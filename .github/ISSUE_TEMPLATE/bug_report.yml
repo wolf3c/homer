@@ -1,0 +1,41 @@
+name: 问题反馈
+description: 使用可公开的虚构输入，说明安装、构建或使用时的问题。
+title: "[问题] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这是公开反馈。请仅使用虚构材料描述问题，不要粘贴完整日志、会话、提示词、工具参数或结果、账户凭据、数据库或客户资料。
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      description: 使用的发布版本或完整提交号。
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 系统与运行方式
+      description: 系统版本、CPU 类型，以及源码 CLI、开发 Web 或桌面入口；构建问题请补充 Node/npm 版本。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 最小复现步骤
+      description: 从哪个入口开始、执行了哪些操作？请使用虚构输入，不复制真实任务内容。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际表现
+      description: 分别说明你希望发生什么，以及实际观察到什么。
+    validations:
+      required: true
+  - type: input
+    id: error_code
+    attributes:
+      label: 错误码（可选）
+      description: 仅填错误码；不要粘贴原始请求、完整 URL、文件内容或认证信息。
