@@ -1,0 +1,9 @@
+@import "tailwindcss" source(none);
+@source "./run-activity.tsx";
+@source "./surfaces.ts";
+@theme inline {
+  --color-muted-foreground: var(--muted);
+  --color-foreground: var(--ink);
+  --color-border: var(--line);
+  --color-ring: var(--focus);
+}

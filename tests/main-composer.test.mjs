@@ -1,0 +1,436 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
+import ts from 'typescript';
+import * as client from '../ui/conversation-client.ts';
+import {previewIntentTooLong} from '../src/user-intent.ts';
+import {messageQuoteText,previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText} from '../src/message-quote.ts';
+import {createAnnotationDraft} from '../ui/annotation-draft.ts';
+import * as references from '../src/preview-reference.ts';
+import {annotationValidationReferences} from '../ui/annotation-draft.ts';
+import {ContextOrder,contextKey} from '../ui/composer-context-order.ts';
+import {createHomerAttachmentAdapter,attachmentAsset} from '../ui/homer-attachment-adapter.ts';
+
+// Execute the production component's handlers with deterministic hook storage.
+// This deliberately does not simulate a browser, Lexical DOM, or a second composer.
+const require=createRequire(import.meta.url);
+function productionFunction(path,name,bindings){
+  const source=ts.createSourceFile(String(path),readFileSync(path,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+  const declaration=source.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name);
+  assert.ok(declaration,`production ${name} exists`);
+  const js=ts.transpileModule(declaration.getText(source),{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
+  return Function('require','exports',...Object.keys(bindings),js+`;return ${name};`)(require,{},...Object.values(bindings));
+}
+const appPath=process.env.HOMER_READER_SOURCE??new URL('../ui/homer-app.tsx',import.meta.url);
+function nodes(tree){return !tree||typeof tree!=='object'?[]:Array.isArray(tree)?tree.flatMap(nodes):[tree,...nodes(tree.props?.children)];}
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+function fixture({text='draft',draft,queueEditor,request,collections=2,connected=true,running=true,upgrade={phase:'running'},pending=[],completeQuote=async value=>value.quote}={}){
+  const state={threadId:'synthetic-composer',messages:[],isRunning:running,activeMessageId:running?'active':null,generation:running?{messageId:'active',generationId:'generation'}:null,work:[],interactions:[],features:{draftUpload:true,previewReferenceCollections:collections},upgrade};
+  const cache=new Map(),calls=[],sends=[],hooks=[],effects=[],revoked=[];let cursor=0,dirty=false,tree,stops=0,focuses=0,preview;
+  if(draft)cache.set('homer-draft:'+state.threadId,draft);
+  if(queueEditor)cache.set('homer-queue-editor:'+state.threadId,queueEditor);
+  if(pending.length)cache.set('homer-unconfirmed:'+state.threadId,pending);
+  const runtime={text,quote:undefined,attachments:[]};const composer={setText(value){runtime.text=value;dirty=true;},setQuote(value){runtime.quote=value;dirty=true;},getState:()=>runtime};
+  const useState=initial=>{const i=cursor++;if(!hooks[i])hooks[i]={value:typeof initial==='function'?initial():initial};return [hooks[i].value,value=>{hooks[i].value=typeof value==='function'?value(hooks[i].value):value;dirty=true;}];};
+  const useRef=initial=>{const i=cursor++;return hooks[i]??(hooks[i]={current:initial});};
+  const useMemo=(factory,deps)=>{const i=cursor++,previous=hooks[i];if(!previous||deps.some((d,n)=>!Object.is(d,previous.deps[n])))hooks[i]={deps,value:factory()};return hooks[i].value;};
+  const useEffect=(effect,deps)=>{const i=cursor++,previous=hooks[i];if(!previous||!deps||deps.some((d,n)=>!Object.is(d,previous.deps[n]))){hooks[i]={deps,cleanup:previous?.cleanup};effects.push(()=>{hooks[i].cleanup?.();hooks[i].cleanup=effect();});}};
+  const storage={read:key=>cache.get(key),write:(key,value)=>{if(value===undefined)cache.delete(key);else cache.set(key,structuredClone(value));return true;}};
+  const fetch=async(path,options)=>{calls.push({path,...options});return request?request(path,options):{ok:true,json:async()=>({})};};
+  const post=async(path,value)=>{const response=await fetch(path,{method:'POST',body:JSON.stringify(value)});const data=await response.json();if(!response.ok)throw Error(data.error);return data;};
+  let attachmentRead=()=>({threadId:state.threadId,requestId:'initial',enabled:true,attachments:runtime.attachments,notice:()=>{}});
+  const attachmentOwner=createHomerAttachmentAdapter(()=>attachmentRead(),fetch);
+  composer.addAttachment=async file=>{if(!(file instanceof File)){runtime.attachments.push(file);dirty=true;return;}for await(const value of attachmentOwner.add({file})){const at=runtime.attachments.findIndex(a=>a.id===value.id);if(at<0)runtime.attachments.push(value);else runtime.attachments[at]=value;dirty=true;}};
+  composer.attachment=({id})=>({remove:async()=>{await attachmentOwner.remove(runtime.attachments.find(a=>a.id===id));runtime.attachments=runtime.attachments.filter(a=>a.id!==id);dirty=true;}});
+  composer.clearAttachments=async()=>{const previous=runtime.attachments;runtime.attachments=[];dirty=true;await Promise.all(previous.map(a=>attachmentOwner.remove(a)));};
+  const annotationDraft=createAnnotationDraft();annotationDraft.subscribe(()=>{dirty=true;});
+  const ArtifactsContext={};const ComposerInputFocusContext={},inputRef={current:()=>{focuses++;}},useContext=context=>{if(context===ArtifactsContext)return {open(){}};assert.equal(context,ComposerInputFocusContext);return inputRef;};
+  const useComposerInputFocus=productionFunction(new URL('../ui/homer-composer-input.tsx',import.meta.url),'useComposerInputFocus',{useContext,ComposerInputFocusContext,useCallback:(callback,deps)=>useMemo(()=>callback,deps)});
+  const MainComposer=productionFunction(appPath,'MainComposer',{...client,...references,ContextOrder,contextKey,previewIntentTooLong,annotationValidationReferences,Popover:{Root:'popover',Portal:'portal',Positioner:'positioner',Popup:'popup'},AnnotationCommentForm:'quote-form',QuoteBlock:{Root:'quote-block',Text:'quote-text'},completeSourceQuote:completeQuote,locateSourceQuote:async()=>undefined,AnnotationChips:'annotation-chips',MessageCirclePlus:'quote-icon',ExecutionUsage:'usage',QueueDraftRecovery:'legacy-panel',useAnnotationDraft:owner=>owner.read(),ArtifactsContext,useState,useRef,useEffect,useLayoutEffect:useEffect,useMemo,useCallback:(callback,deps)=>useMemo(()=>callback,deps),useContext,interactionDraft:key=>({text:storage.read(key+':draft')??'',answers:{}}),ComposerInputFocusContext,useComposerInputFocus,useAui:()=>({composer:()=>composer}),useAuiState:selector=>selector({composer:runtime}),attachmentAsset,HomerAttachmentByIndex:'attachment',ComposerPrimitive:{Root:'form'},ComposerQuotePreview:{Root:'quote-root',Icon:'quote-icon',Text:'quote-text',Dismiss:'quote-dismiss'},requestAnimationFrame:fn=>fn(),Node:class {static [Symbol.hasInstance](node){return !!node&&typeof node==='object';}},document:{querySelector:()=>null},CSS:{escape:value=>value},HomerComposerInput:'editor',ComposerIcon:()=>null,storage,fetch,post,window:{addEventListener(){},removeEventListener(){}},URL:{createObjectURL:()=> 'blob:synthetic',revokeObjectURL:url=>revoked.push(url)}});
+  const props={state,connected,annotationDraft,bindPreview(value){preview=value;},interactionsVerified:true,onAnswerTarget:item=>{props.answerTarget=item;dirty=true;},attachmentOwner,bindAttachments:read=>{attachmentRead=read;},stopping:null,onSend:async(...args)=>{sends.push(args);},onStop:()=>{stops++;}};
+  function render(){let count=0;do{assert.ok(count++<15,'hook effects settle');dirty=false;cursor=0;tree=MainComposer(props);while(effects.length)effects.shift()();}while(dirty);return tree;}
+  const find=predicate=>{render();const result=nodes(tree).find(predicate);assert.ok(result,'expected production control');return result;};
+  const button=label=>find(node=>node.type==='button'&&(node.props['aria-label']===label||node.props.children===label));
+  const editor=()=>find(node=>node.type==='editor');
+  const form=()=>find(node=>node.type==='form');
+  render();return {state,props,runtime,cache,calls,sends,revoked,annotationDraft,preview:()=>preview,remove:name=>composer.attachment({id:runtime.attachments.find(a=>a.name===name).id}).remove(),render,find,button,editor,form,get stops(){return stops;},get focuses(){return focuses;},close(){for(const hook of hooks)hook?.cleanup?.();}};
+}
+function submit(f){f.form().props.onSubmit({preventDefault(){}});f.render();}
+const asset={assetId:'asset-synthetic',revision:1,filename:'image.png',size:24,state:'ready',kind:'image'};
+
+test('ordinary whole-message quotes append to the main draft with stable IDs and delete only the chosen entry',()=>{
+ const original={messageId:'source',text:'full source',annotation:''};
+ const f=fixture({draft:{text:'keep text',quotes:[original],requestId:'quote-owner'}});
+ f.preview().appendQuote({messageId:'replacement',text:'replacement source'});f.render();
+ assert.deepEqual(draftQuotesOf(f).map(({draftId,...q})=>q),[original,{messageId:'replacement',text:'replacement source',annotation:''}]);
+ f.button('删除引用 1').props.onClick();f.render();assert.equal(draftQuotesOf(f).length,1);
+ f.button('删除引用 1').props.onClick();f.render();assert.deepEqual(draftQuotesOf(f),[]);
+ assert.equal(f.runtime.text,'keep text');f.close();
+});
+
+test('retired queue editor restores ordinary original without exposing or rewriting the archive',()=>{
+ const original={text:'ordinary original',quotes:[{messageId:'s',text:'original quote',annotation:''}]};
+ const queueEditor={item:{input:{requestId:'queued',text:'old edit'}},text:'old edit',quotes:[],attachments:[],original};
+ const f=fixture({queueEditor});
+ assert.equal(f.runtime.text,original.text);assert.deepEqual(draftQuotesOf(f).map(({draftId,...q})=>q),original.quotes);
+ assert.deepEqual(f.cache.get('homer-queue-editor:'+f.state.threadId),queueEditor);
+ assert.equal(nodes(f.render()).some(n=>n.type==='legacy-panel'),false);assert.equal(f.sends.length,0);f.close();
+});
+test('ordinary draft takes priority and legacy multi quote original restores structurally without altering archive',()=>{
+ const original={text:'old ordinary draft',quotes:[{messageId:'a',text:'old first',annotation:'old note'},{messageId:'b',text:'old second',annotation:''}]};
+ const queueEditor={item:{input:{requestId:'queued-restored',text:'queued text'}},text:'queued text',quotes:[],attachments:[],original};
+ const f=fixture({queueEditor});
+ assert.equal(f.runtime.text,'old ordinary draft');assert.deepEqual(draftQuotesOf(f).map(({draftId,...q})=>q),original.quotes);
+ assert.equal(f.runtime.quote,undefined);assert.deepEqual(f.cache.get('homer-queue-editor:'+f.state.threadId),queueEditor);f.close();
+ const g=fixture({draft:{text:'new ordinary draft',quotes:[]},queueEditor});assert.equal(g.runtime.text,'new ordinary draft');assert.deepEqual(g.cache.get('homer-queue-editor:'+g.state.threadId),queueEditor);g.close();
+});
+
+test('production send retains exact pending snapshot with no manual entry and acceptance cannot erase newer draft',async()=>{
+  const f=fixture({draft:{text:'full draft',quotes:[{messageId:'source',text:'original\nquote',annotation:''}],requestId:'original-request',attachments:[asset]}});
+  await tick();f.render();submit(f);await tick();
+  assert.equal(f.sends.length,1);assert.equal(f.sends[0][1],undefined);
+  assert.deepEqual(f.sends[0][0],{requestId:'original-request',text:'full draft',quotes:[{messageId:'source',text:'original\nquote',annotation:''}],attachments:[{assetId:asset.assetId,revision:1}]});
+  f.runtime.text='next draft';f.render();await tick();
+  assert.equal(f.sends.length,1);assert.deepEqual(f.cache.get('homer-unconfirmed:'+f.state.threadId)[0].input,f.sends[0][0]);
+  assert.equal(nodes(f.render()).some(n=>n.props?.children==='核对并重试'||n.props?.className==='unconfirmed-inputs'||n.props?.className==='composer-run-line'),false);
+  f.state.acceptedRequestIds=['another-id'];f.render();assert.equal(f.cache.get('homer-unconfirmed:'+f.state.threadId).length,1);
+  f.state.acceptedRequestIds=['original-request'];f.render();assert.equal(f.cache.has('homer-unconfirmed:'+f.state.threadId),false);assert.equal(f.runtime.text,'next draft');f.close();
+});
+
+test('consecutive queued sends clear long text, quote and attachments while retaining separate immutable requests',async()=>{
+  const text='long draft\n'.repeat(30),quote={messageId:'source',text:'full original quote',annotation:''};
+  const f=fixture({running:true,draft:{text,quotes:[quote],requestId:'first-queued',attachments:[asset]}});
+  await tick();f.render();submit(f);await tick();
+  f.runtime.text='second queued draft';submit(f);await tick();f.render();
+  assert.equal(f.sends.length,2);
+  assert.equal(f.sends[0][0].text,text);
+  assert.deepEqual(f.sends[0][0].quotes,[{messageId:'source',text:'full original quote',annotation:''}]);
+  assert.deepEqual(f.sends[0][0].attachments,[{assetId:asset.assetId,revision:1}]);
+  assert.equal(f.sends[1][0].text,'second queued draft');
+  assert.notEqual(f.sends[1][0].requestId,f.sends[0][0].requestId);
+  assert.equal(f.sends[1][0].quote,undefined);assert.equal(f.sends[1][0].attachments,undefined);
+  assert.equal(f.runtime.text,'');assert.deepEqual(f.runtime.attachments,[]);
+  assert.deepEqual(f.cache.get('homer-unconfirmed:'+f.state.threadId).map(item=>item.input),f.sends.map(([input])=>input));
+  assert.equal(f.focuses,2);f.close();
+});
+
+test('production stop is independent of draft, quote, attachments, queued and unconfirmed input',async()=>{
+  const old={input:{requestId:'unconfirmed',text:'old'}};
+  const f=fixture({draft:{text:'keep me',quotes:[{messageId:'source',text:'quote',annotation:''}],attachments:[asset]},pending:[old]});
+  await tick();f.render();f.state.queue=[{input:{requestId:'queued',text:'queued'},state:'queued'}];
+  const before=structuredClone([...f.cache]);f.button('停止回复').props.onClick();f.render();
+  assert.equal(f.stops,1);assert.equal(f.sends.length,0);assert.equal(f.runtime.text,'keep me');assert.deepEqual([...f.cache],before);assert.equal(f.state.queue[0].state,'queued');
+  f.props.stopping='active';assert.equal(f.button('停止回复').props.disabled,true);f.close();
+});
+
+test('production submit guards empty/quote only, upload busy, uncertain upload and acceptance fence',async()=>{
+  const f=fixture({text:'   ',draft:{text:' ',quotes:[{messageId:'s',text:'source',annotation:''}]}});
+  submit(f);assert.equal(f.sends.length,0);f.runtime.text='new';f.props.connected=false;submit(f);assert.equal(f.sends.length,0);f.close();
+  const gate=deferred();const g=fixture({request:()=>gate.promise});
+  const upload=g.editor().props.onFiles([new File(['x'],'note.txt')]);g.render();submit(g);assert.equal(g.sends.length,0);
+  gate.reject(Error('uncertain'));await upload;await tick();g.render();submit(g);assert.equal(g.sends.length,0);g.close();
+});
+
+test('production sequential partial upload retries original upload ID, removes only after discard receipt and retains ownership until receipt',async()=>{
+  const discard=deferred();let uploadCount=0;
+  const f=fixture({text:'',request:(path,options)=>{
+    if(path.endsWith('/discard'))return discard.promise;
+    uploadCount++;if(uploadCount===2)throw Error('unknown receipt');
+    return {ok:true,json:async()=>({...asset,assetId:uploadCount===1?'image':'note',filename:decodeURIComponent(options.headers['X-Homer-Filename'])})};
+  }});
+  f.editor().props.onFiles([new File(['image'],'image.png',{type:'image/png'}),new File(['note'],'note.txt')]);await tick();f.render();
+  assert.equal(uploadCount,2);assert.equal(f.runtime.attachments.filter(attachmentAsset).length,1);const original=f.calls[1].headers['X-Homer-Upload'];
+  f.button('重试上传').props.onClick();await tick();f.render();assert.equal(f.calls[2].headers['X-Homer-Upload'],original);
+  assert.equal(f.calls[0].headers['X-Homer-Request'],f.calls[2].headers['X-Homer-Request']);
+  const removing=f.remove('image.png');f.render();assert.equal(f.runtime.attachments.some(a=>a.name==='image.png'),true);
+  discard.resolve({ok:true,json:async()=>({})});await removing;await tick();f.render();assert.equal(f.runtime.attachments.some(a=>a.name==='image.png'),false); // Object URL lifetime is covered by the real browser row test.
+  submit(f);assert.deepEqual(f.sends[0][0].attachments,[{assetId:'note',revision:1}]);f.close();
+});
+
+test('production uncertain-upload discard keeps failed files until acknowledged and validates file limits',async()=>{
+  let removing=false;const gate=deferred();const f=fixture({request:path=>{if(path.endsWith('/discard')){removing=true;return gate.promise;}throw Error('lost');}});
+  f.editor().props.onFiles([new File(['x'],'note.txt')]);await tick();f.render();f.button('不添加这些附件').props.onClick();f.render();assert.equal(removing,true);assert.ok(f.button('重试上传'));
+  gate.resolve({ok:true,json:async()=>({})});await tick();f.render();assert.equal(nodes(f.render()).some(n=>n.props?.children==='重试上传'),false);
+  const count=f.calls.length;
+  for(const files of [[new File([],'empty')],[new File(['x'],'../bad')],Array.from({length:11},()=>new File(['x'],'note')), [new File([new Uint8Array(8*1024*1024+1)],'large')]]){f.editor().props.onFiles(files);await tick();f.render();}
+  assert.equal(f.calls.length,count);f.close();
+});
+
+test('production container drop consumes files once, respects editor consumption and exposes running send semantics',async()=>{
+  const gate=deferred();const f=fixture({request:()=>gate.promise});
+  assert.ok(f.form().props.onDrop,'container blank space accepts drop');
+  const file=new File(['x'],'note.txt'),event={defaultPrevented:false,dataTransfer:{types:['Files'],files:[file]},preventDefault(){this.defaultPrevented=true;}};
+  f.form().props.onDrop(event);assert.equal(event.defaultPrevented,true);await tick();assert.equal(f.calls.length,1);
+  f.form().props.onDrop(event);assert.equal(f.calls.length,1);
+  const consumed={...event,defaultPrevented:true};f.form().props.onDrop(consumed);assert.equal(f.calls.length,1);
+  assert.equal(f.button('排队发送').props.disabled,true);
+  gate.resolve({ok:true,json:async()=>asset});await tick();f.render();assert.equal(f.button('排队发送').props.disabled,false);f.close();
+});
+
+test('production acceptance during upgrade keeps text enabled but fences attachment entry',()=>{
+  const f=fixture({upgrade:{phase:'preparing',accepting:true}});assert.equal(f.editor().props.disabled,false);
+  assert.equal(f.button('添加附件').props.disabled,true);submit(f);assert.equal(f.sends.length,1);f.close();
+});
+
+test('production quote removal restores editor focus without changing text; successful send restores focus too',()=>{
+  const f=fixture({draft:{text:'keep text',quotes:[{messageId:'s',text:'full source',annotation:''}]}});
+  f.button('删除引用 1').props.onClick();
+  f.render();assert.equal(f.focuses,1);assert.equal(f.runtime.text,'keep text');
+  submit(f);assert.equal(f.focuses,2);assert.equal(f.sends.length,1);assert.equal(f.sends[0][0].quote,undefined);f.close();
+});
+
+test('Lexical focus registers only for the mounted editor, skips scrolling, respects disabled input and cleans up',()=>{
+ const focus={current:null},calls=[];let cleanup,editable=true;
+ const editor={isEditable:()=>editable,update(fn,options){calls.push(options);fn();},focus(){calls.push('focus');}};
+ const plugin=productionFunction(new URL('../ui/homer-composer-input.tsx',import.meta.url),'HomerFocusPlugin',{
+  useLexicalComposerContext:()=>[editor],useContext:()=>focus,ComposerInputFocusContext:{},useLayoutEffect:fn=>{cleanup=fn();},
+  $addUpdateTag:tag=>calls.push(tag),SKIP_SCROLL_INTO_VIEW_TAG:'skip-scroll-into-view',
+ });
+ plugin();assert.deepEqual(calls,[],'mounting or restoring quote state never requests focus');
+ focus.current();assert.deepEqual(calls,[{discrete:true},'skip-scroll-into-view','focus']);
+ editable=false;focus.current();assert.equal(calls.length,3);
+ cleanup();assert.equal(focus.current,null);
+});
+
+test('production Lexical commands preserve IME, modified Enter, mixed clipboard text and consumed drop',()=>{
+  const commands=new Map();let submissions=0,files=0,inserted='',composing=false;
+  const editor={setEditable(){},isComposing:()=>composing,getRootElement:()=>({closest:()=>({requestSubmit(){submissions++;}})}),registerCommand:(name,callback)=>{commands.set(name,callback);return ()=>{};}};
+  const bindings={useLexicalComposerContext:()=>[editor],useAuiState:()=>false,useEffect:fn=>fn(),mergeRegister:()=>()=>{},KEY_DOWN_COMMAND:'key',PASTE_COMMAND:'paste',DROP_COMMAND:'drop',COMMAND_PRIORITY_CRITICAL:4,$getSelection:()=>({insertRawText:text=>{inserted=text;}}),ClipboardEvent:class ClipboardEvent{}};
+  const plugin=productionFunction(new URL('../ui/homer-composer-input.tsx',import.meta.url),'HomerInputPlugin',bindings);
+  plugin({onFiles(){files++;}});
+  const key=extra=>({key:'Enter',shiftKey:false,ctrlKey:false,altKey:false,metaKey:false,keyCode:13,isComposing:false,preventDefault(){this.defaultPrevented=true;},...extra});
+  for(const flags of [{isComposing:true},{keyCode:229},{shiftKey:true},{ctrlKey:true},{metaKey:true},{altKey:true}])commands.get('key')(key(flags));
+  composing=true;commands.get('key')(key());composing=false;assert.equal(submissions,0);
+  commands.get('key')(key());assert.equal(submissions,1);
+  const event=new bindings.ClipboardEvent();Object.assign(event,{clipboardData:{files:[new File(['x'],'note')],getData:()=> 'clipboard text'},preventDefault(){this.defaultPrevented=true;}});
+  commands.get('paste')(event);assert.equal(inserted,'clipboard text');assert.equal(files,1);
+  commands.get('drop')({defaultPrevented:true});assert.equal(files,1);
+  plugin({disabled:true,onFiles(){files++;}});commands.get('paste')(event);commands.get('key')(key());assert.equal(files,1);assert.equal(submissions,1);
+});
+
+test('answer pending and invalid question remain blocked; exit restores ordinary draft with no upper status',async()=>{
+ const f=fixture({draft:{text:'ordinary',quotes:[]}});await tick();f.render();
+ const item={id:'question',question:'What next?',kind:'question'};f.state.interactions=[item];f.props.answerTarget=item;f.render();f.runtime.text='answer';f.render();
+ f.cache.set('homer-interaction:'+f.state.threadId+':question:pending',{requestId:'answer-old',text:'answer'});
+ assert.equal(f.button('提交答复').props.disabled,true);submit(f);assert.equal(f.sends.length,0);
+ const tree=f.render(),form=nodes(tree).findIndex(n=>n.type==='form');
+ assert.equal(nodes(tree).slice(0,form).some(n=>n.props?.role==='status'),false);
+ f.cache.delete('homer-interaction:'+f.state.threadId+':question:pending');f.state.interactions=[];f.render();assert.equal(f.button('提交答复').props.disabled,true);submit(f);assert.equal(f.sends.length,0);
+ f.button('退出答复').props.onClick();f.render();assert.equal(f.runtime.text,'ordinary');assert.equal(f.props.answerTarget,undefined);f.close();
+});
+test('automatic receipt lookup removes only exact accepted request and preserves later draft',async()=>{
+ const old={input:{requestId:'old-request',text:'old immutable'}};let lookups=0;
+ const f=fixture({pending:[old],draft:{text:'new draft',quotes:[]},request:async()=>({ok:true,json:async()=>({statuses:[{requestId:'old-request',state:'unconfirmed'}],acceptedRequestIds:++lookups===1?['unrelated']:['old-request']})})});
+ f.state.history={page:{revision:1}};f.render();await tick();f.render();assert.deepEqual(f.cache.get('homer-unconfirmed:'+f.state.threadId),[old]);
+ f.props.connected=false;f.render();f.props.connected=true;f.state.history.page.revision=2;f.render();await tick();f.render();assert.equal(f.sends.length,0);assert.equal(f.cache.has('homer-unconfirmed:'+f.state.threadId),false);
+ assert.equal(f.runtime.text,'new draft');assert.ok(f.calls.some(c=>c.path==='/api/history/receipts'));f.close();
+});
+
+const textReference={kind:'text',source:{kind:'artifact',id:'result-notes',sha256:'a'.repeat(64),title:'notes.txt'},annotations:[{id:'n',text:'Source excerpt',comment:'My remark',anchor:{format:'preview-text-v1',representation:'plain',start:0,end:14,exact:'Source excerpt',prefix:'',suffix:''}}]};
+const ordinaryQuote={messageId:'source-message',text:'Visible quote'};
+test('production ordinary composer accepts both orders and selection entry; removing one owner keeps the other and body',async()=>{
+ for(const first of ['resource','quote']){
+  const f=fixture({text:'Body'});await tick();f.render();
+  if(first==='quote')f.preview().appendQuote(ordinaryQuote);f.render();
+  await f.preview().add(textReference);f.render();
+  if(first==='resource'){
+   const Toolbar=productionFunction(appPath,'HomerSelectionToolbar',{useComposerInputFocus:()=>()=>{},useContext:()=>f.preview(),PreviewActionsContext:{},captureSourceQuoteSelection:()=>({quote:ordinaryQuote}),document:{getElementById:()=>null},window:{getSelection:()=>({removeAllRanges(){}})},SelectionToolbar:{Root:'selection-root',Quote:'selection-quote'},MessageCirclePlus:'icon'});
+   let blocked=false;Toolbar().props.onClickCapture({target:{closest:()=>true},preventDefault(){blocked=true;},stopPropagation(){blocked=true;}});
+   assert.equal(blocked,true);await tick();f.render();f.find(n=>n.type==='quote-form').props.onCancel();f.render();f.preview().appendQuote(ordinaryQuote);f.render();
+  }
+  assert.deepEqual(f.annotationDraft.read().resourceReferences,[textReference]);assert.ok(draftQuotesOf(f).some(q=>q.messageId===ordinaryQuote.messageId));
+  f.find(n=>n.type==='annotation-chips').props.onRemove(references.referenceKey(textReference),'n');f.render();
+  assert.ok(draftQuotesOf(f).some(q=>q.messageId===ordinaryQuote.messageId));assert.equal(f.runtime.text,'Body');assert.equal(references.referencesOf(f.annotationDraft.read()).length,0);
+  await f.preview().add(textReference);f.button('删除引用 1').props.onClick();f.render();
+  assert.deepEqual(f.annotationDraft.read().resourceReferences,[textReference]);assert.equal(f.runtime.text,'Body');
+  f.close();
+ }
+});
+test('capability 1 keeps both old guards and refuses sending a restored mixed draft; capability 2 sends the same fields',async()=>{
+ const f=fixture({collections:1});await tick();f.render();
+ await f.preview().add(textReference);f.render();assert.equal(f.preview().canQuote(),false);
+ f.annotationDraft.clear();f.preview().appendQuote(ordinaryQuote);f.render();f.render();
+ await assert.rejects(f.preview().add(textReference));assert.ok(draftQuotesOf(f).some(q=>q.messageId===ordinaryQuote.messageId));f.close();
+ for(const collections of [undefined,1,2]){
+  const g=fixture({collections:collections??null,draft:{text:'Body',quotes:[{...ordinaryQuote,annotation:''}],resourceReferences:[textReference],requestId:'mixed'}});await tick();g.render();submit(g);
+  assert.equal(g.sends.length,collections===2?1:0);
+  if(collections===2){assert.deepEqual(g.sends[0][0].quotes,[{...ordinaryQuote,annotation:''}]);assert.deepEqual(g.sends[0][0].resourceReferences,[textReference]);}
+  g.close();
+ }
+});
+test('mixed pending keeps both contexts and metadata through refresh, failure, answer freeze and exact ACK',async()=>{
+ const metadata={'note':{n:{selectedText:'Source excerpt'}}};
+ const draft={text:'Body',quotes:[{...ordinaryQuote,annotation:''}],resourceReferences:[textReference],htmlMetadata:metadata,requestId:'mixed-owner',attachments:[asset]};
+ const f=fixture({draft});await tick();f.render();
+ assert.deepEqual(f.cache.get('homer-draft:'+f.state.threadId).htmlMetadata,metadata);
+ const item={id:'answer-question',question:'Question?',kind:'question'};f.state.interactions=[item];f.props.answerTarget=item;f.render();
+ assert.equal(f.preview().canQuote(),false);await assert.rejects(f.preview().add(textReference));
+ assert.equal(f.annotationDraft.remove(references.referenceKey(textReference),'n'),false);
+ f.runtime.text='Answer';f.button('退出答复').props.onClick();f.render();
+ assert.equal(f.runtime.text,'Body');assert.ok(draftQuotesOf(f).some(q=>q.messageId===ordinaryQuote.messageId));assert.deepEqual(f.annotationDraft.read().resourceReferences,[textReference]);
+ f.props.onSend=async(...args)=>{f.sends.push(args);throw Error('unknown ACK');};
+ submit(f);await tick();f.render();const pending=f.cache.get('homer-unconfirmed:'+f.state.threadId);
+ assert.equal(pending[0].input.requestId,'mixed-owner');assert.deepEqual(pending[0].input.quotes,[{...ordinaryQuote,annotation:''}]);assert.deepEqual(pending[0].input.resourceReferences,[textReference]);assert.equal(f.runtime.quote,undefined);assert.equal(references.referencesOf(f.annotationDraft.read()).length,0);
+ f.runtime.text='newer';f.render();f.state.acceptedRequestIds=['unrelated'];f.render();assert.deepEqual(f.cache.get('homer-unconfirmed:'+f.state.threadId),pending);
+ const refreshed=fixture({pending,draft:f.cache.get('homer-draft:'+f.state.threadId)});await tick();refreshed.render();assert.equal(refreshed.sends.length,0);assert.equal(refreshed.runtime.text,'newer');assert.deepEqual(refreshed.cache.get('homer-unconfirmed:'+refreshed.state.threadId),pending);
+ const input=pending[0].input;assert.equal(client.prepareMessage(input.text,input.quotes,input,()=>assert.fail('same ID'),input.attachments,undefined,input.resourceReferences),input);
+ f.state.acceptedRequestIds=['mixed-owner'];f.render();assert.equal(f.runtime.text,'newer');assert.equal(f.cache.has('homer-unconfirmed:'+f.state.threadId),false);f.close();refreshed.close();
+});
+test('reference save counts current quote in the full byte budget and submit checks the resulting snapshot again',async()=>{
+ const f=fixture({text:'body'});await tick();f.render();
+ // Under 48000 resource characters and 24000 authority; UTF-8 snapshot exceeds 96KiB only with quote.
+ const large={...textReference,annotations:[{id:'big',text:'中'.repeat(16000),comment:'中'.repeat(10000)}]};
+ await f.preview().add(large);f.render();f.annotationDraft.clear();f.preview().appendQuote({messageId:'q',text:'中'.repeat(8000)});f.render();
+ await assert.rejects(f.preview().add(large),/96KiB/);assert.equal(references.referencesOf(f.annotationDraft.read()).length,0);
+ f.annotationDraft.replace([large]);f.render();submit(f);assert.equal(f.sends.length,0);assert.ok(nodes(f.render()).some(n=>String(n.props?.children).includes('96KiB')));f.close();
+});
+
+test('image preparation reserves its original attachment in the full snapshot budget before upload',async()=>{
+ const f=fixture({text:'x'.repeat(10000)});await tick();f.render();
+ const large={...textReference,annotations:[{id:'big',text:'中'.repeat(16000),comment:'中'.repeat(10000)}]};
+ await f.preview().add(large);f.render();
+ const picture={kind:'image',source:{...textReference.source,id:'result-image',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
+ const sentinel={...picture,image:{assetId:'asset-00000000-0000-4000-8000-000000000000',revision:1}};
+ const requestId=f.cache.get('homer-draft:'+f.state.threadId).requestId;
+ const empty=client.prepareMessage(f.runtime.text,{messageId:'q',text:''},undefined,()=>requestId,[],undefined,[large,sentinel]);
+ const space=96*1024-Buffer.byteLength(JSON.stringify(empty))-1;
+ assert.ok(space>0&&space<16000);f.runtime.quote={messageId:'q',text:'q'.repeat(space)};f.render();
+ await assert.rejects(f.preview().add(picture,new File(['image'],'Image.png',{type:'image/png'})),/96KiB/);
+ assert.equal(f.calls.length,0,'oversized image candidate rejected before upload');f.close();
+});
+
+test('restored message quote appends while keeping the draft and annotation owner intact',async()=>{
+ const f=fixture({text:'Body'});await tick();f.render();await f.preview().add(textReference);f.render();
+ const Actions=productionFunction(new URL('../ui/message-details.tsx',import.meta.url),'RuntimeMessageActions',{
+  useContext:()=>f.preview(),PreviewActionsContext:{},useAuiState:fn=>fn({thread:{isDisabled:false}}),useComposerInputFocus:()=>()=>{},previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText,window:{getSelection:()=>null},useActionBarCopy:()=>({copy(){},isCopied:false}),MessageActions:'actions',MessageTimestamp:'timestamp',
+ });
+ const tree=Actions({message:{id:'action-source',text:'**Visible** source'},write:async()=>{},busy:false,notice:'',onNotice(){}});
+ const actions=nodes(tree).find(n=>n.type==='actions');
+ assert.equal(typeof actions.props.onCopy,'function');assert.equal(typeof actions.props.onQuote,'function');actions.props.onQuote();f.render();
+ assert.deepEqual(draftQuotesOf(f).map(({draftId,...q})=>q),[{messageId:'action-source',text:'Visible source',annotation:''}]);assert.equal(f.runtime.text,'Body');assert.deepEqual(f.annotationDraft.read().resourceReferences,[textReference]);f.close();
+});
+test('late original upload cannot recreate mixed annotations after the draft epoch ends',async()=>{
+ const gate=deferred(),f=fixture({request:()=>gate.promise});await tick();f.render();f.preview().appendQuote(ordinaryQuote);f.render();f.render();
+ const picture={kind:'image',source:{...textReference.source,id:'result-late',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
+ const saving=f.preview().add(picture,new File(['image'],'Image.png',{type:'image/png'}));
+ f.render();assert.ok(f.annotationDraft.read().preparingImages);f.annotationDraft.clear();f.preview().appendQuote({messageId:'new',text:'new quote'});f.runtime.text='new body';f.render();
+ gate.resolve({ok:true,json:async()=>({...asset,assetId:'asset-00000000-0000-4000-8000-000000000001'})});
+ await assert.rejects(saving,/原草稿已经结束/);f.render();assert.equal(references.referencesOf(f.annotationDraft.read()).length,0);assert.ok(draftQuotesOf(f).some(q=>q.messageId==='new'));assert.equal(f.runtime.text,'new body');f.close();
+});
+
+test('original upload rechecks the live mixed budget before confirming Canvas-registered pending notes',async()=>{
+ const gate=deferred(),f=fixture({text:'x'.repeat(10000),request:()=>gate.promise});await tick();f.render();
+ const large={...textReference,annotations:[{id:'big',text:'中'.repeat(16000),comment:'中'.repeat(10000)}]};await f.preview().add(large);f.render();
+ const picture={kind:'image',source:{...textReference.source,id:'result-race',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
+ const file=new File(['image'],'Image.png',{type:'image/png'}),key=references.referenceKey(picture);f.annotationDraft.imageFile(key,file);
+ const saving=f.preview().add(picture,file);f.render();
+ f.runtime.text='中'.repeat(10000);f.render();
+ gate.resolve({ok:true,json:async()=>({...asset,assetId:'asset-00000000-0000-4000-8000-000000000001'})});
+ await assert.rejects(saving,/96KiB/);f.render();
+ assert.deepEqual(f.annotationDraft.read().resourceReferences,[large]);assert.ok(f.annotationDraft.read().preparingImages[key]);assert.equal(f.runtime.text,'中'.repeat(10000));
+ f.runtime.text='short';f.render();await f.preview().add(picture,file);f.render();
+ assert.equal(f.annotationDraft.read().resourceReferences.length,2);assert.equal(f.calls.length,1,'confirmed original reused after budget correction');f.close();
+});
+
+const draftQuotesOf=f=>f.cache.get('homer-draft:'+f.state.threadId)?.quotes??[];
+test('selection comments save without sending, duplicate positions stay independent and edits/cancel/delete preserve all other owners',async()=>{
+ const f=fixture({draft:{text:'body',quotes:[],attachments:[asset],resourceReferences:[textReference]}});await tick();f.render();
+ const snapshot={quote:ordinaryQuote};
+ for(const comment of ['first','second']){
+  f.preview().openQuote(snapshot);await tick();f.render();
+  f.find(n=>n.type==='quote-form').props.onChange(comment);f.render();
+  submit(f);assert.equal(f.sends.length,0,'unfinished editor blocks main submit');
+  f.find(n=>n.type==='quote-form').props.onSave();f.render();
+ }
+ assert.equal(f.sends.length,0);assert.equal(f.runtime.text,'body');assert.equal(f.runtime.attachments.length,1);
+ assert.deepEqual(f.annotationDraft.read().resourceReferences,[textReference]);
+ let quotes=draftQuotesOf(f);assert.deepEqual(quotes.map(q=>q.annotation),['first','second']);assert.notEqual(quotes[0].draftId,quotes[1].draftId);
+ f.button('编辑引用 1').props.onClick({currentTarget:{isConnected:false}});await tick();f.render();
+ f.find(n=>n.type==='quote-form').props.onChange('cancelled');f.render();f.find(n=>n.type==='quote-form').props.onCancel();f.render();assert.equal(draftQuotesOf(f)[0].annotation,'first');
+ f.button('编辑引用 1').props.onClick({currentTarget:{isConnected:false}});await tick();f.render();f.find(n=>n.type==='quote-form').props.onChange('edited');f.render();f.find(n=>n.type==='quote-form').props.onSave();f.render();
+ assert.deepEqual(draftQuotesOf(f).map(q=>q.annotation),['edited','second']);
+ f.button('删除引用 2').props.onClick();f.render();assert.deepEqual(draftQuotesOf(f).map(q=>q.annotation),['edited']);
+ submit(f);await tick();assert.equal(f.sends.length,1);assert.equal(f.sends[0][0].quotes[0].annotation,'edited');assert.equal('draftId' in f.sends[0][0].quotes[0],false);f.close();
+});
+test('structured duplicate drafts reload and ordinary answer keeps them frozen until exit',async()=>{
+ const draft={text:'body',quotes:[{...ordinaryQuote,annotation:'one',draftId:'a'},{...ordinaryQuote,annotation:'two',draftId:'b'}]};
+ const f=fixture({draft});await tick();f.render();assert.equal(f.runtime.text,'body');assert.deepEqual(draftQuotesOf(f),draft.quotes);
+ const question={id:'question',question:'Question?',kind:'question'};f.state.interactions=[question];f.props.answerTarget=question;f.render();
+ assert.equal(f.preview().canQuote(),false);f.preview().openQuote({quote:ordinaryQuote});f.render();assert.equal(nodes(f.render()).some(n=>n.type==='quote-form'),false);
+ f.runtime.text='answer';f.button('退出答复').props.onClick();f.render();assert.equal(f.runtime.text,'body');assert.deepEqual(draftQuotesOf(f),draft.quotes);f.close();
+});
+
+test('late quote hashing after cancel or unmount cannot append or replace a newer editor',async()=>{
+ const gate=deferred();let calls=0;const f=fixture({completeQuote:value=>++calls===1?gate.promise:Promise.resolve(value.quote)});await tick();f.render();
+ f.preview().openQuote({quote:ordinaryQuote});f.render();f.find(n=>n.type==='quote-form').props.onChange('old');f.render();f.find(n=>n.type==='quote-form').props.onCancel();f.render();
+ f.preview().openQuote({quote:{messageId:'new',text:'new'}});f.render();
+ gate.resolve({...ordinaryQuote,position:{sourceHash:'late'}});await tick();f.render();assert.equal(f.find(n=>n.type==='quote-form').props.excerpt,'new');assert.equal(draftQuotesOf(f).length,0);f.close();
+ const late=deferred(),g=fixture({completeQuote:()=>late.promise});await tick();g.render();g.preview().openQuote({quote:ordinaryQuote});g.render();g.close();late.resolve(ordinaryQuote);await tick();assert.equal(draftQuotesOf(g).length,0);
+});
+test('quote source rejection restores all saved entries only into its own empty cleared draft',async()=>{
+ const quotes=[{...ordinaryQuote,annotation:'first',draftId:'a'},{...ordinaryQuote,annotation:'second',draftId:'b'}];
+ for(const newer of [false,true]){
+  const gate=deferred(),f=fixture({draft:{text:'original',quotes}});await tick();f.render();f.props.onSend=()=>gate.promise;submit(f);
+  if(newer){f.preview().appendQuote({messageId:'new',text:'new quote'});f.runtime.text='new body';f.render();}
+  gate.reject(Error('quote_source_mismatch'));await tick();f.render();
+  assert.equal(f.runtime.text,newer?'new body':'original');assert.deepEqual(draftQuotesOf(f).map(q=>q.annotation),newer?['']:['first','second']);f.close();
+ }
+});
+test('quote count and UTF8 budget errors retain saved entries and the unsaved editor',async()=>{
+ const quotes=Array.from({length:20},(_,i)=>({...ordinaryQuote,annotation:'comment '+i,draftId:'id-'+i}));
+ const f=fixture({draft:{text:'body',quotes}});await tick();f.render();f.preview().openQuote({quote:ordinaryQuote});await tick();f.render();f.find(n=>n.type==='quote-form').props.onChange('twenty-first');f.render();f.find(n=>n.type==='quote-form').props.onSave();f.render();
+ assert.match(f.find(n=>n.type==='quote-form').props.error,/20条/);assert.equal(draftQuotesOf(f).length,20);assert.equal(f.sends.length,0);f.close();
+ const g=fixture({draft:{text:'中'.repeat(16000),quotes:[{...ordinaryQuote,text:'中'.repeat(16000),annotation:'one',draftId:'one'}]}});await tick();g.render();g.preview().openQuote({quote:ordinaryQuote});await tick();g.render();g.find(n=>n.type==='quote-form').props.onChange('中'.repeat(1000));g.render();g.find(n=>n.type==='quote-form').props.onSave();g.render();assert.match(g.find(n=>n.type==='quote-form').props.error,/96KiB/);assert.equal(draftQuotesOf(g).length,1);g.close();
+});
+
+test('quote comments share the existing combined intent budget with file annotations',async()=>{
+ const f=fixture({draft:{text:'x'.repeat(10000),quotes:[{...ordinaryQuote,annotation:'q'.repeat(13000)}]}});await tick();f.render();
+ const reference={...textReference,annotations:[{id:'n',text:'excerpt',comment:'r'.repeat(2000)}]};
+ await assert.rejects(f.preview().add(reference),/整体要求/);assert.equal(references.referencesOf(f.annotationDraft.read()).length,0);assert.equal(draftQuotesOf(f)[0].annotation.length,13000);f.close();
+});
+
+test('Popover outside dismissal cannot discard an unsaved comment immediately before the main send click',async()=>{
+ const f=fixture();await tick();f.render();f.preview().openQuote({quote:ordinaryQuote});await tick();f.render();f.find(n=>n.type==='quote-form').props.onChange('unsaved');f.render();
+ f.find(n=>n.props?.className==='composer-area').props.ref.current={contains:node=>!!node?.composer,focus(){}};
+ let cancelled=false;f.find(n=>n.type==='popover').props.onOpenChange(false,{reason:'outside-press',event:{target:{composer:true}},cancel(){cancelled=true;}});f.render();submit(f);
+ assert.equal(f.sends.length,0);assert.equal(cancelled,true);assert.equal(f.find(n=>n.type==='quote-form').props.value,'unsaved');
+ f.find(n=>n.type==='popover').props.onOpenChange(false,{reason:'focus-out',event:{target:{},relatedTarget:{composer:true}},cancel(){}});f.render();submit(f);assert.equal(f.sends.length,0);
+ f.find(n=>n.type==='popover').props.onOpenChange(false,{reason:'escape-key',event:{},cancel(){}});f.render();assert.equal(nodes(f.render()).some(n=>n.type==='quote-form'),false);f.close();
+});
+
+test('late source rejection cannot replace a newer unsaved quote editor generation, during hashing or after readiness',async()=>{
+ for(const hashing of [false,true]){
+  const send=deferred(),hash=deferred(),f=fixture({draft:{text:'original',quotes:[{...ordinaryQuote,annotation:'original comment'}]},completeQuote:value=>hashing?hash.promise:Promise.resolve(value.quote)});await tick();f.render();f.props.onSend=()=>send.promise;submit(f);
+  f.preview().openQuote({quote:{messageId:'new-source',text:'new excerpt'}});await tick();f.render();f.find(n=>n.type==='quote-form').props.onChange('new unsaved note');f.render();
+  send.reject(Error('quote_source_mismatch'));await tick();f.render();assert.equal(f.runtime.text,'');assert.equal(draftQuotesOf(f).length,0);
+  hash.resolve({messageId:'new-source',text:'new excerpt'});await tick();f.render();f.find(n=>n.type==='quote-form').props.onSave();f.render();assert.equal(draftQuotesOf(f)[0].annotation,'new unsaved note');assert.equal(draftQuotesOf(f)[0].messageId,'new-source');f.close();
+ }
+});
+
+test('message quoting is refused while an unsaved quote comment owns the current selection',async()=>{
+ const f=fixture({text:'keep text'});await tick();f.render();
+ f.preview().openQuote({quote:ordinaryQuote,range:{startContainer:{parentElement:{isConnected:false}}}});await tick();f.render();
+ assert.equal(f.preview().canQuote(),false);f.preview().appendQuote({messageId:'new-source',text:'new source'});f.render();
+ assert.deepEqual(draftQuotesOf(f),[]);assert.equal(f.runtime.text,'keep text');assert.ok(f.find(n=>n.type==='quote-form'));f.close();
+});
+
+test('composer records cross-type insertion order and restores it after refresh',async()=>{
+ const upload={...asset,assetId:'asset-mixed',filename:'note.txt',kind:'file'};
+ const f=fixture({text:'Draft',request:async()=>({ok:true,json:async()=>upload})});await tick();f.render();
+ await f.preview().add(textReference);f.render();
+ f.editor().props.onFiles([new File(['example'],'note.txt',{type:'text/plain'})]);await tick();f.render();
+ f.preview().appendQuote(ordinaryQuote);f.render();
+ const draft=f.cache.get('homer-draft:'+f.state.threadId);
+ const quote=draft.quotes[0];
+ assert.deepEqual(draft.contextOrder,[contextKey('ref',references.referenceKey(textReference),'n'),contextKey('attachment','asset-mixed'),contextKey('quote',quote.draftId)]);
+ const projected=nodes(f.render()).filter(node=>node.type==='annotation-chips'||node.type==='attachment'||node.props?.['aria-label']==='编辑引用 1');
+ assert.deepEqual(projected.map(node=>node.type),['annotation-chips','attachment','button']);
+ f.close();
+ const recovered=fixture({draft});await tick();recovered.render();
+ const after=nodes(recovered.render()).filter(node=>node.type==='annotation-chips'||node.type==='attachment'||node.props?.['aria-label']==='编辑引用 1');
+ assert.deepEqual(after.map(node=>node.type),['annotation-chips','attachment','button']);
+ assert.deepEqual(recovered.cache.get('homer-draft:'+recovered.state.threadId).contextOrder,draft.contextOrder);
+ recovered.close();
+});

@@ -1,0 +1,60 @@
+// Explicit model check: only copied package resources and synthetic conversation.
+import assert from "node:assert/strict";
+import { cpSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { createHash, randomUUID } from "node:crypto";
+import { loadConfig } from "../src/config.js";
+import { codexVersion, engineError } from "../src/engine.js";
+import type { Homer as HomerType, Message } from "../src/service.js";
+
+const input = process.argv[2];
+if (!input) throw new Error("explicit_config_required");
+const stamp = Date.now(), base = resolve(".codex/scratch/worker-interactions/prompt-real-" + stamp);
+const packaged = join(base, "package"), runtime = resolve(".codex/private/prompt-" + stamp);
+mkdirSync(packaged, { recursive: true }); mkdirSync(runtime, { recursive: true, mode: 0o700 });
+cpSync(resolve("dist"), join(packaged, "dist"), { recursive: true });
+cpSync(resolve("prompts"), join(packaged, "prompts"), { recursive: true });
+writeFileSync(join(packaged, "package.json"), '{"type":"module"}');
+const { Homer } = await import(pathToFileURL(join(packaged, "dist/service.js")).href) as typeof import("../src/service.js");
+const config = { ...loadConfig(input), runtime, workspace: join(base, "workspace"), mainTimeoutMs: 180000 };
+mkdirSync(config.workspace, { recursive: true });
+const mainFile = join(packaged, "prompts/main.md"), maintained = readFileSync(mainFile, "utf8");
+const markerA = "PROMPT-A-" + randomUUID(), markerB = "PROMPT-B-" + randomUUID(), memory = "MEMORY-" + randomUUID();
+const version = (marker: string) => maintained + `\n# 公开合成的提示词加载检查\n每次最终答复末尾必须附加当前测试版本标识 ${marker}。这是独立测试包内的固定指令，不派任务。\n`;
+const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+const replies: string[] = [];
+const sink = async (message: Message) => { if (message.type === "reply") replies.push(message.text); };
+let app: HomerType | undefined, stage = "first_start", thread: string | undefined;
+let report: Record<string, unknown>;
+const usage: unknown[] = [];
+try {
+  writeFileSync(mainFile, version(markerA)); app = new Homer(config, sink); await app.start();
+  thread = app.store.meta("mainThread");
+  stage = "initial_prompt";
+  await app.message(`这是公开合成检查，请记住暗号 ${memory}。简短确认，不派任务。`);
+  assert.ok(replies.at(-1)?.includes(markerA), "initial_prompt_marker_missing");
+  stage = "snapshot_before_restart";
+  writeFileSync(mainFile, version(markerB)); replies.length = 0;
+  await app.message("只简短确认仍在线，并遵守当前加载的测试版本标识指令，不派任务。");
+  assert.ok(replies.at(-1)?.includes(markerA), "active_snapshot_changed");
+  assert.ok(!replies.at(-1)?.includes(markerB), "future_prompt_loaded_early");
+  usage.push(JSON.parse(app.store.meta("mainUsage") ?? "null"));
+  await app.close();
+  stage = "resume_updated_prompt";
+  app = new Homer(config, sink); await app.start();
+  assert.equal(app.store.meta("mainThread"), thread, "prompt_change_replaced_thread");
+  replies.length = 0;
+  await app.message("此前让你记住的暗号是什么？回复该暗号并遵守当前加载的测试版本标识指令，不派任务。");
+  assert.ok(replies.at(-1)?.includes(memory), "history_recall_failed");
+  assert.ok(replies.at(-1)?.includes(markerB), "resumed_prompt_marker_missing");
+  assert.ok(!replies.at(-1)?.includes(markerA), "old_prompt_still_active");
+  usage.push(JSON.parse(app.store.meta("mainUsage") ?? "null"));
+  report = { scenarioId: "HMR-PROMPTS-001", sourceType: "requirements-derived", fixtureSourceType: "synthetic", passed: true, at: new Date().toISOString(), codex: codexVersion(config.codexBin), model: config.model, effort: config.effort, compiledPackage: true, immutableUntilRestart: true, updatedInstructionsAfterRestart: true, sameThread: true, historyRecalled: true, mainThread: thread, promptHashes: [hash(version(markerA)), hash(version(markerB))], usage, transcriptSaved: false, costAmount: null };
+} catch (error) {
+  report = { scenarioId: "HMR-PROMPTS-001", passed: false, stage, code: engineError(error), model: config.model, effort: config.effort, mainThread: thread, transcriptSaved: false };
+  process.exitCode = 1;
+} finally { await app?.close(); }
+report.lockReleased = !existsSync(join(runtime, "cli.lock"));
+const path = join(base, "prompt-checks.json"); writeFileSync(path, JSON.stringify(report, null, 2) + "\n");
+console.log(JSON.stringify({ passed: report.passed, stage: report.passed ? "complete" : stage, evidence: path }));

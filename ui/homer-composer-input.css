@@ -1,0 +1,19 @@
+.homer-composer-input { position: relative; min-width: 0; max-height: 192px; }
+.homer-composer-input .aui-lexical-input {
+  min-height: 24px;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: inherit;
+}
+.homer-composer-input .aui-lexical-input p { margin: 0; }
+.homer-composer-input .aui-lexical-placeholder {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: currentColor;
+  opacity: .5;
+  white-space: pre-wrap;
+}
+.homer-composer-input[aria-disabled="true"] { opacity: .65; }

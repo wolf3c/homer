@@ -1,0 +1,43 @@
+// Run the original Run Activity against isolated synthetic history only.
+import assert from 'node:assert/strict';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {legacyActivityFixture} from './legacy-activity-reading-browser-fixture.mjs';
+import {isolatedChrome} from './web-history-browser-cdp.mjs';
+const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/run-activity-direct-20261023/browser');mkdirSync(destination,{recursive:true});
+const browser=await isolatedChrome(destination),results=[];
+async function key(p,key,code,n){await p.command('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode:n,...(key===' '?{text:' '}:{} )});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:n});}
+try{for(const width of [1440,390,320]){
+ const f=await legacyActivityFixture(),p=await browser.page(f.server.url,width),checks=[];
+ const format=JSON.parse(f.store.meta('publicMainNode:v1:node-89'));format.revision++;format.items.push({id:'formatting',kind:'commentary',seq:25,revision:1,phase:'commentary',text:'- 第一项\n- 第二项\n\n### 原公开标题'});f.store.setMeta('publicMainNode:v1:node-89',JSON.stringify(format));
+ const wait=fn=>p.until('Boolean(('+String(fn)+')())',12000);
+ const click=()=>p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-trigger]').click());
+ const ids=()=>p.evaluate(()=>[...document.querySelectorAll('#message-node-89 [data-tool-id]')].map(e=>e.dataset.toolId));
+ const noAddedReader=async()=>assert.equal(await p.evaluate(()=>[...document.querySelectorAll('#message-node-89 button')].some(b=>/查看原调用记录|查看活动|查看关联任务/.test(b.textContent))),false);
+ const shot=async name=>{await wait(()=>!document.querySelector('#message-node-89 [data-slot=collapsible-content]')?.getAnimations().length);await p.evaluate(()=>{const v=document.querySelector('.thread-viewport'),n=document.querySelector('#message-node-89');v.scrollTop+=n.getBoundingClientRect().top-v.getBoundingClientRect().top;});await p.screenshot(name+'-'+width+'.png');};
+ try{
+  await p.navigate();await f.connect(p);await wait(()=>document.querySelector('#message-node-89 [data-slot=collapsible-trigger]'));
+  assert.equal(f.activityReads.length,0);assert.equal(await ids().then(value=>value.length),0);assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-trigger]').getAttribute('aria-expanded')),'false');
+  assert.doesNotMatch(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-trigger]').textContent),/次调用已返回/);await shot('default-closed');checks.push('官方默认收起，不额外显示调用汇总，不提前读取历史');
+  await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-trigger]').focus());await key(p,' ','Space',32);
+  await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===24);assert.deepEqual(await ids(),f.old.map(i=>i.id));await noAddedReader();await shot('all-old-inline');checks.push('Space展开原组件，24次原调用直接在同一列表逐项阅读，没有按钮、弹窗或汇总替代');
+  await wait(()=>!document.querySelector('#message-node-89 [data-slot=collapsible-content]').getAnimations().length);
+  const style=await p.evaluate(()=>{const r=document.querySelector('#message-node-89 [data-slot=run-activity]'),b=r.querySelector('[data-slot=collapsible-trigger]'),o=r.querySelector('ol'),panel=r.querySelector('[data-slot=collapsible-content]');return {rootGap:getComputedStyle(r).gap,font:getComputedStyle(b).fontSize,triggerGap:getComputedStyle(b).gap,listGap:getComputedStyle(o).gap,line:getComputedStyle(o).borderInlineStartWidth,padding:getComputedStyle(o).paddingInlineStart,icon:getComputedStyle(b.querySelector('svg')).width,panelDuration:getComputedStyle(panel).transitionDuration,panelEase:getComputedStyle(panel).transitionTimingFunction,markdownList:getComputedStyle(r.querySelector('.markdown ul')).listStyleType,markdownHeading:getComputedStyle(r.querySelector('.markdown h3')).fontSize};});
+  const {panelDuration,panelEase,markdownList,markdownHeading,...metrics}=style;assert.deepEqual(metrics,{rootGap:'12px',font:'14px',triggerGap:'6px',listGap:'12px',line:'1px',padding:'14px',icon:'14px'});
+  assert.equal(panelDuration,'0.2s');assert.equal(panelEase,'cubic-bezier(0.32, 0.72, 0, 1)');assert.notEqual(markdownList,'none');assert.equal(markdownHeading,'18px');checks.push('官方尺寸及200ms过渡保持；业务Markdown列表和标题不受重置影响');
+  f.setScenario('mixed');await wait(()=>document.querySelector('[data-tool-id=activity-call-1]'));
+  assert.deepEqual(await ids(),['old-0','activity-call-0','old-1','activity-call-1','old-2','activity-call-2']);await noAddedReader();assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 [data-worker-event]').length),1);await shot('mixed-inline');checks.push('新旧活动和同名不同调用保持身份顺序，Worker事件保留已批准卡片，且只显示一次');
+  f.setScenario('detailed');await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===5);assert.deepEqual(await ids(),f.facts.map(i=>i.id));assert.match(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-content]').textContent),/交付已准备，正式交付尚未确认/);await noAddedReader();checks.push('准确动作、对象和回执直接展示，不提供活动详情或关联跳转入口');
+  f.setScenario('risks');await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===30);await shot('risks-inline');await click();await wait(()=>!document.querySelector('#message-node-89 [data-slot=collapsible-content]'));
+  assert.match(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=run-activity]>p[role=status]').textContent),/调用失败.*调用被拒绝.*调用已中断.*结束状态待核实.*调用受阻/);assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 [data-worker-event]').length),1);checks.push('异常沿原attention可见，折叠保留已批准的Worker卡片且只显示一次');
+  await click();f.setScenario('running');await wait(()=>document.querySelector('[data-tool-id=live-call]'));f.setScenario('updated');await wait(()=>document.querySelector('[data-tool-id=live-call]')?.textContent.includes('检查成果文件：'));assert.equal(await p.evaluate(()=>document.querySelectorAll('[data-tool-id=live-call]').length),1);checks.push('同一次调用按revision更新，不增加第二行或阅读层');
+  f.setScenario('interrupted');await wait(()=>document.querySelector('#message-node-89 [data-slot=run-activity]').dataset.status==='cancelled');assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-trigger]').getAttribute('aria-expanded')),'true');checks.push('结束与中断保留用户主动展开，不强制收起');
+  f.setScenario('unknown');await wait(()=>document.querySelector('#message-node-89 [data-slot=run-activity]').dataset.status==='incomplete');assert.match(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-trigger]').textContent),/待核实/);checks.push('未知状态保持待核实，不冒充Worked');
+  await click();await wait(()=>!document.querySelector('#message-node-89 [data-slot=collapsible-content]'));await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-trigger]').focus());await key(p,' ','Space',32);await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===24);assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('#message-node-89 [data-slot=collapsible-trigger]')),true);checks.push('原组件折叠和重开保持键盘焦点');
+  await p.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});await click();await wait(()=>!document.querySelector('#message-node-89 [data-slot=collapsible-content]'));await click();await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===24);
+  assert.deepEqual(await p.evaluate(()=>({panel:getComputedStyle(document.querySelector('#message-node-89 [data-slot=collapsible-content]')).transitionDuration,icon:getComputedStyle(document.querySelector('#message-node-89 [data-slot=collapsible-trigger] svg')).transitionDuration})),{panel:'0s',icon:'0s'});checks.push('官方reduced-motion禁用折叠及箭头过渡');
+  assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(p.errors,[]);assert.deepEqual(p.blocked,[]);assert.equal(f.fakeEngine.invocations,0);assert.equal(f.submitted.length,0);assert.equal(f.stopped.length,0);await noAddedReader();
+  results.push({width,checks,style,passed:true});
+ }finally{await p.close();await f.close();}
+}}finally{await browser.close();writeFileSync(join(destination,'direct-run-activity-browser.json'),JSON.stringify({browser:browser.version,syntheticOnly:true,results},null,2)+'\n');}
+console.log(JSON.stringify({passed:results.length===3,widths:results.map(x=>x.width),checks:results.reduce((n,x)=>n+x.checks.length,0)}));

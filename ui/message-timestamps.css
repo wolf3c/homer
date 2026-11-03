@@ -1,0 +1,12 @@
+.message-day-separator{display:flex;align-items:center;gap:14px;max-width:760px;margin:24px auto;color:var(--muted);font-size:12px;line-height:1.6}
+.message-day-separator::before,.message-day-separator::after{content:"";height:1px;flex:1;background:var(--line)}
+.message-day-separator time{flex-shrink:0}
+.message-timestamp{display:block;width:fit-content;margin-top:4px;color:var(--muted);font-size:11px;line-height:1.6;font-variant-numeric:tabular-nums;opacity:0;transition:opacity .12s}
+.user-message>.message-timestamp{margin-left:auto}
+.message-actions{flex-wrap:wrap}
+.message-actions>.message-timestamp{margin:0 0 0 -4px;max-width:0;overflow:hidden;white-space:nowrap}
+.message:hover .message-timestamp,.message:focus-within .message-timestamp{opacity:1}
+.message:hover>.message-actions>.message-timestamp,.message:focus-within>.message-actions>.message-timestamp{margin-left:0;max-width:100%;overflow:visible}
+.message-timestamp:focus-visible{outline:2px solid var(--strong-line);outline-offset:2px;border-radius:2px}
+@media(hover:none),(pointer:coarse){.message-timestamp{opacity:1}.message-actions>.message-timestamp{margin-left:0;max-width:100%;overflow:visible}}
+@media(prefers-reduced-motion:reduce){.message-timestamp{transition:none}}

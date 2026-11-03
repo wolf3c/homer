@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Homer",
+    "slug": "homer-mobile",
+    "version": "0.1.0",
+    "orientation": "default",
+    "ios": {
+      "bundleIdentifier": "com.homer.mobile",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.homer.mobile",
+      "permissions": [
+        "CAMERA",
+        "android.permission.ACCESS_LOCAL_NETWORK"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      ["expo-build-properties", {"android": {"targetSdkVersion": 37}}],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "用相机扫描 Homer 主端的连接二维码。",
+          "recordAudioAndroid": false,
+          "microphonePermission": false
+        }
+      ]
+    ]
+  }
+}

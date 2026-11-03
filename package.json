@@ -1,0 +1,65 @@
+{
+  "name": "homer-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Codex App Server matter and worker CLI",
+  "type": "module",
+  "workspaces": [
+    "ui"
+  ],
+  "engines": {
+    "node": ">=22.16.0 <23"
+  },
+  "bin": {
+    "homer": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "prompts",
+    ".codex/skills/homer-initialize",
+    ".codex/skills/homer-tool-management"
+  ],
+  "scripts": {
+    "desktop:make": "node scripts/build-desktop.mjs",
+    "test:desktop:shell": "node --experimental-vm-modules --test tests/electron-shell.test.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/copy-media-readers.mjs && npm run build --workspace=homer-web",
+    "build:service": "tsc -p tsconfig.json && node scripts/copy-media-readers.mjs",
+    "start": "node --disable-warning=ExperimentalWarning dist/cli.js",
+    "dev": "node --disable-warning=ExperimentalWarning scripts/dev.mjs",
+    "web": "node --disable-warning=ExperimentalWarning scripts/dev.mjs --web",
+    "test": "node scripts/test.mjs",
+    "test:scenarios": "tsx --test --test-name-pattern=HMR- tests/scenarios.test.ts tests/service.test.ts",
+    "test:real": "tsx scripts/real-acceptance.ts",
+    "check": "npm run build && npm run typecheck && npm test",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test:local-media": "node scripts/test.mjs --local-media",
+    "test:engine": "node scripts/test.mjs --engine",
+    "test:account": "node scripts/test.mjs --account",
+    "test:rtc": "node scripts/test.mjs --rtc",
+    "test:development": "node scripts/test.mjs --development",
+    "test:vendor": "node scripts/test.mjs --vendor",
+    "test:desktop:acceptance": "node scripts/test.mjs --desktop"
+  },
+  "devDependencies": {
+    "@electron-forge/core": "8.0.1",
+    "@electron-forge/maker-zip": "8.0.1",
+    "@types/node": "22.19.7",
+    "@types/qrcode": "1.5.6",
+    "electron": "45.0.0",
+    "playwright-core": "1.59.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite-plugin-singlefile": "2.3.4"
+  },
+  "dependencies": {
+    "mdast-util-from-markdown": "2.1.0",
+    "mdast-util-gfm": "3.1.0",
+    "mdast-util-math": "3.0.0",
+    "micromark-extension-gfm": "3.0.0",
+    "micromark-extension-math": "3.1.0",
+    "qrcode": "1.5.4",
+    "silk-wasm": "3.7.1",
+    "node-datachannel": "0.33.6",
+    "undici": "7.30.1"
+  }
+}

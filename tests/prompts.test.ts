@@ -1,0 +1,56 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdirSync,rmSync,chmodSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {loadPrompts} from '../src/prompts.js';
+import {CodexEngine} from '../src/engine.js';
+import type {Config} from '../src/config.js';
+import {fixture} from './prompt-resources-fixture.js';
+test("HMR-PROMPTS-001: maintained product instructions have one file source", () => {
+  const prompts = loadPrompts();
+  for (const value of Object.values(prompts)) {
+    assert.equal(typeof value, "string");
+    assert.ok(value.trim().length > 0);
+    assert.doesNotMatch(value, /\{\{HOMER_MEMORY_POLICY\}\}/);
+  }
+  assert.deepEqual(Object.keys(prompts).sort(),["main","worker"]);
+  assert.ok(Object.isFrozen(prompts));
+});
+
+test("HMR-PROMPTS-001: snapshot stays fixed and the next load sees edits", () => {
+  const f = fixture();
+  try {
+    const first = loadPrompts(f.directory);
+    f.write("main", "Synthetic main B"); f.write("worker", "Synthetic worker B");
+    assert.equal(first.main, "Synthetic main A"); assert.equal(first.worker, "Synthetic worker A");
+    const next = loadPrompts(f.directory);
+    assert.equal(next.main, "Synthetic main B"); assert.equal(next.worker, "Synthetic worker B");
+  } finally { f.cleanup(); }
+});
+
+test("HMR-PROMPTS-001: missing, empty and unreadable resources fail explicitly without fallback", () => {
+  const f = fixture();
+  try {
+    rmSync(join(f.root, "main.md"));
+    assert.throws(() => loadPrompts(f.directory), /^Error: prompt_file_missing:main.md$/);
+    f.write("main", " \n\t");
+    assert.throws(() => loadPrompts(f.directory), /^Error: prompt_file_empty:main.md$/);
+    rmSync(join(f.root, "main.md")); mkdirSync(join(f.root, "main.md"));
+    assert.throws(() => loadPrompts(f.directory), /^Error: prompt_file_unreadable:main.md$/);
+  } finally { f.cleanup(); }
+});
+
+test("HMR-PROMPTS-001: native resume attaches developer instructions on the same thread", async () => {
+  const f = fixture();
+  const binary = resolve("tests/fixtures/worker-interaction-app-server.mjs"); chmodSync(binary, 0o755);
+  const config: Config = { workspace: f.root, runtime: f.root, codexHome: f.root, codexBin: binary, model: "prompt-reload", timeoutMs: 1000, mainTimeoutMs: 1000, stopGraceMs: 50, requiresOpenaiAuth: false };
+  const create = (threadId?: string) => new CodexEngine(config, { cwd: f.root, readRoots: [], instructions: loadPrompts(f.directory).main, tools: [], threadId }, async () => ({}));
+  const first = create(); let next: CodexEngine | undefined;
+  try {
+    const thread = await first.start();
+    assert.equal((await first.turn("first")).text, "Synthetic main A");
+    await first.close(); f.write("main", "Synthetic main B"); next = create(thread);
+    assert.equal(await next.start(), thread);
+    assert.equal((await next.turn("resumed")).text, "Synthetic main B");
+  } finally { await first.close(); await next?.close(); f.cleanup(); }
+});

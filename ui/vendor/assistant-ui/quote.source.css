@@ -1,0 +1,25 @@
+@import "tailwindcss" source(none);
+@source "./quote.tsx";
+@source inline("line-clamp-none whitespace-pre-wrap");
+@theme inline {
+  --color-muted-foreground: var(--muted);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--ink);
+  --color-foreground: var(--ink);
+  --color-muted: var(--soft);
+  --color-accent: var(--soft-hover);
+  --color-border: var(--line);
+}
+
+/* Keep the preview's existing host accessibility adaptation. */
+[data-slot="composer-quote-dismiss"]:focus-visible { outline:2px solid var(--focus);outline-offset:2px; }
+/* Pinned registry theme: radius .625rem, md radius - 2px, border-border.
+   Limit this mapping to the toolbar; other Quote surfaces keep their theme. */
+[data-slot="selection-toolbar"] {
+  --radius-lg: .625rem;
+  --radius-md: calc(.625rem - 2px);
+  border-color: var(--line);
+}
+/* Upstream Quote has no custom focus utility. Restore the native focus ring
+   instead of inheriting Homer's global button focus decoration. */
+[data-slot="selection-toolbar-quote"]:focus-visible { outline:revert;outline-offset:revert; }

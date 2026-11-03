@@ -1,0 +1,22 @@
+/* Agentation 3.1.2 annotation-popup-css styles.module.scss visual adaptation.
+   Copyright (c) 2026 Benji Taylor. PolyForm Shield 1.0.0.
+   This local controlled form is not Agentation's native Popup.
+   See vendor/assistant-ui/README.md and generated third-party notices. */
+.annotation-comment-form{--note-accent:#0087ff;--note-accent:color(display-p3 0 .53 1);box-sizing:border-box;width:280px;max-width:min(100%,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain;margin:0;padding:12px 16px;border:0;border-radius:16px;background:#1a1a1a;color:#fff;box-shadow:0 4px 24px rgba(0,0,0,.3),0 0 0 1px rgba(255,255,255,.08);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:16px;line-height:1.5;color-scheme:dark}
+.annotation-comment-form label{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;font-weight:400;color:rgba(255,255,255,.7);margin-bottom:9px}
+.annotation-comment-form blockquote{margin:0 0 9px;max-height:80px;overflow:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:18px;color:rgba(255,255,255,.75)}
+.annotation-comment-form textarea{box-sizing:border-box;display:block;width:100%;margin:0;padding:8px 10px;font:inherit;font-size:13px;line-height:1.5;resize:none;background:rgba(255,255,255,.05);color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:8px;outline:none;transition:border-color .15s ease}
+.annotation-comment-form textarea:focus{border-color:var(--note-accent);outline:2px solid var(--note-accent);outline-offset:1px;box-shadow:none}
+.annotation-comment-form textarea::placeholder{color:rgba(255,255,255,.65);opacity:1}
+.annotation-comment-form [role=alert]{margin:8px 0 0;font-size:12px;line-height:18px;color:#ffb4ab;white-space:pre-wrap;overflow-wrap:anywhere}
+.annotation-comment-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:flex-end;margin-top:12px}
+.annotation-comment-form .annotation-comment-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 14px;font:500 12px/18px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border:0;border-radius:16px;cursor:pointer;white-space:nowrap;transition:background-color .15s ease,color .15s ease,opacity .15s ease}
+.annotation-comment-form :is(button,blockquote):focus-visible{outline:2px solid var(--note-accent);outline-offset:3px}
+.annotation-comment-actions .quiet{background:transparent;color:rgba(255,255,255,.7)}
+.annotation-comment-actions .quiet:hover:not(:disabled){background:rgba(255,255,255,.1);color:rgba(255,255,255,.9)}
+.annotation-comment-actions .primary{background:var(--note-accent);color:#101010}
+.annotation-comment-actions .primary:hover:not(:disabled){filter:brightness(.95)}
+.annotation-comment-actions button:disabled{opacity:.5;cursor:default}
+.annotation-comment-actions .delete-note{margin-right:auto;padding-left:0;padding-right:4px}
+@media(max-width:800px){.annotation-comment-form textarea{font-size:16px}}
+@media(prefers-reduced-motion:reduce){.annotation-comment-form *{transition:none!important;animation:none!important}}

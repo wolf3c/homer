@@ -1,0 +1,13 @@
+/* Component-scoped equivalents of the pinned standalone utilities. */
+.aui-message-queue{display:flex;width:100%;max-width:384px;flex-direction:column;gap:8px;min-width:0;line-height:1.5}
+.aui-queue-count,.aui-queue-number{font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;letter-spacing:-.025em;color:var(--muted);font-variant-numeric:tabular-nums}
+.aui-queue-count{display:flex;align-items:baseline;justify-content:space-between;padding:0 4px}
+.aui-queue-list{display:flex;flex-direction:column;gap:6px;padding:0;margin:0;list-style:none;min-width:0}
+.aui-queue-field{display:flex;align-items:center;gap:10px;border-radius:16px;padding:8px 8px 8px 12px;background:color-mix(in srgb,var(--ink) 4%,transparent);min-width:0}
+.aui-queue-number{flex-shrink:0;width:12px}
+.aui-queue-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:color-mix(in srgb,var(--ink) 60%,transparent)}
+.aui-queue-remove{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted)}
+.aui-queue-remove:hover:not(:disabled){background:color-mix(in srgb,var(--ink) 6%,transparent);color:color-mix(in srgb,var(--ink) 90%,transparent)}
+.aui-queue-remove:focus-visible{outline:1px solid color-mix(in srgb,var(--ink) 20%,transparent);outline-offset:0}
+.aui-queue-remove:disabled{opacity:.4;cursor:default}
+@media(forced-colors:active){.aui-queue-field{border:1px solid CanvasText}}

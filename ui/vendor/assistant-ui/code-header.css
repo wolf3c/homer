@@ -1,0 +1,20 @@
+/* Component-scoped equivalents of the pinned official CodeHeader utilities.
+   Host adaptations: theme roles, Chinese labels and original copy/error ownership. */
+.aui-code-header-root{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 8px;margin-top:12px;padding:6px 14px;border:1px solid color-mix(in srgb,var(--line) 50%,transparent);border-bottom:0;border-radius:12px 12px 0 0;background:color-mix(in srgb,var(--soft) 50%,transparent);font-size:12px;line-height:16px;user-select:none}
+.aui-code-header-language{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-weight:500;text-transform:lowercase}
+.aui-code-header-root .aui-code-header-copy{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;padding:4px;background:transparent;color:var(--muted);border:0;border-radius:8px}
+.aui-code-header-root .aui-code-header-copy:disabled{pointer-events:none;opacity:.5}
+.aui-code-header-root .aui-code-header-copy:active{scale:.9}
+.aui-code-header-root .aui-code-header-copy:hover{background:var(--soft);color:var(--ink)}
+.aui-code-header-root .aui-code-header-copy:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.aui-code-header-root .aui-code-header-copy[aria-busy=true]{cursor:wait}
+.aui-code-header-root svg{width:16px;height:16px}
+.aui-code-header-copy-icon{animation:homer-code-header-copy 150ms ease-out}
+.aui-code-header-check-icon{animation:homer-code-header-check 200ms ease-out}
+.aui-code-header-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.aui-code-header-notice{flex-basis:100%;color:var(--error);overflow-wrap:anywhere}
+.markdown .aui-code-header-root+.code-block{margin-top:0;border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px}
+.markdown .aui-code-header-root+.mermaid-diagram{margin-top:0;padding:0 14px;border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px}
+@keyframes homer-code-header-copy{from{opacity:0;scale:.75}to{opacity:1;scale:1}}
+@keyframes homer-code-header-check{from{opacity:0;scale:.5}to{opacity:1;scale:1}}
+@media(prefers-reduced-motion:reduce){.aui-code-header-root svg{animation:none}.aui-code-header-root .aui-code-header-copy{transition:none}}

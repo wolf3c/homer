@@ -1,0 +1,36 @@
+.homer-message-queue{width:100%;max-width:384px;min-width:0;margin:0 auto 8px}
+.homer-message-queue .aui-queue-list{max-height:min(272px,30dvh);overflow:auto;overscroll-behavior:contain}
+.homer-message-queue .queue-drag-handle{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;background:transparent;padding:0;cursor:grab;touch-action:none}
+.homer-message-queue .queue-drag-handle:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.homer-message-queue [data-dragging] .queue-drag-handle{cursor:grabbing}
+@media(pointer:coarse){.homer-message-queue .queue-drag-handle{min-width:44px;min-height:44px}}
+.queue-pages{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:12px}
+.queue-pages button{font:inherit;border:0;background:transparent;color:inherit;padding:6px 8px;border-radius:8px}
+.queue-pages button:hover:not(:disabled){background:var(--soft)}
+.queue-draft-recovery{max-height:160px;overflow:auto;max-width:760px;margin:0 auto 8px;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.queue-draft-recovery summary{cursor:pointer}
+.queue-draft-recovery p,.queue-draft-recovery blockquote{white-space:pre-wrap}
+
+/* Collapsible queue and composer surface. */
+.homer-message-queue{max-width:760px;margin-bottom:8px;position:relative;border:1px solid var(--strong-line);border-radius:14px;background:var(--surface);padding:4px 12px 6px}
+.composer-area > .homer-message-queue:has(+ .composer){margin-bottom:0;border-bottom:0;border-radius:14px 14px 0 0}
+.composer-area > .homer-message-queue + .composer{border-radius:0 0 14px 14px;border-top-color:var(--line)}
+.composer-area:has(> .homer-message-queue + .composer .aui-lexical-input:focus) > .homer-message-queue{border-color:var(--focus)}
+.composer-area > .homer-message-queue + .composer:has(.aui-lexical-input:focus){border-top-color:var(--line)}
+.composer-area > .homer-message-queue + .composer:has(.aui-lexical-input:focus-visible){outline:0}
+.homer-message-queue .queue-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:calc(100% + 24px);min-height:36px;margin:-4px -12px 0;padding:4px 16px;border-radius:13px 13px 0 0;background:transparent;border:0;color:var(--muted);font-size:13px;font-weight:500;text-align:left}
+.homer-message-queue .queue-toggle:hover:not(:disabled){background:#f6f5f3}
+.homer-message-queue:has(.queue-toggle[aria-expanded=false]){padding-bottom:0}
+@media(pointer:coarse){.homer-message-queue .queue-toggle{min-height:44px}}
+.homer-message-queue .queue-toggle:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.homer-message-queue .queue-toggle-label{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.homer-message-queue .queue-toggle[aria-expanded=true] .queue-toggle-label svg{transform:rotate(90deg)}
+.homer-message-queue .aui-message-queue{max-width:none;gap:0}
+.homer-message-queue .aui-queue-list{gap:0;max-height:min(272px,30dvh)}
+.homer-message-queue .aui-queue-field{min-height:39px;gap:10px;padding:4px;border-radius:0;background:transparent}
+.homer-message-queue .aui-queue-field+.aui-queue-field{border-top:1px solid var(--line)}
+.homer-message-queue .aui-queue-text{font-size:14px;color:var(--ink)}
+.homer-message-queue .queue-drag-handle,.homer-message-queue .queue-source-icon{display:inline-flex;align-items:center;justify-content:center;width:35px;min-width:35px;height:32px;border-radius:6px;color:var(--muted)}
+.homer-message-queue .queue-drag-handle:hover{background:var(--soft);color:var(--ink)}
+.homer-message-queue .aui-queue-remove{width:32px;height:32px}
+@media(pointer:coarse){.homer-message-queue .queue-drag-handle,.homer-message-queue .aui-queue-remove{min-width:44px;min-height:44px}}

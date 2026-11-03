@@ -1,0 +1,798 @@
+/* Generated from pinned official utilities. Run node scripts/build-run-activity-css.mjs --approval-card. */
+/*! tailwindcss v4.1.14 | MIT License | https://tailwindcss.com */
+[data-slot="approval-card"], [data-slot="approval-card"] {
+    --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+    --color-red-400: oklch(70.4% 0.191 22.216);
+    --color-red-600: oklch(57.7% 0.245 27.325);
+    --color-red-950: oklch(25.8% 0.092 26.042);
+    --color-emerald-500: oklch(69.6% 0.17 162.48);
+    --spacing: 0.25rem;
+    --container-sm: 24rem;
+    --text-xs: 0.75rem;
+    --text-xs--line-height: calc(1 / 0.75);
+    --font-weight-medium: 500;
+    --tracking-tight: -0.025em;
+    --radius-xl: 0.75rem;
+    --animate-spin: spin 1s linear infinite;
+    --default-transition-duration: 150ms;
+    --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    --default-font-family: var(--font-sans);
+    --default-mono-font-family: var(--font-mono);
+  }
+@layer base {
+  [data-slot="approval-card"] *, [data-slot="approval-card"]:is(*), [data-slot="approval-card"] ::after, [data-slot="approval-card"]::after, [data-slot="approval-card"] ::before, [data-slot="approval-card"]::before, [data-slot="approval-card"] ::backdrop, [data-slot="approval-card"]::backdrop, [data-slot="approval-card"] ::file-selector-button, [data-slot="approval-card"]::file-selector-button {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+  [data-slot="approval-card"], [data-slot="approval-card"] {
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+    font-family: var(--default-font-family, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+    font-feature-settings: var(--default-font-feature-settings, normal);
+    font-variation-settings: var(--default-font-variation-settings, normal);
+    -webkit-tap-highlight-color: transparent;
+  }
+  [data-slot="approval-card"] hr, [data-slot="approval-card"]:is(hr) {
+    height: 0;
+    color: inherit;
+    border-top-width: 1px;
+  }
+  [data-slot="approval-card"] abbr:where([title]), [data-slot="approval-card"]:is(abbr:where([title])) {
+    -webkit-text-decoration: underline dotted;
+    text-decoration: underline dotted;
+  }
+  [data-slot="approval-card"] h1, [data-slot="approval-card"]:is(h1), [data-slot="approval-card"] h2, [data-slot="approval-card"]:is(h2), [data-slot="approval-card"] h3, [data-slot="approval-card"]:is(h3), [data-slot="approval-card"] h4, [data-slot="approval-card"]:is(h4), [data-slot="approval-card"] h5, [data-slot="approval-card"]:is(h5), [data-slot="approval-card"] h6, [data-slot="approval-card"]:is(h6) {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  [data-slot="approval-card"] a, [data-slot="approval-card"]:is(a) {
+    color: inherit;
+    -webkit-text-decoration: inherit;
+    text-decoration: inherit;
+  }
+  [data-slot="approval-card"] b, [data-slot="approval-card"]:is(b), [data-slot="approval-card"] strong, [data-slot="approval-card"]:is(strong) {
+    font-weight: bolder;
+  }
+  [data-slot="approval-card"] code, [data-slot="approval-card"]:is(code), [data-slot="approval-card"] kbd, [data-slot="approval-card"]:is(kbd), [data-slot="approval-card"] samp, [data-slot="approval-card"]:is(samp), [data-slot="approval-card"] pre, [data-slot="approval-card"]:is(pre) {
+    font-family: var(--default-mono-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-feature-settings: var(--default-mono-font-feature-settings, normal);
+    font-variation-settings: var(--default-mono-font-variation-settings, normal);
+    font-size: 1em;
+  }
+  [data-slot="approval-card"] small, [data-slot="approval-card"]:is(small) {
+    font-size: 80%;
+  }
+  [data-slot="approval-card"] sub, [data-slot="approval-card"]:is(sub), [data-slot="approval-card"] sup, [data-slot="approval-card"]:is(sup) {
+    font-size: 75%;
+    line-height: 0;
+    position: relative;
+    vertical-align: baseline;
+  }
+  [data-slot="approval-card"] sub, [data-slot="approval-card"]:is(sub) {
+    bottom: -0.25em;
+  }
+  [data-slot="approval-card"] sup, [data-slot="approval-card"]:is(sup) {
+    top: -0.5em;
+  }
+  [data-slot="approval-card"] table, [data-slot="approval-card"]:is(table) {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+  [data-slot="approval-card"] :-moz-focusring, [data-slot="approval-card"]:is(:-moz-focusring) {
+    outline: auto;
+  }
+  [data-slot="approval-card"] progress, [data-slot="approval-card"]:is(progress) {
+    vertical-align: baseline;
+  }
+  [data-slot="approval-card"] summary, [data-slot="approval-card"]:is(summary) {
+    display: list-item;
+  }
+  [data-slot="approval-card"] ol, [data-slot="approval-card"]:is(ol), [data-slot="approval-card"] ul, [data-slot="approval-card"]:is(ul), [data-slot="approval-card"] menu, [data-slot="approval-card"]:is(menu) {
+    list-style: none;
+  }
+  [data-slot="approval-card"] img, [data-slot="approval-card"]:is(img), [data-slot="approval-card"] svg, [data-slot="approval-card"]:is(svg), [data-slot="approval-card"] video, [data-slot="approval-card"]:is(video), [data-slot="approval-card"] canvas, [data-slot="approval-card"]:is(canvas), [data-slot="approval-card"] audio, [data-slot="approval-card"]:is(audio), [data-slot="approval-card"] iframe, [data-slot="approval-card"]:is(iframe), [data-slot="approval-card"] embed, [data-slot="approval-card"]:is(embed), [data-slot="approval-card"] object, [data-slot="approval-card"]:is(object) {
+    display: block;
+    vertical-align: middle;
+  }
+  [data-slot="approval-card"] img, [data-slot="approval-card"]:is(img), [data-slot="approval-card"] video, [data-slot="approval-card"]:is(video) {
+    max-width: 100%;
+    height: auto;
+  }
+  [data-slot="approval-card"] button, [data-slot="approval-card"]:is(button), [data-slot="approval-card"] input, [data-slot="approval-card"]:is(input), [data-slot="approval-card"] select, [data-slot="approval-card"]:is(select), [data-slot="approval-card"] optgroup, [data-slot="approval-card"]:is(optgroup), [data-slot="approval-card"] textarea, [data-slot="approval-card"]:is(textarea), [data-slot="approval-card"] ::file-selector-button, [data-slot="approval-card"]::file-selector-button {
+    font: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    border-radius: 0;
+    background-color: transparent;
+    opacity: 1;
+  }
+  [data-slot="approval-card"] :where(select:is([multiple], [size])) optgroup, [data-slot="approval-card"]:is(:where(select:is([multiple], [size])) optgroup) {
+    font-weight: bolder;
+  }
+  [data-slot="approval-card"] :where(select:is([multiple], [size])) optgroup option, [data-slot="approval-card"]:is(:where(select:is([multiple], [size])) optgroup option) {
+    padding-inline-start: 20px;
+  }
+  [data-slot="approval-card"] ::file-selector-button, [data-slot="approval-card"]::file-selector-button {
+    margin-inline-end: 4px;
+  }
+  [data-slot="approval-card"] ::placeholder, [data-slot="approval-card"]::placeholder {
+    opacity: 1;
+  }
+  @supports (not (-webkit-appearance: -apple-pay-button))  or (contain-intrinsic-size: 1px) {
+    [data-slot="approval-card"] ::placeholder, [data-slot="approval-card"]::placeholder {
+      color: currentcolor;
+      @supports (color: color-mix(in lab, red, red)) {
+        color: color-mix(in oklab, currentcolor 50%, transparent);
+      }
+    }
+  }
+  [data-slot="approval-card"] textarea, [data-slot="approval-card"]:is(textarea) {
+    resize: vertical;
+  }
+  [data-slot="approval-card"] ::-webkit-search-decoration, [data-slot="approval-card"]::-webkit-search-decoration {
+    -webkit-appearance: none;
+  }
+  [data-slot="approval-card"] ::-webkit-date-and-time-value, [data-slot="approval-card"]::-webkit-date-and-time-value {
+    min-height: 1lh;
+    text-align: inherit;
+  }
+  [data-slot="approval-card"] ::-webkit-datetime-edit, [data-slot="approval-card"]::-webkit-datetime-edit {
+    display: inline-flex;
+  }
+  [data-slot="approval-card"] ::-webkit-datetime-edit-fields-wrapper, [data-slot="approval-card"]::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+  }
+  [data-slot="approval-card"] ::-webkit-datetime-edit, [data-slot="approval-card"]::-webkit-datetime-edit, [data-slot="approval-card"] ::-webkit-datetime-edit-year-field, [data-slot="approval-card"]::-webkit-datetime-edit-year-field, [data-slot="approval-card"] ::-webkit-datetime-edit-month-field, [data-slot="approval-card"]::-webkit-datetime-edit-month-field, [data-slot="approval-card"] ::-webkit-datetime-edit-day-field, [data-slot="approval-card"]::-webkit-datetime-edit-day-field, [data-slot="approval-card"] ::-webkit-datetime-edit-hour-field, [data-slot="approval-card"]::-webkit-datetime-edit-hour-field, [data-slot="approval-card"] ::-webkit-datetime-edit-minute-field, [data-slot="approval-card"]::-webkit-datetime-edit-minute-field, [data-slot="approval-card"] ::-webkit-datetime-edit-second-field, [data-slot="approval-card"]::-webkit-datetime-edit-second-field, [data-slot="approval-card"] ::-webkit-datetime-edit-millisecond-field, [data-slot="approval-card"]::-webkit-datetime-edit-millisecond-field, [data-slot="approval-card"] ::-webkit-datetime-edit-meridiem-field, [data-slot="approval-card"]::-webkit-datetime-edit-meridiem-field {
+    padding-block: 0;
+  }
+  [data-slot="approval-card"] ::-webkit-calendar-picker-indicator, [data-slot="approval-card"]::-webkit-calendar-picker-indicator {
+    line-height: 1;
+  }
+  [data-slot="approval-card"] :-moz-ui-invalid, [data-slot="approval-card"]:is(:-moz-ui-invalid) {
+    box-shadow: none;
+  }
+  [data-slot="approval-card"] button, [data-slot="approval-card"]:is(button), [data-slot="approval-card"] input:where([type="button"], [type="reset"], [type="submit"]), [data-slot="approval-card"]:is(input:where([type="button"], [type="reset"], [type="submit"])), [data-slot="approval-card"] ::file-selector-button, [data-slot="approval-card"]::file-selector-button {
+    appearance: button;
+  }
+  [data-slot="approval-card"] ::-webkit-inner-spin-button, [data-slot="approval-card"]::-webkit-inner-spin-button, [data-slot="approval-card"] ::-webkit-outer-spin-button, [data-slot="approval-card"]::-webkit-outer-spin-button {
+    height: auto;
+  }
+  [data-slot="approval-card"] [hidden]:where(:not([hidden="until-found"])), [data-slot="approval-card"]:is([hidden]:where(:not([hidden="until-found"]))) {
+    display: none !important;
+  }
+}
+[data-slot="approval-card"] .flex, [data-slot="approval-card"]:is(.flex) {
+    display: flex;
+  }
+[data-slot="approval-card"] .grid, [data-slot="approval-card"]:is(.grid) {
+    display: grid;
+  }
+[data-slot="approval-card"] .size-3\.5, [data-slot="approval-card"]:is(.size-3\.5) {
+    width: calc(var(--spacing) * 3.5);
+    height: calc(var(--spacing) * 3.5);
+  }
+[data-slot="approval-card"] .size-4, [data-slot="approval-card"]:is(.size-4) {
+    width: calc(var(--spacing) * 4);
+    height: calc(var(--spacing) * 4);
+  }
+[data-slot="approval-card"] .size-9, [data-slot="approval-card"]:is(.size-9) {
+    width: calc(var(--spacing) * 9);
+    height: calc(var(--spacing) * 9);
+  }
+[data-slot="approval-card"] .h-\(--collapsible-panel-height\), [data-slot="approval-card"]:is(.h-\(--collapsible-panel-height\)) {
+    height: var(--collapsible-panel-height);
+  }
+[data-slot="approval-card"] .h-8, [data-slot="approval-card"]:is(.h-8) {
+    height: calc(var(--spacing) * 8);
+  }
+[data-slot="approval-card"] .min-h-8, [data-slot="approval-card"]:is(.min-h-8) {
+    min-height: calc(var(--spacing) * 8);
+  }
+[data-slot="approval-card"] .w-full, [data-slot="approval-card"]:is(.w-full) {
+    width: 100%;
+  }
+[data-slot="approval-card"] .max-w-sm, [data-slot="approval-card"]:is(.max-w-sm) {
+    max-width: var(--container-sm);
+  }
+[data-slot="approval-card"] .shrink-0, [data-slot="approval-card"]:is(.shrink-0) {
+    flex-shrink: 0;
+  }
+[data-slot="approval-card"] .animate-in, [data-slot="approval-card"]:is(.animate-in) {
+    animation: enter var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none);
+  }
+[data-slot="approval-card"] .animate-spin, [data-slot="approval-card"]:is(.animate-spin) {
+    animation: var(--animate-spin);
+  }
+[data-slot="approval-card"] .grid-cols-\[minmax\(0\,1fr\)_minmax\(0\,2fr\)\],[data-slot="approval-card"]:is(.grid-cols-\[minmax\(0\,1fr\)_minmax\(0\,2fr\)\]) {
+    grid-template-columns: minmax(0,1fr) minmax(0,2fr);
+  }
+[data-slot="approval-card"] .flex-col, [data-slot="approval-card"]:is(.flex-col) {
+    flex-direction: column;
+  }
+[data-slot="approval-card"] .flex-wrap, [data-slot="approval-card"]:is(.flex-wrap) {
+    flex-wrap: wrap;
+  }
+[data-slot="approval-card"] .items-center, [data-slot="approval-card"]:is(.items-center) {
+    align-items: center;
+  }
+[data-slot="approval-card"] .justify-center, [data-slot="approval-card"]:is(.justify-center) {
+    justify-content: center;
+  }
+[data-slot="approval-card"] .justify-end, [data-slot="approval-card"]:is(.justify-end) {
+    justify-content: flex-end;
+  }
+[data-slot="approval-card"] .gap-2, [data-slot="approval-card"]:is(.gap-2) {
+    gap: calc(var(--spacing) * 2);
+  }
+[data-slot="approval-card"] .gap-3, [data-slot="approval-card"]:is(.gap-3) {
+    gap: calc(var(--spacing) * 3);
+  }
+[data-slot="approval-card"] .gap-3\.5, [data-slot="approval-card"]:is(.gap-3\.5) {
+    gap: calc(var(--spacing) * 3.5);
+  }
+[data-slot="approval-card"] .gap-4, [data-slot="approval-card"]:is(.gap-4) {
+    gap: calc(var(--spacing) * 4);
+  }
+[data-slot="approval-card"] .overflow-hidden, [data-slot="approval-card"]:is(.overflow-hidden) {
+    overflow: hidden;
+  }
+[data-slot="approval-card"] .rounded-\[20px\], [data-slot="approval-card"]:is(.rounded-\[20px\]) {
+    border-radius: 20px;
+  }
+[data-slot="approval-card"] .rounded-full, [data-slot="approval-card"]:is(.rounded-full) {
+    border-radius: calc(infinity * 1px);
+  }
+[data-slot="approval-card"] .rounded-xl, [data-slot="approval-card"]:is(.rounded-xl) {
+    border-radius: var(--radius-xl);
+  }
+[data-slot="approval-card"] .border, [data-slot="approval-card"]:is(.border) {
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+  }
+[data-slot="approval-card"] .border-border\/60, [data-slot="approval-card"]:is(.border-border\/60) {
+    border-color: var(--line);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--line) 60%, transparent);
+    }
+  }
+[data-slot="approval-card"] .bg-background, [data-slot="approval-card"]:is(.bg-background) {
+    background-color: var(--surface);
+  }
+[data-slot="approval-card"] .bg-foreground, [data-slot="approval-card"]:is(.bg-foreground) {
+    background-color: var(--ink);
+  }
+[data-slot="approval-card"] .bg-foreground\/\[0\.04\], [data-slot="approval-card"]:is(.bg-foreground\/\[0\.04\]) {
+    background-color: var(--ink);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--ink) 4%, transparent);
+    }
+  }
+[data-slot="approval-card"] .bg-foreground\/\[0\.05\], [data-slot="approval-card"]:is(.bg-foreground\/\[0\.05\]) {
+    background-color: var(--ink);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--ink) 5%, transparent);
+    }
+  }
+[data-slot="approval-card"] .bg-red-600, [data-slot="approval-card"]:is(.bg-red-600) {
+    background-color: var(--color-red-600);
+  }
+[data-slot="approval-card"] .bg-red-600\/10, [data-slot="approval-card"]:is(.bg-red-600\/10) {
+    background-color: color-mix(in srgb, oklch(57.7% 0.245 27.325) 10%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-red-600) 10%, transparent);
+    }
+  }
+[data-slot="approval-card"] .p-4, [data-slot="approval-card"]:is(.p-4) {
+    padding: calc(var(--spacing) * 4);
+  }
+[data-slot="approval-card"] .px-3\.5, [data-slot="approval-card"]:is(.px-3\.5) {
+    padding-inline: calc(var(--spacing) * 3.5);
+  }
+[data-slot="approval-card"] .py-2\.5, [data-slot="approval-card"]:is(.py-2\.5) {
+    padding-block: calc(var(--spacing) * 2.5);
+  }
+[data-slot="approval-card"] .font-mono, [data-slot="approval-card"]:is(.font-mono) {
+    font-family: var(--font-mono);
+  }
+[data-slot="approval-card"] .text-xs, [data-slot="approval-card"]:is(.text-xs) {
+    font-size: var(--text-xs);
+    line-height: var(--tw-leading, var(--text-xs--line-height));
+  }
+[data-slot="approval-card"] .text-\[11px\], [data-slot="approval-card"]:is(.text-\[11px\]) {
+    font-size: 11px;
+  }
+[data-slot="approval-card"] .text-\[13\.5px\], [data-slot="approval-card"]:is(.text-\[13\.5px\]) {
+    font-size: 13.5px;
+  }
+[data-slot="approval-card"] .text-\[13px\], [data-slot="approval-card"]:is(.text-\[13px\]) {
+    font-size: 13px;
+  }
+[data-slot="approval-card"] .font-medium, [data-slot="approval-card"]:is(.font-medium) {
+    --tw-font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-medium);
+  }
+[data-slot="approval-card"] .tracking-tight, [data-slot="approval-card"]:is(.tracking-tight) {
+    --tw-tracking: var(--tracking-tight);
+    letter-spacing: var(--tracking-tight);
+  }
+[data-slot="approval-card"] .break-words, [data-slot="approval-card"]:is(.break-words) {
+    overflow-wrap: break-word;
+  }
+[data-slot="approval-card"] .whitespace-nowrap, [data-slot="approval-card"]:is(.whitespace-nowrap) {
+    white-space: nowrap;
+  }
+[data-slot="approval-card"] .text-background, [data-slot="approval-card"]:is(.text-background) {
+    color: var(--surface);
+  }
+[data-slot="approval-card"] .text-emerald-500, [data-slot="approval-card"]:is(.text-emerald-500) {
+    color: var(--color-emerald-500);
+  }
+[data-slot="approval-card"] .text-foreground\/60, [data-slot="approval-card"]:is(.text-foreground\/60) {
+    color: var(--ink);
+    @supports (color: color-mix(in lab, red, red)) {
+      color: color-mix(in oklab, var(--ink) 60%, transparent);
+    }
+  }
+[data-slot="approval-card"] .text-foreground\/70, [data-slot="approval-card"]:is(.text-foreground\/70) {
+    color: var(--ink);
+    @supports (color: color-mix(in lab, red, red)) {
+      color: color-mix(in oklab, var(--ink) 70%, transparent);
+    }
+  }
+[data-slot="approval-card"] .text-foreground\/80, [data-slot="approval-card"]:is(.text-foreground\/80) {
+    color: var(--ink);
+    @supports (color: color-mix(in lab, red, red)) {
+      color: color-mix(in oklab, var(--ink) 80%, transparent);
+    }
+  }
+[data-slot="approval-card"] .text-muted-foreground, [data-slot="approval-card"]:is(.text-muted-foreground) {
+    color: var(--muted);
+  }
+[data-slot="approval-card"] .text-red-600, [data-slot="approval-card"]:is(.text-red-600) {
+    color: var(--color-red-600);
+  }
+[data-slot="approval-card"] .outline-hidden, [data-slot="approval-card"]:is(.outline-hidden) {
+    --tw-outline-style: none;
+    outline-style: none;
+    @media (forced-colors: active) {
+      outline: 2px solid transparent;
+      outline-offset: 2px;
+    }
+  }
+[data-slot="approval-card"] .transition-\[background-color\,color\,scale\],[data-slot="approval-card"]:is(.transition-\[background-color\,color\,scale\]) {
+    transition-property: background-color,color,scale;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+[data-slot="approval-card"] .transition-\[background-color\,scale\],[data-slot="approval-card"]:is(.transition-\[background-color\,scale\]) {
+    transition-property: background-color,scale;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+[data-slot="approval-card"] .transition-\[height\], [data-slot="approval-card"]:is(.transition-\[height\]) {
+    transition-property: height;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+[data-slot="approval-card"] .transition-\[opacity\,scale\],[data-slot="approval-card"]:is(.transition-\[opacity\,scale\]) {
+    transition-property: opacity,scale;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+[data-slot="approval-card"] .duration-150, [data-slot="approval-card"]:is(.duration-150) {
+    --tw-duration: 150ms;
+    transition-duration: 150ms;
+  }
+[data-slot="approval-card"] .duration-200, [data-slot="approval-card"]:is(.duration-200) {
+    --tw-duration: 200ms;
+    transition-duration: 200ms;
+  }
+[data-slot="approval-card"] .duration-300, [data-slot="approval-card"]:is(.duration-300) {
+    --tw-duration: 300ms;
+    transition-duration: 300ms;
+  }
+[data-slot="approval-card"] .ease-\[cubic-bezier\(0\.23\,1\,0\.32\,1\)\],[data-slot="approval-card"]:is(.ease-\[cubic-bezier\(0\.23\,1\,0\.32\,1\)\]) {
+    --tw-ease: cubic-bezier(0.23,1,0.32,1);
+    transition-timing-function: cubic-bezier(0.23,1,0.32,1);
+  }
+[data-slot="approval-card"] .ease-\[cubic-bezier\(0\.32\,0\.72\,0\,1\)\],[data-slot="approval-card"]:is(.ease-\[cubic-bezier\(0\.32\,0\.72\,0\,1\)\]) {
+    --tw-ease: cubic-bezier(0.32,0.72,0,1);
+    transition-timing-function: cubic-bezier(0.32,0.72,0,1);
+  }
+[data-slot="approval-card"] .fade-in, [data-slot="approval-card"]:is(.fade-in) {
+    --tw-enter-opacity: 0;
+  }
+[data-slot="approval-card"] .running, [data-slot="approval-card"]:is(.running) {
+    animation-play-state: running;
+  }
+[data-slot="approval-card"] .hover\:bg-foreground\/\[0\.06\], [data-slot="approval-card"]:is(.hover\:bg-foreground\/\[0\.06\]) {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--ink);
+        @supports (color: color-mix(in lab, red, red)) {
+          background-color: color-mix(in oklab, var(--ink) 6%, transparent);
+        }
+      }
+    }
+  }
+[data-slot="approval-card"] .hover\:bg-red-600\/90, [data-slot="approval-card"]:is(.hover\:bg-red-600\/90) {
+    &:hover {
+      @media (hover: hover) {
+        background-color: color-mix(in srgb, oklch(57.7% 0.245 27.325) 90%, transparent);
+        @supports (color: color-mix(in lab, red, red)) {
+          background-color: color-mix(in oklab, var(--color-red-600) 90%, transparent);
+        }
+      }
+    }
+  }
+[data-slot="approval-card"] .hover\:text-foreground\/90, [data-slot="approval-card"]:is(.hover\:text-foreground\/90) {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--ink);
+        @supports (color: color-mix(in lab, red, red)) {
+          color: color-mix(in oklab, var(--ink) 90%, transparent);
+        }
+      }
+    }
+  }
+[data-slot="approval-card"] .hover\:opacity-90, [data-slot="approval-card"]:is(.hover\:opacity-90) {
+    &:hover {
+      @media (hover: hover) {
+        opacity: 90%;
+      }
+    }
+  }
+[data-slot="approval-card"] .focus-visible\:ring-1, [data-slot="approval-card"]:is(.focus-visible\:ring-1) {
+    &:focus-visible {
+      --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+      box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+    }
+  }
+[data-slot="approval-card"] .focus-visible\:ring-foreground\/20, [data-slot="approval-card"]:is(.focus-visible\:ring-foreground\/20) {
+    &:focus-visible {
+      --tw-ring-color: var(--ink);
+      @supports (color: color-mix(in lab, red, red)) {
+        --tw-ring-color: color-mix(in oklab, var(--ink) 20%, transparent);
+      }
+    }
+  }
+[data-slot="approval-card"] .active\:scale-\[0\.96\], [data-slot="approval-card"]:is(.active\:scale-\[0\.96\]) {
+    &:active {
+      scale: 0.96;
+    }
+  }
+[data-slot="approval-card"] .data-\[ending-style\]\:h-0, [data-slot="approval-card"]:is(.data-\[ending-style\]\:h-0) {
+    &[data-ending-style] {
+      height: calc(var(--spacing) * 0);
+    }
+  }
+[data-slot="approval-card"] .data-\[starting-style\]\:h-0, [data-slot="approval-card"]:is(.data-\[starting-style\]\:h-0) {
+    &[data-starting-style] {
+      height: calc(var(--spacing) * 0);
+    }
+  }
+[data-slot="approval-card"] .motion-reduce\:animate-none, [data-slot="approval-card"]:is(.motion-reduce\:animate-none) {
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }
+[data-slot="approval-card"] .motion-reduce\:transition-none, [data-slot="approval-card"]:is(.motion-reduce\:transition-none) {
+    @media (prefers-reduced-motion: reduce) {
+      transition-property: none;
+    }
+  }
+[data-slot="approval-card"] .dark\:bg-foreground\/\[0\.06\], [data-slot="approval-card"]:is(.dark\:bg-foreground\/\[0\.06\]) {
+    @media (prefers-color-scheme: dark) {
+      background-color: var(--ink);
+      @supports (color: color-mix(in lab, red, red)) {
+        background-color: color-mix(in oklab, var(--ink) 6%, transparent);
+      }
+    }
+  }
+[data-slot="approval-card"] .dark\:bg-popover, [data-slot="approval-card"]:is(.dark\:bg-popover) {
+    @media (prefers-color-scheme: dark) {
+      background-color: var(--surface);
+    }
+  }
+[data-slot="approval-card"] .dark\:bg-red-400, [data-slot="approval-card"]:is(.dark\:bg-red-400) {
+    @media (prefers-color-scheme: dark) {
+      background-color: var(--color-red-400);
+    }
+  }
+[data-slot="approval-card"] .dark\:bg-red-400\/10, [data-slot="approval-card"]:is(.dark\:bg-red-400\/10) {
+    @media (prefers-color-scheme: dark) {
+      background-color: color-mix(in srgb, oklch(70.4% 0.191 22.216) 10%, transparent);
+      @supports (color: color-mix(in lab, red, red)) {
+        background-color: color-mix(in oklab, var(--color-red-400) 10%, transparent);
+      }
+    }
+  }
+[data-slot="approval-card"] .dark\:text-red-400, [data-slot="approval-card"]:is(.dark\:text-red-400) {
+    @media (prefers-color-scheme: dark) {
+      color: var(--color-red-400);
+    }
+  }
+[data-slot="approval-card"] .dark\:text-red-950, [data-slot="approval-card"]:is(.dark\:text-red-950) {
+    @media (prefers-color-scheme: dark) {
+      color: var(--color-red-950);
+    }
+  }
+[data-slot="approval-card"] .dark\:hover\:bg-foreground\/\[0\.09\], [data-slot="approval-card"]:is(.dark\:hover\:bg-foreground\/\[0\.09\]) {
+    @media (prefers-color-scheme: dark) {
+      &:hover {
+        @media (hover: hover) {
+          background-color: var(--ink);
+          @supports (color: color-mix(in lab, red, red)) {
+            background-color: color-mix(in oklab, var(--ink) 9%, transparent);
+          }
+        }
+      }
+    }
+  }
+[data-slot="approval-card"] .dark\:hover\:bg-red-400\/90, [data-slot="approval-card"]:is(.dark\:hover\:bg-red-400\/90) {
+    @media (prefers-color-scheme: dark) {
+      &:hover {
+        @media (hover: hover) {
+          background-color: color-mix(in srgb, oklch(70.4% 0.191 22.216) 90%, transparent);
+          @supports (color: color-mix(in lab, red, red)) {
+            background-color: color-mix(in oklab, var(--color-red-400) 90%, transparent);
+          }
+        }
+      }
+    }
+  }
+[data-slot="approval-card"] .forced-colors\:border, [data-slot="approval-card"]:is(.forced-colors\:border) {
+    @media (forced-colors: active) {
+      border-style: var(--tw-border-style);
+      border-width: 1px;
+    }
+  }
+@property --tw-animation-delay {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0s;
+}
+@property --tw-animation-direction {
+  syntax: "*";
+  inherits: false;
+  initial-value: normal;
+}
+@property --tw-animation-duration {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-animation-fill-mode {
+  syntax: "*";
+  inherits: false;
+  initial-value: none;
+}
+@property --tw-animation-iteration-count {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-enter-blur {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-enter-opacity {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-enter-rotate {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-enter-scale {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-enter-translate-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-enter-translate-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-exit-blur {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-exit-opacity {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-exit-rotate {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-exit-scale {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-exit-translate-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-exit-translate-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+[data-slot="approval-card"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  margin-block: 20px;
+}
+[data-slot="approval-card"] p {
+  margin: 0;
+}
+[data-slot="approval-card"] > div:first-child > div {
+  min-width: 0;
+}
+[data-slot="approval-card"] > div.font-mono {
+  white-space: pre-wrap;
+}
+[data-slot="approval-card"] button:focus-visible, [data-slot="approval-card"] a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+@property --tw-border-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@property --tw-font-weight {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-tracking {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-duration {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ease {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-inset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-ring-inset {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-offset-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --tw-ring-offset-color {
+  syntax: "*";
+  inherits: false;
+  initial-value: #fff;
+}
+@property --tw-ring-offset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes enter {
+  from {
+    opacity: var(--tw-enter-opacity,1);
+    transform: translate3d(var(--tw-enter-translate-x,0),var(--tw-enter-translate-y,0),0)scale3d(var(--tw-enter-scale,1),var(--tw-enter-scale,1),var(--tw-enter-scale,1))rotate(var(--tw-enter-rotate,0));
+    filter: blur(var(--tw-enter-blur,0));
+  }
+}
+@supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+    [data-slot="approval-card"] *, [data-slot="approval-card"]:is(*), [data-slot="approval-card"] ::before, [data-slot="approval-card"]::before, [data-slot="approval-card"] ::after, [data-slot="approval-card"]::after, [data-slot="approval-card"] ::backdrop, [data-slot="approval-card"]::backdrop {
+      --tw-border-style: solid;
+      --tw-font-weight: initial;
+      --tw-tracking: initial;
+      --tw-duration: initial;
+      --tw-ease: initial;
+      --tw-shadow: 0 0 #0000;
+      --tw-shadow-color: initial;
+      --tw-shadow-alpha: 100%;
+      --tw-inset-shadow: 0 0 #0000;
+      --tw-inset-shadow-color: initial;
+      --tw-inset-shadow-alpha: 100%;
+      --tw-ring-color: initial;
+      --tw-ring-shadow: 0 0 #0000;
+      --tw-inset-ring-color: initial;
+      --tw-inset-ring-shadow: 0 0 #0000;
+      --tw-ring-inset: initial;
+      --tw-ring-offset-width: 0px;
+      --tw-ring-offset-color: #fff;
+      --tw-ring-offset-shadow: 0 0 #0000;
+      --tw-animation-delay: 0s;
+      --tw-animation-direction: normal;
+      --tw-animation-duration: initial;
+      --tw-animation-fill-mode: none;
+      --tw-animation-iteration-count: 1;
+      --tw-enter-blur: 0;
+      --tw-enter-opacity: 1;
+      --tw-enter-rotate: 0;
+      --tw-enter-scale: 1;
+      --tw-enter-translate-x: 0;
+      --tw-enter-translate-y: 0;
+      --tw-exit-blur: 0;
+      --tw-exit-opacity: 1;
+      --tw-exit-rotate: 0;
+      --tw-exit-scale: 1;
+      --tw-exit-translate-x: 0;
+      --tw-exit-translate-y: 0;
+    }
+  }

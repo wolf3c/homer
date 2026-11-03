@@ -1,0 +1,10 @@
+{
+  "version": "3.1.2",
+  "inputs": {
+    "node_modules/agentation/package.json": "3d802cfa04a77e4b6e2f7d8bb173d292268ea61c1cf52078e003c3e4e37d0e19",
+    "node_modules/agentation/dist/index.mjs": "1a4d069438c9f218d20eab31150e5c2b1c6ef05c526135bd10dd492950023b1e",
+    "node_modules/agentation/dist/index.d.ts": "ad53930a48adf24d58dd40e6d469c2e54f8133c619e490af9a4a77e84c78b438",
+    "node_modules/agentation/dist/index.mjs.map": "d28bf2ed9561a9db7334ebeb0c2995ca14e346a329b3cb3f339d7e13bc578efe",
+    "node_modules/agentation/LICENSE": "29eb64b5c188e2d6f739a8beadf09bcbb3a386bf78ae44e07343975331fd9775"
+  }
+}

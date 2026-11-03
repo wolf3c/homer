@@ -1,0 +1,17 @@
+@import "tailwindcss" source(none);
+@import "../task-status/tw-animate.css";
+@source "./question-flow.tsx";
+@source "./option-list.tsx";
+@source "./elicitation-form.tsx";
+@source "./surfaces.ts";
+@theme inline {
+ --color-background:var(--surface);
+ --color-foreground:var(--ink);
+ --color-popover:var(--surface);
+ --color-muted-foreground:var(--muted);
+ --color-border:var(--line);
+}
+[data-slot="question-flow"],[data-slot="option-list"],[data-slot="elicitation-form"] {min-width:0;overflow-wrap:anywhere;}
+[data-slot="question-flow"] p,[data-slot="elicitation-form"] p {margin:0;white-space:pre-wrap;}
+[data-slot="question-flow"] button:focus-visible,[data-slot="elicitation-form"] button:focus-visible,[data-slot="elicitation-form"] textarea:focus-visible {outline:2px solid var(--focus);outline-offset:2px;}
+[data-slot="elicitation-form"] textarea {min-height:88px;resize:vertical;white-space:pre-wrap;}

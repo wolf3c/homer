@@ -1,0 +1,592 @@
+/* Generated from pinned official utilities. Run node scripts/build-run-activity-css.mjs --image-file. */
+/*! tailwindcss v4.1.14 | MIT License | https://tailwindcss.com */
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) {
+    --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+    --color-black: #000;
+    --spacing: 0.25rem;
+    --text-sm: 0.875rem;
+    --text-sm--line-height: calc(1.25 / 0.875);
+    --font-weight-medium: 500;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    --aspect-video: 16 / 9;
+    --default-transition-duration: 150ms;
+    --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    --default-font-family: var(--font-sans);
+    --default-mono-font-family: var(--font-mono);
+  }
+@layer base {
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) *, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(*), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::after, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::after, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::before, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::before, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::backdrop, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::backdrop, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::file-selector-button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::file-selector-button {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) {
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+    font-family: var(--default-font-family, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+    font-feature-settings: var(--default-font-feature-settings, normal);
+    font-variation-settings: var(--default-font-variation-settings, normal);
+    -webkit-tap-highlight-color: transparent;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) hr, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(hr) {
+    height: 0;
+    color: inherit;
+    border-top-width: 1px;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) abbr:where([title]), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(abbr:where([title])) {
+    -webkit-text-decoration: underline dotted;
+    text-decoration: underline dotted;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) h1, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(h1), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) h2, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(h2), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) h3, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(h3), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) h4, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(h4), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) h5, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(h5), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) h6, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(h6) {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) a, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(a) {
+    color: inherit;
+    -webkit-text-decoration: inherit;
+    text-decoration: inherit;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) b, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(b), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) strong, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(strong) {
+    font-weight: bolder;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) code, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(code), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) kbd, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(kbd), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) samp, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(samp), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) pre, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(pre) {
+    font-family: var(--default-mono-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-feature-settings: var(--default-mono-font-feature-settings, normal);
+    font-variation-settings: var(--default-mono-font-variation-settings, normal);
+    font-size: 1em;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) small, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(small) {
+    font-size: 80%;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) sub, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(sub), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) sup, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(sup) {
+    font-size: 75%;
+    line-height: 0;
+    position: relative;
+    vertical-align: baseline;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) sub, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(sub) {
+    bottom: -0.25em;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) sup, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(sup) {
+    top: -0.5em;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) table, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(table) {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) :-moz-focusring, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(:-moz-focusring) {
+    outline: auto;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) progress, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(progress) {
+    vertical-align: baseline;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) summary, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(summary) {
+    display: list-item;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ol, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(ol), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ul, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(ul), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) menu, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(menu) {
+    list-style: none;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) img, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(img), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) svg, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(svg), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) video, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(video), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) canvas, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(canvas), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) audio, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(audio), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) iframe, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(iframe), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) embed, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(embed), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) object, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(object) {
+    display: block;
+    vertical-align: middle;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) img, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(img), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) video, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(video) {
+    max-width: 100%;
+    height: auto;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(button), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) input, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(input), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) select, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(select), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) optgroup, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(optgroup), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) textarea, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(textarea), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::file-selector-button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::file-selector-button {
+    font: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    border-radius: 0;
+    background-color: transparent;
+    opacity: 1;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) :where(select:is([multiple], [size])) optgroup, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(:where(select:is([multiple], [size])) optgroup) {
+    font-weight: bolder;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) :where(select:is([multiple], [size])) optgroup option, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(:where(select:is([multiple], [size])) optgroup option) {
+    padding-inline-start: 20px;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::file-selector-button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::file-selector-button {
+    margin-inline-end: 4px;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::placeholder, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::placeholder {
+    opacity: 1;
+  }
+  @supports (not (-webkit-appearance: -apple-pay-button))  or (contain-intrinsic-size: 1px) {
+    :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::placeholder, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::placeholder {
+      color: currentcolor;
+      @supports (color: color-mix(in lab, red, red)) {
+        color: color-mix(in oklab, currentcolor 50%, transparent);
+      }
+    }
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) textarea, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(textarea) {
+    resize: vertical;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-search-decoration, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-search-decoration {
+    -webkit-appearance: none;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-date-and-time-value, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-date-and-time-value {
+    min-height: 1lh;
+    text-align: inherit;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit {
+    display: inline-flex;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-fields-wrapper, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-year-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-year-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-month-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-month-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-day-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-day-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-hour-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-hour-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-minute-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-minute-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-second-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-second-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-millisecond-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-millisecond-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-datetime-edit-meridiem-field, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-datetime-edit-meridiem-field {
+    padding-block: 0;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-calendar-picker-indicator, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-calendar-picker-indicator {
+    line-height: 1;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) :-moz-ui-invalid, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(:-moz-ui-invalid) {
+    box-shadow: none;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(button), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) input:where([type="button"], [type="reset"], [type="submit"]), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(input:where([type="button"], [type="reset"], [type="submit"])), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::file-selector-button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::file-selector-button {
+    appearance: button;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-inner-spin-button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-inner-spin-button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::-webkit-outer-spin-button, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::-webkit-outer-spin-button {
+    height: auto;
+  }
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [hidden]:where(:not([hidden="until-found"])), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([hidden]:where(:not([hidden="until-found"]))) {
+    display: none !important;
+  }
+}
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .invisible, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.invisible) {
+    visibility: hidden;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .sr-only, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.sr-only) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border-width: 0;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .absolute, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.absolute) {
+    position: absolute;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .fixed, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.fixed) {
+    position: fixed;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .relative, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.relative) {
+    position: relative;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .inset-0, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.inset-0) {
+    inset: calc(var(--spacing) * 0);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .end-4, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.end-4) {
+    inset-inline-end: calc(var(--spacing) * 4);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .top-4, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.top-4) {
+    top: calc(var(--spacing) * 4);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .z-50, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.z-50) {
+    z-index: 50;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .m-0, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.m-0) {
+    margin: calc(var(--spacing) * 0);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .block, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.block) {
+    display: block;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .flex, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.flex) {
+    display: flex;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .hidden, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.hidden) {
+    display: none;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .inline-flex, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.inline-flex) {
+    display: inline-flex;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .aspect-\[4\/3\], :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.aspect-\[4\/3\]) {
+    aspect-ratio: 4/3;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .aspect-\[9\/16\], :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.aspect-\[9\/16\]) {
+    aspect-ratio: 9/16;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .aspect-square, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.aspect-square) {
+    aspect-ratio: 1 / 1;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .aspect-video, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.aspect-video) {
+    aspect-ratio: var(--aspect-video);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .size-4, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.size-4) {
+    width: calc(var(--spacing) * 4);
+    height: calc(var(--spacing) * 4);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .size-5, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.size-5) {
+    width: calc(var(--spacing) * 5);
+    height: calc(var(--spacing) * 5);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .size-8, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.size-8) {
+    width: calc(var(--spacing) * 8);
+    height: calc(var(--spacing) * 8);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .h-auto, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.h-auto) {
+    height: auto;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .h-full, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.h-full) {
+    height: 100%;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .max-h-\[90\%\], :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.max-h-\[90\%\]) {
+    max-height: 90%;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .min-h-32, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.min-h-32) {
+    min-height: calc(var(--spacing) * 32);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .w-full, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.w-full) {
+    width: 100%;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .max-w-96, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.max-w-96) {
+    max-width: calc(var(--spacing) * 96);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .max-w-\[90\%\], :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.max-w-\[90\%\]) {
+    max-width: 90%;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .max-w-full, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.max-w-full) {
+    max-width: 100%;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .min-w-0, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.min-w-0) {
+    min-width: calc(var(--spacing) * 0);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .flex-1, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.flex-1) {
+    flex: 1;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .shrink-0, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.shrink-0) {
+    flex-shrink: 0;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .animate-in, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.animate-in) {
+    animation: enter var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .animate-pulse, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.animate-pulse) {
+    animation: var(--animate-pulse);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .cursor-pointer, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.cursor-pointer) {
+    cursor: pointer;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .cursor-zoom-in, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.cursor-zoom-in) {
+    cursor: zoom-in;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .cursor-zoom-out, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.cursor-zoom-out) {
+    cursor: zoom-out;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .list-none, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.list-none) {
+    list-style-type: none;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .flex-col, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.flex-col) {
+    flex-direction: column;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .items-center, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.items-center) {
+    align-items: center;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .justify-center, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.justify-center) {
+    justify-content: center;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .gap-2, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.gap-2) {
+    gap: calc(var(--spacing) * 2);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .gap-3, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.gap-3) {
+    gap: calc(var(--spacing) * 3);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .truncate, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.truncate) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .overflow-hidden, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.overflow-hidden) {
+    overflow: hidden;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .rounded-lg, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.rounded-lg) {
+    border-radius: var(--radius-lg);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .rounded-md, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.rounded-md) {
+    border-radius: var(--radius-md);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .border, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.border) {
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .border-0, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.border-0) {
+    border-style: var(--tw-border-style);
+    border-width: 0px;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .border-border, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.border-border) {
+    border-color: var(--line);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .bg-background\/80, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.bg-background\/80) {
+    background-color: var(--surface);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--surface) 80%, transparent);
+    }
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .bg-black\/80, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.bg-black\/80) {
+    background-color: color-mix(in srgb, #000 80%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-black) 80%, transparent);
+    }
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .bg-muted\/50, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.bg-muted\/50) {
+    background-color: var(--soft);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--soft) 50%, transparent);
+    }
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .bg-transparent, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.bg-transparent) {
+    background-color: transparent;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .object-contain, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.object-contain) {
+    object-fit: contain;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .object-cover, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.object-cover) {
+    object-fit: cover;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .p-0, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.p-0) {
+    padding: calc(var(--spacing) * 0);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .p-1, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.p-1) {
+    padding: calc(var(--spacing) * 1);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .p-2, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.p-2) {
+    padding: calc(var(--spacing) * 2);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .p-4, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.p-4) {
+    padding: calc(var(--spacing) * 4);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .px-3, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.px-3) {
+    padding-inline: calc(var(--spacing) * 3);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .py-2, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.py-2) {
+    padding-block: calc(var(--spacing) * 2);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .text-start, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.text-start) {
+    text-align: start;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .text-sm, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.text-sm) {
+    font-size: var(--text-sm);
+    line-height: var(--tw-leading, var(--text-sm--line-height));
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .font-medium, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.font-medium) {
+    --tw-font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-medium);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .text-muted-foreground, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.text-muted-foreground) {
+    color: var(--muted);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .transition-colors, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.transition-colors) {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .duration-200, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.duration-200) {
+    --tw-duration: 200ms;
+    transition-duration: 200ms;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .zoom-in-95, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.zoom-in-95) {
+    --tw-enter-scale: calc(95*1%);
+    --tw-enter-scale: .95;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .fade-in, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.fade-in) {
+    --tw-enter-opacity: 0;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .hover\:bg-accent, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.hover\:bg-accent) {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--soft-hover);
+      }
+    }
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .hover\:bg-muted\/50, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.hover\:bg-muted\/50) {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--soft);
+        @supports (color: color-mix(in lab, red, red)) {
+          background-color: color-mix(in oklab, var(--soft) 50%, transparent);
+        }
+      }
+    }
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .hover\:text-accent-foreground, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.hover\:text-accent-foreground) {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--ink);
+      }
+    }
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .hover\:text-foreground, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.hover\:text-foreground) {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--ink);
+      }
+    }
+  }
+@property --tw-animation-delay {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0s;
+}
+@property --tw-animation-direction {
+  syntax: "*";
+  inherits: false;
+  initial-value: normal;
+}
+@property --tw-animation-duration {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-animation-fill-mode {
+  syntax: "*";
+  inherits: false;
+  initial-value: none;
+}
+@property --tw-animation-iteration-count {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-enter-blur {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-enter-opacity {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-enter-rotate {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-enter-scale {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-enter-translate-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-enter-translate-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-exit-blur {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-exit-opacity {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-exit-rotate {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-exit-scale {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-exit-translate-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+@property --tw-exit-translate-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [data-slot="file-root"], :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([data-slot="file-root"]) {
+  max-width: 100%;
+  min-width: 0;
+}
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .homer-media-file, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.homer-media-file) {
+  width: 100%;
+}
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .file-list-open:focus-visible,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.file-list-open:focus-visible),:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [data-slot="file-download"]:focus-visible,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([data-slot="file-download"]:focus-visible),:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .aui-image-zoom-trigger:focus-visible,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.aui-image-zoom-trigger:focus-visible),:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [data-slot="image-zoom-close"]:focus-visible,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([data-slot="image-zoom-close"]:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .file-list-open[aria-current="true"] [data-slot="file-root"], :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.file-list-open[aria-current="true"] [data-slot="file-root"]) {
+  background: var(--soft);
+}
+@media (prefers-reduced-motion:reduce) {
+  :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [data-slot="image-zoom-overlay"],:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([data-slot="image-zoom-overlay"]),:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [data-slot="image-zoom-content"],:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([data-slot="image-zoom-content"]),:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [data-slot="image-preview-loading"] svg,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([data-slot="image-preview-loading"] svg) {
+    animation: none;
+  }
+}
+@property --tw-border-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@property --tw-font-weight {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-duration {
+  syntax: "*";
+  inherits: false;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+@keyframes enter {
+  from {
+    opacity: var(--tw-enter-opacity,1);
+    transform: translate3d(var(--tw-enter-translate-x,0),var(--tw-enter-translate-y,0),0)scale3d(var(--tw-enter-scale,1),var(--tw-enter-scale,1),var(--tw-enter-scale,1))rotate(var(--tw-enter-rotate,0));
+    filter: blur(var(--tw-enter-blur,0));
+  }
+}
+@supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+    :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) *, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(*), :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::before, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::before, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::after, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::after, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) ::backdrop, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"])::backdrop {
+      --tw-border-style: solid;
+      --tw-font-weight: initial;
+      --tw-duration: initial;
+      --tw-animation-delay: 0s;
+      --tw-animation-direction: normal;
+      --tw-animation-duration: initial;
+      --tw-animation-fill-mode: none;
+      --tw-animation-iteration-count: 1;
+      --tw-enter-blur: 0;
+      --tw-enter-opacity: 1;
+      --tw-enter-rotate: 0;
+      --tw-enter-scale: 1;
+      --tw-enter-translate-x: 0;
+      --tw-enter-translate-y: 0;
+      --tw-exit-blur: 0;
+      --tw-exit-opacity: 1;
+      --tw-exit-rotate: 0;
+      --tw-exit-scale: 1;
+      --tw-exit-translate-x: 0;
+      --tw-exit-translate-y: 0;
+    }
+  }

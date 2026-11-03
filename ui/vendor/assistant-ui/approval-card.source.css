@@ -1,0 +1,19 @@
+@import "tailwindcss" source(none);
+@import "../task-status/tw-animate.css";
+@source "./approval-card.tsx";
+@source "./surfaces.ts";
+@theme inline {
+ --color-background:var(--surface);
+ --color-foreground:var(--ink);
+ --color-popover:var(--surface);
+ --color-muted-foreground:var(--muted);
+ --color-border:var(--line);
+}
+
+/* Host containment, text fidelity and accessibility; official geometry above. */
+[data-slot="approval-card"] {min-width:0;overflow-wrap:anywhere;margin-block:20px;}
+[data-slot="approval-card"] p {margin:0;}
+[data-slot="approval-card"] > div:first-child > div {min-width:0;}
+[data-slot="approval-card"] > div.font-mono {white-space:pre-wrap;}
+[data-slot="approval-card"] button:focus-visible,
+[data-slot="approval-card"] a:focus-visible {outline:2px solid var(--focus);outline-offset:2px;}

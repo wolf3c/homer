@@ -1,0 +1,21 @@
+@import "tailwindcss" source(none);
+@import "../task-status/tw-animate.css";
+@source "./tool-fallback.aui.tsx";
+@source "./tool-button.tsx";
+@source "./tool-textarea.tsx";
+@theme inline {
+ --color-background:var(--surface);
+ --color-foreground:var(--ink);
+ --color-muted-foreground:var(--muted);
+ --color-muted:var(--soft);
+ --color-border:var(--line);
+ --color-ring:var(--focus);
+ --color-primary:var(--ink);
+ --color-primary-foreground:var(--surface);
+ --color-destructive:var(--error);
+}
+/* Host containment and accessible focus only. Official utilities own geometry. */
+[data-slot="tool-fallback-root"] {min-width:0;overflow-wrap:anywhere;}
+[data-slot="tool-fallback-root"] p {margin:0;}
+[data-slot="tool-fallback-root"] pre {max-width:100%;overflow-wrap:anywhere;}
+[data-slot="tool-fallback-root"] button:focus-visible {outline:2px solid var(--focus);outline-offset:2px;}

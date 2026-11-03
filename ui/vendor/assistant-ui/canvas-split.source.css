@@ -1,0 +1,19 @@
+@import "tailwindcss" source(none);
+@source "./canvas-split.tsx";
+@source "./web-preview.tsx";
+@source "./surfaces.ts";
+@theme inline {
+ --color-background:var(--surface);
+ --color-foreground:var(--ink);
+ --color-popover:var(--surface);
+ --color-muted-foreground:var(--muted);
+ --color-border:var(--line);
+}
+
+/* Native dialog sizing stays with Homer; these are containment/a11y only. */
+[data-slot="canvas-split-document"] {min-height:0;}
+[data-slot="canvas-split-header"] {flex-shrink:0;}
+[data-slot="canvas-split-body"] {overscroll-behavior:contain;}
+[data-slot="canvas-split-header"] button:focus-visible,
+[data-slot="web-preview"] button:focus-visible {outline:2px solid var(--focus);outline-offset:2px;}
+[data-slot="web-preview"] {flex-shrink:0;max-width:none;}

@@ -1,0 +1,311 @@
+--- a/index.mjs
++++ b/index.mjs
+@@ -1344,7 +1344,9 @@
+   disabled = false,
+   preview = false,
+   resetOnPreview = true,
+-  variant = "popup"
++  variant = "popup",
++  errorMessage,
++  busy = false
+ }, ref) {
+   const isCard = variant === "card";
+   const [text, setText] = useState3(initialValue);
+@@ -1575,6 +1577,7 @@
+             )
+           }
+         ),
++        errorMessage && /* @__PURE__ */ jsx2("p", { role: "alert", style: { fontSize: 12, margin: "6px 0", color: "inherit" }, children: errorMessage }),
+         /* @__PURE__ */ jsx2(
+           "div",
+           {
+@@ -1586,13 +1589,14 @@
+                 "button",
+                 {
+                   className: styles_module_default.deleteButton,
++                  disabled: busy,
+                   onClick: onDelete,
+                   type: "button",
+                   "aria-label": "Delete annotation",
+                   children: "Delete"
+                 }
+               ) }),
+-              /* @__PURE__ */ jsx2("button", { className: styles_module_default.cancel, onClick: onCancel, children: "Cancel" }),
++              /* @__PURE__ */ jsx2("button", { className: styles_module_default.cancel, disabled: busy, onClick: onCancel, children: "Cancel" }),
+               /* @__PURE__ */ jsx2(
+                 "button",
+                 {
+@@ -1602,7 +1606,7 @@
+                     opacity: text.trim() || allowEmpty ? 1 : 0.4
+                   },
+                   onClick: handleSubmit,
+-                  disabled: disabled || !text.trim() && !allowEmpty,
++                  disabled: disabled || busy || !text.trim() && !allowEmpty,
+                   children: submitLabel
+                 }
+               )
+@@ -1634,7 +1638,9 @@
+     isExiting = false,
+     onExitComplete,
+     lightMode = false,
+-    computedStyles
++    computedStyles,
++    errorMessage,
++    busy = false
+   }, ref) {
+     const [isShaking, setIsShaking] = useState4(false);
+     const [animState, setAnimState] = useState4("initial");
+@@ -1726,7 +1732,9 @@
+             allowEmpty,
+             accentColor,
+             computedStyles,
+-            disabled: visibleAnimState === "exit"
++            errorMessage,
++            busy,
++            disabled: busy || visibleAnimState === "exit"
+           }
+         )
+       }
+@@ -8836,7 +8844,7 @@
+           variant: "card",
+           preview,
+           resetOnPreview: !editing,
+-          disabled: !editing || exiting
++          disabled: !editing || exiting || formProps?.busy
+         },
+         displayed.id
+       )
+@@ -9603,7 +9611,7 @@
+ }
+ function PageFeedbackToolbarCSS(props = {}) {
+   const pathname = usePagePath(props.useHashLocation ?? false);
+-  const activeState = useState11(false);
++  const activeState = useState11(props.defaultActive ?? false);
+   const portalHost = useFeedbackPortal(props.portalContainer);
+   if (!portalHost) return null;
+   return createPortal3(/* @__PURE__ */ createElement(
+@@ -9620,6 +9628,8 @@
+ function PageFeedbackToolbarForRoute({
+   pathname,
+   activeState,
++  onActiveChange,
++  onDraftController,
+   portalHost,
+   useHashLocation = false,
+   appName,
+@@ -10166,6 +10176,7 @@
+     hasPendingFeedbackRef.current = annotations.length > 0 || designPlacements.length > 0 || (rearrangeState?.sections.length ?? 0) > 0;
+   }, [annotations, designPlacements.length, rearrangeState?.sections.length]);
+   const finishMarkerRemoval = useCallback8((id) => {
++    if (onDraftController && !deletedIds.current.has(id)) return;
+     const wasClearing = clearingIds.current.has(id);
+     if (wasClearing) {
+       pendingClearIds.current.delete(id);
+@@ -10593,7 +10604,7 @@
+       const rect = freshRects[0];
+       const isFixed = isElementFixed(firstEl);
+       setPendingAnnotation({
+-        id: Date.now().toString(),
++        id: crypto.randomUUID(),
+         x: rect.left / window.innerWidth * 100,
+         y: isFixed ? rect.top : rect.top + window.scrollY,
+         clientY: rect.top,
+@@ -10640,7 +10651,7 @@
+       const lastCenterY = lastRect.top + lastRect.height / 2;
+       const lastIsFixed = isElementFixed(lastEl);
+       setPendingAnnotation({
+-        id: Date.now().toString(),
++        id: crypto.randomUUID(),
+         x: lastCenterX / window.innerWidth * 100,
+         y: lastIsFixed ? lastCenterY : lastCenterY + window.scrollY,
+         clientY: lastCenterY,
+@@ -10958,7 +10969,7 @@
+       const computedStylesStr = getForensicComputedStyles(elementUnder);
+       setPendingExiting(false);
+       setPendingAnnotation({
+-        id: Date.now().toString(),
++        id: crypto.randomUUID(),
+         x,
+         y,
+         clientY: e.clientY,
+@@ -11296,7 +11307,7 @@
+             const firstElementComputedStyles = getDetailedComputedStyles(firstElement);
+             const firstElementComputedStylesStr = getForensicComputedStyles(firstElement);
+             setPendingAnnotation({
+-              id: Date.now().toString(),
++              id: crypto.randomUUID(),
+               x,
+               y,
+               clientY: e.clientY,
+@@ -11328,7 +11339,7 @@
+           const height = Math.abs(bottom - top);
+           if (width > 20 && height > 20) {
+             setPendingAnnotation({
+-              id: Date.now().toString(),
++              id: crypto.randomUUID(),
+               x,
+               y,
+               clientY: e.clientY,
+@@ -11367,6 +11378,52 @@
+     pendingMultiSelectElements,
+     createMultiSelectPendingAnnotation
+   ]);
++  // Homer: authoritative draft projection; native user events remain separate.
++  const homerCandidate = useRef14(null);
++  const [homerBusy, setHomerBusy] = useState11(false);
++  const [homerError, setHomerError] = useState11("");
++  const homerLive = useRef14({ pendingAnnotation, editingAnnotation });
++  homerLive.current = { pendingAnnotation, editingAnnotation };
++  useLayoutEffect10(() => {
++    if (!onDraftController) return;
++    const cancelPending = () => {
++      homerCandidate.current = null;
++      setHomerBusy(false); setHomerError("");
++      setPendingAnnotation(null); setPendingExiting(false);
++      setEditingAnnotation(null); setEditExiting(false);
++      setEditingTargetElement(null); setEditingTargetElements([]);
++      setRestoreEditPreview(false);
++    };
++    onDraftController({
++      cancelPending,
++      replaceAnnotations(next, options = {}) {
++        const ids = new Set(next.map(note => note.id));
++        for (const old of currentAnnotationsRef.current) {
++          if (!ids.has(old.id)) { deletedIds.current.add(old.id); markerKeys.current.delete(old.id); animatedMarkers.current.delete(old.id); }
++        }
++        for (const id of ids) { deletedIds.current.delete(id); clearingIds.current.delete(id); pendingClearIds.current.delete(id); }
++        setExitingMarkers(previous => new Set([...previous].filter(id => !ids.has(id))));
++        currentAnnotationsRef.current = next;
++        setAnnotations(next);
++        saveAnnotations(pathname, next);
++        const candidate = homerCandidate.current;
++        if (options.settled && candidate) {
++          homerCandidate.current = null;
++          setHomerBusy(false); setHomerError(options.error || "");
++          if (options.error) {
++            if (candidate.kind === "add") { setPendingAnnotation({ ...candidate.pending, isSubmitted: false }); setPendingExiting(false); }
++            else if (ids.has(candidate.note.id)) { setEditingAnnotation(candidate.note); setEditExiting(false); }
++          } else if (candidate.kind === "add") setPendingExiting(true);
++          else setEditExiting(true);
++        } else {
++          const editing = homerLive.current.editingAnnotation;
++          if (editing && !ids.has(editing.id)) cancelPending();
++        }
++        if (!next.length) { setHoveredMarkerId(null); finishClearBatch(); }
++      }
++    });
++    return () => { homerCandidate.current = null; onDraftController(null); };
++  }, [onDraftController, pathname]);
+   const fireWebhook = useCallback8(
+     async (event, payload, force) => {
+       const targetUrl = settings.webhookUrl || webhookUrl;
+@@ -11392,7 +11449,7 @@
+   );
+   const addAnnotation = useCallback8(
+     (comment) => {
+-      if (!pendingAnnotation || pendingAnnotation.isSubmitted) return;
++      if (!pendingAnnotation || pendingAnnotation.isSubmitted || homerCandidate.current) return;
+       const newAnnotation = {
+         id: pendingAnnotation.id,
+         x: pendingAnnotation.x,
+@@ -11423,12 +11480,13 @@
+           status: "pending"
+         } : {}
+       };
++      if (onDraftController) { homerCandidate.current = { kind: "add", pending: pendingAnnotation, note: newAnnotation }; setHomerBusy(true); setHomerError(""); }
+       setAnnotations((prev) => [...prev, newAnnotation]);
+       setPendingAnnotation({ ...pendingAnnotation, isSubmitted: true });
+       recentlyAddedIdRef.current = newAnnotation.id;
+       onAnnotationAdd?.(newAnnotation);
+       fireWebhook("annotation.add", { annotation: newAnnotation });
+-      setPendingExiting(true);
++      if (!onDraftController) setPendingExiting(true);
+       window.getSelection()?.removeAllRanges();
+       if (endpoint && currentSessionId) {
+         routeTask(async () => {
+@@ -11467,6 +11525,8 @@
+     ]
+   );
+   const cancelAnnotation = useCallback8(() => {
++    if (homerCandidate.current) return;
++    setHomerError("");
+     setPendingExiting(true);
+   }, []);
+   const finishPendingExit = useCallback8(() => {
+@@ -11544,8 +11604,9 @@
+   );
+   const updateAnnotation2 = useCallback8(
+     (newComment) => {
+-      if (!editingAnnotation) return;
++      if (!editingAnnotation || homerCandidate.current || deletedIds.current.has(editingAnnotation.id) || !currentAnnotationsRef.current.some(note => note.id === editingAnnotation.id)) return;
+       const updatedAnnotation = { ...editingAnnotation, comment: newComment };
++      if (onDraftController) { homerCandidate.current = { kind: "update", note: updatedAnnotation }; setHomerBusy(true); setHomerError(""); }
+       setEditingAnnotation(updatedAnnotation);
+       setAnnotations(
+         (prev) => prev.map(
+@@ -11565,11 +11626,13 @@
+         });
+       }
+       setRestoreEditPreview(editingFromKeyboardRef.current || !!editingTriggerRef.current?.matches(":hover"));
+-      setEditExiting(true);
++      if (!onDraftController) setEditExiting(true);
+     },
+     [editingAnnotation, onAnnotationUpdate, fireWebhook, endpoint, routeTask]
+   );
+   const cancelEditAnnotation = useCallback8(() => {
++    if (homerCandidate.current) return;
++    setHomerError("");
+     setRestoreEditPreview(editingFromKeyboardRef.current || !!editingTriggerRef.current?.matches(":hover"));
+     setEditExiting(true);
+   }, []);
+@@ -12159,6 +12222,9 @@
+   const missingCopyMetadata = metadataCopy && !formatCopyOutput(annotations, "", copyFormat);
+   const copyLabel = typeof copyFormat === "object" ? `Copy ${copyFormat.attribute}` : copyFormat === "source" ? "Copy source paths" : copyFormat === "classes" ? "Copy classes" : isDesignMode && blankCanvas ? "Copy layout" : "Copy feedback";
+   const controlTabIndex = isActive ? 0 : -1;
++  useEffect8(() => {
++    if (mounted) onActiveChange?.(isActive && !isToolbarHidden);
++  }, [isActive, isToolbarHidden, mounted, onActiveChange]);
+   if (!mounted) return null;
+   if (isToolbarHidden) return null;
+   return /* @__PURE__ */ jsxs15(ShadowRoot, { host: "agentation-toolbar", className: userClassName, children: [
+@@ -12997,6 +13063,8 @@
+                     onOpenSource: onOpenSource && pendingAnnotation.sourceFile ? () => onOpenSource(pendingAnnotation.sourceFile) : void 0,
+                     computedStyles: pendingAnnotation.computedStylesObj,
+                     placeholder: typeof copyFormat === "object" && pendingAnnotation.attributes?.[copyFormat.attribute] ? "Add a note (optional)" : pendingAnnotation.element === "Area selection" ? "What should change in this area?" : pendingAnnotation.isMultiSelect ? "Feedback for this group of elements..." : "What should change?",
++                    errorMessage: homerError,
++                    busy: homerBusy,
+                     onSubmit: addAnnotation,
+                     onExitComplete: finishPendingExit,
+                     onCancel: cancelAnnotation,
+@@ -13120,6 +13188,8 @@
+             placeholder: "Edit your feedback...",
+             initialValue: cardAnnotation.comment,
+             submitLabel: "Save",
++            errorMessage: homerError,
++            busy: homerBusy,
+             onSubmit: updateAnnotation2,
+             onCancel: cancelEditAnnotation,
+             onDelete: () => deleteAnnotation2(cardAnnotation.id),
+@@ -13182,4 +13252,4 @@
+   loadAnnotations,
+   saveAnnotations
+ };
+-//# sourceMappingURL=index.mjs.map
+\ No newline at end of file
++// Demo-local modified source: see MODIFIED-SOURCE.md; upstream map is not used.
+\ No newline at end of file
+--- a/index.d.ts
++++ b/index.d.ts
+@@ -107,6 +107,12 @@
+     selectedText?: string;
+ };
+ type PageFeedbackToolbarCSSProps = {
++    /** Homer-local authoritative draft projection; does not emit user callbacks. */
++    onDraftController?: (controller: { replaceAnnotations(notes: Annotation[], options?: {settled?: boolean; error?: string}): void; cancelPending(): void } | null) => void;
++    /** Demo-local patch: initial selection state; defaults to false. */
++    defaultActive?: boolean;
++    /** Demo-local patch: committed initial state and native selection changes; no unmount event. */
++    onActiveChange?: (active: boolean) => void;
+     demoAnnotations?: DemoAnnotation[];
+     demoDelay?: number;
+     enableDemoMode?: boolean;

@@ -1,0 +1,245 @@
+"use client";
+
+import {
+  type PropsWithChildren,
+  useState,
+  type FC,
+  isValidElement,
+} from "react";
+import {
+  XIcon,
+  FileText,
+  Loader2Icon,
+  AlertCircleIcon,
+} from "lucide-react";
+import {
+  AttachmentPrimitive,
+  useAuiState,
+  useAui,
+} from "@assistant-ui/react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./attachment-tooltip";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogTrigger,
+} from "./attachment-dialog";
+import { Avatar, AvatarImage, AvatarFallback } from "./attachment-avatar";
+import { TooltipIconButton } from "./attachment-icon-button";
+
+import { cn } from "../task-status/utils";
+import "./attachment.css";
+
+type AttachmentPreviewProps = {
+  src: string;
+  name: string;
+};
+
+const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src, name }) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  return (
+    <img
+      src={src}
+      alt={`图片预览 ${name}`}
+      className={cn(
+        "block h-auto max-h-[80vh] w-auto max-w-full rounded-sm object-contain transition-opacity duration-300 motion-reduce:transition-none",
+        isLoaded
+          ? "aui-attachment-preview-image-loaded opacity-100"
+          : "aui-attachment-preview-image-loading opacity-0",
+      )}
+      onLoad={() => setIsLoaded(true)}
+    />
+  );
+};
+
+type AttachmentPreviewDialogProps = PropsWithChildren<{
+  src: string | undefined;
+  name: string;
+}>;
+
+const AttachmentPreviewDialog: FC<AttachmentPreviewDialogProps> = ({
+  children,
+  src,
+  name,
+}) => {
+  if (!src) return children;
+
+  return (
+    <Dialog>
+      <DialogTrigger
+        nativeButton={false}
+        className="aui-attachment-preview-trigger cursor-zoom-in"
+        render={
+          isValidElement(children) ? (
+            children
+          ) : (
+            <button type="button">{children}</button>
+          )
+        }
+      />
+      <DialogContent className="aui-attachment-preview-dialog-content [&>button]:bg-foreground/60 [&>button]:hover:bg-foreground/80 [&_svg]:text-background p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0!">
+        <DialogTitle className="aui-sr-only sr-only">
+          预览 {name}
+        </DialogTitle>
+        <div className="aui-attachment-preview bg-background relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden rounded-sm">
+          <AttachmentPreview src={src} name={name} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+const AttachmentThumb: FC<{ src: string | undefined }> = ({ src }) => {
+  return (
+    <Avatar className="aui-attachment-tile-avatar h-full w-full rounded-none after:hidden">
+      <AvatarImage
+        src={src}
+        alt=""
+        className="aui-attachment-tile-image rounded-none object-cover"
+      />
+      <AvatarFallback>
+        <FileText className="aui-attachment-tile-fallback-icon text-muted-foreground/80 size-6 stroke-[1.5]" />
+      </AvatarFallback>
+    </Avatar>
+  );
+};
+
+export const AttachmentUI: FC<{src?: string; removeDisabled: boolean; onRemove: () => Promise<void>; description: string;removeLabel?:string}> = ({src, removeDisabled, onRemove, description,removeLabel}) => {
+  const aui = useAui();
+  const isComposer = aui.attachment.source !== "message";
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+
+  const isImage = useAuiState((s) => s.attachment.type === "image");
+  const name = useAuiState((s) => s.attachment.name);
+  const typeLabel = useAuiState((s) => {
+    const type = s.attachment.type;
+    switch (type) {
+      case "image":
+        return "图片";
+      case "document":
+        return "文档";
+      case "file":
+        return "文件";
+      default:
+        return type;
+    }
+  });
+
+  // An attachment on a submission is still being prepared, whether or not the
+  // adapter reports progress while it uploads.
+  const uploadState = useAuiState((s) =>
+    s.attachment.status.type === "incomplete" &&
+    s.attachment.status.reason === "error"
+      ? "error"
+      : s.attachment.status.type === "running" ||
+          (s.optional.message?.submission !== undefined &&
+            s.attachment.status.type !== "complete")
+        ? "uploading"
+        : undefined,
+  );
+  const isUploading = uploadState === "uploading";
+  const isError = uploadState === "error";
+
+  const errorMessage = useAuiState((s) =>
+    s.attachment.status.type === "incomplete" &&
+    s.attachment.status.reason === "error"
+      ? (s.attachment.status.message ?? "上传失败")
+      : undefined,
+  );
+
+  return (
+    <TooltipProvider>
+      <Tooltip open={tooltipOpen} onOpenChange={setTooltipOpen}>
+        <AttachmentPrimitive.Root
+          className={cn(
+            "aui-attachment-root relative",
+            isComposer &&
+              "animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none",
+            isImage &&
+              !isComposer &&
+              "aui-attachment-root-message only:*:first:size-24",
+          )}
+        >
+          <AttachmentPreviewDialog src={src} name={name}>
+            <TooltipTrigger
+              closeOnClick={!!src}
+              render={
+                <div
+                  onPointerUp={(event) => {
+                    if (!src && event.pointerType === "touch") setTooltipOpen(true);
+                  }}
+                  className={cn(
+                    "aui-attachment-tile bg-muted hover:after:bg-foreground/10 focus-visible:ring-ring/50 relative size-14 overflow-hidden rounded-[calc(var(--composer-radius,1rem)-var(--composer-padding,8px))] transition-transform outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-black/10 after:transition-colors after:ring-inset focus-visible:ring-1 motion-reduce:transition-none dark:after:ring-white/10",
+                    src
+                      ? "cursor-zoom-in active:scale-[0.96]"
+                      : "cursor-default",
+                    isError &&
+                      "after:ring-destructive/60 dark:after:ring-destructive/60",
+                  )}
+                  role={src ? "button" : "group"}
+                  tabIndex={0}
+                  aria-label={`${src ? `预览 ${name}` : `${typeLabel}附件 ${name}`}，${description}${
+                    isError
+                      ? "，上传失败"
+                      : isUploading
+                        ? "，正在上传"
+                        : ""
+                  }`}
+                />
+              }
+            >
+              <AttachmentThumb src={src} />
+              {isUploading && (
+                <div
+                  aria-hidden="true"
+                  className="aui-attachment-tile-uploading bg-background/60 animate-in fade-in-0 absolute inset-0 flex items-center justify-center backdrop-blur-[2px] motion-reduce:animate-none"
+                >
+                  <Loader2Icon className="text-muted-foreground size-4 animate-spin" />
+                </div>
+              )}
+              {isError && (
+                <div
+                  aria-hidden="true"
+                  className="aui-attachment-tile-error bg-background/70 animate-in fade-in-0 absolute inset-0 flex items-center justify-center backdrop-blur-[2px] motion-reduce:animate-none"
+                >
+                  <AlertCircleIcon className="text-destructive size-4" />
+                </div>
+              )}
+            </TooltipTrigger>
+          </AttachmentPreviewDialog>
+          {isComposer && <AttachmentRemove name={name} label={removeLabel} disabled={removeDisabled} onRemove={onRemove} />}
+        </AttachmentPrimitive.Root>
+        <TooltipContent side="top">
+          <span><AttachmentPrimitive.Name /> · {description}</span>
+          {errorMessage && (
+            <p className="aui-attachment-error-message">{errorMessage}</p>
+          )}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
+
+const AttachmentRemove: FC<{ name: string; label?:string;disabled: boolean; onRemove: () => Promise<void> }> = ({ name,label, disabled, onRemove }) => {
+  return (
+    <AttachmentPrimitive.Remove
+      aria-label={label??`移除附件 ${name}`}
+      disabled={disabled}
+      onClick={(event) => { event.preventDefault(); void onRemove(); }}
+      render={
+        <TooltipIconButton
+          tooltip={label??`移除附件 ${name}`}
+          className="aui-attachment-tile-remove absolute end-1 top-1 size-5 rounded-full bg-black/50! text-white after:absolute after:-inset-1.5 hover:bg-black/70! hover:text-white! active:scale-[0.96] motion-reduce:transition-none"
+          side="top"
+        />
+      }
+    >
+      <XIcon className="aui-attachment-remove-icon size-3 stroke-[2.5]" />
+    </AttachmentPrimitive.Remove>
+  );
+};

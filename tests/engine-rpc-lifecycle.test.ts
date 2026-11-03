@@ -1,0 +1,268 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter, once } from 'node:events';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { CodexEngine } from '../src/engine.js';
+import type { Config } from '../src/config.js';
+
+const config: Config = {
+  workspace: resolve('.codex/scratch'), runtime: resolve('.codex/scratch/rpc-lifecycle-tests'),
+  codexHome: resolve('.codex/scratch/rpc-lifecycle-tests/home'),
+  codexBin: resolve('tests/fixtures/rpc-lifecycle-app-server.mjs'),
+  model: 'silent', requiresOpenaiAuth: false, timeoutMs: 1000, mainTimeoutMs: 1000, stopGraceMs: 100,
+};
+mkdirSync(config.workspace,{recursive:true});
+const options = { cwd: config.workspace, readRoots: [], instructions: 'transport only', tools: [] };
+function peer(role?:'main'|'worker') {
+  const engine = new CodexEngine(config, { ...options,role }, async () => ({}));
+  const sent: {id:number;method:string;params:any}[] = [];
+  engine['send'] = (message: any) => { sent.push(message); };
+  engine.threadId = 'thread';
+  const receive = (message: unknown) => engine['receive'](JSON.stringify(message));
+  const reply = (index: number, result: unknown = {}) => receive({id: sent[index]!.id, result});
+  const event = (method: string, params: any) => receive({method, params: {threadId:'thread', ...params}});
+  return {engine, sent, receive, reply, event};
+}
+
+for(const status of ['completed','failed'])test('Worker '+status+' returns public items before an unrelated background refresh',async()=>{
+ const p=peer('worker');let release!:()=>void;
+ p.engine['refreshBackground']=()=>new Promise<void>(resolve=>{release=resolve;});
+ const work=p.engine.turn('Synthetic return');await flush();
+ await p.reply(0,{turn:{id:'turn',status:'inProgress'}});await flush();
+ await p.event('item/completed',{turnId:'turn',item:{type:'agentMessage',id:'comment',phase:'commentary',text:'Checking synthetic input'}});
+ const final={type:'agentMessage',id:'final',phase:'final_answer',text:'Checked; date remains unknown'};
+ await p.event('item/completed',{turnId:'turn',item:final});
+ await p.event('item/completed',{threadId:'unrelated',turnId:'turn',item:{...final,id:'wrong-thread'}});
+ const summaryOnly={...final,id:'summary-only',text:'The staged file contains the evidence'};
+ const terminal=p.event('turn/completed',{turn:{id:'turn',status,itemsView:'full',items:[final,summaryOnly],...(status==='failed'?{error:{message:'synthetic transport error'}}:{})}});
+ const result=await work;
+ assert.equal(result.status,status);assert.equal(result.messages!.length,3);
+ assert.deepEqual(result.messages!.filter(m=>m.phase==='final_answer').map(m=>m.text),[final.text,summaryOnly.text]);
+ release();await terminal;await p.engine.close();
+});
+async function flush() { await Promise.resolve(); await Promise.resolve(); }
+function observed<T>(work: Promise<T>) {
+  let state = 'pending';
+  const result = work.then(value => { state='resolved'; return value; }, error => {state='rejected'; throw error;});
+  result.catch(() => {});
+  return {result, state: () => state};
+}
+
+for(const role of ['main','worker'] as const)for(const [message,code] of [
+ ['HTTP 403 Forbidden: token quota is not enough, token remain quota: 1, need quota: 10; PRIVATE_PROVIDER_DETAILS','engine_quota_insufficient'],
+ ['HTTP 429: {"error":{"code":"insufficient_quota"}}','engine_quota_insufficient'],
+ ['HTTP 403 Forbidden: token quota is not enough, token remain quota: 401.000000','engine_quota_insufficient'],
+ ['quota cache read failed: available 429.000000','engine_rpc_failed'],
+ ['Insufficient credits','engine_quota_insufficient'],
+ ['当前余额不足','engine_quota_insufficient'],
+ ['429 Too Many Requests','engine_rate_limited'],
+ ['Rate limit reached for tokens per minute','engine_rate_limited'],
+ ['quota cache read failed: PRIVATE_PROVIDER_DETAILS','engine_rpc_failed'],
+ ['401 unauthorized','engine_authentication_failed'],
+] as const)test(role+' classifies native failures without exposing diagnostics or replaying: '+code+' / '+message.slice(0,20),async()=>{
+ const p=peer(role);
+ try{
+  const rpc=observed(p.engine.request('config/read',{}));
+  await p.receive({id:p.sent[0]!.id,error:{message}});
+  await assert.rejects(rpc.result,error=>error instanceof Error&&error.message===code);
+  const turn=p.engine.turn('synthetic');await p.reply(1,{turn:{id:'turn'}});await flush();
+  await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message}}});
+  assert.equal((await turn).errorCode,code);
+  assert.deepEqual(p.sent.map(x=>x.method),['config/read','turn/start']);
+ }finally{await p.engine.close();}
+});
+
+test('Worker close sends EOF before bounded fallback and confirms only actual exit',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const p=peer('worker'),events:string[]=[],child=new EventEmitter() as any;
+ p.engine.pid=9999999;
+ t.mock.method(process,'kill',(pid:number,signal?:string|number)=>{assert.equal(pid,-9999999);events.push(String(signal));return true;});
+ child.stdin={end(){events.push('EOF');}};p.engine['child']=child;
+ const close=p.engine.close();assert.deepEqual(events,['EOF']);
+ t.mock.timers.tick(45000);await flush();assert.equal(child.listenerCount('exit'),1);
+ t.mock.timers.tick(1000);await flush();t.mock.timers.tick(config.stopGraceMs);await flush();t.mock.timers.tick(1000);
+ assert.deepEqual(events,['EOF','SIGTERM','SIGKILL']);
+ assert.equal(await close,false);assert.equal(child.listenerCount('exit'),0);
+});
+test('Worker EOF completion needs no fallback and keeps transport closing fenced',async()=>{
+ const p=peer('worker'),child=new EventEmitter() as any;
+ child.stdin={end(){queueMicrotask(()=>{p.engine['exited']=true;child.emit('exit',0);});}};
+ p.engine['child']=child;assert.equal(await p.engine.close(),true);assert.equal(p.engine.available,false);
+});
+
+test('a terminal checkpoint failure rejects the turn instead of leaving its caller waiting',async()=>{
+ const p=peer('worker'),work=observed(p.engine.turn('Synthetic terminal checkpoint'));
+ try{
+  await flush();await p.reply(0,{turn:{id:'turn',status:'inProgress'}});await flush();
+  p.engine.on('nativeCompleted',()=>{throw Error('synthetic_checkpoint_failed');});
+  await assert.rejects(()=>p.event('turn/completed',{turn:{id:'turn',status:'completed',items:[]}}),/synthetic_checkpoint_failed/);
+  await flush();assert.equal(work.state(),'rejected');
+  await assert.rejects(work.result,/synthetic_checkpoint_failed/);
+ }finally{await p.engine.close();}
+});
+
+test('slow RPC success and native error remain authoritative beyond the former 15 second cutoff', async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  const p=peer();
+  const success=observed(p.engine.request('plugin/install',{}));
+  const failure=observed(p.engine.request('config/read',{}));
+  try {
+    t.mock.timers.tick(15001); await flush();
+    assert.equal(success.state(),'pending'); assert.equal(failure.state(),'pending');
+    await p.receive({id:p.sent[1]!.id,error:{message:'429 native quota details hidden'}});
+    await assert.rejects(failure.result,/^Error: engine_rate_limited$/);
+    await p.reply(0,{installed:true}); assert.deepEqual(await success.result,{installed:true});
+    assert.equal(p.engine['pending'].size,0); assert.equal(p.sent.length,2);
+  } finally {await p.engine.close();}
+});
+
+test('fast OAuth ACK is separate from delayed completion and unrelated concurrent responses', async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  const p=peer(); let completions=0;
+  p.engine.on('oauthCompleted',()=>completions++);
+  const login=p.engine.request('mcpServer/oauth/login',{timeoutSecs:120});
+  await p.reply(0,{authorizationUrl:'synthetic-placeholder',loginId:'login'});
+  assert.equal((await login).loginId,'login'); assert.equal(completions,0);
+  const slow=observed(p.engine.request('plugin/read',{})), fast=p.engine.request('account/read',{});
+  await p.reply(2,{account:null}); assert.deepEqual(await fast,{account:null});
+  t.mock.timers.tick(120001); await flush(); assert.equal(slow.state(),'pending');
+  await p.event('mcpServer/oauthLogin/completed',{success:true}); assert.equal(completions,1);
+  await p.reply(1,{plugin:'synthetic'}); assert.deepEqual(await slow.result,{plugin:'synthetic'});
+  await p.engine.close();
+});
+
+test('lost receipts for mutations stay unknown on disconnect and are never replayed', async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  const p=peer();
+  const operations=['plugin/install','mcpServer/oauth/login','config/batchWrite'].map(method=>observed(p.engine.request(method,{})));
+  try {
+    t.mock.timers.tick(60000); await flush();
+    assert.deepEqual(operations.map(x=>x.state()),['pending','pending','pending']);
+    p.engine['fail'](Error('engine_disconnected'));
+    for(const work of operations)await assert.rejects(work.result,/engine_disconnected/);
+    assert.deepEqual(p.sent.map(x=>x.method),['plugin/install','mcpServer/oauth/login','config/batchWrite']);
+    assert.equal(p.engine['pending'].size,0);
+    await p.reply(0,{installed:true}); // A late receipt cannot revive settled work.
+    await assert.rejects(p.engine.request('account/read',{}),/engine_disconnected/);
+    assert.equal(p.sent.length,3);
+  } finally {await p.engine.close();}
+});
+
+test('send failure, duplicate response and close clean pending and refuse further requests', async () => {
+  const p=peer(); const first=p.engine.request('first',{});
+  await p.reply(0,{value:1}); await p.reply(0,{value:2}); assert.equal((await first).value,1);
+  const second=observed(p.engine.request('second',{}));
+  await p.engine.close(); await assert.rejects(second.result,/engine_closed/);
+  await assert.rejects(p.engine.request('after-close',{}),/engine_closed/); assert.equal(p.sent.length,2);
+  assert.equal(p.engine['pending'].size,0);
+  const broken=new CodexEngine(config,options,async()=>({}));
+  await assert.rejects(broken.request('before-start',{}),/engine_disconnected/); assert.equal(broken['pending'].size,0);
+});
+
+test('interrupt without native confirmation remains unconfirmed and close settles both pending calls', async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  const p=peer();
+  const turn=observed(p.engine.turn('synthetic')); await p.reply(0,{turn:{id:'turn'}}); await flush();
+  const stopped=p.engine.interrupt(); t.mock.timers.tick(config.stopGraceMs); assert.equal(await stopped,false);
+  assert.equal(turn.state(),'pending'); assert.equal(p.engine['pending'].size,1);
+  await p.engine.close(); await assert.rejects(turn.result,/engine_closed/); assert.equal(p.engine['pending'].size,0);
+});
+
+test('native retry notifications do not retry or finish the host turn before terminal completion', async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  const p=peer(); const turn=observed(p.engine.turn('synthetic'));
+  await p.event('turn/started',{turn:{id:'turn',status:'inProgress'}});
+  t.mock.timers.tick(15001); await flush(); assert.equal(turn.state(),'pending');
+  await p.reply(0,{turn:{id:'turn'}});
+  await p.event('error',{turnId:'turn',willRetry:true,error:{message:'retry native'}});
+  t.mock.timers.tick(60000); await flush(); assert.equal(turn.state(),'pending'); assert.equal(p.sent.length,1);
+  await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'429 exhausted'}}});
+  assert.equal((await turn.result).errorCode,'engine_rate_limited'); assert.equal(p.sent.length,1);
+  await p.engine.close();
+});
+
+test('silent initialize terminates its process within the existing handshake boundary', async t => {
+  const engine=new CodexEngine(config,options,async()=>({}));
+  t.mock.timers.enable({apis:['setTimeout']});
+  const start=observed(engine.start());
+  try {
+    assert.equal(engine['pending'].size,1);
+    t.mock.timers.tick(15000); await flush();
+    // Let actual process exit settle close(), while advancing the bounded fallback too.
+    t.mock.timers.tick(config.stopGraceMs+1000);
+    await assert.rejects(start.result,/engine_initialize_timeout/);
+    assert.equal(engine['pending'].size,0); assert.equal(engine['closing'],true);
+  } finally {assert.equal(await engine.close(),true);}
+});
+
+test('stdout EOF rejects pending even if the process stays alive', async () => {
+  const engine=new CodexEngine({...config,model:'eof'},options,async()=>({}));
+  try {await assert.rejects(engine.start(),/engine_disconnected/); assert.equal(engine['pending'].size,0);}
+  finally {assert.equal(await engine.close(),true);}
+});
+
+test('unconfirmed process stop is bounded, clears pending and removes exit waiters', async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  const p=peer(); const child=new EventEmitter() as any;
+  p.engine['child']=child; // No pid: no real process is signalled by this synthetic boundary test.
+  const work=observed(p.engine.request('plugin/install',{})); const close=p.engine.close();
+  t.mock.timers.tick(config.stopGraceMs); await flush(); t.mock.timers.tick(1000);
+  assert.equal(await close,false); await assert.rejects(work.result,/engine_closed/);
+  assert.equal(child.listenerCount('exit'),0); assert.equal(p.engine['pending'].size,0);
+});
+
+test('compaction waits beyond 15 seconds for its own native item and ignores other turns', async t => {
+  t.mock.timers.enable({apis:['setTimeout']}); const p=peer();
+  const compact=observed(p.engine.compact()); await p.reply(0);
+  await p.event('turn/started',{turn:{id:'compact-turn'}});
+  await p.event('item/started',{turnId:'compact-turn',item:{type:'contextCompaction',id:'compact-item'}});
+  await assert.rejects(p.engine.turn('conflict'),/engine_turn_busy/);
+  await assert.rejects(p.engine.compact(),/engine_compact_not_applicable/);
+  t.mock.timers.tick(60000); await flush(); assert.equal(compact.state(),'pending');
+  await p.event('item/completed',{turnId:'other-turn',item:{type:'contextCompaction',id:'other-item'}});
+  await flush(); assert.equal(compact.state(),'pending');
+  await p.event('error',{turnId:'compact-turn',willRetry:true,error:{message:'native retry'}});
+  await p.event('item/completed',{turnId:'compact-turn',item:{type:'contextCompaction',id:'compact-item'}});
+  await compact.result; assert.equal(p.sent.length,1); await p.engine.close();
+});
+
+test('compaction terminal failure, interruption, missing item and disconnect all settle without listeners leaking', async () => {
+  for(const outcome of ['failed','interrupted','completed','disconnect','close']) {
+    const p=peer(); const work=observed(p.engine.compact()); await p.reply(0);
+    await p.event('turn/started',{turn:{id:'compact-turn'}});
+    if(outcome==='disconnect')p.engine['fail'](Error('engine_disconnected'));
+    else if(outcome==='close')await p.engine.close();
+    else await p.event('turn/completed',{turn:{id:'compact-turn',status:outcome,...(outcome==='failed'?{error:{message:'401 hidden'}}:{})}});
+    const code=outcome==='failed'?'engine_authentication_failed':outcome==='interrupted'?'engine_compact_interrupted':outcome==='completed'?'engine_compact_unconfirmed':outcome==='close'?'engine_closed':'engine_disconnected';
+    await assert.rejects(work.result,new RegExp(code)); assert.equal(p.engine.listenerCount('contextCompaction'),0);
+    await p.engine.close();
+  }
+});
+
+test('compaction interrupt targets the native compact turn and does not claim confirmation on ACK', async () => {
+  const p=peer(); const work=observed(p.engine.compact()); await p.reply(0);
+  await p.event('turn/started',{turn:{id:'compact-turn'}});
+  const interrupted=p.engine.interrupt();
+  assert.equal(p.sent[1]!.method,'turn/interrupt'); assert.equal(p.sent[1]!.params.turnId,'compact-turn');
+  await p.reply(1); assert.equal(await interrupted,false); assert.equal(work.state(),'pending');
+  await p.event('turn/completed',{turn:{id:'compact-turn',status:'interrupted'}});
+  await assert.rejects(work.result,/engine_compact_interrupted/); await p.engine.close();
+});
+
+test('compaction completion before ACK remains successful only after the request succeeds', async () => {
+  const p=peer(); const work=observed(p.engine.compact());
+  await p.event('item/started',{turnId:'compact-turn',item:{type:'contextCompaction',id:'item'}});
+  await p.event('item/completed',{turnId:'compact-turn',item:{type:'contextCompaction',id:'item'}});
+  await flush(); assert.equal(work.state(),'pending');
+  await p.receive({id:p.sent[0]!.id,error:{message:'permissions denied'}});
+  await assert.rejects(work.result,/engine_permission_failed/); await p.engine.close();
+});
+
+// Exercise the real stdio/exit path in addition to controlled protocol delivery.
+test('real child exit rejects active pending and cleans the request map', async () => {
+  const engine=new CodexEngine({...config,model:'exit'},options,async()=>({}));
+  const exit=once(engine,'exit');
+  try {await assert.rejects(engine.start(),/engine_disconnected/); await exit; assert.equal(engine['pending'].size,0);}
+  finally {assert.equal(await engine.close(),true);}
+});

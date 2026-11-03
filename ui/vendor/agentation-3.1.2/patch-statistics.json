@@ -1,0 +1,16 @@
+{
+  "primaryFiles": [
+    "index.mjs",
+    "index.d.ts"
+  ],
+  "hunks": 26,
+  "addedLines": 93,
+  "removedLines": 17,
+  "esmDeclarationMirror": "index.d.mts is an exact copy of patched index.d.ts",
+  "upstreamEsmBytes": 749068,
+  "patchedEsmBytes": 752970,
+  "upstreamEsmSha256": "1a4d069438c9f218d20eab31150e5c2b1c6ef05c526135bd10dd492950023b1e",
+  "patchedEsmSha256": "2cf30bd06dc8819541f91e0efd1f56144d2ffdf3d319457420d96b29c8952946",
+  "upstreamTypesSha256": "ad53930a48adf24d58dd40e6d469c2e54f8133c619e490af9a4a77e84c78b438",
+  "patchedTypesSha256": "b37ba49827a64f25f7510bf744dcf10456d4656cd22cd3c56d47e2ac235e0949"
+}

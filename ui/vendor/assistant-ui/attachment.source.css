@@ -1,0 +1,29 @@
+@import "tailwindcss" source(none);
+@import "../task-status/tw-animate.css";
+@source "./attachment.tsx";
+@source "./attachment-avatar.tsx";
+@source "./attachment-tooltip.tsx";
+@source "./attachment-dialog.tsx";
+@source "./attachment-icon-button.tsx";
+@source "../../homer-attachments.tsx";
+@theme inline {
+ --color-muted-foreground:var(--muted);
+ --color-background:var(--surface);
+ --color-foreground:var(--ink);
+ --color-popover:var(--surface);
+ --color-popover-foreground:var(--ink);
+ --color-muted:var(--soft);
+ --color-border:var(--line);
+ --color-ring:var(--focus);
+ --color-destructive:var(--error);
+}
+/* Host accessibility and containment; tile geometry comes from upstream. */
+.aui-composer-attachments { min-width:0;padding:0;flex-shrink:0; }
+.aui-attachment-root { flex-shrink:0; }
+.aui-attachment-tile-remove:focus-visible,
+.aui-attachment-tile:focus-visible { outline:2px solid var(--focus);outline-offset:2px; }
+.aui-attachment-preview-dialog-content [data-slot="dialog-close"] svg { width:16px;height:16px; }
+/* Contain the official 28px close button even for a 4px source image. */
+.aui-attachment-preview { min-height:28px; }
+[data-slot="tooltip-content"] { max-width:min(20rem,calc(100vw - 16px));overflow-wrap:anywhere; }
+[data-slot="dialog-close"]:focus-visible { outline:2px solid var(--focus);outline-offset:2px; }

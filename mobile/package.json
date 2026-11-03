@@ -1,0 +1,35 @@
+{
+  "name": "homer-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test connection.test.mjs local-network.test.mjs rebind.test.mjs",
+    "bundle": "npm run build:ui && expo export --platform ios --platform android --max-workers 1",
+    "build:ui": "node ../scripts/build-mobile-ui.mjs"
+  },
+  "dependencies": {
+    "expo": "58.0.21",
+    "expo-build-properties": "58.0.11",
+    "expo-camera": "58.0.14",
+    "expo-crypto": "58.0.7",
+    "expo-device": "~58.0.5",
+    "expo-file-system": "58.0.13",
+    "expo-secure-store": "58.0.2",
+    "expo-sharing": "58.0.21",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "5.10.1",
+    "react-native-webview": "14.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "esbuild": "^0.28.2",
+    "react-test-renderer": "19.3.0",
+    "typescript": "5.9.3"
+  }
+}

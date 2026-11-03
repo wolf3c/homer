@@ -1,0 +1,14 @@
+/* Scoped equivalents of upstream ghostButton, size-7 and iconSwap utilities.
+   Deliberate host adaptations: existing theme roles. */
+.aui-message-actions{display:flex;align-items:center;gap:4px}
+.aui-message-actions .aui-message-action{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:9999px;background:transparent;color:var(--muted);outline:none;transition:background-color 150ms,color 150ms,scale 150ms}
+.aui-message-actions .aui-message-action:hover{background:var(--soft);color:var(--ink)}
+.aui-message-actions .aui-message-action:active{scale:.96}
+.aui-message-actions .aui-message-action:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.aui-message-actions .aui-message-action:disabled{cursor:default;opacity:.6;scale:1}
+.aui-message-actions .aui-message-action[aria-busy=true]{cursor:wait}
+.aui-message-actions .aui-message-action svg{width:14px;height:14px}
+.aui-message-actions .aui-message-action-icon{grid-area:1/1;transition:opacity 200ms cubic-bezier(.2,0,0,1),scale 200ms cubic-bezier(.2,0,0,1),filter 200ms cubic-bezier(.2,0,0,1)}
+.aui-message-actions .is-in{scale:1;opacity:1;filter:blur(0)}
+.aui-message-actions .is-out{scale:.25;opacity:0;filter:blur(4px)}
+@media(prefers-reduced-motion:reduce){.aui-message-actions .aui-message-action,.aui-message-actions .aui-message-action-icon{transition:none}}

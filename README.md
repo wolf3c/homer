@@ -17,7 +17,7 @@
 
 电脑前展开工作，离开电脑后用手机接着交代、查看进展、收取成果，是荷马的多端使用方向。
 
-当前首发源码候选以 macOS / Apple Silicon 桌面端为范围。Windows、iPhone、Android 及跨设备体验仍需分别验证，首页设备展示为示意。
+当前源码以 macOS / Apple Silicon 桌面端为主要开发与验证范围，同时包含移动端工程。Windows、iPhone、Android 及跨设备体验仍需分别验证，首页设备展示为示意。
 
 ## 模型怎么用，由你选择
 
@@ -32,8 +32,8 @@
 
 ## 当前进展与入口
 
-**仓库目前仅公开文档。** 源码将在验收修复与模型接入完成后另行上传，正式安装包尚未发布；自有代码许可证和第三方授权仍在准备。
+**源码现已公开，当前为开发预览，正式安装包尚未发布。** 自有代码采用 [Apache-2.0](LICENSE)，[第三方许可](THIRD_PARTY_NOTICES.md)单独适用；Agentation 额外授权询问仍待答复。已知检查失败与验证边界见[当前源码状态](docs/public/getting-started.md#当前源码状态)。
 
-- [构建与运行指南](docs/public/getting-started.md)：供源码发布后的开发者使用。
+- [构建与运行指南](docs/public/getting-started.md)：开发者环境、运行方式和已知限制。
 - [费用与数据说明](docs/public/data-and-costs.md)：了解模型选择、费用和资料处理。
 - [GitHub Issues](https://github.com/wolf3c/homer/issues)：提问与反馈，请使用可公开的虚构材料。

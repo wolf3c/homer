@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "platform": "darwin-arm64",
+  "codexVersion": "0.163.0",
+  "node": {
+    "version": "22.22.0",
+    "url": "https://nodejs.org/dist/v22.22.0/node-v22.22.0-darwin-arm64.tar.gz",
+    "sha256": "5ed4db0fcf1eaf84d91ad12462631d73bf4576c1377e192d222e48026a902640"
+  },
+  "python": {
+    "version": "3.12.12+20251014",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20251014/cpython-3.12.12%2B20251014-aarch64-apple-darwin-install_only.tar.gz",
+    "sha256": "6ceba34fe78802853a30bde6f303a0a54f71f6ab07a673da34e90c0aa06c786e",
+    "licenseBundle": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20251014/cpython-3.12.12%2B20251014-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
+      "sha256": "7554ad3ba70c19a8c1793cbcb90179b6880ff271dd19e933c1e775b8339d9c15"
+    }
+  },
+  "chromium": {
+    "version": "141.0.7390.37",
+    "revision": "1194",
+    "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1194/chromium-mac-arm64.zip",
+    "sha256": "bb13e2bab465de3305277559395805c19ef8f221420e9a7d830a149c8e4d9e3d"
+  },
+  "desktop": {
+    "version": "5.1",
+    "url": "https://api.github.com/repos/BlueM/cliclick/releases/assets/74673449?download=1",
+    "sha256": "710910fd2dade6a3b5889594bfc019e7d4c2beee09fd777503e71ea82acc91bc"
+  }
+}

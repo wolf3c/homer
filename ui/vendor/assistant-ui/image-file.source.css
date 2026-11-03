@@ -1,0 +1,26 @@
+@import "tailwindcss" source(none);
+@import "../task-status/tw-animate.css";
+@source "./image.tsx";
+@source "./file.tsx";
+@source "../../file-list.tsx";
+@theme inline {
+ --color-muted-foreground:var(--muted);
+ --color-background:var(--surface);
+ --color-foreground:var(--ink);
+ --color-muted:var(--soft);
+ --color-border:var(--line);
+ --color-accent:var(--soft-hover);
+ --color-accent-foreground:var(--ink);
+}
+/* Host focus, exact-preview containment and selection only. */
+[data-slot="file-root"] { max-width:100%;min-width:0; }
+.homer-media-file { width:100%; }
+.file-list-open:focus-visible,[data-slot="file-download"]:focus-visible,
+.aui-image-zoom-trigger:focus-visible,[data-slot="image-zoom-close"]:focus-visible {
+ outline:2px solid var(--focus);outline-offset:2px;
+}
+.file-list-open[aria-current="true"] [data-slot="file-root"] { background:var(--soft); }
+@media(prefers-reduced-motion:reduce) {
+ [data-slot="image-zoom-overlay"],[data-slot="image-zoom-content"],
+ [data-slot="image-preview-loading"] svg { animation:none; }
+}

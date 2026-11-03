@@ -1,0 +1,341 @@
+/* Generated from pinned official utilities. Run node scripts/build-run-activity-css.mjs --quote. */
+/*! tailwindcss v4.1.14 | MIT License | https://tailwindcss.com */
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) {
+    --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+    --spacing: 0.25rem;
+    --text-sm: 0.875rem;
+    --text-sm--line-height: calc(1.25 / 0.875);
+    --radius-sm: 0.25rem;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --default-transition-duration: 150ms;
+    --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    --default-font-family: var(--font-sans);
+    --default-mono-font-family: var(--font-mono);
+  }
+@layer base {
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) *, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(*), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::after, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::after, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::before, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::before, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::backdrop, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::backdrop, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::file-selector-button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::file-selector-button {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) {
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+    font-family: var(--default-font-family, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+    font-feature-settings: var(--default-font-feature-settings, normal);
+    font-variation-settings: var(--default-font-variation-settings, normal);
+    -webkit-tap-highlight-color: transparent;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) hr, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(hr) {
+    height: 0;
+    color: inherit;
+    border-top-width: 1px;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) abbr:where([title]), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(abbr:where([title])) {
+    -webkit-text-decoration: underline dotted;
+    text-decoration: underline dotted;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) h1, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(h1), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) h2, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(h2), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) h3, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(h3), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) h4, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(h4), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) h5, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(h5), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) h6, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(h6) {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) a, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(a) {
+    color: inherit;
+    -webkit-text-decoration: inherit;
+    text-decoration: inherit;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) b, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(b), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) strong, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(strong) {
+    font-weight: bolder;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) code, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(code), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) kbd, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(kbd), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) samp, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(samp), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) pre, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(pre) {
+    font-family: var(--default-mono-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-feature-settings: var(--default-mono-font-feature-settings, normal);
+    font-variation-settings: var(--default-mono-font-variation-settings, normal);
+    font-size: 1em;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) small, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(small) {
+    font-size: 80%;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) sub, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(sub), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) sup, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(sup) {
+    font-size: 75%;
+    line-height: 0;
+    position: relative;
+    vertical-align: baseline;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) sub, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(sub) {
+    bottom: -0.25em;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) sup, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(sup) {
+    top: -0.5em;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) table, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(table) {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) :-moz-focusring, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(:-moz-focusring) {
+    outline: auto;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) progress, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(progress) {
+    vertical-align: baseline;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) summary, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(summary) {
+    display: list-item;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ol, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(ol), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ul, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(ul), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) menu, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(menu) {
+    list-style: none;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) img, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(img), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) svg, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(svg), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) video, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(video), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) canvas, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(canvas), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) audio, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(audio), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) iframe, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(iframe), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) embed, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(embed), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) object, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(object) {
+    display: block;
+    vertical-align: middle;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) img, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(img), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) video, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(video) {
+    max-width: 100%;
+    height: auto;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(button), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) input, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(input), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) select, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(select), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) optgroup, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(optgroup), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) textarea, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(textarea), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::file-selector-button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::file-selector-button {
+    font: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    border-radius: 0;
+    background-color: transparent;
+    opacity: 1;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) :where(select:is([multiple], [size])) optgroup, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(:where(select:is([multiple], [size])) optgroup) {
+    font-weight: bolder;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) :where(select:is([multiple], [size])) optgroup option, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(:where(select:is([multiple], [size])) optgroup option) {
+    padding-inline-start: 20px;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::file-selector-button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::file-selector-button {
+    margin-inline-end: 4px;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::placeholder, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::placeholder {
+    opacity: 1;
+  }
+  @supports (not (-webkit-appearance: -apple-pay-button))  or (contain-intrinsic-size: 1px) {
+    :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::placeholder, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::placeholder {
+      color: currentcolor;
+      @supports (color: color-mix(in lab, red, red)) {
+        color: color-mix(in oklab, currentcolor 50%, transparent);
+      }
+    }
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) textarea, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(textarea) {
+    resize: vertical;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-search-decoration, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-search-decoration {
+    -webkit-appearance: none;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-date-and-time-value, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-date-and-time-value {
+    min-height: 1lh;
+    text-align: inherit;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit {
+    display: inline-flex;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-fields-wrapper, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-year-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-year-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-month-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-month-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-day-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-day-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-hour-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-hour-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-minute-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-minute-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-second-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-second-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-millisecond-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-millisecond-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-datetime-edit-meridiem-field, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-datetime-edit-meridiem-field {
+    padding-block: 0;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-calendar-picker-indicator, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-calendar-picker-indicator {
+    line-height: 1;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) :-moz-ui-invalid, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(:-moz-ui-invalid) {
+    box-shadow: none;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(button), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) input:where([type="button"], [type="reset"], [type="submit"]), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(input:where([type="button"], [type="reset"], [type="submit"])), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::file-selector-button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::file-selector-button {
+    appearance: button;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-inner-spin-button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-inner-spin-button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::-webkit-outer-spin-button, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::-webkit-outer-spin-button {
+    height: auto;
+  }
+  :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) [hidden]:where(:not([hidden="until-found"])), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is([hidden]:where(:not([hidden="until-found"]))) {
+    display: none !important;
+  }
+}
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .mx-3, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.mx-3) {
+    margin-inline: calc(var(--spacing) * 3);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .mt-0\.5, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.mt-0\.5) {
+    margin-top: calc(var(--spacing) * 0.5);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .mt-2, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.mt-2) {
+    margin-top: calc(var(--spacing) * 2);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .mb-2, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.mb-2) {
+    margin-bottom: calc(var(--spacing) * 2);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .line-clamp-2, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.line-clamp-2) {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .line-clamp-none, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.line-clamp-none) {
+    overflow: visible;
+    display: block;
+    -webkit-box-orient: horizontal;
+    -webkit-line-clamp: unset;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .flex, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.flex) {
+    display: flex;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .size-3, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.size-3) {
+    width: calc(var(--spacing) * 3);
+    height: calc(var(--spacing) * 3);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .size-3\.5, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.size-3\.5) {
+    width: calc(var(--spacing) * 3.5);
+    height: calc(var(--spacing) * 3.5);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .min-w-0, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.min-w-0) {
+    min-width: calc(var(--spacing) * 0);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .flex-1, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.flex-1) {
+    flex: 1;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .shrink-0, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.shrink-0) {
+    flex-shrink: 0;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .items-center, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.items-center) {
+    align-items: center;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .items-start, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.items-start) {
+    align-items: flex-start;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .gap-1, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.gap-1) {
+    gap: calc(var(--spacing) * 1);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .gap-1\.5, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.gap-1\.5) {
+    gap: calc(var(--spacing) * 1.5);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .gap-2, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.gap-2) {
+    gap: calc(var(--spacing) * 2);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .rounded-lg, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.rounded-lg) {
+    border-radius: var(--radius-lg);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .rounded-md, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.rounded-md) {
+    border-radius: var(--radius-md);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .rounded-sm, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.rounded-sm) {
+    border-radius: var(--radius-sm);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .border, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.border) {
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .bg-muted\/60, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.bg-muted\/60) {
+    background-color: var(--soft);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--soft) 60%, transparent);
+    }
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .bg-popover, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.bg-popover) {
+    background-color: var(--surface);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .p-0\.5, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.p-0\.5) {
+    padding: calc(var(--spacing) * 0.5);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .px-1, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.px-1) {
+    padding-inline: calc(var(--spacing) * 1);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .px-2\.5, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.px-2\.5) {
+    padding-inline: calc(var(--spacing) * 2.5);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .px-3, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.px-3) {
+    padding-inline: calc(var(--spacing) * 3);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .py-1, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.py-1) {
+    padding-block: calc(var(--spacing) * 1);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .py-2, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.py-2) {
+    padding-block: calc(var(--spacing) * 2);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .text-sm, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.text-sm) {
+    font-size: var(--text-sm);
+    line-height: var(--tw-leading, var(--text-sm--line-height));
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .whitespace-pre-wrap, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.whitespace-pre-wrap) {
+    white-space: pre-wrap;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .text-muted-foreground, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.text-muted-foreground) {
+    color: var(--muted);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .text-muted-foreground\/60, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.text-muted-foreground\/60) {
+    color: var(--muted);
+    @supports (color: color-mix(in lab, red, red)) {
+      color: color-mix(in oklab, var(--muted) 60%, transparent);
+    }
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .text-muted-foreground\/70, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.text-muted-foreground\/70) {
+    color: var(--muted);
+    @supports (color: color-mix(in lab, red, red)) {
+      color: color-mix(in oklab, var(--muted) 70%, transparent);
+    }
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .text-muted-foreground\/80, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.text-muted-foreground\/80) {
+    color: var(--muted);
+    @supports (color: color-mix(in lab, red, red)) {
+      color: color-mix(in oklab, var(--muted) 80%, transparent);
+    }
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .text-popover-foreground, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.text-popover-foreground) {
+    color: var(--ink);
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .italic, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.italic) {
+    font-style: italic;
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .transition-colors, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.transition-colors) {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .hover\:bg-accent, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.hover\:bg-accent) {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--soft-hover);
+      }
+    }
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) .hover\:text-foreground, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(.hover\:text-foreground) {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--ink);
+      }
+    }
+  }
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) [data-slot="composer-quote-dismiss"]:focus-visible, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is([data-slot="composer-quote-dismiss"]:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) [data-slot="selection-toolbar"], :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is([data-slot="selection-toolbar"]) {
+  --radius-lg: .625rem;
+  --radius-md: calc(.625rem - 2px);
+  border-color: var(--line);
+}
+:is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) [data-slot="selection-toolbar-quote"]:focus-visible, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is([data-slot="selection-toolbar-quote"]:focus-visible) {
+  outline: revert;
+  outline-offset: revert;
+}
+@property --tw-border-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+    :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) *, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is(*), :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::before, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::before, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::after, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::after, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) ::backdrop, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"])::backdrop {
+      --tw-border-style: solid;
+    }
+  }
