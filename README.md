@@ -1,5 +1,7 @@
 # 荷马 Homer
 
+**简体中文** | [English](README.en.md)
+
 > 统驭 AI 军团，帮你搞定一切。
 
 [产品首页](https://super-tree.com/homer)
