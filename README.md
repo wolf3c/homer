@@ -1,3 +1,5 @@
+<img src="assets/readme/homer-logo.png" alt="Homer logo" width="80" />
+
 # Homer
 
 **English** | [简体中文](README.zh-CN.md)
@@ -5,6 +7,8 @@
 > Command an army of AI assistants. Get things done.
 
 [Product website](https://super-tree.com/homer)
+
+![Artwork from the Homer homepage concept](assets/readme/home-hero.png)
 
 Talk to Homer and hand off multiple tasks as they come up. Homer coordinates AI assistants, reviews their work, and keeps your goals moving forward. Add context or request changes along the way, and Homer coordinates the next steps.
 
@@ -14,6 +18,10 @@ Talk to Homer and hand off multiple tasks as they come up. Homer coordinates AI 
 - Let AI assistants work together while Homer coordinates progress, reviews results, and brings them back to you.
 - Add information or change direction as work progresses, then refine the results.
 - Review files and web pages, and annotate exactly what needs to change.
+
+![Animated illustration of Homer coordinating tasks, assistants, review, and delivery](assets/readme/homer-workflow.gif)
+
+Workflow illustration: assign multiple tasks → assistants collaborate → Homer reviews and delivers. Demo text is in Chinese.
 
 For example, give Homer a few project documents and ask it to summarize requirements, identify missing information, and prepare an action plan. Then revise the plan with your feedback. This illustrates an intended workflow; important conclusions and final results still need your review.
 
