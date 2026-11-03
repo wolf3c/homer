@@ -68,7 +68,7 @@ npm install --prefix .codex/private/codex-cli @openai/codex@0.163.0
 npm start -- --config .codex/private/homer.config.json
 ```
 
-启动后使用[第一个任务](using-homer.md#第一个任务)检查交付并尝试修订；输入 `/quit` 正常退出。不要复制他人的认证、数据库或聊天记录来初始化。ChatGPT 套餐的对外接入条件仍待确认。
+启动后即可交办工作，详见[使用指南](using-homer.md)；输入 `/quit` 正常退出。不要复制他人的认证、数据库或聊天记录来初始化。ChatGPT 套餐的对外接入条件仍待确认。
 
 ## 本地 Web 与桌面端
 

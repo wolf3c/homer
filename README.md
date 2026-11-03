@@ -4,57 +4,32 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-> Command an army of AI assistants. Get things done.
+Homer coordinates AI assistants to carry out your tasks, reviews their work, and delivers the results. Give instructions, add context, and request changes in one conversation.
 
-[Product website](https://super-tree.com/homer)
+## Install and start
 
-![Artwork from the Homer homepage concept](assets/readme/home-hero.png)
+**Desktop installers are being prepared.** Download links and installation steps will be added after the packages are published and verified.
 
-Talk to Homer and hand off multiple tasks as they come up. Homer coordinates AI assistants, reviews their work, and keeps your goals moving forward. Add context or request changes along the way, and Homer coordinates the next steps.
+Developers can [build and run from source](docs/public/getting-started.en.md) now. This is a development preview with [known limitations](docs/public/getting-started.en.md#source-preview-status).
 
-## Start using Homer
+Once running, connect an available model service, describe what you want done, and provide the relevant materials. Answer questions and request changes in the same conversation. See the [user guide](docs/public/using-homer.en.md).
 
-**Desktop installers are being prepared.** Download links will appear here after the packages have been published and their downloads and installations verified. Platform availability will follow the validated releases.
+## Models and costs
 
-1. **Prepare:** read the [user guide](docs/public/using-homer.en.md) for installation status, model requirements, and costs.
-2. **Run:** developers can use the [source setup guide](docs/public/getting-started.en.md) today; it documents the preview's known limitations.
-3. **Do your first task:** copy the [sample task](docs/public/using-homer.en.md#your-first-task), review the delivered files, and request a revision.
+The client is planned to be free; model usage is billed separately. Homer's optional pay-as-you-go service and access through your ChatGPT plan are being prepared. Availability and eligibility remain to be confirmed. See [Costs and data](docs/public/data-and-costs.en.md).
 
-## You set the goal. Your AI team gets to work.
-
-- Assign multiple tasks in one conversation, with less repeated context across separate chats.
-- Let AI assistants work together while Homer coordinates progress, reviews results, and brings them back to you.
-- Add information or change direction as work progresses, then refine the results.
-- Review files and web pages, and annotate exactly what needs to change.
+## How Homer works
 
 ![Animated illustration of Homer coordinating tasks, assistants, review, and delivery](assets/readme/homer-workflow.gif)
 
-Workflow illustration: assign multiple tasks → assistants collaborate → Homer reviews and delivers. Demo text is in Chinese.
+Workflow illustration; demo text is in Chinese.
 
-For example, give Homer a few project documents and ask it to summarize requirements, identify missing information, and prepare an action plan. Then revise the plan with your feedback. This illustrates an intended workflow; important conclusions and final results still need your review.
+![Artwork from the Homer homepage concept](assets/readme/home-hero.png)
 
-## Keep work moving, wherever you are
+## Links and license
 
-Start work at your computer, then use your phone to give further instructions, check progress, and receive results. This is Homer's direction for working across devices.
+- [Website](https://super-tree.com/homer)
+- [User guide](docs/public/using-homer.en.md) · [Source setup](docs/public/getting-started.en.md)
+- [Report a problem](https://github.com/wolf3c/homer/issues): exclude credentials and private materials.
 
-The current source primarily targets development and validation on macOS / Apple Silicon desktops and also includes the mobile project. Windows, iPhone, Android, and cross-device experiences each require separate validation. Devices shown on the website are illustrative.
-
-## Choose how you use models
-
-The client is planned to be free, with model usage billed separately:
-
-| Option | Details |
-| --- | --- |
-| Homer model service | An optional pay-as-you-go service with credits purchased as needed. Pricing and availability will be confirmed at launch. |
-| Your ChatGPT plan | Planned access to an existing plan through Codex. The integration method and eligibility remain to be confirmed. |
-
-Tasks may send your materials to the selected model or tool service. See [Costs and data](docs/public/data-and-costs.en.md) for the boundaries.
-
-## Status and resources
-
-**The source is public as a development preview. Official installers have not been released.** Homer's own code uses [Apache-2.0](LICENSE); [third-party licenses](THIRD_PARTY_NOTICES.md) apply separately. An additional permission inquiry for Agentation is still awaiting a reply. Known check failures and validation limits are documented in [Current source status](docs/public/getting-started.en.md#source-preview-status).
-
-- [User guide](docs/public/using-homer.en.md): installation status, your first task, revisions, and troubleshooting.
-- [Build and run guide](docs/public/getting-started.en.md): developer setup, usage, and known limitations.
-- [Costs and data](docs/public/data-and-costs.en.md): model options, fees, and how materials are handled.
-- [GitHub Issues](https://github.com/wolf3c/homer/issues): questions and feedback. Use fictional examples that are safe to publish.
+Homer's own code uses [Apache-2.0](LICENSE). [Third-party licenses](THIRD_PARTY_NOTICES.md) apply separately; the additional permission inquiry for Agentation is awaiting a reply.

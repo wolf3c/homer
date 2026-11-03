@@ -18,53 +18,12 @@ Developers willing to configure their environment can follow the [source setup g
 
 See [Costs and data](data-and-costs.en.md) for details.
 
-## Your first task
+## Give Homer a task
 
-Use this planning task without downloading extra materials. Everything in the brief is fictional; paste it into your conversation with Homer:
-
-```text
-Organize assistants to prepare a launch plan for an English product page.
-Review their work before delivering the results.
-
-Brief: We are a two-person team building a project handoff tool for freelancers.
-The only confirmed features are task lists, file attachments, and review comments.
-We want to prepare an English product page within two weeks.
-The target country, pricing, budget, and individual responsibilities are undecided.
-This task is planning only; do not purchase anything or publish externally.
-
-Deliver three Markdown files:
-1. requirements.md: known requirements, scope, and acceptance criteria.
-2. questions.md: missing information and decisions I need to make.
-3. plan.md: a two-week plan using relative days, dependencies, and risks.
-
-Mark missing information as "To confirm". Do not invent market data or feedback.
-Ask me first if any question must be answered before proceeding.
-When finished, tell me where the files are and summarize each one.
-```
-
-This is a sample request for getting started, not a completed real-model acceptance case. It carries no fixed time or cost promise.
-
-## Answer questions, inspect results, and revise
-
-Answer important questions in the same conversation. CLI users should keep the interactive session open so they can respond.
-
-Open the actual delivered files and check:
-
-- All three files exist, open correctly, and contain content.
-- Requirements reflect the brief and unknowns are marked for confirmation.
-- The plan identifies dependencies, sequence, and decisions you need to make.
-- Claims, market data, or customer feedback have not been invented.
-
-Then request a specific revision in the same conversation:
-
-```text
-Start with English-speaking users only. Assign copywriting to one person and
-page production to the other. Finish the draft in week one, then review and
-revise in week two. Keep the remaining unknowns marked for confirmation.
-Check all three files for consistency and deliver the revised files.
-```
-
-Use annotations where the preview supports them, or name the file, section, and desired change in the conversation. Accept the delivered files based on their content. Review the final content and permissions before using it externally.
+1. Describe the result you want and any constraints, such as a deadline or output format.
+2. Provide the relevant materials and grant access to the files or tools needed for the task.
+3. Answer questions in the same conversation. Keep CLI sessions open while work is in progress.
+4. Open the delivered results and request changes in the conversation, or annotate them where supported.
 
 ## Troubleshooting
 
@@ -72,7 +31,7 @@ Use annotations where the preview supports them, or name the file, section, and 
 | --- | --- |
 | No installer | Packages are still being prepared. Developers can use the source guide; avoid installers from unverified sources. |
 | Model connection or authentication fails | Check the active configuration, service eligibility, and balance. Source users must check the dedicated Codex Home or key environment variable. Do not copy another application's credentials. |
-| An attachment cannot be read | Try the plain-text example first, then prepare the optional document or media tools in the source guide. An upload alone does not prove successful parsing. |
+| An attachment cannot be read | Check the file format and prepare the relevant document or media tools in the source guide. An upload alone does not prove successful parsing. |
 | A task is waiting for input | Answer the question in the same session instead of repeatedly submitting the task. |
 | Files are missing or incomplete | Name the missing files, observations, and acceptance criteria; ask Homer to complete the delivery. |
 | Ending a CLI session | Enter `/quit`. Exiting stops execution; keep the interactive session open when you need to answer questions. |

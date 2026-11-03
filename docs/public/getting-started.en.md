@@ -59,7 +59,7 @@ After checking configuration, authentication, permissions, and [costs](data-and-
 npm start -- --config .codex/private/homer.config.json
 ```
 
-Keep the interactive session open to answer questions. Try the [first task](using-homer.en.md#your-first-task), inspect the files, and request a revision. Enter `/quit` to stop execution and exit. A ChatGPT subscription is not a promise of publicly available Homer integration; eligibility remains to be confirmed.
+Keep the interactive session open to answer questions. Describe your task; see the [user guide](using-homer.en.md) for details. Enter `/quit` to stop execution and exit. A ChatGPT subscription is not a promise of publicly available Homer integration; eligibility remains to be confirmed.
 
 ## Local Web and desktop
 
