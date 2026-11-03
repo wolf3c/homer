@@ -1,12 +1,16 @@
 # 源码构建与运行
 
-本页面向开发者。当前[仓库](https://github.com/wolf3c/homer)已公开开发预览源码；正式桌面安装包尚未发布。产品介绍见 [README](../../README.md)。
+[English](getting-started.en.md) | **简体中文**
+
+本页面向开发者。当前[仓库](https://github.com/wolf3c/homer)已公开开发预览源码；正式桌面安装包尚未发布。普通使用流程和示例任务见[使用指南](using-homer.md)，产品介绍见 [README](../../README.zh-CN.md)。
 
 ## 环境与构建
 
 使用 Node.js **22.22.0**、npm 和仓库锁文件；版本记录于源码的 `.nvmrc`。在项目根目录运行：
 
 ```sh
+git clone https://github.com/wolf3c/homer.git
+cd homer
 node --version
 npm --version
 npm ci --no-audit --no-fund
@@ -34,20 +38,44 @@ npm install --prefix .codex/private/codex-cli @openai/codex@0.163.0
 - `appData`、`codexHome`、`nativeCodexHome`：建议使用明确的绝对路径，避免误用其他应用或日常数据目录。
 - 模型、提供方和认证：按自己获准使用的服务配置；`keyEnv` 填环境变量名称，不填密钥值。配置字段及模型名不代表相应接入已经可用。
 
-确认认证、权限与[费用](data-and-costs.md)后运行：
+### 建立专用配置
 
-```sh
-npm start -- --config /absolute/path/to/your/homer.config.json
+不要直接启动并复用日常数据目录。先在仓库根目录创建被 Git 忽略的 `.codex/private/`，将配置保存为 `.codex/private/homer.config.json`。以下是使用兼容提供方的模板（CLI 路径示例适用于 macOS／类 Unix 开发环境）；请替换可执行文件、目录、模型和服务地址占位符：
+
+```json
+{
+  "codexBin": "/absolute/path/to/homer/.codex/private/codex-cli/node_modules/.bin/codex",
+  "appData": "/absolute/path/to/homer/.codex/private/profile/app-data",
+  "workspace": "./workspace",
+  "runtime": "./runtime",
+  "codexHome": "/absolute/path/to/homer/.codex/private/profile/codex",
+  "nativeCodexHome": "/absolute/path/to/homer/.codex/private/profile/codex",
+  "model": "YOUR_MODEL_ID",
+  "baseUrl": "https://your-provider.example/v1",
+  "keyEnv": "HOMER_MODEL_KEY",
+  "requiresOpenaiAuth": false,
+  "fast": false
+}
 ```
 
-输入任务开始工作，输入 `/quit` 正常退出。不要复制他人的认证、数据库或聊天记录来初始化。ChatGPT 套餐的对外接入条件仍待确认。
+`workspace` 和 `runtime` 将位于配置文件所在目录下，彼此独立。其他路径请填写实际绝对路径。选择支持 Codex 所需 Responses 协议和工具调用的提供方；仅声称兼容 Chat Completions 的接口不够。这个模板没有预置可用服务、模型或凭据。
+
+在启动终端通过你自己的凭据管理方式设置 `HOMER_MODEL_KEY` 环境变量，不把真实密钥写进 JSON 或 Git。字段 `keyEnv` 保存的是变量名称。本模板使用环境变量密钥，不复用日常 Codex 登录态。不要复制日常 App 的认证文件。相关 `HOMER_*` 环境变量可以覆盖配置，运行前核对当前终端是否已有覆盖项。
+
+确认配置、认证、权限与[费用](data-and-costs.md)后，在同一终端运行：
+
+```sh
+npm start -- --config .codex/private/homer.config.json
+```
+
+启动后使用[第一个任务](using-homer.md#第一个任务)检查交付并尝试修订；输入 `/quit` 正常退出。不要复制他人的认证、数据库或聊天记录来初始化。ChatGPT 套餐的对外接入条件仍待确认。
 
 ## 本地 Web 与桌面端
 
 使用同一份专用配置启动开发 Web：
 
 ```sh
-npm run web -- --config /absolute/path/to/your/homer.config.json --port 4780
+npm run web -- --config .codex/private/homer.config.json --port 4780
 ```
 
 打开启动提示的 `http://127.0.0.1:4780/`。开发入口免配对，仅用于可信本机；不要对外转发端口。同一 runtime 的旧实例须先正常退出，不要删除运行锁强行接管。桌面入口另有自动认证，无需手工配对。

@@ -12,6 +12,14 @@
 
 与荷马对话，随时交办多项工作。荷马调度 AI 助手分工协作、审核成果，让你的目标持续向前。过程中，你可以补充想法、提出调整，由荷马协调推进。
 
+## 开始使用荷马
+
+**桌面安装包准备中。** 安装包发布并完成下载、安装验证后，这里再提供下载链接；支持的平台以实际验证通过的版本为准。
+
+1. **先准备：**阅读[使用指南](docs/public/using-homer.md)，了解安装状态、模型接入和费用。
+2. **启动荷马：**开发者目前可按[源码运行指南](docs/public/getting-started.md)操作，同时留意预览版的已知限制。
+3. **完成第一个任务：**复制[示例任务](docs/public/using-homer.md#第一个任务)，检查交付文件，再提出一次修改。
+
 ## 你来交代，军团协同开工
 
 - 一个对话，交办多项工作，减少在不同会话间反复解释背景。
@@ -46,6 +54,7 @@
 
 **源码现已公开，当前为开发预览，正式安装包尚未发布。** 自有代码采用 [Apache-2.0](LICENSE)，[第三方许可](THIRD_PARTY_NOTICES.md)单独适用；Agentation 额外授权询问仍待答复。已知检查失败与验证边界见[当前源码状态](docs/public/getting-started.md#当前源码状态)。
 
+- [使用指南](docs/public/using-homer.md)：首次使用、示例任务、修改成果和问题处理。
 - [构建与运行指南](docs/public/getting-started.md)：开发者环境、运行方式和已知限制。
 - [费用与数据说明](docs/public/data-and-costs.md)：了解模型选择、费用和资料处理。
 - [GitHub Issues](https://github.com/wolf3c/homer/issues)：提问与反馈，请使用可公开的虚构材料。

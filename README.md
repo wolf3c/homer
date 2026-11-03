@@ -12,6 +12,14 @@
 
 Talk to Homer and hand off multiple tasks as they come up. Homer coordinates AI assistants, reviews their work, and keeps your goals moving forward. Add context or request changes along the way, and Homer coordinates the next steps.
 
+## Start using Homer
+
+**Desktop installers are being prepared.** Download links will appear here after the packages have been published and their downloads and installations verified. Platform availability will follow the validated releases.
+
+1. **Prepare:** read the [user guide](docs/public/using-homer.en.md) for installation status, model requirements, and costs.
+2. **Run:** developers can use the [source setup guide](docs/public/getting-started.en.md) today; it documents the preview's known limitations.
+3. **Do your first task:** copy the [sample task](docs/public/using-homer.en.md#your-first-task), review the delivered files, and request a revision.
+
 ## You set the goal. Your AI team gets to work.
 
 - Assign multiple tasks in one conversation, with less repeated context across separate chats.
@@ -40,12 +48,13 @@ The client is planned to be free, with model usage billed separately:
 | Homer model service | An optional pay-as-you-go service with credits purchased as needed. Pricing and availability will be confirmed at launch. |
 | Your ChatGPT plan | Planned access to an existing plan through Codex. The integration method and eligibility remain to be confirmed. |
 
-Tasks may send your materials to the selected model or tool service. See [Costs and data](docs/public/data-and-costs.md) (Chinese) for the boundaries.
+Tasks may send your materials to the selected model or tool service. See [Costs and data](docs/public/data-and-costs.en.md) for the boundaries.
 
 ## Status and resources
 
-**The source is public as a development preview. Official installers have not been released.** Homer's own code uses [Apache-2.0](LICENSE); [third-party licenses](THIRD_PARTY_NOTICES.md) apply separately. An additional permission inquiry for Agentation is still awaiting a reply. Known check failures and validation limits are documented in [Current source status](docs/public/getting-started.md#当前源码状态) (Chinese).
+**The source is public as a development preview. Official installers have not been released.** Homer's own code uses [Apache-2.0](LICENSE); [third-party licenses](THIRD_PARTY_NOTICES.md) apply separately. An additional permission inquiry for Agentation is still awaiting a reply. Known check failures and validation limits are documented in [Current source status](docs/public/getting-started.en.md#source-preview-status).
 
-- [Build and run guide](docs/public/getting-started.md) (Chinese): developer setup, usage, and known limitations.
-- [Costs and data](docs/public/data-and-costs.md) (Chinese): model options, fees, and how materials are handled.
+- [User guide](docs/public/using-homer.en.md): installation status, your first task, revisions, and troubleshooting.
+- [Build and run guide](docs/public/getting-started.en.md): developer setup, usage, and known limitations.
+- [Costs and data](docs/public/data-and-costs.en.md): model options, fees, and how materials are handled.
 - [GitHub Issues](https://github.com/wolf3c/homer/issues): questions and feedback. Use fictional examples that are safe to publish.
