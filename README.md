@@ -1,43 +1,43 @@
-# 荷马 Homer
+# Homer
 
-**简体中文** | [English](README.en.md)
+**English** | [简体中文](README.zh-CN.md)
 
-> 统驭 AI 军团，帮你搞定一切。
+> Command an army of AI assistants. Get things done.
 
-[产品首页](https://super-tree.com/homer)
+[Product website](https://super-tree.com/homer)
 
-与荷马对话，随时交办多项工作。荷马调度 AI 助手分工协作、审核成果，让你的目标持续向前。过程中，你可以补充想法、提出调整，由荷马协调推进。
+Talk to Homer and hand off multiple tasks as they come up. Homer coordinates AI assistants, reviews their work, and keeps your goals moving forward. Add context or request changes along the way, and Homer coordinates the next steps.
 
-## 你来交代，军团协同开工
+## You set the goal. Your AI team gets to work.
 
-- 一个对话，交办多项工作，减少在不同会话间反复解释背景。
-- AI 助手分工协作，由荷马协调进度、审核成果，再带回给你。
-- 随时补充和调整，围绕已有工作继续推进、修改成果。
-- 查看文件和网页成果，直接批注，说明哪里需要修改。
+- Assign multiple tasks in one conversation, with less repeated context across separate chats.
+- Let AI assistants work together while Homer coordinates progress, reviews results, and brings them back to you.
+- Add information or change direction as work progresses, then refine the results.
+- Review files and web pages, and annotate exactly what needs to change.
 
-例如，交给荷马几份项目材料，请它整理需求、找出缺失信息并形成执行方案，再根据你的反馈修订。这是场景示例；重要结论和最终成果仍需你确认。
+For example, give Homer a few project documents and ask it to summarize requirements, identify missing information, and prepare an action plan. Then revise the plan with your feedback. This illustrates an intended workflow; important conclusions and final results still need your review.
 
-## 不论在哪，工作都在继续
+## Keep work moving, wherever you are
 
-电脑前展开工作，离开电脑后用手机接着交代、查看进展、收取成果，是荷马的多端使用方向。
+Start work at your computer, then use your phone to give further instructions, check progress, and receive results. This is Homer's direction for working across devices.
 
-当前源码以 macOS / Apple Silicon 桌面端为主要开发与验证范围，同时包含移动端工程。Windows、iPhone、Android 及跨设备体验仍需分别验证，首页设备展示为示意。
+The current source primarily targets development and validation on macOS / Apple Silicon desktops and also includes the mobile project. Windows, iPhone, Android, and cross-device experiences each require separate validation. Devices shown on the website are illustrative.
 
-## 模型怎么用，由你选择
+## Choose how you use models
 
-客户端计划免费提供，模型调用费用另计：
+The client is planned to be free, with model usage billed separately:
 
-| 方式 | 说明 |
+| Option | Details |
 | --- | --- |
-| 荷马会员服务 | 可选的按量模型服务，按需购买额度；具体价格和可用性以正式发布为准。 |
-| 我的 ChatGPT 套餐 | 计划通过 Codex 接入已有套餐，具体方式和使用资格仍待确认。 |
+| Homer model service | An optional pay-as-you-go service with credits purchased as needed. Pricing and availability will be confirmed at launch. |
+| Your ChatGPT plan | Planned access to an existing plan through Codex. The integration method and eligibility remain to be confirmed. |
 
-执行任务时，资料可能发送给所选模型或工具服务。[费用与数据说明](docs/public/data-and-costs.md)介绍具体边界。
+Tasks may send your materials to the selected model or tool service. See [Costs and data](docs/public/data-and-costs.md) (Chinese) for the boundaries.
 
-## 当前进展与入口
+## Status and resources
 
-**源码现已公开，当前为开发预览，正式安装包尚未发布。** 自有代码采用 [Apache-2.0](LICENSE)，[第三方许可](THIRD_PARTY_NOTICES.md)单独适用；Agentation 额外授权询问仍待答复。已知检查失败与验证边界见[当前源码状态](docs/public/getting-started.md#当前源码状态)。
+**The source is public as a development preview. Official installers have not been released.** Homer's own code uses [Apache-2.0](LICENSE); [third-party licenses](THIRD_PARTY_NOTICES.md) apply separately. An additional permission inquiry for Agentation is still awaiting a reply. Known check failures and validation limits are documented in [Current source status](docs/public/getting-started.md#当前源码状态) (Chinese).
 
-- [构建与运行指南](docs/public/getting-started.md)：开发者环境、运行方式和已知限制。
-- [费用与数据说明](docs/public/data-and-costs.md)：了解模型选择、费用和资料处理。
-- [GitHub Issues](https://github.com/wolf3c/homer/issues)：提问与反馈，请使用可公开的虚构材料。
+- [Build and run guide](docs/public/getting-started.md) (Chinese): developer setup, usage, and known limitations.
+- [Costs and data](docs/public/data-and-costs.md) (Chinese): model options, fees, and how materials are handled.
+- [GitHub Issues](https://github.com/wolf3c/homer/issues): questions and feedback. Use fictional examples that are safe to publish.
