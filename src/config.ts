@@ -24,9 +24,12 @@ export type Config = {
   codexHome: string;
   model: string;
   // Explicit shared override; absence lets each execution role use its default.
-  effort?: ReasoningEffort;
+  effort?: ReasoningEffort|null;
   fast?: boolean;
   deepseek?: DeepSeekTuning;
+  // Provider-neutral context delivered by the trusted desktop connection.
+  context?: import('./model-context.js').ContextTuning;
+  capabilities?: import('./model-catalog.js').ModelCapabilities;
   baseUrl?: string;
   keyEnv?: string;
   requiresOpenaiAuth: boolean;
@@ -72,7 +75,7 @@ export function loadConfig(path?: string): Config {
     stopGraceMs: raw.stopGraceMs ?? 3000,
   };
   if(raw.controlBrowserData!==undefined&&(!Array.isArray(raw.controlBrowserData)||raw.controlBrowserData.some((p:unknown)=>typeof p!=="string"||!p.startsWith("/"))))throw Error("invalid_control_browser_data");
-  if (c.effort !== undefined && !["low", "medium", "high", "xhigh", "max", "ultra"].includes(c.effort))
+  if (c.effort !== undefined && !["low", "medium", "high", "xhigh", "max", "ultra"].includes(c.effort??''))
     throw new Error("invalid_effort");
   for (const n of ["timeoutMs", "mainTimeoutMs", "stopGraceMs"] as const){
     const value=c[n];
@@ -114,12 +117,12 @@ export function effectiveModelConfig(config:Config,role:"main"|"worker"="main"):
   validateExecutionLimits(config.executionLimits);
   if(config.desktopModelSource==='codex'){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('desktop_model_source_scope_invalid');
-    return {...config,dailyDeepSeek:false,desktopConnection:undefined,model:'gpt-6.1-terra',effort:role==='main'?'high':'xhigh',fast:role==='main',baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true};
+    return {...config,dailyDeepSeek:false,desktopConnection:undefined,context:undefined,capabilities:undefined,model:'gpt-6.1-terra',effort:role==='main'?'high':'xhigh',fast:role==='main',baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true};
   }
   if(config.dailyDeepSeek){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('daily_deepseek_desktop_required');
     const selected=config.desktopConnection?.[role];
-    config={...config,...selected,baseUrl:selected?.baseUrl,keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
+    config={...config,...selected,baseUrl:selected?.baseUrl,context:selected?.context,capabilities:selected?.capabilities,keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
   }
   const profile=deepseekProfile(config);
   return profile?{...config,effort:profile.effort,fast:profile.fast}:config;

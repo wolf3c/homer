@@ -13,7 +13,7 @@ async function until(check,timeout=45000){const end=Date.now()+timeout;while(!aw
 // Real launcher + business processes + SQLite + HTTP, injected EngineLike only.
 // codexBin=/usr/bin/false, independent empty home, no credentials or channels.
 test('gateway accepts Web/CLI during handoff, survives crash and reconciles a lost commit ack exactly once',{timeout:150000},async()=>{
- const {base,configPath:config}=seamlessFixture();const fetch=syntheticUserFetch(join(base,'runtime/web-connection/connect-homer.html'));
+ const {base,configPath:config}=seamlessFixture();const fetch=syntheticUserFetch();
  const reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
  const url=`http://127.0.0.1:${port}`,events=[],children=[];
  function launch(){

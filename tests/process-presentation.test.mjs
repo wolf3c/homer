@@ -20,7 +20,8 @@ test('official entries retain all original calls across categories, turns and co
  await d.render(view({...node,items}));await d.click(button(d));
  assert.equal(groups(d).length,0);
  assert.deepEqual(rows(d).map(r=>r.attrs['data-tool-id']),items.filter(i=>i.kind==='tool').map(i=>i.id));
- assert.ok(d.container.textContent.indexOf('A')<d.container.textContent.indexOf('读取文件'));assert.ok(d.container.textContent.indexOf('B')>d.container.textContent.indexOf('读取文件'));
+ const entries=d.find(n=>n.tagName==='OL').textContent;
+ assert.ok(entries.indexOf('A')<entries.indexOf('读取文件'));assert.ok(entries.indexOf('B')>entries.indexOf('读取文件'));
  assert.equal(d.all().some(n=>n.attrs['aria-label']==='关联 Worker 状态'),false);
 }));
 
@@ -47,7 +48,7 @@ test('original disclosure starts closed and preserves user choice across complet
  await d.click(toggle);await d.render(view({...done(node),revision:6}));assert.equal(toggle.attrs['aria-expanded'],'false');
 }));
 
-// Real focus removal is checked in web-working-combination.browser.mjs. This
+// Real focus removal is checked in run-activity-focus.browser.mjs. This
 // synthetic DOM does not move activeElement when React removes its subtree.
 test('new node and thread start with the original closed disclosure using the production key',async()=>withDom(async d=>{
  await d.render(view(node));assert.equal(button(d).attrs['aria-expanded'],'false');await d.click(button(d));

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve, join } from "node:path";
+import {syntheticFile} from './recursive-publication-fixture.js';
 import { Store } from "../src/store.js";
 import { Files } from "../src/files.js";
 import { ConversationHistory, type ConversationInput } from "../src/web-history.js";
@@ -71,6 +72,50 @@ for(const state of ['pending_main','answered','pending_user','answered_user','fo
  assert.equal(reportCount,state.endsWith('_user')?0:1);assert.equal(questionCount,state==='pending_user'?1:0);
 });
 
+test("TG completed native draft uses canonical receipt when public final has a different ID; recovery stays single", async t => {
+  const f = fixture(t), requestId = "tg:123456:10";
+  await f.bridge.submit({ requestId, text: "合成请求", origin: f.origin });
+  const reply = f.history.list("original-main")[1]!;
+  const state = f.app.conversationState.bind(f.app);
+  f.app.conversationState = () => ({ ...state(), messages: [{ ...reply, id: "node-public-final", text: "合成最终回复", status: "completed" }] });
+  const generation = { generationId: "canonical-generation", messageId: reply.id, threadId: "original-main", turnId: "canonical-turn", sourceRequestId: requestId };
+  await f.bridge.handleMessage({ type: "main_start", ...generation, text: "" });
+  f.history.finish(reply.id, "合成最终回复", "completed");
+  await f.bridge.handleMessage({ type: "main_terminal", ...generation, text: "合成最终回复", status: "completed" });
+  await f.bridge.handleMessage({ type: "reply", requestId, text: "合成最终回复" });
+  assert.equal(f.bridge.gaps.size, 0);
+  await f.bridge.recoverReplies(); await f.bridge.recoverReplies();
+  assert.deepEqual(f.store.db.prepare("SELECT groupId FROM tg_outbox").all().map(row => row.groupId), ["generation:canonical-generation"]);
+  assert.equal(f.bridge.channel.store.draft(generation.generationId)?.state, "closed");
+});
+
+test("TG truly missing native events keep one canonical fallback across reply and recovery", async t => {
+  const f = fixture(t), requestId = "tg:123456:10";
+  await f.bridge.submit({ requestId, text: "合成请求", origin: f.origin });
+  const reply = f.history.list("original-main")[1]!;
+  const state = f.app.conversationState.bind(f.app);
+  f.app.conversationState = () => ({ ...state(), messages: [{ ...reply, id: "node-public-fallback" }] });
+  f.history.finish(reply.id, "合成无原生事件回复", "completed");
+  await f.bridge.handleMessage({ type: "main_start", generationId: "foreign-source", messageId: reply.id, threadId: "original-main", turnId: "wrong-source-turn", sourceRequestId: "unaccepted-request", text: "" });
+  await f.bridge.handleMessage({ type: "reply", requestId, text: "合成无原生事件回复" });
+  assert.equal(f.bridge.gaps.has("native_generation_events_missing"), true);
+  await f.bridge.recoverReplies(); await f.bridge.recoverReplies();
+  assert.equal(f.store.db.prepare("SELECT count(*) n FROM tg_drafts").get()?.n, 0);
+  assert.deepEqual(f.store.db.prepare("SELECT groupId FROM tg_outbox").all().map(row => row.groupId), ["delivery:reply:" + reply.id]);
+});
+
+test("TG public reply cannot replace a mismatched canonical input or revoked acceptance route", async t => {
+  const f = fixture(t), requestId = "tg:123456:10";
+  await f.bridge.submit({ requestId, text: "合成请求", origin: f.origin });
+  const original = f.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId=?").get(requestId)!.replyId;
+  f.store.db.prepare("UPDATE conversation_inputs SET replyId='wrong-reply' WHERE requestId=?").run(requestId);
+  await f.bridge.handleMessage({ type: "reply", requestId, text: "不可授权的合成回复" });
+  assert.equal(f.store.db.prepare("SELECT count(*) n FROM tg_outbox").get()?.n, 0);
+  f.store.db.prepare("UPDATE conversation_inputs SET replyId=? WHERE requestId=?").run(original!, requestId);
+  f.store.db.prepare("UPDATE tg_routes SET origin='{}' WHERE requestId=?").run(requestId);
+  await f.bridge.handleMessage({ type: "reply", requestId, text: "错来源合成回复" });
+  assert.equal(f.store.db.prepare("SELECT count(*) n FROM tg_outbox").get()?.n, 0);
+});
 
 test("TG Homer bridge uses injected SQLite/original main history and fails closed on thread replacement", async t => {
   const f = fixture(t);
@@ -93,6 +138,28 @@ test("TG Homer bridge never invents native lifecycle and does not duplicate form
   f.history.finish(reply.id, "合成最终回复", "completed");
   await f.bridge.mainFinished(generation.id, "合成最终回复", "completed");
   await f.bridge.handleMessage({ type: "reply", text: "合成最终回复", requestId: "tg:123456:10" });
+  assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM tg_outbox").get()?.n, 1);
+});
+
+test("TG accepted route retains all 300 ordered deltas between real start and terminal with one formal reply", async t => {
+  const f = fixture(t), requestId = "tg:123456:10";
+  await f.bridge.submit({ requestId, text: "合成请求", origin: f.origin });
+  const reply = f.history.list("original-main")[1]!, events: any[] = [];
+  const event = f.bridge.channel.event.bind(f.bridge.channel);
+  f.bridge.channel.event = async value => { await event(value); events.push(value); };
+  const generation = { generationId: "synthetic-burst-generation", messageId: reply.id,
+    threadId: "original-main", turnId: "synthetic-burst-turn", sourceRequestId: requestId };
+  await f.bridge.handleMessage({ type: "main_start", ...generation, text: "" });
+  const chunks = Array.from({ length: 300 }, (_, index) => `Synthetic-${index};`);
+  for (const text of chunks) await f.bridge.handleMessage({ type: "delta", requestId, messageId: reply.id, text });
+  const text = chunks.join(""); f.history.finish(reply.id, text, "completed");
+  await f.bridge.handleMessage({ type: "main_terminal", ...generation, status: "completed", text });
+  await f.bridge.handleMessage({ type: "reply", requestId, text });
+  assert.deepEqual(events.map(value => value.type), ["start", ...Array(300).fill("delta"), "finish"]);
+  const deltas = events.filter(value => value.type === "delta");
+  assert.deepEqual(deltas.map(value => value.text), chunks);
+  assert.deepEqual(deltas.map(value => value.sequence), Array.from({ length: 300 }, (_, index) => index));
+  assert.ok(deltas.every(value => value.generationId === generation.generationId));
   assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM tg_outbox").get()?.n, 1);
 });
 
@@ -144,6 +211,11 @@ test("TG failed history and ordinary reply cannot confirm a still-active main ge
   assert.equal(settled, false);
   await f.bridge.handleMessage({ type: "main_terminal", text: "迟到的其他轮终态", ...generation, turnId: "wrong-turn", status: "interrupted" });
   assert.equal(settled, false);
+  for (const wrong of [{ generationId: "wrong-generation" }, { sourceRequestId: "unaccepted-source" }, { threadId: "wrong-thread" }, { messageId: "node-public-final" }]) {
+    await f.bridge.handleMessage({ type: "main_terminal", text: "错误身份终态", ...generation, ...wrong, status: "interrupted" });
+    assert.equal(settled, false);
+    assert.equal(f.bridge.channel.store.draft(generation.generationId)?.state, "active");
+  }
   await f.bridge.handleMessage({ type: "main_terminal", text: "合成已确认关闭", ...generation, status: "failed" });
   assert.equal(await stopping, "already_finished");
   assert.equal(f.stops.length, 1);
@@ -173,4 +245,14 @@ test("TG Homer bridge routes answer through main with original interaction; canc
   await assert.rejects(f.bridge.respond({ interactionId: opened.id, requestId: "tg:123456:11", text: "变更过的答案", origin: answerOrigin }), /request_id_conflict/);
   await assert.rejects(f.bridge.respond({ interactionId: opened.id, requestId: "tg:123456:12", text: "同意", origin: f.origin }), /interaction_not_live/);
   f.interactions.cancelRun(run.id); assert.equal((await opened.response).status, "cancelled");
+});
+
+
+test("multi-file Telegram publication queues one explicit Web notice and no file reference; replay and wrong source stay fenced",async t=>{
+ const f=fixture(t);await f.bridge.submit({requestId:'tg:123456:10',text:'合成请求',origin:f.origin});
+ const candidate=syntheticFile(f.bridge.app as import('../src/service.js').Homer,'tg:123456:10','one.md','# One',[{filename:'two.md',content:'# Two'}]),d=candidate.publish('两份合成成果');
+ const message={type:'delivery' as const,deliveryId:d.id,messageId:d.historyMessageId,requestId:'tg:123456:10',runId:candidate.run.id,text:d.text};
+ await f.bridge.handleMessage({...message,requestId:'wrong-source'});assert.equal(f.store.db.prepare('SELECT count(*) n FROM tg_outbox').get()?.n,0);
+ await f.bridge.handleMessage(message);await f.bridge.handleMessage(message);
+ const rows=f.store.db.prepare('SELECT kind,payload FROM tg_outbox').all();assert.equal(rows.length,1);assert.equal(rows[0]!.kind,'rich');assert.match(String(rows[0]!.payload),/2 个成果.*Web/);
 });

@@ -2,7 +2,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import {readFileSync,readdirSync,lstatSync,realpathSync,existsSync,writeFileSync} from 'node:fs';
-import {resolve,join,dirname} from 'node:path';
+import {resolve,join,dirname,sep} from 'node:path';
 import {createRequire} from 'node:module';
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const jsonHash=value=>hash(JSON.stringify(value));
@@ -32,7 +32,7 @@ export function dependencyIdentity(directory){
   }
   path=realpathSync(path);if(seen.has(path))return;seen.add(path);
   const metadata=JSON.parse(readFileSync(join(path,'package.json'),'utf8'));
-  const relative=path.startsWith(modules+'/')?'node_modules/'+path.slice(modules.length+1):undefined;
+  const relative=path.startsWith(modules+sep)?'node_modules/'+path.slice(modules.length+1).split(sep).join('/'):undefined;
   if(!relative||lock.packages?.[relative]?.version!==metadata.version)throw Error('pinned_dependency_lock_mismatch');
   const files=[];
   function collect(part){for(const entry of readdirSync(join(path,part)).sort()){

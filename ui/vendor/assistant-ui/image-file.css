@@ -250,6 +250,9 @@
 :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .max-h-\[90\%\], :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.max-h-\[90\%\]) {
     max-height: 90%;
   }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .min-h-11, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.min-h-11) {
+    min-height: calc(var(--spacing) * 11);
+  }
 :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .min-h-32, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.min-h-32) {
     min-height: calc(var(--spacing) * 32);
   }
@@ -387,6 +390,12 @@
 :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .font-medium, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.font-medium) {
     --tw-font-weight: var(--font-weight-medium);
     font-weight: var(--font-weight-medium);
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .break-words, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.break-words) {
+    overflow-wrap: break-word;
+  }
+:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .whitespace-normal, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.whitespace-normal) {
+    white-space: normal;
   }
 :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .text-muted-foreground, :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.text-muted-foreground) {
     color: var(--muted);

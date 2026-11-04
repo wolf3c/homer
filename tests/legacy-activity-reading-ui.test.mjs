@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
-import {ProcessNodeView,ProcessDetailsContext} from './helpers/process-ui-loader.mjs';
+import {ProcessNodeView,ProcessDetailHarness} from './helpers/process-ui-loader.mjs';
 import {withDom,visibleText} from './helpers/process-dom.mjs';
 const h=React.createElement;
 const call=(id,status='completed',extra={})=>({id,kind:'tool',seq:Number(id.replace(/\D/g,''))||1,revision:1,category:'host',label:'检查资料',status,...extra});
@@ -36,15 +36,15 @@ test('mixed public facts and all original statuses remain independent in the sam
 test('history reads only on original disclosure expansion and shows original call identities inline',async()=>withDom(async d=>{
  const detail={...node([call('call-1'),call('call-2')]),state:'worked',status:'completed'},header={...detail,items:[],details:'unloaded',toolStatusCounts:{completed:2}};
  let reads=0;const load=async()=>{reads++;return detail;};
- const render=()=>d.render(h(ProcessDetailsContext.Provider,{value:load},h(ProcessNodeView,{node:header,renderText:t=>t})));
+ const render=()=>d.render(h(ProcessDetailHarness,{node:header,load,viewOnly:true,renderText:t=>t}));
  await render();assert.equal(reads,0);await d.click(toggle(d));await render();
  assert.equal(reads,1);assert.deepEqual(rows(d),['call-1','call-2']);noAdditions(d);
  await d.click(toggle(d));await d.click(toggle(d));await render();assert.equal(toggle(d).attrs['aria-expanded'],'true');assert.deepEqual(rows(d),['call-1','call-2']);
 }));
 test('approved Worker event card stays visible once when folded and in the ordered list when expanded',async()=>withDom(async d=>{
  const event={id:'event',seq:1,revision:1,kind:'workerEvent',eventKey:'result:one',event:{eventKind:'result_received',title:'后台研究',body:'保留一个待确认事项。'}};
- const render=value=>d.render(h(ProcessNodeView,{node:value,renderText:t=>t}));await render(node([event]));
- assert.match(visibleText(d.container),/保留一个待确认事项/);assert.equal(d.all().filter(n=>n.attrs.class==='worker-event-card').length,1);await d.click(toggle(d));
- assert.equal(d.container.textContent.match(/保留一个待确认事项。/g).length,1);assert.match(visibleText(d.container),/后台研究/);noAdditions(d);
- await render({...node([event]),revision:2,state:'worked',status:'completed'});assert.equal(toggle(d).attrs['aria-expanded'],'true');
+ const render=value=>d.render(h(ProcessNodeView,{node:value,renderText:t=>t}));await render(node([call('call-1'),event]));
+ assert.match(visibleText(d.container),/后台研究/);assert.equal(d.all().filter(n=>n.attrs['data-worker-event']==='result:one').length,1);await d.click(toggle(d));
+ const card=d.find(n=>n.attrs['data-worker-event']==='result:one').childNodes.find(n=>n.tagName==='BUTTON');assert.ok(card);await d.click(card);assert.equal(visibleText(d.container).match(/保留一个待确认事项。/g).length,1);assert.match(visibleText(d.container),/后台研究/);noAdditions(d);
+ await render({...node([call('call-1'),event]),revision:2,state:'worked',status:'completed'});assert.equal(toggle(d).attrs['aria-expanded'],'true');
 }));

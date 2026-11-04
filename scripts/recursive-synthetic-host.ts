@@ -28,7 +28,7 @@ export function syntheticHost(failChild=false,retainRuntime=false){
     async review(taskId:string,resultId:string,_outcome?:string|null){
       const state=await this.inspect(taskId,resultId),goal=state.contract.goal;
       const outcome=failChild&&goal==='C'?'failed':failChild&&goal==='A'?'partial':'succeeded';
-      const children=[];for(const child of state.children){const childState=await this.inspect(child.id),result=childState.results.find((r:any)=>r.state==='accepted'&&!r.completionResultId);children.push({childTaskId:child.id,childVersion:child.headVersion,disposition:result?'included':'gap',resultId:result?.id??null,nextCoordinatorId:null,reason:'Synthetic child reviewed'});}
+      const children=[];for(const child of state.children){const childState=await this.inspect(child.id),result=childState.results.find((r:any)=>r.state==='accepted'&&!r.completionResultId);children.push({childTaskId:child.id,childVersion:child.headVersion,disposition:result?'included':'gap',resultId:result?.id??null,reason:'Synthetic child reviewed'});}
       return this.mutation('task_review',taskId,{resultId,accepted:true,outcome,reason:'Synthetic result bytes and evidence inspected',evidence:{facts:true,gaps:'Synthetic unavailable input'},children});
     }
     async turn(text:string,options?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
@@ -45,7 +45,7 @@ export function syntheticHost(failChild=false,retainRuntime=false){
           for(const root of app.tasks.tasks().filter(t=>!t.parentTaskId&&t.executorKind==='main'&&t.state!=='settled')){
             const children=app.tasks.children(root.id);if(children.length===3&&children.every(t=>t.state==='settled')){
               const resolutions=[];let file:string|null=null;
-              for(const child of children){const state=await this.inspect(child.id),r=state.results.find((r:any)=>r.state==='accepted');resolutions.push({childTaskId:child.id,childVersion:child.headVersion,disposition:r?'included':'gap',resultId:r?.id??null,nextCoordinatorId:null,reason:'Synthetic child fact'});if(r?.filePath)file=r.id;}
+              for(const child of children){const state=await this.inspect(child.id),r=state.results.find((r:any)=>r.state==='accepted');resolutions.push({childTaskId:child.id,childVersion:child.headVersion,disposition:r?'included':'gap',resultId:r?.id??null,reason:'Synthetic child fact'});if(r?.filePath)file=r.id;}
               await this.mutation('publish_delivery',root.id,{resultId:null,outcome:failChild?'partial':'succeeded',evidence:{facts:true,...(failChild?{gaps:'C unavailable'}:{})},children:resolutions,text:failChild?'Synthetic partially completed; missing C':'Synthetic completed; date unknown',publishedFileResultId:file});
             }
           }return {status:'completed',text:'已核对收到的工作结果。'};

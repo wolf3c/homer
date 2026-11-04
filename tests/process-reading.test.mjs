@@ -24,8 +24,8 @@ test('original single disclosure shows all calls inline without another reader',
 test('legacy Worker rows do not imply their last projection was the historical event',async()=>withDom(async d=>{
  await d.render(view());await d.click(d.find(n=>n.tagName==='BUTTON'));assert.equal(d.find(n=>n.attrs['aria-label']==='关联 Worker 状态'),undefined);assert.match(visibleText(d.container),/旧后台工作记录（当时的事件内容未保留）/);assert.doesNotMatch(visibleText(d.container),/部分完成|当前任务快照|已验收/);
 }));
-test('missing clocks stay absent without invented endpoints or extra notes',async()=>withDom(async d=>{
- await d.render(view());const trigger=d.find(n=>n.tagName==='BUTTON');assert.doesNotMatch(trigger.textContent,/耗时|0s/);await d.click(trigger);assert.doesNotMatch(d.container.textContent,/for 0s|耗时未记录/);
+test('missing clocks report unavailable duration without invented endpoints',async()=>withDom(async d=>{
+ await d.render(view());const trigger=d.find(n=>n.tagName==='BUTTON');assert.match(trigger.textContent,/耗时未提供/);assert.doesNotMatch(trigger.textContent,/0s/);await d.click(trigger);assert.doesNotMatch(d.container.textContent,/for 0s|耗时未记录/);
 }));
 
 test('failed, denied, blocked and uncertain facts stay in lazy headers without expanding ordinary successful history',()=>{

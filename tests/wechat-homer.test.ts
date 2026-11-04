@@ -185,3 +185,17 @@ test("Homer adapter routes a completed run by its original source and returns on
     await s.adapter.channel.disconnect(); await assert.rejects(s.adapter.artifact(run.id), /artifact_not_authorized/);
   } finally { await s.close(); }
 });
+
+
+test("multi-file Wechat delivery queues one explicit Web notice, no first-file upload, and deduplicates replay",async()=>{
+ const s=await setup();try{
+  s.api.receive('55','合成多文件请求');await until(()=>s.api.sent.length===1);await s.app.idle();
+  const input=s.app.store.db.prepare('SELECT requestId FROM wechat_homer_receipts').get() as {requestId:string};
+  const candidate=syntheticFile(s.app,input.requestId,'one.md','# One',[{filename:'two.md',content:'# Two'}]),d=candidate.publish('两份合成成果');
+  const message={type:'delivery' as const,deliveryId:d.id,messageId:d.historyMessageId,requestId:input.requestId,runId:candidate.run.id,text:d.text};
+  assert.equal(await s.adapter.onMessage({...message,requestId:'unrelated-source'}),false);assert.equal(await s.adapter.onMessage(message),true);await until(()=>s.api.sent.length===2);
+  assert.equal(s.api.sent[1]!.item.type,1);assert.match(JSON.stringify(s.api.sent[1]!.item),/2 个成果.*Web/);assert.equal(s.api.uploaded.length,0);
+  await s.adapter.onMessage(message);await delay(20);assert.equal(s.api.sent.length,2);
+  await s.restartAdapter();await s.adapter.onMessage(message);await delay(20);assert.equal(s.api.sent.length,2);assert.equal(s.api.uploaded.length,0);
+ }finally{await s.close();}
+});

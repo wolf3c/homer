@@ -30,4 +30,15 @@ export function historyFixture(total=20,bodyBytes=160,stableRecent=false,databas
  return {store,history,tasks,processes,inputs,interactions,close:()=>store.close()};
 }
 // Synthetic streaming updates follow the public native-final owner, not an unrelated host fallback.
-export function updateSyntheticPublicText(f:ReturnType<typeof historyFixture>,id:string,text:string){return f.store.transaction(()=>{const changed=f.store.db.prepare('UPDATE conversation_messages SET text=? WHERE id=?').run(text,id);const key='publicMainNode:v1:'+id,raw=f.store.meta(key);if(raw){const node=JSON.parse(raw);node.final={id:node.final?.id??'native-final-'+id,text};f.store.setMeta(key,JSON.stringify(node));}return changed;});}
+export function updateSyntheticPublicText(f:ReturnType<typeof historyFixture>,id:string,text:string){return f.store.transaction(()=>{
+ const changed=f.store.db.prepare('UPDATE conversation_messages SET text=? WHERE id=?').run(text,id),key='publicMainNode:v1:'+id,raw=f.store.meta(key);
+ if(raw){
+  const node=JSON.parse(raw);node.revision++;node.final={id:node.final?.id??'native-final-'+id,text};
+  const previous=node.items.find((item:{id:string})=>item.id===node.final.id);
+  const item={...previous,id:node.final.id,kind:'commentary',phase:'final_answer',seq:previous?.seq??Math.max(0,...node.items.map((item:{seq:number})=>item.seq))+1,revision:node.revision,text,completed:true};
+  node.items=previous?node.items.map((old:{id:string})=>old.id===item.id?item:old):[...node.items,item];
+  node.completedItemIds=[...new Set([...(node.completedItemIds??[]),item.id])];node.itemPhases={...node.itemPhases,[item.id]:'final_answer'};
+  f.store.setMeta(key,JSON.stringify(node));
+ }
+ return changed;
+});}

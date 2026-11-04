@@ -45,7 +45,11 @@ function fixture(choice:'repair'|'defer'|'close', emptyEventReply = false, empty
      const inbox=await this.call('inbox_read',{after:0});
      for(const message of inbox){
       if(message.taskId===failedChildId&&!handled){
-       const facts=await this.call('work_inspect',{taskId:failedChildId,runId:null,resultId:null});assert.equal(facts.task.outcome,'failed');
+       const facts=await this.call('work_inspect',{taskId:failedChildId,runId:null,resultId:null});assert.equal(facts.task.outcome,null);
+       const result=facts.results.find((r:any)=>r.state==='offered'&&!r.completionResultId);assert.ok(result);
+       await this.call('work_inspect',{taskId:failedChildId,runId:null,resultId:result.id});
+       await this.call('task_review',{operationId:'accept-failure',taskId:failedChildId,version:facts.task.headVersion,expectedTaskRevision:facts.task.revision,resultId:result.id,accepted:true,outcome:'failed',reason:'Synthetic execution failure checked',evidence:{},children:[]});
+       assert.equal(app.tasks.task(failedChildId).outcome,'failed');
        assert.ok(text.includes(itemId),'relevant item must be discoverable without retained conversation');
        const latest=(await this.call('pending_list',{id:itemId})).items[0];
        if(choice==='repair'){
@@ -75,9 +79,8 @@ function fixture(choice:'repair'|'defer'|'close', emptyEventReply = false, empty
      }
      const ref=JSON.parse(String(app.store.db.prepare("SELECT refsJson FROM conversation_attachments WHERE requestId='allow-followup'").get()!.refsJson))[0];
      const chosen=await this.call('task_delegate',{...args,contract:{...c('scope-test'),inputs:[{type:'attachment',id:ref.assetId+'@'+ref.revision}]}});
-     const task=app.tasks.task(chosen.taskId),actor={agentId:app.store.meta('mainAgentId')!,threadId:this.threadId};
-     const result=app.tasks.complete(actor,{operationId:'settle',taskId:task.id,version:1,expectedTaskRevision:task.revision,outcome:'failed',payload:{reason:'synthetic'},evidence:{},children:[]});
-     const publish=await this.call('publish_delivery',{operationId:'publish',taskId:task.id,version:1,expectedTaskRevision:app.tasks.task(task.id).revision,resultId:result.resultId,text:'synthetic delivery',publishedFileResultId:null});
+     const task=app.tasks.task(chosen.taskId);
+     const publish=await this.call('publish_delivery',{operationId:'publish',taskId:task.id,version:1,expectedTaskRevision:app.tasks.task(task.id).revision,resultId:null,outcome:'failed',evidence:{},children:[],text:'synthetic delivery',publishedFileResultId:null});
      assert.equal(app.tasks.delivery(publish.deliveryId).routeSourceRequestId,'allow-followup');
     }else if(text.startsWith('恢复后查询')){
      assert.ok(text.includes(itemId));const latest=await this.mcp('pending_list',{id:itemId});assert.equal(latest.items[0].id,itemId);
@@ -141,23 +144,24 @@ test('AC08 empty internal narrative preserves completed actions and following no
 });
 
 
-test('AC08 an empty normal user reply still fails clearly and fences later execution',async()=>{
+test('AC08 an empty normal user reply fails clearly and admits a later independent input',async()=>{
  const f=fixture('defer',false,true);try{
   await f.app.start();
   assert.match(await f.app.message('普通空回复','empty-user'),/main_empty_reply/);
-  await assert.rejects(()=>f.app.message('后续普通输入','after-empty-user'),/main_engine_unavailable/);
+  assert.match(await f.app.message('后续普通输入','after-empty-user'),/main_empty_reply/);
+  assert.equal(f.app.inputs.list().filter(i=>i.state==='failed').length,2);
   assert.equal(f.app.tasks.tasks().length,0);
  }finally{await f.close();}
 });
 
 
-test('AC08 a failed internal engine result still fences later execution',async()=>{
+test('AC08 a failed internal engine result preserves failure and receives later user input',async()=>{
  const f=fixture('defer',true,false,true);try{
   await f.app.start();await f.app.message('开始原工作','start');await until(()=>f.app.snapshot().activeWorkers===1);
   await f.app.message('先记下导出，不执行','remember');await f.app.message('允许后续处理','allow-followup');
   f.release();await until(()=>f.handled);await f.app.idle();
   assert.equal(f.app.tasks.task(f.childId).outcome,'failed');
   assert.ok(f.app.store.db.prepare("SELECT 1 FROM events WHERE type='main_turn_failed' AND code='synthetic_main_engine_failed'").get());
-  await assert.rejects(()=>f.app.message('恢复后查询','after-failed-internal'),/main_engine_unavailable/);
+  assert.equal(await f.app.message('恢复后查询','after-failed-internal'),'Synthetic reply');
  }finally{await f.close();}
 });

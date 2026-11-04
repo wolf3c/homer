@@ -38,7 +38,7 @@ test('quiet rework requires exact confirmed current-turn review and never swallo
  const returned=tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'Useful synthetic result'},true)!;
  const resultId=returned.resultId;tasks.inspect(main,{resultId});
  const t=tasks.task(d.taskId),args={operationId:'rework',taskId:t.id,version:t.headVersion,expectedTaskRevision:t.revision,resultId,decision:'request_changes' as const,outcome:'partial' as const,reason:'Check missing evidence',revision:{contract:contract(),children:[],queuedDisposition:[]}};
- const receipt=tasks.review(main,args),activity=tasks.captureActivity(main,'task_review',args,receipt)!;
+ const receipt=tasks.review(main,args);assert.ok(receipt.runId);const activity=tasks.captureActivity(main,'task_review',args,receipt)!;
  assert.equal(activity.target?.version,1);assert.equal(activity.relatedTarget?.version,2);
  const revisionMessage=String(f.store.db.prepare("SELECT id FROM agent_messages WHERE kind='revision_requested' AND taskId=?").get(t.id)!.id);
  const revisionProjection=web.withTaskSources(f.store.db,[message(node([revisionMessage]))],'thread')[0]!;

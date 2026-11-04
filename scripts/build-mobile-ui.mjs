@@ -9,8 +9,11 @@ export async function buildMobileUi(output='mobile/.generated'){
  await import('./build-preview-annotation.mjs');
  const root=fileURLToPath(new URL('../',import.meta.url)),out=resolve(root,output);
  await build({root:resolve(root,'ui'),configFile:resolve(root,'ui/vite.config.ts'),configLoader:'runner',logLevel:'warn',
-  plugins:[viteSingleFile()],base:'./',build:{outDir:out,emptyOutDir:true,assetsInlineLimit:Number.MAX_SAFE_INTEGER}});
+  plugins:[{name:'mobile-without-live-debugger',transformIndexHtml:{order:'pre',handler:html=>html.replace(/<!-- impeccable-live-start -->[\s\S]*?<!-- impeccable-live-end -->/g,'')}},viteSingleFile()],base:'./',build:{outDir:out,emptyOutDir:true,assetsInlineLimit:Number.MAX_SAFE_INTEGER}});
  let html=readFileSync(resolve(out,'index.html'),'utf8');
+ // Only chat.mjs enters the native bundle; keep emitted license notices inside it.
+ const notices=JSON.stringify(readFileSync(resolve(out,'assets/task-status-NOTICES.txt'),'utf8')).replace(/</g,'\\u003c');
+ html=html.replace('</head>','<script type="application/json" id="homer-third-party-notices">'+notices+'</script></head>');
  html=html.replace('<head>','<head><meta name="homer-mobile" content="true">').replace(/<link[^>]+rel="icon"[^>]*>/g,'');
  if(/<script[^>]+src=|<link[^>]+(?:stylesheet|modulepreload)/i.test(html))throw Error('mobile_ui_external_asset');
  mkdirSync(out,{recursive:true});writeFileSync(resolve(out,'index.html'),html);writeFileSync(resolve(out,'chat.mjs'),'export default '+JSON.stringify(html)+';\n');

@@ -4,8 +4,11 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const read=name=>readFileSync(new URL('../ui/vendor/assistant-ui/'+name,import.meta.url),'utf8');
 const hash=text=>createHash('sha256').update(text).digest('hex');
-test('Run Activity stays pinned to upstream with only the host utility import adapted',()=>{
- const original=read('run-activity.tsx').replace('"../task-status/utils"','"@/lib/utils"');
+test('Run Activity stays pinned apart from the utility import and exact focus/accessibility fixes',()=>{
+ const adapted=read('run-activity.tsx');
+ assert.equal(adapted.split('entries.length > 0 || open ? (').length,2);
+ assert.equal(adapted.split('inert={!open} aria-hidden={!open || undefined} ').length,2);
+ const original=adapted.replace('entries.length > 0 || open ? (','entries.length > 0 ? (').replace('inert={!open} aria-hidden={!open || undefined} ','').replace('"../task-status/utils"','"@/lib/utils"');
  assert.equal(hash(original),'1b838ae6054c2c45535701af231291436e77da1d6215a2c2a80a313de5aaeace');
 });
 test('official Collapsible is unmodified and uses the authorized exact Base UI dependency',()=>{

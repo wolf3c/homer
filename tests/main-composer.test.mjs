@@ -11,6 +11,13 @@ import * as references from '../src/preview-reference.ts';
 import {annotationValidationReferences} from '../ui/annotation-draft.ts';
 import {ContextOrder,contextKey} from '../ui/composer-context-order.ts';
 import {createHomerAttachmentAdapter,attachmentAsset} from '../ui/homer-attachment-adapter.ts';
+import {historyFixture} from './web-history-loading-fixture.ts';
+import {MainInputs} from '../src/recursive-main-inputs.ts';
+import {WebHistoryPages} from '../src/web-history-pages.ts';
+import {homerWebBridge} from '../src/web-homer.ts';
+import {Homer} from '../src/service.ts';
+import {RecursiveTools} from '../src/recursive-tools.ts';
+import {recoveryFixture} from './main-history-recovery-fixture.ts';
 
 // Execute the production component's handlers with deterministic hook storage.
 // This deliberately does not simulate a browser, Lexical DOM, or a second composer.
@@ -26,7 +33,7 @@ const appPath=process.env.HOMER_READER_SOURCE??new URL('../ui/homer-app.tsx',imp
 function nodes(tree){return !tree||typeof tree!=='object'?[]:Array.isArray(tree)?tree.flatMap(nodes):[tree,...nodes(tree.props?.children)];}
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function fixture({text='draft',draft,queueEditor,request,collections=2,connected=true,running=true,upgrade={phase:'running'},pending=[],completeQuote=async value=>value.quote}={}){
+function fixture({text='draft',draft,queueEditor,request,queueRead,collections=2,connected=true,running=true,upgrade={phase:'running'},pending=[],completeQuote=async value=>value.quote}={}){
   const state={threadId:'synthetic-composer',messages:[],isRunning:running,activeMessageId:running?'active':null,generation:running?{messageId:'active',generationId:'generation'}:null,work:[],interactions:[],features:{draftUpload:true,previewReferenceCollections:collections},upgrade};
   const cache=new Map(),calls=[],sends=[],hooks=[],effects=[],revoked=[];let cursor=0,dirty=false,tree,stops=0,focuses=0,preview;
   if(draft)cache.set('homer-draft:'+state.threadId,draft);
@@ -50,15 +57,124 @@ function fixture({text='draft',draft,queueEditor,request,collections=2,connected
   const useComposerInputFocus=productionFunction(new URL('../ui/homer-composer-input.tsx',import.meta.url),'useComposerInputFocus',{useContext,ComposerInputFocusContext,useCallback:(callback,deps)=>useMemo(()=>callback,deps)});
   const MainComposer=productionFunction(appPath,'MainComposer',{...client,...references,ContextOrder,contextKey,previewIntentTooLong,annotationValidationReferences,Popover:{Root:'popover',Portal:'portal',Positioner:'positioner',Popup:'popup'},AnnotationCommentForm:'quote-form',QuoteBlock:{Root:'quote-block',Text:'quote-text'},completeSourceQuote:completeQuote,locateSourceQuote:async()=>undefined,AnnotationChips:'annotation-chips',MessageCirclePlus:'quote-icon',ExecutionUsage:'usage',QueueDraftRecovery:'legacy-panel',useAnnotationDraft:owner=>owner.read(),ArtifactsContext,useState,useRef,useEffect,useLayoutEffect:useEffect,useMemo,useCallback:(callback,deps)=>useMemo(()=>callback,deps),useContext,interactionDraft:key=>({text:storage.read(key+':draft')??'',answers:{}}),ComposerInputFocusContext,useComposerInputFocus,useAui:()=>({composer:()=>composer}),useAuiState:selector=>selector({composer:runtime}),attachmentAsset,HomerAttachmentByIndex:'attachment',ComposerPrimitive:{Root:'form'},ComposerQuotePreview:{Root:'quote-root',Icon:'quote-icon',Text:'quote-text',Dismiss:'quote-dismiss'},requestAnimationFrame:fn=>fn(),Node:class {static [Symbol.hasInstance](node){return !!node&&typeof node==='object';}},document:{querySelector:()=>null},CSS:{escape:value=>value},HomerComposerInput:'editor',ComposerIcon:()=>null,storage,fetch,post,window:{addEventListener(){},removeEventListener(){}},URL:{createObjectURL:()=> 'blob:synthetic',revokeObjectURL:url=>revoked.push(url)}});
   const props={state,connected,annotationDraft,bindPreview(value){preview=value;},interactionsVerified:true,onAnswerTarget:item=>{props.answerTarget=item;dirty=true;},attachmentOwner,bindAttachments:read=>{attachmentRead=read;},stopping:null,onSend:async(...args)=>{sends.push(args);},onStop:()=>{stops++;}};
-  function render(){let count=0;do{assert.ok(count++<15,'hook effects settle');dirty=false;cursor=0;tree=MainComposer(props);while(effects.length)effects.shift()();}while(dirty);return tree;}
+  const queueEvents=new EventTarget();
+  const queueModule={};
+  if(queueRead){
+   const js=ts.transpileModule(readFileSync(new URL('../ui/homer-message-queue.tsx',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
+   const modules={'react':{useState,useRef,useEffect,useLayoutEffect:useEffect,useId:()=>useRef('queue-id').current},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'queue-provider'},'@dnd-kit/react/sortable':{isSortable:()=>false},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue-rows'},'./queue-operations':{queuePost:queueRead},'./homer-message-queue.css':{}};
+   Function('require','exports','window',js)(id=>id in modules?modules[id]:require(id),queueModule,queueEvents);
+  }
+  const Queue=queueModule.HomerMessageQueue;
+  function render(){let count=0;do{assert.ok(count++<15,'hook effects settle');dirty=false;cursor=0;tree=MainComposer(props);if(Queue)tree=[tree,Queue({state,connected:props.connected,operations:{locked:false,run:()=>assert.fail('display cannot write queue data')}})];while(effects.length)effects.shift()();}while(dirty);return tree;}
   const find=predicate=>{render();const result=nodes(tree).find(predicate);assert.ok(result,'expected production control');return result;};
   const button=label=>find(node=>node.type==='button'&&(node.props['aria-label']===label||node.props.children===label));
   const editor=()=>find(node=>node.type==='editor');
   const form=()=>find(node=>node.type==='form');
-  render();return {state,props,runtime,cache,calls,sends,revoked,annotationDraft,preview:()=>preview,remove:name=>composer.attachment({id:runtime.attachments.find(a=>a.name===name).id}).remove(),render,find,button,editor,form,get stops(){return stops;},get focuses(){return focuses;},close(){for(const hook of hooks)hook?.cleanup?.();}};
+  render();return {state,props,runtime,cache,calls,sends,revoked,annotationDraft,refreshQueue:()=>queueEvents.dispatchEvent(new Event('homer-queue-updated')),preview:()=>preview,remove:name=>composer.attachment({id:runtime.attachments.find(a=>a.name===name).id}).remove(),render,find,button,editor,form,get stops(){return stops;},get focuses(){return focuses;},close(){for(const hook of hooks)hook?.cleanup?.();}};
 }
 function submit(f){f.form().props.onSubmit({preventDefault(){}});f.render();}
 const asset={assetId:'asset-synthetic',revision:1,filename:'image.png',size:24,state:'ready',kind:'image'};
+
+for(const behavior of ['ack','ignore'])test('composer submission reconciles real old receipts and refreshes the queue: '+behavior,async()=>{
+ const f=await recoveryFixture();let ui;
+ try{
+  f.behavior=behavior;const bridge=homerWebBridge(f.app);
+  ui=fixture({text:'Please reconcile the old work against my current requirements',running:false,upgrade:undefined,queueRead:async(path,input)=>{assert.equal(path,'/api/history/queue');return bridge.history.dispatchQueue(input);}});
+  Object.assign(ui.state,await bridge.history.state());ui.render();await tick();ui.render();
+  assert.equal(ui.editor().props.placeholder,'发送消息，说明如何继续…');
+  assert.equal(ui.find(n=>n.props?.className==='queue-toggle').props['aria-expanded'],false);
+  assert.deepEqual(ui.find(n=>n.type==='queue-rows').props.messages.map(item=>item.id),f.originals.map(item=>item.id));
+  let sent;
+  ui.props.onSend=async input=>{sent=input;f.app.submitMessage(input);};
+  submit(ui);await tick();await f.app.idle();
+  assert.ok(sent,'the production composer sends a real user input');
+  assert.ok(f.turns.every(turn=>turn.requestId===sent.requestId));
+  Object.assign(ui.state,await bridge.history.state());ui.refreshQueue();await tick();ui.render();await tick();
+  if(behavior==='ack'){
+   assert.equal(f.calls.filter(call=>call.tool==='inbox_ack').length,1);
+   assert.equal(nodes(ui.render()).some(n=>n.props?.className==='queue-toggle'),false);
+   assert.equal(ui.editor().props.placeholder,'说说你想办的事…');
+  }else{
+   assert.ok(ui.state.messages.some(message=>message.text.includes('旧回执核对未确认')));
+   assert.equal(ui.find(n=>n.props?.className==='queue-toggle').props['aria-expanded'],false);
+   assert.equal(ui.editor().props.placeholder,'发送消息，说明如何继续…');
+  }
+ }finally{ui?.close();await f.close();}
+});
+
+for(const scenario of ['paused','ready','unowned','active','recoverable'])test('real Worker receipt drives collapsed queue and continuation placeholder: '+scenario,async()=>{
+ const f=historyFixture(0);let ui;
+ try{
+  f.inputs.accept({requestId:'source',text:'Synthetic authority'});
+  const source=f.inputs.claim();f.inputs.finish(source.messageId,source.revision,'completed');
+  const agentId=f.store.meta('mainAgentId');
+  const root=f.tasks.createRoot({agentId,sourceRequestId:'source'},{operationId:'root',title:'Synthetic work',executorKind:'worker',contract:{goal:'Synthetic work',inputs:[],resultKind:'structured',acceptance:{criteria:[]}},authority:{sourceRequestId:'source',description:'Synthetic work only',materials:[],resultIds:[],collaborateTaskIds:[],maxActiveMs:10000}});
+  const run=f.tasks.claim(root.runId);f.tasks.bind(run.id,run.epoch,'worker-thread','worker-turn');
+  const task=f.tasks.task(root.taskId);
+  const notice=f.tasks.send({agentId:task.executorAgentId,runId:run.id,epoch:run.epoch,threadId:'worker-thread',turnId:'worker-turn'},{operationId:'report',taskId:task.id,version:task.headVersion,expectedTaskRevision:task.revision,recipientAgentId:agentId,kind:'progress',payload:{text:'Synthetic report'}});
+  if(scenario==='unowned'||scenario==='active'||scenario==='recoverable'){
+   const claimed=f.inputs.claim([],'all');assert.equal(claimed.messageId,notice.messageId);
+   f.inputs.uncertain(claimed.messageId,claimed.revision);
+   if(scenario!=='unowned'){
+    f.processes.start({id:'old-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[notice.messageId],messageId:'old-process'},'old-turn');
+    f.processes.finish('old-process','unknown',scenario==='recoverable'?'host:restart:engine_closed':undefined);
+   }
+  }
+  const cutoff=Number(f.store.db.prepare('SELECT max(seq) n FROM agent_messages').get().n);
+  const inputs=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff});
+  if(scenario==='ready')inputs.resumeWorkerMessages();
+  const reader=new WebHistoryPages(f.history,f.processes,inputs),host=Object.create(Homer.prototype);
+  Object.assign(host,{...f,inputs,webReadEpoch:'synthetic-epoch',registerChannelCapabilities(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('unexpected_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),mainContext:{event:false,requestId:'user-recovery',inspected:new Set()},accountClocks(){},recursiveTools:new RecursiveTools(f.tasks,{rootAuthority(){throw Error('unexpected_authority');},wake(){},async stop(){throw Error('unexpected_stop');},async update(){throw Error('unexpected_update');}})});
+  const bridge=homerWebBridge(host),awaiting=scenario==='paused'||scenario==='recoverable';
+  const receipts=()=>f.store.db.prepare('SELECT * FROM agent_receipts ORDER BY messageId').all();
+  const originalReceipts=receipts(),originalCount=f.store.db.prepare('SELECT count(*) n FROM agent_messages').get().n;
+  const open=async()=>{
+   const next=fixture({text:'',running:false,queueRead:async(path,input)=>{assert.equal(path,'/api/history/queue');return bridge.history.dispatchQueue(input);}});
+   Object.assign(next.state,await bridge.history.state());next.render();await tick();next.render();return next;
+  };
+  ui=await open();
+  const toggle=()=>ui.find(n=>n.props?.className==='queue-toggle');
+  assert.equal(!!ui.state.queueDispatch.awaitingUser,awaiting);
+  assert.equal(ui.editor().props.placeholder,awaiting?'发送消息，说明如何继续…':'说说你想办的事…');
+  assert.equal(toggle().props['aria-expanded'],false);
+  assert.equal(ui.find(n=>n.type==='div'&&n.props.id==='queue-id').props.hidden,true);
+  const items=ui.find(n=>n.type==='queue-rows').props.messages;
+  assert.deepEqual(items.map(item=>item.id),[notice.messageId]);
+  toggle().props.onClick();assert.equal(toggle().props['aria-expanded'],true);
+  Object.assign(ui.state,await bridge.history.state());ui.refreshQueue();await tick();ui.render();await tick();
+  assert.equal(toggle().props['aria-expanded'],true,'background refresh preserves manual expansion');
+  toggle().props.onClick();ui.refreshQueue();ui.render();await tick();
+  assert.equal(toggle().props['aria-expanded'],false,'background refresh preserves manual collapse');
+  toggle().props.onClick();
+  ui.close();ui=await open();assert.equal(toggle().props['aria-expanded'],false,'reopening resets expansion');
+  assert.deepEqual(receipts(),originalReceipts,'loading and rendering never changes a receipt');
+  if(scenario==='recoverable'){
+   ui.props.connected=false;assert.equal(ui.editor().props.placeholder,'连接恢复后继续发送，草稿会保留');
+   ui.props.connected=true;ui.preview().appendQuote({messageId:'source',text:'Synthetic quotation'});
+   assert.equal(ui.editor().props.placeholder,'说说你对这段原文的要求…');
+   const question={id:'recovery-question',question:'Synthetic question?',kind:'question'};
+   ui.state.interactions=[question];ui.props.answerTarget=question;
+   assert.equal(ui.editor().props.placeholder,'回答上面的问题…');
+   ui.props.connected=false;assert.equal(ui.editor().props.placeholder,'回答上面的问题…');
+   ui.props.connected=true;ui.button('退出答复').props.onClick();ui.state.interactions=[];
+   ui.button('删除引用 1').props.onClick();
+   inputs.resumeWorkerMessages();Object.assign(ui.state,await bridge.history.state());
+   assert.equal(ui.editor().props.placeholder,'发送消息，说明如何继续…','resuming pending work does not hide unresolved history');
+   assert.equal(inputs.runnableHead('all'),undefined,'uncertain history is never offered again');
+   const original=await host.recursiveTool({agentId},'inbox_read',{after:0});
+   assert.deepEqual(original.map(item=>item.id),[notice.messageId]);
+   await host.recursiveTool({agentId},'inbox_ack',{operationId:'review-original',messageId:notice.messageId,disposition:'processed',reason:'Synthetic original outcome reviewed',resultId:null});
+   Object.assign(ui.state,await bridge.history.state());ui.refreshQueue();await tick();ui.render();await tick();
+   assert.equal(ui.editor().props.placeholder,'说说你想办的事…');
+   assert.equal(!!ui.state.queueDispatch.awaitingUser,false);
+   assert.equal(nodes(ui.render()).some(n=>n.props?.className==='queue-toggle'),false);
+   assert.equal(inputs.runnableHead('all'),undefined);
+   assert.equal(receipts().find(item=>item.messageId===notice.messageId).state,'processed');
+  }
+  assert.equal(f.store.db.prepare('SELECT count(*) n FROM agent_messages').get().n,originalCount,'no messages are resent');
+  assert.equal(ui.sends.length,0);assert.deepEqual(ui.calls,[]);
+ }finally{ui?.close();f.close();}
+});
 
 test('ordinary whole-message quotes append to the main draft with stable IDs and delete only the chosen entry',()=>{
  const original={messageId:'source',text:'full source',annotation:''};

@@ -1,22 +1,25 @@
-import type {MainActivity,WebState} from '../src/web-contract';
-import type {ProcessNode} from '../src/main-process';
+import type {MainActivity,WebState} from '../src/web-contract.js';
+import type {ProcessNode} from '../src/main-process.js';
+import {compactProcessAction,confirmedTerminal} from './process-presentation.js';
 
 // A live snapshot replaces observations; history merge must never preserve them.
 export function liveMainActivity(state:WebState,connected:boolean):MainActivity|null{
   const activity=state.mainActivity;
   if(!connected||!state.threadId||state.upgrade.phase!=='running'||!activity)return null;
   const node=state.processNodes?.find(node=>node.id===activity.processId);
-  if(node?.state==='worked'||node?.status==='unknown')return null;
+  if(!node||node.threadId!==state.threadId||activity.source!==(node.sourceKind==='user'?'user':'internal')||node.state==='worked'||node.status==='unknown')return null;
   if(activity.turnId&&node?.turnIds.length&&node.turnIds.at(-1)!==activity.turnId)return null;
   if(activity.source==='user'&&activity.turnId&&state.generation?.turnId!==activity.turnId)return null;
   return activity;
 }
-function stageText(activity:MainActivity){
-  const labels={preparing:activity.source==='internal'?'正在准备协作处理':'正在准备本轮处理',native:'原生轮执行中',compacting:'正在压缩上下文，等待原生完成',finishing:'原生轮已结束，宿主处理中',unknown:'当前处理阶段待确认'};
+function stageText(activity:MainActivity,nativeText='处理中'){
+  const labels={preparing:activity.source==='internal'?'正在准备协作处理':'正在准备本轮处理',native:nativeText,compacting:'正在压缩上下文，等待原生完成',finishing:'原生轮已结束，宿主处理中',unknown:'当前处理阶段待确认'};
   const retry=activity.retryObserved&&!['finishing','unknown'].includes(activity.stage)?'；本轮原生执行'+(activity.connectionIssue?'发生连接异常并':'')+'报告过重试，完成待确认':'';
   return labels[activity.stage]+retry;
 }
 export function processActivityText(state:WebState,connected:boolean,node:ProcessNode):string{
+  const observation={connected,threadId:state.threadId,serviceRunning:state.upgrade.phase==='running',generationTurnId:state.generation?.turnId,mainActivity:state.mainActivity};
+  if(confirmedTerminal(node))return compactProcessAction(node,observation);
   if((!connected||state.upgrade.phase!=='running')&&(node.state==='working'||node.items.some(item=>item.kind==='worker'&&['queued','running'].includes(item.runStatus??''))))return '以下为上次状态，当前执行状态未确认';
   if(node.status==='unknown')return '本次处理结束状态待核实';
   const activity=liveMainActivity(state,connected);
@@ -24,9 +27,8 @@ export function processActivityText(state:WebState,connected:boolean,node:Proces
   if(activity.stage==='native'||activity.stage==='compacting'){
     const pending=activity.source==='user'&&state.generation?state.interactions.find(item=>item.runId==='main-native:'+state.generation!.generationId):undefined;
     if(pending)return pending.kind==='authorization'?'等待你确认本轮操作':'等待你补充本轮信息';
-    if(activity.stage==='native'&&node.items.some(item=>item.kind==='tool'&&item.status==='running'))return '有工具调用进行中'+(activity.retryObserved?'；本轮原生执行报告过重试，完成待确认':'');
   }
-  return stageText(activity);
+  return stageText(activity,activity.stage==='native'?compactProcessAction(node,observation):undefined);
 }
 export function serviceActivityNotice(upgrade:WebState['upgrade']):string{
   if(upgrade.phase==='running')return '';

@@ -10,7 +10,7 @@ import type {Annotation} from './vendor/agentation-3.1.2/index.mjs';
 import {useMediaQuery} from '@mantine/hooks';
 import {previewAnnotations,type PreviewSource} from '../src/preview-reference';
 import type {PreviewRequest,WebPreviewSource} from './preview-reference';
-import {lazy,Suspense,useEffect,useLayoutEffect,useMemo,useRef,useState,type RefObject} from 'react';
+import {Component,lazy,Suspense,useEffect,useLayoutEffect,useMemo,useRef,useState,type RefObject,type ReactNode} from 'react';
 import {connectionFetch,mobileView} from './web-connection-client';
 import {htmlPreviewShell} from '../src/html-preview';
 import ReactMarkdown,{type Components} from 'react-markdown';
@@ -27,6 +27,18 @@ import {PreviewSelectionToolbar} from './preview-selection-toolbar';
 import type {ImageAnnotationControl} from './image-annotation';
 import type {PreviewImportGuard} from './preview-reference';
 const ImageAnnotation=lazy(()=>import('./image-annotation'));
+const MAX_PATCH_BYTES=256*1024,MAX_PATCH_LINES=2000,PATCH_PREFIX_BYTES=128*1024;
+function isPatchFile(name:string,mime:string){
+  return /^(text|application)\/x-(diff|patch)$/.test(mime)||
+    (['','application/octet-stream','text/plain'].includes(mime)&&/\.(patch|diff)$/i.test(name));
+}
+const LazyDiffViewer=lazy(()=>import('./vendor/assistant-ui/diff-viewer').then(module=>({default:module.DiffViewer})));
+class PatchPreviewBoundary extends Component<{children:ReactNode;fallback:ReactNode},{failed:boolean}>{
+  state={failed:false};
+  static getDerivedStateFromError(){return {failed:true};}
+  render(){return this.state.failed?this.props.fallback:this.props.children;}
+}
+
 export type CanvasArtifact = {id:string;title:string};
 export function canvasWebUrl(value:string):string {
   const url=new URL(value);
@@ -146,7 +158,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
       }
       const blob=await response.blob(),mime=(response.headers.get('Content-Type')??blob.type).split(';')[0]!.trim().toLowerCase();
       let name=artifact.title;try{const encoded=response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];if(encoded)name=decodeURIComponent(encoded);}catch{}
-      const text=!/^(audio|video)\//.test(mime)&&(mime.startsWith('text/')||/^(application\/(json|javascript))/.test(mime)||/\.(txt|md|json|[cm]?[jt]sx?|css|py|sh)$/i.test(name))?await blob.text():'';
+      const text=isPatchFile(name,mime)?await blob.slice(0,blob.size>MAX_PATCH_BYTES?PATCH_PREFIX_BYTES:blob.size).text():!/^(audio|video)\//.test(mime)&&(mime.startsWith('text/')||/^(application\/(json|javascript))/.test(mime)||/\.(txt|md|json|[cm]?[jt]sx?|css|py|sh)$/i.test(name))?await blob.text():'';
       if(controller.signal.aborted||!readerCurrent())return;
       objectUrl=URL.createObjectURL(blob);setFile({url:objectUrl,mime,text,name,blob,sha256:response.headers.get('X-Homer-Artifact-Hash')??''});
     }catch(error){if(!controller.signal.aborted&&readerCurrent())setReadError(error instanceof Error?error.message:'成果读取失败。');}
@@ -238,6 +250,20 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
       if(readerCurrent()&&current===generation.current)setRuntime(bundle.default);
     }catch{if(readerCurrent()&&current===generation.current)staticPreview(true);}
   }
+  const isPatch=!!file&&isPatchFile(file.name,file.mime);
+  const patchFallback=useMemo(()=>{
+    if(!file||!isPatchFile(file.name,file.mime))return '';
+    if(file.blob.size>MAX_PATCH_BYTES)return '补丁较大，仅显示开头 128 KiB 的解码文本；下载查看完整原文件。';
+    if(!file.text.trim())return '补丁为空或仅含空白。';
+    if(/[\0\uFFFD]/.test(file.text))return '内容可能不是 UTF-8 文本，显示解码结果；可下载原文件。';
+    if(/^(GIT binary patch|Binary files .+ differ)\r?$/m.test(file.text))return '包含二进制差异，显示原文。';
+    if(/^diff --(cc|combined) |^@@@/m.test(file.text))return '暂不支持 combined 差异，显示原文。';
+    let lines=1;
+    for(let i=0;i<file.text.length;i++)if(file.text.charCodeAt(i)===10&&++lines>MAX_PATCH_LINES)return '补丁行数较多，显示原文。';
+    if(!/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m.test(file.text))return '未发现支持的 unified hunk，显示原文。';
+    return '';
+  },[file]);
+  const patchRaw=file&&<><a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},()=>{if(readerCurrent())setNotice('下载未完成，请重新连接后重试。');});}}>下载原文件</a><pre>{file.text}</pre></>;
   const mediaKind=file?.mime.startsWith('audio/')?'audio':file?.mime.startsWith('video/')?'video':null;
   const unknownMedia=!!file&&(!file.mime||file.mime==='application/octet-stream')&&/\.(mp3|wav|m4a|ogg|flac|mp4|webm|mov|mkv)$/i.test(file.name);
   const isHtml=file?.mime==='text/html',isText=!!file&&!mediaKind&&(file.mime.startsWith('text/')||!!file.text);
@@ -247,13 +273,17 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
     {actions&&createPortal(isHtml&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
       <TooltipIconButton className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)staticPreview();else void enableWebAnnotation();}}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>
     </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface">{!imageAnnotation&&<TooltipIconButton className="image-annotation-toggle" tooltipContainer={imageActions} aria-label="批注" aria-pressed={false} tooltip="开始图片批注" onClick={()=>setImageAnnotation(true)}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>}</span>:null,actions)}
-    <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml?'html-preview-body':undefined}>
+    <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml?'html-preview-body':isPatch?'patch-preview-body':undefined}>
     {notice&&<p role="status" className="canvas-note">{notice}</p>}
     {webSource&&<p className="canvas-note canvas-web-narrow-note">网页元素批注暂限桌面使用。</p>}
-    {referencesEnabled&&source&&!webSource&&isText&&!isHtml&&<PreviewSelectionToolbar key={JSON.stringify([artifact?.id,file?.sha256])} body={body} source={source} annotations={textReference?.kind==='text'?textReference.annotations??[]:[]} representation={file?.mime==='text/markdown'||/\.md$/i.test(file?.name??'')?'markdown':'plain'} onReference={onReference} onRemove={id=>annotationDraft.remove(referenceKey({kind:'text',source}),id)} onNotice={setNotice} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/>}
+    {referencesEnabled&&source&&!webSource&&isText&&!isHtml&&!isPatch&&<PreviewSelectionToolbar key={JSON.stringify([artifact?.id,file?.sha256])} body={body} source={source} annotations={textReference?.kind==='text'?textReference.annotations??[]:[]} representation={file?.mime==='text/markdown'||/\.md$/i.test(file?.name??'')?'markdown':'plain'} onReference={onReference} onRemove={id=>annotationDraft.remove(referenceKey({kind:'text',source}),id)} onNotice={setNotice} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/>}
     {webSource?<><p className="canvas-note">{ready?'网页已接入批注器，可使用页面内工具栏选择元素。':'网站可能禁止嵌入；未接入批注器的网页只能预览。'}</p><WebPreview origin={webSource.url} loading={false} onReload={()=>{setReady(false);if(webFrame.current)webFrame.current.src=webSource.url;}} onOpenExternal={()=>window.open(webSource.url,'_blank','noopener,noreferrer')}><iframe ref={webFrame} key={webSource.url} title="网页预览" onLoad={()=>setFrameRevision(value=>value+1)} src={webSource.url} sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer"/></WebPreview></>:
     loading?<p role="status">正在读取成果…</p>:readError?<div className="canvas-read-error"><p role="alert">{readError}</p><button type="button" onClick={()=>{staticPreview();setFile(null);setRetry(value=>value+1);}}>重试读取</button></div>:file?<>
-      {isHtml?<><iframe ref={webFrame} key={token} title="隔离 HTML 成果" sandbox={interactive?'allow-scripts':''} referrerPolicy="no-referrer" {...(interactive?{...(mobileView?{srcDoc:htmlPreviewShell}:{src:'/preview/interactive'}),onLoad:(event)=>event.currentTarget.contentWindow?.postMessage({type:'homer-html-preview',html:isolatedHtml(file.text,true),runtime},'*')}:{srcDoc:isolatedHtml(file.text)})}/>
+      {isPatch?patchFallback?<><p role="status" className="canvas-note">{patchFallback}</p>{patchRaw}</>:
+      <PatchPreviewBoundary key={JSON.stringify([artifact?.id,file.sha256,retry])} fallback={<><p role="status" className="canvas-note">差异预览失败，显示原文。</p>{patchRaw}</>}>
+        <details><summary>原始补丁文本</summary>{patchRaw}</details>
+        <Suspense fallback={<p role="status">加载差异预览…</p>}><LazyDiffViewer patch={file.text} maxCollapsedLines={200}/></Suspense>
+      </PatchPreviewBoundary>:isHtml?<><iframe ref={webFrame} key={token} title="隔离 HTML 成果" sandbox={interactive?'allow-scripts':''} referrerPolicy="no-referrer" {...(interactive?{...(mobileView?{srcDoc:htmlPreviewShell}:{src:'/preview/interactive'}),onLoad:(event)=>event.currentTarget.contentWindow?.postMessage({type:'homer-html-preview',html:isolatedHtml(file.text,true),runtime},'*')}:{srcDoc:isolatedHtml(file.text)})}/>
       {savedCount>0&&!interactive&&<p className="canvas-note html-notes-status">已保存 {savedCount} 条网页批注到输入草稿</p>}</>:
       mediaKind?<div className="canvas-media">
         <p className="canvas-note">{file.name}</p>

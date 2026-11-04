@@ -16,7 +16,7 @@ type Screen='not-determined'|'denied'|'granted'|'restricted'|'unknown';
 type PermissionState={supported:false}|{supported:true;subject:'Homer';accessibility:Accessibility;screen:Screen};
 type ActionResult={supported:false}|{ok:boolean;code?:string};
 type PermissionsBridge={check:()=>Promise<PermissionState>;openSystemSettings:(target?:'screen')=>Promise<ActionResult>};
-type AccountState={supported:boolean;configured:boolean;source?:'codex'|'website';native?:{account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:string;pending:boolean;canReopen:boolean};nativeError?:string;websiteReady?:boolean;connection:'website'|'legacy'|'disconnected';active:'website'|'legacy'|'disconnected';pending:boolean;canReopen:boolean;needsRestart:boolean;error?:string;wallet?:{available:number;used:number;unit:string};updatedAt?:string;walletError?:string;stale:boolean};
+type AccountState={supported:boolean;configured:boolean;source?:'codex'|'website';native?:{account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:string;pending:boolean;canReopen:boolean};nativeError?:string;websiteReady?:boolean;connection:'website'|'disconnected';active:'website'|'disconnected';pending:boolean;canReopen:boolean;needsRestart:boolean;error?:string;wallet?:{available:number;used:number;unit:string;expiresAt?:number};updatedAt?:string;walletError?:string;stale:boolean};
 type AccountAction='state'|'connect'|'cancel'|'reopen'|'refresh'|'openWebsite'|'disconnect'|'restart'|'nativeConnect'|'nativeCancel'|'nativeReopen'|'applyCodex'|'applyWebsite';
 type AccountBridge=Record<AccountAction,()=>Promise<AccountState>>&{onChange:(callback:()=>void)=>()=>void};
 declare global{interface Window{homerDesktopAccount?:AccountBridge;homerDesktopPermissions?:PermissionsBridge;homerDesktopSettings?:{onOpen:(callback:()=>void)=>()=>void};}}
@@ -151,22 +151,30 @@ const accountErrors:Record<string,string>={
  CONNECTION_CANCELLED:'登录已取消。',TOKEN_UNAVAILABLE:'登录凭据已失效，请重新登录；仍不可用时请联系维护方。',
  USAGE_UNAVAILABLE:'未能确认最新额度，请稍后刷新。',NOT_CONNECTED:'当前尚未登录。',
 };
-export function DesktopAccount(){
+export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
  const bridge=window.homerDesktopAccount;
  const [state,setState]=useState<AccountState>(),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[source,setSource]=useState<'chatgpt'|'website'>();
- const selectedSource=source??(state?.source==='codex'?'chatgpt':'website');
+ const selectedSource=source??(!onboarding&&state?.source==='codex'?'chatgpt':'website');
  const live=useRef(false),request=useRef(0),running=useRef(false);
  const apply=useCallback(async(action:AccountAction='state')=>{
   if(!bridge)return;
   const id=++request.current;
   try{
    let value=await bridge[action]();
+   if(action==='openWebsite'&&!value.configured)throw Error('unavailable');
    if(live.current&&id===request.current){setState(value);setNotice('');}
    if(action==='state'&&value.stale&&(value.active!=='disconnected'||value.source==='codex'&&value.connection!=='disconnected'))value=await bridge.refresh();
    if(live.current&&id===request.current){setState(value);setNotice('');}
-  }catch{if(live.current&&id===request.current)setNotice(action==='openWebsite'?'购买积分页面未能打开，请稍后重试。':'状态未能确认，请重新打开账号设置。');}
+  }catch{if(live.current&&id===request.current){if(action==='refresh'||action==='state')setState(value=>value?{...value,stale:true}:value);setNotice(action==='openWebsite'?'购买积分页面未能打开，请稍后重试。':'状态未能确认，请重试。');}}
  },[bridge]);
  useEffect(()=>{live.current=true;void apply();const dispose=bridge?.onChange(()=>{void apply();});return()=>{live.current=false;request.current++;dispose?.();};},[bridge,apply]);
+ useEffect(()=>{
+  const expiresAt=state?.wallet?.expiresAt;
+  if(!expiresAt||expiresAt<=Date.now()/1000||state.stale||state.walletError)return;
+  // Reconcile once at expiry; long-lived credentials respect the timer limit.
+  const timer=window.setTimeout(()=>void apply(),Math.min(expiresAt*1000-Date.now(),2147483647));
+  return()=>window.clearTimeout(timer);
+ },[state,apply]);
  useEffect(()=>{
   if(!state?.pending&&!state?.native?.pending)return;
   // The browser callback can finish while the renderer misses an invalidation.
@@ -183,21 +191,23 @@ export function DesktopAccount(){
   try{await apply(action);}finally{running.current=false;if(live.current)setBusy(false);}
  }
  const error=(value?:string)=>value?(accountErrors[value]??'状态未能确认，请联系维护方。'):'';
- const connected=state?.active==='website'||state?.active==='legacy',saved=state?.connection==='website'||state?.connection==='legacy';
- const expired=(connected||saved)&&(state?.error==='TOKEN_UNAVAILABLE'||state?.walletError==='TOKEN_UNAVAILABLE');
+ const connected=state?.active==='website',saved=state?.connection==='website';
+ const expired=(connected||saved)&&(state?.error==='TOKEN_UNAVAILABLE'||state?.walletError==='TOKEN_UNAVAILABLE'||!!state?.wallet?.expiresAt&&state.wallet.expiresAt<=Date.now()/1000);
  const native=state?.native;
  const nativeLabel=state?.nativeError?'状态未确认':!native?'状态未确认':native.connected?'已登录':native.account==='other'?'API Key 登录':native.pending?'登录待完成':({cancelled:'登录已取消',failed:'登录失败',timed_out:'登录已超时',cancel_unconfirmed:'取消结果待确认',unconfirmed:'授权结果待确认'}[native.phase]??(native.account==='none'?'未登录':'状态未确认'));
  const websiteStatus=!state?'正在读取…':state.pending?'请在浏览器完成登录。':expired?'登录已失效':state.needsRestart?(connected?'配置已更新，重启后生效。':'登录信息已保存，重启后生效。'):!connected&&saved?'登录信息已保存，应用后生效。':!connected?'未登录':'';
  const viewingCodex=selectedSource==='chatgpt',different=!!state&&(state.source==='codex')!==viewingCodex;
- return <div className="desktop-permissions desktop-account" aria-busy={busy}>
-  {!bridge||state?.supported===false?<p role="status">此入口仅适用于日常 Homer 桌面版。</p>:<>
-   <div className="desktop-account-page-heading"><h2>{viewingCodex?'ChatGPT 套餐':'荷马模型服务'}</h2>
-    <Button className="desktop-account-source-entry" disabled={!state} onClick={()=>setSource(viewingCodex?'website':'chatgpt')}>
+ const walletKnown=!!state?.wallet&&!state.stale&&!state.walletError&&!expired;
+ const sourceEntry=<Button className="desktop-account-source-entry" disabled={!state} onClick={()=>setSource(viewingCodex?'website':'chatgpt')}>
      {viewingCodex?<img src={homerLogo} alt="" width={16} height={16}/>:<svg viewBox="130 210 300 300" width={16} height={16} aria-hidden="true"><path fill="currentColor" d="M249.176 323.434V298.276C249.176 296.158 249.971 294.569 251.825 293.509L302.406 264.381C309.29 260.409 317.5 258.555 325.973 258.555C357.75 258.555 377.877 283.185 377.877 309.399C377.877 311.253 377.877 313.371 377.611 315.49L325.178 284.771C322.001 282.919 318.822 282.919 315.645 284.771L249.176 323.434ZM367.283 421.415V361.301C367.283 357.592 365.694 354.945 362.516 353.092L296.048 314.43L317.763 301.982C319.617 300.925 321.206 300.925 323.058 301.982L373.639 331.112C388.205 339.586 398.003 357.592 398.003 375.069C398.003 395.195 386.087 413.733 367.283 421.412V421.415ZM233.553 368.452L211.838 355.742C209.986 354.684 209.19 353.095 209.19 350.975V292.718C209.19 264.383 230.905 242.932 260.301 242.932C271.423 242.932 281.748 246.641 290.49 253.26L238.321 283.449C235.146 285.303 233.555 287.951 233.555 291.659V368.455L233.553 368.452ZM280.292 395.462L249.176 377.985V340.913L280.292 323.436L311.407 340.913V377.985L280.292 395.462ZM300.286 475.968C289.163 475.968 278.837 472.259 270.097 465.64L322.264 435.449C325.441 433.597 327.03 430.949 327.03 427.239V350.445L349.011 363.155C350.865 364.213 351.66 365.802 351.66 367.922V426.179C351.66 454.514 329.679 475.965 300.286 475.965V475.968ZM237.525 416.915L186.944 387.785C172.378 379.31 162.582 361.305 162.582 343.827C162.582 323.436 174.763 305.164 193.563 297.485V357.861C193.563 361.571 195.154 364.217 198.33 366.071L264.535 404.467L242.82 416.915C240.967 417.972 239.377 417.972 237.525 416.915ZM234.614 460.343C204.689 460.343 182.71 437.833 182.71 410.028C182.71 407.91 182.976 405.792 183.238 403.672L235.405 433.863C238.582 435.715 241.763 435.715 244.938 433.863L311.407 395.466V420.622C311.407 422.742 310.612 424.331 308.758 425.389L258.179 454.519C251.293 458.491 243.083 460.343 234.611 460.343H234.614ZM300.286 491.854C332.329 491.854 359.073 469.082 365.167 438.892C394.825 431.211 413.892 403.406 413.892 375.073C413.892 356.535 405.948 338.529 391.648 325.552C392.972 319.991 393.766 314.43 393.766 308.87C393.766 271.003 363.048 242.666 327.562 242.666C320.413 242.666 313.528 243.723 306.644 246.109C294.725 234.457 278.307 227.042 260.301 227.042C228.258 227.042 201.513 249.815 195.42 280.004C165.761 287.685 146.694 315.49 146.694 343.824C146.694 362.362 154.638 380.368 168.938 393.344C167.613 398.906 166.819 404.467 166.819 410.027C166.819 447.894 197.538 476.231 233.024 476.231C240.172 476.231 247.058 475.173 253.943 472.788C265.859 484.441 282.278 491.854 300.286 491.854Z"/></svg>}
      {viewingCodex?'荷马会员':'改用 ChatGPT 套餐'}
-    </Button>
-   </div>
+    </Button>;
+ return <div className={'desktop-permissions desktop-account'+(onboarding?' desktop-account-onboarding':'')} aria-busy={busy}>
+  {!bridge||state?.supported===false?<p role="status">此入口仅适用于日常 Homer 桌面版。</p>:<>
+   {onboarding&&<header className="desktop-account-welcome"><img src={homerLogo} alt="" width={64} height={64}/><h1>欢迎使用荷马</h1><p>连接一个模型服务，开始和荷马一起做事。</p></header>}
+   <div className="desktop-account-page-heading"><h2>{viewingCodex?'ChatGPT 套餐':onboarding?'荷马会员服务':'荷马模型服务'}</h2>{!onboarding&&sourceEntry}</div>
    <div className="desktop-account-detail">
+    {onboarding&&!viewingCodex&&<p>登录荷马账号，使用积分调用模型。</p>}
     {viewingCodex?<>
      <p role="status">{nativeLabel}</p><p>通过 Codex 使用 ChatGPT 登录，荷马不收取模型费用。</p>
      {native?.account==='other'&&<p>当前使用 API Key，不能作为 ChatGPT 套餐登录；请在原 Codex 环境中处理。</p>}
@@ -205,21 +215,27 @@ export function DesktopAccount(){
      {state?.nativeError&&<p role="status">{state.nativeError}</p>}
      <div className="desktop-permission-actions">
       {native?.pending?<><Button disabled={busy||!native.canReopen} onClick={()=>void run('nativeReopen')}>重新打开 Codex 登录页面</Button><Button disabled={busy} onClick={()=>void run('nativeCancel')}>取消 Codex 登录</Button></>:native?.account==='none'&&<Button className="primary-button" disabled={busy} onClick={()=>void run('nativeConnect')}>通过 Codex 登录</Button>}
-      <Button disabled={busy} onClick={()=>void run('state')}>重新检查 Codex 登录</Button>
+      {state&&(nativeLabel==='状态未确认'||native?.phase==='unconfirmed'||native?.phase==='cancel_unconfirmed'||notice)&&<Button disabled={busy} onClick={()=>void run('state')}>重新检查 Codex 登录</Button>}
+      {onboarding&&!different&&native?.connected&&!state?.nativeError&&<Button className="primary-button" disabled={busy} onClick={()=>void run('restart')}>重启并应用</Button>}
      </div>
     </>:<>
      {websiteStatus&&<p role="status">{websiteStatus}</p>}
      {state&&!state.configured&&<p role="status">{error('CONFIGURATION_REQUIRED')}</p>}
      {state?.error&&<p role="status">{error(state.error)}</p>}
      {state?.pending?<div className="desktop-permission-actions"><Button disabled={busy||!state.canReopen} onClick={()=>void run('reopen')}>重新打开登录页面</Button><Button disabled={busy} onClick={()=>void run('cancel')}>取消</Button></div>:<>
-      {state&&!state.needsRestart&&(!connected&&!saved||expired)&&<div className="desktop-permission-actions"><Button className="primary-button" disabled={busy||!state.configured} onClick={()=>void run('connect')}>{expired||state.error&&state.error!=='CONNECTION_CANCELLED'?'重新登录':'登录'}</Button></div>}
-      {state?.needsRestart&&<div className="desktop-permission-actions"><Button className="primary-button" disabled={busy} onClick={()=>void run('restart')}>重启并应用</Button></div>}
+      {state&&!state.needsRestart&&(!connected&&!saved||expired)&&<div className="desktop-permission-actions"><Button className="primary-button" disabled={busy||!state.configured} onClick={()=>void run('connect')}>{expired||state.error&&state.error!=='CONNECTION_CANCELLED'?'重新登录':onboarding?'登录荷马':'登录'}</Button></div>}
+      {state?.needsRestart&&!different&&<div className="desktop-permission-actions"><Button className="primary-button" disabled={busy} onClick={()=>void run('restart')}>重启并应用</Button></div>}
      </>}
      {(connected||state?.source==='codex'&&saved)&&<section aria-label="可用积分">
       <div className="desktop-account-metrics"><p><span>可用积分</span><strong>{state?.wallet?`${state.wallet.available.toLocaleString(undefined,{maximumFractionDigits:6})} ${state.wallet.unit}`:'未知'}</strong></p></div>
       {state?.updatedAt&&<p>{state.stale||state.walletError?'上次记录':'更新时间'}：{new Date(state.updatedAt).toLocaleString()}</p>}
       {state?.walletError&&<p role="status">{error(state.walletError)}</p>}
-      <div className="desktop-permission-actions"><Button className="primary-button" disabled={busy||!state?.configured} onClick={()=>void run('openWebsite')}>购买积分</Button></div>
+      {walletKnown&&state?.wallet?.available===0&&<p role="status">购买积分后即可开始使用。</p>}
+      {!walletKnown&&<p role="status">暂时无法确认可用积分，请重新检查。</p>}
+      <div className="desktop-permission-actions">
+       {(!onboarding||walletKnown&&state?.wallet?.available===0)&&<Button className="primary-button" disabled={busy||!state?.configured} onClick={()=>void run('openWebsite')}>购买积分</Button>}
+       {(!walletKnown||state?.wallet?.available===0)&&<Button disabled={busy} onClick={()=>void run('refresh')}>{walletKnown?'我已购买，刷新状态':'重新检查积分'}</Button>}
+      </div>
      </section>}
     </>}
     {different&&<div className="desktop-account-apply">
@@ -227,18 +243,20 @@ export function DesktopAccount(){
      {(viewingCodex?native?.connected&&!state?.nativeError:saved&&!expired&&state?.websiteReady!==false&&!state?.pending)&&<Button className="primary-button" disabled={busy} onClick={()=>void run(viewingCodex?'applyCodex':'applyWebsite')}>应用并重启</Button>}
     </div>}
    </div>
-   {!viewingCodex&&(saved||connected)&&!state?.pending&&<div className="desktop-account-footer"><Button disabled={busy} onClick={()=>void run('disconnect')}>退出登录</Button></div>}
+   {onboarding&&<>{sourceEntry}<p className="desktop-account-hint">之后可以在设置中查看账号或切换服务。</p></>}
+   {!onboarding&&!viewingCodex&&(saved||connected)&&!state?.pending&&<div className="desktop-account-footer"><Button disabled={busy} onClick={()=>void run('disconnect')}>退出登录</Button></div>}
   </>}
   {notice&&<p role="status">{notice}</p>}
+  {onboarding&&notice&&<Button disabled={busy} onClick={()=>void run('state')}>重新检查账号</Button>}
  </div>;
 }
 
 
 export function ModelFailureNotice({failure,onAccount,onDismiss}:{failure:NonNullable<WebState['modelFailure']>;onAccount?:()=>void;onDismiss?:()=>void}){
  const [closed,setClosed]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
- const quota=failure.code==='engine_quota_insufficient',rate=failure.code==='engine_rate_limited';
- const title=quota?'额度不足':rate?'请求受到限流，本次未能继续':'本次请求未能完成';
- const description=quota?'当前额度不足以继续本次请求。':rate?'请稍后再发起请求。恢复时间暂未提供，荷马不会自动重试。':'原因暂无法确认。请先核对已有结果，再决定下一步。';
+ const quota=failure.code==='engine_quota_insufficient',rate=failure.code==='engine_rate_limited',auth=failure.code==='engine_authentication_failed',unconfirmed=failure.code==='engine_account_status_unconfirmed';
+ const title=quota?'额度不足':rate?'请求受到限流，本次未能继续':auth?'账号连接未通过验证':unconfirmed?'账号状态未能确认':'本次请求未能完成';
+ const description=quota?'当前额度不足以继续本次请求。':rate?'请稍后再发起请求。恢复时间暂未提供，荷马不会自动重试。':auth?'当前模型服务未通过认证，请检查账号连接后重新发送消息。':unconfirmed?'未能核实账号状态，请检查连接与额度后重新发送消息。':'原因暂无法确认。请先核对已有结果，再决定下一步。';
  async function recharge(){
   if(busy)return;setBusy(true);setNotice('');
   try{const state=await window.homerDesktopAccount!.openWebsite();if(!state.configured)throw Error('unavailable');}
@@ -248,8 +266,8 @@ export function ModelFailureNotice({failure,onAccount,onDismiss}:{failure:NonNul
  if(closed)return null;
  return <section className="model-failure-notice" aria-label={quota?'额度不足提醒':rate?'请求限流提醒':'请求失败提醒'}>
   <div className="model-failure-copy"><div role="status"><h2>{title}</h2><p>{description}</p></div>
-   {quota&&(window.homerDesktopAccount||onAccount)&&<div className="model-failure-actions">
-    {failure.source==='website'&&window.homerDesktopAccount&&<Button className="primary-button" disabled={busy} aria-busy={busy} onClick={()=>void recharge()}>{busy?'正在打开…':'充值'}</Button>}
+   {(quota||auth||unconfirmed)&&(window.homerDesktopAccount||onAccount)&&<div className="model-failure-actions">
+    {quota&&failure.source==='website'&&window.homerDesktopAccount&&<Button className="primary-button" disabled={busy} aria-busy={busy} onClick={()=>void recharge()}>{busy?'正在打开…':'充值'}</Button>}
     {onAccount&&<Button className="model-failure-account" onClick={onAccount}>查看账号与额度</Button>}
    </div>}
    {notice&&<p role="status">{notice}</p>}

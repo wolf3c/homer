@@ -7,6 +7,8 @@ import { mkdtempSync, mkdirSync, cpSync, writeFileSync, readFileSync, existsSync
 import { resolve, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { sourceSnapshot } from "../scripts/dev-build.mjs";
+import {waitForDevCondition} from './fixtures/dev-condition.mjs';
+import {fixtureBuildEnvironment,fixtureBuildEvidence} from './fixtures/dev-build-trace.mjs';
 
 const root = resolve(".");
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -26,7 +28,7 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
   const config = join(base, "synthetic.config.json");
   writeFileSync(config, JSON.stringify({ workspace: "workspace", runtime: "runtime", codexHome: join(base, "home"), codexBin: binary, model: "synthetic-only", effort: "medium", requiresOpenaiAuth: false, timeoutMs: 60000, mainTimeoutMs: 60000, stopGraceMs: 200 }));
   const reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
-  const url='http://127.0.0.1:'+port,fetch=syntheticUserFetch(join(base,'runtime/web-connection/connect-homer.html'));
+  const url='http://127.0.0.1:'+port,fetch=syntheticUserFetch();
   const approve=async()=>{await buildUntil(async()=>{try{return !!(await(await fetch(url+'/api/update/review')).json())?.hash;}catch{return false;}});const review=await(await fetch(url+'/api/update/review')).json();assert.ok(review.files.length);assert.equal((await fetch(url+'/api/update/approve',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({hash:review.hash})})).status,200);};
   const events = [], errors = [];
   const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", join(base, "scripts/dev.mjs"), "--web","--port",String(port),"--config", config, "--json"], { cwd: base, env:fixtureBuildEnvironment(base), stdio: ["pipe", "pipe", "pipe"] });

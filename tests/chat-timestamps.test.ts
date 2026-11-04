@@ -10,14 +10,14 @@ import { AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useAuiStat
 import * as AssistantUI from '@assistant-ui/react';
 import { useActionBarCopy } from '@assistant-ui/core/react';
 import { MessageCirclePlus } from 'lucide-react';
-import { referencesOf } from '../src/preview-reference.ts';
-import { previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText } from '../src/message-quote.ts';
-import { conversationTimestamps, isVisibleConversationMessage } from '../ui/chat-date.ts';
-import { projectConversation } from '../src/conversation-projection.ts';
-import { ConversationHistory } from '../src/web-history.ts';
+import { referencesOf } from '../src/preview-reference.js';
+import { previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText } from '../src/message-quote.js';
+import { conversationTimestamps, isVisibleConversationMessage } from '../ui/chat-date.js';
+import { projectConversation } from '../src/conversation-projection.js';
+import { ConversationHistory } from '../src/web-history.js';
 import { withDom } from './helpers/process-dom.mjs';
 
-const m = (id: string, createdAt: unknown, extra = {}) => ({ id, createdAt, role: 'user', text: '内容', ...extra });
+const m = <T extends object = Record<never, never>>(id: string, createdAt: unknown, extra: T = {} as T) => ({ id, createdAt, role: 'user', text: '内容', ...extra });
 const at = (value: string) => new Date(value);
 const defaultClock = (value: string, timeZone?: string) => new Intl.DateTimeFormat(undefined, { timeZone, hour: '2-digit', minute: '2-digit' }).format(at(value));
 test('adjacent calendar days include year, yesterday crosses year, original order and IDs remain', () => {
@@ -70,7 +70,7 @@ test('default timezone follows local environment and relative labels refresh aft
     const expected = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
     const options = expected.resolvedOptions();
     assert.equal(options.timeZone, 'America/Los_Angeles');
-    const resolved = new Intl.DateTimeFormat(options.locale, { timeZone: options.timeZone, hour: options.hour, minute: options.minute, hourCycle: options.hourCycle });
+    const resolved = new Intl.DateTimeFormat(options.locale, { timeZone: options.timeZone, hour: '2-digit', minute: '2-digit', hourCycle: options.hourCycle });
     assert.equal(expected.format(at(messages[0]!.createdAt as string)), resolved.format(at(messages[0]!.createdAt as string)));
     assert.equal(conversationTimestamps(messages, { now: at('2025-01-01T08:00:00Z') }).get('a')?.time, expected.format(at(messages[0]!.createdAt as string)));
   } finally { if (before === undefined) delete process.env.TZ; else process.env.TZ = before; }
@@ -232,7 +232,8 @@ test('production wrappers integrate installed runtime and retain rich slots with
   assert.ok(!html.includes('data-conversation-message="hidden"'));
   for (const value of ['引用', '批注', '附件', 'Working/Worked', '公开正文', '成果', '失效待答记录', '唯一正式答复']) assert.ok(html.includes(value), value);
   assert.match(html, /<time class="message-timestamp" tabindex="0" dateTime="2025-01-01T10:00:00.000Z" title="[^"]+" aria-label="消息时间：[^"]+">[^<]+<\/time>/);
-  assert.equal(calls.find(c => c[0] === 'process' && c[1].node === source[1]!.process)?.[1].node, source[1]!.process);
+  const assistant=source.find(row=>row.id==='a');assert.ok(assistant&&'process' in assistant);
+  assert.equal(calls.find(c => c[0] === 'process' && c[1].node === assistant.process)?.[1].node, assistant.process);
   assert.equal(calls.find(c => c[0] === 'files')?.[1].files[0], files[0]);
   assert.equal(calls.find(c => c[0] === 'details')?.[1].message, source[0]);
   const streamed = renderConversation(source.map(row => row.id === 'a' ? { ...row, text: '公开正文更新' } : row));

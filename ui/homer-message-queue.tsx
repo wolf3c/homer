@@ -14,8 +14,7 @@ const summaryOf=(item:QueueItem)=>[item.origin==='worker'?'Worker':undefined,ite
 export function HomerMessageQueue({state,connected,operations,editorBusy=false}:{state:WebState;connected:boolean;operations:QueueOperations;editorBusy?:boolean}){
  const [page,setPage]=useState<DispatchQueuePage<'all'>>(),[checking,setChecking]=useState(true),[cursor,setCursor]=useState<string>(),[refresh,setRefresh]=useState(0);
  const [loadedFor,setLoadedFor]=useState('');
- const [expandedOverride,setExpanded]=useState<boolean>(),contentId=useId();
- const expanded=expandedOverride??!state.queueDispatch?.awaitingUser;
+ const [expanded,setExpanded]=useState(false),contentId=useId();
  const [dragging,setDragging]=useState(false),[dragReset,setDragReset]=useState(0);
  const restoreFocus=useRef<{id:string;threadId:string;epoch?:string;cursor?:string;scrollTop?:number}|undefined>(undefined);
  const dragSnapshot=useRef<{messageId:string;revision:number;threadId:string;readEpoch:string;orderVersion:string;queryKey:string;group:string;items:readonly QueueItem[]}|undefined>(undefined);
@@ -34,7 +33,7 @@ export function HomerMessageQueue({state,connected,operations,editorBusy=false}:
   return()=>controller.abort();
  },[connected,supported,state.threadId,epoch,version,cursor,refresh]);
  const legacy=(state.queue??[]).flatMap((item,index)=>item.user?[{...item,origin:'user',user:item.user,movable:false,position:index+1,statusText:item.statusText??'状态待核对'} as QueueItem]:[]);
- const items=supported?page?.items??[]:legacy,waiting=items.filter(item=>item.state==='queued');
+ const items=supported?page?.items??[]:legacy;
  const verified=!supported||!!page&&loadedFor===queryKey&&page.readEpoch===epoch&&page.orderVersion===version;
  const disabled=!connected||!verified||(supported&&checking)||operations.locked||editorBusy;
  latest.current={state,page,queryKey,disabled};
@@ -76,7 +75,7 @@ export function HomerMessageQueue({state,connected,operations,editorBusy=false}:
  if(!items.length&&!state.queueDispatch?.totalWaiting)return null;
  return <section className="homer-message-queue" aria-label="消息队列">
   <button className="queue-toggle" type="button" aria-expanded={expanded} aria-controls={contentId} disabled={dragging} onClick={()=>setExpanded(!expanded)}>
-   <span className="queue-toggle-label"><ChevronRightIcon size={16} aria-hidden="true"/><span>消息队列 · {supported?`待发送 ${state.queueDispatch?.totalWaiting??page?.totalWaiting??0} 条`:`已加载 ${waiting.length} 条待发送`}</span></span>
+   <span className="queue-toggle-label"><ChevronRightIcon size={16} aria-hidden="true"/><span>消息队列 · 已加载 {items.length} 条</span></span>
   </button>
   <div id={contentId} hidden={!expanded}>
   <DragDropProvider key={JSON.stringify([dragScope,dragReset])} modifiers={[RestrictToVerticalAxis]} onDragStart={dragStart} onDragEnd={dragEnd}>

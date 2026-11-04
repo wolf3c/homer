@@ -10,7 +10,6 @@ import { Files } from '../src/files.js';
 import { ConversationHistory } from '../src/web-history.js';
 import { RecursiveTasks } from '../src/recursive-tasks.js';
 import { MainInputs } from '../src/recursive-main-inputs.js';
-import { Memory } from '../src/memory.js';
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const identifier = (value: string) => '"' + value.replaceAll('"', '""') + '"';
@@ -67,10 +66,10 @@ export async function previewFreshMain(snapshot: string, directory: string) {
   const store = new Store(candidate);
   let receipt;
   try {
-    const history = new ConversationHistory(store.db), memory = new Memory(store);
+    const history = new ConversationHistory(store.db);
     const tasks = new RecursiveTasks(store, new Files(join(directory, 'empty-workspace')));
     tasks.migrate();
-    const inputs = new MainInputs(tasks, history), memoryBefore = memory.snapshot('');
+    const inputs = new MainInputs(tasks, history);
     const oldHistoryCount = history.list(String(oldThread)).length, oldQueueCount = inputs.list().length;
     // Exactly the proposed live metadata change, ONLY in this new offline copy.
     store.transaction(() => store.db.prepare("DELETE FROM meta WHERE key IN ('mainThread','mainUsage')").run());
@@ -92,14 +91,13 @@ export async function previewFreshMain(snapshot: string, directory: string) {
     const newThreadHistoryEmpty = history.list('synthetic-fresh-main-preview').length === 0;
     const originalThreadHistoryRetained = history.list(String(oldThread)).length === oldHistoryCount;
     const originalQueueRowsRetained = inputs.list().length === oldQueueCount;
-    const customMemoryStillAvailable = hash(memory.snapshot('')) === hash(memoryBefore);
     const integrity = store.db.prepare('PRAGMA quick_check').get()?.quick_check;
     const foreignKeyViolations = store.db.prepare('PRAGMA foreign_key_check').all().length;
     receipt = { at: new Date().toISOString(), offline: true, noEngineChannelOrAccount: true, noNativeHomeOpened: true, actualThreadCreated: false, automaticActivationAllowed: false,
       readiness, changedMetadata, tablesCompared: Object.keys(prior.tables).length, allBusinessTablesUnchanged, schemaUnchanged, bindingRemovedForNativeThreadStart,
-      originalThreadHistoryRetained, originalQueueRowsRetained, newThreadHistoryEmpty, noOldInputClaimed, crossThreadRequestRetryRejected, customMemoryStillAvailable,
+      originalThreadHistoryRetained, originalQueueRowsRetained, newThreadHistoryEmpty, noOldInputClaimed, crossThreadRequestRetryRejected,
       oldHistoryCount, oldQueueCount, integrity, foreignKeyViolations,
-      passed: schemaUnchanged && allBusinessTablesUnchanged && hash(changedMetadata) === hash(['mainThread', 'mainUsage']) && bindingRemovedForNativeThreadStart && originalThreadHistoryRetained && originalQueueRowsRetained && newThreadHistoryEmpty && noOldInputClaimed && crossThreadRequestRetryRejected && customMemoryStillAvailable && integrity === 'ok' && foreignKeyViolations === 0 };
+      passed: schemaUnchanged && allBusinessTablesUnchanged && hash(changedMetadata) === hash(['mainThread', 'mainUsage']) && bindingRemovedForNativeThreadStart && originalThreadHistoryRetained && originalQueueRowsRetained && newThreadHistoryEmpty && noOldInputClaimed && crossThreadRequestRetryRejected && integrity === 'ok' && foreignKeyViolations === 0 };
   } finally { store.close(); }
   const rollback = join(directory, 'rollback-offline.sqlite'); copyFileSync(before, rollback); chmodSync(rollback, 0o600);
   const result = { ...receipt, rollbackCopyBytesMatch: readFileSync(before).equals(readFileSync(rollback)) };

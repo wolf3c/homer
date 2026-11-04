@@ -111,7 +111,7 @@ test('legacy host fallback stays readable without masquerading as native final; 
   f.processes.start({id:'native',threadId:'synthetic',sourceKind:'user',sourceMessageIds:[],messageId:'native'},'new-turn');f.history.record('native','synthetic','','running');
   f.processes.agent('native',{turnId:'new-turn',itemId:'unknown',phase:'future_phase',text:'EXPLICIT_UNKNOWN_PHASE',completed:true});
   f.processes.agent('native',{turnId:'new-turn',itemId:'final',phase:'final_answer',text:'同文',completed:true});f.processes.finish('native','completed','turn:new:terminal:completed');
-  f.history.record('publication-one','synthetic','同文');f.history.record('publication-two','synthetic','同文');const state=f.state();assert.equal(state.messages.filter(m=>m.text==='同文').length,3);assert.deepEqual(state.messages.find(m=>m.id==='native')?.process?.items.map(item=>item.id),['new-turn:unknown','new-turn:final']);assert.ok(JSON.stringify(state).includes('EXPLICIT_UNKNOWN_PHASE'));
+  f.history.record('publication-one','synthetic','同文');f.history.record('publication-two','synthetic','同文');const state=f.state();assert.equal(state.messages.filter(m=>m.text==='同文').length,3);assert.deepEqual(state.messages.find(m=>m.id==='native')?.process?.items.map(item=>item.id),['new-turn:final']);assert.ok(!JSON.stringify(state).includes('EXPLICIT_UNKNOWN_PHASE'));assert.ok(String(f.store.db.prepare('SELECT value FROM meta WHERE key=?').get('publicMainNode:v1:native')!.value).includes('EXPLICIT_UNKNOWN_PHASE'));
  }finally{f.close();}
 });
 

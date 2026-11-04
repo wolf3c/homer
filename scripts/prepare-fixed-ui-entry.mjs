@@ -9,7 +9,7 @@ export function freezeFixedUiInputs({baseline,patch}){
   const path=realpathSync(input),scratch=realpathSync(resolve('.codex/scratch'));
   if(!path.startsWith(scratch+'/')||!path.includes('/.codex/scratch/dev-upgrade/builds/ui-'))throw Error('fixed_input_location_denied');
   const allowed=new Set(['src','prompts','assets','ui','dist','package.json','package-lock.json','tsconfig.json','node_modules','scripts','.codex']);
-  if(readdirSync(path).some(name=>!allowed.has(name))||(readdirSync(path).includes('.codex')&&(readdirSync(join(path,'.codex')).some(name=>name!=='skills')||readdirSync(join(path,'.codex/skills')).some(name=>!['homer-initialize','homer-tool-management'].includes(name)))))throw Error('fixed_input_inventory_invalid');
+  if(readdirSync(path).some(name=>!allowed.has(name))||(readdirSync(path).includes('.codex')&&(readdirSync(join(path,'.codex')).some(name=>name!=='skills')||readdirSync(join(path,'.codex/skills')).some(name=>!['homer-initialize','homer-tool-management','homer-feedback','homer-archive-review'].includes(name)))))throw Error('fixed_input_inventory_invalid');
  }
  mkdirSync(join(directory,'scripts'),{recursive:true,mode:0o700});
  for(const name of ['dev.mjs','dev-build.mjs','trusted-build.mjs','dev-ingress.mjs','pinned-build.mjs','fixed-ui-launcher.mjs'])copyFileSync(join(root,'scripts',name),join(directory,'scripts',name));

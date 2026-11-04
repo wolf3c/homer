@@ -8,18 +8,18 @@ import {createInterface} from 'node:readline';
 import {userInfo} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
 import {prepareDesktopProfile,acquireDesktopOwner,desktopBoundary,readDesktopModelSource} from './desktop-profile.mjs';
-import {assertDeepSeekProfile,prepareDeepSeekProfile,deepSeekConfig,validateDeepSeekToken,DEEPSEEK_KEY_ENV} from './desktop-deepseek.mjs';
+const DEEPSEEK_KEY_ENV='HOMER_DEEPSEEK_TOKEN';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const send=value=>new Promise((accept,reject)=>process.stdout.write(JSON.stringify(value)+'\n',error=>error?reject(error):accept()));
 let releaseOwner;
 let hostStarted=false,refusalConfirmed=false;
 try{
  const homer=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'..'));
- const resources=resolve(homer,'..'),bundle=resolve(resources,'../..');
- if(realpathSync(process.execPath)!==join(bundle,'Contents/MacOS/node')||process.version!=='v22.22.0'||process.arch!=='arm64')throw Error('desktop_runtime_incompatible');
+ const resources=resolve(homer,'..'),windows=process.platform==='win32',bundle=windows?resolve(resources,'..'):resolve(resources,'../..');
+ if(realpathSync(process.execPath)!==(windows?join(resources,'node.exe'):join(bundle,'Contents/MacOS/node'))||process.version!=='v22.22.0'||!['arm64','x64'].includes(process.arch))throw Error('desktop_runtime_incompatible');
  const manifestBytes=readFileSync(join(resources,'desktop-manifest.json')),manifest=JSON.parse(manifestBytes);
  const preparation=manifest.preparation&&!(manifest.localWorkingTree===true&&manifest.publishable===false);
- if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.163.0')throw Error('desktop_runtime_incompatible');
+ if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.163.0'||manifest.arch!==undefined&&manifest.arch!==process.arch)throw Error('desktop_runtime_incompatible');
  const observed=[];
  function inventory(directory,prefix=''){
    for(const name of readdirSync(directory).sort()){
@@ -29,7 +29,7 @@ try{
      if(stat.isDirectory())inventory(path,rel);else if(stat.isFile())observed.push({path:rel,sha256:sha(readFileSync(path))});else throw Error('desktop_resource_changed');
    }
  }
- const codeFiles=['Contents/MacOS/homer-image-decoder','Contents/MacOS/node'].map(path=>{
+ const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node']).map(path=>{
    const file=join(bundle,path);if(realpathSync(file)!==file)throw Error('desktop_resource_changed');
    return {path,sha256:sha(readFileSync(file))};
  });
@@ -37,41 +37,34 @@ try{
  inventory(resources);
  if(JSON.stringify(observed)!==JSON.stringify(manifest.files))throw Error('desktop_resource_changed');
  const args=process.argv.slice(2),at=args.indexOf('--profile');
- if(at<0||!args[at+1]||args.some((arg,index)=>index!==at+1&&!['--profile','--test-profile','--deepseek','--deepseek-daily'].includes(arg))||args.filter(arg=>arg==='--profile').length!==1||args.filter(arg=>arg==='--deepseek-daily').length>1)throw Error('desktop_explicit_profile_required');
- const profile=resolve(args[at+1]),test=args.includes('--test-profile'),daily=args.includes('--deepseek-daily'),deepseek=daily||args.includes('--deepseek');
- if(daily&&args.includes('--deepseek'))throw Error('deepseek_profile_invalid');
- if(daily&&!test&&profile!==join(userInfo().homedir,'Library/Application Support/Homer Desktop'))throw Error('deepseek_profile_invalid');
- if(daily&&preparation&&!test)throw Error('desktop_preparation_profile_required');
- if(deepseek&&!daily)assertDeepSeekProfile(profile);
- if(preparation&&!test&&!deepseek)throw Error('desktop_preparation_profile_required');
+ if(at<0||!args[at+1]||args.some((arg,index)=>index!==at+1&&!['--profile','--test-profile','--deepseek-daily'].includes(arg))||args.filter(arg=>arg==='--profile').length!==1||args.filter(arg=>arg==='--deepseek-daily').length>1)throw Error('desktop_explicit_profile_required');
+ const profile=resolve(args[at+1]),test=args.includes('--test-profile'),daily=args.includes('--deepseek-daily');
+ if(daily&&!test&&profile!==(windows?join(process.env.APPDATA??'','Homer Desktop'):join(userInfo().homedir,'Library/Application Support/Homer Desktop')))throw Error('deepseek_profile_invalid');
+ if(preparation&&!test)throw Error('desktop_preparation_profile_required');
  if(process.cwd()!==profile||process.env.HOME!==join(profile,'host-home')||process.env.TMPDIR!==join(profile,'tmp'))throw Error('desktop_environment_isolation_required');
  // No inherited provider/account/config environment reaches the host.
- const env={PATH:join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'};
+ const env={...(windows?{SystemRoot:process.env.SystemRoot,TEMP:join(profile,'tmp'),TMP:join(profile,'tmp'),APPDATA:process.env.APPDATA,LOCALAPPDATA:process.env.LOCALAPPDATA,USERPROFILE:join(profile,'host-home')}:{ }),PATH:windows?resources+';'+join(process.env.SystemRoot,'System32'):join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'};
  for(const key of Object.keys(process.env))delete process.env[key];Object.assign(process.env,env);
  let connection;
- if(deepseek){
+ if(daily){
   // FD 3 is a one-shot private pipe from Electron, never a renderer or URL.
   try{
    const payload=readFileSync(3,'utf8');
-   if(daily){
-    connection=JSON.parse(payload);
-    if(connection!==null){
-     const {validateHomerCredentials}=await import(pathToFileURL(join(homer,'dist/homer-account.js')).href);
-     const {token,...metadata}=connection;
-     if(connection.subject)validateHomerCredentials({...metadata,modelToken:token??'disconnected'},{gatewayOrigin:manifest.account?.gatewayOrigin??'',allowSyntheticLoopback:test});
-     else if(Object.keys(connection).length!==1||!token)throw Error('deepseek_token_invalid');
-     if(token)process.env[DEEPSEEK_KEY_ENV]=validateDeepSeekToken(token);
-    }
-   }else process.env[DEEPSEEK_KEY_ENV]=validateDeepSeekToken(payload);
+   connection=JSON.parse(payload);
+   if(connection!==null){
+    const {validateHomerCredentials}=await import(pathToFileURL(join(homer,'dist/homer-account.js')).href);
+    const {token,...metadata}=connection;
+    validateHomerCredentials({...metadata,modelToken:token??'disconnected'},{gatewayOrigin:manifest.account?.gatewayOrigin??'',allowSyntheticLoopback:test});
+   }
   }
   finally{closeSync(3);}
  }
- const paths=deepseek&&!daily?prepareDeepSeekProfile(profile,manifest,{test}):prepareDesktopProfile(profile,manifest,{test});
- const modelSource=deepseek&&!daily?undefined:readDesktopModelSource(profile,daily?'website':'codex');
+ const paths=prepareDesktopProfile(profile,manifest,{test});
+ const modelSource=readDesktopModelSource(profile,daily?'website':'codex');
 
  if(existsSync(join(paths.codexHome,'desktop-owner.json')))throw Error('desktop_owner_conflict');
  const {processIdentity}=await import(pathToFileURL(join(homer,'dist/processes.js')).href);
- let codexBin=join(resources,'runtime/codex/vendor/aarch64-apple-darwin/bin/codex');
+ let codexBin=join(resources,'runtime/codex/vendor',windows?'x86_64-pc-windows-msvc':process.arch==='arm64'?'aarch64-apple-darwin':'x86_64-apple-darwin',windows?'bin/codex.exe':'bin/codex');
  if(test){
    const fake=join(profile,'fixture-codex.mjs');
    if(!existsSync(fake)||realpathSync(fake)!==fake||JSON.parse(readFileSync(join(profile,'.homer-desktop-test-profile'),'utf8')).format!==1)throw Error('desktop_test_fixture_required');
@@ -80,7 +73,6 @@ try{
  const {PRODUCT_MODEL_DEFAULTS}=await import(pathToFileURL(join(homer,'dist/model-config.js')).href);
  const resourceIdentity={bundleRoot:bundle,manifestSha256:sha(manifestBytes)};
  let config={appData:profile,nativeCodexHome:paths.codexHome,workspace:paths.workspace,runtime:paths.runtime,codexHome:paths.codexHome,codexBin,model:PRODUCT_MODEL_DEFAULTS.model,requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:resourceIdentity};
- if(deepseek&&!daily)config={...config,...deepSeekConfig(paths)};
  if(paths.adoption){
    const {loadConfig}=await import(pathToFileURL(join(homer,'dist/config.js')).href);
    const original=loadConfig(paths.adoption.sourceConfig);
@@ -92,9 +84,10 @@ try{
    const lock=join(paths.runtime,'cli.lock');
    if(existsSync(lock)||existsSync(join(paths.runtime,'gateway/cli.lock')))throw Error('desktop_adoption_owner_unknown');
  }
+ if(daily&&modelSource==='website'&&connection?.token)process.env[DEEPSEEK_KEY_ENV]=connection.token;
+ const mobileTurnAccount=daily&&connection?.token?{gatewayOrigin:manifest.account.gatewayOrigin,token:connection.token,allowSyntheticLoopback:test}:undefined;
  if(daily){
-   const {baseUrl,model,effort,fast}=deepSeekConfig(paths),legacy={baseUrl,model,effort,fast};
-   config={...config,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopConnection:connection?.subject?connection.config:connection?.token?{main:legacy,worker:legacy}:undefined};connection=undefined;
+   config={...config,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopConnection:modelSource==='website'&&connection?.token?connection.config:undefined};connection=undefined;
  }
  if(modelSource)config={...config,desktopModelSource:modelSource,pauseOldDesktopWork:true};
  const database=join(paths.runtime,'homer.sqlite');let thread;
@@ -134,26 +127,27 @@ try{
  const {readMobileConfig}=await import(pathToFileURL(join(homer,'dist/mobile-gateway.js')).href);
  const mobileConfig=readMobileConfig(join(profile,'mobile.json'));
  const input=new PassThrough(),output=new Writable({write(_chunk,_encoding,done){done();}});
- let quitting=false,nativeAccount;
+ let quitting=false,nativeAccount,updateStop;
  const quit=()=>{if(quitting)return;quitting=true;input.write('/quit\n');};
  const reader=createInterface({input:process.stdin});
  reader.on('line',line=>{
   if(line.length>128)return;
   try{const value=JSON.parse(line);
    if(value.kind==='quit')quit();
+   else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
    else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel'].includes(value.action)){
     void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action)});}catch{await send({kind:'native_account_result',id:value.id,error:'native_account_unconfirmed'});}})();
    }
   }catch{}
  });
  reader.on('close',quit);
- const result=await runDev({root:homer,input,output,...mobileConfig,json:false,webPort:0,fixedBuild:build,fixedUi:build,fallbackUi:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
+ const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,fixedUi:build,fallbackUi:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
  reader.close();input.destroy();process.stdin.pause();
  if(!result?.stoppedConfirmed&&!result?.noHostStarted)throw Error('desktop_stop_unconfirmed');
  // A successful host close includes all main/control/Worker/MCP owner evidence.
  releaseOwner();releaseOwner=undefined;
  if(result?.startupError){refusalConfirmed=true;throw Error(result.startupError);}
- await send({kind:'stopped'});
+ await send({kind:result.updateStopped?'update-stopped':'stopped'});
 }catch(error){
  if(releaseOwner&&!hostStarted){try{releaseOwner();releaseOwner=undefined;}catch{}}
  if(refusalConfirmed||!hostStarted&&!releaseOwner)await send({kind:'startup_refused'}).catch(()=>{});

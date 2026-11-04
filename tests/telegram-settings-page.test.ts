@@ -29,11 +29,11 @@ function ui(configure: (signal: AbortSignal) => Promise<Response>, getState = as
   let interval = () => {};
   const context = {
     document: { hidden: false, getElementById: (id: string) => elements.get(id), querySelectorAll: () => buttons },
-    window: { addEventListener() {} }, sessionStorage:{getItem(key:string){assert.equal(key,"homer-user-connection");return "synthetic-browser-connection";}}, AbortController, Date, Error, JSON,
+    window: { addEventListener() {} }, AbortController, Date, Error, JSON,
     setTimeout(fn: () => void, ms: number) { const id = ++nextId; timeouts.set(id, { fn, ms }); return id; },
     clearTimeout(id: number) { timeouts.delete(id); }, setInterval(fn: () => void) { interval = fn; return 0; }, clearInterval() {}, confirm: () => false,
     async fetch(path: string, init?: RequestInit) {
-      assert.equal((init?.headers as Record<string,string>)["X-Homer-Connection"],"synthetic-browser-connection");assert.equal(init?.credentials,"omit");
+      assert.equal(new Headers(init?.headers).has("X-Homer-Connection"),false);assert.equal(init?.credentials,"omit");
       if (path === "/api/channels/telegram") return getState();
       assert.equal(path, "/api/channels/telegram/configure"); submissions++;
       receivedToken = (JSON.parse(String(init?.body)) as { token: string }).token === token;

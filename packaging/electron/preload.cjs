@@ -19,6 +19,14 @@ if(process.isMainFrame===true){
    let active=true;return()=>{if(!active)return;active=false;ipcRenderer.removeListener('homer:account:changed',listener);};
   },
  });
+ contextBridge.exposeInMainWorld('homerDesktopUpdate',{
+  ...Object.fromEntries(['state','dismiss','restart'].map(name=>[name,(...args)=>invoke('homer:update:'+name,args)])),
+  onChange:callback=>{
+   if(typeof callback!=='function')throw new TypeError('desktop_update_callback');
+   const listener=()=>callback();ipcRenderer.on('homer:update:changed',listener);
+   let active=true;return()=>{if(!active)return;active=false;ipcRenderer.removeListener('homer:update:changed',listener);};
+  },
+ });
  contextBridge.exposeInMainWorld('homerDesktopSettings',{
   onOpen:callback=>{
    if(typeof callback!=='function')throw new TypeError('desktop_settings_callback');

@@ -1,7 +1,7 @@
 import {mobileChannel} from '../src/mobile-channel.js';
 import {openMobileSignal} from '../src/mobile-signaling.js';
 import {WEB_PROTOCOL} from '../src/web-contract.js';
-declare global{interface Window{__homerMobileNonce?:string;ReactNativeWebView?:{postMessage:(message:string)=>void};}}
+declare global{interface Window{__homerMobileNonce?:string;__homerMobileUpdate?:{version:string;openError:boolean}|null;ReactNativeWebView?:{postMessage:(message:string)=>void};}}
 
 type Binding={signalOrigin:string;routeId:string;invitation?:string;credential?:string;deviceName?:string};
 type Packet={id?:string;result?:any;error?:string;event?:string;value?:unknown};
@@ -17,7 +17,7 @@ function start(){
  dispose?.();if(retry)clearTimeout(retry);retry=undefined;connected=false;request=undefined;cancelPairing=undefined;changed();
  const current=binding,nonce=window.__homerMobileNonce;if(!current){notice('scan',nonce);return;}
  const update=(code:string)=>notice(code,nonce);
- const abort=new AbortController(),pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+ const abort=new AbortController(),pc=new RTCPeerConnection({iceServers:[{urls:['stun:120.27.120.125:3478','stun:stun.l.google.com:19302']}]});
  let ended=false,sessionId:string|undefined,sequence=0,link:Awaited<ReturnType<typeof openMobileSignal>>|undefined,channel:ReturnType<typeof mobileChannel>|undefined,poll:ReturnType<typeof setTimeout>|undefined;
  const pending=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
  const finish=(reconnect=true)=>{if(ended)return;ended=true;abort.abort();if(poll)clearTimeout(poll);clearTimeout(deadline);link?.close();channel?.close();pc.close();connected=false;request=undefined;for(const value of pending.values()){clearTimeout(value.timer);value.reject(Error('web_receipt_unconfirmed'));}pending.clear();changed();if(reconnect&&binding===current){update('unavailable');retry=setTimeout(start,3000);}};

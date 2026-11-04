@@ -19,5 +19,29 @@
   },
   "codexLicenseTag": "rust-v0.163.0",
   "verifiedAt": "2026-10-21",
-  "verification": "Official HTTPS SHASUMS256 and npm registry SRI, independently pinned to these SHA-256 bytes; all 43 platform files retained. Not a PGP or npm-signature verification."
+  "verification": "ARM64 and generic archives only: Official HTTPS SHASUMS256 and npm registry SRI, independently pinned to these SHA-256 bytes; all 43 platform files retained. Not a PGP or npm-signature verification.",
+  "nodeDarwinX64": {
+    "version": "22.22.0",
+    "url": "https://nodejs.org/dist/v22.22.0/node-v22.22.0-darwin-x64.tar.gz",
+    "sha256": "5ea50c9d6dea3dfa3abb66b2656f7a4e1c8cef23432b558d45fb538c7b5dedce",
+    "verification": "Official HTTPS SHASUMS256.txt metadata pinned 2026-11-04; binary archive not downloaded or verified in this source phase"
+  },
+  "codexDarwinX64": {
+    "version": "0.163.0-darwin-x64",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0-darwin-x64.tgz",
+    "integrity": "sha512-Ioj7h+B1ME9ZU1PH1ATfvFV5DiototEpFFaSSbg3kfDifB9djhl5fcJ++g5mpcL/+uVbcnReei+RiSXEx8o+kw==",
+    "verification": "npm registry SHA-512 SRI pinned 2026-11-04; binary archive not downloaded or verified in this source phase"
+  },
+  "nodeWin32X64": {
+    "version": "22.22.0",
+    "url": "https://nodejs.org/dist/v22.22.0/node-v22.22.0-win-x64.zip",
+    "sha256": "c97fa376d2becdc8863fcd3ca2dd9a83a9f3468ee7ccf7a6d076ec66a645c77a",
+    "verification": "Official HTTPS SHASUMS256.txt metadata pinned 2026-11-04; archive not downloaded or verified in source phase"
+  },
+  "codexWin32X64": {
+    "version": "0.163.0-win32-x64",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0-win32-x64.tgz",
+    "integrity": "sha512-QQGQ/q9dCJ5C5jqhgFrwycpWG3szIyFNThMiKl6hYtu6N/eM3Qd7StesgnCFAfzVED8IkE3N3oH71szzcludqw==",
+    "verification": "Official npm registry SHA-512 SRI pinned 2026-11-04; archive not downloaded or verified in source phase"
+  }
 }

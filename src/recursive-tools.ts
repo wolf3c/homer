@@ -11,7 +11,7 @@ const contract = obj({ workingDirectory: {type:'string',description:'Absolute ex
 (contract.properties as Record<string,unknown>).presentation=obj({title:{type:'string',minLength:1,maxLength:80},description:{type:'string',minLength:1,maxLength:320}},['title']);
 const common = { operationId: str, taskId: str, version: integer, expectedTaskRevision: integer };
 const outcome = enumeration('succeeded', 'partial', 'failed', 'cancelled', 'interrupted');
-const child = obj({ childTaskId: str, childVersion: integer, disposition: enumeration('included', 'gap', 'stopped', 'transferred'), resultId: nullable, nextCoordinatorId: nullable, reason: str });
+const child = obj({ childTaskId: str, childVersion: integer, disposition: enumeration('included', 'gap', 'stopped', 'transferred'), resultId: nullable, reason: str });
 function tool(name: string, description: string, properties: Record<string, unknown>): Tool { return { type: 'function', name, description, inputSchema: obj(properties) }; }
 export const WORKER_RECURSIVE_TOOL_NAMES = ['work_inspect','agent_send','inbox_read','inbox_ack','task_wait','adopt_version'];
 export const RECURSIVE_TOOLS: Tool[] = [
@@ -25,11 +25,11 @@ export const RECURSIVE_TOOLS: Tool[] = [
   tool('inbox_ack', 'Only the recipient can acknowledge processing/rejection. Main may acknowledge its current input, or a previously claimed ended blocked/uncertain input while following a real user recovery request. Do not replay business to repair a report. This records consumption, not a public report, task acceptance or new authority.', { operationId: str, messageId: str, disposition: enumeration('processed', 'rejected'), reason: str, resultId: nullable }),
   tool('task_wait', 'Worker with a live Run only: persist a precise wait, then END this turn. Main ends its reply directly without this tool. The call returns immediately; host starts another turn on the SAME Run/thread after the condition is satisfied and this turn ended. No further side effects after wait. Coordinators should wait result_or_terminal, not accepted_result they must themselves review.', { ...common, condition: obj({ type: enumeration('result_or_terminal', 'accepted_result', 'message'), taskId: nullable, version: { type: ['integer', 'null'] }, messageId: nullable, replyTo: nullable }) }),
   tool('task_review', 'Coordinator acceptance of one automatically returned candidate and its staged file group after work_inspect of EVERY completionResultId in this same turn. Review the primary resultId once; never settle members separately. Accepted partial remains partial; a child failure never automatically fails the root. Internal accepted results cannot be downloaded until explicit root publication.', { ...common, resultId: str, accepted: { type: 'boolean' }, outcome, reason: str }),
-  tool('task_update', 'Choose explicitly: steer active unwritten executing turn and await adopt_version; stop_replace confirms old engine exit before a new attempt; queue preserves current work and activates a later full contract. New queue updates on settled tasks fail with task_queue_not_applicable; use work_inspect for the current version/revision, then explicitly choose stop_replace on the same task for a new attempt, with required child and queued-version dispositions. Existing authority and stop fences still apply. Host never silently substitutes modes. Root main aggregate steer is not applicable. Disposition all queued versions when changing the head.', { ...common, mode: enumeration('steer', 'stop_replace', 'queue'), contract, children: array(obj({ taskId: str, action: enumeration('retain', 'update', 'stop', 'transfer'), coordinatorAgentId: nullable })), queuedDisposition: array(obj({ version: integer, action: enumeration('cancel', 'rebase'), contract: { ...contract, type: ['object', 'null'] } })), independent: { type: 'boolean' } }),
+  tool('task_update', 'Choose explicitly: steer active unwritten executing turn and await adopt_version; stop_replace confirms old engine exit before a new attempt; queue preserves current work and activates a later full contract. New queue updates on settled tasks fail with task_queue_not_applicable; use work_inspect for the current version/revision, then explicitly choose stop_replace on the same task for a new attempt, with required child and queued-version dispositions. Existing authority and stop fences still apply. Host never silently substitutes modes. Root main aggregate steer is not applicable. Disposition all queued versions when changing the head.', { ...common, mode: enumeration('steer', 'stop_replace', 'queue'), contract, children: array(obj({ taskId: str, action: enumeration('retain', 'update', 'stop', 'transfer') })), queuedDisposition: array(obj({ version: integer, action: enumeration('cancel', 'rebase'), contract: { ...contract, type: ['object', 'null'] } })), independent: { type: 'boolean' } }),
   tool('adopt_version', 'Executor acknowledgement only after reading the new full contract via work_inspect in this turn. RPC steer acceptance alone is not adoption. Host binds Run, epoch and turn; no writing/delegation/completion until adopted.', { ...common, contractHash: str }),
   tool('task_stop', 'Persist stop request for precise self or entire subtree. requested is distinct from confirmed engine exit. self holds unresolved children for explicit main takeover; siblings continue. An ancestor subtree fence forbids further delegated side effects.', { ...common, scope: enumeration('self', 'subtree'), reason: str }),
   tool('task_continue', 'Explicitly continue from persistent recovery. Keeps task identity, children, messages and recorded execution time. After a process restart creates a NEW attempt; never claims old Worker RPC resumed. Unknown effects block replay.', common),
-  tool('task_takeover', 'Assign explicit coordinator responsibility for held work within the same authorization. Does not turn cancelled tasks into success or lift an ancestor stop fence.', { ...common, coordinatorAgentId: str }),
+  tool('task_takeover', 'Assign explicit coordinator responsibility for held work within the same authorization. Does not turn cancelled tasks into success or lift an ancestor stop fence.', common),
   tool('publish_delivery', 'Main only: formally publish settled ROOT version to its original trusted user source. Choose accepted files explicitly with optional publishedFileResultIds; the legacy publishedFileResultId selects one file or null. If both are provided the legacy id must match the first array id. Multiple files are individually downloadable in Web; Wechat/Telegram send one text notice directing to Web. Descendant results stay internal unless explicitly included and published. recorded means host/channel receipt, not user read.', { ...common, resultId: nullable, text: str, publishedFileResultId: nullable }),
 ];
 const deleteSchema=RECURSIVE_TOOLS.find(t=>t.name==='delete_work')!.inputSchema as {properties:Record<string,unknown>};
@@ -122,7 +122,18 @@ export class RecursiveTools {
     if (!definition)
       throw Error('tool_denied');
     if (actor.runId && !WORKER_RECURSIVE_TOOL_NAMES.includes(name)) throw Error('task_main_required');
-    try{validateToolArguments(args, definition.inputSchema);}
+    // Decode only the removed legacy fields, without changing the catalog or operation payload.
+    let validationSchema=definition.inputSchema;
+    if(['task_takeover','task_update','task_review','publish_delivery'].includes(name)){
+      validationSchema=structuredClone(validationSchema);
+      const properties=object(validationSchema.properties);
+      if(name==='task_takeover')properties.coordinatorAgentId=str;
+      else{
+        const children=object(object(properties.children).items);
+        object(children.properties)[name==='task_update'?'coordinatorAgentId':'nextCoordinatorId']=nullable;
+      }
+    }
+    try{validateToolArguments(args, validationSchema);}
     catch(error){
       if(name==='task_review'&&error instanceof InvalidToolArguments)return {ok:false,state:'review_invalid_arguments',code:'invalid_tool_arguments',applied:false,issues:error.issues};
       throw error;
@@ -188,7 +199,7 @@ export class RecursiveTools {
     else if (name === 'task_continue')
       result = this.tasks.continue(actor, common);
     else if (name === 'task_takeover')
-      result = this.tasks.takeover(actor, { ...common, coordinatorAgentId: string(a.coordinatorAgentId, 200) });
+      result = this.tasks.takeover(actor, { ...common, ...(a.coordinatorAgentId===undefined?{}:{coordinatorAgentId:string(a.coordinatorAgentId,200)}) });
     else if (name === 'publish_delivery')
       result = this.tasks.publish(actor, { ...common, resultId: a.resultId == null ? null : string(a.resultId, 200), text: string(a.text, 24000), publishedFileResultId: a.publishedFileResultId == null ? null : string(a.publishedFileResultId, 200), ...(a.publishedFileResultIds===undefined?{}:{publishedFileResultIds:a.publishedFileResultIds as string[]}),...(a.outcome===undefined?{}:{outcome:string(a.outcome,30) as Outcome}),...(a.evidence===undefined?{}:{evidence:object(a.evidence)}),...(a.children===undefined?{}:{children:a.children as ChildResolution[]}) });
     else

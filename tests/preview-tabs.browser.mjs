@@ -7,6 +7,7 @@ import {deflateSync} from 'node:zlib';
 import {fixture} from './web-history-followup-fixture.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 import {actualClick,inspectHtmlFrame} from './helpers/html-preview-browser.mjs';
+import {patchPreviewFiles,verifyPatchPreview} from './helpers/patch-preview-browser.mjs';
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/preview-tabs-implementation-20261025/browser');mkdirSync(destination,{recursive:true});
 function png(){
  const crc=b=>{let n=0xffffffff;for(const x of b){n^=x;for(let k=0;k<8;k++)n=n>>>1^((n&1)?0xedb88320:0);}return(n^0xffffffff)>>>0;};
@@ -36,6 +37,7 @@ files.push(
  {id:'result-tabs-unknown',title:'未识别.webm',mime:'application/octet-stream',bytes:video},
  {id:'result-tabs-pdf',title:'PDF.mp4',mime:'application/pdf',bytes:Buffer.from('%PDF-1.4\n%%EOF')},
 );
+if(process.env.HOMER_PATCH_PREVIEW)files.push(...patchPreviewFiles);
 for(const f of files){f.bytes??=Buffer.from(f.text);f.hash=createHash('sha256').update(f.bytes).digest('hex');}
 const f=await fixture(4,'after'),checks=[],reads=[],uploads=[],attempts=[];let chrome,hideFiles=false,denied=false,readDelay=0,holdUpload=false,releaseUpload,unknownSend=false,management=false,readFailure=null;
 f.bridge.artifact=async id=>{const file=files.find(x=>x.id===id);if(!file)throw Error('synthetic_file_missing');reads.push(id);const bytes=file.bytes,hash=file.hash;if(readDelay)await new Promise(r=>setTimeout(r,readDelay));if(denied)throw Error('synthetic_scope_revoked');return {filename:file.title,mime:file.mime,data:bytes.toString('base64'),sha256:hash};};
@@ -70,6 +72,7 @@ try{
    await until(()=>!!document.querySelector('[data-slot=selection-toolbar-quote]'));await click('[data-slot=selection-toolbar-quote]');await until(()=>!!document.querySelector('.annotation-comment-form textarea'));await p.command('Input.insertText',{text:comment});await click('.annotation-comment-form button[type=submit]');await until(()=>!document.querySelector('.annotation-comment-form'));
   };
   try{
+   if(process.env.HOMER_PATCH_PREVIEW){await verifyPatchPreview({p,chrome,files,destination,width,record});continue;}
    await p.command('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{
     const create=URL.createObjectURL,revoke=URL.revokeObjectURL,originalFetch=window.fetch;window.__fileProbe={created:[],revoked:[],aborted:0,mediaTextReads:0,holds:{},releases:{}};
     const blobText=Blob.prototype.text;Blob.prototype.text=function(...args){if(this.type.startsWith('audio/')||this.type.startsWith('video/'))__fileProbe.mediaTextReads++;return blobText.apply(this,args);};

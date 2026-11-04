@@ -116,7 +116,7 @@ test('queue drag handlers write once using source final index; cancellation, bar
   host.unmount();
  }
 });
-test('queue display preserves claimed and uncertain states without counting or replaying them as waiting',async t=>{
+test('queue header counts every loaded row across states and pages without replaying messages',async t=>{
  const oldWindow=Object.getOwnPropertyDescriptor(globalThis,'window');
  Object.defineProperty(globalThis,'window',{value:new EventTarget(),configurable:true});
  const jsx=(type:unknown,props:unknown,key?:string)=>({type,props,key});
@@ -134,8 +134,10 @@ test('queue display preserves claimed and uncertain states without counting or r
   state={threadId:'T',features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:page.orderVersion,totalWaiting:scenario.total,...(scenario.awaitingUser?{awaitingUser:true}:{})}};
   const before=JSON.stringify(page);render();await settle();const tree=render();
   const toggle=find(tree,node=>node?.type==='button'&&node.props.className==='queue-toggle');
-  assert.equal(text(toggle),'消息队列 · 待发送 '+scenario.total+' 条');
-  assert.equal(toggle.props['aria-expanded'],!scenario.awaitingUser,'waiting backlog defaults to collapsed, including a late state update');
+  assert.equal(text(toggle),'消息队列 · 已加载 '+source.length+' 条','header and rendered rows use the same snapshot, including processing/unknown rows and partial pages');
+  state={...state,queueDispatch:{...state.queueDispatch,totalWaiting:999}};
+  assert.equal(text(find(render(),node=>node?.props?.className==='queue-toggle')),text(toggle),'a summary update cannot relabel the still-rendered page');
+  assert.equal(toggle.props['aria-expanded'],false,'every queue defaults to collapsed, independently of dispatch state');
   if(scenario.awaitingUser){
    toggle.props.onClick();let updated=render();
    assert.equal(find(updated,node=>node?.props?.className==='queue-toggle').props['aria-expanded'],true);
@@ -188,7 +190,7 @@ test('queued focus restoration cannot scroll or focus a different page after nav
  const host=hookHost('ui/homer-message-queue.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'provider'},'@dnd-kit/react/sortable':{isSortable:()=>true},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue'},'./queue-operations':{queuePost:async()=>({items,threadId:'T',readEpoch:'E',orderVersion:'V',nextCursor:'next'}),queueMoveBefore:()=>undefined},'./homer-message-queue.css':{}});
  const render=()=>host.render(()=>host.exports.HomerMessageQueue({state,connected:true,operations:{locked:false,run:()=>{throw Error('unexpected move');}}}));
  const find=(node:any,predicate:(node:any)=>boolean):any=>predicate(node)?node:Array.isArray(node)?node.map(child=>find(child,predicate)).find(Boolean):node?.props?find(node.props.children,predicate):undefined;
- render();await settle();let tree=render();const provider=find(tree,node=>node?.type==='provider'),source={id:'A',initialIndex:0,index:1,initialGroup:'A',group:'A',element:{closest:()=>({scrollTop:66})}};
+ render();await settle();let tree=render();find(tree,node=>node?.props?.className==='queue-toggle').props.onClick();tree=render();const provider=find(tree,node=>node?.type==='provider'),source={id:'A',initialIndex:0,index:1,initialGroup:'A',group:'A',element:{closest:()=>({scrollTop:66})}};
  provider.props.onDragStart({operation:{source}});render();provider.props.onDragEnd({canceled:true,operation:{source,target:{}}});tree=render();assert.equal(frames.length,1);
  find(tree,node=>node?.type==='button'&&node.props.children==='查看下一页').props.onClick();render();await settle();render();
  frames[0]!(0);assert.equal(lookups.length,0,'stale scheduled restoration must not touch the new page');host.unmount();

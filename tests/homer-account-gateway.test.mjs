@@ -34,6 +34,6 @@ test('website-delivered synthetic Key runs real Codex main and Worker through AM
 test('disabled synthetic Key cannot start a new Responses request',{skip:!file||!disabled,timeout:10000},async()=>{
  assert.ok(resolve(file).includes('/.codex/scratch/account-mvp/three-projects/'));assert.ok(file.endsWith('/runtime-config.json')||file.endsWith('/deepseek.json'));// Historical synthetic profiles retain their original path.
  const connection=readHomerConnection(resolve(file),{gatewayOrigin:gateway,allowSyntheticLoopback:true});assert.ok(connection?.token);
- const result=await fetch(connection.config.main.baseUrl+'/responses',{method:'POST',headers:{Authorization:'Bearer '+connection.token,'Content-Type':'application/json'},body:JSON.stringify({model:'deepseek-flash',input:'Synthetic disabled-key canary.',stream:true,reasoning:{effort:'max'}}),redirect:'error',signal:AbortSignal.timeout(5000)});
+ const result=await fetch(connection.config.main.baseUrl+'/responses',{method:'POST',headers:{Authorization:'Bearer '+connection.token,'Content-Type':'application/json'},body:JSON.stringify({model:connection.config.main.model,input:'Synthetic disabled-key canary.',stream:true,reasoning:{effort:connection.config.main.effort}}),redirect:'error',signal:AbortSignal.timeout(5000)});
  try{assert.ok([401,403].includes(result.status),'native authentication must reject before model execution');}finally{await result.body?.cancel();}
 });

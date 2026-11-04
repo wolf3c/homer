@@ -10,6 +10,16 @@ const node={id:'node',threadId:'t',seq:1,revision:2,sourceKind:'user',sourceMess
 const projected=(history,nodes,inbox=[])=>projectConversation(history,nodes,inbox);
 const page=(messages,revision=1,units=messages.map(m=>m.id),artifacts=[])=>({protocol:3,threadId:'t',revision,messages,units,queue:[],before:null,after:null,artifacts});
 const snapshot=(p)=>({threadId:'t',messages:p.messages,artifacts:p.artifacts,history:{protocol:3,readEpoch:'epoch',page:p}});
+test('activity updates keep one header and the original disclosure selection',async()=>withDom(async d=>{
+ const observation={connected:true,serviceRunning:true,threadId:'t',generationTurnId:'turn',mainActivity:{processId:'node',source:'user',turnId:'turn',stage:'native',summary:'准备只读诊断'}};
+ const render=(activityText,value=node)=>d.render(h(ProcessNodeView,{node:value,activityText,observation,renderText:t=>h('p',null,t)}));
+ await render('准备只读诊断');
+ const trigger=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');
+ assert.match(trigger.textContent,/当前对话 · 准备只读诊断/);assert.doesNotMatch(trigger.textContent,/处理中|具体动作未提供/);
+ await d.click(trigger);assert.equal(trigger.attrs['aria-expanded'],'true');
+ await render('读取文件');assert.equal(trigger.attrs['aria-expanded'],'true');assert.match(trigger.textContent,/当前对话 · 读取文件/);assert.doesNotMatch(trigger.textContent,/准备只读诊断/);
+ await render('准备只读诊断',{...node,state:'worked',status:'completed'});assert.match(trigger.textContent,/当前对话 · 已结束/);assert.doesNotMatch(trigger.textContent,/准备只读诊断/);
+}));
 test('all call statuses stay inside the disclosure with missing parts or lazy details in live and historical processes',()=>{
  const statuses=['running','completed','failed','declined','interrupted','blocked','unknown'];
  const items=statuses.map((status,i)=>({id:status,seq:i+1,revision:1,kind:'tool',label:'CALL_'+status,status}));
@@ -30,7 +40,7 @@ test('aggregate categories never escape the original disclosure and legacy calls
   const trigger=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');
   assert.equal(trigger.attrs['aria-expanded'],'false');await d.click(trigger);assert.equal(trigger.attrs['aria-expanded'],'true');
   assert.match(d.container.textContent,details?/过程详情未能读取，请收起后重新展开/:/检查资料 · 调用失败/);
-  assert.match(d.container.textContent,/Worked/);assert.equal(d.container.textContent.match(/FINAL BODY/g).length,1);
+  assert.match(d.container.textContent,/已结束/);assert.equal(d.container.textContent.match(/FINAL BODY/g).length,1);
   await d.click(trigger);
  }
 }));
@@ -60,7 +70,7 @@ test('real lazy details keep failed Args/Error/Result inside Worked through reco
  assert.match(d.find(n=>n.attrs['data-slot']==='tool-fallback-args').textContent,/SYNTHETIC_INPUT/);
  assert.match(d.find(n=>n.attrs['data-slot']==='tool-fallback-error').textContent,/调用失败/);
  assert.match(d.find(n=>n.attrs['data-slot']==='tool-fallback-result').textContent,/SYNTHETIC_ERROR_LOG/);
- assert.equal(d.find(n=>n.attrs['data-final']).textContent,'FINAL BODY');assert.match(d.container.textContent,/Worked/);
+ assert.equal(d.find(n=>n.attrs['data-final']).textContent,'FINAL BODY');assert.match(d.container.textContent,/已结束/);
  await d.render(h(PartsRuntime,{value:{...detail,state:'working',status:'running',revision:3,items:[...node.items,{...call,revision:2,status:'running'}]},load}));
  assert.equal(d.find(n=>n.attrs['data-tool-id']==='failed-call'),row);assert.equal(row.parentNode,parent);
  assert.equal(d.all().filter(n=>n.attrs['data-tool-id']==='failed-call').length,1);assert.match(tool.textContent,/调用中/);
@@ -93,7 +103,7 @@ test('all real message parts retain stable order and complete details only insid
  assert.equal(reads,0);
 }));
 test('production React SSR and real projection retain one final, silent/no-final fallback and exact public action identity',()=>{
- const worked={...node,revision:3,state:'worked',status:'completed',items:[{id:'final',kind:'commentary',seq:1,revision:1,phase:'final_answer',turnId:'turn',itemId:'final',text:'ONLY FINAL',completed:true}],final:{id:'final',text:'ONLY FINAL'}},messages=projected([message],[worked]).messages;assert.equal(messages.length,1);assert.equal(messages[0].text,'ONLY FINAL');const html=renderToStaticMarkup(h(ProcessMessageContent,{node:messages[0].process,renderText:text=>h('p',null,text)},h('div',null,messages[0].text)));assert.match(html,/data-slot="run-activity"/);assert.doesNotMatch(html,/<button|<dialog/);assert.equal(html.match(/ONLY FINAL/g).length,1);assert.match(html,/Worked/);
+ const worked={...node,revision:3,state:'worked',status:'completed',items:[{id:'final',kind:'commentary',seq:1,revision:1,phase:'final_answer',turnId:'turn',itemId:'final',text:'ONLY FINAL',completed:true}],final:{id:'final',text:'ONLY FINAL'}},messages=projected([message],[worked]).messages;assert.equal(messages.length,1);assert.equal(messages[0].text,'ONLY FINAL');const html=renderToStaticMarkup(h(ProcessMessageContent,{node:messages[0].process,renderText:text=>h('p',null,text)},h('div',null,messages[0].text)));assert.match(html,/data-slot="run-activity"/);assert.doesNotMatch(html,/<button|<dialog/);assert.equal(html.match(/ONLY FINAL/g).length,1);assert.match(html,/已结束/);
  assert.equal(projected([{...message,text:''}],[{...worked,items:[],final:undefined}]).messages[0].text,'');assert.equal(projected([message],[{...worked,items:[],final:{id:'reply',text:message.text}}]).messages[0].text,message.text);assert.equal(projected([message],[]).messages[0].text,message.text);
  const delivery={...message,id:'delivery-message',text:'FORMAL'},formal={...worked,items:[],deliveryMessageId:delivery.id,final:{id:delivery.id,text:delivery.text}},formalMessages=projected([message,delivery],[formal]).messages;assert.deepEqual(formalMessages.map(m=>[m.id,m.text]),[['reply',''],['delivery-message','FORMAL']]);
  for(const feedback of ['up','down',null]){const visible=projected([{...message,feedback}],[worked]).messages[0];assert.equal(visible.id,worked.messageId);assert.equal(visible.feedback,feedback);assert.notEqual(visible.id,worked.final.id);}
@@ -199,12 +209,12 @@ test('TaskCard sources stay outside Worked with static semantic icons and histor
  const source={key:'exact',target:{taskId:'task',version:2,runId:'run'},title:'核对公开来源',icon:'CornerDownRight',origin:{kind:'activity',processId:'node',itemId:'tool'},phaseLabel:'调整已受理，尚待采用',owner:'main'};
  const event={id:'received',kind:'workerEvent',seq:2,revision:1,eventKey:'received',event:{eventKind:'result_received',title:'准确收到结果',body:'原结果正文'}};
  await d.render(h(ProcessMessageContent,{node:{...node,items:[...node.items,event]},taskSources:[source],renderText:t=>t},'ANSWER'));
- const card=d.find(n=>n.attrs['data-task-source']==='exact');assert.ok(card);assert.equal(card.attrs['data-state'],'waiting');
+ const card=d.find(n=>n.attrs['data-task-source']==='task');assert.ok(card);assert.equal(card.attrs['data-state'],'waiting');
  assert.equal(d.find(n=>n.attrs['data-worker-event']==='received').attrs['data-state'],'waiting');
  assert.match(d.container.textContent,/当时：收到成果待核对/);assert.equal(d.all().some(n=>n.attrs.class?.includes('animate-spin')),false);
  await d.click(card.firstChild);assert.match(card.textContent,/主 Agent/);assert.match(card.textContent,/版本 2/);
- assert.match(card.firstChild.childNodes.find(n=>n.attrs?.class?.includes('max-w-24')).textContent,/调整已受理/);
+ assert.match(card.firstChild.childNodes.find(n=>n.attrs?.class?.includes('max-w-24')).textContent,/任务来源/);assert.match(card.textContent,/调整已受理/);
  const original=card;await d.render(h(ProcessMessageContent,{node:{...node,details:'unloaded'},taskSources:[source],renderText:t=>t},'ANSWER'));
- assert.equal(d.find(n=>n.attrs['data-task-source']==='exact'),original);assert.equal(card.firstChild.attrs['aria-expanded'],'true');
+ assert.equal(d.find(n=>n.attrs['data-task-source']==='task'),original);assert.equal(card.firstChild.attrs['aria-expanded'],'true');
  assert.equal(d.all().filter(n=>n.tagName==='BUTTON'&&card.contains(n)).length,1);
 }));

@@ -1,3 +1,4 @@
+import {processIdentity,terminateLease} from './processes.js';
 import {nativeHistoryBridge} from './native-history-bridge.js';
 import {TurnExecution,executionCounters} from './execution-limits.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
@@ -18,11 +19,15 @@ import type { Config } from "./config.js";
 import { effectiveEffort, effectiveFast, type ModelRole } from "./model-config.js";
 import {usesHomerNativeHome,effectiveModelConfig} from "./config.js";
 import {deepseekProfile,materializeDeepSeekCatalog} from './deepseek-model.js';
+import {validateContextTuning} from './model-context.js';
+import {validateModelCapabilities,membershipModelCatalog,materializeModelCatalog} from './model-catalog.js';
 import { WorkerNativeRequests, type NativeRequest } from "./worker-native-requests.js";
 import type { InteractionResolution } from "./worker-interactions.js";
 import { HOST_MCP_TOOLS } from "./worker-interaction-mcp.js";
 import {publicActivityName} from './activity-facts.js';
 import {nativeToolContent} from './tool-content.js';
+import {activitySummaryText} from './message-quote.js';
+import {queryHomerTokenFailure} from './homer-account.js';
 export type Tool = {
   type: "function";
   name: string;
@@ -135,10 +140,10 @@ function rpcError(value: any): Error {
   if(value?.data?.config_write_error_code==='configVersionConflict')return new Error('capability_config_conflict');
   const msg = String(value?.message ?? "");
   if(value?.code===-32600&&/^thread not found: [a-zA-Z0-9_-]+$/.test(msg))return new Error('engine_thread_not_found');
-  if (/^\s*401\b|\b(?:HTTP(?:\/[\d.]+)?\s+|status(?:\s+code)?[=:]?\s*)401\b|unauthorized|authentication/i.test(msg))
-    return new Error("engine_authentication_failed");
   if (/insufficient[_\s-]+(?:quota|balance|credits?)|(?:quota|balance|credits?)(?:\s+is)?\s+(?:not enough|insufficient|exhausted)|(?:余额|额度)不足/i.test(msg))
     return new Error("engine_quota_insufficient");
+  if (/^\s*401\b|\b(?:HTTP(?:\/[\d.]+)?\s+|status(?:\s+code)?[=:]?\s*)401\b|unauthorized|authentication/i.test(msg))
+    return new Error("engine_authentication_failed");
   if (/^\s*429\b|\b(?:HTTP(?:\/[\d.]+)?\s+|status(?:\s+code)?[=:]?\s*)429\b|rate[ _.-]?limit|too many requests/i.test(msg))
     return new Error("engine_rate_limited");
   if (/sandbox|permissions|operation not permitted/i.test(msg))
@@ -188,7 +193,8 @@ export function profileOverrides(config: Config, options: EngineOptions) {
     filesystem[join(config.codexHome,"skills")]="write";
     filesystem[join(config.codexHome,"skills/.system")]="read";
   }
-  const browserRoots=["Library/Cookies","Library/Safari","Library/Containers/com.apple.Safari","Library/Group Containers/group.com.apple.Safari","Library/Application Support/Google/Chrome","Library/Application Support/Microsoft Edge","Library/Application Support/BraveSoftware","Library/Application Support/Arc","Library/Application Support/Firefox",...(config.controlBrowserData??[])].map(path=>isAbsolute(path)?path:join(userInfo().homedir,path));
+  const windowsBrowsers=['Google/Chrome','Microsoft/Edge','BraveSoftware','Mozilla/Firefox'];
+  const browserRoots=(process.platform==='win32'?[...windowsBrowsers.map(path=>join(userInfo().homedir,'AppData/Local',path)),join(userInfo().homedir,'AppData/Roaming/Mozilla/Firefox'),...windowsBrowsers.map(path=>join(process.env.LOCALAPPDATA??join(userInfo().homedir,'AppData/Local'),path)),join(process.env.APPDATA??join(userInfo().homedir,'AppData/Roaming'),'Mozilla/Firefox')]:["Library/Cookies","Library/Safari","Library/Containers/com.apple.Safari","Library/Group Containers/group.com.apple.Safari","Library/Application Support/Google/Chrome","Library/Application Support/Microsoft Edge","Library/Application Support/BraveSoftware","Library/Application Support/Arc","Library/Application Support/Firefox"]).concat(config.controlBrowserData??[]).map(path=>isAbsolute(path)?path:join(userInfo().homedir,path));
   for(const path of browserRoots)filesystem[path]="deny";
   const executableRoots=nativeExecutableRoots(config);
   for(const path of executableRoots)filesystem[path]="read";
@@ -261,6 +267,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       method: string;
       resolve: (value: any) => void;
       reject: (e: Error) => void;
+      checking?:boolean;
     }
   >();
   private active?: {
@@ -276,12 +283,15 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     nativeImageItems?:Set<string>;
     nativeOutputError?:string;
     deltaFenced?:boolean;
+    reasoningSummary?:{itemId:string;itemIds:Set<string>;summaryIndex:number;text:string;completed?:boolean};
     messageOrder?:string[];
+    settling?:boolean;
   };
   private usageBaseline?:ReturnType<typeof executionCounters>;
   private compaction?: {
     turnId?: string;
     itemId?: string;
+    settling?: boolean;
     resolve: () => void;
     reject: (error: Error) => void;
   };
@@ -289,6 +299,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private exited = false;
   private closing = false;
   private failure?: Error;
+  private websiteToken?:string;
+  private failureChecks=new AbortController();
   private toolResponses = new Map<string, Promise<any>>();
   private nativeRequests: WorkerNativeRequests;
   private nativeItems = new Map<string, Record<string, unknown>>();
@@ -313,6 +325,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     })();this.backgroundCheck=work;return work;
   }
   pid?: number;
+  private windowsLease?:{pid:number;identity:string};
   threadId?: string;
   turnId?: string;
   // Codex does not persist a fresh empty thread until its first turn.
@@ -325,7 +338,13 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   ) {
     super();
     this.config=effectiveModelConfig(config,options.role);
+    if(this.config.desktopModelSource==='website'&&this.config.keyEnv)this.websiteToken=process.env[this.config.keyEnv];
     this.nativeRequests = this.requestBridge();
+  }
+  private async modelError(value:unknown):Promise<Error>{
+    const error=rpcError(value);
+    if(error.message!=='engine_authentication_failed'||this.config.desktopModelSource!=='website'||!this.websiteToken||!this.config.baseUrl)return error;
+    return Error(await queryHomerTokenFailure(this.websiteToken,{gatewayOrigin:new URL(this.config.baseUrl).origin},this.failureChecks.signal));
   }
   private get executionEnabled(){return this.config.executionLimits!==undefined||!!deepseekProfile(this.config);}
   private publishExecution(active:NonNullable<CodexEngine['active']>){
@@ -341,7 +360,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private requestBridge() {
     return new WorkerNativeRequests({
       worker: this.options.role === 'worker',
-      current: () => ({ active: !!this.active && !this.closing && !this.exited, threadId: this.threadId, turnId: this.turnId }),
+      current: () => ({ active: !!this.active && !this.active.settling && !this.closing && !this.exited, threadId: this.threadId, turnId: this.turnId }),
       forward: request => {
         if (this.options.onInteraction) return this.options.onInteraction(request);
         if (request.method === "mcpServer/elicitation/request") throw Error("interaction_handler_unavailable");
@@ -354,6 +373,12 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     });
   }
   get nativeInteractionPending() { return this.nativeRequests.hasPending; }
+  private publishNativeProcess(method:string,p:any){
+    const hostTool=p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions'||p.item?.type==='dynamicToolCall'&&this.options.tools.some(tool=>tool.name===p.item.tool);
+    const workerMcp=this.options.nativeTools==='worker'&&p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions';
+    const safe=hostTool&&!workerMcp?undefined:safeNativeProcess(p.threadId,p.turnId,p.item,method==='item/completed');
+    if(safe)this.emit('nativeProcess',safe);
+  }
   private assertInteractionMcpBoundary(effective:any){
     if(this.options.nativeCapabilities){
       // Native tables merge. File-backed declarations may not append env or
@@ -374,9 +399,15 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   // Native 0.163.0: priority is Fast; explicit null clears an inherited tier.
   private get serviceTier(){return effectiveFast(this.config.fast,this.options.role)?"priority":null;}
   private async startConfigured(disabledMcp?: string[]): Promise<string> {
+    if(this.failureChecks.signal.aborted)this.failureChecks=new AbortController();
     const proxy=codexProxyEnvironment();
     const deepseek=deepseekProfile(this.config);
+    const context=this.config.context?validateContextTuning(this.config.context):deepseek;
     const nativeMemory=!!this.options.nativeCapabilities&&usesHomerNativeHome(this.config);
+    // This initializes new threads only. Resumes retain the native stored mode;
+    // Workers and configuration-only connections never opt new threads in.
+    const generateMemories=!this.options.threadId&&!this.options.controlOnly&&this.options.role!=="worker";
+    const memorySettings=nativeMemory?{"features.memories":true,"memories.dedicated_tools":true,...(this.config.dailyDeepSeek?{"memories.generate_memories":generateMemories,"memories.extract_model":this.config.model,"memories.consolidation_model":this.config.model}:{})}:{"features.memories":false,"memories.generate_memories":false,"memories.use_memories":false};
     const settings: Record<string, unknown> = {
       default_permissions: "homer",
       "permissions.homer": profileOverrides(this.config, this.options),
@@ -385,7 +416,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       "shell_environment_policy.inherit": "none",
       ...(this.options.nativeTools?{"features.multi_agent":this.options.nativeTools==="worker","features.multi_agent_v2":this.options.nativeTools==="worker","agents.enabled":this.options.nativeTools==="worker"}:{}),
       "features.code_mode_host": true,
-      ...(nativeMemory?{"features.memories":true,"memories.dedicated_tools":true,...(this.config.dailyDeepSeek?{"memories.generate_memories":false,"memories.consolidation_model":this.config.model}:{})}:{"features.memories":false,"memories.generate_memories":false,"memories.use_memories":false}),
+      ...memorySettings,
       "features.unbounded_connection_retries": false,
       "analytics.enabled": false,
       "feedback.enabled": false,
@@ -393,7 +424,12 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       model_provider: "openai",
     };
     const deepseekCatalogPath=deepseek?materializeDeepSeekCatalog(this.config.runtime):undefined;
-    if(deepseek)Object.assign(settings,{model_catalog_json:deepseekCatalogPath,model_context_window:deepseek.contextWindow,model_auto_compact_token_limit:deepseek.autoCompactTokenLimit,model_auto_compact_token_limit_scope:deepseek.autoCompactTokenLimitScope,web_search:'disabled'});
+    const capabilities=this.config.capabilities??(this.config.context&&this.config.effort===null?{inputModalities:['text'] as ('text'|'image')[],reasoningEfforts:[],webSearch:false,toolSearch:false}:undefined);
+    const membershipCatalog=capabilities&&context?membershipModelCatalog(this.config.model,this.config.effort??null,context.contextWindow,validateModelCapabilities(capabilities,this.config.effort??null)):undefined;
+    const membershipCatalogPath=membershipCatalog?materializeModelCatalog(this.config.runtime,membershipCatalog):undefined;
+    if(membershipCatalogPath)Object.assign(settings,{model_catalog_json:membershipCatalogPath,web_search:capabilities!.webSearch?'live':'disabled'});
+    if(context)Object.assign(settings,{model_context_window:context.contextWindow,model_auto_compact_token_limit:context.autoCompactTokenLimit,model_auto_compact_token_limit_scope:context.autoCompactTokenLimitScope});
+    if(deepseek)Object.assign(settings,{model_catalog_json:deepseekCatalogPath,web_search:'disabled'});
     // A legacy shared HOME must not expose its ambient capabilities. Isolated
     // Homer sessions use Codex defaults and their native user configuration.
     if (!this.options.nativeCapabilities || !usesHomerNativeHome(this.config))
@@ -459,11 +495,12 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       TMPDIR: process.env.TMPDIR,
       LANG: process.env.LANG,
       CODEX_HOME: this.config.codexHome,
+      ...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TEMP,USERPROFILE:join(this.config.codexHome,'host-home')}:{ }),
       ...proxy,
     };
     if(this.historyBridge){env.NO_PROXY=[proxy.NO_PROXY??proxy.no_proxy,'127.0.0.1'].filter(Boolean).join(',');env.no_proxy=env.NO_PROXY;}
     if (this.config.keyEnv)
-      env[this.config.keyEnv] = process.env[this.config.keyEnv];
+      env[this.config.keyEnv] = this.config.desktopModelSource==='website'?this.websiteToken:process.env[this.config.keyEnv];
     if(this.options.nativeCapabilities||usesHomerNativeHome(this.config))mkdirSync(env.HOME!,{recursive:true,mode:0o700});
     const child = this.child = spawn(this.config.codexBin, args, {
       cwd: this.options.cwd,
@@ -472,6 +509,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.pid = this.child.pid;
+    if(process.platform==='win32'&&this.pid){const identity=processIdentity(this.pid);if(identity)this.windowsLease={pid:this.pid,identity};}
     this.emit("spawn");
     this.child.stdin.on("error", () =>
       this.fail(new Error("engine_stdin_closed")),
@@ -518,6 +556,11 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       includeLayers: !!this.options.nativeCapabilities,
       cwd: this.options.cwd,
     });
+    if(this.config.context){
+      const actual=effective.config;
+      if(actual?.model!==this.config.model||actual?.model_context_window!==context!.contextWindow||actual?.model_auto_compact_token_limit!==context!.autoCompactTokenLimit||actual?.model_auto_compact_token_limit_scope!==context!.autoCompactTokenLimitScope)throw Error('engine_model_context_mismatch');
+    }
+    if(membershipCatalogPath&&(effective.config?.model_catalog_json!==membershipCatalogPath||effective.config?.web_search!==settings.web_search))throw Error('engine_model_catalog_mismatch');
     if(deepseek){
       const actual=effective.config;
       if(actual?.model!==this.config.model||actual?.model_catalog_json!==deepseekCatalogPath||actual?.model_context_window!==deepseek.contextWindow||actual?.model_auto_compact_token_limit!==deepseek.autoCompactTokenLimit||actual?.model_auto_compact_token_limit_scope!==deepseek.autoCompactTokenLimitScope||actual?.web_search!=='disabled')throw Error('engine_deepseek_config_mismatch');
@@ -526,7 +569,10 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       if(!model||model.defaultReasoningEffort!=='high'||!['low','high','max'].every(e=>model.supportedReasoningEfforts?.some((r:any)=>r.reasoningEffort===e)))throw Error('engine_deepseek_catalog_mismatch');
     }
     if(nativeMemory&&(this.version!=="0.163.0"||effective.config?.features?.memories!==true||effective.config?.memories?.dedicated_tools!==true))throw Error("engine_native_memory_tools_unavailable");
-    if(nativeMemory&&this.config.dailyDeepSeek&&effective.config?.memories?.generate_memories!==false)throw Error("engine_memory_generation_not_disabled");
+    if(nativeMemory&&this.config.dailyDeepSeek){
+      if(effective.config?.memories?.generate_memories!==generateMemories)throw Error("engine_memory_generation_mismatch");
+      if(effective.config?.memories?.extract_model!==this.config.model||effective.config?.memories?.consolidation_model!==this.config.model)throw Error("engine_memory_model_mismatch");
+    }
     this.assertInteractionMcpBoundary(effective);
     const inheritedMcp = Object.entries(this.options.nativeCapabilities?{}:effective.config?.mcp_servers ?? {})
       .filter(([name, server]: [string, any]) => server?.enabled !== false && !(name === "homer_interactions" && this.options.interactionMcp))
@@ -564,7 +610,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       config: { ...((this.options.nativeCapabilities||usesHomerNativeHome(this.config))?{"skills.config":[...(effective.config?.skills?.config??[]),...skillConfig]}:{}), mcp_servers: {
         ...Object.fromEntries((disabledMcp ?? []).map(name => [name, { enabled: false }])),
         ...(interactionMcp ? { homer_interactions: interactionMcp } : {}),
-      }, ...(!this.options.nativeCapabilities ? {"apps._default.enabled":false}:{}), ...(nativeMemory?{"features.memories":true,"memories.dedicated_tools":true,...(this.config.dailyDeepSeek?{"memories.generate_memories":false,"memories.consolidation_model":this.config.model}:{})}:{"features.memories":false,"memories.generate_memories":false,"memories.use_memories":false}) },
+      }, ...(!this.options.nativeCapabilities ? {"apps._default.enabled":false}:{}), ...memorySettings },
     };
     if(this.serviceTier){
       const catalog=await this.request("model/list",{includeHidden:true});
@@ -585,6 +631,9 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     )
       throw new Error("engine_boundary_mismatch");
     this.threadId = response.thread.id;
+    // Turn effort:null inherits ambient settings; replace only the membership thread's reasoning state.
+    if(this.config.context&&this.config.effort===null)
+      await this.request('thread/settings/update',{threadId:this.threadId,collaborationMode:{mode:'default',settings:{model:this.config.model,reasoning_effort:null,developer_instructions:''}},summary:'none'});
     this.resumable = !!this.options.threadId;
     // Fixed 0.163.0 protocol probe verifies this persisted per-thread fence.
     // Older transport fixtures/engines still have process-level memories off.
@@ -624,7 +673,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     });
   }
   private fail(error: Error) {
-    if(this.active&&this.threadId&&this.turnId)this.emit('turnUnavailable',{threadId:this.threadId,turnId:this.turnId});
+    this.failureChecks.abort();
+    if(this.active&&!this.active.settling&&this.threadId&&this.turnId)this.emit('turnUnavailable',{threadId:this.threadId,turnId:this.turnId});
     this.nativeRequests.close();
     if (!this.closing) {this.failure = error;this.preparation=undefined;}
     for (const p of this.pending.values()) {
@@ -655,8 +705,11 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if (m.id !== undefined && !m.method) {
       const p = this.pending.get(m.id);
       if (p) {
+        if(p.checking)return;
+        let error:Error|undefined;
+        if(m.error){p.checking=true;error=await this.modelError(m.error);if(this.pending.get(m.id)!==p)return;}
         this.pending.delete(m.id);
-        m.error ? p.reject(rpcError(m.error)) : p.resolve(m.result);
+        error ? p.reject(error) : p.resolve(m.result);
       }
       return;
     }
@@ -676,7 +729,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         if (
           p.threadId !== this.threadId ||
           p.turnId !== this.turnId ||
-          this.closing || !this.active
+          this.closing || !this.active || this.active.settling
         ) {
           result = {
             success: false,
@@ -707,7 +760,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
           }
           const owner=this.active,turnId=this.turnId;
           result = await response;
-          if(owner&&this.active===owner&&turnId===this.turnId&&this.executionEnabled){owner.execution.evidence({type:'dynamicToolCall',...(result as object)});this.publishExecution(owner);}
+          if(owner&&!owner.settling&&this.active===owner&&turnId===this.turnId&&this.executionEnabled){owner.execution.evidence({type:'dynamicToolCall',...(result as object)});this.publishExecution(owner);}
         }
       } else {
         this.send({
@@ -718,7 +771,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         return;
       }
       if (!this.exited && !this.closing) {
-        const bound = this.active && p?.threadId === this.threadId && p?.turnId === this.turnId;
+        const bound = this.active && !this.active.settling && p?.threadId === this.threadId && p?.turnId === this.turnId;
         this.send({ id: m.id, result: bound ? result : { success: false, contentItems: [{ type: "inputText", text: "tool_scope_denied" }] } });
         if (bound) this.emit("toolResponse", p.callId);
       }
@@ -730,14 +783,18 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     // never completes the parent turn or enters its public output projection.
     if (m.method === 'serverRequest/resolved') this.nativeRequests.resolved(p?.threadId, p?.requestId);
     if (m.method === 'turn/completed') this.nativeRequests.endTurn(p?.turn?.id, p?.threadId);
-    if (m.method === 'item/started' && this.active && !this.closing &&
+    if (m.method === 'item/started' && this.active && !this.active.settling && !this.closing &&
         (this.options.role === 'worker' || p?.threadId === this.threadId && p?.turnId === this.turnId) &&
         ['fileChange','commandExecution'].includes(p?.item?.type))
       this.nativeItems.set(JSON.stringify([p.threadId,p.turnId,p.item.id]),p.item);
     if (p?.threadId !== this.threadId) return;
+    if(this.active?.settling&&(p.turnId===this.turnId||p.turn?.id===this.turnId)){
+      if(this.options.nativeTools==='worker'&&m.method==='item/completed')this.publishNativeProcess(m.method,p);
+      return;
+    }
     if(m.method==='turn/plan/updated'&&this.active&&p.turnId===this.turnId&&Array.isArray(p.plan))this.emit('publicPlan',{threadId:p.threadId,turnId:p.turnId,plan:p.plan});
     const compact = this.compaction;
-    if (compact) {
+    if (compact&&!compact.settling) {
       // Compact's ACK has no turn id. Its new native turn/item binds the
       // completion; unrelated and duplicate item notifications cannot finish it.
       if (m.method === "turn/started" && !compact.turnId && p.turn.id !== this.turnId)
@@ -748,11 +805,14 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       }
       if (m.method === "item/completed" && p.item?.type === "contextCompaction" && p.turnId === compact.turnId && p.item.id === compact.itemId)
         compact.resolve();
-      if (m.method === "turn/completed" && p.turn.id === compact.turnId)
-        compact.reject(p.turn.error ? rpcError(p.turn.error) : new Error(p.turn.status === "interrupted" ? "engine_compact_interrupted" : "engine_compact_unconfirmed"));
+      if (m.method === "turn/completed" && p.turn.id === compact.turnId){
+        compact.settling=true;
+        const error=p.turn.error?await this.modelError(p.turn.error):new Error(p.turn.status === "interrupted" ? "engine_compact_interrupted" : "engine_compact_unconfirmed");
+        if(this.compaction===compact)compact.reject(error);
+      }
     }
     if(p.item?.type==='contextCompaction'&&typeof p.item.id==='string'&&['item/started','item/completed'].includes(m.method)&&
-      (this.active&&p.turnId===this.turnId||compact&&p.turnId===compact.turnId))
+      (this.active&&p.turnId===this.turnId||compact&&!compact.settling&&p.turnId===compact.turnId))
       this.emit('contextCompaction',{state:m.method==='item/completed'?'completed':'started',threadId:p.threadId,turnId:p.turnId,itemId:p.item.id});
     if(this.active&&p.turnId===this.turnId&&m.method==='item/completed'&&this.executionEnabled){
       if(p.item?.type==='contextCompaction'&&typeof p.item.id==='string')this.active.execution.compact(p.item.id);
@@ -767,6 +827,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       const connectionIssue=!!info&&typeof info==='object'&&['httpConnectionFailed','responseStreamConnectionFailed','responseStreamDisconnected'].some(key=>Object.hasOwn(info,key));
       // There is no upstream delta offset across native stream retries.
       this.active.deltaFenced=true;
+      if(this.active.reasoningSummary)this.active.reasoningSummary.text='';
       this.emit('turnRetry',{threadId:p.threadId,turnId:p.turnId,...(connectionIssue?{connectionIssue:true}:{})});
     }
     if(m.method==='item/completed'&&p.item?.type==='imageGeneration'&&p.item.status==='completed'&&!p.item.failure&&p.turnId===this.turnId&&this.active&&this.options.nativeTools&&this.options.nativeCapabilities){
@@ -786,10 +847,29 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     // Worker terminal observations may outlive their turn. The service accepts
     // them only against an already retained exact call/epoch, never as new work.
     if(['item/started','item/completed'].includes(m.method)&&(p.turnId===this.turnId&&this.active||this.options.nativeTools==='worker'&&m.method==='item/completed')){
-      const hostTool=p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions'||p.item?.type==='dynamicToolCall'&&this.options.tools.some(tool=>tool.name===p.item.tool);
-      const workerMcp=this.options.nativeTools==='worker'&&p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions';
-      const safe=hostTool&&!workerMcp?undefined:safeNativeProcess(p.threadId,p.turnId,p.item,m.method==='item/completed');
-      if(safe)this.emit('nativeProcess',safe);
+      this.publishNativeProcess(m.method,p);
+    }
+    if(this.active&&this.turnId&&p.turnId===this.turnId&&!this.closing){
+      const active=this.active,prior=active.reasoningSummary;
+      if(['item/started','item/completed'].includes(m.method)&&p.item?.type==='reasoning'&&typeof p.item.id==='string'&&p.item.id){
+        const item=p.item;
+        if(!(prior&&prior.itemId===item.id&&prior.completed&&m.method==='item/started')&&
+          (!prior||prior.itemId===item.id||!prior.itemIds.has(item.id))&&Array.isArray(item.summary)&&item.summary.every((text:unknown)=>typeof text==='string')){
+          const summaryIndex=Math.max(0,item.summary.length-1);
+          if(!prior||prior.itemId!==item.id||summaryIndex>=prior.summaryIndex){
+            active.reasoningSummary={itemId:item.id,itemIds:prior?.itemIds??new Set(),summaryIndex,text:(item.summary[summaryIndex]??'').slice(0,4096),completed:m.method==='item/completed'};
+          }
+        }
+      }else if(m.method==='item/reasoning/summaryTextDelta'&&!active.deltaFenced&&typeof p.itemId==='string'&&p.itemId&&Number.isSafeInteger(p.summaryIndex)&&p.summaryIndex>=0&&typeof p.delta==='string'&&(!prior||prior.itemId===p.itemId&&!prior.completed&&p.summaryIndex>=prior.summaryIndex)){
+        active.reasoningSummary={itemId:p.itemId,itemIds:prior?.itemIds??new Set(),summaryIndex:p.summaryIndex,text:((prior&&prior.summaryIndex===p.summaryIndex?prior.text:'')+p.delta).slice(0,4096)};
+      }
+      const summary=active.reasoningSummary;
+      if(summary&&summary!==prior){
+        // Retain identities, never old text, to reject earlier item replays.
+        summary.itemIds.add(summary.itemId);
+        const text=activitySummaryText(summary.text);
+        if(text)this.emit('reasoningSummary',{threadId:p.threadId,turnId:p.turnId,text});
+      }
     }
     if (m.method === "thread/tokenUsage/updated" && p.turnId === this.turnId && this.active) {
       this.active.usage = p.tokenUsage;
@@ -827,6 +907,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       this.active
     ) {
       const a = this.active;
+      if(a.settling)return;
+      a.settling=true;
       if(a.execution.snapshot.stopReason&&a.partialMessages)for(const message of a.partialMessages.values())if(!a.messages.some(m=>m.itemId===message.itemId))a.messages.push(message);
       // summary/notLoaded are display projections, never full source snapshots.
       // Keep the turn bound until every source update has reached persistence.
@@ -850,10 +932,13 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         }
       }
       if(a.messageOrder)a.messages.sort((x,y)=>a.messageOrder!.indexOf(x.itemId)-a.messageOrder!.indexOf(y.itemId));
+      try{this.emit('turnTerminal',{threadId:p.threadId,turnId:p.turn.id,...turnTiming(p.turn)});}
+      catch(error){a.reject(error instanceof Error?error:Error('engine_terminal_observer_failed'));throw error;}
+      const errorCode=a.execution.snapshot.stopReason??(p.turn.error?(await this.modelError(p.turn.error)).message:undefined);
+      if(this.active!==a)return;
       this.active = undefined;
-      const result:TurnResult={status:p.turn.status,text:a.messages.map(m=>m.text).join('\n').trim(),messages:a.messages,...(a.execution.snapshot.stopReason?{errorCode:a.execution.snapshot.stopReason}:p.turn.error?{errorCode:rpcError(p.turn.error).message}:{}),usage:a.usage,...(a.nativeOutputError?{nativeOutputError:a.nativeOutputError}:{})};
+      const result:TurnResult={status:p.turn.status,text:a.messages.map(m=>m.text).join('\n').trim(),messages:a.messages,...(errorCode?{errorCode}:{}),usage:a.usage,...(a.nativeOutputError?{nativeOutputError:a.nativeOutputError}:{})};
       try{
-        this.emit('turnTerminal',{threadId:p.threadId,turnId:p.turn.id,...turnTiming(p.turn)});
         this.emit('nativeCompleted',{threadId:p.threadId,turnId:p.turn.id,status:p.turn.status,result});
       }catch(error){const failure=error instanceof Error?error:Error('engine_terminal_observer_failed');a.reject(failure);throw failure;}
       // Worker returns must not wait on an unrelated background RPC. Main keeps
@@ -966,7 +1051,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     }finally{if(this.preparation===operation)this.preparation=undefined;}
   }
   async steer(expectedTurnId:string,text:string):Promise<{turnId:string}> {
-    if(!this.active||!this.threadId||this.turnId!==expectedTurnId||this.closing)throw Error('engine_steer_not_applicable');
+    if(!this.active||this.active.settling||!this.threadId||this.turnId!==expectedTurnId||this.closing)throw Error('engine_steer_not_applicable');
     const result=await this.request('turn/steer',{threadId:this.threadId,expectedTurnId,input:[{type:'text',text,text_elements:[]}]});
     if(result.turnId!==expectedTurnId)throw Error('engine_steer_turn_mismatch');return result;
   }
@@ -987,6 +1072,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   async interrupt() {
     const turnId = this.compaction?.turnId ?? this.turnId;
     if (turnId) this.nativeRequests.endTurn(turnId);
+    if(this.active?.settling||this.compaction?.settling)return true;
     if (!this.threadId || !turnId || (!this.active && !this.compaction)) return !this.active && !this.compaction;
     let timer: NodeJS.Timeout | undefined;
     try {
@@ -1030,6 +1116,12 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       const timer = setTimeout(done, timeoutMs);
       this.child!.once("exit", done);
     });
+    if(process.platform==='win32'){
+      const drain=async()=>{if(!this.exited){this.child!.stdin?.end();if(!this.exited)await waitForExit(46000);}};
+      const stopped=this.windowsLease?await terminateLease(this.windowsLease,drain):(await drain(),false);
+      if(this.exited){await this.historyBridge?.close();this.historyBridge=undefined;}
+      return this.exited&&stopped;
+    }
     if (!this.exited && this.options.role === 'worker') {
       // Fixed Codex 0.163.0 drains stdio EOF and shuts down native threads.
       // Its Unix watchdog is 45s; allow that bounded drain before signals.

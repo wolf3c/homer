@@ -87,6 +87,28 @@ test('CONTRACT 1b: same-source root retry finds one committed root after lost re
   observations(t,{operationKey:replay.operationKey,taskId:replay.taskId,rootCount:2});
  }finally{f.close();}
 });
+for(const legacy of [false,true])test('fixed coordinator host recovery: '+(legacy?'old':'new')+' replacement reuses completed child takeover',async()=>{
+ const f=fixture();try{
+  const child=await f.tools.call(main,'task_delegate',delegateArgs(f)) as any;
+  Object.assign(f.host,{hostActors:new WeakSet(),pump(){},scheduleInternal(){}});
+  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake(){},stop:async r=>r,update:(r,m)=>f.host.applyUpdate(r,m)});
+  const args={...current(f,f.root.taskId,'replace-transfer'),mode:'stop_replace',contract:contract('aggregate'),children:[{taskId:child.taskId,action:'transfer',...(legacy?{coordinatorAgentId:main.agentId}:{})}],queuedDisposition:[],independent:false};
+  const receipt=await tools.call(main,'task_update',args) as any;
+  assert.equal(f.tasks.task(child.taskId).controlState,'normal');
+  const operationId='host-transfer:'+receipt.operationKey+':'+child.taskId;
+  const lookup=f.tasks.inspect(event,{operationId,operationScopeId:child.taskId});
+  assert.ok('operation' in lookup&&lookup.operation);
+  const transfer=lookup.operation;
+  assert.equal(transfer.kind,'takeover');assert.equal(transfer.state,'confirmed');
+  const before=snapshot(f);
+  assert.deepEqual(await tools.call(event,'task_update',args),receipt);
+  assert.equal(snapshot(f),before);
+  f.store.db.prepare("UPDATE operations SET state='uncertain',responseJson=NULL WHERE id=?").run(transfer.id);
+  const uncertain=snapshot(f);
+  await assert.rejects(()=>tools.call(event,'task_update',args),/operation_uncertain/);
+  assert.equal(snapshot(f),uncertain);
+ }finally{f.close();}
+});
 for(const timeout of [false,true])test('CONTRACT 1c '+(timeout?'uncertain':'received/adopted')+': supplementation retries read durable RPC disposition without another fake steer',async t=>{
  const f=fixture();try{
   const child=await f.tools.call(main,'task_delegate',delegateArgs(f)) as any,w=running(f,child.taskId);let calls=0;

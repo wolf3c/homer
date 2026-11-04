@@ -9,10 +9,11 @@ import {createAnnotationDraft,useAnnotationDraft,annotationValidationReferences,
 import {useMediaQuery} from '@mantine/hooks';
 import {previewIntentTooLong} from '../src/user-intent';
 import {Group,Panel,Separator} from 'react-resizable-panels';
-import {MessageCirclePlus,PanelRightIcon,ScanLine} from 'lucide-react';
+import {MessageCirclePlus,PanelRightIcon} from 'lucide-react';
 import {parseResourceReference,parseResourceReferences,referenceKey,referencesOf,type ResourceReference} from '../src/preview-reference';
 import {PreviewActionsContext,ResourceReferenceBlock,AnnotationChips,type PreviewComposer,type PreviewRequest} from './preview-reference';
 import {TaskStatusPopover} from './task-status';
+import {MobileSettings} from './mobile-settings';
 import {ExecutionUsage} from './execution-usage';
 import homerLogo64 from "../assets/branding/odysseus-20261030/homer-odysseus-64.png";
 import homerLogo256 from "../assets/branding/odysseus-20261030/homer-odysseus-256.png";
@@ -65,9 +66,15 @@ import {questionReply} from '../src/question-schema';
 import type { ConversationInput, MessageQuote, AnnotatedQuote } from "../src/web-history";
 import { canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, restoreComposerDraft,restoreRejectedSourceDraft,singleComposerDraft,unconfirmedInputs,quoteDrafts,protocolQuotes,type QuoteDraft,type UnconfirmedInput } from "./conversation-client";
 import type {MediaView} from '../src/media-store';
-import {DesktopSettings,ModelFailureNotice} from './desktop-permissions';
+import {DesktopSettings,DesktopAccount,ModelFailureNotice} from './desktop-permissions';
 import "highlight.js/styles/github.css";
 import "./homer-styles.css";
+
+type DesktopUpdateState={status:'idle'|'checking'|'downloading'|'ready'|'error';version?:string;noticeHidden:boolean;error?:string}|null;
+declare global{interface Window{homerDesktopUpdate?:{
+  state():Promise<DesktopUpdateState>;dismiss():Promise<DesktopUpdateState>;restart():Promise<DesktopUpdateState>;
+  onChange(callback:()=>void):()=>void;
+};}}
 
 const empty: WebState = { threadId: "", messages: [], isRunning: false, activeMessageId: null, work: [], interactions: [], upgrade: { phase: "starting" } };
 const storage = {
@@ -221,6 +228,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   const [uploading,setUploading]=useState(false),[restoring,setRestoring]=useState(true);
   const uploadingRef=useRef(false);
   const draftRequest=useRef<string>(crypto.randomUUID()),fileInput=useRef<HTMLInputElement>(null);
+  function pickerBusy(busy:boolean){if(mobileView)window.ReactNativeWebView?.postMessage(JSON.stringify({type:'update-busy',busy,nonce:window.__homerMobileNonce}));}
   const focusInput=useComposerInputFocus();
   const [answerEditing,setAnswerEditing]=useState<{item:WebInteraction;original:{text:string;quotes:AnnotatedQuote[];requestId:string}}|null>(null);
   const answerRef=useRef(answerEditing);answerRef.current=answerEditing;
@@ -495,7 +503,8 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   }
   useLayoutEffect(()=>{bindPreview({add:addReference,canQuote:canQuoteMessage,appendQuote,openQuote});return()=>bindPreview(null);});
   const intentReference=answerEditing?undefined:resourceReference;
-  const notice=blocked?(connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):previewIntentTooLong({text,quotes,resourceReference:intentReference,resourceReferences:answerEditing?undefined:resourceReferences})?'整体要求与批注合计过长，请缩短后再发送。':draftNotice;
+  const accountRequired=!mobileView&&!!window.homerDesktopAccount&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
+  const notice=blocked?(accountRequired?'请先连接账号，重启并应用后即可开始。':connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):previewIntentTooLong({text,quotes,resourceReference:intentReference,resourceReferences:answerEditing?undefined:resourceReferences})?'整体要求与批注合计过长，请缩短后再发送。':draftNotice;
   const range=quoteEditor?.range;
   const rangeBody=range?.startContainer.parentElement;
   const quoteAnchor=range&&rangeVisible&&rangeBody?.isConnected?{contextElement:rangeBody,getBoundingClientRect:()=>range.getBoundingClientRect(),getClientRects:()=>range.getClientRects()}:quoteEditor?.existing&&quoteEditor.trigger?.isConnected?quoteEditor.trigger:composerBody;
@@ -511,7 +520,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
       dismissQuote();
     }}>
      <Popover.Portal><Popover.Positioner anchor={quoteAnchor} positionMethod="fixed" side="bottom" sideOffset={8} collisionPadding={8} sticky collisionAvoidance={{side:'flip',align:'shift'}} className="preview-selection-positioner">
-      <Popover.Popup initialFocus={false} finalFocus={false} aria-label="引用评论" className="text-annotation-editor">
+      <Popover.Popup initialFocus={false} finalFocus={false} aria-label="引用评论" className="text-annotation-editor message-quote-editor">
        {quoteEditor&&<AnnotationCommentForm key={quoteEditor.draftId} ref={focusQuoteTextarea} title={'引用 · '+quoteEditor.quote.messageId} excerpt={quoteEditor.quote.text} value={quoteEditor.annotation} onChange={annotation=>{const next={...quoteEditor,annotation,error:''};quoteEditorRef.current=next;setQuoteEditor(next);}} onSave={saveQuote} onCancel={dismissQuote} onDelete={quoteEditor.existing?()=>{replaceQuotes(quotesRef.current.filter(q=>q.draftId!==quoteEditor.draftId));dismissQuote();}:undefined} busy={false} error={quoteEditor.error}/>}
       </Popover.Popup>
      </Popover.Positioner></Popover.Portal>
@@ -541,9 +550,9 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     {uploading&&<div className="composer-upload-status" role="status">正在处理附件…</div>}
     </div>}
     {!answerEditing&&retryAttachments.length>0&&<div className="composer-upload-actions"><button type="button" disabled={uploading||blocked||state.upgrade.phase!=='running'} onClick={()=>void uploadFiles(retryAttachments.map(attachment=>attachmentOwner.retryFile(attachment)))}>重试上传</button><button type="button" disabled={uploading||blocked} onClick={()=>void discardUnconfirmed()}>不添加这些附件</button></div>}
-    <HomerComposerInput className="composer-input" aria-label="给荷马发消息" placeholder={answerEditing?'回答上面的问题…':connected ? quotes.length ? "说说你对这段原文的要求…" : state.queueDispatch?.awaitingUser ? "发送消息，说明如何继续…" : "说说你想办的事…" : "连接恢复后继续发送，草稿会保留"} autoFocus disabled={blocked} onFiles={files=>void uploadFiles(files)} onPaste={answerEditing?event=>{if(event.clipboardData?.files.length){event.preventDefault();setDraftNotice('答复时不能添加附件，原普通草稿已保留。');}}:undefined}/>
+    <HomerComposerInput className="composer-input" aria-label="给荷马发消息" placeholder={answerEditing?'回答上面的问题…':accountRequired?'请先连接账号':connected ? quotes.length ? "说说你对这段原文的要求…" : state.queueDispatch?.awaitingUser ? "发送消息，说明如何继续…" : "说说你想办的事…" : "连接恢复后继续发送，草稿会保留"} autoFocus disabled={blocked} onFiles={files=>void uploadFiles(files)} onPaste={answerEditing?event=>{if(event.clipboardData?.files.length){event.preventDefault();setDraftNotice('答复时不能添加附件，原普通草稿已保留。');}}:undefined}/>
     <div className="composer-toolbar">
-      {!answerEditing&&state.features?.draftUpload&&<><input ref={fileInput} type="file" multiple hidden aria-label="选择附件" onChange={event=>void uploadFiles(Array.from(event.target.files??[]))}/><button type="button" className="attach-button" aria-label="添加附件" title="添加附件" aria-busy={uploading} disabled={blocked||uploading||state.upgrade.phase!=='running'} onClick={()=>fileInput.current?.click()}><ComposerIcon name="paperclip"/></button></>}
+      {!answerEditing&&state.features?.draftUpload&&<><input ref={node=>{fileInput.current=node;if(node)node.oncancel=()=>pickerBusy(false);}} type="file" multiple hidden aria-label="选择附件" onChange={event=>{pickerBusy(false);void uploadFiles(Array.from(event.target.files??[]));}}/><button type="button" className="attach-button" aria-label="添加附件" title="添加附件" aria-busy={uploading} disabled={blocked||uploading||state.upgrade.phase!=='running'} onClick={()=>{pickerBusy(true);fileInput.current?.click();}}><ComposerIcon name="paperclip"/></button></>}
       <div className="composer-actions">
       {state.activeMessageId&&<button type="button" className="stop-button" aria-label="停止回复" title="停止回复" aria-busy={!!stopping} disabled={!!stopping||!connected} onClick={onStop}><ComposerIcon name="square"/><span>{stopping?'停止中':'停止'}</span></button>}
       <button type="submit" className="send-button" aria-label={answerEditing?'提交答复':state.isRunning?'排队发送':'发送消息'} title={answerEditing?'提交答复':state.isRunning?'排队发送':'发送消息'} disabled={answerEditing?answerBlocked||!text.trim()||text.length>16000:blocked||uploading||preparingKeys.length>0||retryAttachments.length>0||!canSubmitMessage(text,quotes,attachments,resourceReference,resourceReferences)}><ComposerIcon name="arrow"/></button>
@@ -622,14 +631,14 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
     {free&&!!questions?.[0]?.options.length&&<ul>{questions[0].options.map(option=><li key={option.label}>{option.label}{option.description?'：'+option.description:''}</li>)}</ul>}
     {item.reason&&<p className="secondary">{item.reason}</p>}
     {unmapped.length>0&&<details><summary>旧版未提交内容已保留</summary>{unmapped.map(([id,value])=><p key={id}>{value}</p>)}</details>}
-    {free?<>{accepted?<p role="status">答复已接收，待荷马处理。</p>:<button type="button" disabled={!verified||sending} onClick={()=>onAnswer?.(item)}>回答此问题</button>}</>:<fieldset className="interaction-controls" disabled={!verified||sending||!!pending&&!accepted}>
+    {free?<>{accepted?<p role="status">答复已接收，待荷马处理。</p>:<button type="button" disabled={!verified||sending} onClick={()=>onAnswer?.(item)}>回答此问题</button>}</>:<fieldset className="interaction-controls" disabled={closed&&!verified||sending||!!pending&&!accepted}>
       {closed?<QuestionFlow steps={questions!.map(q=>({id:q.id,question:q.question,options:q.options.map(o=>({...o,id:o.label}))}))}
         defaultValue={Object.fromEntries(Object.entries(answers).map(([id,value])=>[id,[value]]))}
         choice={receiptAnswers}
         onComplete={accepted?undefined:values=>complete(Object.fromEntries(Object.entries(values).map(([id,list])=>[id,list[0]??''])))}/>
       :<ElicitationForm server="荷马" message={'请补充本轮所需的信息。'+questions!.flatMap(q=>q.options.filter(o=>o.description||q.allowOther).map(o=>'\n'+q.question+'：'+o.label+(o.description?'，'+o.description:''))).join('')}
         fields={questions!.map(q=>({name:q.id,label:q.question,value:answers[q.id]??'',kind:q.allowOther?'text':'choice',options:q.options.map(o=>o.label),required:true}))}
-        state={accepted?'accepted':'request'} onFieldChange={(id,value)=>setAnswers(old=>({...old,[id]:value}))}
+        state={accepted?'accepted':'request'} submitDisabled={!verified} onFieldChange={(id,value)=>setAnswers(old=>({...old,[id]:value}))}
         onAccept={()=>{void complete(answers).catch(error=>onError(error.message));}}/>}
     </fieldset>}
     {!verified&&<p role="status">正在核对原问题，暂不能提交。</p>}
@@ -836,6 +845,32 @@ function HomerApp() {
   const [stateRefresh,setStateRefresh]=useState(0);
   const [connectionError, setConnectionError] = useState("");
   const [uiUpdate, setUiUpdate] = useState(false);
+  const [desktopUpdate,setDesktopUpdate]=useState<DesktopUpdateState>(null);
+  useLayoutEffect(()=>{
+    const bridge=window.homerDesktopUpdate;if(mobileView||!bridge)return;
+    let disposed=false,revision=0;
+    const receive=()=>{const current=++revision;void bridge.state().then(value=>{
+      if(disposed||current!==revision)return;
+      captureAnchor();setDesktopUpdate(value);
+    }).catch(()=>{});};
+    const unsubscribe=bridge.onChange(receive);receive();
+    return()=>{disposed=true;unsubscribe();};
+  },[]);
+  useLayoutEffect(()=>{restoreAnchor();},[desktopUpdate]);
+  function desktopUpdateIntent(action:'dismiss'|'restart',returnFocus=false){
+    const bridge=window.homerDesktopUpdate;if(!bridge)return;
+    // Main emits the authoritative snapshot; action responses must not overwrite newer events.
+    void bridge[action]().then(value=>{if(returnFocus&&value?.noticeHidden)focusEditor.current?.();}).catch(()=>{captureAnchor();setDesktopUpdate(value=>value?{...value,error:'update_action_unconfirmed'}:value);});
+  }
+  const [mobileUpdate,setMobileUpdate]=useState<{version:string;openError:boolean}|null>(null);
+  useLayoutEffect(()=>{
+    if(!mobileView||!window.ReactNativeWebView)return;
+    const receive=()=>{const value=window.__homerMobileUpdate;captureAnchor();setMobileUpdate(value&&typeof value.version==='string'&&/^\d+(?:\.\d+)*$/.test(value.version)&&typeof value.openError==='boolean'?{version:value.version,openError:value.openError}:null);};
+    window.addEventListener('homer-mobile-update',receive);receive();
+    return()=>window.removeEventListener('homer-mobile-update',receive);
+  },[]);
+  useLayoutEffect(()=>{restoreAnchor();},[mobileUpdate]);
+  function updateIntent(type:'update-open'|'update-dismiss'){window.ReactNativeWebView?.postMessage(JSON.stringify({type,nonce:window.__homerMobileNonce}));}
   const [error, setError] = useState("");
   const [stopping, setStopping] = useState<string | null>(null);
   useEffect(() => { if (stopping && state.activeMessageId !== stopping) setStopping(null); }, [state.activeMessageId, stopping]);
@@ -1047,14 +1082,17 @@ function HomerApp() {
     }
   }catch{/* Old local drafts remain optional and never cause submission. */}
 
-  const feedback = error || (!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
+  const accountRequired=!mobileView&&!!window.homerDesktopAccount&&!connected&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
+  const feedback = error || (!accountRequired&&!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
   return <QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><ProcessDetailsContext.Provider value={processDetails.load}><ProcessMessagesContext.Provider value={processMessages}><ProcessObservationContext.Provider value={{connected,threadId:state.threadId,readEpoch:state.history?.readEpoch,serviceRunning:state.upgrade.phase==='running',observedAtMs:state.observedAtMs,mainActivity:state.mainActivity,generationTurnId:state.generation?.turnId}}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
     <div className={canvasOpen?"app-shell canvas-open":"app-shell"} data-native-titlebar={nativeTitlebar||undefined}>
       <Group className="preview-layout" orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={nativeTitlebar?'240px':'25%'}><div className="conversation-panel">
         <header className="conversation-header">
-          <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span>{mobileView&&<button type="button" className="mobile-scan" aria-label="重新扫码" title="重新扫码" onClick={()=>window.ReactNativeWebView?.postMessage(JSON.stringify({type:'open-scanner',nonce:window.__homerMobileNonce}))}><ScanLine size={18}/></button>}</span>
-          <div className="header-actions">{!mobileView&&<DesktopSettings key={state.threadId} ref={accountSettings}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} connected={connected} onInteraction={locateTaskInteraction} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-expanded={canvasOpen} aria-controls="canvas-panel" onClick={event=>{if(canvasOpen){closeCanvas();return;}canvasTrigger.current=event.currentTarget;updatePreviewScope(true,canvasArtifact?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
+          <div className="header-actions">{mobileView?<MobileSettings/>:<DesktopSettings key={state.threadId} ref={accountSettings}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} connected={connected} onInteraction={locateTaskInteraction} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-expanded={canvasOpen} aria-controls="canvas-panel" onClick={event=>{if(canvasOpen){closeCanvas();return;}canvasTrigger.current=event.currentTarget;updatePreviewScope(true,canvasArtifact?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
+      {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
+      {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}
       <div className="conversation-workspace"><main className="conversation">
         {state.orderWarning&&<div className="upgrade-banner" role="status">{state.orderWarning}</div>}
         {state.upgrade.reviewRequired && <div className="upgrade-banner" role="status">更新涉及用户身份或私有运行数据，当前版本继续可用。<a href="/settings/update">审阅更新</a></div>}
@@ -1067,6 +1105,7 @@ function HomerApp() {
             onClick={event=>{const link=(event.target as Element).closest<HTMLAnchorElement>('a[href^="#message-"]');if(link){event.preventDefault();locateMessage(decodeURIComponent(link.hash.slice(9)));}}}>
             {state.history&&<nav className="history-navigation" aria-label="对话记录分页">{history.current.before&&<button type="button" disabled={pageBusy} onClick={()=>void loadPage('before')}>{pageBusy?'正在读取…':'加载更早消息'}</button>}{history.current.archived&&<button type="button" onClick={returnLatest}>回到最新消息</button>}{history.current.stale&&<span role="status">较早记录可能已有更新，展开过程时会重新核对。</span>}{history.current.inactiveMore&&<span role="status">本页还有失效交互记录未加载；旧提问和授权回调均不可继续提交，请从原事项核对。</span>}{pageNotice&&<p role="status">{pageNotice}</p>}</nav>}
 
+            {accountRequired&&<DesktopAccount onboarding/>}
             {connected && state.threadId && <ThreadPrimitive.Empty><div className="welcome"><img src={homerLogo256} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="(max-width: 480px) 58px, 70px" alt="" width={70} height={70} style={{borderRadius:0,objectFit:"contain"}} />
               <h1 className="welcome-title">一语成真。</h1>
               <p className="welcome-description">把想法告诉我，一起把它变成现实。</p>
@@ -1084,7 +1123,7 @@ function HomerApp() {
             {queueDrafts.map(draft=><details className="queue-draft-recovery" key={draft.key}><summary>未提交的排队编辑草稿</summary><p style={{whiteSpace:'pre-wrap'}}>{draft.text}</p>{draftQuotes(draft).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i} expanded/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}{referencesOf(draft).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)} {!!draft.attachments?.length&&<p>已保留 {draft.attachments.length} 个原附件引用；如另发消息，请重新添加文件。</p>}<button type="button" onClick={()=>setEditDraft({text:[draft.text,...draftQuotes(draft).map(quote=>quote.text+(quote.annotation?'\n批注：'+quote.annotation:''))].filter(Boolean).join('\n\n'),id:crypto.randomUUID()})}>{referencesOf(draft).length?'复制正文到输入草稿':'复制文字与引用到输入草稿'}</button></details>)}
             {questionDrafts.map(draft=><details className="queue-draft-recovery" key={draft.id}><summary>已保留的答复内容</summary><p>{draft.expired?'原问题已失效':'旧版问题状态需要核对'}；内容不会自动发送，接收情况以原请求回执为准。</p><p style={{whiteSpace:'pre-wrap'}}>{draft.text}</p><button type="button" onClick={()=>setEditDraft({text:draft.text,id:crypto.randomUUID()})}>复制到普通消息草稿</button></details>)}
             <div className="interaction-list">{state.interactions.map(item => <InteractionCard key={state.threadId+':'+item.id} verified={connected&&!activePages.current.interactions.checking} item={item} threadId={state.threadId} messages={state.messages} acceptedRequestIds={state.acceptedRequestIds??[]} onError={setError} onNotLive={interactionNotLive} onAnswer={item=>setAnswerTarget({...item,historyThreadId:state.threadId})} structuredAnswers={!!state.features?.nativeQuestionAnswers} />)}</div>
-            <button type="button" className="scroll-latest" disabled={!history.current.archived&&isAtBottom&&!hasNewContent} onClick={returnLatest}>↓ {hasNewContent?'有新内容 · 最新消息':'最新消息'}</button>
+            {!accountRequired&&<button type="button" className="scroll-latest" disabled={!history.current.archived&&isAtBottom&&!hasNewContent} onClick={returnLatest}>↓ {hasNewContent?'有新内容 · 最新消息':'最新消息'}</button>}
           </ThreadPrimitive.Viewport>
           <MainComposer onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar />

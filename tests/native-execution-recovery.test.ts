@@ -50,14 +50,16 @@ for(const status of ['failed','empty','rejected'] as const)test('main recovery: 
   const f=host();try{await f.app.start();const old=f.peers[0]!;
     old.behavior=async text=>{if(text!=='first')return{status:'completed',text:'next accepted'};if(status==='rejected')throw Error('engine_disconnected');return{status:status==='failed'?'failed':'completed',text:'',errorCode:'engine_rate_limited'};};
     const failure=await f.app.message('first','first');assert.match(failure,/主 Agent 未完成/);
-    assert.equal(f.app.inputs.list()[0]?.state,'failed');
+    assert.equal(f.app.inputs.list()[0]?.state,status==='rejected'?'uncertain':'failed');
+    const node=f.app.processes.list(old.threadId)[0]!;
+    assert.equal(node.state,'worked');assert.equal(node.status,status==='rejected'?'unknown':'failed');
     assert.equal(await f.app.message('next accepted','second'),'next accepted');
     assert.equal(f.app.submitMessage({requestId:'first',text:'first'}).fresh,false);
     await f.app.idle();assert.equal(f.peers.flatMap(p=>p.seen).filter(t=>t==='first').length,1);
     assert.equal(f.app.store.meta('mainThread'),'synthetic-original-thread');
     assert.equal(f.peers.length,status==='rejected'?2:1);
     if(status==='rejected')assert.equal(f.peers[1]!.options.threadId,'synthetic-original-thread');
-    assert.equal(f.app.inputs.list().find(i=>i.input.requestId==='first')?.state,'failed');
+    assert.equal(f.app.inputs.list().find(i=>i.input.requestId==='first')?.state,status==='rejected'?'uncertain':'failed');
   }finally{await f.close();}
 });
 

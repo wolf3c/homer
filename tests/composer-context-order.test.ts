@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {ContextOrder,contextKey} from '../ui/composer-context-order.ts';
+import {ContextOrder,contextKey} from '../ui/composer-context-order.js';
 
 test('tracks mixed insertion order, preserves edits and appends after removal',()=>{
  const o=new ContextOrder();const r=contextKey('ref','doc','1'),a=contextKey('attachment','upload-1'),q=contextKey('quote','q1');

@@ -1,3 +1,4 @@
+import {TurnExecution} from '../src/execution-limits.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -21,10 +22,12 @@ test('unknown phase, delta then full, late delta and persisted lifecycle retain 
  f.agent('u','future_phase','first');f.agent('missing',undefined,'unknown');
  f.agent('a','final_answer','Hel',false);f.processes.agent('node',{turnId:'turn',itemId:'a',delta:'lo',completed:false});f.agent('a','final_answer','Hello');
  f.processes.agent('node',{turnId:'turn',itemId:'a',delta:'LATE',completed:false});f.agent('a','final_answer','DUPLICATE');
- assert.deepEqual(f.node().items.map((i:any)=>[i.itemId,i.phase,i.text,i.completed]),[['u','future_phase','first',true],['missing',null,'unknown',true],['a','final_answer','Hello',true]]);
+ const stored=JSON.parse(String(f.db.prepare('SELECT value FROM meta WHERE key=?').get('publicMainNode:v1:node')!.value));
+ assert.deepEqual(stored.items.map((i:any)=>[i.itemId,i.phase,i.text,i.completed]),[['u','future_phase','first',true],['missing',null,'unknown',true],['a','final_answer','Hello',true]]);
+ assert.deepEqual(f.node().items.map((i:any)=>i.itemId),['a'],'unknown phases remain stored, not public');
  f.agent('b','final_answer','partial',false);f.processes.finish('node','interrupted','native:terminal');
  const msg=projectConversation(f.history.list('thread'),f.processes.headers(['node']),[]).messages[0]!;
- assert.equal(msg.status,'interrupted');assert.deepEqual(msg.process!.items.map(i=>i.id),['turn:u','turn:missing','turn:a','turn:b']);
+ assert.equal(msg.status,'interrupted');assert.deepEqual(msg.process!.items.map(i=>i.id),['turn:a','turn:b']);
  assert.equal((msg.process!.items.at(-1) as any).completed,false);
  assert.deepEqual(new MainProcessHistory(f.db).headers(['node'])[0]!.items,f.node().items);
  }finally{f.db.close();}
@@ -35,7 +38,7 @@ test('unknown phase, delta then full, late delta and persisted lifecycle retain 
 test('real engine terminal full reconciles the same persistent entry in protocol order; summary is not full',async()=>{
  const f=fixture();try{
  const engine:any=new CodexEngine({workspace:process.cwd(),runtime:process.cwd(),model:'synthetic'} as any,{cwd:process.cwd(),readRoots:[],instructions:'',tools:[]},async()=>({}));
- engine.threadId='thread';engine.turnId='turn';engine.active={messages:[],earlyEvents:[],resolve:()=>{},reject:()=>{}};engine.refreshBackground=async()=>{};
+ engine.threadId='thread';engine.turnId='turn';engine.active={execution:new TurnExecution({}),messages:[],earlyEvents:[],resolve:()=>{},reject:()=>{}};engine.refreshBackground=async()=>{};
  const rawDeltas:string[]=[];engine.on('textDelta',(e:any)=>rawDeltas.push(e.delta));
  engine.on('agentMessage',(e:any)=>f.processes.agent('node',e));
  engine.on('turnRetry',(e:any)=>{(f.processes as any).uncertain('node',e.turnId);});
@@ -47,13 +50,14 @@ test('real engine terminal full reconciles the same persistent entry in protocol
  await receive('item/started',{item:{id:'new',type:'agentMessage',phase:'future',text:''}});
  await receive('item/agentMessage/delta',{itemId:'new',delta:'REPLAY'});
  await receive('item/completed',{threadId:'other',item:{id:'forged',type:'agentMessage',phase:'final_answer',text:'FORGED'}});
- assert.equal((f.node().items[0] as any).text,'Hel');assert.equal((f.node().items[1] as any).text,'');assert.deepEqual(rawDeltas,['Hel']);
+ assert.equal((f.node().items[0] as any).text,'Hel');assert.equal(f.node().items.length,1);assert.deepEqual(rawDeltas,['Hel']);
  const items=[{type:'agentMessage',id:'a',phase:'final_answer',text:'A'},{type:'agentMessage',id:'b',phase:'final_answer',text:'Hello'},{type:'agentMessage',id:'new',phase:'future',text:'N'}];
  await receive('turn/completed',{turn:{id:'turn',status:'completed',itemsView:'full',items}});
- assert.deepEqual(f.node().items.map((i:any)=>[i.itemId,i.text]),[['a','A'],['b','Hello'],['new','N']]);
+ assert.deepEqual(f.node().items.map((i:any)=>[i.itemId,i.text]),[['a','A'],['b','Hello']]);
+ assert.ok(String(f.db.prepare('SELECT value FROM meta WHERE key=?').get('publicMainNode:v1:node')!.value).includes('"phase":"future"'));
  assert.ok(f.node().items.every((i:any)=>i.completed));
  const g=fixture();try{
- const peer:any=new CodexEngine({workspace:process.cwd(),runtime:process.cwd(),model:'synthetic'} as any,{cwd:process.cwd(),readRoots:[],instructions:'',tools:[]},async()=>({}));peer.threadId='thread';peer.turnId='turn';peer.active={messages:[],earlyEvents:[],resolve:()=>{}};peer.refreshBackground=async()=>{};
+ const peer:any=new CodexEngine({workspace:process.cwd(),runtime:process.cwd(),model:'synthetic'} as any,{cwd:process.cwd(),readRoots:[],instructions:'',tools:[]},async()=>({}));peer.threadId='thread';peer.turnId='turn';peer.active={execution:new TurnExecution({}),messages:[],earlyEvents:[],resolve:()=>{}};peer.refreshBackground=async()=>{};
  peer.on('agentMessage',(e:any)=>g.processes.agent('node',e));g.agent('a','final_answer','Confirmed',false);
  await peer.receive(JSON.stringify({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed',itemsView:'summary',items:[{...items[0],text:'SUMMARY'}]}}}));
  g.processes.finish('node','completed','terminal');assert.equal((g.node().items[0] as any).text,'Confirmed');assert.equal((g.node().items[0] as any).completed,false);
@@ -109,7 +113,7 @@ test('adapter keeps interleaved source order and final classification without su
  const f=fixture();try{f.agent('a','final_answer','A');f.agent('c','commentary','C');f.agent('b','final_answer','B');f.agent('u','future','U');
  const msg=projectConversation(f.history.list('thread'),[f.node()],[]).messages[0]!;
  const projected=module.exports.projectProcessMessage(msg);
- assert.deepEqual(projected.content.map((part:any)=>[part.id,part.text]),[['turn:a','A'],['turn:c','C'],['turn:b','B'],['turn:u','U']]);
+ assert.deepEqual(projected.content.map((part:any)=>[part.id,part.text]),[['turn:a','A'],['turn:c','C'],['turn:b','B']]);
  assert.equal(projected.presentation.entries['text:turn:a'].kind,'answer');assert.equal(projected.presentation.entries['text:turn:c'].kind,'commentary');
  const quote={messageId:'node',text:'A\n\nB',itemIds:['turn:a','turn:b']};
  f.history.validateQuotes('thread',{requestId:'cross',text:'ask',quote});

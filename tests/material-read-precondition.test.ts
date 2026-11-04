@@ -18,9 +18,9 @@ function setup(kinds: InputKind[] = [], resultKind: Contract['resultKind'] = 'ma
   media.ready(ref, media.claim(ref)!, Buffer.from('Synthetic attachment'), 'text/plain');
   writeFileSync(join(f.files.materials, 'sample.md'), '# Synthetic material');
   writeFileSync(join(f.files.materials, 'changed.md'), '# Changed material');
-  let resultId: string | undefined, producerId: string | undefined;
+  let resultId: string | undefined;
   if (kinds.includes('result')) {
-    const producer = delegate(f, 'producer'); producerId = producer.taskId;
+    const producer = delegate(f, 'producer');
     const producerActor = running(f, producer.taskId);
     resultId = complete(f, producerActor, producer.taskId).resultId;
     f.tasks.endSegment(producerActor.runId!, producerActor.epoch!, {status:'completed',text:'Synthetic final result'}, true);
@@ -29,7 +29,7 @@ function setup(kinds: InputKind[] = [], resultKind: Contract['resultKind'] = 'ma
   const inputs = kinds.map(type => ({ type, id: type === 'material' ? 'sample.md' : type === 'result' ? resultId! : ref.assetId + '@' + ref.revision }));
   const c: Contract = { ...contract(resultKind), goal: 'Generate a synthetic report from the task instructions', inputs };
   const root = f.tasks.createRoot(main, { operationId: 'read-precondition', title: 'Synthetic report', executorKind: 'worker', contract: c,
-    authority: { sourceRequestId: 'user-synthetic', description: 'Synthetic report only', materials: ['sample.md', 'changed.md'], resultIds: resultId ? [resultId] : [], attachments: [ref.assetId + '@1', ref.assetId + '@2'], collaborateTaskIds: producerId ? [producerId] : [], maxActiveMs: 10000 } });
+    authority: { sourceRequestId: 'user-synthetic', description: 'Synthetic report only', materials: ['sample.md', 'changed.md'], resultIds: [], attachments: [ref.assetId + '@1', ref.assetId + '@2'], collaborateTaskIds: [], maxActiveMs: 10000 } });
   const actor = running(f, root.taskId), run = f.tasks.run(actor.runId!);
   // Use the actual worker read/stage dispatchers, with only unrelated clocks and
   // native-memory callbacks stubbed. RecursiveTasks/Files/MediaStore remain real.

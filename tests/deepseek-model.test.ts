@@ -16,18 +16,18 @@ test('total compaction defaults match pinned 90 percent capacity without a silen
   const capacity=Math.floor(contextWindow*.9);
   assert.equal(deepseekProfile({...config,deepseek:{contextWindow}})?.autoCompactTokenLimit,Math.min(250000,capacity));
   assert.equal(deepseekProfile({...config,deepseek:{contextWindow,autoCompactTokenLimit:capacity}})?.autoCompactTokenLimit,capacity);
-  assert.throws(()=>deepseekProfile({...config,deepseek:{contextWindow,autoCompactTokenLimit:capacity+1}}),/invalid_deepseek_auto_compact_token_limit/);
+  assert.throws(()=>deepseekProfile({...config,deepseek:{contextWindow,autoCompactTokenLimit:capacity+1}}),/invalid_model_auto_compact_token_limit/);
  }
- assert.throws(()=>deepseekProfile({...config,deepseek:{autoCompactTokenLimit:250000}}),/invalid_deepseek_auto_compact_token_limit/);
+ assert.throws(()=>deepseekProfile({...config,deepseek:{autoCompactTokenLimit:250000}}),/invalid_model_auto_compact_token_limit/);
 });
 test('body_after_prefix retains separate growth limit below 95 percent',()=>{
  assert.equal(deepseekProfile({...config,deepseek:{autoCompactTokenLimitScope:'body_after_prefix'}})?.autoCompactTokenLimit,250000);
  assert.equal(deepseekProfile({...config,deepseek:{autoCompactTokenLimitScope:'body_after_prefix',autoCompactTokenLimit:258399}})?.autoCompactTokenLimit,258399);
- assert.throws(()=>deepseekProfile({...config,deepseek:{autoCompactTokenLimitScope:'body_after_prefix',autoCompactTokenLimit:258400}}),/invalid_deepseek_auto_compact_token_limit/);
+ assert.throws(()=>deepseekProfile({...config,deepseek:{autoCompactTokenLimitScope:'body_after_prefix',autoCompactTokenLimit:258400}}),/invalid_model_auto_compact_token_limit/);
 });
 test('runtime tuning rejects unknown keys and invalid compaction boundaries',()=>{
  for(const deepseek of [{contextWindow:32767},{contextWindow:1048577},{contextWindow:null},{autoCompactTokenLimit:258400},{autoCompactTokenLimit:0},{autoCompactTokenLimitScope:'bad'},{unknown:1},null])
-  assert.throws(()=>deepseekProfile({...config,deepseek} as any),/invalid_deepseek/);
+  assert.throws(()=>deepseekProfile({...config,deepseek} as any),/invalid_model_/);
  assert.equal(deepseekProfile({...config,deepseek:{contextWindow:1048576,autoCompactTokenLimit:900000,autoCompactTokenLimitScope:'body_after_prefix'}})?.contextWindow,1048576);
 });
 test('catalog materialization is deterministic, private and refuses symlink targets',()=>{
@@ -36,7 +36,7 @@ test('catalog materialization is deterministic, private and refuses symlink targ
  try{
   const path=materializeDeepSeekCatalog(root);assert.equal(materializeDeepSeekCatalog(root),path);
   assert.deepEqual(JSON.parse(readFileSync(path,'utf8')),deepseekCatalog);assert.equal(statSync(path).mode&0o777,0o600);
-  rmSync(path);symlinkSync(join(root,'outside'),path);assert.throws(()=>materializeDeepSeekCatalog(root),/invalid_deepseek_catalog_file/);
+  rmSync(path);symlinkSync(join(root,'outside'),path);assert.throws(()=>materializeDeepSeekCatalog(root),/invalid_model_catalog_file/);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 test('versioned catalog declares pinned native tool and modality capabilities',()=>{
@@ -49,4 +49,16 @@ test('versioned catalog declares pinned native tool and modality capabilities',(
 test('retired website aliases are absent from execution profiles and the pinned catalog',()=>{
  for(const model of ['homer-main','homer-worker'])assert.equal(deepseekProfile({...config,model,effort:'max',fast:false}),undefined);
  assert.deepEqual(deepseekCatalog.models.map(model=>model.slug),['deepseek-flash']);
+});
+
+test('different model and role capability snapshots retain distinct private catalogs',async()=>{
+ const {membershipModelCatalog,materializeModelCatalog}=await import('../src/model-catalog.js');
+ const parent=resolve('.codex/scratch/generic-membership-20261104');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'catalogs-'));
+ const capabilities={inputModalities:['text'] as ('text'|'image')[],reasoningEfforts:['high'],webSearch:false,toolSearch:false};
+ try{
+  const a=membershipModelCatalog('vendor/model:a','high',272000,capabilities),b=membershipModelCatalog('vendor/model:b','high',512000,{...capabilities,inputModalities:['text','image']});
+  const first=materializeModelCatalog(root,a),second=materializeModelCatalog(root,b);
+  assert.notEqual(first,second);assert.equal(materializeModelCatalog(root,a),first);
+  assert.deepEqual(JSON.parse(readFileSync(first,'utf8')),a);assert.deepEqual(JSON.parse(readFileSync(second,'utf8')),b);assert.equal(statSync(second).mode&0o777,0o600);
+ }finally{rmSync(root,{recursive:true,force:true});}
 });

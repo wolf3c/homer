@@ -1,16 +1,15 @@
-import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences} from 'electron';
+import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences,autoUpdater} from 'electron';
 import {readFileSync,existsSync,mkdirSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {join,resolve,win32} from 'node:path';
 import {userInfo} from 'node:os';
-import {execFileSync,spawn} from 'node:child_process';
+import {execFileSync,execFile,spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
 import {prepareDesktopProfile,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource} from '../homer/scripts/desktop-profile.mjs';
-import {assertDeepSeekProfile,prepareDeepSeekProfile,promptDeepSeekToken} from '../homer/scripts/desktop-deepseek.mjs';
 
 import {validateHomerOrigins,readHomerConnection,authorizeHomerConnection,disconnectHomerConnection,queryHomerWallet,queryHomerRuntimeConfig,saveHomerRuntimeConfig} from '../homer/dist/homer-account.js';
 
-const resources=process.resourcesPath,bundle=resolve(resources,'../..');
+const resources=process.resourcesPath,bundle=process.platform==='win32'?resolve(resources,'..'):resolve(resources,'../..');
 let window,child,origin,acknowledged=false,startupRefused=false,closed=false,exitCode,exitSignal,quitPending=false,quitSent=false,allowQuit=false,stopTimer,permissionNavigation=0;
 let deepseek=false;
 let desktopAccessToken;
@@ -32,10 +31,10 @@ let dailyTokenFile,accountOrigins,accountSynthetic=false,connection,activeConnec
 let configRead,configAbort,lastConfigCheck;
 let accountRevision=0,walletRevision=0,walletDirty=true,walletRead,quitAction,pendingLoginUrl;
 const accountBoundary=()=>({gatewayOrigin:accountOrigins?.gatewayOrigin??'',allowSyntheticLoopback:accountSynthetic});
-const connectionKind=value=>value?.token?(value.subject?'website':'legacy'):'disconnected';
-const connectionReady=value=>!!value?.token&&(!value.subject||!!value.config);
+const connectionKind=value=>value?.subject&&value.token?'website':'disconnected';
+const connectionReady=value=>!!value?.subject&&!!value.token&&!!value.config;
 const accountCode=error=>['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED','CONNECTION_CANCELLED','TOKEN_UNAVAILABLE','USAGE_UNAVAILABLE','NOT_CONNECTED'].includes(error?.message)?error.message:'UNAVAILABLE';
-const accountState=()=>({supported:!!dailyTokenFile,configured:!!accountOrigins,source:modelSource,websiteReady:connectionReady(connection),native:nativeStatus?{account:nativeStatus.account,connected:nativeStatus.connected,phase:nativeStatus.phase,pending:!!nativeStatus.loginId,canReopen:!!nativeStatus.authUrl}:undefined,nativeError,connection:connectionKind(connection),active:connectionKind(activeConnection),pending:!!pendingConnection,canReopen:!!pendingConnection&&!!pendingLoginUrl,needsRestart:modelSource==='website'&&connectionReady(connection)&&JSON.stringify(connection)!==JSON.stringify(activeConnection),error:connectionError,...(wallet?{wallet,updatedAt:walletUpdatedAt}:{}),walletError,stale:walletDirty});
+const accountState=()=>({supported:!!dailyTokenFile,configured:!!accountOrigins,source:modelSource,websiteReady:connectionReady(connection),native:nativeStatus?{account:nativeStatus.account,connected:nativeStatus.connected,phase:nativeStatus.phase,pending:!!nativeStatus.loginId,canReopen:!!nativeStatus.authUrl}:undefined,nativeError,connection:connectionKind(connection),active:connectionKind(modelSource==='website'?activeConnection:null),pending:!!pendingConnection,canReopen:!!pendingConnection&&!!pendingLoginUrl,needsRestart:connectionReady(connection)&&JSON.stringify(connection)!==JSON.stringify(activeConnection),error:connectionError,...(wallet?{wallet,updatedAt:walletUpdatedAt}:{}),walletError,stale:walletDirty||!!wallet?.expiresAt&&wallet.expiresAt<=Date.now()/1000});
 function accountChanged(){
  if(!window||window.isDestroyed()||!origin)return;
  const frame=window.webContents.mainFrame,event={sender:window.webContents,senderFrame:frame};
@@ -68,8 +67,8 @@ function registerDesktopAccount(){
   nativeConnect:async()=>{await readNativeAccount('connect');if(nativeStatus?.authUrl){try{await shell.openExternal(nativeStatus.authUrl);}catch{nativeError='登录页面未能打开，请重试。';}}return accountState();},
   nativeCancel:()=>readNativeAccount('cancel'),
   nativeReopen:async()=>{if(nativeStatus?.authUrl){try{await shell.openExternal(nativeStatus.authUrl);}catch{nativeError='登录页面未能打开，请重试。';}}return accountState();},
-  applyCodex:async()=>{await readNativeAccount();if(nativeStatus?.connected&&!quitPending){switchSource='codex';quitAction='restart';app.quit();}return accountState();},
-  applyWebsite:()=>{if(connectionReady(connection)&&!quitPending){switchSource='website';quitAction='restart';app.quit();}return accountState();},
+  applyCodex:async()=>{await readNativeAccount();if(nativeStatus?.connected&&!quitPending){switchSource='codex';quitAction='restart';requestQuit();}return accountState();},
+  applyWebsite:()=>{if(connectionReady(connection)&&!quitPending){switchSource='website';quitAction='restart';requestQuit();}return accountState();},
   connect:()=>{
    if(quitPending)return accountState();
    cancelConnection();connectionError=undefined;
@@ -77,7 +76,8 @@ function registerDesktopAccount(){
    const operation=new AbortController();pendingConnection=operation;
    void authorizeHomerConnection({...accountOrigins,allowSyntheticLoopback:accountSynthetic,file:dailyTokenFile,signal:operation.signal,openBrowser:url=>{if(pendingConnection!==operation||operation.signal.aborted)return Promise.resolve();pendingLoginUrl=url;accountChanged();return shell.openExternal(url);},onCallback:()=>{if(pendingConnection===operation){pendingLoginUrl=undefined;accountChanged();}}}).then(value=>{
     if(pendingConnection!==operation||operation.signal.aborted)return;
-    connection=value;lastConfigCheck=performance.now();
+    connection=value;lastConfigCheck=performance.now();accountRevision++;
+    wallet=undefined;walletUpdatedAt=undefined;walletError=undefined;walletDirty=true;walletRevision++;
    }).catch(error=>{if(pendingConnection===operation&&!operation.signal.aborted)connectionError=accountCode(error);})
    .finally(()=>{if(pendingConnection===operation){pendingConnection=undefined;pendingLoginUrl=undefined;accountChanged();}});
    return accountState();
@@ -87,7 +87,7 @@ function registerDesktopAccount(){
   refresh:async()=>{
    if(walletRead)return walletRead;
    const credentials=modelSource==='codex'?connection:activeConnection;
-   if(!accountOrigins||!credentials?.token){walletError=accountOrigins?'NOT_CONNECTED':'CONFIGURATION_REQUIRED';return accountState();}
+   if(!accountOrigins||!credentials?.subject||!credentials.token){walletError=accountOrigins?'NOT_CONNECTED':'CONFIGURATION_REQUIRED';return accountState();}
    const revision=accountRevision;
    walletRead=(async()=>{
     try{do{
@@ -103,8 +103,8 @@ function registerDesktopAccount(){
    return walletRead;
   },
   openWebsite:async()=>{if(!accountOrigins)return {...accountState(),error:'CONFIGURATION_REQUIRED'};await shell.openExternal(accountOrigins.websiteOrigin+'/homer');return accountState();},
-  disconnect:()=>{if(!quitPending){quitAction='disconnect';app.quit();}return accountState();},
-  restart:()=>{if(!quitPending){quitAction='restart';app.quit();}return accountState();},
+  disconnect:()=>{if(!quitPending){quitAction='disconnect';requestQuit();}return accountState();},
+  restart:()=>{if(!quitPending){quitAction='restart';requestQuit();}return accountState();},
  };
  for(const [name,action]of Object.entries(actions))ipcMain.handle('homer:account:'+name,async(event,...args)=>{
   const frame=event.senderFrame,navigation=permissionNavigation;
@@ -115,7 +115,6 @@ function registerDesktopAccount(){
  });
  return actions;
 }
-const tokenPrompt=new AbortController();
 const confirmed=()=>closed&&!exitSignal&&(acknowledged&&exitCode===0||startupRefused&&exitCode===1);
 const code=error=>/^[a-z_]{1,70}$/.test(error?.message??'')?error.message:'desktop_start_failed';
 const showError=detail=>{
@@ -137,6 +136,110 @@ function permissionCaller(event,frame){
    &&!frame.isDestroyed()&&frame.detached===false&&frame.origin===origin
    &&permissionPage(frame.url)&&permissionPage(contents.getURL());
  }catch{return false;}
+}
+let windowsUpdater,windowsCandidate,windowsPublishers,windowsInstall;
+function requestQuit(){if(windowsRecovery())void recoverWindowsExit();else app.quit();}
+const nativeUpdater=()=>windowsUpdater??autoUpdater;
+const windowsRecovery=()=>!!windowsUpdater&&(closed||updateStopping)&&updateState?.status==='error';
+let updateState=null,updateStopping=false,updateAcknowledged=false,updateManual=false;
+const updateConfirmed=()=>updateAcknowledged&&closed&&exitCode===0&&!exitSignal;
+function updateChanged(){
+ refreshMenu();
+ if(window&&!window.isDestroyed()){
+  const frame=window.webContents.mainFrame;
+  if(permissionCaller({sender:window.webContents,senderFrame:frame},frame))frame.send('homer:update:changed');
+ }
+}
+function checkUpdate(manual=false){
+ if(windowsRecovery()||!updateState||['checking','downloading','ready'].includes(updateState.status))return;
+ updateManual=manual;updateState={status:'checking',noticeHidden:false};updateChanged();
+ try{const checking=nativeUpdater().checkForUpdates();if(windowsUpdater)void Promise.resolve(checking).then(result=>{if(result===null){updateState={status:'idle',noticeHidden:false};updateChanged();return;}return result?.downloadPromise;}).catch(()=>{});}catch{updateCheckFailed();}
+}
+function updateCheckFailed(){
+ if(!updateState)return;
+ if(windowsUpdater&&closed&&(!updateStopping||updateConfirmed())){windowsUpdateFailed();return;}
+ if(updateStopping&&allowQuit){allowQuit=false;updateFailed('update_install_unconfirmed');return;}
+ if(windowsUpdater)windowsCandidate=undefined;
+ updateState={...updateState,status:!windowsUpdater&&updateState.status==='ready'?'ready':'error',error:'update_check_failed'};updateChanged();
+ if(updateManual)void showError('检查更新未能完成，请稍后从菜单重试。');updateManual=false;
+}
+async function setupDesktopUpdate(manifest,test){
+ if(test||!app.isPackaged||manifest.preparation||manifest.localWorkingTree||manifest.publishable!==true||manifest.releaseChannel!=='stable'||manifest.appId!=='app.homer.desktop'||!(process.platform==='darwin'&&['arm64','x64'].includes(process.arch)||process.platform==='win32'&&process.arch==='x64')||!/^\d+\.\d+\.\d+$/.test(app.getVersion()))return;
+ try{
+  if(process.platform==='win32'){
+   const {load}=(await import('js-yaml')).default;
+   const config=load(readFileSync(join(resources,'app-update.yml'),'utf8'));
+   windowsPublishers=Array.isArray(config?.publisherName)?config.publisherName:[config?.publisherName];
+   if(config?.verifyUpdateCodeSignature===false||!windowsPublishers.length||windowsPublishers.some(name=>typeof name!=='string'||!/(?:^|,)\s*CN=/.test(name)||!/(?:^|,)\s*(?:O|OU|C|ST|L)=/.test(name)))return;
+   if(await verifyWindowsUpdate(windowsPublishers,process.execPath))return;
+   const {NsisUpdater}=(await import('electron-updater')).default;
+   windowsUpdater=new NsisUpdater({provider:'generic',url:'https://super-tree.com/homer/updates/stable/win32-x64/',channel:'latest'});
+   windowsUpdater.logger=null;
+   Object.assign(windowsUpdater,{autoDownload:true,autoInstallOnAppQuit:false,allowPrerelease:false,allowDowngrade:false,disableDifferentialDownload:true,disableWebInstaller:true,verifyUpdateCodeSignature:verifyWindowsUpdate});
+  }else{
+  execFileSync('/usr/bin/codesign',['--verify','--strict','-R','anchor apple generic and identifier "app.homer.desktop" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists',bundle],{stdio:'ignore',timeout:30000});
+  autoUpdater.setFeedURL({url:`https://super-tree.com/homer/updates/stable/darwin-${process.arch}/RELEASES.json`,serverType:'json'});
+  }
+  updateState={status:'idle',noticeHidden:false};
+  nativeUpdater().on('checking-for-update',()=>{if(windowsRecovery())return;updateState={status:'checking',noticeHidden:false};updateChanged();});
+  nativeUpdater().on('update-available',info=>{if(windowsRecovery())return;if(windowsUpdater&&info?.files?.some(file=>file.isAdminRightsRequired===true)){updateCheckFailed();return;}updateState={status:'downloading',noticeHidden:false};updateChanged();});
+  nativeUpdater().on('update-not-available',()=>{if(windowsRecovery())return;updateState={status:'idle',noticeHidden:false};updateChanged();if(updateManual)void dialog.showMessageBox(window,{type:'info',title:'荷马',message:'已是最新版本',buttons:['返回会话']});updateManual=false;});
+  nativeUpdater().on('update-downloaded',(_event,_notes,version)=>{
+   if(windowsUpdater){void windowsDownloaded(_event);return;}
+   if(updateState?.status==='ready'&&updateState.version===version)return;
+   updateManual=false;updateState={status:'ready',noticeHidden:false,...(typeof version==='string'&&/^\d+\.\d+\.\d+$/.test(version)?{version}:{error:'update_metadata_unconfirmed'})};updateChanged();if(!updateState.version)void showError('更新版本信息未确认，请核对安装包。暂存更新未被撤销。');
+  });
+  nativeUpdater().on('error',updateCheckFailed);
+ }catch{updateState=null;}
+}
+async function verifyWindowsUpdate(publishers,path){
+ if(!win32.isAbsolute(process.env.SystemRoot??'')||typeof path!=='string'||!win32.isAbsolute(path)||!publishers?.length)return 'update_signature_unconfirmed';
+ try{
+  const result=await new Promise((accept,reject)=>execFile(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoLogo','-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $s=Get-AuthenticodeSignature -LiteralPath $env:HOMER_UPDATE_FILE; @{valid=($s.Status -eq 'Valid');embedded=($s.SignatureType -eq 'Authenticode');subject=$s.SignerCertificate.Subject;path=$s.Path}|ConvertTo-Json -Compress"],{env:{SystemRoot:process.env.SystemRoot,HOMER_UPDATE_FILE:path},windowsHide:true,timeout:20000,maxBuffer:16384,encoding:'utf8'},(error,stdout)=>{if(error){reject(error);return;}try{accept(JSON.parse(stdout));}catch{reject(Error('update_signature_unconfirmed'));}}));
+  return result.valid===true&&result.embedded===true&&publishers.includes(result.subject)&&typeof result.path==='string'&&win32.normalize(result.path).toLowerCase()===win32.normalize(path).toLowerCase()?null:'update_signature_unconfirmed';
+ }catch{return 'update_signature_unconfirmed';}
+}
+async function windowsDownloaded(info){
+ if(windowsRecovery())return;
+ if(info?.isAdminRightsRequired===true||info?.files?.some(file=>file.isAdminRightsRequired===true)||typeof info?.version!=='string'||!/^\d+\.\d+\.\d+$/.test(info.version)||typeof info.downloadedFile!=='string'){updateCheckFailed();return;}
+ const candidate={path:info.downloadedFile,version:info.version};windowsCandidate=candidate;
+ const error=await verifyWindowsUpdate(windowsPublishers,candidate.path);
+ if(windowsCandidate!==candidate||windowsRecovery())return;
+ updateManual=false;updateState={...updateState,status:error?'error':'ready',version:info.version,error:error??undefined};updateChanged();
+}
+function windowsUpdateFailed(){
+ if(windowsRecovery()&&!updateStopping)return;
+ updateStopping=false;windowsCandidate=undefined;
+ allowQuit=false;clearTimeout(stopTimer);quitPending=false;quitAction=undefined;switchSource=undefined;
+ updateState={...updateState,status:'error',error:'update_install_unconfirmed'};updateChanged();
+ void recoverWindowsExit();
+}
+async function recoverWindowsExit(){
+ if(quitPending||!updateConfirmed())return;
+ quitPending=true;quitAction=undefined;switchSource=undefined;
+ const currentWindow=window,contents=currentWindow&&!currentWindow.isDestroyed()?currentWindow.webContents:undefined,navigation=permissionNavigation;
+ try{
+  if(contents&&!await contents.executeJavaScript("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))"))return;
+  if(window!==currentWindow||contents?.isDestroyed()||navigation!==permissionNavigation)return;
+  const options={type:'question',title:'荷马',message:'服务已安全停止，更新未完成。请退出后重新打开荷马再试。',buttons:['取消','退出荷马'],defaultId:0,cancelId:0};
+  const {response}=await(contents?dialog.showMessageBox(currentWindow,options):dialog.showMessageBox(options));
+  if(response===1&&window===currentWindow&&!contents?.isDestroyed()&&navigation===permissionNavigation&&updateConfirmed()){cancelConnection();allowQuit=true;app.quit();}
+ }catch{}finally{quitPending=false;}
+}
+function registerDesktopUpdate(){
+ for(const name of ['state','dismiss','restart'])ipcMain.handle('homer:update:'+name,async(event,...args)=>{
+  const frame=event.senderFrame,navigation=permissionNavigation;
+  if(args.length||!permissionCaller(event,frame))throw Error('desktop_update_forbidden');
+  if(name==='dismiss'&&updateState?.status==='ready'){updateState={...updateState,noticeHidden:true};updateChanged();}
+  if(name==='restart'&&updateState?.status==='ready'&&updateState.version&&!quitPending){app.quit();}
+  if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_update_forbidden');
+  return updateState;
+ });
+}
+function updateFailed(error){
+ clearTimeout(stopTimer);quitPending=false;quitAction=undefined;switchSource=undefined;updateStopping=false;
+ updateState={...updateState,error};updateChanged();
+ if(error&&updateState.noticeHidden)void showError(error==='update_busy'?'当前工作尚未结束，请稍后重试。':closed?'服务已停止，更新尚未确认。请重新打开荷马后核对。':'重启更新未能确认，请保存未提交编辑并稍后重试。');
 }
 function registerDesktopPermissions(){
  const actions={
@@ -198,28 +301,64 @@ function openSettings(){
 const showWindow=()=>{if(window&&!window.isDestroyed()){window.show();window.focus();}};
 const startupFailed=error=>{void app.whenReady().then(async()=>{await showError('无法启动荷马（'+code(error)+'）。请保留原账号与数据，核对后重新打开。');if(!child){allowQuit=true;app.quit();}});};
 function finishQuit(){
- if(!confirmed())return;
+ if(allowQuit)return;
+ if(updateStopping?!updateConfirmed():!confirmed())return;
+ if(windowsUpdater&&updateStopping&&updateState?.status==='error'){windowsUpdateFailed();return;}
+ if(updateState?.status==='ready'&&!updateStopping){updateFailed('update_service_stopped');return;}
  clearTimeout(stopTimer);
  if(quitPending){
   cancelConnection();
   try{
    if(quitAction==='disconnect'){disconnectHomerConnection(dailyTokenFile,accountBoundary());connection=readHomerConnection(dailyTokenFile,accountBoundary());}
    if(switchSource)saveDesktopModelSource(desktopProfile,switchSource);
-   if(quitAction)app.relaunch();
-  }catch(error){quitPending=false;quitAction=undefined;switchSource=undefined;connectionError=accountCode(error);accountChanged();void showError('本机账号或来源设置未能保存，原设置已保留。请核对后重试。');return;}
-  allowQuit=true;app.quit();
+   if(quitAction&&!updateStopping)app.relaunch();
+  }catch(error){if(updateStopping)updateFailed('update_service_stopped');quitPending=false;quitAction=undefined;switchSource=undefined;connectionError=accountCode(error);accountChanged();void showError('本机账号或来源设置未能保存，原设置已保留。请核对后重试。');return;}
+  if(windowsUpdater&&updateStopping){
+   if(windowsInstall)return;
+   windowsInstall=(async()=>{const candidate=windowsCandidate;if(!candidate||await verifyWindowsUpdate(windowsPublishers,candidate.path)||candidate!==windowsCandidate||!updateConfirmed()){windowsUpdateFailed();return;}allowQuit=true;try{windowsUpdater.quitAndInstall(true,true);}catch{windowsUpdateFailed();}})().finally(()=>{windowsInstall=undefined;});return;
+  }
+  allowQuit=true;
+  if(updateStopping){try{autoUpdater.quitAndInstall();}catch{allowQuit=false;updateFailed('update_install_unconfirmed');}}else app.quit();
  }
 }
 app.on('before-quit',event=>{
- if(allowQuit||!child){tokenPrompt.abort();cancelConnection();return;}
+ if(allowQuit||!child){cancelConnection();return;}
  event.preventDefault();
- if(confirmed()){quitPending=true;finishQuit();return;}
+ if(windowsRecovery())return;
+ if(confirmed()&&updateState?.status!=='ready'){quitPending=true;finishQuit();return;}
  if(quitPending)return;
  quitPending=true;
  showWindow();
+ if(updateState?.status==='ready'){
+  if(!updateState.version){updateFailed('update_metadata_unconfirmed');return;}
+  const stopped=updateConfirmed();
+  if(closed&&!stopped){updateFailed('update_service_stopped');return;}
+  const currentWindow=window,contents=currentWindow&&!currentWindow.isDestroyed()?currentWindow.webContents:undefined,navigation=permissionNavigation;
+  if(!contents&&!stopped){updateFailed('update_stop_unconfirmed');return;}
+  void (async()=>{
+   try{
+    if(contents){
+     const mayLeave=await contents.executeJavaScript("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))");
+     if(!mayLeave||window!==currentWindow||contents.isDestroyed()||navigation!==permissionNavigation){updateFailed('update_unsaved');return;}
+    }
+    const options={type:'question',title:'荷马',message:stopped?'更新尚未确认，如何继续？':'重启并更新荷马？',detail:stopped?'服务已安全停止。可重试更新，或退出后重新打开荷马；退出也可能应用已暂存更新。':'请先保存草稿及未提交编辑；仅在当前工作安全结束后重启。',buttons:stopped?['取消','重试更新','退出荷马']:['取消，继续使用','重启并更新'],defaultId:0,cancelId:0};
+    const {response}=await(contents?dialog.showMessageBox(currentWindow,options):dialog.showMessageBox(options));
+    if(window!==currentWindow||contents?.isDestroyed()||navigation!==permissionNavigation){updateFailed(undefined);return;}
+    if(stopped&&response===2){cancelConnection();allowQuit=true;app.quit();return;}
+    if(response!==1){updateFailed(undefined);return;}
+    updateStopping=true;
+    if(stopped){finishQuit();return;}
+    updateAcknowledged=false;
+    child.stdin.write('{"kind":"update-stop"}\n',error=>{if(error&&updateStopping)updateFailed('update_stop_unconfirmed');});
+    stopTimer=setTimeout(()=>{if(updateStopping)updateFailed(closed?'update_service_stopped':'update_stop_unconfirmed');},20000);
+   }catch{updateFailed('update_stop_unconfirmed');}
+  })();
+  return;
+ }
  const disconnecting=quitAction==='disconnect',restarting=quitAction==='restart';
  void dialog.showMessageBox(window,{type:'question',title:'荷马',message:disconnecting?'退出本机登录？':restarting?'重启荷马？':'退出荷马？',detail:disconnecting?'将先停止当前回复和后台工作，请先保存草稿。退出仅清除本机登录凭据，保留历史对话、任务和文件；不会注销网站账号。':restarting?'将先停止当前回复和后台工作，请先保存草稿。重启后应用已保存的配置，保留历史对话、任务和文件。':'退出会停止当前回复和后台工作。请先核对并保存草稿。',buttons:['取消，继续使用',disconnecting?'退出登录并重启':restarting?'重启并应用':'退出并停止工作'],defaultId:0,cancelId:0}).then(({response})=>{
   if(response!==1){quitPending=false;quitAction=undefined;switchSource=undefined;return;}
+  if(updateState?.status==='ready'){quitPending=false;app.quit();return;}
   cancelConnection();
   if(confirmed()){finishQuit();return;}
   if(closed){quitPending=false;quitAction=undefined;switchSource=undefined;void showError('停止尚未确认。请保留数据并核对后台 owner；不会强制终止或自动重发。');return;}
@@ -245,7 +384,7 @@ function createWindow(){
   const y=window.getContentBounds().width<=800?19:15,position=window.getWindowButtonPosition();
   if(position?.x!==12||position?.y!==y)window.setWindowButtonPosition({x:12,y});
  });
- window.on('close',event=>{if(!allowQuit){event.preventDefault();window.hide();}});
+ window.on('close',event=>{if(!allowQuit){event.preventDefault();if(process.platform==='win32'){if(windowsRecovery())void recoverWindowsExit();else app.quit();}else window.hide();}});
  const contents=window.webContents;
  // Main-process-only credential: never available to page JS, previews or other origins.
  contents.session.webRequest.onBeforeSendHeaders((details,callback)=>{
@@ -284,30 +423,31 @@ function createWindow(){
   if(!item.getURLChain().every(owned)){event.preventDefault();return;}
   item.setSaveDialogOptions({title:'保存荷马成果'});
  });
+ refreshMenu();
+}
+function refreshMenu(){
  Menu.setApplicationMenu(Menu.buildFromTemplate([
-  {label:'荷马',submenu:[{role:'about'},...(deepseek?[{label:dailyTokenFile?'模型连接信息…':'DeepSeek 连接信息…',click:()=>dialog.showMessageBox(window,{type:'info',title:'荷马 · DeepSeek',message:dailyTokenFile?(activeConnection?.config?'已连接网站账号':activeConnection?.token?'已连接（原凭据）':'未连接网站账号'):'主 Agent / Worker：deepseek-flash',detail:(activeConnection?.config?['main','worker'].map(role=>(role==='main'?'主 Agent':'Worker')+'：'+activeConnection.config[role].model+' · '+activeConnection.config[role].effort+' · Fast 关闭\n入口：'+activeConnection.config[role].baseUrl).join('\n'):dailyTokenFile?'':'effort：max · Fast：关闭\n入口：https://models.super-tree.com/v1')+'\nCodex：0.163.0\n'+(dailyTokenFile?(activeConnection?.token&&!activeConnection.subject?'沿用原凭据：Main / Worker · deepseek-flash · high · Fast 关闭。\n':'请在设置 → 账号中通过网站登录并连接。\n连接更新后正常重启生效。'):'Token 仅用于本次进程，退出后需要重新输入。')+'实际可用性以模型回复为准。',buttons:['返回会话']})}]:[]), {type:'separator'},{label:'设置…',accelerator:'CmdOrCtrl+,',click:openSettings},{type:'separator'},{label:'关闭窗口',accelerator:'Command+W',click:()=>window.hide()},{role:'hide'},{type:'separator'},{id:'quit',label:'退出荷马',accelerator:'Command+Q',click:()=>app.quit()}]},
+  {label:'荷马',submenu:[{role:'about'},...(updateState?[{id:'update',label:windowsRecovery()?'退出后重新打开以重试更新…':updateState.status==='ready'?'重启并更新…':updateState.status==='downloading'?'正在后台下载…':updateState.status==='checking'?'正在检查更新…':'检查更新…',enabled:!['checking','downloading'].includes(updateState.status)&&!quitPending&&!(updateState.status==='ready'&&!updateState.version),click:()=>windowsRecovery()?void recoverWindowsExit():updateState.status==='ready'?app.quit():checkUpdate(true)}]:[]),...(deepseek?[{label:'模型连接信息…',click:()=>dialog.showMessageBox(window,{type:'info',title:'荷马',message:activeConnection?'已连接网站账号':'未连接网站账号',detail:(activeConnection?['main','worker'].map(role=>(role==='main'?'主 Agent':'Worker')+'：'+activeConnection.config[role].model+' · '+activeConnection.config[role].effort+' · Fast 关闭\n入口：'+activeConnection.config[role].baseUrl).join('\n'):'请在设置 → 账号中通过网站登录并连接。')+'\nCodex：0.163.0\n连接更新后正常重启生效。实际可用性以模型回复为准。',buttons:['返回会话']})}]:[]), {type:'separator'},{label:'设置…',accelerator:'CmdOrCtrl+,',click:openSettings},{type:'separator'},{label:'关闭窗口',accelerator:'Command+W',click:()=>window.hide()},{role:'hide'},{type:'separator'},{id:'quit',label:'退出荷马',accelerator:'Command+Q',click:()=>windowsRecovery()?void recoverWindowsExit():app.quit()}]},
   {label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},
   {label:'显示',submenu:[{role:'zoomIn'},{role:'zoomOut'},{role:'resetZoom'},{label:'显示主窗口',accelerator:'Command+1',click:showWindow}]},
  ]));
 }
 try{
- if(!app.isPackaged||process.platform!=='darwin')throw Error('desktop_packaged_macos_required');
- execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle],{stdio:'ignore',timeout:30000});
+ if(!app.isPackaged||!['darwin','win32'].includes(process.platform))throw Error('desktop_packaged_macos_required');
+ if(process.platform==='darwin')execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle],{stdio:'ignore',timeout:30000});
  const manifest=JSON.parse(readFileSync(join(resources,'desktop-manifest.json'),'utf8'));
  const preparation=manifest.preparation&&!(manifest.localWorkingTree===true&&manifest.publishable===false);
  const args=process.argv,at=args.indexOf('--test-profile'),test=at>=0;
  accountSynthetic=test;accountOrigins=manifest.account?validateHomerOrigins(manifest.account,test):undefined;
  if(test&&(!args[at+1]||args[at+1].startsWith('--')))throw Error('desktop_test_fixture_required');
- const deepseekAt=args.indexOf('--deepseek-profile'),native=args.includes('--native'),daily=args.includes('--deepseek-daily')||!test&&!native&&deepseekAt<0;deepseek=daily||deepseekAt>=0||test&&args.includes('--deepseek');
- if(args.filter(arg=>arg==='--deepseek-daily').length>1||args.filter(arg=>arg==='--native').length>1||native&&(args.includes('--deepseek-daily')||deepseekAt>=0||args.includes('--deepseek'))||daily&&deepseekAt>=0||daily&&args.includes('--deepseek'))throw Error('deepseek_profile_invalid');
- if(deepseekAt>=0&&(test||!args[deepseekAt+1]||args[deepseekAt+1].startsWith('--')))throw Error('deepseek_profile_invalid');
- if(preparation&&daily&&!test)throw Error('desktop_preparation_profile_required');
- if(preparation&&!test&&!deepseek)throw Error('desktop_preparation_profile_required');
- const profile=deepseekAt>=0?resolve(args[deepseekAt+1]):test?resolve(args[at+1]):join(userInfo().homedir,'Library/Application Support/Homer Desktop');
- if(deepseek&&!daily)assertDeepSeekProfile(profile);
- if(!test&&!deepseek&&!existsSync(join(profile,'desktop-adoption.json')))throw Error('desktop_existing_account_required');
- const paths=deepseek&&!daily?prepareDeepSeekProfile(profile,manifest,{test}):prepareDesktopProfile(profile,manifest,{test,initialize:daily});
- if(daily||native){dailyTokenFile=join(paths.adoption?.appData??profile,'runtime-config.json');desktopProfile=profile;modelSource=readDesktopModelSource(profile,daily?'website':'codex');deepseek=daily||modelSource==='website';}
+ const native=args.includes('--native'),daily=args.includes('--deepseek-daily')||!test&&!native;
+ if(args.includes('--deepseek-profile')||args.includes('--deepseek')||args.filter(arg=>arg==='--deepseek-daily').length>1||args.filter(arg=>arg==='--native').length>1||native&&args.includes('--deepseek-daily'))throw Error('desktop_explicit_profile_required');
+ if(preparation&&!test)throw Error('desktop_preparation_profile_required');
+ const profile=test?resolve(args[at+1]):process.platform==='win32'?join(app.getPath('appData'),'Homer Desktop'):join(userInfo().homedir,'Library/Application Support/Homer Desktop');
+ if(!test&&!daily&&!existsSync(join(profile,'desktop-adoption.json')))throw Error('desktop_existing_account_required');
+ const paths=prepareDesktopProfile(profile,manifest,{test,initialize:daily});
+ if(daily||native){dailyTokenFile=join(paths.adoption?.appData??profile,'runtime-config.json');desktopProfile=profile;modelSource=readDesktopModelSource(profile,daily?'website':'codex');}
+ deepseek=daily||modelSource==='website';
  assertDesktopControlPaths({...paths,root:profile});
  const userData=join(profile,'host-home/electron');
  // The backend owns business data. Electron has only its own cache directory.
@@ -319,23 +459,16 @@ try{
   app.whenReady().then(async()=>{
   registerDesktopPermissions();
   registerDesktopSettings();
+  registerDesktopUpdate();
+  const updateReady=setupDesktopUpdate(manifest,test);
+  if(process.platform!=='win32')await updateReady;
   const accountActions=registerDesktopAccount();
   app.setAboutPanelOptions({applicationName:'荷马',applicationVersion:app.getVersion(),version:String(manifest.build),copyright:'本机候选 · Electron / Node 22.22.0 / Codex 0.163.0'});
   createWindow();
-  let token;
-  if(dailyTokenFile){try{connection=readHomerConnection(dailyTokenFile,accountBoundary());}catch(error){connection=null;connectionError=accountCode(error);}await syncHomerConfig('startup');activeConnection=modelSource==='website'&&connectionReady(connection)?connection:null;}
-  if(deepseek){
-   // Test profiles always select the offline protocol fixture in the runtime.
-   try{
-    if(dailyTokenFile)token=JSON.stringify(modelSource==='website'?activeConnection:null);
-    else token=test?'synthetic-desktop-deepseek':await promptDeepSeekToken({signal:tokenPrompt.signal});
-   }
-   catch(error){if(error.message!=='deepseek_token_input_cancelled')await showError(daily?'网站连接未能读取，请在设置 → 账号中重新连接。':'Token 输入无效，未启动模型连接。请重新打开荷马。');allowQuit=true;app.quit();return;}
-   if(tokenPrompt.signal.aborted)return;
-  }
-  if(daily&&activeConnection?.token&&accountOrigins)void accountActions.refresh();
-  const runtime=spawn(join(bundle,'Contents/MacOS/node'),['--disable-warning=ExperimentalWarning',join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',profile,...(test?['--test-profile']:[]),...(daily||native&&modelSource==='website'?['--deepseek-daily']:deepseek?['--deepseek']:[])],{cwd:profile,env:{PATH:join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','ignore',...(deepseek?['pipe']:[])]});
-  if(deepseek){runtime.stdio[3].on('error',()=>{});runtime.stdio[3].end(token);token=undefined;}
+  if(dailyTokenFile){try{connection=readHomerConnection(dailyTokenFile,accountBoundary());}catch(error){connection=null;connectionError=accountCode(error);}await syncHomerConfig('startup');activeConnection=connectionReady(connection)?connection:null;}
+  if(daily&&modelSource==='website'&&activeConnection&&accountOrigins)void accountActions.refresh();
+  const runtime=spawn(process.platform==='win32'?join(resources,'node.exe'):join(bundle,'Contents/MacOS/node'),['--disable-warning=ExperimentalWarning',join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',profile,...(test?['--test-profile']:[]),...(deepseek?['--deepseek-daily']:[])],{cwd:profile,env:{...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,LOCALAPPDATA:process.env.LOCALAPPDATA,APPDATA:app.getPath('appData'),USERPROFILE:join(profile,'host-home'),TEMP:join(profile,'tmp'),TMP:join(profile,'tmp')}:{ }),PATH:process.platform==='win32'?resources+';'+join(process.env.SystemRoot,'System32'):join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','ignore',...(deepseek?['pipe']:[])]});
+  if(deepseek){runtime.stdio[3].on('error',()=>{});runtime.stdio[3].end(JSON.stringify(activeConnection));}
   child=runtime;let buffer='';
   runtime.stdin.on('error',()=>{});
   runtime.stdout.on('data',bytes=>{
@@ -348,6 +481,8 @@ try{
     }
     else if(value.kind==='account_config_check'){if(modelSource==='website')void syncHomerConfig('message');}
     else if(value.kind==='account_usage_dirty'){walletRevision++;walletDirty=true;accountChanged();}
+    else if(value.kind==='update-busy'&&updateStopping)updateFailed('update_busy');
+    else if(value.kind==='update-stopped'&&updateStopping){updateAcknowledged=true;finishQuit();}
     else if(value.kind==='stopped'){acknowledged=true;finishQuit();}
     else if(value.kind==='startup_refused'&&!origin)startupRefused=true;
     else if(value.kind==='url'&&!origin){
@@ -357,7 +492,7 @@ try{
       void showError('桌面服务认证信息无效。请保留数据并核对应用完整性。');continue;
      }
      desktopAccessToken=value.desktopAccessToken;
-     origin=url.origin;void window.loadURL(value.url).then(()=>window.setTitle(deepseek?'荷马 · DeepSeek':'荷马')).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
+     origin=url.origin;if(process.platform==='win32')void updateReady.then(()=>{if(!closed)checkUpdate();});else checkUpdate();void window.loadURL(value.url).then(()=>window.setTitle(deepseek?'荷马 · DeepSeek':'荷马')).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
     }else if(value.kind==='error')void showError('无法启动荷马（'+code({message:value.code})+'）。请保留原账号和数据，核对后重新打开。');
    }
   });
@@ -366,7 +501,9 @@ try{
    for(const pending of nativeRequests.values()){clearTimeout(pending.timer);pending.reject(Error('native_account_unconfirmed'));}nativeRequests.clear();
    desktopAccessToken=undefined;
    closed=true;exitCode=status;exitSignal=signal;
-   if(confirmed())finishQuit();
+   if(windowsUpdater&&updateStopping&&status===0&&!signal&&!updateAcknowledged)return;
+   if(updateStopping?updateConfirmed():confirmed())finishQuit();
+   else if(updateState?.status==='ready'){updateFailed('update_service_stopped');}
    else{clearTimeout(stopTimer);quitPending=false;quitAction=undefined;switchSource=undefined;void showError('停止尚未确认。请保留数据并核对后台 owner；不会自动重发请求。');}
   });
   }).catch(startupFailed);

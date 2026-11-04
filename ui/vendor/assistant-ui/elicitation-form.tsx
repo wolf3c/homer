@@ -51,6 +51,7 @@ export function ElicitationForm({
   state,
   onFieldChange,
   onAccept,
+  submitDisabled = false,
   onDecline,
   className,
   ...props
@@ -71,6 +72,7 @@ export function ElicitationForm({
   state: ElicitationState;
   onFieldChange?: ((name: string, value: string) => void) | undefined;
   onAccept?: () => void;
+  submitDisabled?: boolean;
   onDecline?: () => void;
 }) {
   const fieldPrefix = useId();
@@ -239,7 +241,7 @@ export function ElicitationForm({
             <button
               type="button"
               onClick={onAccept}
-              disabled={missingRequired}
+              disabled={submitDisabled || missingRequired}
               className={cn(
                 inkButton,
                 "flex h-8 items-center rounded-full px-3.5 text-xs font-medium disabled:pointer-events-none disabled:opacity-40",

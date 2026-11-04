@@ -3,6 +3,8 @@ let previousStorage;
 beforeEach(()=>{previousStorage=globalThis.sessionStorage;const entries=new Map();globalThis.sessionStorage={getItem:k=>entries.get(k)??null,setItem:(k,v)=>entries.set(k,v),removeItem:k=>entries.delete(k)};});
 afterEach(()=>{if(previousStorage===undefined)delete globalThis.sessionStorage;else globalThis.sessionStorage=previousStorage;});
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
 import {createRequire} from 'node:module';
 import {buildSync} from 'esbuild';
 import React,{act} from 'react';
@@ -165,14 +167,21 @@ test('native requests share the gear dialog, focus on repeat, and unsubscribe on
  await d.remount();assert.equal(disposals,1);await d.render(React.createElement(get().DesktopSettings));assert.equal(subscriptions,2);
 }));
 test('native source uses existing account actions and requires an explicit apply',async()=>withDom(async d=>{
- const calls=[];let current={supported:true,configured:false,source:'website',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'none',connected:false,phase:'idle',pending:false}};
- window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},nativeConnect:async()=>{calls.push('nativeConnect');return current={...current,native:{account:'none',connected:false,phase:'waiting',pending:true,canReopen:true}};},nativeCancel:async()=>{calls.push('nativeCancel');return current={...current,native:{account:'none',connected:false,phase:'cancelled',pending:false}};},applyCodex:async()=>{calls.push('applyCodex');return current;}};
+ const calls=[];let changed,current={supported:true,configured:false,source:'website',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'none',connected:false,phase:'idle',pending:false}};
+ window.homerDesktopAccount={state:async()=>current,onChange:fn=>{changed=fn;return()=>{};},nativeConnect:async()=>{calls.push('nativeConnect');return current={...current,native:{account:'none',connected:false,phase:'waiting',pending:true,canReopen:true}};},nativeCancel:async()=>{calls.push('nativeCancel');return current={...current,native:{account:'none',connected:false,phase:'cancelled',pending:false}};},applyCodex:async()=>{calls.push('applyCodex');return current;}};
  await d.render(React.createElement(get().DesktopAccount));
  await d.click(button(d,'改用 ChatGPT 套餐'));assert.deepEqual(calls,[]);
  await d.click(button(d,'通过 Codex 登录'));assert.deepEqual(calls,['nativeConnect']);assert.ok(button(d,'取消 Codex 登录'));await d.click(button(d,'取消 Codex 登录'));
- current={...current,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};await d.click(button(d,'重新检查 Codex 登录'));
- assert.ok(!button(d,'通过 Codex 登录'));await d.click(button(d,'应用并重启'));assert.deepEqual(calls,['nativeConnect','nativeCancel','applyCodex']);
- current={...current,native:{account:'other',connected:false,phase:'idle',pending:false}};await d.click(button(d,'重新检查 Codex 登录'));assert.match(d.container.textContent,/API Key/);assert.ok(!button(d,'通过 Codex 登录'));assert.ok(!button(d,'应用并重启'));
+ current={...current,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};await act(async()=>changed());
+ assert.ok(!button(d,'重新检查 Codex 登录'));assert.ok(!button(d,'通过 Codex 登录'));await d.click(button(d,'应用并重启'));assert.deepEqual(calls,['nativeConnect','nativeCancel','applyCodex']);
+ current={...current,native:{account:'other',connected:false,phase:'idle',pending:false}};await act(async()=>changed());assert.match(d.container.textContent,/API Key/);assert.ok(!button(d,'通过 Codex 登录'));assert.ok(!button(d,'应用并重启'));
+}));
+test('unconfirmed Codex status can be retried and disappears after a successful read',async()=>withDom(async d=>{
+ let current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,nativeError:'Codex 登录状态未能确认，请重试。'};
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{}};
+ await d.render(React.createElement(get().DesktopAccount));assert.ok(button(d,'重新检查 Codex 登录'));
+ current={...current,nativeError:undefined,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
+ await d.click(button(d,'重新检查 Codex 登录'));assert.match(d.container.textContent,/已登录/);assert.ok(!button(d,'重新检查 Codex 登录'));
 }));
 test('saved website account retains balance and an explicit apply while Codex is active',async()=>withDom(async d=>{
  const calls=[];const current={supported:true,configured:true,source:'codex',connection:'website',active:'disconnected',pending:false,needsRestart:false,stale:true,websiteReady:true};
@@ -183,7 +192,7 @@ test('saved website account retains balance and an explicit apply while Codex is
  await d.click(button(d,'应用并重启'));assert.deepEqual(calls,['refresh','applyWebsite']);
 }));
 for(const effective of ['codex','website'])test(`account defaults to ${effective}; status reads keep a manually selected detail and remount restores the default`,async()=>withDom(async d=>{
- let changed;const calls=[],current={supported:true,configured:true,source:effective,connection:'legacy',active:effective==='website'?'legacy':'disconnected',pending:false,needsRestart:false,stale:false,websiteReady:true};
+ let changed;const calls=[],current={supported:true,configured:true,source:effective,connection:'website',active:effective==='website'?'website':'disconnected',pending:false,needsRestart:false,stale:false,websiteReady:true};
  window.homerDesktopAccount={state:async()=>current,onChange:fn=>{changed=fn;return()=>{};},applyWebsite:async()=>{calls.push('applyWebsite');return current;}};
  const title=()=>d.find(n=>n.tagName==='H2').textContent;
  await d.render(React.createElement(get().DesktopAccount));
@@ -311,6 +320,13 @@ for(const [code,title] of [['engine_rate_limited','请求受到限流，本次�
  assert.equal(d.all().filter(n=>n.tagName==='BUTTON').length,1);
 }));
 
+for(const [code,title]of [['engine_authentication_failed','账号连接未通过验证'],['engine_account_status_unconfirmed','账号状态未能确认']])test(code+' offers account inspection without guessing a quota failure',async()=>withDom(async d=>{
+ const calls=[];window.homerDesktopAccount={openWebsite:async()=>{assert.fail('must not recharge');}};
+ await d.render(React.createElement(get().ModelFailureNotice,{failure:{messageId:'failure',code,source:'website'},onAccount:()=>calls.push('account')}));
+ assert.match(d.container.textContent,new RegExp(title));assert.doesNotMatch(d.container.textContent,/原因暂无法确认|充值|额度不足|0 积分/);
+ await d.click(button(d,'查看账号与额度'));assert.deepEqual(calls,['account']);
+}));
+
 test('Codex quota never offers Homer recharge and a failed website open keeps the original card',async()=>withDom(async d=>{
  window.homerDesktopAccount={openWebsite:async()=>{throw Error('PRIVATE_DIAGNOSTICS');}};
  await d.render(React.createElement(get().ModelFailureNotice,{key:'codex',failure:{messageId:'codex',code:'engine_quota_insufficient',source:'codex'},onAccount:()=>{}}));
@@ -346,7 +362,7 @@ test('single source account page keeps purchase and logout scoped to Homer and n
 }));
 
 test('purchase failure is safe, retains the account and permits a later explicit attempt',async()=>withDom(async d=>{
- let calls=0;const current={supported:true,configured:true,source:'website',connection:'legacy',active:'legacy',pending:false,needsRestart:false,stale:false,wallet:{available:3,used:99,unit:'积分'}};
+ let calls=0;const current={supported:true,configured:true,source:'website',connection:'website',active:'website',pending:false,needsRestart:false,stale:false,wallet:{available:3,used:99,unit:'积分'}};
  window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},openWebsite:async()=>{calls++;throw Error('PRIVATE_PURCHASE_DETAILS');}};
  await d.render(React.createElement(get().DesktopAccount));await d.click(button(d,'购买积分'));
  assert.match(d.container.textContent,/购买积分页面未能打开/);assert.doesNotMatch(d.container.textContent,/PRIVATE_PURCHASE_DETAILS|已用/);assert.ok(button(d,'退出登录'));assert.ok(!button(d,'登录'));assert.equal(calls,1);
@@ -362,4 +378,105 @@ test('native login remains available while the website account is disconnected a
   current={...current,native:{account:'none',connected:false,phase,pending:false}};await act(async()=>changed());
   assert.match(d.container.textContent,new RegExp(label));assert.ok(button(d,'通过 Codex 登录'));assert.ok(!button(d,'应用并重启'));
  }
+}));
+
+const firstAccount={supported:true,configured:true,source:'website',connection:'disconnected',active:'disconnected',pending:false,canReopen:false,needsRestart:false,stale:true,native:{account:'none',connected:false,phase:'idle',pending:false,canReopen:false}};
+test('first-open account reuses login, reopen, cancel and restart without automatically applying a source',async()=>withDom(async d=>{
+ let current={...firstAccount},changed;const actions=[];
+ window.homerDesktopAccount={state:async()=>current,onChange:cb=>{changed=cb;return()=>{};},connect:async()=>{actions.push('connect');return current={...current,pending:true,canReopen:true};},reopen:async()=>{actions.push('reopen');return current;},cancel:async()=>{actions.push('cancel');return current={...current,pending:false,error:'CONNECTION_CANCELLED'};},restart:async()=>{actions.push('restart');return current;}};
+ await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));
+ assert.match(d.container.textContent,/欢迎使用荷马/);assert.match(d.container.textContent,/荷马会员服务/);assert.ok(button(d,'登录荷马'));assert.deepEqual(actions,[]);
+ await d.click(button(d,'登录荷马'));assert.match(d.container.textContent,/浏览器完成登录/);
+ await d.click(button(d,'重新打开登录页面'));await d.click(button(d,'取消'));assert.match(d.container.textContent,/登录已取消/);
+ await d.click(button(d,'登录荷马'));current={...current,pending:false,error:undefined,connection:'website',needsRestart:true};await act(async()=>changed());
+ assert.ok(button(d,'重启并应用'));assert.ok(!button(d,'购买积分'));await d.click(button(d,'重启并应用'));
+ assert.deepEqual(actions,['connect','reopen','cancel','connect','restart']);
+}));
+test('first-open ChatGPT navigation never changes the source until explicit application',async()=>withDom(async d=>{
+ let current={...firstAccount},changed;const actions=[];
+ window.homerDesktopAccount={state:async()=>current,onChange:cb=>{changed=cb;return()=>{};},nativeConnect:async()=>{actions.push('nativeConnect');return current={...current,native:{...current.native,pending:true,canReopen:true}};},nativeReopen:async()=>{actions.push('nativeReopen');return current;},nativeCancel:async()=>{actions.push('nativeCancel');return current={...current,native:{...current.native,pending:false,phase:'cancelled'}};},applyCodex:async()=>{actions.push('applyCodex');return current;}};
+ await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));await d.click(button(d,'改用 ChatGPT 套餐'));
+ assert.deepEqual(actions,[]);await d.click(button(d,'通过 Codex 登录'));await d.click(button(d,'重新打开 Codex 登录页面'));await d.click(button(d,'取消 Codex 登录'));
+ current={...current,native:{...current.native,account:'chatgpt',connected:true,pending:false,phase:'idle'}};await act(async()=>changed());
+ assert.ok(button(d,'应用并重启'));assert.doesNotMatch(d.container.textContent,/调用已验证/);await d.click(button(d,'应用并重启'));
+ assert.deepEqual(actions,['nativeConnect','nativeReopen','nativeCancel','applyCodex']);
+}));
+for(const [name,changes,want] of [
+ ['zero',{wallet:{available:0,used:1,unit:'积分'},stale:false},'zero'],
+ ['positive',{wallet:{available:2,used:1,unit:'积分'},stale:false},'positive'],
+ ['unknown',{stale:false},'unknown'],
+ ['stale zero',{wallet:{available:0,used:1,unit:'积分'},stale:true},'unknown'],
+ ['failed zero',{wallet:{available:0,used:1,unit:'积分'},stale:false,walletError:'USAGE_UNAVAILABLE'},'unknown'],
+ ['expired zero',{wallet:{available:0,used:1,unit:'积分'},stale:false,walletError:'TOKEN_UNAVAILABLE'},'unknown'],
+])test('first-open wallet guidance preserves '+name,async()=>withDom(async d=>{
+ const current={...firstAccount,connection:'website',active:'website',updatedAt:'2026-11-04T00:00:00Z',...changes};
+ window.homerDesktopAccount={state:async()=>current,refresh:async()=>current,onChange:()=>()=>{}};
+ await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));
+ if(want==='zero'){assert.match(d.container.textContent,/购买积分后即可开始使用/);assert.ok(button(d,'购买积分'));assert.ok(button(d,'我已购买，刷新状态'));}
+ else{assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用|积分不足/);assert.ok(!button(d,'我已购买，刷新状态'));if(want==='positive')assert.ok(!button(d,'购买积分'));if(want==='unknown'){assert.match(d.container.textContent,/暂时无法确认/);assert.ok(button(d,'重新检查积分'));assert.ok(!button(d,'购买积分'));}}
+}));
+test('first-open purchase and refresh failures keep a retry and never retain a zero-balance conclusion',async()=>withDom(async d=>{
+ let current={...firstAccount,connection:'website',active:'website',stale:false,wallet:{available:0,used:1,unit:'积分'}};let fail=false;
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},openWebsite:async()=>{throw Error('synthetic-open-failure');},refresh:async()=>{if(fail)throw Error('synthetic-read-failure');return current={...current,wallet:{...current.wallet,available:3}};}};
+ await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));await d.click(button(d,'购买积分'));assert.match(d.container.textContent,/购买积分页面未能打开/);
+ fail=true;await d.click(button(d,'我已购买，刷新状态'));assert.match(d.container.textContent,/暂时无法确认/);assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用/);
+ fail=false;await d.click(button(d,'重新检查积分'));assert.match(d.container.textContent,/3 积分/);assert.doesNotMatch(d.container.textContent,/暂时无法确认|购买积分后即可开始使用/);
+}));
+test('first-open unreadable account exposes a working retry instead of an absent login',async()=>withDom(async d=>{
+ let fail=true;window.homerDesktopAccount={state:async()=>{if(fail)throw Error('synthetic-read-failure');return firstAccount;},onChange:()=>()=>{}};
+ await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));assert.match(d.container.textContent,/状态未能确认/);fail=false;await d.click(button(d,'重新检查账号'));assert.ok(button(d,'登录荷马'));
+}));
+
+// Execute the actual app condition and account JSX without starting its service.
+function firstOpenApp(state,connected=false,mobileView=false){
+ const source=readFileSync('ui/homer-app.tsx','utf8'),ast=ts.createSourceFile('homer-app.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+ const app=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name.text==='HomerApp');
+ const condition=app.body.statements.find(n=>ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(ast)==='accountRequired'));assert.ok(condition);
+ let view;const visit=node=>{if(ts.isJsxExpression(node)&&node.getText(ast).startsWith('{accountRequired&&'))view=node;ts.forEachChild(node,visit);};visit(app);assert.ok(view);
+ const code=ts.transpileModule(`module.exports=function FirstOpen(){${condition.getText(ast)}return <>${view.getText(ast)}</>;}`,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+ const m={exports:{}};Function('require','module','exports','state','connected','mobileView','DesktopAccount',code)(require,m,m.exports,state,connected,mobileView,get().DesktopAccount);return m.exports;
+}
+for(const [name,phase,code,connected,mobile,bridgePresent,want] of [
+ ['required','management','desktop_account_required',false,false,true,true],
+ ['starting','starting',undefined,false,false,true,false],
+ ['other failure','management','engine_failed',false,false,true,false],
+ ['connected','running','desktop_account_required',true,false,true,false],
+ ['web','management','desktop_account_required',false,false,false,false],
+ ['mobile','management','desktop_account_required',false,true,true,false],
+])test('chat first-open entry only enables the trusted account-required branch: '+name,async()=>withDom(async d=>{
+ let reads=0;if(bridgePresent)window.homerDesktopAccount={state:async()=>{reads++;return firstAccount;},onChange:()=>()=>{}};
+ const App=firstOpenApp({upgrade:{phase,code}},connected,mobile);await d.render(React.createElement(App));
+ assert.equal(!!button(d,'登录荷马'),want);assert.equal(reads,want?1:0);
+}));
+
+test('existing ChatGPT source can restart after reconnecting without switching source again',async()=>withDom(async d=>{
+ let current={...firstAccount,source:'codex'},changed;const actions=[];
+ window.homerDesktopAccount={state:async()=>current,onChange:cb=>{changed=cb;return()=>{};},nativeConnect:async()=>{actions.push('nativeConnect');return current;},restart:async()=>{actions.push('restart');return current;}};
+ await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));await d.click(button(d,'改用 ChatGPT 套餐'));assert.ok(!button(d,'重启并应用'));
+ await d.click(button(d,'通过 Codex 登录'));current={...current,native:{account:'chatgpt',connected:true,phase:'idle',pending:false,canReopen:false}};await act(async()=>changed());
+ assert.ok(button(d,'重启并应用'));assert.ok(!button(d,'应用并重启'));await d.click(button(d,'重启并应用'));assert.deepEqual(actions,['nativeConnect','restart']);
+}));
+
+test('Homer login from an existing ChatGPT source only offers the action that applies website source',async()=>withDom(async d=>{
+ let current={...firstAccount,source:'codex',connection:'website',needsRestart:true,websiteReady:true};const actions=[];
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},restart:async()=>{actions.push('restart');return current;},applyWebsite:async()=>{actions.push('applyWebsite');return current;}};
+ await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));assert.ok(!button(d,'重启并应用'));assert.ok(button(d,'应用并重启'));
+ await d.click(button(d,'应用并重启'));assert.deepEqual(actions,['applyWebsite']);
+}));
+
+for(const onboarding of [false,true])test('cached zero wallet expires while open and after reopening: '+onboarding,async t=>withDom(async d=>{
+ const now=1800000000000,expiresAt=now/1000+30; t.mock.timers.enable({apis:['Date'],now});
+ const timers=new Map();let next=0,reads=0;
+ window.setTimeout=(fn,delay)=>{timers.set(++next,{fn,delay});return next;};window.clearTimeout=id=>timers.delete(id);
+ const current={...firstAccount,source:'codex',connection:'website',websiteReady:true,stale:false,wallet:{available:0,used:1,unit:'积分',expiresAt}};
+ window.homerDesktopAccount={state:async()=>{reads++;return {...current};},onChange:()=>()=>{},refresh:async()=>({...current,stale:true,walletError:'TOKEN_UNAVAILABLE'})};
+ await d.render(React.createElement(get().DesktopAccount,{onboarding}));
+ if(!onboarding)await d.click(button(d,'荷马会员'));
+ assert.match(d.container.textContent,/购买积分后即可开始使用/);assert.equal(timers.size,1);
+ const timer=[...timers.values()][0];assert.equal(timer.delay,30000);const before=reads;
+ t.mock.timers.tick(30000);await act(async()=>timer.fn());assert.equal(reads,before+1);
+ assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用/);assert.match(d.container.textContent,/暂时无法确认/);assert.ok(!button(d,'应用并重启'));assert.equal(timers.size,0);
+ await d.remount();await d.render(React.createElement(get().DesktopAccount,{onboarding}));
+ if(!onboarding)await d.click(button(d,'荷马会员'));
+ assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用/);assert.match(d.container.textContent,/暂时无法确认/);assert.ok(!button(d,'应用并重启'));
 }));

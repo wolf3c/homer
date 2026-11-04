@@ -39,7 +39,7 @@ test('legacy calls use one neutral RunActivity, preserve same-name IDs and user 
 }));
 
 // Real message runtime and MessageDetails; synthetic DOM, no native clipboard/layout.
-test('runtime text messages expose only Copy while preserving copy feedback',async()=>withDom(async d=>{
+test('runtime text messages expose Copy and Quote while preserving copy feedback',async()=>withDom(async d=>{
  const text='**literal source**',original={...message,id:'copy-message',text},writes=[];
  const previous=Object.getOwnPropertyDescriptor(globalThis,'navigator');
  let fail=false;
@@ -51,7 +51,7 @@ test('runtime text messages expose only Copy while preserving copy feedback',asy
  }
  await d.render(h(Harness));
  const bar=slot(d,'message-actions');assert.ok(bar);
- assert.deepEqual(bar.childNodes.filter(n=>n.tagName==='BUTTON').map(n=>n.attrs['aria-label']),['复制']);
+ assert.deepEqual(bar.childNodes.filter(n=>n.tagName==='BUTTON').map(n=>n.attrs['aria-label']),['复制','引用']);
  const copy=()=>slot(d,'message-actions').childNodes.find(n=>n.tagName==='BUTTON');
  assert.equal(copy().attrs['aria-busy'],'false');
  await d.click(copy());assert.deepEqual(writes,[text]);

@@ -2,6 +2,7 @@
 import {readFileSync,writeFileSync,existsSync,mkdirSync,lstatSync,realpathSync,unlinkSync,openSync,closeSync,readdirSync,renameSync,fsyncSync} from 'node:fs';
 import {resolve,join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
+import {assertWindowsPrivate,secureWindowsDirectory} from './windows-security.mjs';
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const markerName='desktop-profile.json';
 export function readDesktopModelSource(root,fallback){
@@ -21,12 +22,12 @@ export function saveDesktopModelSource(root,source){
 const bytesHash=bytes=>createHash('sha256').update(bytes).digest('hex');
 function privateFile(path){
  const stat=lstatSync(path,{throwIfNoEntry:false});
- if(!stat?.isFile()||realpathSync(path)!==path||stat.uid!==process.getuid()||(stat.mode&0o077)!==0)throw Error('desktop_adoption_private_file_required');
+ if(!stat?.isFile()||realpathSync(path)!==path||(process.platform==='win32'?(assertWindowsPrivate(path),false):stat.uid!==process.getuid()||(stat.mode&0o077)!==0))throw Error('desktop_adoption_private_file_required');
  return readFileSync(path);
 }
 function existingOwnedDirectory(path){
  const stat=lstatSync(path,{throwIfNoEntry:false});
- if(!stat?.isDirectory()||realpathSync(path)!==path||stat.uid!==process.getuid())throw Error('desktop_adoption_paths_invalid');
+ if(!stat?.isDirectory()||realpathSync(path)!==path||(process.platform==='win32'?(assertWindowsPrivate(path),false):stat.uid!==process.getuid()))throw Error('desktop_adoption_paths_invalid');
 }
 function readAdoption(root,test){
  const record=JSON.parse(privateFile(join(root,'desktop-adoption.json')));
@@ -84,9 +85,11 @@ export function assertDesktopControlPaths({root,runtime,codexHome,workspace}){
 }
 export function prepareDesktopProfile(root,version,{test=false,initialize=false}={}){
  root=resolve(root);
+ if(process.platform==='win32'&&lstatSync(root,{throwIfNoEntry:false}))assertWindowsPrivate(root);
  if(initialize&&!test){
   controlPath(root,'directory');
-  if(!lstatSync(root,{throwIfNoEntry:false}))mkdirSync(root,{recursive:true,mode:0o700});
+  if(!lstatSync(root,{throwIfNoEntry:false})){mkdirSync(root,{recursive:true,mode:0o700});if(process.platform==='win32')secureWindowsDirectory(root);}
+  if(process.platform==='win32')assertWindowsPrivate(root);
   if(readdirSync(root).length===0)writeFileSync(join(root,'.homer-desktop-new'),'{"format":1}\n',{flag:'wx',mode:0o600});
  }
  if(!lstatSync(root,{throwIfNoEntry:false})?.isDirectory()||lstatSync(root).isSymbolicLink()||realpathSync(root)!==root)throw Error('desktop_data_unrecognized');

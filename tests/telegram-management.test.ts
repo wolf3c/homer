@@ -46,7 +46,7 @@ test("TG local management guards origin/query, keeps secret out of replies and r
   assert.equal((await (await post("pair/approve", { code: pairing.code, ...candidate })).json() as { bound: boolean }).bound, true);
   const page = await fetch(web.url + "/settings/telegram"); assert.equal(page.status, 200); assert.equal(page.headers.get("cache-control"), "no-store");
   const html = await page.text(); assert.match(html, /type="password"/); assert.doesNotMatch(html, /<script[^>]*>[^<]+<\/script>|synthetic_fixture/);
-  const js = await (await fetch(web.url + "/settings/telegram.js")).text(); assert.doesNotMatch(js, /localStorage|sessionStorage\.setItem|console\./);assert.match(js,/sessionStorage.getItem\('homer-user-connection'\)/);
+  const js = await (await fetch(web.url + "/settings/telegram.js")).text(); assert.doesNotMatch(js, /localStorage|sessionStorage\.setItem|console\./);assert.doesNotMatch(js,/sessionStorage|X-Homer-Connection/);
   assert.equal((await post("disconnect")).status, 200);
   assert.equal((await post("forget")).status, 200); assert.equal(secrets.size, 0);
 });

@@ -51,49 +51,6 @@ test('disable/delete close only that device and enable permits the same credenti
  }finally{a.host.close();a.client.close();b.host.close();b.client.close();resumed?.host.close();resumed?.client.close();devices.close();}
 });
 
-
-test('device names are bounded display data, and legacy phones can be approved',async()=>{
- const devices=new MobileDevices(':memory:'),calls:string[]=[],c=connection(devices,calls);
- try{
-  const invite=()=>devices.invite('https://example.test').url.split('#')[1];
-  for(const deviceName of [undefined,null,' ','\u202e伪造','x'.repeat(61),{name:'X'}]){
-   const paired=await c.call('pair',{invitation:invite(),deviceName});
-   assert.equal(paired.result.status,'pending');assert.equal(devices.state().pending?.name,'未知设备');
-  }
-  const invitation=invite(),paired=await c.call('pair',{invitation,deviceName:' 测试手机 '});
-  assert.equal(devices.state().pending?.name,'测试手机');
-  await c.call('pair',{invitation,credential:paired.result.credential,deviceName:'其他'});
-  assert.equal(devices.state().pending?.name,'测试手机');
-  assert.equal((await c.call('history.state')).error,'mobile_device_denied');
-  devices.approve(devices.state().pending!.id,'测试手机');
-  assert.equal((await c.call('status',{credential:paired.result.credential})).result.status,'active');
-  assert.deepEqual(calls,[]);
- }finally{c.host.close();c.client.close();devices.close();}
-});
-
-
-test('mobile connection forwards the name through the actual candidate session',async()=>{
- const source=(await build({entryPoints:['ui/mobile-connection.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'fake-signal',setup(build){
-  build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
-  build.onLoad({filter:/.*/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(){return {call:async()=>{},close(){}}}'}));
- }}]})).outputFiles[0]!.text;
- const devices=new MobileDevices(':memory:'),messages:any[]=[],window=new EventTarget() as EventTarget&{__homerMobileNonce:string;ReactNativeWebView:{postMessage:(value:string)=>void}},document=new EventTarget(),module={exports:{}};
- let peer:any,receiveHost:(value:Uint8Array)=>void=()=>{};
- const dc:any={readyState:'open',bufferedAmount:0,close(){},send(value:Uint8Array){queueMicrotask(()=>receiveHost(new Uint8Array(value)));}};
- const port:MobileChannelPort={send(value){const bytes=new Uint8Array(value);queueMicrotask(()=>dc.onmessage({data:bytes.buffer}));},receive(fn){receiveHost=fn;},closed:()=>false,buffered:()=>0,close(){}};
- const host=openMobileSession({devices,port,call:async()=>{throw Error('unexpected_business_call');}});
- class Peer{constructor(){peer=this;}close(){}}
- try{
-  window.__homerMobileNonce='synthetic';window.ReactNativeWebView={postMessage:value=>messages.push(JSON.parse(value))};
-  Function('window','document','RTCPeerConnection','module','exports',source)(window,document,Peer,module,module.exports);
-  const invitation=devices.invite('https://example.test').url.split('#')[1];
-  window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:{signalOrigin:'https://signal.example.invalid',routeId:'a'.repeat(64),invitation,deviceName:'测试手机'}}));
-  peer.ondatachannel({channel:dc});dc.onopen();
-  for(let i=0;i<30&&!messages.some(item=>item.code==='pending');i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(devices.state().pending?.name,'测试手机');assert.ok(messages.some(item=>item.code==='pending'));assert.equal(host.authorized,false);
- }finally{window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:null}));host.close();devices.close();}
-});
-
 test('pending approval timeout reaches the phone without granting chat access',async()=>{
  let now=1000;const devices=new MobileDevices(':memory:',()=>now),calls:string[]=[],c=connection(devices,calls);
  try{
@@ -171,6 +128,23 @@ test('mobile connection cancels a pending request over the real device session',
   assert.equal(devices.state().pending,null);
   assert.deepEqual(calls,[]);
  }finally{window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:null}));host.close();devices.close();}
+});
+
+test('phone name travels with the pending request without granting authorization',async()=>{
+ const devices=new MobileDevices(':memory:'),calls:string[]=[],c=connection(devices,calls),other=connection(devices,calls);
+ try{
+  const invitation=devices.invite('https://example.test').url.split('#')[1];
+  const paired=await c.call('pair',{invitation,deviceName:'  测试手机  '});
+  const display=devices.state().pending!;
+  assert.equal(display.name,'测试手机');assert.equal(paired.result.verificationCode,undefined);
+  await c.call('pair',{invitation,credential:paired.result.credential,deviceName:'不同名称'});
+  assert.equal(devices.state().pending?.name,'测试手机');
+  assert.equal((await other.call('pair',{invitation})).error,'mobile_pairing_busy');
+  assert.equal((await c.call('history.state')).error,'mobile_device_denied');
+  devices.approve(display.id,display.name);
+  assert.equal((await c.call('status',{credential:paired.result.credential})).result.status,'active');
+  assert.equal(devices.state().devices[0]?.name,'测试手机');assert.deepEqual(calls,[]);
+ }finally{c.host.close();c.client.close();other.host.close();other.client.close();devices.close();}
 });
 
 test('missing and unsafe device names fall back, while replacement and timeout clear the candidate',async()=>{

@@ -9,6 +9,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   const m = JSON.parse(line);
   if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});
   if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fixture/0.163.0" } });
+  if (m.method === 'model/list') send({id:m.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
   if (m.method === "config/read") send({ id: m.id, result: { config: { mcp_servers: {} } } });
   if (m.method === "thread/start" || m.method === "thread/resume") send({ id: m.id, result: { thread: { id: threadId, path: "/synthetic/not-yet-written-rollout.jsonl" }, activePermissionProfile: { id: "homer" }, approvalPolicy: "never" } });
   if (m.method === "turn/start") {

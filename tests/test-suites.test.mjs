@@ -80,6 +80,7 @@ const explicitSuites={
   "web-dev-host.test.mjs",
   "mobile-runtime-packaging.test.mjs",
   "mobile-ui-build.test.mjs",
+  "mobile-download-focus.development.test.mjs",
   "deepseek-isolated.test.mjs",
   "dev-fixture-wait.test.mjs",
   "dev-upgrade.development.test.mjs",
@@ -176,4 +177,18 @@ for(const mode of ['core','development','direct'])test('source overrides stay ex
   env:{PATH:process.env.PATH,HOME:join(f.root,'home'),TMPDIR:join(f.root,'tmp'),CODEX_HOME:join(f.root,'codex'),...overrides,HOMER_SYNTHETIC_UNRELATED:'preserved'}});
  assert.equal(result.status,0,result.stdout+result.stderr);
  assert.match(result.stdout,/selected source/);assert.doesNotMatch(result.stdout,/# skipped [1-9]/);
+});
+
+
+test('browser regressions are opt-in and require explicit synthetic paths',t=>{
+ const f=fixture(t);f.put('artifact-file-list.browser.mjs',"throw Error('browser_must_not_run_in_core');");
+ const core=f.run();assert.equal(core.status,0,core.stdout+core.stderr);assert.doesNotMatch(core.stdout,/browser_must_not_run_in_core/);
+ const browser=f.run('--browser');assert.notEqual(browser.status,0);assert.match(browser.stderr,/browser_acceptance_requires_explicit_path: HISTORY_FOLLOWUP_BUILD/);
+});
+
+
+test('fixed native protocol acceptance is explicit and absent from core',t=>{
+ const f=fixture(t);f.put('native-protocol.engine.test.mjs',"console.log('fixed-native-selected');");
+ const core=f.run();assert.equal(core.status,0,core.stdout+core.stderr);assert.doesNotMatch(core.stdout,/fixed-native-selected/);
+ const engine=f.run('--engine');assert.equal(engine.status,0,engine.stdout+engine.stderr);assert.match(engine.stdout,/fixed-native-selected/);
 });

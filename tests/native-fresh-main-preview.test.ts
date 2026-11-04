@@ -9,7 +9,6 @@ import { ConversationHistory } from '../src/web-history.js';
 import { WorkerInteractions } from '../src/worker-interactions.js';
 import { RecursiveTasks } from '../src/recursive-tasks.js';
 import { MainInputs } from '../src/recursive-main-inputs.js';
-import { Memory } from '../src/memory.js';
 import { WechatStore } from '../src/channels/wechat-store.js';
 import { TelegramStore } from '../src/channels/telegram-store.js';
 import { previewFreshMain } from '../scripts/native-fresh-main-preview.js';
@@ -19,7 +18,7 @@ function fixture() {
   const dir = mkdtempSync(resolve('.codex/scratch/native-capabilities-expansion/fresh-main-test-'));
   const path = join(dir, 'source.sqlite'), store = new Store(path);
   new WorkerInteractions(store.db);
-  const history = new ConversationHistory(store.db), memory = new Memory(store);
+  const history = new ConversationHistory(store.db);
   const tasks = new RecursiveTasks(store, new Files(join(dir, 'workspace')));
   tasks.migrate(); new WechatStore(store.db); new TelegramStore(store.db);
   store.setMeta('mainThread', 'synthetic-old-main');
@@ -28,9 +27,6 @@ function fixture() {
   const inputs = new MainInputs(tasks, history);
   const request = { requestId: 'synthetic-old-request', text: '请记住：以后报告都用中文。' };
   inputs.accept(request);
-  memory.observe(request.requestId, 'synthetic-old-main');
-  memory.adopt(request.requestId, 'synthetic-old-main', request.text);
-  memory.propose({ operationId: 'synthetic-save', content: '以后报告都用中文。' }, { requestId: request.requestId, threadId: 'synthetic-old-main', epoch: memory.settings().epoch });
   return { dir, path, store, inputs, history, close() { store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 function finish(f: ReturnType<typeof fixture>) {
@@ -39,7 +35,7 @@ function finish(f: ReturnType<typeof fixture>) {
   f.history.finish(item.replyId, 'Synthetic completed reply.', 'completed');
   f.store.finishRequest(item.input.requestId, 'Synthetic completed reply.');
 }
-test('fresh main preview keeps old history, queue, memory and channel rows; only two metadata bindings change', async () => {
+test('fresh main preview keeps old history, queue and channel rows; only two metadata bindings change', async () => {
   const f = fixture(); try {
     finish(f);
     const before = readFileSync(f.path);
@@ -51,7 +47,6 @@ test('fresh main preview keeps old history, queue, memory and channel rows; only
     assert.equal(r.newThreadHistoryEmpty, true);
     assert.equal(r.noOldInputClaimed, true);
     assert.equal(r.crossThreadRequestRetryRejected, true);
-    assert.equal(r.customMemoryStillAvailable, true);
     assert.equal(r.noEngineChannelOrAccount, true);
     assert.equal(r.automaticActivationAllowed, false);
     assert.deepEqual(readFileSync(f.path), before);

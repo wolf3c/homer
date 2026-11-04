@@ -85,12 +85,14 @@ test('main queue: user recovery reads only previously claimed ended inputs and c
   f.processes.start({id:'failed-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[prior.messageId],messageId:'failed-process'},'failed-turn');
   f.store.db.prepare("UPDATE agent_receipts SET state='blocked' WHERE messageId=?").run(prior.messageId);
   assert.deepEqual(f.inputs.recoveryMessages(),[],'a live process cannot become recovery history');
+  assert.deepEqual(f.inputs.recoveryQueue(),[]);
   f.processes.finish('failed-process','failed','turn:failed-turn:terminal');
   const context={event:false,requestId:'user-recovery',inspected:new Set()};
   const host=Object.create(Homer.prototype) as Homer;
   Object.assign(host,{store:f.store,tasks:f.tasks,inputs:f.inputs,recursiveTools:new RecursiveTools(f.tasks,{rootAuthority(){throw Error('unexpected_authority');},wake(){},async stop(){throw Error('unexpected_stop');},async update(){throw Error('unexpected_update');}}),mainContext:context,accountClocks(){}});
   const messages=await host['recursiveTool']({agentId:f.agentId},'inbox_read',{after:0}) as {id:string}[];
   assert.deepEqual(messages.map(message=>message.id),[prior.messageId]);
+  assert.deepEqual(f.inputs.recoveryQueue(),[],'hidden blocked history is not automatically reconciled');
   const ack={operationId:'recover-original',messageId:later.messageId,disposition:'processed',reason:'Synthetic recovery',resultId:null};
   await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',ack),/message_not_claimed/);
   await host['recursiveTool']({agentId:f.agentId},'inbox_ack',{...ack,messageId:prior.messageId});
@@ -98,18 +100,38 @@ test('main queue: user recovery reads only previously claimed ended inputs and c
   assert.equal(f.inputs.claim([],'all')!.messageId,later.messageId,'recovery never auto-requeues the old business');
  }finally{f.close();}
 });
-test('paused historical worker events cannot be read or acknowledged by a new main turn',async()=>{
+for(const state of ['blocked','uncertain'] as const)test('user recovery can inspect and ACK ended pre-start Worker history without replay: '+state,async()=>{
  const f=fixture();try{
   const prior=f.send('old-recovery');f.inputs.claim([],'all');
   f.processes.start({id:'old-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[prior.messageId],messageId:'old-process'},'old-turn');
-  f.store.db.prepare("UPDATE agent_receipts SET state='blocked' WHERE messageId=?").run(prior.messageId);
-  f.processes.finish('old-process','failed','turn:old-turn:terminal');
+  f.store.db.prepare('UPDATE agent_receipts SET state=? WHERE messageId=?').run(state,prior.messageId);
+  f.processes.finish('old-process',state==='blocked'?'failed':'unknown',state==='blocked'?'turn:old-turn:terminal':'host:restart:engine_closed');
+  const pending=f.send('old-pending');
   const cutoff=Number(f.store.db.prepare('SELECT max(seq) n FROM agent_messages').get()!.n),inputs=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff});
   const host=Object.create(Homer.prototype) as Homer;
-  Object.assign(host,{store:f.store,tasks:f.tasks,inputs,recursiveTools:new RecursiveTools(f.tasks,{rootAuthority(){throw Error('unexpected_authority');},wake(){},async stop(){throw Error('unexpected_stop');},async update(){throw Error('unexpected_update');}}),mainContext:{event:false,requestId:'new-user',inspected:new Set()},accountClocks(){}});
+  const context={event:true,requestId:'new-user',inspected:new Set<string>()};
+  Object.assign(host,{store:f.store,tasks:f.tasks,inputs,recursiveTools:new RecursiveTools(f.tasks,{rootAuthority(){throw Error('unexpected_authority');},wake(){},async stop(){throw Error('unexpected_stop');},async update(){throw Error('unexpected_update');}}),mainContext:context,accountClocks(){}});
+  const ack={operationId:'old-ack',messageId:prior.messageId,disposition:'processed',reason:'Synthetic reviewed original work',resultId:null};
   assert.deepEqual(await host['recursiveTool']({agentId:f.agentId},'inbox_read',{after:0}),[]);
-  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',{operationId:'old-ack',messageId:prior.messageId,disposition:'processed',reason:'Synthetic',resultId:null}),/message_not_claimed/);
-  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(prior.messageId)!.state,'blocked');
+  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',ack),/message_not_claimed/);
+  context.event=false;
+  const changes=f.store.db.prepare('SELECT total_changes() n').get()!.n;
+  const messages=await host['recursiveTool']({agentId:f.agentId},'inbox_read',{after:0}) as {id:string;seq:number}[];
+  assert.deepEqual(messages.map(message=>message.id),[prior.messageId]);
+  assert.deepEqual(inputs.recoveryQueue().map(row=>({...row})),state==='uncertain'?[{id:prior.messageId,seq:messages[0]!.seq}]:[],'only visible uncertain history is selected, never hidden blocked or pending inputs');
+  assert.equal(f.store.db.prepare('SELECT total_changes() n').get()!.n,changes,'recovery read does not alter receipts');
+  assert.deepEqual(inputs.recoveryMessages(messages[0]!.seq),[],'after remains a cursor');
+  assert.equal(inputs.claim([],'all'),undefined,'reading history does not release the startup fence');
+  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',{...ack,messageId:pending.messageId}),/message_not_claimed/);
+  f.store.setMeta('mainThread','another-thread');
+  assert.deepEqual(await host['recursiveTool']({agentId:f.agentId},'inbox_read',{after:0}),[]);
+  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',ack),/message_not_claimed/);
+  f.store.setMeta('mainThread','synthetic-history');
+  await host['recursiveTool']({agentId:f.agentId},'inbox_ack',ack);
+  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(prior.messageId)!.state,'processed');
+  assert.deepEqual(inputs.recoveryMessages(),[]);
+  inputs.resumeWorkerMessages();
+  assert.equal(inputs.claim([],'all')!.messageId,pending.messageId,'only the unclaimed pending input is dispatched');
  }finally{f.close();}
 });
 test('a new turn cannot continue or otherwise mutate a historical task while paused',async()=>{

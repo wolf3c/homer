@@ -1,18 +1,19 @@
 // UI acceptance only: real Homer/Web/SQLite/native config; scripted main turn.
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { accessSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { Homer } from '../src/service.js';
 import { type EngineOptions, type TurnResult } from '../src/engine.js';
 import { nativeToolChoices, type NativeToolChoices } from '../src/native-tool-settings.js';
 import { createWebServer } from '../src/web-server.js';
 import { homerWebBridge } from '../src/web-homer.js';
-const root = resolve('.codex/scratch/native-tools-browser');
-mkdirSync(root, { recursive: true });
-const data = mkdtempSync(join(root, 'synthetic-'));
 const bin = process.argv[2];
 if (!bin?.endsWith('/codex'))
     throw Error('fixed_native_binary_required');
+const uiDirectory=resolve(process.env.HISTORY_FOLLOWUP_BUILD??'dist/web');accessSync(join(uiDirectory,'index.html'));
+const root = resolve('.codex/scratch/native-tools-browser');
+mkdirSync(root, { recursive: true });
+const data = mkdtempSync(join(root, 'synthetic-'));
 const config = { appData: data, nativeCodexHome: join(data, 'codex'), codexHome: join(data, 'codex'), codexBin: resolve(bin), workspace: join(data, 'workspace'), runtime: join(data, 'runtime'), model: 'gpt-6.1-sol', effort: 'medium' as const, requiresOpenaiAuth: false, timeoutMs: 3000, mainTimeoutMs: 120000, stopGraceMs: 1000 };
 for (const dir of [config.workspace, config.runtime, config.codexHome])
     mkdirSync(dir, { recursive: true });
@@ -46,7 +47,9 @@ class ScriptedMain extends EventEmitter {
             return { status: 'completed', text: result.status === 'approved' ? '合成本轮范围已批准；没有执行真实外部操作。' : '合成本轮请求已拒绝。' };
         };
         try {
-            return await Promise.race([action(), interrupted]);
+            const result=await Promise.race([action(), interrupted]);
+            if(result.status==='completed')this.emit('agentMessage',{threadId:this.threadId,turnId:this.turnId,itemId:'synthetic-final-'+seq,phase:'final_answer',text:result.text,completed:true});
+            return result;
         }
         finally {
             this.stop = undefined;
@@ -57,10 +60,10 @@ class ScriptedMain extends EventEmitter {
 }
 const app = new Homer(config, async () => { await web?.publish(); }, (options: EngineOptions) => new ScriptedMain(options));
 await app.start();
-web = await createWebServer({ bridge: homerWebBridge(app), port: 4802, uiDirectory: resolve('dist/web'), logoPath: resolve('assets/branding/homer-hippo-cool-icon-256.png') });
-const timer = setInterval(() => void web?.publish(), 200);
+web = await createWebServer({ bridge: homerWebBridge(app), port: 4802, uiDirectory, logoPath: resolve('assets/branding/homer-hippo-cool-icon-256.png') });
+
 const receipt = { url: web.url, data, pid: process.pid, synthetic: true, realModel: false, realAccount: false, realOutbound: false };
 writeFileSync(join(root, 'synthetic-browser-location.json'), JSON.stringify(receipt, null, 2));
 console.log(JSON.stringify(receipt));
 for (const signal of ['SIGTERM', 'SIGINT'])
-    process.on(signal, async () => { clearInterval(timer); await web?.close(); await app.close(); process.exit(0); });
+    process.on(signal, async () => { await web?.close(); await app.close(); process.exit(0); });

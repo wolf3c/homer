@@ -2,8 +2,10 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
-import {readFileSync} from 'node:fs';
-import {resolve} from 'node:path';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,realpathSync,rmSync,symlinkSync,statSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {createServer} from 'node:http';
+import {transpileModule,ModuleKind,ScriptTarget} from 'typescript';
 import vm from 'node:vm';
 import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
@@ -12,7 +14,7 @@ import {fileURLToPath} from 'node:url';
 // Link the real entry to OS fixtures. No test switches or probes in the app.
 async function fixture(args=['Homer','--test-profile','/synthetic/profile'],openExternal=async()=>{},platform='darwin',native={}){
  let monotonic=0;
- const handlers=new Map(),windows=[],messages=[],sent=[],nativeCalls=[],launches=[],credentials=[],tokenFiles=[];let spawnCount=0,prompts=0;
+ const handlers=new Map(),windows=[],messages=[],sent=[],nativeCalls=[],launches=[],credentials=[],tokenFiles=[];let spawnCount=0;
  const app=new EventEmitter();
  Object.assign(app,{isPackaged:true,whenReady:async()=>{},setPath(){},getPath:()=>'/synthetic',requestSingleInstanceLock:()=>true,getVersion:()=> '0.1.0',relaunch(){nativeCalls.push(['relaunch']);},quit(){const e={preventDefault(){this.prevented=true;}};app.emit('before-quit',e);if(!e.prevented)app.emit('quit');},setAboutPanelOptions(){}});
  const session={webRequest:{onBeforeSendHeaders:(...args)=>handlers.set('desktop-request',args.at(-1))},setPermissionRequestHandler:cb=>handlers.set('permission-request',cb),setPermissionCheckHandler:cb=>handlers.set('permission-check',cb),on:(name,cb)=>handlers.set(name,cb)};
@@ -25,31 +27,253 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  });child.exitCode=null;child.signalCode=null;
  child.stdio=[child.stdin,child.stdout,child.stderr,new PassThrough()];child.stdio[3].on('data',value=>credentials.push(String(value)));
  class BrowserWindow extends EventEmitter{
-  constructor(options){super();this.options=options;this.webContents=new EventEmitter();this.webContents.session=session;this.settingsMessages=[];this.webContents.getURL=()=>this.url??'about:blank';this.webContents.isDestroyed=()=>this.contentsDestroyed??false;this.webContents.setWindowOpenHandler=cb=>handlers.set('window-open',cb);windows.push(this);}
+  constructor(options){super();this.options=options;this.webContents=new EventEmitter();this.webContents.session=session;this.settingsMessages=[];this.webContents.executeJavaScript=async()=>{if(this.contentsDestroyed)throw Error('Object has been destroyed');return native.unsaved!==true;};this.webContents.getURL=()=>this.url??'about:blank';this.webContents.isDestroyed=()=>this.contentsDestroyed??false;this.webContents.setWindowOpenHandler=cb=>handlers.set('window-open',cb);windows.push(this);}
   async loadURL(url){this.webContents.emit('did-start-navigation',{url,isSameDocument:false,isMainFrame:true});this.url=url;this.webContents.mainFrame={url,origin:new URL(url).origin,detached:false,isDestroyed:()=>false,send:(...args)=>this.settingsMessages.push(args)};}isMinimized(){return this.minimized??false;}restore(){this.minimized=false;}show(){this.hidden=false;}hide(){this.hidden=true;}focus(){this.focused=true;}isDestroyed(){return this.destroyed??false;}setTitle(){}
   getContentBounds(){return {width:this.contentWidth??this.options.width};}
   getWindowButtonPosition(){return this.buttonPosition??this.options.trafficLightPosition;}
   setWindowButtonPosition(value){this.buttonPosition=value;this.buttonMoves=(this.buttonMoves??0)+1;}
+  close(){const event={preventDefault(){this.prevented=true;}};this.emit('close',event);if(event.prevented)return;this.destroyed=true;this.contentsDestroyed=true;this.emit('closed');if(windows.every(w=>w.isDestroyed()))app.emit('window-all-closed');}
  }
- const electron={app,BrowserWindow,ipcMain:{handle:(name,cb)=>{assert.equal(handlers.has(name),false);handlers.set(name,cb);}},systemPreferences:{isTrustedAccessibilityClient:prompt=>{nativeCalls.push(['ax',prompt]);return native.ax?native.ax(prompt):false;},getMediaAccessStatus:kind=>{nativeCalls.push(['screen',kind]);return native.screen?native.screen(kind):'not-determined';}},Menu:{buildFromTemplate:value=>value,setApplicationMenu:value=>handlers.set('menu',value)},dialog:{showMessageBox:async(_window,options)=>{const o=options??_window;messages.push({...o,parent:options?_window:undefined});return {response:native.response??1};}},shell:{openExternal:url=>{nativeCalls.push(['external',url]);return native.external?native.external(url):openExternal(url);},openPath:path=>{nativeCalls.push(['open',path]);return native.open?native.open(path):Promise.resolve('');}}};
- const fs={readFileSync:()=>Buffer.from(JSON.stringify({format:2,preparation:!native.published,localWorkingTree:native.localWorkingTree,publishable:native.publishable,version:'0.1.0',build:5,account:{websiteOrigin:'https://website.example.invalid',gatewayOrigin:'https://models.super-tree.com'}})),existsSync:()=>true,mkdirSync(){},realpathSync:value=>value};
- const cp={execFileSync:()=>Buffer.alloc(0),spawn(bin,args,options){spawnCount++;launches.push({bin,args,options});return child;}};
- const config=()=>({main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',effort:'max',fast:false}});
+ const updater=new EventEmitter();Object.assign(updater,{setFeedURL:value=>nativeCalls.push(['feed',value]),checkForUpdates:()=>{nativeCalls.push(['check-update']);if(native.checkError)throw Error('private_network_detail');},quitAndInstall:()=>{nativeCalls.push(['install-update']);if(native.installError)throw Error('private_install_detail');app.quit();}});
+ const electron={autoUpdater:updater,app,BrowserWindow,ipcMain:{handle:(name,cb)=>{assert.equal(handlers.has(name),false);handlers.set(name,cb);}},systemPreferences:{isTrustedAccessibilityClient:prompt=>{nativeCalls.push(['ax',prompt]);return native.ax?native.ax(prompt):false;},getMediaAccessStatus:kind=>{nativeCalls.push(['screen',kind]);return native.screen?native.screen(kind):'not-determined';}},Menu:{buildFromTemplate:value=>value,setApplicationMenu:value=>handlers.set('menu',value)},dialog:{showMessageBox:async(_window,options)=>{const o=options??_window;messages.push({...o,parent:options?_window:undefined});return {response:typeof native.response==='function'?await native.response(o):native.response??1};}},shell:{openExternal:url=>{nativeCalls.push(['external',url]);return native.external?native.external(url):openExternal(url);},openPath:path=>{nativeCalls.push(['open',path]);return native.open?native.open(path):Promise.resolve('');}}};
+ const fs={readFileSync:path=>Buffer.from(JSON.stringify(String(path).endsWith('app-update.yml')?{publisherName:native.publisher??['CN=Homer, O=Homer, C=CN'],...native.updateConfig}:({format:2,preparation:!native.published,localWorkingTree:native.localWorkingTree,publishable:native.publishable,version:'0.1.0',build:5,account:{websiteOrigin:'https://website.example.invalid',gatewayOrigin:'https://models.super-tree.com'},...native.manifest}))),existsSync:()=>true,mkdirSync(){},realpathSync:value=>value};
+ const cp={execFile:(bin,args,options,done)=>{nativeCalls.push(['verify',bin,args]);const finish=()=>done(native.verifyError&&!options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?Error('private_verify'):null,native.verifyOutput&&!options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?native.verifyOutput:JSON.stringify({valid:options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')||!native.invalidSignature,subject:options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?'CN=Homer, O=Homer, C=CN':native.signer??'CN=Homer, O=Homer, C=CN',path:options.env.HOMER_UPDATE_FILE,embedded:true}));if(native.holdVerify)native.releaseVerify=finish;else queueMicrotask(finish);},execFileSync:(_bin,args)=>{if(args.includes('-R')&&native.untrustedSigner)throw Error('signer');return Buffer.alloc(0);},spawn(bin,args,options){spawnCount++;launches.push({bin,args,options});return child;}};
+ const config=()=>({main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}});
  let stored=native.connection??{token:'synthetic-file-token',subject:'fixture_user',config:config()};
  const account={queryHomerRuntimeConfig:async options=>{nativeCalls.push(['config']);return native.config?native.config(options):config();},saveHomerRuntimeConfig:(_path,value)=>{if(native.writeError)throw Error('CONNECTION_WRITE_FAILED');stored={token:stored.token,subject:stored.subject,config:value};nativeCalls.push(['save-config']);return stored;},readHomerConnection:path=>{tokenFiles.push(path);if(native.invalidTokenFile)throw Error('CONNECTION_FILE_INVALID');return stored;},validateHomerOrigins:v=>v,authorizeHomerConnection:async options=>{const value=native.authorize?await native.authorize(options):{token:'synthetic-website-token',subject:'fixture_user',config:config()};if(!options.signal.aborted)stored=value;return value;},disconnectHomerConnection:()=>{nativeCalls.push(['disconnect']);if(native.disconnectError)throw Error('CONNECTION_WRITE_FAILED');stored=stored?.subject?{...stored,token:undefined}:null;},queryHomerWallet:async()=>{nativeCalls.push(['wallet']);return native.wallet?native.wallet():{available:5,used:2,unit:'原生额度'};}};
- const modules={'../homer/dist/homer-account.js':account,'electron':electron,'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:()=>native.adopted?{adoption:{appData:"/synthetic/original-app"}}:{},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,saveDesktopModelSource:(_root,source)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(['source',source]);}},'../homer/scripts/desktop-deepseek.mjs':{assertDeepSeekProfile(){if(native.invalidProfile)throw Error('deepseek_profile_invalid');},prepareDeepSeekProfile:()=>({}),promptDeepSeekToken:async options=>{prompts++;return native.prompt?native.prompt(options):'synthetic-private-token';}}};
- let timer;const context=vm.createContext({process:{argv:['Homer','--test-profile','/synthetic/profile'],resourcesPath:'/synthetic/Homer.app/Contents/Resources',platform:'darwin'},Buffer,URL,AbortController,console,performance:{now:()=>monotonic},setTimeout:cb=>{timer=cb;return 1;},clearTimeout(){}});
+ class NsisUpdater extends EventEmitter{constructor(options){super();nativeCalls.push(['nsis',options]);this.on('error',()=>{if(this.logger!==null)console.error('private_library_log');});}checkForUpdates(){nativeCalls.push(['check-update',this.logger]);if(native.checkReject){this.emit('error',Error('private_check'));return Promise.reject(Error('private_check'));}return Promise.resolve(native.nullCheck?null:{downloadPromise:native.downloadReject?Promise.resolve().then(()=>{this.emit('error',Error('private_download'));throw Error('private_download');}):Promise.resolve([])});}quitAndInstall(...args){if(this.quitAndInstallCalled)return;this.quitAndInstallCalled=true;nativeCalls.push(['install-update',...args]);if(native.closeBeforeInstallError)for(const w of windows){w.destroyed=true;w.contentsDestroyed=true;}if(native.installError)throw Error('private_install');if(native.installAsyncError)this.emit('error',Error('EACCES UNKNOWN private_install'));queueMicrotask(()=>app.quit());}}
+ const modules={'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'electron':electron,'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:()=>native.adopted?{adoption:{appData:"/synthetic/original-app"}}:{},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,saveDesktopModelSource:(_root,source)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(['source',source]);}}};
+ Object.assign(account,native.accountApi);
+ let timer;const context=vm.createContext({process:{argv:['Homer','--test-profile','/synthetic/profile'],resourcesPath:'/synthetic/Homer.app/Contents/Resources',platform:'darwin',execPath:'C:\\Homer\\Homer.exe',arch:native.arch??'arm64',env:{SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'}},Buffer,URL,AbortController,console:native.console??console,performance:{now:()=>monotonic},setTimeout:cb=>{timer=cb;return 1;},clearTimeout(){}});
  context.process.argv=args;context.process.platform=platform;
  const path=resolve('packaging/electron/main.mjs');
  // Lifecycle controls exist only in this VM copy, never in the product entry.
- const entry=new vm.SourceTextModule(readFileSync(path,'utf8')+'\nexport {createWindow}; export const forgetWindowForTest=()=>{window=undefined;};',{context,identifier:path,initializeImportMeta:meta=>{meta.url='file://'+path;}});
+ async function synthetic(name){const exports=modules[name]??createRequire(import.meta.url)(name);const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);},{context});await m.link(()=>{});await m.evaluate();return m;}
+ const entry=new vm.SourceTextModule(readFileSync(path,'utf8')+'\nexport {createWindow,windowsUpdater}; export const forgetWindowForTest=()=>{window=undefined;};',{context,identifier:path,importModuleDynamically:synthetic,initializeImportMeta:meta=>{meta.url='file://'+path;}});
  await entry.link(async name=>{const exports=modules[name]??createRequire(import.meta.url)(name);const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);},{context});return m;});
  await entry.evaluate();await new Promise(r=>setImmediate(r));
- return {advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,launches,credentials,tokenFiles,prompts:()=>prompts,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
+ return {options:native,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
 }
 if(!vm.SourceTextModule){
  test('Electron shell contracts run with Node VM module support',()=>{execFileSync(process.execPath,['--experimental-vm-modules','--test',fileURLToPath(import.meta.url)],{stdio:'pipe'});});
 }else{
+
+const stableManifest={releaseChannel:'stable',appId:'app.homer.desktop',publishable:true,preparation:false};
+async function updateFixture(native={}){return accountFixture({manifest:stableManifest,...native});}
+const updateCall=async(f,name,...args)=>{const action=f.handlers.get('homer:update:'+name);assert.equal(typeof action,'function','missing trusted update action: '+name);return action(accountEvent(f),...args);};
+const updateMenu=f=>f.handlers.get('menu')[0].submenu.find(item=>item.id==='update');
+async function windowsFixture(native={}){const f=await fixture(['Homer'],undefined,'win32',{arch:'x64',published:true,publishable:true,manifest:stableManifest,...native});f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;}
+test('Windows uses only NSIS generic latest with explicit safety switches and quiet logger',async()=>{
+ const f=await windowsFixture();assert.ok(f.updater);assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
+ assert.equal(f.launches[0].options.env.LOCALAPPDATA,'C:\\RedirectedLocal');assert.equal(f.updater.logger,null);for(const [name,value]of Object.entries({autoDownload:true,autoInstallOnAppQuit:false,allowPrerelease:false,allowDowngrade:false,disableDifferentialDownload:true,disableWebInstaller:true}))assert.equal(f.updater[name],value);
+ assert.equal(f.nativeCalls.find(c=>c[0]==='nsis')[1].url,'https://super-tree.com/homer/updates/stable/win32-x64/');
+});
+for(const readyFirst of [false,true])test('Windows startup stays usable while signature validation is pending '+readyFirst,async()=>{
+ const f=await fixture(['Homer'],undefined,'win32',{arch:'x64',published:true,publishable:true,manifest:stableManifest,holdVerify:true});
+ assert.equal(f.spawnCount(),1);assert.equal(f.windows.length,1);assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,0);
+ const ready=()=>f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});
+ if(readyFirst)ready();f.options.holdVerify=false;f.options.releaseVerify();await f.tick();if(!readyFirst)ready();await f.tick();
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
+});
+for(const options of [{checkReject:true},{downloadReject:true},{nullCheck:true}])test('Windows consumes updater Promise rejection or null '+JSON.stringify(options),async()=>{const f=await windowsFixture(options);await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.sent.length,0);});
+test('Windows signature verification preserves a Unicode path and full publisher subject',async()=>{
+ const unicode=await windowsFixture({publisher:['CN=Homer, O=Homer, C=CN','CN=荷马, O=荷马, C=CN'],signer:'CN=荷马, O=荷马, C=CN'});
+ unicode.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\Users\\测试\\缓存\\安装.exe'});await unicode.tick();assert.equal((await updateCall(unicode,'state')).status,'ready');
+ for(const call of unicode.nativeCalls.filter(c=>c[0]==='verify'))assert.ok(call[2].at(-1).includes('[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)'));
+});
+for(const invalid of [{invalidSignature:true},{verifyError:true},{signer:'CN=Other, O=Other, C=CN'}])test('Windows cached candidate is verified before ready '+JSON.stringify(invalid),async()=>{const f=await windowsFixture(invalid);f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();assert.equal((await updateCall(f,'state')).status,'error');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);});
+test('Windows revalidates a replacement candidate for the same version without reopening a dismissed notice',async()=>{
+ const f=await windowsFixture();f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\first.exe'});await f.tick();await updateCall(f,'dismiss');
+ f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\second.exe'});await f.tick();assert.equal((await updateCall(f,'state')).noticeHidden,true);f.options.invalidSignature=true;
+ f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\tampered.exe'});await f.tick();const state=await updateCall(f,'state');assert.equal(state.status,'error');assert.equal(state.noticeHidden,true);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+for(const closeFirst of [false,true])test('Windows verifies before ready and again only after safe stop closeFirst='+closeFirst,async()=>{
+ const f=await windowsFixture();f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();assert.equal((await updateCall(f,'state')).status,'ready');await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();if(closeFirst)f.child.emit('close',0,null);f.event({kind:'update-stopped'});if(!closeFirst)f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='verify').length,3);assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='install-update'))),[['install-update',true,true]]);
+});
+for(const closeFirst of [false,true])for(const failure of ['sync','async'])for(const action of ['cancel','quit'])test('Windows '+failure+' failed install '+(closeFirst?'after window destruction ':'')+action+' does not reuse installer state',async()=>{
+ let response=0;const f=await windowsFixture({installError:failure==='sync',installAsyncError:failure==='async',closeBeforeInstallError:closeFirst,response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);
+ f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(f.updater.quitAndInstallCalled,true);const prompts=f.messages.filter(m=>m.type==='question').length;f.app.quit();await f.tick();assert.equal(f.messages.filter(m=>m.type==='question').length,prompts,'delayed library quit is intercepted');assert.equal(exits,0);
+ f.updater.emit('update-downloaded',{version:'0.3.0',downloadedFile:'C:\\cache\\other.exe'});f.updater.emit('error',Error('private_late'));await f.tick();assert.equal(f.messages.filter(m=>m.type==='question').length,prompts);
+ response=action==='quit'?1:0;updateMenu(f).click();await f.tick();assert.deepEqual(Array.from(f.messages.at(-1).buttons),['取消','退出荷马']);if(closeFirst)assert.equal(f.messages.at(-1).parent,undefined);assert.equal(exits,action==='quit'?1:0);assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,1);assert.equal(f.sent.length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='relaunch'),false);
+ if(action==='cancel'){response=1;f.windows[0].close();await f.tick();assert.equal(exits,1);}
+ const reopened=await windowsFixture();reopened.event({kind:'update-stopped'});reopened.child.emit('close',0,null);await reopened.tick();assert.equal(reopened.nativeCalls.some(c=>c[0]==='install-update'),false);assert.equal(reopened.nativeCalls.filter(c=>c[0]==='check-update').length,1);
+});
+for(const destroyed of [false,true])for(const order of ['ack-close','close-ack'])for(const errorAfterFirst of [false,true])test('Windows stop-time error recovers cancel and exit '+order+' destroyed='+destroyed+' errorAfterFirst='+errorAfterFirst,async()=>{
+ let response=0;const f=await windowsFixture({response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);
+ f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();
+ if(destroyed){f.windows[0].destroyed=true;f.windows[0].contentsDestroyed=true;}
+ if(errorAfterFirst){if(order==='ack-close')f.event({kind:'update-stopped'});else f.child.emit('close',0,null);}
+ f.updater.emit('error',Error('synthetic_stop_error'));await f.tick();
+ f.updater.emit('update-not-available');f.updater.emit('update-available',{version:'0.3.0'});f.updater.emit('update-downloaded',{version:'0.3.0',downloadedFile:'C:\\cache\\late.exe'});await f.tick();
+ if(!errorAfterFirst){if(order==='ack-close')f.event({kind:'update-stopped'});else f.child.emit('close',0,null);}
+ if(order==='ack-close')f.child.emit('close',0,null);else f.event({kind:'update-stopped'});await f.tick();
+ assert.deepEqual(Array.from(f.messages.at(-1).buttons),['取消','退出荷马']);if(destroyed)assert.equal(f.messages.at(-1).parent,undefined);
+ if(!destroyed){const state=await updateCall(f,'state');assert.equal(state.status,'error');assert.equal(state.noticeHidden,true);}
+ const prompts=f.messages.filter(m=>m.type==='question').length;f.app.quit();f.updater.emit('error',Error('synthetic_late_error'));f.event({kind:'update-stopped'});await f.tick();assert.equal(exits,0);assert.equal(f.messages.filter(m=>m.type==='question').length,prompts);
+ response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'||c[0]==='relaunch'),false);assert.equal(f.sent.length,1);
+});
+for(const [name,ack,status,signal]of [['no-ack',false,0,null],['nonzero',true,1,null],['signal',true,null,'SIGTERM'],['timeout',false,0,null]])test('Windows stop-time error without proof still refuses exit '+name,async()=>{
+ const f=await windowsFixture({response:1});let exits=0;f.app.on('quit',()=>exits++);f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'restart');await f.tick();f.updater.emit('error',Error('synthetic_stop_error'));if(ack)f.event({kind:'update-stopped'});f.child.emit('close',status,signal);await f.tick();if(name==='timeout'){f.timeout();f.event({kind:'update-stopped'});await f.tick();}updateMenu(f).click();f.app.quit();await f.tick();assert.equal(exits,0);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('Windows recovery invalidates an in-flight pre-install verification',async()=>{
+ let response=0;const f=await windowsFixture({response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);
+ f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'restart');await f.tick();f.options.holdVerify=true;f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(typeof f.options.releaseVerify,'function');f.updater.emit('error',Error('synthetic_verification_error'));await f.tick();assert.deepEqual(Array.from(f.messages.at(-1).buttons),['取消','退出荷马']);
+ f.options.holdVerify=false;f.options.releaseVerify();await f.tick();assert.equal(exits,0);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+ response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.sent.length,1);
+});
+test('Windows rejects malformed signature output and required elevation without leaking raw errors',async()=>{
+ const f=await windowsFixture({verifyOutput:'private malformed response https://example.invalid/?secret=sentinel'});f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();assert.equal((await updateCall(f,'state')).status,'error');assert.equal(JSON.stringify(f.messages).includes('sentinel'),false);
+ const elevated=await windowsFixture();elevated.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe',files:[{isAdminRightsRequired:true}]});await elevated.tick();assert.equal((await updateCall(elevated,'state')).status,'error');
+});
+test('Windows installation-time signature failure preserves proof and requires exit/reopen',async()=>{
+ let response=0;const f=await windowsFixture({response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'restart');await f.tick();f.options.invalidSignature=true;f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);assert.equal(exits,0);response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.sent.length,1);
+});
+for(const publisher of [[],['CN=OnlyName'],['']])test('Windows disables updates without a full trusted publisher '+JSON.stringify(publisher),async()=>{const f=await windowsFixture({publisher});assert.equal(f.nativeCalls.some(c=>c[0]==='nsis'),false);assert.equal(await updateCall(f,'state'),null);});
+test('Windows disables updates when packaged verification is disabled',async()=>{const f=await windowsFixture({updateConfig:{verifyUpdateCodeSignature:false}});assert.equal(f.nativeCalls.some(c=>c[0]==='nsis'),false);});
+test('Windows errors publish safe state without library or signature output',async()=>{
+ const logs=[],f=await windowsFixture({console:{error:(...v)=>logs.push(v),log:(...v)=>logs.push(v),warn:(...v)=>logs.push(v)}}),sentinel='synthetic_secret_body https://example.invalid/?private=1 C:\\Users\\Private';
+ f.updater.emit('error',Error(sentinel));await f.tick();const state=await updateCall(f,'state');assert.equal(state.error,'update_check_failed');assert.equal(JSON.stringify([logs,f.messages,state,f.windows.map(w=>w.settingsMessages)]).includes(sentinel),false);assert.equal(logs.length,0);
+});
+for(const changed of ['valid-cache','tampered-cache','withdrawn'])test('Windows reopened process rechecks '+changed+' and cannot reuse a previous stop ACK',async()=>{
+ const f=await windowsFixture({invalidSignature:changed==='tampered-cache',nullCheck:changed==='withdrawn'});f.event({kind:'update-stopped'});await f.tick();
+ if(changed!=='withdrawn')f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();const state=await updateCall(f,'state');assert.equal(state.status,changed==='valid-cache'?'ready':changed==='withdrawn'?'idle':'error');
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('stable Mac starts one native check after ready and deduplicates reconnect and manual checks',async()=>{
+ const f=await updateFixture();assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='feed'))),[['feed',{url:'https://super-tree.com/homer/updates/stable/darwin-arm64/RELEASES.json',serverType:'json'}]]);
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
+ f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});f.app.emit('activate');updateMenu(f).click();await f.tick();
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
+ f.updater.emit('update-not-available');updateMenu(f).click();assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,2);
+});
+test('Intel Mac reads only its own feed',async()=>{
+ const f=await updateFixture({arch:'x64'});assert.equal(f.nativeCalls.find(c=>c[0]==='feed')[1].url,'https://super-tree.com/homer/updates/stable/darwin-x64/RELEASES.json');
+});
+for(const [name,options]of [['missing channel',{manifest:{}}],['QA',{manifest:{...stableManifest,releaseChannel:'qa'}}],['candidate ID',{manifest:{...stableManifest,appId:'app.homer.desktop.candidate'}}],['local tree',{manifest:{...stableManifest,localWorkingTree:true}}],['untrusted signer',{untrustedSigner:true}],['unknown arch',{arch:'riscv64'}]])test('update remains disabled for '+name,async()=>{
+ const f=await updateFixture(options);assert.equal(await updateCall(f,'state'),null);assert.equal(f.nativeCalls.some(c=>c[0]==='feed'||c[0]==='check-update'),false);
+});
+test('test profile never configures native updates even with stable metadata',async()=>{
+ const f=await fixture(undefined,undefined,undefined,{manifest:stableManifest});assert.equal(f.nativeCalls.some(c=>c[0]==='feed'),false);
+});
+test('native preparation is required; dismissal survives page reload and keeps the menu restart',async()=>{
+ const f=await updateFixture();f.updater.emit('update-available');assert.equal((await updateCall(f,'state')).status,'downloading');
+ await updateCall(f,'restart');assert.equal(f.sent.length,0);
+ f.updater.emit('update-downloaded',{},'ignored notes','0.2.0');assert.equal((await updateCall(f,'state')).version,'0.2.0');
+ await updateCall(f,'dismiss');await f.windows[0].loadURL('http://127.0.0.1:56789/');f.updater.emit('update-downloaded',{},'ignored duplicate','0.2.0');assert.equal((await updateCall(f,'state')).noticeHidden,true);assert.equal(updateMenu(f).label,'重启并更新…');
+});
+test('manual errors and hidden restart failures give safe native feedback',async()=>{
+ const f=await updateFixture();f.updater.emit('update-not-available');updateMenu(f).click();f.updater.emit('error',Error('private_details'));await f.tick();
+ assert.ok(f.messages.some(m=>m.detail?.includes('检查更新未能完成')));assert.equal(JSON.stringify(f.messages).includes('private_details'),false);
+ f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'dismiss');updateMenu(f).click();await f.tick();f.event({kind:'update-busy'});await f.tick();
+ assert.ok(f.messages.some(m=>m.detail?.includes('当前工作尚未结束')));assert.equal((await updateCall(f,'state')).noticeHidden,true);
+});
+test('update becoming ready during an ordinary quit confirmation switches to the safe update gate',async()=>{
+ const f=await updateFixture();f.app.quit();f.updater.emit('update-downloaded',{},'', '0.2.0');await f.tick();
+ assert.deepEqual(f.sent.map(JSON.parse),[{kind:'update-stop'}]);
+});
+test('a staged update arriving after ordinary stop was sent cannot bypass update-stop proof',async()=>{
+ const f=await updateFixture();let quits=0;f.app.on('quit',()=>quits++);f.app.quit();await f.tick();assert.equal(JSON.parse(f.sent[0]).kind,'quit');
+ f.updater.emit('update-downloaded',{},'', '0.2.0');f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(quits,0);assert.equal((await updateCall(f,'state')).error,'update_service_stopped');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('native install failure keeps a recoverable ready state without relaunch or forced exit',async()=>{
+ const f=await updateFixture({installError:true});f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();const state=await updateCall(f,'state');assert.equal(state.status,'ready');assert.equal(state.error,'update_install_unconfirmed');assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='relaunch'),false);
+});
+test('asynchronous native install error also releases the quit gate and reports the stopped service',async()=>{
+ const f=await updateFixture();f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ f.updater.emit('error',Error('private_install_detail'));await f.tick();assert.equal((await updateCall(f,'state')).error,'update_install_unconfirmed');assert.equal(updateMenu(f).enabled,true);assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,1);
+});
+for(const failure of ['throw','event'])for(const action of ['retry','quit','cancel'])test('native install '+failure+' recovery permits '+action+' only after confirmed safe stop',async()=>{
+ let response=1;
+ const f=await updateFixture({response:()=>response});
+ let exits=0;f.app.on('quit',()=>exits++);
+ f.updater.quitAndInstall=()=>{f.nativeCalls.push(['install-update']);if(failure==='throw')throw Error('synthetic_install_failure');};
+ f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ if(failure==='event'){f.updater.emit('error',Error('synthetic_install_failure'));await f.tick();}
+ assert.equal((await updateCall(f,'state')).error,'update_install_unconfirmed');assert.equal(exits,0);
+ response=action==='retry'?1:action==='quit'?2:0;
+ f.updater.quitAndInstall=()=>{f.nativeCalls.push(['install-update']);f.app.quit();};
+ if(action==='retry')await updateCall(f,'restart');else f.app.quit();await f.tick();
+ const recovery=f.messages.filter(m=>m.type==='question').at(-1);
+ assert.deepEqual(Array.from(recovery.buttons),['取消','重试更新','退出荷马']);
+ assert.equal(f.sent.length,1,'a stopped runtime must not receive another stop');
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,action==='retry'?2:1);
+ assert.equal(exits,action==='cancel'?0:1);assert.equal(f.nativeCalls.some(c=>c[0]==='relaunch'),false);
+ assert.equal((await updateCall(f,'state')).noticeHidden,true);
+ if(action==='cancel'){response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.sent.length,1);assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,2);}
+ f.event({kind:'update-stopped'});await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,action==='quit'?1:2);
+});
+for(const blocked of ['unsaved','navigation'])test('install recovery preserves '+blocked+' protection',async()=>{
+ let f;f=await updateFixture({installError:true,response:async options=>{if(blocked==='navigation'&&options.buttons.includes('退出荷马'))await f.windows[0].loadURL('http://127.0.0.1:56789/');return options.buttons.includes('退出荷马')?2:1;}});
+ let exits=0;f.app.on('quit',()=>exits++);
+ f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ if(blocked==='unsaved')f.windows[0].webContents.executeJavaScript=async()=>false;
+ f.app.quit();await f.tick();assert.equal(exits,0);assert.equal(f.sent.length,1);assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,1);
+});
+for(const action of ['retry','quit','cancel'])test('native close-before-error recovery permits '+action+' without a live renderer',async()=>{
+ let response=1;
+ const f=await updateFixture({response:()=>response});let exits=0;f.app.on('quit',()=>exits++);
+ f.updater.quitAndInstall=()=>{f.nativeCalls.push(['install-update']);for(const w of f.windows)w.close();};
+ f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(f.windows[0].isDestroyed(),true);assert.equal(f.windows[0].webContents.isDestroyed(),true);
+ f.updater.emit('error',Error('synthetic_install_failure'));await f.tick();assert.equal(exits,0);
+ response=action==='retry'?1:action==='quit'?2:0;
+ f.updater.quitAndInstall=()=>{f.nativeCalls.push(['install-update']);f.app.quit();};
+ if(action==='retry')updateMenu(f).click();else f.app.quit();await f.tick();
+ const recovery=f.messages.filter(m=>m.type==='question').at(-1);
+ assert.deepEqual(Array.from(recovery.buttons),['取消','重试更新','退出荷马']);assert.equal(recovery.parent,undefined);
+ assert.equal(f.sent.length,1);assert.equal(f.windows.length,1,'recovery must not recreate the stopped service page');
+ assert.equal(exits,action==='cancel'?0:1);assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,action==='retry'?2:1);
+ if(action==='cancel'){response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,2);assert.equal(f.sent.length,1);}
+ f.event({kind:'update-stopped'});await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,action==='quit'?1:2);assert.equal(f.nativeCalls.some(c=>c[0]==='relaunch'),false);
+});
+test('parentless recovery rejects a window opened while confirmation is pending',async()=>{
+ let f;f=await updateFixture({response:async options=>{if(options.buttons.includes('重试更新')){f.createWindow();await f.windows.at(-1).loadURL('http://127.0.0.1:56789/');return 2;}return 1;}});
+ let exits=0;f.app.on('quit',()=>exits++);
+ f.updater.quitAndInstall=()=>{f.nativeCalls.push(['install-update']);for(const w of f.windows)w.close();};
+ f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ f.updater.emit('error',Error('synthetic_install_failure'));await f.tick();f.app.quit();await f.tick();
+ assert.equal(f.messages.filter(m=>m.type==='question').at(-1).parent,undefined);assert.equal(f.windows.length,2);assert.equal(exits,0);assert.equal(f.sent.length,1);assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,1);
+});
+test('ready update requires update-stop acknowledgement plus exit0 and never relaunches twice',async()=>{
+ const f=await updateFixture();f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();
+ assert.deepEqual(f.sent.map(JSON.parse),[{kind:'update-stop'}]);f.app.quit();await f.tick();assert.equal(f.sent.length,1);
+ f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+ const ok=await updateFixture();ok.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(ok,'restart');await ok.tick();
+ ok.event({kind:'update-stopped'});await ok.tick();assert.equal(ok.nativeCalls.some(c=>c[0]==='install-update'),false);
+ ok.child.emit('close',0,null);await ok.tick();ok.event({kind:'update-stopped'});await ok.tick();assert.deepEqual(ok.nativeCalls.filter(c=>['install-update','relaunch'].includes(c[0])),[['install-update']]);
+});
+for(const [name,status,signal,ack]of [['exit1',1,null,true],['signal',0,'SIGTERM',true],['missing-ack',0,null,false]])test('update '+name+' does not install or relaunch',async()=>{
+ const f=await updateFixture();let exits=0;f.app.on('quit',()=>exits++);f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();if(ack)f.event({kind:'update-stopped'});f.child.emit('close',status,signal);await f.tick();
+ assert.equal(f.nativeCalls.some(c=>['install-update','relaunch'].includes(c[0])),false);assert.equal((await updateCall(f,'state')).error,'update_service_stopped');
+ await updateCall(f,'restart');f.app.quit();await f.tick();assert.equal(exits,0);assert.equal(f.sent.length,1);assert.equal(f.messages.some(m=>m.buttons?.includes('退出荷马')),false);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+ f.windows[0].destroyed=true;f.windows[0].contentsDestroyed=true;f.app.quit();await f.tick();assert.equal(exits,0);assert.equal(f.messages.some(m=>m.buttons?.includes('退出荷马')),false);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('busy update leaves service and configuration in place and permits an explicit retry',async()=>{
+ const f=await updateFixture();f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();f.event({kind:'update-busy'});await f.tick();
+ assert.equal((await updateCall(f,'state')).error,'update_busy');assert.equal(f.nativeCalls.some(c=>['install-update','source','disconnect'].includes(c[0])),false);
+ await updateCall(f,'restart');await f.tick();assert.equal(f.sent.length,2);
+});
+test('unsaved edits and timeout never stop or install automatically',async()=>{
+ const unsaved=await updateFixture({unsaved:true});unsaved.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(unsaved,'restart');await unsaved.tick();assert.equal(unsaved.sent.length,0);
+ const f=await updateFixture();f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();f.timeout();await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('updater failures never expose native errors or report preparation success',async()=>{
+ const f=await updateFixture({checkError:true});assert.equal((await updateCall(f,'state')).status,'error');assert.equal(JSON.stringify(await updateCall(f,'state')).includes('private'),false);
+ const malformed=await updateFixture();malformed.updater.emit('update-downloaded',{},'', '<unsafe>');await updateCall(malformed,'restart');await malformed.tick();assert.equal(malformed.sent.length,0);
+});
+test('update bridge rejects extra arguments and stale or foreign frames',async()=>{
+ const f=await updateFixture();for(const method of ['state','dismiss','restart']){
+  await assert.rejects(()=>updateCall(f,method,'https://foreign.invalid/'),/desktop_update_forbidden/);
+  await assert.rejects(()=>f.handlers.get('homer:update:'+method)({...accountEvent(f),senderFrame:{...accountEvent(f).senderFrame}}),/desktop_update_forbidden/);
+ }
+});
 
 test('desktop access refuses a URL event without a valid private transport credential',async()=>{
  for(const desktopAccessToken of [undefined,null,'short','A'.repeat(64)]){
@@ -104,9 +328,9 @@ for(const failure of ['cancel','stop','save'])test(`source switch ${failure} ret
  if(failure==='save'){f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();assert.ok(f.messages.some(m=>m.detail?.includes('原设置已保留')));}
  assert.equal(f.nativeCalls.some(c=>['source','relaunch','disconnect'].includes(c[0])),false);
 });
-test('native startup does not forward website credentials; saved website balance and switching back remain available',async()=>{
+test('Codex startup passes the applied Homer account only through the private host pipe',async()=>{
  const f=await accountFixture({modelSource:'codex',nativeState:{account:'chatgpt',connected:true,phase:'idle'}});
- assert.deepEqual(f.credentials,['null']);const state=await accountCall(f,'state');assert.equal(state.source,'codex');assert.equal(state.connection,'website');assert.equal(state.active,'disconnected');assert.equal(state.needsRestart,false);assert.equal(f.nativeCalls.some(c=>c[0]==='wallet'),false);
+ assert.equal(JSON.parse(f.credentials[0]).token,'synthetic-file-token');const state=await accountCall(f,'state');assert.equal(state.source,'codex');assert.equal(state.connection,'website');assert.equal(state.active,'disconnected');assert.equal(state.needsRestart,false);assert.equal(f.nativeCalls.some(c=>c[0]==='wallet'),false);
  assert.ok((await accountCall(f,'refresh')).wallet);assert.equal(f.nativeCalls.filter(c=>c[0]==='wallet').length,1);
  await accountCall(f,'applyWebsite');await f.tick();f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();
  assert.deepEqual(f.nativeCalls.filter(c=>['source','relaunch','disconnect'].includes(c[0])),[['source','website'],['relaunch']]);
@@ -114,20 +338,14 @@ test('native startup does not forward website credentials; saved website balance
 for(const account of ['none','other','unknown'])test(`native ${account} cannot activate a ChatGPT source`,async()=>{
  const f=await accountFixture({nativeState:{account,connected:false,phase:'idle'}});await accountCall(f,'applyCodex');await f.tick();assert.equal(f.sent.length,0);assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
 });
-test('daily desktop reuses a legacy Token without website login or config writes',async()=>{
- const f=await accountFixture({connection:{token:'synthetic-development-key'}});
- assert.deepEqual(f.credentials,[JSON.stringify({token:'synthetic-development-key'})]);
- const state=await accountCall(f,'state');assert.equal(state.active,'legacy');assert.equal(state.connection,'legacy');assert.equal(state.websiteReady,true);assert.equal(state.needsRestart,false);
- assert.equal(JSON.stringify(state).includes('synthetic-development-key'),false);
- await accountCall(f,'refresh');assert.equal(f.nativeCalls.some(c=>c[0]==='wallet'),true);
- assert.equal(f.nativeCalls.some(c=>['config','save-config','external'].includes(c[0])),false);
- await f.handlers.get('menu')[0].submenu.find(item=>item.label==='模型连接信息…').click();
- assert.equal(f.messages.at(-1).message,'已连接（原凭据）');assert.doesNotMatch(f.messages.at(-1).detail,/通过网站登录/);
- const codex=await accountFixture({modelSource:'codex',connection:{token:'synthetic-development-key'}});
- assert.deepEqual(codex.credentials,['null']);assert.equal((await accountCall(codex,'state')).connection,'legacy');
- await accountCall(codex,'applyWebsite');await codex.tick();assert.equal(codex.nativeCalls.some(c=>c[0]==='source'),false);
- codex.event({kind:'stopped'});codex.child.emit('close',0,null);await codex.tick();
- assert.deepEqual(codex.nativeCalls.filter(c=>['source','relaunch','disconnect'].includes(c[0])),[['source','website'],['relaunch']]);
+test('manual Token cannot enter the runtime, query balance or select website source',async()=>{
+ for(const modelSource of ['website','codex']){
+  const f=await accountFixture({modelSource,connection:{token:'synthetic-development-key'}});
+  assert.deepEqual(f.credentials,['null']);
+  const state=await accountCall(f,'state');assert.equal(state.connection,'disconnected');assert.equal(state.websiteReady,false);
+  await accountCall(f,'refresh');assert.equal(f.nativeCalls.some(c=>c[0]==='wallet'),false);
+  await accountCall(f,'applyWebsite');assert.equal(f.sent.length,0);
+ }
 });
 test('account bridge saves pending connection without changing running Token, and restarts only after stopped ACK and exit',async()=>{
  const f=await accountFixture();
@@ -156,6 +374,13 @@ test('confirmed disconnect clears local Key only after owner stop, then relaunch
  f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();
  assert.deepEqual(f.nativeCalls.filter(c=>['disconnect','relaunch'].includes(c[0])),[['disconnect'],['relaunch']]);
 });
+for(const action of ['restart','disconnect'])test(`Codex account ${action} preserves the applied channel account until confirmed stop`,async()=>{
+ const f=await accountFixture({modelSource:'codex',response:0});
+ const applied=f.credentials[0];await accountCall(f,'connect');await f.tick();
+ assert.equal((await accountCall(f,'state')).needsRestart,true);
+ await accountCall(f,action);await f.tick();assert.deepEqual(f.credentials,[applied]);
+ assert.equal(f.sent.length,0);assert.equal(f.nativeCalls.some(c=>['disconnect','relaunch'].includes(c[0])),false);
+});
 test('account methods reject arguments, foreign frames, and responses after navigation',async()=>{
  const f=await accountFixture();for(const name of ['state','connect','cancel','reopen','refresh','openWebsite','disconnect','restart','nativeConnect','nativeCancel','nativeReopen','applyCodex','applyWebsite']){
   await assert.rejects(()=>accountCall(f,name,'extra'),/desktop_account_forbidden/);
@@ -175,6 +400,15 @@ test('reopening a pending login uses the same private authorization and stops af
  options.onCallback();await accountCall(f,'reopen');assert.equal(f.nativeCalls.filter(c=>c[0]==='external').length,2);
  await accountCall(f,'cancel');await accountCall(f,'reopen');assert.equal(f.nativeCalls.filter(c=>c[0]==='external').length,2);complete(websiteConnection());
 });
+test('a balance read started during website authorization cannot publish the previous Token balance',async()=>{
+ let authorize,finishWallet,reads=0;
+ const f=await accountFixture({modelSource:'codex',authorize:()=>new Promise(r=>authorize=r),wallet:()=>++reads===1?new Promise(r=>finishWallet=r):Promise.resolve({available:999,used:0,unit:'old'})});
+ await accountCall(f,'connect');await f.tick();
+ const pending=accountCall(f,'refresh');await f.tick();
+ authorize({token:'synthetic-new-token',subject:'fixture_user',config:{main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}});await f.tick();
+ finishWallet({available:999,used:0,unit:'old'});await pending;
+ const state=await accountCall(f,'state');assert.equal(state.wallet,undefined);assert.equal(state.stale,true);assert.equal(state.source,'codex');
+});
 test('wallet refresh merges concurrent reads and runtime events only expose invalidation',async()=>{
  let settle;const f=await accountFixture({wallet:()=>new Promise(r=>settle=r)});
  const a=accountCall(f,'refresh'),b=accountCall(f,'refresh');await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='wallet').length,1);
@@ -182,7 +416,100 @@ test('wallet refresh merges concurrent reads and runtime events only expose inva
  f.event({kind:'account_usage_dirty',text:'must-not-forward'});await f.tick();assert.ok(f.windows[0].settingsMessages.some(([name,value])=>name==='homer:account:changed'&&value===undefined));
 });
 
-const websiteConnection=()=>({token:'synthetic-account-token',subject:'fixture_user',config:{main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',effort:'max',fast:false}}});
+const websiteConnection=()=>({token:'synthetic-account-token',subject:'fixture_user',config:{main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}});
+async function realAccountApi(){
+ const source=transpileModule(readFileSync(resolve('src/homer-account.ts'),'utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
+ const module=new vm.SourceTextModule(source,{identifier:'homer-account-offline'});
+ await module.link(async name=>{assert.ok(name.startsWith('node:')||name==='../scripts/windows-security.mjs'||['./deepseek-model.js','./model-context.js','./model-catalog.js','./model-config.js'].includes(name));const exports=name.startsWith('node:')?createRequire(import.meta.url)(name):name.startsWith('./')?await (await import('tsx/esm/api')).tsImport('../src/'+name.slice(2).replace(/\.js$/,'.ts'),import.meta.url):await import('../scripts/windows-security.mjs');return new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);});});
+ await module.evaluate();return module.namespace;
+}
+test('real account HTTP and private file preserve A until restart, adopt B, and roll back without replacing identity or history',async()=>{
+ // Keep validation, HTTP and atomic persistence real; replace only Electron/OS and the local website response.
+ const api=await realAccountApi();
+ const parent=resolve('.codex/scratch/config-ab-offline-20261030/shell');mkdirSync(parent,{recursive:true});
+ const root=realpathSync(mkdtempSync(join(parent,'synthetic-'))),file=join(root,'runtime-config.json'),history=join(root,'history.txt');
+ const boundary={gatewayOrigin:'https://models.super-tree.com'},a=websiteConnection(),b={...a.config,worker:{...a.config.worker,effort:'high',context:{contextWindow:600000,autoCompactTokenLimit:450000,autoCompactTokenLimitScope:'total'}}};
+ assert.deepEqual(api.validateHomerRuntimeConfig(b,boundary),b);
+ api.saveHomerConnection(file,{subject:a.subject,modelToken:a.token,config:a.config},boundary);
+ writeFileSync(history,'synthetic existing history\n');const historyBefore=readFileSync(history);
+ let config=a.config,mode='good',release,received;const pending=join(root,'.runtime-config.json.pending');
+ const server=createServer((req,res)=>{
+  assert.equal(req.url,'/api/homer/v1/config');assert.equal(req.method,'GET');
+  assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
+  if(mode==='unavailable'){res.writeHead(503).end('{}');return;}
+  if(mode==='late'){received?.();release=()=>res.end(JSON.stringify(config));return;}
+  res.end(JSON.stringify(mode==='invalid'?{...config,worker:{...config.worker,effort:''}}:config));
+ });
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const accountApi={...api,queryHomerWallet:async()=>{throw Error('USAGE_UNAVAILABLE');},readHomerConnection:()=>api.readHomerConnection(file,boundary),saveHomerRuntimeConfig:(_file,value)=>api.saveHomerRuntimeConfig(file,value,boundary),queryHomerRuntimeConfig:(_options,signal)=>api.queryHomerRuntimeConfig({...boundary,websiteOrigin:'http://127.0.0.1:'+server.address().port,allowSyntheticLoopback:true},signal)};
+ const boot=async()=>{const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,accountApi});for(let i=0;i<300&&!f.credentials.length;i++)await new Promise(r=>setTimeout(r,5));assert.equal(f.credentials.length,1);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;};
+ const waitFor=async(f,expected)=>{for(let i=0;i<300;i++){const state=await accountCall(f,'state');if(expected(state))return state;await new Promise(r=>setTimeout(r,5));}assert.fail('account state did not settle');};
+ const check=async(f,expected)=>{f.advance(3600001);f.event({kind:'account_config_check'});return waitFor(f,expected);};
+ const stop=async f=>{f.app.quit();await f.tick();f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();};
+ let f;
+ try{
+  f=await boot();assert.deepEqual(JSON.parse(f.credentials[0]),a);
+  const bytesA=readFileSync(file);
+  for(const [failure,error]of [['invalid','INVALID_REQUEST'],['unavailable','CONFIG_UNAVAILABLE']]){
+   mode=failure;await check(f,s=>s.error===error);assert.deepEqual(readFileSync(file),bytesA);
+   assert.equal((await accountCall(f,'state')).needsRestart,false);assert.deepEqual(JSON.parse(f.credentials[0]),a);
+  }
+  config=b;mode='good';symlinkSync(file,pending);
+  await check(f,s=>s.error==='CONNECTION_WRITE_FAILED');assert.deepEqual(readFileSync(file),bytesA);rmSync(pending);
+  await check(f,s=>s.needsRestart&&!s.error);
+  assert.deepEqual(api.readHomerConnection(file,boundary),{...a,config:b});
+  assert.equal(statSync(file).mode&0o777,0o600);assert.deepEqual(JSON.parse(f.credentials[0]),a);assert.equal(f.credentials.length,1);assert.equal(f.spawnCount(),1);
+  const bytesB=readFileSync(file);await stop(f);f=await boot();assert.deepEqual(readFileSync(file),bytesB);
+  assert.deepEqual(JSON.parse(f.credentials[0]),{...a,config:b});assert.equal((await accountCall(f,'state')).needsRestart,false);
+  config=a.config;await check(f,s=>s.needsRestart);assert.deepEqual(JSON.parse(f.credentials[0]),{...a,config:b});
+  await stop(f);f=await boot();assert.deepEqual(JSON.parse(f.credentials[0]),a);assert.equal((await accountCall(f,'state')).needsRestart,false);
+  // A valid delayed response must not save after the shell begins shutting down.
+  config=b;mode='late';const arrived=new Promise(r=>received=r);f.advance(3600001);f.event({kind:'account_config_check'});await arrived;
+  f.app.quit();release();await new Promise(r=>setTimeout(r,20));assert.deepEqual(api.readHomerConnection(file,boundary),a);
+  assert.deepEqual(readFileSync(history),historyBefore);
+ }finally{if(f)await stop(f);server.closeAllConnections();await new Promise(r=>server.close(r));rmSync(root,{recursive:true,force:true});}
+});
+for(const cacheFormat of ['four','five'])for(const modelSource of ['website','codex'])test('old membership cache refreshes at startup without authorization in '+modelSource+' mode from '+cacheFormat+' fields',async()=>{
+ const api=await realAccountApi(),parent=resolve('.codex/scratch/membership-context-cache/shell');mkdirSync(parent,{recursive:true});
+ const root=realpathSync(mkdtempSync(join(parent,'startup-'))),file=join(root,'runtime-config.json'),pending=join(root,'.runtime-config.json.pending');
+ const boundary={gatewayOrigin:'https://models.super-tree.com'},role={baseUrl:boundary.gatewayOrigin+'/v1',model:'deepseek-flash',effort:'max',fast:false};
+ if(cacheFormat==='five')role.deepseek={contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'};
+ const targetRole={baseUrl:boundary.gatewayOrigin+'/v1',model:'Qwen/future-model',effort:null,fast:false,capabilities:{inputModalities:['text'],reasoningEfforts:[],webSearch:false,toolSearch:false},context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'}},target={main:targetRole,worker:targetRole};
+ const old={subject:'fixture_user',token:'synthetic-retained-key',config:{main:role,worker:role}},bytes=JSON.stringify(old);
+ let mode,requests=0,authorizations=0;
+ const server=createServer((req,res)=>{
+  requests++;assert.equal(req.url,'/api/homer/v1/config');assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
+  if(mode==='unavailable'){res.writeHead(503).end('{}');return;}
+  res.end(JSON.stringify(mode==='invalid'?old.config:target));
+ });
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const accountApi={...api,authorizeHomerConnection:async()=>{authorizations++;throw Error('unexpected_authorization');},queryHomerWallet:async()=>{throw Error('USAGE_UNAVAILABLE');},readHomerConnection:()=>api.readHomerConnection(file,boundary),saveHomerRuntimeConfig:(_file,value)=>api.saveHomerRuntimeConfig(file,value,boundary),queryHomerRuntimeConfig:(_options,signal)=>api.queryHomerRuntimeConfig({...boundary,websiteOrigin:'http://127.0.0.1:'+server.address().port,allowSyntheticLoopback:true},signal)};
+ const boot=async()=>{
+  const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,modelSource,accountApi});
+  for(let i=0;i<300&&!f.credentials.length;i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(f.credentials.length,1);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;
+ };
+ const stop=async f=>{f.app.quit();await f.tick();f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();};
+ try{
+  for(const failure of ['unavailable','invalid','write','good']){
+   writeFileSync(file,bytes,{mode:0o600});mode=failure;if(mode==='write')symlinkSync(file,pending);
+   let f=await boot();
+   try{
+    const state=await accountCall(f,'state');assert.equal(state.connection,'website');assert.equal(state.source,modelSource);
+    if(failure!=='good'){
+     assert.equal(state.error,{unavailable:'CONFIG_UNAVAILABLE',invalid:'INVALID_REQUEST',write:'CONNECTION_WRITE_FAILED'}[failure]);
+     assert.equal(state.websiteReady,false);assert.equal(state.needsRestart,false);assert.deepEqual(f.credentials,['null']);assert.equal(readFileSync(file,'utf8'),bytes);
+     if(mode==='write')rmSync(pending);mode='good';await stop(f);f=await boot();
+    }
+    const expected={subject:old.subject,token:old.token,config:target};
+    assert.deepEqual(JSON.parse(f.credentials[0]),expected);assert.deepEqual(api.readHomerConnection(file,boundary),expected);
+    assert.equal(statSync(file).mode&0o777,0o600);assert.equal((await accountCall(f,'state')).needsRestart,false);
+    assert.equal((await accountCall(f,'state')).active,modelSource==='website'?'website':'disconnected');
+   }finally{await stop(f);}
+  }
+  assert.equal(requests,7);assert.equal(authorizations,0);
+ }finally{server.closeAllConnections();await new Promise(r=>server.close(r));rmSync(root,{recursive:true,force:true});}
+});
 test('startup sync adopts website config; legacy startup failure keeps credential on disk but sends none to runtime',async()=>{
  const f=await accountFixture({connection:websiteConnection()});assert.equal(f.nativeCalls.filter(c=>c[0]==='config').length,1);
  assert.equal(JSON.parse(f.credentials[0]).config.main.model,'deepseek-flash');assert.equal((await accountCall(f,'state')).needsRestart,false);
@@ -220,32 +547,11 @@ test('login counts as a config check; retired development input never fetches we
 
 const permissionChannels=['check','prompt-accessibility','open-system-settings'].map(name=>'homer:desktop-permissions:'+name);
 const plain=value=>JSON.parse(JSON.stringify(value));
-test('DeepSeek opt-in prompts once, sends its credential only on FD3 and leaves native account mode unchanged',async()=>{
- const f=await fixture(['Homer','--deepseek-profile','/synthetic/deepseek']);
- assert.equal(f.prompts(),1);assert.equal(f.spawnCount(),1);assert.deepEqual(f.credentials,['synthetic-private-token']);
- assert.equal(JSON.stringify(f.launches).includes('synthetic-private-token'),false);
- assert.equal(f.launches[0].options.cwd,'/synthetic/deepseek');assert.ok(f.launches[0].args.includes('--deepseek'));
- assert.deepEqual(plain(f.launches[0].options.stdio),['pipe','pipe','ignore','pipe']);
- assert.ok(f.handlers.get('menu')[0].submenu.some(item=>item.label==='DeepSeek 连接信息…'));
- const original=await fixture();assert.equal(original.prompts(),0);assert.deepEqual(original.credentials,[]);
- assert.equal(original.launches[0].args.includes('--deepseek'),false);
-});
-test('DeepSeek cancellation, invalid profile and malformed path never launch a backend',async()=>{
- for(const [args,native]of [
-  [['Homer','--deepseek-profile','/synthetic/deepseek'],{prompt:async()=>{throw Error('deepseek_token_input_cancelled');}}],
-  [['Homer','--deepseek-profile','/synthetic/deepseek'],{invalidProfile:true}],
-  [['Homer','--deepseek-profile'],{}],
-  [['Homer','--test-profile','/synthetic/test','--deepseek-profile','/synthetic/other'],{}],
- ]){const f=await fixture(args,undefined,undefined,native);assert.equal(f.spawnCount(),0);assert.deepEqual(f.credentials,[]);}
-});
-test('quitting during a native Token prompt aborts it and cannot start a late backend',async()=>{
- let finish,signal;const f=await fixture(['Homer','--deepseek-profile','/synthetic/deepseek'],undefined,undefined,{prompt:options=>{signal=options.signal;return new Promise(r=>finish=r);}});
- f.app.quit();assert.equal(signal.aborted,true);finish('synthetic-late-token');await f.tick();assert.equal(f.spawnCount(),0);assert.deepEqual(f.credentials,[]);
-});
-test('offline DeepSeek profile uses the explicit fixture path without opening a real credential prompt',async()=>{
- const f=await fixture(['Homer','--test-profile','/synthetic/test','--deepseek']);
- assert.equal(f.prompts(),0);assert.equal(f.spawnCount(),1);assert.deepEqual(f.credentials,['synthetic-desktop-deepseek']);
- assert.ok(f.launches[0].args.includes('--test-profile'));assert.ok(f.launches[0].args.includes('--deepseek'));
+test('retired manual Token launch flags never prompt or spawn a backend',async()=>{
+ for(const args of [
+  ['Homer','--deepseek-profile','/synthetic/deepseek'],
+  ['Homer','--test-profile','/synthetic/test','--deepseek'],
+ ]){const f=await fixture(args);assert.equal(f.spawnCount(),0);assert.deepEqual(f.credentials,[]);}
 });
 const permissionEvent=f=>({sender:f.windows[0].webContents,senderFrame:f.windows[0].webContents.mainFrame});
 async function permissionFixture(native){const f=await fixture(undefined,undefined,undefined,native);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;}
@@ -253,22 +559,22 @@ const settingsItem=f=>f.handlers.get('menu')[0].submenu.find(item=>item.label===
 const settingsReady=(f,w=f.windows.at(-1),...args)=>f.handlers.get('homer:settings:ready')({sender:w.webContents,senderFrame:w.webContents.mainFrame},...args);
 test('explicit daily DeepSeek entry uses only an adopted profile and forwards a private token',async()=>{
  const f=await fixture(['Homer','--deepseek-daily'],undefined,undefined,{adopted:true,published:true});
- assert.equal(f.prompts(),0);assert.equal(f.spawnCount(),1);assert.ok(f.launches[0].args.includes('--deepseek-daily'));
+ assert.equal(f.spawnCount(),1);assert.ok(f.launches[0].args.includes('--deepseek-daily'));
  assert.equal(JSON.parse(f.credentials[0]).token,'synthetic-file-token');
  assert.deepEqual(f.tokenFiles,['/synthetic/original-app/runtime-config.json']);
  assert.equal(JSON.stringify(f.launches).includes('synthetic-file-token'),false);
- const rejected=await fixture(['Homer','--deepseek-daily'],undefined,undefined,{published:true});assert.equal(rejected.spawnCount(),1);assert.equal(rejected.prompts(),0);
+ const rejected=await fixture(['Homer','--deepseek-daily'],undefined,undefined,{published:true});assert.equal(rejected.spawnCount(),1);
 });
 test('ordinary adopted desktop launch selects DeepSeek; explicit native rollback keeps the original provider',async()=>{
  const daily=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true});
- assert.equal(daily.prompts(),0);assert.ok(daily.launches[0].args.includes('--deepseek-daily'));
+ assert.ok(daily.launches[0].args.includes('--deepseek-daily'));
  assert.deepEqual(daily.tokenFiles,['/synthetic/original-app/runtime-config.json']);
  const native=await fixture(['Homer','--native'],undefined,undefined,{adopted:true,published:true});
- assert.equal(native.prompts(),0);assert.equal(native.launches[0].args.includes('--deepseek-daily'),false);
+ assert.equal(native.launches[0].args.includes('--deepseek-daily'),false);
 });
 test('invalid daily token file opens management mode without a model credential',async()=>{
  const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,invalidTokenFile:true});
- assert.equal(f.spawnCount(),1);assert.equal(f.prompts(),0);assert.deepEqual(f.credentials,['null']);
+ assert.equal(f.spawnCount(),1);assert.deepEqual(f.credentials,['null']);
 });
 test('settings menu restores the primary window and waits for its renderer subscription',async()=>{
  const f=await fixture(),w=f.windows[0],item=settingsItem(f);assert.ok(item);assert.equal(item.accelerator,'CmdOrCtrl+,');
@@ -298,6 +604,13 @@ for(const state of ['detached','frame destroyed','contents destroyed','query','f
  if(state==='query')await w.loadURL('http://127.0.0.1:56789/?query=1');
  if(state==='foreign origin')await w.loadURL('http://127.0.0.1:56790/');
  await assert.rejects(()=>settingsReady(f,w,true),/desktop_settings_forbidden/);assert.equal(w.settingsMessages.length,0);
+});
+test('update preload exposes only zero-argument actions and removable event-free notifications',async()=>{
+ const exposed={},calls=[],listeners=new Map();vm.runInNewContext(readFileSync('packaging/electron/preload.cjs','utf8'),{process:{isMainFrame:true},require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>exposed[name]=value},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return null;},on:(channel,fn)=>listeners.set(channel,fn),removeListener:(channel,fn)=>{assert.equal(listeners.get(channel),fn);listeners.delete(channel);}}})});
+ const api=exposed.homerDesktopUpdate;assert.deepEqual(Object.keys(api),['state','dismiss','restart','onChange']);let received;
+ const off=api.onChange((...args)=>{received=args;});listeners.get('homer:update:changed')({sender:'private'},'ignored');assert.deepEqual(received,[]);off();off();assert.equal(listeners.size,0);assert.throws(()=>api.onChange(null),/desktop_update_callback/);
+ for(const method of ['state','dismiss','restart']){await api[method]();await assert.rejects(api[method]('forbidden-url'),/desktop_permissions_arguments/);}
+ assert.deepEqual(calls,[['homer:update:state'],['homer:update:dismiss'],['homer:update:restart']]);
 });
 test('settings preload subscribes before readiness, strips IPC event and disposes exactly its listener',async()=>{
  const listeners=new Map(),calls=[],exposed={};const source=readFileSync('packaging/electron/preload.cjs','utf8');
@@ -400,7 +713,7 @@ test('preload exposes fixed Promise methods and only the screen settings token i
  for(const isMainFrame of [true,false,undefined]){
   const exposed=[],calls=[];vm.runInNewContext(source,{process:{isMainFrame},require:name=>{assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(...args)=>exposed.push(args)},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {synthetic:true};}}};}});
   if(isMainFrame!==true){assert.equal(exposed.length,0);continue;}
-  assert.equal(exposed.length,3);const [name,api]=exposed.find(([name])=>name==='homerDesktopPermissions');assert.equal(name,'homerDesktopPermissions');assert.deepEqual(Object.keys(api),['check','promptAccessibility','openSystemSettings']);
+  assert.equal(exposed.length,4);const [name,api]=exposed.find(([name])=>name==='homerDesktopPermissions');assert.equal(name,'homerDesktopPermissions');assert.deepEqual(Object.keys(api),['check','promptAccessibility','openSystemSettings']);
   await api.openSystemSettings('screen');assert.deepEqual(calls.at(-1),[permissionChannels[2],'screen']);
   for(const args of [[undefined],[null],['Screen'],['screen',true],['https://example.invalid/'],[{target:'screen'}]]){const n=calls.length;await assert.rejects(async()=>api.openSystemSettings(...args),/desktop_permissions_arguments/);assert.equal(calls.length,n);}
   for(const [i,method] of Object.keys(api).entries()){assert.equal(typeof api[method],'function');assert.equal((await api[method]()).synthetic,true);assert.deepEqual(calls.at(-1),[permissionChannels[i]]);const n=calls.length;await assert.rejects(async()=>api[method]('/tmp'),/desktop_permissions_arguments/);assert.equal(calls.length,n);}
@@ -423,7 +736,7 @@ test('macOS keeps real window controls aligned with the original 44/52px toolbar
  w.contentWidth=801;w.emit('resize');assert.equal(w.buttonPosition.y,15);assert.equal(w.buttonMoves,2);
  assert.equal(w.listenerCount('resize'),1);
 });
-for(const platform of ['win32','linux'])test(`${platform} retains the packaged macOS guard without invoking window controls`,async()=>{
+for(const platform of ['linux'])test(`${platform} retains the packaged macOS guard without invoking window controls`,async()=>{
  const f=await fixture(undefined,undefined,platform);assert.equal(f.windows.length,0);assert.equal(f.spawnCount(),0);
  assert.ok(f.messages.some(m=>m.detail?.includes('desktop_packaged_macos_required')));
 });
@@ -548,6 +861,15 @@ test('system browser failure is handled without reporting the raw external URL',
  const error=f.messages.find(m=>m.type==='error');assert.ok(error?.detail.includes('系统浏览器'));
  assert.equal(error.detail.includes('private='),false);
 });
+test('mobile download link uses the existing confirmation before opening the fixed URL',async()=>{
+ const url='https://super-tree.com/homer/app';
+ for(const response of [0,1]){
+  const f=await fixture(undefined,undefined,undefined,{response});
+  assert.equal(f.handlers.get('window-open')({url}).action,'deny');await f.tick();
+  assert.ok(f.messages.some(m=>m.message==='在系统浏览器打开链接？'&&m.detail===url));
+  assert.deepEqual(f.nativeCalls.filter(c=>c[0]==='external'),response===1?[['external',url]]:[]);
+ }
+});
 test('repeated quit cannot accept acknowledgement without actual exit0; timeout retains owner',async()=>{
  const f=await fixture();let quit=0;f.app.on('quit',()=>quit++);
  f.app.quit();await f.tick();assert.equal(f.sent.length,1);
@@ -570,5 +892,11 @@ for(const [code,ack]of [[1,true],[0,false]])test(`exit ${code}, ack ${ack} never
 });
 test('ack plus actual exit0 completes normal quit once',async()=>{
  const f=await fixture();let quit=0;f.app.on('quit',()=>quit++);f.app.quit();await f.tick();f.event({kind:'stopped'});f.child.exitCode=0;f.child.emit('close',0,null);await f.tick();assert.equal(quit,1);assert.equal(f.sent.length,1);
+});
+
+test('expired wallet cache is stale even when no usage invalidation arrives',async()=>{
+ const f=await accountFixture({modelSource:'codex',wallet:async()=>({available:0,used:0,unit:'积分',expiresAt:1})});
+ await accountCall(f,'refresh');const state=await accountCall(f,'state');
+ assert.equal(state.stale,true);assert.equal(state.wallet.expiresAt,1);
 });
 }

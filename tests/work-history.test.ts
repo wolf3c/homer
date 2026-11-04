@@ -13,7 +13,10 @@ import { CodexEngine } from '../src/engine.js';
 import { writeFileSync,readFileSync,mkdirSync,mkdtempSync,rmSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { createHash } from 'node:crypto';
+import { MAIN_TOOLS } from '../src/tools.js';
 import { Homer } from '../src/service.js';
+import { seedFirstLaunchSkills } from '../src/first-launch.js';
 import type { EngineOptions,ToolCall,TurnResult } from '../src/engine.js';
 const scratch = '.codex/scratch/worker-history-cleanup-implementation-20261023/runtime';
 // Seed settled facts directly so cleanup tests do not depend on the separate
@@ -94,6 +97,88 @@ test('archive and restore use original Task identity, filter discovery and count
   assert.equal(f.tasks.listHistory().tasks[0]!.id,f.root.taskId);assert.equal(readTaskOverview(f.store.db).tasks.length,1);
   assert.equal(f.store.runs().length,0);assert.equal(f.tasks.deliveries()[0]!.state,'recorded');
  }finally{f.close();}
+});
+
+test('Worker archive emits one factual notice per transition and preserves results',async()=>{
+ const f=setup();try{
+  const w=worker(f);settleWorker(f,w.child.taskId,w.actor);f.finish();
+  const before=f.tasks.inspect(main,{taskId:w.child.taskId}).results;
+  const notices=()=>f.tasks.inbox(main).filter(m=>m.kind==='task_archived');
+  const args=f.args(w.child.taskId,'archive-worker');
+  const archived=await tools(f).call(f.actor,'archive_work',args) as any;
+  assert.equal(archived.state,'archived');assert.equal(notices().length,1);
+  const notice=notices()[0]!;
+  assert.equal(notice.senderAgentId,'host');assert.equal(notice.recipientAgentId,main.agentId);
+  assert.equal(notice.taskId,w.child.taskId);assert.equal(notice.taskVersion,args.version);
+  assert.deepEqual(notice.payload,{historyState:'archived',revision:archived.revision});
+  await tools(f).call(f.actor,'archive_work',args);
+  f.tasks.ack(main,{operationId:'archive-notice-ack',messageId:notice.id,disposition:'processed',reason:'Synthetic fact received'});
+  await tools(f).call(f.actor,'archive_work',f.args(w.child.taskId,'already-archived'));
+  assert.equal(notices().length,0,'a new operation on an already archived task creates no notice');
+  await tools(f).call(f.actor,'restore_work',f.args(w.child.taskId,'restore-worker'));
+  assert.equal(notices().length,0,'restore creates no archive notice');
+  await tools(f).call(f.actor,'archive_work',f.args(w.child.taskId,'archive-again'));
+  assert.equal(notices().length,1);assert.notEqual(notices()[0]!.id,notice.id);
+  assert.deepEqual(f.tasks.inspect(main,{taskId:w.child.taskId}).results,before);
+ }finally{f.close();}
+});
+
+test('archive facts are atomic with state, absent for blocked archives, and include main-executed work',async()=>{
+ const f=setup();try{
+  const w=worker(f),t=tools(f);
+  assert.equal((await t.call(f.actor,'archive_work',f.args(w.child.taskId,'live')) as any).state,'skipped');
+  assert.equal(f.tasks.inbox(main).filter(m=>m.kind==='task_archived').length,0);
+  settleWorker(f,w.child.taskId,w.actor);f.finish();
+  f.store.db.exec("CREATE TEMP TRIGGER reject_archive_notice BEFORE INSERT ON agent_messages WHEN NEW.kind='task_archived' BEGIN SELECT RAISE(ABORT,'synthetic_notice_failure'); END");
+  const args=f.args(w.child.taskId,'atomic-archive');
+  await assert.rejects(()=>t.call(f.actor,'archive_work',args),/synthetic_notice_failure/);
+  assert.equal(f.tasks.task(w.child.taskId).historyState,'visible');
+  f.store.db.exec('DROP TRIGGER reject_archive_notice');
+  assert.equal((await t.call(f.actor,'archive_work',args) as any).state,'archived');
+ }finally{f.close();}
+ const mainOnly=setup();try{
+  mainOnly.finish();await tools(mainOnly).call(mainOnly.actor,'archive_work',mainOnly.args());
+  assert.equal(mainOnly.tasks.inbox(main).filter(m=>m.kind==='task_archived').length,1);
+ }finally{mainOnly.close();}
+});
+
+for(const [status,skillState] of [['completed','legacy'],['failed','legacy'],['completed','enabled'],['failed','enabled'],['completed','missing'],['completed','disabled'],['completed','rpc-error'],['completed','wrong-path']] as const)test('persisted archive reaches main with native Skill selection: '+status+'/'+skillState,async()=>{
+ const native=skillState!=='legacy',available=skillState==='enabled'||!native;
+ const f=setup();let app:Homer|undefined,closed=false;const received:string[]=[],selected:{name:string;path:string}[][]=[];let home='';
+ class Peer extends EventEmitter {
+  threadId:string;turnId='archive-notice-turn';
+  constructor(options:EngineOptions){super();this.threadId=options.threadId!;}
+  async start(){return this.threadId;}async close(){return true;}async interrupt(){return true;}
+  async request(method:string){if(method!=='skills/list')return {};if(skillState==='rpc-error')throw Error('synthetic_skill_list_failed');return {data:[{skills:skillState==='missing'?[]:[{name:'homer-archive-review',path:join(skillState==='wrong-path'?f.files.workspace:home,'skills/homer-archive-review/SKILL.md'),enabled:skillState!=='disabled'}]}]};}
+  async turn(text:string,hooks?:{onStarted?:(id:string)=>void;skills?:{name:string;path:string}[]}):Promise<TurnResult>{hooks?.onStarted?.(this.turnId);received.push(text);selected.push(hooks?.skills??[]);return {status,text:''};}
+ }
+ try{
+  f.inputs.finish(f.input.messageId,f.input.revision,'completed');
+  const w=worker(f);settleWorker(f,w.child.taskId,w.actor);f.finish();
+  f.store.db.prepare("UPDATE task_versions SET sourceRequestId='cleanup-user'").run();
+  await tools(f).call(f.actor,'archive_work',f.args(w.child.taskId));
+  const notice=f.tasks.inbox(main).find(m=>m.kind==='task_archived');assert.ok(notice);
+  const page=f.inputs.dispatchPage(undefined,'epoch','all');
+  assert.equal(page.items.length,1);assert.equal(page.items[0]!.origin,'worker');
+  assert.equal((page.items[0] as import('../src/recursive-main-inputs.js').WorkerInput).text,'任务已归档。');
+  const tasksBefore=f.tasks.tasks().length;
+  const sentinel=join(f.files.workspace,'valuable.txt');writeFileSync(sentinel,'keep');
+  f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify(MAIN_TOOLS)).digest('hex'));
+  f.store.close();closed=true;
+  home=join(f.dir,'isolated-home');if(native)seedFirstLaunchSkills(home);
+  app=new Homer({runtime:f.dir,workspace:f.files.workspace,codexHome:home,nativeCodexHome:native?home:join(f.dir,'unused-native-home'),codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Peer(options));
+  await app.start();await app.idle();
+  assert.equal(received.length,available?1:0);
+  if(available){assert.match(received[0]!,/任务归档/);assert.doesNotMatch(received[0]!,/清理|cleanup|work_inspect|task_delegate/);
+   const facts=JSON.parse(received[0]!.slice(received[0]!.indexOf('\n')+1));
+   assert.equal(facts[0].taskId,w.child.taskId);assert.equal(facts[0].kind,'task_archived');assert.deepEqual(Object.keys(facts[0].payload).sort(),['historyState','revision']);
+   assert.deepEqual(selected[0],native?[{name:'homer-archive-review',path:join(home,'skills/homer-archive-review/SKILL.md')}]:[]);
+  }
+  assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.id)!.state,available?(status==='completed'?'processed':'blocked'):'uncertain');
+  if(native){assert.equal(readFileSync(join(home,'skills/homer-archive-review/SKILL.md'),'utf8'),readFileSync('.codex/skills/homer-archive-review/SKILL.md','utf8'));if(available&&status==='completed'){await app.message('事项已归档，只是普通用户文字','plain-user-notice');assert.deepEqual(selected.at(-1),[]);}}
+  assert.equal(app.tasks.tasks().length,tasksBefore);assert.equal(readFileSync(sentinel,'utf8'),'keep');
+  assert.equal(app.inputs.runnableHead('all'),undefined);
+ }finally{await app?.close();if(!closed)f.store.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 
 test('many internal bodies share one reference scan instead of scanning all results per body',async()=>{

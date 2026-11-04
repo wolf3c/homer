@@ -17,7 +17,7 @@ test('daily desktop uses website roles only and has no model endpoint before log
  assert.equal(inactive.keyEnv,'HOMER_DEEPSEEK_TOKEN');assert.equal(inactive.requiresOpenaiAuth,false);
  assert.equal(original.baseUrl,'https://old.invalid/v1');assert.equal(original.requiresOpenaiAuth,true);
  assert.throws(()=>effectiveModelConfig({...original,desktopResources:undefined}),/daily_deepseek_desktop_required/);
- const role={baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',effort:'max',fast:false} as const;
+ const role={baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false} as const;
  const effective=effectiveModelConfig({...original,desktopConnection:{main:role,worker:role}});
  assert.equal(effective.workspace,original.workspace);assert.equal(effective.codexHome,original.codexHome);
  assert.equal(effective.model,'deepseek-flash');assert.equal(effective.effort,'max');assert.equal(effective.fast,false);
@@ -110,7 +110,7 @@ test('DeepSeek loaded configuration enforces the scope-specific compaction contr
   assert.equal(deepseekProfile(f.read(connection))?.autoCompactTokenLimit,244800);
   assert.equal(deepseekProfile(f.read({...connection,deepseek:{contextWindow:100000}}))?.autoCompactTokenLimit,90000);
   assert.equal(deepseekProfile(f.read({...connection,deepseek:{autoCompactTokenLimit:244800}}))?.autoCompactTokenLimit,244800);
-  assert.throws(()=>f.read({...connection,deepseek:{autoCompactTokenLimit:244801}}),/invalid_deepseek_auto_compact_token_limit/);
+  assert.throws(()=>f.read({...connection,deepseek:{autoCompactTokenLimit:244801}}),/invalid_model_auto_compact_token_limit/);
   assert.equal(deepseekProfile(f.read({...connection,deepseek:{autoCompactTokenLimitScope:'body_after_prefix',autoCompactTokenLimit:250000}}))?.autoCompactTokenLimit,250000);
  }finally{f.close();}
 }));
@@ -211,7 +211,7 @@ for(const role of [undefined,'main','worker'] as const)for(const resume of [fals
   });
 }
 test('website connection resolves each role without changing data and native-account binding',()=>{
- const original={workspace:'/synthetic/work',runtime:'/synthetic/runtime',codexHome:'/synthetic/codex',codexBin:'/synthetic/codex-bin',model:'original-model',requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:{bundleRoot:'/synthetic/app',manifestSha256:'a'.repeat(64)},dailyDeepSeek:true,pauseOldDesktopWork:true,desktopConnection:{main:{baseUrl:'https://gateway.example.invalid/v1',model:'deepseek-flash',effort:'max',fast:false},worker:{baseUrl:'https://gateway.example.invalid/v1',model:'deepseek-flash',effort:'max',fast:false}}} as Config;
+ const original={workspace:'/synthetic/work',runtime:'/synthetic/runtime',codexHome:'/synthetic/codex',codexBin:'/synthetic/codex-bin',model:'original-model',requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:{bundleRoot:'/synthetic/app',manifestSha256:'a'.repeat(64)},dailyDeepSeek:true,pauseOldDesktopWork:true,desktopConnection:{main:{baseUrl:'https://gateway.example.invalid/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://gateway.example.invalid/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}} as Config;
  const before=JSON.stringify(original);
  for(const role of ['main','worker'] as const){
   const effective=effectiveModelConfig(original,role);
@@ -219,4 +219,19 @@ test('website connection resolves each role without changing data and native-acc
   assert.equal(effective.effort,'max');assert.equal(effective.fast,false);assert.equal(effective.requiresOpenaiAuth,false);
  }
  assert.equal(JSON.stringify(original),before);
+});
+
+test('membership projections use independently delivered context settings over local tuning',()=>{
+ const base={workspace:'/synthetic/work',runtime:'/synthetic/runtime',codexHome:'/synthetic/home',codexBin:'/synthetic/bin',model:'original',requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:{bundleRoot:'/synthetic/app',manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true,dailyDeepSeek:true,deepseek:{contextWindow:272000,autoCompactTokenLimit:244800}} as Config;
+ const role={baseUrl:'https://gateway.example.invalid/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false} as const;
+ const main={...role,context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total' as const}};
+ const worker={...role,context:{contextWindow:600000,autoCompactTokenLimit:450000,autoCompactTokenLimitScope:'total' as const}};
+ const config={...base,desktopConnection:{main,worker}};
+ for(const name of ['main','worker'] as const){
+  const effective=effectiveModelConfig(config,name);
+  assert.deepEqual(effective.context,config.desktopConnection[name].context);
+  assert.equal(deepseekProfile(effective),undefined);
+ }
+ const native=effectiveModelConfig({...config,desktopModelSource:'codex'});
+ assert.equal(native.model,'gpt-6.1-terra');assert.equal(native.effort,'high');assert.equal(native.fast,true);
 });

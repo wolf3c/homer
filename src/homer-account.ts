@@ -3,7 +3,12 @@ import {createServer} from 'node:http';
 import {readFileSync,openSync,fstatSync,closeSync,realpathSync,writeFileSync,fsyncSync,renameSync,unlinkSync,linkSync,constants,lstatSync} from 'node:fs';
 import {resolve,dirname,join,basename} from 'node:path';
 
-export type HomerRoleConfig = {baseUrl:string;model:'deepseek-flash';effort:'max';fast:false};
+import {assertWindowsPrivate} from '../scripts/windows-security.mjs';
+import {validateContextTuning} from './model-context.js';
+import {validateModelCapabilities,type ModelCapabilities} from './model-catalog.js';
+import {validReasoningEffort} from './model-config.js';
+
+export type HomerRoleConfig = {baseUrl:string;model:string;effort:string|null;fast:false;capabilities?:ModelCapabilities;context:{contextWindow:number;autoCompactTokenLimit:number;autoCompactTokenLimitScope:'total'}};
 export type HomerRuntimeConfig = {main:HomerRoleConfig;worker:HomerRoleConfig};
 
 export type HomerCredentials = {
@@ -42,15 +47,21 @@ function allowedOrigin(origin: string, synthetic = false) {
     !(url.protocol === 'https:' || synthetic && url.protocol === 'http:' && url.hostname === '127.0.0.1')) invalid();
 }
 
+function validateHomerRoleConfig(input:unknown,boundary:HomerCredentialBoundary):HomerRoleConfig {
+    const value=record(input);fields(value,['baseUrl','model','effort','fast','context',...(Object.hasOwn(value,'capabilities')?['capabilities']:[])]);
+    if(value.baseUrl!==boundary.gatewayOrigin+'/v1'||typeof value.model!=='string'||!/^[\x21-\x7e]{1,256}$/.test(value.model)||(value.effort!==null&&!validReasoningEffort(value.effort))||value.fast!==false)invalid();
+    const tuning=record(value.context);fields(tuning,['contextWindow','autoCompactTokenLimit','autoCompactTokenLimitScope']);
+    if(tuning.autoCompactTokenLimitScope!=='total'||!Number.isInteger(tuning.contextWindow)||!Number.isInteger(tuning.autoCompactTokenLimit))invalid();
+    let context;
+    try{context=validateContextTuning(tuning);}catch{invalid();}
+    let capabilities;
+    try{if(Object.hasOwn(value,'capabilities'))capabilities=validateModelCapabilities(value.capabilities,value.effort as string|null);}catch{invalid();}
+    return {baseUrl:value.baseUrl,model:value.model,effort:value.effort as string|null,fast:value.fast,...(capabilities?{capabilities}:{}),context:{...context,autoCompactTokenLimitScope:'total'}};
+}
 export function validateHomerRuntimeConfig(input:unknown,boundary:HomerCredentialBoundary):HomerRuntimeConfig {
   allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
   const value=record(input);fields(value,['main','worker']);
-  const role=(input:unknown):HomerRoleConfig=>{
-    const value=record(input);fields(value,['baseUrl','model','effort','fast']);
-    if(value.baseUrl!==boundary.gatewayOrigin+'/v1'||value.model!=='deepseek-flash'||value.effort!=='max'||value.fast!==false)invalid();
-    return {baseUrl:value.baseUrl,model:value.model,effort:value.effort,fast:value.fast};
-  };
-  return {main:role(value.main),worker:role(value.worker)};
+  return {main:validateHomerRoleConfig(value.main,boundary),worker:validateHomerRoleConfig(value.worker,boundary)};
 }
 function validateIdentity(value:Record<string,unknown>,boundary:HomerCredentialBoundary) {
   if(typeof value.subject!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(value.subject)||
@@ -151,8 +162,8 @@ export class HomerAuthorizationAttempt {
   }
 }
 
-// modelBaseUrl/aliases and accountRef are read-only compatibility for older files.
-export type HomerConnection = {token?:string;subject?:string;config?:HomerRuntimeConfig;modelBaseUrl?:string;aliases?:{main:'homer-main';worker:'homer-worker'}};
+// Missing config retains credentials for startup refresh; legacy fields are read-only.
+export type HomerConnection = {token?:string;subject:string;config?:HomerRuntimeConfig;modelBaseUrl?:string;aliases?:{main:'homer-main';worker:'homer-worker'}};
 export type HomerWallet = {available:number;used:number;unit:string};
 
 function migrateConnectionFilename(file:string,boundary:HomerCredentialBoundary):void {
@@ -166,13 +177,13 @@ function migrateConnectionFilename(file:string,boundary:HomerCredentialBoundary)
   let directory:number|undefined;
   try{
     const parent=dirname(resolve(file)),stat=lstatSync(parent);
-    if(realpathSync(parent)!==parent||!stat.isDirectory()||stat.uid!==process.getuid!()||(stat.mode&0o022)!==0)throw Error();
+    if(realpathSync(parent)!==parent||!stat.isDirectory()||(process.platform==='win32'?(assertWindowsPrivate(parent),false):stat.uid!==process.getuid!()||(stat.mode&0o022)!==0))throw Error();
     clearConnectionStaging(legacy);
     // link is atomic and refuses an existing destination; never overwrite a Key.
-    directory=openSync(parent,constants.O_RDONLY|constants.O_NOFOLLOW);
+    if(process.platform!=='win32')directory=openSync(parent,constants.O_RDONLY|constants.O_NOFOLLOW);
     if(!current)linkSync(legacy,file);
-    fsyncSync(directory); // Persist the new name before removing the only old name.
-    unlinkSync(legacy);fsyncSync(directory);
+    if(directory!==undefined)fsyncSync(directory); // Persist the new name before removing the only old name.
+    unlinkSync(legacy);if(directory!==undefined)fsyncSync(directory);
   }catch{throw Error('CONNECTION_WRITE_FAILED');}
   finally{if(directory!==undefined)closeSync(directory);}
 }
@@ -186,13 +197,13 @@ export function readHomerConnection(file:string,boundary:HomerCredentialBoundary
     if(realpathSync(file)!==resolve(file))throw Error();
     fd=openSync(file,constants.O_RDONLY|constants.O_NOFOLLOW);
     const opened=fstatSync(fd);
-    if(!opened.isFile()||opened.uid!==process.getuid!()||(opened.mode&0o077)!==0||opened.size>8192)throw Error();
+    if(!opened.isFile()||(process.platform==='win32'?(assertWindowsPrivate(file),opened.ino!==stat.ino||opened.dev!==stat.dev):opened.uid!==process.getuid!()||(opened.mode&0o077)!==0)||opened.size>32768)throw Error();
     const value=record(JSON.parse(readFileSync(fd,'utf8')));
     if(Object.keys(value).length===1&&Object.hasOwn(value,'token')){
-      if(typeof value.token!=='string'||!/^[\x21-\x7e]{1,4096}$/.test(value.token))throw Error();
-      return {token:value.token};
+      // Retired development data stays untouched until website authorization succeeds.
+      return null;
     }
-    const metadataFields=['subject',...(Object.hasOwn(value,'config')?['config']:['modelBaseUrl','aliases']),...(Object.hasOwn(value,'accountRef')?['accountRef']:[])];
+    const metadataFields=['subject',...(Object.hasOwn(value,'config')?['config']:Object.hasOwn(value,'modelBaseUrl')||Object.hasOwn(value,'aliases')?['modelBaseUrl','aliases']:[]),...(Object.hasOwn(value,'accountRef')?['accountRef']:[])];
     if(Object.hasOwn(value,'accountRef')&&(typeof value.accountRef!=='string'||!/^[\x21-\x7e]{1,256}$/.test(value.accountRef)))throw Error();
     fields(value,Object.hasOwn(value,'token')?['token',...metadataFields]:metadataFields);
     const {token,accountRef:_,...metadata}=value;
@@ -200,9 +211,23 @@ export function readHomerConnection(file:string,boundary:HomerCredentialBoundary
     if(!Object.hasOwn(value,'config')){
       allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
       validateIdentity({...metadata,modelToken:token??'disconnected'},boundary);
-      const aliases=record(metadata.aliases);fields(aliases,['main','worker']);
-      if(metadata.modelBaseUrl!==boundary.gatewayOrigin+'/v1'||aliases.main!=='homer-main'||aliases.worker!=='homer-worker')invalid();
+      if(Object.hasOwn(metadata,'aliases')){
+        const aliases=record(metadata.aliases);fields(aliases,['main','worker']);
+        if(metadata.modelBaseUrl!==boundary.gatewayOrigin+'/v1'||aliases.main!=='homer-main'||aliases.worker!=='homer-worker')invalid();
+      }
       return {...metadata,...(token===undefined?{}:{token})} as HomerConnection;
+    }
+    const config=record(metadata.config);fields(config,['main','worker']);
+    if(['main','worker'].every(name=>!Object.hasOwn(record(config[name]),'context'))){
+      // Recover only the old local contract; never pass its model settings to an engine.
+      allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
+      const {subject,modelToken}=validateIdentity({...metadata,modelToken:token??'disconnected'},boundary);
+      for(const name of ['main','worker']){
+        const role=record(config[name]),hasTuning=Object.hasOwn(role,'deepseek');fields(role,['baseUrl','model','effort','fast',...(hasTuning?['deepseek']:[])]);
+        if(role.baseUrl!==boundary.gatewayOrigin+'/v1'||role.model!=='deepseek-flash'||!['low','high','max'].includes(role.effort as string)||role.fast!==false)invalid();
+        if(hasTuning){const {deepseek,...legacy}=role;validateHomerRoleConfig({...legacy,context:deepseek},boundary);}
+      }
+      return {subject,...(token===undefined?{}:{token:modelToken})};
     }
     const checked=validateHomerCredentials({...metadata,modelToken:token??'disconnected'},boundary);
     const {modelToken,...connection}=checked;
@@ -218,7 +243,7 @@ function clearConnectionStaging(file:string):string {
   try{
     const stat=lstatSync(path,{throwIfNoEntry:false});
     if(stat){
-      if(!stat.isFile()||stat.uid!==process.getuid!()||(stat.mode&0o077)!==0||realpathSync(path)!==path)throw Error();
+      if(!stat.isFile()||(process.platform==='win32'?(assertWindowsPrivate(path),false):stat.uid!==process.getuid!()||(stat.mode&0o077)!==0)||realpathSync(path)!==path)throw Error();
       unlinkSync(path);
     }
     return path;
@@ -228,11 +253,13 @@ function writeConnection(file:string,value:HomerConnection) {
   const parent=dirname(resolve(file));
   let temporary:string|undefined,fd:number|undefined,created=false;
   try {
+    const content=JSON.stringify(value)+'\n';
+    if(Buffer.byteLength(content)>32768)throw Error();
     const stat=lstatSync(parent);
-    if(realpathSync(parent)!==parent||!stat.isDirectory()||stat.uid!==process.getuid!()||(stat.mode&0o022)!==0)throw Error();
+    if(realpathSync(parent)!==parent||!stat.isDirectory()||(process.platform==='win32'?(assertWindowsPrivate(parent),false):stat.uid!==process.getuid!()||(stat.mode&0o022)!==0))throw Error();
     temporary=clearConnectionStaging(file);
     fd=openSync(temporary,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);created=true;
-    writeFileSync(fd,JSON.stringify(value)+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
+    writeFileSync(fd,content);fsyncSync(fd);closeSync(fd);fd=undefined;
     renameSync(temporary,file);temporary=undefined;
   }catch{throw Error('CONNECTION_WRITE_FAILED');}
   finally{if(fd!==undefined)closeSync(fd);if(temporary&&created)try{unlinkSync(temporary);}catch{}}
@@ -251,8 +278,7 @@ export function disconnectHomerConnection(file:string,boundary:HomerCredentialBo
   const previous=readHomerConnection(file,boundary);
   if(!previous){clearConnectionStaging(file);return;}
   const {token:_,...metadata}=previous;
-  if(previous.subject)writeConnection(file,metadata);
-  else {clearConnectionStaging(file);unlinkSync(file);}
+  writeConnection(file,metadata);
 }
 const number=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>=0;
 export function parseHomerWallet(usage:unknown,status:unknown):HomerWallet {
@@ -276,8 +302,12 @@ export function parseHomerWallet(usage:unknown,status:unknown):HomerWallet {
   }catch{factor=1;unit='原生额度';}
   return {available:quota.total_available*factor,used:quota.total_used*factor,unit};
 }
-async function jsonRequest(url:string,options:RequestInit):Promise<{status:number;body:unknown}> {
+async function jsonRequest(url:string,options:RequestInit,authenticationStatus=false):Promise<{status:number;body:unknown}> {
   const response=await fetch(url,{...options,redirect:'error',signal:AbortSignal.any([options.signal??new AbortController().signal,AbortSignal.timeout(20000)])});
+  if(authenticationStatus&&(response.status===401||response.status===403)){
+    void response.body?.cancel().catch(()=>{});
+    return {status:response.status,body:null};
+  }
   const reader=response.body?.getReader();if(!reader)throw Error('UNAVAILABLE');
   const chunks:Uint8Array[]=[];let length=0;
   try{while(true){const {done,value}=await reader.read();if(done)break;length+=value.byteLength;if(length>65536)throw Error('UNAVAILABLE');chunks.push(value);}}
@@ -290,15 +320,35 @@ export async function queryHomerRuntimeConfig(options:HomerCredentialBoundary&{w
   if(response.status!==200)throw Error('UNAVAILABLE');
   return validateHomerRuntimeConfig(response.body,options);
 }
-export async function queryHomerWallet(connection:HomerConnection,boundary:HomerCredentialBoundary,signal?:AbortSignal):Promise<HomerWallet> {
+export async function queryHomerWallet(connection:HomerConnection,boundary:HomerCredentialBoundary,signal?:AbortSignal):Promise<HomerWallet&{expiresAt:number}> {
   allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
-  if(!connection.token)throw Error('NOT_CONNECTED');
+  if(!connection.subject||!connection.token)throw Error('NOT_CONNECTED');
   const [usage,status]=await Promise.all([
     jsonRequest(boundary.gatewayOrigin+'/api/usage/token/',{signal,headers:{Authorization:'Bearer '+connection.token}}),
     jsonRequest(boundary.gatewayOrigin+'/api/status',{signal}).catch(()=>null),
   ]);
   if(usage.status!==200)throw Error(usage.status===401||usage.status===403?'TOKEN_UNAVAILABLE':'USAGE_UNAVAILABLE');
-  try{return parseHomerWallet(usage.body,status?.status===200?status.body:null);}catch{throw Error('USAGE_UNAVAILABLE');}
+  const expires=record(record(usage.body).data).expires_at;
+  if(!number(expires)||!Number.isSafeInteger(expires))throw Error('USAGE_UNAVAILABLE');
+  if(expires!==0&&expires<=Date.now()/1000)throw Error('TOKEN_UNAVAILABLE');
+  try{return {...parseHomerWallet(usage.body,status?.status===200?status.body:null),expiresAt:expires};}catch{throw Error('USAGE_UNAVAILABLE');}
+}
+
+export type HomerTokenFailure = 'engine_quota_insufficient'|'engine_authentication_failed'|'engine_account_status_unconfirmed';
+export async function queryHomerTokenFailure(token:string,boundary:HomerCredentialBoundary,signal?:AbortSignal):Promise<HomerTokenFailure> {
+  try{
+    allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
+    const usage=await jsonRequest(boundary.gatewayOrigin+'/api/usage/token/',{
+      headers:{Authorization:'Bearer '+token},cache:'no-store',
+      signal:AbortSignal.any([signal??new AbortController().signal,AbortSignal.timeout(5000)]),
+    },true);
+    if(usage.status===401||usage.status===403)return 'engine_authentication_failed';
+    if(usage.status!==200)throw Error('USAGE_UNAVAILABLE');
+    const wallet=parseHomerWallet(usage.body,null),expires=record(record(usage.body).data).expires_at;
+    if(!number(expires)||!Number.isSafeInteger(expires))throw Error('USAGE_UNAVAILABLE');
+    if(expires!==0&&expires<=Date.now()/1000)return 'engine_authentication_failed';
+    return wallet.available===0?'engine_quota_insufficient':'engine_authentication_failed';
+  }catch{return 'engine_account_status_unconfirmed';}
 }
 
 // One ephemeral listener and one exchange; the Electron owner controls single flight.

@@ -1,6 +1,8 @@
-import type { ProcessItem, ProcessNode, ProcessTiming } from '../src/main-process';
-import type { MainActivity } from '../src/web-contract';
-import {activityActions,activityOutcomes} from '../src/activity-facts';
+import type { ProcessItem, ProcessNode, ProcessTiming } from '../src/main-process.js';
+import type { MainActivity } from '../src/web-contract.js';
+import {activityActions,activityOutcomes} from '../src/activity-facts.js';
+import {nativeLabels} from '../src/main-process.js';
+import {activitySummaryText} from '../src/message-quote.js';
 
 export type ToolItem = Extract<ProcessItem, { kind: 'tool' }>;
 export const toolStatusText: Record<ToolItem['status'], string> = {
@@ -53,13 +55,12 @@ export function confirmedTerminal(node: ProcessNode) {
 export function compactProcessAction(node:ProcessNode,observation:ProcessObservation):string {
   if(confirmedTerminal(node))return node.status==='failed'?'处理失败':node.status==='interrupted'?'已中断':'已结束';
   const activity=observation.mainActivity,turn=node.turnIds.at(-1);
-  if(!observation.connected||!observation.serviceRunning||observation.threadId!==node.threadId||node.status!=='running'||!activity||activity.processId!==node.id||activity.turnId!==turn||activity.source!==(node.sourceKind==='user'?'user':'internal')||(activity.source==='user'&&observation.generationTurnId!==turn)||!['native','compacting','finishing'].includes(activity.stage))return '状态待确认';
-  const calls=projectProcessItems(node.items).items.filter((item):item is ToolItem=>item.kind==='tool'&&item.turnId===turn&&(item.threadId===node.threadId||item.category==='host'&&!item.threadId)).sort((a,b)=>b.seq-a.seq);
-  const call=calls.find(item=>item.status==='running')??calls[0];
-  if(!call)return '具体动作未提供';
-  const action=compactToolAction(call);
-  if(call.status==='running'&&activity.stage==='finishing')return action+' · 结束状态待核实';
-  return action+(call.status==='running'?'':call.status==='completed'?' · 已返回':call.status==='failed'?' · 失败':call.status==='interrupted'?' · 已中断':call.status==='declined'?' · 被拒绝':' · 结束状态待核实');
+  if(!observation.connected||!observation.serviceRunning||observation.threadId!==node.threadId||node.status!=='running'||!turn||!activity||activity.processId!==node.id||activity.turnId!==turn||activity.source!==(node.sourceKind==='user'?'user':'internal')||(activity.source==='user'&&observation.generationTurnId!==turn)||activity.stage!=='native')return '状态待确认';
+  const items=projectProcessItems(node.items).items.filter(item=>'turnId' in item&&item.turnId===turn).sort((a,b)=>b.seq-a.seq);
+  const call=items.find((item):item is ToolItem=>item.kind==='tool'&&item.status==='running'&&(item.threadId===node.threadId||item.category==='host'&&!item.threadId));
+  if(call)return compactToolAction(call);
+  const commentary=items.find(item=>item.kind==='commentary'&&item.phase==='commentary'&&item.itemId&&item.text.trim());
+  return activity.summary||(commentary?.kind==='commentary'?activitySummaryText(commentary.text):'')||'处理中';
 }
 function compactToolAction(item:ToolItem):string {
   const name=item.toolName?.split(/[.:]/).at(-1);
@@ -75,6 +76,7 @@ function compactToolAction(item:ToolItem):string {
     const sub=allowed[executable]!.includes(words[1]??'')?' '+words[1]:'';
     return '运行 '+executable+sub;
   }
+  if(item.category&&item.category!=='host'&&item.category!=='externalTool')return nativeLabels[item.category];
   // functions.exec is arbitrary code, not an already-started nested call.
   if(name==='exec'||!name||!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(name))return '调用工具';
   return '调用 '+name;

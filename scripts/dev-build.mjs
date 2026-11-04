@@ -5,7 +5,7 @@ import { spawn, fork } from "node:child_process";
 import {copyRuntimeDependencies,sealBuild,freezeToolchain} from "./trusted-build.mjs";
 
 const digest = value => createHash("sha256").update(value).digest("hex");
-const roots = ["scripts", "src", "prompts", "assets", "ui", ".codex/skills/homer-initialize", ".codex/skills/homer-tool-management"];
+const roots = ["scripts", "src", "prompts", "assets", "ui", ".codex/skills/homer-initialize", ".codex/skills/homer-tool-management", ".codex/skills/homer-feedback", ".codex/skills/homer-archive-review"];
 const excluded = path => path.replaceAll("\\", "/").split("/").some(part => part === "node_modules" || part === "dist" || part === ".vite" || part === ".DS_Store");
 export function sourceSnapshot(root, configPath) {
   const files = new Map();
@@ -15,7 +15,7 @@ export function sourceSnapshot(root, configPath) {
     const stat = lstatSync(join(root, path));
     if (stat.isSymbolicLink()) throw new Error("dev_source_symlink_unsupported");
     if (stat.isDirectory()) for (const item of readdirSync(join(root, path)).sort()) visit(join(path, item));
-    else if (stat.isFile()) files.set(path, readFileSync(join(root, path)));
+    else if (stat.isFile()) files.set(path.replaceAll("\\", "/"), readFileSync(join(root, path)));
   }
   for (const path of [...roots, "package.json", "package-lock.json", "tsconfig.json"]) visit(path);
   const configBytes = configPath ? readFileSync(configPath) : Buffer.from("");
@@ -48,7 +48,7 @@ export function trustedHash(snapshot) {
   return digest(Buffer.concat([...snapshot.files].filter(([path]) => (/^(src|ui|assets)\//.test(path)||["package.json","tsconfig.json"].includes(path))).flatMap(([path,bytes])=>[Buffer.from(path+"\0"),bytes,Buffer.from("\0")]).concat(snapshot.configBytes??Buffer.alloc(0))));
 }
 export function gatewayFingerprint(snapshot) {
-  return digest(Buffer.concat([...snapshot.files.keys()].filter(path=>path.startsWith("scripts/")||["src/mobile-devices.ts", "src/mobile-gateway.ts", "src/mobile-route.ts", "src/mobile-signaling.ts", "src/mobile-channel.ts", "src/mobile-session.ts", "src/mobile-rtc.ts", "src/web-chat.ts", "src/state-publication.ts", "src/web-server.ts", "src/web-contract.ts", "src/web-connection.ts", "src/update-review-page.ts", "src/channels/telegram-settings-page.ts", "src/web-upload.ts", "src/media-policy.ts", "src/web-history.ts", "src/processes.ts"].includes(path)).sort().flatMap(path => [Buffer.from(path+"\0"),snapshot.files.get(path)??Buffer.alloc(0),Buffer.from("\0")])));
+  return digest(Buffer.concat([...snapshot.files.keys()].filter(path=>path.startsWith("scripts/")||["src/mobile-turn.ts", "src/homer-account.ts", "src/mobile-devices.ts", "src/mobile-gateway.ts", "src/mobile-route.ts", "src/mobile-signaling.ts", "src/mobile-channel.ts", "src/mobile-session.ts", "src/mobile-rtc.ts", "src/web-chat.ts", "src/state-publication.ts", "src/web-server.ts", "src/web-contract.ts", "src/web-connection.ts", "src/update-review-page.ts", "src/channels/telegram-settings-page.ts", "src/web-upload.ts", "src/media-policy.ts", "src/web-history.ts", "src/processes.ts"].includes(path)).sort().flatMap(path => [Buffer.from(path+"\0"),snapshot.files.get(path)??Buffer.alloc(0),Buffer.from("\0")])));
 }
 export async function buildUiCandidate(root, configPath, snapshot, baseline, signal) {
   if (dependencyHash(snapshot) !== baseline.deps) throw Error("dev_dependencies_changed_restart_required");

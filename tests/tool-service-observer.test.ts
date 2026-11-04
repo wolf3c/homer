@@ -1,3 +1,4 @@
+import {TurnExecution} from '../src/execution-limits.js';
 // Requirement-derived synthetic RPC -> service -> persisted history regression.
 // Extracted from the pre-existing untracked main-process suite for the E scope.
 import {test} from 'node:test';
@@ -15,7 +16,7 @@ function fixture(){
 test('native RPC call content flows through real service observers with credentials removed before persistence',async()=>{
  const f=fixture();try{
   const engine:any=new CodexEngine({workspace:process.cwd(),runtime:'/synthetic/runtime',codexHome:'/synthetic/home',model:'synthetic'} as any,{cwd:process.cwd(),readRoots:[],instructions:'',tools:[]},async()=>({}));
-  engine.threadId='synthetic';engine.turnId='turn:node';engine.active={text:'',messages:[],earlyEvents:[],resolve:()=>{}};
+  engine.threadId='synthetic';engine.turnId='turn:node';engine.active={execution:new TurnExecution({}),messages:[],earlyEvents:[],resolve:()=>{}};
   const app:any=Object.create(Homer.prototype);
   Object.assign(app,{config:{workspace:process.cwd(),runtime:'/synthetic/runtime',codexHome:'/synthetic/home'},prompts:{main:''},interactionMcp:{path:'/synthetic/socket',directory:process.cwd()},factory:()=>engine,store:{db:f.db},processes:f.history});
   app.main=app.createMain(process.cwd());

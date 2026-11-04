@@ -4,6 +4,16 @@ import {createElement,Fragment} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createRequire} from 'node:module';
 const build=path=>buildSync({entryPoints:[path],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent'}).outputFiles[0].text;
+test('mobile discovers public candidates through the relay endpoint without receiving TURN credentials',async()=>{
+ const window=new EventTarget(),document=new EventTarget(),module={exports:{}};let config;
+ class Peer{constructor(value){config=value;}close(){}}
+ class Socket extends EventTarget{close(){this.dispatchEvent(new Event('close'));}}
+ Function('window','document','RTCPeerConnection','WebSocket','module','exports',build('ui/mobile-connection.ts'))(window,document,Peer,Socket,module,module.exports);
+ try{
+  window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:{signalOrigin:'https://signal.example',routeId:'a'.repeat(64),invitation:'b'.repeat(43)}}));
+  assert.deepEqual(config.iceServers,[{urls:['stun:120.27.120.125:3478','stun:stun.l.google.com:19302']}]);
+ }finally{window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:null}));await new Promise(resolve=>setImmediate(resolve));}
+});
 test('desktop requests omit ambient cookies and reject foreign origins',async()=>{
  const code=build('ui/web-connection-client.ts'),module={exports:{}},calls=[];
  Function('document','location','globalThis','module','exports',code)({querySelector:()=>null},new URL('https://phone.example/'),{fetch:async(...args)=>{calls.push(args);return Response.json({});}},module,module.exports);
@@ -27,7 +37,7 @@ function nativeShell(overrides={}){
  const require=createRequire(import.meta.url),module={exports:{}},injected=[];let web;
  const container=({children})=>createElement(Fragment,null,children);
  const native={ActivityIndicator:container,Alert:{alert(){}},AppState:{},Image:container,Linking:{},Modal:()=>null,PermissionsAndroid:{},Platform:{OS:'ios'},Pressable:container,StatusBar:()=>null,StyleSheet:{create:value=>value},Text:container,View:container};
- const stubs={'react-native':native,'react-native-safe-area-context':{SafeAreaProvider:container,SafeAreaView:container},'expo-camera':{CameraView:()=>null,useCameraPermissions:()=>[{granted:true},()=>{}]},'expo-secure-store':{},'expo-crypto':{randomUUID:()=> 'synthetic-nonce'},'expo-device':{deviceName:null},'expo-file-system':{},'expo-sharing':{},'react-native-webview':{WebView:props=>{web=props;props.ref.current={injectJavaScript:value=>injected.push(value)};return null;}}};
+ const stubs={'react-native':native,'react-native-safe-area-context':{SafeAreaProvider:container,SafeAreaView:container},'expo-camera':{CameraView:()=>null,useCameraPermissions:()=>[{granted:true},()=>{}]},'expo-secure-store':{},'expo-crypto':{randomUUID:()=> 'synthetic-nonce'},'expo-device':{deviceName:null},'expo-application':{applicationId:'com.homer.mobile.qa'},'expo':{requireOptionalNativeModule:()=>null},'expo-file-system':{},'expo-sharing':{},'react-native-webview':{WebView:props=>{web=props;props.ref.current={injectJavaScript:value=>injected.push(value)};return null;}}};
  const code=buildSync({entryPoints:['mobile/App.tsx'],bundle:true,write:false,format:'cjs',platform:'browser',packages:'external',external:['./.generated/chat.mjs'],loader:{'.png':'dataurl'},jsx:'automatic',logLevel:'silent'}).outputFiles[0].text;
  Function('require','module','exports',code)(name=>name.endsWith('/chat.mjs')?{default:''}:overrides[name]??stubs[name]??require(name),module,module.exports);
  renderToStaticMarkup(createElement(module.exports.default));

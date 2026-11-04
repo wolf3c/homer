@@ -25,7 +25,7 @@ function launch(root,daily=false){
  const child=spawn(node,[join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',root,'--test-profile',...(daily?['--deepseek-daily']:[])],{cwd:root,env:{PATH:'/usr/bin:/bin',HOME:join(root,'host-home'),TMPDIR:join(root,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','pipe',...(daily?['pipe']:[])]});
  if(daily){
   const baseUrl=JSON.parse(readFileSync(join(resources,'desktop-manifest.json'))).account.gatewayOrigin+'/v1';
-  child.stdio[3].end(JSON.stringify({token:'synthetic-deepseek-token',subject:'fixture_user',config:{main:{baseUrl,model:'deepseek-flash',effort:'max',fast:false},worker:{baseUrl,model:'deepseek-flash',effort:'max',fast:false}}}));
+  child.stdio[3].end(JSON.stringify(daily==='manual-token'?{token:'synthetic-deepseek-token'}:{token:'synthetic-deepseek-token',subject:'fixture_user',config:{main:{baseUrl,model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl,model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}}));
  }
  const events=[];let buffer='',stderr='';child.stdout.on('data',bytes=>{buffer+=bytes;let at;while((at=buffer.indexOf('\n'))>=0){const event=JSON.parse(buffer.slice(0,at));if(event.kind==='url'){assert.equal(typeof event.desktopAccessToken==='string'&&/^[a-f0-9]{64}$/.test(event.desktopAccessToken),true,'private desktop credential format');runtimeAccess.set(new URL(event.url).origin,event.desktopAccessToken);delete event.desktopAccessToken;}events.push(event);buffer=buffer.slice(at+1);}});child.stderr.on('data',b=>{stderr+=b;});
  const exited=new Promise(r=>child.once('exit',(code,signal)=>r({code,signal})));
@@ -206,6 +206,13 @@ test('adoption requires reviewed gateway CAS, then original owner retains curren
   const calls=methods(f.original);assert.equal(calls.filter(m=>m==='thread/start').length,0);assert.equal(calls.filter(m=>m==='turn/start').length,0);assert.ok(calls.includes('thread/resume'));
   const gateway=new DatabaseSync(f.gatewayPath,{readOnly:true});try{assert.equal(gateway.prepare("SELECT count(*) n FROM transport_requests WHERE state='rejected'").get().n,1);}finally{gateway.close();}
  }finally{if(run.child.exitCode===null)run.child.stdin.end('{"kind":"quit"}\n');}
+});
+test('manual Token pipe is refused before any adopted history or account is modified',{timeout:15000},async()=>{
+ const f=await adoptedFixture({effort:'high'});adoptGateway(f);
+ const before=readFileSync(f.dbPath),config=readFileSync(f.source),run=launch(f.shell,'manual-token');
+ assert.equal((await run.exited).code,1);assert.equal(run.events.some(e=>e.kind==='url'),false);
+ assert.deepEqual(readFileSync(f.dbPath),before);assert.deepEqual(readFileSync(f.source),config);
+ assert.equal(methods(f.original).includes('thread/start'),false);
 });
 for(const effort of ['high','max'])test(`daily website uses max and preserves original ${effort} config, thread and unknown work on native rollback`,{timeout:60000},async()=>{
  // Website roles use max; retain the original source effort for native rollback.

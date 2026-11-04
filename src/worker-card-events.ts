@@ -77,6 +77,7 @@ export class WorkerCardEvents{
 }
 const startupErrors:Record<string,string>={
   engine_authentication_failed:'认证失败，Worker 未能启动。',
+  engine_account_status_unconfirmed:'未能核实账号状态，Worker 未能启动。请检查连接与额度。',
   engine_quota_insufficient:'模型服务额度不足，Worker 未能启动。请检查可用额度。',
   engine_rate_limited:'模型服务请求受到限流，Worker 未能启动。请稍后手动重试。',
   engine_permission_failed:'权限不足，Worker 未能启动。',

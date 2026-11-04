@@ -95,8 +95,7 @@ export function ProcessNodeView({node,renderText,activityText,observation={conne
   const loaded=node.details!=='unloaded';
   const {items}=useMemo(()=>projectProcessItems(node.items),[node.items]);
   const stale=!observation.connected||!observation.serviceRunning||node.status==='unknown';
-  const label=(name||(node.sourceKind==='user'?'当前对话':'当前事项'))+' · '+compactProcessAction(node,observation);
-  const stage=!terminal&&activityText&&!['原生轮执行中','有工具调用进行中','当前处理阶段待确认'].includes(activityText)?activityText:'';
+  const label=(name||(node.sourceKind==='user'?'当前对话':'当前事项'))+' · '+(terminal?compactProcessAction(node,observation):activityText||compactProcessAction(node,observation));
   const entries=parts?parts.entries.map(entry=>({...entry,label:''})):items.filter(item=>item.kind!=='worker'&&item.kind!=='workerEvent').flatMap<RunActivityEntry>(item=>{
     if(item.kind==='commentary')return item.text&&item.phase!=='final_answer'?[{id:item.id,kind:'commentary',label:'',content:<div className="process-item">{renderText(item.text)}</div>}]:[];
     if(item.content)return []; // New content belongs to the message parts renderer.
@@ -111,7 +110,7 @@ export function ProcessNodeView({node,renderText,activityText,observation={conne
   // A lazy header needs the original disclosure to request its authorized entries.
   if(!loaded)entries.push({id:node.id+':loading',kind:'commentary',label:'',content:<p role="status">{error||'过程详情尚未加载…'}</p>});
   return <><RunActivity className="process-node" status={node.status==='unknown'?'incomplete':node.status==='failed'?'error':node.status==='interrupted'?'cancelled':terminal?'complete':'running'}
-    statusLabel={label+(stage?' · '+stage:'')} durationLabel={<ProcessDuration node={node} observation={observation}/>}
+    statusLabel={label} durationLabel={<ProcessDuration node={node} observation={observation}/>}
     entries={entries} open={open} onOpenChange={setOpen}
   />{items.filter((item):item is Extract<ProcessItem,{kind:'workerEvent'}>=>item.kind==='workerEvent'&&!detailReceipt(item)).map(item=><WorkerEventCard key={item.id} item={item}/>)}</>;
 }

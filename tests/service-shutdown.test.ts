@@ -46,10 +46,10 @@ for(const confirmed of [true,false])test(`shutdown cancellation keeps the Worker
   try{
    assert.equal(db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()!.value,thread);
    assert.equal(readFileSync(run.artifact!,'utf8'),'Synthetic preserved file');
-   assert.equal(db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(String(source.messageId))!.state,confirmed?'blocked':'uncertain');
+   assert.equal(db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(String(source.messageId))!.state,'uncertain');
    const nodes=db.prepare("SELECT value FROM meta WHERE key GLOB 'publicMainNode:v1:*'").all().map(row=>JSON.parse(String(row.value)));
    const internal=nodes.filter(node=>node.sourceKind==='worker');assert.equal(internal.length,1);
-   assert.equal(internal[0].status,confirmed?'interrupted':'unknown');
+   assert.equal(internal[0].status,'unknown');assert.equal(internal[0].state,confirmed?'worked':'working');if(confirmed)assert.match(internal[0].endEventId,/^host:engine_closed:/);else assert.equal(internal[0].endEventId,undefined);
    assert.equal(db.prepare("SELECT count(*) n FROM events WHERE type IN ('main_turn_failed','internal_processing_failed')").get()!.n,0);
   }finally{db.close();}
  }finally{await f.cleanup();}
@@ -78,7 +78,7 @@ test('shutdown cancels a user turn without inventing a native terminal or replay
    assert.equal(db.prepare("SELECT count(*) n FROM events WHERE type='main_turn_failed'").get()!.n,0);
    assert.equal(db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE json_extract(m.payloadJson,'$.requestId')='synthetic-user-request'").get()!.state,'uncertain');
    const node=JSON.parse(String(db.prepare("SELECT value FROM meta WHERE key GLOB 'publicMainNode:v1:*'").get()!.value));
-   assert.equal(node.status,'unknown');assert.equal(node.endEventId,undefined);
+   assert.equal(node.status,'unknown');assert.equal(node.state,'worked');assert.match(node.endEventId,/^host:engine_closed:/);
    const reply=db.prepare("SELECT text FROM conversation_messages WHERE requestId='synthetic-user-request' AND role='assistant'").get()!;
    assert.match(String(reply.text),/已停止当前回复/);assert.doesNotMatch(String(reply.text),/工作继续运行/);
   }finally{db.close();}

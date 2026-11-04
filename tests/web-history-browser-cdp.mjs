@@ -5,7 +5,8 @@ import {resolve,join} from 'node:path';
 const wait=ms=>new Promise(done=>setTimeout(done,ms));
 export async function isolatedChrome(destination,{zoomFactor}={}){
  const profile=join(resolve(destination),'isolated-chrome-profile-'+Date.now());mkdirSync(profile,{recursive:true});
- if(zoomFactor){mkdirSync(join(profile,'Default'),{recursive:true});writeFileSync(join(profile,'Default','Preferences'),JSON.stringify({partition:{default_zoom_level:Math.log(zoomFactor)/Math.log(1.2)}}));}
+ // Chromium ChromeZoomLevelPrefs stores the default partition under the key 'x'.
+ if(zoomFactor){mkdirSync(join(profile,'Default'),{recursive:true});writeFileSync(join(profile,'Default','Preferences'),JSON.stringify({partition:{default_zoom_level:{x:Math.log(zoomFactor)/Math.log(1.2)}}}));}
  const activeFile=join(profile,'DevToolsActivePort');rmSync(activeFile,{force:true});
  const process=spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--remote-debugging-port=0','--user-data-dir='+profile,'--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--no-first-run','--no-default-browser-check','--disable-features=MediaRouter,OptimizationHints,AutofillServerCommunication,Translate','about:blank'],{stdio:['ignore','ignore','pipe']});
  let startup='';process.stderr.on('data',data=>{if(startup.length<8000)startup+=String(data);});
@@ -32,7 +33,7 @@ export async function isolatedChrome(destination,{zoomFactor}={}){
   });
   const unerror=on('Runtime.exceptionThrown',(event,session)=>{if(session===sessionId)errors.push(event.exceptionDetails.exception?.description??event.exceptionDetails.text);});
   await command('Page.enable');await command('Runtime.enable');await command('Fetch.enable',{patterns:[{urlPattern:'*'}]});
-  await command('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+  if(!zoomFactor)await command('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
   const evaluate=async(expression)=>{const r=await command('Runtime.evaluate',{expression:typeof expression==='string'?expression:'('+expression.toString()+')()',awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description??r.exceptionDetails.text);return r.result.value;};
   const until=async(expression,timeout=60000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await evaluate(expression))return;await wait(40);}throw Error('browser_condition_timeout');};
   const screenshot=async filename=>{const data=await command('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});writeFileSync(join(destination,filename),Buffer.from(data.data,'base64'));};

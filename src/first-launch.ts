@@ -4,7 +4,8 @@ import {capabilityHome,usesHomerNativeHome,type Config} from './config.js';
 import {fileURLToPath} from 'node:url';
 
 export const FIRST_LAUNCH_TEXT='首次启动自动发起：请使用 $homer-initialize 完成首次初始化，按需调用工具管理 Skill。';
-export const FIRST_LAUNCH_SKILLS=['homer-initialize','homer-tool-management'] as const;
+export const FIRST_LAUNCH_SKILLS=['homer-initialize','homer-tool-management','homer-feedback'] as const;
+export const BUNDLED_SKILLS=[...FIRST_LAUNCH_SKILLS,'homer-archive-review'] as const;
 // Automatic startup belongs to the product's single app-data instance.
 // Custom runtimes sharing a HOME opt in through an ordinary user request.
 export function automaticFirstLaunch(config:Config){
@@ -15,7 +16,7 @@ export function automaticFirstLaunch(config:Config){
 export function seedFirstLaunchSkills(home:string){
  const source=fileURLToPath(new URL('../.codex/skills/',import.meta.url)),parent=join(home,'skills');
  for(const path of [home,parent]){const stat=lstatSync(path,{throwIfNoEntry:false});if(stat&&(!stat.isDirectory()||stat.isSymbolicLink()))throw Error('first_launch_directory_symlink_or_not_directory');mkdirSync(path,{recursive:true});}
- for(const name of FIRST_LAUNCH_SKILLS){
+ for(const name of BUNDLED_SKILLS){
   const target=join(parent,name);
   const existing=lstatSync(target,{throwIfNoEntry:false});
   if(existing){if(existing.isSymbolicLink()||!existing.isDirectory())throw Error('first_launch_directory_symlink_or_not_directory');continue;}

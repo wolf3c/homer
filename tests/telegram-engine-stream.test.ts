@@ -64,4 +64,19 @@ test("TG actual engine increments -> native Thinking -> exact stop terminal -> s
   assert.equal(app.store.meta("mainThread"), "telegram-synthetic-original");
   const starts = events.filter(item => item.type === "main_start"); assert.equal(starts.length, 2); assert.notEqual(starts[0]!.generationId, starts[1]!.generationId);
   assert.ok(events.findIndex(item => item.type === "main_start") < events.findIndex(item => item.type === "delta"));
+  await until(() => events.filter(item => item.type === "reply").length === 2);
+  await until(() => app.store.db.prepare("SELECT count(*) n FROM tg_outbox WHERE state='pending'").get()?.n === 0);
+  const outbox = () => app.store.db.prepare("SELECT id,groupId,state FROM tg_outbox ORDER BY id").all();
+  const completed = outbox();
+  const formal = completed.filter(row => String(row.groupId).startsWith("generation:"));
+  assert.deepEqual(formal.map(row => row.groupId).sort(), starts.map(start => "generation:" + start.generationId).sort());
+  assert.ok(formal.every(row => row.state === "sent"));
+  assert.equal(completed.some(row => String(row.groupId).startsWith("delivery:reply:")), false);
+  await bridge.restore(); await bridge.restore();
+  // Let the real adapter pump run twice after reconnect, rather than merely
+  // checking the queue before it has a chance to send an erroneous fallback.
+  await new Promise(resolve => setTimeout(resolve, 600));
+  assert.deepEqual(outbox(), completed);
+  assert.equal(sent.filter(item => item.method === "sendRichMessage").length, 2);
+  assert.equal(bridge.gaps.size, 0);
 });

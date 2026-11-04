@@ -45,6 +45,14 @@ const inputRows = `SELECT m.id,m.seq,m.kind,m.taskId,m.taskVersion,m.senderAgent
   LEFT JOIN operations o ON o.id=m.operationKey
   LEFT JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
   LEFT JOIN conversation_inputs s ON s.requestId=v.sourceRequestId`;
+const recoveryRows = `FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
+  JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
+  JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
+  WHERE m.recipientAgentId=? AND i.threadId=? AND m.kind<>'user_input' AND m.targetRunId IS NULL
+    AND r.state IN ('blocked','uncertain')
+    AND EXISTS(SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') s
+      WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=i.threadId
+        AND json_extract(p.value,'$.sourceKind')='worker' AND json_extract(p.value,'$.state')='worked' AND s.value=m.id)`;
 export type QueuedInput = {
   origin:'user';
   messageId: string;
@@ -134,7 +142,7 @@ export class MainInputs {
     const fields=Object(payload) as Record<string,unknown>;
     let text=typeof fields.text==='string'?fields.text:typeof fields.question==='string'?fields.question:JSON.stringify(payload,null,2);
     if(row.senderAgentId==='host'){
-      text=row.kind==='interaction_required'?'Worker 有问题需要主 Agent 协调。':row.kind==='terminal'?'Worker 执行状态已变化，等待主 Agent 核对。':'Worker 返回了业务更新，等待主 Agent 处理。';
+      text=row.kind==='task_archived'?'任务已归档。':row.kind==='interaction_required'?'Worker 有问题需要主 Agent 协调。':row.kind==='terminal'?'Worker 执行状态已变化，等待主 Agent 核对。':'Worker 返回了业务更新，等待主 Agent 处理。';
       if(row.kind==='result_ready'&&typeof fields.resultId==='string'){
         const resultJson=row.resultJson===undefined?this.db.prepare('SELECT payloadJson FROM results WHERE id=? AND taskId=? AND version=?').get(fields.resultId,row.taskId,row.taskVersion)?.payloadJson:row.resultJson;
         const body=typeof resultJson==='string'?JSON.parse(resultJson):undefined;
@@ -161,7 +169,8 @@ export class MainInputs {
   resumeWorkerMessages(){if(this.dispatchPolicy)this.dispatchPolicy.resumeWorkers=true;}
   dispatchSummary(){
     const {rows,orderVersion,totalWaiting}=this.dispatchSnapshot();
-    const awaitingUser=this.dispatchPolicy&&!this.dispatchPolicy.resumeWorkers&&rows.some(row=>row.kind!=='user_input'&&row.receiptState==='pending'&&row.seq<=this.dispatchPolicy!.pausedThroughSeq);
+    const awaitingUser=this.dispatchPolicy&&!this.dispatchPolicy.resumeWorkers&&rows.some(row=>row.kind!=='user_input'&&row.receiptState==='pending'&&row.seq<=this.dispatchPolicy!.pausedThroughSeq)
+      ||rows.some(row=>row.kind!=='user_input'&&row.receiptState==='uncertain')&&!!this.db.prepare(`SELECT 1 ${recoveryRows} AND r.state='uncertain' LIMIT 1`).get(this.agent,this.store.meta('mainThread')!);
     const unscoped=Number(this.db.prepare(`SELECT count(*) total FROM agent_receipts r CROSS JOIN agent_messages m ON m.id=r.messageId
       LEFT JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
       LEFT JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
@@ -204,16 +213,12 @@ export class MainInputs {
     return row?JSON.parse(String(row.responseJson)) as QueueOperationResult:undefined;
   }
   recoveryMessages(after=0,messageId?:string){
-    // Historical, already claimed inputs only. This never offers pending work.
-    return this.db.prepare(`SELECT m.* FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
-      JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
-      JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
-      WHERE m.recipientAgentId=? AND i.threadId=? AND m.kind<>'user_input' AND m.targetRunId IS NULL
-        AND r.state IN ('blocked','uncertain') AND m.seq>? ${this.dispatchPolicy?'AND m.seq>?':''} ${messageId?'AND m.id=?':''}
-        AND EXISTS(SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') s
-          WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=i.threadId
-            AND json_extract(p.value,'$.sourceKind')='worker' AND json_extract(p.value,'$.state')='worked' AND s.value=m.id)
-      ORDER BY m.seq LIMIT 80`).all(this.agent,this.store.meta('mainThread')!,after,...(this.dispatchPolicy?[this.dispatchPolicy.pausedThroughSeq]:[]),...(messageId?[messageId]:[])).map(row=>({...row,payload:JSON.parse(String(row.payloadJson))}));
+    // User recovery may inspect pre-start history; this never offers pending work.
+    return this.db.prepare(`SELECT m.* ${recoveryRows} AND m.seq>? ${messageId?'AND m.id=?':''}
+      ORDER BY m.seq LIMIT 80`).all(this.agent,this.store.meta('mainThread')!,after,...(messageId?[messageId]:[])).map(row=>({...row,payload:JSON.parse(String(row.payloadJson))}));
+  }
+  recoveryQueue(){
+    return this.db.prepare(`SELECT m.id,m.seq ${recoveryRows} AND r.state='uncertain' ORDER BY m.seq`).all(this.agent,this.store.meta('mainThread')!) as {id:string;seq:number}[];
   }
   messageBelongs(messageId:string){return this.rowByMessage(messageId)?.threadId===this.store.meta('mainThread');}
   private scope(row:Row,input:QueueScope){

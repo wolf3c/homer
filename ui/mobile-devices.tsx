@@ -1,16 +1,18 @@
 import {useEffect,useRef,useState} from 'react';
 import {Button} from '@base-ui/react/button';
 import {AlertDialog} from '@base-ui/react/alert-dialog';
+import {Dialog} from '@base-ui/react/dialog';
 import {Clock,Plus,RefreshCw,Smartphone} from 'lucide-react';
 import {connectionFetch} from './web-connection-client';
 
 type Device={id:string;name:string;enabled:boolean};
-type State={configured:boolean;devices:Device[];pending:{id:string;name:string}|null;expiresAt?:number|null};
+type State={turnStatus?:'account_required'|'configuration_required'|'network_restricted';configured:boolean;devices:Device[];pending:{id:string;name:string}|null;expiresAt?:number|null};
 export function MobileDeviceSettings(){
  const [state,setState]=useState<State>(),[qr,setQr]=useState<{qr:string;expiresAt:number}>();
  const [readFailed,setReadFailed]=useState(false),[uncertain,setUncertain]=useState(false),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[now,setNow]=useState(Date.now());
  const [editing,setEditing]=useState<string|null>(null),[draft,setDraft]=useState(''),[remove,setRemove]=useState<Device|null>(null);
  const live=useRef(false),pending=useRef(false),reading=useRef(false),uncertainRef=useRef(false),revision=useRef(0),cancelDelete=useRef<HTMLButtonElement>(null);
+ const downloadPopup=useRef<HTMLDivElement>(null);
  async function call(path:string,input?:unknown){
   const response=await connectionFetch('/api/mobile/'+path,input===undefined?undefined:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
   const value=await response.json();if(!response.ok)throw Error('mobile_action_failed');return value;
@@ -40,6 +42,11 @@ export function MobileDeviceSettings(){
   live.current=true;void read();const poll=window.setInterval(()=>void read(),1500),clock=window.setInterval(()=>setNow(Date.now()),1000);
   return()=>{live.current=false;revision.current++;window.clearInterval(poll);window.clearInterval(clock);};
  },[]);
+ useEffect(()=>{
+  const keepFocusVisible=()=>{const focused=document.activeElement;if(focused instanceof HTMLElement&&downloadPopup.current?.contains(focused))focused.scrollIntoView({block:'nearest',inline:'nearest'});};
+  window.addEventListener('resize',keepFocusVisible);
+  return()=>window.removeEventListener('resize',keepFocusVisible);
+ },[]);
  const locked=busy||readFailed||uncertain;
  const seconds=qr?Math.max(0,Math.ceil((qr.expiresAt-now)/1000)):0;
  const expired=!!qr&&seconds===0;
@@ -48,6 +55,8 @@ export function MobileDeviceSettings(){
  const submitName=(event:React.FormEvent<HTMLFormElement>,id:string)=>{event.preventDefault();if(draft.trim())void action('update',{id,name:draft.trim()});};
  return <div className="mobile-device-settings mobile-settings" aria-busy={busy}>
   <h2>移动设备</h2><p className="mobile-settings-intro">连接手机后，可在 Homer App 继续主聊天。主端需保持运行。</p>
+  <section className="mobile-settings-download"><div className="mobile-settings-download-icon"><Smartphone size={22}/></div><div className="mobile-settings-download-copy"><h3>还没有手机 App？</h3><p>先在手机上下载安装，再回到这里添加设备。</p></div><Dialog.Root><Dialog.Trigger className="mobile-settings-primary">下载手机 App</Dialog.Trigger><Dialog.Portal><Dialog.Backdrop className="desktop-settings-backdrop desktop-settings-confirm-backdrop"/><Dialog.Popup ref={downloadPopup} className="desktop-settings-confirm mobile-download-popup"><Dialog.Title>下载 Homer 手机 App</Dialog.Title><Dialog.Description>用手机相机扫描下载二维码，打开下载页面。</Dialog.Description><svg role="img" aria-label="手机 App 下载二维码" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 37 37" shapeRendering="crispEdges"><path fill="#ffffff" d="M0 0h37v37H0z"/><path stroke="#000000" d="M4 4.5h7m1 0h1m1 0h2m3 0h2m1 0h1m1 0h1m1 0h7M4 5.5h1m5 0h1m2 0h1m1 0h4m1 0h3m1 0h1m1 0h1m5 0h1M4 6.5h1m1 0h3m1 0h1m1 0h2m1 0h2m1 0h4m1 0h1m2 0h1m1 0h3m1 0h1M4 7.5h1m1 0h3m1 0h1m2 0h1m1 0h1m2 0h1m2 0h3m2 0h1m1 0h3m1 0h1M4 8.5h1m1 0h3m1 0h1m2 0h1m3 0h3m2 0h1m3 0h1m1 0h3m1 0h1M4 9.5h1m5 0h1m1 0h1m6 0h1m4 0h1m1 0h1m5 0h1M4 10.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M18 11.5h3m2 0h2M4 12.5h1m1 0h1m3 0h2m1 0h6m5 0h1m2 0h1m2 0h1m1 0h1M7 13.5h3m4 0h1m1 0h3m2 0h1m1 0h5m3 0h2M4 14.5h2m1 0h4m2 0h1m5 0h1m3 0h1m1 0h2m1 0h3m1 0h1M5 15.5h1m1 0h1m1 0h1m2 0h4m1 0h1m4 0h2m2 0h2m1 0h1M4 16.5h1m1 0h7m1 0h1m2 0h1m1 0h2m2 0h5m4 0h1M4 17.5h1m1 0h3m3 0h2m1 0h1m4 0h2m1 0h2m1 0h2m3 0h2M7 18.5h1m1 0h3m1 0h1m3 0h2m1 0h2m1 0h2m2 0h2m3 0h1M5 19.5h1m2 0h2m4 0h1m3 0h3m1 0h4M6 20.5h1m1 0h3m1 0h1m3 0h3m1 0h1m3 0h1m1 0h1m5 0h1M11 21.5h2m1 0h1m1 0h3m4 0h1m1 0h3m2 0h3M4 22.5h3m3 0h5m1 0h1m2 0h3m1 0h1m2 0h1m1 0h2m2 0h1M7 23.5h3m1 0h3m1 0h1m1 0h1m4 0h1m1 0h1m2 0h1M4 24.5h2m3 0h2m2 0h3m1 0h1m1 0h1m3 0h7m1 0h1M12 25.5h1m2 0h1m3 0h2m1 0h1m1 0h1m3 0h3m1 0h1M4 26.5h7m1 0h3m2 0h4m1 0h1m1 0h1m1 0h1m1 0h1m3 0h1M4 27.5h1m5 0h1m2 0h2m1 0h1m1 0h1m4 0h2m3 0h1M4 28.5h1m1 0h3m1 0h1m3 0h1m2 0h3m2 0h8m1 0h2M4 29.5h1m1 0h3m1 0h1m2 0h2m1 0h1m1 0h4m1 0h1m1 0h1m1 0h4m1 0h1M4 30.5h1m1 0h3m1 0h1m1 0h1m1 0h1m1 0h4m4 0h1m3 0h1m2 0h2M4 31.5h1m5 0h1m3 0h4m4 0h1m1 0h1m2 0h3M4 32.5h7m1 0h1m1 0h1m1 0h1m1 0h3m3 0h2m1 0h2m3 0h1"/></svg><p>支持 iPhone、iPad 和 Android<br/>扫码后选择对应版本下载安装。</p><a href="https://super-tree.com/homer/app" target="_blank" rel="noopener noreferrer">在浏览器打开下载页</a><p>安装后回到此页，点击“添加设备”进行配对。配对时请使用 Homer App 扫描配对二维码。</p><Dialog.Close>知道了</Dialog.Close></Dialog.Popup></Dialog.Portal></Dialog.Root></section>
+  {state?.turnStatus&&<p className="mobile-settings-notice" role="status">{state.turnStatus==='account_required'?'中继授权已失效，请重新连接账号并重启 Homer。':state.turnStatus==='network_restricted'?'当前网络不允许使用中继，请切换网络后重试。':'中继暂不可用，请联系维护方检查服务配置后重启 Homer。'}直连仍可尝试。</p>}
   {readFailed&&<section className="mobile-settings-message" role="alert"><h3>暂时无法读取设备状态</h3><p>请确认主端正在运行，然后重新检查。无法读取时，不会将设备视为未绑定。</p><Button disabled={busy} onClick={()=>void read(true)}>重新检查设备状态</Button></section>}
   {!readFailed&&uncertain&&<section className="mobile-settings-message" role="alert"><h3>操作结果尚未确认</h3><p>请先重新检查设备状态，确认结果后再继续操作。</p><Button disabled={busy} onClick={()=>void read(true)}>重新检查设备状态</Button></section>}
   {notice&&!locked&&<p className="mobile-settings-notice" role="status">{notice}</p>}

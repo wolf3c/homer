@@ -5,13 +5,15 @@ import {resolve,join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {sourceSnapshot} from './dev-build.mjs';
 export const DESKTOP_CANDIDATE_PATHS=[
- 'packaging/electron/main.mjs','packaging/electron/preload.cjs','packaging/electron/forge.config.mjs',
- 'src/homer-account.ts','ui/desktop-permissions.tsx',
+ 'packaging/electron/main.mjs','packaging/electron/preload.cjs','packaging/electron/forge.config.mjs','packaging/electron/node-entitlements.plist',
+ 'scripts/pinned-build.mjs','scripts/trusted-build.mjs','scripts/windows-security.mjs','scripts/windows-security.d.mts','packaging/windows/image-decoder.mjs','src/processes.ts','src/desktop-resources.ts','src/media-decode.ts','src/homer-account.ts','ui/desktop-permissions.tsx',
+ 'src/mobile-turn.ts','src/mobile-gateway.ts','src/mobile-rtc.ts','ui/mobile-devices.tsx',
+ 'scripts/prepare-desktop-dependencies.mjs','packaging/macos/dependencies-lock.json',
  'package.json','package-lock.json','scripts/build-desktop.mjs','scripts/desktop-source.mjs','scripts/desktop-profile.mjs','src/web-server.ts',
- 'scripts/desktop-runtime.mjs','scripts/desktop-deepseek.mjs','scripts/dev.mjs','scripts/dev-ingress.mjs','src/dev-host.ts',
+ 'scripts/desktop-runtime.mjs','scripts/dev-build.mjs','scripts/dev.mjs','scripts/dev-ingress.mjs','src/dev-host.ts',
  'src/service.ts','src/config.ts','src/engine.ts','src/native-history-bridge.ts','src/recursive-main-inputs.ts',
 ];
-const retired=['packaging/macos/HomerApplication.swift','packaging/macos/Info.plist','packaging/macos/distribution-policy.json','packaging/macos/node-distribution-entitlements.plist','scripts/build-macos-desktop.mjs','scripts/macos-distribution.mjs','tests/desktop-termination.test.mjs'];
+const retired=['packaging/macos/HomerApplication.swift','packaging/macos/Info.plist','packaging/macos/distribution-policy.json','packaging/macos/node-distribution-entitlements.plist','scripts/build-macos-desktop.mjs','scripts/macos-distribution.mjs','tests/desktop-termination.test.mjs','scripts/desktop-deepseek.mjs','scripts/deepseek-desktop.mjs','tests/desktop-deepseek.test.mjs'];
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function prepareDesktopSource({root,sourceSha,stage,prepareCandidate=false,localWorkingTree=false}){
  if(prepareCandidate&&localWorkingTree)throw Error('desktop_source_mode_conflict');
@@ -20,7 +22,7 @@ export function prepareDesktopSource({root,sourceSha,stage,prepareCandidate=fals
  if(!stage.startsWith(join(root,'.codex/scratch/'))||existsSync(stage))throw Error('desktop_fresh_source_stage_required');
  mkdirSync(dirname(stage),{recursive:true});
  if(realpathSync(dirname(stage))!==dirname(stage))throw Error('desktop_source_symlink_denied');
- const commit=execFileSync('/usr/bin/git',['rev-parse',sourceSha+'^{commit}'],{cwd:root,encoding:'utf8'}).trim();
+ const commit=execFileSync(process.platform==='win32'?'git.exe':'/usr/bin/git',['rev-parse',sourceSha+'^{commit}'],{cwd:root,encoding:'utf8'}).trim();
  if(commit!==sourceSha)throw Error('desktop_full_git_sha_required');
  if(localWorkingTree){
    const {files}=sourceSnapshot(root);
@@ -40,8 +42,8 @@ export function prepareDesktopSource({root,sourceSha,stage,prepareCandidate=fals
    const provenance={format:1,gitSha:sourceSha,localWorkingTree:true,preparation:true,publishable:false,candidateInputs,removedInputs:[]};
    writeFileSync(join(dirname(stage),'source-provenance.json'),JSON.stringify(provenance,null,2)+'\n');return provenance;
  }
- const archive=execFileSync('/usr/bin/git',['archive','--format=tar',sourceSha],{cwd:root,maxBuffer:64*1024*1024});
- mkdirSync(stage);execFileSync('/usr/bin/tar',['-xf','-','-C',stage],{input:archive});
+ const archive=execFileSync(process.platform==='win32'?'git.exe':'/usr/bin/git',['archive','--format=tar',sourceSha],{cwd:root,maxBuffer:64*1024*1024});
+ mkdirSync(stage);execFileSync(process.platform==='win32'?join(process.env.SystemRoot,'System32/tar.exe'):'/usr/bin/tar',['-xf','-','-C',stage],{input:archive});
  const candidateInputs=[];
  for(const path of DESKTOP_CANDIDATE_PATHS){
   const source=join(root,path),target=join(stage,path);

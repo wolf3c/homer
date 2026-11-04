@@ -65,7 +65,9 @@ export class MainProcessHistory {
   constructor(private db: DatabaseSync) {this.events=new WorkerCardEvents(db);}
   private hydrate(nodes:ProcessNode[]):ProcessNode[]{
     const keys=nodes.flatMap(node=>node.items.flatMap(item=>item.kind==='workerEvent'?[item.eventKey]:[]));
-    const events=this.events.read([...new Set(keys)]);return nodes.map(node=>({...node,items:node.items.map(item=>item.kind==='workerEvent'?{...item,event:events.get(item.eventKey)}:item)}));
+    // Retain exact source phases in storage; only known public text phases
+    // belong in list, header and detail projections (including legacy rows).
+    const events=this.events.read([...new Set(keys)]);return nodes.map(node=>({...node,items:node.items.filter(item=>item.kind!=='commentary'||item.phase==='commentary'||item.phase==='final_answer').map(item=>item.kind==='workerEvent'?{...item,event:events.get(item.eventKey)}:item)}));
   }
   workerEvent(id:string,input:WorkerCardInput){
     const node=this.load(id);if(!node)throw Error('worker_event_anchor_missing');

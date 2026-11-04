@@ -7,35 +7,117 @@ import {build} from 'esbuild';
 const require=createRequire(import.meta.url),React=require('react'),Renderer=require('react-test-renderer');
 const {act}=React;
 const mocks={
- 'react-native':`const React=require('react'); exports.View='View';exports.Text='Text';exports.Image='Image';exports.Pressable='Pressable';exports.ActivityIndicator='ActivityIndicator';exports.StatusBar='StatusBar';exports.Modal=({visible,children,...props})=>visible?React.createElement('NativeModal',props,children):null;exports.StyleSheet={create:v=>v,hairlineWidth:1};exports.Platform={OS:'ios'};exports.PermissionsAndroid={};exports.Linking={};exports.Alert={alert(){}};exports.AppState={addEventListener:()=>({remove(){}})};`,
+ 'react-native':`const React=require('react'); exports.View='View';exports.Text='Text';exports.Image='Image';exports.Pressable='Pressable';exports.ActivityIndicator='ActivityIndicator';exports.StatusBar='StatusBar';exports.Modal=({visible,children,...props})=>visible?React.createElement('NativeModal',props,children):null;exports.StyleSheet={create:v=>v,hairlineWidth:1};exports.Platform={get OS(){return globalThis.__rebindTest.platform??'ios'},get Version(){return globalThis.__rebindTest.platform==='android'?33:'17.0'}};exports.PermissionsAndroid={};exports.Linking={openURL:url=>globalThis.__rebindTest.openURL?.(url)};exports.Alert={alert:(...args)=>globalThis.__rebindTest.alerts?.push(args)};exports.AppState={addEventListener:(_,fn)=>{globalThis.__rebindTest.foreground=fn;return {remove(){}}}};`,
  'react-native-safe-area-context':`exports.SafeAreaProvider='SafeAreaProvider';exports.SafeAreaView='SafeAreaView';`,
  'expo-camera':`exports.CameraView='CameraView';exports.useCameraPermissions=()=>[{granted:true},async()=>{},async()=>{}];`,
- 'expo-secure-store':`exports.getItemAsync=key=>key==='homer.mobile-cancel'?Promise.resolve(globalThis.__rebindTest.cancel??null):globalThis.__rebindTest.read();exports.setItemAsync=(key,value)=>key==='homer.mobile-cancel'?(globalThis.__rebindTest.storeCancel?globalThis.__rebindTest.storeCancel(value):(globalThis.__rebindTest.cancel=value,Promise.resolve())):globalThis.__rebindTest.write(value);exports.deleteItemAsync=key=>key==='homer.mobile-cancel'?(globalThis.__rebindTest.removeCancel?globalThis.__rebindTest.removeCancel():(globalThis.__rebindTest.cancel=null,Promise.resolve())):globalThis.__rebindTest.remove();`,
- 'expo-device':`Object.defineProperty(exports,'deviceName',{get:()=>globalThis.__rebindDeviceName??null});`,
+ 'expo-secure-store':`exports.getItemAsync=key=>key.startsWith('homer.mobile-update-dismissed.')?(globalThis.__rebindTest.readUpdate?.(key)??Promise.resolve(null)):key==='homer.mobile-cancel'?Promise.resolve(globalThis.__rebindTest.cancel??null):globalThis.__rebindTest.read();exports.setItemAsync=(key,value)=>key.startsWith('homer.mobile-update-dismissed.')?(globalThis.__rebindTest.writeUpdate?.(key,value)??Promise.resolve()):key==='homer.mobile-cancel'?(globalThis.__rebindTest.storeCancel?globalThis.__rebindTest.storeCancel(value):(globalThis.__rebindTest.cancel=value,Promise.resolve())):globalThis.__rebindTest.write(value);exports.deleteItemAsync=key=>key==='homer.mobile-cancel'?(globalThis.__rebindTest.removeCancel?globalThis.__rebindTest.removeCancel():(globalThis.__rebindTest.cancel=null,Promise.resolve())):globalThis.__rebindTest.remove();`,
+ 'expo-application':`Object.defineProperties(exports,{applicationId:{get:()=>globalThis.__rebindTest.applicationId??'com.homer.mobile.qa'},nativeApplicationVersion:{get:()=> '0.1.1'},nativeBuildVersion:{get:()=> '3'}});exports.getAppleStoreEnvironmentAsync=async()=>('storeEnvironment' in globalThis.__rebindTest?globalThis.__rebindTest.storeEnvironment:'production');`,
+ 'expo':`exports.requireOptionalNativeModule=()=>globalThis.__rebindTest.storefrontMissing?null:({current:()=>globalThis.__rebindTest.readStorefront?.()??Promise.resolve('storefront' in globalThis.__rebindTest?globalThis.__rebindTest.storefront:'CHN')});`,
+ 'expo-device':`Object.defineProperties(exports,{deviceName:{get:()=>globalThis.__rebindDeviceName??null},supportedCpuArchitectures:{get:()=>globalThis.__rebindTest.abis??['arm64-v8a']}});`,
  'expo-crypto':`exports.randomUUID=()=>globalThis.__rebindTest.uuid();`,
  'expo-file-system':`exports.File=class{};exports.Paths={cache:'test'};`,
- 'expo-sharing':`exports.isAvailableAsync=async()=>false;exports.shareAsync=async()=>{};`,
- 'react-native-webview':`const React=require('react');exports.WebView=React.forwardRef((props,ref)=>{React.useImperativeHandle(ref,()=>({injectJavaScript:script=>globalThis.__rebindTest.injections.push(script)}));return React.createElement('WebView',props)});`,
+ 'expo-sharing':`exports.isAvailableAsync=()=>globalThis.__rebindTest.sharingAvailable??Promise.resolve(false);exports.shareAsync=async()=>{};`,
+ 'react-native-webview':`const React=require('react');exports.WebView=React.forwardRef((props,ref)=>{React.useImperativeHandle(ref,()=>({injectJavaScript:script=>(script.includes('__homerMobileUpdate=')?(globalThis.__rebindTest.updates??=[]):globalThis.__rebindTest.injections).push(script)}));return React.createElement('WebView',props)});`,
 };
 const entry=fileURLToPath(new URL('./App.tsx',import.meta.url));
 const code=(await build({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'cjs',loader:{'.png':'dataurl'},external:['react','react/jsx-runtime'],plugins:[{name:'native-fixtures',setup(b){
  b.onResolve({filter:/.*/},args=>{if(args.path in mocks)return {path:args.path,namespace:'mock'};if(args.path.endsWith('/.generated/chat.mjs'))return {path:'chat',namespace:'mock'};});
  b.onLoad({filter:/.*/,namespace:'mock'},args=>({contents:args.path==='chat'?'export default "<html></html>"':mocks[args.path],loader:'js'}));
 }}]})).outputFiles[0].text;
-const module={exports:{}};Function('require','module','exports',code)(require,module,module.exports);
-const App=module.exports.default;
+function createApp(){const module={exports:{}};Function('require','module','exports',code)(require,module,module.exports);return module.exports.default;}
+const App=createApp();
+const releaseFixture={schemaVersion:1,releases:{stable:{ios:{status:'available',version:'0.1.2',minOsVersion:'16.0',verifiedStorefronts:['CHN'],storeUrl:'https://apps.apple.com/app/id6830019784'}}}};
 const old={signalOrigin:'https://old.example',routeId:'a'.repeat(64),credential:'c'.repeat(43)};
 const next={signalOrigin:'https://new.example',routeId:'b'.repeat(64),credential:'e'.repeat(43)};
 const qr='https://new.example/homer/mobile/'+'b'.repeat(64)+'#'+'d'.repeat(43);
 const web=tree=>tree.root.findByType('WebView');
 const text=tree=>tree.root.findAllByType('Text').map(t=>t.children.join('')).join('\n');
 const press=(tree,label)=>{const target=tree.root.findAllByType('Pressable').find(node=>node.findAllByType('Text').some(t=>t.children.join('')===label));assert.ok(target,`missing action ${label}`);return target.props.onPress();};
-const token=ctx=>JSON.parse(ctx.injections.at(-1).match(/window\.__homerMobileNonce=("[^"]+")/)[1]);
+const token=ctx=>JSON.parse(ctx.injections.findLast(script=>script.includes('__homerMobileNonce=')).match(/window\.__homerMobileNonce=("[^"]+")/)[1]);
 const send=(tree,ctx,item,nonce=token(ctx))=>web(tree).props.onMessage({nativeEvent:{url:'https://localhost/',data:JSON.stringify({...item,nonce})}});
-async function boot(ctx){let tree;await act(async()=>{tree=Renderer.create(React.createElement(App));await Promise.resolve();});await act(async()=>web(tree).props.onLoadEnd());await act(async()=>send(tree,ctx,{type:'connection-status',code:'active'}));return tree;}
+async function boot(ctx,Client=App){let tree;await act(async()=>{tree=Renderer.create(React.createElement(Client));await Promise.resolve();});await act(async()=>web(tree).props.onLoadEnd());await act(async()=>send(tree,ctx,{type:'connection-status',code:'active'}));return tree;}
 async function scan(tree){await act(async()=>send(tree,globalThis.__rebindTest,{type:'open-scanner'}));await act(async()=>{tree.root.findByType('CameraView').props.onBarcodeScanned({data:qr});await Promise.resolve();});}
 const credential=(tree,ctx)=>send(tree,ctx,{type:'credential',routeId:next.routeId,credential:next.credential});
 async function cancelAndReturn(tree,ctx){const attempt=token(ctx);await act(async()=>press(tree,'返回原连接'));await act(async()=>send(tree,ctx,{type:'cancel-result',result:'absent'},attempt));}
+
+test('update check runs once across foreground, ready, reconnect and WebView reload; native owns URL and dismissal',async()=>{
+ const originalFetch=globalThis.fetch,channel=process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;globalThis.__DEV__=false;process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL='stable';
+ let count=0,serial=0,failOpen=true,written=[],opened=[];
+ const ctx={applicationId:'com.homer.mobile',injections:[],uuid:()=>`update-${++serial}`,read:async()=>JSON.stringify(old),write:async()=>{},readUpdate:async()=>null,writeUpdate:async(key,value)=>{written.push([key,value]);throw Error('disk failed');},openURL:async url=>{opened.push(url);if(failOpen)throw Error('cannot open');}};
+ globalThis.__rebindTest=ctx;globalThis.fetch=async()=>{count++;return new Response(JSON.stringify(releaseFixture));};
+ const Client=createApp();let tree=await boot(ctx,Client);
+ const snapshot=()=>JSON.parse(ctx.updates.at(-1).match(/window\.__homerMobileUpdate=([^;]+);/)[1]);
+ try{
+  assert.equal(count,1);assert.deepEqual(snapshot(),{version:'0.1.2',openError:false});
+  await act(async()=>ctx.foreground('active'));
+  await act(async()=>send(tree,ctx,{type:'ready'}));
+  await act(async()=>send(tree,ctx,{type:'connection-status',code:'unavailable'}));
+  await act(async()=>{web(tree).props.onLoadStart();web(tree).props.onLoadEnd();});
+  assert.equal(count,1);assert.equal(snapshot().version,'0.1.2');
+  await act(async()=>send(tree,ctx,{type:'update-open',url:'https://evil.example'},'stale'));assert.equal(opened.length,0);
+  await act(async()=>web(tree).props.onMessage({nativeEvent:{url:'https://evil.example',data:JSON.stringify({type:'update-dismiss',nonce:token(ctx)})}}));assert.equal(snapshot().version,'0.1.2');
+  await act(async()=>send(tree,ctx,{type:'update-open',url:'https://evil.example'}));assert.equal(snapshot().openError,true);
+  assert.deepEqual(opened,['https://super-tree.com/homer/app']);
+  failOpen=false;await act(async()=>send(tree,ctx,{type:'update-open'}));assert.equal(snapshot().openError,false);assert.equal(snapshot().version,'0.1.2');
+  await act(async()=>send(tree,ctx,{type:'update-busy',busy:true},'stale'));assert.equal(snapshot().version,'0.1.2');
+  await act(async()=>send(tree,ctx,{type:'update-busy',busy:true}));assert.equal(snapshot(),null);
+  await act(async()=>send(tree,ctx,{type:'update-busy',busy:false}));assert.equal(snapshot().version,'0.1.2');
+  let finishShare;ctx.sharingAvailable=new Promise(resolve=>{finishShare=resolve;});
+  await act(async()=>send(tree,ctx,{type:'share-file',filename:'synthetic.txt',base64:'YQ=='}));assert.equal(snapshot(),null);
+  await act(async()=>finishShare(false));assert.equal(snapshot().version,'0.1.2');
+  await act(async()=>send(tree,ctx,{type:'open-scanner'}));assert.equal(snapshot(),null);
+  await act(async()=>press(tree,'取消'));assert.equal(snapshot().version,'0.1.2');
+  await scan(tree);assert.equal(snapshot(),null);await act(async()=>send(tree,ctx,{type:'connection-status',code:'pending'}));assert.equal(snapshot(),null);
+  await cancelAndReturn(tree,ctx);assert.equal(snapshot().version,'0.1.2');assert.equal(count,1);
+  await act(async()=>send(tree,ctx,{type:'update-dismiss',version:'999'}));assert.equal(snapshot(),null);
+  assert.deepEqual(written,[['homer.mobile-update-dismissed.stable.ios','0.1.2']]);
+  await act(async()=>send(tree,ctx,{type:'ready'}));assert.equal(snapshot(),null);
+  await act(async()=>tree.unmount());tree=await boot(ctx,Client);assert.equal(snapshot(),null);assert.equal(count,1);
+ }finally{await act(async()=>tree.unmount());globalThis.fetch=originalFetch;if(channel===undefined)delete process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;else process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=channel;delete globalThis.__DEV__;delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
+});
+
+test('unknown/QA/development/sandbox identity and unreadable dismissal skip without touching binding storage',async()=>{
+ const originalFetch=globalThis.fetch,channel=process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;let requests=0;
+ globalThis.fetch=async()=>{requests++;return new Response(JSON.stringify(releaseFixture));};
+ try{
+  for(const config of [{applicationId:'com.homer.mobile.qa'},{channel:undefined},{channel:'qa'},{development:true},{storeEnvironment:'sandbox'},{storeEnvironment:null},{storefront:null},{storefrontMissing:true},{readUpdate:async()=>{throw Error('unreadable');}},{readUpdate:async()=> '0.1.2'},{storefront:'GBR'}]){
+   globalThis.__DEV__=config.development??false;process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=config.channel??'stable';if('channel' in config&&config.channel===undefined)delete process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;
+   let pairingReads=0;const ctx={applicationId:'com.homer.mobile',injections:[],uuid:()=> 'skip',read:async()=>{pairingReads++;return JSON.stringify(old);},write:async()=>{},...config};
+   globalThis.__rebindTest=ctx;const before=requests,tree=await boot(ctx,createApp());
+   assert.match(ctx.updates.at(-1),/__homerMobileUpdate=null/);assert.equal(pairingReads,1);
+   if(config.storefront!=='GBR'&&!config.readUpdate)assert.equal(requests,before);
+   await act(async()=>tree.unmount());
+  }
+ }finally{globalThis.fetch=originalFetch;if(channel===undefined)delete process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;else process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=channel;delete globalThis.__DEV__;delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
+});
+
+test('Android native metadata and connection-page notice share the platform-specific dismissal key',async()=>{
+ const originalFetch=globalThis.fetch,channel=process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;globalThis.__DEV__=false;process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL='stable';
+ let stored=null,requests=0;
+ const ctx={platform:'android',applicationId:'com.homer.mobile',injections:[],uuid:()=> 'android-update',read:async()=>null,readUpdate:async key=>{assert.equal(key,'homer.mobile-update-dismissed.stable.android');return stored;},writeUpdate:async(key,value)=>{assert.equal(key,'homer.mobile-update-dismissed.stable.android');stored=value;}};
+ globalThis.__rebindTest=ctx;globalThis.fetch=async()=>{requests++;return Response.json({schemaVersion:1,releases:{stable:{android:{status:'available',version:'0.1.2',versionCode:4,minApiLevel:33,supportedAbis:['arm64-v8a'],downloadUrl:'https://github.com/wolf3c/homer/releases/download/mobile-0.1.2/Homer.apk',sha256:'a'.repeat(64)}}}});};
+ let tree;
+ try{
+  await act(async()=>{tree=Renderer.create(React.createElement(createApp()));});
+  assert.match(text(tree),/连接你的电脑/);assert.match(text(tree),/有新版本 0.1.2/);
+  const close=tree.root.findAllByType('Pressable').find(node=>node.props.accessibilityLabel==='关闭更新提示');
+  await act(async()=>close.props.onPress());assert.doesNotMatch(text(tree),/有新版本/);assert.equal(stored,'4');
+  await act(async()=>tree.unmount());await act(async()=>{tree=Renderer.create(React.createElement(createApp()));});assert.doesNotMatch(text(tree),/有新版本/);assert.equal(requests,2);
+ }finally{if(tree)await act(async()=>tree.unmount());globalThis.fetch=originalFetch;if(channel===undefined)delete process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;else process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=channel;delete globalThis.__DEV__;delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
+});
+
+test('a stalled storefront read ends after five seconds without a request or connection failure',async t=>{
+ const originalFetch=globalThis.fetch,channel=process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;globalThis.__DEV__=false;process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL='stable';t.mock.timers.enable({apis:['setTimeout']});
+ let requests=0;globalThis.fetch=async()=>{requests++;return Response.json(releaseFixture);};
+ const ctx={applicationId:'com.homer.mobile',injections:[],uuid:()=> 'storefront-timeout',read:async()=>JSON.stringify(old),readStorefront:()=>new Promise(()=>{})};globalThis.__rebindTest=ctx;
+ let tree;
+ try{tree=await boot(ctx,createApp());await act(async()=>t.mock.timers.tick(5000));assert.equal(requests,0);assert.match(ctx.updates.at(-1),/__homerMobileUpdate=null/);assert.doesNotMatch(text(tree),/无法读取|加载失败/);}
+ finally{if(tree)await act(async()=>tree.unmount());t.mock.timers.reset();globalThis.fetch=originalFetch;if(channel===undefined)delete process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;else process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=channel;delete globalThis.__DEV__;delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
+});
 
 test('scanner has a modal safe area and can return to the existing chat',async()=>{
  globalThis.IS_REACT_ACT_ENVIRONMENT=true;
@@ -288,4 +370,48 @@ test('scanning after the chat process exits reloads the page before connecting t
   assert.match(ctx.injections.at(-1),new RegExp(next.routeId));
   assert.deepEqual(JSON.parse(stored),old,'the old binding remains until approval');
  }finally{if(tree)await act(async()=>tree.unmount());delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
+});
+
+
+test('privacy stays available before pairing, in scanner and after a chat page failure without changing binding',async()=>{
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;globalThis.__DEV__=true;
+ let serial=0,fail=false;const opened=[],alerts=[],writes=[];
+ const ctx={injections:[],uuid:()=>`privacy-${++serial}`,read:async()=>null,write:async value=>writes.push(value),alerts,openURL:async url=>{opened.push(url);if(fail)throw Error('offline');}};
+ globalThis.__rebindTest=ctx;let tree;
+ try{
+  await act(async()=>{tree=Renderer.create(React.createElement(createApp()));await Promise.resolve();});
+  assert.match(text(tree),/连接你的电脑/);
+  await act(async()=>web(tree).props.onLoadEnd());
+  await act(async()=>send(tree,ctx,{type:'open-privacy'}));
+  assert.equal(opened.length,0,'the chat bridge cannot open privacy before pairing');
+  await act(async()=>press(tree,'隐私政策'));
+  assert.deepEqual(opened,['https://super-tree.com/homer/privacy']);
+  await act(async()=>press(tree,'开始扫码'));
+  const modal=tree.root.findByType('NativeModal');
+  const link=modal.findAllByType('Pressable').find(n=>n.props.accessibilityRole==='link');assert.ok(link);
+  await act(async()=>link.props.onPress());
+  assert.deepEqual(opened,['https://super-tree.com/homer/privacy','https://super-tree.com/homer/privacy']);
+  await act(async()=>press(tree,'取消'));
+  assert.equal(writes.length,0);
+  fail=true;await act(async()=>press(tree,'隐私政策'));
+  assert.equal(alerts.length,1);assert.match(alerts[0][0],/隐私政策/);
+  assert.match(text(tree),/连接你的电脑/);assert.equal(writes.length,0);
+  await act(async()=>tree.unmount());tree=undefined;
+  ctx.read=async()=>JSON.stringify(old);fail=false;
+  tree=await boot(ctx,createApp());
+  assert.doesNotMatch(text(tree),/隐私政策/,'a working chat has no privacy footer');
+  await act(async()=>send(tree,ctx,{type:'connection-status',code:'unavailable'}));
+  assert.doesNotMatch(text(tree),/隐私政策/,'a previously connected chat keeps its footer hidden during reconnect');
+  const before=opened.length;
+  await act(async()=>send(tree,ctx,{type:'open-privacy'},'stale'));
+  await act(async()=>web(tree).props.onMessage({nativeEvent:{url:'https://foreign.example/',data:JSON.stringify({type:'open-privacy',nonce:token(ctx)})}}));
+  assert.equal(opened.length,before,'stale or foreign pages cannot open privacy');
+  await act(async()=>send(tree,ctx,{type:'open-privacy',url:'https://foreign.example/'}));
+  assert.equal(opened.length,before+1);assert.equal(opened.at(-1),'https://super-tree.com/homer/privacy');assert.equal(writes.length,0);
+  fail=true;await act(async()=>send(tree,ctx,{type:'open-privacy'}));assert.equal(alerts.length,2);fail=false;
+  await act(async()=>web(tree).props.onError());
+  await act(async()=>press(tree,'隐私政策'));
+  assert.equal(opened.at(-1),'https://super-tree.com/homer/privacy');assert.equal(writes.length,0);
+  assert.equal(tree.root.findAllByType('WebView').length,1);
+ }finally{if(tree)await act(async()=>tree.unmount());delete globalThis.__rebindTest;delete globalThis.__DEV__;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
 });

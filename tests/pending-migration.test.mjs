@@ -1,4 +1,4 @@
-// Isolated synthetic schema-2 fixture; no live snapshots or accounts.
+// Isolated synthetic current-schema fixture; no live snapshots or accounts.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
@@ -13,7 +13,7 @@ import {WechatStore} from '../src/channels/wechat-store.ts';
 import {schemaHash} from '../scripts/dev-build.mjs';
 import {pinnedDatabaseIdentity,preparePinned} from '../scripts/pinned-build.mjs';
 const parent=resolve('.codex/scratch/main-pending-implementation');mkdirSync(parent,{recursive:true});
-test('AC07: additive pending migration preserves schema-2 rows, task queue and uncertain send; repeat is inert',()=>{
+test('AC07: additive pending migration preserves recursive rows, task queue and uncertain send; repeat is inert',()=>{
  const dir=mkdtempSync(join(parent,'migration-')),path=join(dir,'synthetic.sqlite');let store=new Store(path);
  try{
   new WorkerInteractions(store.db);new ConversationHistory(store.db);new WechatStore(store.db);
@@ -24,7 +24,7 @@ test('AC07: additive pending migration preserves schema-2 rows, task queue and u
   tasks.createRoot({agentId:'main:synthetic',sourceRequestId:'synthetic-source'},{operationId:'root',title:'preserved',contract,authority,executorKind:'worker'});
   store.db.prepare("INSERT INTO wechat_inbox VALUES('synthetic-inbound','synthetic-binding','1','synthetic-owner','synthetic-context','','submitted')").run();
   store.db.prepare("INSERT INTO wechat_outbox VALUES('unknown','synthetic-inbound','synthetic-binding','event',0,'synthetic','uncertain','wechat_send_uncertain')").run();
-  // Remove exactly the addon to represent the prior recursive schema-2 ABI.
+  // Remove exactly the addon to represent the prior pending addon ABI.
   store.db.exec("DROP TABLE pending_items;DELETE FROM meta WHERE key='pendingSchemaVersion'");
   const tables=store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r=>r.name);
   const capture=()=>Object.fromEntries(tables.map(table=>[table,store.db.prepare('SELECT * FROM "'+table+'"').all()]));

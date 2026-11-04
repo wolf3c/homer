@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,rmSync,readFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {Store} from '../src/store.js';
 import {Files} from '../src/files.js';
@@ -55,17 +55,15 @@ test('production Web bridge emits bounded history state using the selected servi
 });
 
 
-test('history HTTP keeps the parent connection gate and initializes its synthetic connection entry',async()=>{
+test('history HTTP allows local same-origin access and rejects cross-origin reads',async()=>{
  const f=fixture();let server:Awaited<ReturnType<typeof createWebServer>>|undefined;
  try{
   f.history.record('http-reply','synthetic','已有答复');
   const host={registerChannelCapabilities(){},store:f.store,history:f.history,inputs:f.inputs,tasks:f.tasks,processes:f.processes,webReadEpoch:'synthetic-epoch',webHistoryPages:()=>f.pages,conversationControlState:()=>({observedAtMs:1,isRunning:false,activeMessageId:null,generation:null,mainActivity:null,usage:null}),onStateChange:()=>()=>{},media:{view:()=>{throw Error('unexpected_media');}}};
-  server=await createWebServer({bridge:homerWebBridge(host as unknown as Homer),port:0,connectionDirectory:join(f.dir,'synthetic-connection')});
-  assert.equal((await fetch(server.url+'/api/history/state')).status,401);
-  const key=readFileSync(server.connectionFile,'utf8').match(/\/connect#([^"<]+)/)![1]!;
-  const connected=await fetch(server.url+'/api/connect',{method:'POST',headers:{Origin:server.url,'Content-Type':'application/json'},body:JSON.stringify({key})});assert.equal(connected.status,200);
-  const session=await connected.json() as {connection:string};
-  const response=await fetch(server.url+'/api/history/state',{headers:{'X-Homer-Connection':session.connection}});assert.equal(response.status,200);
+  server=await createWebServer({bridge:homerWebBridge(host as unknown as Homer),port:0});
+  assert.equal((await fetch(server.url+'/api/history/state',{headers:{Origin:'https://synthetic.invalid'}})).status,403);
+  assert.equal((await fetch(server.url+'/api/history/state',{headers:{'Sec-Fetch-Site':'cross-site'}})).status,403);
+  const response=await fetch(server.url+'/api/history/state',{headers:{Origin:server.url}});assert.equal(response.status,200);
   const state=await response.json() as {messages:{id:string}[]};assert.deepEqual(state.messages.map(m=>m.id),['http-reply']);
  }finally{await server?.close();f.close();}
 });

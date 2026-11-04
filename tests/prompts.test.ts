@@ -17,14 +17,27 @@ test("HMR-PROMPTS-001: maintained product instructions have one file source", ()
   assert.ok(Object.isFrozen(prompts));
 });
 
+test('both roles receive the same bounded temporary-resource lifecycle authority', () => {
+  const prompts = loadPrompts();
+  const boundary = '\n\n## 临时资源生命周期授权\n\n';
+  const policy = prompts.main.split(boundary)[1];
+  assert.ok(policy);
+  assert.equal(prompts.worker.split(boundary)[1], policy);
+  for (const clause of ['仅服务本任务', '无独有价值且无其他依赖', '无须逐项再次申请', '用户原有、共享、持久、归属不明及仍有用途的资源不在该许可内', '用户明确限制和宿主审批继续生效']) assert.ok(policy.includes(clause), clause);
+  assert.equal(prompts.main.split(boundary).length, 2);
+  assert.equal(prompts.worker.split(boundary).length, 2);
+});
+
 test("HMR-PROMPTS-001: snapshot stays fixed and the next load sees edits", () => {
   const f = fixture();
   try {
     const first = loadPrompts(f.directory);
+    const snapshot = {...first};
     f.write("main", "Synthetic main B"); f.write("worker", "Synthetic worker B");
-    assert.equal(first.main, "Synthetic main A"); assert.equal(first.worker, "Synthetic worker A");
+    assert.deepEqual(first, snapshot);
+    assert.ok(first.main.startsWith("Synthetic main A\n\n")); assert.ok(first.worker.startsWith("Synthetic worker A\n\n"));
     const next = loadPrompts(f.directory);
-    assert.equal(next.main, "Synthetic main B"); assert.equal(next.worker, "Synthetic worker B");
+    assert.ok(next.main.startsWith("Synthetic main B\n\n")); assert.ok(next.worker.startsWith("Synthetic worker B\n\n"));
   } finally { f.cleanup(); }
 });
 
@@ -48,9 +61,9 @@ test("HMR-PROMPTS-001: native resume attaches developer instructions on the same
   const first = create(); let next: CodexEngine | undefined;
   try {
     const thread = await first.start();
-    assert.equal((await first.turn("first")).text, "Synthetic main A");
+    assert.equal((await first.turn("first")).text, loadPrompts(f.directory).main);
     await first.close(); f.write("main", "Synthetic main B"); next = create(thread);
     assert.equal(await next.start(), thread);
-    assert.equal((await next.turn("resumed")).text, "Synthetic main B");
+    assert.equal((await next.turn("resumed")).text, loadPrompts(f.directory).main);
   } finally { await first.close(); await next?.close(); f.cleanup(); }
 });

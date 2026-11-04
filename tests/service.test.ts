@@ -461,7 +461,7 @@ test("T07: missing material, actual engine failure and absent artifact cannot re
   }
 });
 
-test("T08: cancellation is separate from confirmation; timeout and unconfirmed stop never succeed", async () => {
+test("T08: cancellation is separate from confirmation; unconfirmed stop never succeeds", async () => {
   for (const mode of ["hang", "unconfirmed"] as const) {
     const f = fixture("stop-" + mode, mode);
     const a = f.app;
@@ -484,9 +484,13 @@ test("T08: cancellation is separate from confirmation; timeout and unconfirmed s
   const f = fixture("timeout", "hang", 100);
   await f.app.start();
   await f.app.message(JSON.stringify({ action: "dispatch" }), "timeout");
+  await until(() => !!f.workerEngines[0]?.pendingResolve);
+  await new Promise(resolve=>setTimeout(resolve,200));
+  assert.equal(f.app.store.runs()[0]?.status, "running");
+  assert.equal(f.app.tasks.authority(f.app.tasks.run(f.app.store.runs()[0]!.id).taskId,1).maxActiveMs, undefined);
+  await f.app.stop(f.app.store.runs()[0]!.id);
   await f.app.idle();
-  assert.equal(f.app.store.runs()[0]?.errorCode, "timeout");
-  assert.equal(f.app.store.runs()[0]?.status, "failed");
+  assert.equal(f.app.store.runs()[0]?.status, "cancelled");
   await f.app.close();
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "homer-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Local Codex App Server matter and worker CLI",
   "type": "module",
@@ -17,7 +17,9 @@
     "dist",
     "prompts",
     ".codex/skills/homer-initialize",
-    ".codex/skills/homer-tool-management"
+    ".codex/skills/homer-tool-management",
+    ".codex/skills/homer-feedback",
+    ".codex/skills/homer-archive-review"
   ],
   "scripts": {
     "desktop:make": "node scripts/build-desktop.mjs",
@@ -49,7 +51,11 @@
     "playwright-core": "1.59.1",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
-    "vite-plugin-singlefile": "2.3.4"
+    "vite-plugin-singlefile": "2.3.4",
+    "electron-builder": "26.18.0",
+    "electron-updater": "6.8.11",
+    "js-yaml": "4.1.1",
+    "sharp": "0.35.5"
   },
   "dependencies": {
     "mdast-util-from-markdown": "2.1.0",

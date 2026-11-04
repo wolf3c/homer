@@ -39,16 +39,38 @@ test('pinned rollback keeps actual host IPC, original thread and durable input i
   assert.ok(existsSync(join(f.base,'runtime/cli.lock')));
   const input={requestId:'synthetic-stable-id',text:'Synthetic input'};
   p.child.stdin.write(JSON.stringify(input)+'\n');await until(()=>p.records.some(x=>x.kind==='accepted'));
-  assert.equal(p.records.find(x=>x.kind==='accepted').value.fresh,true);
+  const originalReceipt=p.records.find(x=>x.kind==='accepted').value;
+  assert.equal(originalReceipt.fresh,true);
   p.child.stdin.write(JSON.stringify(input)+'\n');await until(()=>p.records.filter(x=>x.kind==='accepted').length===2);
-  assert.equal(p.records.filter(x=>x.kind==='accepted')[1].value.fresh,false);
+  const duplicateReceipt=p.records.filter(x=>x.kind==='accepted')[1].value;assert.equal(duplicateReceipt.fresh,false);assert.equal(duplicateReceipt.replyId,originalReceipt.replyId);assert.equal(duplicateReceipt.queueMessageId,originalReceipt.queueMessageId);assert.ok(Number.isSafeInteger(duplicateReceipt.revision)&&duplicateReceipt.revision>=originalReceipt.revision);
   p.child.stdin.write(JSON.stringify({...input,text:'Conflicting synthetic input'})+'\n');await until(()=>p.records.some(x=>x.kind==='rejected'));
   assert.equal(p.records.find(x=>x.kind==='rejected').code,'request_id_conflict');
+  await until(()=>p.records.some(x=>x.kind==='output'&&x.message.type==='reply'&&x.message.requestId===input.requestId));
+  const inspect=()=>{
+   const db=new f.Store(join(f.base,'runtime/homer.sqlite'));
+   try{
+    const inputs=db.db.prepare('SELECT * FROM conversation_inputs').all();assert.equal(inputs.length,1);
+    assert.equal(inputs[0].requestId,input.requestId);assert.equal(inputs[0].threadId,'synthetic-pinned-main');assert.equal(inputs[0].replyId,originalReceipt.replyId);
+    const requests=db.db.prepare('SELECT * FROM requests').all();assert.equal(requests.length,1);assert.equal(requests[0].id,input.requestId);assert.equal(requests[0].state,'completed');
+    const sourceMessages=db.db.prepare("SELECT m.id,m.payloadJson,r.revision,r.state FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input'").all();assert.equal(sourceMessages.length,1);
+    const source=JSON.parse(sourceMessages[0].payloadJson);assert.equal(source.requestId,input.requestId);assert.equal(source.source,'local');
+    const processes=db.db.prepare("SELECT value FROM meta WHERE key LIKE 'publicMainNode:v1:%'").all().map(row=>JSON.parse(row.value));assert.equal(processes.length,1);
+    const process=processes[0];assert.equal(process.replyMessageId,originalReceipt.replyId);assert.equal(process.threadId,'synthetic-pinned-main');assert.equal(process.sourceKind,'user');assert.equal(process.status,'completed');
+    const messages=db.db.prepare('SELECT id,threadId,requestId,role,text,status FROM conversation_messages ORDER BY rowid').all();
+    const users=messages.filter(m=>m.role==='user');assert.equal(users.length,1);assert.equal(users[0].requestId,input.requestId);assert.equal(users[0].text,input.text);assert.equal(users[0].threadId,process.threadId);
+    assert.equal(sourceMessages[0].id,originalReceipt.queueMessageId);assert.deepEqual(process.sourceMessageIds,[sourceMessages[0].id]);
+    const execution=messages.filter(m=>m.id===originalReceipt.replyId);assert.equal(execution.length,1);assert.equal(execution[0].requestId,input.requestId);assert.equal(execution[0].role,'assistant');assert.equal(execution[0].text,requests[0].response);assert.equal(execution[0].status,'completed');
+    const published=messages.filter(m=>m.id===process.messageId);assert.equal(published.length,1);assert.equal(published[0].role,'assistant');assert.equal(published[0].threadId,process.threadId);assert.equal(published[0].status,'completed');
+    assert.equal(messages.length,users.length+execution.length+published.length,'every stored message belongs uniquely to the input, original reply or public process');
+    return {inputs,requests,sourceMessages,processes,messages};
+   }finally{db.close();}
+  };
+  const beforeRestart=inspect();
   p.child.kill('SIGTERM');assert.deepEqual(await p.exit,[0,null]);assert.equal(existsSync(join(f.base,'runtime/cli.lock')),false);
   p=f.run();await until(()=>p.records.some(x=>x.kind==='ready')||p.child.exitCode!==null);assert.equal(p.child.exitCode,null,p.errors);
   p.child.stdin.write(JSON.stringify(input)+'\n');await until(()=>p.records.some(x=>x.kind==='accepted'));
-  assert.equal(p.records.find(x=>x.kind==='accepted').value.fresh,false);
-  const db=new f.Store(join(f.base,'runtime/homer.sqlite'));assert.equal(db.db.prepare('SELECT count(*) n FROM conversation_inputs').get().n,1);assert.equal(db.db.prepare('SELECT count(*) n FROM conversation_messages').get().n,2);assert.equal(db.db.prepare('SELECT count(*) n FROM requests').get().n,1);db.close();
+  const restartedReceipt=p.records.find(x=>x.kind==='accepted').value;assert.equal(restartedReceipt.fresh,false);assert.equal(restartedReceipt.replyId,originalReceipt.replyId);assert.equal(restartedReceipt.queueMessageId,originalReceipt.queueMessageId);assert.equal(restartedReceipt.revision,beforeRestart.sourceMessages[0].revision);assert.equal(restartedReceipt.queueState,'completed');
+  assert.deepEqual(inspect(),beforeRestart,'restart and duplicate input preserve the exact source/receipt/process/history without loss or additional dispatch');
   p.child.stdin.end();assert.deepEqual(await p.exit,[0,null]);assert.equal(existsSync(join(f.base,'runtime/cli.lock')),false);
  }finally{if(p.child.exitCode===null)p.child.kill('SIGTERM');await p.exit;}
 });
@@ -64,7 +86,7 @@ test('pinned rollback rejects lock, schema, thread and configuration mismatch be
  p=f.run();assert.deepEqual(await p.exit,[1,null]);assert.equal(p.records.at(-1).code,'pinned_thread_mismatch');
  db=new f.Store(join(f.base,'runtime/homer.sqlite'));db.setMeta('mainThread','synthetic-pinned-main');db.db.exec('CREATE TABLE synthetic_future_schema(id TEXT)');db.close();
  p=f.run();assert.deepEqual(await p.exit,[1,null]);assert.equal(p.records.at(-1).code,'pinned_schema_mismatch');
- db=new f.Store(join(f.base,'runtime/homer.sqlite'));db.setMeta('memorySchemaVersion','999');db.close();
+ db=new f.Store(join(f.base,'runtime/homer.sqlite'));db.setMeta('recursiveSchemaVersion','999');db.close();
  const future=launch(['prepare','--build',build,'--config',f.config,'--snapshot',join(f.base,'runtime/homer.sqlite'),'--thread','synthetic-pinned-main','--manifest',join(f.base,'future-manifest.json')],f.env);
  assert.deepEqual(await future.exit,[1,null]);assert.equal(future.records.at(-1).code,'pinned_schema_unsupported');
  appendFileSync(f.config,' ');p=f.run();assert.deepEqual(await p.exit,[1,null]);assert.equal(p.records.at(-1).code,'pinned_configuration_changed');
@@ -94,9 +116,9 @@ test('pinned rollback serves the pinned HTTP assets and never restarts a failed 
  const f=await fixture(),reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
  let p=f.run(['--port',String(port)]);
  try{
-  await until(()=>p.records.some(x=>x.kind==='ready')||p.child.exitCode!==null);assert.equal(p.child.exitCode,null,p.errors);
+  await until(()=>p.records.some(x=>x.kind==='ready')||p.child.exitCode!==null);assert.equal(p.child.exitCode,null,p.errors+JSON.stringify(p.records.filter(x=>x.kind==='failed').map(({kind,code})=>({kind,code}))));
   const url=p.records.find(x=>x.kind==='ready').url;
-  const fetch=syntheticUserFetch(join(f.base,'runtime/web-connection/connect-homer.html'));
+  const fetch=syntheticUserFetch();
   const page=await fetch(url);assert.equal(page.status,200);const html=await page.text();assert.match(html,/homer-root/);
   const assets=[...html.matchAll(/(?:src|href)="([^"]*\/assets\/[^"]+)"/g)].map(match=>match[1]);assert.ok(assets.length>=2);
   for(const asset of assets){const response=await fetch(url+asset);assert.equal(response.status,200);assert.deepEqual(Buffer.from(await response.arrayBuffer()),readFileSync(join(build,'dist/web',asset.replace(/^\//,''))));}

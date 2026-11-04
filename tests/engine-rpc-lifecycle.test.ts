@@ -14,8 +14,8 @@ const config: Config = {
 };
 mkdirSync(config.workspace,{recursive:true});
 const options = { cwd: config.workspace, readRoots: [], instructions: 'transport only', tools: [] };
-function peer(role?:'main'|'worker') {
-  const engine = new CodexEngine(config, { ...options,role }, async () => ({}));
+function peer(role?:'main'|'worker',patch:Partial<Config>={}) {
+  const engine = new CodexEngine({...config,...patch}, { ...options,role }, async () => ({}));
   const sent: {id:number;method:string;params:any}[] = [];
   engine['send'] = (message: any) => { sent.push(message); };
   engine.threadId = 'thread';
@@ -24,6 +24,106 @@ function peer(role?:'main'|'worker') {
   const event = (method: string, params: any) => receive({method, params: {threadId:'thread', ...params}});
   return {engine, sent, receive, reply, event};
 }
+
+for(const role of ['main','worker'] as const)test(role+' resolves ambiguous website auth using the exact engine credential before terminal persistence',async t=>{
+ const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
+ const p=peer(role,{desktopModelSource:'website',baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});
+ process.env[key]='synthetic-replacement';
+ let calls=0;const terminals:any[]=[];p.engine.on('nativeCompleted',v=>terminals.push(v));
+ t.mock.method(globalThis,'fetch',async(url:RequestInfo|URL,init?:RequestInit)=>{calls++;assert.equal(String(url),'https://gateway.example.invalid/api/usage/token/');assert.equal(new Headers(init?.headers).get('Authorization'),'Bearer synthetic-active');return Response.json({code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:0}});});
+ try{
+  const rpc=observed(p.engine.request('config/read',{}));await p.receive({id:p.sent[0]!.id,error:{message:'HTTP 401 Unauthorized: invalid token'}});await assert.rejects(rpc.result,/^Error: engine_quota_insufficient$/);
+  const turn=p.engine.turn('synthetic');await p.reply(1,{turn:{id:'turn'}});await flush();
+  await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'HTTP 401 Unauthorized: invalid token'}}});
+  assert.equal((await turn).errorCode,'engine_quota_insufficient');assert.equal(terminals[0].result.errorCode,'engine_quota_insufficient');assert.equal(calls,2);assert.deepEqual(p.sent.map(x=>x.method),['config/read','turn/start']);
+ }finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+});
+
+test('website quota diagnosis cannot outlive closure or overwrite a replacement turn',async t=>{
+ const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
+ const p=peer('main',{desktopModelSource:'website',baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});
+ let release!:(v:Response)=>void,entered!:()=>void;const started=new Promise<void>(r=>{entered=r;});let calls=0;
+ t.mock.method(globalThis,'fetch',async()=>{calls++;entered();return new Promise<Response>(r=>{release=r;});});
+ const terminals:any[]=[],nativeEnds:any[]=[];p.engine.on('nativeCompleted',v=>terminals.push(v));p.engine.on('turnTerminal',v=>nativeEnds.push(v));
+ try{
+  const turn=observed(p.engine.turn('synthetic'));await p.reply(0,{turn:{id:'turn'}});await flush();
+  const event=p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'}}});await started;
+  assert.equal(nativeEnds.length,1,'quota verification must not delay native terminal timing evidence');
+  await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'}}});assert.equal(calls,1);
+  await p.engine.close();await assert.rejects(turn.result,/engine_closed/);release(Response.json({code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:0}}));await event;assert.deepEqual(terminals,[]);
+ }finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+});
+
+test('failed compaction verifies quota once and ignores a late successful item',async t=>{
+ const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
+ const p=peer('main',{desktopModelSource:'website',baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});
+ let entered!:()=>void;const started=new Promise<void>(r=>{entered=r;});const releases:((v:Response)=>void)[]=[];
+ t.mock.method(globalThis,'fetch',async()=>new Promise<Response>(resolve=>{releases.push(resolve);entered();}));
+ let first:Promise<void>|undefined,duplicate:Promise<void>|undefined;
+ try{
+  const work=observed(p.engine.compact());await p.reply(0);await p.event('turn/started',{turn:{id:'compact'}});
+  await p.event('item/started',{turnId:'compact',item:{id:'compact-item',type:'contextCompaction'}});
+  const terminal={turn:{id:'compact',status:'failed',error:{message:'401 unauthorized'}}};
+  first=p.event('turn/completed',terminal);await started;duplicate=p.event('turn/completed',terminal);
+  await p.event('item/completed',{turnId:'compact',item:{id:'compact-item',type:'contextCompaction'}});await flush();
+  assert.equal(releases.length,1,'one verification for a duplicate compaction terminal');assert.equal(work.state(),'pending','late item cannot turn failure into success');
+  for(const release of releases)release(Response.json({code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:0}}));
+  await Promise.all([first,duplicate]);await assert.rejects(work.result,/engine_quota_insufficient/);assert.equal(p.sent.length,1);
+ }finally{for(const release of releases)release(Response.json({code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:0}}));await Promise.all([first,duplicate]);await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+});
+
+for(const role of ['main','worker'] as const)test(role+' freezes terminal work while quota verification is pending',async t=>{
+ const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
+ const p=peer(role,{desktopModelSource:'website',baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});p.engine.options.nativeTools=role;p.engine['refreshBackground']=async()=>{};
+ let tools=0,interactions=0,release!:(v:Response)=>void,entered!:()=>void;
+ const started=new Promise<void>(resolve=>{entered=resolve;}),processes:any[]=[],messages:any[]=[];
+ p.engine.on('nativeProcess',value=>processes.push(value));p.engine.on('agentMessage',value=>messages.push(value));
+ t.mock.method(p.engine,'handleTool',async()=>{tools++;return {};});
+ p.engine.options.onInteraction=async()=>{interactions++;return {status:'denied',decision:{action:'deny',reason:'synthetic'}};};
+ t.mock.method(globalThis,'fetch',async()=>{entered();return new Promise<Response>(resolve=>{release=resolve;});});
+ let terminal:Promise<void>|undefined;
+ try{
+  const work=observed(p.engine.turn('synthetic'));await p.reply(0,{turn:{id:'turn'}});await flush();
+  terminal=p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'},itemsView:'full',items:[{type:'agentMessage',id:'final',phase:'final_answer',text:'Terminal snapshot'}]}});await started;
+  await p.event('item/completed',{turnId:'turn',item:{id:'late',type:'agentMessage',phase:'final_answer',text:'After-terminal text'}});
+  await p.receive({id:99,method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'late-tool',name:'synthetic',arguments:{}}});
+  await p.receive({id:100,method:'item/commandExecution/requestApproval',params:{threadId:'thread',turnId:'turn',itemId:'late-approval',kind:'command',command:'synthetic',cwd:'/synthetic',availableDecisions:['accept','decline']}});
+  await p.event('item/completed',{turnId:'turn',item:{id:'retained',type:'fileChange',status:'completed',changes:[]}});
+  const steer=observed(p.engine.steer('turn','synthetic'));await flush();
+  assert.equal(tools,0);assert.equal(interactions,0);assert.equal(p.sent.filter(item=>item.method==='turn/steer').length,0);
+  await assert.rejects(steer.result,/engine_steer_not_applicable/);assert.equal(await p.engine.interrupt(),true);
+  assert.deepEqual(processes.map(item=>item.itemId),role==='worker'?['retained']:[]);
+  assert.deepEqual(messages.map(item=>item.text),['Terminal snapshot']);
+  release(Response.json({code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:0}}));await terminal;
+  assert.equal((await work.result).text,'Terminal snapshot');assert.deepEqual(p.sent.filter(item=>item.method).map(item=>item.method),['turn/start']);
+ }finally{release?.(Response.json({code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:0}}));await terminal;await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+});
+
+for(const [source,body,expected,queries]of [
+ ['website',{code:true,data:{total_available:20,total_used:0,unlimited_quota:false,expires_at:0}},'engine_authentication_failed',1],
+ ['website',{code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:1}},'engine_authentication_failed',1],
+ ['website',null,'engine_account_status_unconfirmed',1],
+ ['codex',null,'engine_authentication_failed',0],
+] as const)test('model terminal classification keeps '+source+' failure evidence: '+expected+' / '+String(body?.data?.expires_at),async t=>{
+ const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
+ const p=peer('main',{desktopModelSource:source,...(source==='codex'?{pauseOldDesktopWork:true,desktopResources:{bundleRoot:'synthetic',manifestSha256:'0'.repeat(64)}}:{}),baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});let calls=0;
+ t.mock.method(globalThis,'fetch',async()=>{calls++;if(body===null)throw Error('PRIVATE_DIAGNOSTICS');return Response.json(body);});
+ try{const work=p.engine.turn('synthetic');await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'}}});assert.equal((await work).errorCode,expected);assert.equal(calls,queries);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+});
+
+test('explicit quota failure avoids a supplementary website query',async t=>{
+ const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
+ const p=peer('main',{desktopModelSource:'website',baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});
+ t.mock.method(globalThis,'fetch',async()=>assert.fail('explicit quota must not query or replay'));
+ try{const work=p.engine.turn('synthetic');await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 Unauthorized insufficient_quota'}}});assert.equal((await work).errorCode,'engine_quota_insufficient');assert.equal(p.sent.length,1);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+});
+
+test('successful website turns add no account request',async t=>{
+ const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
+ const p=peer('main',{desktopModelSource:'website',baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});
+ t.mock.method(globalThis,'fetch',async()=>assert.fail('successful turns must not query account status'));
+ try{const work=p.engine.turn('synthetic');await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'completed'}});assert.equal((await work).status,'completed');assert.equal(p.sent.length,1);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+});
 
 for(const status of ['completed','failed'])test('Worker '+status+' returns public items before an unrelated background refresh',async()=>{
  const p=peer('worker');let release!:()=>void;
@@ -52,6 +152,7 @@ function observed<T>(work: Promise<T>) {
 for(const role of ['main','worker'] as const)for(const [message,code] of [
  ['HTTP 403 Forbidden: token quota is not enough, token remain quota: 1, need quota: 10; PRIVATE_PROVIDER_DETAILS','engine_quota_insufficient'],
  ['HTTP 429: {"error":{"code":"insufficient_quota"}}','engine_quota_insufficient'],
+ ['HTTP 401 Unauthorized: {"error":{"code":"insufficient_quota"}}','engine_quota_insufficient'],
  ['HTTP 403 Forbidden: token quota is not enough, token remain quota: 401.000000','engine_quota_insufficient'],
  ['quota cache read failed: available 429.000000','engine_rpc_failed'],
  ['Insufficient credits','engine_quota_insufficient'],
@@ -265,4 +366,10 @@ test('real child exit rejects active pending and cleans the request map', async 
   const exit=once(engine,'exit');
   try {await assert.rejects(engine.start(),/engine_disconnected/); await exit; assert.equal(engine['pending'].size,0);}
   finally {assert.equal(await engine.close(),true);}
+});
+
+test('Windows main close drains stdio but refuses a stop proof without an owned process tree',async()=>{
+ const p=peer('main'),child=new EventEmitter() as any,platform=Object.getOwnPropertyDescriptor(process,'platform')!;let eof=0;
+ child.stdin={end(){eof++;queueMicrotask(()=>{p.engine['exited']=true;child.emit('exit',0);});}};p.engine['child']=child;
+ try{Object.defineProperty(process,'platform',{value:'win32'});assert.equal(await p.engine.close(),false);assert.equal(eof,1);}finally{Object.defineProperty(process,'platform',platform);}
 });

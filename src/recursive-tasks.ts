@@ -359,7 +359,10 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
       if(t.historyState==='deleted')throw Error('history_deleted');
       if(archive){const blockers=this.historyBlockers(t,key);if(blockers.length)return {state:'skipped',taskId:t.id,blockers};}
       const state=archive?'archived':'visible';
-      if(t.historyState!==state)this.sql('UPDATE tasks SET historyState=?,revision=revision+1 WHERE id=?',state,t.id);
+      if(t.historyState!==state){
+        this.sql('UPDATE tasks SET historyState=?,revision=revision+1 WHERE id=?',state,t.id);
+        if(archive)this.notify(t,'task_archived',{historyState:state,revision:this.task(t.id).revision});
+      }
       return {state:archive?'archived':'restored',taskId:t.id,revision:this.task(t.id).revision,diskBytesReclaimed:null};
     });
   }
@@ -645,6 +648,18 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
     requireText(input.title, 200);
     requireText(input.authority.description,USER_AUTHORITY_MAX_LENGTH);
     input = { ...input, contract: { ...input.contract, workingDirectory: input.contract.workingDirectory ?? this.files.workspace } };
+    const sources = new Set([input.authority.sourceRequestId, ...(input.authority.sourceRequestIds ?? [])]);
+    const resultIds = input.contract.inputs.filter(item => item.type === 'result').map(item => {
+      const result = this.one<Result>('SELECT * FROM results WHERE id=?', item.id);
+      if (!result || result.state !== 'accepted') throw Error('task_authority_input_denied');
+      this.readAllowed(actor, this.task(result.taskId));
+      // The producing version, not its current head, owns this result's scope.
+      const origin = this.authority(result.taskId, result.version);
+      if (!origin.sourceRequestId || [origin.sourceRequestId, ...(origin.sourceRequestIds ?? [])].some(source => !sources.has(source)))
+        throw Error('task_authority_input_denied');
+      return result.id;
+    });
+    input = { ...input, authority: { ...input.authority, resultIds: [...new Set(resultIds)] } };
     this.validateContract(input.contract, input.authority);
     const matterId = id('matter'), taskId = id('task'), kind = input.executorKind ?? 'main';
     this.sql("INSERT INTO matters(id,title,status,createdAt,rootTaskId) VALUES(?,?,'queued',?,?)", matterId, input.title, Date.now(), taskId);
@@ -1170,6 +1185,15 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
     this.inspected.set(this.inspectionKey(actor, 'contract:' + t.id), recursiveHash(this.contract(t.id, t.headVersion)));
     return { task: t, contract: this.contract(t.id, t.headVersion), contractHash: recursiveHash(this.contract(t.id, t.headVersion)), authoritySummary: { sourceRequestId: version.sourceRequestId }, run, nativeHistory, children: this.children(t.id), dependencies: this.all('SELECT * FROM task_dependencies WHERE taskId=? AND version=?', t.id, t.headVersion), results: this.all<Result>('SELECT * FROM results WHERE taskId=? ORDER BY rowid', t.id), actualResult: actual, completionResultIds: result ? this.completionResults(result).map(r=>r.id) : [], operations: this.all<Operation>("SELECT id,kind,state,revision FROM operations WHERE scopeId=? AND state IN ('accepted','dispatching','uncertain')", t.id) };
   }
+  readResultInput(actor: Actor, resultId: string) {
+    const task = this.guard(actor), run = this.run(actor.runId!);
+    const contract = this.contract(task.id, run.contractVersion), authority = this.authority(task.id, run.contractVersion);
+    const result = this.result(resultId);
+    if (!contract.inputs.some(input => input.type === 'result' && input.id === resultId) || result.state !== 'accepted' ||
+      !authority.resultIds.includes(resultId) && this.task(result.taskId).rootTaskId !== task.rootTaskId)
+      throw Error('task_authority_input_denied');
+    return this.actualResult(result);
+  }
   private actualResult(r: Result) {
     if (r.filePath) {
       if (!r.runId)
@@ -1274,6 +1298,7 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
       if (!c || c.childVersion !== child.headVersion)
         throw Error('child_version_conflict');
       requireText(c.reason);
+      const nextCoordinatorId=c.disposition==='transferred'&&c.nextCoordinatorId===undefined?this.store.meta('mainAgentId'):c.nextCoordinatorId;
       if (c.disposition === 'included') {
         if (!c.resultId)
           throw Error('child_result_required');
@@ -1294,14 +1319,14 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
           throw Error('child_stop_unconfirmed');
       }
       else if (c.disposition === 'transferred') {
-        if (!c.nextCoordinatorId || child.coordinatorAgentId !== c.nextCoordinatorId || child.controlState !== 'normal')
+        if (!nextCoordinatorId || child.coordinatorAgentId !== nextCoordinatorId || child.controlState !== 'normal')
           throw Error('child_transfer_unconfirmed');
         if (outcome === 'succeeded')
           throw Error('child_transferred_gap');
       }
       else
         throw Error('child_disposition_invalid');
-      this.sql('INSERT INTO child_resolutions VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(parentTaskId,parentVersion,childTaskId) DO UPDATE SET childVersion=excluded.childVersion,disposition=excluded.disposition,resultId=excluded.resultId,nextCoordinatorId=excluded.nextCoordinatorId,reason=excluded.reason,operationKey=excluded.operationKey', t.id, t.headVersion, child.id, c.childVersion, c.disposition, c.resultId ?? null, c.nextCoordinatorId ?? null, c.reason, key);
+      this.sql('INSERT INTO child_resolutions VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(parentTaskId,parentVersion,childTaskId) DO UPDATE SET childVersion=excluded.childVersion,disposition=excluded.disposition,resultId=excluded.resultId,nextCoordinatorId=excluded.nextCoordinatorId,reason=excluded.reason,operationKey=excluded.operationKey', t.id, t.headVersion, child.id, c.childVersion, c.disposition, c.resultId ?? null, nextCoordinatorId ?? null, c.reason, key);
     }
     if (outcome === 'succeeded')
       for (const dep of this.all<{
@@ -1729,7 +1754,8 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
       if(new Set(input.children.map(c=>c.taskId)).size!==input.children.length||input.children.some(c=>!actualChildren.some(a=>a.id===c.taskId)))throw Error('child_disposition_invalid');
       for (const child of actualChildren.filter(x => x.state !== 'settled')) {
         const disposition = input.children.find(x => x.taskId === child.id);
-        if(disposition?.action==='transfer'&&(!disposition.coordinatorAgentId||disposition.coordinatorAgentId===child.executorAgentId||disposition.coordinatorAgentId!==this.store.meta('mainAgentId')))throw Error('task_coordinator_invalid');
+        const coordinatorAgentId=disposition?.action==='transfer'&&disposition.coordinatorAgentId===undefined?this.store.meta('mainAgentId'):disposition?.coordinatorAgentId;
+        if(disposition?.action==='transfer'&&(!coordinatorAgentId||coordinatorAgentId===child.executorAgentId||coordinatorAgentId!==this.store.meta('mainAgentId')))throw Error('task_coordinator_invalid');
         if(disposition?.action==='stop'){
           const stopKey=id('op'),run=child.currentRunId?this.run(child.currentRunId):null,targets=run&&live(run)?[run.id]:[];
           this.insertOperation(stopKey,actor.agentId,child.id,input.operationId+':stop:'+child.id,'stop',{parentOperationKey:key},'accepted');
@@ -1746,7 +1772,7 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
             this.sql("UPDATE runs SET epoch=epoch+1,phase=CASE WHEN phase IN ('executing','starting','rpc_wait','yielding') THEN 'uncertain' ELSE 'held' END,stateRevision=stateRevision+1 WHERE id=? AND status='running'", child.currentRunId);
             this.cancelInteractions(child.currentRunId, 'parent_version_replaced');
           }
-          childActions.push({taskId:child.id,action:disposition?.action??'hold',state:disposition?.action==='update'?'held_update_required':disposition?.action==='transfer'?'transfer_pending_stop_confirmation':'held',...(disposition?.coordinatorAgentId?{coordinatorAgentId:disposition.coordinatorAgentId}:{})});
+          childActions.push({taskId:child.id,action:disposition?.action??'hold',state:disposition?.action==='update'?'held_update_required':disposition?.action==='transfer'?'transfer_pending_stop_confirmation':'held',...(coordinatorAgentId?{coordinatorAgentId}:{})});
         }
         else childActions.push({taskId:child.id,action:'retain',state:'retained'});
       }
@@ -1832,7 +1858,7 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
     this.project(t.id);
   }
   takeover(actor: Actor, input: Mutation & {
-    coordinatorAgentId: string;
+    coordinatorAgentId?: string;
   }) {
     this.requireMain(actor);
     return this.mutation(actor, input.taskId, input.operationId, 'takeover', input, () => {
@@ -1841,7 +1867,8 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
         throw Error('task_revision_conflict');
       if (t.subtreeStopOpId || t.controlState === 'stopping')
         throw Error('task_stop_requested');
-      if (input.coordinatorAgentId !== this.store.meta('mainAgentId'))
+      const coordinatorAgentId=input.coordinatorAgentId===undefined?this.store.meta('mainAgentId'):input.coordinatorAgentId;
+      if (!coordinatorAgentId || coordinatorAgentId !== this.store.meta('mainAgentId'))
         throw Error('task_coordinator_invalid');
       if (t.currentRunId && this.run(t.currentRunId).phase === 'uncertain')
         throw Error('run_stop_unconfirmed');
@@ -1850,7 +1877,7 @@ CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);
       if(t.controlState!=='normal'&&t.state!=='recovery'&&t.currentRunId){
         const r=this.run(t.currentRunId);if(r.contractVersion===t.headVersion&&r.phase==='ended'&&r.status==='awaiting_review')this.sql('UPDATE tasks SET reviewEnteredAt=? WHERE id=?',Date.now(),t.id);
       }
-      this.sql("UPDATE tasks SET coordinatorAgentId=?,controlState='normal',revision=revision+1 WHERE id=?", input.coordinatorAgentId, t.id);
+      this.sql("UPDATE tasks SET coordinatorAgentId=?,controlState='normal',revision=revision+1 WHERE id=?", coordinatorAgentId, t.id);
       return { taskId: t.id, state: 'taken_over' };
     });
   }

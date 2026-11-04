@@ -17,7 +17,7 @@ export function webChatPost(path:string):{op:string;status:number;id?:string}|un
   return match?{op:'interactions.respond',status:202,id:match[1]}:undefined;
 }
 // Live observation only; never persisted or used as an execution/stop target.
-export type MainActivity={processId:string;source:'user'|'internal';turnId?:string;stage:'preparing'|'native'|'compacting'|'finishing'|'unknown';retryObserved?:true;connectionIssue?:true};
+export type MainActivity={processId:string;source:'user'|'internal';turnId?:string;stage:'preparing'|'native'|'compacting'|'finishing'|'unknown';summary?:string;retryObserved?:true;connectionIssue?:true};
 import type { ConversationInput } from "./web-history.js";
 import type { WechatManagementBridge } from "./channels/wechat-management.js";
 import type { TelegramManagementBridge } from "./channels/telegram-management.js";
@@ -46,7 +46,7 @@ export type WebState = {
   artifacts?:WebArtifact[];
   mainActivity?:MainActivity|null;
   // Current host observation only; never reconstruct it from legacy message text.
-  modelFailure?:{messageId:string;code:'engine_quota_insufficient'|'engine_rate_limited'|'main_turn_failed';source?:'codex'|'website'};
+  modelFailure?:{messageId:string;code:'engine_quota_insufficient'|'engine_rate_limited'|'engine_authentication_failed'|'engine_account_status_unconfirmed'|'main_turn_failed';source?:'codex'|'website'};
   processNodes?: import('./main-process.js').ProcessNode[];
   features?:{draftUpload?:boolean;nativeCapabilities?:boolean;taskOverview?:boolean;workerExecution?:1;workerEventCards?:1;queueDispatch?:1;queueSources?:1;nativeQuestionAnswers?:1;previewReferences?:1;previewReferenceCollections?:1|2};
   threadId: string; messages: import('./conversation-projection.js').DisplayMessage[]; isRunning: boolean; activeMessageId: string | null;

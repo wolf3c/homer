@@ -20,7 +20,7 @@ const tool = (name, args) => new Promise(resolve => {
 });
 async function gate(name) { while (!existsSync(join(home, name))) await new Promise(r => setTimeout(r, 15)); }
 function complete(text) {
-  send({ method: "item/completed", params: { threadId: thread, turnId: turn, item: { id: "reply-" + turn, type: "agentMessage", text } } });
+  send({ method: "item/completed", params: { threadId: thread, turnId: turn, item: { id: "reply-" + turn, type: "agentMessage", phase: "final_answer", text } } });
   send({ method: "turn/completed", params: { threadId: thread, turn: { id: turn, status: "completed" } } });
 }
 createInterface({ input: process.stdin }).on("line", line => { void receive(JSON.parse(line)); });
@@ -36,6 +36,7 @@ async function receive(m) {
   }
   if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.163.0" } });
   if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});
+  if (m.method === 'model/list') send({id:m.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
   if (m.method === "config/read") send({ id: m.id, result: { config: { mcp_servers: trusted ? { homer_interactions: trusted } : {} } } });
   if (m.method === "mcpServerStatus/list") send({ id: m.id, result: { data: [{ name: "homer_interactions", tools: Object.fromEntries((trusted?.enabled_tools??[]).map(n => [n, {}])) }] } });
   if (m.method === "thread/start" || m.method === "thread/resume") {

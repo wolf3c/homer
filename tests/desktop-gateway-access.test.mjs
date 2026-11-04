@@ -22,6 +22,7 @@ test('desktop gateway privately supplies a fresh enforced key on each launch wit
   credentialPassedToHost ||= /desktopAccessToken|x-homer-desktop-access/i.test(JSON.stringify(m));
   if(m.kind==='init')process.send({kind:'management_ready',stateInvalidationProtocol:1,webHistoryProtocol:3});
   if(m.kind==='web')process.send({kind:'web_result',id:m.id,value:{...state,credentialPassedToHost}});
+  if(m.kind==='desktop_account')process.send({kind:'web_result',id:m.id,value:{account:'none',connected:false,phase:m.method}});
   if(m.kind==='stop')process.send({kind:'desktop_stopped',confirmed:true},()=>process.disconnect());
  });
  `);
@@ -34,7 +35,8 @@ test('desktop gateway privately supplies a fresh enforced key on each launch wit
   const input=new PassThrough();let text='',ready;
   const urlEvent=new Promise(r=>{ready=r;});
   const output=new Writable({write(chunk,_encoding,done){text+=String(chunk);done();}});
-  const done=runDev({root:buildDir,input,output,fixedBuild:build,fixedUi:build,fallbackUi:build,webPort:0,desktop:{onEvent:event=>{if(event.kind==='url')ready(event);}}});
+  let account;
+  const done=runDev({root:buildDir,input,output,fixedBuild:build,fixedUi:build,fallbackUi:build,webPort:0,desktop:{bindAccount:callback=>{account=callback;},onEvent:event=>{if(event.kind==='url')ready(event);}}});
   let timer;
   try{
    const event=await Promise.race([urlEvent,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('synthetic_desktop_gateway_timeout')),15000);})]);clearTimeout(timer);
@@ -43,6 +45,8 @@ test('desktop gateway privately supplies a fresh enforced key on each launch wit
    assert.equal((await request()).status,401);
    if(previous){assert.equal(previous===event.desktopAccessToken,false,'desktop credential must change between launches');assert.equal((await request(previous)).status,401);}
    const authenticated=await request(event.desktopAccessToken);assert.equal(authenticated.status,200);assert.equal(authenticated.value.credentialPassedToHost,false);
+   for(const action of ['state','connect','cancel'])assert.deepEqual(await account(action),{account:'none',connected:false,phase:action});
+   await assert.rejects(()=>account('logout'),/desktop_account_unavailable/);
    assert.equal(text.includes(event.desktopAccessToken),false);previous=event.desktopAccessToken;
   }finally{clearTimeout(timer);input.write('/quit\n');assert.equal((await done).stoppedConfirmed,true);input.destroy();output.destroy();}
  }

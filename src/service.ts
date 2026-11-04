@@ -91,7 +91,7 @@ export type Message = MessageBase & ({
   (MainGeneration & { type: "main_terminal"; status: "completed" | "failed" | "interrupted" }));
 type MainContext = {
   // Current-turn observations only, never scheduling or authorization inputs.
-  nativeActivity?:{turnId?:string;ended?:true;unavailable?:true;compactions:Map<string,'started'|'completed'>;retryObserved?:true;connectionIssue?:true};
+  nativeActivity?:{turnId?:string;ended?:true;unavailable?:true;compactions:Map<string,'started'|'completed'>;summary?:string;retryObserved?:true;connectionIssue?:true};
   nativeStartAttempted?:boolean;
   processId?: string;
   processStatus?: 'completed' | 'failed' | 'interrupted';
@@ -244,7 +244,7 @@ export class Homer {
       if(this.closing||this.closed)throw Error('service_upgrading');
       if(!this.nativeControl){
         const home=capabilityHome(this.config),cwd=canonicalDir(join(home,'homer-control'));
-        this.nativeControl=new CodexEngine({...this.config,codexHome:home,dailyDeepSeek:false,desktopModelSource:undefined,desktopConnection:undefined,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true},{cwd,readRoots:[cwd],instructions:'Homer native configuration service. No model turns.',tools:[],nativeCapabilities:true,controlOnly:true},async()=>{throw Error('capability_control_tool_denied');});
+        this.nativeControl=new CodexEngine({...this.config,codexHome:home,dailyDeepSeek:false,desktopModelSource:undefined,desktopConnection:undefined,context:undefined,capabilities:undefined,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true},{cwd,readRoots:[cwd],instructions:'Homer native configuration service. No model turns.',tools:[],nativeCapabilities:true,controlOnly:true},async()=>{throw Error('capability_control_tool_denied');});
         const control=this.nativeControl;let initialized=false;
         control.on('spawn',()=>this.lease('native-control',control));
         control.on('accountLoginCompleted',value=>{this.accountManager?.completed(value);if(value.success){this.nativeDirty=true;this.nativeReconnect=true;this.nativeRevision++;this.drainMain();}});
@@ -550,12 +550,13 @@ export class Homer {
       if(this.main!==engine||this.closing||!activity||!value||value.threadId!==engine.threadId||value.turnId!==engine.turnId||value.turnId!==activity.turnId)return;
       if(kind==='unavailable'){
         if(activity.ended||activity.unavailable)return;
-        activity.unavailable=true;activity.compactions.clear();delete activity.retryObserved;delete activity.connectionIssue;
+        activity.unavailable=true;activity.compactions.clear();delete activity.summary;delete activity.retryObserved;delete activity.connectionIssue;
       }else{
         if(activity.ended||activity.unavailable)return;
-        if(kind==='terminal'){activity.ended=true;activity.compactions.clear();delete activity.retryObserved;delete activity.connectionIssue;}
+        if(kind==='terminal'){activity.ended=true;activity.compactions.clear();delete activity.summary;delete activity.retryObserved;delete activity.connectionIssue;}
         else if(kind==='retry'){
-          if(activity.retryObserved&&(!value.connectionIssue||activity.connectionIssue))return;
+          if(activity.retryObserved&&(!value.connectionIssue||activity.connectionIssue)&&!activity.summary)return;
+          delete activity.summary;
           activity.retryObserved=true;if(value.connectionIssue===true)activity.connectionIssue=true;
         }else{
           if(typeof value.itemId!=='string'||!value.itemId||!['started','completed'].includes(value.state??''))return;
@@ -567,6 +568,11 @@ export class Homer {
       this.invalidateState();
     };
     engine.on('contextCompaction',value=>observe('compaction',value));
+    engine.on('reasoningSummary',(value:{threadId:string;turnId:string;text:string})=>{
+      const activity=this.mainContext?.nativeActivity;
+      if(this.main!==engine||this.closing||!activity?.turnId||activity.ended||activity.unavailable||!value||value.threadId!==engine.threadId||value.turnId!==engine.turnId||value.turnId!==activity.turnId||typeof value.text!=='string'||!value.text.trim()||value.text===activity.summary)return;
+      activity.summary=value.text;this.invalidateState();
+    });
     engine.on('turnRetry',value=>{
       const context=this.mainContext;
       if(this.main===engine&&context?.processId&&value.threadId===engine.threadId&&value.turnId===engine.turnId)this.processes.uncertain(context.processId,value.turnId);
@@ -821,9 +827,16 @@ export class Homer {
       reply=await this.mainTurn(interactionId?`[用户答复原待答] interactionId=${interactionId}。先核实原请求及用户当前意图；需要答复时通过 respond_interaction 回原 Worker，不以重建任务冒充续接。信息仍不足、用户改意图或请求失效时，按实际情况协调并说明。\n${contextText}`:contextText,context);
     }catch(error){
       const code=engineError(error),interrupted=code==='main_user_interrupted';replyStatus=interrupted?'interrupted':'failed';
-      if(!interrupted)this.modelFailure={messageId:replyId,code:code==='engine_quota_insufficient'||code==='engine_rate_limited'?code:'main_turn_failed',source:this.config.desktopModelSource};
+      if(!interrupted&&code!=='main_recovery_unconfirmed')this.modelFailure={messageId:replyId,code:code==='engine_quota_insufficient'||code==='engine_rate_limited'||code==='engine_authentication_failed'||code==='engine_account_status_unconfirmed'?code:'main_turn_failed',source:this.config.desktopModelSource};
       const partial=this.history.message(replyId)?.text??'';
-      const reason=code==='engine_quota_insufficient'?'当前模型来源额度不足，请检查可用额度':code==='engine_rate_limited'?'当前模型来源请求受到限流，请稍后手动重试':code;
+      const reasons:Record<string,string>={
+        main_recovery_unconfirmed:'旧回执核对未确认，原记录已保留；发送消息可继续核对',
+        engine_quota_insufficient:'当前额度不足以继续本次请求，请查看账号与额度后重新发送消息',
+        engine_rate_limited:'当前模型来源请求受到限流，请稍后手动重试',
+        engine_authentication_failed:'当前模型服务未通过认证，请检查账号连接后重新发送消息',
+        engine_account_status_unconfirmed:'未能核实账号状态，请检查连接与额度后重新发送消息',
+      };
+      const reason=reasons[code]??code;
       if(reason!==code)failureNotice=`主 Agent 未完成：${reason}。未自动重试。`;
       reply=interrupted?partial||(this.closing?'已停止当前回复，原记录已保留。':'已停止当前回复。已派发的工作继续运行。'):`${partial?partial+'\n\n':''}主 Agent 未完成：${reason}。已保存的派发不会自动重试；请查询状态。`;
       if(this.mainRecoveryError)reply+='\n恢复接待未确认：'+this.mainRecoveryError+'。未启动替代执行，请先核对原执行状态。';
@@ -869,9 +882,12 @@ export class Homer {
   // Sinks persist these local events; adapters perform network delivery later.
   private finishMainProcess(context:MainContext,status:'completed'|'failed'|'interrupted'|'unknown'){
     if(!context.processId)return;
+    // Closing the writer ends ownership, not the unknown native outcome.
+    // Keep its closure evidence so a later input can claim the single writer.
+    if(context.nativeStartAttempted&&!context.processEndEventId?.startsWith('turn:'))status='unknown';
     this.store.db.exec('BEGIN IMMEDIATE');
     try{
-      this.processes.finish(context.processId,status,status==='unknown'?undefined:context.terminalConfirmed?context.processEndEventId:undefined,context.publicText);
+      this.processes.finish(context.processId,status,context.terminalConfirmed?context.processEndEventId:undefined,context.publicText);
       const node=this.processes.exact(context.processId);
       if(node?.state==='worked'){const prior=this.history.message(node.messageId);this.history.finish(node.messageId,node.final?.text??prior?.text??'',status==='unknown'?'interrupted':status);}
       this.store.db.exec('COMMIT');
@@ -1000,6 +1016,7 @@ export class Homer {
         text=request.kind==='authorization'?'处理 Worker 操作确认':'处理 Worker 提问';
         taskId=run.taskId;version=run.contractVersion;
       }else if(notice?.kind==='result_ready')text='处理 Worker 结果回传';
+      else if(notice?.kind==='task_archived')text='接收归档通知';
       else if(notice?.kind==='review_required'||context.sourceEventId?.startsWith('review:'))text='核对 Worker 成果';
       else if(notice?.kind==='revision_requested')text='处理 Worker 修订通知';
       else if(context.sourceEventId?.startsWith('delivery:'))text='整理 Worker 交付';
@@ -1051,13 +1068,18 @@ export class Homer {
       if(images.length)text+='\n[本轮附件：以下 '+images.length+' 张图片按收到顺序作为原生图片输入。静态图片保留源图尺寸；动画只分析第一帧；视频使用上述实际抽帧尺寸。只有实际传入的图片可称为看见。]';
       context.nativeImageCount=images.length;
       let skills:{name:string;path:string}[]=[];
-      if(usesHomerNativeHome(this.config)&&this.main.request&&!context.event&&/\$[a-z][a-z0-9_-]*/.test(context.userText??text)){
-        const names=new Set([...((context.userText??text).matchAll(/\$([a-z][a-z0-9_-]*)/g))].map(m=>m[1]));
+      const archiveReview=context.workerInput?.senderAgentId==='host'&&context.workerInput.kind==='task_archived';
+      if(usesHomerNativeHome(this.config)&&(archiveReview||(this.main.request&&!context.event&&/\$[a-z][a-z0-9_-]*/.test(context.userText??text)))){
+        if(!this.main.request)throw Error('archive_review_skill_unavailable');
+        const names=archiveReview?new Set(['homer-archive-review']):new Set([...((context.userText??text).matchAll(/\$([a-z][a-z0-9_-]*)/g))].map(m=>m[1]));
         const listed=await this.main.request('skills/list',{cwds:[this.store.meta('mainWorkingDirectory')??this.config.workspace],forceReload:true});
         skills=(listed.data??[]).flatMap((d:any)=>d.skills??[]).filter((s:any)=>s.enabled&&names.has(s.name)&&s.path.startsWith(join(capabilityHome(this.config),'skills')+'/')).map((s:any)=>({name:s.name,path:s.path}));
+        if(archiveReview){skills=skills.filter(s=>s.path===join(capabilityHome(this.config),'skills/homer-archive-review/SKILL.md'));if(!skills.length)throw Error('archive_review_skill_unavailable');}
         this.validateMainContext(context);
       }
-      let nextText=text;
+      const recovery=context.queuedInput&&context.queuedInput.source!=='first_launch'?this.inputs.recoveryQueue():[];
+      const confirmed=(item:{id:string})=>['processed','rejected'].includes(String(this.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(item.id)?.state));
+      let nextText=text,recoveryIndex=0,capabilityRounds=0,reply='';
       for(let round=0;;round++){
         this.checkMainStop(context);
         const revision=context.capabilityRevision??0;
@@ -1100,6 +1122,7 @@ export class Homer {
         this.checkMainStop(context);
         if (result.status !== "completed" || isExecutionGuardStop(result.errorCode))throw new Error(result.errorCode ?? "main_turn_failed");
         this.validateMainContext(context);
+        if(recoveryIndex&&!confirmed(recovery[recoveryIndex-1]!))throw Error('main_recovery_unconfirmed');
         this.store.setMeta("mainUsage", JSON.stringify(result.usage ?? null));
         // Native terminal text aggregates commentary and final messages. Only
         // explicit business finals belong to an internal turn's public report.
@@ -1110,10 +1133,16 @@ export class Homer {
           // A real successful host-managed mutation is the only trigger. Denied
           // or unknown installers do not mint a continuation or approval.
           if(context.generation)this.mainApprovals.end(context.generation.generationId);
-          if(round>=2)return (result.text||'工具变更已保存。')+'\n\n工具自动续接已达本次续接上限；已保存操作保留，未重复执行。';
+          if(capabilityRounds++>=2){
+            if(recovery.some(item=>!confirmed(item)))throw Error('main_recovery_unconfirmed');
+            return (result.text||'工具变更已保存。')+'\n\n工具自动续接已达本次续接上限；已保存操作保留，未重复执行。';
+          }
           const blocked=await this.adoptMainCapabilities(context);
           this.checkMainStop(context);
-          if(blocked)return (result.text||'工具变更已保存。')+'\n\n工具已保存，待采用：'+blocked+'。已完成操作不会自动重放。';
+          if(blocked){
+            if(recovery.some(item=>!confirmed(item)))throw Error('main_recovery_unconfirmed');
+            return (result.text||'工具变更已保存。')+'\n\n工具已保存，待采用：'+blocked+'。已完成操作不会自动重放。';
+          }
           this.validateMainContext(context);
           nextText='[宿主续接：同一用户请求，不是新用户输入或新增授权] requestId='+context.requestId+'。本请求刚完成的工具变更已刷新；在同一 thread 内继续尚未完成的原任务，先核原生发现并按需使用。不要重复安装、重放未知结果、重复交付已完成成果或把本通知当安装批准；任何新权限仍走原审批。若原任务已完成，仅给最终结果。';
           continue;
@@ -1121,13 +1150,18 @@ export class Homer {
         const notice=context.workerInput;
         const quietRework=result.status==='completed'&&!context.processStatus&&!!context.processId&&!!notice&&this.processes.canQuietRework(context.processId,notice.messageId);
         const reportRequired=!quietRework&&notice?.senderAgentId==='host'&&(notice.kind==='result_ready'||notice.kind==='terminal'&&Object(notice.payload).stopConfirmed!==true)&&!this.processes.hasSourceDelivery(context.processId!,notice.messageId);
-        if (!result.text.trim() && (!context.allowEmptyReply||reportRequired)) {
+        if (!result.text.trim() && ((!context.allowEmptyReply&&!recoveryIndex)||reportRequired)) {
           if(!context.event||!context.interactionId||!this.interactions.hasDeliveredDecision(context.interactionId))throw new Error("main_empty_reply");
         }
         // Only an exact copy of this source's accepted publication is redundant.
         // A different final (including new gaps) or an unrelated same-text report stays.
         if(context.workerInput)context.publicText=context.processId&&this.processes.hasSourceDelivery(context.processId,context.workerInput.messageId,result.text)?undefined:result.text;
-        return result.text;
+        if(result.text)reply+=(reply?'\n\n':'')+result.text;
+        while(recoveryIndex<recovery.length&&confirmed(recovery[recoveryIndex]!))recoveryIndex++;
+        const item=recovery[recoveryIndex];
+        if(!item)return reply;
+        recoveryIndex++;
+        nextText='[宿主续接：同一用户请求，核对已送交的旧回执；不是重发或新增授权] '+JSON.stringify({requestId:context.requestId,messageId:item.id,after:item.seq-1})+'。先 inbox_read 读取原记录，再 work_inspect 核实当前事实，按用户本次要求使用现有核对工具处理，最后 inbox_ack 确认 processed 或 rejected 并说明依据。不要重发、重跑或仅口头声称已处理；无法确认则明确说明。常规核对无需重复答复，用户原请求的答复已保留。';
       }
     } catch (e) {
       // Owned transport closure cancels an active turn during normal exit.
@@ -1266,7 +1300,7 @@ export class Homer {
     const context=this.mainContext,evidence=context?.nativeActivity;
     if(!context?.processId||!evidence)return null;
     const stage=evidence.unavailable||this.main?.available===false?'unknown':evidence.ended?'finishing':!evidence.turnId?'preparing':[...evidence.compactions.values()].includes('started')?'compacting':'native';
-    return {processId:context.processId,source:context.event?'internal':'user',...(evidence.turnId?{turnId:evidence.turnId}:{}),stage,...(evidence.retryObserved?{retryObserved:true}:{}),...(evidence.connectionIssue?{connectionIssue:true}:{})};
+    return {processId:context.processId,source:context.event?'internal':'user',...(evidence.turnId?{turnId:evidence.turnId}:{}),stage,...(stage==='native'&&evidence.summary?{summary:evidence.summary}:{}),...(evidence.retryObserved?{retryObserved:true}:{}),...(evidence.connectionIssue?{connectionIssue:true}:{})};
   }
   private recordWorkerDelegation(actor:Actor,key:string,kind:string,response:Record<string,unknown>){
     const context=this.mainContext;
@@ -1634,7 +1668,7 @@ export class Homer {
       if(Object.keys(a).length)throw Error('invalid_tool_arguments');
       const inputs=this.tasks.contract(run.taskId,run.contractVersion).inputs;
       const materials=inputs.filter(x=>x.type==='material').map(x=>({path:x.id,content:this.files.readMaterial(x.id)}));
-      const results=inputs.filter(x=>x.type==='result').map(x=>this.tasks.inspect(actor,{resultId:x.id}).actualResult);
+      const results=inputs.filter(x=>x.type==='result').map(x=>this.tasks.readResultInput(actor,x.id));
       const attachments=inputs.filter(x=>x.type==='attachment').map(x=>{const ref=parseAttachmentReference(x.id);this.media.validate(run.sourceRequestId!,[ref]);return {...this.media.view(ref),reference:attachmentReference(ref),extraction:this.media.extracted(run.sourceRequestId!,ref)};});
       if(materials.length||results.length||attachments.length){this.tasks.markMaterialRead(actor);this.store.event(run.id,'material_read');}
       return materials.length===1&&!results.length&&!attachments.length?materials[0]:{materials,results,attachments};
@@ -1902,7 +1936,21 @@ export class Homer {
       for(const child of (receipt.childStops??[]) as Record<string,unknown>[])await this.applyStop(child);
       await this.holdDirectWorkers(String(receipt.taskId));
       for(const child of (receipt.childActions??[]) as {taskId:string;action:string;coordinatorAgentId?:string}[]){
-        if(child.action==='transfer'&&child.coordinatorAgentId){const task=this.tasks.task(child.taskId);this.tasks.takeover(this.mainActor(true),{operationId:'host-transfer:'+String(receipt.operationKey)+':'+task.id,taskId:task.id,version:task.headVersion,expectedTaskRevision:task.revision,coordinatorAgentId:child.coordinatorAgentId});}
+        if(child.action==='transfer'&&child.coordinatorAgentId){
+          const task=this.tasks.task(child.taskId),actor=this.mainActor(true),operationId='host-transfer:'+String(receipt.operationKey)+':'+task.id;
+          try{
+            // A completed takeover keeps its original revision and must not be reconstructed from the current task.
+            const inspection=this.tasks.inspect(actor,{operationId,operationScopeId:task.id});
+            if(!('operation' in inspection)||!inspection.operation)throw Error('operation_uncertain');
+            const prior=inspection.operation;
+            if(prior.kind!=='takeover')throw Error('operation_payload_conflict');
+            if(prior.state!=='confirmed'||!prior.response)throw Error('operation_uncertain');
+            if(prior.response.taskId!==task.id||prior.response.state!=='taken_over')throw Error('operation_payload_conflict');
+          }catch(error){
+            if(!(error instanceof Error&&error.message==='operation_not_found'))throw error;
+            this.tasks.takeover(actor,{operationId,taskId:task.id,version:task.headVersion,expectedTaskRevision:task.revision,coordinatorAgentId:child.coordinatorAgentId});
+          }
+        }
       }
     }
     if(mode==='steer'){
@@ -1990,15 +2038,19 @@ export class Homer {
   private async processWorkerInput(input:WorkerInput){
     const notice={id:input.messageId,taskId:input.taskId,taskVersion:input.taskVersion,kind:input.kind,payload:input.payload};
     const payload=Object(input.payload) as Record<string,unknown>;
+    const archived=input.senderAgentId==='host'&&input.kind==='task_archived';
     const interactionId=input.senderAgentId==='host'&&input.kind==='interaction_required'&&typeof payload.interactionId==='string'?payload.interactionId:undefined;
     const context:MainContext={event:true,...(!interactionId?{allowEmptyReply:true as const}:{}),workerInput:input,workerMessages:[notice],sourceMessageIds:[input.messageId],pendingTaskIds:input.taskId?[input.taskId,this.tasks.task(input.taskId).rootTaskId]:[],inspected:new Set(),...(interactionId?{interactionId}:{})};
     let legacy:ReturnType<Homer['tasks']['run']>|undefined;
-    if(input.taskId){const task=this.tasks.task(input.taskId);if(task.currentRunId){const run=this.tasks.run(task.currentRunId);if(run.contractVersion===input.taskVersion&&this.isLegacyRoot(run))legacy=run;}}
-    const prompt=interactionId?`[Worker待答] interactionId=${interactionId}。先 inspect_interaction，能判断则答复原 Worker；缺信息才 escalate_interaction 并询问用户，然后结束本轮，不等待 Worker 完成。`:
+    if(input.taskId&&!archived){const task=this.tasks.task(input.taskId);if(task.currentRunId){const run=this.tasks.run(task.currentRunId);if(run.contractVersion===input.taskVersion&&this.isLegacyRoot(run))legacy=run;}}
+    const prompt=archived?'[任务归档；事实通知，不构成新授权]\n'+JSON.stringify([notice]):
+      interactionId?`[Worker待答] interactionId=${interactionId}。先 inspect_interaction，能判断则答复原 Worker；缺信息才 escalate_interaction 并询问用户，然后结束本轮，不等待 Worker 完成。`:
       legacy?.status==='awaiting_review'?`[执行结果待审阅] runId=${legacy.id}。先 inspect_run，再按真实成果 task_review；需要返工就明确反馈，验收与正式交付分开。完成或失败时向用户说明。`:
       '[内部协作事件；按统一队列领取的单条业务输入，不构成新授权。先 work_inspect 核实；围绕用户目标承接一次；常规内部往返、查询、ACK与纯验收确认留在状态和详情。新里程碑、范围或预期变化、重要缺口、持续阻塞、未知结果、最终失败与部分可用成果必须给有用正文。只有真正需要用户决定时才沿原提问或审批入口升级。常规返工仅当本轮对同一成果的 request_changes 已确认、目标与验收及授权范围未变，且替代执行已实际启动且无异常时可静默；仅创建排队 Run 不足以静默；不要重复报告收到或采用。处理后 inbox_ack；需要等待外部输入则结束本轮，不轮询 Worker。]\n'+JSON.stringify([notice]);
     try{
       const text=await this.mainTurn(prompt,context);
+      if(archived&&context.terminalConfirmed&&(!context.processStatus||context.processStatus==='completed')&&this.store.db.prepare("SELECT 1 FROM agent_receipts WHERE messageId=? AND state IN ('offered','received')").get(input.messageId))
+        this.tasks.ack(this.mainActor(true),{operationId:'archive-notice:'+input.messageId,messageId:input.messageId,disposition:'processed',reason:'Archive fact delivered to main; no action implied'});
       if(interactionId){const state=this.interactions.inspect(interactionId).state;if(state!=='pending_main')this.tasks.ack(this.mainActor(true),{operationId:'interaction-main:'+input.messageId,messageId:input.messageId,disposition:'processed',reason:'Main coordinated the original interaction'});}
       if(legacy){
         const task=this.tasks.task(legacy.taskId),run=this.tasks.run(legacy.id);
@@ -2019,7 +2071,7 @@ export class Homer {
     finally{
       this.receptionTimings?.mark('host_finalize_start',{processId:context.processId,kind:'internal'});
       this.finishMainProcess(context,context.terminalConfirmed?context.processStatus??'completed':'unknown');
-      this.store.db.prepare("UPDATE agent_receipts SET state=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state IN ('offered','received')").run(context.terminalConfirmed?'blocked':'uncertain',input.messageId,this.store.meta('mainAgentId')!);
+      this.store.db.prepare("UPDATE agent_receipts SET state=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state IN ('offered','received')").run(context.processEndEventId?.startsWith('turn:')?'blocked':'uncertain',input.messageId,this.store.meta('mainAgentId')!);
       this.receptionTimings?.mark('host_finalize_end',{processId:context.processId,kind:'internal'});
       const output=context.processId?this.processes.coordination(context.processId):undefined;
       if(output)await this.emit({type:'coordination',messageId:output.messageId,text:output.text,requestId:output.sourceRequestId});

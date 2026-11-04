@@ -17,7 +17,9 @@
 
 ## 离线契约
 
-`npm run check` 包括专门的 service-interactions、worker-interactions、worker-native-requests、engine-worker-interactions、worker-interaction-protocol、worker-execution-clock、worker-interaction-mcp 测试。全部使用本地 Fake、临时 SQLite、模拟 stdio 或本地 socket，不调用模型。
+`npm run check` 包括专门的 service-interactions、worker-interactions、worker-native-requests、engine-worker-interactions、worker-interaction-protocol、worker-interaction-mcp 测试。全部使用本地 Fake、临时 SQLite、模拟 stdio 或本地 socket，不调用模型。
+
+历史测试说明：下文“等待超过执行预算仍存活”及红绿记录来自旧执行预算阶段。当前宿主整轮预算已由[执行时限与故障恢复](../../docs/38-native-timeout-recovery.md)移除；等待期间的 `activeMs` 统计、交互失效及停止确认仍保留，不表示存在自动整轮限时。原孤立计时器及其两项专用单测已移除；现有估算费用/连续压缩保护属于独立引擎契约，不恢复旧整轮预算。
 
 检查主直接回答、授权批准／拒绝、两 Worker 准确路由与乱序答复、等待超过执行预算仍存活、无关消息、正式 ask_main、答复前校验、重复／冲突／过期答复、停止禁授权、失去回调的重启对账、准确非空原生答案、秘密输入拒绝、权限子集和 turn scope、未知能力拒绝、MCP 只暴露三个工具、诊断无正文。协议 fixture 保留原生关联 ID 并收到真正 JSON-RPC 响应，不以模型提示词代替传输测试。
 

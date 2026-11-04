@@ -23,3 +23,16 @@ test('ILINK-QUEUE-003 removing a queued attachment revokes only removed lease an
   s.release();await until(()=>s.turns.length===1);assert.equal(s.turns[0]!.images?.length,1);
  }finally{await s.close();}
 });
+
+test('Wechat image preparation retains source dimensions and original bytes for native input',async()=>{
+ assert.ok(ffmpegPath);
+ const bytes=await mediaProcess(ffmpegPath,['-v','error','-filter_threads','1','-f','lavfi','-i','color=c=blue:s=4096x256','-frames:v','1','-f','image2pipe','-vcodec','png','-threads','1','pipe:1'],Buffer.alloc(0),1024*1024);
+ const s=await setup(bytes);try{
+  s.receive('501',[{type:2,image_item:{media:{encrypt_query_param:'synthetic-large-image'}}}]);s.release();await until(()=>s.turns.length===1);
+  const native=Buffer.from(s.turns[0]!.images![0]!.url.split(',')[1]!,'base64');
+  assert.deepEqual(imageDimensions(native,'image/png'),{width:4096,height:256});
+  assert.doesNotMatch(s.turns[0]!.text,/2048/);assert.match(s.turns[0]!.text,/保留源图尺寸/);
+  const ref=s.app.inputs.list()[0]!.input.attachments![0]!;
+  assert.deepEqual(s.app.media.read(s.app.inputs.list()[0]!.input.requestId,ref).bytes,bytes);
+ }finally{await s.close();}
+});

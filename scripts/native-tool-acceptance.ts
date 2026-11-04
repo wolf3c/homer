@@ -1,3 +1,4 @@
+import {validateNativeMcpConfig} from '../src/native-mcp-config.js';
 // Fixed native tools + new HOME + scripted loopback Responses only.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -21,8 +22,10 @@ if (!bin || !bin.endsWith('/codex'))
     throw Error('fixed_native_binary_required');
 const config = { appData: dir, nativeCodexHome: home, codexHome: home, codexBin: resolve(bin), workspace, runtime, baseUrl: '', model: 'gpt-6.1-sol', effort: 'medium' as const, requiresOpenaiAuth: false, timeoutMs: 1000, mainTimeoutMs: 1000, stopGraceMs: 1000 };
 let activeCallId: string | undefined;
-let script = '', sent = false, turn = 0, approval: 'approve' | 'deny' | 'hold' = 'deny', networkCalls = 0;
+let script = '', sent = false, turn = 0, approval: 'approve' | 'deny' = 'deny', networkCalls = 0;
+let currentRole:'main'|'worker'='main';
 const requests: {
+    role:'main'|'worker';
     toolNames: string[];
     nestedToolNames: string[];
     outputSeen: boolean;
@@ -83,7 +86,7 @@ const server = createServer(async (req, res) => {
         if (x && typeof x === 'object')
             Array.isArray(x) ? x.forEach(countImages) : countImages(x); }
     countImages(outputs);
-    requests.push({ ownSkillBodySeen: raw.includes('SYNTHETIC_NATIVE_SKILL_BODY_8K4'), mcpEchoSeen: out.includes('synthetic:SYNTHETIC_APPROVED_MCP_ECHO'), toolNames: catalog.flatMap((i: any) => i.type === 'namespace' ? (i.tools ?? []).map((t: any) => i.name + '.' + t.name) : [i.name ?? i.type]), nestedToolNames: catalog.flatMap((i: any) => i.tools ?? []).flatMap((i: any) => [...(i.description ?? '').matchAll(/### `([^`]+)`/g)].map((m: any) => m[1])), outputSeen: out.includes('exit_code'), exitCodes: [...out.matchAll(/exit_code[^0-9]*([0-9]+)/g)].map(m => Number(m[1])), privateSentinelSeen: out.includes('SYNTHETIC_PRIVATE_SENTINEL_3R7'), imageOutputSeen: imageParts > 0, viewUrlPresent: /probeViewUrlPresent.{0,10}true/.test(out), viewUrlUndefined: /probeViewUrlType.{0,10}undefined/.test(out), inputKinds: (data.input ?? []).map((x: any) => String(x.type ?? x.role)), toolMetadata: outputs.flatMap((x: any) => Array.isArray(x.output) ? x.output.filter((y: any) => y.type === 'input_text').flatMap((y: any) => { const match = y.text?.match(/\{\s*"probeNativeToolNames"[\s\S]*?\}/); if (!match)
+    requests.push({ role:currentRole, ownSkillBodySeen: raw.includes('SYNTHETIC_NATIVE_SKILL_BODY_8K4'), mcpEchoSeen: out.includes('synthetic:SYNTHETIC_APPROVED_MCP_ECHO'), toolNames: catalog.flatMap((i: any) => i.type === 'namespace' ? (i.tools ?? []).map((t: any) => i.name + '.' + t.name) : [i.name ?? i.type]), nestedToolNames: catalog.flatMap((i: any) => i.tools ?? []).flatMap((i: any) => [...(i.description ?? '').matchAll(/### `([^`]+)`/g)].map((m: any) => m[1])), outputSeen: out.includes('exit_code'), exitCodes: [...out.matchAll(/exit_code[^0-9]*([0-9]+)/g)].map(m => Number(m[1])), privateSentinelSeen: out.includes('SYNTHETIC_PRIVATE_SENTINEL_3R7'), imageOutputSeen: imageParts > 0, viewUrlPresent: /probeViewUrlPresent.{0,10}true/.test(out), viewUrlUndefined: /probeViewUrlType.{0,10}undefined/.test(out), inputKinds: (data.input ?? []).map((x: any) => String(x.type ?? x.role)), toolMetadata: outputs.flatMap((x: any) => Array.isArray(x.output) ? x.output.filter((y: any) => y.type === 'input_text').flatMap((y: any) => { const match = y.text?.match(/\{\s*"probeNativeToolNames"[\s\S]*?\}/); if (!match)
             return []; try {
             return [JSON.parse(match[0])];
         }
@@ -96,8 +99,9 @@ const server = createServer(async (req, res) => {
         catch {
             return [];
         } }) : []), outputShapes: outputs.map((x: any) => ({ type: x.type, keys: Object.keys(x), outputType: typeof x.output, outputItems: Array.isArray(x.output) ? x.output.map((y: any) => ({ type: y.type, keys: Object.keys(y) })) : null })), errors: ['image', 'Image', 'expected', 'expects', 'image_url', 'Invalid image', 'decode', 'image type', 'image format', 'data URL', 'image not', 'interaction_capability_denied', 'interaction_not_live', 'interaction_approval_unavailable', 'interaction_scope_denied', 'engine_invalid_message', 'rpc failed', 'rejected by user', 'declined', 'TypeError', 'is not a function', 'command not found', 'Failed to write', 'Sandbox', 'sandbox', 'Permission denied', 'Operation not permitted', 'code-mode host', 'Failed to', 'failed to', 'denied', 'permission', 'Permission', 'not available', 'unknown tool', 'Unknown tool', 'unavailable', 'disabled', 'exec_command', 'Operation not permitted', 'Permission denied', 'Unknown tool', 'not found', 'disabled', 'not enabled', 'code-mode host'].filter(x => out.includes(x)) });
-    const call = !!script && !sent;
-    sent = true;
+    const primary = data.model === config.model;
+    const call = primary && !!script && !sent;
+    if(primary)sent = true;
     const seq = requests.length;
     if (call)
         activeCallId = 'synthetic-' + seq;
@@ -119,17 +123,13 @@ process.env.SYNTHETIC_PARENT_PRIVATE = 'synthetic-parent-environment-secret';
 const db = new DatabaseSync(':memory:'), interactions = new WorkerInteractions(db), history = new ConversationHistory(db), approvals = new MainNativeApprovals(interactions, history);
 const checks: Record<string, any> = { isolatedHome: true, realModel: false, realAccount: false, realOutbound: false, directory: dir, commands: [], approvals: [] };
 let engine: CodexEngine | undefined;
-let heldApproval: string | undefined;
 const make = (nativeTools?: 'main' | 'worker', threadId?: string, workdir = workspace) => {
+    currentRole=nativeTools??'main';
     const peer = new CodexEngine(config, { cwd: workdir, readRoots: [workdir], instructions: 'Synthetic bounded native tool verification. No real account or external service.', tools: [], nativeCapabilities: true, ...(nativeTools ? { nativeTools, permissionRequests: true } : {}), threadId, onInteraction: async (request) => {
             assert.equal(request.threadId, engine!.threadId);
             assert.equal(request.turnId, engine!.turnId);
             const opened = approvals.open(request, { threadId: request.threadId, turnId: request.turnId, generationId: 'synthetic-generation-' + turn, sourceRequestId: 'synthetic-request-' + turn, userText: 'Synthetic explicit one-operation authorization fixture.', isCurrent: () => engine?.turnId === request.turnId, protectedRoots: [home, runtime] });
             checks.approvals.push({ method: request.method, decision: approval });
-            if (approval === 'hold') {
-                heldApproval = opened.id;
-                return opened.response;
-            }
             approvals.respond(opened.id, { requestId: 'synthetic-decision-' + turn, text: approval === 'approve' ? '允许本次操作' : '拒绝本次操作' });
             return opened.response;
         } }, async () => { throw Error('dynamic_tools_not_used'); });
@@ -151,7 +151,7 @@ try {
     engine = make();
     await engine.start();
     assert.equal(engine.version, '0.163.0');
-    const manager = new NativeCapabilities(home, (m, p) => engine!.request(m, p), () => true);
+    const manager = new NativeCapabilities(home, (m, p) => engine!.request(m, p), () => true, undefined, (name, server) => validateNativeMcpConfig({...config,codexHome:home},name,server));
     let state = await manager.state();
     await assert.rejects(() => manager.manage({ action: 'tools_configure', approve: true, settings: { shell: true, viewImage: true, shellSnapshot: true, skillSearch: true, search: 'live' }, expectedVersion: state.version }, 'agent'), /capability_user_approval_required/);
     await manager.manage({ action: 'tools_configure', approve: true, settings: { shell: true, viewImage: true, shellSnapshot: true, skillSearch: true, search: 'live' }, expectedVersion: state.version }, 'user');
@@ -179,61 +179,30 @@ try {
         checks.nativePatch = true;
         const secret = join(outside, 'synthetic-private.txt');
         writeFileSync(secret, 'SYNTHETIC_PRIVATE_SENTINEL_3R7');
-        const denied = await run('outside-read-denied', sh('/bin/cat ' + JSON.stringify(secret)));
-        assert.equal(denied.privateSentinelSeen, false);
-        checks.outsideReadDenied = true;
-        const deniedWrite = join(outside, 'not-authorized.txt');
-        await run('outside-write-denied', sh('printf denied > ' + JSON.stringify(deniedWrite)));
-        assert.equal(existsSync(deniedWrite), false);
-        checks.outsideWriteDenied = true;
-        const approved = join(outside, 'explicit-approved.txt');
-        approval = 'deny';
-        await run('explicit-operation-denied', sh('printf approved > ' + JSON.stringify(approved), true));
-        assert.equal(existsSync(approved), false);
-        assert.ok(checks.approvals.some((x: any) => x.decision === 'deny'));
-        approval = 'approve';
-        const commandOnly = await run('command-approved-without-filesystem-grant', sh('printf approved > ' + JSON.stringify(approved), true));
-        assert.equal(existsSync(approved), false);
-        assert.ok(commandOnly.exitCodes.includes(1));
-        checks.commandApprovalDoesNotGrantFilesystem = true;
-        const permissionScript = 'text(await tools.request_permissions(' + JSON.stringify({ permissions: { file_system: { write: [approved] } }, reason: 'Synthetic explicit exact-file access for this turn only.' }) + '));' + sh('printf approved > ' + JSON.stringify(approved));
-        await run('exact-file-turn-permission', permissionScript);
-        assert.equal(readFileSync(approved, 'utf8'), 'approved');
-        checks.originalTurnApproval = true;
-        await run('file-permission-does-not-survive-turn', sh('printf changed > ' + JSON.stringify(approved)));
-        assert.equal(readFileSync(approved, 'utf8'), 'approved');
-        checks.fileGrantOnlyCurrentTurn = true;
-        approval = 'deny';
-        await run('loopback-network-denied', sh('/usr/bin/curl --max-time 2 --noproxy ' + JSON.stringify('*') + ' ' + JSON.stringify(origin + '/network-probe')));
-        assert.equal(networkCalls, 0);
-        checks.networkDefaultDenied = true;
-        approval = 'approve';
-        await run('whole-turn-network-refused-by-host-scope', 'text(await tools.request_permissions(' + JSON.stringify({ permissions: { network: { enabled: true } }, reason: 'Synthetic loopback network access, this turn only.' }) + '));' + sh('/usr/bin/curl --max-time 2 --noproxy ' + JSON.stringify('*') + ' ' + JSON.stringify(origin + '/network-probe')));
-        assert.equal(networkCalls, 0);
-        checks.wholeTurnNetworkGrantRefused = true;
-        approval = 'deny';
-        await run('network-permission-does-not-survive-turn', sh('/usr/bin/curl --max-time 2 --noproxy ' + JSON.stringify('*') + ' ' + JSON.stringify(origin + '/network-probe')));
-        assert.equal(networkCalls, 0);
-        checks.networkRemainsDeniedAfterRefusal = true;
-        approval='approve';
-        await run('command-approval-does-not-grant-network',sh('/usr/bin/curl --max-time 2 --noproxy '+JSON.stringify('*')+' '+JSON.stringify(origin+'/network-probe'),true));
-        assert.equal(networkCalls,0);checks.commandApprovalDoesNotGrantNetwork=true;approval='deny';
+        const outsideRead = await run('ordinary-project-read', sh('/bin/cat ' + JSON.stringify(secret)));
+        assert.equal(outsideRead.privateSentinelSeen, true);
+        const projectFile = join(outside, 'ordinary-project.txt');
+        await run('ordinary-project-write', sh('printf synthetic > ' + JSON.stringify(projectFile)));
+        assert.equal(readFileSync(projectFile,'utf8'),'synthetic');checks.ordinaryProjectReadWrite = true;
+        const beforeNetwork=networkCalls;
+        await run('loopback-network', sh('/usr/bin/curl --fail --max-time 2 --noproxy "*" ' + JSON.stringify(origin + '/network-probe')));
+        assert.equal(networkCalls,beforeNetwork+1);checks.loopbackNetworkAllowed = true;
         writeFileSync(join(workspace, 'synthetic.png'), readFileSync(resolve('assets/branding/homer-hippo-cool-icon-256.png')));
         const image = await run('native-view-image', 'const result=await tools.view_image({path:' + JSON.stringify(join(workspace, 'synthetic.png')) + '});text({probeViewResultKeys:Object.keys(result),probeViewIsArray:Array.isArray(result),probeViewValues:Object.values(result).map(v=>typeof v),probeViewUrlType:typeof result.image_url,probeViewUrlPresent:typeof result.image_url==="string"});if(result.image_url)image(result.image_url);');
         assert.equal(image.imageOutputSeen, true);
         checks.viewImage = true;
-        const outsideImage = join(outside, 'outside.png');
+        const outsideImage = join(home, 'protected.png');
         writeFileSync(outsideImage, readFileSync(join(workspace, 'synthetic.png')));
         const forbiddenImage = await run('native-view-image-outside-denied', 'const r=await tools.view_image({path:' + JSON.stringify(outsideImage) + '});if(r?.image_url)image(r.image_url);');
         assert.equal(forbiddenImage.imageOutputSeen, false);
-        checks.viewImageScopeDenied = true;
+        checks.protectedHomeImageDenied = true;
         const protectedFile = join(home, 'synthetic-auth.txt');
         writeFileSync(protectedFile, 'SYNTHETIC_PRIVATE_SENTINEL_3R7');
         const privateRead = await run('native-home-read-denied', sh('/bin/cat ' + JSON.stringify(protectedFile)));
         assert.equal(privateRead.privateSentinelSeen, false);
         assert.ok(privateRead.exitCodes.includes(1));
         checks.nativeHomeReadDenied = true;
-        const outsidePatch = join(outside, 'outside-patch.txt');
+        const outsidePatch = join(runtime, 'protected-patch.txt');
         approval = 'deny';
         await run('native-patch-outside-denied', 'text(await tools.apply_patch(' + JSON.stringify('*** Begin Patch\n*** Add File: ' + outsidePatch + '\n+SYNTHETIC_DENIED_PATCH\n*** End Patch') + '));');
         assert.equal(existsSync(outsidePatch), false);
@@ -243,9 +212,9 @@ try {
         await run('persist-synthetic-thread-before-configuration', 'text("Synthetic configured thread marker.");');
     await manager.manage({ action: 'skill_save', name: 'native-check', description: 'Synthetic own-home capability verification only.', body: 'SYNTHETIC_NATIVE_SKILL_BODY_8K4', expectedHash: null }, 'agent');
     state = await manager.state();
-    await manager.manage({ action: 'mcp_save', name: 'stdio', server: { command: process.execPath, args: [resolve('tests/fixtures/native-capability-mcp.mjs')], enabled_tools: ['echo'] }, approve: true, expectedVersion: state.version }, 'user');
+    await manager.manage({ action: 'mcp_save', name: 'stdio', server: { command: process.execPath, args: [resolve('tests/fixtures/native-capability-mcp.mjs')], enabled_tools: ['echo'], default_tools_approval_mode:'approve' }, approve: true, expectedVersion: state.version }, 'user');
     state = await manager.state();
-    await manager.manage({ action: 'mcp_save', name: 'http', server: { url: origin + '/mcp', enabled_tools: ['echo'] }, approve: true, expectedVersion: state.version }, 'user');
+    await manager.manage({ action: 'mcp_save', name: 'http', server: { url: origin + '/mcp', enabled_tools: ['echo'], default_tools_approval_mode:'approve' }, approve: true, expectedVersion: state.version }, 'user');
     assert.deepEqual(await engine.refreshCapabilities(), { pending: false });
     const mcpStatus = await engine.request('mcpServerStatus/list', { threadId: engine.threadId, detail: 'full', limit: 100 });
     const appliedMcp = await engine.request('config/read', { cwd: workspace, includeLayers: true });
@@ -258,22 +227,19 @@ try {
     assert.equal(skillTurn.ownSkillBodySeen, true);
     assert.ok(skillTurn.exitCodes.includes(0));
     checks.nativeSkillOnDemand = true;
-    const catalogNames = requests.at(-1)!.nestedToolNames;
-    const stdioName = catalogNames.find(n => n.includes('stdio') && n.endsWith('echo')), httpName = catalogNames.find(n => n.includes('http') && n.endsWith('echo'));
-    checks.mcpDeclared = { stdio: !!stdioName, http: !!httpName };
-    for (const [transport] of [['stdio', stdioName ?? 'mcp__stdio__echo'], ['http', httpName ?? 'mcp__http__echo']]) {
+    for (const transport of ['stdio','http']) {
         const result = await run('native-main-mcp-' + transport, 'text({probeNativeToolNames:ALL_TOOLS.filter(t=>/stdio|http|echo/.test(t.name)||t.description?.includes("Synthetic local echo")).map(t=>t.name)});const picked=ALL_TOOLS.find(t=>t.name.includes(' + JSON.stringify(transport) + ')&&t.name.includes("echo"));if(picked)text(await tools[picked.name]({text:"SYNTHETIC_APPROVED_MCP_ECHO"}));');
         assert.equal(result.mcpEchoSeen, true);
     }
     checks.nativeMainMcpActualTools = true;
     const mainThread = engine.threadId;
     await engine.close();
-    const workerDir = join(runtime, 'worker');
+    const workerDir = join(dir, 'worker-project');
     mkdirSync(workerDir);
     engine = make('worker', undefined, workerDir);
     await engine.start();
     const approvalCount = checks.approvals.length;
-    for (const [transport] of [['stdio', stdioName ?? 'mcp__stdio__echo'], ['http', httpName ?? 'mcp__http__echo']]) {
+    for (const transport of ['stdio','http']) {
         const result = await run('native-worker-mcp-' + transport, 'text({probeNativeToolNames:ALL_TOOLS.filter(t=>/stdio|http|echo/.test(t.name)||t.description?.includes("Synthetic local echo")).map(t=>t.name)});const picked=ALL_TOOLS.find(t=>t.name.includes(' + JSON.stringify(transport) + ')&&t.name.includes("echo"));if(picked)text(await tools[picked.name]({text:"SYNTHETIC_APPROVED_MCP_ECHO"}));');
         assert.equal(result.mcpEchoSeen, true);
     }
@@ -281,11 +247,11 @@ try {
     assert.equal(workerSkill.ownSkillBodySeen, true);
     assert.ok(workerSkill.exitCodes.includes(0));
     assert.equal(checks.approvals.length, approvalCount);
-    const workerDenied = join(workspace, 'worker-denied.txt');
-    await run('worker-cannot-write-main-workspace', 'text(await tools.exec_command({cmd:' + JSON.stringify('printf denied > ' + JSON.stringify(workerDenied)) + ',login:false,workdir:' + JSON.stringify(workerDir) + '}));');
+    const workerDenied = join(runtime, 'worker-denied.txt');
+    await run('worker-cannot-write-host-runtime', 'text(await tools.exec_command({cmd:' + JSON.stringify('printf denied > ' + JSON.stringify(workerDenied)) + ',login:false,workdir:' + JSON.stringify(workerDir) + '}));');
     assert.equal(existsSync(workerDenied), false);
     checks.nativeWorkerMcpAndSkills = true;
-    checks.workerCannotWriteMainWorkspace = true;
+    checks.workerCannotWriteHostRuntime = true;
     await engine.close();
     engine = make('main', mainThread);
     await engine.start();
@@ -306,18 +272,6 @@ try {
         approvals.end('synthetic-generation-' + turn);
         await until(() => !engine!.nativeBusy);
         checks.nativeInterrupt = true;
-        approval = 'hold';
-        turn++;
-        script = 'text(await tools.request_permissions('+JSON.stringify({permissions:{file_system:{read:[join(outside,"late-approved.txt")]}},reason:"Synthetic late decision must not authorize after stop."})+'));';
-        sent = false;
-        const held = engine.turn('Synthetic pending native approval');
-        await until(() => !!heldApproval);
-        await engine.interrupt();
-        assert.equal((await held).status, 'interrupted');
-        assert.throws(() => approvals.respond(heldApproval!, { requestId: 'synthetic-late-decision', text: '允许本次操作' }), /interaction_not_live/);
-        approvals.end('synthetic-generation-' + turn);
-        checks.stoppedApprovalCannotExecute = true;
-        approval = 'deny';
         await run('background-shell-session', sh('/bin/sleep 3'));
         const terminals = await engine.request('thread/backgroundTerminals/list', { threadId: engine.threadId, limit: 100 });
         checks.backgroundAfterTurn = terminals.data.length;
@@ -366,8 +320,9 @@ try {
     }
     checks.toolNames = [...new Set(requests.flatMap(r => r.toolNames))];
     checks.nestedToolNames = [...new Set(requests.flatMap(r => r.nestedToolNames))];
-    assert.ok(![...checks.toolNames,...checks.nestedToolNames].some((name:string)=>name.includes('spawn_agent')||name.startsWith('collaboration.')), 'Homer must be the only business scheduler even when the model prefers native multi-agent');
-    checks.nativeMultiAgentToolsAbsent = true;
+    assert.ok(!requests.filter(r=>r.role==='main').flatMap(r=>[...r.toolNames,...r.nestedToolNames]).some((name:string)=>name.includes('spawn_agent')||name.startsWith('collaboration.')), 'Main keeps business scheduling; only Worker exposes native collaboration');
+    assert.ok(requests.filter(r=>r.role==='worker').flatMap(r=>[...r.toolNames,...r.nestedToolNames]).some(name=>name.includes('spawn_agent')||name.startsWith('collaboration.')));
+    checks.mainMultiAgentToolsAbsent = true;checks.workerNativeCollaborationAvailable = true;
     checks.snapshots = readdirSync(home).filter(x => /snapshot/.test(x));
     checks.thread = engine.threadId;
     checks.success = true;

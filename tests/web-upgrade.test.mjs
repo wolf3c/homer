@@ -51,7 +51,7 @@ test("a declared UI protocol alone cannot bypass changes to the resident gateway
 test('resident gateway imports require restart even after source review',()=>{
  const first={files:new Map([['package.json',Buffer.from('{"type":"module"}')],['package-lock.json',Buffer.from('{}')]]),configBytes:Buffer.alloc(0)};
  const baseline={deps:dependencyHash(first),schema:schemaHash(first),gatewayHash:gatewayFingerprint(first)};
- for(const path of ['src/channels/telegram-settings-page.ts','src/web-upload.ts','src/media-policy.ts','src/processes.ts']){
+ for(const path of ['src/web-server.ts','src/update-review-page.ts','src/channels/telegram-settings-page.ts','src/web-upload.ts','src/media-policy.ts','src/processes.ts']){
   const next={...first,files:new Map(first.files)};next.files.set(path,Buffer.from('changed resident executable'));
   assert.throws(()=>candidateGuard(next,baseline),/dev_gateway_changed_restart_required/);
  }

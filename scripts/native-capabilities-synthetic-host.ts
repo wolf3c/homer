@@ -1,6 +1,6 @@
 // Explicit synthetic candidate. Native protocol/MCP/files are real; Agent
 // decisions below are scripted. No provider turn, account or real channel.
-import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
+import {accessSync,mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {createServer} from 'node:http';
 import {handleMcp} from '../tests/fixtures/native-capability-mcp.mjs';
@@ -8,9 +8,11 @@ import {Homer} from '../src/service.js';
 import {CodexEngine,type EngineOptions,type ToolCall,type TurnResult} from '../src/engine.js';
 import {createWebServer} from '../src/web-server.js';
 import {homerWebBridge} from '../src/web-homer.js';
+const binary=process.argv[2];if(!binary)throw Error('fixed_native_binary_required');
+const uiDirectory=resolve(process.env.HISTORY_FOLLOWUP_BUILD??'dist/web');accessSync(join(uiDirectory,'index.html'));
 const root=resolve('.codex/scratch/native-capabilities-implementation');mkdirSync(root,{recursive:true});
-const data=process.argv[2]?resolve(process.argv[2]):mkdtempSync(join(root,'synthetic-host-'));if(!data.startsWith(root+'/synthetic-host-'))throw Error('synthetic_data_path_required');
-const config={appData:data,codexHome:join(data,'codex'),codexBin:resolve('.codex/private/engines/codex-0.163.0/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex'),workspace:join(data,'workspace'),runtime:join(data,'runtime'),model:'gpt-6.1-sol',effort:'medium' as const,requiresOpenaiAuth:false,timeoutMs:3000,mainTimeoutMs:30000,stopGraceMs:1000};mkdirSync(config.workspace,{recursive:true});mkdirSync(config.runtime,{recursive:true});
+const data=process.argv[3]?resolve(process.argv[3]):mkdtempSync(join(root,'synthetic-host-'));if(!data.startsWith(root+'/synthetic-host-'))throw Error('synthetic_data_path_required');
+const config={appData:data,codexHome:join(data,'codex'),codexBin:resolve(binary),workspace:join(data,'workspace'),runtime:join(data,'runtime'),model:'gpt-6.1-sol',effort:'medium' as const,requiresOpenaiAuth:false,timeoutMs:3000,mainTimeoutMs:30000,stopGraceMs:1000};mkdirSync(config.workspace,{recursive:true});mkdirSync(config.runtime,{recursive:true});
 let seq=0;
 class SyntheticEngine extends CodexEngine{
  async start(){const id=await super.start();if(!this.resumable){await this.request('thread/inject_items',{threadId:id,items:[{type:'message',role:'user',content:[{type:'input_text',text:'Homer synthetic capabilities UI candidate only. No model execution.'}]}]});this.resumable=true;}return id;}
@@ -26,6 +28,7 @@ class SyntheticEngine extends CodexEngine{
   else if(/^调用合成 MCP (stdio|http)$/.test(text)){const server=text.split(' ').at(-1)!;const called=await this.request('mcpServer/tool/call',{threadId:this.threadId,server,tool:'echo',arguments:{text:'homer-conversation'}});if(called.isError)throw Error('synthetic_mcp_call_failed');reply=called.content[0].text;}
   else if(text==='演示用量'){usage={total:{totalTokens:120,inputTokens:100,cachedInputTokens:40,outputTokens:20,reasoningOutputTokens:10},last:{totalTokens:12,inputTokens:10,outputTokens:2}};this.emit('usage',usage);reply='这是脚本生成的合成用量，用于核对网页展示；未调用模型，不是实际消耗。';}
   else if(options?.skills?.length)reply='合成主轮已通过原生 UserInput.skill 选择：'+options.skills.map(s=>s.name).join('、')+'。模型理解需另行验收。';
+  this.emit('agentMessage',{threadId:this.threadId,turnId:this.turnId,itemId:'synthetic-final-'+seq,phase:'final_answer',text:reply,completed:true});
   return {status:'completed',text:reply,usage};
  }
 }
@@ -43,5 +46,5 @@ const mock=createServer(async(req,res)=>{
 });await new Promise<void>(r=>mock.listen(4798,'127.0.0.1',r));
 let web:Awaited<ReturnType<typeof createWebServer>>|undefined;
 const app=new Homer(config,async()=>{await web?.publish();},(options:EngineOptions,handler:(call:ToolCall)=>Promise<unknown>)=>new SyntheticEngine(config,options,handler));await app.start();
-web=await createWebServer({bridge:homerWebBridge(app),port:4797,uiDirectory:resolve('dist/web'),logoPath:resolve('assets/branding/homer-hippo-cool-icon-256.png')});const timer=setInterval(()=>web?.publish(),250);
-writeFileSync(join(root,'synthetic-candidate-location.json'),JSON.stringify({url:web.url,data,classification:'native protocol with scripted Agent; no real model or account'},null,2));console.log(web.url+' · 合成验收入口');for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{clearInterval(timer);await web?.close();await app.close();await new Promise<void>(r=>mock.close(()=>r()));process.exit(0);});
+web=await createWebServer({bridge:homerWebBridge(app),port:4797,uiDirectory,logoPath:resolve('assets/branding/homer-hippo-cool-icon-256.png')});
+writeFileSync(join(root,'synthetic-candidate-location.json'),JSON.stringify({url:web.url,data,classification:'native protocol with scripted Agent; no real model or account'},null,2));console.log(web.url+' · 合成验收入口');for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await web?.close();await app.close();await new Promise<void>(r=>mock.close(()=>r()));process.exit(0);});

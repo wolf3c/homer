@@ -26,6 +26,10 @@ export function previewMathText(value:string,display:boolean):string{
 export function previewQuoteText(markdown:string):string{
  return visibleMarkdown(fromMarkdown(markdown,{extensions:[gfm(),math()],mdastExtensions:[gfmFromMarkdown(),mathFromMarkdown()]}));
 }
+export function activitySummaryText(markdown:string):string{
+ const text=(previewQuoteText(markdown.slice(0,4096)).split(/\r?\n/).find(line=>line.trim())??'').replace(/\s+/g,' ').trim();
+ return text.length>80?text.slice(0,80)+'…':text;
+}
 
 export type MessageSourcePart={id:string;text:string;revision:number};
 // The existing answer slot is a view of these items, never the node.final

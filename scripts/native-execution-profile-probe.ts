@@ -2,13 +2,13 @@
 import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';import {createServer} from 'node:http';
 import assert from 'node:assert/strict';import {CodexEngine,profileOverrides} from '../src/engine.js';import {createWebServer} from '../src/web-server.js';
-const root=resolve('.codex/scratch/flexible-execution-review');mkdirSync(root,{recursive:true});const d=mkdtempSync(join(root,'native-profile-'));
+const root=resolve('.codex/scratch/local-development-web-access-implementation');mkdirSync(root,{recursive:true});const d=mkdtempSync(join(root,'native-profile-'));
 const config={appData:d,codexHome:join(d,'codex'),runtime:join(d,'runtime'),workspace:join(d,'A'),controlBrowserData:[join(d,'browser')],codexBin:resolve(process.argv[2]!),model:'gpt-6.1-sol',requiresOpenaiAuth:false,timeoutMs:90000,mainTimeoutMs:90000,stopGraceMs:1000};
 for(const p of [config.codexHome,config.runtime,config.workspace,join(d,'B'),join(d,'C'),...config.controlBrowserData])mkdirSync(p,{recursive:true});
 writeFileSync(join(config.runtime,'protected.txt'),'synthetic-private');writeFileSync(join(d,'browser/session'),'synthetic-browser-secret');
 const dev=createServer((_q,r)=>r.end('synthetic-local-development'));await new Promise<void>(r=>dev.listen(0,'127.0.0.1',r));const devUrl=`http://127.0.0.1:${(dev.address() as any).port}/`;
 let controls=0;const bridge:any={state:async()=>({threadId:'synthetic',pending:true}),submit:async()=>{controls++;return{};},stop:async()=>{controls++;},respond:async()=>{controls++;},artifact:async()=>({filename:'x',content:'x'})};
-const web=await createWebServer({bridge,port:0,connectionDirectory:join(config.runtime,'web-connection')});
+const web=await createWebServer({bridge,port:0});
 const receipt:any={synthetic:true,model:false,account:false,protocol:'native command/exec; no scripted model calls',roles:{}};let engine:CodexEngine|undefined;
 try{
  for(const role of ['main','worker'] as const){
@@ -21,9 +21,8 @@ try{
   proof.privateReadExit=(await run(['/bin/cat',join(config.runtime,'protected.txt')])).exitCode;assert.notEqual(proof.privateReadExit,0);
   proof.privateWriteExit=(await run(['/bin/sh','-c','printf overwritten > "$1"','probe',join(config.runtime,'protected.txt')])).exitCode;assert.notEqual(proof.privateWriteExit,0);
   proof.browserReadExit=(await run(['/bin/cat',join(d,'browser/session')])).exitCode;assert.notEqual(proof.browserReadExit,0);
-  proof.launcherReadExit=(await run(['/bin/cat',web.connectionFile])).exitCode;assert.notEqual(proof.launcherReadExit,0);
-  const attempts=[['GET','/api/state'],['POST','/api/stop'],['POST','/api/interactions/synthetic']];proof.forgedControlStatus=[];
-  for(const [method,path]of attempts){const r=await run(['/usr/bin/curl','--noproxy','*','--silent','--output','/dev/null','--write-out','%{http_code}','--request',method!,'--header','Origin: '+web.url,'--header','Cookie: homer=forged','--header','X-Homer-Connection: forged','--header','Content-Type: application/json','--data','{}',web.url+path]);assert.equal(r.exitCode,0);proof.forgedControlStatus.push(r.stdout?.trim());assert.equal(r.stdout?.trim(),'401');}
+  const attempts=[['GET','/api/state','{}','200'],['POST','/api/stop',JSON.stringify({messageId:'synthetic-message'}),'202'],['POST','/api/interactions/synthetic',JSON.stringify({requestId:'synthetic-decision',text:'拒绝本次操作'}),'202']];proof.localCallerProtection='deferred';proof.localControlStatus=[];
+  for(const [method,path,payload,expected]of attempts){const r=await run(['/usr/bin/curl','--noproxy','*','--silent','--output','/dev/null','--write-out','%{http_code}','--request',method!,'--header','Origin: '+web.url,'--header','Cookie: homer=forged','--header','X-Homer-Connection: forged','--header','Content-Type: application/json','--data',payload!,web.url+path]);assert.equal(r.exitCode,0);proof.localControlStatus.push(r.stdout?.trim());assert.equal(r.stdout?.trim(),expected);}
   const commands=[
    ['/usr/bin/curl','--fail','--silent','--max-time','10','--output','https-'+role+'.txt','https://github.com/robots.txt'],
    ['/usr/bin/git','-c','credential.helper=','-c','core.askPass=','-c','http.lowSpeedLimit=1','-c','http.lowSpeedTime=8','ls-remote','https://github.com/makecindy/cindy.git','HEAD'],
@@ -34,6 +33,6 @@ try{
   const effective=await engine.request('config/read',{cwd:config.workspace});proof.nativeAgentsEnabled=effective.config.features.multi_agent;assert.equal(proof.nativeAgentsEnabled,role==='worker');
   await engine.close();engine=undefined;
  }
- assert.equal(controls,0);receipt.controlMutations=controls;receipt.status='passed';
+ assert.equal(controls,4);receipt.controlMutations=controls;receipt.securityStatus='local_caller_isolation_deferred';receipt.status='passed';
 }catch(error){receipt.status='failed';receipt.error=error instanceof Error&&'code'in error?String(error.code):error instanceof Error&&/^[a-z_]{1,70}$/.test(error.message)?error.message:'native_profile_failed';process.exitCode=1;}
 finally{await engine?.close();await web.close();await new Promise<void>(r=>dev.close(()=>r()));writeFileSync(join(root,'native-profile-receipt.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt));}

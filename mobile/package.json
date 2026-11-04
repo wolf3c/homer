@@ -1,6 +1,6 @@
 {
   "name": "homer-mobile",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "main": "index.js",
   "scripts": {
@@ -8,12 +8,13 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "test": "node --test connection.test.mjs local-network.test.mjs rebind.test.mjs",
+    "test": "node --test connection.test.mjs local-network.test.mjs rebind.test.mjs update.test.mjs",
     "bundle": "npm run build:ui && expo export --platform ios --platform android --max-workers 1",
     "build:ui": "node ../scripts/build-mobile-ui.mjs"
   },
   "dependencies": {
     "expo": "58.0.21",
+    "expo-application": "~58.1.2",
     "expo-build-properties": "58.0.11",
     "expo-camera": "58.0.14",
     "expo-crypto": "58.0.7",

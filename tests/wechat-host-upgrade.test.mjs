@@ -50,7 +50,7 @@ test("same stable host manages QR, defers upgrade while scanning, restores one m
   let lines = "", exited = false, completed = false;
   child.stdout.on("data", data => { lines += data; const parts = lines.split("\n"); lines = parts.pop(); for (const line of parts) { try { events.push(JSON.parse(line)); } catch {} } });
   child.stderr.on("data", data => errors.push(String(data))); child.on("exit", () => { exited = true; });
-  const fetch=syntheticUserFetch(join(base,'runtime/web-connection/connect-homer.html'));
+  const fetch=syntheticUserFetch();
   const state = async () => { try { return await (await fetch(url + "/api/state")).json(); } catch { return undefined; } };
   const post = (path, body = {}) => fetch(url + path, { method: "POST", headers: { Origin: url, "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const lock = () => JSON.parse(readFileSync(join(base, "runtime/cli.lock"), "utf8")).pid;

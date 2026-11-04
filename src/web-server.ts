@@ -1,3 +1,4 @@
+import type {MobileTurnStatus} from './mobile-turn.js';
 import type {MobileDevices} from './mobile-devices.js';
 import QRCode from 'qrcode';
 import {StatePublication} from './state-publication.js';
@@ -34,7 +35,7 @@ async function body(request: IncomingMessage) {
 // Transport only: ownership and authorization stay in the existing Homer service.
 export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPath, getAssets, updateReview, deviceManagement, desktopAccessToken }: {
   desktopAccessToken?:string;
-  deviceManagement?:{devices:MobileDevices;invitationUrl:string};
+  deviceManagement?:{devices:MobileDevices;invitationUrl:string;turnStatus?:()=>MobileTurnStatus};
   updateReview?:{read():unknown;approve(hash:unknown):unknown}; bridge: WebBridge; port?: number; uiDirectory?: string; logoPath?: string; getAssets?: (version?: string) => { uiDirectory?: string; logoPath?: string };
 }) {
   if(desktopAccessToken!==undefined&&(typeof desktopAccessToken!=='string'||!/^[a-f0-9]{64}$/.test(desktopAccessToken)))throw Error('desktop_access_invalid');
@@ -81,7 +82,7 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
     }
     if(target.pathname.startsWith('/api/mobile/')){
       const path=target.pathname.slice('/api/mobile/'.length);
-      if(request.method==='GET'&&path==='state')return json(response,200,deviceManagement?.devices.state()??{configured:false,devices:[],pending:null});
+      if(request.method==='GET'&&path==='state')return json(response,200,deviceManagement?{...deviceManagement.devices.state(),turnStatus:deviceManagement.turnStatus?.()}:{configured:false,devices:[],pending:null});
       if(request.method!=='POST'||request.headers.origin!==requestOrigin)return json(response,403,{error:'local_origin_required'});
       if(!deviceManagement)throw Error('mobile_not_configured');
       const input=await body(request),devices=deviceManagement.devices;
@@ -94,7 +95,7 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       else if(path==='update')devices.update(input?.id,input??{});
       else if(path==='delete')devices.remove(input?.id);
       else return json(response,404,{error:'route_not_found'});
-      return json(response,200,devices.state());
+      return json(response,200,{...devices.state(),turnStatus:deviceManagement.turnStatus?.()});
     }
     if(request.method==='GET'&&target.pathname==='/preview/interactive'){
       response.setHeader('Content-Security-Policy',HTML_PREVIEW_POLICY);

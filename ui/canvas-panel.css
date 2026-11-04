@@ -136,3 +136,15 @@
 .composer-context .context-attachment-item .aui-attachment-tile-remove:hover{background:transparent!important;color:var(--ink)!important}
 .composer-context .context-attachment-item .aui-attachment-remove-icon{width:14px;height:14px;stroke-width:2}
 @media (pointer:coarse){.composer-context .context-attachment-item{padding-right:48px}.composer-context .context-attachment-item .aui-attachment-tile-remove{width:44px;height:44px}}
+
+/* Keep the diff visible when the raw disclosure grows inside the flex reader. */
+.canvas-panel .patch-preview-body>*{flex-shrink:0}
+.canvas-panel .patch-preview-body pre{max-height:24rem;overflow:auto}
+.canvas-panel .patch-preview-body a[download]{display:inline-flex;align-items:center;min-height:44px}
+.canvas-panel .patch-preview-body summary{min-height:44px;align-content:center;cursor:pointer}
+@media(max-width:800px),(pointer:coarse){
+ .canvas-panel .patch-preview-body [data-slot=diff-viewer-header]{height:48px}
+ .canvas-panel .patch-preview-body [data-slot=diff-viewer-header] button{width:44px;height:44px}
+}
+
+.canvas-panel .patch-preview-body [data-slot=diff-viewer] button[aria-expanded]{min-height:44px}

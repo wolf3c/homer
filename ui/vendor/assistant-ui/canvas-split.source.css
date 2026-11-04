@@ -1,6 +1,7 @@
 @import "tailwindcss" source(none);
 @source "./canvas-split.tsx";
 @source "./web-preview.tsx";
+@source "./diff-viewer.tsx";
 @source "./surfaces.ts";
 @theme inline {
  --color-background:var(--surface);

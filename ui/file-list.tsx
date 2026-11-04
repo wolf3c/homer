@@ -34,9 +34,9 @@ export function FileList<T extends FileListItem>({files,label,onOpen,selectedId,
         <button type="button" className="file-list-open w-full border-0 bg-transparent p-0 text-start" aria-label={'预览 '+file.title} aria-describedby={typeId}
           aria-controls={controlsId} aria-expanded={controlsId?selectedId===file.id:undefined}
           aria-current={selectedId===file.id?'true':undefined} onClick={event=>onOpen(file,event.currentTarget)}>
-          <FileRoot className="w-full min-w-0">
+          <FileRoot className="w-full min-w-0 min-h-11">
             <FileIconDisplay mimeType={appearance.mimeType}/>
-            <FileName title={file.title}>{file.title}</FileName>
+            <FileName className="whitespace-normal break-words" title={file.title}>{file.title}</FileName>
           </FileRoot>
           <span id={typeId} className="sr-only">{appearance.label}</span>
         </button>

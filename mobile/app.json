@@ -2,11 +2,12 @@
   "expo": {
     "name": "Homer",
     "slug": "homer-mobile",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "orientation": "default",
     "ios": {
       "bundleIdentifier": "com.homer.mobile",
-      "supportsTablet": true
+      "supportsTablet": false,
+      "buildNumber": "3"
     },
     "android": {
       "package": "com.homer.mobile",
@@ -16,10 +17,18 @@
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
-      ]
+      ],
+      "versionCode": 4
     },
     "plugins": [
-      ["expo-build-properties", {"android": {"targetSdkVersion": 37}}],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "targetSdkVersion": 37
+          }
+        }
+      ],
       [
         "expo-camera",
         {
@@ -28,6 +37,7 @@
           "microphonePermission": false
         }
       ]
-    ]
+    ],
+    "icon": "../assets/branding/odysseus-20261030/homer-odysseus-1024.png"
   }
 }

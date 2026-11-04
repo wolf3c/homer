@@ -11,7 +11,7 @@ import { sourceSnapshot, buildCandidate, buildUiCandidate, backendHash, uiHash, 
 import {verifyBuild,sealBuild,copyRuntimeDependencies} from "./trusted-build.mjs";
 import { IngressJournal } from "./dev-ingress.mjs";
 
-export async function runDev({ root, configPath, json = false, webPort, mobileSignalOrigin = process.env.HOMER_MOBILE_SIGNAL_ORIGIN, pollMs = 300, debounceMs = 600, input = process.stdin, output = process.stdout, fixedBuild, fixedUi, fallbackUi, desktop }) {
+export async function runDev({ root, configPath, json = false, webPort, mobileSignalOrigin = process.env.HOMER_MOBILE_SIGNAL_ORIGIN, mobileTurnAccount, pollMs = 300, debounceMs = 600, input = process.stdin, output = process.stdout, fixedBuild, fixedUi, fallbackUi, desktop }) {
   if(desktop&&!fixedBuild)throw Error("desktop_fixed_build_required");
   const desktopAccessToken=desktop?randomBytes(32).toString('hex'):undefined;
   const managementAllowed=desktop?(await import(pathToFileURL(join(fixedBuild.directory,'dist/desktop-management.js')).href)).desktopManagementAllowed:()=>false;
@@ -27,7 +27,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
   let expectedThread, handoffThread, timer, readyTimer, initial = true, upgradeProbe = false;
   let buildController;
   let web, cachedState, cachedHistoryState, webHistoryProtocol=0, finishing = false, desktopStoppedConfirmed=false,desktopChatError,desktopHostStarted=false,desktopStartupError;
-  let review, approvedSourceHash, acceptedSnapshot, pendingUi, drainingReads=false;
+  let review, approvedSourceHash, acceptedSnapshot, pendingUi, drainingReads=false, updateStopId, updateStopped=false;
   let recoveryCode;
   let journal, unlockGateway, uiCurrent, observedHash, rejectedUiHash;
   const uiBuilds = new Map(), ingressSending = new Set(), ingressWaiters = new Map(), ownedBuilds = new Set();
@@ -87,6 +87,14 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
   // UI adoption keeps the same executor and transport. Read-only refreshes
   // cannot starve it; mutations must settle before adopting trusted assets.
   const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","wechat.state","wechat.qr","telegram.state","artifact","artifactOrigin","media.read"].includes(item.method));
+  const canStopForUpdate=()=>!stopped&&phase==='running'&&!!journal&&!inFlight.size&&!hasWebMutation()&&!queue.length&&!journal.pending().length;
+  const updateBusy=()=>{updateStopId=undefined;upgradeProbe=false;desktop?.onEvent?.({kind:'update-busy'});};
+  desktop?.bindUpdateStop?.(()=>{
+    if(updateStopId)return;
+    if(!canStopForUpdate()||upgradeProbe||!child?.connected){updateBusy();return;}
+    updateStopId=randomUUID();upgradeProbe=true;
+    if(!send({kind:'probe',id:updateStopId}))updateBusy();
+  });
   const acceptInput = input => {
     if (stopped || !journal) throw Error("service_not_ready");
     if(desktop&&phase!=="running")throw Error("desktop_chat_not_ready");
@@ -134,7 +142,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     };
     web = await createServer({ port: webPort,
       ...(desktop?{desktopAccessToken}:{}),
-      ...(mobileSignalOrigin?{signalOrigin:mobileSignalOrigin,databasePath:join(build.config.runtime,'homer.sqlite')} : {}),
+      ...(mobileSignalOrigin?{signalOrigin:mobileSignalOrigin,turnAccount:mobileTurnAccount,databasePath:join(build.config.runtime,'homer.sqlite')} : {}),
       updateReview:{read:()=>review?{hash:review.hash,files:review.files}:null,approve:hash=>{
         if(!review||hash!==review.hash||sourceSnapshot(root,configPath).hash!==hash)throw Error('dev_update_review_stale');
         approvedSourceHash=hash;review=undefined;publish();return {approved:true};
@@ -291,12 +299,18 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
         flush();
       } else if (m.kind === "upgrade_probe") {
         upgradeProbe = false;
+        if(updateStopId&&m.id===updateStopId){
+          if(m.safe&&canStopForUpdate()){phase='preparing';publish();drainingReads=true;prepareWhenDrained();}
+          else updateBusy();
+          return;
+        }
         if(m.safe&&phase==='running'&&pendingUi?.hash===m.id&&!stopped&&!inFlight.size&&!hasWebMutation()&&!queue.length&&!journal.pending().length){
           verifyBuild(pendingUi);uiCurrent=pendingUi;uiBuilds.set(pendingUi.uiHash,pendingUi);acceptedSnapshot=pendingUi.snapshot;pendingUi=undefined;pruneBuilds();publish();await notice('界面构建检查通过，已审阅并在安全空闲生效；原执行版本与任务继续运行。');
         }else if (m.safe && phase === "running" && candidate?.hash === m.id && !stopped && !inFlight.size && !hasWebMutation() && !queue.length && !journal.pending().length) {
           phase = "preparing";publish();drainingReads=true;prepareWhenDrained();
         }
       } else if (m.kind === "busy") {
+        if(updateStopId)updateBusy();
         phase = "running";publish();
         flush();
       } else if (m.kind === "handoff") handoffThread = m.thread;
@@ -306,6 +320,12 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
       webRequests.clear();
       ingressSending.clear(); upgradeProbe = false;
       if (stopped || phase === "stopping") return finish();
+      if(updateStopId){
+        if(phase==='preparing'&&typeof handoffThread==='string'&&!!handoffThread&&handoffThread===expectedThread&&desktopStoppedConfirmed&&code===0&&!exitSignal&&!inFlight.size&&!existsSync(join(current.config.runtime,'cli.lock'))){
+          updateStopped=true;stopped=true;return finish();
+        }
+        return recoveryRequired('dev_child_exit_unconfirmed');
+      }
       if (phase === "preparing" && handoffThread && code === 0 && !exitSignal) {
         if (existsSync(join(current.config.runtime, "cli.lock"))) {
           await notice("dev_lock_release_unconfirmed；停止切换。");
@@ -419,7 +439,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     await tick();
   }
   await done;
-  if(desktop)return {stoppedConfirmed:desktopStoppedConfirmed,noHostStarted:!desktopHostStarted,...(desktopStartupError?{startupError:desktopStartupError}:{})};
+  if(desktop)return {stoppedConfirmed:desktopStoppedConfirmed,updateStopped,noHostStarted:!desktopHostStarted,...(desktopStartupError?{startupError:desktopStartupError}:{})};
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

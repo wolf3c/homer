@@ -219,7 +219,7 @@ for(const outcome of ['completed','failed','interrupted'] as const)test('desktop
   app.store.db.prepare("UPDATE runs SET status='cancelled' WHERE id=?").run(run.id);app.store.db.prepare("UPDATE tasks SET state='settled',outcome='cancelled' WHERE id=?").run(root.taskId);
   await app.close();turns.length=0;
   const paused={...config,pauseOldDesktopWork:true,desktopResources:{bundleRoot:dir,manifestSha256:'a'.repeat(64)}};
-  app=new Homer(paused,async()=>{},factory);await app.start();await app.idle();assert.deepEqual(turns,[]);assert.equal(app.inputs.dispatchSummary().awaitingUser,true);
+  app=new Homer(paused,async()=>{},factory);await app.start();await app.idle();assert.deepEqual([...turns],[]);assert.equal(app.inputs.dispatchSummary().awaitingUser,true);
   await app.message('fresh requirements','fresh');await app.idle();
   assert.deepEqual(turns,outcome==='completed'?['fresh requirements',...pending]:['fresh requirements']);
   assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(unknown)!.state,'uncertain');

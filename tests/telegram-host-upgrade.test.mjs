@@ -39,7 +39,7 @@ test("TG local settings shares Web/CLI/WeChat host and survives stable handoff w
     process.stderr.on("data", data => errors.push(String(data))); process.on("exit", () => { exited = true; });
   };
   observe(child);
-  const fetch=syntheticUserFetch(join(base,'runtime/web-connection/connect-homer.html'));
+  const fetch=syntheticUserFetch();
   const state = async () => { try { return await (await fetch(url + "/api/state")).json(); } catch { return undefined; } };
   const lock = () => JSON.parse(readFileSync(join(base, "runtime/cli.lock"), "utf8")).pid;
   try {

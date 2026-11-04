@@ -1,7 +1,9 @@
 // Internal product defaults shared by the main Agent, Workers and presentation.
 // Store only the environment variable name for a key, never a credential value.
 // Explicit local configuration and HOMER_* overrides are resolved in config.ts.
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+// Fixed native protocol accepts a non-empty advertised effort string.
+export type ReasoningEffort = string;
+export const validReasoningEffort=(value:unknown):value is string=>typeof value==='string'&&/^[\x21-\x7e]{1,64}$/.test(value);
 export type ModelRole = "main" | "worker";
 export const PRODUCT_MODEL_DEFAULTS: Readonly<{
   model: string;
@@ -24,8 +26,8 @@ export const PRODUCT_MODEL_DEFAULTS: Readonly<{
 });
 
 // Shared by execution and caller-facing configuration projections.
-export function effectiveEffort(effort: ReasoningEffort | undefined, role: ModelRole = "main"): ReasoningEffort {
-  return effort ?? (role === "worker" ? PRODUCT_MODEL_DEFAULTS.workerEffort : PRODUCT_MODEL_DEFAULTS.effort);
+export function effectiveEffort(effort: ReasoningEffort | null | undefined, role: ModelRole = "main"): ReasoningEffort | null {
+  return effort===null?null:effort ?? (role === "worker" ? PRODUCT_MODEL_DEFAULTS.workerEffort : PRODUCT_MODEL_DEFAULTS.effort);
 }
 
 export function effectiveFast(fast: boolean | undefined, role: ModelRole = "main"): boolean {

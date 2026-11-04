@@ -31,7 +31,7 @@ test('Web binary upload -> scoped history -> original thread, safe retry/remove/
   assert.equal((await upload({'X-Homer-Thread':'foreign-main'})).status,409);
   const response=await upload();assert.equal(response.status,201);const ref=await response.json() as {assetId:string;revision:number};
   assert.equal((await upload()).status,201);assert.deepEqual(await (await upload()).json(),app.media.view(ref));
-  assert.equal(turns.length,0);assert.equal(Number(app.store.db.prepare('SELECT COUNT(*) n FROM memory_jobs').get()!.n),0);
+  assert.equal(turns.length,0);
   const input={requestId:metadata['X-Homer-Request'],text:'',attachments:[{assetId:ref.assetId,revision:ref.revision}]};
   const sent=await fetch(web.url+'/api/messages',{method:'POST',headers:{Origin:web.url,'Content-Type':'application/json'},body:JSON.stringify(input)});assert.equal(sent.status,202);
   for(let n=0;n<400&&!turns.length;n++)await new Promise(r=>setTimeout(r,5));

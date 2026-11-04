@@ -1,0 +1,171 @@
+# Manual builds only. Formal Mac releases require the signing secrets described in docs.
+name: Homer build
+"on":
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Source compilation or desktop release
+        required: true
+        type: choice
+        default: desktop
+        options: [source, desktop]
+      target:
+        description: Requested platform; desktop-three is both Macs and Windows
+        required: true
+        type: choice
+        default: desktop-three
+        options: [desktop-three, macos-arm64, macos-x64, windows-x64, linux-x64, all]
+      expected_sha:
+        description: Reviewed full commit SHA
+        required: true
+        type: string
+      release_tag:
+        description: Immutable desktop release tag matching the product version
+        required: false
+        type: string
+      build_number:
+        description: Reviewed positive desktop build number shared by all platforms
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: plan
+        env:
+          HOMER_BUILD_KIND: ${{ inputs.kind }}
+          HOMER_BUILD_TARGET: ${{ inputs.target }}
+          HOMER_EXPECTED_SHA: ${{ inputs.expected_sha }}
+          HOMER_RELEASE_TAG: ${{ inputs.release_tag }}
+          HOMER_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          if [[ "$HOMER_BUILD_KIND" == desktop ]]; then
+            [[ "$HOMER_RELEASE_TAG" =~ ^v?[0-9][A-Za-z0-9._-]*$ ]] || exit 1
+            [[ "$HOMER_BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || exit 1
+            node -e "const p=require('./package.json');if(process.env.HOMER_RELEASE_TAG.replace(/^v/,'')!==p.version)process.exit(1)"
+          fi
+          node scripts/github-build-plan.mjs >> "$GITHUB_OUTPUT"
+  build:
+    needs: plan
+    name: ${{ inputs.kind }} (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - name: Verify target runtime
+        env:
+          HOMER_BUILD_PLATFORM: ${{ matrix.platform }}
+          HOMER_BUILD_ARCH: ${{ matrix.arch }}
+        run: >-
+          node -e "const a=require('node:assert/strict');
+          a.equal(process.platform,process.env.HOMER_BUILD_PLATFORM);
+          a.equal(process.arch,process.env.HOMER_BUILD_ARCH);
+          a.equal(process.versions.node,require('node:fs').readFileSync('.nvmrc','utf8').trim());"
+      - name: Verify desktop SDK
+        if: inputs.kind == 'desktop' && matrix.platform == 'darwin'
+        env:
+          HOMER_BUILD_ARCH: ${{ matrix.arch }}
+        run: |
+          sdk=$(xcrun --sdk macosx --show-sdk-version)
+          minimum=14
+          if [[ "$HOMER_BUILD_ARCH" == arm64 ]]; then minimum=27; fi
+          [[ "${sdk%%.*}" -ge "$minimum" ]] || { echo desktop_macos_sdk_required; exit 1; }
+      - name: Configure temporary Mac signing keychain
+        if: inputs.kind == 'desktop' && matrix.platform == 'darwin'
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.HOMER_MAC_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.HOMER_MAC_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.HOMER_MAC_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.HOMER_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.HOMER_APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.HOMER_APPLE_APP_PASSWORD }}
+        run: |
+          [[ -n "$CERTIFICATE_BASE64" && -n "$CERTIFICATE_PASSWORD" && -n "$SIGNING_IDENTITY" && -n "$APPLE_ID" && -n "$APPLE_TEAM_ID" && -n "$APPLE_APP_PASSWORD" ]] || { echo desktop_mac_signing_secrets_required; exit 1; }
+          keychain="$RUNNER_TEMP/homer-signing.keychain-db"
+          password=$(openssl rand -hex 32)
+          echo "::add-mask::$password"
+          echo "HOMER_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/homer-signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/homer-signing.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/homer-signing.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          xcrun notarytool store-credentials homer-ci --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+      - run: npm ci --no-audit --no-fund
+      - name: Compile source
+        if: inputs.kind == 'source'
+        run: npm run build
+      - name: Build desktop distribution
+        if: inputs.kind == 'desktop'
+        env:
+          HOMER_BUILD_SHA: ${{ github.sha }}
+          HOMER_BUILD_ARCH: ${{ matrix.arch }}
+          HOMER_BUILD_PLATFORM: ${{ matrix.platform }}
+          HOMER_RELEASE_TAG: ${{ inputs.release_tag }}
+          HOMER_BUILD_NUMBER: ${{ inputs.build_number }}
+          HOMER_MAC_SIGNING_IDENTITY: ${{ secrets.HOMER_MAC_SIGNING_IDENTITY }}
+          HOMER_NOTARY_KEYCHAIN_PROFILE: homer-ci
+        run: |
+          args=(--source-sha "$HOMER_BUILD_SHA" --maintenance "$GITHUB_WORKSPACE" --scratch "$GITHUB_WORKSPACE/.codex/scratch/github-build/desktop" --website-origin https://super-tree.com --gateway-origin https://models.super-tree.com --distribution --release-tag "$HOMER_RELEASE_TAG" --build-number "$HOMER_BUILD_NUMBER")
+          if [[ "$HOMER_BUILD_PLATFORM" == win32 ]]; then args+=(--unsigned-windows); fi
+          if [[ "$HOMER_BUILD_PLATFORM" == darwin && "$HOMER_BUILD_ARCH" == x64 ]]; then args+=(--minimum-macos 14.0); fi
+          node scripts/build-desktop.mjs "${args[@]}"
+      - name: Remove temporary Mac signing materials
+        if: always() && inputs.kind == 'desktop' && matrix.platform == 'darwin'
+        run: |
+          rm -f "$RUNNER_TEMP/homer-signing.p12"
+          security delete-keychain "$RUNNER_TEMP/homer-signing.keychain-db" 2>/dev/null || true
+      - name: Upload source compilation output
+        if: inputs.kind == 'source'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload desktop package
+        if: inputs.kind == 'desktop'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .codex/scratch/github-build/desktop/forge/make/**/*.zip
+            .codex/scratch/github-build/desktop/forge/make/**/RELEASES.json
+            .codex/scratch/github-build/desktop/nsis/*.exe
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload desktop build receipt
+        if: inputs.kind == 'desktop'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-receipt-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: .codex/scratch/github-build/desktop/desktop-build-result.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1

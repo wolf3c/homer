@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, mkdtempSync, cpSync, symlinkSync, writeFileSync, appendFileSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import {waitForDevCondition} from './fixtures/dev-condition.mjs';
@@ -16,7 +17,7 @@ async function until(check, timeout = 45000) {
 // Requirement-derived, synthetic protocol peer. No model or production runtime.
 test('Web stable host hands off immutable UI, retains accepted input/history/thread and never owns a second Homer', { timeout: 120000 }, async t => {
   const root = resolve('.'), parent = join(root, '.codex/scratch/assistant-ui'); mkdirSync(parent, { recursive: true });
-  const base = mkdtempSync(join(parent, 'web-dev-'));const fetch=syntheticUserFetch(join(base,'runtime/web-connection/connect-homer.html'));
+  const base = mkdtempSync(join(parent, 'web-dev-'));const fetch=syntheticUserFetch();
   for (const name of ['src', 'scripts', 'prompts', 'assets', 'ui', 'package.json', 'package-lock.json', 'tsconfig.json']) cpSync(join(root, name), join(base, name), { recursive: true, filter: path => !/(?:^|\/)(?:node_modules|dist)(?:\/|$)/.test(path) });
   symlinkSync(join(root, 'node_modules'), join(base, 'node_modules'), 'dir');
   for (const name of ['home', 'runtime', 'workspace/materials']) mkdirSync(join(base, name), { recursive: true });
@@ -33,6 +34,14 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
   const state = async () => { try { return await (await fetch(url + '/api/state')).json(); } catch { return undefined; } };
   const post = (path, body) => fetch(url + path, { method: 'POST', headers: { Origin: url, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const lock = () => JSON.parse(readFileSync(join(base, 'runtime/cli.lock'), 'utf8')).pid;
+  const persistedInput = requestId => {
+    const db = new DatabaseSync(join(base, 'runtime/homer.sqlite'), {readOnly:true});
+    try {
+      const rows = db.prepare("SELECT m.id AS messageId,i.replyId,r.revision,m.payloadJson FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id JOIN conversation_inputs i ON i.requestId=json_extract(m.payloadJson,'$.requestId') WHERE m.kind='user_input' AND i.requestId=?").all(requestId);
+      assert.equal(rows.length,1);
+      return {...rows[0],payload:JSON.parse(rows[0].payloadJson)};
+    } finally { db.close(); }
+  };
   const buildReady=check=>waitForDevCondition(check,{signal:t.signal,events,exited:()=>exited});
   try {
     await buildReady(async () => (await state())?.upgrade?.phase === 'running'); assert.equal(exited, false);
@@ -40,12 +49,12 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
     const page = await (await fetch(url)).text(); assert.match(page, /homer-root/); assert.match(page, /assets\//);
     const oldAssetPaths=[...page.matchAll(/(?:src|href)="([^"]*\/assets\/[^"]+)"/g)].map(match=>match[1]);
     assert.ok(oldAssetPaths.length>=2);const oldAssets=await Promise.all(oldAssetPaths.map(async path=>Buffer.from(await(await fetch(url+path)).arrayBuffer())));
-    assert.equal((await post('/api/messages',{requestId:'synthetic-prime',text:'合成首次完成'})).status,202);
+    const primeResponse=await post('/api/messages',{requestId:'synthetic-prime',text:'合成首次完成'});assert.equal(primeResponse.status,202);const primeReceipt=await primeResponse.json();
     await until(async()=>(await state())?.messages.at(-1)?.status==='completed');
     appendFileSync(join(base, 'ui/homer-styles.css'), '\n/* synthetic UI immutable snapshot check */\n');
     await until(async()=>(await state())?.upgrade.reviewRequired===true);
     assert.equal((await state()).upgrade.uiVersion,first.upgrade.uiVersion);
-    assert.equal((await globalThis.fetch(url+'/api/update/approve',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({hash:'f'.repeat(64)})})).status,401);
+    assert.equal((await globalThis.fetch(url+'/api/update/approve',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({hash:'f'.repeat(64)})})).status,409);
     const review=await(await fetch(url+'/api/update/review')).json();assert.ok(review.files.some(f=>f.path==='ui/homer-styles.css'));
     assert.equal((await post('/api/update/approve',{hash:'f'.repeat(64)})).status,409);
     // Changing ordinary staged output cannot change the in-use protected assets.
@@ -59,9 +68,20 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
     assert.equal((await state()).upgrade.version, version);
     assert.notEqual((await state()).upgrade.uiVersion, first.upgrade.uiVersion, 'compatible UI must activate while the original executor stays resident');
     const receipt = await (await post('/api/messages', { requestId: 'synthetic-stream', text: '持续慢速合成回答' })).json();
-    await until(async () => (await state())?.messages.some(m => m.id === receipt.replyId && m.status === 'running' && m.text.length > 0));
+    const linkedProcesses=s=>s.processNodes.filter(node=>node.replyMessageId===receipt.replyId);
+    await until(async () => {
+      const s=await state(),publicProcess=s&&linkedProcesses(s)[0];
+      return publicProcess?.state==='working'&&publicProcess.status==='running'&&publicProcess.items.some(item=>item.kind==='commentary'&&item.text.length>0)&&s.messages.some(m=>m.id===publicProcess.messageId&&m.role==='assistant'&&m.status==='running');
+    });
     assert.equal(lock(), pid);
-    const streaming=await state();
+    const streaming=await state(),publicProcess=linkedProcesses(streaming)[0];
+    assert.equal(linkedProcesses(streaming).length,1);
+    const source=streaming.messages.filter(m=>m.requestId==='synthetic-stream'&&m.role==='user');assert.equal(source.length,1);
+    assert.equal(publicProcess.sourceKind,'user');assert.deepEqual(publicProcess.sourceMessageIds,[receipt.queueMessageId]);
+    const accepted=persistedInput('synthetic-stream');assert.equal(accepted.messageId,receipt.queueMessageId);assert.equal(accepted.replyId,receipt.replyId);assert.equal(accepted.payload.source,'local');
+    assert.equal(source[0].inputState,'processing');assert.equal(streaming.queue.some(row=>row.messageId===receipt.queueMessageId),false,'an input with a public process is no longer presented in the waiting queue');
+    assert.notEqual(publicProcess.messageId,receipt.replyId);assert.equal(streaming.messages.some(m=>m.id===receipt.replyId),false);
+    assert.equal(streaming.activeMessageId,receipt.replyId);assert.equal(streaming.isRunning,true);
     appendFileSync(join(base,'ui/homer-styles.css'),'\n/* synthetic UI update during live main turn */\n');
     await until(async()=>(await state())?.upgrade.reviewRequired===true);
     const second=await(await fetch(url+'/api/update/review')).json();
@@ -72,21 +92,36 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
     assert.equal(lock(),pid);assert.equal((await state()).activeMessageId,receipt.replyId);
     for(let i=0;i<oldAssetPaths.length;i++)assert.deepEqual(Buffer.from(await(await fetch(url+oldAssetPaths[i])).arrayBuffer()),oldAssets[i]);
     assert.equal((await post('/api/stop', { messageId: receipt.replyId })).status, 202);
-    await until(async () => (await state())?.messages.some(m => m.id === receipt.replyId && m.status === 'interrupted'));
+    await until(async () => {
+      const s=await state(),nodes=s&&linkedProcesses(s);
+      return nodes?.length===1&&nodes[0].id===publicProcess.id&&nodes[0].state==='worked'&&nodes[0].status==='interrupted'&&s.messages.some(m=>m.id===publicProcess.messageId&&m.status==='interrupted')&&!s.isRunning&&s.activeMessageId===null;
+    });
     await until(async()=>(await state())?.upgrade.uiVersion!==streaming.upgrade.uiVersion);
+    const stoppedProcess=linkedProcesses(await state())[0];
     appendFileSync(join(base, 'prompts/main.md'), '\n<!-- synthetic business handoff after independent UI -->\n');
     await until(() => events.some(e => e.text?.includes('等待安全边界')));
     assert.equal(lock(), pid);
     await until(async () => { const s = await state(); return s?.upgrade?.phase === 'running' && s.upgrade.version !== version; });
-    assert.notEqual(lock(), pid); assert.throws(() => process.kill(pid, 0));
-    const after = await state(); assert.equal(after.threadId, first.threadId); assert.equal(after.messages.length, 4); assert.equal(after.messages[3].id, receipt.replyId);
-    assert.equal((await (await post('/api/messages', { requestId: 'synthetic-stream', text: '持续慢速合成回答' })).json()).fresh, false);
+    assert.notEqual(lock(), pid); assert.throws(() => process.kill(pid, 0),{code:'ESRCH'});
+    const after = await state(); assert.equal(after.threadId, first.threadId);
+    assert.deepEqual(after.messages.filter(m=>m.role==='user').map(m=>m.requestId),['synthetic-prime','synthetic-stream']);
+    for(const requestId of ['synthetic-prime','synthetic-stream']){
+      const users=after.messages.filter(m=>m.role==='user'&&m.requestId===requestId);assert.equal(users.length,1);
+      const original=requestId==='synthetic-prime'?primeReceipt:receipt;
+      const nodes=after.processNodes.filter(node=>node.sourceKind==='user'&&node.replyMessageId===original.replyId);assert.equal(nodes.length,1);assert.deepEqual(nodes[0].sourceMessageIds,[original.queueMessageId]);
+      const replies=after.messages.filter(m=>m.id===nodes[0].messageId);assert.equal(replies.length,1);assert.equal(replies[0].role,'assistant');assert.equal(replies[0].requestId,requestId);
+    }
+    assert.deepEqual(linkedProcesses(after),[stoppedProcess],'executor replacement preserves the original stopped public process');
+    assert.equal(linkedProcesses(after).length,1);assert.equal(linkedProcesses(after)[0].id,publicProcess.id);assert.equal(linkedProcesses(after)[0].status,'interrupted');
+    assert.equal(after.messages.length,after.messages.filter(m=>m.role==='user').length+after.processNodes.length);
+    const duplicate=await (await post('/api/messages', { requestId: 'synthetic-stream', text: '持续慢速合成回答' })).json();assert.equal(duplicate.fresh,false);assert.equal(duplicate.replyId,receipt.replyId);assert.equal(duplicate.queueMessageId,receipt.queueMessageId);assert.equal(duplicate.revision,persistedInput('synthetic-stream').revision);assert.equal(duplicate.queueState,'interrupted');
+    assert.deepEqual((await state()).processNodes,after.processNodes);assert.deepEqual((await state()).messages,after.messages);
     assert.equal((await post('/api/messages', { requestId: 'synthetic-next', text: '合成继续' })).status, 202);
     await until(async () => (await state())?.messages.at(-1)?.status === 'completed');
     assert.equal((await state()).messages.filter(m => m.role === 'user').length, 3);
     assert.equal((await state()).threadId, first.threadId);
     child.stdin.end(); await delay(300); assert.equal(exited, false, 'Web mode survives terminal EOF/page closure');
-    writeFileSync(join(base,'verified-checks.json'),JSON.stringify({synthetic:true,reviewRequired:true,unreviewedRetainsOld:true,stagedEditsDoNotChangeLive:true,unauthenticatedApprovalStatus:401,staleApprovalStatus:409,reviewedUiWaitsForIdle:true,reviewedUiPreservesExecutor:true,threadPreserved:true}));
+    writeFileSync(join(base,'verified-checks.json'),JSON.stringify({synthetic:true,reviewRequired:true,unreviewedRetainsOld:true,stagedEditsDoNotChangeLive:true,localCallerProtectionDeferred:true,staleApprovalStatus:409,reviewedUiWaitsForIdle:true,reviewedUiPreservesExecutor:true,threadPreserved:true}));
     verified=true;
   } finally {
     if(!verified){const observed=await state();writeFileSync(join(base,'safe-failure-stages.json'),JSON.stringify({phase:observed?.upgrade?.phase,reviewRequired:observed?.upgrade?.reviewRequired,codes:events.flatMap(e=>e.type==='progress'?e.text?.match(/\b(?:dev|cli|gateway|main)_[a-z_]+\b/g)??[]:[])}));}

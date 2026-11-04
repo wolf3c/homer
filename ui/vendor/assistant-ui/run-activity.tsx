@@ -69,7 +69,7 @@ export function RunActivity({
       data-status={status}
       className={cn("flex min-w-0 flex-col gap-3", className)}
     >
-      {entries.length > 0 ? (
+      {entries.length > 0 || open ? (
         <Collapsible open={open} onOpenChange={onOpenChange}>
           <CollapsibleTrigger
             aria-busy={status === "running"}
@@ -81,7 +81,7 @@ export function RunActivity({
             />
             {summary}
           </CollapsibleTrigger>
-          <CollapsibleContent className={cn(collapsePanel, "peer")}>
+          <CollapsibleContent inert={!open} aria-hidden={!open || undefined} className={cn(collapsePanel, "peer")}>
             <ol className="border-border ms-1.5 flex min-w-0 flex-col gap-3 border-s ps-3.5 pt-2 text-sm wrap-anywhere">
               {entries.map((entry) => (
                 <li key={entry.id} data-activity-kind={entry.kind}>
