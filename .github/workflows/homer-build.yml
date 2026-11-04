@@ -117,6 +117,9 @@ jobs:
           security list-keychains -d user -s "$keychain"
           xcrun notarytool store-credentials homer-ci --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
       - run: npm ci --no-audit --no-fund
+      - name: Install Electron runtime
+        if: inputs.kind == 'desktop'
+        run: node node_modules/electron/install.js
       - name: Compile source
         if: inputs.kind == 'source'
         run: npm run build
