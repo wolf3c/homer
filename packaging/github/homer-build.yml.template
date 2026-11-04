@@ -99,11 +99,12 @@ jobs:
           CERTIFICATE_BASE64: ${{ secrets.HOMER_MAC_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.HOMER_MAC_CERTIFICATE_PASSWORD }}
           SIGNING_IDENTITY: ${{ secrets.HOMER_MAC_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.HOMER_APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.HOMER_APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.HOMER_APPLE_APP_PASSWORD }}
+          APPLE_KEY_ID: ${{ secrets.HOMER_APPLE_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.HOMER_APPLE_API_ISSUER_ID }}
+          APPLE_PRIVATE_KEY_BASE64: ${{ secrets.HOMER_APPLE_API_PRIVATE_KEY_BASE64 }}
         run: |
-          [[ -n "$CERTIFICATE_BASE64" && -n "$CERTIFICATE_PASSWORD" && -n "$SIGNING_IDENTITY" && -n "$APPLE_ID" && -n "$APPLE_TEAM_ID" && -n "$APPLE_APP_PASSWORD" ]] || { echo desktop_mac_signing_secrets_required; exit 1; }
+          umask 077
+          [[ -n "$CERTIFICATE_BASE64" && -n "$CERTIFICATE_PASSWORD" && -n "$SIGNING_IDENTITY" && -n "$APPLE_KEY_ID" && -n "$APPLE_ISSUER_ID" && -n "$APPLE_PRIVATE_KEY_BASE64" ]] || { echo desktop_mac_signing_secrets_required; exit 1; }
           keychain="$RUNNER_TEMP/homer-signing.keychain-db"
           password=$(openssl rand -hex 32)
           echo "::add-mask::$password"
@@ -115,7 +116,10 @@ jobs:
           rm -f "$RUNNER_TEMP/homer-signing.p12"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
           security list-keychains -d user -s "$keychain"
-          xcrun notarytool store-credentials homer-ci --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          security default-keychain -d user -s "$keychain"
+          printf '%s' "$APPLE_PRIVATE_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/homer-notary.p8"
+          xcrun notarytool store-credentials homer-ci --key "$RUNNER_TEMP/homer-notary.p8" --key-id "$APPLE_KEY_ID" --issuer "$APPLE_ISSUER_ID"
+          rm -f "$RUNNER_TEMP/homer-notary.p8"
       - run: npm ci --no-audit --no-fund
       - name: Install Electron runtime
         if: inputs.kind == 'desktop'
@@ -141,7 +145,7 @@ jobs:
       - name: Remove temporary Mac signing materials
         if: always() && inputs.kind == 'desktop' && matrix.platform == 'darwin'
         run: |
-          rm -f "$RUNNER_TEMP/homer-signing.p12"
+          rm -f "$RUNNER_TEMP/homer-signing.p12" "$RUNNER_TEMP/homer-notary.p8"
           security delete-keychain "$RUNNER_TEMP/homer-signing.keychain-db" 2>/dev/null || true
       - name: Upload source compilation output
         if: inputs.kind == 'source'
