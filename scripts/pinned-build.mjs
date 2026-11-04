@@ -27,7 +27,12 @@ export function dependencyIdentity(directory){
   try{path=dirname(require.resolve(name+'/package.json'));}
   catch{
    try{path=dirname(require.resolve(name));}
-   catch(error){if(optional&&error.code==='MODULE_NOT_FOUND')return;throw error;}
+   catch(error){
+    if(optional&&error.code==='MODULE_NOT_FOUND')return;
+    if(error.code!=='ERR_PACKAGE_PATH_NOT_EXPORTED')throw error;
+    path=require.resolve.paths(name)?.map(base=>join(base,name)).find(candidate=>existsSync(join(candidate,'package.json')));
+    if(!path)throw error;
+   }
    while(!existsSync(join(path,'package.json'))||JSON.parse(readFileSync(join(path,'package.json'),'utf8')).name!==name){const parent=dirname(path);if(parent===path)throw Error('pinned_dependency_unresolved');path=parent;}
   }
   path=realpathSync(path);if(seen.has(path))return;seen.add(path);
