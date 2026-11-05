@@ -11,6 +11,8 @@ npm test
 
 默认测试验证调度、审批、成果交付、持久化、权限及适配契约。它不代表真实模型、第三方工具、桌面安装或真机体验通过验收。
 
+构建规划与 Release 草稿上传可单独离线检查：`node --test tests/github-build-plan.test.mjs tests/github-release-draft.test.mjs`。测试使用合成包、模拟 GitHub 协议及回环 HTTP，不访问 GitHub，不构建、签名或发布产品；验证附件名、Mac 更新链接、下载摘要及拒绝覆盖已发布版本。
+
 ## 显式专项
 
 仅在准备好对应环境、账户和费用授权后运行；先阅读 `scripts/test.mjs` 对应清单和各测试的环境要求。
@@ -23,6 +25,7 @@ npm test
 | `npm run test:rtc` | WebRTC 通信。 |
 | `npm run test:development` | 开发、构建及发布流程。 |
 | `npm run test:vendor` | 上游组件契约及资源。 |
+| `node scripts/test.mjs --browser` | 浏览器专项；须显式设置 `HISTORY_FOLLOWUP_BUILD`、`HOMER_SYNTHETIC_ROOT`、`HOMER_BROWSER_EVIDENCE`，按清单准备隔离环境。 |
 | `npm run test:desktop:acceptance` | 已构建桌面 App、显式指定引擎与模块。 |
 
 缺少依赖、条件跳过和未运行均保留未验证状态；专项退出码 0 不代表全部能力验收通过。`npm run test:real` 等真实任务可能产生模型费用，不能当作普通离线检查运行。

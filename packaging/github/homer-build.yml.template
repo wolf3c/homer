@@ -27,12 +27,22 @@ name: Homer build
         description: Reviewed positive desktop build number shared by all platforms
         required: false
         type: string
+      upload_release_draft:
+        description: Upload desktop packages to a private Release draft; never publish
+        required: true
+        type: boolean
+        default: true
 permissions:
   contents: read
+concurrency:
+  group: homer-build-${{ inputs.release_tag || github.ref }}
+  cancel-in-progress: false
 jobs:
   plan:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
+    permissions:
+      contents: write # Read draft releases during preflight.
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -54,11 +64,25 @@ jobs:
             node -e "const p=require('./package.json');if(process.env.HOMER_RELEASE_TAG.replace(/^v/,'')!==p.version)process.exit(1)"
           fi
           node scripts/github-build-plan.mjs >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: inputs.kind == 'desktop' && inputs.upload_release_draft
+        with:
+          node-version-file: .nvmrc
+      - name: Check release tag and draft before building
+        if: inputs.kind == 'desktop' && inputs.upload_release_draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOMER_BUILD_TARGET: ${{ inputs.target }}
+          HOMER_RELEASE_TAG: ${{ inputs.release_tag }}
+          HOMER_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: node scripts/github-release-draft.mjs check
   build:
     needs: plan
     name: ${{ inputs.kind }} (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    permissions:
+      contents: write # Direct upload uses only the temporary GITHUB_TOKEN.
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -156,7 +180,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Upload desktop package
-        if: inputs.kind == 'desktop'
+        if: inputs.kind == 'desktop' && !inputs.upload_release_draft
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -167,6 +191,16 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+      - name: Upload desktop package directly to Release draft
+        if: inputs.kind == 'desktop' && inputs.upload_release_draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOMER_BUILD_TARGET: ${{ matrix.target }}
+          HOMER_RELEASE_TAG: ${{ inputs.release_tag }}
+          HOMER_BUILD_NUMBER: ${{ inputs.build_number }}
+          HOMER_RELEASE_DIRECTORY: ${{ github.workspace }}/.codex/scratch/github-build/desktop
+          HOMER_RELEASE_RECEIPT: ${{ github.workspace }}/.codex/scratch/github-build/desktop/desktop-build-result.json
+        run: node scripts/github-release-draft.mjs upload
       - name: Upload desktop build receipt
         if: inputs.kind == 'desktop'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -176,3 +210,25 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+  verify-draft:
+    if: inputs.kind == 'desktop' && inputs.upload_release_draft
+    needs: [plan, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - name: Verify all draft downloads and generate release checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOMER_BUILD_TARGET: ${{ inputs.target }}
+          HOMER_RELEASE_TAG: ${{ inputs.release_tag }}
+          HOMER_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: node scripts/github-release-draft.mjs finalize
