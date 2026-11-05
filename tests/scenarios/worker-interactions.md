@@ -27,7 +27,7 @@
 
 ## 连续性与退出
 
-`scripts/check-worker-tool-compatibility.ts <Codex路径>` 在隔离 Home 内先建原五 dynamicTools 的原生线程，注入合成历史、退出进程，再以自有 MCP 恢复同一线程，检查历史、原 dynamicTools 及三个新工具目录。它不调用模型，真实连续性还需独立的 `real-session-resume.ts` 和上述交互脚本。
+`scripts/check-worker-tool-compatibility.ts <Codex路径>` 在隔离 Codex Home 内以当前完整 Main 工具表建立原生线程，注入合成历史、退出进程，再恢复同一线程，核对原历史、工具元数据及当前 MCP 目录，并完成一次只读 MCP 往返。它不读取日常账号或调用模型，真实模型连续性另由上述交互脚本验收。
 
 停止／退出立即失效回调，重启将丢失回调项标 expired，Run interrupted；不会从持久批准恢复外部动作。EOF／--message 只剩用户待答时明示并停止。普通最终文本提问不自动识别；不涵盖运行中追加、steer、停止重派、完成后排队续办、IM、Office 或浏览器。
 

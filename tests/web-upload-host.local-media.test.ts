@@ -10,7 +10,7 @@ import type {EngineImage} from '../src/engine.js';
 
 // Requirement-derived fixture: scratch DB, injected Engine, localhost HTTP only.
 // No account, Keychain, actual model or external channel is constructed.
-test('Web image input and candidate result inspection retain source dimensions and accurate capabilities',async()=>{
+test('Web image input and adopted result inspection retain source dimensions and accurate capabilities',async()=>{
  assert.ok(ffmpegPath);
  const bytes=await mediaProcess(ffmpegPath,['-v','error','-filter_threads','1','-f','lavfi','-i','color=c=blue:s=4096x256','-frames:v','1','-f','image2pipe','-vcodec','png','-threads','1','pipe:1'],Buffer.alloc(0),1024*1024);
  const parent=resolve('.codex/scratch/web-upload-host');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'image-resolution-'));
@@ -19,19 +19,18 @@ test('Web image input and candidate result inspection retain source dimensions a
   threadId='synthetic-resolution-main';turnId?:string;async start(){return this.threadId;}async imageCapability(){return true;}
   async turn(text:string,options?:{images?:EngineImage[];onStarted?:(id:string)=>void}){
    this.turnId='synthetic-resolution-turn-'+ ++turnSequence;options?.onStarted?.(this.turnId);
-   if(text.startsWith('[内部协作事件'))return {status:'completed',text:''};
+   if(!options?.images?.length)return {status:'completed',text:''};
    try{seenText=text;seenImage=Buffer.from(options!.images![0]!.url.split(',')[1]!,'base64');
    const actor={agentId:app.store.meta('mainAgentId')!,sourceRequestId:'synthetic-resolution-request'};
-   const contract={goal:'Synthetic image inspection',inputs:[],resultKind:'aggregate' as const,acceptance:{criteria:[{id:'pixels',required:true,description:'Keep the source dimensions'}]}};
-   const task=app.tasks.createRoot(actor,{operationId:'root-image',title:'Synthetic image',contract,authority:{sourceRequestId:actor.sourceRequestId,description:'Synthetic image fixture only',materials:[],resultIds:[],collaborateTaskIds:[],maxActiveMs:10000}});
-   const child=app.tasks.delegate(actor,{operationId:'child-image',taskId:task.taskId,version:1,expectedTaskRevision:app.tasks.task(task.taskId).revision,contract:{...contract,resultKind:'file'},dependencies:[]});
-   const run=app.tasks.claim(child.runId)!;app.tasks.bind(run.id,run.epoch,'synthetic-worker','synthetic-turn');
-   const worker={agentId:child.agentId,runId:run.id,epoch:run.epoch,threadId:'synthetic-worker',turnId:'synthetic-turn'};
-   app.tasks.markMaterialRead(worker);const staged=app.tasks.writeFile(worker,{operationId:'stage-image',filename:'synthetic.png',bytes});
-   try{
-    const result=await (app as any).mediaTool('inspect_result_file',{resultId:staged.resultId});
-    const image=result.mediaContent.find((item:any)=>item.type==='image');inspectedImage=Buffer.from(image.data,'base64');
-   }finally{app.tasks.failRun(run.id,run.epoch,'synthetic_fixture_finished');}
+   const task=app.tasks.createTask(actor,{operationId:'image-task',goal:'Keep the source image dimensions',authority:{sourceRequestId:actor.sourceRequestId,description:'Synthetic image fixture only',materials:[],resultIds:[]}});
+   const opened=app.tasks.workerOpen(actor,{operationId:'image-worker',taskId:task.taskId,text:'Prepare synthetic image'});
+   const run=app.tasks.claim(opened.runId)!;app.tasks.bind(run.id,run.epoch,'synthetic-worker','synthetic-turn');
+   const worker={agentId:'worker:'+run.workerId,runId:run.id,epoch:run.epoch,threadId:'synthetic-worker',turnId:'synthetic-turn'};
+   const written=app.tasks.writeFile(worker,{operationId:'stage-image',filename:'synthetic.png',bytes});
+   app.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic image prepared'},true);
+   const staged=app.tasks.adoptResult(actor,{operationId:'adopt-image',taskId:task.taskId,version:1,runId:run.id,filePath:written.path});
+   const result=await (app as any).mediaTool('inspect_result_file',{resultId:staged.resultId});
+   const image=result.mediaContent.find((item:any)=>item.type==='image');inspectedImage=Buffer.from(image.data,'base64');
    return {status:'completed',text:'合成图片已检查'};}catch(error){fixtureError=error;throw error;}
   }
   async close(){return true;}async interrupt(){return true;}

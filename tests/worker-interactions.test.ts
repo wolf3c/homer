@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { WorkerInteractions, type InteractionInput } from "../src/worker-interactions.js";
 
-const input = (requestId: string, runId = "run-a", kind: "question" | "authorization" = "question"): InteractionInput => ({
+const input = (requestId: string | number, runId = "run-a", kind: "question" | "authorization" = "question"): InteractionInput => ({
   runId, threadId: "thread-" + runId, turnId: "turn-" + runId, requestId,
   source: kind === "question" ? "ask_main" : "native", kind,
   details: { question: "Which report format?", operation: "synthetic local check" },
@@ -19,6 +19,46 @@ function setup() {
   });
   return { db, interactions, notices, waiting };
 }
+
+test("fresh interactions capture the Run epoch and task version in the initial insert", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    const interactions = new WorkerInteractions(db, { persisted: id => {
+      const row = db.prepare("SELECT runEpoch,taskVersion FROM worker_interactions WHERE id=?").get(id)!;
+      assert.equal(row.runEpoch, 7);
+      assert.equal(row.taskVersion, 3);
+    } });
+    const columns = (db.prepare("PRAGMA table_info(worker_interactions)").all() as { name: string }[]).map(column => column.name);
+    for (const name of ["responseUserText", "runEpoch", "taskVersion"]) assert.ok(columns.includes(name));
+    assert.equal(columns.includes("contractVersion"), false);
+    db.exec(`CREATE TRIGGER captured_run_before_publish AFTER INSERT ON worker_interactions
+      WHEN NEW.runEpoch IS NOT 7 OR NEW.taskVersion IS NOT 3
+      BEGIN SELECT RAISE(ABORT,'interaction_missing_captured_run'); END`);
+    const value = { ...input("captured-run"), runEpoch: 7, taskVersion: 3 };
+    const request = interactions.open(value, () => true);
+    assert.equal(interactions.inspect(request.id).runEpoch, 7);
+    assert.equal(interactions.inspect(request.id).taskVersion, 3);
+    assert.equal(interactions.open(value, () => true).response, request.response);
+    for (const change of [{ runEpoch: 8 }, { taskVersion: 4 }])
+      assert.throws(() => interactions.open({ ...value, ...change }, () => true), /interaction_request_conflict/);
+  } finally { db.close(); }
+});
+
+test("captured Run versions require a safe integer pair and retain exact native identities", () => {
+  const { db, interactions, notices } = setup();
+  try {
+    for (const version of [
+      { runEpoch: 1 }, { taskVersion: 1 }, { runEpoch: 1, taskVersion: 1.5 },
+      { runEpoch: NaN, taskVersion: 1 }, { runEpoch: 1, taskVersion: Number.MAX_SAFE_INTEGER + 1 },
+    ]) assert.throws(() => interactions.open({ ...input("invalid-version"), ...version }, () => true), /interaction_invalid_request/);
+    assert.equal(interactions.list().length, 0);
+    assert.equal(notices.length, 0);
+    const value = { ...input(1), runEpoch: 1, taskVersion: 2 };
+    const variants = [value, { ...value, requestId: "1" }, { ...value, threadId: "other-thread" }, { ...value, turnId: "other-turn" }, { ...value, source: "native" as const }];
+    const ids = variants.map(item => interactions.open(item, () => true).id);
+    assert.equal(new Set(ids).size, variants.length);
+  } finally { db.close(); }
+});
 
 test("HMR-INTERACTION-002: only the exact delivered decision permits silent completion", () => {
   const { db, interactions } = setup();
@@ -89,9 +129,11 @@ test("HMR-INTERACTION-001: escalation releases the main queue while the original
     await Promise.resolve();
     assert.equal(workerResumed, false);
     assert.throws(() => interactions.respond(request.id, { action: "answer", answer: "Invented answer", reason: "event is not new user authority" }), /interaction_user_reply_required/);
-    interactions.respond(request.id, { action: "answer", answer: "Weekly report", reason: "User clarified the intended report" }, { userMessageId: "new-user-message" });
+    interactions.respond(request.id, { action: "answer", answer: "Weekly report", reason: "User clarified the intended report" }, { userMessageId: "new-user-message", userText: "The weekly report, please" });
     assert.equal((await request.response).decision?.answer, "Weekly report");
     assert.equal(interactions.inspect(request.id).responseUserMessageId, "new-user-message");
+    assert.equal(interactions.inspect(request.id).responseUserText, "The weekly report, please");
+    assert.equal(JSON.stringify(interactions.list()).includes("The weekly report, please"), false);
   } finally { db.close(); }
 });
 

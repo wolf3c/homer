@@ -46,5 +46,5 @@ const mock=createServer(async(req,res)=>{
 });await new Promise<void>(r=>mock.listen(4798,'127.0.0.1',r));
 let web:Awaited<ReturnType<typeof createWebServer>>|undefined;
 const app=new Homer(config,async()=>{await web?.publish();},(options:EngineOptions,handler:(call:ToolCall)=>Promise<unknown>)=>new SyntheticEngine(config,options,handler));await app.start();
-web=await createWebServer({bridge:homerWebBridge(app),port:4797,uiDirectory,logoPath:resolve('assets/branding/homer-hippo-cool-icon-256.png')});
+web=await createWebServer({bridge:homerWebBridge(app),port:4797,uiDirectory,logoPath:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 writeFileSync(join(root,'synthetic-candidate-location.json'),JSON.stringify({url:web.url,data,classification:'native protocol with scripted Agent; no real model or account'},null,2));console.log(web.url+' · 合成验收入口');for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await web?.close();await app.close();await new Promise<void>(r=>mock.close(()=>r()));process.exit(0);});

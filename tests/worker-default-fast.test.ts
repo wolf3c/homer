@@ -76,19 +76,15 @@ async function capabilityModels(options:EngineOptions):Promise<ModelsStatus>{
   });
 }
 
-for(const effortOverride of ['default','local-low','env-high'] as const)for(const override of ['default','local-true','local-false','env-true','env-false'] as const)test(`peer and main-coordinated child Workers preserve Fast ${override} and effort ${effortOverride}; capability.models matches every execution`,()=>cleanEnvironment(async()=>{
+for(const effortOverride of ['default','local-low','env-high'] as const)for(const override of ['default','local-true','local-false','env-true','env-false'] as const)test(`independent Worker conversations preserve Fast ${override} and effort ${effortOverride}; capability.models matches every execution`,()=>cleanEnvironment(async()=>{
   const f=fixture(),options:EngineOptions[]=[],models=new Map<EngineOptions,ModelsStatus>(),capabilityErrors:Error[]=[];
-  const contract=(goal:string)=>({goal,inputs:[],resultKind:'structured',acceptance:{criteria:[{id:'facts',required:true,description:'Synthetic only'}]}});
   let sequence=0;
   class Peer extends EventEmitter implements EngineLike{
     threadId='synthetic-role-'+ ++sequence;turnId?:string;release?:(value:TurnResult)=>void;
     constructor(readonly opts:EngineOptions,readonly tool:(call:ToolCall)=>Promise<unknown>){super();options.push(opts);}
     async start(){return this.threadId;}
     async call(tool:string,args:unknown):Promise<any>{return this.tool({threadId:this.threadId,turnId:this.turnId!,callId:'synthetic-call-'+ ++sequence,tool,arguments:args});}
-    async delegate(parentTaskId:string|null,goal:string,executorKind='worker'){
-      const parent=parentTaskId?await this.call('work_inspect',{taskId:parentTaskId,runId:null,resultId:null}):null;
-      return this.call('task_delegate',{operationId:'synthetic-op-'+ ++sequence,parentTaskId,parentVersion:parent?.task.headVersion??null,expectedTaskRevision:parent?.task.revision??null,title:parentTaskId?null:'Synthetic root',executorKind,contract:contract(goal),dependencies:[]});
-    }
+    async open(taskId:string,goal:string){return this.call('worker_open',{taskId,message:goal});}
     async turn(text:string,on?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
       this.turnId='synthetic-turn-'+ ++sequence;on?.onStarted?.(this.turnId);
       try{models.set(this.opts,await capabilityModels(this.opts));}catch(error){capabilityErrors.push(error as Error);throw error;}
@@ -96,8 +92,8 @@ for(const effortOverride of ['default','local-low','env-high'] as const)for(cons
         return new Promise(resolve=>{this.release=resolve;});
       }
       if(text==='synthetic:start'){
-        await this.delegate(null,'parent');await this.delegate(null,'peer');
-        const root=await this.delegate(null,'root','main');await this.delegate(root.taskId,'child');
+        const task=await this.call('task_create',{goal:'Synthetic coordination'});
+        await this.open(task.taskId,'A');await this.open(task.taskId,'B');await this.open(task.taskId,'C');
       }
       return {status:'completed',text:'Synthetic accepted'};
     }
@@ -116,11 +112,11 @@ for(const effortOverride of ['default','local-low','env-high'] as const)for(cons
     while(models.size<4){if(Date.now()>end)throw capabilityErrors[0]??Error('synthetic_worker_timeout:'+models.size+':'+options.length);await new Promise(r=>setTimeout(r,5));}
     const workers=options.filter(o=>o.tools.some(t=>t.name==='read_material'));
     assert.equal(workers.length,3);for(const worker of workers)assert.equal(worker.role,'worker');
-    assert.equal(app.tasks.tasks().filter(t=>!!t.parentTaskId).length,1);
+    assert.equal(app.tasks.tasks().length,1);assert.equal(new Set(app.store.runs().map(run=>run.workerId)).size,3);
     assert.equal(options[0]!.role,undefined);
     const userModels=await app.manageCapabilities({action:'models'},'user') as ModelsStatus;
     assert.deepEqual(userModels.configured,models.get(options[0]!)!.configured);
-    // Compare main + peer and main-coordinated child Workers' actual model DTOs with actual startup/turn parameters.
+    // Compare main + independent Worker conversations' actual model DTOs with actual startup/turn parameters.
     for(const execution of [options[0]!,...workers]){
       const effective=override==='default'||override.endsWith('true');
       const configured=models.get(execution)!.configured;

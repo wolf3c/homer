@@ -3,9 +3,9 @@ import {ListTodoIcon,ChevronRightIcon,XIcon} from 'lucide-react';
 import {Collapsible} from '@base-ui/react/collapsible';
 import {Toggle} from '@base-ui/react/toggle';
 import type {WebState} from '../src/web-contract';
-import type {OverviewTask} from '../src/task-overview';
+import type {OverviewTask,OverviewWorker} from '../src/task-overview';
 import {taskName,validPendingUsers,pendingUserCount} from '../src/task-presentation';
-import {taskCardPresentation,taskOwnerLabels,taskUpdateLabels,statusTree,statusCountSnapshot,rankedStatusMatters,statusVisibleLimit,matterStatus,workerStatus,progressMatches,linearPlanIndex,type StatusFilter,type StatusMatter,type StatusWorker,type WorkerProgress,type TaskProgress} from '../src/task-status';
+import {taskCardPresentation,taskOwnerLabels,statusTree,statusCountSnapshot,rankedStatusMatters,statusVisibleLimit,matterStatus,progressMatches,linearPlanIndex,type StatusFilter,type StatusMatter,type StatusWorker,type WorkerProgress,type TaskProgress} from '../src/task-status';
 import {useTaskStatusData} from './task-status-data';
 import {connectionFetch} from './web-connection-client';
 import {TaskExecutionRecord,ExecutionObservationContext} from './task-execution-record';
@@ -23,56 +23,55 @@ type ReadMap=Record<string,ProgressRead>;
 const PendingDisabled=createContext(false);
 // One disclosure owner survives presentation changes; keys retain execution identity.
 const Disclosures=createContext(new Map<string,string>());
-function Pending({task,state,onVisit}:{task:OverviewTask;state:WebState;onVisit:(task:OverviewTask,id:string,after:number)=>void}){
+function Pending({worker,state,onVisit}:{worker:OverviewWorker;state:WebState;onVisit:(worker:OverviewWorker,id:string,after:number)=>void}){
  const disabled=useContext(PendingDisabled);
- return <>{pendingUserCount(task)>validPendingUsers(task).length&&<p>有待处理请求，但当前记录未提供完整定位信息，请在主对话核对。</p>}{validPendingUsers(task).map(q=><div key={q.id} className="status-pending"><p>{state.interactions.find(i=>i.id===q.id&&i.runId===task.currentRunId)?.question??'有一项请求需要你处理，请在原待答卡核对。'}</p><button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} disabled={disabled} onClick={()=>onVisit(task,q.id,q.after)}>前往原待答卡</button></div>)}</>;
+ return <>{pendingUserCount(worker)>validPendingUsers(worker).length&&<p>有待处理请求，但当前记录未提供完整定位信息，请在主对话核对。</p>}{validPendingUsers(worker).map(q=><div key={q.id} className="status-pending"><p>{state.interactions.find(i=>i.id===q.id&&i.runId===worker.run.id)?.question??'有一项请求需要你处理，请在原待答卡核对。'}</p><button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} disabled={disabled} onClick={()=>onVisit(worker,q.id,q.after)}>前往原待答卡</button></div>)}</>;
 }
-
-
-function TaskStatusRow({task,label,status,onOpenChange,children,...props}:Omit<ComponentProps<'div'>,'children'> & {task:OverviewTask;label:string;status:ReturnType<typeof workerStatus>;onOpenChange:(open:boolean)=>void;children:ReactNode}){
- const open=useContext(Disclosures).get(task.id)===workerKey(task),presentation=taskCardPresentation(task);
+function rowId(task:OverviewTask,worker?:OverviewWorker){return worker?task.id+'/worker/'+worker.id:task.id;}
+function workerKey(worker:OverviewWorker){const r=worker.run;return [worker.id,r.id,r.version,r.epoch,r.threadId,r.turnId].join(':');}
+function rowKey(task:OverviewTask,worker?:OverviewWorker){return worker?workerKey(worker):task.id+':'+task.headVersion;}
+function TaskStatusRow({task,worker,label,status,onOpenChange,children,...props}:Omit<ComponentProps<'div'>,'children'> & {task:OverviewTask;worker?:OverviewWorker;label:string;status:ReturnType<typeof taskCardPresentation>;onOpenChange:(open:boolean)=>void;children:ReactNode}){
+ const open=useContext(Disclosures).get(rowId(task,worker))===rowKey(task,worker),presentation=status;
  return <Collapsible.Root open={open} onOpenChange={onOpenChange} data-slot="task-status-row" data-state={status.state} data-attention={presentation.attention} {...props}>
   <Collapsible.Trigger className="status-row-trigger flex w-full items-center gap-2.5 rounded-xl px-1.5 py-2 text-start transition-colors hover:bg-foreground/[0.04]" title={label+' · '+status.label}>
    <span className="flex size-3.5 shrink-0 items-center justify-center"><SemanticTaskIcon icon={presentation.icon}/></span>
    <span className="flex min-w-0 flex-1 flex-col gap-0.5"><span className="truncate text-[13px]">{label}</span><span className={cn(mono,'truncate text-muted-foreground')}>{status.label}</span></span>
    <ChevronRightIcon aria-hidden="true" className={cn('size-3 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none',open&&'rotate-90')}/>
   </Collapsible.Trigger>
-  <Collapsible.Panel>{open&&<div className="status-row-body"><div className="status-row-heading"><p>{label}</p><p className="text-muted-foreground">{status.label}</p></div>{children}<TaskExecutionRecord key={task.id+':'+task.headVersion+':'+task.currentRunId} task={task}/></div>}</Collapsible.Panel>
+  <Collapsible.Panel>{open&&<div className="status-row-body"><div className="status-row-heading"><p>{label}</p><p className="text-muted-foreground">{status.label}</p></div>{children}{worker&&<TaskExecutionRecord task={task} worker={worker}/>}</div>}</Collapsible.Panel>
  </Collapsible.Root>;
 }
-function WorkerView({node,title,matter,reads,state,onExpand,onVisit}:{node:StatusWorker;title?:string;matter?:OverviewTask;reads:ReadMap;state:WebState;onExpand:(task:OverviewTask,open:boolean)=>void;onVisit:(task:OverviewTask,id:string,after:number)=>void}){
- const task=node.task,read=reads[task.rootTaskId],candidate=read?.workers?.get(task.id),progress=candidate&&progressMatches(task,candidate)?candidate:undefined;
+function MatterFacts({task}:{task:OverviewTask}){
+ return <>{task.goal&&<p className="status-output">目标：{task.goal}</p>}{task.notes&&<p className="status-output">工作笔记：{task.notes}</p>}{task.results.length>0&&<p>已采纳 {task.results.length} 份正式成果</p>}{task.deliveries.map(d=><p key={d.id}>版本 {d.version} 交付记录：{d.state==='recorded'?'渠道已确认':d.state==='prepared'?'已准备，待发送':d.state==='submitting'?'正在发送':'发送结果待核实'}</p>)}</>;
+}
+function WorkerView({node,title,reads,state,onExpand,onVisit}:{node:StatusWorker;title?:string;reads:ReadMap;state:WebState;onExpand:(task:OverviewTask,open:boolean,worker?:OverviewWorker)=>void;onVisit:(worker:OverviewWorker,id:string,after:number)=>void}){
+ const {task,worker}=node,read=reads[task.id],candidate=read?.workers?.get(worker.run.id),progress=candidate&&progressMatches(worker,candidate)?candidate:undefined;
  const linear=progress?.plan?linearPlanIndex(progress.plan):null;
- const matterNotice=matter&&matter.id!==task.id&&(matter.controlState!=='normal'||matter.state==='recovery'||matter.run?.phase==='uncertain')?workerStatus(matter).label:undefined;
- const ownStatus=taskCardPresentation(task),status=matterNotice?taskCardPresentation(matter!):ownStatus;
- const ended=task.run?.phase==='ended'&&(ownStatus.state==='done'||ownStatus.state==='failed'||ownStatus.state==='cancelled');
+ const ownStatus=taskCardPresentation(task,worker),status=title?taskCardPresentation(task):ownStatus;
+ const ended=worker.run.phase==='ended';
  const output=ended&&progress?.output?.type==='tool'?undefined:progress?.output;
- const content=<>
-  <p>下一步处理：{taskOwnerLabels[ownStatus.owner]}</p>
-  {!!task.updates?.length&&<ul className="task-update-summary">{task.updates.map(u=><li key={u.operationKey}>版本 {u.version}：{taskUpdateLabels[u.stage]}</li>)}</ul>}
-  {task.moreUpdates&&<p>另有调整记录，可在原事项详情核对。</p>}
-  {matterNotice&&<p>事项：{matterNotice}</p>}
-  {matter&&matter.id!==task.id&&<Pending task={matter} state={state} onVisit={onVisit}/>}
-  <Pending task={task} state={state} onVisit={onVisit}/>
-  {read?.loading&&!progress?<p role="status">正在读取公开进展…</p>:read?.error?<p role="status">{read.error}</p>:null}
-  {!!progress?.plan?.length&&(linear!==null?<AgentPlan title="计划" steps={progress.plan.map((s,i)=>({id:String(i),label:s.step}))} activeIndex={linear}/>:<TodoList title="计划" items={progress.plan.map((s,i)=>({id:String(i),text:s.step,status:s.status==='completed'?'done':s.status==='inProgress'?'active':'pending'}))}/>)}
-  {output&&<p className="status-output">{output.type==='tool'?'工具调用：':''}{output.text}</p>}
-  {!progress?.plan?.length&&!output&&(task.run?.summary?<p className="status-output">已记录说明（非实时进展）：{task.run.summary}</p>:!ended&&!read?.loading&&!read?.error?<p>尚无可确认的公开进展。</p>:null)}
-  {!!progress?.next?.length&&<TodoList title="后续待办" items={progress.next.map(item=>({...item,status:'pending'}))}/>}
- </>;
- return <div data-worker-id={task.id} data-merged={title?'true':undefined} className="flex flex-col gap-3">
-  <TaskStatusRow task={task} {...(matter?{role:'group','aria-label':title??taskName(task).text,'data-item-row':'true'}:{})} label={title??taskName(task).text} status={status} onOpenChange={open=>onExpand(task,open)}>{content}</TaskStatusRow>
+ const label=title??(worker.title?.trim()||'Worker');
+ return <div data-worker-id={worker.id} data-merged={title?'true':undefined} className="flex flex-col gap-3">
+  <TaskStatusRow task={task} worker={worker} {...(title?{role:'group','aria-label':title,'data-item-row':'true'}:{})} label={label} status={status} onOpenChange={open=>onExpand(task,open,worker)}>
+   {title&&<MatterFacts task={task}/>}<p>下一步处理：{taskOwnerLabels[status.owner]}</p>
+   {title&&<p>Worker 本轮：{ownStatus.label}</p>}
+   <Pending worker={worker} state={state} onVisit={onVisit}/>
+   {read?.loading&&!progress?<p role="status">正在读取公开进展…</p>:read?.error?<p role="status">{read.error}</p>:null}
+   {!!progress?.plan?.length&&(linear!==null?<AgentPlan title="计划" steps={progress.plan.map((s,i)=>({id:String(i),label:s.step}))} activeIndex={linear}/>:<TodoList title="计划" items={progress.plan.map((s,i)=>({id:String(i),text:s.step,status:s.status==='completed'?'done':s.status==='inProgress'?'active':'pending'}))}/>)}
+   {output&&<p className="status-output">{output.type==='tool'?'工具调用：':''}{output.text}</p>}
+   {!progress?.plan?.length&&!output&&!ended&&!read?.loading&&!read?.error&&<p>尚无可确认的公开进展。</p>}
+   {!!progress?.next?.length&&<TodoList title="后续待办" items={progress.next.map(item=>({...item,status:'pending'}))}/>}
+  </TaskStatusRow>
  </div>;
 }
-function MatterView({matter,...props}:{matter:StatusMatter}&Omit<ComponentProps<typeof WorkerView>,'node'|'title'|'matter'>){
+function MatterView({matter,...props}:{matter:StatusMatter}&Omit<ComponentProps<typeof WorkerView>,'node'|'title'>){
  const task=matter.task,title=taskName(task).text,status=matterStatus(matter);
- if(matter.workers.length===1)return <WorkerView key={workerKey(matter.workers[0]!.task)} node={matter.workers[0]!} title={title} matter={task} {...props}/>;
+ if(matter.workers.length===1)return <WorkerView key={matter.workers[0]!.worker.id} node={matter.workers[0]!} title={title} {...props}/>;
  return <TaskStatusRow task={task} role="group" aria-label={title} data-item-row="true" label={title} status={status} onOpenChange={open=>props.onExpand(task,open)}>
-  <Pending task={task} state={props.state} onVisit={props.onVisit}/>
-  {matter.workers.length?<div className="flex flex-col gap-1" aria-label={title+'的 Worker'}>{matter.workers.map(node=><WorkerView key={workerKey(node.task)} node={node} {...props}/>)}</div>:task.run?.summary?<p className="status-output">已记录说明（非实时进展）：{task.run.summary}</p>:null}
+  <MatterFacts task={task}/>
+  {!!matter.workers.length&&<div className="flex flex-col gap-1" aria-label={title+'的 Worker'}>{matter.workers.map(node=><WorkerView key={node.worker.id} node={node} {...props}/>)}</div>}
  </TaskStatusRow>;
 }
-function workerKey(t:OverviewTask){return t.id+':'+t.headVersion+':'+(t.currentRunId??'none')+':'+(t.run?.epoch??'none')+':'+(t.run?.threadId??'none')+':'+(t.run?.turnId??'none');}
 export function TaskStatusPopover({state,connected,onInteraction,asideContainer,onBeforeLayoutChange}:{state:WebState;connected:boolean;onInteraction:(id:string,after?:number)=>void|boolean|Promise<void|boolean>;asideContainer:HTMLElement|null;onBeforeLayoutChange:()=>void}){
  const [wide,setWide]=useState(false),[pinned,setPinned]=useState(true),[popupOpen,setPopupOpen]=useState(false);
  const open=wide?pinned:popupOpen;
@@ -109,8 +108,8 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
   const tasks=data?.tasks??[],matters=statusTree(tasks);
   const members=new Map<string,string[]>(),children=new Map<string,string[]>();
   for(const t of tasks){
-   const group=members.get(t.rootTaskId)??[];group.push(workerKey(t));members.set(t.rootTaskId,group);
-   if(t.parentTaskId){const group=children.get(t.parentTaskId)??[];group.push(t.id);children.set(t.parentTaskId,group);}
+   members.set(t.id,t.workers.map(workerKey));
+   children.set(t.id,t.workers.map(w=>rowId(t,w)));
   }
   const ranked=rankedStatusMatters(matters),contributions=statusCountSnapshot(tasks,matters);
   return {ranked,workingKnown:contributions.workingKnown,counts:data?contributions.counts:null,matches:contributions.matches,children,
@@ -154,7 +153,7 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
   try{const response=await connectionFetch('/api/tasks/'+encodeURIComponent(id)+'/progress',{signal:controller.signal});
    if([404,501].includes(response.status)){if(!controller.signal.aborted)setReads(old=>({...old,[id]:{signature:sig,unavailable:true}}));return;}
    if(!response.ok)throw Error();const value:TaskProgress=await response.json();if(controller.signal.aborted||!openRef.current||signature(id)!==sig)return;
-   if(value.taskId!==id)throw Error();setReads(old=>({...old,[id]:{signature:sig,workers:new Map(value.workers.map(p=>[p.taskId,p]))}}));
+   if(value.taskId!==id)throw Error();setReads(old=>({...old,[id]:{signature:sig,workers:new Map(value.workers.map(p=>[p.runId,p]))}}));
   }catch{if((!controller.signal.aborted||controller.signal.reason==='task_status_timeout')&&openRef.current&&controllers.current.get(id)===controller&&signature(id)===sig)setReads(old=>({...old,[id]:{...(old[id]?.signature===sig?old[id]:{}),signature:sig,loading:false,error:'公开进展读取失败，可收起后重新展开重试。'}}));}
   finally{clearTimeout(timeout);if(controllers.current.get(id)===controller)controllers.current.delete(id);}
  },[signature]);
@@ -166,31 +165,32 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
    setReads(old=>Object.fromEntries(Object.entries(old).map(([id,read])=>[id,{...read,signature:'',loading:false,error:undefined}])));
   }
  },[connected]);
- useEffect(()=>{if(!open)return;const visible=new Set(ranked.slice(0,effectiveLimit).map(r=>r.key.id));for(const id of new Set(data?.tasks.filter(t=>visible.has(t.rootTaskId)&&t.executorKind==='worker'&&expanded.get(t.id)===workerKey(t)).map(t=>t.rootTaskId)))void load(id);},[data,ranked,effectiveLimit,open,connected,load,expanded]);
+ useEffect(()=>{if(!open)return;const visible=new Set(ranked.slice(0,effectiveLimit).map(r=>r.key.id));for(const task of data?.tasks??[])if(visible.has(task.id)&&task.workers.some(w=>expanded.get(rowId(task,w))===workerKey(w)))void load(task.id);},[data,ranked,effectiveLimit,open,connected,load,expanded]);
  useEffect(()=>{if(!open){for(const c of controllers.current.values())c.abort();controllers.current.clear();setReads(old=>Object.fromEntries(Object.entries(old).map(([id,read])=>[id,read.loading?{...read,signature:'',loading:false}:read])));navigation.current?.abort();setNavigating(false);setNavigationError('');}else refresh(true);},[open,refresh]);
  useEffect(()=>()=>{for(const c of controllers.current.values())c.abort();navigation.current?.abort();},[]);
  useLayoutEffect(()=>{
   for(const c of controllers.current.values())c.abort();controllers.current.clear();navigation.current?.abort();
   setPopupOpen(false);setReads({});setNavigating(false);setNavigationError('');setVisibleCount(20);setFilter(null);setExpanded(new Map());Object.assign(listPosition.current,{scrollTop:0,anchorId:'',focus:null,focusRootId:'',pending:false,generation:0});
  },[state.threadId,state.history?.readEpoch]);
- const onExpand=useCallback((task:OverviewTask,value:boolean)=>{
+ const onExpand=useCallback((task:OverviewTask,value:boolean,worker?:OverviewWorker)=>{
+  const id=rowId(task,worker),key=rowKey(task,worker);
   setExpanded(old=>{
    const next=new Map(old);
-   if(!value||next.get(task.id)!==workerKey(task)){
-    next.delete(task.id);
-    for(const child of snapshotRef.current.children.get(task.id)??[])next.delete(child);
+   if(!value||next.get(id)!==key){
+    next.delete(id);
+    if(!worker)for(const child of snapshotRef.current.children.get(task.id)??[])next.delete(child);
    }
-   if(value)next.set(task.id,workerKey(task));
+   if(value)next.set(id,key);
    return next;
   });
-  if(value&&task.executorKind==='worker')void load(task.rootTaskId,true);
+  if(value&&worker)void load(task.id,true);
  },[load]);
- async function visit(task:OverviewTask,id:string,after:number){
+ async function visit(worker:OverviewWorker,id:string,after:number){
   if(navigating||stale)return;const controller=new AbortController();navigation.current=controller;setNavigating(true);setNavigationError('');
   const timeout=setTimeout(()=>controller.abort('task_status_timeout'),15000);
   try{const response=await connectionFetch('/api/tasks',{signal:controller.signal});if(!response.ok)throw Error();const current=await response.json();
    if(controller.signal.aborted||!openRef.current||!connectedRef.current)return;
-   const target=current.tasks.find((t:OverviewTask)=>t.id===task.id&&workerKey(t)===workerKey(task));if(!target||!validPendingUsers(target).some(q=>q.id===id&&q.after===after))throw Error();
+   const task=current.tasks.find((t:OverviewTask)=>t.id===worker.taskId);const target=task?.workers.find((w:OverviewWorker)=>w.id===worker.id&&workerKey(w)===workerKey(worker));if(!target||!validPendingUsers(target).some(q=>q.id===id&&q.after===after))throw Error();
    const result=await onInteraction(id,after);if(controller.signal.aborted||!openRef.current||!connectedRef.current)return;if(result===false)throw Error();returnTarget.current='task-interaction-'+id;setOpen(false);if(wide){returnTarget.current=null;requestAnimationFrame(()=>{const target=document.getElementById('task-interaction-'+id);target?.scrollIntoView({block:'center'});target?.focus({preventScroll:true});});}
   }catch{if(!controller.signal.aborted||controller.signal.reason==='task_status_timeout')setNavigationError('这项待答已变化或暂不可读，请收起后重新打开工作状态核对。');}finally{clearTimeout(timeout);if(navigation.current===controller){navigation.current=null;setNavigating(false);}}
  }

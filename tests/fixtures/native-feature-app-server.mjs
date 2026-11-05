@@ -14,7 +14,7 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
  if(m.method==='skills/list')result={data:[{skills:[{name:'合成内置方法',path:join(process.env.CODEX_HOME,'skills/.system/native/SKILL.md')},{name:'合成插件方法',path:join(process.env.CODEX_HOME,'plugins/native/skills/example/SKILL.md')},{path:'/synthetic/outside/skills/untrusted/SKILL.md'}]}]};
  if(m.method==='environment/info')result={shell:{}};
  if(m.method==='thread/backgroundTerminals/list')result={data:[]};
- if(m.method==='thread/start'||m.method==='thread/resume'){threadMethod=m.method;threadParams=m.params;result={thread:{id:'synthetic-native-feature-thread'},activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy};}
+ if(m.method==='thread/start'||m.method==='thread/resume'){threadMethod=m.method;threadParams=m.params;result={thread:{id:m.params.threadId??'synthetic-native-feature-thread'},activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy};}
  if(m.method==='thread/memoryMode/set')memoryModeSets.push(m.params);
 
  if(m.method==='account/read')result={account:{type:'chatgpt',email:'SYNTHETIC_NOT_A_REAL_ACCOUNT',planType:'plus'},requiresOpenaiAuth:true};

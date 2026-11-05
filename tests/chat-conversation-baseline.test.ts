@@ -36,10 +36,10 @@ test('conversation baseline reads legacy persisted replies and a separate queue 
  }finally{f.close();}
 });
 
-test('conversation baseline summary/detail readers work with the committed parent task schema',()=>{
+test('conversation baseline summary/detail readers work with the committed task schema',()=>{
  const f=fixture();try{
-  f.store.startRequest('synthetic-source','synthetic-hash');
-  const root=f.tasks.createRoot({agentId:f.store.meta('mainAgentId')!,sourceRequestId:'synthetic-source'},{operationId:'root',title:'合成事项',contract:{goal:'只读验证',inputs:[],resultKind:'structured',acceptance:{criteria:[]}},authority:{sourceRequestId:'synthetic-source',description:'合成验证',materials:[],resultIds:[],collaborateTaskIds:[],maxActiveMs:10000}});
+  f.inputs.accept({requestId:'synthetic-source',text:'合成验证'});const source=f.inputs.claim()!;f.inputs.finish(source.messageId,source.revision,'completed');
+  const root=f.tasks.createTask({agentId:f.store.meta('mainAgentId')!,threadId:'synthetic',sourceRequestId:'synthetic-source'},{operationId:'root',title:'合成事项',goal:'只读验证',authority:{sourceRequestId:'synthetic-source',description:'合成验证',materials:[],resultIds:[]}});
   assert.equal(readTaskOverview(f.store.db).tasks[0]!.id,root.taskId);
   assert.equal(readTaskSummary(f.store.db,root.taskId).taskId,root.taskId);assert.equal(readTaskDetail(f.store.db,root.taskId).taskId,root.taskId);
  }finally{f.close();}

@@ -12,7 +12,7 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4n
 const media=(assetId,state='ready',kind='image')=>({assetId,revision:1,state,kind,filename:assetId+(kind==='image'?'.png':'.txt'),mime:kind==='image'?'image/png':'text/plain',size:94720,error:null});
 const assets=[media('normal'),media('document','ready','file'),media('pending','downloading'),media('failed','failed'),media('expired','expired'),media('fetch-error'),media('decode-error')];
 const message=items=>({id:'attachment-fixture',threadId:'composer-review',requestId:'attachment-fixture-request',role:'user',text:'合成图片附件验收',status:'completed',createdAt:1700000000000,media:items});
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png'),resource(req,res,url){
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png'),resource(req,res,url){
  const [,id,revision]=url.pathname.match(/^\/api\/media\/attachment-fixture\/([^/]+)\/(\d+)$/)??[];
  if(!id){res.writeHead(404);res.end();return;}
  if(id==='fetch-error'||revision!=='1'){res.writeHead(503);res.end('synthetic unavailable');return;}

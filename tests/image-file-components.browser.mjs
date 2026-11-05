@@ -21,7 +21,7 @@ const assets=[media('wide'),media('portrait'),media('document','file',{filename:
 const message=(id,role,text,media)=>({id,threadId:'composer-review',requestId:'request-'+id,role,text,media,status:'completed',createdAt:1700000000000});
 const makeMessages=()=>[message('offscreen','user','较早的合成图片',[media('old')]),...Array.from({length:12},(_,n)=>message('filler-'+n,n%2?'assistant':'user','隔离测试中的填充文本。'.repeat(12))),message('image-user','user','用户附件',structuredClone(assets)),message('result-reply','assistant','合成成果。\n\n![外部图片](https://example.invalid/private.png)')];
 const checks=[],requests=[];let active=0,peak=0,downloadFail=true;
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png'),resource:async(_req,res,url)=>{
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png'),resource:async(_req,res,url)=>{
  const path=url.pathname;requests.push(path);active++;peak=Math.max(peak,active);
  try{
   await new Promise(done=>setTimeout(done,70));

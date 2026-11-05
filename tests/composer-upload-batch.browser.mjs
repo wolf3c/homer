@@ -8,7 +8,7 @@ import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/ui-component-simplification/browser-upload-batch');mkdirSync(destination,{recursive:true});
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??'.codex/scratch/ui-component-simplification/batch-observer-web');
 const files=Array.from({length:11},(_,n)=>{const path=join(destination,n===0?'batch-01.png':'batch-'+String(n+1).padStart(2,'0')+'.txt');writeFileSync(path,n===0?Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGOI6tkCRwzEcQCU8hmhmgeEcAAAAABJRU5ErkJggg==','base64'):'synthetic batch '+n);return path;});
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')}),chrome=await isolatedChrome(destination),checks=[],snapshots=[];
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')}),chrome=await isolatedChrome(destination),checks=[],snapshots=[];
 const page=await chrome.page(fixture.url,390);let phase='startup',passed=false;
 const record=async label=>{const snapshot={label,renderedNames:await page.evaluate(()=>[...document.querySelectorAll('.aui-attachment-root .aui-attachment-tile')].map(e=>e.getAttribute('aria-label').match(/^(?:预览 |(?:图片|文件|文档)附件 )(.+?)，/)[1])),collection:await page.evaluate(()=>window.__homerTestGetComposer().attachments.map(a=>({id:a.id,name:a.name,status:a.status,homer:a.homer}))),api:structuredClone(fixture.received)};snapshots.push(snapshot);return snapshot;};
 const wait=async predicate=>page.until('Boolean(('+String(predicate)+')())',10000);

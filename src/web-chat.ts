@@ -32,14 +32,20 @@ export function createWebChat(bridge:WebBridge){
    const owner=bridge.taskOverview;if(!owner)throw Error('task_overview_unavailable');
    if(op==='tasks.list')return owner.list();
    if(op==='tasks.execution'||op==='tasks.call'){
-    if(!id(input?.rootTaskId)||!id(input.taskId)||!id(input.runId)||input.before!==undefined&&(typeof input.before!=='string'||! /^[A-Za-z0-9_-]{1,256}$/.test(input.before)))throw Error('task_execution_invalid');
+    if(!id(input?.taskId)||!id(input.runId)||Object.keys(input).some(key=>!['taskId','runId',op==='tasks.call'?'callKey':'before'].includes(key))||input.before!==undefined&&(typeof input.before!=='string'||! /^[A-Za-z0-9_-]{1,256}$/.test(input.before)))throw Error('task_execution_invalid');
     if(!owner.execution||!owner.call)throw Error('task_execution_unavailable');
-    const selector={rootTaskId:input.rootTaskId,taskId:input.taskId,runId:input.runId};
+    const selector={taskId:input.taskId,runId:input.runId};
     if(op==='tasks.call'){if(typeof input.callKey!=='string'||! /^[A-Za-z0-9_-]{1,256}$/.test(input.callKey))throw Error('task_execution_invalid');return boundedRead(()=>owner.call!(selector,input.callKey));}
     return boundedRead(()=>owner.execution!(selector,input.before));
    }
    if(!id(input?.id))throw Error('task_overview_invalid');
-   if(op==='tasks.detail')return owner.detail(input.id);
+   if(op==='tasks.detail'){
+    if(Object.keys(input).some(key=>!['id','workerId','after','messageId','offset'].includes(key)))throw Error('task_overview_invalid');
+    const {workerId,after,messageId,offset}=input;
+    if(workerId===undefined){if(after!==undefined||messageId!==undefined||offset!==undefined)throw Error('worker_query_invalid');return boundedRead(()=>owner.detail(input.id));}
+    if(!id(workerId)||after!==undefined&&(!Number.isSafeInteger(after)||after<0)||offset!==undefined&&(!Number.isSafeInteger(offset)||offset<0)||messageId!==undefined&&!id(messageId)||offset!==undefined&&messageId===undefined||messageId!==undefined&&after!==undefined)throw Error('worker_query_invalid');
+    return boundedRead(()=>owner.detail(input.id,{workerId,...(after!==undefined?{after}:{}),...(messageId!==undefined?{messageId}:{}),...(offset!==undefined?{offset}:{})}));
+   }
    if(op==='tasks.summary'&&owner.summary)return owner.summary(input.id);
    if(op==='tasks.progress'&&owner.progress)return owner.progress(input.id);
    if(op==='tasks.origin'&&owner.origin&&id(input.messageId))return owner.origin(input.id,input.messageId);

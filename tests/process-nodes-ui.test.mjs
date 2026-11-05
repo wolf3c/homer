@@ -133,7 +133,7 @@ test('original disclosure preserves manual expansion across completion, replay a
 }));
 
 test('immutable Worker events use default-closed static TaskCards and only disclose original plain text',async()=>withDom(async d=>{
- const events=[{id:'e1',kind:'workerEvent',seq:1,revision:1,eventKey:'one',event:{eventKind:'delegated',title:'准确交办',body:'原交办正文\n保留换行'}},{id:'e2',kind:'workerEvent',seq:2,revision:1,eventKey:'two',event:{eventKind:'result_received',title:'准确接收',body:'<img src=x onerror=never()> **原文**'}},{id:'e3',kind:'workerEvent',seq:3,revision:1,eventKey:'three',event:{eventKind:'start_failed',title:'准确失败',body:'认证失败，Worker 未能启动。'}}];
+ const events=[{id:'e1',kind:'workerEvent',seq:1,revision:1,eventKey:'one',event:{eventKind:'delegated',title:'准确交办',body:'原交办正文\n保留换行'}},{id:'e2',kind:'workerEvent',seq:2,revision:1,eventKey:'two',event:{eventKind:'reply_received',title:'准确接收',body:'<img src=x onerror=never()> **原文**'}},{id:'e3',kind:'workerEvent',seq:3,revision:1,eventKey:'three',event:{eventKind:'start_failed',title:'准确失败',body:'认证失败，Worker 未能启动。'}}];
  const render=n=>d.render(h(ProcessMessageContent,{node:n,renderText:t=>t},h('div',null,'FORMAL ANSWER'))),worked={...node,state:'worked',status:'completed',items:[...node.items,...events]};
  const cards=()=>d.all().filter(n=>n.attrs['data-worker-event']),toggle=card=>card.childNodes.find(n=>n.tagName==='BUTTON');
  await render(worked);
@@ -188,7 +188,7 @@ test('Worker cards stay outside their own process and before their own answer ac
 }));
 
 test('lazy details keep the header event card mounted; event-only and absent process add no empty disclosure',async()=>withDom(async d=>{
- const event={id:'event',kind:'workerEvent',seq:2,revision:1,eventKey:'lazy-event',event:{eventKind:'result_received',title:'准确收到结果',body:'原结果正文'}};
+ const event={id:'event',kind:'workerEvent',seq:2,revision:1,eventKey:'lazy-event',event:{eventKind:'reply_received',title:'准确收到结果',body:'原结果正文'}};
  const header={...node,details:'unloaded',toolStatusCounts:{completed:1},items:[event]},detail={...node,revision:3,items:[...node.items,event]};
  const requests=[],load=async(id,signal)=>{requests.push({id,signal});return detail;};
  await d.render(h(ProcessDetailHarness,{node:header,load,renderText:t=>t},'ANSWER'));
@@ -207,11 +207,11 @@ test('lazy details keep the header event card mounted; event-only and absent pro
 
 test('TaskCard sources stay outside Worked with static semantic icons and historical receipt is never done',async()=>withDom(async d=>{
  const source={key:'exact',target:{taskId:'task',version:2,runId:'run'},title:'核对公开来源',icon:'CornerDownRight',origin:{kind:'activity',processId:'node',itemId:'tool'},phaseLabel:'调整已受理，尚待采用',owner:'main'};
- const event={id:'received',kind:'workerEvent',seq:2,revision:1,eventKey:'received',event:{eventKind:'result_received',title:'准确收到结果',body:'原结果正文'}};
+ const event={id:'received',kind:'workerEvent',seq:2,revision:1,eventKey:'received',event:{eventKind:'reply_received',title:'准确收到结果',body:'原结果正文'}};
  await d.render(h(ProcessMessageContent,{node:{...node,items:[...node.items,event]},taskSources:[source],renderText:t=>t},'ANSWER'));
  const card=d.find(n=>n.attrs['data-task-source']==='task');assert.ok(card);assert.equal(card.attrs['data-state'],'waiting');
  assert.equal(d.find(n=>n.attrs['data-worker-event']==='received').attrs['data-state'],'waiting');
- assert.match(d.container.textContent,/当时：收到成果待核对/);assert.equal(d.all().some(n=>n.attrs.class?.includes('animate-spin')),false);
+ assert.match(d.container.textContent,/当时：收到回复/);assert.equal(d.all().some(n=>n.attrs.class?.includes('animate-spin')),false);
  await d.click(card.firstChild);assert.match(card.textContent,/主 Agent/);assert.match(card.textContent,/版本 2/);
  assert.match(card.firstChild.childNodes.find(n=>n.attrs?.class?.includes('max-w-24')).textContent,/任务来源/);assert.match(card.textContent,/调整已受理/);
  const original=card;await d.render(h(ProcessMessageContent,{node:{...node,details:'unloaded'},taskSources:[source],renderText:t=>t},'ANSWER'));

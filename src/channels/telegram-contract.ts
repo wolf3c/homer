@@ -21,7 +21,7 @@ export type TelegramHostEvent =
   | { type: "start"; generation: MainGeneration; mode?: "rich" | "plain" }
   | { type: "delta"; generationId: string; sequence: number; text: string }
   | { type: "finish"; generationId: string; text: string; status: "completed" | "interrupted" | "failed" }
-  | { type: "delivery"; id: string; sourceRequestId: string; text: string; runId?: string }
+  | { type: "delivery"; id: string; sourceRequestId: string; text: string; resultId?: string }
   | { type: "interaction"; id: string; sourceRequestId: string; runId: string; text: string;
       kind: "question" | "authorization"; expiresAt: number; options: { id: string; label: string; text: string }[] };
 
@@ -34,7 +34,7 @@ export interface TelegramHost {
   // Must deduplicate requestId and validate pending/live original interaction.
   respond(input: { interactionId: string; requestId: string; text: string; origin: TelegramOrigin }): Promise<void>;
   // Content must come from the core's checked artifact, never a user supplied path.
-  artifact(runId: string, origin?: TelegramOrigin): Promise<{ filename: string; bytes: Uint8Array }>;
+  artifact(resultId: string, origin?: TelegramOrigin): Promise<{ filename: string; bytes: Uint8Array }>;
 }
 
 export type TelegramChat = { id: number; type: string };

@@ -10,7 +10,7 @@ test('public activities and legacy links remain text without a reader or task na
   {id:'old',kind:'tool',seq:2,revision:1,category:'host',label:'旧公开标签',status:'unknown'}];
  const worker={id:'legacy-worker',kind:'worker',seq:3,revision:1,taskId:'task',version:1};
  const event={id:'event',kind:'workerEvent',seq:4,revision:1,eventKey:'delegated',event:{eventKind:'delegated',title:'原交办标题',body:'不可变原交办正文'}};
- const node={id:'node',threadId:'thread',revision:1,turnIds:['turn'],sourceKind:'worker',state:'worked',status:'completed',items:[...tools,worker,event],activityLinks:{new:{task:{taskId:'task',rootTaskId:'task',version:1}},'legacy-worker':{task:{taskId:'task',rootTaskId:'task',version:1}}}};
+ const node={id:'node',threadId:'thread',revision:1,turnIds:['turn'],sourceKind:'worker',state:'worked',status:'completed',items:[...tools,worker,event],activityLinks:{new:{task:{taskId:'task',version:1}},'legacy-worker':{task:{taskId:'task',version:1}}}};
  const render=value=>d.render(h(ProcessMessageContent,{node:value,renderText:t=>t},'正式答复保留'));
  await render(node);const toggle=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');await d.click(toggle);
  assert.match(d.container.textContent,/查看任务记录：准确事项 · 已读取/);

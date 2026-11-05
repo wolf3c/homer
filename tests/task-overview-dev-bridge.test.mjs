@@ -21,6 +21,7 @@ for(const [name,args,input] of [
  ['list',[],undefined],
  ['progress',['synthetic-root'],{id:'synthetic-root'}],
  ['detail',['synthetic-root'],{id:'synthetic-root'}],
+ ['detail',['synthetic-task',{workerId:'synthetic-worker',after:20}],{id:'synthetic-task',workerId:'synthetic-worker',after:20}],
  ['summary',['synthetic-root'],{id:'synthetic-root'}],
  ['origin',['synthetic-root','synthetic-message'],{id:'synthetic-root',messageId:'synthetic-message'}],
 ])test('development task overview '+name+' passes its exact read request',()=>{

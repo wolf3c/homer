@@ -13,10 +13,14 @@ Developers willing to configure their environment can follow the [source setup g
 ## Before you start
 
 - **Model connection:** you need an available model service you are authorized to use. Installing the client does not configure a model. Availability and eligibility for Homer's model service and ChatGPT plan integration will follow the actual release information.
-- **Costs:** the client is planned to be free; model usage is billed separately. Tasks can involve multiple assistants, retries, and revisions. There is no fixed per-task price or verified global spending cap.
+- **Costs:** Homer's own code is free and open source; model service costs are separate. Tasks can involve multiple assistants, retries, and revisions. There is no fixed per-task price or verified global spending cap.
 - **Materials and permissions:** start with public or fictional materials. Confirm the files, tools, and accounts needed for your task before granting access.
 
 See [Costs and data](data-and-costs.en.md) for details.
+
+## Select a desktop model source
+
+In the desktop account page, choose **ChatGPT 套餐** (ChatGPT plan) or **荷马模型服务** (Homer model service), then complete the browser login. When switching sources, stop ongoing work and select **应用并重启** (Apply and restart); continue in the same conversation after restart. If the source is unavailable, check the displayed status and service eligibility. This account page is specific to the desktop app; CLI and development Web users configure their provider in the source guide.
 
 ## Give Homer a task
 

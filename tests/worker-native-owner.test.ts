@@ -6,9 +6,9 @@ import {CodexEngine} from '../src/engine.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
 import {MainNativeApprovals} from '../src/main-native-approvals.js';
 import {ConversationHistory} from '../src/web-history.js';
-import {fixture,delegate,running,main} from './recursive-fixture.js';
+import {fixture,openWorker,running,main} from './recursive-fixture.js';
 function setup(){
- const f=fixture('.codex/scratch/worker-native-subagent-convergence-implementation-20261024/native-owner'),child=delegate(f),actor=running(f,child.taskId),host:any=Object.create(Homer.prototype);
+ const f=fixture('.codex/scratch/worker-native-subagent-convergence-implementation-20261024/native-owner'),worker=openWorker(f),actor=running(f,worker.runId),host:any=Object.create(Homer.prototype);
  const config={workspace:f.files.workspace,runtime:f.dir,codexHome:f.dir,nativeCodexHome:f.dir,codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
  const engine=new CodexEngine(config,{cwd:f.files.workspace,readRoots:[],instructions:'Synthetic',role:'worker',tools:[],onInteraction:r=>host.openInteraction({runId:actor.runId!,threadId:r.threadId,turnId:r.turnId,requestId:r.requestId,source:'native',kind:r.kind,details:{method:r.method,params:r.details}},r).response},async()=>{throw Error('dynamic_child_tool_must_not_run');});
  engine.threadId=actor.threadId;engine.turnId=actor.turnId;engine['active']={} as any;
@@ -53,7 +53,7 @@ test('old Worker epoch refuses child callback; dynamic child tools remain parent
  const f=setup();try{
   await f.receive({id:90,method:'item/tool/call',params:{threadId:'native-child',turnId:'child-turn',callId:'forged',tool:'read_material',arguments:{}}});
   assert.equal(f.sent[0].result.success,false);
-  const t=f.tasks.task(f.root.taskId);f.tasks.stop(main,{operationId:'stop',taskId:t.id,version:1,expectedTaskRevision:t.revision,scope:'subtree',reason:'Synthetic stop'});
+  f.tasks.workerStop(main,{operationId:'stop',workerId:f.tasks.run(f.actor.runId!).workerId,reason:'Synthetic stop'});
   await f.request(1);assert.equal(f.interactions.list().length,0);assert.ok(f.sent[1].error);
  }finally{f.engine['active']=undefined;await f.engine.close();f.close();}
 });

@@ -14,7 +14,7 @@ const output=await build({entryPoints:['ui/task-status.tsx'],bundle:true,write:f
 const context={module:{exports:{}},require:createRequire(new URL('../ui/task-status.tsx',import.meta.url)),EventTarget,snapshot:{} as Record<string,unknown>};
 runInNewContext(output.outputFiles[0]!.text,context);
 const Component=(context.module.exports as {TaskStatusPopover:ComponentType<Record<string,unknown>>}).TaskStatusPopover;
-const task=(id:string):OverviewTask=>({id,rootTaskId:id,parentTaskId:null,goal:'合成任务',executorKind:'worker',executorAgentId:'worker',coordinatorAgentId:'main',sourceRequestId:null,headVersion:1,revision:0,state:'working',outcome:null,controlState:'normal',currentRunId:'run',run:{id:'run',status:'running',phase:'executing',contractVersion:1,epoch:0,summary:null,sourceRequestId:null},result:null,delivery:null,pendingUser:0,pendingMain:0});
+const task=(id:string):OverviewTask=>({id,title:'合成任务',goal:'合成任务',notes:'',headVersion:1,revision:1,state:'open',outcome:null,controlState:'normal',historyState:'visible',sourceRequestId:null,workers:[{id:'worker-'+id,taskId:id,pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run-'+id,workerId:'worker-'+id,taskId:id,status:'running',phase:'executing',version:1,epoch:0,sourceRequestId:null}}],results:[],deliveries:[]});
 function render(data:TaskOverview|null,options:{stale?:boolean;error?:string;connected?:boolean}={}){
  context.snapshot={data,stale:options.stale??false,error:options.error??'',busy:false,refresh:()=>{}};
  return renderToStaticMarkup(createElement(Component,{state:{threadId:'synthetic',interactions:[]} as unknown as WebState,connected:options.connected??true,onInteraction:()=>{},asideContainer:null,onBeforeLayoutChange:()=>{}}));
@@ -29,9 +29,8 @@ test('rendered 0/1/12/large counts share root facts and an accessible button nam
   if(n)assert.ok(html.includes('data-count="working">'+visible+'</span>'));
   else assert.doesNotMatch(html,/data-count="working"/);
  }
- const root=task('root');root.executorKind='main';root.currentRunId=null;root.run=null;
- const a={...task('a'),rootTaskId:'root',parentTaskId:'root'},b={...task('b'),rootTaskId:'root',parentTaskId:'root'};
- assert.match(render({tasks:[root,a,b]}),/aria-label="工作状态，1 个任务工作中"/);
+ const root=task('root');root.workers.push({...root.workers[0]!,id:'peer',run:{...root.workers[0]!.run,id:'peer',workerId:'peer'}});
+ assert.match(render({tasks:[root]}),/aria-label="工作状态，1 个任务工作中"/);
 });
 test('unloaded, stale, failed and disconnected snapshots never present a current count or zero',()=>{
  for(const [data,options,want] of [
@@ -45,7 +44,8 @@ test('unloaded, stale, failed and disconnected snapshots never present a current
 });
 
 test('an uncertain task snapshot cannot announce a known zero or exact active total',()=>{
- for(const tasks of [[{...task('unknown'),run:null}],[task('active'),{...task('unknown'),headVersion:2}]]){
+ const unknown=task('unknown');unknown.workers[0]!.run.phase='uncertain';
+ for(const tasks of [[unknown],[task('active'),unknown]]){
   const html=render({tasks});assert.doesNotMatch(html,/data-count="working"/);
   assert.ok(html.includes('数量待核实'));assert.doesNotMatch(html,/无工作中任务/);
  }

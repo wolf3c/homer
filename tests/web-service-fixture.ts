@@ -26,7 +26,10 @@ export function fixture(sink: (message: Message) => Promise<void> = async () => 
       inputs.push(text);
       nativeImages.push(options?.images??[]);
       if (text === "fail") throw new Error("synthetic_engine_failure");
-      if (text === "dispatch") await this.call("dispatch_work", { title: "合成后台任务", goal: "合成目标", material: "synthetic.md" });
+      if (text === "dispatch") {
+        const task=await this.call("task_create", {title:"合成后台任务",goal:"合成目标"}) as {taskId:string};
+        await this.call("worker_open", {taskId:task.taskId,message:"合成目标"});
+      }
       if (text === "stream") return new Promise(accept => {
         this.pending = accept;
         this.emit("textDelta", { threadId: this.threadId, turnId: this.turnId, delta: "合成部分回复" });
@@ -34,7 +37,7 @@ export function fixture(sink: (message: Message) => Promise<void> = async () => 
       const interactionId = text.match(/interactionId=([\w-]+)/)?.[1];
       if (interactionId) {
         await this.call("inspect_interaction", { interactionId });
-        if (text.startsWith("[Worker待答]")) await this.call("escalate_interaction", { interactionId, question: "合成问题：采用哪种格式？", reason: "该偏好不在任务范围内" });
+        if (text.includes("[待答入口]")) await this.call("escalate_interaction", { interactionId, question: "合成问题：采用哪种格式？", reason: "该偏好不在任务范围内" });
         else await this.call("respond_interaction", { interactionId, action: "answer", answer: "用户指定表格", reason: "依据本条用户答复" });
       }
       this.emit('agentMessage',{threadId:this.threadId,turnId:this.turnId,itemId:'synthetic-final',phase:'final_answer',text:'准确的合成来源句子',completed:true});

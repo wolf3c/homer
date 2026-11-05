@@ -10,7 +10,7 @@ export type InteractionInput = {
   source: "native" | "ask_main";
   kind: "authorization" | "question";
   details: Record<string, unknown>;
-  runEpoch?:number;contractVersion?:number;
+  runEpoch?:number;taskVersion?:number;
   // Captured by the host from the authorized task, never taken from Worker arguments.
   authority: { description: string; sourceRequestId: string; nativeApprovals: boolean };
 };
@@ -64,13 +64,10 @@ export class WorkerInteractions {
       runId TEXT NOT NULL, threadId TEXT NOT NULL, turnId TEXT NOT NULL, requestId TEXT NOT NULL,
       source TEXT NOT NULL, kind TEXT NOT NULL, details TEXT NOT NULL, authority TEXT NOT NULL,
       state TEXT NOT NULL, userQuestion TEXT, escalationReason TEXT, decision TEXT,
-      responseUserMessageId TEXT, deliveredAt INTEGER, code TEXT,
+      responseUserMessageId TEXT, responseUserText TEXT, runEpoch INTEGER, taskVersion INTEGER,
+      deliveredAt INTEGER, code TEXT,
       createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
     ); CREATE INDEX IF NOT EXISTS worker_interactions_run ON worker_interactions(runId,state);`);
-    if (!(db.prepare("PRAGMA table_info(worker_interactions)").all() as { name: string }[]).some(column => column.name === "responseUserText"))
-      db.exec("ALTER TABLE worker_interactions ADD COLUMN responseUserText TEXT");
-    const columns=db.prepare('PRAGMA table_info(worker_interactions)').all() as {name:string}[];
-    for(const name of ['runEpoch','contractVersion'])if(!columns.some(c=>c.name===name))db.exec(`ALTER TABLE worker_interactions ADD COLUMN ${name} INTEGER`);
     db.exec("CREATE TABLE IF NOT EXISTS worker_authorities(runId TEXT PRIMARY KEY,sourceRequestId TEXT NOT NULL,description TEXT NOT NULL)");
   }
   setAuthority(runId: string, sourceRequestId: string, description: string) {
@@ -115,7 +112,7 @@ export class WorkerInteractions {
     return {total,items};
   }
   open(input: InteractionInput, isCurrent: () => boolean, validate?: (decision: InteractionDecision) => void): { id: string; response: Promise<InteractionResolution> } {
-    if((input.runEpoch!==undefined||input.contractVersion!==undefined)&&(!Number.isSafeInteger(input.runEpoch)||!Number.isSafeInteger(input.contractVersion)))throw Error('interaction_invalid_request');
+    if((input.runEpoch!==undefined||input.taskVersion!==undefined)&&(!Number.isSafeInteger(input.runEpoch)||!Number.isSafeInteger(input.taskVersion)))throw Error('interaction_invalid_request');
     for (const value of [input.runId, input.threadId, input.turnId])
       if (!text(value, 200)) throw new Error("interaction_invalid_request");
     if ((typeof input.requestId !== "number" || !Number.isSafeInteger(input.requestId)) && !text(input.requestId, 200)) throw new Error("interaction_invalid_request");
@@ -137,14 +134,11 @@ export class WorkerInteractions {
     const id = randomUUID(), now = Date.now(), wasWaiting = this.hasPending(input.runId);
     this.db.exec('SAVEPOINT worker_interaction_open');
     try{
-    this.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending_main',?,?)`).run(
+    this.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,runEpoch,taskVersion,state,createdAt,updatedAt)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'pending_main',?,?)`).run(
       id, identity, fingerprint, input.runId, input.threadId, input.turnId, JSON.stringify(input.requestId), input.source, input.kind,
-      JSON.stringify(input.details), JSON.stringify(input.authority), now, now,
+      JSON.stringify(input.details), JSON.stringify(input.authority), input.runEpoch ?? null, input.taskVersion ?? null, now, now,
     );
-    if(input.runEpoch!==undefined||input.contractVersion!==undefined){
-      this.db.prepare('UPDATE worker_interactions SET runEpoch=?,contractVersion=? WHERE id=?').run(input.runEpoch!,input.contractVersion!,id);
-    }
       this.hooks.persisted?.(id);
       this.db.exec('RELEASE worker_interaction_open');
     }catch(error){this.db.exec('ROLLBACK TO worker_interaction_open; RELEASE worker_interaction_open');throw error;}

@@ -167,7 +167,7 @@ async function refused(run,code){
 test('review refusal releases the desktop owner so a reviewed synthetic delivery can restart',{timeout:60000},async()=>{
  const f=await adoptedFixture();adoptGateway(f);
  const db=new DatabaseSync(f.dbPath);
- try{db.exec("PRAGMA foreign_keys=OFF; INSERT INTO deliveries(id,rootTaskId,version,outcome,text,state,operationKey) VALUES('synthetic-delivery','synthetic-task',1,'succeeded','synthetic','prepared','synthetic-operation')");}finally{db.close();}
+ try{db.exec("PRAGMA foreign_keys=OFF; INSERT INTO deliveries(id,taskId,version,resultIdsJson,routeSourceRequestId,text,historyMessageId,state,operationKey) VALUES('synthetic-delivery','synthetic-task',1,'[]','synthetic-source','synthetic','synthetic-message','prepared','synthetic-operation')");}finally{db.close();}
  const blocked=launch(f.shell,true);await refused(blocked,'desktop_delivery_review_required');
  assert.ok(blocked.events.some(e=>e.kind==='startup_refused'));
  assert.equal(existsSync(join(f.paths.codexHome,'desktop-owner.json')),false);
@@ -230,7 +230,7 @@ for(const effort of ['high','max'])test(`daily website uses max and preserves or
   assert.equal((await request(url,'/api/messages',{requestId:'synthetic-daily-worker',text:'dispatch-synthetic'})).status,202);
   for(let i=0;i<1000;i++){
    const db=new DatabaseSync(f.dbPath,{readOnly:true});let delivered;
-   try{delivered=db.prepare("SELECT artifact FROM runs WHERE status='succeeded' AND id IN (SELECT runId FROM events WHERE type='delivered')").get();}finally{db.close();}
+   try{delivered=db.prepare("SELECT r.filePath AS artifact FROM results r JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) selected ON selected.value=r.id WHERE r.kind='file' AND r.state='accepted' AND d.state='recorded' AND d.revokedAt IS NULL").get();}finally{db.close();}
    if(delivered){assert.equal(readFileSync(delivered.artifact,'utf8'),'DeepSeek Worker 已运行（离线合成）');break;}
    if(i===999)throw Error('synthetic_worker_delivery_timeout');await wait(20);
   }

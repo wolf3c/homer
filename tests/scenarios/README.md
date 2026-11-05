@@ -27,7 +27,7 @@
 
 旧宿主记忆系统及原 `memory.test.ts`、`memory-service.test.ts`、`memory-migration.test.mjs` 已退役，不能再列作当前验收入口。默认的 `native-memory-only.test.ts` 保护旧接口不再暴露；`native-memory-engine.test.ts` 验证 Homer 的协议配置。固定 Codex 的实际记忆协议检查为显式 engine 分组的 `tests/native-memory-defaults-offline.test.mjs`；先阅读该文件的二进制及隔离要求，不因只想验证记忆就运行整个 `npm run test:engine`。协议检查不代表真实模型记忆质量已验证。不得向共享日常 CODEX_HOME 创建测试线程。
 
-默认核心与显式专项的按变更/发版选择规则见[测试边界](../../docs/public/testing.md)。默认核心通过不代替任何显式专项；未运行、跳过和失败均不能记录为验收通过。
+默认核心与显式专项的按变更/发版选择规则见[测试边界](../../docs/testing.md)。默认核心通过不代替任何显式专项；未运行、跳过和失败均不能记录为验收通过。
 
 ## HMR-UPGRADE-001 如何运行
 

@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {mkdirSync,mkdtempSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {Homer} from '../src/service.js';
 import type {EngineOptions} from '../src/engine.js';
@@ -10,13 +10,30 @@ test('native change leaves a live Worker running and permits its authorized resu
  const home=join(dir,'codex'),runtime=join(dir,'runtime'),workspace=join(dir,'workspace');mkdirSync(runtime);mkdirSync(join(workspace,'materials'),{recursive:true});
  const {writeFileSync}=await import('node:fs');writeFileSync(join(workspace,'materials/sample.md'),'Synthetic');
  const base={appData:dir,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',runtime,workspace,model:'synthetic',requiresOpenaiAuth:false,timeoutMs:5000,mainTimeoutMs:1000,stopGraceMs:100};
- const peers:Peer[]=[];
+ const peers:Peer[]=[];let serial=0;
  class Peer extends EventEmitter{
   threadId:string;turnId='';resumable=true;release?:(r:any)=>void;
   constructor(readonly options:EngineOptions,readonly handler:(c:any)=>Promise<unknown>){super();this.threadId=options.threadId??'synthetic-'+peers.length;peers.push(this);}
   async start(){return this.threadId;}
-  async call(tool:string,args:unknown){return this.handler({threadId:this.threadId,turnId:this.turnId,callId:'synthetic-call',tool,arguments:args});}
-  async turn(text:string,o?:{onStarted?:(id:string)=>void}){this.turnId='synthetic-turn-'+Date.now();o?.onStarted?.(this.turnId);if(this.options.tools.some(t=>t.name==='read_material'))return new Promise<any>(r=>this.release=r);if(text==='dispatch')await this.call('dispatch_work',{title:'Synthetic',goal:'Synthetic',material:'sample.md'});if(text.startsWith('[执行结果待审阅]')){const id=text.match(/runId=([\w-]+)/)![1]!;await this.call('inspect_run',{runId:id});await this.call('review_artifact',{runId:id,accepted:true,summary:'Synthetic checked',reason:'Synthetic test passed'});}return {status:'completed',text:'Synthetic'};}
+  async call(tool:string,args:unknown){const callId='synthetic-call-'+ ++serial,result=await this.handler({threadId:this.threadId,turnId:this.turnId,callId,tool,arguments:args});this.emit('toolResponse',callId);return result;}
+  async turn(text:string,o?:{onStarted?:(id:string)=>void}){
+   this.turnId='synthetic-turn-'+ ++serial;o?.onStarted?.(this.turnId);
+   if(this.options.tools.some(t=>t.name==='read_material'))return new Promise<any>(r=>this.release=r);
+   if(text==='dispatch'){
+    const task=await this.call('task_create',{title:'Synthetic',goal:'Synthetic authorized file'}) as {taskId:string};
+    await this.call('worker_open',{taskId:task.taskId,message:'Read materials/sample.md and write the synthetic result.'});
+   }
+   if(text.startsWith('[内部协作输入')){
+    const input=JSON.parse(text.split('\n')[1]!);
+    if(input.kind==='worker_reply'){
+     const reply=await this.call('worker_read',{workerId:input.workerId,messageId:input.messageId}) as {messages:{text:string}[]};
+     const filePath=reply.messages[0]!.text.trim().split('\n').at(-1);
+     const result=await this.call('accept_result',{runId:input.runId,messageId:input.messageId,filePath}) as {resultId:string};
+     await this.call('work_inspect',{resultId:result.resultId});
+    }
+   }
+   return {status:'completed',text:'Synthetic'};
+  }
   async interrupt(){this.release?.({status:'interrupted',text:''});return true;}async close(){await this.interrupt();return true;}
  }
  const factory=(o:EngineOptions,h:(c:any)=>Promise<unknown>)=>new Peer(o,h);
@@ -29,8 +46,10 @@ test('native change leaves a live Worker running and permits its authorized resu
   const run=app.store.runs()[0]!;await new Promise(r=>setTimeout(r,40));
   assert.equal(app.store.run(run.id)!.stopReason,null);
   await worker.call('read_material',{});
-  await worker.call('write_markdown',{filename:'answer.md',content:'# Synthetic result'});
-  worker.release?.({status:'completed',text:'Synthetic finished'});
+  const file=await worker.call('write_markdown',{filename:'answer.md',content:'# Synthetic result'}) as {path:string};
+  worker.release?.({status:'completed',text:'Synthetic finished\n'+file.path});
   await app.idle();assert.equal(app.store.runs().length,1);assert.equal(app.store.run(run.id)!.status,'succeeded');
- }finally{await app.close();}
+  const results=app.tasks.readTask({agentId:app.store.meta('mainAgentId')!},run.taskId).results;
+  assert.equal(results.length,1);assert.equal(results[0]!.runId,run.id);assert.equal(results[0]!.version,run.version);assert.equal(results[0]!.state,'accepted');
+ }finally{await app.close();rmSync(dir,{recursive:true,force:true});}
 });

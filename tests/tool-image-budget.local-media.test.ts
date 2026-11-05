@@ -20,9 +20,9 @@ test('large tool images fit the actual MCP envelope while original pixels remain
  assert.equal(image.modelView.resized,true);
  assert.deepEqual(image.modelView.source,{width,height});
  assert.ok(image.modelView.width<=320&&image.modelView.height<=320);
- const mainHost={mainContext:{},validateMainContext(){},mainActor(){return {};},tasks:{inspect(){return {actualResult:{file:{path:'synthetic.png'}},results:[{id:'result',runId:'run'}]};},run(){return {matterId:'matter'};}},files:{prepareRun(){return 'unused';},resultBytes(){return {data:source,mime:'image/png'};}}};
+ const mainHost={mainContext:{},validateMainContext(){},mainActor(){return {};},tasks:{readResult(){return {id:'result',file:{path:'synthetic.png'}};}},files:{resultBytes(){return {data:source,mime:'image/png'};}}};
  let revoked=false;const assetId='asset-00000000-0000-0000-0000-000000000001';
- const workerHost={workerActor(){return {};},tasks:{run(){return {sourceRequestId:'source',taskId:'task',contractVersion:1};},guard(){},contract(_taskId:string,version:number){return {inputs:version===1?[{type:'attachment',id:assetId+'@1'}]:[]};}},media:{validate(){if(revoked)throw Error('media_scope_denied');},read(){return {asset:{kind:'image'}};},view(){return {};},extracted(){},image(){return full;}}};
+ const workerHost={workerActor(){return {};},tasks:{run(){return {sourceRequestId:'source',taskId:'task',version:1};},guard(){},authority(_taskId:string,version:number){return {attachments:version===1?[assetId+'@1']:[]};}},media:{validate(){if(revoked)throw Error('media_scope_denied');},read(){return {asset:{kind:'image'}};},view(){return {};},extracted(){},image(){return full;}}};
  const args={assetId,revision:1};
  const workerView=await workerMediaTool.call(workerHost,{id:'run'},'inspect_attachment',args);
  assert.equal(JSON.parse(workerView.mediaContent[0].text).modelView.resized,true);
@@ -34,10 +34,10 @@ test('large tool images fit the actual MCP envelope while original pixels remain
  }finally{await f.close();}
  workerHost.media.image=()=>{queueMicrotask(()=>{revoked=true;});return full;};
  await assert.rejects(workerMediaTool.call(workerHost,{id:'run'},'inspect_attachment',args),/media_scope_denied/);
- // Adoption can change contractVersion within the same Run/epoch/turn, so a
- // successful actor guard must not authorize the captured old attachment scope.
+ // An in-flight read must recheck the currently resolved Run authority;
+ // an actor guard alone cannot grant a withdrawn attachment.
  revoked=false;let version=1;
- workerHost.tasks.run=()=>({sourceRequestId:'source',taskId:'task',contractVersion:version});
+ workerHost.tasks.run=()=>({sourceRequestId:'source',taskId:'task',version});
  workerHost.media.image=()=>{queueMicrotask(()=>{version=2;});return full;};
  await assert.rejects(workerMediaTool.call(workerHost,{id:'run'},'inspect_attachment',args),/media_scope_denied/);
 });

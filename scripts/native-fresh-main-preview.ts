@@ -27,8 +27,8 @@ function capture(db: DatabaseSync) {
 export function freshMainReadiness(db: DatabaseSync) {
   const checks: Record<string, [string, string]> = {
     requests: ['requests', "state!='completed'"],
-    runs: ['runs', "status IN ('queued','running','awaiting_review') OR delivery='pending' OR phase='uncertain'"],
-    tasks: ['tasks', "state!='settled' OR controlState IN ('held','stopping')"],
+    runs: ['runs', "status IN ('queued','running') OR phase IN ('uncertain','stopping')"],
+    tasks: ['tasks', "state!='settled' OR controlState='stopping'"],
     receipts: ['agent_receipts', "state IN ('pending','offered','received','uncertain','blocked')"],
     interactions: ['worker_interactions', "state IN ('pending_main','pending_user') OR (state IN ('approved','denied','answered') AND deliveredAt IS NULL)"],
     operations: ['operations', "state IN ('accepted','dispatching','uncertain')"],
@@ -42,7 +42,6 @@ export function freshMainReadiness(db: DatabaseSync) {
     telegramDrafts: ['tg_drafts', "state IN ('active','stop_requested')"],
   };
   const pending = Object.fromEntries(Object.entries(checks).map(([name, [table, where]]) => [name, Number(db.prepare('SELECT count(*) n FROM ' + identifier(table) + ' WHERE ' + where).get()!.n)]));
-  pending.legacyPublication = Number(db.prepare("SELECT count(*) n FROM runs r JOIN tasks t ON t.id=r.taskId WHERE json_extract(coalesce(r.checkpointJson,'{}'),'$.legacy')=1 AND t.parentTaskId IS NULL AND t.state='settled' AND NOT EXISTS(SELECT 1 FROM deliveries d WHERE d.rootTaskId=t.id AND d.version=r.contractVersion)").get()!.n);
   const telegramBindings = Number(db.prepare('SELECT count(*) n FROM tg_connections').get()!.n);
   return { pending, telegramBindings, ready: !telegramBindings && !Object.values(pending).some(Boolean) };
 }

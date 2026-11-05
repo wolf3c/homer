@@ -4,7 +4,7 @@ export type ActivityOutcome='record_read'|'file_read'|'attachment_read'|'extract
 export type ActivityTarget={taskId:string;version:number;runId?:string;resultId?:string;deliveryId?:string;operationKey?:string};
 export type PublicActivity={schemaVersion:1;action:ActivityAction;objectName?:string;outcome:ActivityOutcome;target?:ActivityTarget;relatedTarget?:ActivityTarget};
 // Web-only, freshly authorized navigation, never persisted with the historical fact.
-export type ActivityLink={task:ActivityTarget&{rootTaskId:string};artifact?:{id:string;title:string};messageId?:string};
+export type ActivityLink={task:ActivityTarget;artifact?:{id:string;title:string};messageId?:string};
 export const activityActions:Record<ActivityAction,string>={inspect_task:'查看任务记录',inspect_run:'查看执行记录',inspect_file:'检查成果文件',inspect_attachment:'读取附件材料',review_result:'验收成果',prepare_delivery:'准备正式交付',create_task:'创建任务',update_task:'调整任务',stop_task:'停止任务',continue_task:'续接任务'};
 export const activityOutcomes:Record<ActivityOutcome,string>={record_read:'记录已读取',file_read:'文件已读取',attachment_read:'材料已读取',extraction_unavailable:'附件记录已读取，内容当前不可读',accepted:'验收已接受',changes_requested:'已要求修改',rejected:'验收未接受',review_required:'验收决定待明确',delivery_prepared:'交付已准备，正式交付尚未确认',delivery_recorded:'正式交付回执已记录',created:'任务已创建',update_accepted:'调整已受理，尚待采用',update_queued:'后续要求已排队',update_confirmed:'新要求已就绪，尚待执行',stop_requested:'停止待确认',stop_confirmed:'已确认停止',stop_noop:'事项此前已结束',continue_queued:'续接已排队',continue_ready:'续接已就绪，尚待执行',operation_uncertain:'操作状态待核实',operation_failed:'操作未完成'};
 // Only already-public display names; reject path-like or control-laden values.

@@ -2,6 +2,7 @@ import {useCallback,useEffect,useImperativeHandle,useRef,useState,type Ref} from
 import homerLogo from '../assets/branding/odysseus-20261030/homer-odysseus-64.png';
 import type {WebState} from '../src/web-contract';
 import {MobileDeviceSettings} from './mobile-devices';
+import {accountErrors,useDesktopAccount,type AccountState} from './desktop-account-state';
 import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
 import {Button} from '@base-ui/react/button';
@@ -16,10 +17,7 @@ type Screen='not-determined'|'denied'|'granted'|'restricted'|'unknown';
 type PermissionState={supported:false}|{supported:true;subject:'Homer';accessibility:Accessibility;screen:Screen};
 type ActionResult={supported:false}|{ok:boolean;code?:string};
 type PermissionsBridge={check:()=>Promise<PermissionState>;openSystemSettings:(target?:'screen')=>Promise<ActionResult>};
-type AccountState={supported:boolean;configured:boolean;source?:'codex'|'website';native?:{account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:string;pending:boolean;canReopen:boolean};nativeError?:string;websiteReady?:boolean;connection:'website'|'disconnected';active:'website'|'disconnected';pending:boolean;canReopen:boolean;needsRestart:boolean;error?:string;wallet?:{available:number;used:number;unit:string;expiresAt?:number};updatedAt?:string;walletError?:string;stale:boolean};
-type AccountAction='state'|'connect'|'cancel'|'reopen'|'refresh'|'openWebsite'|'disconnect'|'restart'|'nativeConnect'|'nativeCancel'|'nativeReopen'|'applyCodex'|'applyWebsite';
-type AccountBridge=Record<AccountAction,()=>Promise<AccountState>>&{onChange:(callback:()=>void)=>()=>void};
-declare global{interface Window{homerDesktopAccount?:AccountBridge;homerDesktopPermissions?:PermissionsBridge;homerDesktopSettings?:{onOpen:(callback:()=>void)=>()=>void};}}
+declare global{interface Window{homerDesktopPermissions?:PermissionsBridge;homerDesktopSettings?:{onOpen:(callback:()=>void)=>()=>void};}}
 
 
 export function DesktopSettings({ref}:{ref?:Ref<{openAccount:()=>void}>}={}){
@@ -139,57 +137,12 @@ export function DesktopPermissions(){
  </div>;
 }
 
-const accountErrors:Record<string,string>={
- CONFIG_UNAVAILABLE:'配置同步未完成，已有有效配置会继续使用；尚未连接时请检查网络后重新打开荷马。',
- CONFIGURATION_REQUIRED:'网站连接地址尚未配置，请联系维护方。',
- INVALID_REQUEST:'连接参数不匹配，请联系维护方。',UNAUTHORIZED:'登录请求已取消、失效或被使用，请重新登录。',
- FORBIDDEN:'网站服务权限未配置，请联系维护方。',ACCOUNT_UNAVAILABLE:'账户不可用，请联系维护方核对。',
- CONFLICT:'账户归属或模型 Key 需要人工核对。',RATE_LIMITED:'请求较多，请稍后重新登录。',
- UNAVAILABLE:'登录未完成，请重新登录。',ACCOUNT_MISMATCH:'此本机资料已连接另一账号，请使用原账号登录。',
- CONNECTION_FILE_INVALID:'本机连接文件损坏或权限不正确，请保留文件并联系维护方核对。',
- CONNECTION_WRITE_FAILED:'登录信息未能保存，原文件已保留，请核对磁盘与文件权限后重新登录。',
- CONNECTION_CANCELLED:'登录已取消。',TOKEN_UNAVAILABLE:'登录凭据已失效，请重新登录；仍不可用时请联系维护方。',
- USAGE_UNAVAILABLE:'未能确认最新额度，请稍后刷新。',NOT_CONNECTED:'当前尚未登录。',
-};
+
 export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
  const bridge=window.homerDesktopAccount;
- const [state,setState]=useState<AccountState>(),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[source,setSource]=useState<'chatgpt'|'website'>();
+ const {state,busy,notice,run}=useDesktopAccount();
+ const [source,setSource]=useState<'chatgpt'|'website'>();
  const selectedSource=source??(!onboarding&&state?.source==='codex'?'chatgpt':'website');
- const live=useRef(false),request=useRef(0),running=useRef(false);
- const apply=useCallback(async(action:AccountAction='state')=>{
-  if(!bridge)return;
-  const id=++request.current;
-  try{
-   let value=await bridge[action]();
-   if(action==='openWebsite'&&!value.configured)throw Error('unavailable');
-   if(live.current&&id===request.current){setState(value);setNotice('');}
-   if(action==='state'&&value.stale&&(value.active!=='disconnected'||value.source==='codex'&&value.connection!=='disconnected'))value=await bridge.refresh();
-   if(live.current&&id===request.current){setState(value);setNotice('');}
-  }catch{if(live.current&&id===request.current){if(action==='refresh'||action==='state')setState(value=>value?{...value,stale:true}:value);setNotice(action==='openWebsite'?'购买积分页面未能打开，请稍后重试。':'状态未能确认，请重试。');}}
- },[bridge]);
- useEffect(()=>{live.current=true;void apply();const dispose=bridge?.onChange(()=>{void apply();});return()=>{live.current=false;request.current++;dispose?.();};},[bridge,apply]);
- useEffect(()=>{
-  const expiresAt=state?.wallet?.expiresAt;
-  if(!expiresAt||expiresAt<=Date.now()/1000||state.stale||state.walletError)return;
-  // Reconcile once at expiry; long-lived credentials respect the timer limit.
-  const timer=window.setTimeout(()=>void apply(),Math.min(expiresAt*1000-Date.now(),2147483647));
-  return()=>window.clearTimeout(timer);
- },[state,apply]);
- useEffect(()=>{
-  if(!state?.pending&&!state?.native?.pending)return;
-  // The browser callback can finish while the renderer misses an invalidation.
-  // Reconcile local state only while that authorization is still pending.
-  let active=true,reading=false;
-  const timer=window.setInterval(()=>{
-   if(!active||reading)return;reading=true;
-   void apply().finally(()=>{reading=false;});
-  },1000);
-  return()=>{active=false;window.clearInterval(timer);};
- },[state?.pending,state?.native?.pending,apply]);
- async function run(action:AccountAction){
-  if(running.current)return;running.current=true;setBusy(true);
-  try{await apply(action);}finally{running.current=false;if(live.current)setBusy(false);}
- }
  const error=(value?:string)=>value?(accountErrors[value]??'状态未能确认，请联系维护方。'):'';
  const connected=state?.active==='website',saved=state?.connection==='website';
  const expired=(connected||saved)&&(state?.error==='TOKEN_UNAVAILABLE'||state?.walletError==='TOKEN_UNAVAILABLE'||!!state?.wallet?.expiresAt&&state.wallet.expiresAt<=Date.now()/1000);
@@ -226,14 +179,14 @@ export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
       {state&&!state.needsRestart&&(!connected&&!saved||expired)&&<div className="desktop-permission-actions"><Button className="primary-button" disabled={busy||!state.configured} onClick={()=>void run('connect')}>{expired||state.error&&state.error!=='CONNECTION_CANCELLED'?'重新登录':onboarding?'登录荷马':'登录'}</Button></div>}
       {state?.needsRestart&&!different&&<div className="desktop-permission-actions"><Button className="primary-button" disabled={busy} onClick={()=>void run('restart')}>重启并应用</Button></div>}
      </>}
-     {(connected||state?.source==='codex'&&saved)&&<section aria-label="可用积分">
+     {!onboarding&&(connected||state?.source==='codex'&&saved)&&<section aria-label="可用积分">
       <div className="desktop-account-metrics"><p><span>可用积分</span><strong>{state?.wallet?`${state.wallet.available.toLocaleString(undefined,{maximumFractionDigits:6})} ${state.wallet.unit}`:'未知'}</strong></p></div>
       {state?.updatedAt&&<p>{state.stale||state.walletError?'上次记录':'更新时间'}：{new Date(state.updatedAt).toLocaleString()}</p>}
       {state?.walletError&&<p role="status">{error(state.walletError)}</p>}
       {walletKnown&&state?.wallet?.available===0&&<p role="status">购买积分后即可开始使用。</p>}
       {!walletKnown&&<p role="status">暂时无法确认可用积分，请重新检查。</p>}
       <div className="desktop-permission-actions">
-       {(!onboarding||walletKnown&&state?.wallet?.available===0)&&<Button className="primary-button" disabled={busy||!state?.configured} onClick={()=>void run('openWebsite')}>购买积分</Button>}
+       <Button className="primary-button" disabled={busy||!state?.configured} onClick={()=>void run('openWebsite')}>购买积分</Button>
        {(!walletKnown||state?.wallet?.available===0)&&<Button disabled={busy} onClick={()=>void run('refresh')}>{walletKnown?'我已购买，刷新状态':'重新检查积分'}</Button>}
       </div>
      </section>}
@@ -252,26 +205,55 @@ export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
 }
 
 
-export function ModelFailureNotice({failure,onAccount,onDismiss}:{failure:NonNullable<WebState['modelFailure']>;onAccount?:()=>void;onDismiss?:()=>void}){
- const [closed,setClosed]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
- const quota=failure.code==='engine_quota_insufficient',rate=failure.code==='engine_rate_limited',auth=failure.code==='engine_authentication_failed',unconfirmed=failure.code==='engine_account_status_unconfirmed';
- const title=quota?'额度不足':rate?'请求受到限流，本次未能继续':auth?'账号连接未通过验证':unconfirmed?'账号状态未能确认':'本次请求未能完成';
- const description=quota?'当前额度不足以继续本次请求。':rate?'请稍后再发起请求。恢复时间暂未提供，荷马不会自动重试。':auth?'当前模型服务未通过认证，请检查账号连接后重新发送消息。':unconfirmed?'未能核实账号状态，请检查连接与额度后重新发送消息。':'原因暂无法确认。请先核对已有结果，再决定下一步。';
- async function recharge(){
-  if(busy)return;setBusy(true);setNotice('');
-  try{const state=await window.homerDesktopAccount!.openWebsite();if(!state.configured)throw Error('unavailable');}
-  catch{setNotice('未能打开充值入口，请在账号设置中查看。');}
-  finally{setBusy(false);}
+function currentHomerWallet(state?:AccountState){
+ const wallet=state?.wallet;
+ return state?.supported&&state.configured&&state.source==='website'&&state.active==='website'&&wallet&&!state.stale&&!state.walletError&&state.error!=='TOKEN_UNAVAILABLE'&&!(wallet.expiresAt&&wallet.expiresAt<=Date.now()/1000)?wallet:undefined;
+}
+
+export function ModelFailureNotice({failure,onAccount,onDismiss}:{failure?:NonNullable<WebState['modelFailure']>;onAccount?:()=>void;onDismiss?:()=>void}){
+ const bridge=window.homerDesktopAccount;
+ const {state,busy,notice,run}=useDesktopAccount({currentSourceOnly:true});
+ const [dismissed,setDismissed]=useState<string>(),[lowSeen,setLowSeen]=useState(false);
+ const active=state?.supported&&state.configured&&state.source==='website'&&state.active==='website';
+ const expired=!!state?.wallet?.expiresAt&&state.wallet.expiresAt<=Date.now()/1000||state?.walletError==='TOKEN_UNAVAILABLE'||state?.error==='TOKEN_UNAVAILABLE';
+ const currentWallet=currentHomerWallet(state),known=!!currentWallet;
+ const low=known&&currentWallet.unit==='积分'&&currentWallet.available<=10;
+ useEffect(()=>{
+  if(!active||known&&!low)setLowSeen(false);
+  else if(low)setLowSeen(true);
+ },[active,known,low]);
+ const current=failure?.messageId===dismissed?undefined:failure;
+ const quota=current?.code==='engine_quota_insufficient'||!current&&active&&(low||lowSeen);
+ const rate=current?.code==='engine_rate_limited',auth=current?.code==='engine_authentication_failed',unconfirmed=current?.code==='engine_account_status_unconfirmed';
+ const website=quota&&(current?current.source==='website':active);
+ const wallet=website?currentWallet:undefined;
+ const zero=wallet?.available===0;
+ let title=quota?'额度不足':rate?'请求受到限流，本次未能继续':auth?'账号连接未通过验证':unconfirmed?'账号状态未能确认':'本次请求未能完成';
+ let description=quota?'当前额度不足以继续本次请求。':rate?'请稍后再发起请求。恢复时间暂未提供，荷马不会自动重试。':auth?'当前模型服务未通过认证，请检查账号连接后重新发送消息。':unconfirmed?'未能核实账号状态，请检查连接与额度后重新发送消息。':'原因暂无法确认。请先核对已有结果，再决定下一步。';
+ if(website){
+  title=zero?'积分已用完':current?'额度不足':wallet?'积分余额较低':'积分状态待确认';
+  if(expired)description='登录凭据已失效，请查看账号与额度并重新登录。';
+  else if(!wallet)description=current?'本次请求因额度不足未能完成，剩余积分暂时无法确认，请刷新余额。':'剩余积分暂时无法确认，请刷新余额或查看账号与额度。';
+  else if(zero)description='新的模型请求将无法继续；已保存的对话和成果仍可查看。购买积分后，请刷新余额再继续。';
+  else description=current?'当前额度不足以继续本次请求，请购买积分后重新发送。':'积分用完后，新的模型请求将无法继续。建议及时购买，避免工作中断。';
  }
- if(closed)return null;
- return <section className="model-failure-notice" aria-label={quota?'额度不足提醒':rate?'请求限流提醒':'请求失败提醒'}>
-  <div className="model-failure-copy"><div role="status"><h2>{title}</h2><p>{description}</p></div>
-   {(quota||auth||unconfirmed)&&(window.homerDesktopAccount||onAccount)&&<div className="model-failure-actions">
-    {quota&&failure.source==='website'&&window.homerDesktopAccount&&<Button className="primary-button" disabled={busy} aria-busy={busy} onClick={()=>void recharge()}>{busy?'正在打开…':'充值'}</Button>}
-    {onAccount&&<Button className="model-failure-account" onClick={onAccount}>查看账号与额度</Button>}
-   </div>}
-   {notice&&<p role="status">{notice}</p>}
+ async function refresh(){
+  const wallet=currentHomerWallet(await run('refresh'));
+  if(wallet?.unit==='积分'&&wallet.available>10)setDismissed(failure?.messageId);
+ }
+ if(!current&&!quota)return null;
+ return <section className={'model-failure-notice'+(quota?' model-failure-notice-quota':'')} aria-label={quota?(website?'积分余额提醒':'额度不足提醒'):rate?'请求限流提醒':'请求失败提醒'}>
+  <div className="model-failure-copy"><div role="status">
+   <div className="model-failure-heading"><h2>{title}</h2>{website&&<p className="model-failure-balance">{wallet&&wallet.unit!=='积分'?'剩余额度':'剩余积分'}：<strong>{wallet?`${wallet.available.toLocaleString(undefined,{maximumFractionDigits:6})} ${wallet.unit}`:'暂时无法确认'}</strong></p>}</div>
+   <p>{description}</p>
   </div>
-  <Button className="model-failure-close" aria-label={'关闭'+(quota?'额度不足':rate?'请求限流':'请求失败')+'提醒'} onClick={()=>{setClosed(true);onDismiss?.();}}><X size={16}/></Button>
+   {(quota||auth||unconfirmed)&&(bridge||onAccount)&&<div className="model-failure-actions">
+    {onAccount&&<Button className="model-failure-account" onClick={onAccount}>查看账号与额度</Button>}
+    {website&&bridge&&!expired&&<Button className="primary-button" disabled={busy||state?.configured===false} aria-busy={busy} onClick={()=>void run('openWebsite')}>购买积分</Button>}
+    {website&&bridge&&<Button disabled={busy} aria-busy={busy} onClick={()=>void refresh()}>刷新余额</Button>}
+   </div>}
+   {quota&&notice&&<p role="status">{notice}</p>}
+  </div>
+  {!quota&&<Button className="model-failure-close" aria-label={'关闭'+(rate?'请求限流':'请求失败')+'提醒'} onClick={()=>{setDismissed(current!.messageId);onDismiss?.();}}><X size={16}/></Button>}
  </section>;
 }

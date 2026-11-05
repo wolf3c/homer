@@ -39,3 +39,13 @@ test('draft image preview reuses the existing scoped owner and rejects unsupport
  assert.deepEqual(calls,[scope]);
  mime='text/html';await assert.rejects(chat('media.preview',scope),/media_preview_unavailable/);
 });
+
+test('execution reads identify only the task and run and reject extra scope fields',async()=>{
+ const calls:unknown[]=[];
+ const chat=createWebChat({taskOverview:{execution:async(selector:unknown,before:unknown)=>{calls.push({selector,before});return {items:[]};},call:async()=>({})}} as unknown as WebBridge);
+ await chat('tasks.execution',{taskId:'task-one',runId:'run-one',before:'page'});
+ assert.deepEqual(calls,[{selector:{taskId:'task-one',runId:'run-one'},before:'page'}]);
+ await assert.rejects(chat('tasks.execution',{taskId:'task-one',runId:'run-one',rootTaskId:'task-other'}),/task_execution_invalid/);
+ await assert.rejects(chat('tasks.execution',{taskId:'../task-one',runId:'run-one'}),/task_execution_invalid/);
+ assert.equal(calls.length,1);
+});

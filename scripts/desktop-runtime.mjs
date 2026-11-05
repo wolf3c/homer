@@ -7,7 +7,7 @@ import {PassThrough,Writable} from 'node:stream';
 import {createInterface} from 'node:readline';
 import {userInfo} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
-import {prepareDesktopProfile,acquireDesktopOwner,desktopBoundary,readDesktopModelSource} from './desktop-profile.mjs';
+import {prepareDesktopProfile,acquireDesktopOwner,assertDesktopAdoptionLeasesRecoverable,desktopBoundary,readDesktopModelSource} from './desktop-profile.mjs';
 const DEEPSEEK_KEY_ENV='HOMER_DEEPSEEK_TOKEN';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const send=value=>new Promise((accept,reject)=>process.stdout.write(JSON.stringify(value)+'\n',error=>error?reject(error):accept()));
@@ -63,7 +63,7 @@ try{
  const modelSource=readDesktopModelSource(profile,daily?'website':'codex');
 
  if(existsSync(join(paths.codexHome,'desktop-owner.json')))throw Error('desktop_owner_conflict');
- const {processIdentity}=await import(pathToFileURL(join(homer,'dist/processes.js')).href);
+ const {processIdentity,leaseOwnerGone}=await import(pathToFileURL(join(homer,'dist/processes.js')).href);
  let codexBin=join(resources,'runtime/codex/vendor',windows?'x86_64-pc-windows-msvc':process.arch==='arm64'?'aarch64-apple-darwin':'x86_64-apple-darwin',windows?'bin/codex.exe':'bin/codex');
  if(test){
    const fake=join(profile,'fixture-codex.mjs');
@@ -81,8 +81,6 @@ try{
    // Source config owns model, effort, timeouts and browser protections. Only
    // the verified binary and shell HOME/tmp come from the installed App.
    config={...original,appData:paths.adoption.appData,nativeCodexHome:paths.adoption.nativeCodexHome,codexBin,desktopResources:resourceIdentity,pauseOldDesktopWork:true,...(daily?{dailyDeepSeek:true}:{})};
-   const lock=join(paths.runtime,'cli.lock');
-   if(existsSync(lock)||existsSync(join(paths.runtime,'gateway/cli.lock')))throw Error('desktop_adoption_owner_unknown');
  }
  if(daily&&modelSource==='website'&&connection?.token)process.env[DEEPSEEK_KEY_ENV]=connection.token;
  const mobileTurnAccount=daily&&connection?.token?{gatewayOrigin:manifest.account.gatewayOrigin,token:connection.token,allowSyntheticLoopback:test}:undefined;
@@ -98,10 +96,9 @@ try{
      if(hasMeta){
        thread=db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()?.value;
        const leases=db.prepare("SELECT key,value FROM meta WHERE key LIKE 'lease:%'").all();
-       if(paths.adoption){
-         if(!thread)throw Error('desktop_adoption_original_thread_required');
-         if(leases.length)throw Error('desktop_adoption_owner_unknown');
-       }else if(leases.length)throw Error('desktop_lease_review_required');
+       if(paths.adoption&&!thread)throw Error('desktop_adoption_original_thread_required');
+       try{assertDesktopAdoptionLeasesRecoverable(leases,pid=>!leaseOwnerGone(pid));}
+       catch{throw Error(paths.adoption?'desktop_adoption_owner_unknown':'desktop_lease_review_required');}
        const {RECURSIVE_SCHEMA_VERSION}=await import(pathToFileURL(join(homer,'dist/recursive-tasks.js')).href);
        for(const [key,supported]of[['pendingSchemaVersion',['1']],['recursiveSchemaVersion',[RECURSIVE_SCHEMA_VERSION]]]){
          const row=db.prepare('SELECT value FROM meta WHERE key=?').get(key);if(row&&!supported.includes(row.value))throw Error('desktop_schema_incompatible');
@@ -119,7 +116,7 @@ try{
      if(paths.adoption&&db.prepare("SELECT value FROM transport_meta WHERE key='binding'").get()?.value!==desktopBoundary(config,manifest.codex))throw Error('desktop_adoption_gateway_review_required');
    }finally{db.close();}
  }
- releaseOwner=acquireDesktopOwner(paths.codexHome,processIdentity);
+ releaseOwner=acquireDesktopOwner(paths.codexHome,processIdentity,paths.runtime);
  // Retain exact original account/memory defaults; no loadConfig fallback to HOME.
  const build={directory:homer,hash:manifest.sourceHash,manifest:manifest.manifest,version:manifest.sourceHash.slice(0,12),uiHash:manifest.uiHash,schema:manifest.schema,toolsHash:manifest.toolsHash,boundary:desktopBoundary(config,manifest.codex),config,thread};
  const {verifyBuild}=await import('./trusted-build.mjs');verifyBuild(build);

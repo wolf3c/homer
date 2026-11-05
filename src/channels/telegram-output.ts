@@ -38,7 +38,7 @@ export function recordTelegramOutput(store: TelegramStore, event: TelegramHostEv
   store.atomic(() => {
     if (event.type === "delivery") {
       queueTelegramText(store, "delivery:" + event.id, origin, event.text, "rich", now, degraded);
-      if (event.runId) store.enqueue("artifact:" + event.id, origin, "file", { runId: event.runId }, now, "delivery:" + event.id);
+      if (event.resultId) store.enqueue("artifact:" + event.id, origin, "file", { resultId: event.resultId }, now, "delivery:" + event.id);
     } else {
       const buttons = store.interaction(event.id, origin, event.runId, Math.min(event.expiresAt, now + 1_800_000), event.options);
       if (buttons) {

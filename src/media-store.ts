@@ -148,7 +148,7 @@ export class MediaStore{
  gc(now=Date.now()){
   const has=(name:string)=>!!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
   const queue=has('agent_receipts')?" AND NOT EXISTS(SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE json_extract(m.payloadJson,'$.requestId')=media_assets.requestId AND r.state IN ('pending','offered','received','uncertain','blocked'))":'';
-  const workers=has('tasks')?" AND NOT EXISTS(SELECT 1 FROM task_versions v JOIN tasks t ON t.id=v.taskId JOIN json_each(v.inputsJson) i WHERE json_extract(i.value,'$.type')='attachment' AND json_extract(i.value,'$.id')=media_assets.id||'@'||media_assets.revision AND (t.state!='settled' OR t.controlState!='normal'))":'';
+  const workers=has('tasks')?" AND NOT EXISTS(SELECT 1 FROM task_versions v JOIN tasks t ON t.id=v.taskId JOIN json_each(v.authorityJson,'$.attachments') i WHERE i.value=media_assets.id||'@'||media_assets.revision AND (t.state!='settled' OR t.controlState!='normal'))":'';
   const candidates=this.db.prepare("SELECT * FROM media_assets WHERE expiresAt<? AND state NOT IN ('deleted','downloading') AND NOT EXISTS(SELECT 1 FROM media_pins p WHERE p.assetId=media_assets.id AND p.revision=media_assets.revision)"+queue+workers).all(now) as MediaAsset[];
   for(const a of candidates){
    this.db.prepare("UPDATE media_assets SET state='expired',lease=NULL WHERE id=?").run(a.id);let clean=true;

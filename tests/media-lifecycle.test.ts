@@ -1,5 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {mkdirSync,mkdtempSync,rmSync,existsSync} from 'node:fs';import {resolve,join} from 'node:path';
 import {MediaStore} from '../src/media-store.js';
+import {fixture,main,authority,mutation} from './recursive-fixture.js';
 import {writeFileSync,utimesSync,readFileSync} from 'node:fs';
 test('ILINK-LIFE-002 missing derivatives are recoverable, orphan bytes count and only aged unowned files are collected',()=>{
  const parent=resolve('.codex/scratch/media-lifecycle');mkdirSync(parent,{recursive:true});const dir=mkdtempSync(join(parent,'recovery-')),db=new DatabaseSync(':memory:');
@@ -26,4 +27,15 @@ test('ILINK-MEDIA-003 interrupted transfer recovery fences stale lease and missi
  const root=resolve('.codex/scratch/media-lifecycle'),dir=mkdtempSync(join(root,'fixture-')),db=new DatabaseSync(join(dir,'db.sqlite'));try{
   const m=new MediaStore(db,join(dir,'assets')),r=m.intent('request','binding','file'),old=m.claim(r)!;m.reconcile();assert.equal(m.asset(r).state,'retryable_failed');assert.throws(()=>m.ready(r,old,Buffer.from('late'),'text/plain'),/lease/);const next=m.claim(r)!;m.ready(r,next,Buffer.from('current'),'text/plain');rmSync(join(dir,'assets',r.assetId));m.reconcile();assert.equal(m.asset(r).error,'media_file_missing');
  }finally{db.close();rmSync(dir,{recursive:true,force:true});}
+});
+test('active task authority retains its exact attachment until the task is settled',()=>{
+ const f=fixture();try{
+  const media=new MediaStore(f.store.db,join(f.dir,'assets')),ref=media.intent(main.sourceRequestId!,'synthetic','file'),lease=media.claim(ref)!;
+  media.ready(ref,lease,Buffer.from('task attachment'),'text/plain');
+  const task=f.tasks.createTask(main,{operationId:'attachment-task',goal:'Use the supplied attachment',authority:{...authority(),attachments:[ref.assetId+'@'+ref.revision]}});
+  const expiredAt=Date.now()+31*86400000;
+  assert.equal(media.gc(expiredAt),0);assert.equal(media.read(main.sourceRequestId!,ref).bytes.toString(),'task attachment');
+  f.tasks.settleTask(main,{...mutation(f,'attachment-finished',task.taskId),outcome:'succeeded'});
+  assert.equal(media.gc(expiredAt),1);assert.equal(media.asset(ref).state,'deleted');
+ }finally{f.close();}
 });

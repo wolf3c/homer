@@ -209,7 +209,7 @@ async function receive(raw: unknown) {
       else if(m.method==='taskOverview.list')value=await bridge.taskOverview!.list();
       else if(m.method==='taskOverview.summary')value=await bridge.taskOverview!.summary!(m.input.id);
       else if(m.method==='taskOverview.origin')value=await bridge.taskOverview!.origin!(m.input.id,m.input.messageId);
-      else if(m.method==='taskOverview.detail')value=await bridge.taskOverview!.detail(m.input.id);
+      else if(m.method==='taskOverview.detail'){const {id,...query}=m.input;value=await bridge.taskOverview!.detail(id,Object.keys(query).length?query:undefined);}
       else if(m.method === 'media.read')value=await bridge.media!.read(m.input);
       else if(m.method === 'media.upload'){if(!bridge.media?.upload)throw Error('web_upload_unavailable');value=await bridge.media.upload(m.input);}
       else if(m.method === 'media.discard'){if(!bridge.media?.discard)throw Error('web_upload_unavailable');value=await bridge.media.discard(m.input);}

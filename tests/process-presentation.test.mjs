@@ -188,16 +188,17 @@ test('formal publications retain original IDs even after internal batch, same te
  assert.equal(d.find(n=>n.attrs['data-final-body']==='body').textContent,'');assert.doesNotMatch(d.container.textContent,/处理完毕|已读/);
 }));
 
-test('approved immutable Worker card remains visible once across original disclosure and live transport',async()=>withDom(async d=>{
- const event={id:'event',seq:1,revision:1,kind:'workerEvent',eventKey:'result:one',event:{eventKind:'result_received',title:'后台研究',body:'保留一个待确认事项。'}};
+test('ordinary Worker reply stays once inside original process disclosure across live transport',async()=>withDom(async d=>{
+ const event={id:'event',seq:1,revision:1,kind:'workerEvent',eventKey:'reply:one',event:{eventKind:'reply_received',bodySource:'reply',title:'后台研究',body:'保留一个待确认事项。'}};
  const messages=conversation([historyMessage('body')],[{...done(node),items:[...node.items,event]}]);await d.render(body(messages));
  assert.equal(button(d).attrs['aria-expanded'],'false');assert.doesNotMatch(visibleText(d.container),/保留一个待确认事项/);
- const originalCard=d.find(n=>n.attrs['data-worker-event']==='result:one');
+ assert.ok(!d.find(n=>n.attrs['data-worker-event']==='reply:one'),'reply DOM is unmounted while the process is closed');
  await d.click(button(d));
- const card=d.find(n=>n.attrs['data-worker-event']==='result:one'),cardButton=card.childNodes.find(n=>n.tagName==='BUTTON');
- assert.equal(card,originalCard);assert.ok(!d.find(n=>n.attrs['data-slot']==='run-activity').contains(card));
+ const card=d.find(n=>n.attrs['data-worker-event']==='reply:one'),cardButton=card.childNodes.find(n=>n.tagName==='BUTTON');
+ assert.ok(d.find(n=>n.attrs['data-slot']==='run-activity').contains(card));
  assert.equal(cardButton.attrs['aria-expanded'],'false');await d.click(cardButton);assert.equal(d.container.textContent.match(/保留一个待确认事项。/g).length,1);
- assert.equal(d.all().filter(n=>n.attrs['data-worker-event']).length,1);await d.render(body(messages,{...observation,connected:false}));assert.match(visibleText(d.container),/保留一个待确认事项。/);assert.equal(card.attrs['data-state'],'waiting');assert.match(card.textContent,/收到成果待核对/);assert.doesNotMatch(visibleText(d.container),/部分完成|上次状态/);
+ assert.equal(d.all().filter(n=>n.attrs['data-worker-event']).length,1);await d.render(body(messages,{...observation,connected:false}));
+ assert.ok(d.find(n=>n.attrs['data-worker-event']==='reply:one')===card,'reply DOM identity stays stable across transport updates');assert.match(visibleText(d.container),/保留一个待确认事项。/);assert.equal(card.attrs['data-state'],'waiting');assert.match(card.textContent,/当时：收到回复/);assert.doesNotMatch(visibleText(d.container),/部分完成|上次状态/);
  assert.equal(d.all().filter(n=>n.tagName==='DIALOG').length,0);
 }));
 

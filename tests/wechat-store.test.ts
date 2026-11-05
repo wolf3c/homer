@@ -15,15 +15,15 @@ const message = (id: string, context = "context-" + id) => ({message_id:id,from_
 test('ILINK-EXTRA-002 combined publication is opt-in, one durable operation and never merges old parts',()=>{
  const {db,store,generation}=setup();try{
   store.accept(generation,{msgs:[message('9702')]},key);const request=store.pending()[0]!.requestId;
-  assert.equal(store.queueCombinedArtifact(request,'bundle','说明','run-synthetic',key),false);
+  assert.equal(store.queueCombinedArtifact(request,'bundle','说明','result-synthetic',key),false);
   store.prepareCombinedDelivery(request);
-  assert.equal(store.queueCombinedArtifact(request,'bundle','说明','run-synthetic',key),true);
+  assert.equal(store.queueCombinedArtifact(request,'bundle','说明','result-synthetic',key),true);
   assert.equal(store.outbox().length,1);const row=store.outbox()[0]!;
-  assert.deepEqual(JSON.parse(decryptWechatPayload(row.payload,key,row.id)),{artifactRunId:'run-synthetic',combinedText:'说明'});
+  assert.deepEqual(JSON.parse(decryptWechatPayload(row.payload,key,row.id)),{artifactResultId:'result-synthetic',combinedText:'说明'});
   assert.equal(store.claim(row.id),true);store.failed(row.id,true,'wechat_send_uncertain');
-  assert.equal(store.queueCombinedArtifact(request,'bundle','说明','run-synthetic',key),true);assert.equal(store.claim(row.id),false);assert.equal(store.outbox().length,1);
-  store.queueText(request,'legacy','旧分片',key);assert.equal(store.queueCombinedArtifact(request,'legacy','说明','run-synthetic',key),false);
-  assert.equal(store.queueCombinedArtifact(request,'large','字'.repeat(2000),'run-synthetic',key),false);
+  assert.equal(store.queueCombinedArtifact(request,'bundle','说明','result-synthetic',key),true);assert.equal(store.claim(row.id),false);assert.equal(store.outbox().length,1);
+  store.queueText(request,'legacy','旧分片',key);assert.equal(store.queueCombinedArtifact(request,'legacy','说明','result-synthetic',key),false);
+  assert.equal(store.queueCombinedArtifact(request,'large','字'.repeat(2000),'result-synthetic',key),false);
   assert.throws(()=>store.prepareCombinedDelivery('foreign'),/wechat_combo_source_denied/);
   db.prepare('UPDATE wechat_connection SET bindingId=?').run('foreign');assert.throws(()=>store.prepareCombinedDelivery(request),/wechat_combo_source_denied/);
  }finally{db.close();}
@@ -109,7 +109,7 @@ test("unicode chunks preserve text and remain within a conservative byte budget"
 test("ILINK-OUT-04 uncertain text blocks the artifact in the same visible event across restart",()=>{
  const {db,store,generation}=setup();try{
   store.accept(generation,{msgs:[message('55')]},key);const input=store.pending()[0]!;
-  store.queueText(input.requestId,'paired-event','text',key);store.queueArtifact(input.requestId,'paired-event','run',key,1);
+  store.queueText(input.requestId,'paired-event','text',key);store.queueArtifact(input.requestId,'paired-event','result-synthetic',key,1);
   const rows=store.outbox();assert.equal(rows.length,2);assert.equal(rows[1]!.part,1);
   assert.equal(store.claim(rows[1]!.id),false);assert.equal(store.claim(rows[0]!.id),true);store.failed(rows[0]!.id,true,'wechat_send_uncertain');
   const restored=new WechatStore(db);restored.reconcile();assert.equal(restored.claim(rows[1]!.id),false);

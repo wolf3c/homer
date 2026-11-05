@@ -6,13 +6,15 @@ import {mkdirSync,mkdtempSync,readFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 const {MAIN_TOOLS}=await import(new URL('./tools.js',process.env.HOMER_TEST_SERVICE_MODULE));
-test('fixed native engine resumes the exact historical tools without replacing definitions or calling a model',{timeout:45000},async()=>{
+const {RECURSIVE_TOOLS}=await import(new URL('./recursive-tools.js',process.env.HOMER_TEST_SERVICE_MODULE));
+const {PENDING_TOOLS}=await import(new URL('./pending-tools.js',process.env.HOMER_TEST_SERVICE_MODULE));
+const tools=[...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS];
+const toolsHash=createHash('sha256').update(JSON.stringify(tools)).digest('hex');
+test('fixed native engine resumes the exact complete current tools without replacing definitions or calling a model',{timeout:45000},async()=>{
  const bin=process.env.HOMER_TEST_CODEX_BIN;assert.ok(bin?.startsWith('/'),'explicit bundled engine required');
  const parent=resolve('.codex/scratch/macos-desktop-application/native-tools-resume');mkdirSync(parent,{recursive:true});
  const root=mkdtempSync(join(parent,'synthetic-')),home=join(root,'codex');
  for(const name of ['codex','host-home','tmp','workspace'])mkdirSync(join(root,name),{mode:0o700});
- const original=MAIN_TOOLS.map(tool=>tool.name==='list_work'?{...tool,description:'Read current persistent matters, runs, statuses and available prepared material names.',inputSchema:{type:'object',properties:{},required:[],additionalProperties:false}}:tool);
- assert.equal(createHash('sha256').update(JSON.stringify(original)).digest('hex'),'e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a');
  const calls=[];
  function peer(){
   const settings={approval_policy:'never',web_search:'disabled','features.shell_tool':false,'features.plugins':false,'features.apps':false,'features.memories':false,'memories.generate_memories':false,'memories.use_memories':false,'features.skip_host_skill_discovery':true,'analytics.enabled':false,'feedback.enabled':false,model_provider:'synthetic_boundary','model_providers.synthetic_boundary':{name:'Synthetic local boundary',base_url:'http://127.0.0.1:9/v1',wire_api:'responses',supports_websockets:false,requires_openai_auth:false}};
@@ -30,13 +32,15 @@ test('fixed native engine resumes the exact historical tools without replacing d
  const metadata=path=>{assert.ok(path.startsWith(home+'/'));return readFileSync(path,'utf8').split('\n').filter(Boolean).map(x=>JSON.parse(x)).find(x=>x.type==='session_meta').payload;};
  try{
   await first.init();
-  const created=await first.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'synthetic_boundary',cwd:join(root,'workspace'),approvalPolicy:'never',sandbox:'read-only',environments:[],config:{mcp_servers:{}},dynamicTools:original});
+  const created=await first.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'synthetic_boundary',cwd:join(root,'workspace'),approvalPolicy:'never',sandbox:'read-only',environments:[],config:{mcp_servers:{}},dynamicTools:tools});
   const thread=created.thread.id;await first.request('thread/memoryMode/set',{threadId:thread,mode:'disabled'});
   await first.request('thread/inject_items',{threadId:thread,items:[{type:'message',role:'user',content:[{type:'input_text',text:'Synthetic tool resume marker. No model execution.'}]}]});
-  const before=await first.request('thread/read',{threadId:thread,includeTurns:true});assert.deepEqual(metadata(before.thread.path).dynamic_tools,original);
+  const before=await first.request('thread/read',{threadId:thread,includeTurns:true});assert.deepEqual(metadata(before.thread.path).dynamic_tools,tools);
+  assert.equal(createHash('sha256').update(JSON.stringify(metadata(before.thread.path).dynamic_tools)).digest('hex'),toolsHash);
   await first.close();first=undefined;second=peer();await second.init();
   const resumed=await second.request('thread/resume',{threadId:thread,excludeTurns:true,cwd:join(root,'workspace'),approvalPolicy:'never'});assert.equal(resumed.thread.id,thread);
-  const after=await second.request('thread/read',{threadId:thread,includeTurns:true});assert.deepEqual(metadata(after.thread.path).dynamic_tools,original);
+  const after=await second.request('thread/read',{threadId:thread,includeTurns:true});assert.deepEqual(metadata(after.thread.path).dynamic_tools,tools);
+  assert.equal(createHash('sha256').update(JSON.stringify(metadata(after.thread.path).dynamic_tools)).digest('hex'),toolsHash);
   assert.equal(calls.filter(x=>x==='thread/start').length,1);assert.equal(calls.includes('turn/start'),false);
  }finally{await first?.close();await second?.close();}
 });

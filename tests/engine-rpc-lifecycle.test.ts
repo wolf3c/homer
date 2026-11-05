@@ -186,10 +186,56 @@ test('Worker close sends EOF before bounded fallback and confirms only actual ex
  assert.deepEqual(events,['EOF','SIGTERM','SIGKILL']);
  assert.equal(await close,false);assert.equal(child.listenerCount('exit'),0);
 });
-test('Worker EOF completion needs no fallback and keeps transport closing fenced',async()=>{
+if(process.platform!=='win32')for(const groupAlive of [false,true])test('Worker EOF confirms only an empty process group: child remains='+groupAlive,async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:0});
  const p=peer('worker'),child=new EventEmitter() as any;
+ p.engine.pid=9999999;
+ t.mock.method(process,'kill',(pid:number,signal?:string|number)=>{
+  assert.equal(signal,0);
+  if(pid===-p.engine.pid!&&groupAlive)return true;
+  throw Object.assign(Error('no process'),{code:'ESRCH'});
+ });
  child.stdin={end(){queueMicrotask(()=>{p.engine['exited']=true;child.emit('exit',0);});}};
- p.engine['child']=child;assert.equal(await p.engine.close(),true);assert.equal(p.engine.available,false);
+ p.engine['child']=child;const close=observed(p.engine.close());await flush();
+ if(groupAlive){assert.equal(close.state(),'pending');t.mock.timers.tick(config.stopGraceMs);await flush();}
+ assert.equal(await close.result,!groupAlive);assert.equal(p.engine.available,false);
+});
+
+if(process.platform!=='win32')test('Worker EOF rechecks a draining process group within stopGraceMs',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:0});
+ const p=peer('worker'),child=new EventEmitter() as any;let groupAlive=true,groupChecks=0;
+ p.engine.pid=9999999;
+ t.mock.method(process,'kill',(pid:number,signal?:string|number)=>{
+  assert.equal(signal,0,'an exited leader must never trigger a signal against a reused PID');
+  assert.ok(pid===p.engine.pid||pid===-p.engine.pid!);
+  if(pid===-p.engine.pid!){groupChecks++;if(groupAlive)return true;}
+  throw Object.assign(Error('no process'),{code:'ESRCH'});
+ });
+ child.stdin={end(){queueMicrotask(()=>{p.engine['exited']=true;child.emit('exit',0);});}};
+ p.engine['child']=child;const close=observed(p.engine.close());await flush();
+ assert.equal(groupChecks,1);assert.equal(close.state(),'pending');
+ setTimeout(()=>{groupAlive=false;},config.stopGraceMs/2);
+ t.mock.timers.tick(config.stopGraceMs);await flush();
+ assert.equal(await close.result,true);assert.ok(groupChecks>1);assert.equal(p.engine.available,false);
+});
+
+if(process.platform!=='win32')for(const failure of ['EPERM','EIO','reused-leader'])test('Worker close keeps an unconfirmed owner fenced: '+failure,async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:0});
+ const p=peer('worker');p.engine.pid=9999999;p.engine['child']=new EventEmitter() as any;p.engine['exited']=true;
+ t.mock.method(process,'kill',(pid:number,signal?:string|number)=>{
+  assert.equal(signal,0,'unknown ownership permits probes only');
+  assert.ok(pid===p.engine.pid||pid===-p.engine.pid!);
+  if(pid===p.engine.pid&&failure==='reused-leader')return true;
+  throw Object.assign(Error('unconfirmed'),{code:pid===p.engine.pid?'ESRCH':failure});
+ });
+ const close=observed(p.engine.close());await flush();assert.equal(close.state(),'pending');
+ t.mock.timers.tick(config.stopGraceMs);await flush();assert.equal(await close.result,false);
+});
+
+if(process.platform!=='win32')for(const pid of [undefined,0,1,-1,1.5,NaN])test('Worker close cannot confirm an invalid PID: '+String(pid),async t=>{
+ const p=peer('worker');p.engine.pid=pid;p.engine['child']=new EventEmitter() as any;p.engine['exited']=true;
+ t.mock.method(process,'kill',()=>assert.fail('invalid PID must never be probed or signalled'));
+ assert.equal(await p.engine.close(),false);
 });
 
 test('a terminal checkpoint failure rejects the turn instead of leaving its caller waiting',async()=>{

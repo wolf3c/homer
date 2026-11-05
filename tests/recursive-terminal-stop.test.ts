@@ -10,12 +10,13 @@ import {DatabaseSync} from 'node:sqlite';
 import {WorkerInteractions} from '../src/worker-interactions.js';
 const until=async(check:()=>boolean)=>{const end=Date.now()+2000;while(!check()){assert.ok(Date.now()<end,'synthetic stop did not settle');await new Promise(r=>setTimeout(r,5));}};
 function fixture(confirm=true){
-  const root=mkdtempSync(resolve('.codex/scratch/recursive-agent-implementation/terminal-stop-'));
+  const base=resolve('.codex/scratch/chat-architecture-implementation-20261105/e-stop');mkdirSync(base,{recursive:true});
+  const root=mkdtempSync(join(base,'test-'));
   mkdirSync(join(root,'runtime'));mkdirSync(join(root,'workspace/materials'),{recursive:true});writeFileSync(join(root,'workspace/materials/sample.md'),'# Synthetic reference\nUnknown date.');
   const peers:Peer[]=[];let sequence=0;
   class Peer extends EventEmitter implements EngineLike{
     readonly worker:boolean;threadId:string;turnId='';resumable=true;
-    constructor(readonly options:EngineOptions,readonly handler:(call:ToolCall)=>Promise<unknown>){super();this.worker=options.tools.some(t=>t.name==='read_material');this.threadId=options.threadId??'synthetic-stop-thread-'+ ++sequence;}
+    constructor(readonly options:EngineOptions,readonly handler:(call:ToolCall)=>Promise<unknown>){super();this.worker=options.role==='worker';this.threadId=options.threadId??'synthetic-stop-thread-'+ ++sequence;}
     async start(){return this.threadId;}
     async call(tool:string,args:unknown):Promise<any>{return this.handler({threadId:this.threadId,turnId:this.turnId,callId:'synthetic-stop-call-'+ ++sequence,tool,arguments:args});}
     interrupts=0;closes=0;resolutions=0;status?:string;confirm=confirm;held=false;
@@ -29,9 +30,9 @@ function fixture(confirm=true){
       }
       if(text.startsWith('synthetic:dispatch')){
         this.turnId='synthetic-dispatch-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
-        const run=await this.call('dispatch_work',{title:'Synthetic held worker',goal:'琥珀',material:'sample.md'});return {status:'completed',text:run.id};
+        const task=await this.call('task_create',{goal:'Synthetic held worker'});const worker=await this.call('worker_open',{taskId:task.taskId,message:'Ask for the missing format'});return {status:'completed',text:worker.runId};
       }
-      if(text.startsWith('[Worker待答]')){
+      if(text.startsWith('[内部协作输入')&&text.includes('interactionId=')){
         this.turnId='synthetic-question-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
         const interactionId=text.match(/interactionId=([\w-]+)/)![1]!;
         await this.call('inspect_interaction',{interactionId});
@@ -63,9 +64,9 @@ for(const status of ['failed','cancelled'] as const)for(const confirmed of [true
     const {worker,item}=await f.start(),run=f.app.tasks.run(item.runId);
     if(status==='failed')f.app.tasks.failRun(run.id,run.epoch,'synthetic_parent_cancelled');
     else{
-      const task=f.app.tasks.task(run.taskId);
-      const receipt=f.app.tasks.stop({agentId:f.app.store.meta('mainAgentId')!},{operationId:'synthetic-db-stop',taskId:task.id,version:task.headVersion,expectedTaskRevision:task.revision,scope:'self',reason:'synthetic_db_first'});
-      f.app.tasks.confirmStop(receipt.operationKey,true);
+      f.app.tasks.workerStop({agentId:f.app.store.meta('mainAgentId')!},{operationId:'synthetic-db-stop',workerId:run.workerId,reason:'synthetic_db_first'});
+      // Fault at the persistence boundary: terminal business status must not skip physical close.
+      f.app.store.db.prepare("UPDATE runs SET status='cancelled' WHERE id=?").run(run.id);
     }
     assert.equal(f.app.interactions.inspect(item.id).state,'cancelled');assert.equal(worker.resolutions,0);
     assert.equal(f.app.store.run(run.id)!.status,status);

@@ -13,9 +13,9 @@ const trustedArg = process.argv.find(a => a.startsWith("mcp_servers.homer_intera
 const trusted = trustedArg ? JSON.parse(trustedArg.slice(trustedArg.indexOf("=") + 1).replace(/("(?:[^"\\]|\\.)*")=/g, "$1:")) : undefined;
 let worker = false, thread, turn, count = 0;
 const pending = new Map();
-const tool = (name, args) => new Promise(resolve => {
+const tool = (name, args) => new Promise((resolve, reject) => {
   const id = "tool-" + ++count;
-  pending.set(id, resolve);
+  pending.set(id, {resolve, reject});
   send({ id, method: "item/tool/call", params: { threadId: thread, turnId: turn, callId: id, tool: name, arguments: args } });
 });
 async function gate(name) { while (!existsSync(join(home, name))) await new Promise(r => setTimeout(r, 15)); }
@@ -27,10 +27,10 @@ createInterface({ input: process.stdin }).on("line", line => { void receive(JSON
 async function receive(m) {
   if (!m.method) {
     if (pending.has(m.id)) {
-      const resolve = pending.get(m.id); pending.delete(m.id);
+      const {resolve, reject} = pending.get(m.id); pending.delete(m.id);
       const text = m.result?.contentItems?.[0]?.text;
-      let result; try { result = JSON.parse(text); } catch { result = { error: text }; }
-      resolve(result);
+      if(m.error||m.result?.success===false)reject(Error(m.error?.message??text??'synthetic_tool_failed'));
+      else resolve(text?JSON.parse(text):m.result);
     }
     return;
   }
@@ -41,7 +41,7 @@ async function receive(m) {
   if (m.method === "mcpServerStatus/list") send({ id: m.id, result: { data: [{ name: "homer_interactions", tools: Object.fromEntries((trusted?.enabled_tools??[]).map(n => [n, {}])) }] } });
   if (m.method === "thread/start" || m.method === "thread/resume") {
     worker = trusted?.args?.at(-1) === "worker";
-    thread = worker ? "synthetic-worker-" + process.pid : "synthetic-main";
+    thread = m.params.threadId ?? (worker ? "synthetic-worker-" + process.pid : "synthetic-main");
     log({ event: "started", pid: process.pid, worker, thread, resumed: m.method === "thread/resume" });
     if (m.method === "thread/resume" && existsSync(join(home, "hold-resume"))) {
       writeFileSync(join(home, "resume-waiting"), "1"); await gate("release-resume");
@@ -53,6 +53,7 @@ async function receive(m) {
     send({ id: m.id, result: { turn: { id: turn, status: "inProgress" } } });
     send({ method: "turn/started", params: { threadId: thread, turn: { id: turn } } });
     const text = m.params.input.map(i => i.text ?? "").join("");
+    const input = text.startsWith('[内部协作输入') ? JSON.parse(text.split('\n')[1]) : undefined;
     if (worker) {
       writeFileSync(join(home, "worker-running"), String(process.pid));
       // Only this controlled fixture source is changed; no account or real model.
@@ -63,20 +64,20 @@ async function receive(m) {
       writeFileSync(join(home,"self-development-tested.json"),JSON.stringify({synthetic:true,sourceModified:true,testExit:check.status}));
       await gate("release-worker");
       await tool("read_material", {});
-      await tool("write_markdown", { filename: "result.md", content: "# Synthetic result\n林青：2026-10-20；待确认。" });
-      complete("written");
+      const file = await tool("write_markdown", { filename: "result.md", content: "# Synthetic result\n林青：2026-10-20；待确认。" });
+      complete("written\n" + file.path);
     } else if (text === "dispatch-synthetic") {
-      await tool("dispatch_work", { title: "Synthetic", goal: "Synthetic result", material: "meeting.md", matterId: null });
+      const task = await tool("task_create", { title: "Synthetic", goal: "Synthetic result" });
+      await tool("worker_open", { taskId: task.taskId, message: "Read meeting.md and write the synthetic result." });
       complete("dispatched");
     } else if (text === "hold-main") {
       writeFileSync(join(home, "main-running"), "1"); await gate("release-main"); complete("main-finished");
-    } else if (text.startsWith("[执行结果待审阅]")) {
-      const runId = text.match(/runId=([\w-]+)/)[1];
-      await tool("inspect_run", { runId });
-      await tool("review_artifact", { runId, accepted: true, summary: "verified synthetic", reason: "synthetic" });
-      complete("reviewed");
-    } else if (text.startsWith("[执行结果待交付]")) {
-      await tool("list_work", {}); complete("synthetic-delivered");
+    } else if (input?.kind === 'worker_reply') {
+      const reply = await tool('worker_read', {workerId:input.workerId,messageId:input.messageId}), filePath = reply.messages[0].text.trim().split('\n').at(-1);
+      if(readFileSync(filePath,'utf8')!=="# Synthetic result\n林青：2026-10-20；待确认。")throw Error('synthetic_result_mismatch');
+      const result = await tool('accept_result', {runId:input.runId,messageId:input.messageId,filePath});
+      await tool('work_inspect', {resultId:result.resultId});await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});
+      await tool('publish_delivery', {taskId:input.taskId,resultIds:[result.resultId],text:'synthetic-delivered'});complete('');
     } else complete("synthetic-reply");
   }
   if (m.method === "turn/interrupt") send({ id: m.id, result: {} });

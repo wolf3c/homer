@@ -11,7 +11,7 @@ const image=join(destination,'synthetic-image.png'),name='合成完整文件名-
 writeFileSync(image,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGOI6tkCRwzEcQCU8hmhmgeEcAAAAABJRU5ErkJggg==','base64'));
 writeFileSync(file,'synthetic attachment only');
 const tenFiles=Array.from({length:10},(_,i)=>{const path=join(destination,'synthetic-many-'+i+'.txt');writeFileSync(path,'synthetic '+i);return path;});
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 const chrome=await isolatedChrome(destination),checks=[];
 async function key(page,key){await page.command('Input.dispatchKeyEvent',{type:'keyDown',key,code:key,...(key==='Enter'?{text:'\r',windowsVirtualKeyCode:13}:{})});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key,code:key});}
 async function press(page,selector){await page.evaluate('document.querySelector('+JSON.stringify(selector)+').focus()');await key(page,'Enter');}

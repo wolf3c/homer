@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {validatePreviewIntent} from './user-intent.js';
-import type { RecursiveTasks } from './recursive-tasks.js';
+import type { AgentMessage, RecursiveTasks } from './recursive-tasks.js';
 import { recursiveHash } from './recursive-tasks.js';
 import { conversationInput, encodeConversationReferences, type ConversationHistory, type ConversationInput, type ConversationAcceptance, type ConversationReceipt, type ConversationMessage } from './web-history.js';
 type InterruptTarget = {
@@ -34,7 +34,6 @@ type Row = {
   threadId: string;
   detailsJson: string | null;
   hasRequest: number;
-  resultJson?:string|null;
 };
 const inputRows = `SELECT m.id,m.seq,m.kind,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,
   CASE WHEN m.kind='user_input' THEN m.payloadJson ELSE '{}' END payloadJson,
@@ -141,14 +140,6 @@ export class MainInputs {
     const payload=JSON.parse(body??String(this.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(row.id)!.payloadJson));
     const fields=Object(payload) as Record<string,unknown>;
     let text=typeof fields.text==='string'?fields.text:typeof fields.question==='string'?fields.question:JSON.stringify(payload,null,2);
-    if(row.senderAgentId==='host'){
-      text=row.kind==='task_archived'?'任务已归档。':row.kind==='interaction_required'?'Worker 有问题需要主 Agent 协调。':row.kind==='terminal'?'Worker 执行状态已变化，等待主 Agent 核对。':'Worker 返回了业务更新，等待主 Agent 处理。';
-      if(row.kind==='result_ready'&&typeof fields.resultId==='string'){
-        const resultJson=row.resultJson===undefined?this.db.prepare('SELECT payloadJson FROM results WHERE id=? AND taskId=? AND version=?').get(fields.resultId,row.taskId,row.taskVersion)?.payloadJson:row.resultJson;
-        const body=typeof resultJson==='string'?JSON.parse(resultJson):undefined;
-        const summary=body?.text??body?.summary;if(typeof summary==='string'&&summary.trim())text=summary;
-      }
-    }
     return {origin:'worker',messageId:row.id,seq:row.seq,revision:row.revision,state:row.receiptState==='pending'?'queued':['offered','received'].includes(row.receiptState)?'processing':'uncertain',source:'worker',editable:false,kind:row.kind,taskId:row.taskId,taskVersion:row.taskVersion,senderAgentId:row.senderAgentId,runId:row.senderRunId??(row.senderAgentId==='host'&&typeof fields.runId==='string'?fields.runId:null),payload,text};
   }
   private rowByMessage(messageId:string){return this.db.prepare(inputRows+' WHERE m.id=? AND m.recipientAgentId=? AND m.targetRunId IS NULL').get(messageId,this.agent) as Row|undefined;}
@@ -192,14 +183,12 @@ export class MainInputs {
     const end=Math.min(start+80,rows.length),selected=rows.slice(start,end);
     const messages=this.history.inputs(threadId,selected.filter(row=>row.kind==='user_input').map(row=>this.payload(row).requestId));
     const workerIds=selected.filter(row=>row.kind!=='user_input').map(row=>row.id);
-    const bodies=new Map(workerIds.length?this.db.prepare(`SELECT m.id,m.payloadJson,r.payloadJson resultJson FROM agent_messages m
-      LEFT JOIN results r ON m.senderAgentId='host' AND m.kind='result_ready' AND r.id=json_extract(m.payloadJson,'$.resultId') AND r.taskId=m.taskId AND r.version=m.taskVersion
-      WHERE m.id IN (${workerIds.map(()=>'?').join(',')})`).all(...workerIds).map(row=>[String(row.id),{payloadJson:String(row.payloadJson),resultJson:row.resultJson as string|null}]):[]);
+    const bodies=new Map(workerIds.length?this.db.prepare(`SELECT id,payloadJson FROM agent_messages WHERE id IN (${workerIds.map(()=>'?').join(',')})`).all(...workerIds).map(row=>[String(row.id),String(row.payloadJson)]):[]);
     let position=rows.slice(0,start).filter(row=>row.receiptState==='pending').length;
     const pending=rows.filter(row=>row.receiptState==='pending');
     const positions=new Map(pending.map((row,index)=>[row.id,index]));
     const items=selected.map((row,offset)=>{
-      const index=start+offset,body=bodies.get(row.id),item=row.kind==='user_input'?this.current(row,messages.get(this.payload(row).requestId)):this.workerCurrent({...row,resultJson:body?.resultJson},body?.payloadJson);
+      const index=start+offset,body=bodies.get(row.id),item=row.kind==='user_input'?this.current(row,messages.get(this.payload(row).requestId)):this.workerCurrent(row,body);
       const at=positions.get(row.id)??-1;
       const shared={...item,movable:movable[index]!,...(row.receiptState==='pending'?{position:++position,firstMessageId:pending[0]?.id,nextMessageId:pending[at+1]?.id??null,previousMessageId:pending[at-1]?.id,moveDownBeforeMessageId:pending[at+2]?.id??null}:{})};
       if(sources==='all'||item.origin==='worker')return shared;
@@ -214,8 +203,9 @@ export class MainInputs {
   }
   recoveryMessages(after=0,messageId?:string){
     // User recovery may inspect pre-start history; this never offers pending work.
-    return this.db.prepare(`SELECT m.* ${recoveryRows} AND m.seq>? ${messageId?'AND m.id=?':''}
-      ORDER BY m.seq LIMIT 80`).all(this.agent,this.store.meta('mainThread')!,after,...(messageId?[messageId]:[])).map(row=>({...row,payload:JSON.parse(String(row.payloadJson))}));
+    const rows=this.db.prepare(`SELECT m.* ${recoveryRows} AND m.seq>? ${messageId?'AND m.id=?':''}
+      ORDER BY m.seq LIMIT 80`).all(this.agent,this.store.meta('mainThread')!,after,...(messageId?[messageId]:[])) as AgentMessage[];
+    return rows.map(row=>({...row,payload:JSON.parse(row.payloadJson)}));
   }
   recoveryQueue(){
     return this.db.prepare(`SELECT m.id,m.seq ${recoveryRows} AND r.state='uncertain' ORDER BY m.seq`).all(this.agent,this.store.meta('mainThread')!) as {id:string;seq:number}[];
@@ -483,6 +473,11 @@ export class MainInputs {
   }
   reconcile() {
     this.store.transaction(() => {
+      this.db.prepare(`UPDATE agent_receipts SET state='pending',offeredTurnId=NULL,revision=revision+1
+        WHERE recipientAgentId=? AND state IN ('offered','received','uncertain') AND messageId IN (
+          SELECT m.id FROM agent_messages m JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
+          JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
+          WHERE m.recipientAgentId=? AND m.senderAgentId='host' AND m.kind<>'user_input' AND m.targetRunId IS NULL AND i.threadId=?)`).run(this.agent,this.agent,this.store.meta('mainThread')??'');
       const active = this.list().filter(r => r.state === 'processing' || r.state === 'uncertain');
       for (const item of active) {
         if(item.state==='processing')this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE messageId=?").run(item.messageId);

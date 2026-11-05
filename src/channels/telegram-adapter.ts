@@ -306,7 +306,7 @@ export class TelegramAdapter {
     const payload = JSON.parse(row.payload!) as Record<string, unknown>;
     if (row.kind === "file") {
       let artifact: { filename: string; bytes: Uint8Array };
-      try { artifact = await this.host.artifact(payload.runId as string, origin); }
+      try { artifact = await this.host.artifact(payload.resultId as string, origin); }
       catch { throw new TelegramApiError("rejected", 0, 422); }
       if (!this.store.trusted(origin)) throw new TelegramApiError("rejected", 0, 410);
       try { return await this.api.document(origin.chatId, artifact.filename, artifact.bytes, origin.messageId, this.#abort?.signal); }

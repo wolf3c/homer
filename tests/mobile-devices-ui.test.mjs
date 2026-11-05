@@ -104,3 +104,62 @@ test('relay authorization pauses explain recovery without blocking device approv
   assert.doesNotMatch(d.container.textContent,/Bearer|credential|token/);
  });
 });
+
+function account(overrides={}){return {supported:true,configured:true,source:'codex',connection:'disconnected',active:'disconnected',pending:false,canReopen:false,needsRestart:false,stale:true,...overrides};}
+function accountBridge(initial=account()){
+ let current=initial;const calls=[],listeners=new Set();
+ const api=Object.fromEntries(['state','connect','cancel','reopen','restart','refresh','applyWebsite','applyCodex'].map(action=>[action,async()=>{calls.push(action);if(action==='connect')current={...current,pending:true,canReopen:true};if(action==='cancel')current={...current,pending:false,canReopen:false};return current;} ]));
+ api.onChange=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
+ return {api,calls,listeners,set:async value=>{current=value;await act(async()=>{for(const fn of listeners)fn();});}};
+}
+test('mobile login saves a relay account without switching models or requesting wallet data',async()=>setup(async d=>{
+ const a=accountBridge();window.homerDesktopAccount=a.api;globalThis.fetch=async()=>json(state());
+ await d.render(React.createElement(m.exports.MobileDeviceSettings));
+ assert.match(d.container.textContent,/当前模型来源保持不变/);assert.ok(button(d,'连接 Homer 账号'));
+ await d.click(button(d,'添加移动设备'));assert.equal(button(d,'连接 Homer 账号').hasAttribute('disabled'),false);
+ await d.click(button(d,'连接 Homer 账号'));assert.match(d.container.textContent,/请在浏览器完成 Homer 登录/);
+ await d.click(button(d,'重新打开登录页面'));await d.click(button(d,'取消登录'));
+ assert.ok(button(d,'连接 Homer 账号'));
+ await a.set(account({connection:'website',needsRestart:true,wallet:{available:0,used:0,unit:'积分',expiresAt:Date.now()/1000+0.01}}));
+ assert.ok(button(d,'重启并启用中继'));await d.click(button(d,'重启并启用中继'));
+ assert.ok(button(d,'重启并启用中继'),'cancelled restart leaves the saved account pending');
+ assert.equal(a.calls.filter(x=>x==='restart').length,1);assert.ok(!a.calls.some(x=>['applyWebsite','applyCodex','refresh'].includes(x)));
+ assert.doesNotMatch(d.container.textContent,/购买|充值|积分/);
+ await a.set(account({connection:'website'}));assert.ok(!button(d,'连接 Homer 账号'));assert.ok(!button(d,'重启并启用中继'));assert.doesNotMatch(d.container.textContent,/中继已连通/);
+ await d.render(null);assert.equal(a.listeners.size,0);
+}));
+test('authorization read failure stays unknown, recovers by check and never gates pairing',async()=>setup(async d=>{
+ const a=accountBridge();let failed=true;a.api.state=async()=>{a.calls.push('state');if(failed)throw Error('private');return account();};window.homerDesktopAccount=a.api;globalThis.fetch=async()=>json(state());
+ await d.render(React.createElement(m.exports.MobileDeviceSettings));assert.match(d.container.textContent,/暂时无法确认连接授权/);assert.ok(!button(d,'连接 Homer 账号'));assert.ok(button(d,'添加移动设备'));
+ failed=false;await d.click(button(d,'重新检查连接授权'));assert.ok(button(d,'连接 Homer 账号'));
+ failed=true;await a.set(account());assert.match(d.container.textContent,/暂时无法确认连接授权/);assert.ok(!button(d,'连接 Homer 账号'));
+}));
+test('relay login handles expired, service, unsupported and ordinary Web states without wallet promotion',async()=>{
+ for(const [value,deviceState,message,login] of [
+  [account({connection:'website'}),state({turnStatus:'account_required'}),'重新连接账号并重启 Homer',true],
+  [account({error:'TOKEN_UNAVAILABLE'}),state(),'登录凭据已失效',true],
+  [account({error:'UNAVAILABLE'}),state(),'暂不可用',true],
+  [account({configured:false}),state(),'尚未配置',false],
+  [account({supported:false}),state(),'Homer 桌面版',false],
+ ])await setup(async d=>{window.homerDesktopAccount=accountBridge(value).api;globalThis.fetch=async()=>json(deviceState);await d.render(React.createElement(m.exports.MobileDeviceSettings));assert.ok(d.container.textContent.includes(message));assert.equal(!!button(d,'连接 Homer 账号'),login);assert.ok(button(d,'添加移动设备'));});
+ await setup(async d=>{globalThis.fetch=async()=>json(state());await d.render(React.createElement(m.exports.MobileDeviceSettings));assert.match(d.container.textContent,/Homer 桌面版连接账号/);assert.ok(!button(d,'连接 Homer 账号'));});
+});
+test('duplicate login clicks are serialized and callbacks after unmount cannot revive the view',async()=>setup(async d=>{
+ const a=accountBridge();let finish;a.api.connect=()=>{a.calls.push('connect');return new Promise(r=>finish=r);};window.homerDesktopAccount=a.api;globalThis.fetch=async()=>json(state());
+ await d.render(React.createElement(m.exports.MobileDeviceSettings));const start=button(d,'连接 Homer 账号');await d.click(start);await d.click(start);assert.equal(a.calls.filter(x=>x==='connect').length,1);
+ await d.render(null);assert.equal(a.listeners.size,0);await act(async()=>finish(account({pending:true})));assert.equal(d.container.textContent,'');
+}));
+
+test('pending login uses the shared fallback read and stops after completion',async()=>setup(async d=>{
+ let current=account(),reads=0;
+ const a=accountBridge();a.api.state=async()=>{reads++;return current;};a.api.connect=async()=>{current=account({pending:true,canReopen:true});return current;};window.homerDesktopAccount=a.api;globalThis.fetch=async()=>json(state());
+ await d.render(React.createElement(m.exports.MobileDeviceSettings));await d.click(button(d,'连接 Homer 账号'));
+ current=account({connection:'website',needsRestart:true});await act(async()=>{await new Promise(r=>setTimeout(r,1100));});assert.ok(button(d,'重启并启用中继'));
+ const completed=reads;await act(async()=>{await new Promise(r=>setTimeout(r,1100));});assert.equal(reads,completed);assert.ok(!a.calls.includes('refresh'));
+}));
+test('a failed reopen retains cancellation and account errors never promote buying model credit',async()=>setup(async d=>{
+ const a=accountBridge();a.api.reopen=async()=>{throw Error('synthetic');};window.homerDesktopAccount=a.api;globalThis.fetch=async()=>json(state());
+ await d.render(React.createElement(m.exports.MobileDeviceSettings));await d.click(button(d,'连接 Homer 账号'));await d.click(button(d,'重新打开登录页面'));
+ assert.ok(button(d,'取消登录'));await d.click(button(d,'取消登录'));assert.ok(button(d,'连接 Homer 账号'));
+ await a.set(account({error:'RATE_LIMITED'}));assert.match(d.container.textContent,/请求较多/);assert.doesNotMatch(d.container.textContent,/购买|充值|积分/);
+}));

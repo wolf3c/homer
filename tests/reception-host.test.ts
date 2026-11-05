@@ -21,10 +21,10 @@ test('reception host: continuous user reception with a real background task; com
    this.turnId='synthetic-turn-'+ ++sequence;options?.onStarted?.(this.turnId);
    if(this.options.tools.some(t=>t.name==='read_material'))return new Promise(r=>releaseWorker=r);
    if(text==='synthetic:delegate'){
-    const task=await this.call('task_delegate',{operationId:'background',parentTaskId:null,parentVersion:null,expectedTaskRevision:null,title:'Synthetic background',executorKind:'worker',contract:{goal:'Synthetic background',inputs:[],resultKind:'structured',acceptance:{criteria:[]}},dependencies:[]});taskId=task.taskId;
-   }else if(text.startsWith('[内部协作事件')){
+    const task=await this.call('task_create',{title:'Synthetic background',goal:'Synthetic background'});taskId=task.taskId;
+    await this.call('worker_open',{taskId,message:'Inspect synthetic background'});
+   }else if(text.startsWith('[内部协作输入')){
     await new Promise<void>(r=>releaseInternal=r);
-    for(const message of await this.call('inbox_read',{after:0}))await this.call('inbox_ack',{operationId:'ack-'+message.id,messageId:message.id,disposition:'processed',reason:'Synthetic inspected failure',resultId:null});
    }else turns.push(text);
    this.emit('nativeCompleted',{turnId:this.turnId,status:'completed'});
    return {status:'completed',text:'Synthetic confirmed reply'};
@@ -38,7 +38,7 @@ test('reception host: continuous user reception with a real background task; com
   await app.start();await app.message('synthetic:delegate','synthetic-delegate');await until(()=>!!releaseWorker);
   for(let i=0;i<6;i++)app.submitMessage({requestId:'synthetic-user-'+i,text:'synthetic-question-'+i});
   await until(()=>app.inputs.list().filter(item=>item.state==='completed').length===7);
-  assert.deepEqual(turns,Array.from({length:6},(_,i)=>'synthetic-question-'+i));assert.equal(app.tasks.task(taskId).state,'working');
+  assert.deepEqual(turns,Array.from({length:6},(_,i)=>'synthetic-question-'+i));assert.equal(app.tasks.task(taskId).state,'open');
   const bridge=homerWebBridge(app),before=app.store.db.prepare('SELECT total_changes() n').get()!.n;
   const observedAt=Date.now(),clock=t.mock.method(Date,'now',()=>observedAt);
   const a=await bridge.state(),b=await bridge.state();assert.deepEqual(a,b);clock.mock.restore();assert.equal(app.store.db.prepare('SELECT total_changes() n').get()!.n,before);
@@ -53,7 +53,7 @@ test('reception host: continuous user reception with a real background task; com
   assert.deepEqual(await bridge.state(),busy);busyClock.mock.restore();assert.equal(app.store.db.prepare('SELECT total_changes() n').get()!.n,internalChanges);
   await assert.rejects(app.stopMain('invented-internal-message'),/main_reply_not_active/);
   assert.deepEqual(app.processes.exact(node.id),original,'historical delegation stays frozen when the live Run fails');
-  const run=app.tasks.run(app.tasks.task(taskId).currentRunId!);assert.equal(run.errorCode,'synthetic_failure');assert.equal(run.status,'awaiting_review');assert.equal(app.tasks.task(taskId).outcome,null,'execution failure is not a reviewed business outcome');
+  const run=app.tasks.runs(taskId)[0]!;assert.equal(run.errorCode,'synthetic_failure');assert.equal(run.status,'failed');assert.equal(app.tasks.task(taskId).outcome,null,'execution failure is not a reviewed business outcome');
   const beforeInternalEnd=seen.length;
   releaseInternal!();await app.idle();assert.equal((await bridge.state()).isRunning,false);
   assert.equal(app['mainContext'],undefined);assert.ok(seen.slice(beforeInternalEnd).some(state=>!state.internal&&state.messageId===null),'internal round end invalidates state');

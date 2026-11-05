@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {cloneTask,workerNamed,changeWorker,overviewTask} from './task-status-browser-data.mjs';
 
 export async function pinnedPerformance(page){
  const trigger=page.locator('#task-status-trigger');
@@ -6,14 +7,14 @@ export async function pinnedPerformance(page){
  await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('工作中'));
  const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
  const tasks=[];
- for(let n=0;n<250;n++)for(const task of original.tasks)tasks.push({...task,id:task.id+'-'+n,rootTaskId:task.rootTaskId+'-'+n,parentTaskId:task.parentTaskId?task.parentTaskId+'-'+n:null,pendingUsers:task.pendingUsers?.map(question=>({...question,id:question.id+'-'+n}))});
- assert.equal(tasks.length,2000);
+ for(let n=0;n<250;n++)for(const task of original.tasks)tasks.push(cloneTask(task,'-'+n));
+ assert.equal(tasks.length,1000);
  await page.route('**/api/tasks',route=>route.fulfill({json:{...original,tasks}}));
  let progressReads=0;
  page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/progress'))progressReads++;});
  const samples=[];
  for(let n=0;n<3;n++){
-  await page.reload();await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('750 个 Worker'));
+  await page.reload();await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('250 个任务工作中'));
   await page.evaluate(()=>{window.__statusOpenStart=performance.now();});
   await trigger.click();const panel=page.getByRole('dialog',{name:'工作状态卡片'});await panel.waitFor();
   const sample=await page.evaluate(async()=>{await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));return {openToFrameMs:performance.now()-window.__statusOpenStart,initialSections:document.querySelectorAll('[data-todo-id]').length,domNodes:document.querySelectorAll('*').length};});
@@ -37,13 +38,13 @@ export default async function pinnedStatus(page,{destination}={}){
  const shot=async name=>{if(destination)await page.screenshot({path:destination+'/'+name+'.png',animations:'disabled'});};
  await trigger.waitFor();await page.getByRole('complementary',{name:'工作状态卡片'}).waitFor();await ready();
  ok(await trigger.getAttribute('aria-expanded')==='true','1440px 初次常驻');
- ok(await trigger.getAttribute('aria-label')==='工作状态'&&await trigger.getAttribute('aria-controls')==='task-status-panel','图标入口名称及面板关系准确');
- ok(await trigger.innerText()===''&&await page.locator('.header-name').innerText()==='荷马','左侧仅保留品牌，入口为图标');
+ ok(await trigger.getAttribute('aria-label')==='工作状态，1 个任务工作中'&&await trigger.getAttribute('aria-controls')==='task-status-panel','图标入口名称及面板关系准确');
+ ok(await trigger.innerText()==='1'&&await page.locator('.header-name').innerText()==='荷马','左侧仅保留品牌，入口图标与事项计数');
  ok(await page.locator('.header-actions> :last-child').getAttribute('aria-label')==='预览','预览入口保持应用最右');
  const purchase=()=>panel.getByRole('button',{name:/采购选型方案/});
  await purchase().click();await panel.getByRole('button',{name:/资料整理 Worker/}).click();
  await panel.getByText('核对服务条款',{exact:true}).waitFor();
- ok((await panel.locator('[data-count="working"]').innerText()).startsWith('3 ')&&(await panel.locator('[data-count="done"]').innerText()).startsWith('1 ')&&(await panel.locator('[data-count="needs-user"]').innerText()).startsWith('1 '),'原工作/完成/有效待答计数及层级准确');
+ ok((await panel.locator('[data-count="working"]').innerText())==='1'&&(await panel.locator('[data-count="done"]').innerText())==='1'&&(await panel.locator('[data-count="needs-user"]').innerText())==='1','原工作/完成/有效待答计数及层级准确');
  await page.keyboard.press('Escape');ok(await panel.isVisible(),'宽屏摘要为非模态，Escape 不关闭常驻');
  await shot('desktop-1440-pinned');
  const originalNode=await panel.locator('[data-todo-id]').first().getAttribute('data-todo-id');
@@ -120,14 +121,14 @@ export async function pinnedData(page,{destination,publish}={}){
  const checks=[],ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
  const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel');
  await panel.waitFor();const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- const research=original.tasks.find(t=>t.goal==='资料整理 Worker');
+ const {task:purchaseTask,worker:research}=workerNamed(original,'资料整理 Worker');
  const root=()=>panel.getByRole('button',{name:/采购选型方案/}),worker=()=>panel.getByRole('button',{name:/资料整理 Worker/});
  await root().click();await worker().click();await panel.locator('[data-slot="agent-plan"]').waitFor();
  await root().click();await root().click();ok(await worker().getAttribute('aria-expanded')==='false','原父层收起重开仍清理子层展开');
  await worker().click();await panel.locator('[data-slot="agent-plan"]').waitFor();
  await panel.getByRole('button',{name:/成本分析 Worker/}).click();publish('progress');
  await panel.getByText('成本表已按统一口径更新。',{exact:true}).waitFor();
- ok(await worker().getAttribute('aria-expanded')==='true'&&(await panel.locator('[data-count="working"]').innerText()).startsWith('3 '),'真实合成 SSE 通知更新公开进展并保留层级与计数');
+ ok(await worker().getAttribute('aria-expanded')==='true'&&(await panel.locator('[data-count="working"]').innerText())==='1','真实合成 SSE 通知更新公开进展并保留层级与计数');
  await panel.getByRole('button',{name:/成本分析 Worker/}).click();
  const refreshed=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
  let snapshot={...refreshed,progressRevision:(refreshed.progressRevision??0)+1};
@@ -139,11 +140,11 @@ export async function pinnedData(page,{destination,publish}={}){
  await page.unroute('**/api/tasks/*/progress');await worker().click();await worker().click();await panel.locator('[data-slot="agent-plan"]').waitFor();
  ok(true,'详情失败仍按原收起重开路径恢复');
  // Hold an old execution response while the source identity changes.
- const oldProgress=await page.evaluate(async id=>await(await fetch('/api/tasks/'+id+'/progress')).json(),research.rootTaskId);
+ const oldProgress=await page.evaluate(async id=>await(await fetch('/api/tasks/'+id+'/progress')).json(),purchaseTask.id);
  const held=[];let started;const pending=new Promise(resolve=>started=resolve);
  await page.route('**/api/tasks/*/progress',route=>{held.push(route);started();});
  await worker().click();await worker().click();await pending;
- snapshot={...snapshot,tasks:original.tasks.map(t=>t.id===research.id?{...t,headVersion:t.headVersion+1,currentRunId:t.currentRunId+'-next',run:{...t.run,id:t.currentRunId+'-next',epoch:t.run.epoch+1,threadId:'synthetic-next-thread',turnId:'synthetic-next-turn'}}:t)};
+ snapshot=changeWorker({...snapshot,tasks:original.tasks},'资料整理 Worker',w=>({...w,run:{...w.run,id:w.run.id+'-next',version:w.run.version+1,epoch:w.run.epoch+1,threadId:'synthetic-next-thread',turnId:'synthetic-next-turn'}}));
  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
  await page.waitForFunction(()=>[...document.querySelectorAll('[data-worker-id] > [data-slot="task-status-row"] > button')].some(el=>el.textContent.includes('资料整理 Worker')&&el.getAttribute('aria-expanded')==='false'));
  for(const route of held)await route.fulfill({json:oldProgress}).catch(()=>{});await page.unroute('**/api/tasks/*/progress');
@@ -161,21 +162,21 @@ export async function pinnedData(page,{destination,publish}={}){
  ok(true,'宽屏原待答定位保持准确身份及焦点');
  // A large, synthetic snapshot verifies pagination and long names in both hosts.
  const tasks=[];
- for(let n=0;n<10;n++)for(const t of original.tasks)tasks.push({...t,id:t.id+'-'+n,rootTaskId:t.rootTaskId+'-'+n,parentTaskId:t.parentTaskId?t.parentTaskId+'-'+n:null,title:((t.title??t.goal)+' 完整中文事项标题用于窄屏省略与展开阅读全文'.repeat(3)).slice(0,60),pendingUsers:t.pendingUsers?.map(q=>({...q,id:q.id+'-'+n}))});
+ for(let n=0;n<20;n++)for(const t of original.tasks)tasks.push(cloneTask(t,'-'+n,{title:((t.title??t.goal)+' 完整中文事项标题用于窄屏省略与展开阅读全文'.repeat(3)).slice(0,60)}));
  await page.route('**/api/tasks',route=>route.fulfill({json:{...original,tasks}}));
  await page.setViewportSize({width:320,height:844});await page.reload();
- await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('30 个 Worker'));
+ await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('20 个任务工作中'));
  ok(await trigger.getAttribute('aria-expanded')==='false','320px 大量任务仍默认关闭');
  await trigger.click();await panel.waitFor();
- ok(await panel.locator('[data-todo-id]').count()===20,'仍按原20事项分批展示');
+ ok(await panel.locator('[data-todo-id]').count()===60,'未结案事项全部可达，历史仍按批展示');
  await panel.getByRole('button',{name:/显示更多事项/}).click();
- ok(await panel.locator('[data-todo-id]').count()===40,'原分页可继续加载到40事项');
+ ok(await panel.locator('[data-todo-id]').count()===80,'原分页继续加载剩余历史事项');
  const first=panel.locator('[data-item-row]>button').first();await first.click();
  ok((await first.getAttribute('title')).length>50&&await panel.locator('.status-row-heading').first().isVisible(),'长标题有完整 title 与展开全文');
  await trigger.click();await panel.waitFor({state:'hidden'});await trigger.click();await panel.waitFor();
- ok(await panel.locator('[data-todo-id]').count()===40&&await first.getAttribute('aria-expanded')==='true','弹层关闭重开保持分页与展开');
+ ok(await panel.locator('[data-todo-id]').count()===80&&await first.getAttribute('aria-expanded')==='true','弹层关闭重开保持分页与展开');
  await page.keyboard.press('Escape');await page.setViewportSize({width:1440,height:1000});await panel.waitFor();
- ok(await panel.locator('[data-todo-id]').count()===40,'切回常驻保留同一分页');
+ ok(await panel.locator('[data-todo-id]').count()===80,'切回常驻保留同一分页');
  const view=page.locator('.thread-viewport'),top=await view.evaluate(el=>el.scrollTop);
  await panel.locator('.status-list').evaluate(el=>el.scrollTop=200);
  ok(await panel.locator('.status-list').evaluate(el=>el.scrollHeight>el.clientHeight&&el.scrollTop===200)&&await view.evaluate(el=>el.scrollTop)===top,'常驻列表独立滚动，不移动聊天');
@@ -235,9 +236,9 @@ export async function pinnedConnection(page){
 export async function pinnedOrdering(page,{destination}={}){
  await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('工作中'));
  const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- const template=original.tasks.find(t=>t.executorKind==='worker'&&t.run?.phase==='executing');
+ const template=original.tasks.find(t=>t.workers.some(w=>w.run.phase==='executing'));
  assert.ok(template);
- const make=(id,at,ended=false)=>({...template,id,rootTaskId:id,parentTaskId:null,title:id,creationOrder:at,state:ended?'settled':'working',outcome:ended?'succeeded':null,currentRunId:'run-'+id,pendingUser:0,pendingMain:0,pendingUsers:[],result:null,delivery:null,run:{...template.run,id:'run-'+id,status:ended?'succeeded':'running',phase:ended?'ended':'executing',startedAt:at,endedAt:ended?at:null}});
+ const make=(id,at,ended=false)=>{const task=overviewTask(id,{title:id,creationOrder:at,settledAt:ended?at:null,state:ended?'settled':'open',outcome:ended?'succeeded':null});task.workers[0].run={...task.workers[0].run,status:ended?'succeeded':'running',phase:ended?'ended':'executing',startedAt:at,endedAt:ended?at:null};return task;};
  const active=Array.from({length:25},(_,i)=>make('ordering-active-'+i,i+1));
  const history=Array.from({length:30},(_,i)=>make('ordering-history-'+i,i+1,true));
  await page.evaluate(()=>{
@@ -271,11 +272,11 @@ export async function pinnedOrdering(page,{destination}={}){
   await page.waitForFunction(()=>document.querySelectorAll('[data-todo-id]').length===56);
   const reading=await page.evaluate(anchor=>{const list=document.querySelector('.status-list'),row=[...list.querySelectorAll('[data-todo-id]')].find(e=>e.dataset.todoId===anchor.id);return {offset:row.getBoundingClientRect().top-list.getBoundingClientRect().top,focus:row.contains(document.activeElement),expanded:row.querySelector('.status-row-trigger').getAttribute('aria-expanded'),overflow:document.documentElement.scrollWidth>innerWidth};},anchor);
   assert.ok(Math.abs(reading.offset-anchor.offset)<2,JSON.stringify({width,anchor,reading}));assert.equal(reading.focus,true);assert.equal(reading.expanded,'true');assert.equal(reading.overflow,false);
-  const order=await ids();await snapshot([...active.map(t=>t.id===reader?make(reader,0,true):{...t,revision:t.revision+10,updatedAt:999999,run:{...t.run,summary:'ordinary update'}}),make('ordering-new',999),...history]);
+  const order=await ids();await snapshot([...active.map(t=>t.id===reader?make(reader,0,true):{...t,revision:t.revision+10,notes:'ordinary update'}),make('ordering-new',999),...history]);
   await page.waitForFunction(()=>window.__orderingReads.overview>0);assert.deepEqual(await ids(),order);
   // A new scope of roots releases the former reader. More grows from the actual prefix.
   await page.evaluate(()=>document.querySelector('.status-list').focus());
-  const small=[...active.slice(0,18).map(t=>({...t,id:t.id+'-small',rootTaskId:t.id+'-small'})),...history.map(t=>({...t,id:t.id+'-small',rootTaskId:t.id+'-small'}))];
+  const small=[...active.slice(0,18).map(t=>(cloneTask(t,'-small'))),...history.map(t=>(cloneTask(t,'-small')))];
   await snapshot(small);await page.waitForFunction(()=>document.querySelectorAll('[data-todo-id]').length===20);
   await page.evaluate(()=>{const button=[...document.querySelectorAll('.status-list button')].find(e=>e.textContent.includes('显示更多事项'));button.focus();button.click();});
   await page.waitForFunction(()=>document.querySelectorAll('[data-todo-id]').length===40);

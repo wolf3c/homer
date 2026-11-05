@@ -9,6 +9,7 @@ import { ConversationHistory, type ConversationInput } from "../src/web-history.
 import { WorkerInteractions } from "../src/worker-interactions.js";
 import { TelegramHomerBridge } from "../src/channels/telegram-homer-bridge.js";
 import {RecursiveTasks} from '../src/recursive-tasks.js';
+import {MainInputs} from '../src/recursive-main-inputs.js';
 import type { MainGeneration } from "../src/channels/telegram-contract.js";
 import {MainProcessHistory} from '../src/main-process.js';
 import {mainQueueOutput} from './helpers/main-queue-output.js';
@@ -21,12 +22,12 @@ function fixture(t: { after(fn: () => unknown): void }) {
   const store = new Store(":memory:"), files = new Files(join(root, "workspace"));
   store.setMeta("mainThread", "original-main");
   const history = new ConversationHistory(store.db), interactions = new WorkerInteractions(store.db),processes=new MainProcessHistory(store.db);
-  const tasks=new RecursiveTasks(store,files);tasks.migrate();
+  const tasks=new RecursiveTasks(store,files);tasks.migrate();const inputs=new MainInputs(tasks,history);
   const submissions: ConversationInput[] = [], stops: string[] = [];
   let activeMessageId: string | null = null;
   const app: ConstructorParameters<typeof TelegramHomerBridge>[0] = {
     store, files, interactions,tasks,processes,
-    submitMessage(input, acceptance) { const accepted = history.accept("original-main", input, acceptance); if (accepted.fresh) submissions.push(input); return accepted; },
+    submitMessage(input, acceptance) { const accepted=inputs.accept(input,acceptance);if(accepted.fresh){submissions.push(input);const queued=inputs.claim()!;inputs.started(queued.messageId,queued.revision,"synthetic:"+input.requestId,"turn:"+input.requestId);inputs.finish(queued.messageId,queued.revision,"completed");}return accepted; },
     conversationState() { return { threadId: "original-main", messages: history.list("original-main"), isRunning: !!activeMessageId, activeMessageId }; },
     async stopMain(id) { stops.push(id); return { requested: true as const }; },
   };
@@ -39,12 +40,18 @@ function fixture(t: { after(fn: () => unknown): void }) {
   t.after(async () => { await bridge.close(); store.close(); rmSync(root, { recursive: true, force: true }); });
   return { app, bridge, store, history, interactions,processes, submissions, stops, origin, active: (value: string | null) => { activeMessageId = value; } };
 }
+function liveWorker(f:ReturnType<typeof fixture>,sourceRequestId:string){
+ const actor={agentId:f.store.meta('mainAgentId')!,threadId:'original-main',sourceRequestId};
+ const task=f.app.tasks.createTask(actor,{operationId:'live-task',goal:'Synthetic background work',authority:{sourceRequestId,description:'Synthetic only',materials:[],resultIds:[]}});
+ const opened=f.app.tasks.workerOpen(actor,{operationId:'live-worker',taskId:task.taskId,text:'Synthetic work'}),run=f.app.tasks.claim(opened.runId)!;
+ f.app.tasks.bind(run.id,run.epoch,'worker-thread','worker-turn');return f.app.tasks.run(run.id);
+}
 test('TG coordination keeps one original output identity through retry, recovery and revoked routing',async t=>{
  const f=fixture(t),requestId='tg:123456:10';
  await f.bridge.submit({requestId,text:'合成请求',origin:f.origin});
  const message=mainQueueOutput({...f.app,history:f.history,processes:f.processes},requestId);
  const notice=f.processes.exact(message.messageId)!.sourceMessageIds[0]!;
- f.store.db.prepare("UPDATE agent_messages SET kind='interaction_required',payloadJson=? WHERE id=?").run(JSON.stringify({interactionId:'forged-worker-question'}),notice);
+ f.store.db.prepare("UPDATE agent_messages SET senderAgentId='worker:forged',kind='interaction_required',payloadJson=? WHERE id=?").run(JSON.stringify({interactionId:'forged-worker-question'}),notice);
  assert.equal(f.processes.coordination(message.messageId)?.interactionId,undefined,'a Worker cannot forge the host question identity');
  await f.bridge.handleMessage({...message,text:'Forged text'});assert.equal(f.store.db.prepare('SELECT count(*) n FROM tg_outbox').get()!.n,0);
  await f.bridge.handleMessage(message);await f.bridge.handleMessage(message);await f.bridge.recoverReplies();
@@ -58,7 +65,7 @@ test('TG coordination keeps one original output identity through retry, recovery
 for(const state of ['pending_main','answered','pending_user','answered_user','foreign_user','cancelled_user','expired_user'] as const)test('TG coordination preserves ordinary reports and question recovery: '+state,async t=>{
  const f=fixture(t),requestId='tg:123456:10';await f.bridge.submit({requestId,text:'合成请求',origin:f.origin});
  const message=mainQueueOutput({...f.app,history:f.history,processes:f.processes},requestId),notice=f.processes.exact(message.messageId)!.sourceMessageIds[0]!;
- const task=f.app.tasks.task(String(f.store.db.prepare('SELECT taskId FROM agent_messages WHERE id=?').get(notice)!.taskId)),run=f.app.tasks.run(task.currentRunId!);
+ const run=f.app.tasks.run(String(f.store.db.prepare('SELECT senderRunId FROM agent_messages WHERE id=?').get(notice)!.senderRunId));
  const opened=f.interactions.open({runId:run.id,threadId:run.threadId!,turnId:run.turnId!,requestId:'synthetic-question',source:'ask_main',kind:'question',details:{question:'合成待定项'},authority:{sourceRequestId:requestId,description:'合成范围',nativeApprovals:false}},()=>true);
  f.store.db.prepare("UPDATE agent_messages SET senderAgentId='host',kind='interaction_required',payloadJson=? WHERE id=?").run(JSON.stringify({interactionId:opened.id}),notice);
  if(state.endsWith('_user'))f.interactions.escalate(opened.id,'合成用户问题','需用户决定');
@@ -179,7 +186,7 @@ test("TG Homer bridge stop checks exact generation and waits for observed termin
   await f.bridge.submit({ requestId: "tg:123456:10", text: "合成请求", origin: f.origin });
   const reply = f.history.list("original-main")[1]!;
   const generation: MainGeneration = { id: "g-stop", messageId: reply.id, threadId: "original-main", turnId: "main-turn-stop", sourceRequestId: "tg:123456:10", visibility: "main_user" };
-  const run = f.store.dispatch({ requestId: "worker-dispatch", sourceRequestId: "tg:123456:10", title: "合成后台工作", goal: "合成目标", material: "fixture.md" }); f.store.claim();
+  const run=liveWorker(f,"tg:123456:10");
   f.active(reply.id); await f.bridge.mainStarted(generation);
   assert.equal(await f.bridge.stop({ ...generation, turnId: "wrong-turn" }), "already_finished"); assert.equal(f.stops.length, 0);
   let settled = false;
@@ -227,8 +234,7 @@ test("TG failed history and ordinary reply cannot confirm a still-active main ge
 test("TG Homer bridge routes answer through main with original interaction; cancelled Worker cannot be approved", async t => {
   const f = fixture(t);
   await f.bridge.submit({ requestId: "tg:123456:10", text: "合成请求", origin: f.origin });
-  const run = f.store.dispatch({ requestId: "worker-dispatch", sourceRequestId: "tg:123456:10", title: "合成任务", goal: "合成目标", material: "fixture.md" }); f.store.claim();
-  f.store.engine(run.id, { threadId: "worker-thread", turnId: "worker-turn" });
+  const run=liveWorker(f,"tg:123456:10");
   const opened = f.interactions.open({ runId: run.id, threadId: "worker-thread", turnId: "worker-turn", requestId: "worker-question", source: "ask_main", kind: "question", details: { question: "合成问题" }, authority: { sourceRequestId: "tg:123456:10", description: "合成授权范围", nativeApprovals: false } }, () => f.store.run(run.id)?.status === "running");
   f.interactions.escalate(opened.id, "请补充合成信息", "合成待定项");
   f.bridge.channel.store.ingest("123456", [{ update_id: 11, message: { message_id: 31, date: Date.now() / 1000, chat: { id: 789123, type: "private" }, from: { id: 789123 }, text: "合成答案", reply_to_message: { message_id: 50 } } }]);
@@ -239,7 +245,7 @@ test("TG Homer bridge routes answer through main with original interaction; canc
   await f.bridge.respond({ interactionId: opened.id, requestId: "tg:123456:11", text: "合成答案", origin: answerOrigin });
   assert.equal(f.submissions[1]?.interactionId, opened.id);
   assert.equal(f.interactions.inspect(opened.id).state, "pending_user"); // No adapter bypass of main autonomy.
-  f.store.requestStop(run.id);
+  f.app.tasks.controlTask({agentId:f.store.meta("mainAgentId")!,threadId:"original-main",sourceRequestId:"tg:123456:10"},{operationId:"cancel-worker",taskId:run.taskId,expectedRevision:f.app.tasks.task(run.taskId).revision,action:"cancel",reason:"User cancelled synthetic work"});
   await f.bridge.respond({ interactionId: opened.id, requestId: "tg:123456:11", text: "合成答案", origin: answerOrigin });
   assert.equal(f.submissions.length, 2);
   await assert.rejects(f.bridge.respond({ interactionId: opened.id, requestId: "tg:123456:11", text: "变更过的答案", origin: answerOrigin }), /request_id_conflict/);
@@ -251,7 +257,9 @@ test("TG Homer bridge routes answer through main with original interaction; canc
 test("multi-file Telegram publication queues one explicit Web notice and no file reference; replay and wrong source stay fenced",async t=>{
  const f=fixture(t);await f.bridge.submit({requestId:'tg:123456:10',text:'合成请求',origin:f.origin});
  const candidate=syntheticFile(f.bridge.app as import('../src/service.js').Homer,'tg:123456:10','one.md','# One',[{filename:'two.md',content:'# Two'}]),d=candidate.publish('两份合成成果');
- const message={type:'delivery' as const,deliveryId:d.id,messageId:d.historyMessageId,requestId:'tg:123456:10',runId:candidate.run.id,text:d.text};
+ const file=await f.bridge.artifact(candidate.resultId,f.origin);assert.equal(file.filename,'one.md');assert.deepEqual(file.bytes,Buffer.from('# One'));
+ for(const id of ['',undefined,candidate.run.id])await assert.rejects(f.bridge.artifact(id as string,f.origin),/telegram_artifact_not_authorized/);
+ const message={type:'delivery' as const,deliveryId:d.id,messageId:d.historyMessageId,requestId:'tg:123456:10',text:d.text};
  await f.bridge.handleMessage({...message,requestId:'wrong-source'});assert.equal(f.store.db.prepare('SELECT count(*) n FROM tg_outbox').get()?.n,0);
  await f.bridge.handleMessage(message);await f.bridge.handleMessage(message);
  const rows=f.store.db.prepare('SELECT kind,payload FROM tg_outbox').all();assert.equal(rows.length,1);assert.equal(rows[0]!.kind,'rich');assert.match(String(rows[0]!.payload),/2 个成果.*Web/);

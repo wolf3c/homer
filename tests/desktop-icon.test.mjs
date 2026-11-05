@@ -5,7 +5,7 @@ import {resolve,join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createDesktopIcon} from '../scripts/desktop-icon.mjs';
 const parent=resolve('.codex/scratch/desktop-icon-tests');mkdirSync(parent,{recursive:true});
-const source=resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png');
+const source=resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png');
 test('native ICNS decoding preserves every size, scale and RGBA pixel deterministically',()=>{
  const root=mkdtempSync(join(parent,'native-')),first=createDesktopIcon({source,directory:join(root,'first')}),second=createDesktopIcon({source,directory:join(root,'second')});
  assert.deepEqual(readFileSync(first),readFileSync(second));

@@ -143,7 +143,7 @@ test('all text remarks authorize delegated work while excerpts never become auth
   // synthetic engine instead of patching the retired pre-publication instance.
   await f.app.message('合成准备','text-authority-ready');await f.app.idle();
   const engine=f.engines.findLast(engine=>!engine.worker)!;
-  engine.turn=async(_text,options)=>{engine.turnId='synthetic-text-comment-turn';options?.onStarted?.(engine.turnId);await engine.call('dispatch_work',{title:'Synthetic file task',goal:'Review remarks',material:'synthetic.md'});return {status:'completed',text:'Synthetic dispatched'};};
+  engine.turn=async(_text,options)=>{engine.turnId='synthetic-text-comment-turn';options?.onStarted?.(engine.turnId);const task=await engine.call('task_create',{title:'Synthetic file task',goal:'Review remarks'}) as {taskId:string};await engine.call('worker_open',{taskId:task.taskId,message:'Review remarks'});return {status:'completed',text:'Synthetic dispatched'};};
   const annotations=['untrusted $hidden source','second excerpt','third excerpt'].map((text,i)=>({id:String(i),text,comment:'用户备注'+i}));
   f.app.submitMessage({requestId:'text-authority',text:'整体要求',resourceReference:{kind:'text',source:{kind:'artifact',id:published.resultId,sha256:file.sha256,title:file.filename},annotations}});
   await until(()=>!!f.app.store.db.prepare('SELECT 1 FROM worker_authorities WHERE sourceRequestId=?').get('text-authority'));
@@ -163,7 +163,8 @@ test('preview comments become user intent for delegated authority without promot
   const engine=f.engines.find(engine=>!engine.worker)!;
   engine.turn=async(_text,options)=>{
    engine.turnId='synthetic-comment-turn';options?.onStarted?.(engine.turnId);
-   await engine.call('dispatch_work',{title:'Synthetic annotation task',goal:'Enlarge button',material:'synthetic.md'});
+   const task=await engine.call('task_create',{title:'Synthetic annotation task',goal:'Enlarge button'}) as {taskId:string};
+   await engine.call('worker_open',{taskId:task.taskId,message:'Enlarge button'});
    return {status:'completed',text:'Synthetic dispatched'};
   };
   f.app.submitMessage({requestId:'preview-comment-intent',text:'',resourceReference:{kind:'web',source:{kind:'web',messageId,sourceId:'link-1',url:'https://example.com/',title:'Source $hidden'},annotations:[{id:'n1',element:'button $hidden',elementPath:'#hidden',comment:'Use $impeccable to enlarge this button',x:1,y:1}]}});
@@ -217,11 +218,12 @@ test("artifact access requires a successful authorized Run and Files verificatio
   const f = fixture();
   try {
     await f.app.start();
-    f.app.store.startRequest("user-source", "synthetic-hash"); f.app.store.finishRequest("user-source", "合成回执");
+    await f.app.message("Synthetic file request","user-source");await f.app.idle();
     const candidate=syntheticFile(f.app,'user-source','成果.md','# 合成成果'),run=candidate.run;
     const bridge=homerWebBridge(f.app);await assert.rejects(()=>bridge.artifact(run.id),/artifact_not_authorized/);
-    const publication=candidate.publish();assert.equal((await bridge.artifact(run.id)).content,'# 合成成果');
-    const dir=f.app.files.prepareRun(run.matterId,run.id),link=join(dir,'link.md');symlinkSync(run.artifact!,link);
+    const publication=candidate.publish();f.app.tasks.markDelivery(publication.id,'recorded');assert.equal((await bridge.artifact(run.id)).content,'# 合成成果');
+    const path=f.app.tasks.readResult({agentId:f.app.store.meta('mainAgentId')!},candidate.resultId).file!.path;
+    const dir=f.app.files.prepareRun(run.taskId,run.id),link=join(dir,'link.md');symlinkSync(path,link);
     f.app.store.db.prepare('UPDATE results SET filePath=? WHERE id=?').run(link,candidate.resultId);
     await assert.rejects(()=>bridge.artifact(run.id),/symlink_denied/);
     f.app.store.db.prepare("UPDATE results SET filePath='/etc/passwd' WHERE id=?").run(candidate.resultId);

@@ -21,11 +21,11 @@ async function workerFixture(){
  for(const n of [10,11]){
   save('node-'+n,{state:'working',status:'running',items:[{id:'progress-'+n,seq:1,revision:1,kind:'commentary',phase:'commentary',text:'已公开进展：核对合成材料。 [公开材料](https://example.invalid/)'},{id:'create-'+n,seq:2,revision:1,kind:'tool',category:'host',label:'创建任务：合成批注测试',status:'completed'}]});
  }
- const event=(eventKey,eventKind,title)=>({eventKey,eventKind,title,body:'原始合成事件正文：核对网页和图片，保留未确认范围。',bodySource:eventKind==='delegated'?'description':eventKind==='result_received'?'summary':'error',taskId:'synthetic-task',version:1,runId:'synthetic-run',resultId:eventKind==='result_received'?'synthetic-result':null,sourceMessageId:null,operationKey:eventKind==='delegated'?'synthetic-operation':null,observedAtMs:1});
+ const event=(eventKey,eventKind,title)=>({eventKey,eventKind,title,body:'原始合成事件正文：核对网页和图片，保留未确认范围。',bodySource:eventKind==='delegated'?'description':eventKind==='reply_received'?'reply':'error',taskId:'synthetic-task',version:1,runId:'synthetic-run',sourceMessageId:null,operationKey:eventKind==='delegated'?'synthetic-operation':null,observedAtMs:1});
  const first=event('outside-delegated','delegated','制作合成批注测试网页和图片');
  f.processes.workerEvent('node-10',first);
  f.processes.workerEvent('node-10',event('outside-failed','start_failed','合成启动失败记录'));
- f.processes.workerEvent('node-11',event('outside-received','result_received','收到合成结果'));
+ f.processes.workerEvent('node-11',event('outside-received','reply_received','收到合成结果'));
  for(const n of [10,11])save('node-'+n,{state:'worked',status:'completed',startedAtMs:1000,endedAtMs:34000,durationMs:33000,timingSource:'native',timingState:'terminal',final:{id:'native-final-'+n,text:n===10?'已安排制作，完成后核对合成成果。':'已收到合成结果，仍需核对。'}});
  const text='合成预览正文。',file={id:'result-outside-preview',title:'Synthetic.txt',messageId:'node-10',workTitle:'合成预览'};
  const read=f.bridge.artifact.bind(f.bridge);
@@ -55,11 +55,13 @@ try{
    await ev(()=>document.querySelector('#message-node-10 [data-slot=collapsible-trigger]').focus({preventScroll:true}));await key(p,'Tab','Tab',9);
    assert.ok(await ev(()=>document.activeElement===window.__cards[0].querySelector('button')));
    await key(p,'Enter','Enter',13);await until(()=>document.querySelector('#message-node-10 [data-worker-event] button').getAttribute('aria-expanded')==='false');await key(p,'Enter','Enter',13);checks.push('closed process skips internal links; card keyboard disclosure remains independent');
-   for(const [state,status,label] of [['working','running','Working'],['worked','completed','Worked'],['worked','failed','处理失败'],['worked','interrupted','已中断'],['working','unknown','待核实']]){
+   for(const [state,status,label] of [['working','running','状态待确认'],['worked','completed','已结束'],['worked','failed','处理失败'],['worked','interrupted','已中断'],['working','unknown','状态待确认']]){
     f.setStatus(state,status);await until(`document.querySelector('#message-node-10 [data-slot=collapsible-trigger]')?.textContent.includes('${label}')`);await toggle(true);await toggle(false);
     assert.ok(await ev(()=>window.__cards.every(c=>c.isConnected&&c.parentNode===window.__cardParent)&&window.__removedCards===0&&window.__cards[0].querySelector('button').getAttribute('aria-expanded')==='true'));
    }
-   f.setStatus('worked','completed');f.replay();await until(()=>document.querySelector('#message-node-10 [data-slot=collapsible-trigger]').textContent.includes('Worked'));
+   f.setStatus('worked','completed');f.replay();await until(()=>document.querySelector('#message-node-10 [data-slot=collapsible-trigger]').textContent.includes('已结束'));
+   assert.equal(await ev(()=>document.querySelectorAll('#message-node-11 [data-worker-event]').length),0,'ordinary replies remain in the collapsed process');
+   await ev(()=>document.querySelector('#message-node-11 [data-slot=collapsible-trigger]').click());await until(()=>!!document.querySelector('#message-node-11 [data-worker-event]'));
    const order=await ev(()=>{const a=document.querySelector('#message-node-10'),b=document.querySelector('#message-node-11'),cards=[...a.querySelectorAll('[data-worker-event]')],bubble=a.querySelector('.assistant-message-bubble'),process=a.querySelector('[data-slot=run-activity]');return {events:cards.map(c=>c.dataset.workerEvent),states:cards.map(c=>c.dataset.state),received:b.querySelectorAll('[data-worker-event="outside-received"]').length,total:document.querySelectorAll('[data-worker-event]').length,outsideBubble:cards.every(c=>!bubble.contains(c)),ordered:cards.every(c=>!!(process.compareDocumentPosition(c)&Node.DOCUMENT_POSITION_FOLLOWING)&&!!(c.compareDocumentPosition(bubble)&Node.DOCUMENT_POSITION_FOLLOWING)),noCard:document.querySelectorAll('#message-node-9 [data-worker-event],#message-node-9 .process-workers').length,emptyPanel:document.querySelectorAll('#message-node-9 [data-slot=collapsible-content]').length,answer:bubble.textContent.includes('已安排制作')};});
    assert.deepEqual(order,{events:['outside-delegated','outside-failed'],states:['waiting','failed'],received:1,total:3,outsideBubble:true,ordered:true,noCard:0,emptyPanel:0,answer:true});checks.push('replay, multiple rounds, errors, cancellation and unknown keep event identities, states and answer ownership');
    await ev(()=>{const viewport=document.querySelector('.thread-viewport');viewport.scrollTop=100;window.__readingTop=viewport.scrollTop;});await toggle(true);await toggle(false);

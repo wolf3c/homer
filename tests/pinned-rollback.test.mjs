@@ -20,7 +20,8 @@ async function fixture(){
  const env={PATH:process.env.PATH,HOME:join(base,'home'),HOMER_PINNED_TEST_TARGET:build,NODE_OPTIONS:'--import='+preload};
  const {loadConfig}=await import(pathToFileURL(join(build,'dist/config.js')).href),{Store}=await import(pathToFileURL(join(build,'dist/store.js')).href);
  const {MAIN_TOOLS}=await import(pathToFileURL(join(build,'dist/tools.js')).href);
- const settings=loadConfig(config);const store=new Store(join(base,'runtime/homer.sqlite'));store.setMeta('mainThread','synthetic-pinned-main');store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify(MAIN_TOOLS)).digest('hex'));store.close();
+ const {RECURSIVE_TOOLS}=await import(pathToFileURL(join(build,'dist/recursive-tools.js')).href),{PENDING_TOOLS}=await import(pathToFileURL(join(build,'dist/pending-tools.js')).href);
+ const settings=loadConfig(config);const store=new Store(join(base,'runtime/homer.sqlite'));store.setMeta('mainThread','synthetic-pinned-main');store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS])).digest('hex'));store.close();
  // Seed only a synthetic database through the real pinned host before sealing its schema.
  const seed=fork(join(build,'dist/dev-host.js'),[],{env,execArgv:['--disable-warning=ExperimentalWarning'],stdio:['ignore','ignore','pipe','ipc']});let ready=false,seedError='';const exit=once(seed,'exit');const seedRecords=[];
  seed.on('message',m=>{seedRecords.push(m);if(m.kind==='output')seed.send({kind:'written',id:m.id});if(m.kind==='ready')ready=true;});seed.stderr.on('data',data=>seedError+=data);seed.send({kind:'init',config:settings,thread:'synthetic-pinned-main'});

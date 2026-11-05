@@ -1,150 +1,166 @@
-// Synthetic task/bytes only; never starts a model or a user channel.
+// Synthetic Task/Worker records and exact bytes; no model or user channel.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {writeFileSync,symlinkSync} from 'node:fs';
 import {join} from 'node:path';
-import {fixture,delegate,running,main} from './recursive-fixture.js';
+import {fixture,openWorker,running,complete,main,mutation,authority} from './recursive-fixture.js';
 import {RecursiveTasks} from '../src/recursive-tasks.js';
 import {Store} from '../src/store.js';
 import {Homer} from '../src/service.js';
 import {homerWebBridge} from '../src/web-homer.js';
 
-function setup(kind:'markdown'|'file'|'structured'='markdown'){
- const f=fixture(),child=delegate(f,'multi',undefined,undefined,kind),actor=running(f,child.taskId);
- f.tasks.markMaterialRead(actor);
- const host=Object.create(Homer.prototype) as any;Object.assign(host,{stateObservers:new Set(),tasks:f.tasks,files:f.files,store:f.store,memory:{validateRun(){}},workerActor:()=>actor,closing:false,registerChannelCapabilities(){}});
- return {...f,child,actor,bridge:homerWebBridge(host),host};
+function setup(){
+ const f=fixture(),opened=openWorker(f,'multi'),actor=running(f,opened.runId);
+ const host={store:f.store,files:f.files,tasks:f.tasks,registerChannelCapabilities(){},onStateChange:(listener:()=>void)=>f.store.db.onChange(()=>listener())} as unknown as Homer;
+ host.previewArtifact=Homer.prototype.previewArtifact.bind(host);
+ return {...f,actor,opened,bridge:homerWebBridge(host)};
 }
 type Fixture=ReturnType<typeof setup>;
 function write(f:Fixture,name:string,content='# '+name,operationId=name){return f.tasks.writeMarkdown(f.actor,{operationId,filename:name,content});}
-function seal(f:Fixture,_ids:string[],_outcome:'succeeded'|'partial'|'failed'='succeeded'){
- return f.tasks.endSegment(f.actor.runId!,f.actor.epoch!,{status:'completed',text:'Synthetic files checked; dates remain unknown.'},true)!;
+function adopt(f:Fixture,written:{path:string},operationId=written.path){
+ const accepted=f.tasks.adoptResult(main,{operationId:'adopt-'+operationId,taskId:f.task.taskId,version:1,runId:f.actor.runId,filePath:written.path});
+ return {...f.tasks.readResult(main,accepted.resultId).file!,resultId:accepted.resultId};
 }
-function review(f:Fixture,id:string,accepted=true,outcome:'succeeded'|'partial'|'failed'='succeeded'){
- const t=f.tasks.task(f.child.taskId);return f.tasks.review(main,{operationId:'review-'+id,taskId:t.id,version:1,expectedTaskRevision:t.revision,resultId:id,...(accepted?{accepted:true,outcome}:{decision:'terminal_failure' as const,outcome:'failed' as const}),reason:'Actual synthetic bytes checked',evidence:{facts:true,gaps:'Synthetic optional part missing'},children:[]});
-}
-function root(f:Fixture,id:string,outcome:'succeeded'|'partial'='succeeded'){
- const t=f.tasks.task(f.root.taskId);return {taskId:t.id,version:1,expectedTaskRevision:t.revision,outcome,evidence:{facts:true,gaps:'Synthetic optional part missing'},children:[{childTaskId:f.child.taskId,childVersion:1,disposition:'included' as const,resultId:id,reason:'Reviewed whole returned set'}]};
-}
-function publish(f:Fixture,settlement:ReturnType<typeof root>,ids:string[]){return f.tasks.publish(main,{...settlement,operationId:'publish',resultId:null,text:'Synthetic multiple-file delivery',publishedFileResultId:null,publishedFileResultIds:ids});}
+function publish(f:Fixture,ids:string[]){return f.tasks.publish(main,{operationId:'publish',taskId:f.task.taskId,version:1,resultIds:ids,text:'Synthetic multiple-file delivery'});}
 
-test('multiple Markdown: automatic return, actual-byte group review, selected publication and restart are one settlement',async()=>{
+test('multiple Markdown files require explicit adoption and selected publication, survive restart and revoke together',async()=>{
  const f=setup();try{
-  const a=write(f,'facts.md','# Facts\nunknown'),b=write(f,'notes.md','# Notes\n未确定'),privateFile=write(f,'internal.md');
-  assert.notEqual(a.resultId,b.resultId);assert.deepEqual(write(f,'facts.md','# Facts\nunknown'),a);
-  const done=seal(f,[a.resultId,b.resultId]);
-  assert.equal(f.tasks.inspect(main,{runId:f.actor.runId}).results.length,3);
-  f.tasks.inspect(main,{resultId:a.resultId});assert.throws(()=>review(f,done.resultId),/result_inspection_required/);
-  f.tasks.inspect(main,{resultId:b.resultId});f.tasks.inspect(main,{resultId:privateFile.resultId});review(f,done.resultId);
-  assert.equal(f.tasks.task(f.child.taskId).state,'settled');
-  assert.equal(f.tasks.inspect(main,{resultId:privateFile.resultId}).results.find(x=>x.id===privateFile.resultId)?.state,'accepted');
-  for(const id of[a.resultId,b.resultId,privateFile.resultId])await assert.rejects(()=>f.bridge.artifact(id),/artifact_not_authorized/);
-  const final=root(f,done.resultId),delivery=publish(f,final,[a.resultId,b.resultId]);
-  assert.equal(publish(f,final,[a.resultId,b.resultId]).deliveryId,delivery.deliveryId);
-  for(const item of[a,b]){const file=await f.bridge.artifact(item.resultId);assert.equal(file.filename,item===a?'facts.md':'notes.md');assert.equal(Buffer.from(file.data!,'base64').toString(),item===a?'# Facts\nunknown':'# Notes\n未确定');}
+  const written=[write(f,'facts.md','# Facts\nunknown'),write(f,'notes.md','# Notes\n未确定'),write(f,'internal.md')];
+  assert.deepEqual(write(f,'facts.md','# Facts\nunknown'),written[0]);
+  complete(f,f.actor,'Synthetic files checked; dates remain unknown.');
+  assert.deepEqual(f.tasks.readTask(main,f.task.taskId).results,[]);
+  const [a,b,privateFile]=written.map(file=>adopt(f,file));
+  assert.notEqual(a!.resultId,b!.resultId);
+  assert.equal(f.tasks.task(f.task.taskId).state,'open','adoption does not settle the task');
+  for(const file of[a!,b!,privateFile!])await assert.rejects(()=>f.bridge.artifact(file.resultId),/artifact_not_authorized/);
+  const delivery=publish(f,[a!.resultId,b!.resultId]);
+  assert.equal(publish(f,[a!.resultId,b!.resultId]).deliveryId,delivery.deliveryId);
+  for(const [file,filename,content] of [[a!,'facts.md','# Facts\nunknown'],[b!,'notes.md','# Notes\n未确定']] as const){const actual=await f.bridge.artifact(file.resultId);assert.equal(actual.filename,filename);assert.equal(Buffer.from(actual.data!,'base64').toString(),content);}
   assert.equal((await f.bridge.artifact(f.actor.runId!)).filename,'facts.md');
-  await assert.rejects(()=>f.bridge.artifact(privateFile.resultId),/artifact_not_authorized/);
+  await assert.rejects(()=>f.bridge.artifact(privateFile!.resultId),/artifact_not_authorized/);
   f.tasks.markDelivery(delivery.deliveryId,'submitting');f.tasks.markDelivery(delivery.deliveryId,'recorded');
   const store=new Store(join(f.dir,'homer.sqlite'));try{const tasks=new RecursiveTasks(store,f.files);tasks.migrate();tasks.reconcile();assert.equal(tasks.deliveries().length,1);assert.equal(tasks.pendingDeliveries().length,0);assert.equal(tasks.publishedArtifacts(f.actor.runId!).length,2);assert.equal(tasks.delivery(delivery.deliveryId).publishedFileResultIds.length,2);}finally{store.close();}
-  f.tasks.markDelivery(delivery.deliveryId,'revoked');await assert.rejects(()=>f.bridge.artifact(a.resultId),/artifact_not_authorized/);await assert.rejects(()=>f.bridge.artifact(b.resultId),/artifact_not_authorized/);
+  f.tasks.markDelivery(delivery.deliveryId,'revoked');for(const file of[a!,b!])await assert.rejects(()=>f.bridge.artifact(file.resultId),/artifact_not_authorized/);
+ }finally{f.close();}
+});
+
+test('unknown external delivery retains its original receipt across retries and restart without another sendable item',()=>{
+ const f=setup();try{
+  const written=[write(f,'one.md'),write(f,'two.md')];complete(f,f.actor);const files=written.map(file=>adopt(f,file)),ids=files.map(file=>file.resultId);
+  const delivery=publish(f,ids);f.tasks.markDelivery(delivery.deliveryId,'submitting');f.tasks.markDelivery(delivery.deliveryId,'uncertain');
+  assert.equal(publish(f,ids).deliveryId,delivery.deliveryId);assert.equal(f.tasks.delivery(delivery.deliveryId).state,'uncertain');
+  assert.throws(()=>f.tasks.publish(main,{operationId:'retry-as-new',taskId:f.task.taskId,version:1,resultIds:ids,text:'Do not send twice'}),/delivery_already_prepared/);
+  const store=new Store(join(f.dir,'homer.sqlite'));try{const tasks=new RecursiveTasks(store,f.files);tasks.migrate();tasks.reconcile();assert.equal(tasks.delivery(delivery.deliveryId).state,'uncertain');assert.deepEqual(tasks.pendingDeliveries(),[]);assert.equal(tasks.deliveries().length,1);assert.equal(tasks.publishedArtifacts(f.actor.runId!).length,2);}finally{store.close();}
  }finally{f.close();}
 });
 
 test('different operations cannot claim the same staged filename, identical bytes included; retry stays idempotent',()=>{
  const f=setup();try{const a=write(f,'same.md','first','original');
   for(const content of['first','changed'])assert.throws(()=>write(f,'same.md',content,'another-'+content),/artifact_filename_conflict/);
-  assert.equal(f.files.verify(f.files.prepareRun(f.tasks.run(f.actor.runId!).matterId,f.actor.runId!),a.path).content,'first');
+  assert.equal(f.files.verify(f.files.prepareRun(f.task.taskId,f.actor.runId!),a.path).content,'first');
   assert.throws(()=>write(f,'same.md','changed','original'),/operation_payload_conflict/);
-  assert.equal(f.tasks.inspect(main,{runId:f.actor.runId}).results.length,1);
+  assert.deepEqual(f.tasks.readTask(main,f.task.taskId).results,[]);
  }finally{f.close();}
 });
 
-test('mixed workspace/binary/Markdown files keep exact bytes and unselected accepted files remain private',async()=>{
- const f=setup('file');try{
-  const run=f.tasks.run(f.actor.runId!),dir=f.files.prepareRun(run.matterId,run.id),bytes=Buffer.from([0,255,3,4,8]);
-  writeFileSync(join(dir,'generated.bin'),bytes);
-  const a=await f.host.workerMediaTool({id:run.id,epoch:run.epoch},'stage_workspace_file',{operationId:'workspace',path:'generated.bin',filename:'generated.bin'});
-  const b=f.tasks.writeFile(f.actor,{operationId:'binary',filename:'second.bin',bytes:Buffer.from([255,0,22])}),c=write(f,'notes.md');
-  const done=seal(f,[a.resultId,b.resultId,c.resultId]);for(const id of[a.resultId,b.resultId,c.resultId])f.tasks.inspect(main,{resultId:id});review(f,done.resultId);
-  const final=root(f,done.resultId);publish(f,final,[a.resultId,c.resultId]);
+test('mixed workspace, binary and Markdown adoption keeps exact bytes and unselected accepted files remain private',async()=>{
+ const f=setup();try{
+  const dir=f.files.prepareRun(f.task.taskId,f.actor.runId!),bytes=Buffer.from([0,255,3,4,8]),source=join(dir,'generated.bin');
+  writeFileSync(source,bytes);
+  const binary=f.tasks.writeFile(f.actor,{operationId:'binary',filename:'second.bin',bytes:Buffer.from([255,0,22])}),notes=write(f,'notes.md');
+  complete(f,f.actor);
+  const a=adopt(f,{path:source}),b=adopt(f,binary),c=adopt(f,notes);publish(f,[a.resultId,c.resultId]);
   assert.deepEqual(Buffer.from((await f.bridge.artifact(a.resultId)).data!,'base64'),bytes);await assert.rejects(()=>f.bridge.artifact(b.resultId),/artifact_not_authorized/);
   writeFileSync(a.path,'tampered');await assert.rejects(()=>f.bridge.artifact(a.resultId),/result_hash_mismatch/);
  }finally{f.close();}
 });
 
-test('scope, exact completion and inspection fences reject unrelated/stale members and unsafe paths',async()=>{
+test('exact task, version, paths and hashes fence adoption and obsolete writers',()=>{
  const f=setup();try{
   const a=write(f,'a.md'),b=write(f,'b.md');
-  const other=delegate(f,'other',undefined,undefined,'markdown'),actor=running(f,other.taskId);f.tasks.markMaterialRead(actor);const foreign=f.tasks.writeMarkdown(actor,{operationId:'foreign',filename:'foreign.md',content:'other task'});
-  for(const filename of['../bad.md','/bad.md'])assert.throws(()=>write(f,filename),/artifact_input_denied/);
-  const dir=f.files.prepareRun(f.tasks.run(f.actor.runId!).matterId,f.actor.runId!);symlinkSync('/etc/hosts',join(dir,'link.md'));assert.throws(()=>write(f,'link.md'),/symlink_denied/);
-  const done=seal(f,[a.resultId,b.resultId]);assert.equal(done.resultIds.includes(foreign.resultId),false);f.tasks.inspect(main,{resultId:a.resultId});f.tasks.inspect({...main,turnId:'other-turn'},{resultId:b.resultId});assert.throws(()=>review(f,done.resultId),/result_inspection_required/);
-  writeFileSync(b.path,'tampered');assert.throws(()=>f.tasks.inspect(main,{resultId:b.resultId}),/result_hash_mismatch/);
+  const other=f.tasks.createTask(main,{operationId:'other',goal:'Other authorized task',authority:authority()}),opened=openWorker(f,'other-worker',other.taskId),actor=running(f,opened.runId);
+  const foreign=f.tasks.writeMarkdown(actor,{operationId:'foreign',filename:'foreign.md',content:'other task'});
+  for(const filename of['../bad.md','/bad.md'])assert.throws(()=>write(f,filename),/artifact_path_denied/);
+  const dir=f.files.prepareRun(f.task.taskId,f.actor.runId!);symlinkSync('/etc/hosts',join(dir,'link.md'));assert.throws(()=>write(f,'link.md'),/symlink_denied/);
+  complete(f,f.actor);
+  assert.throws(()=>f.tasks.adoptResult(main,{operationId:'foreign-adopt',taskId:f.task.taskId,version:1,runId:actor.runId,filePath:foreign.path}),/result_source_denied/);
+  const acceptedA=adopt(f,a),acceptedB=adopt(f,b);assert.notEqual(acceptedA.resultId,acceptedB.resultId);
+  writeFileSync(acceptedB.path,'tampered');assert.throws(()=>f.tasks.readResult(main,acceptedB.resultId),/result_hash_mismatch/);
   assert.throws(()=>write(f,'late.md'),/run_not_live/);
  }finally{f.close();}
 });
 
-test('automatic return includes every explicitly staged file for Markdown and structured contracts',()=>{
- for(const kind of['markdown','structured'] as const){const f=setup(kind);try{
-  const a=write(f,'a.md'),b=write(f,'b.md'),t=f.tasks.task(f.child.taskId);
-  assert.equal(f.tasks.task(t.id).outcome,null);
-  const done=f.tasks.endSegment(f.actor.runId!,f.actor.epoch!,{status:'completed',text:JSON.stringify({summary:'synthetic'})},true)!;
-  f.tasks.endSegment(f.actor.runId!,f.actor.epoch!,{status:'completed',text:'Synthetic final result'},true);for(const id of new Set([done.resultId,a.resultId,b.resultId]))f.tasks.inspect(main,{resultId:id});review(f,done.resultId);assert.equal(f.tasks.task(t.id).outcome,'succeeded');
+test('ordinary text and structured-looking replies preserve staged files without implicit Result or task settlement',()=>{
+ for(const text of ['Synthetic files checked',JSON.stringify({summary:'synthetic'})]){const f=setup();try{
+  const a=write(f,'a.md'),b=write(f,'b.md');complete(f,f.actor,text);
+  const read=f.tasks.workerRead(main,{workerId:f.opened.workerId});assert.equal(read.messages.at(-1)?.text,text);
+  assert.deepEqual(f.tasks.readTask(main,f.task.taskId).results,[]);assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  for(const [file,content] of [[a,'# a.md'],[b,'# b.md']] as const)assert.equal(f.files.verify(f.files.prepareRun(f.task.taskId,f.actor.runId!),file.path).content,content);
  }finally{f.close();}}
 });
 
-test('partial and rejected groups settle once and retain their actual outcome',()=>{
- for(const accepted of[true,false]){const f=setup();try{const a=write(f,'a.md'),b=write(f,'b.md');const done=seal(f,[a.resultId,b.resultId],'partial');for(const id of[a.resultId,b.resultId])f.tasks.inspect(main,{resultId:id});review(f,done.resultId,accepted,'partial');assert.equal(f.tasks.task(f.child.taskId).outcome,accepted?'partial':'failed');const rows=f.tasks.inspect(main,{runId:f.actor.runId}).results;assert.ok(rows.every(x=>x.state===(accepted?'accepted':'rejected')));assert.throws(()=>review(f,b.resultId,accepted,'partial'),/task_revision_conflict|task_phase_denied|result_not_offered|task_not_executing/);}finally{f.close();}}
+test('Main explicitly settles partial and failed tasks while retained adopted files keep their accepted state',()=>{
+ for(const outcome of['partial','failed'] as const){const f=setup();try{
+  const written=[write(f,'a.md'),write(f,'b.md')];complete(f,f.actor);const files=written.map(file=>adopt(f,file));
+  const input={...mutation(f,'settle'),outcome,notes:'Synthetic optional part missing'},settled=f.tasks.settleTask(main,input);
+  assert.equal(f.tasks.task(f.task.taskId).outcome,outcome);assert.equal(f.tasks.task(f.task.taskId).state,'settled');
+  const retained=f.tasks.readTask(main,f.task.taskId).results;assert.deepEqual(retained.map(result=>result.id),files.map(file=>file.resultId));assert.deepEqual(retained.map(result=>result.state),['accepted','accepted']);
+  assert.deepEqual(f.tasks.settleTask(main,input),settled);
+ }finally{f.close();}}
 });
 
 test('HTTP exposes only explicitly published IDs, checks publication/source and revokes all selected links',async()=>{
  const {createWebServer,fetch}=await import('./web-connected-fixture.js');const f=setup();let web:Awaited<ReturnType<typeof createWebServer>>|undefined;
  try{
-  const a=write(f,'a.md'),b=write(f,'b.md'),hidden=write(f,'hidden.md');const done=seal(f,[a.resultId,b.resultId]);for(const id of[a.resultId,b.resultId,hidden.resultId])f.tasks.inspect(main,{resultId:id});review(f,done.resultId);const final=root(f,done.resultId);
-  assert.equal(f.tasks.publishedResult(hidden.resultId),undefined,'accepted candidates are still private before explicit publication');
-  assert.throws(()=>publish(f,final,[a.resultId,a.resultId]),/delivery_file_selection_invalid/);
-  writeFileSync(b.path,'tampered before publication');assert.throws(()=>publish(f,final,[a.resultId,b.resultId]),/result_hash_mismatch/);assert.equal(f.tasks.deliveries().length,0);writeFileSync(b.path,'# b.md');
-  const delivery=publish(f,final,[a.resultId,b.resultId]);
-  assert.equal(f.tasks.publishedResult(a.resultId,{sourceRequestId:'another-user-source'}),undefined);
+  const written=[write(f,'a.md'),write(f,'b.md'),write(f,'hidden.md')];complete(f,f.actor);const [a,b,hidden]=written.map(file=>adopt(f,file));
+  assert.equal(f.tasks.publishedResult(hidden!.resultId),undefined,'accepted files remain private before explicit publication');
+  assert.throws(()=>publish(f,[a!.resultId,a!.resultId]),/delivery_result_required/);
+  writeFileSync(b!.path,'tampered before publication');assert.throws(()=>publish(f,[a!.resultId,b!.resultId]),/result_hash_mismatch/);assert.equal(f.tasks.deliveries().length,0);writeFileSync(b!.path,'# b.md');
+  const delivery=publish(f,[a!.resultId,b!.resultId]);
+  assert.equal(f.tasks.publishedResult(a!.resultId,{sourceRequestId:'another-user-source'}),undefined);
   web=await createWebServer({bridge:f.bridge,port:0});
-  assert.equal((await globalThis.fetch(web.url+'/api/files/'+a.resultId)).status,200);
-  for(const file of[a,b]){const response:Response=await fetch(web.url+'/api/files/'+file.resultId);assert.equal(response.status,200);assert.equal(await response.text(),file===a?'# a.md':'# b.md');}
-  for(const suffix of[hidden.resultId,'result-unrelated'])assert.equal((await fetch(web.url+'/api/files/'+suffix)).status,409);
-  for(const suffix of[a.resultId+'?path=/etc/hosts',a.resultId+'?resultId='+hidden.resultId])assert.equal((await fetch(web.url+'/api/files/'+suffix)).status,400);
-  assert.equal((await fetch(web.url+'/api/files/'+a.resultId+'%2F..%2Fhidden.md')).status,404);
-  f.tasks.markDelivery(delivery.deliveryId,'revoked');for(const file of[a,b])assert.equal((await fetch(web.url+'/api/files/'+file.resultId)).status,409);
+  assert.equal((await globalThis.fetch(web.url+'/api/files/'+a!.resultId)).status,200);
+  for(const file of[a!,b!]){const response:Response=await fetch(web.url+'/api/files/'+file.resultId);assert.equal(response.status,200);assert.equal(await response.text(),file===a?'# a.md':'# b.md');}
+  for(const suffix of[hidden!.resultId,'result-unrelated'])assert.equal((await fetch(web.url+'/api/files/'+suffix)).status,409);
+  for(const suffix of[a!.resultId+'?path=/etc/hosts',a!.resultId+'?resultId='+hidden!.resultId])assert.equal((await fetch(web.url+'/api/files/'+suffix)).status,400);
+  assert.equal((await fetch(web.url+'/api/files/'+a!.resultId+'%2F..%2Fhidden.md')).status,404);
+  f.tasks.markDelivery(delivery.deliveryId,'revoked');for(const file of[a!,b!])assert.equal((await fetch(web.url+'/api/files/'+file.resultId)).status,409);
  }finally{await web?.close();f.close();}
 });
 
-test('replacement fences old writers and only its own staged files enter the next return',()=>{
+test('requirements replacement fences old writers and new adoption refers to its exact Run and version',()=>{
  const f=setup();try{
-  const a=write(f,'old.md'),b=write(f,'old-two.md'),t=f.tasks.task(f.child.taskId);
-  const update=f.tasks.update(main,{operationId:'replace',taskId:t.id,version:1,expectedTaskRevision:t.revision,mode:'stop_replace',contract:f.tasks.contract(t.id,1),children:[],queuedDisposition:[]});
+  const a=write(f,'old.md'),b=write(f,'old-two.md');
+  const update=f.tasks.updateTask(main,{...mutation(f,'replace'),patch:{goal:'Prepare replacement files'},authority:authority()});
+  assert.equal(f.tasks.confirmWorkerExit(f.actor.runId!,undefined),true);
   f.tasks.confirmStop(update.operationKey,true);
-  const replacement=running(f,t.id);f.tasks.markMaterialRead(replacement);
-  const current=f.tasks.writeMarkdown(replacement,{operationId:'current',filename:'current.md',content:'new attempt'});
-  const done=f.tasks.endSegment(replacement.runId!,replacement.epoch!,{status:'completed',text:'Replacement checked'},true)!;
-  assert.deepEqual(done.resultIds,[current.resultId]);
-  for(const file of[a,b])assert.equal(f.tasks.publishedResult(file.resultId),undefined);
-  assert.throws(()=>f.tasks.writeMarkdown(f.actor,{operationId:'late',filename:'late.md',content:'late'}),/run_epoch_stale|run_stop_requested/);
+  const next=f.tasks.workerSend(main,{operationId:'continue',workerId:f.opened.workerId,text:'Prepare replacement files'}),replacement=running(f,next.runId!);
+  const current=f.tasks.writeMarkdown(replacement,{operationId:'current',filename:'current.md',content:'new attempt'});complete(f,replacement);
+  const adopted=f.tasks.adoptResult(main,{operationId:'adopt-current',taskId:f.task.taskId,version:2,runId:replacement.runId,filePath:current.path});
+  assert.equal(f.tasks.readResult(main,adopted.resultId).file!.content,'new attempt');
+  for(const file of[a,b])assert.throws(()=>f.tasks.adoptResult(main,{operationId:'wrong-version-'+file.path,taskId:f.task.taskId,version:2,runId:f.actor.runId,filePath:file.path}),/result_source_denied/);
+  assert.throws(()=>write(f,'late.md'),/run_epoch_stale|run_stop_requested/);
  }finally{f.close();}
 });
 
-test('publication rejects an accepted completion from another tree and a member cannot replace the primary settlement',()=>{
+test('publication rejects foreign task and stale version results; text-only formal adoption has no file links',()=>{
  const f=setup();try{
-  const a=write(f,'a.md'),b=write(f,'b.md'),done=seal(f,[a.resultId,b.resultId]);for(const id of[a.resultId,b.resultId])f.tasks.inspect(main,{resultId:id});review(f,done.resultId);
-  const t=f.tasks.task(f.root.taskId);assert.throws(()=>f.tasks.publish(main,{operationId:'member-root',taskId:t.id,version:1,expectedTaskRevision:t.revision,outcome:'succeeded',evidence:{facts:true},children:[{childTaskId:f.child.taskId,childVersion:1,disposition:'included',resultId:b.resultId,reason:'member is not a settlement'}],resultId:null,text:JSON.stringify({summary:'bad'}),publishedFileResultId:null}),/child_result_not_accepted/);
-  const other=f.tasks.createRoot(main,{operationId:'other-root',title:'Other tree',contract:{goal:'text',inputs:[],resultKind:'structured',acceptance:{criteria:[]}},authority:f.tasks.authority(t.id,1)}),otherTask=f.tasks.task(other.taskId);
-  const text=({operationId:'other-complete',taskId:otherTask.id,version:1,expectedTaskRevision:otherTask.revision,outcome:'succeeded',evidence:{},children:[],resultId:null,text:JSON.stringify({text:'pure text'}),publishedFileResultId:null} satisfies Parameters<typeof f.tasks.publish>[1]);
-  assert.throws(()=>f.tasks.publish(main,{...text,operationId:'other-publish',taskId:otherTask.id,version:1,expectedTaskRevision:f.tasks.task(otherTask.id).revision,resultId:text.resultId,publishedFileResultId:null,publishedFileResultIds:[a.resultId,b.resultId],text:'wrong tree'}),/delivery_file_not_accepted/);
-  const delivery=f.tasks.publish(main,{...text,operationId:'text-publish',taskId:otherTask.id,version:1,expectedTaskRevision:f.tasks.task(otherTask.id).revision,resultId:text.resultId,publishedFileResultId:null,text:'text only'});assert.deepEqual(f.tasks.delivery(delivery.deliveryId).publishedFileResultIds,[]);
+  const a=write(f,'a.md'),b=write(f,'b.md');complete(f,f.actor);const files=[adopt(f,a),adopt(f,b)];
+  const other=f.tasks.createTask(main,{operationId:'other-task',goal:'Separate text reply',authority:authority()});
+  assert.throws(()=>f.tasks.publish(main,{operationId:'wrong-task',taskId:other.taskId,version:1,resultIds:files.map(file=>file.resultId),text:'wrong task'}),/delivery_result_not_accepted/);
+  f.tasks.updateTask(main,{...mutation(f,'version'),patch:{goal:'New requirement'},authority:authority()});
+  assert.throws(()=>publish(f,files.map(file=>file.resultId)),/delivery_version_conflict/);
+  assert.throws(()=>f.tasks.publish(main,{operationId:'stale-files',taskId:f.task.taskId,version:2,resultIds:files.map(file=>file.resultId),text:'old files'}),/delivery_result_not_accepted/);
+  const opened=openWorker(f,'text-worker',other.taskId),actor=running(f,opened.runId);complete(f,actor,'Pure text');
+  const message=f.tasks.workerRead(main,{workerId:opened.workerId}).messages.find(message=>message.kind==='worker_reply')!;
+  const adopted=f.tasks.adoptResult(main,{operationId:'adopt-text',taskId:other.taskId,version:1,messageId:message.id});
+  const delivery=f.tasks.publish(main,{operationId:'text-publish',taskId:other.taskId,version:1,resultIds:[adopted.resultId],text:'text only'});assert.deepEqual(f.tasks.delivery(delivery.deliveryId).publishedFileResultIds,[]);
  }finally{f.close();}
 });
-
 
 test('download bytes cannot change between verification and the byte read without failing',()=>{
  const f=setup();try{const a=write(f,'race.md','original');const verify=f.files.verify.bind(f.files);
   f.files.verify=(dir,path)=>{const result=verify(dir,path);writeFileSync(path,'replacement bytes');return result;};
-  assert.throws(()=>f.files.resultBytes(f.files.prepareRun(f.tasks.run(f.actor.runId!).matterId,f.actor.runId!),a.path),/artifact_changed/);
+  assert.throws(()=>f.files.resultBytes(f.files.prepareRun(f.task.taskId,f.actor.runId!),a.path),/artifact_changed/);
  }finally{f.close();}
 });

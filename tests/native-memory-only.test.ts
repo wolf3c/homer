@@ -6,6 +6,8 @@ import {join,resolve} from 'node:path';
 import {Homer} from '../src/service.js';
 import {HOST_MCP_TOOLS,WORKER_HOST_MCP_TOOLS} from '../src/worker-interaction-mcp.js';
 import {MAIN_TOOLS} from '../src/tools.js';
+import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
+import {PENDING_TOOLS} from '../src/pending-tools.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {createWebServer,fetch} from './web-connected-fixture.js';
 import type {EngineOptions,ToolCall} from '../src/engine.js';
@@ -42,7 +44,8 @@ for(const native of [true,false])test(`${native?'native':'restricted'} service r
     assertNoHostMemory();const thread=app.store.meta('mainThread'),toolsHash=app.store.meta('mainToolsHash');
     await app.close();app=new Homer(config,async()=>{},factory);await app.start();
     assert.equal(app.store.meta('mainThread'),thread);assert.equal(app.store.meta('mainToolsHash'),toolsHash);
-    assert.equal(starts.at(-1)?.threadId,thread);assert.deepEqual(starts[0]?.tools,MAIN_TOOLS);
+    assert.equal(starts.at(-1)?.threadId,thread);
+    for(const options of starts)assert.deepEqual(options.tools,[...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS]);
     assert.equal(await app.message('继续解释当前工作。','synthetic-native-only-next'),'Synthetic answer');
     assertNoHostMemory();assert.ok(inputs.every(text=>!text.includes('宿主记忆数据')&&!text.includes('memorySnapshot')));
     assert.equal(app.history.inputs(thread!,['synthetic-native-only-first']).get('synthetic-native-only-first')?.text,'请记住：以后使用中文。');

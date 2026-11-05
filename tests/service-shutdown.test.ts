@@ -22,7 +22,7 @@ async function fixture(confirmed=true,closeError='engine_closed'){
   async turn(text:string,hooks?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
    this.turnId='shutdown-turn-'+ ++this.sequence;hooks?.onStarted?.(this.turnId);
    if(this.worker){await this.call('read_material',{});await this.call('write_markdown',{filename:'saved.md',content:'Synthetic preserved file'});return {status:'completed',text:'Synthetic file written'};}
-   if(text==='dispatch'){await this.call('dispatch_work',{title:'Synthetic task',goal:'Preserve the file',material:'input.md',matterId:null});return {status:'completed',text:'Dispatched'};}
+   if(text==='dispatch'){const task=await this.call('task_create',{title:'Synthetic task',goal:'Preserve the file'}) as {taskId:string};await this.call('worker_open',{taskId:task.taskId,message:'Preserve the file'});return {status:'completed',text:'Dispatched'};}
    return new Promise((_resolve,reject)=>{this.pending=reject;});
   }
   async interrupt(){return false;}
@@ -45,7 +45,7 @@ for(const confirmed of [true,false])test(`shutdown cancellation keeps the Worker
   const db=new DatabaseSync(join(f.runtime,'homer.sqlite'),{readOnly:true});
   try{
    assert.equal(db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()!.value,thread);
-   assert.equal(readFileSync(run.artifact!,'utf8'),'Synthetic preserved file');
+   assert.equal(readFileSync(join(f.app.files.prepareRun(run.taskId,run.id),'saved.md'),'utf8'),'Synthetic preserved file');
    assert.equal(db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(String(source.messageId))!.state,'uncertain');
    const nodes=db.prepare("SELECT value FROM meta WHERE key GLOB 'publicMainNode:v1:*'").all().map(row=>JSON.parse(String(row.value)));
    const internal=nodes.filter(node=>node.sourceKind==='worker');assert.equal(internal.length,1);

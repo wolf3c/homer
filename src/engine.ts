@@ -1,4 +1,4 @@
-import {processIdentity,terminateLease} from './processes.js';
+import {leaseOwnerGone,processIdentity,terminateLease} from './processes.js';
 import {nativeHistoryBridge} from './native-history-bridge.js';
 import {TurnExecution,executionCounters} from './execution-limits.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
@@ -630,6 +630,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       response.approvalPolicy !== (this.options.permissionRequests ? "on-request" : "never")
     )
       throw new Error("engine_boundary_mismatch");
+    if(this.options.threadId&&response.thread.id!==this.options.threadId)throw Error('engine_resume_thread_mismatch');
     this.threadId = response.thread.id;
     // Turn effort:null inherits ambient settings; replace only the membership thread's reasoning state.
     if(this.config.context&&this.config.effort===null)
@@ -1135,7 +1136,15 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if (this.options.role !== 'worker' || !this.exited) kill("SIGKILL");
     if (!this.exited) await waitForExit(1000);
     if(this.exited){await this.historyBridge?.close();this.historyBridge=undefined;}
-    return this.exited;
+    if(!this.exited||this.options.role!=='worker')return this.exited;
+    const pid=this.pid;if(pid===undefined||!Number.isSafeInteger(pid)||pid<=1)return false;
+    // A reaped leader may precede its draining children; probe without signalling a reused PID.
+    const until=Date.now()+this.config.stopGraceMs;
+    while(!leaseOwnerGone(pid)){
+      const remaining=until-Date.now();if(remaining<=0)return false;
+      await new Promise<void>(resolve=>setTimeout(resolve,Math.min(30,remaining)));
+    }
+    return true;
   }
 }
 export function codexVersion(bin: string) {

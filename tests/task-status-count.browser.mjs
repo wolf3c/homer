@@ -5,11 +5,11 @@ import {createServer} from 'node:http';
 import {mkdtemp,readFile,writeFile,mkdir,rm} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {build} from 'esbuild';
+import {overviewTask as task} from './task-status-browser-data.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/task-status-count');
 await mkdir(destination,{recursive:true});
 const scratch=await mkdtemp(join(destination,'fixture-'));
 const checks=[],metrics=[],errors=[];let browser,server,page;
-const task=(id,extra={})=>({id,rootTaskId:id,parentTaskId:null,goal:'合成任务 '+id,executorKind:'worker',executorAgentId:'worker',coordinatorAgentId:'main',sourceRequestId:null,headVersion:1,revision:0,state:'working',outcome:null,controlState:'normal',currentRunId:'run-'+id,run:{id:'run-'+id,status:'running',phase:'executing',contractVersion:1,epoch:0,summary:null,sourceRequestId:null},result:null,delivery:null,pendingUser:0,pendingMain:0,...extra});
 const roots=n=>({tasks:Array.from({length:n},(_,i)=>task('root-'+i))});
 let snapshot=roots(0),fail=false,hold=false,held=[];
 try{
@@ -45,14 +45,16 @@ try{
  ok(await panel.locator('[data-count="working"]').innerText()==='12','panel working count equals badge');
  await page.screenshot({path:join(destination,'count-12-expanded.png')});
  await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});ok(await trigger.evaluate(el=>el===document.activeElement),'Escape restores trigger focus');
- const root=task('mixed',{executorKind:'main',currentRunId:null,run:null});
- const a=task('a',{rootTaskId:'mixed',parentTaskId:'mixed'}),b=task('b',{rootTaskId:'mixed',parentTaskId:'mixed'}),q=task('queue',{rootTaskId:'mixed',parentTaskId:'mixed'}),ask=task('ask',{rootTaskId:'mixed',parentTaskId:'mixed',pendingUser:1,pendingUsers:[{id:'question',after:0}]});q.run.status='queued';q.run.phase='ready';
- snapshot={tasks:[root,a,b,q,ask]};await refresh();await waitName('工作状态，1 个任务工作中');await trigger.click();await panel.waitFor();
- ok(await panel.locator('[data-count="working"]').innerText()==='1'&&await panel.locator('[data-count="queued"]').innerText()==='1'&&await panel.locator('[data-count="needs-user"]').innerText()==='1','same root deduplicates while queue and requests remain separate');
- // Updating execution identity or ending one sibling cannot inflate the user count.
- b.currentRunId='retry';b.run={...b.run,id:'retry',epoch:2};a.run.phase='ended';a.run.status='succeeded';await refresh();await waitName('工作状态，1 个任务工作中');
- b.headVersion=2;await refresh();await waitName('工作状态，数量待核实');
- b.run.contractVersion=2;await refresh();await waitName('工作状态，1 个任务工作中');checks.push('retry/version/state snapshots update without duplication');
+ const root=task('mixed'),a=root.workers[0];
+ const peer=id=>({...a,id,run:{...a.run,id:'run-'+id,workerId:id}});
+ const b=peer('b'),q=peer('queue'),ask={...peer('ask'),pendingUser:1,pendingUsers:[{id:'question',after:0}]};q.run.status='queued';q.run.phase='ready';ask.run.phase='rpc_wait';
+ root.workers=[a,b,q,ask];snapshot={tasks:[root]};await refresh();await waitName('工作状态，1 个任务工作中');await trigger.click();await panel.waitFor();
+ ok(await panel.locator('[data-count="working"]').innerText()==='1'&&await panel.locator('[data-count="queued"]').innerText()==='1'&&await panel.locator('[data-count="needs-user"]').innerText()==='1','one Task deduplicates multiple sessions while queue and requests remain separate');
+ b.run={...b.run,id:'retry',epoch:2};a.run.phase='ended';a.run.status='succeeded';await refresh();await waitName('工作状态，1 个任务工作中');
+ root.headVersion=2;await refresh();await waitName('工作状态，1 个任务工作中');
+ b.run.version=2;await refresh();await waitName('工作状态，1 个任务工作中');checks.push('goal and session versions remain separate, without duplicate counts');
+ b.run.phase='uncertain';await refresh();await waitName('工作状态，数量待核实');
+ b.run.phase='executing';await refresh();await waitName('工作状态，1 个任务工作中');
  fail=true;await refresh();await waitName('工作状态，读取失败');ok(await trigger.locator('[data-count]').count()===0,'failed refresh hides live badge instead of showing old count');
  fail=false;await refresh();await waitName('工作状态，1 个任务工作中');
  await page.evaluate(()=>window.statusFixture.update(false));await waitName('工作状态，连接未确认');ok(await trigger.locator('[data-count]').count()===0,'disconnect never becomes a known zero');
@@ -64,7 +66,7 @@ try{
    ok(layout.count===3&&layout.sameRow&&layout.closeAbove&&!layout.overflow,'three filters below the title and close button '+width);
    await page.screenshot({path:join(destination,'panel-'+width+'.png')});
   }
- snapshot=roots(1);snapshot.tasks[0].headVersion=2;await refresh();await waitName('工作状态，数量待核实');await page.setViewportSize({width:320,height:600});
+ snapshot=roots(1);snapshot.tasks[0].workers[0].run.phase='uncertain';await refresh();await waitName('工作状态，数量待核实');await page.setViewportSize({width:320,height:600});
  ok(await panel.locator('.status-count-filter').evaluateAll(filters=>filters.every(e=>e.scrollWidth<=e.clientWidth)),'unverified count fits narrow filters');
  ok(errors.length===0,'no page errors or business writes');
 }catch(error){errors.push(String(error.stack??error));process.exitCode=1;}

@@ -14,13 +14,14 @@ function publicationFixture(){
  const f=fixture(),app={...f,registerChannelCapabilities(){},onStateChange:(listener:()=>void)=>f.store.db.onChange(()=>listener())} as unknown as Homer;
  const filename='synthetic-reveal.html',bytes=Buffer.from('<h1>Synthetic reveal</h1>');
  const published=syntheticFile(app,'user-synthetic',filename,bytes.toString(),[],true);
- f.store.startRequest('synthetic-unpublished','synthetic-unpublished-hash');
+ f.source('synthetic-unpublished');
  const hidden=syntheticFile(app,'synthetic-unpublished','hidden.md');
- const run=published.run,path=join(f.files.prepareRun(run.matterId,run.id),filename);
+ const run=published.run,checked=f.tasks.readResult({agentId:f.store.meta('mainAgentId')!},published.resultId),path=checked.file!.path;
+ const sourcePath=(checked.payload.workspaceSource as {path:string}).path;
  let deliveryId:string;
- return {...f,run,bytes,staged:{resultId:published.resultId,path},hidden,
+ return {...f,run,bytes,staged:{resultId:published.resultId,path,sourcePath},hidden,
   bridge:homerWebBridge(app,{draftUpload:false,nativeCapabilities:false}),
-  publish(){const delivery=published.publish();deliveryId=delivery.id;return delivery;},
+  publish(){const delivery=published.publish();deliveryId=delivery.id;f.tasks.markDelivery(deliveryId,'recorded');return delivery;},
   revoke(){f.tasks.markDelivery(deliveryId,'revoked');},
  };
 }
@@ -34,11 +35,11 @@ test('reveal requires the exact published ID and launches only a checked registe
   for(const id of [f.hidden.resultId!,'result-unknown','run-any','../../etc/passwd','result-x;open','/etc/hosts'])
    await assert.rejects(()=>revealPublishedArtifact(f.tasks,id,options),/artifact_not_authorized/);
   assert.equal(calls.length,0);
-  assert.deepEqual(await revealPublishedArtifact(f.tasks,f.staged.resultId!,options),{target:'published',device:'homer-host'});
-  assert.deepEqual(calls,[['/usr/bin/open',['-R',f.staged.path]]]);
+  assert.deepEqual(await revealPublishedArtifact(f.tasks,f.staged.resultId!,options),{target:'source',device:'homer-host'});
+  assert.deepEqual(calls,[['/usr/bin/open',['-R',f.staged.sourcePath]]]);
   await assert.rejects(()=>revealPublishedArtifact(f.tasks,f.staged.resultId!,{...options,platform:'linux'}),/artifact_reveal_unsupported/);
   await assert.rejects(()=>revealPublishedArtifact(f.tasks,f.staged.resultId!,{...options,launch:async()=>{throw Error('private path');}}),/artifact_reveal_failed/);
-  const sha256=f.files.resultBytes(f.files.prepareRun(f.run.matterId,f.run.id),f.staged.path).sha256;
+  const sha256=f.files.resultBytes(f.files.prepareRun(f.run.taskId,f.run.id),f.staged.path).sha256;
   f.store.db.prepare('UPDATE results SET sha256=NULL WHERE id=?').run(f.staged.resultId!);
   await assert.rejects(()=>revealPublishedArtifact(f.tasks,f.staged.resultId!,options),/artifact_version_unknown/);
   f.store.db.prepare('UPDATE results SET sha256=? WHERE id=?').run(sha256,f.staged.resultId!);
@@ -54,11 +55,10 @@ test('reveal requires the exact published ID and launches only a checked registe
 });
 
 test('workspace provenance selects the recorded original, never a same-name copy or fallback',async()=>{
- // The production staging test below exercises provenance creation. This fixture
- // supplies persisted metadata to cover legacy/invalid/tampered records independently.
+ // Exercise persisted provenance validation independently of its creation during adoption.
  const f=publicationFixture();const calls:string[][]=[];
  try{
-  f.publish();const dir=f.files.prepareRun(f.run.matterId,f.run.id),path=join(dir,'original.html');
+  f.publish();const dir=f.files.prepareRun(f.run.taskId,f.run.id),path=join(dir,'original.html');
   writeFileSync(path,f.bytes);
   const provenance={path,sha256:f.files.resultBytes(dir,path).sha256};
   const payload=(source:unknown)=>f.store.db.prepare('UPDATE results SET payloadJson=? WHERE id=?').run(JSON.stringify({workspaceSource:source}),f.staged.resultId!);
@@ -107,7 +107,7 @@ test('reveal fails clearly for corrupt provenance and verifies each distinct fil
    payload(invalid);
    await assert.rejects(()=>revealPublishedArtifact(f.tasks,f.staged.resultId!,options),/artifact_source_invalid/);
   }
-  const sha256=f.files.verify(f.files.prepareRun(f.run.matterId,f.run.id),f.staged.path).sha256;
+  const sha256=f.files.verify(f.files.prepareRun(f.run.taskId,f.run.id),f.staged.path).sha256;
   payload(JSON.stringify({workspaceSource:{path:f.staged.path,sha256}}));
   const verify=f.files.verify.bind(f.files),verified:string[]=[];
   f.files.verify=(dir,path)=>{verified.push(path);return verify(dir,path);};

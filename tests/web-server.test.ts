@@ -5,6 +5,20 @@ import { createWebServer,fetch } from "./web-connected-fixture.js";
 import type { WebBridge, WebState } from "../src/web-contract.js";
 
 const state: WebState = { threadId: "synthetic-thread", messages: [], isRunning: false, activeMessageId: null, work: [], interactions: [], upgrade: { phase: "running" } };
+test('execution route reads the exact task and run without a redundant root selector',async()=>{
+ const calls:unknown[]=[];
+ const bridge={taskOverview:{execution:async(selector:unknown,before:unknown)=>{calls.push({selector,before});return {items:[]};},call:async()=>({})}} as unknown as WebBridge;
+ const web=await createWebServer({bridge,port:0});
+ try{
+  const path=web.url+'/api/tasks/task-one/execution/run-one/before/page';
+  const response=await fetch(path);
+  assert.equal(response.status,200);
+  assert.match(response.headers.get('cache-control')??'',/no-store/);
+  assert.deepEqual(calls,[{selector:{taskId:'task-one',runId:'run-one'},before:'page'}]);
+  assert.equal((await fetch(path+'?runId=run-other')).status,400);
+  assert.equal(calls.length,1);
+ }finally{await web.close();}
+});
 test("loopback gateway rejects foreign origins, missing mutation origin, and invalid host", async () => {
   let calls = 0;
   const bridge: WebBridge = { state: async () => state, submit: async () => { calls++; }, stop: async () => {}, respond: async () => {}, artifact: async () => { throw new Error("artifact_unavailable"); } };

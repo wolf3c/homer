@@ -6,7 +6,8 @@ import { resolve, join } from 'node:path';
 import { historyFixture, syntheticRoot } from './web-history-loading-fixture.js';
 import { WebHistoryPages } from '../src/web-history-pages.js';
 import {Files} from '../src/files.js';
-import {basename} from 'node:path';
+import {WorkerProgressStore} from '../src/worker-progress.js';
+import {dirname} from 'node:path';
 import {isUtf8} from 'node:buffer';
 import { projectConversation } from '../src/conversation-projection.js';
 import { homerWebBridge } from '../src/web-homer.js';
@@ -24,16 +25,18 @@ export async function fixture(total, mode, media = false, stableRecent = false) 
         }
     const mediaOwner = { view(ref) { return { ...ref, kind: 'image', state: 'ready', mime: 'image/png', size: 68, filename: 'synthetic-image.png', error: null }; } };
     const fakeEngine={invocations:0,turn(){this.invocations++;throw Error('synthetic_engine_forbidden');}};
-    const files=new Files(resolve(syntheticRoot+'/unused-workspace'));
+    const files=new Files(resolve(syntheticRoot+'/unused-workspace')),workerProgress=new WorkerProgressStore();
     const host = { ...f, files, engine:fakeEngine, webReadEpoch: 'synthetic-browser-epoch', webHistoryPages: () => reader, registerChannelCapabilities() { }, onStateChange(listener) { listeners.add(listener); return () => listeners.delete(listener); }, media: mediaOwner, conversationControlState: () => ({ isRunning: false, activeMessageId: null }), submitMessage(input) { submitted.push(input.requestId); const receipt = f.inputs.accept(input); server?.publish(); return receipt; }, snapshot() { throw Error('full_snapshot_forbidden'); }, conversationState() { throw Error('full_conversation_forbidden'); }, stopMain(id) { stopped.push(id); return {}; } };
+    host.readWorkerExecution=(selector,before)=>{const scope=f.tasks.executionReadScope({agentId:f.store.meta('mainAgentId')},selector,f.store.meta('mainThread')??'');return workerProgress.execution(selector,scope.version,before);};
+    host.readWorkerCall=(selector,callKey)=>{const scope=f.tasks.executionReadScope({agentId:f.store.meta('mainAgentId')},selector,f.store.meta('mainThread')??'');if(!/^[a-f0-9]{64}$/.test(callKey))throw Error('execution_call_unavailable');return workerProgress.call(selector,scope.version,callKey);};
     const bridge = homerWebBridge(host, { nativeCapabilities: false, draftUpload: false });
     // The synthetic host has no service instance; retain the same published-file checks.
     host.previewArtifact=id=>{
         const verified=id.startsWith('result-')?f.tasks.publishedResult(id):f.tasks.publishedArtifact(id);
         if(!verified)throw Error('artifact_not_authorized');
-        const file=files.resultBytes(files.prepareRun(f.tasks.run(verified.runId).matterId,verified.runId),verified.path);
+        const file=files.resultBytes(dirname(verified.path),verified.path);
         if(file.sha256!==verified.sha256)throw Error('result_hash_mismatch');
-        const filename=basename(verified.path),mime=file.mime==='application/octet-stream'&&/\.html?$/i.test(filename)&&isUtf8(file.data)?'text/html; charset=utf-8':file.mime;
+        const filename=verified.filename,mime=file.mime==='application/octet-stream'&&/\.html?$/i.test(filename)&&isUtf8(file.data)?'text/html; charset=utf-8':file.mime;
         return {filename,content:verified.content,data:file.data.toString('base64'),mime,sha256:file.sha256};
     };
     if (mode === 'before')
@@ -48,9 +51,9 @@ export async function fixture(total, mode, media = false, stableRecent = false) 
     // that synthetic state in this task's scratch, never the default private root.
     mkdirSync(destination,{recursive:true});
     const connectionDirectory=mkdtempSync(join(destination,'synthetic-connection-'));
-    server = await createWebServer({ bridge, connectionDirectory, port: 0, uiDirectory: process.env.HISTORY_FOLLOWUP_BUILD??join(destination, 'browser-' + mode), logoPath: resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png') });
+    server = await createWebServer({ bridge, connectionDirectory, port: 0, uiDirectory: process.env.HISTORY_FOLLOWUP_BUILD??join(destination, 'browser-' + mode), logoPath: resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png') });
     assert.notEqual(new URL(server.url).port, '4780');
     const remove = f.store.db.onChange(() => { for (const listener of listeners)
         listener(); });
-    return { ...f, files, fakeEngine, reader, bridge, server, submitted, stopped, mediaRequests, close: async () => { assert.equal(fakeEngine.invocations,0);remove(); try{await server.close();}finally{f.close();rmSync(connectionDirectory,{recursive:true,force:true});} } };
+    return { ...f, files, workerProgress, fakeEngine, reader, bridge, server, submitted, stopped, mediaRequests, close: async () => { assert.equal(fakeEngine.invocations,0);remove(); try{await server.close();}finally{f.close();rmSync(connectionDirectory,{recursive:true,force:true});} } };
 }

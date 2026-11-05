@@ -31,15 +31,15 @@ copyFileSync(
 );
 const checks: any[] = [];
 const transcript: any[] = [];
-function rows() {
+function rows(sql = "SELECT * FROM runs ORDER BY createdAt,rowid",parameters:string[] = []) {
   try {
     const db = new DatabaseSync(join(config.runtime, "homer.sqlite"), {
       readOnly: true,
     });
     try {
       return db
-        .prepare("SELECT * FROM runs ORDER BY createdAt,rowid")
-        .all() as any[];
+        .prepare(sql)
+        .all(...parameters) as any[];
     } finally {
       db.close();
     }
@@ -123,7 +123,7 @@ try {
   );
   const second = rows().find((r) => r.id !== first.id);
   assert.ok(second);
-  assert.ok(["running", "awaiting_review", "succeeded"].includes(second.status));
+  assert.ok(["running", "succeeded"].includes(second.status));
   assert.ok(second.startedAt < (rows().find((r) => r.id === first.id)!.endedAt ?? Date.now() + 1));
   checks.push({
     test: "T06-real-concurrent-dispatch",
@@ -147,7 +147,8 @@ try {
   assert.ok(["cancelled", "failed", "succeeded"].includes(stopped.status));
   if (stopped.status === "cancelled") {
     assert.ok(stopped.stopRequestedAt);
-    assert.equal(stopped.errorCode, "stop_confirmed");
+    assert.equal(JSON.parse(stopped.checkpointJson??'{}').workerExitConfirmed,1);
+    assert.equal(rows('SELECT key FROM meta WHERE key=?',['lease:'+stopped.id]).length,0);
   }
   checks.push({
     test: "T08-real-natural-stop-or-terminal-noop",
@@ -156,9 +157,10 @@ try {
     status: stopped.status,
     stopRequested: !!stopped.stopRequestedAt,
   });
-  await wait(() =>
-    live!.messages.some((m) => m.type === "delivery" && m.runId === second.id),
-  );
+  await wait(() => {
+    const ids=new Set(rows("SELECT d.id FROM deliveries d JOIN json_each(d.resultIdsJson) i JOIN results r ON r.id=i.value WHERE r.runId=? AND d.state='recorded' AND d.revokedAt IS NULL",[second.id]).map(row=>row.id));
+    return live!.messages.some(message=>message.type==='delivery'&&ids.has(message.deliveryId));
+  });
   assert.equal(rows().find((r) => r.id === second.id).status, "succeeded");
   live.child.stdin.end();
   await wait(() => live!.exited);
@@ -175,14 +177,18 @@ try {
   assert.equal(live.code, 0);
   const failed = rows().find((r) => (r.sourceRequestId ?? r.requestId) === "real-missing-input-once");
   assert.ok(failed);
-  assert.equal(failed.status, "failed");
-  assert.equal(failed.errorCode, "material_missing");
-  assert.equal(failed.artifact, null);
+  assert.ok(!['queued','running'].includes(failed.status));
+  assert.equal(rows('SELECT outcome FROM tasks WHERE id=?',[failed.taskId])[0]?.outcome,'failed');
+  const missingReply=rows("SELECT payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?",[failed.id])[0];
+  assert.ok(missingReply);assert.match(JSON.parse(missingReply.payloadJson).text,/不存在|未找到|缺失|missing|not found/i);
+  assert.equal(Number(rows("SELECT count(*) n FROM results WHERE taskId=? AND kind='file'",[failed.taskId])[0]!.n),0);
   checks.push({
     test: "T07-real-missing-input",
     passed: true,
     runId: failed.id,
-    code: failed.errorCode,
+    taskId: failed.taskId,
+    outcome: 'failed',
+    fabricatedFiles: false,
   });
   const count = rows().length;
   live = launch([

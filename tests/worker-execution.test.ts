@@ -2,7 +2,7 @@ import {test} from 'node:test';import assert from 'node:assert/strict';
 import {WorkerProgressStore,type WorkerScope} from '../src/worker-progress.js';
 import {nativeToolContent} from '../src/tool-content.js';
 const scope:WorkerScope={taskId:'task',version:1,runId:'run',epoch:1,threadId:'thread',turnId:'turn'};
-const selector={rootTaskId:'root',taskId:'task',runId:'run'};
+const selector={taskId:'task',runId:'run'};
 const event=(id:string,completed=false)=>({threadId:'thread',turnId:'turn',itemId:id,category:'command' as const,status:completed?'completed' as const:'running' as const,completed,observedAtMs:completed?200:100,content:{input:{state:'recorded' as const,value:{command:'rg token=SECRET private customer',cwd:'/private/customer'}},output:completed?{state:'recorded' as const,value:{output:'private customer record',exitCode:0}}:{state:'pending' as const}}});
 test('calls retain distinct identities, merge terminal once, and never publish raw content',()=>{
  const s=new WorkerProgressStore();s.recordCall(scope,event('a'));s.recordCall(scope,event('b'));s.recordCall(scope,event('a',true));

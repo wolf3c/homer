@@ -187,7 +187,7 @@ try {
         const beforeNetwork=networkCalls;
         await run('loopback-network', sh('/usr/bin/curl --fail --max-time 2 --noproxy "*" ' + JSON.stringify(origin + '/network-probe')));
         assert.equal(networkCalls,beforeNetwork+1);checks.loopbackNetworkAllowed = true;
-        writeFileSync(join(workspace, 'synthetic.png'), readFileSync(resolve('assets/branding/homer-hippo-cool-icon-256.png')));
+        writeFileSync(join(workspace, 'synthetic.png'), readFileSync(resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')));
         const image = await run('native-view-image', 'const result=await tools.view_image({path:' + JSON.stringify(join(workspace, 'synthetic.png')) + '});text({probeViewResultKeys:Object.keys(result),probeViewIsArray:Array.isArray(result),probeViewValues:Object.values(result).map(v=>typeof v),probeViewUrlType:typeof result.image_url,probeViewUrlPresent:typeof result.image_url==="string"});if(result.image_url)image(result.image_url);');
         assert.equal(image.imageOutputSeen, true);
         checks.viewImage = true;

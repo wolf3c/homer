@@ -5,7 +5,8 @@ import {userInfo} from 'node:os';
 import {execFileSync,execFile,spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
-import {prepareDesktopProfile,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource} from '../homer/scripts/desktop-profile.mjs';
+import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource} from '../homer/scripts/desktop-profile.mjs';
+import {processIdentity,leaseOwnerGone} from '../homer/dist/processes.js';
 
 import {validateHomerOrigins,readHomerConnection,authorizeHomerConnection,disconnectHomerConnection,queryHomerWallet,queryHomerRuntimeConfig,saveHomerRuntimeConfig} from '../homer/dist/homer-account.js';
 
@@ -75,11 +76,11 @@ function registerDesktopAccount(){
    if(!accountOrigins){connectionError='CONFIGURATION_REQUIRED';return accountState();}
    const operation=new AbortController();pendingConnection=operation;
    void authorizeHomerConnection({...accountOrigins,allowSyntheticLoopback:accountSynthetic,file:dailyTokenFile,signal:operation.signal,openBrowser:url=>{if(pendingConnection!==operation||operation.signal.aborted)return Promise.resolve();pendingLoginUrl=url;accountChanged();return shell.openExternal(url);},onCallback:()=>{if(pendingConnection===operation){pendingLoginUrl=undefined;accountChanged();}}}).then(value=>{
-    if(pendingConnection!==operation||operation.signal.aborted)return;
+    if(pendingConnection!==operation||operation.signal.aborted||quitPending)return;
     connection=value;lastConfigCheck=performance.now();accountRevision++;
     wallet=undefined;walletUpdatedAt=undefined;walletError=undefined;walletDirty=true;walletRevision++;
-   }).catch(error=>{if(pendingConnection===operation&&!operation.signal.aborted)connectionError=accountCode(error);})
-   .finally(()=>{if(pendingConnection===operation){pendingConnection=undefined;pendingLoginUrl=undefined;accountChanged();}});
+   }).catch(error=>{if(pendingConnection===operation&&!operation.signal.aborted&&!quitPending)connectionError=accountCode(error);})
+   .finally(()=>{if(pendingConnection===operation){pendingConnection=undefined;pendingLoginUrl=undefined;if(!operation.signal.aborted&&!quitPending){accountChanged();showWindow();}}});
    return accountState();
   },
   cancel:()=>{cancelConnection();accountChanged();return accountState();},
@@ -97,7 +98,7 @@ function registerDesktopAccount(){
      wallet=value;walletUpdatedAt=new Date().toISOString();walletError=undefined;walletDirty=false;break;
     }while(true);}
     catch(error){if(revision===accountRevision){walletError=accountCode(error);walletDirty=true;}}
-    finally{walletRead=undefined;}
+    finally{walletRead=undefined;accountChanged();}
     return accountState();
    })();
    return walletRead;
@@ -328,6 +329,7 @@ app.on('before-quit',event=>{
  if(confirmed()&&updateState?.status!=='ready'){quitPending=true;finishQuit();return;}
  if(quitPending)return;
  quitPending=true;
+ if(pendingConnection){cancelConnection();accountChanged();}
  showWindow();
  if(updateState?.status==='ready'){
   if(!updateState.version){updateFailed('update_metadata_unconfirmed');return;}
@@ -452,9 +454,12 @@ try{
  const userData=join(profile,'host-home/electron');
  // The backend owns business data. Electron has only its own cache directory.
  mkdirSync(userData,{recursive:true,mode:0o700});
+ app.setPath('userData',paths.codexHome);
+ const ownsHome=app.requestSingleInstanceLock();
  app.setPath('userData',userData);app.setPath('sessionData',userData);
- if(!app.requestSingleInstanceLock()){allowQuit=true;app.quit();}
+ if(!ownsHome){allowQuit=true;app.quit();}
  else{
+  recoverDesktopOwner(paths.codexHome,processIdentity,leaseOwnerGone);
   // Do not top-level await readiness: Electron waits for its ESM entry to load.
   app.whenReady().then(async()=>{
   registerDesktopPermissions();

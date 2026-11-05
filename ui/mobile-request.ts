@@ -15,7 +15,8 @@ export async function mobileFetch(request:Request):Promise<Response>{
    let match:RegExpMatchArray|null;
    if(path==='/api/history/state')op='history.state';
    else if(path==='/api/tasks')op='tasks.list';
-   else if((match=path.match(/^\/api\/tasks\/([\w:-]+)\/execution\/([\w:-]+)\/([\w:-]+)(?:\/(before|calls)\/([A-Za-z0-9_-]+))?$/))){op=match[4]==='calls'?'tasks.call':'tasks.execution';input={rootTaskId:match[1],taskId:match[2],runId:match[3],...(match[4]==='calls'?{callKey:match[5]}:{before:match[5]})};}
+   else if((match=path.match(/^\/api\/tasks\/([\w:-]+)\/execution\/([\w:-]+)(?:\/(before|calls)\/([A-Za-z0-9_-]+))?$/))){op=match[3]==='calls'?'tasks.call':'tasks.execution';input={taskId:match[1],runId:match[2],...(match[3]==='calls'?{callKey:match[4]}:{before:match[4]})};}
+   else if((match=path.match(/^\/api\/tasks\/([\w:-]+)\/workers\/([\w:-]+)(?:\/(?:after\/(\d+)|messages\/([\w:-]+)\/(\d+)))?$/))){op='tasks.detail';input={id:match[1],workerId:match[2],...(match[3]!==undefined?{after:Number(match[3])}:{}),...(match[4]!==undefined?{messageId:match[4],offset:Number(match[5])}:{})};}
    else if((match=path.match(/^\/api\/tasks\/([\w:-]+)(?:\/(summary|progress|origin)(?:\/([\w:-]+))?)?$/))){op='tasks.'+(match[2]??'detail');input={id:match[1],messageId:match[3]};}
    else if((match=path.match(/^\/api\/media\/([\w:-]+)\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})$/))){op='media.read';input={messageId:match[1],assetId:match[2],revision:Number(match[3])};binary=true;}
    else if((match=path.match(/^\/api\/files\/((?:run|result)-[\w-]+)(\/origin)?$/))){op=match[2]?'files.origin':'files.read';input={id:match[1]};binary=!match[2];}

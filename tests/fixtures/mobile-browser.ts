@@ -16,7 +16,7 @@ export async function mobileBrowserFixture({signalOrigin,uiDirectory,base}:{sign
  const app=new Homer({runtime,workspace:join(directory,'workspace'),codexHome:join(directory,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',timeoutMs:2000,mainTimeoutMs:2000,stopGraceMs:100},async()=>{},()=>new Engine());
  try{
   await app.start();
-  const gateway=await createMobileGateway({bridge:homerWebBridge(app,{nativeCapabilities:false}),port:0,signalOrigin,databasePath:join(runtime,'homer.sqlite'),uiDirectory:resolve(uiDirectory),logoPath:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
+  const gateway=await createMobileGateway({bridge:homerWebBridge(app,{nativeCapabilities:false}),port:0,signalOrigin,databasePath:join(runtime,'homer.sqlite'),uiDirectory:resolve(uiDirectory),logoPath:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
   return {...gateway,app,turns,history:app.history,inputs:app.inputs,async close(){await gateway.close();await app.close();rmSync(directory,{recursive:true,force:true});}};
  }catch(error){await app.close();rmSync(directory,{recursive:true,force:true});throw error;}
 }

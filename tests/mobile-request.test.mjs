@@ -35,3 +35,9 @@ test('restored draft images use the same scoped preview operation over RTC',asyn
  assert.deepEqual(new Uint8Array(await response.arrayBuffer()),new Uint8Array([0,5,255,7]));
  assert.deepEqual(f.calls,[{op:'media.preview',input:scope}]);
 });
+test('mobile conversation and execution selectors retain exact Task and Worker identities',async()=>{
+ const f=fixture();
+ for(const path of ['/api/tasks/t/execution/r','/api/tasks/t/workers/w','/api/tasks/t/workers/w/after/20','/api/tasks/t/workers/w/messages/m/24000'])assert.equal((await f.fetch(new Request('https://localhost'+path))).status,200);
+ assert.deepEqual(f.calls,[{op:'tasks.execution',input:{taskId:'t',runId:'r',before:undefined}},{op:'tasks.detail',input:{id:'t',workerId:'w'}},{op:'tasks.detail',input:{id:'t',workerId:'w',after:20}},{op:'tasks.detail',input:{id:'t',workerId:'w',messageId:'m',offset:24000}}]);
+ assert.equal((await f.fetch(new Request('https://localhost/api/tasks/t/workers/w?after=20'))).status,409);assert.equal(f.calls.length,4);
+});

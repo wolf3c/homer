@@ -4,14 +4,11 @@ import { createInterface } from "node:readline";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.js";
-import { engineError, codexVersion, CodexEngine } from "../src/engine.js";
+import { engineError, codexVersion } from "../src/engine.js";
 import { Homer, type Message } from "../src/service.js";
-import { MAIN_TOOLS } from "../src/tools.js";
-import { loadPrompts } from "../src/prompts.js";
 
 const input = process.argv[2];
 if (!input) throw new Error("explicit_config_required");
@@ -25,19 +22,14 @@ writeFileSync(join(config.workspace, "materials", "sample.md"), "# 合成材料\
 const configPath = join(runtime, "test.config.json");
 writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
 const marker = "合成标题-" + randomUUID().slice(0, 8), label = "合成版式-" + randomUUID().slice(0, 8);
-// Prepare a real legacy main thread with only the original five dynamic tools.
-// New Homer must recover its history and add interaction MCP without replacing it.
+// Resume a normally created current-version main conversation after shutdown.
 const initial = new Homer(config, async () => {});
-const legacyCwd = join(runtime, "main-workspace"); mkdirSync(legacyCwd, { recursive: true });
-const legacy = new CodexEngine(config, { cwd: legacyCwd, readRoots: [legacyCwd], instructions: loadPrompts().main, tools: MAIN_TOOLS }, async () => { throw new Error("interaction_probe_no_dispatch"); });
-let legacyThread: string;
+let preparedThread: string;
 try {
-  legacyThread = await legacy.start();
-  const result = await legacy.turn(`请记住本次公开合成测试标题为「${marker}」，只回复已记住，暂不派任务。`);
-  assert.equal(result.status, "completed"); assert.ok(result.text);
-  initial.store.setMeta("mainThread", legacyThread);
-  initial.store.setMeta("mainToolsHash", createHash("sha256").update(JSON.stringify(MAIN_TOOLS)).digest("hex"));
-} finally { await legacy.close(); await initial.close(); }
+  await initial.start();
+  await initial.message(`请记住本次公开合成测试标题为「${marker}」，只回复已记住，暂不派任务。`,'interaction-remember');
+  preparedThread=initial.store.meta('mainThread')!;assert.ok(preparedThread);
+} finally { await initial.close(); }
 const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", resolve("dist/cli.js"), "--json", "--config", configPath], { stdio: ["pipe", "pipe", "pipe"] });
 child.stderr.resume();
 const messages: Message[] = [];
@@ -50,6 +42,10 @@ const database = join(runtime, "homer.sqlite");
 function rows(table: "runs" | "worker_interactions" | "meta") {
   const db = new DatabaseSync(database, { readOnly: true });
   try { return db.prepare("SELECT * FROM " + table).all() as any[]; } finally { db.close(); }
+}
+function artifact(runId:string){
+  const db=new DatabaseSync(database,{readOnly:true});
+  try{const files=db.prepare("SELECT r.filePath FROM results r JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) i ON i.value=r.id WHERE r.runId=? AND r.kind='file' AND d.state='recorded' AND d.revokedAt IS NULL").all(runId);assert.equal(files.length,1);return String(files[0]!.filePath);}finally{db.close();}
 }
 async function until(check: () => boolean, timeout = 240000) {
   const deadline = Date.now() + timeout;
@@ -69,7 +65,7 @@ try {
   await until(() => count("reply") === 1);
   assert.ok(messages.find(message => message.type === "reply")!.text.includes(marker));
   const originalMain = rows("meta").find(item => item.key === "mainThread").value;
-  assert.equal(originalMain, legacyThread!);
+  assert.equal(originalMain, preparedThread!);
   stage = "ask_main_direct";
   send("请现在派发一个独立文件任务，材料 sample.md。验收目标明确要求 Worker 先 read_material，再必须调用 ask_main 一次询问主Agent刚才记住的合成标题；即使goal带了标题也必须确认，然后把实际返回的合成标题和材料中的负责人/日期待确认写入 Markdown。主Agent知道答案，应直接 respond_interaction 回答，不用问用户。");
   await until(() => count("delivery") >= 1);
@@ -77,7 +73,7 @@ try {
   assert.ok(direct && direct.state === "answered" && direct.deliveredAt);
   assert.ok(JSON.parse(direct.decision).answer.includes(marker));
   const run = rows("runs").find(item => item.id === direct.runId);
-  assert.equal(run.status, "succeeded"); assert.ok(readFileSync(run.artifact, "utf8").includes(marker));
+  assert.equal(run.status, "succeeded"); assert.ok(readFileSync(artifact(run.id), "utf8").includes(marker));
   stage = "escalate_user";
   send("请现在先派发第二个独立任务，材料 sample.md，不要在派发前问用户。Worker必须先 read_material，再调用 ask_main 询问‘用户专门指定的合成展示版式是什么？’。该版式尚未告知主Agent，用户要求禁止推测或替选；主Agent须使用 escalate_interaction 询问用户。Worker得到用户真实答复后，写入包含版式标签以及材料事实的Markdown。这是验收所必需的用户选择。");
   await until(() => count("question") >= 1);
@@ -98,7 +94,7 @@ try {
   const continued = rows("runs").find(item => item.id === waiting.runId);
   assert.equal(answered.state, "answered"); assert.ok(answered.responseUserMessageId);
   assert.equal(continued.status, "succeeded"); assert.equal(continued.threadId, originalWorker.threadId); assert.equal(continued.pid, originalWorker.pid);
-  assert.ok(readFileSync(continued.artifact, "utf8").includes(label));
+  assert.ok(readFileSync(artifact(continued.id), "utf8").includes(label));
   const checkNative = process.argv.includes("--native");
   if (checkNative) {
   stage = "native_read_approval";
@@ -113,7 +109,7 @@ try {
   assert.ok(rows("runs").every(item => item.status === "succeeded"));
   assert.equal(rows("runs").length, checkNative ? 3 : 2);
   assert.equal(rows("meta").find(item => item.key === "mainThread").value, originalMain);
-  const report = { scenarioId: "HMR-INTERACTION-001", sourceType: "requirements-derived", fixtureSourceType: "synthetic", at: new Date().toISOString(), passed: true, codex: codexVersion(config.codexBin), model: config.model, effort: config.effort, cli: true, directMainAnswer: true, userEscalation: true, unrelatedMessageWhileWaiting: true, originalWorkerContinued: true, legacyThreadUpgradeRecall: true, nativeVerification: checkNative ? "observed" : "not_run", nativeApprovalObserved: nativeApproved, mainThreadPreserved: true, mainThread: originalMain, mainUsage: JSON.parse(rows("meta").find(item => item.key === "mainUsage")?.value ?? "null"), runs: rows("runs").map(({ id, threadId, status, artifact, usage }) => ({ id, threadId, status, artifact, usage: usage ? JSON.parse(usage) : null })), interactions: rows("worker_interactions").map(({ id, runId, source, kind, state, deliveredAt }) => ({ id, runId, source, kind, state, deliveredAt })), transcriptSaved: false, costAmount: null };
+  const report = { scenarioId: "HMR-INTERACTION-001", sourceType: "requirements-derived", fixtureSourceType: "synthetic", at: new Date().toISOString(), passed: true, codex: codexVersion(config.codexBin), model: config.model, effort: config.effort, cli: true, directMainAnswer: true, userEscalation: true, unrelatedMessageWhileWaiting: true, originalWorkerContinued: true, mainThreadRestartRecall: true, nativeVerification: checkNative ? "observed" : "not_run", nativeApprovalObserved: nativeApproved, mainThreadPreserved: true, mainThread: originalMain, mainUsage: JSON.parse(rows("meta").find(item => item.key === "mainUsage")?.value ?? "null"), runs: rows("runs").map(({ id, taskId, workerId, threadId, status, usage }) => ({ id, taskId, workerId, threadId, status, usage: usage ? JSON.parse(usage) : null })), interactions: rows("worker_interactions").map(({ id, runId, source, kind, state, deliveredAt }) => ({ id, runId, source, kind, state, deliveredAt })), transcriptSaved: false, costAmount: null };
   writeFileSync(reportPath, JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ passed: true, model: config.model, report: reportPath }));
 } catch (error) {

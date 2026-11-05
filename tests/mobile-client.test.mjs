@@ -14,6 +14,28 @@ test('mobile discovers public candidates through the relay endpoint without rece
   assert.deepEqual(config.iceServers,[{urls:['stun:120.27.120.125:3478','stun:stun.l.google.com:19302']}]);
  }finally{window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:null}));await new Promise(resolve=>setImmediate(resolve));}
 });
+test('mobile serializes fixed ICE fields even when WebKit toJSON omits usernameFragment',async()=>{
+ const source=(await buildAsync({entryPoints:['ui/mobile-connection.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'candidate-transport',setup(build){
+  build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
+  build.onLoad({filter:/signal/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(_base,_role,onEvent){return {call:async(op,input)=>{if(op==="connect")await onEvent({type:"session",sessionId:"s".repeat(22)});else sent.push(JSON.parse(JSON.stringify(input)));},close(){}}}'}));
+ }}]})).outputFiles[0].text;
+ const window=new EventTarget(),document=new EventTarget(),module={exports:{}},sent=[];let peer;
+ class Peer{constructor(){peer=this;}close(){}}
+ Function('window','document','RTCPeerConnection','sent','module','exports',source)(window,document,Peer,sent,module,module.exports);
+ try{
+  window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:{signalOrigin:'https://signal.example',routeId:'a'.repeat(64),invitation:'b'.repeat(43)}}));
+  await new Promise(resolve=>setImmediate(resolve));
+  for(const usernameFragment of [undefined,null,'synthetic-ufrag']){
+   const candidate={candidate:'candidate:1 1 UDP 1 192.0.2.1 43210 typ host',sdpMid:'0',sdpMLineIndex:0,usernameFragment,extra:'not-on-wire',toJSON(){return {candidate:this.candidate,sdpMid:this.sdpMid,sdpMLineIndex:this.sdpMLineIndex};}};
+   peer.onicecandidate({candidate});await new Promise(resolve=>setImmediate(resolve));
+   assert.deepEqual(sent.at(-1),{sessionId:'s'.repeat(22),candidate:{candidate:candidate.candidate,sdpMid:'0',sdpMLineIndex:0,usernameFragment:usernameFragment??null}});
+  }
+  peer.onicecandidate({candidate:{candidate:'',sdpMid:null,sdpMLineIndex:null,usernameFragment:null,toJSON:()=>({candidate:''})}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(sent.at(-1).candidate,{candidate:'',sdpMid:null,sdpMLineIndex:null,usernameFragment:null});
+  const count=sent.length;peer.onicecandidate({candidate:null});assert.equal(sent.length,count);
+ }finally{window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:null}));}
+});
 test('desktop requests omit ambient cookies and reject foreign origins',async()=>{
  const code=build('ui/web-connection-client.ts'),module={exports:{}},calls=[];
  Function('document','location','globalThis','module','exports',code)({querySelector:()=>null},new URL('https://phone.example/'),{fetch:async(...args)=>{calls.push(args);return Response.json({});}},module,module.exports);

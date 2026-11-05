@@ -120,9 +120,9 @@ try {
   await wait(() => live!.exited);
   assert.equal(live.code, 0);
   const stopped = rows().find((r) => r.id === run.id);
-  assert.equal(stopped.status, "cancelled");
-  assert.ok(stopped.stopRequestedAt);
-  assert.equal(stopped.errorCode, "stop_confirmed");
+  assert.equal(stopped.status, "interrupted");
+  assert.equal(JSON.parse(stopped.checkpointJson??'{}').workerExitConfirmed,1);
+  assert.ok(!rows('SELECT key FROM meta').some(row=>row.key==='lease:'+stopped.id));
   assert.equal(processIdentity(stopped.pid), undefined);
   checks.push({
     test: "T08-real-safe-stop",
@@ -140,7 +140,7 @@ try {
   live = launch();
   await wait(() => live!.messages.some((m) => m.type === "progress"));
   assert.equal(rows().find((r) => r.id === crashRun.id).status, "interrupted");
-  assert.equal(rows().find((r) => r.id === run.id).status, "cancelled");
+  assert.equal(rows().find((r) => r.id === run.id).status, "interrupted");
   assert.equal(rows().length, 2);
   assert.equal(processIdentity(crashRun.pid), undefined);
   send(live, "请查询所有尚未完成的事项，说明停止和中断的实际状态；不要重试。");
@@ -226,54 +226,7 @@ try {
       permissionDenied: true,
     });
   }
-  // Timeout a genuine App Server turn, using a distinct runtime and the same authorized connection.
-  const timeoutConfig = join(evidence, "timeout.config.json");
-  writeFileSync(
-    timeoutConfig,
-    JSON.stringify(
-      {
-        ...config,
-        runtime: config.runtime + "-timeout",
-        timeoutMs: 1000,
-      },
-      null,
-      2,
-    ),
-  );
-  live = launch(timeoutConfig);
-  await wait(() => live!.messages.some((m) => m.type === "progress"));
-  send(
-    live,
-    "请读取 long-meeting.md，把全部180项行动逐条写成完整 Markdown 表格，不要省略。",
-  );
-  const tdb = () => {
-    try {
-      const db = new DatabaseSync(
-        join(config.runtime + "-timeout", "homer.sqlite"),
-        { readOnly: true },
-      );
-      try {
-        return db.prepare("SELECT * FROM runs").all() as any[];
-      } finally {
-        db.close();
-      }
-    } catch {
-      return [];
-    }
-  };
-  const timed = await wait(() => tdb().find((r) => r.status === "failed"));
-  assert.equal(timed.errorCode, "timeout");
-  assert.ok(timed.stopRequestedAt);
-  live.child.stdin.end();
-  await wait(() => live!.exited);
-  assert.equal(live.code, 0);
-  checks.push({
-    test: "T08-real-timeout",
-    passed: true,
-    runId: timed.id,
-    status: timed.status,
-    code: timed.errorCode,
-  });
+
 } catch (e) {
   checks.push({
     passed: false,

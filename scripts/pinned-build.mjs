@@ -73,8 +73,9 @@ export function pinnedDatabaseIdentity(path){
   const runColumns=hasTable('runs')?db.prepare('PRAGMA table_info(runs)').all().map(row=>row.name):[];
   const executionReviewRequired=exists("SELECT 1 FROM meta WHERE key LIKE 'lease:%' LIMIT 1")||
    (hasTable('requests')&&exists("SELECT 1 FROM requests WHERE state!='completed' LIMIT 1"))||
-   (hasTable('runs')&&exists("SELECT 1 FROM runs WHERE status NOT IN ('succeeded','failed','cancelled','interrupted') OR delivery='pending' LIMIT 1"))||
-   (runColumns.includes('phase')&&exists("SELECT 1 FROM runs WHERE phase='uncertain' LIMIT 1"))||
+   (hasTable('runs')&&exists("SELECT 1 FROM runs WHERE status NOT IN ('succeeded','failed','cancelled','interrupted') LIMIT 1"))||
+   (runColumns.includes('phase')&&exists("SELECT 1 FROM runs WHERE phase IN ('uncertain','stopping') LIMIT 1"))||
+   (hasTable('deliveries')&&exists("SELECT 1 FROM deliveries WHERE state IN ('prepared','submitting','uncertain') LIMIT 1"))||
    (hasTable('worker_interactions')&&exists("SELECT 1 FROM worker_interactions WHERE state IN ('pending_main','pending_user') OR (state IN ('approved','denied','answered') AND deliveredAt IS NULL) LIMIT 1"))||
    (hasTable('wechat_outbox')&&exists("SELECT 1 FROM wechat_outbox WHERE state='sending' LIMIT 1"))||
    (hasTable('tg_outbox')&&exists("SELECT 1 FROM tg_outbox WHERE state='sending' LIMIT 1"))||
@@ -87,11 +88,11 @@ function reviewedSchema(directory,database){
  if(database.mediaVersion!=null&&(database.mediaVersion!==1||!existsSync(join(directory,'dist','media-store.js'))))throw Error('pinned_schema_unsupported');
  // The selected artifact must declare the exact persisted schema. A manifest
  // cannot authorize a different version to migrate or reinterpret these facts.
- for(const [key,owner] of [['recursiveSchemaVersion','recursive-tasks.js'],['pendingSchemaVersion','pending-items.js']]){
+ for(const [key,owner] of [['recursiveSchemaVersion','store.js'],['pendingSchemaVersion','pending-items.js']]){
   const version=database.metadata[key];
   const file=join(directory,'dist',owner);
   const source=existsSync(file)?readFileSync(file,'utf8'):'';
-  const declared=source.match(key==='recursiveSchemaVersion'?/RECURSIVE_SCHEMA_VERSION\s*=\s*['"]([0-9]+)['"]/:/PENDING_SCHEMA_VERSION\s*=\s*['"]([0-9]+)['"]/ )?.[1];
+  const declared=source.match(key==='recursiveSchemaVersion'?/STORE_SCHEMA_VERSION\s*=\s*['"]([0-9]+)['"]/:/PENDING_SCHEMA_VERSION\s*=\s*['"]([0-9]+)['"]/ )?.[1];
   const supported=version===declared;
   if(version!==null&&(!supported||!existsSync(file)))throw Error('pinned_schema_unsupported');
  }

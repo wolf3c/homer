@@ -79,11 +79,11 @@ export class Files {
       .filter((x) => x.isFile() && x.name.endsWith(".md"))
       .map((x) => x.name);
   }
-  prepareRun(matterId: string, runId: string) {
-    if (!/^matter-[\w-]+$/.test(matterId) || !/^run-[\w-]+$/.test(runId))
+  prepareRun(taskId: string, runId: string) {
+    if (!/^task-[\w-]+$/.test(taskId) || !/^run-[\w-]+$/.test(runId))
       throw new Error("id_denied");
     return canonicalDir(
-      join(canonicalDir(join(this.outputs, matterId)), runId),
+      join(canonicalDir(join(this.outputs, taskId)), runId),
     );
   }
   writeMarkdown(dir: string, filename: string, content: string) {

@@ -1,9 +1,9 @@
-import { basename } from "node:path";
 import type { Homer, Message } from "../service.js";
 import { WechatApi, WechatError } from "./wechat-api.js";
 import { WechatChannel, type WechatBridge } from "./wechat-channel.js";
 import { MacWechatSecrets, type WechatSecrets } from "./wechat-secrets.js";
 import { WechatManagement } from "./wechat-management.js";
+import {dirname} from 'node:path';
 
 type Receipt = { requestId: string; replyId: string; bindingId: string; peerId: string; messageId: string };
 
@@ -56,11 +56,13 @@ export class HomerWechat implements WechatBridge {
     });
   }
   mediaChanged(){this.app.mediaChanged();}
-  async artifact(runId: string) {
-    const verified=this.app.tasks.publishedArtifact(runId);
+  async artifact(resultId: string) {
+    if(typeof resultId!=='string'||!resultId)throw new WechatError('artifact_not_authorized');
+    const verified=this.app.tasks.publishedResult(resultId);
     if(!verified?.routeSourceRequestId||!this.authorized(verified.routeSourceRequestId))throw new WechatError('artifact_not_authorized');
-    const file=this.app.files.resultBytes(this.app.files.prepareRun(this.app.tasks.run(runId).matterId,runId),verified.path);
-    return { filename: basename(verified.path), bytes:file.data,mime:file.mime,sha256:file.sha256 };
+    const file=this.app.files.resultBytes(dirname(verified.path),verified.path);
+    if(file.sha256!==verified.sha256)throw new WechatError('result_hash_mismatch');
+    return { filename: verified.filename, bytes:file.data,mime:file.mime,sha256:file.sha256 };
   }
   async onMessage(message: Message): Promise<boolean> {
     if(message.type==='coordination'){
@@ -88,20 +90,22 @@ export class HomerWechat implements WechatBridge {
       const d=this.app.tasks.delivery(message.deliveryId);
       if(!['submitting','recorded','uncertain'].includes(d.state)||d.text!==message.text||d.historyMessageId!==message.messageId||d.routeSourceRequestId!==message.requestId)return false;
     }
-    const run = message.runId ? this.app.store.run(message.runId) : undefined;
-    if (message.runId && !run) return false;
+    const run = message.type!=='delivery'&&message.runId ? this.app.store.run(message.runId) : undefined;
+    if (message.type!=='delivery'&&message.runId && !run) return false;
     if (run && message.requestId && message.requestId !== run.sourceRequestId) return false;
     const requestId = message.requestId ?? run?.sourceRequestId;
     if (!requestId || !this.authorized(requestId)) return false;
     if (message.interactionId && (!run || this.app.interactions.inspect(message.interactionId).runId !== run.id)) return false;
-    // A request has one final reply; each interaction and run has its own stable
+    // A request has one final reply; each interaction and delivery has its own stable
     // question/delivery identity. Neither transport retries nor restarts rename it.
     const files=message.type==='delivery'&&message.deliveryId?this.app.tasks.delivery(message.deliveryId).publishedFileResultIds:[];
+    const resultId=files.length===1?files[0]:undefined;
+    if(resultId&&this.app.tasks.publishedResult(resultId)?.deliveryId!==message.deliveryId)return false;
     const text=files.length>1?message.text+`\n\n本次有 ${files.length} 个成果，请在荷马 Web 主对话的“成果下载”逐个获取。`:message.text;
     const eventId = "homer-wechat:" + message.type + ":" + (message.deliveryId ?? message.interactionId ?? requestId);
     return this.channel.publish({ eventId, requestId, type: message.type, text,
       ...(message.interactionId ? { interactionId: message.interactionId } : {}),
-      ...(message.type === "delivery" && files.length<=1 && run && this.app.tasks.publishedArtifact(run.id) ? { artifactRunId: run.id } : {}),
+      ...(resultId ? { artifactResultId: resultId } : {}),
     });
   }
   private async recoverReplies() {

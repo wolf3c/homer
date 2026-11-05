@@ -9,7 +9,7 @@ import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/approval-card-official-20261023');mkdirSync(destination,{recursive:true});
 const screenshots=process.argv.includes('--screenshots');
 const webDir=process.env.HOMER_APPROVAL_WEB_DIR??(process.argv.includes('--reuse-build')?join(destination,'candidate'):await buildApprovalUI(join(destination,'candidate')));
-const options={webDir,branding:resolve('assets/branding/homer-river-stone-64.e3015ec6baed.png'),resource:async(_req,res,url)=>{res.writeHead(url.pathname==='/api/files/synthetic-result'?200:404,{'Content-Type':'text/plain'});res.end('Synthetic preview content');}};
+const options={webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-64.png'),resource:async(_req,res,url)=>{res.writeHead(url.pathname==='/api/files/synthetic-result'?200:404,{'Content-Type':'text/plain'});res.end('Synthetic preview content');}};
 if(process.argv.includes('--serve')){
  const f=await approvalFixture(options);console.log('Synthetic ApprovalCard product preview: '+f.url+' (unknown receipt fixture; no real commands execute)');
  const close=async()=>{await f.close();process.exit(0);};process.once('SIGINT',close);process.once('SIGTERM',close);

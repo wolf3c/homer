@@ -3,20 +3,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {MainProcessHistory} from '../src/main-process.js';
-import {ConversationHistory} from '../src/web-history.js';
 import {CodexEngine} from '../src/engine.js';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
-import {MainInputs} from '../src/recursive-main-inputs.js';
 import {Homer} from '../src/service.js';
-import {Store} from '../src/store.js';
-import {Files} from '../src/files.js';
-import {RecursiveTasks} from '../src/recursive-tasks.js';
-import {RecursiveTools} from '../src/recursive-tools.js';
-import {WorkerInteractions} from '../src/worker-interactions.js';
-import {syntheticFile} from './recursive-publication-fixture.js';
+import {fixture as chatFixture,until} from './fixtures/worker-chat-host.js';
 import {homerWebBridge} from '../src/web-homer.js';
-import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
-import {resolve} from 'node:path';
 
 function fixture(){
   const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT)');
@@ -245,65 +236,41 @@ test('early protocol notifications wait for actual ACK; native terminal freezes 
  assert.equal((await work).status,'completed');
 });
 
-test('real accepted publication and Web projection preserve final/result ownership and immutable Worker receipt',async()=>{
-  mkdirSync('.codex/scratch/linear-conversation-timeline-review',{recursive:true});
-  const dir=mkdtempSync(resolve('.codex/scratch/linear-conversation-timeline-review/publication-'));
-  const store=new Store(':memory:');
-  try{
-    new WorkerInteractions(store.db);const files=new Files(dir),tasks=new RecursiveTasks(store,files);tasks.migrate();
-    store.setMeta('mainAgentId','main:synthetic');store.setMeta('mainThread','synthetic');store.startRequest('synthetic-source','synthetic-hash');
-    const history=new ConversationHistory(store.db),processes=new MainProcessHistory(store.db),app:any=Object.create(Homer.prototype);
-    Object.assign(app,{store,files,tasks,history,processes,inputs:new MainInputs(tasks,history),registerChannelCapabilities(){},snapshot:()=>({runs:store.runs(),matters:store.matters(),tasks:tasks.tasks(),interactions:[],deliveries:tasks.deliveries()})});
-    processes.start({id:'node',threadId:'synthetic',sourceKind:'worker',sourceMessageIds:['worker-result-message'],messageId:'node'},'turn');
-    history.record('node','synthetic','','running');
-    const file=syntheticFile(app,'synthetic-source','public.md','# Public');
-    const notice=store.db.prepare("SELECT id FROM agent_messages WHERE kind='result_ready' AND json_extract(payloadJson,'$.resultId')=?").get(file.resultId)!;app.recordWorkerReceipt('node',{id:String(notice.id)});
-    const item=processes.list('synthetic')[0]!.items[0] as any;assert.equal(item.kind,'workerEvent');assert.equal(item.event.eventKind,'result_received');assert.equal(item.event.resultId,file.resultId);
-    const delivery=file.publish('Formal authorized final');processes.delivery('node',delivery);
-    app.finishMainProcess({processId:'node',terminalConfirmed:true,processEndEventId:'turn:terminal'},'completed');
-    history.record(delivery.historyMessageId,'synthetic',delivery.text);
-    const state=await homerWebBridge(app).state();const artifact=state.work.flatMap(work=>work.artifacts??[]).find(a=>a.id===file.resultId)!;
-    assert.equal(artifact.id,file.resultId);
-    assert.equal(artifact.historyMessageId,delivery.historyMessageId);
-    assert.equal(tasks.publishedArtifacts(file.run.id)[0]?.historyMessageId,delivery.historyMessageId);
-    assert.equal(state.processNodes?.[0]?.final,undefined);assert.equal(state.processNodes?.[0]?.deliveryMessageId,delivery.historyMessageId);assert.equal(state.messages.find(message=>message.id===delivery.historyMessageId)?.text,'Formal authorized final');
-    assert.equal((state.processNodes?.[0]?.items.find(item=>item.kind==='workerEvent') as any).event.body,'Synthetic final result');
-    assert.equal((processes.list('synthetic')[0]?.items.find(item=>item.kind==='workerEvent') as any).event.title,'后台工作','missing historical display title is never inferred from current task');
-    assert.equal((await homerWebBridge(app).artifact(file.resultId)).content,'# Public');
-    assert.ok(!JSON.stringify(state.processNodes).includes('# Public'));
-  }finally{store.close();rmSync(dir,{recursive:true,force:true});}
-});
-
-test('real publish tool and delivery scheduler keep recorded summaries visible once after private processing',async()=>{
-  mkdirSync(resolve('.codex/scratch/codex-process-fidelity-20261021/backend'),{recursive:true});
- const dir=mkdtempSync(resolve('.codex/scratch/codex-process-fidelity-20261021/backend/publication-'));
- const store=new Store(':memory:');
+test('real publication preserves the Worker reply and emits one delivery for the original input',async()=>{
+ const f=chatFixture();let taskId='',runId='',filePath='',resultId='',deliveryId='';
+ const raw='Synthetic final result',published='Formal authorized final';
  try{
-  new WorkerInteractions(store.db);const files=new Files(dir),tasks=new RecursiveTasks(store,files);tasks.migrate();
-  store.setMeta('mainAgentId','main:synthetic');store.setMeta('mainThread','synthetic');store.startRequest('publish-source','synthetic-hash');
-  const history=new ConversationHistory(store.db),processes=new MainProcessHistory(store.db),app:any=Object.create(Homer.prototype),outputs:any[]=[],jobs:Promise<unknown>[]=[];
-  Object.assign(app,{store,files,tasks,history,processes,inputs:new MainInputs(tasks,history),workers:new Map(),hostActors:new WeakSet(),memory:{},main:{threadId:'synthetic',turnId:'publish-turn'},sink:async(value:any)=>outputs.push(value),registerChannelCapabilities(){},
-   enqueue:(fn:()=>Promise<unknown>)=>{const job=Promise.resolve().then(fn);jobs.push(job);return job;},
-   snapshot:()=>({runs:store.runs(),matters:store.matters(),tasks:tasks.tasks(),interactions:[],deliveries:tasks.deliveries()})});
-  app.recursiveTools=new RecursiveTools(tasks,{wake:()=>{}} as any);
-  const file=syntheticFile(app,'publish-source','summary.md','# Public file');const taskId=tasks.run(file.run.id).taskId;
-  const start=(id:string)=>{processes.start({id,threadId:'synthetic',sourceKind:'worker',sourceMessageIds:['notice-1','notice-2'],messageId:id},'publish-turn');history.record(id,'synthetic','','running');app.mainContext={processId:id,event:true};};
-  start('private-batch');processes.agent('private-batch',{turnId:'publish-turn',itemId:'hidden',phase:'final_answer',text:'PRIVATE_BATCH_FINAL',completed:true});
-  const actor={agentId:'main:synthetic',threadId:'synthetic',turnId:'publish-turn'};
-  const args={operationId:'publish-through-service',taskId,version:1,expectedTaskRevision:tasks.task(taskId).revision,resultId:file.resultId,publishedFileResultId:file.resultId,text:'正式交付摘要'};
-  const result=await app.recursiveTool(actor,'publish_delivery',args),delivery=tasks.delivery(result.deliveryId);
-  assert.equal(delivery.state,'prepared');assert.equal(history.message(delivery.historyMessageId),undefined);
-  assert.deepEqual(processes.list('synthetic')[0]?.deliveryMessageIds,[delivery.historyMessageId]);
-  app.finishMainProcess({processId:'private-batch',terminalConfirmed:true,processEndEventId:'publish-turn:terminal'},'completed');app.mainContext=undefined;
-  app.scheduleDelivery();await Promise.all(jobs);
-  assert.equal(tasks.delivery(delivery.id).state,'recorded');assert.equal(history.message(delivery.historyMessageId)?.text,args.text);
-  const state=await homerWebBridge(app).state();
-  assert.equal(state.messages.filter(message=>message.id===delivery.historyMessageId).length,1);assert.equal(state.messages.find(message=>message.id===delivery.historyMessageId)?.text,args.text);
-  assert.equal(state.messages.find(message=>message.id==='private-batch')?.text,'');assert.ok(!JSON.stringify(state).includes('PRIVATE_BATCH_FINAL'));
-  assert.equal(state.artifacts?.find(item=>item.id===file.resultId)?.messageId,delivery.historyMessageId);assert.equal(outputs.filter(item=>item.type==='delivery').length,1);
-  // Same operation replay in a later batch cannot steal an already recorded history identity.
-  start('replay-batch');await app.recursiveTool(actor,'publish_delivery',args);assert.equal(processes.list('synthetic')[1]?.deliveryMessageId,undefined);
-  app.finishMainProcess({processId:'replay-batch',terminalConfirmed:true,processEndEventId:'replay-terminal'},'completed');app.mainContext=undefined;
-  app.scheduleDelivery();await Promise.all(jobs);assert.equal(outputs.filter(item=>item.type==='delivery').length,1);
- }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+  f.setScript(async(main,text)=>{
+   if(text==='publish test'){
+    taskId=(await main.call('task_create',{goal:'Prepare a synthetic report.'})).taskId;
+    runId=(await main.call('worker_open',{taskId,message:'Write public.md.'})).runId;
+    return {status:'completed',text:'Started.'};
+   }
+   resultId=(await main.call('accept_result',{runId,filePath})).resultId;
+   const args={taskId,resultIds:[resultId],text:published};
+   const first=await main.call('publish_delivery',args,'publish-once');
+   const retry=await main.call('publish_delivery',args,'publish-once');
+   assert.equal(retry.deliveryId,first.deliveryId);deliveryId=first.deliveryId;
+   return {status:'completed',text:published,messages:[{itemId:'final',phase:'final_answer',text:published}]};
+  });
+  await f.app.start();await f.app.message('publish test','publication-source');
+  await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+  const worker=f.engines.find(engine=>engine.options.role==='worker')!;
+  filePath=(await worker.call('write_markdown',{filename:'public.md',content:'# Public'})).path;
+  await assert.rejects(()=>homerWebBridge(f.app).artifact(runId),/artifact_not_authorized/);
+  worker.finish!({status:'completed',text:raw,messages:[{itemId:'worker-final',phase:'final_answer',text:raw}]});
+  await f.app.idle();
+  const delivery=f.app.tasks.delivery(deliveryId),state=await homerWebBridge(f.app).state();
+  assert.equal(delivery.state,'recorded');
+  assert.equal(f.events.filter(item=>item.type==='delivery'&&item.text===published).length,1);
+  assert.equal(f.events.filter(item=>item.type==='reply'&&item.text===published).length,0);
+  assert.equal(state.messages.filter(message=>message.id===delivery.historyMessageId).length,1);
+  assert.equal(state.artifacts?.find(item=>item.id===resultId)?.messageId,delivery.historyMessageId);
+  assert.equal((await homerWebBridge(f.app).artifact(resultId)).content,'# Public');
+  const receipt=f.app.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?").get(runId)!;
+  assert.equal(JSON.parse(String(receipt.payloadJson)).text,raw);
+  const process=state.processNodes?.find(node=>node.deliveryMessageId===delivery.historyMessageId);
+  assert.ok(process);assert.equal((process.items.find(item=>item.kind==='workerEvent') as any).event.body,raw);
+  assert.ok(!JSON.stringify(state.processNodes).includes('# Public'));
+ }finally{await f.close();}
 });

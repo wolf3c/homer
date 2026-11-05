@@ -39,7 +39,7 @@ test('authorized result origin reads exact old-thread publication and refuses re
   await f.app.start();f.app.inputs.accept({requestId:'synthetic-origin',text:'合成成果授权'});
   const claimed=f.app.inputs.claim()!;f.app.inputs.finish(claimed.messageId,claimed.revision,'completed');f.app.store.finishRequest('synthetic-origin','Synthetic accepted request');
   const file=syntheticFile(f.app,'synthetic-origin','synthetic-plan.md','# Plan',[{filename:'synthetic-draft.md',content:'# Draft'}]);const delivery=file.publish('旧线程原答复，正文完整');
-  f.app.history.record(delivery.historyMessageId,'synthetic-older-thread',delivery.text);
+  f.app.tasks.markDelivery(delivery.id,'recorded');f.app.history.record(delivery.historyMessageId,'synthetic-older-thread',delivery.text);
   const bridge=homerWebBridge(f.app),origin=await bridge.artifactOrigin!(file.resultId);
   assert.equal(origin.message.id,delivery.historyMessageId);assert.equal(origin.message.threadId,'synthetic-older-thread');assert.equal(origin.message.text,delivery.text);assert.deepEqual(new Set(origin.files.map(file=>file.id)),new Set(file.resultIds));
   const web=await createWebServer({bridge,port:0});try{
@@ -59,7 +59,7 @@ test('internal worker turn with host closure remains unknown and never promotes 
    const node=f.app.processes.list(peer.threadId)[0]!;assert.equal(node.status,'unknown');assert.equal(node.state,'worked');assert.match(node.endEventId!,/^host:engine_closed:/);assert.equal(node.final,undefined);assert.equal(node.items.length,1);assert.ok(!JSON.stringify(f.app.conversationState()).includes('PRIVATE_WORKER_BODY'));
  }finally{await f.close();}
 });
-test('new user input runs after Worker host closure but an unacknowledged old receipt stays uncertain',async()=>{
+test('new user input runs independently after Worker host closure while its old receipt stays uncertain',async()=>{
  const f=syntheticHost();try{
   await f.app.start();const peer=f.engines[0]!;
   peer.turn=async(_text,options)=>{peer.turnId='synthetic-worker-receipt';options?.onStarted?.(peer.turnId);throw Error('synthetic_worker_connection_lost');};
@@ -71,10 +71,10 @@ test('new user input runs after Worker host closure but an unacknowledged old re
   await f.app['processWorkerInput'](input);await f.app.idle();
   assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(input.messageId,f.app.store.meta('mainAgentId')!)!.state,'uncertain');
   const node=f.app.processes.list(peer.threadId)[0]!;assert.equal(node.state,'worked');assert.equal(node.status,'unknown');assert.equal(node.final?.text.includes('主 Agent 本次协调未完成'),true);
-  assert.match(await f.app.message('Synthetic next input','synthetic-next-user'),/旧回执核对未确认/);
+  assert.equal(await f.app.message('Synthetic next input','synthetic-next-user'),'Synthetic reply: Synthetic next input');
   assert.ok(f.seen.includes('Synthetic next input'),'the new user input reaches the recovered engine');
-  assert.equal(f.seen.filter(text=>text.includes(input.messageId)).length,1,'the original receipt is reconciled once within the new user request');
-  assert.equal(f.app.inputs.byRequestIds(['synthetic-next-user'])[0]!.state,'failed');
+  assert.equal(f.seen.filter(text=>text.includes(input.messageId)).length,0,'unrelated historical uncertainty adds no model round to the new request');
+  assert.equal(f.app.inputs.byRequestIds(['synthetic-next-user'])[0]!.state,'completed');
   assert.equal(f.app.processes.list(peer.threadId).filter(item=>item.sourceKind==='worker'&&item.sourceMessageIds.includes(input.messageId)).length,1,'the old Worker input is not replayed');
   assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(input.messageId,f.app.store.meta('mainAgentId')!)!.state,'uncertain');
  }finally{await f.close();}

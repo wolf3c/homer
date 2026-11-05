@@ -8,7 +8,7 @@ const observation={connected:true,serviceRunning:true,threadId:'thread',observed
 test('one in-place summary has unique source title, safe live action and continuous process duration',async()=>withDom(async d=>{
  const render=(n=node,sources=[{key:'source',icon:'Send',title:'消息队列调整',target:{taskId:'task',version:1},phaseLabel:'原请求'}])=>d.render(h(ProcessObservationContext.Provider,{value:observation},h(ProcessMessageContent,{node:n,taskSources:sources,renderText:t=>t},'结果保留')));
  await render();const toggle=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');assert.match(toggle.textContent,/消息队列调整 · 运行 pnpm test.*1m 24s/);assert.doesNotMatch(toggle.textContent,/主端本轮|SECRET/);
- await render({...node,items:node.items.map(i=>({...i,revision:2,status:'completed'}))});assert.equal(d.find(n=>n.attrs['data-slot']==='collapsible-trigger'),toggle);assert.match(toggle.textContent,/已返回.*1m 24s/);
+ await render({...node,items:node.items.map(i=>({...i,revision:2,status:'completed'}))});assert.equal(d.find(n=>n.attrs['data-slot']==='collapsible-trigger'),toggle);assert.match(toggle.textContent,/处理中.*1m 24s/);assert.doesNotMatch(toggle.textContent,/已结束/,'a returned tool cannot end the active Main process');
  await render(node,[{key:'a',icon:'Send',title:'甲',target:{taskId:'a',version:1}},{key:'b',icon:'Send',title:'乙',target:{taskId:'b',version:1}}]);assert.match(toggle.textContent,/当前对话/);
 }));
 test('missing timing is explicit and an old turn cannot retain a live command',async()=>withDom(async d=>{
@@ -24,14 +24,15 @@ const require=createRequire(new URL('../package.json',import.meta.url));
 const built=buildSync({stdin:{contents:readFileSync('ui/task-status.tsx','utf8')+'\nexport {TaskStatusRow,Disclosures};',resolveDir:resolve('ui'),loader:'tsx'},bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',external:['react','react/jsx-runtime','react-dom'],loader:{'.css':'empty'}});
 const mod={exports:{}};Function('require','module','exports',built.outputFiles[0].text)(require,mod,mod.exports);
 const {TaskStatusRow,Disclosures}=mod.exports;
-const task={id:'task',rootTaskId:'task',headVersion:1,currentRunId:'run',executorKind:'worker',state:'working',controlState:'normal',pendingUser:0,pendingMain:0,run:{id:'run',contractVersion:1,epoch:1,threadId:'worker-thread',turnId:'worker-turn',status:'running',phase:'executing',createdAt:1000,startedAt:2000,endedAt:null},result:null,delivery:null};
+const worker={id:'worker',taskId:'task',pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run',taskId:'task',workerId:'worker',version:1,epoch:1,threadId:'worker-thread',turnId:'worker-turn',status:'running',phase:'executing',createdAt:1000,startedAt:2000,endedAt:null}};
+const task={id:'task',headVersion:1,state:'open',controlState:'normal',historyState:'visible',workers:[worker],results:[],deliveries:[]};
 test('task row keeps execution record at bottom, collapsed by default, with finite-history boundary',async()=>withDom(async d=>{
- const view=t=>h(Disclosures.Provider,{value:new Map([['task','task:1:run:1:worker-thread:worker-turn']])},h(TaskStatusRow,{task:t,label:'任务',status:{state:'working',label:'执行中'},onOpenChange:()=>{}},h('p',null,'原有结果与操作')));
+ const view=t=>h(Disclosures.Provider,{value:new Map([['task/worker/worker','worker:run:1:1:worker-thread:worker-turn']])},h(TaskStatusRow,{task:t,worker:t.workers[0],label:'任务',status:{state:'working',label:'执行中',icon:'Activity',attention:'none',owner:'worker'},onOpenChange:()=>{}},h('p',null,'原有结果与操作')));
  await d.render(view(task));const record=d.find(n=>n.attrs['data-task-execution-record']==='task');assert.ok(record,'record is in the existing expanded task');
  const body=record.parentNode;assert.equal(body.lastChild,record);assert.ok(body.textContent.indexOf('原有结果与操作')<body.textContent.indexOf('执行记录'));
  const toggle=d.all().find(n=>record.contains(n)&&n.attrs['data-slot']==='collapsible-trigger');assert.equal(toggle.attrs['aria-expanded'],'false');
  await d.click(toggle);assert.match(record.textContent,/仅含当前版本.*完整.*历史/);assert.match(record.textContent,/等待结束确认/);assert.match(record.textContent,/已记录开始/);
- const previous=toggle;await d.render(view({...task,revision:2,run:{...task.run,status:'failed',phase:'ended',endedAt:3000}}));assert.equal(previous,d.all().find(n=>record.contains(n)&&n.attrs['data-slot']==='collapsible-trigger'));assert.equal(toggle.attrs['aria-expanded'],'true');assert.match(record.textContent,/执行失败/);assert.equal(d.all().filter(n=>n.tagName==='DIALOG').length,0);
+ const previous=toggle;await d.render(view({...task,revision:2,workers:[{...worker,run:{...worker.run,status:'failed',phase:'ended',endedAt:3000}}]}));assert.equal(previous,d.all().find(n=>record.contains(n)&&n.attrs['data-slot']==='collapsible-trigger'));assert.equal(toggle.attrs['aria-expanded'],'true');assert.match(record.textContent,/执行失败/);assert.equal(d.all().filter(n=>n.tagName==='DIALOG').length,0);
 }));
 
 // Catches accidental preview leakage or a streaming duration in the live region.

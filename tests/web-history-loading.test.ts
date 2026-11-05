@@ -125,8 +125,9 @@ test('worker relation selects only affected node and dirty acknowledgement rolls
 });
 test('page publication keeps every authorized file at its exact original message and revocation removes all',()=>{
  const f=historyFixture(100);try{
-  f.store.startRequest('request-0','synthetic-publication-hash');
-  const made=syntheticFile(f as unknown as Homer,'request-0','first.md','# First',[{filename:'second.md',content:'# Second'}]),delivery=made.publish();
+  f.inputs.accept({requestId:'publication-source',text:'Publish the two synthetic files'});
+  const source=f.inputs.claim()!;f.inputs.finish(source.messageId,source.revision,'completed');
+  const made=syntheticFile({...f,files:f.tasks.files} as unknown as Homer,'publication-source','first.md','# First',[{filename:'second.md',content:'# Second'}]),delivery=made.publish();
   f.history.record(delivery.historyMessageId,'synthetic-history',delivery.text);f.tasks.markDelivery(delivery.id,'recorded');
   assert.deepEqual(f.tasks.publishedForMessages([delivery.historyMessageId]).map(file=>file.resultId).sort(),made.resultIds.sort());
   assert.deepEqual(f.tasks.publishedForMessages(['node-99']),[]);

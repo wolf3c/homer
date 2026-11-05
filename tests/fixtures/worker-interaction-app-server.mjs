@@ -5,7 +5,7 @@ const send = message => process.stdout.write(JSON.stringify(message) + "\n");
 let model, instructions, turn = "native-turn";
 const trustedArgument = process.argv.find(arg => arg.startsWith("mcp_servers.homer_interactions="));
 const trusted = trustedArgument ? JSON.parse(trustedArgument.slice(trustedArgument.indexOf("=") + 1).replace(/("(?:[^"\\]|\\.)*")=/g, "$1:")) : undefined;
-const names = ["pending_add", "pending_list", "pending_update", "work_directory", "file_checkpoint", "capabilities", "inspect_interaction", "respond_interaction", "escalate_interaction", "archive_work", "restore_work", "delete_work", "task_delegate", "work_inspect", "agent_send", "inbox_read", "inbox_ack", "task_review", "task_update", "adopt_version", "task_stop", "task_continue", "task_takeover", "publish_delivery", "runtime_capabilities", "inspect_attachment", "inspect_result_file", "quote_current_message", "prepare_combined_delivery"];
+const names = ["work_directory", "file_checkpoint", "capabilities", "inspect_interaction", "respond_interaction", "escalate_interaction", "runtime_capabilities", "inspect_attachment", "inspect_result_file", "quote_current_message", "prepare_combined_delivery"];
 createInterface({ input: process.stdin }).on("line", line => {
   const m = JSON.parse(line);
   if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});

@@ -100,7 +100,7 @@ test('actual website delivers a finite native Token to Homer and preserves histo
    await page.locator('[contenteditable=true]').fill('dispatch-synthetic');await page.locator('.send-button').click();
    const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
    try{
-    const result=db.prepare("SELECT runs.artifact,results.sha256 FROM runs JOIN results ON results.runId=runs.id AND results.filePath=runs.artifact JOIN deliveries ON deliveries.publishedFileResultId=results.id WHERE runs.status='succeeded' AND results.state='accepted' AND deliveries.state='recorded' AND deliveries.outcome='succeeded'");
+    const result=db.prepare("SELECT r.filePath AS artifact,r.sha256 FROM results r JOIN runs ON runs.id=r.runId JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) selected ON selected.value=r.id WHERE runs.status='succeeded' AND r.kind='file' AND r.state='accepted' AND d.state='recorded' AND d.revokedAt IS NULL");
     const deadline=Date.now()+30000;
     while(!(delivered=result.get())&&Date.now()<deadline)await page.waitForTimeout(50);
     assert.ok(delivered,'real Worker must finish, be inspected and deliver its actual file');

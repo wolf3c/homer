@@ -30,7 +30,7 @@ test('ILINK-NOTIFY-004 actual main tool failure persists a progress pair without
   async start(){return this.threadId;}
   async turn(_text:string,options?:{onStarted?:(id:string)=>void}){
    this.turnId='synthetic-progress-turn';options?.onStarted?.(this.turnId);
-   await assert.rejects(this.handler({threadId:this.threadId,turnId:this.turnId,callId:'synthetic-check',tool:'inspect_run',arguments:{runId:'run-missing'}}),/run_not_found/);
+   await assert.rejects(this.handler({threadId:this.threadId,turnId:this.turnId,callId:'synthetic-check',tool:'work_inspect',arguments:{taskId:'task-missing'}}),/task_not_found/);
    return {status:'completed',text:'合成已知失败后正常答复'};
   }
   async close(){return true;}async interrupt(){return true;}

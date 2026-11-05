@@ -1,291 +1,137 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
-import {
-  mkdirSync,
-  writeFileSync,
-  rmSync,
-  chmodSync,
-  copyFileSync,
-  readFileSync,
-} from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, chmodSync, copyFileSync, readFileSync } from "node:fs";
+import { resolve, join } from "node:path";
 import { Homer, type Message } from "../src/service.js";
 import { Store } from "../src/store.js";
 import type { Config } from "../src/config.js";
-import type {
-  EngineLike,
-  EngineOptions,
-  ToolCall,
-  TurnResult,
-} from "../src/engine.js";
-import {
-  MEETING_REVISION,
-  assertMeetingArtifact,
-} from "./scenarios/meeting-revision.js";
+import type { EngineLike, EngineOptions, ToolCall, TurnResult } from "../src/engine.js";
+import { MEETING_REVISION, assertMeetingArtifact } from "./scenarios/meeting-revision.js";
 const tick = () => new Promise((r) => setTimeout(r, 10));
 async function until(check: () => boolean) {
-  const end = Date.now() + 3000;
-  while (!check()) {
-    if (Date.now() > end) throw new Error("test_wait_timeout");
-    await tick();
-  }
+  const end = Date.now() + 4000;
+  while (!check()) { if (Date.now() > end) throw new Error("test_wait_timeout"); await tick(); }
 }
 let sequence = 0;
+const cleanup: (()=>Promise<void>)[]=[];
+after(async()=>{for(const close of cleanup)await close();});
+function delivery(app:Homer,runId:string){
+  const run=app.tasks.run(runId);return app.tasks.deliveries([run.taskId]).find(row=>row.version===run.version);
+}
 function fixture(
   name: string,
-  mode:
-    | "normal"
-    | "hang"
-    | "unconfirmed"
-    | "failed"
-    | "empty"
-    | "start-fail" = "normal",
+  mode: "normal" | "hang" | "unconfirmed" | "failed" | "empty" | "start-fail" = "normal",
   timeoutMs = 5000,
 ) {
-  const base = resolve(".codex/scratch/service-tests/" + name);
-  rmSync(base, { recursive: true, force: true });
-  mkdirSync(base + "/workspace/materials", { recursive: true });
-  mkdirSync(base + "/runtime", { recursive: true });
-  writeFileSync(
-    base + "/workspace/materials/meeting.md",
-    "林青：写初稿，2026-10-20。整理反馈：负责人和时间待确认。",
-  );
+  const scratch=resolve(".codex/scratch/e-service");mkdirSync(scratch,{recursive:true});
+  const base=mkdtempSync(join(scratch,name.slice(0,20)+"-"));
+  mkdirSync(base + "/workspace/materials", { recursive: true });mkdirSync(base + "/runtime", { recursive: true });
+  writeFileSync(base + "/workspace/materials/meeting.md","林青：写初稿，2026-10-20。整理反馈：负责人和时间待确认。");
   const config: Config = {
-    workspace: base + "/workspace",
-    runtime: base + "/runtime",
-    codexBin: "/usr/bin/false",
-    codexHome: base + "/engine",
-    model: "mock-only",
-    requiresOpenaiAuth: false,
-    timeoutMs,
-    mainTimeoutMs: 1000,
-    stopGraceMs: 100,
+    workspace: base + "/workspace",runtime: base + "/runtime",codexBin: "/usr/bin/false",codexHome: base + "/engine",
+    model: "mock-only",requiresOpenaiAuth: false,timeoutMs,mainTimeoutMs: 1000,stopGraceMs: 100,
   };
-  const messages: Message[] = [];
-  const scriptedMessages = new Map<string, Record<string, unknown>>();
-  const workerDocuments: string[] = [];
-  const workerEngines: Fake[] = [];
-  const engineOptions: EngineOptions[] = [];
-  let active = 0,
-    maxActive = 0;
-  let sinkFails = false;
-  let progressFails = false;
-  let mainStopFails = false;
-  let mainDeliveryFails = false;
-  let mainDeliveryEmpty = false;
-  let deliveryGate: Promise<void> | undefined;
-  let releaseDelivery: (() => void) | undefined;
-  let deliveryWaiting = false;
+  const messages: Message[] = [],scriptedMessages = new Map<string, Record<string, any>>(),workerDocuments: string[] = [],workerEngines: Fake[] = [],engineOptions: EngineOptions[] = [];
+  let active = 0,maxActive = 0,deliveryAttempts=0,sinkFails = false,progressFails = false,mainStopFails = false,mainDeliveryFails = false,mainDeliveryEmpty = false;
+  let deliveryGate: Promise<void> | undefined,releaseDelivery: (() => void) | undefined,deliveryWaiting = false;
   class Fake extends EventEmitter implements EngineLike {
-    threadId = "mock-thread-" + ++sequence;
-    turnId?: string;
-    release?: () => void;
-    pendingResolve?: (r: TurnResult) => void;
-    isWorker: boolean;
-    constructor(
-      readonly options: EngineOptions,
-      readonly tool: (call: ToolCall) => Promise<unknown>,
-    ) {
-      super();
-      this.threadId=options.threadId??this.threadId;
-      this.isWorker = options.tools.some((t) => t.name === "read_material");
-      if (this.isWorker) workerEngines.push(this);
+    threadId = "mock-thread-" + ++sequence;turnId?: string;release?: () => void;pendingResolve?: (r: TurnResult) => void;isWorker: boolean;failureCode?:string;
+    constructor(readonly options: EngineOptions,readonly tool: (call: ToolCall) => Promise<unknown>) {
+      super();this.threadId=options.threadId??this.threadId;this.isWorker=options.role==="worker";if(this.isWorker)workerEngines.push(this);
     }
-    async start() {
-      if (mode === "start-fail" && !this.isWorker)
-        throw new Error("mock_start_failed");
-      return this.threadId;
+    async start() {if(mode==="start-fail"&&!this.isWorker)throw Error("mock_start_failed");return this.threadId;}
+    async call(tool:string,args:unknown):Promise<any>{
+      return this.tool({threadId:this.threadId,turnId:this.turnId!,callId:"call-"+ ++sequence,tool,arguments:args});
     }
-    async call(tool: string, args: unknown) {
-      return this.tool({
-        threadId: this.threadId,
-        turnId: this.turnId!,
-        callId: "call-" + ++sequence,
-        tool,
-        arguments: args,
-      });
-    }
-    async turn(
-      text: string,
-      options?: { onStarted?: (id: string) => void },
-    ): Promise<TurnResult> {
-      this.turnId = "mock-turn-" + ++sequence;
-      options?.onStarted?.(this.turnId);
-      if (this.isWorker) {
-        active++;
-        maxActive = Math.max(maxActive, active);
-        try {
-          if (mode === "hang" || mode === "unconfirmed") {
-            return await new Promise<TurnResult>(
-              (r) => (this.pendingResolve = r),
-            );
+    async turn(text:string,options?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
+      this.turnId="mock-turn-"+ ++sequence;options?.onStarted?.(this.turnId);
+      if(this.isWorker){
+        active++;maxActive=Math.max(maxActive,active);
+        try{
+          if(mode==="hang"||mode==="unconfirmed")return await new Promise<TurnResult>(resolve=>{this.pendingResolve=resolve;});
+          await new Promise<void>(resolve=>{this.release=resolve;});
+          if(mode==="failed"||this.failureCode)throw Error(this.failureCode??"mock_engine_failed");
+          let file:{path:string}|undefined;
+          if(mode!=="empty"){
+            await this.call("read_material",{});
+            file=await this.call("write_markdown",{filename:"actions.md",content:workerDocuments.shift()??"# 行动清单\n\n- 林青：写初稿，2026-10-20\n- 待确认：整理反馈；负责人和时间待确认。"});
           }
-          await new Promise<void>((r) => (this.release = r));
-          if (mode === "failed") throw new Error("mock_engine_failed");
-          if (mode !== "empty") {
-            await this.call("read_material", {});
-            await this.call("write_markdown", {
-              filename: "actions.md",
-              content:
-                workerDocuments.shift() ??
-                "# 行动清单\n\n- 林青：写初稿，2026-10-20\n- 待确认：整理反馈；负责人和时间待确认。",
-            });
-          }
-          return {
-            status: "completed",
-            text: "已写入",
-            usage: { total: { totalTokens: 10 } },
-          };
-        } finally {
-          active--;
+          return {status:"completed",text:file?JSON.stringify({message:"已写入",filePath:file.path}):"No artifact produced",usage:{total:{totalTokens:10}}};
+        }finally{active--;}
+      }
+      if(text.startsWith("[内部协作输入")){
+        const notice=JSON.parse(text.split("\n")[1]!);
+        if(notice.kind!=="worker_reply")return {status:"completed",text:""};
+        const read=await this.call("worker_read",{workerId:notice.workerId,messageId:notice.messageId}),original=read.messages[0];
+        const execution=original.payload.execution;let filePath:string|undefined;
+        try{filePath=JSON.parse(original.text).filePath;}catch{}
+        if(execution.status!=="completed"||!filePath){
+          const reason=execution.errorCode??"artifact_missing";
+          await this.call("task_update",{taskId:notice.taskId,notes:reason});
+          if(!["interrupted","unconfirmed"].includes(execution.status))await this.call("task_update",{taskId:notice.taskId,action:"settle",outcome:"failed",notes:reason});
+          if(mainDeliveryFails)throw Error("mock_main_disconnected");
+          if(mainDeliveryEmpty)return {status:"completed",text:""};
+          return {status:"completed",text:"已核对执行状态："+reason};
         }
+        const adopted=await this.call("accept_result",{runId:notice.runId,filePath});
+        await this.call("work_inspect",{resultId:adopted.resultId});
+        if(mainDeliveryFails)throw Error("mock_main_disconnected");
+        if(mainDeliveryEmpty)return {status:"completed",text:""};
+        await this.call("publish_delivery",{taskId:notice.taskId,resultIds:[adopted.resultId],text:"已核对并正式交付行动清单。"});
+        return {status:"completed",text:""};
       }
-      if (text.startsWith("[执行结果待审阅]")) {
-        const id = text.match(/runId=([\w-]+)/)![1]!;
-        const inspected:any=await this.call("inspect_run", { runId: id });
-        const facts=await this.call('work_inspect',{taskId:null,runId:id,resultId:null}) as any;
-        const result=facts.results.find((r:any)=>r.runId===id&&!r.completionResultId&&r.state==='offered');
-        if(!inspected.artifact||JSON.parse(result.payloadJson).execution?.status!=='completed'){
-          await this.call('work_inspect',{taskId:null,runId:null,resultId:result.id});
-          await this.call('task_review',{operationId:'review-failure-'+id,taskId:facts.task.id,version:facts.task.headVersion,expectedTaskRevision:facts.task.revision,resultId:result.id,accepted:true,outcome:'failed',reason:inspected.run.errorCode??'artifact_missing',evidence:{},children:[]});
-          if (mainDeliveryFails) throw new Error("mock_main_disconnected");
-          if (mainDeliveryEmpty) return { status: "completed", text: "" };
-          return {status:'completed',text:'已核对执行失败及缺失成果。'};
+      const p=scriptedMessages.get(text)??JSON.parse(text);
+      const dispatch=async(title=p.title??"会议")=>{
+        app.files.readMaterial(p.material??"meeting.md");
+        if(p.taskId){
+          const existing=await this.call("work_inspect",{taskId:p.taskId});
+          await this.call("task_update",{taskId:p.taskId,goal:p.goal??"按新要求整理行动清单"});
+          return this.call("worker_send",{workerId:existing.workers[0].workerId,message:"按新要求整理行动清单"});
         }
-        await this.call("review_artifact", {
-          runId: id,
-          accepted: true,
-          summary: "行动与待确认项已核验",
-          reason: "符合要求",
-        });
-        return { status: "completed", text: "审核完成" };
+        const task=await this.call("task_create",{title,goal:p.goal??"行动清单"});
+        return this.call("worker_open",{taskId:task.taskId,message:"整理 "+(p.material??"meeting.md")+" 的行动清单"});
+      };
+      if(p.action==="dispatch_many"){
+        const results=[];for(const title of ["第一件","第二件","第三件"])results.push(await dispatch(title));
+        return {status:"completed",text:JSON.stringify(results)};
       }
-      if (text.startsWith("[执行结果待交付]")) {
-        if (mainDeliveryFails) throw new Error("mock_main_disconnected");
-        if (mainDeliveryEmpty) return { status: "completed", text: "" };
-        const data: any = await this.call("list_work", {});
-        const id = text.match(/runId=([\w-]+)/)![1]!;
-        const r = data.runs.find((r: any) => r.id === id);
-        return {
-          status: "completed",
-          text: `${r.status} ${r.artifact ?? r.errorCode}`,
-        };
+      if(p.action==="dispatch")return {status:"completed",text:JSON.stringify(await dispatch())};
+      if(p.action==="stop"){
+        const run=app.tasks.run(p.id);await this.call("worker_interrupt",{workerId:run.workerId});
+        const read=await this.call("worker_read",{workerId:run.workerId});
+        return {status:"completed",text:JSON.stringify(read.runs.find((row:any)=>row.id===run.id))};
       }
-      if(text.startsWith('[内部协作事件')){
-        for(const notice of JSON.parse(text.slice(text.indexOf('\n')+1)))await this.call('inbox_ack',{operationId:'ack-'+notice.id,messageId:notice.id,disposition:'processed',reason:'Synthetic event inspected',resultId:null});
-        return {status:'completed',text:''};
+      if(p.action==="status"){
+        const page=await this.call("list_work",{}),runs=[];
+        for(const task of page.tasks){const facts=await this.call("work_inspect",{taskId:task.id});runs.push(...facts.workers.map((worker:any)=>worker.run));}
+        return {status:"completed",text:JSON.stringify({...page,runs})};
       }
-      const p = scriptedMessages.get(text) ?? JSON.parse(text);
-      if (p.action === "dispatch_many") {
-        const results = [];
-        for (const title of ["第一件", "第二件", "第三件"])
-          results.push(await this.call("dispatch_work", {
-            title, goal: "行动清单", material: "meeting.md", matterId: null,
-          }));
-        return { status: "completed", text: JSON.stringify(results) };
-      }
-      if (p.action === "dispatch")
-        return {
-          status: "completed",
-          text: JSON.stringify(
-            await this.call("dispatch_work", {
-              title: p.title ?? "会议",
-              goal: p.goal ?? "行动清单",
-              material: p.material ?? "meeting.md",
-              matterId: p.matterId ?? null,
-            }),
-          ),
-        };
-      if (p.action === "stop")
-        return {
-          status: "completed",
-          text: JSON.stringify(await this.call("stop_work", { runId: p.id })),
-        };
-      if (p.action === "status")
-        return {
-          status: "completed",
-          text: JSON.stringify(await this.call("list_work", {})),
-        };
-      if (p.action === "invalid_review") {
-        await assert.rejects(
-          () =>
-            this.call("review_artifact", {
-              runId: p.id,
-              accepted: true,
-              summary: "fake",
-              reason: "fake",
-            }),
-          /review_requires_inspection/,
-        );
-        return { status: "completed", text: "拒绝未经检查的验收" };
-      }
-      return { status: "completed", text: p.text ?? "记住了" };
+      return {status:"completed",text:p.text??"记住了"};
     }
-    async interrupt() {
-      return false;
-    }
-    async close() {
-      this.pendingResolve?.({ status: "interrupted", text: "" });
-      this.release?.();
-      return this.isWorker ? mode !== "unconfirmed" : !mainStopFails;
+    async interrupt(){return false;}
+    async close(){
+      this.pendingResolve?.({status:"interrupted",text:""});this.release?.();
+      return this.isWorker?mode!=="unconfirmed":!mainStopFails;
     }
   }
-  const app = new Homer(
-    config,
-    async (m) => {
-      if (
-        (sinkFails && m.type === "delivery") ||
-        (progressFails && m.type === "progress")
-      )
-        throw new Error("sink_closed");
-      if (m.type === "delivery" && deliveryGate) {
-        deliveryWaiting = true;
-        await deliveryGate;
-      }
-      messages.push(m);
-    },
-    (o, h) => { engineOptions.push(o); return new Fake(o, h); },
-  );
-  return {
-    app,
-    messages,
-    workerEngines,
-    engineOptions,
-    respondTo(message: string, response: Record<string, unknown>) {
-      scriptedMessages.set(message, response);
-    },
-    workerWrites(...documents: string[]) {
-      workerDocuments.push(...documents);
-    },
-    get maxActive() {
-      return maxActive;
-    },
-    failDelivery() {
-      sinkFails = true;
-    },
-    failMainStop() {
-      mainStopFails = true;
-    },
-    emptyMainDelivery() {
-      mainDeliveryEmpty = true;
-    },
-    failMainDelivery() {
-      mainDeliveryFails = true;
-    },
-    failProgress() {
-      progressFails = true;
-    },
-    pauseDelivery() {
-      deliveryGate = new Promise<void>((r) => (releaseDelivery = r));
-    },
-    releaseDelivery() {
-      releaseDelivery?.();
-    },
-    get deliveryWaiting() {
-      return deliveryWaiting;
-    },
+  const app=new Homer(config,async message=>{
+    if(message.type==="delivery")deliveryAttempts++;
+    if((sinkFails&&message.type==="delivery")||(progressFails&&message.type==="progress"))throw Error("sink_closed");
+    if(message.type==="delivery"&&deliveryGate){deliveryWaiting=true;await deliveryGate;}
+    messages.push(message);
+  },(options,handle)=>{engineOptions.push(options);return new Fake(options,handle);});
+  cleanup.push(async()=>{mainStopFails=false;await app.close().catch(()=>{});rmSync(base,{recursive:true,force:true});});
+  return {app,messages,workerEngines,engineOptions,
+    respondTo(message:string,response:Record<string,unknown>){scriptedMessages.set(message,response);},
+    workerWrites(...documents:string[]){workerDocuments.push(...documents);},
+    get maxActive(){return maxActive;},
+    get deliveryAttempts(){return deliveryAttempts;},
+    failDelivery(){sinkFails=true;},failMainStop(){mainStopFails=true;},emptyMainDelivery(){mainDeliveryEmpty=true;},
+    failMainDelivery(){mainDeliveryFails=true;},failProgress(){progressFails=true;},
+    pauseDelivery(){deliveryGate=new Promise<void>(resolve=>{releaseDelivery=resolve;});},
+    releaseDelivery(){releaseDelivery?.();},get deliveryWaiting(){return deliveryWaiting;},
   };
 }
 
@@ -329,16 +175,16 @@ test("HMR-MEETING-001: offline host regression runs dispatch, live query, delive
     await a.idle();
     const original = a.store.runs()[0]!;
     assert.equal(original.status, "succeeded");
-    assert.equal(original.delivery, "delivered");
+    assert.equal(delivery(a,original.id)!.state, "recorded");
     const verified = a.files.verify(
-      a.files.prepareRun(original.matterId, original.id),
-      original.artifact!,
+      a.files.prepareRun(original.taskId, original.id),
+      a.tasks.publishedArtifact(original.id)!.path,
     );
     assertMeetingArtifact(verified.content);
-    const revisionMessage = m.revise.replace("{matterId}", original.matterId);
+    const revisionMessage = m.revise.replace("{taskId}", original.taskId);
     f.respondTo(revisionMessage, {
       action: "dispatch",
-      matterId: original.matterId,
+      taskId: original.taskId,
       material: scenario.fixture.filename,
       goal: "按负责人分组，保留事实和原文件",
     });
@@ -348,16 +194,16 @@ test("HMR-MEETING-001: offline host regression runs dispatch, live query, delive
     await a.idle();
     const revised = a.store.runs()[1]!;
     assert.equal(a.store.runs().length, 2);
-    assert.equal(revised.matterId, original.matterId);
-    assert.notEqual(revised.threadId, original.threadId);
-    assert.notEqual(revised.artifact, original.artifact);
+    assert.equal(revised.taskId, original.taskId);
+    assert.equal(revised.threadId, original.threadId);
+    assert.notEqual(a.tasks.publishedArtifact(revised.id)!.path, a.tasks.publishedArtifact(original.id)!.path);
     assert.equal(revised.status, "succeeded");
-    assert.equal(revised.delivery, "delivered");
-    assertMeetingArtifact(readFileSync(revised.artifact!, "utf8"), true);
+    assert.equal(delivery(a,revised.id)!.state, "recorded");
+    assertMeetingArtifact(readFileSync(a.tasks.publishedArtifact(revised.id)!.path, "utf8"), true);
     assert.equal(
       a.files.verify(
-        a.files.prepareRun(original.matterId, original.id),
-        original.artifact!,
+        a.files.prepareRun(original.taskId, original.id),
+        a.tasks.publishedArtifact(original.id)!.path,
       ).sha256,
       verified.sha256,
     );
@@ -388,13 +234,13 @@ test("HMR-PARALLEL-001: main stays responsive while independent Workers overlap"
   assert.equal(a.store.runs()[0]?.status, "running");
   assert.equal(a.store.runs()[1]?.status, "running");
   f.workerEngines[1]!.release!();
-  await until(() => a.store.runs()[1]?.delivery === "delivered");
+  await until(() => delivery(a,a.store.runs()[1]!.id)?.state === "recorded");
   assert.equal(a.store.runs()[0]?.status, "running");
   f.workerEngines[0]!.release!();
   await a.idle();
   assert.equal(f.maxActive, 2);
   assert.ok(a.store.runs().every((r) => r.status === "succeeded"));
-  assert.ok(a.store.runs().every((r) => r.delivery === "delivered"));
+  assert.ok(a.store.runs().every((r) => delivery(a,r.id)?.state === "recorded"));
   assert.notEqual(a.store.runs()[0]?.threadId, a.store.runs()[1]?.threadId);
   await a.close();
 });
@@ -420,17 +266,17 @@ test("T05/T10: explicit revisions preserve artifacts; duplicate user requests do
   assert.match(receipt, /succeeded/);
   assert.equal(a.store.runs().length, 1);
   await a.message(
-    JSON.stringify({ action: "dispatch", matterId: r.matterId }),
+    JSON.stringify({ action: "dispatch", taskId: r.taskId }),
     "revision",
   );
   await until(() => !!f.workerEngines[1]?.release);
   f.workerEngines[1]!.release!();
   await a.idle();
   const revised = a.store.runs()[1]!;
-  assert.equal(revised.matterId, r.matterId);
-  assert.notEqual(revised.artifact, r.artifact);
+  assert.equal(revised.taskId, r.taskId);
+  assert.notEqual(a.tasks.publishedArtifact(revised.id)!.path,a.tasks.publishedArtifact(r.id)!.path);
   assert.ok(
-    a.files.verify(a.files.prepareRun(r.matterId, r.id), r.artifact!).bytes,
+    a.files.verify(a.files.prepareRun(r.taskId, r.id), a.tasks.publishedArtifact(r.id)!.path).bytes,
   );
   await a.close();
 });
@@ -444,19 +290,22 @@ test("T07: missing material, actual engine failure and absent artifact cannot re
     const f = fixture("failure-" + mode, mode);
     const a = f.app;
     await a.start();
-    await a.message(JSON.stringify({ action: "dispatch", material }), "first");
+    const response=await a.message(JSON.stringify({ action: "dispatch", material }), "first");
+    if(mode==='normal'){
+      assert.match(response,/material_missing/);assert.equal(a.store.runs().length,0);assert.equal(f.workerEngines.length,0);await a.close();continue;
+    }
     await until(() => !!f.workerEngines[0]?.release);
     f.workerEngines[0]!.release!();
     await a.idle();
     const r = a.store.runs()[0]!;
-    assert.equal(r.status, "failed");
+    assert.equal(r.status, mode==='empty'?"succeeded":"failed");
     if(mode==='empty'){
       assert.equal(r.errorCode,null,'missing deliverable is an explicit review verdict, not an engine error');
-      const result=a.tasks.inspect({agentId:a.store.meta('mainAgentId')!},{runId:r.id}).results.find(result=>result.runId===r.id&&!result.completionResultId)!;
-      assert.equal(result.reviewReason,'artifact_missing');
-      assert.equal(JSON.parse(result.payloadJson).execution.status,'completed');
+      assert.equal(a.tasks.task(r.taskId).notes,'artifact_missing');
+      const raw=a.tasks.workerRead({agentId:a.store.meta('mainAgentId')!},{workerId:r.workerId}).messages.find(message=>message.kind==='worker_reply')!;
+      assert.equal(raw.payload.execution.status,'completed');
     }else assert.equal(r.errorCode, code);
-    assert.equal(r.artifact, null);
+    assert.equal(a.tasks.publishedArtifact(r.id),undefined);assert.equal(a.tasks.task(r.taskId).outcome,'failed');
     await a.close();
   }
 });
@@ -477,8 +326,7 @@ test("T08: cancellation is separate from confirmation; unconfirmed stop never su
       a.store.run(r.id)?.status,
       mode === "hang" ? "cancelled" : "interrupted",
     );
-    const types = a.store.events(r.id).map((e) => e.type);
-    assert.ok(types.indexOf("stop_requested") < types.indexOf("finished"));
+    assert.ok(a.store.run(r.id)!.stopRequestedAt!<=a.store.run(r.id)!.endedAt!);assert.equal(JSON.parse(a.store.run(r.id)!.checkpointJson!).workerExitConfirmed,mode==="hang"?1:0);
     await a.close();
   }
   const f = fixture("timeout", "hang", 100);
@@ -487,14 +335,14 @@ test("T08: cancellation is separate from confirmation; unconfirmed stop never su
   await until(() => !!f.workerEngines[0]?.pendingResolve);
   await new Promise(resolve=>setTimeout(resolve,200));
   assert.equal(f.app.store.runs()[0]?.status, "running");
-  assert.equal(f.app.tasks.authority(f.app.tasks.run(f.app.store.runs()[0]!.id).taskId,1).maxActiveMs, undefined);
+  assert.equal(Object.hasOwn(JSON.parse(f.app.tasks.version(f.app.store.runs()[0]!.taskId,1).authorityJson),'maxActiveMs'),false);
   await f.app.stop(f.app.store.runs()[0]!.id);
   await f.app.idle();
   assert.equal(f.app.store.runs()[0]?.status, "cancelled");
   await f.app.close();
 });
 
-test("T10: failed output acknowledgement keeps result pending for restart", async () => {
+test("T10: lost output acknowledgement preserves exact Result and unknown Delivery without restart replay", async () => {
   const f = fixture("receipt");
   const a = f.app;
   await a.start();
@@ -503,8 +351,12 @@ test("T10: failed output acknowledgement keeps result pending for restart", asyn
   await until(() => !!f.workerEngines[0]?.release);
   f.workerEngines[0]!.release!();
   await a.idle();
-  assert.equal(a.store.runs()[0]?.delivery, "pending");
+  assert.equal(delivery(a,a.store.runs()[0]!.id)!.state, "uncertain");
+  const original=delivery(a,a.store.runs()[0]!.id)!,artifact=a.tasks.publishedArtifact(a.store.runs()[0]!.id)!;
+  assert.equal(f.deliveryAttempts,1);assert.ok(readFileSync(artifact.path).length);
   await a.close();
+  let replays=0;const resumed=new Homer(a.config,async message=>{if(message.type==='delivery')replays++;},a['factory']);
+  try{await resumed.start();await resumed.idle();assert.equal(resumed.tasks.delivery(original.id).state,'uncertain');assert.equal(replays,0);assert.equal(resumed.tasks.publishedResult(artifact.resultId)!.sha256,artifact.sha256);}finally{await resumed.close();}
 });
 
 test("T07/T10: failed main coordination keeps reviewed facts without claiming user delivery", async () => {
@@ -517,13 +369,13 @@ test("T07/T10: failed main coordination keeps reviewed facts without claiming us
   await f.app.idle();
   const run = f.app.store.runs()[0]!;
   assert.equal(run.status, "failed");
-  assert.notEqual(run.delivery, "delivered");
+  assert.equal(delivery(f.app,run.id), undefined);
   assert.equal(f.messages.filter((m) => m.type === "delivery").length, 0);
   assert.equal(f.app.tasks.task(f.app.tasks.run(run.id).taskId).outcome,'failed');
   await f.app.close();
 });
 
-test("T07/T10: empty legacy coordination reply preserves the outcome without fabricating delivery", async () => {
+test("T07/T10: empty internal reply preserves the outcome without fabricating delivery", async () => {
   const f = fixture("main-delivery-empty", "failed");
   try {
     await f.app.start();
@@ -534,9 +386,9 @@ test("T07/T10: empty legacy coordination reply preserves the outcome without fab
     await f.app.idle();
     const run = f.app.store.runs()[0]!;
     assert.equal(run.status, "failed");
-    assert.notEqual(run.delivery, "delivered");
-    const delivery = f.messages.filter((m) => m.type === "delivery");
-    assert.equal(delivery.length, 0);
+    assert.equal(delivery(f.app,run.id), undefined);
+    const deliveries = f.messages.filter((m) => m.type === "delivery");
+    assert.equal(deliveries.length, 0);
     assert.equal(await f.app.message(JSON.stringify({ action: "chat", text: "after failure" }), "after-empty-delivery"), "after failure");
   } finally {
     await f.app.close();
@@ -550,7 +402,7 @@ test("T11: main rejects parent traversal; no Worker can be launched with out of 
     JSON.stringify({ action: "dispatch", material: "../private.md" }),
     "outside",
   );
-  assert.match(reply, /material_path_denied/);
+  assert.match(reply, /path_denied/);
   assert.equal(f.app.store.runs().length, 0);
   await f.app.close();
 });
@@ -574,12 +426,12 @@ test("T08: a throwing Worker close persists an unconfirmed stop without hanging 
   worker.close=async()=>{throw Error('synthetic_close_failure');};
   try{
     await f.app.stop(id);assert.equal(f.app.tasks.run(id).phase,'uncertain');assert.equal(f.app.upgradeStatus().safe,false);
-    assert.equal(f.app.tasks.task(f.app.tasks.run(id).taskId).controlState,'stopping');
+    assert.equal(f.app.tasks.task(f.app.tasks.run(id).taskId).controlState,'normal');
   }finally{worker.close=close;await close();await f.app.idle();await f.app.close();}
 });
 
 test("T10: a result finishing while another delivery waits is drained without needing restart", async () => {
-  const f = fixture("concurrent-deliveries", "failed");
+  const f = fixture("concurrent-deliveries");
   await f.app.start();
   f.pauseDelivery();
   await f.app.message(JSON.stringify({ action: "dispatch" }), "first");
@@ -591,12 +443,12 @@ test("T10: a result finishing while another delivery waits is drained without ne
   f.workerEngines[0]!.release!();
   await until(() => f.deliveryWaiting && !!f.workerEngines[1]?.release);
   f.workerEngines[1]!.release!();
-  await until(() => f.app.store.runs().some((r) => r.status === "awaiting_review"));
+  await until(() => f.app.store.runs().every((r) => r.status === "succeeded"));
   f.releaseDelivery();
   await f.app.idle();
-  assert.ok(f.app.store.runs().every((r) => r.status === "failed"));
+  assert.ok(f.app.store.runs().every((r) => r.status === "succeeded"));
   assert.equal(f.messages.filter((m) => m.type === "delivery").length, 2);
-  assert.equal(f.app.store.pendingDeliveries().length, 0);
+  assert.equal(f.app.tasks.pendingDeliveries().length, 0);
   await f.app.close();
 });
 
@@ -628,7 +480,7 @@ test("T08: main stop tool returns confirmed terminal state after emitting the se
     await f.app.message(JSON.stringify({ action: "stop", id }), "stop"),
   );
   assert.equal(result.status, "cancelled");
-  assert.ok(f.app.store.events(id).some((e) => e.type === "stop_requested"));
+  assert.ok(f.app.tasks.run(id).stopRequestedAt);assert.ok(f.app.store.db.prepare("SELECT 1 FROM operations WHERE kind=\'worker_stop\' AND state=\'confirmed\'").get());
   await f.app.idle();
   await f.app.close();
 });
@@ -657,15 +509,15 @@ test("HMR-PARALLEL-001: one message can dispatch several Workers; replay adds no
     await until(() => f.workerEngines.length === 3 && f.workerEngines.every(e => !!e.release));
     assert.equal(f.maxActive, 3);
     assert.equal(f.app.store.runs().length, 3);
-    assert.equal(new Set(f.app.store.runs().map(r => r.matterId)).size, 3);
+    assert.equal(new Set(f.app.store.runs().map(r => r.taskId)).size, 3);
     await f.app.message(input, "multi");
     assert.equal(f.app.store.runs().length, 3);
     for (const engine of [...f.workerEngines].reverse()) engine.release!();
     await f.app.idle();
-    assert.ok(f.app.store.runs().every(r => r.status === "succeeded" && r.delivery === "delivered"));
-    assert.equal(new Set(f.app.store.runs().map(r => r.artifact)).size, 3);
+    assert.ok(f.app.store.runs().every(r => r.status === "succeeded" && delivery(f.app,r.id)?.state === "recorded"));
+    assert.equal(new Set(f.app.store.runs().map(r => f.app.tasks.publishedArtifact(r.id)!.path)).size, 3);
     const receipt = await f.app.message(input, "multi");
-    for (const r of f.app.store.runs()) assert.ok(receipt.includes(r.artifact!));
+    assert.match(receipt,/历史回执/);assert.equal(f.messages.filter(message=>message.type==="delivery").length,3);
   } finally { await f.app.close(); }
 });
 
@@ -683,7 +535,15 @@ test("HMR-PARALLEL-001: stopping one Worker leaves the other running; shutdown s
     const snapshot = JSON.parse(await f.app.message(JSON.stringify({ action: "status" }), "query"));
     assert.equal(snapshot.runs.filter((r: any) => r.status === "running").length, 2);
     await f.app.close();
-    assert.equal(f.messages.filter(m => m.type === "progress" && m.text.includes("已确认停止")).length, 3);
+    const saved=new Store(resolve(f.app.config.runtime,'homer.sqlite'));
+    try {
+      assert.equal(saved.run(two!.id)?.status,'cancelled');
+      assert.equal(saved.run(two!.id)?.phase,'ended');
+      for(const r of [one!,three!]){
+        assert.equal(saved.run(r.id)?.status,'interrupted');
+        assert.equal(saved.db.prepare("SELECT json_extract(checkpointJson,'$.workerExitConfirmed') AS closed FROM runs WHERE id=?").get(r.id)?.closed,1);
+      }
+    }finally{saved.close();}
   } finally { await f.app.close(); }
 });
 
@@ -691,16 +551,17 @@ test("HMR-PARALLEL-001: one failed Worker does not block another artifact and de
   const f = fixture("parallel-partial-failure");
   try {
     await f.app.start();
-    await f.app.message(JSON.stringify({ action: "dispatch", material: "missing.md" }), "missing");
+    await f.app.message(JSON.stringify({ action: "dispatch" }), "failed");
     await f.app.message(JSON.stringify({ action: "dispatch" }), "valid");
     await until(() => f.workerEngines.length === 2 && f.workerEngines.every(e => !!e.release));
+    f.workerEngines[0]!.failureCode='mock_engine_failed';
     for (const e of f.workerEngines) e.release!();
     await f.app.idle();
     const [failed, succeeded] = f.app.store.runs();
     assert.equal(failed?.status, "failed");
-    assert.equal(failed?.errorCode, "material_missing");
+    assert.equal(failed?.errorCode, "mock_engine_failed");
     assert.equal(succeeded?.status, "succeeded");
-    assert.ok(f.app.store.runs().every(r => r.delivery === "delivered"));
+    assert.equal(delivery(f.app,failed!.id),undefined);assert.equal(delivery(f.app,succeeded!.id)!.state,'recorded');
   } finally { await f.app.close(); }
 });
 

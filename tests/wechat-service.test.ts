@@ -45,21 +45,28 @@ test("synthetic single service: WeChat, Web and CLI retain main thread; ambiguou
       if(this.worker){
         const answer=await this.call("ask_main",{question:"合成问题：采用哪个格式？"}) as {status:string;answer?:string};
         if(this.closed||answer.status==="cancelled")return {status:"interrupted",text:"stopped"};
-        resumed.push(this.threadId);await this.call("read_material",{});await this.call("write_markdown",{filename:"answer.md",content:"# 合成成果\n"+this.threadId+"\n"+answer.answer});
-        return {status:"completed",text:"合成成果已写入"};
+        resumed.push(this.threadId);await this.call("read_material",{});const file=await this.call("write_markdown",{filename:"answer.md",content:"# 合成成果\n"+this.threadId+"\n"+answer.answer}) as {path:string};
+        return {status:"completed",text:JSON.stringify({filePath:file.path})};
       }
       if(text==="dispatch two"){
-        for(let i=0;i<2;i++)await this.call("dispatch_work",{title:"合成任务"+i,goal:"生成Markdown，必要时确认格式",material:"input.md",matterId:null});
-      }else if(text.startsWith("[Worker待答]")){
-        const id=text.match(/interactionId=([\w-]+)/)![1]!;await this.call("inspect_interaction",{interactionId:id});await this.call("escalate_interaction",{interactionId:id,question:"请选择格式",reason:"合成输入存在歧义"});
-        return {status:"completed",text:"请选择原任务的格式。"};
+        for(let i=0;i<2;i++){const task=await this.call('task_create',{title:'合成任务'+i,goal:'生成Markdown，必要时确认格式'}) as {taskId:string};await this.call('worker_open',{taskId:task.taskId,message:'读取 input.md，确认格式后生成 Markdown'});}
+      }else if(text.startsWith('[内部协作输入')){
+        const input=JSON.parse(text.split('\n')[1]!);
+        if(input.kind==='interaction_required'){
+          const id=text.match(/interactionId=([\w-]+)/)![1]!;await this.call('inspect_interaction',{interactionId:id});await this.call('escalate_interaction',{interactionId:id,question:'请选择格式',reason:'合成输入存在歧义'});
+          return {status:'completed',text:'请选择原任务的格式。'};
+        }
+        if(input.kind==='worker_reply'){
+          const read=await this.call('worker_read',{workerId:input.workerId,messageId:input.messageId}) as {messages:{text:string}[]};
+          const result=await this.call('accept_result',{runId:input.runId,filePath:JSON.parse(read.messages[0]!.text).filePath}) as {resultId:string};
+          const inspected=await this.call('work_inspect',{resultId:result.resultId}) as {file:{content:string}};assert.match(inspected.file.content,/合成成果/);
+          await this.call('publish_delivery',{taskId:input.taskId,resultIds:[result.resultId],text:'主Agent已核验并交付合成成果。'});
+        }
       }else if(text.split('\n')[0]==="同意")return {status:"completed",text:"有两个待答，请指明待答编号。"};
       else if(text.startsWith("answer ")){
-        const id=text.match(/^answer ([\w-]+)/)![1]!;await this.call("inspect_interaction",{interactionId:id});await this.call("respond_interaction",{interactionId:id,action:"answer",answer:"原Worker采用合成格式",reason:"用户明确指定原待答",answers:null,permissions:null});
-      }else if(text.startsWith("[执行结果待审阅]")){
-        const id=text.match(/runId=([\w-]+)/)![1]!;await this.call("inspect_run",{runId:id});await this.call("review_artifact",{runId:id,accepted:true,summary:"合成成果核验通过",reason:"符合合成目标"});
+        const id=text.match(/^answer ([\w-]+)/)![1]!;await this.call("inspect_interaction",{interactionId:id});await this.call("respond_interaction",{interactionId:id,action:"answer",answer:"原Worker采用合成格式",reason:"用户明确指定原待答"});
       }
-      return {status:"completed",text:text.startsWith("[执行结果待交付]")?"主Agent已核验并交付合成成果。":"主Agent已处理合成输入。"};
+      return {status:"completed",text:"主Agent已处理合成输入。"};
     }
     async interrupt(){return false;}
     async close(){this.closed=true;return true;}

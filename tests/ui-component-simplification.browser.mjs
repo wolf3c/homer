@@ -9,7 +9,7 @@ const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/ui
 mkdirSync(destination,{recursive:true});
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??'.codex/scratch/ui-component-simplification/candidate-web');
 const taskOnly=process.env.HOMER_TASK_FOCUS_ONLY==='1',chrome=await isolatedChrome(destination),checks=[];
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 const file=join(destination,'synthetic-upload.txt');writeFileSync(file,'synthetic attachment');
 async function key(page,key,modifiers=0){await page.command('Input.dispatchKeyEvent',{type:'keyDown',key,code:key,modifiers,...(key==='Enter'?{text:'\r',unmodifiedText:'\r',windowsVirtualKeyCode:13}:key==='Tab'?{windowsVirtualKeyCode:9}:key==='Escape'?{windowsVirtualKeyCode:27}:{})});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key,code:key,modifiers});}
 async function press(page,selector){await page.evaluate('document.querySelector('+JSON.stringify(selector)+').focus()');await key(page,'Enter');}

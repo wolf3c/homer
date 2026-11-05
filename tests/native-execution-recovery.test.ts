@@ -2,10 +2,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,rmSync,writeFileSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {join} from 'node:path';
 import {Homer} from '../src/service.js';
 import {loadConfig} from '../src/config.js';
-import {fixture,delegate,running,main,contract} from './recursive-fixture.js';
+import {fixture,openWorker,running,main} from './recursive-fixture.js';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
 
 import {host} from './native-execution-recovery-fixture.js';
@@ -123,16 +123,14 @@ test('main recovery: a normal service restart cannot admit a writer while resume
   }finally{await resumed?.close();await f.close();}
 });
 
-test('legacy execution budgets are readable facts and cannot block child dispatch, claim or explicit recovery',()=>{
-  mkdirSync(resolve('.codex/scratch/recursive-agent-implementation'),{recursive:true});
-  const f=fixture();try{const a=delegate(f),actor=running(f,a.taskId);f.tasks.charge(actor.runId!,actor.epoch!,120001);
-    const authorityBefore=f.tasks.version(f.root.taskId,1).authorityJson;
-    const child=delegate(f,'after-old-budget');assert.ok(f.tasks.claim(child.runId!));
-    f.tasks.reconcile();f.tasks.takeover(main,{operationId:'take',taskId:a.taskId,version:1,expectedTaskRevision:f.tasks.task(a.taskId).revision,coordinatorAgentId:main.agentId});
-    const resumed=f.tasks.continue(main,{operationId:'continue',taskId:a.taskId,version:1,expectedTaskRevision:f.tasks.task(a.taskId).revision});assert.ok(f.tasks.claim(resumed.runId!));
-    assert.equal(f.tasks.version(f.root.taskId,1).authorityJson,authorityBefore);assert.equal(f.tasks.usedBudget(a.taskId),120001);
-    const {maxActiveMs:_,...authority}=f.tasks.authority(f.root.taskId,1);
-    assert.ok(f.tasks.createRoot(main,{operationId:'no-budget',title:'No default budget',contract:contract(),authority}).taskId);
+test('execution time remains accounting and does not block an authorized peer or same-session followup',()=>{
+  const f=fixture();try{const worker=openWorker(f),actor=running(f,worker.runId);f.tasks.charge(actor.runId!,actor.epoch!,120001);
+    const authorityBefore=f.tasks.version(f.task.taskId,1).authorityJson;
+    const peer=openWorker(f,'after-accounting');assert.ok(f.tasks.claim(peer.runId));
+    f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'interrupted',text:'Partial checked facts'},true);
+    const resumed=f.tasks.workerSend(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checked work'});assert.ok(f.tasks.claim(resumed.runId!));
+    assert.equal(f.tasks.run(resumed.runId!).threadId,actor.threadId);assert.equal(f.tasks.run(actor.runId!).activeMs,120001);
+    assert.equal(f.tasks.version(f.task.taskId,1).authorityJson,authorityBefore);assert.equal(Object.hasOwn(JSON.parse(authorityBefore),'maxActiveMs'),false);
   }finally{f.close();}
 });
 
@@ -144,28 +142,28 @@ test('legacy timeout config is accepted without injecting an execution default',
   }finally{f.app.store.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 
-test('legacy zero budgets cannot hide missing authorization: delegate, claim and takeover still fail closed',()=>{
-  mkdirSync(resolve('.codex/scratch/recursive-agent-implementation'),{recursive:true});
-  const f=fixture();try{const child=delegate(f);const rootAuthority=f.tasks.authority(f.root.taskId,1),childAuthority=f.tasks.authority(child.taskId,1);
-    for(const [id,authority]of [[f.root.taskId,rootAuthority],[child.taskId,childAuthority]] as const)f.store.db.prepare('UPDATE task_versions SET authorityJson=? WHERE taskId=?').run(JSON.stringify({...authority,sourceRequestId:null,maxActiveMs:0}),id);
-    assert.throws(()=>delegate(f,'unauthorized-legacy-child'),/task_authority_source_denied/);
-    assert.equal(f.tasks.claim(child.runId!),undefined);assert.equal(f.tasks.run(child.runId!).errorCode,'task_authority_source_denied');
-    assert.throws(()=>f.tasks.takeover(main,{operationId:'unauthorized-takeover',taskId:f.root.taskId,version:1,expectedTaskRevision:f.tasks.task(f.root.taskId).revision,coordinatorAgentId:main.agentId}),/task_authority_source_denied/);
-    assert.equal(f.tasks.authority(f.root.taskId,1).maxActiveMs,0);
+test('missing authorization cannot be hidden by execution accounting at open, send or claim',()=>{
+  const f=fixture();try{const worker=openWorker(f),authority=f.tasks.authority(f.task.taskId,1);
+    f.store.db.prepare('UPDATE task_versions SET authorityJson=?,sourceRequestId=? WHERE taskId=?').run(JSON.stringify({...authority,sourceRequestId:'missing-source'}),'missing-source',f.task.taskId);
+    f.store.db.prepare('UPDATE runs SET sourceRequestId=? WHERE id=?').run('missing-source',worker.runId);
+    const before=f.store.runs();
+    assert.throws(()=>openWorker(f,'unauthorized-peer'),/task_authority_source_denied|pending_source_denied/);
+    assert.throws(()=>f.tasks.workerSend(main,{operationId:'unauthorized-send',workerId:worker.workerId,text:'Continue'}),/task_authority_source_denied|pending_source_denied/);
+    assert.throws(()=>f.tasks.claim(worker.runId),/task_authority_source_denied|pending_source_denied/);
+    assert.deepEqual(f.store.runs(),before);assert.equal(f.tasks.run(worker.runId).status,'queued');
   }finally{f.close();}
 });
 
 test('native execution: peer Workers exceed the old shared budget and publish once',async()=>{
-  mkdirSync(resolve('.codex/scratch/recursive-agent-implementation'),{recursive:true});
   const f=syntheticHost();f.app.config.timeoutMs=1;f.app.config.mainTimeoutMs=1;
   const original=f.app['factory']!;
   f.app['factory']=(options,handler)=>{const engine=original(options,handler),turn=engine.turn.bind(engine);
-    engine.turn=async(text,hooks)=>{if(options.tools.some(t=>t.name==='read_material'))await wait(30);return turn(text,hooks);};return engine;};
-  try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await f.app.idle();
-    assert.equal(f.app.tasks.tasks().find(t=>!t.parentTaskId)?.outcome,'succeeded');
-    assert.equal(f.events.filter(e=>e.type==='delivery').length,1);assert.equal(f.app.store.runs().length,3);
-    assert.ok(f.app.store.runs().every(r=>r.status==='succeeded'));assert.ok(f.app.tasks.tasks().every(t=>f.app.tasks.authority(t.id,1).maxActiveMs===undefined));
-    assert.equal(f.engines.filter(e=>e.worker).length,3);
+    engine.turn=async(text,hooks)=>{if(options.role==='worker')await wait(30);return turn(text,hooks);};return engine;};
+  try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await until(()=>f.events.some(e=>e.type==='delivery'));await f.app.idle();
+    assert.equal(f.app.tasks.tasks()[0]?.outcome,'succeeded');
+    assert.equal(f.events.filter(e=>e.type==='delivery').length,1);assert.equal(f.app.store.runs().length,4);
+    assert.ok(f.app.store.runs().every(r=>r.status==='succeeded'));assert.ok(f.app.tasks.tasks().every(t=>!Object.hasOwn(JSON.parse(f.app.tasks.version(t.id,1).authorityJson),'maxActiveMs')));
+    assert.equal(new Set(f.app.store.runs().map(run=>run.workerId)).size,3);assert.equal(f.engines.filter(e=>e.worker).length,4);
   }finally{await f.close();}
 });
 

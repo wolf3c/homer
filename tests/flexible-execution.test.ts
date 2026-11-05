@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
-import {fixture,main,contract} from './recursive-fixture.js';
+import {chatFixture} from './task-chat-fixture.js';
 import {profileOverrides,type EngineOptions} from '../src/engine.js';
 import type {Config} from '../src/config.js';
 
@@ -16,16 +16,16 @@ test('ordinary native execution opens project and network while protecting preci
  assert.notEqual(p.filesystem[root],'deny');
 });
 
-test('task directories persist per contract and delegation inherits without relocating earlier runs',()=>{
- const f=fixture();try{
+test('task and conversation directories persist without relocating earlier executions',()=>{
+ const f=chatFixture();try{
  const a=join(f.dir,'project-a'),b=join(f.dir,'project-b');mkdirSync(a);mkdirSync(b);
- const root=f.tasks.createRoot(main,{operationId:'cwd-root',title:'A',contract:{...contract('aggregate'),workingDirectory:a},authority:f.tasks.authority(f.root.taskId,1)});
- const child=f.tasks.delegate(main,{operationId:'cwd-child',taskId:root.taskId,version:1,expectedTaskRevision:f.tasks.task(root.taskId).revision,contract:contract(),dependencies:[]});
- assert.equal(f.tasks.contract(child.taskId,1).workingDirectory,a);
- const rootB=f.tasks.createRoot(main,{operationId:'cwd-root-b',title:'B',contract:{...contract('aggregate'),workingDirectory:b},authority:f.tasks.authority(f.root.taskId,1)});
- assert.equal(f.tasks.contract(rootB.taskId,1).workingDirectory,b);
- assert.equal(f.tasks.contract(child.taskId,f.tasks.run(child.runId!).contractVersion).workingDirectory,a);
- assert.equal(f.store.meta('recursiveSchemaVersion'),'4');
+ const task=f.tasks.createTask(f.actor,{operationId:'cwd-a',goal:'Inspect A',workingDirectory:a,authority:f.authority});
+ const worker=f.tasks.workerOpen(f.actor,{operationId:'worker-a',taskId:task.taskId,text:'Inspect files'}),run=f.start(worker.workerId);
+ assert.equal(f.tasks.workingDirectory(run.id),a);
+ const taskB=f.tasks.createTask(f.actor,{operationId:'cwd-b',goal:'Inspect B',workingDirectory:b,authority:f.authority});
+ assert.equal(f.tasks.version(taskB.taskId,1).workingDirectory,b);assert.equal(f.tasks.workingDirectory(run.id),a);
+ f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'A inspected'},true);const followup=f.tasks.workerSend(f.actor,{operationId:'again',workerId:worker.workerId,text:'Explain A'});
+ assert.equal(f.tasks.workingDirectory(followup.runId!),a);assert.equal(f.tasks.run(followup.runId!).threadId,run.threadId);assert.equal(f.store.meta('recursiveSchemaVersion'),'5');
  }finally{f.close();}
 });
 

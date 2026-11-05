@@ -61,7 +61,14 @@ function processAlive(pid: number) {
   try { process.kill(pid, 0); return true; }
   catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
+// A reaped Unix group leader can leave a managed writer in the same group.
+export function leaseOwnerGone(pid:number) {
+  if(process.platform==='win32'||!Number.isSafeInteger(pid)||pid<=1||processAlive(pid))return false;
+  try {process.kill(-pid,0);return false;}
+  catch(error){return (error as NodeJS.ErrnoException).code==='ESRCH';}
+}
 export async function terminateLease(lease: { pid: number; identity: string }, drain?:()=>Promise<void>) {
+  if(!lease||!Number.isSafeInteger(lease.pid)||lease.pid<=1||typeof lease.identity!=='string'||!lease.identity)return false;
   if(process.platform==='win32'){
     // Keep the existing owner; EOF alone cannot prove its descendants stopped.
     const snapshot=()=>{
@@ -91,7 +98,7 @@ export async function terminateLease(lease: { pid: number; identity: string }, d
       return [...ids].every(pid=>!processAlive(pid))&&[...after.keys()].every(pid=>pid===0||outside.has(pid));
     }catch{return false;}
   }
-  if (processIdentity(lease.pid) !== lease.identity) return !processAlive(lease.pid);
+  if (processIdentity(lease.pid) !== lease.identity) return leaseOwnerGone(lease.pid);
   try {
     process.kill(-lease.pid, "SIGTERM");
   } catch {}
@@ -103,7 +110,7 @@ export async function terminateLease(lease: { pid: number; identity: string }, d
       process.kill(-lease.pid, "SIGKILL");
     } catch {}
   }
-  return processIdentity(lease.pid) !== lease.identity;
+  return leaseOwnerGone(lease.pid);
 }
 export type Resources = {
   at: number;

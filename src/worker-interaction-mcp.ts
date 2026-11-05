@@ -1,4 +1,3 @@
-import {PENDING_TOOLS} from './pending-tools.js';
 import {EXECUTION_TOOLS} from './execution-tools.js';
 import { createServer, createConnection, type Server, type Socket } from "node:net";
 import { createInterface } from "node:readline";
@@ -6,22 +5,19 @@ import { chmodSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { MAIN_INTERACTION_TOOLS } from "./worker-interaction-tools.js";
-import { RECURSIVE_TOOLS, WORKER_RECURSIVE_TOOL_NAMES } from "./recursive-tools.js";
 import type { Tool } from "./engine.js";
 import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
 
 import {CAPABILITY_TOOLS} from "./native-capability-tools.js";
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 
-export const HOST_MCP_TOOLS = [...PENDING_TOOLS,...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...MAIN_INTERACTION_TOOLS, ...RECURSIVE_TOOLS.filter(tool=>tool.name!=='task_wait'),...MEDIA_TOOLS];
-export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...RECURSIVE_TOOLS.filter(tool=>WORKER_RECURSIVE_TOOL_NAMES.includes(tool.name)),...WORKER_MEDIA_TOOLS];
+export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS];
+export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...WORKER_MEDIA_TOOLS];
 const allowed = (name: unknown, catalog:readonly Tool[]): name is string => typeof name === "string" && catalog.some(tool => tool.name === name);
 function code(error: unknown) {
   return error instanceof Error && /^[a-z][a-z0-9_]{1,70}$/.test(error.message) ? error.message : "interaction_mcp_failed";
 }
-// A Homer-owned MCP endpoint permits extending governed tools on a resumed
-// native thread while preserving its original dynamicTools and thread ID.
-// It is never an inherited/user MCP server and never exposes shell or network.
+// File writes and business collaboration use native dynamic call identity.
 export class WorkerInteractionMcp {
   readonly path: string;
   readonly directory = process.cwd();
@@ -136,7 +132,7 @@ export function runWorkerInteractionMcp(path: string,role:string='main') {
             const value = await hostCall(path, message.params.name, message.params.arguments);
             const media=value as {mediaContent?:unknown[]};
             result = { isError: false, content: media?.mediaContent??[{ type: "text", text: JSON.stringify(value) }] };
-          } catch (error) { const failure=code(error);result = { isError: true, content: [{ type: "text", text: failure },...(failure==='interaction_result_unconfirmed'?[{type:'text',text:'The request may still complete. Do not replay it. Inspect current state or recover the original operation receipt using the same operationId and unchanged payload where supported. This error does not confirm cancellation.'}]:[])] }; }
+          } catch (error) { const failure=code(error);result = { isError: true, content: [{ type: "text", text: failure },...(failure==='interaction_result_unconfirmed'?[{type:'text',text:'The request may still complete. Do not replay it. Inspect current state and any original host receipt. This error does not confirm cancellation.'}]:[])] }; }
         } else { send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "interaction_method_denied" } }); return; }
         send({ jsonrpc: "2.0", id: message.id, result });
       } catch {

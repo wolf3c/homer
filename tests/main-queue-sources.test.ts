@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import {historyFixture} from './web-history-loading-fixture.js';
 import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-import {Homer} from '../src/service.js';
 import {MainInputs} from '../src/recursive-main-inputs.js';
 import {RecursiveTools} from '../src/recursive-tools.js';
 import {queueMoveBefore} from '../ui/queue-operations.js';
@@ -14,11 +13,19 @@ function fixture(database=':memory:'){
  f.inputs.accept({requestId:'source',text:'Synthetic authority'});
  const source=f.inputs.claim()!;f.inputs.finish(source.messageId,source.revision,'completed');
  const agentId=f.store.meta('mainAgentId')!;
- const root=f.tasks.createRoot({agentId,sourceRequestId:'source'},{operationId:'root',title:'Same title',executorKind:'worker',contract:{goal:'Synthetic work',inputs:[],resultKind:'structured',acceptance:{criteria:[]}},authority:{sourceRequestId:'source',description:'Synthetic work only',materials:[],resultIds:[],collaborateTaskIds:[],maxActiveMs:10000}});
- const run=f.tasks.claim(root.runId!)!;f.tasks.bind(run.id,run.epoch,'worker-thread','worker-turn');
- const worker={agentId:f.tasks.task(root.taskId).executorAgentId,runId:run.id,epoch:run.epoch,threadId:'worker-thread',turnId:'worker-turn'};
- const send=(operationId:string,payload:unknown={text:'Same text',queueOrder:-999})=>{const task=f.tasks.task(root.taskId);return f.tasks.send(worker,{operationId,taskId:task.id,version:task.headVersion,expectedTaskRevision:task.revision,recipientAgentId:agentId,kind:'progress',payload});};
- return {...f,send,agentId};
+ const actor={agentId,threadId:'synthetic-history',turnId:'main-turn',sourceRequestId:'source'};
+ const task=f.tasks.createTask(actor,{operationId:'root',title:'Same title',goal:'Synthetic work',authority:{sourceRequestId:'source',description:'Synthetic work only',materials:[],resultIds:[]}});
+ const send=(operationId:string,text='Same text')=>{
+  const opened=f.tasks.workerOpen(actor,{operationId,taskId:task.taskId,text:'Synthetic work'}),run=f.tasks.claim(opened.runId);
+  if(run)f.tasks.bind(run.id,run.epoch,'thread:'+run.workerId,'turn:'+run.id);
+  const current=f.tasks.run(opened.runId);return f.tasks.endSegment(current.id,current.epoch,{status:'completed',text},true)!;
+ };
+ const consume=(input:{messageId:string;revision:number},generationId='generation:'+input.messageId)=>{
+  f.inputs.started(input.messageId,input.revision,generationId,'turn:'+input.messageId);
+  f.store.transaction(()=>f.tasks.completeMainMessagesInTransaction([input.messageId],generationId));
+ };
+
+ return {...f,send,agentId,actor,consume,task};
 }
 test('resume boundary preserves old worker events while accepting new user work',()=>{
  const f=fixture();try{
@@ -49,24 +56,24 @@ test('main queue: Web, Wechat, Worker and Telegram share durable order and claim
   assert.deepEqual(f.inputs.dispatchPage(undefined,'epoch','all').items.map(item=>item.messageId),[worker.messageId,...page.items.filter(item=>item.messageId!==worker.messageId).map(item=>item.messageId)]);
   const first=f.inputs.claim([],'all')!;assert.equal(first.messageId,worker.messageId);
   assert.throws(()=>f.inputs.move({messageId:worker.messageId,operationId:'late',expectedRevision:first.revision,threadId:'synthetic-history',readEpoch:'epoch',expectedOrderVersion:page.orderVersion,beforeMessageId:null}),/processing|conflict/);
-  f.tasks.ack({agentId:f.agentId},{operationId:'ack-worker',messageId:first.messageId,disposition:'processed',reason:'Synthetic processed'});
+  f.consume(first);
   for(const requestId of ['web','wechat','telegram']){const next=f.inputs.claim([],'all')!;assert.equal(next.origin,'user');if(next.origin==='user'){assert.equal(next.input.requestId,requestId);f.inputs.finish(next.messageId,next.revision,'completed');}}
  }finally{f.close();}
 });
-test('main queue: valid scalar and null business payloads preserve original data without breaking readiness',()=>{
+test('main queue: raw Worker text preserves whitespace, empty returns and Unicode without changing its body',()=>{
  const f=fixture();try{
-  f.send('null-payload',null);f.send('scalar-payload','Original scalar');
+  const original='  原文\n\nSame text\t';f.send('raw-text',original);f.send('empty-text','');
   const page=f.inputs.dispatchPage(undefined,'epoch','all');
-  assert.deepEqual(page.items.map(item=>item.origin==='worker'?item.payload:undefined),[null,'Original scalar']);
-  assert.equal(f.inputs.runnableHead('all')!.origin,'worker');
+  assert.deepEqual(page.items.map(item=>item.origin==='worker'?item.text:undefined),[original,'']);
+  assert.equal(f.inputs.runnableHead('all')!.origin,'worker');assert.equal(f.store.db.prepare('SELECT count(*) n FROM results').get()!.n,0);
  }finally{f.close();}
 });
-test('main queue: processed ACK cannot release a live or unknown main process; confirmed closure never replays it',()=>{
+test('main queue: automatic receipt cannot release a live or unknown main process; confirmed closure never replays it',()=>{
  const f=fixture();try{
   const worker=f.send('ack-before-final');f.inputs.accept({requestId:'later',text:'Next input'});
-  f.inputs.claim([],'all');
+  const claimed=f.inputs.claim([],'all')!;
   f.processes.start({id:'live-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[worker.messageId],messageId:'live-process'},'live-turn');
-  f.tasks.ack({agentId:f.agentId},{operationId:'ack-before-final',messageId:worker.messageId,disposition:'processed',reason:'Synthetic consumed'});
+  f.consume(claimed);
   assert.equal(f.inputs.claim([],'all'),undefined,'a processed receipt does not end the actual turn');
   f.processes.finish('live-process','unknown');assert.equal(f.inputs.claim([],'all'),undefined);
   f.processes.reconcileUnknown('synthetic-history',true);
@@ -79,93 +86,56 @@ test('main queue: processed ACK cannot release a live or unknown main process; c
   assert.equal(f.processes.exact('lost-final')!.final,undefined,'closing an engine never promotes an unconfirmed native final');
  }finally{f.close();}
 });
-test('main queue: user recovery reads only previously claimed ended inputs and cannot ACK later business',async()=>{
+test('main queue: recovery inspection reads only previously claimed closed inputs and cannot consume pending business',()=>{
  const f=fixture();try{
-  const prior=f.send('prior'),later=f.send('later');f.inputs.claim([],'all');
+  const prior=f.send('prior'),later=f.send('later'),claimed=f.inputs.claim([],'all')!;
   f.processes.start({id:'failed-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[prior.messageId],messageId:'failed-process'},'failed-turn');
   f.store.db.prepare("UPDATE agent_receipts SET state='blocked' WHERE messageId=?").run(prior.messageId);
-  assert.deepEqual(f.inputs.recoveryMessages(),[],'a live process cannot become recovery history');
-  assert.deepEqual(f.inputs.recoveryQueue(),[]);
-  f.processes.finish('failed-process','failed','turn:failed-turn:terminal');
-  const context={event:false,requestId:'user-recovery',inspected:new Set()};
-  const host=Object.create(Homer.prototype) as Homer;
-  Object.assign(host,{store:f.store,tasks:f.tasks,inputs:f.inputs,recursiveTools:new RecursiveTools(f.tasks,{rootAuthority(){throw Error('unexpected_authority');},wake(){},async stop(){throw Error('unexpected_stop');},async update(){throw Error('unexpected_update');}}),mainContext:context,accountClocks(){}});
-  const messages=await host['recursiveTool']({agentId:f.agentId},'inbox_read',{after:0}) as {id:string}[];
-  assert.deepEqual(messages.map(message=>message.id),[prior.messageId]);
-  assert.deepEqual(f.inputs.recoveryQueue(),[],'hidden blocked history is not automatically reconciled');
-  const ack={operationId:'recover-original',messageId:later.messageId,disposition:'processed',reason:'Synthetic recovery',resultId:null};
-  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',ack),/message_not_claimed/);
-  await host['recursiveTool']({agentId:f.agentId},'inbox_ack',{...ack,messageId:prior.messageId});
   assert.deepEqual(f.inputs.recoveryMessages(),[]);
-  assert.equal(f.inputs.claim([],'all')!.messageId,later.messageId,'recovery never auto-requeues the old business');
+  f.processes.finish('failed-process','failed','turn:failed-turn:terminal');
+  const before=f.store.db.prepare('SELECT total_changes() n').get()!.n;
+  assert.deepEqual(f.inputs.recoveryMessages().map(message=>message.id),[prior.messageId]);
+  assert.equal(f.store.db.prepare('SELECT total_changes() n').get()!.n,before);
+  f.store.transaction(()=>f.tasks.completeMainMessagesInTransaction([prior.messageId,later.messageId],'unrelated-turn'));
+  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(later.messageId)!.state,'pending');
+  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(claimed.messageId)!.state,'blocked');
+  assert.equal(f.inputs.claim([],'all')!.messageId,later.messageId);
  }finally{f.close();}
 });
-for(const state of ['blocked','uncertain'] as const)test('user recovery can inspect and ACK ended pre-start Worker history without replay: '+state,async()=>{
+for(const state of ['blocked','uncertain'] as const)test('recovery retains exact closed evidence and honors startup source boundary: '+state,()=>{
  const f=fixture();try{
   const prior=f.send('old-recovery');f.inputs.claim([],'all');
   f.processes.start({id:'old-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[prior.messageId],messageId:'old-process'},'old-turn');
   f.store.db.prepare('UPDATE agent_receipts SET state=? WHERE messageId=?').run(state,prior.messageId);
-  f.processes.finish('old-process',state==='blocked'?'failed':'unknown',state==='blocked'?'turn:old-turn:terminal':'host:restart:engine_closed');
-  const pending=f.send('old-pending');
-  const cutoff=Number(f.store.db.prepare('SELECT max(seq) n FROM agent_messages').get()!.n),inputs=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff});
-  const host=Object.create(Homer.prototype) as Homer;
-  const context={event:true,requestId:'new-user',inspected:new Set<string>()};
-  Object.assign(host,{store:f.store,tasks:f.tasks,inputs,recursiveTools:new RecursiveTools(f.tasks,{rootAuthority(){throw Error('unexpected_authority');},wake(){},async stop(){throw Error('unexpected_stop');},async update(){throw Error('unexpected_update');}}),mainContext:context,accountClocks(){}});
-  const ack={operationId:'old-ack',messageId:prior.messageId,disposition:'processed',reason:'Synthetic reviewed original work',resultId:null};
-  assert.deepEqual(await host['recursiveTool']({agentId:f.agentId},'inbox_read',{after:0}),[]);
-  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',ack),/message_not_claimed/);
-  context.event=false;
-  const changes=f.store.db.prepare('SELECT total_changes() n').get()!.n;
-  const messages=await host['recursiveTool']({agentId:f.agentId},'inbox_read',{after:0}) as {id:string;seq:number}[];
-  assert.deepEqual(messages.map(message=>message.id),[prior.messageId]);
-  assert.deepEqual(inputs.recoveryQueue().map(row=>({...row})),state==='uncertain'?[{id:prior.messageId,seq:messages[0]!.seq}]:[],'only visible uncertain history is selected, never hidden blocked or pending inputs');
-  assert.equal(f.store.db.prepare('SELECT total_changes() n').get()!.n,changes,'recovery read does not alter receipts');
-  assert.deepEqual(inputs.recoveryMessages(messages[0]!.seq),[],'after remains a cursor');
-  assert.equal(inputs.claim([],'all'),undefined,'reading history does not release the startup fence');
-  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',{...ack,messageId:pending.messageId}),/message_not_claimed/);
-  f.store.setMeta('mainThread','another-thread');
-  assert.deepEqual(await host['recursiveTool']({agentId:f.agentId},'inbox_read',{after:0}),[]);
-  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'inbox_ack',ack),/message_not_claimed/);
-  f.store.setMeta('mainThread','synthetic-history');
-  await host['recursiveTool']({agentId:f.agentId},'inbox_ack',ack);
-  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(prior.messageId)!.state,'processed');
-  assert.deepEqual(inputs.recoveryMessages(),[]);
-  inputs.resumeWorkerMessages();
-  assert.equal(inputs.claim([],'all')!.messageId,pending.messageId,'only the unclaimed pending input is dispatched');
+  f.processes.finish('old-process',state==='blocked'?'failed':'unknown','host:restart:engine_closed');
+  const pending=f.send('old-pending'),cutoff=Number(f.store.db.prepare('SELECT max(seq) n FROM agent_messages').get()!.n);
+  const inputs=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff});
+  const messages=inputs.recoveryMessages();assert.deepEqual(messages.map(message=>message.id),[prior.messageId]);
+  assert.deepEqual(inputs.recoveryMessages(Number(messages[0]!.seq)),[]);
+  assert.equal(inputs.claim([],'all'),undefined);
+  f.store.setMeta('mainThread','foreign-thread');assert.deepEqual(inputs.recoveryMessages(),[]);f.store.setMeta('mainThread','synthetic-history');
+  inputs.resumeWorkerMessages();assert.equal(inputs.claim([],'all')!.messageId,pending.messageId);
+  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(prior.messageId)!.state,state);
  }finally{f.close();}
 });
-test('a new turn cannot continue or otherwise mutate a historical task while paused',async()=>{
+test('paused Tasks reject new Worker execution until explicitly resumed; old coordination tools are denied',async()=>{
  const f=fixture();try{
-  const task=f.tasks.tasks()[0]!,host=Object.create(Homer.prototype) as Homer;
-  let invoked=false;
-  Object.assign(host,{store:f.store,tasks:f.tasks,inputs:f.inputs,pausedTaskIds:new Set([task.id]),recursiveTools:{async call(){invoked=true;return {}; }},mainContext:{event:false,requestId:'new-user',inspected:new Set()},accountClocks(){}});
-  await assert.rejects(host['recursiveTool']({agentId:f.agentId},'task_continue',{operationId:'old-continue',taskId:task.id,version:task.headVersion,expectedTaskRevision:task.revision}),/desktop_old_task_paused/);
-  assert.equal(invoked,false);
+  f.tasks.controlTask(f.actor,{operationId:'pause',taskId:f.task.taskId,expectedRevision:1,action:'pause'});
+  const snapshot=()=>['tasks','runs','operations'].map(table=>f.store.db.prepare('SELECT * FROM '+table+' ORDER BY rowid').all());const before=snapshot();
+  assert.throws(()=>f.tasks.workerOpen(f.actor,{operationId:'open-paused',taskId:f.task.taskId,text:'Do work'}),/task_not_open/);
+  assert.deepEqual(snapshot(),before);
+  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>{throw Error('unexpected_authority');},wake(){},async stop(){},async steer(){}});
+  for(const name of ['task_delegate','task_continue','inbox_read','inbox_ack','dispatch_work'])await assert.rejects(tools.call(f.actor,name,{},'legacy-'+name),/tool_denied/);
+  f.tasks.controlTask(f.actor,{operationId:'resume',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,action:'resume'});
+  assert.equal(f.tasks.workerOpen(f.actor,{operationId:'open-resumed',taskId:f.task.taskId,text:'Do work'}).state,'queued');
  }finally{f.close();}
 });
-test('paused pending items and historical sources cannot be edited or dispatched by a new turn',async()=>{
+test('historical source text cannot gain authority in another Main thread',()=>{
  const f=fixture();try{
-  const host=Object.create(Homer.prototype) as Homer;let invoked=false;
-  Object.assign(host,{store:f.store,tasks:f.tasks,inputs:f.inputs,pausedTaskIds:new Set(),pausedPendingIds:new Set(['old-pending']),pausedSourceIds:new Set(['old-source']),pendingTools:{async call(){invoked=true;}},recursiveTools:{async call(){invoked=true;}},mainContext:{event:false,requestId:'new-user',inspected:new Set()},accountClocks(){}});
-  await assert.rejects(host['pendingTool']('pending_update',{id:'old-pending'}),/desktop_old_pending_paused/);
-  for(const pending of [{items:[{id:'old-pending',expectedRevision:1}],sourceRequestIds:['new'],primarySourceRequestId:'new'},{items:[],sourceRequestIds:['old-source'],primarySourceRequestId:'old-source'}])
-   await assert.rejects(host['recursiveTool']({agentId:f.agentId},'task_delegate',{parentTaskId:null,pending}),/desktop_old_pending_paused/);
-  assert.equal(invoked,false);
+  f.store.setMeta('mainThread','new-thread');const actor={...f.actor,threadId:'new-thread'};
+  assert.throws(()=>f.tasks.pending.source(actor,'source'),/pending_source_denied/);
+  assert.throws(()=>f.tasks.createTask(actor,{operationId:'cross-thread',goal:'Do work',authority:{sourceRequestId:'source',description:'Forged',materials:[],resultIds:[]}}),/pending_source_denied/);
  }finally{f.close();}
-});
-test('legacy dispatch and old interaction actions remain fenced while paused',async()=>{
- const f=fixture();try{
-  const host=Object.create(Homer.prototype) as Homer,task=f.tasks.tasks()[0]!,main={threadId:'synthetic-thread',turnId:'synthetic-turn'};
-  Object.assign(host,{store:f.store,tasks:f.tasks,inputs:f.inputs,main,pausedMatterIds:new Set([task.matterId]),pausedInteractionIds:new Set(['old-interaction']),mainContext:{event:false,requestId:'new-user',inspected:new Set(),inspectedInteractions:new Set(['old-interaction'])},closing:false});
-  await assert.rejects(host['mainTool']({threadId:main.threadId,turnId:main.turnId,callId:'synthetic',tool:'dispatch_work',arguments:{matterId:task.matterId}}),/desktop_old_task_paused/);
-  await assert.rejects(host['interactionTool']('escalate_interaction',{interactionId:'old-interaction'}),/desktop_old_interaction_paused/);
- }finally{f.close();}
-});
-test('a repeated native approval reply cannot touch a paused old interaction',()=>{
- const host=Object.create(Homer.prototype) as Homer;let responded=false;
- Object.assign(host,{closing:false,closed:false,mainBroken:false,pausedInteractionIds:new Set(['old-approval']),mainApprovals:{owns:()=>true,respond(){responded=true;}}});
- assert.throws(()=>host.submitMessage({requestId:'old-reply',text:'Synthetic',interactionId:'old-approval'}),/desktop_old_interaction_paused/);
- assert.equal(responded,false);
 });
 test('main queue: Worker order survives reopen and pagination; source identity cannot be forged',()=>{
  const parent=resolve('.codex/scratch/worker-return-main-queue-20261023');mkdirSync(parent,{recursive:true});
@@ -202,20 +172,17 @@ test('main queue: duplicate Worker receipt is one input; same text with a differ
   assert.equal(f.history.list('synthetic-history').filter(item=>item.role==='user').length,1,'Worker is never fabricated as user history');
  }finally{f.close();}
 });
-test('main queue: result previews hydrate one bounded page without a query per Worker',()=>{
+test('main queue: raw reply previews hydrate one bounded page without a query per Worker',()=>{
  const f=fixture();try{
   for(let n=0;n<100;n++){
-   const notice=f.send('preview-'+n),resultId='preview-result-'+n;
-   f.store.db.prepare(`INSERT INTO results(id,taskId,version,runId,producerAgentId,kind,payloadJson,state,evidenceJson,operationKey)
-    SELECT ?,taskId,taskVersion,senderRunId,senderAgentId,'structured',?,'offered','{}',operationKey FROM agent_messages WHERE id=?`).run(resultId,JSON.stringify({summary:'Result '+n}),notice.messageId);
-   f.store.db.prepare("UPDATE agent_messages SET senderAgentId='host',kind='result_ready',payloadJson=? WHERE id=?").run(JSON.stringify({resultId}),notice.messageId);
+   f.send('preview-'+n,'Result '+n);
   }
   let queries=0;const prepare=f.store.db.prepare.bind(f.store.db);
   f.store.db.prepare=(...args:Parameters<typeof prepare>)=>{queries++;return prepare(...args);};
   const page=f.inputs.dispatchPage(undefined,'epoch','all');
   assert.equal(page.items.length,80);assert.equal(page.totalWaiting,100);assert.ok(page.nextCursor);
   assert.deepEqual(page.items.map(item=>item.origin==='worker'?item.text:undefined),Array.from({length:80},(_,n)=>'Result '+n));
-  assert.ok(queries<=6,`one page must not query every result separately: ${queries}`);
+  assert.ok(queries<=6,`one page must not query every reply separately: ${queries}`);
  }finally{f.close();}
 });
 test('main queue: U1/W1/U2/W2 interleave and orphan sources never gain current-thread authority',()=>{
@@ -225,7 +192,7 @@ test('main queue: U1/W1/U2/W2 interleave and orphan sources never gain current-t
   const page=f.inputs.dispatchPage(undefined,'epoch','all'),row=page.items.find(item=>item.messageId===w2.messageId)!;
   f.inputs.move({messageId:w2.messageId,operationId:'first-W2',expectedRevision:row.revision,threadId:'synthetic-history',readEpoch:'epoch',expectedOrderVersion:page.orderVersion,beforeMessageId:page.items[0]!.messageId});
   const expected=[w2.messageId,page.items[0]!.messageId,w1.messageId,page.items[2]!.messageId];
-  for(const messageId of expected){const next=f.inputs.claim([],'all')!;assert.equal(next.messageId,messageId);if(next.origin==='user')f.inputs.finish(next.messageId,next.revision,'completed');else f.tasks.ack({agentId:f.agentId},{operationId:'consume-'+messageId,messageId,disposition:'processed',reason:'Synthetic ordered consumption'});}
+  for(const messageId of expected){const next=f.inputs.claim([],'all')!;assert.equal(next.messageId,messageId);if(next.origin==='user')f.inputs.finish(next.messageId,next.revision,'completed');else f.consume(next);}
   const orphan=f.send('orphan');f.store.db.prepare('UPDATE agent_messages SET taskVersion=999 WHERE id=?').run(orphan.messageId);
   assert.equal(f.inputs.dispatchSummary().unscoped,1);assert.equal(f.inputs.runnableHead('all'),undefined);
   assert.deepEqual(f.inputs.dispatchPage(undefined,'epoch','all').items,[]);
@@ -286,7 +253,7 @@ test('desktop release admits only pending Worker messages, preserving old user a
   for(const message of [first,second]){
    const next=resumed.claim([],'all')!;assert.equal(next.messageId,message.messageId);
    assert.equal(resumed.claim([],'all'),undefined,'one receipt owns dispatch until acknowledged');
-   f.tasks.ack({agentId:f.agentId},{operationId:'ack-'+message.messageId,messageId:message.messageId,disposition:'processed',reason:'Synthetic handled'});
+   f.consume(next);
   }
   assert.equal(resumed.claim([],'all'),undefined);assert.equal(resumed.dispatchSummary().awaitingUser,undefined);
   assert.equal(f.inputs.byRequestIds(['old-user'])[0]!.state,'queued');

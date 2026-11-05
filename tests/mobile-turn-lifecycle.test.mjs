@@ -9,27 +9,82 @@ import {createMobileTurn} from '../src/mobile-turn.ts';
 const flush=async()=>{for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));};
 const payload=(n=1)=>({iceServers:[{urls:['turn:192.0.2.10:3478?transport=udp'],username:'2000000000:0123456789abcdef0123456789abcdef',credential:Buffer.alloc(20,n).toString('base64')}],expiresAt:2000000000,ttlSeconds:3600});
 async function hostFixture(t,turn){
- const peers=[],links=[];
+ const peers=[],links=[],diagnostics=[];
+ const files={fail:false,writeFail:false,size:0,truncated:0,mode:0o600};
+ const fsStub={constants:{O_WRONLY:1,O_CREAT:64,O_APPEND:1024,O_NOFOLLOW:131072,O_NONBLOCK:2048},
+  openSync(_path,flags,mode){assert.ok(flags&131072);assert.ok(flags&2048);assert.equal(mode,0o600);if(files.fail)throw Error('private-file-error');return 1;},closeSync(){},
+  fstatSync:()=>({isFile:()=>true,mode:files.mode,nlink:1,uid:process.getuid?.(),size:files.size}),
+  ftruncateSync(){files.truncated++;},writeSync(_fd,line){if(files.writeFail)throw Error('private-write-error');diagnostics.push(JSON.parse(line));}};
  class Peer{
   constructor(_name,config){this.config=config;this.closed=false;peers.push(this);}
-  onLocalDescription(){} onLocalCandidate(){} onStateChange(fn){this.change=fn;}
+  onLocalDescription(fn){this.description=fn;} onLocalCandidate(fn){this.candidate=fn;} onStateChange(fn){this.change=fn;}
+  onGatheringStateChange(fn){this.gathering=fn;}
+  onIceStateChange(fn){this.ice=fn;}
+  getSelectedCandidatePair(){return {local:{type:'relay',address:'192.0.2.9',port:25001},remote:{type:'srflx',address:'198.51.100.7',port:54321}};}
+  setRemoteDescription(){} addRemoteCandidate(){}
   close(){this.closed=true;}
   createDataChannel(){
-   return this.channel={closed:false,onClosed(fn){this.closedCallback=fn;},onError(){},onOpen(fn){this.open=fn;},close(){this.closed=true;},bufferedAmount:()=>0,isOpen:()=>true,onMessage(){},sendMessageBinary(){}};
+   return this.channel={closed:false,onClosed(fn){this.closedCallback=fn;},onError(fn){this.error=fn;},onOpen(fn){this.open=fn;},close(){this.closed=true;},bufferedAmount:()=>0,isOpen:()=>true,onMessage(){},sendMessageBinary(){}};
   }
  }
  const rtcStub={PeerConnection:Peer,cleanup(){}};
  const signalStub=async(_address,_role,handle,closed)=>{const link={closed:false,call:async()=>({}),close(){this.closed=true;},emit:event=>handle(event),drop(){this.closed=true;closed();}};links.push(link);return link;};
  const source=(await build({entryPoints:['src/mobile-rtc.ts'],bundle:true,write:false,format:'cjs',platform:'node',logLevel:'silent',plugins:[{name:'transport-fixture',setup(b){
   b.onResolve({filter:/^node-datachannel$/},()=>({path:'rtc',namespace:'fake'}));
+  b.onResolve({filter:/^node:fs$/},()=>({path:'fs',namespace:'fake'}));
   b.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
   b.onResolve({filter:/mobile-session\.js$/},()=>({path:'session',namespace:'fake'}));
-  b.onLoad({filter:/.*/,namespace:'fake'},({path})=>({contents:path==='rtc'?'export default rtcStub':path==='signal'?'export const openMobileSignal=signalStub':'export const openMobileSession=()=>({authorized:true,close(){},event:async()=>{}})'}));
+  b.onLoad({filter:/.*/,namespace:'fake'},({path})=>({contents:path==='rtc'?'export default rtcStub':path==='fs'?'export const {constants,openSync,closeSync,fstatSync,ftruncateSync,writeSync}=fsStub':path==='signal'?'export const openMobileSignal=signalStub':'export const openMobileSession=()=>({authorized:true,close(){},event:async()=>{}})'}));
  }}]})).outputFiles[0].text;
- const module={exports:{}};Function('rtcStub','signalStub','module','exports',source)(rtcStub,signalStub,module,module.exports);
+ const module={exports:{}};Function('rtcStub','signalStub','fsStub','require','module','exports',source)(rtcStub,signalStub,fsStub,createRequire(import.meta.url),module,module.exports);
  const host=module.exports.startMobileRtc({signalOrigin:'http://127.0.0.1:1',route:{routeId:'a'.repeat(64),prove:()=>({})},devices:{},call:async()=>({}),iceServers:[],turn});
- t.after(()=>host.close());await host.ready;return {host,peers,links};
+ t.after(()=>host.close());await host.ready;return {host,peers,links,diagnostics,files};
 }
+test('RTC diagnostics identify negotiation and selected path without raw connection data',async t=>{
+ const f=await hostFixture(t,{get:async()=>[],networkChanged(){}});
+ await f.links[0].emit({type:'session',sessionId:'private-session-id'});
+ const peer=f.peers[0];
+ peer.description('private-sdp-with-secret','offer');
+ peer.candidate('candidate:secret 1 udp 1 192.0.2.9 25001 typ relay','private-mid');
+ await f.links[0].emit({type:'signal',sessionId:'private-session-id',description:{type:'answer',sdp:'private-sdp-with-secret'}});
+ await f.links[0].emit({type:'signal',sessionId:'private-session-id',candidate:{candidate:'candidate:secret 1 udp 1 198.51.100.7 54321 typ srflx'}});
+ peer.gathering('complete');peer.ice('checking');peer.change('connected');peer.channel.open();
+ peer.change('private-state-with-secret');peer.channel.error('private-error-with-secret');
+ const has=(stage,value)=>f.diagnostics.some(row=>row.stage===stage&&row.value===value);
+ assert.ok(has('signaling','registered'));
+ assert.ok(has('local-description','offer'));assert.ok(has('remote-description','answer'));
+ assert.ok(has('local-candidate','relay'));assert.ok(has('remote-candidate','srflx'));
+ assert.ok(has('gathering','complete'));assert.ok(has('peer','connected'));
+ assert.ok(has('ice','checking'));
+ assert.ok(has('selected-pair','relay/srflx'));assert.ok(has('channel','open'));assert.ok(has('channel','error'));
+ assert.ok(has('peer','unknown'));
+ for(const row of f.diagnostics){assert.deepEqual(Object.keys(row),['time','stage','value']);assert.equal(typeof row.time,'number');}
+ assert.doesNotMatch(JSON.stringify(f.diagnostics),/private-|192\.0\.2|198\.51\.100|25001|54321|candidate:|sdp-with/);
+});
+test('RTC diagnostics cannot block negotiation or cleanup when the log is unavailable',async t=>{
+ for(const failure of ['fail','writeFail'])await t.test(failure,async t=>{
+  const f=await hostFixture(t,{get:async()=>[],networkChanged(){}});f.files[failure]=true;
+  await f.links[0].emit({type:'session',sessionId:'first'});
+  f.peers[0].change('connected');f.peers[0].channel.open();
+  assert.equal(f.host.connected,true);
+  f.host.disconnect();assert.equal(f.peers[0].closed,true);assert.equal(f.host.connected,false);
+ });
+});
+test('RTC diagnostics bound the temporary log size',async t=>{
+ const f=await hostFixture(t,{get:async()=>[],networkChanged(){}});f.files.size=262145;
+ await f.links[0].emit({type:'session',sessionId:'first'});
+ assert.ok(f.files.truncated>0);
+});
+test('RTC diagnostics reject an existing public log and unavailable selected path stays non-fatal',async t=>{
+ const f=await hostFixture(t,{get:async()=>[],networkChanged(){}}),before=f.diagnostics.length;
+ f.files.mode=0o644;
+ await f.links[0].emit({type:'session',sessionId:'first'});
+ assert.equal(f.diagnostics.length,before);
+ f.files.mode=0o600;f.peers[0].getSelectedCandidatePair=()=>{throw Error('private-selected-path-error');};
+ f.peers[0].channel.open();assert.equal(f.host.connected,true);
+ assert.ok(f.diagnostics.some(row=>row.stage==='selected-pair'&&row.value==='unavailable'));
+ assert.doesNotMatch(JSON.stringify(f.diagnostics),/private-/);
+});
 test('healthy direct PCs carrying TURN config survive refresh and signaling expiry; owner close removes all',async t=>{
  let count=0;t.mock.timers.enable({apis:['Date','setTimeout'],now:100000});
  t.mock.method(globalThis,'fetch',async()=>Response.json(payload(++count)));

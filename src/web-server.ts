@@ -137,12 +137,14 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
         return json(response,201,await chat('media.upload',{...metadata,data:Buffer.concat(chunks).toString('base64')}));
       }finally{uploading--;}
     }
-    const execution=path.match(/^\/api\/tasks\/([\w:-]{1,100})\/execution\/([\w:-]{1,100})\/([\w:-]{1,100})(?:\/(before|calls)\/([A-Za-z0-9_-]{1,256}))?$/);
+    const execution=path.match(/^\/api\/tasks\/([\w:-]{1,100})\/execution\/([\w:-]{1,100})(?:\/(before|calls)\/([A-Za-z0-9_-]{1,256}))?$/);
     if(request.method==='GET'&&execution){
       const owner=bridge.taskOverview;if(!owner?.execution||!owner.call)throw Error('task_execution_unavailable');
-      const selector={rootTaskId:execution[1]!,taskId:execution[2]!,runId:execution[3]!};
-      return json(response,200,await chat(execution[4]==='calls'?'tasks.call':'tasks.execution',{...selector,...(execution[4]==='calls'?{callKey:execution[5]}:{before:execution[5]})}));
+      const selector={taskId:execution[1]!,runId:execution[2]!};
+      return json(response,200,await chat(execution[3]==='calls'?'tasks.call':'tasks.execution',{...selector,...(execution[3]==='calls'?{callKey:execution[4]}:{before:execution[4]})}));
     }
+    const conversation=path.match(/^\/api\/tasks\/([\w:-]{1,100})\/workers\/([\w:-]{1,100})(?:\/after\/(\d+)|\/messages\/([\w:-]{1,100})\/(\d+))?$/);
+    if(request.method==='GET'&&conversation)return json(response,200,await chat('tasks.detail',{id:conversation[1],workerId:conversation[2],...(conversation[3]!==undefined?{after:Number(conversation[3])}:{}),...(conversation[4]!==undefined?{messageId:conversation[4],offset:Number(conversation[5])}:{})}));
     const overviewProgress=path.match(/^\/api\/tasks\/([\w:-]{1,100})\/progress$/);
     if(request.method==='GET'&&overviewProgress){if(!bridge.taskOverview?.progress)throw Error('task_overview_unavailable');return json(response,200,await bridge.taskOverview.progress(overviewProgress[1]!));}
     const overviewSummary=path.match(/^\/api\/tasks\/([\w:-]{1,100})\/summary$/),overviewOrigin=path.match(/^\/api\/tasks\/([\w:-]{1,100})\/origin\/([\w:-]{1,100})$/);

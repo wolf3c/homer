@@ -23,7 +23,7 @@ const processNode={id:'new-process',threadId:'composer-review',seq:2,revision:1,
  {id:'old-worker',kind:'worker',seq:3,revision:1,label:'旧后台记录'},
 ]};
 const initial=[message('empty','没有引用或工具的合成回复。'),message('legacy','# 合成历史回复\n\n**保留正文**与 `x = 1`。\n\n- 原列表\n\n```text\n原代码\n```',{sources,toolActivities:tools}),message('new-process','新过程正式答复。',{process:processNode,toolActivities:[]})];
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 if(process.argv.includes('--preview')){
  fixture.reset({messages:structuredClone(initial),features:{draftUpload:false,taskOverview:false}});
  console.log('Sources 与历史 RunActivity 隔离合成候选：'+fixture.url+'\nCtrl+C 关闭；不连接真实业务或模型。');

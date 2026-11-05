@@ -1,7 +1,7 @@
-import { basename } from "node:path";
 import type { Homer, Message } from "../service.js";
 import { TelegramChannel } from "./telegram-channel.js";
 import type { MainGeneration, TelegramHost, TelegramOrigin } from "./telegram-contract.js";
+import {dirname} from 'node:path';
 
 type App = Partial<Pick<Homer,'processes'>> & Pick<Homer, "store" | "files" | "tasks" | "interactions" | "submitMessage" | "stopMain"> & {conversationState():Pick<ReturnType<Homer['conversationState']>,'threadId'|'messages'|'isRunning'|'activeMessageId'>};
 type Options = ConstructorParameters<typeof TelegramChannel>[3];
@@ -66,15 +66,17 @@ export class TelegramHomerBridge implements TelegramHost {
       source: "telegram", persist: receipt => this.channel.store.persistAcceptance(input, receipt),
     });
   }
-  async artifact(runId: string, origin?: TelegramOrigin) {
+  async artifact(resultId: string, origin?: TelegramOrigin) {
     this.originalThread();
-    const verified=this.app.tasks.publishedArtifact(runId);
+    if(typeof resultId!=='string'||!resultId)throw new Error('telegram_artifact_not_authorized');
+    const verified=this.app.tasks.publishedResult(resultId);
     const source=verified?.routeSourceRequestId?this.acceptedRoute(verified.routeSourceRequestId):undefined;
     if (!verified || !source || !this.channel.store.trusted(source) ||
       (origin && (source.botId !== origin.botId || source.chatId !== origin.chatId || source.userId !== origin.userId || source.bindingVersion !== origin.bindingVersion)))
       throw new Error("telegram_artifact_not_authorized");
-    const file=this.app.files.resultBytes(this.app.files.prepareRun(this.app.tasks.run(runId).matterId,runId),verified.path);
-    return { filename: basename(verified.path), bytes:file.data };
+    const file=this.app.files.resultBytes(dirname(verified.path),verified.path);
+    if(file.sha256!==verified.sha256)throw Error('result_hash_mismatch');
+    return { filename: verified.filename, bytes:file.data };
   }
   async stop(target: MainGeneration): Promise<"stopped" | "already_finished" | "unconfirmed"> {
     this.originalThread();
@@ -177,9 +179,10 @@ export class TelegramHomerBridge implements TelegramHost {
       if(!message.deliveryId)return;
       const d=this.app.tasks.delivery(message.deliveryId),sourceRequestId=d.routeSourceRequestId;
       if(!sourceRequestId||!this.acceptedRoute(sourceRequestId)||!['submitting','recorded','uncertain'].includes(d.state)||d.text!==message.text||d.historyMessageId!==message.messageId||sourceRequestId!==message.requestId)return;
-      const file=d.publishedFileResultIds.length<=1&&message.runId?this.app.tasks.publishedArtifact(message.runId):null;
+      const resultId=d.publishedFileResultIds.length===1?d.publishedFileResultIds[0]:undefined;
+      if(resultId&&this.app.tasks.publishedResult(resultId)?.deliveryId!==d.id)return;
       const text=d.publishedFileResultIds.length>1?d.text+`\n\n本次有 ${d.publishedFileResultIds.length} 个成果，请在荷马 Web 主对话的“成果下载”逐个获取。`:d.text;
-      await this.channel.event({type:'delivery',id:d.id,sourceRequestId,text,...(file?.deliveryId===d.id?{runId:message.runId}: {})});return;
+      await this.channel.event({type:'delivery',id:d.id,sourceRequestId,text,...(resultId?{resultId}: {})});return;
     }
     if (!message.runId) return;
     const run = this.app.store.run(message.runId), sourceRequestId = run?.sourceRequestId;

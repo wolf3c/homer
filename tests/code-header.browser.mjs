@@ -8,7 +8,7 @@ import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/code-header-20261023/browser');
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??'.codex/scratch/code-header-20261023/candidate-web');
 mkdirSync(destination,{recursive:true});
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 const tsCode='const value = "<safe>";\nconsole.log(value);\n';
 const plainCode='plain <safe> & text\nsecond line\n';
 const diagram='graph TD\n  A[开始] --> B[完成]\n';

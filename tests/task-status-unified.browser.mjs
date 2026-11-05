@@ -1,6 +1,7 @@
 // Real product page served by task-status-browser-fixture.mjs. All mutations
 // below replace synthetic read responses; they never call business write APIs.
 import assert from 'node:assert/strict';
+import {workerNamed,changeWorker} from './task-status-browser-data.mjs';
 
 // Exercise the existing visibility owner, rather than a persistent manual control.
 export async function restoreStatusVisibility(page){
@@ -8,6 +9,7 @@ export async function restoreStatusVisibility(page){
 }
 
 export async function taskStatusRefreshRemoval(page,{destination,publish}={}){
+ await page.setViewportSize({width:1100,height:1000});
  const checks=[],metrics=[],errors=[],ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
  page.on('pageerror',error=>errors.push(error.message));
  const trigger=page.locator('#task-status-trigger'),dialog=page.getByRole('dialog',{name:'工作状态卡片'});
@@ -33,7 +35,7 @@ export async function taskStatusRefreshRemoval(page,{destination,publish}={}){
  ok(requests===1,'busy 时键盘重复操作仅发一个请求');
  for(const route of held)await route.continue();await page.unroute('**/api/tasks');
  await retry.waitFor({state:'hidden'});ok(await dialog.locator('[data-item-row]').count()===4,'总览重试成功移除错误及重试入口');
- for(const width of [320,390,1440]){
+ for(const width of [320,390,1100]){
   await page.setViewportSize({width,height:width===1440?1000:844});
   const bounds=await dialog.evaluate(el=>{const list=el.querySelector('.status-list'),root=list.parentElement;return {last:list===root.lastElementChild,gap:root.getBoundingClientRect().bottom-list.getBoundingClientRect().bottom,right:el.getBoundingClientRect().right,scroll:document.documentElement.scrollWidth};});
   ok(bounds.last&&bounds.gap<1&&bounds.scroll===width&&bounds.right<=width,width+'px 正常列表后无空栏且无横向溢出');
@@ -57,11 +59,11 @@ export async function taskStatusRefreshRemoval(page,{destination,publish}={}){
   ok(notifiedReads<=2,'50 次连续状态通知沿原读取节流合并');metrics.push({stateNotifications:50,overviewReads:notifiedReads});page.off('request',count);
  }
  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));});
- await page.waitForFunction(()=>document.querySelector('#task-status-trigger').textContent.includes('上次'));
+ await page.waitForFunction(()=>document.querySelector('#task-status-trigger').title.includes('上次'));
  ok(await retry.count()===0&&await dialog.getByText(/任务记录暂时无法读取/).count()===0,'页面隐藏后的上次记录不冒称读取失败或显示重试');
  const restored=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/tasks');
  await page.evaluate(()=>{delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));});await restored;
- await page.waitForFunction(()=>!document.querySelector('#task-status-trigger').textContent.includes('上次'));
+ await page.waitForFunction(()=>!document.querySelector('#task-status-trigger').title.includes('上次'));
  ok(true,'hidden 恢复沿原 owner 自动读取最新总览');
  // No state notification means no poll.
  await page.clock.install();let overviewReads=0,progressReads=0;
@@ -82,81 +84,63 @@ export async function taskStatusRefreshRemoval(page,{destination,publish}={}){
 }
 
 export async function taskStatusPresentation(page,{destination}={}){
+ await page.setViewportSize({width:1100,height:1000});
  const checks=[],errors=[],ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
  page.on('pageerror',error=>errors.push(error.message));
  const trigger=page.locator('#task-status-trigger'),dialog=page.getByRole('dialog',{name:'工作状态卡片'});
  await trigger.locator('[data-count="working"]').waitFor();
  const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- const target=original.tasks.find(t=>t.goal==='成本分析 Worker');
+ const {task,worker:target}=workerNamed(original,'成本分析 Worker');
  let snapshot=original,output={type:'tool',text:'正在执行合成命令'},plan,failProgress=false;
  await page.route('**/api/tasks',route=>route.fulfill({json:snapshot}));
- await page.route('**/api/tasks/*/progress',route=>failProgress?route.fulfill({status:503,body:'synthetic_progress_failure'}):route.fulfill({json:{taskId:target.rootTaskId,workers:[{
-  taskId:target.id,version:target.headVersion,runId:target.currentRunId,epoch:target.run.epoch,threadId:target.run.threadId,turnId:target.run.turnId,revision:1,observedAtMs:1,output,plan,
- }]}}));
- const open=async extra=>{
-  snapshot={...original,tasks:original.tasks.map(t=>t.id===target.id?{...t,...extra}:t)};
-  await page.reload();await trigger.locator('[data-count="working"]').waitFor();await trigger.click();
+ await page.route('**/api/tasks/*/progress',route=>{
+  if(failProgress)return route.fulfill({status:503,body:'synthetic_progress_failure'});
+  const r=workerNamed(snapshot,'成本分析 Worker').worker.run;
+  return route.fulfill({json:{taskId:task.id,workers:[{taskId:task.id,version:r.version,runId:r.id,epoch:r.epoch,threadId:r.threadId,turnId:r.turnId,revision:1,observedAtMs:1,output,plan}]}});
+ });
+ const open=async(extra={},taskExtra={})=>{
+  snapshot=changeWorker(original,'成本分析 Worker',w=>({...w,...extra}));
+  snapshot={...snapshot,tasks:snapshot.tasks.map(t=>t.id===task.id?{...t,...taskExtra}:t)};
+  await page.reload();await page.waitForFunction(()=>{const title=document.querySelector('#task-status-trigger')?.title;return title&&!title.includes('正在读取')&&!title.includes('读取失败');});await trigger.click();
   await dialog.getByRole('button',{name:/采购选型方案/}).click();
-  const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/tasks/'+target.rootTaskId+'/progress');
+  const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/tasks/'+task.id+'/progress');
   const button=dialog.getByRole('button',{name:/成本分析 Worker/});await button.click();await response;
-  const card=button.locator('..');
-  await card.getByText('正在读取公开进展…',{exact:true}).waitFor({state:'hidden'});
-  return card;
+  const card=button.locator('..');await card.getByText('正在读取公开进展…',{exact:true}).waitFor({state:'hidden'});return card;
  };
- let card=await open({});
- await card.getByText('工具调用：正在执行合成命令',{exact:true}).waitFor();
- ok(await dialog.getByText('执行、验收与正式交付分别核对',{exact:true}).count()===0,'移除浮层通用解释');
+ let card=await open();await card.getByText('工具调用：正在执行合成命令',{exact:true}).waitFor();
+ ok(await dialog.getByText('执行、验收与正式交付分别核对',{exact:true}).count()===0,'不增加泛用解释');
  ok(await dialog.getByRole('button',{name:'刷新',exact:true}).count()===0,'正常状态无常驻刷新按钮');
  plan=[{step:'合成并行展示计划',status:'inProgress'}];output={type:'text',text:'合成计划对应的最新公开进展'};
- card=await open({});await card.getByText('合成并行展示计划',{exact:true}).waitFor();
- await card.getByText('合成计划对应的最新公开进展',{exact:true}).waitFor();
- ok(true,'已有计划与最新公开进展同时显示');plan=undefined;output={type:'tool',text:'正在执行合成命令'};
- for(const [status,label]of [['succeeded','执行已结束 · 待验收'],['failed','执行失败'],['cancelled','已取消'],['interrupted','执行已中断']]){
-  card=await open({run:{...target.run,status,phase:'ended',summary:'合成的已记录说明'}});
-  await card.getByText('已记录说明（非实时进展）：合成的已记录说明',{exact:true}).waitFor();
-  ok(await card.getByText('工具调用：正在执行合成命令',{exact:true}).count()===0,status+' 结束后不以末次工具进度覆盖现有摘要');
-  ok((await card.locator('>button').innerText()).includes(label),status+' 保留准确状态');
+ card=await open();await card.getByText('合成并行展示计划',{exact:true}).waitFor();await card.getByText('合成计划对应的最新公开进展',{exact:true}).waitFor();ok(true,'已有计划与最新公开进展同时显示');
+ plan=undefined;output={type:'tool',text:'正在执行合成命令'};
+ for(const [status,label]of [['succeeded','已回复'],['failed','执行失败'],['cancelled','本轮已停止'],['interrupted','执行已中断']]){
+  card=await open({run:{...target.run,status,phase:'ended'}});
+  ok(await card.getByText('工具调用：正在执行合成命令',{exact:true}).count()===0,status+' 结束后隐藏末次工具进度');
+  ok((await card.locator('>button').innerText()).includes(label),status+' 保留准确会话状态');
+  ok(await card.getByText('尚无可确认的公开进展。',{exact:true}).count()===0,'结束后的空正文不冒充当前进展');
  }
- card=await open({run:{...target.run,status:'awaiting_review',phase:'ended',summary:null},result:{id:'partial',state:'offered',outcome:'partial'}});
- ok(await card.locator('.status-output').count()===0&&await card.getByText('尚无可确认的公开进展。',{exact:true}).count()===0,'部分成果结束后无摘要则省略工具进度及空说明');
- ok((await card.locator('>button').innerText()).includes('部分成果'),'省略正文不丢失部分成果事实');
- plan=[{step:'合成已完成计划',status:'completed'}];
- card=await open({run:{...target.run,status:'succeeded',phase:'ended',summary:'合成摘要'}});
- await card.getByText('合成已完成计划',{exact:true}).waitFor();ok(true,'结束后的真实计划保留');plan=undefined;
- output={type:'text',text:'合成公开正文'};
- card=await open({run:{...target.run,status:'succeeded',phase:'ended',summary:null}});
- await card.getByText('合成公开正文',{exact:true}).waitFor();ok(true,'结束后的公开文字进展保留');
- output={type:'tool',text:'正在执行合成命令'};
- card=await open({state:'recovery',run:{...target.run,status:'succeeded',phase:'ended',summary:null}});
- await card.getByText('工具调用：正在执行合成命令',{exact:true}).waitFor();
- ok((await card.locator('>button').innerText()).includes('状态待核实'),'状态未知时不根据旧 ended 隐藏记录');
- card=await open({controlState:'stopping',run:{...target.run,status:'succeeded',phase:'ended',summary:null}});
- await card.getByText('工具调用：正在执行合成命令',{exact:true}).waitFor();
- ok((await card.locator('>button').innerText()).includes('停止待确认'),'停止待确认不凭 ended 隐藏记录');
- failProgress=true;
- card=await open({run:{...target.run,status:'succeeded',phase:'ended',summary:null}});
- await card.getByText('公开进展读取失败，可收起后重新展开重试。',{exact:true}).waitFor();
- ok(true,'已结束但读取失败仍显示重试提示');failProgress=false;
- output=undefined;card=await open({});await card.getByText('尚无可确认的公开进展。',{exact:true}).waitFor();
- ok(true,'未结束且无进展仍明确说明');
- await page.setViewportSize({width:320,height:844});
- card=await open({run:{...target.run,status:'succeeded',phase:'ended',summary:'合成的已记录说明'}});
- await card.getByText('已记录说明（非实时进展）：合成的已记录说明',{exact:true}).waitFor();
- ok(await page.evaluate(()=>document.documentElement.scrollWidth===320),'320px 展开与刷新无横向溢出');
+ card=await open({run:{...target.run,status:'succeeded',phase:'ended'}},{state:'settled',outcome:'partial'});
+ ok((await dialog.getByRole('button',{name:/采购选型方案/}).innerText()).includes('部分完成')&&(await card.locator('>button').innerText()).includes('已回复'),'Main部分结案与Worker回复分别保真');
+ plan=[{step:'合成已完成计划',status:'completed'}];card=await open({run:{...target.run,status:'succeeded',phase:'ended'}});await card.getByText('合成已完成计划',{exact:true}).waitFor();ok(true,'结束后的真实计划保留');plan=undefined;
+ output={type:'text',text:'合成公开正文'};card=await open({run:{...target.run,status:'succeeded',phase:'ended'}});await card.getByText('合成公开正文',{exact:true}).waitFor();ok(true,'结束后的公开文字进展保留');
+ output={type:'tool',text:'正在执行合成命令'};card=await open({run:{...target.run,phase:'uncertain'}});await card.getByText('工具调用：正在执行合成命令',{exact:true}).waitFor();ok((await card.locator('>button').innerText()).includes('状态待核实'),'未确认结束不伪造终态');
+ card=await open({run:{...target.run,stopRequestedAt:1}});ok((await card.locator('>button').innerText()).includes('停止待确认'),'停止请求保留准确事实');
+ failProgress=true;card=await open({run:{...target.run,status:'succeeded',phase:'ended'}});await card.getByText('公开进展读取失败，可收起后重新展开重试。',{exact:true}).waitFor();ok(true,'结束后的读取失败仍可重试');failProgress=false;
+ output=undefined;card=await open();await card.getByText('尚无可确认的公开进展。',{exact:true}).waitFor();ok(true,'未结束且无进展明确说明');
+ await page.setViewportSize({width:320,height:844});output={type:'text',text:'合成公开正文'};card=await open({run:{...target.run,status:'succeeded',phase:'ended'}});await card.getByText('合成公开正文',{exact:true}).waitFor();ok(await page.evaluate(()=>document.documentElement.scrollWidth===320),'320px 展开与刷新无横向溢出');
  if(destination)await page.screenshot({path:destination+'/presentation-320.png',animations:'disabled'});
- await page.unroute('**/api/tasks');await page.unroute('**/api/tasks/*/progress');
- ok(errors.length===0,'展示精简所有场景无页面异常');
- return {checksPassed:checks.length,checks,errors};
+ await page.unroute('**/api/tasks');await page.unroute('**/api/tasks/*/progress');ok(errors.length===0,'展示场景无页面异常');return {checksPassed:checks.length,checks,errors};
 }
 
 export default async function inlineTaskRows(page,{destination}={}){
+ await page.setViewportSize({width:1100,height:1000});
  const checks=[],metrics=[],errors=[];
  const ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
  page.on('pageerror',e=>errors.push(e.message));
  const trigger=page.locator('#task-status-trigger'),dialog=page.getByRole('dialog',{name:'工作状态卡片'});
  const card=name=>dialog.getByRole('button',{name:new RegExp(name)}).locator('..');
  const toggle=name=>card(name).locator('>button');
- const ready=async()=>{await trigger.locator('[data-count="working"]').waitFor();};
+ const ready=async()=>{await page.waitForFunction(()=>{const title=document.querySelector('#task-status-trigger')?.title;return title&&!title.includes('正在读取')&&!title.includes('读取失败');});};
  const open=async()=>{await ready();await trigger.click();await dialog.waitFor();};
  const collapsed=async()=>{await open();ok(await dialog.locator('[data-slot="task-status-row"]').count()===4,'四类根事项仅挂载四个紧凑任务行');};
  const capture=async name=>{if(destination)await page.screenshot({path:destination+'/'+name+'.png',animations:'disabled'});};
@@ -165,9 +149,9 @@ export default async function inlineTaskRows(page,{destination}={}){
  await collapsed();
  ok(await dialog.locator('[data-item-row="true"]').count()===4,'全部根事项采用同一种紧凑行，单 Worker 与事项合并');
  ok(await dialog.locator('[data-slot="task-status-row"]>button[aria-expanded="false"]').count()===4,'根事项初次全部收起');
- ok(await card('停止旧版市场调研').getAttribute('data-state')==='waiting'&&await card('活动资料整理').getAttribute('data-state')==='waiting','停止未确认和状态未知都是 waiting');
- ok((await toggle('停止旧版市场调研').innerText()).includes('停止待确认')&&(await toggle('活动资料整理').innerText()).includes('状态待核实'),'未知与停止中文事实保持');
- ok((await trigger.innerText()).includes('3 工作中')&&(await trigger.innerText()).includes('1 完成')&&(await trigger.innerText()).includes('1 待处理'),'未知、停止和根汇总不新增计数');
+ ok(await card('停止旧版市场调研').getAttribute('data-state')==='waiting'&&await card('活动资料整理').getAttribute('data-state')==='waiting','停止未确认和已暂停都是 waiting');
+ ok((await toggle('停止旧版市场调研').innerText()).includes('停止待确认')&&(await toggle('活动资料整理').innerText()).includes('已暂停'),'暂停与停止中文事实保持');
+ ok(await trigger.getAttribute('aria-label')==='工作状态，1 个任务工作中'&&await dialog.locator('[data-count="done"]').innerText()==='1'&&await dialog.locator('[data-count="needs-user"]').innerText()==='1','未知、停止和根汇总不新增计数');
  ok(await dialog.locator('[data-slot="card"]').count()===0,'没有旧 Card 或 UnknownWorker 分支');
  ok(await dialog.locator('[data-slot="task-card"]').count()===0,'总览不再嵌套独立 TaskCard');
  // Shared TaskCard accessibility remains valid for other consumers of the scoped CSS.
@@ -181,7 +165,7 @@ export default async function inlineTaskRows(page,{destination}={}){
 
  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
  ok(await trigger.evaluate(e=>e===document.activeElement),'Escape 关闭并回到顶部入口');
- for(const width of [320,390,704,1440]){
+ for(const width of [320,390,704,1100]){
   await page.setViewportSize({width,height:width<600?844:1000});await collapsed();
   await page.waitForTimeout(250); // Read the completed Radix transition, not its scaled first frame.
   const sizes=await dialog.locator('[data-slot="task-status-row"]>button').evaluateAll(nodes=>nodes.map(n=>({height:n.getBoundingClientRect().height,width:n.getBoundingClientRect().width})));
@@ -228,7 +212,7 @@ export default async function inlineTaskRows(page,{destination}={}){
  ok(await toggle('成本分析 Worker').locator('.animate-spin').evaluate(e=>getComputedStyle(e).animationName==='none'),'reduced-motion 关闭运行图标动画');
  await page.emulateMedia({colorScheme:'dark'});await page.setViewportSize({width:390,height:844});
  ok(await dialog.evaluate(el=>getComputedStyle(el).getPropertyValue('--background').trim()==='0 0% 3.9%'),'浮层沿既有局部暗色主题');
- await capture('mobile-390-dark-expanded');await page.emulateMedia({colorScheme:'light'});await page.setViewportSize({width:1440,height:1000});
+ await capture('mobile-390-dark-expanded');await page.emulateMedia({colorScheme:'light'});await page.setViewportSize({width:1100,height:1000});
  await toggle('采购选型方案').focus();await page.keyboard.press('ArrowDown');
  ok(await toggle('采购选型方案').evaluate(e=>getComputedStyle(e).outlineStyle!=='none'),'键盘焦点可见');
  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
@@ -246,29 +230,29 @@ export default async function inlineTaskRows(page,{destination}={}){
  let snapshot=original;
  const replace=async value=>{snapshot=value;await page.reload();await ready();};
  await page.route('**/api/tasks',route=>route.fulfill({json:snapshot}));
- const change=(goal,fn)=>({...original,tasks:original.tasks.map(t=>t.goal===goal?fn(t):t)});
- // Out-of-order completion keeps an active sibling and a valid approval.
- await replace(change('税费资料 Worker',t=>({...t,run:{...t.run,status:'succeeded',phase:'ended'},result:{id:'tax-result',state:'offered',outcome:'succeeded'}})));
+ const change=(title,fn)=>changeWorker(original,title,fn);
+ // A replied session does not settle its Task or stop its active peer.
+ await replace(change('税费资料 Worker',w=>({...w,run:{...w.run,status:'succeeded',phase:'ended'}})));
  await open();await toggle('采购选型方案').click();await toggle('成本分析 Worker').click();
- ok((await trigger.innerText()).includes('2 工作中')&&(await trigger.innerText()).includes('2 完成')&&(await trigger.innerText()).includes('1 待处理'),'同级 Worker 先结束时，运行兄弟及有效批准独立计数');
- ok(await card('税费资料 Worker').getAttribute('data-state')==='done'&&(await toggle('税费资料 Worker').innerText()).includes('执行已结束 · 待验收'),'候选执行结束仅表示待验收');
- ok(await card('采购选型方案').getAttribute('data-state')==='working','同级 Worker 成功不将根事项标为已交付');
- await replace(change('成本分析 Worker',t=>({...t,rework:true})));
- await open();await toggle('采购选型方案').click();ok((await toggle('成本分析 Worker').innerText()).includes('返工中'),'返工使用同一 Worker 身份和明确中文状态');
-
- for(const [status,state,label]of [['failed','failed','执行失败'],['cancelled','cancelled','已取消'],['interrupted','done','执行已中断']]){
-  await replace(change('停止旧版市场调研',t=>({...t,controlState:'normal',state:'settled',outcome:status,run:{...t.run,status,phase:'ended'}})));
-  await open();ok(await card('停止旧版市场调研').getAttribute('data-state')===state,status+' 映射准确官方状态');
-  ok((await toggle('停止旧版市场调研').innerText()).includes(label),status+' 保留具体中文事实');
-  ok((await trigger.innerText()).includes('1 完成')&&(await trigger.innerText()).includes('1 待处理'),status+' 不被图标加入成功或待处理统计');
+ ok(await trigger.getAttribute('aria-label')==='工作状态，1 个任务工作中'&&await dialog.locator('[data-count="done"]').innerText()==='2'&&await dialog.locator('[data-count="needs-user"]').innerText()==='1','同一事项继续工作，已回复会话和有效请求各自计数');
+ ok(await card('税费资料 Worker').getAttribute('data-state')==='done'&&(await toggle('税费资料 Worker').innerText()).includes('已回复'),'成功会话只表示已回复');
+ ok(await card('采购选型方案').getAttribute('data-state')!=='done','同伴会话成功不将事项结案');
+ await replace(change('成本分析 Worker',w=>({...w,run:{...w.run,id:w.run.id+'-followup',epoch:w.run.epoch+1}})));
+ await open();await toggle('采购选型方案').click();ok((await toggle('成本分析 Worker').innerText()).includes('运行中'),'继续执行保留同一Worker身份，以实际新Run呈现');
+ for(const [status,state,label]of [['failed','failed','未完成'],['succeeded','done','已完成']]){
+  await replace({...original,tasks:original.tasks.map(t=>t.title==='停止旧版市场调研'?{...t,controlState:'normal',state:'settled',outcome:status,workers:t.workers.map(w=>({...w,run:{...w.run,status,phase:'ended',stopRequestedAt:null}}))}:t)});
+  await open();ok(await card('停止旧版市场调研').getAttribute('data-state')===state,status+' Main结案状态准确');ok((await toggle('停止旧版市场调研').innerText()).includes(label),status+' 保留中文事实');
+  ok(await dialog.locator('[data-count="needs-user"]').innerText()==='1','结案不改变其他事项待答计数');
  }
- await replace(change('资料整理 Worker',t=>({...t,run:{...t.run,status:'awaiting_review',phase:'ended'},result:{id:'partial-result',state:'offered',outcome:'partial'}})));
- await open();await toggle('采购选型方案').click();ok((await toggle('资料整理 Worker').innerText()).includes('部分成果'),'部分成果保真，未冒称验收或正式交付');
+ for(const [status,label]of [['failed','执行失败'],['cancelled','本轮已停止'],['interrupted','执行已中断']]){
+  await replace(change('资料整理 Worker',w=>({...w,run:{...w.run,status,phase:'ended'}})));await open();await toggle('采购选型方案').click();ok((await toggle('资料整理 Worker').innerText()).includes(label),status+' 非成功会话保留准确状态');ok(await dialog.locator('[data-count="done"]').innerText()==='1','非成功会话不增加执行成功计数');
+ }
+ await replace({...original,tasks:original.tasks.map(t=>t.title==='采购选型方案'?{...t,state:'settled',outcome:'partial'}:t)});await open();ok((await toggle('采购选型方案').innerText()).includes('部分完成'),'部分完成由Main显式结案呈现');
 
  // Same name is not identity. Current run/segment changes must reset only that card.
  await replace(original);await open();await toggle('采购选型方案').click();await toggle('资料整理 Worker').click();
  await card('资料整理 Worker').locator('[data-slot="agent-plan"]').waitFor();
- snapshot=change('资料整理 Worker',t=>({...t,run:{...t.run,threadId:t.run.threadId+'-rebound'}}));
+ snapshot=change('资料整理 Worker',w=>({...w,run:{...w.run,threadId:w.run.threadId+'-rebound'}}));
  await restoreStatusVisibility(page);
  await page.waitForFunction(()=>[...document.querySelectorAll('[data-slot="task-status-row"]>button')].some(e=>e.textContent.includes('资料整理 Worker')&&e.getAttribute('aria-expanded')==='false'));
  ok(await toggle('采购选型方案').getAttribute('aria-expanded')==='true','线程身份变化只收起目标 Worker，保留根层');
@@ -288,7 +272,7 @@ export default async function inlineTaskRows(page,{destination}={}){
  await open();ok(await page.evaluate(()=>document.documentElement.scrollWidth===320),'320px 长中文不扩张页面');
  ok((await dialog.locator('[data-item-row]').first().getAttribute('aria-label')).length>30,'长中文名称保留在可访问标签');
  await replace({tasks:[]});await open();await dialog.getByText('暂无已安排的事项。',{exact:true}).waitFor();
- ok((await trigger.innerText()).includes('0 工作中'),'真正空集合可以明确显示零');
+ ok(await trigger.getAttribute('aria-label')==='工作状态，无工作中任务'&&await trigger.locator('[data-count]').count()===0,'真正空集合准确宣告无工作，保留空计数槽');
 
  // First read is unknown until the server answers; failures retain known facts.
  await page.unroute('**/api/tasks');
@@ -300,13 +284,14 @@ export default async function inlineTaskRows(page,{destination}={}){
  await page.unroute('**/api/tasks');await page.reload();await ready();await open();
  await page.route('**/api/tasks',r=>r.fulfill({status:503,body:'synthetic_failure'}));
  await restoreStatusVisibility(page);await dialog.getByText(/任务记录暂时无法读取/).waitFor();
- ok(await dialog.locator('[data-item-row]').count()===4&&(await trigger.innerText()).includes('上次'),'刷新失败保留四个已知事项与上次计数');
+ ok(await dialog.locator('[data-item-row]').count()===4&&(await trigger.getAttribute('title')).includes('上次'),'刷新失败保留四个已知事项与上次计数');
  await page.unroute('**/api/tasks');await page.keyboard.press('Escape');
  ok(errors.length===0,'全部交互无页面异常');
  return {checksPassed:checks.length,checks,metrics,errors};
 }
 
 export async function taskStatusLateResponses(page){
+ await page.setViewportSize({width:1100,height:1000});
  const checks=[],errors=[];const ok=(value,name)=>{assert.ok(value,name);checks.push(name);};page.on('pageerror',e=>errors.push(e.message));
  // Reuse the fixture's real SSE transport while injecting only a synthetic
  // scope notification. The owners and their authorization stay unchanged.
@@ -329,14 +314,14 @@ export async function taskStatusLateResponses(page){
  });
  await page.reload();const trigger=page.locator('#task-status-trigger'),dialog=page.getByRole('dialog',{name:'工作状态卡片'});
  await trigger.locator('[data-count="working"]').waitFor();const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- const root=original.tasks.find(t=>t.title==='采购选型方案'),research=original.tasks.find(t=>t.goal==='资料整理 Worker');
+ const {task:root,worker:research}=workerNamed(original,'资料整理 Worker');
  const oldProgress=await page.evaluate(async id=>await(await fetch('/api/tasks/'+id+'/progress')).json(),root.id);
  await trigger.click();await dialog.getByRole('button',{name:/采购选型方案/}).click();
  let held=[],started;const request=new Promise(resolve=>{started=resolve;});
  await page.route('**/api/tasks/*/progress',route=>{held.push(route);started();});
  await dialog.getByRole('button',{name:/资料整理 Worker/}).click();await request;
  await dialog.getByText('正在读取公开进展…',{exact:true}).waitFor();
- const changed={...original,tasks:original.tasks.map(t=>t.id===research.id?{...t,headVersion:t.headVersion+1,currentRunId:t.currentRunId+'-next',run:{...t.run,id:t.currentRunId+'-next',contractVersion:t.headVersion+1,epoch:t.run.epoch+1,threadId:'next-worker-thread',turnId:'next-worker-turn'}}:t)};
+ const changed=changeWorker(original,'资料整理 Worker',w=>({...w,run:{...w.run,id:w.run.id+'-next',version:w.run.version+1,epoch:w.run.epoch+1,threadId:'next-worker-thread',turnId:'next-worker-turn'}}));
  await page.route('**/api/tasks',r=>r.fulfill({json:changed}));
  await restoreStatusVisibility(page);
  await page.waitForFunction(()=>[...document.querySelectorAll('[data-slot="task-status-row"]>button')].some(b=>b.textContent.includes('资料整理 Worker')&&b.getAttribute('aria-expanded')==='false'));
@@ -366,7 +351,7 @@ export async function taskStatusLateResponses(page){
  await dialog.getByRole('button',{name:'前往原待答卡'}).click();await disconnectedNavigation;
  await page.evaluate(()=>window.__switchStatusScope('thread'));
  await page.getByText('主对话标识发生变化，已暂停发送。请检查服务配置。',{exact:true}).waitFor();
- await page.waitForFunction(()=>document.querySelector('#task-status-trigger').textContent.includes('上次'));
+ await page.waitForFunction(()=>document.querySelector('#task-status-trigger').title.includes('上次'));
  ok(await dialog.getByRole('button',{name:'前往原待答卡'}).isDisabled(),'主对话线程变动沿原 owner 暂停连接并禁用旧入口');
  for(const route of held)await route.fulfill({json:original}).catch(()=>{});held=[];await page.unroute('**/api/tasks');
  ok(await dialog.getByText(/这项待答已变化或暂不可读/).count()===0,'断连中止在途导航，迟到响应不再调用旧待答入口');
@@ -375,6 +360,7 @@ export async function taskStatusLateResponses(page){
 }
 
 export async function taskStatusCachedProgress(page){
+ await page.setViewportSize({width:1100,height:1000});
  const checks=[];await page.reload();const trigger=page.locator('#task-status-trigger');
  await trigger.locator('[data-count="working"]').waitFor();
  const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());

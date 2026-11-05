@@ -60,7 +60,7 @@ function start(){
   });void authorize().catch(authorizationFailed);};
  };
  pc.onconnectionstatechange=()=>{if(['failed','disconnected','closed'].includes(pc.connectionState))finish();};
- pc.onicecandidate=({candidate})=>{if(candidate&&sessionId)void link?.call('send',{sessionId,candidate:candidate.toJSON()}).catch(()=>{if(!connected)finish();});};
+ pc.onicecandidate=({candidate})=>{if(candidate&&sessionId)void link?.call('send',{sessionId,candidate:{candidate:candidate.candidate,sdpMid:candidate.sdpMid??null,sdpMLineIndex:candidate.sdpMLineIndex??null,usernameFragment:candidate.usernameFragment??null}}).catch(()=>{if(!connected)finish();});};
  update('connecting');
  void (async()=>{
   link=await openMobileSignal(current.signalOrigin.replace(/^http/,'ws')+'/homer/rtc','mobile',async event=>{

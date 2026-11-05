@@ -20,23 +20,23 @@ test('a Worker question has a durable public source before any output, without e
  }finally{db.close();}
 });
 
-test('source labels use the exact Worker version and fixed templates, never the question or raw queue text',()=>{
+test('source labels locate the Worker Task and use fixed templates, never the question or raw queue text',()=>{
  const app:any=Object.create(Homer.prototype);
  app.interactions={inspect:()=>({kind:'question',runId:'run'})};
- app.tasks={run:(id:string)=>{assert.equal(id,'run');return {taskId:'task',contractVersion:2};},contract:(id:string,version:number)=>{assert.equal(id,'task');assert.equal(version,2);return {presentation:{title:'原任务名称'}};}};
+ app.tasks={run:(id:string)=>{assert.equal(id,'run');return {taskId:'task',version:2};},task:(id:string)=>{assert.equal(id,'task');return {title:'原任务名称'};}};
  const context={event:true,interactionId:'interaction',workerMessages:[{taskId:'task',taskVersion:2,kind:'interaction_required',payload:{text:'PRIVATE_BODY'}}]};
  assert.equal(app.mainSourceText(context),'处理 Worker 提问：原任务名称');
  app.interactions.inspect=()=>({kind:'authorization',runId:'run'});
  assert.equal(app.mainSourceText(context),'处理 Worker 操作确认：原任务名称');
- assert.equal(app.mainSourceText({...context,interactionId:undefined,workerMessages:[{...context.workerMessages[0],kind:'result_ready'}]}),'处理 Worker 结果回传：原任务名称');
+ assert.equal(app.mainSourceText({...context,interactionId:undefined,workerMessages:[{...context.workerMessages[0],kind:'worker_reply'}]}),'处理 Worker 结果回传：原任务名称');
  assert.equal(app.mainSourceText({...context,workerMessages:undefined}),'处理 Worker 操作确认：原任务名称');
  assert.equal(app.mainSourceText({...context,workerMessages:[{...context.workerMessages[0],taskVersion:99}]}),'处理 Worker 操作确认：原任务名称');
  assert.equal(app.mainSourceText({...context,interactionId:undefined,workerMessages:[...context.workerMessages,context.workerMessages[0]]}),'处理 Worker 协作消息');
- assert.equal(app.mainSourceText({event:true,sourceEventId:'review:run'}),'核对 Worker 成果');
+ assert.equal(app.mainSourceText({event:true,sourceEventId:'review:run'}),'处理 Worker 协作消息');
  assert.equal(app.mainSourceText({event:true,sourceEventId:'delivery:run'}),'整理 Worker 交付');
- app.tasks.contract=()=>({presentation:{title:'/private/path'}});
+ app.tasks.task=()=>({title:'/private/path'});
  assert.equal(app.mainSourceText(context),'处理 Worker 操作确认');
- app.tasks.contract=()=>{throw Error('display_record_missing');};
+ app.tasks.task=()=>{throw Error('display_record_missing');};
  assert.equal(app.mainSourceText(context),'处理 Worker 操作确认');
  assert.equal(app.mainSourceText({event:false}),'处理你的消息');
 });
@@ -62,8 +62,9 @@ test('all host calls get factual labels, including coordination and unclassified
  assert.equal(progressLabel('inspect_interaction'),'检查协作请求');
  assert.equal(progressLabel('respond_interaction'),'答复协作请求');
  assert.equal(progressLabel('escalate_interaction'),'转交用户确认');
- assert.equal(progressLabel('agent_send'),'发送协作消息');
- assert.equal(progressLabel('inbox_ack'),'确认协作回执');
+ assert.equal(progressLabel('worker_send'),'发送协作消息');
+ for(const tool of ['work_inspect','worker_read','list_work'])assert.equal(progressLabel(tool),'检查资料');
+ assert.equal(progressLabel('task_create'),'创建任务');
  assert.equal(progressLabel('future_tool'),'调用工具');
 });
 

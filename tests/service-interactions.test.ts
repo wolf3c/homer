@@ -61,9 +61,9 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
       }
       mainInputs.push(text);
       if (text === "dispatch") {
-        for (let i = 0; i < workers; i++) await this.call("dispatch_work", { title: "合成任务" + i, goal: "按用户要求生成 Markdown", material: "input.md", matterId: null });
-      } else if (text.startsWith("[Worker待答]")) {
-        const id = text.match(/interactionId=([\w-]+)/)![1]!;
+        for (let i = 0; i < workers; i++) { const task = await this.call("task_create", { title: "合成任务" + i, goal: "按用户要求生成 Markdown" }); await this.call("worker_open", { taskId: task.taskId, message: "按用户要求生成 Markdown" }); }
+      } else if (app["mainContext"]?.interactionId) {
+        const id = app["mainContext"]!.interactionId!;
         interactionTurns.push(id);
         const item = await this.call("inspect_interaction", { interactionId: id });
         if (scenario.handoff) {
@@ -91,10 +91,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
         const id = text.slice(6).split(/\s/)[0]!;
         await this.call("inspect_interaction", { interactionId: id });
         await this.call("respond_interaction", { interactionId: id, action: "answer", reason: "用户补充", answer: "用户指定格式", answers: null, permissions: null });
-      } else if (text.startsWith("[执行结果待审阅]")) {
-        const id = text.match(/runId=([\w-]+)/)![1]!;
-        await this.call("inspect_run", { runId: id });
-        await this.call("review_artifact", { runId: id, accepted: true, summary: "实际读取核验", reason: "符合目标" });
+
       }
       return { status: "completed", text: "已处理" };
     }
@@ -132,7 +129,7 @@ for (const mode of ["answer", "approve", "deny"] as const) {
       assert.equal(new Set(f.interactionTurns).size, 2);
       assert.equal(f.interactionTurns.length, 2);
       for (const path of f.handoffs) assert.equal(JSON.parse(readFileSync(path, "utf8")).source, "synthetic");
-      assert.ok(!f.events().some(event => event.type === "interaction_failed" || event.type === "main_turn_failed"));
+      assert.ok(!f.events().some(event => event.type === "internal_processing_failed" || event.type === "main_turn_failed"));
     } finally { await f.cleanup(); }
   });
 }
@@ -141,12 +138,12 @@ test("HMR-INTERACTION-002: a successful file write without a decision does not e
   const f = await fixture("answer", 1, { reply: { status: "completed", text: "" }, skipDecision: true, handoff: true });
   try {
     await f.app.message("dispatch", "user-task");
-    await until(()=>f.events().some(event=>event.type==='interaction_failed'));
+    await until(()=>f.events().some(event=>event.type==='internal_processing_failed'));
     assert.equal(f.app.interactions.list()[0]?.state, "pending_main","failed coordination preserves the original question for recovery");
     assert.equal(f.resumes.length, 0);
     assert.equal(f.handoffs.length, 1);
     assert.equal(JSON.parse(readFileSync(f.handoffs[0]!, "utf8")).source, "synthetic");
-    assert.ok(f.events().some(event => event.type === "interaction_failed" && event.code === "main_empty_reply"));
+    assert.ok(f.events().some(event => event.type === "internal_processing_failed" && event.code === "main_empty_reply"));
   } finally { await f.cleanup(); }
 });
 
@@ -154,9 +151,9 @@ test("HMR-INTERACTION-002: a decision without delivery confirmation does not exc
   const f = await fixture("answer", 1, { reply: { status: "completed", text: "" }, skipDelivery: true });
   try {
     await f.app.message("dispatch", "user-task");
-    await until(() => f.events().some(event => event.type === "interaction_failed"));
+    await until(() => f.events().some(event => event.type === "internal_processing_failed"));
     assert.equal(f.app.interactions.list()[0]?.deliveredAt, null);
-    assert.ok(f.events().some(event => event.type === "interaction_failed" && event.code === "main_empty_reply"));
+    assert.ok(f.events().some(event => event.type === "internal_processing_failed" && event.code === "main_empty_reply"));
     f.releaseWorkers(); await f.app.idle();
   } finally { await f.cleanup(); }
 });
@@ -165,10 +162,10 @@ test("HMR-INTERACTION-002: escalation still requires a nonempty user question", 
   const f = await fixture("user", 1, { reply: { status: "completed", text: "" } });
   try {
     await f.app.message("dispatch", "user-task");
-    await until(()=>f.events().some(event=>event.type==='interaction_failed'));
+    await until(()=>f.events().some(event=>event.type==='internal_processing_failed'));
     assert.equal(f.app.interactions.list()[0]?.state, "pending_user");
     assert.equal(f.messages.filter(message => message.type === "question").length, 0);
-    assert.ok(f.events().some(event => event.type === "interaction_failed" && event.code === "main_empty_reply"));
+    assert.ok(f.events().some(event => event.type === "internal_processing_failed" && event.code === "main_empty_reply"));
   } finally { await f.cleanup(); }
 });
 
@@ -178,7 +175,7 @@ test("HMR-INTERACTION-002: native failure after a delivered decision remains fai
     await f.app.message("dispatch", "user-task"); await f.app.idle();
     const item = f.app.interactions.list()[0]!;
     assert.equal(item.state, "answered"); assert.notEqual(item.deliveredAt, null);
-    assert.ok(f.events().some(event => event.type === "interaction_failed" && event.code === "synthetic_native_failure"));
+    assert.ok(f.events().some(event => event.type === "internal_processing_failed" && event.code === "synthetic_native_failure"));
     assert.equal(f.handoffs.length, 1); assert.equal(f.interactionTurns.length, 1);
     assert.equal(JSON.parse(readFileSync(f.handoffs[0]!, "utf8")).source, "synthetic");
   } finally { await f.cleanup(); }
@@ -198,10 +195,11 @@ test("HMR-INTERACTION-001: service main answers and original two Workers finish 
     await f.app.message("dispatch", "user-task"); await f.app.idle();
     assert.equal(f.resumes.length, 2);
     assert.ok(f.app.store.runs().every(run => run.status === "succeeded"));
-    for (const run of f.app.store.runs()) assert.ok(readFileSync(run.artifact!, "utf8").includes(run.threadId!));
+    for (const run of f.app.store.runs()) assert.ok(readFileSync(join(f.app.files.prepareRun(run.taskId, run.id), "answer.md"), "utf8").includes(run.threadId!));
     assert.equal(f.app.interactions.list().length, 2);
     assert.ok(f.app.interactions.list().every(item => item.deliveredAt !== null));
-    assert.equal(f.engines.filter(engine => !engine.worker)[0]!.options.tools.length, 5);
+    const mainTools=f.engines.find(engine => !engine.worker)!.options.tools.map(tool=>tool.name);
+    assert.ok(mainTools.includes("task_create")&&mainTools.includes("worker_open"));assert.ok(!mainTools.includes("dispatch_work"));
     const prompts = loadPrompts();
     assert.equal(f.engines.find(engine => !engine.worker)!.options.instructions, prompts.main);
     assert.ok(f.engines.filter(engine => engine.worker).every(engine => engine.options.instructions === prompts.worker));

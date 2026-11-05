@@ -19,12 +19,12 @@ export interface WechatBridge {
   // Adapter-injected provenance. Public Web/CLI inputs must not supply this trusted argument.
   submit(input: { requestId: string; text: string; origin: WechatOrigin;attachments?:AttachmentRef[] }): Promise<unknown>;
   mediaChanged?():void;
-  artifact(runId: string): Promise<{ filename: string; bytes: Uint8Array;mime?:string;sha256?:string }>;
+  artifact(resultId: string): Promise<{ filename: string; bytes: Uint8Array;mime?:string;sha256?:string }>;
 }
 export type WechatVisibleEvent = {
-  // Stable across host retries/restart. Host resolves Run.sourceRequestId before calling.
+  // Stable across host retries/restart. Host resolves the original request before calling.
   eventId: string; requestId: string; type: "reply" | "question" | "delivery" | "error" | "coordination";
-  text: string; interactionId?: string; artifactRunId?: string;
+  text: string; interactionId?: string; artifactResultId?: string;
 };
 export type WechatLoginView = { id: string; status: string; qrCodeUrl?: string; expiresAt?: number; error?: string };
 type Login = { id: string; generation: number; qrcode: string; base: string; qrCodeUrl: string; expiresAt: number; status: string };
@@ -357,12 +357,10 @@ export class WechatChannel {
     // Commit before acknowledging the host event. No transport errors can trigger a Worker replay.
     this.store.transaction(() => {
       const text = event.interactionId ? `${event.text}\n\n待答编号：${event.interactionId}。回复时请注明该编号。` : event.text;
-      if(event.artifactRunId&&this.store.queueCombinedArtifact(event.requestId,event.eventId,text,event.artifactRunId,credential.dataKey))return;
+      if(event.artifactResultId&&this.store.queueCombinedArtifact(event.requestId,event.eventId,text,event.artifactResultId,credential.dataKey))return;
       this.store.queueText(event.requestId, event.eventId, text, credential.dataKey,event.type==='reply');
-      if (event.artifactRunId) {
-        // Preserve previously committed event identities on host recovery.
-        const legacy=this.store.outbox().some(row=>row.eventKey===event.eventId+':file');
-        this.store.queueArtifact(event.requestId, legacy?event.eventId+':file':event.eventId, event.artifactRunId, credential.dataKey,legacy?0:splitWechatText(text).length);
+      if (event.artifactResultId) {
+        this.store.queueArtifact(event.requestId, event.eventId, event.artifactResultId, credential.dataKey,splitWechatText(text).length);
       }
     });
     if (current.enabled && !this.closed) this.flush(current.generation, this.abort.signal);
@@ -379,11 +377,11 @@ export class WechatChannel {
           const credential = await this.credentials();
           if (!this.alive(generation, signal)) { this.store.release(item.id); return; }
           const context = decryptWechatPayload(input.context, credential.dataKey, input.requestId);
-          const payload = JSON.parse(decryptWechatPayload(item.payload, credential.dataKey, item.id)) as WechatItem | { artifactRunId: string;combinedText?:string };
+          const payload = JSON.parse(decryptWechatPayload(item.payload, credential.dataKey, item.id)) as WechatItem | { artifactResultId: string;combinedText?:string };
           let outgoing: WechatItem;
-          if ("artifactRunId" in payload) {
+          if ("artifactResultId" in payload) {
             artifact = true;
-            const verified = await this.bridge.artifact(payload.artifactRunId);
+            const verified = await this.bridge.artifact(payload.artifactResultId);
             if (!this.alive(generation, signal)) { this.store.release(item.id); return; }
             const hash=createHash('sha256').update(verified.bytes).digest('hex');
             const previous=this.store.db.prepare('SELECT * FROM wechat_media_uploads WHERE outboxId=?').get(item.id);
@@ -396,11 +394,11 @@ export class WechatChannel {
               outgoing=verified.filename.endsWith('.md')?await this.api.uploadMarkdown(credential,verified.filename,verified.bytes,signal):await this.api.uploadMedia(credential,verified.filename,Buffer.from(verified.bytes),kind,signal,thumbnail);
               this.store.db.prepare("UPDATE wechat_media_uploads SET state='uploaded',payload=? WHERE outboxId=?").run(encryptWechatPayload(JSON.stringify(outgoing),credential.dataKey,item.id),item.id);
             }
-            const current=await this.bridge.artifact(payload.artifactRunId);
+            const current=await this.bridge.artifact(payload.artifactResultId);
             if(createHash('sha256').update(current.bytes).digest('hex')!==hash)throw new WechatError('wechat_artifact_changed');
           } else outgoing = payload;
           if (!this.alive(generation, signal)) { this.store.release(item.id); return; }
-          const items='artifactRunId' in payload&&typeof payload.combinedText==='string'?[{type:1,text_item:{text:payload.combinedText}} as WechatItem,outgoing]:[outgoing];
+          const items='artifactResultId' in payload&&typeof payload.combinedText==='string'?[{type:1,text_item:{text:payload.combinedText}} as WechatItem,outgoing]:[outgoing];
           sendAttempted=true;const receipt=items.length>1?await this.api.sendItems(credential,input.peerId,context,item.id,items,signal):await this.api.send(credential, input.peerId, context, item.id, outgoing, signal);
           if(outgoing.type===11||outgoing.type===12)this.extension.progress='accepted';
           if(items.length>1)this.extension.combination='accepted';

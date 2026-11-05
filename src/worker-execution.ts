@@ -3,7 +3,7 @@ import type {NativeProcessEvent} from './main-process.js';
 import {captureToolValue,type ToolContent,type ToolValue} from './tool-content.js';
 import {publicActivityName} from './activity-facts.js';
 export type CallScope={taskId:string;version:number;runId:string;epoch:number;threadId:string;turnId:string};
-export type ExecutionSelector={rootTaskId:string;taskId:string;runId:string};
+export type ExecutionSelector={taskId:string;runId:string};
 export type WorkerCallSummary={callKey:string;seq:number;revision:number;scope:CallScope;source:'native'|'host';category:string;toolName?:string;status:NativeProcessEvent['status'];terminalObserved:boolean;firstObservedAtMs:number;lastObservedAtMs:number;startedAtMs?:number;endedAtMs?:number;durationMs?:number;timingSource:'native'|'hostObserved'|'unknown';inputSummary?:string;outputSummary?:string;errorSummary?:string;exitCode?:number;contentState:'available'|'evicted'|'not-recorded';conflict?:true};
 export type WorkerExecutionPage={selector:ExecutionSelector;version:number;revision:number;observedAtMs:number;storeGeneration:string;availability:'available'|'unavailable';coverage:'partial';retention:'memory';active:WorkerCallSummary[];items:WorkerCallSummary[];before?:string;hasMore:boolean;omitted:boolean};
 export type WorkerCallDetail={selector:ExecutionSelector;callKey:string;revision:number;summary:WorkerCallSummary;content?:ToolContent;contentState:WorkerCallSummary['contentState']};
@@ -25,7 +25,7 @@ function safeSide(side:ToolValue|undefined,category:string,input:boolean,toolNam
   }
   if(!input&&Number.isSafeInteger(o?.exitCode))safe.exitCode=o!.exitCode;
  }else if(category==='fileChange'&&Array.isArray(o?.changes))safe.fileCount=o.changes.length;
- else if(toolName&&['work_inspect','inspect_run','task_review','task_update','task_stop','task_continue','publish_delivery','read_material','write_markdown','stage_workspace_file','inspect_attachment'].includes(toolName)){
+ else if(toolName&&['work_inspect','task_create','task_update','worker_open','worker_send','worker_read','worker_interrupt','accept_result','publish_delivery','read_material','write_markdown','stage_file_result','create_voice_result','inspect_attachment'].includes(toolName)){
   for(const key of ['state','status','outcome','decision','errorCode']){const c=code(o?.[key]);if(c)safe[key]=c;}
   for(const key of ['count','bytes','total'])if(Number.isSafeInteger(o?.[key])&&Number(o?.[key])>=0)safe[key]=o![key];
   for(const key of ['materials','results','attachments'])if(Array.isArray(o?.[key]))safe[key+'Count']=(o![key] as unknown[]).length;

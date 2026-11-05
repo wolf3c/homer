@@ -39,9 +39,9 @@ test('reception: durable FIFO ignores legacy priorities and only a preparing hea
 test('reception: failed head remains visible and is rejected by original fenced failure path',()=>{
  const f=fixture(()=> 'failed');try{f.queue.accept({requestId:'bad',text:'Synthetic failed material'});assert.equal(f.queue.runnable(),true);assert.throws(()=>f.queue.claim(),MainInputClaimError);assert.equal(f.queue.list()[0]!.preparation,'failed');}finally{f.store.close();}
 });
-test('reception: existing queue database gains an idempotent state index and candidate avoids historical receipt scan',()=>{
+test('reception: current queue index avoids historical receipt scans',()=>{
  const f=fixture();try{
-  f.store.db.exec('DROP INDEX agent_receipt_state');f.tasks.migrate();f.tasks.migrate();
+  f.tasks.migrate();f.tasks.migrate();
   assert.equal(f.store.db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='index' AND name='agent_receipt_state'").get()!.n,1);
   f.queue.accept({requestId:'indexed',text:'Synthetic indexed input'});
   const original=f.store.db.prepare.bind(f.store.db);let candidate='';f.store.db.prepare=sql=>{if(/\br\.state\s*=\s*'pending'/.test(sql))candidate=sql;return original(sql);};

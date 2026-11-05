@@ -2,7 +2,7 @@
 
 [English](getting-started.en.md) | **简体中文**
 
-本页面向开发者。当前[仓库](https://github.com/wolf3c/homer)已公开开发预览源码；正式桌面安装包尚未发布。普通使用流程和示例任务见[使用指南](using-homer.md)，产品介绍见 [README](../../README.zh-CN.md)。
+本页面向开发者。当前[仓库](https://github.com/wolf3c/homer)已公开开发预览源码；正式桌面安装包尚未发布。使用方法见[使用指南](using-homer.md)，产品介绍见 [README](../../README.zh-CN.md)。
 
 ## 环境与构建
 
@@ -80,7 +80,7 @@ npm run web -- --config .codex/private/homer.config.json --port 4780
 
 打开启动提示的 `http://127.0.0.1:4780/`。开发入口免配对，仅用于可信本机；不要对外转发端口。同一 runtime 的旧实例须先正常退出，不要删除运行锁强行接管。桌面入口另有自动认证，无需手工配对。
 
-当前桌面构建脚本限定 macOS / Apple Silicon、Node.js 22.22.0，Swift 目标为 macOS 27.0；需要 Xcode 命令行工具。维护入口 `npm run desktop:make` 还要求准确的 `--source-sha`、`--maintenance` 等参数，详见随源码提供的 `scripts/build-desktop.mjs`。正式安装、签名、公证和更新须单独验收，不以源码构建通过代替。
+当前 `scripts/build-desktop.mjs` 支持 macOS 的 Apple Silicon 与 Intel，要求 Node.js 22.22.0。Apple Silicon 默认最低系统版本为 macOS 27.0；Intel 必须显式指定最低系统版本。原生 helper 需要 Xcode 命令行工具。维护入口 `npm run desktop:make` 还要求准确的 `--source-sha`、`--maintenance` 等参数，详见随源码提供的 `scripts/build-desktop.mjs`。正式安装、签名、公证和更新须单独验收，不以源码构建通过代替。
 
 ## 按需安装工具
 
@@ -114,16 +114,6 @@ whisper-cli --help
 
 ## 当前源码状态
 
-本次源码基于 2026-11-03 的固定开发快照。隔离副本复用本机依赖完成以下检查；未执行全新依赖安装，也不代表正式发行验收。
+本指南对应当前提交的源码。桌面安装包与下载说明将在发行验证完成后提供。桌面端已实现模型来源切换，但不表示所有 ChatGPT 套餐均有资格使用，也不表示荷马付费服务已公开上线。上面的 CLI 提供方配置属于独立运行路径。
 
-| 检查 | 结果 |
-| --- | --- |
-| `npm run build` | 通过；前端仍有部分分块超过 500 kB 的提示。 |
-| `npm start -- --help` | 通过，无真实模型调用。 |
-| `npm run typecheck` | 未通过：121 条诊断，涉及测试引用、接口及导入等问题。 |
-| 模型配置、历史桥及服务观察器的定向离线测试 | 83/84 通过；`tests/tool-service-observer.test.ts` 读取未定义对象的 `snapshot` 时失败，原因尚待确认。 |
-| 移动端离线测试 | 19/19 通过。 |
-
-当前按量模型服务仍有充值余额接线未对齐、恢复专项失败及超时的待解决项；不作为已全面验收的公开付费服务承诺。ChatGPT 套餐的对外接入条件仍待确认。
-
-完整命令见[测试与移动端开发](testing.md)。`npm test` 验证 Homer 自身的调度、审批、交付、持久化和权限等职责；本轮未运行全量默认测试。真实引擎、媒体、浏览器／原生通信、第二台机器和正式安装包须分别验收，默认测试通过不能代替这些能力的验收。
+请针对实际检出的提交运行 `npm run typecheck` 和相关离线测试，完整命令见[测试与移动端开发](testing.md)。旧源码快照的测试结果不能代表当前提交。默认测试验证 Homer 自身契约；真实模型、媒体工具、浏览器／原生通信、安装、签名及更新仍须分别验收。

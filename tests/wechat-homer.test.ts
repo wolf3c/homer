@@ -2,7 +2,7 @@ import {syntheticFile} from "./recursive-publication-fixture.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Homer } from "../src/service.js";
@@ -11,6 +11,7 @@ import { WechatApi, type WechatCredential, type WechatItem, type WechatUpdates }
 import type { WechatSecrets } from "../src/channels/wechat-secrets.js";
 import {mainQueueOutput} from './helpers/main-queue-output.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
+import type {ToolCall} from '../src/engine.js';
 
 class Api extends WechatApi {
   constructor(){super(async()=>Response.json({ret:0}));}
@@ -28,7 +29,7 @@ class Api extends WechatApi {
   receive(id: string, text: string) { this.inputs.push({ msgs: [{ message_id: id, from_user_id: "owner", to_user_id: "bot", message_type: 1, context_token: "context-" + id, item_list: [{ type: 1, text_item: { text } }] }] }); }
 }
 async function until(check: () => boolean) { for (let n = 0; n < 200; n++) { if (check()) return; await delay(5); } assert.ok(check(), "wechat_adapter_fixture_timeout"); }
-async function setup() {
+async function setup(mainFile=false) {
   const scratch = resolve(".codex/scratch/wechat-integration"); mkdirSync(scratch, { recursive: true });
   const root = mkdtempSync(join(scratch, "adapter-")), api = new Api(), credentials = new Map<string, WechatCredential>();
   mkdirSync(join(root, "runtime"), { recursive: true });
@@ -36,12 +37,22 @@ async function setup() {
   let adapter: HomerWechat | undefined, turns = 0, engines = 0, dropOutput = false;
   class Engine extends EventEmitter {
     threadId='synthetic-main';
+    turnId?:string;
+    constructor(readonly tool:(call:ToolCall)=>Promise<unknown>){super();}
     async start() { return "synthetic-main"; }
-    async turn(text: string,options?:{onStarted?:(id:string)=>void}) { options?.onStarted?.('synthetic-turn-'+turns);turns++; return { status: "completed", text: "主Agent合成回复：" + text }; }
+    async turn(text: string,options?:{onStarted?:(id:string)=>void}) {
+      const turnId='synthetic-turn-'+turns;this.turnId=turnId;options?.onStarted?.(turnId);turns++;
+      if(mainFile&&text==='Main file'){
+        let callId=0;const call=async(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId,callId:turnId+':'+ ++callId,tool,arguments:args}) as Promise<any>;
+        const task=await call('task_create',{goal:'Publish the exact Main file'}),filePath=join(app.files.workspace,'main-result.md');writeFileSync(filePath,'# Main 合成成果\n原文件字节。');
+        const result=await call('accept_result',{taskId:task.taskId,filePath});await call('publish_delivery',{taskId:task.taskId,resultIds:[result.resultId],text:'Main 已核验成果'});
+      }
+      return { status: "completed", text: "主Agent合成回复：" + text };
+    }
     async interrupt() { return true; }
     async close() { return true; }
   }
-  const app = new Homer({ runtime: join(root, "runtime"), workspace: join(root, "workspace"), codexHome: root, codexBin: "/usr/bin/false", model: "synthetic-only", requiresOpenaiAuth: false, timeoutMs: 2000, mainTimeoutMs: 1000, stopGraceMs: 20 }, async message => { if (!dropOutput) await adapter?.onMessage(message); }, () => { engines++; return new Engine(); });
+  const app = new Homer({ runtime: join(root, "runtime"), workspace: join(root, "workspace"), codexHome: root, codexBin: "/usr/bin/false", model: "synthetic-only", requiresOpenaiAuth: false, timeoutMs: 2000, mainTimeoutMs: 1000, stopGraceMs: 20 }, async message => { if (!dropOutput) await adapter?.onMessage(message); }, (_options,tool) => { engines++; return new Engine(tool); });
   await app.start(); adapter = new HomerWechat(app, api, secrets);
   const login = await adapter.channel.beginLogin(); await adapter.channel.pollLogin(login.id);
   return { app, api, secrets, credentials, get adapter() { return adapter!; }, get turns() { return turns; }, get engines() { return engines; },
@@ -56,6 +67,18 @@ function admit(s: Awaited<ReturnType<typeof setup>>, id: string, text: string) {
   const row = s.app.store.db.prepare("SELECT requestId FROM wechat_inbox WHERE messageId=?").get(id) as { requestId: string };
   return { requestId: row.requestId, text, origin: { channel: "wechat" as const, bindingGeneration: c.bindingId!, botId: "bot", peerId: "owner", messageId: id } };
 }
+test('Wechat actual Main acceptance publishes a runless Result and uploads the original name and bytes once',async()=>{
+ const s=await setup(true);try{
+  s.api.receive('903','Main file');await until(()=>s.app.conversationState().messages.some(m=>m.role==='assistant'&&m.status!=='running'));await s.app.idle();
+  assert.equal(s.app.tasks.deliveries().length,1,JSON.stringify(s.app.store.db.prepare('SELECT type,code FROM events').all()));await until(()=>s.api.uploaded.length===1);
+  const d=s.app.tasks.deliveries()[0]!,resultId=d.publishedFileResultIds[0]!;
+  assert.equal(s.app.tasks.readResult({agentId:s.app.store.meta('mainAgentId')!,threadId:s.app.store.meta('mainThread')!},resultId).file?.filename,'main-result.md');
+  assert.equal(s.app.store.db.prepare('SELECT runId FROM results WHERE id=?').get(resultId)!.runId,null);assert.equal(s.app.store.runs().length,0);
+  assert.equal(s.api.uploaded[0]!.filename,'main-result.md');assert.deepEqual(s.api.uploaded[0]!.bytes,Buffer.from('# Main 合成成果\n原文件字节。'));assert.equal(s.api.sent.find(item=>item.item.type===4)!.context,'context-903');
+  await s.adapter.onMessage({type:'delivery',deliveryId:d.id,messageId:d.historyMessageId,requestId:d.routeSourceRequestId!,text:d.text});await delay(20);assert.equal(s.api.uploaded.length,1);
+  s.app.tasks.markDelivery(d.id,'revoked');await assert.rejects(s.adapter.artifact(resultId),/artifact_not_authorized/);
+ }finally{await s.close();}
+});
 test('Wechat coordination uses persisted main output and original source once across adapter recovery',async()=>{
  const s=await setup();try{
   const input=admit(s,'901','Synthetic request');await s.adapter.submit(input);await s.app.idle();
@@ -74,7 +97,7 @@ for(const state of ['pending_main','answered','pending_user','answered_user','fo
  const s=await setup();try{
   const input=admit(s,'902','Synthetic request');await s.adapter.submit(input);await s.app.idle();
   const message=mainQueueOutput(s.app,input.requestId),notice=s.app.processes.exact(message.messageId)!.sourceMessageIds[0]!;
-  const task=s.app.tasks.task(String(s.app.store.db.prepare('SELECT taskId FROM agent_messages WHERE id=?').get(notice)!.taskId)),run=s.app.tasks.run(task.currentRunId!);
+  const run=s.app.tasks.run(String(s.app.store.db.prepare('SELECT senderRunId FROM agent_messages WHERE id=?').get(notice)!.senderRunId));
   const interactions=new WorkerInteractions(s.app.store.db),opened=interactions.open({runId:run.id,threadId:run.threadId!,turnId:run.turnId!,requestId:'synthetic-question',source:'ask_main',kind:'question',details:{question:'合成待定项'},authority:{sourceRequestId:input.requestId,description:'合成范围',nativeApprovals:false}},()=>true);
   s.app.store.db.prepare("UPDATE agent_messages SET senderAgentId='host',kind='interaction_required',payloadJson=? WHERE id=?").run(JSON.stringify({interactionId:opened.id}),notice);
   if(state.endsWith('_user'))interactions.escalate(opened.id,'合成用户问题','需用户决定');
@@ -166,11 +189,12 @@ test("Homer adapter routes a completed run by its original source and returns on
   try {
     s.api.receive("3", "本人合成文件请求"); await until(() => s.api.sent.length === 1); await s.app.idle();
     const input = s.app.store.db.prepare("SELECT requestId FROM wechat_homer_receipts").get() as { requestId: string };
-    const candidate=syntheticFile(s.app,input.requestId,'合成成果.md','# 已核验的合成成果\n🙂'),run=candidate.run;
-    await assert.rejects(s.adapter.artifact(run.id),/artifact_not_authorized/);
-    const d=candidate.publish('主Agent已核验的合成成果');
-    const delivery={type:'delivery' as const,deliveryId:d.id,messageId:d.historyMessageId,requestId:input.requestId,runId:run.id,text:d.text};
-    const file=await s.adapter.artifact(run.id);assert.equal(file.filename,'合成成果.md');assert.equal(Buffer.from(file.bytes).toString(),'# 已核验的合成成果\n🙂');
+    const candidate=syntheticFile(s.app,input.requestId,'unselected.md','# Private first file',[{filename:'合成成果.md',content:'# 已核验的合成成果\n🙂'}]),run=candidate.run,resultId=candidate.resultIds[1]!;
+    await assert.rejects(s.adapter.artifact(resultId),/artifact_not_authorized/);
+    const published=s.app.tasks.publish({agentId:s.app.store.meta('mainAgentId')!,threadId:s.app.store.meta('mainThread')!,sourceRequestId:input.requestId},{operationId:'select-second',taskId:run.taskId,version:run.version,resultIds:[resultId],text:'主Agent已核验的合成成果'});s.app.tasks.markDelivery(published.deliveryId,'submitting');const d=s.app.tasks.delivery(published.deliveryId);
+    const delivery={type:'delivery' as const,deliveryId:d.id,messageId:d.historyMessageId,requestId:input.requestId,text:d.text};
+    const file=await s.adapter.artifact(resultId);assert.equal(file.filename,'合成成果.md');assert.equal(Buffer.from(file.bytes).toString(),'# 已核验的合成成果\n🙂');
+    for(const id of ['',undefined,run.id,candidate.resultId])await assert.rejects(s.adapter.artifact(id as string),/artifact_not_authorized/);
     assert.equal(await s.adapter.onMessage({...delivery,requestId:'web-unrelated'}),false);
     assert.equal(await s.adapter.onMessage(delivery),true);
     await until(() => s.api.sent.length === 3);
@@ -178,11 +202,11 @@ test("Homer adapter routes a completed run by its original source and returns on
     assert.equal(s.api.uploaded[0]!.filename, file.filename); assert.deepEqual(s.api.uploaded[0]!.bytes, file.bytes);
     assert.equal(await s.adapter.onMessage({ type: "delta", requestId: input.requestId, text: "内部流" }), false);
     assert.equal(await s.adapter.onMessage({ type: "progress", runId: run.id, text: "内部Worker进度" }), false);
-    s.app.store.markDelivered(run.id);
+    s.app.tasks.markDelivery(d.id,'recorded');
     await s.restartAdapter();
     await s.adapter.onMessage(delivery); await delay(20);
     assert.equal(s.api.sent.length, 3); assert.equal(s.api.uploaded.length, 1); assert.equal(s.engines, 1);
-    await s.adapter.channel.disconnect(); await assert.rejects(s.adapter.artifact(run.id), /artifact_not_authorized/);
+    await s.adapter.channel.disconnect(); await assert.rejects(s.adapter.artifact(resultId), /artifact_not_authorized/);
   } finally { await s.close(); }
 });
 
@@ -192,7 +216,7 @@ test("multi-file Wechat delivery queues one explicit Web notice, no first-file u
   s.api.receive('55','合成多文件请求');await until(()=>s.api.sent.length===1);await s.app.idle();
   const input=s.app.store.db.prepare('SELECT requestId FROM wechat_homer_receipts').get() as {requestId:string};
   const candidate=syntheticFile(s.app,input.requestId,'one.md','# One',[{filename:'two.md',content:'# Two'}]),d=candidate.publish('两份合成成果');
-  const message={type:'delivery' as const,deliveryId:d.id,messageId:d.historyMessageId,requestId:input.requestId,runId:candidate.run.id,text:d.text};
+  const message={type:'delivery' as const,deliveryId:d.id,messageId:d.historyMessageId,requestId:input.requestId,text:d.text};
   assert.equal(await s.adapter.onMessage({...message,requestId:'unrelated-source'}),false);assert.equal(await s.adapter.onMessage(message),true);await until(()=>s.api.sent.length===2);
   assert.equal(s.api.sent[1]!.item.type,1);assert.match(JSON.stringify(s.api.sent[1]!.item),/2 个成果.*Web/);assert.equal(s.api.uploaded.length,0);
   await s.adapter.onMessage(message);await delay(20);assert.equal(s.api.sent.length,2);

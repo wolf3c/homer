@@ -16,7 +16,10 @@ test("T04/T07/T11: scoped file I/O denies traversal, absolute paths, symlinks an
   for (const p of ["../outside.md", base + "/outside.md", "link.md"])
     assert.throws(() => f.readMaterial(p));
   assert.throws(() => f.readMaterial("missing.md"), /material_missing/);
-  const dir = f.prepareRun("matter-1", "run-1");
+  const dir = f.prepareRun("task-1", "run-1");
+  assert.equal(dir, base + "/outputs/task-1/run-1");
+  assert.throws(() => f.prepareRun("../task-1", "run-1"), /id_denied/);
+  assert.throws(() => f.prepareRun("task-1", "../run-1"), /id_denied/);
   assert.throws(() => f.writeMarkdown(dir, "../evil.md", "text"));
   assert.throws(() => f.writeMarkdown(dir, "empty.md", " "));
   const artifact = f.writeMarkdown(

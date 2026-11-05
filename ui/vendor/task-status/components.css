@@ -7,9 +7,7 @@
       "Courier New", monospace;
     --color-red-400: oklch(70.4% 0.191 22.216);
     --color-red-600: oklch(57.7% 0.245 27.325);
-    --color-amber-600: oklch(66.6% 0.179 58.318);
     --color-emerald-500: oklch(69.6% 0.17 162.48);
-    --color-emerald-600: oklch(59.6% 0.145 163.225);
     --color-blue-400: oklch(70.7% 0.165 254.624);
     --color-blue-500: oklch(62.3% 0.214 259.815);
     --spacing: 0.25rem;
@@ -23,7 +21,6 @@
     --radius-xl: 0.75rem;
     --radius-2xl: 1rem;
     --animate-spin: homer-task-status-spin 1s linear infinite;
-    --animate-pulse: homer-task-status-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     --default-transition-duration: 150ms;
     --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
     --default-font-family: var(--font-sans);
@@ -545,9 +542,6 @@
 .homer-task-status .whitespace-pre, .homer-task-status:is(.whitespace-pre) {
     white-space: pre;
   }
-.homer-task-status .text-amber-600, .homer-task-status:is(.text-amber-600) {
-    color: var(--color-amber-600);
-  }
 .homer-task-status .text-background, .homer-task-status:is(.text-background) {
     color: hsl(var(--background));
   }
@@ -559,9 +553,6 @@
   }
 .homer-task-status .text-emerald-500, .homer-task-status:is(.text-emerald-500) {
     color: var(--color-emerald-500);
-  }
-.homer-task-status .text-emerald-600, .homer-task-status:is(.text-emerald-600) {
-    color: var(--color-emerald-600);
   }
 .homer-task-status .text-foreground\/70, .homer-task-status:is(.text-foreground\/70) {
     color: hsl(var(--foreground));
@@ -872,11 +863,6 @@
     &[data-state="open"] {
       --tw-enter-scale: calc(95*1%);
       --tw-enter-scale: .95;
-    }
-  }
-.homer-task-status .motion-safe\:animate-pulse, .homer-task-status:is(.motion-safe\:animate-pulse) {
-    @media (prefers-reduced-motion: no-preference) {
-      animation: var(--animate-pulse);
     }
   }
 .homer-task-status .motion-reduce\:animate-none, .homer-task-status:is(.motion-reduce\:animate-none) {
@@ -1287,11 +1273,6 @@
 @keyframes homer-task-status-spin {
   to {
     transform: rotate(360deg);
-  }
-}
-@keyframes homer-task-status-pulse {
-  50% {
-    opacity: 0.5;
   }
 }
 @keyframes homer-task-status-enter {

@@ -14,7 +14,7 @@ const mixed=make('mixed',[{id:'format',question:'使用什么格式？',options:
 const free={id:'worker-question',runId:'original-worker',kind:'question',question:'这项工作还需要哪些说明？',reason:'缺少实际用户信息。'};
 try{for(const width of [1440,390,320]){
  let mode='success',held=[],f;const submissions=[];
- f=await composerFixture({webDir,branding:resolve('assets/branding/homer-river-stone-64.e3015ec6baed.png'),interaction({body,json}){
+ f=await composerFixture({webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-64.png'),interaction({body,json}){
   submissions.push(body);if(mode==='hold'){held.push(()=>{f.accept(body);json({fresh:true,replyId:'synthetic-reply'});});return;}
   if(mode==='unknown')return json({error:'synthetic_unknown'},503);
   f.accept(body);json({fresh:true,replyId:'synthetic-reply'});

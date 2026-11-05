@@ -1,5 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
-import {activityOutcomes,publicActivityName,type ActivityTarget} from './activity-facts.js';
+import {activityOutcomes,publicActivityName} from './activity-facts.js';
 import type {DisplayMessage,TaskMessageSource} from './conversation-projection.js';
 
 // Read-only page enrichment. Inputs are the already-authorized persisted page,
@@ -12,96 +12,49 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
  };
  const eligible=messages.filter(m=>m.role==='assistant'&&m.threadId===threadId&&(m.text.trim()||m.finalAnswers?.some(a=>a.text.trim())));
  const sourceIds=[...new Set(eligible.flatMap(m=>m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length?m.process.sourceMessageIds:[]))];
- // Select only the public envelope for Workers, and fixed identity fields for
- // authenticated host notices. Receipt state can change after consumption.
- const notices=batch(`SELECT m.id,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,m.senderEpoch,m.kind,m.operationKey,o.actorAgentId,o.kind AS operationKind,o.state AS operationState,o.scopeId,
- CASE WHEN m.senderAgentId='host' AND o.actorAgentId='host' THEN json_object('runId',json_extract(m.payloadJson,'$.runId'),'version',json_extract(m.payloadJson,'$.version'),'previousVersion',json_extract(m.payloadJson,'$.previousVersion'),'resultId',json_extract(m.payloadJson,'$.resultId'),'stopConfirmed',json_extract(m.payloadJson,'$.stopConfirmed')) ELSE '{}' END AS identityJson
- FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId JOIN operations o ON o.id=m.operationKey
- WHERE m.id IN ($keys) AND m.targetRunId IS NULL AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')`,sourceIds);
- const noticeMap=new Map<string,Record<string,any>>(notices.map(row=>[row.id,{...row,identity:JSON.parse(row.identityJson)}]));
- const actions=eligible.flatMap(m=>m.process?.threadId===threadId?m.process.items.flatMap(i=>i.kind==='tool'&&i.activity?.target&&!i.activity.action.startsWith('inspect_')?[{node:m.process!,item:i,activity:i.activity}]:[]):[]);
- const operations=new Map(batch('SELECT o.id,o.actorAgentId,o.scopeId,o.kind,o.state,o.detailsJson,o.responseJson,v.taskId AS createdTaskId,v.version AS createdVersion FROM operations o LEFT JOIN task_versions v ON v.triggerOpId=o.id WHERE o.id IN ($keys)',[...new Set(actions.flatMap(a=>a.activity.target?.operationKey?[a.activity.target.operationKey]:[]))]).map(o=>[o.id,o]));
- const publications=batch(`SELECT d.id,d.rootTaskId,d.version,d.resultId,d.historyMessageId,d.state,d.outcome,d.revokedAt,r.runId,r.taskId AS resultTaskId,r.version AS resultVersion FROM deliveries d LEFT JOIN results r ON r.id=d.resultId WHERE d.historyMessageId IN ($keys)`,eligible.map(m=>m.id));
- const resultIds=[...new Set(notices.flatMap(n=>{const p=JSON.parse(n.identityJson);return typeof p.resultId==='string'?[p.resultId]:[];}))];
- const results=new Map(batch('SELECT id,taskId,version,runId,completionResultId FROM results WHERE id IN ($keys)',resultIds).map(r=>[r.id,r]));
- const runIds=[...new Set([...notices.flatMap(n=>{const p=JSON.parse(n.identityJson);return [n.senderRunId,p.runId].filter((x):x is string=>typeof x==='string');}),...actions.flatMap(a=>[a.activity.target?.runId,a.activity.relatedTarget?.runId].filter((x):x is string=>!!x)),...publications.flatMap(d=>d.runId?[d.runId]:[])])];
- const runs=new Map(batch('SELECT id,taskId,contractVersion,epoch,replacesRunId FROM runs WHERE id IN ($keys)',runIds).map(r=>[r.id,r]));
- const targets=new Map<string,ActivityTarget>();
- const addTarget=(t:ActivityTarget)=>{if(typeof t.taskId==='string'&&Number.isSafeInteger(t.version)&&t.version>0)targets.set(JSON.stringify([t.taskId,t.version]),t);};
- for(const n of notices){addTarget({taskId:n.taskId,version:n.taskVersion});const p=JSON.parse(n.identityJson),r=results.get(p.resultId);if(r)addTarget({taskId:r.taskId,version:r.version});if(p.version)addTarget({taskId:n.taskId,version:p.version});}
- for(const a of actions){addTarget(a.activity.target!);if(a.activity.relatedTarget)addTarget(a.activity.relatedTarget);}
- for(const d of publications)addTarget({taskId:d.rootTaskId,version:d.version});
- const versions=new Map<string,Record<string,any>>(),keys=[...targets.keys()];
+ const notices=new Map(batch(`SELECT m.id,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,m.senderEpoch,m.kind,o.actorAgentId,o.kind AS operationKind,o.state AS operationState,o.scopeId FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId JOIN operations o ON o.id=m.operationKey WHERE m.id IN ($keys) AND m.targetRunId IS NULL AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')`,sourceIds).map(row=>[row.id,row]));
+ const actions=eligible.flatMap(m=>m.process?.threadId===threadId?m.process.items.flatMap(i=>i.kind==='tool'&&i.activity?.target&&!i.activity.action.startsWith('inspect_')?[{node:m.process,item:i,activity:i.activity}]:[]):[]);
+ const operations=new Map(batch(`SELECT id,actorAgentId,scopeId,kind,state,json_extract(responseJson,'$.taskId') AS createdTaskId FROM operations WHERE id IN ($keys)`,[...new Set(actions.flatMap(a=>a.activity.target?.operationKey?[a.activity.target.operationKey]:[]))]).map(o=>[o.id,o]));
+ const publications=batch('SELECT id,taskId,version,historyMessageId,state,revokedAt FROM deliveries WHERE historyMessageId IN ($keys)',eligible.map(m=>m.id));
+ const runIds=[...new Set([...notices.values()].flatMap(n=>typeof n.senderRunId==='string'?[n.senderRunId]:[]).concat(actions.flatMap(a=>a.activity.target?.runId?[a.activity.target.runId]:[])))];
+ const runs=new Map(batch('SELECT id,taskId,version,epoch FROM runs WHERE id IN ($keys)',runIds).map(r=>[r.id,r]));
+ const targets=[...notices.values()].map(n=>[n.taskId,n.taskVersion]).concat(actions.map(a=>[a.activity.target!.taskId,a.activity.target!.version]),publications.map(d=>[d.taskId,d.version]));
+ const keys=[...new Set(targets.filter(([id,version])=>typeof id==='string'&&Number.isSafeInteger(version)).map(pair=>JSON.stringify(pair)))];
+ const versions=new Map<string,Record<string,any>>();
  for(let at=0;at<keys.length;at+=200){
-  const rows=db.prepare(`SELECT v.taskId,v.version,v.presentationJson,c.id AS sourceMessageId FROM json_each(?) k JOIN task_versions v ON v.taskId=json_extract(k.value,'$[0]') AND v.version=json_extract(k.value,'$[1]') JOIN conversation_inputs i ON i.requestId=v.sourceRequestId AND i.threadId=? LEFT JOIN conversation_messages c ON c.threadId=i.threadId AND c.requestId=i.requestId AND c.role='user'`).all('['+keys.slice(at,at+200).join(',')+']',threadId);
+  const rows=db.prepare(`SELECT v.taskId,v.version,t.title,c.id AS sourceMessageId FROM json_each(?) k JOIN task_versions v ON v.taskId=json_extract(k.value,'$[0]') AND v.version=json_extract(k.value,'$[1]') JOIN tasks t ON t.id=v.taskId JOIN conversation_inputs i ON i.requestId=v.sourceRequestId AND i.threadId=? LEFT JOIN conversation_messages c ON c.threadId=i.threadId AND c.requestId=i.requestId AND c.role='user'`).all('['+keys.slice(at,at+200).join(',')+']',threadId);
   for(const row of rows){const key=JSON.stringify([row.taskId,row.version]),old=versions.get(key);versions.set(key,old?{...old,sourceMessageId:null}:row);}
  }
- const dbMain=db.prepare("SELECT value FROM meta WHERE key='mainAgentId'").get()?.value;
- const byNode=new Map<string,typeof actions>(),byMessage=new Map<string,typeof publications>();
- for(const a of actions){const list=byNode.get(a.node.id)??[];list.push(a);byNode.set(a.node.id,list);}
- for(const d of publications){const list=byMessage.get(d.historyMessageId)??[];list.push(d);byMessage.set(d.historyMessageId,list);}
- const seen=new Set<string>(),out=new Map<string,TaskMessageSource[]>(),unresolved=new Set<string>();
- const push=(messageId:string,source:TaskMessageSource)=>{
-  const v=versions.get(JSON.stringify([source.target.taskId,source.target.version]));if(!v){unresolved.add(messageId);return;}
-  const title=v.presentationJson?publicActivityName(JSON.parse(v.presentationJson).title):undefined;
-  const list=out.get(messageId)??[];if(!seen.has(source.key)){seen.add(source.key);list.push({...source,title:title??'后台工作',...(v.sourceMessageId?{originalRequestMessageId:v.sourceMessageId}:{})});}out.set(messageId,list);
+ const main=db.prepare("SELECT value FROM meta WHERE key='mainAgentId'").get()?.value;
+ const out=new Map<string,TaskMessageSource[]>(),unresolved=new Set<string>(),seen=new Set<string>();
+ const push=(id:string,source:TaskMessageSource)=>{
+  const v=versions.get(JSON.stringify([source.target.taskId,source.target.version]));if(!v){unresolved.add(id);return;}
+  const run=source.target.runId?runs.get(source.target.runId):undefined;
+  if(source.target.runId&&(!run||run.taskId!==source.target.taskId||run.version!==source.target.version)){unresolved.add(id);return;}
+  if(seen.has(source.key))return;seen.add(source.key);
+  const list=out.get(id)??[];list.push({...source,title:publicActivityName(v.title)??'后台工作',...(v.sourceMessageId?{originalRequestMessageId:v.sourceMessageId}:{})});out.set(id,list);
  };
- for(const m of eligible){
-  const node=m.process?.threadId===threadId?m.process:undefined;
+ for(const message of eligible){
+  const node=message.process?.threadId===threadId?message.process:undefined;
   const events=node?.items.flatMap(i=>i.kind==='workerEvent'&&i.event?[i.event]:[])??[];
-  const eventMessages=new Set(events.map(e=>e.sourceMessageId)),eventResults=new Set(events.map(e=>e.resultId)),eventOperations=new Set(events.map(e=>e.operationKey));
+  const eventMessages=new Set(events.map(e=>e.sourceMessageId)),eventOperations=new Set(events.map(e=>e.operationKey));
   if(node?.sourceKind==='worker'&&node.turnIds.length)for(const id of node.sourceMessageIds){
-   const n=noticeMap.get(id);if(!n){unresolved.add(m.id);continue;}
    if(eventMessages.has(id))continue;
-   let target:ActivityTarget={taskId:n.taskId,version:n.taskVersion},phaseLabel='Worker 业务回传',icon:TaskMessageSource['icon']='MessagesSquare',owner:TaskMessageSource['owner']='main';
-   if(n.senderAgentId==='host'){
-    if(n.actorAgentId!=='host'||n.operationKind!=='notify'||n.operationState!=='confirmed'||n.scopeId!==n.taskId){unresolved.add(m.id);continue;}
-    const p=n.identity,r=results.get(p.resultId);
-    if(n.kind==='revision_requested'){
-      const next=runs.get(p.runId);
-      if(!r||r.taskId!==n.taskId||r.completionResultId||p.previousVersion!==r.version||n.taskVersion!==p.version||!next||next.taskId!==n.taskId||next.contractVersion!==p.version||next.replacesRunId!==r.runId){unresolved.add(m.id);continue;}
-      for(const [side,target,phaseLabel] of [
-        ['previous',{taskId:r.taskId,version:r.version,resultId:r.id,...(r.runId?{runId:r.runId}:{})},'原成果已要求修改'],
-        ['next',{taskId:n.taskId,version:p.version,runId:next.id},'新要求已就绪，待补充核验']
-      ] as const)push(m.id,{key:JSON.stringify([threadId,node.id,id,side]),target,title:'',icon:'RotateCcw',origin:{kind:'message',processId:node.id,messageId:id},phaseLabel,owner:'main'});
-      continue;
-    }
-    if(r){
-      if(r.taskId!==n.taskId||r.completionResultId||p.version!=null&&p.version!==r.version||p.runId!=null&&p.runId!==r.runId){unresolved.add(m.id);continue;}
-      target={taskId:r.taskId,version:r.version,...(r.runId?{runId:r.runId}:{}),resultId:r.id};
-      if(eventResults.has(r.id))continue;
-    }else if(p.resultId!=null){unresolved.add(m.id);continue;}
-    else if(p.runId){const run=runs.get(p.runId),version=p.version??(n.kind==='review_required'?n.taskVersion:undefined);if(!run||run.taskId!==n.taskId||!Number.isSafeInteger(version)||version!==run.contractVersion){unresolved.add(m.id);continue;}target={taskId:n.taskId,version,runId:run.id};}
-    const labels:Record<string,string>={result_ready:'收到成果，待主 Agent 核对',revision_requested:'已要求补充核验',terminal:p.stopConfirmed===true?'已确认停止':'执行终止，结果需核对',result_accepted:'验收已接受',review_required:'验收待协调',supervision_required:'主 Agent 协调中'};
-    phaseLabel=labels[n.kind]??'主 Agent 协调事件';icon=n.kind==='result_ready'?'Inbox':n.kind==='revision_requested'?'RotateCcw':n.kind==='terminal'?'Pause':'MessagesSquare';
-   }else{
-    const run=runs.get(n.senderRunId);if(!run||run.taskId!==n.taskId||n.senderEpoch==null||n.senderEpoch>run.epoch||n.actorAgentId!==n.senderAgentId||n.operationKind!=='send'||n.scopeId!==n.taskId){unresolved.add(m.id);continue;}
-    target={...target,runId:run.id};
-   }
-   push(m.id,{key:JSON.stringify([threadId,node.id,id]),target,title:'',icon,origin:{kind:'message',processId:node.id,messageId:id,...(n.senderEpoch!=null?{senderEpoch:n.senderEpoch}:{})},phaseLabel,owner});
+   const notice=notices.get(id),run=notice?.senderRunId?runs.get(notice.senderRunId):undefined;
+   if(!notice||notice.senderAgentId!=='host'||notice.actorAgentId!=='host'||notice.operationState!=='confirmed'||notice.scopeId!==notice.taskId||!['worker_return','notify'].includes(notice.operationKind)||notice.kind==='worker_reply'&&(!run||run.taskId!==notice.taskId||run.version!==notice.taskVersion||notice.senderEpoch==null||notice.senderEpoch>run.epoch)){unresolved.add(message.id);continue;}
+   push(message.id,{key:JSON.stringify([threadId,node.id,id]),target:{taskId:notice.taskId,version:notice.taskVersion,...(run?{runId:run.id}:{})},title:'',icon:notice.kind==='worker_reply'?'MessagesSquare':'Inbox',origin:{kind:'message',processId:node.id,messageId:id},phaseLabel:notice.kind==='worker_reply'?'收到 Worker 回复':notice.kind==='task_archived'?'事项已归档':'主 Agent 协作事项',owner:'main'});
   }
-  for(const a of byNode.get(node?.id??'')??[]){
-   const t=a.activity.target!,op=operations.get(t.operationKey);
-   const expected:Record<string,string[]>={update_task:['update'],stop_task:['stop'],continue_task:['continue'],review_result:['review','legacy_review'],create_task:['delegate','create_root','create_pending_root','legacy_dispatch'],prepare_delivery:['publish']};
-   const scopeMatches=op&&(a.activity.action==='create_task'?op.createdTaskId===t.taskId&&op.createdVersion===t.version:op.scopeId===t.taskId);
-   if(!op||!scopeMatches||op.actorAgentId!==dbMain||!expected[a.activity.action]?.includes(op.kind)){unresolved.add(m.id);continue;}
-   if(eventOperations.has(t.operationKey??null))continue;
-   const info=[t,...(a.activity.relatedTarget?[a.activity.relatedTarget]:[])];
-   for(const target of info){
-    const run=target.runId?runs.get(target.runId):undefined;if(target.runId&&(!run||run.taskId!==target.taskId)){unresolved.add(m.id);continue;}
-    push(m.id,{key:JSON.stringify([threadId,node!.id,a.item.id,target]),target,title:'',icon:a.activity.action==='review_result'?'RotateCcw':a.activity.action==='stop_task'?'CircleStop':a.activity.action==='create_task'?'Send':'CornerDownRight',origin:{kind:'activity',processId:node!.id,itemId:a.item.id},phaseLabel:(a.activity.action==='update_task'?'调整已受理：':'')+activityOutcomes[a.activity.outcome],owner:'main'});
-   }
+  for(const action of actions.filter(a=>a.node?.id===node?.id)){
+   const target=action.activity.target!,operation=operations.get(target.operationKey);
+   if(eventOperations.has(target.operationKey??null))continue;
+   if(!operation||operation.actorAgentId!==main||!(operation.scopeId===target.taskId||operation.kind==='task_create'&&operation.createdTaskId===target.taskId)||!({create_task:['task_create','worker_open'],update_task:['task_update'],stop_task:['worker_stop'],review_result:['result_adopt'],prepare_delivery:['publish']} as Record<string,string[]>)[action.activity.action]?.includes(operation.kind)){unresolved.add(message.id);continue;}
+   push(message.id,{key:JSON.stringify([threadId,node!.id,action.item.id]),target,title:'',icon:action.activity.action==='create_task'?'Send':'CornerDownRight',origin:{kind:'activity',processId:node!.id,itemId:action.item.id},phaseLabel:activityOutcomes[action.activity.outcome],owner:'main'});
   }
-  for(const d of byMessage.get(m.id)??[]){
-   if(d.resultId&&(d.resultTaskId!==d.rootTaskId||d.resultVersion!==d.version)){unresolved.add(m.id);continue;}
-   const states:Record<string,string>={recorded:'已记录',prepared:'已准备，尚未送达',submitting:'送达待确认',uncertain:'状态待核实',revoked:'已撤回'};
-   push(m.id,{key:JSON.stringify([threadId,'delivery',d.id]),target:{taskId:d.rootTaskId,version:d.version,deliveryId:d.id,...(d.resultId?{resultId:d.resultId}:{}),...(d.runId?{runId:d.runId}:{})},title:'',icon:d.state==='recorded'&&d.revokedAt==null?(d.outcome==='partial'?'CircleDashed':d.outcome==='failed'?'CircleX':d.outcome==='cancelled'?'CircleStop':'Check'):'Pause',origin:{kind:'delivery',deliveryId:d.id},phaseLabel:'当次交付来源（当前回执：'+(d.revokedAt!=null?'已撤回':states[d.state]??'待核实')+'）',owner:'main'});
-  }
+  for(const delivery of publications.filter(d=>d.historyMessageId===message.id))push(message.id,{key:JSON.stringify([threadId,'delivery',delivery.id]),target:{taskId:delivery.taskId,version:delivery.version,deliveryId:delivery.id},title:'',icon:delivery.state==='recorded'&&delivery.revokedAt==null?'Check':'Pause',origin:{kind:'delivery',deliveryId:delivery.id},phaseLabel:'当次交付来源（'+(delivery.revokedAt!=null?'已撤回':delivery.state==='recorded'?'渠道已确认':delivery.state==='prepared'?'已准备':'回执待核实')+'）',owner:'main'});
  }
  return messages.map(m=>({...m,...(out.has(m.id)?{taskSources:out.get(m.id)}:{}),...(unresolved.has(m.id)?{taskSourceUnresolved:true as const}:{})}));
 }
 import { readTaskOverview, readTaskDetail, readTaskSummary } from './task-overview.js';
-import { basename } from "node:path";
 import { projectQuestions } from './question-schema.js';
 import {revealPublishedArtifact} from './artifact-reveal.js';
 import type { Homer } from "./service.js";
@@ -111,18 +64,10 @@ export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=t
   app.registerChannelCapabilities('web',()=>({draftUpload}));
   const pageReader=()=>app.webHistoryPages();
   const epoch=(value:string)=>{if(value!==app.webReadEpoch)throw Error('history_epoch_changed');};
-  const legacyLinks=(node:import('./main-process.js').ProcessNode)=>{
-    const activityLinks:Record<string,import('./activity-facts.js').ActivityLink>={};
-    for(const item of node.items)if(item.kind==='worker'){
-      const link=app.tasks.activityLink({taskId:item.taskId,version:item.version,...(item.runId?{runId:item.runId}:{})},node.threadId);
-      if(link)activityLinks[item.id]=link;
-    }
-    return {...node,activityLinks};
-  };
   // Worker events already contain their immutable, explicitly public snapshot.
   const page=(request:import('./web-history-pages.js').HistoryPageRequest={})=>{
     const result=pageReader().read(app.store.meta('mainThread')!,request);
-    const artifacts=app.tasks.publishedForMessages(result.units).map(file=>({id:file.resultId,title:basename(file.path),workTitle:'正式交付',historyMessageId:file.historyMessageId,messageId:file.historyMessageId,version:file.version,outcome:file.outcome??undefined}));
+    const artifacts=app.tasks.publishedForMessages(result.units).map(file=>({id:file.resultId,title:file.filename,workTitle:'正式交付',historyMessageId:file.historyMessageId,messageId:file.historyMessageId,version:file.version}));
     const sources=new Map(result.units.length?app.store.db.prepare(`SELECT historyMessageId,routeSourceRequestId FROM deliveries WHERE historyMessageId IN (${result.units.map(()=>'?').join(',')})`).all(...result.units).filter(row=>row.routeSourceRequestId!==null).map(row=>[String(row.historyMessageId),String(row.routeSourceRequestId)]):[]);
     const requests=[...new Set(result.messages.flatMap(m=>m.requestId?[m.requestId]:[]))];
     let inactiveMore=false;
@@ -136,14 +81,14 @@ export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=t
       if(!process&&!user)return [];
       return [{id:item.id,kind:item.kind,state:item.state as 'cancelled'|'expired',...(item.code?{code:item.code}:{}),sourceRequestId:item.authority.sourceRequestId,...(process?{processId:process.id}:{messageId:user!.id})}];
     });
-    return {...result,artifacts,inactiveInteractions,inactiveMore,messages:withTaskSources(app.store.db,result.messages,result.threadId).map(message=>({...message,...(message.process?{process:legacyLinks(message.process)}:{}),requestId:message.requestId??sources.get(message.id)??null,...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{}),...(message.source?.attachments?{source:{...message.source,media:message.source.attachments.map(ref=>app.media.view(ref))}}:{})}))};
+    return {...result,artifacts,inactiveInteractions,inactiveMore,messages:withTaskSources(app.store.db,result.messages,result.threadId).map(message=>({...message,...(message.process?{process:message.process}:{}),requestId:message.requestId??sources.get(message.id)??null,...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{}),...(message.source?.attachments?{source:{...message.source,media:message.source.attachments.map(ref=>app.media.view(ref))}}:{})}))};
   };
   const queuePage=(after=0)=>{const page=pageReader().queuePage(after);return {...page,items:page.items.map(item=>({...item,user:{...item.user,...(item.user.attachments?{media:item.user.attachments.map(ref=>app.media.view(ref))}:{})}}))};};
   const interactionPage=(after=0)=>{
     if(!Number.isSafeInteger(after)||after<0)throw Error('history_cursor_invalid');
     const rows=app.store.db.prepare("SELECT id,rowid position FROM worker_interactions WHERE state='pending_user' AND rowid>? ORDER BY rowid LIMIT 81").all(after),selected=rows.slice(0,80);
-    const facts=new Map(selected.length?app.store.db.prepare(`SELECT i.id,m.title,(SELECT id FROM conversation_messages c WHERE c.threadId=? AND c.requestId=json_extract(i.authority,'$.sourceRequestId') AND c.role='user' ORDER BY c.rowid DESC LIMIT 1) sourceMessageId
-      FROM worker_interactions i LEFT JOIN runs r ON r.id=CASE WHEN i.runId LIKE 'main-native:worker-native:%' THEN substr(i.runId,27) ELSE i.runId END LEFT JOIN matters m ON m.id=r.matterId WHERE i.id IN (${selected.map(()=>'?').join(',')})`).all(app.store.meta('mainThread')!,...selected.map(row=>String(row.id))).map(row=>[String(row.id),row]):[]);
+    const facts=new Map(selected.length?app.store.db.prepare(`SELECT i.id,t.title,(SELECT id FROM conversation_messages c WHERE c.threadId=? AND c.requestId=json_extract(i.authority,'$.sourceRequestId') AND c.role='user' ORDER BY c.rowid DESC LIMIT 1) sourceMessageId
+      FROM worker_interactions i LEFT JOIN runs r ON r.id=CASE WHEN i.runId LIKE 'main-native:worker-native:%' THEN substr(i.runId,27) ELSE i.runId END LEFT JOIN tasks t ON t.id=r.taskId WHERE i.id IN (${selected.map(()=>'?').join(',')})`).all(app.store.meta('mainThread')!,...selected.map(row=>String(row.id))).map(row=>[String(row.id),row]):[]);
     return {items:selected.map(({id})=>app.interactions.inspect(String(id))).map(item=>({id:item.id,runId:item.runId,kind:item.kind,workTitle:String(facts.get(item.id)?.title??(item.runId.startsWith('main-native:worker-native:')?'后台原生请求':item.runId.startsWith('main-native:')?'主对话':'后台工作')),sourceRequestId:item.authority.sourceRequestId,...(facts.get(item.id)?.sourceMessageId?{sourceMessageId:String(facts.get(item.id)!.sourceMessageId)}:{}),question:item.userQuestion??'请补充完成这项工作所需的信息。',reason:item.escalationReason,...(item.details.method==='mcpServer/elicitation/request'&&(item.details.params as any)?._meta?.codex_approval_kind==='mcp_tool_call'?{canCancel:true as const}:{}),questions:item.runId.startsWith('main-native:')?projectQuestions(item.kind,item.details):undefined})),after:rows.length>80?Number(selected.at(-1)!.position):null};
   };
   return {
@@ -201,37 +146,40 @@ export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=t
       },
     },
     onStateChange: listener=>app.onStateChange(listener),
-    taskOverview:{execution:async(selector,before)=>app.readWorkerExecution(selector,before),call:async(selector,key)=>app.readWorkerCall(selector,key),list:async()=>({...readTaskOverview(app.store.db),progressRevision:app.workerProgress?.revision??0}),progress:async id=>{
-      const db=app.store.db;
-      if(!db.prepare('SELECT id FROM tasks WHERE id=? AND rootTaskId=id AND parentTaskId IS NULL').get(id))throw Error('task_not_found');
-      // Scope the read before projection: progress needs no global result,
-      // delivery or interaction scans, and never reads historical Runs.
-      const scopes=db.prepare(`SELECT t.id AS taskId,t.headVersion AS version,r.id AS runId,r.epoch,r.threadId,r.turnId
-        FROM tasks t JOIN runs r ON r.id=t.currentRunId AND r.taskId=t.id AND r.contractVersion=t.headVersion
-        WHERE t.rootTaskId=? AND t.executorKind='worker' AND r.threadId IS NOT NULL AND r.turnId IS NOT NULL`).all(id) as import('./worker-progress.js').WorkerScope[];
-      return {taskId:id,workers:scopes.flatMap(scope=>{const progress=app.workerProgress?.get(scope);return progress?[progress]:[];})};
-    },summary:async id=>{
-      const detail=readTaskSummary(app.store.db,id);
-      // Unique exact original message only; never choose an arbitrary thread when ambiguous.
-      const sources=app.store.db.prepare(`SELECT v.taskId,c.id,c.threadId FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion JOIN conversation_inputs input ON input.requestId=v.sourceRequestId JOIN conversation_messages c INDEXED BY conversation_request_user ON c.threadId=input.threadId AND c.requestId=input.requestId AND c.role='user' WHERE t.rootTaskId=?`).all(id);
-      const counts=new Map<string,number>();for(const row of sources){const id=String(row.taskId);counts.set(id,(counts.get(id)??0)+1);}
-      const byTask=new Map(sources.filter(row=>counts.get(String(row.taskId))===1).map(row=>[String(row.taskId),row]));
-      const ids=detail.publications!.flatMap(p=>p.historyMessageId?[p.historyMessageId]:[]);
-      return {...detail,requirements:detail.requirements!.map(r=>({...r,...(byTask.has(r.taskId)?{sourceMessageId:String(byTask.get(r.taskId)!.id),threadId:String(byTask.get(r.taskId)!.threadId)}:{})})),artifacts:app.tasks.publishedForMessages(ids).map(file=>({id:file.resultId,title:basename(file.path),historyMessageId:file.historyMessageId}))};
-    },detail:async id=>{
-      const detail=readTaskDetail(app.store.db,id);
-      const publications=app.store.db.prepare("SELECT historyMessageId FROM deliveries WHERE rootTaskId=? AND state='recorded' AND revokedAt IS NULL ORDER BY version DESC,rowid DESC LIMIT 81").all(id);
-      const ids=publications.slice(0,80).flatMap(row=>row.historyMessageId?[String(row.historyMessageId)]:[]);
-      return {...detail,artifacts:ids.length?app.tasks.publishedForMessages(ids).map(file=>({id:file.resultId,title:basename(file.path),historyMessageId:file.historyMessageId})):[],moreArtifacts:publications.length>80};
-    },origin:async(id,messageId)=>{
-      if(!/^[\w:-]{1,100}$/.test(id)||!/^[\w:-]{1,100}$/.test(messageId))throw Error('task_origin_not_found');
-      const source=app.store.db.prepare(`SELECT c.id FROM tasks t JOIN task_versions v ON v.taskId=t.id JOIN conversation_inputs input ON input.requestId=v.sourceRequestId JOIN conversation_messages c ON c.threadId=input.threadId AND c.requestId=input.requestId AND c.role='user' WHERE t.rootTaskId=? AND c.id=? LIMIT 1`).get(id,messageId);
-      const publication=app.store.db.prepare("SELECT id FROM deliveries WHERE rootTaskId=? AND historyMessageId=? AND state='recorded' AND revokedAt IS NULL LIMIT 1").get(id,messageId);
-      if(!source&&!publication)throw Error('task_origin_not_found');
-      const message=app.history.message(messageId);if(!message||(source?message.role!=='user':message.role!=='assistant'))throw Error('task_origin_not_found');
-      const files=publication?app.tasks.publishedForMessages([messageId]).map(file=>({id:file.resultId,title:basename(file.path),workTitle:'正式交付',historyMessageId:messageId,version:file.version})):[];
-      return {message,files};
-    }},
+    taskOverview:{
+      execution:async(selector,before)=>app.readWorkerExecution(selector,before),
+      call:async(selector,key)=>app.readWorkerCall(selector,key),
+      list:async()=>({...readTaskOverview(app.store.db),progressRevision:app.workerProgress.revision}),
+      progress:async id=>{
+        const db=app.store.db;
+        if(!db.prepare("SELECT id FROM tasks WHERE id=? AND historyState='visible'").get(id))throw Error('task_not_found');
+        const scopes=db.prepare(`SELECT r.taskId,r.version,r.id AS runId,r.epoch,r.threadId,r.turnId FROM runs r WHERE r.taskId=? AND r.threadId IS NOT NULL AND r.turnId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid)`).all(id) as import('./worker-progress.js').WorkerScope[];
+        return {taskId:id,workers:scopes.flatMap(scope=>{const progress=app.workerProgress.get(scope);return progress?[progress]:[];})};
+      },
+      summary:async id=>{
+        const detail=readTaskSummary(app.store.db,id);
+        const sources=app.store.db.prepare(`SELECT v.taskId,c.id,c.threadId FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion JOIN conversation_inputs input ON input.requestId=v.sourceRequestId JOIN conversation_messages c ON c.threadId=input.threadId AND c.requestId=input.requestId AND c.role='user' WHERE t.id=?`).all(id);
+        const source=sources.length===1?sources[0]:undefined;
+        const ids=detail.publications!.flatMap(p=>p.historyMessageId?[p.historyMessageId]:[]);
+        return {...detail,requirements:detail.requirements!.map(r=>({...r,...(source?{sourceMessageId:String(source.id),threadId:String(source.threadId)}:{})})),artifacts:app.tasks.publishedForMessages(ids).map(file=>({id:file.resultId,title:file.filename,historyMessageId:file.historyMessageId}))};
+      },
+      detail:async(id,query?:import('./task-overview.js').WorkerConversationQuery)=>{
+        const detail=readTaskDetail(app.store.db,id,query);
+        if(query)return detail;
+        const publications=app.store.db.prepare("SELECT historyMessageId FROM deliveries WHERE taskId=? AND state='recorded' AND revokedAt IS NULL ORDER BY rowid DESC LIMIT 81").all(id);
+        const ids=publications.slice(0,80).flatMap(row=>row.historyMessageId?[String(row.historyMessageId)]:[]);
+        return {...detail,artifacts:ids.length?app.tasks.publishedForMessages(ids).map(file=>({id:file.resultId,title:file.filename,historyMessageId:file.historyMessageId})):[],moreArtifacts:publications.length>80};
+      },
+      origin:async(id,messageId)=>{
+        if(!/^[\w:-]{1,100}$/.test(id)||!/^[\w:-]{1,100}$/.test(messageId))throw Error('task_origin_not_found');
+        const source=app.store.db.prepare(`SELECT c.id FROM task_versions v JOIN conversation_inputs input ON input.requestId=v.sourceRequestId JOIN conversation_messages c ON c.threadId=input.threadId AND c.requestId=input.requestId AND c.role='user' WHERE v.taskId=? AND c.id=? LIMIT 1`).get(id,messageId);
+        const publication=app.store.db.prepare("SELECT id FROM deliveries WHERE taskId=? AND historyMessageId=? AND state='recorded' AND revokedAt IS NULL LIMIT 1").get(id,messageId);
+        if(!source&&!publication)throw Error('task_origin_not_found');
+        const message=app.history.message(messageId);if(!message||(source?message.role!=='user':message.role!=='assistant'))throw Error('task_origin_not_found');
+        const files=publication?app.tasks.publishedForMessages([messageId]).map(file=>({id:file.resultId,title:file.filename,workTitle:'正式交付',historyMessageId:messageId,version:file.version})):[];
+        return {message,files};
+      }
+    },
     media:{read:async input=>app.readAttachment(input),...(draftUpload?{upload:(input:import('./web-upload.js').WebUpload)=>app.uploadAttachment(input),discard:async(input:unknown)=>app.discardAttachment(input),previewDraft:async(input:unknown)=>app.readDraftImage(input)}:{})},
     state: async () => {
       const started=performance.now();app.receptionTimings?.mark('state_start');
@@ -243,9 +191,8 @@ export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=t
       const work = snapshot.runs.flatMap(run=>{
         const artifacts=app.tasks.publishedArtifacts(run.id);
         const taskId=app.tasks.run(run.id).taskId,task=tasks.get(taskId)??app.tasks.task(taskId);
-        if(task.parentTaskId&&!artifacts.length)return [];
-        return [{id:run.id,title:snapshot.matters.find(matter=>matter.id===run.matterId)?.title??'正在办的事',status:run.status,summary:run.summary,hasArtifact:!!artifacts.length,
-          artifacts:artifacts.map(file=>({id:file.resultId,title:basename(file.path),historyMessageId:file.historyMessageId,version:file.version,outcome:file.outcome??undefined}))}];
+        return [{id:run.id,title:task?.title??'正在办的事',status:run.status,summary:null,hasArtifact:!!artifacts.length,
+          artifacts:artifacts.map(file=>({id:file.resultId,title:file.filename,historyMessageId:file.historyMessageId,version:file.version}))}];
       });
       const visible=new Set(conversation.messages.map(message=>message.id));
       const artifacts=work.flatMap(work=>work.artifacts.map(file=>({...file,workTitle:work.title,...(visible.has(file.historyMessageId)?{messageId:file.historyMessageId}:{})})));
@@ -267,7 +214,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=t
         }),
         interactions: snapshot.interactions.filter(item => item.state === "pending_user").map(summary => app.interactions.inspect(summary.id)).map(item => ({
           id: item.id, runId: item.runId, kind: item.kind,
-          workTitle:snapshot.matters.find(matter=>matter.id===snapshot.runs.find(run=>run.id===(item.runId.startsWith('main-native:worker-native:')?item.runId.slice(26):item.runId))?.matterId)?.title??(item.runId.startsWith('main-native:worker-native:')?'后台原生请求':item.runId.startsWith('main-native:')?'主对话':undefined),sourceRequestId:item.authority.sourceRequestId,
+          workTitle:tasks.get(snapshot.runs.find(run=>run.id===(item.runId.startsWith('main-native:worker-native:')?item.runId.slice(26):item.runId))?.taskId??'')?.title??(item.runId.startsWith('main-native:worker-native:')?'后台原生请求':item.runId.startsWith('main-native:')?'主对话':undefined),sourceRequestId:item.authority.sourceRequestId,
           question: item.userQuestion ?? "请补充完成这项工作所需的信息。", reason: item.escalationReason,
           ...(item.details.method==='mcpServer/elicitation/request'&&(item.details.params as any)?._meta?.codex_approval_kind==='mcp_tool_call'?{canCancel:true as const}:{}),questions: item.runId.startsWith('main-native:')?projectQuestions(item.kind, item.details):undefined,
         })),
@@ -288,12 +235,10 @@ export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=t
       if(!message||message.role!=='assistant')throw Error('artifact_origin_not_found');
       // Reuse exactly the existing publication/file grant and integrity check.
       // No caller-controlled thread or path and no directory traversal API.
-      const files=app.tasks.delivery(verified.deliveryId).publishedFileResultIds.flatMap(id=>{
+      const files=(JSON.parse(app.tasks.delivery(verified.deliveryId).resultIdsJson) as string[]).flatMap(id=>{
         const file=app.tasks.publishedResult(id);
         if(!file||file.deliveryId!==verified.deliveryId||file.historyMessageId!==message.id)return [];
-        const bytes=app.files.resultBytes(app.files.prepareRun(app.tasks.run(file.runId).matterId,file.runId),file.path);
-        if(bytes.sha256!==file.sha256)throw Error('result_hash_mismatch');
-        return [{id:file.resultId,title:basename(file.path),workTitle:'原交付',historyMessageId:message.id,version:file.version,outcome:file.outcome??undefined}];
+        return [{id:file.resultId,title:file.filename,workTitle:'原交付',historyMessageId:message.id,version:file.version}];
       });
       return {message,files};
     },

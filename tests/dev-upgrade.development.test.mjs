@@ -68,7 +68,7 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     writeFileSync(join(base, "home/release-worker"), "1");
     await until(() => active() === 2); assertDead(originalPid); assertDead(workerPid);
     assert.equal(query("SELECT value FROM meta WHERE key='mainThread'")[0].value, thread);
-    const savedRuns = query("SELECT * FROM runs"); assert.equal(savedRuns.length, 1); assert.equal(savedRuns[0].status, "succeeded"); assert.equal(savedRuns[0].delivery, "delivered");
+    const savedRuns = query("SELECT * FROM runs"); assert.equal(savedRuns.length, 1); assert.equal(savedRuns[0].status, "succeeded"); assert.equal(query("SELECT state FROM deliveries WHERE taskId=?",savedRuns[0].taskId)[0]?.state,"recorded");
     const savedRequests = query("SELECT * FROM requests");
     // A main round also blocks handoff; changes within debounce coalesce.
     send("hold-main"); await until(() => existsSync(join(base, "home/main-running")));

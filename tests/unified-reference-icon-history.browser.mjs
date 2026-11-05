@@ -5,7 +5,7 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {composerFixture} from './fixtures/composer-browser-server.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const root=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/unified-reference-icon-regression'),destination=join(root,'history'),webDir=resolve(process.env.HISTORY_FOLLOWUP_BUILD??join(root,'candidate-web'));mkdirSync(destination,{recursive:true});
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 const long='这是合成历史引用的完整正文。'.repeat(100),source={kind:'artifact',id:'result-history-text',title:'历史成果.txt',sha256:'a'.repeat(64)};
 const msg=(id,extra)=>({id,threadId:'composer-review',requestId:id,role:'user',text:'合成说明',status:'completed',createdAt:1700000000000,...extra});
 const messages=[

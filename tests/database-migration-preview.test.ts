@@ -55,10 +55,6 @@ test('offline preview includes every existing source table in preservation check
 
 function schema2Fixture(){
  const f=fixture();new RecursiveTasks(f.store,new Files(join(f.directory,'workspace'))).migrate();
- f.store.db.exec(`DROP INDEX one_completed_result_per_run;DROP INDEX one_accepted_result_per_version;DROP INDEX result_completion;DROP INDEX results_run;
- ALTER TABLE results DROP COLUMN completionResultId;ALTER TABLE deliveries DROP COLUMN publishedFileResultIdsJson;
- CREATE UNIQUE INDEX one_result_per_run ON results(runId) WHERE runId IS NOT NULL;
- CREATE UNIQUE INDEX one_accepted_result_per_version ON results(taskId,version) WHERE state='accepted';`);
  f.store.setMeta('recursiveSchemaVersion','2');return f;
 }
 test('offline preview refuses unsupported historical schemas without activating or changing the source',async()=>{

@@ -7,7 +7,7 @@
     "ios": {
       "bundleIdentifier": "com.homer.mobile",
       "supportsTablet": false,
-      "buildNumber": "3"
+      "buildNumber": "7"
     },
     "android": {
       "package": "com.homer.mobile",
@@ -18,7 +18,11 @@
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ],
-      "versionCode": 4
+      "versionCode": 4,
+      "adaptiveIcon": {
+        "foregroundImage": "../assets/branding/mobile/android-adaptive.png",
+        "backgroundColor": "#0645AD"
+      }
     },
     "plugins": [
       [
@@ -38,6 +42,6 @@
         }
       ]
     ],
-    "icon": "../assets/branding/odysseus-20261030/homer-odysseus-1024.png"
+    "icon": "../assets/branding/mobile/mobile-icon.png"
   }
 }

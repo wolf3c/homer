@@ -302,16 +302,16 @@ test('desktop account shares the channel settings shell without starting hidden 
 }));
 
 
-test('model quota card reuses the existing website/account actions and closes without replay',async()=>withDom(async d=>{
- const calls=[];window.homerDesktopAccount={openWebsite:async()=>{calls.push('openWebsite');return {configured:true};}};
+test('model quota card keeps purchase reachable without dismissal or replay',async()=>withDom(async d=>{
+ const calls=[];window.homerDesktopAccount={state:async()=>firstAccount,onChange:()=>()=>{},openWebsite:async()=>{calls.push('openWebsite');return {configured:true};}};
  const failure={messageId:'new-failure',code:'engine_quota_insufficient',source:'website'};
  const render=(id='new-failure')=>d.render(React.createElement(get().ModelFailureNotice,{key:id,failure:{...failure,messageId:id},onAccount:()=>calls.push('account'),onDismiss:()=>calls.push('dismiss')}));
- await render();assert.match(d.container.textContent,/额度不足当前额度不足以继续本次请求。/);
- assert.doesNotMatch(d.container.textContent,/积分|金额|剩余|未知|预扣/);assert.deepEqual(calls,[]);
- await d.click(button(d,'充值'));assert.deepEqual(calls,['openWebsite']);
+ await render();assert.match(d.container.textContent,/本次请求因额度不足未能完成/);
+ assert.match(d.container.textContent,/剩余积分：暂时无法确认/);assert.deepEqual(calls,[]);
+ await d.click(button(d,'购买积分'));assert.deepEqual(calls,['openWebsite']);
  await d.click(button(d,'查看账号与额度'));assert.deepEqual(calls,['openWebsite','account']);
- await d.click(button(d,'关闭额度不足提醒'));assert.deepEqual(calls,['openWebsite','account','dismiss']);
- await render();assert.equal(d.container.textContent,'');await render('next-failure');assert.ok(button(d,'充值'));
+ assert.ok(!button(d,'关闭额度不足提醒'));assert.deepEqual(calls,['openWebsite','account']);
+ await render();assert.ok(button(d,'购买积分'));await render('next-failure');assert.ok(button(d,'购买积分'));
 }));
 
 for(const [code,title] of [['engine_rate_limited','请求受到限流，本次未能继续'],['main_turn_failed','本次请求未能完成']])test('model failure card distinguishes '+code+' without a recharge or retry action',async()=>withDom(async d=>{
@@ -321,18 +321,18 @@ for(const [code,title] of [['engine_rate_limited','请求受到限流，本次�
 }));
 
 for(const [code,title]of [['engine_authentication_failed','账号连接未通过验证'],['engine_account_status_unconfirmed','账号状态未能确认']])test(code+' offers account inspection without guessing a quota failure',async()=>withDom(async d=>{
- const calls=[];window.homerDesktopAccount={openWebsite:async()=>{assert.fail('must not recharge');}};
+ const calls=[];window.homerDesktopAccount={state:async()=>firstAccount,onChange:()=>()=>{},openWebsite:async()=>{assert.fail('must not recharge');}};
  await d.render(React.createElement(get().ModelFailureNotice,{failure:{messageId:'failure',code,source:'website'},onAccount:()=>calls.push('account')}));
  assert.match(d.container.textContent,new RegExp(title));assert.doesNotMatch(d.container.textContent,/原因暂无法确认|充值|额度不足|0 积分/);
  await d.click(button(d,'查看账号与额度'));assert.deepEqual(calls,['account']);
 }));
 
 test('Codex quota never offers Homer recharge and a failed website open keeps the original card',async()=>withDom(async d=>{
- window.homerDesktopAccount={openWebsite:async()=>{throw Error('PRIVATE_DIAGNOSTICS');}};
+ window.homerDesktopAccount={state:async()=>firstAccount,onChange:()=>()=>{},openWebsite:async()=>{throw Error('PRIVATE_DIAGNOSTICS');}};
  await d.render(React.createElement(get().ModelFailureNotice,{key:'codex',failure:{messageId:'codex',code:'engine_quota_insufficient',source:'codex'},onAccount:()=>{}}));
- assert.ok(!button(d,'充值'));assert.ok(button(d,'查看账号与额度'));
+ assert.ok(!button(d,'购买积分'));assert.ok(button(d,'查看账号与额度'));
  await d.render(React.createElement(get().ModelFailureNotice,{key:'website',failure:{messageId:'website',code:'engine_quota_insufficient',source:'website'},onAccount:()=>{}}));
- await d.click(button(d,'充值'));assert.match(d.container.textContent,/未能打开充值入口/);assert.doesNotMatch(d.container.textContent,/PRIVATE_DIAGNOSTICS/);assert.ok(button(d,'关闭额度不足提醒'));
+ await d.click(button(d,'购买积分'));assert.match(d.container.textContent,/购买积分页面未能打开/);assert.doesNotMatch(d.container.textContent,/PRIVATE_DIAGNOSTICS/);assert.ok(!button(d,'关闭额度不足提醒'));assert.ok(button(d,'购买积分'));
 }));
 
 test('quota account action opens the existing settings dialog on its account tab and returns to its opener',async()=>withDom(async d=>{
@@ -401,24 +401,31 @@ test('first-open ChatGPT navigation never changes the source until explicit appl
  assert.ok(button(d,'应用并重启'));assert.doesNotMatch(d.container.textContent,/调用已验证/);await d.click(button(d,'应用并重启'));
  assert.deepEqual(actions,['nativeConnect','nativeReopen','nativeCancel','applyCodex']);
 }));
-for(const [name,changes,want] of [
+for(const onboarding of [false,true])for(const [name,changes,want] of [
  ['zero',{wallet:{available:0,used:1,unit:'积分'},stale:false},'zero'],
  ['positive',{wallet:{available:2,used:1,unit:'积分'},stale:false},'positive'],
  ['unknown',{stale:false},'unknown'],
  ['stale zero',{wallet:{available:0,used:1,unit:'积分'},stale:true},'unknown'],
  ['failed zero',{wallet:{available:0,used:1,unit:'积分'},stale:false,walletError:'USAGE_UNAVAILABLE'},'unknown'],
  ['expired zero',{wallet:{available:0,used:1,unit:'积分'},stale:false,walletError:'TOKEN_UNAVAILABLE'},'unknown'],
-])test('first-open wallet guidance preserves '+name,async()=>withDom(async d=>{
+])test((onboarding?'first-open hides wallet and purchase actions: ':'account wallet guidance preserves ')+name,async()=>withDom(async d=>{
  const current={...firstAccount,connection:'website',active:'website',updatedAt:'2026-11-04T00:00:00Z',...changes};
  window.homerDesktopAccount={state:async()=>current,refresh:async()=>current,onChange:()=>()=>{}};
- await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));
- if(want==='zero'){assert.match(d.container.textContent,/购买积分后即可开始使用/);assert.ok(button(d,'购买积分'));assert.ok(button(d,'我已购买，刷新状态'));}
- else{assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用|积分不足/);assert.ok(!button(d,'我已购买，刷新状态'));if(want==='positive')assert.ok(!button(d,'购买积分'));if(want==='unknown'){assert.match(d.container.textContent,/暂时无法确认/);assert.ok(button(d,'重新检查积分'));assert.ok(!button(d,'购买积分'));}}
+ await d.render(React.createElement(get().DesktopAccount,{onboarding}));
+ if(onboarding){
+  assert.ok(!row(d,'可用积分'));assert.doesNotMatch(d.container.textContent,/可用积分|更新时间|上次记录|购买积分后即可开始使用/);
+  for(const label of ['购买积分','我已购买，刷新状态','重新检查积分'])assert.ok(!button(d,label));
+  assert.ok(button(d,'改用 ChatGPT 套餐'));
+ }else{
+  assert.ok(row(d,'可用积分'));assert.ok(button(d,'购买积分'));
+  if(want==='zero'){assert.match(d.container.textContent,/购买积分后即可开始使用/);assert.ok(button(d,'我已购买，刷新状态'));}
+  else{assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用|积分不足/);assert.ok(!button(d,'我已购买，刷新状态'));if(want==='unknown'){assert.match(d.container.textContent,/暂时无法确认/);assert.ok(button(d,'重新检查积分'));}}
+ }
 }));
-test('first-open purchase and refresh failures keep a retry and never retain a zero-balance conclusion',async()=>withDom(async d=>{
+test('account purchase and refresh failures keep a retry and never retain a zero-balance conclusion',async()=>withDom(async d=>{
  let current={...firstAccount,connection:'website',active:'website',stale:false,wallet:{available:0,used:1,unit:'积分'}};let fail=false;
  window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},openWebsite:async()=>{throw Error('synthetic-open-failure');},refresh:async()=>{if(fail)throw Error('synthetic-read-failure');return current={...current,wallet:{...current.wallet,available:3}};}};
- await d.render(React.createElement(get().DesktopAccount,{onboarding:true}));await d.click(button(d,'购买积分'));assert.match(d.container.textContent,/购买积分页面未能打开/);
+ await d.render(React.createElement(get().DesktopAccount));await d.click(button(d,'购买积分'));assert.match(d.container.textContent,/购买积分页面未能打开/);
  fail=true;await d.click(button(d,'我已购买，刷新状态'));assert.match(d.container.textContent,/暂时无法确认/);assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用/);
  fail=false;await d.click(button(d,'重新检查积分'));assert.match(d.container.textContent,/3 积分/);assert.doesNotMatch(d.container.textContent,/暂时无法确认|购买积分后即可开始使用/);
 }));
@@ -472,11 +479,102 @@ for(const onboarding of [false,true])test('cached zero wallet expires while open
  window.homerDesktopAccount={state:async()=>{reads++;return {...current};},onChange:()=>()=>{},refresh:async()=>({...current,stale:true,walletError:'TOKEN_UNAVAILABLE'})};
  await d.render(React.createElement(get().DesktopAccount,{onboarding}));
  if(!onboarding)await d.click(button(d,'荷马会员'));
- assert.match(d.container.textContent,/购买积分后即可开始使用/);assert.equal(timers.size,1);
+ if(onboarding)assert.ok(!row(d,'可用积分'));else assert.match(d.container.textContent,/购买积分后即可开始使用/);
+ assert.equal(timers.size,1);
  const timer=[...timers.values()][0];assert.equal(timer.delay,30000);const before=reads;
  t.mock.timers.tick(30000);await act(async()=>timer.fn());assert.equal(reads,before+1);
- assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用/);assert.match(d.container.textContent,/暂时无法确认/);assert.ok(!button(d,'应用并重启'));assert.equal(timers.size,0);
+ assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用/);assert.match(d.container.textContent,/登录已失效/);
+ if(onboarding)assert.ok(!row(d,'可用积分'));else assert.match(d.container.textContent,/暂时无法确认/);
+ assert.ok(!button(d,'应用并重启'));assert.equal(timers.size,0);
  await d.remount();await d.render(React.createElement(get().DesktopAccount,{onboarding}));
  if(!onboarding)await d.click(button(d,'荷马会员'));
- assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用/);assert.match(d.container.textContent,/暂时无法确认/);assert.ok(!button(d,'应用并重启'));
+ assert.doesNotMatch(d.container.textContent,/购买积分后即可开始使用/);assert.match(d.container.textContent,/登录已失效/);
+ if(onboarding)assert.ok(!row(d,'可用积分'));else assert.match(d.container.textContent,/暂时无法确认/);
+ assert.ok(!button(d,'应用并重启'));
+}));
+
+for(const [name,changes,visible] of [
+ ['zero',{wallet:{available:0,used:1,unit:'积分'}},true],
+ ['low',{wallet:{available:3.5,used:1,unit:'积分'}},true],
+ ['threshold',{wallet:{available:10,used:1,unit:'积分'}},true],
+ ['above threshold',{wallet:{available:10.01,used:1,unit:'积分'}},false],
+ ['unknown',{wallet:undefined},false],
+ ['stale',{stale:true},false],
+ ['failed',{walletError:'USAGE_UNAVAILABLE'},false],
+ ['expired',{wallet:{available:0,used:1,unit:'积分',expiresAt:1}},false],
+ ['not active',{active:'disconnected'},false],
+ ['unsupported',{supported:false},false],
+ ['not configured',{configured:false},false],
+ ['ChatGPT',{source:'codex',active:'disconnected'},false],
+ ['other unit',{wallet:{available:1,used:1,unit:'CNY'}},false],
+])test('proactive purchase notice uses current trusted points only: '+name,async()=>withDom(async d=>{
+ const calls=[],current={...firstAccount,source:'website',active:'website',connection:'website',stale:false,wallet:{available:0,used:1,unit:'积分'},...changes};
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},openWebsite:async()=>{calls.push('openWebsite');return current;}};
+ await d.render(React.createElement(get().ModelFailureNotice,{onDismiss:()=>assert.fail('must not dismiss')}));
+ assert.equal(!!row(d,'积分余额提醒'),visible);assert.deepEqual(calls,[]);
+ if(visible){assert.match(d.container.textContent,new RegExp('剩余积分：'+current.wallet.available+' 积分'));assert.ok(button(d,'购买积分'));assert.ok(button(d,'刷新余额'));assert.ok(!d.find(n=>n.tagName==='BUTTON'&&n.getAttribute('aria-label')?.startsWith('关闭')));
+  if(current.wallet.available===0)assert.match(d.container.textContent,/新的模型请求将无法继续/);else assert.match(d.container.textContent,/积分用完后/);
+ }
+}));
+
+test('proactive credit refresh retains an unknown recovery path then clears above ten',async()=>withDom(async d=>{
+ let current={...firstAccount,active:'website',connection:'website',stale:false,wallet:{available:0,used:1,unit:'积分'}},changed,fail=false;const calls=[];
+ window.homerDesktopAccount={state:async()=>current,onChange:cb=>{changed=cb;return()=>{};},openWebsite:async()=>{calls.push('openWebsite');return current;},refresh:async()=>{calls.push('refresh');if(fail)throw Error('PRIVATE_BALANCE_ERROR');return current;}};
+ await d.render(React.createElement(get().ModelFailureNotice));await d.click(button(d,'购买积分'));assert.deepEqual(calls,['openWebsite']);
+ fail=true;await d.click(button(d,'刷新余额'));assert.ok(row(d,'积分余额提醒'));assert.match(d.container.textContent,/剩余积分：暂时无法确认/);assert.doesNotMatch(d.container.textContent,/剩余积分：0|PRIVATE_BALANCE_ERROR|积分已用完/);assert.ok(button(d,'购买积分'));assert.ok(button(d,'刷新余额'));
+ fail=false;current={...current,wallet:{...current.wallet,available:10}};await d.click(button(d,'刷新余额'));assert.ok(row(d,'积分余额提醒'));assert.match(d.container.textContent,/10 积分/);
+ current={...current,wallet:{...current.wallet,available:11}};await act(async()=>changed());assert.equal(d.container.textContent,'');
+}));
+
+test('ChatGPT with a saved Homer wallet does not fetch Homer credit proactively',async()=>withDom(async d=>{
+ window.homerDesktopAccount={state:async()=>({...firstAccount,source:'codex',connection:'website',stale:true}),onChange:()=>()=>{},refresh:async()=>assert.fail('must not query unused Homer wallet')};
+ await d.render(React.createElement(get().ModelFailureNotice));assert.equal(d.container.textContent,'');
+}));
+
+test('non-quota failure keeps its original close action and reveals a pending low balance afterwards',async()=>withDom(async d=>{
+ window.homerDesktopAccount={state:async()=>({...firstAccount,active:'website',connection:'website',stale:false,wallet:{available:5,used:0,unit:'积分'}}),onChange:()=>()=>{}};
+ await d.render(React.createElement(get().ModelFailureNotice,{failure:{messageId:'auth',code:'engine_authentication_failed',source:'website'}}));
+ assert.match(d.container.textContent,/账号连接未通过验证/);await d.click(button(d,'关闭请求失败提醒'));assert.match(d.container.textContent,/剩余积分：5 积分/);assert.ok(button(d,'购买积分'));
+}));
+
+test('successful manual refresh clears an existing quota failure without sending a request',async()=>withDom(async d=>{
+ let current={...firstAccount,active:'website',connection:'website',stale:false,wallet:{available:20,used:0,unit:'积分'}};const calls=[];
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},refresh:async()=>{calls.push('refresh');return current={...current,wallet:{...current.wallet,available:30}};}};
+ await d.render(React.createElement(get().ModelFailureNotice,{failure:{messageId:'request-costs-more',code:'engine_quota_insufficient',source:'website'}}));
+ assert.ok(row(d,'积分余额提醒'));assert.match(d.container.textContent,/20 积分/);assert.match(d.container.textContent,/当前额度不足以继续本次请求/);
+ await d.click(button(d,'刷新余额'));assert.equal(d.container.textContent,'');assert.deepEqual(calls,['refresh']);
+}));
+
+test('settings credit refresh updates the visible reminder and failed notifications never loop',async()=>withDom(async d=>{
+ let current={...firstAccount,active:'website',connection:'website',stale:false,wallet:{available:0,used:0,unit:'积分'}},fail=false,refreshes=0;const listeners=new Set();
+ window.homerDesktopAccount={state:async()=>current,onChange:cb=>{listeners.add(cb);return()=>listeners.delete(cb);},refresh:async()=>{
+  refreshes++;current=fail?{...current,stale:true,walletError:'USAGE_UNAVAILABLE'}:{...current,wallet:{...current.wallet,available:20},stale:false,walletError:undefined};listeners.forEach(cb=>cb());return current;
+ }};
+ await d.render(React.createElement(React.Fragment,null,React.createElement(get().ModelFailureNotice),React.createElement(get().DesktopAccount)));
+ assert.equal(listeners.size,2);fail=true;await d.click(button(d,'我已购买，刷新状态'));assert.equal(refreshes,1);assert.ok(row(d,'积分余额提醒'));assert.match(d.container.textContent,/剩余积分：暂时无法确认/);
+ fail=false;await d.click(button(d,'重新检查积分'));assert.equal(refreshes,2);assert.ok(!row(d,'积分余额提醒'));assert.match(d.container.textContent,/20 积分/);
+ await d.render(null);assert.equal(listeners.size,0);
+}));
+
+test('visible low balance becomes unconfirmed at credential expiry without retaining a zero conclusion',async t=>withDom(async d=>{
+ const now=1800000000000;t.mock.timers.enable({apis:['Date'],now});const timers=new Map();let next=0;
+ window.setTimeout=(fn,delay)=>{timers.set(++next,{fn,delay});return next;};window.clearTimeout=id=>timers.delete(id);
+ const current={...firstAccount,active:'website',connection:'website',stale:false,wallet:{available:0,used:0,unit:'积分',expiresAt:now/1000+1}};
+ window.homerDesktopAccount={state:async()=>({...current}),onChange:()=>()=>{}};
+ await d.render(React.createElement(get().ModelFailureNotice));assert.match(d.container.textContent,/剩余积分：0 积分/);
+ const timer=[...timers.values()][0];t.mock.timers.tick(1000);await act(async()=>timer.fn());
+ assert.match(d.container.textContent,/剩余积分：暂时无法确认/);assert.match(d.container.textContent,/登录凭据已失效/);assert.doesNotMatch(d.container.textContent,/积分已用完|剩余积分：0/);assert.ok(!button(d,'购买积分'));assert.ok(button(d,'刷新余额'));
+ await d.render(null);assert.equal(timers.size,0);
+}));
+
+test('purchase reminder never owns a second login waiting poll',async()=>withDom(async d=>{
+ window.setInterval=()=>assert.fail('the login view owns authorization polling');
+ window.homerDesktopAccount={state:async()=>({...firstAccount,source:'codex',native:{...firstAccount.native,pending:true}}),onChange:()=>()=>{}};
+ await d.render(React.createElement(get().ModelFailureNotice));assert.equal(d.container.textContent,'');
+}));
+
+test('quota balance preserves the native currency rather than labeling it as points',async()=>withDom(async d=>{
+ window.homerDesktopAccount={state:async()=>({...firstAccount,active:'website',connection:'website',stale:false,wallet:{available:1,used:0,unit:'CNY'}}),onChange:()=>()=>{}};
+ await d.render(React.createElement(get().ModelFailureNotice,{failure:{messageId:'currency-quota',code:'engine_quota_insufficient',source:'website'}}));
+ assert.match(d.container.textContent,/剩余额度：1 CNY/);assert.doesNotMatch(d.container.textContent,/剩余积分：1/);
 }));

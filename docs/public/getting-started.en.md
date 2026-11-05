@@ -2,7 +2,7 @@
 
 **English** | [简体中文](getting-started.md)
 
-This guide is for developers using the public source preview. Official desktop installers are being prepared. For first-use workflow and the sample task, read the [user guide](using-homer.en.md).
+This guide is for developers using the public source preview. Official desktop installers are being prepared. For usage instructions, read the [user guide](using-homer.en.md).
 
 ## Environment and build
 
@@ -71,7 +71,7 @@ npm run web -- --config .codex/private/homer.config.json --port 4780
 
 Open the printed local address, normally `http://127.0.0.1:4780/`. The development entry requires no pairing and is for a trusted local machine; do not forward its port publicly. Quit an old instance normally before reusing the same runtime. Do not delete a running instance's lock to take over. The desktop entry uses automatic authentication without manual pairing.
 
-This source snapshot's desktop build script targets macOS / Apple Silicon, Node.js 22.22.0, and a Swift deployment target of macOS 27.0, with Xcode command-line tools required. `npm run desktop:make` also requires explicit maintenance and source-identity arguments; see `scripts/build-desktop.mjs`. This is not a promise that other-platform installers are available. Signing, notarization, installation, and updates need separate acceptance.
+The current `scripts/build-desktop.mjs` targets macOS on Apple Silicon and Intel with Node.js 22.22.0. Apple Silicon defaults to a minimum macOS version of 27.0; Intel requires an explicit minimum version. Native helpers require Xcode command-line tools. `npm run desktop:make` also requires explicit maintenance and source-identity arguments; see `scripts/build-desktop.mjs`. This is not a promise that other-platform installers are available. Signing, notarization, installation, and updates need separate acceptance.
 
 ## Optional tools
 
@@ -105,16 +105,6 @@ Download speech models separately using the [upstream instructions](https://gith
 
 ## Source preview status
 
-The published product code is a fixed snapshot from 2026-11-03. The following previously recorded checks used isolated directories and reused local dependencies; they do not establish a fresh installation or formal release acceptance.
+This guide describes the source in this commit. Desktop installers and download instructions will be added after release validation. Desktop model-source selection is implemented, but does not establish eligibility for every ChatGPT plan or public availability of Homer's paid service. The CLI provider configuration above is a separate setup path.
 
-| Check | Recorded result |
-| --- | --- |
-| `npm run build` | Passed; some frontend chunks still exceed 500 kB. |
-| `npm start -- --help` | Passed without a real model call. |
-| `npm run typecheck` | Failed with 121 diagnostics involving tests, interfaces, imports, and related references. |
-| Selected model-configuration, history-bridge, and service-observer tests | 83/84 passed; `tests/tool-service-observer.test.ts` failed when reading `snapshot` from an undefined object. The cause remains unconfirmed. |
-| Mobile offline tests | 19/19 passed. |
-
-The model service still has recorded recharge-binding and recovery-check issues. It is not presented as a fully accepted public paid service. ChatGPT integration eligibility remains to be confirmed.
-
-`npm test` covers Homer's own responsibilities. Full default tests were not run in that snapshot check. Real engines, media tools, browser/native communication, other machines, and official installers require separate validation. See [Tests and mobile development](testing.md) (Chinese) for the explicit suites. This documentation update does not rerun or supersede those product checks.
+Run `npm run typecheck` and the relevant offline tests for your checkout; see [Tests and mobile development](testing.md) (Chinese). Test results from an older source snapshot do not describe the current commit. Default tests cover Homer's own contracts; real model access, media tools, browser/native communication, installation, signing, and updates require separate validation.

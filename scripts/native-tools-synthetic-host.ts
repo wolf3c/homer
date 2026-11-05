@@ -60,7 +60,7 @@ class ScriptedMain extends EventEmitter {
 }
 const app = new Homer(config, async () => { await web?.publish(); }, (options: EngineOptions) => new ScriptedMain(options));
 await app.start();
-web = await createWebServer({ bridge: homerWebBridge(app), port: 4802, uiDirectory, logoPath: resolve('assets/branding/homer-hippo-cool-icon-256.png') });
+web = await createWebServer({ bridge: homerWebBridge(app), port: 4802, uiDirectory, logoPath: resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png') });
 
 const receipt = { url: web.url, data, pid: process.pid, synthetic: true, realModel: false, realAccount: false, realOutbound: false };
 writeFileSync(join(root, 'synthetic-browser-location.json'), JSON.stringify(receipt, null, 2));

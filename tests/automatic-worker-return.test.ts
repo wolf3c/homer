@@ -1,158 +1,110 @@
-// Requirements-derived synthetic contracts. No model, credentials or channels.
+// Real Task/Worker returns and SQLite; no model, account or channel.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture,delegate,running,main} from './recursive-fixture.js';
+import {fixture,openWorker,running,main,mutation,processReplies} from './recursive-fixture.js';
 import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
 
-test('natural final output is offered once without a completion tool or a business verdict',()=>{
+test('natural final output returns exactly once without creating a Result or a business verdict',()=>{
  const f=fixture();try{
-  const child=delegate(f),actor=running(f,child.taskId);
-  const output={status:'completed',text:'日期仍待确认，已核对材料。'};
+  const worker=openWorker(f),actor=running(f,worker.runId),output={status:'completed',text:'日期仍待确认，已核对材料。'};
   const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,output,true)!;
-  assert.equal(RECURSIVE_TOOLS.some(t=>t.name==='task_complete'),false);
-  assert.equal(f.tasks.task(child.taskId).outcome,null);
-  const inspected=f.tasks.inspect(main,{resultId:returned.resultId});
-  assert.equal(inspected.actualResult!.payload.text,output.text);
-  assert.equal(inspected.results.find(r=>r.id===returned.resultId)!.state,'offered');
-  assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,output,true)!.resultId,returned.resultId);
-  assert.equal(f.tasks.inbox(main).filter(m=>m.kind==='result_ready').length,1);
-  const t=f.tasks.task(child.taskId);
-  assert.throws(()=>f.tasks.review(main,{operationId:'missing-evidence',taskId:t.id,version:1,expectedTaskRevision:t.revision,resultId:returned.resultId,accepted:true,outcome:'succeeded',reason:'checked',evidence:{},children:[]}),/task_criterion_missing/);
-  f.tasks.review(main,{operationId:'review',taskId:t.id,version:1,expectedTaskRevision:t.revision,resultId:returned.resultId,accepted:true,outcome:'partial',reason:'日期无法确认',evidence:{gaps:'日期缺失'},children:[]});
-  assert.equal(f.tasks.task(t.id).outcome,'partial');
+  assert.equal(RECURSIVE_TOOLS.some(tool=>tool.name==='task_complete'),false);
+  assert.equal(f.tasks.task(f.task.taskId).outcome,null);assert.deepEqual(f.tasks.readTask(main,f.task.taskId).results,[]);
+  const original=f.tasks.workerRead(main,{workerId:worker.workerId,messageId:returned.messageId}).messages[0]!;
+  assert.equal(original.text,output.text);assert.equal(original.taskVersion,1);assert.equal(original.senderRunId,actor.runId);
+  assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,output,true)!.messageId,returned.messageId);
+  assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='worker_reply').length,1);
+  f.tasks.settleTask(main,{...mutation(f,'settle'),outcome:'partial',notes:'日期无法确认'});
+  assert.equal(f.tasks.task(f.task.taskId).outcome,'partial');assert.equal(f.tasks.deliveries().length,0);
  }finally{f.close();}
 });
 
-test('failed execution returns existing files and text without settling the business goal',()=>{
+test('failed execution preserves existing exact file bytes and raw text without adopting or settling',()=>{
  const f=fixture();try{
-  const child=delegate(f,'files',f.root.taskId,main,'markdown'),actor=running(f,child.taskId);
-  f.tasks.markMaterialRead(actor);
-  const file=f.tasks.writeMarkdown(actor,{operationId:'write',filename:'report.md',content:'# Checked synthetic facts'});
-  const result=f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'failed',text:'已生成报告，后续检查失败。',errorCode:'synthetic_error'},true)!;
-  const facts=f.tasks.inspect(main,{resultId:result.resultId});
-  assert.equal(facts.task.outcome,null);
-  assert.equal(facts.results.find(r=>r.id===file.resultId)!.state,'offered');
-  assert.ok(facts.completionResultIds.includes(file.resultId));
-  assert.equal(f.tasks.inbox(main).filter(m=>m.kind==='terminal').length,1);
+  const worker=openWorker(f),actor=running(f,worker.runId),file=f.tasks.writeMarkdown(actor,{operationId:'write',filename:'report.md',content:'# Checked synthetic facts'});
+  const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'failed',text:'已生成报告，后续检查失败。',errorCode:'synthetic_error'},true)!;
+  const reply=f.tasks.workerRead(main,{workerId:worker.workerId,messageId:returned.messageId}).messages[0]!;
+  assert.equal(reply.text,'已生成报告，后续检查失败。');assert.equal(reply.payload.execution.errorCode,'synthetic_error');
+  assert.equal(f.tasks.task(f.task.taskId).outcome,null);assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,0);
+  const adopted=f.tasks.adoptResult(main,{operationId:'adopt',taskId:f.task.taskId,version:1,runId:worker.runId,filePath:file.path});
+  assert.equal(f.tasks.readResult(main,adopted.resultId).file!.sha256,file.sha256);
+  assert.equal(f.tasks.deliveries().length,0);assert.equal(f.tasks.task(f.task.taskId).outcome,null);
  }finally{f.close();}
 });
 
-test('main aggregate settles atomically with publication instead of completing separately',()=>{
+test('formal publication and explicit business settlement are independent and invalid publication is atomic',()=>{
  const f=fixture();try{
-  const root=f.tasks.task(f.root.taskId),args={taskId:root.id,version:1,expectedTaskRevision:root.revision,resultId:null,text:'已核对合成材料。',publishedFileResultId:null,outcome:'succeeded' as const,evidence:{facts:'Synthetic input checked'},children:[]};
-  assert.throws(()=>f.tasks.publish(main,{...args,operationId:'bad',publishedFileResultId:'missing'}));
-  assert.equal(f.tasks.task(root.id).outcome,null);
-  assert.equal(f.tasks.inspect(main,{taskId:root.id}).results.length,0);
-  const delivery=f.tasks.publish(main,{...args,operationId:'publish'});
-  assert.equal(f.tasks.task(root.id).outcome,'succeeded');
-  assert.equal(f.tasks.delivery(delivery.deliveryId).outcome,'succeeded');
+  assert.throws(()=>f.tasks.publish(main,{operationId:'invalid',taskId:f.task.taskId,version:1,resultIds:['missing'],text:'Synthetic report'}),/result_not_found/);
+  assert.equal(f.tasks.task(f.task.taskId).outcome,null);assert.equal(f.tasks.deliveries().length,0);
+  const worker=openWorker(f),actor=running(f,worker.runId),returned=f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'已核对合成材料。'},true)!;
+  const result=f.tasks.adoptResult(main,{operationId:'adopt',taskId:f.task.taskId,version:1,messageId:returned.messageId});
+  const delivery=f.tasks.publish(main,{operationId:'publish',taskId:f.task.taskId,version:1,resultIds:[result.resultId],text:'已核对合成材料。'});
+  assert.equal(f.tasks.task(f.task.taskId).outcome,null);assert.equal(f.tasks.delivery(delivery.deliveryId).state,'prepared');
+  f.tasks.settleTask(main,{...mutation(f,'settle'),outcome:'succeeded'});assert.equal(f.tasks.task(f.task.taskId).outcome,'succeeded');
+  assert.equal(f.tasks.delivery(delivery.deliveryId).state,'prepared');
  }finally{f.close();}
 });
 
-for(const terminalReceived of [false,true])test('restart preserves public output once with terminal received='+terminalReceived,()=>{
+for(const terminalReceived of [false,true])test('restart preserves exact public items once; native terminal received='+terminalReceived,()=>{
  const f=fixture();try{
-  const child=delegate(f),actor=running(f,child.taskId);
+  const worker=openWorker(f),actor=running(f,worker.runId);
   f.tasks.recordWorkerOutput(actor.runId!,actor.epoch!,{...actor,itemId:'report',phase:'final_answer',text:'已核对，日期缺失。'});
   if(terminalReceived)f.tasks.recordWorkerTerminal(actor.runId!,actor.epoch!,{status:'completed',text:'已核对，日期缺失。'});
-  f.tasks.reconcile();
-  const first=f.tasks.inspect(main,{taskId:child.taskId});
-  assert.equal(first.task.state,terminalReceived?'reviewing':'recovery');assert.equal(first.task.outcome,null);
-  const result=first.results.find(r=>r.runId===actor.runId)!;
-  assert.equal(JSON.parse(result.payloadJson).text,'已核对，日期缺失。');
-  assert.equal(result.state,'offered');
-  const notices=f.tasks.inbox(main).length;
-  f.tasks.reconcile();assert.equal(f.tasks.inbox(main).length,notices);
-  assert.equal(f.tasks.inspect(main,{taskId:child.taskId}).results.length,1);
+  f.tasks.confirmWorkerExit(actor.runId!,undefined);f.tasks.reconcile();
+  const reply=f.tasks.workerRead(main,{workerId:worker.workerId}).messages.find(message=>message.kind==='worker_reply')!;
+  assert.equal(reply.text,'已核对，日期缺失。');assert.deepEqual(reply.nativeMessages,[{itemId:'report',phase:'final_answer',characters:reply.text.length}]);
+  assert.equal(reply.payload.execution.status,terminalReceived?'completed':'unconfirmed');assert.equal(f.tasks.run(actor.runId!).status,terminalReceived?'succeeded':'interrupted');
+  assert.equal(f.tasks.task(f.task.taskId).outcome,null);assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,0);
+  f.tasks.reconcile();assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='worker_reply').length,1);
  }finally{f.close();}
 });
 
-test('restart after a wait terminal requires recovery instead of parking an exited Worker',()=>{
+test('unconfirmed return retains raw output but cannot start a queued followup until exact exit',()=>{
  const f=fixture();try{
-  const child=delegate(f),other=delegate(f,'wait-target'),actor=running(f,child.taskId),task=f.tasks.task(child.taskId);
-  f.tasks.wait(actor,{operationId:'wait',taskId:task.id,version:1,expectedTaskRevision:task.revision,condition:{type:'result_or_terminal',taskId:other.taskId,version:1}});
-  f.tasks.recordWorkerOutput(actor.runId!,actor.epoch!,{...actor,itemId:'waiting',phase:'final_answer',text:'等待核对日期。'});
-  f.tasks.recordWorkerTerminal(actor.runId!,actor.epoch!,{status:'completed',text:'等待核对日期。'});
-  f.tasks.reconcile();
-  const facts=f.tasks.inspect(main,{taskId:task.id});
-  assert.equal(facts.task.state,'recovery');assert.equal(facts.task.outcome,null);
-  assert.equal(facts.run!.status,'interrupted');assert.equal(facts.run!.phase,'ended');
-  assert.equal(JSON.parse(facts.results[0]!.payloadJson).text,'等待核对日期。');
-  assert.equal(f.store.db.prepare("SELECT count(*) n FROM run_waits WHERE runId=? AND state IN ('armed','ready')").get(actor.runId!)!.n,0);
+  const worker=openWorker(f),actor=running(f,worker.runId),terminal={status:'completed',text:'等待核对日期。'};
+  const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,false)!;
+  assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,false)!.messageId,returned.messageId);
+  assert.equal(f.tasks.run(actor.runId!).phase,'uncertain');assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  const queued=f.tasks.workerSend(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checking'});assert.equal(queued.runId,null);assert.equal(f.tasks.claim(),undefined);
+  assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='worker_reply').length,1);
+  f.tasks.confirmWorkerExit(actor.runId!,undefined);const next=f.tasks.claim()!;assert.ok(next);assert.equal(next.workerId,worker.workerId);assert.equal(next.threadId,actor.threadId);
  }finally{f.close();}
 });
 
-test('a duplicate wait terminal cannot turn a parked segment into a completed task',()=>{
+test('raw reply and its pending receipt commit together and failed commit retries once',()=>{
  const f=fixture();try{
-  const child=delegate(f),other=delegate(f,'wait-target'),actor=running(f,child.taskId),task=f.tasks.task(child.taskId);
-  f.tasks.wait(actor,{operationId:'wait',taskId:task.id,version:1,expectedTaskRevision:task.revision,condition:{type:'result_or_terminal',taskId:other.taskId,version:1}});
-  const terminal={status:'completed',text:'等待核对日期。'};
-  f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,false);
-  assert.equal(f.tasks.run(actor.runId!).phase,'parked');
-  f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,false);
-  assert.equal(f.tasks.run(actor.runId!).phase,'parked');
-  assert.equal(f.tasks.inspect(main,{taskId:task.id}).results.length,0);
- }finally{f.close();}
-});
-
-test('candidate and original inbox notice commit together and a failed commit can retry',()=>{
- const f=fixture();try{
-  const child=delegate(f),actor=running(f,child.taskId),revision=f.tasks.task(child.taskId).revision;
-  f.store.db.exec("CREATE TEMP TRIGGER fail_return_notice BEFORE INSERT ON agent_messages WHEN NEW.kind='result_ready' BEGIN SELECT RAISE(ABORT,'synthetic_notice_failure'); END");
+  const worker=openWorker(f),actor=running(f,worker.runId),before=f.tasks.task(f.task.taskId);
+  f.store.db.exec("CREATE TEMP TRIGGER fail_return_notice BEFORE INSERT ON agent_messages WHEN NEW.kind='worker_reply' BEGIN SELECT RAISE(ABORT,'synthetic_notice_failure'); END");
   const terminal={status:'completed',text:'Synthetic checked result'};
   assert.throws(()=>f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,true),/synthetic_notice_failure/);
-  assert.equal(f.tasks.inspect(main,{taskId:child.taskId}).results.length,0);
-  assert.equal(f.tasks.task(child.taskId).revision,revision);
-  f.store.db.exec('DROP TRIGGER fail_return_notice');
-  const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,true)!;
-  assert.equal(f.tasks.inbox(main).filter(m=>m.kind==='result_ready').length,1);
-  assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,true)!.resultId,returned.resultId);
+  assert.equal(f.tasks.inbox(main).length,0);assert.deepEqual(f.tasks.task(f.task.taskId),before);assert.equal(f.tasks.run(actor.runId!).status,'running');
+  f.store.db.exec('DROP TRIGGER fail_return_notice');const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,true)!;
+  assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,true)!.messageId,returned.messageId);
+  assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='worker_reply').length,1);
+  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(returned.messageId)!.state,'pending');
  }finally{f.close();}
 });
 
-test('a completed turn with commentary only stays unconfirmed by business acceptance',()=>{
+test('commentary-only output remains exact raw evidence without automatic adoption or business acceptance',()=>{
  const f=fixture();try{
-  const child=delegate(f),actor=running(f,child.taskId);
-  const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'正在检查',messages:[{itemId:'comment',phase:'commentary',text:'正在检查'}]},true)!;
-  const inspected=f.tasks.inspect(main,{resultId:returned.resultId});
-  assert.equal(inspected.actualResult!.payload.text,'');
-  assert.equal(inspected.actualResult!.payload.messages[0].text,'正在检查');
-  const t=inspected.task;
-  for(const outcome of ['succeeded','partial'] as const)
-   assert.throws(()=>f.tasks.review(main,{operationId:'false-'+outcome,taskId:t.id,version:1,expectedTaskRevision:t.revision,resultId:returned.resultId,accepted:true,outcome,reason:'No final output',evidence:{facts:true,gaps:'No usable output'},children:[]}),/result_empty/);
-  assert.equal(f.tasks.task(t.id).outcome,null);
+  const worker=openWorker(f),actor=running(f,worker.runId),returned=f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'正在检查',messages:[{itemId:'comment',phase:'commentary',text:'正在检查'}]},true)!;
+  const reply=f.tasks.workerRead(main,{workerId:worker.workerId,messageId:returned.messageId}).messages[0]!;
+  assert.equal(reply.text,'正在检查');assert.deepEqual(reply.nativeMessages,[{itemId:'comment',phase:'commentary',characters:4}]);
+  assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,0);assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  processReplies(f);assert.equal(f.tasks.inbox(main).length,0);assert.equal(f.tasks.task(f.task.taskId).outcome,null);
  }finally{f.close();}
 });
 
-for(const terminalReceived of [false,true])test('explicit stop retains received output with terminal received='+terminalReceived,()=>{
+for(const terminalReceived of [false,true])test('explicit stop retains exact received output once; native terminal received='+terminalReceived,()=>{
  const f=fixture();try{
-  const child=delegate(f),actor=running(f,child.taskId);
+  const worker=openWorker(f),actor=running(f,worker.runId);
   f.tasks.recordWorkerOutput(actor.runId!,actor.epoch!,{...actor,itemId:'report',phase:terminalReceived?'commentary':'final_answer',text:'停止前已核对两项。'});
   if(terminalReceived)f.tasks.recordWorkerTerminal(actor.runId!,actor.epoch!,{status:'completed',text:'停止前已核对两项。',messages:[{itemId:'terminal-only',phase:'final_answer',text:'停止前已核对两项。'}]});
-  const t=f.tasks.task(child.taskId),stop=f.tasks.stop(main,{operationId:'stop',taskId:t.id,version:1,expectedTaskRevision:t.revision,scope:'self',reason:'Synthetic user stop'});
-  f.tasks.confirmStop(stop.operationKey,true);
-  const notices=f.tasks.inbox(main).filter(m=>m.kind==='terminal');
-  assert.equal(notices.length,1);assert.equal((notices[0]!.payload as any).output.text,'停止前已核对两项。');
-  assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'late'},true),undefined);
-  assert.equal(f.tasks.task(t.id).outcome,'cancelled');
- }finally{f.close();}
-});
-
-for(const state of ['offered','staged'])test('historical '+state+' candidates keep their verdict and receipt across recovery and review',()=>{
- const f=fixture();try{
-  const child=delegate(f),actor=running(f,child.taskId);
-  const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'Historical synthetic report'},true)!;
-  // A historical record, not a compatibility execution route for the removed tool.
-  const row=f.tasks.inspect(main,{resultId:returned.resultId}).results[0]!;
-  f.store.db.prepare("UPDATE results SET state=?,outcome='partial',payloadJson=?,evidenceJson=? WHERE id=?").run(state,JSON.stringify({summary:'Historical partial result'}),JSON.stringify({gaps:'Historical missing date'}),row.id);
-  f.store.db.prepare("UPDATE operations SET kind='complete',operationId='historical-complete',responseJson=? WHERE id=?").run(JSON.stringify({resultId:row.id,state:'sealing',outcome:'partial'}),row.operationKey);
-  if(state==='staged')f.store.db.prepare("UPDATE runs SET status='running',phase='sealing' WHERE id=?").run(actor.runId!);
-  const receipt=f.tasks.operation(row.operationKey);
-  f.tasks.reconcile();
-  const inspected=f.tasks.inspect(main,{resultId:row.id}),t=inspected.task;
-  assert.equal(inspected.results.length,1);assert.equal(inspected.results[0]!.state,'offered');
-  assert.equal(inspected.actualResult!.payload.summary,'Historical partial result');
-  f.tasks.review(main,{operationId:'review-old',taskId:t.id,version:1,expectedTaskRevision:t.revision,resultId:row.id,accepted:true,outcome:'partial',reason:'Historical actual result checked'});
-  assert.equal(f.tasks.task(t.id).outcome,'partial');
-  assert.deepEqual(f.tasks.operation(row.operationKey),receipt);
+  const stop=f.tasks.workerStop(main,{operationId:'stop',workerId:worker.workerId,reason:'Synthetic user stop'});
+  f.tasks.confirmWorkerExit(actor.runId!,undefined);f.tasks.confirmStop(stop.operationKey,true);
+  const notices=f.tasks.inbox(main).filter(message=>message.kind==='worker_reply');
+  assert.equal(notices.length,1);assert.equal(notices[0]!.payload.text,'停止前已核对两项。');
+  const original=notices[0]!.id;assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'late'},true),undefined);
+  assert.equal(f.tasks.inbox(main)[0]!.id,original);assert.equal(f.tasks.task(f.task.taskId).outcome,null);assert.equal(f.tasks.run(actor.runId!).status,'cancelled');
  }finally{f.close();}
 });

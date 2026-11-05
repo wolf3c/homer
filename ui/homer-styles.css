@@ -196,7 +196,10 @@
 .model-failure-copy{flex:1;min-width:0;overflow-wrap:anywhere}.model-failure-notice h2{margin:0;font-size:15px;line-height:1.6;font-weight:600}.model-failure-notice p{margin:4px 0 0;font-size:13px;line-height:1.65;color:var(--muted)}
 .model-failure-actions{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;margin-top:14px}.model-failure-actions button{min-height:36px;font-size:13px}.model-failure-actions .primary-button{padding:8px 16px}.model-failure-actions .primary-button:hover{background:#45433f}.model-failure-account{padding:8px 4px;background:transparent;color:var(--muted);text-align:left}.model-failure-account:hover,.model-failure-close:hover{background:var(--soft-hover)}
 .model-failure-close{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;background:transparent;color:var(--muted)}
+.model-failure-heading{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 20px}.model-failure-heading .model-failure-balance{margin:0;font-size:13px}.model-failure-balance strong{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.model-failure-notice-quota .model-failure-actions{gap:8px;justify-content:flex-end}.model-failure-notice-quota .model-failure-account{margin-right:auto}.model-failure-notice-quota .model-failure-actions button{min-height:44px;padding:8px 12px}.model-failure-notice-quota .model-failure-actions button:not(.primary-button):not(.model-failure-account){background:var(--surface);border:1px solid var(--line)}
 @media(max-width:600px),(pointer:coarse){.model-failure-notice{padding:14px}.model-failure-actions button,.model-failure-close{min-height:44px}.model-failure-close{width:44px}}
+@media(max-width:600px){.model-failure-notice-quota .model-failure-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.model-failure-notice-quota .model-failure-account{grid-column:1/-1;grid-row:1;justify-self:start;margin:0}}
 
 /* Mobile shell owns visibility and version decisions; this is only its snapshot. */
 .mobile-update-notice{flex-shrink:0;background:var(--soft);border-bottom:1px solid var(--line);color:var(--ink);font-size:14px}

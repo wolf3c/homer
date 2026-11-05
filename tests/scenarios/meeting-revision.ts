@@ -21,7 +21,7 @@ export const MEETING_REVISION = {
   initialConditions: [
     "从项目根目录执行，使用新建的专用 scratch workspace 和独立 runtime。",
     "输入 fixture 复制为 materials/meeting-notes.md；无既有 Run 或成果。",
-    "真实回归先构建 dist，使用明确获准的连接、Codex 0.154.0、gpt-6.1-sol。",
+    "真实回归先构建 dist，使用明确获准的连接、当前固定 Codex 和实际模型配置。",
   ],
   messages: {
     remember: "这轮无敏感信息验收的代号是海鸥47，请记住。只需回答收到。",
@@ -30,7 +30,7 @@ export const MEETING_REVISION = {
       "请读取 meeting-notes.md，把会议笔记整理成行动清单并写入 Markdown。保留未明确负责人或时间的待确认项，讨论和暂缓事项不得升级为已承诺行动。新建一个事项。",
     progress: "现在刚才那项会议整理工作是什么状态？请查询实际记录，简短回答。",
     revise:
-      "请修订事项 {matterId}：将刚才的行动清单按负责人分组，未确认的单独列出。保留原来的事实和讨论、暂缓事项。请生成新版本，不覆盖原文件。",
+      "请修订事项 {taskId}：将刚才的行动清单按负责人分组，未确认的单独列出。保留原来的事实和讨论、暂缓事项。请生成新版本，不覆盖原文件。",
   },
   steps: [
     {
@@ -49,7 +49,7 @@ export const MEETING_REVISION = {
       id: "dispatch",
       action: "send",
       message: "dispatch",
-      observe: "主 Agent 工具派发持久 Matter/Run 和独立 Worker。",
+      observe: "主 Agent 记录任务并打开独立 Worker 会话。",
     },
     {
       id: "query",
@@ -66,7 +66,7 @@ export const MEETING_REVISION = {
       id: "revise",
       action: "send-after-delivery",
       message: "revise",
-      observe: "填入上次 matterId，同 Matter 新 Run、新 Worker 及新文件。",
+      observe: "填入原 taskId，同任务按新要求继续；可续用原 Worker，会话新轮次生成新文件。",
     },
     {
       id: "verify",

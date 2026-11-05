@@ -207,7 +207,7 @@ test("TG restart retains checkpoint/route/counter and freezes uncertain sends", 
 
 test("TG actual verified document bytes are multipart; local paths never become download URLs", async () => {
   const f = fixture(); f.adapter.receive([f.update()]); await f.adapter.idle();
-  await f.adapter.event({ type: "delivery", id: "file-result", sourceRequestId: generation.sourceRequestId, text: "成果已完成", runId: "worker-file" });
+  await f.adapter.event({ type: "delivery", id: "file-result", sourceRequestId: generation.sourceRequestId, text: "成果已完成", resultId: "result-file" });
   for (let i = 0; i < 4; i++) { await f.adapter.tick(); f.advance(); }
   const upload = f.calls.find(c => c.method === "sendDocument")?.body;
   assert.ok(upload instanceof FormData);
@@ -325,7 +325,7 @@ test("TG long poll confirms only committed inbox offset; 409 stops consumer with
 
 test("TG one uncertain chunk pauses its own remaining chunks/file but not independent results", async () => {
   const f = fixture(); f.adapter.receive([f.update()]); await f.adapter.idle();
-  await f.adapter.event({ type: "delivery", id: "large", sourceRequestId: generation.sourceRequestId, text: "合成".repeat(20_000), runId: "worker-large" });
+  await f.adapter.event({ type: "delivery", id: "large", sourceRequestId: generation.sourceRequestId, text: "合成".repeat(20_000), resultId: "result-large" });
   await f.adapter.event({ type: "delivery", id: "other", sourceRequestId: generation.sourceRequestId, text: "独立合成成果" });
   await f.adapter.tick(); f.advance(); f.loseResponse(); await f.adapter.tick();
   for (let i = 0; i < 8; i++) { f.advance(); await f.adapter.tick(); }

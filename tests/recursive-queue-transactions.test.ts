@@ -51,14 +51,14 @@ test('HMR-QUEUE-TX: failed claim validation rolls back history, request and sour
     await f.app.start();f.app.inputs.accept(input);const before=state(f);
     const hooks=lifecycle(f),claim=hooks.claim;let requestWasProcessing=false;
     hooks.claim=(value,thread)=>{
-      claim(value,thread);requestWasProcessing=f.app.store.request(value.requestId)?.state==='processing';
+      claim(value,thread);requestWasProcessing=f.app.store.request(value.requestId)?.state==='started';
       throw Error('synthetic_claim_failure');
     };
     assert.throws(()=>f.app.inputs.claim(),/synthetic_claim_failure/);assert.deepEqual(state(f),before);
     assert.equal(requestWasProcessing,true,'request must be inside the transaction before claim validation');
     hooks.claim=claim;
     const claimed=f.app.inputs.claim()!;assert.equal(claimed.state,'processing');
-    assert.equal(f.app.store.request(input.requestId)?.state,'processing');
+    assert.equal(f.app.store.request(input.requestId)?.state,'started');
     assert.equal(f.app.store.request(input.requestId)?.hash,createHash('sha256').update(input.text).digest('hex'));
     assert.deepEqual(f.app.history.list(f.app.store.meta('mainThread')!).map(m=>m.status),['processing','running']);
     assert.equal(f.app.inputs.claim(),undefined);

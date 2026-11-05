@@ -1,8 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {PassThrough} from 'node:stream';
-import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,realpathSync,rmSync,symlinkSync,statSync} from 'node:fs';
+import {PassThrough,Writable} from 'node:stream';
+import * as filesystem from 'node:fs';
+import {createHash} from 'node:crypto';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,realpathSync,rmSync,symlinkSync,statSync,existsSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {createServer} from 'node:http';
 import {transpileModule,ModuleKind,ScriptTarget} from 'typescript';
@@ -14,9 +16,9 @@ import {fileURLToPath} from 'node:url';
 // Link the real entry to OS fixtures. No test switches or probes in the app.
 async function fixture(args=['Homer','--test-profile','/synthetic/profile'],openExternal=async()=>{},platform='darwin',native={}){
  let monotonic=0;
- const handlers=new Map(),windows=[],messages=[],sent=[],nativeCalls=[],launches=[],credentials=[],tokenFiles=[];let spawnCount=0;
- const app=new EventEmitter();
- Object.assign(app,{isPackaged:true,whenReady:async()=>{},setPath(){},getPath:()=>'/synthetic',requestSingleInstanceLock:()=>true,getVersion:()=> '0.1.0',relaunch(){nativeCalls.push(['relaunch']);},quit(){const e={preventDefault(){this.prevented=true;}};app.emit('before-quit',e);if(!e.prevented)app.emit('quit');},setAboutPanelOptions(){}});
+ const handlers=new Map(),windows=[],messages=[],sent=[],nativeCalls=[],ownershipCalls=[],launches=[],credentials=[],tokenFiles=[];let spawnCount=0;
+ const app=new EventEmitter(),paths=new Map();let ownsLock=false;
+ Object.assign(app,{isPackaged:true,whenReady:async()=>{},setPath(name,path){paths.set(name,path);ownershipCalls.push(['set-path',name,path]);},getPath:()=>'/synthetic',requestSingleInstanceLock(){const key=paths.get('userData');ownershipCalls.push(['single-instance',key]);if(native.lockAvailable===false||native.locks?.has(key))return false;native.locks?.add(key);ownsLock=true;return true;},hasSingleInstanceLock:()=>ownsLock,getVersion:()=> '0.1.0',relaunch(){nativeCalls.push(['relaunch']);},quit(){const e={preventDefault(){this.prevented=true;}};app.emit('before-quit',e);if(!e.prevented)app.emit('quit');},setAboutPanelOptions(){}});
  const session={webRequest:{onBeforeSendHeaders:(...args)=>handlers.set('desktop-request',args.at(-1))},setPermissionRequestHandler:cb=>handlers.set('permission-request',cb),setPermissionCheckHandler:cb=>handlers.set('permission-check',cb),on:(name,cb)=>handlers.set(name,cb)};
  const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();child.stdin.on('data',value=>{
   const message=JSON.parse(String(value));
@@ -42,7 +44,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  let stored=native.connection??{token:'synthetic-file-token',subject:'fixture_user',config:config()};
  const account={queryHomerRuntimeConfig:async options=>{nativeCalls.push(['config']);return native.config?native.config(options):config();},saveHomerRuntimeConfig:(_path,value)=>{if(native.writeError)throw Error('CONNECTION_WRITE_FAILED');stored={token:stored.token,subject:stored.subject,config:value};nativeCalls.push(['save-config']);return stored;},readHomerConnection:path=>{tokenFiles.push(path);if(native.invalidTokenFile)throw Error('CONNECTION_FILE_INVALID');return stored;},validateHomerOrigins:v=>v,authorizeHomerConnection:async options=>{const value=native.authorize?await native.authorize(options):{token:'synthetic-website-token',subject:'fixture_user',config:config()};if(!options.signal.aborted)stored=value;return value;},disconnectHomerConnection:()=>{nativeCalls.push(['disconnect']);if(native.disconnectError)throw Error('CONNECTION_WRITE_FAILED');stored=stored?.subject?{...stored,token:undefined}:null;},queryHomerWallet:async()=>{nativeCalls.push(['wallet']);return native.wallet?native.wallet():{available:5,used:2,unit:'原生额度'};}};
  class NsisUpdater extends EventEmitter{constructor(options){super();nativeCalls.push(['nsis',options]);this.on('error',()=>{if(this.logger!==null)console.error('private_library_log');});}checkForUpdates(){nativeCalls.push(['check-update',this.logger]);if(native.checkReject){this.emit('error',Error('private_check'));return Promise.reject(Error('private_check'));}return Promise.resolve(native.nullCheck?null:{downloadPromise:native.downloadReject?Promise.resolve().then(()=>{this.emit('error',Error('private_download'));throw Error('private_download');}):Promise.resolve([])});}quitAndInstall(...args){if(this.quitAndInstallCalled)return;this.quitAndInstallCalled=true;nativeCalls.push(['install-update',...args]);if(native.closeBeforeInstallError)for(const w of windows){w.destroyed=true;w.contentsDestroyed=true;}if(native.installError)throw Error('private_install');if(native.installAsyncError)this.emit('error',Error('EACCES UNKNOWN private_install'));queueMicrotask(()=>app.quit());}}
- const modules={'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'electron':electron,'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:()=>native.adopted?{adoption:{appData:"/synthetic/original-app"}}:{},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,saveDesktopModelSource:(_root,source)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(['source',source]);}}};
+ const modules={'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'../homer/dist/processes.js':{processIdentity:()=> 'synthetic-process',leaseOwnerGone:()=>true},'electron':electron,'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:root=>({root,runtime:native.runtime??join(root,'runtime'),workspace:join(root,'workspace'),codexHome:native.codexHome??join(root,'codex'),...(native.adopted?{adoption:{appData:'/synthetic/original-app'}}:{})}),recoverDesktopOwner:home=>{assert.equal(ownsLock,true);ownershipCalls.push(['recover-owner',home]);if(native.recoveryError)throw Error('desktop_owner_unknown');},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,saveDesktopModelSource:(_root,source)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(['source',source]);}}};
  Object.assign(account,native.accountApi);
  let timer;const context=vm.createContext({process:{argv:['Homer','--test-profile','/synthetic/profile'],resourcesPath:'/synthetic/Homer.app/Contents/Resources',platform:'darwin',execPath:'C:\\Homer\\Homer.exe',arch:native.arch??'arm64',env:{SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'}},Buffer,URL,AbortController,console:native.console??console,performance:{now:()=>monotonic},setTimeout:cb=>{timer=cb;return 1;},clearTimeout(){}});
  context.process.argv=args;context.process.platform=platform;
@@ -52,11 +54,68 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  const entry=new vm.SourceTextModule(readFileSync(path,'utf8')+'\nexport {createWindow,windowsUpdater}; export const forgetWindowForTest=()=>{window=undefined;};',{context,identifier:path,importModuleDynamically:synthetic,initializeImportMeta:meta=>{meta.url='file://'+path;}});
  await entry.link(async name=>{const exports=modules[name]??createRequire(import.meta.url)(name);const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);},{context});return m;});
  await entry.evaluate();await new Promise(r=>setImmediate(r));
- return {options:native,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
+ return {options:native,paths,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,ownershipCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
 }
 if(!vm.SourceTextModule){
  test('Electron shell contracts run with Node VM module support',()=>{execFileSync(process.execPath,['--experimental-vm-modules','--test',fileURLToPath(import.meta.url)],{stdio:'pipe'});});
 }else{
+
+test('desktop home lock serializes different profiles and runtimes while caches remain profile-local',async()=>{
+ const locks=new Set(),codexHome='/synthetic/shared-home';
+ const first=await fixture(['Homer','--test-profile','/synthetic/profile-a'],undefined,'darwin',{locks,codexHome,runtime:'/synthetic/runtime-a'});
+ assert.deepEqual(first.ownershipCalls.filter(call=>call[0]==='single-instance'||call[0]==='recover-owner'),[['single-instance',codexHome],['recover-owner',codexHome]]);
+ assert.equal(first.paths.get('userData'),'/synthetic/profile-a/host-home/electron');assert.equal(first.paths.get('sessionData'),'/synthetic/profile-a/host-home/electron');
+ assert.equal(first.spawnCount(),1);assert.equal(first.app.hasSingleInstanceLock(),true);
+ const second=await fixture(['Homer','--test-profile','/synthetic/profile-b'],undefined,'darwin',{locks,codexHome,runtime:'/synthetic/runtime-b'});
+ assert.equal(second.spawnCount(),0);assert.equal(second.ownershipCalls.some(call=>call[0]==='recover-owner'),false);
+ const other=await fixture(['Homer','--test-profile','/synthetic/profile-c'],undefined,'darwin',{locks,codexHome:'/synthetic/other-home'});
+ assert.equal(other.spawnCount(),1);
+});
+test('desktop owner recovery failure never starts the runtime',async()=>{
+ const f=await fixture(undefined,undefined,'darwin',{recoveryError:true});assert.equal(f.spawnCount(),0);
+ assert.equal(f.ownershipCalls.filter(call=>call[0]==='recover-owner').length,1);assert.equal(f.messages.some(message=>message.detail?.includes('desktop_owner_unknown')),true);
+});
+for(const mode of ['dead','runtime-live','gateway-live','runtime-unknown','lease-live','home-owned'])test('adoption runtime delegates to existing lock recovery: '+mode,async t=>{
+ const desktop=await import('../scripts/desktop-profile.mjs'),{acquireLock,processIdentity,leaseOwnerGone}=await import('../src/processes.ts'),{DatabaseSync}=await import('node:sqlite');
+ const parent=resolve('.codex/scratch/chat-architecture-implementation-20261105/adoption-runtime-tests');mkdirSync(parent,{recursive:true});
+ const profile=mkdtempSync(join(parent,'case-'));t.after(()=>rmSync(profile,{recursive:true,force:true}));
+ const runtime=join(profile,'old-runtime'),codexHome=join(profile,'codex'),workspace=join(profile,'workspace');
+ for(const path of [runtime,join(runtime,'gateway'),codexHome,workspace,join(profile,'host-home'),join(profile,'tmp')])mkdirSync(path,{recursive:true,mode:0o700});
+ const dead=Number(execFileSync(process.execPath,['-e','process.stdout.write(String(process.pid))'],{encoding:'utf8'}));assert.equal(processIdentity(dead),undefined);
+ const locks=[join(runtime,'cli.lock'),join(runtime,'gateway/cli.lock')];
+ for(const [index,path]of locks.entries())writeFileSync(path,mode==='runtime-unknown'&&index===0?'{}':JSON.stringify({pid:mode===(index===0?'runtime-live':'gateway-live')?process.pid:dead,identity:'unverified-old-identity'}),{mode:0o600});
+ const database=join(runtime,'homer.sqlite'),db=new DatabaseSync(database);
+ try{db.exec('CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE retained(state TEXT); INSERT INTO retained VALUES(\'unknown\')');db.prepare('INSERT INTO meta VALUES(?,?)').run('mainThread','original-main');db.prepare('INSERT INTO meta VALUES(?,?)').run('lease:main',JSON.stringify({pid:mode==='lease-live'?process.pid:dead,identity:'old-native'}));}finally{db.close();}
+ const config={runtime,codexHome,workspace,requiresOpenaiAuth:true},sourceConfig=join(profile,'source.json'),sourceBytes=Buffer.from(JSON.stringify(config));writeFileSync(sourceConfig,sourceBytes,{mode:0o600});
+ const digest=bytes=>createHash('sha256').update(bytes).digest('hex'),paths={runtime,codexHome,workspace,adoption:{sourceConfig,sha256:digest(sourceBytes),appData:profile,nativeCodexHome:codexHome}};
+ writeFileSync(join(profile,'.homer-desktop-test-profile'),'{"format":1}');writeFileSync(join(profile,'fixture-codex.mjs'),'synthetic');
+ const ownerFile=join(codexHome,'desktop-owner.json');
+ if(mode==='dead'){writeFileSync(ownerFile,JSON.stringify({format:1,pid:dead,identity:'old-runtime',runtime}),{mode:0o600});desktop.recoverDesktopOwner(codexHome,processIdentity,leaseOwnerGone);assert.equal(existsSync(ownerFile),false);for(const path of locks)assert.equal(existsSync(path),true);}
+ if(mode==='home-owned')writeFileSync(ownerFile,JSON.stringify({format:1,pid:process.pid,identity:processIdentity(process.pid),runtime}),{mode:0o600});
+ const before=readFileSync(database),lockBefore=locks.map(path=>readFileSync(path)),events=[],stdin=new PassThrough();let lockAttempts=0;
+ const bundle='/synthetic/Homer.app',resources=bundle+'/Contents/Resources',homer=resources+'/homer',empty=Buffer.alloc(0);
+ const manifest={format:2,node:'22.22.0',codex:'0.163.0',arch:'arm64',files:[],sourceHash:'synthetic-hash',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node'].map(path=>({path,sha256:digest(empty)}))};
+ const proc={argv:['node','desktop-runtime','--profile',profile,'--test-profile'],version:'v22.22.0',arch:'arm64',platform:'darwin',execPath:bundle+'/Contents/MacOS/node',stdin,stdout:new Writable({write(bytes,_encoding,done){events.push(JSON.parse(String(bytes)));done();}}),env:{HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp')},cwd:()=>profile};
+ const modules={
+  'node:fs':{...filesystem,realpathSync:path=>String(path).startsWith(bundle)?path:filesystem.realpathSync(path),readdirSync:path=>path===resources?[]:filesystem.readdirSync(path),readFileSync:(path,...args)=>path===join(resources,'desktop-manifest.json')?Buffer.from(JSON.stringify(manifest)):String(path).startsWith(bundle)?empty:filesystem.readFileSync(path,...args)},
+  './desktop-profile.mjs':{...desktop,prepareDesktopProfile:()=>paths,readDesktopModelSource:()=> 'codex'},
+  ['file://'+homer+'/dist/processes.js']:{processIdentity,leaseOwnerGone},
+  ['file://'+homer+'/dist/model-config.js']:{PRODUCT_MODEL_DEFAULTS:{model:'synthetic'}},
+  ['file://'+homer+'/dist/config.js']:{loadConfig:path=>{assert.equal(path,sourceConfig);return config;}},
+  ['file://'+homer+'/dist/recursive-tasks.js']:{RECURSIVE_SCHEMA_VERSION:'5'},
+  ['file://'+homer+'/dist/mobile-gateway.js']:{readMobileConfig:()=>({})},
+  './trusted-build.mjs':{verifyBuild(){}},
+  './dev.mjs':{runDev:async options=>{assert.equal(options.fixedBuild.thread,'original-main');const releases=[];try{for(const path of [join(runtime,'gateway'),runtime]){lockAttempts++;releases.push(acquireLock(path));}return {noHostStarted:true};}catch(error){return {noHostStarted:true,startupError:error.message};}finally{for(const release of releases.reverse())release();}}},
+ };
+ const context=vm.createContext({process:proc,Buffer,console}),require=createRequire(import.meta.url);
+ async function synthetic(name){const exports=modules[name]??require(name),module=new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);},{context});await module.link(()=>{});await module.evaluate();return module;}
+ const entry=new vm.SourceTextModule(readFileSync('scripts/desktop-runtime.mjs','utf8'),{context,initializeImportMeta:meta=>{meta.url='file://'+homer+'/scripts/desktop-runtime.mjs';},importModuleDynamically:synthetic});
+ await entry.link(synthetic);await entry.evaluate();stdin.destroy();
+ if(mode==='dead'){assert.equal(proc.exitCode,undefined,JSON.stringify(events));assert.equal(lockAttempts,2);assert.ok(events.some(event=>event.kind==='stopped'));for(const path of locks)assert.equal(existsSync(path),false);}
+ else{assert.equal(proc.exitCode,1);assert.equal(events.some(event=>event.kind==='stopped'),false);assert.equal(events.find(event=>event.kind==='error')?.code,mode==='home-owned'?'desktop_owner_conflict':mode==='lease-live'?'desktop_adoption_owner_unknown':mode==='runtime-unknown'?'runtime_already_open':'runtime_lock_identity_unverified');assert.equal(lockAttempts,mode==='gateway-live'?1:mode==='lease-live'||mode==='home-owned'?0:2);if(mode==='runtime-live'||mode==='runtime-unknown')assert.deepEqual(readFileSync(locks[0]),lockBefore[0]);if(mode==='gateway-live')assert.deepEqual(readFileSync(locks[1]),lockBefore[1]);}
+ assert.deepEqual(readFileSync(database),before);assert.deepEqual(readFileSync(sourceConfig),sourceBytes);
+ assert.equal(existsSync(ownerFile),mode==='home-owned');
+});
 
 const stableManifest={releaseChannel:'stable',appId:'app.homer.desktop',publishable:true,preparation:false};
 async function updateFixture(native={}){return accountFixture({manifest:stableManifest,...native});}
@@ -390,6 +449,35 @@ test('account methods reject arguments, foreign frames, and responses after navi
  await g.tick();await g.windows[0].loadURL('http://127.0.0.1:56789/preview/x');settle({available:1,used:1,unit:'额度'});
  await assert.rejects(pending,/desktop_account_forbidden/);
 });
+for(const error of [undefined,'UNAVAILABLE','CONNECTION_WRITE_FAILED'])test(`website authorization completion presents final account state and focuses Homer: ${error??'success'}`,async()=>{
+ let finish;
+ const f=await accountFixture({authorize:()=>new Promise((resolve,reject)=>{finish=()=>error?reject(Error(error)):resolve({...websiteConnection(),token:'synthetic-new-token'});})});
+ await accountCall(f,'connect');await f.tick();
+ const w=f.windows[0];w.hide();w.focused=false;
+ let stateAtFocus;w.focus=()=>{w.focused=true;stateAtFocus=accountCall(f,'state');};
+ assert.equal((await accountCall(f,'state')).pending,true);
+ finish();await f.tick();
+ assert.equal(w.hidden,false);assert.equal(w.focused,true);
+ const state=await stateAtFocus;assert.equal(state.pending,false);assert.equal(state.canReopen,false);assert.equal(state.error,error);
+ if(!error)assert.equal(state.needsRestart,true);
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='external').length,0);
+});
+for(const boundary of ['cancel','replacement','quit'])test(`late website authorization cannot publish or focus after ${boundary}`,async()=>{
+ for(const error of [undefined,'UNAVAILABLE']){
+  let finish,started=0,finishQuit,signal;
+  const f=await accountFixture({authorize:options=>{signal=options.signal;return ++started===1?new Promise((resolve,reject)=>{finish=()=>error?reject(Error(error)):resolve({...websiteConnection(),token:'synthetic-late-token'});}):new Promise(()=>{});},response:()=>new Promise(resolve=>{finishQuit=resolve;})});
+  await accountCall(f,'connect');await f.tick();
+  if(boundary==='cancel')await accountCall(f,'cancel');
+  else if(boundary==='replacement')await accountCall(f,'connect');
+  else {f.app.quit();assert.equal(signal.aborted,true);}
+  const w=f.windows[0];w.hide();w.focused=false;
+  const before=await accountCall(f,'state'),messages=w.settingsMessages.length;
+  finish();await f.tick();
+  assert.equal(w.hidden,true);assert.equal(w.focused,false);assert.deepEqual(await accountCall(f,'state'),before);
+  assert.equal(w.settingsMessages.length,messages);
+  await accountCall(f,'cancel');finishQuit?.(0);await f.tick();
+ }
+});
 test('reopening a pending login uses the same private authorization and stops after callback or cancellation',async()=>{
  let options,complete;const login=new Promise(resolve=>complete=resolve);
  const f=await accountFixture({authorize:async value=>{options=value;await value.openBrowser('https://website.example.invalid/homer?state=synthetic');return login;}});
@@ -414,6 +502,16 @@ test('wallet refresh merges concurrent reads and runtime events only expose inva
  const a=accountCall(f,'refresh'),b=accountCall(f,'refresh');await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='wallet').length,1);
  settle({available:0,used:2,unit:'额度'});const states=await Promise.all([a,b]);assert.equal(states[0].wallet.available,0);
  f.event({kind:'account_usage_dirty',text:'must-not-forward'});await f.tick();assert.ok(f.windows[0].settingsMessages.some(([name,value])=>name==='homer:account:changed'&&value===undefined));
+});
+
+test('wallet refresh notifies existing account views on success and failure without exposing balances',async()=>{
+ let fail=false;const f=await accountFixture({wallet:async()=>{if(fail)throw Error('USAGE_UNAVAILABLE');return {available:10,used:0,unit:'积分'};}});
+ f.windows[0].settingsMessages.length=0;
+ await accountCall(f,'refresh');
+ assert.ok(f.windows[0].settingsMessages.some(([name,value])=>name==='homer:account:changed'&&value===undefined));
+ f.windows[0].settingsMessages.length=0;fail=true;
+ await accountCall(f,'refresh');
+ assert.ok(f.windows[0].settingsMessages.some(([name,value])=>name==='homer:account:changed'&&value===undefined));
 });
 
 const websiteConnection=()=>({token:'synthetic-account-token',subject:'fixture_user',config:{main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}});
@@ -899,4 +997,18 @@ test('expired wallet cache is stale even when no usage invalidation arrives',asy
  await accountCall(f,'refresh');const state=await accountCall(f,'state');
  assert.equal(state.stale,true);assert.equal(state.wallet.expiresAt,1);
 });
+
+for(const modelSource of ['codex','website'])for(const response of [0,1])test(`relay account login and ordinary restart retain ${modelSource} source, confirmation ${response}`,async()=>{
+ const f=await accountFixture({modelSource,response});
+ const walletReads=f.nativeCalls.filter(c=>c[0]==='wallet').length;
+ await accountCall(f,'connect');await f.tick();
+ const saved=await accountCall(f,'state');assert.equal(saved.source,modelSource);assert.equal(saved.needsRestart,true);
+ const previous=f.credentials.slice();await accountCall(f,'restart');await f.tick();
+ assert.deepEqual(f.credentials,previous,'running owner keeps its applied account until exit');
+ if(response===1){f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='relaunch').length,1);}
+ else{assert.equal((await accountCall(f,'state')).needsRestart,true);assert.equal(f.sent.length,0);}
+ assert.equal(f.nativeCalls.some(c=>c[0]==='source'||c[0]==='disconnect'),false);
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='wallet').length,walletReads);
+});
+
 }

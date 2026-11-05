@@ -8,6 +8,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import {transpileModule,ModuleKind,ScriptTarget} from 'typescript';
+import {assertDesktopAdoptionLeasesRecoverable} from '../scripts/desktop-profile.mjs';
 const require=createRequire(import.meta.url),tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function link(source,modules,context,url){
  const entry=new vm.SourceTextModule(source,{context,initializeImportMeta:meta=>{meta.url=url;},importModuleDynamically:name=>synthetic(modules[name]??require(name))});
@@ -22,8 +23,8 @@ async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestAr
  const modules={
   'node:fs':{realpathSync:path=>path,existsSync:path=>path===profile+'/fixture-codex.mjs',readFileSync:path=>Buffer.from(path.endsWith('desktop-manifest.json')?JSON.stringify(manifest):path.endsWith('.homer-desktop-test-profile')?'{"format":1}':''),readdirSync:()=>[],lstatSync(){throw Error('unexpected_lstat');},mkdirSync(){},writeFileSync(){throw Error('unexpected_write');},closeSync(){}},
   'node:sqlite':{DatabaseSync:class{constructor(){throw Error('unexpected_database');}}},
-  './desktop-profile.mjs':{prepareDesktopProfile:()=>({codexHome:profile+'/codex',workspace:profile+'/workspace',runtime:profile+'/runtime'}),acquireDesktopOwner:()=>()=>{events.push({kind:'owner-release'});if(releaseError)throw Error('desktop_owner_release_failed');},desktopBoundary:()=> 'fixture',readDesktopModelSource:()=> 'codex'},
-  [new URL('dist/processes.js','file://'+homer+'/').href]:{processIdentity:()=>{}},
+  './desktop-profile.mjs':{prepareDesktopProfile:()=>({codexHome:profile+'/codex',workspace:profile+'/workspace',runtime:profile+'/runtime'}),assertDesktopAdoptionLeasesRecoverable,acquireDesktopOwner:(home,identity,runtime)=>{assert.equal(home,profile+'/codex');assert.equal(runtime,profile+'/runtime');assert.equal(identity(),'fixture-owner');return ()=>{events.push({kind:'owner-release'});if(releaseError)throw Error('desktop_owner_release_failed');};},desktopBoundary:()=> 'fixture',readDesktopModelSource:()=> 'codex'},
+  [new URL('dist/processes.js','file://'+homer+'/').href]:{processIdentity:()=> 'fixture-owner',leaseOwnerGone:()=>{throw Error('unexpected_lease_probe');}},
   [new URL('dist/model-config.js','file://'+homer+'/').href]:{PRODUCT_MODEL_DEFAULTS:{model:'fixture'}},
   [new URL('dist/mobile-gateway.js','file://'+homer+'/').href]:{readMobileConfig:()=>({})},
   './trusted-build.mjs':{verifyBuild(){}},

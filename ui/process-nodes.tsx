@@ -73,10 +73,10 @@ function LegacyWorkerNotes({items}:{items:Extract<ProcessItem,{kind:'worker'}>[]
 }
 export function WorkerEventCard({item}:{item:Extract<ProcessItem,{kind:'workerEvent'}>}){
   const event=item.event;if(!event)return <p className="process-record-note">Worker 事件内容未能读取。</p>;
-  const label=event.eventKind==='delegated'?'当时：已交办':event.eventKind==='result_received'?'当时：收到成果待核对':'当时：启动失败';
+  const label=event.eventKind==='delegated'?'当时：已交办':event.eventKind==='reply_received'?'当时：收到回复':'当时：启动失败';
   return <TaskCard className="homer-task-status worker-event-card" data-worker-event={item.eventKey}
     label={event.title} meta={label} title={event.title+' · '+label}
-    state={event.eventKind==='start_failed'?'failed':'waiting'} statusLabel={label} statusIcon={<SemanticTaskIcon icon={event.eventKind==='delegated'?'Send':event.eventKind==='result_received'?'Inbox':'CircleX'}/>}>
+    state={event.eventKind==='start_failed'?'failed':'waiting'} statusLabel={label} statusIcon={<SemanticTaskIcon icon={event.eventKind==='delegated'?'Send':event.eventKind==='reply_received'?'Inbox':'CircleX'}/>}>
     <p className="text-xs leading-relaxed">{event.body}</p>
   </TaskCard>;
 }
@@ -102,10 +102,10 @@ export function ProcessNodeView({node,renderText,activityText,observation={conne
     const text=toolActivityText(item,stale); // Legacy summaries have no call body.
     return [{id:item.id,kind:'tool',label:'',content:<p data-tool-id={item.id} data-tool-status={item.status}>{text}</p>}];
   });
-  // A received summary is an immutable receipt, not an acceptance or a new
+  // A received reply preview is an immutable receipt, not a new
   // user report. Keep it in the existing process disclosure. Missing/error or
   // unclassified historical events retain their visible entry.
-  const detailReceipt=(item:Extract<ProcessItem,{kind:'workerEvent'}>)=>item.event?.eventKind==='result_received'&&item.event.bodySource==='summary';
+  const detailReceipt=(item:Extract<ProcessItem,{kind:'workerEvent'}>)=>item.event?.eventKind==='reply_received'&&item.event.bodySource==='reply';
   for(const item of items)if(item.kind==='workerEvent'&&detailReceipt(item))entries.push({id:item.id,kind:'commentary',label:'',content:<WorkerEventCard item={item}/>});
   // A lazy header needs the original disclosure to request its authorized entries.
   if(!loaded)entries.push({id:node.id+':loading',kind:'commentary',label:'',content:<p role="status">{error||'过程详情尚未加载…'}</p>});

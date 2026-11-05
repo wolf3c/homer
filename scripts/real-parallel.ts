@@ -16,7 +16,7 @@ writeFileSync(join(config.workspace, 'materials', 'a.md'), '# 合成笔记A\n林
 writeFileSync(join(config.workspace, 'materials', 'b.md'), '# 合成笔记B\n陈舟负责校对，日期待确认。\n');
 const delivered = new Set<string>();
 const app = new Homer(config, async m => {
-  if (m.type === 'delivery' && m.runId) delivered.add(m.runId);
+  if (m.type === 'delivery' && m.deliveryId) delivered.add(m.deliveryId);
 });
 let stage = "start";
 try {
@@ -28,20 +28,24 @@ try {
   stage = "assertions";
   const runs = app.store.runs();
   assert.equal(runs.length, 2);
-  assert.ok(runs.every(r => r.status === 'succeeded' && r.delivery === 'delivered' && delivered.has(r.id)));
+  assert.ok(runs.every(r => r.status === 'succeeded'));
   assert.equal(new Set(runs.map(r => r.threadId)).size, 2);
-  assert.equal(new Set(runs.map(r => r.artifact)).size, 2);
+  const files=runs.map(r=>{const files=app.tasks.publishedArtifacts(r.id);assert.equal(files.length,1);return files[0]!;});
+  assert.ok(files.every(file=>delivered.has(file.deliveryId)));
+  assert.equal(new Set(files.map(file=>file.path)).size, 2);
+  assert.ok(app.tasks.deliveries().every(delivery=>delivery.state==='recorded'));
   const intervals = runs.map(r => {
     const events = app.store.events(r.id);
-    return { start: events.find(e => e.type === 'engine_started')!.at, end: events.find(e => e.type === 'artifact_written')!.at };
+    return { start: events.find(e => e.type === 'engine_started')!.at, end: r.endedAt! };
   });
   assert.ok(Math.max(...intervals.map(x => x.start)) < Math.min(...intervals.map(x => x.end)), 'real_worker_intervals_must_overlap');
-  for (const r of runs) {
-    const content = readFileSync(r.artifact!, 'utf8');
+  for (const [i,r] of runs.entries()) {
+    const content = readFileSync(files[i]!.path, 'utf8');
     assert.match(content, /待确认/);
-    assert.match(content, r.material === 'a.md' ? /林青/ : /陈舟/);
+    const goal=app.tasks.version(r.taskId,r.version).goal;assert.match(goal,/a\.md|b\.md/);
+    assert.match(content, goal.includes('a.md') ? /林青/ : /陈舟/);
   }
-  const report = { scenarioId: 'HMR-PARALLEL-001', sourceType: 'requirements-derived', fixtureSourceType: 'synthetic', at: new Date().toISOString(), model: config.model, passed: true, workerIntervalsOverlap: true, runs: runs.map(r => ({ id:r.id, matterId:r.matterId, threadId:r.threadId, status:r.status, delivery:r.delivery, artifact:r.artifact, usage:r.usage ? JSON.parse(r.usage) : null })), mainUsage: JSON.parse(app.store.meta('mainUsage') ?? 'null'), transcriptSaved:false, costAmount:null };
+  const report = { scenarioId: 'HMR-PARALLEL-001', sourceType: 'requirements-derived', fixtureSourceType: 'synthetic', at: new Date().toISOString(), model: config.model, passed: true, workerIntervalsOverlap: true, runs: runs.map((r,i) => ({ id:r.id, taskId:r.taskId, workerId:r.workerId, threadId:r.threadId, status:r.status, resultId:files[i]!.resultId, sha256:files[i]!.sha256, usage:r.usage ? JSON.parse(r.usage) : null })), mainUsage: JSON.parse(app.store.meta('mainUsage') ?? 'null'), transcriptSaved:false, costAmount:null };
   writeFileSync(join(base, 'checks.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ passed:true, model:config.model, workers:runs.length, report:join(base,'checks.json') }));
 } catch (error) {

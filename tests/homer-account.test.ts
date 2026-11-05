@@ -221,15 +221,17 @@ test('real loopback performs exact exchange once; invalid callback cannot write,
   res.setHeader('Content-Type','application/json');res.end(JSON.stringify(credentials()));
  });
  try{
-  const controller=new AbortController();let callbackUrl='',accepted=0;
-  const connected=api.authorizeHomerConnection({...boundary,websiteOrigin:website.origin,allowSyntheticLoopback:true,file,signal:controller.signal,onCallback:()=>{accepted++;},openBrowser:async(raw:string)=>{
+  const controller=new AbortController();let callbackUrl='',accepted=0,browser:Promise<void>|undefined;
+  const connected=api.authorizeHomerConnection({...boundary,websiteOrigin:website.origin,allowSyntheticLoopback:true,file,signal:controller.signal,onCallback:()=>{accepted++;},openBrowser:(raw:string)=>browser=(async()=>{
    const url=new URL(raw);callbackUrl=url.searchParams.get('redirect_uri')!;const state=url.searchParams.get('state');
    assert.equal((await fetch(callbackUrl+'?code='+Buffer.alloc(32,1).toString('base64url')+'&state=wrong')).status,400);
    assert.equal(accepted,0);
    assert.equal(api.readHomerConnection(file,boundary),null);
-   assert.equal((await fetch(callbackUrl+'?code='+Buffer.alloc(32,1).toString('base64url')+'&state='+state)).status,200);
-  }});
-  await connected;assert.equal(accepted,1);assert.equal(posts,1);assert.equal(api.readHomerConnection(file,boundary).token,'synthetic-key');
+   const response=await fetch(callbackUrl+'?code='+Buffer.alloc(32,1).toString('base64url')+'&state='+state);
+   assert.equal(response.status,200);
+   assert.equal(await response.text(),'授权请求已收到，请返回 Homer 查看连接结果。此页面可以关闭。');
+  })()});
+  await connected;await browser;assert.equal(accepted,1);assert.equal(posts,1);assert.equal(api.readHomerConnection(file,boundary).token,'synthetic-key');
   await assert.rejects(fetch(callbackUrl));
   hold=true;const cancel=new AbortController();let sent:()=>void=()=>{};const requested=new Promise<void>(r=>sent=r);
   const late=api.authorizeHomerConnection({...boundary,websiteOrigin:website.origin,allowSyntheticLoopback:true,file,signal:cancel.signal,openBrowser:async(raw:string)=>{

@@ -7,7 +7,7 @@ import {Homer} from '../src/service.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import type {EngineOptions,ToolCall} from '../src/engine.js';
 
-const until=async(check:()=>boolean)=>{const deadline=Date.now()+5000;while(!check()){assert.ok(Date.now()<deadline,'synthetic skill approval wait');await new Promise(r=>setTimeout(r,5));}};
+const until=async(check:()=>boolean,label='synthetic skill approval wait')=>{const deadline=Date.now()+5000;while(!check()){assert.ok(Date.now()<deadline,label);await new Promise(r=>setTimeout(r,5));}};
 test('service main and Worker skill requests use real user cards and retain protected HOME boundaries across main resume',async()=>{
  const scratch=resolve('.codex/scratch/native-system-skills-implementation');mkdirSync(scratch,{recursive:true});
  const dir=mkdtempSync(join(scratch,'skill-svc-')),home=join(dir,'codex'),workspace=join(dir,'workspace'),runtime=join(dir,'runtime');
@@ -33,7 +33,8 @@ test('service main and Worker skill requests use real user cards and retain prot
    if(this.options.nativeTools==='worker'){
     await this.approvals();await this.call('write_markdown',{filename:'synthetic.md',content:'# Synthetic result'});
    }else if(text==='synthetic skill request'){
-    await this.approvals();await this.call('dispatch_work',{title:'Synthetic skill package',goal:'Synthetic authorized full package check',material:'synthetic.md'});
+    await this.approvals();const task=await this.call('task_create',{title:'Synthetic skill package',goal:'Synthetic authorized full package check'}) as {taskId:string};
+    await this.call('worker_open',{taskId:task.taskId,message:'Check the synthetic skill package using materials/synthetic.md.'});
    }
    return {status:'completed',text:'Synthetic receipt.'};
   }
@@ -45,7 +46,7 @@ test('service main and Worker skill requests use real user cards and retain prot
    if(mode==='resume'){const thread=app.store.meta('mainThread');await app.close();app=new Homer(config,async()=>{},factory);await app.start();assert.equal(starts.at(-1)?.threadId,thread);}else await app.start();
    const before=outcomes.length;app.submitMessage({requestId:mode+'-user-task',text:'synthetic skill request'});
    for(let n=0;n<4;n++){
-    await until(()=>app.interactions.list().some(i=>i.state==='pending_user'));
+    await until(()=>app.interactions.list().some(i=>i.state==='pending_user'),mode+' pending skill card '+n);
     const pending=app.interactions.inspect(app.interactions.list().find(i=>i.state==='pending_user')!.id);
     const bridge=homerWebBridge(app);
     if(pending.userQuestion!.includes(join(home,'config.toml'))){

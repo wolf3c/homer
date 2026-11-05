@@ -1,7 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 
-export type WorkerEventKind = 'delegated' | 'result_received' | 'start_failed';
-export type WorkerBodySource = 'description' | 'summary' | 'missing' | 'error';
+export type WorkerEventKind = 'delegated' | 'reply_received' | 'start_failed';
+export type WorkerBodySource = 'description' | 'reply' | 'missing' | 'error';
 export type WorkerCardSnapshot = {
   schemaVersion:1;
   eventKind:WorkerEventKind;
@@ -11,7 +11,6 @@ export type WorkerCardSnapshot = {
   taskId:string|null;
   version:number|null;
   runId:string|null;
-  resultId:string|null;
   sourceMessageId:string|null;
   operationKey:string|null;
   observedAtMs:number;
@@ -29,8 +28,8 @@ function text(value:unknown,max:number){
   return value.trim();
 }
 function snapshot(input:WorkerCardInput):WorkerCardSnapshot{
-  if(!['delegated','result_received','start_failed'].includes(input.eventKind) ||
-    !['description','summary','missing','error'].includes(input.bodySource) ||
+  if(!['delegated','reply_received','start_failed'].includes(input.eventKind) ||
+    !['description','reply','missing','error'].includes(input.bodySource) ||
     !Number.isFinite(input.observedAtMs)||input.observedAtMs<0 ||
     input.version!==null&&(!Number.isSafeInteger(input.version)||input.version<1) ||
     input.failureStage!=null&&!['dispatch','startup'].includes(input.failureStage) ||
@@ -39,7 +38,7 @@ function snapshot(input:WorkerCardInput):WorkerCardSnapshot{
   // Explicit allowlist: raw tool arguments and extra payload fields never persist here.
   return {schemaVersion:1,eventKind:input.eventKind,title:text(input.title,80),body:text(input.body,640),
     bodySource:input.bodySource,taskId:nullable(input.taskId),version:input.version,runId:nullable(input.runId),
-    resultId:nullable(input.resultId),sourceMessageId:nullable(input.sourceMessageId),operationKey:nullable(input.operationKey),
+    sourceMessageId:nullable(input.sourceMessageId),operationKey:nullable(input.operationKey),
     observedAtMs:input.observedAtMs,failureStage:input.failureStage??null,errorCode:input.errorCode??null};
 }
 // Sole persisted public body. Process items contain references, not another snapshot.

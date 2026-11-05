@@ -107,6 +107,18 @@ test("T09: unavailable persisted thread history is reported without exposing raw
   } finally { await engine.close(); }
 });
 
+test('resuming a Worker refuses a different native thread before submitting another turn',async()=>{
+  const engine=new CodexEngine(config,{...options,role:'worker',threadId:'expected-worker-thread'},async()=>({}));
+  try{await assert.rejects(()=>engine.start(),/^Error: engine_resume_thread_mismatch$/);}
+  finally{await engine.close();}
+});
+
+test('resuming the exact Worker thread can start its next turn',async()=>{
+  const engine=new CodexEngine(config,{...options,role:'worker',threadId:'mock-thread'},async()=>({}));
+  try{assert.equal(await engine.start(),'mock-thread');assert.equal((await engine.turn('follow-up')).text,'FIRST');}
+  finally{await engine.close();}
+});
+
 
 test('ILINK-ENGINE-001: stdio submits real native image items and refuses text-only model before start',async()=>{
  const url='data:image/png;base64,aGVsbG8=';

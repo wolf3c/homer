@@ -14,7 +14,7 @@ const archived=msg('archived-source','assistant',text),q=id=>({messageId:id,text
 const quotes=[q('current-source'),q('other-source'),q('archived-source'),{messageId:'missing-source',text:'保留缺失原文',annotation:'缺失来源批注'},{messageId:'current-source',text:'旧引用摘录',annotation:'无选区旧引用'}, {...q('current-source'),position:{...position,sourceHash:'0'.repeat(64)}}];
 const messages=[msg('current-source','assistant',text),msg('other-source','assistant',text),...Array.from({length:10},(_,i)=>msg('filler-'+i,i%2?'assistant':'user','合成历史正文。'.repeat(15))),msg('quoted','user','继续核对这几段。',{quotes})];
 let held,hold=false;const requests=[];
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png'),historyPage({body,json}){
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png'),historyPage({body,json}){
  requests.push(body);const id=body.request.around;
  const respond=()=>json({protocol:3,threadId:'composer-review',revision:100000,units:id==='missing-source'?[]:[id],messages:id==='archived-source'?[archived]:messages.filter(m=>m.id===id),before:null,after:null});
  if(hold&&id==='archived-source'){held=respond;return;}respond();

@@ -367,7 +367,7 @@ export async function authorizeHomerConnection(options:HomerCredentialBoundary&{
       if(!attempt)throw Error('UNAUTHORIZED');
       const exchange=attempt.acceptCallback({method:request.method??'',host:request.headers.host??'',target:request.url??''});
       options.onCallback?.();
-      response.end('连接正在保存，请返回 Homer。');settle(exchange);
+      response.end('授权请求已收到，请返回 Homer 查看连接结果。此页面可以关闭。');settle(exchange);
     }catch{
       response.statusCode=400;response.end('此连接请求无效或已取消，请返回 Homer 重新连接。');
       try{attempt?.assertActive();}catch{fail(Error('UNAUTHORIZED'));}

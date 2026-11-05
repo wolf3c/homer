@@ -509,7 +509,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   const rangeBody=range?.startContainer.parentElement;
   const quoteAnchor=range&&rangeVisible&&rangeBody?.isConnected?{contextElement:rangeBody,getBoundingClientRect:()=>range.getBoundingClientRect(),getClientRects:()=>range.getClientRects()}:quoteEditor?.existing&&quoteEditor.trigger?.isConnected?quoteEditor.trigger:composerBody;
   return <div className="composer-area" ref={composerBody} tabIndex={-1}>
-    {state.modelFailure&&<ModelFailureNotice key={state.threadId+':'+state.modelFailure.messageId} failure={state.modelFailure} onAccount={onAccount} onDismiss={focusInput}/>}
+    {(connected&&window.homerDesktopAccount||state.modelFailure)&&<ModelFailureNotice key={state.threadId} failure={state.modelFailure} onAccount={onAccount} onDismiss={focusInput}/>}
     <Popover.Root open={!!quoteEditor} onOpenChange={(open,details)=>{
       if(open)return;
       const event=details.event as Event&{relatedTarget?:EventTarget|null};

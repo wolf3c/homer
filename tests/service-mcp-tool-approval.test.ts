@@ -9,7 +9,7 @@ import {Homer} from '../src/service.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {nativeInteraction,nativeResponse} from '../src/worker-interaction-protocol.js';
 import type {EngineOptions,ToolCall} from '../src/engine.js';
-const until=async(check:()=>boolean)=>{const end=Date.now()+6000;while(!check()){assert.ok(Date.now()<end,'synthetic MCP wait');await new Promise(r=>setTimeout(r,5));}};
+const until=async(check:()=>boolean,label='synthetic MCP wait')=>{const end=Date.now()+6000;while(!check()){assert.ok(Date.now()<end,label);await new Promise(r=>setTimeout(r,5));}};
 for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main and Worker ordinary MCP route once through user cards: '+serverName,{skip:!processIdentity(process.pid)?'environment: process_identity_unavailable':false},async()=>{
  mkdirSync('.codex/scratch',{recursive:true});const dir=mkdtempSync(resolve('.codex/scratch/mcp-user-')),home=join(dir,'home'),workspace=join(dir,'workspace');mkdirSync(join(workspace,'materials'),{recursive:true});writeFileSync(join(workspace,'materials/input.md'),'Synthetic');
  const config={workspace,runtime:join(dir,'runtime'),codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:10000,mainTimeoutMs:10000,stopGraceMs:100};
@@ -30,7 +30,10 @@ for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main and Wor
      const result=await this.options.onInteraction!(request);outcomes.push(result.status);wire.push({role:this.options.nativeTools,id,result:nativeResponse(request,result.decision!)});this.emit('interactionDelivered',id);
     }
     if(this.options.nativeTools==='worker')await this.call('write_markdown',{filename:'answer.md',content:'# Synthetic result'});
-    else await this.call('dispatch_work',{title:'Actual Worker title',goal:'Synthetic MCP validation',material:'input.md'});
+    else{
+     const task=await this.call('task_create',{title:'Actual Worker title',goal:'Synthetic MCP validation'}) as {taskId:string};
+     await this.call('worker_open',{taskId:task.taskId,message:'Validate the synthetic MCP interactions using materials/input.md.'});
+    }
    }
    return{status:'completed',text:'Synthetic result'};
   }
@@ -39,7 +42,7 @@ for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main and Wor
  try{
   await app.start();app.submitMessage({requestId:'source',text:'check MCP'});const bridge=homerWebBridge(app);
   for(let n=0;n<6;n++){
-   await until(()=>app.interactions.list().some(i=>i.state==='pending_user'));
+   await until(()=>app.interactions.list().some(i=>i.state==='pending_user'),'pending MCP card '+n);
    const item=app.interactions.inspect(app.interactions.list().find(i=>i.state==='pending_user')!.id);
    for(const projected of [(await bridge.state()).interactions,(await bridge.history!.state()).interactions,(await bridge.history!.interactions(0)).items]){
     const card=projected.find(i=>i.id===item.id)!;assert.equal(card.canCancel,true);assert.equal(card.workTitle,n<3?'主对话':'Actual Worker title');assert.doesNotMatch(JSON.stringify(card),/SENSITIVE_SENTINEL|tool_params/);assert.match(card.question,/alice/);

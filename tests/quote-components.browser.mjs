@@ -7,7 +7,7 @@ import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/quote-components-20261023/browser');
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??'.codex/scratch/quote-components-20261023/candidate-web');
 mkdirSync(destination,{recursive:true});
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 const long='这是一段保留原消息身份的合成引用，官方预览只显示两行。'.repeat(30);
 const msg=(id,role,text,quotes)=>({id,role,text,quotes,status:'completed',threadId:'composer-review',requestId:'request-'+id,createdAt:1700000000000});
 const messages=[msg('source-assistant','assistant','选取这句合成原文。\n\n'+long),msg('source-user','user','用户的另一条合成原文。'),msg('single-quote','user','新的说明',[{messageId:'source-assistant',text:long,annotation:''}]),msg('legacy-quote','user','历史说明',[{messageId:'legacy-a',text:long,annotation:'原批注完整保留'},{messageId:'legacy-b',text:'第二条旧引用',annotation:'第二条批注'}])];

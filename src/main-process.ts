@@ -102,41 +102,15 @@ export class MainProcessHistory {
     const row = this.db.prepare('SELECT value FROM meta WHERE key=?').get(prefix + id);
     return row ? JSON.parse(String(row.value)) : undefined;
   }
-  // Only one exact, useful result reworked by this consuming turn can be quiet.
-  // Failure/partial/unknown notices and changed contracts still require a report.
-  canQuietRework(id:string,sourceMessageId:string):boolean{
-    const node=this.exact(id);
-    if(!node||node.sourceKind!=='worker'||!node.turnIds.length||['unknown','failed','interrupted'].includes(node.status)||!node.sourceMessageIds.includes(sourceMessageId))return false;
-    const source=this.db.prepare(`SELECT m.taskId,m.taskVersion,json_extract(m.payloadJson,'$.resultId') resultId FROM agent_messages m JOIN operations o ON o.id=m.operationKey
-      WHERE m.id=? AND m.senderAgentId='host' AND m.kind='result_ready' AND m.targetRunId IS NULL AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND o.actorAgentId='host' AND o.kind='notify' AND o.state='confirmed' AND o.scopeId=m.taskId`).get(sourceMessageId);
-    if(!source)return false;
-    for(const item of node.items){
-      if(item.kind!=='tool'||item.status!=='completed'||item.activity?.action!=='review_result'||item.activity.outcome!=='changes_requested')continue;
-      const target=item.activity.target,next=item.activity.relatedTarget;
-      if(!target?.operationKey||!next||target.resultId!==source.resultId||target.taskId!==source.taskId||target.version!==source.taskVersion)continue;
-      const row=this.db.prepare(`SELECT o.detailsJson,r.version,r.runId,r.outcome,r.state,r.filePath,r.payloadJson,t.headVersion,t.currentRunId,t.state taskState,t.controlState taskControl,t.outcome taskOutcome,n.taskId nextTaskId,n.contractVersion nextVersion,n.replacesRunId,n.status nextStatus,n.phase nextPhase,n.startedAt nextStartedAt,n.errorCode nextError,n.stopRequestedAt nextStop,
-        (SELECT json_array(goal,inputsJson,resultKind,acceptanceJson,workingDirectory,authorityJson) FROM task_versions WHERE taskId=r.taskId AND version=r.version) previousContract,
-        (SELECT json_array(goal,inputsJson,resultKind,acceptanceJson,workingDirectory,authorityJson) FROM task_versions WHERE taskId=n.taskId AND version=n.contractVersion) nextContract
-        FROM operations o JOIN results r ON r.id=? JOIN tasks t ON t.id=r.taskId JOIN runs n ON n.id=?
-        WHERE o.id=? AND o.scopeId=r.taskId AND o.kind='review' AND o.state='confirmed' AND o.actorAgentId=(SELECT value FROM meta WHERE key='mainAgentId')`).get(String(source.resultId),next.runId??'',target.operationKey);
-      if(!row||row.nextStatus!=='running'||row.nextPhase!=='executing'||row.taskState!=='working'||row.taskControl!=='normal'||row.nextStop!==null||row.nextStartedAt===null||row.nextError!==null||!row.previousContract||row.previousContract!==row.nextContract||row.state!=='rejected'||row.outcome!==null&&row.outcome!=='succeeded'||row.nextTaskId!==target.taskId||row.nextVersion!==next.version||row.headVersion!==next.version||row.currentRunId!==next.runId||row.replacesRunId!==row.runId)return false;
-      const d=JSON.parse(String(row.detailsJson)),payload=JSON.parse(String(row.payloadJson));
-      if(!row.filePath&&!String(payload.text??'').trim())return false;
-      if(d.decision==='request_changes'&&d.resultId===source.resultId&&d.previousVersion===target.version&&d.previousRunId===row.runId&&d.version===next.version&&d.runId===next.runId)return true;
-    }
-    return false;
-  }
-  // An unrelated/replayed publication must not excuse this source's report.
+  // A delivery already submitted by this input must not be sent again as chat.
   hasSourceDelivery(id:string,sourceMessageId:string,text?:string):boolean{
     const node=this.exact(id);
     if(!node?.sourceMessageIds.includes(sourceMessageId))return false;
     return (node.deliveryMessageIds??[]).some(messageId=>!!this.db.prepare(`SELECT 1 FROM agent_messages m
-      JOIN results r ON r.id=json_extract(m.payloadJson,'$.resultId') AND r.taskId=m.taskId AND r.version=m.taskVersion
-      JOIN tasks t ON t.id=m.taskId
-      JOIN deliveries d ON (d.resultId=r.id OR d.resultId=r.completionResultId) AND d.rootTaskId=t.rootTaskId
-      WHERE m.id=? AND m.senderAgentId='host' AND m.kind='result_ready' AND m.targetRunId IS NULL
-      AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND r.state='accepted'
-      AND d.historyMessageId=? AND d.outcome=r.outcome AND d.state IN ('prepared','submitting','recorded')
+      JOIN deliveries d ON d.taskId=m.taskId
+      JOIN operations o ON o.id=d.operationKey AND json_extract(o.detailsJson,'$.inputMessageId')=m.id
+      WHERE m.id=? AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')
+      AND d.historyMessageId=? AND d.revokedAt IS NULL AND d.state IN ('prepared','submitting','recorded','uncertain')
       AND (? IS NULL OR d.text=?)`).get(sourceMessageId,messageId,text??null,text??null));
   }
   coordination(id:string){

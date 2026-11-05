@@ -43,7 +43,7 @@ test('ILINK-EXTRA-002 authorized publication sends one ordered combo and never r
    s.api.sendItems=async(_c,_peer,_context,_id,items)=>{combos.push(items);if(unknown)throw new WechatError('wechat_send_uncertain',true);return {message_id:'9851'};};
    s.api.updatesQueue=[{msgs:[update('9850')]}];await connect(s);await until(()=>s.received.length===1);const requestId=s.received[0]!.requestId;
    await s.channel.prepareCombinedDelivery(requestId);
-   const event={requestId,eventId:'synthetic-combo-delivery',type:'delivery' as const,text:'合成正式交付说明',artifactRunId:'run-synthetic'};
+   const event={requestId,eventId:'synthetic-combo-delivery',type:'delivery' as const,text:'合成正式交付说明',artifactResultId:'result-synthetic'};
    await s.channel.publish(event);await until(()=>combos.length===1);await until(()=>s.channel.store.outbox().find(row=>row.eventKey===event.eventId)?.state===(unknown?'uncertain':'sent'));
    assert.deepEqual(combos[0]!.map(item=>item.type),[1,4]);assert.equal(combos[0]![0]!.text_item?.text,event.text);
    const original={...s.channel.store.outbox().find(row=>row.eventKey===event.eventId)!};
@@ -60,7 +60,7 @@ test('ILINK-EXTRA-002 upload does not authorize combo send after publication is 
   s.api.sendItems=async()=>{sends++;return {message_id:'9861'};};
   s.api.updatesQueue=[{msgs:[update('9860')]}];await connect(s);await until(()=>s.channel.store.outbox().length===0&&!!s.channel.store.db.prepare('SELECT 1 FROM wechat_inbox').get());
   const requestId=String(s.db.prepare('SELECT requestId FROM wechat_inbox').get()!.requestId);await s.channel.prepareCombinedDelivery(requestId);
-  await s.channel.publish({requestId,eventId:'revoked-combo',type:'delivery',text:'synthetic description',artifactRunId:'run-synthetic'});
+  await s.channel.publish({requestId,eventId:'revoked-combo',type:'delivery',text:'synthetic description',artifactResultId:'result-synthetic'});
   await until(()=>s.channel.store.outbox().find(row=>row.eventKey==='revoked-combo')?.state==='failed');assert.equal(uploads,1);assert.equal(sends,0);
  }finally{await s.close();}
 });
@@ -218,7 +218,7 @@ test("a file upload failure preserves the task and reports an honest delivery st
   const s=setup();s.api.uploadMarkdown=async()=>{throw new WechatError("wechat_upload_unconfirmed");};
   try{
     s.api.updatesQueue=[{msgs:[update("16")]}];await connect(s);await until(()=>s.received.length===1);
-    await s.channel.publish({eventId:"file-failure",requestId:s.received[0]!.requestId,type:"delivery",text:"主Agent已核验合成成果",artifactRunId:"run-fixture"});
+    await s.channel.publish({eventId:"file-failure",requestId:s.received[0]!.requestId,type:"delivery",text:"主Agent已核验合成成果",artifactResultId:"result-fixture"});
     await until(()=>s.channel.status().failed===1 && s.api.sent.length===2);
     assert.equal(s.received.length,1);assert.match(s.api.sent[1]!.item.text_item!.text!,/尚未发送成功/);
     assert.equal(s.api.sent.filter(m=>m.item.type===4).length,0);

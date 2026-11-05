@@ -38,16 +38,15 @@ try{for(const width of [1440,390,320]){
   await page.screenshot({path:resolve(destination,name+'-'+width+'.png'),animations:'disabled'});
  };
  try{
-  // Real current-status ownership, with multiple Workers, a child and one pending question.
-  const actor={agentId:'main:activity-browser',sourceRequestId:'request-89'};
-  const contract=goal=>({goal,inputs:[],resultKind:'aggregate',acceptance:{criteria:[]}});
-  const authority={sourceRequestId:actor.sourceRequestId,description:'Synthetic removal regression',materials:[],resultIds:[],collaborateTaskIds:[],maxActiveMs:10000};
-  const root=f.tasks.createRoot(actor,{operationId:'status-root',title:'独立当前事项',executorKind:'main',contract:contract('保留顶部状态与待答'),authority});
-  const child=(parent,id,goal)=>{const t=f.tasks.task(parent);return f.tasks.delegate(actor,{operationId:id,taskId:t.id,version:t.headVersion,expectedTaskRevision:t.revision,contract:contract(goal),dependencies:[]});};
-  const first=child(root.taskId,'first-worker','资料 Worker'),second=child(root.taskId,'second-worker','核对 Worker'),nested=child(first.taskId,'child-worker','子 Worker');
-  for(const [i,w]of [first,second,nested].entries()){const r=f.tasks.claim(w.runId);f.tasks.bind(r.id,r.epoch,'synthetic-worker-'+i,'synthetic-turn-'+i);}
+  // One Task owns three independent conversations and one pending question.
+  const actor=f.actor;
+  const authority={sourceRequestId:actor.sourceRequestId,description:'Synthetic removal regression',materials:[],resultIds:[]};
+  const root=f.tasks.createTask(actor,{operationId:'status-root',title:'独立当前事项',goal:'保留顶部状态与待答',authority});
+  const open=(id,text)=>f.tasks.workerOpen(actor,{operationId:id,taskId:root.taskId,text});
+  const first=open('first-worker','资料 Worker'),second=open('second-worker','核对 Worker'),peer=open('peer-worker','并行 Worker');
+  for(const [i,w]of [first,second,peer].entries()){const r=f.tasks.claim(w.runId);f.tasks.bind(r.id,r.epoch,'synthetic-worker-'+i,'synthetic-turn-'+i);}
   const r=f.tasks.run(second.runId);
-  f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt,runEpoch,contractVersion,userQuestion,escalationReason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('reader-removal-question','reader-removal-identity','synthetic-fingerprint',r.id,r.threadId,r.turnId,'"synthetic-native"','ask_main','question','{}',JSON.stringify({...authority,nativeApprovals:false}),'pending_user',1,1,r.epoch,r.contractVersion,'是否保留这份合成资料？','仅验证原待答定位，不提交。');
+  f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt,runEpoch,taskVersion,userQuestion,escalationReason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('reader-removal-question','reader-removal-identity','synthetic-fingerprint',r.id,r.threadId,r.turnId,'"synthetic-native"','ask_main','question','{}',JSON.stringify({...authority,nativeApprovals:false}),'pending_user',1,1,r.epoch,r.version,'是否保留这份合成资料？','仅验证原待答定位，不提交。');
   f.server.publish();
   await page.setViewportSize({width,height:900});
   if(f.server.connectionFile){
@@ -93,22 +92,22 @@ try{for(const width of [1440,390,320]){
   }
   await noReader();ok(await answer.isVisible(),'普通 FileList、Canvas 与准确原答复定位可用');
   await file.click();await page.getByRole('button',{name:'关闭 Canvas'}).click();await file.waitFor();ok(await file.evaluate(e=>e===document.activeElement),'关闭 Canvas 回到原成果入口焦点');
-  const status=page.locator('#task-status-trigger');await status.click();const popover=page.getByRole('dialog',{name:'工作状态卡片'});await popover.waitFor();
-  const matter=popover.locator('[data-todo-id="'+root.taskId+'"]'),rootToggle=matter.locator(':scope > [data-slot="task-card"] > button');
+  const status=page.locator('#task-status-trigger');if(await status.getAttribute('aria-expanded')!=='true')await status.click();const popover=page.locator('#task-status-panel');await popover.waitFor();
+  const matter=popover.locator('[data-todo-id="'+root.taskId+'"]'),rootToggle=matter.locator(':scope > [data-slot="task-status-row"] > button');
   assert.equal(await rootToggle.getAttribute('aria-expanded'),'false');assert.equal(await matter.locator('[data-worker-id]').count(),0);
   await rootToggle.focus();await page.keyboard.press('Space');
-  const firstToggle=matter.locator('[data-worker-id="'+first.taskId+'"] > [data-slot="task-card"] > button');await firstToggle.waitFor();assert.equal(await firstToggle.getAttribute('aria-expanded'),'false');
-  assert.equal(await matter.locator('[data-worker-id="'+nested.taskId+'"]').count(),0);await firstToggle.click();
-  const childToggle=matter.locator('[data-worker-id="'+nested.taskId+'"] > [data-slot="task-card"] > button');await childToggle.waitFor();assert.equal(await childToggle.getAttribute('aria-expanded'),'false');
-  await rootToggle.click();await rootToggle.click();assert.equal(await firstToggle.getAttribute('aria-expanded'),'false');assert.equal(await matter.locator('[data-worker-id="'+nested.taskId+'"]').count(),0);ok(true,'顶部事项、Worker、子 Worker 逐层默认收起，父层重开重置子层');
+  const firstToggle=matter.locator('[data-worker-id="'+first.workerId+'"] > [data-slot="task-status-row"] > button'),peerToggle=matter.locator('[data-worker-id="'+peer.workerId+'"] > [data-slot="task-status-row"] > button');
+  await firstToggle.waitFor();assert.equal(await firstToggle.getAttribute('aria-expanded'),'false');assert.equal(await peerToggle.getAttribute('aria-expanded'),'false');assert.equal(await matter.locator('[data-worker-id]').count(),3);
+  await firstToggle.click();assert.equal(await peerToggle.getAttribute('aria-expanded'),'false');assert.equal(await matter.locator('[data-worker-id="'+first.workerId+'"] [data-worker-id]').count(),0);
+  await peerToggle.click();await rootToggle.click();await rootToggle.click();assert.equal(await firstToggle.getAttribute('aria-expanded'),'false');assert.equal(await peerToggle.getAttribute('aria-expanded'),'false');ok(true,'同事项各会话平铺且独立默认收起，父层重开重置各会话');
   const bounds=await popover.evaluate(e=>({left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right,width:innerWidth,document:document.documentElement.scrollWidth,scroll:e.scrollWidth,client:e.clientWidth}));
   ok(bounds.left>=0&&bounds.right<=width&&bounds.document===width&&bounds.scroll<=bounds.client,'当前状态浮层及页面无横向溢出');
   await page.screenshot({path:resolve(destination,'task-status-'+width+'.png'),animations:'disabled'});
-  await matter.locator('[data-worker-id="'+second.taskId+'"] > [data-slot="task-card"] > button').click();
+  await matter.locator('[data-worker-id="'+second.workerId+'"] > [data-slot="task-status-row"] > button').click();
   await matter.getByRole('button',{name:'前往原待答卡'}).click();
   await page.locator('#task-interaction-reader-removal-question').waitFor();
   await page.waitForFunction(()=>document.activeElement?.id==='task-interaction-reader-removal-question');await noReader();ok(true,'独立有效待答沿顶部状态定位原卡并还焦，未提交');
-  await status.click();await popover.waitFor();await page.keyboard.press('Escape');await popover.waitFor({state:'hidden'});ok(await status.evaluate(e=>e===document.activeElement),'键盘关闭状态浮层返回原入口，无失效关闭回调');
+  await status.click();await popover.waitFor();if(width>=1120){await popover.getByRole('button',{name:'收起工作状态',exact:true}).focus();await page.keyboard.press('Enter');}else await page.keyboard.press('Escape');await popover.waitFor({state:'hidden'});ok(await status.evaluate(e=>e===document.activeElement),'键盘关闭状态浮层返回原入口，无失效关闭回调');
   // An ordinary lazy history request may arrive after the thread changes.
   f.delay(500);const oldToggle=page.locator('#message-node-88 [data-slot="collapsible-trigger"]');await oldToggle.click();
   await page.waitForFunction(()=>document.querySelector('#message-node-88 [data-slot="collapsible-trigger"]')?.getAttribute('aria-expanded')==='true');

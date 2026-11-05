@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,copyFileSync,chmodSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
+import {execFileSync} from 'node:child_process';
 import {_electron} from 'playwright-core';
 
 const bundle=process.env.HOMER_TEST_APP,parent=resolve(process.env.HOMER_TEST_SCRATCH??'.codex/scratch/electron-window-tests');
@@ -33,11 +34,12 @@ async function accountWhen(page,predicate){
  while(Date.now()<deadline){const state=await page.evaluate(()=>window.homerDesktopAccount.state());if(predicate(state))return state;await page.waitForTimeout(50);}
  throw Error('synthetic_account_state_timeout');
 }
-async function quit(instance,root){
+async function quit(instance,root,verifyReleased=true){
  // Replace the native confirmation in this test process only; invoke the real menu.
  await instance.evaluate(({dialog})=>{const original=dialog.showMessageBox.bind(dialog);dialog.showMessageBox=async(first,second)=>{const options=second??first;return options.message==='退出荷马？'?{response:1,checkboxChecked:false}:original(first,second);};});
  const closed=instance.waitForEvent('close',{timeout:25000});
  await instance.evaluate(({Menu})=>Menu.getApplicationMenu().getMenuItemById('quit').click());await closed;
+ if(!verifyReleased)return; // A refused replacement must leave the old owner's evidence intact.
  for(const path of ['codex/desktop-owner.json','runtime/cli.lock','runtime/gateway/cli.lock'])assert.equal(existsSync(join(root,path)),false,path);
  const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
  try{assert.equal(db.prepare("SELECT count(*) n FROM meta WHERE key LIKE 'lease:%'").get().n,0);}finally{db.close();}
@@ -83,6 +85,30 @@ test('actual Electron app keeps an unconnected synthetic account read-only',{ski
   const result=await page.evaluate(async()=>({state:await(await fetch('/api/state')).json(),capabilities:(await fetch('/api/capabilities')).status,send:(await fetch('/api/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:'synthetic-blocked',text:'blocked'})})).status}));
   assert.equal(result.state.threadId,'');assert.equal(result.state.upgrade.accepting,false);assert.equal(result.capabilities,404);assert.equal(result.send,409);
  }finally{await quit(instance,root);}
+});
+
+test('actual Electron app recovers its isolated owner after a complete process crash',{skip:!bundle,timeout:90000},async t=>{
+ const root=profile(true);let app=await launch(root),refused=false;
+ try{
+  await stateWhen(app.page,state=>state.upgrade.phase==='running');
+  await app.page.locator('[contenteditable=true]').fill('synthetic crash retained request');
+  await app.page.locator('.send-button').click();
+  await stateWhen(app.page,state=>!state.isRunning&&state.messages.some(m=>m.role==='assistant'&&m.status==='completed'&&m.text.includes('隔离测试答复')));
+  const thread=(await app.page.evaluate(async()=>(await(await fetch('/api/state')).json()))).threadId;
+  const processes=execFileSync('/bin/ps',['-axo','pid=,ppid='],{encoding:'utf8'}).trim().split('\n').map(row=>row.trim().split(/\s+/).map(Number));
+  const owned=new Set([app.instance.process().pid]);let changed=true;
+  while(changed){changed=false;for(const [pid,parent] of processes)if(owned.has(parent)&&!owned.has(pid)){owned.add(pid);changed=true;}}
+  const closed=app.instance.waitForEvent('close',{timeout:15000});
+  for(const pid of [...owned].reverse())try{process.kill(pid,'SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;}
+  await closed;app=undefined;
+  assert.equal(existsSync(join(root,'codex/desktop-owner.json')),true,'crash leaves real ownership evidence');
+  app=await launch(root);
+  const restarted=await stateWhen(app.page,state=>state.upgrade.phase==='running'||!!state.upgrade.code);
+  refused=!!restarted.upgrade.code;
+  assert.equal(restarted.upgrade.phase,'running',restarted.upgrade.code);
+  assert.equal(restarted.threadId,thread);assert.ok(restarted.messages.some(message=>message.text==='synthetic crash retained request'));
+  t.diagnostic(JSON.stringify({synthetic:true,completeProcessCrash:true,originalThreadPreserved:true,locksManuallyRemoved:false}));
+ }finally{if(app)await quit(app.instance,root,!refused);}
 });
 
 test('daily desktop automatically receives website credentials, applies by normal stop, delivers both roles and preserves history on disconnect',{skip:!bundle,timeout:120000},async t=>{
@@ -138,7 +164,7 @@ test('daily desktop automatically receives website credentials, applies by norma
   await app.page.locator('[contenteditable=true]').fill('dispatch-synthetic');await app.page.locator('.send-button').click();
   const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
   try{
-   const deadline=Date.now()+30000;let run;const result=db.prepare("SELECT artifact FROM runs WHERE status='succeeded' AND id IN (SELECT runId FROM events WHERE type='delivered')");
+   const deadline=Date.now()+30000;let run;const result=db.prepare("SELECT r.filePath AS artifact FROM results r JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) selected ON selected.value=r.id WHERE r.kind='file' AND r.state='accepted' AND d.state='recorded' AND d.revokedAt IS NULL");
    while(!(run=result.get())&&Date.now()<deadline)await app.page.waitForTimeout(50);
    assert.ok(run,'Worker must deliver an actual file');assert.equal(readFileSync(run.artifact,'utf8'),'DeepSeek Worker 已运行（离线合成）');
   }finally{db.close();}

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';import {writeFileSync} from 'node:fs';im
 import {fixture} from './web-history-followup-fixture.mjs';import {syntheticFile} from './recursive-publication-fixture.js';import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/web-history-loading-implementation/followup'),chrome=await isolatedChrome(destination),f=await fixture(100,'after',true);
 try{
- f.store.startRequest('request-0','synthetic-old-origin');
- const made=syntheticFile(f,'request-0','authorized-old.md','# Exact old file\nSynthetic authorized bytes'),delivery=made.publish('Exact authorized old reply');
+ for(const requestId of ['origin-file-source','cancelled-file-source']){f.inputs.accept({requestId,text:'Synthetic exact authorized file'});const source=f.inputs.claim();f.inputs.finish(source.messageId,source.revision,'completed');}
+ const made=syntheticFile(f,'origin-file-source','authorized-old.md','# Exact old file\nSynthetic authorized bytes'),delivery=made.publish('Exact authorized old reply');
  f.history.record('private-neighbor-before','old-synthetic-thread','UNAUTHORIZED_NEIGHBOR_BEFORE');
  f.history.record(delivery.historyMessageId,'old-synthetic-thread',delivery.text);
  f.history.record('private-neighbor-after','old-synthetic-thread','UNAUTHORIZED_NEIGHBOR_AFTER');f.tasks.markDelivery(delivery.id,'recorded');
@@ -34,12 +34,10 @@ try{
   failures.wrongRevision=await request('/api/media/user-99/asset-00000000-0000-4000-8000-000000000099/2');assert.notEqual(failures.wrongRevision.status,200);
   failures.oldThreadAsset=await request('/api/media/'+delivery.historyMessageId+'/asset-00000000-0000-4000-8000-000000000099/1');assert.notEqual(failures.oldThreadAsset.status,200);
   failures.wrongResult=await request('/api/files/result-not-authorized/origin');assert.notEqual(failures.wrongResult.status,200);
-  f.store.startRequest('request-1','synthetic-cancelled-file');
-  const main={agentId:f.store.meta('mainAgentId'),sourceRequestId:'request-1'},root=f.tasks.createRoot(main,{operationId:'synthetic-cancelled-root',title:'Cancelled synthetic file',executorKind:'worker',contract:{goal:'Cancelled before publication',inputs:[],resultKind:'markdown',acceptance:{criteria:[]}},authority:{sourceRequestId:'request-1',description:'Synthetic exact file',materials:[],resultIds:[],collaborateTaskIds:[],maxActiveMs:10000}}),run=f.tasks.claim(root.runId);
-  const worker={agentId:root.agentId,runId:run.id,epoch:run.epoch,threadId:'synthetic-cancelled-worker',turnId:'synthetic-cancelled-turn'};f.tasks.bind(run.id,run.epoch,worker.threadId,worker.turnId);f.tasks.markMaterialRead(worker);
-  const cancelled=f.tasks.writeMarkdown(worker,{operationId:'synthetic-cancelled-write',filename:'cancelled-unpublished.md',content:'# Never published'}),task=f.tasks.task(root.taskId);
-  const stop=f.tasks.stop(main,{operationId:'synthetic-stop-before-publication',taskId:task.id,version:task.headVersion,expectedTaskRevision:task.revision,scope:'subtree',reason:'Synthetic explicit cancellation'});
-  f.tasks.confirmStop(stop.operationKey,true);assert.equal(f.tasks.task(task.id).outcome,'cancelled');
+  const cancelled=syntheticFile(f,'cancelled-file-source','cancelled-unpublished.md','# Never published'),task=f.tasks.task(cancelled.run.taskId);
+  const main={agentId:f.store.meta('mainAgentId'),sourceRequestId:'cancelled-file-source',threadId:'synthetic-history'};
+  f.tasks.controlTask(main,{operationId:'synthetic-stop-before-publication',taskId:task.id,expectedRevision:task.revision,action:'cancel',reason:'Synthetic explicit cancellation'});
+  assert.equal(f.tasks.task(task.id).outcome,'cancelled');
   failures.cancelledUnpublished=await request('/api/files/'+cancelled.resultId+'/origin');failures.cancelledFile=await request('/api/files/'+cancelled.resultId);
   const exactFile=await request('/api/files/'+made.resultId);assert.equal(exactFile.status,200);assert.ok(exactFile.body.includes('Exact old file'));
   const revoked=f.tasks.markDelivery(delivery.id,'revoked');assert.equal(revoked.state,'revoked');

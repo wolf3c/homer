@@ -9,7 +9,7 @@ import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/message-actions-20261023/browser');
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??'.codex/scratch/message-actions-20261023/candidate-web');
 mkdirSync(destination,{recursive:true});
-const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 let chrome;const checks=[];
 const markdown='# 合成回复\n\n**核对** [资料](https://example.com/hidden-target) 与 `x = 1`。\n\n| 项目 | 状态 |\n| --- | --- |\n| 核对 | 完成 |';
 const message=(id,role,text,status='completed')=>({id,role,text,status,threadId:'composer-review',requestId:'request-'+id,createdAt:1700000000000});

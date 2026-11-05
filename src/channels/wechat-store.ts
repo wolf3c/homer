@@ -132,7 +132,7 @@ export class WechatStore {
   pending(): WechatInbox[] { return this.db.prepare("SELECT * FROM wechat_inbox WHERE bindingId=? AND state='pending' ORDER BY rowid").all(this.connection().bindingId) as WechatInbox[]; }
   submitted(requestId: string) { this.db.prepare("UPDATE wechat_inbox SET state='submitted',text='' WHERE requestId=? AND state='pending'").run(requestId); }
   block(requestId: string) { this.db.prepare("UPDATE wechat_inbox SET state='blocked',text='' WHERE requestId=? AND state='pending'").run(requestId); }
-  private queueItem(requestId: string, eventKey: string, part: number, item: WechatItem | { artifactRunId: string;combinedText?:string }, key: string) {
+  private queueItem(requestId: string, eventKey: string, part: number, item: WechatItem | { artifactResultId: string;combinedText?:string }, key: string) {
     const input = this.inbox(requestId), c = this.connection();
     if (!input || input.bindingId !== c.bindingId) return false;
     const id = "homer-wechat-" + hash([eventKey, part]);
@@ -160,8 +160,8 @@ export class WechatStore {
     return this.queueItem(requestId,eventKey,progress.phase==='start'?0:1,item,key);
   }
   queueFile(requestId: string, eventKey: string, item: WechatItem, key: string) { return this.queueItem(requestId, eventKey, 0, item, key); }
-  queueArtifact(requestId: string, eventKey: string, artifactRunId: string, key: string, part=0) {
-    return this.queueItem(requestId, eventKey, part, { artifactRunId }, key);
+  queueArtifact(requestId: string, eventKey: string, artifactResultId: string, key: string, part=0) {
+    return this.queueItem(requestId, eventKey, part, { artifactResultId }, key);
   }
   prepareCombinedDelivery(requestId:string){
     const input=this.inbox(requestId),c=this.connection();
@@ -169,13 +169,13 @@ export class WechatStore {
     this.db.prepare('INSERT OR IGNORE INTO wechat_delivery_options VALUES(?,?,?)').run(requestId,input.bindingId,input.peerId);
     return {prepared:true,scope:'current_request_publications',serverAndPhone:'unverified',limit:'每次正式交付的短说明与一个已授权成果；超长说明沿原有分片路径'};
   }
-  queueCombinedArtifact(requestId:string,eventKey:string,text:string,artifactRunId:string,key:string){
+  queueCombinedArtifact(requestId:string,eventKey:string,text:string,artifactResultId:string,key:string){
     const c=this.connection();
     if(!this.db.prepare('SELECT 1 FROM wechat_delivery_options WHERE requestId=? AND bindingId=? AND peerId=?').get(requestId,c.bindingId,c.ownerId)||!text.trim()||splitWechatText(text).length!==1)return false;
     const previous=this.db.prepare('SELECT requestId FROM wechat_combined_events WHERE eventKey=?').get(eventKey);
     if(previous){if(previous.requestId!==requestId)throw new WechatError('wechat_event_conflict');return true;}
-    if(this.db.prepare('SELECT 1 FROM wechat_outbox WHERE eventKey IN (?,?) LIMIT 1').get(eventKey,eventKey+':file'))return false;
-    if(!this.queueItem(requestId,eventKey,0,{artifactRunId,combinedText:text},key))return false;
+    if(this.db.prepare('SELECT 1 FROM wechat_outbox WHERE eventKey=? LIMIT 1').get(eventKey))return false;
+    if(!this.queueItem(requestId,eventKey,0,{artifactResultId,combinedText:text},key))return false;
     this.db.prepare('INSERT INTO wechat_combined_events VALUES(?,?)').run(eventKey,requestId);return true;
   }
   outbox(): WechatOutbox[] {

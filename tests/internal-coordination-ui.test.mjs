@@ -7,10 +7,10 @@ const h=React.createElement;
 const node={id:'internal',threadId:'t',seq:1,revision:1,sourceKind:'worker',sourceMessageIds:['notice'],messageId:'internal',turnIds:['turn'],state:'worked',status:'completed'};
 const event=(key,kind,bodySource,body)=>({id:key,kind:'workerEvent',seq:1,revision:1,eventKey:key,event:{eventKind:kind,title:key,bodySource,body}});
 test('routine received result belongs to process details; missing and failed facts remain visible',async()=>withDom(async d=>{
- const items=[event('received','result_received','summary','已收到的完整摘要'),event('failed','start_failed','error','启动失败'),event('missing','result_received','missing','未提供摘要')];
+ const items=[event('received','reply_received','reply','已收到的完整摘要'),event('failed','start_failed','error','启动失败'),event('missing','reply_received','missing','未提供摘要')];
  await d.render(h(ProcessMessageContent,{node:{...node,items},renderText:t=>t},h('p',null,'部分可用结果，仍有缺口。')));
  assert.doesNotMatch(visibleText(d.container),/received|已收到的完整摘要/);
- assert.match(visibleText(d.container),/启动失败/);assert.match(visibleText(d.container),/收到成果待核对/);
+ assert.match(visibleText(d.container),/启动失败/);assert.match(visibleText(d.container),/当时：收到回复/);
  assert.match(visibleText(d.container),/部分可用结果，仍有缺口/);
  await d.click(d.find(n=>n.attrs['data-slot']==='collapsible-trigger'));
  assert.ok(d.find(n=>n.attrs['data-worker-event']==='received'),'exact immutable receipt is available on expansion');

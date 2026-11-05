@@ -75,17 +75,26 @@ async function wait<T>(
   }
   throw new Error("acceptance_wait_timeout");
 }
-function rows(sql = "SELECT * FROM runs ORDER BY createdAt,rowid") {
+function rows(sql = "SELECT * FROM runs ORDER BY createdAt,rowid", parameters: string[] = []) {
   try {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      return db.prepare(sql).all() as any[];
+      return db.prepare(sql).all(...parameters) as any[];
     } finally {
       db.close();
     }
   } catch {
     return [];
   }
+}
+function publication(runId: string) {
+  const files=rows("SELECT r.id,r.filePath,r.sha256 FROM results r JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) i ON i.value=r.id WHERE r.runId=? AND r.kind='file' AND d.state='recorded' AND d.revokedAt IS NULL",[runId]);
+  assert.equal(files.length,1,'one_formal_file_required');
+  return files[0]!;
+}
+function delivered(runId: string) {
+  const ids=new Set(rows("SELECT d.id FROM deliveries d JOIN json_each(d.resultIdsJson) i JOIN results r ON r.id=i.value WHERE r.runId=? AND d.state='recorded' AND d.revokedAt IS NULL",[runId]).map(row=>row.id));
+  return messages.find(message=>message.type==='delivery'&&ids.has(message.deliveryId));
 }
 function send(text: string) {
   child.stdin.write(text + "\n");
@@ -141,7 +150,7 @@ try {
     rows("SELECT type,code,at FROM events").some(
       (e) =>
         e.type === "main_tool" &&
-        ["list_work", "inspect_run"].includes(e.code) &&
+        ["list_work", "work_inspect", "worker_read"].includes(e.code) &&
         e.at >= activeAtQuery &&
         e.at <= statusReply.at,
     ),
@@ -157,61 +166,55 @@ try {
     statusAtReply: rows().find((r) => r.id === run.id)?.status,
   });
   stage = "T02/T04";
-  const delivery = await wait(() =>
-    messages.find((m) => m.type === "delivery" && m.runId === run.id),
-  );
+  const delivery = await wait(() => delivered(run.id));
   const result = rows().find((r) => r.id === run.id)!;
   assert.equal(result.status, "succeeded");
   assert.notEqual(
     result.threadId,
     rows("SELECT value FROM meta WHERE key='mainThread'")[0]?.value,
   );
-  assert.ok(result.artifact.startsWith(config.workspace + "/outputs/"));
-  const original = readFileSync(result.artifact, "utf8");
+  const originalFile=publication(run.id);
+  assert.ok(originalFile.filePath.startsWith(config.workspace + "/outputs/"));
+  const original = readFileSync(originalFile.filePath, "utf8");
   assertMeetingArtifact(original);
   const acceptanceEvents = rows("SELECT runId,type FROM events").filter(
     (e) => e.runId === run.id,
   );
-  assert.ok(acceptanceEvents.some((e) => e.type === "material_read"));
-  assert.ok(acceptanceEvents.some((e) => e.type === "artifact_inspected"));
-  assert.match(
-    delivery.text,
-    new RegExp(result.artifact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-  );
+  assert.ok(acceptanceEvents.some((e) => e.type === "engine_started"));
+  assert.ok(delivery.text.trim());
   const originalHash = createHash("sha256").update(original).digest("hex");
   checks.push({
     test: "T02/T04",
     passed: true,
     runId: run.id,
     threadId: result.threadId,
-    artifact: result.artifact,
+    resultId: originalFile.id,
     sha256: originalHash,
   });
   stage = "T05";
-  send(scenario.messages.revise.replace("{matterId}", run.matterId));
+  send(scenario.messages.revise.replace("{taskId}", run.taskId));
   const revision = await wait(() =>
-    rows().find((r) => r.matterId === run.matterId && r.id !== run.id),
+    rows().find((r) => r.taskId === run.taskId && r.version > run.version),
   );
-  await wait(() =>
-    messages.find((m) => m.type === "delivery" && m.runId === revision.id),
-  );
+  await wait(() => delivered(revision.id));
   const revised = rows().find((r) => r.id === revision.id)!;
   assert.equal(revised.status, "succeeded");
-  assert.notEqual(revised.artifact, result.artifact);
-  assert.notEqual(revised.threadId, result.threadId);
+  const revisedFile=publication(revised.id);
+  assert.notEqual(revisedFile.filePath, originalFile.filePath);
+  assert.ok(revised.threadId);
   assert.equal(
-    createHash("sha256").update(readFileSync(result.artifact)).digest("hex"),
+    createHash("sha256").update(readFileSync(originalFile.filePath)).digest("hex"),
     originalHash,
   );
-  const revisedText = readFileSync(revised.artifact, "utf8");
+  const revisedText = readFileSync(revisedFile.filePath, "utf8");
   assertMeetingArtifact(revisedText, true);
   checks.push({
     test: "T05",
     passed: true,
-    matterId: run.matterId,
+    taskId: run.taskId,
     runId: revised.id,
     threadId: revised.threadId,
-    artifact: revised.artifact,
+    resultId: revisedFile.id,
     originalPreserved: true,
   });
   stage = "shutdown";

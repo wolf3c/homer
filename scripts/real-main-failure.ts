@@ -1,4 +1,4 @@
-// Deliberately terminate only this test's own main App Server; verify factual fallback delivery.
+// Terminate only this test's leased main engine; the Worker's original reply must survive.
 import { resolve, join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import assert from "node:assert/strict";
@@ -27,7 +27,7 @@ try {
   assert.equal(app.store.runs().length, 0, "Use a fresh runtime");
   await app.start();
   await app.message(
-    "请新建一个缺失输入验收事项，读取 missing-public-notes.md 并写 Markdown。这个文件确实不存在，允许执行一次检查；读取失败就报告失败，绝不能编造材料或成果。",
+    "请新建任务并派 Worker 检查 missing-public-notes.md。这个文件确实不存在，允许执行一次检查；只回复缺失输入的结论，不生成文件或正式成果，绝不能编造材料。",
     "real-main-engine-failure",
   );
   const lease = JSON.parse(app.store.meta("lease:main")!);
@@ -36,22 +36,19 @@ try {
   process.kill(lease.pid, "SIGTERM");
   await app.idle();
   const run = app.store.runs()[0]!;
-  assert.equal(run.status, "failed");
-  assert.equal(run.errorCode, "material_missing");
-  assert.equal(run.artifact, null);
-  assert.equal(run.delivery, "delivered");
-  assert.ok(
-    messages.some(
-      (m) => m.type === "delivery" && m.text.includes("系统事实回执"),
-    ),
-  );
-  assert.ok(
-    app.store.events(run.id).some((e) => e.type === "delivery_degraded"),
-  );
+  assert.ok(run && !['queued','running'].includes(run.status));
+  const reply=app.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?").get(run.id);
+  assert.ok(reply,'worker_original_reply_must_survive_main_failure');
+  const payload=JSON.parse(String(reply.payloadJson));
+  assert.equal(payload.runId,run.id);assert.equal(payload.threadId,run.threadId);
+  assert.match(payload.text,/不存在|未找到|缺失|missing|not found/i);
+  assert.equal(Number(app.store.db.prepare("SELECT count(*) n FROM results WHERE taskId=? AND kind='file'").get(run.taskId)!.n),0);
   Object.assign(evidence, {
     passed: true,
     runId: run.id,
-    events: app.store.events(run.id),
+    taskId: run.taskId,
+    originalReplyPreserved: true,
+    fabricatedFiles: false,
   });
 } catch (e) {
   evidence.errorCode = engineError(e);

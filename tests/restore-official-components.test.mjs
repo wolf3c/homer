@@ -10,18 +10,18 @@ function load(entry){const result=buildSync({entryPoints:[entry],bundle:true,wri
 const {HomerMessageQueue}=load('ui/homer-message-queue.tsx');
 const {MessageDetails}=load('ui/message-details.tsx');
 const h=React.createElement;
-test('expanded queue has one summary per item and its permitted cancel action',async()=>{
- const old=globalThis.matchMedia;globalThis.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
- try{await withDom(async d=>{
- const calls=[],item={input:{requestId:'request-b',text:'合成待发送正文'},messageId:'message-b',state:'queued',editable:true,user:{media:[]},revision:7};
- await d.render(h(HomerMessageQueue,{state:{threadId:'test',queue:[item]},connected:true,operations:{locked:false,run:async(...args)=>{calls.push(args);return {};}}}));
- assert.equal(d.all().filter(n=>n.tagName==='LI').length,1);
+test('queue starts collapsed and offers cancel only for its editable queued user item',async()=>queueEnvironment(async d=>{
+ const calls=[],active={...queueItem,messageId:'message-active',input:{requestId:'request-active',text:'合成处理中正文'},state:'processing',statusText:'主 Agent 处理中',editable:false,position:2};
+ globalThis.fetch=async()=>({ok:true,json:async()=>({...queuePage,items:[{...queueItem,input:{requestId:'request-b',text:'合成待发送正文'}},active]})});
+ await d.render(h(HomerMessageQueue,{state:queueState,connected:true,operations:{locked:false,run:async(...args)=>{calls.push(args);return {};}}}));await flush();
+ const toggle=d.find(n=>n.attrs.class==='queue-toggle');assert.equal(toggle.attrs['aria-expanded'],'false');assert.match(toggle.textContent,/消息队列 · 已加载 2 条/);await d.click(toggle);assert.equal(toggle.attrs['aria-expanded'],'true');
+ assert.equal(d.all().filter(n=>n.tagName==='LI').length,2);assert.equal(d.container.textContent.match(/合成待发送正文/g).length,1);assert.equal(d.container.textContent.match(/合成处理中正文/g).length,1);
  assert.equal(d.all().some(n=>/编辑第|拖动第|调整第/.test(n.attrs['aria-label']??'')),false);
- assert.equal(d.find(n=>n.tagName==='BUTTON'&&n.attrs['aria-expanded']==='true')?.textContent.includes('待发送'),true);
- const cancel=d.find(n=>/取消发送/.test(n.attrs['aria-label']??''));assert.ok(cancel);
- await d.click(cancel);assert.equal(calls.length,1);assert.equal(calls[0][0],'cancel');assert.equal(calls[0][1].requestId,'request-b');assert.equal(calls[0][1].expectedRevision,7);
- });}finally{globalThis.matchMedia=old;}
-});
+ const cancel=d.find(n=>/取消发送/.test(n.attrs['aria-label']??''));assert.ok(cancel);assert.equal(d.all().filter(n=>/取消发送/.test(n.attrs['aria-label']??'')).length,1);
+ const activeRow=d.find(n=>n.tagName==='LI'&&n.textContent.includes('合成处理中正文'));assert.ok(activeRow);assert.equal(activeRow.contains(cancel),false);assert.match(activeRow.textContent,/主 Agent 处理中/);
+ await d.click(cancel);assert.equal(calls.length,1);assert.equal(calls[0][0],'cancel');assert.equal(calls[0][1].requestId,'request-b');assert.equal(calls[0][1].expectedRevision,7);assert.equal(calls[0][1].threadId,'test');assert.equal(calls[0][1].readEpoch,'epoch');
+}));
+
 test('Sources has one official link per safe source and no duplicate preview action',async()=>withDom(async d=>{
  const sources=[{id:'one',title:'合成来源',url:'https://example.invalid/one'},{id:'bad',title:'禁止',url:'https://user:pass@example.invalid'}];
  await d.render(h(MessageDetails,{message:{id:'reply',role:'assistant',text:'',sources}}));
