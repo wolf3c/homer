@@ -42,10 +42,11 @@ export function prepareDependencies(scratch,{archiveSource,arch=process.arch,pla
     if((pinned.sha256&&sha(bytes)!==pinned.sha256)||metadata.dist.integrity!==pinned.integrity||'sha512-'+createHash('sha512').update(bytes).digest('base64')!==metadata.dist.integrity)throw Error('desktop_codex_integrity_failed');
     components.push({name:'@openai/codex',version,archive:`codex-${version}.tgz`,url,sha256:sha(bytes),integrity:metadata.dist.integrity,license:metadata.license,completePlatformArchive:version.endsWith(target)});
   }
+  if(lock.codexLicenseTag!==`rust-v${CODEX_VERSION}`)throw Error('desktop_codex_license_tag_mismatch');
   for(const name of ['LICENSE','NOTICE']){
-    const metadata=JSON.parse(readFileSync(fetch(`https://api.github.com/repos/openai/codex/contents/${name}?ref=rust-v${CODEX_VERSION}`,`codex-${name}-source.json`,50000),'utf8'));
-    if(metadata.path!==name||metadata.encoding!=='base64'||!metadata.content)throw Error('desktop_codex_license_invalid');
-    writeFileSync(join(scratch,'codex-'+name),Buffer.from(metadata.content,'base64'));
+    const bytes=readFileSync(new URL(`../packaging/macos/codex-license/${name}`,import.meta.url));
+    if(sha(bytes)!==lock.codexLicenseSha256?.[name])throw Error('desktop_codex_license_integrity_failed: '+name);
+    writeFileSync(join(scratch,'codex-'+name),bytes);
   }
   const paths={node:join(scratch,'official-node'),codex:join(scratch,'official-codex'),cli:join(scratch,'official-codex-cli')};
   for(const [key,name]of[['node',nodeName],['codex',`codex-${CODEX_VERSION}-${target}.tgz`],['cli',`codex-${CODEX_VERSION}.tgz`]]){

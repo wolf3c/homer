@@ -18,6 +18,10 @@
     "integrity": "sha512-i7Dzk2a5aGmuGM9aNZgaUVTojZ/4bc5lRfosz++Y7X2BGhDkz+cySgbD+NYS1pOxfm0VEbLi9PZ3pAulI4kchw=="
   },
   "codexLicenseTag": "rust-v0.163.0",
+  "codexLicenseSha256": {
+    "LICENSE": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+    "NOTICE": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
+  },
   "verifiedAt": "2026-10-21",
   "verification": "ARM64 and generic archives only: Official HTTPS SHASUMS256 and npm registry SRI, independently pinned to these SHA-256 bytes; all 43 platform files retained. Not a PGP or npm-signature verification.",
   "nodeDarwinX64": {

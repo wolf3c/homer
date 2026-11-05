@@ -20,7 +20,7 @@ export async function runReleaseDraft(mode,context,{fetch=globalThis.fetch,token
  if(mode==='upload'&&include.length!==1)throw Error('release_upload_requires_one_target');
  const api=`https://api.github.com/repos/${repository}`,downloadBase=`https://github.com/${repository}/releases/download/${tag}/`;
  async function request(url,{method='GET',body,binary=false,bytes}={}){
-  const response=await fetch(url,{method,headers:{authorization:'Bearer '+token,accept:binary?'application/octet-stream':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',...(body?{'content-type':binary?'application/octet-stream':'application/json',...(bytes===undefined?{}:{'content-length':String(bytes)})}:{})},...(body?{body:binary?body:JSON.stringify(body),...(binary?{duplex:'half'}:{})}:{})});
+  const response=await fetch(url,{method,headers:{authorization:'Bearer '+token,accept:binary&&method==='GET'?'application/octet-stream':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',...(body?{'content-type':binary?'application/octet-stream':'application/json',...(bytes===undefined?{}:{'content-length':String(bytes)})}:{})},...(body?{body:binary?body:JSON.stringify(body),...(binary?{duplex:'half'}:{})}:{})});
   if(!response.ok)throw Error('release_request_failed: '+response.status);
   return binary&&method==='GET'?response:response.json();
  }

@@ -146,6 +146,9 @@ test('native HTTP transport streams uploads and follows binary-download redirect
    }
    const chunks=[];for await(const chunk of req)chunks.push(chunk);
    const buffer=Buffer.concat(chunks),binary=req.headers['content-type']==='application/octet-stream';
+   if(req.method==='POST'&&new URL(url).hostname==='uploads.github.com'&&req.headers.accept!=='application/vnd.github+json'){
+    res.writeHead(415);res.end();return;
+   }
    const response=await f.transport(url,{method:req.method,...(buffer.length?{body:binary?buffer:buffer.toString()}:{})});
    res.writeHead(response.status);res.end(Buffer.from(await response.arrayBuffer()));
   }catch{res.writeHead(500);res.end();}

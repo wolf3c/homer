@@ -38,16 +38,17 @@ async function dependencyFixture(arch,corrupt=false,platform='darwin'){
  const nodeBytes=Buffer.from('synthetic-node-'+arch),cli=Buffer.from('synthetic-cli'),native=Buffer.from('synthetic-codex-'+arch);
  const sha=bytes=>createHash('sha256').update(bytes).digest('hex'),sri=bytes=>'sha512-'+createHash('sha512').update(bytes).digest('base64');
  const pin=bytes=>({sha256:sha(bytes),integrity:sri(bytes)});
- const locks={node:pin(nodeBytes),nodeDarwinX64:pin(nodeBytes),nodeWin32X64:pin(nodeBytes),codexWin32X64:pin(native),codex:pin(cli),codexDarwinArm64:pin(native),codexDarwinX64:{integrity:sri(native)}};
+ const licenses={LICENSE:Buffer.from('synthetic-license'),NOTICE:Buffer.from('synthetic-notice')};
+ const locks={node:pin(nodeBytes),nodeDarwinX64:pin(nodeBytes),nodeWin32X64:pin(nodeBytes),codexWin32X64:pin(native),codex:pin(cli),codexDarwinArm64:pin(native),codexDarwinX64:{integrity:sri(native)},codexLicenseTag:'rust-v'+version,codexLicenseSha256:{LICENSE:sha(licenses.LICENSE),NOTICE:sha(licenses.NOTICE)}};
  const put=(name,bytes)=>files.set('/archives/'+name,Buffer.from(bytes));
  put('node-shasums256.txt',sha(nodeBytes)+'  '+nodeName+'\n');put(nodeName,nodeBytes);
  for(const [v,name,bytes]of [[version,'codex-registry.json',cli],[version+'-'+target,`codex-${arch}-registry.json`,native]]){
   put(name,JSON.stringify({name:'@openai/codex',version:v,license:'Apache-2.0',dist:{tarball:`https://registry.npmjs.org/@openai/codex/-/codex-${v}.tgz`,integrity:sri(bytes)}}));
-  put(`codex-${v}.tgz`,corrupt&&v.endsWith(target)?Buffer.from('tampered'):bytes);
+  put(`codex-${v}.tgz`,corrupt===true&&v.endsWith(target)?Buffer.from('tampered'):bytes);
  }
- for(const name of ['LICENSE','NOTICE'])put(`codex-${name}-source.json`,JSON.stringify({path:name,encoding:'base64',content:Buffer.from('synthetic-license').toString('base64')}));
+ for(const [name,bytes] of Object.entries(licenses))files.set(`file:///fixture/packaging/macos/codex-license/${name}`,corrupt===name?Buffer.from('tampered'):bytes);
  const modules={
-  'node:fs':{readFileSync:(path,encoding)=>{if(String(path).endsWith('dependencies-lock.json'))return JSON.stringify(locks);assert.ok(files.has(path),'unexpected network or file read '+path);return encoding?files.get(path).toString(encoding):files.get(path);},writeFileSync:(path,value)=>files.set(path,Buffer.from(value)),mkdirSync(){},existsSync:path=>files.has(path),rmSync(){throw Error('unexpected_cleanup');}},
+  'node:fs':{readFileSync:(path,encoding)=>{const key=String(path);if(key.endsWith('dependencies-lock.json'))return JSON.stringify(locks);assert.ok(files.has(key),'unexpected network or file read '+path);return encoding?files.get(key).toString(encoding):files.get(key);},writeFileSync:(path,value)=>files.set(path,Buffer.from(value)),mkdirSync(){},existsSync:path=>files.has(path),rmSync(){throw Error('unexpected_cleanup');}},
   'node:child_process':{execFileSync:(bin,args)=>{commands.push([bin,args]);assert.equal(bin,platform==='win32'?'C:\\Windows/System32/tar.exe':'/usr/bin/tar','dependency test must never fetch or execute binaries');return args[0]==='-tf'?'package/file\n':Buffer.alloc(0);}},
  };
  const entry=await link(readFileSync('scripts/prepare-desktop-dependencies.mjs','utf8'),modules,vm.createContext({process:{arch,platform,argv:[],env:{SystemRoot:'C:\\Windows'}},Buffer,URL,console}),'file:///fixture/scripts/prepare-desktop-dependencies.mjs');await entry.evaluate();
@@ -125,6 +126,7 @@ if(!vm.SourceTextModule){
   const bad=await dependencyFixture(arch,true);assert.throws(bad.prepare,/desktop_codex_integrity_failed/);assert.equal(bad.commands.length,0,'all bytes must pass pins before extraction');
  });
  test('Windows selects pinned ZIP Node and the full x64 Codex archive offline',async()=>{const f=await dependencyFixture('x64',false,'win32'),result=f.prepare();assert.equal(result.vendor,'x86_64-pc-windows-msvc');assert.ok(f.commands.some(([_bin,args])=>args.includes('/archives/node-v22.22.0-win-x64.zip')));assert.ok(f.commands.some(([_bin,args])=>args.includes('node-v22.22.0-win-x64/node.exe')));const bad=await dependencyFixture('x64',true,'win32');assert.throws(bad.prepare,/desktop_codex_integrity_failed/);assert.equal(bad.commands.length,0);});
+ test('a tampered bundled Codex license fails before extraction',async()=>{const f=await dependencyFixture('arm64','LICENSE');assert.throws(f.prepare,/desktop_codex_license_integrity_failed: LICENSE/);assert.equal(f.commands.length,0);});
  test('unknown dependency architecture is refused before downloads',async()=>{
   const f=await dependencyFixture('riscv64');assert.throws(f.prepare,/desktop_dependency_target_invalid/);assert.equal(f.commands.length,0);
  });
