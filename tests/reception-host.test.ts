@@ -19,10 +19,9 @@ test('reception host: continuous user reception with a real background task; com
   call(tool:string,args:unknown):Promise<any>{return this.handler({threadId:this.threadId,turnId:this.turnId!,callId:'synthetic-call-'+ ++sequence,tool,arguments:args});}
   async turn(text:string,options?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
    this.turnId='synthetic-turn-'+ ++sequence;options?.onStarted?.(this.turnId);
-   if(this.options.tools.some(t=>t.name==='read_material'))return new Promise(r=>releaseWorker=r);
+   if(this.options.role==='worker')return new Promise(r=>releaseWorker=r);
    if(text==='synthetic:delegate'){
-    const task=await this.call('task_create',{title:'Synthetic background',goal:'Synthetic background'});taskId=task.taskId;
-    await this.call('worker_open',{taskId,message:'Inspect synthetic background'});
+    taskId=(await this.call('worker_open',{message:'Inspect synthetic background'})).taskId;
    }else if(text.startsWith('[内部协作输入')){
     await new Promise<void>(r=>releaseInternal=r);
    }else turns.push(text);
@@ -32,7 +31,7 @@ test('reception host: continuous user reception with a real background task; com
   async close(){releaseWorker?.({status:'failed',text:'',errorCode:'synthetic_closed'});releaseInternal?.();return true;}
   async interrupt(){return this.close();}
  }
- const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},(options,handler)=>new Engine(options,handler));
+ const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},(options,handler)=>new Engine(options,handler));
  const seen:{internal:boolean;messageId:string|null}[]=[];app.onStateChange(()=>seen.push({internal:!!app['mainContext']?.event,messageId:app['mainContext']?.messageId??null}));
  try{
   await app.start();await app.message('synthetic:delegate','synthetic-delegate');await until(()=>!!releaseWorker);
@@ -84,7 +83,7 @@ test('reception host: preparing first_launch interrupt stays idle until one read
   async close(){return true;}
   async interrupt(){return this.close();}
  }
- const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},()=>new Engine());
+ const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},()=>new Engine());
  try{
   await app.start();await app.idle();
   app.inputs.preparation=input=>input.requestId==='synthetic-head-first'&&!ready?'preparing':'ready';

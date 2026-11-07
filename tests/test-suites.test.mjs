@@ -75,8 +75,6 @@ const explicitSuites={
   "reception-gateway.test.mjs",
   "reception-ipc.test.ts",
   "release-css-snapshot.test.mjs",
-  "telegram-host-upgrade.test.mjs",
-  "wechat-host-upgrade.test.mjs",
   "web-dev-host.test.mjs",
   "mobile-runtime-packaging.test.mjs",
   "mobile-ui-build.test.mjs",

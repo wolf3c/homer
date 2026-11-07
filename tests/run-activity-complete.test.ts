@@ -33,7 +33,7 @@ test('source labels locate the Worker Task and use fixed templates, never the qu
  assert.equal(app.mainSourceText({...context,workerMessages:[{...context.workerMessages[0],taskVersion:99}]}),'处理 Worker 操作确认：原任务名称');
  assert.equal(app.mainSourceText({...context,interactionId:undefined,workerMessages:[...context.workerMessages,context.workerMessages[0]]}),'处理 Worker 协作消息');
  assert.equal(app.mainSourceText({event:true,sourceEventId:'review:run'}),'处理 Worker 协作消息');
- assert.equal(app.mainSourceText({event:true,sourceEventId:'delivery:run'}),'整理 Worker 交付');
+ assert.equal(app.mainSourceText({...context,interactionId:undefined,workerMessages:[{...context.workerMessages[0],kind:'task_archived'}]}),'接收归档通知：原任务名称');
  app.tasks.task=()=>({title:'/private/path'});
  assert.equal(app.mainSourceText(context),'处理 Worker 操作确认');
  app.tasks.task=()=>{throw Error('display_record_missing');};

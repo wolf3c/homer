@@ -111,10 +111,11 @@ function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:stri
  const [previewUrl,setPreviewUrl]=useState(''),[loadedImageUrl,setLoadedImageUrl]=useState('');
  const labels:Record<string,string>={received:'等待下载',downloading:'准备中',retryable_failed:'等待重试',failed:'准备失败',expired:'已过期',deleted:'已清理',revoked:'已撤回'};
  const path='/api/media/'+messageId+'/'+asset.assetId+'/'+asset.revision;
+ const previewPath=asset.kind==='voice'?path+'?preview=voice':path;
  const previewable=asset.state==='ready'&&(asset.kind==='image'||asset.kind==='video'||(asset.kind==='voice'&&(!!asset.previewMime||asset.mime!=='audio/silk')));
  const imagePreviewReady=previewable&&asset.kind==='image'&&!!previewUrl&&loadedImageUrl===previewUrl;
  return <figure className="message-attachment">
-  {previewable&&<LazyMedia key={path} path={path} kind={asset.kind as 'image'|'video'|'voice'} onUrlChange={asset.kind==='image'?setPreviewUrl:undefined}>{preview=>asset.kind==='image'?<ImageRoot><ImageZoom src={preview} alt={asset.filename}><ImagePreview src={preview} alt={asset.filename} ratio="4:3" onLoad={()=>setLoadedImageUrl(preview)} onError={()=>setLoadedImageUrl('')}/></ImageZoom></ImageRoot>:asset.kind==='voice'?<audio controls preload="none" src={preview} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={preview} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>}
+  {previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'} onUrlChange={asset.kind==='image'?setPreviewUrl:undefined}>{preview=>asset.kind==='image'?<ImageRoot><ImageZoom src={preview} alt={asset.filename}><ImagePreview src={preview} alt={asset.filename} ratio="4:3" onLoad={()=>setLoadedImageUrl(preview)} onError={()=>setLoadedImageUrl('')}/></ImageZoom></ImageRoot>:asset.kind==='voice'?<audio controls preload="none" src={preview} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={preview} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>}
   {!imagePreviewReady&&<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
    {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
    {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
@@ -536,7 +537,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
       const items=new Map<string,ReactNode>();
       for(const reference of chipReferences)for(const note of reference.annotations??[{id:'legacy'}]){
         const key=contextKey('ref',referenceKey(reference),note.id);
-        items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{const source=ref.source;if(source.kind==='artifact')openReferenceArtifact({id:source.id,title:source.title},undefined,{key:referenceKey(ref),id});}} onRemove={(refKey,id)=>{annotationDraft.remove(refKey,id);focusInput();}}/>);
+        items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{const source=ref.source;if(source.kind==='attachment')openReferenceArtifact({...source,id:JSON.stringify([source.messageId,source.assetId,source.revision])},undefined,{key:referenceKey(ref),id});}} onRemove={(refKey,id)=>{annotationDraft.remove(refKey,id);focusInput();}}/>);
       }
       quotes.forEach((quote,i)=>{const key=contextKey('quote',quote.draftId);items.set(key,<div className="annotation-chip" key={key}>
         <button type="button" className="annotation-chip-open" aria-label={'编辑引用 '+(i+1)} onClick={event=>editQuote(quote,event.currentTarget)} title={quote.text+'\n'+quote.annotation}><MessageCirclePlus size={15} aria-hidden="true"/><span className="compact-context-copy"><span className="compact-context-label">{quote.annotation?.trim()||quote.text}</span><span className="compact-context-source">{quote.annotation?.trim()?'消息批注':'消息引用'}</span></span></button>
@@ -564,7 +565,6 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
 }
 function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError,onNotLive,verified,onAnswer,structuredAnswers=true }: { verified:boolean; item: WebInteraction; threadId: string; messages: WebState["messages"]; acceptedRequestIds:string[]; onError: (message: string) => void;onNotLive:(item:WebInteraction)=>void;onAnswer?:(item:WebInteraction)=>void;structuredAnswers?:boolean }) {
   const key = "homer-interaction:" + threadId + ":" + item.id;
-  const [text,setText]=useState(()=>interactionDraft(key).text);
   const [answers,setAnswers]=useState(()=>interactionDraft(key).answers);
   const [sending,setSending]=useState(false),[received,setReceived]=useState(false);
   const responseOwner=useRef({live:false,submitting:false,verified,acceptedRequestIds});
@@ -574,9 +574,8 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
   const accepted=received||!!pending&&acceptedRequestIds.includes(pending.requestId),busy=sending||accepted;
   useEffect(()=>{
     if(accepted){if(item.kind==='authorization'||item.questions&&!(item.questions.length===1&&item.questions[0]!.allowOther))storage.write(key+':draft',undefined);try{const old=interactionDraft(key).legacy;if(Object.keys(old).every(id=>item.questions?.some(q=>q.id===id)))localStorage.removeItem(key+':questions');}catch{};return;}
-    if(item.kind==='authorization')storage.write(key+':draft',text);
-    else if(item.questions&&item.questions.length>1&&item.questions.some(q=>q.allowOther))storage.write(key+':draft',{answers});
-  },[key,text,answers,accepted]);
+    if(item.questions&&item.questions.length>1&&item.questions.some(q=>q.allowOther))storage.write(key+':draft',{answers});
+  },[key,answers,accepted]);
   useEffect(()=>{
     if(!pending||accepted||!verified)return;
     const controller=new AbortController();
@@ -584,7 +583,7 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
       if(!response.ok)return;const receipt=await response.json();if(!controller.signal.aborted&&receipt.acceptedRequestIds?.includes(pending.requestId))setReceived(true);
     }).catch(()=>{});return()=>controller.abort();
   },[pending?.requestId,accepted,verified,threadId,acceptedRequestIds]);
-  async function respond(event?:FormEvent,decision=text,questionAnswers?:ConversationInput['questionAnswers'],retry=false):Promise<void>{
+  async function respond(event?:FormEvent,decision="",questionAnswers?:ConversationInput['questionAnswers'],retry=false):Promise<void>{
     event?.preventDefault();const owner=responseOwner.current;
     if(!decision.trim()||accepted||!owner.verified||!owner.live||owner.submitting)throw Error('当前问题暂不可提交，请核对连接和原请求。');
     const previous=storage.read<ConversationInput>(key+':pending');
@@ -605,7 +604,7 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
   }
   const source=item.sourceRequestId?messages.find(message=>message.role==='user'&&message.requestId===item.sourceRequestId):undefined;
   const sourceLabel=<>工作：{item.workTitle??'来源未关联'}{source?<><br/><a href={'#message-'+source.id}>原请求：{source.text.slice(0,80)||'附件请求'}</a></>:item.sourceMessageId?<><br/><a href={'#message-'+item.sourceMessageId}>原请求尚未加载 · 查看原文</a></>:<> · 原请求未关联</>}</>;
-  if(item.kind==='authorization'&&item.runId.startsWith('main-native:'))return <><ApprovalCard
+  if(item.kind==='authorization')return <><ApprovalCard
     id={'task-interaction-'+item.id} tabIndex={-1} state="request" title="需要你确认" subtitle={sourceLabel}
     command={item.question} description={item.reason??undefined} disabled={busy||!verified} aria-busy={busy}
     statusLabel={!verified?'正在核对当前请求，暂不能提交。':accepted?'决定已送达，等待处理；尚未确认执行结果。':sending?'决定已提交，等待确认。':pending?'上次决定尚未确认；重试相同决定会沿用原请求标识。':undefined}
@@ -613,7 +612,6 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
     onAllowOnce={()=>{void respond(undefined,'允许本次操作').catch(()=>{});}}
     onDeny={()=>{void respond(undefined,'拒绝本次操作').catch(()=>{});}}/>
     {item.canCancel&&<button type="button" disabled={busy||!verified} onClick={()=>{void respond(undefined,'取消本次请求').catch(()=>{});}}>取消本次请求</button>}</>;
-  if(item.kind==='authorization')return <form className="interaction-card" id={'task-interaction-'+item.id} tabIndex={-1} onSubmit={event=>{void respond(event).catch(()=>{});}}><span className="card-kind">需要你确认</span><p className="secondary">{sourceLabel}</p><p>{item.question}</p>{item.reason&&<p>{item.reason}</p>}<textarea aria-label="答复荷马" value={text} onChange={event=>setText(event.target.value)} disabled={busy}/><button disabled={busy||!verified||!text.trim()}>提交答复</button></form>;
   const questions=item.questions,closed=!!questions?.length&&questions.every(q=>q.options.length&&!q.allowOther);
   const free=!questions?.length||questions.length===1&&questions[0]!.allowOther;
   let receiptAnswers=accepted?pending?.questionAnswers:undefined;
@@ -781,7 +779,7 @@ function HomerApp() {
       const old=previous.get(message.id),signature=old?.source===message?old.signature:readerContentSignature(message);
       summary.set(message.id,{source:message,signature});if(signature&&old?.signature!==signature)changed=true;
     }
-    for(const file of next.artifacts??[]){const key='artifact:'+file.id,signature=String(file.version??'');summary.set(key,{source:file,signature});if(!previous.has(key)||previous.get(key)!.signature!==signature)changed=true;}
+    for(const file of next.artifacts??[]){const key='artifact:'+file.id,signature=file.sha256;summary.set(key,{source:file,signature});if(!previous.has(key)||previous.get(key)!.signature!==signature)changed=true;}
     reader.current.summary=summary;if(baseline)setHasNewContent(false);else if(changed)setHasNewContent(true);
   }
   const loadProcess=useCallback(async(id:string,signal:AbortSignal)=>{
@@ -1062,7 +1060,7 @@ function HomerApp() {
     updatePreviewScope(true,file.id);
     setPreviewTabs(old=>{
       const existing=old.tabs.some(tab=>tab.id===file.id);
-      return {...old,tabs:existing?old.tabs.map(tab=>tab.id===file.id&&origin?{...tab,trigger:origin}:tab):[...old.tabs,{id:file.id,title:file.title,trigger:origin}],activeId:file.id};
+      return {...old,tabs:existing?old.tabs.map(tab=>tab.id===file.id&&origin?{...tab,trigger:origin}:tab):[...old.tabs,{...file,trigger:origin}],activeId:file.id};
     });setCanvasOpen(true);
   };
   const queueDrafts=(()=>{try{return Object.keys(sessionStorage).filter(key=>key.startsWith('homer-queue-edit:')).flatMap(key=>{const draft=storage.read<Pick<ConversationInput,'text'|'quote'|'quotes'|'resourceReference'|'resourceReferences'|'attachments'>>(key);return draft?[{key,...draft}]:[];});}catch{return [];}})();

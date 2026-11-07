@@ -1,6 +1,6 @@
 // Synthetic peers only. Actual Homer/SQLite, no Codex process or account.
 import {EventEmitter} from 'node:events';
-import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,rmSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {Homer,type Message} from '../src/service.js';
 import type {EngineLike,EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
@@ -26,24 +26,23 @@ export function syntheticHost(failChild=false,retainRuntime=false){
     const assignment=text.slice(at+marker.length);
     if(assignment==='C'&&failChild)return {status:'failed',text:'Synthetic input unavailable; date remains unknown.',errorCode:'synthetic_input_missing'};
     if(assignment==='A followup'){
-     await this.call('write_markdown',{filename:'synthetic-report.md',content:'# Synthetic report\nDate unknown.\n'});
+     writeFileSync(join(root,'workspace','synthetic-report.md'),'# Synthetic report\nDate unknown.\n');
      return {status:'completed',text:'Synthetic report checked; date unknown.'};
     }
     return {status:'completed',text:'Synthetic '+assignment+' checked; date unknown.'};
    }
    if(text==='synthetic:tree'||text==='运行递归合成案例'){
-    const task=await this.createTask('Check synthetic input; keep dates unknown');
-    for(const label of ['A','B','C'])await this.openWorker(task.taskId,label);
+    const task=await this.call('worker_open',{message:'A'});
+    for(const label of ['B','C'])await this.openWorker(task.taskId,label);
     return {status:'completed',text:'Synthetic work accepted'};
    }
    if(text.startsWith('[内部协作输入')){
     const task=app.tasks.tasks()[0];if(!task)return {status:'completed',text:''};
     const workers=app.tasks.workers(task.id),a=workers.find(worker=>app.tasks.runs(task.id,worker.workerId)[0]?.prompt==='A');
     if(a&&a.run.status==='succeeded'&&!followed){followed=true;await this.send(a.workerId,'A followup');return {status:'completed',text:''};}
-    if(a&&followed&&app.tasks.runs(task.id,a.workerId).length===2&&workers.length===3&&workers.every(worker=>['succeeded','failed'].includes(worker.run.status))&&!app.tasks.deliveries([task.id]).length){
-     const filePath=join(app.files.prepareRun(task.id,a.run.id),'synthetic-report.md');
-     const adopted=await this.call('accept_result',{runId:a.run.id,filePath});
-     await this.call('publish_delivery',{taskId:task.id,resultIds:[adopted.resultId],text:failChild?'Synthetic partially completed; missing C':'Synthetic completed; date unknown'});
+    if(a&&followed&&app.tasks.runs(task.id,a.workerId).length===2&&workers.length===3&&workers.every(worker=>['succeeded','failed'].includes(worker.run.status))&&task.state==='open'){
+     const path=join(root,'workspace','synthetic-report.md');
+     await this.call('send_user_message',{taskId:task.id,attachments:[{path}],text:failChild?'Synthetic partially completed; missing C':'Synthetic completed; date unknown'});
      await this.call('task_update',{taskId:task.id,action:'settle',outcome:failChild?'partial':'succeeded'});
     }
     return {status:'completed',text:''};
@@ -56,6 +55,6 @@ export function syntheticHost(failChild=false,retainRuntime=false){
   async interrupt(){this.interrupts++;this.pending?.({status:'interrupted',text:'Synthetic partial'});this.pending=undefined;return true;}
   async close(){this.pending?.({status:'interrupted',text:''});this.pending=undefined;return true;}
  }
- app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexBin:'/usr/bin/false',codexHome:join(root,'empty-home'),model:'synthetic-only',effort:'medium',requiresOpenaiAuth:false,timeoutMs:20000,mainTimeoutMs:5000,stopGraceMs:100},async message=>{events.push(message);},(options,handler)=>new Peer(options,handler));
+ app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexBin:'/usr/bin/false',codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),model:'synthetic-only',effort:'medium',requiresOpenaiAuth:false,timeoutMs:20000,mainTimeoutMs:5000,stopGraceMs:100},async message=>{events.push(message);},(options,handler)=>new Peer(options,handler));
  return {app,events,engines,seen,root,async close(){await app.close();if(!retainRuntime)rmSync(root,{recursive:true,force:true});}};
 }

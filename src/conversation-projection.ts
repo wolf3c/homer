@@ -3,7 +3,7 @@ import type {ProcessNode} from './main-process.js';
 import type {QueuedInput} from './recursive-main-inputs.js';
 
 export type DisplayQueueInput=QueuedInput & {user:ConversationMessage;editable:boolean;statusText:string};
-export type TaskMessageSource={key:string;target:import('./activity-facts.js').ActivityTarget;title:string;icon:import('./task-status.js').TaskSemanticIcon;origin:{kind:'activity';processId:string;itemId:string}|{kind:'message';processId:string;messageId:string;senderEpoch?:number}|{kind:'delivery';deliveryId:string};phaseLabel:string;owner:'main'|'worker'|'ended'|'unknown';originalRequestMessageId?:string};
+export type TaskMessageSource={key:string;target:import('./activity-facts.js').ActivityTarget;title:string;icon:import('./task-status.js').TaskSemanticIcon;origin:{kind:'activity';processId:string;itemId:string}|{kind:'message';processId:string;messageId:string;senderEpoch?:number};phaseLabel:string;owner:'main'|'worker'|'ended'|'unknown';originalRequestMessageId?:string};
 export type DisplayMessage=ConversationMessage & {process?:ProcessNode;finalAnswers?:{id:string;text:string;completed:boolean}[];sourceLabel?:string;sourceMessageId?:string;source?:ConversationMessage;inputState?:string;taskSources?:TaskMessageSource[];taskSourceUnresolved?:true};
 
 export type ConversationBoundary={visibleIds:ReadonlySet<string>;requestsWithNodes:ReadonlySet<string>;outcomes:ReadonlySet<string>;legacyReplies:ReadonlySet<string>;nodeRequests:ReadonlyMap<string,string>;continuedNodes:ReadonlySet<string>};
@@ -45,8 +45,7 @@ export function projectConversation(history:readonly ConversationMessage[],nodes
    lastProcessSeq=Math.max(lastProcessSeq,node.seq);
    const requestId=requestFor(node)??null,source=users.get(requestId??''),continuation=!!source&&(boundary?boundary.continuedNodes.has(node.id):shownUsers.has(source.id));
    if(node.sourceKind==='user'&&source&&!continuation){messages.push({...source,createdAt:message.createdAt,inputState:byRequest.get(requestId!)?.state});shownUsers.add(source.id);}
-   const deliveries=node.deliveryMessageIds??(node.deliveryMessageId?[node.deliveryMessageId]:[]);
-   const nativeFinal=node.sourceKind==='user'&&node.final&&node.final.id!==node.messageId&&!deliveries.includes(node.final.id)?node.final:undefined;
+   const nativeFinal=node.sourceKind==='user'&&node.final&&node.final.id!==node.messageId?node.final:undefined;
    const finals=publicFinals(node).flatMap(item=>item.kind==='commentary'?[{id:item.id,text:item.text,completed:item.completed??(node.state==='worked'&&item.id===nativeFinal?.id)}]:[]);
    const hostFinal=node.final?.id===node.messageId?node.final:undefined;
    const displayNode={...node,final:nativeFinal??hostFinal};
@@ -56,6 +55,8 @@ export function projectConversation(history:readonly ConversationMessage[],nodes
   }
   // Keep a historical host reply at its original identity when no segment has
   // a final; it may be the only public answer for that request.
+  if(message.operationKey&&message.audience==='user'){messages.push(message);continue;}
+  if(message.audience==='internal')continue;
   if(managedReplies.has(message.id)&&(message.status==='running'||finalReplies.has(message.id)))continue;
   if(item?.replyId===message.id&&(queuedRequests.has(item.input.requestId)||item.state==='cancelled'||outcomes.has(item.input.requestId)||!message.text))continue;
   const source=message.requestId?users.get(message.requestId):undefined;

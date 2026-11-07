@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {overviewFixture} from './task-overview-fixture.js';
-import {readTaskOverview,readTaskDetail,classifyTask,filterRoots} from '../src/task-overview.js';
+import {readTaskOverview,readTaskDetail,classifyTask} from '../src/task-overview.js';
 import {workerStatus} from '../src/task-status.js';
 
 test('projection reads two real sessions without inventing Tasks or requiring formal results',()=>{
@@ -10,7 +10,7 @@ test('projection reads two real sessions without inventing Tasks or requiring fo
   for(const worker of [a,b]){const run=f.tasks.claim(worker.runId)!;f.tasks.bind(run.id,run.epoch,'thread:'+worker.workerId,'turn:'+run.id);}
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();
   let data=readTaskOverview(f.store.db);assert.equal(data.tasks.length,1);assert.equal(data.tasks[0]!.id,f.taskId);assert.deepEqual(data.tasks[0]!.workers.map(w=>w.id),[a.workerId,b.workerId]);
-  assert.equal(classifyTask(data.tasks[0]!).key,'running');assert.deepEqual(data.tasks[0]!.results,[]);assert.deepEqual(data.tasks[0]!.deliveries,[]);
+  assert.equal(classifyTask(data.tasks[0]!).key,'running');
   assert.equal(readTaskDetail(f.store.db,f.taskId).runs.length,2);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
   f.store.db.exec('PRAGMA query_only=OFF');
   for(const worker of [a,b]){const run=f.tasks.run(worker.runId);f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Answer '+worker.workerId},true);}
@@ -33,7 +33,7 @@ test('same-session followup replaces its latest Run projection and preserves his
 test('plain text Main settlement is visible with zero Result and Delivery records',()=>{
  const f=overviewFixture();try{
   f.tasks.settleTask(f.actor,{operationId:'settle',taskId:f.taskId,expectedRevision:f.tasks.task(f.taskId).revision,outcome:'succeeded',notes:'Investigation complete'});
-  const task=readTaskOverview(f.store.db).tasks[0]!;assert.equal(classifyTask(task).key,'complete');assert.equal(task.notes,'Investigation complete');assert.deepEqual(task.results,[]);assert.deepEqual(task.deliveries,[]);
+  const task=readTaskOverview(f.store.db).tasks[0]!;assert.equal(classifyTask(task).key,'complete');assert.equal(task.notes,'Investigation complete');
  }finally{f.close();}
 });
 
@@ -41,7 +41,7 @@ test('pending questions retain exact Run epoch version thread and turn ownership
  const f=overviewFixture();try{
   const a=f.open('page'),run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:page');
   f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt,runEpoch,taskVersion) VALUES('question','identity','fingerprint',?,'thread:page','turn:page','request','ask_main','question','{}','{}','pending_user',100,100,?,?)`).run(run.id,run.epoch,run.version);
-  let row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingUser,1);assert.deepEqual(row.workers[0]!.pendingUsers,[{id:'question',after:0,kind:'question'}]);assert.deepEqual(filterRoots([row],'user','').map(t=>t.id),[f.taskId]);
+  let row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingUser,1);assert.deepEqual(row.workers[0]!.pendingUsers,[{id:'question',after:0,kind:'question'}]);assert.equal(classifyTask(row).key,'user');
   for(const [column,value] of [['runEpoch',99],['taskVersion',99],['threadId','unrelated'],['turnId','unrelated']] as const){
    const before=f.store.db.prepare(`SELECT ${column} AS value FROM worker_interactions`).get()!.value;
    f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(value);row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingUser,0,column);
@@ -57,7 +57,7 @@ test('overview stays batched and excludes message bodies and historical executio
   const a=f.open('page'),run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:page');f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'large reply'.repeat(10000)},true);
   const statements:string[]=[],db={prepare(sql:string){statements.push(sql);return f.store.db.prepare(sql);}} as typeof f.store.db;
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();const data=readTaskOverview(db);
-  assert.equal(statements.length,6);assert.ok(statements.every(sql=>/^SELECT/.test(sql)));assert.ok(statements.every(sql=>!/(payloadJson|checkpointJson|filePath)/.test(sql)));assert.equal(data.tasks[0]!.workers.length,1);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
+  assert.equal(statements.length,4);assert.ok(statements.every(sql=>/^SELECT/.test(sql)));assert.ok(statements.every(sql=>!/(payloadJson|checkpointJson|filePath)/.test(sql)));assert.equal(data.tasks[0]!.workers.length,1);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
   assert.throws(()=>readTaskDetail(f.store.db,'unknown'),/task_not_found/);assert.throws(()=>readTaskDetail(f.store.db,'../outside'),/task_not_found/);
  }finally{f.close();}
 });

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {Homer} from '../src/service.js';
 import type {EngineLike,EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
@@ -12,7 +12,7 @@ const until=async(check:()=>boolean)=>{const end=Date.now()+2000;while(!check())
 function fixture(confirm=true){
   const base=resolve('.codex/scratch/chat-architecture-implementation-20261105/e-stop');mkdirSync(base,{recursive:true});
   const root=mkdtempSync(join(base,'test-'));
-  mkdirSync(join(root,'runtime'));mkdirSync(join(root,'workspace/materials'),{recursive:true});writeFileSync(join(root,'workspace/materials/sample.md'),'# Synthetic reference\nUnknown date.');
+  mkdirSync(join(root,'runtime'));mkdirSync(join(root,'workspace'));
   const peers:Peer[]=[];let sequence=0;
   class Peer extends EventEmitter implements EngineLike{
     readonly worker:boolean;threadId:string;turnId='';resumable=true;
@@ -30,7 +30,7 @@ function fixture(confirm=true){
       }
       if(text.startsWith('synthetic:dispatch')){
         this.turnId='synthetic-dispatch-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
-        const task=await this.call('task_create',{goal:'Synthetic held worker'});const worker=await this.call('worker_open',{taskId:task.taskId,message:'Ask for the missing format'});return {status:'completed',text:worker.runId};
+        const worker=await this.call('worker_open',{message:'Ask for the missing format'});return {status:'completed',text:worker.runId};
       }
       if(text.startsWith('[内部协作输入')&&text.includes('interactionId=')){
         this.turnId='synthetic-question-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
@@ -49,7 +49,7 @@ function fixture(confirm=true){
       this.releaseTurn?.({status:'interrupted',text:''});return true;
     }return false;}
   }
-  const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic-only',effort:'medium',requiresOpenaiAuth:false,timeoutMs:30000,mainTimeoutMs:3000,stopGraceMs:50},async()=>{},(o,h)=>{const peer=new Peer(o,h);peers.push(peer);return peer;});
+  const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic-only',effort:'medium',requiresOpenaiAuth:false,timeoutMs:30000,mainTimeoutMs:3000,stopGraceMs:50},async()=>{},(o,h)=>{const peer=new Peer(o,h);peers.push(peer);return peer;});
   const start=async()=>{await app.start();await app.message('synthetic:dispatch','synthetic-dispatch');await until(()=>app.interactions.list()[0]?.state==='pending_user');return {worker:peers.find(p=>p.worker)!,item:app.interactions.list()[0]!};};
   return {app,start,async close(){
     // RED must not depend on the very terminal-run cleanup being tested.
@@ -77,7 +77,7 @@ for(const status of ['failed','cancelled'] as const)for(const confirmed of [true
     assert.equal(worker.status,'cancelled');assert.equal(f.app.store.run(run.id)!.status,status,'resource cleanup preserves the settled business outcome');
     assert.equal(f.app.tasks.run(run.id).phase,confirmed?'ended':'uncertain');
     if(!confirmed)assert.equal(f.app.upgradeStatus().safe,false);
-    await assert.rejects(()=>worker.call('write_markdown',{filename:'late.md',content:'# Synthetic late result'}),/stale|not_live|stop/);
+    await assert.rejects(()=>worker.call('stage_file_result',{filename:'late.md',assetId:'synthetic-media',revision:1}),/stale|not_live|stop/);
     assert.throws(()=>f.app.interactions.respond(item.id,{action:'answer',answer:'Synthetic late answer',reason:'Synthetic race'}),/not_live|resolved/);
     await f.app.stop(run.id);assert.equal(worker.resolutions,1);assert.equal(worker.closes,1);
   }finally{await f.close();}
@@ -104,7 +104,7 @@ test('HMR-RECURSIVE-007: a throwing terminal process close keeps its uncertain f
       assert.equal(worker.interrupts,1);assert.equal(worker.closes,1);
       assert.equal(f.app.tasks.run(run.id).phase,'uncertain');assert.equal(f.app.upgradeStatus().safe,false);
       assert.ok(f.app.store.events(run.id).some(e=>e.type==='engine_stop_unconfirmed'&&e.code==='synthetic_terminal_close_failure'));
-      await assert.rejects(()=>worker.call('write_markdown',{filename:'late.md',content:'# Synthetic late result'}),/stale|not_live|stop/);
+      await assert.rejects(()=>worker.call('stage_file_result',{filename:'late.md',assetId:'synthetic-media',revision:1}),/stale|not_live|stop/);
     }finally{worker.close=close;}
   }finally{await f.close();}
 });
@@ -129,6 +129,6 @@ test('HMR-RECURSIVE-007: an answer delivered just before stop remains one callba
     await f.app.stop(item.runId);
     assert.equal(worker.status,'answered');assert.equal(worker.resolutions,1);
     assert.equal(worker.interrupts,1);assert.equal(worker.closes,1);
-    await assert.rejects(()=>worker.call('write_markdown',{filename:'answered-late.md',content:'# Synthetic stale answer'}),/stale|not_live|stop/);
+    await assert.rejects(()=>worker.call('stage_file_result',{filename:'answered-late.md',assetId:'synthetic-media',revision:1}),/stale|not_live|stop/);
   }finally{await f.close();}
 });

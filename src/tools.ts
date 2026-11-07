@@ -21,21 +21,9 @@ function tool(
 export const MAIN_TOOLS = [
   tool(
     "list_work",
-    "Read a bounded page of user tasks and lightweight Worker progress. Archived history is excluded unless includeArchived is true. Filter by task state; follow nextCursor. Open one task with work_inspect for notes, sources, conversations and formal delivery facts. Does not start or clean up work.",
+    "Read a bounded page of user tasks and lightweight Worker progress. Archived history is excluded unless includeArchived is true. Filter by task state; follow nextCursor. Open one task with work_inspect for notes, sources, conversations and message references. Does not start or clean up work.",
     {state:{type:'string',enum:['open','paused','settled']},includeArchived:{type:'boolean'},cursor:str,limit:{type:'integer',minimum:1,maximum:80}},
     [],
-  ),
-];
-export const WORKER_TOOLS = [
-  tool(
-    "read_material",
-    "Read this execution's authorized materials, exact accepted results and attachments. Host binds the selected inputs and user sources. Does not grant access to other tasks or change permission. Takes no arguments.",
-    {},
-  ),
-  tool(
-    "write_markdown",
-    "Create a new nonempty Markdown file in this run's output directory. A file cannot be overwritten.",
-    { filename: str, content: str },
   ),
 ];
 export function object(value: unknown): Record<string, unknown> {

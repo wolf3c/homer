@@ -28,16 +28,14 @@ export async function runPinned(manifestPath,configPath,port){
  const rpc=(method,input={})=>new Promise((accept,reject)=>{
   if(!ready||stopping)return reject(Error('pinned_not_ready'));
   const id=randomUUID();
-  const timeout=setTimeout(()=>{pending.delete(id);reject(Error('pinned_receipt_unconfirmed'));},method==='wechat.poll'||method==='telegram.configure'?90000:method.startsWith('wechat.')||method.startsWith('telegram.')?35000:5000);
+  const timeout=setTimeout(()=>{pending.delete(id);reject(Error('pinned_receipt_unconfirmed'));},5000);
   pending.set(id,{accept,reject,timeout});
   void send({kind:'web',id,method,input}).catch(error=>{clearTimeout(timeout);pending.delete(id);reject(error);});
  });
  const startWeb=async()=>{
   if(port===undefined)return;
   const {createWebServer}=await import(pathToFileURL(join(live.directory,'dist/web-server.js')).href);
-  const bridge={state:()=>rpc('state'),submit:input=>rpc('submit',input),stop:messageId=>rpc('stop',{messageId}),respond:(id,input)=>rpc('respond',{...input,id}),artifact:runId=>rpc('artifact',{runId}),
-   wechat:{state:()=>rpc('wechat.state'),beginLogin:()=>rpc('wechat.login'),pollLogin:(id,verifyCode)=>rpc('wechat.poll',{id,verifyCode}),qrPng:id=>rpc('wechat.qr',{id}),disable:()=>rpc('wechat.disable'),reconnect:()=>rpc('wechat.reconnect'),disconnect:()=>rpc('wechat.disconnect')},
-   telegram:{state:()=>rpc('telegram.state'),configure:token=>rpc('telegram.configure',{token}),beginPairing:()=>rpc('telegram.pair'),candidate:code=>rpc('telegram.candidate',{code}),approve:(code,userId,chatId)=>rpc('telegram.approve',{code,userId,chatId}),connect:()=>rpc('telegram.connect'),disconnect:()=>rpc('telegram.disconnect'),forget:()=>rpc('telegram.forget')}};
+  const bridge={state:()=>rpc('state'),submit:input=>rpc('submit',input),stop:messageId=>rpc('stop',{messageId}),respond:(id,input)=>rpc('respond',{...input,id}),media:{read:input=>rpc('media.read',input),origin:input=>rpc('media.origin',input),reveal:input=>rpc('media.reveal',input)}};
   web=await createWebServer({port,bridge,uiDirectory:join(live.directory,'dist/web'),logoPath:join(live.directory,'assets/branding/homer-hippo-cool-icon-256.png')});
  };
  const rl=createInterface({input:process.stdin,terminal:false});

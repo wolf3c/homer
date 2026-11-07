@@ -9,7 +9,6 @@ function fixture(){
  const calls:string[]=[];
  const touch=(method:string,value:any={})=>async()=>{calls.push(method);return value;};
  const bridge={state:touch('state',state),submit:touch('submit'),stop:touch('stop'),respond:touch('respond'),
-  artifact:touch('artifact',{filename:'synthetic.txt',content:'synthetic artifact'}),
   history:{state:touch('history',state),page:touch('page'),process:touch('process'),resolve:touch('resolve'),receipts:touch('receipts'),queue:touch('queue',[]),interactions:touch('interactions',[])},
   media:{upload:touch('upload',{id:'synthetic-upload'}),read:touch('media',{filename:'synthetic.png',mime:'image/png',data:'eA=='})},
  };
@@ -29,10 +28,10 @@ test('desktop authentication denies every sensitive route before reads, bodies o
  try{
   for(const [method,path] of [
    ['GET','/api/state'],['GET','/api/events'],['GET','/api/history/state'],['GET','/api/history/events'],
-   ['GET','/api/tasks'],['GET','/api/update/review'],['GET','/api/mobile/state'],['GET','/api/files/result-synthetic'],
-   ['GET','/api/channels/telegram'],['GET','/api/media/synthetic/asset-11111111-1111-4111-8111-111111111111/1'],
+   ['GET','/api/tasks'],['GET','/api/update/review'],['GET','/api/mobile/state'],
+   ['GET','/api/media/synthetic/asset-11111111-1111-4111-8111-111111111111/1'],
    ['POST','/api/uploads'],['POST','/api/messages'],['POST','/api/stop'],['POST','/api/interactions/synthetic'],
-   ['POST','/api/update/approve'],['POST','/api/mobile/approve'],['POST','/api/channels/telegram/configure'],
+   ['POST','/api/update/approve'],['POST','/api/mobile/approve'],['POST','/api/media/synthetic/asset-11111111-1111-4111-8111-111111111111/1/reveal'],
   ]){
    for(const credential of [undefined,'',second,first+', '+first]){
     const response=await fetch(web.url+path,{method,headers:{Connection:'close',Origin:web.url,...(credential===undefined?{}:{'X-Homer-Desktop-Access':credential})}});
@@ -60,9 +59,8 @@ test('authorized desktop reads, events, messages, explicit decisions, uploads an
   assert.equal((await post('/api/update/approve',{hash:'synthetic'})).status,200);
   const upload=await fetch(web.url+'/api/uploads',{method:'POST',headers:{...headers,'Content-Type':'application/octet-stream','Content-Length':'1','X-Homer-Filename':'synthetic.txt','X-Homer-Thread':state.threadId,'X-Homer-Request':'synthetic-input','X-Homer-Upload':'synthetic-upload'},body:'x'});
   assert.equal(upload.status,201);await upload.arrayBuffer();
-  const file=await fetch(web.url+'/api/files/result-synthetic',{headers});assert.equal(file.status,200);assert.equal(await file.text(),'synthetic artifact');
   const media=await fetch(web.url+'/api/media/synthetic/asset-11111111-1111-4111-8111-111111111111/1',{headers});assert.equal(media.status,200);await media.arrayBuffer();
-  assert.ok(['state','history','submit','respond','approve','upload','artifact','media'].every(name=>f.calls.includes(name)));
+  assert.ok(['state','history','submit','respond','approve','upload','media'].every(name=>f.calls.includes(name)));
   const forbidden=await fetch(web.url+'/api/state',{headers:{...headers,Origin:'https://foreign.invalid'}});assert.equal(forbidden.status,403);await forbidden.arrayBuffer();
  }finally{await web.close();}
 });

@@ -65,36 +65,31 @@ export function pinnedDatabaseIdentity(path){
  try{
   db.exec('PRAGMA query_only=ON;PRAGMA busy_timeout=3000;BEGIN');
   const schema=db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all();
-  const metadata=Object.fromEntries(['mainThread','mainToolsHash','binding','bindingVersion','recursiveSchemaVersion','pendingSchemaVersion'].map(key=>[key,db.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value??null]));
-  const hasOutbox=schema.some(row=>row.type==='table'&&row.name==='wechat_outbox');
-  const unknown=hasOutbox?db.prepare("SELECT * FROM wechat_outbox WHERE state='uncertain' ORDER BY id").all().map(row=>({identityHash:jsonHash(row.id),rowHash:jsonHash(row)})):[];
+  const metadata=Object.fromEntries(['mainThread','mainToolsHash','binding','bindingVersion','recursiveSchemaVersion'].map(key=>[key,db.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value??null]));
   const hasTable=name=>schema.some(row=>row.type==='table'&&row.name===name);
+  const unknown=hasTable('operations')?db.prepare("SELECT * FROM operations WHERE state='uncertain' ORDER BY id").all().map(row=>({identityHash:jsonHash(row.id),rowHash:jsonHash(row)})):[];
   const exists=sql=>!!db.prepare(sql).get();
   const runColumns=hasTable('runs')?db.prepare('PRAGMA table_info(runs)').all().map(row=>row.name):[];
   const executionReviewRequired=exists("SELECT 1 FROM meta WHERE key LIKE 'lease:%' LIMIT 1")||
    (hasTable('requests')&&exists("SELECT 1 FROM requests WHERE state!='completed' LIMIT 1"))||
    (hasTable('runs')&&exists("SELECT 1 FROM runs WHERE status NOT IN ('succeeded','failed','cancelled','interrupted') LIMIT 1"))||
    (runColumns.includes('phase')&&exists("SELECT 1 FROM runs WHERE phase IN ('uncertain','stopping') LIMIT 1"))||
-   (hasTable('deliveries')&&exists("SELECT 1 FROM deliveries WHERE state IN ('prepared','submitting','uncertain') LIMIT 1"))||
+   (hasTable('operations')&&exists("SELECT 1 FROM operations WHERE state IN ('accepted','dispatching','uncertain') LIMIT 1"))||
    (hasTable('worker_interactions')&&exists("SELECT 1 FROM worker_interactions WHERE state IN ('pending_main','pending_user') OR (state IN ('approved','denied','answered') AND deliveredAt IS NULL) LIMIT 1"))||
-   (hasTable('wechat_outbox')&&exists("SELECT 1 FROM wechat_outbox WHERE state='sending' LIMIT 1"))||
-   (hasTable('tg_outbox')&&exists("SELECT 1 FROM tg_outbox WHERE state='sending' LIMIT 1"))||
    (hasTable('tasks')&&exists('SELECT 1 FROM tasks LIMIT 1'));
   const mediaVersion=hasTable('media_schema')?db.prepare('SELECT version FROM media_schema').get()?.version:null;
   return {schemaHash:jsonHash(schema),metadata,unknown,executionReviewRequired,mediaVersion};
  }finally{db.close();}
 }
 function reviewedSchema(directory,database){
- if(database.mediaVersion!=null&&(database.mediaVersion!==1||!existsSync(join(directory,'dist','media-store.js'))))throw Error('pinned_schema_unsupported');
+ if(database.mediaVersion!=null&&(database.mediaVersion!==2||!existsSync(join(directory,'dist','media-store.js'))))throw Error('pinned_schema_unsupported');
  // The selected artifact must declare the exact persisted schema. A manifest
  // cannot authorize a different version to migrate or reinterpret these facts.
- for(const [key,owner] of [['recursiveSchemaVersion','store.js'],['pendingSchemaVersion','pending-items.js']]){
-  const version=database.metadata[key];
-  const file=join(directory,'dist',owner);
-  const source=existsSync(file)?readFileSync(file,'utf8'):'';
-  const declared=source.match(key==='recursiveSchemaVersion'?/STORE_SCHEMA_VERSION\s*=\s*['"]([0-9]+)['"]/:/PENDING_SCHEMA_VERSION\s*=\s*['"]([0-9]+)['"]/ )?.[1];
-  const supported=version===declared;
-  if(version!==null&&(!supported||!existsSync(file)))throw Error('pinned_schema_unsupported');
+ const version=database.metadata.recursiveSchemaVersion;
+ if(version!==null){
+  const file=join(directory,'dist','store.js');
+  const declared=existsSync(file)?readFileSync(file,'utf8').match(/STORE_SCHEMA_VERSION\s*=\s*['"]([0-9]+)['"]/)?.[1]:undefined;
+  if(version!==declared)throw Error('pinned_schema_unsupported');
  }
 }
 export function preparePinned({directory,configPath,snapshot,thread,manifestPath}){
@@ -118,7 +113,7 @@ export function verifyPinned(manifestPath,configPath){
  const raw=JSON.parse(readFileSync(configPath,'utf8'));
  if(!raw.codexHome&&process.env.CODEX_HOME)throw Error('pinned_explicit_codex_home_required');
  const runtime=manifest.config.runtime;
- for(const path of [runtime,manifest.config.workspace,join(manifest.config.workspace,'materials'),join(manifest.config.workspace,'outputs')]){
+ for(const path of [runtime,manifest.config.workspace,join(manifest.config.workspace,'outputs')]){
   if(!existsSync(path)||!lstatSync(path).isDirectory())throw Error('pinned_workspace_missing');
   if(realpathSync(path)!==path)throw Error('pinned_path_changed');
  }

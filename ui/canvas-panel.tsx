@@ -20,6 +20,7 @@ import rehypeKatex from 'rehype-katex';
 import { Highlight } from './markdown-code';
 import './canvas-panel.css';
 import {ImageRoot,ImagePreview} from './vendor/assistant-ui/image';
+import {FileDownload} from './vendor/assistant-ui/file';
 import {CanvasSplitDocument,CanvasSplitBody} from './vendor/assistant-ui/canvas-split';
 import {WebPreview} from './vendor/assistant-ui/web-preview';
 import {remarkPreviewMath} from './preview-selection';
@@ -39,7 +40,7 @@ class PatchPreviewBoundary extends Component<{children:ReactNode;fallback:ReactN
   render(){return this.state.failed?this.props.fallback:this.props.children;}
 }
 
-export type CanvasArtifact = {id:string;title:string};
+export type CanvasArtifact = {id:string;title:string;messageId:string;assetId:string;revision:number;sha256:string};
 export function canvasWebUrl(value:string):string {
   const url=new URL(value);
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('请输入不含账号密码的 http(s) 网页地址。');
@@ -105,8 +106,11 @@ export function CanvasPanel({tabs,threadId='',onSelectArtifact,onCloseArtifact,r
       <Tabs.List className="canvas-tab-rail" ref={rail} aria-label="已打开的成果" activateOnFocus={false} loopFocus onFocusCapture={event=>{visibleTab.current=event.target;ensureVisible(event.target);}}>
         {tabs.map(tab=>{
           const sameName=tabs.filter(item=>item.title===tab.title);
-          let length=8;while(length<tab.id.length&&sameName.some(item=>item.id!==tab.id&&item.id.slice(0,length)===tab.id.slice(0,length)))length++;
-          const label=tab.title+(sameName.length>1?' · '+tab.id.slice(0,length):'');
+          const repeatedAsset=new Set(sameName.map(item=>item.assetId)).size!==sameName.length;
+          const sourceKey=(item:typeof tab)=>repeatedAsset?item.messageId.replace(/^message-/,'')+':'+item.revision+':'+item.assetId.slice(6):item.assetId.slice(6);
+          const key=sourceKey(tab);
+          let length=8;while(length<key.length&&sameName.some(item=>item.id!==tab.id&&sourceKey(item).slice(0,length)===key.slice(0,length)))length++;
+          const label=tab.title+(sameName.length>1?' · '+key.slice(0,length):'');
           return <div key={tab.id} className="canvas-tab-item" role="presentation">
             <Tabs.Tab value={tab.id} className="canvas-tab" title={tab.title+' · '+tab.id} aria-label={label}><span>{label}</span></Tabs.Tab>
             <button type="button" className="canvas-tab-close" aria-label={'关闭文件：'+label} title={'关闭文件：'+label} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))event.stopPropagation();}} onClick={event=>{focusAfterClose.current=tab.id===artifact?.id||event.currentTarget===document.activeElement;onCloseArtifact?.(tab.id);}}><XIcon size={14} aria-hidden/></button>
@@ -144,23 +148,26 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
   const interactive=!!runtime,annotationLoading=selection==='connecting';
   const annotationLabel=annotationLoading?'取消批注加载，返回静态预览':interactive?'退出批注，返回静态预览':'启用批注（将运行当前网页脚本）';
   const token=useMemo(()=>crypto.randomUUID(),[artifact?.id,webSource?.url,retry,interactive,runtime,frameRevision]);
-  const source=useMemo<PreviewSource|undefined>(()=>webSource??(artifact&&file?.sha256?{kind:'artifact',id:artifact.id,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file]);
+  const attachmentPath=artifact?'/api/media/'+[artifact.messageId,artifact.assetId,artifact.revision].map(encodeURIComponent).join('/') : '';
+  const source=useMemo<PreviewSource|undefined>(()=>webSource??(artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file]);
   const imageFile=useMemo(()=>file&&source?annotationDraft.imageFile(referenceKey({kind:'image',source}),new File([file.blob],file.name,{type:file.mime})):undefined,[file,source,annotationDraft]);
   useLayoutEffect(()=>{
     generation.current++;setFile(null);setReadError('');setMediaError('');setNotice('');setImageAnnotation(false);setRuntime('');setReady(false);setSelection('idle');
     if(!artifact||webSource){setLoading(false);return;}
     const controller=new AbortController();let objectUrl='';setLoading(true);
     void (async()=>{try{
-      const response=await connectionFetch('/api/files/'+encodeURIComponent(artifact.id),{signal:controller.signal});
+      const response=await connectionFetch(attachmentPath,{signal:controller.signal});
       if(!response.ok){
         let denied=false;try{denied=(await response.json()).error==='file_type_or_size_denied';}catch{}
         throw Error('成果读取失败（'+response.status+'），'+(denied?'文件类型或大小不符合当前读取限制（文件上限 50 MiB），请使用原文件。':'请重新连接后重试。'));
       }
+      const sha256=response.headers.get('X-Homer-Artifact-Hash');
+      if(sha256!==artifact.sha256)throw Error('成果读取失败：附件版本已变化，请重新打开。');
       const blob=await response.blob(),mime=(response.headers.get('Content-Type')??blob.type).split(';')[0]!.trim().toLowerCase();
       let name=artifact.title;try{const encoded=response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];if(encoded)name=decodeURIComponent(encoded);}catch{}
       const text=isPatchFile(name,mime)?await blob.slice(0,blob.size>MAX_PATCH_BYTES?PATCH_PREFIX_BYTES:blob.size).text():!/^(audio|video)\//.test(mime)&&(mime.startsWith('text/')||/^(application\/(json|javascript))/.test(mime)||/\.(txt|md|json|[cm]?[jt]sx?|css|py|sh)$/i.test(name))?await blob.text():'';
       if(controller.signal.aborted||!readerCurrent())return;
-      objectUrl=URL.createObjectURL(blob);setFile({url:objectUrl,mime,text,name,blob,sha256:response.headers.get('X-Homer-Artifact-Hash')??''});
+      objectUrl=URL.createObjectURL(blob);setFile({url:objectUrl,mime,text,name,blob,sha256});
     }catch(error){if(!controller.signal.aborted&&readerCurrent())setReadError(error instanceof Error?error.message:'成果读取失败。');}
     finally{if(!controller.signal.aborted&&readerCurrent())setLoading(false);}})();
     return()=>{
@@ -172,7 +179,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
       if(objectUrl)URL.revokeObjectURL(objectUrl);
     };
   },[artifact?.id,webSource?.url,retry]);
-  const noteKey=source?.kind==='artifact'?JSON.stringify([source.id,source.sha256]):'';
+  const noteKey=source?.kind==='attachment'?referenceKey({kind:'image',source}):'';
   const htmlKey=source?referenceKey({kind:'web',source}):'';
   const textReference=referencesOf(draft).find(r=>r.kind==='text'&&source&&referenceKey(r)===referenceKey({kind:'text',source}));
   const imageReference=Object.values(draft.preparingImages??{}).find(r=>source&&referenceKey(r)===referenceKey({kind:'image',source}))??referencesOf(draft).find(r=>r.kind==='image'&&source&&referenceKey(r)===referenceKey({kind:'image',source}));
@@ -270,6 +277,13 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
   const hasFrame=!!webSource||file?.mime==='application/pdf';
   const isImage=!!file&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mime);
   return <CanvasSplitDocument>
+    {actions&&isImage&&file&&createPortal(<FileDownload data={file.url} mimeType={file.mime} filename={file.name} onClick={event=>{
+      event.preventDefault();
+      void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},error=>{
+        if(readerCurrent())setNotice(error instanceof Error&&error.message==='mobile_file_size_limit'
+          ?'图片超过移动端下载上限，请在电脑上下载原图。':'下载未完成，请重新连接后重试。');
+      });
+    }}/>,actions)}
     {actions&&createPortal(isHtml&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
       <TooltipIconButton className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)staticPreview();else void enableWebAnnotation();}}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>
     </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface">{!imageAnnotation&&<TooltipIconButton className="image-annotation-toggle" tooltipContainer={imageActions} aria-label="批注" aria-pressed={false} tooltip="开始图片批注" onClick={()=>setImageAnnotation(true)}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>}</span>:null,actions)}

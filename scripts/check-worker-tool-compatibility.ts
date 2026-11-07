@@ -6,9 +6,8 @@ import assert from "node:assert/strict";
 import { HOST_MCP_TOOLS, WorkerInteractionMcp } from "../src/worker-interaction-mcp.js";
 import { MAIN_TOOLS } from "../src/tools.js";
 import { RECURSIVE_TOOLS } from "../src/recursive-tools.js";
-import { PENDING_TOOLS } from "../src/pending-tools.js";
 
-const tools = [...MAIN_TOOLS, ...RECURSIVE_TOOLS, ...PENDING_TOOLS];
+const tools = [...MAIN_TOOLS, ...RECURSIVE_TOOLS];
 
 const requestedBin = process.argv[2] ?? "codex";
 const codexBin = requestedBin.includes("/") ? resolve(requestedBin) : requestedBin;

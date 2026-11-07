@@ -1,11 +1,10 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {withTaskSources} from '../src/web-homer.js';import {WorkerCardEvents} from '../src/worker-card-events.js';
-import {overviewFixture} from './task-overview-fixture.js';import {ConversationHistory} from '../src/web-history.js';import type {DisplayMessage} from '../src/conversation-projection.js';
+import {overviewFixture} from './task-overview-fixture.js';import type {DisplayMessage} from '../src/conversation-projection.js';
 test('source and event reads batch 601 exact keys and ignore 20000 unrelated notices and their payloads',()=>{
  const f=overviewFixture();try{
   const db=f.store.db;
   const w=f.open('inspect'),run=f.tasks.claim(w.runId)!;f.tasks.bind(run.id,run.epoch,'thread:worker','turn:worker');const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'PRIVATE_BODY'},true)!;
-  const history=new ConversationHistory(db);history.accept(f.actor.threadId,{requestId:f.actor.sourceRequestId,text:'synthetic source'});
   const source=db.prepare('SELECT operationKey FROM agent_messages WHERE id=?').get(reply.messageId)!;
   const op=db.prepare('INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,responseJson,revision,detailsJson) SELECT ?,actorAgentId,scopeId,?,kind,payloadHash,state,responseJson,revision,detailsJson FROM operations WHERE id=?');
   const message=db.prepare('INSERT INTO agent_messages(id,senderAgentId,senderRunId,senderEpoch,recipientAgentId,taskId,taskVersion,targetRunId,kind,replyTo,causationId,operationKey,payloadJson) SELECT ?,senderAgentId,senderRunId,senderEpoch,recipientAgentId,taskId,taskVersion,targetRunId,kind,replyTo,causationId,?,payloadJson FROM agent_messages WHERE id=?');

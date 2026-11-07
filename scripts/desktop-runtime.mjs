@@ -100,9 +100,8 @@ try{
        try{assertDesktopAdoptionLeasesRecoverable(leases,pid=>!leaseOwnerGone(pid));}
        catch{throw Error(paths.adoption?'desktop_adoption_owner_unknown':'desktop_lease_review_required');}
        const {RECURSIVE_SCHEMA_VERSION}=await import(pathToFileURL(join(homer,'dist/recursive-tasks.js')).href);
-       for(const [key,supported]of[['pendingSchemaVersion',['1']],['recursiveSchemaVersion',[RECURSIVE_SCHEMA_VERSION]]]){
-         const row=db.prepare('SELECT value FROM meta WHERE key=?').get(key);if(row&&!supported.includes(row.value))throw Error('desktop_schema_incompatible');
-       }
+       const schema=db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get();
+       if(schema?.value!==RECURSIVE_SCHEMA_VERSION)throw Error('desktop_schema_incompatible');
      }
    }finally{db.close();}
  }

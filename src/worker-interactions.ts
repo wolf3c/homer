@@ -68,13 +68,6 @@ export class WorkerInteractions {
       deliveredAt INTEGER, code TEXT,
       createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
     ); CREATE INDEX IF NOT EXISTS worker_interactions_run ON worker_interactions(runId,state);`);
-    db.exec("CREATE TABLE IF NOT EXISTS worker_authorities(runId TEXT PRIMARY KEY,sourceRequestId TEXT NOT NULL,description TEXT NOT NULL)");
-  }
-  setAuthority(runId: string, sourceRequestId: string, description: string) {
-    this.db.prepare("INSERT INTO worker_authorities VALUES(?,?,?) ON CONFLICT(runId) DO NOTHING").run(runId, sourceRequestId, description);
-  }
-  authority(runId: string): { sourceRequestId: string; description: string } | undefined {
-    return this.db.prepare("SELECT sourceRequestId,description FROM worker_authorities WHERE runId=?").get(runId) as { sourceRequestId: string; description: string } | undefined;
   }
   private row(id: string): Row {
     const row = this.db.prepare("SELECT * FROM worker_interactions WHERE id=?").get(id) as Row | undefined;
@@ -86,7 +79,7 @@ export class WorkerInteractions {
     return {
       ...row, requestId: JSON.parse(row.requestId), details: JSON.parse(row.details),
       authority: JSON.parse(row.authority), decision: row.decision ? JSON.parse(row.decision) : null,
-      waitingFor: row.state === "pending_main" ? "main" : row.state === "pending_user" ? "user" : null,
+      waitingFor: row.state === "pending_main" || row.state === "pending_user" && row.responseUserMessageId ? "main" : row.state === "pending_user" ? "user" : null,
     };
   }
   list(runId?: string|readonly string[]) {
@@ -181,6 +174,11 @@ export class WorkerInteractions {
     if (decision.action === "answer" && row.source === "ask_main" && !text(decision.answer, 16000)) throw new Error("interaction_answer_required");
     if (decision.action === "answer" && row.source === "native" && (!decision.answers || !Object.keys(decision.answers).length)) throw new Error("interaction_answer_required");
     if (decision.action === "approve" && !JSON.parse(row.authority).nativeApprovals) throw new Error("interaction_capability_denied");
+    if (details.review && (decision.action === 'approve' || decision.action === 'cancel')) {
+      const expected = decision.action === 'approve' ? '允许本次操作' : '取消本次请求';
+      if (!row.responseUserMessageId || row.responseUserMessageId !== context.userMessageId || row.responseUserText !== expected)
+        throw Error('interaction_user_decision_required');
+    }
     const serialized = JSON.stringify(decision);
     if (serialized.length > 64000) throw new Error("interaction_invalid_response");
     if (!pending(row.state)) {
@@ -195,12 +193,21 @@ export class WorkerInteractions {
   validateResponse(id: string, decision: InteractionDecision, context: { userMessageId?: string; userText?: string } = {}) {
     this.prepareResponse(id, decision, context);
   }
+  // Called within the conversation acceptance transaction. Save the user's
+  // decision without releasing the Worker's callback.
+  recordUserDecision(id:string, decision:InteractionDecision, requestId:string, userText:string) {
+    this.current(id);
+    const row=this.row(id);
+    if (row.state !== 'pending_user' || row.responseUserMessageId) throw Error('interaction_already_resolved');
+    this.db.prepare('UPDATE worker_interactions SET responseUserMessageId=?,responseUserText=?,updatedAt=? WHERE id=?').run(requestId,userText,Date.now(),id);
+    this.validateResponse(id,decision,{userMessageId:requestId,userText});
+  }
   respond(id: string, decision: InteractionDecision, context: { userMessageId?: string; userText?: string } = {}) {
     const { duplicate, live, row, serialized } = this.prepareResponse(id, decision, context);
     if (duplicate) return { duplicate: true };
     const state = decision.action === "approve" ? "approved" : decision.action === "deny" ? "denied" : decision.action === "cancel" ? "cancelled" : "answered";
     this.db.prepare("UPDATE worker_interactions SET state=?,decision=?,responseUserMessageId=?,responseUserText=?,code=?,updatedAt=? WHERE id=?")
-      .run(state, serialized, context.userMessageId ?? null, context.userText ?? null, decision.action === "cancel" ? "interaction_user_cancelled" : null, Date.now(), id);
+      .run(state, serialized, row.responseUserMessageId ?? context.userMessageId ?? null, row.responseUserText ?? context.userText ?? null, decision.action === "cancel" ? "interaction_user_cancelled" : null, Date.now(), id);
     live.resolve({ status: state, decision: JSON.parse(serialized) });
     if (!this.hasPending(row.runId)) this.hooks.waiting?.(row.runId, false);
     return { duplicate: false };

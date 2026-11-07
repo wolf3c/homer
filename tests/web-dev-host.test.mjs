@@ -24,10 +24,11 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
   const binary = join(base, 'synthetic-codex.mjs'); cpSync(join(root, 'tests/fixtures/web-browser-app-server.mjs'), binary);
   writeFileSync(binary, readFileSync(binary,'utf8').replace('slow ? 230 : 30','slow ? 10000 : 30'));
   const config = join(base, 'synthetic.config.json');
-  writeFileSync(config, JSON.stringify({ workspace: 'workspace', runtime: 'runtime', codexHome: join(base, 'home'), codexBin: binary, model: 'synthetic-only', requiresOpenaiAuth: false, effort: 'medium', timeoutMs: 30000, mainTimeoutMs: 120000, stopGraceMs: 200 }));
+  writeFileSync(config, JSON.stringify({ appData:base, workspace: 'workspace', runtime: 'runtime', nativeCodexHome:join(base,'home'), codexBin: binary, model: 'synthetic-only', requiresOpenaiAuth: false, effort: 'medium', timeoutMs: 30000, mainTimeoutMs: 120000, stopGraceMs: 200 }));
   const reserve = createServer(); await new Promise(r => reserve.listen(0, '127.0.0.1', r)); const port = reserve.address().port; await new Promise(r => reserve.close(r));
   const url = `http://127.0.0.1:${port}`, events = [];
-  const child = spawn(process.execPath, [join(base, 'scripts/dev.mjs'), '--web', '--port', String(port), '--config', config, '--json'], { cwd: base, env:fixtureBuildEnvironment(base), stdio: ['pipe', 'pipe', 'pipe'] });
+  const env={...fixtureBuildEnvironment(base),HOMER_DATA_HOME:base,HOMER_NATIVE_CODEX_HOME:join(base,'home'),HOMER_CODEX_HOME:join(base,'home'),HOMER_CODEX_BIN:binary};
+  const child = spawn(process.execPath, [join(base, 'scripts/dev.mjs'), '--web', '--port', String(port), '--config', config, '--json'], { cwd: base, env, stdio: ['pipe', 'pipe', 'pipe'] });
   let lines = '', exited = false, verified=false; const errors = [];
   child.stdout.on('data', data => { lines += data; const parts = lines.split('\n'); lines = parts.pop(); for (const line of parts) { try { events.push(JSON.parse(line)); } catch {} } });
   child.stderr.on('data', data => errors.push(String(data))); child.on('exit', () => { exited = true; });

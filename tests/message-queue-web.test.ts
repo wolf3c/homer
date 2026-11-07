@@ -214,7 +214,7 @@ test('move receipt deadlines, mismatched identities and unmount never clear unkn
 function host(){
  const f=historyFixture(0),reader=new WebHistoryPages(f.history,f.processes,f.inputs);
  for(const requestId of ['B','C','D'])f.inputs.accept({requestId,text:'合成 '+requestId});
- return {...f,webReadEpoch:'queue-epoch',registerChannelCapabilities(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('no-media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),editQueued:f.inputs.edit.bind(f.inputs),cancelQueued:f.inputs.cancel.bind(f.inputs),moveQueued:f.inputs.move.bind(f.inputs)};
+ return {...f,webReadEpoch:'queue-epoch',registerWebSurface(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('no-media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),editQueued:f.inputs.edit.bind(f.inputs),cancelQueued:f.inputs.cancel.bind(f.inputs),moveQueued:f.inputs.move.bind(f.inputs)};
 }
 test('unified messageId HTTP move confirms exact receipt after claim and preserves normal edit/cancel',async()=>{
  const app=host(),server=await createWebServer({bridge:homerWebBridge(app as unknown as Homer),port:0});

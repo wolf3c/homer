@@ -1,15 +1,12 @@
 // Real isolated SQLite and public tool adapter; no engine, model or channel.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, rmSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {Store} from '../src/store.js';
 import {Files} from '../src/files.js';
 import {RecursiveTasks, type Actor} from '../src/recursive-tasks.js';
 import {RecursiveTools, RECURSIVE_TOOLS, toolOperationId, validateToolArguments} from '../src/recursive-tools.js';
-import {PendingTools} from '../src/pending-tools.js';
-import {Homer} from '../src/service.js';
-import {chatFixture} from './task-chat-fixture.js';
 import {fixture as hostFixture, until} from './fixtures/worker-chat-host.js';
 
 function fixture() {
@@ -22,43 +19,18 @@ function fixture() {
   store.startRequest('source:tools', 'synthetic');
   const actor: Actor = {agentId: 'main:tools', threadId: 'thread:main', turnId: 'turn:main', sourceRequestId: 'source:tools', inputMessageId: 'input:tools'};
   const stopped: Record<string, unknown>[] = []; let authorityReads = 0, wakes = 0;
-  let currentTaskId: string | undefined;
   const effects = {
-    rootAuthority: (a: Actor) => { authorityReads++; return {sourceRequestId: a.sourceRequestId!, description: 'Only investigate the synthetic project', materials: [], resultIds: []}; },
+    rootAuthority: (a: Actor) => { authorityReads++; return {sourceRequestId: a.sourceRequestId!, description: 'Only investigate the synthetic project'}; },
     rootWorkingDirectory: () => tasks.files.workspace,
-    currentTaskId: () => currentTaskId,
     wake: () => { wakes++; },
     stop: async (receipt: Record<string, unknown>) => { stopped.push(receipt); return receipt; },
     steer: async (receipt: Record<string, unknown>) => receipt,
   };
   const tools = new RecursiveTools(tasks, effects);
-  const create = async () => { const receipt = await tools.call(actor, 'task_create', {goal: 'Investigate without edits'}, 'create') as any; currentTaskId = receipt.taskId; return receipt; };
+  const create = async () => tasks.createTask(actor,{operationId:'setup',goal:'Investigate without edits',
+    authority:{sourceRequestId:actor.sourceRequestId!,description:'Only investigate the synthetic project'}});
   const counts = () => ['tasks', 'runs', 'operations'].map(table => Number(store.db.prepare('SELECT count(*) n FROM ' + table).get()!.n));
   return {dir, path, store, tasks, actor, effects, tools, create, stopped, counts, reads: () => ({authorityReads, wakes}), close() {store.close(); rmSync(dir, {recursive: true, force: true});}};
-}
-
-function transferFixture() {
-  const f = chatFixture();
-  const tools = new RecursiveTools(f.tasks, {
-    rootAuthority: actor => {
-      const source = f.tasks.pending.source(actor, actor.sourceRequestId!);
-      return {sourceRequestId: source.requestId, description: source.text, materials: [], resultIds: []};
-    },
-    wake() {}, stop: async () => ({}), steer: async () => ({}),
-  });
-  const counts = () => ['tasks', 'runs', 'operations'].map(table => Number(f.store.db.prepare('SELECT count(*) n FROM ' + table).get()!.n));
-  return {...f, tools, counts};
-}
-
-async function acceptedReply(f: {tools: RecursiveTools; tasks: RecursiveTasks; actor: Actor}, taskId: string, label: string) {
-  const opened = await f.tools.call(f.actor, 'worker_open', {taskId, message: 'Report ' + label}, 'produce-' + label) as any;
-  const run = f.tasks.claim(opened.runId)!; f.tasks.bind(run.id, run.epoch, 'thread:' + run.id, 'turn:' + run.id);
-  f.tasks.endSegment(run.id, run.epoch, {status: 'completed', text: 'Exact evidence: ' + label}, true);
-  const page = await f.tools.call(f.actor, 'worker_read', {workerId: opened.workerId}) as any;
-  const message = page.messages.find((message: {kind: string}) => message.kind === 'worker_reply');
-  assert.ok(message, 'public Worker read exposes the original reply');
-  const accepted = await f.tools.call(f.actor, 'accept_result', {runId: run.id, messageId: message.id}, 'accept-' + label) as any;
-  return {opened, resultId: accepted.resultId};
 }
 
 test('v1 to v2 archival inspection separates readable source history from current dispatch authority', async () => {
@@ -101,9 +73,8 @@ test('v1 to v2 archival inspection separates readable source history from curren
             await assert.rejects(main.call('task_create', {goal: 'Inspect remaining synthetic facts', sourceRequestIds}), /invalid_tool_arguments/);
             assert.deepEqual(counts(), before, 'rejected source selection cannot create work');
           }
-          const followup = await main.call('task_create', {goal: 'Inspect remaining synthetic facts'});
+          const followup = await main.call('worker_open', {message: 'Read remaining facts within the revised source only'});
           followups.push(followup.taskId);
-          await main.call('worker_open', {taskId: followup.taskId, message: 'Read within the revised source only'});
           checked = true;
         }
         return {status: 'completed', text: 'Synthetic review recorded.'};
@@ -131,58 +102,46 @@ test('v1 to v2 archival inspection separates readable source history from curren
   } finally {await f.close();}
 });
 
-test('public adapter transfers only an explicitly selected same-source result without prefilled authority grants', async () => {
-  const f = transferFixture(); try {
-    const task = await f.tools.call(f.actor, 'task_create', {goal: 'Produce precise evidence'}, 'producer-task') as any;
-    const selected = await acceptedReply(f, task.taskId, 'selected'), privateResult = await acceptedReply(f, task.taskId, 'unselected');
-    assert.deepEqual(f.tasks.authority(task.taskId, 1).resultIds, [], 'creation did not bypass the model interface');
-    const sameSource = await f.tools.call(f.actor, 'task_create', {goal: 'Read a selected same-source result'}, 'consumer-task') as any;
-    for (const [label, taskId] of [
-      ['same-task', task.taskId],
-      ['same-source-task', sameSource.taskId],
-    ] as const) {
-      assert.deepEqual(f.tasks.authority(taskId, 1).resultIds, []);
-      const consumer = await f.tools.call(f.actor, 'worker_open', {taskId, message: 'Read exactly the selected result', resultIds: [selected.resultId]}, 'read-' + label) as any;
-      const run = f.tasks.claim(consumer.runId)!; f.tasks.bind(run.id, run.epoch, 'thread:' + run.id, 'turn:' + run.id);
-      const actor = {agentId: 'worker:' + consumer.workerId, runId: run.id, epoch: run.epoch, threadId: 'thread:' + run.id, turnId: 'turn:' + run.id};
-      const host = Object.create(Homer.prototype) as any;
-      Object.assign(host, {tasks: f.tasks, files: f.tasks.files, store: f.store, workerActor: () => actor, closing: false, accountClocks() {}});
-      const read = await host.workerToolWork({id: run.id, epoch: run.epoch}, {tool: 'read_material', arguments: {}, callId: 'read-selected', threadId: actor.threadId, turnId: actor.turnId});
-      assert.deepEqual(read.results.map((result: {id: string}) => result.id), [selected.resultId]);
-      assert.equal(read.results[0].payload.text, 'Exact evidence: selected');
-      assert.throws(() => f.tasks.readResultInput(actor, privateResult.resultId), /task_authority_input_denied/);
-      assert.throws(() => f.tasks.readTask(actor, label === 'same-task' ? sameSource.taskId : task.taskId), /agent_scope_denied/);
-    }
-  } finally {f.close();}
-});
-
-test('public adapter rejects cross-source result selection atomically without granting another Worker', async () => {
-  const f = transferFixture(); try {
-    const producer = await f.tools.call(f.actor, 'task_create', {goal: 'Produce evidence for the original source'}, 'producer-task') as any;
-    const source = f.source('source:other', 'Synthetic unrelated user request');
-    const other = {...f.actor, sourceRequestId: 'source:other', inputMessageId: source.messageId};
-    const consumer = await f.tools.call(other, 'task_create', {goal: 'Work only for this unrelated source'}, 'other-task') as any;
-    const selected = await acceptedReply(f, producer.taskId, 'foreign-source');
-    assert.deepEqual(f.tasks.authority(consumer.taskId, 1).resultIds, []);
-    const before = f.counts();
-    await assert.rejects(f.tools.call(other, 'worker_open', {taskId: consumer.taskId, message: 'Try to read foreign evidence', resultIds: [selected.resultId]}, 'cross-source'), /task_authority_input_denied/);
-    assert.deepEqual(f.counts(), before);
-    assert.equal(f.tasks.workers(consumer.taskId).length, 0);
-  } finally {f.close();}
-});
-
-test('goal-only creation and message-only opening bind the unique current task without a contract', async () => {
+test('record-only and first-dispatch tools have separate effects', async () => {
   const f = fixture(); try {
-    const root = await f.create();
-    assert.equal(f.tasks.task(root.taskId).notes, ''); assert.equal(f.tasks.task(root.taskId).state, 'open');
-    assert.equal(f.tasks.runs().length, 0);
-    const opened = await f.tools.call(f.actor, 'worker_open', {message: 'Read the build files'}, 'open') as any;
-    assert.equal(opened.taskId, root.taskId); assert.equal(opened.workerId, opened.runId);
-    assert.equal(f.tasks.run(opened.runId).workingDirectory, f.tasks.files.workspace);
-    const unbound = new RecursiveTools(f.tasks, {...f.effects, currentTaskId: () => undefined});
-    await assert.rejects(unbound.call(f.actor, 'worker_open', {message: 'Ambiguous assignment'}, 'ambiguous'), /task_selection_required/);
-    assert.equal(f.tasks.runs().length, 1);
+    const root = await f.tools.call(f.actor,'task_create',{goal:'Possible later work'},'create') as {taskId:string};
+    assert.equal(f.tasks.task(root.taskId).notes,'');
+    assert.equal(f.tasks.runs().length,0);
+    assert.equal(f.tasks.version(root.taskId,1).authorityJson,null);
+    assert.deepEqual(f.reads(),{authorityReads:0,wakes:1});
+    await assert.rejects(f.tools.call(f.actor,'worker_open',{taskId:root.taskId,message:'Run uncommissioned work'},'blocked'),/source_denied/);
+    const args={message:'Read the build files'};
+    const opened=await f.tools.call(f.actor,'worker_open',args,'open') as {taskId:string;workerId:string;runId:string};
+    assert.notEqual(opened.taskId,root.taskId);
+    assert.equal(opened.workerId,opened.runId);
+    assert.equal(f.tasks.run(opened.runId).workingDirectory,f.tasks.files.workspace);
+    assert.deepEqual(await f.tools.call(f.actor,'worker_open',args,'open'),opened);
+    assert.equal(f.tasks.runs().length,1);
   } finally {f.close();}
+});
+
+test('worker tool receives only exact attachment selectors and does not re-prepare on replay',async()=>{
+ const f=fixture();try{
+  const ref={assetId:'asset-00000000-0000-0000-0000-000000000001',revision:1};
+  let prepared=0;
+  const tools=new RecursiveTools(f.tasks,{...f.effects,prepareAttachments:(actor,key,inputs,scope)=>{
+   prepared++;
+   assert.equal(actor.agentId,f.actor.agentId);
+   assert.deepEqual(inputs,[ref]);
+   assert.equal(f.tasks.operation(key).operationId,scope.operationId);
+   assert.ok(scope.messageId.startsWith('message-'));
+   return [ref];
+  }});
+  const args={message:'Read selected source',attachments:[ref]};
+  const opened=await tools.call(f.actor,'worker_open',args,'open');
+  assert.deepEqual(await tools.call(f.actor,'worker_open',args,'open'),opened);
+  const before=f.counts();
+  for(const selector of [{path:'/tmp/example',...ref},{assetId:ref.assetId},{revision:1},{}]){
+   await assert.rejects(tools.call(f.actor,'worker_open',{...args,attachments:[selector]},'invalid'),/invalid_attachments/);
+  }
+  assert.deepEqual(f.counts(),before);
+  assert.equal(prepared,1);
+ }finally{f.close();}
 });
 
 test('forged host fields, malformed collections and missing native identity fail before side effects', async () => {
@@ -235,8 +194,8 @@ test('a retried notes edit uses the original native receipt after the hidden rev
 test('changing requirements invokes the host stop effect for all affected in-flight sessions', async () => {
   const f = fixture(); try {
     const root = await f.create();
-    const a = await f.tools.call(f.actor, 'worker_open', {message: 'Inspect page'}, 'page') as any;
-    const b = await f.tools.call(f.actor, 'worker_open', {message: 'Inspect build'}, 'build') as any;
+    const a = await f.tools.call(f.actor, 'worker_open', {taskId:root.taskId,message: 'Inspect page'}, 'page') as any;
+    const b = await f.tools.call(f.actor, 'worker_open', {taskId:root.taskId,message: 'Inspect build'}, 'build') as any;
     for (const opened of [a, b]) {const run = f.tasks.claim(opened.runId)!; f.tasks.bind(run.id, run.epoch, 'thread:' + run.id, 'turn:' + run.id);}
     await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, goal: 'Stop the old investigation; only explain existing evidence'}, 'changed-goal');
     assert.equal(f.stopped.length, 1);
@@ -246,21 +205,33 @@ test('changing requirements invokes the host stop effect for all affected in-fli
   } finally {f.close();}
 });
 
-test('task controls reject ambiguous mixed edits and settlement without an explicit outcome', async () => {
+test('task controls reject mixed edits and accept settlement with an outcome and optional notes', async () => {
   const f = fixture(); try {
     const root = await f.create(), before = f.counts();
-    for (const args of [{action: 'pause', goal: 'also change'}, {action: 'settle'}, {outcome: 'succeeded'}, {sourceRequestIds: ['source:tools'], notes: 'no goal'}]) await assert.rejects(f.tools.call(f.actor, 'task_update', {taskId: root.taskId, ...args}, 'invalid'), /invalid_tool_arguments/);
+    for (const args of [
+      {action: 'pause', goal: 'also change'},
+      {action: 'settle'},
+      {action: 'settle', outcome: 'succeeded', reason: 'User asked to settle'},
+      {outcome: 'succeeded'},
+      {sourceRequestIds: ['source:tools'], notes: 'no goal'},
+    ]) await assert.rejects(f.tools.call(f.actor, 'task_update', {taskId: root.taskId, ...args}, 'invalid'), /invalid_tool_arguments/);
     assert.deepEqual(f.counts(), before);
     const paused = await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'pause'}, 'pause') as any;
     assert.equal(paused.state, 'paused'); assert.equal(f.stopped.length, 1);
     await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'resume'}, 'resume');
     assert.equal(f.tasks.task(root.taskId).state, 'open');
+    const notes = 'Only the available evidence was reviewed';
+    await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'settle', outcome: 'partial', notes}, 'settle');
+    const settled = f.tasks.task(root.taskId);
+    assert.equal(settled.state, 'settled');
+    assert.equal(settled.outcome, 'partial');
+    assert.equal(settled.notes, notes);
   } finally {f.close();}
 });
 
-test('raw replies remain readable without a Result; formal adoption and unknown publication stay explicit', async () => {
+test('raw replies remain readable and legacy publication entry points reject calls', async () => {
   const f = fixture(); try {
-    const root = await f.create(), opened = await f.tools.call(f.actor, 'worker_open', {message: 'Inspect'}, 'open') as any;
+    const root = await f.create(), opened = await f.tools.call(f.actor, 'worker_open', {taskId:root.taskId,message: 'Inspect'}, 'open') as any;
     const run = f.tasks.claim(opened.runId)!; f.tasks.bind(run.id, run.epoch, 'thread:worker', 'turn:worker');
     const body = 'First paragraph.\n\n' + '证据'.repeat(15000);
     f.tasks.endSegment(run.id, run.epoch, {status: 'completed', text: body, messages: [{itemId: 'native:reply', phase: 'final_answer', text: body}]}, true);
@@ -269,20 +240,13 @@ test('raw replies remain readable without a Result; formal adoption and unknown 
     assert.ok(page.messages[0].text === body.slice(0, 24000), 'first chunk keeps original text'); assert.equal(page.messages[0].nextOffset, 24000);
     const tail = await f.tools.call(f.actor, 'worker_read', {workerId: opened.workerId, messageId: reply.id, offset: 24000}) as any;
     assert.ok(page.messages[0].text + tail.messages[0].text === body, 'chunks preserve the complete original');
-    assert.equal(f.tasks.readTask(f.actor, root.taskId).results.length, 0); assert.equal(f.tasks.task(root.taskId).state, 'open');
-    const adopted = await f.tools.call(f.actor, 'accept_result', {runId: run.id, messageId: reply.id}, 'adopt') as any;
-    const accepted = await f.tools.call(f.actor, 'work_inspect', {resultId: adopted.resultId}) as any;
-    assert.ok(accepted.payload.text === body, 'formal inspection reads the accepted source text');
-    const args = {taskId: root.taskId, resultIds: [adopted.resultId], text: 'Checked synthetic evidence'};
-    const delivery = await f.tools.call(f.actor, 'publish_delivery', args, 'publish') as any;
-    f.tasks.markDelivery(delivery.deliveryId, 'submitting'); f.tasks.markDelivery(delivery.deliveryId, 'uncertain');
-    await assert.rejects(f.tools.call(f.actor, 'publish_delivery', args, 'new-publish'), /delivery_already_prepared/);
-    assert.equal(f.tasks.deliveries().length, 1); assert.equal(f.tasks.delivery(delivery.deliveryId).state, 'uncertain');
-    const details = await f.tools.call(f.actor, 'work_inspect', {taskId: root.taskId}) as any;
-    assert.equal(details.deliveries[0].state, 'uncertain');
-    const receipt = await f.tools.call(f.actor, 'work_inspect', {operationKey: delivery.operationKey}) as any;
-    assert.equal(receipt.operations[0].response.deliveryId, delivery.deliveryId);
-    await assert.rejects(f.tools.call(f.actor, 'work_inspect', {taskId: root.taskId, resultId: adopted.resultId}), /invalid_tool_arguments/);
+    assert.equal(f.tasks.task(root.taskId).state,'open');
+    const before=f.counts();
+    for(const name of ['accept_result','publish_delivery','read_material','pending_add','write_markdown']){
+      await assert.rejects(f.tools.call(f.actor,name,{},'obsolete'),/tool_denied/);
+    }
+    assert.deepEqual(f.counts(),before);
+    await assert.rejects(f.tools.call(f.actor,'work_inspect',{taskId:root.taskId,resultId:'removed'}),/invalid_tool_arguments/);
     await assert.rejects(f.tools.call(f.actor, 'work_inspect', {taskId: root.taskId, sourceRequestId: 'source:foreign'}), /task_authority_source_denied/);
   } finally {f.close();}
 });
@@ -311,47 +275,14 @@ test('worker_read selects and pages one original native public item through the 
   } finally {f.close();}
 });
 
-test('pending tools bind native identity without exposing a concurrency token or authorizing execution', async () => {
-  const f = fixture(); try {
-    const pending = new PendingTools(f.tasks), event = {...f.actor, sourceRequestId: undefined};
-    const note = await pending.call(event, 'pending_add', {content: 'A suggestion, not an assignment'}, 'add-note') as any;
-    assert.deepEqual(await pending.call(event, 'pending_add', {content: 'A suggestion, not an assignment'}, 'add-note'), note);
-    const args = {id: note.id, patch: {handlingNote: 'Waiting for a real user decision'}};
-    const edited = await pending.call(event, 'pending_update', args, 'edit-note');
-    assert.deepEqual(await pending.call(event, 'pending_update', args, 'edit-note'), edited);
-    assert.equal(f.tasks.tasks().length, 0); assert.equal(f.tasks.runs().length, 0);
-    await assert.rejects(pending.call(event, 'pending_update', {...args, expectedRevision: 2}, 'spoof'), /invalid_tool_arguments/);
-  } finally {f.close();}
-});
-
-test('Main can explicitly adopt its own actual task file without opening a Worker', async () => {
-  const f = fixture(); try {
-    const root = await f.create(), filePath = join(f.tasks.files.workspace, 'main-answer.txt');
-    writeFileSync(filePath, 'Synthetic Main result');
-    const adopted = await f.tools.call(f.actor, 'accept_result', {taskId: root.taskId, filePath}, 'main-file') as any;
-    assert.equal(f.tasks.runs().length, 0);
-    const actual = await f.tools.call(f.actor, 'work_inspect', {resultId: adopted.resultId}) as any;
-    assert.equal(actual.file.content, 'Synthetic Main result');
-    assert.equal(actual.version, 1);
-    await assert.rejects(f.tools.call(f.actor, 'accept_result', {taskId: root.taskId, runId: 'unrelated', filePath}, 'mixed-source'), /invalid_tool_arguments/);
-    await assert.rejects(f.tools.call(f.actor, 'accept_result', {filePath}, 'missing-source'), /invalid_tool_arguments/);
-  } finally {f.close();}
-});
-
-test('Main can explicitly adopt a Worker file from that exact Run output directory', async () => {
-  const f = fixture(); try {
-    await f.create();
-    const workingDirectory = join(f.dir, 'authorized-project'); mkdirSync(workingDirectory);
-    const opened = await f.tools.call(f.actor, 'worker_open', {message: 'Write a synthetic file', workingDirectory}, 'open-file') as any;
-    const run = f.tasks.claim(opened.runId)!; f.tasks.bind(run.id, run.epoch, 'thread:file-worker', 'turn:file-worker');
-    const actor = {agentId: 'worker:' + opened.workerId, runId: run.id, epoch: run.epoch, threadId: 'thread:file-worker', turnId: 'turn:file-worker'};
-    const written = f.tasks.writeMarkdown(actor, {operationId: toolOperationId(actor, 'write'), filename: 'worker-answer.md', content: '# Synthetic Worker result'});
-    assert.equal(f.tasks.readTask(f.actor, run.taskId).results.length, 0);
-    f.tasks.endSegment(run.id, run.epoch, {status: 'completed', text: written.path}, true);
-    const adopted = await f.tools.call(f.actor, 'accept_result', {runId: run.id, filePath: written.path}, 'accept-worker-file') as any;
-    const actual = await f.tools.call(f.actor, 'work_inspect', {resultId: adopted.resultId}) as any;
-    assert.equal(actual.file.content, '# Synthetic Worker result');
-  } finally {f.close();}
+test('explicit user message requires text or attachments and binds its native operation ID',async()=>{
+ const f=fixture();try{
+  const ref={assetId:'asset-00000000-0000-0000-0000-000000000001',revision:1};
+  const tools=new RecursiveTools(f.tasks,{...f.effects,sendUserMessage:(actor,input)=>({actor:actor.agentId,...input})});
+  for(const args of [{},{text:'  '},{text:'',attachments:[]}])await assert.rejects(tools.call(f.actor,'send_user_message',args,'empty'),/invalid_message/);
+  const committed=await tools.call(f.actor,'send_user_message',{attachments:[ref]},'send');
+  assert.deepEqual(committed,{actor:f.actor.agentId,operationId:toolOperationId(f.actor,'send'),attachments:[ref],text:undefined,taskId:undefined});
+ }finally{f.close();}
 });
 
 test('schema validation reports trusted paths without copying unknown field names or values', () => {

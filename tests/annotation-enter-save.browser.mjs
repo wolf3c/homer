@@ -3,7 +3,6 @@
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
 import {deflateSync} from 'node:zlib';
 import {buildSync} from 'esbuild';
@@ -70,9 +69,9 @@ async function consumers(chrome){
  const png=syntheticPng();
  const files=[{id:'result-enter-text',title:'Enter.txt',mime:'text/plain',bytes:Buffer.from(text)},{id:'result-enter-image',title:'Enter.png',mime:'image/png',bytes:png}];
  const f=await fixture(4,'after');let uploads=0;
- f.bridge.artifact=async id=>{const file=files.find(x=>x.id===id);if(!file)throw Error('synthetic_file_missing');return {filename:file.title,mime:file.mime,data:file.bytes.toString('base64'),sha256:createHash('sha256').update(file.bytes).digest('hex')};};
+ f.attach('Synthetic Enter',files.map(({title,mime,bytes})=>({filename:title,mime,content:bytes})));
  f.bridge.media.upload=async input=>{uploads++;return {assetId:'asset-'+input.uploadId,revision:1,filename:input.filename,kind:'image',state:'ready',mime:'image/png',size:png.length,error:null};};
- for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,features:{...value.features,draftUpload:true},artifacts:[...(value.artifacts??[]),...files.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic Enter'}))]};};}
+ for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,features:{...value.features,draftUpload:true}};};}
  try{for(const width of process.env.HOMER_TEST_WIDTHS?.split(',').map(Number)??[1440,390,320]){
   const p=await chrome.page(f.server.url,width),{ev,until,fill,key,click}=controls(p);
   const draft=()=>ev(()=>JSON.parse(sessionStorage.getItem('homer-draft:synthetic-history')));

@@ -66,6 +66,7 @@
   .canvas-panel .canvas-tab{height:44px}
   .canvas-panel :is(.canvas-tab-close,.canvas-collapse){width:44px;height:44px}
   .canvas-panel .canvas-tab-actions :is(.html-annotation-toggle,.image-annotation-toggle){height:44px;min-width:44px}
+  .canvas-panel .canvas-tab-actions [data-slot=file-download]{display:grid;place-items:center;height:44px;min-width:44px}
 }
 @media(max-width:800px){
   .canvas-web-narrow-note{display:block}

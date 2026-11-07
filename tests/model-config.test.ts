@@ -26,7 +26,7 @@ test('daily desktop uses website roles only and has no model endpoint before log
 mkdirSync(scratch,{recursive:true});
 function fixture(){
   const dir=mkdtempSync(join(scratch,'case-'));
-  const raw={appData:join(dir,'data'),nativeCodexHome:join(dir,'native-home'),codexBin:process.execPath,workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'home'),timeoutMs:1000,mainTimeoutMs:1000};
+  const raw={appData:join(dir,'data'),nativeCodexHome:join(dir,'home'),codexBin:process.execPath,workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'home'),timeoutMs:1000,mainTimeoutMs:1000};
   for(const path of [raw.workspace,raw.runtime,raw.codexHome])mkdirSync(path);
   const path=join(dir,'config.json');
   return {dir,raw,read(extra:Record<string,unknown>={}){writeFileSync(path,JSON.stringify({...raw,...extra}));return loadConfig(path);},close(){rmSync(dir,{recursive:true,force:true});}};

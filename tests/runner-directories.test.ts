@@ -16,7 +16,7 @@ test('Main and peer Workers select independent accessible directories without ex
   mkdirSync(path);writeFileSync(join(path,'AGENTS.md'),'Synthetic rules for '+path.split('/').at(-1));
   writeFileSync(join(path,'project.test.mjs'),"import test from 'node:test';import assert from 'node:assert/strict';test('synthetic project',()=>assert.equal(2+2,4));");
  }
- const config={appData:dir,workspace:a,runtime:join(dir,'runtime'),codexHome:join(dir,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:10000,mainTimeoutMs:10000,stopGraceMs:100};
+ const config={appData:dir,workspace:a,runtime:join(dir,'runtime'),codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:10000,mainTimeoutMs:10000,stopGraceMs:100};
  mkdirSync(config.runtime);mkdirSync(config.codexHome);
  const seen:{assignment:string;cwd:string}[]=[],profiles:unknown[]=[];let app:Homer,seq=0,parentWorker='',parentRun='',parentSelected=false,followed=false;
  class Peer extends EventEmitter{
@@ -28,9 +28,10 @@ test('Main and peer Workers select independent accessible directories without ex
    this.turnId='turn-'+ ++seq;hooks?.onStarted?.(this.turnId);
    if(this.options.role!=='worker'){
     if(text==='Synthetic directory work'){
-     const task=await this.call('task_create',{goal:'Run the three synthetic project checks'});
+     let taskId:string|undefined;
      for(const [assignment,cwd] of [['parent',a],['child',b],['independent',c]] as const){
-      const worker=await this.call('worker_open',{taskId:task.taskId,message:assignment,workingDirectory:cwd});
+      const worker=await this.call('worker_open',{...(taskId?{taskId}:{}),message:assignment,workingDirectory:cwd});
+      taskId=worker.taskId;
       if(assignment==='parent')parentWorker=worker.workerId;
      }
      return {status:'completed',text:'Synthetic main returned'};

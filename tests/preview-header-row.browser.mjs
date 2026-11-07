@@ -3,7 +3,6 @@
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-import {createHash} from 'node:crypto';
 import {fixture} from './web-history-followup-fixture.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 import {actualClick,inspectHtmlFrame} from './helpers/html-preview-browser.mjs';
@@ -17,8 +16,7 @@ const files=[
  {id:'result-header-unsupported',title:'不支持格式.bin',mime:'application/octet-stream',text:'unsupported'},
 ];
 const f=await fixture(4,'after');let chrome;
-f.bridge.artifact=async id=>{const file=files.find(x=>x.id===id);assert.ok(file);return {filename:file.title,mime:file.mime,data:Buffer.from(file.text).toString('base64'),sha256:createHash('sha256').update(file.text).digest('hex')};};
-for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,artifacts:[...(value.artifacts??[]),...files.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic header'}))]};};}
+f.attach('Synthetic header',files.map(({title,mime,text})=>({filename:title,mime,content:text})));
 const delay=ms=>new Promise(done=>setTimeout(done,ms));
 try{
  chrome=await isolatedChrome(destination);

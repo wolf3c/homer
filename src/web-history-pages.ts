@@ -14,7 +14,7 @@ function historyPredicates(){
   const inbox=(m:string,state:string)=>`EXISTS(SELECT 1 FROM agent_messages a JOIN agent_receipts r ON r.messageId=a.id WHERE a.kind='user_input' AND a.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND json_extract(a.payloadJson,'$.requestId')=${m}.requestId AND ${state})`;
   const queued=(m:string)=>`(${inbox(m,"r.state IN ('pending','offered','received','uncertain')")} AND NOT ${hasUserNode(m)} AND NOT ${legacy(m)})`;
   const cancelled=(m:string)=>inbox(m,"r.state NOT IN ('pending','offered','received','uncertain') AND json_extract(a.payloadJson,'$.terminal')='cancelled'");
-  const formal=`(EXISTS(SELECT 1 FROM web_process_ids p WHERE p.threadId=m.threadId AND p.messageId=m.id)
+  const formal=`((m.audience='user' AND m.operationKey IS NOT NULL) OR EXISTS(SELECT 1 FROM web_process_ids p WHERE p.threadId=m.threadId AND p.messageId=m.id)
    OR (m.role='user' AND NOT ${hasUserNode('m')} AND NOT ${queued('m')} AND NOT ${cancelled('m')} AND NOT ${outcome('m')})
    OR (m.role='assistant' AND NOT (EXISTS(SELECT 1 FROM web_process_ids p WHERE p.threadId=m.threadId AND p.replyId=m.id AND p.position IS NOT NULL) AND (m.status='running' OR EXISTS(SELECT 1 FROM web_process_ids f WHERE f.threadId=m.threadId AND f.replyId=m.id AND f.hasFinal=1)))
     AND NOT (${inbox('m',"EXISTS(SELECT 1 FROM conversation_inputs i WHERE i.requestId=m.requestId AND i.replyId=m.id)")} AND (${queued('m')} OR ${cancelled('m')} OR ${outcome('m')} OR m.text=''))))`;
@@ -44,7 +44,6 @@ export class WebHistoryPages{
     CREATE INDEX IF NOT EXISTS temp.web_process_reply ON web_process_ids(threadId,replyId,position);
     CREATE TEMP TABLE IF NOT EXISTS web_process_workers(nodeId TEXT,taskId TEXT,PRIMARY KEY(nodeId,taskId));
     CREATE INDEX IF NOT EXISTS temp.web_process_task ON web_process_workers(taskId,nodeId);
-    CREATE TEMP TABLE IF NOT EXISTS web_process_publications(messageId TEXT,nodeId TEXT,PRIMARY KEY(messageId,nodeId));
     CREATE TEMP TABLE IF NOT EXISTS web_dirty_tasks(taskId TEXT PRIMARY KEY);
     CREATE TEMP TABLE IF NOT EXISTS web_active_inputs(messageId TEXT PRIMARY KEY,seq INTEGER);
     CREATE INDEX IF NOT EXISTS temp.web_active_order ON web_active_inputs(seq);
@@ -64,13 +63,12 @@ export class WebHistoryPages{
     (SELECT rowid FROM conversation_messages WHERE id=json_extract(${value},'$.messageId')),CASE WHEN json_extract(${value},'$.replyPolicy')='explicitFinal' OR json_type(${value},'$.final')='object' OR (json_extract(${value},'$.sourceKind')='user' AND EXISTS(SELECT 1 FROM json_each(${value},'$.items') item WHERE json_extract(item.value,'$.kind')='commentary' AND json_extract(item.value,'$.phase')='final_answer')) THEN 1 ELSE 0 END;`;
   // Triggers execute in the original write transaction, including rollback.
   // Revision is a read invalidation fence, never a Run/version or stop target.
-  const publicationIds=(value:string)=>`CASE WHEN json_type(${value},'$.deliveryMessageIds')='array' THEN json_extract(${value},'$.deliveryMessageIds') ELSE json_array(json_extract(${value},'$.deliveryMessageId')) END`;
-  const updateNode=`DELETE FROM web_process_publications WHERE nodeId=json_extract(new.value,'$.id');INSERT INTO web_process_publications SELECT DISTINCT j.value,json_extract(new.value,'$.id') FROM json_each(${publicationIds('new.value')}) j WHERE j.value IS NOT NULL;DELETE FROM web_process_workers WHERE nodeId=json_extract(new.value,'$.id');DELETE FROM web_process_ids WHERE id=json_extract(new.value,'$.id');${indexNode('new.value')}
+  const updateNode=`DELETE FROM web_process_workers WHERE nodeId=json_extract(new.value,'$.id');DELETE FROM web_process_ids WHERE id=json_extract(new.value,'$.id');${indexNode('new.value')}
     INSERT INTO web_process_workers SELECT DISTINCT json_extract(new.value,'$.id'),json_extract(j.value,'$.taskId') FROM json_each(new.value,'$.items') j WHERE json_extract(j.value,'$.kind')='worker';${refreshLegacy(nodeIds('new.value'))}${refreshFormal(nodeIds('new.value'))}${refreshFormal(front("(SELECT requestId FROM web_process_ids WHERE id=json_extract(new.value,'$.id'))"))}`;
   for(const event of ['INSERT','UPDATE'])execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_meta_${event.toLowerCase()} AFTER ${event} ON main.meta WHEN new.key GLOB '${processPrefix}*' BEGIN ${updateNode}
     ${event==='UPDATE'?`${refreshLegacy(nodeIds('old.value'))}${refreshFormal(nodeIds('old.value'))}${refreshFormal(front("coalesce((SELECT json_extract(a.payloadJson,'$.requestId') FROM json_each(old.value,'$.sourceMessageIds') s JOIN agent_messages a ON a.id=s.value WHERE a.kind='user_input' ORDER BY cast(s.key AS INTEGER) LIMIT 1),(SELECT requestId FROM conversation_messages WHERE id=json_extract(old.value,'$.replyMessageId')))"))}`:''}UPDATE web_read_revision SET revision=revision+1; END;`);
   execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_meta_delete AFTER DELETE ON main.meta WHEN old.key GLOB '${processPrefix}*' BEGIN
-    DELETE FROM web_process_publications WHERE nodeId=json_extract(old.value,'$.id');DELETE FROM web_process_workers WHERE nodeId=json_extract(old.value,'$.id');DELETE FROM web_process_ids WHERE id=json_extract(old.value,'$.id');${refreshLegacy(nodeIds('old.value'))}${refreshFormal(nodeIds('old.value'))}${refreshFormal(front("(SELECT requestId FROM conversation_messages WHERE id=json_extract(old.value,'$.replyMessageId'))"))}UPDATE web_read_revision SET revision=revision+1;END;`);
+    DELETE FROM web_process_workers WHERE nodeId=json_extract(old.value,'$.id');DELETE FROM web_process_ids WHERE id=json_extract(old.value,'$.id');${refreshLegacy(nodeIds('old.value'))}${refreshFormal(nodeIds('old.value'))}${refreshFormal(front("(SELECT requestId FROM conversation_messages WHERE id=json_extract(old.value,'$.replyMessageId'))"))}UPDATE web_read_revision SET revision=revision+1;END;`);
   for(const event of ['INSERT','UPDATE','DELETE']){
    const ref=event==='DELETE'?'old':'new';
    execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_history_${event.toLowerCase()} AFTER ${event} ON main.conversation_messages BEGIN
@@ -79,10 +77,10 @@ export class WebHistoryPages{
     ${refreshFormal(`SELECT ${ref}.id UNION SELECT replyId FROM web_process_ids WHERE messageId=${ref}.id`)}
     ${refreshFormal(front(`coalesce(${ref}.requestId,(SELECT requestId FROM web_process_ids WHERE messageId=${ref}.id))`))}
     UPDATE web_read_revision SET revision=revision+1;END;`);
-   for(const table of ['tasks','runs','results'])execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_dirty_${table}_${event.toLowerCase()} AFTER ${event} ON main.${table} BEGIN
+   for(const table of ['tasks','runs'])execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_dirty_${table}_${event.toLowerCase()} AFTER ${event} ON main.${table} BEGIN
     INSERT INTO web_dirty_tasks SELECT ${ref}.${table==='tasks'?'id':'taskId'} WHERE ${ref}.${table==='tasks'?'id':'taskId'} IS NOT NULL AND NOT EXISTS(SELECT 1 FROM web_dirty_tasks WHERE taskId=${ref}.${table==='tasks'?'id':'taskId'});UPDATE web_read_revision SET revision=revision+1;END;`);
   }
-  for(const table of ['worker_interactions','deliveries','conversation_feedback','conversation_attachments','media_assets','media_derivatives']){
+  for(const table of ['worker_interactions','conversation_feedback','conversation_attachments','media_assets','media_derivatives']){
    if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))continue;
    for(const event of ['INSERT','UPDATE','DELETE'])execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_revision_${table}_${event.toLowerCase()} AFTER ${event} ON main.${table} BEGIN UPDATE web_read_revision SET revision=revision+1;END;`);
   }
@@ -111,7 +109,6 @@ export class WebHistoryPages{
      // Bind once through a CTE; statements contain only trusted SQL identifiers.
      db.prepare(`WITH source(value) AS (SELECT value FROM meta WHERE key=?) ${indexNode('(SELECT value FROM source)')}`).run(key);
      db.prepare(`INSERT OR IGNORE INTO web_process_workers SELECT json_extract(m.value,'$.id'),json_extract(j.value,'$.taskId') FROM meta m,json_each(m.value,'$.items') j WHERE m.key=? AND json_extract(j.value,'$.kind')='worker'`).run(key);
-     db.prepare(`INSERT OR IGNORE INTO web_process_publications SELECT DISTINCT j.value,json_extract(m.value,'$.id') FROM meta m,json_each(${publicationIds('m.value')}) j WHERE m.key=? AND j.value IS NOT NULL`).run(key);
     }
     execute('RELEASE web_index_batch');
    }catch(error){execute('ROLLBACK TO web_index_batch;RELEASE web_index_batch');throw error;}

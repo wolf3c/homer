@@ -1,4 +1,4 @@
-<img src="assets/readme/homer-logo.png" alt="荷马 Homer 标志" width="80" />
+<img src="assets/branding/odysseus-20261030/homer-odysseus-256.png" alt="荷马 Homer 标志" width="80" />
 
 # 荷马 Homer
 

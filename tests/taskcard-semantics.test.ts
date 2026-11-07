@@ -8,7 +8,7 @@ test('session success, failure and interruption remain separate from the Main de
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Found facts'},true);const returned=read();
   assert.equal(taskCardPresentation(returned,returned.workers[0]!).label,'已回复');assert.equal(taskCardPresentation(returned).owner,'main');assert.notEqual(taskCardPresentation(returned).state,'done');
   for(const result of [{status:'failed',label:'执行失败'},{status:'interrupted',label:'执行已中断'}]){const worker={...returned.workers[0]!,run:{...returned.workers[0]!.run,status:result.status}};assert.equal(workerStatus(worker).label,result.label);assert.equal(taskCardPresentation({...returned,workers:[worker]}).state,'waiting');}
-  f.tasks.settleTask(f.actor,{operationId:'settle',taskId:f.taskId,expectedRevision:1,outcome:'partial'});assert.equal(taskCardPresentation(read()).icon,'CircleDashed');assert.equal(read().results.length,0);assert.equal(read().deliveries.length,0);
+  f.tasks.settleTask(f.actor,{operationId:'settle',taskId:f.taskId,expectedRevision:1,outcome:'partial'});assert.equal(taskCardPresentation(read()).icon,'CircleDashed');assert.equal(read().outcome,'partial');
  }finally{f.close();}
 });
 test('goal change projects a pending stop while retaining the actual earlier Run version',()=>{

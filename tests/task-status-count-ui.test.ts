@@ -14,7 +14,7 @@ const output=await build({entryPoints:['ui/task-status.tsx'],bundle:true,write:f
 const context={module:{exports:{}},require:createRequire(new URL('../ui/task-status.tsx',import.meta.url)),EventTarget,snapshot:{} as Record<string,unknown>};
 runInNewContext(output.outputFiles[0]!.text,context);
 const Component=(context.module.exports as {TaskStatusPopover:ComponentType<Record<string,unknown>>}).TaskStatusPopover;
-const task=(id:string):OverviewTask=>({id,title:'合成任务',goal:'合成任务',notes:'',headVersion:1,revision:1,state:'open',outcome:null,controlState:'normal',historyState:'visible',sourceRequestId:null,workers:[{id:'worker-'+id,taskId:id,pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run-'+id,workerId:'worker-'+id,taskId:id,status:'running',phase:'executing',version:1,epoch:0,sourceRequestId:null}}],results:[],deliveries:[]});
+const task=(id:string):OverviewTask=>({id,title:'合成任务',goal:'合成任务',notes:'',headVersion:1,revision:1,state:'open',outcome:null,controlState:'normal',historyState:'visible',sourceRequestId:null,workers:[{id:'worker-'+id,taskId:id,pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run-'+id,workerId:'worker-'+id,taskId:id,status:'running',phase:'executing',version:1,epoch:0,sourceRequestId:null}}]});
 function render(data:TaskOverview|null,options:{stale?:boolean;error?:string;connected?:boolean}={}){
  context.snapshot={data,stale:options.stale??false,error:options.error??'',busy:false,refresh:()=>{}};
  return renderToStaticMarkup(createElement(Component,{state:{threadId:'synthetic',interactions:[]} as unknown as WebState,connected:options.connected??true,onInteraction:()=>{},asideContainer:null,onBeforeLayoutChange:()=>{}}));

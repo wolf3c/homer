@@ -46,10 +46,11 @@ export async function imageThumbnail(bytes:Buffer,mime:string,signal?:AbortSigna
 // once, and avoid any decoder work for an image already within the envelope.
 export async function toolImage(image:{bytes:Buffer;mime:string},signal?:AbortSignal){
  if(signal?.aborted)throw Error('media_decode_cancelled');
- const source=imageDimensions(image.bytes,image.mime);
+ const input=image.mime==='image/gif'||image.mime==='image/webp'?await modelImage(image.bytes,image.mime,signal):image;
+ const source=imageDimensions(input.bytes,input.mime);
  if(!source||!source.width||!source.height||source.width*source.height>MEDIA_POLICY.maxPixels)throw Error('media_pixel_limit');
- const resized=image.bytes.length>TOOL_IMAGE_BYTES;
- const view=resized?await imageThumbnail(image.bytes,image.mime,signal):{...image,...source};
+ const resized=input.bytes.length>TOOL_IMAGE_BYTES;
+ const view=resized?await imageThumbnail(input.bytes,input.mime,signal):{...input,...source};
  return {bytes:view.bytes,mime:view.mime,modelView:{source,width:view.width,height:view.height,resized,...(resized?{notice:'Downsampled tool view; fine detail may be lost. The original file is unchanged.'}:{})}};
 }
 async function normalizeImage(bytes:Buffer,mime:string,edge:number|undefined,signal?:AbortSignal){

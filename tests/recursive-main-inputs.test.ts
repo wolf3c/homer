@@ -213,7 +213,7 @@ test('typed native question answers cannot enter the ordinary durable inbox',()=
 
 test('preview queue edits retain or remove the accepted source snapshot, but cannot replace it',()=>{
  const f=fixture();try{
-  const resourceReference={kind:'text' as const,source:{kind:'artifact' as const,id:'result-synthetic',sha256:'a'.repeat(64),title:'Synthetic.txt'},text:'Original excerpt'};
+  const resourceReference={kind:'text' as const,source:{kind:'attachment' as const,assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,messageId:'result-synthetic',sha256:'a'.repeat(64),title:'Synthetic.txt'},text:'Original excerpt'};
   f.inputs.accept({requestId:'preview-queue',text:'Original requirement',resourceReference});
   let row=f.inputs.list().find(x=>x.input.requestId==='preview-queue')!;
   f.inputs.edit({requestId:'preview-queue',operationId:'preview-edit',expectedRevision:row.revision,input:{...row.input,text:'Revised requirement'}});

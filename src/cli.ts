@@ -31,7 +31,7 @@ async function main() {
     write(
       json
         ? JSON.stringify(message)
-        : `${message.type === "reply" ? "荷马" : message.type === "delivery" ? "交付" : "状态"}：${message.text}`,
+        : `${message.type === "reply" ? "荷马" : "状态"}：${message.text}`,
     );
   const app = new Homer(config, sink);
   let stopping = false;

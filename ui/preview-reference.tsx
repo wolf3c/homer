@@ -30,7 +30,7 @@ export function ResourceReferenceBlock({reference}:{reference:ResourceReference}
  const coordinates=(r:{x:number;y:number;width:number;height:number})=>`${Math.round(r.x)}, ${Math.round(r.y)} · ${Math.round(r.width)} × ${Math.round(r.height)}`;
  const excerpt=reference.kind==='text'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. ${note.text}\n批注：${note.comment}`).join('\n\n'):reference.text:reference.kind==='image'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. 区域：${coordinates(note.region)}\n批注：${note.comment}`).join('\n\n'):`区域：${coordinates(reference.region)}\n${reference.comment}`:reference.annotations.map(note=>`${note.element}：${note.comment}`).join('\n');
  return <div className="preview-reference" aria-label="预览引用">
-  <span className="preview-reference-source" title={reference.source.kind==='artifact'?reference.source.id:reference.source.url}>来源：{reference.source.title}</span>
+  <span className="preview-reference-source" title={reference.source.kind==='attachment'?reference.source.title:reference.source.url}>来源：{reference.source.title}</span>
   <QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text className={reference.kind!=='web'&&reference.annotations?'resource-annotations-text':undefined}>{excerpt}</QuoteBlock.Text></QuoteBlock.Root>
  </div>;
 }

@@ -14,8 +14,7 @@ test('cancelling while the Worker endpoint starts cannot subsequently start its 
     let runId='';
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        const task=await main.call('task_create',{goal:'Synthetic cancelled startup'});
-        runId=(await main.call('worker_open',{taskId:task.taskId,message:'Synthetic startup'})).runId;
+        runId=(await main.call('worker_open',{message:'Synthetic cancelled startup'})).runId;
       }
       return {status:'completed',text:'Synthetic response'};
     });
@@ -40,8 +39,7 @@ test('a cancelled start cannot publish a late thread binding',async()=>{
     let runId='';
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        const task=await main.call('task_create',{goal:'Synthetic cancelled startup'});
-        runId=(await main.call('worker_open',{taskId:task.taskId,message:'Synthetic startup'})).runId;
+        runId=(await main.call('worker_open',{message:'Synthetic cancelled startup'})).runId;
       }
       return {status:'completed',text:'Synthetic response'};
     });
@@ -60,8 +58,8 @@ test('a goal change during endpoint startup fences the old version before any en
     t.mock.method(WorkerInteractionMcp.prototype,'start',async function(this:WorkerInteractionMcp){entered();await gate;return start.call(this);});
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        taskId=(await main.call('task_create',{goal:'Original synthetic scope'})).taskId;
-        runId=(await main.call('worker_open',{taskId,message:'Old action'})).runId;
+        const opened=await main.call('worker_open',{message:'Original synthetic scope'});
+        ({taskId,runId}=opened);
       }else if(text==='change')assert.equal((await main.call('task_update',{taskId,goal:'Revised synthetic scope'})).state,'confirmed');
       return {status:'completed',text:'Recorded'};
     });

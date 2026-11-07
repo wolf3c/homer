@@ -1,3 +1,4 @@
+import {messageFilesForRun} from './message-file-evidence.js';
 // Real natural-language queue, clarification, missing input, and idempotent CLI checks.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -157,10 +158,7 @@ try {
     status: stopped.status,
     stopRequested: !!stopped.stopRequestedAt,
   });
-  await wait(() => {
-    const ids=new Set(rows("SELECT d.id FROM deliveries d JOIN json_each(d.resultIdsJson) i JOIN results r ON r.id=i.value WHERE r.runId=? AND d.state='recorded' AND d.revokedAt IS NULL",[second.id]).map(row=>row.id));
-    return live!.messages.some(message=>message.type==='delivery'&&ids.has(message.deliveryId));
-  });
+  await wait(() => rows(messageFilesForRun,[second.id])[0]);
   assert.equal(rows().find((r) => r.id === second.id).status, "succeeded");
   live.child.stdin.end();
   await wait(() => live!.exited);
@@ -181,7 +179,7 @@ try {
   assert.equal(rows('SELECT outcome FROM tasks WHERE id=?',[failed.taskId])[0]?.outcome,'failed');
   const missingReply=rows("SELECT payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?",[failed.id])[0];
   assert.ok(missingReply);assert.match(JSON.parse(missingReply.payloadJson).text,/不存在|未找到|缺失|missing|not found/i);
-  assert.equal(Number(rows("SELECT count(*) n FROM results WHERE taskId=? AND kind='file'",[failed.taskId])[0]!.n),0);
+  assert.equal(rows(messageFilesForRun,[failed.id]).length,0);
   checks.push({
     test: "T07-real-missing-input",
     passed: true,

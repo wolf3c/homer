@@ -11,7 +11,7 @@ mkdirSync(scratch,{recursive:true});
 async function flush(){await new Promise<void>(done=>setImmediate(done));}
 function fixture(){
  const dir=mkdtempSync(join(scratch,'shutdown-test-'));
- const config:Config={appData:dir,runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexHome:join(dir,'codex'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic',timeoutMs:1000,mainTimeoutMs:1000,stopGraceMs:100};
+ const config:Config={appData:dir,runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic',timeoutMs:1000,mainTimeoutMs:1000,stopGraceMs:100};
  for(const path of [config.runtime,config.workspace])mkdirSync(path);
  const app=new Homer(config,async()=>{});
  const engine=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'synthetic',tools:[]},async()=>({}));

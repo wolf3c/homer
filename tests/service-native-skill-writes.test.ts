@@ -30,11 +30,18 @@ test('service main and Worker skill requests use real user cards and retain prot
   }
   async turn(text:string,o?:{onStarted?:(id:string)=>void}){
    this.turnId='synthetic-turn-'+ ++serial;o?.onStarted?.(this.turnId);
+   const context=app['mainContext'],id=context?.interactionId??context?.queuedInput?.input.interactionId;
+   if(this.options.nativeTools==='main'&&id){
+    await this.call('inspect_interaction',{interactionId:id});
+    if(context?.event)await this.call('escalate_interaction',{interactionId:id,question:'Confirm the synthetic operation',reason:'Requires user confirmation'});
+    else await this.call('respond_interaction',{interactionId:id,action:context?.queuedInput?.input.text==='允许本次操作'?'approve':'deny',reason:'Use the actual decision'});
+    return {status:'completed',text:'Synthetic decision recorded'};
+   }
    if(this.options.nativeTools==='worker'){
-    await this.approvals();await this.call('write_markdown',{filename:'synthetic.md',content:'# Synthetic result'});
+    await this.approvals();
    }else if(text==='synthetic skill request'){
-    await this.approvals();const task=await this.call('task_create',{title:'Synthetic skill package',goal:'Synthetic authorized full package check'}) as {taskId:string};
-    await this.call('worker_open',{taskId:task.taskId,message:'Check the synthetic skill package using materials/synthetic.md.'});
+    await this.approvals();
+    await this.call('worker_open',{message:'Check the synthetic skill package.'});
    }
    return {status:'completed',text:'Synthetic receipt.'};
   }
@@ -54,7 +61,7 @@ test('service main and Worker skill requests use real user cards and retain prot
      assert.equal(app.interactions.inspect(pending.id).state,'pending_user');
      await bridge.respond(pending.id,{requestId:mode+'-deny-'+n,text:'拒绝本次操作'});
     }else{
-     assert.throws(()=>app.interactions.respond(pending.id,{action:'approve',reason:'forged model'},{userMessageId:'forged'}),/main_native_user_decision_required/);
+     assert.throws(()=>app.interactions.respond(pending.id,{action:'approve',reason:'forged model'},{userMessageId:'forged'}),/interaction_user_decision_required|main_native_user_decision_required/);
      await bridge.respond(pending.id,{requestId:mode+'-allow-'+n,text:'允许本次操作'});
     }
     await until(()=>outcomes.length>before+n);

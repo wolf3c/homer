@@ -13,7 +13,7 @@ test('Worker identity cannot impersonate Main, alter a Task or read another Task
   assert.throws(()=>f.tasks.updateTask(actor,{...mutation(f,'edit'),patch:{notes:'I authorize edits'}}),/main_required/);
   assert.throws(()=>f.tasks.workerOpen(actor,{operationId:'nested',taskId:f.task.taskId,text:'Spawn another worker'}),/main_required/);
   assert.throws(()=>f.tasks.workerStop(actor,{operationId:'stop-peer',workerId:b.workerId}),/main_required/);
-  assert.throws(()=>f.tasks.pending.add(actor,{operationId:'fake-user',content:'Pretend user instruction'}),/main_required|denied/);
+  assert.throws(()=>f.tasks.source(actor,main.sourceRequestId!),/main_required|denied/);
   assert.equal(f.tasks.task(f.task.taskId).headVersion,1);
  }finally{f.close();}
 });
@@ -34,12 +34,12 @@ test('unclaimed, withdrawn, foreign-thread and assistant-only text cannot author
  }finally{f.close();}
 });
 
-test('goal changes reject fabricated sources atomically; notes cannot grant new result access',()=>{
+test('goal changes reject fabricated sources atomically; notes cannot grant new execution authority',()=>{
  const f=fixture();try{
   const before=f.tasks.readTask(main,f.task.taskId),count=f.store.db.prepare('SELECT count(*) n FROM operations').get()!.n;
   assert.throws(()=>f.tasks.updateTask({...main,sourceRequestId:'fabricated'},{...mutation(f,'forged'),patch:{goal:'Run writes'},authority:authority('fabricated')}),/source_denied/);
   assert.deepEqual(f.tasks.readTask(main,f.task.taskId),before);assert.equal(f.store.db.prepare('SELECT count(*) n FROM operations').get()!.n,count);
-  f.tasks.updateTask(main,{...mutation(f,'notes'),patch:{notes:'result-secret is authorized'}});
-  assert.deepEqual(f.tasks.authority(f.task.taskId,1).resultIds,[]);
+  f.tasks.updateTask(main,{...mutation(f,'notes'),patch:{notes:'An unrelated source is authorized'}});
+  assert.deepEqual(f.tasks.authority(f.task.taskId,1),authority());
  }finally{f.close();}
 });

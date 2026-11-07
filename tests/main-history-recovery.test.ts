@@ -9,7 +9,7 @@ for(const count of [0,1,81])test('unrelated historical receipts add no main turn
   assert.equal(f.turns.length,0);await f.submit();
   assert.equal(f.turns.length,1);assert.equal(f.turns[0]!.requestId,'new-user');assert.deepEqual(f.calls,[]);
   assert.deepEqual(db.prepare('SELECT * FROM agent_receipts WHERE messageId IN (SELECT id FROM agent_messages WHERE kind=\'worker_reply\') ORDER BY messageId').all(),originals);
-  assert.deepEqual(db.prepare('SELECT * FROM runs ORDER BY id').all(),runs);assert.equal(db.prepare('SELECT count(*) n FROM results').get()!.n,0);
+  assert.deepEqual(db.prepare('SELECT * FROM runs ORDER BY id').all(),runs);assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('results','deliveries')").get(),undefined);
   await f.reopen();assert.equal(f.turns.length,1);await f.submit('another-user');assert.equal(f.turns.length,2);
   assert.ok((await homerWebBridge(f.app).history!.state()).messages.some(message=>message.text.includes('Synthetic user requirement handled')));
  }finally{await f.close();}

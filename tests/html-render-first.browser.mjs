@@ -1,9 +1,9 @@
 // Product UI + real synthetic HTTP/queue. No production port, account or model.
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {fixture} from './web-history-followup-fixture.mjs';
-import {syntheticFile} from './recursive-publication-fixture.js';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 import {actualClick,inspectHtmlFrame} from './helpers/html-preview-browser.mjs';
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/html-preview-product-integration-20261024/browser');mkdirSync(destination,{recursive:true});
@@ -13,8 +13,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const filename='周末计划-'+'窄屏截断长标题'.repeat(7)+'-weekend-plan.html';
 
 try{
- f.store.startRequest('request-0','html-render-first-synthetic');
- const result=syntheticFile(f,'request-0',filename,html,[],true),delivery=result.publish('合成 HTML 成果');f.history.record(delivery.historyMessageId,'synthetic-history',delivery.text);f.tasks.markDelivery(delivery.id,'recorded');
+ const sent=f.attach('合成 HTML 成果',[{filename,mime:'text/html',content:html}]);
  chrome=await isolatedChrome(destination);
  for(const width of [1440,390,320]){
   const p=await chrome.page(f.server.url,width),ev=x=>p.evaluate(x);let frame;
@@ -79,8 +78,8 @@ try{
    await p.screenshot('composer-'+width+'.png');
    await click('.send-button');await p.until(()=>!document.querySelector('.composer-area .preview-reference'));for(let n=0;n<150&&f.submitted.length===before;n++)await sleep(40);
    assert.equal(f.submitted.length,before+1);const input=f.inputs.list().find(x=>x.input.requestId===f.submitted.at(-1)).input;
-   check('real HTTP main queue retains artifact identity, hash, both comments and body',input.resourceReference.kind==='web'&&input.resourceReference.source.id===result.resultId&&input.resourceReference.annotations.length===2&&input.text.includes('聚焦原输入框'));
-   assert.equal(input.resourceReference.source.sha256,f.tasks.publishedResult(result.resultId).sha256);assert.deepEqual(input.resourceReference.annotations.map(n=>n.comment),['把主标题加大','保留副标题，增加间距']);
+   check('real HTTP main queue retains artifact identity, hash, both comments and body',input.resourceReference.kind==='web'&&input.resourceReference.source.messageId===sent.messageId&&input.resourceReference.source.assetId===sent.attachments[0].assetId&&input.resourceReference.annotations.length===2&&input.text.includes('聚焦原输入框'));
+   assert.equal(input.resourceReference.source.sha256,createHash('sha256').update(html).digest('hex'));assert.deepEqual(input.resourceReference.annotations.map(n=>n.comment),['把主标题加大','保留副标题，增加间距']);
    if(width>800){await frame.close();frame=null;await click('.html-annotation-toggle');await click('.canvas-collapse, .conversation-header [aria-controls=canvas-panel][aria-expanded=true]:not([aria-hidden=true] *)');await p.until(()=>!document.querySelector('#canvas-panel'));}
    check('header and page have no horizontal overflow',await ev(()=>document.documentElement.scrollWidth<=innerWidth));
    check('no application exceptions or escaped network requests',p.errors.length===0&&p.blocked.length===0);

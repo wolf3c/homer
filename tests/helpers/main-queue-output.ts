@@ -3,7 +3,7 @@ import type {Homer,Message} from '../../src/service.js';
 import {MainInputs} from '../../src/recursive-main-inputs.js';
 export function mainQueueOutput(app:Pick<Homer,'store'|'tasks'|'processes'|'history'>,sourceRequestId:string,id='synthetic-coordination'):Message&{type:'coordination';messageId:string;requestId:string}{
  const agentId=app.store.meta('mainAgentId')!,threadId=app.store.meta('mainThread')!,actor={agentId,threadId,sourceRequestId};
- const task=app.tasks.createTask(actor,{operationId:id,goal:'Synthetic work',authority:{sourceRequestId,description:'Synthetic only',materials:[],resultIds:[]}});
+ const task=app.tasks.createTask(actor,{operationId:id,goal:'Synthetic work',authority:{sourceRequestId,description:'Synthetic only'}});
  const opened=app.tasks.workerOpen(actor,{operationId:'open-'+id,taskId:task.taskId,text:'Synthetic work'}),run=app.tasks.claim(opened.runId)!;
  app.tasks.bind(run.id,run.epoch,'worker-'+id,'worker-turn-'+id);
  const returned=app.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic checked facts'},true)!;

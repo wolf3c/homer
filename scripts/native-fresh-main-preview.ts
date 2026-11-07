@@ -32,18 +32,10 @@ export function freshMainReadiness(db: DatabaseSync) {
     receipts: ['agent_receipts', "state IN ('pending','offered','received','uncertain','blocked')"],
     interactions: ['worker_interactions', "state IN ('pending_main','pending_user') OR (state IN ('approved','denied','answered') AND deliveredAt IS NULL)"],
     operations: ['operations', "state IN ('accepted','dispatching','uncertain')"],
-    deliveries: ['deliveries', "state IN ('prepared','submitting','uncertain')"],
     conversation: ['conversation_messages', "status IN ('queued','processing','running')"],
-    wechatInbox: ['wechat_inbox', "state='pending'"],
-    wechatSending: ['wechat_outbox', "state IN ('pending','sending')"],
-    telegramInbox: ['tg_inbox', "state IN ('queued','held','dispatching','uncertain')"],
-    telegramSending: ['tg_outbox', "state IN ('pending','sending')"],
-    telegramAnswers: ['tg_answers', "state IN ('pending','uncertain')"],
-    telegramDrafts: ['tg_drafts', "state IN ('active','stop_requested')"],
   };
   const pending = Object.fromEntries(Object.entries(checks).map(([name, [table, where]]) => [name, Number(db.prepare('SELECT count(*) n FROM ' + identifier(table) + ' WHERE ' + where).get()!.n)]));
-  const telegramBindings = Number(db.prepare('SELECT count(*) n FROM tg_connections').get()!.n);
-  return { pending, telegramBindings, ready: !telegramBindings && !Object.values(pending).some(Boolean) };
+  return { pending, ready: !Object.values(pending).some(Boolean) };
 }
 export async function previewFreshMain(snapshot: string, directory: string) {
   snapshot = resolve(snapshot); directory = resolve(directory);
@@ -60,7 +52,6 @@ export async function previewFreshMain(snapshot: string, directory: string) {
   const oldThread = baseline.prepare("SELECT value FROM meta WHERE key='mainThread'").get()?.value;
   baseline.close();
   if (!oldThread) throw Error('fresh_main_original_binding_required');
-  if (readiness.telegramBindings) throw Error('fresh_main_telegram_binding_review_required');
   if (!readiness.ready) throw Error('fresh_main_pending_work');
   const store = new Store(candidate);
   let receipt;

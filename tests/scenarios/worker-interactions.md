@@ -4,16 +4,16 @@
 
 ## 前置与消息
 
-显式入口 `scripts/real-worker-interactions.ts <已获准连接配置>` 自动创建 `.codex/scratch/worker-interactions/real-<时间>/workspace`、`.codex/private/wi-<时间>`，沿用获准连接但不复制凭据、不操作日常 runtime、Terminal 或主线程。CLI 标准输入保持打开，以便用户答复；每次重跑使用新目录。
+显式入口 `scripts/real-worker-interactions.ts <已获准连接配置>` 自动创建 `.codex/scratch/worker-interactions/real-<时间>/workspace`、`.codex/private/wi-<时间>`，配置须指向已获准的独立 CODEX_HOME。脚本不复制凭据，不操作日常 runtime 或主线程。CLI 标准输入保持打开，以便用户答复；每次重跑使用新目录。
 
-1. 用真实旧工具线程（仅原五 dynamicTools、无交互 MCP）告知主 Agent 随机合成标题；关闭该引擎，再以新 Homer CLI 恢复原 ID，核验标题回忆与历史保留。
-2. 要求派独立 Worker，先 read_material，再必须 ask_main 确认该标题，使用实际答复写 Markdown。主 Agent 应查看待答并直接回答，原 Worker 成功／通过内容审阅／交付。
-3. 再派 Worker，ask_main 询问尚未给出的用户指定合成版式。主 Agent 应 escalate_interaction 并发出自然语言 question，待答保持 pending_user。
+1. 用当前版本创建独立主会话并告知主 Agent 随机合成标题；关闭该引擎，再以 Homer CLI 恢复原 ID，核验标题回忆与历史保留。
+2. 要求派独立 Worker，按文件地址读取材料，再调用 `ask_main` 确认标题。主 Agent 直接回答，Worker 写入实际答复并回报文件地址。核对内容后，主 Agent 用 `send_user_message` 发送选定的 Markdown 附件。
+3. 再派 Worker，ask_main 询问尚未给出的用户指定合成版式。主 Agent 用 `escalate_interaction` 保留待答，再通过 `send_user_message` 将问题呈现给 CLI 用户。
 4. 发送一条明确不回答待答的普通聊天，验证主 Agent 能回复且原问题保持未答。
 5. 发送准确 interactionId 与随机版式，主 Agent 查看并答复；断言原 Worker pid/thread 未变，实际成果包含版式且成功交付，未重新派发。
-6. 可选 `--native`：要求第三 Worker 使用原生 request_permissions 申请仅自己 cwd 的 read，主 Agent 在宿主允许范围内直接批准，然后读取材料并交付。必须观察真实 native 请求、approved 和原通道 deliveredAt，不能将 ask_main 或 fixture 冒充此项。
+6. 可选 `--native`：要求第三 Worker 使用原生 request_permissions 申请仅自己 cwd 的 read，CLI 退出后复用同一线程与隔离 runtime，沿现有结构化审批入口提交用户决定。观察 Homer 先呈现待答，再依据用户决定回复原 Worker。验证原生请求范围、`approved`、`deliveredAt`、实际用户回执与准确文件字节。
 
-基础脚本核对两 Run（`--native` 要求三 Run）、独立线程、产物内容、交互状态和同一 mainThread；报告只保存元数据与用量，不保存对话／原始参数／模型回执。真实模型使用可能计费，金额未知。Native 无法安全触发时应报未实测，不替换成功条件。当前本机 0.163.0 / environments=[] 不提供 request_permissions，保留原生尝试失败证据；基础脚本只代表业务问答和历史兼容通过，报告 nativeVerification=not_run。
+基础脚本核对两 Run（`--native` 要求三 Run）、独立线程、产物内容、交互状态和同一 mainThread；报告只保存元数据与用量，不保存对话／原始参数／模型回执。真实模型使用可能计费，金额未知。Native 无法安全触发时应报未实测，不替换成功条件。基础脚本实际通过后可证明本轮业务问答和当前会话恢复，报告 `nativeVerification=not_run`。原生请求缺失时记录失败阶段及错误。
 
 ## 离线契约
 
@@ -21,7 +21,7 @@
 
 历史测试说明：下文“等待超过执行预算仍存活”及红绿记录来自旧执行预算阶段。当前宿主整轮预算已由[执行时限与故障恢复](../../docs/38-native-timeout-recovery.md)移除；等待期间的 `activeMs` 统计、交互失效及停止确认仍保留，不表示存在自动整轮限时。原孤立计时器及其两项专用单测已移除；现有估算费用/连续压缩保护属于独立引擎契约，不恢复旧整轮预算。
 
-检查主直接回答、授权批准／拒绝、两 Worker 准确路由与乱序答复、等待超过执行预算仍存活、无关消息、正式 ask_main、答复前校验、重复／冲突／过期答复、停止禁授权、失去回调的重启对账、准确非空原生答案、秘密输入拒绝、权限子集和 turn scope、未知能力拒绝、MCP 只暴露三个工具、诊断无正文。协议 fixture 保留原生关联 ID 并收到真正 JSON-RPC 响应，不以模型提示词代替传输测试。
+检查主直接回答、授权批准／拒绝、两 Worker 准确路由与乱序答复、等待期间保留原 Worker 并继续无关消息、正式 ask_main、答复前校验、重复／冲突／过期答复、停止禁授权、失去回调的重启对账、准确非空原生答案、秘密输入拒绝、权限子集和 turn scope、未知能力拒绝、MCP 按 Main／Worker 角色限制工具目录、诊断无正文。协议 fixture 保留原生关联 ID 并收到真正 JSON-RPC 响应，不以模型提示词代替传输测试。
 
 先有红色行为回归，再实现独占模块和集成。真实测试另揭示 thread config 清空自有 MCP、MCP 调用审批被 never 拦截、验收缺少步骤证据三个路径，修复后重跑；具体事实记录在 docs/07。
 

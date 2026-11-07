@@ -13,7 +13,7 @@ test('state: repeated WebState reads never project/write Worker facts or revisio
  try{
   new WorkerInteractions(store.db);const files=new Files(dir),tasks=new RecursiveTasks(store,files);tasks.migrate();store.setMeta('mainThread','synthetic-thread');
   const history=new ConversationHistory(store.db),processes=new MainProcessHistory(store.db),app:any=Object.create(Homer.prototype);
-  Object.assign(app,{store,files,tasks,history,processes,inputs:new MainInputs(tasks,history),registerChannelCapabilities(){},snapshot:()=>({tasks:[],runs:[],matters:[],interactions:[],deliveries:[]}),projectProcessWorker(){store.setMeta('synthetic-read-side-effect','forbidden');}});
+  Object.assign(app,{store,files,tasks,history,processes,inputs:new MainInputs(tasks,history),registerWebSurface(){},snapshot:()=>({tasks:[],runs:[],matters:[],interactions:[],deliveries:[]}),projectProcessWorker(){store.setMeta('synthetic-read-side-effect','forbidden');}});
   processes.start({id:'synthetic-node',threadId:'synthetic-thread',sourceKind:'user',sourceMessageIds:[],messageId:'synthetic-node'},'synthetic-turn');
   processes.worker('synthetic-node',{taskId:'synthetic-worker',version:1,taskRevision:1,runId:null,runRevision:null,runStatus:null,resultState:null,epoch:null,state:'working',controlState:'normal',outcome:null,phase:null,stopRequested:false});
   const before=store.db.prepare('SELECT * FROM meta ORDER BY key').all();

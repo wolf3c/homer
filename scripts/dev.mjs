@@ -60,7 +60,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     if(method.startsWith('history.')&&webHistoryProtocol!==3)throw Error('history_protocol_required');
     // Only unsent reads may wait across a handoff. Mutations retain their exact
     // live context and fail visibly instead of running later in a new version.
-    if (method.startsWith("history.") || ["taskOverview.progress", "taskOverview.list", "taskOverview.detail", "taskOverview.summary", "taskOverview.origin", "wechat.state", "wechat.qr", "telegram.state", "artifact", "artifactOrigin"].includes(method)) {
+    if (method.startsWith("history.") || ["taskOverview.progress", "taskOverview.list", "taskOverview.detail", "taskOverview.summary", "taskOverview.origin", "media.origin"].includes(method)) {
       const deadline = Date.now() + 5000;
       while (phase !== "running" && !(desktop&&phase==='management'&&managementAllowed(method,request)) && !stopped && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -71,7 +71,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     // QR poll allows 35s protocol wait plus dedicated Keychain write/read and
     // old-reference cleanup. This is a bounded management call, not main work.
     if(method==='media.upload'&&(!request||typeof request.data!=='string'||request.data.length>Math.ceil(8*1024*1024/3)*4))return reject(new Error('web_upload_size_limit'));
-    const timeout = setTimeout(() => { webRequests.delete(id); reject(new Error("web_receipt_unconfirmed"));prepareWhenDrained(); }, method==='media.upload'?180000:method === "wechat.poll" || method === "telegram.configure" ? 90000 : method.startsWith("wechat.") || method.startsWith("telegram.") ? 35000 : 5000);
+    const timeout = setTimeout(() => { webRequests.delete(id); reject(new Error("web_receipt_unconfirmed"));prepareWhenDrained(); }, method==='media.upload'?180000:5000);
     webRequests.set(id, { accept, reject, timeout, method });
     if (!send({ kind: "web", id, method, input: request })) {
       clearTimeout(timeout); webRequests.delete(id); reject(new Error("web_receipt_unconfirmed"));prepareWhenDrained();
@@ -86,7 +86,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
   }));
   // UI adoption keeps the same executor and transport. Read-only refreshes
   // cannot starve it; mutations must settle before adopting trusted assets.
-  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","wechat.state","wechat.qr","telegram.state","artifact","artifactOrigin","media.read"].includes(item.method));
+  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read"].includes(item.method));
   const canStopForUpdate=()=>!stopped&&phase==='running'&&!!journal&&!inFlight.size&&!hasWebMutation()&&!queue.length&&!journal.pending().length;
   const updateBusy=()=>{updateStopId=undefined;upgradeProbe=false;desktop?.onEvent?.({kind:'update-busy'});};
   desktop?.bindUpdateStop?.(()=>{
@@ -151,18 +151,10 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
       bridge: { state,history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
         const value=await invokeWeb('history.receipts',input),transport=journal?.receipts(input.requestIds)??[];
         return {...value,statuses:value.statuses.map(item=>value.acceptedRequestIds.includes(item.requestId)?item:transport.find(row=>row.requestId===item.requestId)??item)};
-      }},taskOverview:{progress:id=>invokeWeb("taskOverview.progress",{id}),summary:id=>invokeWeb("taskOverview.summary",{id}),origin:(id,messageId)=>invokeWeb("taskOverview.origin",{id,messageId}),list:()=>invokeWeb("taskOverview.list"),detail:(id,query)=>invokeWeb("taskOverview.detail",{id,...query})},media:{read:input=>invokeWeb('media.read',input),upload:input=>invokeWeb('media.upload',input),discard:input=>invokeWeb('media.discard',input)}, submit: async input => acceptInput(input), stop: messageId => invokeWeb("stop", { messageId }),
+      }},taskOverview:{progress:id=>invokeWeb("taskOverview.progress",{id}),summary:id=>invokeWeb("taskOverview.summary",{id}),origin:(id,messageId)=>invokeWeb("taskOverview.origin",{id,messageId}),list:()=>invokeWeb("taskOverview.list"),detail:(id,query)=>invokeWeb("taskOverview.detail",{id,...query})},media:{read:input=>invokeWeb('media.read',input),origin:input=>invokeWeb('media.origin',input),reveal:input=>invokeWeb('media.reveal',input),upload:input=>invokeWeb('media.upload',input),discard:input=>invokeWeb('media.discard',input)}, submit: async input => acceptInput(input), stop: messageId => invokeWeb("stop", { messageId }),
         queue:{edit:input=>invokeWeb('queue.edit',input),cancel:input=>invokeWeb('queue.cancel',input),move:input=>invokeWeb('queue.move',input),interrupt:(input,target)=>invokeWeb('queue.interrupt',{input,target})},
         feedback: (messageId, value) => invokeWeb("feedback", { messageId, value }),
-        respond: (id, input) => invokeWeb("respond", { ...input, id }), artifact: runId => invokeWeb("artifact", { runId }), artifactOrigin: resultId => invokeWeb("artifactOrigin", {resultId}),
-        revealArtifact:resultId=>invokeWeb('revealArtifact',{resultId}),
-        wechat: { state: () => invokeWeb("wechat.state"), beginLogin: () => invokeWeb("wechat.login"),
-          pollLogin: (id, verifyCode) => invokeWeb("wechat.poll", { id, verifyCode }), qrPng: id => invokeWeb("wechat.qr", { id }),
-          disable: () => invokeWeb("wechat.disable"), reconnect: () => invokeWeb("wechat.reconnect"), disconnect: () => invokeWeb("wechat.disconnect") },
-        telegram: { state: () => invokeWeb("telegram.state"), configure: token => invokeWeb("telegram.configure", { token }),
-          beginPairing: () => invokeWeb("telegram.pair"), candidate: code => invokeWeb("telegram.candidate", { code }),
-          approve: (code, userId, chatId) => invokeWeb("telegram.approve", { code, userId, chatId }),
-          connect: () => invokeWeb("telegram.connect"), disconnect: () => invokeWeb("telegram.disconnect"), forget: () => invokeWeb("telegram.forget") },
+        respond: (id, input) => invokeWeb("respond", { ...input, id }),
       },
     });
     if(desktop)desktop.onEvent?.({kind:"url",url:web.url,desktopAccessToken});

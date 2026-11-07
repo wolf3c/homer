@@ -17,7 +17,7 @@ test('main native questions project through the web bridge and preserve legacy t
   const app = {
     store,
     inputs:{dispatchSummary:()=>({orderVersion:'synthetic',totalWaiting:0})},
-    registerChannelCapabilities() {}, conversationState: () => ({threadId:'t',messages:[],processNodes:[]}),
+    registerWebSurface() {}, conversationState: () => ({threadId:'t',messages:[],processNodes:[]}),
     snapshot: () => ({ runs: [], tasks:[], matters:[], deliveries:[], interactions: [{ id: 'q', state: 'pending_user' }] }),
     interactions: { inspect: () => ({ ...native, id: 'q', runId, authority:{sourceRequestId:'synthetic-source'}, userQuestion: 'Choose', escalationReason: null }) },
     submitMessage: async (input: unknown) => { submitted = input; return {}; },

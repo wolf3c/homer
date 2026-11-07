@@ -1,6 +1,7 @@
 // Real UI, private-byte adapters and isolated Chrome; all data and HTTP are synthetic.
 import assert from 'node:assert/strict';
-import {mkdirSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {composerFixture} from './fixtures/composer-browser-server.mjs';
@@ -16,6 +17,10 @@ function png(width,height){
  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(raw)),chunk('IEND',Buffer.alloc(0))]);
 }
 const wide=png(640,80),portrait=png(80,600),longName='合成文件名-'+ '完整名称'.repeat(20)+'.txt';
+const assistantFiles=[{title:'合成图片成果.png',mime:'image/png',bytes:portrait},{title:longName,mime:'text/plain',bytes:Buffer.from('Synthetic exact result bytes')}].map(({title,mime,bytes},index)=>{
+ const assetId='asset-00000000-0000-4000-8000-'+String(index+1).padStart(12,'0'),messageId='result-reply';
+ return {mime,bytes,path:'/api/media/'+messageId+'/'+assetId+'/1',attachment:{id:assetId,title,messageId,assetId,revision:1,sha256:createHash('sha256').update(bytes).digest('hex')}};
+});
 const media=(id,kind='image',extra={})=>({assetId:id,revision:1,filename:id+'.png',size:1234,mime:'image/png',kind,state:'ready',error:null,...extra});
 const assets=[media('wide'),media('portrait'),media('document','file',{filename:longName,mime:null}),media('broken'),media('expired','image',{state:'expired'}),media('silk','voice',{filename:'合成旧语音.silk',mime:'audio/silk'})];
 const message=(id,role,text,media)=>({id,threadId:'composer-review',requestId:'request-'+id,role,text,media,status:'completed',createdAt:1700000000000});
@@ -25,8 +30,8 @@ const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('a
  const path=url.pathname;requests.push(path);active++;peak=Math.max(peak,active);
  try{
   await new Promise(done=>setTimeout(done,70));
-  if(path==='/api/files/result-image'){res.writeHead(200,{'Content-Type':'image/png'});res.end(portrait);return;}
-  if(path==='/api/files/result-text'){res.writeHead(200,{'Content-Type':'text/plain'});res.end('Synthetic exact result bytes');return;}
+  const file=assistantFiles.find(file=>file.path===path);
+  if(file){res.writeHead(200,{'Content-Type':file.mime,'X-Homer-Artifact-Hash':file.attachment.sha256});res.end(file.bytes);return;}
   const match=/^\/api\/media\/(image-user|offscreen)\/(wide|portrait|document|broken|old)\/([12])$/.exec(path);
   if(!match){res.writeHead(403);res.end('synthetic_denied');return;}
   if(match[2]==='document'){res.writeHead(downloadFail?503:200,{'Content-Type':'application/octet-stream'});res.end('synthetic document bytes');return;}
@@ -41,7 +46,7 @@ let passed=false;
 try{
  for(const width of [1440,390,320]){
   requests.length=0;peak=0;downloadFail=true;
-  const messages=makeMessages();fixture.reset({messages,features:{draftUpload:true,taskOverview:false},artifacts:[{id:'result-image',title:'合成图片成果.png',workTitle:'正式交付',historyMessageId:'result-reply',messageId:'result-reply'},{id:'result-text',title:longName,workTitle:'正式交付',historyMessageId:'result-reply',messageId:'result-reply'}]});
+  const messages=makeMessages();fixture.reset({messages,features:{draftUpload:true,taskOverview:false},artifacts:assistantFiles.map(file=>file.attachment)});
   const page=await chrome.page(fixture.url,width),wait=predicate=>waitFor(page,predicate);
   const check=async(label,predicate)=>{assert.ok(await page.evaluate(predicate),label);checks.push({width,label});};
   try{
@@ -54,7 +59,7 @@ try{
    await wait(()=>document.querySelector('#message-image-user [data-slot="image-preview"] img')?.naturalWidth===640);
    await page.evaluate(()=>document.querySelectorAll('#message-image-user .message-attachment')[3].scrollIntoView({block:'center'}));
    await wait(()=>!!document.querySelector('[data-slot="image-preview-error"]'));
-   assert.ok(!requests.some(p=>p.startsWith('/api/files/')||p.includes('/document/')||p.includes('/old/')));assert.ok(peak<=2);checks.push({width,label:'only nearby images load; result/document bodies stay lazy and shared request budget stays at two'});
+   assert.ok(!requests.some(p=>assistantFiles.some(file=>file.path===p)||p.includes('/document/')||p.includes('/old/')));assert.ok(peak<=2);checks.push({width,label:'only nearby images load; result/document bodies stay lazy and shared request budget stays at two'});
    await check('image/file official structures replace the custom file drawings',()=>!document.querySelector('#message-image-user .message-attachment:first-child [data-slot="file-root"]')&&!!document.querySelector('#message-image-user .message-attachment:nth-child(3) [data-slot="file-root"]')&&!!document.querySelector('#message-image-user [data-slot="image-preview-error"]')&&document.querySelectorAll('[data-slot="file-list"] [data-slot="file-root"]').length===2&&!document.querySelector('.file-list-icon,.file-list-name'));
    await check('expired and unsupported silk attachments remain factual and have no fake player',()=>document.querySelector('#message-image-user').textContent.includes('已过期')&&!document.querySelector('#message-image-user audio')&&document.querySelectorAll('#message-image-user .lazy-media').length===3);
    await check('full accessible names, ellipsis, official size and authorized download survive narrow width',()=>{const rows=[...document.querySelectorAll('[data-slot="file-name"]')];return rows.some(e=>e.textContent.length>70&&e.title===e.textContent&&getComputedStyle(e).whiteSpace==='nowrap'&&getComputedStyle(e).textOverflow==='ellipsis')&&!!document.querySelector('[data-slot="file-size"]')&&document.documentElement.scrollWidth<=innerWidth;});
@@ -87,7 +92,15 @@ try{
    for(let attempt=0;attempt<200&&!requests.includes('/api/media/image-user/document/2');attempt++)await new Promise(resolve=>setTimeout(resolve,10));
    assert.equal(requests.filter(p=>p==='/api/media/image-user/document/2').length,1);checks.push({width,label:'download after revision change uses the new exact revision'});
    await press(page,'[data-slot="file-list"] [aria-label="预览 合成图片成果.png"]');await wait(()=>document.querySelector('#canvas-panel [data-slot="image-preview"] img')?.naturalHeight===600);
-   assert.equal(requests.filter(p=>p==='/api/files/result-image').length,1);await check('Canvas image uses official preview without a second zoom/download flow',()=>!!document.querySelector('#canvas-panel [data-slot="image-root"]')&&!document.querySelector('#canvas-panel .aui-image-zoom-trigger,#canvas-panel [data-slot="file-download"]'));
+   assert.equal(requests.filter(p=>p===assistantFiles[0].path).length,1);await check('Canvas image has one original-file download beside the official preview',()=>!!document.querySelector('#canvas-panel [data-slot="image-root"]')&&!document.querySelector('#canvas-panel .aui-image-zoom-trigger')&&document.querySelectorAll('#canvas-panel [data-slot="file-download"]').length===1);
+   const downloads=mkdtempSync(join(destination,'image-download-'));
+   await chrome.command('Browser.setDownloadBehavior',{behavior:'allow',browserContextId:page.browserContextId,downloadPath:downloads});
+   await press(page,'#canvas-panel [aria-label="下载 合成图片成果.png"]');
+   const downloaded=join(downloads,'合成图片成果.png');
+   for(let attempt=0;attempt<150&&!existsSync(downloaded);attempt++)await new Promise(resolve=>setTimeout(resolve,20));
+   assert.deepEqual(readFileSync(downloaded),portrait);
+   assert.equal(requests.filter(p=>p===assistantFiles[0].path).length,1);
+   checks.push({width,label:'Canvas downloads the original bytes without another artifact request'});
    await press(page,'.canvas-collapse, .conversation-header [aria-controls=canvas-panel][aria-expanded=true]:not([aria-hidden=true] *)');await wait(()=>!document.querySelector('#canvas-panel'));
    await check('closing Canvas restores the exact official file-row trigger',()=>document.activeElement.getAttribute('aria-label')==='预览 合成图片成果.png');
    await press(page,'[data-slot="file-list"] [aria-label^="预览 合成文件名"]');await wait(()=>document.querySelector('#canvas-panel pre')?.textContent==='Synthetic exact result bytes');

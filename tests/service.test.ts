@@ -1,8 +1,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, chmodSync, copyFileSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, chmodSync, copyFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { Homer, type Message } from "../src/service.js";
 import { Store } from "../src/store.js";
@@ -17,8 +16,16 @@ async function until(check: () => boolean) {
 let sequence = 0;
 const cleanup: (()=>Promise<void>)[]=[];
 after(async()=>{for(const close of cleanup)await close();});
-function delivery(app:Homer,runId:string){
-  const run=app.tasks.run(runId);return app.tasks.deliveries([run.taskId]).find(row=>row.version===run.version);
+function reply(app:Homer,runId:string){
+  const run=app.tasks.run(runId);
+  return app.history.list(app.store.meta('mainThread')!).find(message=>message.taskId===run.taskId&&message.taskVersion===run.version&&message.role==='assistant'&&message.audience==='user');
+}
+function attachment(app:Homer,runId:string){
+  const message=reply(app,runId)!;
+  return app.readAttachment({messageId:message.id,...message.attachments![0]!});
+}
+function attachmentText(app:Homer,runId:string){
+  return Buffer.from(attachment(app,runId).data,'base64').toString('utf8');
 }
 function fixture(
   name: string,
@@ -27,14 +34,14 @@ function fixture(
 ) {
   const scratch=resolve(".codex/scratch/e-service");mkdirSync(scratch,{recursive:true});
   const base=mkdtempSync(join(scratch,name.slice(0,20)+"-"));
-  mkdirSync(base + "/workspace/materials", { recursive: true });mkdirSync(base + "/runtime", { recursive: true });
-  writeFileSync(base + "/workspace/materials/meeting.md","林青：写初稿，2026-10-20。整理反馈：负责人和时间待确认。");
+  mkdirSync(base + "/workspace", { recursive: true });mkdirSync(base + "/runtime", { recursive: true });
+  writeFileSync(base + "/workspace/meeting.md","林青：写初稿，2026-10-20。整理反馈：负责人和时间待确认。");
   const config: Config = {
-    workspace: base + "/workspace",runtime: base + "/runtime",codexBin: "/usr/bin/false",codexHome: base + "/engine",
+    workspace: base + "/workspace",runtime: base + "/runtime",codexBin: "/usr/bin/false",codexHome: base + "/engine",nativeCodexHome:base+"/engine",
     model: "mock-only",requiresOpenaiAuth: false,timeoutMs,mainTimeoutMs: 1000,stopGraceMs: 100,
   };
   const messages: Message[] = [],scriptedMessages = new Map<string, Record<string, any>>(),workerDocuments: string[] = [],workerEngines: Fake[] = [],engineOptions: EngineOptions[] = [];
-  let active = 0,maxActive = 0,deliveryAttempts=0,sinkFails = false,progressFails = false,mainStopFails = false,mainDeliveryFails = false,mainDeliveryEmpty = false;
+  let active = 0,maxActive = 0,outputFails=false,outputAttempts=0,progressFails = false,mainStopFails = false,mainDeliveryFails = false,mainDeliveryEmpty = false;
   let deliveryGate: Promise<void> | undefined,releaseDelivery: (() => void) | undefined,deliveryWaiting = false;
   class Fake extends EventEmitter implements EngineLike {
     threadId = "mock-thread-" + ++sequence;turnId?: string;release?: () => void;pendingResolve?: (r: TurnResult) => void;isWorker: boolean;failureCode?:string;
@@ -53,12 +60,13 @@ function fixture(
           if(mode==="hang"||mode==="unconfirmed")return await new Promise<TurnResult>(resolve=>{this.pendingResolve=resolve;});
           await new Promise<void>(resolve=>{this.release=resolve;});
           if(mode==="failed"||this.failureCode)throw Error(this.failureCode??"mock_engine_failed");
-          let file:{path:string}|undefined;
+          let filePath:string|undefined;
           if(mode!=="empty"){
-            await this.call("read_material",{});
-            file=await this.call("write_markdown",{filename:"actions.md",content:workerDocuments.shift()??"# 行动清单\n\n- 林青：写初稿，2026-10-20\n- 待确认：整理反馈；负责人和时间待确认。"});
+            const run=app.store.runs().find(run=>run.turnId===this.turnId)!;
+            filePath=join(this.options.cwd,run.id+'-actions.md');
+            writeFileSync(filePath,workerDocuments.shift()??"# 行动清单\n\n- 林青：写初稿，2026-10-20\n- 待确认：整理反馈；负责人和时间待确认。");
           }
-          return {status:"completed",text:file?JSON.stringify({message:"已写入",filePath:file.path}):"No artifact produced",usage:{total:{totalTokens:10}}};
+          return {status:"completed",text:filePath?JSON.stringify({message:"已写入",filePath}):"No file produced",usage:{total:{totalTokens:10}}};
         }finally{active--;}
       }
       if(text.startsWith("[内部协作输入")){
@@ -75,23 +83,21 @@ function fixture(
           if(mainDeliveryEmpty)return {status:"completed",text:""};
           return {status:"completed",text:"已核对执行状态："+reason};
         }
-        const adopted=await this.call("accept_result",{runId:notice.runId,filePath});
-        await this.call("work_inspect",{resultId:adopted.resultId});
         if(mainDeliveryFails)throw Error("mock_main_disconnected");
         if(mainDeliveryEmpty)return {status:"completed",text:""};
-        await this.call("publish_delivery",{taskId:notice.taskId,resultIds:[adopted.resultId],text:"已核对并正式交付行动清单。"});
-        return {status:"completed",text:""};
+        if(deliveryGate&&!deliveryWaiting){deliveryWaiting=true;await deliveryGate;}
+        await this.call("send_user_message",{taskId:notice.taskId,attachments:[{path:filePath}],text:"已核对并发送行动清单。"});
+        return {status:"completed",text:"This text must not overwrite the committed user message."};
       }
       const p=scriptedMessages.get(text)??JSON.parse(text);
       const dispatch=async(title=p.title??"会议")=>{
-        app.files.readMaterial(p.material??"meeting.md");
         if(p.taskId){
           const existing=await this.call("work_inspect",{taskId:p.taskId});
           await this.call("task_update",{taskId:p.taskId,goal:p.goal??"按新要求整理行动清单"});
           return this.call("worker_send",{workerId:existing.workers[0].workerId,message:"按新要求整理行动清单"});
         }
-        const task=await this.call("task_create",{title,goal:p.goal??"行动清单"});
-        return this.call("worker_open",{taskId:task.taskId,message:"整理 "+(p.material??"meeting.md")+" 的行动清单"});
+        const material=p.material??"meeting.md";
+        return this.call("worker_open",{message:title+"：整理 "+material+" 的行动清单",attachments:[{path:resolve(config.workspace,material)}]});
       };
       if(p.action==="dispatch_many"){
         const results=[];for(const title of ["第一件","第二件","第三件"])results.push(await dispatch(title));
@@ -117,9 +123,11 @@ function fixture(
     }
   }
   const app=new Homer(config,async message=>{
-    if(message.type==="delivery")deliveryAttempts++;
-    if((sinkFails&&message.type==="delivery")||(progressFails&&message.type==="progress"))throw Error("sink_closed");
-    if(message.type==="delivery"&&deliveryGate){deliveryWaiting=true;await deliveryGate;}
+    if(progressFails&&message.type==="progress")throw Error("sink_closed");
+    if(message.type==='reply'&&message.messageId&&!message.requestId){
+      outputAttempts++;
+      if(outputFails)throw Error('sink_closed');
+    }
     messages.push(message);
   },(options,handle)=>{engineOptions.push(options);return new Fake(options,handle);});
   cleanup.push(async()=>{mainStopFails=false;await app.close().catch(()=>{});rmSync(base,{recursive:true,force:true});});
@@ -127,8 +135,8 @@ function fixture(
     respondTo(message:string,response:Record<string,unknown>){scriptedMessages.set(message,response);},
     workerWrites(...documents:string[]){workerDocuments.push(...documents);},
     get maxActive(){return maxActive;},
-    get deliveryAttempts(){return deliveryAttempts;},
-    failDelivery(){sinkFails=true;},failMainStop(){mainStopFails=true;},emptyMainDelivery(){mainDeliveryEmpty=true;},
+    get outputAttempts(){return outputAttempts;},failOutput(){outputFails=true;},
+    failMainStop(){mainStopFails=true;},emptyMainDelivery(){mainDeliveryEmpty=true;},
     failMainDelivery(){mainDeliveryFails=true;},failProgress(){progressFails=true;},
     pauseDelivery(){deliveryGate=new Promise<void>(resolve=>{releaseDelivery=resolve;});},
     releaseDelivery(){releaseDelivery?.();},get deliveryWaiting(){return deliveryWaiting;},
@@ -143,7 +151,7 @@ test("HMR-MEETING-001: offline host regression runs dispatch, live query, delive
   // Scripted peer responses are synthetic. Natural-language tool selection is checked only in test:real.
   copyFileSync(
     scenario.fixture.path,
-    a.files.materials + "/" + scenario.fixture.filename,
+    join(a.config.workspace,scenario.fixture.filename),
   );
   f.respondTo(m.remember, { action: "chat", text: "收到" });
   f.respondTo(m.recall, { action: "chat", text: "海鸥47" });
@@ -175,12 +183,8 @@ test("HMR-MEETING-001: offline host regression runs dispatch, live query, delive
     await a.idle();
     const original = a.store.runs()[0]!;
     assert.equal(original.status, "succeeded");
-    assert.equal(delivery(a,original.id)!.state, "recorded");
-    const verified = a.files.verify(
-      a.files.prepareRun(original.taskId, original.id),
-      a.tasks.publishedArtifact(original.id)!.path,
-    );
-    assertMeetingArtifact(verified.content);
+    const verified=attachment(a,original.id);
+    assertMeetingArtifact(attachmentText(a,original.id));
     const revisionMessage = m.revise.replace("{taskId}", original.taskId);
     f.respondTo(revisionMessage, {
       action: "dispatch",
@@ -196,19 +200,12 @@ test("HMR-MEETING-001: offline host regression runs dispatch, live query, delive
     assert.equal(a.store.runs().length, 2);
     assert.equal(revised.taskId, original.taskId);
     assert.equal(revised.threadId, original.threadId);
-    assert.notEqual(a.tasks.publishedArtifact(revised.id)!.path, a.tasks.publishedArtifact(original.id)!.path);
+    assert.notEqual(attachment(a,revised.id).sha256,verified.sha256);
     assert.equal(revised.status, "succeeded");
-    assert.equal(delivery(a,revised.id)!.state, "recorded");
-    assertMeetingArtifact(readFileSync(a.tasks.publishedArtifact(revised.id)!.path, "utf8"), true);
-    assert.equal(
-      a.files.verify(
-        a.files.prepareRun(original.taskId, original.id),
-        a.tasks.publishedArtifact(original.id)!.path,
-      ).sha256,
-      verified.sha256,
-    );
+    assertMeetingArtifact(attachmentText(a,revised.id),true);
+    assert.equal(attachment(a,original.id).sha256,verified.sha256);
     assert.equal(f.maxActive, 1);
-    assert.equal(f.messages.filter((msg) => msg.type === "delivery").length, 2);
+    assert.equal(a.history.list(a.store.meta('mainThread')!).filter(message=>message.taskId===original.taskId&&message.attachments?.length).length,2);
   } finally {
     await a.close();
   }
@@ -234,13 +231,13 @@ test("HMR-PARALLEL-001: main stays responsive while independent Workers overlap"
   assert.equal(a.store.runs()[0]?.status, "running");
   assert.equal(a.store.runs()[1]?.status, "running");
   f.workerEngines[1]!.release!();
-  await until(() => delivery(a,a.store.runs()[1]!.id)?.state === "recorded");
+  await until(() => !!reply(a,a.store.runs()[1]!.id));
   assert.equal(a.store.runs()[0]?.status, "running");
   f.workerEngines[0]!.release!();
   await a.idle();
   assert.equal(f.maxActive, 2);
   assert.ok(a.store.runs().every((r) => r.status === "succeeded"));
-  assert.ok(a.store.runs().every((r) => delivery(a,r.id)?.state === "recorded"));
+  assert.ok(a.store.runs().every((r) => !!reply(a,r.id)));
   assert.notEqual(a.store.runs()[0]?.threadId, a.store.runs()[1]?.threadId);
   await a.close();
 });
@@ -274,16 +271,14 @@ test("T05/T10: explicit revisions preserve artifacts; duplicate user requests do
   await a.idle();
   const revised = a.store.runs()[1]!;
   assert.equal(revised.taskId, r.taskId);
-  assert.notEqual(a.tasks.publishedArtifact(revised.id)!.path,a.tasks.publishedArtifact(r.id)!.path);
-  assert.ok(
-    a.files.verify(a.files.prepareRun(r.taskId, r.id), a.tasks.publishedArtifact(r.id)!.path).bytes,
-  );
+  assert.notEqual(reply(a,revised.id)!.id,reply(a,r.id)!.id);
+  assert.ok(attachmentText(a,r.id).includes('行动清单'));
   await a.close();
 });
 
 test("T07: missing material, actual engine failure and absent artifact cannot report success", async () => {
   for (const [mode, material, code] of [
-    ["normal", "missing.md", "material_missing"],
+    ["normal", "missing.md", "artifact_missing"],
     ["failed", "meeting.md", "mock_engine_failed"],
     ["empty", "meeting.md", "artifact_missing"],
   ] as const) {
@@ -292,7 +287,7 @@ test("T07: missing material, actual engine failure and absent artifact cannot re
     await a.start();
     const response=await a.message(JSON.stringify({ action: "dispatch", material }), "first");
     if(mode==='normal'){
-      assert.match(response,/material_missing/);assert.equal(a.store.runs().length,0);assert.equal(f.workerEngines.length,0);await a.close();continue;
+      assert.match(response,new RegExp(code));assert.equal(a.store.runs().length,0);assert.equal(f.workerEngines.length,0);await a.close();continue;
     }
     await until(() => !!f.workerEngines[0]?.release);
     f.workerEngines[0]!.release!();
@@ -305,7 +300,7 @@ test("T07: missing material, actual engine failure and absent artifact cannot re
       const raw=a.tasks.workerRead({agentId:a.store.meta('mainAgentId')!},{workerId:r.workerId}).messages.find(message=>message.kind==='worker_reply')!;
       assert.equal(raw.payload.execution.status,'completed');
     }else assert.equal(r.errorCode, code);
-    assert.equal(a.tasks.publishedArtifact(r.id),undefined);assert.equal(a.tasks.task(r.taskId).outcome,'failed');
+    assert.equal(reply(a,r.id),undefined);assert.equal(a.tasks.task(r.taskId).outcome,'failed');
     await a.close();
   }
 });
@@ -335,28 +330,37 @@ test("T08: cancellation is separate from confirmation; unconfirmed stop never su
   await until(() => !!f.workerEngines[0]?.pendingResolve);
   await new Promise(resolve=>setTimeout(resolve,200));
   assert.equal(f.app.store.runs()[0]?.status, "running");
-  assert.equal(Object.hasOwn(JSON.parse(f.app.tasks.version(f.app.store.runs()[0]!.taskId,1).authorityJson),'maxActiveMs'),false);
+  assert.equal(Object.hasOwn(JSON.parse(f.app.tasks.version(f.app.store.runs()[0]!.taskId,1).authorityJson!),'maxActiveMs'),false);
   await f.app.stop(f.app.store.runs()[0]!.id);
   await f.app.idle();
   assert.equal(f.app.store.runs()[0]?.status, "cancelled");
   await f.app.close();
 });
 
-test("T10: lost output acknowledgement preserves exact Result and unknown Delivery without restart replay", async () => {
-  const f = fixture("receipt");
-  const a = f.app;
+test("T10: unconfirmed output does not replay a committed user message after restart or lose its attachment", async () => {
+  const f=fixture("receipt"),a=f.app;
   await a.start();
-  f.failDelivery();
-  await a.message(JSON.stringify({ action: "dispatch" }), "first");
-  await until(() => !!f.workerEngines[0]?.release);
+  f.failOutput();
+  await a.message(JSON.stringify({action:"dispatch"}),"first");
+  await until(()=>!!f.workerEngines[0]?.release);
   f.workerEngines[0]!.release!();
   await a.idle();
-  assert.equal(delivery(a,a.store.runs()[0]!.id)!.state, "uncertain");
-  const original=delivery(a,a.store.runs()[0]!.id)!,artifact=a.tasks.publishedArtifact(a.store.runs()[0]!.id)!;
-  assert.equal(f.deliveryAttempts,1);assert.ok(readFileSync(artifact.path).length);
+  const run=a.store.runs()[0]!,original=reply(a,run.id)!,snapshot=attachment(a,run.id);
+  assert.equal(original.requestId,null);
+  assert.equal(f.outputAttempts,1);
+  assert.ok(a.store.db.prepare("SELECT 1 FROM events WHERE type='message_output_unconfirmed'").get());
+  assert.equal(original.text,"已核对并发送行动清单。");
+  assert.equal(a.store.db.prepare("SELECT state FROM operations WHERE id=?").get(original.operationKey!)?.state,"confirmed");
+  rmSync(join(a.config.workspace,run.id+'-actions.md'));
   await a.close();
-  let replays=0;const resumed=new Homer(a.config,async message=>{if(message.type==='delivery')replays++;},a['factory']);
-  try{await resumed.start();await resumed.idle();assert.equal(resumed.tasks.delivery(original.id).state,'uncertain');assert.equal(replays,0);assert.equal(resumed.tasks.publishedResult(artifact.resultId)!.sha256,artifact.sha256);}finally{await resumed.close();}
+  const output:Message[]=[];
+  const resumed=new Homer(a.config,async message=>{output.push(message);},a['factory']);
+  try{
+    await resumed.start();await resumed.idle();
+    assert.equal(reply(resumed,run.id)?.id,original.id);
+    assert.deepEqual(attachment(resumed,run.id),snapshot);
+    assert.deepEqual(output.filter(message=>message.type==='reply'||message.type==='coordination'),[]);
+  }finally{await resumed.close();}
 });
 
 test("T07/T10: failed main coordination keeps reviewed facts without claiming user delivery", async () => {
@@ -369,8 +373,8 @@ test("T07/T10: failed main coordination keeps reviewed facts without claiming us
   await f.app.idle();
   const run = f.app.store.runs()[0]!;
   assert.equal(run.status, "failed");
-  assert.equal(delivery(f.app,run.id), undefined);
-  assert.equal(f.messages.filter((m) => m.type === "delivery").length, 0);
+  assert.equal(reply(f.app,run.id), undefined);
+  assert.ok(!f.messages.some(m=>m.type==="coordination"&&m.text.includes("发送行动清单")));
   assert.equal(f.app.tasks.task(f.app.tasks.run(run.id).taskId).outcome,'failed');
   await f.app.close();
 });
@@ -386,20 +390,20 @@ test("T07/T10: empty internal reply preserves the outcome without fabricating de
     await f.app.idle();
     const run = f.app.store.runs()[0]!;
     assert.equal(run.status, "failed");
-    assert.equal(delivery(f.app,run.id), undefined);
-    const deliveries = f.messages.filter((m) => m.type === "delivery");
-    assert.equal(deliveries.length, 0);
+    assert.equal(reply(f.app,run.id), undefined);
+    assert.equal(f.messages.filter(m=>m.type==="coordination").length,0);
     assert.equal(await f.app.message(JSON.stringify({ action: "chat", text: "after failure" }), "after-empty-delivery"), "after failure");
   } finally {
     await f.app.close();
   }
 });
 
-test("T11: main rejects parent traversal; no Worker can be launched with out of scope material", async () => {
+test("T11: a protected path cannot be included as a Worker attachment", async () => {
   const f = fixture("scope");
   await f.app.start();
+  writeFileSync(join(f.app.config.runtime,'private.md'),'not shared');
   const reply = await f.app.message(
-    JSON.stringify({ action: "dispatch", material: "../private.md" }),
+    JSON.stringify({ action: "dispatch", material: "../runtime/private.md" }),
     "outside",
   );
   assert.match(reply, /path_denied/);
@@ -447,8 +451,8 @@ test("T10: a result finishing while another delivery waits is drained without ne
   f.releaseDelivery();
   await f.app.idle();
   assert.ok(f.app.store.runs().every((r) => r.status === "succeeded"));
-  assert.equal(f.messages.filter((m) => m.type === "delivery").length, 2);
-  assert.equal(f.app.tasks.pendingDeliveries().length, 0);
+  assert.ok(f.app.store.runs().every(run=>!!reply(f.app,run.id)));
+  assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_receipts WHERE state IN ('offered','received')").get()?.n,0);
   await f.app.close();
 });
 
@@ -514,10 +518,10 @@ test("HMR-PARALLEL-001: one message can dispatch several Workers; replay adds no
     assert.equal(f.app.store.runs().length, 3);
     for (const engine of [...f.workerEngines].reverse()) engine.release!();
     await f.app.idle();
-    assert.ok(f.app.store.runs().every(r => r.status === "succeeded" && delivery(f.app,r.id)?.state === "recorded"));
-    assert.equal(new Set(f.app.store.runs().map(r => f.app.tasks.publishedArtifact(r.id)!.path)).size, 3);
+    assert.ok(f.app.store.runs().every(r => r.status === "succeeded" && !!reply(f.app,r.id)));
+    assert.equal(new Set(f.app.store.runs().map(r=>reply(f.app,r.id)!.id)).size,3);
     const receipt = await f.app.message(input, "multi");
-    assert.match(receipt,/历史回执/);assert.equal(f.messages.filter(message=>message.type==="delivery").length,3);
+    assert.match(receipt,/历史回执/);assert.equal(f.app.history.list(f.app.store.meta('mainThread')!).filter(message=>message.attachments?.length).length,3);
   } finally { await f.app.close(); }
 });
 
@@ -561,7 +565,7 @@ test("HMR-PARALLEL-001: one failed Worker does not block another artifact and de
     assert.equal(failed?.status, "failed");
     assert.equal(failed?.errorCode, "mock_engine_failed");
     assert.equal(succeeded?.status, "succeeded");
-    assert.equal(delivery(f.app,failed!.id),undefined);assert.equal(delivery(f.app,succeeded!.id)!.state,'recorded');
+    assert.equal(reply(f.app,failed!.id),undefined);assert.ok(reply(f.app,succeeded!.id));
   } finally { await f.app.close(); }
 });
 
@@ -640,20 +644,12 @@ test("T09: normal restarts resume the same main conversation; failed resume pres
 });
 
 // HMR-MODEL-001: model selection must preserve the conversation and account boundary.
-test("T09: legacy bindings upgrade only with the original config, then model changes resume the same thread", async () => {
+test("T09: model changes resume the same native thread without changing its account or path binding", async () => {
   const f = fixture("model-switch-binding");
   await f.app.start();
   const config = f.app.config;
   const savedThread = f.app.store.meta("mainThread");
   await f.app.close();
-  const legacy = createHash("sha256").update(JSON.stringify({ workspace: config.workspace, model: config.model, codexHome: config.codexHome, baseUrl: config.baseUrl })).digest("hex");
-  const store = new Store(config.runtime + "/homer.sqlite");
-  store.setMeta("binding", legacy);
-  store.db.prepare("DELETE FROM meta WHERE key='bindingVersion'").run();
-  store.close();
-  assert.throws(() => new Homer({ ...config, model: "gpt-6.1-sol" }, async () => {}), /runtime_configuration_changed/);
-  const upgraded = new Homer(config, async () => {});
-  await upgraded.close();
   let resumedId: string | undefined;
   const switched = new Homer({ ...config, model: "gpt-6.1-sol", effort: "medium" }, async () => {}, options => {
     resumedId = options.threadId;
@@ -672,7 +668,7 @@ test("T09: legacy bindings upgrade only with the original config, then model cha
   } finally { await switched.close(); }
   for (const changed of [
     { workspace: config.workspace + "-other" },
-    { codexHome: config.codexHome + "-other" },
+    { codexHome: config.codexHome + "-other", nativeCodexHome:config.codexHome+"-other" },
     { baseUrl: "https://example.invalid/v1" },
     { keyEnv: "OTHER_ACCOUNT_KEY" },
     { requiresOpenaiAuth: true },

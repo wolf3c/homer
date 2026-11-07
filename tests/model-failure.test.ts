@@ -20,7 +20,7 @@ for(const [code,copy] of [
   async close(){return true;}
   async interrupt(){return true;}
  }
- const app=new Homer({workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,desktopModelSource:'website'},async()=>{},()=>new Engine());
+ const app=new Homer({workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,desktopModelSource:'website'},async()=>{},()=>new Engine());
  try{
   await app.start();app.submitMessage({requestId:'failure',text:'Synthetic request'});await app.idle();
   assert.equal(turns,1);assert.equal(app.conversationState().modelFailure?.code,code);

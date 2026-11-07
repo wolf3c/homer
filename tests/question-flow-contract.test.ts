@@ -23,7 +23,7 @@ for(const c of cases)test('readable user answer reaches native callback: '+c.nam
   const scope={threadId:'main',turnId:'turn',generationId:'generation',sourceRequestId:'source',userText:'合成请求',isCurrent:()=>true};
   const request={requestId:1,method:'item/tool/requestUserInput',threadId:'main',turnId:'turn',itemId:'question',kind:'question' as const,details:{questions:c.questions}};
   const opened=approvals.open(request,scope),input={requestId:'answer',text:'用户可读答复',questionAnswers:c.answers} as ConversationInput;
-  const bridge=homerWebBridge({registerChannelCapabilities(){},submitMessage(value:ConversationInput){return approvals.respond(value.interactionId!,value);}} as unknown as Homer);
+  const bridge=homerWebBridge({registerWebSurface(){},submitMessage(value:ConversationInput){return approvals.respond(value.interactionId!,value);}} as unknown as Homer);
   await bridge.respond(opened.id,input);
   assert.deepEqual(interactions.inspect(opened.id).decision?.answers,c.answers);
   assert.deepEqual(nativeResponse(request,(await opened.response).decision!),{answers:Object.fromEntries(Object.entries(c.answers).map(([id,answers])=>[id,{answers}]))});

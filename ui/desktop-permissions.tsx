@@ -6,11 +6,7 @@ import {accountErrors,useDesktopAccount,type AccountState} from './desktop-accou
 import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
 import {Button} from '@base-ui/react/button';
-import {AlertDialog} from '@base-ui/react/alert-dialog';
-import {Settings,X,ArrowLeft,ShieldCheck,MessageCircle,Send,UserRound,Smartphone} from 'lucide-react';
-import {useChannelSettings} from './channel-settings';
-import {WechatSettingsPanel} from './wechat-connection';
-import {TelegramSettingsPanel} from './telegram-settings';
+import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone} from 'lucide-react';
 
 type Accessibility='granted'|'not-granted'|'unknown';
 type Screen='not-determined'|'denied'|'granted'|'restricted'|'unknown';
@@ -22,44 +18,32 @@ declare global{interface Window{homerDesktopPermissions?:PermissionsBridge;homer
 
 export function DesktopSettings({ref}:{ref?:Ref<{openAccount:()=>void}>}={}){
  const [open,setOpen]=useState(false),entry=useRef<HTMLButtonElement>(null),tab=useRef<HTMLButtonElement>(null);
- const [panel,setPanel]=useState(window.homerDesktopAccount?'account':'permissions'),[dirty,setDirty]=useState(false),[pending,setPending]=useState<(()=>void)|null>(null),[narrow,setNarrow]=useState(false);
+ const [panel,setPanel]=useState(window.homerDesktopAccount?'account':'permissions'),[narrow,setNarrow]=useState(false);
  const opener=useRef<HTMLElement|null>(null);
- const cancel=useRef<HTMLButtonElement>(null),lastFocus=useRef<HTMLElement|null>(null),opened=useRef(open);opened.current=open;
- const wechat=useChannelSettings('wechat',open&&panel==='wechat'),telegram=useChannelSettings('telegram',open&&panel==='telegram');
+ const opened=useRef(open);opened.current=open;
  const openSettings=useCallback(()=>{opener.current=null;if(!opened.current)setPanel(window.homerDesktopAccount?'account':'permissions');setOpen(true);tab.current?.focus();},[]);
  useEffect(()=>window.homerDesktopSettings?.onOpen(openSettings),[openSettings]);
  useEffect(()=>{const q=window.matchMedia?.('(max-width:600px)');if(!q)return;const changed=()=>setNarrow(q.matches);changed();q.addEventListener('change',changed);return()=>q.removeEventListener('change',changed);},[]);
- useEffect(()=>{if(!dirty)return;const prevent=(event:BeforeUnloadEvent)=>event.preventDefault();window.addEventListener('beforeunload',prevent);return()=>window.removeEventListener('beforeunload',prevent);},[dirty]);
- function guard(action:()=>void){if(dirty){lastFocus.current=document.activeElement as HTMLElement;setPending(()=>action);}else action();}
- useImperativeHandle(ref,()=>({openAccount:()=>guard(()=>{opener.current=document.activeElement as HTMLElement;setPanel('account');setOpen(true);})}));
- return <Dialog.Root open={open} onOpenChange={(next,details)=>{if(next)openSettings();else{details.cancel();guard(()=>setOpen(false));}}}>
+ useImperativeHandle(ref,()=>({openAccount:()=>{opener.current=document.activeElement as HTMLElement;setPanel('account');setOpen(true);}}));
+ return <Dialog.Root open={open} onOpenChange={next=>{if(next)openSettings();else setOpen(false);}}>
   <Dialog.Trigger ref={entry} aria-label="设置" title="设置"><Settings size={18}/></Dialog.Trigger>
   <Dialog.Portal><Dialog.Backdrop className="desktop-settings-backdrop"/>
    <Dialog.Popup className="desktop-settings-popup" initialFocus={()=>tab.current} finalFocus={opener.current?()=>opener.current?.isConnected?opener.current:entry.current:entry}>
     <header className="desktop-settings-heading"><div><Settings size={19}/><Dialog.Title>设置</Dialog.Title></div><Dialog.Close aria-label="关闭设置"><X size={19}/></Dialog.Close></header>
-    <Dialog.Description className="desktop-settings-description">管理账号、本机权限、移动设备与 IM 连接。</Dialog.Description>
-    <Tabs.Root className="desktop-settings-layout" value={panel} orientation={narrow?'horizontal':'vertical'} onValueChange={value=>{if(value!==panel)guard(()=>setPanel(value as string));}}>
-     <Tabs.List className="desktop-settings-nav" aria-label="设置分类：账号，本机权限，移动设备，IM 机器人" activateOnFocus={false}>
+    <Dialog.Description className="desktop-settings-description">管理账号、本机权限与移动设备。</Dialog.Description>
+    <Tabs.Root className="desktop-settings-layout" value={panel} orientation={narrow?'horizontal':'vertical'} onValueChange={setPanel}>
+     <Tabs.List className="desktop-settings-nav" aria-label="设置分类：账号，本机权限，移动设备" activateOnFocus={false}>
       {window.homerDesktopAccount&&<Tabs.Tab value="account" ref={panel==='account'?tab:undefined}><UserRound size={18}/>账号</Tabs.Tab>}
       <Tabs.Tab value="permissions" ref={panel==='permissions'?tab:undefined}><ShieldCheck size={18}/>本机权限</Tabs.Tab>
       <Tabs.Tab value="mobile" ref={panel==='mobile'?tab:undefined}><Smartphone size={18}/>移动设备</Tabs.Tab>
-      <h3 className="desktop-settings-group">IM 机器人</h3>
-      <Tabs.Tab value="wechat" ref={panel==='wechat'?tab:undefined}><MessageCircle size={18}/>微信</Tabs.Tab>
-      <Tabs.Tab value="telegram" ref={panel==='telegram'?tab:undefined}><Send size={18}/>Telegram</Tabs.Tab>
      </Tabs.List>
      <div className="desktop-settings-content">
       {window.homerDesktopAccount&&<Tabs.Panel value="account" className="desktop-account-panel">{open&&panel==='account'&&<DesktopAccount/>}</Tabs.Panel>}
       <Tabs.Panel value="permissions">{open&&panel==='permissions'&&<DesktopPermissions/>}</Tabs.Panel>
       <Tabs.Panel value="mobile">{open&&panel==='mobile'&&<MobileDeviceSettings/>}</Tabs.Panel>
-      <Tabs.Panel value="wechat">{open&&panel==='wechat'&&<WechatSettingsPanel model={wechat} onDirtyChange={setDirty}/>}</Tabs.Panel>
-      <Tabs.Panel value="telegram">{open&&panel==='telegram'&&<TelegramSettingsPanel model={telegram} onDirtyChange={setDirty}/>}</Tabs.Panel>
      </div>
     </Tabs.Root>
     <footer className="desktop-settings-footer"><Dialog.Close><ArrowLeft size={16}/>返回会话</Dialog.Close></footer>
-    <AlertDialog.Root open={!!pending} onOpenChange={next=>{if(!next)setPending(null);}}><AlertDialog.Portal><AlertDialog.Backdrop className="desktop-settings-backdrop desktop-settings-confirm-backdrop"/><AlertDialog.Popup className="desktop-settings-confirm" initialFocus={cancel} finalFocus={()=>lastFocus.current?.isConnected?lastFocus.current:entry.current}>
-     <AlertDialog.Title>丢弃当前输入？</AlertDialog.Title><AlertDialog.Description>仅丢弃未提交的输入，已提交的操作不会取消。</AlertDialog.Description>
-     <div><AlertDialog.Close ref={cancel}>取消</AlertDialog.Close><Button onClick={()=>{const action=pending;setPending(null);setDirty(false);action?.();}}>丢弃并继续</Button></div>
-    </AlertDialog.Popup></AlertDialog.Portal></AlertDialog.Root>
    </Dialog.Popup>
   </Dialog.Portal>
  </Dialog.Root>;

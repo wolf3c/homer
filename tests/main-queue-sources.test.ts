@@ -14,7 +14,7 @@ function fixture(database=':memory:'){
  const source=f.inputs.claim()!;f.inputs.finish(source.messageId,source.revision,'completed');
  const agentId=f.store.meta('mainAgentId')!;
  const actor={agentId,threadId:'synthetic-history',turnId:'main-turn',sourceRequestId:'source'};
- const task=f.tasks.createTask(actor,{operationId:'root',title:'Same title',goal:'Synthetic work',authority:{sourceRequestId:'source',description:'Synthetic work only',materials:[],resultIds:[]}});
+ const task=f.tasks.createTask(actor,{operationId:'root',title:'Same title',goal:'Synthetic work',authority:{sourceRequestId:'source',description:'Synthetic work only'}});
  const send=(operationId:string,text='Same text')=>{
   const opened=f.tasks.workerOpen(actor,{operationId,taskId:task.taskId,text:'Synthetic work'}),run=f.tasks.claim(opened.runId);
   if(run)f.tasks.bind(run.id,run.epoch,'thread:'+run.workerId,'turn:'+run.id);
@@ -65,7 +65,7 @@ test('main queue: raw Worker text preserves whitespace, empty returns and Unicod
   const original='  原文\n\nSame text\t';f.send('raw-text',original);f.send('empty-text','');
   const page=f.inputs.dispatchPage(undefined,'epoch','all');
   assert.deepEqual(page.items.map(item=>item.origin==='worker'?item.text:undefined),[original,'']);
-  assert.equal(f.inputs.runnableHead('all')!.origin,'worker');assert.equal(f.store.db.prepare('SELECT count(*) n FROM results').get()!.n,0);
+  assert.equal(f.inputs.runnableHead('all')!.origin,'worker');assert.equal(f.store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('results','deliveries')").get(),undefined);
  }finally{f.close();}
 });
 test('main queue: automatic receipt cannot release a live or unknown main process; confirmed closure never replays it',()=>{
@@ -133,8 +133,8 @@ test('paused Tasks reject new Worker execution until explicitly resumed; old coo
 test('historical source text cannot gain authority in another Main thread',()=>{
  const f=fixture();try{
   f.store.setMeta('mainThread','new-thread');const actor={...f.actor,threadId:'new-thread'};
-  assert.throws(()=>f.tasks.pending.source(actor,'source'),/pending_source_denied/);
-  assert.throws(()=>f.tasks.createTask(actor,{operationId:'cross-thread',goal:'Do work',authority:{sourceRequestId:'source',description:'Forged',materials:[],resultIds:[]}}),/pending_source_denied/);
+  assert.throws(()=>f.tasks.source(actor,'source'),/task_authority_source_denied/);
+  assert.throws(()=>f.tasks.createTask(actor,{operationId:'cross-thread',goal:'Do work',authority:{sourceRequestId:'source',description:'Forged'}}),/task_authority_source_denied/);
  }finally{f.close();}
 });
 test('main queue: Worker order survives reopen and pagination; source identity cannot be forged',()=>{

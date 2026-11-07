@@ -12,7 +12,7 @@ test('real host IPC: dedicated notifications survive filtered output; GET is pur
  child.on('message',(message:any)=>{messages.push(message);if(message.kind==='output')child.send({kind:'written',id:message.id});});
  const rpc=async(method:string,input:unknown={})=>{const id='synthetic-ipc-'+ ++next;child.send({kind:'web',id,method,input});await until(()=>messages.some(message=>message.kind==='web_result'&&message.id===id));const response=messages.find(message=>message.kind==='web_result'&&message.id===id);if(response.error)throw Error(response.error);return response.value;};
  try{
-  child.send({kind:'init',config:{runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),codexBin:resolve('tests/fixtures/reception-app-server.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},webUploadProtocol:1});
+  child.send({kind:'init',config:{runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:resolve('tests/fixtures/reception-app-server.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},webUploadProtocol:1});
   await until(()=>messages.some(message=>message.kind==='ready'||message.kind==='fatal'));assert.equal(messages.find(message=>message.kind==='ready')?.stateInvalidationProtocol,1);
   const receipt=await rpc('submit',{requestId:'synthetic-ipc-input',text:'Synthetic private input excluded from notifications'});
   let state:any;const end=Date.now()+4000;
@@ -30,11 +30,11 @@ test('real host IPC: dedicated notifications survive filtered output; GET is pur
  }finally{if(child.connected)child.send({kind:'stop'});await exited;rmSync(base,{recursive:true,force:true});}
 });
 
-test('real host IPC: plain terminal skips hundreds of discarded deltas after channels; streaming and legacy callers retain ordered written fences',{timeout:30000},async t=>{
+test('real host IPC: plain terminal skips hundreds of discarded deltas; streaming and legacy callers retain ordered written fences',{timeout:30000},async t=>{
  const parent=resolve('.codex/scratch/main-agent-reception-optimization');mkdirSync(parent,{recursive:true});
  for(const [terminalDeltas,count] of [[false,300],[false,1],[true,300],[undefined,3]] as const){
   const base=mkdtempSync(join(parent,'ipc-delta-mode-'));mkdirSync(join(base,'runtime'));
-  const child=fork(resolve('dist/dev-host.js'),[],{stdio:['ignore','ignore','ignore','ipc'],execArgv:['--disable-warning=ExperimentalWarning','--import',resolve('tests/fixtures/reception-channel-observer.mjs')]});
+  const child=fork(resolve('dist/dev-host.js'),[],{stdio:['ignore','ignore','ignore','ipc'],execArgv:['--disable-warning=ExperimentalWarning','--import',resolve('tests/fixtures/reception-start-fence.mjs')]});
   const exited=once(child,'exit'),messages:any[]=[],pending:string[]=[];let next=0,draining=false;
   const acknowledge=async()=>{while(pending.length&&child.connected){const id=pending.shift()!;await new Promise(r=>setTimeout(r,1));if(child.connected)child.send({kind:'written',id});}};
   child.on('message',(message:any)=>{
@@ -44,11 +44,11 @@ test('real host IPC: plain terminal skips hundreds of discarded deltas after cha
   });
   const rpc=async(method:string,input:unknown={})=>{const id='synthetic-delta-rpc-'+ ++next;child.send({kind:'web',id,method,input});await until(()=>messages.some(m=>m.kind==='web_result'&&m.id===id));const response=messages.find(m=>m.kind==='web_result'&&m.id===id);if(response.error)throw Error(response.error);return response.value;};
   try{
-   child.send({kind:'init',terminalDeltas,config:{runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),codexBin:resolve('tests/fixtures/reception-app-server.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}});
+   child.send({kind:'init',terminalDeltas,config:{runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:resolve('tests/fixtures/reception-app-server.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}});
    await until(()=>messages.some(m=>m.kind==='ready'));
    for(let i=0;i<2;i++)await rpc('submit',{requestId:'synthetic-delta-'+i,text:'Synthetic delta mode input synthetic:delta-count='+count});
    await until(()=>messages.some(m=>m.kind==='synthetic_start_blocked'));
-   assert.equal((await rpc('state')).queue.find((item:any)=>item.input.requestId==='synthetic-delta-1')?.state,'queued','the next input is already queued before channel deltas drain');
+   assert.equal((await rpc('state')).queue.find((item:any)=>item.input.requestId==='synthetic-delta-1')?.state,'queued','the next input is already queued before the active input begins emitting deltas');
    child.send({kind:'synthetic_release_start'});
    await until(()=>messages.some(m=>m.kind==='output'&&m.message.requestId==='synthetic-delta-0'&&['delta','reply'].includes(m.message.type)));
    if(terminalDeltas===false){
@@ -63,15 +63,13 @@ test('real host IPC: plain terminal skips hundreds of discarded deltas after cha
    assert.deepEqual(state.messages.filter((item:any)=>item.role==='user').map((item:any)=>[item.requestId,item.inputState]),[['synthetic-delta-0','completed'],['synthetic-delta-1','completed']]);
    for(let i=0;i<2;i++){
     const requestId='synthetic-delta-'+i,events=messages.filter(m=>(m.requestId??m.message?.requestId)===requestId);
-    const observed=events.filter(m=>m.kind==='synthetic_channel_observed');
-    assert.deepEqual(observed.map(m=>[m.channel,m.type]),['main_start',...Array(count).fill('delta'),'main_terminal','reply'].flatMap(type=>[['wechat',type],['telegram',type]]));
     const ipc=events.filter(m=>m.kind==='output');
     assert.deepEqual(ipc.map(m=>m.message.type),[...Array(terminalDeltas===false?0:count).fill('delta'),'reply']);
     if(terminalDeltas!==false)assert.deepEqual(ipc.filter(m=>m.message.type==='delta').map(m=>m.message.text),Array.from({length:count},(_,n)=>`Synthetic-${n};`));
     // The full stream still reached history/process projection and Web reads.
     assert.ok(JSON.stringify(state.processNodes).includes(Array.from({length:count},(_,n)=>`Synthetic-${n};`).join('')));
    }
-   t.diagnostic(JSON.stringify({terminalDeltas:terminalDeltas??'legacy',deltasPerInput:count,inputs:2,deltaIPC:messages.filter(m=>m.kind==='output'&&m.message.type==='delta').length,channelDeltas:messages.filter(m=>m.kind==='synthetic_channel_observed'&&m.type==='delta').length}));
+   t.diagnostic(JSON.stringify({terminalDeltas:terminalDeltas??'legacy',deltasPerInput:count,inputs:2,deltaIPC:messages.filter(m=>m.kind==='output'&&m.message.type==='delta').length}));
   }finally{
    draining=true;if(child.connected)child.send({kind:'synthetic_release_start'});await acknowledge();if(child.connected)child.send({kind:'stop'});await exited;rmSync(base,{recursive:true,force:true});
   }
@@ -94,7 +92,7 @@ test('real host IPC: withheld delta and reply written acknowledgements locate ta
  const timings=async()=>{const count=messages.filter(message=>message.kind==='timings').length;child.send({kind:'timings'});await until(()=>messages.filter(message=>message.kind==='timings').length>count);return messages.filter(message=>message.kind==='timings').at(-1)!.diagnostics;};
  const waitReport=async(check:(report:any)=>boolean)=>{const end=Date.now()+8000;for(;;){const report=await timings();if(check(report))return report;if(Date.now()>end)throw Error('synthetic_tail_report_timeout');await new Promise(r=>setTimeout(r,5));}};
  try{
-  child.send({kind:'init',config:{runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),codexBin:resolve('tests/fixtures/reception-app-server.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}});
+  child.send({kind:'init',config:{runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:resolve('tests/fixtures/reception-app-server.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}});
   await until(()=>messages.some(message=>message.kind==='ready'));
   for(let i=0;i<6;i++)await rpc('submit',{requestId:'synthetic-ipc-tail-'+i,text:'Synthetic content omitted from diagnostics '+i});
   let report=await waitReport(report=>report.records.some((row:any)=>row.requestId==='synthetic-ipc-tail-0'&&row.phase==='output_wait_start'));

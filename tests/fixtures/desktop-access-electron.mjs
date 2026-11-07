@@ -18,8 +18,12 @@ electron.app.whenReady().then(async()=>{
  const open=()=>createWebServer({port:0,desktopAccessToken:token,uiDirectory:ui,bridge:{
   state:async()=>({threadId:'synthetic-electron',messages:[],isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running'}}),
   submit:async()=>({}),stop:async()=>{},respond:async()=>{},
-  artifact:async()=>({filename:'synthetic.txt',content:'synthetic artifact'}),
-  media:{upload:async()=>({}),read:async()=>({filename:'synthetic.png',mime:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jHHkAAAAASUVORK5CYII='})},
+  media:{upload:async()=>({}),read:async({messageId,assetId,revision})=>{
+   if(messageId!=='synthetic'||revision!==1)throw Error('media_scope_denied');
+   if(assetId==='asset-11111111-1111-4111-8111-111111111111')return {filename:'synthetic.png',mime:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jHHkAAAAASUVORK5CYII='};
+   if(assetId==='asset-22222222-2222-4222-8222-222222222222')return {filename:'synthetic.txt',mime:'text/plain',data:Buffer.from('synthetic artifact').toString('base64')};
+   throw Error('media_scope_denied');
+  }},
  }});
  web=await open();
  const path=join(root,'packaging/electron/main.mjs'),source=readFileSync(path,'utf8');
@@ -36,4 +40,4 @@ electron.app.whenReady().then(async()=>{
   async restart(){const previous=token;await web.close();token=randomBytes(32).toString('hex');web=await open();const response=await fetch(web.url+'/api/state',{headers:{'X-Homer-Desktop-Access':previous}});await response.arrayBuffer();window.destroy();window=entry.bind(web.url,token);await window.loadURL(web.url+'/');return response.status;},
   async close(){await web.close();window.destroy();},
  };
-}).catch(()=>{console.error('synthetic_desktop_access_fixture_failed');electron.app.exit(1);});
+}).catch(error=>{console.error('synthetic_desktop_access_fixture_failed',error.message);electron.app.exit(1);});

@@ -16,6 +16,14 @@ test('main-native uses official card and current-request controls with exact sou
  assert.ok(d.find(n=>n.tagName==='A'&&n.attrs.href==='#message-original'));
  assert.doesNotMatch(d.container.textContent,/始终允许|Always allow|永久授权/);
 }));
+test('a Worker approval submits the same explicit decision without a free-text reply',async()=>withDom(async d=>{
+ const calls=[],Card=interactionComponent(async(...args)=>{calls.push(args);});
+ await d.render(h(Card,{...props,item:{...item,runId:'worker-run',workTitle:'合成事项'}}));
+ const approve=button(d,'允许本次操作');assert.ok(approve);
+ await d.click(approve);
+ assert.equal(calls[0][0],'/api/interactions/approval');
+ assert.equal(calls[0][1].text,'允许本次操作');
+}));
 for(const label of ['允许本次操作','拒绝本次操作'])test(label+' submits once even before React rerenders',async()=>withDom(async d=>{
  const pending=deferred(),calls=[];const Card=interactionComponent((...args)=>{calls.push(args);return pending.promise;});
  await d.render(h(Card,props));const b=button(d,label);

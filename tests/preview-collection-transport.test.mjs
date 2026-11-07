@@ -4,7 +4,7 @@ import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {IngressJournal} from '../scripts/dev-ingress.mjs';
 const root=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/annotation-composer-sync-implementation-20261025/transport');
-const refs=[{kind:'text',source:{kind:'artifact',id:'result-synthetic',sha256:'a'.repeat(64),title:'Synthetic.txt'},annotations:[{id:'one',text:'Source',comment:'User intent'}]}];
+const refs=[{kind:'text',source:{kind:'attachment',messageId:'message-synthetic',assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64),title:'Synthetic.txt'},annotations:[{id:'one',text:'Source',comment:'User intent'}]}];
 test('journal retains plural and unknown fields byte-for-byte and never rebinds a pending contract',()=>{
  mkdirSync(root,{recursive:true});const directory=mkdtempSync(join(root,'journal-')),journal=new IngressJournal(directory,'synthetic-binding');
  try{

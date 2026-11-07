@@ -10,7 +10,6 @@ import { extname, resolve, sep } from "node:path";
 import {webChatPost,type WebBridge} from "./web-contract.js";
 import {createWebChat} from "./web-chat.js";
 import {WEB_UPLOAD_BYTES,webUpload} from './web-upload.js';
-import { telegramSettingsHtml, telegramSettingsCss, telegramSettingsJs } from "./channels/telegram-settings-page.js";
 import {timingSafeEqual} from 'node:crypto';
 
 const mime: Record<string, string> = { ".txt": "text/plain; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
@@ -74,7 +73,9 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       (request.headers.origin && request.headers.origin !== requestOrigin) || request.headers["sec-fetch-site"] === "cross-site")
       return json(response, 403, { error: "local_origin_required" });
     const target = new URL(request.url ?? "/", url);
-    if (target.search) return json(response, 400, { error: "query_not_supported" });
+    const media=target.pathname.match(/^\/api\/media\/([\w:-]{1,100})\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})(?:\/(origin|reveal))?$/);
+    const preview=request.method==='GET'&&media&&!media[4]&&target.search==='?preview=voice'?'voice':undefined;
+    if (target.search&&!preview) return json(response, 400, { error: "query_not_supported" });
     if(desktopAccess&&target.pathname.startsWith('/api/')){
       const supplied=request.headers['x-homer-desktop-access'];
       if(typeof supplied!=='string'||!/^[a-f0-9]{64}$/.test(supplied)||!timingSafeEqual(desktopAccess,Buffer.from(supplied,'hex')))
@@ -166,31 +167,16 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       request.on('close',()=>historyClients.delete(response));response.write(`event: state\ndata: ${JSON.stringify(initial)}\n\n`);historyPublication.afterInitialDelivery();return;
     }
     if (request.method === "GET" && path === "/api/state") return json(response, 200, await publication.read());
-    const media=path.match(/^\/api\/media\/([\w:-]{1,100})\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})$/);
-    if(request.method==='GET'&&media){
+    const attachment=media?{messageId:media[1]!,assetId:media[2]!,revision:Number(media[3])}:undefined;
+    if(request.method==='GET'&&attachment){
       if(!bridge.media)throw Error('media_unavailable');
-      const file=await bridge.media.read({messageId:media[1]!,assetId:media[2]!,revision:Number(media[3])});
+      if(media![4]==='origin'&&bridge.media.origin)return json(response,200,await bridge.media.origin(attachment));
+      if(media![4])return json(response,404,{error:'not_found'});
+      const file=await bridge.media.read({...attachment,...(preview?{preview}:{})});
       const inline=['image/png','image/jpeg','image/webp','image/gif','audio/wav','audio/mpeg','audio/ogg','video/mp4'].includes(file.mime);
-      response.writeHead(200,{'Content-Type':inline?file.mime:'application/octet-stream','Content-Disposition':`${inline?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(file.filename)}`});response.end(Buffer.from(file.data,'base64'));return;
-    }
-    if (request.method === "GET" && path === "/api/channels/telegram") {
-      if (!bridge.telegram) throw new Error("telegram_unavailable");
-      return json(response, 200, await bridge.telegram.state());
-    }
-    if (request.method === "GET" && ["/settings/telegram", "/settings/telegram.css", "/settings/telegram.js"].includes(path)) {
-      response.writeHead(200, { "Content-Type": path.endsWith(".js") ? "text/javascript; charset=utf-8" : path.endsWith(".css") ? "text/css; charset=utf-8" : "text/html; charset=utf-8" });
-      response.end(path.endsWith(".js") ? telegramSettingsJs : path.endsWith(".css") ? telegramSettingsCss : telegramSettingsHtml); return;
-    }
-    if (request.method === "GET" && path === "/api/channels/wechat") {
-      if (!bridge.wechat) throw new Error("wechat_unavailable");
-      return json(response, 200, await bridge.wechat.state());
-    }
-    const qr = path.match(/^\/api\/channels\/wechat\/login\/([a-f0-9-]{36})\/qr\.png$/);
-    if (request.method === "GET" && qr) {
-      if (!bridge.wechat) throw new Error("wechat_unavailable");
-      const encoded = await bridge.wechat.qrPng(qr[1]!);
-      if (typeof encoded !== "string" || encoded.length > 256 * 1024 || !/^[A-Za-z0-9+/]+=*$/.test(encoded)) throw new Error("wechat_qr_invalid");
-      response.writeHead(200, { "Content-Type": "image/png" }); response.end(Buffer.from(encoded, "base64")); return;
+      if(file.sha256)response.setHeader('X-Homer-Artifact-Hash',file.sha256);
+      response.writeHead(200,{'Content-Type':file.mime,'X-Content-Type-Options':'nosniff','Content-Disposition':`${inline?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(file.filename)}`});
+      response.end(Buffer.from(file.data,'base64'));return;
     }
     if (request.method === "GET" && path === "/api/events") {
       const initial = await publication.read();
@@ -206,11 +192,10 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
     if (request.method === "POST") {
       if (request.headers.origin !== requestOrigin) return json(response, 403, { error: "local_origin_required" });
       const input = await body(request);
-      const reveal=path.match(/^\/api\/files\/(result-[\w-]{1,100})\/reveal$/);
-      if(reveal){
+      if(attachment&&media![4]==='reveal'){
         if(!input||Array.isArray(input)||typeof input!=='object'||Object.keys(input).length)throw Error('artifact_reveal_invalid');
-        if(!bridge.revealArtifact)throw Error('artifact_reveal_unsupported');
-        return json(response,200,await bridge.revealArtifact(reveal[1]!));
+        if(!bridge.media?.reveal)throw Error('artifact_reveal_unsupported');
+        return json(response,200,await bridge.media.reveal(attachment));
       }
       if(path==='/api/uploads/preview'){
         const preview=await chat('media.preview',input) as {mime:string;data:string};
@@ -218,42 +203,6 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       }
       const operation=webChatPost(path);
       if(operation)return json(response,operation.status,await chat(operation.op,operation.id?{id:operation.id,input}:input));
-      if (path.startsWith("/api/channels/telegram/")) {
-        const telegram = bridge.telegram;
-        if (!telegram) throw new Error("telegram_unavailable");
-        if (path === "/api/channels/telegram/configure") return json(response, 200, await telegram.configure(input?.token));
-        if (path === "/api/channels/telegram/connect") return json(response, 200, await telegram.connect());
-        if (path === "/api/channels/telegram/disconnect") return json(response, 200, await telegram.disconnect());
-        if (path === "/api/channels/telegram/forget") return json(response, 200, await telegram.forget());
-        if (path === "/api/channels/telegram/pair") return json(response, 200, await telegram.beginPairing());
-        if (path === "/api/channels/telegram/pair/candidate") return json(response, 200, await telegram.candidate(input?.code));
-        if (path === "/api/channels/telegram/pair/approve") return json(response, 200, await telegram.approve(input?.code, input?.userId, input?.chatId));
-      }
-      if (path.startsWith("/api/channels/wechat/")) {
-        if (!bridge.wechat) throw new Error("wechat_unavailable");
-        if (path === "/api/channels/wechat/login") return json(response, 200, await bridge.wechat.beginLogin());
-        if (path === "/api/channels/wechat/login/poll") {
-          if (typeof input?.id !== "string" || !/^[a-f0-9-]{36}$/.test(input.id) ||
-            (input.verifyCode !== undefined && (typeof input.verifyCode !== "string" || !/^\d{4,12}$/.test(input.verifyCode)))) throw new Error("wechat_login_invalid");
-          return json(response, 200, await bridge.wechat.pollLogin(input.id, input.verifyCode));
-        }
-        if (path === "/api/channels/wechat/disable") return json(response, 200, await bridge.wechat.disable());
-        if (path === "/api/channels/wechat/reconnect") return json(response, 200, await bridge.wechat.reconnect());
-        if (path === "/api/channels/wechat/disconnect") return json(response, 200, await bridge.wechat.disconnect());
-      }
-    }
-    const origin = path.match(/^\/api\/files\/(result-[\w-]+)\/origin$/);
-    if(request.method==='GET'&&origin){
-      if(!bridge.artifactOrigin)throw Error('artifact_origin_unavailable');
-      return json(response,200,await bridge.artifactOrigin(origin[1]!));
-    }
-    const file = path.match(/^\/api\/files\/((?:run|result)-[\w-]+)$/);
-    if (request.method === "GET" && file) {
-      const artifact = await bridge.artifact(file[1]!);
-      if(artifact.sha256)response.setHeader('X-Homer-Artifact-Hash',artifact.sha256);
-      response.writeHead(200, { "Content-Type": artifact.mime??"text/markdown; charset=utf-8", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(artifact.filename)}` });
-      response.end(artifact.data?Buffer.from(artifact.data,'base64'):artifact.content);
-      return;
     }
     if (request.method === "GET" && path === "/branding/homer.png" && assets.logoPath) {
       response.writeHead(200, { "Content-Type": "image/png" }); response.end(await readFile(assets.logoPath)); return;

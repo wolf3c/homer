@@ -122,7 +122,7 @@ for(const scenario of ['paused','ready','unowned','active','recoverable'])test('
   const inputs=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff});
   if(scenario==='ready')inputs.resumeWorkerMessages();
   const reader=new WebHistoryPages(f.history,f.processes,inputs),host=Object.create(Homer.prototype);
-  Object.assign(host,{...f,inputs,webReadEpoch:'synthetic-epoch',registerChannelCapabilities(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('unexpected_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null})});
+  Object.assign(host,{...f,inputs,webReadEpoch:'synthetic-epoch',registerWebSurface(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('unexpected_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null})});
   const bridge=homerWebBridge(host),awaiting=scenario==='paused'||scenario==='recoverable';
   const receipts=()=>f.store.db.prepare('SELECT * FROM agent_receipts ORDER BY messageId').all();
   const originalReceipts=receipts(),originalCount=f.store.db.prepare('SELECT count(*) n FROM agent_messages').get().n;
@@ -335,7 +335,7 @@ test('automatic receipt lookup removes only exact accepted request and preserves
  assert.equal(f.runtime.text,'new draft');assert.ok(f.calls.some(c=>c.path==='/api/history/receipts'));f.close();
 });
 
-const textReference={kind:'text',source:{kind:'artifact',id:'result-notes',sha256:'a'.repeat(64),title:'notes.txt'},annotations:[{id:'n',text:'Source excerpt',comment:'My remark',anchor:{format:'preview-text-v1',representation:'plain',start:0,end:14,exact:'Source excerpt',prefix:'',suffix:''}}]};
+const textReference={kind:'text',source:{kind:'attachment',messageId:'message-notes',assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64),title:'notes.txt'},annotations:[{id:'n',text:'Source excerpt',comment:'My remark',anchor:{format:'preview-text-v1',representation:'plain',start:0,end:14,exact:'Source excerpt',prefix:'',suffix:''}}]};
 const ordinaryQuote={messageId:'source-message',text:'Visible quote'};
 test('production ordinary composer accepts both orders and selection entry; removing one owner keeps the other and body',async()=>{
  for(const first of ['resource','quote']){
@@ -398,7 +398,7 @@ test('image preparation reserves its original attachment in the full snapshot bu
  const f=fixture({text:'x'.repeat(10000)});await tick();f.render();
  const large={...textReference,annotations:[{id:'big',text:'中'.repeat(16000),comment:'中'.repeat(10000)}]};
  await f.preview().add(large);f.render();
- const picture={kind:'image',source:{...textReference.source,id:'result-image',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
+ const picture={kind:'image',source:{...textReference.source,messageId:'message-image',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
  const sentinel={...picture,image:{assetId:'asset-00000000-0000-4000-8000-000000000000',revision:1}};
  const requestId=f.cache.get('homer-draft:'+f.state.threadId).requestId;
  const empty=client.prepareMessage(f.runtime.text,{messageId:'q',text:''},undefined,()=>requestId,[],undefined,[large,sentinel]);
@@ -420,7 +420,7 @@ test('restored message quote appends while keeping the draft and annotation owne
 });
 test('late original upload cannot recreate mixed annotations after the draft epoch ends',async()=>{
  const gate=deferred(),f=fixture({request:()=>gate.promise});await tick();f.render();f.preview().appendQuote(ordinaryQuote);f.render();f.render();
- const picture={kind:'image',source:{...textReference.source,id:'result-late',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
+ const picture={kind:'image',source:{...textReference.source,messageId:'message-late',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
  const saving=f.preview().add(picture,new File(['image'],'Image.png',{type:'image/png'}));
  f.render();assert.ok(f.annotationDraft.read().preparingImages);f.annotationDraft.clear();f.preview().appendQuote({messageId:'new',text:'new quote'});f.runtime.text='new body';f.render();
  gate.resolve({ok:true,json:async()=>({...asset,assetId:'asset-00000000-0000-4000-8000-000000000001'})});
@@ -430,7 +430,7 @@ test('late original upload cannot recreate mixed annotations after the draft epo
 test('original upload rechecks the live mixed budget before confirming Canvas-registered pending notes',async()=>{
  const gate=deferred(),f=fixture({text:'x'.repeat(10000),request:()=>gate.promise});await tick();f.render();
  const large={...textReference,annotations:[{id:'big',text:'中'.repeat(16000),comment:'中'.repeat(10000)}]};await f.preview().add(large);f.render();
- const picture={kind:'image',source:{...textReference.source,id:'result-race',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
+ const picture={kind:'image',source:{...textReference.source,messageId:'message-race',title:'Image.png'},width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'image note'}]};
  const file=new File(['image'],'Image.png',{type:'image/png'}),key=references.referenceKey(picture);f.annotationDraft.imageFile(key,file);
  const saving=f.preview().add(picture,file);f.render();
  f.runtime.text='中'.repeat(10000);f.render();

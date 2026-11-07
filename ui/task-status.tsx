@@ -42,7 +42,7 @@ function TaskStatusRow({task,worker,label,status,onOpenChange,children,...props}
  </Collapsible.Root>;
 }
 function MatterFacts({task}:{task:OverviewTask}){
- return <>{task.goal&&<p className="status-output">目标：{task.goal}</p>}{task.notes&&<p className="status-output">工作笔记：{task.notes}</p>}{task.results.length>0&&<p>已采纳 {task.results.length} 份正式成果</p>}{task.deliveries.map(d=><p key={d.id}>版本 {d.version} 交付记录：{d.state==='recorded'?'渠道已确认':d.state==='prepared'?'已准备，待发送':d.state==='submitting'?'正在发送':'发送结果待核实'}</p>)}</>;
+ return <>{task.goal&&<p className="status-output">目标：{task.goal}</p>}{task.notes&&<p className="status-output">工作笔记：{task.notes}</p>}</>;
 }
 function WorkerView({node,title,reads,state,onExpand,onVisit}:{node:StatusWorker;title?:string;reads:ReadMap;state:WebState;onExpand:(task:OverviewTask,open:boolean,worker?:OverviewWorker)=>void;onVisit:(worker:OverviewWorker,id:string,after:number)=>void}){
  const {task,worker}=node,read=reads[task.id],candidate=read?.workers?.get(worker.run.id),progress=candidate&&progressMatches(worker,candidate)?candidate:undefined;

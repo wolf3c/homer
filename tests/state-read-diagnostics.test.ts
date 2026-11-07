@@ -22,7 +22,7 @@ test('state read measurements preserve values and failures without retaining rea
 
 test('real state reads expose separate snapshot and conversation durations without changing persisted facts',async()=>{
  const f=historyFixture(20),timings=new ReceptionTimings();
- const app=Object.assign(Object.create(Homer.prototype),f,{files:new Files('.codex/scratch/deepseek-adaptation-20261028/unused-state-workspace'),workers:new Map(),receptionTimings:timings,registerChannelCapabilities(){}}) as Homer;
+ const app=Object.assign(Object.create(Homer.prototype),f,{files:new Files('.codex/scratch/deepseek-adaptation-20261028/unused-state-workspace'),workers:new Map(),receptionTimings:timings,registerWebSurface(){}}) as Homer;
  try{
   const bridge=homerWebBridge(app);app.webHistoryPages();
   const before=f.store.db.prepare('SELECT total_changes() n').get()!.n;

@@ -5,6 +5,7 @@ import {mkdirSync,rmSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {Homer} from '../src/service.js';
 import {loadConfig} from '../src/config.js';
+import {loadPrompts} from '../src/prompts.js';
 import {fixture,openWorker,running,main} from './recursive-fixture.js';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
 
@@ -68,7 +69,9 @@ test('main recovery: idle process exit rebuilds on original thread and latest se
     f.peers[0]!.available=false;f.peers[0]!.emit('exit');
     assert.equal(await f.app.message('after exit','second'),'after exit');
     assert.equal(f.peers.length,2);assert.equal(f.peers[0]!.closed,1);assert.equal(f.peers[1]!.options.threadId,'synthetic-original-thread');assert.equal(f.peers[1]!.options.cwd,cwd);
-    assert.equal(f.peers[1]!.options.instructions,f.peers[0]!.options.instructions);
+    assert.ok(f.peers[0]!.options.instructions.startsWith(loadPrompts().main));
+    assert.ok(f.peers[1]!.options.instructions.startsWith(loadPrompts().main));
+    assert.ok(f.peers[1]!.options.instructions.includes(cwd));
   }finally{await f.close();}
 });
 
@@ -130,7 +133,7 @@ test('execution time remains accounting and does not block an authorized peer or
     f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'interrupted',text:'Partial checked facts'},true);
     const resumed=f.tasks.workerSend(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checked work'});assert.ok(f.tasks.claim(resumed.runId!));
     assert.equal(f.tasks.run(resumed.runId!).threadId,actor.threadId);assert.equal(f.tasks.run(actor.runId!).activeMs,120001);
-    assert.equal(f.tasks.version(f.task.taskId,1).authorityJson,authorityBefore);assert.equal(Object.hasOwn(JSON.parse(authorityBefore),'maxActiveMs'),false);
+    assert.equal(f.tasks.version(f.task.taskId,1).authorityJson,authorityBefore);assert.equal(Object.hasOwn(JSON.parse(authorityBefore!),'maxActiveMs'),false);
   }finally{f.close();}
 });
 
@@ -147,22 +150,22 @@ test('missing authorization cannot be hidden by execution accounting at open, se
     f.store.db.prepare('UPDATE task_versions SET authorityJson=?,sourceRequestId=? WHERE taskId=?').run(JSON.stringify({...authority,sourceRequestId:'missing-source'}),'missing-source',f.task.taskId);
     f.store.db.prepare('UPDATE runs SET sourceRequestId=? WHERE id=?').run('missing-source',worker.runId);
     const before=f.store.runs();
-    assert.throws(()=>openWorker(f,'unauthorized-peer'),/task_authority_source_denied|pending_source_denied/);
-    assert.throws(()=>f.tasks.workerSend(main,{operationId:'unauthorized-send',workerId:worker.workerId,text:'Continue'}),/task_authority_source_denied|pending_source_denied/);
-    assert.throws(()=>f.tasks.claim(worker.runId),/task_authority_source_denied|pending_source_denied/);
+    assert.throws(()=>openWorker(f,'unauthorized-peer'),/task_authority_source_denied/);
+    assert.throws(()=>f.tasks.workerSend(main,{operationId:'unauthorized-send',workerId:worker.workerId,text:'Continue'}),/task_authority_source_denied/);
+    assert.throws(()=>f.tasks.claim(worker.runId),/task_authority_source_denied/);
     assert.deepEqual(f.store.runs(),before);assert.equal(f.tasks.run(worker.runId).status,'queued');
   }finally{f.close();}
 });
 
-test('native execution: peer Workers exceed the old shared budget and publish once',async()=>{
+test('native execution: peer Workers exceed the old shared budget and send once',async()=>{
   const f=syntheticHost();f.app.config.timeoutMs=1;f.app.config.mainTimeoutMs=1;
   const original=f.app['factory']!;
   f.app['factory']=(options,handler)=>{const engine=original(options,handler),turn=engine.turn.bind(engine);
     engine.turn=async(text,hooks)=>{if(options.role==='worker')await wait(30);return turn(text,hooks);};return engine;};
-  try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await until(()=>f.events.some(e=>e.type==='delivery'));await f.app.idle();
+  try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await until(()=>f.events.some(e=>e.type==='reply'&&e.messageId!==undefined));await f.app.idle();
     assert.equal(f.app.tasks.tasks()[0]?.outcome,'succeeded');
-    assert.equal(f.events.filter(e=>e.type==='delivery').length,1);assert.equal(f.app.store.runs().length,4);
-    assert.ok(f.app.store.runs().every(r=>r.status==='succeeded'));assert.ok(f.app.tasks.tasks().every(t=>!Object.hasOwn(JSON.parse(f.app.tasks.version(t.id,1).authorityJson),'maxActiveMs')));
+    assert.equal(f.events.filter(e=>e.type==='reply'&&e.messageId!==undefined).length,1);assert.equal(f.app.store.runs().length,4);
+    assert.ok(f.app.store.runs().every(r=>r.status==='succeeded'));assert.ok(f.app.tasks.tasks().every(t=>!Object.hasOwn(JSON.parse(f.app.tasks.version(t.id,1).authorityJson!),'maxActiveMs')));
     assert.equal(new Set(f.app.store.runs().map(run=>run.workerId)).size,3);assert.equal(f.engines.filter(e=>e.worker).length,4);
   }finally{await f.close();}
 });

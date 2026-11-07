@@ -14,7 +14,7 @@ export function historyFixture(total=20,bodyBytes=160,stableRecent=false,databas
  const history=new ConversationHistory(store.db),tasks=new RecursiveTasks(store,new Files(resolve(syntheticRoot+'/unused-workspace')));tasks.migrate();
  store.setMeta('mainThread','synthetic-history');
  const processes=new MainProcessHistory(store.db),inputs=new MainInputs(tasks,history);
- const db=store.db,insert=db.prepare('INSERT INTO conversation_messages VALUES(?,?,?,?,?,?,?,?)');
+ const db=store.db,insert=db.prepare('INSERT INTO conversation_messages(id,threadId,requestId,role,text,status,quote,createdAt) VALUES(?,?,?,?,?,?,?,?)');
  const meta=db.prepare('INSERT INTO meta(key,value) VALUES(?,?)');
  db.exec('BEGIN');
  for(let position=0;position<total;position++){

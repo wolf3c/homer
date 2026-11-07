@@ -8,7 +8,6 @@ mkdirSync(destination,{recursive:true});
 process.env.HOMER_SYNTHETIC_ROOT=join(destination,'synthetic');
 process.env.HISTORY_FOLLOWUP_BUILD=process.env.HOMER_REMOVED_CAPABILITY_WEB_DIR??join(destination,'web');
 const {fixture}=await import('./web-history-followup-fixture.mjs');
-const {syntheticFile}=await import('./recursive-publication-fixture.ts');
 const {isolatedChrome}=await import('./web-history-browser-cdp.mjs');
 const {approval}=await import('./fixtures/approval-browser-server.mjs');
 const browser=await isolatedChrome(destination),results=[];
@@ -19,8 +18,9 @@ try{for(const width of [320,390,1440]){
  const readState=f.bridge.state.bind(f.bridge),readHistory=f.bridge.history.state.bind(f.bridge.history);
  f.bridge.state=async()=>augment(await readState());f.bridge.history.state=async()=>augment(await readHistory());
  f.bridge.respond=async(id,input)=>{decisions.push({id,...input});pending=false;f.server.publish();return {ok:true};};
- const file=syntheticFile(f,'request-0','合成核对成果.md','# 合成核对成果\n\n移除能力管理页后，文件仍沿原授权路径读取。');
- const delivery=file.publish('合成正式答复：请核对成果。');f.history.record(delivery.historyMessageId,'synthetic-history',delivery.text);f.tasks.markDelivery(delivery.id,'recorded');
+ const actor={agentId:f.store.meta('mainAgentId'),threadId:'synthetic-history'};
+ const task=f.tasks.createTask(actor,{operationId:'settings-task',goal:'Synthetic file'});
+ f.attach('合成正式答复：请核对成果。',[{filename:'合成核对成果.md',mime:'text/markdown',content:'# 合成核对成果\n\n移除能力管理页后，文件仍沿原授权路径读取。'}],{taskId:task.taskId,taskVersion:1});
  const check=(name,value)=>{assert.ok(value,name+' at '+width);checks.push(name);};
  const key=async(name,code,num)=>{await p.command('Input.dispatchKeyEvent',{type:'keyDown',key:name,code,windowsVirtualKeyCode:num,...(name==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key:name,code,windowsVirtualKeyCode:num});};
  try{
@@ -30,16 +30,14 @@ try{for(const width of [320,390,1440]){
   check('no horizontal page overflow',await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await p.screenshot('chat-'+width+'.png');
   await p.evaluate(()=>document.querySelector('#task-status-trigger').click());await p.until(()=>!!document.querySelector('[aria-label="工作状态卡片"]'));
+  await p.until(()=>document.querySelector('[aria-label="工作状态卡片"]').textContent.includes('Synthetic file'));
   check('existing task status popover opens',await p.evaluate(()=>document.querySelector('[aria-label="工作状态卡片"]').textContent.includes('Synthetic file')));
   await key('Escape','Escape',27);await p.until(()=>!document.querySelector('[aria-label="工作状态卡片"]'));
   check('task popover returns keyboard focus',await p.evaluate(()=>document.activeElement.id==='task-status-trigger'));
   await p.evaluate(()=>document.querySelector('.header-actions button[aria-label="设置"]').focus());
   await key('Enter','Enter',13);await p.until(()=>!!document.querySelector('.desktop-settings-popup'));
-  check('one settings dialog exposes permissions and both IM channels',await p.evaluate(()=>Array.from(document.querySelectorAll('.desktop-settings-nav [role=tab]')).map(n=>n.textContent).join('|')==='本机权限|微信|Telegram'));
-  await p.evaluate(()=>Array.from(document.querySelectorAll('.desktop-settings-nav [role=tab]')).find(n=>n.textContent==='微信').click());
-  await p.until(()=>document.querySelector('.channel-settings h2')?.textContent==='微信');
-  check('WeChat is inside settings without a separate dialog',await p.evaluate(()=>!document.querySelector('.channel-dialog')&&document.querySelectorAll('[role=dialog]').length===1));
-  check('viewing settings does not start channel mutations',!p.requests.some(r=>r.path.startsWith('/api/channels/')&&r.method==='POST'));
+  check('settings exposes permissions and device connection',await p.evaluate(()=>Array.from(document.querySelectorAll('.desktop-settings-nav [role=tab]')).map(n=>n.textContent).join('|')==='本机权限|移动设备'));
+  check('settings never contacts retired IM channels',!p.requests.some(r=>r.path.startsWith('/api/channels/')));
   await key('Escape','Escape',27);await p.until(()=>!document.querySelector('.desktop-settings-popup'));
   await p.evaluate(()=>document.querySelector('button[aria-label="预览 合成核对成果.md"]').click());await p.until(()=>!!document.querySelector('#canvas-panel'));
   await p.until(()=>document.querySelector('#canvas-panel').textContent.includes('文件仍沿原授权路径读取'));
@@ -55,7 +53,7 @@ try{for(const width of [320,390,1440]){
   for(let n=0;n<250&&f.submitted.length===0;n++)await new Promise(accept=>setTimeout(accept,20));
   await p.until(()=>document.querySelector('[contenteditable=true]').textContent.trim()==='');
   check('main chat submits through existing synthetic queue',f.submitted.length===1);
-  for(const path of ['/settings/capabilities','/api/capabilities']){
+  for(const path of ['/settings/capabilities','/api/capabilities','/api/channels/wechat','/api/channels/telegram']){
    const result=await p.evaluate(`fetch(${JSON.stringify(path)}).then(async r=>({status:r.status,body:await r.json()}))`);check(path+' returns unified 404',result.status===404&&result.body.error==='route_not_found');
   }
   await p.command('Page.navigate',{url:f.server.url+'/settings/capabilities'});await p.until(()=>document.body.textContent.includes('route_not_found'));

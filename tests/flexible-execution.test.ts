@@ -25,7 +25,7 @@ test('task and conversation directories persist without relocating earlier execu
  const taskB=f.tasks.createTask(f.actor,{operationId:'cwd-b',goal:'Inspect B',workingDirectory:b,authority:f.authority});
  assert.equal(f.tasks.version(taskB.taskId,1).workingDirectory,b);assert.equal(f.tasks.workingDirectory(run.id),a);
  f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'A inspected'},true);const followup=f.tasks.workerSend(f.actor,{operationId:'again',workerId:worker.workerId,text:'Explain A'});
- assert.equal(f.tasks.workingDirectory(followup.runId!),a);assert.equal(f.tasks.run(followup.runId!).threadId,run.threadId);assert.equal(f.store.meta('recursiveSchemaVersion'),'5');
+ assert.equal(f.tasks.workingDirectory(followup.runId!),a);assert.equal(f.tasks.run(followup.runId!).threadId,run.threadId);assert.equal(f.store.meta('recursiveSchemaVersion'),'6');
  }finally{f.close();}
 });
 

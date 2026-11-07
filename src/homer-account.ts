@@ -302,17 +302,32 @@ export function parseHomerWallet(usage:unknown,status:unknown):HomerWallet {
   }catch{factor=1;unit='原生额度';}
   return {available:quota.total_available*factor,used:quota.total_used*factor,unit};
 }
+export async function readHomerResponseBytes(response:Response,maxBytes:number):Promise<Buffer> {
+  const reader=response.body?.getReader();if(!reader)throw Error('UNAVAILABLE');
+  const chunks:Uint8Array[]=[];
+  let length=0;
+  try{
+    for(;;){
+      const {done,value}=await reader.read();
+      if(done)break;
+      length+=value.byteLength;
+      if(length>maxBytes)throw Error('UNAVAILABLE');
+      chunks.push(value);
+    }
+  }
+  finally{await reader.cancel().catch(()=>{});}
+  return Buffer.concat(chunks,length);
+}
+export async function readHomerJsonResponse(response:Response,maxBytes:number):Promise<unknown> {
+  try{return JSON.parse((await readHomerResponseBytes(response,maxBytes)).toString('utf8'));}catch{throw Error('UNAVAILABLE');}
+}
 async function jsonRequest(url:string,options:RequestInit,authenticationStatus=false):Promise<{status:number;body:unknown}> {
   const response=await fetch(url,{...options,redirect:'error',signal:AbortSignal.any([options.signal??new AbortController().signal,AbortSignal.timeout(20000)])});
   if(authenticationStatus&&(response.status===401||response.status===403)){
     void response.body?.cancel().catch(()=>{});
     return {status:response.status,body:null};
   }
-  const reader=response.body?.getReader();if(!reader)throw Error('UNAVAILABLE');
-  const chunks:Uint8Array[]=[];let length=0;
-  try{while(true){const {done,value}=await reader.read();if(done)break;length+=value.byteLength;if(length>65536)throw Error('UNAVAILABLE');chunks.push(value);}}
-  finally{await reader.cancel().catch(()=>{});}
-  try{return {status:response.status,body:JSON.parse(Buffer.concat(chunks).toString('utf8'))};}catch{throw Error('UNAVAILABLE');}
+  return {status:response.status,body:await readHomerJsonResponse(response,64*1024)};
 }
 export async function queryHomerRuntimeConfig(options:HomerCredentialBoundary&{websiteOrigin:string},signal?:AbortSignal):Promise<HomerRuntimeConfig> {
   allowedOrigin(options.websiteOrigin,options.allowSyntheticLoopback);

@@ -35,23 +35,24 @@ type Row = {
   detailsJson: string | null;
   hasRequest: number;
 };
+const workerSource = `LEFT JOIN operations o ON o.id=m.operationKey
+  LEFT JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
+  LEFT JOIN conversation_inputs s ON s.requestId=CASE WHEN m.kind='task_archived' AND o.kind='archive_work'
+    THEN json_extract(o.detailsJson,'$.sourceRequestId') ELSE v.sourceRequestId END`;
 const inputRows = `SELECT m.id,m.seq,m.kind,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,
   CASE WHEN m.kind='user_input' THEN m.payloadJson ELSE '{}' END payloadJson,
   r.state AS receiptState,r.revision,r.offeredTurnId,i.replyId,CASE WHEN m.kind='user_input' THEN i.threadId ELSE s.threadId END threadId,o.detailsJson,
   (m.kind='user_input' AND EXISTS(SELECT 1 FROM requests q WHERE q.id=json_extract(m.payloadJson,'$.requestId'))) AS hasRequest
   FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
   LEFT JOIN conversation_inputs i ON i.requestId=CASE WHEN m.kind='user_input' THEN json_extract(m.payloadJson,'$.requestId') END
-  LEFT JOIN operations o ON o.id=m.operationKey
-  LEFT JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
-  LEFT JOIN conversation_inputs s ON s.requestId=v.sourceRequestId`;
+  ${workerSource}`;
 const recoveryRows = `FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
-  JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
-  JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
-  WHERE m.recipientAgentId=? AND i.threadId=? AND m.kind<>'user_input' AND m.targetRunId IS NULL
+  ${workerSource}
+  WHERE m.recipientAgentId=? AND s.threadId=? AND m.kind<>'user_input' AND m.targetRunId IS NULL
     AND r.state IN ('blocked','uncertain')
-    AND EXISTS(SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') s
-      WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=i.threadId
-        AND json_extract(p.value,'$.sourceKind')='worker' AND json_extract(p.value,'$.state')='worked' AND s.value=m.id)`;
+    AND EXISTS(SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') source
+      WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=s.threadId
+        AND json_extract(p.value,'$.sourceKind')='worker' AND json_extract(p.value,'$.state')='worked' AND source.value=m.id)`;
 export type QueuedInput = {
   origin:'user';
   messageId: string;
@@ -106,7 +107,12 @@ export class MainInputs {
   private get agent() { return this.store.meta('mainAgentId')!; }
   private row(requestId: string) { return this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? AND json_extract(m.payloadJson,'$.requestId')=?").get(this.agent, requestId) as Row | undefined; }
   private payload(row: Row): InputPayload { return JSON.parse(row.payloadJson); }
-  private rowEditable(row:Row){return row.receiptState==='pending'&&!row.offeredTurnId&&!JSON.parse(row.detailsJson??'{}').turnId&&!row.hasRequest;}
+  private rowEditable(row:Row){
+    if(row.receiptState!=='pending'||row.offeredTurnId||row.hasRequest)return false;
+    const details=JSON.parse(row.detailsJson??'{}');
+    return !details.turnId&&
+      !(details.interactionId&&this.db.prepare('SELECT 1 FROM worker_interactions WHERE id=? AND responseUserMessageId=?').get(details.interactionId,this.payload(row).requestId));
+  }
   private current(row: Row, message?: ConversationMessage): QueuedInput {
     const p = this.payload(row);
     message ??= this.history.inputs(row.threadId, [p.requestId]).get(p.requestId);
@@ -348,8 +354,10 @@ export class MainInputs {
       const oldRefs=this.current(row).input.attachments??[];
       // Editors may keep/remove the exact scoped assets; adding assets requires intake.
       if(updated.attachments?.some(ref=>!oldRefs.some(old=>old.assetId===ref.assetId&&old.revision===ref.revision)))throw Error('media_scope_denied');
-      this.db.prepare('DELETE FROM conversation_attachments WHERE requestId=?').run(input.requestId);
-      if(updated.attachments?.length)this.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run(input.requestId,JSON.stringify(updated.attachments));
+      const userMessage=this.db.prepare("SELECT id FROM conversation_messages WHERE requestId=? AND threadId=? AND role='user'").get(p.requestId,thread);
+      if(!userMessage)throw Error('queue_message_not_found');
+      this.db.prepare('DELETE FROM conversation_attachments WHERE messageId=?').run(String(userMessage.id));
+      if(updated.attachments?.length)this.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run(String(userMessage.id),JSON.stringify(updated.attachments));
       this.db.prepare("UPDATE conversation_messages SET text=?,quote=? WHERE requestId=? AND threadId=? AND role='user'").run(updated.text, encodeConversationReferences(updated), p.requestId, thread);
       this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, inputHash: recursiveHash(updated), inputRevision: p.inputRevision + 1 }), row.id);
       this.db.prepare('UPDATE operations SET detailsJson=? WHERE id=(SELECT operationKey FROM agent_messages WHERE id=?)').run(JSON.stringify(updated.interactionId ? { interactionId: updated.interactionId } : {}), row.id);
@@ -402,7 +410,7 @@ export class MainInputs {
       if (!change.changes)
         return;
       this.db.prepare("UPDATE conversation_messages SET status='processing' WHERE requestId=? AND role='user'").run(p.requestId);
-      this.db.prepare("UPDATE conversation_messages SET status='running' WHERE id=?").run(current.replyId);
+      this.db.prepare("UPDATE conversation_messages SET status='running' WHERE id=? AND operationKey IS NULL").run(current.replyId);
       const hash=createHash('sha256').update(current.input.text).digest('hex');
       const previous=this.store.request(p.requestId);
       if(previous)throw Error(previous.hash===hash?'request_interrupted_use_new_id':'request_id_conflict');
@@ -451,7 +459,7 @@ export class MainInputs {
   uncertainInTransaction(messageId:string,revision:number) {
     if (!this.db.isTransaction) throw Error('queue_transaction_required');
       const changed=this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE messageId=? AND revision=? AND state IN ('offered','received')").run(messageId,revision);
-      if(changed.changes)this.db.prepare("UPDATE conversation_messages SET status='interrupted' WHERE requestId=(SELECT json_extract(payloadJson,'$.requestId') FROM agent_messages WHERE id=?)").run(messageId);
+      if(changed.changes)this.db.prepare("UPDATE conversation_messages SET status='interrupted' WHERE requestId=(SELECT json_extract(payloadJson,'$.requestId') FROM agent_messages WHERE id=?) AND operationKey IS NULL AND status IN ('queued','processing','running')").run(messageId);
       return !!changed.changes;
   }
   interruptReceipt(messageId: string, state: 'confirmed' | 'failed' | 'uncertain') { this.store.transaction(() => this.interruptReceiptInTransaction(messageId, state)); }
@@ -475,9 +483,8 @@ export class MainInputs {
     this.store.transaction(() => {
       this.db.prepare(`UPDATE agent_receipts SET state='pending',offeredTurnId=NULL,revision=revision+1
         WHERE recipientAgentId=? AND state IN ('offered','received','uncertain') AND messageId IN (
-          SELECT m.id FROM agent_messages m JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
-          JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
-          WHERE m.recipientAgentId=? AND m.senderAgentId='host' AND m.kind<>'user_input' AND m.targetRunId IS NULL AND i.threadId=?)`).run(this.agent,this.agent,this.store.meta('mainThread')??'');
+          SELECT m.id FROM agent_messages m ${workerSource}
+          WHERE m.recipientAgentId=? AND m.senderAgentId='host' AND m.kind<>'user_input' AND m.targetRunId IS NULL AND s.threadId=?)`).run(this.agent,this.agent,this.store.meta('mainThread')??'');
       const active = this.list().filter(r => r.state === 'processing' || r.state === 'uncertain');
       for (const item of active) {
         if(item.state==='processing')this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE messageId=?").run(item.messageId);

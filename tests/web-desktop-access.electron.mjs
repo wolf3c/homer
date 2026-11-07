@@ -1,6 +1,6 @@
 // Explicit real-Electron offline check; npm test does not launch native apps.
 import assert from 'node:assert/strict';
-import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,writeFileSync,copyFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
@@ -10,6 +10,7 @@ import {_electron} from 'playwright-core';
 const parent=resolve('.codex/scratch/open-source-web-boundary-20261102/electron');mkdirSync(parent,{recursive:true});
 const directory=mkdtempSync(join(parent,'synthetic-')),compiled=join(directory,'compiled');
 execFileSync(process.execPath,['node_modules/typescript/bin/tsc','-p','tsconfig.json','--outDir',compiled],{stdio:'pipe'});
+mkdirSync(join(directory,'scripts'));copyFileSync('scripts/windows-security.mjs',join(directory,'scripts/windows-security.mjs'));
 const instance=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('tests/fixtures/desktop-access-electron.mjs'),directory,compiled],env:{PATH:process.env.PATH,LANG:'en_US.UTF-8'},timeout:30000});
 let foreignCredential=false,foreignRequests=0;
 const foreign=createServer((request,response)=>{foreignRequests++;foreignCredential||=Object.keys(request.headers).some(k=>k==='x-homer-desktop-access');response.setHeader('Access-Control-Allow-Origin','*');response.end('{}');});
@@ -24,7 +25,7 @@ try{
   const post=(path,input)=>fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
   const controller=new AbortController(),events=await fetch('/api/events',{signal:controller.signal});const first=await events.body.getReader().read();controller.abort();
   const image=await new Promise(resolve=>{const img=new Image();img.onload=()=>resolve(true);img.onerror=()=>resolve(false);img.src='/api/media/synthetic/asset-11111111-1111-4111-8111-111111111111/1';});
-  const file=await fetch('/api/files/result-synthetic');
+  const file=await fetch('/api/media/synthetic/asset-22222222-2222-4222-8222-222222222222/1');
   const upload=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Homer-Filename':'synthetic.txt','X-Homer-Thread':'synthetic-electron','X-Homer-Request':'synthetic-input','X-Homer-Upload':'synthetic-upload'},body:new Blob(['x'])});
   return {events:events.status,first:first.value.length>0,image,file:await file.text(),upload:upload.status,submit:(await post('/api/messages',{requestId:'synthetic-input',text:'synthetic'})).status,decision:(await post('/api/interactions/synthetic',{requestId:'synthetic-decision',text:'拒绝本次操作'})).status};
  });

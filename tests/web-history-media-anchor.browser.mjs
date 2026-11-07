@@ -6,9 +6,10 @@ function png(width,height){const crc=bytes=>{let n=0xffffffff;for(const byte of 
 const dimensions=[[640,80],[80,600],[360,360]],images=dimensions.map(([w,h])=>png(w,h));
 const chrome=await isolatedChrome(destination),rows=[];
 try{for(const width of [1440,390,320]){
- const f=await fixture(100,'after',true);
- for(let n=20;n<60;n++)f.store.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run('request-'+n,JSON.stringify([{assetId:'asset-00000000-0000-4000-8000-'+String(n).padStart(12,'0'),revision:1}]));
- f.bridge.media.read=async input=>{f.mediaRequests.push(input.assetId);const message=f.history.byIds('synthetic-history',[input.messageId])[0];if(!message?.attachments?.some(ref=>ref.assetId===input.assetId&&ref.revision===input.revision))throw Error('media_scope_denied');const n=Number(input.assetId.split('-').at(-1));await new Promise(done=>setTimeout(done,650));return {filename:'varied-'+n+'.png',mime:'image/png',data:images[n%3].toString('base64')};};
+ const f=await fixture(100,'after');
+ for(let n=20;n<100;n++)f.addUserMedia(n,images[n%3]);
+ const read=f.bridge.media.read;
+ f.bridge.media.read=async input=>{await new Promise(done=>setTimeout(done,650));return read(input);};
  const page=await chrome.page(f.server.url,width);
  try{
   await page.command('Page.addScriptToEvaluateOnNewDocument',{source:probeScript});await page.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:'dark'}]});

@@ -38,7 +38,7 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
     });
     assert.equal((await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "synthetic-test", version: "1" } })).result.serverInfo.name, "homer-interactions");
     const tools = (await rpc("tools/list", {})).result.tools;
-    assert.deepEqual(tools.map((tool: any) => tool.name), role==='main'?['work_directory','file_checkpoint','capabilities','inspect_interaction','respond_interaction','escalate_interaction','runtime_capabilities','inspect_attachment','inspect_result_file','quote_current_message','prepare_combined_delivery']:['work_directory','file_checkpoint','capabilities','inspect_attachment']);
+    assert.deepEqual(tools.map((tool: any) => tool.name), role==='main'?['work_directory','file_checkpoint','capabilities','inspect_interaction','respond_interaction','escalate_interaction','runtime_capabilities','inspect_attachment']:['work_directory','file_checkpoint','capabilities','inspect_attachment']);
     const inspected=role==='main'?'inspect_interaction':'work_directory';
     const response = await rpc("tools/call", { name: inspected, arguments: { interactionId: "request-a" } });
     assert.equal(response.result.isError, false);

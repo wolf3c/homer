@@ -92,7 +92,9 @@ export function nativeToolContent(item:Record<string,unknown>,completed:boolean)
  let input:unknown,output:unknown;
  switch(item.type){
   case 'commandExecution':input=pick(item,['command','cwd']);output=Object.hasOwn(item,'aggregatedOutput')?{output:item.aggregatedOutput,...pick(item,['exitCode'])}:pick(item,['exitCode']);break;
-  case 'mcpToolCall':input=item.arguments;output=item.error!=null?{...pick(item,['result']),error:item.error}:item.result;break;
+  case 'mcpToolCall':
+   if(item.server==='homer_interactions'&&(item.tool==='generate_image'||item.tool==='generate_video'))break;
+   input=item.arguments;output=item.error!=null?{...pick(item,['result']),error:item.error}:item.result;break;
   case 'dynamicToolCall':input=item.arguments;output=item.contentItems;break;
   case 'fileChange':input=pick(item,['changes']);break;
   case 'webSearch':input=pick(item,['query','action']);output=item.results;break;

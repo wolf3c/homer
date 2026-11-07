@@ -16,7 +16,7 @@ for(const json of [true,false])test('real gateway: SSE sees mutations without st
  for(const name of ['src','scripts','prompts','assets','ui','package.json','package-lock.json','tsconfig.json'])cpSync(join(root,name),join(base,name),{recursive:true,filter:path=>!/(?:^|\/)(?:node_modules|dist)(?:\/|$)/.test(path)});
  symlinkSync(join(root,'node_modules'),join(base,'node_modules'),'dir');for(const dir of ['runtime','home','workspace'])mkdirSync(join(base,dir),{recursive:true});
  cpSync(join(root,'tests/fixtures/reception-app-server.mjs'),join(base,'synthetic-engine.mjs'));
- const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),codexBin:join(base,'synthetic-engine.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}));
+ const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),nativeCodexHome:join(base,'home'),codexBin:join(base,'synthetic-engine.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}));
  const reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
  const url='http://127.0.0.1:'+port,fetch=syntheticUserFetch();
  const child=spawn(process.execPath,[join(base,'scripts/dev.mjs'),'--web','--port',String(port),'--config',config,...(json?['--json']:[])],{cwd:base,env:fixtureBuildEnvironment(base),stdio:['pipe','pipe','pipe']});
@@ -59,7 +59,7 @@ test('real gateway: stdout callback backpressure preserves the written fence and
  for(const name of ['src','scripts','prompts','assets','ui','package.json','package-lock.json','tsconfig.json'])cpSync(join(root,name),join(base,name),{recursive:true,filter:path=>!/(?:^|\/)(?:node_modules|dist)(?:\/|$)/.test(path)});
  symlinkSync(join(root,'node_modules'),join(base,'node_modules'),'dir');for(const dir of ['runtime','home','workspace'])mkdirSync(join(base,dir),{recursive:true});
  cpSync(join(root,'tests/fixtures/reception-app-server.mjs'),join(base,'synthetic-engine.mjs'));
- const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),codexBin:join(base,'synthetic-engine.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}));
+ const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),nativeCodexHome:join(base,'home'),codexBin:join(base,'synthetic-engine.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}));
  const reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
  const url='http://127.0.0.1:'+port,fetch=syntheticUserFetch(),input=new PassThrough(),events=[];
  let releaseWrite,blocked=false,report,finished=false;

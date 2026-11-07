@@ -84,6 +84,22 @@ test('custom runtime sharing native HOME does not automatically initialize',asyn
  const s=setup();s.config.runtime=join(s.dir,'custom-runtime');mkdirSync(s.config.runtime);try{await s.open();await s.app.idle();assert.equal(s.turns.length,0);assert.equal(s.app.store.meta('firstLaunchRequestId'),undefined);assert.equal(existsSync(join(s.home,'skills/homer-initialize')),false);}finally{await s.cleanup();}
 });
 
+test('automatic initialization does not grant authority to start a Worker',async()=>{
+ const s=setup();let checked=false;
+ try{
+  s.behavior=async()=>{
+   const actor=s.app['mainActor'](),source=s.app.store.meta('firstLaunchRequestId')!;
+   assert.throws(()=>s.app.tasks.source(actor,source),/task_authority_source_denied/);
+   await assert.rejects(s.app['recursiveTool'](actor,'worker_open',{message:'Synthetic unrequested work'},'automatic-worker'),/task_authority_source_denied/);
+   checked=true;
+   return {status:'completed',text:'Initialization checked.'};
+  };
+  const app=await s.open();await until(()=>s.turns.length===1);await app.idle();
+  assert.equal(checked,true);
+  assert.equal(app.store.runs().length,0);
+ }finally{await s.cleanup();}
+});
+
 test('queued automatic and ordinary inputs preserve accepted FIFO order before claim',async()=>{
  const s=setup();s.connected=false;try{await s.open();await s.app.idle();s.app.inputs.accept({requestId:s.app.store.meta('firstLaunchRequestId')!,text:automatic},{source:'first_launch',persist:()=>{}});s.app.submitMessage({requestId:'priority-real',text:'请先完成这个真实任务'});await until(()=>s.turns.length===2);await s.app.idle();assert.match(s.turns[0]!,/^首次启动自动发起/);assert.match(s.turns[1]!,/^请先完成/);}finally{await s.cleanup();}
 });

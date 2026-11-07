@@ -71,7 +71,6 @@ export function statusCountSnapshot(_tasks:OverviewTask[],matters=statusTree(_ta
  }
  return {workingKnown,counts:{working:matches.working.size,queued:matches.queued.size,done,needsUser:interactions.size+unlocatedPending},matches};
 }
-export function statusCounts(tasks:OverviewTask[],matters=statusTree(tasks)){return statusCountSnapshot(tasks,matters).counts;}
 export function matterStatus(matter:StatusMatter){return taskCardPresentation(matter.task);}
 export type StatusSortKey={priority:0|1|2|3|4;enteredAtMs:number;creationOrder:number;id:string};
 export type RankedStatusMatter={matter:StatusMatter;key:StatusSortKey};

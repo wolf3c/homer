@@ -21,7 +21,7 @@ async function reader(mode='real'){
  }}]});
  const mod={exports:{}};Function('require','module','exports',result.outputFiles[0].text)(require,mod,mod.exports);return mod.exports;
 }
-const component=await reader();
+const component=await reader(),digest='a'.repeat(64);
 async function fixture(run,{module=component,fetcher}={}){
  const old={};for(const key of ['fetch','location','addEventListener','removeEventListener','__patchParser'])old[key]=globalThis[key];
  const create=URL.createObjectURL,revoke=URL.revokeObjectURL,urls=new Map(),revoked=[],requests=[],parses=[];
@@ -29,11 +29,14 @@ async function fixture(run,{module=component,fetcher}={}){
  globalThis.location=new URL('http://127.0.0.1:48731/');globalThis.addEventListener=()=>{};globalThis.removeEventListener=()=>{};
  globalThis.__patchParser=value=>{parses.push(value);return require('parse-diff')(value);};
  let current={bytes:patch,mime:'application/octet-stream',name:'review.PATCH',status:200};
- globalThis.fetch=async(input,init)=>{requests.push({input,init});if(fetcher)return fetcher(input,init);return new Response(current.bytes,{status:current.status,headers:{'Content-Type':current.mime,'Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(current.name),'X-Homer-Artifact-Hash':'synthetic-hash'}});};
+ globalThis.fetch=async(input,init)=>{requests.push({input,init});if(fetcher)return fetcher(input,init);return new Response(current.bytes,{status:current.status,headers:{'Content-Type':current.mime,'Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(current.name),'X-Homer-Artifact-Hash':digest}});};
  try{await withDom(async d=>{
   const draft=module.createAnnotationDraft(),control=React.createRef(),create=d.doc.createElement;
   d.doc.createElement=name=>{const n=create(name);if(name==='template')n.content={querySelectorAll:()=>[]};return n;};
-  const render=async(value={},extra={})=>{current={bytes:patch,mime:'application/octet-stream',name:'review.PATCH',status:200,...value};await d.render(h(module.CanvasReader,{key:extra.key??current.name,artifact:{id:current.name,title:current.name},annotationDraft:draft,actions:null,imageControl:control,onReference:()=>{throw Error('patch_must_not_annotate');},onClose:()=>{},...extra}));await act(async()=>{});};
+  const ids=new Map();
+  const render=async(value={},extra={})=>{current={bytes:patch,mime:'application/octet-stream',name:'review.PATCH',status:200,...value};
+   if(!ids.has(current.name))ids.set(current.name,'asset-00000000-0000-4000-8000-'+String(ids.size+1).padStart(12,'0'));
+   await d.render(h(module.CanvasReader,{key:extra.key??current.name,artifact:{id:current.name,title:current.name,messageId:'message-synthetic',assetId:ids.get(current.name),revision:1,sha256:digest},annotationDraft:draft,actions:null,imageControl:control,onReference:()=>{throw Error('patch_must_not_annotate');},onClose:()=>{},...extra}));await act(async()=>{});};
   await run({...d,render,urls,revoked,requests,parses,draft});
  });}finally{URL.createObjectURL=create;URL.revokeObjectURL=revoke;for(const key of Object.keys(old)){if(old[key]===undefined)delete globalThis[key];else globalThis[key]=old[key];}}
 }
@@ -45,7 +48,7 @@ test('generic MIME patch is decoded and rendered by the real unified viewer, ret
  assert.ok(slot(d).textContent.includes('old'));assert.ok(slot(d).textContent.includes('new'));
  const download=d.find(n=>n.tagName==='A'&&n.getAttribute('download')==='review.PATCH');assert.ok(download);
  assert.equal(await d.urls.get(download.getAttribute('href')).text(),patch);
- assert.equal(d.find(n=>n.tagName==='PRE').textContent,patch);assert.equal(d.requests.length,1);assert.equal(d.requests[0].init.credentials,'omit');
+ assert.equal(d.find(n=>n.tagName==='PRE').textContent,patch);assert.equal(d.requests.length,1);assert.equal(d.requests[0].input,'/api/media/message-synthetic/asset-00000000-0000-4000-8000-000000000001/1');assert.equal(d.requests[0].init.credentials,'omit');
  assert.equal(d.parses.length,1);await d.render({}, {key:'review.PATCH'});assert.equal(d.parses.length,1);
 }));
 
@@ -154,11 +157,11 @@ test('a late response and late Blob text after navigation cannot replace the new
    await d.remount();assert.deepEqual(d.revoked,live);
   },{fetcher:async()=>{
    if(++seen===1){
-    if(!delayedText){await new Promise(resolve=>{release=resolve;});return new Response(patch,{headers:{'Content-Type':'application/octet-stream'}});}
+    if(!delayedText){await new Promise(resolve=>{release=resolve;});return new Response(patch,{headers:{'Content-Type':'application/octet-stream','X-Homer-Artifact-Hash':digest}});}
     const blob=new Blob([patch]);const slice=blob.slice.bind(blob);blob.slice=(...args)=>{const part=slice(...args);part.text=()=>new Promise(resolve=>{release=()=>resolve(patch);});return part;};
-    return {ok:true,headers:new Headers({'Content-Type':'application/octet-stream'}),blob:async()=>blob};
+    return {ok:true,headers:new Headers({'Content-Type':'application/octet-stream','X-Homer-Artifact-Hash':digest}),blob:async()=>blob};
    }
-   return new Response(patch,{headers:{'Content-Type':'application/octet-stream'}});
+   return new Response(patch,{headers:{'Content-Type':'application/octet-stream','X-Homer-Artifact-Hash':digest}});
   }});
  }
 });

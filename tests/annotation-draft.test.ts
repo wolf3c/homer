@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createAnnotationDraft,annotationValidationReferences} from '../ui/annotation-draft.js';
 import {referenceKey,referencesOf,parseResourceReferences,type ResourceReference} from '../src/preview-reference.js';
-const source={kind:'artifact' as const,id:'result-synthetic-draft',sha256:'a'.repeat(64),title:'Synthetic.png'};
+const source={kind:'attachment' as const,messageId:'message-synthetic-draft',assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64),title:'Synthetic.png'};
 const notes=[{id:'one',region:{x:1,y:1,width:3,height:3},comment:'First'},{id:'two',region:{x:5,y:1,width:3,height:3},comment:'Second'}];
 const image={kind:'image' as const,source,width:10,height:10,annotations:notes};
 const asset={assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1};

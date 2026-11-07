@@ -4,7 +4,6 @@ import {createHash} from 'node:crypto';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {fixture} from './web-history-followup-fixture.mjs';
-import {syntheticFile} from './recursive-publication-fixture.js';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/web-history-loading-implementation/kerning-approved');mkdirSync(destination,{recursive:true});
 const sha=value=>createHash('sha256').update(value).digest('hex'),delay=ms=>new Promise(done=>setTimeout(done,ms));
@@ -12,9 +11,7 @@ const rich='# 中英文 AV To\n\n系统字体与完整 Markdown。**Bold** and *
 // Markdown result owner already caps authored files at 128KiB; do not change it.
 const fileText=rich+'d'.repeat(65536-Buffer.byteLength(rich));
 const f=await fixture(40,'after'),node=f.processes.exact('node-39');
-f.store.startRequest('request-0','synthetic-kerning-download');
-const made=syntheticFile(f,'request-0','complete-kerning-markdown.md',fileText),delivery=made.publish('完整授权文件');
-f.history.record(delivery.historyMessageId,'synthetic-history',delivery.text);f.tasks.markDelivery(delivery.id,'recorded');
+const made=f.attach('完整授权文件',[{filename:'complete-kerning-markdown.md',content:fileText,mime:'text/markdown'}]);
 node.state='working';node.status='running';delete node.endEventId;node.final={id:'streaming-final',text:rich};node.items=[{id:'working-commentary',kind:'commentary',seq:1,revision:1,phase:'commentary',text:'Working 显式展开，AV To 中文过程。'}];
 node.items.push({id:'streaming-final',kind:'commentary',phase:'final_answer',seq:2,revision:1,text:rich});
 f.store.db.prepare('UPDATE conversation_messages SET text=? WHERE id=?').run(rich,'node-39');
@@ -47,7 +44,7 @@ try{for(const width of [1440,390,320]){
    await page.evaluate(()=>document.querySelector('.file-list-open[aria-label="预览 complete-kerning-markdown.md"]').click());await page.until(()=>!!document.querySelector('#canvas-panel .canvas-markdown'));
    const canvasKerning=await page.evaluate(()=>getComputedStyle(document.querySelector('#canvas-panel .canvas-markdown')).fontKerning);assert.equal(canvasKerning,'auto');
    assert.equal(await page.evaluate(()=>document.querySelectorAll('#canvas-panel a[download]').length),0);
-   const response=await fetch(f.server.url+'/api/files/'+made.resultId);assert.equal(response.status,200);const bytes=Buffer.from(await response.arrayBuffer());assert.equal(bytes.toString('utf8'),fileText);
+   const response=await fetch(f.server.url+made.paths[0]);assert.equal(response.status,200);const bytes=Buffer.from(await response.arrayBuffer());assert.equal(bytes.toString('utf8'),fileText);
    download={method:'authorized file HTTP bytes; published-file download UI retired',bytes:bytes.length,sha256:sha(bytes),expectedSha256:sha(fileText),canvasKerning};
   }
   rows.push({width,styles,streaming:observed,copy:{bytes:Buffer.byteLength(copied),sha256:sha(copied),method:'UI click, captured clipboard.writeText; OS clipboard untouched'},download,errors:page.errors,submits:f.submitted.length});assert.deepEqual(page.errors,[]);assert.equal(f.submitted.length,0);

@@ -16,7 +16,7 @@ async function fixture(){
     async turn(text:string,options?:{onStarted?:(id:string)=>void}){options?.onStarted?.('synthetic-turn-'+turns.length);turns.push(text);return {status:'completed',text:'合成回执'};}
     async interrupt(){return true;}async close(){return true;}
   }
-  const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:3000,mainTimeoutMs:3000,stopGraceMs:50},async()=>{},()=>new Fake());
+  const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'home'),nativeCodexHome:join(base,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:3000,mainTimeoutMs:3000,stopGraceMs:50},async()=>{},()=>new Fake());
   await app.start();await app.idle();
   app.store.db.exec('CREATE TABLE synthetic_channel_sources(requestId TEXT PRIMARY KEY,replyId TEXT NOT NULL,peer TEXT NOT NULL)');
   const rows=()=>app.store.db.prepare('SELECT * FROM synthetic_channel_sources').all();

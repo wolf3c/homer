@@ -20,7 +20,7 @@ test('Web binary upload -> scoped history -> original thread, safe retry/remove/
   async close(){return true;}async interrupt(){return true;}
  }
  mkdirSync(join(root,'runtime'),{recursive:true});
- const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',timeoutMs:2000,mainTimeoutMs:2000,stopGraceMs:100},async()=>{},()=>new Engine());
+ const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',timeoutMs:2000,mainTimeoutMs:2000,stopGraceMs:100},async()=>{},()=>new Engine());
  let web:Awaited<ReturnType<typeof createWebServer>>|undefined;
  try{
   await app.start();web=await createWebServer({port:0,bridge:homerWebBridge(app)});

@@ -40,6 +40,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       },
     });
   }
+  if (m.method === "skills/list") send({ id: m.id, result: { data: [] } });
   if (m.method === "thread/start" || m.method === "thread/resume") {
     model = m.params.model;
     if (model === "missing-rollout" && m.method === "thread/resume") {

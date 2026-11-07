@@ -84,16 +84,15 @@ for(const effortOverride of ['default','local-low','env-high'] as const)for(cons
     constructor(readonly opts:EngineOptions,readonly tool:(call:ToolCall)=>Promise<unknown>){super();options.push(opts);}
     async start(){return this.threadId;}
     async call(tool:string,args:unknown):Promise<any>{return this.tool({threadId:this.threadId,turnId:this.turnId!,callId:'synthetic-call-'+ ++sequence,tool,arguments:args});}
-    async open(taskId:string,goal:string){return this.call('worker_open',{taskId,message:goal});}
     async turn(text:string,on?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
       this.turnId='synthetic-turn-'+ ++sequence;on?.onStarted?.(this.turnId);
       try{models.set(this.opts,await capabilityModels(this.opts));}catch(error){capabilityErrors.push(error as Error);throw error;}
-      if(this.opts.tools.some(t=>t.name==='read_material')){
+      if(this.opts.role==='worker'){
         return new Promise(resolve=>{this.release=resolve;});
       }
       if(text==='synthetic:start'){
-        const task=await this.call('task_create',{goal:'Synthetic coordination'});
-        await this.open(task.taskId,'A');await this.open(task.taskId,'B');await this.open(task.taskId,'C');
+        const {taskId}=await this.call('worker_open',{message:'A'});
+        for(const message of ['B','C'])await this.call('worker_open',{taskId,message});
       }
       return {status:'completed',text:'Synthetic accepted'};
     }
@@ -103,14 +102,14 @@ for(const effortOverride of ['default','local-low','env-high'] as const)for(cons
   const local=override==='default'?undefined:override.startsWith('env-')?override!=='env-true':override==='local-true';
   if(override.startsWith('env-'))process.env.HOMER_FAST=String(override==='env-true');
   if(effortOverride==='env-high')process.env.HOMER_EFFORT='high';
-  const config=f.read({requiresOpenaiAuth:false,stopGraceMs:100,...(local===undefined?{}:{fast:local}),...(effortOverride==='default'?{}:{effort:'low'})});
+  const config=f.read({nativeCodexHome:f.raw.codexHome,requiresOpenaiAuth:false,stopGraceMs:100,...(local===undefined?{}:{fast:local}),...(effortOverride==='default'?{}:{effort:'low'})});
   const app=new Homer(config,async()=>{},(o,h)=>new Peer(o,h));
   app['nativeRpc']=async(method:string)=>{assert.equal(method,'model/list');return {data:[{id:config.model,model:config.model,supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'},{reasoningEffort:'low'}]}]};};
   try{
     await app.start();await app.message('synthetic:start','synthetic-fast-source');
     const end=Date.now()+4000;
     while(models.size<4){if(Date.now()>end)throw capabilityErrors[0]??Error('synthetic_worker_timeout:'+models.size+':'+options.length);await new Promise(r=>setTimeout(r,5));}
-    const workers=options.filter(o=>o.tools.some(t=>t.name==='read_material'));
+    const workers=options.filter(o=>o.role==='worker');
     assert.equal(workers.length,3);for(const worker of workers)assert.equal(worker.role,'worker');
     assert.equal(app.tasks.tasks().length,1);assert.equal(new Set(app.store.runs().map(run=>run.workerId)).size,3);
     assert.equal(options[0]!.role,undefined);

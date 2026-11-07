@@ -7,7 +7,7 @@ import type {EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
 export function host(){
   const scratch=resolve('.codex/scratch/native-timeout-recovery');mkdirSync(scratch,{recursive:true});
   const dir=mkdtempSync(join(scratch,'host-'));
-  const config={runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexHome:join(dir,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:40,mainTimeoutMs:40,stopGraceMs:20};
+  const config={runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexHome:join(dir,'home'),nativeCodexHome:join(dir,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:40,mainTimeoutMs:40,stopGraceMs:20};
   mkdirSync(config.runtime);mkdirSync(config.workspace);
   const peers:Peer[]=[],events:any[]=[];let sequence=0;
   class Peer extends EventEmitter{

@@ -10,9 +10,14 @@ import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
 
 import {CAPABILITY_TOOLS} from "./native-capability-tools.js";
 import {INTERACTION_LIMITS} from './interaction-limits.js';
+import {MEMBERSHIP_TOOLS} from './membership-web-tools.js';
 
 export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS];
 export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...WORKER_MEDIA_TOOLS];
+export function hostMcpTools(role:'main'|'worker',membership=false){
+  const tools=role==='worker'?WORKER_HOST_MCP_TOOLS:HOST_MCP_TOOLS;
+  return membership?[...tools,...MEMBERSHIP_TOOLS]:tools;
+}
 const allowed = (name: unknown, catalog:readonly Tool[]): name is string => typeof name === "string" && catalog.some(tool => tool.name === name);
 function code(error: unknown) {
   return error instanceof Error && /^[a-z][a-z0-9_]{1,70}$/.test(error.message) ? error.message : "interaction_mcp_failed";
@@ -23,7 +28,7 @@ export class WorkerInteractionMcp {
   readonly directory = process.cwd();
   private server?: Server;
   private sockets = new Set<Socket>();
-  constructor(runtime: string, private handle: (tool: string, args: unknown) => Promise<unknown>,private catalog:readonly Tool[]=HOST_MCP_TOOLS) {
+  constructor(runtime: string, private handle: (tool: string, args: unknown) => Promise<unknown>,readonly catalog:Tool[]=HOST_MCP_TOOLS) {
     const absolute = join(runtime, "hi-" + randomUUID().slice(0, 8) + ".sock");
     const local = relative(this.directory, absolute);
     this.path = Buffer.byteLength(local) < Buffer.byteLength(absolute) ? local : absolute;
@@ -108,9 +113,9 @@ function hostCall(path: string, tool: string, args: unknown): Promise<unknown> {
   });
 }
 
-export function runWorkerInteractionMcp(path: string,role:string='main') {
-  if(!['main','worker'].includes(role))throw Error('interaction_role_denied');
-  const catalog=role==='worker'?WORKER_HOST_MCP_TOOLS:HOST_MCP_TOOLS;
+export function runWorkerInteractionMcp(path: string,role:string='main',membership=false) {
+  if(role!=='main'&&role!=='worker')throw Error('interaction_role_denied');
+  const catalog=hostMcpTools(role,membership);
   const send = (message: unknown) => process.stdout.write(JSON.stringify(message) + "\n");
   createInterface({ input: process.stdin }).on("line", line => {
     void (async () => {
@@ -132,7 +137,19 @@ export function runWorkerInteractionMcp(path: string,role:string='main') {
             const value = await hostCall(path, message.params.name, message.params.arguments);
             const media=value as {mediaContent?:unknown[]};
             result = { isError: false, content: media?.mediaContent??[{ type: "text", text: JSON.stringify(value) }] };
-          } catch (error) { const failure=code(error);result = { isError: true, content: [{ type: "text", text: failure },...(failure==='interaction_result_unconfirmed'?[{type:'text',text:'The request may still complete. Do not replay it. Inspect current state and any original host receipt. This error does not confirm cancellation.'}]:[])] }; }
+          } catch (error) {
+            const failure=code(error);
+            const note=failure==='membership_web_fetch_unavailable'
+              ? '未能取得网页正文。可使用已有搜索摘要，或改用其他来源。'
+              : failure==='membership_image_result_unconfirmed'||(failure==='interaction_result_unconfirmed'&&message.params?.name==='generate_image')
+              ? '未能确认结果，可能已扣费。不要自动重试。'
+              : failure==='interaction_result_unconfirmed'&&message.params?.name==='generate_video'
+                ? '未能确认结果，可能已扣费。请用原回执继续取回，勿重新提交。'
+              : failure==='interaction_result_unconfirmed'
+                ? 'The request may still complete. Do not replay it. Inspect current state and any original host receipt. This error does not confirm cancellation.'
+                : undefined;
+            result={isError:true,content:[{type:'text',text:failure},...(note?[{type:'text',text:note}]:[])]};
+          }
         } else { send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "interaction_method_denied" } }); return; }
         send({ jsonrpc: "2.0", id: message.id, result });
       } catch {

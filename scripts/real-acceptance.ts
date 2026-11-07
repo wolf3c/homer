@@ -1,3 +1,4 @@
+import {messageFilesForRun} from './message-file-evidence.js';
 // Explicit real-model verification. Only a dedicated non-sensitive scratch workspace is allowed.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -87,15 +88,14 @@ function rows(sql = "SELECT * FROM runs ORDER BY createdAt,rowid", parameters: s
     return [];
   }
 }
-function publication(runId: string) {
-  const files=rows("SELECT r.id,r.filePath,r.sha256 FROM results r JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) i ON i.value=r.id WHERE r.runId=? AND r.kind='file' AND d.state='recorded' AND d.revokedAt IS NULL",[runId]);
-  assert.equal(files.length,1,'one_formal_file_required');
-  return files[0]!;
+function attachedFile(runId:string){
+  const files=rows(messageFilesForRun,[runId]);
+  assert.equal(files.length,1,'one_message_attachment_required');
+  const [file]=files;
+  assert.match(String(file.assetId),/^asset-[a-f0-9-]{36}$/);
+  return {...file,filePath:join(config.runtime,'media',file.assetId)};
 }
-function delivered(runId: string) {
-  const ids=new Set(rows("SELECT d.id FROM deliveries d JOIN json_each(d.resultIdsJson) i JOIN results r ON r.id=i.value WHERE r.runId=? AND d.state='recorded' AND d.revokedAt IS NULL",[runId]).map(row=>row.id));
-  return messages.find(message=>message.type==='delivery'&&ids.has(message.deliveryId));
-}
+function delivered(runId:string){return rows(messageFilesForRun,[runId])[0];}
 function send(text: string) {
   child.stdin.write(text + "\n");
 }
@@ -173,8 +173,8 @@ try {
     result.threadId,
     rows("SELECT value FROM meta WHERE key='mainThread'")[0]?.value,
   );
-  const originalFile=publication(run.id);
-  assert.ok(originalFile.filePath.startsWith(config.workspace + "/outputs/"));
+  const originalFile=attachedFile(run.id);
+  assert.ok(originalFile.filePath.startsWith(config.runtime + "/media/"));
   const original = readFileSync(originalFile.filePath, "utf8");
   assertMeetingArtifact(original);
   const acceptanceEvents = rows("SELECT runId,type FROM events").filter(
@@ -188,7 +188,7 @@ try {
     passed: true,
     runId: run.id,
     threadId: result.threadId,
-    resultId: originalFile.id,
+    assetId: originalFile.assetId,
     sha256: originalHash,
   });
   stage = "T05";
@@ -199,7 +199,7 @@ try {
   await wait(() => delivered(revision.id));
   const revised = rows().find((r) => r.id === revision.id)!;
   assert.equal(revised.status, "succeeded");
-  const revisedFile=publication(revised.id);
+  const revisedFile=attachedFile(revised.id);
   assert.notEqual(revisedFile.filePath, originalFile.filePath);
   assert.ok(revised.threadId);
   assert.equal(
@@ -214,7 +214,7 @@ try {
     taskId: run.taskId,
     runId: revised.id,
     threadId: revised.threadId,
-    resultId: revisedFile.id,
+    assetId: revisedFile.assetId,
     originalPreserved: true,
   });
   stage = "shutdown";

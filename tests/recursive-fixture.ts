@@ -9,7 +9,7 @@ import {MainInputs} from '../src/recursive-main-inputs.js';
 import {RecursiveTasks,type Actor,type Authority} from '../src/recursive-tasks.js';
 
 export const main:Actor={agentId:'main:synthetic',threadId:'thread:synthetic-main',turnId:'turn:synthetic-main',sourceRequestId:'user-synthetic'};
-export const authority=(sourceRequestId='user-synthetic',resultIds:string[]=[]):Authority=>({sourceRequestId,description:'Synthetic authorized local work',materials:[],resultIds});
+export const authority=(sourceRequestId='user-synthetic'):Authority=>({sourceRequestId,description:'Synthetic authorized local work'});
 export function fixture(scratch='.codex/scratch/chat-architecture-implementation-20261105/e-runtime'){
  mkdirSync(scratch,{recursive:true});const dir=mkdtempSync(join(resolve(scratch),'test-'));
  const store=new Store(join(dir,'homer.sqlite')),files=new Files(join(dir,'workspace'));

@@ -20,15 +20,7 @@ const formats=[
  {id:'result-review-fenced-invalid',title:'Fenced-invalid.md',mime:'text/markdown',text:'Before\n\n```math\n\\frac{\n```\n\nAfter'},
 ].map(file=>({...file,sha256:createHash('sha256').update(file.text).digest('hex')}));
 const f=await fixture(4,'after'),checks=[];let chrome;
-const read=f.bridge.artifact.bind(f.bridge);
-f.bridge.artifact=async id=>{
- const file=formats.find(file=>file.id===id);
- return file?{filename:file.title,mime:file.mime,data:Buffer.from(file.text).toString('base64'),sha256:file.sha256}:read(id);
-};
-for(const owner of [f.bridge,f.bridge.history]){
- const state=owner.state.bind(owner);
- owner.state=async()=>{const value=await state();return {...value,artifacts:[...(value.artifacts??[]),...formats.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic review'}))]};};
-}
+f.attach('Synthetic review',formats.map(({title,mime,text})=>({filename:title,mime,content:text})));
 try{
  chrome=await isolatedChrome(destination);
  for(const width of [1440,390,320]){

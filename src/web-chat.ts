@@ -19,14 +19,13 @@ export function createWebChat(bridge:WebBridge){
    if(!['image/png','image/jpeg','image/webp'].includes(preview.mime))throw Error('media_preview_unavailable');
    return preview;
   }
-  if(op==='media.read'){
-   if(!id(input?.messageId)||typeof input.assetId!=='string'||!/^asset-[a-f0-9-]{36}$/.test(input.assetId)||!Number.isSafeInteger(input.revision)||input.revision<1||input.revision>99999999)throw Error('media_request_invalid');
-   if(!bridge.media)throw Error('media_unavailable');return bridge.media.read(input);
-  }
-  if(op==='files.read'||op==='files.origin'){
-   if(typeof input?.id!=='string'||! /^(?:run|result)-[\w-]{1,100}$/.test(input.id))throw Error('artifact_request_invalid');
-   if(op==='files.read')return bridge.artifact(input.id);
-   if(!bridge.artifactOrigin)throw Error('artifact_origin_unavailable');return bridge.artifactOrigin(input.id);
+  if(op==='media.read'||op==='media.origin'){
+   const read=op==='media.read';
+   if(!id(input?.messageId)||typeof input.assetId!=='string'||!/^asset-[a-f0-9-]{36}$/.test(input.assetId)||!Number.isSafeInteger(input.revision)||input.revision<1||input.revision>99999999||Object.keys(input).some(key=>!['messageId','assetId','revision'].includes(key)&&!(read&&key==='preview'&&input.preview==='voice')))throw Error('media_request_invalid');
+   if(!bridge.media)throw Error('media_unavailable');
+   if(read)return bridge.media.read(input);
+   if(!bridge.media.origin)throw Error('media_unavailable');
+   return bridge.media.origin(input);
   }
   if(op.startsWith('tasks.')){
    const owner=bridge.taskOverview;if(!owner)throw Error('task_overview_unavailable');

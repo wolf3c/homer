@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
-import {syntheticFile} from './recursive-publication-fixture.js';
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {createWebServer,fetch} from './web-connected-fixture.js';
 for(const scenario of ['pre-call-failure','ack-db-failure','no-ack','after-ack-lost','failed-terminal','failed-terminal-closed','completed'] as const){
@@ -34,20 +34,24 @@ for(const scenario of ['pre-call-failure','ack-db-failure','no-ack','after-ack-l
   }finally{await f.close();}
  });
 }
-test('authorized result origin reads exact old-thread publication and refuses revoked/unpublished/arbitrary selectors',async()=>{
+test('attachment origin returns exactly its owning message and rejects foreign, revoked and mismatched identities',async()=>{
  const f=syntheticHost();try{
-  await f.app.start();f.app.inputs.accept({requestId:'synthetic-origin',text:'合成成果授权'});
-  const claimed=f.app.inputs.claim()!;f.app.inputs.finish(claimed.messageId,claimed.revision,'completed');f.app.store.finishRequest('synthetic-origin','Synthetic accepted request');
-  const file=syntheticFile(f.app,'synthetic-origin','synthetic-plan.md','# Plan',[{filename:'synthetic-draft.md',content:'# Draft'}]);const delivery=file.publish('旧线程原答复，正文完整');
-  f.app.tasks.markDelivery(delivery.id,'recorded');f.app.history.record(delivery.historyMessageId,'synthetic-older-thread',delivery.text);
-  const bridge=homerWebBridge(f.app),origin=await bridge.artifactOrigin!(file.resultId);
-  assert.equal(origin.message.id,delivery.historyMessageId);assert.equal(origin.message.threadId,'synthetic-older-thread');assert.equal(origin.message.text,delivery.text);assert.deepEqual(new Set(origin.files.map(file=>file.id)),new Set(file.resultIds));
+  await f.app.start();
+  const thread=f.app.store.meta('mainThread')!,text='原答复，正文完整';
+  const message=commitSyntheticMessage(f.app,thread,text,[{filename:'synthetic-plan.md',content:'# Plan'},{filename:'synthetic-draft.md',content:'# Draft'}]);
+  const foreign=commitSyntheticMessage(f.app,'synthetic-older-thread','Unrelated private text',[{filename:'foreign.md',content:'# Foreign'}]);
+  const ref={messageId:message.messageId,...message.attachments[0]!},bridge=homerWebBridge(f.app),origin=await bridge.media!.origin!(ref);
+  assert.equal(origin.message.id,message.messageId);assert.equal(origin.message.threadId,thread);assert.equal(origin.message.text,text);
+  assert.deepEqual(origin.files.map(({assetId,revision})=>({assetId,revision})),message.attachments);
   const web=await createWebServer({bridge,port:0});try{
-   assert.equal((await fetch(web.url+'/api/files/'+file.resultId+'/origin')).status,200);
-   assert.equal((await fetch(web.url+'/api/files/'+file.resultId+'/origin?threadId=other')).status,400);
-   assert.equal((await fetch(web.url+'/api/files/result-not-published/origin')).status,409);
+   const path=message.paths[0]!;
+   assert.equal((await fetch(web.url+path+'/origin')).status,200);
+   assert.equal((await fetch(web.url+path+'/origin?threadId=other')).status,400);
+   assert.equal((await fetch(web.url+path.replace(message.messageId,'message-not-sent')+'/origin')).status,409);
+   assert.equal((await fetch(web.url+foreign.paths[0]+'/origin')).status,409);
    assert.equal((await fetch(web.url+'/api/files/run-arbitrary/origin')).status,404);
-   f.app.tasks.markDelivery(delivery.id,'revoked');assert.equal((await fetch(web.url+'/api/files/'+file.resultId+'/origin')).status,409);
+   assert.ok(f.app.history.revokeMessage(thread,message.messageId));
+   assert.equal((await fetch(web.url+path+'/origin')).status,409);
   }finally{await web.close();}
  }finally{await f.close();}
 });
@@ -65,7 +69,11 @@ test('new user input runs independently after Worker host closure while its old 
   peer.turn=async(_text,options)=>{peer.turnId='synthetic-worker-receipt';options?.onStarted?.(peer.turnId);throw Error('synthetic_worker_connection_lost');};
   f.app.inputs.accept({requestId:'synthetic-worker-source',text:'Synthetic authorized file'});
   const source=f.app.inputs.claim()!;f.app.inputs.finish(source.messageId,source.revision,'completed');
-  syntheticFile(f.app,'synthetic-worker-source');
+  const main={agentId:f.app.store.meta('mainAgentId')!,sourceRequestId:source.input.requestId,threadId:f.app.store.meta('mainThread')!};
+  const opened=f.app.tasks.workerOpen(main,{operationId:'synthetic-open',text:'Read the synthetic file',authority:{sourceRequestId:source.input.requestId,description:'Synthetic authorized request'}});
+  const run=f.app.tasks.claim(opened.runId)!;
+  f.app.tasks.bind(run.id,run.epoch,'synthetic-worker-thread','synthetic-worker-turn');
+  f.app.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original Worker answer'},true);
   const input=f.app.inputs.claim([],'all');assert.ok(input);assert.equal(input.origin,'worker');
   if(input.origin!=='worker')assert.fail('worker input required');
   await f.app['processWorkerInput'](input);await f.app.idle();
@@ -79,14 +87,20 @@ test('new user input runs independently after Worker host closure while its old 
   assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(input.messageId,f.app.store.meta('mainAgentId')!)!.state,'uncertain');
  }finally{await f.close();}
 });
-test('unknown/no-final process keeps the exact original publication and both authorized files reachable',async()=>{
+test('unknown/no-final process keeps the exact explicit message and both authorized files reachable',async()=>{
  const f=syntheticHost();try{
   await f.app.start();const thread=f.app.store.meta('mainThread')!;
   f.app.inputs.accept({requestId:'synthetic-fast-origin',text:'合成方案与配套草稿'});const input=f.app.inputs.claim()!;
   f.app.store.transaction(()=>{f.app.processes.start({id:'synthetic-fast-node',threadId:thread,sourceKind:'user',sourceMessageIds:[input.messageId],messageId:'synthetic-fast-node',replyMessageId:input.replyId},'synthetic-fast-turn');f.app.history.record('synthetic-fast-node',thread,'','running');f.app.inputs.startedInTransaction(input.messageId,input.revision,'synthetic-fast-generation','synthetic-fast-turn');});
-  const file=syntheticFile(f.app,input.input.requestId,'synthetic-fast-plan.md','# Plan',[{filename:'synthetic-fast-draft.md',content:'# Draft'}]),delivery=file.publish('Fast 合成原交付正文，两个文件关系完整。');
-  f.app.history.record(delivery.historyMessageId,thread,delivery.text);f.app.processes.delivery('synthetic-fast-node',{historyMessageId:delivery.historyMessageId,text:delivery.text});f.app.processes.finish('synthetic-fast-node','unknown');f.app.inputs.uncertain(input.messageId,input.revision);
-  const bridge=homerWebBridge(f.app),state=await bridge.state();assert.equal(state.messages.find(message=>message.id==='synthetic-fast-node')?.process?.status,'unknown');assert.equal(state.messages.find(message=>message.id==='synthetic-fast-node')?.process?.final,undefined);assert.equal(state.messages.find(message=>message.id===delivery.historyMessageId)?.text,delivery.text);
-  assert.deepEqual(new Set(state.artifacts?.filter(file=>file.messageId===delivery.historyMessageId).map(file=>file.id)),new Set(file.resultIds));assert.equal((await bridge.artifactOrigin!(file.resultId)).message.id,delivery.historyMessageId);assert.equal(state.queue?.length,0);assert.equal(state.messages.filter(message=>message.role==='user').length,1);
+  const text='合成原答复，两个文件关系完整。',sent=commitSyntheticMessage(f.app,thread,text,[{filename:'synthetic-plan.md',content:'# Plan'},{filename:'synthetic-draft.md',content:'# Draft'}],input.input.requestId);
+  assert.equal(sent.messageId,input.replyId);
+  f.app.processes.finish('synthetic-fast-node','unknown');f.app.inputs.uncertain(input.messageId,input.revision);
+  const bridge=homerWebBridge(f.app),state=await bridge.state();
+  const process=state.messages.find(message=>message.id==='synthetic-fast-node')?.process;
+  assert.equal(process?.status,'unknown');assert.equal(process?.final,undefined);
+  assert.equal(state.messages.find(message=>message.id===sent.messageId)?.text,text);
+  assert.deepEqual(state.artifacts?.filter(file=>file.messageId===sent.messageId).map(({assetId,revision})=>({assetId,revision})),sent.attachments);
+  assert.equal((await bridge.media!.origin!({messageId:sent.messageId,...sent.attachments[0]!})).message.id,sent.messageId);
+  assert.equal(state.queue?.length,0);assert.equal(state.messages.filter(message=>message.role==='user').length,1);
  }finally{await f.close();}
 });

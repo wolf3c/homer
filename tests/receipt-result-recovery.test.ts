@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {RecursiveTools,toolOperationId} from '../src/recursive-tools.js';
-import {RecursiveTasks} from '../src/recursive-tasks.js';
-import {fixture,main,authority,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
+import {Store} from '../src/store.js';
+import {ConversationHistory} from '../src/web-history.js';
+import {MediaStore} from '../src/media-store.js';
+import {htmlAttachmentFixture} from './canvas-html-publication-fixture.js';
+import {fixture,main,authority,openWorker,running,complete,mutation} from './recursive-fixture.js';
 
 test('committed Worker open survives lost tool response; same native call replays, different payload conflicts',async()=>{
  const f=fixture();try{
@@ -47,7 +50,7 @@ for(const fault of ['message','receipt'] as const)test('return '+fault+' persist
   assert.throws(()=>complete(f,actor,'Ignored fallback'),/synthetic_return_failure/);assert.equal(f.tasks.run(w.runId).status,'running');assert.match(f.tasks.run(w.runId).checkpointJson!,/Original raw answer/);
   f.store.db.exec('DROP TRIGGER reject_return');const reply=complete(f,actor,'Ignored fallback'),snapshot=f.tasks.workerRead(main,{workerId:w.workerId,messageId:reply.messageId});
   assert.equal(snapshot.messages[0]!.text,raw);assert.deepEqual(complete(f,actor,'Duplicate callback'),reply);
-  assert.equal(f.tasks.inbox(main).filter(m=>m.kind==='worker_reply').length,1);assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,0);
+  assert.equal(f.tasks.inbox(main).filter(m=>m.kind==='worker_reply').length,1);assert.equal(f.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);
   assert.equal(JSON.parse(f.tasks.run(w.runId).checkpointJson!).workerOutput,undefined);
  }finally{f.close();}
 });
@@ -66,7 +69,7 @@ test('long raw originals are recoverable in exact chunks and paging does not ado
  const f=fixture();try{
   const w=openWorker(f),actor=running(f,w.runId),raw=('汉字🙂\n\n').repeat(14000),reply=complete(f,actor,raw);
   let text='',offset=0;for(;;){const message=f.tasks.workerRead(main,{workerId:w.workerId,messageId:reply.messageId,offset}).messages[0]!;text+=message.text;if(message.nextOffset===null)break;offset=message.nextOffset;}
-  assert.equal(text,raw);assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,0);
+  assert.equal(text,raw);assert.equal(f.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);
   assert.throws(()=>f.tasks.workerRead(main,{workerId:w.workerId,messageId:reply.messageId,offset:-1}),/message_offset_invalid/);
   const page=f.tasks.workerRead(main,{workerId:w.workerId,limit:1});assert.ok(page.nextCursor);assert.notEqual(f.tasks.workerRead(main,{workerId:w.workerId,after:page.nextCursor!,limit:1}).messages[0]!.id,page.messages[0]!.id);
  }finally{f.close();}
@@ -95,23 +98,50 @@ test('a cached pre-change final remains readable under its original version afte
  }finally{f.close();}
 });
 
-for(const state of ['recorded','uncertain'] as const)test('lost publication response retains the original receipt and '+state+' sending fact without replay',()=>{
- const f=fixture();try{
-  const w=openWorker(f),actor=running(f,w.runId),reply=complete(f,actor),result=f.tasks.adoptResult(main,{operationId:'adopt',taskId:f.task.taskId,version:1,messageId:reply.messageId});
-  const args={operationId:'publish',taskId:f.task.taskId,version:1,resultIds:[result.resultId],text:'Synthetic formal result'},published=f.tasks.publish(main,args);
-  f.tasks.markDelivery(published.deliveryId,'submitting');f.tasks.markDelivery(published.deliveryId,state);f.tasks.reconcile();
-  assert.deepEqual(f.tasks.publish(main,args),published);assert.equal(f.tasks.delivery(published.deliveryId).state,state);assert.equal(f.tasks.pendingDeliveries().length,0);
-  assert.throws(()=>f.tasks.publish(main,{...args,operationId:'blind-new-call'}),/delivery_already_prepared/);assert.equal(f.tasks.deliveries().length,1);
-  if(state==='uncertain'){processReplies(f);assert.throws(()=>f.tasks.settleTask(main,{...mutation(f,'settle'),outcome:'succeeded'}),/operation_uncertain/);}
+test('a committed message and exact attachment survive restart and a lost tool response',()=>{
+ const f=htmlAttachmentFixture('report.md',Buffer.from('# Preserved bytes'));
+ try{
+  const sent=f.send();
+  const operations=f.store.db.prepare("SELECT responseJson,state FROM operations WHERE kind='send_user_message'").all();
+  assert.equal(operations.length,1);assert.equal(operations[0]!.state,'confirmed');
+  assert.equal(JSON.parse(String(operations[0]!.responseJson)).messageId,sent.messageId);
+  const store=new Store(join(f.dir,'homer.sqlite'));
+  try{
+   const history=new ConversationHistory(store.db),media=new MediaStore(store.db,join(f.dir,'runtime/media'));
+   history.reconcile();media.reconcile();
+   assert.deepEqual(history.message(sent.messageId)?.attachments,[{assetId:sent.assetId,revision:sent.revision}]);
+   assert.equal(history.message(sent.messageId)?.status,'completed');
+   assert.equal(media.readAttachment(sent).bytes.toString(),'# Preserved bytes');
+   assert.equal(media.gc(Date.now()+31*86400000),0);
+  }finally{store.close();}
+  writeFileSync(f.original,'Changed after original response');
+  assert.deepEqual(f.send(),sent);
+  assert.equal(f.history.list(f.threadId).filter(message=>message.attachments?.length).length,1);
  }finally{f.close();}
 });
 
-test('reopen turns submitting into uncertain and retains exact adopted file bytes',()=>{
- const f=fixture();try{
-  const w=openWorker(f),actor=running(f,w.runId),filePath=join(f.files.workspace,'report.md');writeFileSync(filePath,'# Preserved bytes');complete(f,actor);
-  const result=f.tasks.adoptResult(main,{operationId:'adopt',taskId:f.task.taskId,version:1,runId:w.runId,filePath}),delivery=f.tasks.publish(main,{operationId:'publish',taskId:f.task.taskId,version:1,resultIds:[result.resultId],text:'Synthetic file'});
-  f.tasks.markDelivery(delivery.deliveryId,'submitting');const restarted=new RecursiveTasks(f.store,f.files);restarted.reconcile();
-  assert.equal(restarted.delivery(delivery.deliveryId).state,'uncertain');assert.equal(restarted.readResult(main,result.resultId).file!.content,'# Preserved bytes');assert.equal(restarted.pendingDeliveries().length,0);
+test('an unknown native terminal cannot interrupt an already committed user-visible reply',()=>{
+ const f=htmlAttachmentFixture();
+ try{
+  const sent=f.send(),input=f.queuedInput;
+  f.inputs.uncertain(input.messageId,input.revision);
+  assert.equal(f.inputs.list().find(row=>row.messageId===input.messageId)?.state,'uncertain');
+  assert.equal(f.history.message(sent.messageId)?.status,'completed');
+  assert.deepEqual(f.app.readAttachment(sent).data,f.bytes.toString('base64'));
+  assert.deepEqual(f.send(),sent);
+ }finally{f.close();}
+});
+
+test('a missing user-send receipt is uncertain and cannot commit or suppress another reply',()=>{
+ const f=htmlAttachmentFixture();
+ try{
+  const sent=f.send(),context=f.app['mainContext']!;
+  f.store.db.prepare("UPDATE operations SET responseJson=NULL WHERE kind='send_user_message'").run();
+  context.explicitSent=false;
+  assert.throws(()=>f.send(),/operation_uncertain/);
+  assert.equal(context.explicitSent,false);
+  assert.deepEqual(f.history.message(sent.messageId)?.attachments,[{assetId:sent.assetId,revision:sent.revision}]);
+  assert.equal(f.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='send_user_message'").get()?.n,1);
  }finally{f.close();}
 });
 
@@ -123,12 +153,21 @@ test('equal raw bodies from different Workers retain distinct messages and both 
  }finally{f.close();}
 });
 
-test('explicit Result adoption survives a lost outer response without creating a second Result or Delivery',async()=>{
- const f=fixture();try{
-  const w=openWorker(f),actor=running(f,w.runId),reply=complete(f,actor),args={runId:w.runId,messageId:reply.messageId};let lose=true;
-  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>authority(),wake(){if(lose)throw Error('synthetic_response_lost');},stop:async r=>r,steer:async r=>r});
-  await assert.rejects(()=>tools.call(main,'accept_result',args,'adopt-native-call'),/synthetic_response_lost/);assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,1);
-  const lookup=f.tasks.inspectOperation(main,toolOperationId(main,'adopt-native-call'),f.task.taskId).operations[0]!;lose=false;
-  assert.deepEqual(await tools.call(main,'accept_result',args,'adopt-native-call'),lookup.response);assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,1);assert.equal(f.tasks.deliveries().length,0);
+test('message transaction failure leaves the original reply mutable and collects only failed staging',()=>{
+ const f=htmlAttachmentFixture();
+ try{
+  f.store.db.exec("CREATE TEMP TRIGGER reject_send BEFORE UPDATE ON conversation_messages WHEN NEW.operationKey IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic_commit_failure'); END");
+  assert.throws(()=>f.send(),/synthetic_commit_failure/);
+  assert.equal(f.history.message(f.replyId)?.status,'running');
+  assert.equal(f.history.message(f.replyId)?.attachments,undefined);
+  const operation=f.store.db.prepare("SELECT state,detailsJson,responseJson FROM operations WHERE kind='send_user_message'").get()!;
+  assert.equal(operation.state,'failed');
+  assert.equal(JSON.parse(String(operation.detailsJson)).failureCode,'message_not_committed');
+  assert.equal(operation.responseJson,null);
+  assert.equal(f.store.db.prepare("SELECT count(*) n FROM media_assets WHERE originOperationKey IS NOT NULL AND state='deleted'").get()!.n,1);
+  assert.equal(f.media.gc(),0);
+  f.store.db.exec('DROP TRIGGER reject_send');
+  assert.throws(()=>f.send(),/message_not_committed/);
+  assert.equal(f.send([{path:f.original}],'new-authorized-action').messageId,f.replyId);
  }finally{f.close();}
 });

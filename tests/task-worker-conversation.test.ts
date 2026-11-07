@@ -43,8 +43,9 @@ test('the real host retains late old drafts, confirms both paused exits and resu
  f.setScript(async(main,text)=>{
   try{
    if(text===original){
-    taskId=(await main.call('task_create',{goal:'并行核对旧版事实'})).taskId;
-    for(const message of ['A 核对旧版','B 核对旧版'])workerIds.push((await main.call('worker_open',{taskId,message})).workerId);
+    const first=await main.call('worker_open',{message:'A 核对旧版事实'});
+    taskId=first.taskId;workerIds.push(first.workerId);
+    workerIds.push((await main.call('worker_open',{taskId,message:'B 核对旧版事实'})).workerId);
    }else if(text===changedText){
     obsoleteMessage=(await main.call('worker_send',{workerId:workerIds[0],message:'仅属于旧版的排队动作'})).messageId;
     change=await main.call('task_update',{taskId,goal:'仅核对新版事实；保留缺失日期，不补猜'});
@@ -57,7 +58,13 @@ test('the real host retains late old drafts, confirms both paused exits and resu
     await assert.rejects(main.call('task_update',{taskId,action:'resume'}),/task_resume_unconfirmed/);pauseChecked=true;
     pause=await stopping;
     await assert.rejects(main.call('worker_send',{workerId:workerIds[0],message:'暂停中不得新增执行'}),/task_not_open/);
-   }else if(text==='恢复办理原会话中的排队问题')resume=await main.call('task_update',{taskId,action:'resume'});
+   }else if(text==='暂停时只改目标，不执行'){
+    await main.call('task_update',{taskId,goal:'第三版目标，保留缺失日期'});
+   }else if(text==='恢复办理原会话中的排队问题'){
+    resume=await main.call('task_update',{taskId,action:'resume'});
+    assert.equal(f.app.tasks.runs(taskId).length,4,'resume alone cannot create Worker runs');
+    for(const [index,workerId] of workerIds.entries())await main.call('worker_send',{workerId,message:(index?'B':'A')+' 暂停后继续核对'});
+   }
    else if(text==='核对新版原文后结案')await main.call('task_update',{taskId,action:'settle',outcome:'succeeded'});
    else{
     const notice=JSON.parse(text.split('\n')[1]!);assert.equal(notice.kind,'worker_reply');assert.equal(notice.taskId,taskId);
@@ -66,7 +73,7 @@ test('the real host retains late old drafts, confirms both paused exits and resu
     notices.push({messageId:reply.id,runId:notice.runId,version:notice.version,text:reply.text});
     if(notice.version===1){
      assert.equal(f.app.tasks.task(taskId).headVersion,2);
-     await assert.rejects(main.call('accept_result',{taskId,messageId:reply.id}),/source_denied/);
+     await assert.rejects(main.call('accept_result',{taskId,messageId:reply.id}),/tool_denied/);
     }
     return {status:'completed',text:'',messages:[]};
    }
@@ -114,13 +121,16 @@ test('the real host retains late old drafts, confirms both paused exits and resu
   assert.equal(pause.state,'confirmed');assert.equal(f.app.tasks.task(taskId).state,'paused');assert.equal(f.app.tasks.task(taskId).controlState,'normal');
   for(const run of secondRuns){assert.equal(f.app.tasks.run(run.id).phase,'ended');assert.equal(JSON.parse(f.app.tasks.run(run.id).checkpointJson??'{}').workerExitConfirmed,1);}
   assert.deepEqual(JSON.parse(f.app.tasks.operation(pause.operationKey).detailsJson).runIds.slice().sort(),secondRuns.map(run=>run.id).sort());
-  assert.equal(peers().length,4);assert.ok(queued.every(receipt=>receiptState(receipt.messageId)==='pending'));
+  assert.equal(peers().length,4);assert.ok(queued.every(receipt=>receiptState(receipt.messageId)==='rejected'));
+  await f.app.message('暂停时只改目标，不执行','lifecycle-paused-edit');
+  assert.equal(f.app.tasks.task(taskId).state,'paused');
+  assert.equal(f.app.tasks.task(taskId).headVersion,3);assert.equal(peers().length,4);
   await f.app.message('恢复办理原会话中的排队问题','lifecycle-resume');await until(()=>peers().length===6&&peers().slice(4).every(peer=>!!peer.finish));
   assert.equal(resume.state,'open');const resumed=f.app.tasks.runs(taskId).slice(4);
   assert.equal(resumed.length,2);assert.deepEqual(new Set(resumed.map(run=>run.workerId)),new Set(workerIds));
   const newBodies=new Map<string,string>();
   for(const run of resumed){
-   assert.equal(run.version,2);assert.equal(run.sourceRequestId,'lifecycle-change');assert.equal(run.threadId,oldRuns.find(old=>old.workerId===run.workerId)!.threadId);
+   assert.equal(run.version,3);assert.equal(run.sourceRequestId,'lifecycle-paused-edit');assert.equal(run.threadId,oldRuns.find(old=>old.workerId===run.workerId)!.threadId);
    const expected=(run.workerId===workerIds[0]?'A':'B')+' 暂停后继续核对';assert.equal(run.prompt,expected);
    const peer=peers().slice(4).find(peer=>peer.threadId===run.threadId)!;assert.equal(peer.options.threadId,run.threadId);
    const body='  新版核对原文：'+expected+'\n\n缺失日期保持未知。  ';newBodies.set(run.id,body);
@@ -136,20 +146,21 @@ test('the real host retains late old drafts, confirms both paused exits and resu
   }
   for(const run of resumed){
    const readback=notices.filter(notice=>notice.runId===run.id);assert.equal(readback.length,1);
-   assert.equal(readback[0]!.text,newBodies.get(run.id));assert.equal(readback[0]!.version,2);
+   assert.equal(readback[0]!.text,newBodies.get(run.id));assert.equal(readback[0]!.version,3);
    const detail=readTaskDetail(f.app.store.db,taskId,{workerId:run.workerId,messageId:readback[0]!.messageId}).conversation!.messages[0]!;
-   assert.equal(detail.text,newBodies.get(run.id));assert.equal(detail.version,2);
+   assert.equal(detail.text,newBodies.get(run.id));assert.equal(detail.version,3);
   }
   assert.equal(notices.length,6);for(const notice of notices)assert.equal(receiptState(notice.messageId),'processed');
-  for(const [index,receipt] of queued.entries()){
-   const run=resumed.find(run=>run.workerId===workerIds[index])!,saved=f.app.store.db.prepare('SELECT m.taskVersion,m.targetRunId,r.offeredRunId,r.processedBy FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.id=?').get(receipt.messageId)!;
-   assert.equal(receiptState(receipt.messageId),'processed');assert.equal(saved.taskVersion,2);assert.equal(saved.targetRunId,run.id);assert.equal(saved.offeredRunId,run.id);assert.equal(saved.processedBy,run.id);
+  for(const receipt of queued){
+   const saved=f.app.store.db.prepare('SELECT m.taskVersion,m.targetRunId,r.offeredRunId,r.processedBy FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.id=?').get(receipt.messageId)!;
+   assert.equal(receiptState(receipt.messageId),'rejected');assert.equal(saved.taskVersion,2);
+   assert.equal(saved.targetRunId,null);assert.equal(saved.offeredRunId,null);assert.equal(saved.processedBy,null);
   }
   for(const [receipt,requestId] of [[change,'lifecycle-change'],[pause,'lifecycle-pause'],[resume,'lifecycle-resume']] as const){
    const operation=f.app.tasks.operation(receipt.operationKey),inputMessageId=JSON.parse(operation.detailsJson).inputMessageId;
    assert.equal(operation.state,'confirmed');const input=f.app.store.db.prepare('SELECT kind,payloadJson FROM agent_messages WHERE id=?').get(inputMessageId)!;
    assert.equal(input.kind,'user_input');assert.equal(JSON.parse(String(input.payloadJson)).requestId,requestId);assert.equal(receiptState(inputMessageId),'processed');
   }
-  assert.equal(f.app.tasks.readTask({agentId:f.app.store.meta('mainAgentId')!},taskId).results.length,0);assert.equal(f.app.tasks.deliveries().length,0);
+  assert.equal(f.app.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name IN ('results','deliveries')").get(),undefined);
  }finally{for(const release of releases)release();await f.close();}
 });

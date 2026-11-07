@@ -18,7 +18,7 @@ test('real host captures only current public Worker progress and safely ignores 
     return new Promise<TurnResult>(resolve=>{finishWorker=resolve;(engine as unknown as {pending:(value:TurnResult)=>void}).pending=resolve;});
    };
   }return engine;};
-  await f.app.start();const main=f.engines[0]!;main.turn=async(text,options)=>{if(text!=='synthetic:public-progress')return {status:'completed',text:''};main.turnId='progress-main-turn';options?.onStarted?.(main.turnId);const root=await main.createTask('合成公开进展');rootId=root.taskId;await main.openWorker(rootId,'合成公开进展');return {status:'completed',text:'合成工作已交办'};};
+  await f.app.start();const main=f.engines[0]!;main.turn=async(text,options)=>{if(text!=='synthetic:public-progress')return {status:'completed',text:''};main.turnId='progress-main-turn';options?.onStarted?.(main.turnId);rootId=(await main.call('worker_open',{message:'合成公开进展'})).taskId;return {status:'completed',text:'合成工作已交办'};};
   await f.app.message('synthetic:public-progress','progress-source');await until(()=>!!workerEvents&&f.app.workerProgress.revision>=3);
   const value=await homerWebBridge(f.app).taskOverview!.progress!(rootId);assert.equal(value.workers.length,1);assert.equal(value.workers[0]?.plan?.[0]?.step,'核对合成资料');assert.equal(value.workers[0]?.output?.text,'公开合成进展');assert.ok(!JSON.stringify(value).includes('MUST_NOT_BE_PUBLIC'));
   workerEvents!.emit('agentMessage',{threadId:workerThread,turnId:'old-turn',itemId:'old',phase:'commentary',completed:true,text:'OLD_TURN'});

@@ -8,7 +8,7 @@ import type {Homer} from '../src/service.js';
 
 test('versioned HTTP reads enforce Origin, epoch, bounds, exact identity and shared finite SSE',async()=>{
  const f=historyFixture(100),reader=new WebHistoryPages(f.history,f.processes,f.inputs);let submits=0,builds=0;
- const host={...f,webReadEpoch:'http-synthetic-epoch',webHistoryPages:()=>reader,registerChannelCapabilities(){},onStateChange(){return()=>{};},media:{view(){throw Error('no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');},submitMessage(){submits++;throw Error('unexpected_submit');}};
+ const host={...f,webReadEpoch:'http-synthetic-epoch',webHistoryPages:()=>reader,registerWebSurface(){},onStateChange(){return()=>{};},media:{view(){throw Error('no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');},submitMessage(){submits++;throw Error('unexpected_submit');}};
  const bridge=homerWebBridge(host as unknown as Homer),original=bridge.history!.state;
  bridge.history!.state=async()=>{builds++;return original();};
  const server=await createWebServer({bridge,port:0}),origin=server.url;

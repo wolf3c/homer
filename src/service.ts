@@ -10,21 +10,25 @@ import {publicActivityName,type PublicActivity} from './activity-facts.js';
 import {projectConversation} from './conversation-projection.js';
 import {WebHistoryPages} from './web-history-pages.js';
 import {ReceptionTimings} from './reception-timings.js';
-import {attachmentReference,parseAttachmentReference,AttachmentInputError} from './attachment-reference.js';
+import {attachmentReference} from './attachment-reference.js';
 import {validateNativeMcpConfig,publicMcpCatalog} from './native-mcp-config.js';
-import { PendingTools, PENDING_TOOLS } from './pending-tools.js';
 import {EXECUTION_TOOLS} from './execution-tools.js';
+import {attachmentRevealTarget} from './artifact-reveal.js';
 import {FileCheckpoints} from './file-checkpoints.js';
 import {FIRST_LAUNCH_TEXT,FIRST_LAUNCH_SKILLS,seedFirstLaunchSkills,automaticFirstLaunch} from './first-launch.js';
 import {NativeAccount} from './native-account.js';
+import {createMembershipTools,isMembershipTool} from './membership-web-tools.js';
+import {runMembershipVideo} from './membership-video.js';
+import {materializePng} from './native-generated-files.js';
+import {detectMedia,MEDIA_POLICY} from './media-policy.js';
 import {capabilityOperationReview} from './capability-operations.js';
 import {CAPABILITY_TOOLS} from './native-capability-tools.js';
-import { RecursiveTasks, type Actor, type TaskRun, type Authority } from "./recursive-tasks.js";
+import { RecursiveTasks, recursiveHash, type Actor, type TaskRun, type Authority } from "./recursive-tasks.js";
 import { RecursiveTools, RECURSIVE_TOOLS, validateToolArguments, toolOperationId } from "./recursive-tools.js";
 import { MainInputs,MainInputClaimError, type QueuedInput,type MainInput,type WorkerInput } from "./recursive-main-inputs.js";
-import { join,isAbsolute,dirname } from "node:path";
+import { join,isAbsolute,dirname,basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { realpathSync,existsSync,statSync } from "node:fs";
+import { accessSync,constants,realpathSync,existsSync,statSync,lstatSync,openSync,fstatSync,closeSync,readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { Store, type Run } from "./store.js";
 import { Files, canonicalDir } from "./files.js";
@@ -41,20 +45,20 @@ import {
 import type { Config } from "./config.js";
 import { effectiveEffort, effectiveFast } from "./model-config.js";
 import {capabilityHome,usesHomerNativeHome,effectiveModelConfig} from "./config.js";
-import {MainNativeApprovals} from "./main-native-approvals.js";
+import {approvalDecision, MainNativeApprovals, VIDEO_APPROVAL_METHOD} from "./main-native-approvals.js";
 import {nativeMcpLogout} from "./native-mcp-logout.js";
 import {NativeCapabilities} from "./native-capabilities.js";
 import { loadPrompts, type Prompts } from "./prompts.js";
-import { MAIN_TOOLS, WORKER_TOOLS, object, string } from "./tools.js";
+import { MAIN_TOOLS, object, string } from "./tools.js";
 import { acquireLock, leaseOwnerGone, processIdentity, terminateLease } from "./processes.js";
 import { WorkerInteractions, type InteractionInput } from "./worker-interactions.js";
-import { WorkerInteractionMcp, HOST_MCP_TOOLS, WORKER_HOST_MCP_TOOLS } from "./worker-interaction-mcp.js";
+import { WorkerInteractionMcp, hostMcpTools } from "./worker-interaction-mcp.js";
 import { MAIN_INTERACTION_TOOLS, WORKER_INTERACTION_TOOLS } from "./worker-interaction-tools.js";
 import { nativeResponse, type InteractionDecision } from "./worker-interaction-protocol.js";
 import type { NativeRequest } from "./worker-native-requests.js";
 import { inside } from "./files.js";
 import { ConversationHistory, conversationInput, type ConversationInput, type ConversationAcceptance, type MessageQuote } from "./web-history.js";
-import { MediaStore } from './media-store.js';
+import { MediaStore,type AttachmentRef } from './media-store.js';
 import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS,WORKER_FILE_TOOLS } from './media-tools.js';
 import {modelImage,toolImage,ffmpegPath} from './media-decode.js';
 import {extractDocument,documentPython} from './media-documents.js';
@@ -80,10 +84,10 @@ type MessageBase = {
   requestId?: string;
   interactionId?: string;
   messageId?: string;
-  deliveryId?: string;
+  attachments?:AttachmentRef[];
 };
 export type Message = MessageBase & ({
-  type: "reply" | "progress" | "delivery" | "error" | "question" | "delta" | "coordination";
+  type: "reply" | "progress" | "error" | "question" | "delta" | "coordination";
 } | (MainGeneration & { type: "main_start"; text: "" }) |
   (MainGeneration & {type:'tool_progress';progress:MainProgress;text:''}) |
   (MainGeneration & { type: "main_terminal"; status: "completed" | "failed" | "interrupted" }));
@@ -100,14 +104,15 @@ type MainContext = {
   allowEmptyReply?: true;
   workerInput?:WorkerInput;
   publicText?:string;
+  explicitSent?:boolean;
   // Worker decisions may finish silently only after their delivery is confirmed.
   interactionId?: string;
-  pendingTaskIds?:string[];
   workerMessages?:{id:string;taskId:string|null;taskVersion:number|null;kind:string;payload:unknown}[];
   capabilityRevision?:number;
   stopRequested?:boolean;
   capabilityCalls?:Map<string,{fingerprint:string;result:Promise<any>}>;
   requestId?: string;
+  turnCwd?:string;
   inspected: Set<string>;
   event: boolean;
   userText?: string;
@@ -116,8 +121,6 @@ type MainContext = {
   generation?: MainGeneration;
   terminalConfirmed?: boolean;
   nativeImageCount?:number;
-  progressCount?:number;
-  progressAt?:number;
   toolActivities?:Map<string,Pick<MainProgress,'id'|'label'>>;
   queuedInput?:QueuedInput;
   output?: Promise<void>;
@@ -158,65 +161,249 @@ export class Homer {
   private mainApprovals: MainNativeApprovals;
   readonly media:MediaStore;
   private runtimeBuild:string|null=null;
-  private replyQuote?: (requestId:string)=>Promise<unknown>;
-  private combinedDelivery?: (requestId:string)=>Promise<unknown>;
-  registerCombinedDelivery(handler:(requestId:string)=>Promise<unknown>){this.combinedDelivery=handler;}
-  registerReplyQuote(handler:(requestId:string)=>Promise<unknown>){this.replyQuote=handler;}
   registerRuntimeBuild(hash:string){
     if(!/^[a-f0-9]{64}$/.test(hash)||this.runtimeBuild&&this.runtimeBuild!==hash)throw Error('runtime_build_invalid');
     this.runtimeBuild=hash;
   }
-  private channelViews=new Map<string,()=>unknown>();
-  registerChannelCapabilities(name:string,read:()=>unknown){this.channelViews.set(name,read);}
+  private webDraftUpload?:boolean;
+  registerWebSurface(draftUpload:boolean){this.webDraftUpload=draftUpload;}
   async capabilities(){
     const imageInput=this.main?.imageCapability?await this.main.imageCapability().catch(()=>false):false;
     const desktop=!!this.config.desktopResources;
     const decoder=desktop||!!ffmpegPath,avDecoder=!desktop&&!!ffmpegPath,asr=avDecoder&&!!whisperPath&&existsSync(whisperModel),documents=!desktop&&existsSync(documentPython);
-    const web=this.channelViews.get('web')?.() as {draftUpload:boolean}|undefined;
+    const web=this.webDraftUpload!==undefined, draftUpload=this.webDraftUpload===true;
     return {runtime:{version:this.runtimeBuild?.slice(0,12)??null,buildHash:this.runtimeBuild},model:this.modelConfig.model,imageInput,
-      currentInput:{nativeImagesSubmitted:this.mainContext?.nativeImageCount??0,attachments:(this.mainContext?.queuedInput?.input.attachments??[]).map(ref=>this.media.view(ref))},channels:Object.fromEntries([...this.channelViews].map(([name,read])=>[name,read()])),
-      surfaces:{web:{receive:web?(web.draftUpload?'scoped_draft_upload_and_history':'text_and_history'):'unavailable',draftUpload:web?.draftUpload===true,uploadLimit:web?.draftUpload?'8MiB_per_file_10_files':null,send:web?'published_artifact_download':'unavailable'},wechat:{receive:this.config.pauseOldDesktopWork?'unavailable':'bound_owner_media',send:this.config.pauseOldDesktopWork?'unavailable':'published_artifacts_to_original_bound_owner',phoneMediaVerification:'unverified'},telegram:{receive:this.config.pauseOldDesktopWork?'unavailable':'text_only',send:this.config.pauseOldDesktopWork?'unavailable':'published_artifact_files'},cli:{receive:'text_only'}},
-      media:{image:{receive:'available',understanding:imageInput&&decoder?'native_image_input':'unavailable',send:'image_publication'},
-        file:{receive:'available',understanding:documents?'local_txt_pdf_docx_xlsx_pptx':'utf8_text_only',send:'binary_publication'},
-        voice:{receive:'available',understanding:asr?'local_asr_first60s_or_protocol_transcription':'protocol_transcription_only',send:avDecoder&&existsSync('/usr/bin/say')?'local_tts_native_silk_unverified_phone':'unavailable'},
-        video:{receive:'available',understanding:avDecoder&&imageInput?'six_frames_first60s_and_optional_local_asr':'unavailable',send:'video_publication_unverified_phone'}},
+      currentInput:{nativeImagesSubmitted:this.mainContext?.nativeImageCount??0,attachments:(this.mainContext?.queuedInput?.input.attachments??[]).map(ref=>this.media.view(ref))},
+      surfaces:{web:{receive:web?(draftUpload?'scoped_draft_upload_and_history':'text_and_history'):'unavailable',draftUpload,uploadLimit:draftUpload?'8MiB_per_file_10_files':null,send:web?'message_attachment_download':'unavailable'},cli:{receive:'text_only'}},
+      media:{image:{receive:'available',understanding:imageInput&&decoder?'native_image_input':'unavailable',send:'message_attachment'},
+        file:{receive:'available',understanding:documents?'local_txt_pdf_docx_xlsx_pptx':'utf8_text_only',send:'message_attachment'},
+        voice:{receive:'available',understanding:asr?'local_asr_first60s_or_protocol_transcription':'protocol_transcription_only',send:avDecoder&&existsSync('/usr/bin/say')?'local_tts_silk':'unavailable'},
+        video:{receive:'available',understanding:avDecoder&&imageInput?'six_frames_first60s_and_optional_local_asr':'unavailable',send:'message_attachment'}},
       // null: Homer imposes no generated-image count limit; input attachment limits still apply.
       limits:{attachmentsPerMessage:10,nativeImagesPerTurn:null,audioVideoAnalyzedSeconds:60},
       warning:'收存、传输和本地解码不等于已理解或手机已播放；只可描述本轮实际传入的图像或抽取内容。未知编码明确受限。不得要求从尚未接通的入口重传。'};
   }
 
+  private authorizeAttachment(ref:AttachmentRef,scope:MainContext|TaskRun|undefined){
+    const matches=(value:AttachmentRef)=>value.assetId===ref.assetId&&value.revision===ref.revision;
+    if(scope&&'taskId' in scope){
+      const slot=this.workers.get(scope.id);
+      if(slot&&this.tasks.workerAttachments(this.workerActor(slot)).some(matches)){
+        this.media.validateAttachments([ref]);return;
+      }
+    }else if(scope){
+      const thread=this.store.meta('mainThread')!;
+      const request=scope.queuedInput?.input.requestId;
+      const candidates=this.store.db.prepare(`SELECT m.id,m.role,m.requestId FROM conversation_messages m
+        JOIN conversation_attachments a ON a.messageId=m.id JOIN json_each(a.refsJson) j
+        WHERE m.threadId=? AND (m.status='completed' OR (m.role='user' AND m.requestId=? AND m.status='processing'))
+        AND m.audience='user' AND m.revokedAt IS NULL
+        AND (?!='event' OR m.taskId=? OR m.requestId=?)
+        AND json_extract(j.value,'$.assetId')=? AND json_extract(j.value,'$.revision')=?
+        ORDER BY (m.role='user' AND m.requestId=?) DESC,m.rowid DESC`)
+        .iterate(thread,request??null,scope.event?'event':'user',scope.workerInput?.taskId??null,
+          this.rootAuthority(this.mainActor())?.sourceRequestId??null,ref.assetId,ref.revision,request??null);
+      for(const row of candidates){
+        const messageId=String(row.id);
+        try{
+          if(row.role==='user')this.media.validate(String(row.requestId),[ref]);
+          this.validateAttachmentGrant(ref,messageId);
+          return messageId;
+        }
+        catch(error){if(!(error instanceof Error&&error.message==='media_scope_denied'))throw error;}
+      }
+    }
+    throw Error('media_scope_denied');
+  }
+  private validateAttachmentGrant(ref:AttachmentRef,messageId:string){
+    this.media.validateAttachments([ref]);
+    const operation=this.store.db.prepare(`SELECT o.operationId FROM operations o WHERE o.id=
+      coalesce((SELECT operationKey FROM agent_messages WHERE id=?),(SELECT operationKey FROM conversation_messages WHERE id=?))`);
+    const origin=this.store.db.prepare("SELECT detailsJson,responseJson FROM operations WHERE id=? AND state='confirmed'");
+    const visited=new Set<string>();
+    let id:string|undefined=messageId;
+    while(id){
+      if(visited.has(id))throw Error('media_scope_denied');
+      visited.add(id);
+      if(id!==messageId){
+        const source=this.readUserMessage(id);
+        if(source.role==='user'){if(!source.requestId)throw Error('media_scope_denied');this.media.validate(source.requestId,[ref]);}
+        if(!source.attachments?.some(a=>a.assetId===ref.assetId&&a.revision===ref.revision))throw Error('media_scope_denied');
+      }
+      const action=operation.get(id,id) as {operationId:string}|undefined;
+      const staged=action?origin.get('stage:'+action.operationId) as {detailsJson:string;responseJson:string}|undefined:undefined;
+      if(!staged){
+        if(action)throw Error('media_scope_denied');
+        break;
+      }
+      try{
+        const refs=JSON.parse(staged.responseJson) as AttachmentRef[];
+        const position=refs.findIndex(a=>a.assetId===ref.assetId&&a.revision===ref.revision);
+        const sources=JSON.parse(staged.detailsJson).sources;
+        if(position<0||!Array.isArray(sources)||sources.length!==refs.length||
+          !(sources[position]===null||typeof sources[position]==='string'))throw Error('media_scope_denied');
+        id=sources[position]??undefined;
+      }catch{throw Error('media_scope_denied');}
+    }
+  }
+  private readLocalAttachment(path:string){
+    if(!isAbsolute(path))throw Error('artifact_path_denied');
+    let canonical:string;
+    try{canonical=realpathSync.native(path);}
+    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')throw Error('artifact_missing');throw Error('artifact_path_denied');}
+    if(canonical!==path)throw Error('artifact_path_denied');
+    this.taskFileGuard()(path);
+    const expected=lstatSync(path);
+    const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+    try{
+      const before=fstatSync(fd);
+      if(before.dev!==expected.dev||before.ino!==expected.ino||realpathSync.native(path)!==path)throw Error('artifact_path_denied');
+      if(!before.isFile()||before.nlink!==1||before.size<1||before.size>MEDIA_POLICY.fileBytes)throw Error('file_type_or_size_denied');
+      const bytes=readFileSync(fd),after=fstatSync(fd);
+      if(bytes.length!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs)throw Error('artifact_changed');
+      const detected=detectMedia(bytes),filename=basename(path);
+      const mime=detected==='application/octet-stream'&&isUtf8(bytes)
+        ? /\.html?$/i.test(filename)?'text/html; charset=utf-8':/\.md$/i.test(filename)?'text/markdown':/\.(txt|csv|json)$/i.test(filename)?'text/plain':detected
+        :detected;
+      const kind=mime.startsWith('image/')?'image':mime.startsWith('audio/')?'voice':mime.startsWith('video/')?'video':'file';
+      return {filename,mime,kind,bytes} as const;
+    }finally{closeSync(fd);}
+  }
+  private stageAttachments(actor:Actor,operationId:string,inputs:unknown[],context:MainContext){
+    const key='stage:'+operationId;
+    const fingerprint=recursiveHash(inputs);
+    const prior=this.store.db.prepare('SELECT payloadHash,state,responseJson FROM operations WHERE id=?').get(key);
+    if(prior){
+      if(prior.payloadHash!==fingerprint)throw Error('operation_payload_conflict');
+      if(!prior.responseJson||prior.state==='failed')throw Error('message_not_committed');
+      return {key,refs:JSON.parse(String(prior.responseJson)) as AttachmentRef[]};
+    }
+    if(inputs.length>MEDIA_POLICY.maxItems)throw Error('media_attachment_limit');
+    this.store.db.prepare(`INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson)
+      VALUES(?,?,?,?,'attachment_stage',?,'accepted',?)`).run(key,actor.agentId,'message-attachments',key,fingerprint,
+      JSON.stringify({inputMessageId:actor.inputMessageId??null,turnId:actor.turnId,inputs}));
+    try{
+      const sources:(string|null)[]=[];
+      const refs=inputs.map(input=>{
+        const a=object(input);
+        if(Object.keys(a).length===1&&typeof a.path==='string'){
+          sources.push(null);
+          return this.media.snapshot(key,this.readLocalAttachment(a.path));
+        }
+        if(Object.keys(a).length!==2||typeof a.assetId!=='string'||!Number.isSafeInteger(a.revision)||Number(a.revision)<1)
+          throw Error('invalid_attachment');
+        const ref={assetId:a.assetId,revision:Number(a.revision)};
+        sources.push(this.authorizeAttachment(ref,context)??null);
+        this.media.readAttachment(ref);
+        this.media.pinAttachment(ref,'operation:'+key);
+        return ref;
+      });
+      this.media.validateAttachments(refs);
+      this.store.db.prepare("UPDATE operations SET responseJson=?,detailsJson=json_set(detailsJson,'$.sources',json(?)) WHERE id=?").run(JSON.stringify(refs),JSON.stringify(sources),key);
+      return {key,refs};
+    }catch(error){this.abandonMessageOperation(key);throw error;}
+  }
+  private abandonMessageOperation(key:string){
+    const reclaim=this.store.transaction(()=>{
+      const failed=this.store.db.prepare(`UPDATE operations SET state='failed',revision=revision+1,
+        detailsJson=json_set(detailsJson,'$.failureCode','message_not_committed')
+        WHERE id=? AND state='accepted' AND kind IN ('send_user_message','attachment_stage')`).run(key);
+      if(!failed.changes||!key.startsWith('stage:'))return false;
+      this.media.abandonOperation(key);
+      return true;
+    });
+    if(reclaim)this.media.gc(Date.now(),key);
+  }
+  private commitAttachments(key:string,refs:AttachmentRef[],messageId:string){
+    for(const ref of refs)this.media.pinAttachment(ref,'message:'+messageId);
+    this.media.unpin('operation:'+key);
+    this.store.db.prepare("UPDATE operations SET state='confirmed' WHERE id=?").run(key);
+  }
+  private sendUserMessage(actor:Actor,input:{operationId:string;text?:string;attachments?:unknown[];taskId?:string}){
+    const context=this.mainContext;
+    if(!context)throw Error('tool_scope_denied');
+    this.validateMainContext(context);
+    const threadId=this.store.meta('mainThread')!;
+    const scopeId='user-messages', key='send:'+input.operationId;
+    const hash=recursiveHash(actor.operationPayload??input);
+    const prior=this.store.db.prepare('SELECT payloadHash,state,responseJson FROM operations WHERE id=?').get(key);
+    if(prior){
+      if(prior.payloadHash!==hash)throw Error('operation_payload_conflict');
+      if(prior.state==='failed')throw Error('message_not_committed');
+      if(prior.state!=='confirmed'||!prior.responseJson)throw Error('operation_uncertain');
+      context.explicitSent=true;
+      return JSON.parse(String(prior.responseJson));
+    }
+    const taskId=input.taskId??context.workerInput?.taskId??undefined;
+    if(context.event){
+      const authority=this.rootAuthority(actor);
+      if(!authority||taskId!==context.workerInput?.taskId)throw Error('task_authority_source_denied');
+      this.tasks.validateAuthority(actor,authority);
+    }
+    const task=taskId?(context.event?this.tasks.task(taskId):this.tasks.authorizeTask(actor,taskId,{allowSettled:true}).task):undefined;
+    if(task&&(task.outcome==='cancelled'||task.state==='paused'||task.controlState!=='normal'
+      ||context.event&&task.headVersion!==context.workerInput?.taskVersion))throw Error('task_authority_source_denied');
+    const requestId=context.event?null:context.requestId;
+    if(!context.event&&(!requestId||requestId!==actor.sourceRequestId))throw Error('tool_scope_denied');
+    const details={inputMessageId:actor.inputMessageId??null,threadId:actor.threadId,turnId:actor.turnId};
+    this.store.db.prepare(`INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson)
+      VALUES(?,?,?,?,'send_user_message',?,'accepted',?)`).run(key,actor.agentId,scopeId,input.operationId,hash,JSON.stringify(details));
+    let staged:{key:string;refs:AttachmentRef[]}|undefined;
+    try{
+      if(input.attachments?.length)staged=this.stageAttachments(actor,input.operationId,input.attachments,context);
+      const result=this.store.transaction(()=>{
+        this.validateMainContext(context);
+        if(task&&this.tasks.task(task.id).revision!==task.revision)throw Error('task_revision_conflict');
+        const messageId=this.history.commitAssistant({threadId,requestId,text:input.text??'',attachments:staged?.refs,
+          taskId,taskVersion:task?.headVersion,operationKey:key});
+        if(staged)this.commitAttachments(staged.key,staged.refs,messageId);
+        if(context.processId)this.processes.discardNativeFinal(context.processId);
+        const result={messageId,operationKey:key,state:'confirmed'};
+        this.store.db.prepare("UPDATE operations SET state='confirmed',responseJson=?,revision=revision+1 WHERE id=?").run(JSON.stringify(result),key);
+        return result;
+      });
+      context.explicitSent=true;
+      const notification:Message={type:'reply',text:input.text??'',messageId:result.messageId,
+        ...(requestId?{requestId}:{}),...(staged?.refs.length?{attachments:staged.refs}:{})};
+      context.output=(context.output??Promise.resolve()).then(()=>this.emit(notification))
+        .catch(error=>{this.store.event(null,'message_output_unconfirmed',engineError(error));});
+      return result;
+    }catch(error){
+      if(staged)this.abandonMessageOperation(staged.key);
+      this.abandonMessageOperation(key);
+      throw error;
+    }
+  }
   private async mediaTool(name:string,value:unknown){
     const context=this.mainContext;
     if(!context||this.closing)throw Error('tool_scope_denied');this.validateMainContext(context);
     if(name==='runtime_capabilities')return this.capabilities();
-    if(name==='quote_current_message'){
-      if(Object.keys(object(value)).length||context.event||context.queuedInput?.source!=='wechat'||!context.requestId||!this.replyQuote)throw Error('wechat_quote_source_denied');
-      const prepared=await this.replyQuote(context.requestId);this.validateMainContext(context);return prepared;
-    }
-    if(name==='prepare_combined_delivery'){
-      if(Object.keys(object(value)).length||context.event||context.queuedInput?.source!=='wechat'||!context.requestId||!this.combinedDelivery)throw Error('wechat_combo_source_denied');
-      const prepared=await this.combinedDelivery(context.requestId);this.validateMainContext(context);return prepared;
-    }
-    if(name==='inspect_result_file'){
-      const inspected=this.tasks.readResult(this.mainActor(),string(object(value).resultId)),file=inspected.file;
-      if(!file)throw Error('result_file_missing');
-      const bytes=this.files.resultBytes(dirname(file.path),file.path);
-      if(bytes.mime.startsWith('image/')){const image=await toolImage(await modelImage(bytes.data,bytes.mime));this.validateMainContext(context);return {mediaContent:[{type:'text',text:JSON.stringify({...file,modelView:image.modelView})},{type:'image',mimeType:image.mime,data:image.bytes.toString('base64')}]};}
-      const extracted=bytes.mime.startsWith('audio/')?await transcribeAudio(await audioPcm(bytes.data,bytes.mime)):await extractDocument(bytes.data,file.path);
+    const args=object(value),ref={assetId:string(args.assetId),revision:Number(args.revision)};
+    return this.inspectAttachment(ref,()=>{
       this.validateMainContext(context);
-      const current=this.files.resultBytes(dirname(file.path),file.path);
-      if(current.sha256!==bytes.sha256)throw Error('artifact_changed');
-      context.inspected.add(inspected.id);
-      return {...file,extracted};
+      this.authorizeAttachment(ref,context);
+    });
+  }
+  private async inspectAttachment(ref:AttachmentRef,authorize:()=>void){
+    authorize();
+    const asset=this.media.asset(ref),view={...this.media.view(ref),reference:attachmentReference(ref)};
+    if(asset.kind==='image'){
+      const image=await toolImage(this.media.imageAttachment(ref));
+      authorize();
+      return {mediaContent:[{type:'text',text:JSON.stringify({...view,modelView:image.modelView})},{type:'image',mimeType:image.mime,data:image.bytes.toString('base64')}]};
     }
-    const args=object(value),assetId=string(args.assetId),revision=Number(args.revision),refs=context.queuedInput?.input.attachments??[];
-    const ref=refs.find(ref=>ref.assetId===assetId&&ref.revision===revision);if(!ref||!context.requestId)throw Error('media_scope_denied');
-    return {...this.media.view(ref),reference:attachmentReference(ref),extraction:this.media.extracted(context.requestId,ref)};
+    let extraction;
+    if(asset.originOperationKey&&(asset.kind==='file'||asset.kind==='voice')){
+      const {bytes}=this.media.readAttachment(ref);
+      const content=asset.kind==='file'?await extractDocument(bytes,asset.filename):await transcribeAudio(await audioPcm(bytes,asset.mime!));
+      extraction={state:'ready',...content};
+      authorize();
+    }else extraction=this.media.extractedAttachment(ref);
+    return {...view,extraction};
   }
   readonly tasks:RecursiveTasks;
   readonly inputs:MainInputs;
   private recursiveTools:RecursiveTools;
-  private pendingTools:PendingTools;
   private interactionMcp?: WorkerInteractionMcp;
   private unlock: () => void;
   private main?: EngineLike;
@@ -242,16 +429,26 @@ export class Homer {
       if(!this.nativeControl){
         const home=capabilityHome(this.config),cwd=canonicalDir(join(home,'homer-control'));
         this.nativeControl=new CodexEngine({...this.config,codexHome:home,dailyDeepSeek:false,desktopModelSource:undefined,desktopConnection:undefined,context:undefined,capabilities:undefined,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true},{cwd,readRoots:[cwd],instructions:'Homer native configuration service. No model turns.',tools:[],nativeCapabilities:true,controlOnly:true},async()=>{throw Error('capability_control_tool_denied');});
-        const control=this.nativeControl;let initialized=false;
-        control.on('spawn',()=>this.lease('native-control',control));
+        const control=this.nativeControl;let initialized=false,lease:string|undefined;
+        const release=()=>{
+          if(this.nativeControl!==control||this.closed)return;
+          const saved=this.store.meta('lease:native-control');
+          if(saved!==undefined&&saved!==lease)return;
+          if(saved!==undefined)this.store.db.prepare("DELETE FROM meta WHERE key='lease:native-control' AND value=?").run(saved);
+          this.nativeControl=undefined;this.nativeStarting=undefined;
+        };
+        control.on('spawn',()=>{lease=this.lease('native-control',control);});
         control.on('accountLoginCompleted',value=>{this.accountManager?.completed(value);if(value.success){this.nativeDirty=true;this.nativeReconnect=true;this.nativeRevision++;this.drainMain();}});
         control.on('exit',()=>{
           if(!initialized)return;
           this.accountManager?.disconnected();
-          if(this.nativeControl===control){this.nativeControl=undefined;this.nativeStarting=undefined;const lease=this.store.meta('lease:native-control');if(lease&&JSON.parse(lease).pid===control.pid)this.store.db.prepare("DELETE FROM meta WHERE key='lease:native-control'").run();}
+          release();
         });
         control.on('oauthCompleted',({success})=>{if(success){this.nativeReconnect=true;this.nativeDirty=true;this.nativeRevision++;}});
-        this.nativeStarting=control.start().then(id=>{initialized=true;return id;}).catch(async error=>{await control.close();if(this.nativeControl===control){this.nativeControl=undefined;this.nativeStarting=undefined;}throw error;});
+        this.nativeStarting=control.start().then(id=>{initialized=true;return id;}).catch(async error=>{
+          if(await control.close())release();
+          throw error;
+        });
       }
       await this.nativeStarting;
       if(this.closing||this.closed)throw Error('service_upgrading');
@@ -284,25 +481,44 @@ export class Homer {
       }finally{this.nativeOperations--;}
     }
     this.nativeOperations++;
-    try{const context=this.mainContext;const guard=()=>{if(this.closing||this.closed)throw Error('service_upgrading');if(actor==='agent'){if(worker){this.tasks.guard(this.workerActor(worker));if(!this.liveInteraction(worker.id,worker.engine.threadId!,worker.engine.turnId!))throw Error('tool_scope_denied');}else{if(!context||this.mainContext!==context||this.closing)throw Error('tool_scope_denied');this.validateMainContext(context);}}};guard();let reviewed=false;const execute=async()=>{if(actor!=='agent')return this.nativeCapabilities().manage(input,actor,guard);if(['plugin_install','plugin_uninstall'].includes((input as any)?.action)){reviewed=true;return this.approveCapabilityOperation(input,guard,context,worker);}try{return await this.nativeCapabilities().manage(input,actor,guard);}catch(error){if((input as any)?.action==='mcp_save'&&error instanceof Error&&error.message==='capability_user_approval_required'){reviewed=true;return this.approveCapabilityOperation(input,guard,context,worker);}throw error;}};const value=await execute();if(!reviewed&&value?.saved!==false&&!['state','catalog','models','skill_read','oauth','discover','plugin_search','plugin_read'].includes((input as any)?.action)){if(['plugin_install','plugin_uninstall','mcp_logout'].includes((input as any)?.action))this.nativeReconnect=true;this.nativeDirty=true;this.nativeRevision++;if(!worker&&context&&!context.event)context.capabilityRevision=this.nativeRevision;}if((input as any)?.action==='models'){const config=effectiveModelConfig(this.config,worker?'worker':'main'),models=value.models??[],listed=models.find((m:any)=>m.model===config.model||m.id===config.model),effort=effectiveEffort(config.effort,worker?"worker":"main");return {...value,configured:{model:config.model,effort,fast:effectiveFast(config.fast,worker?"worker":"main"),catalogListed:!!listed,effortListed:!!listed?.supportedReasoningEfforts?.some((e:any)=>e.reasoningEffort===effort)}};}if((input as any)?.action==='state')return {...value,...(actor==='user'?{account:await this.nativeAccount().state()}:{}),runtime:{pendingConfiguration:this.nativeDirty||usesHomerNativeHome(this.config)&&!!this.main?.appliedConfigurationVersion&&this.main.appliedConfigurationVersion!==value.version,activeToolSettings:this.main?.activeToolSettings??null,nativeToolBusy:this.main?.nativeBusy??false,threadId:this.main?.threadId??null}};if((input as any)?.action==='catalog'){const engine=worker?.engine??this.main;const live=usesHomerNativeHome(this.config)&&engine?.request?await engine.request('mcpServerStatus/list',{threadId:engine.threadId,serverName:(input as any).name,detail:'full',limit:100}):null;return {configurationProbe:value,currentThread:live?publicMcpCatalog(live):null,pendingConfiguration:this.nativeDirty};}return value;}
+    try{
+      const context=this.mainContext;
+      let reviewed=false;
+      const guard=()=>{
+        if(this.closing||this.closed)throw Error('service_upgrading');
+        if(actor!=='agent')return;
+        if(worker){
+          if(!reviewed)this.tasks.guard(this.workerActor(worker));
+          if(!this.liveInteraction(worker.id,worker.engine.threadId!,worker.engine.turnId!))throw Error('tool_scope_denied');
+        }else{
+          if(!context)throw Error('tool_scope_denied');
+          this.validateMainContext(context);
+        }
+      };
+      guard();
+      const execute=async()=>{if(actor!=='agent')return this.nativeCapabilities().manage(input,actor,guard);if(['plugin_install','plugin_uninstall'].includes((input as any)?.action)){reviewed=true;return this.approveCapabilityOperation(input,guard,context,worker);}try{return await this.nativeCapabilities().manage(input,actor,guard);}catch(error){if((input as any)?.action==='mcp_save'&&error instanceof Error&&error.message==='capability_user_approval_required'){reviewed=true;return this.approveCapabilityOperation(input,guard,context,worker);}throw error;}};const value=await execute();if(!reviewed&&value?.saved!==false&&!['state','catalog','models','skill_read','oauth','discover','plugin_search','plugin_read'].includes((input as any)?.action)){if(['plugin_install','plugin_uninstall','mcp_logout'].includes((input as any)?.action))this.nativeReconnect=true;this.nativeDirty=true;this.nativeRevision++;if(!worker&&context&&!context.event)context.capabilityRevision=this.nativeRevision;}if((input as any)?.action==='models'){const config=effectiveModelConfig(this.config,worker?'worker':'main'),models=value.models??[],listed=models.find((m:any)=>m.model===config.model||m.id===config.model),effort=effectiveEffort(config.effort,worker?"worker":"main");return {...value,configured:{model:config.model,effort,fast:effectiveFast(config.fast,worker?"worker":"main"),catalogListed:!!listed,effortListed:!!listed?.supportedReasoningEfforts?.some((e:any)=>e.reasoningEffort===effort)}};}if((input as any)?.action==='state')return {...value,...(actor==='user'?{account:await this.nativeAccount().state()}:{}),runtime:{pendingConfiguration:this.nativeDirty||usesHomerNativeHome(this.config)&&!!this.main?.appliedConfigurationVersion&&this.main.appliedConfigurationVersion!==value.version,activeToolSettings:this.main?.activeToolSettings??null,nativeToolBusy:this.main?.nativeBusy??false,threadId:this.main?.threadId??null}};if((input as any)?.action==='catalog'){const engine=worker?.engine??this.main;const live=usesHomerNativeHome(this.config)&&engine?.request?await engine.request('mcpServerStatus/list',{threadId:engine.threadId,serverName:(input as any).name,detail:'full',limit:100}):null;return {configurationProbe:value,currentThread:live?publicMcpCatalog(live):null,pendingConfiguration:this.nativeDirty};}return value;}
     finally{this.nativeOperations--;}
   }
 
-  private async approveCapabilityOperation(raw:unknown,guard:()=>void,context?:MainContext,worker?:WorkerSlot,requestIdentity?:string){
+  private async approveCapabilityOperation(raw:unknown,guard:()=>void,context?:MainContext,worker?:WorkerSlot,native?:NativeRequest){
     if(!usesHomerNativeHome(this.config))throw Error('capability_native_home_required');
     const input=object(raw),operationId=string(input.operationId,100);
     if(!/^[A-Za-z0-9_-]+$/.test(operationId))throw Error('capability_operation_id_invalid');
-    const generation=worker?{threadId:worker.engine.threadId!,turnId:worker.engine.turnId!,generationId:'capability-worker:'+worker.id+':'+worker.engine.turnId,sourceRequestId:this.tasks.run(worker.id).sourceRequestId!}:context?.generation;
-    if(!generation||!worker&&context?.event)throw Error('tool_scope_denied');
+    const run=worker?this.tasks.run(worker.id):undefined;
+    const generation=worker&&run?{threadId:worker.engine.threadId!,turnId:worker.engine.turnId!,generationId:run.id,sourceRequestId:run.sourceRequestId!}:context?.generation??this.archiveApprovalScope(context);
+    if(!generation)throw Error('tool_scope_denied');
     const owner=worker??context!;const calls=owner.capabilityCalls??=new Map();
     const fingerprint=createHash('sha256').update(JSON.stringify(raw)).digest('hex'),key=generation.generationId+':'+operationId,prior=calls.get(key);
     if(prior){if(prior.fingerprint!==fingerprint)throw Error('capability_operation_conflict');return prior.result;}
     if(calls.size>=32)throw Error('capability_operation_limit');
     const result=(async()=>{
-      guard();const review=await capabilityOperationReview(this.nativeCapabilities(),input,guard);guard();
-      const current=()=>{try{guard();return worker?this.liveInteraction(worker.id,generation.threadId,generation.turnId):this.mainContext===context&&this.main?.turnId===generation.turnId;}catch{return false;}};
-      const opened=this.mainApprovals.openOperation({requestId:requestIdentity??'capability:'+operationId,question:review.question,details:review.details},{...generation,historyThreadId:this.store.meta('mainThread')!,userText:worker?this.interactions.authority(worker.id)?.description??'已授权后台任务':context?.userText??'',isCurrent:current});
-      if(worker)this.pauseClock(worker);
+      guard();if(run)this.tasks.validateAuthority(this.mainActor(true),this.tasks.authority(run.taskId,run.version));
+      const review=await capabilityOperationReview(this.nativeCapabilities(),input,guard);guard();
+      const current=()=>{try{guard();return worker?this.liveInteraction(worker.id,generation.threadId,generation.turnId):this.mainContext===context&&!context?.stopRequested&&this.main?.turnId===generation.turnId&&(!context?.event||!!this.archiveApprovalScope(context));}catch{return false;}};
+      const requestId=native?(worker?'workerplugin:'+worker.id+':':'mainplugin:')+JSON.stringify(native.requestId):'capability:'+operationId;
+      const opened=this.mainApprovals.openOperation({requestId,question:review.question,details:review.details},{...generation,historyThreadId:this.store.meta('mainThread')!,userText:worker?this.tasks.authority(run!.taskId,run!.version).description:context?.userText??('userText' in generation?String(generation.userText):''),isCurrent:current,...(run?{worker:{runId:run.id,runEpoch:run.epoch,taskVersion:run.version}}:{})});
+      if(worker&&native)worker.requests.set(JSON.stringify(['native',native.requestId]),opened.id);
+      this.invalidateState();
       const timeout=setTimeout(()=>this.interactions.expire(opened.id,'capability_approval_timeout'),540000);timeout.unref();
       try{
         const decision=await opened.response;
@@ -312,7 +528,7 @@ export class Homer {
         // Only this host branch, after the persisted user receipt, acts as user.
         // NativeCapabilities rechecks config/review CAS immediately before RPC.
         const saved=await this.nativeCapabilities().manage({...review.operation,approve:true},'user',guard);if(['plugin_install','plugin_uninstall'].includes(String(review.operation.action)))this.nativeReconnect=true;this.nativeDirty=true;this.nativeRevision++;if(!worker&&context)context.capabilityRevision=this.nativeRevision;return saved;
-      }finally{clearTimeout(timeout);if(worker)this.resumeClock(worker);}
+      }finally{clearTimeout(timeout);}
     })();calls.set(key,{fingerprint,result});return result;
   }
 
@@ -326,6 +542,7 @@ export class Homer {
   readonly workerProgress=new WorkerProgressStore();
   private workers = new Map<string, WorkerSlot>();
   private executions = new Set<Promise<void>>();
+  private videoCalls = new Set<Promise<unknown>>();
   private mainQueue: Promise<unknown> = Promise.resolve();
   private mainPending:{run:()=>Promise<void>}[]=[];
   private mainDraining=false;
@@ -337,24 +554,24 @@ export class Homer {
   private closing = false;
   private closed = false;
   private mediaGcTimer?:NodeJS.Timeout;
-  private deliveryQueued = false;
   private mainBroken = false;
   private mainRecovery = false;
   private mainRecoveryError?:string;
   private mainStopRequested = false;
+  private readonly membershipTools:ReturnType<typeof createMembershipTools>;
   constructor(
     readonly config: Config,
     readonly sink: (message: Message) => Promise<void>,
     private factory?: EngineFactory,
   ) {
+    if(!usesHomerNativeHome(config))throw Error('engine_native_tools_home_required');
+    this.membershipTools=createMembershipTools(config);
     this.unlock = acquireLock(config.runtime);
     try { this.store = new Store(join(config.runtime, "homer.sqlite")); }
     catch(error) { this.unlock();throw error; }
     try{
       if(config.pauseOldDesktopWork){
         if(!config.desktopResources)throw Error('desktop_pause_scope_invalid');
-        const exists=(name:string)=>!!this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
-        if(exists('deliveries')&&this.store.db.prepare("SELECT 1 FROM deliveries WHERE state='prepared' LIMIT 1").get())throw Error('desktop_delivery_review_required');
         for(const row of this.store.db.prepare("SELECT value FROM meta WHERE key LIKE 'lease:%'").all()){
           let lease;try{lease=JSON.parse(String(row.value));}catch{}
           if(typeof lease?.identity!=='string'||!lease.identity||!leaseOwnerGone(lease.pid))throw Error('desktop_adoption_owner_unknown');
@@ -367,7 +584,7 @@ export class Homer {
       }
     }catch(error){
       this.store.close();this.unlock();
-      if(error instanceof Error&&['desktop_delivery_review_required','desktop_run_review_required','desktop_adoption_owner_unknown','desktop_process_review_required'].includes(error.message)){
+      if(error instanceof Error&&['desktop_run_review_required','desktop_adoption_owner_unknown','desktop_process_review_required'].includes(error.message)){
         if(existsSync(join(config.runtime,'cli.lock')))throw Error('desktop_constructor_cleanup_unconfirmed');
         throw new DesktopReviewRequired(error.message);
       }
@@ -375,18 +592,6 @@ export class Homer {
     }
     this.store.db.onChange(()=>{if(!this.closed)this.invalidateState();});
     this.files = new Files(config.workspace);
-    const legacyBinding = createHash("sha256")
-      .update(
-        JSON.stringify({
-          workspace: config.workspace,
-          model: config.model,
-          codexHome: config.codexHome,
-          baseUrl: config.baseUrl,
-        }),
-      )
-      .digest("hex");
-    // Model/effort are per-turn choices within the same account and workspace.
-    // Legacy hashes can upgrade only while the original model still matches.
     const binding = createHash("sha256").update(JSON.stringify({
       workspace: config.workspace,
       codexHome: config.codexHome,
@@ -396,9 +601,7 @@ export class Homer {
     })).digest("hex");
     const savedBinding = this.store.meta("binding");
     const version = this.store.meta("bindingVersion");
-    if (savedBinding && (version === undefined
-      ? savedBinding !== legacyBinding
-      : version !== "2" || savedBinding !== binding)) {
+    if (savedBinding && (version !== "2" || savedBinding !== binding)) {
       this.store.close();
       this.unlock();
       throw new Error("runtime_configuration_changed");
@@ -428,9 +631,9 @@ export class Homer {
       this.tasks=new RecursiveTasks(this.store,this.files,{
         operationConfirmed:(actor,key,kind,response)=>this.recordWorkerDelegation(actor,key,kind,response),
         validateActor:actor=>{if(!actor.runId&&!this.hostActors.has(actor)&&this.mainContext)this.validateMainContext(this.mainContext);},
-        validateFileRead:path=>this.validateTaskFileRead(path),
+        validateFileRead:path=>this.taskFileGuard()(path),
         reviewExitConfirmed:run=>!this.workers.has(run.id)&&!this.store.meta('lease:'+run.id),
-        validateAttachments:(source,refs)=>this.validateTaskAttachments(source,refs),
+        validateWorkerAttachment:(ref,messageId)=>this.validateAttachmentGrant(ref,messageId),
       });
       this.tasks.migrate();
       if(config.pauseOldDesktopWork)this.tasks.reconcile(true);
@@ -450,12 +653,21 @@ export class Homer {
         mutation:scope=>{if(scope.readEpoch!==undefined&&scope.readEpoch!==this.webReadEpoch)throw Error('history_epoch_changed');},
       },config.pauseOldDesktopWork?{pausedThroughSeq:Number(this.store.db.prepare('SELECT coalesce(max(seq),0) n FROM agent_messages').get()!.n),pausedThroughProcessSeq:Number(this.store.meta('publicMainNodeSeq:v1')??0)}:undefined);
       if(!config.pauseOldDesktopWork){this.media.gc();this.mediaGcTimer=setInterval(()=>{try{this.media.gc();}catch(error){this.store.event(null,'media_gc_failed',engineError(error));}},3600000);this.mediaGcTimer.unref();}
-      this.pendingTools=new PendingTools(this.tasks);
       this.recursiveTools=new RecursiveTools(this.tasks,{
         rootWorkingDirectory:()=>this.store.meta('mainWorkingDirectory')??this.config.workspace,
-        currentTaskId:()=>this.mainContext?.workerInput?.taskId??undefined,
-        rootAuthority:(actor,pendingIds)=>pendingIds?this.selectedAuthority(actor,pendingIds):this.rootAuthority(actor),
-        wake:()=>{this.pump();this.scheduleInternal();this.scheduleDelivery();},
+        rootAuthority:actor=>this.rootAuthority(actor),
+        prepareAttachments:(_actor,_key,_inputs,scope)=>{
+          const key='stage:'+scope.operationId;
+          const row=this.store.db.prepare("SELECT responseJson FROM operations WHERE id=? AND state='accepted'").get(key);
+          if(!row?.responseJson)throw Error('message_not_committed');
+          const refs=JSON.parse(String(row.responseJson)) as AttachmentRef[];
+          this.media.validateAttachments(refs);
+          this.commitAttachments(key,refs,scope.messageId);
+          return refs;
+        },
+        readMessage:(actor,messageId)=>this.readUserMessage(messageId,actor),
+        sendUserMessage:(actor,input)=>this.sendUserMessage(actor,input),
+        wake:()=>{this.pump();this.scheduleInternal();},
         stop:receipt=>this.applyStop(receipt),
         steer:receipt=>this.applySteer(receipt),
       });
@@ -487,12 +699,12 @@ export class Homer {
   }
   private async emit(message: Message) {
     this.invalidateState();
-    if (["delivery", "question", "error"].includes(message.type) && !message.deliveryId && this.store.meta("mainThread"))
+    if (["question", "error"].includes(message.type) && this.store.meta("mainThread"))
       this.history.add(this.store.meta("mainThread")!, message.text, message.type === "error" ? "failed" : "completed");
     try {
       await this.sink(message);
     } catch {
-      if (message.type === "reply" || message.type === "delivery")
+      if (message.type === "reply")
         throw new Error("cli_output_unconfirmed");
     }
   }
@@ -506,17 +718,16 @@ export class Homer {
     }
   }
   private createMain(cwd:string,savedThread?:string):EngineLike{
-    const catalog=HOST_MCP_TOOLS;
     const engine = this.engine(
       {
         cwd,
         readRoots: [cwd],
-        instructions: this.prompts.main + (usesHomerNativeHome(this.config)?"\n默认工作目录："+cwd+"。Worker 可选择项目目录，Run目录存放可供采纳的文件。":""),
-        tools: [...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS],
-        nativeCapabilities:usesHomerNativeHome(this.config),
-        ...(usesHomerNativeHome(this.config)?{nativeTools:"main" as const,permissionRequests:true,onInteraction:(request:NativeRequest)=>{if(this.main!==engine)throw Error('interaction_not_live');return this.openMainNativeInteraction(request);}}:{}),
+        instructions: this.prompts.main + "\n默认工作目录："+cwd+"。Worker 可选择获准的项目目录。",
+        tools: [...MAIN_TOOLS,...RECURSIVE_TOOLS],
+        nativeCapabilities:true,
+        nativeTools:"main",permissionRequests:true,onInteraction:(request:NativeRequest)=>{if(this.main!==engine)throw Error('interaction_not_live');return this.openMainNativeInteraction(request);},
         threadId: savedThread,
-        interactionMcp: { ...this.mcpOptions(this.interactionMcp!), catalog },
+        interactionMcp: this.mcpOptions(this.interactionMcp!),
       },
       (c) => {if(this.main!==engine)throw Error('tool_scope_denied');return this.mainActivity(c.tool,()=>this.mainTool(c),c.arguments);},
     );
@@ -581,11 +792,12 @@ export class Homer {
     engine.on('agentMessage', value=>{
       const context=this.mainContext;
       if(this.main!==engine||!context?.processId||value.threadId!==this.main?.threadId||value.turnId!==this.main?.turnId)return;
+      if(context.explicitSent&&value.phase!=='commentary')return;
       this.processes.agent(context.processId,value);this.invalidateState();
     });
     engine.on("textDelta", (value: { threadId: string; turnId: string; delta: string }) => {
       const context = this.mainContext;
-      if (this.main!==engine || !context?.generation || typeof value.delta !== "string" ||
+      if (this.main!==engine || !context?.generation || context.explicitSent || typeof value.delta !== "string" ||
         value.threadId !== context.generation.threadId || value.turnId !== context.generation.turnId) return;
       this.history.append(context.generation.messageId, value.delta);
       this.emitMain(context, { type: "delta", text: value.delta, messageId: context.messageId, requestId: context.requestId });
@@ -615,6 +827,9 @@ export class Homer {
         }
         else this.store.db.prepare("DELETE FROM meta WHERE key=?").run(lease.key);
       }
+      this.tasks.recoverWorkerOperations();
+      const stages=this.store.db.prepare("SELECT id FROM operations WHERE kind IN ('attachment_stage','send_user_message') AND state='accepted'").all();
+      for(const row of stages)this.abandonMessageOperation(String(row.id));
       // No original turn terminal survived: preserve the node and disclose the gap.
       if(!this.config.pauseOldDesktopWork){
         if(this.store.meta('mainThread'))this.processes.reconcileUnknown(this.store.meta('mainThread')!,true);
@@ -625,14 +840,13 @@ export class Homer {
         this.store.db.prepare("UPDATE requests SET state='interrupted' WHERE state='started'").run();
       }
       const cwd = canonicalDir(this.store.meta("mainWorkingDirectory")??this.config.workspace);
-      const toolsHash = createHash("sha256").update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS])).digest("hex");
+      const toolsHash = createHash("sha256").update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest("hex");
       const savedThread = this.store.meta("mainThread");
       if(!savedThread&&automaticFirstLaunch(this.config)){try{seedFirstLaunchSkills(capabilityHome(this.config));}catch(error){this.store.event(null,'first_launch_seed_failed',engineError(error));}}
       const sameTools = this.store.meta("mainToolsHash")===toolsHash;
       if (savedThread && !sameTools)
         throw new Error("main_tools_migration_required");
-      const catalog=HOST_MCP_TOOLS;
-      this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args) => this.mainActivity(tool,()=>EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):tool==="capabilities"?this.manageCapabilities(args,"agent"):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):this.interactionTool(tool, args),args),catalog);
+      this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args) => this.mainActivity(tool,()=>isMembershipTool(tool)?this.membershipTool(tool,args):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):tool==="capabilities"?this.manageCapabilities(args,"agent"):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):this.interactionTool(tool, args),args),hostMcpTools('main',!!this.membershipTools));
       await this.interactionMcp.start();
       this.main = this.createMain(cwd,savedThread);
       attemptMain=this.main;
@@ -650,7 +864,7 @@ export class Homer {
         if (!savedThread) this.store.setMeta("mainToolsHash", toolsHash);
         if(!savedThread&&automaticFirstLaunch(this.config))this.store.setMeta('firstLaunchRequestId','first-launch-'+randomUUID());
       });
-      this.scheduleDelivery();
+
       this.scheduleInputs();
       this.scheduleInternal();
       this.pump();this.drainMain();
@@ -705,21 +919,10 @@ export class Homer {
         ...r,
         usage: usage ? JSON.parse(usage) : null,
       })),
-      materials: this.files.listMaterials(),
       activeWorkers: this.workers.size,
       interactions: this.interactions.list(),
       tasks:this.tasks.tasks(),
-      deliveries:this.tasks.deliveries(),
     };
-  }
-  previewArtifact(id:string){
-    const verified=id.startsWith('result-')?this.tasks.publishedResult(id):this.tasks.publishedArtifact(id);
-    if(!verified)throw Error('artifact_not_authorized');
-    const file=this.files.resultBytes(dirname(verified.path),verified.path);
-    if(file.sha256!==verified.sha256)throw Error('result_hash_mismatch');
-    const filename=verified.filename;
-    const mime=file.mime==='application/octet-stream'&&/\.html?$/i.test(filename)&&isUtf8(file.data)?'text/html; charset=utf-8':file.mime;
-    return {filename,content:verified.content,data:file.data.toString('base64'),mime,sha256:file.sha256};
   }
   private validateResourceReference(threadId:string,input:ConversationInput,reference:ResourceReference){
     const source=reference.source;
@@ -729,7 +932,7 @@ export class Homer {
       if(!link||link.url!==source.url||link.title!==source.title)throw Error('preview_source_mismatch');
       return;
     }
-    const file=this.previewArtifact(source.id);
+    const file=this.readAttachment(source);
     if(file.sha256!==source.sha256||file.filename!==source.title)throw Error('preview_source_mismatch');
     if(reference.kind==='text'){
       const bytes=Buffer.from(file.data,'base64');
@@ -842,7 +1045,7 @@ export class Homer {
       this.store.finishRequest(requestId,reply);this.history.finish(replyId,reply,uncertain?'interrupted':replyStatus);
       if(uncertain)this.inputs.uncertainInTransaction(queued.messageId,queued.revision);
       else this.inputs.finishInTransaction(queued.messageId,queued.revision,replyStatus);
-      if(failureNotice||!context.processId||!this.processes.exact(context.processId))
+      if(!context.explicitSent&&(failureNotice||!context.processId||!this.processes.exact(context.processId)))
         this.history.record('input-outcome:'+replyId,this.store.meta('mainThread')!,failureNotice??reply,uncertain?'interrupted':replyStatus,requestId);
     });
     if(context.generation){
@@ -861,7 +1064,7 @@ export class Homer {
     await context.output;
     this.receptionTimings?.mark('output_wait_end',timing);
     this.receptionTimings?.mark('reply_delivery_start',timing);
-    await this.emit({type:'reply',text:reply,requestId});
+    if(!context.explicitSent)await this.emit({type:'reply',text:reply,requestId});
     this.receptionTimings?.mark('reply_delivery_end',timing);
     if(replyStatus==='completed'&&!uncertain&&queued.source!=='first_launch'){
       this.inputs.resumeWorkerMessages();
@@ -881,7 +1084,7 @@ export class Homer {
         try{this.tasks.completeMainMessagesInTransaction(context.workerMessages.map(message=>message.id),this.main.turnId);}
         catch(error){if(!(error instanceof Error&&error.message==='coordination_operations_unresolved'))throw error;status='unknown';context.publicText??='本次协调的操作结果尚未确认，原始消息和回执已保留。';}
       }
-      this.processes.finish(context.processId,status,context.terminalConfirmed?context.processEndEventId:undefined,context.publicText);
+      this.processes.finish(context.processId,status,context.terminalConfirmed?context.processEndEventId:undefined,context.explicitSent?undefined:context.publicText);
       const node=this.processes.exact(context.processId);
       if(node?.state==='worked'){const prior=this.history.message(node.messageId);this.history.finish(node.messageId,node.final?.text??prior?.text??'',status==='unknown'?'interrupted':status);}
       this.store.db.exec('COMMIT');
@@ -895,22 +1098,17 @@ export class Homer {
     }
     context.output = (context.output ?? Promise.resolve()).then(() => this.emit(message));
   }
-  private validateTaskAttachments(source:string,refs:readonly import('./media-store.js').AttachmentRef[]){
-    try{this.media.validate(source,refs);}catch(error){
-      if(error instanceof Error&&['media_asset_not_found','media_scope_denied','media_attachment_limit','media_message_size_limit'].includes(error.message))throw new AttachmentInputError('task_authority_input_denied');
-      throw error;
-    }
-  }
   private async mainActivity<T>(tool:string,work:()=>Promise<T>,args?:unknown):Promise<T>{
     const context=this.mainContext,label=progressLabel(tool),generation=context?.generation;
     if(!context||this.closing)return work();
     const endLabel:MainProgress['label']=label;
     let publicFact:PublicActivity|undefined;
-    const content:ToolContent={input:captureToolValue(args),output:{state:'pending'}};
+    const privateMedia=tool==='generate_image'||tool==='generate_video';
+    const content:ToolContent={input:captureToolValue(privateMedia?undefined:args),output:{state:'pending'}};
     const invoke=async()=>{
       try{
         const result=await work();
-        content.output=captureToolValue(result);
+        content.output=captureToolValue(privateMedia?undefined:result);
         try{
           if(tool==='inspect_attachment'){
             const a=args as {assetId?:string;revision?:number},r=result as {extraction?:{state?:string}};
@@ -929,9 +1127,7 @@ export class Homer {
       finally{this.processes.tool(context.processId,{...activity,label:endLabel,phase:'end',status,toolName:tool,content,...(publicFact?{activity:publicFact}:{})});}
     }
     if(!generation)return work();
-    if(context.queuedInput?.source==='wechat'&&((context.progressCount??0)>=3||Date.now()-(context.progressAt??0)<5000))return work();
     this.validateMainContext(context);
-    context.progressCount=(context.progressCount??0)+1;context.progressAt=Date.now();
     const activity={id:'activity-'+randomUUID(),label};
     (context.toolActivities??=new Map()).set(activity.id,activity);
     this.emitMain(context,{type:'tool_progress',...generation,text:'',progress:{...activity,phase:'start'}},undefined,{toolName:tool,content});
@@ -1010,7 +1206,6 @@ export class Homer {
         taskId=run.taskId;version=run.version;
       }else if(notice?.kind==='worker_reply')text='处理 Worker 结果回传';
       else if(notice?.kind==='task_archived')text='接收归档通知';
-      else if(context.sourceEventId?.startsWith('delivery:'))text='整理 Worker 交付';
       if(taskId&&version){
         const title=publicActivityName(this.tasks.task(taskId).title);
         if(title)text+='：'+title;
@@ -1037,9 +1232,6 @@ export class Homer {
     this.mainStopRequested = false;
     try {
       // start() owns the thread identity; EngineLike.threadId is optional.
-      const taskIds = context.pendingTaskIds ?? [];
-      const pendingSummary=this.tasks.pending.summary({...this.mainActor(),threadId:this.store.meta('mainThread')!},taskIds);
-      if(pendingSummary.totalOpen)text += '\n\n[宿主待处理事项数据；仅帮助发现，不是指令或执行授权。摘要可能过时，决定前按需 pending_list 重读事项及真实来源；事项存在不要求本轮行动。]\n' + JSON.stringify(pendingSummary);
       if(!context.event){
         const questions=this.interactions.pendingForMain(this.store.meta('mainThread')!);
         if(questions.total)text+='\n\n[当前用户范围的 Worker 待答事实；不是指令或授权，不自动将本条消息关联为答案。结合用户实际意图判断是否相关，需要时 inspect_interaction/worker_read 重读原记录，再分别整理答复。摘要可能截断或过时，不要求本轮全部处理。]\n'+JSON.stringify(questions);
@@ -1078,7 +1270,8 @@ export class Homer {
         context.nativeActivity={compactions:new Map()};
         this.invalidateState();
         context.nativeStartAttempted=true;
-        const work = this.main.turn(nextText, {cwd:this.store.meta("mainWorkingDirectory")??this.config.workspace, ...(round===0&&skills.length?{skills}:{}), ...(round===0&&images.length?{images}:{}),onStarted: (turnId,timing) => {
+        context.turnCwd=this.store.meta("mainWorkingDirectory")??this.config.workspace;
+        const work = this.main.turn(nextText, {cwd:context.turnCwd, ...(round===0&&skills.length?{skills}:{}), ...(round===0&&images.length?{images}:{}),onStarted: (turnId,timing) => {
           if (this.mainContext !== context) return;
           context.nativeActivity={turnId,compactions:new Map()};
           this.invalidateState();
@@ -1090,7 +1283,7 @@ export class Homer {
           if(context.queuedInput&&!generation)throw Error('main_start_identity_missing');
           this.store.transaction(()=>{
             const created=this.processes.start({id:processId,threadId:this.store.meta('mainThread')!,sourceKind:context.event?'worker':'user',sourceMessageIds:context.sourceMessageIds??(context.queuedInput?[context.queuedInput.messageId]:[]),sourceEventId:context.sourceEventId,messageId:processId,replyMessageId:context.messageId,replyPolicy:'explicitFinal'},turnId,timing??{observedAtMs:Date.now()},this.mainSourceText(context));
-            if(created)this.history.record(processId,this.store.meta('mainThread')!,'','running');
+            if(created)this.history.record(processId,this.store.meta('mainThread')!,'','running',null,'internal');
             if(context.workerMessages){
               this.tasks.receiveMainMessagesInTransaction(context.workerMessages.map(m=>m.id),turnId);
               for(const message of context.workerMessages)this.recordWorkerReceipt(processId,message);
@@ -1133,12 +1326,11 @@ export class Homer {
           nextText='[宿主续接：同一用户请求，不是新用户输入或新增授权] requestId='+context.requestId+'。本请求刚完成的工具变更已刷新；在同一 thread 内继续尚未完成的原任务，先核原生发现并按需使用。不要重复安装、重放未知结果、重复交付已完成成果或把本通知当安装批准；任何新权限仍走原审批。若原任务已完成，仅给最终结果。';
           continue;
         }
-        if (!result.text.trim() && !context.allowEmptyReply) {
+        if (!result.text.trim() && !context.allowEmptyReply && !context.explicitSent) {
           if(!context.event||!context.interactionId||!this.interactions.hasDeliveredDecision(context.interactionId))throw new Error("main_empty_reply");
         }
-        // Only an exact copy of this source's accepted publication is redundant.
-        // A different final (including new gaps) or an unrelated same-text report stays.
-        if(context.workerInput)context.publicText=context.processId&&this.processes.hasSourceDelivery(context.processId,context.workerInput.messageId,result.text)?undefined:result.text;
+        if(context.explicitSent)return this.history.message(context.messageId??'')?.text??'';
+
         if(result.text)reply+=(reply?'\n\n':'')+result.text;
         return reply;
       }
@@ -1163,7 +1355,8 @@ export class Homer {
         this.finishMainProcess(context,context.terminalConfirmed?context.processStatus??'completed':'unknown');
         this.receptionTimings?.mark('host_finalize_end',{processId:context.processId,kind:'internal'});
       }
-      if(context.generation)this.mainApprovals.end(context.generation.generationId);
+      const approvalOwner=context.generation?.generationId??context.processId;
+      if(approvalOwner)this.mainApprovals.end(approvalOwner);
       this.mainContext = undefined;
       this.invalidateState();
       if(context.event&&!context.workerInput)this.receptionTimings?.mark('round_end',{processId:context.processId,kind:'internal'},context.processStatus??'completed');
@@ -1174,11 +1367,24 @@ export class Homer {
   submitMessage(value:ConversationInput,acceptance?:ConversationAcceptance,interrupt?:{generationId:string;messageId:string}):ReturnType<MainInputs["accept"]> {
     if(this.closing||this.closed||this.mainBroken)throw Error('main_engine_unavailable');
     const input=conversationInput(value);
-    if(input.interactionId&&this.mainApprovals.owns(input.interactionId)){if(interrupt)throw Error("interaction_scope_denied");const accepted=this.mainApprovals.respond(input.interactionId,input,acceptance);if(accepted.fresh&&acceptance?.source!=='first_launch')this.invalidateState('user-input');return accepted;}
-    if(input.attachments?.length&&acceptance?.source!=='wechat'){
+    if(input.interactionId&&this.mainApprovals.owns(input.interactionId)){
+      if(interrupt||acceptance&&this.interactions.inspect(input.interactionId).details.method===VIDEO_APPROVAL_METHOD)throw Error('interaction_scope_denied');
+      const accepted=this.mainApprovals.respond(input.interactionId,input,acceptance);if(accepted.fresh&&acceptance?.source!=='first_launch')this.invalidateState('user-input');return accepted;
+    }
+    if(input.attachments?.length){
       if(acceptance)throw Error('media_source_required');
       this.media.validate(input.requestId,input.attachments);
       if(input.attachments.some(ref=>this.media.asset(ref).bindingId!=='web:'+this.store.meta('mainThread')))throw Error('media_source_required');
+    }
+    const interaction=input.interactionId?this.interactions.inspect(input.interactionId):undefined;
+    if(interaction?.kind==='authorization'&&interaction.details.review){
+      if(interrupt)throw Error('interaction_scope_denied');
+      const decision=approvalDecision(interaction,input);
+      const prior=acceptance;
+      acceptance={source:prior?.source??'native_approval',persist:receipt=>{
+        if(receipt.fresh)this.interactions.recordUserDecision(interaction.id,decision,input.requestId,input.text);
+        prior?.persist(receipt);
+      }};
     }
     const accepted=this.inputs.accept(input,acceptance,interrupt);
     if(accepted.fresh&&acceptance?.source!=='first_launch')this.invalidateState('user-input');
@@ -1267,11 +1473,12 @@ export class Homer {
     const threadId=this.store.meta('mainThread');
     if(!threadId)return {observedAtMs:Date.now(),threadId:'',modelFailure:undefined,processNodes:[],...projectConversation([],[],[]),acceptedRequestIds:[],conversationView:3 as const,isRunning:false,activeMessageId:null,generation:null,mainActivity:null,usage:null};
     const processNodes=this.processes.list(threadId),history=this.history.list(threadId).map(message=>({...message,...(message.attachments?{media:message.attachments.map(ref=>this.media.view(ref))}:{})}));
-    const display=projectConversation(history,processNodes,this.inputs.list());
-    return {observedAtMs:Date.now(),threadId,processNodes,...display,modelFailure:this.modelFailure,acceptedRequestIds:this.history.acceptedRequestIds(threadId),conversationView:3 as const,isRunning:!!this.mainContext?.messageId,activeMessageId:this.mainContext?.messageId??null,generation:this.mainContext?.generation??null,mainActivity:this.mainActivityState(),usage:nativeTokenUsage(JSON.parse(this.store.meta('mainUsage')??'null'))};
+    const display=projectConversation(history,processNodes,this.inputs.list()),activeMessageId=this.activeMainMessageId();
+    return {observedAtMs:Date.now(),threadId,processNodes,...display,modelFailure:this.modelFailure,acceptedRequestIds:this.history.acceptedRequestIds(threadId),conversationView:3 as const,isRunning:!!activeMessageId,activeMessageId,generation:this.mainContext?.generation??null,mainActivity:this.mainActivityState(),usage:nativeTokenUsage(JSON.parse(this.store.meta('mainUsage')??'null'))};
   }
   conversationControlState(){
-    return {observedAtMs:Date.now(),modelFailure:this.modelFailure,isRunning:!!this.mainContext?.messageId,activeMessageId:this.mainContext?.messageId??null,generation:this.mainContext?.generation??null,mainActivity:this.mainActivityState(),usage:nativeTokenUsage(JSON.parse(this.store.meta('mainUsage')??'null'))};
+    const activeMessageId=this.activeMainMessageId();
+    return {observedAtMs:Date.now(),modelFailure:this.modelFailure,isRunning:!!activeMessageId,activeMessageId,generation:this.mainContext?.generation??null,mainActivity:this.mainActivityState(),usage:nativeTokenUsage(JSON.parse(this.store.meta('mainUsage')??'null'))};
   }
 
   private mainActivityState():import('./web-contract.js').MainActivity|null{
@@ -1294,14 +1501,51 @@ export class Homer {
     const body=typeof payload.text==='string'?payload.text.trim().slice(0,640):'';
     this.processes.workerEvent(processId,{eventKey:'worker-reply:'+source.id,eventKind:'reply_received',title:this.tasks.task(run.taskId).title.slice(0,80),body:body||'Worker 已结束本轮，未提供正文。',bodySource:body?'reply':'missing',taskId:run.taskId,version:run.version,runId:run.id,sourceMessageId:String(source.id),operationKey:null,observedAtMs:Date.now()});
   }
-  readAttachment(input:{messageId:string;assetId:string;revision:number}){
-    const message=this.history.byIds(this.store.meta('mainThread')!,[input.messageId]).find(m=>m.role==='user');
-    if(!message?.requestId||!message.attachments?.some(ref=>ref.assetId===input.assetId&&ref.revision===input.revision))throw Error('media_scope_denied');
-    const {asset,bytes}=this.media.read(message.requestId,input),preview=asset.kind==='voice'?this.media.previews(message.requestId,input,'audio/wav')[0]:undefined;return {filename:preview?asset.filename+'.wav':asset.filename,mime:preview?.mime??asset.mime!,data:(preview?.bytes??bytes).toString('base64')};
+  private readUserMessage(messageId:string,actor?:Actor){
+    const message=this.history.message(messageId);
+    if(!message||message.threadId!==this.store.meta('mainThread')||message.audience!=='user'||message.revokedAt!=null||
+      (message.role==='assistant'?message.status!=='completed':message.status==='cancelled'))
+      throw Error('media_scope_denied');
+    if(actor&&message.role==='user'&&message.status!=='completed'&&message.requestId!==this.mainContext?.requestId)throw Error('media_scope_denied');
+    if(actor&&this.mainContext?.event){
+      const taskId=this.mainContext.workerInput?.taskId, source=this.rootAuthority(actor)?.sourceRequestId;
+      if(!(taskId&&message.taskId===taskId)&&!(source&&message.requestId===source))throw Error('media_scope_denied');
+    }
+    return message;
+  }
+  attachmentMessage(input:AttachmentRef&{messageId:string}){
+    const message=this.readUserMessage(input.messageId);
+    if(!message.attachments?.some(ref=>ref.assetId===input.assetId&&ref.revision===input.revision))throw Error('media_scope_denied');
+    if(message.role==='user'){
+      if(!message.requestId)throw Error('media_scope_denied');
+      this.media.validate(message.requestId,[input]);
+    }
+    this.validateAttachmentGrant(input,message.id);
+    return message;
+  }
+  readAttachment(input:AttachmentRef&{messageId:string;preview?:'voice'}){
+    this.attachmentMessage(input);
+    const {asset,bytes}=this.media.readAttachment(input);
+    const preview=input.preview==='voice'&&asset.kind==='voice'?this.media.previewsAttachment(input,'audio/wav')[0]:undefined;
+    if(preview)return {filename:asset.filename+'.wav',mime:preview.mime,data:preview.bytes.toString('base64')};
+    return {filename:asset.filename,mime:asset.mime!,data:bytes.toString('base64'),sha256:asset.hash!};
+  }
+  revealAttachment(input:AttachmentRef&{messageId:string}){
+    this.attachmentMessage(input);
+    return attachmentRevealTarget(this.store.db,this.media.readAttachment(input),path=>this.readLocalAttachment(path));
+  }
+  private activeMainMessageId() {
+    const context=this.mainContext;
+    return context?.messageId??(context?.workerInput?.kind==='task_archived'&&context.processId&&this.mainApprovals.pending(context.processId)?context.processId:null);
   }
   async stopMain(messageId:string){
-    if(!this.mainContext?.messageId||this.mainContext.messageId!==messageId||!this.main)throw Error('main_reply_not_active');
-    this.mainStopRequested=true;this.mainContext.stopRequested=true;await this.main.interrupt();return {requested:true};
+    const context=this.mainContext;
+    if(!context||this.activeMainMessageId()!==messageId||!this.main)throw Error('main_reply_not_active');
+    this.mainStopRequested=true;context.stopRequested=true;
+    const stopping=this.main.interrupt();
+    if(context.event)this.mainApprovals.end(messageId);
+    this.invalidateState();
+    await stopping;return {requested:true};
   }
   private async mainTool(call: ToolCall): Promise<unknown> {
     const context=this.mainContext;
@@ -1309,13 +1553,12 @@ export class Homer {
     this.validateMainContext(context);
     if(call.tool==='list_work'){validateToolArguments(call.arguments,MAIN_TOOLS.find(tool=>tool.name==='list_work')!.inputSchema);return this.tasks.listTasks(this.mainActor(),object(call.arguments));}
     if(MAIN_INTERACTION_TOOLS.some(tool=>tool.name===call.tool))return this.interactionTool(call.tool,call.arguments);
-    if(PENDING_TOOLS.some(tool=>tool.name===call.tool))return this.pendingTool(call.tool,call.arguments,call.callId);
     if(EXECUTION_TOOLS.some(tool=>tool.name===call.tool))return this.executionTool(this.mainActor(),call.tool,call.arguments);
     if(RECURSIVE_TOOLS.some(tool=>tool.name===call.tool))return this.recursiveTool(this.mainActor(),call.tool,call.arguments,call.callId);
     throw Error('main_tool_denied');
   }
   private validateMainContext(context:MainContext) {
-    if(this.mainContext!==context||this.closing)throw Error('tool_scope_denied');
+    if(this.mainContext!==context||this.closing||context.stopRequested)throw Error('tool_scope_denied');
   }
   private async interactionTool(tool: string, args: unknown): Promise<unknown> {
     const context = this.mainContext;
@@ -1325,15 +1568,18 @@ export class Homer {
     if(this.mainApprovals.owns(id))throw Error("main_native_user_decision_required");
     if (tool === "inspect_interaction") {
       (context.inspectedInteractions ??= new Set()).add(id);
-      return { ...item, run: this.store.run(item.runId), hostCapabilities: "Worker在事项契约目录执行普通文件、测试、构建和联网；Run目录用于正式产物。审批依据真实用户任务与具体操作，涉及设备数据安全时请用户决定。主Agent不能批准本人请求。" };
+      return { ...item, run: this.store.run(item.runId), hostCapabilities: "Worker在事项契约目录执行普通文件、测试、构建和联网；Run目录用于附件导出。审批依据真实用户任务与具体操作，涉及设备数据安全时请用户决定。主Agent不能批准本人请求。" };
     }
     if (!context.inspectedInteractions?.has(id)) throw new Error("interaction_inspection_required");
     if(item.state==='pending_main'&&context.interactionId!==id){
       const blocked=!context.event&&this.store.db.prepare("SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.recipientAgentId=? AND m.kind='interaction_required' AND json_extract(m.payloadJson,'$.interactionId')=? AND r.state='blocked'").get(this.store.meta('mainAgentId')!,id);
       if(!blocked)throw Error('message_not_claimed');
     }
-    if (tool === "escalate_interaction")
-      return { interactionId: id, ...this.interactions.escalate(id, string(a.question, 4000), string(a.reason, 2000)), waitingFor: "user" };
+    if (tool === "escalate_interaction") {
+      if(item.responseUserMessageId)throw Error('interaction_already_resolved');
+      const question=string(a.question,4000),reason=string(a.reason,2000);
+      return {interactionId:id,...this.interactions.escalate(id,typeof item.details.review==='string'?item.details.review:question,typeof item.details.reviewReason==='string'?item.details.reviewReason:reason),waitingFor:'user'};
+    }
     if (tool !== "respond_interaction") throw new Error("interaction_tool_denied");
     const action = string(a.action, 20);
     if (!["approve", "deny", "answer"].includes(action)) throw new Error("interaction_response_kind");
@@ -1352,13 +1598,25 @@ export class Homer {
       decision.answers = Object.fromEntries(values);
     }
     if (a.permissions != null) decision.permissions = object(a.permissions);
-    const result = this.interactions.respond(id, decision, context.event ? {} : { userMessageId: context.requestId, userText: context.userText });
+    const currentInput=context.queuedInput?.input;
+    const recorded=item.details.review&&item.responseUserMessageId&&currentInput?.requestId!==item.responseUserMessageId
+      ? this.inputs.byRequestIds([item.responseUserMessageId])[0] : undefined;
+    const reply=recorded&&!['queued','processing'].includes(recorded.state)?recorded.input:currentInput;
+    const associated=reply?.interactionId===id&&reply.requestId===item.responseUserMessageId;
+    if(item.details.review&&associated){
+      const userDecision=approvalDecision(item,reply);
+      if(decision.action==='approve'&&decision.permissions===undefined&&userDecision.permissions!==undefined)decision.permissions=userDecision.permissions;
+      if(decision.action==='deny'&&userDecision.action==='cancel')decision.action='cancel';
+    }
+    const receipt=item.details.review?(associated?{userMessageId:reply.requestId,userText:reply.text}:{})
+      :context.event?{}:{userMessageId:context.requestId,userText:context.userText};
+    const result=this.interactions.respond(id,decision,receipt);
     this.store.event(item.runId, "interaction_decided", decision.action);
     return { interactionId: id, ...result, state: this.interactions.inspect(id).state };
   }
   private async openNativePluginInteraction(request:NativeRequest,worker?:WorkerSlot){
     const context=this.mainContext;
-    const guard=()=>{if(this.closing||!usesHomerNativeHome(this.config))throw Error('tool_scope_denied');if(worker){if(!this.liveNativeInteraction(worker,request))throw Error('interaction_not_live');}else{if(!context?.generation||context.event||this.mainContext!==context||context.generation.threadId!==request.threadId||context.generation.turnId!==request.turnId||request.isCurrent?.()===false)throw Error('interaction_not_live');this.validateMainContext(context);}};
+    const guard=()=>{if(this.closing||!usesHomerNativeHome(this.config))throw Error('tool_scope_denied');if(worker){if(!this.liveNativeInteraction(worker,request))throw Error('interaction_not_live');}else{const scope=context?.generation??this.archiveApprovalScope(context);if(!context||!scope||context.stopRequested||this.mainContext!==context||scope.threadId!==request.threadId||scope.turnId!==request.turnId||request.isCurrent?.()===false)throw Error('interaction_not_live');this.validateMainContext(context);}};
     guard();const manager=this.nativeCapabilities(),meta=request.details._meta as any;
     const directory=await manager.rpc('plugin/list',{cwds:[join(manager.home,'homer-control')]});guard();
     const matches=(directory.marketplaces??[]).flatMap((market:any)=>(market.plugins??[]).filter((p:any)=>p.id===meta.tool_id||p.remotePluginId===meta.tool_id).map((plugin:any)=>({plugin,market})));
@@ -1366,23 +1624,38 @@ export class Homer {
     const {plugin,market}=matches[0],target={pluginName:plugin.name,...(market.path?{marketplacePath:market.path}:{remoteMarketplaceName:market.name})};
     const detail=await manager.manage({action:'plugin_read',target},'agent',guard),state=await manager.manage({action:'state'},'agent',guard);guard();
     const identity=(worker?'workerplugin:'+worker.id+':':'mainplugin:')+JSON.stringify(request.requestId);
-    const result=await this.approveCapabilityOperation({action:'plugin_install',operationId:'native-'+createHash('sha256').update(identity).digest('hex').slice(0,32),target,reviewHash:detail.reviewHash,expectedVersion:state.version},guard,context,worker,identity);
+    const result=await this.approveCapabilityOperation({action:'plugin_install',operationId:'native-'+createHash('sha256').update(identity).digest('hex').slice(0,32),target,reviewHash:detail.reviewHash,expectedVersion:state.version},guard,context,worker,request);
     if (result.saved === true) return {status:'approved' as const,decision:{action:'approve' as const,reason:'用户批准所示插件且原生安装已返回成功。'}};
     if (result.status === 'expired' || result.status === 'cancelled') return {status:result.status,code:result.code};
     if (result.status === 'denied') return {status:'denied' as const,decision:{action:'deny' as const,reason:'用户未批准本次插件安装。'}};
     throw Error('interaction_plugin_install_unavailable');
   }
+  private archiveApprovalScope(context:MainContext|undefined) {
+    const input=context?.workerInput,turnId=context?.nativeActivity?.turnId,threadId=this.main?.threadId;
+    if(!context?.event||!context.processId||!turnId||!threadId||this.main?.turnId!==turnId||
+       input?.senderAgentId!=='host'||input.kind!=='task_archived'||!input.taskId||!input.taskVersion)return;
+    const task=this.tasks.task(input.taskId);
+    if(task.headVersion!==input.taskVersion||task.controlState!=='normal'||task.state!=='settled'||task.historyState!=='archived')return;
+    const authority=this.tasks.authority(task.id,task.headVersion);
+    try{this.tasks.validateAuthority(this.mainActor(true),authority);}catch{return;}
+    return {generationId:context.processId,threadId,turnId,sourceRequestId:authority.sourceRequestId,userText:authority.description};
+  }
   private openMainNativeInteraction(request:NativeRequest){
     if(request.method==="mcpServer/elicitation/request"&&(request.details._meta as any).codex_approval_kind==='tool_suggestion')return this.openNativePluginInteraction(request);
-    const context=this.mainContext,generation=context?.generation;
-    if(!generation||context?.event||this.closing||!usesHomerNativeHome(this.config))throw Error("interaction_scope_denied");
+    const context=this.mainContext,scope=context?.generation??(request.kind==='authorization'?this.archiveApprovalScope(context):undefined);
+    if(!context||!scope||context.stopRequested||this.closing||!usesHomerNativeHome(this.config))throw Error("interaction_scope_denied");
     this.validateMainContext(context);
-    const opened=this.mainApprovals.open(request,{...generation,userText:context.userText??"",isCurrent:()=>!this.closing&&this.mainContext===context&&this.main?.threadId===generation.threadId&&this.main?.turnId===generation.turnId&&(request.isCurrent?.()??true),protectedRoots:this.protectedExecutionPaths(),skillWriteRoot:join(this.config.codexHome,'skills')});
+    const opened=this.mainApprovals.open(request,{...scope,userText:context.userText??('userText' in scope?String(scope.userText):''),isCurrent:()=>!this.closing&&!context.stopRequested&&this.mainContext===context&&this.main?.threadId===scope.threadId&&this.main?.turnId===scope.turnId&&(!context.event||!!this.archiveApprovalScope(context))&&(request.isCurrent?.()??true),protectedRoots:this.protectedExecutionPaths(),skillWriteRoot:join(this.config.codexHome,'skills')});
+    this.invalidateState();
     return opened.response;
   }
   private liveInteraction(runId: string, threadId: string, turnId: string) {
     const run = this.store.run(runId), slot = this.workers.get(runId);
-    try { if(!slot)return false;this.tasks.guard(this.workerActor(slot),['executing','rpc_wait']); } catch { return false; }
+    try {
+      if(!slot||!run)return false;
+      this.tasks.guard(this.workerActor(slot),['executing','rpc_wait']);
+      this.tasks.validateAuthority(this.mainActor(true),this.tasks.authority(run.taskId,run.version));
+    }catch{return false;}
     return !this.closing && run?.status === "running" && !run.stopRequestedAt && !!slot && !slot.stopping && slot.engine.threadId === threadId && slot.engine.turnId === turnId;
   }
   private liveNativeInteraction(slot:WorkerSlot,request:NativeRequest) {
@@ -1391,8 +1664,7 @@ export class Homer {
       (request.isCurrent ? request.isCurrent() : request.threadId===slot.engine.threadId&&request.turnId===slot.engine.turnId);
   }
   private syncInteractionWaiting(slot:WorkerSlot) {
-    const waiting=!!slot.engine.nativeInteractionPending||this.interactions.hasPending(slot.id)||
-      this.interactions.hasPending('main-native:worker-native:'+slot.id);
+    const waiting=!!slot.engine.nativeInteractionPending||this.interactions.hasPending(slot.id);
     try{this.tasks.rpc(slot.id,slot.epoch,waiting);}catch{return;}
     waiting?this.pauseClock(slot):this.resumeClock(slot);
   }
@@ -1400,15 +1672,18 @@ export class Homer {
     const slot=this.workers.get(input.runId);if(!slot)throw Error('agent_identity_denied');
     this.tasks.guard(this.workerActor(slot),native?['executing','rpc_wait']:['executing']);
     if(native&&!this.liveNativeInteraction(slot,native))throw Error('interaction_not_live');
-    const authority = this.interactions.authority(input.runId);
-    if (!authority) throw new Error("interaction_authority_missing");
     const run=this.tasks.run(input.runId);
+    const authority=this.tasks.authority(run.taskId,run.version);
+    this.tasks.validateAuthority(this.mainActor(true),authority);
     if(native&&native.kind==='authorization'&&usesHomerNativeHome(this.config)){
-      const key='worker-native:'+run.id+':'+JSON.stringify(native.requestId);
-      const opened=this.mainApprovals.open({...native,requestId:key},{threadId:native.threadId,turnId:native.turnId,generationId:'worker-native:'+run.id,sourceRequestId:authority.sourceRequestId,userText:authority.description,isCurrent:()=>this.liveNativeInteraction(slot,native),protectedRoots:this.protectedExecutionPaths(),skillWriteRoot:join(this.config.codexHome,'skills'),historyThreadId:this.store.meta('mainThread')});
-      this.syncInteractionWaiting(slot);
-      const response=opened.response.finally(()=>this.syncInteractionWaiting(slot));
-      return {id:opened.id,response};
+      const request=this.mainApprovals.open(native,{
+        threadId:native.threadId,turnId:native.turnId,generationId:run.id,
+        worker:{runId:run.id,runEpoch:run.epoch,taskVersion:run.version},
+        sourceRequestId:authority.sourceRequestId,userText:authority.description,isCurrent:()=>this.liveNativeInteraction(slot,native),
+        protectedRoots:this.protectedExecutionPaths(),skillWriteRoot:join(this.config.codexHome,'skills'),historyThreadId:this.store.meta('mainThread')
+      });
+      slot.requests.set(JSON.stringify(['native',native.requestId]),request.id);
+      return request;
     }
     const request = this.interactions.open({ ...input,runEpoch:run.epoch,taskVersion:run.version, authority: { ...authority, nativeApprovals: native?.method === "item/permissions/requestApproval" } },
       () => native?this.liveNativeInteraction(slot,native):this.liveInteraction(input.runId, input.threadId, input.turnId), native ? decision => {
@@ -1436,7 +1711,7 @@ export class Homer {
     let run:TaskRun|undefined;
     while((run=this.tasks.claim())){
       const execution=this.execute(run);this.executions.add(execution);
-      void execution.finally(()=>{this.executions.delete(execution);this.pump();this.scheduleInternal();this.scheduleDelivery();});
+      void execution.finally(()=>{this.executions.delete(execution);this.pump();this.scheduleInternal();});
     }
   }
   private workerActor(slot:WorkerSlot):Actor {
@@ -1444,22 +1719,91 @@ export class Homer {
   }
   private mcpOptions(endpoint:WorkerInteractionMcp,worker=false){
     const source=import.meta.url.endsWith('.ts');
-    return {command:process.execPath,args:[...(source?['--import',fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs',import.meta.url))]:[]),fileURLToPath(new URL(source?'./worker-interaction-mcp-stdio.ts':'./worker-interaction-mcp-stdio.js',import.meta.url)),endpoint.path,...(worker?['worker']:[])],cwd:endpoint.directory,...(worker?{catalog:WORKER_HOST_MCP_TOOLS}:{})};
+    const roleArgs=this.membershipTools?[worker?'worker':'main','membership-web']:worker?['worker']:[];
+    return {command:process.execPath,args:[...(source?['--import',fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs',import.meta.url))]:[]),fileURLToPath(new URL(source?'./worker-interaction-mcp-stdio.ts':'./worker-interaction-mcp-stdio.js',import.meta.url)),endpoint.path,...roleArgs],cwd:endpoint.directory,catalog:endpoint.catalog};
+  }
+  private async membershipTool(name:string,args:unknown,slot?:WorkerSlot){
+    if(!this.membershipTools||this.closing)throw Error('tool_scope_denied');
+    const context=this.mainContext,engine=slot?.engine??this.main;
+    const threadId=engine?.threadId,turnId=engine?.turnId;
+    const actor=slot?this.workerActor(slot):undefined;
+    const video=name==='generate_video';
+    const guard=()=>{
+      if(this.closing||!turnId||engine?.turnId!==turnId||engine.threadId!==threadId)throw Error('tool_scope_denied');
+      if((video||name==='generate_image')&&(engine.turnActive===false||engine.available===false))throw Error('tool_scope_denied');
+      if(slot&&actor){
+        if(this.workers.get(slot.id)!==slot||slot.stopping)throw Error('tool_scope_denied');
+        this.tasks.guard(actor);
+      }else if(!context?.requestId||context.nativeActivity?.turnId!==turnId||this.mainContext!==context||this.main!==engine||context.event||context.queuedInput?.source==='first_launch'||context.stopRequested||context.terminalConfirmed){
+        throw Error('tool_scope_denied');
+      }
+    };
+    guard();
+    if(!video&&name!=='generate_image')return this.membershipTools.web(name,args);
+
+    const run=slot?this.tasks.run(slot.id):undefined;
+    const cwd=run?this.files.prepareRun(run.taskId,run.id):context?.turnCwd;
+    if(!cwd||!isAbsolute(cwd)||dirname(cwd)===cwd||!statSync(cwd,{throwIfNoEntry:false})?.isDirectory()||realpathSync(cwd)!==cwd)throw Error('artifact_path_denied');
+    const checkOutput=run?undefined:this.taskFileGuard(cwd,true);
+    checkOutput?.(cwd);
+    try{accessSync(cwd,constants.W_OK);}catch{throw Error('artifact_path_denied');}
+    if(video){
+      const sourceRequestId=run?.sourceRequestId??context?.requestId;
+      const original=run&&sourceRequestId?this.inputs.byRequestIds([sourceRequestId])[0]:context?.queuedInput;
+      const historyThreadId=this.store.meta('mainThread');
+      if(!sourceRequestId||!historyThreadId||original?.source!=='local'||!threadId||!turnId)throw Error('tool_scope_denied');
+      const scope={conversation:historyThreadId,worker:run?JSON.stringify([run.taskId,run.version,run.workerId,sourceRequestId]):undefined};
+      const outputGuard=()=>{
+        guard();
+        if(realpathSync(cwd)!==cwd)throw Error('artifact_path_denied');
+        checkOutput?.(cwd);
+      };
+      const call=runMembershipVideo(this.store.db,this.membershipTools.video,scope,cwd,args,outputGuard,async(receipt,signal)=>{
+        signal.throwIfAborted();
+        const opened=this.mainApprovals.openOperation({requestId:receipt,method:VIDEO_APPROVAL_METHOD,
+          question:'使用荷马会员积分生成 1 条万相 3.0 视频（5 秒、720P、16:9、有声）？',
+          reason:'仅批准本次生成。停止等待后，已提交的任务仍可能完成并扣费。',details:{receipt}},
+        {threadId,turnId,historyThreadId,sourceRequestId,generationId:run?'worker-native:'+run.id:context?.generation?.generationId??receipt,
+          userText:original.input.text,isCurrent:()=>{try{guard();return !signal.aborted;}catch{return false;}}});
+        const expire=()=>this.mainApprovals.invalidated(receipt,'membership_video_approval_expired');
+        signal.addEventListener('abort',expire,{once:true});
+        const timer=setTimeout(expire,180_000);timer.unref();
+        this.invalidateState();
+        try{
+          const result=await opened.response;
+          if(result.status==='approved'||result.status==='denied')this.mainApprovals.delivered(receipt);
+          return result.status==='approved';
+        }finally{clearTimeout(timer);signal.removeEventListener('abort',expire);expire();this.invalidateState();}
+      });
+      this.videoCalls.add(call);
+      try{return await call;}finally{this.videoCalls.delete(call);}
+    }
+    const {model,encoded}=await this.membershipTools.image(args,ref=>{
+      this.authorizeAttachment(ref,run??context);
+      if(this.media.asset(ref).kind!=='image')throw Error('media_scope_denied');
+      const image=this.media.imageAttachment(ref);
+      if(image.mime!=='image/png'||!image.bytes.length||image.bytes.length>MEDIA_POLICY.imageBytes)throw Error('media_size_limit');
+      return image.bytes;
+    });
+    try{
+      guard();
+      checkOutput?.(cwd);
+      const file=materializePng(cwd,'image-'+randomUUID()+'.png',encoded);
+      return {...file,path:join(cwd,file.filename),model};
+    }catch{
+      throw Error('membership_image_result_unconfirmed');
+    }
   }
   private async workerMediaTool(slot:WorkerSlot,name:string,value:unknown){
     const actor=this.workerActor(slot),run=this.tasks.run(slot.id);this.tasks.guard(actor);
     if(this.closing)throw Error('tool_scope_denied');
-    const a=object(value),source=run.sourceRequestId;
-    const scoped=()=>{
-      const ref={assetId:string(a.assetId,100),revision:Number(a.revision)};
-      const current=this.tasks.run(slot.id);
-      if(!source||current.sourceRequestId!==source||!this.tasks.authority(current.taskId,current.version).attachments?.includes(ref.assetId+'@'+ref.revision))throw Error('media_scope_denied');
-      this.media.validate(source,[ref]);return ref;
-    };
     if(name==='inspect_attachment'){
-      const ref=scoped(),file=this.media.read(source!,ref),view={...this.media.view(ref),reference:attachmentReference(ref),extraction:this.media.extracted(source!,ref)};
-      if(file.asset.kind==='image'){const image=await toolImage(this.media.image(source!,ref));this.tasks.guard(actor);if(this.closing)throw Error('tool_scope_denied');scoped();return {mediaContent:[{type:'text',text:JSON.stringify({...view,modelView:image.modelView})},{type:'image',mimeType:image.mime,data:image.bytes.toString('base64')}]};}
-      return view;
+      const a=object(value),ref={assetId:string(a.assetId,100),revision:Number(a.revision)};
+      return this.inspectAttachment(ref,()=>{
+        this.tasks.guard(actor);
+        if(this.closing)throw Error('tool_scope_denied');
+        this.authorizeAttachment(ref,run);
+      });
     }
     throw Error('tool_denied');
   }
@@ -1476,28 +1820,15 @@ export class Homer {
     catch(error){emit(true,'failed',captureToolError(error));throw error;}
   }
   private async workerToolWork(slot:WorkerSlot,call:ToolCall):Promise<unknown>{
-    this.accountClocks();const actor=this.workerActor(slot),run=this.tasks.run(slot.id);
+    this.accountClocks();const actor=this.workerActor(slot);
     if(this.closing||call.threadId!==actor.threadId||call.turnId!==actor.turnId)throw Error('tool_scope_denied');
     if(EXECUTION_TOOLS.some(t=>t.name===call.tool))return this.executionTool(actor,call.tool,call.arguments);
     if(WORKER_FILE_TOOLS.some(tool=>tool.name===call.tool))return this.workerFileTool(slot,call);
-    this.tasks.guard(actor);const a=object(call.arguments),dir=this.files.prepareRun(run.taskId,run.id);
+    this.tasks.guard(actor);const a=object(call.arguments);
     if(call.tool==='ask_main'){
       if(Object.keys(a).some(key=>key!=='question'))throw Error('invalid_tool_arguments');
-      const request=this.openInteraction({runId:run.id,threadId:call.threadId,turnId:call.turnId,requestId:call.callId,source:'ask_main',kind:'question',details:{question:string(a.question,16000)}});
+      const request=this.openInteraction({runId:slot.id,threadId:call.threadId,turnId:call.turnId,requestId:call.callId,source:'ask_main',kind:'question',details:{question:string(a.question,16000)}});
       const response=await request.response;return {interactionId:request.id,status:response.status,answer:response.decision?.answer??null,reason:response.decision?.reason??response.code};
-    }
-    if(call.tool==='read_material'){
-      if(Object.keys(a).length)throw Error('invalid_tool_arguments');
-      const authority=this.tasks.authority(run.taskId,run.version);
-      const materials=authority.materials.map(path=>({path,content:this.files.readMaterial(path)}));
-      const results=(JSON.parse(run.checkpointJson??'{}').resultIds??[] as string[]).map((id:string)=>this.tasks.readResultInput(actor,id));
-      const attachments=(authority.attachments??[]).map(id=>{const ref=parseAttachmentReference(id);this.media.validate(run.sourceRequestId,[ref]);return {...this.media.view(ref),reference:attachmentReference(ref),extraction:this.media.extracted(run.sourceRequestId,ref)};});
-      this.store.event(run.id,'material_read');return {materials,results,attachments};
-    }
-    if(call.tool==='write_markdown'){
-      validateToolArguments(a,WORKER_TOOLS.find(tool=>tool.name==='write_markdown')!.inputSchema);
-      const written=this.tasks.writeMarkdown({...actor,operationPayload:{tool:call.tool,arguments:call.arguments}},{operationId:toolOperationId(actor,call.callId),filename:string(a.filename,104),content:string(a.content,128*1024)});
-      this.store.event(run.id,'artifact_written');return {...written,bytes:this.files.verify(dir,written.path).bytes};
     }
     throw Error('worker_tool_denied');
   }
@@ -1509,13 +1840,10 @@ export class Homer {
     let bytes:Buffer,filename=string(a.filename,120);
     if(call.tool==='create_voice_result'){
       const voice=await synthesizeVoice(string(a.text,800));this.tasks.guard(actor);if(this.closing)throw Error('tool_scope_denied');bytes=voice.bytes;filename=filename.replace(/\.silk$/,'')+'.silk';
-    }else if(a.dataBase64!==undefined){
-      if(a.assetId!==undefined||a.revision!==undefined||typeof a.dataBase64!=='string'||!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.dataBase64))throw Error('media_result_encoding_denied');
-      bytes=Buffer.from(a.dataBase64,'base64');
     }else{
       const ref={assetId:string(a.assetId,100),revision:Number(a.revision)};
-      if(!this.tasks.authority(run.taskId,run.version).attachments?.includes(ref.assetId+'@'+ref.revision))throw Error('media_scope_denied');
-      bytes=this.media.read(run.sourceRequestId,ref).bytes;
+      this.authorizeAttachment(ref,run);
+      bytes=this.media.readAttachment(ref).bytes;
     }
     this.tasks.guard(actor);const result=this.tasks.writeFile(actor,{operationId,filename,bytes});this.store.event(run.id,'artifact_written');return result;
   }
@@ -1526,11 +1854,11 @@ export class Homer {
       if(!slot){
         let created!:WorkerSlot;
         const endpoint=pendingEndpoint=new WorkerInteractionMcp(this.config.runtime,(tool,args)=>{
-          if(!created)throw Error('agent_identity_denied');return EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.workerActor(created),tool,args):CAPABILITY_TOOLS.some(t=>t.name===tool)?this.manageCapabilities(args,'agent',created):WORKER_MEDIA_TOOLS.some(t=>t.name===tool)?this.workerMediaTool(created,tool,args):Promise.reject(Error('worker_tool_denied'));
-        },WORKER_HOST_MCP_TOOLS);await endpoint.start();
+          if(!created)throw Error('agent_identity_denied');return isMembershipTool(tool)?this.membershipTool(tool,args,created):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.workerActor(created),tool,args):CAPABILITY_TOOLS.some(t=>t.name===tool)?this.manageCapabilities(args,'agent',created):WORKER_MEDIA_TOOLS.some(t=>t.name===tool)?this.workerMediaTool(created,tool,args):Promise.reject(Error('worker_tool_denied'));
+        },hostMcpTools('worker',!!this.membershipTools));await endpoint.start();
         if(!this.workerStarting(run)){await endpoint.close();if(this.closing){this.tasks.confirmWorkerExit(run.id,undefined);this.tasks.interruptWorker(run.id);}return;}
-        const project=usesHomerNativeHome(this.config)?this.tasks.workingDirectory(run.id):dir;
-        const engine=this.engine({role:"worker",threadId:run.threadId??undefined,cwd:project,readRoots:[project],instructions:this.prompts.worker+(usesHomerNativeHome(this.config)?"\n正式产物暂存目录："+dir:""),tools:[...WORKER_TOOLS,...WORKER_INTERACTION_TOOLS,...WORKER_FILE_TOOLS],permissionRequests:true,...(usesHomerNativeHome(this.config)?{nativeTools:"worker" as const,nativeCapabilities:true}:{}),interactionMcp:this.mcpOptions(endpoint,true),onInteraction:request=>request.method==='mcpServer/elicitation/request'&&(request.details._meta as any).codex_approval_kind==='tool_suggestion'?this.openNativePluginInteraction(request,created):this.openInteraction({runId:run.id,threadId:request.threadId,turnId:request.turnId,requestId:request.requestId,source:'native',kind:request.kind,details:{method:request.method,params:request.details}},request).response},call=>this.workerTool(created,call).catch(error=>{this.store.event(run.id,'tool_rejected',engineError(error));throw error;}));
+        const project=this.tasks.workingDirectory(run.id);
+        const engine=this.engine({role:"worker",threadId:run.threadId??undefined,cwd:project,readRoots:[project],instructions:this.prompts.worker+"\n附件导出目录："+dir,tools:[...WORKER_INTERACTION_TOOLS,...WORKER_FILE_TOOLS],permissionRequests:true,nativeTools:"worker",nativeCapabilities:true,interactionMcp:this.mcpOptions(endpoint,true),onInteraction:request=>request.method==='mcpServer/elicitation/request'&&(request.details._meta as any).codex_approval_kind==='tool_suggestion'?this.openNativePluginInteraction(request,created):this.openInteraction({runId:run.id,threadId:request.threadId,turnId:request.turnId,requestId:request.requestId,source:'native',kind:request.kind,details:{method:request.method,params:request.details}},request).response},call=>this.workerTool(created,call).catch(error=>{this.store.event(run.id,'tool_rejected',engineError(error));throw error;}));
         created={id:run.id,epoch:run.epoch,engine,requests:new Map(),mcp:endpoint};pendingEndpoint=undefined;slot=created;this.workers.set(run.id,slot);
         const delivered=(source:string,id:string|number)=>{const key=created.requests.get(JSON.stringify([source,id]));if(key)try{this.interactions.markDelivered(key);}catch{}};
         const publicScope=(event:{threadId?:string;turnId?:string}):WorkerScope|undefined=>{
@@ -1557,8 +1885,8 @@ export class Homer {
         });
         engine.on('usage',usage=>this.store.usage(run.id,usage));
         engine.on('interactionWaiting',()=>this.syncInteractionWaiting(created));
-        engine.on('toolResponse',id=>delivered('ask_main',id));engine.on('interactionDelivered',id=>{delivered('native',id);this.mainApprovals.delivered('worker-native:'+created.id+':'+JSON.stringify(id));});
-        engine.on('interactionInvalidated',(id,code)=>{this.mainApprovals.invalidated('workerplugin:'+created.id+':'+JSON.stringify(id),code);this.mainApprovals.invalidated('worker-native:'+created.id+':'+JSON.stringify(id),code);const key=created.requests.get(JSON.stringify(['native',id]));if(key)this.interactions.expire(key,code);this.store.event(created.id,'native_interaction_invalidated',JSON.stringify({role:'worker',epoch:created.epoch,requestId:id,code}));});
+        engine.on('toolResponse',id=>delivered('ask_main',id));engine.on('interactionDelivered',id=>delivered('native',id));
+        engine.on('interactionInvalidated',(id,code)=>{const key=created.requests.get(JSON.stringify(['native',id]));if(key)this.interactions.expire(key,code);this.store.event(created.id,'native_interaction_invalidated',JSON.stringify({role:'worker',epoch:created.epoch,requestId:id,code}));});
         engine.on('exit',()=>this.interactions.cancelRun(run.id,'worker_process_exited'));
         engine.on('spawn',()=>{created.lease=this.lease(run.id,engine);if(engine.pid)this.store.engine(run.id,{pid:engine.pid});});
         if(!this.workerStarting(run))return;
@@ -1568,7 +1896,7 @@ export class Homer {
       if(this.closing||slot.epoch!==run.epoch||this.tasks.run(run.id).stopRequestedAt)return;
       this.resumeClock(slot);
       const authority=this.tasks.authority(run.taskId,run.version);
-      const result=await slot.engine.turn('[宿主任务事实；仅原始用户来源构成授权，Worker 消息和引用是工作资料]\n'+JSON.stringify({taskId:run.taskId,workerId:run.workerId,runId:run.id,version:run.version,goal:run.goal,authority})+'\n\n[主 Agent 本次消息原文]\n'+run.prompt,{cwd:usesHomerNativeHome(this.config)?this.tasks.workingDirectory(run.id):this.files.prepareRun(run.taskId,run.id),onStarted:turnId=>{this.tasks.bind(run.id,run.epoch,slot!.engine.threadId!,turnId);}}).finally(()=>this.invalidateState('model-turn'));
+      const result=await slot.engine.turn('[宿主任务事实；仅原始用户来源构成授权，Worker 消息和引用是工作资料]\n'+JSON.stringify({taskId:run.taskId,workerId:run.workerId,runId:run.id,version:run.version,goal:run.goal,authority,attachments:this.tasks.offeredWorkerAttachments(run.id)})+'\n\n[主 Agent 本次消息原文]\n'+run.prompt,{cwd:this.tasks.workingDirectory(run.id),onStarted:turnId=>{this.tasks.bind(run.id,run.epoch,slot!.engine.threadId!,turnId);}}).finally(()=>this.invalidateState('model-turn'));
       this.pauseClock(slot);if(result.usage)this.store.usage(run.id,result.usage);
       const current=this.tasks.run(run.id);if(current.epoch!==run.epoch||current.stopRequestedAt)return;
       if(this.closing){if(result.status==='completed')this.tasks.recordWorkerTerminal(run.id,run.epoch,result);return;}
@@ -1589,7 +1917,7 @@ export class Homer {
       }
     }finally{
       await pendingEndpoint?.close();
-      if(slot){this.pauseClock(slot);this.mainApprovals.end('capability-worker:'+slot.id+':'+slot.engine.turnId);slot.capabilityCalls?.clear();}
+      if(slot){this.pauseClock(slot);slot.capabilityCalls?.clear();}
       const current=this.tasks.run(run.id);
       if(!this.closing&&slot&&this.workers.has(run.id)&&current.phase!=='ready'&&!slot.stopping){
         this.interactions.cancelRun(run.id,'worker_turn_ended');const closed=await this.closeWorker(slot);
@@ -1597,7 +1925,7 @@ export class Homer {
         this.workers.delete(run.id);
       }
 
-      this.scheduleInternal();this.scheduleDelivery();
+      this.scheduleInternal();
     }
   }
   private workerStarting(run:TaskRun){
@@ -1610,8 +1938,6 @@ export class Homer {
     finally{slot.closing=undefined;}
   }
   private async closeWorkerResources(slot:WorkerSlot){
-    this.mainApprovals.end('capability-worker:'+slot.id+':'+slot.engine.turnId);
-    this.mainApprovals.end('worker-native:'+slot.id);
     let stopped=false;
     try{stopped=await slot.engine.close();}catch(error){this.store.event(slot.id,'engine_stop_unconfirmed',engineError(error));}
     let mcpStopped=true;
@@ -1640,39 +1966,31 @@ export class Homer {
   }
   private mainActor(host=false):Actor {
     if(!host&&(!this.mainContext||this.closing))throw Error('tool_scope_denied');
-    const actor={agentId:this.store.meta('mainAgentId')!,...(!host&&!this.mainContext?.event&&this.mainContext?.requestId?{sourceRequestId:this.mainContext.requestId}:{}),threadId:this.main?.threadId,turnId:this.main?.turnId,inputMessageId:this.mainContext?.workerInput?.messageId??this.mainContext?.queuedInput?.messageId};
+    const context=this.mainContext,sourceRequestId=!host&&!context?.event&&context?.queuedInput?.source!=='first_launch'?context?.requestId:undefined;
+    const actor={agentId:this.store.meta('mainAgentId')!,...(sourceRequestId?{sourceRequestId}:{}),threadId:this.main?.threadId,turnId:this.main?.turnId,inputMessageId:context?.workerInput?.messageId??context?.queuedInput?.messageId};
     // Only objects created by this host may perform lifecycle cleanup while a
     // model turn is closing. A tool cannot forge this identity through fields.
     if(host)this.hostActors.add(actor);return actor;
   }
-  private rootAuthority(actor:Actor,materials=this.files.listMaterials()):Authority {
+  private rootAuthority(actor:Actor):Authority|undefined {
     const context=this.mainContext;
-    if(context?.event&&context.workerInput?.senderAgentId==='host'&&['task_archived','worker_reply','interaction_required'].includes(context.workerInput.kind)&&context.workerInput.taskId&&context.workerInput.taskVersion)return this.tasks.authority(context.workerInput.taskId,context.workerInput.taskVersion);
-    if(!actor.sourceRequestId||context?.event||context?.requestId!==actor.sourceRequestId)throw Error('dispatch_requires_user_message');
-    return {sourceRequestId:actor.sourceRequestId,description:userAuthorityDescription(context.userText??''),materials,resultIds:[],attachments:(context.queuedInput?.input.attachments??[]).map(ref=>ref.assetId+'@'+ref.revision)};
-  }
-  private selectedAuthority(actor:Actor,pendingIds:string[]):Authority {
-    const inherited=this.rootAuthority(actor);
-    const sourceRequestIds=[...new Set([...this.tasks.pending.userSources(actor,pendingIds),inherited.sourceRequestId,...(inherited.sourceRequestIds??[])])];
-    const sources=sourceRequestIds.map(id=>this.tasks.pending.source(actor,id)),primary=sources[0];
-    if(!primary)throw Error('pending_source_denied');
-    const inheritedAttachments=[inherited.sourceRequestId,...(inherited.sourceRequestIds??[])].includes(primary.requestId)?inherited.attachments??[]:undefined;
-    return {sourceRequestIds,sourceRequestId:primary.requestId,description:'真实用户来源（引用为资料）：'+JSON.stringify(sources.map(({requestId,text,quotes})=>({requestId,text,quotes}))),materials:inherited.materials,resultIds:[],attachments:primary.attachments.map(ref=>ref.assetId+'@'+ref.revision).filter(ref=>!inheritedAttachments||inheritedAttachments.includes(ref))};
-  }
-  private async pendingTool(name:string,args:unknown,callId?:string){
-    const context=this.mainContext;if(!context)throw Error('tool_scope_denied');this.validateMainContext(context);
-    const result=await this.pendingTools.call(this.mainActor(),name,args,callId);this.validateMainContext(context);return result;
+    if(context?.event&&context.workerInput?.senderAgentId==='host'&&['task_archived','worker_reply','interaction_required'].includes(context.workerInput.kind)&&context.workerInput.taskId&&context.workerInput.taskVersion)
+      return this.tasks.authority(context.workerInput.taskId,context.workerInput.taskVersion);
+    if(!actor.sourceRequestId||context?.event||context?.requestId!==actor.sourceRequestId)return;
+    return {sourceRequestId:actor.sourceRequestId,description:userAuthorityDescription(context.userText??'')};
   }
   private protectedExecutionPaths(){
     const profile=profileOverrides(this.config,{cwd:this.config.workspace,readRoots:[],instructions:'',tools:[],...(usesHomerNativeHome(this.config)?{nativeTools:'main' as const,nativeCapabilities:true}:{})});
     return [this.config.runtime,this.config.codexHome,...Object.entries(profile.filesystem).filter(([path,access])=>isAbsolute(path)&&access!=='write').map(([path])=>path)];
   }
-  private validateTaskFileRead(path:string){
-    const cwd=this.store.meta('mainWorkingDirectory')??this.config.workspace;
+  private taskFileGuard(cwd=this.store.meta('mainWorkingDirectory')??this.config.workspace,write=false){
     const profile=profileOverrides(this.config,{cwd,readRoots:[cwd],instructions:'',tools:[],...(usesHomerNativeHome(this.config)?{nativeTools:'main' as const,nativeCapabilities:true}:{})});
     const filesystem={...profile.filesystem,[this.config.runtime]:'deny',[this.config.codexHome]:'deny'};
-    const matches=Object.entries(filesystem).filter(([root])=>isAbsolute(root)).map(([root,access])=>[existsSync(root)?realpathSync(root):root,access] as const).filter(([root])=>path===root||inside(root,path)).sort(([a],[b])=>b.length-a.length);
-    if((matches[0]?.[1]??filesystem[':root'])==='deny')throw Error('artifact_path_denied');
+    return (path:string)=>{
+      const matches=Object.entries(filesystem).filter(([root])=>isAbsolute(root)).map(([root,access])=>[existsSync(root)?realpathSync.native(root):root,access] as const).filter(([root])=>path===root||inside(root,path)).sort(([a],[b])=>b.length-a.length);
+      const access=matches[0]?.[1]??filesystem[':root'];
+      if(write?access!=='write':access==='deny')throw Error('artifact_path_denied');
+    };
   }
   private async executionTool(actor:Actor,name:string,args:unknown){
     if(this.closing)throw Error('tool_scope_denied');
@@ -1708,18 +2026,25 @@ export class Homer {
   }
   private async recursiveTool(actor:Actor,name:string,args:unknown,callId?:string){
     const context=this.mainContext;if(!context||actor.runId)throw Error('tool_scope_denied');this.validateMainContext(context);
-    if(context.workerInput&&['task_create','worker_open','worker_send','publish_delivery'].includes(name)){
-      const a=object(args),kind=name==='publish_delivery'?'publish':name;
-      const prior=this.tasks.operationsForInput(actor,context.workerInput.messageId).filter(operation=>operation.kind===kind&&operation.details.turnId!==actor.turnId&&(name==='task_create'||(name==='worker_send'?operation.response?.workerId===a.workerId:operation.scopeId===(a.taskId??context.workerInput?.taskId))));
+    if(actor.inputMessageId&&['task_create','worker_open','worker_send','send_user_message'].includes(name)){
+      const a=object(args),kind=name==='worker_send'&&a.immediate===true?'worker_steer':name;
+      const liveTurns=context.processId?this.processes.exact(context.processId)?.turnIds:undefined;
+      const prior=this.tasks.operationsForInput(actor,actor.inputMessageId).some(operation=>operation.kind===kind&&operation.state!=='failed'&&operation.details.turnId!==actor.turnId&&!liveTurns?.includes(operation.details.turnId)&&(name==='task_create'||name==='send_user_message'||(name==='worker_send'?operation.response?.workerId===a.workerId:a.taskId===undefined||operation.scopeId===a.taskId)));
       // A restored input keeps its original action identity even if the model invents a new call ID.
-      if(prior.length)throw Error('coordination_action_already_committed');
+      if(prior)throw Error('coordination_action_already_committed');
     }
-    this.accountClocks();let result=await this.recursiveTools.call(actor,name,args,callId);
+    this.accountClocks();
+    validateToolArguments(args,RECURSIVE_TOOLS.find(tool=>tool.name===name)!.inputSchema);
+    const attachments=object(args).attachments;
+    const staged=(name==='worker_open'||name==='worker_send')&&Array.isArray(attachments)&&attachments.length
+      ?this.stageAttachments(actor,toolOperationId(actor,callId),attachments,context):undefined;
+    let result:unknown;
+    try{result=await this.recursiveTools.call(actor,name,args,callId);}
+    catch(error){
+      if(staged)this.abandonMessageOperation(staged.key);
+      throw error;
+    }
     if(name==='task_update'&&(result as any)?.state==='requested'&&Array.isArray((result as any)?.targets))result=await this.applyStop(result as Record<string,unknown>);
-    if(context.processId&&name==='publish_delivery'&&typeof (result as any)?.deliveryId==='string'){
-      const delivery=this.tasks.delivery((result as any).deliveryId);
-      if(delivery.state==='prepared'&&!this.store.db.prepare('SELECT 1 FROM conversation_messages WHERE id=?').get(delivery.historyMessageId))this.processes.delivery(context.processId,delivery);
-    }
     this.validateMainContext(context);return result;
   }
   private async applySteer(receipt:Record<string,unknown>){
@@ -1727,18 +2052,32 @@ export class Homer {
     if(operation.state!=='accepted')return {...receipt,state:operation.state};
     const slot=this.workers.get(String(receipt.runId));
     if(!slot?.engine.steer){this.tasks.markSteer(key,'failed');return {...receipt,state:'failed',code:'engine_steer_not_applicable'};}
-    const run=this.tasks.run(slot.id);this.tasks.guard(this.workerActor(slot));
-    if(run.epoch!==details.epoch||slot.engine.threadId!==details.threadId||slot.engine.turnId!==details.expectedTurnId)throw Error('message_target_stale');
-    const message=this.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(details.messageId);
-    if(!message)throw Error('message_not_found');
-    this.tasks.markSteer(key,'dispatching');
-    try{await slot.engine.steer(details.expectedTurnId,JSON.parse(String(message.payloadJson)).text);this.tasks.markSteer(key,'received');return {...receipt,state:'received'};}
-    catch(error){const code=engineError(error),state=error instanceof EngineRpcUnconfirmed||code==='engine_rpc_timeout'?'uncertain':'failed';this.tasks.markSteer(key,state);return {...receipt,state,code};}
+    let acknowledged=false;
+    try{
+      const run=this.tasks.run(slot.id);
+      this.tasks.guard(this.workerActor(slot));
+      if(run.epoch!==details.epoch||slot.engine.threadId!==details.threadId||slot.engine.turnId!==details.expectedTurnId)
+        throw Error('message_target_stale');
+      const message=this.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(details.messageId);
+      if(!message)throw Error('message_not_found');
+      this.tasks.markSteer(key,'dispatching');
+      const payload=JSON.parse(String(message.payloadJson));
+      const text=payload.attachments?.length?payload.text+'\n\n[附件] '+JSON.stringify(payload.attachments):payload.text;
+      await slot.engine.steer(details.expectedTurnId,text);
+      acknowledged=true;
+      this.tasks.markSteer(key,'received');
+      const state=this.tasks.operation(key).state;
+      return {...receipt,state:state==='confirmed'?'received':state};
+    }catch(error){
+      const code=engineError(error);
+      this.tasks.markSteer(key,acknowledged||error instanceof EngineRpcUnconfirmed||code==='engine_rpc_timeout'?'uncertain':'failed');
+      return {...receipt,state:this.tasks.operation(key).state,code};
+    }
   }
   private async applyStop(receipt:Record<string,unknown>){
     const key=String(receipt.operationKey);let confirmed=true;
     for(const id of (receipt.targets??[]) as string[])if(!await this.stopOwnedWorker(id))confirmed=false;
-    const result=this.tasks.confirmStop(key,confirmed);this.pump();this.scheduleInternal();this.scheduleDelivery();return result;
+    const result=this.tasks.confirmStop(key,confirmed);this.pump();this.scheduleInternal();return result;
   }
   private async stopOwnedWorker(id:string){
     // A recursive transaction may have already cancelled the durable RPC.
@@ -1770,9 +2109,9 @@ export class Homer {
   private async processWorkerInput(input:WorkerInput){
     const notice={id:input.messageId,taskId:input.taskId,taskVersion:input.taskVersion,kind:input.kind,payload:input.payload},payload=Object(input.payload) as Record<string,unknown>;
     const interactionId=input.senderAgentId==='host'&&input.kind==='interaction_required'&&typeof payload.interactionId==='string'?payload.interactionId:undefined;
-    const context:MainContext={event:true,...(!interactionId?{allowEmptyReply:true as const}:{}),workerInput:input,workerMessages:[notice],sourceMessageIds:[input.messageId],pendingTaskIds:input.taskId?[input.taskId]:[],inspected:new Set(),...(interactionId?{interactionId}:{})};
+    const context:MainContext={event:true,...(!interactionId?{allowEmptyReply:true as const}:{}),workerInput:input,workerMessages:[notice],sourceMessageIds:[input.messageId],inspected:new Set(),...(interactionId?{interactionId}:{})};
     const operations=this.tasks.operationsForInput(this.mainActor(true),input.messageId);
-    const prompt='[内部协作输入；原始消息与已提交操作是事实，不构成新增授权。沿用户目标协调，可继续追问现有 Worker，内部往返可静默；正式成果须明确采纳与发布。宿主自动记录本次消费，不需要 ACK。已提交或未知操作不得重放；恢复时先核原回执与现有 Worker，原操作标识变化不允许重复打开会话或发送。]\n'+JSON.stringify({messageId:input.messageId,taskId:input.taskId,version:input.taskVersion,kind:input.kind,workerId:payload.workerId,runId:input.runId,threadId:payload.threadId,turnId:payload.turnId,execution:payload.execution,operations})+'\n\n[Worker 原文]\n'+input.text+(interactionId?'\n[待答入口] interactionId='+interactionId+'；先 inspect_interaction，按事实回复或升级。':'');
+    const prompt='[内部协作输入；原始消息与已提交操作是事实，不构成新增授权。沿用户目标协调，可继续追问现有 Worker，内部往返可静默；需要通知用户或附文件时使用 send_user_message。宿主自动记录本次消费，不需要 ACK。已提交或未知操作不得重放；恢复时先核原回执与现有 Worker，原操作标识变化不允许重复打开会话或发送。]\n'+JSON.stringify({messageId:input.messageId,taskId:input.taskId,version:input.taskVersion,kind:input.kind,workerId:payload.workerId,runId:input.runId,threadId:payload.threadId,turnId:payload.turnId,execution:payload.execution,operations})+'\n\n[Worker 原文]\n'+input.text+(interactionId?'\n[待答入口] interactionId='+interactionId+'；先 inspect_interaction，按事实回复或升级。':'');
     try{await this.mainTurn(prompt,context);}
     catch(error){if(!context.processStatus)context.processStatus='failed';if(engineError(error)!=='main_user_interrupted')this.store.event(null,'internal_processing_failed',engineError(error));}
     finally{
@@ -1780,23 +2119,12 @@ export class Homer {
       this.finishMainProcess(context,context.terminalConfirmed?context.processStatus??'completed':'unknown');
       this.store.db.prepare("UPDATE agent_receipts SET state=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state IN ('offered','received')").run(context.processEndEventId?.startsWith('turn:')?'blocked':'uncertain',input.messageId,this.store.meta('mainAgentId')!);
       this.receptionTimings?.mark('host_finalize_end',{processId:context.processId,kind:'internal'});
+      await context.output;
       const output=context.processId?this.processes.coordination(context.processId):undefined;
       if(output)await this.emit({type:'coordination',messageId:output.messageId,text:output.text,requestId:output.sourceRequestId});
       this.receptionTimings?.mark('round_end',{processId:context.processId,kind:'internal'},context.processStatus??'completed');
-      this.pump();this.scheduleDelivery();
+      this.pump();
     }
-  }
-  private scheduleDelivery(){
-    if(this.closing||this.deliveryQueued)return;
-    if(!this.tasks.pendingDeliveries().length)return;
-    this.deliveryQueued=true;
-    void this.enqueue(async()=>{let progressed=false;try{
-      const delivery=this.tasks.pendingDeliveries()[0];if(!delivery)return;
-      this.tasks.markDelivery(delivery.id,'submitting');this.history.record(delivery.historyMessageId,this.store.meta('mainThread')!,delivery.text);
-      try{await this.emit({type:'delivery',deliveryId:delivery.id,messageId:delivery.historyMessageId,requestId:delivery.routeSourceRequestId,text:delivery.text});this.tasks.markDelivery(delivery.id,'recorded');}
-      catch{this.tasks.markDelivery(delivery.id,'uncertain');}
-      progressed=true;
-    }finally{this.deliveryQueued=false;if(progressed&&this.tasks.pendingDeliveries().length)this.scheduleDelivery();}}).catch(error=>this.store.event(null,'publication_failed',engineError(error)));
   }
   async idle(options: { returnOnUserWait?: boolean } = {}) {
     while (true) {
@@ -1807,8 +2135,7 @@ export class Homer {
       if (
         ![...this.workers.keys()].some(id=>['starting','executing','rpc_wait','yielding'].includes(this.tasks.run(id).phase)) &&
         !this.executions.size &&
-        !this.deliveryQueued &&
-        !this.store.runs().some((r) => r.status === "queued")
+          !this.store.runs().some((r) => r.status === "queued")
       )
         return this.workers.size?'waiting_or_blocked':undefined;
       await new Promise((r) => setTimeout(r, 20));
@@ -1819,10 +2146,7 @@ export class Homer {
   // not account for an output receipt that failed before markDelivered.
   upgradeStatus() {
     const safe = !this.closing && !this.closed && !this.mainBroken && !this.mainRecovery && this.main?.available !== false && this.main?.resumable !== false &&
-      this.nativeOperations === 0 && !this.accountManager?.pending && !this.main?.nativeBusy && this.mainJobs === 0 && this.workers.size === 0 && this.executions.size === 0 && this.uploads.size===0 &&
-      !this.deliveryQueued &&
-      !this.store.runs().some(r => ["queued", "running"].includes(r.status)) &&
-      this.tasks.pendingDeliveries().length === 0 &&
+      this.nativeOperations === 0 && !this.accountManager?.pending && !this.main?.nativeBusy && this.mainJobs === 0 && this.workers.size === 0 && this.executions.size === 0 && this.uploads.size===0 && this.videoCalls.size===0 &&
       !this.interactions.list().some(i => i.state === "pending_main" || i.state === "pending_user") && this.tasks.safeToUpgrade();
     return { safe };
   }
@@ -1833,7 +2157,11 @@ export class Homer {
     this.uploadAbort.abort();await Promise.allSettled([...this.uploads]);
     // Pending native account operations must settle before their serial queue
     // can close. Closing the owned transport rejects their waits without replay.
-    const controlStopped=(await this.nativeControl?.close())??true;
+    const control=this.nativeControl,starting=this.nativeStarting;
+    const controlStopped=(await control?.close())??true;
+    // Startup cancellation can finish after close resolves. Let the original
+    // control callback release its exact lease before closing the database.
+    await starting?.catch(()=>{});
     if(this.mediaGcTimer)clearInterval(this.mediaGcTimer);
     for (const waiter of this.inputWaiters.values())waiter.reject(Error("application_closing"));this.inputWaiters.clear();
     // Closing Homer interrupts its executors. Only an explicit stop cancels work.
@@ -1846,13 +2174,13 @@ export class Homer {
     while (this.executions.size) await new Promise((r) => setTimeout(r, 10));
     for(const slot of owned)if(this.store.run(slot.id))this.tasks.interruptWorker(slot.id);
     await this.interactionMcp?.close();
+    await Promise.allSettled(this.videoCalls);
     await this.accountManager?.close();
     const releaseOwnLease=(key:string,engine:EngineLike|undefined,confirmed:boolean)=>{
       if(!confirmed)return;
       if(options.requireAllOwnersConfirmed){const saved=this.store.meta(key);if(!engine||saved&&JSON.parse(saved).pid!==engine.pid)return;}
       this.store.db.prepare("DELETE FROM meta WHERE key=?").run(key);
     };
-    releaseOwnLease('lease:native-control',this.nativeControl,controlStopped);
     if (mainStopped)
       releaseOwnLease('lease:main',this.main,mainStopped);
     else

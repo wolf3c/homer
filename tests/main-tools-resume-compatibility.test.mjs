@@ -6,9 +6,9 @@ import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 const serviceUrl=process.env.HOMER_TEST_SERVICE_MODULE;
 const {Homer}=await import(serviceUrl),{MAIN_TOOLS}=await import(new URL('./tools.js',serviceUrl));
-const {RECURSIVE_TOOLS}=await import(new URL('./recursive-tools.js',serviceUrl)),{PENDING_TOOLS}=await import(new URL('./pending-tools.js',serviceUrl));
+const {RECURSIVE_TOOLS}=await import(new URL('./recursive-tools.js',serviceUrl));
 const originalHash='e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a';
-const currentHash=createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS])).digest('hex');
+const currentHash=createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex');
 const parent=resolve('.codex/scratch/macos-desktop-application/tools-resume');mkdirSync(parent,{recursive:true});
 function fixture(savedHash){
  const root=mkdtempSync(join(parent,'synthetic-'));mkdirSync(join(root,'runtime'));let starts=0,resumed;
@@ -18,7 +18,7 @@ function fixture(savedHash){
   async close(){return true;}async interrupt(){return true;}
   async turn(){throw Error('no_model_turn_authorized');}
  }
- const app=new Homer({appData:root,workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Engine(options));
+ const app=new Homer({appData:root,workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Engine(options));
  app.store.setMeta('mainThread','synthetic-original-thread');app.store.setMeta('mainToolsHash',savedHash);
  return {app,root,starts:()=>starts,resumed:()=>resumed};
 }

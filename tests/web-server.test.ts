@@ -21,7 +21,7 @@ test('execution route reads the exact task and run without a redundant root sele
 });
 test("loopback gateway rejects foreign origins, missing mutation origin, and invalid host", async () => {
   let calls = 0;
-  const bridge: WebBridge = { state: async () => state, submit: async () => { calls++; }, stop: async () => {}, respond: async () => {}, artifact: async () => { throw new Error("artifact_unavailable"); } };
+  const bridge: WebBridge = { state: async () => state, submit: async () => { calls++; }, stop: async () => {}, respond: async () => {} };
   const web = await createWebServer({ bridge, port: 0 });
   try {
     const response = await fetch(web.url + "/api/state");
@@ -41,12 +41,13 @@ test("loopback gateway rejects foreign origins, missing mutation origin, and inv
   } finally { await web.close(); }
 });
 
-test("gateway forwards quote and interaction IDs and exposes files only by Run ID", async () => {
+test("gateway forwards quote and interaction IDs and reads attachments only by their message and revision", async () => {
   let received: unknown;
-  const bridge: WebBridge = { state: async () => state, submit: async input => { received = input; }, stop: async () => {}, respond: async (id, input) => { received = { id, input }; }, artifact: async id => {
-    if (id !== "run-synthetic") throw new Error("artifact_unavailable");
-    return { filename: "合成成果.md", content: "# 合成成果" };
-  } };
+  const assetId='asset-11111111-1111-4111-8111-111111111111',path='/api/media/message-synthetic/'+assetId+'/1';
+  const bridge: WebBridge = { state: async () => state, submit: async input => { received = input; }, stop: async () => {}, respond: async (id, input) => { received = { id, input }; }, media:{read:async input=>{
+    if(input.messageId!=="message-synthetic"||input.assetId!==assetId||input.revision!==1)throw Error("media_scope_denied");
+    return {filename:"合成成果.md",mime:"text/markdown",data:Buffer.from("# 合成成果").toString("base64")};
+  }} };
   const web = await createWebServer({ bridge, port: 0 });
   const headers = { Origin: web.url, "Content-Type": "application/json" };
   try {
@@ -55,20 +56,57 @@ test("gateway forwards quote and interaction IDs and exposes files only by Run I
     assert.deepEqual(received, input);
     assert.equal((await fetch(web.url + "/api/interactions/interaction-synthetic", { method: "POST", headers, body: JSON.stringify({ requestId: "reply", text: "答复" }) })).status, 202);
     assert.deepEqual(received, { id: "interaction-synthetic", input: { requestId: "reply", text: "答复" } });
-    const file = await fetch(web.url + "/api/files/run-synthetic");
+    const file = await fetch(web.url + path);
     assert.equal(await file.text(), "# 合成成果");
     assert.match(file.headers.get("content-disposition")!, /attachment/);
-    assert.equal((await fetch(web.url + "/api/files/run-synthetic?path=/etc/passwd")).status, 400);
-    assert.equal((await fetch(web.url + "/api/files/etc%2Fpasswd")).status, 404);
-    assert.equal((await fetch(web.url + "/api/files/run-other")).status, 409);
+    assert.equal((await fetch(web.url + path + "?path=/etc/passwd")).status, 400);
+    assert.equal((await fetch(web.url + "/api/media/etc%2Fpasswd/"+assetId+"/1")).status, 404);
+    assert.equal((await fetch(web.url + path.replace("message-synthetic","message-other"))).status, 409);
   } finally { await web.close(); }
+});
+
+test('voice preview is accepted only on the exact attachment GET route',async()=>{
+ const ref={messageId:'message-voice',assetId:'asset-11111111-1111-4111-8111-111111111111',revision:2};
+ const path='/api/media/'+ref.messageId+'/'+ref.assetId+'/'+ref.revision;
+ const original=Buffer.from([0,5,255,7]),preview=Buffer.from([82,73,70,70,1]),calls:unknown[]=[];
+ const bridge:WebBridge={state:async()=>state,submit:async()=>{},stop:async()=>{},respond:async()=>{},media:{read:async input=>{
+  calls.push(input);
+  return input.preview==='voice'
+   ?{filename:'voice.wav',mime:'audio/wav',data:preview.toString('base64')}
+   :{filename:'voice.silk',mime:'audio/silk',data:original.toString('base64'),sha256:'a'.repeat(64)};
+ }}};
+ const web=await createWebServer({bridge,port:0});
+ try{
+  const file=await fetch(web.url+path);
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()),original);
+  assert.equal(file.headers.get('x-homer-artifact-hash'),'a'.repeat(64));
+  const audio=await fetch(web.url+path+'?preview=voice');
+  assert.equal(audio.status,200);
+  assert.equal(audio.headers.get('content-type'),'audio/wav');
+  assert.deepEqual(Buffer.from(await audio.arrayBuffer()),preview);
+  for(const suffix of ['?preview=html','?preview=voice&preview=voice','?preview=voice&path=other','/origin?preview=voice','/reveal?preview=voice'])
+   assert.equal((await fetch(web.url+path+suffix)).status,400);
+  assert.equal((await fetch(web.url+'/api/state?preview=voice')).status,400);
+  assert.equal((await fetch(web.url+path+'?preview=voice',{method:'POST'})).status,400);
+  assert.deepEqual(calls,[ref,{...ref,preview:'voice'}]);
+ }finally{await web.close();}
+});
+
+test('retired external message gateways have no local entry points',async()=>{
+ const bridge:WebBridge={state:async()=>state,submit:async()=>{},stop:async()=>{},respond:async()=>{}};
+ const web=await createWebServer({bridge,port:0});
+ try{
+  for(const path of ['/api/channels/wechat','/api/channels/telegram','/settings/telegram','/api/files/result-retired'])
+   assert.equal((await fetch(web.url+path)).status,404);
+  assert.equal((await fetch(web.url+'/api/channels/telegram/configure',{method:'POST',headers:{Origin:web.url,'Content-Type':'application/json'},body:'{}'})).status,404);
+ }finally{await web.close();}
 });
 
 test("SSE reconnect gets current server history and disconnect does not cancel submitted work", async () => {
   let text = "部分", stopped = false;
   const bridge: WebBridge = {
     state: async () => ({ ...state, messages: [{ id: "message-synthetic", threadId: state.threadId, requestId: "request-synthetic", role: "assistant", text, status: "running", createdAt: 1 }] }),
-    submit: async () => {}, stop: async () => { stopped = true; }, respond: async () => {}, artifact: async () => { throw new Error("artifact_unavailable"); },
+    submit: async () => {}, stop: async () => { stopped = true; }, respond: async () => {},
   };
   const web = await createWebServer({ bridge, port: 0 });
   try {
@@ -86,13 +124,13 @@ test("SSE reconnect gets current server history and disconnect does not cancel s
   } finally { await web.close(); }
 });
 
-test("gateway forwards annotation-only multi-quotes without accepting a forged trusted channel source", async () => {
+test("gateway forwards annotation-only multi-quotes without accepting a forged trusted source", async () => {
   let received: unknown;
-  const bridge: WebBridge={state:async()=>state,submit:async input=>{received=input;},stop:async()=>{},respond:async()=>{},artifact:async()=>{throw new Error("artifact_unavailable");}};
+  const bridge: WebBridge={state:async()=>state,submit:async input=>{received=input;},stop:async()=>{},respond:async()=>{}};
   const web=await createWebServer({bridge,port:0});
   try {
     const input={requestId:"synthetic-multi-http",text:"",quotes:[{messageId:"message-synthetic",text:"合成原文",annotation:"合成批注"}]};
-    const response=await fetch(web.url+"/api/messages",{method:"POST",headers:{Origin:web.url,"Content-Type":"application/json"},body:JSON.stringify({...input,source:"wechat",persist:"forged"})});
+    const response=await fetch(web.url+"/api/messages",{method:"POST",headers:{Origin:web.url,"Content-Type":"application/json"},body:JSON.stringify({...input,source:"forged-source",persist:"forged"})});
     assert.equal(response.status,202);assert.deepEqual(received,input);
   }finally{await web.close();}
 });

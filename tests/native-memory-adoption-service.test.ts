@@ -18,18 +18,16 @@ test('native change leaves a live Worker running and permits its authorized resu
   async call(tool:string,args:unknown){const callId='synthetic-call-'+ ++serial,result=await this.handler({threadId:this.threadId,turnId:this.turnId,callId,tool,arguments:args});this.emit('toolResponse',callId);return result;}
   async turn(text:string,o?:{onStarted?:(id:string)=>void}){
    this.turnId='synthetic-turn-'+ ++serial;o?.onStarted?.(this.turnId);
-   if(this.options.tools.some(t=>t.name==='read_material'))return new Promise<any>(r=>this.release=r);
+   if(this.options.role==='worker')return new Promise<any>(r=>this.release=r);
    if(text==='dispatch'){
-    const task=await this.call('task_create',{title:'Synthetic',goal:'Synthetic authorized file'}) as {taskId:string};
-    await this.call('worker_open',{taskId:task.taskId,message:'Read materials/sample.md and write the synthetic result.'});
+    await this.call('worker_open',{message:'Read materials/sample.md and write the synthetic result.'});
    }
    if(text.startsWith('[内部协作输入')){
     const input=JSON.parse(text.split('\n')[1]!);
     if(input.kind==='worker_reply'){
      const reply=await this.call('worker_read',{workerId:input.workerId,messageId:input.messageId}) as {messages:{text:string}[]};
      const filePath=reply.messages[0]!.text.trim().split('\n').at(-1);
-     const result=await this.call('accept_result',{runId:input.runId,messageId:input.messageId,filePath}) as {resultId:string};
-     await this.call('work_inspect',{resultId:result.resultId});
+     await this.call('send_user_message',{taskId:input.taskId,text:'Synthetic result',attachments:[{path:filePath}]});
     }
    }
    return {status:'completed',text:'Synthetic'};
@@ -40,16 +38,19 @@ test('native change leaves a live Worker running and permits its authorized resu
  const app=new Homer(base,async()=>{},factory);
  try{
   await app.start();await app.message('dispatch');const deadline=Date.now()+3000;
-  while(!peers.some(p=>p.options.tools.some(t=>t.name==='read_material'))){assert.ok(Date.now()<deadline);await new Promise(r=>setTimeout(r,10));}
-  const worker=peers.find(p=>p.options.tools.some(t=>t.name==='read_material'))!;assert.doesNotMatch(worker.options.instructions,/suggest_memory|宿主为当前事项选择的有限快照/);assert.equal(worker.options.tools.some(t=>t.name==='suggest_memory'),false);
+  while(!peers.some(p=>p.options.role==='worker')){assert.ok(Date.now()<deadline);await new Promise(r=>setTimeout(r,10));}
+  const worker=peers.find(p=>p.options.role==='worker')!;assert.doesNotMatch(worker.options.instructions,/suggest_memory|宿主为当前事项选择的有限快照/);assert.equal(worker.options.tools.some(t=>t.name==='suggest_memory'),false);
   const notes=join(home,'memories/extensions/ad_hoc/notes');mkdirSync(notes,{recursive:true});writeFileSync(join(notes,'withdrawal.md'),'Synthetic withdrawal');
   const run=app.store.runs()[0]!;await new Promise(r=>setTimeout(r,40));
   assert.equal(app.store.run(run.id)!.stopReason,null);
-  await worker.call('read_material',{});
-  const file=await worker.call('write_markdown',{filename:'answer.md',content:'# Synthetic result'}) as {path:string};
-  worker.release?.({status:'completed',text:'Synthetic finished\n'+file.path});
+  const path=join(workspace,'answer.md');writeFileSync(path,'# Synthetic result');
+  worker.release?.({status:'completed',text:'Synthetic finished\n'+path});
   await app.idle();assert.equal(app.store.runs().length,1);assert.equal(app.store.run(run.id)!.status,'succeeded');
-  const results=app.tasks.readTask({agentId:app.store.meta('mainAgentId')!},run.taskId).results;
-  assert.equal(results.length,1);assert.equal(results[0]!.runId,run.id);assert.equal(results[0]!.version,run.version);assert.equal(results[0]!.state,'accepted');
+  const record=app.store.db.prepare("SELECT id FROM conversation_messages WHERE taskId=? AND taskVersion=? AND role='assistant'").get(run.taskId,run.version);
+  assert.ok(record);
+  const message=app.history.message(String(record.id))!;
+  assert.equal(message.attachments?.length,1);
+  assert.equal(Buffer.from(app.readAttachment({messageId:message.id,...message.attachments![0]!}).data,'base64').toString(),'# Synthetic result');
+
  }finally{await app.close();rmSync(dir,{recursive:true,force:true});}
 });

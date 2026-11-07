@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,copyFileSync,chmodSync,existsSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,copyFileSync,chmodSync,existsSync,unlinkSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {execFileSync} from 'node:child_process';
@@ -16,7 +16,7 @@ function profile(loggedIn){
 }
 async function launch(root,daily=false){
  const startedAt=performance.now();
- const instance=await _electron.launch({executablePath:join(resolve(bundle),'Contents/MacOS/Homer'),args:['--test-profile',root,...(daily?['--deepseek-daily']:[])],timeout:30000});
+ const instance=await _electron.launch({executablePath:join(resolve(bundle),'Contents/MacOS/Homer'),args:['--test-profile',root,...(daily?['--deepseek-daily']:[])],env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(root,'host-home'),TMPDIR:join(root,'tmp'),LANG:'zh_CN.UTF-8'},timeout:30000});
  const page=await instance.firstWindow();await page.waitForURL('http://127.0.0.1:*/**',{timeout:30000});
  return {instance,page,startedAt};
 }
@@ -28,6 +28,12 @@ async function stateWhen(page,predicate){
   await page.waitForTimeout(50);
  }
  throw Error('synthetic_desktop_state_timeout');
+}
+async function readAttachment(page,{messageId,assetId,revision}){
+ return page.evaluate(async({messageId,assetId,revision})=>{
+  const response=await fetch('/api/media/'+messageId+'/'+assetId+'/'+revision);
+  return {status:response.status,text:await response.text(),sha256:response.headers.get('x-homer-artifact-hash')};
+ },{messageId,assetId,revision});
 }
 async function accountWhen(page,predicate){
  const deadline=Date.now()+30000;
@@ -87,14 +93,22 @@ test('actual Electron app keeps an unconnected synthetic account read-only',{ski
  }finally{await quit(instance,root);}
 });
 
-test('actual Electron app recovers its isolated owner after a complete process crash',{skip:!bundle,timeout:90000},async t=>{
- const root=profile(true);let app=await launch(root),refused=false;
+test('actual Electron app recovers its isolated owner and attachment after a complete process crash',{skip:!bundle,timeout:90000},async t=>{
+ const root=profile(true);writeFileSync(join(root,'fixture-control.json'),JSON.stringify({loggedIn:true,deepseekSmoke:true}));
+ let app=await launch(root),refused=false;
  try{
   await stateWhen(app.page,state=>state.upgrade.phase==='running');
   await app.page.locator('[contenteditable=true]').fill('synthetic crash retained request');
   await app.page.locator('.send-button').click();
   await stateWhen(app.page,state=>!state.isRunning&&state.messages.some(m=>m.role==='assistant'&&m.status==='completed'&&m.text.includes('隔离测试答复')));
-  const thread=(await app.page.evaluate(async()=>(await(await fetch('/api/state')).json()))).threadId;
+  writeFileSync(join(root,'workspace/synthetic.md'),'Synthetic crash material');
+  await app.page.locator('[contenteditable=true]').fill('dispatch-synthetic');
+  await app.page.locator('.send-button').click();
+  const settled=await stateWhen(app.page,state=>!state.isRunning&&state.artifacts?.some(file=>file.title==='hello.md'));
+  const thread=settled.threadId,file=settled.artifacts.find(file=>file.title==='hello.md');
+  const bytes={status:200,text:'DeepSeek Worker 已运行（离线合成）',sha256:file.sha256};
+  assert.deepEqual(await readAttachment(app.page,file),bytes);
+  unlinkSync(join(root,'workspace/hello.md'));
   const processes=execFileSync('/bin/ps',['-axo','pid=,ppid='],{encoding:'utf8'}).trim().split('\n').map(row=>row.trim().split(/\s+/).map(Number));
   const owned=new Set([app.instance.process().pid]);let changed=true;
   while(changed){changed=false;for(const [pid,parent] of processes)if(owned.has(parent)&&!owned.has(pid)){owned.add(pid);changed=true;}}
@@ -107,7 +121,9 @@ test('actual Electron app recovers its isolated owner after a complete process c
   refused=!!restarted.upgrade.code;
   assert.equal(restarted.upgrade.phase,'running',restarted.upgrade.code);
   assert.equal(restarted.threadId,thread);assert.ok(restarted.messages.some(message=>message.text==='synthetic crash retained request'));
-  t.diagnostic(JSON.stringify({synthetic:true,completeProcessCrash:true,originalThreadPreserved:true,locksManuallyRemoved:false}));
+  assert.ok(restarted.artifacts.some(ref=>ref.messageId===file.messageId&&ref.assetId===file.assetId&&ref.revision===file.revision));
+  assert.deepEqual(await readAttachment(app.page,file),bytes);
+  t.diagnostic(JSON.stringify({synthetic:true,completeProcessCrash:true,originalThreadPreserved:true,exactAttachmentPreserved:true,locksManuallyRemoved:false}));
  }finally{if(app)await quit(app.instance,root,!refused);}
 });
 
@@ -118,10 +134,15 @@ test('daily desktop automatically receives website credentials, applies by norma
  for(const value of Object.values(origins))assert.equal(new URL(value).hostname,'127.0.0.1');
  const root=profile(false);writeFileSync(join(root,'fixture-control.json'),JSON.stringify({loggedIn:false,deepseekSmoke:true}));
  const config={main:{baseUrl:origins.gatewayOrigin+'/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:origins.gatewayOrigin+'/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}};
- let balance=200,code,challenge,redirect,consumed=false,exchanges=0,configReads=0;
+ let balance=200,code,challenge,redirect,consumed=false,exchanges=0,configReads=0,turnCredentialRequests=0;
  const gateway=createServer((req,res)=>{
   res.setHeader('Content-Type','application/json');
   if(req.url==='/api/status'){assert.equal(req.headers.authorization,undefined);res.end(JSON.stringify({success:true,data:{quota_per_unit:100,quota_display_type:'CUSTOM',custom_currency_symbol:'积分',custom_currency_exchange_rate:1}}));return;}
+  if(req.url==='/api/homer/turn/credentials'){
+   assert.equal(req.method,'POST');assert.equal(req.headers.authorization,'Bearer synthetic-website-model-token');turnCredentialRequests++;
+   const expiresAt=Math.floor(Date.now()/1000)+3600;
+   res.end(JSON.stringify({ttlSeconds:3600,expiresAt,iceServers:[{urls:['turn:127.0.0.1:3478?transport=udp'],username:expiresAt+':'+ 'a'.repeat(32),credential:Buffer.alloc(20,1).toString('base64')}]}));return;
+  }
   assert.equal(req.url,'/api/usage/token/');assert.equal(req.headers.authorization,'Bearer synthetic-website-model-token');
   res.end(JSON.stringify({code:true,data:{total_available:balance,total_used:50,unlimited_quota:false,expires_at:0,user_quota:{total_available:900000,total_used:999999}}}));
  });
@@ -160,17 +181,16 @@ test('daily desktop automatically receives website credentials, applies by norma
   await restart();app=undefined;app=await launch(root,true);
   await stateWhen(app.page,s=>s.upgrade.phase==='running'&&!s.isRunning);
   const first=await app.page.evaluate(async()=>(await(await fetch('/api/state')).json()));
-  mkdirSync(join(root,'workspace/materials'),{recursive:true});writeFileSync(join(root,'workspace/materials/synthetic.md'),'Synthetic website-connected material');
+  writeFileSync(join(root,'workspace/synthetic.md'),'Synthetic website-connected material');
   await app.page.locator('[contenteditable=true]').fill('dispatch-synthetic');await app.page.locator('.send-button').click();
-  const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
-  try{
-   const deadline=Date.now()+30000;let run;const result=db.prepare("SELECT r.filePath AS artifact FROM results r JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) selected ON selected.value=r.id WHERE r.kind='file' AND r.state='accepted' AND d.state='recorded' AND d.revokedAt IS NULL");
-   while(!(run=result.get())&&Date.now()<deadline)await app.page.waitForTimeout(50);
-   assert.ok(run,'Worker must deliver an actual file');assert.equal(readFileSync(run.artifact,'utf8'),'DeepSeek Worker 已运行（离线合成）');
-  }finally{db.close();}
+  const delivered=await stateWhen(app.page,s=>s.artifacts?.some(file=>file.title==='hello.md'));
+  const file=delivered.artifacts.find(file=>file.title==='hello.md');
+  const downloaded=await readAttachment(app.page,file);
+  assert.deepEqual(downloaded,{status:200,text:'DeepSeek Worker 已运行（离线合成）',sha256:file.sha256});
   const observed=readFileSync(join(root,'fixture-models.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
   for(const worker of [false,true])assert.ok(observed.some(v=>v.worker===worker&&v.model==='deepseek-flash'&&v.effort==='max'&&v.serviceTier===null&&v.provider.base_url===origins.gatewayOrigin+'/v1'&&v.keyPresent));
   assert.equal(configReads,1,'startup checks once; Worker work and notices do not fetch config');
+  assert.ok(turnCredentialRequests>0,'mobile keeps its isolated credential startup path');
   const savedBefore=readFileSync(join(root,'runtime-config.json'),'utf8');
   await stateWhen(app.page,s=>!s.isRunning);
   // Advance only this isolated Electron owner's clock, without product test flags.
@@ -184,15 +204,21 @@ test('daily desktop automatically receives website credentials, applies by norma
   assert.equal(configReads,2);assert.equal(readFileSync(join(root,'runtime-config.json'),'utf8'),savedBefore,'unchanged config never rewrites credentials');
   assert.equal((await app.page.evaluate(()=>window.homerDesktopAccount.state())).needsRestart,false);
   await app.page.getByRole('button',{name:'设置',exact:true}).click();
-  await app.page.getByText('可用额度：2 积分',{exact:true}).waitFor();balance=700;
-  await app.page.getByRole('button',{name:'刷新',exact:true}).click();await app.page.getByText('可用额度：7 积分',{exact:true}).waitFor();
+  assert.deepEqual((await app.page.locator('.desktop-settings-nav [role=tab]').allTextContents()).map(text=>text.trim()),['账号','本机权限','移动设备']);
+  const credits=app.page.getByRole('region',{name:'可用积分'});
+  await credits.getByText('2 积分',{exact:true}).waitFor();
+  await app.page.getByRole('button',{name:'关闭设置',exact:true}).click();balance=700;
+  await app.page.locator('[contenteditable=true]').fill('synthetic-wallet-refresh');await app.page.locator('.send-button').click();
+  await stateWhen(app.page,s=>!s.isRunning&&s.messages.some(m=>m.role==='assistant'&&m.status==='completed'&&m.text.includes('隔离测试答复'))&&s.messages.some(m=>m.text==='synthetic-wallet-refresh'));
+  await app.page.getByRole('button',{name:'设置',exact:true}).click();
+  await credits.getByText('7 积分',{exact:true}).waitFor();
   for(const width of [390,1440]){
    await app.instance.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setContentSize(width,780),width);
    await app.page.waitForTimeout(100);assert.equal(await app.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
    await app.page.screenshot({path:join(root,'website-account-'+width+'.png')});
   }
   await app.page.getByRole('tab',{name:'本机权限',exact:true}).click();await app.page.getByRole('heading',{name:'辅助功能',exact:true}).waitFor();
-  await app.page.getByRole('tab',{name:'账号',exact:true}).click();await app.page.getByText('可用额度：7 积分',{exact:true}).waitFor();
+  await app.page.getByRole('tab',{name:'账号',exact:true}).click();await credits.getByText('7 积分',{exact:true}).waitFor();
   await app.instance.evaluate(({dialog,app})=>{dialog.showMessageBox=async()=>({response:1});app.relaunch=()=>{};});
   const stopped=app.instance.waitForEvent('close',{timeout:25000});await app.page.getByRole('button',{name:'退出登录',exact:true}).click();await stopped;app=undefined;
   const saved=JSON.parse(readFileSync(join(root,'runtime-config.json')));assert.equal(saved.token,undefined);assert.equal(saved.subject,'fixture_user_a');
@@ -200,5 +226,8 @@ test('daily desktop automatically receives website credentials, applies by norma
   assert.equal(readFileSync(join(root,'fixture-models.jsonl'),'utf8'),turns,'disconnected restart must not replay initialization or work');
   const check=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});try{assert.equal(check.prepare("SELECT value FROM meta WHERE key='mainThread'").get().value,first.threadId);assert.ok(check.prepare('SELECT count(*) n FROM runs').get().n>0);}finally{check.close();}
   t.diagnostic(JSON.stringify({synthetic:true,websiteExchange:exchanges,roles:['main','worker'],fileDelivered:true,restarted:true,historyPreserved:true,profile:root}));
- }finally{if(app)await quit(app.instance,root);await close(website);await close(gateway);}
+ }finally{
+  try{if(app)await quit(app.instance,root);}
+  finally{await Promise.all([close(website),close(gateway)]);}
+ }
 });

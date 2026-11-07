@@ -17,8 +17,7 @@ for(const status of ['completed','failed','interrupted'] as const)test(`internal
  const f=fixture();let taskId='';try{
   f.setScript(async(main,text)=>{
    if(text==='start'){
-    taskId=(await main.call('task_create',{goal:'Inspect a synthetic source; retain any unresolved gaps'})).taskId;
-    await main.call('worker_open',{taskId,message:'Inspect the source'});
+    taskId=(await main.call('worker_open',{message:'Inspect a synthetic source; retain any unresolved gaps'})).taskId;
     return {status:'completed',text:'Started'};
    }
    return {status:'completed',text:'',messages:[]};
@@ -31,8 +30,8 @@ for(const status of ['completed','failed','interrupted'] as const)test(`internal
   const row=f.app.store.db.prepare("SELECT m.payloadJson,r.state FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='worker_reply'").get()!;
   assert.equal(JSON.parse(String(row.payloadJson)).text,body);assert.equal(row.state,'processed');
   assert.equal(f.app.tasks.task(taskId).state,'open');assert.equal(f.app.tasks.runs(taskId)[0]!.status,status==='completed'?'succeeded':status);
-  assert.equal(f.app.tasks.deliveries().length,0);
-  assert.equal(f.events.filter(event=>event.type==='coordination'||event.type==='delivery').length,0);
+  assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='send_user_message'").get()!.n,0);
+  assert.equal(f.events.filter(event=>event.type==='coordination').length,0);
   assert.equal(f.inputs.length,2);
  }finally{await f.close();}
 });

@@ -1,6 +1,6 @@
 import { resolve, relative, isAbsolute, dirname, join, sep } from 'node:path';
 import { existsSync, realpathSync, lstatSync } from 'node:fs';
-import { WorkerInteractions, type InteractionResolution } from './worker-interactions.js';
+import { WorkerInteractions, type InteractionInput, type InteractionResolution } from './worker-interactions.js';
 import { ConversationHistory, conversationInput, type ConversationInput, type ConversationAcceptance } from './web-history.js';
 import { nativeResponse, type InteractionDecision } from './worker-interaction-protocol.js';
 import type { NativeRequest } from './worker-native-requests.js';
@@ -15,8 +15,19 @@ export type MainApprovalScope = {
     // Host-supplied dedicated HOME/skills only. Never a model-selected grant.
     skillWriteRoot?: string;
     historyThreadId?: string;
+    worker?: Pick<InteractionInput, 'runId' | 'runEpoch' | 'taskVersion'>;
 };
 const ownerPrefix = 'main-native:';
+export const VIDEO_APPROVAL_METHOD='homer_video_generation';
+export function approvalDecision(item: Pick<InteractionInput, 'details'>, input: ConversationInput): InteractionDecision {
+    if (input.questionAnswers) throw Error('interaction_response_kind');
+    if (input.attachments?.length || input.quote || input.quotes || input.resourceReference || input.resourceReferences)
+        throw Error('native_approval_explicit_decision_required');
+    const canCancel = item.details.method === 'mcpServer/elicitation/request' && (item.details.params as any)?._meta?.codex_approval_kind === 'mcp_tool_call';
+    if (!['允许本次操作', '拒绝本次操作', ...(canCancel ? ['取消本次请求'] : [])].includes(input.text))
+        throw Error('native_approval_explicit_decision_required');
+    return { action: input.text === '允许本次操作' ? 'approve' : input.text === '取消本次请求' ? 'cancel' : 'deny', reason: '用户通过待答卡明确决定当前请求。', ...(input.text === '允许本次操作' && item.details.method === 'item/permissions/requestApproval' ? { permissions: (item.details.params as any).permissions } : {}) };
+}
 const within = (root: string, path: string) => { const rel = relative(root, path); return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)); };
 // native also resolves actual spelling on case-insensitive filesystems.
 function canonicalTarget(raw: string) { let parent = resolve(raw); const parts: string[] = []; while (!existsSync(parent) && dirname(parent) !== parent) {
@@ -130,16 +141,30 @@ export class MainNativeApprovals {
     private userDecisions = new Set<string>();
     constructor(private interactions: WorkerInteractions, private history: ConversationHistory) { }
     owns(id: string) { return this.interactions.inspect(id).runId.startsWith(ownerPrefix); }
+    pending(generationId: string) { return this.interactions.hasPending(ownerPrefix + generationId); }
+    private openReview(requestId: string | number, kind: InteractionInput['kind'], details: InteractionInput['details'], question: string, reason: string, scope: MainApprovalScope, validate?: (decision: InteractionDecision) => void) {
+        let ownerId: string | undefined;
+        const opened = this.interactions.open({
+            ...(scope.worker ?? {runId:ownerPrefix + scope.generationId}), threadId:scope.threadId, turnId:scope.turnId, requestId, source:'native', kind,
+            details:{...details,historyThreadId:scope.historyThreadId??scope.threadId,...(scope.worker?{review:question,reviewReason:reason}:{})},
+            authority:{description:scope.userText.slice(0,24000)||'主对话本轮操作',sourceRequestId:scope.sourceRequestId,nativeApprovals:true}
+        }, scope.isCurrent, decision => {
+            if (!scope.worker && (!ownerId || !this.userDecisions.has(ownerId))) throw Error('main_native_user_decision_required');
+            validate?.(decision);
+        });
+        ownerId = opened.id;
+        if (!scope.worker) {
+            this.callbacks.set(requestId, opened.id);
+            this.interactions.escalate(opened.id, question, reason);
+        }
+        return opened;
+    }
     // A Homer capability operation is a host review, not a fabricated Codex RPC.
     // Codex still owns the actual installer/configuration after the user receipt.
-    openOperation(review:{requestId:string;question:string;details:Record<string,unknown>},scope:MainApprovalScope){
+    openOperation(review:{requestId:string;question:string;details:Record<string,unknown>;method?:string;reason?:string},scope:MainApprovalScope){
         if(!scope.isCurrent())throw Error('interaction_not_live');
         if(!review.question.trim()||review.question.length>4000||JSON.stringify(review.details).length>64000)throw Error('capability_review_too_large');
-        let ownerId:string|undefined;
-        const opened=this.interactions.open({runId:ownerPrefix+scope.generationId,threadId:scope.threadId,turnId:scope.turnId,requestId:review.requestId,source:'native',kind:'authorization',details:{method:'homer_capability_operation',operation:review.details,historyThreadId:scope.historyThreadId??scope.threadId},authority:{description:scope.userText.slice(0,24000)||'本轮工具安装配置',sourceRequestId:scope.sourceRequestId,nativeApprovals:true}},scope.isCurrent,()=>{if(!ownerId||!this.userDecisions.has(ownerId))throw Error('main_native_user_decision_required');});
-        ownerId=opened.id;this.callbacks.set(review.requestId,opened.id);
-        this.interactions.escalate(opened.id,review.question,'仅批准所示安装或配置；不批准额外登录、费用、外发、系统权限或自动重试。取消或本轮结束后失效。');
-        return opened;
+        return this.openReview(review.requestId,'authorization',{method:review.method??'homer_capability_operation',operation:review.details},review.question,review.reason??'仅批准所示安装或配置；不批准额外登录、费用、外发、系统权限或自动重试。取消或本轮结束后失效。',scope);
     }
     open(request: NativeRequest, scope: MainApprovalScope): {
         id: string;
@@ -165,13 +190,8 @@ export class MainNativeApprovals {
             message: mcpDisplay(request.details.message), requestedSchema: {type: 'object', properties: {}},
             _meta: {codex_approval_kind: 'mcp_tool_call'},
         } : request.details;
-        let ownerId: string | undefined;
-        const opened = this.interactions.open({ runId: ownerPrefix + scope.generationId, threadId: scope.threadId, turnId: scope.turnId, requestId: request.requestId, source: 'native', kind: request.kind, details: { method: request.method, params, historyThreadId: scope.historyThreadId ?? scope.threadId }, authority: { description: scope.userText.slice(0, 24000) || '主对话本轮操作', sourceRequestId: scope.sourceRequestId, nativeApprovals: true } }, scope.isCurrent, decision => { if (!ownerId || !this.userDecisions.has(ownerId))
-            throw Error('main_native_user_decision_required'); validateGrant(request, decision, scope); });
-        ownerId = opened.id;
-        this.callbacks.set(request.requestId, opened.id);
-        this.interactions.escalate(opened.id, question, request.kind==='question'?'答复交给荷马继续处理，不授予操作权限。':request.method === 'item/permissions/requestApproval' ? ((request.details.permissions as any)?.network?.enabled === true ? '网络许可覆盖当前回复轮次的网络访问，不限单一站点；本轮结束即失效。' : '文件许可仅当前回复轮次有效，本轮结束即失效。') : '仅授权当前请求；不授予永久权限或自动重试。');
-        return opened;
+        const reason = request.kind==='question'?'答复交给荷马继续处理，不授予操作权限。':request.method === 'item/permissions/requestApproval' ? ((request.details.permissions as any)?.network?.enabled === true ? '网络许可覆盖当前回复轮次的网络访问，不限单一站点；本轮结束即失效。' : '文件许可仅当前回复轮次有效，本轮结束即失效。') : '仅授权当前请求；不授予永久权限或自动重试。';
+        return this.openReview(request.requestId,request.kind,{method:request.method,params},question,reason,scope,decision=>validateGrant(request,decision,scope));
     }
     respond(id: string, value: ConversationInput, acceptance?: ConversationAcceptance) {
         if (!this.owns(id))
@@ -181,13 +201,7 @@ export class MainNativeApprovals {
             throw Error('native_approval_explicit_decision_required');
         const item = this.interactions.inspect(id);
         let decision: InteractionDecision;
-        if (item.kind === 'authorization') {
-            if(input.questionAnswers)throw Error('interaction_response_kind');
-            const canCancel = item.details.method === 'mcpServer/elicitation/request' && (item.details.params as any)?._meta?.codex_approval_kind === 'mcp_tool_call';
-            if (!['允许本次操作', '拒绝本次操作', ...(canCancel ? ['取消本次请求'] : [])].includes(input.text))
-                throw Error('native_approval_explicit_decision_required');
-            decision = { action: input.text === '允许本次操作' ? 'approve' : input.text === '取消本次请求' ? 'cancel' : 'deny', reason: '用户通过待答卡明确决定当前请求。', ...(input.text === '允许本次操作' && item.details.method === 'item/permissions/requestApproval' ? { permissions: (item.details.params as any).permissions } : {}) };
-        }
+        if (item.kind === 'authorization') decision=approvalDecision(item,input);
         else {
             let answers;
             const questions = (item.details.params as any).questions;
@@ -211,7 +225,8 @@ export class MainNativeApprovals {
             // A host crash never recreates the callback or replays an old permission.
             if (item.responseUserMessageId !== input.requestId) {
                 this.interactions.respond(id, decision, context);
-                this.history.finish(receipt.replyId, item.kind === 'authorization' ? (decision.action === 'approve' ? '已批准本次操作，等待执行结果。' : decision.action === 'cancel' ? '已记录取消，等待原生处理。' : '已拒绝本次操作。') : '已提交本轮补充。', 'completed');
+                const videoReceipt=item.details.method===VIDEO_APPROVAL_METHOD&&decision.action==='approve'?(item.details.operation as {receipt:string}).receipt:undefined;
+                this.history.finish(receipt.replyId, videoReceipt?`已批准本次视频生成。取回编号 ${videoReceipt}`:item.kind === 'authorization' ? (decision.action === 'approve' ? '已批准本次操作，等待执行结果。' : decision.action === 'cancel' ? '已记录取消，等待原生处理。' : '已拒绝本次操作。') : '已提交本轮补充。', 'completed');
             }
             return receipt;
         }

@@ -41,7 +41,7 @@ test("HMR-PROMPTS-001: packaged CLI reports the missing resource and releases it
     cpSync(resolve("scripts/windows-security.mjs"), join(f.root, "scripts/windows-security.mjs"));
     writeFileSync(join(f.root, "package.json"), '{"type":"module"}');
     const runtime = join(f.root, "runtime");
-    writeFileSync(join(f.root, "test.config.json"), JSON.stringify({ runtime, workspace: join(f.root, "workspace"), codexBin: process.execPath, codexHome: f.root, model: "mock", requiresOpenaiAuth: false }));
+    writeFileSync(join(f.root, "test.config.json"), JSON.stringify({ runtime, workspace: join(f.root, "workspace"), codexBin: process.execPath, codexHome: f.root, nativeCodexHome: f.root, model: "mock", requiresOpenaiAuth: false }));
     const probe = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", join(f.root, "dist/cli.js"), "--json", "--config", join(f.root, "test.config.json")], { cwd: f.root, encoding: "utf8" });
     assert.equal(probe.status, 1);
     const message = JSON.parse(probe.stdout.trim());

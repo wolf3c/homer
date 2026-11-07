@@ -18,7 +18,7 @@ test('normal restart reconciles user history before generic receipt recovery, pr
   async interrupt(){return true;}
   async close(){return true;}
  }
- const config={workspace,runtime:join(dir,'runtime'),codexHome:join(dir,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:5000,mainTimeoutMs:5000,stopGraceMs:10};
+ const config={workspace,runtime:join(dir,'runtime'),codexHome:join(dir,'home'),nativeCodexHome:join(dir,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:5000,mainTimeoutMs:5000,stopGraceMs:10};
  let app=new Homer(config,async()=>{},options=>new Peer(options));
  try{
   await app.start();const thread=app.store.meta('mainThread')!;

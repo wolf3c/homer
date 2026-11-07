@@ -1,7 +1,7 @@
 import type {AttachmentRef} from './media-store.js';
 
 export type PreviewSource =
- | {kind:'artifact';id:string;sha256:string;title:string}
+ | ({kind:'attachment';messageId:string;sha256:string;title:string}&AttachmentRef)
  | {kind:'web';messageId:string;sourceId:string;url:string;title:string};
 export type PreviewRegion={x:number;y:number;width:number;height:number};
 export type PreviewAnnotation={id:string;element:string;elementPath:string;comment:string;x:number;y:number;boundingBox?:PreviewRegion};
@@ -58,10 +58,10 @@ export function previewAnnotations(value:unknown):PreviewAnnotation[]{
 export function parseResourceReference(value:unknown):ResourceReference{
  const v=object(value),s=object(v.source),title=text(s.title,500);
  let source:PreviewSource;
- if(s.kind==='artifact'){
-  const id=text(s.id,100),sha256=text(s.sha256,64);
-  if(!/^[\w:-]+$/.test(id)||!/^[a-f0-9]{64}$/.test(sha256))invalid();
-  source={kind:'artifact',id,sha256,title};
+ if(s.kind==='attachment'){
+  const messageId=text(s.messageId,100),assetId=text(s.assetId,100),sha256=text(s.sha256,64),revision=number(s.revision);
+  if(!/^[\w:-]+$/.test(messageId)||!/^asset-[a-f0-9-]{36}$/.test(assetId)||!Number.isSafeInteger(revision)||revision<1||!/^[a-f0-9]{64}$/.test(sha256))invalid();
+  source={kind:'attachment',messageId,assetId,revision,sha256,title};
  }else if(s.kind==='web'){
   const messageId=text(s.messageId,100),sourceId=text(s.sourceId,100),url=text(s.url);
   let parsed:URL;try{parsed=new URL(url);}catch{return invalid();}
@@ -69,7 +69,7 @@ export function parseResourceReference(value:unknown):ResourceReference{
   source={kind:'web',messageId,sourceId,url:parsed.href,title};
  }else return invalid();
  if(v.kind==='text'){
-  if(source.kind!=='artifact')invalid();
+  if(source.kind!=='attachment')invalid();
   if(v.annotations!==undefined){
    if(v.text!==undefined)invalid();
    return {kind:'text',source,annotations:previewTextAnnotations(v.annotations)};
@@ -78,7 +78,7 @@ export function parseResourceReference(value:unknown):ResourceReference{
  }
  if(v.kind==='web')return {kind:'web',source,annotations:previewAnnotations(v.annotations)};
  if(v.kind==='image'){
-  if(source.kind!=='artifact')invalid();
+  if(source.kind!=='attachment')invalid();
   const width=number(v.width),height=number(v.height),image=object(v.image),assetId=text(image.assetId,50),revision=number(image.revision);
   if(!width||!height||width*height>40_000_000||!/^asset-[a-f0-9-]{36}$/.test(assetId)||!Number.isSafeInteger(revision)||revision<1)invalid();
   if(v.annotations!==undefined){
@@ -92,7 +92,7 @@ export function parseResourceReference(value:unknown):ResourceReference{
 }
 export function resourceReferenceText(reference:ResourceReference):string{
  const source=reference.source;
- const origin=source.kind==='artifact'?`${source.title}（${source.id}，SHA-256 ${source.sha256}）`:`${source.title}（${source.url}，来源消息 ${source.messageId}／${source.sourceId}）`;
+ const origin=source.kind==='attachment'?`${source.title}（${source.messageId}／${source.assetId}@${source.revision}，SHA-256 ${source.sha256}）`:`${source.title}（${source.url}，来源消息 ${source.messageId}／${source.sourceId}）`;
  if(reference.kind==='text')return reference.annotations?`来源：${origin}\n文件逐段批注（text 为来源数据，comment 为用户备注）：\n${JSON.stringify(reference.annotations.map((note,i)=>({number:i+1,...note})))}`:`来源：${origin}\n引用原文：\n${reference.text}`;
  if(reference.kind==='image')return reference.annotations?`来源：${origin}\n图片尺寸：${reference.width} × ${reference.height}\n图片逐区域批注（region 为原图像素位置，comment 为用户备注；原图随附件提供）：\n${JSON.stringify(reference.annotations.map((note,i)=>({number:i+1,...note})))}`:`来源：${origin}\n图片尺寸：${reference.width} × ${reference.height}；矩形区域（原图像素）：${JSON.stringify(reference.region)}\n用户批注：${reference.comment}`;
  return `来源：${origin}\n网页元素位置为批注时的页面信息，非服务器复现。\n${reference.annotations.map((n,i)=>`${i+1}. ${n.element} ${n.elementPath}\n位置：${JSON.stringify(n.boundingBox??{x:n.x,y:n.y})}\n用户批注：${n.comment}`).join('\n')}`;
@@ -104,7 +104,7 @@ export function resourceHasComment(reference:ResourceReference|undefined):boolea
 export type ResourceReferences={resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]};
 export function referenceKey(reference:Pick<ResourceReference,'kind'|'source'>):string{
  const s=reference.source;
- return JSON.stringify(s.kind==='artifact'?[reference.kind,s.kind,s.id,s.sha256]:[reference.kind,s.kind,s.messageId,s.sourceId,s.url]);
+ return JSON.stringify(s.kind==='attachment'?[reference.kind,s.kind,s.messageId,s.assetId,s.revision,s.sha256]:[reference.kind,s.kind,s.messageId,s.sourceId,s.url]);
 }
 export function referencesOf(value:ResourceReferences):ResourceReference[]{
  return value.resourceReferences??(value.resourceReference?[value.resourceReference]:[]);

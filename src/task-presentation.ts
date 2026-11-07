@@ -12,11 +12,3 @@ export function pendingUserCount(worker:OverviewWorker){
 }
 export function validPendingUsers(worker:OverviewWorker){return pendingUserCount(worker)?worker.pendingUsers:[];}
 export function readableStatus(task:OverviewTask){return classifyTask(task).label;}
-export function taskProgress(task:OverviewTask){
- const pending=task.workers.reduce((n,w)=>n+pendingUserCount(w),0);
- if(pending)return `${pending} 项需你处理`;
- if(task.controlState==='stopping')return '已记录停止请求，执行结束尚待确认';
- if(task.state==='settled')return readableStatus(task);
- const active=task.workers.filter(w=>w.run.status==='running'&&w.run.phase==='executing'&&w.run.stopRequestedAt==null).length;
- return active?`${active} 个 Worker 正在执行`:task.workers.length?'Worker 会话可继续追问':'事项已记录';
-}

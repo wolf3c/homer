@@ -2,7 +2,6 @@
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-import {createHash} from 'node:crypto';
 import {deflateSync} from 'node:zlib';
 import {fixture} from './web-history-followup-fixture.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
@@ -21,8 +20,7 @@ const files=[
  {id:'result-icon-image',title:'图标核对.png',mime:'image/png',bytes:png()},
 ];
 const f=await fixture(4,'after'),checks=[],metrics=[];let chrome;
-f.bridge.artifact=async id=>{const file=files.find(x=>x.id===id);assert.ok(file);return {filename:file.title,mime:file.mime,data:file.bytes.toString('base64'),sha256:createHash('sha256').update(file.bytes).digest('hex')};};
-for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,artifacts:[...(value.artifacts??[]),...files.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic icon review'}))]};};}
+f.attach('Synthetic icon review',files.map(({title,mime,bytes})=>({filename:title,mime,content:bytes})));
 f.history.accept('synthetic-history',{requestId:'historical-icon-review',text:'历史引用的合成说明',quotes:[{messageId:'node-3',text:'合成答复 3',annotation:''}]});
 try{
  chrome=await isolatedChrome(destination);

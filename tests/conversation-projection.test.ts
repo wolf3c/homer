@@ -1,3 +1,4 @@
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
@@ -17,8 +18,8 @@ function fixture(){
  const store=new Store(join(root,'synthetic.sqlite'));new WorkerInteractions(store.db);
  const history=new ConversationHistory(store.db),tasks=new RecursiveTasks(store,new Files(join(root,'workspace')));tasks.migrate();store.setMeta('mainThread','synthetic');
  const inputs=new MainInputs(tasks,history),processes=new MainProcessHistory(store.db);
- const host={store,history,inputs,processes,media:{view:()=>{throw Error('no_media_fixture');}},mainActivityState:()=>null};
- const state=()=>Homer.prototype.conversationState.call(host as unknown as Homer);
+ const host=Object.assign(Object.create(Homer.prototype),{store,history,inputs,processes,media:{view:()=>{throw Error('no_media_fixture');}},mainActivityState:()=>null}) as Homer;
+ const state=()=>host.conversationState();
  function ack(item:ReturnType<MainInputs['claim']>,id:string,previous?:{generationId:string;turnId:string}){assert.ok(item);store.transaction(()=>{
   processes.start({id,threadId:'synthetic',sourceKind:'user',sourceMessageIds:[item.messageId],messageId:id,replyMessageId:item.replyId},id+'-turn');history.record(id,'synthetic','','running');
   if(previous)inputs.continuedInTransaction(item.messageId,item.revision,previous.generationId,previous.turnId,id+'-turn');else inputs.startedInTransaction(item.messageId,item.revision,'generation-'+item.input.requestId,id+'-turn');
@@ -53,18 +54,18 @@ test('ACK local failure rolls node/history/receipt back together, then uncertain
  const reopened=new Store(join(f.root,'synthetic.sqlite'));try{const again=new MainInputs(new RecursiveTasks(reopened,new Files(join(f.root,'workspace'))),new ConversationHistory(reopened.db));again.reconcile();assert.equal(again.list()[0]!.state,'uncertain');assert.equal(again.claim(),undefined);}finally{reopened.close();}
  }finally{f.close();}
 });
-test('formal scan preserves publication text/multiple files, final identity and A1 B A2 without node.seq sorting',()=>{
+test('formal scan preserves explicit message text, final identity and A1 B A2 without node.seq sorting',()=>{
  const f=fixture();try{
  f.inputs.accept({requestId:'A',text:'same text'});const a=f.inputs.claim()!;f.ack(a,'A1');
  f.processes.agent('A1',{turnId:'A1-turn',itemId:'earlier',phase:'final_answer',text:'Earlier public answer',completed:true});
  f.processes.agent('A1',{turnId:'A1-turn',itemId:'final',phase:'final_answer',text:'Final answer',completed:true});
  f.history.finish(a.replyId,'Earlier public answer\n\nFinal answer','completed');
- f.processes.delivery('A1',{historyMessageId:'publication',text:'Original publication'});f.history.record('publication','synthetic','Original publication');f.processes.finish('A1','completed','turn:A:terminal:completed');
+ const sent=commitSyntheticMessage(f,'synthetic','Original explicit message');f.processes.finish('A1','completed','turn:A:terminal:completed');
  f.inputs.finish(a.messageId,a.revision,'completed');f.inputs.accept({requestId:'B',text:'same text'});const b=f.inputs.claim()!;f.ack(b,'B1');f.inputs.finish(b.messageId,b.revision,'completed');
  f.processes.start({id:'A2',threadId:'synthetic',sourceKind:'user',sourceMessageIds:[a.messageId],messageId:'A2',replyMessageId:a.replyId},'A2-turn');f.history.record('A2','synthetic','','running');
  const stored=f.store.db.prepare('SELECT value FROM meta WHERE key=?').get('publicMainNode:v1:A1')!;f.store.db.prepare('UPDATE meta SET value=? WHERE key=?').run(JSON.stringify({...JSON.parse(String(stored.value)),seq:50}),'publicMainNode:v1:A1');
  const state=f.state();assert.ok(state.orderWarning);assert.equal(state.messages[1]?.id,'A1');assert.equal(state.messages.filter(m=>m.role==='user'&&m.requestId==='A').length,1);assert.equal(state.messages.filter(m=>m.role==='user').length,2);
- assert.equal(state.messages.find(m=>m.id==='publication')?.text,'Original publication');assert.match(state.messages.at(-1)!.sourceLabel!,/继续处理/);
+ assert.equal(state.messages.find(m=>m.id===sent.messageId)?.text,'Original explicit message');assert.match(state.messages.at(-1)!.sourceLabel!,/继续处理/);
  const node=f.processes.list('synthetic').find(node=>node.id==='A1')!;assert.equal(node.final?.text,'Final answer');assert.equal(node.items.length,2,'store retains all public items');assert.ok(node.items[0]?.kind==='commentary');assert.equal(node.items[0].phase,'final_answer');
  const rendered=state.messages.find(m=>m.id==='A1')!;assert.equal(rendered.text,'Earlier public answer\n\nFinal answer');assert.deepEqual(rendered.finalAnswers?.map(item=>item.id),['A1-turn:earlier','A1-turn:final']);assert.deepEqual(rendered.process!.items.map(item=>item.id),['A1-turn:earlier','A1-turn:final'],'source items survive projection; the adapter renders each once');
  assert.ok(!state.messages.some(message=>message.id===a.replyId));assert.equal(f.history.message(a.replyId)?.text,'Earlier public answer\n\nFinal answer','aggregate receipt remains stored');

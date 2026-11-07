@@ -100,6 +100,7 @@ export type EngineLike = {
   refreshCapabilities?(force?:boolean):Promise<void|{pending:boolean}>;
   readonly appliedConfigurationVersion?:string;
   readonly nativeBusy?:boolean;
+  readonly turnActive?:boolean;
   readonly nativeInteractionPending?:boolean;
   // A failed turn and an unavailable process are separate facts.
   readonly available?:boolean;
@@ -311,6 +312,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private appliedVersion?:string;
   get appliedConfigurationVersion(){return this.appliedVersion;}
   get nativeBusy(){return this.backgroundUnconfirmed;}
+  get turnActive(){return !!this.active&&!this.active.settling;}
   get available(){return !this.failure&&!this.closing&&!this.exited;}
   get activeToolSettings(){return this.appliedTools?{...this.appliedTools}:undefined;}
   private async refreshBackground(){

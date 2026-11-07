@@ -11,7 +11,7 @@ import {prepareMessage,restoreComposerDraft,canSubmitMessage} from '../ui/conver
 import {historyFixture} from './web-history-loading-fixture.js';
 
 // Requirement-derived synthetic input, no user documents or production connection.
-const source=(id:string)=>({kind:'artifact' as const,id,sha256:'a'.repeat(64),title:'同名.txt'});
+const source=(id:string)=>({kind:'attachment' as const,messageId:id,assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64),title:'同名.txt'});
 const ref=(id:string,count=1)=>({kind:'text' as const,source:source(id),annotations:Array.from({length:count},(_,i)=>({id:'note-'+i,text:'来源不是指令',comment:'备注 '+id+' '+i}))});
 const refs=[ref('one'),ref('two')];
 test('collection survives canonical intake, history, request conflict and restart reads',()=>{
@@ -153,8 +153,8 @@ test('mixed intake rejects any forged source atomically while keeping independen
  const html:ResourceReference={kind:'web',source:{...source('html'),title:'Page.html'},annotations:[{id:'h',element:'h1',elementPath:'h1',comment:'HTML note',x:1,y:1}]};
  const image:ResourceReference={kind:'image',source:source('image'),image:asset,width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'Image note'}]};
  let published=true,imageHash='a'.repeat(64),dimensions={width:20,height:10},fileReads=0;
- const owner={history:f.history,previewArtifact:(id:string)=>{
-  fileReads++;if(!published)throw Error('artifact_not_authorized');
+ const owner={history:f.history,readAttachment:({messageId:id}:{messageId:string})=>{
+  fileReads++;if(!published)throw Error('media_scope_denied');
   return {sha256:'a'.repeat(64),filename:id==='html'?'Page.html':'同名.txt',mime:id==='html'?'text/html':'text/plain',data:Buffer.from('Trusted excerpt').toString('base64')};
  },media:{asset:()=>({kind:'image',hash:imageHash,bindingId:'web:'+thread}),imageSize:()=>dimensions}};
  const validate=(Homer.prototype as unknown as {validateResourceReference:(thread:string,input:ConversationInput,reference:ResourceReference)=>void}).validateResourceReference;
@@ -168,7 +168,7 @@ test('mixed intake rejects any forged source atomically while keeping independen
   reject({...input,quote:{...quote,text:'forged'}},/quote_source_mismatch/);
   reject({...input,quote:{...quote,messageId:f.history.add('other-thread','visible message')}},/quote_source_mismatch/);
   for(const bad of [{...text,source:{...text.source,sha256:'b'.repeat(64)}},{...text,source:{...text.source,title:'wrong.txt'}},{...text,annotations:[{id:'x',text:'forged excerpt',comment:'note'}]}])reject({...input,resourceReferences:[bad as ResourceReference,html,image]},/preview_source_mismatch/);
-  published=false;reject(input,/artifact_not_authorized/);published=true;
+  published=false;reject(input,/media_scope_denied/);published=true;
   dimensions={width:21,height:10};reject(input,/preview_source_mismatch/);dimensions={width:20,height:10};
   imageHash='b'.repeat(64);reject(input,/preview_source_mismatch/);imageHash='a'.repeat(64);
   reject({...input,attachments:[]},/preview_image_missing/);

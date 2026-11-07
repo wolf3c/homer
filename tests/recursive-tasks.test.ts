@@ -12,7 +12,7 @@ test('two Workers share one Task, open replay is exact and failure never settles
   const aa=running(f,a.runId),bb=running(f,b.runId);
   f.tasks.failRun(aa.runId!,aa.epoch!,'synthetic_missing');complete(f,bb);
   assert.equal(f.tasks.task(f.task.taskId).state,'open');assert.equal(f.tasks.task(f.task.taskId).outcome,null);
-  assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,0);
+  assert.equal(f.tasks.workerRead(main,{workerId:b.workerId}).messages.at(-1)?.text,'Checked synthetic input; date remains unknown.');
   assert.equal(f.tasks.inbox(main).filter(m=>m.kind==='worker_reply').length,2);
  }finally{f.close();}
 });
@@ -94,7 +94,7 @@ for(const confirmed of [false,true])test('settlement waits for execution and exi
   if(!confirmed){assert.throws(()=>f.tasks.settleTask(main,{...mutation(f,'unknown'),outcome:'succeeded'}),/unconfirmed|unresolved|live|closed|active|blocked/);f.tasks.confirmWorkerExit(w.runId,undefined);}
   processReplies(f);const input={...mutation(f,'settle'),outcome:'succeeded' as const};f.tasks.settleTask(main,input);
   assert.equal(f.tasks.task(f.task.taskId).state,'settled');assert.deepEqual(f.tasks.settleTask(main,input).taskId,f.task.taskId);
-  assert.equal(f.tasks.readTask(main,f.task.taskId).results.length,0);assert.equal(f.tasks.deliveries().length,0);
+  assert.equal(f.tasks.workerRead(main,{workerId:w.workerId}).messages.at(-1)?.text,'Readable answer');
  }finally{f.close();}
 });
 

@@ -46,9 +46,9 @@ test('explicit preparation overlays only desktop owners and retains exact commit
  assert.equal(existsSync(join(stage,'.codex/private')),false);
  assert.equal(JSON.parse(readFileSync(join(out,'source-provenance.json'))).publishable,false);
 });
-test('Electron preparation removes retired shells and manual Token entries from the committed tree',()=>{
+test('Electron preparation removes retired shells and manual Token entries from the committed tree',t=>{
  const sourceSha=execFileSync('/usr/bin/git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
- const out=mkdtempSync(join(parent,'electron-')),stage=join(out,'stage');
+ const out=mkdtempSync(join(parent,'electron-')),stage=join(out,'stage');let completed=false;t.after(()=>{if(completed)rmSync(out,{recursive:true,force:true});});
  const provenance=prepareDesktopSource({root,sourceSha,stage,prepareCandidate:true});
  assert.equal(provenance.removedInputs.length,10);
  for(const path of ['scripts/desktop-deepseek.mjs','scripts/deepseek-desktop.mjs','tests/desktop-deepseek.test.mjs'])assert.ok(provenance.removedInputs.includes(path));
@@ -57,14 +57,16 @@ test('Electron preparation removes retired shells and manual Token entries from 
   assert.deepEqual(readFileSync(join(stage,path)),execFileSync('/usr/bin/git',['show',sourceSha+':'+path]));
  }
  for(const path of ['src/service.ts','src/config.ts','src/engine.ts','src/recursive-main-inputs.ts'])assert.deepEqual(readFileSync(join(stage,path)),readFileSync(join(root,path)));
+ completed=true;
 });
-test('local working-tree build freezes current product inputs without private data or deleted sources',()=>{
+test('local working-tree build freezes current product inputs without private data or deleted sources',t=>{
  const sourceSha=execFileSync('/usr/bin/git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
- const stage=join(mkdtempSync(join(parent,'local-')),'stage');
+ const out=mkdtempSync(join(parent,'local-')),stage=join(out,'stage');let completed=false;t.after(()=>{if(completed)rmSync(out,{recursive:true,force:true});});
  const provenance=prepareDesktopSource({root,sourceSha,stage,localWorkingTree:true});
  assert.equal(provenance.localWorkingTree,true);assert.equal(provenance.preparation,true);assert.equal(provenance.publishable,false);
  for(const path of ['src/native-history-bridge.ts','src/engine.ts','ui/homer-app.tsx','packaging/electron/main.mjs'])assert.deepEqual(readFileSync(join(stage,path)),readFileSync(join(root,path)));
  for(const path of ['src/memory.ts','.codex/private','.codex/scratch','node_modules','docs','tests'])assert.equal(existsSync(join(stage,path)),false);
  for(const input of provenance.candidateInputs)assert.equal(createHash('sha256').update(readFileSync(join(stage,input.path))).digest('hex'),input.sha256);
  assert.throws(()=>prepareDesktopSource({root,sourceSha,stage:stage+'-invalid',localWorkingTree:true,prepareCandidate:true}),/desktop_source_mode_conflict/);
+ completed=true;
 });

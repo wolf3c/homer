@@ -7,12 +7,12 @@ import {fileURLToPath} from 'node:url';
 const candidates=readdirSync('tests').filter(file=>/\.test\.(ts|mjs)$/.test(file)).sort();
 const suites={
  browser:["artifact-file-list.browser.mjs", "run-activity-focus.browser.mjs", "run-activity-style.browser.mjs", "web-history-active-pages.browser.mjs", "web-history-artifact-origin.browser.mjs", "web-history-kerning-content.browser.mjs", "web-history-kerning.browser.mjs", "web-history-loading.browser.mjs", "web-history-media-anchor.browser.mjs", "web-history-native-zoom.browser.mjs", "web-working-publication-large.browser.mjs"],
- desktop:['desktop-browser-boundary.test.mjs','desktop-service-startup.test.mjs','main-tools-resume-compatibility.test.mjs','macos-keychain-home.test.mjs','macos-desktop-runtime.test.mjs','electron-desktop.test.mjs','native-main-tools-resume.test.mjs'],
+ desktop:['desktop-browser-boundary.test.mjs','desktop-service-startup.test.mjs','main-tools-resume-compatibility.test.mjs','macos-desktop-runtime.test.mjs','electron-desktop.test.mjs','native-main-tools-resume.test.mjs'],
  'local-media':candidates.filter(file=>/\.local-media\.test\.(ts|mjs)$/.test(file)),
  engine:["native-protocol.engine.test.mjs","deepseek-continuation.test.ts","deepseek-pinned.test.ts","desktop-source-resume.test.mjs","homer-account-native.test.mjs","native-memory-defaults-offline.test.mjs"],
  account:["homer-account-gateway.test.mjs","homer-account-integration.test.mjs"],
  rtc:["mobile-webrtc-runtime.test.mjs"],
- development:["desktop-gateway-access.test.mjs","desktop-icon.test.mjs","desktop-source.test.mjs","dev-gateway.test.mjs","fixed-ui-launcher.test.mjs","pinned-rollback.test.mjs","reception-gateway.test.mjs","reception-ipc.test.ts","release-css-snapshot.test.mjs","telegram-host-upgrade.test.mjs","wechat-host-upgrade.test.mjs","web-dev-host.test.mjs","mobile-runtime-packaging.test.mjs","mobile-ui-build.test.mjs","mobile-download-focus.development.test.mjs","deepseek-isolated.test.mjs","dev-fixture-wait.test.mjs","dev-upgrade.development.test.mjs","web-feedback-host.development.test.ts","electron-package.development.test.mjs","first-launch-distribution.development.test.mjs","prompts.development.test.ts"],
+ development:["desktop-gateway-access.test.mjs","desktop-icon.test.mjs","desktop-source.test.mjs","dev-gateway.test.mjs","fixed-ui-launcher.test.mjs","pinned-rollback.test.mjs","reception-gateway.test.mjs","reception-ipc.test.ts","release-css-snapshot.test.mjs","web-dev-host.test.mjs","mobile-runtime-packaging.test.mjs","mobile-ui-build.test.mjs","mobile-download-focus.development.test.mjs","deepseek-isolated.test.mjs","dev-fixture-wait.test.mjs","dev-upgrade.development.test.mjs","web-feedback-host.development.test.ts","electron-package.development.test.mjs","first-launch-distribution.development.test.mjs","prompts.development.test.ts"],
  vendor:["agentation-preview-patch.test.mjs","approval-card-upstream.test.mjs","official-canvas-upstream.test.mjs","official-sources-upstream.test.mjs","official-tool-fallback-upstream.test.mjs","question-flow-upstream.test.mjs","run-activity-upstream.test.mjs","task-status-css.vendor.test.mjs"],
 };
 const requested=process.argv[2]?.slice(2);
@@ -20,7 +20,7 @@ const suite=process.argv[2]?.startsWith('--')&&Object.hasOwn(suites,requested)?r
 const desktop=suite==='desktop';
 if(suite==='browser')for(const name of ['HISTORY_FOLLOWUP_BUILD','HOMER_SYNTHETIC_ROOT','HOMER_BROWSER_EVIDENCE'])if(!process.env[name])throw Error('browser_acceptance_requires_explicit_path: '+name);
 if(desktop){
- for(const name of ['HOMER_TEST_ENGINE_MODULE','HOMER_TEST_SERVICE_MODULE','HOMER_TEST_CHANNEL_MODULES']){
+ for(const name of ['HOMER_TEST_ENGINE_MODULE','HOMER_TEST_SERVICE_MODULE']){
   const value=process.env[name];
   if(!value?.startsWith('file://')||!existsSync(fileURLToPath(value)))throw Error('desktop_acceptance_requires_explicit_file_url: '+name);
  }

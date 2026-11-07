@@ -36,7 +36,11 @@ function start(){
  };
  async function authorize(){
   if(ended)return;
-  const result=await call(current!.invitation?'pair':'status',current!.invitation?{invitation:current!.invitation,credential:current!.credential,deviceName:current!.deviceName}:{credential:current!.credential});
+  const credential=current!.credential;
+  let result=await call('status',{credential});
+  if(!ended&&result.protocol===WEB_PROTOCOL&&current!.invitation){
+   result=await call('pair',{invitation:current!.invitation,credential,deviceName:current!.deviceName,protocol:WEB_PROTOCOL});
+  }
   if(ended)return;
   if(result.protocol!==WEB_PROTOCOL){update('version');finish(false);return;}
   if(result.credential){current!.credential=result.credential;delete current!.invitation;window.ReactNativeWebView?.postMessage(JSON.stringify({type:'credential',routeId:current!.routeId,credential:result.credential,nonce}));}

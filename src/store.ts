@@ -1,6 +1,6 @@
 import {CommittedDatabase} from './committed-database.js';
 
-export const STORE_SCHEMA_VERSION='5';
+export const STORE_SCHEMA_VERSION='6';
 export type Status='queued'|'running'|'succeeded'|'failed'|'cancelled'|'interrupted';
 export type Run={
  id:string;taskId:string;workerId:string;version:number;sourceRequestId:string;
@@ -23,12 +23,21 @@ export class Store {
     if(['taskId','workerId','version','prompt','checkpointJson','workingDirectory'].some(column=>!columns.includes(column))||columns.includes('matterId'))throw Error('recursive_schema_unsupported');
    }
    if(tables.includes('meta')){
-    const recursive=this.meta('recursiveSchemaVersion'),pending=this.meta('pendingSchemaVersion');
+    const recursive=this.meta('recursiveSchemaVersion');
     if(recursive!==undefined&&recursive!==STORE_SCHEMA_VERSION)throw Error('recursive_schema_unsupported');
-    if(recursive===STORE_SCHEMA_VERSION&&['tasks','task_versions','operations','agent_messages','agent_receipts','results','deliveries'].some(table=>!tables.includes(table)))throw Error('recursive_schema_unsupported');
-    if(pending!==undefined&&pending!=='1')throw Error('pending_schema_unsupported');
+    if(recursive===STORE_SCHEMA_VERSION&&['tasks','task_versions','operations','agent_messages','agent_receipts'].some(table=>!tables.includes(table)))throw Error('recursive_schema_unsupported');
     if(recursive===undefined&&['runs','tasks','matters'].some(table=>tables.includes(table)&&this.db.prepare('SELECT 1 FROM '+table+' LIMIT 1').get()))throw Error('recursive_schema_unsupported');
    }else if(tables.some(table=>!table.startsWith('sqlite_')))throw Error('recursive_schema_unsupported');
+   if(tables.includes('media_schema')||tables.includes('media_assets')){
+    if(!tables.includes('media_schema')||this.db.prepare('SELECT version FROM media_schema').get()?.version!==2
+      ||!this.db.prepare('PRAGMA table_info(media_assets)').all().some(column=>column.name==='originOperationKey'))throw Error('media_schema_unsupported');
+   }
+   if(tables.includes('conversation_attachments')&&!this.db.prepare('PRAGMA table_info(conversation_attachments)').all().some(column=>column.name==='messageId'))
+    throw Error('conversation_schema_unsupported');
+   if(tables.includes('conversation_messages')){
+    const columns=this.db.prepare('PRAGMA table_info(conversation_messages)').all().map(column=>column.name);
+    if(['taskId','taskVersion','operationKey','audience','revokedAt'].some(column=>!columns.includes(column)))throw Error('conversation_schema_unsupported');
+   }
    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;
     CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,taskId TEXT NOT NULL REFERENCES tasks(id),workerId TEXT NOT NULL REFERENCES runs(id) DEFERRABLE INITIALLY DEFERRED,version INTEGER NOT NULL,sourceRequestId TEXT NOT NULL,goal TEXT NOT NULL,prompt TEXT NOT NULL,status TEXT NOT NULL,phase TEXT NOT NULL DEFAULT 'ready',epoch INTEGER NOT NULL DEFAULT 0,stateRevision INTEGER NOT NULL DEFAULT 0,threadId TEXT,turnId TEXT,pid INTEGER,startedAt INTEGER,endedAt INTEGER,stopRequestedAt INTEGER,stopReason TEXT,errorCode TEXT,checkpointJson TEXT,replacesRunId TEXT REFERENCES runs(id),workingDirectory TEXT NOT NULL,activeMs INTEGER NOT NULL DEFAULT 0,usage TEXT,createdAt INTEGER NOT NULL);

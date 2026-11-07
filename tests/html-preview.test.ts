@@ -8,7 +8,7 @@ test('HTML preview serves a constant sandboxed shell without loosening API origi
   const bridge: WebBridge = {
     state: async () => { calls++; throw Error('not_used'); },
     submit: async () => { calls++; }, stop: async () => { calls++; },
-    respond: async () => { calls++; }, artifact: async () => { calls++; throw Error('not_used'); },
+    respond: async () => { calls++; },
   };
   const web = await createWebServer({ bridge, port: 0 });
   try {

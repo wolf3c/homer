@@ -22,6 +22,13 @@ for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main and Wor
   async call(tool:string,args:unknown){const callId='call-'+ ++serial,result=await this.handler({threadId:this.threadId,turnId:this.turnId,callId,tool,arguments:args});this.emit('toolResponse',callId);return result;}
   async turn(text:string,o?:{onStarted?:(id:string)=>void}){
    this.turnId='turn-'+ ++serial;o?.onStarted?.(this.turnId);
+   const context=app['mainContext'],id=context?.interactionId??context?.queuedInput?.input.interactionId;
+   if(this.options.nativeTools==='main'&&id){
+    await this.call('inspect_interaction',{interactionId:id});
+    if(context?.event)await this.call('escalate_interaction',{interactionId:id,question:'Confirm the synthetic operation',reason:'Requires user confirmation'});
+    else await this.call('respond_interaction',{interactionId:id,action:context?.queuedInput?.input.text==='允许本次操作'?'approve':'deny',reason:'Use the actual decision'});
+    return {status:'completed',text:'Synthetic decision recorded'};
+   }
    if(text==='check MCP'||this.options.nativeTools==='worker'){
     turns++;
     for(const id of [1,'1',3]){
@@ -29,11 +36,7 @@ for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main and Wor
      const request={...nativeInteraction('mcpServer/elicitation/request',p)!,requestId:id,isCurrent:()=>true};
      const result=await this.options.onInteraction!(request);outcomes.push(result.status);wire.push({role:this.options.nativeTools,id,result:nativeResponse(request,result.decision!)});this.emit('interactionDelivered',id);
     }
-    if(this.options.nativeTools==='worker')await this.call('write_markdown',{filename:'answer.md',content:'# Synthetic result'});
-    else{
-     const task=await this.call('task_create',{title:'Actual Worker title',goal:'Synthetic MCP validation'}) as {taskId:string};
-     await this.call('worker_open',{taskId:task.taskId,message:'Validate the synthetic MCP interactions using materials/input.md.'});
-    }
+    if(this.options.nativeTools==='main')await this.call('worker_open',{message:'Actual Worker title\nValidate the synthetic MCP interactions.'});
    }
    return{status:'completed',text:'Synthetic result'};
   }
@@ -47,7 +50,7 @@ for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main and Wor
    for(const projected of [(await bridge.state()).interactions,(await bridge.history!.state()).interactions,(await bridge.history!.interactions(0)).items]){
     const card=projected.find(i=>i.id===item.id)!;assert.equal(card.canCancel,true);assert.equal(card.workTitle,n<3?'主对话':'Actual Worker title');assert.doesNotMatch(JSON.stringify(card),/SENSITIVE_SENTINEL|tool_params/);assert.match(card.question,/alice/);
    }
-   assert.throws(()=>app.interactions.respond(item.id,{action:'approve',reason:'forged'},{userMessageId:'forged'}),/main_native_user_decision_required/);
+   assert.throws(()=>app.interactions.respond(item.id,{action:'approve',reason:'forged'},{userMessageId:'forged'}),/interaction_user_decision_required|main_native_user_decision_required/);
    await bridge.respond(item.id,{requestId:'user-'+n,text:actions[n%3]!});await until(()=>outcomes.length>n);
   }
   await app.idle();assert.equal(turns,2);assert.deepEqual(outcomes,['approved','denied','cancelled','approved','denied','cancelled']);

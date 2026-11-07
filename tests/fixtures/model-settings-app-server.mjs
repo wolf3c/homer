@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Protocol fixture only. No network, account access, native threads or model calls.
 import {createInterface} from 'node:readline';
+import {join} from 'node:path';
 if(process.argv.includes('--version')){console.log('codex-cli 0.163.0');process.exit(0);}
 let threadMethod,threadParams;
 const args=process.argv.slice(2),model=JSON.parse(args.find(arg=>arg.startsWith('model='))?.slice(6)??'null');
@@ -12,9 +13,9 @@ const send=value=>process.stdout.write(JSON.stringify(value)+'\n');
 createInterface({input:process.stdin}).on('line',line=>{
   const m=JSON.parse(line);if(m.id===undefined)return;let result={};
   if(m.method==='initialize')result={userAgent:'codex/0.163.0',codexHome:process.env.CODEX_HOME};
-  if(m.method==='config/read')result={config:{...Object.fromEntries(['model','model_catalog_json','model_context_window','model_auto_compact_token_limit','model_auto_compact_token_limit_scope','web_search'].map(name=>[name,setting(name)])),features:{memories:true},memories:{dedicated_tools:true,generate_memories:generateMemories,extract_model:extractionModel,consolidation_model:consolidationModel},mcp_servers:trusted?{homer_interactions:trusted}:{}},layers:[]};
+  if(m.method==='config/read')result={config:{...Object.fromEntries(['model','model_catalog_json','model_context_window','model_auto_compact_token_limit','model_auto_compact_token_limit_scope','web_search'].map(name=>[name,setting(name)])),features:{memories:true},memories:{dedicated_tools:true,generate_memories:generateMemories,extract_model:extractionModel,consolidation_model:consolidationModel},mcp_servers:trusted?{homer_interactions:trusted}:{}},layers:[{name:{type:'user',file:join(process.env.CODEX_HOME,'config.toml')},version:'synthetic-config',config:{}}]};
   if(m.method==='mcpServerStatus/list')result={data:trusted?[{name:'homer_interactions',tools:Object.fromEntries(trusted.enabled_tools.map(name=>[name,{}]))}]:[]};
-  if(m.method==='environment/info')result={shell:{}};
+  if(m.method==='environment/info')result={shell:'/bin/zsh'};
   if(m.method==='model/list')result={data:[{id:model,model,defaultReasoningEffort:'high',supportedReasoningEfforts:['low','high','max'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:model==='synthetic-standard-only'?[]:[{id:'priority',name:'Fast',description:'Synthetic catalog'}]}],nextCursor:null};
   if(m.method==='thread/start'||m.method==='thread/resume'){
     threadMethod=m.method;threadParams=m.params;
@@ -26,7 +27,7 @@ createInterface({input:process.stdin}).on('line',line=>{
   if(m.method==='turn/start'){
     // Missing fields remain absent, so tests detect omission rather than inheritance.
     const text=JSON.stringify({contextWindow:setting('model_context_window'),autoCompactTokenLimit:setting('model_auto_compact_token_limit'),autoCompactTokenLimitScope:setting('model_auto_compact_token_limit_scope'),openaiBaseUrl:setting('openai_base_url'),requestCompression:setting('features.enable_request_compression'),threadMethod,threadServiceTier:threadParams.serviceTier,turnServiceTier:m.params.serviceTier,model:threadParams.model,effort:m.params.effort,consolidationModel,extractionModel,generateMemories});
-    send({method:'item/completed',params:{threadId:'synthetic-model-thread',turnId:'synthetic-turn',item:{id:'synthetic-item',type:'agentMessage',text}}});
+    send({method:'item/completed',params:{threadId:'synthetic-model-thread',turnId:'synthetic-turn',item:{id:'synthetic-item',type:'agentMessage',phase:'final_answer',text}}});
     send({method:'turn/completed',params:{threadId:'synthetic-model-thread',turn:{id:'synthetic-turn',status:'completed'}}});
   }
 });

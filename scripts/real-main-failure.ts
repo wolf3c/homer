@@ -1,6 +1,6 @@
 // Terminate only this test's leased main engine; the Worker's original reply must survive.
 import { resolve, join } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { Homer, type Message } from "../src/service.js";
 import { loadConfig } from "../src/config.js";
@@ -24,10 +24,13 @@ const evidence: Record<string, unknown> = {
   passed: false,
 };
 try {
+  assert.equal(app.store.meta("mainThread"), undefined, "Use a fresh runtime");
   assert.equal(app.store.runs().length, 0, "Use a fresh runtime");
   await app.start();
+  const workspaceEntries=()=>readdirSync(config.workspace,{recursive:true,withFileTypes:true}).filter(entry=>!entry.isDirectory()).map(entry=>join(entry.parentPath,entry.name)).sort();
+  const before=workspaceEntries();
   await app.message(
-    "请新建任务并派 Worker 检查 missing-public-notes.md。这个文件确实不存在，允许执行一次检查；只回复缺失输入的结论，不生成文件或正式成果，绝不能编造材料。",
+    "请新建任务并派 Worker 检查 missing-public-notes.md。这个文件确实不存在，允许执行一次检查；只回复缺失输入的结论，不生成或附带文件，绝不能编造材料。",
     "real-main-engine-failure",
   );
   const lease = JSON.parse(app.store.meta("lease:main")!);
@@ -42,7 +45,8 @@ try {
   const payload=JSON.parse(String(reply.payloadJson));
   assert.equal(payload.runId,run.id);assert.equal(payload.threadId,run.threadId);
   assert.match(payload.text,/不存在|未找到|缺失|missing|not found/i);
-  assert.equal(Number(app.store.db.prepare("SELECT count(*) n FROM results WHERE taskId=? AND kind='file'").get(run.taskId)!.n),0);
+  assert.deepEqual(workspaceEntries(),before,"the Worker must not fabricate a replacement file");
+  assert.equal(app.store.db.prepare("SELECT 1 FROM conversation_attachments a JOIN conversation_messages m ON m.id=a.messageId WHERE m.role='assistant'").get(),undefined);
   Object.assign(evidence, {
     passed: true,
     runId: run.id,

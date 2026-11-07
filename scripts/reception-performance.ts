@@ -16,7 +16,7 @@ for (const size of [60,120,240]) {
   const queue=new MainInputs(tasks,history);
   for(let i=0;i<size;i++){queue.accept({requestId:'synthetic-'+i,text:'Synthetic input '+i});const next=queue.claim();queue.finish(next.messageId,next.revision,'completed');}
   queue.accept({requestId:'synthetic-pending',text:'Synthetic pending'});
-  const app=Object.create(Homer.prototype);Object.assign(app,{store,history,tasks,files,interactions,inputs:queue,processes:new MainProcessHistory(store.db),channelViews:new Map(),workers:new Map()});
+  const app=Object.create(Homer.prototype);Object.assign(app,{store,history,tasks,files,interactions,inputs:queue,processes:new MainProcessHistory(store.db),workers:new Map()});
   const bridge=homerWebBridge(app),pendingRow=queue.row('synthetic-pending');
   let prepares=0, historyLists=0, returnedRows=0,candidateSql='';
   const prepare=store.db.prepare.bind(store.db), list=history.list.bind(history);

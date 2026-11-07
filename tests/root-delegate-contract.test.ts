@@ -7,7 +7,7 @@ test('goal-only creation starts no Worker and rejects retired contract/dependenc
  const f=chatFixture();try{
   let wakes=0;const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake:()=>{wakes++;},stop:async()=>{},steer:async()=>{}});
   const args={goal:'Inspect one source'};
-  for(const extra of [{contract:{goal:'Old contract'}},{dependencies:[]},{parentTaskId:null},{title:null}])await assert.rejects(tools.call(f.actor,'task_create',{...args,...extra},'invalid'),/invalid_tool_arguments/);
+  for(const extra of [{contract:{goal:'Old contract'}},{dependencies:[]},{parentTaskId:null},{title:null},{pendingIds:[]},{resultIds:[]}])await assert.rejects(tools.call(f.actor,'task_create',{...args,...extra},'invalid'),/invalid_tool_arguments/);
   assert.equal(f.tasks.tasks().length,0);assert.equal(f.store.runs().length,0);assert.equal(wakes,0);
   const created=await tools.call(f.actor,'task_create',args,'create') as {taskId:string};assert.ok(created.taskId);assert.equal(f.store.runs().length,0);assert.equal(wakes,1);
   assert.deepEqual(await tools.call(f.actor,'task_create',args,'create'),created);assert.equal(f.tasks.tasks().length,1);
@@ -15,23 +15,22 @@ test('goal-only creation starts no Worker and rejects retired contract/dependenc
  }finally{f.close();}
 });
 
-test('task creation cannot borrow unrelated authorization or accepted-result references',()=>{
+test('task creation cannot borrow an unrelated historical user source',()=>{
  const f=chatFixture();try{
   f.source('other','A separate user source');
-  for(const authority of [{...f.authority,sourceRequestId:'other'},{...f.authority,resultIds:['result-missing']}])assert.throws(()=>f.tasks.createTask(f.actor,{operationId:'invalid-'+authority.sourceRequestId,goal:'Inspect',authority}),/source_denied|result_not_found/);
+  assert.throws(()=>f.tasks.createTask(f.actor,{operationId:'invalid',goal:'Inspect',authority:{...f.authority,sourceRequestId:'other'}}),/source_denied/);
   assert.equal(f.tasks.tasks().length,0);assert.equal(f.store.runs().length,0);
  }finally{f.close();}
 });
 
-test('a real user source creates no execution; explicit Pending links retain CAS and original receipts',()=>{
+test('a real user source can record a task without authorizing execution',()=>{
  const f=chatFixture();try{
-  const item=f.tasks.pending.add(f.actor,{operationId:'remember',content:'Inspect synthetic source'}),input={operationId:'pending-task',goal:'Inspect selected real user source',authority:f.authority};
-  assert.throws(()=>f.tasks.createTask({...f.actor,sourceRequestId:undefined},input),/source_denied/);
-  assert.equal(f.tasks.tasks().length,0);assert.equal(f.tasks.pending.list(f.actor,{id:item.id}).items[0]!.revision,1);
-  const created=f.tasks.createTask(f.actor,input);assert.equal(f.store.runs().length,0);assert.equal(f.tasks.pending.list(f.actor,{id:item.id}).items[0]!.linkedTaskId,null);
-  const link={operationId:'link',id:item.id,expectedRevision:1,patch:{linkedTaskId:created.taskId}};
-  assert.throws(()=>f.tasks.pending.update(f.actor,{...link,expectedRevision:2}),/revision_conflict/);assert.equal(f.tasks.pending.list(f.actor,{id:item.id}).items[0]!.revision,1);
-  const linked=f.tasks.pending.update(f.actor,link);assert.equal(linked.linkedTaskId,created.taskId);assert.deepEqual(f.tasks.pending.update(f.actor,link),linked);assert.equal(f.store.runs().length,0);
-  assert.deepEqual(f.tasks.createTask(f.actor,input),created);assert.equal(f.tasks.tasks().length,1);assert.throws(()=>f.tasks.createTask(f.actor,{...input,goal:'Different goal'}),/payload_conflict/);
+  const input={operationId:'record',goal:'Inspect later',notes:'Await the decision to start'};
+  const created=f.tasks.createTask(f.actor,input);
+  assert.equal(f.tasks.version(created.taskId,1).sourceRequestId,'source:test');
+  assert.equal(f.tasks.version(created.taskId,1).authorityJson,null);
+  assert.throws(()=>f.tasks.workerOpen(f.actor,{operationId:'open-record',taskId:created.taskId,text:'Start without new authorization'}),/task_authority_source_denied/);
+  assert.deepEqual(f.tasks.createTask(f.actor,input),created);assert.equal(f.tasks.tasks().length,1);assert.equal(f.store.runs().length,0);
+  assert.throws(()=>f.tasks.createTask(f.actor,{...input,goal:'Different goal'}),/payload_conflict/);
  }finally{f.close();}
 });

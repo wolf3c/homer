@@ -26,8 +26,8 @@ const Dialog={
 const tabsContext=React.createContext(null);
 const Tabs={Root:({value,onValueChange,orientation:_orientation,children,...props})=>React.createElement(tabsContext.Provider,{value:{value,onValueChange}},React.createElement('div',props,children)),List:({activateOnFocus:_activateOnFocus,...props})=>React.createElement('nav',props),Tab:({value,...props})=>{const c=React.useContext(tabsContext);return React.createElement('button',{...props,'data-value':value,role:'tab','aria-selected':c.value===value,onClick:()=>c.onValueChange?.(value)});},Panel:({value,...props})=>React.useContext(tabsContext).value===value?React.createElement('div',{...props,'data-value':value,role:'tabpanel'}):null};
 function load(){
- const result=buildSync({entryPoints:['ui/desktop-permissions.tsx'],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',loader:{'.png':'dataurl'},external:['react','react/jsx-runtime','@base-ui/react/dialog','@base-ui/react/alert-dialog','@base-ui/react/tabs','@base-ui/react/button'],logLevel:'silent'});
- const m={exports:{}};Function('require','module','exports',result.outputFiles[0].text)(name=>name==='@base-ui/react/dialog'?{Dialog}:name==='@base-ui/react/alert-dialog'?{AlertDialog:Dialog}:name==='@base-ui/react/tabs'?{Tabs}:name==='@base-ui/react/button'?{Button:pass('button')}:require(name),m,m.exports);return m.exports;
+ const result=buildSync({entryPoints:['ui/desktop-permissions.tsx'],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',loader:{'.png':'dataurl'},external:['react','react/jsx-runtime','@base-ui/react/dialog','@base-ui/react/tabs','@base-ui/react/button'],logLevel:'silent'});
+ const m={exports:{}};Function('require','module','exports',result.outputFiles[0].text)(name=>name==='@base-ui/react/dialog'?{Dialog}:name==='@base-ui/react/tabs'?{Tabs}:name==='@base-ui/react/button'?{Button:pass('button')}:require(name),m,m.exports);return m.exports;
 }
 let components;
 const get=()=>components??=load();
@@ -40,59 +40,15 @@ function bridge(checkValue={...granted,accessibility:'not-granted',screen:'not-d
 }
 async function panel(d,api){if(api)window.homerDesktopPermissions=api;await d.render(React.createElement(get().DesktopPermissions));}
 
-test('one settings dialog exposes permissions and both IM channels without starting channel requests',async()=>withDom(async d=>{
+test('one settings dialog exposes permissions and mobile devices without starting network requests',async()=>withDom(async d=>{
  const original=globalThis.fetch,calls=[];
- globalThis.fetch=async(...args)=>{calls.push(args);throw Error('unexpected_channel_request');};
+ globalThis.fetch=async(...args)=>{calls.push(args);throw Error('unexpected_settings_request');};
  try{
   await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
-  assert.deepEqual(d.all().filter(n=>n.getAttribute('role')==='tab').map(n=>n.textContent),['本机权限','移动设备','微信','Telegram']);
+  assert.deepEqual(d.all().filter(n=>n.getAttribute('role')==='tab').map(n=>n.textContent),['本机权限','移动设备']);
   assert.equal(d.all().filter(n=>n.getAttribute('role')==='dialog').length,1);
   assert.equal(calls.length,0);
  }finally{globalThis.fetch=original;}
-}));
-
-test('unavailable channel reads never show an unconfigured form; unknown recovery cannot resume or erase history',async()=>withDom(async d=>{
- const original=globalThis.fetch,location=globalThis.location,calls=[];
- globalThis.location=new URL('http://127.0.0.1:12345/');
- const state={status:'disabled',enabled:false,bound:true,generation:1,pending:0,uncertain:0,failed:0,extensions:{},recovery:{mode:'new_messages_only',clockVerified:false,reviewRequired:false,heldLocal:8,heldRemote:0}};
- globalThis.fetch=async(path,init)=>{calls.push({path,init});return path.endsWith('wechat')?Response.json(state):Response.json({error:'web_method_denied'},{status:409});};
- try{
-  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'微信'));
-  assert.match(d.container.textContent,/本人绑定已保留/);assert.equal(button(d,'恢复收发').getAttribute('disabled'),'');assert.equal(button(d,'解除绑定').getAttribute('disabled'),'');
-  await d.click(button(d,'恢复收发'));await d.click(button(d,'解除绑定'));assert.equal(calls.filter(c=>c.init.method==='POST').length,0);
-  await d.click(button(d,'Telegram'));assert.match(d.container.textContent,/状态暂不可用/);assert.ok(!d.find(n=>n.tagName==='INPUT'));assert.ok(button(d,'重新检查'));
-  assert.equal(calls.filter(c=>c.init.method==='POST').length,0);
- }finally{await d.render(null);globalThis.fetch=original;if(location===undefined)delete globalThis.location;else globalThis.location=location;}
-}));
-
-test('Telegram pairing sends the exact explicitly approved candidate and expired candidates cannot be approved',async t=>withDom(async d=>{
- const original=globalThis.fetch,location=globalThis.location,calls=[];
- globalThis.location=new URL('http://127.0.0.1:12345/');
- const state={status:'online',configured:true,enabled:true,bound:false,pending:0,uncertain:0,failed:0,heldInputs:0,uncertainInputs:0,recovery:{mode:'new_messages_only',clockVerified:true,reviewRequired:false,heldLocal:0,heldRemote:0}};
- const code='abcdef0123456789abcdef0123456789',candidate={userId:'1234567',chatId:'1234567'};
- globalThis.fetch=async(path,init)=>{calls.push({path,init});return Response.json(path.endsWith('/pair/candidate')?candidate:path.endsWith('/pair/approve')?{...state,bound:true}:path.endsWith('/pair')?{code,expiresInSeconds:600}:state);};
- try{
-  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'Telegram'));
-  assert.doesNotMatch(d.container.textContent,/收发已开启/,'an online transport without an approved owner is not ready for messaging');
-  await d.click(button(d,'生成配对码'));assert.match(d.container.textContent,/1234567/);assert.equal(calls.filter(c=>c.path.endsWith('/pair/approve')).length,0);
-  t.mock.timers.enable({apis:['Date'],now:Date.now()+601000});
-  await d.click(button(d,'确认是我并绑定'));assert.equal(calls.filter(c=>c.path.endsWith('/pair/approve')).length,0);assert.match(d.container.textContent,/已过期/);
-  await d.click(button(d,'生成配对码'));await d.click(button(d,'确认是我并绑定'));
-  const approvals=calls.filter(c=>c.path.endsWith('/pair/approve'));assert.equal(approvals.length,1);assert.deepEqual(JSON.parse(approvals[0].init.body),{code,...candidate});assert.match(d.container.textContent,/本人绑定已保留/);
- }finally{await d.render(null);globalThis.fetch=original;if(location===undefined)delete globalThis.location;else globalThis.location=location;}
-}));
-
-test('a failed WeChat QR image exposes a visible recovery action instead of silently disappearing',async()=>withDom(async d=>{
- const original=globalThis.fetch,location=globalThis.location;
- globalThis.location=new URL('http://127.0.0.1:12345/');
- globalThis.fetch=async()=>Response.json({status:'connecting',enabled:false,bound:false,generation:1,pending:0,uncertain:0,failed:0,extensions:{},recovery:{mode:'new_messages_only',clockVerified:true,reviewRequired:false,heldLocal:0,heldRemote:0},login:{id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',status:'wait',imagePath:'/api/channels/wechat/login/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/qr.png'}});
- try{
-  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'微信'));
-  const image=d.find(n=>n.tagName==='IMG');assert.ok(image);
-  Object.defineProperty(image,'hidden',{set(value){if(value)this.setAttribute('hidden','');}});
-  await act(async()=>{for(const {handler} of image.listeners.error??[])handler({type:'error',target:image,bubbles:false});});
-  assert.match(d.container.textContent,/二维码未能显示/);assert.ok(button(d,'重新生成二维码'));
- }finally{await d.render(null);globalThis.fetch=original;if(location===undefined)delete globalThis.location;else globalThis.location=location;}
 }));
 
 test('settings entry opens the approved dialog and two columns; close and thread change unmount pending reads',async()=>withDom(async d=>{
@@ -271,29 +227,13 @@ test('saved configuration offers restart without login and does not show quota u
  await d.render(React.createElement(get().DesktopAccount));assert.ok(button(d,'重启并应用'));assert.ok(!button(d,'登录'));assert.ok(!row(d,'可用积分'));
  current={...current,active:'website'};await act(async()=>changed());assert.match(d.container.textContent,/配置已更新/);assert.ok(!button(d,'重新登录'));
 }));
-test('ordinary parent renders do not postpone WeChat login polling indefinitely',async t=>withDom(async d=>{
- const original=globalThis.fetch,location=globalThis.location,calls=[];
- globalThis.location=new URL('http://127.0.0.1:12345/');
- const login={id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',status:'wait'};
- const state={status:'connecting',enabled:false,bound:false,generation:1,pending:0,uncertain:0,failed:0,extensions:{},recovery:{mode:'new_messages_only',clockVerified:true,reviewRequired:false,heldLocal:0,heldRemote:0},login};
- globalThis.fetch=async(path,init)=>{calls.push({path,init});return Response.json(path.endsWith('/login/poll')?{...login,status:'confirmed'}:state);};
- try{
-  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
-  t.mock.timers.enable({apis:['setTimeout','setInterval']});
-  await d.click(button(d,'微信'));
-  for(let i=0;i<5;i++){await act(async()=>{t.mock.timers.tick(500);});await d.render(React.createElement(get().DesktopSettings));}
-  assert.equal(calls.filter(c=>c.path.endsWith('/login/poll')).length,1);
- }finally{await d.render(null);globalThis.fetch=original;if(location===undefined)delete globalThis.location;else globalThis.location=location;}
-}));
-
-
-test('desktop account shares the channel settings shell without starting hidden channel requests',async()=>withDom(async d=>{
+test('desktop account shares the local settings shell without starting network requests',async()=>withDom(async d=>{
  const original=globalThis.fetch,calls=[];
  window.homerDesktopAccount={state:async()=>({supported:true,configured:true,connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:true}),onChange:()=>()=>{}};
- globalThis.fetch=async(...args)=>{calls.push(args);throw Error('unexpected_channel_request');};
+ globalThis.fetch=async(...args)=>{calls.push(args);throw Error('unexpected_settings_request');};
  try{
   await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
-  assert.deepEqual(d.all().filter(n=>n.getAttribute('role')==='tab').map(n=>n.textContent),['账号','本机权限','移动设备','微信','Telegram']);
+  assert.deepEqual(d.all().filter(n=>n.getAttribute('role')==='tab').map(n=>n.textContent),['账号','本机权限','移动设备']);
   assert.ok(button(d,'登录'));assert.equal(calls.length,0);
   await d.click(button(d,'本机权限'));assert.match(d.container.textContent,/辅助功能/);
   await d.click(button(d,'关闭设置'));await d.click(button(d,'设置'));assert.ok(button(d,'登录'));

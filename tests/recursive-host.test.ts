@@ -4,12 +4,30 @@ import assert from 'node:assert/strict';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
 import {homerWebBridge} from '../src/web-homer.js';
 const until=async(check:()=>boolean)=>{const end=Date.now()+4000;while(!check()){if(Date.now()>end)throw Error('synthetic_wait_timeout');await new Promise(r=>setTimeout(r,5));}};
-for(const failed of [false,true])test('HMR-RECURSIVE host: actual single pump, same-thread followup, explicit adoption and '+(failed?'partial':'complete')+' formal publication',async()=>{
-  const f=syntheticHost(failed);try{await f.app.start();await f.app.message('synthetic:tree','synthetic-root-source');await until(()=>f.events.some(m=>m.type==='delivery')).catch(()=>{throw Error(JSON.stringify({runs:f.app.store.runs().map(r=>({status:r.status,error:r.errorCode,phase:f.app.tasks.run(r.id).phase})),events:f.app.store.db.prepare('SELECT type,code FROM events').all(),turns:f.engines.map(e=>e.turns)}));});await f.app.idle();
-    assert.equal(f.engines.length,5);assert.deepEqual(f.engines.filter(e=>e.worker).map(e=>e.turns),[1,1,1,1]);const aEngines=f.engines.filter(e=>e.worker);assert.equal(aEngines[0]!.threadId,aEngines[3]!.threadId);assert.equal(f.events.filter(m=>m.type==='delivery').length,1);assert.equal(f.events.some(m=>m.text.includes('INTERNAL_TEXT_MUST_NOT_LEAK')),false);
-    const task=f.app.tasks.tasks()[0]!;assert.equal(f.app.tasks.tasks().length,1);assert.equal(task.outcome,failed?'partial':'succeeded');assert.equal(f.app.tasks.deliveries()[0]!.state,'recorded');
-    const runs=f.app.tasks.runs(task.id),a=runs.find(run=>run.prompt==='A followup')!;assert.ok(f.app.tasks.publishedArtifact(a.id));assert.equal(runs.length,4);assert.equal(new Set(runs.map(run=>run.workerId)).size,3);
-    assert.deepEqual((await homerWebBridge(f.app).state()).work.filter(w=>w.hasArtifact).map(w=>w.id),[a.id]);
+for(const failed of [false,true])test('HMR-RECURSIVE host: same-thread followup and '+(failed?'partial':'complete')+' message attachment',async()=>{
+  const f=syntheticHost(failed);
+  try{
+    await f.app.start();
+    await f.app.message('synthetic:tree','synthetic-root-source');
+    await f.app.idle();
+    const workers=f.engines.filter(engine=>engine.worker);
+    assert.deepEqual(workers.map(engine=>engine.turns),[1,1,1,1]);
+    assert.equal(workers[0]!.threadId,workers[3]!.threadId);
+    const [task]=f.app.tasks.tasks();
+    assert.equal(f.app.tasks.tasks().length,1);
+    assert.equal(task!.outcome,failed?'partial':'succeeded');
+    const state=await homerWebBridge(f.app).state();
+    assert.equal(state.artifacts?.length,1);
+    const [file]=state.artifacts!;
+    const message=f.app.history.message(file!.messageId)!;
+    assert.equal(message.requestId,null);
+    assert.equal(message.taskId,task!.id);
+    assert.match(message.text,failed?/partially completed/:/Synthetic completed/);
+    assert.equal(Buffer.from(f.app.readAttachment(file!).data,'base64').toString(),'# Synthetic report\nDate unknown.\n');
+    assert.equal(f.events.some(message=>message.text.includes('INTERNAL_TEXT_MUST_NOT_LEAK')),false);
+    const runs=f.app.tasks.runs(task!.id);
+    assert.equal(runs.length,4);
+    assert.equal(new Set(runs.map(run=>run.workerId)).size,3);
   }finally{await f.close();}
 });
 test('HMR-QUEUE host: three durable inputs FIFO; edit/cancel CAS; exact-generation interrupt preserves earlier queue and Worker',async()=>{

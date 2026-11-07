@@ -1,6 +1,8 @@
 import {TurnExecution} from '../src/execution-limits.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {writeFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {MainProcessHistory} from '../src/main-process.js';
 import {CodexEngine} from '../src/engine.js';
@@ -34,14 +36,17 @@ test('final source item remains stored; terminal confirms native final and never
   }finally{f.db.close();}
 });
 
-test('two publications in one node retain both identities and texts once; replay cannot claim a previous publication',()=>{
+test('an explicit reply suppresses the native final for that process only',()=>{
   const f=fixture();try{
-    f.start('worker','worker');f.history.delivery('worker',{historyMessageId:'d1',text:'FIRST'});
-    f.history.delivery('worker',{historyMessageId:'d2',text:'SECOND'});f.history.delivery('worker',{historyMessageId:'d1',text:'DUPLICATE'});
-    f.history.finish('worker','completed','terminal');const node=f.history.list('synthetic')[0]!;
-    assert.deepEqual(node.deliveryMessageIds,['d1','d2']);assert.equal(node.deliveryMessageId,'d1');assert.equal(node.final,undefined);assert.ok(!JSON.stringify(node).includes('FIRST'));
-    f.start('next','worker');f.history.delivery('next',{historyMessageId:'d2',text:'REPLAY'});f.history.finish('next','completed','terminal-next');
-    assert.equal(f.history.list('synthetic')[1]?.final,undefined);
+    f.start();f.message('progress','commentary','Public progress');f.message('answer','final_answer','Duplicate native answer');
+    f.history.discardNativeFinal('node');
+    new MainProcessHistory(f.db).reconcileUnknown('synthetic',true);
+    assert.equal(f.node().status,'unknown');
+    assert.equal(f.node().final,undefined);
+    assert.deepEqual(f.node().items.map(item=>item.id),['turn:node:progress']);
+    f.start('next');f.message('answer','final_answer','Independent native answer','next');
+    f.history.finish('next','completed','terminal-next');
+    assert.equal(f.history.list('synthetic')[1]?.final?.text,'Independent native answer');
   }finally{f.db.close();}
 });
 
@@ -99,16 +104,6 @@ test('authoritative item sequence and worker revision: completed item beats delt
     f.history.worker('node',{...fact,taskRevision:5,runRevision:8});const newer=f.node().revision;
     f.history.worker('node',fact);assert.equal(f.node().revision,newer);
     assert.deepEqual(f.node().items.map(i=>i.seq),[1,2,3,4]);assert.equal((f.node().items[0] as any).text,'a');assert.equal((f.node().items[2] as any).status,'completed');
-  }finally{f.db.close();}
-});
-
-test('formal publication keeps its history identity and never synthesizes a worker final',()=>{
-  const f=fixture();try{
-    f.start('worker','worker');f.history.delivery('worker',{historyMessageId:'delivery-message',text:'FORMAL FINAL'});
-    f.history.delivery('worker',{historyMessageId:'delivery-message',text:'DUPLICATE'});
-    assert.equal(f.history.list('synthetic')[0]?.final,undefined);assert.ok(!JSON.stringify(f.history.list('synthetic')).includes('FORMAL FINAL'));
-    f.history.finish('worker','completed','turn:worker:terminal');const worker=f.history.list('synthetic')[0]!;
-    assert.equal(worker.final,undefined);assert.equal(worker.deliveryMessageId,'delivery-message');assert.ok(!JSON.stringify(worker).includes('FORMAL FINAL'));
   }finally{f.db.close();}
 });
 
@@ -236,40 +231,40 @@ test('early protocol notifications wait for actual ACK; native terminal freezes 
  assert.equal((await work).status,'completed');
 });
 
-test('real publication preserves the Worker reply and emits one delivery for the original input',async()=>{
- const f=chatFixture();let taskId='',runId='',filePath='',resultId='',deliveryId='';
- const raw='Synthetic final result',published='Formal authorized final';
+test('real explicit send preserves the Worker reply and commits one attachment-backed user message',async()=>{
+ const f=chatFixture();let taskId='',runId='',filePath='',messageId='';
+ const raw='Synthetic final result',published='Explicit authorized reply';
  try{
   f.setScript(async(main,text)=>{
-   if(text==='publish test'){
-    taskId=(await main.call('task_create',{goal:'Prepare a synthetic report.'})).taskId;
-    runId=(await main.call('worker_open',{taskId,message:'Write public.md.'})).runId;
+   if(text==='send test'){
+    const run=await main.call('worker_open',{message:'Write public.md.'});
+    taskId=run.taskId;runId=run.runId;
     return {status:'completed',text:'Started.'};
    }
-   resultId=(await main.call('accept_result',{runId,filePath})).resultId;
-   const args={taskId,resultIds:[resultId],text:published};
-   const first=await main.call('publish_delivery',args,'publish-once');
-   const retry=await main.call('publish_delivery',args,'publish-once');
-   assert.equal(retry.deliveryId,first.deliveryId);deliveryId=first.deliveryId;
+   const args={taskId,attachments:[{path:filePath}],text:published};
+   const first=await main.call('send_user_message',args,'send-once');
+   const retry=await main.call('send_user_message',args,'send-once');
+   assert.equal(retry.messageId,first.messageId);messageId=first.messageId;
    return {status:'completed',text:published,messages:[{itemId:'final',phase:'final_answer',text:published}]};
   });
-  await f.app.start();await f.app.message('publish test','publication-source');
+  await f.app.start();await f.app.message('send test','send-source');
   await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
   const worker=f.engines.find(engine=>engine.options.role==='worker')!;
-  filePath=(await worker.call('write_markdown',{filename:'public.md',content:'# Public'})).path;
-  await assert.rejects(()=>homerWebBridge(f.app).artifact(runId),/artifact_not_authorized/);
+  filePath=join(f.app.config.workspace,'public.md');writeFileSync(filePath,'# Public');
+  const bridge=homerWebBridge(f.app);
+  assert.equal((await bridge.state()).artifacts?.length,0);
   worker.finish!({status:'completed',text:raw,messages:[{itemId:'worker-final',phase:'final_answer',text:raw}]});
   await f.app.idle();
-  const delivery=f.app.tasks.delivery(deliveryId),state=await homerWebBridge(f.app).state();
-  assert.equal(delivery.state,'recorded');
-  assert.equal(f.events.filter(item=>item.type==='delivery'&&item.text===published).length,1);
-  assert.equal(f.events.filter(item=>item.type==='reply'&&item.text===published).length,0);
-  assert.equal(state.messages.filter(message=>message.id===delivery.historyMessageId).length,1);
-  assert.equal(state.artifacts?.find(item=>item.id===resultId)?.messageId,delivery.historyMessageId);
-  assert.equal((await homerWebBridge(f.app).artifact(resultId)).content,'# Public');
-  const receipt=f.app.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?").get(runId)!;
+  const state=await bridge.state(),sent=state.messages.filter(message=>message.id===messageId);
+  assert.equal(sent.length,1);assert.equal(sent[0]?.text,published);assert.equal(sent[0]?.requestId,null);
+  const replies=f.events.filter(item=>item.type==='reply'&&item.text===published);
+  assert.equal(replies.length,1);assert.equal(replies[0]?.messageId,messageId);assert.equal(replies[0]?.requestId,undefined);
+  const artifact=state.artifacts?.find(item=>item.messageId===messageId)!;
+  const actual=await bridge.media!.read({messageId,assetId:artifact.assetId,revision:artifact.revision});
+  assert.equal(Buffer.from(actual.data!,'base64').toString(),'# Public');
+  const receipt=f.app.store.db.prepare("SELECT id,payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?").get(runId)!;
   assert.equal(JSON.parse(String(receipt.payloadJson)).text,raw);
-  const process=state.processNodes?.find(node=>node.deliveryMessageId===delivery.historyMessageId);
+  const process=state.processNodes?.find(node=>node.sourceMessageIds.includes(String(receipt.id)));
   assert.ok(process);assert.equal((process.items.find(item=>item.kind==='workerEvent') as any).event.body,raw);
   assert.ok(!JSON.stringify(state.processNodes).includes('# Public'));
  }finally{await f.close();}

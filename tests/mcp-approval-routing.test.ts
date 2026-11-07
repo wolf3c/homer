@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Homer} from '../src/service.js';
 import {nativeInteraction} from '../src/worker-interaction-protocol.js';
-import {MainNativeApprovals} from '../src/main-native-approvals.js';
+import {approvalDecision, MainNativeApprovals} from '../src/main-native-approvals.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
 import {ConversationHistory} from '../src/web-history.js';
 import {NativeCapabilities} from '../src/native-capabilities.js';
@@ -13,7 +13,7 @@ const until=async(f:()=>boolean)=>{for(let n=0;n<100;n++){if(f())return;await ne
 function setup(){
  const f=fixture('.codex/scratch/mcp-routing'),interactions=new WorkerInteractions(f.store.db),history=new ConversationHistory(f.store.db),approvals=new MainNativeApprovals(interactions,history),host:any=Object.create(Homer.prototype);
  const generation={threadId:'thread:synthetic-main',turnId:'turn',generationId:'generation',sourceRequestId:'user-synthetic'},context={generation,userText:'Synthetic authorization'},config={codexHome:f.dir,nativeCodexHome:f.dir};
- Object.assign(host,{config,store:f.store,tasks:f.tasks,files:f.files,interactions,history,mainApprovals:approvals,mainContext:context,main:{threadId:'thread:synthetic-main',turnId:'turn'},workers:new Map(),nativeRevision:0,validateMainContext(){},protectedExecutionPaths:()=>[],registerChannelCapabilities(){}});
+ Object.assign(host,{config,store:f.store,tasks:f.tasks,files:f.files,interactions,history,mainApprovals:approvals,mainContext:context,main:{threadId:'thread:synthetic-main',turnId:'turn'},workers:new Map(),hostActors:new WeakSet(),nativeRevision:0,validateMainContext(){},protectedExecutionPaths:()=>[],registerWebSurface(){}});
  f.store.setMeta('mainThread','thread:synthetic-main');
  return {...f,interactions,history,approvals,host,context};
 }
@@ -45,16 +45,32 @@ for(const role of ['main','worker'])for(const outcome of ['approve','deny','expi
    if(method==='plugin/read')return{plugin:{summary:{id:'sample@synthetic',name:'sample',version:'1',installed,source:{type:'local',path:f.dir+'/sample'}},skills:[],hooks:[],apps:[],mcpServers:[]}};
    if(method==='plugin/install'){installs++;installed=true;return{authPolicy:'ON_USE',appsNeedingAuth:[]};}return{};
   },()=>true);
-  const worker=role==='worker'?{id:'worker-fixture',engine:{threadId:'child',turnId:'child-turn'}}:undefined;
-  if(worker){f.host.liveNativeInteraction=()=>true;f.host.liveInteraction=()=>true;f.host.pauseClock=()=>{};f.host.resumeClock=()=>{};f.host.tasks={run:()=>({sourceRequestId:'user-synthetic'})};}
+  const run=role==='worker'?f.tasks.workerOpen({agentId:f.store.meta('mainAgentId')!,threadId:'thread:synthetic-main',sourceRequestId:'user-synthetic'},{operationId:'plugin-worker',taskId:f.task.taskId,text:'Inspect plugin'}):undefined;
+  if(run)running(f,run.runId);
+  const worker=run?{id:run.runId,requests:new Map(),engine:{threadId:'child',turnId:'child-turn'}}:undefined;
+  if(worker){f.host.liveNativeInteraction=()=>true;f.host.liveInteraction=()=>true;f.host.pauseClock=()=>{};f.host.resumeClock=()=>{};}
   const params={threadId:worker?'child':'thread:synthetic-main',turnId:worker?'child-turn':'turn',serverName:'codex_apps',mode:'form',message:'Install reviewed plugin',requestedSchema:{type:'object',properties:{}},_meta:{codex_approval_kind:'tool_suggestion',tool_type:'plugin',suggest_type:'install',tool_id:'sample@synthetic'}};
   const native={...nativeInteraction('mcpServer/elicitation/request',params)!,requestId:1,isCurrent:()=>true};
   const response=worker?f.host.openNativePluginInteraction(native,worker):f.host.openMainNativeInteraction(native);
-  await until(()=>f.interactions.list().some(i=>i.state==='pending_user'));const pending=f.interactions.list().find(i=>i.state==='pending_user')!;assert.equal(installs,0);
+  await until(()=>f.interactions.list().length>0);
+  const pending=f.interactions.list()[0]!;assert.equal(installs,0);
+  if(worker){
+   assert.equal(pending.state,'pending_main');
+   const item=f.interactions.inspect(pending.id);
+   f.interactions.escalate(pending.id,String(item.details.review),String(item.details.reviewReason));
+  }
   const card=(await homerWebBridge(f.host).history!.interactions(0)).items.find(i=>i.id===pending.id)!;assert.equal(card.canCancel,undefined);
   if(outcome==='expire')f.interactions.expire(pending.id,'capability_approval_timeout');
   else if(outcome==='cancel')f.interactions.cancelRun(pending.runId,'worker_stopped');
-  else f.approvals.respond(pending.id,{requestId:'actual-user',text:outcome==='approve'?'允许本次操作':'拒绝本次操作'});
+  else {
+   const input={requestId:'actual-user',text:outcome==='approve'?'允许本次操作':'拒绝本次操作'};
+   if(worker){
+    const decision=approvalDecision(f.interactions.inspect(pending.id),input);
+    f.store.transaction(()=>f.interactions.recordUserDecision(pending.id,decision,input.requestId,input.text));
+    assert.equal(installs,0);
+    f.interactions.respond(pending.id,decision,{userMessageId:input.requestId,userText:input.text});
+   }else f.approvals.respond(pending.id,input);
+  }
   const result=await response;assert.equal(result.status,outcome==='approve'?'approved':outcome==='deny'?'denied':outcome==='expire'?'expired':'cancelled');assert.equal(installs,outcome==='approve'?1:0);if(['expire','cancel'].includes(outcome))assert.equal(result.decision,undefined);
  }finally{f.close();}
 });

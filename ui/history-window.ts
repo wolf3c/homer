@@ -54,7 +54,7 @@ export class HistoryWindow{
    if(page.units[0]===p.units[0])p.before=page.before;
    if(page.units.at(-1)===p.units.at(-1))p.after=page.after;
    if(page.inactiveMore)p.inactiveMore=true;
-   p.artifacts=[...(p.artifacts??[]).filter(a=>!a.historyMessageId||!page.units.includes(a.historyMessageId)),...(page.artifacts??[])];
+   p.artifacts=[...(p.artifacts??[]).filter(a=>!page.units.includes(a.messageId)),...(page.artifacts??[])];
    p.inactiveInteractions=[...(p.inactiveInteractions??[]).filter(i=>!(page.inactiveInteractions??[]).some(n=>n.id===i.id)),...(page.inactiveInteractions??[])];
   }return true;
  }

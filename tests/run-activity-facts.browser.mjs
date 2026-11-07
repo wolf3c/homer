@@ -40,7 +40,7 @@ try{for(const width of [1440,390,320]){
  try{
   // One Task owns three independent conversations and one pending question.
   const actor=f.actor;
-  const authority={sourceRequestId:actor.sourceRequestId,description:'Synthetic removal regression',materials:[],resultIds:[]};
+  const authority={sourceRequestId:actor.sourceRequestId,description:'Synthetic removal regression'};
   const root=f.tasks.createTask(actor,{operationId:'status-root',title:'独立当前事项',goal:'保留顶部状态与待答',authority});
   const open=(id,text)=>f.tasks.workerOpen(actor,{operationId:id,taskId:root.taskId,text});
   const first=open('first-worker','资料 Worker'),second=open('second-worker','核对 Worker'),peer=open('peer-worker','并行 Worker');
@@ -59,8 +59,8 @@ try{for(const width of [1440,390,320]){
   await toggle.focus();await page.keyboard.press('Space');await page.locator('[data-tool-id=activity-call-0]').waitFor();
   assert.deepEqual(await ids(),f.tools.map(t=>t.id));
   const texts=await page.locator('#message-node-89 [data-tool-id]').allTextContents();
-  assert.match(texts[0],/查看任务记录：周报材料核对.*记录已读取/);assert.match(texts[1],/周报材料核对/);
-  assert.match(texts[2],/检查成果文件：季度经营数据/);assert.match(texts[3],/验收已接受/);assert.match(texts[4],/交付已准备，正式交付尚未确认/);
+  assert.match(texts[0],/查看任务记录：周报材料核对.*已读取/);assert.match(texts[1],/周报材料核对/);
+  assert.match(texts[2],/读取附件材料：季度经营数据/);assert.match(texts[3],/读取附件材料：合成附件.*已读取/);assert.match(texts[4],/新要求已就绪，尚待执行/);
   await noReader();ok(true,'新公开事实保留动作、对象、结果与六次独立调用，只有原折叠按钮');
   assert.equal(await page.locator('#message-node-89 button').count(),1);
   const style=await page.locator('#message-node-89 [data-slot="run-activity"]').evaluate(r=>{const b=r.querySelector('[data-slot="collapsible-trigger"]'),o=r.querySelector('ol');return {rootGap:getComputedStyle(r).gap,font:getComputedStyle(b).fontSize,triggerGap:getComputedStyle(b).gap,listGap:getComputedStyle(o).gap,line:getComputedStyle(o).borderInlineStartWidth,padding:getComputedStyle(o).paddingInlineStart,icon:getComputedStyle(b.querySelector('svg')).width};});
@@ -75,23 +75,14 @@ try{for(const width of [1440,390,320]){
   const event=page.locator('#message-node-89 [data-worker-event]'),eventBody=page.getByText('不可变的合成 Worker 交办正文。',{exact:true});
   await event.waitFor();assert.equal(await eventBody.count(),0);await event.locator('>button').click();await eventBody.waitFor();assert.equal(await eventBody.count(),1);
   await toggle.click();await event.waitFor();assert.equal(await eventBody.count(),0);assert.equal(await event.locator('button').count(),1);await event.locator('>button').click();await eventBody.waitFor();assert.equal(await eventBody.count(),1);await toggle.click();await noReader();ok(true,'不可变 Worker 事件收起和展开各仅显示一次，仅官方正文展开按钮');
-  // Independent FileList -> Canvas -> original answer navigation remains functional.
+  // Independent FileList and Canvas preview remains functional.
   const file=page.getByRole('button',{name:'预览 季度经营数据核对与改进建议_待确认范围说明_2026年十月最终候选.md',exact:true});
-  // Filename is returned by the actual publication owner; no activity navigation involved.
+  // Filename is returned by the owning message; no activity navigation involved.
   await file.click();await page.locator('#canvas-panel .canvas-markdown').getByText('隔离合成成果').waitFor();
   await page.screenshot({path:resolve(destination,'canvas-'+width+'.png'),animations:'disabled'});
-  await page.locator('#canvas-locate').click();
-  await page.locator('#canvas-panel').waitFor({state:'detached'});
-  const answer=page.locator('[id="message-'+f.delivery.historyMessageId+'"]');await answer.waitFor();
-  if(width>800)await page.waitForFunction(id=>document.activeElement?.id==='message-'+id,f.delivery.historyMessageId);
-  else{
-   // Exact pre-change/candidate comparison records this existing mobile focus
-   // behavior in canvas-focus-baseline.json. It is not a reader-removal fix.
-   await page.waitForFunction(id=>document.activeElement?.id==='message-'+id||document.activeElement?.getAttribute('aria-label')?.startsWith('预览 季度经营数据'),f.delivery.historyMessageId);
-   if(!await answer.evaluate(e=>e===document.activeElement))limitations.push('手机 Canvas 返回准确原答复后，原模态关闭会把焦点还给成果按钮；390px 修改前后相同，未改此独立行为。');
-  }
-  await noReader();ok(await answer.isVisible(),'普通 FileList、Canvas 与准确原答复定位可用');
-  await file.click();await page.getByRole('button',{name:'关闭 Canvas'}).click();await file.waitFor();ok(await file.evaluate(e=>e===document.activeElement),'关闭 Canvas 回到原成果入口焦点');
+  await page.getByRole('button',{name:'关闭 Canvas'}).click();
+  await page.locator('#canvas-panel').waitFor({state:'detached'});await file.waitFor();
+  await noReader();ok(await file.evaluate(e=>e===document.activeElement),'关闭 Canvas 回到拥有附件的原答复入口');
   const status=page.locator('#task-status-trigger');if(await status.getAttribute('aria-expanded')!=='true')await status.click();const popover=page.locator('#task-status-panel');await popover.waitFor();
   const matter=popover.locator('[data-todo-id="'+root.taskId+'"]'),rootToggle=matter.locator(':scope > [data-slot="task-status-row"] > button');
   assert.equal(await rootToggle.getAttribute('aria-expanded'),'false');assert.equal(await matter.locator('[data-worker-id]').count(),0);

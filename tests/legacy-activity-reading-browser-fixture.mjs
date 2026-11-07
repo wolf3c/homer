@@ -8,10 +8,10 @@ export async function legacyActivityFixture(mode='all-old'){
  const facts=[
   {action:'inspect_task',objectName:'周报材料核对',outcome:'record_read'},
   {action:'inspect_task',objectName:'周报材料核对',outcome:'record_read'},
-  {action:'inspect_file',objectName:'季度经营数据核对与改进建议_待确认范围说明_2026年十月最终候选.md',outcome:'file_read'},
-  {action:'review_result',outcome:'accepted'},
-  {action:'prepare_delivery',outcome:'delivery_prepared'},
- ].map((activity,i)=>({id:'activity-call-'+i,seq:i+1,revision:2,kind:'tool',category:'host',label:i===3?'核对成果':i===4?'整理交付':'检查资料',status:'completed',activity:{schemaVersion:1,...activity}}));
+  {action:'inspect_attachment',objectName:'季度经营数据核对与改进建议_待确认范围说明_2026年十月最终候选.md',outcome:'attachment_read'},
+  {action:'inspect_run',outcome:'record_read'},
+  {action:'update_task',outcome:'update_confirmed'},
+ ].map((activity,i)=>({id:'activity-call-'+i,seq:i+1,revision:2,kind:'tool',category:'host',label:i===4?'调整任务':'检查资料',status:'completed',activity:{schemaVersion:1,...activity}}));
  const activityReads=[];
  const readProcess=f.bridge.history.process;f.bridge.history.process=async input=>{activityReads.push(input.itemId??null);return readProcess(input);};
  const initial=JSON.parse(f.store.meta('publicMainNode:v1:node-89'));

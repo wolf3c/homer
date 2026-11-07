@@ -3,7 +3,6 @@
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-import {createHash} from 'node:crypto';
 import {fixture} from './web-history-followup-fixture.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 import {actualClick,inspectHtmlFrame} from './helpers/html-preview-browser.mjs';
@@ -11,10 +10,10 @@ import {actualClick,inspectHtmlFrame} from './helpers/html-preview-browser.mjs';
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/compact-header-implementation-20261025/browser');
 mkdirSync(destination,{recursive:true});
 const baseline=!!process.env.HOMER_COMPACT_BASELINE,checks=[],metrics=[];
-const files=Array.from({length:10},(_,n)=>({id:'result-compact-'+n,title:(n%2?'continuous-ascii-name-':'长中文文件名阅读与批注').repeat(10)+n+(n===1?'.html':'.txt'),mime:n===1?'text/html':'text/plain',text:n===1?'<!doctype html><style>body{font:18px system-ui;padding:20px}</style><h1>合成网页标题</h1><script>document.body.dataset.executions=String(Number(document.body.dataset.executions||0)+1)</script>':'第一处中文。第二处中文。\n'+('阅读正文\n'.repeat(150))}));
+const files=Array.from({length:10},(_,n)=>({id:'result-compact-'+n,title:(n%2?'continuous-ascii-name-':'长中文文件名阅读与批注').repeat(4)+n+(n===1?'.html':'.txt'),mime:n===1?'text/html':'text/plain',text:n===1?'<!doctype html><style>body{font:18px system-ui;padding:20px}</style><h1>合成网页标题</h1><script>document.body.dataset.executions=String(Number(document.body.dataset.executions||0)+1)</script>':'第一处中文。第二处中文。\n'+('阅读正文\n'.repeat(150))}));
 const f=await fixture(100,'after');let chrome;
-f.bridge.artifact=async id=>{const file=files.find(x=>x.id===id);assert.ok(file);return {filename:file.title,mime:file.mime,data:Buffer.from(file.text).toString('base64'),sha256:createHash('sha256').update(file.text).digest('hex')};};
-for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const v=await state();return {...v,features:{...v.features,taskOverview:true},artifacts:[...(v.artifacts??[]),...files.map(({id,title})=>({id,title,messageId:'node-99',workTitle:'Synthetic compact header'}))]};};}
+f.attach('Synthetic compact header',files.map(({title,mime,text})=>({filename:title,mime,content:text})));
+for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const v=await state();return {...v,features:{...v.features,taskOverview:true}};};}
 const delay=ms=>new Promise(done=>setTimeout(done,ms));
 try{
  chrome=await isolatedChrome(destination);

@@ -31,7 +31,7 @@ for(const bytes of [65536,1048576])for(const kind of ['body','process'] as const
  giant.push({kind,singleBytes:bytes,total:40,initialization:reader.initialization,pageBytes,medianMs:(samples[14]!+samples[15]!)/2,p95Ms:samples[28],rawReadAndSerializeMs:samples,jsonParseMeanMs:parseMs/30,expandedDetailBytes:Buffer.byteLength(JSON.stringify(detail)),expandedDetailReadMs:detailMs});f.close();
 }
 const f=historyFixture(10000),reader=new WebHistoryPages(f.history,f.processes,f.inputs);
-const host={...f,webReadEpoch:'synthetic-epoch',webHistoryPages:()=>reader,registerChannelCapabilities(){},onStateChange(){return()=>{};},media:{view(){throw Error('no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');}};
+const host={...f,webReadEpoch:'synthetic-epoch',webHistoryPages:()=>reader,registerWebSurface(){},onStateChange(){return()=>{};},media:{view(){throw Error('no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');}};
 const bridge=homerWebBridge(host as unknown as Homer);const states=[];
 for(let i=0;i<30;i++){const start=performance.now(),state=await bridge.history!.state();states.push({ms:performance.now()-start,bytes:Buffer.byteLength(JSON.stringify(state)),messages:state.messages.length});}
 f.close();

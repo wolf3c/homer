@@ -3,17 +3,14 @@ import type {DatabaseSync} from 'node:sqlite';
 // Read-only Web facts. Task decisions and Worker execution have separate owners.
 export type OverviewRun={id:string;taskId:string;workerId:string;status:string;phase:string;version:number;epoch:number;sourceRequestId:string|null;createdAt?:number;startedAt?:number|null;endedAt?:number|null;stopRequestedAt?:number|null;replacesRunId?:string|null;errorCode?:string|null;threadId?:string|null;turnId?:string|null};
 export type OverviewWorker={id:string;taskId:string;title?:string|null;run:OverviewRun;pendingUser:number;pendingMain:number;pendingUsers:{id:string;after:number;kind?:'question'|'authorization'}[];pendingUserCreatedAt?:number|null;pendingMainCreatedAt?:number|null};
-export type OverviewTask={id:string;title?:string|null;goal:string|null;notes:string;headVersion:number;revision:number;state:string;outcome:string|null;controlState:string;historyState:string;sourceRequestId:string|null;sourceRequestIds?:string[];creationOrder?:number;createdAt?:number;settledAt?:number|null;workers:OverviewWorker[];results:{id:string;version:number;state:string}[];deliveries:{id:string;version:number;state:string;resultIds:string[]}[]};
+export type OverviewTask={id:string;title?:string|null;goal:string|null;notes:string;headVersion:number;revision:number;state:string;outcome:string|null;controlState:string;historyState:string;sourceRequestId:string|null;sourceRequestIds?:string[];creationOrder?:number;createdAt?:number;settledAt?:number|null;workers:OverviewWorker[]};
 export type TaskOverview={tasks:OverviewTask[];progressRevision?:number};
 export type TaskRequirement={taskId:string;version:number;goal:string|null;sourceRequestId:string|null;sourceMessageId?:string;threadId?:string};
-export type TaskPublication={id:string;version:number;historyMessageId:string|null};
-export type RecoveryFacts={results:{id:string;taskId:string;version:number;runId:string|null;state:string}[];deliveries:{id:string;taskId:string;version:number;resultIds:string[];historyMessageId:string|null;state:string}[];operations:{id:string;taskId:string;kind:string;state:string;revision:number}[];receipts:{messageId:string;taskId:string;taskVersion:number;state:string;revision:number}[];interactions:{id:string;runId:string;taskVersion:number|null;kind:string;state:string}[]};
+export type RecoveryFacts={operations:{id:string;taskId:string;kind:string;state:string;revision:number}[];receipts:{messageId:string;taskId:string;taskVersion:number;state:string;revision:number}[];interactions:{id:string;runId:string;taskVersion:number|null;kind:string;state:string}[]};
 export type WorkerConversationQuery={workerId:string;after?:number;messageId?:string;offset?:number};
 export type WorkerConversation={taskId:string;workerId:string;threadId:string|null;messages:{id:string;seq:number;kind:'worker_input'|'worker_reply';runId:string|null;version:number;text:string;offset:number;nextOffset:number|null}[];nextCursor:number|null};
-export type TaskDetail={taskId:string;conversation?:WorkerConversation;requirements?:TaskRequirement[];publications?:TaskPublication[];morePublications?:boolean;moreHistory?:boolean;artifacts?:{id:string;title:string;historyMessageId:string}[];moreArtifacts?:boolean;recovery?:RecoveryFacts;runs:(OverviewRun&{stateRevision:number;activeMs:number;createdAt:number;startedAt:number|null;endedAt:number|null})[]};
-export const overviewFilters={all:'全部',running:'进行中',queued:'排队',user:'待我处理',main:'待主 Agent',other:'其他状态',unknown:'待核实',complete:'已完成'} as const;
-export type OverviewFilter=keyof typeof overviewFilters;
-type Classification={key:Exclude<OverviewFilter,'all'>;label:string};
+export type TaskDetail={taskId:string;conversation?:WorkerConversation;requirements?:TaskRequirement[];moreHistory?:boolean;artifacts?:import('./web-contract.js').WebArtifact[];moreArtifacts?:boolean;recovery?:RecoveryFacts;runs:(OverviewRun&{stateRevision:number;activeMs:number;createdAt:number;startedAt:number|null;endedAt:number|null})[]};
+type Classification={key:'running'|'queued'|'user'|'main'|'other'|'unknown'|'complete';label:string};
 export function classifyTask(task:OverviewTask):Classification{
  if(task.controlState==='stopping')return {key:'other',label:'停止待确认'};
  if(task.state==='paused')return {key:'other',label:'已暂停'};
@@ -25,28 +22,16 @@ export function classifyTask(task:OverviewTask):Classification{
  if(task.workers.some(w=>w.run.status==='queued'&&w.run.phase==='ready'))return {key:'queued',label:'排队中'};
  return {key:'other',label:'办理中'};
 }
-export function filterRoots(tasks:OverviewTask[],filter:OverviewFilter,query:string){
- const needle=query.trim().toLocaleLowerCase();
- return tasks.filter(t=>(filter==='all'||classifyTask(t).key===filter)&&(!needle||`${t.title??''}\n${t.goal??''}\n${t.notes}`.toLocaleLowerCase().includes(needle)));
-}
-export function overviewStats(tasks:OverviewTask[]){
- const workers=tasks.flatMap(t=>t.workers),active=workers.filter(w=>w.run.status==='running'&&w.run.phase==='executing'&&w.run.stopRequestedAt==null);
- return {roots:tasks.length,activeRuns:active.length,activeWorkers:active.length,queuedWorkers:workers.filter(w=>w.run.status==='queued'&&w.run.phase==='ready').length};
-}
 export function readTaskOverview(db:DatabaseSync):TaskOverview{
- const tasks=db.prepare(`SELECT t.rowid AS creationOrder,t.id,t.title,t.notes,t.headVersion,t.revision,t.state,t.outcome,t.controlState,t.historyState,t.createdAt,t.settledAt,v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState='visible' ORDER BY t.rowid DESC`).all() as (Omit<OverviewTask,'workers'|'results'|'deliveries'|'sourceRequestIds'>&{sources:string|null})[];
+ const tasks=db.prepare(`SELECT t.rowid AS creationOrder,t.id,t.title,t.notes,t.headVersion,t.revision,t.state,t.outcome,t.controlState,t.historyState,t.createdAt,t.settledAt,v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState='visible' ORDER BY t.rowid DESC`).all() as (Omit<OverviewTask,'workers'|'sourceRequestIds'>&{sources:string|null})[];
  const runs=db.prepare(`SELECT r.id,r.taskId,r.workerId,r.version,r.status,r.phase,r.epoch,r.sourceRequestId,r.createdAt,r.startedAt,r.endedAt,r.stopRequestedAt,r.replacesRunId,r.errorCode,r.threadId,r.turnId,substr(first.prompt,1,80) AS title FROM tasks t JOIN runs r ON r.taskId=t.id JOIN runs first ON first.id=r.workerId WHERE t.historyState='visible' AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid) ORDER BY first.rowid`).all() as (OverviewRun&{title:string})[];
- const results=db.prepare(`SELECT r.id,r.taskId,r.version,r.state FROM tasks t JOIN results r ON r.taskId=t.id WHERE t.historyState='visible' ORDER BY r.rowid`).all() as {id:string;taskId:string;version:number;state:string}[];
- const deliveries=db.prepare(`SELECT d.id,d.taskId,d.version,d.state,d.resultIdsJson FROM tasks t JOIN deliveries d ON d.taskId=t.id WHERE t.historyState='visible' AND d.revokedAt IS NULL ORDER BY d.rowid`).all() as {id:string;taskId:string;version:number;state:string;resultIdsJson:string}[];
  const pending=db.prepare(`SELECT r.workerId,i.id,i.rowid-1 AS after,i.kind,i.state,i.createdAt FROM worker_interactions i JOIN runs r ON r.id=i.runId JOIN tasks t ON t.id=r.taskId WHERE t.historyState='visible' AND t.controlState='normal' AND t.state='open' AND i.state IN ('pending_user','pending_main') AND r.status='running' AND r.phase NOT IN ('ended','uncertain','held') AND i.runEpoch=r.epoch AND i.taskVersion=r.version AND i.threadId=r.threadId AND i.turnId=r.turnId AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid) ORDER BY i.rowid`).all() as {workerId:string;id:string;after:number;kind:'question'|'authorization';state:string;createdAt:number}[];
  const replies=db.prepare(`SELECT r.workerId,count(*) AS pendingMain,max(r.endedAt) AS pendingMainCreatedAt FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id JOIN runs r ON r.id=m.senderRunId JOIN tasks t ON t.id=r.taskId WHERE t.historyState='visible' AND m.kind='worker_reply' AND m.senderAgentId='host' AND m.taskId=r.taskId AND m.taskVersion=r.version AND m.taskVersion=t.headVersion AND m.senderEpoch<=r.epoch AND m.targetRunId IS NULL AND ar.recipientAgentId=m.recipientAgentId AND ar.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND ar.state IN ('pending','offered','received','blocked','uncertain') AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid) GROUP BY r.workerId`).all() as {workerId:string;pendingMain:number;pendingMainCreatedAt:number|null}[];
- const byTask=new Map<string,OverviewTask>(tasks.map(({sources,...t})=>[t.id,{...t,sourceRequestIds:sources?JSON.parse(sources):t.sourceRequestId?[t.sourceRequestId]:[],workers:[],results:[],deliveries:[]}]));
+ const byTask=new Map<string,OverviewTask>(tasks.map(({sources,...t})=>[t.id,{...t,sourceRequestIds:sources?JSON.parse(sources):t.sourceRequestId?[t.sourceRequestId]:[],workers:[]}]));
  const byWorker=new Map<string,OverviewWorker>();
  for(const {title,...run} of runs){const worker:OverviewWorker={id:run.workerId,taskId:run.taskId,title,run,pendingUser:0,pendingMain:0,pendingUsers:[]};byWorker.set(worker.id,worker);byTask.get(run.taskId)?.workers.push(worker);}
  for(const item of pending){const w=byWorker.get(item.workerId);if(!w)continue;if(item.state==='pending_user'){w.pendingUser++;w.pendingUsers.push({id:item.id,after:item.after,kind:item.kind});w.pendingUserCreatedAt=Math.max(w.pendingUserCreatedAt??0,item.createdAt);}else{w.pendingMain++;w.pendingMainCreatedAt=Math.max(w.pendingMainCreatedAt??0,item.createdAt);}}
  for(const item of replies){const w=byWorker.get(item.workerId);if(w){w.pendingMain+=item.pendingMain;w.pendingMainCreatedAt=Math.max(w.pendingMainCreatedAt??0,item.pendingMainCreatedAt??0);}}
- for(const {taskId,...result} of results)byTask.get(taskId)?.results.push(result);
- for(const {taskId,resultIdsJson,...delivery} of deliveries)byTask.get(taskId)?.deliveries.push({...delivery,resultIds:JSON.parse(resultIdsJson)});
  return {tasks:[...byTask.values()]};
 }
 function requireTask(db:DatabaseSync,id:string){
@@ -55,20 +40,17 @@ function requireTask(db:DatabaseSync,id:string){
 export function readTaskSummary(db:DatabaseSync,taskId:string):TaskDetail{
  requireTask(db,taskId);
  const requirements=db.prepare(`SELECT v.taskId,v.version,v.goal,v.sourceRequestId FROM task_versions v JOIN tasks t ON t.id=v.taskId AND t.headVersion=v.version WHERE t.id=?`).all(taskId) as TaskRequirement[];
- const publications=db.prepare(`SELECT id,version,historyMessageId FROM deliveries WHERE taskId=? AND state='recorded' AND revokedAt IS NULL ORDER BY rowid DESC LIMIT 81`).all(taskId) as TaskPublication[];
- return {taskId,runs:[],requirements,publications:publications.slice(0,80),morePublications:publications.length>80};
+ return {taskId,runs:[],requirements};
 }
 export function readTaskDetail(db:DatabaseSync,taskId:string,query?:WorkerConversationQuery):TaskDetail{
  requireTask(db,taskId);
  if(query)return {taskId,runs:[],conversation:readWorkerConversation(db,taskId,query)};
  const runs=db.prepare(`SELECT id,taskId,workerId,version,status,phase,epoch,sourceRequestId,stateRevision,activeMs,replacesRunId,errorCode,stopRequestedAt,createdAt,startedAt,endedAt,threadId,turnId FROM runs WHERE taskId=? ORDER BY rowid DESC LIMIT 81`).all(taskId) as TaskDetail['runs'];
- const results=db.prepare(`SELECT id,taskId,version,runId,state FROM results WHERE taskId=? ORDER BY rowid DESC LIMIT 81`).all(taskId) as RecoveryFacts['results'];
- const deliveries=db.prepare(`SELECT id,taskId,version,resultIdsJson,historyMessageId,state FROM deliveries WHERE taskId=? ORDER BY rowid DESC LIMIT 81`).all(taskId).map(({resultIdsJson,...row})=>({...row,resultIds:JSON.parse(String(resultIdsJson))})) as RecoveryFacts['deliveries'];
  const operations=db.prepare(`SELECT id,scopeId AS taskId,kind,state,revision FROM operations WHERE scopeId=? AND state IN ('accepted','dispatching','uncertain') ORDER BY rowid DESC LIMIT 81`).all(taskId) as RecoveryFacts['operations'];
  const receipts=db.prepare(`SELECT m.id AS messageId,m.taskId,m.taskVersion,ar.state,ar.revision FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id WHERE m.taskId=? AND ar.recipientAgentId=m.recipientAgentId AND ar.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND ar.state IN ('blocked','uncertain') AND m.kind<>'user_input' AND m.targetRunId IS NULL ORDER BY m.seq DESC LIMIT 81`).all(taskId) as RecoveryFacts['receipts'];
  const interactions=db.prepare(`SELECT i.id,i.runId,i.taskVersion,i.kind,i.state FROM worker_interactions i JOIN runs r ON r.id=i.runId WHERE r.taskId=? AND i.state IN ('expired','cancelled') ORDER BY i.rowid DESC LIMIT 81`).all(taskId) as RecoveryFacts['interactions'];
  const requirements=db.prepare(`SELECT taskId,version,goal,sourceRequestId FROM task_versions WHERE taskId=? ORDER BY version DESC LIMIT 81`).all(taskId) as TaskRequirement[];
- return {taskId,requirements:requirements.slice(0,80),runs:runs.slice(0,80),moreHistory:[requirements,runs,results,deliveries,operations,receipts,interactions].some(rows=>rows.length>80),recovery:{results:results.slice(0,80),deliveries:deliveries.slice(0,80),operations:operations.slice(0,80),receipts:receipts.slice(0,80),interactions:interactions.slice(0,80)}};
+ return {taskId,requirements:requirements.slice(0,80),runs:runs.slice(0,80),moreHistory:[requirements,runs,operations,receipts,interactions].some(rows=>rows.length>80),recovery:{operations:operations.slice(0,80),receipts:receipts.slice(0,80),interactions:interactions.slice(0,80)}};
 }
 
 function readWorkerConversation(db:DatabaseSync,taskId:string,query:WorkerConversationQuery):WorkerConversation{
