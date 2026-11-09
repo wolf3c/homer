@@ -834,8 +834,13 @@ export class Homer {
       const cwd = canonicalDir(this.store.meta("mainWorkingDirectory")??this.config.workspace);
       const savedThread = this.store.meta("mainThread");
       if(!savedThread&&shouldSeedFirstLaunchSkills(this.config)){try{seedFirstLaunchSkills(capabilityHome(this.config));}catch(error){this.store.event(null,'first_launch_seed_failed',engineError(error));}}
-      const sameTools = this.store.meta("mainToolsHash")===MAIN_TOOLS_HASH;
-      if (savedThread && !sameTools)
+      const savedTools = this.store.meta("mainToolsHash");
+      // v0.1.4 only lacks the optional worker_open title. Native resume keeps the old declarations and fingerprint.
+      const compatibleTools = savedTools === MAIN_TOOLS_HASH || (
+        savedTools === 'f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe' &&
+        MAIN_TOOLS_HASH === 'd8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150'
+      );
+      if (savedThread && !compatibleTools)
         throw new Error("main_tools_migration_required");
       const catalog=hostMcpTools('main',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'main'))==='live')
         .concat([...this.mainPluginTools.values()].map(entry=>entry.tool));

@@ -8,6 +8,7 @@ const serviceUrl=process.env.HOMER_TEST_SERVICE_MODULE;
 const {Homer}=await import(serviceUrl),{MAIN_TOOLS}=await import(new URL('./tools.js',serviceUrl));
 const {RECURSIVE_TOOLS}=await import(new URL('./recursive-tools.js',serviceUrl));
 const originalHash='e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a';
+const v014Hash='f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe';
 const currentHash=createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex');
 const parent=resolve('.codex/scratch/macos-desktop-application/tools-resume');mkdirSync(parent,{recursive:true});
 function fixture(savedHash){
@@ -27,6 +28,13 @@ test('resume retains the exact complete current dynamic catalog and original thr
  try{
   await f.app.start({keepManagementOnFailure:true});assert.equal(f.starts(),1);assert.equal(f.resumed(),'synthetic-original-thread');
   assert.equal(f.app.store.meta('mainThread'),'synthetic-original-thread');assert.equal(f.app.store.meta('mainToolsHash'),currentHash);
+ }finally{await f.app.close({requireAllOwnersConfirmed:true});rmSync(f.root,{recursive:true,force:true});}
+});
+test('v0.1.4 resumes its original thread without relabeling its native tool declarations',async()=>{
+ const f=fixture(v014Hash);
+ try{
+  await f.app.start({keepManagementOnFailure:true});assert.equal(f.starts(),1);assert.equal(f.resumed(),'synthetic-original-thread');
+  assert.equal(f.app.store.meta('mainThread'),'synthetic-original-thread');assert.equal(f.app.store.meta('mainToolsHash'),v014Hash);
  }finally{await f.app.close({requireAllOwnersConfirmed:true});rmSync(f.root,{recursive:true,force:true});}
 });
 for(const hash of [originalHash,'f'.repeat(64)])test('an obsolete or unknown tools fingerprint cannot create or replace an existing thread: '+hash.slice(0,8),async()=>{
