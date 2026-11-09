@@ -13,17 +13,13 @@ test('MCP retains media reads, while file writes require native dynamic calls',(
  assert.equal(MAIN_TOOLS.some(t=>t.name==='stage_workspace_file'),false);
 });
 
-test('independent voice creation and attachment export need business inputs only and no legacy contract gates',()=>{
+test('Worker file writes only export a selected message attachment',()=>{
  const files=media.WORKER_FILE_TOOLS;
- assert.throws(()=>validateToolArguments({filename:'answer.bin',dataBase64:'AQID'},files[1]!.inputSchema),/invalid_tool_arguments/);
- assert.deepEqual(files.map(t=>t.name),['create_voice_result','stage_file_result']);
- for(const [name,args] of [
-  ['create_voice_result',{filename:'answer.silk',text:'合成测试'}],
-  ['stage_file_result',{filename:'answer.bin',assetId:'synthetic-asset',revision:1}],
- ] as const){
-  const tool=files.find(t=>t.name===name)!;
-  validateToolArguments(args,tool.inputSchema);
-  assert.throws(()=>validateToolArguments({...args,operationId:'forged'},tool.inputSchema),/invalid_tool_arguments/);
-  assert.doesNotMatch(tool.description,/contract|合约|契约|自动回传|read_material/);
- }
+ assert.deepEqual(files.map(t=>t.name),['stage_file_result']);
+ const [tool]=files;
+ const args={filename:'answer.bin',assetId:'synthetic-asset',revision:1};
+ validateToolArguments(args,tool!.inputSchema);
+ assert.throws(()=>validateToolArguments({filename:'answer.bin',dataBase64:'AQID'},tool!.inputSchema),/invalid_tool_arguments/);
+ assert.throws(()=>validateToolArguments({...args,operationId:'forged'},tool!.inputSchema),/invalid_tool_arguments/);
+ assert.doesNotMatch(tool!.description,/contract|合约|契约|自动回传|read_material/);
 });

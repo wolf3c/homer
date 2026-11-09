@@ -79,7 +79,7 @@ try{
    await click('.html-annotation-toggle');
    await until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')==='true');await icon('.html-annotation-toggle',14);
    assert.equal(await ev(()=>document.querySelector('.html-annotation-toggle').getAttribute('aria-busy')),'false');await p.screenshot('html-active-'+width+'.png');
-   assert.equal(await ev(()=>document.querySelector('.html-annotation-toggle').getAttribute('aria-label')),'退出批注，返回静态预览');
+   assert.equal(await ev(()=>document.querySelector('.html-annotation-toggle').getAttribute('aria-label')),'退出批注，返回预览');
    await click('.html-annotation-toggle');await until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')==='false');
    await close();await open(2);await until(()=>!!document.querySelector('.image-annotation-toggle'));await icon('.image-annotation-toggle',14);await p.screenshot('image-idle-'+width+'.png');
    await click('.image-annotation-toggle');await until(()=>document.querySelector('.image-annotation-toggle')?.getAttribute('aria-pressed')==='true');await icon('.image-annotation-toggle',14);await p.screenshot('image-active-'+width+'.png');

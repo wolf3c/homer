@@ -1,3 +1,4 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 // Real host, original replies, process projection and explicit user messages; synthetic transport only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,10 +41,10 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
   main.close=async()=>{mainCloses++;return close();};main.interrupt=async()=>{mainInterrupts++;return interrupt();};
   await f.app.message('synthetic:user','coord-source');await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
   const worker=f.engines.find(engine=>engine.options.role==='worker')!,run=f.app.tasks.runs(taskId)[0]!,rounds=f.inputs.length;
-  const before=f.app.conversationState().messages.filter(message=>message.text.trim()).map(message=>({id:message.id,text:message.text}));
+  const before=readTestConversation(f.app).messages.filter(message=>message.text.trim()).map(message=>({id:message.id,text:message.text}));
   worker.emit('agentMessage',{threadId:worker.threadId,turnId:worker.turnId,itemId:'worker-progress',phase:'commentary',text:'普通中间处理',completed:true});
   await new Promise(resolve=>setTimeout(resolve,20));assert.equal(f.inputs.length,rounds,'ordinary Worker progress adds zero Main rounds');
-  assert.deepEqual(f.app.conversationState().messages.filter(message=>message.text.trim()).map(message=>({id:message.id,text:message.text})),before,'progress adds no user message');
+  assert.deepEqual(readTestConversation(f.app).messages.filter(message=>message.text.trim()).map(message=>({id:message.id,text:message.text})),before,'progress adds no user message');
   assert.equal(f.app.workerProgress.get({taskId,version:run.version,runId:run.id,epoch:run.epoch,threadId:worker.threadId,turnId:worker.turnId!})?.output?.text,'普通中间处理');
   const path=join(f.app.config.workspace,'checked.md');writeFileSync(path,'# 已核对的材料');
   const raw=finalText+'\n[报告]('+path+')';
@@ -55,7 +56,7 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
   const nodes=f.app.processes.list(f.app.store.meta('mainThread')!),process=nodes.find(node=>node.sourceMessageIds.includes(reply.id))!;
   assert.ok(process);assert.ok(process.items.some(item=>item.kind==='tool'),'original inspection remains in process details');
   assert.equal(f.inputs.filter(text=>text.startsWith('[内部协作输入')).length,1,'settlement and explicit sends add no self-confirmation round');
-  const projected=f.app.conversationState(),user=projected.messages.find(message=>message.process?.sourceKind==='user')!;
+  const projected=readTestConversation(f.app),user=projected.messages.find(message=>message.process?.sourceKind==='user')!;
   assert.equal(user.text,'已安排核对。');assert.ok(user.process?.items.some(item=>item.kind==='commentary'&&item.text==='正常起始反馈'));
   const copies=projected.messages.filter(message=>message.text.includes(finalText));
   assert.equal(copies.length,sentId||scenario==='unlinked-same-text'?1:0,'only explicit sends or an independent user reply make this internal text public');
@@ -64,7 +65,7 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
   if(['published','published-final','published-extra'].includes(scenario)){
    assert.equal(mainCloses,0);assert.equal(mainInterrupts,0);
    assert.equal(copies[0]?.id,sentId);assert.equal(copies[0]?.text,finalText);
-   const bridge=homerWebBridge(f.app),state=await bridge.state(),attachment=state.artifacts?.find(artifact=>artifact.messageId===sentId)!;
+   const bridge=homerWebBridge(f.app),state=await bridge.history!.state(),attachment=state.artifacts?.find(artifact=>artifact.messageId===sentId)!;
    assert.ok(attachment);
    const file=await bridge.media!.read({messageId:sentId,assetId:attachment.assetId,revision:attachment.revision});
    assert.equal(Buffer.from(file.data!,'base64').toString(),'# 已核对的材料');

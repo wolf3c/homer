@@ -29,7 +29,7 @@ const png=syntheticPng();files[2]={...files[2],title:'合成区域.png',mime:'im
 const f=await fixture(100,'after');
 f.attach('合成原生窗口文件',files.map(file=>({filename:file.title,mime:file.mime,content:file.mime==='image/png'?png:file.text})));
 f.bridge.media.upload=async input=>({assetId:'asset-'+input.uploadId,revision:1,filename:input.filename,kind:'image',state:'ready',mime:'image/png',size:png.length,error:null});
-for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const v=await state();return {...v,features:{...v.features,taskOverview:true,draftUpload:true}};};}
+{const owner=f.bridge.history;const state=owner.state.bind(owner);owner.state=async()=>{const v=await state();return {...v,features:{...v.features,taskOverview:true,draftUpload:true}};};}
 
 // The installed/package gate is tested by electron-shell.test.mjs. This harness
 // substitutes only bootstrap/profile/codesign, retaining the exact createWindow,
@@ -86,7 +86,7 @@ try{
   await resize(1440);await page.locator('.preview-separator').focus();await page.keyboard.press('Home');assert.ok((await measure('native-left-min-1440')).header.width>=359);
   await page.keyboard.press('End');assert.ok((await measure('native-right-min-1440')).panel.width>=359);
   record('native left 240px plus 25%, preview 25–75%, original separator keyboard interaction');
-  await resize(1080);await open(1);assert.equal(await page.locator('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox'),'');
+  await resize(1080);await open(1);assert.equal(await page.locator('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox'),'allow-scripts allow-forms');
   await page.locator('.html-annotation-toggle').click();await page.locator('.html-annotation-toggle[aria-pressed=true]').waitFor();
   const html=page.frames().find(x=>x.url()==='about:srcdoc');assert.ok(html);await html.waitForFunction(()=>document.body.dataset.executions==='1');
   await page.evaluate(()=>{window.__titlebarFrame=document.querySelector('iframe[title="隔离 HTML 成果"]');window.__titlebarActions=document.querySelector('.canvas-tab-actions');window.__titlebarTab=document.querySelector('[role=tab][aria-selected=true]');window.__titlebarComposer=document.querySelector('[contenteditable=true]');});
@@ -98,8 +98,8 @@ try{
   assert.equal(await html.evaluate(()=>document.body.dataset.executions),'1');
   await native(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setFullScreen(false));await page.waitForFunction(()=>navigator.windowControlsOverlay.visible);
   assert.equal(await page.evaluate(()=>window.__titlebarFrame===document.querySelector('iframe[title="隔离 HTML 成果"]')&&window.__titlebarActions===document.querySelector('.canvas-tab-actions')),true);
-  record('HTML explicit script boundary, iframe/tab/actions/composer identities through 800px and real fullscreen, no duplicate script');
-  await page.locator('.html-annotation-toggle').click();await page.waitForFunction(()=>document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')==='');
+  record('HTML script preview, iframe/tab/actions/composer identities through 800px and real fullscreen, no duplicate script');
+  await page.locator('.html-annotation-toggle').click();await page.waitForFunction(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')==='false');
   for(let n=2;n<files.length;n++)await open(n);
   assert.equal(await html.evaluate(()=>document.body.dataset.executions).catch(()=>null),null,'switching file destroys old HTML context');
   assert.equal(await page.locator('.canvas-tab-rail').evaluate(e=>e.scrollWidth>e.clientWidth),true);

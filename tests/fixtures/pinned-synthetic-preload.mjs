@@ -19,7 +19,13 @@ registerHooks({resolve(specifier,context,next){
  }
  return next(specifier,context);
 }});
-if(process.argv[1]===join(executable,'dist/dev-host.js'))globalThis.fetch=()=>{throw Error('synthetic_external_network_denied');};
+if(process.argv[1]===join(executable,'dist/dev-host.js')){
+ globalThis.fetch=()=>{throw Error('synthetic_external_network_denied');};
+ if(process.env.HOMER_PINNED_TEST_NO_HISTORY==='1'){
+  const send=process.send.bind(process);
+  process.send=(message,...args)=>send(message.kind==='ready'?{...message,webHistoryProtocol:undefined}:message,...args);
+ }
+}
 export const factory=options=>new Synthetic(options);
 class Synthetic extends EventEmitter{
  resumable=true;turnId;closed=false;

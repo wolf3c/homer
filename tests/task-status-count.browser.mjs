@@ -15,7 +15,7 @@ let snapshot=roots(0),fail=false,hold=false,held=[];
 try{
  const {chromium}=await import(process.env.HOMER_PLAYWRIGHT_MODULE??'playwright-core');
  const entry=`import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import {MessageCircle,Settings,PanelRight} from 'lucide-react';import {TaskStatusPopover} from './ui/task-status';import './ui/homer-styles.css';
- function Fixture(){const [connection,setConnection]=useState(true),[state,setState]=useState({threadId:'synthetic',interactions:[]});window.statusFixture={update:(connected=true)=>{setConnection(connected);setState(s=>({...s}));}};return <div className="conversation-panel"><header className="conversation-header"><span>荷马</span><div className="header-actions"><button aria-label="聊天"><MessageCircle/></button><button aria-label="设置"><Settings/></button><TaskStatusPopover state={state} connected={connection} onInteraction={()=>{}} asideContainer={null} onBeforeLayoutChange={()=>{}}/><button aria-label="侧栏"><PanelRight/></button></div></header><main style={{padding:24,color:'#67645f'}}>合成任务验证 · 实际产品组件与读取逻辑</main></div>};createRoot(document.getElementById('root')).render(<Fixture/>);`;
+ function Fixture(){const [connection,setConnection]=useState(true),[state,setState]=useState({threadId:'synthetic',interactions:[]}),[aside,setAside]=useState(null);window.statusFixture={update:(connected=true)=>{setConnection(connected);setState(s=>({...s}));}};return <div className="conversation-workspace"><div className="conversation conversation-panel"><header className="conversation-header"><span>荷马</span><div className="header-actions"><button aria-label="聊天"><MessageCircle/></button><button aria-label="设置"><Settings/></button><TaskStatusPopover state={state} connected={connection} onInteraction={()=>{}} asideContainer={aside} onBeforeLayoutChange={()=>{}}/><button aria-label="侧栏"><PanelRight/></button></div></header><main style={{padding:24,color:'#67645f'}}>合成任务验证 · 实际产品组件与读取逻辑</main></div><div className="status-aside-slot" ref={setAside}/></div>};createRoot(document.getElementById('root')).render(<Fixture/>);`;
  await build({stdin:{contents:entry,resolveDir:process.cwd(),sourcefile:'task-count-fixture.tsx',loader:'tsx'},bundle:true,outfile:join(scratch,'app.js'),platform:'browser',format:'esm',jsx:'automatic',logLevel:'silent'});
  const assets=new Map([['/',Buffer.from('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><link rel="stylesheet" href="/app.css"><div id="root"></div><script type="module" src="/app.js"></script>')],['/app.js',await readFile(join(scratch,'app.js'))],['/app.css',await readFile(join(scratch,'app.css'))]]);
  server=createServer((req,res)=>{res.setHeader('Content-Type',req.url==='/'?'text/html; charset=utf-8':req.url==='/app.css'?'text/css':'text/javascript');if(assets.has(req.url))res.end(assets.get(req.url));else{res.statusCode=404;res.end();}});
@@ -59,15 +59,65 @@ try{
  fail=false;await refresh();await waitName('工作状态，1 个任务工作中');
  await page.evaluate(()=>window.statusFixture.update(false));await waitName('工作状态，连接未确认');ok(await trigger.locator('[data-count]').count()===0,'disconnect never becomes a known zero');
  hold=true;await page.reload();await waitName('工作状态，正在读取');ok(await trigger.locator('[data-count]').count()===0,'unloaded snapshot hides badge');hold=false;for(const route of held)await route.fulfill({json:roots(0)});held=[];await waitName('工作状态，无工作中任务');
+ const longTitle='已有事项完整标题'.repeat(15);snapshot={tasks:[task('long',{title:longTitle,goal:'完整目标仍可查看'})]};await refresh();await waitName('工作状态，1 个任务工作中');
+ await trigger.click();await panel.waitFor();await page.setViewportSize({width:320,height:600});
+ const row=panel.locator('[data-todo-id="long"]'),rowButton=row.locator('.status-row-trigger');await rowButton.waitFor();
+ const nameLayout=await rowButton.locator('span.truncate').first().evaluate(el=>({text:el.textContent,clipped:el.scrollWidth>el.clientWidth,ellipsis:getComputedStyle(el).textOverflow}));
+ ok(nameLayout.text===longTitle&&nameLayout.clipped&&nameLayout.ellipsis==='ellipsis','long title stays intact and is visually ellipsized at narrow width');
+ ok((await rowButton.getAttribute('title')).includes(longTitle),'complete title is available as tooltip');
+ await rowButton.focus();await page.keyboard.press('Enter');
+ ok(await rowButton.getAttribute('aria-expanded')==='true'&&await row.locator('.status-row-heading p').first().innerText()===longTitle,'keyboard opens full readable title');
+ ok(await page.evaluate(()=>document.documentElement.scrollWidth)===320,'long title does not overflow narrow page');
+ await page.screenshot({path:join(destination,'long-title-expanded-320.png')});await trigger.click();await panel.waitFor({state:'hidden'});
  snapshot=roots(35);await refresh();await waitName('工作状态，35 个任务工作中');ok(true,'full snapshot count survives list prefix');
  await trigger.click();await panel.waitFor();ok(await panel.locator('[data-count="working"]').innerText()==='35','full panel summary matches badge');
  for(const width of [320,390,800]){await page.setViewportSize({width,height:600});ok(await page.evaluate(()=>document.documentElement.scrollWidth)===width,'no horizontal overflow '+width);
-   const layout=await panel.evaluate(el=>{const filters=[...el.querySelectorAll('.status-count-filter')].map(e=>e.getBoundingClientRect()),close=el.querySelector('[aria-label="收起工作状态"]').getBoundingClientRect();return {count:filters.length,sameRow:filters.every(r=>Math.abs(r.top-filters[0].top)<1),closeAbove:close.bottom<=filters[0].top,overflow:[...el.querySelectorAll('.status-count-filter')].some(e=>e.scrollWidth>e.clientWidth)};});
-   ok(layout.count===3&&layout.sameRow&&layout.closeAbove&&!layout.overflow,'three filters below the title and close button '+width);
+   const layout=await panel.evaluate(el=>{const filters=[...el.querySelectorAll('.status-count-filter')].map(e=>e.getBoundingClientRect());return {count:filters.length,sameRow:filters.every(r=>Math.abs(r.top-filters[0].top)<1),header:!!el.querySelector('h2,[aria-label="收起工作状态"]'),overflow:[...el.querySelectorAll('.status-count-filter')].some(e=>e.scrollWidth>e.clientWidth)};});
+   ok(layout.count===3&&layout.sameRow&&!layout.header&&!layout.overflow,'three filters without a title or close button '+width);
+   const working=panel.locator('.status-count-filter').first();await working.focus();await page.keyboard.press('Space');
+   ok(await working.getAttribute('aria-pressed')==='true'&&await working.evaluate(el=>getComputedStyle(el,'::after').width)==='20px','keyboard selection shows the short underline '+width);
+   await page.keyboard.press('Space');ok(await working.getAttribute('aria-pressed')==='false','keyboard toggles filter off '+width);
    await page.screenshot({path:join(destination,'panel-'+width+'.png')});
   }
  snapshot=roots(1);snapshot.tasks[0].workers[0].run.phase='uncertain';await refresh();await waitName('工作状态，数量待核实');await page.setViewportSize({width:320,height:600});
  ok(await panel.locator('.status-count-filter').evaluateAll(filters=>filters.every(e=>e.scrollWidth<=e.clientWidth)),'unverified count fits narrow filters');
+
+ snapshot={tasks:Array.from({length:6},(_,i)=>{
+  const t=task('returned-'+i,i===0?{title:null,goal:null}:{state:'settled',outcome:'succeeded'});
+  Object.assign(t.workers[0].run,{status:'succeeded',phase:'ended'});
+  return t;
+ })};
+ await page.setViewportSize({width:1440,height:900});await page.reload();
+ const sidebar=page.getByRole('complementary',{name:'工作状态卡片'});
+ const done=sidebar.getByRole('button',{name:'执行完成，6 个 Worker',exact:true});
+ await done.waitFor();
+ assert.deepEqual(await sidebar.locator('.status-count-filter').allTextContents(),['工作中 0','执行完成 6','待你处理 0']);
+ const rows=sidebar.locator('[data-item-row]'),first=rows.first();
+ ok(await first.locator('.status-row-trigger').getAttribute('title')==='未命名事项 · 未结案','open matter with a successful Worker return shows 未结案 and retains the title fallback');
+ const clock=first.locator('svg.lucide-clock3');
+ ok(await clock.evaluate(el=>getComputedStyle(el).animationName==='none'),'open matter shows a static clock');
+ ok(await sidebar.locator('[data-item-row] svg.lucide-check').count()===5,'successful settled rows keep check icons');
+ await page.screenshot({path:join(destination,'sidebar-1440-unsettled.png')});
+ await done.click();ok(await rows.count()===6&&await clock.isVisible(),'execution-complete filter retains the open matter with a successful Worker return');
+ for(const name of ['工作中，0 个任务','待你处理，0 项请求']){
+  await sidebar.getByRole('button',{name,exact:true}).click();
+  ok(await rows.count()===0,name+' filters to an empty list');
+ }
+ snapshot={tasks:[root,task('running')]};await page.reload();
+ const running=sidebar.locator('[data-todo-id="running"] .status-row-trigger');
+ const spinner=running.locator('svg.lucide-loader-circle');
+ await running.waitFor();
+ ok(await running.getByText('运行中',{exact:true}).isVisible()&&await spinner.evaluate(el=>el.getAnimations().some(a=>a.playState==='running')),'running matter spins in the rendered sidebar');
+ await page.emulateMedia({reducedMotion:'reduce'});
+ ok(await spinner.evaluate(el=>getComputedStyle(el).animationName==='none'),'sidebar spinner respects reduced motion');
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ const mixed=sidebar.locator('[data-todo-id="mixed"]');
+ ok(await mixed.getByText('需你答复',{exact:true}).isVisible()&&await mixed.locator('svg.lucide-message-circle-question').isVisible(),'waiting for the user takes precedence over a running peer');
+ await page.screenshot({path:join(destination,'sidebar-1440-running.png')});
+ await sidebar.getByRole('button',{name:'工作中，2 个任务',exact:true}).click();
+ ok(await rows.count()===2,'working filter includes the matter with a running peer');
+ await sidebar.getByRole('button',{name:'待你处理，1 项请求',exact:true}).click();
+ ok(await rows.count()===1&&await mixed.isVisible(),'user filter includes only the matter with a pending question');
  ok(errors.length===0,'no page errors or business writes');
 }catch(error){errors.push(String(error.stack??error));process.exitCode=1;}
 finally{await writeFile(join(destination,'browser-results.json'),JSON.stringify({synthetic:true,checks,metrics,errors,realBrowserVerified:checks.length>0&&errors.length===0},null,2));await browser?.close();await new Promise(done=>server?server.close(done):done());await rm(scratch,{recursive:true,force:true});}

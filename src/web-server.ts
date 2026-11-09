@@ -3,11 +3,10 @@ import type {MobileDevices} from './mobile-devices.js';
 import QRCode from 'qrcode';
 import {StatePublication} from './state-publication.js';
 import {HTML_PREVIEW_POLICY,htmlPreviewShell} from './html-preview.js';
-import {updateReviewHtml,updateReviewJs,updateReviewCss} from './update-review-page.js';
 import { createServer, type ServerResponse, type IncomingMessage } from "node:http";
 import { readFile, realpath } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
-import {webChatPost,type WebBridge} from "./web-contract.js";
+import {webChatPost,webMediaRoute,type WebBridge} from "./web-contract.js";
 import {createWebChat} from "./web-chat.js";
 import {WEB_UPLOAD_BYTES,webUpload} from './web-upload.js';
 import {timingSafeEqual} from 'node:crypto';
@@ -40,20 +39,13 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
   if(desktopAccessToken!==undefined&&(typeof desktopAccessToken!=='string'||!/^[a-f0-9]{64}$/.test(desktopAccessToken)))throw Error('desktop_access_invalid');
   const desktopAccess=desktopAccessToken===undefined?undefined:Buffer.from(desktopAccessToken,'hex');
   const chat=createWebChat(bridge);
-  const clients = new Set<ServerResponse>(),historyClients=new Set<ServerResponse>();
+  const historyClients=new Set<ServerResponse>();
   let url = "", sequence = 0, uploading=0;
-  const publication=new StatePublication(()=>bridge.state(),state=>{
-    const event=`id: ${++sequence}\nevent: state\ndata: ${JSON.stringify(state)}\n\n`;
-    for(const client of clients){
-      if(client.writableLength>2*1024*1024){clients.delete(client);client.end();}
-      else client.write(event);
-    }
-  },()=>{for(const client of clients)client.write('event: unavailable\ndata: {}\n\n');},()=>clients.size>0);
   const historyPublication=new StatePublication(async()=>{if(!bridge.history)throw Error('history_protocol_required');return bridge.history.state();},state=>{
     const event=`id: ${++sequence}\nevent: state\ndata: ${JSON.stringify(state)}\n\n`;
     for(const client of historyClients){if(client.writableLength>2*1024*1024){historyClients.delete(client);client.end();}else client.write(event);}
   },()=>{for(const client of historyClients)client.write('event: unavailable\ndata: {}\n\n');},()=>historyClients.size>0);
-  const unsubscribe=bridge.onStateChange?.(()=>{publication.invalidate();historyPublication.invalidate();});
+  const unsubscribe=bridge.onStateChange?.(()=>historyPublication.invalidate());
   const server = createServer((request, response) => {
     void handle(request, response).catch(error => {
       if (response.headersSent) { response.end(); return; }
@@ -73,9 +65,8 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       (request.headers.origin && request.headers.origin !== requestOrigin) || request.headers["sec-fetch-site"] === "cross-site")
       return json(response, 403, { error: "local_origin_required" });
     const target = new URL(request.url ?? "/", url);
-    const media=target.pathname.match(/^\/api\/media\/([\w:-]{1,100})\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})(?:\/(origin|reveal))?$/);
-    const preview=request.method==='GET'&&media&&!media[4]&&target.search==='?preview=voice'?'voice':undefined;
-    if (target.search&&!preview) return json(response, 400, { error: "query_not_supported" });
+    const media=webMediaRoute(request.method,target);
+    if (target.search&&!media?.preview) return json(response, 400, { error: "query_not_supported" });
     if(desktopAccess&&target.pathname.startsWith('/api/')){
       const supplied=request.headers['x-homer-desktop-access'];
       if(typeof supplied!=='string'||!/^[a-f0-9]{64}$/.test(supplied)||!timingSafeEqual(desktopAccess,Buffer.from(supplied,'hex')))
@@ -105,14 +96,16 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
     if(request.method==='GET'&&target.pathname==='/connect'){
       response.writeHead(302,{Location:'/#'});response.end();return;
     }
-    if(request.method==='GET'&&['/settings/update','/update-review.js','/update-review.css'].includes(target.pathname)){
-      response.writeHead(200,{'Content-Type':target.pathname.endsWith('.js')?'text/javascript; charset=utf-8':target.pathname.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});response.end(target.pathname.endsWith('.js')?updateReviewJs:target.pathname.endsWith('.css')?updateReviewCss:updateReviewHtml);return;
-    }
-    if(target.pathname==='/api/update/review'&&request.method==='GET')return json(response,200,updateReview?.read()??null);
-    if(target.pathname==='/api/update/approve'&&request.method==='POST'){
-      if(request.headers.origin!==requestOrigin)return json(response,403,{error:'local_origin_required'});
-      if(!updateReview)throw Error('dev_update_review_unavailable');
-      const input=await body(request);return json(response,200,updateReview.approve(input?.hash));
+    if(!desktopAccess&&updateReview){
+      if(request.method==='GET'&&['/settings/update','/update-review.js','/update-review.css'].includes(target.pathname)){
+        const {updateReviewHtml,updateReviewJs,updateReviewCss}=await import('./update-review-page.js');
+        response.writeHead(200,{'Content-Type':target.pathname.endsWith('.js')?'text/javascript; charset=utf-8':target.pathname.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});response.end(target.pathname.endsWith('.js')?updateReviewJs:target.pathname.endsWith('.css')?updateReviewCss:updateReviewHtml);return;
+      }
+      if(target.pathname==='/api/update/review'&&request.method==='GET')return json(response,200,updateReview.read()??null);
+      if(target.pathname==='/api/update/approve'&&request.method==='POST'){
+        if(request.headers.origin!==requestOrigin)return json(response,403,{error:'local_origin_required'});
+        const input=await body(request);return json(response,200,updateReview.approve(input?.hash));
+      }
     }
     const versioned = target.pathname.match(/^\/ui\/([a-f0-9]{64})(\/assets\/[\w.-]+)$/);
     const path = versioned ? versioned[2]! : target.pathname;
@@ -166,36 +159,24 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       response.writeHead(200,{'Content-Type':'text/event-stream',Connection:'keep-alive','X-Accel-Buffering':'no'});historyClients.add(response);
       request.on('close',()=>historyClients.delete(response));response.write(`event: state\ndata: ${JSON.stringify(initial)}\n\n`);historyPublication.afterInitialDelivery();return;
     }
-    if (request.method === "GET" && path === "/api/state") return json(response, 200, await publication.read());
-    const attachment=media?{messageId:media[1]!,assetId:media[2]!,revision:Number(media[3])}:undefined;
-    if(request.method==='GET'&&attachment){
+    if(request.method==='GET'&&media){
+      const {attachment,action,preview}=media;
       if(!bridge.media)throw Error('media_unavailable');
-      if(media![4]==='origin'&&bridge.media.origin)return json(response,200,await bridge.media.origin(attachment));
-      if(media![4])return json(response,404,{error:'not_found'});
+      if(action==='origin'&&bridge.media.origin)return json(response,200,await bridge.media.origin(attachment));
+      if(action)return json(response,404,{error:'not_found'});
       const file=await bridge.media.read({...attachment,...(preview?{preview}:{})});
       const inline=['image/png','image/jpeg','image/webp','image/gif','audio/wav','audio/mpeg','audio/ogg','video/mp4'].includes(file.mime);
       if(file.sha256)response.setHeader('X-Homer-Artifact-Hash',file.sha256);
       response.writeHead(200,{'Content-Type':file.mime,'X-Content-Type-Options':'nosniff','Content-Disposition':`${inline?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(file.filename)}`});
       response.end(Buffer.from(file.data,'base64'));return;
     }
-    if (request.method === "GET" && path === "/api/events") {
-      const initial = await publication.read();
-      if (response.destroyed||response.writableEnded) return;
-      if(!server.listening){response.writeHead(503,{Connection:'close'});response.end();return;}
-      response.writeHead(200, { "Content-Type": "text/event-stream", Connection: "keep-alive", "X-Accel-Buffering": "no" });
-      clients.add(response);
-      request.on("close", () => clients.delete(response));
-      response.write(`event: state\ndata: ${JSON.stringify(initial)}\n\n`);
-      publication.afterInitialDelivery();
-      return;
-    }
     if (request.method === "POST") {
       if (request.headers.origin !== requestOrigin) return json(response, 403, { error: "local_origin_required" });
       const input = await body(request);
-      if(attachment&&media![4]==='reveal'){
+      if(media?.action==='reveal'){
         if(!input||Array.isArray(input)||typeof input!=='object'||Object.keys(input).length)throw Error('artifact_reveal_invalid');
         if(!bridge.media?.reveal)throw Error('artifact_reveal_unsupported');
-        return json(response,200,await bridge.media.reveal(attachment));
+        return json(response,200,await bridge.media.reveal(media.attachment));
       }
       if(path==='/api/uploads/preview'){
         const preview=await chat('media.preview',input) as {mime:string;data:string};
@@ -219,12 +200,12 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("web_listen_failed");
   url = `http://127.0.0.1:${address.port}`;
-  function publish(){publication.invalidate();historyPublication.invalidate();}
-  const heartbeat = setInterval(() => { for (const client of [...clients,...historyClients]) client.write(": heartbeat\n\n"); }, 15000);
+  function publish(){historyPublication.invalidate();}
+  const heartbeat = setInterval(() => { for (const client of historyClients) client.write(": heartbeat\n\n"); }, 15000);
   heartbeat.unref();
-  const disconnectClients=()=>{for(const client of [...clients,...historyClients])client.end();clients.clear();historyClients.clear();};
-  return { url, publish, reset:()=>{publication.reset();historyPublication.reset();}, disconnectClients, close: async () => {
-    unsubscribe?.();publication.close();historyPublication.close();
+  const disconnectClients=()=>{for(const client of historyClients)client.end();historyClients.clear();};
+  return { url, publish, reset:()=>{historyPublication.reset();}, disconnectClients, close: async () => {
+    unsubscribe?.();historyPublication.close();
     clearInterval(heartbeat);
     disconnectClients();
     await new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));

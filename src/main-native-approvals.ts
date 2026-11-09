@@ -1,5 +1,3 @@
-import { resolve, relative, isAbsolute, dirname, join, sep } from 'node:path';
-import { existsSync, realpathSync, lstatSync } from 'node:fs';
 import { WorkerInteractions, type InteractionInput, type InteractionResolution } from './worker-interactions.js';
 import { ConversationHistory, conversationInput, type ConversationInput, type ConversationAcceptance } from './web-history.js';
 import { nativeResponse, type InteractionDecision } from './worker-interaction-protocol.js';
@@ -11,9 +9,6 @@ export type MainApprovalScope = {
     sourceRequestId: string;
     userText: string;
     isCurrent: () => boolean;
-    protectedRoots?: string[];
-    // Host-supplied dedicated HOME/skills only. Never a model-selected grant.
-    skillWriteRoot?: string;
     historyThreadId?: string;
     worker?: Pick<InteractionInput, 'runId' | 'runEpoch' | 'taskVersion'>;
 };
@@ -27,50 +22,6 @@ export function approvalDecision(item: Pick<InteractionInput, 'details'>, input:
     if (!['允许本次操作', '拒绝本次操作', ...(canCancel ? ['取消本次请求'] : [])].includes(input.text))
         throw Error('native_approval_explicit_decision_required');
     return { action: input.text === '允许本次操作' ? 'approve' : input.text === '取消本次请求' ? 'cancel' : 'deny', reason: '用户通过待答卡明确决定当前请求。', ...(input.text === '允许本次操作' && item.details.method === 'item/permissions/requestApproval' ? { permissions: (item.details.params as any).permissions } : {}) };
-}
-const within = (root: string, path: string) => { const rel = relative(root, path); return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)); };
-// native also resolves actual spelling on case-insensitive filesystems.
-function canonicalTarget(raw: string) { let parent = resolve(raw); const parts: string[] = []; while (!existsSync(parent) && dirname(parent) !== parent) {
-    parts.unshift(parent.slice(dirname(parent).length + 1));
-    parent = dirname(parent);
-} return join(realpathSync.native(parent), ...parts); }
-function userSkillTarget(raw: string, root: string) {
-    const base = resolve(root), path = resolve(raw), rel = relative(base, path);
-    if (!rel || !within(base, path) || within(join(base, '.system'), path)) return false;
-    // lstat also detects dangling links, which existsSync/realpath alone miss.
-    let current = base;
-    for (const part of ['', ...rel.split(sep)]) {
-        current = join(current, part);
-        if (lstatSync(current, {throwIfNoEntry:false})?.isSymbolicLink()) return false;
-    }
-    const target = canonicalTarget(path);
-    return within(canonicalTarget(base), target) && !within(canonicalTarget(join(base, '.system')), target);
-}
-export function validateGrant(request: NativeRequest, decision: InteractionDecision, scope: MainApprovalScope) {
-    nativeResponse(request, decision);
-    if (decision.action !== 'approve')
-        return;
-    const changes = (request.details.operation as any)?.changes;
-    if (request.method === 'item/fileChange/requestApproval' && (!Array.isArray(changes) || !changes.length))
-        throw Error('interaction_approval_unavailable');
-    const fs = request.method === 'item/permissions/requestApproval' ? (decision.permissions as any)?.fileSystem : undefined;
-    const paths = [...(fs?.read ?? []), ...(fs?.write ?? []), ...(fs?.entries ?? []).map((e: any) => e.path.path), ...(request.method === 'item/fileChange/requestApproval' ? changes.flatMap((change: any) => [change.path, ...(change.kind?.move_path ? [change.kind.move_path] : [])]) : [])];
-    for (const raw of paths) {
-        if (typeof raw !== 'string' || !isAbsolute(raw))
-            throw Error('interaction_capability_denied');
-        const path = canonicalTarget(raw);
-        const skillRoot = scope.skillWriteRoot;
-        const userSkill = skillRoot && userSkillTarget(raw, skillRoot);
-        if (skillRoot && !userSkill && (within(resolve(skillRoot), resolve(raw)) || within(canonicalTarget(skillRoot), path)))
-            throw Error('interaction_capability_denied');
-        if (path === '/' || (scope.protectedRoots ?? []).some(rawRoot => {
-            const root = canonicalTarget(rawRoot);
-            // Only the enclosing HOME exclusion has this narrow exception.
-            // System skills, plugins, runtimes and executable roots still win.
-            return within(path, root) || (within(root, path) && !(userSkill && root === canonicalTarget(dirname(skillRoot!))));
-        }))
-            throw Error('interaction_capability_denied');
-    }
 }
 // Display copy only. Raw native arguments remain in the process-owned callback.
 function mcpDisplay(value: unknown, field = ''): string {
@@ -172,9 +123,9 @@ export class MainNativeApprovals {
     } {
         if (request.threadId !== scope.threadId || request.turnId !== scope.turnId || !scope.isCurrent())
             throw Error('interaction_not_live');
-        const payload = JSON.stringify(request.details);
+        const command = request.method === 'item/commandExecution/requestApproval';
         const ordinary = request.method === 'mcpServer/elicitation/request' && (request.details._meta as any)?.codex_approval_kind === 'mcp_tool_call';
-        if (payload.length > (ordinary ? 128 * 1024 : 3000))
+        if (!command && JSON.stringify(request.details).length > (ordinary ? 128 * 1024 : 3000))
             throw Error('native_approval_review_too_large');
         const questions = request.details.questions as {
             id: string;
@@ -185,13 +136,20 @@ export class MainNativeApprovals {
         }[] | undefined;
         const question = request.kind === 'authorization' ? authorizationReview(request) : questions?.length === 1 ? questions[0]!.question + (questions[0]!.options?.length ? '\n可选：' + questions[0]!.options!.map(o => o.label).join('、') : '') : '请补充本轮所需的信息。';
         if (!question.trim() || question.length > 4000) throw Error('native_approval_review_too_large');
-        const params = ordinary ? {
+        // The full command is already in the review, and the live callback holds its native request.
+        const params = command ? undefined : ordinary ? {
             mode: request.details.mode, serverName: mcpDisplay(request.details.serverName),
             message: mcpDisplay(request.details.message), requestedSchema: {type: 'object', properties: {}},
             _meta: {codex_approval_kind: 'mcp_tool_call'},
         } : request.details;
         const reason = request.kind==='question'?'答复交给荷马继续处理，不授予操作权限。':request.method === 'item/permissions/requestApproval' ? ((request.details.permissions as any)?.network?.enabled === true ? '网络许可覆盖当前回复轮次的网络访问，不限单一站点；本轮结束即失效。' : '文件许可仅当前回复轮次有效，本轮结束即失效。') : '仅授权当前请求；不授予永久权限或自动重试。';
-        return this.openReview(request.requestId,request.kind,{method:request.method,params},question,reason,scope,decision=>validateGrant(request,decision,scope));
+        return this.openReview(request.requestId,request.kind,{method:request.method,params},question,reason,scope,decision=>{
+            nativeResponse(request,decision);
+            const changes=(request.details.operation as {changes?:unknown}|undefined)?.changes;
+            if (decision.action === 'approve' && request.method === 'item/fileChange/requestApproval' &&
+                (!Array.isArray(changes)||!changes.length))
+                throw Error('interaction_approval_unavailable');
+        });
     }
     respond(id: string, value: ConversationInput, acceptance?: ConversationAcceptance) {
         if (!this.owns(id))

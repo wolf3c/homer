@@ -13,7 +13,7 @@ const baseline=!!process.env.HOMER_COMPACT_BASELINE,checks=[],metrics=[];
 const files=Array.from({length:10},(_,n)=>({id:'result-compact-'+n,title:(n%2?'continuous-ascii-name-':'长中文文件名阅读与批注').repeat(4)+n+(n===1?'.html':'.txt'),mime:n===1?'text/html':'text/plain',text:n===1?'<!doctype html><style>body{font:18px system-ui;padding:20px}</style><h1>合成网页标题</h1><script>document.body.dataset.executions=String(Number(document.body.dataset.executions||0)+1)</script>':'第一处中文。第二处中文。\n'+('阅读正文\n'.repeat(150))}));
 const f=await fixture(100,'after');let chrome;
 f.attach('Synthetic compact header',files.map(({title,mime,text})=>({filename:title,mime,content:text})));
-for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const v=await state();return {...v,features:{...v.features,taskOverview:true}};};}
+{const owner=f.bridge.history;const state=owner.state.bind(owner);owner.state=async()=>{const v=await state();return {...v,features:{...v.features,taskOverview:true}};};}
 const delay=ms=>new Promise(done=>setTimeout(done,ms));
 try{
  chrome=await isolatedChrome(destination);
@@ -90,7 +90,7 @@ try{
     await resize(1440);record('real divider supports 250px preview and 200px left header without losing controls or shrinking SVG');
    }
    await frame.close();frame=undefined;await resize(width);
-   await click('.html-annotation-toggle');await until(()=>document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')==='');
+   await click('.html-annotation-toggle');await until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')==='false');
    for(let n=2;n<files.length;n++)await open(n);
    assertLayout(await measure('many-long-tabs'));assert.equal(await ev(()=>{const rail=document.querySelector('.canvas-tab-rail'),a=document.querySelector('[role=tab][aria-selected=true]').parentElement,r=rail.getBoundingClientRect(),t=a.getBoundingClientRect();return rail.scrollWidth>rail.clientWidth&&t.right<=r.right+1&&t.left>=r.left-1;}),true);
    await p.screenshot('long-tabs-'+width+'.png');

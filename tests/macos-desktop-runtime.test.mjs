@@ -43,7 +43,7 @@ function recordSyntheticShutdown(root,events,exit){
  assert.equal(ownerPresent,false);assert.equal(runtimeLockPresent,false);assert.equal(gatewayLockPresent,false);assert.equal(leases,0);
 }
 const request=(url,path,input,headers={})=>fetch(url+path,{method:input===undefined?'GET':'POST',headers:{Origin:url,'X-Homer-Desktop-Access':runtimeAccess.get(new URL(url).origin),...(input===undefined?{}:{'Content-Type':'application/json'}),...headers},...(input===undefined?{}:{body:JSON.stringify(input)})});
-async function stateWhen(url,predicate){for(let i=0;i<500;i++){const r=await request(url,'/api/state');if(r.ok){const s=await r.json();if(predicate(s))return s;}await wait(20);}throw Error('state timeout');}
+async function stateWhen(url,predicate){for(let i=0;i<500;i++){const r=await request(url,'/api/history/state');if(r.ok){const s=await r.json();if(predicate(s))return s;}await wait(20);}throw Error('state timeout');}
 const methods=root=>existsSync(join(root,'fixture-methods.jsonl'))?readFileSync(join(root,'fixture-methods.jsonl'),'utf8').trim().split('\n').map(x=>JSON.parse(x).method):[];
 test('a pending transport discovered under the gateway lock exits before spawning the host',{timeout:15000},async()=>{
  const root=profile(),runtime=join(root,'runtime'),homer=join(resources,'homer'),manifest=JSON.parse(readFileSync(join(resources,'desktop-manifest.json')));
@@ -53,7 +53,7 @@ test('a pending transport discovered under the gateway lock exits before spawnin
  const build={directory:homer,hash:manifest.sourceHash,manifest:manifest.manifest,schema:manifest.schema,toolsHash:manifest.toolsHash,boundary:'synthetic-binding',config:{runtime,pauseOldDesktopWork:true},thread:'synthetic'};
  const previous=process.exitCode;
  try{
-  const result=await runDev({root:homer,input,output,webPort:0,fixedBuild:build,fixedUi:build,fallbackUi:build,desktop:{onEvent(){}}});
+  const result=await runDev({root:homer,input,output,webPort:0,fixedBuild:build,desktop:{onEvent(){}}});
   assert.equal(result.noHostStarted,true);assert.equal(result.startupError,'desktop_transport_review_required');
   assert.equal(existsSync(join(runtime,'gateway/cli.lock')),false);
   const check=new DatabaseSync(join(runtime,'gateway/transport.sqlite'),{readOnly:true});try{assert.equal(check.prepare("SELECT count(*) n FROM transport_requests WHERE state='pending'").get().n,1);}finally{check.close();}
@@ -83,14 +83,20 @@ test('desktop unopened account stays read-only and cannot restore deleted login 
   await run.stop();
  }finally{if(run.child.exitCode===null)run.child.stdin.end('{"kind":"quit"}\n');}
 });
-test('packaged current history, queue, upload and same-thread restart retain synthetic data',{timeout:45000},async()=>{
+test('packaged desktop retains current history, uploads and the same thread across a source hash change',{timeout:45000},async()=>{
  const root=profile({loggedIn:true});let run=launch(root);
  try{
   const url=await run.url(),s=await stateWhen(url,s=>s.upgrade.phase==='running');
   assert.equal(s.threadId,'synthetic-desktop-main');
+  const bundled=join(resources,'homer');
+  for(const name of ['scripts/dev-build.mjs','dist/update-review-page.js'])assert.equal(existsSync(join(bundled,name)),false,name);
+  for(const path of ['/settings/update','/update-review.js','/update-review.css','/api/update/review']){
+   const absent=await request(url,path);assert.equal(absent.status,404,path);await absent.arrayBuffer();
+  }
+  const approval=await request(url,'/api/update/approve',{hash:'synthetic'});assert.equal(approval.status,404);await approval.arrayBuffer();
   const history=await (await request(url,'/api/history/state')).json();assert.equal(history.history.protocol,3);assert.equal(history.threadId,s.threadId);
   assert.equal((await request(url,'/api/capabilities')).status,404);
-  assert.equal((await fetch(url+'/api/state',{headers:{Origin:'https://example.invalid'}})).status,403);
+  assert.equal((await fetch(url+'/api/history/state',{headers:{Origin:'https://example.invalid'}})).status,403);
   const sent=await request(url,'/api/messages',{requestId:'synthetic-conversation',text:'synthetic retained request'});
   assert.equal(sent.status,202,await sent.text());
   await stateWhen(url,s=>s.messages.some(m=>m.role==='assistant'&&m.requestId==='synthetic-conversation'&&m.status==='completed'&&m.text.includes('隔离测试答复')));
@@ -100,8 +106,17 @@ test('packaged current history, queue, upload and same-thread restart retain syn
   await run.stop();writeFileSync(join(root,'workspace/synthetic-retained'),'unchanged');
   const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
   let before;
-  try{before=db.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all();assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);}finally{db.close();}
+  try{
+   before=db.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all();
+   const manifest=JSON.parse(readFileSync(join(resources,'desktop-manifest.json'),'utf8'));
+   assert.equal(manifest.toolsHash,db.prepare("SELECT value FROM meta WHERE key='mainToolsHash'").get().value);
+   assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
+  }finally{db.close();}
+  const profileMarker=join(root,'desktop-profile.json');
+  writeFileSync(profileMarker,JSON.stringify({...JSON.parse(readFileSync(profileMarker)),schema:'0a79d7312b9c'}));
+  const oldMarker=readFileSync(profileMarker);
   run=launch(root);const next=await stateWhen(await run.url(),s=>s.upgrade.phase==='running');assert.equal(next.threadId,s.threadId);
+  assert.deepEqual(readFileSync(profileMarker),oldMarker);
   assert.equal(readFileSync(join(root,'workspace/synthetic-retained'),'utf8'),'unchanged');
   const after=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});try{assert.deepEqual(after.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all(),before);}finally{after.close();}
   assert.equal(methods(root).filter(m=>m==='thread/start').length,1);assert.ok(methods(root).includes('thread/resume'));await run.stop();
@@ -141,7 +156,7 @@ async function adoptedFixture({effort='high'}={}){
   writeFileSync(join(p,'.homer-desktop-test-profile'),'{"format":1}');writeFileSync(join(p,'fixture-control.json'),'{"loggedIn":true}');
  }
  copyFileSync(resolve('tests/fixtures/desktop-app-server.mjs'),join(shell,'fixture-codex.mjs'));chmodSync(join(shell,'fixture-codex.mjs'),0o700);
- const config={workspace:'workspace',runtime:'runtime-local-subscription',codexHome:paths.codexHome,codexBin:join(seed,'fixture-codex.mjs'),model:'synthetic',effort,requiresOpenaiAuth:true,mainTimeoutMs:600000};
+ const config={workspace:'workspace',runtime:'runtime-local-subscription',codexHome:paths.codexHome,codexBin:join(seed,'fixture-codex.mjs'),model:'synthetic',effort,requiresOpenaiAuth:true};
  const source=join(privateRoot,'local-chatgpt.config.json');writeFileSync(source,JSON.stringify(config),{mode:0o600});
  writeFileSync(join(shell,'desktop-adoption.json'),JSON.stringify({format:1,test:true,sourceConfig:source,sha256:digest(readFileSync(source,'utf8'))}),{mode:0o600});
  const db=new DatabaseSync(join(paths.runtime,'homer.sqlite'));let toolsHash;
@@ -253,7 +268,13 @@ for(const effort of ['high','max'])test(`daily website uses max and preserves or
   const models=readFileSync(join(f.original,'fixture-models.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
   for(const worker of [false,true])assert.ok(models.some(model=>model.worker===worker&&model.model==='deepseek-flash'&&model.effort==='max'&&model.serviceTier===null&&model.keyPresent));
   const turnCount=methods(f.original).filter(x=>x==='turn/start').length;
-  run=launch(f.shell);assert.equal((await stateWhen(await run.url(),s=>s.upgrade.phase==='running')).threadId,state.threadId);await run.stop();
+  run=launch(f.shell);const resumedUrl=await run.url();
+  assert.equal((await stateWhen(resumedUrl,s=>s.upgrade.phase==='running')).threadId,state.threadId);
+  const retained=await request(resumedUrl,'/api/media/'+file.messageId+'/'+file.assetId+'/'+file.revision);
+  assert.equal(retained.status,200);
+  assert.equal(retained.headers.get('x-homer-artifact-hash'),file.sha256);
+  assert.equal(createHash('sha256').update(Buffer.from(await retained.arrayBuffer())).digest('hex'),file.sha256);
+  await run.stop();
   const after=new DatabaseSync(f.dbPath,{readOnly:true});try{assert.equal(after.prepare("SELECT value FROM meta WHERE key='publicMainNode:v1:adoption-unknown'").get().value,old);}finally{after.close();}
   assert.deepEqual(readFileSync(f.source),originalConfig);
   assert.equal(methods(f.original).filter(x=>x==='turn/start').length,turnCount);

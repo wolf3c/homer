@@ -31,6 +31,10 @@ const text=(value:unknown,max=24000)=>{if(typeof value!=='string'||!value.trim()
 const directory=(path:string)=>{if(!isAbsolute(path)||realpathSync(path)!==path||!statSync(path).isDirectory())throw Error('task_working_directory_invalid');return path;};
 const active=(run:Run)=>['queued','running'].includes(run.status)||run.phase==='uncertain';
 const recipient=(workerId:string)=>'worker:'+workerId;
+function defaultTaskTitle(goal:string){
+ const first=goal.trim().split(/[。！？!?\n]/u).map(part=>part.trim()).find(Boolean)??goal.trim();
+ const chars=Array.from(first);return chars.length>48?chars.slice(0,48).join('')+'…':first;
+}
 
 export class RecursiveTasks{
  constructor(readonly store:Store,readonly files:Files,private lifecycle?:RecursiveTaskLifecycle){}
@@ -172,7 +176,7 @@ export class RecursiveTasks{
   else if(actor.sourceRequestId)this.trustedSource(actor,actor.sourceRequestId);
   text(input.goal);
   if(typeof (input.notes??'')!=='string'||(input.notes??'').length>24000)throw Error('task_invalid_input');
-  const taskId=id('task'),now=Date.now(),title=input.title??input.goal.trimStart().split('\n')[0]!.slice(0,200);
+  const taskId=id('task'),now=Date.now(),title=input.title??defaultTaskTitle(input.goal);
   text(title,200);
   this.sql("INSERT INTO tasks VALUES(?,?,1,?,'open',NULL,1,'normal','visible',?,?,NULL)",taskId,title,input.notes??'',now,now);
   this.sql('INSERT INTO task_versions VALUES(?,1,?,?,?,?,?)',taskId,input.goal,input.authority?json(input.authority):null,
@@ -268,12 +272,13 @@ export class RecursiveTasks{
   return this.message(actor,key,recipient(workerId),task.id,task.headVersion,'worker_input',
     {workerId,text:input.text,...(attachments?.length?{attachments}:{})},target,messageId);
  }
- workerOpen(actor:Actor,input:{operationId:string;taskId?:string;text:string;workingDirectory?:string;authority?:Authority;attachments?:AttachmentRef[]},prepare?:PrepareAttachments){
+ workerOpen(actor:Actor,input:{operationId:string;taskId?:string;text:string;title?:string;workingDirectory?:string;authority?:Authority;attachments?:AttachmentRef[]},prepare?:PrepareAttachments){
   this.requireMain(actor);
+  if(input.taskId&&input.title!==undefined)throw Error('invalid_tool_arguments');
   return this.mutation(actor,input.taskId??'tasks',input.operationId,'worker_open',input,key=>{
    text(input.text);
    if(!input.taskId&&!input.authority)throw Error('task_authority_source_denied');
-   const taskId=input.taskId??this.createTaskRecord(actor,{goal:input.text,authority:input.authority,workingDirectory:input.workingDirectory},key).taskId;
+   const taskId=input.taskId??this.createTaskRecord(actor,{goal:input.text,title:input.title,authority:input.authority,workingDirectory:input.workingDirectory},key).taskId;
    const task=this.task(taskId);
    this.writable(task);
    this.dispatchAuthority(actor,task);
@@ -341,9 +346,9 @@ export class RecursiveTasks{
  workerRead(actor:Actor,input:{workerId:string;after?:number;limit?:number;messageId?:string;itemId?:string;offset?:number}){
   const worker=this.worker(input.workerId);this.readAllowed(actor,worker.taskId);if(actor.runId&&this.run(actor.runId).workerId!==input.workerId)throw Error('agent_scope_denied');
   const offset=input.offset??0;if(!Number.isSafeInteger(offset)||offset<0)throw Error('message_offset_invalid');if(input.itemId!==undefined){text(input.itemId,200);if(!input.messageId)throw Error('worker_query_invalid');}
-  type PageRow=Omit<AgentMessage,'payloadJson'>&{metadataJson:string;nativeMessagesJson:string;text:string;textLength:number};
+  type PageRow=Omit<AgentMessage,'payloadJson'|'replyTo'|'causationId'>&{metadataJson:string;nativeMessagesJson:string;text:string;textLength:number};
   const body=input.itemId?"(SELECT json_extract(value,'$.text') FROM json_each(payloadJson,'$.messages') WHERE json_extract(value,'$.itemId')=?)":"json_extract(payloadJson,'$.text')";
-  const fields=`seq,id,senderAgentId,senderRunId,senderEpoch,recipientAgentId,taskId,taskVersion,targetRunId,kind,replyTo,causationId,operationKey,json_remove(payloadJson,'$.text','$.messages') metadataJson,(SELECT json_group_array(json_object('itemId',json_extract(value,'$.itemId'),'phase',json_extract(value,'$.phase'),'characters',length(json_extract(value,'$.text')))) FROM json_each(payloadJson,'$.messages')) nativeMessagesJson,substr(coalesce(${body},''),?,24000) text,length(coalesce(${body},'')) textLength`;
+  const fields=`seq,id,senderAgentId,senderRunId,senderEpoch,recipientAgentId,taskId,taskVersion,targetRunId,kind,operationKey,json_remove(payloadJson,'$.text','$.messages') metadataJson,(SELECT json_group_array(json_object('itemId',json_extract(value,'$.itemId'),'phase',json_extract(value,'$.phase'),'characters',length(json_extract(value,'$.text')))) FROM json_each(payloadJson,'$.messages')) nativeMessagesJson,substr(coalesce(${body},''),?,24000) text,length(coalesce(${body},'')) textLength`;
   const page=({metadataJson,nativeMessagesJson,text,textLength,...row}:PageRow)=>({...row,payload:{...JSON.parse(metadataJson),text},nativeMessages:JSON.parse(nativeMessagesJson) as {itemId:string;phase:string|null;characters:number}[],...(input.itemId?{itemId:input.itemId}:{}),text,offset,nextOffset:offset+24000<textLength?offset+24000:null});
   if(input.messageId){const row=this.one<PageRow>(`SELECT ${fields} FROM agent_messages WHERE id=? AND taskId=? AND json_extract(payloadJson,'$.workerId')=?${input.itemId?" AND EXISTS(SELECT 1 FROM json_each(payloadJson,'$.messages') WHERE json_extract(value,'$.itemId')=?)":''}`,...(input.itemId?[input.itemId]:[]),offset+1,...(input.itemId?[input.itemId]:[]),input.messageId,worker.taskId,worker.workerId,...(input.itemId?[input.itemId]:[]));if(!row)throw Error('message_not_found');return {workerId:worker.workerId,taskId:worker.taskId,threadId:worker.threadId,runs:[],messages:[page(row)],nextCursor:null};}
   const after=input.after??0,limit=input.limit??20;if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>50)throw Error('worker_query_invalid');

@@ -23,7 +23,7 @@ function pdf(){
  const start=Buffer.byteLength(text);text+=`xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${start}\n%%EOF`;
  return Buffer.from(text);
 }
-const html='<!doctype html><h1>Isolated synthetic HTML</h1><button onclick="this.textContent=\'Local click passed\'">Local action</button><script>document.body.dataset.executed="yes";addEventListener("securitypolicyviolation",event=>{if(event.effectiveDirective==="connect-src")document.body.dataset.networkBlocked="yes"});fetch("https://canvas-test.invalid/blocked").catch(()=>{});try{parent.document.body.dataset.escaped="yes"}catch{}</script>';
+const html='<!doctype html><h1>Isolated synthetic HTML</h1><button onclick="this.textContent=\'Local click passed\'">Local action</button><script>document.body.dataset.executed="yes";try{parent.document.body.dataset.escaped="yes"}catch{}</script>';
 const f=await fixture(50,'after'),checks=[];let chrome;
 function check(value,label){assert.ok(value,label);checks.push(label);}
 try{
@@ -114,14 +114,12 @@ try{
    await p.until(()=>!document.querySelector('#canvas-panel'));await p.until(()=>document.activeElement?.getAttribute('aria-label')==='预览 合成重试.txt');
    checks.push('keyboard Enter opens chat file and Escape restores that file entry '+width);
    await select('synthetic-html');await p.until(()=>!!document.querySelector('iframe[title="隔离 HTML 成果"]'));
-   check(await evaluate(()=>document.querySelector('#canvas-panel iframe').getAttribute('sandbox')===''),'HTML defaults to static rendered webpage '+width);
-   let staticReady=false;for(let i=0;i<100;i++){staticReady=await frameEval('document.body?.textContent.includes("Isolated synthetic HTML")&&document.body.dataset.executed===undefined');if(staticReady)break;await new Promise(done=>setTimeout(done,20));}
-   check(staticReady,'static HTML never executes script '+width);
+   check(await evaluate(()=>document.querySelector('#canvas-panel iframe').getAttribute('sandbox')==='allow-scripts allow-forms'),'HTML opens in the script-enabled sandbox '+width);
+   let previewReady=false;for(let i=0;i<100;i++){previewReady=await frameEval('document.body?.textContent.includes("Isolated synthetic HTML")&&document.body.dataset.executed==="yes"');if(previewReady)break;await new Promise(done=>setTimeout(done,20));}
+   check(previewReady,'HTML executes in the ordinary preview '+width);
    await evaluate(()=>document.querySelector('.html-annotation-toggle').click());
    let ran=false;for(let i=0;i<150;i++){ran=await frameEval('document.body?.dataset.executed==="yes"');if(ran)break;await new Promise(done=>setTimeout(done,20));}
-   check(ran,'HTML executes only after explicit interaction action '+width);
-   let networkBlocked=false;for(let i=0;i<100;i++){networkBlocked=await frameEval('document.body?.dataset.networkBlocked==="yes"');if(networkBlocked)break;await new Promise(done=>setTimeout(done,20));}
-   check(networkBlocked,'interactive network is blocked by effective connect-src CSP '+width);
+   check(ran,'HTML also executes after opening annotation '+width);
    check(await frameEval('(()=>{try{return !!parent.document}catch{return false}})()')===false,'interactive frame cannot access parent DOM '+width);
    await p.until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')==='true');
    check(await frameEval('!!document.querySelector("agentation-toolbar")'),'explicit annotation loads native selection toolbar '+width);

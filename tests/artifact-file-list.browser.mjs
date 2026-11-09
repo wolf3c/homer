@@ -28,8 +28,8 @@ try{for(const width of [1440,704,390,320]){
   await page.evaluate(()=>document.querySelector('[contenteditable=true]').focus());await page.command('Input.insertText',{text:'Synthetic draft remains intact'});
   const open=async name=>{await page.evaluate(`(()=>{const b=[...document.querySelectorAll('.messages .file-list-open')].find(b=>b.getAttribute('aria-label')===${JSON.stringify('预览 '+name)});b.scrollIntoView({block:'center'});b.focus();b.click();})()`);};
   await open(names[0]);await page.until(()=>!!document.querySelector('iframe[title="隔离 HTML 成果"]'));
-  assert.equal(await page.evaluate(()=>document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')),'');
-  assert.equal(await page.evaluate(()=>!!document.querySelector('#canvas-panel [data-preview-text]')),false,'HTML defaults to a static sandbox, not the retired source view');
+  assert.equal(await page.evaluate(()=>document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')),'allow-scripts allow-forms');
+  assert.equal(await page.evaluate(()=>!!document.querySelector('#canvas-panel [data-preview-text]')),false,'HTML opens in the isolated preview');
   assert.equal(await page.evaluate(()=>document.querySelectorAll('#canvas-panel a[download]').length),0);
   if(width<=800){await page.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});}
   else await page.evaluate(()=>document.querySelector('.conversation-header [aria-controls=canvas-panel]').click());
@@ -64,7 +64,7 @@ try{for(const width of [1440,704,390,320]){
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.screenshot('file-list-'+width+'.png');
   assert.deepEqual(page.errors,[]);assert.deepEqual(page.blocked,[]);assert.equal(f.submitted.length,0);assert.equal(f.fakeEngine.invocations,0);
-  results.push({width,rows,staticHtml:true,exactTabSelection:true,digestMismatchRejected:true,retry:true,supersededReadIgnored:true,draftPreserved:true});
+  results.push({width,rows,isolatedHtml:true,exactTabSelection:true,digestMismatchRejected:true,retry:true,supersededReadIgnored:true,draftPreserved:true});
  }finally{await page.close();await f.close();}
 }}finally{await browser.close();writeFileSync(join(destination,'file-list-browser.json'),JSON.stringify({results},null,2));}
 assert.equal(results.length,4);console.log(JSON.stringify({pass:true,widths:results.map(r=>r.width)}));

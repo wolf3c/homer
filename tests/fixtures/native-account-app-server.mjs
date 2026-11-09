@@ -5,7 +5,7 @@ const home=process.env.CODEX_HOME,file=join(home,'synthetic-account-state.json')
 const account=()=>existsSync(file)&&JSON.parse(readFileSync(file)).connected?{type:'chatgpt',email:'SYNTHETIC_PRIVATE_EMAIL',planType:'plus'}:null;
 createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id===undefined)return;let result={};
 if(m.method==='initialize')result={userAgent:'homer-fixture/0.163.0 ',codexHome:home};
-else if(m.method==='config/read')result={config:{mcp_servers:{},features:{memories:true},memories:{dedicated_tools:true}},layers:[{name:{type:'user',file:join(home,'config.toml')},version:'synthetic-version',config:{}}]};
+else if(m.method==='config/read')result={config:{mcp_servers:{}},layers:[{name:{type:'user',file:join(home,'config.toml')},version:'synthetic-version',config:{}}]};
 else if(m.method==='skills/list')result={data:[]};
 else if(m.method==='account/read')result={account:account(),requiresOpenaiAuth:true};
 else if(m.method==='account/login/start'){login='synthetic-login';result={type:'chatgpt',loginId:login,authUrl:'http://127.0.0.1:4807/synthetic-account-authorize'};}

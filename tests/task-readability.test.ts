@@ -8,7 +8,8 @@ test('Task name remains short while full goal and working notes are preserved',(
   f.tasks.updateTask(f.actor,{operationId:'notes',taskId:f.taskId,expectedRevision:1,patch:{notes:'刚刚已经成功'}});
   const row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.title,'Inspect synthetic inputs');assert.equal(row.goal,goal);assert.equal(row.notes,'刚刚已经成功');
   assert.equal(taskName(row).text,'Inspect synthetic inputs');assert.equal(taskName({...row,title:undefined}).text,'核对样例');
-  assert.equal(taskName({title:null,goal:'这是没有短首句的很长要求'.repeat(20)},2).text,'Worker 2');assert.equal(taskName({title:null,goal:null}).source,'名称未记录');
+  const long='这是一个已有的长标题'.repeat(12);assert.equal(taskName({title:long,goal:'其他要求'}).text,long);
+  const longGoal='这是没有短首句的很长要求'.repeat(20);assert.equal(taskName({title:null,goal:longGoal},2).text,longGoal);assert.equal(taskName({title:' ',goal:'。可用目标。详情'}).text,'可用目标');assert.equal(taskName({title:null,goal:null}).source,'名称未记录');
   assert.notEqual(readableStatus(row),'已完成');
  }finally{f.close();}
 });

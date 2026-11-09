@@ -31,7 +31,7 @@ let app: Homer | undefined;
 let stage = 'source-start';
 let result: Record<string, unknown>;
 try {
-  const first = { ...source, ...directories, mainTimeoutMs: 90000 };
+  const first = { ...source, ...directories };
   app = new Homer(first, async () => {}, factory(first));
   await app.start();
   const threadId = app.store.meta('mainThread');
@@ -42,7 +42,7 @@ try {
   assert.ok(reply && !reply.includes('主 Agent 未完成'));
   await app.close();
   stage = 'target-resume';
-  const next = { ...target, ...directories, mainTimeoutMs: 90000 };
+  const next = { ...target, ...directories };
   app = new Homer(next, async () => {}, factory(next));
   await app.start();
   assert.equal(app.store.meta('mainThread'), threadId);

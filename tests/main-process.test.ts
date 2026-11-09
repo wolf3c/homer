@@ -1,3 +1,4 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 import {TurnExecution} from '../src/execution-limits.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -135,7 +136,7 @@ test('real host callbacks bind user and private worker nodes to native terminal 
   assert.throws(()=>f.app.history.validateQuotes(peer.threadId,{requestId:'quoted-private',text:'quoted',quote:{messageId:user.messageId,text:'public progress'}}),/quote_source_mismatch/);
   await f.app['mainTurn']('PRIVATE_WORKER_BODY',{event:true,allowEmptyReply:true,inspected:new Set(),sourceMessageIds:['worker-message','worker-message-2']});
   const worker=f.app.processes.list(peer.threadId)[1]!;assert.equal(worker.sourceKind,'worker');assert.deepEqual(worker.sourceMessageIds,['worker-message','worker-message-2']);assert.equal(worker.state,'worked');assert.equal(worker.final,undefined);assert.notEqual(worker.id,user.id);assert.equal(modelInputs.length,2);
-  const state=f.app.conversationState();assert.equal(state.messages.find(m=>m.id===user.id)?.text,'public final');assert.equal(state.messages.find(m=>m.id===user.id)?.process?.items.filter(i=>i.kind==='commentary'&&i.phase==='final_answer').length,1);assert.ok(!JSON.stringify(state.messages).includes('PRIVATE_WORKER_BODY'));
+  const state=readTestConversation(f.app);assert.equal(state.messages.find(m=>m.id===user.id)?.text,'public final');assert.equal(state.messages.find(m=>m.id===user.id)?.process?.items.filter(i=>i.kind==='commentary'&&i.phase==='final_answer').length,1);assert.ok(!JSON.stringify(state.messages).includes('PRIVATE_WORKER_BODY'));
  }finally{await f.close();}
 });
 
@@ -145,6 +146,7 @@ test('native RPC call content flows through real service observers with credenti
   engine.threadId='synthetic';engine.turnId='turn:node';engine.active={execution:new TurnExecution({}),messages:[],earlyEvents:[],resolve:()=>{}};
   const app:any=Object.create(Homer.prototype);
   Object.assign(app,{config:{workspace:process.cwd(),runtime:'/synthetic/runtime',codexHome:'/synthetic/home'},prompts:{main:''},interactionMcp:{path:'/synthetic/socket',directory:process.cwd()},factory:()=>engine,store:{db:f.db},processes:f.history});
+ (app as any).mainPluginTools=new Map();
   app.main=app.createMain(process.cwd());
   f.history.start({id:'node',threadId:'synthetic',sourceKind:'user',sourceMessageIds:[],messageId:'node'},'turn:node',{startedAtMs:100000,observedAtMs:100050});
   app.mainContext={processId:'node',nativeActivity:{turnId:'turn:node',compactions:new Map()}};
@@ -219,7 +221,9 @@ test('early protocol notifications wait for actual ACK; native terminal freezes 
  engine.threadId='synthetic';const order:string[]=[],starts:any[]=[],ends:any[]=[],safe:any[]=[];let release!:()=>void;
  engine.on('nativeProcess',(event:any)=>{order.push('item');safe.push(event);});engine.on('turnTerminal',(event:any)=>{order.push('terminal');ends.push(event);});
  engine.refreshBackground=()=>new Promise<void>(resolve=>{release=resolve;});
- engine.request=async()=>{
+ engine.request=async(method:string)=>{
+  if(method==='config/read')return {config:{},layers:[]};
+  assert.equal(method,'turn/start');
   await engine.receive(JSON.stringify({method:'item/started',params:{threadId:'synthetic',turnId:'early',item:{type:'commandExecution',id:'cmd',command:'PRIVATE_EARLY',commandActions:[{type:'search',query:'PRIVATE_EARLY'}]}}}));
   await engine.receive(JSON.stringify({method:'turn/completed',params:{threadId:'synthetic',turn:{id:'early',status:'completed',startedAt:123,completedAt:125,durationMs:1800}}}));
   assert.deepEqual(order,[]);return {turn:{id:'early',startedAt:123}};
@@ -252,10 +256,10 @@ test('real explicit send preserves the Worker reply and commits one attachment-b
   const worker=f.engines.find(engine=>engine.options.role==='worker')!;
   filePath=join(f.app.config.workspace,'public.md');writeFileSync(filePath,'# Public');
   const bridge=homerWebBridge(f.app);
-  assert.equal((await bridge.state()).artifacts?.length,0);
+  assert.equal((await bridge.history!.state()).artifacts?.length,0);
   worker.finish!({status:'completed',text:raw,messages:[{itemId:'worker-final',phase:'final_answer',text:raw}]});
   await f.app.idle();
-  const state=await bridge.state(),sent=state.messages.filter(message=>message.id===messageId);
+  const state=await bridge.history!.state(),sent=state.messages.filter(message=>message.id===messageId);
   assert.equal(sent.length,1);assert.equal(sent[0]?.text,published);assert.equal(sent[0]?.requestId,null);
   const replies=f.events.filter(item=>item.type==='reply'&&item.text===published);
   assert.equal(replies.length,1);assert.equal(replies[0]?.messageId,messageId);assert.equal(replies[0]?.requestId,undefined);
@@ -264,8 +268,8 @@ test('real explicit send preserves the Worker reply and commits one attachment-b
   assert.equal(Buffer.from(actual.data!,'base64').toString(),'# Public');
   const receipt=f.app.store.db.prepare("SELECT id,payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?").get(runId)!;
   assert.equal(JSON.parse(String(receipt.payloadJson)).text,raw);
-  const process=state.processNodes?.find(node=>node.sourceMessageIds.includes(String(receipt.id)));
+  const processes=f.app.processes.list(state.threadId),process=processes.find(node=>node.sourceMessageIds.includes(String(receipt.id)));
   assert.ok(process);assert.equal((process.items.find(item=>item.kind==='workerEvent') as any).event.body,raw);
-  assert.ok(!JSON.stringify(state.processNodes).includes('# Public'));
+  assert.ok(!JSON.stringify(processes).includes('# Public'));
  }finally{await f.close();}
 });

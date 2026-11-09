@@ -65,13 +65,13 @@ const source=readFileSync(new URL('../scripts/dev.mjs',import.meta.url),'utf8');
 const ast=ts.createSourceFile('dev.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
 function find(node,predicate){if(predicate(node))return node;return ts.forEachChild(node,child=>find(child,predicate));}
 const startWeb=find(ast,n=>ts.isFunctionDeclaration(n)&&n.name?.text==='startWeb');
-const declaration=find(startWeb,n=>ts.isVariableDeclaration(n)&&n.name.getText(ast)==='state');
+const declaration=find(startWeb,n=>ts.isVariableDeclaration(n)&&n.name.getText(ast)==='historyState');
 const expression=declaration.initializer.getText(ast);
 const recovery=find(ast,n=>ts.isVariableDeclaration(n)&&n.name.getText(ast)==='recoveryRequired').initializer.getText(ast);
 const ready=find(ast,n=>ts.isIfStatement(n)&&n.expression.getText(ast)==='m.kind === "ready"').thenStatement.getText(ast);
-function gateway(){return Function(`let desktop,desktopChatError;let phase='running',child={},cachedState,recoveryCode,current={version:'synthetic'},uiCurrent={},journal={pending:()=>[],rejected:()=>[]},review,stopped=false;
- let web,readyTimer,webPort,expectedThread,build={version:'synthetic',config:{}},candidate,initial=true,acceptedSnapshot,rollback=false,m={thread:'synthetic'};const uiBuilds=new Map(),pruneBuilds=()=>{},startWeb=async()=>{},publish=()=>{},notice=async()=>{},flush=()=>{};journal.bindThread=()=>{};
- let fail=false;const invokeWeb=async()=>{if(fail)throw Error('web_receipt_unconfirmed');return {threadId:'synthetic',mainActivity:{stage:'compacting'}};};
+function gateway(){return Function(`let desktop,desktopChatError;let phase='running',child={},cachedHistoryState,recoveryCode,current={version:'synthetic'},uiCurrent={},journal={pending:()=>[],rejected:()=>[]},review,stopped=false;
+ let web,readyTimer,webPort,webHistoryProtocol,expectedThread,build={version:'synthetic',config:{}},candidate,initial=true,acceptedSnapshot,rollback=false,m={thread:'synthetic'};const uiBuilds=new Map(),pruneBuilds=()=>{},startWeb=async()=>{},publish=()=>{},notice=async()=>{},flush=()=>{};journal.bindThread=()=>{};
+ let fail=false;const invokeWeb=async method=>{if(method!=='history.state')throw Error('unexpected_gateway_method');if(fail)throw Error('web_receipt_unconfirmed');return {threadId:'synthetic',mainActivity:{stage:'compacting'}};};
  return {state:${expression},fail:()=>{fail=true;},recover:${recovery},ready:async()=>${ready}};`)();}
 test('gateway read failure propagates unavailable instead of publishing the cached business activity as current',async()=>{
  const g=gateway();assert.equal((await g.state()).threadId,'synthetic');g.fail();await assert.rejects(g.state(),/web_receipt_unconfirmed/);

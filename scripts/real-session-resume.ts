@@ -9,7 +9,7 @@ import { engineError } from '../src/engine.js';
 const input = process.argv[2];
 if (!input) throw new Error('explicit_config_required');
 const base = resolve('.codex/scratch/session-resume-' + Date.now());
-const config = { ...loadConfig(input), runtime: join(base, 'runtime'), workspace: join(base, 'workspace'), mainTimeoutMs: 60000 };
+const config = { ...loadConfig(input), runtime: join(base, 'runtime'), workspace: join(base, 'workspace') };
 mkdirSync(config.runtime, {recursive: true});
 mkdirSync(config.workspace, {recursive: true});
 const token = 'HMR-' + randomUUID();

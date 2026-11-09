@@ -16,7 +16,7 @@ export async function composerFixture({webDir,beforeDir,branding,resource,intera
   const url=new URL(req.url,'http://127.0.0.1');
   const json=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
   if(req.method==='GET'&&url.pathname.startsWith('/api/media/')&&resource)return resource(req,res,url);
-  if(['/api/events','/api/history/events'].includes(url.pathname)){if(mode.offline)return json({error:'synthetic_offline'},503);res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache'});streams.add(res);res.write('event: state\ndata: '+JSON.stringify(snapshot())+'\n\n');req.on('close',()=>streams.delete(res));return;}
+  if(url.pathname==='/api/history/events'){if(mode.offline)return json({error:'synthetic_offline'},503);res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache'});streams.add(res);res.write('event: state\ndata: '+JSON.stringify(snapshot())+'\n\n');req.on('close',()=>streams.delete(res));return;}
   if(url.pathname==='/api/tasks'&&req.method==='GET')return json({tasks:[task]});
   if(url.pathname==='/api/tasks/'+task.id&&req.method==='GET')return json({taskId:task.id,requirements:[{taskId:task.id,version:task.headVersion,goal:task.goal,sourceRequestId:null}],runs:[],artifacts:[]});
   if(req.method==='POST'){

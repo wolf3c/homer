@@ -14,9 +14,9 @@ const browser=await isolatedChrome(destination),results=[];
 try{for(const width of [320,390,1440]){
  const f=await fixture(4,'after'),p=await browser.page(f.server.url,width),checks=[];
  let pending=true;const decisions=[];
- const augment=state=>({...state,features:{...state.features,nativeCapabilities:true,taskOverview:true},interactions:pending?[{...approval,sourceRequestId:'request-0'}]:[]});
- const readState=f.bridge.state.bind(f.bridge),readHistory=f.bridge.history.state.bind(f.bridge.history);
- f.bridge.state=async()=>augment(await readState());f.bridge.history.state=async()=>augment(await readHistory());
+ const augment=state=>({...state,features:{...state.features,taskOverview:true},interactions:pending?[{...approval,sourceRequestId:'request-0'}]:[]});
+ const readHistory=f.bridge.history.state.bind(f.bridge.history);
+ f.bridge.history.state=async()=>augment(await readHistory());
  f.bridge.respond=async(id,input)=>{decisions.push({id,...input});pending=false;f.server.publish();return {ok:true};};
  const actor={agentId:f.store.meta('mainAgentId'),threadId:'synthetic-history'};
  const task=f.tasks.createTask(actor,{operationId:'settings-task',goal:'Synthetic file'});

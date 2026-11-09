@@ -1,12 +1,13 @@
 import {useCallback,useEffect,useImperativeHandle,useRef,useState,type Ref} from 'react';
 import homerLogo from '../assets/branding/odysseus-20261030/homer-odysseus-64.png';
 import type {WebState} from '../src/web-contract';
+import {DesktopChatApps} from './desktop-chat-apps';
 import {MobileDeviceSettings} from './mobile-devices';
 import {accountErrors,useDesktopAccount,type AccountState} from './desktop-account-state';
 import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
 import {Button} from '@base-ui/react/button';
-import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone} from 'lucide-react';
+import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2} from 'lucide-react';
 
 type Accessibility='granted'|'not-granted'|'unknown';
 type Screen='not-determined'|'denied'|'granted'|'restricted'|'unknown';
@@ -30,17 +31,19 @@ export function DesktopSettings({ref}:{ref?:Ref<{openAccount:()=>void}>}={}){
   <Dialog.Portal><Dialog.Backdrop className="desktop-settings-backdrop"/>
    <Dialog.Popup className="desktop-settings-popup" initialFocus={()=>tab.current} finalFocus={opener.current?()=>opener.current?.isConnected?opener.current:entry.current:entry}>
     <header className="desktop-settings-heading"><div><Settings size={19}/><Dialog.Title>设置</Dialog.Title></div><Dialog.Close aria-label="关闭设置"><X size={19}/></Dialog.Close></header>
-    <Dialog.Description className="desktop-settings-description">管理账号、本机权限与移动设备。</Dialog.Description>
+    <Dialog.Description className="desktop-settings-description">管理账号、本机权限、移动设备与聊天应用。</Dialog.Description>
     <Tabs.Root className="desktop-settings-layout" value={panel} orientation={narrow?'horizontal':'vertical'} onValueChange={setPanel}>
-     <Tabs.List className="desktop-settings-nav" aria-label="设置分类：账号，本机权限，移动设备" activateOnFocus={false}>
+     <Tabs.List className="desktop-settings-nav" aria-label="设置分类" activateOnFocus={false}>
       {window.homerDesktopAccount&&<Tabs.Tab value="account" ref={panel==='account'?tab:undefined}><UserRound size={18}/>账号</Tabs.Tab>}
       <Tabs.Tab value="permissions" ref={panel==='permissions'?tab:undefined}><ShieldCheck size={18}/>本机权限</Tabs.Tab>
       <Tabs.Tab value="mobile" ref={panel==='mobile'?tab:undefined}><Smartphone size={18}/>移动设备</Tabs.Tab>
+      {window.homerDesktopChatApps&&<Tabs.Tab value="chat-apps" ref={panel==='chat-apps'?tab:undefined}><Link2 size={18}/>连接聊天应用</Tabs.Tab>}
      </Tabs.List>
      <div className="desktop-settings-content">
       {window.homerDesktopAccount&&<Tabs.Panel value="account" className="desktop-account-panel">{open&&panel==='account'&&<DesktopAccount/>}</Tabs.Panel>}
       <Tabs.Panel value="permissions">{open&&panel==='permissions'&&<DesktopPermissions/>}</Tabs.Panel>
       <Tabs.Panel value="mobile">{open&&panel==='mobile'&&<MobileDeviceSettings/>}</Tabs.Panel>
+      {window.homerDesktopChatApps&&<Tabs.Panel value="chat-apps">{open&&panel==='chat-apps'&&<DesktopChatApps/>}</Tabs.Panel>}
      </div>
     </Tabs.Root>
     <footer className="desktop-settings-footer"><Dialog.Close><ArrowLeft size={16}/>返回会话</Dialog.Close></footer>

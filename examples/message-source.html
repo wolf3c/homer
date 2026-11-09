@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homer · 消息来源 Demo</title>
+<style>
+  :root{color-scheme:light;--bg:#f7f6f3;--surface:#fff;--ink:#272523;--muted:#645e57;--line:#e4dfd8;--selected:#eeebe5}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"PingFang SC",sans-serif}
+  main{max-width:1050px;margin:auto;padding:52px 32px}
+  header p,.note{margin:0;color:var(--muted);font-size:14px}
+  h1{font-size:32px;letter-spacing:-.04em;margin:3px 0 6px;line-height:1.25}
+  fieldset{border:0;padding:0;margin:26px 0 22px;display:flex;flex-wrap:wrap;gap:8px}
+  legend{padding:0;margin-bottom:8px;font-size:13px;color:var(--muted)}
+  label{display:flex;align-items:center;gap:7px;min-height:44px;padding:6px 13px;background:var(--surface);border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:14px}
+  label:has(:checked){background:var(--selected);border-color:#b9b0a4}
+  input{margin:0;accent-color:#494139}
+  .views{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  section{min-width:0;border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden}
+  h2{font-size:15px;font-weight:650;margin:0;padding:13px 18px;border-bottom:1px solid var(--line)}
+  .conversation,.model{padding:22px;min-height:250px}
+  .conversation{background:var(--bg);display:flex;flex-direction:column;align-items:flex-end}
+  .user-message-bubble{padding:12px 16px;background:var(--surface);border:1px solid var(--line);border-radius:13px;max-width:100%;overflow-wrap:anywhere}
+  .origin{margin:0 0 4px;color:var(--muted);font-size:12px}
+  .body{margin:0;line-height:1.75}
+  .input-text{margin:0;padding:12px 14px;background:var(--bg);border-radius:8px;font:14px/1.7 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+  .note{margin-top:14px}
+  @media(max-width:680px){main{padding:26px 16px}.views{grid-template-columns:1fr}.conversation,.model{min-height:0;padding:16px}h1{font-size:26px}}
+</style>
+<main>
+  <header>
+    <p>Homer · 交互 Demo</p>
+    <h1>一条消息，两种呈现</h1>
+    <p>切换来源，对照聊天气泡和主 Agent 的本轮输入。</p>
+  </header>
+  <fieldset>
+    <legend>模拟来源</legend>
+    <label><input type="radio" name="source" value="work" checked>Telegram 工作 Bot</label>
+    <label><input type="radio" name="source" value="personal">Telegram 个人 Bot</label>
+    <label><input type="radio" name="source" value="wechatWork">微信账号 1</label>
+    <label><input type="radio" name="source" value="wechatPersonal">微信账号 2</label>
+    <label><input type="radio" name="source" value="homer">Homer 页面</label>
+  </fieldset>
+  <div class="views" aria-live="polite">
+    <section aria-labelledby="chat-title">
+      <h2 id="chat-title">Homer 聊天</h2>
+      <div class="conversation">
+        <div class="user-message-bubble">
+          <p class="origin" id="origin"></p>
+          <p class="body" id="chat-text"></p>
+        </div>
+      </div>
+    </section>
+    <section aria-labelledby="model-title">
+      <h2 id="model-title">LLM · 完整 InputText</h2>
+      <div class="model">
+        <pre class="input-text" id="model-text"></pre>
+      </div>
+    </section>
+  </div>
+  <p class="note">模拟账号和请求 · 右侧展示模型输入的完整文本值。</p>
+</main>
+<script>
+  const messages = {
+    work: { source: "telegram", entryLabel: "homer_work_bot" },
+    personal: { source: "telegram", entryLabel: "homer_personal_bot" },
+    wechatWork: { source: "wechat", entryLabel: "wx-demo-01" },
+    wechatPersonal: { source: "wechat", entryLabel: "wx-demo-02" },
+    homer: {},
+  };
+  const labels = { telegram: "Telegram", wechat: "微信" };
+  const text = "这个事项后续的消息和附件都发到这里。";
+  const byId = id => document.getElementById(id);
+  byId("chat-text").textContent = text;
+
+  function render() {
+    const selected = document.querySelector("input:checked").value;
+    const { source, entryLabel } = messages[selected];
+    const label = labels[source];
+    const badge = label && entryLabel ? `${label}@${entryLabel}` : "";
+    byId("origin").hidden = !badge;
+    byId("origin").textContent = badge;
+    byId("model-text").textContent = source
+      ? `::message-source{source=${source}}\n\n${text}`
+      : text;
+  }
+
+  document.querySelector("fieldset").addEventListener("change", render);
+  render();
+</script>
+</html>

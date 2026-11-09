@@ -82,7 +82,9 @@ test('pinned rollback rejects lock, schema, thread and configuration mismatch be
  const {unlinkSync}=await import('node:fs');unlinkSync(join(f.base,'runtime/cli.lock'));
  let db=new f.Store(join(f.base,'runtime/homer.sqlite'));db.setMeta('mainThread','different-synthetic-thread');db.close();
  p=f.run();assert.deepEqual(await p.exit,[1,null]);assert.equal(p.records.at(-1).code,'pinned_thread_mismatch');
- db=new f.Store(join(f.base,'runtime/homer.sqlite'));db.setMeta('mainThread','synthetic-pinned-main');db.db.exec('CREATE TABLE synthetic_future_schema(id TEXT)');db.close();
+ db=new f.Store(join(f.base,'runtime/homer.sqlite'));db.setMeta('mainThread','synthetic-pinned-main');db.db.exec('CREATE UNIQUE INDEX synthetic_constraint ON requests(id)');db.close();
+ p=f.run();assert.deepEqual(await p.exit,[1,null]);assert.equal(p.records.at(-1).code,'pinned_schema_mismatch');
+ db=new f.Store(join(f.base,'runtime/homer.sqlite'));db.db.exec('DROP INDEX synthetic_constraint; CREATE TABLE synthetic_future_schema(id TEXT)');db.close();
  p=f.run();assert.deepEqual(await p.exit,[1,null]);assert.equal(p.records.at(-1).code,'pinned_schema_mismatch');
  db=new f.Store(join(f.base,'runtime/homer.sqlite'));db.setMeta('recursiveSchemaVersion','999');db.close();
  const future=launch(['prepare','--build',build,'--config',f.config,'--snapshot',join(f.base,'runtime/homer.sqlite'),'--thread','synthetic-pinned-main','--manifest',join(f.base,'future-manifest.json')],f.env);
@@ -112,6 +114,22 @@ test('pinned rollback leaves unknown leases and durable gateway inputs for expli
 });
 test('pinned rollback serves the pinned HTTP assets and never restarts a failed business child',{timeout:45000},async t=>{
  const f=await fixture(t),reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
+ f.env.HOMER_PINNED_TEST_NO_HISTORY='1';
+ const oldWeb=f.run(['--port',String(port)]);
+ try{
+  await until(()=>oldWeb.records.some(x=>x.kind==='ready'||x.kind==='failed'));
+  assert.equal(oldWeb.records.some(x=>x.kind==='ready'),false);
+  assert.equal(oldWeb.records.find(x=>x.kind==='failed')?.code,'history_protocol_required');
+  assert.deepEqual(await oldWeb.exit,[1,null]);
+  assert.equal(existsSync(join(f.base,'runtime/cli.lock')),false);
+ }finally{if(oldWeb.child.exitCode===null)oldWeb.child.kill('SIGTERM');await oldWeb.exit;}
+ const oldCli=f.run();
+ try{
+  await until(()=>oldCli.records.some(x=>x.kind==='ready')||oldCli.child.exitCode!==null);
+  assert.equal(oldCli.records.find(x=>x.kind==='ready')?.thread,'synthetic-pinned-main');
+  oldCli.child.stdin.end();assert.deepEqual(await oldCli.exit,[0,null]);
+ }finally{if(oldCli.child.exitCode===null)oldCli.child.kill('SIGTERM');await oldCli.exit;}
+ delete f.env.HOMER_PINNED_TEST_NO_HISTORY;
  let p=f.run(['--port',String(port)]);
  try{
   await until(()=>p.records.some(x=>x.kind==='ready')||p.child.exitCode!==null);assert.equal(p.child.exitCode,null,p.errors+JSON.stringify(p.records.filter(x=>x.kind==='failed').map(({kind,code})=>({kind,code}))));
@@ -123,10 +141,11 @@ test('pinned rollback serves the pinned HTTP assets and never restarts a failed 
   const post=()=>fetch(url+'/api/messages',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({requestId:'synthetic-http-id',text:'Synthetic HTTP input'})});
   let response=await post();assert.equal(response.status,202);assert.equal((await response.json()).fresh,true);
   response=await post();assert.equal(response.status,202);assert.equal((await response.json()).fresh,false);
-  assert.equal((await(await fetch(url+'/api/state')).json()).threadId,'synthetic-pinned-main');
+  assert.equal((await(await fetch(url+'/api/history/state')).json()).threadId,'synthetic-pinned-main');
+  await until(()=>p.records.some(x=>x.kind==='output'&&x.message.type==='reply'&&x.message.requestId==='synthetic-http-id'));
   p.child.stdin.end();await delay(40);assert.equal(p.child.exitCode,null);
   p.child.kill('SIGTERM');assert.deepEqual(await p.exit,[0,null]);
-  p=f.run();await until(()=>p.records.some(x=>x.kind==='ready')||p.child.exitCode!==null);assert.equal(p.child.exitCode,null,p.errors);
+  p=f.run();await until(()=>p.records.some(x=>x.kind==='ready')||p.child.exitCode!==null);assert.equal(p.child.exitCode,null,p.errors+JSON.stringify(p.records.filter(x=>x.kind==='failed')));
   const business=p.records.find(x=>x.kind==='ready').pid;
   process.kill(business,'SIGKILL');assert.deepEqual(await p.exit,[1,null]);
   assert.equal(p.records.filter(x=>x.kind==='ready').length,1);assert.equal(p.records.at(-1).clean,false);

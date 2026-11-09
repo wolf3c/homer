@@ -44,6 +44,7 @@
 /* User content owns the surface; existing message actions stay outside it. */
 .user-message{min-width:0;margin-bottom:10px;padding:0;background:transparent;border-radius:0}
 .user-message-bubble{display:flex;flex-direction:column;gap:10px;min-width:0;padding:12px 16px;background:var(--surface);border:1px solid var(--line);border-radius:13px}
+.user-message-bubble>.message-source-label{margin:0}
 .user-message-bubble>.message-attachments:empty,.user-message-bubble>[data-aui-quote-selectable]:empty{display:none}
 /* Only the formal assistant content owns a bubble, outside the process disclosure. */
 .assistant-message-bubble{display:flex;flex-direction:column;gap:10px;width:fit-content;min-width:0;max-width:100%;padding:12px 16px;background:var(--surface);border:1px solid var(--line);border-radius:13px}
@@ -213,3 +214,39 @@
 @media(max-width:480px){.desktop-account-welcome h1{font-size:26px}.desktop-account-onboarding .desktop-permission-actions{align-items:stretch;flex-direction:column}.desktop-account-onboarding button{max-width:100%;white-space:normal}}
 
 .desktop-account-onboarding .desktop-account-hint{font-size:13px;margin:12px 0 0}
+
+.chat-apps { color: var(--ink); }
+.chat-apps h2 { margin: 0; font-size: 23px; }
+.chat-apps h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.chat-apps p { margin: 6px 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.chat-apps-heading, .chat-apps-actions, .chat-apps-banner, .chat-apps-qr {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.chat-apps-heading, .chat-apps-banner { justify-content: space-between; }
+.chat-apps-heading h3, .chat-apps-note { display: flex; align-items: center; gap: 8px; }
+.chat-apps-heading h3 span { color: var(--muted); font-size: 13px; font-weight: 400; }
+.chat-apps-group, .chat-apps-card, .chat-apps-banner { margin-top: 16px; }
+.chat-apps-list, .chat-apps-card, .chat-apps-banner { border: 1px solid var(--line); border-radius: 10px; }
+.chat-apps-list { margin-top: 8px; }
+.chat-apps-banner { padding: 10px 12px; background: var(--soft); font-size: 13px; }
+.chat-apps-card { padding: 14px; }
+.chat-apps-card form { margin: 10px 0; }
+.chat-apps-card label { display: grid; gap: 6px; margin: 8px 0; max-width: 320px; font-size: 13px; }
+.chat-apps-card input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 9px; font: inherit; }
+.chat-apps-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; }
+.chat-apps-row + .chat-apps-row { border-top: 1px solid var(--line); }
+.chat-apps-row > div:first-child { flex: 1 1 175px; min-width: 0; }
+.chat-apps-row strong, .chat-apps-command, .chat-apps dd { overflow-wrap: anywhere; }
+.chat-apps-row strong { font-size: 14px; }
+.chat-apps-row p { margin: 0; }
+.chat-apps .chat-apps-empty, .chat-apps-command { display: block; padding: 8px 12px; }
+.chat-apps-command { background: var(--soft); border-radius: 6px; user-select: all; }
+.chat-apps-status { display: inline-block; padding: 3px 6px; border-radius: 6px; background: var(--soft); color: var(--ink); font-size: 12px; }
+.chat-apps-status[data-state="ready"] { color: #295c43; background: #e6eee5; }
+.chat-apps-status[data-state="setup"] { color: #77521e; background: #f7eddf; }
+.chat-apps-status[data-state="reauthorize"] { color: var(--error); }
+.chat-apps .chat-apps-note { align-items: flex-start; margin-top: 16px; }
+.chat-apps-qr img { max-width: 100%; height: auto; }
+.desktop-settings-popup .chat-apps .chat-apps-quiet { border-color: transparent; background: transparent; color: var(--muted); }
+.desktop-settings-popup .chat-apps .chat-apps-danger { color: var(--error); }
+.desktop-settings-popup .chat-apps .primary-button { background: var(--control); color: white; }

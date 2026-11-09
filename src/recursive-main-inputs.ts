@@ -12,7 +12,6 @@ type InputPayload = {
   source: string;
   inputHash: string;
   inputRevision: number;
-  priority: number;
   queueOrder?: number;
   interrupt?: InterruptTarget;
   interruptState?: 'requested' | 'confirmed' | 'failed' | 'uncertain';
@@ -89,6 +88,7 @@ export type MainDispatchInput=MainInput&{movable:boolean;position?:number;firstM
 export type QueueOperationResult={requestId?:string;state:string;revision:number;inputRevision?:number;action?:'move';messageId?:string;orderVersion?:string;changed?:{requestId?:string;messageId?:string;revision:number}[];noOp?:true};
 const rank="coalesce(CASE WHEN m.kind='user_input' THEN json_extract(m.payloadJson,'$.queueOrder') ELSE json_extract(o.detailsJson,'$.mainQueueOrder') END,m.seq)";
 const dispatchOrder=rank+',m.seq';
+const activeUserSource="coalesce(json_extract(m.payloadJson,'$.source'),'')<>'first_launch'";
 export class MainInputClaimError extends Error{
   constructor(readonly messageId:string,readonly requestId:string,readonly revision:number,cause:unknown){
     super(cause instanceof Error&&/^[a-z][a-z0-9_]{1,70}$/.test(cause.message)?cause.message:'queue_claim_failed');
@@ -98,8 +98,8 @@ export class MainInputClaimError extends Error{
 // Message body and quotes remain in conversation_messages. No second queue table.
 export class MainInputs {
   private readonly pausedActiveMessages:Set<string>;
-  constructor(readonly tasks: RecursiveTasks, readonly history: ConversationHistory, private validateQuotes?: (input: ConversationInput) => void, private lifecycle?: MainInputLifecycle, private dispatchPolicy?:{pausedThroughSeq:number;pausedThroughProcessSeq?:number;resumeWorkers?:boolean}) {
-    if(dispatchPolicy&&(!Number.isSafeInteger(dispatchPolicy.pausedThroughSeq)||dispatchPolicy.pausedThroughSeq<0||!Number.isSafeInteger(dispatchPolicy.pausedThroughProcessSeq??0)||(dispatchPolicy.pausedThroughProcessSeq??0)<0))throw Error('queue_pause_boundary_invalid');
+  constructor(readonly tasks: RecursiveTasks, readonly history: ConversationHistory, private validateQuotes?: (input: ConversationInput) => void, private lifecycle?: MainInputLifecycle, private dispatchPolicy?:{pausedThroughSeq:number;userPausedThroughSeq?:number;pausedThroughProcessSeq?:number;resumeWorkers?:boolean}) {
+    if(dispatchPolicy&&[dispatchPolicy.pausedThroughSeq,dispatchPolicy.userPausedThroughSeq??0,dispatchPolicy.pausedThroughProcessSeq??0].some(seq=>!Number.isSafeInteger(seq)||seq<0))throw Error('queue_pause_boundary_invalid');
     this.pausedActiveMessages=new Set(dispatchPolicy?this.db.prepare("SELECT r.messageId FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE r.recipientAgentId=? AND m.seq<=? AND r.state IN ('offered','received')").all(this.agent,dispatchPolicy.pausedThroughSeq).map(row=>String(row.messageId)):[]);
   }
   private get store() { return this.tasks.store; }
@@ -107,6 +107,11 @@ export class MainInputs {
   private get agent() { return this.store.meta('mainAgentId')!; }
   private row(requestId: string) { return this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? AND json_extract(m.payloadJson,'$.requestId')=?").get(this.agent, requestId) as Row | undefined; }
   private payload(row: Row): InputPayload { return JSON.parse(row.payloadJson); }
+  confirmedReplyStatus(requestId: string, replyId: string) {
+    const row = this.row(requestId);
+    if (row?.replyId === replyId && ['processed', 'rejected'].includes(row.receiptState))
+      return this.payload(row).terminal;
+  }
   private rowEditable(row:Row){
     if(row.receiptState!=='pending'||row.offeredTurnId||row.hasRequest)return false;
     const details=JSON.parse(row.detailsJson??'{}');
@@ -153,9 +158,15 @@ export class MainInputs {
     const sql=inputRows.replace('FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id','FROM agent_receipts r CROSS JOIN agent_messages m ON m.id=r.messageId');
     const state=view==='head'?"='pending'":view==='active'?"IN ('offered','received')":"IN ('pending','offered','received','uncertain')";
     const paused=view==='head'&&this.dispatchPolicy!==undefined;
-    const rows=this.db.prepare(sql+" WHERE r.recipientAgentId=? AND r.state "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId ELSE s.threadId END)=?"+(paused?" AND (m.seq>?"+(this.dispatchPolicy!.resumeWorkers?" OR m.kind<>'user_input'":'')+")":'')+' ORDER BY '+dispatchOrder+(view==='head'?' LIMIT 1':'')).all(this.agent,this.store.meta('mainThread')!,...(paused?[this.dispatchPolicy!.pausedThroughSeq]:[])) as Row[];
-    // Ignore owners inherited at startup, never a Worker claimed by this instance.
-    return view==='active'&&this.dispatchPolicy?rows.filter(row=>row.seq>this.dispatchPolicy!.pausedThroughSeq||this.dispatchPolicy!.resumeWorkers&&row.kind!=='user_input'&&!this.pausedActiveMessages.has(row.id)):rows;
+    const cutoff=this.dispatchPolicy?.pausedThroughSeq??0;
+    const resumeUser=` OR (m.seq>? AND m.kind='user_input' AND r.offeredTurnId IS NULL AND hasRequest=0
+      AND json_extract(m.payloadJson,'$.source')='local' AND json_extract(m.payloadJson,'$.interrupt') IS NULL
+      AND json_extract(o.detailsJson,'$.interactionId') IS NULL AND json_extract(o.detailsJson,'$.turnId') IS NULL)`;
+    const eligible=paused?" AND (m.seq>?"+resumeUser+(this.dispatchPolicy?.resumeWorkers?" OR m.kind<>'user_input'":'')+")":'';
+    const activeSource=view==='head'?` AND (m.kind<>'user_input' OR ${activeUserSource})`:'';
+    const rows=this.db.prepare(sql+" WHERE r.recipientAgentId=? AND r.state "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId ELSE s.threadId END)=?"+eligible+activeSource+' ORDER BY '+dispatchOrder+(view==='head'?' LIMIT 1':'')).all(this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,this.dispatchPolicy?.userPausedThroughSeq??cutoff]:[])) as Row[];
+    // Ignore only owners inherited at startup. A newly claimed old message still owns dispatch.
+    return view==='active'&&this.dispatchPolicy?rows.filter(row=>!this.pausedActiveMessages.has(row.id)):rows;
   }
   private dispatchSnapshot(){
     const rows=this.dispatchRows();
@@ -163,7 +174,7 @@ export class MainInputs {
     const orderVersion=recursiveHash(rows.map((row,index)=>[row.id,row.revision,row.receiptState,this.order(row),movable[index]]));
     return {rows,movable,orderVersion,totalWaiting:rows.filter(row=>row.receiptState==='pending').length};
   }
-  resumeWorkerMessages(){if(this.dispatchPolicy)this.dispatchPolicy.resumeWorkers=true;}
+  resumeWorkerMessages(userSeq:number){if(this.dispatchPolicy&&userSeq>this.dispatchPolicy.pausedThroughSeq)this.dispatchPolicy.resumeWorkers=true;}
   dispatchSummary(){
     const {rows,orderVersion,totalWaiting}=this.dispatchSnapshot();
     const awaitingUser=this.dispatchPolicy&&!this.dispatchPolicy.resumeWorkers&&rows.some(row=>row.kind!=='user_input'&&row.receiptState==='pending'&&row.seq<=this.dispatchPolicy!.pausedThroughSeq)
@@ -251,7 +262,13 @@ export class MainInputs {
     },byMessage);
   }
   pendingInterrupts(){
-    return (this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? AND r.state='pending' AND json_extract(m.payloadJson,'$.interruptState')='requested'"+(this.dispatchPolicy?' AND m.seq>?':'')+' ORDER BY m.seq').all(this.agent,...(this.dispatchPolicy?[this.dispatchPolicy.pausedThroughSeq]:[])) as Row[]).map(row=>this.current(row));
+    return (this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? AND r.state='pending' AND json_extract(m.payloadJson,'$.interruptState')='requested' AND "+activeUserSource+(this.dispatchPolicy?' AND m.seq>?':'')+' ORDER BY m.seq').all(this.agent,...(this.dispatchPolicy?[this.dispatchPolicy.pausedThroughSeq]:[])) as Row[]).map(row=>this.current(row));
+  }
+  interruptIdsForGeneration(generationId:string){
+    return this.db.prepare(`SELECT m.id FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id AND r.recipientAgentId=m.recipientAgentId
+      WHERE m.kind='user_input' AND m.recipientAgentId=? AND json_extract(m.payloadJson,'$.interrupt.generationId')=?
+        AND json_extract(m.payloadJson,'$.interruptState') IN ('requested','failed','uncertain') ORDER BY m.seq`)
+      .all(this.agent,generationId).map(row=>String(row.id));
   }
   preparation(input:ConversationInput){return this.lifecycle?.readiness?.(input)??'ready';}
   // Readiness observes the same durable head that transactional claim
@@ -282,7 +299,7 @@ export class MainInputs {
       source: acceptance?.source,validateFresh:()=>{validatePreviewIntent(input);this.validateQuotes?.(input);}, persist: receipt => {
         if (receipt.fresh) {
           const key = 'op-' + randomUUID(), messageId = 'message-' + randomUUID();
-          const payload: InputPayload = { requestId: input.requestId, source: acceptance?.source ?? 'local', inputHash: recursiveHash(input), inputRevision: 1, priority: interrupt ? 1 : acceptance?.source==='first_launch' ? -1 : 0, ...(interrupt ? { interrupt, interruptState: 'requested' } : {}) };
+          const payload: InputPayload = { requestId: input.requestId, source: acceptance?.source ?? 'local', inputHash: recursiveHash(input), inputRevision: 1, ...(interrupt ? { interrupt, interruptState: 'requested' } : {}) };
           this.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson,revision) VALUES(?,?,?,?,?,?,'confirmed',?,?,0)").run(key, 'user:' + this.agent, input.requestId, 'accept', 'user_accept', recursiveHash(input), JSON.stringify(input.interactionId ? { interactionId: input.interactionId } : {}), JSON.stringify({ messageId, replyId: receipt.replyId }));
           this.db.prepare("INSERT INTO agent_messages(id,senderAgentId,recipientAgentId,kind,operationKey,payloadJson) VALUES(?,?,?,'user_input',?,?)").run(messageId, 'user:' + this.agent, this.agent, key, JSON.stringify(payload));
           this.db.prepare("INSERT INTO agent_receipts(messageId,recipientAgentId,state) VALUES(?,?,'pending')").run(messageId, this.agent);
@@ -374,11 +391,28 @@ export class MainInputs {
     return this.mutate(input.requestId, input.operationId, input, (row, p) => {
       this.scope(row,input);
       this.editable(row, input.expectedRevision);
-      this.db.prepare("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE messageId=? AND state='pending'").run(row.id);
-      this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, terminal: 'cancelled' }), row.id);
-      this.db.prepare("UPDATE conversation_messages SET status='cancelled' WHERE requestId=? AND threadId=?").run(p.requestId, this.store.meta('mainThread')!);
-      this.lifecycle?.cancelled?.(p.requestId);
+      this.cancelPending(row,p);
       return { requestId: p.requestId, state: 'cancelled', revision: row.revision + 1 };
+    });
+  }
+  private cancelPending(row:Row,p:InputPayload){
+    this.db.prepare("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE messageId=? AND state='pending'").run(row.id);
+    this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, terminal: 'cancelled' }), row.id);
+    this.db.prepare("UPDATE conversation_messages SET status='cancelled' WHERE requestId=? AND threadId=?").run(p.requestId,row.threadId);
+    this.lifecycle?.cancelled?.(p.requestId);
+  }
+  retireFirstLaunch(){
+    this.store.transaction(()=>{
+      const rows=this.db.prepare(inputRows+` WHERE r.recipientAgentId=? AND m.recipientAgentId=r.recipientAgentId
+        AND r.state='pending' AND m.kind='user_input' AND m.senderAgentId=? AND i.threadId=?
+        AND json_extract(m.payloadJson,'$.source')='first_launch'
+        AND EXISTS(SELECT 1 FROM conversation_messages c WHERE c.id=i.replyId AND c.status='queued')
+        AND EXISTS(SELECT 1 FROM conversation_messages c WHERE c.requestId=i.requestId AND c.threadId=i.threadId AND c.role='user' AND c.status='queued')`)
+        .all(this.agent,'user:'+this.agent,this.store.meta('mainThread')!) as Row[];
+      for(const row of rows){
+        const payload=this.payload(row);
+        if(!payload.terminal&&this.rowEditable(row))this.cancelPending(row,payload);
+      }
     });
   }
   claim(suspended:{messageId:string;revision:number;generationId:string}[],sources:'all'):MainInput|undefined;
@@ -427,9 +461,10 @@ export class MainInputs {
       this.db.prepare("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE messageId=?").run(row.id);
       this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({...p,terminal:'failed'}),row.id);
       this.db.prepare("UPDATE conversation_messages SET status='failed',text=CASE WHEN role='assistant' THEN ? ELSE text END WHERE requestId=?").run(error.message==='media_preparation_failed'?'附件准备失败，整条消息未执行。可查看各附件状态后重新发送可读材料。':'消息未开始处理：来源校验未完成。未自动重跑，可检查状态后另发消息。',p.requestId);
-      const reply=this.db.prepare("SELECT id,text FROM conversation_messages WHERE requestId=? AND role='assistant'").get(p.requestId);
+      const reply=this.history.message(row.replyId);
       if(reply)this.history.record('input-outcome:'+reply.id,this.store.meta('mainThread')!,String(reply.text),'failed',p.requestId);
       this.lifecycle?.cancelled?.(p.requestId);
+      return reply?.id;
     });
   }
   started(messageId: string, revision: number, generationId: string, turnId: string) { return this.store.transaction(() => this.startedInTransaction(messageId, revision, generationId, turnId)); }
@@ -441,13 +476,6 @@ export class MainInputs {
       this.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId=? WHERE messageId=?").run(generationId, messageId);
       // Native turnId is a transport reference only; it is never user identity.
       this.db.prepare('UPDATE operations SET detailsJson=json_set(detailsJson,\'$.turnId\',?) WHERE id=(SELECT operationKey FROM agent_messages WHERE id=?)').run(turnId, messageId);
-  }
-  continued(messageId:string,revision:number,generationId:string,expectedTurnId:string,turnId:string) { return this.store.transaction(() => this.continuedInTransaction(messageId,revision,generationId,expectedTurnId,turnId)); }
-  continuedInTransaction(messageId:string,revision:number,generationId:string,expectedTurnId:string,turnId:string) {
-    if (!this.db.isTransaction) throw Error('queue_transaction_required');
-      const row=this.db.prepare("SELECT m.operationKey,r.offeredTurnId,r.revision,o.detailsJson FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id JOIN operations o ON o.id=m.operationKey WHERE m.id=? AND m.recipientAgentId=? AND r.state='received'").get(messageId,this.agent);
-      if(!row||row.revision!==revision||row.offeredTurnId!==generationId||JSON.parse(String(row.detailsJson)).turnId!==expectedTurnId)throw Error('queue_revision_conflict');
-      this.db.prepare("UPDATE operations SET detailsJson=json_set(detailsJson,'$.turnId',?) WHERE id=?").run(turnId,String(row.operationKey));
   }
   finish(messageId: string, revision: number, state: 'completed' | 'failed' | 'interrupted') { return this.store.transaction(() => this.finishInTransaction(messageId,revision,state)); }
   finishInTransaction(messageId: string, revision: number, state: 'completed' | 'failed' | 'interrupted') {

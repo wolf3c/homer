@@ -17,7 +17,9 @@ test('versioned HTTP reads enforce Origin, epoch, bounds, exact identity and sha
  try{
   assert.notEqual(new URL(origin).port,'4780');
   const state=await fetch(origin+'/api/history/state');assert.equal(state.headers.get('cache-control'),'no-store');const initial=await state.json();assert.equal(initial.messages.length,80);assert.equal(initial.history.protocol,3);
-  assert.equal((await fetch(origin+'/api/state')).status,409,'legacy route remains full; new client must not use it');
+  for(const path of ['/api/state','/api/events']){
+   const retired=await fetch(origin+path);assert.equal(retired.status,404,path);await retired.arrayBuffer();
+  }
   assert.equal((await post('/api/history/page',{readEpoch:host.webReadEpoch,request:{}},'https://untrusted.invalid')).status,403);
   assert.equal((await post('/api/history/page',{readEpoch:'stale',request:{}})).status,409);
   assert.equal((await post('/api/history/page',{readEpoch:host.webReadEpoch,request:{limit:81}})).status,409);

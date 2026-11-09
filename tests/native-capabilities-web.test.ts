@@ -10,7 +10,7 @@ test('retired capability page and management HTTP routes return 404 without reac
  const dir=mkdtempSync(join(root,'routes-'));writeFileSync(join(dir,'index.html'),'<main>synthetic chat shell</main>');
  mkdirSync(join(dir,'assets'));writeFileSync(join(dir,'assets','chat.js'),'/* synthetic chat asset */');
  let calls=0;const forbidden=async()=>{calls++;throw Error('retired_management_reached_owner');};
- const bridge:WebBridge={state:async()=>({threadId:'synthetic-retired-capability',messages:[],isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running'}}),submit:forbidden,stop:async()=>{},respond:async()=>{}};
+ const bridge:WebBridge={submit:forbidden,stop:async()=>{},respond:async()=>{}};
  // Even an older bridge must never make the removed transport reachable.
  Object.assign(bridge,{capabilities:{state:forbidden,manage:forbidden}});
  const web=await createWebServer({port:0,bridge,uiDirectory:dir});

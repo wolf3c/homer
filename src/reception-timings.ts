@@ -1,5 +1,5 @@
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
-export type ReceptionPhase='accepted'|'head'|'claimed'|'main_prepare'|'capabilities_start'|'capabilities_end'|'native_start'|'native_completed'|'background_refreshed'|'engine_settled'|'host_finalize_start'|'host_finalize_end'|'output_wait_start'|'output_wait_end'|'reply_delivery_start'|'reply_delivery_end'|'output_ipc_start'|'output_ipc_sent'|'output_ipc_ack'|'round_end'|'state_start'|'state_snapshot'|'state_conversation'|'state_history'|'state_end';
+export type ReceptionPhase='accepted'|'head'|'claimed'|'main_prepare'|'capabilities_start'|'capabilities_end'|'native_start'|'native_completed'|'background_refreshed'|'engine_settled'|'host_finalize_start'|'host_finalize_end'|'output_wait_start'|'output_wait_end'|'reply_delivery_start'|'reply_delivery_end'|'output_ipc_start'|'output_ipc_sent'|'output_ipc_ack'|'round_end'|'state_history';
 type Identity={requestId?:string;messageId?:string;generationId?:string;turnId?:string;processId?:string;outputId?:string;kind?:'user'|'internal'};
 export type ReceptionTiming=Identity & {phase:ReceptionPhase;at:number;monotonicMs:number;status?:string;durationMs?:number};
 // Bounded, process-local diagnostics. No prompt, SQL parameters, tool data,

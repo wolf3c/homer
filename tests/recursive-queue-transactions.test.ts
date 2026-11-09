@@ -1,9 +1,11 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 // Requirements-derived synthetic fault tests. Real Homer/SQLite; no Codex/account.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
 import type {MainInputLifecycle} from '../src/recursive-main-inputs.js';
+import {fixture,until} from './fixtures/worker-chat-host.js';
 
 type Host = ReturnType<typeof syntheticHost>;
 const input = {requestId:'synthetic-transaction',text:'合成任务：整理报告。'};
@@ -88,7 +90,42 @@ test('HMR-QUEUE-TX: normal host processing uses the claimed request without inse
     await f.app.start();const reply=await f.app.message(input.text,input.requestId);
     assert.match(reply,/Synthetic reply/);assert.deepEqual(f.seen,[input.text]);
     assert.equal(f.app.store.request(input.requestId)?.state,'completed');assert.equal(f.app.inputs.list()[0]!.state,'completed');
-    await f.app.message(input.text,input.requestId);assert.deepEqual(f.seen,[input.text]);
+    f.app.store.finishRequest(input.requestId,'Synthetic stale reply copy');
+    assert.equal(await f.app.message(input.text,input.requestId),'重复请求的历史回执：\n'+reply);
+    await assert.rejects(f.app.message(changed.text,input.requestId),/request_id_conflict/);
+    assert.deepEqual(f.seen,[input.text]);
+  }finally{await f.close();}
+});
+
+test('CLI retry joins the current turn through its accepted queue state',async t=>{
+  const f=syntheticHost();try{
+    await f.app.start();
+    const first=f.app.message('synthetic:stream','active-retry');
+    await until(()=>f.engines.some(engine=>engine.pending));
+    const fullQueue=t.mock.method(f.app.inputs,'list');
+    const retry=f.app.message('synthetic:stream','active-retry');
+    f.engines.find(engine=>engine.pending)!.pending!({status:'completed',text:'Synthetic final'});
+    assert.deepEqual(await Promise.all([first,retry]),['Synthetic final','Synthetic final']);
+    assert.equal(fullQueue.mock.callCount(),0);
+    assert.deepEqual(f.seen,['synthetic:stream']);
+  }finally{await f.close();}
+});
+
+for(const outcome of ['explicit','failed','uncertain'] as const)test('CLI retry preserves the original '+outcome+' outcome without rerunning',async()=>{
+  const f=fixture();try{
+    f.setScript(async main=>{
+      if(outcome==='uncertain')throw Error('synthetic_response_lost');
+      if(outcome==='failed')return {status:'failed',text:'',errorCode:'synthetic_confirmed_failure'};
+      await main.call('send_user_message',{text:'Synthetic explicit answer'});
+      return {status:'completed',text:'Synthetic draft that was not sent'};
+    });
+    await f.app.start();const reply=await f.app.message(input.text,input.requestId);
+    assert.equal(f.app.inputs.byRequestIds([input.requestId])[0]!.state,outcome==='explicit'?'completed':outcome);
+    assert.equal(f.app.store.request(input.requestId)?.state,'completed');
+    if(outcome==='explicit')assert.equal(reply,'Synthetic explicit answer');
+    if(outcome==='uncertain')assert.match(reply,/结果未确认/);
+    assert.equal(await f.app.message(input.text,input.requestId),'重复请求的历史回执：\n'+reply);
+    assert.deepEqual(f.inputs,[input.text]);
   }finally{await f.close();}
 });
 
@@ -113,8 +150,8 @@ test('HMR-QUEUE-TX: host durably reports failed claim validation without a half-
     const records=f.app.history.list(f.app.store.meta('mainThread')!);
     assert.deepEqual(records.map(m=>m.status),['failed','failed','failed']);
     assert.equal(records[2]!.id,'input-outcome:'+f.app.inputs.list()[0]!.replyId);assert.equal(records[2]!.requestId,input.requestId);
-    assert.equal(f.app.conversationState().messages.length,1,'pre-send failure has one outcome, no formal user bubble');
-    assert.equal(f.app.conversationState().messages[0]!.source?.text,input.text);
+    assert.equal(readTestConversation(f.app).messages.length,1,'pre-send failure has one outcome, no formal user bubble');
+    assert.equal(readTestConversation(f.app).messages[0]!.source?.text,input.text);
     assert.equal(f.app.submitMessage(input).fresh,false);assert.equal(attempts,1);
   }finally{await f.close();}
 });

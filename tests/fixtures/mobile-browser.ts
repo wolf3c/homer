@@ -13,10 +13,11 @@ export async function mobileBrowserFixture({signalOrigin,uiDirectory,base}:{sign
   async turn(text:string){turns.push(text);return {status:'completed',text:'合成主端回复'};}
   async close(){return true;}async interrupt(){return true;}
  }
- const app=new Homer({runtime,workspace:join(directory,'workspace'),codexHome:join(directory,'empty-home'),nativeCodexHome:join(directory,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',timeoutMs:2000,mainTimeoutMs:2000,stopGraceMs:100},async()=>{},()=>new Engine());
+ const app=new Homer({runtime,workspace:join(directory,'workspace'),codexHome:join(directory,'empty-home'),nativeCodexHome:join(directory,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',stopGraceMs:100},async()=>{},()=>new Engine());
  try{
   await app.start();
-  const gateway=await createMobileGateway({bridge:homerWebBridge(app,{nativeCapabilities:false}),port:0,signalOrigin,databasePath:join(runtime,'homer.sqlite'),uiDirectory:resolve(uiDirectory),logoPath:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
+  const bridge=homerWebBridge(app,{});
+  const gateway=await createMobileGateway({bridge,port:0,signalOrigin,databasePath:join(runtime,'homer.sqlite'),uiDirectory:resolve(uiDirectory),logoPath:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
   return {...gateway,app,turns,history:app.history,inputs:app.inputs,async close(){await gateway.close();await app.close();rmSync(directory,{recursive:true,force:true});}};
  }catch(error){await app.close();rmSync(directory,{recursive:true,force:true});throw error;}
 }

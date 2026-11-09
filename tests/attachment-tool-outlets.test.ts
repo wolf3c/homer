@@ -58,8 +58,10 @@ test('MCP exposes scoped attachment reads and rejects a duplicate business outle
   try{
     await f.app.start();await server.start();
     const requestId='selected-attachment-mcp';
-    const ref=f.app.media.intent(requestId,'web:'+f.app.store.meta('mainThread'),'file');
-    f.app.media.ready(ref,f.app.media.claim(ref)!,Buffer.from('Synthetic attachment'),'text/plain');
+    const body='Synthetic attachment with a literal $fixture-skill.';
+    const upload=await f.app.uploadAttachment({requestId,threadId:f.app.store.meta('mainThread'),uploadId:'selected-file',
+      filename:'notes.txt',data:Buffer.from(body).toString('base64')});
+    const ref={assetId:upload.assetId,revision:upload.revision};
     child=spawn(process.execPath,['--import','tsx',resolve('src/worker-interaction-mcp-stdio.ts'),server.path],{stdio:['pipe','pipe','pipe']});
     const pending=new Map<number,(message:any)=>void>();let sequence=0,stderr='';
     child.stderr!.on('data',chunk=>stderr+=chunk);
@@ -71,9 +73,23 @@ test('MCP exposes scoped attachment reads and rejects a duplicate business outle
     });
     f.setScript(async(_main,text)=>{
       if(!text.includes('Read the selected file'))return {status:'completed',text:'Barrier'};
+      assert.doesNotMatch(text,/\$fixture-skill/);
+      assert.match(text,/inspect_attachment/);
+      const facts=JSON.parse(text.split('\n').at(-1)!);
+      assert.equal(facts.length,1);
+      assert.equal(facts[0].assetId,ref.assetId);
+      assert.equal(facts[0].revision,ref.revision);
+      assert.equal(facts[0].kind,'file');
+      assert.equal(facts[0].state,'ready');
+      assert.equal(facts[0].filename,'notes.txt');
+      assert.ok(facts[0].reference);
+      assert.equal(facts[0].extraction,undefined);
       const valid=await rpc('inspect_attachment',ref);
       assert.equal(valid.isError,false);
-      assert.equal(JSON.parse(valid.content[0].text).assetId,ref.assetId);
+      const result=JSON.parse(valid.content[0].text);
+      assert.equal(result.assetId,ref.assetId);
+      assert.equal(result.extraction.state,'ready');
+      assert.equal(result.extraction.text,body);
       assert.deepEqual(await rpc('inspect_attachment',{...ref,revision:2}),{isError:true,content:[{type:'text',text:'media_scope_denied'}]});
       f.app.store.db.prepare('UPDATE media_assets SET requestId=? WHERE id=?').run('private-foreign-source',ref.assetId);
       assert.deepEqual(await rpc('inspect_attachment',ref),{isError:true,content:[{type:'text',text:'media_scope_denied'}]});

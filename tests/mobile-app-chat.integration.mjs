@@ -45,10 +45,11 @@ test('bundled chat pairs, approves, sends, reconnects with one credential and re
   await file.setInputFiles({name:'synthetic.txt',mimeType:'text/plain',buffer:Buffer.from('合成附件正文')});
   await page.getByRole('button',{name:'发送消息',exact:true}).click();
   const uploadUntil=Date.now()+5000;while(host.turns.length<2&&Date.now()<uploadUntil)await new Promise(resolve=>setTimeout(resolve,20));
-  assert.equal(host.turns.length,2);assert.ok(host.turns[1].includes('合成附件正文'));
+  assert.equal(host.turns.length,2);
   const user=host.history.list('synthetic-mobile-main').filter(value=>value.role==='user').at(-1),ref=user.attachments?.[0];
-  assert.ok(ref);assert.equal(Buffer.from(host.app.readAttachment({messageId:user.id,assetId:ref.assetId,revision:ref.revision}).data,'base64').toString(),'合成附件正文');
-  const snapshot=await homerWebBridge(host.app,{nativeCapabilities:false}).history.state();
+  assert.ok(ref);assert.ok(host.turns[1].includes(ref.assetId));assert.doesNotMatch(host.turns[1],/合成附件正文/);
+  assert.equal(Buffer.from(host.app.readAttachment({messageId:user.id,assetId:ref.assetId,revision:ref.revision}).data,'base64').toString(),'合成附件正文');
+  const snapshot=await homerWebBridge(host.app,{}).history.state();
   assert.equal(snapshot.messages.find(message=>message.source?.attachments?.length)?.source?.media?.length,1,'original request must expose its prepared attachment metadata');
   await page.getByText('合成主端回复',{exact:true}).nth(1).waitFor();
   await page.locator('details').filter({hasText:'synthetic.txt'}).locator('summary').first().click();

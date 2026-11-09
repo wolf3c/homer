@@ -78,9 +78,9 @@ try{
    const original=loadConfig(paths.adoption.sourceConfig);
    if(sha(readFileSync(paths.adoption.sourceConfig))!==paths.adoption.sha256)throw Error('desktop_adoption_source_changed');
    if(original.runtime!==paths.runtime||original.workspace!==paths.workspace||original.codexHome!==paths.codexHome)throw Error('desktop_adoption_paths_invalid');
-   // Source config owns model, effort, timeouts and browser protections. Only
+   // Source config owns model, effort and timeouts. Only
    // the verified binary and shell HOME/tmp come from the installed App.
-   config={...original,appData:paths.adoption.appData,nativeCodexHome:paths.adoption.nativeCodexHome,codexBin,desktopResources:resourceIdentity,pauseOldDesktopWork:true,...(daily?{dailyDeepSeek:true}:{})};
+   config={...original,appData:paths.adoption.appData,nativeCodexHome:paths.adoption.nativeCodexHome,codexBin,desktopResources:resourceIdentity,desktopAdopted:true,pauseOldDesktopWork:true,...(daily?{dailyDeepSeek:true}:{})};
  }
  if(daily&&modelSource==='website'&&connection?.token)process.env[DEEPSEEK_KEY_ENV]=connection.token;
  const mobileTurnAccount=daily&&connection?.token?{gatewayOrigin:manifest.account.gatewayOrigin,token:connection.token,allowSyntheticLoopback:test}:undefined;
@@ -131,13 +131,13 @@ try{
   try{const value=JSON.parse(line);
    if(value.kind==='quit')quit();
    else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
-   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel'].includes(value.action)){
+   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','channel-state'].includes(value.action)){
     void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action)});}catch{await send({kind:'native_account_result',id:value.id,error:'native_account_unconfirmed'});}})();
    }
   }catch{}
  });
  reader.on('close',quit);
- const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,fixedUi:build,fallbackUi:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
+ const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
  reader.close();input.destroy();process.stdin.pause();
  if(!result?.stoppedConfirmed&&!result?.noHostStarted)throw Error('desktop_stop_unconfirmed');
  // A successful host close includes all main/control/Worker/MCP owner evidence.

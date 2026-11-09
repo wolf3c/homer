@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {Tool} from './engine.js';
-import {object, string} from './tools.js';
+import {MAIN_TOOLS, object, string} from './tools.js';
 import type {Actor, Authority, RecursiveTasks, WorkerMessageScope} from './recursive-tasks.js';
 import type {AttachmentRef} from './media-store.js';
 export type MessageAttachmentInput={path:string}|AttachmentRef;
@@ -22,7 +22,7 @@ export const RECURSIVE_TOOLS: Tool[] = [
     + 'To settle, send only taskId, action "settle", outcome ("succeeded", "partial" or "failed"), and optional notes. Choose outcome from the recorded work when the user asks to settle. '
     + 'A goal change requires actual user authority. A paused goal change stays paused. Resume can include a new goal, and reopening settled work requires a new user request. Neither starts a Worker.',
     {taskId: str, goal: text, notes: {type: 'string', maxLength: 24000}, action: enumeration('pause', 'resume', 'cancel', 'settle'), outcome: enumeration('succeeded', 'partial', 'failed'), reason: text}, ['taskId']),
-  tool('worker_open', 'Open a Worker conversation. With taskId use that authorized task, otherwise atomically create a task for the current assignment. Optional attachments each select either an absolute path or an exact assetId and revision. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.', {taskId: str, message: text, workingDirectory: str, attachments}, ['message']),
+  tool('worker_open', 'Open a Worker conversation. With taskId use that authorized task, otherwise atomically create a task for the current assignment. When creating, provide a concise title describing the task; omit title when taskId is given. Optional attachments each select either an absolute path or an exact assetId and revision. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.', {taskId: str, message: text, title: {type:'string',minLength:1,maxLength:80}, workingDirectory: str, attachments}, ['message']),
   tool('worker_send', 'Send a message to the existing Worker conversation. An idle session resumes its native thread and a busy one queues the message. immediate=true supplements the exact current turn. Optional attachments each select either an absolute path or an exact assetId and revision. Inspect the original receipt for unknown effects.', {workerId: str, message: text, immediate: {type: 'boolean'}, attachments}, ['workerId', 'message']),
   tool('worker_read', 'Read original public messages and execution facts for one Worker conversation. Follow nextCursor using after. Select messageId and optionally itemId from nativeMessages to read one original public item. Follow nextOffset using offset for long text.', {workerId: str, after: integer, limit: {type: 'integer', minimum: 1, maximum: 50}, messageId: str, itemId: str, offset: integer}, ['workerId']),
   tool('worker_interrupt', 'Interrupt the selected Worker conversation current execution, retaining history and other sessions. Requested is distinct from confirmed exit. Do not replace or resume an execution whose exit or side effects remain unknown.', {workerId: str, reason: text}, ['workerId']),
@@ -30,6 +30,9 @@ export const RECURSIVE_TOOLS: Tool[] = [
   tool('archive_work', 'Archive one exact settled task only under a real user turn and its actual authorization. Inspect completion, stopped executions and unresolved actions first. Does not stop work, delete conversations/files or authorize cleanup.', {taskId: str}),
   tool('restore_work', 'Restore one exact archived task to visible history under actual user authorization. Does not start execution.', {taskId: str}),
 ];
+
+export const MAIN_DYNAMIC_TOOLS = [...MAIN_TOOLS, ...RECURSIVE_TOOLS];
+export const MAIN_TOOLS_HASH = createHash('sha256').update(JSON.stringify(MAIN_DYNAMIC_TOOLS)).digest('hex');
 
 export type RecursiveToolEffects = {
   rootWorkingDirectory?: () => string;
@@ -132,7 +135,8 @@ export class RecursiveTools {
         title:a.title as string|undefined, workingDirectory:a.workingDirectory===undefined?this.effects.rootWorkingDirectory?.():string(a.workingDirectory,4096)});
     } else if (name === 'worker_open') {
       const taskId=a.taskId===undefined?undefined:string(a.taskId,200);
-      result=this.tasks.workerOpen(actor,{operationId,taskId,text:string(a.message,24000),
+      if(taskId!==undefined&&a.title!==undefined)throw Error('invalid_tool_arguments');
+      result=this.tasks.workerOpen(actor,{operationId,taskId,text:string(a.message,24000),title:a.title as string|undefined,
         authority:taskId===undefined?this.effects.rootAuthority(actor):undefined,
         workingDirectory:a.workingDirectory!==undefined?string(a.workingDirectory,4096):taskId===undefined?this.effects.rootWorkingDirectory?.():undefined},prepare);
     } else if (name === 'worker_send') {

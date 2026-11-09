@@ -23,7 +23,7 @@ async function launch(root,daily=false){
 async function stateWhen(page,predicate){
  const deadline=Date.now()+30000;
  while(Date.now()<deadline){
-  const state=await page.evaluate(async()=>(await(await fetch('/api/state')).json()));
+  const state=await page.evaluate(async()=>(await(await fetch('/api/history/state')).json()));
   if(predicate(state))return state;
   await page.waitForTimeout(50);
  }
@@ -57,7 +57,7 @@ test('actual Electron app renders and restarts its original synthetic conversati
   await stateWhen(page,state=>state.upgrade.phase==='running');
   t.diagnostic(JSON.stringify({synthetic:true,metric:'first_ready_ms',value:Math.round(performance.now()-app.startedAt)}));
   assert.equal(await page.evaluate(()=>typeof window.require),'undefined');
-  const thread=await page.evaluate(async()=>(await(await fetch('/api/state')).json()).threadId);assert.equal(thread,'synthetic-desktop-main');
+  const thread=await page.evaluate(async()=>(await(await fetch('/api/history/state')).json()).threadId);assert.equal(thread,'synthetic-desktop-main');
   await page.locator('[contenteditable=true]').fill('synthetic Electron retained request');
   await page.locator('.send-button').click();
   await stateWhen(page,state=>!state.isRunning&&state.messages.some(m=>m.role==='assistant'&&m.status==='completed'&&m.text.includes('隔离测试答复')));
@@ -88,7 +88,7 @@ test('actual Electron app keeps an unconnected synthetic account read-only',{ski
  const root=profile(false),{instance,page}=await launch(root);
  try{
   await stateWhen(page,state=>state.upgrade.code==='desktop_account_required');
-  const result=await page.evaluate(async()=>({state:await(await fetch('/api/state')).json(),capabilities:(await fetch('/api/capabilities')).status,send:(await fetch('/api/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:'synthetic-blocked',text:'blocked'})})).status}));
+  const result=await page.evaluate(async()=>({state:await(await fetch('/api/history/state')).json(),capabilities:(await fetch('/api/capabilities')).status,send:(await fetch('/api/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:'synthetic-blocked',text:'blocked'})})).status}));
   assert.equal(result.state.threadId,'');assert.equal(result.state.upgrade.accepting,false);assert.equal(result.capabilities,404);assert.equal(result.send,409);
  }finally{await quit(instance,root);}
 });
@@ -125,6 +125,48 @@ test('actual Electron app recovers its isolated owner and attachment after a com
   assert.deepEqual(await readAttachment(app.page,file),bytes);
   t.diagnostic(JSON.stringify({synthetic:true,completeProcessCrash:true,originalThreadPreserved:true,exactAttachmentPreserved:true,locksManuallyRemoved:false}));
  }finally{if(app)await quit(app.instance,root,!refused);}
+});
+
+test('actual Electron app plays SILK previews while preserving attachment access checks',{skip:!bundle,timeout:60000},async()=>{
+ const root=profile(true),{instance,page}=await launch(root);
+ try{
+  const state=await stateWhen(page,s=>s.upgrade.phase==='running'&&s.threadId);
+  const original=readFileSync(new URL('./fixtures/synthetic-legacy-voice.silk',import.meta.url));
+  const requestId='synthetic-silk-playback';
+  const asset=await page.evaluate(async({threadId,requestId,bytes})=>{
+   const upload=await fetch('/api/uploads',{method:'POST',headers:{
+    'content-type':'application/octet-stream','x-homer-thread':threadId,'x-homer-request':requestId,'x-homer-upload':requestId,'x-homer-filename':'sample.silk'
+   },body:new Uint8Array(bytes)});
+   if(upload.status!==201)throw Error('SILK upload HTTP '+upload.status);
+   const asset=await upload.json();
+   const send=await fetch('/api/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+    requestId,text:'Synthetic SILK playback',attachments:[{assetId:asset.assetId,revision:asset.revision}]
+   })});
+   if(send.status!==202)throw Error('SILK message HTTP '+send.status);
+   return asset;
+  },{threadId:state.threadId,requestId,bytes:[...original]});
+  const settled=await stateWhen(page,s=>!s.isRunning&&s.messages.some(m=>m.role==='user'&&m.requestId===requestId));
+  const message=settled.messages.find(m=>m.role==='user'&&m.requestId===requestId);
+  const path='/api/media/'+message.id+'/'+asset.assetId+'/'+asset.revision,preview=path+'?preview=voice';
+  const read=await page.evaluate(async({path,preview})=>{
+   const audio=await fetch(preview),download=await fetch(path);
+   const foreign=await fetch(preview.replace(/^\/api\/media\/[^/]+/,'/api/media/unrelated-message'));
+   const extraQuery=await fetch(preview+'&extra=1');
+   return {previewStatus:audio.status,mime:audio.headers.get('content-type'),downloadStatus:download.status,bytes:[...new Uint8Array(await download.arrayBuffer())],foreign:foreign.status,extraQuery:extraQuery.status};
+  },{path,preview});
+  assert.equal(read.previewStatus,200,'voice preview must authenticate in the desktop main frame');
+  assert.equal(read.mime,'audio/wav');
+  assert.equal(read.downloadStatus,200);
+  assert.deepEqual(Buffer.from(read.bytes),original);
+  assert.equal(read.foreign,409);
+  assert.equal(read.extraQuery,400);
+  assert.equal((await fetch(new URL(preview,page.url()))).status,401);
+  await page.reload();
+  await page.locator('.message-attachment').scrollIntoViewIfNeeded();
+  const audio=page.locator('audio[aria-label="语音附件 1"]');
+  await audio.evaluate(async node=>{node.muted=true;await node.play();});
+  await page.waitForFunction(()=>{const node=document.querySelector('audio[aria-label="语音附件 1"]');return node?.ended&&node.duration>0;});
+ }finally{await quit(instance,root);}
 });
 
 test('daily desktop automatically receives website credentials, applies by normal stop, delivers both roles and preserves history on disconnect',{skip:!bundle,timeout:120000},async t=>{
@@ -180,7 +222,8 @@ test('daily desktop automatically receives website credentials, applies by norma
   };
   await restart();app=undefined;app=await launch(root,true);
   await stateWhen(app.page,s=>s.upgrade.phase==='running'&&!s.isRunning);
-  const first=await app.page.evaluate(async()=>(await(await fetch('/api/state')).json()));
+  const first=await app.page.evaluate(async()=>(await(await fetch('/api/history/state')).json()));
+  assert.equal(existsSync(join(root,'fixture-models.jsonl')),false,'connected fresh profile stays idle until the first user message');
   writeFileSync(join(root,'workspace/synthetic.md'),'Synthetic website-connected material');
   await app.page.locator('[contenteditable=true]').fill('dispatch-synthetic');await app.page.locator('.send-button').click();
   const delivered=await stateWhen(app.page,s=>s.artifacts?.some(file=>file.title==='hello.md'));
@@ -204,7 +247,7 @@ test('daily desktop automatically receives website credentials, applies by norma
   assert.equal(configReads,2);assert.equal(readFileSync(join(root,'runtime-config.json'),'utf8'),savedBefore,'unchanged config never rewrites credentials');
   assert.equal((await app.page.evaluate(()=>window.homerDesktopAccount.state())).needsRestart,false);
   await app.page.getByRole('button',{name:'设置',exact:true}).click();
-  assert.deepEqual((await app.page.locator('.desktop-settings-nav [role=tab]').allTextContents()).map(text=>text.trim()),['账号','本机权限','移动设备']);
+  assert.deepEqual((await app.page.locator('.desktop-settings-nav [role=tab]').allTextContents()).map(text=>text.trim()),['账号','本机权限','移动设备','连接聊天应用']);
   const credits=app.page.getByRole('region',{name:'可用积分'});
   await credits.getByText('2 积分',{exact:true}).waitFor();
   await app.page.getByRole('button',{name:'关闭设置',exact:true}).click();balance=700;

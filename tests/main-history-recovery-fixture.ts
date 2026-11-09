@@ -53,6 +53,6 @@ export async function recoveryFixture(count=1){
  const open=async()=>{app=new Homer(paused,async message=>{messages.push(message);},(options,handler)=>new Peer(options,handler));await app.start();};
  try{await open();}catch(error){rmSync(dir,{recursive:true,force:true});throw error;}
  return {get app(){return app;},originals,turns,messages,calls,set behavior(value:typeof behavior){behavior=value;},set beforeRecovery(value:typeof beforeRecovery){beforeRecovery=value;},
-  async submit(requestId='new-user',source?:'first_launch'){app.submitMessage({requestId,text:'Handle my current request'},source?{source,persist(){}}:undefined);await app.idle();},
+  async submit(requestId='new-user'){app.submitMessage({requestId,text:'Handle my current request'});await app.idle();},
   async reopen(){await app.close();await open();},async close(){behavior='inspect';await app.close();rmSync(dir,{recursive:true,force:true});}};
 }

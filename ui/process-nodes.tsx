@@ -1,8 +1,11 @@
-import {Send,CornerDownRight,Clock3,RotateCcw,MessagesSquare,MessageCircleQuestion,ShieldQuestion,Activity,Inbox,Check,CircleDashed,CircleX,OctagonAlert,CircleStop,Pause,RefreshCw,CheckCheck} from 'lucide-react';
+import {Send,CornerDownRight,Clock3,LoaderCircle,RotateCcw,MessagesSquare,MessageCircleQuestion,ShieldQuestion,Activity,Inbox,Check,CircleDashed,CircleX,OctagonAlert,CircleStop,Pause,RefreshCw,CheckCheck} from 'lucide-react';
 import type {TaskSemanticIcon} from '../src/task-status';
 import type {TaskMessageSource} from '../src/conversation-projection';
-const semanticIcons={Send,CornerDownRight,Clock3,RotateCcw,MessagesSquare,MessageCircleQuestion,ShieldQuestion,Activity,Inbox,Check,CircleDashed,CircleX,OctagonAlert,CircleStop,Pause,RefreshCw,CheckCheck};
-export function SemanticTaskIcon({icon}:{icon:TaskSemanticIcon}){const Icon=semanticIcons[icon];return <Icon aria-hidden="true" className="size-3.5 shrink-0" strokeWidth={2}/>;}
+const semanticIcons={Send,CornerDownRight,Clock3,LoaderCircle,RotateCcw,MessagesSquare,MessageCircleQuestion,ShieldQuestion,Activity,Inbox,Check,CircleDashed,CircleX,OctagonAlert,CircleStop,Pause,RefreshCw,CheckCheck};
+export function SemanticTaskIcon({icon}:{icon:TaskSemanticIcon}){
+ const Icon=semanticIcons[icon],spin=icon==='LoaderCircle'?' animate-spin motion-reduce:animate-none':'';
+ return <Icon aria-hidden="true" className={'size-3.5 shrink-0'+spin} strokeWidth={2}/>;
+}
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useInterval } from '@mantine/hooks';
 import type { ProcessNode, ProcessItem } from '../src/main-process';

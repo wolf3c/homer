@@ -27,7 +27,7 @@ async function fixture(confirmed=true,closeError='engine_closed'){
   async interrupt(){return false;}
   async close(){this.pending?.(Error(closeError));this.pending=undefined;return this.worker||confirmed;}
  }
- const app=new Homer({runtime,workspace,codexHome:join(root,'home'),nativeCodexHome:join(root,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:50,timeoutMs:2000},async()=>{},(options,handle)=>new Peer(options,handle));
+ const app=new Homer({runtime,workspace,codexHome:join(root,'home'),nativeCodexHome:join(root,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:50},async()=>{},(options,handle)=>new Peer(options,handle));
  await app.start();
  const until=async(check:()=>boolean)=>{const end=Date.now()+3000;while(!check()){if(Date.now()>end)throw Error('shutdown_test_timeout');await new Promise(r=>setTimeout(r,5));}};
  return {app,root,runtime,main:()=>main,until,cleanup:async()=>{await app.close().catch(()=>{});rmSync(root,{recursive:true,force:true});}};

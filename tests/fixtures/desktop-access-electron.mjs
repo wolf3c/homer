@@ -13,10 +13,10 @@ electron.app.whenReady().then(async()=>{
  const {createWebServer}=await import(pathToFileURL(join(compiled,'web-server.js')).href);
  const ui=join(directory,'ui');mkdirSync(join(ui,'assets'),{recursive:true});
  writeFileSync(join(ui,'index.html'),'<!doctype html><title>Offline desktop access</title><h1>离线桌面访问验证</h1><button id="state">读取状态</button><output id="result"></output><script src="/assets/fixture.js"></script>');
- writeFileSync(join(ui,'assets/fixture.js'),"document.querySelector('button').onclick=async()=>{document.querySelector('output').textContent=String((await fetch('/api/state')).status)}");
+ writeFileSync(join(ui,'assets/fixture.js'),"document.querySelector('button').onclick=async()=>{document.querySelector('output').textContent=String((await fetch('/api/history/state')).status)}");
  let token=randomBytes(32).toString('hex'),web;
  const open=()=>createWebServer({port:0,desktopAccessToken:token,uiDirectory:ui,bridge:{
-  state:async()=>({threadId:'synthetic-electron',messages:[],isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running'}}),
+  history:{state:async()=>({threadId:'synthetic-electron',messages:[],isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running'}})},
   submit:async()=>({}),stop:async()=>{},respond:async()=>{},
   media:{upload:async()=>({}),read:async({messageId,assetId,revision})=>{
    if(messageId!=='synthetic'||revision!==1)throw Error('media_scope_denied');
@@ -37,7 +37,7 @@ electron.app.whenReady().then(async()=>{
  globalThis.desktopAccessFixture={
   url:()=>web.url,
   async reopen(){window=entry.reopen();await window.loadURL(web.url+'/');},
-  async restart(){const previous=token;await web.close();token=randomBytes(32).toString('hex');web=await open();const response=await fetch(web.url+'/api/state',{headers:{'X-Homer-Desktop-Access':previous}});await response.arrayBuffer();window.destroy();window=entry.bind(web.url,token);await window.loadURL(web.url+'/');return response.status;},
+  async restart(){const previous=token;await web.close();token=randomBytes(32).toString('hex');web=await open();const response=await fetch(web.url+'/api/history/state',{headers:{'X-Homer-Desktop-Access':previous}});await response.arrayBuffer();window.destroy();window=entry.bind(web.url,token);await window.loadURL(web.url+'/');return response.status;},
   async close(){await web.close();window.destroy();},
  };
 }).catch(error=>{console.error('synthetic_desktop_access_fixture_failed',error.message);electron.app.exit(1);});

@@ -1,3 +1,4 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 // Actual host queue and dynamic tools; no model, credentials or external channel.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,7 +34,7 @@ for(const outcome of ['failed','succeeded'] as const)test('ordinary Worker '+out
  const f=notifications();try{
   await f.app.start();await f.app.message('synthetic:start','synthetic-source');await until(()=>!!f.worker(f.rootId)?.finish);
   const before=f.inputs.length;
-  const publicBefore=f.app.conversationState().messages.filter(message=>message.role==='assistant'&&message.text.trim()).map(message=>({id:message.id,text:message.text}));
+  const publicBefore=readTestConversation(f.app).messages.filter(message=>message.role==='assistant'&&message.text.trim()).map(message=>({id:message.id,text:message.text}));
   assert.equal(publicBefore.length,1);assert.equal(publicBefore[0]!.text,'Synthetic host reply');
   f.worker(f.rootId).finish!({status:outcome==='failed'?'failed':'completed',text:'Synthetic result',...(outcome==='failed'?{errorCode:'synthetic_failure'}:{})});
   await f.app.idle();assert.deepEqual(f.errors,[]);
@@ -41,7 +42,7 @@ for(const outcome of ['failed','succeeded'] as const)test('ordinary Worker '+out
   assert.equal(f.app.tasks.task(f.rootId).outcome,outcome);assert.equal(f.inputs.length,before+1);
   assert.equal(f.events.filter(message=>message.type==='reply'&&message.messageId!==undefined).length,0);
   assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='send_user_message'").get()!.n,0);
-  assert.deepEqual(f.app.conversationState().messages.filter(message=>message.role==='assistant'&&message.text.trim()).map(message=>({id:message.id,text:message.text})),publicBefore,'ordinary internal completion adds no user-facing confirmation');
+  assert.deepEqual(readTestConversation(f.app).messages.filter(message=>message.role==='assistant'&&message.text.trim()).map(message=>({id:message.id,text:message.text})),publicBefore,'ordinary internal completion adds no user-facing confirmation');
  }finally{await f.close();}
 });
 
@@ -59,7 +60,7 @@ test('a separate explicit user message cannot consume another Worker original or
   const ordinary=f.observed.find(message=>message.taskId===f.rootId)!;
   assert.equal(ordinary.outcome,null);assert.equal(ordinary.text,'Synthetic failed result');
   assert.notEqual(JSON.parse(operation.detailsJson).inputMessageId,ordinary.messageId);
-  assert.equal(f.app.conversationState().messages.filter(m=>m.text==='Separate failure report').length,1);
+  assert.equal(readTestConversation(f.app).messages.filter(m=>m.text==='Separate failure report').length,1);
   for(const message of f.observed)assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(message.messageId)!.state,'processed');
   assert.equal(f.inputs.filter(text=>text.startsWith('[内部协作输入')).length,2);
  }finally{await f.close();}

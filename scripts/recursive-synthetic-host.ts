@@ -55,6 +55,6 @@ export function syntheticHost(failChild=false,retainRuntime=false){
   async interrupt(){this.interrupts++;this.pending?.({status:'interrupted',text:'Synthetic partial'});this.pending=undefined;return true;}
   async close(){this.pending?.({status:'interrupted',text:''});this.pending=undefined;return true;}
  }
- app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexBin:'/usr/bin/false',codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),model:'synthetic-only',effort:'medium',requiresOpenaiAuth:false,timeoutMs:20000,mainTimeoutMs:5000,stopGraceMs:100},async message=>{events.push(message);},(options,handler)=>new Peer(options,handler));
+ app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexBin:'/usr/bin/false',codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),model:'synthetic-only',effort:'medium',requiresOpenaiAuth:false,stopGraceMs:100},async message=>{events.push(message);},(options,handler)=>new Peer(options,handler));
  return {app,events,engines,seen,root,async close(){await app.close();if(!retainRuntime)rmSync(root,{recursive:true,force:true});}};
 }

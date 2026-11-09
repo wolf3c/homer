@@ -6,27 +6,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { existsSync, readFileSync, mkdirSync, rmSync } from "node:fs";
 import { randomUUID, randomBytes } from "node:crypto";
-import { sourceSnapshot, buildCandidate, buildUiCandidate, backendHash, uiHash, trustedHash, candidateGuard } from "./dev-build.mjs";
 
-import {verifyBuild,sealBuild,copyRuntimeDependencies} from "./trusted-build.mjs";
+import {verifyBuild} from "./trusted-build.mjs";
 import { IngressJournal } from "./dev-ingress.mjs";
 
-export async function runDev({ root, configPath, json = false, webPort, mobileSignalOrigin = process.env.HOMER_MOBILE_SIGNAL_ORIGIN, mobileTurnAccount, pollMs = 300, debounceMs = 600, input = process.stdin, output = process.stdout, fixedBuild, fixedUi, fallbackUi, desktop }) {
+export async function runDev({ root, configPath, json = false, webPort, mobileSignalOrigin = process.env.HOMER_MOBILE_SIGNAL_ORIGIN, mobileTurnAccount, pollMs = 300, debounceMs = 600, input = process.stdin, output = process.stdout, fixedBuild, desktop }) {
   if(desktop&&!fixedBuild)throw Error("desktop_fixed_build_required");
+  const development=desktop?undefined:await import('./dev-build.mjs');
   const desktopAccessToken=desktop?randomBytes(32).toString('hex'):undefined;
   const managementAllowed=desktop?(await import(pathToFileURL(join(fixedBuild.directory,'dist/desktop-management.js')).href)).desktopManagementAllowed:()=>false;
-  if(fixedBuild&&!desktop){
-    const dependencies=copyRuntimeDependencies(fixedBuild.directory,fixedBuild.config.runtime);
-    const config=fixedBuild.config;
-    fixedBuild=sealBuild(fixedBuild,dependencies);
-    fixedUi=sealBuild({...fixedUi,hash:fixedUi.uiHash,config},dependencies);
-    fallbackUi=sealBuild({...fallbackUi,hash:fallbackUi.uiHash,config},dependencies);
-  }
   let current, candidate, child, phase = "building", stopped = false, eof = false;
   let building = false, lastHash, changedAt = 0, rejectedHash, checking = false;
   let expectedThread, handoffThread, timer, readyTimer, initial = true, upgradeProbe = false;
   let buildController;
-  let web, cachedState, cachedHistoryState, webHistoryProtocol=0, finishing = false, desktopStoppedConfirmed=false,desktopChatError,desktopHostStarted=false,desktopStartupError;
+  let web, cachedHistoryState, webHistoryProtocol=0, finishing = false, desktopStoppedConfirmed=false,desktopChatError,desktopHostStarted=false,desktopStartupError;
   let review, approvedSourceHash, acceptedSnapshot, pendingUi, drainingReads=false, updateStopId, updateStopped=false;
   let recoveryCode;
   let journal, unlockGateway, uiCurrent, observedHash, rejectedUiHash;
@@ -79,14 +72,14 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     });
   };
   desktop?.bindAccount?.(action=>new Promise((accept,reject)=>{
-    if(!['state','connect','cancel'].includes(action)||!['running','management'].includes(phase)||!child?.connected||stopped)return reject(Error('desktop_account_unavailable'));
+    if(!['state','connect','cancel','channel-state'].includes(action)||!['running','management'].includes(phase)||!child?.connected||stopped)return reject(Error('desktop_account_unavailable'));
     const id=randomUUID(),timeout=setTimeout(()=>{webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));},15000);
-    webRequests.set(id,{accept,reject,timeout,method:'desktop_account'});
+    webRequests.set(id,{accept,reject,timeout,method:action==='channel-state'?'channel-state':'desktop_account'});
     if(!send({kind:'desktop_account',id,method:action})){clearTimeout(timeout);webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));}
   }));
   // UI adoption keeps the same executor and transport. Read-only refreshes
   // cannot starve it; mutations must settle before adopting trusted assets.
-  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read"].includes(item.method));
+  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["channel-state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read"].includes(item.method));
   const canStopForUpdate=()=>!stopped&&phase==='running'&&!!journal&&!inFlight.size&&!hasWebMutation()&&!queue.length&&!journal.pending().length;
   const updateBusy=()=>{updateStopId=undefined;upgradeProbe=false;desktop?.onEvent?.({kind:'update-busy'});};
   desktop?.bindUpdateStop?.(()=>{
@@ -124,15 +117,6 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     if (webPort === undefined || web) return;
     const { createWebServer } = await import(pathToFileURL(join(build.directory, "dist/web-server.js")).href);
     const createServer = mobileSignalOrigin ? (await import(pathToFileURL(join(build.directory, 'dist/mobile-gateway.js')).href)).createMobileGateway : createWebServer;
-    const state = async () => {
-      if (phase === "running" || desktop&&phase==='management') {
-        const owner=child,value=await invokeWeb("state");
-        if(owner!==child)throw Error("service_generation_changed");
-        cachedState=value;
-      }
-      if (!cachedState) throw new Error("service_not_ready");
-      return { ...cachedState, upgrade: { reviewRequired:!!review, phase, ...(phase==='recovery_required'&&recoveryCode?{code:recoveryCode}:desktop&&desktopChatError?{code:desktopChatError}:{}), version: current?.version, uiVersion: uiCurrent?.uiHash, accepting: !!journal && !stopped && (!desktop||phase==='running'), transportPending: journal?.pending().map(item => item.id) ?? [], transportRejected: journal?.rejected() ?? [] } };
-    };
     const historyState=async()=>{
       if(phase==='running'||desktop&&phase==='management'){
         const owner=child,value=await invokeWeb('history.state');if(owner!==child)throw Error('service_generation_changed');cachedHistoryState=value;
@@ -143,12 +127,12 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     web = await createServer({ port: webPort,
       ...(desktop?{desktopAccessToken}:{}),
       ...(mobileSignalOrigin?{signalOrigin:mobileSignalOrigin,turnAccount:mobileTurnAccount,databasePath:join(build.config.runtime,'homer.sqlite')} : {}),
-      updateReview:{read:()=>review?{hash:review.hash,files:review.files}:null,approve:hash=>{
-        if(!review||hash!==review.hash||sourceSnapshot(root,configPath).hash!==hash)throw Error('dev_update_review_stale');
+      ...(development?{updateReview:{read:()=>review?{hash:review.hash,files:review.files}:null,approve:hash=>{
+        if(!review||hash!==review.hash||development.sourceSnapshot(root,configPath).hash!==hash)throw Error('dev_update_review_stale');
         approvedSourceHash=hash;review=undefined;publish();return {approved:true};
-      }},
+      }}}:{}),
       getAssets: version => ({ uiDirectory: version ? uiBuilds.has(version) ? join(uiBuilds.get(version).directory, "dist/web") : undefined : join(uiCurrent.directory, "dist/web"), logoPath: join(current.directory, "assets/branding/odysseus-20261030/homer-odysseus-256.png") }),
-      bridge: { state,history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
+      bridge: { history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
         const value=await invokeWeb('history.receipts',input),transport=journal?.receipts(input.requestIds)??[];
         return {...value,statuses:value.statuses.map(item=>value.acceptedRequestIds.includes(item.requestId)?item:transport.find(row=>row.requestId===item.requestId)??item)};
       }},taskOverview:{progress:id=>invokeWeb("taskOverview.progress",{id}),summary:id=>invokeWeb("taskOverview.summary",{id}),origin:(id,messageId)=>invokeWeb("taskOverview.origin",{id,messageId}),list:()=>invokeWeb("taskOverview.list"),detail:(id,query)=>invokeWeb("taskOverview.detail",{id,...query})},media:{read:input=>invokeWeb('media.read',input),origin:input=>invokeWeb('media.origin',input),reveal:input=>invokeWeb('media.reveal',input),upload:input=>invokeWeb('media.upload',input),discard:input=>invokeWeb('media.discard',input)}, submit: async input => acceptInput(input), stop: messageId => invokeWeb("stop", { messageId }),
@@ -229,7 +213,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     // Do not kill a timed-out startup: it may still own an engine lease/lock.
     readyTimer = setTimeout(() => void notice("dev_start_waiting；启动尚未确认，输入继续保留，未宣称升级生效。"), 20000);
     own.on("message", raw => {
-      void receive(raw).catch(() => { if (fixedBuild) process.exitCode = 1; void notice("cli_output_unconfirmed"); signal(); });
+      void receive(raw).catch(() => { if (desktop) process.exitCode = 1; void notice("cli_output_unconfirmed"); signal(); });
     });
     own.on("error", () => { void notice("dev_child_spawn_failed"); });
     own.on("exit", (code, exitSignal) => {
@@ -237,14 +221,14 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
       clearTimeout(readyTimer); child = undefined;
       void exited(code, exitSignal);
     });
-    own.send({ kind: "init", desktop:!!desktop, config: build.config, buildHash:build.hash,terminalDeltas:json,webUploadProtocol:fixedBuild&&!desktop?0:webPort===undefined?0:1,nativeCapabilitiesProtocol:fixedBuild&&!desktop?0:webPort===undefined?0:1, thread: expectedThread });
+    own.send({ kind: "init", desktop:!!desktop, config: build.config, buildHash:build.hash,terminalDeltas:json,webUploadProtocol:webPort===undefined?0:1, thread: expectedThread });
     async function receive(m) {
       if(own!==child)return;
       if(desktop&&m.kind==='desktop_stopped'){desktopStoppedConfirmed=m.confirmed===true;return;}
       if(desktop&&m.kind==='management_ready'){
         if(m.stateInvalidationProtocol!==1)throw Error('state_invalidation_protocol_required');
         webHistoryProtocol=m.webHistoryProtocol??0;
-        clearTimeout(readyTimer);current=build;phase='management';cachedState=undefined;
+        clearTimeout(readyTimer);current=build;phase='management';cachedHistoryState=undefined;
         await startWeb(build);publish();return;
       }
       if(desktop&&(m.kind==='account_usage_dirty'||m.kind==='account_config_check')){desktop.onEvent?.({kind:m.kind});return;}
@@ -273,7 +257,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
         webHistoryProtocol=m.webHistoryProtocol??0;
         clearTimeout(readyTimer);
         if(webPort!==undefined&&m.stateInvalidationProtocol!==1){await recoveryRequired("state_invalidation_protocol_required");return;}
-        cachedState=undefined;cachedHistoryState=undefined;web?.reset();
+        cachedHistoryState=undefined;web?.reset();
         if (expectedThread && m.thread !== expectedThread) { signal(); return; }
         journal.bindThread(m.thread);
         expectedThread = m.thread;
@@ -344,6 +328,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     if (stopped || checking) return;
     checking = true;
     try {
+      const {sourceSnapshot,buildCandidate,buildUiCandidate,backendHash,uiHash,trustedHash,candidateGuard}=development;
       const snapshot = sourceSnapshot(root, configPath);
       if (snapshot.hash !== lastHash) { lastHash = snapshot.hash; changedAt = Date.now(); }
       if(current&&snapshot.hash!==current.hash&&snapshot.hash!==rejectedHash){
@@ -407,9 +392,8 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     } catch(error) {rejectedHash=lastHash;await notice(`${/^[a-z_]+$/.test(error.message)?error.message:"dev_source_read_failed"}；旧版保留，等待源码／配置恢复。`);}
     finally { checking = false; }
   }
-  if (fixedBuild) {
-    // Explicit maintenance mode: no source reads, builds, watchers or automatic
-    // backend changes. The entry verifies the complete sealed manifest first.
+  if (desktop) {
+    // The desktop entry verifies its bundled build before starting the host.
     try {
       const { acquireLock } = await import(pathToFileURL(join(fixedBuild.directory, "dist/processes.js")).href);
       const gatewayDir = join(fixedBuild.config.runtime, "gateway"); mkdirSync(gatewayDir, {recursive:true, mode:0o700});
@@ -420,9 +404,9 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
       expectedThread = journal.thread;
       if (expectedThread && expectedThread !== fixedBuild.thread) throw Error("pinned_thread_mismatch");
       expectedThread = fixedBuild.thread;
-      uiCurrent = fixedUi;
-      for (const ui of [fallbackUi, fixedUi]) uiBuilds.set(ui.uiHash, ui);
-      await notice("Homer 固定维护入口：保留原业务版本与消息队列；/quit 正常退出，不自动换版。");
+      uiCurrent = fixedBuild;
+      uiBuilds.set(fixedBuild.uiHash, fixedBuild);
+      await notice("Homer 桌面运行时：保留原业务版本与消息队列；/quit 正常退出，不自动换版。");
       launch(fixedBuild);
     } catch (error) { desktopStartupError=error.message;process.exitCode = 1; await notice(error.message); finish(); }
   } else {

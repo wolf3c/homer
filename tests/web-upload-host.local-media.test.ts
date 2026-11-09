@@ -41,7 +41,7 @@ test('Web image input and message attachment inspection retain source dimensions
   async close(){return true;}async interrupt(){return true;}
  }
  mkdirSync(join(root,'runtime'),{recursive:true});
- const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',timeoutMs:2000,mainTimeoutMs:10000,stopGraceMs:100},async()=>{},(_options,tool)=>new Engine(tool));
+ const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',stopGraceMs:100},async()=>{},(_options,tool)=>new Engine(tool));
  try{
   await app.start();const capabilities=JSON.parse(JSON.stringify(await app.capabilities()));
   assert.equal(capabilities.limits.nativeImagesPerTurn,null);assert.equal(capabilities.limits.attachmentsPerMessage,10);

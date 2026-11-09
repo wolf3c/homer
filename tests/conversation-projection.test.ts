@@ -10,7 +10,7 @@ import {WorkerInteractions} from '../src/worker-interactions.js';
 import {ConversationHistory} from '../src/web-history.js';
 import {MainInputs} from '../src/recursive-main-inputs.js';
 import {MainProcessHistory} from '../src/main-process.js';
-import {Homer} from '../src/service.js';
+import {projectConversation} from '../src/conversation-projection.js';
 import {unconfirmedInputs} from '../ui/conversation-client.js';
 function fixture(){
  mkdirSync(resolve('.codex/scratch/conversation-projection-implementation'),{recursive:true});
@@ -18,13 +18,13 @@ function fixture(){
  const store=new Store(join(root,'synthetic.sqlite'));new WorkerInteractions(store.db);
  const history=new ConversationHistory(store.db),tasks=new RecursiveTasks(store,new Files(join(root,'workspace')));tasks.migrate();store.setMeta('mainThread','synthetic');
  const inputs=new MainInputs(tasks,history),processes=new MainProcessHistory(store.db);
- const host=Object.assign(Object.create(Homer.prototype),{store,history,inputs,processes,media:{view:()=>{throw Error('no_media_fixture');}},mainActivityState:()=>null}) as Homer;
- const state=()=>host.conversationState();
- function ack(item:ReturnType<MainInputs['claim']>,id:string,previous?:{generationId:string;turnId:string}){assert.ok(item);store.transaction(()=>{
+ const state=()=>projectConversation(history.list('synthetic'),processes.list('synthetic'),inputs.list());
+ const accepted=()=>history.acceptedRequestIds('synthetic');
+ function ack(item:ReturnType<MainInputs['claim']>,id:string){assert.ok(item);store.transaction(()=>{
   processes.start({id,threadId:'synthetic',sourceKind:'user',sourceMessageIds:[item.messageId],messageId:id,replyMessageId:item.replyId},id+'-turn');history.record(id,'synthetic','','running');
-  if(previous)inputs.continuedInTransaction(item.messageId,item.revision,previous.generationId,previous.turnId,id+'-turn');else inputs.startedInTransaction(item.messageId,item.revision,'generation-'+item.input.requestId,id+'-turn');
+  inputs.startedInTransaction(item.messageId,item.revision,'generation-'+item.input.requestId,id+'-turn');
  });}
- return{root,store,history,inputs,processes,tasks,state,ack,close(){store.close();rmSync(root,{recursive:true,force:true});}};
+ return{root,store,history,inputs,processes,tasks,state,accepted,ack,close(){store.close();rmSync(root,{recursive:true,force:true});}};
 }
 test('B: pending is a separate queue; edit/cancel, claim lock and exact ACK move the original identity once',()=>{
  const f=fixture();try{
@@ -35,7 +35,7 @@ test('B: pending is a separate queue; edit/cancel, claim lock and exact ACK move
  assert.deepEqual(f.state().queue.map(q=>q.input.requestId),['B','C']);
  const edit={requestId:'B',operationId:'edit-B',expectedRevision:b.revision,input:{...b.input,text:'查最新资料'}};f.inputs.edit(edit);f.inputs.edit(edit);
  f.inputs.cancel({requestId:'C',operationId:'cancel-C',expectedRevision:c.revision});f.inputs.accept(c.input);
- assert.deepEqual(f.state().acceptedRequestIds,['A','B','C']);assert.deepEqual(unconfirmedInputs([{input:b.input},{input:c.input},{input:{requestId:'D',text:'查资料'}}],f.state().acceptedRequestIds).map(item=>item.input.requestId),['D']);assert.deepEqual(f.state().queue.map(q=>q.input.text),['查最新资料']);
+ assert.deepEqual(f.accepted(),['A','B','C']);assert.deepEqual(unconfirmedInputs([{input:b.input},{input:c.input},{input:{requestId:'D',text:'查资料'}}],f.accepted()).map(item=>item.input.requestId),['D']);assert.deepEqual(f.state().queue.map(q=>q.input.text),['查最新资料']);
  f.processes.finish('A1','completed','turn:A:terminal:completed');f.inputs.finish(a.messageId,a.revision,'completed');
  const claimed=f.inputs.claim()!;assert.equal(claimed.input.text,'查最新资料');assert.equal(f.state().queue[0]!.editable,false);
  assert.throws(()=>f.inputs.edit({...edit,operationId:'late'}),/processing/);assert.throws(()=>f.inputs.cancel({requestId:'B',operationId:'late-cancel',expectedRevision:claimed.revision}),/processing/);
@@ -76,16 +76,15 @@ test('74 terminal queue records and legacy replies stay in history; similar inpu
  const before=f.history.list('synthetic');const state=f.state();assert.deepEqual(state.messages.map(m=>m.id),before.map(m=>m.id));assert.equal(state.queue.length,0);assert.equal(new Set(state.messages.map(m=>m.id)).size,148);
  }finally{f.close();}
 });
-test('preparing inputs remain editable until claim; continued ACK retains generation/turn fences',()=>{
+test('preparing inputs remain editable until claim and retain their original ACK',()=>{
  const f=fixture();try{
   let ready=false;
   const inputs=new MainInputs(f.tasks,f.history,undefined,{claim:()=>{},readiness:()=>ready?'ready':'preparing'});
   inputs.accept({requestId:'prepare',text:'合成附件准备'});let item=inputs.list()[0]!;assert.equal(item.preparation,'preparing');assert.equal(item.editable,true);assert.equal(inputs.claim(),undefined);
   inputs.edit({requestId:'prepare',operationId:'prepare-edit',expectedRevision:item.revision,input:{requestId:'prepare',text:'合成新版'}});item=inputs.list()[0]!;
   ready=true;const claimed=inputs.claim()!;assert.equal(inputs.list()[0]!.editable,false);assert.throws(()=>inputs.cancel({requestId:'prepare',operationId:'claimed-cancel',expectedRevision:claimed.revision}),/queue_input_processing/);f.ack(claimed,'prepare1');
-  assert.throws(()=>f.store.transaction(()=>inputs.continuedInTransaction(claimed.messageId,claimed.revision,'wrong-generation','prepare1-turn','next')),/revision/);
-  assert.throws(()=>f.store.transaction(()=>inputs.continuedInTransaction(claimed.messageId,claimed.revision,'generation-prepare','wrong-turn','next')),/revision/);
-  inputs.continued(claimed.messageId,claimed.revision,'generation-prepare','prepare1-turn','next');
+  assert.equal(f.store.db.prepare('SELECT offeredTurnId FROM agent_receipts WHERE messageId=?').get(claimed.messageId)?.offeredTurnId,'generation-prepare');
+  assert.throws(()=>f.ack(claimed,'duplicate-ack'),/revision/);
  }finally{f.close();}
 });
 test('insertion order survives clock rollback, no-final host text survives unknown, same text publications remain distinct',()=>{

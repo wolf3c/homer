@@ -1,3 +1,4 @@
+import {callHostMcp} from './fixtures/host-mcp-call.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -18,13 +19,14 @@ type InteractionScenario = {
   skipDecision?: boolean;
   skipDelivery?: boolean;
   handoff?: boolean;
+  namedTask?: boolean;
 };
 async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", workers = 1, scenario: InteractionScenario = {}) {
   const root = resolve(".codex/scratch/worker-interactions"); mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(root + "/svc-");
   const runtime = join(dir, "rt"), workspace = join(dir, "ws");
   mkdirSync(runtime); mkdirSync(workspace);
-  const config: Config = { runtime, workspace, codexHome:join(dir,"home"),nativeCodexHome:join(dir,"home"), codexBin: "/usr/bin/false", model: "mock", effort: "medium", requiresOpenaiAuth: false, timeoutMs: 150, mainTimeoutMs: 2000, stopGraceMs: 50 };
+  const config: Config = { runtime, workspace, codexHome:join(dir,"home"),nativeCodexHome:join(dir,"home"), codexBin: "/usr/bin/false", model: "mock", effort: "medium", requiresOpenaiAuth: false, stopGraceMs: 50 };
   const messages: Message[] = [], resumes: string[] = [], engines: Fake[] = [], mainInputs:string[]=[];
   const handoffs: string[] = [], interactionTurns: string[] = [], pausedWorkers: (() => void)[] = [];
   const releaseWorkers = () => { for (const release of pausedWorkers.splice(0)) release(); };
@@ -60,11 +62,11 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
       }
       mainInputs.push(text);
       if (text === "dispatch") {
-        for (let i = 0; i < workers; i++) await this.call("worker_open", { message: "按用户要求生成 Markdown " + i });
+        for (let i = 0; i < workers; i++) await this.call("worker_open", { message: "按用户要求生成 Markdown " + i, ...(scenario.namedTask ? {title:"整理 Markdown " + i} : {}) });
       } else if (app["mainContext"]?.interactionId) {
         const id = app["mainContext"]!.interactionId!;
         interactionTurns.push(id);
-        const item = await this.call("inspect_interaction", { interactionId: id });
+        const item = await callHostMcp(this.options, "inspect_interaction", { interactionId: id });
         if (scenario.handoff) {
           const path = join(workspace, "handoff-" + id + ".json");
           writeFileSync(path, JSON.stringify({ source: "synthetic", format: "Markdown" }));
@@ -72,31 +74,31 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
           this.emit("nativeProcess", { threadId: this.threadId, turnId: this.turnId, itemId: "handoff-" + id, category: "fileChange", status: "completed", completed: true, fileCount: 1 });
         }
         if (mode === "user" || mode === "hang") {
-          await this.call("escalate_interaction", { interactionId: id, question: `请指定 ${item.runId} 的格式`, reason: "合成歧义" });
+          await callHostMcp(this.options, "escalate_interaction", { interactionId: id, question: `请指定 ${item.runId} 的格式`, reason: "合成歧义" });
           return scenario.reply ?? { status: "completed", text: `请指定 ${item.runId} 的格式。` };
         }
         if (scenario.skipDecision) return scenario.reply ?? { status: "completed", text: "已处理" };
         if (mode === "approve") {
-          await assert.rejects(this.call("respond_interaction", { interactionId: id, action: "approve", reason: "No user decision" }), /interaction_user_decision_required/);
-          await this.call("escalate_interaction", { interactionId: id, question: "确认范围", reason: "需要用户决定" });
+          await assert.rejects(callHostMcp(this.options, "respond_interaction", { interactionId: id, action: "approve", reason: "No user decision" }), /interaction_user_decision_required/);
+          await callHostMcp(this.options, "escalate_interaction", { interactionId: id, question: "确认范围", reason: "需要用户决定" });
           return {status:"completed",text:"需要用户确认。"};
         }
-        await this.call("respond_interaction", { interactionId: id, action: mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.threadId : null, answers: null, permissions: null });
+        await callHostMcp(this.options, "respond_interaction", { interactionId: id, action: mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.threadId : null, answers: null, permissions: null });
         return scenario.reply ?? { status: "completed", text: "已处理" };
       } else if (mode === "approve" && text.includes("[用户答复原待答]")) {
         const id = /interactionId=([^。]+)/.exec(text)![1]!;
-        const item = await this.call("inspect_interaction", { interactionId: id });
+        const item = await callHostMcp(this.options, "inspect_interaction", { interactionId: id });
         for (const permissions of [{network:{enabled:true}}, {fileSystem:{read:[resolve(item.details.params.cwd,"..")]}}]) {
-          await assert.rejects(this.call("respond_interaction", {interactionId:id,action:"approve",reason:"Overbroad",permissions}),/interaction_permission_scope/);
+          await assert.rejects(callHostMcp(this.options, "respond_interaction", {interactionId:id,action:"approve",reason:"Overbroad",permissions}),/interaction_permission_scope/);
           assert.equal(app.interactions.inspect(id).state,"pending_user");
         }
-        await this.call("respond_interaction",{interactionId:id,action:"approve",reason:"应用用户的明确许可"});
+        await callHostMcp(this.options, "respond_interaction",{interactionId:id,action:"approve",reason:"应用用户的明确许可"});
       } else if (text === "empty-user-reply") {
         return { status: "completed", text: "" };
       } else if (text.startsWith("reply ")) {
         const id = text.slice(6).split(/\s/)[0]!;
-        await this.call("inspect_interaction", { interactionId: id });
-        await this.call("respond_interaction", { interactionId: id, action: "answer", reason: "用户补充", answer: "用户指定格式", answers: null, permissions: null });
+        await callHostMcp(this.options, "inspect_interaction", { interactionId: id });
+        await callHostMcp(this.options, "respond_interaction", { interactionId: id, action: "answer", reason: "用户补充", answer: "用户指定格式", answers: null, permissions: null });
 
       }
       return { status: "completed", text: "已处理" };
@@ -205,7 +207,7 @@ test("HMR-INTERACTION-002: ordinary user turns still reject an empty reply", asy
 });
 
 test("HMR-INTERACTION-001: service main answers and original two Workers finish without cross-routing", async () => {
-  const f = await fixture("answer", 2);
+  const f = await fixture("answer", 2, {namedTask:true});
   try {
     await f.app.message("dispatch", "user-task"); await f.app.idle();
     assert.equal(f.resumes.length, 2);
@@ -213,6 +215,8 @@ test("HMR-INTERACTION-001: service main answers and original two Workers finish 
     for (const run of f.app.store.runs()) assert.ok(readFileSync(join(f.config.workspace, "answer-" + run.threadId + ".md"), "utf8").includes(run.threadId!));
     assert.equal(f.app.interactions.list().length, 2);
     assert.ok(f.app.interactions.list().every(item => item.deliveredAt !== null));
+    assert.deepEqual(f.app.tasks.tasks().map(task=>task.title).sort(),["整理 Markdown 0","整理 Markdown 1"]);
+    assert.deepEqual(f.app.tasks.tasks().map(task=>f.app.tasks.version(task.id,task.headVersion).goal).sort(),["按用户要求生成 Markdown 0","按用户要求生成 Markdown 1"]);
     const mainTools=f.engines.find(engine => !engine.worker)!.options.tools.map(tool=>tool.name);
     assert.ok(mainTools.includes("task_create")&&mainTools.includes("worker_open"));assert.ok(!mainTools.includes("dispatch_work"));
     const prompts = loadPrompts();

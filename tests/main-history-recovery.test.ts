@@ -15,9 +15,9 @@ for(const count of [0,1,81])test('unrelated historical receipts add no main turn
  }finally{await f.close();}
 });
 
-test('first launch and ordinary user reception preserve original unknown inputs without a recovery round',async()=>{
+test('successive user inputs preserve original unknown inputs without a recovery round',async()=>{
  const f=await recoveryFixture(2);try{
-  await f.submit('initialization','first_launch');await f.submit('real-user');assert.equal(f.turns.length,2);assert.deepEqual(f.calls,[]);
+  await f.submit('first-user');await f.submit('real-user');assert.equal(f.turns.length,2);assert.deepEqual(f.calls,[]);
   for(const original of f.originals)assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(original.id)!.state,'uncertain');
  }finally{await f.close();}
 });

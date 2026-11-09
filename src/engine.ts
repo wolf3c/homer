@@ -2,7 +2,6 @@ import {leaseOwnerGone,processIdentity,terminateLease} from './processes.js';
 import {nativeHistoryBridge} from './native-history-bridge.js';
 import {TurnExecution,executionCounters} from './execution-limits.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
-import {userInfo} from 'node:os';
 import {verifiedDesktopResources} from './desktop-resources.js';
 import{materializeNativeImage}from"./native-generated-files.js";
 import {
@@ -12,12 +11,11 @@ import {
 } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
-import { mkdirSync, existsSync, realpathSync, readFileSync, lstatSync } from "node:fs";
-import {nativeToolChoices,type NativeToolChoices} from "./native-tool-settings.js";
-import { dirname, join, resolve, relative, isAbsolute } from "node:path";
+import { mkdirSync, existsSync, realpathSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import { effectiveEffort, effectiveFast, type ModelRole } from "./model-config.js";
-import {usesHomerNativeHome,effectiveModelConfig} from "./config.js";
+import {usesHomerNativeHome,effectiveModelConfig,configuredWebSearchMode} from "./config.js";
 import {deepseekProfile,materializeDeepSeekCatalog} from './deepseek-model.js';
 import {validateContextTuning} from './model-context.js';
 import {validateModelCapabilities,membershipModelCatalog,materializeModelCatalog} from './model-catalog.js';
@@ -90,21 +88,17 @@ export type EngineOptions = {
   threadId?: string;
   interactionMcp?: { command: string; args: string[]; cwd: string; catalog?: Tool[] };
   onInteraction?: (request: NativeRequest) => Promise<InteractionResolution>;
-  permissionRequests?: boolean;
-  nativeCapabilities?: boolean;
   nativeTools?: "main" | "worker";
   controlOnly?: boolean;
 };
 export type EngineLike = {
   request?(method:string,params:any):Promise<any>;
   refreshCapabilities?(force?:boolean):Promise<void|{pending:boolean}>;
-  readonly appliedConfigurationVersion?:string;
   readonly nativeBusy?:boolean;
   readonly turnActive?:boolean;
   readonly nativeInteractionPending?:boolean;
   // A failed turn and an unavailable process are separate facts.
   readonly available?:boolean;
-  readonly activeToolSettings?:NativeToolChoices;
   imageCapability?():Promise<boolean>;
   resumable?: boolean;
   pid?: number;
@@ -155,8 +149,7 @@ function rpcError(value: any): Error {
     return new Error("engine_model_unavailable");
   return new Error("engine_rpc_failed");
 }
-// Protect the actual executables and the installed Codex companion bundle.
-// These are read-only exceptions in the same native profile, not chmod guards.
+// Host file operations protect the installed executables and companion bundle.
 export function nativeExecutableRoots(config:Config){
   const roots=new Set([realpathSync(process.execPath),realpathSync(config.codexBin)]);
   for(let directory=dirname(config.codexBin);dirname(directory)!==directory;directory=dirname(directory)){
@@ -168,44 +161,10 @@ export function nativeExecutableRoots(config:Config){
   if(config.desktopResources)roots.add(verifiedDesktopResources(config.desktopResources).bundleRoot);
   return [...roots];
 }
-export function profileOverrides(config: Config, options: EngineOptions) {
-  if(options.nativeTools&&!usesHomerNativeHome(config))throw Error("engine_native_tools_home_required");
-  if (!options.nativeTools) {
-    const filesystem: Record<string,string>={":root":"deny",":minimal":"read",[dirname(config.codexBin)]:"read"};
-    for(const root of options.readRoots)filesystem[root]="read";
-    for(const name of ['runtime-config.json','.runtime-config.json.pending','deepseek.json','.deepseek.json.pending'])filesystem[join(config.appData??join(config.runtime,'application-data'),name)]="deny";
-    return {filesystem,network:{enabled:false}};
-  }
-  const canonical=(raw:string)=>{let parent=resolve(raw);const parts:string[]=[];while(!existsSync(parent)&&dirname(parent)!==parent){parts.unshift(parent.slice(dirname(parent).length+1));parent=dirname(parent);}return join(realpathSync.native(parent),...parts);};
-  const cwd=canonical(options.cwd);
-  for(const raw of [config.runtime,config.codexHome]){
-    const root=canonical(raw),rel=relative(root,cwd);
-    if(!options.controlOnly&&(rel===""||(!isAbsolute(rel)&&rel!==".."&&!rel.startsWith("../"))))throw Error("engine_native_tools_workspace_invalid");
-  }
-  // More specific native denies protect account/control data even when cwd is
-  // their project ancestor. Never override a deny by granting cwd again.
-  const filesystem:Record<string,string>={":root":"write",[config.runtime]:"deny",[config.codexHome]:"deny",[join(config.codexHome,"skills")]:"read",[join(config.codexHome,"plugins")]:"read"};
-  // The desktop host reads this file. Neither role's tools may read or alter
-  // the persisted credential, including after an explicit native rollback.
-  for(const name of ['runtime-config.json','.runtime-config.json.pending','deepseek.json','.deepseek.json.pending'])filesystem[join(config.appData??join(config.runtime,'application-data'),name)]="deny";
-  if(options.nativeCapabilities){
-    // Native Creator/Installer own complete user packages, not just SKILL.md.
-    // Keep bundled system skills immutable to sandboxed tools.
-    filesystem[join(config.codexHome,"skills")]="write";
-    filesystem[join(config.codexHome,"skills/.system")]="read";
-  }
-  const windowsBrowsers=['Google/Chrome','Microsoft/Edge','BraveSoftware','Mozilla/Firefox'];
-  const browserRoots=(process.platform==='win32'?[...windowsBrowsers.map(path=>join(userInfo().homedir,'AppData/Local',path)),join(userInfo().homedir,'AppData/Roaming/Mozilla/Firefox'),...windowsBrowsers.map(path=>join(process.env.LOCALAPPDATA??join(userInfo().homedir,'AppData/Local'),path)),join(process.env.APPDATA??join(userInfo().homedir,'AppData/Roaming'),'Mozilla/Firefox')]:["Library/Cookies","Library/Safari","Library/Containers/com.apple.Safari","Library/Group Containers/group.com.apple.Safari","Library/Application Support/Google/Chrome","Library/Application Support/Microsoft Edge","Library/Application Support/BraveSoftware","Library/Application Support/Arc","Library/Application Support/Firefox"]).concat(config.controlBrowserData??[]).map(path=>isAbsolute(path)?path:join(userInfo().homedir,path));
-  for(const path of browserRoots)filesystem[path]="deny";
-  const executableRoots=nativeExecutableRoots(config);
-  for(const path of executableRoots)filesystem[path]="read";
-  if(options.nativeCapabilities){
-    const skills=join(config.codexHome,"skills"),target=canonical(skills);
-    const protectedRoots=[config.runtime,join(config.codexHome,"plugins"),...browserRoots,...executableRoots];
-    // A more specific write must never reopen another protected ancestor.
-    if([skills,join(skills,".system")].some(path=>lstatSync(path,{throwIfNoEntry:false})?.isSymbolicLink())||protectedRoots.some(path=>{const rel=relative(canonical(path),target);return rel===""||(!isAbsolute(rel)&&rel!==".."&&!rel.startsWith("../"));}))throw Error("engine_native_skills_path_protected");
-  }
-  return {filesystem,network:{enabled:true}};
+function controlPermissions(config: Config, readRoots: string[]) {
+  const filesystem: Record<string, string> = {":root": "deny", ":minimal": "read", [dirname(config.codexBin)]: "read"};
+  for (const root of readRoots) filesystem[root] = "read";
+  return { filesystem, network: { enabled: false } };
 }
 function toml(v: unknown): string {
   if (typeof v === "object" && v !== null && !Array.isArray(v))
@@ -308,13 +267,10 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private backgroundTimer?:NodeJS.Timeout;
   private backgroundCheck?:Promise<void>;
   private backgroundUnconfirmed=false;
-  private appliedTools?:NativeToolChoices;
   private appliedVersion?:string;
-  get appliedConfigurationVersion(){return this.appliedVersion;}
   get nativeBusy(){return this.backgroundUnconfirmed;}
   get turnActive(){return !!this.active&&!this.active.settling;}
   get available(){return !this.failure&&!this.closing&&!this.exited;}
-  get activeToolSettings(){return this.appliedTools?{...this.appliedTools}:undefined;}
   private async refreshBackground(){
     if(!this.options.nativeTools||!this.threadId||this.closing||this.exited)return;
     if(this.backgroundCheck)return this.backgroundCheck;
@@ -378,17 +334,17 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private publishNativeProcess(method:string,p:any){
     const hostTool=p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions'||p.item?.type==='dynamicToolCall'&&this.options.tools.some(tool=>tool.name===p.item.tool);
     const workerMcp=this.options.nativeTools==='worker'&&p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions';
+    if(method==='item/started'&&this.options.nativeTools==='main'&&hostTool&&p.item.type==='mcpToolCall'&&typeof p.item.id==='string'&&typeof p.item.tool==='string')
+      this.emit('hostMcpToolStarted',{threadId:p.threadId,turnId:p.turnId,itemId:p.item.id,tool:p.item.tool,arguments:p.item.arguments});
     const safe=hostTool&&!workerMcp?undefined:safeNativeProcess(p.threadId,p.turnId,p.item,method==='item/completed');
     if(safe)this.emit('nativeProcess',safe);
   }
   private assertInteractionMcpBoundary(effective:any){
-    if(this.options.nativeCapabilities){
-      // Native tables merge. File-backed declarations may not append env or
-      // other options to Homer's endpoint; ignored untrusted layers stay ignored.
-      if(effective.layers?.some((l:any)=>!l.disabledReason&&l.name?.type!=="sessionFlags"&&Object.hasOwn(l.config?.mcp_servers??{},"homer_interactions"))||(effective.config?.mcp_servers?.homer_interactions&&!this.options.interactionMcp))
-        throw new Error("engine_interaction_mcp_boundary_mismatch");
-      if(this.options.interactionMcp&&!Array.isArray(effective.layers))throw new Error("engine_interaction_mcp_boundary_mismatch");
-    }
+    // Native tables merge. File-backed declarations may not append env or
+    // other options to Homer's endpoint; ignored untrusted layers stay ignored.
+    if(effective.layers?.some((l:any)=>!l.disabledReason&&l.name?.type!=="sessionFlags"&&Object.hasOwn(l.config?.mcp_servers??{},"homer_interactions"))||(effective.config?.mcp_servers?.homer_interactions&&!this.options.interactionMcp))
+      throw new Error("engine_interaction_mcp_boundary_mismatch");
+    if(this.options.interactionMcp&&!Array.isArray(effective.layers))throw new Error("engine_interaction_mcp_boundary_mismatch");
     if(this.options.interactionMcp){
       const trusted=effective.config?.mcp_servers?.homer_interactions;
       if(trusted?.command!==this.options.interactionMcp.command||JSON.stringify(trusted?.args)!==JSON.stringify(this.options.interactionMcp.args)||trusted?.cwd!==this.options.interactionMcp.cwd||trusted?.url||trusted?.enabled===false)
@@ -400,25 +356,26 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   }
   // Native 0.163.0: priority is Fast; explicit null clears an inherited tier.
   private get serviceTier(){return effectiveFast(this.config.fast,this.options.role)?"priority":null;}
-  private async startConfigured(disabledMcp?: string[]): Promise<string> {
+  private async startConfigured(): Promise<string> {
     if(this.failureChecks.signal.aborted)this.failureChecks=new AbortController();
+    if (!usesHomerNativeHome(this.config)) throw Error("engine_native_tools_home_required");
     const proxy=codexProxyEnvironment();
     const deepseek=deepseekProfile(this.config);
     const context=this.config.context?validateContextTuning(this.config.context):deepseek;
-    const nativeMemory=!!this.options.nativeCapabilities&&usesHomerNativeHome(this.config);
     // This initializes new threads only. Resumes retain the native stored mode;
     // Workers and configuration-only connections never opt new threads in.
-    const generateMemories=!this.options.threadId&&!this.options.controlOnly&&this.options.role!=="worker";
-    const memorySettings=nativeMemory?{"features.memories":true,"memories.dedicated_tools":true,...(this.config.dailyDeepSeek?{"memories.generate_memories":generateMemories,"memories.extract_model":this.config.model,"memories.consolidation_model":this.config.model}:{})}:{"features.memories":false,"memories.generate_memories":false,"memories.use_memories":false};
+    const generateMemories=!this.options.threadId&&this.options.role!=="worker";
+    const memorySettings={"features.memories":true,"memories.dedicated_tools":true,...(this.config.dailyDeepSeek?{"memories.generate_memories":generateMemories,"memories.extract_model":this.config.model,"memories.consolidation_model":this.config.model}:{})};
     const settings: Record<string, unknown> = {
-      default_permissions: "homer",
-      "permissions.homer": profileOverrides(this.config, this.options),
-      approval_policy: this.options.permissionRequests ? "on-request" : "never",
-      "features.request_permissions_tool": !!this.options.permissionRequests,
-      "shell_environment_policy.inherit": "none",
+      ...(this.options.controlOnly ? {
+        default_permissions: "homer_control",
+        "permissions.homer_control": controlPermissions(this.config, this.options.readRoots),
+        approval_policy: "never",
+      } : {}),
+      ...(this.options.controlOnly || this.config.keyEnv ? {"shell_environment_policy.inherit": "none"} : {}),
       ...(this.options.nativeTools?{"features.multi_agent":this.options.nativeTools==="worker","features.multi_agent_v2":this.options.nativeTools==="worker","agents.enabled":this.options.nativeTools==="worker"}:{}),
       "features.code_mode_host": true,
-      ...memorySettings,
+      ...(this.options.controlOnly?{"features.memories":false}:memorySettings),
       "features.unbounded_connection_retries": false,
       "analytics.enabled": false,
       "feedback.enabled": false,
@@ -429,15 +386,11 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     const capabilities=this.config.capabilities??(this.config.context&&this.config.effort===null?{inputModalities:['text'] as ('text'|'image')[],reasoningEfforts:[],webSearch:false,toolSearch:false}:undefined);
     const membershipCatalog=capabilities&&context?membershipModelCatalog(this.config.model,this.config.effort??null,context.contextWindow,validateModelCapabilities(capabilities,this.config.effort??null)):undefined;
     const membershipCatalogPath=membershipCatalog?materializeModelCatalog(this.config.runtime,membershipCatalog):undefined;
-    if(membershipCatalogPath)Object.assign(settings,{model_catalog_json:membershipCatalogPath,web_search:capabilities!.webSearch?'live':'disabled'});
+    const webSearchMode=configuredWebSearchMode(this.config);
+    if(webSearchMode)settings.web_search=webSearchMode;
+    if(membershipCatalogPath)settings.model_catalog_json=membershipCatalogPath;
     if(context)Object.assign(settings,{model_context_window:context.contextWindow,model_auto_compact_token_limit:context.autoCompactTokenLimit,model_auto_compact_token_limit_scope:context.autoCompactTokenLimitScope});
     if(deepseek)Object.assign(settings,{model_catalog_json:deepseekCatalogPath,web_search:'disabled'});
-    // A legacy shared HOME must not expose its ambient capabilities. Isolated
-    // Homer sessions use Codex defaults and their native user configuration.
-    if (!this.options.nativeCapabilities || !usesHomerNativeHome(this.config))
-      Object.assign(settings, {web_search:"disabled", ...Object.fromEntries(
-        ["shell_tool","shell_snapshot","plugins","apps","browser_use","computer_use","view_image","image_generation","code_mode","hooks","skill_search"].map(key=>["features."+key,false])),"features.skip_host_skill_discovery":true});
-    if(this.options.nativeTools){settings["features.write_stdin_approval"]=true;settings["features.exec_permission_approvals"]=true;}
     if (this.config.baseUrl) {
       settings.model_provider = "homer";
       settings["model_providers.homer"] = {
@@ -453,22 +406,17 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         ...(this.config.keyEnv ? { env_key: this.config.keyEnv } : {}),
       };
     }
-    if(this.config.desktopModelSource==='codex'&&!this.options.controlOnly){
+    if(this.config.desktopModelSource==='codex'&&!this.options.controlOnly&&this.options.threadId){
       const bridge=await nativeHistoryBridge(proxy);
       if(this.closing){await bridge.close();throw Error('engine_closed');}
       this.historyBridge=bridge;
       settings.openai_base_url=this.historyBridge.baseUrl;
       settings['features.enable_request_compression']=false;
     }
-    // Config tables merge: an empty map does not remove inherited servers.
-    // Disable each discovered name on our process only; never edit user config.
-    settings.mcp_servers = {};
-    if(this.options.nativeCapabilities||usesHomerNativeHome(this.config)){
-      settings.cli_auth_credentials_store="file";
-      settings.mcp_oauth_credentials_store="file";
-      settings.sqlite_home=this.config.codexHome;
-      settings.log_dir=join(this.config.codexHome,"log");
-    }
+    settings.cli_auth_credentials_store="file";
+    settings.mcp_oauth_credentials_store="file";
+    settings.sqlite_home=this.config.codexHome;
+    settings.log_dir=join(this.config.codexHome,"log");
     const catalog=this.options.interactionMcp?.catalog??HOST_MCP_TOOLS;
     const interactionMcp = this.options.interactionMcp ? {
       command:this.options.interactionMcp.command,args:this.options.interactionMcp.args,cwd:this.options.interactionMcp.cwd, enabled: true, startup_timeout_sec: INTERACTION_LIMITS.connectMs/1000, tool_timeout_sec:INTERACTION_LIMITS.nativeToolSeconds,
@@ -479,10 +427,6 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       tools: Object.fromEntries(catalog.map(tool => [tool.name, { enabled: true, approval_mode: "approve" }])),
     } : undefined;
     if (interactionMcp) settings["mcp_servers.homer_interactions"] = interactionMcp;
-    for (const name of disabledMcp ?? [])
-      if (/^[A-Za-z0-9_-]+$/.test(name))
-        settings[`mcp_servers.${name}.enabled`] = false;
-      else throw new Error("engine_unsupported_mcp_name");
     const args = [
       "app-server",
       "--stdio",
@@ -493,7 +437,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     ];
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      HOME: (this.options.nativeCapabilities||usesHomerNativeHome(this.config)) ? join(this.config.codexHome,"host-home") : process.env.HOME,
+      HOME: join(this.config.codexHome,"host-home"),
       TMPDIR: process.env.TMPDIR,
       LANG: process.env.LANG,
       CODEX_HOME: this.config.codexHome,
@@ -503,7 +447,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if(this.historyBridge){env.NO_PROXY=[proxy.NO_PROXY??proxy.no_proxy,'127.0.0.1'].filter(Boolean).join(',');env.no_proxy=env.NO_PROXY;}
     if (this.config.keyEnv)
       env[this.config.keyEnv] = this.config.desktopModelSource==='website'?this.websiteToken:process.env[this.config.keyEnv];
-    if(this.options.nativeCapabilities||usesHomerNativeHome(this.config))mkdirSync(env.HOME!,{recursive:true,mode:0o700});
+    mkdirSync(env.HOME!,{recursive:true,mode:0o700});
     const child = this.child = spawn(this.config.codexBin, args, {
       cwd: this.options.cwd,
       env,
@@ -553,16 +497,17 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     }
     this.version = initialized.userAgent?.match(/\/([\d.]+)/)?.[1];
     this.notify("initialized", {});
-    if(this.options.nativeCapabilities&&(this.version!=="0.163.0"||resolve(initialized.codexHome??"/")!==resolve(this.config.codexHome)))throw Error("capability_native_version_or_home_mismatch");
+    if(this.version!=="0.163.0"||resolve(initialized.codexHome??"/")!==resolve(this.config.codexHome))throw Error("capability_native_version_or_home_mismatch");
     const effective = await this.request("config/read", {
-      includeLayers: !!this.options.nativeCapabilities,
+      includeLayers: true,
       cwd: this.options.cwd,
     });
     if(this.config.context){
       const actual=effective.config;
       if(actual?.model!==this.config.model||actual?.model_context_window!==context!.contextWindow||actual?.model_auto_compact_token_limit!==context!.autoCompactTokenLimit||actual?.model_auto_compact_token_limit_scope!==context!.autoCompactTokenLimitScope)throw Error('engine_model_context_mismatch');
     }
-    if(membershipCatalogPath&&(effective.config?.model_catalog_json!==membershipCatalogPath||effective.config?.web_search!==settings.web_search))throw Error('engine_model_catalog_mismatch');
+    if((membershipCatalogPath&&effective.config?.model_catalog_json!==membershipCatalogPath)||
+       (!deepseek&&webSearchMode&&effective.config?.web_search!==webSearchMode))throw Error('engine_model_catalog_mismatch');
     if(deepseek){
       const actual=effective.config;
       if(actual?.model!==this.config.model||actual?.model_catalog_json!==deepseekCatalogPath||actual?.model_context_window!==deepseek.contextWindow||actual?.model_auto_compact_token_limit!==deepseek.autoCompactTokenLimit||actual?.model_auto_compact_token_limit_scope!==deepseek.autoCompactTokenLimitScope||actual?.web_search!=='disabled')throw Error('engine_deepseek_config_mismatch');
@@ -570,49 +515,27 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       const model=models.data?.find((m:any)=>m.model===this.config.model||m.id===this.config.model);
       if(!model||model.defaultReasoningEffort!=='high'||!['low','high','max'].every(e=>model.supportedReasoningEfforts?.some((r:any)=>r.reasoningEffort===e)))throw Error('engine_deepseek_catalog_mismatch');
     }
-    if(nativeMemory&&(this.version!=="0.163.0"||effective.config?.features?.memories!==true||effective.config?.memories?.dedicated_tools!==true))throw Error("engine_native_memory_tools_unavailable");
-    if(nativeMemory&&this.config.dailyDeepSeek){
-      if(effective.config?.memories?.generate_memories!==generateMemories)throw Error("engine_memory_generation_mismatch");
-      if(effective.config?.memories?.extract_model!==this.config.model||effective.config?.memories?.consolidation_model!==this.config.model)throw Error("engine_memory_model_mismatch");
+    if(!this.options.controlOnly){
+      if(effective.config?.features?.memories!==true||effective.config?.memories?.dedicated_tools!==true)throw Error("engine_native_memory_tools_unavailable");
+      if(this.config.dailyDeepSeek){
+        if(effective.config?.memories?.generate_memories!==generateMemories)throw Error("engine_memory_generation_mismatch");
+        if(effective.config?.memories?.extract_model!==this.config.model||effective.config?.memories?.consolidation_model!==this.config.model)throw Error("engine_memory_model_mismatch");
+      }
     }
     this.assertInteractionMcpBoundary(effective);
-    const inheritedMcp = Object.entries(this.options.nativeCapabilities?{}:effective.config?.mcp_servers ?? {})
-      .filter(([name, server]: [string, any]) => server?.enabled !== false && !(name === "homer_interactions" && this.options.interactionMcp))
-      .map(([name]) => name);
-    if (inheritedMcp.length) {
-      // Discover configuration before starting a thread. Restart once with
-      // explicit overrides, then verify the effective config fails closed.
-      if (disabledMcp) throw new Error("engine_external_tools_configured");
-      if (!(await this.close())) throw new Error("engine_shutdown_unconfirmed");
-      this.exited = false;
-      this.closing = false;
-      this.failure = undefined;
-      this.nativeRequests = this.requestBridge();
-      return this.startConfigured(inheritedMcp);
-    }
     if(this.options.controlOnly)return "";
-    let skillConfig:any[]=[];
-    // Native sessions keep Codex discovery and user enable/disable choices.
-    // Only the restricted isolated-HOME branch fences off discovered skills.
-    if(!this.options.nativeCapabilities&&usesHomerNativeHome(this.config)){
-      const skills=await this.request("skills/list",{cwds:[this.options.cwd],forceReload:true});
-      skillConfig=(skills.data??[]).flatMap((x:any)=>x.skills??[]).map((s:any)=>({path:s.path,enabled:false}));
-    }
     if(this.options.nativeTools){const local=await this.request("environment/info",{environmentId:"local"});if(!local?.shell)throw Error("engine_local_environment_unavailable");}
     const params = {
       model: this.config.model,
       serviceTier: this.serviceTier,
       // Omit fresh cwd: fixed native start otherwise implicitly trusts writable unknown projects.
-      ...(!this.options.nativeCapabilities||this.options.threadId?{cwd:this.options.cwd}:{}),
+      ...(this.options.threadId?{cwd:this.options.cwd}:{}),
       runtimeWorkspaceRoots: [this.options.cwd],
-      permissions: "homer",
-      approvalPolicy: this.options.permissionRequests ? "on-request" : "never",
       developerInstructions: this.options.instructions,
       environments: this.options.nativeTools?[{environmentId:"local",cwd:this.options.cwd,runtimeWorkspaceRoots:[this.options.cwd,...(this.options.nativeTools==="main"?[this.config.workspace]:[])]}]:[],
-      config: { ...((this.options.nativeCapabilities||usesHomerNativeHome(this.config))?{"skills.config":[...(effective.config?.skills?.config??[]),...skillConfig]}:{}), mcp_servers: {
-        ...Object.fromEntries((disabledMcp ?? []).map(name => [name, { enabled: false }])),
+      config: { "skills.config": effective.config?.skills?.config??[], mcp_servers: {
         ...(interactionMcp ? { homer_interactions: interactionMcp } : {}),
-      }, ...(!this.options.nativeCapabilities ? {"apps._default.enabled":false}:{}), ...memorySettings },
+      }, ...memorySettings },
     };
     if(this.serviceTier){
       const catalog=await this.request("model/list",{includeHidden:true});
@@ -627,28 +550,19 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         ? { ...params, threadId: this.options.threadId, excludeTurns: true }
         : { ...params, dynamicTools: this.options.tools },
     );
-    if (
-      response.activePermissionProfile?.id !== "homer" ||
-      response.approvalPolicy !== (this.options.permissionRequests ? "on-request" : "never")
-    )
-      throw new Error("engine_boundary_mismatch");
     if(this.options.threadId&&response.thread.id!==this.options.threadId)throw Error('engine_resume_thread_mismatch');
     this.threadId = response.thread.id;
     // Turn effort:null inherits ambient settings; replace only the membership thread's reasoning state.
     if(this.config.context&&this.config.effort===null)
       await this.request('thread/settings/update',{threadId:this.threadId,collaborationMode:{mode:'default',settings:{model:this.config.model,reasoning_effort:null,developer_instructions:''}},summary:'none'});
     this.resumable = !!this.options.threadId;
-    // Fixed 0.163.0 protocol probe verifies this persisted per-thread fence.
-    // Older transport fixtures/engines still have process-level memories off.
-    if (!nativeMemory&&this.version && Number(this.version.split(".")[1]) >= 163)
-      await this.request("thread/memoryMode/set", {threadId:this.threadId,mode:"disabled"});
     if (this.options.interactionMcp) {
       const inventory = await this.request("mcpServerStatus/list", { threadId: this.threadId, serverName: "homer_interactions", detail: "full", limit: 100 });
       const trusted = inventory.data?.find((entry: any) => entry.name === "homer_interactions");
       if (JSON.stringify(Object.keys(trusted?.tools ?? {}).sort()) !== JSON.stringify(catalog.map(tool => tool.name).sort()))
         throw new Error("engine_interaction_tools_unavailable");
     }
-    if(this.options.nativeTools){this.appliedTools=nativeToolChoices(effective.config??{});this.appliedVersion=effective.layers?.find((l:any)=>l.name?.type==="user"&&resolve(l.name.file)===resolve(this.config.codexHome,"config.toml"))?.version;await this.refreshBackground();}
+    if(this.options.nativeTools){this.appliedVersion=effective.layers?.find((l:any)=>l.name?.type==="user"&&resolve(l.name.file)===resolve(this.config.codexHome,"config.toml"))?.version;await this.refreshBackground();}
     this.emit("thread", this.threadId);
     return this.threadId!;
   }
@@ -699,11 +613,11 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     const m = JSON.parse(line);
     // 0.163 also pushes the complete Apps catalog as a notification (observed
     // 6.7 MB). It has no model payload or business callback; queries stay native.
-    if(this.options.nativeCapabilities&&m.id===undefined&&m.method==='app/list/updated'&&Array.isArray(m.params?.data))return;
+    if(m.id===undefined&&m.method==='app/list/updated'&&Array.isArray(m.params?.data))return;
     // Fixed native plugin catalogs currently exceed 15 MB. Only a response to
     // one of our native catalog requests receives the larger bounded quota.
-    const catalog=this.options.nativeCapabilities&&!m.method&&["plugin/list","plugin/search","plugin/read","skills/list","app/list"].includes(this.pending.get(m.id)?.method??"");
-    const nativeImage=this.options.nativeCapabilities&&this.options.nativeTools&&this.active&&m.method==='item/completed'&&m.params?.item?.type==='imageGeneration'&&m.params.threadId===this.threadId&&(!this.turnId||m.params.turnId===this.turnId);
+    const catalog=!m.method&&["plugin/list","plugin/search","plugin/read","skills/list","app/list"].includes(this.pending.get(m.id)?.method??"");
+    const nativeImage=this.options.nativeTools&&this.active&&m.method==='item/completed'&&m.params?.item?.type==='imageGeneration'&&m.params.threadId===this.threadId&&(!this.turnId||m.params.turnId===this.turnId);
     if(bytes>2*1024*1024&&!catalog&&!nativeImage)throw Error("engine_message_too_large");
     if (m.id !== undefined && !m.method) {
       const p = this.pending.get(m.id);
@@ -833,7 +747,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       if(this.active.reasoningSummary)this.active.reasoningSummary.text='';
       this.emit('turnRetry',{threadId:p.threadId,turnId:p.turnId,...(connectionIssue?{connectionIssue:true}:{})});
     }
-    if(m.method==='item/completed'&&p.item?.type==='imageGeneration'&&p.item.status==='completed'&&!p.item.failure&&p.turnId===this.turnId&&this.active&&this.options.nativeTools&&this.options.nativeCapabilities){
+    if(m.method==='item/completed'&&p.item?.type==='imageGeneration'&&p.item.status==='completed'&&!p.item.failure&&p.turnId===this.turnId&&this.active&&this.options.nativeTools){
       const seen=this.active.nativeImageItems??=new Set<string>();
       if(!seen.has(p.item.id)){
         seen.add(p.item.id);
@@ -966,7 +880,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if (!this.threadId) throw new Error("engine_not_started");
     const operation={};this.preparation=operation;
     try{
-    if(this.options.nativeCapabilities&&options?.cwd&&resolve(options.cwd)!==resolve(this.options.cwd)){
+    if(options?.cwd&&resolve(options.cwd)!==resolve(this.options.cwd)){
 
         this.assertInteractionMcpBoundary(await this.prepared(operation,this.request('config/read',{includeLayers:true,cwd:options.cwd})));
         // 0.163.0 retains the startup project layers across settings updates
@@ -998,10 +912,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     this.active = active;
     this.publishExecution(active);
     try {
-      if(this.options.nativeCapabilities){
-        this.assertInteractionMcpBoundary(await this.prepared(operation,this.request('config/read',{includeLayers:true,cwd:this.options.cwd})));
-        if(this.active!==active)throw Error('engine_turn_no_longer_active');
-      }
+      this.assertInteractionMcpBoundary(await this.prepared(operation,this.request('config/read',{includeLayers:true,cwd:this.options.cwd})));
+      if(this.active!==active)throw Error('engine_turn_no_longer_active');
       const response = await this.request("turn/start", {
         cwd:this.options.cwd, runtimeWorkspaceRoots:[this.options.cwd],
         ...(this.options.nativeTools?{environments:[{environmentId:"local",cwd:this.options.cwd,runtimeWorkspaceRoots:[this.options.cwd]}]}:{}),
@@ -1025,7 +937,6 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   }
   // Registry/credential changes may force resume; Skill-only writes use native reload.
   async refreshCapabilities(force=true){
-    if(!this.options.nativeCapabilities)return;
     if(this.active||this.compaction||this.preparation)throw Error('capability_engine_busy');
     if(this.closing||this.exited)throw Error('engine_closed');
     const operation={};this.preparation=operation;
@@ -1035,8 +946,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     let version:string|undefined;
     if(this.options.nativeTools){
       const layer=effective.layers?.find((l:any)=>l.name?.type==='user'&&resolve(l.name.file)===resolve(this.config.codexHome,'config.toml'));
-      if(!layer)throw Error('capability_native_config_unavailable');
-      version=layer.version;
+      version=layer?.version;
     }
     // Native reload is useful even when a pinned per-thread configuration
     // subsequently requires resume. Never turn a Skill-only write into close().

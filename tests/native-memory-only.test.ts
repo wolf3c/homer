@@ -40,7 +40,7 @@ test('native service receives and resumes user work without host memory tables o
   let app=new Homer(config,async()=>{},factory);
   const assertNoHostMemory=()=>assert.deepEqual(app.store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'memory_*'").all(),[]);
   try{
-    await app.start();assertNoHostMemory();assert.equal(starts[0]?.nativeCapabilities,true);
+    await app.start();assertNoHostMemory();
     assert.equal(await app.message('请记住：以后使用中文。','synthetic-native-only-first'),'Synthetic answer');
     assertNoHostMemory();const thread=app.store.meta('mainThread'),toolsHash=app.store.meta('mainToolsHash');
     await app.close();app=new Homer(config,async()=>{},factory);await app.start();

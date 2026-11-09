@@ -13,9 +13,9 @@ const flush=()=>new Promise<void>(done=>setImmediate(done));
 async function peer(){
  const f=fixture(),worker=openWorker(f),actor=running(f,worker.runId);
  const engine=new CodexEngine({workspace:f.files.workspace,stopGraceMs:100} as Config,{cwd:f.files.workspace,readRoots:[],instructions:'synthetic',tools:[]},async()=>({}));
- const sent:{id:number;method:string;params:any}[]=[];engine.threadId=actor.threadId;engine['send']=(message:any)=>{sent.push(message);};
+ const sent:{id:number;method:string;params:any}[]=[];engine.threadId=actor.threadId;engine['send']=(message:any)=>{if(message.method==='config/read')void receive({id:message.id,result:{config:{},layers:[]}});else sent.push(message);};
  const receive=(message:unknown)=>engine['receive'](JSON.stringify(message));
- const turn=engine.turn('synthetic');turn.catch(()=>{});await receive({id:sent[0]!.id,result:{turn:{id:actor.turnId}}});await flush();
+ const turn=engine.turn('synthetic');turn.catch(()=>{});await flush();await receive({id:sent[0]!.id,result:{turn:{id:actor.turnId}}});await flush();
  const app=Object.assign(Object.create(Homer.prototype),{store:f.store,tasks:f.tasks,workers:new Map([[actor.runId,{id:actor.runId,epoch:actor.epoch,engine}]])}) as Homer;
  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.tasks.authority(f.task.taskId,1),wake(){},stop:async r=>r,steer:r=>app['applySteer'](r)});
  const input={workerId:worker.workerId,message:'Synthetic immediate correction',immediate:true};

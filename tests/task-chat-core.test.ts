@@ -392,7 +392,7 @@ test('an exact native file call can reread its committed receipt without produci
 
 for(const changed of ['bytes','receipt-size'] as const)test('file receipt replay verifies original '+changed,()=>{
  const f=chatFixture();try{
-  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Write'}),run=f.start(worker.workerId),actor={agentId:'worker:'+run.workerId,runId:run.id,epoch:run.epoch,threadId:run.threadId!,turnId:run.turnId!,operationPayload:{tool:'create_voice_result',arguments:{filename:'voice',text:'Synthetic source text'}}};
+  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Write'}),run=f.start(worker.workerId),actor={agentId:'worker:'+run.workerId,runId:run.id,epoch:run.epoch,threadId:run.threadId!,turnId:run.turnId!,operationPayload:{tool:'stage_file_result',arguments:{filename:'voice.silk',assetId:'synthetic-voice',revision:1}}};
   const written=f.tasks.writeFile(actor,{operationId:'native-voice',filename:'voice.silk',bytes:Buffer.from('Original audio bytes')});
   if(changed==='bytes')writeFileSync(written.path,'Changed audio bytes');else f.store.db.prepare('UPDATE operations SET responseJson=? WHERE id=?').run(JSON.stringify({...written,bytes:written.bytes+1}),written.operationKey);
   assert.throws(()=>f.tasks.readFileReceipt(actor,'native-voice'),/result_hash_mismatch/);assert.equal(f.tasks.operation(written.operationKey).state,'confirmed');

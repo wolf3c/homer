@@ -29,8 +29,10 @@ test('desktop refuses an unmarked existing directory without mutating it',()=>{
 test('desktop explicitly creates and reuses only its own compatible profile',()=>{
  const root=make();writeFileSync(join(root,'.homer-desktop-new'),'{"format":1}');
  const first=prepareDesktopProfile(root,version);writeFileSync(join(first.runtime,'synthetic-history'),'retained');
- const second=prepareDesktopProfile(root,version);assert.equal(first.runtime,second.runtime);assert.equal(readFileSync(join(second.runtime,'synthetic-history'),'utf8'),'retained');
- assert.throws(()=>prepareDesktopProfile(root,{...version,schema:'future'}),/desktop_schema_incompatible/);
+ const marker=readFileSync(join(root,'desktop-profile.json'));
+ const second=prepareDesktopProfile(root,{...version,schema:'new-source-hash'});
+ assert.equal(first.runtime,second.runtime);
+ assert.deepEqual(readFileSync(join(root,'desktop-profile.json')),marker);
  assert.equal(readFileSync(join(second.runtime,'synthetic-history'),'utf8'),'retained');
 });
 test('codexHome ownership refuses same-home copies and never clears a stale owner',()=>{
@@ -56,11 +58,10 @@ test('Electron cache cannot be redirected outside its profile through a symbolic
  assert.equal(lstatSync(join(root,'host-home/electron')).isSymbolicLink(),true);
 });
 
-test('a different schema, engine or mode cannot mutate a recognized profile',()=>{
+test('a different engine or mode cannot mutate a recognized profile',()=>{
  const root=make(),paths=prepareDesktopProfile(root,version,{initialize:true});
  const marker=readFileSync(join(root,'desktop-profile.json'));writeFileSync(join(paths.runtime,'history'),'keep');
- for(const target of [{...version,schema:'older'},{...version,schema:'newer'},{...version,codex:'0.164.0'}])
-  assert.throws(()=>prepareDesktopProfile(root,target),/desktop_schema_incompatible/);
+ assert.throws(()=>prepareDesktopProfile(root,{...version,codex:'0.164.0'}),/desktop_schema_incompatible/);
  assert.throws(()=>prepareDesktopProfile(root,version,{test:true}),/desktop_profile_mode_mismatch/);
  assert.deepEqual(readFileSync(join(root,'desktop-profile.json')),marker);
  assert.equal(readFileSync(join(paths.runtime,'history'),'utf8'),'keep');

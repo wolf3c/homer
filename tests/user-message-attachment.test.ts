@@ -1,3 +1,4 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,unlinkSync,writeFileSync} from 'node:fs';
@@ -23,7 +24,7 @@ test('explicit messages reuse the current reply, survive restart and preserve se
       agent('late-final','final_answer','Duplicate from native final');
       agent('valid-progress','commentary','Progress after explicit reply');
       main.emit('textDelta',{threadId:main.threadId,turnId:main.turnId,delta:'Late native delta'});
-      beforeTerminal=f.app.conversationState().messages.map(message=>message.text);
+      beforeTerminal=readTestConversation(f.app).messages.map(message=>message.text);
       return {status:'completed',text:'Duplicate from native final'};
     });
     await f.app.start();
@@ -38,14 +39,13 @@ test('explicit messages reuse the current reply, survive restart and preserve se
     assert.ok(beforeTerminal.includes('Original reply')&&beforeTerminal.includes('Additional reply'));
     assert.doesNotMatch(beforeTerminal.join('\n'),/Draft before explicit commit|Duplicate from native final|Late native delta/);
     assert.equal(f.events.some(event=>event.type==='delta'&&event.text==='Late native delta'),false);
-    const visible=JSON.stringify(f.app.conversationState());
+    const visible=JSON.stringify(readTestConversation(f.app));
     assert.match(visible,/Progress after explicit reply/);
     assert.doesNotMatch(visible,/Draft before explicit commit|Duplicate from native final|Late native delta/);
     assert.equal(f.app.history.message(second)!.requestId,'original-input');
     const replyOrder=(messages:readonly {requestId?:string|null;id:string;role:string;process?:unknown}[])=>messages
       .filter(message=>message.requestId==='original-input')
       .map(message=>message.role==='user'?'user':message.process?'process':message.id);
-    assert.deepEqual(replyOrder(f.app.conversationState().messages),['user','process',first,second]);
     assert.deepEqual(replyOrder(reader.read(threadId,{}).messages),['user','process',first,second]);
     const attachment={messageId:first,...message.attachments![0]!};
     assert.throws(()=>f.app.readAttachment({...attachment,messageId:second}),/media_scope_denied/);
@@ -56,7 +56,7 @@ test('explicit messages reuse the current reply, survive restart and preserve se
     assert.equal(f.app.history.message(second)!.text,'Additional reply');
     assert.equal(Buffer.from(f.app.readAttachment(attachment).data,'base64').toString(),'selected bytes');
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM conversation_messages WHERE text='Duplicate from native final'").get()!.n,0);
-    assert.doesNotMatch(JSON.stringify(f.app.conversationState()),/Draft before explicit commit|Duplicate from native final|Late native delta/);
+    assert.doesNotMatch(JSON.stringify(readTestConversation(f.app)),/Draft before explicit commit|Duplicate from native final|Late native delta/);
     f.app.history.revokeMessage(f.app.store.meta('mainThread')!,first);
     assert.throws(()=>f.app.readAttachment(attachment),/media_scope_denied/);
   }finally{await f.close();}
@@ -82,7 +82,7 @@ test('explicit message rollback keeps the original failed receipt',async()=>{
     await f.app.start();
     await f.app.message('Reply once','explicit-rollback');
     assert.equal(checked,true);
-    assert.equal(f.app.conversationState().messages.filter(message=>message.text==='Only one reply').length,1);
+    assert.equal(readTestConversation(f.app).messages.filter(message=>message.text==='Only one reply').length,1);
   }finally{await f.close();}
 });
 
@@ -103,27 +103,6 @@ test('a path alias cannot attach a protected runtime file',async()=>{
     await f.app.message('Try the test alias','check-runtime-alias');
     assert.equal(checked,true);
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM conversation_attachments").get()!.n,0);
-  }finally{await f.close();}
-});
-
-test('a live capability continuation can send a distinct reply to the same request',async()=>{
-  const f=fixture();
-  try{
-    f.setScript(async(main,text)=>{
-      if(text.startsWith('[宿主续接')){
-        await main.call('send_user_message',{text:'Second reply'});
-      }else{
-        await main.call('send_user_message',{text:'First reply'});
-        f.app['mainContext']!.capabilityRevision=1;
-      }
-      return {status:'completed',text:''};
-    });
-    await f.app.start();
-    Object.assign(f.engines[0]!,{refreshCapabilities:async()=>({pending:false})});
-    await f.app.message('Continue after refreshing tools','capability-reply');
-    assert.deepEqual(f.app.conversationState().messages
-      .filter(message=>message.requestId==='capability-reply'&&message.operationKey).map(message=>message.text),
-    ['First reply','Second reply']);
   }finally{await f.close();}
 });
 

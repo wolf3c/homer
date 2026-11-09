@@ -52,6 +52,7 @@ test('empty optional suite fails explicitly and desktop acceptance still require
 // Audited ownership: optional environment settings must never activate these through npm test.
 const explicitSuites={
  "engine": [
+  "channel-native.engine.test.ts",
   "deepseek-continuation.test.ts",
   "deepseek-pinned.test.ts",
   "desktop-source-resume.test.mjs",
@@ -70,7 +71,6 @@ const explicitSuites={
   "desktop-icon.test.mjs",
   "desktop-source.test.mjs",
   "dev-gateway.test.mjs",
-  "fixed-ui-launcher.test.mjs",
   "pinned-rollback.test.mjs",
   "reception-gateway.test.mjs",
   "reception-ipc.test.ts",

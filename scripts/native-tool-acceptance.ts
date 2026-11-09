@@ -1,13 +1,12 @@
-import {validateNativeMcpConfig} from '../src/native-mcp-config.js';
 // Fixed native tools + new HOME + scripted loopback Responses only.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { handleMcp } from '../tests/fixtures/native-capability-mcp.mjs';
 import { CodexEngine } from '../src/engine.js';
-import { NativeCapabilities } from '../src/native-capabilities.js';
 import { MainNativeApprovals } from '../src/main-native-approvals.js';
 import { WorkerInteractions } from '../src/worker-interactions.js';
 import { ConversationHistory } from '../src/web-history.js';
@@ -20,7 +19,7 @@ for (const p of [home, workspace, outside, runtime])
 const bin = process.argv[2];
 if (!bin || !bin.endsWith('/codex'))
     throw Error('fixed_native_binary_required');
-const config = { appData: dir, nativeCodexHome: home, codexHome: home, codexBin: resolve(bin), workspace, runtime, baseUrl: '', model: 'gpt-6.1-sol', effort: 'medium' as const, requiresOpenaiAuth: false, timeoutMs: 1000, mainTimeoutMs: 1000, stopGraceMs: 1000 };
+const config = { appData: dir, nativeCodexHome: home, codexHome: home, codexBin: resolve(bin), workspace, runtime, baseUrl: '', model: 'gpt-6.1-sol', effort: 'medium' as const, requiresOpenaiAuth: false, stopGraceMs: 1000 };
 let activeCallId: string | undefined;
 let script = '', sent = false, turn = 0, approval: 'approve' | 'deny' = 'deny', networkCalls = 0;
 let currentRole:'main'|'worker'='main';
@@ -125,10 +124,10 @@ const checks: Record<string, any> = { isolatedHome: true, realModel: false, real
 let engine: CodexEngine | undefined;
 const make = (nativeTools?: 'main' | 'worker', threadId?: string, workdir = workspace) => {
     currentRole=nativeTools??'main';
-    const peer = new CodexEngine(config, { cwd: workdir, readRoots: [workdir], instructions: 'Synthetic bounded native tool verification. No real account or external service.', tools: [], nativeCapabilities: true, ...(nativeTools ? { nativeTools, permissionRequests: true } : {}), threadId, onInteraction: async (request) => {
+    const peer = new CodexEngine(config, { cwd: workdir, readRoots: [workdir], instructions: 'Synthetic bounded native tool verification. No real account or external service.', tools: [], ...(nativeTools ? { nativeTools } : {}), threadId, onInteraction: async (request) => {
             assert.equal(request.threadId, engine!.threadId);
             assert.equal(request.turnId, engine!.turnId);
-            const opened = approvals.open(request, { threadId: request.threadId, turnId: request.turnId, generationId: 'synthetic-generation-' + turn, sourceRequestId: 'synthetic-request-' + turn, userText: 'Synthetic explicit one-operation authorization fixture.', isCurrent: () => engine?.turnId === request.turnId, protectedRoots: [home, runtime] });
+            const opened = approvals.open(request, { threadId: request.threadId, turnId: request.turnId, generationId: 'synthetic-generation-' + turn, sourceRequestId: 'synthetic-request-' + turn, userText: 'Synthetic explicit one-operation authorization fixture.', isCurrent: () => engine?.turnId === request.turnId });
             checks.approvals.push({ method: request.method, decision: approval });
             approvals.respond(opened.id, { requestId: 'synthetic-decision-' + turn, text: approval === 'approve' ? '允许本次操作' : '拒绝本次操作' });
             return opened.response;
@@ -148,16 +147,21 @@ async function run(name: string, code: string, options?: {
 }) { turn++; script = code; sent = false; activeCallId = undefined; const before = requests.length; const result = await engine!.turn('Synthetic native action ' + name, options); assert.equal(result.status, 'completed'); approvals.end('synthetic-generation-' + turn); checks.commands.push({ name, requests: requests.length - before, outputSeen: requests.slice(before).some(x => x.outputSeen), imageOutputSeen: requests.slice(before).some(x => x.imageOutputSeen), viewUrlPresent: requests.slice(before).some(x => x.viewUrlPresent), viewUrlUndefined: requests.slice(before).some(x => x.viewUrlUndefined), privateSentinelSeen: requests.slice(before).some(x => x.privateSentinelSeen), exitCodes: requests.slice(before).flatMap(x => x.exitCodes), errors: [...new Set(requests.slice(before).flatMap(x => x.errors))], viewMetadata: requests.slice(before).flatMap(x => x.viewMetadata), toolMetadata: requests.slice(before).flatMap(x => x.toolMetadata), ownSkillBodySeen: requests.slice(before).some(x => x.ownSkillBodySeen), mcpEchoSeen: requests.slice(before).some(x => x.mcpEchoSeen) }); return checks.commands.at(-1); }
 const sh = (cmd: string, escalated = false) => 'text(await tools.exec_command(' + JSON.stringify({ cmd, login: false, workdir: workspace, yield_time_ms: 1000, ...(escalated ? { sandbox_permissions: 'require_escalated', justification: 'Synthetic explicit one-command approval fixture.' } : {}) }) + '));';
 try {
-    engine = make();
-    await engine.start();
-    assert.equal(engine.version, '0.163.0');
-    const manager = new NativeCapabilities(home, (m, p) => engine!.request(m, p), () => true, undefined, (name, server) => validateNativeMcpConfig({...config,codexHome:home},name,server));
-    let state = await manager.state();
-    await assert.rejects(() => manager.manage({ action: 'tools_configure', approve: true, settings: { shell: true, viewImage: true, shellSnapshot: true, skillSearch: true, search: 'live' }, expectedVersion: state.version }, 'agent'), /capability_user_approval_required/);
-    await manager.manage({ action: 'tools_configure', approve: true, settings: { shell: true, viewImage: true, shellSnapshot: true, skillSearch: true, search: 'live' }, expectedVersion: state.version }, 'user');
-    await engine.close();
+    const file=join(home,'config.toml');
+    // The fixture chooses a native profile. The Homer client adds no execution policy.
+    writeFileSync(file, [
+      'default_permissions = "fixture"',
+      'approval_policy = "on-request"',
+      'web_search = "disabled"',
+      'shell_environment_policy.inherit = "none"',
+      'features.shell_tool = true',
+      'features.view_image = true',
+      'permissions.fixture.filesystem = {":root" = "write", '+JSON.stringify(home)+' = "deny", '+JSON.stringify(runtime)+' = "deny", '+JSON.stringify(join(home,'skills'))+' = "read", '+JSON.stringify(join(home,'plugins'))+' = "read"}',
+      'permissions.fixture.network.enabled = true',
+    ].join('\n')+'\n');
     engine = make('main');
     await engine.start();
+    assert.equal(engine.version, '0.163.0');
     const effective = await engine.request('config/read', { includeLayers: true, cwd: workspace });
     assert.equal(effective.config.features.shell_tool, true);
     assert.equal(effective.config.features.view_image, true);
@@ -210,23 +214,37 @@ try {
     }
     if (!engine.resumable)
         await run('persist-synthetic-thread-before-configuration', 'text("Synthetic configured thread marker.");');
-    await manager.manage({ action: 'skill_save', name: 'native-check', description: 'Synthetic own-home capability verification only.', body: 'SYNTHETIC_NATIVE_SKILL_BODY_8K4', expectedHash: null }, 'agent');
-    state = await manager.state();
-    await manager.manage({ action: 'mcp_save', name: 'stdio', server: { command: process.execPath, args: [resolve('tests/fixtures/native-capability-mcp.mjs')], enabled_tools: ['echo'], default_tools_approval_mode:'approve' }, approve: true, expectedVersion: state.version }, 'user');
-    state = await manager.state();
-    await manager.manage({ action: 'mcp_save', name: 'http', server: { url: origin + '/mcp', enabled_tools: ['echo'], default_tools_approval_mode:'approve' }, approve: true, expectedVersion: state.version }, 'user');
+    const skillPath=join(home,'skills/native-check/SKILL.md');
+    mkdirSync(join(home,'skills/native-check'),{recursive:true});
+    writeFileSync(skillPath,'---\nname: native-check\ndescription: Synthetic native Skill\n---\nSYNTHETIC_NATIVE_SKILL_BODY_8K4\n');
+    const pluginRoot=join(dir,'market','fixture-plugin'),market=join(dir,'market','.agents/plugins');
+    for(const folder of [join(pluginRoot,'.codex-plugin'),join(pluginRoot,'skills/plugin-check'),market])mkdirSync(folder,{recursive:true});
+    writeFileSync(join(pluginRoot,'.codex-plugin/plugin.json'),JSON.stringify({name:'fixture-plugin',version:'1.0.0',description:'Synthetic local Skill plugin'}));
+    writeFileSync(join(pluginRoot,'skills/plugin-check/SKILL.md'),'---\nname: plugin-check\ndescription: Synthetic plugin Skill\n---\nSYNTHETIC_PLUGIN_SKILL_BODY\n');
+    const marketplacePath=join(market,'marketplace.json');
+    writeFileSync(marketplacePath,JSON.stringify({name:'fixture-local',plugins:[{name:'fixture-plugin',source:{source:'local',path:'./fixture-plugin'}}]}));
+    await engine.request('plugin/install',{pluginName:'fixture-plugin',marketplacePath});
+    const env={PATH:process.env.PATH,HOME:dir,CODEX_HOME:home,NO_PROXY:'127.0.0.1,localhost'};
+    execFileSync(config.codexBin,['mcp','add','stdio','--',process.execPath,resolve('tests/fixtures/native-capability-mcp.mjs')],{env,cwd:workspace});
+    execFileSync(config.codexBin,['mcp','add','http','--url',origin+'/mcp'],{env,cwd:workspace});
+    writeFileSync(file,readFileSync(file,'utf8').replace(/\[mcp_servers\.(stdio|http)\]\n/g,'[mcp_servers.$1]\ndefault_tools_approval_mode = "approve"\n'));
     assert.deepEqual(await engine.refreshCapabilities(), { pending: false });
     const mcpStatus = await engine.request('mcpServerStatus/list', { threadId: engine.threadId, detail: 'full', limit: 100 });
     const appliedMcp = await engine.request('config/read', { cwd: workspace, includeLayers: true });
     checks.mcpEffective = Object.keys(appliedMcp.config.mcp_servers ?? {});
     checks.nativeServerFieldNames = Object.fromEntries(appliedMcp.layers.filter((l: any) => l.name?.type === 'user').flatMap((l: any) => Object.entries(l.config.mcp_servers ?? {})).map(([n, s]: any) => [n, Object.keys(s)]));
-    checks.managedMcp = (await manager.state()).servers.map((s: any) => ({ name: s.name, managed: s.managed }));
     checks.mcpStatus = mcpStatus.data.map((s: any) => ({ name: s.name, toolCount: Object.keys(s.tools ?? {}).length, status: s.runtimeStatus, error: !!s.toolsError }));
-    const skillPath = join(home, 'skills/native-check/SKILL.md');
     const skillTurn = await run('native-skill-on-demand', sh('/bin/cat ' + JSON.stringify(skillPath)), { skills: [{ name: 'native-check', path: skillPath }] });
     assert.equal(skillTurn.ownSkillBodySeen, true);
     assert.ok(skillTurn.exitCodes.includes(0));
     checks.nativeSkillOnDemand = true;
+    const pluginSkill=(await engine.request('skills/list',{cwds:[workspace],forceReload:true})).data
+        .flatMap((entry:any)=>entry.skills).find((skill:any)=>skill.name.endsWith('plugin-check')&&skill.enabled);
+    assert.ok(pluginSkill);
+    const pluginTurn=await run('native-installed-plugin-skill',sh('/usr/bin/grep -F SYNTHETIC_PLUGIN_SKILL_BODY '+JSON.stringify(pluginSkill.path)),
+        {skills:[{name:pluginSkill.name,path:pluginSkill.path}]});
+    assert.ok(pluginTurn.exitCodes.includes(0));
+    checks.installedPluginSkillUsed=true;
     for (const transport of ['stdio','http']) {
         const result = await run('native-main-mcp-' + transport, 'text({probeNativeToolNames:ALL_TOOLS.filter(t=>/stdio|http|echo/.test(t.name)||t.description?.includes("Synthetic local echo")).map(t=>t.name)});const picked=ALL_TOOLS.find(t=>t.name.includes(' + JSON.stringify(transport) + ')&&t.name.includes("echo"));if(picked)text(await tools[picked.name]({text:"SYNTHETIC_APPROVED_MCP_ECHO"}));');
         assert.equal(result.mcpEchoSeen, true);
@@ -278,9 +296,7 @@ try {
         assert.ok(terminals.data.length > 0);
         assert.equal(engine.nativeBusy, true);
         const originalPid = engine.pid, originalThread = engine.threadId;
-        state = await manager.state();
-        const saved = await manager.manage({ action: 'tools_configure', approve: true, settings: { shell: true, viewImage: false, shellSnapshot: true, skillSearch: true, search: 'disabled' }, expectedVersion: state.version }, 'user');
-        assert.equal(saved.application, 'safe_reconnect_required');
+        writeFileSync(file,readFileSync(file,'utf8').replace(/view_image\s*=\s*true/,'view_image = false'));
         assert.deepEqual(await engine.refreshCapabilities(), { pending: true });
         assert.equal(engine.pid, originalPid);
         for (let i = 0; i < 30; i++) {
@@ -294,7 +310,7 @@ try {
         assert.deepEqual(await engine.refreshCapabilities(), { pending: false });
         assert.equal(engine.threadId, originalThread);
         assert.notEqual(engine.pid, originalPid);
-        assert.equal(engine.activeToolSettings?.viewImage, false);
+        assert.equal((await engine.request('config/read',{cwd:workspace})).config.features.view_image,false);
         const beforeRefresh = requests.length;
         await run('after-safe-native-reconnect', sh('printf SYNTHETIC_RECONNECTED_OK'));
         assert.ok(requests.slice(beforeRefresh).every(r => !r.nestedToolNames.includes('view_image')));

@@ -1,7 +1,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, chmodSync, copyFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, copyFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { Homer, type Message } from "../src/service.js";
 import { Store } from "../src/store.js";
@@ -30,7 +30,6 @@ function attachmentText(app:Homer,runId:string){
 function fixture(
   name: string,
   mode: "normal" | "hang" | "unconfirmed" | "failed" | "empty" | "start-fail" = "normal",
-  timeoutMs = 5000,
 ) {
   const scratch=resolve(".codex/scratch/e-service");mkdirSync(scratch,{recursive:true});
   const base=mkdtempSync(join(scratch,name.slice(0,20)+"-"));
@@ -38,7 +37,7 @@ function fixture(
   writeFileSync(base + "/workspace/meeting.md","林青：写初稿，2026-10-20。整理反馈：负责人和时间待确认。");
   const config: Config = {
     workspace: base + "/workspace",runtime: base + "/runtime",codexBin: "/usr/bin/false",codexHome: base + "/engine",nativeCodexHome:base+"/engine",
-    model: "mock-only",requiresOpenaiAuth: false,timeoutMs,mainTimeoutMs: 1000,stopGraceMs: 100,
+    model: "mock-only",requiresOpenaiAuth: false,stopGraceMs: 100,
   };
   const messages: Message[] = [],scriptedMessages = new Map<string, Record<string, any>>(),workerDocuments: string[] = [],workerEngines: Fake[] = [],engineOptions: EngineOptions[] = [];
   let active = 0,maxActive = 0,outputFails=false,outputAttempts=0,progressFails = false,mainStopFails = false,mainDeliveryFails = false,mainDeliveryEmpty = false;
@@ -324,7 +323,7 @@ test("T08: cancellation is separate from confirmation; unconfirmed stop never su
     assert.ok(a.store.run(r.id)!.stopRequestedAt!<=a.store.run(r.id)!.endedAt!);assert.equal(JSON.parse(a.store.run(r.id)!.checkpointJson!).workerExitConfirmed,mode==="hang"?1:0);
     await a.close();
   }
-  const f = fixture("timeout", "hang", 100);
+  const f = fixture("timeout", "hang");
   await f.app.start();
   await f.app.message(JSON.stringify({ action: "dispatch" }), "timeout");
   await until(() => !!f.workerEngines[0]?.pendingResolve);
@@ -487,21 +486,6 @@ test("T08: main stop tool returns confirmed terminal state after emitting the se
   assert.ok(f.app.tasks.run(id).stopRequestedAt);assert.ok(f.app.store.db.prepare("SELECT 1 FROM operations WHERE kind=\'worker_stop\' AND state=\'confirmed\'").get());
   await f.app.idle();
   await f.app.close();
-});
-
-test("T07: an unwritable output directory fails the claimed run instead of leaving a phantom Worker", async () => {
-  const f = fixture("unwritable-output");
-  await f.app.start();
-  chmodSync(f.app.files.outputs, 0o500);
-  try {
-    await f.app.message(JSON.stringify({ action: "dispatch" }), "first");
-    await f.app.idle();
-    assert.equal(f.app.store.runs()[0]?.status, "failed");
-    assert.equal(f.workerEngines.length, 0);
-  } finally {
-    chmodSync(f.app.files.outputs, 0o700);
-    await f.app.close();
-  }
 });
 
 test("HMR-PARALLEL-001: one message can dispatch several Workers; replay adds none", async () => {
@@ -680,7 +664,8 @@ test('accepted user sends notify config checks once; duplicate, rejected and fir
  try{
   await f.app.start();const reasons:string[]=[];f.app.onStateChange(reason=>{if(reason)reasons.push(reason);});
   const system={requestId:'synthetic-config-first',text:'synthetic initialization'};
-  f.app.submitMessage(system,{source:'first_launch',persist:()=>{}});
+  assert.throws(()=>f.app.submitMessage(system,{source:'first_launch',persist:()=>{}}),/first_launch_retired/);
+  assert.equal(f.app.inputs.byRequestIds([system.requestId]).length,0);
   assert.equal(reasons.filter(v=>v==='user-input').length,0);
   const input={requestId:'synthetic-config-user',text:'synthetic user message'};
   assert.equal(f.app.submitMessage(input).fresh,true);assert.equal(reasons.filter(v=>v==='user-input').length,1);

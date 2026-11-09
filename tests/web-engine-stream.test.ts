@@ -6,8 +6,8 @@ import type { Config } from "../src/config.js";
 
 const config: Config = {
   workspace: resolve(".codex/scratch"), runtime: resolve(".codex/scratch/assistant-ui/engine"),
-  codexBin: resolve("tests/fixtures/web-stream-app-server.mjs"), codexHome: resolve(".codex/scratch/assistant-ui/engine/home"),
-  model: "synthetic", requiresOpenaiAuth: false, timeoutMs: 2000, mainTimeoutMs: 2000, stopGraceMs: 100,
+  codexBin: resolve("tests/fixtures/web-stream-app-server.mjs"), codexHome: resolve(".codex/scratch/assistant-ui/engine/home"), nativeCodexHome: resolve(".codex/scratch/assistant-ui/engine/home"),
+  model: "synthetic", requiresOpenaiAuth: false, stopGraceMs: 100,
 };
 test("main text deltas arrive before completion, scoped to the active thread and turn", async () => {
   const engine = new CodexEngine(config, { cwd: resolve(".codex/scratch"), readRoots: [], instructions: "Synthetic protocol test", tools: [] }, async () => ({}));

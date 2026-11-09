@@ -1,17 +1,20 @@
 // Local synthetic Worker sessions exercise attachment reads and exact byte export.
 import {test} from 'node:test';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {readFileSync,unlinkSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 import type {AttachmentRef} from '../src/media-store.js';
 
+const exactBytes=Buffer.from([0,255,128,13,10,0,42]);
+
 async function setup(){
  const f=fixture();let opened:{taskId:string;runId:string}|undefined,refs:AttachmentRef[]=[];
  try{
   await f.app.start();
-  const files=['first.txt','second.txt'].map(filename=>{
-   const path=join(f.app.config.workspace,filename);writeFileSync(path,'Synthetic '+filename);return {path};
+  const files=['first.txt','second.bin'].map(filename=>{
+   const path=join(f.app.config.workspace,filename);writeFileSync(path,filename==='second.bin'?exactBytes:'Synthetic '+filename);return {path};
   });
   f.setScript(async(main,text)=>{
    if(text==='Inspect files'){
@@ -38,9 +41,10 @@ test('a missing source fails without changing the running task, and healthy atta
   await assert.rejects(f.read(missing),/media_file_missing/);
   assert.deepEqual(f.app.tasks.task(task.id),task);
   assert.equal(f.app.tasks.run(f.run.id).status,'running');
-  const exportArgs={filename:'actual.txt',...available};
+  const exportArgs={filename:'actual.bin',...available};
   const receipt=await f.peer.call('stage_file_result',exportArgs,'exact-export');
-  assert.equal(readFileSync(receipt.path,'utf8'),'Synthetic second.txt');
+  assert.deepEqual(readFileSync(receipt.path),exactBytes);
+  assert.equal(receipt.sha256,createHash('sha256').update(exactBytes).digest('hex'));
   assert.deepEqual(await f.peer.call('stage_file_result',exportArgs,'exact-export'),receipt);
   await assert.rejects(f.peer.call('stage_file_result',{...exportArgs,filename:'changed.txt'},'exact-export'),/operation_payload_conflict/);
   writeFileSync(retained.path,retained.bytes);

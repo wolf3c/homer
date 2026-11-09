@@ -10,7 +10,7 @@ export type RecoveryFacts={operations:{id:string;taskId:string;kind:string;state
 export type WorkerConversationQuery={workerId:string;after?:number;messageId?:string;offset?:number};
 export type WorkerConversation={taskId:string;workerId:string;threadId:string|null;messages:{id:string;seq:number;kind:'worker_input'|'worker_reply';runId:string|null;version:number;text:string;offset:number;nextOffset:number|null}[];nextCursor:number|null};
 export type TaskDetail={taskId:string;conversation?:WorkerConversation;requirements?:TaskRequirement[];moreHistory?:boolean;artifacts?:import('./web-contract.js').WebArtifact[];moreArtifacts?:boolean;recovery?:RecoveryFacts;runs:(OverviewRun&{stateRevision:number;activeMs:number;createdAt:number;startedAt:number|null;endedAt:number|null})[]};
-type Classification={key:'running'|'queued'|'user'|'main'|'other'|'unknown'|'complete';label:string};
+type Classification={key:'running'|'queued'|'user'|'main'|'open'|'other'|'unknown'|'complete';label:string};
 export function classifyTask(task:OverviewTask):Classification{
  if(task.controlState==='stopping')return {key:'other',label:'停止待确认'};
  if(task.state==='paused')return {key:'other',label:'已暂停'};
@@ -20,7 +20,7 @@ export function classifyTask(task:OverviewTask):Classification{
  if(task.workers.some(w=>w.run.phase==='uncertain'))return {key:'unknown',label:'执行状态待核实'};
  if(task.workers.some(w=>w.pendingMain>0))return {key:'main',label:'待主 Agent 处理'};
  if(task.workers.some(w=>w.run.status==='queued'&&w.run.phase==='ready'))return {key:'queued',label:'排队中'};
- return {key:'other',label:'办理中'};
+ return {key:'open',label:'未结案'};
 }
 export function readTaskOverview(db:DatabaseSync):TaskOverview{
  const tasks=db.prepare(`SELECT t.rowid AS creationOrder,t.id,t.title,t.notes,t.headVersion,t.revision,t.state,t.outcome,t.controlState,t.historyState,t.createdAt,t.settledAt,v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState='visible' ORDER BY t.rowid DESC`).all() as (Omit<OverviewTask,'workers'|'sourceRequestIds'>&{sources:string|null})[];

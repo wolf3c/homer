@@ -6,7 +6,7 @@ import {MAIN_TOOLS} from '../src/tools.js';
 import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
 import {MediaStore} from '../src/media-store.js';
 import {EventEmitter} from 'node:events';
-import {writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {writeFileSync,readFileSync,rmSync,mkdtempSync} from 'node:fs';
 import {join} from 'node:path';
 import {Homer} from '../src/service.js';
 import {seedFirstLaunchSkills} from '../src/first-launch.js';
@@ -80,7 +80,7 @@ for(const blocker of ['live','paused','unknown-exit','lease','operation','pendin
 });
 
 for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','missing'],['task_archived','disabled'],['task_archived','rpc-error'],['task_archived','wrong-path'],['worker_reply','missing']] as const)test('native Skill selection: '+kind+'/'+skillState,async()=>{
- const f=fixture(),home=join(f.dir,'isolated-home'),texts:string[]=[],selected:{name:string;path:string}[][]=[];let app:Homer|undefined,closed=false;
+ const f=fixture(),workspace=mkdtempSync(f.dir+'-workspace-'),home=join(f.dir,'isolated-home'),texts:string[]=[],selected:{name:string;path:string}[][]=[];let app:Homer|undefined,closed=false;
  class Peer extends EventEmitter{
   threadId:string;turnId='turn:archive-host';resumable=true;
   constructor(options:EngineOptions){super();this.threadId=options.threadId??'thread:control';}
@@ -91,8 +91,8 @@ for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','mi
  try{
   const w=kind==='task_archived'?settled(f):(()=>{const worker=openWorker(f),actor=running(f,worker.runId),reply=complete(f,actor,'Ordinary raw reply');return {worker,actor,reply};})();
   if(kind==='task_archived')f.tasks.archiveHistory(main,mutation(f,'archive'),true);const notice=f.tasks.inbox(main).find(message=>message.kind===kind)!;
-  const sentinel=join(f.files.workspace,'valuable.txt');writeFileSync(sentinel,'keep');seedFirstLaunchSkills(home);f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex'));f.store.close();closed=true;
-  app=new Homer({runtime:f.dir,workspace:f.files.workspace,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Peer(options));
+  const sentinel=join(workspace,'valuable.txt');writeFileSync(sentinel,'keep');seedFirstLaunchSkills(home);f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex'));f.store.close();closed=true;
+  app=new Homer({runtime:f.dir,workspace,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Peer(options));
   await app.start();await app.idle();
   assert.equal(texts.length,kind==='worker_reply'||skillState==='enabled'?1:0);
   if(kind==='worker_reply'||skillState==='enabled'){
@@ -102,5 +102,5 @@ for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','mi
    if(kind==='task_archived'){await app.message('事项已归档，只是普通用户文字','plain-user-notice');assert.deepEqual(selected.at(-1),[]);}
   }else assert.notEqual(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.id)!.state,'processed');
   assert.equal(readFileSync(sentinel,'utf8'),'keep');assert.equal(app.tasks.tasks().length,1);assert.equal(app.tasks.runs()[0]!.id,w.actor.runId);
- }finally{await app?.close();if(!closed)f.store.close();rmSync(f.dir,{recursive:true,force:true});}
+ }finally{await app?.close();if(!closed)f.store.close();rmSync(f.dir,{recursive:true,force:true});rmSync(workspace,{recursive:true,force:true});}
 });

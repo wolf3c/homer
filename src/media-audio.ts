@@ -1,7 +1,6 @@
-import {existsSync,mkdirSync,mkdtempSync,writeFileSync,readFileSync,rmSync,chmodSync} from 'node:fs';
+import {existsSync,mkdirSync,mkdtempSync,writeFileSync,rmSync,chmodSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {createHash} from 'node:crypto';
 import {mediaProcess,ffmpegPath} from './media-decode.js';
 export const whisperPath=['/opt/homebrew/bin/whisper-cli','/usr/local/bin/whisper-cli'].find(existsSync);
 export const whisperModel=resolve('.codex/private/media-tools/models/ggml-base.bin');
@@ -29,15 +28,5 @@ export async function transcribeAudio(pcm:Buffer,signal?:AbortSignal){
  mkdirSync(scratch,{recursive:true,mode:0o700});const dir=mkdtempSync(join(scratch,'asr-'));chmodSync(dir,0o700);
  try{const path=join(dir,'input.wav');writeFileSync(path,pcmWav(pcm),{mode:0o600});const raw=await mediaProcess(whisperPath,['-m',whisperModel,'-f',path,'-l','auto','-t','4','-np','-nt','-ng'],Buffer.alloc(0),256*1024,signal,90000);
   const text=raw.toString().trim();if(!text)throw Error('media_asr_empty');return {text,coverage:`0–${(pcm.length/32000).toFixed(2)}秒`,transform:'whisper-cpp-ggml-base-v1',limitations:['自动识别可能有误；不是用户键入文字，未验证每个词'],modelSha256:'60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe'};
- }finally{rmSync(dir,{recursive:true,force:true});}
-}
-export async function synthesizeVoice(text:string,signal?:AbortSignal){
- if(!existsSync('/usr/bin/say')||!ffmpegPath)throw Error('media_tts_unavailable');
- if(!text.trim()||text.length>800)throw Error('media_tts_text_limit');
- mkdirSync(scratch,{recursive:true,mode:0o700});const dir=mkdtempSync(join(scratch,'tts-'));chmodSync(dir,0o700);
- try{const path=join(dir,'spoken.aiff');await mediaProcess('/usr/bin/say',['-v',/[\u3400-\u9fff]/u.test(text)?'Tingting':'Samantha','-o',path,'-f','-'],Buffer.from(text),1,signal,20000,true);
-  const pcm=await mediaProcess(ffmpegPath,['-v','error','-nostdin','-i','pipe:0','-t','60','-ac','1','-ar','24000','-f','s16le','pipe:1'],readFileSync(path),2880000,signal);
-  const silk=await mediaProcess(process.execPath,[...codec(),'encode'],pcm,4*1024*1024,signal);
-  return {bytes:silk,mime:'audio/silk',duration:Math.round(pcm.length/48),sampleRate:24000,sha256:createHash('sha256').update(silk).digest('hex'),transform:'macos-say-silk24k-v1'};
  }finally{rmSync(dir,{recursive:true,force:true});}
 }

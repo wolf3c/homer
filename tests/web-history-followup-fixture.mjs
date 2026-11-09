@@ -9,12 +9,11 @@ import { WebHistoryPages } from '../src/web-history-pages.js';
 import {Files} from '../src/files.js';
 import {WorkerProgressStore} from '../src/worker-progress.js';
 import {MediaStore} from '../src/media-store.js';
-import { projectConversation } from '../src/conversation-projection.js';
 import { homerWebBridge } from '../src/web-homer.js';
 import { createWebServer } from '../src/web-server.js';
 const destination=resolve(syntheticRoot);
 export async function fixture(total, mode, media = false, stableRecent = false) {
-    const f = historyFixture(total,160,stableRecent), reader = mode === 'after' ? new WebHistoryPages(f.history, f.processes, f.inputs) : undefined;
+    const f = historyFixture(total,160,stableRecent), reader = new WebHistoryPages(f.history, f.processes, f.inputs);
     const listeners = new Set();
     let server;
     const submitted = [], stopped = [], mediaRequests = [];
@@ -32,10 +31,10 @@ export async function fixture(total, mode, media = false, stableRecent = false) 
     const attach=(text,files,task)=>commitSyntheticMessage({...f,media:mediaOwner},task?.threadId??'synthetic-history',text,files,undefined,task);
     const fakeEngine={invocations:0,turn(){this.invocations++;throw Error('synthetic_engine_forbidden');}};
     const files=new Files(resolve(syntheticRoot+'/unused-workspace')),workerProgress=new WorkerProgressStore();
-    const host = { ...f, files, engine:fakeEngine, webReadEpoch: 'synthetic-browser-epoch', webHistoryPages: () => reader, registerWebSurface() { }, onStateChange(listener) { listeners.add(listener); return () => listeners.delete(listener); }, media: mediaOwner, conversationControlState: () => ({ isRunning: false, activeMessageId: null }), submitMessage(input) { submitted.push(input.requestId); const receipt = f.inputs.accept(input); server?.publish(); return receipt; }, snapshot() { throw Error('full_snapshot_forbidden'); }, conversationState() { throw Error('full_conversation_forbidden'); }, stopMain(id) { stopped.push(id); return {}; } };
+    const host = { ...f, files, workerProgress, engine:fakeEngine, webReadEpoch: 'synthetic-browser-epoch', webHistoryPages: () => reader, registerWebSurface() { }, onStateChange(listener) { listeners.add(listener); return () => listeners.delete(listener); }, media: mediaOwner, conversationControlState: () => ({ isRunning: false, activeMessageId: null }), submitMessage(input) { submitted.push(input.requestId); const receipt = f.inputs.accept(input); server?.publish(); return receipt; }, snapshot() { throw Error('full_snapshot_forbidden'); }, conversationState() { throw Error('full_conversation_forbidden'); }, stopMain(id) { stopped.push(id); return {}; } };
     host.readWorkerExecution=(selector,before)=>{const scope=f.tasks.executionReadScope({agentId:f.store.meta('mainAgentId')},selector,f.store.meta('mainThread')??'');return workerProgress.execution(selector,scope.version,before);};
     host.readWorkerCall=(selector,callKey)=>{const scope=f.tasks.executionReadScope({agentId:f.store.meta('mainAgentId')},selector,f.store.meta('mainThread')??'');if(!/^[a-f0-9]{64}$/.test(callKey))throw Error('execution_call_unavailable');return workerProgress.call(selector,scope.version,callKey);};
-    const bridge = homerWebBridge(host, { nativeCapabilities: false, draftUpload: false });
+    const bridge = homerWebBridge(host, { draftUpload: false });
     host.attachmentMessage=input=>{
         const message=f.history.message(input.messageId);
         if(message?.threadId!==f.store.meta('mainThread')||message.audience!=='user'||message.revokedAt!=null||!message.attachments?.some(ref=>ref.assetId===input.assetId&&ref.revision===input.revision))throw Error('media_scope_denied');
@@ -47,11 +46,6 @@ export async function fixture(total, mode, media = false, stableRecent = false) 
         const {asset,bytes}=mediaOwner.readAttachment(input);
         return {filename:asset.filename,mime:asset.mime,sha256:asset.hash,data:bytes.toString('base64')};
     };
-    if (mode === 'before')
-        bridge.state = async () => {
-            const history = f.history.list('synthetic-history').map(message => ({ ...message, ...(message.attachments ? { media: message.attachments.map(ref=>mediaOwner.view(ref)) } : {}) })), nodes = f.processes.list('synthetic-history');
-            return { threadId: 'synthetic-history', ...projectConversation(history, nodes, f.inputs.list()), processNodes: nodes, acceptedRequestIds: f.history.acceptedRequestIds('synthetic-history'), conversationView: 2, isRunning: false, activeMessageId: null, work: [], interactions: [], upgrade: { phase: 'running', accepting: true } };
-        };
     server = await createWebServer({ bridge, connectionDirectory, port: 0, uiDirectory: process.env.HISTORY_FOLLOWUP_BUILD??join(destination, 'browser-' + mode), logoPath: resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png') });
     assert.notEqual(new URL(server.url).port, '4780');
     const remove = f.store.db.onChange(() => { for (const listener of listeners)

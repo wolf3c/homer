@@ -18,7 +18,7 @@ for(const role of ['main','worker'] as const)test(`pinned DeepSeek ${role}: comp
  });
  await new Promise<void>(accept=>server.listen(0,'127.0.0.1',accept));
  const config={...session.config,baseUrl:'http://127.0.0.1:'+(server.address() as {port:number}).port+'/v1',keyEnv:undefined,stopGraceMs:1000};
- const options={role,cwd:config.workspace,readRoots:[],instructions:'Offline synthetic continuation acceptance only.',tools:[],nativeCapabilities:true,nativeTools:role};
+ const options={role,cwd:config.workspace,readRoots:[],instructions:'Offline synthetic continuation acceptance only.',tools:[],nativeTools:role};
  let engine=new CodexEngine(config,options,async()=>({}));
  const timer=setTimeout(()=>void engine.close(),45000);
  try{

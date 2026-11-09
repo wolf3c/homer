@@ -1,7 +1,8 @@
+import {callHostMcp} from './fixtures/host-mcp-call.js';
 // Real Homer and SQLite, scripted engine boundary, isolated runtime only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {writeFileSync} from 'node:fs';
+import {existsSync,readFileSync,unlinkSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 
@@ -18,13 +19,26 @@ test('two Worker conversations return complete original text automatically witho
     await f.app.start();await f.app.message('start','user-start');
     await until(()=>f.engines.filter(engine=>engine.options.role==='worker'&&engine.finish).length===2);
     const workers=f.engines.filter(engine=>engine.options.role==='worker');
+    const firstInput=workers.find(worker=>worker.input?.endsWith('Read A.'))?.input??'';
+    const secondInput=workers.find(worker=>worker.input?.endsWith('Read B.'))?.input??'';
+    assert.equal(firstInput.match(/Read A\./g)?.length,1);
+    assert.match(firstInput,/"sourceRequestId":"user-start"/);
+    assert.match(secondInput,/"goal":"Read A\."/);
     const rounds=f.inputs.length;
     workers[0]!.emit('agentMessage',{threadId:workers[0]!.threadId,turnId:workers[0]!.turnId,itemId:'progress',phase:'commentary',text:'Checking.',completed:true});
     await new Promise(resolve=>setTimeout(resolve,20));assert.equal(f.inputs.length,rounds);
     const raw='  First paragraph.\n\n[file](/synthetic/report.md)\nLast line.  ';
     for(const [index,worker]of workers.entries())worker.finish!({status:'completed',text:'wrong aggregate',messages:[{itemId:'answer-'+index,phase:'final_answer',text:raw}]});
     await f.app.idle();
-    assert.equal(f.inputs.filter(text=>text.includes(raw)).length,2);
+    const replies=f.inputs.filter(text=>text.endsWith(raw));
+    assert.equal(replies.length,2);
+    for(const reply of replies){
+      const facts=JSON.parse(reply.split('\n')[1]!);
+      assert.equal(facts.taskId,taskId);assert.equal(facts.version,1);
+      assert.equal(facts.kind,'worker_reply');assert.ok(facts.workerId&&facts.messageId);
+      assert.equal(facts.execution.status,'completed');assert.equal(facts.execution.exitConfirmed,true);
+      for(const key of ['runId','threadId','turnId'])assert.ok(!Object.hasOwn(facts,key),key);
+    }
     assert.equal(f.app.tasks.task(taskId).state,'open');
     assert.equal(f.app.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='worker_reply' AND r.state='processed'").get()!.n,2);
@@ -47,6 +61,10 @@ test('an idle conversation follow-up resumes its exact native thread in a new Ru
     await until(()=>f.engines.filter(engine=>engine.options.role==='worker').length===2&&!!f.engines.filter(engine=>engine.options.role==='worker')[1]?.finish);
     const second=f.engines.filter(engine=>engine.options.role==='worker')[1]!;
     assert.equal(second.options.threadId,first.threadId);
+    assert.match(second.input!,/"goal":"Read A\."/);
+    assert.ok(second.input!.endsWith('Explain the observation.'));
+    assert.ok(!second.options.tools.some(tool=>tool.name==='create_voice_result'));
+    await assert.rejects(second.call('create_voice_result',{filename:'voice.silk',text:'Synthetic text'}),/worker_tool_denied/);
     const runs=f.app.tasks.runs(undefined,workerId);assert.equal(runs.length,2);assert.equal(runs[1]!.workerId,workerId);
     second.finish!({status:'completed',text:'Second answer',messages:[{itemId:'second',phase:'final_answer',text:'Second answer'}]});
     await f.app.idle();
@@ -192,8 +210,11 @@ for(const kind of ['worker_reply','interaction_required'] as const)test(`a curre
         for(const message of ['Inspect remaining authorized fact A','Inspect remaining authorized fact B'])
           await main.call('worker_open',{message});
         if(kind==='interaction_required'){
-          const request=f.app.interactions.list()[0]!;await main.call('inspect_interaction',{interactionId:request.id});
-          await main.call('respond_interaction',{interactionId:request.id,action:'answer',answer:'Continue within the original scope',reason:'Original source remains current'});
+          assert.doesNotMatch(text,/"(?:runId|threadId|turnId)"|\[Worker 原文\]/);
+          const interactionId=text.match(/\[待答入口\] interactionId=([^；]+)/)?.[1];
+          assert.equal(interactionId,f.app.interactions.list()[0]!.id);
+          await callHostMcp(main.options, 'inspect_interaction',{interactionId});
+          await callHostMcp(main.options, 'respond_interaction',{interactionId,action:'answer',answer:'Continue within the original scope',reason:'Original source remains current'});
         }
         checked=true;
       }
@@ -409,17 +430,17 @@ for(const action of ['approve','deny'] as const)test('a desktop Worker command w
         const id=JSON.parse(text.split('\n')[1]!).messageId;
         const notice=f.app.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(id)!;
         seen=JSON.parse(String(notice.payloadJson)).interactionId;
-        await main.call('inspect_interaction',{interactionId:seen});
-        await assert.rejects(main.call('respond_interaction',{interactionId:seen,action:'approve',reason:'No user approval'}),/user.*required/);
-        await main.call('escalate_interaction',{interactionId:seen,question:'Confirm the operation',reason:'Needs user authorization'});
+        await callHostMcp(main.options, 'inspect_interaction',{interactionId:seen});
+        await assert.rejects(callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action:'approve',reason:'No user approval'}),/user.*required/);
+        await callHostMcp(main.options, 'escalate_interaction',{interactionId:seen,question:'Confirm the operation',reason:'Needs user authorization'});
       }else if(text.includes('[用户答复原待答]')){
         assert.equal(resolved,false);mediated=true;
-        await main.call('inspect_interaction',{interactionId:seen});
+        await callHostMcp(main.options, 'inspect_interaction',{interactionId:seen});
         if(action==='deny'){
-          await assert.rejects(main.call('respond_interaction',{interactionId:seen,action:'approve',reason:'Cannot turn a refusal into permission'}),/user.*required/);
+          await assert.rejects(callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action:'approve',reason:'Cannot turn a refusal into permission'}),/user.*required/);
           wrongDecisionRejected=true;
         }
-        await main.call('respond_interaction',{interactionId:seen,action,reason:'Use the actual user decision'});
+        await callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action,reason:'Use the actual user decision'});
       }
       return {status:'completed',text:'Recorded'};
     });
@@ -430,8 +451,6 @@ for(const action of ['approve','deny'] as const)test('a desktop Worker command w
     await until(()=>f.app.interactions.list().some(item=>item.state==='pending_user'));
     const [card]=f.app.interactions.list();assert.equal(card?.id,seen,'Homer must inspect before a card is shown');
     assert.equal(await f.app.message('unrelated','other-user-message'),'Recorded');assert.equal(resolved,false);
-    const runId=f.app.interactions.inspect(seen).runId;
-    await assert.rejects(f.app.manageCapabilities({action:'state'},'agent',f.app['workers'].get(runId)),/run_phase_denied/);
     const input={requestId:'user-decision',interactionId:seen,text:action==='approve'?'允许本次操作':'拒绝本次操作'};
     assert.equal(f.app.submitMessage(input).fresh,true);
     assert.equal(f.app.submitMessage(input).fresh,false);
@@ -497,8 +516,8 @@ test('a Worker question wakes Main and returns the persisted answer to that exac
         await main.call('worker_open',{message:'Ask one question'});
       }else if(text.includes('interaction_required')){
         const request=f.app.interactions.list().find(item=>item.source==='ask_main')!;
-        await main.call('inspect_interaction',{interactionId:request.id});
-        await main.call('respond_interaction',{interactionId:request.id,action:'answer',answer:'Use A',reason:'Within the original synthetic goal'});
+        await callHostMcp(main.options, 'inspect_interaction',{interactionId:request.id});
+        await callHostMcp(main.options, 'respond_interaction',{interactionId:request.id,action:'answer',answer:'Use A',reason:'Within the original synthetic goal'});
       }
       return {status:'completed',text:text==='start'?'Started':'',messages:[]};
     });
@@ -513,10 +532,10 @@ test('a Worker question wakes Main and returns the persisted answer to that exac
 });
 
 test('a committed staged attachment replays its native receipt after the source is revoked',async()=>{
-  const f=fixture();let ref:{assetId:string;revision:number};
+  const f=fixture();let ref:{assetId:string;revision:number},taskId='',runId='';
   try{
     f.setScript(async(main,text)=>{
-      if(text.startsWith('start'))await main.call('worker_open',{message:'Stage the assigned source',attachments:[ref]});
+      if(text.startsWith('start'))({taskId,runId}=await main.call('worker_open',{message:'Stage the assigned source',attachments:[ref]}));
       return {status:'completed',text:'Started'};
     });
     await f.app.start();
@@ -528,7 +547,15 @@ test('a committed staged attachment replays its native receipt after the source 
     await assert.rejects(worker.call('stage_file_result',{filename:'legacy.txt',dataBase64:'AQ=='},'legacy'),/invalid_tool_arguments/);
     await assert.rejects(worker.call('stage_file_result',{...args,operationId:'forged'},'forged'),/invalid_tool_arguments/);
     await assert.rejects(worker.call('write_markdown',{filename:'legacy.md',content:'old'},'legacy-write'),/worker_tool_denied/);
+    const output=join(f.app.files.outputs,taskId,runId);
+    assert.equal(existsSync(output),false);
+    const blocked=join(f.app.files.outputs,taskId);
+    writeFileSync(blocked,'Synthetic path collision');
+    try{await assert.rejects(worker.call('stage_file_result',args,'blocked-stage'),/EEXIST|ENOTDIR/);}
+    finally{unlinkSync(blocked);}
     const receipt=await worker.call('stage_file_result',args,'original-stage');
+    assert.equal(receipt.path,join(output,'source.txt'));
+    assert.deepEqual(readFileSync(receipt.path),Buffer.from('Synthetic staged bytes'));
     f.app.media.revoke(source);
     assert.deepEqual(await worker.call('stage_file_result',args,'original-stage'),receipt);
     await assert.rejects(worker.call('stage_file_result',{...args,filename:'changed.txt'},'original-stage'),/operation_payload_conflict/);

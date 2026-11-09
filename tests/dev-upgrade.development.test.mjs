@@ -26,7 +26,7 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
   writeFileSync(join(base,"src/synthetic-self-development.ts"),'export const syntheticGreeting = "before";\n');
   const binary = join(base, "synthetic-codex.mjs"); cpSync(join(root, "tests/fixtures/dev-upgrade-app-server.mjs"), binary); chmodSync(binary, 0o755);
   const config = join(base, "synthetic.config.json");
-  writeFileSync(config, JSON.stringify({ workspace: "workspace", runtime: "runtime", codexHome: join(base, "home"), nativeCodexHome:join(base,"home"), codexBin: binary, model: "synthetic-only", effort: "medium", requiresOpenaiAuth: false, timeoutMs: 60000, mainTimeoutMs: 60000, stopGraceMs: 200 }));
+  writeFileSync(config, JSON.stringify({ workspace: "workspace", runtime: "runtime", codexHome: join(base, "home"), nativeCodexHome:join(base,"home"), codexBin: binary, model: "synthetic-only", effort: "medium", requiresOpenaiAuth: false, stopGraceMs: 200 }));
   const reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
   const url='http://127.0.0.1:'+port,fetch=syntheticUserFetch();
   const approve=async()=>{await buildUntil(async()=>{try{return !!(await(await fetch(url+'/api/update/review')).json())?.hash;}catch{return false;}});const review=await(await fetch(url+'/api/update/review')).json();assert.ok(review.files.length);assert.equal((await fetch(url+'/api/update/approve',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({hash:review.hash})})).status,200);};
@@ -127,8 +127,22 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     writeFileSync(manifest, originalManifest);
     const tools = join(base, "src/tools.ts"), originalTools = readFileSync(tools, "utf8");
     writeFileSync(tools, originalTools+'\nMAIN_TOOLS[0]!.description += " Synthetic tool migration probe.";\n');await approve();
-    await buildUntil(() => notices("main_tools_migration_required").length > 0);
+    const toolRejected="候选未生效：main_tools_migration_required";
+    await buildUntil(() => notices(toolRejected).length === 1);
     writeFileSync(tools, originalTools);
+    const recursiveTools = join(base, "src/recursive-tools.ts"), originalRecursiveTools = readFileSync(recursiveTools, "utf8");
+    const changedTools = [
+      originalRecursiveTools.replace('Send a message to the existing Worker conversation.', 'Send a synthetic message to the existing Worker conversation.'),
+      originalRecursiveTools.replace("immediate: {type: 'boolean'}", "immediate: {type: 'string'}"),
+    ];
+    const beforeToolChanges = lockPid();
+    for (const [index, changed] of changedTools.entries()) {
+      assert.notEqual(changed, originalRecursiveTools);
+      writeFileSync(recursiveTools, changed);await approve();
+      await buildUntil(() => notices(toolRejected).length === index + 2);
+      assert.equal(lockPid(), beforeToolChanges, "tool changes must be rejected before host handoff");
+    }
+    writeFileSync(recursiveTools, originalRecursiveTools);
     const storePath = join(base, "src/store.ts"), originalStore = readFileSync(storePath, "utf8");
     appendFileSync(storePath, "\n// schema change guard\n");
     await buildUntil(() => notices("dev_schema_change_requires_review").length > 0);

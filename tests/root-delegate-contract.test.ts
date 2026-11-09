@@ -34,3 +34,17 @@ test('a real user source can record a task without authorizing execution',()=>{
   assert.throws(()=>f.tasks.createTask(f.actor,{...input,goal:'Different goal'}),/payload_conflict/);
  }finally{f.close();}
 });
+
+
+test('worker_open names new work without altering its goal or input',async()=>{
+ const f=chatFixture();try{
+  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake(){},stop:async()=>{},steer:async()=>{}});
+  const message='用户要求优化工作状态标题。'+'详细要求🙂'.repeat(30);
+  const a=await tools.call(f.actor,'worker_open',{message,title:'优化事项标题'},'named') as {taskId:string;workerId:string};
+  assert.equal(f.tasks.task(a.taskId).title,'优化事项标题');assert.equal(f.tasks.version(a.taskId,1).goal,message);
+  assert.equal(f.tasks.run(a.workerId).prompt,message);
+  const b=await tools.call(f.actor,'worker_open',{message:'🙂'.repeat(60)+'。详情'},'fallback') as {taskId:string};
+  const title=f.tasks.task(b.taskId).title;assert.ok([...title].length<=49);assert.ok(!title.includes('�'));assert.equal(f.tasks.version(b.taskId,1).goal,'🙂'.repeat(60)+'。详情');
+  await assert.rejects(tools.call(f.actor,'worker_open',{taskId:a.taskId,message:'继续',title:'误导性的名称'},'existing'),/invalid_tool_arguments/);
+ }finally{f.close();}
+});

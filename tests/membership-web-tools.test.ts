@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {EventEmitter,once} from 'node:events';
 import {constants,copyFileSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,writeFileSync} from 'node:fs';
 import {createServer} from 'node:http';
-import type {AddressInfo} from 'node:net';
+import {createConnection,type AddressInfo} from 'node:net';
 import {dirname,join,resolve} from 'node:path';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -52,7 +52,8 @@ function syntheticDesktop(t:TestContext,root:string){
   return {bundleRoot,manifestSha256:hash(manifest)};
 }
 
-test('an existing main thread and its Worker use the same membership Token through the host MCP',async t=>{
+for(const nativeRole of ['main','worker'] as const)
+test(`an existing main thread and its Worker share the membership Token with native search on ${nativeRole}`,async t=>{
   const token='sk-synthetic-membership-only';
   const query='"Example" site:example.invalid lang:en after:2026-01-01';
   const date='2026-05-02T12:34:56+00:00';
@@ -84,8 +85,11 @@ test('an existing main thread and its Worker use the same membership Token throu
   const role={baseUrl,model:'synthetic',effort:null,fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
   const parent=resolve('.codex/scratch');mkdirSync(parent,{recursive:true});
   const root=mkdtempSync(join(parent,'membership-web-'));
+  const nativeRoleConfig={...role,effort:'high',capabilities:{inputModalities:['text' as const],reasoningEfforts:['high'],webSearch:true,toolSearch:false}};
+  // Inject an incomplete snapshot below the website validator to exercise the unavailable catalog path.
+  const unavailableNativeRole={...nativeRoleConfig,context:undefined} as unknown as typeof nativeRoleConfig;
   const config:Config={appData:root,workspace:join(root,'work'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,
-    desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'0'.repeat(64)},desktopConnection:{main:role,worker:role}};
+    desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'0'.repeat(64)},desktopConnection:nativeRole==='main'?{main:nativeRoleConfig,worker:unavailableNativeRole}:{main:role,worker:nativeRoleConfig}};
   mkdirSync(config.runtime);
   const oldToken=process.env.HOMER_DEEPSEEK_TOKEN;
   process.env.HOMER_DEEPSEEK_TOKEN=token;
@@ -103,15 +107,27 @@ test('an existing main thread and its Worker use the same membership Token throu
       this.turnId=this.threadId+'-turn';opts?.onStarted?.(this.turnId);
       if(text.startsWith('[内部协作输入'))return {status:'completed',text:''};
       const worker=this.options.role==='worker';
+      const hasNativeSearch=(worker?'worker':'main')===nativeRole;
       try{
         await withMcp(this.options,async rpc=>{
           const tools=(await rpc('tools/list')).tools as {name:string;description:string}[];
           const names=tools.map(tool=>tool.name);
-          assert.deepEqual(names.filter(name=>['web_search','web_fetch','generate_image','generate_video'].includes(name)),['web_search','web_fetch','generate_image','generate_video']);
-          const description=tools.find(tool=>tool.name==='web_search')!.description;
-          for(const syntax of ['site:','-site:','lang:','after:','before:','double quotes'])assert.ok(description.includes(syntax),`Search description omits ${syntax}`);
+          assert.deepEqual(names,this.options.interactionMcp!.catalog!.map(tool=>tool.name));
+          assert.deepEqual(names.filter(name=>['web_search','web_fetch','generate_image','generate_video'].includes(name)),[...(hasNativeSearch?[]:['web_search']),'web_fetch','generate_image','generate_video']);
+          const description=tools.find(tool=>tool.name==='web_search')?.description;
+          for(const syntax of ['site:','-site:','lang:','after:','before:','double quotes'])if(!hasNativeSearch)assert.ok(description?.includes(syntax),`Search description omits ${syntax}`);
           const call=(name:string,args:unknown)=>rpc('tools/call',{name,arguments:args});
-          if(worker){
+          if(hasNativeSearch){
+            assert.equal((await call('web_search',{query:'hidden'})).content[0].text,'interaction_tool_denied');
+            const socketPath=this.options.interactionMcp!.args.find(arg=>arg.endsWith('.sock'));
+            assert.ok(socketPath);
+            const socket=createConnection(socketPath);
+            const lines=createInterface({input:socket});
+            try{
+              const response=once(lines,'line',{signal:AbortSignal.timeout(5000)});
+              socket.write(JSON.stringify({tool:'web_search',arguments:{query:'hidden'}})+'\n');
+              assert.deepEqual(JSON.parse((await response)[0]),{error:'interaction_tool_denied'});
+            }finally{lines.close();socket.destroy();}
             const reply=await call('web_fetch',{url:'https://example.invalid/article'});
             assert.equal(reply.isError,false);const page=JSON.parse(reply.content[0].text);
             assert.ok(page.content.startsWith('# Article')&&page.content.length<=24_000&&page.truncated);
@@ -121,7 +137,6 @@ test('an existing main thread and its Worker use the same membership Token throu
             assert.equal(missing.content[0].text,'membership_web_fetch_unavailable');
             assert.match(missing.content[1].text,/未能取得网页正文.*搜索摘要.*其他来源/);
             assert.doesNotMatch(JSON.stringify(missing),/Synthetic gateway 404/);
-            workerChecked=true;
           }else{
             const reply=await call('web_search',{query:` ${query} `});
             assert.equal(reply.isError,false);
@@ -143,6 +158,7 @@ test('an existing main thread and its Worker use the same membership Token throu
             for(const query of ['redirect','lost','oversized'])assert.equal((await call('web_search',{query})).content[0].text,'membership_web_result_unconfirmed');
           }
         });
+        if(worker)workerChecked=true;
         if(!worker){
           const call=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args});
           await call('worker_open',{message:'Fetch the example page'});
@@ -156,17 +172,19 @@ test('an existing main thread and its Worker use the same membership Token throu
     app.store.setMeta('mainThread',oldThread);app.store.setMeta('mainToolsHash',oldHash);
     await app.start();
     assert.equal(mainOptions.threadId,oldThread);
-    await withMcp(mainOptions,async rpc=>assert.equal((await rpc('tools/call',{name:'web_search',arguments:{query:'idle'}})).content[0].text,'tool_scope_denied'));
+    await withMcp(mainOptions,async rpc=>assert.equal((await rpc('tools/call',{name:'web_search',arguments:{query:'idle'}})).content[0].text,
+      nativeRole==='main'?'interaction_tool_denied':'tool_scope_denied'));
     await app.submitMessage({requestId:'synthetic-user',text:'Search for and read the example page.'});
     await app.idle();
     assert.deepEqual(engineErrors,[]);
     assert.equal(workerChecked,true);
     assert.equal(app.store.meta('mainThread'),oldThread);assert.equal(app.store.meta('mainToolsHash'),oldHash);
-    assert.deepEqual(requests,[
-      ...[query,'empty','filtered','denied','redirect','lost','oversized'].map(query=>({path:'/v1/tools/search',method:'POST',auth:`Bearer ${token}`,body:{query,count:5,need_content:false}})),
+    const searchRequests=[query,'empty','filtered','denied','redirect','lost','oversized'].map(query=>({path:'/v1/tools/search',method:'POST',auth:`Bearer ${token}`,body:{query,count:5,need_content:false}}));
+    const fetchRequests=[
       {path:'/v1/tools/fetch',method:'POST',auth:`Bearer ${token}`,body:{url:'https://example.invalid/article'}},
       {path:'/v1/tools/fetch',method:'POST',auth:`Bearer ${token}`,body:{url:missingUrl}},
-    ]);
+    ];
+    assert.deepEqual(requests,nativeRole==='main'?[...fetchRequests,...searchRequests]:[...searchRequests,...fetchRequests]);
     await app.close();
     for(const source of ['codex','website'] as const){
       if(source==='website')delete process.env.HOMER_DEEPSEEK_TOKEN;

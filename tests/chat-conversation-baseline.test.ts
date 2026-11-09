@@ -28,10 +28,7 @@ test('conversation baseline reads legacy persisted replies and a separate queue 
   f.history.record('publication','synthetic','正式答复');
   f.inputs.accept({requestId:'pending',text:'待处理请求'});
   const expected=f.history.message('publication')!;
-  const host=Object.assign(Object.create(Homer.prototype),{store:f.store,history:f.history,inputs:f.inputs,processes:f.processes,media:{view:()=>{throw Error('unexpected_media');}},mainActivityState:()=>null}) as Homer;
-  const state=host.conversationState();
-  assert.deepEqual(state.messages.map(m=>m.id),['publication']);assert.equal(state.messages[0]!.createdAt,expected.createdAt);assert.equal(state.queue.length,1);
-  const page=f.pages.read('synthetic',{limit:40});assert.deepEqual(page.messages.map(m=>m.id),['publication']);assert.equal(page.messages[0]!.createdAt,expected.createdAt);
+  const page=f.pages.read('synthetic',{limit:40});assert.deepEqual(page.messages.map(m=>m.id),['publication']);assert.equal(page.messages[0]!.createdAt,expected.createdAt);assert.equal(f.pages.queuePage().items.length,1);
   assert.deepEqual(readTaskOverview(f.store.db).tasks,[]);
  }finally{f.close();}
 });

@@ -30,8 +30,8 @@ import {WORKER_FILE_TOOLS} from '../src/media-tools.js';
   } finally {f.close();}
 });
 
-test('Workers retain scoped input reads, synchronous questions and capabilities without business management', () => {
+test('Workers retain scoped input reads, synchronous questions and business file tools', () => {
   const names = new Set([...WORKER_INTERACTION_TOOLS, ...WORKER_FILE_TOOLS, ...WORKER_HOST_MCP_TOOLS].map(tool => tool.name));
-  for (const name of ['ask_main', 'capabilities', 'inspect_attachment', 'create_voice_result', 'stage_file_result']) assert.ok(names.has(name), name);
-  for (const name of ['read_material', 'write_markdown', 'send_user_message', 'task_create', 'task_update', 'worker_open', 'worker_send', 'worker_interrupt', 'accept_result', 'publish_delivery', 'archive_work', 'restore_work', 'pending_add', 'pending_update', 'task_delegate', 'agent_send', 'inbox_read', 'inbox_ack', 'task_wait', 'adopt_version']) assert.ok(!names.has(name), name);
+  for (const name of ['ask_main', 'inspect_attachment', 'stage_file_result']) assert.ok(names.has(name), name);
+  for (const name of ['capabilities', 'read_material', 'write_markdown', 'send_user_message', 'task_create', 'task_update', 'worker_open', 'worker_send', 'worker_interrupt', 'accept_result', 'publish_delivery', 'archive_work', 'restore_work', 'pending_add', 'pending_update', 'task_delegate', 'agent_send', 'inbox_read', 'inbox_ack', 'task_wait', 'adopt_version']) assert.ok(!names.has(name), name);
 });

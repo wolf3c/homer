@@ -7,6 +7,7 @@ import {resolve,join} from 'node:path';
 import {MainInputs} from '../src/recursive-main-inputs.js';
 import {RecursiveTools} from '../src/recursive-tools.js';
 import {queueMoveBefore} from '../ui/queue-operations.js';
+import {WebHistoryPages} from '../src/web-history-pages.js';
 
 function fixture(database=':memory:'){
  const f=historyFixture(0,160,false,database);
@@ -27,6 +28,38 @@ function fixture(database=':memory:'){
 
  return {...f,send,agentId,actor,consume,task};
 }
+test('worker queue presents type, task title and receipt state without exposing message bodies',()=>{
+ const f=fixture();try{
+  const opened=f.tasks.workerOpen(f.actor,{operationId:'questions',taskId:f.task.taskId,text:'Synthetic work'}),run=f.tasks.claim(opened.runId)!;
+  f.tasks.bind(run.id,run.epoch,'worker-thread','worker-turn');
+  const add=(kind:'question'|'authorization',requestId:string)=>{
+   const interaction=f.interactions.open({runId:run.id,threadId:'worker-thread',turnId:'worker-turn',requestId,source:'native',kind,details:{secret:'DO NOT DISPLAY'},authority:{sourceRequestId:'source',description:'Synthetic',nativeApprovals:false}},()=>true);
+   f.tasks.queueInteraction(interaction.id);
+  };
+  add('question','q');add('authorization','a');
+  const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'DO NOT DISPLAY'},true)!;
+  const reader=new WebHistoryPages(f.history,f.processes,f.inputs);
+  const texts=()=>reader.dispatchQueue(undefined,'epoch','all').items.map(item=>item.origin==='worker'?item.text:'');
+  assert.equal(JSON.stringify(reader.dispatchQueue(undefined,'epoch','all').items).includes('DO NOT DISPLAY'),false,'the browser queue projection excludes internal message bodies');
+  assert.deepEqual(texts(),[
+   '提问 · 等待主 Agent 处理 · 事项：Same title',
+   '操作或授权请求 · 等待主 Agent 处理 · 事项：Same title',
+   '执行信息已返回 · 等待主 Agent 处理 · 事项：Same title',
+  ]);
+  const first=f.inputs.claim([],'all')!;
+  assert.equal(texts()[0],'提问 · 主 Agent 正在接收或处理 · 事项：Same title');
+  assert.equal(f.inputs.runnableHead('all')!.origin,'worker');
+  const prepare=f.store.db.prepare.bind(f.store.db);
+  f.store.db.prepare=((sql:string)=>{if(sql.startsWith('SELECT id,title FROM tasks')||sql.startsWith('SELECT id,kind,runId FROM worker_interactions'))throw Error('synthetic_lookup_failure');return prepare(sql);}) as typeof f.store.db.prepare;
+  try{assert.equal(texts()[0],'交互请求 · 主 Agent 正在接收或处理 · 事项标题暂不可用');}finally{f.store.db.prepare=prepare;}
+  assert.equal(first.origin,'worker');
+  f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(reply.messageId);
+  f.store.db.prepare('UPDATE tasks SET title=? WHERE id=?').run('',f.task.taskId);
+  assert.equal(texts()[2],'执行信息已返回 · 接收状态待核对 · 事项标题暂不可用');
+  f.store.db.prepare('DELETE FROM worker_interactions').run();
+  assert.equal(texts()[0],'交互请求 · 主 Agent 正在接收或处理 · 事项标题暂不可用');
+ }finally{f.close();}
+});
 test('resume boundary preserves old worker events while accepting new user work',()=>{
  const f=fixture();try{
   const old=f.send('old-worker');
@@ -114,7 +147,7 @@ for(const state of ['blocked','uncertain'] as const)test('recovery retains exact
   assert.deepEqual(inputs.recoveryMessages(Number(messages[0]!.seq)),[]);
   assert.equal(inputs.claim([],'all'),undefined);
   f.store.setMeta('mainThread','foreign-thread');assert.deepEqual(inputs.recoveryMessages(),[]);f.store.setMeta('mainThread','synthetic-history');
-  inputs.resumeWorkerMessages();assert.equal(inputs.claim([],'all')!.messageId,pending.messageId);
+  inputs.resumeWorkerMessages(cutoff+1);assert.equal(inputs.claim([],'all')!.messageId,pending.messageId);
   assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(prior.messageId)!.state,state);
  }finally{f.close();}
 });
@@ -247,9 +280,11 @@ test('desktop release admits only pending Worker messages, preserving old user a
   const cutoff=Number(f.store.db.prepare('SELECT max(seq) n FROM agent_messages').get()!.n);
   const resumed=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff});
   assert.equal(resumed.dispatchSummary().awaitingUser,true);assert.equal(resumed.claim([],'all'),undefined);
+  resumed.resumeWorkerMessages(cutoff);
+  assert.equal(resumed.claim([],'all'),undefined,'completing a recovered input does not release the old Worker backlog');
   resumed.accept({requestId:'new-user',text:'New requirements first'});
   const user=resumed.claim([],'all')!;assert.equal(user.origin,'user');resumed.finish(user.messageId,user.revision,'completed');
-  resumed.resumeWorkerMessages();
+  resumed.resumeWorkerMessages(user.seq);
   for(const message of [first,second]){
    const next=resumed.claim([],'all')!;assert.equal(next.messageId,message.messageId);
    assert.equal(resumed.claim([],'all'),undefined,'one receipt owns dispatch until acknowledged');

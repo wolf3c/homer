@@ -15,7 +15,7 @@ async function accountWhen(page,predicate){
 }
 async function runtimeWhen(page,predicate){
  const deadline=Date.now()+30000;
- while(Date.now()<deadline){const state=await page.evaluate(async()=>(await fetch('/api/state')).json());if(predicate(state))return state;await page.waitForTimeout(50);}
+ while(Date.now()<deadline){const state=await page.evaluate(async()=>(await fetch('/api/history/state')).json());if(predicate(state))return state;await page.waitForTimeout(50);}
  throw Error('synthetic_runtime_state_timeout');
 }
 async function readAttachment(page,{messageId,assetId,revision}){
@@ -81,12 +81,10 @@ test('actual website delivers a finite native Token to Homer and preserves histo
   const restarted=desktop.waitForEvent('close',{timeout:25000});await page.getByRole('button',{name:'重启并应用',exact:true}).click();await restarted;desktop=undefined;
   for(const file of ['codex/desktop-owner.json','runtime/cli.lock','runtime/gateway/cli.lock'])assert.equal(existsSync(join(root,file)),false);
   page=await start();await runtimeWhen(page,s=>s.upgrade.phase==='running'&&s.threadId&&!s.isRunning);
+  await page.getByRole('heading',{name:'一语成真。'}).waitFor();
   const startup=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
   try{
-   const completed=startup.prepare("SELECT 1 FROM agent_messages WHERE kind='user_input' AND json_extract(payloadJson,'$.source')='first_launch' AND json_extract(payloadJson,'$.terminal')='completed'");
-   const deadline=Date.now()+30000;while(!completed.get()&&Date.now()<deadline)await page.waitForTimeout(50);
-   assert.ok(completed.get(),'fresh profile initialization must finish before normal work');
-   assert.equal(startup.prepare("SELECT count(*) n FROM agent_messages WHERE kind='user_input' AND json_extract(payloadJson,'$.source')='first_launch'").get().n,1);
+   assert.equal(startup.prepare("SELECT count(*) n FROM agent_messages WHERE kind='user_input'").get().n,0);
   }finally{startup.close();}
   let delivered,downloaded,history;
   await page.getByRole('button',{name:'设置',exact:true}).click();

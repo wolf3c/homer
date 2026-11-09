@@ -12,7 +12,7 @@ test('draft image preview is available only to its original unsubmitted upload a
  const parent=resolve('.codex/scratch/draft-preview-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'fixture-'));
  mkdirSync(join(root,'runtime'),{recursive:true});
  class Engine extends EventEmitter {threadId='preview-test-main';async start(){return this.threadId;}async turn(){return {status:'completed' as const,text:'synthetic'};}async close(){return true;}async interrupt(){return true;}}
- const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',timeoutMs:2000,mainTimeoutMs:2000,stopGraceMs:100},async()=>{},()=>new Engine());
+ const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',stopGraceMs:100},async()=>{},()=>new Engine());
  let web:Awaited<ReturnType<typeof createWebServer>>|undefined;
  try{
   assert.ok(ffmpegPath);await app.start();web=await createWebServer({port:0,bridge:homerWebBridge(app)});

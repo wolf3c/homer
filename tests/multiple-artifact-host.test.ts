@@ -45,7 +45,7 @@ test('Homer opens one Worker and commits the two selected files in one backgroun
   async interrupt(){return true;}
   async close(){return true;}
  }
- app=new Homer({runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexHome:join(dir,'empty-home'),nativeCodexHome:join(dir,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:20000,mainTimeoutMs:10000,stopGraceMs:100},async message=>{events.push(message);},(options,tool)=>new Peer(options,tool));
+ app=new Homer({runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexHome:join(dir,'empty-home'),nativeCodexHome:join(dir,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async message=>{events.push(message);},(options,tool)=>new Peer(options,tool));
  try{
   await app.start();await app.message('synthetic multiple files','synthetic-multi-source');await app.idle();
   assert.ok(messageId,JSON.stringify(app.store.db.prepare('SELECT type,code FROM events').all()));
@@ -54,7 +54,7 @@ test('Homer opens one Worker and commits the two selected files in one backgroun
   const messages=app.history.list(app.store.meta('mainThread')!).filter(m=>m.attachments?.length);
   assert.equal(messages.length,1);const [sent]=messages;
   assert.equal(sent!.id,messageId);assert.equal(sent!.taskId,taskId);assert.equal(sent!.requestId,null);
-  const bridge=homerWebBridge(app),state=await bridge.state();
+  const bridge=homerWebBridge(app),state=await bridge.history!.state();
   assert.deepEqual(state.artifacts?.map(f=>f.title),['事实.md','说明.md']);
   assert.deepEqual(await Promise.all(sent!.attachments!.map(async ref=>Buffer.from((await bridge.media!.read({messageId,...ref})).data,'base64').toString())),['# 事实\n日期未确定。','# 说明\n保留未知日期。']);
   assert.equal(app.tasks.task(taskId).outcome,null);

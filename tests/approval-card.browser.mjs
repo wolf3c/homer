@@ -76,7 +76,7 @@ if(process.argv.includes('--serve')){
    assert.ok(await p.evaluate(()=>!!document.querySelector('[contenteditable=true]')));assert.ok(await p.evaluate(()=>!!document.querySelector('header')));checks.push('ordinary free reply and official QuestionFlow submit their exact payloads; composer and header retain product components');
    f.reset({artifacts:[attachment]});await loaded();
    await p.evaluate(()=>{if(!document.querySelector('#task-status-panel'))document.querySelector('#task-status-trigger').click();});await wait(()=>document.querySelector('#task-status-panel'));
-   await p.evaluate(()=>document.querySelector('button[aria-label="收起工作状态"]').click());await wait(()=>!document.querySelector('#task-status-panel'));
+   await p.evaluate(()=>document.querySelector('#task-status-trigger').click());await wait(()=>!document.querySelector('#task-status-panel'));
    await wait(()=>document.querySelector('button[aria-label="预览 合成成果.txt"]'));
    await p.evaluate(()=>document.querySelector('button[aria-label="预览 合成成果.txt"]').click());
    await wait(()=>document.querySelector('#canvas-panel')?.textContent.includes('Synthetic preview content'));

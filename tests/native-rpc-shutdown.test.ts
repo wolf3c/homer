@@ -11,7 +11,7 @@ mkdirSync(scratch,{recursive:true});
 async function flush(){await new Promise<void>(done=>setImmediate(done));}
 function fixture(){
  const dir=mkdtempSync(join(scratch,'shutdown-test-'));
- const config:Config={appData:dir,runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic',timeoutMs:1000,mainTimeoutMs:1000,stopGraceMs:100};
+ const config:Config={appData:dir,runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic',stopGraceMs:100};
  for(const path of [config.runtime,config.workspace])mkdirSync(path);
  const app=new Homer(config,async()=>{});
  const engine=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'synthetic',tools:[]},async()=>({}));
@@ -30,9 +30,9 @@ test('service shutdown releases a blocked account read, login start or cancellat
  for(const operation of ['account/read','account/login/start','account/login/cancel']){
   const f=fixture();let closing:Promise<void>|undefined,finished=false;
   try{
-   if(operation==='account/login/cancel')await f.app.manageCapabilities({action:'account_login',approve:true});
+   if(operation==='account/login/cancel')await f.app.manageNativeAccount({action:'account_login',approve:true});
    f.hold(operation);
-   const work=f.app.manageCapabilities(operation==='account/read'?{action:'account_state'}:operation==='account/login/start'?{action:'account_login',approve:true}:{action:'account_cancel',loginId:'synthetic',approve:true});
+   const work=f.app.manageNativeAccount(operation==='account/read'?{action:'account_state'}:operation==='account/login/start'?{action:'account_login',approve:true}:{action:'account_cancel',loginId:'synthetic',approve:true});
    work.catch(()=>{});await flush();assert.equal(f.engine['pending'].size,1);
    closing=f.app.close().then(()=>{finished=true;});await flush();
    assert.equal(finished,true,'close must stop control transport before waiting for the account queue');

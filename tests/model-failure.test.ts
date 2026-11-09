@@ -23,11 +23,11 @@ for(const [code,copy] of [
  const app=new Homer({workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,desktopModelSource:'website'},async()=>{},()=>new Engine());
  try{
   await app.start();app.submitMessage({requestId:'failure',text:'Synthetic request'});await app.idle();
-  assert.equal(turns,1);assert.equal(app.conversationState().modelFailure?.code,code);
+  assert.equal(turns,1);assert.equal(app.conversationControlState().modelFailure?.code,code);
   const before=app.store.db.prepare("SELECT text FROM conversation_messages WHERE requestId='failure' AND role='assistant'").all() as {text:string}[];
   assert.match(before.map(r=>r.text).join('\n'),new RegExp(copy));
   assert.equal(app.store.db.prepare("SELECT code FROM events WHERE type='main_turn_failed' ORDER BY seq DESC LIMIT 1").get()!.code,code);
-  app.submitMessage({requestId:'next',text:'Synthetic next request'});await app.idle();assert.equal(turns,2);assert.equal(app.conversationState().modelFailure,undefined);
+  app.submitMessage({requestId:'next',text:'Synthetic next request'});await app.idle();assert.equal(turns,2);assert.equal(app.conversationControlState().modelFailure,undefined);
   assert.deepEqual(app.store.db.prepare("SELECT text FROM conversation_messages WHERE requestId='failure' AND role='assistant'").all(),before);
  }finally{await app.close();rmSync(root,{recursive:true,force:true});}
 });

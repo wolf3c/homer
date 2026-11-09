@@ -41,6 +41,18 @@ test('user content and its single copy action have separate surfaces while prese
  assert.equal(calls.details.message,original);
 });
 
+test('the channel label sits above the original and only uses projected account data',()=>{
+ const text='::message-source{source=telegram}\n\n原文';
+ const original={id:'synthetic-channel',role:'user',text,channelSource:{source:'telegram',entryLabel:'homer_work_bot'}};
+ const metadata={messageId:original.id,original,media:[]};
+ const {html,calls}=render(metadata);
+ assert.match(html,/<div class="user-message-bubble"><p class="message-source-label">Telegram@homer_work_bot<\/p><div data-aui-quote-selectable/);
+ assert.match(render({...metadata,original:{...original,channelSource:{source:'wechat',entryLabel:'wx-demo'}}}).html,
+   /<p class="message-source-label">微信@wx-demo<\/p>/);
+ assert.equal(calls.details.message.text,text);
+ assert.doesNotMatch(render({...metadata,original:{...original,channelSource:undefined}}).html,/class="message-source-label"/);
+});
+
 test('legacy quotes, annotations and media retain exact owners; formal user messages do not render queue controls',()=>{
  const queue={state:'queued',revision:4,input:{requestId:'synthetic-request',text:'补充说明'}};
  const media=[{assetId:'synthetic-asset',revision:2,filename:'合成附件.txt'}];

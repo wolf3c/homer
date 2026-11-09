@@ -26,7 +26,6 @@ export function createSession(){
   const directory=realpathSync(mkdtempSync(join(parent,'session-')));
   const home=join(directory,'host-home');
   const config={appData:join(directory,'app-data'),workspace:join(directory,'workspace'),
-    // A custom runtime avoids the product's automatic first-launch model turn.
     runtime:join(directory,'runtime-isolated'),codexHome:join(directory,'codex'),
     nativeCodexHome:join(directory,'codex'),codexBin:fixedEngine(),model:'deepseek-flash',effort:'high',fast:false,
     baseUrl:'https://models.super-tree.com/v1',keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
@@ -125,7 +124,7 @@ async function main(){
       import {CodexEngine} from ${JSON.stringify(pathToFileURL(join(root,'src/engine.ts')).href)};
       import {checkStartup} from ${JSON.stringify(import.meta.url)};
       const config=loadConfig(process.argv[1]);
-      const engine=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'Local startup check; no model turn.',tools:[],nativeCapabilities:true,controlOnly:true},async()=>{throw Error('no_model_tools');});
+      const engine=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'Local startup check; no model turn.',tools:[],controlOnly:true},async()=>{throw Error('no_model_tools');});
       if(await checkStartup(engine))console.log('固定引擎本机协议检查通过；未提交模型轮次。');else process.exitCode=130;`;
     process.exitCode=await runChild({bin:process.execPath,args:['--disable-warning=ExperimentalWarning','--import',loader,
       '--input-type=module','-e',source,session.configPath],cwd:session.config.workspace,env:environment(session)});

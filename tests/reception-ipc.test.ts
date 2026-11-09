@@ -16,17 +16,18 @@ test('real host IPC: dedicated notifications survive filtered output; GET is pur
   await until(()=>messages.some(message=>message.kind==='ready'||message.kind==='fatal'));assert.equal(messages.find(message=>message.kind==='ready')?.stateInvalidationProtocol,1);
   const receipt=await rpc('submit',{requestId:'synthetic-ipc-input',text:'Synthetic private input excluded from notifications'});
   let state:any;const end=Date.now()+4000;
-  do{state=await rpc('state');if(state.messages.some((item:any)=>item.role==='user'&&item.requestId==='synthetic-ipc-input'&&item.inputState==='completed'))break;if(Date.now()>end)throw Error('synthetic_turn_timeout');await new Promise(r=>setTimeout(r,10));}while(true);
+  do{state=await rpc('history.state');if(state.messages.some((item:any)=>item.role==='user'&&item.requestId==='synthetic-ipc-input'&&item.inputState==='completed'))break;if(Date.now()>end)throw Error('synthetic_turn_timeout');await new Promise(r=>setTimeout(r,10));}while(true);
   const invalidations=messages.filter(message=>message.kind==='state_invalidated');assert.ok(invalidations.length>=3);
   for(const message of invalidations)assert.deepEqual(message,{kind:'state_invalidated',protocol:1});
   assert.ok(!messages.some(message=>message.kind==='output'&&['main_start','main_terminal','tool_progress'].includes(message.message.type)));
-  const process=state.processNodes.find((node:any)=>node.replyMessageId===receipt.replyId);assert.ok(process);
+  const process=state.messages.find((message:any)=>message.process?.replyMessageId===receipt.replyId)?.process;assert.ok(process);
   assert.equal(state.queue.length,0);assert.equal(process.state,'worked');assert.equal(process.status,'completed');
-  assert.deepEqual(process.items.filter((item:any)=>item.phase==='final_answer').map((item:any)=>item.text),['Synthetic final answer']);
+  const detail=await rpc('history.process',{id:process.id,readEpoch:state.history.readEpoch});
+  assert.deepEqual(detail.items.filter((item:any)=>item.phase==='final_answer').map((item:any)=>item.text),['Synthetic final answer']);
   await new Promise(r=>setTimeout(r,100));const before=messages.filter(message=>message.kind==='state_invalidated').length;
-  await Promise.all([rpc('state'),rpc('state')]);await new Promise(r=>setTimeout(r,180));assert.equal(messages.filter(message=>message.kind==='state_invalidated').length,before);
+  await Promise.all([rpc('history.state'),rpc('history.state')]);await new Promise(r=>setTimeout(r,180));assert.equal(messages.filter(message=>message.kind==='state_invalidated').length,before);
   await rpc('feedback',{messageId:process.messageId,value:'up'});await until(()=>messages.filter(message=>message.kind==='state_invalidated').length>before);
-  assert.equal((await rpc('state')).messages.find((item:any)=>item.id===process.messageId).feedback,'up');
+  assert.equal((await rpc('history.state')).messages.find((item:any)=>item.id===process.messageId).feedback,'up');
  }finally{if(child.connected)child.send({kind:'stop'});await exited;rmSync(base,{recursive:true,force:true});}
 });
 
@@ -46,28 +47,32 @@ test('real host IPC: plain terminal skips hundreds of discarded deltas; streamin
   try{
    child.send({kind:'init',terminalDeltas,config:{runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:resolve('tests/fixtures/reception-app-server.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}});
    await until(()=>messages.some(m=>m.kind==='ready'));
-   for(let i=0;i<2;i++)await rpc('submit',{requestId:'synthetic-delta-'+i,text:'Synthetic delta mode input synthetic:delta-count='+count});
+   const receipts:{replyId:string}[]=[];
+   for(let i=0;i<2;i++)receipts.push(await rpc('submit',{requestId:'synthetic-delta-'+i,text:'Synthetic delta mode input synthetic:delta-count='+count}));
    await until(()=>messages.some(m=>m.kind==='synthetic_start_blocked'));
-   assert.equal((await rpc('state')).queue.find((item:any)=>item.input.requestId==='synthetic-delta-1')?.state,'queued','the next input is already queued before the active input begins emitting deltas');
+   assert.equal((await rpc('history.state')).queue.find((item:any)=>item.input.requestId==='synthetic-delta-1')?.state,'queued','the next input is already queued before the active input begins emitting deltas');
    child.send({kind:'synthetic_release_start'});
    await until(()=>messages.some(m=>m.kind==='output'&&m.message.requestId==='synthetic-delta-0'&&['delta','reply'].includes(m.message.type)));
    if(terminalDeltas===false){
     assert.equal(pending.length,0,'plain terminal must not wait for any discarded delta written receipt');
    }else{
     assert.equal(pending.length,1,'one ordered delta is in flight until written');
-    const waiting=await rpc('state');assert.equal(waiting.queue.find((item:any)=>item.input.requestId==='synthetic-delta-1')?.state,'queued');
+    const waiting=await rpc('history.state');assert.equal(waiting.queue.find((item:any)=>item.input.requestId==='synthetic-delta-1')?.state,'queued');
     draining=true;await acknowledge();
    }
    await until(()=>messages.some(m=>m.kind==='output'&&m.message.type==='reply'&&m.message.requestId==='synthetic-delta-1'));
-   const state=await rpc('state');assert.equal(state.queue.length,0);
+   const state=await rpc('history.state');assert.equal(state.queue.length,0);
    assert.deepEqual(state.messages.filter((item:any)=>item.role==='user').map((item:any)=>[item.requestId,item.inputState]),[['synthetic-delta-0','completed'],['synthetic-delta-1','completed']]);
-   for(let i=0;i<2;i++){
+   for(const [i,receipt] of receipts.entries()){
     const requestId='synthetic-delta-'+i,events=messages.filter(m=>(m.requestId??m.message?.requestId)===requestId);
     const ipc=events.filter(m=>m.kind==='output');
     assert.deepEqual(ipc.map(m=>m.message.type),[...Array(terminalDeltas===false?0:count).fill('delta'),'reply']);
     if(terminalDeltas!==false)assert.deepEqual(ipc.filter(m=>m.message.type==='delta').map(m=>m.message.text),Array.from({length:count},(_,n)=>`Synthetic-${n};`));
     // The full stream still reached history/process projection and Web reads.
-    assert.ok(JSON.stringify(state.processNodes).includes(Array.from({length:count},(_,n)=>`Synthetic-${n};`).join('')));
+    const node=state.messages.find((item:any)=>item.process?.replyMessageId===receipt.replyId)?.process;
+    assert.ok(node);
+    const detail=await rpc('history.process',{id:node.id,readEpoch:state.history.readEpoch});
+    assert.ok(JSON.stringify(detail).includes(Array.from({length:count},(_,n)=>`Synthetic-${n};`).join('')));
    }
    t.diagnostic(JSON.stringify({terminalDeltas:terminalDeltas??'legacy',deltasPerInput:count,inputs:2,deltaIPC:messages.filter(m=>m.kind==='output'&&m.message.type==='delta').length}));
   }finally{
@@ -101,9 +106,9 @@ test('real host IPC: withheld delta and reply written acknowledgements locate ta
   for(const [index,phase] of boundaries.entries())assert.ok(phases.indexOf(phase)>=0&&(index===0||phases.indexOf(phase)>phases.indexOf(boundaries[index-1]!)),phase);
   assert.ok(deltaId);assert.ok(report.outputPending.some((row:any)=>row.outputId===deltaId&&row.requestId==='synthetic-ipc-tail-0'&&row.sentAt));
   assert.ok(!JSON.stringify(report).includes('Synthetic content omitted'));
-  const state=await rpc('state');assert.deepEqual(state.queue.map((item:any)=>[item.input.requestId,item.state]),Array.from({length:5},(_,i)=>['synthetic-ipc-tail-'+(i+1),'queued']));
+  const state=await rpc('history.state');assert.deepEqual(state.queue.map((item:any)=>[item.input.requestId,item.state]),Array.from({length:5},(_,i)=>['synthetic-ipc-tail-'+(i+1),'queued']));
   assert.equal(state.messages.find((item:any)=>item.role==='user'&&item.requestId==='synthetic-ipc-tail-0').inputState,'completed');
-  assert.equal(state.processNodes[0].state,'worked');assert.ok(!report.records.some((row:any)=>row.requestId==='synthetic-ipc-tail-1'&&row.phase==='native_start'));
+  assert.equal(state.messages.find((message:any)=>message.process).process.state,'worked');assert.ok(!report.records.some((row:any)=>row.requestId==='synthetic-ipc-tail-1'&&row.phase==='native_start'));
   releasedDelta=true;child.send({kind:'written',id:deltaId});await until(()=>!!replyId);
   report=await timings();assert.ok(report.outputPending.some((row:any)=>row.outputId===replyId));
   assert.ok(report.records.some((row:any)=>row.requestId==='synthetic-ipc-tail-0'&&row.phase==='reply_delivery_start'));
@@ -112,7 +117,7 @@ test('real host IPC: withheld delta and reply written acknowledgements locate ta
   report=await waitReport(report=>report.records.some((row:any)=>row.requestId==='synthetic-ipc-tail-5'&&row.phase==='round_end'));
   const records=report.records.filter((row:any)=>row.outputId===replyId);
   for(const phase of ['output_ipc_start','output_ipc_sent','output_ipc_ack'])assert.ok(records.some((row:any)=>row.phase===phase),phase);
-  assert.equal(report.outputPending.length,0);const finished=await rpc('state');assert.equal(finished.queue.length,0);
+  assert.equal(report.outputPending.length,0);const finished=await rpc('history.state');assert.equal(finished.queue.length,0);
   assert.deepEqual(finished.messages.filter((item:any)=>item.role==='user').map((item:any)=>[item.requestId,item.inputState]),Array.from({length:6},(_,i)=>['synthetic-ipc-tail-'+i,'completed']));
  }finally{
   releasedDelta=releasedReply=true;if(child.connected){if(deltaId)child.send({kind:'written',id:deltaId});if(replyId)child.send({kind:'written',id:replyId});child.send({kind:'stop'});}

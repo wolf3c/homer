@@ -98,7 +98,7 @@ try{for(const width of [1440,390,320]){
   await matter.getByRole('button',{name:'前往原待答卡'}).click();
   await page.locator('#task-interaction-reader-removal-question').waitFor();
   await page.waitForFunction(()=>document.activeElement?.id==='task-interaction-reader-removal-question');await noReader();ok(true,'独立有效待答沿顶部状态定位原卡并还焦，未提交');
-  await status.click();await popover.waitFor();if(width>=1120){await popover.getByRole('button',{name:'收起工作状态',exact:true}).focus();await page.keyboard.press('Enter');}else await page.keyboard.press('Escape');await popover.waitFor({state:'hidden'});ok(await status.evaluate(e=>e===document.activeElement),'键盘关闭状态浮层返回原入口，无失效关闭回调');
+  await status.click();await popover.waitFor();if(width>=1120){await status.focus();await page.keyboard.press('Enter');}else await page.keyboard.press('Escape');await popover.waitFor({state:'hidden'});ok(await status.evaluate(e=>e===document.activeElement),'键盘关闭状态浮层返回原入口，无失效关闭回调');
   // An ordinary lazy history request may arrive after the thread changes.
   f.delay(500);const oldToggle=page.locator('#message-node-88 [data-slot="collapsible-trigger"]');await oldToggle.click();
   await page.waitForFunction(()=>document.querySelector('#message-node-88 [data-slot="collapsible-trigger"]')?.getAttribute('aria-expanded')==='true');

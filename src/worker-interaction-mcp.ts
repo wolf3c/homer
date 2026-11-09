@@ -8,15 +8,14 @@ import { MAIN_INTERACTION_TOOLS } from "./worker-interaction-tools.js";
 import type { Tool } from "./engine.js";
 import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
 
-import {CAPABILITY_TOOLS} from "./native-capability-tools.js";
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {MEMBERSHIP_TOOLS} from './membership-web-tools.js';
 
-export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS];
-export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...WORKER_MEDIA_TOOLS];
-export function hostMcpTools(role:'main'|'worker',membership=false){
+export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS];
+export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS];
+export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false){
   const tools=role==='worker'?WORKER_HOST_MCP_TOOLS:HOST_MCP_TOOLS;
-  return membership?[...tools,...MEMBERSHIP_TOOLS]:tools;
+  return membership?[...tools,...MEMBERSHIP_TOOLS.filter(tool=>!nativeWebSearch||tool.name!=='web_search')]:tools;
 }
 const allowed = (name: unknown, catalog:readonly Tool[]): name is string => typeof name === "string" && catalog.some(tool => tool.name === name);
 function code(error: unknown) {
@@ -28,7 +27,7 @@ export class WorkerInteractionMcp {
   readonly directory = process.cwd();
   private server?: Server;
   private sockets = new Set<Socket>();
-  constructor(runtime: string, private handle: (tool: string, args: unknown) => Promise<unknown>,readonly catalog:Tool[]=HOST_MCP_TOOLS) {
+  constructor(runtime: string, private handle: (tool: string, args: unknown, meta: unknown) => Promise<unknown>,readonly catalog:Tool[]=HOST_MCP_TOOLS) {
     const absolute = join(runtime, "hi-" + randomUUID().slice(0, 8) + ".sock");
     const local = relative(this.directory, absolute);
     this.path = Buffer.byteLength(local) < Buffer.byteLength(absolute) ? local : absolute;
@@ -55,7 +54,7 @@ export class WorkerInteractionMcp {
             const message = JSON.parse(buffer.slice(0, end));
             if (!allowed(message.tool,this.catalog)) throw new Error("interaction_tool_denied");
             socket.setTimeout(INTERACTION_LIMITS.businessMs);
-            const result = JSON.stringify({ result: await this.handle(message.tool, message.arguments) });
+            const result = JSON.stringify({ result: await this.handle(message.tool, message.arguments, message.meta) });
             if (Buffer.byteLength(result) > INTERACTION_LIMITS.responseBytes) throw new Error("interaction_response_too_large");
             socket.end(result + "\n");
           } catch (error) { socket.end(JSON.stringify({ error: code(error) }) + "\n"); }
@@ -81,7 +80,7 @@ export class WorkerInteractionMcp {
   }
 }
 
-function hostCall(path: string, tool: string, args: unknown): Promise<unknown> {
+function hostCall(path: string, tool: string, args: unknown, meta?: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(path);
     let buffer = "", settled = false, dispatched=false;
@@ -90,7 +89,7 @@ function hostCall(path: string, tool: string, args: unknown): Promise<unknown> {
     socket.on("error", fail);
     socket.on("end", () => { if (!settled) fail(); });
     socket.on("connect", () => {
-      const request=JSON.stringify({ tool, arguments: args }) + "\n";
+      const request=JSON.stringify({ tool, arguments: args, meta }) + "\n";
       // Once writing starts, a lost reply cannot prove that work did not run.
       dispatched=true;socket.setTimeout(INTERACTION_LIMITS.businessMs);socket.write(request);
     });
@@ -113,9 +112,9 @@ function hostCall(path: string, tool: string, args: unknown): Promise<unknown> {
   });
 }
 
-export function runWorkerInteractionMcp(path: string,role:string='main',membership=false) {
+export function runWorkerInteractionMcp(path: string,role:string='main',membership=false,nativeWebSearch=false,plugins:Tool[]=[]) {
   if(role!=='main'&&role!=='worker')throw Error('interaction_role_denied');
-  const catalog=hostMcpTools(role,membership);
+  const catalog=[...hostMcpTools(role,membership,nativeWebSearch),...(role==='main'?plugins:[])];
   const send = (message: unknown) => process.stdout.write(JSON.stringify(message) + "\n");
   createInterface({ input: process.stdin }).on("line", line => {
     void (async () => {
@@ -134,7 +133,8 @@ export function runWorkerInteractionMcp(path: string,role:string='main',membersh
         else if (message.method === "tools/call") {
           try {
             if (!allowed(message.params?.name,catalog)) throw new Error("interaction_tool_denied");
-            const value = await hostCall(path, message.params.name, message.params.arguments);
+            const meta = plugins.some(tool=>tool.name===message.params.name) ? message.params._meta : undefined;
+            const value = await hostCall(path, message.params.name, message.params.arguments, meta);
             const media=value as {mediaContent?:unknown[]};
             result = { isError: false, content: media?.mediaContent??[{ type: "text", text: JSON.stringify(value) }] };
           } catch (error) {

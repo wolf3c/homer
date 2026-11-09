@@ -105,7 +105,7 @@ export function prepareDesktopProfile(root,version,{test=false,initialize=false}
  const acceptedVersion={format:1,schema:version.schema,codex:version.codex};
  if(existsSync(marker)){
    const saved=JSON.parse(readFileSync(marker,'utf8'));
-   if(saved.format!==1||saved.schema!==version.schema||saved.codex!==version.codex)throw Error('desktop_schema_incompatible');
+   if(saved.format!==1||typeof saved.schema!=='string'||!saved.schema||saved.codex!==version.codex)throw Error('desktop_schema_incompatible');
    if(saved.test!==test)throw Error('desktop_profile_mode_mismatch');
  }else{
    const permission=test?fixture:fresh;

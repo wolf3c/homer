@@ -18,7 +18,7 @@ test('normal restart reconciles user history before generic receipt recovery, pr
   async interrupt(){return true;}
   async close(){return true;}
  }
- const config={workspace,runtime:join(dir,'runtime'),codexHome:join(dir,'home'),nativeCodexHome:join(dir,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:5000,mainTimeoutMs:5000,stopGraceMs:10};
+ const config={workspace,runtime:join(dir,'runtime'),codexHome:join(dir,'home'),nativeCodexHome:join(dir,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:10};
  let app=new Homer(config,async()=>{},options=>new Peer(options));
  try{
   await app.start();const thread=app.store.meta('mainThread')!;
@@ -49,10 +49,13 @@ test('normal restart reconciles user history before generic receipt recovery, pr
   assert.deepEqual(rows('conversation_messages','requestId=?',['cancelled']),before.cancelled);
   assert.deepEqual(rows('operations','id=(SELECT operationKey FROM agent_messages WHERE id=?)',[active.messageId]),before.operation,'native turn and accepted input identity remain unchanged');
   assert.equal(app.store.request('original')!.state,'interrupted');assert.equal(app.store.request('original')!.response,null);
-  const process=app.conversationState().processNodes.find(n=>n.id==='original-node')!;assert.equal(process.state,'worked');assert.equal(process.status,'unknown');assert.match(process.endEventId!,/^host:restart:engine_closed/);assert.equal(process.final,undefined);
+  const process=app.processes.exact('original-node')!;assert.equal(process.state,'worked');assert.equal(process.status,'unknown');assert.match(process.endEventId!,/^host:restart:engine_closed/);assert.equal(process.final,undefined);
   assert.deepEqual(seen,Array.from({length:6},(_,i)=>'Synthetic queued '+i));assert.equal(app.inputs.list().filter(q=>q.state==='completed').length,7);
-  assert.equal(app.conversationState().isRunning,false);assert.equal(app.conversationState().activeMessageId,null);assert.equal(app.conversationState().mainActivity,null);
-  assert.equal(app.submitMessage(source).fresh,false);await app.idle();assert.deepEqual(seen,Array.from({length:6},(_,i)=>'Synthetic queued '+i),'same accepted request retry cannot revive uncertain work');
+  assert.equal(app.conversationControlState().isRunning,false);assert.equal(app.conversationControlState().activeMessageId,null);assert.equal(app.conversationControlState().mainActivity,null);
+  assert.equal(app.submitMessage(source).fresh,false);
+  await assert.rejects(app.message(source.text,source.requestId),/request_interrupted_use_new_id/);
+  assert.equal(await app.message(later.text,later.requestId),'重复请求的历史回执：\nSynthetic later final');
+  await app.idle();assert.deepEqual(seen,Array.from({length:6},(_,i)=>'Synthetic queued '+i),'same accepted request retry cannot revive uncertain work');
   const receipts=rows('agent_receipts','messageId IN (?,?)',[active.messageId,old.messageId]);app.inputs.reconcile();assert.deepEqual(rows('agent_receipts','messageId IN (?,?)',[active.messageId,old.messageId]),receipts,'recovery is idempotent');
  }finally{await app.close();rmSync(dir,{recursive:true,force:true});}
 });

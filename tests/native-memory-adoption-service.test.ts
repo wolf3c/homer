@@ -9,7 +9,7 @@ test('native change leaves a live Worker running and permits its authorized resu
  const root=resolve('.codex/scratch/native-memory-service-tests');mkdirSync(root,{recursive:true});const dir=mkdtempSync(join(root,'worker-'));
  const home=join(dir,'codex'),runtime=join(dir,'runtime'),workspace=join(dir,'workspace');mkdirSync(runtime);mkdirSync(join(workspace,'materials'),{recursive:true});
  const {writeFileSync}=await import('node:fs');writeFileSync(join(workspace,'materials/sample.md'),'Synthetic');
- const base={appData:dir,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',runtime,workspace,model:'synthetic',requiresOpenaiAuth:false,timeoutMs:5000,mainTimeoutMs:1000,stopGraceMs:100};
+ const base={appData:dir,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',runtime,workspace,model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
  const peers:Peer[]=[];let serial=0;
  class Peer extends EventEmitter{
   threadId:string;turnId='';resumable=true;release?:(r:any)=>void;

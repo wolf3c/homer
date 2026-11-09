@@ -5,7 +5,7 @@ import type {WebHistoryPages} from '../src/web-history-pages.js';
 import type {Files} from '../src/files.js';
 
 type HistoryBridge=ReturnType<typeof homerWebBridge> & {history:NonNullable<ReturnType<typeof homerWebBridge>['history']>};
-export function fixture(total:number,mode:'before'|'after',media?:boolean,stableRecent?:boolean):Promise<
+export function fixture(total:number,mode:'after',media?:boolean,stableRecent?:boolean):Promise<
   Omit<ReturnType<typeof historyFixture>,'close'> & {
     files:Files;reader:WebHistoryPages|undefined;bridge:HistoryBridge;
     server:Awaited<ReturnType<typeof createWebServer>>;

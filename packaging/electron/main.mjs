@@ -7,6 +7,8 @@ import {fileURLToPath} from 'node:url';
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
 import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource} from '../homer/scripts/desktop-profile.mjs';
 import {processIdentity,leaseOwnerGone} from '../homer/dist/processes.js';
+import {DesktopChannels} from '../homer/dist/desktop-channels.js';
+import {webMediaRoute} from '../homer/dist/web-contract.js';
 
 import {validateHomerOrigins,readHomerConnection,authorizeHomerConnection,disconnectHomerConnection,queryHomerWallet,queryHomerRuntimeConfig,saveHomerRuntimeConfig} from '../homer/dist/homer-account.js';
 
@@ -275,6 +277,62 @@ function registerDesktopPermissions(){
   return result;
  });
 }
+let channels,channelBindings,channelResult,channelReadError=false;
+const channelPending=()=>channels?.snapshot().pending.length??0;
+const channelStopConfirmed=()=>closed&&acknowledged&&exitCode===0&&!exitSignal;
+async function channelState(refresh){
+ if(refresh&&!closed&&!quitPending){
+  try{
+   const bindings=await nativeAccount('channel-state');
+   if(!Array.isArray(bindings))throw Error('channel_status_invalid');
+   channelBindings=bindings;channelReadError=false;
+  }catch{channelReadError=true;}
+ }
+ let bindings=channelBindings,readError=channelReadError;
+ if(!bindings){
+  try{bindings=channels.configured();}
+  catch{bindings=[];readError=true;}
+ }
+ if(closed&&channelResult){
+  try{bindings=channels.configured();}catch{readError=true;}
+ }
+ return {bindings,...channels.snapshot(),readError,busy:quitPending&&quitAction==='channels',
+  stopped:channelStopConfirmed(),result:channelResult};
+}
+function registerDesktopChannels(){
+ ipcMain.handle('homer:chat-apps',async(event,action,input)=>{
+  const frame=event.senderFrame,navigation=permissionNavigation;
+  if(!channels||!permissionCaller(event,frame))throw Error('desktop_channels_forbidden');
+  if(action==='state'){
+   if(typeof input!=='boolean')throw Error('desktop_channels_arguments');
+   const value=await channelState(input);
+   if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_channels_forbidden');
+   return value;
+  }
+  if(quitPending||updateStopping||(updateState?.status==='ready'&&!closed))throw Error('desktop_channels_busy');
+  if(action==='apply'){
+   if(input!==undefined||(!channelPending()&&!channelStopConfirmed())||channels.snapshot().flow||!child||closed&&!channelStopConfirmed())
+    throw Error('desktop_channels_unavailable');
+   quitAction='channels';
+   requestQuit();
+   return;
+  }
+  if(action==='discard'){if(input!==undefined)throw Error('desktop_channels_arguments');channels.discard();channelResult=undefined;return;}
+  if(!input||typeof input!=='object')throw Error('desktop_channels_arguments');
+  if(action==='cancel'){if(typeof input.id!=='string')throw Error('desktop_channels_arguments');channels.cancel(input.id);return;}
+  if(action==='undo'){if(typeof input.key!=='string')throw Error('desktop_channels_arguments');channels.undo(input.channel,input.key);return;}
+  if(closed)throw Error('desktop_channels_unavailable');
+  if(action==='start')return channels.start(input.channel,input.target,input.token,input.credentials);
+  if(action==='code')return channels.code(input.id,input.code);
+  if(action==='confirm')return channels.confirm(input.id);
+  if(action==='remove'&&typeof input.key==='string'){
+   const label=channelBindings?.find(row=>row.adapterId===input.channel&&row.accountKey===input.key)?.label??input.key;
+   return channels.remove(input.channel,input.key,label);
+  }
+  throw Error('desktop_channels_arguments');
+ });
+}
+
 // Only the current main page may announce its settings component is mounted.
 let settingsPending=false,settingsSubscriber;
 function flushSettings(){
@@ -303,6 +361,7 @@ const showWindow=()=>{if(window&&!window.isDestroyed()){window.show();window.foc
 const startupFailed=error=>{void app.whenReady().then(async()=>{await showError('无法启动荷马（'+code(error)+'）。请保留原账号与数据，核对后重新打开。');if(!child){allowQuit=true;app.quit();}});};
 function finishQuit(){
  if(allowQuit)return;
+ if(!quitPending&&channelPending())return;
  if(updateStopping?!updateConfirmed():!confirmed())return;
  if(windowsUpdater&&updateStopping&&updateState?.status==='error'){windowsUpdateFailed();return;}
  if(updateState?.status==='ready'&&!updateStopping){updateFailed('update_service_stopped');return;}
@@ -312,6 +371,20 @@ function finishQuit(){
   try{
    if(quitAction==='disconnect'){disconnectHomerConnection(dailyTokenFile,accountBoundary());connection=readHomerConnection(dailyTokenFile,accountBoundary());}
    if(switchSource)saveDesktopModelSource(desktopProfile,switchSource);
+   if(quitAction==='channels'){
+    if(!channelStopConfirmed())throw Error('desktop_channel_stop_unconfirmed');
+    try{
+     const result=channels.apply();
+     channelResult={saved:[...(channelResult?.saved??[]),...result.saved],failed:result.failed};
+    }
+    catch{channelResult={saved:channelResult?.saved??[],failed:[...new Set(channels.snapshot().pending.map(row=>row.channel))]};}
+    if(channelResult.failed.length){
+     quitPending=false;quitAction=undefined;
+     const saved=channelResult.saved.join('、')||'无';
+     void showError('连接变更未全部保存。已保存：'+saved+'。请回到「连接聊天应用」重试剩余变更。');
+     return;
+    }
+   }
    if(quitAction&&!updateStopping)app.relaunch();
   }catch(error){if(updateStopping)updateFailed('update_service_stopped');quitPending=false;quitAction=undefined;switchSource=undefined;connectionError=accountCode(error);accountChanged();void showError('本机账号或来源设置未能保存，原设置已保留。请核对后重试。');return;}
   if(windowsUpdater&&updateStopping){
@@ -326,7 +399,7 @@ app.on('before-quit',event=>{
  if(allowQuit||!child){cancelConnection();return;}
  event.preventDefault();
  if(windowsRecovery())return;
- if(confirmed()&&updateState?.status!=='ready'){quitPending=true;finishQuit();return;}
+ if(confirmed()&&updateState?.status!=='ready'&&(!channelPending()||quitAction==='channels')){quitPending=true;finishQuit();return;}
  if(quitPending)return;
  quitPending=true;
  if(pendingConnection){cancelConnection();accountChanged();}
@@ -343,7 +416,7 @@ app.on('before-quit',event=>{
      const mayLeave=await contents.executeJavaScript("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))");
      if(!mayLeave||window!==currentWindow||contents.isDestroyed()||navigation!==permissionNavigation){updateFailed('update_unsaved');return;}
     }
-    const options={type:'question',title:'荷马',message:stopped?'更新尚未确认，如何继续？':'重启并更新荷马？',detail:stopped?'服务已安全停止。可重试更新，或退出后重新打开荷马；退出也可能应用已暂存更新。':'请先保存草稿及未提交编辑；仅在当前工作安全结束后重启。',buttons:stopped?['取消','重试更新','退出荷马']:['取消，继续使用','重启并更新'],defaultId:0,cancelId:0};
+    const options={type:'question',title:'荷马',message:stopped?'更新尚未确认，如何继续？':'重启并更新荷马？',detail:stopped?'服务已安全停止。可重试更新，或退出后重新打开荷马；退出也可能应用已暂存更新。':'请先保存草稿及未提交编辑；仅在当前工作安全结束后重启。'+(channelPending()?' 待应用的聊天应用连接变更会丢弃。':''),buttons:stopped?['取消','重试更新','退出荷马']:['取消，继续使用','重启并更新'],defaultId:0,cancelId:0};
     const {response}=await(contents?dialog.showMessageBox(currentWindow,options):dialog.showMessageBox(options));
     if(window!==currentWindow||contents?.isDestroyed()||navigation!==permissionNavigation){updateFailed(undefined);return;}
     if(stopped&&response===2){cancelConnection();allowQuit=true;app.quit();return;}
@@ -357,10 +430,12 @@ app.on('before-quit',event=>{
   })();
   return;
  }
- const disconnecting=quitAction==='disconnect',restarting=quitAction==='restart';
- void dialog.showMessageBox(window,{type:'question',title:'荷马',message:disconnecting?'退出本机登录？':restarting?'重启荷马？':'退出荷马？',detail:disconnecting?'将先停止当前回复和后台工作，请先保存草稿。退出仅清除本机登录凭据，保留历史对话、任务和文件；不会注销网站账号。':restarting?'将先停止当前回复和后台工作，请先保存草稿。重启后应用已保存的配置，保留历史对话、任务和文件。':'退出会停止当前回复和后台工作。请先核对并保存草稿。',buttons:['取消，继续使用',disconnecting?'退出登录并重启':restarting?'重启并应用':'退出并停止工作'],defaultId:0,cancelId:0}).then(({response})=>{
+ const disconnecting=quitAction==='disconnect',applyingChannels=quitAction==='channels',restarting=quitAction==='restart'||applyingChannels;
+ const pendingHint=!applyingChannels&&channelPending()?' 「连接聊天应用」中待应用的变更会丢弃。':'';
+ void dialog.showMessageBox(window,{type:'question',title:'荷马',message:disconnecting?'退出本机登录？':restarting?'重启荷马？':'退出荷马？',detail:(disconnecting?'将先停止当前回复和后台工作，请先保存草稿。退出仅清除本机登录凭据，保留历史对话、任务和文件；不会注销网站账号。':restarting?'将先停止当前回复和后台工作，请先保存草稿。重启后应用已保存的配置，保留历史对话、任务和文件。':'退出会停止当前回复和后台工作。请先核对并保存草稿。')+pendingHint,buttons:['取消，继续使用',disconnecting?'退出登录并重启':restarting?'重启并应用':'退出并停止工作'],defaultId:0,cancelId:0}).then(({response})=>{
   if(response!==1){quitPending=false;quitAction=undefined;switchSource=undefined;return;}
-  if(updateState?.status==='ready'){quitPending=false;app.quit();return;}
+  if(updateState?.status==='ready'){quitPending=false;if(applyingChannels)quitAction=undefined;app.quit();return;}
+  channels?.cancel();
   cancelConnection();
   if(confirmed()){finishQuit();return;}
   if(closed){quitPending=false;quitAction=undefined;switchSource=undefined;void showError('停止尚未确认。请保留数据并核对后台 owner；不会强制终止或自动重发。');return;}
@@ -394,14 +469,15 @@ function createWindow(){
   for(const key of Object.keys(requestHeaders))if(key.toLowerCase()==='x-homer-desktop-access')delete requestHeaders[key];
   try{
    const target=new URL(details.url);
-   if(desktopAccessToken&&owned(details.url)&&!target.search&&target.pathname.startsWith('/api/')
+   if(desktopAccessToken&&owned(details.url)&&target.pathname.startsWith('/api/')
+    &&(!target.search||webMediaRoute(details.method,target)?.preview)
     &&['xhr','image','media','other'].includes(details.resourceType)&&details.initiatorOrigin===origin
     &&permissionCaller({sender:details.webContents,senderFrame:details.frame},details.frame))
      requestHeaders['X-Homer-Desktop-Access']=desktopAccessToken;
   }catch{} // Missing or detached request identity fails closed.
   callback({requestHeaders});
  });
- contents.on('did-start-navigation',details=>{if(details.isMainFrame){permissionNavigation++;if(!details.isSameDocument&&window?.webContents===contents)settingsSubscriber=undefined;}});
+ contents.on('did-start-navigation',details=>{if(details.isMainFrame){permissionNavigation++;if(!details.isSameDocument&&window?.webContents===contents){settingsSubscriber=undefined;channels?.cancel();}}});
  contents.setWindowOpenHandler(({url})=>{void external(url).catch(()=>showError('链接未能打开，请核对系统浏览器后重试。'));return {action:'deny'};});
  contents.on('will-navigate',event=>{if(!owned(event.url))event.preventDefault();});
  contents.on('will-redirect',event=>{if(!owned(event.url))event.preventDefault();});
@@ -464,6 +540,8 @@ try{
   app.whenReady().then(async()=>{
   registerDesktopPermissions();
   registerDesktopSettings();
+  channels=new DesktopChannels(paths.runtime);
+  registerDesktopChannels();
   registerDesktopUpdate();
   const updateReady=setupDesktopUpdate(manifest,test);
   if(process.platform!=='win32')await updateReady;

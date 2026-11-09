@@ -58,7 +58,7 @@ import {revealAttachmentFile} from './artifact-reveal.js';
 import type { Homer } from "./service.js";
 import type { WebBridge,DispatchQueuePage,WebArtifact,MessageAttachment } from "./web-contract.js";
 
-export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=true}:{draftUpload?:boolean;nativeCapabilities?:boolean}={}): WebBridge {
+export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boolean}={}): WebBridge {
   app.registerWebSurface(draftUpload);
   const files=(messages:readonly import('./web-history.js').ConversationMessage[]):WebArtifact[]=>messages.flatMap(message=>{
     if(message.role!=='assistant'||message.audience!=='user'||message.revokedAt!=null||message.status!=='completed')return [];
@@ -157,7 +157,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=t
         const pending=interactionPage(),interactions=pending.items;
         const current=app.conversationControlState();
         return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:3,acceptedRequestIds:[],processNodes:[],
-        queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,nativeCapabilities,taskOverview:true,workerExecution:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
+        queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,taskOverview:true,workerExecution:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
         history:{protocol:3,readEpoch:app.webReadEpoch,page:pageInfo,moreQueue:queue.after,moreInteractions:pending.after}};
         };
         return app.receptionTimings?app.receptionTimings.measure('state_history',build):build();
@@ -195,40 +195,6 @@ export function homerWebBridge(app: Homer,{draftUpload=true,nativeCapabilities=t
       }
     },
     media:{read:async input=>app.readAttachment(input),origin,reveal:input=>revealAttachmentFile(app.revealAttachment(input)),...(draftUpload?{upload:(input:import('./web-upload.js').WebUpload)=>app.uploadAttachment(input),discard:async(input:unknown)=>app.discardAttachment(input),previewDraft:async(input:unknown)=>app.readDraftImage(input)}:{})},
-    state: async () => {
-      const started=performance.now();app.receptionTimings?.mark('state_start');
-      try{
-      const snapshot = app.receptionTimings?app.receptionTimings.measure('state_snapshot',()=>app.snapshot()):app.snapshot();
-      const tasks=new Map(snapshot.tasks?.map(task=>[task.id,task]));
-      const conversation=app.receptionTimings?app.receptionTimings.measure('state_conversation',()=>app.conversationState()):app.conversationState();
-      const work=snapshot.runs.map(run=>({id:run.id,title:tasks.get(run.taskId)?.title??'正在办的事',status:run.status,summary:null}));
-      const artifacts=files(conversation.messages);
-      return {
-        queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,nativeCapabilities,taskOverview:true,workerExecution:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},
-        ...conversation,
-        processNodes:conversation.processNodes,
-        messages:withTaskSources(app.store.db,conversation.messages,conversation.threadId),
-        work,artifacts,
-        inactiveInteractions:snapshot.interactions.flatMap(summary=>{
-          if(summary.state!=='expired'&&summary.state!=='cancelled')return [];
-          const item=app.interactions.inspect(summary.id),sourceRequestId=item.authority.sourceRequestId;
-          // A source match is exact. A conflicting recorded history thread is never guessed away.
-          if(typeof item.details.historyThreadId==='string'&&item.details.historyThreadId!==conversation.threadId)return [];
-          const process=conversation.processNodes.find(node=>node.threadId===item.threadId&&node.turnIds.includes(item.turnId));
-          const message=conversation.messages.find(message=>message.role==='user'&&message.requestId===sourceRequestId);
-          if(!process&&!message)return [];
-          return [{id:item.id,kind:item.kind,state:summary.state,...(item.code?{code:item.code}:{}),sourceRequestId,...(process?{processId:process.id}:{messageId:message!.id})}];
-        }),
-        interactions: snapshot.interactions.filter(item => item.state === "pending_user" && !item.responseUserMessageId).map(summary => app.interactions.inspect(summary.id)).map(item => ({
-          id: item.id, runId: item.runId, kind: item.kind,
-          workTitle:tasks.get(snapshot.runs.find(run=>run.id===(item.runId.startsWith('main-native:worker-native:')?item.runId.slice(26):item.runId))?.taskId??'')?.title??(item.runId.startsWith('main-native:worker-native:')?'后台原生请求':item.runId.startsWith('main-native:')?'主对话':undefined),sourceRequestId:item.authority.sourceRequestId,
-          question: item.userQuestion ?? "请补充完成这项工作所需的信息。", reason: item.escalationReason,
-          ...(item.details.method==='mcpServer/elicitation/request'&&(item.details.params as any)?._meta?.codex_approval_kind==='mcp_tool_call'?{canCancel:true as const}:{}),questions: item.runId.startsWith('main-native:')?projectQuestions(item.kind, item.details):undefined,
-        })),
-        upgrade: { phase: "running" },
-      };
-      }finally{app.receptionTimings?.mark('state_end',{},undefined,performance.now()-started);}
-    },
     submit: async input => app.submitMessage(input),
     queue:{edit:async input=>app.editQueued(input),cancel:async input=>app.cancelQueued(input),move:async input=>app.moveQueued(input),interrupt:async(input,target)=>app.submitMessage(input,undefined,target)},
     stop: id => app.stopMain(id),

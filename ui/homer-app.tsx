@@ -141,10 +141,14 @@ function QuoteSource({quote,index,expanded=false}:{quote:MessageQuote;index:numb
 }
 function UserMessage() {
   const metadata = useAuiState(s => s.message.metadata.custom);
+  const original=metadata.original as WebState['messages'][number]|undefined;
+  const channelSource=original?.channelSource;
+  const channelName=channelSource?.source==='wechat'?'微信':channelSource?.source==='telegram'?'Telegram':channelSource?.source==='dingtalk'?'钉钉':channelSource?.source;
   const hasText = useAuiState(s => s.message.content.some(part => part.type === 'text' && part.text.trim().length > 0));
   const quotes = draftQuotes(metadata as { quote?: MessageQuote; quotes?: AnnotatedQuote[] });
   return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className="message user-message" aria-label="你的消息">
     <div className="user-message-bubble">
+    {channelSource&&<p className="message-source-label">{channelName+'@'+channelSource.entryLabel}</p>}
     {quotes.length > 0 && <div className="message-quotes">{quotes.map((quote, index) => <div className="message-quote" key={index}>
       <QuoteSource quote={quote} index={index} expanded={quotes.length>1||!!quote.annotation}/>
       {quote.annotation && <p className="quote-annotation"><span>批注 {index + 1}</span>{quote.annotation}</p>}
@@ -155,8 +159,8 @@ function UserMessage() {
     {metadata.inputState==='uncertain'&&<p className="message-state">接收或结束结果待核实，未自动重跑</p>}
     </div>
     <InactiveInteractionNotes items={metadata.inactiveInteractions as WebState['inactiveInteractions']}/>
-    {!!metadata.original && <MessageDetails runtime message={metadata.original as WebState['messages'][number]} />}
-    {!(metadata.original as WebState['messages'][number] | undefined)?.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
+    {original&&<MessageDetails runtime message={original} />}
+    {!original?.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
   </MessagePrimitive.Root></>;
 }
 const ProcessMessagesContext=createContext<ReadonlyMap<string,WebState['messages'][number]>>(new Map());

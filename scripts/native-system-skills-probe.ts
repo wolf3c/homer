@@ -39,9 +39,9 @@ try{
   const invalid=join(home,'skills/synthetic-invalid/SKILL.md');
   mkdirSync(join(home,'skills/synthetic-invalid'),{recursive:true});
   writeFileSync(invalid,'---\nname: synthetic-invalid\n---\n\nMissing description.\n');
-  const config={appData,codexHome:home,nativeCodexHome:home,codexBin:bin,workspace:cwd,runtime:join(appData,'runtime'),baseUrl,model:'gpt-6.1-sol',requiresOpenaiAuth:false,timeoutMs:10000,mainTimeoutMs:10000,stopGraceMs:1000};
+  const config={appData,codexHome:home,nativeCodexHome:home,codexBin:bin,workspace:cwd,runtime:join(appData,'runtime'),baseUrl,model:'gpt-6.1-sol',requiresOpenaiAuth:false,stopGraceMs:1000};
   const make=(threadId?:string,legacy=false)=>{
-   const next=new CodexEngine(config,{cwd,readRoots:[],instructions:'Synthetic local protocol validation.',tools:[],nativeCapabilities:true,nativeTools:role,threadId},async()=>{throw Error('unexpected_model_tool');});
+   const next=new CodexEngine(config,{cwd,readRoots:[],instructions:'Synthetic local protocol validation.',tools:[],nativeTools:role,threadId},async()=>{throw Error('unexpected_model_tool');});
    if(legacy){
     const request=next.request.bind(next);
     next.request=async(method,params:any)=>{

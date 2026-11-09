@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {DatabaseSync} from 'node:sqlite';
-import {mkdirSync,mkdtempSync,rmSync,readFileSync,readdirSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,rmSync,readFileSync,readdirSync,existsSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {Homer,type Message} from '../src/service.js';
 import {homerWebBridge} from '../src/web-homer.js';
@@ -24,7 +24,41 @@ test('desktop startup rejects the previous schema without changing its receipt',
   assert.deepEqual(readdirSync(config.runtime),['homer.sqlite']);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
-test('desktop resume leaves old work queued and allows new work without replay',async()=>{
+test('desktop media maintenance waits for confirmed ownership and preserves referenced bytes',async()=>{
+ const scratch=resolve('.codex/scratch/desktop-daily-queue-test');mkdirSync(scratch,{recursive:true});const dir=mkdtempSync(join(scratch,'media-'));
+ const runtime=join(dir,'runtime'),codexHome=join(dir,'codex');mkdirSync(runtime);
+ const config={workspace:join(dir,'workspace'),runtime,codexHome,nativeCodexHome:codexHome,codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,pauseOldDesktopWork:true,desktopResources:{bundleRoot:dir,manifestSha256:'a'.repeat(64)}};
+ class Peer extends EventEmitter implements EngineLike{
+  async start(){return 'synthetic-main';}async close(){return true;}async interrupt(){return true;}
+  async turn():Promise<TurnResult>{return {status:'completed',text:''};}
+ }
+ const open=()=>new Homer(config,async()=>{},()=>new Peer());
+ let app=open();
+ try{
+  const media=app.media,bytes=Buffer.from('Synthetic attachment bytes');
+  const draft=media.intent('draft','binding','file'),pinned=media.snapshot('published',{kind:'file',filename:'published.txt',mime:'text/plain',bytes}),staged=media.snapshot('unconfirmed',{kind:'file',filename:'unconfirmed.txt',mime:'text/plain',bytes});
+  media.ready(draft,media.claim(draft)!,bytes,'text/plain');
+  media.pinAttachment(pinned,'message:published');media.unpin('operation:published');
+  const interrupted=media.intent('interrupted','binding','file'),lease=media.claim(interrupted)!;
+  app.store.db.prepare('UPDATE media_assets SET expiresAt=0 WHERE id<>?').run(interrupted.assetId);
+  const original=join(runtime,'media',draft.assetId);
+  app.store.setMeta('lease:main',JSON.stringify({pid:process.pid,identity:'unverified test owner'}));
+  await assert.rejects(app.start({keepManagementOnFailure:true}),/orphan_stop_unconfirmed/);
+  assert.ok(existsSync(original));assert.equal(media.asset(interrupted).lease,lease);
+  app.store.db.prepare("DELETE FROM meta WHERE key='lease:main'").run();
+  await app.close();
+
+  app=open();
+  assert.ok(existsSync(original));assert.equal(app.media.asset(interrupted).lease,lease);
+  await app.start();
+  assert.equal(app.media.asset(draft).state,'deleted');assert.equal(existsSync(original),false);
+  assert.deepEqual(app.media.readAttachment(pinned).bytes,bytes);
+  assert.deepEqual(app.media.readAttachment(staged).bytes,bytes);
+  assert.equal(app.media.asset(interrupted).state,'retryable_failed');
+  assert.equal(app.media.asset(interrupted).lease,null);
+ }finally{await app.close();rmSync(dir,{recursive:true,force:true});}
+});
+for(const scenario of ['restart','switch','adopt'] as const)test('desktop restores only eligible queued user inputs after '+scenario,async()=>{
  const scratch=resolve('.codex/scratch/desktop-daily-queue-test');mkdirSync(scratch,{recursive:true});const dir=mkdtempSync(join(scratch,'case-'));mkdirSync(join(dir,'runtime'));
  const turns:string[]=[];
  class Peer extends EventEmitter implements EngineLike{
@@ -33,18 +67,47 @@ test('desktop resume leaves old work queued and allows new work without replay',
   async turn(text:string,options?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{this.turnId='synthetic-turn';options?.onStarted?.(this.turnId);turns.push(text);return {status:'completed',text:'synthetic answer'};}
  }
  const config={workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
- let app=new Homer(config,async()=>{},options=>new Peer(options));
+ const desktop={...config,pauseOldDesktopWork:true,desktopResources:{bundleRoot:dir,manifestSha256:'a'.repeat(64)},desktopModelSource:'codex' as const};
+ const target={...desktop,desktopModelSource:scenario==='switch'?'website' as const:desktop.desktopModelSource,desktopAdopted:scenario==='adopt'};
+ const open=(settings:typeof target|typeof config)=>new Homer(settings,async()=>{},options=>new Peer(options));
+ let app=open(scenario==='adopt'?config:desktop);
  try{
-  await app.start();app.inputs.accept({requestId:'old',text:'old pending'});app.inputs.accept({requestId:'old-active',text:'old active'});const old=app.inputs.list().find(x=>x.input.requestId==='old-active')!;
-  app.store.db.prepare("UPDATE agent_receipts SET state='offered' WHERE messageId=?").run(old.messageId);
-  const node={id:'old-node',threadId:'synthetic-main',seq:1,revision:1,state:'working',status:'unknown',sourceKind:'user',sourceMessageIds:[old.messageId],messageId:'old-reply',turnIds:['old-turn'],items:[],completedItemIds:[],itemPhases:{}};
-  app.store.setMeta('publicMainNode:v1:old-node',JSON.stringify(node));app.store.setMeta('publicMainNodeSeq:v1','1');await app.close();
-  app=new Homer({...config,pauseOldDesktopWork:true,desktopResources:{bundleRoot:dir,manifestSha256:'a'.repeat(64)}},async()=>{},options=>new Peer(options));
-  await app.start();await new Promise(done=>setTimeout(done,50));assert.deepEqual(turns,[]);
+  await app.start();
+  const original=app.inputs.accept({requestId:'old',text:'old pending'});
+  app.inputs.accept({requestId:'old-interrupt',text:'old interrupt'},undefined,{messageId:'old-reply',generationId:'old-generation'});
+  app.inputs.accept({requestId:'old-approval',text:'old approval'});
+  app.store.db.prepare("UPDATE operations SET detailsJson=json_set(detailsJson,'$.interactionId','old-interaction') WHERE kind='user_accept' AND scopeId='old-approval'").run();
+  app.inputs.accept({requestId:'old-active',text:'old active'});
+  app.inputs.accept({requestId:'old-unknown',text:'old unknown'});
+  const active=app.inputs.list().find(x=>x.input.requestId==='old-active')!;
+  const unknown=app.inputs.list().find(x=>x.input.requestId==='old-unknown')!;
+  const setReceipt=app.store.db.prepare("UPDATE agent_receipts SET state=? WHERE messageId=?");
+  setReceipt.run('offered',active.messageId);
+  setReceipt.run('uncertain',unknown.messageId);
+  const node={id:'old-node',threadId:'synthetic-main',seq:1,revision:1,state:'working',status:'unknown',sourceKind:'user',sourceMessageIds:[active.messageId],messageId:'old-reply',turnIds:['old-turn'],items:[],completedItemIds:[],itemPhases:{}};
+  app.store.setMeta('publicMainNode:v1:old-node',JSON.stringify(node));app.store.setMeta('publicMainNodeSeq:v1','1');
+  await app.close();
+
+  app=open(target);await app.start();await app.idle();
+  const expected=scenario==='restart'?['old pending']:[];
+  assert.deepEqual(turns,expected);
+  assert.equal(app.store.meta('mainThread'),'synthetic-main');
   assert.equal(app.store.meta('publicMainNode:v1:old-node'),JSON.stringify(node));
-  assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(old.messageId)!.state,'offered');
-  app.submitMessage({requestId:'new',text:'new input'});await until(()=>turns.length===1);await app.idle();
-  assert.deepEqual(turns,['new input']);assert.equal(app.inputs.list().find(x=>x.input.requestId==='old')!.state,'queued');
+  const state=(id:string)=>app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(id)!.state;
+  assert.equal(state(active.messageId),'offered');
+  assert.equal(state(unknown.messageId),'uncertain');
+  assert.equal(state(original.queueMessageId!),scenario==='restart'?'processed':'pending');
+  assert.equal(app.inputs.byRequestIds(['old-interrupt','old-approval']).filter(input=>input.state==='queued').length,2);
+  if(scenario==='restart')assert.equal(app.history.message(original.replyId)?.status,'completed');
+  app.inputs.accept({requestId:'next',text:'later pending'});
+  await app.close();
+
+  app=open(target);await app.start();await app.idle();
+  assert.deepEqual(turns,[...expected,'later pending']);
+  assert.equal(state(original.queueMessageId!),scenario==='restart'?'processed':'pending');
+  assert.equal(state(unknown.messageId),'uncertain');
+  await app.message('new input','new');
+  assert.deepEqual(turns,[...expected,'later pending','new input']);
  }finally{await app.close();rmSync(dir,{recursive:true,force:true});}
 });
 for(const scenario of ['result','empty-report','model-failure','response-lost','forged-question'] as const)test('main service mixed durable order and public output: '+scenario,async()=>{

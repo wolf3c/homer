@@ -30,7 +30,7 @@ async function workerFixture(){
  const text='合成预览正文。',file={id:'result-outside-preview',title:'Synthetic.txt',messageId:'node-10',workTitle:'合成预览'};
  const read=f.bridge.artifact.bind(f.bridge);
  f.bridge.artifact=async id=>id===file.id?{filename:file.title,mime:'text/plain',data:Buffer.from(text).toString('base64'),sha256:createHash('sha256').update(text).digest('hex')}:read(id);
- for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,artifacts:[...(value.artifacts??[]),file]};};}
+ {const owner=f.bridge.history;const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,artifacts:[...(value.artifacts??[]),file]};};}
  return {...f,setStatus(state,status){save('node-10',{state,status});f.server.publish();},replay(){f.processes.workerEvent('node-10',first);f.server.publish();}};
 }
 try{

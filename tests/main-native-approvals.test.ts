@@ -1,9 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { WorkerInteractions } from '../src/worker-interactions.js';
 import { ConversationHistory } from '../src/web-history.js';
 import { MainNativeApprovals } from '../src/main-native-approvals.js';
@@ -35,6 +32,22 @@ test('main native approval reaches user directly and never waits for another mai
         assert.throws(() => f.approvals.respond(opened.id, { requestId: 'reply-1', text: '拒绝本次操作' }), /request_id_conflict/);
     }
     finally {
+        f.close();
+    }
+});
+test('command approval preserves the full review when native metadata is larger than the card', async () => {
+    const f = fixture();
+    try {
+        const command = 'printf ' + 'x'.repeat(3100);
+        const request = { ...f.native, details: { ...f.native.details, command } };
+        const opened = f.approvals.open(request, f.scope);
+        assert.ok(f.interactions.inspect(opened.id).userQuestion!.includes(command));
+        f.approvals.respond(opened.id, { requestId: 'long-approval', text: '允许本次操作' });
+        assert.equal((await opened.response).status, 'approved');
+        assert.throws(() => f.approvals.open({
+            ...request, requestId: 2, details: { ...request.details, command: 'x'.repeat(4000) },
+        }, f.scope), /native_approval_review_too_large/);
+    } finally {
         f.close();
     }
 });
@@ -81,29 +94,6 @@ test('failed user receipt persistence cannot release a native action', async () 
     }
     finally {
         f.close();
-    }
-});
-test('protected native storage cannot be granted through an ancestor, symlink or new child', async () => {
-    const f = fixture(), root = mkdtempSync(join(tmpdir(), 'homer-approval-scope-'));
-    try {
-        const protectedRoot = join(root, 'native');
-        mkdirSync(protectedRoot);
-        symlinkSync(protectedRoot, join(root, 'alias'));
-        const patch = f.approvals.open({ ...f.native, requestId: 99, method: 'item/fileChange/requestApproval', details: { operation: { changes: [{ path: join(root, 'alias', 'protected.txt'), kind: { type: 'add' }, diff: '+synthetic' }] } } }, { ...f.scope, protectedRoots: [protectedRoot] });
-        assert.throws(() => f.approvals.respond(patch.id, { requestId: 'protected-patch', text: '允许本次操作' }), /interaction_capability_denied/);
-        f.approvals.respond(patch.id, { requestId: 'deny-patch', text: '拒绝本次操作' });
-        assert.equal((await patch.response).status, 'denied');
-        for (const [index, path] of [root, join(root, 'alias', 'new-file'), join(protectedRoot, 'new-child', 'file')].entries()) {
-            const opened = f.approvals.open({ ...f.native, requestId: 100 + index, method: 'item/permissions/requestApproval', details: { permissions: { fileSystem: { write: [path] } } } }, { ...f.scope, protectedRoots: [protectedRoot] });
-            assert.throws(() => f.approvals.respond(opened.id, { requestId: 'protected-' + index, text: '允许本次操作' }), /interaction_capability_denied/);
-            assert.equal(f.interactions.inspect(opened.id).state, 'pending_user');
-            f.approvals.respond(opened.id, { requestId: 'deny-protected-' + index, text: '拒绝本次操作' });
-            assert.equal((await opened.response).status, 'denied');
-        }
-    }
-    finally {
-        f.close();
-        rmSync(root, { recursive: true, force: true });
     }
 });
 test('single native question accepts ordinary text and validates the native options', async () => { const f = fixture(); try {

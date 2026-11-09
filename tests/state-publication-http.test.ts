@@ -17,7 +17,8 @@ for(const path of ['/api/history/state','/api/history/events'])test('updates dur
  }finally{clearTimeout(deadline);controller.abort();await server.close();}
 });
 
-for(const path of ['/api/events','/api/history/events'])test('first SSE connection receives an update that arrived during its initial snapshot: '+path,async()=>{
+test('first SSE connection receives an update that arrived during its initial snapshot',async()=>{
+ const path='/api/history/events';
  let revision=0,builds=0,server!:Awaited<ReturnType<typeof createWebServer>>;
  const state=async()=>{
   const value={revision};builds++;

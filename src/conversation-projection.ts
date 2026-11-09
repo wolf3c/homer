@@ -1,10 +1,11 @@
 import type {ConversationMessage} from './web-history.js';
 import type {ProcessNode} from './main-process.js';
 import type {QueuedInput} from './recursive-main-inputs.js';
+import type {ChannelMessageSource} from './channel-plugin.js';
 
 export type DisplayQueueInput=QueuedInput & {user:ConversationMessage;editable:boolean;statusText:string};
 export type TaskMessageSource={key:string;target:import('./activity-facts.js').ActivityTarget;title:string;icon:import('./task-status.js').TaskSemanticIcon;origin:{kind:'activity';processId:string;itemId:string}|{kind:'message';processId:string;messageId:string;senderEpoch?:number};phaseLabel:string;owner:'main'|'worker'|'ended'|'unknown';originalRequestMessageId?:string};
-export type DisplayMessage=ConversationMessage & {process?:ProcessNode;finalAnswers?:{id:string;text:string;completed:boolean}[];sourceLabel?:string;sourceMessageId?:string;source?:ConversationMessage;inputState?:string;taskSources?:TaskMessageSource[];taskSourceUnresolved?:true};
+export type DisplayMessage=ConversationMessage & {process?:ProcessNode;finalAnswers?:{id:string;text:string;completed:boolean}[];sourceLabel?:string;sourceMessageId?:string;source?:ConversationMessage;inputState?:string;taskSources?:TaskMessageSource[];taskSourceUnresolved?:true;channelSource?:ChannelMessageSource};
 
 export type ConversationBoundary={visibleIds:ReadonlySet<string>;requestsWithNodes:ReadonlySet<string>;outcomes:ReadonlySet<string>;legacyReplies:ReadonlySet<string>;nodeRequests:ReadonlyMap<string,string>;continuedNodes:ReadonlySet<string>};
 

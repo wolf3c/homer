@@ -8,7 +8,7 @@ import type { InteractionResolution } from "../src/worker-interactions.js";
 
 const binary = resolve("tests/fixtures/worker-interaction-app-server.mjs");
 chmodSync(binary, 0o755);
-const config: Config = { workspace: resolve(".codex/scratch"), runtime: resolve(".codex/scratch/worker-interactions"), codexHome: resolve(".codex/scratch/worker-interactions"), codexBin: binary, model: "approve", timeoutMs: 1000, mainTimeoutMs: 1000, stopGraceMs: 50, requiresOpenaiAuth: false };
+const config: Config = { workspace: resolve(".codex/scratch"), runtime: resolve(".codex/scratch/worker-interactions"), codexHome: resolve(".codex/scratch/worker-interactions"), nativeCodexHome: resolve(".codex/scratch/worker-interactions"), codexBin: binary, model: "approve", stopGraceMs: 50, requiresOpenaiAuth: false };
 
 test("HMR-INTERACTION-PROTOCOL: real adapter forwards and holds native JSON-RPC IDs until approval/denial", async () => {
   for (const action of ["approve", "deny"] as const) {

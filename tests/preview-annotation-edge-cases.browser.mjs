@@ -6,6 +6,7 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {fixture} from './web-history-followup-fixture.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
+import {inspectHtmlFrame} from './helpers/html-preview-browser.mjs';
 import {previewQuoteText} from '../src/message-quote.js';
 
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/preview-reference-fixes-20261023/browser');
@@ -77,20 +78,19 @@ try{
     checks.push({width,label:'canonical math selection reaches queue',fileId,selector});
    }
    if(width>800){
-    await open('result-review-A');await p.until(()=>document.querySelector('#canvas-panel iframe')?.srcdoc.includes('HTML A'));
+    await open('result-review-A');let frame=await inspectHtmlFrame(chrome,p,'document.body?.dataset.executed==="A"');await frame.close();
     await p.command('Network.enable');await p.command('Network.setCacheDisabled',{cacheDisabled:true});
     await p.command('Network.emulateNetworkConditions',{offline:false,latency:10,downloadThroughput:85000,uploadThroughput:85000});
     await ev(()=>document.querySelector('.html-annotation-toggle').click());
-    await select('result-review-B');await p.until(()=>document.querySelector('#canvas-panel iframe')?.srcdoc.includes('HTML B'),5000);
+    await select('result-review-B');frame=await inspectHtmlFrame(chrome,p,'document.body?.dataset.executed==="B"');await frame.close();
     await p.until(()=>performance.getEntriesByType('resource').some(entry=>/\/assets\/runtime-.*\.js/.test(entry.name)),15000);
     await p.command('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
     await new Promise(done=>setTimeout(done,100));
-    assert.equal(await ev(()=>document.querySelector('#canvas-panel iframe')?.getAttribute('sandbox')),'','late A callback must not execute B');
-    assert.ok(await ev(()=>document.querySelector('#canvas-panel iframe')?.srcdoc.includes('HTML B')));
-    await select('result-review-A');await p.until(()=>document.querySelector('#canvas-panel iframe')?.srcdoc.includes('HTML A'));
-    assert.equal(await ev(()=>document.querySelector('#canvas-panel iframe')?.getAttribute('sandbox')),'','returning to A still requires an explicit run');
+    assert.equal(await ev(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')),'false','late A callback must not activate annotation on B');
+    await select('result-review-A');frame=await inspectHtmlFrame(chrome,p,'document.body?.dataset.executed==="A"');await frame.close();
+    assert.equal(await ev(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')),'false','returning to A does not activate annotation');
     await p.screenshot('late-annotation-remains-static.png');
-    checks.push({width,label:'switching during annotation loading keeps both HTML files in static mode'});
+    checks.push({width,label:'switching during annotation loading keeps annotation inactive on both HTML files'});
    }
    const beforeLimit=f.submitted.length;
    await ev(()=>{

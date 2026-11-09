@@ -7,6 +7,9 @@ import { engineError, codexVersion } from "./engine.js";
 import { homerWebBridge } from "./web-homer.js";
 import {desktopManagementAllowed} from './desktop-management.js';
 import {configureDesktopImageDecoder} from './media-decode.js';
+import {dingtalkChannel} from './dingtalk-channel.js';
+import {telegramChannel} from './telegram-channel.js';
+import {wechatChannel} from './wechat-channel.js';
 
 const send = (value: unknown) => new Promise<void>((resolve, reject) => {
   if (!process.send) return reject(new Error("dev_ipc_required"));
@@ -48,7 +51,7 @@ async function startDesktopChat(){
       // Presence permits local startup; only a real response proves validity.
       if(!config.baseUrl||!process.env[config.keyEnv]){await send({kind:'chat_unavailable',code:'desktop_account_required'});invalidateState();return;}
     }else{
-      const account=await app!.manageCapabilities({action:'account_state'});
+      const account=await app!.manageNativeAccount({action:'account_state'});
       if(stopping)return;
       if(!account.connected){await send({kind:'chat_unavailable',code:'desktop_account_required'});invalidateState();return;}
     }
@@ -68,7 +71,6 @@ async function startDesktopChat(){
   })().finally(()=>{desktopChatStarting=undefined;});
   return desktopChatStarting;
 }
-let nativeCapabilitiesProtocol=false;
 let webUploadProtocol=false;
 const receipts = new Map<string, { resolve: () => void; reject: (error: Error) => void; requestId?:string;startedAt:number;sentAt?:number;measured:boolean }>();
 async function output(message: Message) {
@@ -114,7 +116,7 @@ process.on("message", (raw: unknown) => {
   });
 });
 async function receive(raw: unknown) {
-  const m = raw as { desktop?:boolean; kind: string; config: Config; buildHash?:string; terminalDeltas?:boolean;webUploadProtocol?:number;nativeCapabilitiesProtocol?:number;thread?: string; id: string; text: string; method: string; input: any };
+  const m = raw as { desktop?:boolean; kind: string; config: Config; buildHash?:string; terminalDeltas?:boolean;webUploadProtocol?:number;thread?: string; id: string; text: string; method: string; input: any };
   if (m.kind === "written") {
     const pending=receipts.get(m.id);
     if(pending?.measured)app?.receptionTimings.mark('output_ipc_ack',{outputId:m.id,requestId:pending.requestId});
@@ -122,19 +124,24 @@ async function receive(raw: unknown) {
   } else if (m.kind === "init") {
     if (app) throw new Error("dev_already_initialized");
     desktop=m.desktop===true;
-    if(!desktop&&(m.config.pauseOldDesktopWork||m.config.dailyDeepSeek||m.config.desktopConnection||m.config.desktopModelSource))throw Error('desktop_pause_scope_invalid');
+    if(!desktop&&(m.config.pauseOldDesktopWork||m.config.dailyDeepSeek||m.config.desktopConnection||m.config.desktopModelSource||m.config.desktopAdopted))throw Error('desktop_pause_scope_invalid');
     if(desktop){if(!m.config.desktopResources)throw Error('desktop_resource_identity_required');configureDesktopImageDecoder(m.config.desktopResources);}
-    webUploadProtocol=m.webUploadProtocol===1;nativeCapabilitiesProtocol=m.nativeCapabilitiesProtocol===1;
+    webUploadProtocol=m.webUploadProtocol===1;
     // Only an explicit plain-terminal opt-out skips IPC. Legacy/private host
     // callers keep their existing stream until they declare otherwise.
     const terminalDeltas=m.terminalDeltas!==false;
+    const telegram=telegramChannel(m.config.runtime);
+    const wechat=wechatChannel(m.config.runtime);
+    const dingtalk=dingtalkChannel(m.config.runtime);
+    const adapters=[...(telegram?[telegram]:[]),...(wechat?[wechat]:[]),...(dingtalk?[dingtalk]:[])];
     try {
     app = new Homer(m.config, async (message: Message) => {
       if (["main_start", "main_terminal", "tool_progress"].includes(message.type)) return;
       if(message.type==='delta'&&!terminalDeltas)return;
       await output(message);
-    });
-    } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;throw error; }
+    },undefined,adapters);
+    for(const adapter of adapters)adapter.applyBindings(app.channels!);
+    } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;await app?.close();throw error; }
     app.onStateChange(reason=>{invalidateState();if(desktop&&(reason==='model-turn'||reason==='user-input'))void send({kind:reason==='model-turn'?'account_usage_dirty':'account_config_check'}).catch(()=>{});});
     if(m.buildHash)app.registerRuntimeBuild(m.buildHash);
     if(webUploadProtocol)app.registerWebSurface(true);
@@ -156,9 +163,14 @@ async function receive(raw: unknown) {
       effort: effectiveEffort(m.config.effort), engine: codexVersion(m.config.codexBin) });
   } else if(m.kind==='desktop_account'){
     try{
-      if(!desktop||!app||frozen||stopping||!['state','connect','cancel'].includes(m.method))throw Error('desktop_account_forbidden');
-      const state=await app.manageCapabilities({action:'account_state'});
-      const value=m.method==='connect'?await app.manageCapabilities({action:'account_login',approve:true}):m.method==='cancel'&&state.loginId?await app.manageCapabilities({action:'account_cancel',approve:true,loginId:state.loginId}):state;
+      if(!desktop||!app||frozen||stopping)throw Error('desktop_account_forbidden');
+      if(m.method==='channel-state'){
+        await send({kind:'web_result',id:m.id,value:app.channels?.connectionStatus()??[]});
+        return;
+      }
+      if(!['state','connect','cancel'].includes(m.method))throw Error('desktop_account_forbidden');
+      const state=await app.manageNativeAccount({action:'account_state'});
+      const value=m.method==='connect'?await app.manageNativeAccount({action:'account_login',approve:true}):m.method==='cancel'&&state.loginId?await app.manageNativeAccount({action:'account_cancel',approve:true,loginId:state.loginId}):state;
       await send({kind:'web_result',id:m.id,value});
     }catch(error){await send({kind:'web_result',id:m.id,error:engineError(error)});}
   } else if (m.kind === "web") {
@@ -169,7 +181,7 @@ async function receive(raw: unknown) {
         await send({kind:'web_result',id:m.id,value:{...app.conversationControlState(),threadId:'',messages:[],queue:[],work:[],interactions:[],upgrade:{phase:'management',accepting:false}}});
         return;
       }
-      const bridge = homerWebBridge(app,{draftUpload:webUploadProtocol,nativeCapabilities:!!nativeCapabilitiesProtocol});
+      const bridge = homerWebBridge(app,{draftUpload:webUploadProtocol});
       let value: unknown;
       if(m.method==='history.state')value=await bridge.history!.state();
       else if(m.method==='history.page')value=await bridge.history!.page(m.input);
@@ -189,7 +201,6 @@ async function receive(raw: unknown) {
       else if(m.method === 'media.reveal'&&bridge.media?.reveal)value=await bridge.media.reveal(m.input);
       else if(m.method === 'media.upload'){if(!bridge.media?.upload)throw Error('web_upload_unavailable');value=await bridge.media.upload(m.input);}
       else if(m.method === 'media.discard'){if(!bridge.media?.discard)throw Error('web_upload_unavailable');value=await bridge.media.discard(m.input);}
-      else if (m.method === "state") value = await bridge.state();
       else if (m.method === "submit") value = await bridge.submit(m.input);
       else if (m.method === "feedback") value = await bridge.feedback!(m.input.messageId, m.input.value);
       else if(m.method==='queue.edit')value=await bridge.queue!.edit(m.input);

@@ -10,27 +10,26 @@ import type {TurnResult} from '../src/engine.js';
 import {chatFixture} from './task-chat-fixture.js';
 const scratch='.codex/scratch/deepseek-adaptation-20261028';
 const codes=['engine_cost_limit_reached','engine_compaction_loop'] as const;
-for(const code of [...codes,undefined])for(const mutation of [false,true])test(`main completed ${code??'normal'} ${mutation?'with':'without'} capability mutation`,async()=>{
+for(const code of [...codes,undefined])test(`main completed ${code??'normal'}`,async()=>{
  mkdirSync(scratch,{recursive:true});const dir=mkdtempSync(join(resolve(scratch),'consumer-main-'));
- const config:Config={workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,mainTimeoutMs:3000,stopGraceMs:100};
+ const config:Config={workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
  for(const path of [config.workspace,config.runtime,config.codexHome!])mkdirSync(path,{recursive:true});
- let app:Homer,turns=0,adoptions=0;
+ let app:Homer,turns=0;
  class Fake extends EventEmitter{
   threadId='synthetic-main';turnId?:string;resumable=true;
   async start(){return this.threadId;}async close(){return true;}async interrupt(){return true;}
   async turn(_text:string,opts?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
    this.turnId='turn-'+(++turns);opts?.onStarted?.(this.turnId);
-   if(turns===1){if(mutation)app['mainContext']!.capabilityRevision=1;
+   if(turns===1){
     this.emit('agentMessage',{threadId:this.threadId,turnId:this.turnId,itemId:'partial',phase:'final_answer',completed:true,text:'Synthetic partial evidence.'});
    }
    return {status:'completed',text:'Synthetic partial evidence.',...(code?{errorCode:code}:{})};
   }
  }
  app=new Homer(config,async()=>{},()=>new Fake());
- app['adoptMainCapabilities']=async()=>{adoptions++;return undefined;};
  try{
   await app.start();app.submitMessage({requestId:'synthetic-guard',text:'Synthetic request'});await app.idle();
-  assert.equal(turns,!code&&mutation?2:1);assert.equal(adoptions,!code&&mutation?1:0);
+  assert.equal(turns,1);
   const failures=app.store.db.prepare("SELECT * FROM events WHERE type='main_turn_failed'").all();
   assert.equal(failures.length,code?1:0);if(code)assert.match(JSON.stringify(failures),new RegExp(code));
   const nodes=app.store.db.prepare("SELECT value FROM meta WHERE key LIKE 'publicMainNode:v1:%'").all().map(row=>JSON.parse(String(row.value)));

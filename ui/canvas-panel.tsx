@@ -55,15 +55,6 @@ const markdownComponents:Components={
  img:({alt})=><span>{alt?'[图片：'+alt+']':'[图片]'}</span>,
  a:({href,children})=>{try{return href?<a href={canvasWebUrl(href)} target="_blank" rel="noopener noreferrer">{children}</a>:<span>{children}</span>;}catch{return <span>{children}</span>;}},
 };
-export function isolatedHtml(text:string, interactive=false):string {
-  const template=document.createElement('template');template.innerHTML=text;
-  template.content.querySelectorAll('iframe,object,embed,base,meta,link,form,template'+(interactive?'':',script')).forEach(el=>el.remove());
-  template.content.querySelectorAll('script[src]').forEach(el=>el.remove());
-  template.content.querySelectorAll('*').forEach(el=>{for(const attr of [...el.attributes])if((!interactive&&attr.name.startsWith('on'))||['href','src','srcset','action','formaction','ping','target','xlink:href'].includes(attr.name))el.removeAttribute(attr.name);});
-  const policy="default-src 'none'; script-src "+(interactive?"'unsafe-inline'":"'none'")+"; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-src about: blob:; connect-src 'none';";
-  const inner='<!doctype html><meta http-equiv="Content-Security-Policy" content="'+policy+'">'+template.innerHTML;
-  return inner;
-}
 type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly CanvasArtifact[];onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;isCurrent?:PreviewImportGuard};
 
 export function CanvasPanel({tabs,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,...readerProps}:CanvasPanelProps) {
@@ -146,7 +137,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
   const mediaElement=useRef<HTMLMediaElement|null>(null);
   const [imageAnnotation,setImageAnnotation]=useState(false),[runtime,setRuntime]=useState(''),[ready,setReady]=useState(false),[frameRevision,setFrameRevision]=useState(0),[selection,setSelection]=useState<'idle'|'connecting'|'active'|'error'>('idle');
   const interactive=!!runtime,annotationLoading=selection==='connecting';
-  const annotationLabel=annotationLoading?'取消批注加载，返回静态预览':interactive?'退出批注，返回静态预览':'启用批注（将运行当前网页脚本）';
+  const annotationLabel=annotationLoading?'取消批注加载，返回预览':interactive?'退出批注，返回预览':'启用批注';
   const token=useMemo(()=>crypto.randomUUID(),[artifact?.id,webSource?.url,retry,interactive,runtime,frameRevision]);
   const attachmentPath=artifact?'/api/media/'+[artifact.messageId,artifact.assetId,artifact.revision].map(encodeURIComponent).join('/') : '';
   const source=useMemo<PreviewSource|undefined>(()=>webSource??(artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file]);
@@ -188,16 +179,16 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
   useEffect(()=>{if(annotationFocus&&source&&!focusId)setNotice('当前预览无法准确定位这条批注，原摘录与备注已保留。');},[annotationFocus?.nonce,source]);
   function isImageSource(){return !!file&&file.mime.startsWith('image/');}
   useEffect(()=>{if(focusId&&isImageSource())setImageAnnotation(true);else if(focusId&&file?.mime==='text/html'&&!runtime)setNotice('已打开来源；点击“批注”后定位这条网页批注。');},[focusId,annotationFocus?.nonce,runtime]);
-  function staticPreview(error=false){
+  function stopHtmlAnnotation(error=false){
     generation.current++;setRuntime('');setReady(false);setSelection(error?'error':'idle');
-    if(error)setNotice('批注加载失败，已返回静态预览；请点击批注重试。');
+    if(error)setNotice('批注加载失败，已返回预览；请点击批注重试。');
   }
   useEffect(()=>{
     if(selection!=='connecting')return;
-    const timer=setTimeout(()=>staticPreview(true),10000);
+    const timer=setTimeout(()=>stopHtmlAnnotation(true),10000);
     return()=>clearTimeout(timer);
   },[selection]);
-  useEffect(()=>{if(!referencesEnabled)staticPreview();},[referencesEnabled]);
+  useEffect(()=>{if(!referencesEnabled)stopHtmlAnnotation();},[referencesEnabled]);
   function nativeNotes():Annotation[]{
     const state=annotationDraft.read();
     const reference=referencesOf(state).find(r=>r.kind==='web'&&referenceKey(r)===htmlKey);
@@ -221,10 +212,10 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
       if(data?.token!==token||data.sourceKey!==htmlKey)return;
       if(data.type==='homer-preview-connected'){connected=true;setReady(true);return;}
       if(!connected)return;
-      if(data.type==='homer-preview-runtime-error'){staticPreview(true);return;}
+      if(data.type==='homer-preview-runtime-error'){stopHtmlAnnotation(true);return;}
       if(data.type==='homer-preview-location-missing'){setNotice('网页中无法唯一定位这条批注，已保留原备注与位置记录。');return;}
       if(data.type==='homer-preview-active'&&typeof data.active==='boolean'){
-        active=data.active;if(active)setSelection('active');else staticPreview();return;
+        active=data.active;if(active)setSelection('active');else stopHtmlAnnotation();return;
       }
       if(!active||data.type!=='homer-preview-notes'||!Array.isArray(data.notes)||typeof data.changeId!=='string')return;
       const result=(error?:string)=>{
@@ -255,7 +246,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
     try{
       const bundle=await import('../dist/preview-annotation/runtime.js?raw');
       if(readerCurrent()&&current===generation.current)setRuntime(bundle.default);
-    }catch{if(readerCurrent()&&current===generation.current)staticPreview(true);}
+    }catch{if(readerCurrent()&&current===generation.current)stopHtmlAnnotation(true);}
   }
   const isPatch=!!file&&isPatchFile(file.name,file.mime);
   const patchFallback=useMemo(()=>{
@@ -285,19 +276,19 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
       });
     }}/>,actions)}
     {actions&&createPortal(isHtml&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
-      <TooltipIconButton className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)staticPreview();else void enableWebAnnotation();}}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>
+      <TooltipIconButton className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>
     </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface">{!imageAnnotation&&<TooltipIconButton className="image-annotation-toggle" tooltipContainer={imageActions} aria-label="批注" aria-pressed={false} tooltip="开始图片批注" onClick={()=>setImageAnnotation(true)}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>}</span>:null,actions)}
     <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml?'html-preview-body':isPatch?'patch-preview-body':undefined}>
     {notice&&<p role="status" className="canvas-note">{notice}</p>}
     {webSource&&<p className="canvas-note canvas-web-narrow-note">网页元素批注暂限桌面使用。</p>}
     {referencesEnabled&&source&&!webSource&&isText&&!isHtml&&!isPatch&&<PreviewSelectionToolbar key={JSON.stringify([artifact?.id,file?.sha256])} body={body} source={source} annotations={textReference?.kind==='text'?textReference.annotations??[]:[]} representation={file?.mime==='text/markdown'||/\.md$/i.test(file?.name??'')?'markdown':'plain'} onReference={onReference} onRemove={id=>annotationDraft.remove(referenceKey({kind:'text',source}),id)} onNotice={setNotice} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/>}
     {webSource?<><p className="canvas-note">{ready?'网页已接入批注器，可使用页面内工具栏选择元素。':'网站可能禁止嵌入；未接入批注器的网页只能预览。'}</p><WebPreview origin={webSource.url} loading={false} onReload={()=>{setReady(false);if(webFrame.current)webFrame.current.src=webSource.url;}} onOpenExternal={()=>window.open(webSource.url,'_blank','noopener,noreferrer')}><iframe ref={webFrame} key={webSource.url} title="网页预览" onLoad={()=>setFrameRevision(value=>value+1)} src={webSource.url} sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer"/></WebPreview></>:
-    loading?<p role="status">正在读取成果…</p>:readError?<div className="canvas-read-error"><p role="alert">{readError}</p><button type="button" onClick={()=>{staticPreview();setFile(null);setRetry(value=>value+1);}}>重试读取</button></div>:file?<>
+    loading?<p role="status">正在读取成果…</p>:readError?<div className="canvas-read-error"><p role="alert">{readError}</p><button type="button" onClick={()=>{stopHtmlAnnotation();setFile(null);setRetry(value=>value+1);}}>重试读取</button></div>:file?<>
       {isPatch?patchFallback?<><p role="status" className="canvas-note">{patchFallback}</p>{patchRaw}</>:
       <PatchPreviewBoundary key={JSON.stringify([artifact?.id,file.sha256,retry])} fallback={<><p role="status" className="canvas-note">差异预览失败，显示原文。</p>{patchRaw}</>}>
         <details><summary>原始补丁文本</summary>{patchRaw}</details>
         <Suspense fallback={<p role="status">加载差异预览…</p>}><LazyDiffViewer patch={file.text} maxCollapsedLines={200}/></Suspense>
-      </PatchPreviewBoundary>:isHtml?<><iframe ref={webFrame} key={token} title="隔离 HTML 成果" sandbox={interactive?'allow-scripts':''} referrerPolicy="no-referrer" {...(interactive?{...(mobileView?{srcDoc:htmlPreviewShell}:{src:'/preview/interactive'}),onLoad:(event)=>event.currentTarget.contentWindow?.postMessage({type:'homer-html-preview',html:isolatedHtml(file.text,true),runtime},'*')}:{srcDoc:isolatedHtml(file.text)})}/>
+      </PatchPreviewBoundary>:isHtml?<><iframe ref={webFrame} key={token} title="隔离 HTML 成果" sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer" {...(mobileView?{srcDoc:htmlPreviewShell}:{src:'/preview/interactive'})} onLoad={event=>event.currentTarget.contentWindow?.postMessage({type:'homer-html-preview',html:file.text,runtime},'*')}/>
       {savedCount>0&&!interactive&&<p className="canvas-note html-notes-status">已保存 {savedCount} 条网页批注到输入草稿</p>}</>:
       mediaKind?<div className="canvas-media">
         <p className="canvas-note">{file.name}</p>

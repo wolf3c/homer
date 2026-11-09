@@ -173,7 +173,6 @@ export class MediaStore{
   }
   return {bytes:this.readDerivative(asset,row),mime:String(row.mime)};
  }
- extracted(requestId:string,ref:AttachmentRef){this.validate(requestId,[ref]);return this.extractedAttachment(ref);}
  extractedAttachment(ref:AttachmentRef){
   const {asset}=this.readAttachment(ref),row=this.db.prepare("SELECT * FROM media_derivatives WHERE assetId=? AND revision=? AND sourceHash=? AND mime='application/json' ORDER BY rowid DESC LIMIT 1").get(asset.id,asset.revision,asset.hash!);
   if(!row)return {state:'unavailable',error:'media_extraction_unavailable'};

@@ -25,7 +25,7 @@ function safeSide(side:ToolValue|undefined,category:string,input:boolean,toolNam
   }
   if(!input&&Number.isSafeInteger(o?.exitCode))safe.exitCode=o!.exitCode;
  }else if(category==='fileChange'&&Array.isArray(o?.changes))safe.fileCount=o.changes.length;
- else if(toolName&&['work_inspect','task_create','task_update','worker_open','worker_send','worker_read','worker_interrupt','stage_file_result','create_voice_result','inspect_attachment'].includes(toolName)){
+ else if(toolName&&['work_inspect','task_create','task_update','worker_open','worker_send','worker_read','worker_interrupt','stage_file_result','inspect_attachment'].includes(toolName)){
   for(const key of ['state','status','outcome','decision','errorCode']){const c=code(o?.[key]);if(c)safe[key]=c;}
   for(const key of ['count','bytes','total'])if(Number.isSafeInteger(o?.[key])&&Number(o?.[key])>=0)safe[key]=o![key];
   for(const key of ['attachments'])if(Array.isArray(o?.[key]))safe[key+'Count']=(o![key] as unknown[]).length;

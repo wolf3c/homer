@@ -12,13 +12,13 @@ export function configureDesktopImageDecoder(identity:DesktopResourceIdentity){
  if(desktopIdentity&&JSON.stringify(desktopIdentity)!==JSON.stringify(identity))throw Error('desktop_resource_identity_conflict');
  desktopIdentity={...identity};
 }
-export async function mediaProcess(bin:string,args:string[],input:Buffer,maxBytes:number,signal?:AbortSignal,timeoutMs=20000,allowEmpty=false):Promise<Buffer>{
+export async function mediaProcess(bin:string,args:string[],input:Buffer,maxBytes:number,signal?:AbortSignal,timeoutMs=20000):Promise<Buffer>{
  if(desktopIdentity){
   const trusted=verifiedDesktopResources(desktopIdentity),resources=join(trusted.bundleRoot,process.platform==='win32'?'resources':'Contents/Resources');
   // Optional Homebrew/Python/ASR installations never become implicit desktop
   // dependencies. Keep only the verified ImageIO helper and bundled SILK codec.
   const image=process.platform==='win32'?bin===process.execPath&&args.length===2&&args[0]===trusted.imageDecoder&&['0','320'].includes(args[1]!):bin===trusted.imageDecoder&&args.length===1&&['0','320'].includes(args[0]!);
-  const silk=bin===process.execPath&&realpathSync(bin)===join(trusted.bundleRoot,process.platform==='win32'?'resources/node.exe':'Contents/MacOS/node')&&args.length===2&&args[0]===join(resources,'homer/dist/media-silk.js')&&['decode','encode'].includes(args[1]!);
+  const silk=bin===process.execPath&&realpathSync(bin)===join(trusted.bundleRoot,process.platform==='win32'?'resources/node.exe':'Contents/MacOS/node')&&args.length===2&&args[0]===join(resources,'homer/dist/media-silk.js')&&args[1]==='decode';
   if(!image&&!silk)throw Error('media_decoder_unavailable');
  }
  if(signal?.aborted)throw Error('media_decode_cancelled');
@@ -31,7 +31,7 @@ export async function mediaProcess(bin:string,args:string[],input:Buffer,maxByte
   const timer=setTimeout(()=>fail('media_decode_timeout'),timeoutMs),cancel=()=>fail('media_decode_cancelled');signal?.addEventListener('abort',cancel,{once:true});
   child.stderr.resume();child.stdin.on('error',()=>{});child.on('error',()=>fail('media_decoder_unavailable'));
   child.stdout.on('data',chunk=>{if(failure)return;size+=chunk.length;if(size>maxBytes)fail('media_decode_size_limit');else chunks.push(Buffer.from(chunk));});
-  child.on('close',code=>{clearTimeout(timer);signal?.removeEventListener('abort',cancel);if(settled)return;settled=true;if(failure){reject(Error(failure));return;}code===0&&(size||allowEmpty)?resolve(Buffer.concat(chunks)):reject(Error('media_decode_failed'));});
+  child.on('close',code=>{clearTimeout(timer);signal?.removeEventListener('abort',cancel);if(settled)return;settled=true;if(failure){reject(Error(failure));return;}code===0&&size?resolve(Buffer.concat(chunks)):reject(Error('media_decode_failed'));});
   child.stdin.end(input);
  });
 }

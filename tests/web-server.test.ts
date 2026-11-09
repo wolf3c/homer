@@ -21,10 +21,10 @@ test('execution route reads the exact task and run without a redundant root sele
 });
 test("loopback gateway rejects foreign origins, missing mutation origin, and invalid host", async () => {
   let calls = 0;
-  const bridge: WebBridge = { state: async () => state, submit: async () => { calls++; }, stop: async () => {}, respond: async () => {} };
+  const bridge: WebBridge = { history:{state:async()=>state} as WebBridge['history'], submit: async () => { calls++; }, stop: async () => {}, respond: async () => {} };
   const web = await createWebServer({ bridge, port: 0 });
   try {
-    const response = await fetch(web.url + "/api/state");
+    const response = await fetch(web.url + "/api/history/state");
     assert.equal(response.status, 200);
     assert.equal((await response.json() as WebState).threadId, state.threadId);
     for (const origin of [undefined, "https://foreign.example", "null"]) {
@@ -32,7 +32,7 @@ test("loopback gateway rejects foreign origins, missing mutation origin, and inv
       assert.equal(result.status, 403);
     }
     const foreignHost = await new Promise<number | undefined>((accept, reject) => {
-      get(web.url + "/api/state", { headers: { Host: "attacker.example" } }, response => { response.resume(); accept(response.statusCode); }).on("error", reject);
+      get(web.url + "/api/history/state", { headers: { Host: "attacker.example" } }, response => { response.resume(); accept(response.statusCode); }).on("error", reject);
     });
     assert.equal(foreignHost, 403);
     assert.equal(calls, 0);
@@ -44,7 +44,7 @@ test("loopback gateway rejects foreign origins, missing mutation origin, and inv
 test("gateway forwards quote and interaction IDs and reads attachments only by their message and revision", async () => {
   let received: unknown;
   const assetId='asset-11111111-1111-4111-8111-111111111111',path='/api/media/message-synthetic/'+assetId+'/1';
-  const bridge: WebBridge = { state: async () => state, submit: async input => { received = input; }, stop: async () => {}, respond: async (id, input) => { received = { id, input }; }, media:{read:async input=>{
+  const bridge: WebBridge = { submit: async input => { received = input; }, stop: async () => {}, respond: async (id, input) => { received = { id, input }; }, media:{read:async input=>{
     if(input.messageId!=="message-synthetic"||input.assetId!==assetId||input.revision!==1)throw Error("media_scope_denied");
     return {filename:"合成成果.md",mime:"text/markdown",data:Buffer.from("# 合成成果").toString("base64")};
   }} };
@@ -69,7 +69,7 @@ test('voice preview is accepted only on the exact attachment GET route',async()=
  const ref={messageId:'message-voice',assetId:'asset-11111111-1111-4111-8111-111111111111',revision:2};
  const path='/api/media/'+ref.messageId+'/'+ref.assetId+'/'+ref.revision;
  const original=Buffer.from([0,5,255,7]),preview=Buffer.from([82,73,70,70,1]),calls:unknown[]=[];
- const bridge:WebBridge={state:async()=>state,submit:async()=>{},stop:async()=>{},respond:async()=>{},media:{read:async input=>{
+ const bridge:WebBridge={submit:async()=>{},stop:async()=>{},respond:async()=>{},media:{read:async input=>{
   calls.push(input);
   return input.preview==='voice'
    ?{filename:'voice.wav',mime:'audio/wav',data:preview.toString('base64')}
@@ -86,14 +86,14 @@ test('voice preview is accepted only on the exact attachment GET route',async()=
   assert.deepEqual(Buffer.from(await audio.arrayBuffer()),preview);
   for(const suffix of ['?preview=html','?preview=voice&preview=voice','?preview=voice&path=other','/origin?preview=voice','/reveal?preview=voice'])
    assert.equal((await fetch(web.url+path+suffix)).status,400);
-  assert.equal((await fetch(web.url+'/api/state?preview=voice')).status,400);
+  assert.equal((await fetch(web.url+'/api/history/state?preview=voice')).status,400);
   assert.equal((await fetch(web.url+path+'?preview=voice',{method:'POST'})).status,400);
   assert.deepEqual(calls,[ref,{...ref,preview:'voice'}]);
  }finally{await web.close();}
 });
 
 test('retired external message gateways have no local entry points',async()=>{
- const bridge:WebBridge={state:async()=>state,submit:async()=>{},stop:async()=>{},respond:async()=>{}};
+ const bridge:WebBridge={submit:async()=>{},stop:async()=>{},respond:async()=>{}};
  const web=await createWebServer({bridge,port:0});
  try{
   for(const path of ['/api/channels/wechat','/api/channels/telegram','/settings/telegram','/api/files/result-retired'])
@@ -105,14 +105,14 @@ test('retired external message gateways have no local entry points',async()=>{
 test("SSE reconnect gets current server history and disconnect does not cancel submitted work", async () => {
   let text = "部分", stopped = false;
   const bridge: WebBridge = {
-    state: async () => ({ ...state, messages: [{ id: "message-synthetic", threadId: state.threadId, requestId: "request-synthetic", role: "assistant", text, status: "running", createdAt: 1 }] }),
+    history:{state:async()=>({ ...state, messages: [{ id: "message-synthetic", threadId: state.threadId, requestId: "request-synthetic", role: "assistant", text, status: "running", createdAt: 1 }] })} as WebBridge['history'],
     submit: async () => {}, stop: async () => { stopped = true; }, respond: async () => {},
   };
   const web = await createWebServer({ bridge, port: 0 });
   try {
     for (const expected of ["部分", "已完成的合成内容"]) {
       const controller = new AbortController();
-      const response = await fetch(web.url + "/api/events", { signal: controller.signal });
+      const response = await fetch(web.url + "/api/history/events", { signal: controller.signal });
       assert.match(response.headers.get("content-type")!, /text\/event-stream/);
       const reader = response.body!.getReader();
       const first = new TextDecoder().decode((await reader.read()).value);
@@ -126,7 +126,7 @@ test("SSE reconnect gets current server history and disconnect does not cancel s
 
 test("gateway forwards annotation-only multi-quotes without accepting a forged trusted source", async () => {
   let received: unknown;
-  const bridge: WebBridge={state:async()=>state,submit:async input=>{received=input;},stop:async()=>{},respond:async()=>{}};
+  const bridge: WebBridge={submit:async input=>{received=input;},stop:async()=>{},respond:async()=>{}};
   const web=await createWebServer({bridge,port:0});
   try {
     const input={requestId:"synthetic-multi-http",text:"",quotes:[{messageId:"message-synthetic",text:"合成原文",annotation:"合成批注"}]};
@@ -135,12 +135,13 @@ test("gateway forwards annotation-only multi-quotes without accepting a forged t
   }finally{await web.close();}
 });
 
-for(const path of ['/api/events','/api/history/events'])test(`shutdown ends ${path} whose initial snapshot is still pending`,async()=>{
+test('shutdown ends the paged event stream whose initial snapshot is still pending',async()=>{
+ const path='/api/history/events';
  let entered!:()=>void,release!:(value:unknown)=>void;
  const started=new Promise<void>(resolve=>{entered=resolve;});
  const snapshot=new Promise<unknown>(resolve=>{release=resolve;});
  const read=async()=>{entered();return snapshot;};
- const bridge={state:read,history:{state:read}} as unknown as WebBridge;
+ const bridge={history:{state:read}} as unknown as WebBridge;
  const web=await createWebServer({bridge,port:0});
  const request=get(web.url+path,response=>response.resume());request.on('error',()=>{});
  let closing:Promise<void>|undefined;

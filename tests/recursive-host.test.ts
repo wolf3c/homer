@@ -1,3 +1,4 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 // Synthetic peers exercise the actual Homer pump, durable state and sink; no real-model claim.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ for(const failed of [false,true])test('HMR-RECURSIVE host: same-thread followup 
     const [task]=f.app.tasks.tasks();
     assert.equal(f.app.tasks.tasks().length,1);
     assert.equal(task!.outcome,failed?'partial':'succeeded');
-    const state=await homerWebBridge(f.app).state();
+    const state=await homerWebBridge(f.app).history!.state();
     assert.equal(state.artifacts?.length,1);
     const [file]=state.artifacts!;
     const message=f.app.history.message(file!.messageId)!;
@@ -31,14 +32,14 @@ for(const failed of [false,true])test('HMR-RECURSIVE host: same-thread followup 
   }finally{await f.close();}
 });
 test('HMR-QUEUE host: three durable inputs FIFO; edit/cancel CAS; exact-generation interrupt preserves earlier queue and Worker',async()=>{
-  const f=syntheticHost();try{await f.app.start();await f.app.message('synthetic:source','source');const assistant=f.app.conversationState().messages.find(m=>m.role==='assistant'&&m.text.includes('Synthetic reply'))!;
-    f.app.submitMessage({requestId:'stream',text:'synthetic:stream'});await until(()=>!!f.app.conversationState().generation);
+  const f=syntheticHost();try{await f.app.start();await f.app.message('synthetic:source','source');const assistant=readTestConversation(f.app).messages.find(m=>m.role==='assistant'&&m.text.includes('Synthetic reply'))!;
+    f.app.submitMessage({requestId:'stream',text:'synthetic:stream'});await until(()=>!!f.app.conversationControlState().generation);
     const quote={messageId:assistant.id,text:'Synthetic reply',annotation:'Synthetic annotation'};
     for(const id of ['one','two','three'])f.app.submitMessage({requestId:id,text:id,quotes:[quote]});
     const queued=f.app.inputs.list().filter(i=>i.state==='queued');assert.equal(queued.length,3);
     f.app.editQueued({requestId:'one',operationId:'edit-one',expectedRevision:queued[0]!.revision,input:{...queued[0]!.input,text:'one-edited'}});
     f.app.cancelQueued({requestId:'two',operationId:'cancel-two',expectedRevision:queued[1]!.revision});
-    const g=f.app.conversationState().generation!;f.app.submitMessage({requestId:'urgent',text:'urgent'},undefined,{messageId:g.messageId,generationId:g.generationId});
+    const g=f.app.conversationControlState().generation!;f.app.submitMessage({requestId:'urgent',text:'urgent'},undefined,{messageId:g.messageId,generationId:g.generationId});
     await until(()=>f.app.inputs.list().find(i=>i.input.requestId==='three')?.state==='completed');
     await f.app.idle();
     assert.deepEqual(f.seen.slice(0,2),['synthetic:source','synthetic:stream']);

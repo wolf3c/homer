@@ -1,4 +1,4 @@
-import type {NativeRpc} from './native-capabilities.js';
+type NativeRpc = (method: string, params: any) => Promise<any>;
 type Phase='idle'|'waiting'|'unconfirmed'|'cancelled'|'failed'|'timed_out'|'cancel_unconfirmed'|'logout_unconfirmed';
 type Completion={loginId?:unknown;success?:unknown;error?:unknown};
 export type NativeAccountState={account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:Phase;loginId?:string;authUrl?:string;expiresAt?:number};

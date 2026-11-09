@@ -27,6 +27,10 @@ if(process.isMainFrame===true){
    let active=true;return()=>{if(!active)return;active=false;ipcRenderer.removeListener('homer:update:changed',listener);};
   },
  });
+ contextBridge.exposeInMainWorld('homerDesktopChatApps',Object.fromEntries(
+  ['state','start','code','confirm','cancel','remove','undo','discard','apply']
+   .map(action=>[action,input=>ipcRenderer.invoke('homer:chat-apps',action,input)]),
+ ));
  contextBridge.exposeInMainWorld('homerDesktopSettings',{
   onOpen:callback=>{
    if(typeof callback!=='function')throw new TypeError('desktop_settings_callback');

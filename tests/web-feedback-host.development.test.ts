@@ -19,7 +19,7 @@ test('dev gateway forwards unpaired public-final feedback through real host IPC 
  symlinkSync(join(root,'node_modules'),join(base,'node_modules'),'dir');
  for(const name of ['home','runtime','workspace/materials'])mkdirSync(join(base,name),{recursive:true});
  const binary=join(base,'synthetic-codex.mjs');cpSync(join(root,'tests/fixtures/web-browser-app-server.mjs'),binary);
- const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({appData:base,workspace:'workspace',runtime:'runtime',nativeCodexHome:join(base,'home'),codexBin:binary,model:'synthetic-only',requiresOpenaiAuth:false,effort:'medium',timeoutMs:30000,mainTimeoutMs:120000,stopGraceMs:200}));
+ const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({appData:base,workspace:'workspace',runtime:'runtime',nativeCodexHome:join(base,'home'),codexBin:binary,model:'synthetic-only',requiresOpenaiAuth:false,effort:'medium',stopGraceMs:200}));
  const reserve=createServer();await new Promise<void>(r=>reserve.listen(0,'127.0.0.1',r));const port=(reserve.address() as {port:number}).port;await new Promise<void>(r=>reserve.close(()=>r()));
  const url=`http://127.0.0.1:${port}`,fetch=syntheticUserFetch();
  const env={...process.env,HOMER_DATA_HOME:base,HOMER_NATIVE_CODEX_HOME:join(base,'home'),HOMER_CODEX_HOME:join(base,'home'),HOMER_CODEX_BIN:binary};
@@ -27,7 +27,7 @@ test('dev gateway forwards unpaired public-final feedback through real host IPC 
  let lines='',stderr='';const events:any[]=[];
  child.stdout.on('data',data=>{lines+=data;const parts=lines.split('\n');lines=parts.pop()!;for(const line of parts){try{events.push(JSON.parse(line));}catch{}}});
  child.stderr.on('data',data=>{stderr+=data;});child.on('exit',()=>{exited=true;});
- const state=async()=>{try{return await(await fetch(url+'/api/state')).json();}catch{return undefined;}};
+ const state=async()=>{try{return await(await fetch(url+'/api/history/state')).json();}catch{return undefined;}};
  const post=(body:unknown,origin=url)=>fetch(url+'/api/messages/feedback',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
  const until=(check:()=>Promise<boolean>)=>waitForDevCondition(check,{signal:t.signal,events,exited:()=>exited});
  try{
@@ -38,7 +38,7 @@ test('dev gateway forwards unpaired public-final feedback through real host IPC 
   // segment. Resolve that existing relationship; do not choose the last reply.
   let node:any;
   await until(async()=>{
-   const current=await state();node=current?.processNodes?.find((n:any)=>n.replyMessageId===receipt.replyId);
+   const current=await state();node=current?.messages?.find((m:any)=>m.process?.replyMessageId===receipt.replyId)?.process;
    return node?.state==='worked'&&node.status==='completed'&&!!node.final?.text;
   });
   const visible=(await state()).messages.find((m:any)=>m.id===node.messageId);

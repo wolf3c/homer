@@ -35,7 +35,7 @@ export async function runPinned(manifestPath,configPath,port){
  const startWeb=async()=>{
   if(port===undefined)return;
   const {createWebServer}=await import(pathToFileURL(join(live.directory,'dist/web-server.js')).href);
-  const bridge={state:()=>rpc('state'),submit:input=>rpc('submit',input),stop:messageId=>rpc('stop',{messageId}),respond:(id,input)=>rpc('respond',{...input,id}),media:{read:input=>rpc('media.read',input),origin:input=>rpc('media.origin',input),reveal:input=>rpc('media.reveal',input)}};
+  const bridge={history:{state:()=>rpc('history.state'),page:input=>rpc('history.page',input),process:input=>rpc('history.process',input),resolve:input=>rpc('history.resolve',input),receipts:input=>rpc('history.receipts',input),queue:(after,readEpoch)=>rpc('history.queue',{after,readEpoch}),dispatchQueue:input=>rpc('history.dispatchQueue',input),interactions:(after,readEpoch)=>rpc('history.interactions',{after,readEpoch})},submit:input=>rpc('submit',input),stop:messageId=>rpc('stop',{messageId}),respond:(id,input)=>rpc('respond',{...input,id}),media:{read:input=>rpc('media.read',input),origin:input=>rpc('media.origin',input),reveal:input=>rpc('media.reveal',input)}};
   web=await createWebServer({port,bridge,uiDirectory:join(live.directory,'dist/web'),logoPath:join(live.directory,'assets/branding/homer-hippo-cool-icon-256.png')});
  };
  const rl=createInterface({input:process.stdin,terminal:false});
@@ -64,6 +64,7 @@ export async function runPinned(manifestPath,configPath,port){
    clearTimeout(readyTimeout);
    if(stopping)return;
    if(port!==undefined&&message.stateInvalidationProtocol!==1)throw Error('state_invalidation_protocol_required');
+   if(port!==undefined&&message.webHistoryProtocol!==3)throw Error('history_protocol_required');
    if(message.thread!==manifest.database.metadata.mainThread)throw Error('pinned_thread_mismatch');
    ready=true;await startWeb();await emit({kind:'ready',thread:message.thread,engine:message.engine,pid:child.pid,...(web?{url:web.url}:{})});
   }

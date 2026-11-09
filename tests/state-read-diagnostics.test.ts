@@ -10,26 +10,22 @@ test('state read measurements preserve values and failures without retaining rea
  const timings=new ReceptionTimings();
  try{
   const value={private:'SYNTHETIC_PRIVATE_READ'};
-  assert.equal(timings.measure('state_snapshot',()=>value),value);
+  assert.equal(timings.measure('state_history',()=>value),value);
   const failure=Error('SYNTHETIC_PRIVATE_ERROR');
-  assert.throws(()=>timings.measure('state_conversation',()=>{throw failure;}),error=>error===failure);
+  assert.throws(()=>timings.measure('state_history',()=>{throw failure;}),error=>error===failure);
   const records=timings.read().records;
-  assert.deepEqual(records.map(row=>row.phase),['state_snapshot','state_conversation']);
+  assert.deepEqual(records.map(row=>row.phase),['state_history','state_history']);
   assert.ok(records.every(row=>Number.isFinite(row.durationMs)&&row.durationMs!>=0));
   assert.equal(JSON.stringify(records).includes('SYNTHETIC_PRIVATE'),false);
  }finally{timings.close();}
 });
 
-test('real state reads expose separate snapshot and conversation durations without changing persisted facts',async()=>{
+test('paged state reads expose their duration without changing persisted facts',async()=>{
  const f=historyFixture(20),timings=new ReceptionTimings();
  const app=Object.assign(Object.create(Homer.prototype),f,{files:new Files('.codex/scratch/deepseek-adaptation-20261028/unused-state-workspace'),workers:new Map(),receptionTimings:timings,registerWebSurface(){}}) as Homer;
  try{
   const bridge=homerWebBridge(app);app.webHistoryPages();
   const before=f.store.db.prepare('SELECT total_changes() n').get()!.n;
-  const state=await bridge.state();
-  assert.equal(state.threadId,'synthetic-history');assert.ok(state.messages.length>0);
-  const phases=timings.read().records.map(row=>row.phase);
-  for(const phase of ['state_start','state_snapshot','state_conversation','state_end'])assert.ok(phases.includes(phase as any),phase);
   const history=await bridge.history!.state();
   assert.equal(history.threadId,'synthetic-history');assert.ok(history.messages.length>0);
   assert.ok(timings.read().records.some(row=>row.phase==='state_history'&&Number.isFinite(row.durationMs)));

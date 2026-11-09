@@ -1,3 +1,4 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
@@ -23,7 +24,7 @@ for(const scenario of ['pre-call-failure','ack-db-failure','no-ack','after-ack-l
     return {status:scenario.startsWith('failed-terminal')?'failed':'completed',text:'Synthetic native aggregate'};
    };
    f.app.submitMessage({requestId:'synthetic-boundary',text:'合成输入'});await f.app.idle();
-   assert.equal(calls,scenario==='pre-call-failure'?0:1);const item=f.app.inputs.list()[0]!,state=f.app.conversationState();
+   assert.equal(calls,scenario==='pre-call-failure'?0:1);const item=f.app.inputs.list()[0]!,state=readTestConversation(f.app);
    if(scenario==='pre-call-failure'){assert.equal(item.state,'failed');assert.equal(state.queue.length,0);assert.equal(state.messages.length,1);assert.equal(state.messages[0]?.source?.text,'合成输入');}
    else if(['ack-db-failure','no-ack','after-ack-lost'].includes(scenario)){
     assert.equal(item.state,'uncertain');assert.equal(f.app.inputs.claim(),undefined);
@@ -60,7 +61,7 @@ test('internal worker turn with host closure remains unknown and never promotes 
   await f.app.start();const peer=f.engines[0]!;
   peer.turn=async(_text,options)=>{peer.turnId='synthetic-internal-turn';options?.onStarted?.(peer.turnId);peer.emit('agentMessage',{threadId:peer.threadId,turnId:peer.turnId,itemId:'private',phase:'final_answer',text:'PRIVATE_WORKER_BODY',completed:true});throw Error('synthetic_worker_connection_lost');};
   await assert.rejects(()=>f.app['mainTurn']('[内部协作事件 synthetic]',{event:true,inspected:new Set()}),/synthetic_worker_connection_lost/);
-   const node=f.app.processes.list(peer.threadId)[0]!;assert.equal(node.status,'unknown');assert.equal(node.state,'worked');assert.match(node.endEventId!,/^host:engine_closed:/);assert.equal(node.final,undefined);assert.equal(node.items.length,1);assert.ok(!JSON.stringify(f.app.conversationState()).includes('PRIVATE_WORKER_BODY'));
+   const node=f.app.processes.list(peer.threadId)[0]!;assert.equal(node.status,'unknown');assert.equal(node.state,'worked');assert.match(node.endEventId!,/^host:engine_closed:/);assert.equal(node.final,undefined);assert.equal(node.items.length,1);assert.ok(!JSON.stringify(readTestConversation(f.app)).includes('PRIVATE_WORKER_BODY'));
  }finally{await f.close();}
 });
 test('new user input runs independently after Worker host closure while its old receipt stays uncertain',async()=>{
@@ -95,7 +96,7 @@ test('unknown/no-final process keeps the exact explicit message and both authori
   const text='合成原答复，两个文件关系完整。',sent=commitSyntheticMessage(f.app,thread,text,[{filename:'synthetic-plan.md',content:'# Plan'},{filename:'synthetic-draft.md',content:'# Draft'}],input.input.requestId);
   assert.equal(sent.messageId,input.replyId);
   f.app.processes.finish('synthetic-fast-node','unknown');f.app.inputs.uncertain(input.messageId,input.revision);
-  const bridge=homerWebBridge(f.app),state=await bridge.state();
+  const bridge=homerWebBridge(f.app),state=await bridge.history!.state();
   const process=state.messages.find(message=>message.id==='synthetic-fast-node')?.process;
   assert.equal(process?.status,'unknown');assert.equal(process?.final,undefined);
   assert.equal(state.messages.find(message=>message.id===sent.messageId)?.text,text);

@@ -1,3 +1,4 @@
+import {callHostMcp} from './fixtures/host-mcp-call.js';
 // Requirements-derived synthetic stop races. Actual Homer and SQLite only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,8 +36,8 @@ function fixture(confirm=true){
       if(text.startsWith('[内部协作输入')&&text.includes('interactionId=')){
         this.turnId='synthetic-question-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
         const interactionId=text.match(/interactionId=([\w-]+)/)![1]!;
-        await this.call('inspect_interaction',{interactionId});
-        await this.call('escalate_interaction',{interactionId,question:'Synthetic format?',reason:'Synthetic ambiguity'});
+        await callHostMcp(this.options, 'inspect_interaction',{interactionId});
+        await callHostMcp(this.options, 'escalate_interaction',{interactionId,question:'Synthetic format?',reason:'Synthetic ambiguity'});
         return {status:'completed',text:'Synthetic question'};
       }
       this.turnId='synthetic-main-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);return {status:'completed',text:'Synthetic reply'};
@@ -49,7 +50,7 @@ function fixture(confirm=true){
       this.releaseTurn?.({status:'interrupted',text:''});return true;
     }return false;}
   }
-  const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic-only',effort:'medium',requiresOpenaiAuth:false,timeoutMs:30000,mainTimeoutMs:3000,stopGraceMs:50},async()=>{},(o,h)=>{const peer=new Peer(o,h);peers.push(peer);return peer;});
+  const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic-only',effort:'medium',requiresOpenaiAuth:false,stopGraceMs:50},async()=>{},(o,h)=>{const peer=new Peer(o,h);peers.push(peer);return peer;});
   const start=async()=>{await app.start();await app.message('synthetic:dispatch','synthetic-dispatch');await until(()=>app.interactions.list()[0]?.state==='pending_user');return {worker:peers.find(p=>p.worker)!,item:app.interactions.list()[0]!};};
   return {app,start,async close(){
     // RED must not depend on the very terminal-run cleanup being tested.

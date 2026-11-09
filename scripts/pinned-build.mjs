@@ -78,7 +78,9 @@ export function pinnedDatabaseIdentity(path){
    (hasTable('worker_interactions')&&exists("SELECT 1 FROM worker_interactions WHERE state IN ('pending_main','pending_user') OR (state IN ('approved','denied','answered') AND deliveredAt IS NULL) LIMIT 1"))||
    (hasTable('tasks')&&exists('SELECT 1 FROM tasks LIMIT 1'));
   const mediaVersion=hasTable('media_schema')?db.prepare('SELECT version FROM media_schema').get()?.version:null;
-  return {schemaHash:jsonHash(schema),metadata,unknown,executionReviewRequired,mediaVersion};
+  // Non-unique query indexes may be installed on the first history read.
+  const storageSchema=schema.filter(row=>row.type!=='index'||typeof row.sql!=='string'||!/^CREATE INDEX\b/i.test(row.sql));
+  return {schemaHash:jsonHash(storageSchema),metadata,unknown,executionReviewRequired,mediaVersion};
  }finally{db.close();}
 }
 function reviewedSchema(directory,database){

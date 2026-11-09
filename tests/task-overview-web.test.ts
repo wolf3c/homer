@@ -6,7 +6,7 @@ import type {WebBridge} from '../src/web-contract.js';
 test('task overview routes require loopback Host/Origin, offer GET only and never invoke snapshot/state or mutation paths',async()=>{
  let lists=0,details=0,summaries=0,origins=0;
  const denied=async()=>{throw Error('forbidden_call');};
- const bridge:WebBridge={state:denied,submit:denied,stop:denied,respond:denied,taskOverview:{list:async()=>{lists++;return {tasks:[]};},detail:async id=>{details++;return {taskId:id,runs:[]};},summary:async id=>{summaries++;return {taskId:id,runs:[],artifacts:[]};},origin:async()=>{origins++;throw Error('task_origin_not_found');}}};
+ const bridge:WebBridge={submit:denied,stop:denied,respond:denied,taskOverview:{list:async()=>{lists++;return {tasks:[]};},detail:async id=>{details++;return {taskId:id,runs:[]};},summary:async id=>{summaries++;return {taskId:id,runs:[],artifacts:[]};},origin:async()=>{origins++;throw Error('task_origin_not_found');}}};
  const server=await createWebServer({bridge,port:0});
  try{
   const local=await globalThis.fetch(server.url+'/api/tasks');assert.equal(local.status,200,'loopback read needs no pairing');

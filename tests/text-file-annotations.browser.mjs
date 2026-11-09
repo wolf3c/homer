@@ -16,7 +16,7 @@ const read=f.bridge.artifact.bind(f.bridge);
 const submit=f.bridge.submit.bind(f.bridge),attempts=[];let unknownSend=false;
 f.bridge.submit=async input=>{if(unknownSend){attempts.push(structuredClone(input));throw Error('synthetic_unknown_receipt');}return submit(input);};
 f.bridge.artifact=async id=>{const file=formats.find(file=>file.id===id);if(!file)return read(id);return {filename:file.title,mime:'text/plain',data:Buffer.from(file.text).toString('base64'),sha256:createHash('sha256').update(file.text).digest('hex')};};
-for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,upgrade:{...value.upgrade,accepting},artifacts:[...(value.artifacts??[]),...formats.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic annotations'}))]};};}
+{const owner=f.bridge.history;const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,upgrade:{...value.upgrade,accepting},artifacts:[...(value.artifacts??[]),...formats.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic annotations'}))]};};}
 const checks=[];
 async function waitAttempts(count){for(let i=0;i<200&&attempts.length<count;i++)await new Promise(done=>setTimeout(done,10));assert.equal(attempts.length,count);}
 try{

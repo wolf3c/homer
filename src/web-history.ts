@@ -292,7 +292,7 @@ export class ConversationHistory {
     this.db.prepare("UPDATE conversation_messages SET text=text || ? WHERE id=? AND status='running'").run(delta, id);
   }
   finish(id: string, text: string, status: ConversationMessage["status"]) {
-    this.db.prepare("UPDATE conversation_messages SET text=?,status=? WHERE id=? AND status='running'").run(text, status, id);
+    return !!this.db.prepare("UPDATE conversation_messages SET text=?,status=? WHERE id=? AND status='running'").run(text, status, id).changes;
   }
   add(threadId: string, text: string, status: ConversationMessage["status"] = "completed") {
     const id = "message-" + randomUUID();

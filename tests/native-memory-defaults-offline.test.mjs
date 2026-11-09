@@ -47,7 +47,7 @@ test('fixed native engine initializes only fresh main memory and preserves resum
   finally{db.close();}
  };
  async function start(role,threadId,controlOnly=false){
-  const engine=new CodexEngine(config,{role,threadId,controlOnly,cwd:workspace,readRoots:[],instructions:'Synthetic offline metadata check.',tools:[],nativeCapabilities:true,nativeTools:role??'main'},async()=>{throw Error('no_tools_allowed');});
+  const engine=new CodexEngine(config,{role,threadId,controlOnly,cwd:workspace,readRoots:[],instructions:'Synthetic offline metadata check.',tools:[],nativeTools:role??'main'},async()=>{throw Error('no_tools_allowed');});
   const abort=()=>{void engine.close();};t.signal.addEventListener('abort',abort,{once:true});
   try{
    const id=await engine.start();
@@ -55,7 +55,13 @@ test('fixed native engine initializes only fresh main memory and preserves resum
    assert.equal(actual.model_provider,'homer');
    assert.equal(actual.model_providers.homer.base_url,connection.baseUrl,'provider must remain on scripted loopback before any turn');
    const effective=actual.memories;
-   assert.equal(effective.extract_model,'deepseek-flash');assert.equal(effective.consolidation_model,'deepseek-flash');
+   if(controlOnly){
+    assert.notEqual(actual.features.memories,true);
+    assert.equal(id,'');assert.equal(engine.threadId,undefined);
+    await engine.request('account/read',{refreshToken:false});
+   }else{
+    assert.equal(effective.extract_model,'deepseek-flash');assert.equal(effective.consolidation_model,'deepseek-flash');
+   }
    if(!threadId&&!controlOnly)assert.equal((await engine.turn('Synthetic metadata persistence only.')).status,'completed');
    for(const [path,before] of preserved)assert.equal(hash(path),before);
    return id;
@@ -68,7 +74,9 @@ test('fixed native engine initializes only fresh main memory and preserves resum
   const worker=await start('worker');assert.equal(mode(worker),'disabled');
   assert.equal(await start('main',worker),worker);assert.equal(mode(worker),'disabled');
   assert.equal(await start('worker',main),main);assert.equal(mode(main),'enabled');
+  const beforeControl=requests.length;
   assert.equal(await start(undefined,undefined,true),'');
+  assert.equal(requests.length,beforeControl);
   assert.ok(requests.length>=2);
   assert.ok(requests.every(request=>request.model==='deepseek-flash'),'all scripted requests must use the explicitly bound model');
   const efforts=Object.fromEntries([...new Set(requests.map(request=>request.effort))].map(effort=>[effort,requests.filter(request=>request.effort===effort).length]));

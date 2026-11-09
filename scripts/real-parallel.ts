@@ -9,7 +9,7 @@ import { engineError } from '../src/engine.js';
 const input = process.argv[2];
 if (!input) throw new Error('explicit_config_required');
 const base = resolve('.codex/scratch/parallel-regression-' + Date.now());
-const config = { ...loadConfig(input), runtime: join(base, 'runtime'), workspace: join(base, 'workspace'), mainTimeoutMs: 120000, timeoutMs: 120000 };
+const config = { ...loadConfig(input), runtime: join(base, 'runtime'), workspace: join(base, 'workspace') };
 mkdirSync(config.runtime, { recursive: true });
 mkdirSync(join(config.workspace, 'materials'), { recursive: true });
 writeFileSync(join(config.workspace, 'materials', 'a.md'), '# 合成笔记A\n林青负责初稿，日期待确认。\n');

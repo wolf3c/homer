@@ -55,8 +55,8 @@ const uiHash=digest(sources.filter(x=>x.path.replaceAll('\\','/').startsWith('ui
 run(process.execPath,[join(modules,'vite/bin/vite.js'),'build','--configLoader','runner','--base',`/ui/${uiHash}/`,'--config',join(stage,'ui/vite.config.ts')],join(stage,'ui'));
 const dependencies=prepareDependencies(scratch,option('--archive-source')?{archiveSource:resolve(option('--archive-source'))}:undefined);
 const homer=join(payload,'homer');
-for(const part of ['dist','prompts','assets','package.json','package-lock.json','.codex/skills'])cpSync(join(stage,part),join(homer,part),{recursive:true});
-for(const name of ['dev.mjs','dev-build.mjs','trusted-build.mjs','pinned-build.mjs','dev-ingress.mjs','desktop-runtime.mjs','desktop-profile.mjs','windows-security.mjs']){mkdirSync(join(homer,'scripts'),{recursive:true});cpSync(join(stage,'scripts',name),join(homer,'scripts',name));}
+for(const part of ['dist','prompts','assets','package.json','package-lock.json','.codex/skills'])cpSync(join(stage,part),join(homer,part),{recursive:true,filter:path=>path!==join(stage,'dist/update-review-page.js')});
+for(const name of ['dev.mjs','trusted-build.mjs','pinned-build.mjs','dev-ingress.mjs','desktop-runtime.mjs','desktop-profile.mjs','windows-security.mjs']){mkdirSync(join(homer,'scripts'),{recursive:true});cpSync(join(stage,'scripts',name),join(homer,'scripts',name));}
 const {dependencyIdentity,pinnedInventory}=await import(pathToFileURL(join(stage,'scripts/pinned-build.mjs')).href);
 let dependencyRoot=stage;
 if(windows){dependencyRoot=join(scratch,'windows-dependencies');mkdirSync(dependencyRoot);const product=JSON.parse(readFileSync(join(stage,'package.json')));product.dependencies.sharp=product.devDependencies.sharp;writeFileSync(join(dependencyRoot,'package.json'),JSON.stringify(product));cpSync(join(stage,'package-lock.json'),join(dependencyRoot,'package-lock.json'));symlinkSync(modules,join(dependencyRoot,'node_modules'),'junction');cpSync(join(dependencyRoot,'package.json'),join(homer,'package.json'));}
@@ -85,12 +85,12 @@ for(const [path,sha]of Object.entries(voice.sha256))if(hash(readFileSync(join(ve
 const files=pinnedInventory(homer),sourceHash=digest({sources,provenance}),manifest=digest(files);
 writeFileSync(join(homer,'build-manifest.json'),JSON.stringify({sourceHash,manifest,files})+'\n');
 const {schemaHash,sourceSnapshot}=await import(pathToFileURL(join(stage,'scripts/dev-build.mjs')).href);
-const {MAIN_TOOLS}=await import(pathToFileURL(join(homer,'dist/tools.js')).href);
+const {MAIN_TOOLS_HASH}=await import(pathToFileURL(join(homer,'dist/recursive-tools.js')).href);
 const product=JSON.parse(readFileSync(join(stage,'package.json'))),electron=product.devDependencies.electron;
 const build=distribution?.build??Number(execFileSync(git,['rev-list','--count',sourceSha],{cwd:root,encoding:'utf8'}));
 const {validateHomerOrigins}=await import(pathToFileURL(join(homer,'dist/homer-account.js')).href);
 const account=validateHomerOrigins({websiteOrigin,gatewayOrigin},provenance.preparation);
-const metadata={account,arch,minimumMacOS,...(windows?{platform:'win32'}:{}),...(distribution?{appId:'app.homer.desktop',releaseChannel:'stable'}:{}),...(provenance.localWorkingTree?{localWorkingTree:true}:{}),format:2,version:product.version,build,gitSha:sourceSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash,schema:schemaHash(sourceSnapshot(stage)),toolsHash:hash(JSON.stringify(MAIN_TOOLS)),node:'22.22.0',codex:'0.163.0',electron};
+const metadata={account,arch,minimumMacOS,...(windows?{platform:'win32'}:{}),...(distribution?{appId:'app.homer.desktop',releaseChannel:'stable'}:{}),...(provenance.localWorkingTree?{localWorkingTree:true}:{}),format:2,version:product.version,build,gitSha:sourceSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash,schema:schemaHash(sourceSnapshot(stage)),toolsHash:MAIN_TOOLS_HASH,node:'22.22.0',codex:'0.163.0',electron};
 cpSync(join(stage,'packaging/electron/main.mjs'),join(shell,'main.mjs'));
 cpSync(join(stage,'packaging/electron/preload.cjs'),join(shell,'preload.cjs'));
 writeFileSync(join(shell,'package.json'),JSON.stringify({...(windows?{dependencies:{'electron-updater':product.devDependencies['electron-updater'],'js-yaml':product.devDependencies['js-yaml']}}:{}),name:'homer-desktop',author:'Homer',version:product.version,private:true,type:'module',main:'main.mjs',devDependencies:{electron}})+'\n');

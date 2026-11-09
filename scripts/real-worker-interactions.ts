@@ -16,7 +16,7 @@ if (!input) throw new Error("explicit_config_required");
 const stamp = Date.now();
 const base = resolve(".codex/scratch/worker-interactions/real-" + stamp);
 const runtime = resolve(".codex/private/wi-" + stamp);
-const config = { ...loadConfig(input), runtime, workspace: join(base, "workspace"), mainTimeoutMs: 180000, timeoutMs: 180000 };
+const config = { ...loadConfig(input), runtime, workspace: join(base, "workspace") };
 mkdirSync(runtime, { recursive: true, mode: 0o700 });
 mkdirSync(config.workspace, { recursive: true });
 const samplePath=join(config.workspace, "sample.md");

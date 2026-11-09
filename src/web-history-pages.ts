@@ -3,6 +3,7 @@ import type {ConversationHistory} from './web-history.js';
 import type {MainProcessHistory,ProcessNode} from './main-process.js';
 import type {MainInputs} from './recursive-main-inputs.js';
 import {projectConversation,type ConversationBoundary} from './conversation-projection.js';
+import type {ChannelPlugin} from './channel-plugin.js';
 export type HistoryPageRequest={limit?:number;before?:string;after?:string;around?:string};
 type Identity={id:string;threadId:string;messageId:string;replyId:string|null;requestId:string|null;sourceKind:string;position:number|null};
 const processPrefix='publicMainNode:v1:';
@@ -27,7 +28,7 @@ function historyPredicates(){
 export class WebHistoryPages{
  readonly initialization:{version:1;nodes:number;ms:number;batches:number};
  private get db(){return this.history.db;}
- constructor(private history:ConversationHistory,private processes:MainProcessHistory,private inputs:MainInputs){
+ constructor(private history:ConversationHistory,private processes:MainProcessHistory,private inputs:MainInputs,private channels?:Pick<ChannelPlugin,'readMessageSources'>){
   const start=performance.now(),db=this.db;
   // DDL for TEMP read indexes is deliberately outside business change observers.
   // One savepoint prevents a partially installed trigger set on initialization failure.
@@ -177,8 +178,16 @@ export class WebHistoryPages{
   for(const node of nodeRows)if(node.requestId&&node.position!==null&&this.db.prepare("SELECT 1 FROM web_process_ids WHERE threadId=? AND requestId=? AND sourceKind='user' AND position IS NOT NULL AND position<? LIMIT 1").get(threadId,node.requestId,node.position))continuedNodes.add(node.id);
   const replies=[...new Set(nodeRows.flatMap(node=>node.replyId?[node.replyId]:[]))];
   for(const reply of replies)related.add(reply);
-  const history=this.history.byIds(threadId,[...related]),display=projectConversation(history,nodes,this.inputs.byRequestIds(requests),boundary);
-  if(!details)display.messages=display.messages.map(message=>message.process?.details==='unloaded'&&message.process.final?{...message,process:{...message.process,final:{id:message.process.final.id,text:''}}}:message);
+  const history=this.history.byIds(threadId,[...related]),inbox=this.inputs.byRequestIds(requests);
+  const display=projectConversation(history,nodes,inbox,boundary);
+  const sources=this.channels?.readMessageSources(inbox.filter(item=>item.source==='channel_plugin').map(item=>item.input.requestId),false);
+  if(!details||sources?.size)display.messages=display.messages.map(message=>{
+   const channelSource=message.role==='user'&&message.requestId?sources?.get(message.requestId):undefined;
+   if(channelSource)return {...message,channelSource};
+   if(!details&&message.process?.details==='unloaded'&&message.process.final)
+    return {...message,process:{...message.process,final:{id:message.process.final.id,text:''}}};
+   return message;
+  });
   const first=selected[0],last=selected.at(-1);
   return {protocol:3 as const,threadId,revision:this.revision,...display,units:selectedIds,
    before:first&&(request.after||inclusive||more)?this.cursor(threadId,first.id):null,
@@ -196,8 +205,21 @@ export class WebHistoryPages{
    const page=this.inputs.dispatchPage(cursor,readEpoch,'all');
    const users=page.items.filter(item=>item.origin==='user');
    const visible=new Map(this.projectQueue(users).map(item=>[item.messageId,item]));
+   const workers=page.items.filter(item=>item.origin==='worker');
+   const taskIds=[...new Set(workers.flatMap(item=>item.taskId?[item.taskId]:[]))];
+   const interactionIds=[...new Set(workers.flatMap(item=>item.kind==='interaction_required'&&item.payload&&typeof item.payload==='object'&&typeof (item.payload as {interactionId?:unknown}).interactionId==='string'?[(item.payload as {interactionId:string}).interactionId]:[]))];
+   let titles=new Map<string,string>(),interactions=new Map<string,{kind:string;runId:string}>();
+   try{if(taskIds.length)titles=new Map((this.db.prepare(`SELECT id,title FROM tasks WHERE id IN (${marks(taskIds)})`).all(...taskIds) as {id:string;title:string}[]).map(row=>[row.id,row.title]));}catch{/* Missing metadata must not block the queue. */}
+   try{if(interactionIds.length)interactions=new Map((this.db.prepare(`SELECT id,kind,runId FROM worker_interactions WHERE id IN (${marks(interactionIds)})`).all(...interactionIds) as {id:string;kind:string;runId:string}[]).map(row=>[row.id,row]));}catch{/* Fall back to a generic interaction. */}
    return {...page,items:page.items.flatMap<import('./recursive-main-inputs.js').MainDispatchInput&{user?:import('./web-history.js').ConversationMessage;statusText:string}>(item=>{
-    if(item.origin==='worker')return [{...item,statusText:item.state==='queued'?'等待主 Agent 处理':'接收结果待核对'}];
+    if(item.origin==='worker'){
+     const payload=item.payload&&typeof item.payload==='object'?item.payload as {interactionId?:unknown}:{};
+     const interaction=typeof payload.interactionId==='string'?interactions.get(payload.interactionId):undefined;
+     const kind=item.kind==='interaction_required'?(interaction?.runId===item.runId?(interaction.kind==='question'?'提问':interaction.kind==='authorization'?'操作或授权请求':'交互请求'):'交互请求'):item.kind==='worker_reply'?'执行信息已返回':item.kind==='task_archived'?'事项归档通知':'协作消息';
+     const statusText=item.state==='queued'?'等待主 Agent 处理':item.state==='processing'?'主 Agent 正在接收或处理':'接收状态待核对';
+     const title=item.taskId?titles.get(item.taskId)?.replace(/\s+/g,' ').trim():undefined;
+     return [{...item,payload:null,text:[kind,statusText,title?'事项：'+title:'事项标题暂不可用'].join(' · '),statusText}];
+    }
     const projected=visible.get(item.messageId);return projected?[{...item,...projected}]:[];
    })};
   }

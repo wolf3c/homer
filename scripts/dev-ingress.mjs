@@ -52,7 +52,6 @@ export class IngressJournal {
   }
   pending() { return this.db.prepare("SELECT id,payload FROM transport_requests WHERE state='pending' ORDER BY seq").all().map(row => ({ id: row.id, input: JSON.parse(row.payload) })); }
   assertNoPending() { if (this.db.prepare("SELECT 1 FROM transport_requests WHERE state='pending' LIMIT 1").get()) throw Error('desktop_transport_review_required'); }
-  rejected() { return this.db.prepare("SELECT id,error FROM transport_requests WHERE state='rejected' ORDER BY seq").all().map(row => ({ requestId: row.id, error: row.error })); }
   receipts(ids) {
     if(!Array.isArray(ids)||ids.length>80||ids.some(id=>typeof id!=='string'||!/^[\w:-]{1,100}$/.test(id)))throw Error('receipt_ids_invalid');
     return ids.flatMap(id=>{const row=this.db.prepare('SELECT id,state,error FROM transport_requests WHERE id=?').get(id);return row?[{requestId:id,state:row.state==='rejected'?'rejected':'gateway_stored',...(row.error?{error:row.error}:{})}]:[];});

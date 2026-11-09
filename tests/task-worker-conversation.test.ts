@@ -69,8 +69,9 @@ test('the real host retains late old drafts, confirms both paused exits and resu
    else{
     const notice=JSON.parse(text.split('\n')[1]!);assert.equal(notice.kind,'worker_reply');assert.equal(notice.taskId,taskId);
     const read=await main.call('worker_read',{workerId:notice.workerId,messageId:notice.messageId}),reply=read.messages[0];
-    assert.equal(reply.senderRunId,notice.runId);assert.equal(reply.taskVersion,notice.version);assert.equal(reply.payload.version,notice.version);
-    notices.push({messageId:reply.id,runId:notice.runId,version:notice.version,text:reply.text});
+    assert.equal(Object.hasOwn(reply,'replyTo'),false);assert.equal(Object.hasOwn(reply,'causationId'),false);
+    assert.equal(reply.senderRunId,reply.payload.runId);assert.equal(reply.taskVersion,notice.version);assert.equal(reply.payload.version,notice.version);
+    notices.push({messageId:reply.id,runId:reply.senderRunId,version:notice.version,text:reply.text});
     if(notice.version===1){
      assert.equal(f.app.tasks.task(taskId).headVersion,2);
      await assert.rejects(main.call('accept_result',{taskId,messageId:reply.id}),/tool_denied/);

@@ -44,7 +44,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  let stored=native.connection??{token:'synthetic-file-token',subject:'fixture_user',config:config()};
  const account={queryHomerRuntimeConfig:async options=>{nativeCalls.push(['config']);return native.config?native.config(options):config();},saveHomerRuntimeConfig:(_path,value)=>{if(native.writeError)throw Error('CONNECTION_WRITE_FAILED');stored={token:stored.token,subject:stored.subject,config:value};nativeCalls.push(['save-config']);return stored;},readHomerConnection:path=>{tokenFiles.push(path);if(native.invalidTokenFile)throw Error('CONNECTION_FILE_INVALID');return stored;},validateHomerOrigins:v=>v,authorizeHomerConnection:async options=>{const value=native.authorize?await native.authorize(options):{token:'synthetic-website-token',subject:'fixture_user',config:config()};if(!options.signal.aborted)stored=value;return value;},disconnectHomerConnection:()=>{nativeCalls.push(['disconnect']);if(native.disconnectError)throw Error('CONNECTION_WRITE_FAILED');stored=stored?.subject?{...stored,token:undefined}:null;},queryHomerWallet:async()=>{nativeCalls.push(['wallet']);return native.wallet?native.wallet():{available:5,used:2,unit:'原生额度'};}};
  class NsisUpdater extends EventEmitter{constructor(options){super();nativeCalls.push(['nsis',options]);this.on('error',()=>{if(this.logger!==null)console.error('private_library_log');});}checkForUpdates(){nativeCalls.push(['check-update',this.logger]);if(native.checkReject){this.emit('error',Error('private_check'));return Promise.reject(Error('private_check'));}return Promise.resolve(native.nullCheck?null:{downloadPromise:native.downloadReject?Promise.resolve().then(()=>{this.emit('error',Error('private_download'));throw Error('private_download');}):Promise.resolve([])});}quitAndInstall(...args){if(this.quitAndInstallCalled)return;this.quitAndInstallCalled=true;nativeCalls.push(['install-update',...args]);if(native.closeBeforeInstallError)for(const w of windows){w.destroyed=true;w.contentsDestroyed=true;}if(native.installError)throw Error('private_install');if(native.installAsyncError)this.emit('error',Error('EACCES UNKNOWN private_install'));queueMicrotask(()=>app.quit());}}
- const modules={'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'../homer/dist/processes.js':{processIdentity:()=> 'synthetic-process',leaseOwnerGone:()=>true},'electron':electron,'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:root=>({root,runtime:native.runtime??join(root,'runtime'),workspace:join(root,'workspace'),codexHome:native.codexHome??join(root,'codex'),...(native.adopted?{adoption:{appData:'/synthetic/original-app'}}:{})}),recoverDesktopOwner:home=>{assert.equal(ownsLock,true);ownershipCalls.push(['recover-owner',home]);if(native.recoveryError)throw Error('desktop_owner_unknown');},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,saveDesktopModelSource:(_root,source)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(['source',source]);}}};
+ const modules={'../homer/dist/web-contract.js':await import('../src/web-contract.ts'),'../homer/dist/desktop-channels.js':{DesktopChannels:class {start(...args){nativeCalls.push(['channel-start',...args]);return 'fixture-flow';} snapshot(){return {pending:native.channelPending??[]};} configured(){return [];} cancel(){} apply(){nativeCalls.push(['channel-apply']);return {saved:['Telegram@example_bot'],failed:[]};}}},'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'../homer/dist/processes.js':{processIdentity:()=> 'synthetic-process',leaseOwnerGone:()=>true},'electron':electron,'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:root=>({root,runtime:native.runtime??join(root,'runtime'),workspace:join(root,'workspace'),codexHome:native.codexHome??join(root,'codex'),...(native.adopted?{adoption:{appData:'/synthetic/original-app'}}:{})}),recoverDesktopOwner:home=>{assert.equal(ownsLock,true);ownershipCalls.push(['recover-owner',home]);if(native.recoveryError)throw Error('desktop_owner_unknown');},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,saveDesktopModelSource:(_root,source)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(['source',source]);}}};
  Object.assign(account,native.accountApi);
  let timer;const context=vm.createContext({process:{argv:['Homer','--test-profile','/synthetic/profile'],resourcesPath:'/synthetic/Homer.app/Contents/Resources',platform:'darwin',execPath:'C:\\Homer\\Homer.exe',arch:native.arch??'arm64',env:{SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'}},Buffer,URL,AbortController,console:native.console??console,performance:{now:()=>monotonic},setTimeout:cb=>{timer=cb;return 1;},clearTimeout(){}});
  context.process.argv=args;context.process.platform=platform;
@@ -345,13 +345,13 @@ test('desktop access injects only into current main UI requests and strips crede
  const f=await fixture(),origin='http://127.0.0.1:56789',token='a'.repeat(64);
  f.event({kind:'url',url:origin+'/',desktopAccessToken:token});await f.tick();
  const w=f.windows[0],headers=overrides=>{
-  let result;f.handlers.get('desktop-request')({url:origin+'/api/state',webContents:w.webContents,frame:w.webContents.mainFrame,resourceType:'xhr',initiatorOrigin:origin,requestHeaders:{Accept:'application/json','x-HoMeR-DeSkToP-aCcEsS':'synthetic-forged-header'},...overrides},value=>{result=value.requestHeaders;});
+  let result;f.handlers.get('desktop-request')({url:origin+'/api/history/state',webContents:w.webContents,frame:w.webContents.mainFrame,resourceType:'xhr',initiatorOrigin:origin,requestHeaders:{Accept:'application/json','x-HoMeR-DeSkToP-aCcEsS':'synthetic-forged-header'},...overrides},value=>{result=value.requestHeaders;});
   return Object.fromEntries(Object.entries(result).map(([k,v])=>[k.toLowerCase(),v]));
  };
  assert.equal(headers({})['x-homer-desktop-access'],token);
  for(const overrides of [
-  {url:'https://foreign.invalid/api/state'},{url:'http://127.0.0.1:56790/api/state'},
-  {url:origin+'/preview/interactive'},{url:origin+'/api/state?q=1'},{url:'http://user:pass@127.0.0.1:56789/api/state'},
+  {url:'https://foreign.invalid/api/history/state'},{url:'http://127.0.0.1:56790/api/history/state'},
+  {url:origin+'/preview/interactive'},{url:origin+'/api/history/state?q=1'},{url:'http://user:pass@127.0.0.1:56789/api/history/state'},
   {webContents:{}},{frame:null},{frame:{...w.webContents.mainFrame}},
   {initiatorOrigin:'null'},{initiatorOrigin:'https://foreign.invalid'},{initiatorOrigin:undefined},
   {resourceType:'mainFrame'},{resourceType:'subFrame'},
@@ -811,12 +811,59 @@ test('preload exposes fixed Promise methods and only the screen settings token i
  for(const isMainFrame of [true,false,undefined]){
   const exposed=[],calls=[];vm.runInNewContext(source,{process:{isMainFrame},require:name=>{assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(...args)=>exposed.push(args)},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {synthetic:true};}}};}});
   if(isMainFrame!==true){assert.equal(exposed.length,0);continue;}
-  assert.equal(exposed.length,4);const [name,api]=exposed.find(([name])=>name==='homerDesktopPermissions');assert.equal(name,'homerDesktopPermissions');assert.deepEqual(Object.keys(api),['check','promptAccessibility','openSystemSettings']);
+  assert.equal(exposed.length,5);
+  const chatApps=exposed.find(([name])=>name==='homerDesktopChatApps')[1];
+  assert.deepEqual(Object.keys(chatApps),['state','start','code','confirm','cancel','remove','undo','discard','apply']);
+  await chatApps.state(true);assert.deepEqual(calls.at(-1),['homer:chat-apps','state',true]);
+  const [name,api]=exposed.find(([name])=>name==='homerDesktopPermissions');assert.equal(name,'homerDesktopPermissions');assert.deepEqual(Object.keys(api),['check','promptAccessibility','openSystemSettings']);
   await api.openSystemSettings('screen');assert.deepEqual(calls.at(-1),[permissionChannels[2],'screen']);
   for(const args of [[undefined],[null],['Screen'],['screen',true],['https://example.invalid/'],[{target:'screen'}]]){const n=calls.length;await assert.rejects(async()=>api.openSystemSettings(...args),/desktop_permissions_arguments/);assert.equal(calls.length,n);}
   for(const [i,method] of Object.keys(api).entries()){assert.equal(typeof api[method],'function');assert.equal((await api[method]()).synthetic,true);assert.deepEqual(calls.at(-1),[permissionChannels[i]]);const n=calls.length;await assert.rejects(async()=>api[method]('/tmp'),/desktop_permissions_arguments/);assert.equal(calls.length,n);}
  }
 });
+test('only the trusted desktop frame can start a DingTalk pairing',async()=>{
+ const f=await permissionFixture({});
+ const handle=f.handlers.get('homer:chat-apps');
+ const sender=f.windows[0].webContents;
+ const credentials={appKey:'dingFixtureApp',appSecret:'synthetic-secret'};
+ const input={channel:'dingtalk',credentials};
+ await assert.rejects(handle({sender,senderFrame:{...sender.mainFrame}},'start',input),/desktop_channels_forbidden/);
+ assert.equal(f.nativeCalls.some(call=>call[0]==='channel-start'),false);
+ assert.equal(await handle({sender,senderFrame:sender.mainFrame},'start',input),'fixture-flow');
+ assert.deepEqual(f.nativeCalls.find(call=>call[0]==='channel-start'),['channel-start','dingtalk',undefined,undefined,credentials]);
+});
+
+for(const mode of ['cancelled','no ack','exit failure','late confirmed','confirmed'])test('chat apps apply requires desktop trust and confirmed stop: '+mode,async()=>{
+ const pending=[{channel:'telegram',key:'101',kind:'add'}];
+ const f=await permissionFixture({channelPending:pending,response:mode==='cancelled'?0:1});
+ const handle=f.handlers.get('homer:chat-apps');
+ const sender=f.windows[0].webContents;
+ await assert.rejects(handle({sender,senderFrame:{...sender.mainFrame}},'apply'),/desktop_channels_forbidden/);
+ await handle({sender,senderFrame:sender.mainFrame},'apply');
+ await f.tick();
+ assert.equal(f.sent.length,mode==='cancelled'?0:1);
+ assert.equal(f.nativeCalls.some(call=>call[0]==='channel-apply'),false);
+ if(mode==='cancelled')return;
+ let quitCount=0;f.app.on('quit',()=>quitCount++);
+ if(mode==='late confirmed')f.timeout();
+ if(mode!=='no ack'){
+  f.event({kind:'stopped'});await f.tick();
+  assert.equal(f.nativeCalls.some(call=>call[0]==='channel-apply'),false);
+ }
+ f.child.emit('close',mode==='exit failure'?1:0,null);await f.tick();
+ assert.equal(f.nativeCalls.some(call=>call[0]==='channel-apply'),mode==='confirmed');
+ assert.equal(f.nativeCalls.some(call=>call[0]==='relaunch'),mode==='confirmed');
+ assert.equal(quitCount,mode==='confirmed'?1:0);
+ if(mode==='late confirmed'){
+  const state=await handle({sender,senderFrame:sender.mainFrame},'state',false);
+  assert.equal(state.stopped,true);
+  assert.equal(state.pending.length,1);
+  await handle({sender,senderFrame:sender.mainFrame},'apply');
+  await f.tick();
+  assert.equal(f.nativeCalls.some(call=>call[0]==='channel-apply'),true);
+ }
+});
+
 test('desktop build copies the actual preload alongside main without packaging or installing',()=>{
  const source=readFileSync('scripts/build-desktop.mjs','utf8');const copy=source.split('\n').find(line=>line.includes("join(shell,'preload.cjs')"));assert.ok(copy);
  const files=new Map([['stage/packaging/electron/preload.cjs',readFileSync('packaging/electron/preload.cjs')]]);

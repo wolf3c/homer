@@ -19,7 +19,7 @@ const formats=[
 const f=await fixture(4,'after');let chrome,accepting=true;
 const read=f.bridge.artifact.bind(f.bridge);
 f.bridge.artifact=async id=>{const file=formats.find(file=>file.id===id);return file?{filename:file.title,mime:file.mime,data:Buffer.from(file.text).toString('base64'),sha256:file.sha256}:read(id);};
-for(const owner of [f.bridge,f.bridge.history]){
+{const owner=f.bridge.history;
  const state=owner.state.bind(owner);
  owner.state=async()=>{const value=await state();return {...value,upgrade:{...value.upgrade,accepting},artifacts:[...(value.artifacts??[]),...formats.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic selection'}))]};};
 }
@@ -34,7 +34,7 @@ try{
    if(await ev(()=>!!document.querySelector('#canvas-panel'))&&width<=800){await ev(()=>document.querySelector('.canvas-collapse, .conversation-header [aria-controls=canvas-panel][aria-expanded=true]:not([aria-hidden=true] *)').click());await until(()=>!document.querySelector('#canvas-panel'));}
    const file=formats.find(file=>file.id===id);
    await ev(`(()=>{const b=[...document.querySelectorAll('.file-list-open')].find(b=>b.getAttribute('aria-label')===${JSON.stringify('预览 '+file.title)});b.scrollIntoView({block:'center'});b.click();})()`);
-   if(file.mime==='text/html'){await until(()=>document.querySelector('iframe[title="隔离 HTML 成果"]')?.getAttribute('sandbox')==='');return;}
+   if(file.mime==='text/html'){await until(()=>document.querySelector('iframe[title="隔离 HTML 成果"]')?.getAttribute('sandbox')==='allow-scripts allow-forms');return;}
    await until(`document.querySelector('[data-preview-text]')?.textContent.includes(${JSON.stringify(file.text.slice(0,4))})`);
   };
   const select=async(selector='[data-preview-text]',partial=true)=>{

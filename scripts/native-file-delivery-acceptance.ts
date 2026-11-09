@@ -40,7 +40,7 @@ try{
   const bridge=homerWebBridge(f.app);
   web=await createWebServer({port:process.argv.includes('--serve')?4811:0,bridge,uiDirectory:resolve('dist/web'),
     logoPath:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
-  const attached=(await bridge.state()).artifacts??[];
+  const attached=(await bridge.history!.state()).artifacts??[];
   assert.equal(attached.length,files.length);
   const results=[];
   const url=({messageId,assetId,revision}:WebArtifact)=>web!.url+'/api/media/'+[messageId,assetId,revision].map(encodeURIComponent).join('/');

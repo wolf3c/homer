@@ -23,7 +23,7 @@ test('actual main tool failure persists a progress pair without preventing its o
  }
  try{
   mkdirSync(join(root,'runtime'));
-  app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'runtime','codex-home'),nativeCodexHome:join(root,'runtime','codex-home'),codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,timeoutMs:2000,mainTimeoutMs:2000,stopGraceMs:100},async message=>{messages.push(message);},(_options:EngineOptions,handler)=>new Engine(handler));
+  app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'runtime','codex-home'),nativeCodexHome:join(root,'runtime','codex-home'),codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async message=>{messages.push(message);},(_options:EngineOptions,handler)=>new Engine(handler));
   app.registerRuntimeBuild('a'.repeat(64));await app.start();
   const reply=await app.message('合成工具失败后继续答复','synthetic-progress-input');
   assert.equal(reply,'合成已知失败后正常答复');

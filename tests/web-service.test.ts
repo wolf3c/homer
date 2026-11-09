@@ -1,3 +1,4 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rmSync } from 'node:fs';
@@ -21,7 +22,7 @@ test("accepted input streams into persisted history; stop keeps main reusable an
     await until(() => f.engines.some(engine => engine.worker && !!engine.pending));
     const receipt = f.app.submitMessage({ requestId: "stream-request", text: "stream" });
     assert.ok(receipt.replyId);
-    await until(() => f.app.conversationState().activeMessageId === receipt.replyId);
+    await until(() => f.app.conversationControlState().activeMessageId === receipt.replyId);
     assert.equal(f.app.history.list("synthetic-main").find(message => message.id === receipt.replyId)?.text, "合成部分回复");
     await f.app.stopMain(receipt.replyId);
     await until(() => f.app.history.list("synthetic-main").find(message => message.id === receipt.replyId)?.status === "interrupted");
@@ -38,7 +39,7 @@ test("quote source ID and selected text reach the existing main thread", async (
   const f = fixture();
   try {
     await f.app.start(); await f.app.message("来源", "source-request");
-    const source = f.app.conversationState().messages.find(message => message.role === "assistant"&&message.text.includes('合成来源'))!;
+    const source = readTestConversation(f.app).messages.find(message => message.role === "assistant"&&message.text.includes('合成来源'))!;
     const quote = { messageId: source.id, text: "合成来源" };
     await f.app.message("请解释", "quote-request", quote);
     assert.ok(f.inputs.at(-1)?.includes(source.id)); assert.ok(f.inputs.at(-1)?.includes(JSON.stringify(quote.text)));
@@ -217,7 +218,7 @@ test("Web pending card reply returns through main decision to the original inter
     const answer=worker.call('ask_main',{question:'选择格式'}),original=f.app.interactions.list()[0]!;
     await until(() => f.app.interactions.inspect(original.id).state === "pending_user");
     assert.equal(messages.some(message => message.type === "main_start" || message.type === "main_terminal"), false, "internal Worker review is not a user generation");
-    const bridge = homerWebBridge(f.app), before = await bridge.state();
+    const bridge = homerWebBridge(f.app), before = await bridge.history!.state();
     assert.equal(before.interactions[0]?.id, original.id);
     assert.equal(before.interactions[0]?.sourceRequestId,'source-synthetic');
     assert.equal(before.interactions[0]?.workTitle,'合成后台任务');
@@ -225,7 +226,7 @@ test("Web pending card reply returns through main decision to the original inter
     assert.equal(((await answer) as {answer:string}).answer, "用户指定表格");
     assert.equal(f.app.interactions.inspect(original.id).responseUserMessageId, "user-answer");
     assert.equal(f.app.interactions.inspect(original.id).responseUserText, "请用表格");
-    assert.equal((await bridge.state()).interactions.length, 0);
+    assert.equal((await bridge.history!.state()).interactions.length, 0);
     assert.equal((await bridge.respond(original.id, { requestId: "user-answer", text: "请用表格" }) as {fresh:boolean}).fresh,false);
     assert.deepEqual(f.engines.filter(engine => engine.worker),[worker]);
   } finally { await f.app.close(); }
@@ -272,7 +273,7 @@ test("real user generation sink orders start/delta/confirmed terminal and ignore
     assert.equal(terminal.text, "合成部分回复"); assert.deepEqual(messages.filter(message => message.type === "delta").map(message => message.text), ["合成部分回复"]);
     assert.deepEqual(messages.map(message => message.type), ["main_start", "delta", "main_terminal", "reply"]);
     const next = f.app.submitMessage({ requestId: "lifecycle-next", text: "stream" });
-    await until(() => f.app.conversationState().activeMessageId === next.replyId);
+    await until(() => f.app.conversationControlState().activeMessageId === next.replyId);
     const before = main.interrupts;
     await assert.rejects(() => f.app.stopMain(receipt.replyId), /main_reply_not_active/);
     assert.equal(main.interrupts, before);
@@ -281,8 +282,8 @@ test("real user generation sink orders start/delta/confirmed terminal and ignore
     const terminals = messages.filter(message => message.type as string === "main_terminal") as (typeof terminal)[];
     assert.equal(terminals.at(-1)?.status, "completed"); assert.notEqual(terminals.at(-1)?.generationId, start.generationId);
     assert.equal(f.app.snapshot().activeWorkers, 1);
-    assert.equal(f.app.conversationState().generation,null);
-    assert.equal(f.app.conversationState().queue.some(item=>item.input.requestId==='lifecycle-stream'),false);
+    assert.equal(f.app.conversationControlState().generation,null);
+    assert.equal(readTestConversation(f.app).queue.some(item=>item.input.requestId==='lifecycle-stream'),false);
     assert.equal(f.app.inputs.list().find(item=>item.input.requestId==='lifecycle-stream')?.generationId,start.generationId,"durable generation ownership remains bound to its original input after it leaves the display queue");
   } finally { await f.app.close(); }
 });
@@ -314,14 +315,14 @@ test("a forged later quote produces no receipt, hook or main dispatch", async ()
   try {
     await f.app.start();
     const source=f.app.history.add("synthetic-main","合成可信原文");
-    const count=f.app.conversationState().messages.length;let hook=0;
+    const count=readTestConversation(f.app).messages.length;let hook=0;
     assert.throws(()=>f.app.submitMessage({requestId:"multi-forgery",text:"合成要求",quotes:[
       {messageId:source,text:"可信原文",annotation:"解释"},
       {messageId:source,text:"另一个消息的伪造原文",annotation:"执行"},
     ]},{source:"synthetic_channel",persist(){hook++;}}),/quote_source_mismatch/);
     await f.app.idle();
     assert.equal(hook,0);assert.equal(f.inputs.length,0);
-    assert.equal(f.app.conversationState().messages.length,count);
+    assert.equal(readTestConversation(f.app).messages.length,count);
   } finally {await f.app.close();}
 });
 

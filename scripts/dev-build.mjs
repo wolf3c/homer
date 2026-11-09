@@ -5,7 +5,7 @@ import { spawn, fork } from "node:child_process";
 import {copyRuntimeDependencies,sealBuild,freezeToolchain} from "./trusted-build.mjs";
 
 const digest = value => createHash("sha256").update(value).digest("hex");
-const roots = ["scripts", "src", "prompts", "assets", "ui", ".codex/skills/homer-initialize", ".codex/skills/homer-tool-management", ".codex/skills/homer-feedback", ".codex/skills/homer-archive-review"];
+const roots = ["scripts", "src", "prompts", "assets", "ui", ".codex/skills/homer-tool-management", ".codex/skills/homer-feedback", ".codex/skills/homer-archive-review"];
 const excluded = path => path.replaceAll("\\", "/").split("/").some(part => part === "node_modules" || part === "dist" || part === ".vite" || part === ".DS_Store");
 export function sourceSnapshot(root, configPath) {
   const files = new Map();

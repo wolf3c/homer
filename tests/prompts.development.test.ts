@@ -24,9 +24,9 @@ test("HMR-PROMPTS-001: package dry run contains dist and the two maintained prom
     const files: string[] = JSON.parse(pack.stdout)[0].files.map((file: { path: string }) => file.path);
     for (const name of ["dist/cli.js", "dist/prompts.js", "prompts/main.md", "prompts/worker.md"]) assert.ok(files.includes(name), name);
     const skills=files.filter(name=>name.startsWith('.codex/'));
-    assert.equal(skills.length,13,'release carries only the four complete maintained Skill directories');
+    assert.equal(skills.length,12,'release carries only the three complete maintained Skill directories');
     assert.ok(files.filter(name=>name.startsWith("prompts/")).every(name=>["prompts/main.md","prompts/worker.md"].includes(name)));
-    const bundled=['homer-initialize','homer-tool-management','homer-feedback','homer-archive-review'];
+    const bundled=['homer-tool-management','homer-feedback','homer-archive-review'];
     assert.ok(skills.every(name=>bundled.some(skill=>name.startsWith('.codex/skills/'+skill+'/'))));
     for(const name of bundled)assert.ok(skills.includes('.codex/skills/'+name+'/SKILL.md'));
     assert.ok(skills.includes('.codex/skills/homer-feedback/scripts/submit-feedback.mjs'));

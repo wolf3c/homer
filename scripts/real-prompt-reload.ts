@@ -17,7 +17,7 @@ cpSync(resolve("dist"), join(packaged, "dist"), { recursive: true });
 cpSync(resolve("prompts"), join(packaged, "prompts"), { recursive: true });
 writeFileSync(join(packaged, "package.json"), '{"type":"module"}');
 const { Homer } = await import(pathToFileURL(join(packaged, "dist/service.js")).href) as typeof import("../src/service.js");
-const config = { ...loadConfig(input), runtime, workspace: join(base, "workspace"), mainTimeoutMs: 180000 };
+const config = { ...loadConfig(input), runtime, workspace: join(base, "workspace") };
 mkdirSync(config.workspace, { recursive: true });
 const mainFile = join(packaged, "prompts/main.md"), maintained = readFileSync(mainFile, "utf8");
 const markerA = "PROMPT-A-" + randomUUID(), markerB = "PROMPT-B-" + randomUUID(), memory = "MEMORY-" + randomUUID();

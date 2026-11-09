@@ -1,5 +1,5 @@
 import {type ComponentProps,type ReactNode,createContext,useContext,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
-import {ListTodoIcon,ChevronRightIcon,XIcon} from 'lucide-react';
+import {ListTodoIcon,ChevronRightIcon} from 'lucide-react';
 import {Collapsible} from '@base-ui/react/collapsible';
 import {Toggle} from '@base-ui/react/toggle';
 import type {WebState} from '../src/web-contract';
@@ -194,13 +194,11 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
    const result=await onInteraction(id,after);if(controller.signal.aborted||!openRef.current||!connectedRef.current)return;if(result===false)throw Error();returnTarget.current='task-interaction-'+id;setOpen(false);if(wide){returnTarget.current=null;requestAnimationFrame(()=>{const target=document.getElementById('task-interaction-'+id);target?.scrollIntoView({block:'center'});target?.focus({preventScroll:true});});}
   }catch{if(!controller.signal.aborted||controller.signal.reason==='task_status_timeout')setNavigationError('这项待答已变化或暂不可读，请收起后重新打开工作状态核对。');}finally{clearTimeout(timeout);if(navigation.current===controller){navigation.current=null;setNavigating(false);}}
  }
- const close=()=>{setOpen(false);if(wide)document.getElementById('task-status-trigger')?.focus({preventScroll:true});};
  // A stale snapshot stays readable in the panel, never masquerades as a live badge.
  const currentWorking=counts&&snapshot.workingKnown&&!stale&&connected&&!error?counts.working:null;
  const title=currentWorking!==null?(currentWorking===0?'工作状态，无工作中任务':`工作状态，${currentWorking} 个任务工作中`):'工作状态，'+(!connected?'连接未确认':error?'读取失败':data?'数量待核实'+(stale?'，显示上次记录':''):'正在读取');
  const content=(
    <ExecutionObservationContext.Provider value={{connected:connected&&!stale,enabled:state.features?.workerExecution===1,revision:data?.progressRevision??0,scope:state.threadId+':'+(state.history?.readEpoch??'legacy'),read:connectionFetch}}><Disclosures.Provider value={expanded}><PendingDisabled.Provider value={stale||navigating}><div className="status-content-body flex flex-col gap-3">
-    <div className="flex items-center justify-between gap-3"><h2 className="text-[13.5px] font-medium">工作状态</h2><button type="button" className={ghostButton+' size-11 shrink-0'} aria-label="收起工作状态" onClick={close}><XIcon className="size-4"/></button></div>
     <div id="task-status-summary" role="group" aria-label="按工作状态筛选" className="status-counts">{counts?(['working','done','needsUser'] as const).map(key=><Toggle key={key} pressed={filter===key} onPressedChange={pressed=>changeFilter(pressed?key:null)} aria-controls="task-status-filtered-list" aria-label={key==='working'&&!snapshot.workingKnown?'工作中数量待核实':(key==='working'?'工作中，':key==='done'?'执行完成，':'待你处理，')+counts[key]+(key==='needsUser'?' 项请求':key==='done'?' 个 Worker':' 个任务')} className="status-count-filter">{key==='working'?'工作中':key==='done'?'执行完成':'待你处理'} <span data-count={key==='needsUser'?'needs-user':key}>{key==='working'&&!snapshot.workingKnown?'待核实':counts[key]}</span></Toggle>):<p className={cn(mono,'text-muted-foreground')}>正在核对任务记录</p>}</div>
     {!!counts?.queued&&<p className="text-xs text-muted-foreground">排队 <span data-count="queued">{counts.queued}</span> 个任务</p>}
     {(stale&&data||error||navigationError)&&<div className="flex items-center gap-2"><p role="status" className="text-xs text-muted-foreground">{navigationError||error||'连接尚未确认。'}{data?' 显示上次记录。':''}</p>{error&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs shrink-0'} disabled={busy||!connected} onClick={()=>refresh(true)}>重试</button>}</div>}

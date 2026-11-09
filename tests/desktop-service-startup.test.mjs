@@ -27,7 +27,7 @@ test('desktop closes only a newly created failed main and keeps management store
  const f=fixture(t),cwd=process.cwd();process.chdir(f.root);
  try{await assert.rejects(f.app.start({keepManagementOnFailure:true}),/synthetic_start_failed/);}finally{process.chdir(cwd);}
  assert.equal(f.starts(),1);assert.equal(f.app.store.meta('lease:main'),undefined);
- assert.equal(f.app.conversationState().threadId,'');await f.app.close({requireAllOwnersConfirmed:true});
+ assert.equal(f.app.store.meta('mainThread'),undefined);await f.app.close({requireAllOwnersConfirmed:true});
 });
 test('desktop shutdown rejects a leftover Worker owner even when close() did not throw',async t=>{
  const f=fixture(t),{app}=f,threadId='synthetic-thread',sourceRequestId='synthetic-owner-source';

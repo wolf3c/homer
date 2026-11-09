@@ -10,12 +10,14 @@ import {MediaStore} from '../src/media-store.js';
 import {detectMedia} from '../src/media-policy.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {Homer} from '../src/service.js';
+import {createHooks} from '../src/hooks.js';
 
 export function htmlAttachmentFixture(filename='正式预览.html',bytes=Buffer.from('<!doctype html><meta charset="utf-8"><h1>正式 HTML 成果</h1>')){
  const root=resolve('.codex/scratch/message-attachments');
  mkdirSync(root,{recursive:true});
  const dir=mkdtempSync(join(root,'fixture-')),store=new Store(join(dir,'homer.sqlite'));
- const close=()=>{store.close();rmSync(dir,{recursive:true,force:true});};
+ const hookEvents=createHooks<{'message.committed':Readonly<{messageId:string}>}>(['message.committed'],()=>{});
+ const close=()=>{hookEvents.close();store.close();rmSync(dir,{recursive:true,force:true});};
  try{
   const workspace=join(dir,'workspace'),runtime=join(dir,'runtime'),codexHome=join(dir,'codex');
   const files=new Files(workspace),tasks=new RecursiveTasks(store,files);tasks.migrate();
@@ -30,14 +32,14 @@ export function htmlAttachmentFixture(filename='正式预览.html',bytes=Buffer.
   if(queuedInput?.origin!=='user')throw Error('synthetic_input_not_claimed');
   inputs.started(queuedInput.messageId,queuedInput.revision,'synthetic-generation','synthetic-turn');
   const app=Object.assign(Object.create(Homer.prototype),{
-   store,files,tasks,history,media,inputs,
+   store,files,tasks,history,media,inputs,hookEvents,hooks:hookEvents.listener,
    stateObservers:new Set(),sink:async()=>{},
    config:{workspace,runtime,codexHome,nativeCodexHome:codexHome,codexBin:process.execPath},
    main:{threadId,turnId:'synthetic-turn',interrupt:async()=>true},
    mainContext:{requestId,messageId:replyId,event:false,userText:'请附上已核对的文件',queuedInput},
   });
   const hidden=media.snapshot('staged-only',{filename:'uncommitted.txt',bytes:Buffer.from('uncommitted bytes'),kind:'file',mime:'text/plain'});
-  const bridge=homerWebBridge(app,{draftUpload:false,nativeCapabilities:false});
+  const bridge=homerWebBridge(app,{draftUpload:false});
   const send=(attachments:unknown[]=[{path:original}],operationId='synthetic-send')=>{
    const sent=app.sendUserMessage(app.mainActor(),{operationId,text:'文件见附件',attachments});
    const ref=history.message(sent.messageId)?.attachments?.[0];

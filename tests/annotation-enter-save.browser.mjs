@@ -71,7 +71,7 @@ async function consumers(chrome){
  const f=await fixture(4,'after');let uploads=0;
  f.attach('Synthetic Enter',files.map(({title,mime,bytes})=>({filename:title,mime,content:bytes})));
  f.bridge.media.upload=async input=>{uploads++;return {assetId:'asset-'+input.uploadId,revision:1,filename:input.filename,kind:'image',state:'ready',mime:'image/png',size:png.length,error:null};};
- for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,features:{...value.features,draftUpload:true}};};}
+ {const owner=f.bridge.history;const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,features:{...value.features,draftUpload:true}};};}
  try{for(const width of process.env.HOMER_TEST_WIDTHS?.split(',').map(Number)??[1440,390,320]){
   const p=await chrome.page(f.server.url,width),{ev,until,fill,key,click}=controls(p);
   const draft=()=>ev(()=>JSON.parse(sessionStorage.getItem('homer-draft:synthetic-history')));

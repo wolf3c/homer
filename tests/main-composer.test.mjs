@@ -120,7 +120,7 @@ for(const scenario of ['paused','ready','unowned','active','recoverable'])test('
   }
   const cutoff=Number(f.store.db.prepare('SELECT max(seq) n FROM agent_messages').get().n);
   const inputs=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff});
-  if(scenario==='ready')inputs.resumeWorkerMessages();
+  if(scenario==='ready')inputs.resumeWorkerMessages(cutoff+1);
   const reader=new WebHistoryPages(f.history,f.processes,inputs),host=Object.create(Homer.prototype);
   Object.assign(host,{...f,inputs,webReadEpoch:'synthetic-epoch',registerWebSurface(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('unexpected_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null})});
   const bridge=homerWebBridge(host),awaiting=scenario==='paused'||scenario==='recoverable';
@@ -157,7 +157,7 @@ for(const scenario of ['paused','ready','unowned','active','recoverable'])test('
    ui.props.connected=false;assert.equal(ui.editor().props.placeholder,'回答上面的问题…');
    ui.props.connected=true;ui.button('退出答复').props.onClick();ui.state.interactions=[];
    ui.button('删除引用 1').props.onClick();
-   inputs.resumeWorkerMessages();Object.assign(ui.state,await bridge.history.state());
+   inputs.resumeWorkerMessages(cutoff+1);Object.assign(ui.state,await bridge.history.state());
    assert.equal(ui.editor().props.placeholder,'发送消息，说明如何继续…','resuming pending work does not hide unresolved history');
    assert.equal(inputs.runnableHead('all'),undefined,'uncertain history is never offered again');
    assert.deepEqual(receipts(),originalReceipts,'ordinary rendering cannot consume uncertain history');
