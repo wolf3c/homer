@@ -4,18 +4,19 @@
 
 /* Official TaskCard owns geometry; event accessibility does not depend on the header. */
 .worker-event-card{margin:12px 0;min-width:0}
-.worker-event-card>button:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:-2px}
 .worker-event-card p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 
 .process-record-note{font-size:12px;line-height:1.6;color:var(--muted);margin:4px 0 8px}
 .process-workers{margin:4px 0 8px;color:var(--muted);font-size:13px;min-width:0}
 
-.task-message-sources { display:grid; gap:6px; margin:8px 0; }
-.homer-task-status.task-source-card,.homer-task-status.worker-event-card { max-width:100%; }
+.message-task-title{margin:0 0 4px;font-size:12px;line-height:18px;font-weight:400;color:var(--muted);overflow-wrap:anywhere}
+/* Keep the message root available to the history commit check. */
+.assistant-message[data-process-completed]:not(:has(> :not(.message-timestamp))){display:none}
+.homer-task-status.worker-event-card { max-width:100%; }
 .homer-task-status [data-slot="task-card-transcript"] { overflow-wrap:anywhere; }
 .homer-task-status [data-attention="user"] > .status-row-trigger { background:var(--accent); outline:1px solid currentColor; }
 @media(max-width:620px) {
- .task-source-card > button > .truncate,.worker-event-card > button > .truncate { white-space:normal; overflow:visible; overflow-wrap:anywhere; }
+ .worker-event-card > button > .truncate { white-space:normal; overflow:visible; overflow-wrap:anywhere; }
 }
 
-.task-source-card > button > .max-w-24,.worker-event-card > button > .max-w-24 { max-width:48%; white-space:normal; overflow:visible; overflow-wrap:anywhere; }
+.worker-event-card > button > .max-w-24 { max-width:48%; white-space:normal; overflow:visible; overflow-wrap:anywhere; }

@@ -2,6 +2,7 @@ import { WorkerInteractions, type InteractionInput, type InteractionResolution }
 import { ConversationHistory, conversationInput, type ConversationInput, type ConversationAcceptance } from './web-history.js';
 import { nativeResponse, type InteractionDecision } from './worker-interaction-protocol.js';
 import type { NativeRequest } from './worker-native-requests.js';
+import type { WebApproval } from './web-contract.js';
 export type MainApprovalScope = {
     threadId: string;
     turnId: string;
@@ -42,48 +43,132 @@ function mcpDisplay(value: unknown, field = ''): string {
     const cleaned = clean(field, value);
     return typeof cleaned === 'string' ? cleaned : JSON.stringify(cleaned, clean);
 }
+function filePermissions(permission: any): string[] {
+    const fs = permission?.fileSystem;
+    const paths: string[] = [];
+    for (const [key, label] of [['read', '读取'], ['write', '写入']] as const) {
+        if (Array.isArray(fs?.[key]))
+            for (const path of fs[key]) if (typeof path === 'string') paths.push(label + '：' + path);
+    }
+    if (Array.isArray(fs?.entries)) for (const entry of fs.entries) {
+        const path = entry?.path;
+        if (!path) continue;
+        const label = entry.access === 'read' ? '读取' : entry.access === 'write' ? '写入' : entry.access === 'deny' ? '禁止访问' : '未知访问规则';
+        paths.push(label + '：' + (path.path ?? path.pattern ?? JSON.stringify(path.value) ?? '未提供路径'));
+    }
+    return paths;
+}
+function fileAccess(paths: string[]) {
+    return ['读取', '写入'].filter(label => paths.some(path => path.startsWith(label + '：'))).join('、');
+}
+function validateNativeDecision(request: NativeRequest, decision: InteractionDecision) {
+    nativeResponse(request, decision);
+    if (decision.action === 'approve' && request.method === 'item/fileChange/requestApproval') {
+        const changes = (request.details.operation as { changes?: unknown } | undefined)?.changes;
+        if (!Array.isArray(changes) || !changes.length) throw Error('interaction_approval_unavailable');
+    }
+}
 function authorizationReview(request: NativeRequest) {
     const p = request.details as any;
-    const lines = ['确认本次操作：'];
-    if (request.method === 'mcpServer/elicitation/request') {
-        const meta = p._meta;
-        lines.push('服务：' + mcpDisplay(p.serverName), mcpDisplay(p.message));
-        if (meta.tool_title) lines.push('工具：' + mcpDisplay(meta.tool_title));
-        if (meta.connector_name) lines.push('来源：' + mcpDisplay(meta.connector_name));
-        const display = meta.tool_params_display;
-        if (display?.length) for (const entry of display)
-            lines.push(mcpDisplay(entry.display_name) + '：' + mcpDisplay(entry.value, entry.name + ' ' + entry.display_name));
-        else if (Object.hasOwn(meta, 'tool_params')) lines.push('操作参数：' + mcpDisplay(meta.tool_params));
-        else lines.push('原请求未提供参数。');
+    const approval: WebApproval = { title: '允许本次操作？', scope: '仅批准本次操作。' };
+    const details: string[] = [], context: string[] = [];
+    let legacy: string[];
+    let unavailableScope: string | undefined;
+    let explanation = typeof p.reason === 'string' && p.reason.trim() ? p.reason : undefined;
+    approval.explanation = explanation;
+    switch (request.method) {
+        case 'mcpServer/elicitation/request': {
+            const meta = p._meta;
+            const tool = meta.tool_title || meta.tool_name;
+            approval.title = meta.codex_approval_kind === 'tool_suggestion' ? '允许安装这个插件？' : '允许调用这个工具？';
+            const message = mcpDisplay(p.message);
+            explanation = explanation && mcpDisplay(explanation);
+            approval.explanation = [message, explanation].filter(Boolean).join('\n');
+            const service = '服务：' + mcpDisplay(p.serverName);
+            const operation = tool && '工具：' + mcpDisplay(tool);
+            const source = meta.connector_name && '来源：' + mcpDisplay(meta.connector_name);
+            context.push(...[service, operation, source].filter(Boolean));
+            legacy = [service, message, meta.tool_title && operation, source].filter(Boolean);
+            const destination = /^(to|recipient|recipients|destination|target|channel|url)$/i;
+            const display = meta.tool_params_display;
+            if (display?.length) for (const entry of display) {
+                const field = mcpDisplay(entry.display_name) + '：' + mcpDisplay(entry.value, entry.name + ' ' + entry.display_name);
+                details.push(field);
+                if (destination.test(entry.name)) context.push(field);
+            }
+            else if (Object.hasOwn(meta, 'tool_params')) {
+                details.push('操作参数：' + mcpDisplay(meta.tool_params));
+                if (meta.tool_params && typeof meta.tool_params === 'object' && !Array.isArray(meta.tool_params))
+                    for (const [key, value] of Object.entries(meta.tool_params))
+                        if (destination.test(key)) context.push('目标（' + key + '）：' + mcpDisplay(value, key));
+            }
+            else context.push('原请求未提供参数。');
+            legacy.push(...(details.length ? details : ['原请求未提供参数。']));
+            approval.detailLabel = '查看操作参数';
+            break;
+        }
+        case 'item/permissions/requestApproval': {
+            const network = p.permissions?.network?.enabled === true;
+            approval.title = '允许本轮使用额外权限？';
+            details.push(...filePermissions(p.permissions));
+            const files = details.length ? '允许文件' + fileAccess(details) + '。' : '';
+            approval.scope = (network ? '允许网络访问，不限单一站点。' : '') + files + '权限在本轮结束时失效。';
+            legacy = network ? ['请求当前回复轮次的网络访问。', ...details] : details;
+            approval.detailLabel = '查看文件权限';
+            break;
+        }
+        case 'item/commandExecution/requestApproval': {
+            const network = p.networkApprovalContext;
+            approval.title = network ? '允许这次网络访问？' : p.kind === 'writeStdin' ? '允许向正在运行的命令发送输入？' : '允许执行这条命令？';
+            approval.scope = network ? '仅批准本次网络访问。' : p.kind === 'writeStdin' ? '仅批准本次输入。' : '仅批准当前命令。';
+            if (network) context.push('网络目标：' + network.protocol + ' / ' + network.host);
+            if (p.command) details.push(p.command);
+            if (p.cwd) details.push('工作目录：' + p.cwd);
+            legacy = [...details, ...context];
+            approval.detailLabel = p.cwd ? '查看完整命令与工作目录' : '查看完整命令';
+            const paths = filePermissions(p.additionalPermissions);
+            if (paths.length) {
+                const grants = paths.filter(path => path.startsWith('读取：') || path.startsWith('写入：'));
+                if (grants.length)
+                    approval.scope += '请求为当前命令增加文件' + fileAccess(grants) + '权限（' + grants.length + ' 项）。';
+                details.push(...paths);
+                approval.detailLabel = '查看命令与附加权限';
+            }
+            if (p.additionalPermissions?.network?.enabled === true) approval.scope += '请求为当前命令启用网络访问。';
+            break;
+        }
+        case 'item/fileChange/requestApproval': {
+            const changes = Array.isArray(p.operation?.changes) ? p.operation.changes : [];
+            approval.title = '允许本次文件改动？';
+            for (const change of changes) {
+                const path = change.path + (change.kind?.move_path ? ' → ' + change.kind.move_path : '');
+                if (context.length < 3) context.push('文件：' + path);
+                details.push('文件：' + path + (change.diff ? '\n' + change.diff : ''));
+            }
+            if (changes.length > 3) context.push('共 ' + changes.length + ' 项文件改动');
+            if (p.grantRoot) {
+                unavailableScope = '请求跨轮次的目录权限，当前入口无法批准。';
+                legacy = [...details, unavailableScope];
+            } else {
+                if (!changes.length) unavailableScope = '原请求未提供可核对的文件改动，当前入口无法批准。';
+                legacy = details;
+            }
+            approval.detailLabel = '查看完整文件改动';
+            break;
+        }
+        default: legacy = details;
     }
-    else if (request.method === 'item/permissions/requestApproval') {
-        const permission = p.permissions ?? {};
-        if (permission.network?.enabled === true)
-            lines.push('请求当前回复轮次的网络访问。');
-        const fs = permission.fileSystem ?? {};
-        for (const [key, label] of [['read', '读取'], ['write', '写入']] as const)
-            for (const path of fs[key] ?? [])
-                lines.push(label + '：' + path);
-        for (const entry of fs.entries ?? [])
-            lines.push((entry.access === 'read' ? '读取' : '写入') + '：' + entry.path.path);
+    try {
+        validateNativeDecision(request, { action: 'approve', reason: '核对可批准的范围', permissions: p.permissions });
+    } catch {
+        approval.canApprove = false;
+        approval.scope = unavailableScope ?? '当前入口无法批准此请求。';
     }
-    else if (request.method === 'item/commandExecution/requestApproval') {
-        if (p.command)
-            lines.push(p.command);
-        if (p.cwd)
-            lines.push('工作目录：' + p.cwd);
-        if (p.networkApprovalContext)
-            lines.push('网络目标：' + p.networkApprovalContext.protocol + ' / ' + p.networkApprovalContext.host);
-    }
-    else {
-        for (const change of p.operation?.changes ?? [])
-            lines.push('文件：' + change.path + (change.kind?.move_path ? ' → ' + change.kind.move_path : '') + '\n' + (change.diff ?? ''));
-        if (p.grantRoot)
-            lines.push('此请求要求跨轮次的目录权限；当前入口不能批准，请拒绝并缩小范围。');
-    }
-    if (p.reason)
-        lines.push('请求说明：' + p.reason);
-    return lines.join('\n');
+    if (context.length) approval.context = context.join('\n');
+    if (details.length) approval.details = details.join('\n');
+    else delete approval.detailLabel;
+    const question = ['确认本次操作：', ...legacy, explanation && '请求说明：' + explanation].filter(Boolean).join('\n');
+    return { approval, question };
 }
 // Reuses the existing interaction/history owner. The legacy runId column holds
 // a distinct main-generation owner key; no Task/Run or callback is reconstructed.
@@ -115,7 +200,9 @@ export class MainNativeApprovals {
     openOperation(review:{requestId:string;question:string;details:Record<string,unknown>;method?:string;reason?:string},scope:MainApprovalScope){
         if(!scope.isCurrent())throw Error('interaction_not_live');
         if(!review.question.trim()||review.question.length>4000||JSON.stringify(review.details).length>64000)throw Error('capability_review_too_large');
-        return this.openReview(review.requestId,'authorization',{method:review.method??'homer_capability_operation',operation:review.details},review.question,review.reason??'仅批准所示安装或配置；不批准额外登录、费用、外发、系统权限或自动重试。取消或本轮结束后失效。',scope);
+        const reason = review.reason ?? '仅批准所示安装或配置；不批准额外登录、费用、外发、系统权限或自动重试。取消或本轮结束后失效。';
+        const approval: WebApproval = { title: review.question, scope: reason };
+        return this.openReview(review.requestId,'authorization',{method:review.method??'homer_capability_operation',operation:review.details,approval},review.question,reason,scope);
     }
     open(request: NativeRequest, scope: MainApprovalScope): {
         id: string;
@@ -134,7 +221,8 @@ export class MainNativeApprovals {
                 label: string;
             }[];
         }[] | undefined;
-        const question = request.kind === 'authorization' ? authorizationReview(request) : questions?.length === 1 ? questions[0]!.question + (questions[0]!.options?.length ? '\n可选：' + questions[0]!.options!.map(o => o.label).join('、') : '') : '请补充本轮所需的信息。';
+        const review = request.kind === 'authorization' ? authorizationReview(request) : undefined;
+        const question = review?.question ?? (questions?.length === 1 ? questions[0]!.question + (questions[0]!.options?.length ? '\n可选：' + questions[0]!.options!.map(o => o.label).join('、') : '') : '请补充本轮所需的信息。');
         if (!question.trim() || question.length > 4000) throw Error('native_approval_review_too_large');
         // The full command is already in the review, and the live callback holds its native request.
         const params = command ? undefined : ordinary ? {
@@ -143,13 +231,8 @@ export class MainNativeApprovals {
             _meta: {codex_approval_kind: 'mcp_tool_call'},
         } : request.details;
         const reason = request.kind==='question'?'答复交给荷马继续处理，不授予操作权限。':request.method === 'item/permissions/requestApproval' ? ((request.details.permissions as any)?.network?.enabled === true ? '网络许可覆盖当前回复轮次的网络访问，不限单一站点；本轮结束即失效。' : '文件许可仅当前回复轮次有效，本轮结束即失效。') : '仅授权当前请求；不授予永久权限或自动重试。';
-        return this.openReview(request.requestId,request.kind,{method:request.method,params},question,reason,scope,decision=>{
-            nativeResponse(request,decision);
-            const changes=(request.details.operation as {changes?:unknown}|undefined)?.changes;
-            if (decision.action === 'approve' && request.method === 'item/fileChange/requestApproval' &&
-                (!Array.isArray(changes)||!changes.length))
-                throw Error('interaction_approval_unavailable');
-        });
+        return this.openReview(request.requestId,request.kind,{method:request.method,params,...(review ? {approval:review.approval} : {})},question,reason,scope,
+            decision=>validateNativeDecision(request,decision));
     }
     respond(id: string, value: ConversationInput, acceptance?: ConversationAcceptance) {
         if (!this.owns(id))

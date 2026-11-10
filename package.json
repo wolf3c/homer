@@ -1,6 +1,6 @@
 {
   "name": "homer-cli",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "Local Codex task and Worker conversation host",
   "type": "module",
@@ -35,11 +35,13 @@
     "typecheck": "tsc -p tsconfig.check.json",
     "test:local-media": "node scripts/test.mjs --local-media",
     "test:engine": "node scripts/test.mjs --engine",
+    "test:prompt-resume": "node scripts/test.mjs --prompt-resume",
     "test:account": "node scripts/test.mjs --account",
     "test:rtc": "node scripts/test.mjs --rtc",
     "test:development": "node scripts/test.mjs --development",
     "test:vendor": "node scripts/test.mjs --vendor",
-    "test:desktop:acceptance": "node scripts/test.mjs --desktop"
+    "test:desktop:acceptance": "node scripts/test.mjs --desktop",
+    "test:windows-capture": "node scripts/test.mjs --windows-capture"
   },
   "devDependencies": {
     "@electron-forge/core": "8.0.1",
@@ -66,6 +68,7 @@
     "qrcode": "1.5.4",
     "silk-wasm": "3.7.1",
     "node-datachannel": "0.33.6",
+    "teleproto": "1.233.0",
     "undici": "7.30.1",
     "ws": "8.22.2"
   }

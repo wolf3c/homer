@@ -53,7 +53,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     if(method.startsWith('history.')&&webHistoryProtocol!==3)throw Error('history_protocol_required');
     // Only unsent reads may wait across a handoff. Mutations retain their exact
     // live context and fail visibly instead of running later in a new version.
-    if (method.startsWith("history.") || ["taskOverview.progress", "taskOverview.list", "taskOverview.detail", "taskOverview.summary", "taskOverview.origin", "media.origin"].includes(method)) {
+    if (method.startsWith("history.") || ["taskOverview.progress", "taskOverview.list", "taskOverview.detail", "taskOverview.summary", "taskOverview.origin", "media.origin", "media.preview"].includes(method)) {
       const deadline = Date.now() + 5000;
       while (phase !== "running" && !(desktop&&phase==='management'&&managementAllowed(method,request)) && !stopped && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -79,7 +79,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
   }));
   // UI adoption keeps the same executor and transport. Read-only refreshes
   // cannot starve it; mutations must settle before adopting trusted assets.
-  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["channel-state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read"].includes(item.method));
+  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["channel-state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read","media.preview"].includes(item.method));
   const canStopForUpdate=()=>!stopped&&phase==='running'&&!!journal&&!inFlight.size&&!hasWebMutation()&&!queue.length&&!journal.pending().length;
   const updateBusy=()=>{updateStopId=undefined;upgradeProbe=false;desktop?.onEvent?.({kind:'update-busy'});};
   desktop?.bindUpdateStop?.(()=>{
@@ -135,7 +135,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
       bridge: { history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
         const value=await invokeWeb('history.receipts',input),transport=journal?.receipts(input.requestIds)??[];
         return {...value,statuses:value.statuses.map(item=>value.acceptedRequestIds.includes(item.requestId)?item:transport.find(row=>row.requestId===item.requestId)??item)};
-      }},taskOverview:{progress:id=>invokeWeb("taskOverview.progress",{id}),summary:id=>invokeWeb("taskOverview.summary",{id}),origin:(id,messageId)=>invokeWeb("taskOverview.origin",{id,messageId}),list:()=>invokeWeb("taskOverview.list"),detail:(id,query)=>invokeWeb("taskOverview.detail",{id,...query})},media:{read:input=>invokeWeb('media.read',input),origin:input=>invokeWeb('media.origin',input),reveal:input=>invokeWeb('media.reveal',input),upload:input=>invokeWeb('media.upload',input),discard:input=>invokeWeb('media.discard',input)}, submit: async input => acceptInput(input), stop: messageId => invokeWeb("stop", { messageId }),
+      }},taskOverview:{progress:id=>invokeWeb("taskOverview.progress",{id}),summary:id=>invokeWeb("taskOverview.summary",{id}),origin:(id,messageId)=>invokeWeb("taskOverview.origin",{id,messageId}),list:()=>invokeWeb("taskOverview.list"),detail:(id,query)=>invokeWeb("taskOverview.detail",{id,...query})},media:{read:input=>invokeWeb('media.read',input),origin:input=>invokeWeb('media.origin',input),reveal:input=>invokeWeb('media.reveal',input),upload:input=>invokeWeb('media.upload',input),previewDraft:input=>invokeWeb('media.preview',input),discard:input=>invokeWeb('media.discard',input)}, submit: async input => acceptInput(input), stop: messageId => invokeWeb("stop", { messageId }),
         queue:{edit:input=>invokeWeb('queue.edit',input),cancel:input=>invokeWeb('queue.cancel',input),move:input=>invokeWeb('queue.move',input),interrupt:(input,target)=>invokeWeb('queue.interrupt',{input,target})},
         feedback: (messageId, value) => invokeWeb("feedback", { messageId, value }),
         respond: (id, input) => invokeWeb("respond", { ...input, id }),

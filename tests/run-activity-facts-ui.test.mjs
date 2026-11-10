@@ -10,7 +10,7 @@ test('public activities and legacy links remain text without a reader or task na
   {id:'old',kind:'tool',seq:2,revision:1,category:'host',label:'旧公开标签',status:'unknown'}];
  const worker={id:'legacy-worker',kind:'worker',seq:3,revision:1,taskId:'task',version:1};
  const event={id:'event',kind:'workerEvent',seq:4,revision:1,eventKey:'delegated',event:{eventKind:'delegated',title:'原交办标题',body:'不可变原交办正文'}};
- const node={id:'node',threadId:'thread',revision:1,turnIds:['turn'],sourceKind:'worker',state:'worked',status:'completed',items:[...tools,worker,event],activityLinks:{new:{task:{taskId:'task',version:1}},'legacy-worker':{task:{taskId:'task',version:1}}}};
+ const node={id:'node',threadId:'thread',revision:1,turnIds:['turn'],sourceKind:'worker',state:'worked',status:'failed',items:[...tools,worker,event],activityLinks:{new:{task:{taskId:'task',version:1}},'legacy-worker':{task:{taskId:'task',version:1}}}};
  const render=value=>d.render(h(ProcessMessageContent,{node:value,renderText:t=>t},'正式答复保留'));
  await render(node);const toggle=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');await d.click(toggle);
  assert.match(d.container.textContent,/查看任务记录：准确事项 · 已读取/);
@@ -28,7 +28,7 @@ test('public activities and legacy links remain text without a reader or task na
  assert.equal(d.all().filter(n=>n.tagName==='DIALOG').length,0);
 }));
 test('a late ordinary history read cannot restore an activity reader after a thread change',async()=>withDom(async d=>{
- const node={id:'history',threadId:'old-thread',seq:1,revision:1,sourceKind:'user',sourceMessageIds:[],messageId:'history',state:'worked',status:'completed',turnIds:['turn'],details:'unloaded',items:[],toolStatusCounts:{completed:1}};
+ const node={id:'history',threadId:'old-thread',seq:1,revision:1,sourceKind:'user',sourceMessageIds:[],messageId:'history',state:'worked',status:'failed',turnIds:['turn'],details:'unloaded',items:[],toolStatusCounts:{completed:1}};
  const requests=[];let finish;
  const load=(...args)=>{requests.push(args);return new Promise(resolve=>{finish=resolve;});};
  const render=value=>d.render(h(ProcessDetailHarness,{node:value,load,renderText:t=>t},'正式答复'));
@@ -42,14 +42,14 @@ test('a late ordinary history read cannot restore an activity reader after a thr
  assert.equal(d.find(n=>n.attrs['data-slot']==='collapsible-trigger').attrs['aria-expanded'],'false');
 }));
 test('a newer exact detail failure survives folding and a newer header invalidates the cache',async()=>withDom(async d=>{
- const header={id:'node',threadId:'thread',seq:1,revision:1,sourceKind:'user',sourceMessageIds:[],messageId:'node',state:'worked',status:'completed',turnIds:['turn'],details:'unloaded',items:[],toolStatusCounts:{completed:1}};
- let detail={...header,revision:2,items:[{id:'call',seq:1,revision:2,kind:'tool',category:'host',label:'检查资料',status:'failed'}]},reads=0;
+ const header={id:'node',threadId:'thread',seq:1,revision:1,sourceKind:'user',sourceMessageIds:[],messageId:'node',state:'worked',status:'interrupted',turnIds:['turn'],details:'unloaded',items:[],toolStatusCounts:{completed:1}};
+ let detail={...header,revision:2,status:'failed',items:[{id:'call',seq:1,revision:2,kind:'tool',category:'host',label:'检查资料',status:'failed'}]},reads=0;
  const load=async()=>{reads++;return detail;};
  const render=node=>d.render(h(ProcessDetailHarness,{node,load,viewOnly:true,renderText:t=>t}));
  await render(header);const button=d.find(n=>n.tagName==='BUTTON');await d.click(button);await render(header);
  assert.equal(d.find(n=>n.attrs['data-tool-id']==='call').attrs['data-tool-status'],'failed');
  assert.match(d.find(n=>n.attrs['data-tool-id']==='call').textContent,/调用失败/);
- assert.equal(d.find(n=>n.attrs['data-slot']==='run-activity').attrs['data-status'],'complete','detail entries cannot replace the header lifecycle');
+ assert.equal(d.find(n=>n.attrs['data-slot']==='run-activity').attrs['data-status'],'cancelled','detail entries cannot replace the header lifecycle');
  await d.click(button);assert.equal(button.attrs['aria-expanded'],'false');
  assert.doesNotMatch(button.textContent,/调用失败/,'tool failures stay in the original disclosure, without a second summary');
  await d.click(button);assert.equal(reads,1);assert.equal(d.find(n=>n.attrs['data-tool-id']==='call').attrs['data-tool-status'],'failed');

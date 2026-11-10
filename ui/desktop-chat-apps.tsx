@@ -1,5 +1,9 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
-import {ArrowLeft,Info,MessagesSquare,Plus,Send} from 'lucide-react';
+import {Popover} from '@base-ui/react/popover';
+import {ArrowLeft,CircleAlert,Info,Plus} from 'lucide-react';
+import wechatLogo from '../assets/branding/chat-apps/wechat.png';
+import telegramLogo from '../assets/branding/chat-apps/telegram.svg';
+import dingtalkLogo from '../assets/branding/chat-apps/dingtalk.png';
 import type {DesktopChannel,DesktopChannelStart,DesktopChannelState} from '../src/desktop-channels';
 import type {ChannelStatus} from '../src/channel-plugin';
 
@@ -18,6 +22,7 @@ type Bridge={
 declare global{interface Window{homerDesktopChatApps?:Bridge;}}
 
 const names={wechat:'微信',telegram:'Telegram',dingtalk:'钉钉'};
+const logos={wechat:wechatLogo,telegram:telegramLogo,dingtalk:dingtalkLogo};
 const status={ready:'已连接',setup:'待发送首条消息',reauthorize:'需重新授权',offline:'暂时无法连接',checking:'等待连接'};
 const phase={
   starting:'正在核验',scan:'等待扫码',scanned:'等待手机确认',code:'输入手机验证码',pair:'在 Bot 私聊里发起配对',
@@ -241,12 +246,31 @@ export function DesktopChatApps(){
         </div>
       </div>}
       {(['wechat','telegram','dingtalk'] as const).map(channel=>{
-        const bindings=rows(channel),Icon=channel==='wechat'?MessagesSquare:Send;
+        const bindings=rows(channel);
         return <section className="chat-apps-group" key={channel}>
           <header className="chat-apps-heading">
-            <h3><Icon size={19}/>{names[channel]} <span>{state&&(!state.readError||bindings.length)?bindings.length+' 个绑定':''}</span></h3>
+            <h3><img className="chat-apps-logo" src={logos[channel]} alt="" width={20} height={20}/>{names[channel]} {bindings.length>0&&<span>{bindings.length}<span className="sr-only"> 个绑定</span></span>}</h3>
             <button type="button" disabled={busy||!state||state.stopped} onClick={()=>channel==='wechat'?void begin(channel):setForm({channel})}><Plus size={16}/>{channel==='wechat'?'扫码添加':channel==='dingtalk'?'添加机器人':'添加 Bot'}</button>
           </header>
+          {channel==='telegram'&&<p>
+            Telegram Bot 可加入群聊，成员可随时 @ 它（需关闭群隐私模式）{' '}
+            <Popover.Root>
+              <Popover.Trigger className="chat-apps-help" aria-label="如何关闭 Telegram 群隐私模式"><CircleAlert size={16} aria-hidden="true"/></Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Positioner side="bottom" align="end" sideOffset={4} collisionPadding={12} className="chat-apps-privacy-positioner">
+                  <Popover.Popup className="chat-apps-privacy-tip">
+                    <Popover.Title>关闭群隐私模式</Popover.Title>
+                    <ol>
+                      <li><a href="https://t.me/BotFather?startapp" target="_blank" rel="noopener noreferrer">打开 BotFather 小程序</a>，选中 Bot，在设置里关闭群隐私模式。</li>
+                      <li>用绑定荷马的 Telegram 账号加群。已入群的 Bot 需先移出再加回。</li>
+                    </ol>
+                    <p>也可在 BotFather 私聊发送 <code>/setprivacy</code>，选中 Bot 后点 <strong>Disable</strong>。</p>
+                    <p>关闭后，Bot 会收到普通群消息。启用群聊背景时，这些消息可用作上下文。</p>
+                  </Popover.Popup>
+                </Popover.Positioner>
+              </Popover.Portal>
+            </Popover.Root>
+          </p>}
           <div className="chat-apps-list">
             {bindings.map(binding=>{
               const target={channel,key:binding.accountKey};

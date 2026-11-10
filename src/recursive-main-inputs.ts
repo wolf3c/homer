@@ -73,8 +73,8 @@ export type MainInput=QueuedInput|WorkerInput;
 export type MainInputLifecycle = {
   // Runs inside the claim transaction after the exact revision is fenced.
   // Only claim adopts the actual revision; enqueue merely records its source.
-  claim(input: ConversationInput, threadId: string): void;
-  readiness?(input:ConversationInput):'ready'|'preparing'|'failed';
+  claim(input: ConversationInput, threadId: string, source?: string): void;
+  readiness?(input:ConversationInput,source?:string):'ready'|'preparing'|'failed';
   accepted?(input:ConversationInput,threadId:string):void;
   edited?(input:ConversationInput,threadId:string):void;
   cancelled?(requestId:string):void;
@@ -124,7 +124,7 @@ export class MainInputs {
     if (!message) throw Error('queue_input_missing');
     const details = JSON.parse(row.detailsJson ?? '{}');
     const input = conversationInput({ requestId: p.requestId, text: message.text,...(message.attachments?{attachments:message.attachments}:{}),...(message.resourceReference?{resourceReference:message.resourceReference}:{}),...(message.resourceReferences?{resourceReferences:message.resourceReferences}:{}), ...(message.quotes ? { quotes: message.quotes } : message.quote ? { quote: message.quote } : {}), ...(details.interactionId ? { interactionId: details.interactionId } : {}) });
-    return { origin:'user',messageId: row.id, seq: row.seq, revision: row.revision, inputRevision: p.inputRevision, input, replyId: row.replyId, source: p.source,editable:this.rowEditable(row),...(row.receiptState==='pending'?{preparation:this.preparation(input)}:{}), state: row.receiptState === 'pending' ? 'queued' : ['offered', 'received'].includes(row.receiptState) ? 'processing' : row.receiptState === 'uncertain' ? 'uncertain' : p.terminal ?? 'failed', ...(row.offeredTurnId ? { generationId: row.offeredTurnId } : {}), ...(p.interruptState ? { interruptState: p.interruptState, interruptTarget: p.interrupt } : {}) };
+    return { origin:'user',messageId: row.id, seq: row.seq, revision: row.revision, inputRevision: p.inputRevision, input, replyId: row.replyId, source: p.source,editable:this.rowEditable(row),...(row.receiptState==='pending'?{preparation:this.preparation(input,p.source)}:{}), state: row.receiptState === 'pending' ? 'queued' : ['offered', 'received'].includes(row.receiptState) ? 'processing' : row.receiptState === 'uncertain' ? 'uncertain' : p.terminal ?? 'failed', ...(row.offeredTurnId ? { generationId: row.offeredTurnId } : {}), ...(p.interruptState ? { interruptState: p.interruptState, interruptTarget: p.interrupt } : {}) };
   }
   list(): QueuedInput[] {
     const rows=this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? ORDER BY m.seq").all(this.agent) as Row[];
@@ -270,7 +270,7 @@ export class MainInputs {
         AND json_extract(m.payloadJson,'$.interruptState') IN ('requested','failed','uncertain') ORDER BY m.seq`)
       .all(this.agent,generationId).map(row=>String(row.id));
   }
-  preparation(input:ConversationInput){return this.lifecycle?.readiness?.(input)??'ready';}
+  preparation(input:ConversationInput,source='local'){return this.lifecycle?.readiness?.(input,source)??'ready';}
   // Readiness observes the same durable head that transactional claim
   // owns. A preparing head blocks both selectors without skipping later inputs.
   private candidate():Row|undefined {
@@ -435,7 +435,7 @@ export class MainInputs {
       }
       selected=row;
       const p = this.payload(row), current = this.current(row);
-      const preparation=this.preparation(current.input);
+      const preparation=current.preparation;
       if(preparation==='preparing')return;
       if(preparation==='failed')throw Error('media_preparation_failed');
       if (recursiveHash(current.input) !== p.inputHash)
@@ -449,7 +449,7 @@ export class MainInputs {
       const previous=this.store.request(p.requestId);
       if(previous)throw Error(previous.hash===hash?'request_interrupted_use_new_id':'request_id_conflict');
       this.store.startRequest(p.requestId,hash);
-      this.lifecycle?.claim(current.input, this.store.meta('mainThread')!);
+      this.lifecycle?.claim(current.input, this.store.meta('mainThread')!,current.source);
       const claimed={...current,state:'processing' as const,editable:false,revision:row.revision+1};
       delete claimed.preparation;return claimed;
     });}catch(error){if(selected)throw new MainInputClaimError(selected.id,this.payload(selected).requestId,selected.revision,error);throw error;}

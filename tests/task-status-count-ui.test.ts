@@ -25,7 +25,7 @@ test('rendered 0/1/12/large counts share root facts and an accessible button nam
   const html=render(roots(n));
   assert.ok(html.includes('aria-label="'+name+'"'),name);
   assert.match(html,/aria-expanded="false"/);assert.match(html,/aria-controls="task-status-panel"/);
-  assert.match(html,/class="status-count-slot" aria-hidden="true"/);
+  assert.match(html,/class="status-entry-icon" aria-hidden="true"/);
   if(n)assert.ok(html.includes('data-count="working">'+visible+'</span>'));
   else assert.doesNotMatch(html,/data-count="working"/);
  }

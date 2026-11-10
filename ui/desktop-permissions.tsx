@@ -1,55 +1,214 @@
-import {useCallback,useEffect,useImperativeHandle,useRef,useState,type Ref} from 'react';
+import {useCallback,useEffect,useImperativeHandle,useLayoutEffect,useRef,useState,type KeyboardEvent,type Ref} from 'react';
 import homerLogo from '../assets/branding/odysseus-20261030/homer-odysseus-64.png';
 import type {WebState} from '../src/web-contract';
 import {DesktopChatApps} from './desktop-chat-apps';
+import {FeatureTourDialog} from './desktop-feature-tour';
 import {MobileDeviceSettings} from './mobile-devices';
 import {accountErrors,useDesktopAccount,type AccountState} from './desktop-account-state';
 import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
 import {Button} from '@base-ui/react/button';
-import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2} from 'lucide-react';
+import {useMediaQuery} from '@mantine/hooks';
+import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2,Scan,RotateCcw,Pause,Play,Info,ExternalLink,ChevronRight} from 'lucide-react';
 
 type Accessibility='granted'|'not-granted'|'unknown';
 type Screen='not-determined'|'denied'|'granted'|'restricted'|'unknown';
 type PermissionState={supported:false}|{supported:true;subject:'Homer';accessibility:Accessibility;screen:Screen};
 type ActionResult={supported:false}|{ok:boolean;code?:string};
 type PermissionsBridge={check:()=>Promise<PermissionState>;openSystemSettings:(target?:'screen')=>Promise<ActionResult>};
-declare global{interface Window{homerDesktopPermissions?:PermissionsBridge;homerDesktopSettings?:{onOpen:(callback:()=>void)=>()=>void};}}
+type CaptureShortcutState={shortcut:string;defaultShortcut:string;active:boolean;error?:'invalid'|'reserved'|'unavailable'|'save_failed'};
+export type CaptureShortcutBridge={platform?:'win32';getShortcut:()=>Promise<CaptureShortcutState>;setShortcut:(shortcut:string|null)=>Promise<CaptureShortcutState>};
+type AboutLink='website'|'github';
+declare global{interface Window{homerDesktopPermissions?:PermissionsBridge;homerDesktopSettings?:{onOpen:(callback:(target?:'permissions')=>void)=>()=>void;openAboutLink?:(link:AboutLink)=>Promise<void>};}}
 
+type SettingsView='closed'|'settings'|'opening-tour'|'tour'|'returning-to-about';
 
-export function DesktopSettings({ref}:{ref?:Ref<{openAccount:()=>void}>}={}){
- const [open,setOpen]=useState(false),entry=useRef<HTMLButtonElement>(null),tab=useRef<HTMLButtonElement>(null);
+export function DesktopSettings({ref,onVisibilityChange}:{ref?:Ref<{openAccount:()=>void}>;onVisibilityChange?:(open:boolean)=>void}={}){
+ const [view,setView]=useState<SettingsView>('closed');
+ const open=view==='settings',active=view!=='closed';
+ const entry=useRef<HTMLButtonElement>(null),tab=useRef<HTMLButtonElement>(null),tourEntry=useRef<HTMLButtonElement>(null);
  const [panel,setPanel]=useState(window.homerDesktopAccount?'account':'permissions'),[narrow,setNarrow]=useState(false);
  const opener=useRef<HTMLElement|null>(null);
- const opened=useRef(open);opened.current=open;
- const openSettings=useCallback(()=>{opener.current=null;if(!opened.current)setPanel(window.homerDesktopAccount?'account':'permissions');setOpen(true);tab.current?.focus();},[]);
+ const currentView=useRef(view);currentView.current=view;
+ const captureAvailable=!!window.homerDesktopCapture?.getShortcut&&!!window.homerDesktopCapture.setShortcut;
+ const aboutLink=window.homerDesktopFeatureTour&&window.homerDesktopSettings?.openAboutLink;
+ const openSettings=useCallback((target?:'permissions')=>{
+  if(currentView.current!=='closed'&&currentView.current!=='settings')return;
+  opener.current=null;
+  if(target==='permissions')setPanel(target);
+  else if(currentView.current==='closed')setPanel(window.homerDesktopAccount?'account':'permissions');
+  setView('settings');tab.current?.focus();
+ },[]);
  useEffect(()=>window.homerDesktopSettings?.onOpen(openSettings),[openSettings]);
  useEffect(()=>{const q=window.matchMedia?.('(max-width:600px)');if(!q)return;const changed=()=>setNarrow(q.matches);changed();q.addEventListener('change',changed);return()=>q.removeEventListener('change',changed);},[]);
- useImperativeHandle(ref,()=>({openAccount:()=>{opener.current=document.activeElement as HTMLElement;setPanel('account');setOpen(true);}}));
- return <Dialog.Root open={open} onOpenChange={next=>{if(next)openSettings();else setOpen(false);}}>
+ useImperativeHandle(ref,()=>({openAccount:()=>{
+  if(currentView.current!=='closed'&&currentView.current!=='settings')return;
+  opener.current=document.activeElement as HTMLElement;setPanel('account');setView('settings');
+ }}));
+ useLayoutEffect(()=>{if(active){onVisibilityChange?.(true);return()=>onVisibilityChange?.(false);}},[active,onVisibilityChange]);
+ return <><Dialog.Root open={open}
+  onOpenChange={next=>{if(next)openSettings();else setView(current=>current==='settings'?'closed':current);}}
+  onOpenChangeComplete={next=>{if(!next)setView(current=>current==='opening-tour'?'tour':current);}}>
   <Dialog.Trigger ref={entry} aria-label="设置" title="设置"><Settings size={18}/></Dialog.Trigger>
   <Dialog.Portal><Dialog.Backdrop className="desktop-settings-backdrop"/>
-   <Dialog.Popup className="desktop-settings-popup" initialFocus={()=>tab.current} finalFocus={opener.current?()=>opener.current?.isConnected?opener.current:entry.current:entry}>
+   <Dialog.Popup className="desktop-settings-popup" initialFocus={()=>panel==='about'?tourEntry.current??tab.current:tab.current}
+    finalFocus={view==='opening-tour'?false:opener.current?()=>opener.current?.isConnected?opener.current:entry.current:entry}>
     <header className="desktop-settings-heading"><div><Settings size={19}/><Dialog.Title>设置</Dialog.Title></div><Dialog.Close aria-label="关闭设置"><X size={19}/></Dialog.Close></header>
-    <Dialog.Description className="desktop-settings-description">管理账号、本机权限、移动设备与聊天应用。</Dialog.Description>
+    <Dialog.Description className="desktop-settings-description">{captureAvailable?'管理账号、本机权限、截图批注、移动设备与聊天应用。':'管理账号、本机权限、移动设备与聊天应用。'}</Dialog.Description>
     <Tabs.Root className="desktop-settings-layout" value={panel} orientation={narrow?'horizontal':'vertical'} onValueChange={setPanel}>
      <Tabs.List className="desktop-settings-nav" aria-label="设置分类" activateOnFocus={false}>
       {window.homerDesktopAccount&&<Tabs.Tab value="account" ref={panel==='account'?tab:undefined}><UserRound size={18}/>账号</Tabs.Tab>}
       <Tabs.Tab value="permissions" ref={panel==='permissions'?tab:undefined}><ShieldCheck size={18}/>本机权限</Tabs.Tab>
+      {captureAvailable&&<Tabs.Tab value="capture" ref={panel==='capture'?tab:undefined}><Scan size={18} aria-hidden/>截图批注</Tabs.Tab>}
       <Tabs.Tab value="mobile" ref={panel==='mobile'?tab:undefined}><Smartphone size={18}/>移动设备</Tabs.Tab>
       {window.homerDesktopChatApps&&<Tabs.Tab value="chat-apps" ref={panel==='chat-apps'?tab:undefined}><Link2 size={18}/>连接聊天应用</Tabs.Tab>}
+      {aboutLink&&<Tabs.Tab value="about" ref={panel==='about'?tab:undefined}><Info size={18} aria-hidden/>关于</Tabs.Tab>}
      </Tabs.List>
      <div className="desktop-settings-content">
       {window.homerDesktopAccount&&<Tabs.Panel value="account" className="desktop-account-panel">{open&&panel==='account'&&<DesktopAccount/>}</Tabs.Panel>}
       <Tabs.Panel value="permissions">{open&&panel==='permissions'&&<DesktopPermissions/>}</Tabs.Panel>
+      {captureAvailable&&<Tabs.Panel value="capture">{open&&panel==='capture'&&<DesktopCaptureSettings/>}</Tabs.Panel>}
       <Tabs.Panel value="mobile">{open&&panel==='mobile'&&<MobileDeviceSettings/>}</Tabs.Panel>
       {window.homerDesktopChatApps&&<Tabs.Panel value="chat-apps">{open&&panel==='chat-apps'&&<DesktopChatApps/>}</Tabs.Panel>}
+      {aboutLink&&<Tabs.Panel value="about">{open&&panel==='about'&&<DesktopAbout openLink={aboutLink}
+       tourEntry={tourEntry} onTour={()=>setView('opening-tour')}/>}</Tabs.Panel>}
      </div>
     </Tabs.Root>
     <footer className="desktop-settings-footer"><Dialog.Close><ArrowLeft size={16}/>返回会话</Dialog.Close></footer>
    </Dialog.Popup>
   </Dialog.Portal>
- </Dialog.Root>;
+ </Dialog.Root>
+ {aboutLink&&<FeatureTourDialog open={view==='tour'} returnFocus={false}
+  onDismiss={()=>setView(current=>current==='tour'?'returning-to-about':current)}
+  onOpenChangeComplete={next=>{if(!next)setView(current=>current==='returning-to-about'?'settings':current);}}/>}
+ </>;
+}
+
+function DesktopAbout({openLink,tourEntry,onTour}: {
+ openLink:(link:AboutLink)=>Promise<void>;tourEntry:Ref<HTMLButtonElement>;onTour:()=>void;
+}){
+ const [notice,setNotice]=useState('');
+ async function open(link:AboutLink){
+  setNotice('');
+  try{await openLink(link);}
+  catch{setNotice('未能打开链接，请重试。');}
+ }
+ return <div className="desktop-about">
+  <h2>关于荷马</h2>
+  <div className="desktop-about-links">
+   <Button type="button" onClick={()=>void open('website')}>官网<ExternalLink size={16} aria-hidden/></Button>
+   <Button type="button" onClick={()=>void open('github')}>GitHub<ExternalLink size={16} aria-hidden/></Button>
+   <Button type="button" ref={tourEntry} onClick={onTour}>特色功能<ChevronRight size={16} aria-hidden/></Button>
+  </div>
+  {notice&&<p role="status">{notice}</p>}
+ </div>;
+}
+
+const shortcutKeys=(shortcut:string,windows:boolean)=>windows?shortcut.replace('Control+','Ctrl+')
+ :shortcut.replaceAll('Control+','⌃').replaceAll('Alt+','⌥').replaceAll('Shift+','⇧').replaceAll('Command+','⌘');
+const shortcutErrors={
+ reserved:'此组合键用于 macOS 系统操作，请换一组。',
+ unavailable:'此组合键已被占用或系统不允许，请换一组。',
+ save_failed:'快捷键未能保存，请重试。',
+};
+function DesktopCaptureSettings(){
+ const {getShortcut,setShortcut,platform}=window.homerDesktopCapture??{},windows=platform==='win32';
+ const shortcutInstruction=windows?'按 Ctrl+Shift 加字母、数字或 F1–F11。'
+  :'按 Control 加数字，或用至少两枚修饰键（含 Control 或 Command）加字母或数字。';
+ const [state,setState]=useState<CaptureShortcutState>(),[recording,setRecording]=useState(false);
+ const [busy,setBusy]=useState(false),[notice,setNotice]=useState('');
+ const motion=useMediaQuery('(prefers-reduced-motion: no-preference)');
+ const [paused,setPaused]=useState(false);
+ const playing=motion&&!paused,playbackLabel=playing?'暂停示意动图':'播放示意动图';
+ useEffect(()=>{
+  let active=true;
+  void getShortcut?.().then(value=>{if(active)setState(value);},()=>{if(active)setNotice('快捷键读取失败，请重新打开设置。');});
+  return()=>{active=false;};
+ },[getShortcut]);
+ async function save(shortcut:string|null){
+  if(busy||!setShortcut)return;
+  setRecording(false);setBusy(true);setNotice('');
+  try{
+   const next=await setShortcut(shortcut);setState(next);
+   if(next.error)setNotice(next.error==='invalid'?shortcutInstruction:shortcutErrors[next.error]);
+  }catch{setNotice(shortcutErrors.save_failed);}
+  finally{setBusy(false);}
+ }
+ function record(event:KeyboardEvent<HTMLButtonElement>){
+  if(!recording||event.key==='Tab')return;
+  event.preventDefault();event.stopPropagation();
+  if(event.key==='Escape'){setRecording(false);setNotice('');return;}
+  if(event.repeat||event.nativeEvent.isComposing||['Control','Alt','Shift','Meta'].includes(event.key))return;
+  const pressed=event.key.toUpperCase();
+  const validKey=windows?/^(?:[A-Z0-9]|F[1-9]|F1[01])$/:/^[A-Z0-9]$/;
+  const key=validKey.test(pressed)?pressed:/^(?:Key|Digit)([A-Z0-9])$/.exec(event.code)?.[1];
+  const modifiers=[event.ctrlKey&&'Control',event.altKey&&'Alt',event.shiftKey&&'Shift',event.metaKey&&'Command'].filter(Boolean);
+  if(!key)return;
+  const controlDigit=modifiers.length===1&&event.ctrlKey&&/^[0-9]$/.test(key);
+  if(windows?modifiers.length!==2||!event.ctrlKey||!event.shiftKey
+   :!controlDigit&&(modifiers.length<2||!event.ctrlKey&&!event.metaKey))return;
+  void save([...modifiers,key].join('+'));
+ }
+ const hint=notice||(recording?`${shortcutInstruction} 按 Esc 取消。`:!state?'正在读取快捷键…':!state.active?'当前快捷键不可用，请更换。':'');
+ return <div className="desktop-capture-settings">
+  <h2>截图批注</h2>
+  <div className="desktop-capture-intro">
+   <Scan size={24} aria-hidden/>
+   <div>
+    <h3>截下当前画面，直接批注</h3>
+    <p>{windows?'按全局快捷键，从列表选择窗口或拖选屏幕区域，再圈出重点、写下备注并发送。'
+     :'按全局快捷键截取当前窗口，在原处圈出重点、写下备注，再发送到当前会话。'}</p>
+   </div>
+  </div>
+  <div className="desktop-capture-layout">
+   <section className="desktop-shortcut-row" aria-label="全局快捷键" aria-busy={busy}>
+    <div className="desktop-permission-heading">
+     <h3>全局快捷键</h3>
+     <div className="desktop-shortcut-actions">
+      <Button type="button" title="更改快捷键"
+       aria-label={state?`更改截图批注快捷键，当前 ${(windows?shortcutKeys(state.shortcut,true):state.shortcut).split('+').join(' + ')}`:'更改截图批注快捷键'}
+       aria-pressed={recording} disabled={busy||!state} focusableWhenDisabled={busy}
+       onBlur={()=>setRecording(false)} onKeyDown={record} onClick={()=>{setRecording(value=>!value);setNotice('');}}>
+       {recording?'按下组合键':<kbd>{state?shortcutKeys(state.shortcut,windows):'—'}</kbd>}
+      </Button>
+      <Button type="button" className="desktop-shortcut-restore" aria-label="恢复截图批注默认快捷键"
+       title={state?`恢复默认（${shortcutKeys(state.defaultShortcut,windows)}）`:'恢复默认'}
+       disabled={busy||!state} focusableWhenDisabled={busy} onClick={()=>void save(null)}><RotateCcw size={16} aria-hidden/></Button>
+     </div>
+    </div>
+    <p>点击键帽更改。关闭设置后，可在其他 App 中使用。</p>
+    {hint&&<p role="status">{hint}</p>}
+   </section>
+   <figure className="desktop-capture-demo">
+    <div className="desktop-capture-demo-media">
+     {playing?<img src={`${import.meta.env.BASE_URL}assets/desktop-feature-tour-v1-annotation.gif`} width={1200} height={614}
+      alt="选取窗口，圈出要说明的位置，写下批注并发送给荷马。" onError={()=>setPaused(true)}/>
+      :<svg viewBox="0 0 360 206" role="img" aria-label="操作示意，圈出连接超时提示，写下批注后点对勾发送">
+       <rect width="360" height="206" fill="var(--soft)"/>
+       <rect x="20" y="22" width="234" height="141" rx="9" fill="var(--surface)" stroke="var(--line)"/>
+       <path d="M36 44h60m-60 17h108m-108 9h76m-76 9h51" stroke="var(--strong-line)" strokeWidth="3" strokeLinecap="round"/>
+       <rect width="360" height="206" fill="var(--ink)" opacity=".5"/>
+       <rect x="63" y="35" width="270" height="149" rx="9" fill="var(--surface)" stroke="var(--line)"/>
+       <path d="M77 49h1m7 0h1m7 0h1m-30 13h268" stroke="var(--strong-line)" strokeWidth="2" strokeLinecap="round"/>
+       <path d="M84 77h94m-94 43h154m-154 11h108m-108 11h124" stroke="var(--line)" strokeWidth="3" strokeLinecap="round"/>
+       <rect x="79" y="86" width="145" height="24" rx="3" fill="var(--soft)" stroke="var(--focus)"/>
+       <text x="88" y="102" fontSize="12" fill="var(--ink)">连接超时 E101</text>
+       <path d="M156 116l-4-6-4 6z" fill="var(--control)"/>
+       <rect x="137" y="115" width="142" height="29" rx="6" fill="var(--control)"/>
+       <text x="148" y="134" fontSize="11" fill="var(--surface)">帮我看看这处报错</text>
+       <rect x="271" y="153" width="52" height="22" rx="5" fill="var(--control)"/>
+       <path d="M281 161l7 7m0-7l-7 7m19-4l4 4 8-8" fill="none" stroke="var(--surface)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>}
+    </div>
+    <figcaption>
+     <div><strong>体验示意</strong><br/>从「显示 → 选取窗口或区域…」进入取景，{windows?'可从列表选择窗口，也可点击「框选区域」后拖选。':'可单击窗口或拖选区域。'}</div>
+     {motion&&<Button type="button" aria-label={playbackLabel} title={playbackLabel} onClick={()=>setPaused(value=>!value)}>
+      {playing?<Pause size={16} aria-hidden/>:<Play size={16} aria-hidden/>}
+     </Button>}
+    </figcaption>
+   </figure>
+  </div>
+ </div>;
 }
 
 const labels={granted:'已允许','not-granted':'未允许','not-determined':'尚未决定',denied:'未允许',restricted:'系统限制',unknown:'无法确认'};
@@ -105,9 +264,15 @@ export function DesktopPermissions(){
   <p className="permission-intro">这里只显示荷马本机应用的权限。开启权限不会自动开始桌面控制，具体操作仍需授权；独立工具的权限需要另行确认。</p>
   {supported===false&&<p className="permission-unavailable" role="status">当前环境不支持权限检查。请在 macOS 桌面版中查看。</p>}
   {([{id:'accessibility',name:'辅助功能',purpose:'用于点击、键入等桌面操作。',path:'辅助功能'},
-    {id:'screen',name:'屏幕采集',purpose:'用于读取屏幕画面，例如截图。',path:'屏幕与系统音频录制'}] as const).map(row=>{
+    {id:'screen',name:'屏幕采集',purpose:'用于一键截取当前窗口，以及桌面操作时查看屏幕。',path:'屏幕与系统音频录制'}] as const).map(row=>{
    const status=states[row.id];
-   const advice=supported===false?'':status==='unknown'?'暂时无法确认状态，请重新检查。':status==='restricted'?'受系统限制，请在系统设置中查看。':status==='not-determined'?'尚未确认，可前往系统设置查看。':status==='not-granted'||status==='denied'?'未允许时，相关操作可能无法使用。':'';
+   let advice='';
+   if(supported!==false){
+    if(status==='unknown')advice='暂时无法确认状态，请重新检查。';
+    else if(status==='restricted')advice='受系统限制，请在系统设置中查看。';
+    else if(row.id==='screen'&&(status==='denied'||status==='not-determined'))advice='请在系统设置中允许荷马录屏，再回来重新检查。';
+    else if(status==='not-granted')advice='未允许时，相关操作可能无法使用。';
+   }
    return <section key={row.id} aria-label={row.name}>
     <div className="desktop-permission-heading"><h3>{row.name}</h3><span className={supported===true&&status==='granted'?'is-granted':''} role="status">{supported===false?'不可用':busy&&supported===null?'正在检查…':labels[status]}</span></div>
     <p className="permission-purpose">{row.purpose}</p>

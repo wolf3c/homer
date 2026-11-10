@@ -32,8 +32,19 @@ if(process.argv.includes('--serve')){
   const shot=async state=>{if(screenshots){await p.evaluate(()=>document.querySelector('[data-slot=approval-card]').scrollIntoView({block:'center'}));await p.screenshot('approval-'+state+'-'+width+'.png');}};
   try{
    await p.navigate();await loaded();
+   assert.equal(await p.evaluate(()=>document.querySelector('[data-slot=approval-card] details').open),false);
+   assert.equal(await p.evaluate(()=>document.querySelector('.approval-review-text').getClientRects().length),0);
+   assert.match(await p.evaluate(()=>document.querySelector('[data-slot=approval-card]').innerText),/申请说明.*隔离合成命令.*授权范围.*仅批准当前命令/s);
    await shot('request');
-   assert.equal(await p.evaluate(()=>document.querySelector('[data-slot=approval-card] .font-mono').textContent),approval.question);
+   await p.evaluate(()=>document.querySelector('[data-slot=approval-card] summary').focus());
+   await p.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',text:'\r',windowsVirtualKeyCode:13});
+   await p.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+   await wait(()=>document.querySelector('[data-slot=approval-card] details').open);
+   await wait(()=>[...document.querySelectorAll('[data-slot=approval-card] button')].every(button=>{
+    const rect=button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2));
+   }));
+   assert.equal(await p.evaluate(()=>document.querySelector('.approval-review-text').textContent),approval.approval.details);
    assert.equal(await p.evaluate(()=>!!document.querySelector('[data-slot=approval-card] script')),false);
    assert.equal(await p.evaluate(()=>document.querySelector('[data-slot=approval-card] a').getAttribute('href')),'#message-synthetic-original');
    assert.equal(await p.evaluate(()=>document.querySelectorAll('[data-slot=approval-card] button').length),2);
@@ -41,9 +52,12 @@ if(process.argv.includes('--serve')){
    assert.equal(await p.evaluate(()=>document.querySelector('[data-slot=approval-card]').closest('.interaction-card')!==null),false);
    await p.evaluate(()=>document.querySelector('[data-slot=approval-card] a').click());await wait(()=>document.activeElement.id==='message-synthetic-original');
    checks.push('real official card replaces custom root; full command is inert text; exact source; only current-request controls');
-   const layout=await p.evaluate(()=>{const root=document.querySelector('[data-slot=approval-card]'),command=root.querySelector('.font-mono'),b=root.querySelector('button');return {pageOverflow:document.documentElement.scrollWidth>innerWidth,cardOverflow:root.scrollWidth>root.clientWidth,commandOverflow:command.scrollWidth>command.clientWidth,cardWidth:root.getBoundingClientRect().width,gap:getComputedStyle(root).gap,padding:getComputedStyle(root).padding,radius:getComputedStyle(root).borderRadius,titleSize:getComputedStyle(root.querySelector('p')).fontSize,commandWhiteSpace:getComputedStyle(command).whiteSpace,buttons:[...root.querySelectorAll('button')].map(b=>({height:b.getBoundingClientRect().height,width:b.getBoundingClientRect().width})),buttonRadius:getComputedStyle(b).borderRadius};});
+   const layout=await p.evaluate(()=>{const root=document.querySelector('[data-slot=approval-card]'),command=root.querySelector('.approval-review-text'),b=root.querySelector('button');return {pageOverflow:document.documentElement.scrollWidth>innerWidth,cardOverflow:root.scrollWidth>root.clientWidth,commandOverflow:command.scrollWidth>command.clientWidth,cardWidth:root.getBoundingClientRect().width,gap:getComputedStyle(root).gap,padding:getComputedStyle(root).padding,radius:getComputedStyle(root).borderRadius,titleSize:getComputedStyle(root.querySelector('p')).fontSize,commandWhiteSpace:getComputedStyle(command).whiteSpace,buttons:[...root.querySelectorAll('button')].map(b=>({height:b.getBoundingClientRect().height,width:b.getBoundingClientRect().width})),buttonRadius:getComputedStyle(b).borderRadius};});
    assert.equal(layout.pageOverflow,false);assert.equal(layout.cardOverflow,false);assert.equal(layout.commandOverflow,false);assert.equal(layout.gap,'14px');assert.equal(layout.padding,'16px');assert.equal(layout.radius,'20px');assert.equal(layout.titleSize,'13.5px');assert.equal(layout.commandWhiteSpace,'pre-wrap');assert.ok(layout.buttons.every(b=>b.height===32&&b.width>0));
    checks.push('official 14px gap / 16px padding / 20px radius / 13.5px title retained; 32px controls; long Chinese command fits');
+   await shot('expanded');
+   await p.evaluate(()=>document.querySelector('[data-slot=approval-card] summary').click());
+   await wait(()=>!document.querySelector('[data-slot=approval-card] details').open);
    await p.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});assert.equal(await p.evaluate(()=>getComputedStyle(document.querySelector('[data-slot=approval-card-allow-once]')).transitionDuration),'0s');
    await p.evaluate(()=>document.querySelector('[data-slot=approval-card] a').focus());await p.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
    assert.equal(await p.evaluate(()=>document.activeElement.dataset.slot),'approval-card-deny');assert.equal(await p.evaluate(()=>getComputedStyle(document.activeElement).outlineWidth),'2px');

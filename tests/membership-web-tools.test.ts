@@ -41,9 +41,10 @@ function syntheticDesktop(t:TestContext,root:string){
   copyFileSync(process.execPath,join(bundleRoot,executable),constants.COPYFILE_FICLONE);
   writeFileSync(join(bundleRoot,decoder),'synthetic decoder; never executed');
   if(process.platform==='win32')writeFileSync(join(bundleRoot,'Homer.exe'),'synthetic application');
+  else writeFileSync(join(bundleRoot,'Contents/MacOS/homer-window-capture'),'synthetic capture helper');
   const file=(path:string)=>({path,sha256:hash(readFileSync(join(bundleRoot,path)))});
   const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',
-    codeFiles:(process.platform==='win32'?['Homer.exe']:[decoder,executable]).map(file),
+    codeFiles:(process.platform==='win32'?['Homer.exe']:[decoder,'Contents/MacOS/homer-window-capture',executable]).map(file),
     ...(process.platform==='win32'?{files:[file(executable),file(decoder)].map(f=>({...f,path:f.path.replace('resources/','')}))}:{})});
   writeFileSync(join(resources,'desktop-manifest.json'),manifest);
   const oldExecPath=process.execPath;

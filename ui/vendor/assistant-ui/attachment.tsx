@@ -109,7 +109,7 @@ const AttachmentThumb: FC<{ src: string | undefined }> = ({ src }) => {
   );
 };
 
-export const AttachmentUI: FC<{src?: string; removeDisabled: boolean; onRemove: () => Promise<void>; description: string;removeLabel?:string}> = ({src, removeDisabled, onRemove, description,removeLabel}) => {
+export const AttachmentUI: FC<{src?: string; removeDisabled: boolean; onRemove: () => Promise<void>; description: string;removeLabel?:string;onPreview?:()=>void}> = ({src, removeDisabled, onRemove, description,removeLabel,onPreview}) => {
   const aui = useAui();
   const isComposer = aui.attachment.source !== "message";
   const [tooltipOpen, setTooltipOpen] = useState(false);
@@ -144,6 +144,7 @@ export const AttachmentUI: FC<{src?: string; removeDisabled: boolean; onRemove: 
   );
   const isUploading = uploadState === "uploading";
   const isError = uploadState === "error";
+  const Tile = onPreview ? "button" : "div";
 
   const errorMessage = useAuiState((s) =>
     s.attachment.status.type === "incomplete" &&
@@ -165,11 +166,11 @@ export const AttachmentUI: FC<{src?: string; removeDisabled: boolean; onRemove: 
               "aui-attachment-root-message only:*:first:size-24",
           )}
         >
-          <AttachmentPreviewDialog src={src} name={name}>
+          <AttachmentPreviewDialog src={onPreview ? undefined : src} name={name}>
             <TooltipTrigger
-              closeOnClick={!!src}
+              closeOnClick={!!src || !!onPreview}
               render={
-                <div
+                <Tile type={onPreview ? "button" : undefined} onClick={onPreview}
                   onPointerUp={(event) => {
                     if (!src && event.pointerType === "touch") setTooltipOpen(true);
                   }}
@@ -181,9 +182,9 @@ export const AttachmentUI: FC<{src?: string; removeDisabled: boolean; onRemove: 
                     isError &&
                       "after:ring-destructive/60 dark:after:ring-destructive/60",
                   )}
-                  role={src ? "button" : "group"}
+                  role={onPreview || src ? "button" : "group"}
                   tabIndex={0}
-                  aria-label={`${src ? `预览 ${name}` : `${typeLabel}附件 ${name}`}，${description}${
+                  aria-label={`${onPreview ? `编辑 ${name} 的批注` : src ? `预览 ${name}` : `${typeLabel}附件 ${name}`}，${description}${
                     isError
                       ? "，上传失败"
                       : isUploading

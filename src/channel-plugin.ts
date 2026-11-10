@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {setImmediate as yieldTurn} from 'node:timers/promises';
 import type {Homer} from './service.js';
+import type {TelegramContextMessage} from './telegram-context.js';
 import {conversationInput} from './web-history.js';
 
 export type ChannelAddress = {
@@ -12,6 +13,8 @@ export type ChannelAddress = {
   conversationKey: string;
 };
 type ChannelInput = ChannelAddress & {eventId:string; text:string};
+type TelegramGroupRoute = {chatId:number; changeId:number; messageId:number; topicId:number|null};
+type TelegramBackground = () => Promise<readonly TelegramContextMessage[]>;
 type ChannelEvent = Pick<ChannelInput,'senderKey'|'conversationKey'|'eventId'|'text'>;
 type Binding = ChannelAddress & {id:string;createdAt:number};
 type Request = {id:string; bindingId:string; inputHash:string; pendingText:string|null};
@@ -22,7 +25,7 @@ type Outbox = {messageId:string; bindingId:string; requestId:string|null; subscr
 type Committed = NonNullable<ReturnType<Homer['readCommittedMessage']>>;
 type Attachment = ReturnType<Homer['readAttachment']>;
 type Part = {kind:'text'; text:string} | ({kind:'attachment'} & Attachment);
-export type ChannelPacket = {address:ChannelAddress; messageId:string; attemptId:string; part:Part};
+export type ChannelPacket = {address:ChannelAddress; messageId:string; attemptId:string; part:Part; telegramGroup?:TelegramGroupRoute; telegramReply?:false};
 type TransportResult = {state:'sent'|'failed'|'unknown'; receipt?:string};
 export type ChannelHealth='checking'|'ready'|'setup'|'offline'|'reauthorize';
 export type ChannelStatus={adapterId:string;accountKey:string;label:string;state:ChannelHealth;failed:number;unknown:number};
@@ -33,7 +36,7 @@ export type ChannelAdapter = {
   accountLabel?: (accountKey:string) => string | undefined;
   // Both operations must settle after stopping on abort. The adapter owns protocol recovery.
   send: (packet:ChannelPacket, signal:AbortSignal) => Promise<TransportResult>;
-  connect?: (address:Readonly<ChannelAddress>, receive:(event:ChannelEvent)=>string, signal:AbortSignal, boundAt:number) => Promise<void>;
+  connect?: (address:Readonly<ChannelAddress>, receive:(event:ChannelEvent)=>string, signal:AbortSignal, boundAt:number, bindingId?:string) => Promise<void>;
 };
 export type ChannelMessageSource = {source:string;entryLabel:string};
 
@@ -48,6 +51,8 @@ const subscriptionTool = {
 export class ChannelPlugin {
   private readonly db:DatabaseSync;
   private readonly adapters:Map<string,ChannelAdapter>;
+  private readonly telegramSync=new Map<string,'ready'|'offline'>();
+  private readonly telegramBackground=new Map<string,{bindingId:string;route:TelegramGroupRoute;load:TelegramBackground}>();
   private readonly abort = new AbortController();
   private readonly connections = new Map<string,{abort:AbortController;done:Promise<void>}>();
   private timer?:NodeJS.Timeout;
@@ -58,7 +63,7 @@ export class ChannelPlugin {
   lastSyncError: 'channel_sync_failed' | null = null;
   lastConnectionError: 'channel_connect_failed' | null = null;
 
-  constructor(private readonly app:Homer, adapters:readonly ChannelAdapter[]) {
+  constructor(private readonly app:Homer, adapters:readonly ChannelAdapter[], private readonly wakeInputs:()=>void=()=>{}) {
     this.adapters=new Map(adapters.map(adapter=>[adapter.id,adapter]));
     if(this.adapters.size!==adapters.length||adapters.some(adapter=>!this.validKey(adapter.id)))
       throw Error('channel_adapter_invalid');
@@ -72,6 +77,9 @@ export class ChannelPlugin {
         CREATE TABLE IF NOT EXISTS channel_requests (
           id TEXT PRIMARY KEY, bindingId TEXT NOT NULL REFERENCES channel_bindings(id),
           eventKey TEXT UNIQUE NOT NULL, inputHash TEXT NOT NULL, pendingText TEXT);
+        CREATE TABLE IF NOT EXISTS telegram_group_routes (
+          requestId TEXT PRIMARY KEY REFERENCES channel_requests(id), chatId INTEGER NOT NULL,
+          changeId INTEGER NOT NULL, messageId INTEGER NOT NULL, topicId INTEGER);
         CREATE TABLE IF NOT EXISTS channel_subscriptions (
           id TEXT PRIMARY KEY, bindingId TEXT NOT NULL REFERENCES channel_bindings(id),
           taskId TEXT NOT NULL, requests TEXT NOT NULL, baseline TEXT NOT NULL, revokedAt INTEGER);
@@ -186,7 +194,10 @@ export class ChannelPlugin {
       .get(Date.now(),id) as Pick<ChannelAddress,'adapterId'|'accountKey'>|undefined;
     if(!account)return;
     this.dirty=true;
+    for(const [requestId,entry] of this.telegramBackground)if(entry.bindingId===id)this.telegramBackground.delete(requestId);
+    this.telegramSync.delete(id);
     this.connections.get(this.accountKey(account))?.abort.abort();
+    if(this.unsubscribe)this.wakeInputs();
   }
 
   private connect(binding:Binding) {
@@ -202,7 +213,7 @@ export class ChannelPlugin {
         if(signal.aborted||event.senderKey!==senderKey||event.conversationKey!==conversationKey)
           throw Error('channel_binding_denied');
         return this.receiveText({...address,eventId:event.eventId,text:event.text});
-      },signal,binding.createdAt);
+      },signal,binding.createdAt,binding.id);
     }).catch(()=>{
       if(!signal.aborted)this.lastConnectionError='channel_connect_failed';
     }).finally(()=>{
@@ -218,6 +229,92 @@ export class ChannelPlugin {
     this.connections.set(key,{abort,done});
   }
 
+  telegramGroups() {
+    this.requireOpen();
+    this.db.exec(`CREATE TABLE IF NOT EXISTS telegram_group_sync (
+      bindingId TEXT PRIMARY KEY REFERENCES channel_bindings(id), polledAt INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS telegram_groups (
+        bindingId TEXT NOT NULL REFERENCES channel_bindings(id), chatId INTEGER NOT NULL,
+        active INTEGER NOT NULL, changedAt INTEGER NOT NULL, changeId INTEGER NOT NULL,
+        PRIMARY KEY(bindingId,chatId));`);
+    const grant=this.db.prepare(`SELECT changeId FROM telegram_groups WHERE bindingId=? AND chatId=? AND active=1
+      AND (changedAt,changeId)<(?,?)`);
+    const lastPoll=this.db.prepare('SELECT polledAt FROM telegram_group_sync WHERE bindingId=?');
+    const savePoll=this.db.prepare(`INSERT INTO telegram_group_sync VALUES(?,?)
+      ON CONFLICT(bindingId) DO UPDATE SET polledAt=excluded.polledAt`);
+    const expire=this.db.prepare('UPDATE telegram_groups SET active=0 WHERE bindingId=? AND active=1 AND changedAt<=?');
+    const changeId=(bindingId:string,chatId:number,date:number,updateId:number)=>{
+      const row=grant.get(bindingId,chatId,date,updateId);
+      return row?Number(row.changeId):undefined;
+    };
+    return {
+      changeId,
+      polled: (bindingId:string,full=false) => {
+        const cutoff=Date.now()-86_400_000;
+        const prior=lastPoll.get(bindingId);
+        // A grant made within the retained window can still be checked for later removal.
+        const expired=!prior||Number(prior.polledAt)<=cutoff;
+        if(full||expired||this.telegramSync.get(bindingId)==='offline')this.telegramSync.delete(bindingId);
+        return expired&&!!expire.run(bindingId,Math.floor(cutoff/1000)).changes;
+      },
+      caughtUp: (bindingId:string,polledAt=Date.now()) => {
+        // A response can contain a removal. Persist the watermark only after processing it.
+        savePoll.run(bindingId,polledAt);
+        if(this.telegramSync.get(bindingId)!=='ready'){
+          this.telegramSync.set(bindingId,'ready');
+          this.dirty=true;
+          this.wakeInputs();
+        }
+      },
+      disconnected: (bindingId:string) => {
+        if(this.telegramSync.get(bindingId)==='offline')return;
+        this.telegramSync.set(bindingId,'offline');
+        this.wakeInputs();
+      },
+      membership: (bindingId:string,chatId:number,active:boolean,date:number,updateId:number) => {
+        const prior=this.db.prepare('SELECT 1 FROM telegram_groups WHERE bindingId=? AND chatId=?').get(bindingId,chatId);
+        if(!active&&!prior)return;
+        const changed=!!this.db.prepare(`INSERT INTO telegram_groups(bindingId,chatId,active,changedAt,changeId) VALUES(?,?,?,?,?)
+          ON CONFLICT(bindingId,chatId) DO UPDATE SET active=excluded.active,changedAt=excluded.changedAt,changeId=excluded.changeId
+          WHERE (excluded.changedAt,excluded.changeId)>(telegram_groups.changedAt,telegram_groups.changeId)`)
+          .run(bindingId,chatId,Number(active),date,updateId).changes;
+        if(changed)for(const [id,entry] of this.telegramBackground){
+          if(entry.bindingId===bindingId&&entry.route.chatId===chatId)this.telegramBackground.delete(id);
+        }
+        return changed;
+      },
+      submit: (bindingId:string,chatId:number,date:number,updateId:number,messageId:number,topicId:number|null,text:string,background?:TelegramBackground) => {
+        const binding=this.binding(bindingId);
+        if(binding?.adapterId!=='telegram')return;
+        const generation=changeId(bindingId,chatId,date,updateId);
+        if(generation!==undefined)this.receiveBound(binding,`group:${chatId}:${messageId}`,text,
+          {chatId,changeId:generation,messageId,topicId},background);
+      },
+    };
+  }
+
+  telegramInputState(requestId:string){
+    if(this.shutdown)return 'denied';
+    const route=this.db.prepare(`SELECT r.bindingId,b.revokedAt,g.chatId,g.changeId FROM telegram_group_routes g
+      JOIN channel_requests r ON r.id=g.requestId JOIN channel_bindings b ON b.id=r.bindingId WHERE g.requestId=?`)
+      .get(requestId) as Pick<TelegramGroupRoute,'chatId'|'changeId'> & {bindingId:string;revokedAt:number|null} | undefined;
+    if(!route)return;
+    if(route.revokedAt!==null||!this.adapters.has('telegram')||!this.groupAllowed(route.bindingId,route))return 'denied';
+    const sync=this.telegramSync.get(route.bindingId);
+    return sync==='offline'?'denied':sync??'preparing';
+  }
+
+  discardTelegramBackground(requestId:string){this.telegramBackground.delete(requestId);}
+
+  takeTelegramBackground(requestId:string){
+    const entry=this.telegramBackground.get(requestId);
+    if(!entry)return;
+    this.discardTelegramBackground(requestId);
+    const allowed=()=>this.telegramInputState(requestId)==='ready';
+    if(!allowed())return;
+    return entry.load().then(messages=>allowed()?messages:undefined,()=>undefined);
+  }
+
   receiveText(input:ChannelInput) {
     this.requireOpen();
     if(!this.validKey(input.eventId)||'attachments' in input||'interactionId' in input)
@@ -226,8 +323,22 @@ export class ChannelPlugin {
       AND senderKey=? AND conversationKey=? AND revokedAt IS NULL`)
       .get(input.adapterId,input.accountKey,input.senderKey,input.conversationKey);
     if(!binding||!this.adapters.has(input.adapterId))throw Error('channel_binding_denied');
-    const eventKey=JSON.stringify([input.adapterId,input.accountKey,input.eventId]);
-    const {requestId,text}=conversationInput({requestId:'channel-'+randomUUID(),text:input.text});
+    return this.receiveBound({...input,id:String(binding.id)},input.eventId,input.text);
+  }
+
+  private groupRoute(requestId:string) {
+    return this.db.prepare('SELECT chatId,changeId,messageId,topicId FROM telegram_group_routes WHERE requestId=?')
+      .get(requestId) as TelegramGroupRoute|undefined;
+  }
+
+  private groupAllowed(bindingId:string,route:Pick<TelegramGroupRoute,'chatId'|'changeId'>|undefined){
+    return !route||!!this.db.prepare('SELECT 1 FROM telegram_groups WHERE bindingId=? AND chatId=? AND changeId=? AND active=1')
+      .get(bindingId,route.chatId,route.changeId);
+  }
+
+  private receiveBound(binding:ChannelAddress & {id:string},eventId:string,body:string,group?:TelegramGroupRoute,background?:TelegramBackground){
+    const eventKey=JSON.stringify([binding.adapterId,binding.accountKey,eventId]);
+    const {requestId,text}=conversationInput({requestId:'channel-'+randomUUID(),text:body});
     const inputHash=createHash('sha256').update(text).digest('hex');
     const prior=this.db.prepare('SELECT * FROM channel_requests WHERE eventKey=?').get(eventKey) as Request|undefined;
     if(prior){
@@ -237,7 +348,18 @@ export class ChannelPlugin {
       return prior.id;
     }
     const request={id:requestId,bindingId:String(binding.id),inputHash,pendingText:text};
-    this.db.prepare('INSERT INTO channel_requests VALUES(?,?,?,?,?)').run(requestId,request.bindingId,eventKey,inputHash,text);
+    const insert=()=>this.db.prepare('INSERT INTO channel_requests VALUES(?,?,?,?,?)')
+      .run(requestId,request.bindingId,eventKey,inputHash,text);
+    if(group){
+      this.db.exec('BEGIN IMMEDIATE');
+      try{
+        insert();
+        this.db.prepare('INSERT INTO telegram_group_routes VALUES(?,?,?,?,?)')
+          .run(requestId,group.chatId,group.changeId,group.messageId,group.topicId);
+        this.db.exec('COMMIT');
+      }catch(error){this.db.exec('ROLLBACK');throw error;}
+    }else insert();
+    if(group&&background)this.telegramBackground.set(requestId,{bindingId:binding.id,route:group,load:background});
     this.dirty=true;
     this.accept(request);
     return requestId;
@@ -247,8 +369,11 @@ export class ChannelPlugin {
     if(request.pendingText===null)return;
     const binding=this.binding(request.bindingId);
     if(binding&&!this.adapters.has(binding.adapterId))return;
-    if(binding)
+    const group=this.groupRoute(request.id);
+    if(binding&&group&&this.telegramSync.get(binding.id)!=='ready')return;
+    if(binding&&this.groupAllowed(binding.id,group))
       this.app.submitMessage({requestId:request.id,text:request.pendingText},{source:'channel_plugin',persist:()=>{}});
+    else this.discardTelegramBackground(request.id);
     this.db.prepare('UPDATE channel_requests SET pendingText=NULL WHERE id=?').run(request.id);
   }
 
@@ -256,11 +381,15 @@ export class ChannelPlugin {
     const request=this.db.prepare('SELECT * FROM channel_requests WHERE id=?').get(requestId) as Request|undefined;
     const binding=request&&this.binding(request.bindingId);
     if(!request||!binding||!this.adapters.has(binding.adapterId))throw Error('channel_binding_denied');
+    const group=this.groupRoute(requestId);
+    if(!this.groupAllowed(binding.id,group))throw Error('channel_binding_denied');
     const prior=this.db.prepare(`SELECT s.* FROM channel_subscriptions s,json_each(s.requests) r
       WHERE s.taskId=? AND r.value=?`).get(taskId,requestId) as Subscription|undefined;
     if(prior)return {taskId,subscriptionId:prior.id,state:prior.revokedAt===null?'active':'superseded'};
     const current=this.db.prepare('SELECT * FROM channel_subscriptions WHERE taskId=? AND revokedAt IS NULL').get(taskId) as Subscription|undefined;
-    if(current?.bindingId===request.bindingId){
+    const currentGroup=current&&this.groupRoute(JSON.parse(current.requests)[0]);
+    if(current?.bindingId===request.bindingId&&currentGroup?.chatId===group?.chatId&&
+      currentGroup?.changeId===group?.changeId&&currentGroup?.topicId===group?.topicId){
       this.db.prepare("UPDATE channel_subscriptions SET requests=json_insert(requests,'$[#]',?) WHERE id=?").run(requestId,current.id);
       return {taskId,subscriptionId:current.id,state:'active'};
     }
@@ -316,6 +445,7 @@ export class ChannelPlugin {
     this.unsubscribe?.();
     clearInterval(this.timer);
     this.abort.abort();
+    this.telegramBackground.clear();
     await Promise.allSettled([this.running,...Array.from(this.connections.values(),connection=>connection.done)]);
     this.db.close();
   }
@@ -371,7 +501,11 @@ export class ChannelPlugin {
       if(!row)return;
       const binding=this.binding(row.bindingId),message=binding&&this.message(row);
       const adapter=binding&&this.adapters.get(binding.adapterId);
-      if(!binding||!message){this.db.prepare("UPDATE channel_outbox SET state='revoked' WHERE messageId=?").run(messageId);return;}
+      const subscription=row.subscriptionId?this.subscription(row.subscriptionId):undefined;
+      const origin=row.requestId??(subscription&&JSON.parse(subscription.requests)[0]);
+      const group=origin?this.groupRoute(origin):undefined;
+      if(binding&&group&&this.telegramSync.get(binding.id)!=='ready')return;
+      if(!binding||!message||!this.groupAllowed(binding.id,group)){this.db.prepare("UPDATE channel_outbox SET state='revoked' WHERE messageId=?").run(messageId);return;}
       if(!adapter)return;
       const text='text' in message?message.text:message.status==='failed'?'Homer 未能完成本次请求。':'Homer 已中断本次回复。';
       const attachments='attachments' in message?message.attachments??[]:[];
@@ -389,7 +523,7 @@ export class ChannelPlugin {
       this.db.prepare("UPDATE channel_outbox SET state='sending',attemptId=?,receipts=? WHERE messageId=?")
         .run(attemptId,JSON.stringify(receipts),messageId);
       const {adapterId,accountKey,senderKey,conversationKey}=binding;
-      const result=await this.transport(adapter,{address:{adapterId,accountKey,senderKey,conversationKey},messageId,attemptId,part});
+      const result=await this.transport(adapter,{address:{adapterId,accountKey,senderKey,conversationKey},messageId,attemptId,part,...(group?{telegramGroup:group,...(!row.requestId?{telegramReply:false}:{})}:{})});
       receipts[receipts.length-1]={...attempt,state:result.state,
         ...(this.validKey(result.receipt)?{receipt:result.receipt}:{})};
       const step=row.nextPart+(result.state==='sent'?1:0);

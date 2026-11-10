@@ -12,7 +12,7 @@ export function verifiedDesktopResources(identity:DesktopResourceIdentity){
  if(createHash('sha256').update(manifestBytes).digest('hex')!==identity.manifestSha256)throw Error('desktop_resource_changed');
  const manifest=JSON.parse(manifestBytes.toString('utf8'));
  const helper=join(root,windows?'resources/homer-image-decoder.mjs':'Contents/MacOS/homer-image-decoder');
- const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node']).map(path=>{
+ const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>{
   const file=join(root,path);if(realpathSync(file)!==file)throw Error('desktop_resource_changed');
   return {path,sha256:createHash('sha256').update(readFileSync(file)).digest('hex')};
  });
@@ -20,5 +20,6 @@ export function verifiedDesktopResources(identity:DesktopResourceIdentity){
  const expected=(windows?manifest.files:manifest.codeFiles)?.find((file:{path:string;sha256:string})=>file.path===(windows?'homer-image-decoder.mjs':'Contents/MacOS/homer-image-decoder'))?.sha256;
  if(windows)for(const name of ['node.exe','homer-image-decoder.mjs'])if(manifest.files?.find((file:{path:string;sha256:string})=>file.path===name)?.sha256!==createHash('sha256').update(readFileSync(join(resources,name))).digest('hex'))throw Error('desktop_resource_changed');
  if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.163.0'||!expected||realpathSync(helper)!==helper||createHash('sha256').update(readFileSync(helper)).digest('hex')!==expected)throw Error('desktop_resource_changed');
- return {bundleRoot:root,imageDecoder:helper,imageDecoderSha256:expected as string};
+ const files:{path:string;sha256:string}[]=Array.isArray(manifest.files)?manifest.files:[];
+ return {bundleRoot:root,resources,files,imageDecoder:helper,imageDecoderSha256:expected as string};
 }

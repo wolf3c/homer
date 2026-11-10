@@ -18,9 +18,10 @@ function desktopIdentity(t,root){
  copyFileSync(executable,join(bundleRoot,node),constants.COPYFILE_FICLONE);
  writeFileSync(join(bundleRoot,decoder),'synthetic decoder');
  if(windows)writeFileSync(join(bundleRoot,'Homer.exe'),'synthetic launcher');
+ else writeFileSync(join(bundleRoot,'Contents/MacOS/homer-window-capture'),'synthetic capture helper');
  const hash=value=>createHash('sha256').update(value).digest('hex');
  const entry=path=>({path,sha256:hash(readFileSync(join(bundleRoot,path)))});
- const codeFiles=(windows?['Homer.exe']:[decoder,node]).map(entry);
+ const codeFiles=(windows?['Homer.exe']:[decoder,'Contents/MacOS/homer-window-capture',node]).map(entry);
  const files=windows?[node,decoder].map(path=>({...entry(path),path:path.slice('resources/'.length)})):undefined;
  const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles,files});
  writeFileSync(join(resources,'desktop-manifest.json'),manifest);

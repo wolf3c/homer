@@ -29,7 +29,7 @@ try{
      if(stat.isDirectory())inventory(path,rel);else if(stat.isFile())observed.push({path:rel,sha256:sha(readFileSync(path))});else throw Error('desktop_resource_changed');
    }
  }
- const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node']).map(path=>{
+ const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>{
    const file=join(bundle,path);if(realpathSync(file)!==file)throw Error('desktop_resource_changed');
    return {path,sha256:sha(readFileSync(file))};
  });
@@ -119,6 +119,11 @@ try{
  // Retain exact original account/memory defaults; no loadConfig fallback to HOME.
  const build={directory:homer,hash:manifest.sourceHash,manifest:manifest.manifest,version:manifest.sourceHash.slice(0,12),uiHash:manifest.uiHash,schema:manifest.schema,toolsHash:manifest.toolsHash,boundary:desktopBoundary(config,manifest.codex),config,thread};
  const {verifyBuild}=await import('./trusted-build.mjs');verifyBuild(build);
+ if((windows||process.arch==='arm64')&&observed.some(file=>file.path.replaceAll('\\','/').startsWith('runtime/cua/'))){
+   const {recoverCuaSessions,WINDOWS_CUA_HELPER}=await import(pathToFileURL(join(homer,'dist/cua-processes.js')).href);
+   if(observed.some(file=>file.path.replaceAll('\\','/')===(windows?WINDOWS_CUA_HELPER:'runtime/cua/cua-driver')))
+     await recoverCuaSessions(paths.runtime,windows?join(resources,WINDOWS_CUA_HELPER):undefined);
+ }
  const {runDev}=await import('./dev.mjs');
  const {readMobileConfig}=await import(pathToFileURL(join(homer,'dist/mobile-gateway.js')).href);
  const mobileConfig=readMobileConfig(join(profile,'mobile.json'));

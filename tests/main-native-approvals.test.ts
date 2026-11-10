@@ -41,7 +41,12 @@ test('command approval preserves the full review when native metadata is larger 
         const command = 'printf ' + 'x'.repeat(3100);
         const request = { ...f.native, details: { ...f.native.details, command } };
         const opened = f.approvals.open(request, f.scope);
-        assert.ok(f.interactions.inspect(opened.id).userQuestion!.includes(command));
+        const item = f.interactions.inspect(opened.id);
+        assert.ok(item.userQuestion!.includes(command));
+        const approval = item.details.approval as {title:string;scope:string;details:string};
+        assert.equal(approval?.title, '允许执行这条命令？');
+        assert.equal(approval.scope, '仅批准当前命令。');
+        assert.ok(approval.details === command);
         f.approvals.respond(opened.id, { requestId: 'long-approval', text: '允许本次操作' });
         assert.equal((await opened.response).status, 'approved');
         assert.throws(() => f.approvals.open({
@@ -73,12 +78,30 @@ test('permissions grant only exact requested paths for one turn; no root/session
         const resolution = await opened.response;
         assert.deepEqual(resolution.decision?.permissions, { fileSystem: { read: ['/synthetic/project'], write: null } });
         const bad = f.approvals.open({ ...f.native, requestId: 2, method: 'item/fileChange/requestApproval', details: { grantRoot: '/' } }, f.scope);
+        assert.equal((f.interactions.inspect(bad.id).details.approval as {canApprove?:boolean}).canApprove, false);
         assert.throws(() => f.approvals.respond(bad.id, { requestId: 'bad', text: '允许本次操作' }), /interaction_approval_unavailable/);
         assert.equal(f.interactions.inspect(bad.id).state, 'pending_user');
         f.approvals.respond(bad.id, { requestId: 'deny', text: '拒绝本次操作' });
         assert.equal((await bad.response).status, 'denied');
     }
     finally {
+        f.close();
+    }
+});
+test('command approval distinguishes denied paths from requested file access', () => {
+    const f = fixture();
+    try {
+        const opened = f.approvals.open({ ...f.native, details: { ...f.native.details,
+            additionalPermissions: { fileSystem: { entries: [
+                { access: 'deny', path: { type: 'path', path: '/synthetic/private' } },
+                { access: 'read', path: { type: 'path', path: '/synthetic/public' } },
+            ] } },
+        } }, f.scope);
+        const approval = f.interactions.inspect(opened.id).details.approval as { scope:string; details:string };
+        assert.match(approval.scope, /读取权限（1 项）/);
+        assert.doesNotMatch(approval.scope, /写入/);
+        assert.match(approval.details, /禁止访问：\/synthetic\/private/);
+    } finally {
         f.close();
     }
 });

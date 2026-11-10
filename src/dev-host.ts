@@ -200,6 +200,7 @@ async function receive(raw: unknown) {
       else if(m.method === 'media.origin'&&bridge.media?.origin)value=await bridge.media.origin(m.input);
       else if(m.method === 'media.reveal'&&bridge.media?.reveal)value=await bridge.media.reveal(m.input);
       else if(m.method === 'media.upload'){if(!bridge.media?.upload)throw Error('web_upload_unavailable');value=await bridge.media.upload(m.input);}
+      else if(m.method === 'media.preview'){if(!bridge.media?.previewDraft)throw Error('web_upload_unavailable');value=await bridge.media.previewDraft(m.input);}
       else if(m.method === 'media.discard'){if(!bridge.media?.discard)throw Error('web_upload_unavailable');value=await bridge.media.discard(m.input);}
       else if (m.method === "submit") value = await bridge.submit(m.input);
       else if (m.method === "feedback") value = await bridge.feedback!(m.input.messageId, m.input.value);

@@ -21,6 +21,23 @@ test('model source retains the existing profile and validates without changing c
  assert.throws(()=>saveDesktopModelSource(root,'other'),/desktop_model_source_invalid/);
  writeFileSync(marker+'.pending','retain',{mode:0o600});assert.throws(()=>saveDesktopModelSource(root,'codex'));assert.equal(readDesktopModelSource(root,'website'),'website');assert.equal(readFileSync(marker+'.pending','utf8'),'retain');
 });
+test('capture shortcut is profile-local and restoring defaults removes its override',()=>{
+ const root=make();prepareDesktopProfile(root,version,{initialize:true});
+ const marker=join(root,'desktop-profile.json'),before=JSON.parse(readFileSync(marker));
+ assert.equal(desktopProfile.readDesktopCaptureShortcut(root),undefined);
+ desktopProfile.saveDesktopCaptureShortcut(root,'Control+Shift+A');
+ saveDesktopModelSource(root,'codex');
+ prepareDesktopProfile(root,version);
+ assert.equal(desktopProfile.readDesktopCaptureShortcut(root),'Control+Shift+A');
+ assert.deepEqual(JSON.parse(readFileSync(marker)),{...before,modelSource:'codex',captureShortcut:'Control+Shift+A'});
+ writeFileSync(marker+'.pending','retain',{mode:0o600});
+ assert.throws(()=>desktopProfile.saveDesktopCaptureShortcut(root,undefined));
+ assert.equal(desktopProfile.readDesktopCaptureShortcut(root),'Control+Shift+A');
+ assert.equal(readFileSync(marker+'.pending','utf8'),'retain');
+ rmSync(marker+'.pending');
+ desktopProfile.saveDesktopCaptureShortcut(root,undefined);
+ assert.deepEqual(JSON.parse(readFileSync(marker)),{...before,modelSource:'codex'});
+});
 test('desktop refuses an unmarked existing directory without mutating it',()=>{
  const root=make();writeFileSync(join(root,'sentinel'),'untouched');
  assert.throws(()=>prepareDesktopProfile(root,version),/desktop_data_unrecognized/);

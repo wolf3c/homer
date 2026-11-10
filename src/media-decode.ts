@@ -17,13 +17,16 @@ export async function mediaProcess(bin:string,args:string[],input:Buffer,maxByte
   const trusted=verifiedDesktopResources(desktopIdentity),resources=join(trusted.bundleRoot,process.platform==='win32'?'resources':'Contents/Resources');
   // Optional Homebrew/Python/ASR installations never become implicit desktop
   // dependencies. Keep only the verified ImageIO helper and bundled SILK codec.
-  const image=process.platform==='win32'?bin===process.execPath&&args.length===2&&args[0]===trusted.imageDecoder&&['0','320'].includes(args[1]!):bin===trusted.imageDecoder&&args.length===1&&['0','320'].includes(args[0]!);
+  const crop=(parts:string[])=>parts.length===5&&parts[0]==='crop'&&parts.slice(1).every(value=>/^[0-9]{1,8}$/.test(value));
+  const image=process.platform==='win32'?bin===process.execPath&&args[0]===trusted.imageDecoder&&
+   (args.length===2&&['0','320'].includes(args[1]!)||args.length===7&&crop(args.slice(1,-1))&&['0','600','1100'].includes(args[6]!)):
+   bin===trusted.imageDecoder&&(args.length===1&&['0','320'].includes(args[0]!)||crop(args));
   const silk=bin===process.execPath&&realpathSync(bin)===join(trusted.bundleRoot,process.platform==='win32'?'resources/node.exe':'Contents/MacOS/node')&&args.length===2&&args[0]===join(resources,'homer/dist/media-silk.js')&&args[1]==='decode';
   if(!image&&!silk)throw Error('media_decoder_unavailable');
  }
  if(signal?.aborted)throw Error('media_decode_cancelled');
  return new Promise((resolve,reject)=>{
-  const child=spawn(bin,args,{stdio:['pipe','pipe','pipe'],env:process.platform==='win32'?{SystemRoot:process.env.SystemRoot,PATH:join(process.env.SystemRoot!,'System32'),TEMP:process.env.TEMP}:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8'}});
+  const child=spawn(bin,args,{stdio:['pipe','pipe','pipe'],windowsHide:true,env:process.platform==='win32'?{SystemRoot:process.env.SystemRoot,PATH:join(process.env.SystemRoot!,'System32'),TEMP:process.env.TEMP}:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8'}});
   const chunks:Buffer[]=[];let size=0,settled=false,failure:string|undefined;
   // Wait for close even on cancellation: the caller may release a decoder slot
   // or remove its private input only after the child has actually exited.

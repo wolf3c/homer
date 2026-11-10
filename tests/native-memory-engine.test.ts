@@ -25,8 +25,9 @@ test('daily DeepSeek permits extraction only for fresh main threads and preserve
  mkdirSync(mac,{recursive:true});mkdirSync(resources,{recursive:true});
  copyFileSync(originalExecPath,join(mac,'node'),constants.COPYFILE_FICLONE);
  writeFileSync(join(mac,'homer-image-decoder'),'synthetic decoder; never executed');
+ writeFileSync(join(mac,'homer-window-capture'),'synthetic capture helper; never executed');
  const digest=(file:string)=>createHash('sha256').update(readFileSync(file)).digest('hex');
- const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node'].map(path=>({path,sha256:digest(join(bundleRoot,path))}))});
+ const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node'].map(path=>({path,sha256:digest(join(bundleRoot,path))}))});
  writeFileSync(join(resources,'desktop-manifest.json'),manifest);
  const config:Config={appData:dir,workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:home,nativeCodexHome:home,codexBin:resolve('tests/fixtures/native-feature-app-server.mjs'),model:'deepseek-flash',requiresOpenaiAuth:false,stopGraceMs:100,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot,manifestSha256:createHash('sha256').update(manifest).digest('hex')}};
  mkdirSync(config.workspace);mkdirSync(config.runtime);

@@ -7,6 +7,7 @@ import { Homer, type Message } from "../src/service.js";
 import { Store } from "../src/store.js";
 import type { Config } from "../src/config.js";
 import type { EngineLike, EngineOptions, ToolCall, TurnResult } from "../src/engine.js";
+import { loadPrompts } from "../src/prompts.js";
 import { MEETING_REVISION, assertMeetingArtifact } from "./scenarios/meeting-revision.js";
 const tick = () => new Promise((r) => setTimeout(r, 10));
 async function until(check: () => boolean) {
@@ -625,6 +626,65 @@ test("T09: normal restarts resume the same main conversation; failed resume pres
   const saved = new Store(f.app.config.runtime + "/homer.sqlite");
   try { assert.equal(saved.meta("mainThread"), savedThread); }
   finally { saved.close(); }
+});
+
+test("a legacy main adopts the current prompt once and retries an unacknowledged injection", async () => {
+  const f = fixture("main-prompt-resume");
+  await f.app.start();
+  const threadId = f.app.store.meta("mainThread")!;
+  const toolsHash = f.app.store.meta("mainToolsHash");
+  const config = f.app.config;
+  await f.app.close();
+
+  let rejectInjection = false;
+  let attempts = 0;
+  let available = true;
+  const open = () => new Homer(config, async () => {}, options => new class extends EventEmitter {
+    get available() { return available; }
+    async start() { available = true; return options.threadId!; }
+    async request(method: string, params: {threadId: string; items: {type: string; role: string; content: {type: string; text: string}[]}[]}) {
+      assert.equal(method, "thread/inject_items");
+      assert.equal(params.threadId, threadId);
+      assert.equal(params.items.length, 1);
+      const [item] = params.items;
+      assert.equal(item!.role, "developer");
+      assert.equal(item!.content[0]?.type, "input_text");
+      assert.ok(item!.content[0]?.text.endsWith(loadPrompts().main));
+      attempts++;
+      if (rejectInjection) throw Error("synthetic_prompt_injection_failed");
+      return {};
+    }
+    async turn(): Promise<TurnResult> { return {status: "completed", text: "continued"}; }
+    async interrupt() { return true; }
+    async close() { return true; }
+  }());
+
+  let app = open();
+  try {
+    await app.start();
+    assert.equal(attempts, 0, "an already-current thread does not need an injection");
+    app.store.db.prepare("DELETE FROM meta WHERE key='mainPromptHash'").run();
+    await app.close();
+
+    app = open();
+    rejectInjection = true;
+    await assert.rejects(app.start({keepManagementOnFailure: true}), /synthetic_prompt_injection_failed/);
+    rejectInjection = false;
+    await app.start({keepManagementOnFailure: true});
+    assert.equal(attempts, 2);
+    assert.equal(await app.message("Continue the original conversation."), "continued");
+    await app.close();
+
+    app = open();
+    await app.start();
+    assert.equal(attempts, 2, "restart reuses the acknowledged prompt version");
+    assert.equal(app.store.meta("mainThread"), threadId);
+    assert.equal(app.store.meta("mainToolsHash"), toolsHash);
+    app.store.setMeta("mainPromptHash", "previous-prompt-version");
+    available = false;
+    assert.equal(await app.message("Continue after the engine exits."), "continued");
+    assert.equal(attempts, 3, "recovery delivers a changed prompt before the next turn");
+  } finally { await app.close(); }
 });
 
 // HMR-MODEL-001: model selection must preserve the conversation and account boundary.

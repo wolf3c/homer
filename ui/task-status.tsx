@@ -208,7 +208,12 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
    </div></PendingDisabled.Provider></Disclosures.Provider></ExecutionObservationContext.Provider>
  );
  return <><div className="homer-task-status"><Popover open={!wide&&popupOpen} onOpenChange={value=>{if(!wide)setPopupOpen(value);}}><PopoverTrigger asChild>
-  <button id="task-status-trigger" type="button" className={ghostButton+' status-entry'} aria-label={title} title={title} aria-expanded={open} aria-controls="task-status-panel" aria-haspopup={wide?undefined:'dialog'} onClick={wide?()=>setOpen(!open):undefined}><ListTodoIcon aria-hidden="true" size={18}/><span className="status-count-slot" aria-hidden="true">{currentWorking!==null&&currentWorking>0&&<span className="status-entry-count" data-digits={currentWorking>9?'multiple':undefined} data-count="working">{currentWorking>99?'99+':currentWorking}</span>}</span></button>
+  <button id="task-status-trigger" type="button" className={ghostButton+' status-entry'} aria-label={title} title={title} aria-expanded={open} aria-controls="task-status-panel" aria-haspopup={wide?undefined:'dialog'} onClick={wide?()=>setOpen(!open):undefined}>
+   <span className="status-entry-icon" aria-hidden="true">
+    <ListTodoIcon size={18}/>
+    {currentWorking!==null&&currentWorking>0&&<span className="status-entry-count" data-count="working">{currentWorking>99?'99+':currentWorking}</span>}
+   </span>
+  </button>
   </PopoverTrigger>
   {!wide&&<PopoverContent id="task-status-panel" className="homer-task-status status-popover w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-3 shadow-none motion-reduce:animate-none" align="end" side="bottom" sideOffset={12} collisionPadding={12} aria-label="工作状态卡片" aria-describedby="task-status-summary" onEscapeKeyDown={event=>event.stopPropagation()} onCloseAutoFocus={event=>{if(wideRef.current){event.preventDefault();return;}const id=returnTarget.current;returnTarget.current=null;if(id){event.preventDefault();requestAnimationFrame(()=>{const target=document.getElementById(id);target?.scrollIntoView({block:'center'});target?.focus({preventScroll:true});});}}}>{content}</PopoverContent>}
  </Popover></div>

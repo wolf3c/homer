@@ -31,7 +31,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
   const run=source.target.runId?runs.get(source.target.runId):undefined;
   if(source.target.runId&&(!run||run.taskId!==source.target.taskId||run.version!==source.target.version)){unresolved.add(id);return;}
   if(seen.has(source.key))return;seen.add(source.key);
-  const list=out.get(id)??[];list.push({...source,title:publicActivityName(v.title)??'后台工作',...(v.sourceMessageId?{originalRequestMessageId:v.sourceMessageId}:{})});out.set(id,list);
+  const list=out.get(id)??[];list.push({...source,title:publicActivityName(v.title)??'',...(v.sourceMessageId?{originalRequestMessageId:v.sourceMessageId}:{})});out.set(id,list);
  };
  for(const message of eligible){
   const node=message.process?.threadId===threadId?message.process:undefined;
@@ -56,7 +56,7 @@ import { readTaskOverview, readTaskDetail, readTaskSummary } from './task-overvi
 import { projectQuestions } from './question-schema.js';
 import {revealAttachmentFile} from './artifact-reveal.js';
 import type { Homer } from "./service.js";
-import type { WebBridge,DispatchQueuePage,WebArtifact,MessageAttachment } from "./web-contract.js";
+import { CONVERSATION_VIEW,type WebBridge,type DispatchQueuePage,type WebArtifact,type MessageAttachment,type WebApproval } from "./web-contract.js";
 
 export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boolean}={}): WebBridge {
   app.registerWebSurface(draftUpload);
@@ -107,7 +107,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
     const rows=app.store.db.prepare("SELECT id,rowid position FROM worker_interactions WHERE state='pending_user' AND responseUserMessageId IS NULL AND rowid>? ORDER BY rowid LIMIT 81").all(after),selected=rows.slice(0,80);
     const facts=new Map(selected.length?app.store.db.prepare(`SELECT i.id,t.title,(SELECT id FROM conversation_messages c WHERE c.threadId=? AND c.requestId=json_extract(i.authority,'$.sourceRequestId') AND c.role='user' ORDER BY c.rowid DESC LIMIT 1) sourceMessageId
       FROM worker_interactions i LEFT JOIN runs r ON r.id=CASE WHEN i.runId LIKE 'main-native:worker-native:%' THEN substr(i.runId,27) ELSE i.runId END LEFT JOIN tasks t ON t.id=r.taskId WHERE i.id IN (${selected.map(()=>'?').join(',')})`).all(app.store.meta('mainThread')!,...selected.map(row=>String(row.id))).map(row=>[String(row.id),row]):[]);
-    return {items:selected.map(({id})=>app.interactions.inspect(String(id))).map(item=>({id:item.id,runId:item.runId,kind:item.kind,workTitle:String(facts.get(item.id)?.title??(item.runId.startsWith('main-native:worker-native:')?'后台原生请求':item.runId.startsWith('main-native:')?'主对话':'后台工作')),sourceRequestId:item.authority.sourceRequestId,...(facts.get(item.id)?.sourceMessageId?{sourceMessageId:String(facts.get(item.id)!.sourceMessageId)}:{}),question:item.userQuestion??'请补充完成这项工作所需的信息。',reason:item.escalationReason,...(item.details.method==='mcpServer/elicitation/request'&&(item.details.params as any)?._meta?.codex_approval_kind==='mcp_tool_call'?{canCancel:true as const}:{}),questions:item.runId.startsWith('main-native:')?projectQuestions(item.kind,item.details):undefined})),after:rows.length>80?Number(selected.at(-1)!.position):null};
+    return {items:selected.map(({id})=>app.interactions.inspect(String(id))).map(item=>({id:item.id,runId:item.runId,kind:item.kind,workTitle:String(facts.get(item.id)?.title??(item.runId.startsWith('main-native:worker-native:')?'后台原生请求':item.runId.startsWith('main-native:')?'主对话':'后台工作')),sourceRequestId:item.authority.sourceRequestId,...(facts.get(item.id)?.sourceMessageId?{sourceMessageId:String(facts.get(item.id)!.sourceMessageId)}:{}),question:item.userQuestion??'请补充完成这项工作所需的信息。',reason:item.escalationReason,...(item.kind==='authorization'&&item.details.approval?{approval:item.details.approval as WebApproval}:{}),...(item.details.method==='mcpServer/elicitation/request'&&(item.details.params as any)?._meta?.codex_approval_kind==='mcp_tool_call'?{canCancel:true as const}:{}),questions:item.runId.startsWith('main-native:')?projectQuestions(item.kind,item.details):undefined})),after:rows.length>80?Number(selected.at(-1)!.position):null};
   };
   return {
     history:{
@@ -156,7 +156,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
         const {messages:_messages,queue:_queue,artifacts,inactiveInteractions,...pageInfo}=recent;
         const pending=interactionPage(),interactions=pending.items;
         const current=app.conversationControlState();
-        return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:3,acceptedRequestIds:[],processNodes:[],
+        return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:CONVERSATION_VIEW,acceptedRequestIds:[],processNodes:[],
         queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,taskOverview:true,workerExecution:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
         history:{protocol:3,readEpoch:app.webReadEpoch,page:pageInfo,moreQueue:queue.after,moreInteractions:pending.after}};
         };

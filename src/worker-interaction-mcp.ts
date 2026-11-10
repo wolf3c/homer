@@ -10,11 +10,12 @@ import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
 
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {MEMBERSHIP_TOOLS} from './membership-web-tools.js';
+import {CUA_TOOLS} from './desktop-cua.js';
 
 export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS];
 export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS];
-export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false){
-  const tools=role==='worker'?WORKER_HOST_MCP_TOOLS:HOST_MCP_TOOLS;
+export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false){
+  const tools=role==='worker'?(cua?[...WORKER_HOST_MCP_TOOLS,...CUA_TOOLS]:WORKER_HOST_MCP_TOOLS):HOST_MCP_TOOLS;
   return membership?[...tools,...MEMBERSHIP_TOOLS.filter(tool=>!nativeWebSearch||tool.name!=='web_search')]:tools;
 }
 const allowed = (name: unknown, catalog:readonly Tool[]): name is string => typeof name === "string" && catalog.some(tool => tool.name === name);
@@ -28,6 +29,11 @@ export class WorkerInteractionMcp {
   private server?: Server;
   private sockets = new Set<Socket>();
   constructor(runtime: string, private handle: (tool: string, args: unknown, meta: unknown) => Promise<unknown>,readonly catalog:Tool[]=HOST_MCP_TOOLS) {
+    if(process.platform==='win32'){
+      // Windows' default pipe ACL allows writing only as the owner, administrators or SYSTEM.
+      this.path="\\\\.\\pipe\\homer-hi-"+randomUUID();
+      return;
+    }
     const absolute = join(runtime, "hi-" + randomUUID().slice(0, 8) + ".sock");
     const local = relative(this.directory, absolute);
     this.path = Buffer.byteLength(local) < Buffer.byteLength(absolute) ? local : absolute;
@@ -64,7 +70,7 @@ export class WorkerInteractionMcp {
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
       this.server!.listen(this.path, () => {
-        try { chmodSync(this.path, 0o600); resolve(); }
+        try { if(process.platform!=='win32')chmodSync(this.path, 0o600); resolve(); }
         catch { reject(new Error("interaction_socket_permissions_failed")); }
       });
     });
@@ -74,6 +80,7 @@ export class WorkerInteractionMcp {
     if (this.server?.listening)
       await new Promise<void>(resolve => this.server!.close(() => resolve()));
     this.server = undefined;
+    if(process.platform==='win32')return; // Windows removes the pipe when its last handle closes.
     try { unlinkSync(this.path); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("interaction_socket_cleanup_failed");
     }
@@ -112,9 +119,9 @@ function hostCall(path: string, tool: string, args: unknown, meta?: unknown): Pr
   });
 }
 
-export function runWorkerInteractionMcp(path: string,role:string='main',membership=false,nativeWebSearch=false,plugins:Tool[]=[]) {
+export function runWorkerInteractionMcp(path: string,role:string='main',membership=false,nativeWebSearch=false,plugins:Tool[]=[],cua=false) {
   if(role!=='main'&&role!=='worker')throw Error('interaction_role_denied');
-  const catalog=[...hostMcpTools(role,membership,nativeWebSearch),...(role==='main'?plugins:[])];
+  const catalog=[...hostMcpTools(role,membership,nativeWebSearch,cua),...(role==='main'?plugins:[])];
   const send = (message: unknown) => process.stdout.write(JSON.stringify(message) + "\n");
   createInterface({ input: process.stdin }).on("line", line => {
     void (async () => {

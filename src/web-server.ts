@@ -11,7 +11,7 @@ import {createWebChat} from "./web-chat.js";
 import {WEB_UPLOAD_BYTES,webUpload} from './web-upload.js';
 import {timingSafeEqual} from 'node:crypto';
 
-const mime: Record<string, string> = { ".txt": "text/plain; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
+const mime: Record<string, string> = { ".txt": "text/plain; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png", ".gif": "image/gif", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
 const json = (response: ServerResponse, status: number, value: unknown) => {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(value === undefined ? {} : value));

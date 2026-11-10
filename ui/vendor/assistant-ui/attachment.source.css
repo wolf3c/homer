@@ -6,6 +6,7 @@
 @source "./attachment-dialog.tsx";
 @source "./attachment-icon-button.tsx";
 @source "../../homer-attachments.tsx";
+@source "../../screenshot-dialog.tsx";
 @theme inline {
  --color-muted-foreground:var(--muted);
  --color-background:var(--surface);

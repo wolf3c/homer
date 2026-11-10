@@ -27,7 +27,7 @@ export async function previewCollection(bytes?:Buffer){
   for(let bad=0;bad<refs.length;bad++)assert.throws(()=>f.app.submitMessage({...input,resourceReferences:refs.map((r,i)=>i===bad?{...r,source:{...r.source,sha256:'b'.repeat(64)}} as typeof r:r)}),/preview_source_mismatch/);
   assert.equal(f.inputs.length,turns);assert.equal(f.app.history.acceptedRequestIds('synthetic-main').includes(requestId),false);
   assert.equal(f.app.submitMessage(input).fresh,true);await f.app.idle();
-  for(const r of refs){assert.ok(f.inputs.at(-1)!.includes(r.source.kind==='attachment'?r.source.assetId:r.source.sourceId));for(const n of r.annotations??[])assert.ok(f.inputs.at(-1)!.includes(n.comment));}
+  for(const r of refs){assert.ok(f.inputs.at(-1)!.includes(r.source.kind==='attachment'?r.source.assetId:r.source.kind==='web'?r.source.sourceId:'本轮截图'));for(const n of r.annotations??[])assert.ok(f.inputs.at(-1)!.includes(n.comment));}
   assert.equal(f.nativeImages.at(-1)!.length,attachments.length?1:0);
   assert.deepEqual(f.app.history.list('synthetic-main').find(m=>m.requestId===requestId&&m.role==='user')?.resourceReferences,refs);
   const count=f.inputs.length;assert.equal(f.app.submitMessage(input).fresh,false);await f.app.idle();assert.equal(f.inputs.length,count);

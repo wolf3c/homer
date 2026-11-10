@@ -20,8 +20,9 @@ test('fixed native engine initializes only fresh main memory and preserves resum
  const originalExecPath=process.execPath,tokenBefore=process.env.HOMER_DEEPSEEK_TOKEN;
  copyFileSync(originalExecPath,join(mac,'node'),constants.COPYFILE_FICLONE);
  writeFileSync(join(mac,'homer-image-decoder'),'synthetic helper; never executed');
+ writeFileSync(join(mac,'homer-window-capture'),'synthetic capture helper; never executed');
  const hash=path=>createHash('sha256').update(readFileSync(path)).digest('hex');
- const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node'].map(path=>({path,sha256:hash(join(bundleRoot,path))}))});
+ const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node'].map(path=>({path,sha256:hash(join(bundleRoot,path))}))});
  writeFileSync(join(resources,'desktop-manifest.json'),manifest);
  const configPath=join(home,'config.toml'),notes=join(home,'memories/extensions/ad_hoc/notes');mkdirSync(notes,{recursive:true});
  writeFileSync(configPath,'[memories]\nuse_memories = true\n');

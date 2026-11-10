@@ -1,3 +1,4 @@
+import {CONVERSATION_VIEW} from '../src/web-contract.ts';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -95,13 +96,13 @@ test('superseded browser stream cannot mark a newer valid state unavailable',()=
  class Events extends EventTarget{constructor(){super();streams.push(this);}close(){}}
  const noop=()=>{},verifiedThread={current:undefined},loadedVersion={current:undefined};
  const reader={current:{connected:false}},history={current:new HistoryWindow()},activePages={current:{queue:new ActiveReadPage(),interactions:new ActiveReadPage()}};
- const context={ConnectionEvents:Events,setConnected:value=>{connected=value;changes++;},setConnectionError:noop,setState:noop,verifiedThread,loadedVersion,setUiUpdate:noop,setError:noop,
+ const context={ConnectionEvents:Events,CONVERSATION_VIEW,setConnected:value=>{connected=value;changes++;},setConnectionError:noop,setState:noop,verifiedThread,loadedVersion,setUiUpdate:noop,setError:noop,
   setTimeout:fn=>{timers.push(fn);return timers.length;},clearTimeout:noop,document:new EventTarget(),mobileView:false,reader,history,activePages,
   activeReads:{current:{controllers:new Set(),timers:new Set()}},anchor:{current:null},navigation:{current:0},userScroll:{current:0},
   invalidatePosition:noop,setPageNotice:noop,readingPins:()=>new Set(),observeContent:noop,prepareLatest:noop,
   positionScope:()=>{throw Error('unexpected_empty_page_navigation');},readActivePage:()=>{throw Error('unexpected_active_page_read');}};
  const run=Function(...Object.keys(context),js+';return effect;')(...Object.values(context));
- const close=run(),data=JSON.stringify({...state,conversationView:3,history:{protocol:3,readEpoch:'synthetic-epoch',page:{revision:1,units:[],before:null,after:null},moreQueue:null,moreInteractions:null}});const send=stream=>stream.dispatchEvent(new MessageEvent('state',{data}));
+ const close=run(),data=JSON.stringify({...state,conversationView:CONVERSATION_VIEW,history:{protocol:3,readEpoch:'synthetic-epoch',page:{revision:1,units:[],before:null,after:null},moreQueue:null,moreInteractions:null}});const send=stream=>stream.dispatchEvent(new MessageEvent('state',{data}));
  send(streams[0]);assert.equal(connected,true);assert.equal(reader.current.connected,true);streams[0].onerror('synthetic_disconnect');assert.equal(connected,false);timers.shift()();send(streams[1]);assert.equal(connected,true);
  const count=changes;streams[0].dispatchEvent(new MessageEvent('unavailable',{data:'{}'}));assert.equal(connected,true);assert.equal(changes,count);
  streams[1].dispatchEvent(new MessageEvent('unavailable',{data:'{}'}));assert.equal(connected,false);close();

@@ -1,5 +1,6 @@
 export type WebProcessNode=import('./main-process.js').ProcessNode&{activityLinks?:Record<string,import('./activity-facts.js').ActivityLink>};
 export const WEB_PROTOCOL = 2;
+export const CONVERSATION_VIEW = 4;
 // One mapping for the existing chat callers and the two transports.
 export const WEB_CHAT_POST:Readonly<Record<string,{op:string;status:number}>>={
   '/api/history/page':{op:'history.page',status:200},'/api/history/process':{op:'history.process',status:200},
@@ -33,12 +34,13 @@ export type ActiveReadResult<T>=ActiveReadVersion&{items:T[];after:number|null};
 type QueueUser=import('./web-history.js').ConversationMessage&{media?:import('./media-store.js').MediaView[]};
 export type DispatchQueuePage<S extends 'all'|undefined=undefined>=ActiveReadVersion&{view:'dispatch-v1';sources?:S;orderVersion:string;totalWaiting:number;items:(S extends 'all'?MainDispatchInput&{user?:QueueUser;statusText:string}:DispatchInput&{user:QueueUser;statusText:string})[];nextCursor:string|null};
 export type QueueReceiptsRequest={requestIds:string[];threadId?:string;readEpoch?:string;operations?:({requestId:string;messageId?:never;operationId:string}|{messageId:string;requestId?:never;operationId:string})[]};
-export type QueueReceipts={acceptedRequestIds:string[];statuses:{requestId:string;state:string;revision?:number;inputRevision?:number;editable?:boolean}[];operations?:{requestId?:string;messageId?:string;operationId:string;committed:boolean;result?:QueueOperationResult}[]};
+export type QueueReceipts={acceptedRequestIds:string[];statuses:{requestId:string;state:string;error?:string;revision?:number;inputRevision?:number;editable?:boolean}[];operations?:{requestId?:string;messageId?:string;operationId:string;committed:boolean;result?:QueueOperationResult}[]};
 export type MessageAttachment={messageId:string;assetId:string;revision:number};
 export type WebArtifact=MessageAttachment&{id:string;title:string;sha256:string};
 export type ArtifactOrigin={message:import('./web-history.js').ConversationMessage;files:WebArtifact[]};
 export type WebWork={id:string;title:string;status:string;summary:string|null};
-export type WebInteraction = { canCancel?:true; id: string; runId: string; workTitle?: string; sourceRequestId?: string; sourceMessageId?:string; kind: "question" | "authorization"; question: string; reason: string | null; questions?: import('./question-schema.js').WebQuestion[] };
+export type WebApproval = { title: string; scope: string; canApprove?: false; context?: string; explanation?: string; detailLabel?: string; details?: string };
+export type WebInteraction = { approval?: WebApproval; canCancel?:true; id: string; runId: string; workTitle?: string; sourceRequestId?: string; sourceMessageId?:string; kind: "question" | "authorization"; question: string; reason: string | null; questions?: import('./question-schema.js').WebQuestion[] };
 export type InactiveInteraction = {code?:string;id:string;kind:"question"|"authorization";state:"expired"|"cancelled";sourceRequestId:string;messageId?:string;processId?:string};
 export type WebState = {
   observedAtMs?:number;
@@ -46,7 +48,7 @@ export type WebState = {
   inactiveInteractions?:InactiveInteraction[];
   orderWarning?:string;
   queueDispatch?:{orderVersion:string;totalWaiting:number;unscoped?:number;awaitingUser?:true};
-  conversationView?:3; acceptedRequestIds?:string[];
+  conversationView?:typeof CONVERSATION_VIEW; acceptedRequestIds?:string[];
   artifacts?:WebArtifact[];
   mainActivity?:MainActivity|null;
   // Current host observation only; never reconstruct it from legacy message text.

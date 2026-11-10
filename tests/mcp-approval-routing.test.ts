@@ -23,6 +23,9 @@ for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main product
    const native={...nativeInteraction('mcpServer/elicitation/request',{threadId:'thread:synthetic-main',turnId:'turn',serverName,mode:'form',message:'Review target',requestedSchema:{type:'object',properties:{}},_meta:{codex_approval_kind:'mcp_tool_call',tool_params:{recipient:'alice',authorization:'SENSITIVE_SENTINEL'}}})!,requestId:id,isCurrent:()=>true};
    const response=f.host.openMainNativeInteraction(native),item=f.interactions.list().find(i=>i.state==='pending_user')!;
    const bridge=homerWebBridge(f.host),card=(await bridge.history!.interactions(0)).items.find(i=>i.id===item.id)!;assert.equal(card.canCancel,true);assert.equal(card.workTitle,'主对话');assert.match(card.question,/alice/);assert.doesNotMatch(JSON.stringify(card),/SENSITIVE_SENTINEL|tool_params/);
+   assert.equal(card.approval?.title,'允许调用这个工具？');
+   assert.match(card.approval?.details??'',/alice/);
+   assert.match(card.approval?.context??'',/目标.*alice/);
    f.approvals.respond(item.id,{requestId:'decision-'+typeof id+id,text});assert.equal((await response).status,want);
   }
  }finally{f.close();}
@@ -33,6 +36,23 @@ test('Worker native projection resolves its actual task title, never main',async
   const native={...nativeInteraction('mcpServer/elicitation/request',{threadId:actor.threadId,turnId:actor.turnId,serverName:'any',mode:'form',message:'Review',requestedSchema:{type:'object',properties:{}},_meta:{codex_approval_kind:'mcp_tool_call'}})!,requestId:1};
   const opened=f.approvals.open(native,{threadId:native.threadId,turnId:native.turnId,generationId:'worker-native:'+actor.runId,sourceRequestId:'user-synthetic',userText:'Synthetic',isCurrent:()=>true,historyThreadId:'thread:synthetic-main'});
   const cards=(await homerWebBridge(f.host).history!.interactions(0)).items;assert.equal(cards[0]!.workTitle,'Actual Worker title');assert.equal(cards[0]!.canCancel,true);f.approvals.end('worker-native:'+actor.runId);await opened.response;
+ }finally{f.close();}
+});
+test('a real Worker escalation projects command facts and full details without mixing them',async()=>{
+ const f=setup();try{
+  const worker=f.tasks.workerOpen({agentId:f.store.meta('mainAgentId')!,threadId:'thread:synthetic-main',sourceRequestId:'user-synthetic'},{operationId:'open-command',taskId:f.task.taskId,text:'Inspect synthetic'});
+  const actor=running(f,worker.runId),run=f.tasks.run(actor.runId!);
+  const native={...nativeInteraction('item/commandExecution/requestApproval',{threadId:actor.threadId,turnId:actor.turnId,itemId:'command',command:'synthetic project operation',cwd:'/synthetic',reason:'验证本地截图。',additionalPermissions:{fileSystem:{write:['/synthetic/tmp']}}})!,requestId:1};
+  const opened=f.approvals.open(native,{threadId:native.threadId,turnId:native.turnId,generationId:run.id,worker:{runId:run.id,runEpoch:run.epoch,taskVersion:run.version},sourceRequestId:'user-synthetic',userText:'Synthetic',isCurrent:()=>true,historyThreadId:'thread:synthetic-main'});
+  const bridge=homerWebBridge(f.host);
+  assert.equal((await bridge.history!.interactions(0)).items.length,0);
+  const pending=f.interactions.inspect(opened.id);
+  f.interactions.escalate(opened.id,String(pending.details.review),String(pending.details.reviewReason));
+  const card=(await bridge.history!.interactions(0)).items[0]!;
+  assert.equal(card.approval?.title,'允许执行这条命令？');
+  assert.equal(card.approval?.explanation,'验证本地截图。');
+  assert.match(card.approval?.scope??'',/当前命令.*写入/);
+  assert.equal(card.approval?.details,'synthetic project operation\n工作目录：/synthetic\n写入：/synthetic/tmp');
  }finally{f.close();}
 });
 for(const role of ['main','worker'])for(const outcome of ['approve','deny','expire','cancel','unknown','lost-installed','changed'])test('native plugin '+role+' '+outcome+' keeps the installer and real status',async()=>{

@@ -28,6 +28,17 @@ test('a reply remains a plain conversation fact and matching event cards suppres
   (n.items[0] as any).event={...event,sourceMessageId:'unrelated'};assert.equal(f.project(message(n)).taskSources?.length,1);
  }finally{f.close();}
 });
+test('verified sources distinguish a literal title from an unavailable public name',()=>{
+ const f=setup();try{
+  const input=message(node([f.reply.messageId])),rename=f.store.db.prepare('UPDATE tasks SET title=? WHERE id=?');
+  rename.run('后台工作',f.task.taskId);
+  assert.equal(f.project(input).taskSources?.[0]?.title,'后台工作');
+  rename.run('file:synthetic',f.task.taskId);
+  const source=f.project(input).taskSources?.[0];
+  assert.equal(source?.target.taskId,f.task.taskId);
+  assert.equal(source?.title,'');
+ }finally{f.close();}
+});
 test('creation provenance authenticates the actual returned Task and never a neighbouring Task',()=>{
  const f=chatFixture();try{
   const task=f.create(),activity=f.tasks.captureActivity(f.actor,'task_create',{},task)!;const n={...node([],[{id:'create',kind:'tool' as const,seq:1,revision:1,label:'创建任务',status:'completed' as const,activity}]),sourceKind:'user' as const};

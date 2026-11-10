@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import {parseResourceReference,parseResourceReferences,referencesOf,resourceHasComment,type ResourceReference} from './preview-reference.js';
+import {isDraftImageReference,parseResourceReference,parseResourceReferences,referencesOf,resourceHasComment,type ResourceReference} from './preview-reference.js';
 import { messageQuoteText,previewQuoteText,sourceQuoteText } from './message-quote.js';
 import type { AttachmentRef,MediaView } from './media-store.js';
 import { messageLinks, type MessageSource } from './message-links.js';
@@ -71,6 +71,7 @@ export function conversationInput(value: unknown): ConversationInput {
   if(input.resourceReference!==undefined&&input.resourceReferences!==undefined)throw Error('invalid_resource_reference');
   if((input.resourceReference!==undefined||input.resourceReferences!==undefined)&&input.interactionId!==undefined)throw Error('invalid_resource_reference');
   const resourceReference=input.resourceReference===undefined?undefined:parseResourceReference(input.resourceReference);
+  if(resourceReference&&isDraftImageReference(resourceReference))throw Error('invalid_resource_reference');
   const resourceReferences=input.resourceReferences===undefined?undefined:parseResourceReferences(input.resourceReferences);
   const references=referencesOf({resourceReference,resourceReferences});
   const quotes = input.quotes?.map(({ messageId, text, annotation,itemIds,position }) => ({ messageId, text, annotation,...(itemIds?{itemIds:[...itemIds]}:{}),...(position!==undefined?{position:quotePosition(position,text)}:{}) }));

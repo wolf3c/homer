@@ -13,10 +13,19 @@ export function readDesktopModelSource(root,fallback){
 }
 export function saveDesktopModelSource(root,source){
  if(source!=='codex'&&source!=='website')throw Error('desktop_model_source_invalid');
+ writeDesktopProfile(root,{modelSource:source});
+}
+export function readDesktopCaptureShortcut(root){
+ return JSON.parse(privateFile(join(root,markerName))).captureShortcut;
+}
+export function saveDesktopCaptureShortcut(root,shortcut){
+ writeDesktopProfile(root,{captureShortcut:shortcut});
+}
+function writeDesktopProfile(root,fields){
  const file=join(root,markerName),value=JSON.parse(privateFile(file)),temporary=file+'.pending';
  let fd,created=false;
  try{
-  fd=openSync(temporary,'wx',0o600);created=true;writeFileSync(fd,JSON.stringify({...value,modelSource:source})+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
+  fd=openSync(temporary,'wx',0o600);created=true;writeFileSync(fd,JSON.stringify({...value,...fields})+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
   renameSync(temporary,file);created=false;
  }finally{if(fd!==undefined)closeSync(fd);if(created)unlinkSync(temporary);}
 }

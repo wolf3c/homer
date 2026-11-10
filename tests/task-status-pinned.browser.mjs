@@ -40,7 +40,8 @@ export default async function pinnedStatus(page,{destination}={}){
  ok(await trigger.getAttribute('aria-expanded')==='true','1440px 初次常驻');
  ok(await panel.getByRole('heading',{name:'工作状态'}).count()===0&&await panel.getByRole('button',{name:'收起工作状态'}).count()===0,'状态摘要不显示标题与关闭按钮');
  await trigger.evaluate(el=>Promise.allSettled(el.getAnimations().map(animation=>animation.finished)));
- const openStyle=await trigger.evaluate(el=>getComputedStyle(el).backgroundColor);
+ const icon=trigger.locator('.status-entry-icon');
+ const openStyle=await icon.evaluate(el=>getComputedStyle(el).backgroundColor);
  ok(await trigger.getAttribute('aria-label')==='工作状态，1 个任务工作中'&&await trigger.getAttribute('aria-controls')==='task-status-panel','图标入口名称及面板关系准确');
  ok(await trigger.innerText()==='1'&&await page.locator('.header-name').innerText()==='荷马','左侧仅保留品牌，入口图标与事项计数');
  ok(await page.locator('.header-actions> :last-child').getAttribute('aria-label')==='预览','预览入口保持应用最右');
@@ -52,8 +53,8 @@ export default async function pinnedStatus(page,{destination}={}){
  await shot('desktop-1440-pinned');
  const originalNode=await panel.locator('[data-todo-id]').first().getAttribute('data-todo-id');
  await trigger.click();await panel.waitFor({state:'hidden'});await page.mouse.move(0,0);
- await page.waitForFunction(openStyle=>getComputedStyle(document.querySelector('#task-status-trigger')).backgroundColor!==openStyle,openStyle);
- ok(await trigger.getAttribute('aria-expanded')==='false'&&await trigger.innerText()==='1'&&await trigger.evaluate(el=>getComputedStyle(el).backgroundColor)!==openStyle,'入口收起时状态样式改变且保留数量');await shot('desktop-1440-closed');
+ await page.waitForFunction(openStyle=>getComputedStyle(document.querySelector('#task-status-trigger .status-entry-icon')).backgroundColor!==openStyle,openStyle);
+ ok(await trigger.getAttribute('aria-expanded')==='false'&&await trigger.innerText()==='1'&&await icon.evaluate(el=>getComputedStyle(el).backgroundColor)!==openStyle,'入口收起时状态样式改变且保留数量');await shot('desktop-1440-closed');
  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
  await page.setViewportSize({width:1024,height:900});await page.setViewportSize({width:1440,height:1000});
  ok(await trigger.getAttribute('aria-expanded')==='false','明确关闭后通知与跨断点不重开');

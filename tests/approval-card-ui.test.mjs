@@ -16,6 +16,18 @@ test('main-native uses official card and current-request controls with exact sou
  assert.ok(d.find(n=>n.tagName==='A'&&n.attrs.href==='#message-original'));
  assert.doesNotMatch(d.container.textContent,/始终允许|Always allow|永久授权/);
 }));
+test('structured approval shows the decision facts separately from collapsed technical details',async()=>withDom(async d=>{
+ const Card=interactionComponent(async()=>{});
+ const approval={title:'允许执行这条命令？',explanation:'测试 Chrome 截图。',scope:'仅批准当前命令。',detailLabel:'查看完整命令',details:'<script>完整命令</script>'};
+ await d.render(h(Card,{...props,item:{...item,workTitle:'不应展开的长任务标题',approval}}));
+ const details=d.find(n=>n.tagName==='DETAILS');
+ assert.ok(details);
+ assert.equal('open' in details.attrs,false);
+ assert.match(details.textContent,/<script>完整命令<\/script>/);
+ assert.match(d.container.textContent,/允许执行这条命令？.*测试 Chrome 截图。.*仅批准当前命令。/s);
+ assert.doesNotMatch(d.container.textContent,/不应展开的长任务标题/);
+ assert.equal(d.all().some(n=>n.tagName==='SCRIPT'),false);
+}));
 test('a Worker approval submits the same explicit decision without a free-text reply',async()=>withDom(async d=>{
  const calls=[],Card=interactionComponent(async(...args)=>{calls.push(args);});
  await d.render(h(Card,{...props,item:{...item,runId:'worker-run',workTitle:'合成事项'}}));
@@ -23,6 +35,13 @@ test('a Worker approval submits the same explicit decision without a free-text r
  await d.click(approve);
  assert.equal(calls[0][0],'/api/interactions/approval');
  assert.equal(calls[0][1].text,'允许本次操作');
+}));
+test('an ungrantable scope offers denial without an unusable approval action',async()=>withDom(async d=>{
+ const calls=[],Card=interactionComponent(async(...args)=>{calls.push(args);});
+ await d.render(h(Card,{...props,item:{...item,approval:{title:'允许本次文件改动？',scope:'当前入口无法批准。',canApprove:false}}}));
+ assert.ok(!button(d,'允许本次操作'));
+ await d.click(button(d,'拒绝本次操作'));
+ assert.equal(calls[0][1].text,'拒绝本次操作');
 }));
 for(const label of ['允许本次操作','拒绝本次操作'])test(label+' submits once even before React rerenders',async()=>withDom(async d=>{
  const pending=deferred(),calls=[];const Card=interactionComponent((...args)=>{calls.push(args);return pending.promise;});

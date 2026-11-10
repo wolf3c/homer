@@ -45,11 +45,32 @@ try{
       await key(page,'Tab','Tab',9);
       assert.equal(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-89 [data-slot=collapsible-content] a')),true);
       assert.equal(await page.evaluate(()=>document.querySelector('#message-node-89 [data-slot=collapsible-content]').inert),false);
+      assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('#message-node-88')).display),'none');
+      fixture.store.setMeta('publicMainNode:v1:node-89',JSON.stringify({...node,revision:node.revision+1,state:'worked',status:'completed'}));
+      fixture.server.publish();
+      await page.until(()=>document.querySelector('#message-node-89 [data-status=complete] button')?.getAttribute('aria-expanded')==='true');
+      await page.command('Input.dispatchMouseEvent',{type:'mouseWheel',x:width/2,y:300,deltaX:0,deltaY:-1000000});
+      await page.until(()=>document.querySelector('.thread-viewport').scrollTop===0);
+      const top=await page.evaluate(()=>{
+        document.querySelector('#message-node-89 [data-slot=collapsible-trigger]').focus({preventScroll:true});
+        return document.querySelector('.thread-viewport').scrollTop;
+      });
+      await key(page,'Enter','Enter',13);
+      await page.until(()=>!document.querySelector('#message-node-89 [data-slot=run-activity]'));
+      const settled=await page.evaluate(()=>({focused:document.activeElement===document.querySelector('#message-node-89'),top:document.querySelector('.thread-viewport').scrollTop}));
+      assert.deepEqual(settled,{focused:true,top});
+      const key88='publicMainNode:v1:node-88',original=fixture.processes.exact('node-88');
+      fixture.store.setMeta(key88,JSON.stringify({...original,revision:original.revision+1,state:'working',status:'running'}));
+      await page.until(()=>!!document.querySelector('#message-node-88 [data-slot=collapsible-trigger][aria-expanded=false]'));
+      await page.evaluate(()=>document.querySelector('#message-node-88 [data-slot=collapsible-trigger]').focus({preventScroll:true}));
+      fixture.store.setMeta(key88,JSON.stringify({...original,revision:original.revision+2}));
+      await page.until(()=>getComputedStyle(document.querySelector('#message-node-88')).display==='none');
+      assert.equal(await page.evaluate(()=>document.activeElement===document.querySelector('.thread-viewport')),true);
       assert.deepEqual(page.errors,[]);
       assert.deepEqual(page.blocked,[]);
       assert.equal(fixture.fakeEngine.invocations,0);
       assert.equal(fixture.submitted.length,0);
-      results.push({width,closing,closedPanelSkippedByTab:true,programmaticFocusBlocked:true,closedChildrenUnmounted:true,reopenedLinkFocusable:true});
+      results.push({width,closing,closedPanelSkippedByTab:true,programmaticFocusBlocked:true,closedChildrenUnmounted:true,reopenedLinkFocusable:true,completedRowRemoved:true,focusAndScrollPreserved:true,automaticCompletionFocusPreserved:true});
     }finally{await page.close();await fixture.close();}
   }
 }finally{

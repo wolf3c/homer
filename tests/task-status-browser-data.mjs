@@ -12,5 +12,13 @@ export function changeWorker(overview,title,change){
 }
 export function cloneTask(task,suffix,extra={}){
  const id=task.id+suffix;
- return {...task,id,workers:task.workers.map(worker=>({...worker,id:worker.id+suffix,taskId:id,pendingUsers:worker.pendingUsers.map(q=>({...q,id:q.id+suffix})),run:{...worker.run,id:worker.run.id+suffix,workerId:worker.id+suffix,taskId:id}})),results:task.results.map(r=>({...r,id:r.id+suffix})),deliveries:task.deliveries.map(d=>({...d,id:d.id+suffix,resultIds:d.resultIds.map(id=>id+suffix)})),...extra};
+ return {
+  ...task,id,
+  workers:task.workers.map(worker=>({
+   ...worker,id:worker.id+suffix,taskId:id,
+   pendingUsers:worker.pendingUsers.map(q=>({...q,id:q.id+suffix})),
+   run:{...worker.run,id:worker.run.id+suffix,workerId:worker.id+suffix,taskId:id},
+  })),
+  ...extra,
+ };
 }

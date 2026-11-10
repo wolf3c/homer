@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import ts from 'typescript';
 import * as client from '../ui/conversation-client.ts';
+import {CONVERSATION_VIEW} from '../src/web-contract.ts';
 import {previewIntentTooLong} from '../src/user-intent.ts';
 import {messageQuoteText,previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText} from '../src/message-quote.ts';
 import {createAnnotationDraft} from '../ui/annotation-draft.ts';
@@ -32,13 +33,14 @@ const appPath=process.env.HOMER_READER_SOURCE??new URL('../ui/homer-app.tsx',imp
 function nodes(tree){return !tree||typeof tree!=='object'?[]:Array.isArray(tree)?tree.flatMap(nodes):[tree,...nodes(tree.props?.children)];}
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function fixture({text='draft',draft,queueEditor,request,queueRead,collections=2,connected=true,running=true,upgrade={phase:'running'},pending=[],completeQuote=async value=>value.quote}={}){
-  const state={threadId:'synthetic-composer',messages:[],isRunning:running,activeMessageId:running?'active':null,generation:running?{messageId:'active',generationId:'generation'}:null,work:[],interactions:[],features:{draftUpload:true,previewReferenceCollections:collections},upgrade};
+function fixture({text='draft',draft,queueEditor,request,queueRead,collections=2,capture=false,acceptCapture=async()=>true,staleAttachmentSnapshot=false,connected=true,running=true,upgrade={phase:'running'},pending=[],completeQuote=async value=>value.quote}={}){
+  const state={threadId:'synthetic-composer',conversationView:CONVERSATION_VIEW,messages:[],isRunning:running,activeMessageId:running?'active':null,generation:running?{messageId:'active',generationId:'generation'}:null,work:[],interactions:[],features:{draftUpload:true,previewReferenceCollections:collections},upgrade};
   const cache=new Map(),calls=[],sends=[],hooks=[],effects=[],revoked=[];let cursor=0,dirty=false,tree,stops=0,focuses=0,preview;
   if(draft)cache.set('homer-draft:'+state.threadId,draft);
   if(queueEditor)cache.set('homer-queue-editor:'+state.threadId,queueEditor);
   if(pending.length)cache.set('homer-unconfirmed:'+state.threadId,pending);
-  const runtime={text,quote:undefined,attachments:[]};const composer={setText(value){runtime.text=value;dirty=true;},setQuote(value){runtime.quote=value;dirty=true;},getState:()=>runtime};
+  let previousAttachments;
+  const runtime={text,quote:undefined,attachments:[]};const composer={setText(value){runtime.text=value;dirty=true;},setQuote(value){runtime.quote=value;dirty=true;},getState:()=>previousAttachments?{...runtime,attachments:previousAttachments}:runtime};
   const useState=initial=>{const i=cursor++;if(!hooks[i])hooks[i]={value:typeof initial==='function'?initial():initial};return [hooks[i].value,value=>{hooks[i].value=typeof value==='function'?value(hooks[i].value):value;dirty=true;}];};
   const useRef=initial=>{const i=cursor++;return hooks[i]??(hooks[i]={current:initial});};
   const useMemo=(factory,deps)=>{const i=cursor++,previous=hooks[i];if(!previous||deps.some((d,n)=>!Object.is(d,previous.deps[n])))hooks[i]={deps,value:factory()};return hooks[i].value;};
@@ -47,15 +49,18 @@ function fixture({text='draft',draft,queueEditor,request,queueRead,collections=2
   const fetch=async(path,options)=>{calls.push({path,...options});return request?request(path,options):{ok:true,json:async()=>({})};};
   const post=async(path,value)=>{const response=await fetch(path,{method:'POST',body:JSON.stringify(value)});const data=await response.json();if(!response.ok)throw Error(data.error);return data;};
   let attachmentRead=()=>({threadId:state.threadId,requestId:'initial',enabled:true,attachments:runtime.attachments,notice:()=>{}});
+  let captureScope,captureResult;
+  const homerDesktopCapture=capture?{setReady:async scope=>{captureScope=scope;return true;},acceptDraft:acceptCapture,onResult:callback=>{captureResult=callback;return ()=>{captureResult=undefined;};}}:undefined;
   const attachmentOwner=createHomerAttachmentAdapter(()=>attachmentRead(),fetch);
-  composer.addAttachment=async file=>{if(!(file instanceof File)){runtime.attachments.push(file);dirty=true;return;}for await(const value of attachmentOwner.add({file})){const at=runtime.attachments.findIndex(a=>a.id===value.id);if(at<0)runtime.attachments.push(value);else runtime.attachments[at]=value;dirty=true;}};
+  composer.addAttachment=async file=>{const before=[...runtime.attachments];if(!(file instanceof File)){runtime.attachments.push(file);dirty=true;return;}for await(const value of attachmentOwner.add({file})){const at=runtime.attachments.findIndex(a=>a.id===value.id);if(at<0)runtime.attachments.push(value);else runtime.attachments[at]=value;dirty=true;}if(staleAttachmentSnapshot)previousAttachments=before;};
   composer.attachment=({id})=>({remove:async()=>{await attachmentOwner.remove(runtime.attachments.find(a=>a.id===id));runtime.attachments=runtime.attachments.filter(a=>a.id!==id);dirty=true;}});
   composer.clearAttachments=async()=>{const previous=runtime.attachments;runtime.attachments=[];dirty=true;await Promise.all(previous.map(a=>attachmentOwner.remove(a)));};
   const annotationDraft=createAnnotationDraft();annotationDraft.subscribe(()=>{dirty=true;});
   const ArtifactsContext={};const ComposerInputFocusContext={},inputRef={current:()=>{focuses++;}},useContext=context=>{if(context===ArtifactsContext)return {open(){}};assert.equal(context,ComposerInputFocusContext);return inputRef;};
   const useComposerInputFocus=productionFunction(new URL('../ui/homer-composer-input.tsx',import.meta.url),'useComposerInputFocus',{useContext,ComposerInputFocusContext,useCallback:(callback,deps)=>useMemo(()=>callback,deps)});
-  const MainComposer=productionFunction(appPath,'MainComposer',{...client,...references,mobileView:false,ContextOrder,contextKey,previewIntentTooLong,annotationValidationReferences,Popover:{Root:'popover',Portal:'portal',Positioner:'positioner',Popup:'popup'},AnnotationCommentForm:'quote-form',QuoteBlock:{Root:'quote-block',Text:'quote-text'},completeSourceQuote:completeQuote,locateSourceQuote:async()=>undefined,AnnotationChips:'annotation-chips',MessageCirclePlus:'quote-icon',ExecutionUsage:'usage',QueueDraftRecovery:'legacy-panel',useAnnotationDraft:owner=>owner.read(),ArtifactsContext,useState,useRef,useEffect,useLayoutEffect:useEffect,useMemo,useCallback:(callback,deps)=>useMemo(()=>callback,deps),useContext,interactionDraft:key=>({text:storage.read(key+':draft')??'',answers:{}}),ComposerInputFocusContext,useComposerInputFocus,useAui:()=>({composer:()=>composer}),useAuiState:selector=>selector({composer:runtime}),attachmentAsset,HomerAttachmentByIndex:'attachment',ComposerPrimitive:{Root:'form'},ComposerQuotePreview:{Root:'quote-root',Icon:'quote-icon',Text:'quote-text',Dismiss:'quote-dismiss'},requestAnimationFrame:fn=>fn(),Node:class {static [Symbol.hasInstance](node){return !!node&&typeof node==='object';}},document:{querySelector:()=>null},CSS:{escape:value=>value},HomerComposerInput:'editor',ComposerIcon:()=>null,storage,fetch,post,window:{addEventListener(){},removeEventListener(){}},URL:{createObjectURL:()=> 'blob:synthetic',revokeObjectURL:url=>revoked.push(url)}});
-  const props={state,connected,annotationDraft,bindPreview(value){preview=value;},interactionsVerified:true,onAnswerTarget:item=>{props.answerTarget=item;dirty=true;},attachmentOwner,bindAttachments:read=>{attachmentRead=read;},stopping:null,onSend:async(...args)=>{sends.push(args);},onStop:()=>{stops++;}};
+  const MainComposer=productionFunction(appPath,'MainComposer',{...client,...references,CONVERSATION_VIEW,ScreenshotDialog:'screenshot-dialog',mobileView:false,ContextOrder,contextKey,previewIntentTooLong,annotationValidationReferences,Popover:{Root:'popover',Portal:'portal',Positioner:'positioner',Popup:'popup'},AnnotationCommentForm:'quote-form',QuoteBlock:{Root:'quote-block',Text:'quote-text'},completeSourceQuote:completeQuote,locateSourceQuote:async()=>undefined,AnnotationChips:'annotation-chips',MessageCirclePlus:'quote-icon',ExecutionUsage:'usage',QueueDraftRecovery:'legacy-panel',useAnnotationDraft:owner=>owner.read(),ArtifactsContext,useState,useRef,useEffect,useLayoutEffect:useEffect,useMemo,useCallback:(callback,deps)=>useMemo(()=>callback,deps),useContext,interactionDraft:key=>({text:storage.read(key+':draft')??'',answers:{}}),ComposerInputFocusContext,useComposerInputFocus,useAui:()=>({composer:()=>composer}),useAuiState:selector=>selector({composer:runtime}),attachmentAsset,HomerAttachmentByIndex:'attachment',ComposerPrimitive:{Root:'form'},ComposerQuotePreview:{Root:'quote-root',Icon:'quote-icon',Text:'quote-text',Dismiss:'quote-dismiss'},requestAnimationFrame:fn=>fn(),Node:class {static [Symbol.hasInstance](node){return !!node&&typeof node==='object';}},document:{querySelector:()=>null},CSS:{escape:value=>value},HomerComposerInput:'editor',ComposerIcon:()=>null,storage,fetch,post,window:{homerDesktopCapture,addEventListener(){},removeEventListener(){}},URL:{createObjectURL:()=> 'blob:synthetic',revokeObjectURL:url=>revoked.push(url)}});
+  const composerRuntime={...composer,getState:()=>runtime,getAttachmentByIndex:index=>composer.attachment({id:runtime.attachments[index].id})};
+  const props={state,connected,annotationDraft,bindPreview(value){preview=value;},interactionsVerified:true,onAnswerTarget:item=>{props.answerTarget=item;dirty=true;},attachmentOwner,composerRuntime,bindAttachments:read=>{attachmentRead=read;},stopping:null,onSend:async(...args)=>{sends.push(args);},onStop:()=>{stops++;}};
   const queueEvents=new EventTarget();
   const queueModule={};
   if(queueRead){
@@ -64,15 +69,191 @@ function fixture({text='draft',draft,queueEditor,request,queueRead,collections=2
    Function('require','exports','window',js)(id=>id in modules?modules[id]:require(id),queueModule,queueEvents);
   }
   const Queue=queueModule.HomerMessageQueue;
-  function render(){let count=0;do{assert.ok(count++<15,'hook effects settle');dirty=false;cursor=0;tree=MainComposer(props);if(Queue)tree=[tree,Queue({state,connected:props.connected,operations:{locked:false,run:()=>assert.fail('display cannot write queue data')}})];while(effects.length)effects.shift()();}while(dirty);return tree;}
+  function render(){previousAttachments=undefined;let count=0;do{assert.ok(count++<15,'hook effects settle');dirty=false;cursor=0;tree=MainComposer(props);if(Queue)tree=[tree,Queue({state,connected:props.connected,operations:{locked:false,run:()=>assert.fail('display cannot write queue data')}})];while(effects.length)effects.shift()();}while(dirty);return tree;}
   const find=predicate=>{render();const result=nodes(tree).find(predicate);assert.ok(result,'expected production control');return result;};
   const button=label=>find(node=>node.type==='button'&&(node.props['aria-label']===label||node.props.children===label));
   const editor=()=>find(node=>node.type==='editor');
   const form=()=>find(node=>node.type==='form');
-  render();return {state,props,runtime,cache,calls,sends,revoked,annotationDraft,refreshQueue:()=>queueEvents.dispatchEvent(new Event('homer-queue-updated')),preview:()=>preview,remove:name=>composer.attachment({id:runtime.attachments.find(a=>a.name===name).id}).remove(),render,find,button,editor,form,get stops(){return stops;},get focuses(){return focuses;},close(){for(const hook of hooks)hook?.cleanup?.();}};
+  render();return {state,props,runtime,cache,calls,sends,revoked,annotationDraft,capture(result){assert.ok(captureScope);captureResult(captureScope,result);render();},refreshQueue:()=>queueEvents.dispatchEvent(new Event('homer-queue-updated')),preview:()=>preview,remove:name=>composer.attachment({id:runtime.attachments.find(a=>a.name===name).id}).remove(),render,find,button,editor,form,get stops(){return stops;},get focuses(){return focuses;},close(){for(const hook of hooks)hook?.cleanup?.();}};
 }
 function submit(f){f.form().props.onSubmit({preventDefault(){}});f.render();}
 const asset={assetId:'asset-synthetic',revision:1,filename:'image.png',size:24,state:'ready',kind:'image'};
+
+const screenshotAsset={...asset,assetId:'asset-00000000-0000-4000-8000-000000000004',filename:'窗口截图.png',mime:'image/png'};
+const screenshotResult={kind:'image',width:10,height:10,png:new Uint8Array([1,2,3])};
+const screenshotNote={id:'area',region:{x:1,y:1,width:5,height:5},comment:'解释错误'};
+const ok=value=>({ok:true,json:async()=>value});
+const captureHandoff=(action='send')=>({...screenshotResult,draft:{id:'floating-capture',action,annotations:[screenshotNote]}});
+
+for(const action of ['add','send'])test('screenshot handoff '+action+' prepares exactly one attachment in the current draft',async()=>{
+ const ui=fixture({capture:true,text:'原草稿',staleAttachmentSnapshot:true,request:async path=>{assert.equal(path,'/api/uploads');return ok(screenshotAsset);}});
+ try{
+  ui.capture(captureHandoff(action));await tick();ui.render();
+  const image={assetId:screenshotAsset.assetId,revision:1};
+  assert.equal(ui.calls.length,1);
+  assert.equal(ui.sends.length,action==='send'?1:0);
+  if(action==='add'){
+   assert.equal(ui.runtime.text,'原草稿');
+   assert.equal(ui.runtime.attachments.length,1);
+   assert.deepEqual(references.referencesOf(ui.annotationDraft.read())[0].annotations,[screenshotNote]);
+  }else{
+   const [[input]]=ui.sends;
+   assert.equal(input.text,'原草稿');
+   assert.deepEqual(input.attachments,[image]);
+   assert.deepEqual(input.resourceReferences[0].annotations,[screenshotNote]);
+   assert.deepEqual(ui.cache.get('homer-unconfirmed:'+ui.state.threadId)[0].input,input);
+   assert.equal(ui.runtime.attachments.length,0);
+  }
+ }finally{ui.close();}
+});
+
+test('screenshot handoff keeps newer draft text for review when direct send is waiting on an upload',async()=>{
+ const upload=deferred(),ui=fixture({capture:true,request:()=>upload.promise});
+ try{
+  ui.capture(captureHandoff());await tick();
+  ui.runtime.text='新编辑';ui.render();
+  upload.resolve(ok(screenshotAsset));await tick();ui.render();
+  assert.equal(ui.sends.length,0);
+  assert.equal(ui.runtime.text,'新编辑');
+  assert.equal(ui.runtime.attachments.length,1);
+  assert.deepEqual(references.referencesOf(ui.annotationDraft.read())[0].annotations,[screenshotNote]);
+ }finally{ui.close();}
+});
+
+test('screenshot handoff cannot upload after the host rejects its ownership',async()=>{
+ const ui=fixture({capture:true,acceptCapture:async()=>false});
+ try{
+  ui.capture(captureHandoff());await tick();ui.render();
+  assert.equal(ui.calls.length,0);
+  assert.equal(ui.sends.length,0);
+  assert.equal(ui.runtime.attachments.length,0);
+ }finally{ui.close();}
+});
+
+test('screenshot handoff preserves the notes and upload identity after an unconfirmed upload',async()=>{
+ let attempts=0;
+ const ui=fixture({capture:true,request:async()=>{if(++attempts===1)throw Error('synthetic_upload_lost');return ok(screenshotAsset);}});
+ try{
+  ui.capture(captureHandoff());await tick();ui.render();
+  const dialog=ui.find(n=>n.type==='screenshot-dialog').props;
+  assert.deepEqual(dialog.annotations,[screenshotNote]);
+  assert.equal(ui.sends.length,0);
+  await dialog.onDone(dialog.annotations);ui.render();
+  assert.equal(ui.calls[0].headers['X-Homer-Upload'],ui.calls[1].headers['X-Homer-Upload']);
+  assert.equal(ui.runtime.attachments.length,1);
+  assert.equal(ui.sends.length,0);
+ }finally{ui.close();}
+});
+
+test('captured image is added once with a lagging composer client and reopens from its attachment',async()=>{
+ const ui=fixture({capture:true,staleAttachmentSnapshot:true,request:async path=>{assert.equal(path,'/api/uploads');return ok(screenshotAsset);}});
+ try{
+  ui.capture(screenshotResult);assert.equal(ui.runtime.attachments.length,0);assert.equal(ui.calls.length,0);
+  const dialog=ui.find(n=>n.type==='screenshot-dialog').props;
+  assert.equal('ocrText' in dialog,false);
+  await dialog.onDone([screenshotNote]);ui.render();
+  const [attachment]=ui.runtime.attachments;
+  assert.equal(ui.runtime.attachments.length,1);assert.equal(ui.calls.length,1);
+  const [ref]=references.referencesOf(ui.annotationDraft.read());
+  assert.deepEqual(ref.image,{assetId:screenshotAsset.assetId,revision:1});
+  assert.deepEqual(ref.annotations,[screenshotNote]);
+  ui.find(n=>n.type==='attachment').props.edit();
+  await ui.find(n=>n.type==='screenshot-dialog').props.onDone([]);ui.render();
+  assert.deepEqual(ui.runtime.attachments,[attachment]);
+  assert.deepEqual(references.referencesOf(ui.annotationDraft.read()),[]);
+  assert.equal(ui.calls.length,1);
+ }finally{ui.close();}
+});
+
+test('screenshot AX follows its attachment through edits and can be removed without another upload',async()=>{
+ const ax=[{role:'AXStaticText',value:'Synthetic E101'}];
+ const ui=fixture({capture:true,request:async path=>{assert.equal(path,'/api/uploads');return ok(screenshotAsset);}});
+ try{
+  ui.capture({...screenshotResult,ax});
+  const dialog=()=>ui.find(n=>n.type==='screenshot-dialog').props;
+  assert.deepEqual(dialog().ax,ax);
+  await dialog().onDone([screenshotNote],ax);ui.render();
+  const [ref]=references.referencesOf(ui.annotationDraft.read());
+  assert.deepEqual(ref.ax,ax);
+  ui.annotationDraft.remove(references.referenceKey(ref),screenshotNote.id);ui.render();
+  assert.deepEqual(references.referencesOf(ui.annotationDraft.read()),[{...ref,annotations:[]}]);
+  ui.find(n=>n.type==='attachment').props.edit();
+  assert.deepEqual(dialog().ax,ax);
+  await dialog().onDone([],undefined);ui.render();
+  assert.deepEqual(references.referencesOf(ui.annotationDraft.read()),[]);
+  assert.equal(ui.runtime.attachments.length,1);assert.equal(ui.calls.length,1);
+ }finally{ui.close();}
+});
+
+test('cancelling a delayed screenshot only discards a confirmed upload and reuses the original identity after uncertainty',async()=>{
+ const delayed=deferred();let uploads=0;
+ const ui=fixture({capture:true,request:async path=>path==='/api/uploads'?++uploads===1?delayed.promise:ok(screenshotAsset):ok({state:'removed'})});
+ try{
+  ui.capture(screenshotResult);
+  const dialog=ui.find(n=>n.type==='screenshot-dialog').props;
+  const finishing=dialog.onDone([screenshotNote]);await tick();
+  await dialog.onCancel();assert.equal(ui.runtime.attachments.length,0);
+  assert.deepEqual(ui.calls.map(call=>call.path),['/api/uploads']);
+  delayed.reject(Error('connection lost'));
+  await assert.rejects(finishing,/暂存结果待确认/);
+  assert.deepEqual(ui.calls.map(call=>call.path),['/api/uploads']);
+  await dialog.onDone([]);ui.render();
+  assert.equal(ui.calls[0].headers['X-Homer-Upload'],ui.calls[1].headers['X-Homer-Upload']);
+  assert.equal(JSON.parse(ui.calls[2].body).assetId,screenshotAsset.assetId);
+  assert.equal(ui.runtime.attachments.length,0);assert.deepEqual(references.referencesOf(ui.annotationDraft.read()),[]);
+ }finally{ui.close();}
+});
+
+for(const edited of [false,true])test('late screenshot rejection with unchanged history '+(edited?'keeps newer draft':'restores original draft'),async()=>{
+ let receipt='gateway_stored';
+ const ui=fixture({capture:true,request:async(path,options)=>{
+  if(path==='/api/uploads')return ok(screenshotAsset);
+  const {requestIds}=JSON.parse(options.body);
+  return ok({acceptedRequestIds:receipt==='accepted'?requestIds:[],statuses:requestIds.map(requestId=>({requestId,state:receipt,error:'preview_source_mismatch'}))});
+ }});
+ try{
+  ui.state.history={page:{revision:1}};ui.render();
+  ui.capture(screenshotResult);await ui.find(n=>n.type==='screenshot-dialog').props.onDone([screenshotNote]);ui.render();
+  submit(ui);await tick();ui.render();
+  assert.equal(ui.sends.length,1);assert.equal(ui.runtime.attachments.length,0);
+  assert.deepEqual(ui.sends[0][0].attachments,[{assetId:screenshotAsset.assetId,revision:1}]);
+  assert.deepEqual(ui.sends[0][0].resourceReferences[0].annotations,[screenshotNote]);
+  if(edited){ui.runtime.text='new work';ui.render();}
+  receipt='rejected';ui.props.state={...ui.state};ui.render();await tick();ui.render();await tick();
+  assert.equal(ui.runtime.text,edited?'new work':'draft');
+  assert.equal(ui.runtime.attachments.length,edited?0:1);
+  assert.deepEqual(references.referencesOf(ui.annotationDraft.read())[0]?.annotations,edited?undefined:[screenshotNote]);
+  assert.equal(ui.sends.length,1);
+  const receiptReads=()=>ui.calls.filter(call=>call.path==='/api/history/receipts').length;
+  const settledReads=receiptReads();
+  for(let i=0;i<20;i++){ui.props.state={...ui.props.state};ui.render();await tick();}
+  assert.equal(receiptReads(),settledReads,'state updates must not poll an already handled rejection');
+  if(!edited){
+   receipt='accepted';ui.runtime.text='reviewed screenshot';submit(ui);await tick();ui.render();
+   assert.equal(ui.sends.length,2);
+   assert.equal(ui.sends[1][0].requestId,ui.sends[0][0].requestId);
+   assert.equal(ui.cache.has('homer-unconfirmed:'+ui.state.threadId),false);
+  }
+ }finally{ui.close();}
+});
+
+test('a lost screenshot send response checks the receipt without a new state event or another send',async()=>{
+ const response=deferred(),sends=[];
+ const ui=fixture({capture:true,request:async(path,options)=>path==='/api/uploads'?ok(screenshotAsset):
+  ok({acceptedRequestIds:JSON.parse(options.body).requestIds,statuses:[]})});
+ try{
+  ui.state.history={page:{revision:1}};ui.render();
+  ui.capture(screenshotResult);await ui.find(n=>n.type==='screenshot-dialog').props.onDone([screenshotNote]);ui.render();
+  ui.props.onSend=input=>{sends.push(input);return response.promise;};
+  submit(ui);await tick();
+  assert.equal(ui.calls.filter(call=>call.path==='/api/history/receipts').length,0);
+  response.reject(Error('connection lost'));await tick();ui.render();
+  const receipt=ui.calls.filter(call=>call.path==='/api/history/receipts');
+  assert.deepEqual(receipt.map(call=>JSON.parse(call.body).requestIds),[[sends[0].requestId]]);
+  assert.equal(sends.length,1);
+  assert.equal(ui.cache.has('homer-unconfirmed:'+ui.state.threadId),false);
+ }finally{ui.close();}
+});
 
 for(const count of [0,1,81])for(const behavior of ['inspect','ignore'])test('composer sends one current request without replaying historical receipts: '+count+' '+behavior,async()=>{
  const f=await recoveryFixture(count);let ui;

@@ -34,7 +34,7 @@ test('mixed public facts and all original statuses remain independent in the sam
  assert.deepEqual(rows(d),items.map(i=>i.id));assert.equal(d.all().filter(n=>n.attrs['data-tool-id']==='call-4').length,1);
 }));
 test('history reads only on original disclosure expansion and shows original call identities inline',async()=>withDom(async d=>{
- const detail={...node([call('call-1'),call('call-2')]),state:'worked',status:'completed'},header={...detail,items:[],details:'unloaded',toolStatusCounts:{completed:2}};
+ const detail={...node([call('call-1'),call('call-2')]),state:'worked',status:'failed'},header={...detail,items:[],details:'unloaded',toolStatusCounts:{completed:2}};
  let reads=0;const load=async()=>{reads++;return detail;};
  const render=()=>d.render(h(ProcessDetailHarness,{node:header,load,viewOnly:true,renderText:t=>t}));
  await render();assert.equal(reads,0);await d.click(toggle(d));await render();

@@ -1,10 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { get } from "node:http";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { createWebServer,fetch } from "./web-connected-fixture.js";
 import type { WebBridge, WebState } from "../src/web-contract.js";
 
 const state: WebState = { threadId: "synthetic-thread", messages: [], isRunning: false, activeMessageId: null, work: [], interactions: [], upgrade: { phase: "running" } };
+test('desktop annotation GIF is served as a local image asset',async()=>{
+ const uiDirectory=new URL('../ui/public/',import.meta.url);
+ const asset='assets/desktop-feature-tour-v1-annotation.gif';
+ const version='a'.repeat(64);
+ const bridge:WebBridge={submit:async()=>{},stop:async()=>{},respond:async()=>{}};
+ const web=await createWebServer({bridge,port:0,getAssets:requested=>requested===version?{uiDirectory:fileURLToPath(uiDirectory)}:{}});
+ try{
+  const response=await fetch(web.url+`/ui/${version}/${asset}`);
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get('content-type'),'image/gif');
+  assert.ok(Buffer.from(await response.arrayBuffer()).equals(await readFile(new URL(asset,uiDirectory))));
+ }finally{await web.close();}
+});
 test('execution route reads the exact task and run without a redundant root selector',async()=>{
  const calls:unknown[]=[];
  const bridge={taskOverview:{execution:async(selector:unknown,before:unknown)=>{calls.push({selector,before});return {items:[]};},call:async()=>({})}} as unknown as WebBridge;

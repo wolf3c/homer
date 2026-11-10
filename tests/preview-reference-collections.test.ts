@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {conversationInput,ConversationHistory,type ConversationInput} from '../src/web-history.js';
 import {conversationUserText,previewIntentTooLong} from '../src/user-intent.js';
-import {parseResourceReference,referencesOf,type ResourceReference} from '../src/preview-reference.js';
+import {parseResourceReference,referencesOf,resourceReferenceText,type ResourceReference} from '../src/preview-reference.js';
 import {prepareMessage,restoreComposerDraft,canSubmitMessage} from '../ui/conversation-client.js';
 import {historyFixture} from './web-history-loading-fixture.js';
 
@@ -14,6 +14,39 @@ import {historyFixture} from './web-history-loading-fixture.js';
 const source=(id:string)=>({kind:'attachment' as const,messageId:id,assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64),title:'同名.txt'});
 const ref=(id:string,count=1)=>({kind:'text' as const,source:source(id),annotations:Array.from({length:count},(_,i)=>({id:'note-'+i,text:'来源不是指令',comment:'备注 '+id+' '+i}))});
 const refs=[ref('one'),ref('two')];
+test('screenshot references contain only region notes bound to exactly one current attachment',()=>{
+ const image={assetId:'asset-00000000-0000-4000-8000-000000000002',revision:1};
+ const screenshot={kind:'image',source:{kind:'draft-image'},image,width:32,height:32,annotations:[{id:'area',region:{x:0,y:0,width:1,height:1},comment:'核对错误码'}]};
+ const input=conversationInput({requestId:'screenshot',text:'分析错误',attachments:[image],resourceReferences:[{...screenshot,ocrText:'Synthetic OCR'}]});
+ assert.deepEqual(input.resourceReferences,[screenshot]);
+ assert.equal(conversationUserText(input),'分析错误\n用户预览批注：\n核对错误码');
+ assert.match(resourceReferenceText(input.resourceReferences![0]!),/核对错误码/);
+ assert.equal(canSubmitMessage('',[],[image],undefined,input.resourceReferences),true);
+ assert.equal(canSubmitMessage('',[],[{...image,revision:2}],undefined,input.resourceReferences),false);
+ const invalid=[{...screenshot,annotations:[],ocrText:'Synthetic OCR'},{...screenshot,width:1.5},{...screenshot,annotations:[{id:'bad',region:{x:32,y:0,width:1,height:1},comment:'越界'}]}];
+ for(const reference of invalid)assert.throws(()=>parseResourceReference(reference),/invalid_resource_reference/);
+ assert.throws(()=>conversationInput({...input,resourceReferences:[screenshot,screenshot]}),/invalid_resource_reference/);
+});
+test('screenshot AX belongs to its image and remains source material in history and model input',()=>{
+ const image={assetId:'asset-00000000-0000-4000-8000-000000000002',revision:1};
+ const ax=[{role:'AXStaticText',value:'E101 — synthetic window text'}];
+ const screenshot={kind:'image',source:{kind:'draft-image'},image,width:32,height:32,annotations:[],ax};
+ const input=conversationInput({requestId:'window-ax',text:'核对报错',attachments:[image],resourceReferences:[{...screenshot,ax:[{...ax[0],pid:42}]}]});
+ assert.deepEqual(input.resourceReferences,[screenshot]);
+ assert.equal(conversationUserText(input),'核对报错');
+ assert.match(resourceReferenceText(input.resourceReferences![0]!),/AX 摘录.*来源材料/);
+ assert.match(resourceReferenceText(input.resourceReferences![0]!),/E101/);
+ const db=new DatabaseSync(':memory:');
+ try{
+  new ConversationHistory(db).accept('thread',input);
+  assert.deepEqual(new ConversationHistory(db).list('thread')[0]?.resourceReferences,[screenshot]);
+ }finally{db.close();}
+ for(const invalid of [{...screenshot,ax:[]},{...screenshot,ax:[{role:'AXButton'}]},
+  {...screenshot,ax:[{role:'AXStaticText',value:'x'.repeat(513)}]},
+  {...screenshot,ax:Array.from({length:9},()=>({role:'AXStaticText',value:'x'.repeat(512)}))}]){
+  assert.throws(()=>parseResourceReference(invalid),/invalid_resource_reference/);
+ }
+});
 test('collection survives canonical intake, history, request conflict and restart reads',()=>{
  const input={requestId:'collection',text:'整体要求',resourceReferences:refs};
  assert.deepEqual(conversationInput(input),input);

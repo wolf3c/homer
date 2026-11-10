@@ -68,9 +68,9 @@ export function dependencyHash(snapshot) {
   const p = JSON.parse(snapshot.files.get("package.json"));
   return digest(JSON.stringify([p.dependencies, p.devDependencies, p.engines, p.type, String(snapshot.files.get("package-lock.json")), String(snapshot.files.get("ui/package.json") ?? "")]));
 }
-// Every SQLite schema owner participates in the reviewed upgrade boundary.
+// SQLite schema and persisted input formats share the reviewed upgrade boundary.
 export function schemaHash(snapshot) {
-  return digest(Buffer.concat(["src/mobile-devices.ts", "src/store.ts", "src/media-store.ts", "src/recursive-tasks.ts", "src/worker-interactions.ts", "src/web-history.ts"].map(path => snapshot.files.get(path) ?? Buffer.from(""))));
+  return digest(Buffer.concat(["src/mobile-devices.ts", "src/store.ts", "src/media-store.ts", "src/recursive-tasks.ts", "src/worker-interactions.ts", "src/web-history.ts", "src/preview-reference.ts"].map(path => snapshot.files.get(path) ?? Buffer.from(""))));
 }
 export function command(bin, args, cwd, signal) {
   return new Promise((done, reject) => {

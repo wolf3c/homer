@@ -17,7 +17,7 @@ let revision=0;
 const readState=async()=>{
  if(!ready)throw Error('service_not_ready');
  const threadId=missingThread?'':state.threadId;
- return {...state,threadId,conversationView:3,queue:[],acceptedRequestIds:[],artifacts:[],inactiveInteractions:[],
+ return {...state,threadId,conversationView:4,queue:[],acceptedRequestIds:[],artifacts:[],inactiveInteractions:[],
   history:{protocol:3,readEpoch:'synthetic-browser-epoch',page:{protocol:3,threadId,revision:++revision,units:state.messages.map((message:any)=>message.id),before:null,after:null},moreQueue:null,moreInteractions:null}};
 };
 const bridge:any={state:readState,history:{state:readState},submit:async()=>{submissions++;return{};},stop:async()=>{},respond:async()=>{},artifact:async()=>({filename:'synthetic.md',content:'# synthetic'}),media:{read:async(input:any)=>{mediaReads++;return input.assetId===file.assetId?{filename:file.filename,mime:file.mime,data:Buffer.from('synthetic').toString('base64')}:{filename:asset.filename,mime:asset.mime,data:png};}}};

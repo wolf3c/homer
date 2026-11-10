@@ -93,6 +93,7 @@
 .annotation-chip-remove{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;border:0;padding:0;background:transparent;color:inherit;cursor:pointer}
 .annotation-chip :is(button):focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .canvas-panel [data-slot=canvas-split-body]{position:relative}
+@media(forced-colors:none){.canvas-panel [data-slot=canvas-split-body]:has(>[data-preview-text]):focus-visible{outline:none;box-shadow:inset 2px 0 var(--focus)}}
 .text-annotation-markers{position:absolute;inset:0;pointer-events:none;z-index:1}
 .text-annotation-marker{position:absolute;display:flex;align-items:center;justify-content:center;pointer-events:auto;min-width:22px;height:22px;padding:0 3px;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--ink);font-size:11px!important;cursor:pointer}
 .text-annotation-marker:focus-visible{outline:2px solid var(--focus);outline-offset:2px}

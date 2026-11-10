@@ -20,7 +20,8 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
   let child: ReturnType<typeof spawn> | undefined;
   try {
     await server.start();
-    assert.equal(statSync(server.path).mode & 0o777, 0o600);
+    if(process.platform==='win32')assert.match(server.path,/^\\\\\.\\pipe\\homer-hi-/);
+    else assert.equal(statSync(server.path).mode & 0o777, 0o600);
     child = spawn(process.execPath, ["--import", "tsx", resolve("src/worker-interaction-mcp-stdio.ts"), server.path,role], { stdio: ["pipe", "pipe", "pipe"] });
     const pending = new Map<number, (value: any) => void>();
     let seq = 0, stderr = "";

@@ -7,6 +7,16 @@ const notes=[{id:'one',region:{x:1,y:1,width:3,height:3},comment:'First'},{id:'t
 const image={kind:'image' as const,source,width:10,height:10,annotations:notes};
 const asset={assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1};
 
+test('deleting the last screenshot note removes the reference',()=>{
+ const draft=createAnnotationDraft();
+ const ref=parseResourceReferences([{kind:'image',source:{kind:'draft-image'},image:asset,width:10,height:10,annotations:[notes[0]],ocrText:'E101'}])[0]!;
+ draft.replace([ref]);
+ assert.equal(draft.remove(referenceKey(ref),'one'),true);
+ assert.deepEqual(referencesOf(draft.read()),[]);
+ draft.forgetImage(asset);
+ assert.deepEqual(referencesOf(draft.read()),[]);
+});
+
 test('preparing original, independent note removal, confirmation and discard share the draft lifecycle',()=>{
  const draft=createAnnotationDraft(),key=referenceKey(image),file=new File(['synthetic'],'Synthetic.png');
  assert.equal(draft.imageFile(key,file),file);assert.equal(draft.imageFile(key,new File(['other'],'Synthetic.png')),file);

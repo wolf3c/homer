@@ -29,13 +29,24 @@ try{
  const ok=(condition,name)=>{assert.ok(condition,name);checks.push(name);};
  const refresh=async()=>{await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));};
  const waitName=name=>page.getByRole('button',{name,exact:true}).waitFor();
- const bounds=async()=>trigger.evaluate(el=>{const icon=el.querySelector('svg').getBoundingClientRect(),slot=el.querySelector('.status-count-slot').getBoundingClientRect(),next=el.closest('.homer-task-status').nextElementSibling.getBoundingClientRect(),r=el.getBoundingClientRect(),count=el.querySelector('.status-entry-count'),style=count&&getComputedStyle(count);return {width:r.width,height:r.height,iconWidth:icon.width,gap:slot.x-icon.right,slotWidth:slot.width,iconX:icon.x,nextX:next.x,overlap:r.right>next.x,countHeight:count?.getBoundingClientRect().height,font:style?.fontSize,weight:style?.fontWeight,background:style?.backgroundColor};});
- await waitName('工作状态，无工作中任务');const zero=await bounds();ok(await trigger.locator('[data-count]').count()===0,'zero hides number and background, retains slot');
+ const bounds=async()=>trigger.evaluate(el=>{
+  const icon=el.querySelector('svg').getBoundingClientRect();
+  const next=el.closest('.homer-task-status').nextElementSibling.getBoundingClientRect();
+  const button=el.getBoundingClientRect(),badge=el.querySelector('.status-entry-count')?.getBoundingClientRect();
+  return {
+   iconX:icon.x,iconY:icon.y,nextX:next.x,
+   centered:Math.abs(icon.x+icon.width/2-button.x-button.width/2)<1,
+   lowerRight:!!badge&&Math.abs(badge.x+badge.width/2-icon.right)<1&&Math.abs(badge.y+badge.height/2-icon.bottom)<1,
+   fits:!!badge&&badge.right<=button.right&&badge.bottom<=button.bottom&&button.right<=next.x,
+  };
+ });
+ await waitName('工作状态，无工作中任务');const zero=await bounds();
+ ok(zero.centered&&await trigger.locator('[data-count]').count()===0,'zero centers the icon and hides the badge');
  await page.screenshot({path:join(destination,'count-0.png')});
- for(const n of [1,12,100]){
+ for(const n of [1,12,99,100]){
   snapshot=roots(n);await refresh();await waitName('工作状态，'+n+' 个任务工作中');
-  const b=await bounds();metrics.push({n,...b});ok(b.width===60&&b.height===44&&b.iconWidth===18&&b.gap===4&&b.slotWidth===22&&b.countHeight===18&&b.font==='11px'&&b.weight==='600'&&!b.overlap,'dimensions and no overlap '+n);
-  ok(b.iconX===zero.iconX&&b.nextX===zero.nextX,'stable adjacent positions '+n);
+  const b=await bounds();metrics.push({n,...b});ok(b.lowerRight&&b.fits,'badge anchors to the lower right without overlap '+n);
+  ok(b.iconX===zero.iconX&&b.iconY===zero.iconY&&b.nextX===zero.nextX,'stable icon and adjacent positions '+n);
   ok(await trigger.locator('[data-count="working"]').innerText()===(n>99?'99+':String(n)),'bounded display with full accessible count '+n);
   await page.screenshot({path:join(destination,'count-'+n+'.png')});
  }
