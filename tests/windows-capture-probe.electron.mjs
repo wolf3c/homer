@@ -152,7 +152,11 @@ async function launchProbeApp() {
     globalThis.probeUnprotect = () => panel.setContentProtection(false);
     return {display: display.id, bounds, scale: display.scaleFactor, electron: process.versions.electron};
   });
-  await globalThis.probeReady;
+  // The entry module must finish loading before Electron emits ready.
+  void globalThis.probeReady.catch(error => {
+    console.error('windows_capture_probe_start_failed:', error.message);
+    app.exit(1);
+  });
 }
 
 async function runProbe() {
