@@ -50,6 +50,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Check Windows capture probe inputs
+        if: github.ref_name == 'codex/windows-capture-probe' && (inputs.kind != 'source' || inputs.target != 'windows-x64' || inputs.upload_release_draft)
+        run: exit 1
       - id: plan
         env:
           HOMER_BUILD_KIND: ${{ inputs.kind }}
@@ -148,8 +151,13 @@ jobs:
       - name: Install Electron runtime
         if: inputs.kind == 'desktop'
         run: node node_modules/electron/install.js
+      - name: Check Windows native capture
+        if: github.ref_name == 'codex/windows-capture-probe' && inputs.kind == 'source' && matrix.platform == 'win32'
+        run: |
+          node node_modules/electron/install.js
+          node tests/windows-capture-probe.electron.mjs
       - name: Compile source
-        if: inputs.kind == 'source'
+        if: inputs.kind == 'source' && github.ref_name != 'codex/windows-capture-probe'
         run: npm run build
       - name: Build desktop distribution
         if: inputs.kind == 'desktop'
@@ -172,7 +180,7 @@ jobs:
           rm -f "$RUNNER_TEMP/homer-signing.p12" "$RUNNER_TEMP/homer-notary.p8"
           security delete-keychain "$RUNNER_TEMP/homer-signing.keychain-db" 2>/dev/null || true
       - name: Upload source compilation output
-        if: inputs.kind == 'source'
+        if: inputs.kind == 'source' && github.ref_name != 'codex/windows-capture-probe'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: source-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
