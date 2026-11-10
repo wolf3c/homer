@@ -121,7 +121,8 @@ async function launchProbeApp() {
       '<button type="button">Capture frame</button><script>(' + capturePage.toString() + ')()</script>');
     const panel = new BrowserWindow({...bounds, frame: false, transparent: true, resizable: false,
       alwaysOnTop: true, skipTaskbar: true, show: false,
-      webPreferences: {partition: 'homer-windows-capture-probe', sandbox: true, contextIsolation: true, nodeIntegration: false},
+      webPreferences: {partition: 'homer-windows-capture-probe', sandbox: true, contextIsolation: true, nodeIntegration: false,
+        backgroundThrottling: false},
     });
     const contents = panel.webContents;
     const url = pathToFileURL(page).href;
@@ -135,21 +136,23 @@ async function launchProbeApp() {
       if (!armed || armed.used || !trusted(contents) || request.frame !== contents.mainFrame ||
           !request.userGesture || !request.videoRequested || request.audioRequested) return respond(null);
       armed.used = true;
+      if (armed.hidePanel) {
+        panel.hide();
+        if (panel.isVisible()) return respond(null);
+      }
       respond({video: armed.source});
     });
-    panel.setContentProtection(true);
     await panel.loadFile(page);
     panel.show();
-    globalThis.probePick = async title => {
+    globalThis.probePick = async (title, hidePanel) => {
       const sources = await desktopCapturer.getSources({
         types: title ? ['window'] : ['screen'], thumbnailSize: {width: 0, height: 0},
       });
       const matches = sources.filter(source => title ? source.name === title && /^window:[^:]+:0$/.test(source.id) :
         source.id.startsWith('screen:') && source.display_id === String(display.id));
       assert.equal(matches.length, 1, 'requested source must resolve uniquely');
-      armed = {source: matches[0], used: false};
+      armed = {source: matches[0], hidePanel, used: false};
     };
-    globalThis.probeUnprotect = () => panel.setContentProtection(false);
     return {display: display.id, bounds, scale: display.scaleFactor, electron: process.versions.electron};
   });
   // The entry module must finish loading before Electron emits ready.
@@ -180,12 +183,18 @@ async function runProbe() {
     assert.equal(info.electron, electronVersion);
     assert.equal(info.display, targets.info.display, 'probe and test windows must use the same display');
     const page = await instance.firstWindow();
-    async function shot(title, region = [0, 0, 1, 1]) {
-      await instance.evaluate((_electron, title) => globalThis.probePick(title), title);
+    const panel = await instance.browserWindow(page);
+    async function shot(title, region = [0, 0, 1, 1], hidePanel = false) {
+      await instance.evaluate((_electron, {title, hidePanel}) => globalThis.probePick(title, hidePanel), {title, hidePanel});
       await page.evaluate(region => { window.probe.region = region; window.probe.result = null; }, region);
       await page.getByRole('button', {name: 'Capture frame'}).click({timeout: 5_000});
       await page.waitForFunction(() => window.probe.result !== null, null, {timeout: 10_000});
-      return page.evaluate(() => window.probe.result);
+      const result = await page.evaluate(() => window.probe.result);
+      if (hidePanel) {
+        assert.equal(await panel.evaluate(window => window.isVisible()), false, 'panel must stay hidden while taking the frame');
+        await panel.evaluate(window => window.show());
+      }
+      return result;
     }
 
     const a = await shot(patterns[0].title), b = await shot(patterns[1].title);
@@ -198,14 +207,13 @@ async function runProbe() {
     const width = board.width / bounds.width, height = board.height / bounds.height;
     const region = [left + .1 * width, top + .2 * height, left + .9 * width, top + .8 * height];
     assert.ok(region.every(value => value >= 0 && value <= 1));
-    const selected = await shot(null, region);
-    assertPattern(selected, [red, yellow, red, yellow], 'display region with probe excluded');
+    const selected = await shot(null, region, true);
+    assertPattern(selected, [red, yellow, red, yellow], 'display region while the probe is hidden');
 
-    // The same region must see the overlay when protection is deliberately disabled.
-    await instance.evaluate(() => globalThis.probeUnprotect());
+    // The same region must see the probe after its window is shown again.
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const control = await shot(null, region);
-    assertPattern(control, [marker, marker, marker, marker], 'unprotected overlay control');
+    assertPattern(control, [marker, marker, marker, marker], 'visible overlay control');
     assert.deepEqual([selected.width, selected.height], [control.width, control.height]);
 
     const describe = frame => ({width: frame.width, height: frame.height, firstFrameMs: frame.firstFrameMs});
