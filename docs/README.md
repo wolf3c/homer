@@ -1,10 +1,12 @@
 # 需求与方案索引
 
-更新日期：2026-11-05
+更新日期：2026-11-11
 
 维护入口：[UI 视觉与交互](../ui/DESIGN.md) · [测试边界与命令](testing.md)。
 
 [Homer 核心架构](architecture/README.md)汇总当前协作、Hook、插件工具注册与多渠道接入设计及各自的验收边界。
+
+[桌面截屏批注方案](desktop-screenshot-annotation.md)已实现窗口／区域截图、图片批注及原主草稿接续，可选附带窗口 AX 文字。Apple 芯片 Mac 隔离签名候选通过采集、批注、发送和历史查看；Windows 原生探针及合成产品路径通过，Windows 11 安装包端到端、多显示器等边界仍按正文待验。
 
 [会话架构实施计划](superpowers/plans/2026-11-05-worker-chat-architecture.md)：已实现单一会话路径，普通回复直接回传，不保留旧库迁移与旧调用兼容。七个 chat 分工及独立审核，离线、桌面与实际 ChatGPT 验证分别记录；尚未部署到日常实例。
 
