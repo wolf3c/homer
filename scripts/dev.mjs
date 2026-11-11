@@ -72,7 +72,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     });
   };
   desktop?.bindAccount?.(action=>new Promise((accept,reject)=>{
-    if(!['state','connect','cancel','channel-state'].includes(action)||!['running','management'].includes(phase)||!child?.connected||stopped)return reject(Error('desktop_account_unavailable'));
+    if(!['state','connect','cancel','models','channel-state'].includes(action)||!['running','management'].includes(phase)||!child?.connected||stopped)return reject(Error('desktop_account_unavailable'));
     const id=randomUUID(),timeout=setTimeout(()=>{webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));},15000);
     webRequests.set(id,{accept,reject,timeout,method:action==='channel-state'?'channel-state':'desktop_account'});
     if(!send({kind:'desktop_account',id,method:action})){clearTimeout(timeout);webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));}

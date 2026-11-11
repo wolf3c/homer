@@ -124,7 +124,7 @@ async function receive(raw: unknown) {
   } else if (m.kind === "init") {
     if (app) throw new Error("dev_already_initialized");
     desktop=m.desktop===true;
-    if(!desktop&&(m.config.pauseOldDesktopWork||m.config.dailyDeepSeek||m.config.desktopConnection||m.config.desktopModelSource||m.config.desktopAdopted))throw Error('desktop_pause_scope_invalid');
+    if(!desktop&&(m.config.pauseOldDesktopWork||m.config.dailyDeepSeek||m.config.desktopConnection||m.config.desktopModelSource||m.config.desktopAdopted||m.config.chatgpt||m.config.serviceTier!==undefined))throw Error('desktop_pause_scope_invalid');
     if(desktop){if(!m.config.desktopResources)throw Error('desktop_resource_identity_required');configureDesktopImageDecoder(m.config.desktopResources);}
     webUploadProtocol=m.webUploadProtocol===1;
     // Only an explicit plain-terminal opt-out skips IPC. Legacy/private host
@@ -168,6 +168,7 @@ async function receive(raw: unknown) {
         await send({kind:'web_result',id:m.id,value:app.channels?.connectionStatus()??[]});
         return;
       }
+      if(m.method==='models'){await send({kind:'web_result',id:m.id,value:await app.manageNativeAccount({action:'model_list'})});return;}
       if(!['state','connect','cancel'].includes(m.method))throw Error('desktop_account_forbidden');
       const state=await app.manageNativeAccount({action:'account_state'});
       const value=m.method==='connect'?await app.manageNativeAccount({action:'account_login',approve:true}):m.method==='cancel'&&state.loginId?await app.manageNativeAccount({action:'account_cancel',approve:true,loginId:state.loginId}):state;

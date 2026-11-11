@@ -2,6 +2,35 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## ChatGPT 模型设置
+
+配置、原生目录、账号桥、持久化、线程参数及设置草稿的离线回归沿现有测试文件维护，自动进入默认核心；固定上游组件源码校验登记在显式 `vendor` 分组。
+
+```sh
+node --experimental-vm-modules --import tsx --test \
+  tests/model-config.test.ts tests/native-account.test.ts tests/native-account-service.test.ts \
+  tests/desktop-profile.test.mjs tests/desktop-permissions-ui.test.mjs \
+  tests/electron-shell.test.mjs tests/mobile-turn-build.test.mjs
+node --test tests/model-selector-upstream.test.mjs
+node scripts/build-run-activity-css.mjs --model-selector --check
+npm run typecheck
+npx --no-install tsc --noEmit -p ui/tsconfig.json
+npm run build
+npm test
+```
+
+测试使用合成 native control、VM Electron、隔离 profile 及本地协议替身，覆盖完整两角色校验、默认覆盖删除、原子保存、分页与隐藏模型、速度权限、失效目录、草稿保留、可信窗口和确认期间导航失效。真实固定引擎的检查扩展既有 `desktop-source-resume.test.mjs`（显式 `engine` 分组）：
+
+```sh
+HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test tests/desktop-source-resume.test.mjs
+```
+
+要求已存在的 Codex 0.163.0；独立 HOME／CODEX_HOME、合成模型目录和回环 Responses 验证 `thread/settings/update`、Standard／Fast／Ultrafast、标准清除旧档以及 openai → homer → openai 保留原线程及推理历史。不访问日常账号或收费模型，不以原生模型目录缺少测试档位来推断服务档生效。
+
+交互式 UI 复验运行 `node --import tsx tests/fixtures/desktop-model-settings-browser.mjs --serve`，用内置浏览器打开打印出的回环地址。该 fixture 打包实际 DesktopSettings 与局部官方 CSS，桌面桥完全合成；默认、`?scenario=failure`（首读失败后可重试）、`missing`、`plus` 和 `cancel` 分别检查保存重读、缺失模型、权限收回及取消。`stale-apply` 验证应用被拒后单次重读目录和失效提示；`account-error` 验证账号暂时未知时草稿保留、操作禁用及重查恢复。需要验证桌面、390px、320px、无搜索、无可调深度、三档闪电、键盘、Escape、焦点与 Portal 102；截图保存到 `.codex/scratch/`。此入口仅供显式浏览器检查，不进入默认测试，Ctrl+C 清理该次临时目录。
+
+2026-11-11 在 Node 22.22.0 上，定向七文件584项通过；补充完整角色与草稿、目录未知及失效深度提示，以及复审发现的应用拒绝后单次重读、临时账号未知时保留草稿回归后，设置 UI 94项通过。固定上游源码4项、两端类型检查、构建及最终默认核心2177项通过，均无失败或跳过。固定引擎专项1项通过，包含全部三档与同线程断言；实际设置 Dialog 在桌面、390px及320px完成交互检查，复审新增两条异常路径也通过实际组件的合成浏览器复验。源码通过不表示已安装；真实 Pro $500／企业权限及收费调用、打包后的 Windows／macOS 验收未执行。
+
 ## Worker 消息移入对话区
 
 2026-11-11：现有来源、消息包装、过程、队列和主输入回归共143项通过，无跳过；前后端类型检查及隔离 Vite 构建通过。新行为先以9项预期失败确认，再验证实现。覆盖无正文但已开始的可信来源、未开始及跨线程拒绝、精确收到回复快照、缺标题、静默成功、隐藏后的排序屏障、零可见行分页、回焦及用户待发送消息；原有安全、回执和排序断言保留。

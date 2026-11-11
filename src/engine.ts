@@ -207,10 +207,18 @@ export function codexProxyEnvironment(
 }
 export class CodexEngine extends EventEmitter implements EngineLike {
   private imageSupported?:boolean;
+  private async modelInfo(){
+    let cursor:string|undefined;const cursors=new Set<string>();
+    do{
+      const response=await this.request('model/list',{includeHidden:true,...(cursor?{cursor}:{})});
+      const model=response.data?.find((value:any)=>value.model===this.config.model||value.id===this.config.model);if(model)return model;
+      const next=response.nextCursor;if(next!=null&&(typeof next!=='string'||!next||cursors.has(next)))throw Error('engine_model_catalog_invalid');
+      cursor=next??undefined;if(cursor)cursors.add(cursor);
+    }while(cursor);
+  }
   async imageCapability(){
     if(this.imageSupported!==undefined)return this.imageSupported;
-    const response=await this.request('model/list',{includeHidden:true});
-    const model=response.data?.find((value:any)=>value.model===this.config.model||value.id===this.config.model);
+    const model=await this.modelInfo();
     this.imageSupported=!!model?.inputModalities?.includes('image');return this.imageSupported;
   }
   private child?: ChildProcessWithoutNullStreams;
@@ -355,7 +363,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     try{return await this.startConfigured();}catch(error){await this.close();throw error;}
   }
   // Native 0.163.0: priority is Fast; explicit null clears an inherited tier.
-  private get serviceTier(){return effectiveFast(this.config.fast,this.options.role)?"priority":null;}
+  private get serviceTier(){return this.config.serviceTier!==undefined?this.config.serviceTier:effectiveFast(this.config.fast,this.options.role)?"priority":null;}
   private async startConfigured(): Promise<string> {
     if(this.failureChecks.signal.aborted)this.failureChecks=new AbortController();
     if (!usesHomerNativeHome(this.config)) throw Error("engine_native_tools_home_required");
@@ -538,8 +546,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       }, ...memorySettings },
     };
     if(this.serviceTier){
-      const catalog=await this.request("model/list",{includeHidden:true});
-      const model=catalog.data?.find((m:any)=>m.model===this.config.model||m.id===this.config.model);
+      const model=await this.modelInfo();
       // The native engine omits tiers that a model explicitly does not advertise.
       // Do not let that known downgrade look like a successful Fast request.
       if(Array.isArray(model?.serviceTiers)&&!model.serviceTiers.some((tier:any)=>tier.id===this.serviceTier))throw Error("engine_fast_unavailable");
@@ -552,6 +559,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     );
     if(this.options.threadId&&response.thread.id!==this.options.threadId)throw Error('engine_resume_thread_mismatch');
     this.threadId = response.thread.id;
+    if(this.config.desktopModelSource==='codex')
+      await this.request('thread/settings/update',{threadId:this.threadId,model:this.config.model,effort:effectiveEffort(this.config.effort,this.options.role),serviceTier:this.serviceTier});
     // Turn effort:null inherits ambient settings; replace only the membership thread's reasoning state.
     if(this.config.context&&this.config.effort===null)
       await this.request('thread/settings/update',{threadId:this.threadId,collaborationMode:{mode:'default',settings:{model:this.config.model,reasoning_effort:null,developer_instructions:''}},summary:'none'});

@@ -6,6 +6,7 @@ import {fork,spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {loadConfig,effectiveModelConfig,type Config} from '../src/config.js';
 import {deepseekProfile} from '../src/deepseek-model.js';
+import {CHATGPT_MODEL_DEFAULTS,validateChatGPTSelection} from '../src/model-config.js';
 import {CodexEngine,type EngineOptions} from '../src/engine.js';
 
 const scratch=resolve('.codex/scratch/homer-main-medium-20261027/model-config-tests');
@@ -224,4 +225,46 @@ test('membership projections use independently delivered context settings over l
  }
  const native=effectiveModelConfig({...config,desktopModelSource:'codex'});
  assert.equal(native.model,'gpt-6.1-terra');assert.equal(native.effort,'high');assert.equal(native.fast,true);
+});
+
+test('ChatGPT role overrides reach execution while the other role keeps its desktop defaults',()=>{
+ const base={workspace:'/synthetic/work',runtime:'/synthetic/runtime',codexHome:'/synthetic/home',codexBin:'/synthetic/bin',model:'original',requiresOpenaiAuth:true,stopGraceMs:100,desktopModelSource:'codex',desktopResources:{bundleRoot:'synthetic',manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true} as Config;
+ const config={...base,chatgpt:{main:{model:'custom-model',effort:'medium',serviceTier:'ultrafast'}}};
+ const main=effectiveModelConfig(config),worker=effectiveModelConfig(config,'worker');
+ assert.deepEqual([main.model,main.effort,main.serviceTier],['custom-model','medium','ultrafast']);
+ assert.deepEqual([worker.model,worker.effort,worker.serviceTier],['gpt-6.1-terra','xhigh',null]);
+ const standard=effectiveModelConfig({...base,chatgpt:{main:{model:'custom-model',effort:'low',serviceTier:null}}});
+ assert.equal(standard.serviceTier,null);assert.equal(standard.fast,false);
+ assert.deepEqual([effectiveModelConfig(base).model,effectiveModelConfig(base).effort,effectiveModelConfig(base).serviceTier],['gpt-6.1-terra','high','priority']);
+});
+test('ChatGPT overrides reject malformed roles and fields instead of silently using defaults',()=>{
+ const base={workspace:'/synthetic/work',runtime:'/synthetic/runtime',codexHome:'/synthetic/home',codexBin:'/synthetic/bin',model:'original',requiresOpenaiAuth:true,stopGraceMs:100,desktopModelSource:'codex',desktopResources:{bundleRoot:'synthetic',manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true} as Config;
+ for(const chatgpt of [{other:{}},{main:{model:'m',effort:'high'}},{main:{model:'m',effort:'high',serviceTier:null,extra:true}},{main:{model:'m',effort:'high',serviceTier:false}}])assert.throws(()=>effectiveModelConfig({...base,chatgpt} as Config),/chatgpt_model_config_invalid/);
+ const original={...base,desktopModelSource:undefined,chatgpt:{main:{model:'custom',effort:'low',serviceTier:'ultrafast'}}} as Config;
+ assert.equal(effectiveModelConfig(original).model,'original');
+});
+
+test('ChatGPT application requires both complete roles instead of filling an undefined role',()=>{
+ for(const value of [{main:CHATGPT_MODEL_DEFAULTS.main},{main:undefined,worker:CHATGPT_MODEL_DEFAULTS.worker},{main:CHATGPT_MODEL_DEFAULTS.main,worker:undefined}])assert.throws(()=>validateChatGPTSelection(value,[]),/chatgpt_model_config_invalid/);
+});
+
+for(const role of ['main','worker'] as const)for(const resume of [false,true])for(const serviceTier of [null,'priority','ultrafast'])test(`ChatGPT ${role}/${resume?'resume':'new'}/${serviceTier??'standard'} replaces inherited thread settings`,async()=>{
+ const f=fixture();
+ const engine=new CodexEngine({...f.raw,nativeCodexHome:f.raw.codexHome,codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'original',requiresOpenaiAuth:true,stopGraceMs:100,desktopModelSource:'codex',pauseOldDesktopWork:true,desktopResources:{bundleRoot:'synthetic',manifestSha256:'a'.repeat(64)},chatgpt:{[role]:{model:'synthetic-ultrafast',effort:'low',serviceTier}}},{role,cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic protocol only',tools:[],...(resume?{threadId:'synthetic-model-thread'}:{})},async()=>({}));
+ try{
+  assert.equal(await engine.start(),'synthetic-model-thread');
+  const result=JSON.parse((await engine.turn('Synthetic turn')).text);
+  assert.deepEqual(result.threadSettings,{threadId:'synthetic-model-thread',model:'synthetic-ultrafast',effort:'low',serviceTier});
+  assert.equal(result.threadServiceTier,serviceTier);assert.equal(result.turnServiceTier,serviceTier);assert.equal(result.effort,'low');
+ }finally{await engine.close();f.close();}
+});
+
+test('ChatGPT refuses Ultrafast before creating a thread when the native catalog excludes the tier',async()=>{
+ const f=fixture();const engine=new CodexEngine({...f.raw,codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'original',requiresOpenaiAuth:true,stopGraceMs:100,desktopModelSource:'codex',pauseOldDesktopWork:true,desktopResources:{bundleRoot:'synthetic',manifestSha256:'a'.repeat(64)},chatgpt:{main:{model:'synthetic-no-ultra',effort:'high',serviceTier:'ultrafast'}}},{cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic tier denial',tools:[]},async()=>({}));
+ try{await assert.rejects(engine.start(),/engine_fast_unavailable/);assert.equal(engine.threadId,undefined);}finally{await engine.close();f.close();}
+});
+
+for(const model of ['synthetic-page-two','synthetic-page-standard'])test(`paginated native metadata preserves image capability and tier validation: ${model}`,async()=>{
+ const f=fixture();const engine=new CodexEngine({...f.raw,codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model,requiresOpenaiAuth:false,stopGraceMs:100},{cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic paginated catalog',tools:[]},async()=>({}));
+ try{if(model==='synthetic-page-standard')await assert.rejects(engine.start(),/engine_fast_unavailable/);else{await engine.start();assert.equal(await engine.imageCapability(),true);}}finally{await engine.close();f.close();}
 });

@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/assistant-ui/assistant-ui",
+  "commit": "1f41f91643fdb56e5d8dbd14db65f742740738a1",
+  "license": "MIT",
+  "canonicalSha256": {
+    "model-selector": "fac25f56bc0920d28c8d4143e9106abb91700f2a48e0b83a426b5d8404e30c82",
+    "model-selection": "f3d5e2fa7c08a7a463b01415563ce2ca13559a7b6d017a093ddc132766582f0b",
+    "popover": "4b4603f4df884f389e2659a1b74c04a3e1e055724a2202d16732959b31f3af74",
+    "command": "83096535851681f634790b9ec661e81201c5afe64bad552992af5befd839e546"
+  },
+  "adaptations": [
+    "Local imports and scoped CSS import",
+    "Chinese empty message",
+    "Popover Positioner slot and z-index 102 for the existing settings overlay",
+    "Removed unused CommandDialog and its Dialog import/export; other command code unchanged"
+  ]
+}

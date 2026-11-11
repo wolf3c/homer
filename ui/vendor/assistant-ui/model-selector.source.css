@@ -1,0 +1,20 @@
+@import "tailwindcss" source(none);
+@source "./model-selector.tsx";
+@source "./command.tsx";
+@source "./popover.tsx";
+@theme inline {
+ --color-muted-foreground: var(--muted);
+ --color-popover: var(--surface);
+ --color-popover-foreground: var(--ink);
+ --color-foreground: var(--ink);
+ --color-muted: var(--soft);
+ --color-accent: var(--soft);
+ --color-accent-foreground: var(--ink);
+ --color-secondary: var(--soft);
+ --color-secondary-foreground: var(--ink);
+ --color-border: var(--line);
+ --color-input: var(--strong-line);
+ --color-ring: var(--focus);
+}
+
+@layer base { * { border-color: var(--line); } }

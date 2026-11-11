@@ -168,3 +168,21 @@ test('desktop recovery refuses an exited leader whose Unix process group still h
   assert.throws(()=>desktopProfile.recoverDesktopOwner(f.codexHome,processIdentity,leaseOwnerGone),/desktop_owner_unknown/);assert.deepEqual(f.snapshot(),before);
  }finally{try{process.kill(-child.pid,'SIGKILL');}catch{}}
 });
+
+test('ChatGPT roles and source save atomically and source-only changes preserve their overrides',()=>{
+ const root=make();try{
+  prepareDesktopProfile(root,version,{initialize:true});
+  const marker=join(root,'desktop-profile.json'),auth=join(root,'codex/auth.json');
+  writeFileSync(auth,'synthetic-kept-auth',{mode:0o600});
+  desktopProfile.saveDesktopCaptureShortcut(root,'Control+Shift+A');
+  const roles={main:{model:'custom-main',effort:'medium',serviceTier:'ultrafast'}};
+  saveDesktopModelSource(root,'codex',roles);
+  assert.deepEqual(JSON.parse(readFileSync(marker)).chatgpt,roles);
+  saveDesktopModelSource(root,'website');assert.deepEqual(JSON.parse(readFileSync(marker)).chatgpt,roles);
+  const before=readFileSync(marker,'utf8');writeFileSync(marker+'.pending','held',{mode:0o600});
+  assert.throws(()=>saveDesktopModelSource(root,'codex',{}));assert.equal(readFileSync(marker,'utf8'),before);
+  rmSync(marker+'.pending');saveDesktopModelSource(root,'codex',{});
+  const saved=JSON.parse(readFileSync(marker));assert.equal('chatgpt' in saved,false);assert.equal(saved.captureShortcut,'Control+Shift+A');assert.equal(saved.modelSource,'codex');
+  assert.equal(readFileSync(auth,'utf8'),'synthetic-kept-auth');
+ }finally{rmSync(root,{recursive:true,force:true});}
+});

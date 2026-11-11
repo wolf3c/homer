@@ -14,3 +14,35 @@ test('native read failure clears stale success and keeps raw errors private',asy
 test('an unknown start outcome holds the handoff fence until the host stops the control process',async()=>{const m=new NativeAccount(async method=>{if(method==='account/read')return{account:null};throw Error('PRIVATE_START_FAILURE');});await assert.rejects(m.start(),/^Error: native_account_login_start_unconfirmed$/);assert.equal(m.pending,true);m.disconnected();assert.equal(m.pending,false);await m.close();});
 test('invalid native browser URL is never exposed and cancels the known operation',async()=>{let cancelled=false;const m=new NativeAccount(async method=>method==='account/read'?{account:null}:method==='account/login/start'?{type:'chatgpt',loginId:'bad-url',authUrl:'javascript:PRIVATE_BAD_URL'}:(cancelled=true,{status:'canceled'}));try{await assert.rejects(m.start(),/native_account_login_start_unconfirmed/);assert.equal(cancelled,true);assert.equal(m.pending,false);assert.equal((await m.state()).authUrl,undefined);}finally{await m.close();}});
 test('logout is not reported successful when native account/read remains connected',async()=>{const m=new NativeAccount(async()=>({account:{type:'chatgpt'}}));try{const state=await m.logout();assert.equal(state.connected,true);assert.equal(state.phase,'logout_unconfirmed');}finally{await m.close();}});
+
+test('model settings reads all pages through the native connection and projects only allowed public metadata',async()=>{
+ const calls:{method:string;params:any}[]=[];
+ const model=(name:string,hidden=false)=>({model:name,id:'catalog-'+name,displayName:name,hidden,description:'PRIVATE_DESCRIPTION',defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium',description:'native depth'}],serviceTiers:[{id:'priority',name:'Fast',description:'native'},{id:'ultrafast',name:'Ultrafast',description:'native'}],privateField:'PRIVATE_VALUE'});
+ const manager=new NativeAccount(async(method,params)=>{
+  calls.push({method,params});
+  if(method==='account/read')return {account:{type:'chatgpt',planType:'promax',email:'PRIVATE_EMAIL'}};
+  if(method==='configRequirements/read')return {requirements:{featureRequirements:{fast_mode:false,ultrafast_mode:true}},supportsIndependentSpeedModes:true};
+  if(method==='model/list')return params.cursor?{data:[model('second')],nextCursor:null}:{data:[model('first'),model('hidden',true)],nextCursor:'page-two'};
+  throw Error('Unexpected RPC');
+ });
+ try{
+  assert.equal(typeof manager.models,'function');const models=await manager.models();
+  assert.deepEqual(models.map(m=>m.model),['first','second']);assert.deepEqual(models[0]!.serviceTiers,[{id:'ultrafast',name:'Ultrafast'}]);
+  assert.equal(JSON.stringify(models).includes('PRIVATE'),false);
+  assert.deepEqual(calls.filter(c=>c.method==='model/list').map(c=>c.params),[{includeHidden:false},{includeHidden:false,cursor:'page-two'}]);
+  assert.equal(calls.some(c=>c.method.startsWith('thread/')||c.method.startsWith('turn/')),false);
+ }finally{await manager.close();}
+});
+for(const [planType,independent,fast,ultra,want] of [
+ ['promax',true,true,true,['priority','ultrafast']],['plus',true,true,true,['priority']],['unknown',true,true,true,['priority']],
+ ['promax',false,false,true,[]],['promax',true,false,true,['ultrafast']],['promax',true,true,false,['priority']],
+ ['enterprise',true,true,true,['priority']],['enterprise_cbp_usage_based',true,true,true,['priority','ultrafast']],
+] as const)test(`speed permissions follow native plan and independent requirements: ${planType}/${independent}/${fast}/${ultra}`,async()=>{
+ const manager=new NativeAccount(async method=>method==='account/read'?{account:{type:'chatgpt',planType}}:method==='configRequirements/read'?{requirements:{featureRequirements:{fast_mode:fast,ultrafast_mode:ultra}},supportsIndependentSpeedModes:independent}:{data:[{model:'native-model',displayName:'Native',hidden:false,defaultReasoningEffort:'high',supportedReasoningEfforts:[],serviceTiers:[{id:'priority',name:'Fast'},{id:'ultrafast',name:'Ultrafast'}]}],nextCursor:null});
+ try{assert.equal(typeof manager.models,'function');assert.deepEqual((await manager.models())[0]!.serviceTiers.map(t=>t.id),want);}finally{await manager.close();}
+});
+test('model discovery rejects repeated pagination and unknown account instead of returning a partial catalog',async()=>{
+ let account:any={type:'chatgpt',planType:'promax'};
+ const manager=new NativeAccount(async method=>method==='account/read'?{account}:method==='configRequirements/read'?{requirements:null}:{data:[],nextCursor:'again'});
+ try{assert.equal(typeof manager.models,'function');await assert.rejects(manager.models(),/native_models_unconfirmed/);account=null;await assert.rejects(manager.models(),/native_account_not_connected/);}finally{await manager.close();}
+});

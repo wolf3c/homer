@@ -11,10 +11,11 @@ export function readDesktopModelSource(root,fallback){
  if(value!=='codex'&&value!=='website')throw Error('desktop_model_source_invalid');
  return value;
 }
-export function saveDesktopModelSource(root,source){
+export function saveDesktopModelSource(root,source,chatgpt){
  if(source!=='codex'&&source!=='website')throw Error('desktop_model_source_invalid');
- writeDesktopProfile(root,{modelSource:source});
+ writeDesktopProfile(root,{modelSource:source,...(chatgpt!==undefined?{chatgpt:Object.keys(chatgpt).length?chatgpt:undefined}:{})});
 }
+export function readDesktopChatGPTConfig(root){return JSON.parse(privateFile(join(root,markerName))).chatgpt;}
 export function readDesktopCaptureShortcut(root){
  return JSON.parse(privateFile(join(root,markerName))).captureShortcut;
 }

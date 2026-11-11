@@ -15,7 +15,7 @@ const suites={
  account:["homer-account-gateway.test.mjs","homer-account-integration.test.mjs"],
  rtc:["mobile-webrtc-runtime.test.mjs"],
  development:["desktop-gateway-access.test.mjs","desktop-icon.test.mjs","desktop-source.test.mjs","dev-gateway.test.mjs","pinned-rollback.test.mjs","reception-gateway.test.mjs","reception-ipc.test.ts","release-css-snapshot.test.mjs","web-dev-host.test.mjs","mobile-runtime-packaging.test.mjs","mobile-ui-build.test.mjs","mobile-download-focus.development.test.mjs","deepseek-isolated.test.mjs","dev-fixture-wait.test.mjs","dev-upgrade.development.test.mjs","web-feedback-host.development.test.ts","electron-package.development.test.mjs","first-launch-distribution.development.test.mjs","prompts.development.test.ts"],
- vendor:["agentation-preview-patch.test.mjs","approval-card-upstream.test.mjs","official-canvas-upstream.test.mjs","official-sources-upstream.test.mjs","official-tool-fallback-upstream.test.mjs","question-flow-upstream.test.mjs","run-activity-upstream.test.mjs","task-status-css.vendor.test.mjs"],
+ vendor:["model-selector-upstream.test.mjs","agentation-preview-patch.test.mjs","approval-card-upstream.test.mjs","official-canvas-upstream.test.mjs","official-sources-upstream.test.mjs","official-tool-fallback-upstream.test.mjs","question-flow-upstream.test.mjs","run-activity-upstream.test.mjs","task-status-css.vendor.test.mjs"],
  'windows-capture':['windows-capture.electron.test.mjs'],
 };
 const requested=process.argv[2]?.slice(2);

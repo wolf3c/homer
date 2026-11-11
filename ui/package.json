@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node ../scripts/build-preview-annotation.mjs && node ../scripts/build-task-status-css.mjs && node ../scripts/build-run-activity-css.mjs && node ../scripts/build-run-activity-css.mjs --tool-fallback && node ../scripts/build-run-activity-css.mjs --quote && node ../scripts/build-run-activity-css.mjs --attachment && node ../scripts/build-run-activity-css.mjs --image-file && node ../scripts/build-run-activity-css.mjs --approval-card && node ../scripts/build-run-activity-css.mjs --question-flow && node ../scripts/build-run-activity-css.mjs --sources && node ../scripts/build-run-activity-css.mjs --canvas-split && tsc --noEmit && vite build --configLoader runner",
-    "dev": "node ../scripts/build-preview-annotation.mjs && node ../scripts/build-task-status-css.mjs && node ../scripts/build-run-activity-css.mjs && node ../scripts/build-run-activity-css.mjs --tool-fallback && node ../scripts/build-run-activity-css.mjs --quote && node ../scripts/build-run-activity-css.mjs --attachment && node ../scripts/build-run-activity-css.mjs --image-file && node ../scripts/build-run-activity-css.mjs --approval-card && node ../scripts/build-run-activity-css.mjs --question-flow && node ../scripts/build-run-activity-css.mjs --sources && node ../scripts/build-run-activity-css.mjs --canvas-split && vite --host 127.0.0.1"
+    "build": "node ../scripts/build-preview-annotation.mjs && node ../scripts/build-task-status-css.mjs && node ../scripts/build-run-activity-css.mjs --model-selector && node ../scripts/build-run-activity-css.mjs && node ../scripts/build-run-activity-css.mjs --tool-fallback && node ../scripts/build-run-activity-css.mjs --quote && node ../scripts/build-run-activity-css.mjs --attachment && node ../scripts/build-run-activity-css.mjs --image-file && node ../scripts/build-run-activity-css.mjs --approval-card && node ../scripts/build-run-activity-css.mjs --question-flow && node ../scripts/build-run-activity-css.mjs --sources && node ../scripts/build-run-activity-css.mjs --canvas-split && tsc --noEmit && vite build --configLoader runner",
+    "dev": "node ../scripts/build-preview-annotation.mjs && node ../scripts/build-task-status-css.mjs && node ../scripts/build-run-activity-css.mjs --model-selector && node ../scripts/build-run-activity-css.mjs && node ../scripts/build-run-activity-css.mjs --tool-fallback && node ../scripts/build-run-activity-css.mjs --quote && node ../scripts/build-run-activity-css.mjs --attachment && node ../scripts/build-run-activity-css.mjs --image-file && node ../scripts/build-run-activity-css.mjs --approval-card && node ../scripts/build-run-activity-css.mjs --question-flow && node ../scripts/build-run-activity-css.mjs --sources && node ../scripts/build-run-activity-css.mjs --canvas-split && vite --host 127.0.0.1"
   },
   "dependencies": {
     "@annotorious/react": "3.9.5",
@@ -25,6 +25,7 @@
     "agentation": "3.1.2",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "cmdk": "1.1.1",
     "diff": "9.0.0",
     "highlight.js": "11.11.1",
     "katex": "0.19.0",

@@ -1,0 +1,767 @@
+/* Generated from pinned official utilities. Run node scripts/build-run-activity-css.mjs --model-selector. */
+/*! tailwindcss v4.1.14 | MIT License | https://tailwindcss.com */
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) {
+    --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+    --spacing: 0.25rem;
+    --text-xs: 0.75rem;
+    --text-xs--line-height: calc(1 / 0.75);
+    --text-sm: 0.875rem;
+    --text-sm--line-height: calc(1.25 / 0.875);
+    --font-weight-medium: 500;
+    --tracking-widest: 0.1em;
+    --radius-sm: 0.25rem;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --radius-xl: 0.75rem;
+    --default-transition-duration: 150ms;
+    --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    --default-font-family: var(--font-sans);
+    --default-mono-font-family: var(--font-mono);
+  }
+@layer base {
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) *, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(*), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::after, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::after, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::before, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::before, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::backdrop, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::backdrop, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::file-selector-button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::file-selector-button {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) {
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+    font-family: var(--default-font-family, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+    font-feature-settings: var(--default-font-feature-settings, normal);
+    font-variation-settings: var(--default-font-variation-settings, normal);
+    -webkit-tap-highlight-color: transparent;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) hr, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(hr) {
+    height: 0;
+    color: inherit;
+    border-top-width: 1px;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) abbr:where([title]), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(abbr:where([title])) {
+    -webkit-text-decoration: underline dotted;
+    text-decoration: underline dotted;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) h1, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(h1), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) h2, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(h2), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) h3, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(h3), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) h4, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(h4), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) h5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(h5), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) h6, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(h6) {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) a, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(a) {
+    color: inherit;
+    -webkit-text-decoration: inherit;
+    text-decoration: inherit;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) b, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(b), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) strong, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(strong) {
+    font-weight: bolder;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) code, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(code), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) kbd, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(kbd), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) samp, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(samp), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) pre, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(pre) {
+    font-family: var(--default-mono-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-feature-settings: var(--default-mono-font-feature-settings, normal);
+    font-variation-settings: var(--default-mono-font-variation-settings, normal);
+    font-size: 1em;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) small, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(small) {
+    font-size: 80%;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) sub, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(sub), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) sup, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(sup) {
+    font-size: 75%;
+    line-height: 0;
+    position: relative;
+    vertical-align: baseline;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) sub, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(sub) {
+    bottom: -0.25em;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) sup, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(sup) {
+    top: -0.5em;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) table, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(table) {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) :-moz-focusring, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(:-moz-focusring) {
+    outline: auto;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) progress, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(progress) {
+    vertical-align: baseline;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) summary, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(summary) {
+    display: list-item;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ol, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(ol), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ul, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(ul), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) menu, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(menu) {
+    list-style: none;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) img, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(img), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) svg, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(svg), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) video, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(video), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) canvas, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(canvas), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) audio, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(audio), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) iframe, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(iframe), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) embed, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(embed), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) object, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(object) {
+    display: block;
+    vertical-align: middle;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) img, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(img), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) video, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(video) {
+    max-width: 100%;
+    height: auto;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(button), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) input, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(input), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) select, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(select), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) optgroup, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(optgroup), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) textarea, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(textarea), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::file-selector-button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::file-selector-button {
+    font: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    border-radius: 0;
+    background-color: transparent;
+    opacity: 1;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) :where(select:is([multiple], [size])) optgroup, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(:where(select:is([multiple], [size])) optgroup) {
+    font-weight: bolder;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) :where(select:is([multiple], [size])) optgroup option, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(:where(select:is([multiple], [size])) optgroup option) {
+    padding-inline-start: 20px;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::file-selector-button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::file-selector-button {
+    margin-inline-end: 4px;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::placeholder, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::placeholder {
+    opacity: 1;
+  }
+  @supports (not (-webkit-appearance: -apple-pay-button))  or (contain-intrinsic-size: 1px) {
+    :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::placeholder, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::placeholder {
+      color: currentcolor;
+      @supports (color: color-mix(in lab, red, red)) {
+        color: color-mix(in oklab, currentcolor 50%, transparent);
+      }
+    }
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) textarea, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(textarea) {
+    resize: vertical;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-search-decoration, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-search-decoration {
+    -webkit-appearance: none;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-date-and-time-value, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-date-and-time-value {
+    min-height: 1lh;
+    text-align: inherit;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit {
+    display: inline-flex;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-fields-wrapper, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-year-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-year-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-month-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-month-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-day-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-day-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-hour-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-hour-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-minute-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-minute-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-second-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-second-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-millisecond-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-millisecond-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-datetime-edit-meridiem-field, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-datetime-edit-meridiem-field {
+    padding-block: 0;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-calendar-picker-indicator, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-calendar-picker-indicator {
+    line-height: 1;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) :-moz-ui-invalid, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(:-moz-ui-invalid) {
+    box-shadow: none;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(button), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) input:where([type="button"], [type="reset"], [type="submit"]), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(input:where([type="button"], [type="reset"], [type="submit"])), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::file-selector-button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::file-selector-button {
+    appearance: button;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-inner-spin-button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-inner-spin-button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::-webkit-outer-spin-button, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::-webkit-outer-spin-button {
+    height: auto;
+  }
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) [hidden]:where(:not([hidden="until-found"])), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is([hidden]:where(:not([hidden="until-found"]))) {
+    display: none !important;
+  }
+}
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .visible, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.visible) {
+    visibility: visible;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .sr-only, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.sr-only) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border-width: 0;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .absolute, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.absolute) {
+    position: absolute;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .relative, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.relative) {
+    position: relative;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .end-3, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.end-3) {
+    inset-inline-end: calc(var(--spacing) * 3);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .top-2\.5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.top-2\.5) {
+    top: calc(var(--spacing) * 2.5);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .isolate, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.isolate) {
+    isolation: isolate;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .z-50, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.z-50) {
+    z-index: 50;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .-mx-1, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.-mx-1) {
+    margin-inline: calc(var(--spacing) * -1);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .ms-auto, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.ms-auto) {
+    margin-inline-start: auto;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .mt-\[3px\], :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.mt-\[3px\]) {
+    margin-top: 3px;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .flex, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.flex) {
+    display: flex;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .size-3\.5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.size-3\.5) {
+    width: calc(var(--spacing) * 3.5);
+    height: calc(var(--spacing) * 3.5);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .size-4, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.size-4) {
+    width: calc(var(--spacing) * 4);
+    height: calc(var(--spacing) * 4);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .h-8, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.h-8) {
+    height: calc(var(--spacing) * 8);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .h-9, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.h-9) {
+    height: calc(var(--spacing) * 9);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .h-10, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.h-10) {
+    height: calc(var(--spacing) * 10);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .h-full, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.h-full) {
+    height: 100%;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .h-px, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.h-px) {
+    height: 1px;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .max-h-\[300px\], :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.max-h-\[300px\]) {
+    max-height: 300px;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .w-72, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.w-72) {
+    width: calc(var(--spacing) * 72);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .w-fit, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.w-fit) {
+    width: fit-content;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .w-full, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.w-full) {
+    width: 100%;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .min-w-\(--anchor-width\), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.min-w-\(--anchor-width\)) {
+    min-width: var(--anchor-width);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .min-w-0, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.min-w-0) {
+    min-width: calc(var(--spacing) * 0);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .min-w-7\.5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.min-w-7\.5) {
+    min-width: calc(var(--spacing) * 7.5);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .shrink-0, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.shrink-0) {
+    flex-shrink: 0;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .origin-\(--transform-origin\), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.origin-\(--transform-origin\)) {
+    transform-origin: var(--transform-origin);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .cursor-default, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.cursor-default) {
+    cursor: default;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .cursor-pointer, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.cursor-pointer) {
+    cursor: pointer;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .scroll-py-1, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.scroll-py-1) {
+    scroll-padding-block: calc(var(--spacing) * 1);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .flex-col, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.flex-col) {
+    flex-direction: column;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .items-center, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.items-center) {
+    align-items: center;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .items-start, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.items-start) {
+    align-items: flex-start;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .justify-between, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.justify-between) {
+    justify-content: space-between;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .justify-center, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.justify-center) {
+    justify-content: center;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .gap-0\.5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.gap-0\.5) {
+    gap: calc(var(--spacing) * 0.5);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .gap-2, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.gap-2) {
+    gap: calc(var(--spacing) * 2);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .gap-2\.5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.gap-2\.5) {
+    gap: calc(var(--spacing) * 2.5);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .gap-3, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.gap-3) {
+    gap: calc(var(--spacing) * 3);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .truncate, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.truncate) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .overflow-hidden, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.overflow-hidden) {
+    overflow: hidden;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .overflow-x-hidden, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.overflow-x-hidden) {
+    overflow-x: hidden;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .overflow-y-auto, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.overflow-y-auto) {
+    overflow-y: auto;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .rounded-\[var\(--radius-surface\,var\(--radius-lg\)\)\],:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.rounded-\[var\(--radius-surface\,var\(--radius-lg\)\)\]) {
+    border-radius: var(--radius-surface,var(--radius-lg));
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .rounded-lg, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.rounded-lg) {
+    border-radius: var(--radius-lg);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .rounded-md, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.rounded-md) {
+    border-radius: var(--radius-md);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .rounded-sm, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.rounded-sm) {
+    border-radius: var(--radius-sm);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .rounded-xl, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.rounded-xl) {
+    border-radius: var(--radius-xl);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .border, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.border) {
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .border-t, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.border-t) {
+    border-top-style: var(--tw-border-style);
+    border-top-width: 1px;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .border-b, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.border-b) {
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 1px;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .border-input, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.border-input) {
+    border-color: var(--strong-line);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .bg-border, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.bg-border) {
+    background-color: var(--line);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .bg-popover, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.bg-popover) {
+    background-color: var(--surface);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .bg-secondary, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.bg-secondary) {
+    background-color: var(--soft);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .bg-transparent, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.bg-transparent) {
+    background-color: transparent;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .p-0, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.p-0) {
+    padding: calc(var(--spacing) * 0);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .p-1, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.p-1) {
+    padding: calc(var(--spacing) * 1);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .p-3, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.p-3) {
+    padding: calc(var(--spacing) * 3);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .px-2, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.px-2) {
+    padding-inline: calc(var(--spacing) * 2);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .px-2\.5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.px-2\.5) {
+    padding-inline: calc(var(--spacing) * 2.5);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .px-3, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.px-3) {
+    padding-inline: calc(var(--spacing) * 3);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .px-4, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.px-4) {
+    padding-inline: calc(var(--spacing) * 4);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .py-1, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.py-1) {
+    padding-block: calc(var(--spacing) * 1);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .py-1\.5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.py-1\.5) {
+    padding-block: calc(var(--spacing) * 1.5);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .py-2, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.py-2) {
+    padding-block: calc(var(--spacing) * 2);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .py-2\.5, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.py-2\.5) {
+    padding-block: calc(var(--spacing) * 2.5);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .py-3, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.py-3) {
+    padding-block: calc(var(--spacing) * 3);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .py-6, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.py-6) {
+    padding-block: calc(var(--spacing) * 6);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .ps-3, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.ps-3) {
+    padding-inline-start: calc(var(--spacing) * 3);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .pe-9, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.pe-9) {
+    padding-inline-end: calc(var(--spacing) * 9);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .text-center, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.text-center) {
+    text-align: center;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .text-sm, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.text-sm) {
+    font-size: var(--text-sm);
+    line-height: var(--tw-leading, var(--text-sm--line-height));
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .text-xs, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.text-xs) {
+    font-size: var(--text-xs);
+    line-height: var(--tw-leading, var(--text-xs--line-height));
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .font-medium, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.font-medium) {
+    --tw-font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-medium);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .tracking-widest, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.tracking-widest) {
+    --tw-tracking: var(--tracking-widest);
+    letter-spacing: var(--tracking-widest);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .whitespace-nowrap, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.whitespace-nowrap) {
+    white-space: nowrap;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .text-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.text-foreground) {
+    color: var(--ink);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .text-muted-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.text-muted-foreground) {
+    color: var(--muted);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .text-popover-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.text-popover-foreground) {
+    color: var(--ink);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .text-secondary-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.text-secondary-foreground) {
+    color: var(--ink);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .opacity-50, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.opacity-50) {
+    opacity: 50%;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .ring-1, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.ring-1) {
+    --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .ring-foreground\/10, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.ring-foreground\/10) {
+    --tw-ring-color: var(--ink);
+    @supports (color: color-mix(in lab, red, red)) {
+      --tw-ring-color: color-mix(in oklab, var(--ink) 10%, transparent);
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .outline-hidden, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.outline-hidden) {
+    --tw-outline-style: none;
+    outline-style: none;
+    @media (forced-colors: active) {
+      outline: 2px solid transparent;
+      outline-offset: 2px;
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .outline, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.outline) {
+    outline-style: var(--tw-outline-style);
+    outline-width: 1px;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .transition-colors, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.transition-colors) {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .duration-100, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.duration-100) {
+    --tw-duration: 100ms;
+    transition-duration: 100ms;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .outline-none, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.outline-none) {
+    --tw-outline-style: none;
+    outline-style: none;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .select-none, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.select-none) {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .\[-ms-overflow-style\:none\], :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.\[-ms-overflow-style\:none\]) {
+    -ms-overflow-style: none;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .\[scrollbar-width\:none\], :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.\[scrollbar-width\:none\]) {
+    scrollbar-width: none;
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .placeholder\:text-muted-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.placeholder\:text-muted-foreground) {
+    &::placeholder {
+      color: var(--muted);
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .hover\:bg-accent, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.hover\:bg-accent) {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--soft);
+      }
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .hover\:bg-muted, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.hover\:bg-muted) {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--soft);
+      }
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .hover\:bg-secondary\/80, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.hover\:bg-secondary\/80) {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--soft);
+        @supports (color: color-mix(in lab, red, red)) {
+          background-color: color-mix(in oklab, var(--soft) 80%, transparent);
+        }
+      }
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .hover\:text-accent-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.hover\:text-accent-foreground) {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--ink);
+      }
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .hover\:text-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.hover\:text-foreground) {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--ink);
+      }
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .focus-visible\:ring-1, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.focus-visible\:ring-1) {
+    &:focus-visible {
+      --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+      box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .focus-visible\:ring-ring\/50, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.focus-visible\:ring-ring\/50) {
+    &:focus-visible {
+      --tw-ring-color: var(--focus);
+      @supports (color: color-mix(in lab, red, red)) {
+        --tw-ring-color: color-mix(in oklab, var(--focus) 50%, transparent);
+      }
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .disabled\:cursor-not-allowed, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.disabled\:cursor-not-allowed) {
+    &:disabled {
+      cursor: not-allowed;
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .disabled\:opacity-50, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.disabled\:opacity-50) {
+    &:disabled {
+      opacity: 50%;
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .data-checked\:bg-accent, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.data-checked\:bg-accent) {
+    &[data-checked] {
+      background-color: var(--soft);
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .data-checked\:font-medium, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.data-checked\:font-medium) {
+    &[data-checked] {
+      --tw-font-weight: var(--font-weight-medium);
+      font-weight: var(--font-weight-medium);
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .data-checked\:text-accent-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.data-checked\:text-accent-foreground) {
+    &[data-checked] {
+      color: var(--ink);
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .data-\[disabled\=true\]\:pointer-events-none, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.data-\[disabled\=true\]\:pointer-events-none) {
+    &[data-disabled="true"] {
+      pointer-events: none;
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .data-\[disabled\=true\]\:opacity-50, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.data-\[disabled\=true\]\:opacity-50) {
+    &[data-disabled="true"] {
+      opacity: 50%;
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .data-\[selected\=true\]\:bg-accent, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.data-\[selected\=true\]\:bg-accent) {
+    &[data-selected="true"] {
+      background-color: var(--soft);
+    }
+  }
+:is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) .data-\[selected\=true\]\:text-accent-foreground, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(.data-\[selected\=true\]\:text-accent-foreground) {
+    &[data-selected="true"] {
+      color: var(--ink);
+    }
+  }
+.\[\&_\[cmdk-group-heading\]\]\:px-2 {
+    & [cmdk-group-heading] {
+      padding-inline: calc(var(--spacing) * 2);
+    }
+  }
+.\[\&_\[cmdk-group-heading\]\]\:py-1\.5 {
+    & [cmdk-group-heading] {
+      padding-block: calc(var(--spacing) * 1.5);
+    }
+  }
+.\[\&_\[cmdk-group-heading\]\]\:text-xs {
+    & [cmdk-group-heading] {
+      font-size: var(--text-xs);
+      line-height: var(--tw-leading, var(--text-xs--line-height));
+    }
+  }
+.\[\&_\[cmdk-group-heading\]\]\:font-medium {
+    & [cmdk-group-heading] {
+      --tw-font-weight: var(--font-weight-medium);
+      font-weight: var(--font-weight-medium);
+    }
+  }
+.\[\&_\[cmdk-group-heading\]\]\:text-muted-foreground {
+    & [cmdk-group-heading] {
+      color: var(--muted);
+    }
+  }
+.\[\&_svg\]\:pointer-events-none {
+    & svg {
+      pointer-events: none;
+    }
+  }
+.\[\&_svg\]\:size-3\.5 {
+    & svg {
+      width: calc(var(--spacing) * 3.5);
+      height: calc(var(--spacing) * 3.5);
+    }
+  }
+.\[\&_svg\]\:shrink-0 {
+    & svg {
+      flex-shrink: 0;
+    }
+  }
+.\[\&_svg\:not\(\[class\*\=\'size-\'\]\)\]\:size-3\.5 {
+    & svg:not([class*='size-']) {
+      width: calc(var(--spacing) * 3.5);
+      height: calc(var(--spacing) * 3.5);
+    }
+  }
+.\[\&_svg\:not\(\[class\*\=\'size-\'\]\)\]\:size-4 {
+    & svg:not([class*='size-']) {
+      width: calc(var(--spacing) * 4);
+      height: calc(var(--spacing) * 4);
+    }
+  }
+.\[\&_svg\:not\(\[class\*\=\'text-\'\]\)\]\:text-muted-foreground {
+    & svg:not([class*='text-']) {
+      color: var(--muted);
+    }
+  }
+.\[\&\:\:-webkit-scrollbar\]\:hidden {
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+@layer base {
+  :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) *, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(*) {
+    border-color: var(--line);
+  }
+}
+@property --tw-border-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@property --tw-font-weight {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-tracking {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-inset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-ring-inset {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-offset-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --tw-ring-offset-color {
+  syntax: "*";
+  inherits: false;
+  initial-value: #fff;
+}
+@property --tw-ring-offset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-outline-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+@property --tw-duration {
+  syntax: "*";
+  inherits: false;
+}
+@supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+    :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) *, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]):is(*), :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::before, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::before, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::after, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::after, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"]) ::backdrop, :is([data-slot="model-selector-trigger"],[data-slot="model-selector-positioner"],[data-slot="model-selector-content"])::backdrop {
+      --tw-border-style: solid;
+      --tw-font-weight: initial;
+      --tw-tracking: initial;
+      --tw-shadow: 0 0 #0000;
+      --tw-shadow-color: initial;
+      --tw-shadow-alpha: 100%;
+      --tw-inset-shadow: 0 0 #0000;
+      --tw-inset-shadow-color: initial;
+      --tw-inset-shadow-alpha: 100%;
+      --tw-ring-color: initial;
+      --tw-ring-shadow: 0 0 #0000;
+      --tw-inset-ring-color: initial;
+      --tw-inset-ring-shadow: 0 0 #0000;
+      --tw-ring-inset: initial;
+      --tw-ring-offset-width: 0px;
+      --tw-ring-offset-color: #fff;
+      --tw-ring-offset-shadow: 0 0 #0000;
+      --tw-outline-style: solid;
+      --tw-duration: initial;
+    }
+  }

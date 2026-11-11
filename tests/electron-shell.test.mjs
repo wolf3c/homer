@@ -55,7 +55,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  let stored=native.connection??{token:'synthetic-file-token',subject:'fixture_user',config:config()};
  const account={queryHomerRuntimeConfig:async options=>{nativeCalls.push(['config']);return native.config?native.config(options):config();},saveHomerRuntimeConfig:(_path,value)=>{if(native.writeError)throw Error('CONNECTION_WRITE_FAILED');stored={token:stored.token,subject:stored.subject,config:value};nativeCalls.push(['save-config']);return stored;},readHomerConnection:path=>{tokenFiles.push(path);if(native.invalidTokenFile)throw Error('CONNECTION_FILE_INVALID');return stored;},validateHomerOrigins:v=>v,authorizeHomerConnection:async options=>{const value=native.authorize?await native.authorize(options):{token:'synthetic-website-token',subject:'fixture_user',config:config()};if(!options.signal.aborted)stored=value;return value;},disconnectHomerConnection:()=>{nativeCalls.push(['disconnect']);if(native.disconnectError)throw Error('CONNECTION_WRITE_FAILED');stored=stored?.subject?{...stored,token:undefined}:null;},queryHomerWallet:async()=>{nativeCalls.push(['wallet']);return native.wallet?native.wallet():{available:5,used:2,unit:'原生额度'};}};
  class NsisUpdater extends EventEmitter{constructor(options){super();nativeCalls.push(['nsis',options]);this.on('error',()=>{if(this.logger!==null)console.error('private_library_log');});}checkForUpdates(){nativeCalls.push(['check-update',this.logger]);if(native.checkReject){this.emit('error',Error('private_check'));return Promise.reject(Error('private_check'));}return Promise.resolve(native.nullCheck?null:{downloadPromise:native.downloadReject?Promise.resolve().then(()=>{this.emit('error',Error('private_download'));throw Error('private_download');}):Promise.resolve([])});}quitAndInstall(...args){if(this.quitAndInstallCalled)return;this.quitAndInstallCalled=true;nativeCalls.push(['install-update',...args]);if(native.closeBeforeInstallError)for(const w of windows){w.destroyed=true;w.contentsDestroyed=true;}if(native.installError)throw Error('private_install');if(native.installAsyncError)this.emit('error',Error('EACCES UNKNOWN private_install'));queueMicrotask(()=>app.quit());}}
- const modules={'../homer/dist/web-contract.js':await import('../src/web-contract.ts'),'../homer/dist/desktop-channels.js':{DesktopChannels:class {start(...args){nativeCalls.push(['channel-start',...args]);return 'fixture-flow';} snapshot(){return {pending:native.channelPending??[]};} configured(){return [];} cancel(){} apply(){nativeCalls.push(['channel-apply']);return {saved:['Telegram@example_bot'],failed:[]};}}},'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'../homer/dist/processes.js':{processIdentity:()=> 'synthetic-process',leaseOwnerGone:()=>true},'electron':electron,'../homer/dist/web-upload.js':{WEB_UPLOAD_BYTES:8*1024*1024},'../homer/dist/media-policy.js':await import('../src/media-policy.ts'),'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:root=>({root,runtime:native.runtime??join(root,'runtime'),workspace:join(root,'workspace'),codexHome:native.codexHome??join(root,'codex'),...(native.adopted?{adoption:{appData:'/synthetic/original-app'}}:{})}),recoverDesktopOwner:home=>{assert.equal(ownsLock,true);ownershipCalls.push(['recover-owner',home]);if(native.recoveryError)throw Error('desktop_owner_unknown');},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,saveDesktopModelSource:(_root,source)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(['source',source]);}}};
+ const modules={'../homer/dist/model-config.js':await import('../src/model-config.ts'),'../homer/dist/web-contract.js':await import('../src/web-contract.ts'),'../homer/dist/desktop-channels.js':{DesktopChannels:class {start(...args){nativeCalls.push(['channel-start',...args]);return 'fixture-flow';} snapshot(){return {pending:native.channelPending??[]};} configured(){return [];} cancel(){} apply(){nativeCalls.push(['channel-apply']);return {saved:['Telegram@example_bot'],failed:[]};}}},'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'../homer/dist/processes.js':{processIdentity:()=> 'synthetic-process',leaseOwnerGone:()=>true},'electron':electron,'../homer/dist/web-upload.js':{WEB_UPLOAD_BYTES:8*1024*1024},'../homer/dist/media-policy.js':await import('../src/media-policy.ts'),'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:root=>({root,runtime:native.runtime??join(root,'runtime'),workspace:join(root,'workspace'),codexHome:native.codexHome??join(root,'codex'),...(native.adopted?{adoption:{appData:'/synthetic/original-app'}}:{})}),recoverDesktopOwner:home=>{assert.equal(ownsLock,true);ownershipCalls.push(['recover-owner',home]);if(native.recoveryError)throw Error('desktop_owner_unknown');},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,readDesktopChatGPTConfig:()=>native.chatgpt,saveDesktopModelSource:(_root,source,chatgpt)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(chatgpt===undefined?['source',source]:['source',source,chatgpt]);if(chatgpt!==undefined)native.chatgpt=chatgpt;}}};
  modules['../homer/dist/preview-reference.js']=await import('../src/preview-reference.ts');
  Object.assign(modules['../homer/scripts/desktop-profile.mjs'],{
   readDesktopCaptureShortcut:()=>native.captureShortcut,
@@ -121,9 +121,9 @@ for(const mode of ['dead','runtime-live','gateway-live','runtime-unknown','lease
  const proc={argv:['node','desktop-runtime','--profile',profile,'--test-profile'],version:'v22.22.0',arch:'arm64',platform:'darwin',execPath:bundle+'/Contents/MacOS/node',stdin,stdout:new Writable({write(bytes,_encoding,done){events.push(JSON.parse(String(bytes)));done();}}),env:{HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp')},cwd:()=>profile};
  const modules={
   'node:fs':{...filesystem,realpathSync:path=>String(path).startsWith(bundle)?path:filesystem.realpathSync(path),readdirSync:path=>path===resources?[]:filesystem.readdirSync(path),readFileSync:(path,...args)=>path===join(resources,'desktop-manifest.json')?Buffer.from(JSON.stringify(manifest)):String(path).startsWith(bundle)?empty:filesystem.readFileSync(path,...args)},
-  './desktop-profile.mjs':{...desktop,prepareDesktopProfile:()=>paths,readDesktopModelSource:()=> 'codex'},
+  './desktop-profile.mjs':{...desktop,prepareDesktopProfile:()=>paths,readDesktopModelSource:()=> 'codex',readDesktopChatGPTConfig:()=>undefined},
   ['file://'+homer+'/dist/processes.js']:{processIdentity,leaseOwnerGone},
-  ['file://'+homer+'/dist/model-config.js']:{PRODUCT_MODEL_DEFAULTS:{model:'synthetic'}},
+  ['file://'+homer+'/dist/model-config.js']:await import('../src/model-config.ts'),
   ['file://'+homer+'/dist/config.js']:{loadConfig:path=>{assert.equal(path,sourceConfig);return config;}},
   ['file://'+homer+'/dist/recursive-tasks.js']:{RECURSIVE_SCHEMA_VERSION},
   ['file://'+homer+'/dist/mobile-gateway.js']:{readMobileConfig:()=>({})},
@@ -465,7 +465,7 @@ for(const action of ['restart','disconnect'])test(`Codex account ${action} prese
 });
 test('account methods reject arguments, foreign frames, and responses after navigation',async()=>{
  const f=await accountFixture();for(const name of ['state','connect','cancel','reopen','refresh','openWebsite','disconnect','restart','nativeConnect','nativeCancel','nativeReopen','applyCodex','applyWebsite']){
-  await assert.rejects(()=>accountCall(f,name,'extra'),/desktop_account_forbidden/);
+  await assert.rejects(()=>accountCall(f,name,...(name==='applyCodex'?['extra','extra']:['extra'])),/desktop_account_forbidden/);
   await assert.rejects(()=>f.handlers.get('homer:account:'+name)({sender:{},senderFrame:f.windows[0].webContents.mainFrame}),/desktop_account_forbidden/);
  }
  let settle;const g=await accountFixture({wallet:()=>new Promise(r=>settle=r)});const pending=accountCall(g,'refresh');
@@ -1511,6 +1511,51 @@ for(const modelSource of ['codex','website'])for(const response of [0,1])test(`r
  else{assert.equal((await accountCall(f,'state')).needsRestart,true);assert.equal(f.sent.length,0);}
  assert.equal(f.nativeCalls.some(c=>c[0]==='source'||c[0]==='disconnect'),false);
  assert.equal(f.nativeCalls.filter(c=>c[0]==='wallet').length,walletReads);
+});
+
+const nativeCatalog=()=>['gpt-6.1-terra','custom-model'].map(model=>({model,displayName:model,defaultReasoningEffort:'high',supportedReasoningEfforts:['low','medium','high','xhigh'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:[{id:'priority',name:'Fast'},{id:'ultrafast',name:'Ultrafast'}]}));
+const selectedNativeRoles={main:{model:'custom-model',effort:'medium',serviceTier:'ultrafast'},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}};
+const nativeModelAction=action=>action==='models'?nativeCatalog():{account:'chatgpt',connected:true,phase:'idle'};
+test('native model settings project saved roles and defaults while failed reads preserve selections',async()=>{
+ const f=await accountFixture({nativeAction:nativeModelAction,chatgpt:{main:selectedNativeRoles.main}});
+ assert.equal(typeof f.handlers.get('homer:account:nativeModels'),'function');
+ const result=await accountCall(f,'nativeModels');assert.equal(result.current.main.model,'custom-model');assert.equal(result.current.worker.serviceTier,null);assert.equal(result.defaults.main.effort,'high');assert.equal(result.models.length,2);
+ const failed=await accountFixture({chatgpt:{main:selectedNativeRoles.main},nativeAction:action=>{if(action==='models')throw Error('PRIVATE_READ');return nativeModelAction(action);}});
+ const retained=await accountCall(failed,'nativeModels');assert.equal(retained.current.main.model,'custom-model');assert.equal(retained.models,undefined);assert.equal(retained.error,'native_models_unconfirmed');assert.equal(JSON.stringify(retained).includes('PRIVATE'),false);
+});
+test('ChatGPT model application saves source and normalized roles only after confirmed stop',async()=>{
+ const f=await accountFixture({nativeAction:nativeModelAction});
+ await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
+ f.event({kind:'stopped'});await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
+ f.child.emit('close',0,null);await f.tick();
+ assert.deepEqual(f.nativeCalls.filter(c=>['source','relaunch'].includes(c[0])),[['source','codex',{main:selectedNativeRoles.main}],['relaunch']]);
+});
+for(const failure of ['cancel','stop','save'])test(`ChatGPT role transaction ${failure} never writes a partial selection`,async()=>{
+ const f=await accountFixture({nativeAction:nativeModelAction,response:failure==='cancel'?0:1,sourceWriteError:failure==='save'});
+ await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();
+ if(failure==='stop'){f.timeout();await f.tick();}
+ if(failure!=='cancel'){f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();}
+ assert.equal(f.nativeCalls.some(c=>c[0]==='source'||c[0]==='relaunch'),false);
+});
+test('ChatGPT host rejects malformed and stale role selections without opening restart confirmation',async()=>{
+ const f=await accountFixture({nativeAction:nativeModelAction});
+ for(const roles of [{main:selectedNativeRoles.main},{main:undefined,worker:selectedNativeRoles.worker},{...selectedNativeRoles,extra:{}},{...selectedNativeRoles,main:{...selectedNativeRoles.main,serviceTier:'not-advertised'}},{...selectedNativeRoles,main:{...selectedNativeRoles.main,extra:true}}])await assert.rejects(accountCall(f,'applyCodex',roles));
+ assert.equal(f.messages.some(m=>m.message==='重启荷马？'),false);assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
+ await assert.rejects(accountCall(f,'nativeModels',{}),/desktop_account_forbidden/);
+});
+
+test('ChatGPT restart confirmation invalidated by navigation cannot stop or save',async()=>{
+ let confirm;const decision=new Promise(resolve=>confirm=resolve);
+ const f=await accountFixture({nativeAction:nativeModelAction,response:options=>options.message==='重启荷马？'?decision:1});
+ await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();
+ await f.windows[0].loadURL('http://127.0.0.1:56789/preview/changed');confirm(1);await f.tick();
+ assert.equal(f.sent.some(message=>JSON.parse(message).kind==='quit'),false);assert.equal(f.nativeCalls.some(call=>call[0]==='source'||call[0]==='relaunch'),false);
+});
+test('ChatGPT source transaction invalidated during stop cannot save or relaunch',async()=>{
+ const f=await accountFixture({nativeAction:nativeModelAction});await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();
+ assert.equal(f.sent.some(message=>JSON.parse(message).kind==='quit'),true);
+ await f.windows[0].loadURL('http://127.0.0.1:56789/preview/changed');f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(f.nativeCalls.some(call=>call[0]==='source'||call[0]==='relaunch'),false);
 });
 
 }

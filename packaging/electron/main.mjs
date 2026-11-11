@@ -8,7 +8,8 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {types} from 'node:util';
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
-import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopCaptureShortcut,saveDesktopCaptureShortcut} from '../homer/scripts/desktop-profile.mjs';
+import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopChatGPTConfig,readDesktopCaptureShortcut,saveDesktopCaptureShortcut} from '../homer/scripts/desktop-profile.mjs';
+import {CHATGPT_MODEL_DEFAULTS,chatgptModelConfig,validateChatGPTSelection} from '../homer/dist/model-config.js';
 import {processIdentity,leaseOwnerGone} from '../homer/dist/processes.js';
 import {DesktopChannels} from '../homer/dist/desktop-channels.js';
 import {webMediaRoute} from '../homer/dist/web-contract.js';
@@ -76,8 +77,20 @@ function registerDesktopAccount(){
   nativeConnect:async()=>{await readNativeAccount('connect');if(nativeStatus?.authUrl){try{await shell.openExternal(nativeStatus.authUrl);}catch{nativeError='登录页面未能打开，请重试。';}}return accountState();},
   nativeCancel:()=>readNativeAccount('cancel'),
   nativeReopen:async()=>{if(nativeStatus?.authUrl){try{await shell.openExternal(nativeStatus.authUrl);}catch{nativeError='登录页面未能打开，请重试。';}}return accountState();},
-  applyCodex:async()=>{await readNativeAccount();if(nativeStatus?.connected&&!quitPending){switchSource='codex';quitAction='restart';requestQuit();}return accountState();},
-  applyWebsite:()=>{if(connectionReady(connection)&&!quitPending){switchSource='website';quitAction='restart';requestQuit();}return accountState();},
+  nativeModels:async()=>{
+   const current=chatgptModelConfig(readDesktopChatGPTConfig(desktopProfile));
+   try{return {current,defaults:CHATGPT_MODEL_DEFAULTS,models:await nativeAccount('models')};}
+   catch{return {current,defaults:CHATGPT_MODEL_DEFAULTS,error:'native_models_unconfirmed'};}
+  },
+  applyCodex:async(roles,validCaller=()=>true)=>{
+   const selected=roles===undefined?undefined:chatgptModelConfig(roles);
+   if(selected&&(Object.keys(roles).length!==2||Object.values(roles).includes(undefined)))throw Error('chatgpt_model_config_invalid');
+   await readNativeAccount();
+   const chatgpt=selected?validateChatGPTSelection(selected,await nativeAccount('models')):undefined;
+   if(!validCaller())throw Error('desktop_account_forbidden');
+   if(nativeStatus?.connected&&!quitPending){switchSource={source:'codex',chatgpt,validCaller};quitAction='restart';requestQuit();}return accountState();
+  },
+  applyWebsite:(_roles,validCaller=()=>true)=>{if(connectionReady(connection)&&!quitPending){switchSource={source:'website',validCaller};quitAction='restart';requestQuit();}return accountState();},
   connect:()=>{
    if(quitPending)return accountState();
    cancelConnection();connectionError=undefined;
@@ -117,8 +130,8 @@ function registerDesktopAccount(){
  };
  for(const [name,action]of Object.entries(actions))ipcMain.handle('homer:account:'+name,async(event,...args)=>{
   const frame=event.senderFrame,navigation=permissionNavigation;
-  if(args.length||!permissionCaller(event,frame))throw Error('desktop_account_forbidden');
-  const result=dailyTokenFile?await action():{supported:false};
+  if(args.length>(name==='applyCodex'?1:0)||!permissionCaller(event,frame))throw Error('desktop_account_forbidden');
+  const result=dailyTokenFile?await action(args[0],()=>navigation===permissionNavigation&&permissionCaller(event,frame)):{supported:false};
   if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_account_forbidden');
   return result;
  });
@@ -717,7 +730,7 @@ function finishQuit(){
   cancelConnection();
   try{
    if(quitAction==='disconnect'){disconnectHomerConnection(dailyTokenFile,accountBoundary());connection=readHomerConnection(dailyTokenFile,accountBoundary());}
-   if(switchSource)saveDesktopModelSource(desktopProfile,switchSource);
+   if(switchSource){if(!switchSource.validCaller())throw Error('desktop_account_forbidden');saveDesktopModelSource(desktopProfile,switchSource.source,switchSource.chatgpt);}
    if(quitAction==='channels'){
     if(!channelStopConfirmed())throw Error('desktop_channel_stop_unconfirmed');
     try{
@@ -781,7 +794,7 @@ app.on('before-quit',event=>{
  const disconnecting=quitAction==='disconnect',applyingChannels=quitAction==='channels',restarting=quitAction==='restart'||applyingChannels;
  const pendingHint=!applyingChannels&&channelPending()?' 「连接聊天应用」中待应用的变更会丢弃。':'';
  void dialog.showMessageBox(window,{type:'question',title:'荷马',message:disconnecting?'退出本机登录？':restarting?'重启荷马？':'退出荷马？',detail:(disconnecting?'将先停止当前回复和后台工作，请先保存草稿。退出仅清除本机登录凭据，保留历史对话、任务和文件；不会注销网站账号。':restarting?'将先停止当前回复和后台工作，请先保存草稿。重启后应用已保存的配置，保留历史对话、任务和文件。':'退出会停止当前回复和后台工作。请先核对并保存草稿。')+pendingHint,buttons:['取消，继续使用',disconnecting?'退出登录并重启':restarting?'重启并应用':'退出并停止工作'],defaultId:0,cancelId:0}).then(({response})=>{
-  if(response!==1){quitPending=false;quitAction=undefined;switchSource=undefined;return;}
+  if(response!==1||switchSource&&!switchSource.validCaller()){quitPending=false;quitAction=undefined;switchSource=undefined;return;}
   if(updateState?.status==='ready'){quitPending=false;if(applyingChannels)quitAction=undefined;app.quit();return;}
   channels?.cancel();
   cancelConnection();

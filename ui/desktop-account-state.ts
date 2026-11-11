@@ -1,8 +1,9 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
+import type {ChatGPTModelConfig,ModelRole,NativeModelSettings} from '../src/model-config';
 
 export type AccountState={supported:boolean;configured:boolean;source?:'codex'|'website';native?:{account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:string;pending:boolean;canReopen:boolean};nativeError?:string;websiteReady?:boolean;connection:'website'|'disconnected';active:'website'|'disconnected';pending:boolean;canReopen:boolean;needsRestart:boolean;error?:string;wallet?:{available:number;used:number;unit:string;expiresAt?:number};updatedAt?:string;walletError?:string;stale:boolean};
 type AccountAction='state'|'connect'|'cancel'|'reopen'|'refresh'|'openWebsite'|'disconnect'|'restart'|'nativeConnect'|'nativeCancel'|'nativeReopen'|'applyCodex'|'applyWebsite';
-type AccountBridge=Record<AccountAction,()=>Promise<AccountState>>&{onChange:(callback:()=>void)=>()=>void};
+type AccountBridge=Omit<Record<AccountAction,()=>Promise<AccountState>>,'applyCodex'>&{applyCodex:(roles?:Record<ModelRole,ChatGPTModelConfig>)=>Promise<AccountState>;nativeModels:()=>Promise<NativeModelSettings>;onChange:(callback:()=>void)=>()=>void};
 declare global{interface Window{homerDesktopAccount?:AccountBridge;}}
 
 export const accountErrors:Record<string,string>={
@@ -21,11 +22,11 @@ export function useDesktopAccount({currentSourceOnly=false,withWallet=true}:{cur
  const bridge=window.homerDesktopAccount;
  const [state,setState]=useState<AccountState>(),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const live=useRef(false),request=useRef(0),running=useRef(false);
- const apply=useCallback(async(action:AccountAction='state')=>{
+ const apply=useCallback(async(action:AccountAction='state',roles?:Record<ModelRole,ChatGPTModelConfig>)=>{
   if(!bridge)return;
   const id=++request.current;
   try{
-   let value=await bridge[action]();
+   let value=action==='applyCodex'?await bridge.applyCodex(roles):await bridge[action]();
    if(action==='openWebsite'&&!value.configured)throw Error('unavailable');
    if(live.current&&id===request.current){setState(value);setNotice('');}
    if(withWallet&&action==='state'&&live.current&&id===request.current&&value.stale&&!value.walletError&&(value.active==='website'||!currentSourceOnly&&value.source==='codex'&&value.connection!=='disconnected'))value=await bridge.refresh();
@@ -52,9 +53,9 @@ export function useDesktopAccount({currentSourceOnly=false,withWallet=true}:{cur
   },1000);
   return()=>{active=false;window.clearInterval(timer);};
  },[state?.pending,state?.native?.pending,apply,currentSourceOnly]);
- async function run(action:AccountAction){
+ async function run(action:AccountAction,roles?:Record<ModelRole,ChatGPTModelConfig>){
   if(running.current)return;running.current=true;setBusy(true);
-  try{return await apply(action);}finally{running.current=false;if(live.current)setBusy(false);}
+  try{return await apply(action,roles);}finally{running.current=false;if(live.current)setBusy(false);}
  }
  return {state,busy,notice,run};
 }

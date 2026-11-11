@@ -14,7 +14,8 @@ import {attachmentReference} from './attachment-reference.js';
 import {EXECUTION_TOOLS} from './execution-tools.js';
 import {attachmentRevealTarget} from './artifact-reveal.js';
 import {seedFirstLaunchSkills,shouldSeedFirstLaunchSkills} from './first-launch.js';
-import {NativeAccount} from './native-account.js';
+import {NativeAccount,type NativeAccountState} from './native-account.js';
+import type {NativeModel} from './model-config.js';
 import {createMembershipTools,isMembershipTool} from './membership-web-tools.js';
 import {runMembershipVideo} from './membership-video.js';
 import {materializePng} from './native-generated-files.js';
@@ -467,14 +468,17 @@ export class Homer {
       if(this.closing||this.closed)throw Error('service_upgrading');
       return this.nativeControl.request(method,params);
   }
+  async manageNativeAccount(input:{action:'model_list'}):Promise<NativeModel[]>;
+  async manageNativeAccount(input:unknown):Promise<NativeAccountState>;
   async manageNativeAccount(input:unknown){
     if(this.closing||this.closed)throw Error('service_upgrading');
     if(!input||typeof input!=='object')throw Error('native_account_action_denied');
-    const a=input as any;if(a.action!=='account_state'&&a.approve!==true)throw Error('native_account_user_action_required');
+    const a=input as any;if(!['account_state','model_list'].includes(a.action)&&a.approve!==true)throw Error('native_account_user_action_required');
     this.nativeOperations++;
     try{
       const account=this.nativeAccount();
       if(a.action==='account_state')return await account.state(a.refresh===true);
+      if(a.action==='model_list')return await account.models();
       if(a.action==='account_login'){
         try{return await account.start();}catch(error){
           if(error instanceof Error&&error.message==='native_account_login_start_unconfirmed'){

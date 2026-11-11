@@ -9,7 +9,10 @@ import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
 import {Button} from '@base-ui/react/button';
 import {useMediaQuery} from '@mantine/hooks';
-import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2,Scan,RotateCcw,Pause,Play,Info,ExternalLink,ChevronRight} from 'lucide-react';
+import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2,Scan,RotateCcw,Pause,Play,Info,ExternalLink,ChevronRight,Zap,Check} from 'lucide-react';
+import {Menu} from '@base-ui/react/menu';
+import {ModelSelectorRoot,ModelSelectorTrigger,ModelSelectorValue,ModelSelectorContent,ModelSelectorList,ModelSelectorEffort} from './vendor/assistant-ui/model-selector';
+import {validateChatGPTSelection,type ChatGPTModelConfig,type ModelRole,type NativeModelSettings} from '../src/model-config';
 
 type Accessibility='granted'|'not-granted'|'unknown';
 type Screen='not-determined'|'denied'|'granted'|'restricted'|'unknown';
@@ -292,6 +295,62 @@ export function DesktopPermissions(){
 }
 
 
+const nativeRoleNames={main:'Homer',worker:'Worker'};
+const nativeEffortNames:Record<string,string>={none:'无',minimal:'最少',low:'低',medium:'中',high:'高',xhigh:'极高',max:'Max',ultra:'Ultra'};
+const nativeSpeedName=(tier:string|null)=>tier==='ultrafast'?'Ultrafast':tier===null?'标准':'Fast';
+const sameNativeModels=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
+function NativeSpeedControl({name,value,tiers,disabled,onChange}:{name:string;value:string|null;tiers:{id:string;name:string}[];disabled:boolean;onChange:(value:string|null)=>void}){
+ const label=name+' 速度：'+nativeSpeedName(value),fast=tiers.find(tier=>['priority','fast'].includes(tier.id)),ultra=tiers.some(tier=>tier.id==='ultrafast');
+ const icon=value==='ultrafast'?<span className="double-bolt" aria-hidden="true"><Zap size={17}/><Zap size={17}/></span>:<Zap size={19} fill={value?'currentColor':'none'} aria-hidden="true"/>;
+ if(!ultra)return <Button type="button" className="speed-button" data-speed={value??'standard'} aria-label={label} aria-pressed={value!==null} disabled={disabled||!fast} title={disabled?label:!fast?'此模型仅支持标准速度':label+'；点击切换为'+(value?'标准':'Fast（更多用量）')} onClick={()=>onChange(value?null:fast!.id)}>{icon}</Button>;
+ return <Menu.Root>
+  <Menu.Trigger type="button" className="speed-button" data-speed={value??'standard'} aria-label={label} disabled={disabled} title={label+'；选择速度'}>{icon}</Menu.Trigger>
+  <Menu.Portal><Menu.Positioner side="bottom" align="end" sideOffset={6} className="desktop-model-speed-positioner"><Menu.Popup className="desktop-model-speed-menu" aria-label={name+' 速度'}>
+   <Menu.RadioGroup value={value} onValueChange={onChange}>{[null,...tiers.map(tier=>tier.id)].map(tier=><Menu.RadioItem key={tier??'standard'} value={tier} className="desktop-model-speed-item" closeOnClick><span>{nativeSpeedName(tier)}</span><Menu.RadioItemIndicator><Check size={16}/></Menu.RadioItemIndicator></Menu.RadioItem>)}</Menu.RadioGroup>
+  </Menu.Popup></Menu.Positioner></Menu.Portal>
+ </Menu.Root>;
+}
+function DesktopChatGPTModels({connected,unconfirmed,busy,different,apply}:{connected:boolean;unconfirmed:boolean;busy:boolean;different:boolean;apply:(roles:Record<ModelRole,ChatGPTModelConfig>)=>Promise<AccountState|undefined>}){
+ const bridge=window.homerDesktopAccount!;
+ const [settings,setSettings]=useState<NativeModelSettings>(),[draft,setDraft]=useState<Record<ModelRole,ChatGPTModelConfig>>(),[reading,setReading]=useState(true),[retry,setRetry]=useState(0),[notice,setNotice]=useState('');
+ useEffect(()=>{
+  if(!connected)return;
+  let live=true,request=0;
+  async function read(){const id=++request;setReading(true);try{const next=await bridge.nativeModels();if(live&&id===request){setSettings(previous=>({...next,models:next.models??previous?.models}));setDraft(previous=>previous??next.current);}}catch{if(live&&id===request)setSettings(previous=>previous?{...previous,error:'native_models_unconfirmed'}:undefined);}
+   finally{if(live&&id===request)setReading(false);}}
+  void read();const dispose=bridge.onChange(()=>void read());return()=>{live=false;request++;dispose();};
+ },[bridge,retry,connected]);
+ if(!connected&&(!unconfirmed||!draft))return null;
+ const disabled=!connected||busy||reading||!!settings?.error;
+ let valid=false;if(draft&&settings?.models&&!disabled){try{validateChatGPTSelection(draft,settings.models);valid=true;}catch{}}
+ function change(role:ModelRole,patch:Partial<ChatGPTModelConfig>){if(disabled)return;setDraft(current=>current?{...current,[role]:{...current[role],...patch}}:current);setNotice('');}
+ function chooseModel(role:ModelRole,id:string){
+  const model=settings?.models?.find(model=>model.model===id);if(disabled||!model||!draft)return;
+  const previous=draft[role],effort=model.supportedReasoningEfforts.some(option=>option.reasoningEffort===previous.effort)?previous.effort:model.defaultReasoningEffort;
+  const serviceTier=model.serviceTiers.some(tier=>tier.id===previous.serviceTier)?previous.serviceTier:null;
+  change(role,{model:id,effort,serviceTier});if(effort!==previous.effort||serviceTier!==previous.serviceTier)setNotice(nativeRoleNames[role]+'：已按所选模型调整思考深度或速度，请核对后应用。');
+ }
+ if(!draft||!settings)return <div className="desktop-chatgpt-models"><p role="status">{reading?'正在读取模型列表…':'模型列表读取失败。'}</p>{!reading&&<Button onClick={()=>setRetry(value=>value+1)}>重试模型列表</Button>}</div>;
+ const models=(settings.models??[]).map(model=>({id:model.model,name:model.displayName,efforts:model.supportedReasoningEfforts.map(option=>({id:option.reasoningEffort,name:nativeEffortNames[option.reasoningEffort]??option.reasoningEffort}))}));
+ return <div className="desktop-chatgpt-models">
+  {(['main','worker'] as const).map(role=>{
+   const selected=draft[role],model=settings.models?.find(model=>model.model===selected.model);
+   return <section key={role} aria-labelledby={'chatgpt-'+role}>
+    <h3 id={'chatgpt-'+role}>{nativeRoleNames[role]}{sameNativeModels(selected,settings.defaults[role])&&<span>默认</span>}</h3>
+    <div className="desktop-model-controls"><ModelSelectorRoot models={models} value={selected.model} effort={selected.effort} onValueChange={id=>chooseModel(role,id)} onEffortChange={effort=>change(role,{effort})}>
+     <ModelSelectorTrigger aria-label={nativeRoleNames[role]+' 模型'} disabled={disabled}><ModelSelectorValue placeholder={selected.model}/></ModelSelectorTrigger>
+     <ModelSelectorContent searchable={false}><ModelSelectorList/><ModelSelectorEffort label="思考深度"/></ModelSelectorContent>
+    </ModelSelectorRoot><NativeSpeedControl name={nativeRoleNames[role]} value={selected.serviceTier} tiers={model?.serviceTiers??[]} disabled={disabled||!model} onChange={serviceTier=>change(role,{serviceTier})}/></div>
+    {settings.models&&!settings.error&&!reading&&(!model||!(model.supportedReasoningEfforts.length?model.supportedReasoningEfforts.some(option=>option.reasoningEffort===selected.effort):selected.effort===model.defaultReasoningEffort)||selected.serviceTier!==null&&!model.serviceTiers.some(tier=>tier.id===selected.serviceTier))&&<p role="status">{nativeRoleNames[role]} 的当前配置不可用，请重新选择。</p>}
+   </section>;
+  })}
+  {settings.error&&<p role="status">模型列表读取失败，已保留当前选择。<Button disabled={!connected||busy||reading} onClick={()=>setRetry(value=>value+1)}>重试模型列表</Button></p>}
+  <p className="desktop-model-hint">分别配置，重启后生效。闪电调整速度，加速会消耗更多用量。</p>
+  <div className="desktop-permission-actions"><Button type="button" className="primary-button" onClick={()=>{if(valid)void apply(draft).then(result=>{if(!result)setRetry(value=>value+1);});}} disabled={!valid||!different&&sameNativeModels(draft,settings.current)}>应用并重启</Button><Button className="desktop-model-restore" type="button" disabled={!connected||busy||reading||sameNativeModels(draft,settings.defaults)} onClick={()=>{setDraft(settings.defaults);setNotice('已恢复默认选择，应用并重启后生效。');}}>恢复默认</Button></div>
+  {notice&&<p role="status">{notice}</p>}
+ </div>;
+}
+
 export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
  const bridge=window.homerDesktopAccount;
  const {state,busy,notice,run}=useDesktopAccount();
@@ -325,6 +384,7 @@ export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
       {state&&(nativeLabel==='状态未确认'||native?.phase==='unconfirmed'||native?.phase==='cancel_unconfirmed'||notice)&&<Button disabled={busy} onClick={()=>void run('state')}>重新检查 Codex 登录</Button>}
       {onboarding&&!different&&native?.connected&&!state?.nativeError&&<Button className="primary-button" disabled={busy} onClick={()=>void run('restart')}>重启并应用</Button>}
      </div>
+     {!onboarding&&<DesktopChatGPTModels connected={!!native?.connected&&!state?.nativeError} unconfirmed={!native||!!state?.nativeError||native.account==='unknown'} busy={busy} different={different} apply={roles=>run('applyCodex',roles)}/>}
     </>:<>
      {websiteStatus&&<p role="status">{websiteStatus}</p>}
      {state&&!state.configured&&<p role="status">{error('CONFIGURATION_REQUIRED')}</p>}
@@ -347,7 +407,7 @@ export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
     </>}
     {different&&<div className="desktop-account-apply">
      <p>当前使用{state?.source==='codex'?'ChatGPT 套餐':'荷马模型服务'}。停止当前工作后切换，重启后继续原对话。</p>
-     {(viewingCodex?native?.connected&&!state?.nativeError:saved&&!expired&&state?.websiteReady!==false&&!state?.pending)&&<Button className="primary-button" disabled={busy} onClick={()=>void run(viewingCodex?'applyCodex':'applyWebsite')}>应用并重启</Button>}
+     {(viewingCodex?onboarding&&native?.connected&&!state?.nativeError:saved&&!expired&&state?.websiteReady!==false&&!state?.pending)&&<Button className="primary-button" disabled={busy} onClick={()=>void run(viewingCodex?'applyCodex':'applyWebsite')}>应用并重启</Button>}
     </div>}
    </div>
    {onboarding&&<>{sourceEntry}<p className="desktop-account-hint">之后可以在设置中查看账号或切换服务。</p></>}

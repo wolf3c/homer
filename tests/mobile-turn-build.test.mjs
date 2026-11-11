@@ -19,13 +19,14 @@ test('TURN desktop candidate includes the gateway fingerprint owner',async()=>{
 
 test('desktop account grants TURN independently of model source without Codex model credentials',async()=>{
  const {readFileSync}=await import('node:fs'),{runInNewContext}=await import('node:vm');
+ const {chatgptModelConfig}=await import('../src/model-config.ts');
  const DEEPSEEK_KEY_ENV='HOMER_DEEPSEEK_TOKEN';
  const source=readFileSync(new URL('../scripts/desktop-runtime.mjs',import.meta.url),'utf8');
  const begin=source.indexOf(' if(daily&&modelSource==='),end=source.indexOf(' const database=',begin);
  assert.ok(begin>0&&end>begin);
  const config={main:{model:'deepseek-flash'},worker:{model:'deepseek-flash'}};
  for(const modelSource of ['website','codex'])for(const loggedIn of [true,false]){
-  const env={},context={daily:true,modelSource,connection:loggedIn?{token:'synthetic-token',subject:'synthetic-user',config}:null,process:{env},DEEPSEEK_KEY_ENV,manifest:{account:{gatewayOrigin:'https://example.invalid'}},test:true,paths:{root:"/synthetic"},config:{},result:null};
+  const env={},context={chatgptModelConfig,readDesktopChatGPTConfig:()=>undefined,profile:'/synthetic',daily:true,modelSource,connection:loggedIn?{token:'synthetic-token',subject:'synthetic-user',config}:null,process:{env},DEEPSEEK_KEY_ENV,manifest:{account:{gatewayOrigin:'https://example.invalid'}},test:true,paths:{root:"/synthetic"},config:{},result:null};
   runInNewContext(source.slice(begin,end)+';result={mobileTurnAccount,config,connection};',context);
   assert.equal(context.result.mobileTurnAccount?.token,loggedIn?'synthetic-token':undefined);
   assert.equal(env[DEEPSEEK_KEY_ENV],modelSource==='website'&&loggedIn?'synthetic-token':undefined);

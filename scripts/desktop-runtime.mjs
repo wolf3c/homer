@@ -7,7 +7,7 @@ import {PassThrough,Writable} from 'node:stream';
 import {createInterface} from 'node:readline';
 import {userInfo} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
-import {prepareDesktopProfile,acquireDesktopOwner,assertDesktopAdoptionLeasesRecoverable,desktopBoundary,readDesktopModelSource} from './desktop-profile.mjs';
+import {prepareDesktopProfile,acquireDesktopOwner,assertDesktopAdoptionLeasesRecoverable,desktopBoundary,readDesktopModelSource,readDesktopChatGPTConfig} from './desktop-profile.mjs';
 const DEEPSEEK_KEY_ENV='HOMER_DEEPSEEK_TOKEN';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const send=value=>new Promise((accept,reject)=>process.stdout.write(JSON.stringify(value)+'\n',error=>error?reject(error):accept()));
@@ -70,7 +70,7 @@ try{
    if(!existsSync(fake)||realpathSync(fake)!==fake||JSON.parse(readFileSync(join(profile,'.homer-desktop-test-profile'),'utf8')).format!==1)throw Error('desktop_test_fixture_required');
    codexBin=fake;
  }
- const {PRODUCT_MODEL_DEFAULTS}=await import(pathToFileURL(join(homer,'dist/model-config.js')).href);
+ const {PRODUCT_MODEL_DEFAULTS,chatgptModelConfig}=await import(pathToFileURL(join(homer,'dist/model-config.js')).href);
  const resourceIdentity={bundleRoot:bundle,manifestSha256:sha(manifestBytes)};
  let config={appData:profile,nativeCodexHome:paths.codexHome,workspace:paths.workspace,runtime:paths.runtime,codexHome:paths.codexHome,codexBin,model:PRODUCT_MODEL_DEFAULTS.model,requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:resourceIdentity};
  if(paths.adoption){
@@ -88,6 +88,7 @@ try{
    config={...config,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopConnection:modelSource==='website'&&connection?.token?connection.config:undefined};connection=undefined;
  }
  if(modelSource)config={...config,desktopModelSource:modelSource,pauseOldDesktopWork:true};
+ if(modelSource==='codex')config={...config,chatgpt:chatgptModelConfig(readDesktopChatGPTConfig(profile))};
  const database=join(paths.runtime,'homer.sqlite');let thread;
  if(existsSync(database)){
    const db=new DatabaseSync(database,{readOnly:true});
@@ -136,7 +137,7 @@ try{
   try{const value=JSON.parse(line);
    if(value.kind==='quit')quit();
    else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
-   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','channel-state'].includes(value.action)){
+   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','channel-state'].includes(value.action)){
     void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action)});}catch{await send({kind:'native_account_result',id:value.id,error:'native_account_unconfirmed'});}})();
    }
   }catch{}

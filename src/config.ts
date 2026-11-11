@@ -3,7 +3,7 @@ import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { canonicalDir, inside } from "./files.js";
-import { PRODUCT_MODEL_DEFAULTS, type ReasoningEffort } from "./model-config.js";
+import { PRODUCT_MODEL_DEFAULTS, chatgptModelConfig, type ChatGPTModelOverrides, type ReasoningEffort } from "./model-config.js";
 import {deepseekProfile,validateDeepSeekTuning,type DeepSeekTuning} from './deepseek-model.js';
 import {validateExecutionLimits,type ExecutionLimits} from './execution-limits.js';
 export type Config = {
@@ -14,6 +14,7 @@ export type Config = {
   dailyDeepSeek?: boolean;
   desktopModelSource?: 'codex'|'website';
   desktopConnection?: import('./homer-account.js').HomerRuntimeConfig;
+  chatgpt?:ChatGPTModelOverrides;
   desktopAdopted?: boolean;
   pauseOldDesktopWork?: boolean;
   appData?: string;
@@ -26,6 +27,7 @@ export type Config = {
   // Explicit shared override; absence lets each execution role use its default.
   effort?: ReasoningEffort|null;
   fast?: boolean;
+  serviceTier?:string|null;
   deepseek?: DeepSeekTuning;
   // Provider-neutral context delivered by the trusted desktop connection.
   context?: import('./model-context.js').ContextTuning;
@@ -112,7 +114,8 @@ export function effectiveModelConfig(config:Config,role:"main"|"worker"="main"):
   validateExecutionLimits(config.executionLimits);
   if(config.desktopModelSource==='codex'){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('desktop_model_source_scope_invalid');
-    return {...config,dailyDeepSeek:false,desktopConnection:undefined,context:undefined,capabilities:undefined,model:'gpt-6.1-terra',effort:role==='main'?'high':'xhigh',fast:role==='main',baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true};
+    const selected=chatgptModelConfig(config.chatgpt)[role];
+    return {...config,dailyDeepSeek:false,desktopConnection:undefined,context:undefined,capabilities:undefined,...selected,fast:selected.serviceTier!==null,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true};
   }
   if(config.dailyDeepSeek){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('daily_deepseek_desktop_required');

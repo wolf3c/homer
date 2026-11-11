@@ -32,7 +32,7 @@ const primitives={
  '@base-ui/react/dialog':{Dialog},'@base-ui/react/tabs':{Tabs},'@base-ui/react/button':{Button},'@base-ui/react/popover':{Popover},
 };
 function load(){
- const result=buildSync({entryPoints:['ui/desktop-permissions.tsx'],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',loader:{'.png':'dataurl','.svg':'dataurl'},define:{'import.meta.env.BASE_URL':JSON.stringify(uiBase)},external:['react','react/jsx-runtime',...Object.keys(primitives)],logLevel:'silent'});
+ const result=buildSync({entryPoints:['ui/desktop-permissions.tsx'],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',loader:{'.png':'dataurl','.svg':'dataurl','.css':'empty'},define:{'import.meta.env.BASE_URL':JSON.stringify(uiBase)},external:['react','react/jsx-runtime',...Object.keys(primitives)],logLevel:'silent'});
  const m={exports:{}};Function('require','module','exports',result.outputFiles[0].text)(name=>primitives[name]??require(name),m,m.exports);return m.exports;
 }
 let components;
@@ -242,8 +242,8 @@ test('a capture permission request opens the permission tab with instructions an
  assert.deepEqual(b.calls,[['check'],['open','screen']]);
 }));
 test('native source uses existing account actions and requires an explicit apply',async()=>withDom(async d=>{
- const calls=[];let changed,current={supported:true,configured:false,source:'website',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'none',connected:false,phase:'idle',pending:false}};
- window.homerDesktopAccount={state:async()=>current,onChange:fn=>{changed=fn;return()=>{};},nativeConnect:async()=>{calls.push('nativeConnect');return current={...current,native:{account:'none',connected:false,phase:'waiting',pending:true,canReopen:true}};},nativeCancel:async()=>{calls.push('nativeCancel');return current={...current,native:{account:'none',connected:false,phase:'cancelled',pending:false}};},applyCodex:async()=>{calls.push('applyCodex');return current;}};
+ const calls=[],listeners=new Set();let changed=()=>{for(const listener of listeners)listener();},current={supported:true,configured:false,source:'website',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'none',connected:false,phase:'idle',pending:false}};
+ window.homerDesktopAccount={state:async()=>current,onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeConnect:async()=>{calls.push('nativeConnect');return current={...current,native:{account:'none',connected:false,phase:'waiting',pending:true,canReopen:true}};},nativeCancel:async()=>{calls.push('nativeCancel');return current={...current,native:{account:'none',connected:false,phase:'cancelled',pending:false}};},nativeModels:async()=>nativeSettings(),applyCodex:async()=>{calls.push('applyCodex');return current;}};
  await d.render(React.createElement(get().DesktopAccount));
  await d.click(button(d,'改用 ChatGPT 套餐'));assert.deepEqual(calls,[]);
  await d.click(button(d,'通过 Codex 登录'));assert.deepEqual(calls,['nativeConnect']);assert.ok(button(d,'取消 Codex 登录'));await d.click(button(d,'取消 Codex 登录'));
@@ -406,7 +406,7 @@ test('quota account action opens the existing settings dialog on its account tab
 
 test('single source account page keeps purchase and logout scoped to Homer and never applies while browsing',async()=>withDom(async d=>{
  const calls=[];const current={supported:true,configured:true,source:'website',connection:'website',active:'website',pending:false,needsRestart:false,stale:false,wallet:{available:0,used:25,unit:'积分'},native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
- window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},openWebsite:async()=>{calls.push('openWebsite');return current;},disconnect:async()=>{calls.push('disconnect');return current;},applyCodex:async()=>{calls.push('applyCodex');return current;}};
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},openWebsite:async()=>{calls.push('openWebsite');return current;},disconnect:async()=>{calls.push('disconnect');return current;},nativeModels:async()=>nativeSettings(),applyCodex:async()=>{calls.push('applyCodex');return current;}};
  await d.render(React.createElement(get().DesktopAccount));
  assert.ok(button(d,'改用 ChatGPT 套餐'));assert.ok(button(d,'购买积分'));assert.ok(button(d,'退出登录'));
  assert.doesNotMatch(d.container.textContent,/已用|已登录|当前使用|账号与额度/);assert.match(d.container.textContent,/0 积分/);
@@ -636,4 +636,59 @@ test('quota balance preserves the native currency rather than labeling it as poi
  window.homerDesktopAccount={state:async()=>({...firstAccount,active:'website',connection:'website',stale:false,wallet:{available:1,used:0,unit:'CNY'}}),onChange:()=>()=>{}};
  await d.render(React.createElement(get().ModelFailureNotice,{failure:{messageId:'currency-quota',code:'engine_quota_insufficient',source:'website'}}));
  assert.match(d.container.textContent,/剩余额度：1 CNY/);assert.doesNotMatch(d.container.textContent,/剩余积分：1/);
+}));
+
+const nativeSettings=()=>({current:{main:{model:'gpt-6.1-terra',effort:'high',serviceTier:'priority'},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}},defaults:{main:{model:'gpt-6.1-terra',effort:'high',serviceTier:'priority'},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}},models:[{model:'gpt-6.1-terra',displayName:'GPT-6.1 Terra',defaultReasoningEffort:'high',supportedReasoningEfforts:['low','medium','high','xhigh'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:[{id:'priority',name:'Fast'}]}]});
+test('ChatGPT settings keep independent role drafts and submit both roles through one apply action',async()=>withDom(async d=>{
+ const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
+ const calls=[];window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},nativeModels:async()=>nativeSettings(),applyCodex:async roles=>{calls.push(roles);return current;}};
+ await d.render(React.createElement(get().DesktopAccount));
+ assert.ok(button(d,'Homer 速度：Fast'));assert.ok(button(d,'Worker 速度：标准'));assert.equal(button(d,'应用并重启').getAttribute('disabled'),'');
+ await d.click(button(d,'Homer 速度：Fast'));assert.equal(button(d,'应用并重启').getAttribute('disabled'),null);assert.ok(button(d,'Worker 速度：标准'));
+ await d.click(button(d,'应用并重启'));
+ assert.deepEqual(calls,[{main:{model:'gpt-6.1-terra',effort:'high',serviceTier:null},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}}]);
+ await d.click(button(d,'恢复默认'));assert.ok(button(d,'Homer 速度：Fast'));assert.equal(calls.length,1);
+}));
+test('ChatGPT catalog errors preserve unavailable saved model values through retry',async()=>withDom(async d=>{
+ const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
+ let failed=true;const settings=nativeSettings();settings.current.main.model='saved-unavailable';
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},nativeModels:async()=>({...settings,...(failed?{models:undefined,error:'native_models_unconfirmed'}:{})}),applyCodex:async()=>current};
+ await d.render(React.createElement(get().DesktopAccount));assert.match(d.container.textContent,/saved-unavailable/);assert.ok(button(d,'重试模型列表'));assert.equal(button(d,'应用并重启').getAttribute('disabled'),'');assert.equal(button(d,'Homer 速度：Fast').getAttribute('title'),'Homer 速度：Fast');
+ failed=false;await d.click(button(d,'重试模型列表'));assert.match(d.container.textContent,/saved-unavailable/);assert.match(d.container.textContent,/不可用/);assert.equal(button(d,'应用并重启').getAttribute('disabled'),'');
+}));
+test('ChatGPT account refresh and catalog retry preserve edited role drafts',async()=>withDom(async d=>{
+ const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
+ const listeners=new Set();let failed=false;
+ window.homerDesktopAccount={state:async()=>current,onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeModels:async()=>({...nativeSettings(),...(failed?{models:undefined,error:'native_models_unconfirmed'}:{})}),applyCodex:async()=>current};
+ await d.render(React.createElement(get().DesktopAccount));await d.click(button(d,'Homer 速度：Fast'));
+ failed=true;await act(async()=>{for(const fn of listeners)fn();});
+ assert.ok(button(d,'Homer 速度：标准'));assert.equal(button(d,'应用并重启').getAttribute('disabled'),'');assert.ok(button(d,'Worker 速度：标准'));
+ failed=false;await d.click(button(d,'重试模型列表'));
+ assert.ok(button(d,'Homer 速度：标准'));assert.equal(button(d,'应用并重启').getAttribute('disabled'),null);
+}));
+test('ChatGPT marks a saved effort unavailable when the catalog omits it from adjustable choices',async()=>withDom(async d=>{
+ const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
+ const settings=nativeSettings();settings.models[0].supportedReasoningEfforts=[{reasoningEffort:'low'}];
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},nativeModels:async()=>settings};
+ await d.render(React.createElement(get().DesktopAccount));
+ assert.match(d.container.textContent,/Homer 的当前配置不可用/);assert.equal(button(d,'应用并重启').getAttribute('disabled'),'');
+}));
+test('ChatGPT failed apply reloads changed permissions once and preserves both role drafts',async()=>withDom(async d=>{
+ const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
+ let changed=false,reads=0;
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},nativeModels:async()=>{reads++;const settings=nativeSettings();if(changed)settings.models[0].serviceTiers=[];return settings;},applyCodex:async()=>{changed=true;throw Error('chatgpt_model_selection_unavailable');}};
+ await d.render(React.createElement(get().DesktopAccount));await d.click(button(d,'Worker 速度：标准'));
+ await d.click(button(d,'应用并重启'));
+ assert.equal(reads,2);assert.ok(button(d,'Worker 速度：Fast'));assert.ok(button(d,'Homer 速度：Fast'));
+ assert.match(d.container.textContent,/Worker 的当前配置不可用/);assert.equal(button(d,'应用并重启').getAttribute('disabled'),'');
+}));
+test('ChatGPT transient account uncertainty disables controls and retains drafts through login recheck',async()=>withDom(async d=>{
+ const connected={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
+ const listeners=new Set();let current=connected;
+ window.homerDesktopAccount={state:async()=>current,onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeModels:async()=>nativeSettings()};
+ await d.render(React.createElement(get().DesktopAccount));await d.click(button(d,'Homer 速度：Fast'));
+ current={...connected,native:undefined,nativeError:'Codex 登录状态未能确认，请重试。'};await act(async()=>{for(const fn of listeners)fn();});
+ assert.equal(button(d,'Homer 速度：标准')?.getAttribute('disabled'),'');assert.equal(button(d,'恢复默认')?.getAttribute('disabled'),'');
+ current=connected;await d.click(button(d,'重新检查 Codex 登录'));
+ assert.ok(button(d,'Homer 速度：标准'));assert.equal(button(d,'应用并重启').getAttribute('disabled'),null);
 }));
