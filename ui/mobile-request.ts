@@ -1,10 +1,9 @@
 import {webChatPost} from '../src/web-contract.js';
 import {mobileCall} from './mobile-connection.js';
 export async function mobileFetch(request:Request):Promise<Response>{
- const path=new URL(request.url).pathname,post=request.method==='POST'?webChatPost(path):undefined;
+ const {pathname:path,search,searchParams}=new URL(request.url),post=request.method==='POST'?webChatPost(path):undefined;
  try{
   request.signal.throwIfAborted();
-  if(new URL(request.url).search)throw Error('query_not_supported');
   let op:string,input:unknown={},status=200,binary=false;
   if(post){op=post.op;status=post.status;binary=op==='media.preview';const value=await request.json();input=post.id?{id:post.id,input:value}:value;}
   else if(request.method==='POST'&&path==='/api/uploads'){
@@ -18,10 +17,13 @@ export async function mobileFetch(request:Request):Promise<Response>{
    else if((match=path.match(/^\/api\/tasks\/([\w:-]+)\/execution\/([\w:-]+)(?:\/(before|calls)\/([A-Za-z0-9_-]+))?$/))){op=match[3]==='calls'?'tasks.call':'tasks.execution';input={taskId:match[1],runId:match[2],...(match[3]==='calls'?{callKey:match[4]}:{before:match[4]})};}
    else if((match=path.match(/^\/api\/tasks\/([\w:-]+)\/workers\/([\w:-]+)(?:\/(?:after\/(\d+)|messages\/([\w:-]+)\/(\d+)))?$/))){op='tasks.detail';input={id:match[1],workerId:match[2],...(match[3]!==undefined?{after:Number(match[3])}:{}),...(match[4]!==undefined?{messageId:match[4],offset:Number(match[5])}:{})};}
    else if((match=path.match(/^\/api\/tasks\/([\w:-]+)(?:\/(summary|progress|origin)(?:\/([\w:-]+))?)?$/))){op='tasks.'+(match[2]??'detail');input={id:match[1],messageId:match[3]};}
-   else if((match=path.match(/^\/api\/media\/([\w:-]+)\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})$/))){op='media.read';input={messageId:match[1],assetId:match[2],revision:Number(match[3])};binary=true;}
-   else if((match=path.match(/^\/api\/files\/((?:run|result)-[\w-]+)(\/origin)?$/))){op=match[2]?'files.origin':'files.read';input={id:match[1]};binary=!match[2];}
+   else if((match=path.match(/^\/api\/media\/([\w:-]+)\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})(\/origin)?$/))){op=match[4]?'media.origin':'media.read';input={messageId:match[1],assetId:match[2],revision:Number(match[3])};binary=!match[4];}
    else throw Error('route_not_found');
   }else throw Error('route_not_found');
+  if(search){
+   if(op!=='media.read'||searchParams.size!==1||searchParams.get('preview')!=='voice')throw Error('query_not_supported');
+   input={...input as object,preview:'voice'};
+  }
   request.signal.throwIfAborted();
   let cancelled:()=>void=()=>{};
   const value=await new Promise<any>((resolve,reject)=>{

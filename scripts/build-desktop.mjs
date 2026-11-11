@@ -53,10 +53,11 @@ cpSync(join(stage,'src/media-documents.py'),join(stage,'dist/media-documents.py'
 run(process.execPath,[join(stage,'scripts/build-preview-annotation.mjs')]);
 const uiHash=digest(sources.filter(x=>x.path.replaceAll('\\','/').startsWith('ui/')||x.path.replaceAll('\\','/').startsWith('assets/branding/')));
 run(process.execPath,[join(modules,'vite/bin/vite.js'),'build','--configLoader','runner','--base',`/ui/${uiHash}/`,'--config',join(stage,'ui/vite.config.ts')],join(stage,'ui'));
+run(process.execPath,[join(modules,'vite/bin/vite.js'),'build','--config',join(stage,'ui/capture-panel-vite.config.mjs')],join(stage,'ui'));
 const dependencies=prepareDependencies(scratch,option('--archive-source')?{archiveSource:resolve(option('--archive-source'))}:undefined);
 const homer=join(payload,'homer');
-for(const part of ['dist','prompts','assets','package.json','package-lock.json','.codex/skills'])cpSync(join(stage,part),join(homer,part),{recursive:true});
-for(const name of ['dev.mjs','dev-build.mjs','trusted-build.mjs','pinned-build.mjs','dev-ingress.mjs','desktop-runtime.mjs','desktop-profile.mjs','windows-security.mjs']){mkdirSync(join(homer,'scripts'),{recursive:true});cpSync(join(stage,'scripts',name),join(homer,'scripts',name));}
+for(const part of ['dist','prompts','assets','package.json','package-lock.json','.codex/skills'])cpSync(join(stage,part),join(homer,part),{recursive:true,filter:path=>path!==join(stage,'dist/update-review-page.js')});
+for(const name of ['dev.mjs','trusted-build.mjs','pinned-build.mjs','dev-ingress.mjs','desktop-runtime.mjs','desktop-profile.mjs','windows-security.mjs']){mkdirSync(join(homer,'scripts'),{recursive:true});cpSync(join(stage,'scripts',name),join(homer,'scripts',name));}
 const {dependencyIdentity,pinnedInventory}=await import(pathToFileURL(join(stage,'scripts/pinned-build.mjs')).href);
 let dependencyRoot=stage;
 if(windows){dependencyRoot=join(scratch,'windows-dependencies');mkdirSync(dependencyRoot);const product=JSON.parse(readFileSync(join(stage,'package.json')));product.dependencies.sharp=product.devDependencies.sharp;writeFileSync(join(dependencyRoot,'package.json'),JSON.stringify(product));cpSync(join(stage,'package-lock.json'),join(dependencyRoot,'package-lock.json'));symlinkSync(modules,join(dependencyRoot,'node_modules'),'junction');cpSync(join(dependencyRoot,'package.json'),join(homer,'package.json'));}
@@ -71,28 +72,42 @@ cpSync(join(dependencies.node,windows?'node.exe':'bin/node'),join(payload,window
 if(distribution&&!windows)execFileSync('/usr/bin/codesign',['--force','--sign',distribution.identity,'--timestamp=http://timestamp.apple.com/ts01','--options','runtime','--entitlements',join(stage,'packaging/electron/node-entitlements.plist'),join(payload,'node')],{stdio:'inherit'});
 mkdirSync(join(payload,'runtime'),{recursive:true});mkdirSync(join(payload,'licenses'),{recursive:true});
 cpSync(dependencies.codex,join(payload,'runtime/codex'),{recursive:true});cpSync(dependencies.cli,join(payload,'runtime/codex-cli'),{recursive:true});
+if(dependencies.cua){
+ if(!windows)execFileSync('/usr/bin/codesign',['--verify','--strict',join(dependencies.cua,'cua-driver')],{stdio:'inherit'});
+ cpSync(dependencies.cua,join(payload,'runtime/cua'),{recursive:true});
+ if(windows){
+  const framework=join(process.env.SystemRoot,'Microsoft.NET/Framework64/v4.0.30319');
+  run(join(framework,'csc.exe'),['/nologo','/target:winexe','/platform:x64','/optimize+',
+   ...['System.Web.Extensions.dll','WPF/WindowsBase.dll','WPF/UIAutomationClient.dll','WPF/UIAutomationTypes.dll'].map(file=>'/reference:'+join(framework,file)),
+   '/out:'+join(payload,'runtime/cua/homer-cua-windows.exe'),join(stage,'packaging/windows/CuaWindows.cs')]);
+ }else run('/usr/bin/xcrun',['swiftc','-O','-target','arm64-apple-macos'+minimumMacOS,'-module-cache-path',join(scratch,'native-build/module-cache'),join(stage,'packaging/macos/ChromeViewport.swift'),'-o',join(payload,'runtime/cua/chrome-viewport')]);
+}
 for(const [source,name]of [[join(dependencies.node,'LICENSE'),'Node-LICENSE'],[join(scratch,'codex-LICENSE'),'Codex-LICENSE'],[join(scratch,'codex-NOTICE'),'Codex-NOTICE']])cpSync(source,join(payload,'licenses',name));
 cpSync(join(modules,'electron/LICENSE'),join(payload,'licenses/Electron-LICENSE'));
 cpSync(join(modules,'electron/dist/LICENSES.chromium.html'),join(payload,'licenses/Chromium-LICENSES.html'));
 if(windows){
  cpSync(join(stage,'packaging/windows/image-decoder.mjs'),join(payload,'homer-image-decoder.mjs'));
 }else{
-run('/usr/bin/xcrun',['swiftc','-O','-target',`${arch==='arm64'?'arm64':'x86_64'}-apple-macos${minimumMacOS}`,'-module-cache-path',join(scratch,'native-build/module-cache'),join(stage,'packaging/macos/ImageDecoder.swift'),'-o',join(payload,'homer-image-decoder')]);
-execFileSync('/usr/bin/codesign',['--force','--sign',distribution?.identity??'-',...(distribution?['--timestamp=http://timestamp.apple.com/ts01','--options','runtime']:[]),join(payload,'homer-image-decoder')],{stdio:'inherit'});
+ for(const [name,source] of [['homer-image-decoder','ImageDecoder.swift'],['homer-window-capture','WindowCapture.swift']]){
+  const executable=join(payload,name);
+  run('/usr/bin/xcrun',['swiftc','-O',...(name==='homer-window-capture'?['-parse-as-library']:[]),'-target',`${arch==='arm64'?'arm64':'x86_64'}-apple-macos${minimumMacOS}`,'-module-cache-path',join(scratch,'native-build/module-cache'),join(stage,'packaging/macos',source),'-o',executable]);
+  execFileSync('/usr/bin/codesign',['--force','--sign',distribution?.identity??'-',...(distribution?['--timestamp=http://timestamp.apple.com/ts01','--options','runtime']:[]),executable],{stdio:'inherit'});
+ }
 }
 const vendor=join(payload,'runtime/codex/vendor',dependencies.vendor),voice=JSON.parse(readFileSync(join(vendor,'codex-resources/voice/manifest.json')));
 for(const [path,sha]of Object.entries(voice.sha256))if(hash(readFileSync(join(vendor,path)))!==sha)throw Error('desktop_codex_original_manifest_changed');
 const files=pinnedInventory(homer),sourceHash=digest({sources,provenance}),manifest=digest(files);
 writeFileSync(join(homer,'build-manifest.json'),JSON.stringify({sourceHash,manifest,files})+'\n');
 const {schemaHash,sourceSnapshot}=await import(pathToFileURL(join(stage,'scripts/dev-build.mjs')).href);
-const {MAIN_TOOLS}=await import(pathToFileURL(join(homer,'dist/tools.js')).href);
+const {MAIN_TOOLS_HASH}=await import(pathToFileURL(join(homer,'dist/recursive-tools.js')).href);
 const product=JSON.parse(readFileSync(join(stage,'package.json'))),electron=product.devDependencies.electron;
 const build=distribution?.build??Number(execFileSync(git,['rev-list','--count',sourceSha],{cwd:root,encoding:'utf8'}));
 const {validateHomerOrigins}=await import(pathToFileURL(join(homer,'dist/homer-account.js')).href);
 const account=validateHomerOrigins({websiteOrigin,gatewayOrigin},provenance.preparation);
-const metadata={account,arch,minimumMacOS,...(windows?{platform:'win32'}:{}),...(distribution?{appId:'app.homer.desktop',releaseChannel:'stable'}:{}),...(provenance.localWorkingTree?{localWorkingTree:true}:{}),format:2,version:product.version,build,gitSha:sourceSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash,schema:schemaHash(sourceSnapshot(stage)),toolsHash:hash(JSON.stringify(MAIN_TOOLS)),node:'22.22.0',codex:'0.163.0',electron};
+const metadata={account,arch,minimumMacOS,...(windows?{platform:'win32'}:{}),...(distribution?{appId:'app.homer.desktop',releaseChannel:'stable'}:{}),...(provenance.localWorkingTree?{localWorkingTree:true}:{}),format:2,version:product.version,build,gitSha:sourceSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash,schema:schemaHash(sourceSnapshot(stage)),toolsHash:MAIN_TOOLS_HASH,node:'22.22.0',codex:'0.163.0',electron};
 cpSync(join(stage,'packaging/electron/main.mjs'),join(shell,'main.mjs'));
 cpSync(join(stage,'packaging/electron/preload.cjs'),join(shell,'preload.cjs'));
+cpSync(join(stage,'packaging/electron/capture-panel-preload.cjs'),join(shell,'capture-panel-preload.cjs'));
 writeFileSync(join(shell,'package.json'),JSON.stringify({...(windows?{dependencies:{'electron-updater':product.devDependencies['electron-updater'],'js-yaml':product.devDependencies['js-yaml']}}:{}),name:'homer-desktop',author:'Homer',version:product.version,private:true,type:'module',main:'main.mjs',devDependencies:{electron}})+'\n');
 const {createDesktopIcon}=await import(pathToFileURL(join(stage,'scripts/desktop-icon.mjs')).href);
 const icon=windows?undefined:createDesktopIcon({source:join(stage,'assets/branding/odysseus-20261030/homer-odysseus-1024.png'),directory:join(scratch,'icons'),run});

@@ -3,12 +3,9 @@ import {join,resolve,basename} from 'node:path';
 import {capabilityHome,usesHomerNativeHome,type Config} from './config.js';
 import {fileURLToPath} from 'node:url';
 
-export const FIRST_LAUNCH_TEXT='首次启动自动发起：请使用 $homer-initialize 完成首次初始化，按需调用工具管理 Skill。';
-export const FIRST_LAUNCH_SKILLS=['homer-initialize','homer-tool-management','homer-feedback'] as const;
-export const BUNDLED_SKILLS=[...FIRST_LAUNCH_SKILLS,'homer-archive-review'] as const;
-// Automatic startup belongs to the product's single app-data instance.
-// Custom runtimes sharing a HOME opt in through an ordinary user request.
-export function automaticFirstLaunch(config:Config){
+const BUNDLED_SKILLS=['homer-tool-management','homer-feedback','homer-archive-review'] as const;
+// Only the default app-data instance owns first-launch Skill distribution.
+export function shouldSeedFirstLaunchSkills(config:Config){
  return !!config.appData&&usesHomerNativeHome(config)&&resolve(config.runtime)===join(resolve(config.appData),'runtime')&&resolve(capabilityHome(config))===join(resolve(config.appData),'codex');
 }
 // Only called for a newly created Homer main conversation. Existing instances,

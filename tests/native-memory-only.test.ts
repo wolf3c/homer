@@ -7,7 +7,6 @@ import {Homer} from '../src/service.js';
 import {HOST_MCP_TOOLS,WORKER_HOST_MCP_TOOLS} from '../src/worker-interaction-mcp.js';
 import {MAIN_TOOLS} from '../src/tools.js';
 import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
-import {PENDING_TOOLS} from '../src/pending-tools.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {createWebServer,fetch} from './web-connected-fixture.js';
 import type {EngineOptions,ToolCall} from '../src/engine.js';
@@ -17,10 +16,10 @@ test('Homer tool catalogs expose no host memory backend',()=>{
     assert.deepEqual(catalog.filter(tool=>tool.name.startsWith('memory_')||tool.name==='suggest_memory'),[]);
 });
 
-for(const native of [true,false])test(`${native?'native':'restricted'} service receives and resumes user work without host memory tables or injected snapshots`,async()=>{
+test('native service receives and resumes user work without host memory tables or injected snapshots',async()=>{
   const scratch=resolve('.codex/scratch/legacy-memory-retirement-20261022/runtime');
   mkdirSync(scratch,{recursive:true});const dir=mkdtempSync(join(scratch,'service-'));
-  const config={appData:dir,codexHome:join(dir,'codex'),nativeCodexHome:join(dir,native?'codex':'dedicated-codex'),codexBin:'/usr/bin/false',runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
+  const config={appData:dir,codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
   mkdirSync(config.runtime);mkdirSync(config.workspace);mkdirSync(config.codexHome);
   const starts:EngineOptions[]=[],inputs:string[]=[];
   class Peer extends EventEmitter{
@@ -36,16 +35,18 @@ for(const native of [true,false])test(`${native?'native':'restricted'} service r
     async close(){return true;}
   }
   const factory=(options:EngineOptions,handle:(call:ToolCall)=>Promise<unknown>)=>{starts.push(options);return new Peer(handle);};
+  assert.throws(()=>new Homer({...config,nativeCodexHome:join(dir,'legacy-home')},async()=>{},factory),/engine_native_tools_home_required/);
+  assert.equal(starts.length,0);
   let app=new Homer(config,async()=>{},factory);
   const assertNoHostMemory=()=>assert.deepEqual(app.store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'memory_*'").all(),[]);
   try{
-    await app.start();assertNoHostMemory();assert.equal(starts[0]?.nativeCapabilities,native);
+    await app.start();assertNoHostMemory();
     assert.equal(await app.message('请记住：以后使用中文。','synthetic-native-only-first'),'Synthetic answer');
     assertNoHostMemory();const thread=app.store.meta('mainThread'),toolsHash=app.store.meta('mainToolsHash');
     await app.close();app=new Homer(config,async()=>{},factory);await app.start();
     assert.equal(app.store.meta('mainThread'),thread);assert.equal(app.store.meta('mainToolsHash'),toolsHash);
     assert.equal(starts.at(-1)?.threadId,thread);
-    for(const options of starts)assert.deepEqual(options.tools,[...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS]);
+    for(const options of starts)assert.deepEqual(options.tools,[...MAIN_TOOLS,...RECURSIVE_TOOLS]);
     assert.equal(await app.message('继续解释当前工作。','synthetic-native-only-next'),'Synthetic answer');
     assertNoHostMemory();assert.ok(inputs.every(text=>!text.includes('宿主记忆数据')&&!text.includes('memorySnapshot')));
     assert.equal(app.history.inputs(thread!,['synthetic-native-only-first']).get('synthetic-native-only-first')?.text,'请记住：以后使用中文。');

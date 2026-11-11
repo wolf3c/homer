@@ -8,19 +8,18 @@ import {Homer,type Message} from '../src/service.js';
 import type {EngineLike,EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
 import {MAIN_TOOLS} from '../src/tools.js';
 import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
-import {PENDING_TOOLS} from '../src/pending-tools.js';
 import {historyFixture} from './web-history-loading-fixture.js';
 
 export async function recoveryFixture(count=1){
  const scratch=resolve('.codex/scratch/history-recovery-tests');mkdirSync(scratch,{recursive:true});
  const dir=mkdtempSync(join(scratch,'case-')),runtime=join(dir,'runtime'),workspace=join(dir,'workspace');mkdirSync(runtime);mkdirSync(workspace);
- const config={runtime,workspace,codexHome:join(dir,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
+ const config={runtime,workspace,codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
  const f=historyFixture(0,160,false,join(runtime,'homer.sqlite')),agentId=f.store.meta('mainAgentId')!,threadId='synthetic-history';
- f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS])).digest('hex'));
+ f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex'));
  const originals:{id:string;seq:number;taskId:string;workerId:string;runId:string}[]=[];
  for(let n=0;n<count;n++){
   const requestId='source-'+n;f.inputs.accept({requestId,text:'Synthetic original authority'});const source=f.inputs.claim()!;f.inputs.finish(source.messageId,source.revision,'completed');
-  const actor={agentId,threadId,sourceRequestId:requestId},task=f.tasks.createTask(actor,{operationId:'task-'+n,goal:'Synthetic old work',authority:{sourceRequestId:requestId,description:'Synthetic only',materials:[],resultIds:[]}});
+  const actor={agentId,threadId,sourceRequestId:requestId},task=f.tasks.createTask(actor,{operationId:'task-'+n,goal:'Synthetic old work',authority:{sourceRequestId:requestId,description:'Synthetic only'}});
   const worker=f.tasks.workerOpen(actor,{operationId:'open-'+n,taskId:task.taskId,text:'Synthetic original input'}),run=f.tasks.claim(worker.runId)!;f.tasks.bind(run.id,run.epoch,'worker-thread-'+n,'worker-turn-'+n);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic original result '+n},true);
   const claimed=f.inputs.claim([],'all')!;assert.equal(claimed.origin,'worker');
@@ -54,6 +53,6 @@ export async function recoveryFixture(count=1){
  const open=async()=>{app=new Homer(paused,async message=>{messages.push(message);},(options,handler)=>new Peer(options,handler));await app.start();};
  try{await open();}catch(error){rmSync(dir,{recursive:true,force:true});throw error;}
  return {get app(){return app;},originals,turns,messages,calls,set behavior(value:typeof behavior){behavior=value;},set beforeRecovery(value:typeof beforeRecovery){beforeRecovery=value;},
-  async submit(requestId='new-user',source?:'first_launch'){app.submitMessage({requestId,text:'Handle my current request'},source?{source,persist(){}}:undefined);await app.idle();},
+  async submit(requestId='new-user'){app.submitMessage({requestId,text:'Handle my current request'});await app.idle();},
   async reopen(){await app.close();await open();},async close(){behavior='inspect';await app.close();rmSync(dir,{recursive:true,force:true});}};
 }

@@ -13,8 +13,10 @@ import {withDom} from './helpers/process-dom.mjs';
 // Reuse the existing React DOM harness. Base UI's portal/focus engine needs a
 // browser: these adapters exercise our controlled props and actions, not that engine.
 const require=createRequire(import.meta.url),focusProps=[];
+const uiBase='/ui/'+'a'.repeat(64)+'/';
 const dialogContext=React.createContext(null);
 const pass=tag=>React.forwardRef(({children,...props},ref)=>React.createElement(tag,{...props,ref},children));
+const Button=React.forwardRef(({focusableWhenDisabled:_focusable,...props},ref)=>React.createElement('button',{...props,ref}));
 const Dialog={
  Root:({open,onOpenChange,children})=>React.createElement(dialogContext.Provider,{value:{open,onOpenChange}},children),
  Trigger:React.forwardRef(({children,...props},ref)=>{const c=React.useContext(dialogContext);return React.createElement('button',{...props,ref,'aria-haspopup':'dialog','aria-expanded':c.open,onClick:()=>c.onOpenChange(true,{cancel(){}})},children);}),
@@ -25,9 +27,13 @@ const Dialog={
 };
 const tabsContext=React.createContext(null);
 const Tabs={Root:({value,onValueChange,orientation:_orientation,children,...props})=>React.createElement(tabsContext.Provider,{value:{value,onValueChange}},React.createElement('div',props,children)),List:({activateOnFocus:_activateOnFocus,...props})=>React.createElement('nav',props),Tab:({value,...props})=>{const c=React.useContext(tabsContext);return React.createElement('button',{...props,'data-value':value,role:'tab','aria-selected':c.value===value,onClick:()=>c.onValueChange?.(value)});},Panel:({value,...props})=>React.useContext(tabsContext).value===value?React.createElement('div',{...props,'data-value':value,role:'tabpanel'}):null};
+const Popover={Root:({children})=>children,Trigger:pass('button'),Portal:()=>null,Positioner:pass('div'),Popup:pass('div'),Title:pass('h2')};
+const primitives={
+ '@base-ui/react/dialog':{Dialog},'@base-ui/react/tabs':{Tabs},'@base-ui/react/button':{Button},'@base-ui/react/popover':{Popover},
+};
 function load(){
- const result=buildSync({entryPoints:['ui/desktop-permissions.tsx'],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',loader:{'.png':'dataurl'},external:['react','react/jsx-runtime','@base-ui/react/dialog','@base-ui/react/alert-dialog','@base-ui/react/tabs','@base-ui/react/button'],logLevel:'silent'});
- const m={exports:{}};Function('require','module','exports',result.outputFiles[0].text)(name=>name==='@base-ui/react/dialog'?{Dialog}:name==='@base-ui/react/alert-dialog'?{AlertDialog:Dialog}:name==='@base-ui/react/tabs'?{Tabs}:name==='@base-ui/react/button'?{Button:pass('button')}:require(name),m,m.exports);return m.exports;
+ const result=buildSync({entryPoints:['ui/desktop-permissions.tsx'],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',loader:{'.png':'dataurl','.svg':'dataurl'},define:{'import.meta.env.BASE_URL':JSON.stringify(uiBase)},external:['react','react/jsx-runtime',...Object.keys(primitives)],logLevel:'silent'});
+ const m={exports:{}};Function('require','module','exports',result.outputFiles[0].text)(name=>primitives[name]??require(name),m,m.exports);return m.exports;
 }
 let components;
 const get=()=>components??=load();
@@ -40,59 +46,106 @@ function bridge(checkValue={...granted,accessibility:'not-granted',screen:'not-d
 }
 async function panel(d,api){if(api)window.homerDesktopPermissions=api;await d.render(React.createElement(get().DesktopPermissions));}
 
-test('one settings dialog exposes permissions and both IM channels without starting channel requests',async()=>withDom(async d=>{
+test('one settings dialog exposes permissions and mobile devices without starting network requests',async()=>withDom(async d=>{
  const original=globalThis.fetch,calls=[];
- globalThis.fetch=async(...args)=>{calls.push(args);throw Error('unexpected_channel_request');};
+ globalThis.fetch=async(...args)=>{calls.push(args);throw Error('unexpected_settings_request');};
  try{
   await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
-  assert.deepEqual(d.all().filter(n=>n.getAttribute('role')==='tab').map(n=>n.textContent),['本机权限','移动设备','微信','Telegram']);
+  assert.deepEqual(d.all().filter(n=>n.getAttribute('role')==='tab').map(n=>n.textContent),['本机权限','移动设备']);
   assert.equal(d.all().filter(n=>n.getAttribute('role')==='dialog').length,1);
   assert.equal(calls.length,0);
  }finally{globalThis.fetch=original;}
 }));
-
-test('unavailable channel reads never show an unconfigured form; unknown recovery cannot resume or erase history',async()=>withDom(async d=>{
- const original=globalThis.fetch,location=globalThis.location,calls=[];
- globalThis.location=new URL('http://127.0.0.1:12345/');
- const state={status:'disabled',enabled:false,bound:true,generation:1,pending:0,uncertain:0,failed:0,extensions:{},recovery:{mode:'new_messages_only',clockVerified:false,reviewRequired:false,heldLocal:8,heldRemote:0}};
- globalThis.fetch=async(path,init)=>{calls.push({path,init});return path.endsWith('wechat')?Response.json(state):Response.json({error:'web_method_denied'},{status:409});};
- try{
-  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'微信'));
-  assert.match(d.container.textContent,/本人绑定已保留/);assert.equal(button(d,'恢复收发').getAttribute('disabled'),'');assert.equal(button(d,'解除绑定').getAttribute('disabled'),'');
-  await d.click(button(d,'恢复收发'));await d.click(button(d,'解除绑定'));assert.equal(calls.filter(c=>c.init.method==='POST').length,0);
-  await d.click(button(d,'Telegram'));assert.match(d.container.textContent,/状态暂不可用/);assert.ok(!d.find(n=>n.tagName==='INPUT'));assert.ok(button(d,'重新检查'));
-  assert.equal(calls.filter(c=>c.init.method==='POST').length,0);
- }finally{await d.render(null);globalThis.fetch=original;if(location===undefined)delete globalThis.location;else globalThis.location=location;}
+test('the screenshot annotation settings introduce capture and let users edit and restore the global shortcut',async()=>withDom(async d=>{
+ const changes=[],visibility=[];let reads=0,resetAttempts=0;
+ let state={shortcut:'Control+Shift+A',defaultShortcut:'Control+1',active:true};
+ window.homerDesktopCapture={getShortcut:async()=>{reads++;return state;},setShortcut:async value=>{
+  changes.push(value);
+  if(value===null&&++resetAttempts===1)return {...state,error:'unavailable'};
+  return state={...state,shortcut:value??state.defaultShortcut};
+ }};
+ await d.render(React.createElement(get().DesktopSettings,{onVisibilityChange:value=>visibility.push(value)}));
+ await d.click(button(d,'设置'));assert.equal(reads,0);
+ const tabs=d.all().filter(n=>n.getAttribute('role')==='tab');
+ assert.deepEqual(tabs.map(n=>n.textContent),['本机权限','截图批注','移动设备']);
+ await d.click(tabs[1]);
+ const panel=d.find(n=>n.getAttribute('role')==='tabpanel');
+ assert.match(panel.textContent,/截取当前窗口/);
+ assert.match(panel.textContent,/选取窗口或区域/);
+ assert.ok(d.find(n=>n.getAttribute('role')==='img'&&n.getAttribute('aria-label')?.includes('操作示意')&&panel.contains(n)));
+ const key=()=>d.find(n=>n.tagName==='KBD');
+ const edit=d.find(n=>n.tagName==='BUTTON'&&n.contains(key())),restore=button(d,'恢复截图批注默认快捷键');
+ assert.equal(reads,1);assert.equal(key().textContent,'⌃⇧A');
+ assert.ok(edit&&restore&&edit.parentNode===restore.parentNode);
+ const pressControl=async (key,code)=>act(async()=>{
+  const event={type:'keydown',target:edit,key,code,ctrlKey:true,preventDefault(){},stopPropagation(){}};
+  for(const listener of d.container.listeners.keydown??[])if(!listener.capture)listener.handler(event);
+ });
+ await d.click(edit);assert.equal(edit.getAttribute('aria-pressed'),'true');
+ await pressControl('a','KeyA');assert.deepEqual(changes,[]);
+ await pressControl('2','Digit2');assert.equal(key()?.textContent,'⌃2');assert.deepEqual(changes,['Control+2']);
+ await d.click(restore);assert.equal(key().textContent,'⌃2');assert.match(d.container.textContent,/已被占用/);
+ await d.click(restore);assert.equal(key().textContent,'⌃1');assert.deepEqual(changes,['Control+2',null,null]);
+ assert.ok(!d.find(n=>n.getAttribute('role')==='status'&&row(d,'全局快捷键').contains(n)));
+ await d.click(button(d,'关闭设置'));assert.deepEqual(visibility,[true,false]);
 }));
 
-test('Telegram pairing sends the exact explicitly approved candidate and expired candidates cannot be approved',async t=>withDom(async d=>{
- const original=globalThis.fetch,location=globalThis.location,calls=[];
- globalThis.location=new URL('http://127.0.0.1:12345/');
- const state={status:'online',configured:true,enabled:true,bound:false,pending:0,uncertain:0,failed:0,heldInputs:0,uncertainInputs:0,recovery:{mode:'new_messages_only',clockVerified:true,reviewRequired:false,heldLocal:0,heldRemote:0}};
- const code='abcdef0123456789abcdef0123456789',candidate={userId:'1234567',chatId:'1234567'};
- globalThis.fetch=async(path,init)=>{calls.push({path,init});return Response.json(path.endsWith('/pair/candidate')?candidate:path.endsWith('/pair/approve')?{...state,bound:true}:path.endsWith('/pair')?{code,expiresInSeconds:600}:state);};
- try{
-  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'Telegram'));
-  assert.doesNotMatch(d.container.textContent,/收发已开启/,'an online transport without an approved owner is not ready for messaging');
-  await d.click(button(d,'生成配对码'));assert.match(d.container.textContent,/1234567/);assert.equal(calls.filter(c=>c.path.endsWith('/pair/approve')).length,0);
-  t.mock.timers.enable({apis:['Date'],now:Date.now()+601000});
-  await d.click(button(d,'确认是我并绑定'));assert.equal(calls.filter(c=>c.path.endsWith('/pair/approve')).length,0);assert.match(d.container.textContent,/已过期/);
-  await d.click(button(d,'生成配对码'));await d.click(button(d,'确认是我并绑定'));
-  const approvals=calls.filter(c=>c.path.endsWith('/pair/approve'));assert.equal(approvals.length,1);assert.deepEqual(JSON.parse(approvals[0].init.body),{code,...candidate});assert.match(d.container.textContent,/本人绑定已保留/);
- }finally{await d.render(null);globalThis.fetch=original;if(location===undefined)delete globalThis.location;else globalThis.location=location;}
+test('Windows screenshot settings show the window or region flow and record function keys',async()=>withDom(async d=>{
+ const changes=[];
+ let state={shortcut:'Control+Shift+F2',defaultShortcut:'Control+Shift+F2',active:true};
+ window.homerDesktopCapture={platform:'win32',getShortcut:async()=>state,setShortcut:async value=>{
+  changes.push(value);return state={...state,shortcut:value??state.defaultShortcut};
+ }};
+ await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
+ await d.click(d.find(n=>n.getAttribute('role')==='tab'&&n.textContent==='截图批注'));
+ const panel=d.find(n=>n.getAttribute('role')==='tabpanel'),key=()=>d.find(n=>n.tagName==='KBD');
+ assert.equal(key().textContent,'Ctrl+Shift+F2');assert.match(panel.textContent,/从列表选择窗口/);
+ const edit=d.find(n=>n.tagName==='BUTTON'&&n.contains(key()));
+ await d.click(edit);assert.match(panel.textContent,/F1–F11/);
+ async function press(key,code=key){await act(async()=>{
+  const event={type:'keydown',target:edit,key,code,ctrlKey:true,shiftKey:true,preventDefault(){},stopPropagation(){}};
+  for(const listener of d.container.listeners.keydown??[])if(!listener.capture)listener.handler(event);
+ });}
+ await press('F12');assert.deepEqual(changes,[]);
+ await press('F11');assert.equal(key().textContent,'Ctrl+Shift+F11');
+ await d.click(edit);await press('!','Digit1');assert.equal(key().textContent,'Ctrl+Shift+1');
+ await d.click(button(d,'恢复截图批注默认快捷键'));assert.equal(key().textContent,'Ctrl+Shift+F2');
+ assert.deepEqual(changes,['Control+Shift+F11','Control+Shift+1',null]);
 }));
 
-test('a failed WeChat QR image exposes a visible recovery action instead of silently disappearing',async()=>withDom(async d=>{
- const original=globalThis.fetch,location=globalThis.location;
- globalThis.location=new URL('http://127.0.0.1:12345/');
- globalThis.fetch=async()=>Response.json({status:'connecting',enabled:false,bound:false,generation:1,pending:0,uncertain:0,failed:0,extensions:{},recovery:{mode:'new_messages_only',clockVerified:true,reviewRequired:false,heldLocal:0,heldRemote:0},login:{id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',status:'wait',imagePath:'/api/channels/wechat/login/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/qr.png'}});
- try{
-  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'微信'));
-  const image=d.find(n=>n.tagName==='IMG');assert.ok(image);
-  Object.defineProperty(image,'hidden',{set(value){if(value)this.setAttribute('hidden','');}});
-  await act(async()=>{for(const {handler} of image.listeners.error??[])handler({type:'error',target:image,bubbles:false});});
-  assert.match(d.container.textContent,/二维码未能显示/);assert.ok(button(d,'重新生成二维码'));
- }finally{await d.render(null);globalThis.fetch=original;if(location===undefined)delete globalThis.location;else globalThis.location=location;}
+test('screenshot settings reuse the tour GIF and show the static guide when motion is paused or reduced',async()=>withDom(async d=>{
+ let motionChanged;
+ window.matchMedia=query=>({
+  matches:query==='(prefers-reduced-motion: no-preference)',
+  addEventListener:(_name,listener)=>{if(query==='(prefers-reduced-motion: no-preference)')motionChanged=listener;},
+  removeEventListener(){},
+ });
+ const shortcut={shortcut:'Control+1',defaultShortcut:'Control+1',active:true};
+ window.homerDesktopCapture={getShortcut:async()=>shortcut,setShortcut:async()=>shortcut};
+ const gif=()=>d.find(n=>n.tagName==='IMG'&&n.getAttribute('src')===uiBase+'assets/desktop-feature-tour-v1-annotation.gif');
+ const still=()=>d.find(n=>n.getAttribute('role')==='img'&&n.getAttribute('aria-label')?.includes('操作示意'));
+ await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
+ assert.ok(!gif());
+ await d.click(d.find(n=>n.getAttribute('role')==='tab'&&n.textContent==='截图批注'));
+ assert.ok(gif());assert.match(d.container.textContent,/体验示意/);
+ await d.click(button(d,'暂停示意动图'));assert.ok(!gif());assert.ok(still());
+ await d.click(button(d,'播放示意动图'));assert.ok(gif());
+ await act(async()=>motionChanged({matches:false}));
+ assert.ok(!gif());assert.ok(still());assert.ok(!button(d,'播放示意动图'));
+}));
+
+test('chat apps show only nonzero binding counts beside their names',async()=>withDom(async d=>{
+ const bindings=['first_bot','second_bot'].map(label=>({adapterId:'telegram',accountKey:label,label,state:'ready',failed:0,unknown:0}));
+ window.homerDesktopChatApps={state:async()=>({bindings,pending:[],busy:false,stopped:false,readError:false})};
+ await d.render(React.createElement(get().DesktopSettings));
+ await d.click(button(d,'设置'));
+ await d.click(button(d,'连接聊天应用'));
+ const headings=d.all().filter(n=>n.tagName==='H3');
+ assert.deepEqual(headings.map(n=>n.textContent.trim()),['微信','Telegram 2 个绑定','钉钉']);
+ const count=headings[1].lastChild;
+ assert.equal(count.firstChild.textContent,'2');
+ assert.equal(count.lastChild.getAttribute('class'),'sr-only');
+ assert.equal(d.all().filter(n=>n.getAttribute('aria-label')==='如何关闭 Telegram 群隐私模式').length,1);
 }));
 
 test('settings entry opens the approved dialog and two columns; close and thread change unmount pending reads',async()=>withDom(async d=>{
@@ -165,6 +218,19 @@ test('native requests share the gear dialog, focus on repeat, and unsubscribe on
  await act(async()=>callback());assert.equal(d.all().filter(n=>n.getAttribute('role')==='dialog').length,1);assert.equal(d.doc.activeElement.getAttribute('role'),'tab');assert.equal(subscriptions,1);
  await d.click(button(d,'关闭设置'));assert.ok(!d.find(n=>n.getAttribute('role')==='dialog'));await d.click(button(d,'设置'));assert.ok(d.find(n=>n.getAttribute('role')==='dialog'));
  await d.remount();assert.equal(disposals,1);await d.render(React.createElement(get().DesktopSettings));assert.equal(subscriptions,2);
+}));
+test('a capture permission request opens the permission tab with instructions and waits for the user',async()=>withDom(async d=>{
+ const b=bridge({...granted,screen:'denied'});let open;
+ window.homerDesktopPermissions=b;
+ window.homerDesktopAccount={state:async()=>({supported:false}),onChange:()=>()=>{}};
+ window.homerDesktopSettings={onOpen:fn=>{open=fn;return ()=>{};}};
+ await d.render(React.createElement(get().DesktopSettings));
+ await act(async()=>open('permissions'));
+ const screenRow=row(d,'屏幕采集');assert.ok(screenRow);
+ assert.match(screenRow.textContent,/请在系统设置中允许荷马录屏/);
+ assert.deepEqual(b.calls,[['check']]);
+ await d.click(button(d,'打开屏幕采集系统设置'));
+ assert.deepEqual(b.calls,[['check'],['open','screen']]);
 }));
 test('native source uses existing account actions and requires an explicit apply',async()=>withDom(async d=>{
  const calls=[];let changed,current={supported:true,configured:false,source:'website',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'none',connected:false,phase:'idle',pending:false}};
@@ -271,29 +337,13 @@ test('saved configuration offers restart without login and does not show quota u
  await d.render(React.createElement(get().DesktopAccount));assert.ok(button(d,'重启并应用'));assert.ok(!button(d,'登录'));assert.ok(!row(d,'可用积分'));
  current={...current,active:'website'};await act(async()=>changed());assert.match(d.container.textContent,/配置已更新/);assert.ok(!button(d,'重新登录'));
 }));
-test('ordinary parent renders do not postpone WeChat login polling indefinitely',async t=>withDom(async d=>{
- const original=globalThis.fetch,location=globalThis.location,calls=[];
- globalThis.location=new URL('http://127.0.0.1:12345/');
- const login={id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',status:'wait'};
- const state={status:'connecting',enabled:false,bound:false,generation:1,pending:0,uncertain:0,failed:0,extensions:{},recovery:{mode:'new_messages_only',clockVerified:true,reviewRequired:false,heldLocal:0,heldRemote:0},login};
- globalThis.fetch=async(path,init)=>{calls.push({path,init});return Response.json(path.endsWith('/login/poll')?{...login,status:'confirmed'}:state);};
- try{
-  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
-  t.mock.timers.enable({apis:['setTimeout','setInterval']});
-  await d.click(button(d,'微信'));
-  for(let i=0;i<5;i++){await act(async()=>{t.mock.timers.tick(500);});await d.render(React.createElement(get().DesktopSettings));}
-  assert.equal(calls.filter(c=>c.path.endsWith('/login/poll')).length,1);
- }finally{await d.render(null);globalThis.fetch=original;if(location===undefined)delete globalThis.location;else globalThis.location=location;}
-}));
-
-
-test('desktop account shares the channel settings shell without starting hidden channel requests',async()=>withDom(async d=>{
+test('desktop account shares the local settings shell without starting network requests',async()=>withDom(async d=>{
  const original=globalThis.fetch,calls=[];
  window.homerDesktopAccount={state:async()=>({supported:true,configured:true,connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:true}),onChange:()=>()=>{}};
- globalThis.fetch=async(...args)=>{calls.push(args);throw Error('unexpected_channel_request');};
+ globalThis.fetch=async(...args)=>{calls.push(args);throw Error('unexpected_settings_request');};
  try{
   await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
-  assert.deepEqual(d.all().filter(n=>n.getAttribute('role')==='tab').map(n=>n.textContent),['账号','本机权限','移动设备','微信','Telegram']);
+  assert.deepEqual(d.all().filter(n=>n.getAttribute('role')==='tab').map(n=>n.textContent),['账号','本机权限','移动设备']);
   assert.ok(button(d,'登录'));assert.equal(calls.length,0);
   await d.click(button(d,'本机权限'));assert.match(d.container.textContent,/辅助功能/);
   await d.click(button(d,'关闭设置'));await d.click(button(d,'设置'));assert.ok(button(d,'登录'));

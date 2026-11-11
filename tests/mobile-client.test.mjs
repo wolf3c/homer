@@ -3,6 +3,7 @@ import {buildSync,build as buildAsync} from 'esbuild';
 import {createElement,Fragment} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createRequire} from 'node:module';
+import {WEB_PROTOCOL} from '../src/web-contract.ts';
 const build=path=>buildSync({entryPoints:[path],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent'}).outputFiles[0].text;
 test('mobile discovers public candidates through the relay endpoint without receiving TURN credentials',async()=>{
  const window=new EventTarget(),document=new EventTarget(),module={exports:{}};let config;
@@ -89,7 +90,7 @@ test('expired or invalid invitation stops retrying and tells native shell to res
  const source=(await buildAsync({entryPoints:['ui/mobile-connection.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'fake-mobile-transport',setup(build){
   build.onResolve({filter:/mobile-channel\.js$/},()=>({path:'channel',namespace:'fake'}));
   build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
-  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:'export const mobileChannel=(_port,receive)=>({send:async packet=>queueMicrotask(()=>receive({id:packet.id,error:"mobile_invitation_expired"})),close(){}});'}));
+  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:`export const mobileChannel=(_port,receive)=>({send:async packet=>queueMicrotask(()=>receive({id:packet.id,...(packet.op==="status"?{result:{status:"denied",protocol:${WEB_PROTOCOL}}}:{error:"mobile_invitation_expired"})})),close(){}});`}));
   build.onLoad({filter:/signal/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(){return {call:async()=>{},close(){}}}'}));
  }}]})).outputFiles[0].text;
  const messages=[],window=new EventTarget(),document=new EventTarget(),module={exports:{}};let peer,peerCount=0;
@@ -108,7 +109,7 @@ test('connection messages keep their original attempt identity',async()=>{
  const source=(await buildAsync({entryPoints:['ui/mobile-connection.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'fake-mobile-transport',setup(build){
   build.onResolve({filter:/mobile-channel\.js$/},()=>({path:'channel',namespace:'fake'}));
   build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
-  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:'export const mobileChannel=(_port,receive)=>({send:async packet=>queueMicrotask(()=>receive({id:packet.id,error:"mobile_invitation_expired"})),close(){}});'}));
+  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:`export const mobileChannel=(_port,receive)=>({send:async packet=>queueMicrotask(()=>receive({id:packet.id,...(packet.op==="status"?{result:{status:"denied",protocol:${WEB_PROTOCOL}}}:{error:"mobile_invitation_expired"})})),close(){}});`}));
   build.onLoad({filter:/signal/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(){return {call:async()=>{},close(){}}}'}));
  }}]})).outputFiles[0].text;
  const messages=[],window=new EventTarget(),document=new EventTarget(),module={exports:{}};let peer;
@@ -121,11 +122,31 @@ test('connection messages keep their original attempt identity',async()=>{
  assert.equal(messages.find(item=>item.code==='invitation-expired')?.nonce,'old-attempt');
 });
 
+test('a new phone probes the old desktop protocol before claiming an invitation',async()=>{
+ const source=(await buildAsync({entryPoints:['ui/mobile-connection.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'old-desktop-transport',setup(build){
+  build.onResolve({filter:/mobile-channel\.js$/},()=>({path:'channel',namespace:'fake'}));
+  build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
+  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:'export const mobileChannel=(_port,receive)=>({send:async packet=>{packets.push(packet);queueMicrotask(()=>receive({id:packet.id,result:{status:"denied",protocol:1}}));},close(){}});'}));
+  build.onLoad({filter:/signal/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(){return {call:async()=>{},close(){}}}'}));
+ }}]})).outputFiles[0].text;
+ const packets=[],messages=[],window=new EventTarget(),document=new EventTarget(),module={exports:{}};let peer;
+ class Peer{constructor(){peer=this;}close(){}}
+ window.ReactNativeWebView={postMessage:value=>messages.push(JSON.parse(value))};
+ Function('window','document','RTCPeerConnection','packets','module','exports',source)(window,document,Peer,packets,module,module.exports);
+ try{
+  window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:{signalOrigin:'https://signal.example',routeId:'a'.repeat(64),invitation:'b'.repeat(43)}}));
+  const channel={close(){},send(){},bufferedAmount:0,readyState:'open'};peer.ondatachannel({channel});channel.onopen();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(packets.map(packet=>packet.op),['status']);
+  assert.deepEqual(messages.filter(item=>item.type==='connection-status').map(item=>item.code),['connecting','version']);
+ }finally{window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:null}));}
+});
+
 test('a timed-out approval is shown as timeout and does not restart on app resume',async()=>{
  const source=(await buildAsync({entryPoints:['ui/mobile-connection.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'fake-mobile-transport',setup(build){
   build.onResolve({filter:/mobile-channel\.js$/},()=>({path:'channel',namespace:'fake'}));
   build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
-  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:'export const mobileChannel=(_port,receive)=>({send:async packet=>queueMicrotask(()=>receive({id:packet.id,result:packet.op==="pair"?{status:"pending",credential:"c".repeat(43),protocol:1}:{status:"expired",protocol:1}})),close(){}});'}));
+  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:`export const mobileChannel=(_port,receive)=>({send:async packet=>queueMicrotask(()=>receive({id:packet.id,result:{protocol:${WEB_PROTOCOL},...(packet.op==="pair"?{status:"pending",credential:"c".repeat(43)}:{status:packet.input.credential?"expired":"denied"})}})),close(){}});`}));
   build.onLoad({filter:/signal/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(){return {call:async()=>{},close(){}}}'}));
  }}]})).outputFiles[0].text;
  const messages=[],window=new EventTarget(),document=new EventTarget(),module={exports:{}};let peer,count=0;
@@ -144,7 +165,7 @@ test('a duplicate scan reports an existing request and does not retry on resume'
  const source=(await buildAsync({entryPoints:['ui/mobile-connection.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'fake-mobile-transport',setup(build){
   build.onResolve({filter:/mobile-channel\.js$/},()=>({path:'channel',namespace:'fake'}));
   build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
-  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:'export const mobileChannel=(_port,receive)=>({send:async packet=>queueMicrotask(()=>receive({id:packet.id,error:"mobile_pairing_busy"})),close(){}});'}));
+  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:`export const mobileChannel=(_port,receive)=>({send:async packet=>queueMicrotask(()=>receive({id:packet.id,...(packet.op==="status"?{result:{status:"denied",protocol:${WEB_PROTOCOL}}}:{error:"mobile_pairing_busy"})})),close(){}});`}));
   build.onLoad({filter:/signal/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(){return {call:async()=>{},close(){}}}'}));
  }}]})).outputFiles[0].text;
  const messages=[],window=new EventTarget(),document=new EventTarget(),module={exports:{}};let peer,count=0;
@@ -180,7 +201,7 @@ test('mobile cancellation uses the candidate credential and reports the desktop 
  const source=(await buildAsync({entryPoints:['ui/mobile-connection.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'fake-mobile-transport',setup(build){
   build.onResolve({filter:/mobile-channel\.js$/},()=>({path:'channel',namespace:'fake'}));
   build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
-  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:'export const mobileChannel=(_port,receive)=>({send:async packet=>{globalThis.__cancelPackets.push(packet);queueMicrotask(()=>receive({id:packet.id,result:packet.op==="pair"?{status:"pending",credential:"c".repeat(43),protocol:1}:{status:"cancelled",protocol:1}}))},close(){}});'}));
+  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:`export const mobileChannel=(_port,receive)=>({send:async packet=>{globalThis.__cancelPackets.push(packet);queueMicrotask(()=>receive({id:packet.id,result:{protocol:${WEB_PROTOCOL},...(packet.op==="pair"?{status:"pending",credential:"c".repeat(43)}:{status:packet.op==="status"?"denied":"cancelled"})}}))},close(){}});`}));
   build.onLoad({filter:/signal/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(){return {call:async()=>{},close(){}}}'}));
  }}]})).outputFiles[0].text;
  const messages=[],window=new EventTarget(),document=new EventTarget(),module={exports:{}};let peer;
@@ -194,6 +215,8 @@ test('mobile cancellation uses the candidate credential and reports the desktop 
   await new Promise(resolve=>setImmediate(resolve));
   window.dispatchEvent(new CustomEvent('homer-mobile-cancel'));
   await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(globalThis.__cancelPackets.map(packet=>packet.op),['status','pair','pair.cancel']);
+  assert.equal(globalThis.__cancelPackets[1].input.protocol,WEB_PROTOCOL);
   assert.equal(globalThis.__cancelPackets.at(-1).op,'pair.cancel');
   assert.equal(globalThis.__cancelPackets.at(-1).input.credential,'c'.repeat(43));
   assert.deepEqual(messages.filter(item=>item.type==='cancel-result').at(-1),{type:'cancel-result',result:'cancelled',nonce:'attempt'});

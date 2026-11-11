@@ -85,6 +85,14 @@ test('failed model usage checks are bounded and never expose transport diagnosti
  t.mock.method(globalThis,'fetch',async(_url:RequestInfo|URL,init?:RequestInit)=>{calls++;assert.equal(init?.redirect,'error');assert.ok(init?.signal);throw Error('PRIVATE_TOKEN_DIAGNOSTICS');});
  assert.equal(await api.queryHomerTokenFailure('synthetic-key',boundary),'engine_account_status_unconfirmed');assert.equal(calls,1);
 });
+test('membership usage accepts up to 64 KiB of JSON and rejects one byte more',async t=>{
+ const usage=JSON.stringify({code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:0}});
+ let bytes=64*1024;
+ t.mock.method(globalThis,'fetch',async()=>new Response(usage.padEnd(bytes)));
+ assert.equal(await account.queryHomerTokenFailure('synthetic-key',boundary),'engine_quota_insufficient');
+ bytes++;
+ assert.equal(await account.queryHomerTokenFailure('synthetic-key',boundary),'engine_account_status_unconfirmed');
+});
 test('failed model usage check stops after its five second deadline',async t=>{
  t.mock.method(globalThis,'fetch',async(_url:RequestInfo|URL,init?:RequestInit)=>new Promise<Response>((_resolve,reject)=>init!.signal!.addEventListener('abort',()=>reject(init!.signal!.reason),{once:true})));
  const keepAlive=setInterval(()=>{},1000),started=Date.now();

@@ -24,14 +24,15 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
   const binary = join(base, 'synthetic-codex.mjs'); cpSync(join(root, 'tests/fixtures/web-browser-app-server.mjs'), binary);
   writeFileSync(binary, readFileSync(binary,'utf8').replace('slow ? 230 : 30','slow ? 10000 : 30'));
   const config = join(base, 'synthetic.config.json');
-  writeFileSync(config, JSON.stringify({ workspace: 'workspace', runtime: 'runtime', codexHome: join(base, 'home'), codexBin: binary, model: 'synthetic-only', requiresOpenaiAuth: false, effort: 'medium', timeoutMs: 30000, mainTimeoutMs: 120000, stopGraceMs: 200 }));
+  writeFileSync(config, JSON.stringify({ appData:base, workspace: 'workspace', runtime: 'runtime', nativeCodexHome:join(base,'home'), codexBin: binary, model: 'synthetic-only', requiresOpenaiAuth: false, effort: 'medium', stopGraceMs: 200 }));
   const reserve = createServer(); await new Promise(r => reserve.listen(0, '127.0.0.1', r)); const port = reserve.address().port; await new Promise(r => reserve.close(r));
   const url = `http://127.0.0.1:${port}`, events = [];
-  const child = spawn(process.execPath, [join(base, 'scripts/dev.mjs'), '--web', '--port', String(port), '--config', config, '--json'], { cwd: base, env:fixtureBuildEnvironment(base), stdio: ['pipe', 'pipe', 'pipe'] });
+  const env={...fixtureBuildEnvironment(base),HOMER_DATA_HOME:base,HOMER_NATIVE_CODEX_HOME:join(base,'home'),HOMER_CODEX_HOME:join(base,'home'),HOMER_CODEX_BIN:binary};
+  const child = spawn(process.execPath, [join(base, 'scripts/dev.mjs'), '--web', '--port', String(port), '--config', config, '--json'], { cwd: base, env, stdio: ['pipe', 'pipe', 'pipe'] });
   let lines = '', exited = false, verified=false; const errors = [];
   child.stdout.on('data', data => { lines += data; const parts = lines.split('\n'); lines = parts.pop(); for (const line of parts) { try { events.push(JSON.parse(line)); } catch {} } });
   child.stderr.on('data', data => errors.push(String(data))); child.on('exit', () => { exited = true; });
-  const state = async () => { try { return await (await fetch(url + '/api/state')).json(); } catch { return undefined; } };
+  const state = async () => { try { return await (await fetch(url + '/api/history/state')).json(); } catch { return undefined; } };
   const post = (path, body) => fetch(url + path, { method: 'POST', headers: { Origin: url, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const lock = () => JSON.parse(readFileSync(join(base, 'runtime/cli.lock'), 'utf8')).pid;
   const persistedInput = requestId => {
@@ -68,7 +69,8 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
     assert.equal((await state()).upgrade.version, version);
     assert.notEqual((await state()).upgrade.uiVersion, first.upgrade.uiVersion, 'compatible UI must activate while the original executor stays resident');
     const receipt = await (await post('/api/messages', { requestId: 'synthetic-stream', text: '持续慢速合成回答' })).json();
-    const linkedProcesses=s=>s.processNodes.filter(node=>node.replyMessageId===receipt.replyId);
+    const processes=s=>s.messages.flatMap(message=>message.process?[message.process]:[]);
+    const linkedProcesses=s=>processes(s).filter(node=>node.replyMessageId===receipt.replyId);
     await until(async () => {
       const s=await state(),publicProcess=s&&linkedProcesses(s)[0];
       return publicProcess?.state==='working'&&publicProcess.status==='running'&&publicProcess.items.some(item=>item.kind==='commentary'&&item.text.length>0)&&s.messages.some(m=>m.id===publicProcess.messageId&&m.role==='assistant'&&m.status==='running');
@@ -108,14 +110,14 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
     for(const requestId of ['synthetic-prime','synthetic-stream']){
       const users=after.messages.filter(m=>m.role==='user'&&m.requestId===requestId);assert.equal(users.length,1);
       const original=requestId==='synthetic-prime'?primeReceipt:receipt;
-      const nodes=after.processNodes.filter(node=>node.sourceKind==='user'&&node.replyMessageId===original.replyId);assert.equal(nodes.length,1);assert.deepEqual(nodes[0].sourceMessageIds,[original.queueMessageId]);
+      const nodes=processes(after).filter(node=>node.sourceKind==='user'&&node.replyMessageId===original.replyId);assert.equal(nodes.length,1);assert.deepEqual(nodes[0].sourceMessageIds,[original.queueMessageId]);
       const replies=after.messages.filter(m=>m.id===nodes[0].messageId);assert.equal(replies.length,1);assert.equal(replies[0].role,'assistant');assert.equal(replies[0].requestId,requestId);
     }
     assert.deepEqual(linkedProcesses(after),[stoppedProcess],'executor replacement preserves the original stopped public process');
     assert.equal(linkedProcesses(after).length,1);assert.equal(linkedProcesses(after)[0].id,publicProcess.id);assert.equal(linkedProcesses(after)[0].status,'interrupted');
-    assert.equal(after.messages.length,after.messages.filter(m=>m.role==='user').length+after.processNodes.length);
+    assert.equal(after.messages.length,after.messages.filter(m=>m.role==='user').length+processes(after).length);
     const duplicate=await (await post('/api/messages', { requestId: 'synthetic-stream', text: '持续慢速合成回答' })).json();assert.equal(duplicate.fresh,false);assert.equal(duplicate.replyId,receipt.replyId);assert.equal(duplicate.queueMessageId,receipt.queueMessageId);assert.equal(duplicate.revision,persistedInput('synthetic-stream').revision);assert.equal(duplicate.queueState,'interrupted');
-    assert.deepEqual((await state()).processNodes,after.processNodes);assert.deepEqual((await state()).messages,after.messages);
+    assert.deepEqual(processes(await state()),processes(after));assert.deepEqual((await state()).messages,after.messages);
     assert.equal((await post('/api/messages', { requestId: 'synthetic-next', text: '合成继续' })).status, 202);
     await until(async () => (await state())?.messages.at(-1)?.status === 'completed');
     assert.equal((await state()).messages.filter(m => m.role === 'user').length, 3);

@@ -7,7 +7,7 @@ import {historyFixture} from './web-history-loading-fixture.ts';
 const h=React.createElement;
 const tools=Array.from({length:8},(_,i)=>({id:'call-'+i,revision:1,seq:i+1,kind:'tool',category:'host',label:i===5?'核对成果':'检查资料',status:'completed'}));
 const worker={id:'worker:task-a',seq:9,revision:1,kind:'worker',taskId:'task-a',version:1,taskRevision:4,runId:'run-a',runRevision:3,epoch:1,runStatus:'succeeded',state:'settled',controlState:'normal',resultState:'accepted',outcome:'partial',phase:'ended',stopRequested:false,label:'核对材料与交付范围'};
-const node={id:'reading-one',threadId:'synthetic-reading',messageId:'reading-one',sourceKind:'worker',sourceMessageIds:[],seq:1,revision:1,turnIds:['internal-turn'],state:'worked',status:'completed',items:[...tools,worker]};
+const node={id:'reading-one',threadId:'synthetic-reading',messageId:'reading-one',sourceKind:'worker',sourceMessageIds:[],seq:1,revision:1,turnIds:['internal-turn'],state:'worked',status:'failed',items:[...tools,worker]};
 const observation={connected:true,serviceRunning:true,threadId:node.threadId};
 const view=(value=node)=>h(ProcessObservationContext.Provider,{value:observation},h(ProcessMessageContent,{node:value,renderText:t=>h('p',null,t)},h('div',{'data-final':''},'')));
 
@@ -43,5 +43,5 @@ test('lazy status counts use the same exact-ID/latest-revision rule and stay bou
 });
 
  test('a missing exact-version Worker name never borrows the current work-list title',async()=>withDom(async d=>{
- const value={...node,items:[{...worker,label:undefined}]};await d.render(h(ProcessObservationContext.Provider,{value:{...observation,workerTitles:new Map([[worker.runId,'另一版本的当前事项标题']])}},h(ProcessMessageContent,{node:value,renderText:t=>t},'')));assert.equal(d.find(n=>n.tagName==='BUTTON'),undefined);assert.match(visibleText(d.container),/旧后台工作记录（当时的事件内容未保留）/);assert.doesNotMatch(visibleText(d.container),/另一版本的当前事项标题/);
+ const value={...node,status:'completed',items:[{...worker,label:undefined}]};await d.render(h(ProcessObservationContext.Provider,{value:{...observation,workerTitles:new Map([[worker.runId,'另一版本的当前事项标题']])}},h(ProcessMessageContent,{node:value,renderText:t=>t},'')));assert.equal(d.find(n=>n.tagName==='BUTTON'),undefined);assert.match(visibleText(d.container),/旧后台工作记录（当时的事件内容未保留）/);assert.doesNotMatch(visibleText(d.container),/另一版本的当前事项标题/);
  }));

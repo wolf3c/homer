@@ -1,0 +1,1357 @@
+{
+  "date": "2026-10-25",
+  "entry": {
+    "branch": "main",
+    "head": "a6040cc62fb2e76ece3fb62b138b31ab9da516c8",
+    "indexInitiallyEmpty": true,
+    "dirtyOrUntrackedPaths": 588
+  },
+  "scope": "A/B/C/D/E/F source review, minimal correction, synthetic verification and local commits only",
+  "sourcePatches": [
+    {
+      "task": "A",
+      "path": ".codex/scratch/annotation-comment-form-unification-20261025/own-extraction.patch",
+      "sha256": "0887a6833015ada8998cd7c38632e04d6eccf2b955be9d0a3ca9ebdc7816203f"
+    },
+    {
+      "task": "B",
+      "path": ".codex/scratch/annotation-button-source-removal-20261025/task-only.patch",
+      "sha256": "7915ecc39bf2e802ec024540bda5d73cdc768db1672d55806e0722e35ce9fc66"
+    },
+    {
+      "task": "C-files",
+      "path": ".codex/scratch/annotation-composer-sync-implementation-20261025/review/task-owned-files.diff",
+      "sha256": "0ed94edc4c2aa60c38128bb745810fd73590a8cf0b16763727ac4370faae65ee"
+    },
+    {
+      "task": "C-fragments",
+      "path": ".codex/scratch/annotation-composer-sync-implementation-20261025/review/task-owned-fragments.diff",
+      "sha256": "b7c44c485f814b77113ef126bf7ca7c768b73aed3c894446b311901aa92b1874"
+    },
+    {
+      "task": "D",
+      "path": ".codex/scratch/preview-tabs-implementation-20261025/task-only.patch",
+      "sha256": "fdb0b7b801e4fe8ef11368a4060154533cc40f84b27f28091f5c79ec58aa5935"
+    },
+    {
+      "task": "E",
+      "path": ".codex/scratch/run-activity-official-tool-implementation-20261025/task-only.patch",
+      "sha256": "7545a01aeddee85e87dafb340ae98ec97da593be88adea5ca0b3f106fa05da29"
+    },
+    {
+      "task": "F",
+      "path": ".codex/scratch/worker-native-subagent-convergence-implementation-20261024/implementation.patch",
+      "sha256": "8a0842d2e7937845103613d6056214897d3a5be978234ba196e30452391faca6"
+    }
+  ],
+  "sourceReports": [
+    {
+      "path": "docs/2026-10-25-annotation-comment-form-unification.md",
+      "sha256": "afc8a53003f1a56fb7b56469fc79b3a48c451b4ea52f26f84f3af6a01bda1ea3"
+    },
+    {
+      "path": "docs/2026-10-25-annotation-header-source-removal.md",
+      "sha256": "8b3c35dca1ef85ee9019056128976507e3f6a4f6f526d93abb84300b0030c569"
+    },
+    {
+      "path": "docs/2026-10-25-annotation-composer-sync.md",
+      "sha256": "f7cf6096347daca5bb286a41e20c72f0c3cace42f5eeb7d03aea050b873f85cb"
+    },
+    {
+      "path": "docs/2026-10-25-preview-tabs.md",
+      "sha256": "93730b6d8f47eb27c5d3f8110cf888f8d9ccfd2b74635845930e97c6e0f369af"
+    },
+    {
+      "path": "docs/2026-10-25-official-tool-activity-integration.md",
+      "sha256": "f743c9fe778e1009ca52ca32db73a875f3251e38f0b07fe9c1d17f54479da670"
+    },
+    {
+      "path": ".codex/scratch/worker-native-subagent-convergence-implementation-20261024/implementation-report.md",
+      "sha256": "816e83e6bf8d1105f9ed79c7cf9e3a1b0ae282c0cee8edc04eaacd74e612b52f"
+    }
+  ],
+  "decisions": [
+    "F precedes the preview and tool integrations; no unrelated pendingForMain question-discovery product code is included.",
+    "A/B/C/D form one compilable reader/composer/protocol closure; no intermediate obsolete Maps or single-source protocol is restored.",
+    "F includes only the named synthetic regression foundations required by its exact suite. Some were already untracked or had schema/tool-catalog fixture corrections before F. They are not newly authored wholesale by this review.",
+    "E observer regression is extracted to tests/tool-service-observer.test.ts. The pre-existing untracked tests/main-process.test.ts remains untouched and uncommitted.",
+    "Review correction: constrain the native image popup to the image container at 250px panels; preserve native positioning and shared form content.",
+    "Review test corrections: conversationView 3 fixture; current text marker editor; real handle movement plus every-coordinate cancellation assertion; existing approval loader dependencies.",
+    "Do not include package-lock churn, branding, memory/platform changes, production data, installed app state or generated build archives."
+  ],
+  "groups": [
+    {
+      "group": "F",
+      "tree": "8f0460fc41c5f1a07d7d6207cfc48cfddbfd4f5b",
+      "parentTreeOrCommit": "a6040cc62fb2e76ece3fb62b138b31ab9da516c8",
+      "patchSha256": "878fa85c765cdae9bf329332572e0968f6d703f16f94aeee419e2c0813949cab",
+      "files": [
+        {
+          "path": "docs/06-running-homer.md",
+          "mode": "100644",
+          "blob": "27eab8aa4072b246432702b8c5b085044f4b812c",
+          "sha256": "780c10e7429e8c6aa36174cda09c4b0407b2b4af10261b9e4c6314a71fce8254",
+          "beforeBlob": "8120388dc2f4a21ae85ec1c3031e6b67948736ee",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "docs/12-recursive-agent-architecture.md",
+          "mode": "100644",
+          "blob": "3b5128e65988177ca8d76071101ec47c7dd44967",
+          "sha256": "b75e8b4b8df87a6c6b9badeb063c70f43ae715d546c652abaefec0c6dceb0028",
+          "beforeBlob": "4c9cf9b86b0700b17b5a930d9557f4ea1fca36a1",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "docs/15-recursive-agent-validation.md",
+          "mode": "100644",
+          "blob": "a18f7739b5f48f79d594999069f0984c1532ee94",
+          "sha256": "b02e1a6ed8327e2fbc0e6e0f54ccbced75b34533e8550fc2cf71831b88436cc2",
+          "beforeBlob": "d0649d6828b6993682532f3569bf6d7ec6c280e9",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "docs/34-flexible-execution-candidate.md",
+          "mode": "100644",
+          "blob": "ce5fd57e1c8f20074641354b18cfd5ac32ced45c",
+          "sha256": "9756642dc4cff6a5fdeccb56b831e2016c8ea72038a64cc0f8a459224089552c",
+          "beforeBlob": "1c81044b976660509375e7c94408a8ed47f5dbe2",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "100644",
+          "blob": "6bde9506f8756b981984c0e15efc8c5c47e98abf",
+          "sha256": "add37d21d77fd65ed62c36057a1b32afadc01dbfa6bbb4306e6601517a313ae9",
+          "beforeBlob": "dc520234e5504887aca6d9446c4371886e147a09",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "prompts/worker.md",
+          "mode": "100644",
+          "blob": "2b1296baa6815a67442aa0838134bb72858c319c",
+          "sha256": "6d2db7a6e719fc614da58ae5f3a4ffcda816f42cedb6b0df771da39f4f764034",
+          "beforeBlob": "d085e1c51db218d5287905e7befa038a1ec40b0c",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "scripts/database-migration-preview.ts",
+          "mode": "100644",
+          "blob": "682b1f3d98d81a47eb282ebdce87d31b09124884",
+          "sha256": "8a5b1080d58993a103ee52b63963adf1b0b41b20a1fcf23b8728ee05c32721a5",
+          "beforeBlob": "e93c728a5c003962697c58ae0985f2f4b7ed9c23",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "scripts/desktop-runtime.mjs",
+          "mode": "100644",
+          "blob": "78617ff8c660116d72cc5c7d235230bd345513d9",
+          "sha256": "455f0d3407fcfd043d205439cd98e26201f7cd761f16e5d325fa40bb4e43bf98",
+          "beforeBlob": "5250a5ed1cb635fd9d84d197d9ad763d50fd4e37",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "scripts/pinned-build.mjs",
+          "mode": "100644",
+          "blob": "29ecf084497ec0d1d299717df2364f4fe021e366",
+          "sha256": "07bf0eb59c1b26120a99d0cda2d217df933b3cf132733d3ce8bd5707a6bb2959",
+          "beforeBlob": "e473f9a18a4d03cd66b270547e62cf102f884ef3",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "scripts/recursive-synthetic-host.ts",
+          "mode": "100644",
+          "blob": "7ac3ef6751a970bdf7ceaa3f237fc170c6387718",
+          "sha256": "9b7be7d3cd95881bde2ebb499c48f1391413653525a3e7a7526ca63285ebd512",
+          "beforeBlob": "659ffa70330d233f3aa105bc13440bfcbd82d08b",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/engine.ts",
+          "mode": "100644",
+          "blob": "095399716114ef4da27eabc7ef7e49a7b5599757",
+          "sha256": "ba7237a6603ef50861150e300ba5d5ec52d9673520098d9453bca4cba54167bb",
+          "beforeBlob": "6c4d9b7e1d539dab1e3485d456aa5a571d95accf",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/recursive-tasks.ts",
+          "mode": "100644",
+          "blob": "b072776bca24dc6604bd9cfbb47db5959da56351",
+          "sha256": "b90c0b054d377ca2c919a15760d97b1631044ff338df80e9e3818ee040eba293",
+          "beforeBlob": "79fcf93225c90f0b0b8f884efe5ef9821232a2e0",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/recursive-tools.ts",
+          "mode": "100644",
+          "blob": "95a5afe4cfd3d92364ffdd76263fee6dda183a5e",
+          "sha256": "fd939b76803b9a536242e9570bb717e9362f6a8d5e63499a73774712f47de289",
+          "beforeBlob": "33de22b9004c07792f74d670e190c891d5ba25a9",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/service.ts",
+          "mode": "100644",
+          "blob": "52948323c389b6761eee8448e9aa82adfccfbe29",
+          "sha256": "5924f8830764f1eb223becc8a5b4e85bcde399d9acdd440f7ea96ae1281e454b",
+          "beforeBlob": "388a9cb5ec77a24a08734f6a2649bc0507a16c37",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/task-status.ts",
+          "mode": "100644",
+          "blob": "a452dd55a795754ea797fac47830ac8fd4433020",
+          "sha256": "f1f8fd64a648344b65e9334e31196f78e41ec7e5fb87682f72eb676dde1a1e53",
+          "beforeBlob": "4e58952e5e513f620c67d553f7254f5bf6d86ba5",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/worker-interaction-mcp.ts",
+          "mode": "100644",
+          "blob": "18eaa0fcd6c7e1ec4a2947b78b5da36bf34e7a8a",
+          "sha256": "04553fc8b7af8847cf67c5782f13a0600625bb0d43927bf2143a29021a0eddf0",
+          "beforeBlob": "6fcf3ba86f4808987479555fc91d0097b8e1d5aa",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/worker-native-requests.ts",
+          "mode": "100644",
+          "blob": "1477e157bc9923c6851e05bb36249c59e3456c7b",
+          "sha256": "c25a9f25a84244cc6a0d73795d4795863ba2aeb792d3ac78e94c407663018e6b",
+          "beforeBlob": "59bde9df4aed5186ee4f82a4eec9f0d075e1df47",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/database-migration-preview.test.ts",
+          "mode": "100644",
+          "blob": "04dc808e1f964541e557e9d9d245b762fed998ba",
+          "sha256": "c6269c6c6629c0229b298b683e5c3f8c251c1fb10402dec790726df39a4fb961",
+          "beforeBlob": "35717fc71cabc9f05ae9bcc0025080e71ae533fc",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/delegation-attachment-input.test.ts",
+          "mode": "100644",
+          "blob": "3035151544a372f87ec8d3711b598bdb0099cc1c",
+          "sha256": "17f3f508a1e017c651d3acf4c12419f77b585264e1a792d0d92c6bcff117f7a8",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/engine-rpc-lifecycle.test.ts",
+          "mode": "100644",
+          "blob": "f992f07b587bb45dd6070cee750b9779c57266ea",
+          "sha256": "19bc107c687e3c42ff97bc25e695149e98ca493ae4bfe2265c9fcce6d1086ef1",
+          "beforeBlob": "9ade9993508f41882fb05ddc704ad3a3495d2198",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/fixtures/worker-interaction-app-server.mjs",
+          "mode": "100755",
+          "blob": "e5a5f692e16598a6f876e1038da5fe2a07e7ac37",
+          "sha256": "1da8d994e88314870c507cefcee8a2b085a43aaa8beb9a84ed2e4910cb41cf3b",
+          "beforeBlob": "db346a4c73c41ad4ebfac04f77dc57c489994c2b",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/flexible-execution.test.ts",
+          "mode": "100644",
+          "blob": "23317fca8a9dc210be311976978505315bd1c50b",
+          "sha256": "cb387961199c881f868ca79b8546a73a6e4e49bd96c7e4d38bdc9fbdf479b56b",
+          "beforeBlob": "7ca0d8a4a5dbfb7f4fae25ad9ed4c5f5dcae5486",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/held-descendant-closure.test.ts",
+          "mode": "100644",
+          "blob": "f69c42517c757d80f55ef3b66e95115517b8e5de",
+          "sha256": "924a321433c0f211876825369fc8586e03a2de547e19c021ada6a8cdf365f714",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/macos-desktop-runtime.test.mjs",
+          "mode": "100644",
+          "blob": "651eb0ca242ec69705d1d5ef0aff24380216d85d",
+          "sha256": "8c51d36d82d973b2e4640079d7937d220f2131ce55c39df33f8a6fadada13068",
+          "beforeBlob": "d1768b21b154cdbf4b117854d937f4c405064ede",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/material-read-precondition.test.ts",
+          "mode": "100644",
+          "blob": "cf4209cbdad21269ba67dc6452099745c33343d9",
+          "sha256": "160d87d56492365467affc0f7c6ca2f32b07e19f7da3603b949170dfc7f8f44c",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/multiple-artifact-migration.test.ts",
+          "mode": "100644",
+          "blob": "57367c15164932866882896ff238d2e5273bd6bd",
+          "sha256": "982fd5538bcb1daf337dc9a656795842255785738af9221deb6eaa816f3ce060",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/multiple-artifact.test.ts",
+          "mode": "100644",
+          "blob": "2e0aa5a20737401deb862ef03cd9689cbcf73154",
+          "sha256": "f01aa20fc8170b5e6759dd8b73771e1e74f13cd584204727ff3fbb86b3d43267",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/native-execution-recovery.test.ts",
+          "mode": "100644",
+          "blob": "3342b3cba1764cc2565c261a07538c2153c1851b",
+          "sha256": "27e12582c13e277a4032b4059a8d67b7a7e420323d0562e54be26b7e21365eb6",
+          "beforeBlob": "fb55142724d05dc877671bb3597efabf3d10e631",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/receipt-result-recovery.test.ts",
+          "mode": "100644",
+          "blob": "077e55d7716a54c8c8d706b475f1bee9e170b392",
+          "sha256": "9e3aea02d2fa94cffed3c7e6ab8c28297d5159015e05249fd92f5532db4d514d",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/recursive-boundaries.test.ts",
+          "mode": "100644",
+          "blob": "7af177692e9a7ddcf05a8504f7ca337966c8ebc1",
+          "sha256": "9afee123e740d67b17720252b189cffa23612598bf8ad42f557a06826cf23204",
+          "beforeBlob": "99c0ffc0c4b2e9e3400de13825da3219db3fe202",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/recursive-cases.test.ts",
+          "mode": "100644",
+          "blob": "69aa404bf30afaffbe21559d861a91fcc08a7916",
+          "sha256": "d0e05f3e06c8948e14d171339b3282b0c28851f19a60df9868fc07dcf3982fd3",
+          "beforeBlob": "68cfadac5304401e1aa77b5ce5d722d2d88efa2b",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/recursive-main-inputs.test.ts",
+          "mode": "100644",
+          "blob": "3c1c7ee0790adc1c3f3a64961c8c01624b1f7b69",
+          "sha256": "26e790c108d005ed913a97f9e724df4a9140b18e0a9f539facf9ae97feb9357e",
+          "beforeBlob": "ceb9ffdfceff4a74ca90374803abe0a1aec42cfb",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/recursive-queue-transactions.test.ts",
+          "mode": "100644",
+          "blob": "cc85fd7ca65d017404a91eaa62adba966c40ab37",
+          "sha256": "b49982bc72b338fdab70c8d8b332b6ea07e8803de7eaf97715f8a79e06175c54",
+          "beforeBlob": "fcb2895415a47f4bff1392dda8ac782559c43030",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/recursive-targeted-messages.test.ts",
+          "mode": "100644",
+          "blob": "7fcd85978dc69b4c41c5ac73b13b926649c92a17",
+          "sha256": "5f448113808a70f16398a0725ebd34a4280baac7f7f00df0c127a7e01b355047",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/recursive-tasks.test.ts",
+          "mode": "100644",
+          "blob": "1e8777a5183257b8d728420edbb86c493c6a480e",
+          "sha256": "d1ed251b3f0e769d93b5814bee7d27321faf430cd434424b2aa8affb9b8395af",
+          "beforeBlob": "443477f4029c088d9b0adb0a74be1f8fcccbf049",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/recursive-terminal-queue.test.ts",
+          "mode": "100644",
+          "blob": "4437500200011edc8c135d7d5da8a53e0031f0b3",
+          "sha256": "f3a9e18734d97a19000e638791012c999b6482ff0f54a4f81d219741d7f81d92",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/recursive-terminal-stop.test.ts",
+          "mode": "100644",
+          "blob": "b95068e6960a20acc9c611f4d0ade05cd3495ecf",
+          "sha256": "2ace638eb2a52a81518960340493e5fb39b8156b676be3b7ec0e4e0d3948b1e6",
+          "beforeBlob": "9c822b2321929295881e91c4f078ee6a13c91e17",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/root-worker-notifications.test.ts",
+          "mode": "100644",
+          "blob": "fa97360e0b46bdf2ace5ef9b027ca79a43ce4cd0",
+          "sha256": "4d8accaa8b7c6cc5cfbd52e80cd5a8d7ee45a809f93e32fecf53ad1bf589516d",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/runner-directories.test.ts",
+          "mode": "100644",
+          "blob": "045cf44426e9bba31a607e9b6f57d5ccdd88b5e1",
+          "sha256": "4e385da11459685d792b8a4a4c362b3a241f3295d3bfcf1ffb13603c38d15bfa",
+          "beforeBlob": "0a059f4df7f6668384fcebe3069aab6abc768f83",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/service-capability-operations.test.ts",
+          "mode": "100644",
+          "blob": "5b5ab9718a9a72e7f6a4bc9a9fc601f92c030f38",
+          "sha256": "3c833ac7199aa08f3004af6f089c4a6aeb171d6f1240bb726440361940c8979d",
+          "beforeBlob": "49ebec206c4c52fce8e3c535cdb372ee29923433",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/task-status-browser-fixture.mjs",
+          "mode": "100644",
+          "blob": "653b60b540a00d15e8e682545801eaf8350a008a",
+          "sha256": "cb341f992d7ce2acb933e7e1969ea4fc4ca09fabef2ab5e6f71cee27bd40dae3",
+          "beforeBlob": "f7c8669cf5266fbe9042eb0e28682af9174a0d85",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/task-status-flat.browser.mjs",
+          "mode": "100644",
+          "blob": "a12d1782dfd18526ece91fcaa59090eeda3195bf",
+          "sha256": "ec92b595628f4e84b7c1a9951062ab6b7e5eebf154363c5f21273236ec05519d",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/task-status-pinned-runner.mjs",
+          "mode": "100644",
+          "blob": "b1120e38622f717a9122acc637578145a940f39b",
+          "sha256": "e6ef214c88ccf160fed0f6d752c097a8a8fd6ad8655b6d9a37380d73b33075a1",
+          "beforeBlob": "472a5c033e523cacb7c88b3c0f46ccceb3e51d40",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/task-status-unified.browser.mjs",
+          "mode": "100644",
+          "blob": "a899aab739d472de5ee571d3499892609b76cdae",
+          "sha256": "01422df56be0861707a2beeb15c59691186a31dde5856c88ee0bad32cdce155e",
+          "beforeBlob": "f340b0f14db0d9d0a0067b26d1735823b475f7cd",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/task-status.test.ts",
+          "mode": "100644",
+          "blob": "ced5e8554272b4cdcdb7ce972c023405f38324a4",
+          "sha256": "13a45d7f15423c7be6682322ecbc4a4f126fb8163d63ea6e177bbf28a50e4c5f",
+          "beforeBlob": "3f9846323e6260fc692f0a51bb3c492ff78037f6",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/work-history.test.ts",
+          "mode": "100644",
+          "blob": "25d692267f2fe6e578c75fb8850c714be25e26b4",
+          "sha256": "29e978fb563c19678ca17bb3ace9d3654375b1536611e62b4b7a06a07f78ee43",
+          "beforeBlob": "db3af3711dd78ef4e2741ecd77a856464ac87803",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/worker-business-boundary.test.ts",
+          "mode": "100644",
+          "blob": "3f4ccd0775623cc342d3dd1249d543af4e3f3325",
+          "sha256": "871bcc78edc9c55a62873572be9a7a6835d9545757f6a7c13c95f291fbf97b67",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/worker-card-events.test.ts",
+          "mode": "100644",
+          "blob": "434f6441c90acbdba6dd917a5574b2fafe7aa25e",
+          "sha256": "a496fe5048655336731b5ec17e4ae1107e987b94175da67208971e9fddd1f46f",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/worker-card-host.test.ts",
+          "mode": "100644",
+          "blob": "c506bf2ffb7e33c19710d9c6fd4f59c0e36d5758",
+          "sha256": "4eac588fe424aaa24dfa9d0eed99d5238d95fcb55cd666bba4b58c6a753fb813",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/worker-default-fast.test.ts",
+          "mode": "100644",
+          "blob": "ede801244233cc1adc7674bf810a9429adf16992",
+          "sha256": "9805da6d2601e13394248b7cc8da3484b5887aa0f96db2bcc75ffe1da9c926a7",
+          "beforeBlob": "6834fff109c3d25e9aee695a9aefeabdb2e76033",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/worker-interaction-mcp.test.ts",
+          "mode": "100644",
+          "blob": "d834ba6cdb32eca783e5e88684e7e03120b12f5f",
+          "sha256": "840a41c92147e1b947abbf51f96e66a8946ba434ffac29c892e95e99a67e5dc4",
+          "beforeBlob": "1b796916a3f17150630e3401e6db56b0a4e43540",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/worker-native-owner.test.ts",
+          "mode": "100644",
+          "blob": "6c089efb564c394bf7b1bcacdced6d2650c53c6a",
+          "sha256": "94f2c09da9ce287d72e39f592d4c22bb3fecd05de2fdae3c7233af35f92903f8",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/worker-native-requests.test.ts",
+          "mode": "100644",
+          "blob": "6eefba5fb0bc1f2951bf4345fadfad79820d65b4",
+          "sha256": "d2bc73490103c9f6a854be870b3c29ae8ccb51720d55a1bbabc1c560e71ae882",
+          "beforeBlob": "d9c547adef827f51137d274dff01dbb3b701e6f3",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/DESIGN.md",
+          "mode": "100644",
+          "blob": "e10d5c4251d6f69396ef3508a55ebed13bb7dfe3",
+          "sha256": "75a4f301c174d1e8c4d050e63e6eeaf92c6b1c0d79531f83d71ca98b61f7eeae",
+          "beforeBlob": "8539ad5a2ccf5355097354093abb000661c3670f",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/task-status.tsx",
+          "mode": "100644",
+          "blob": "5fda68138931332a036f264c2e1862e00dd1d7a1",
+          "sha256": "f8fab6db41356886df3ff3ffcf087edc66e5762b8fc399e20b7292f19c1c0dbd",
+          "beforeBlob": "ab324242305068d0cd88dfce99ff29513c4d2b97",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        }
+      ],
+      "commit": "b303848a2db813164b25dadc6c25fdabb7d7948d",
+      "parentCommit": "a6040cc62fb2e76ece3fb62b138b31ab9da516c8"
+    },
+    {
+      "group": "ABCD",
+      "tree": "404169e0b373bd95ddf654385df668e70b8618d4",
+      "parentTreeOrCommit": "8f0460fc41c5f1a07d7d6207cfc48cfddbfd4f5b",
+      "patchSha256": "3bc082afc47f13172cf0486151b368608403712271cb6ebd4e725408d9decc57",
+      "files": [
+        {
+          "path": "docs/2026-10-25-annotation-comment-form-unification.md",
+          "mode": "100644",
+          "blob": "ed1df316a78448be9f8dff22229a6de7c24c72b3",
+          "sha256": "afc8a53003f1a56fb7b56469fc79b3a48c451b4ea52f26f84f3af6a01bda1ea3",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "docs/2026-10-25-annotation-composer-sync.md",
+          "mode": "100644",
+          "blob": "18a578d32b18632ba345ef310450782f0aff1b0e",
+          "sha256": "f7cf6096347daca5bb286a41e20c72f0c3cace42f5eeb7d03aea050b873f85cb",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "docs/2026-10-25-annotation-header-source-removal.md",
+          "mode": "100644",
+          "blob": "651bab7f9d8a5639ffbab35191f56a0ce6de98d2",
+          "sha256": "8b3c35dca1ef85ee9019056128976507e3f6a4f6f526d93abb84300b0030c569",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "docs/2026-10-25-preview-tabs.md",
+          "mode": "100644",
+          "blob": "072443d0352b8d04bc1703c45d0fb9c74a8a45b6",
+          "sha256": "93730b6d8f47eb27c5d3f8110cf888f8d9ccfd2b74635845930e97c6e0f369af",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "scripts/patch-preview-agentation.mjs",
+          "mode": "100644",
+          "blob": "e866ed94821078c4f1a999ae38e6e09940dc1a65",
+          "sha256": "c8d16c236f5a920cf96c16d4ddcdbc6ae413735ba5d32b951e0f8388aca41c1c",
+          "beforeBlob": "47a93b95ef1e4c014f8cd543e4bf222a1a7c4f2c",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "scripts/preview-agentation-draft-patch.mjs",
+          "mode": "100644",
+          "blob": "778826b2885622af92c6a179a0e8678c7dd6f2da",
+          "sha256": "7c01dfa5a770cb34c2fb5c7e2fb0e883d823b5b0d66bf773b6f02ac02d24e3cc",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/html-preview.ts",
+          "mode": "100644",
+          "blob": "6ecc3bf4e00206780175fa85b063a0dccd62ecdd",
+          "sha256": "62b38a806d3f3a710229a885ebc763b5ff019d9818b1fd4a431830f28a38ad24",
+          "beforeBlob": "047ef568e7c021a5f9915029cdebfe303c248660",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/preview-reference.ts",
+          "mode": "100644",
+          "blob": "eacc73eee1241f30ddbeb9bcf036f471ee5b37f6",
+          "sha256": "d657ef98b0902077361b4ad048e628905b7bd6f5333706cb74d95ca56c94cd27",
+          "beforeBlob": "44d9c61ef6cbaf24f693b262a03c896a705f14e2",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/recursive-main-inputs.ts",
+          "mode": "100644",
+          "blob": "8e2009fabd2da0a46896625f78bac8bbea1058dc",
+          "sha256": "dd3d637a173baa674fe37650e71bc0e3fb0ca1579931ed854b5ef25607ee9c27",
+          "beforeBlob": "ed9fe4468b0787f6e283fffb5109b92c43f5568b",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/service.ts",
+          "mode": "100644",
+          "blob": "3d782835807c40dfff110e16c31a522700ced615",
+          "sha256": "abe3d369e14b2a548a0dd6c30019efe4b71512862fd783af35e9b00a324ae7f2",
+          "beforeBlob": "52948323c389b6761eee8448e9aa82adfccfbe29",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/user-intent.ts",
+          "mode": "100644",
+          "blob": "595c4144a01005b7841a1b40086699684ca498d9",
+          "sha256": "6b06aa0c1177c9634002e46d35fb49e9a65c856dbc6452b329336f91599499b6",
+          "beforeBlob": "c69318267523aaa706b4ca67a1e798a1ef2e9f75",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/web-contract.ts",
+          "mode": "100644",
+          "blob": "91907314fdf384215e1cb7f01d651b8a50449318",
+          "sha256": "803877cd8ab52980cd63a7a959eccdfdbbb47df05036f7f464e9466a68b736ce",
+          "beforeBlob": "68dfb0b1b1e16a82443b84a7ba0ec61c379d6727",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/web-history.ts",
+          "mode": "100644",
+          "blob": "aa2fc5e96fe4ca7ca25b2842e0071bdbbe44de9e",
+          "sha256": "91b86fb3b63c70fdd6ae806b2fa833454f3caf816562f81044beb92b545e8996",
+          "beforeBlob": "b342458bcbcee947142b9a5947f7498dcedc1c45",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/web-homer.ts",
+          "mode": "100644",
+          "blob": "26e2ad3064125bbfeb022eac2110ab8985ca7e29",
+          "sha256": "fe5f0494348435841d6f1261a744d882fb7ef57f09bdd06b11b37eeb747f31ae",
+          "beforeBlob": "77253b8b7d2b3f6725c256b62d2ed64aa88ad997",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/agentation-preview-patch.test.mjs",
+          "mode": "100644",
+          "blob": "38a4d29ca1d8d9b10897ca5edb82dd6dec0af2da",
+          "sha256": "dba3de27436c611e2c23d9d67609dcae328825cee237fb07ad64683f3b67e985",
+          "beforeBlob": "8d9aef2552805fd607adb86fed0337a2a2057673",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/annotation-comment-form.browser.mjs",
+          "mode": "100644",
+          "blob": "a20e01c577fb60fddb3880fbed6f715af6566177",
+          "sha256": "1ead9e6332eaaabfe411f647aaa921834d1d6b27ec3a7392eaa70da014b945dd",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/annotation-comment-form.test.mjs",
+          "mode": "100644",
+          "blob": "66982fe65ed188232d8e89504010224890a8c991",
+          "sha256": "a057be721b354b2cac39fdfdc89de61768afaf298fd20dfb6fbd8ca953e82368",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/annotation-composer-sync.browser.mjs",
+          "mode": "100644",
+          "blob": "031c9d8126caf51658ba58ad0dc8e73a26350609",
+          "sha256": "03aeaaa0eec539d7a21e510059d3a82f7c9cb452920221ba85c0e683b30173ad",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/annotation-draft.test.ts",
+          "mode": "100644",
+          "blob": "2ebc22081538c7077fae436e88ca58928ee434e7",
+          "sha256": "8d01d4a2cfab3f00b658e1d545a2288f3f1cf7c5f51acf8bf760c8d26d67bb2a",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/canvas-selection-toolbar.browser.mjs",
+          "mode": "100644",
+          "blob": "89fc5eb4a04e9d822e41d6a5fc11da779646944a",
+          "sha256": "0e51b78a8dae0dbadc29c6879b4a510fef32aac46e663cd611865d145d5427bb",
+          "beforeBlob": "0fa2b14c0cc1ebcdb66a565124c9458ce8821179",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/fixtures/composer-browser-server.mjs",
+          "mode": "100644",
+          "blob": "6752e207cb0b9a469f4136d4f920b61c69569388",
+          "sha256": "7fa09f84cdfe5d7246c62e26a29cbbe17de8488e5073c2c0c71164dd31a43f4b",
+          "beforeBlob": "c204e888ea05ae8884ae53dd14284a48762e781c",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/helpers/annotation-comment-input.mjs",
+          "mode": "100644",
+          "blob": "ce5c7b9724f270ad60e4fbc5a59aa189956645a0",
+          "sha256": "c9e9d5e5c0ad739f3f6904ae04fd903816d6386f281cc1cd9bdd806f47ee5de6",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/html-annotation-lifecycle.browser.mjs",
+          "mode": "100644",
+          "blob": "801c25c6750643cd404a9e416eac6a09da352576",
+          "sha256": "46353a3eff65b270fe01ae763900f92f10f853c8d4e24947e7fa7defad9dd394",
+          "beforeBlob": "65317a8c903645a777590999e213b7e2c94a2573",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/html-render-first.browser.mjs",
+          "mode": "100644",
+          "blob": "d77de76a4d00d6ccef8e3a10396e4ec496f3adb6",
+          "sha256": "743682043f2462e264ce17280fa16dca279390cbf9f38c368f850abfd8fc5429",
+          "beforeBlob": "3d3fa69a8c91c803354b42bbcfdffb8ac1f0c293",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/image-file-annotations.browser.mjs",
+          "mode": "100644",
+          "blob": "70106c8ea43a8f160d51b370fa56f01f57ab933e",
+          "sha256": "f38ad5484c5d96220d63ffe7466b52acb9f963bfcc84caf3cd0dcd7f291cb311",
+          "beforeBlob": "efdc863748313b315ab50f714ca6be74e6f7dc30",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/preview-collection-transport.test.mjs",
+          "mode": "100644",
+          "blob": "5371c9ccb2a2dd3e6cfca2d63009928aab49b4f0",
+          "sha256": "955ea5ded531da1183e9abf2821f1d1cc4e38b899fd456847eebe751e3d36a70",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/preview-reference-collections.test.ts",
+          "mode": "100644",
+          "blob": "359b0d26592fdefe79a2212a93683f36d9b1df96",
+          "sha256": "2c2218c628aeb530b126022388908492903ef6d4bb823ae7c4661a3963b0edc9",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/preview-tabs.browser.mjs",
+          "mode": "100644",
+          "blob": "3e4a5394a41281faff39a5b368b8dadfaefa6242",
+          "sha256": "fad695febeb8fb6f6a6ad016033fb762b4584a9b77f59ba7ffa3d2a66dd0a28c",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/text-file-annotations.browser.mjs",
+          "mode": "100644",
+          "blob": "c049505524e804f094760f013fac24de69c6d39a",
+          "sha256": "088caa1a33d7b209abdd670bbbf60fa3c6a3a0ffb5a4642dccb6e9df182208e0",
+          "beforeBlob": "f91c0d9632368c0aa75c96d670c1079c8e5c8f17",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/web-service.test.ts",
+          "mode": "100644",
+          "blob": "aeac055bf06b70dce703a51a385a2ee7d769ca34",
+          "sha256": "3e7685134275ffe44a4e6dbed67dfdb3440c9698dabacf9fcbae90ab10650797",
+          "beforeBlob": "5a5cae95b8502a4d5eb3c280ae781fc3b0883e0a",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/DESIGN.md",
+          "mode": "100644",
+          "blob": "ac7fe73b8043aa106ceb3ed9bbc4614567c5c832",
+          "sha256": "c1d56051849a2ce143ea60ab045a7304cae07134f66d685144e913a52768df47",
+          "beforeBlob": "e10d5c4251d6f69396ef3508a55ebed13bb7dfe3",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/annotation-comment-form.css",
+          "mode": "100644",
+          "blob": "2c4b2bfce6e4476c0d66bed35187e597b3a2fdc7",
+          "sha256": "e4e673662b8c9263db8da258731a0f537bc5dfcdcd2dcb0757c4284a58847d86",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/annotation-comment-form.tsx",
+          "mode": "100644",
+          "blob": "19adad90d43d59edd75fec3cf2adc194631676e5",
+          "sha256": "c6075b571960fa1b5e43b27a41bfe104c79466b1b2818c0e0321848b5f129680",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/annotation-draft.ts",
+          "mode": "100644",
+          "blob": "be9080060ae16d547f48e0fa9c6a5af6b54ff72c",
+          "sha256": "712f4371f5ef09618e1f2a52a1b87def1c8c534c51e6da8e7cc58f488531a80c",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/annotation-frame.tsx",
+          "mode": "100644",
+          "blob": "96ce8e1bc9eab9470b6dd5ce03282c63ed1e2c1c",
+          "sha256": "3f8f0df003b943c379c8c36718aa3f404180563baf5d2b25b0e705efeb8dda64",
+          "beforeBlob": "31955b8fbaaf48c526073f5e36f8a85042ae881e",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/canvas-panel.css",
+          "mode": "100644",
+          "blob": "e8f399f9f2fdd8bb1d90c3dd33d01a5fb65a1b9f",
+          "sha256": "89d31ed318dde40654d1feda211b4540912d4a021eb59ad3b313ef8a4802590a",
+          "beforeBlob": "51031fc803427e13746d20b51a9cf3d8afa94c9c",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/canvas-panel.tsx",
+          "mode": "100644",
+          "blob": "f233862211dd98dc6b25d1dcabbe00f560fab256",
+          "sha256": "2d03b915d30a3b34a2573e02927c7f518b1db13c9502504362b56960a3f94017",
+          "beforeBlob": "0a94299db93d1f1db458c97424334e7e6b960f6b",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/conversation-client.ts",
+          "mode": "100644",
+          "blob": "0df759fc5d827972ff84692e7f14eff11e439d97",
+          "sha256": "9c3d970bd737a80359023a7440cf7ed8f885a6ec09dc3e6c6ab5219c677c609c",
+          "beforeBlob": "77dfc12534feee305862b710a87df5744ac2aa0a",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/homer-app.tsx",
+          "mode": "100644",
+          "blob": "1f115626e22f851a88664825bf9f849746e319bf",
+          "sha256": "22646c531bec1c36b8ec72bb772e6e998aef25f51a01d4e57384cfcafde3658e",
+          "beforeBlob": "4e92f345b230631f9c1c2e2853c738bd0fb003b5",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/homer-attachment-adapter.ts",
+          "mode": "100644",
+          "blob": "4479b5ec95aca6ec71b99adda883129e3d3e00e0",
+          "sha256": "ce9a11180131592f928e8ffe192557ffa932f62aad385a20c4f0093ef7a74170",
+          "beforeBlob": "e66e5fcb3ef880b45e68051ab0d18387601fc82d",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/homer-attachments.tsx",
+          "mode": "100644",
+          "blob": "4b77a5d5005d429d2bfca59663119073c0c71a93",
+          "sha256": "a19cef5c35ce373ff37107f273b954d78c031f36521aa19ed682e879421184fd",
+          "beforeBlob": "5300d3323ab014f023413152a26d14a5467d8e83",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/image-annotation.css",
+          "mode": "100644",
+          "blob": "de10b72f5753e491f4cfb763cc86edfd971f363f",
+          "sha256": "39463dcb68f24b9b5195300763d9a6afa9f775012ac6cd38795169b78e8a9f05",
+          "beforeBlob": "8d0ac808f1b5caa755c79d6d62ca73d539d6bd1b",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/image-annotation.tsx",
+          "mode": "100644",
+          "blob": "34acebbf472779aaa22b291d57669cb5776c05dc",
+          "sha256": "911c53217d6cd1c94ee1edea55463a1234bf94f70c939dced8bfacf1d498bc7e",
+          "beforeBlob": "d32b04a3288576be16b62af730e25ca0e7ab5487",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/markdown-code.tsx",
+          "mode": "100644",
+          "blob": "1c1e120c5d174114563e4b6b65b1b4d4a6321269",
+          "sha256": "32240a254c86b9a94f8c6218e94c3ca157e7ee9b54a777e882892ccd32d91939",
+          "beforeBlob": "3a9f2a22bf675055391d23084e0551136ab46041",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/message-details.tsx",
+          "mode": "100644",
+          "blob": "52a8bc567ca68193a27466f8207c210e4bb4b256",
+          "sha256": "02261c31986c9684b1b93618a354e130535011161415d1a15e04ff1255da9494",
+          "beforeBlob": "9abf4d30767720d3b1aea1781801c9a5037858f7",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/preview-reference.tsx",
+          "mode": "100644",
+          "blob": "0427befb13e4861f2622c7dd71a181ae53375002",
+          "sha256": "52aec3ea1e3bf89c842abd612686adf6fe626d200ce4c988ada193ff3d9fc686",
+          "beforeBlob": "57260526e0f382e5b9964b3847053bfd8ced3ce0",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/preview-selection-toolbar.tsx",
+          "mode": "100644",
+          "blob": "5f3ebf7fc824469ed015a1bd4d6c653bee6a494f",
+          "sha256": "228d60e2c2ae0e2ad6fdd0ac222cbf34e3f900d4047b1ffe8e16f75b4cfe69c6",
+          "beforeBlob": "ff129b708279818ae8fabf26baf571d2b4f89578",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/preview-text-anchor.ts",
+          "mode": "100644",
+          "blob": "4c0858111538ec5900219723e205a4fa770f9720",
+          "sha256": "3bdb96d7c36007e350a3d3b5771ecd4bbd5d089952247c08b23697e023654475",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/queue-draft-recovery.tsx",
+          "mode": "100644",
+          "blob": "3dc8a46ad12322a5169c733675861cb8cf8f595f",
+          "sha256": "5388551aa874e3134882ff5cf64e4c7218469e1b023b5dd510f6bd5f5ed1921e",
+          "beforeBlob": "e13eff8f678ec1596a9a53612d4f70d310142ce2",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/agentation-3.1.2/MODIFIED-SOURCE.md",
+          "mode": "100644",
+          "blob": "086b3d0ae367132bfa6b723694ddd38ad54482e4",
+          "sha256": "2b35f1453bc8f5cf9c6282126abf3e68d664a564d1e33274bb6a4f8005001eb8",
+          "beforeBlob": "2099f61f7b2b0f67a4e75ff3b17824cccf1b05bd",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/agentation-3.1.2/agentation-local.patch",
+          "mode": "100644",
+          "blob": "af2d7a353875a99ddc60d15f55ac99dac5d63694",
+          "sha256": "ef426bfe3d4b989f88aac4fffd5edc6f0087ca60d7961e8c5c0db899fb2024cc",
+          "beforeBlob": "691543c58c6e14a3d53f16e9f6993e2fdccacb1c",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/agentation-3.1.2/index.d.mts",
+          "mode": "100644",
+          "blob": "04d457e85296c445d3f8116abc20c3c5d09d511a",
+          "sha256": "b37ba49827a64f25f7510bf744dcf10456d4656cd22cd3c56d47e2ac235e0949",
+          "beforeBlob": "74e1f8821d3f0026626170227b886843872d2487",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/agentation-3.1.2/index.d.ts",
+          "mode": "100644",
+          "blob": "04d457e85296c445d3f8116abc20c3c5d09d511a",
+          "sha256": "b37ba49827a64f25f7510bf744dcf10456d4656cd22cd3c56d47e2ac235e0949",
+          "beforeBlob": "74e1f8821d3f0026626170227b886843872d2487",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/agentation-3.1.2/index.mjs",
+          "mode": "100644",
+          "blob": "64ffaffe0a974def2dea21b96c38281684d4d2c4",
+          "sha256": "2cf30bd06dc8819541f91e0efd1f56144d2ffdf3d319457420d96b29c8952946",
+          "beforeBlob": "0e7cca53d19bc4a8effea45b025f2623ead6d4ac",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/agentation-3.1.2/patch-statistics.json",
+          "mode": "100644",
+          "blob": "e0bbedd6e25cec4ca7c02af5b5cab072744d4d4e",
+          "sha256": "a8fc48b92a2b30359eb0191172ec717d24a509236bec00d82e5d6c4cc17d5aae",
+          "beforeBlob": "800be52575833a8586c532eff90f47c78eb8cadc",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/README.md",
+          "mode": "100644",
+          "blob": "e952e506440514a9ee9e666f16b8bb2df1b8bc26",
+          "sha256": "e168006d5738ca08e06c6a699095e876c98d540f25952098def5f8503943c599",
+          "beforeBlob": "3a36c601cc56ac3e5586b06091c0fd6b0ca4f86f",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/attachment.tsx",
+          "mode": "100644",
+          "blob": "ceb17a9cdd06b8bfc1bb8754d02179345575d49e",
+          "sha256": "e13331c5002a9dd2cadb6c69f02bf7f53f75207041e6c56937d433a26200fc44",
+          "beforeBlob": "66827679015ee61ca2781125ff1e268ba8dfc030",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        }
+      ],
+      "commit": "3f5e98ef43d0e869f71ae3348890da84a8cf3f9f",
+      "parentCommit": "b303848a2db813164b25dadc6c25fdabb7d7948d"
+    },
+    {
+      "group": "E",
+      "tree": "c23461409dfd59245cdc64c29a0411ff5833f7bc",
+      "parentTreeOrCommit": "404169e0b373bd95ddf654385df668e70b8618d4",
+      "patchSha256": "2a7f83430936636455d448b8620ba2996eb14e23d88e4707900cdf9de379b8d2",
+      "files": [
+        {
+          "path": "docs/2026-10-25-official-tool-activity-integration.md",
+          "mode": "100644",
+          "blob": "dbc494eff3de9dc25218ec795abb91f45b6ca602",
+          "sha256": "f743c9fe778e1009ca52ca32db73a875f3251e38f0b07fe9c1d17f54479da670",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "scripts/build-run-activity-css.mjs",
+          "mode": "100644",
+          "blob": "03de477a32f300fc16330bef064c557f42f76185",
+          "sha256": "c23263f3ee31ee90fa0061e9cb573743fc00c63c2f5eb24d1282288e5a0766db",
+          "beforeBlob": "f651f8ebceadbf616097029366e0a8bb6bb45c9d",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "scripts/dev-build.mjs",
+          "mode": "100644",
+          "blob": "8afc5784707c09071759731faa842b64ca4a46c4",
+          "sha256": "701361acc5aeb1d5c0db6d29289bafc929b436a590edf23a95330b26ff1c0d83",
+          "beforeBlob": "56442b9bf4408fe81119d91050d2bb3e1fccd2aa",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/engine.ts",
+          "mode": "100644",
+          "blob": "8658cd42fffc2dac07a2e935ed24d8c8c561fa7b",
+          "sha256": "9ae2a91112a1c11d090d0e64099cae6f0d5a9f9dfb16e502a138afaf58a46724",
+          "beforeBlob": "095399716114ef4da27eabc7ef7e49a7b5599757",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/main-process.ts",
+          "mode": "100644",
+          "blob": "81ef4b88c8e6d5c0a16a616b46ea22661697567d",
+          "sha256": "3833dbb362e43939c07e51ccfe990db2bcf004958d61441f46b7f3e1870eeb24",
+          "beforeBlob": "9921072dbcdbc0fc4bbba211745171e382be03e2",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/service.ts",
+          "mode": "100644",
+          "blob": "be97fad9ea51de5459d1ddaae9b3ba41cad21dd0",
+          "sha256": "329c92a3c44ac57baef14d92b05c54d24b4945a77c9c174bca0eea1e87ec61fe",
+          "beforeBlob": "3d782835807c40dfff110e16c31a522700ced615",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "src/tool-content.ts",
+          "mode": "100644",
+          "blob": "a52898aafa51918f007e27d8331c36ea76257211",
+          "sha256": "5722113fe8a0122ddc26badbd4318bb8a52d43bebd5604e69631547abfc0e011",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/helpers/approval-ui-loader.mjs",
+          "mode": "100644",
+          "blob": "81adb3eee359ce3a4d3170c191101cda3948ddd5",
+          "sha256": "04a129fdae2435a673a213342e157fa3018da2359f8516274ade6b5fb9447a53",
+          "beforeBlob": "01c94689b6eedfd8a32bc358b31e225126c40272",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/helpers/process-ui-loader.mjs",
+          "mode": "100644",
+          "blob": "53edd241a3473dcaf920941d75b4fc1001627e27",
+          "sha256": "92a5152bd5eb6c58f3e91ff883fd18c1c5f3ca08b64e2b41cc1ed4b6734e4cdb",
+          "beforeBlob": "e32af4c8134165c96bcf4471c8e79aeba205d0e3",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/helpers/tool-ui-loader.mjs",
+          "mode": "100644",
+          "blob": "5450bfbd173e385b37394f6fac27f8f300e02501",
+          "sha256": "a538773d61fa416d802f1bba4fda07617a79ae37198eaa20f63392f624c62147",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/official-tool-fallback-upstream.test.mjs",
+          "mode": "100644",
+          "blob": "fc785e03e6cbdd57dd8de1c7f16a3e9ca7e2208f",
+          "sha256": "b1ee6ba5e67d66c60deca60dd42c8ba2bdb4f929262809ffbc07957cadfbc449",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/process-detail-owner.test.mjs",
+          "mode": "100644",
+          "blob": "16b346dcfaab9b04d99ff38dbe8420895c2b8db7",
+          "sha256": "40da51d493c0421e3087642368950f262399f5f44bfe0daf303cd4bfcca7c865",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/process-nodes-ui.test.mjs",
+          "mode": "100644",
+          "blob": "eddf89cf6e2c9c89784ef689f1e0e99df8fe3f9b",
+          "sha256": "09974ca29615c883c0fb3c9e3bebcfc6987394d4f3933f5dac49fb1ce2d2cbc7",
+          "beforeBlob": "44ec34f249d09a79ea573ee3f1f82e7953432834",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/run-activity-complete.test.ts",
+          "mode": "100644",
+          "blob": "367b456ba03d7a4f29b2c8abc41fe11d12c96717",
+          "sha256": "adb40fccc172efd45dcc886f4dd92a8ddeb3cfb75aacaea0ba568b0aa1e15e62",
+          "beforeBlob": "b06d52e60b4355559342784d710309e7ccd11c98",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/run-activity-facts-ui.test.mjs",
+          "mode": "100644",
+          "blob": "f26060d45181244b3cfcc2d860c32d5026b02b84",
+          "sha256": "47c156b6be25e152eae25576b179cffbae9045c1c2a43eddc65de415e4ad18d6",
+          "beforeBlob": "1d5f5bdeea312a303249bff069ed4b2ce82c4708",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/run-activity-tool-integration.browser.mjs",
+          "mode": "100644",
+          "blob": "b22b28666518c3c26d5fdbe608765267dd01ceb2",
+          "sha256": "fb6ea0c0e0b121b5e0e58bfa4299ac5fca28114b3f9679a38acb1084ef19dec6",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/tool-call-history.test.ts",
+          "mode": "100644",
+          "blob": "ddfae553d954847e3bc147b3df46e76401d0af19",
+          "sha256": "ffd5f3c1a4f7abaa83904ac296229921af9740c79e35fd4b6c49e687937533f4",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/tool-content.test.ts",
+          "mode": "100644",
+          "blob": "a96dbe02068c8d7c201fb027693cb77ed49b4fe7",
+          "sha256": "245ec814f5ca347cc1f73abeba2874fef30fb89461469709f335eaf5fd968ce9",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/tool-message-projection.test.mjs",
+          "mode": "100644",
+          "blob": "f408ef13343c3eebc0fadb8b7c7ca67b7ac78ff8",
+          "sha256": "da4e36600f6d2a600239a6a9f8252df102f59c40efb1704c5c8a706be2fd0b0c",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "tests/tool-service-observer.test.ts",
+          "mode": "100644",
+          "blob": "22be477f679b089f4c7bc16d7fe9f1502acd937d",
+          "sha256": "a4e95bbd0d510be9c54378f4089b4b1bc9b3e5ab59303c6b8bc776017b924f6a",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/DESIGN.md",
+          "mode": "100644",
+          "blob": "eef024a65e4b8df64eef09006027cdae6b7c9a51",
+          "sha256": "4ac939c81748da8cf6eeba5278458cfe151cefe398d8d2b115d2dfcbf1efe738",
+          "beforeBlob": "ac7fe73b8043aa106ceb3ed9bbc4614567c5c832",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/homer-app.tsx",
+          "mode": "100644",
+          "blob": "3dee2ee34f15c51782ebbfb4be92baa5a5abdfa2",
+          "sha256": "3a193a7a4da76e1c253acbd3f1797197136250cecb1450645ab8bfa3ea5dfac7",
+          "beforeBlob": "1f115626e22f851a88664825bf9f849746e319bf",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/message-details.tsx",
+          "mode": "100644",
+          "blob": "4bd17581321e95b9342e1b0c6ecd83368e603aad",
+          "sha256": "ce9920eef0d705d021cbc34fb8f08ec8c2c1e1ab8a7ea0af51585764d1c0d260",
+          "beforeBlob": "52a8bc567ca68193a27466f8207c210e4bb4b256",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/package.json",
+          "mode": "100644",
+          "blob": "fd7c8d5f18eff5be75520d5a03a3793bf18969f8",
+          "sha256": "626919b90254041d39e1be214121b204d35589fecfc64e36c2a81f86b5e25aa0",
+          "beforeBlob": "d847910926e771a65af66716b9b7ee829fe3c191",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/process-details.ts",
+          "mode": "100644",
+          "blob": "5544a39256b59cab7f7cdd3c9093437b71f1de17",
+          "sha256": "d1bad563ed21c925201c3c3be141efafd138ef9a5834b34961f54e81780a6689",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/process-message.tsx",
+          "mode": "100644",
+          "blob": "11023d159ce5ddbf2902d311e12aa3ada2446665",
+          "sha256": "9bb128e292a4aa4d0e3eca595988baa1e79dbad0d9c792b6fb2b74d755d3c8e8",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/process-nodes.tsx",
+          "mode": "100644",
+          "blob": "e347d55fd80d710e0ac8d82e6c28cc05360ff62d",
+          "sha256": "4fcc498e0374b1f22b645ea5414ca91aca645e6aba3902420155151c7b81f8e9",
+          "beforeBlob": "85aa644f9d95dd56918479002d386cc920826d1f",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/README.md",
+          "mode": "100644",
+          "blob": "233d378a0816878f9bdb5c2f773a049594d7b71d",
+          "sha256": "27e3840c291dfec6eeb4cb059f73c88b46bd7ec1e047da7cd8b5b59946111cb3",
+          "beforeBlob": "e952e506440514a9ee9e666f16b8bb2df1b8bc26",
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/tool-button.tsx",
+          "mode": "100644",
+          "blob": "d8dab6272338871af62413b330a3cae140176a36",
+          "sha256": "fba9d8d17870a310de6f05b3dacdcf0e5413e03db1ce7e62198e84d5c889df5e",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/tool-fallback.aui.tsx",
+          "mode": "100644",
+          "blob": "777144de0a76ea3de8ae5c418ae6627bd10ccee1",
+          "sha256": "c07ae1e92ab42ef53b1ab35c6c1e1e8bbdd60918198f37759bffaaf8ffa8518d",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/tool-fallback.css",
+          "mode": "100644",
+          "blob": "ec05fe7ba85d12e3c4d951d92f184534a4a1ff4c",
+          "sha256": "c96be953608d01ccf5817dd653b94fa37429b3f0eb72c1ebde2f8174fdcc1192",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/tool-fallback.source.css",
+          "mode": "100644",
+          "blob": "e5c19ddc4734e5ff86febe1bb59a0635fa4f1feb",
+          "sha256": "e2d4284f6743b407273224c2241e47567c3c74102bc94d1beaa1bde3ca0fe36a",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/tool-textarea.tsx",
+          "mode": "100644",
+          "blob": "853dfeff0c603015eeb2715bfa990cec38a13c02",
+          "sha256": "ab67e0bcc6084c0601fa03ae509379ad49b693ac326ffccb9b2bda0cb0c90266",
+          "beforeBlob": null,
+          "origin": "authorized task hunks / explicitly retained regression foundation; see decisions and source patches"
+        }
+      ],
+      "commit": "761b9a5940cbd1146c59985909064f0a656c7cd0",
+      "parentCommit": "3f5e98ef43d0e869f71ae3348890da84a8cf3f9f"
+    }
+  ],
+  "verification": {
+    "sourceAndTestsEqualExportedTrees": [
+      {
+        "group": "F",
+        "tree": "8f0460fc41c5f1a07d7d6207cfc48cfddbfd4f5b",
+        "sourceAndTestBytesEqual": true,
+        "different": []
+      },
+      {
+        "group": "ABCD",
+        "tree": "404169e0b373bd95ddf654385df668e70b8618d4",
+        "sourceAndTestBytesEqual": true,
+        "different": []
+      },
+      {
+        "group": "E",
+        "tree": "c23461409dfd59245cdc64c29a0411ff5833f7bc",
+        "sourceAndTestBytesEqual": true,
+        "different": []
+      }
+    ],
+    "typeReuseDocumentationOnly": {
+      "ABCDPreviouslyChecked": "d838c902a3fae03decc93ec0e839f1e5201fdda9",
+      "EPreviouslyChecked": "31bcb5c52e4c66851ca9343edfd89c9aba6d69b7",
+      "note": "Only maintained Markdown differs from these type-checked trees; runtime/test source bytes are identical."
+    },
+    "syntheticOnly": true,
+    "realModelCalls": 0,
+    "installedBuildAdopted": false,
+    "F": {
+      "tests": 430,
+      "pass": 430,
+      "fail": 0,
+      "evidence": "f-verified-suite.log"
+    },
+    "ABCD": {
+      "focusedTests": 48,
+      "pass": 45,
+      "preExistingFailures": 3,
+      "sameFailuresReproducedBeforeAnnotations": 3,
+      "evidence": "preview-tests.log / preview-lifecycle-preimage.log"
+    },
+    "E": {
+      "tests": 63,
+      "pass": 63,
+      "fail": 0,
+      "evidence": "e-verified-core.log"
+    },
+    "browser": {
+      "annotationSync": 54,
+      "tabs": 121,
+      "geometryCancellationAdditional": 27,
+      "sharedFormGroups": 28,
+      "sharedFormMeasurements": 84,
+      "officialToolGroups": 21,
+      "copyQuote": 48,
+      "workerCards": 19,
+      "flatStatus": 4
+    },
+    "pairedBundles": {
+      "baselineBytes": 3801957,
+      "candidateBytes": 3866875,
+      "deltaBytes": 64918,
+      "baselineGzipBytes": 1078763,
+      "candidateGzipBytes": 1090225,
+      "deltaGzipBytes": 11462,
+      "node": "v22.22.0",
+      "gzip": "node:zlib gzipSync default level; sum per JS/CSS asset"
+    },
+    "capturePerformanceReuse": {
+      "ownerPaths": [
+        "src/tool-content.ts",
+        "src/engine.ts",
+        "src/main-process.ts"
+      ],
+      "allMatchOriginalEVerifiedHashes": true,
+      "source": ".codex/scratch/run-activity-official-tool-implementation-20261025/performance.json",
+      "medianMs": 0.105,
+      "sample": "100 synthetic 3 MB string captures; previous paired E run",
+      "deltaEvents": 1000,
+      "additionalDeltaWrites": 0
+    }
+  }
+}

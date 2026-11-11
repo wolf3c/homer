@@ -16,17 +16,17 @@ for(const json of [true,false])test('real gateway: SSE sees mutations without st
  for(const name of ['src','scripts','prompts','assets','ui','package.json','package-lock.json','tsconfig.json'])cpSync(join(root,name),join(base,name),{recursive:true,filter:path=>!/(?:^|\/)(?:node_modules|dist)(?:\/|$)/.test(path)});
  symlinkSync(join(root,'node_modules'),join(base,'node_modules'),'dir');for(const dir of ['runtime','home','workspace'])mkdirSync(join(base,dir),{recursive:true});
  cpSync(join(root,'tests/fixtures/reception-app-server.mjs'),join(base,'synthetic-engine.mjs'));
- const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),codexBin:join(base,'synthetic-engine.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}));
+ const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),nativeCodexHome:join(base,'home'),codexBin:join(base,'synthetic-engine.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}));
  const reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
  const url='http://127.0.0.1:'+port,fetch=syntheticUserFetch();
  const child=spawn(process.execPath,[join(base,'scripts/dev.mjs'),'--web','--port',String(port),'--config',config,...(json?['--json']:[])],{cwd:base,env:fixtureBuildEnvironment(base),stdio:['pipe','pipe','pipe']});
  const progress=[],snapshots=[];let partial='',exited=false;child.stdout.on('data',data=>{partial+=data;const lines=partial.split('\n');partial=lines.pop();for(const line of lines)try{progress.push(JSON.parse(line));}catch{if(!json&&line.startsWith('状态：'))progress.push({type:'progress',text:line.slice(3)});}});child.stderr.resume();child.on('exit',()=>exited=true);
  const readers=[];
- async function connect(){const controller=new AbortController();const response=await fetch(url+'/api/events',{signal:controller.signal});const reader=response.body.getReader();let buffer='';const reading=(async()=>{try{for(;;){const {done,value}=await reader.read();if(done)break;buffer+=new TextDecoder().decode(value);let end;while((end=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);if(frame.includes('event: state'))snapshots.push(JSON.parse(frame.match(/^data: (.*)$/m)[1]));}}}catch{}})();const close=async()=>{controller.abort();await reading;};readers.push(close);return close;}
+ async function connect(){const controller=new AbortController();const response=await fetch(url+'/api/history/events',{signal:controller.signal});const reader=response.body.getReader();let buffer='';const reading=(async()=>{try{for(;;){const {done,value}=await reader.read();if(done)break;buffer+=new TextDecoder().decode(value);let end;while((end=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);if(frame.includes('event: state'))snapshots.push(JSON.parse(frame.match(/^data: (.*)$/m)[1]));}}}catch{}})();const close=async()=>{controller.abort();await reading;};readers.push(close);return close;}
  const post=(path,input)=>fetch(url+path,{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify(input)});
- async function buildCount(){const start=progress.length;child.stdin.write('/timings\n');let report;await until(()=>{for(const entry of progress.slice(start))try{const value=JSON.parse(entry.text);if(value.capacity===512)report=value;}catch{}return !!report;});return report.records.filter(record=>record.phase==='state_start').length;}
+ async function buildCount(){const start=progress.length;child.stdin.write('/timings\n');let report;await until(()=>{for(const entry of progress.slice(start))try{const value=JSON.parse(entry.text);if(value.capacity===512)report=value;}catch{}return !!report;});return report.records.filter(record=>record.phase==='state_history').length;}
  try{
-  await waitForDevCondition(async()=>{try{return (await(await fetch(url+'/api/state')).json()).upgrade?.phase==='running';}catch{return false;}},{signal:t.signal,events:progress,exited:()=>exited});
+  await waitForDevCondition(async()=>{try{return (await(await fetch(url+'/api/history/state')).json()).upgrade?.phase==='running';}catch{return false;}},{signal:t.signal,events:progress,exited:()=>exited});
   await connect();await until(()=>snapshots.length>0);await delay(250);
   const idle=await buildCount();await delay(400);assert.equal(await buildCount(),idle,'unchanged connected pages must not rebuild');
   const first=await post('/api/messages',{requestId:'synthetic-hold',text:'synthetic:hold'+(json?'':' synthetic:delta-count=300')});assert.equal(first.status,202);const receipt=await first.json();
@@ -43,7 +43,7 @@ for(const json of [true,false])test('real gateway: SSE sees mutations without st
   const settled=snapshots.at(-1);assert.equal(settled.queue.length,0);
   assert.equal(settled.messages.find(item=>item.role==='user'&&item.requestId==='synthetic-edit').text,'Synthetic corrected');
   assert.equal(settled.messages.find(item=>item.role==='user'&&item.requestId==='synthetic-hold').inputState,'interrupted');
-  assert.equal(settled.processNodes.find(node=>node.replyMessageId===receipt.replyId).status,'interrupted');
+  assert.equal(settled.messages.find(message=>message.process?.replyMessageId===receipt.replyId).process.status,'interrupted');
   const message=snapshots.at(-1).messages.find(item=>item.role==='assistant'&&item.status==='completed');
   assert.equal((await post('/api/messages/feedback',{messageId:message.id,value:'up'})).status,200);
   await until(()=>snapshots.at(-1)?.messages.some(item=>item.id===message.id&&item.feedback==='up'));
@@ -59,7 +59,7 @@ test('real gateway: stdout callback backpressure preserves the written fence and
  for(const name of ['src','scripts','prompts','assets','ui','package.json','package-lock.json','tsconfig.json'])cpSync(join(root,name),join(base,name),{recursive:true,filter:path=>!/(?:^|\/)(?:node_modules|dist)(?:\/|$)/.test(path)});
  symlinkSync(join(root,'node_modules'),join(base,'node_modules'),'dir');for(const dir of ['runtime','home','workspace'])mkdirSync(join(base,dir),{recursive:true});
  cpSync(join(root,'tests/fixtures/reception-app-server.mjs'),join(base,'synthetic-engine.mjs'));
- const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),codexBin:join(base,'synthetic-engine.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}));
+ const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),nativeCodexHome:join(base,'home'),codexBin:join(base,'synthetic-engine.mjs'),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100}));
  const reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
  const url='http://127.0.0.1:'+port,fetch=syntheticUserFetch(),input=new PassThrough(),events=[];
  let releaseWrite,blocked=false,report,finished=false;
@@ -70,14 +70,14 @@ test('real gateway: stdout callback backpressure preserves the written fence and
   callback();
  }});
  const done=runDev({root:base,configPath:config,json:true,webPort:port,input,output}).finally(()=>finished=true);
- const state=async()=>{try{return await(await fetch(url+'/api/state')).json();}catch{return undefined;}};
+ const state=async()=>{try{return await(await fetch(url+'/api/history/state')).json();}catch{return undefined;}};
  try{
   await waitForDevCondition(async()=>(await state())?.upgrade?.phase==='running',{signal:t.signal,events,exited:()=>finished});
   for(let i=0;i<6;i++)assert.equal((await fetch(url+'/api/messages',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({requestId:'synthetic-stdout-'+i,text:'Synthetic stdout input '+i})})).status,202);
   await until(()=>blocked);
   const waiting=await state();assert.deepEqual(waiting.queue.map(item=>[item.input.requestId,item.state]),Array.from({length:5},(_,i)=>['synthetic-stdout-'+(i+1),'queued']));
   assert.equal(waiting.messages.find(item=>item.role==='user'&&item.requestId==='synthetic-stdout-0').inputState,'completed');
-  assert.equal(waiting.processNodes[0].state,'worked');assert.equal(waiting.activeMessageId,null);
+  assert.equal(waiting.messages.find(message=>message.process).process.state,'worked');assert.equal(waiting.activeMessageId,null);
   releaseWrite();await until(async()=>{const s=await state();return s?.messages.filter(item=>item.role==='user'&&item.inputState==='completed').length===6;});
   assert.equal((await state()).queue.length,0);
   input.write('/timings\n');await until(()=>!!report);

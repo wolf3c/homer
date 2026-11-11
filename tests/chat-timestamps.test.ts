@@ -217,7 +217,37 @@ function ConversationHarness({ source }: { source: any[] }) {
 }
 const renderConversation = (source: any[]) => renderToStaticMarkup(h(ConversationHarness, { source }));
 
+test('each reply displays its verified task names directly above its own bubble', () => {
+  const task = (taskId: string, title: string, version = 1) => ({ target: { taskId, version }, title });
+  const html = renderConversation([
+    m('related', 1000, { role: 'assistant', text: '保留原正文', taskSourceUnresolved: true, taskSources: [task('one', '隔离 Chrome 排查'), task('one', '重复来源', 2), task('two', '检查附件来源'), task('three', ''), task('another', '检查附件来源')] }),
+    m('ordinary', 2000, { role: 'assistant', text: '普通回复' }),
+    m('unavailable', 3000, { role: 'assistant', text: '来源无可用标题', taskSources: [task('unknown', '')] }),
+    m('empty', 4000, { role: 'assistant', text: '', taskSources: [task('extra', '没有对应气泡')] }),
+    m('single', 5000, { role: 'assistant', text: '单项回复', taskSources: [task('four', '后台工作')] }),
+  ]);
+  assert.deepEqual([...html.matchAll(/<p class="message-task-title">([^<]+)<\/p><div class="assistant-message-bubble">/g)].map(match => match[1]), ['隔离 Chrome 排查、检查附件来源、检查附件来源', '后台工作']);
+  assert.doesNotMatch(html, /重复来源|没有对应气泡|任务来源|事项 ·/);
+  assert.match(html, /保留原正文[\s\S]*aria-label="复制"[\s\S]*aria-label="引用"/);
+});
+
+test('a reply also names its immutable delegation events when taskSources are absent', () => {
+  calls.length = 0;
+  const event = (eventKey: string, taskId: string | null, title: string) => ({ id: eventKey, kind: 'workerEvent', eventKey, event: { eventKind: 'delegated', bodySource: 'description', taskId, title, body: '合成交办详情' } });
+  const process = { sourceKind: 'user', items: [event('first', 'task-one', '核对合成版本'), event('repeated', 'task-one', '重复交办'), event('second', 'task-two', '核对合成界面')] };
+  const html = renderConversation([
+    m('delegation', 1000, { role: 'assistant', text: '合成回复正文', process }),
+    m('without-answer', 2000, { role: 'assistant', text: '', process }),
+  ]);
+  assert.match(html, /<p class="message-task-title">核对合成版本、核对合成界面<\/p><div class="assistant-message-bubble">/);
+  assert.doesNotMatch(html, /重复交办/);
+  const rendered = calls.filter(([name]) => name === 'process').map(([, props]) => props);
+  assert.deepEqual([...rendered[0].titledEvents], ['first', 'repeated', 'second']);
+  assert.equal(rendered[1].titledEvents.size, 0, 'a standalone event retains its own visible entry');
+});
+
 test('production wrappers integrate installed runtime and retain rich slots with semantic keyboard-readable times', () => {
+  calls.length = 0;
   const source = [
     m('u', '2025-01-01T10:00:00Z', { quotes: [{ messageId:'a',text: '引用', annotation: '批注' }], media: [{ filename: '合成附件' }] }),
     m('a', '2025-01-01T10:01:00Z', { role: 'assistant', text: '公开正文', process: { sourceKind: 'user', status: 'completed',items:[] }, notes: [{ id: 'old-question' }] }),

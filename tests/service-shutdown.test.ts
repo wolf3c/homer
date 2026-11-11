@@ -10,8 +10,7 @@ import type {EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
 async function fixture(confirmed=true,closeError='engine_closed'){
  const parent=resolve('.codex/scratch/account-mvp/shutdown-review');mkdirSync(parent,{recursive:true});
  const root=mkdtempSync(join(parent,'synthetic-')),runtime=join(root,'runtime'),workspace=join(root,'workspace');
- mkdirSync(runtime);mkdirSync(join(workspace,'materials'),{recursive:true});
- writeFileSync(join(workspace,'materials/input.md'),'Synthetic shutdown material');
+ mkdirSync(runtime);mkdirSync(workspace);
  let main!:Peer;
  class Peer extends EventEmitter{
   threadId:string;turnId?:string;resumable=true;pending?:(error:Error)=>void;sequence=0;
@@ -21,14 +20,14 @@ async function fixture(confirmed=true,closeError='engine_closed'){
   call(tool:string,args:unknown){return this.handle({threadId:this.threadId,turnId:this.turnId!,callId:'shutdown-call-'+ ++this.sequence,tool,arguments:args});}
   async turn(text:string,hooks?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
    this.turnId='shutdown-turn-'+ ++this.sequence;hooks?.onStarted?.(this.turnId);
-   if(this.worker){await this.call('read_material',{});await this.call('write_markdown',{filename:'saved.md',content:'Synthetic preserved file'});return {status:'completed',text:'Synthetic file written'};}
-   if(text==='dispatch'){const task=await this.call('task_create',{title:'Synthetic task',goal:'Preserve the file'}) as {taskId:string};await this.call('worker_open',{taskId:task.taskId,message:'Preserve the file'});return {status:'completed',text:'Dispatched'};}
+   if(this.worker){writeFileSync(join(this.options.cwd,'saved.md'),'Synthetic preserved file');return {status:'completed',text:'Synthetic file written'};}
+   if(text==='dispatch'){await this.call('worker_open',{message:'Preserve the file'});return {status:'completed',text:'Dispatched'};}
    return new Promise((_resolve,reject)=>{this.pending=reject;});
   }
   async interrupt(){return false;}
   async close(){this.pending?.(Error(closeError));this.pending=undefined;return this.worker||confirmed;}
  }
- const app=new Homer({runtime,workspace,codexHome:join(root,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:50,timeoutMs:2000},async()=>{},(options,handle)=>new Peer(options,handle));
+ const app=new Homer({runtime,workspace,codexHome:join(root,'home'),nativeCodexHome:join(root,'home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:50},async()=>{},(options,handle)=>new Peer(options,handle));
  await app.start();
  const until=async(check:()=>boolean)=>{const end=Date.now()+3000;while(!check()){if(Date.now()>end)throw Error('shutdown_test_timeout');await new Promise(r=>setTimeout(r,5));}};
  return {app,root,runtime,main:()=>main,until,cleanup:async()=>{await app.close().catch(()=>{});rmSync(root,{recursive:true,force:true});}};
@@ -38,14 +37,14 @@ for(const confirmed of [true,false])test(`shutdown cancellation keeps the Worker
  const f=await fixture(confirmed);
  try{
   await f.app.message('dispatch','synthetic-shutdown-request');await f.until(()=>!!f.main().pending);
-  const run=f.app.store.runs()[0]!,thread=f.app.store.meta('mainThread');
+  const thread=f.app.store.meta('mainThread');
   const source=f.app.store.db.prepare("SELECT messageId FROM agent_receipts WHERE state='received'").get()!;
   if(confirmed)await f.app.close({requireAllOwnersConfirmed:true});
   else await assert.rejects(f.app.close({requireAllOwnersConfirmed:true}),/main_stop_unconfirmed/);
   const db=new DatabaseSync(join(f.runtime,'homer.sqlite'),{readOnly:true});
   try{
    assert.equal(db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()!.value,thread);
-   assert.equal(readFileSync(join(f.app.files.prepareRun(run.taskId,run.id),'saved.md'),'utf8'),'Synthetic preserved file');
+   assert.equal(readFileSync(join(f.root,'workspace','saved.md'),'utf8'),'Synthetic preserved file');
    assert.equal(db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(String(source.messageId))!.state,'uncertain');
    const nodes=db.prepare("SELECT value FROM meta WHERE key GLOB 'publicMainNode:v1:*'").all().map(row=>JSON.parse(String(row.value)));
    const internal=nodes.filter(node=>node.sourceKind==='worker');assert.equal(internal.length,1);

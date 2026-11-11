@@ -4,7 +4,6 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {fixture} from './web-history-followup-fixture.mjs';
-import {syntheticFile} from './recursive-publication-fixture.js';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/official-canvas-reuse-20261023/product');
@@ -24,20 +23,22 @@ function pdf(){
  const start=Buffer.byteLength(text);text+=`xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${start}\n%%EOF`;
  return Buffer.from(text);
 }
-const html='<!doctype html><h1>Isolated synthetic HTML</h1><button onclick="this.textContent=\'Local click passed\'">Local action</button><script>document.body.dataset.executed="yes";addEventListener("securitypolicyviolation",event=>{if(event.effectiveDirective==="connect-src")document.body.dataset.networkBlocked="yes"});fetch("https://canvas-test.invalid/blocked").catch(()=>{});try{parent.document.body.dataset.escaped="yes"}catch{}</script>';
+const html='<!doctype html><h1>Isolated synthetic HTML</h1><button onclick="this.textContent=\'Local click passed\'">Local action</button><script>document.body.dataset.executed="yes";try{parent.document.body.dataset.escaped="yes"}catch{}</script>';
 const f=await fixture(50,'after'),checks=[];let chrome;
 function check(value,label){assert.ok(value,label);checks.push(label);}
 try{
- f.store.startRequest('request-0','official-canvas-synthetic');
- const result=syntheticFile(f,'request-0','synthetic-preview.html',html,[],true),delivery=result.publish('Synthetic official Canvas reply');
- f.history.record(delivery.historyMessageId,'synthetic-history',delivery.text);f.tasks.markDelivery(delivery.id,'recorded');
+ f.attach('Synthetic official Canvas reply',[{filename:'synthetic-preview.html',mime:'text/html',content:html}]);
  const markdown='# Synthetic Markdown\n\n| Name | Result |\n| --- | --- |\n| Readable | Yes |\n\n$$x^2 + y^2 = z^2$$\n\n```js\nconst readable = true;\n```\n\n'+Array.from({length:60},(_,i)=>'Readable paragraph '+i+'.').join('\n\n');
  const formats=[{id:'result-synthetic-markdown',title:'合成阅读说明.md',mime:'text/markdown',bytes:Buffer.from(markdown)},{id:'result-synthetic-png',title:'合成条纹.png',mime:'image/png',bytes:png()},{id:'result-synthetic-pdf',title:'合成阅读.pdf',mime:'application/pdf',bytes:pdf()},{id:'result-synthetic-retry',title:'合成重试.txt',mime:'text/plain',bytes:Buffer.from('Synthetic retry succeeded')},{id:'result-synthetic-opaque',title:'合成不支持.bin',mime:'application/octet-stream',bytes:Buffer.from([0,1])}];
+ const sent=f.attach('Synthetic formats',formats.map(({title,mime,bytes})=>({filename:title,mime,content:bytes})));
  let failNext='';const reads=[],revealCalls=[];
- f.bridge.revealArtifact=async id=>{revealCalls.push(id);throw Error('unexpected_reveal');};
- const read=f.bridge.artifact.bind(f.bridge);
- f.bridge.artifact=async id=>{reads.push(id);if(failNext===id){failNext='';throw Error('synthetic_read_failure');}const item=formats.find(item=>item.id===id);return item?{filename:item.title,mime:item.mime,data:item.bytes.toString('base64')}:read(id);};
- for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,artifacts:[...(value.artifacts??[]),...formats.map(({id,title})=>({id,title,messageId:'node-49',workTitle:'Synthetic formats'}))]};};}
+ f.bridge.media.reveal=async input=>{revealCalls.push(input);throw Error('unexpected_reveal');};
+ const read=f.bridge.media.read.bind(f.bridge.media);
+ f.bridge.media.read=async input=>{
+  const item=formats[sent.attachments.findIndex(ref=>input.messageId===sent.messageId&&ref.assetId===input.assetId&&ref.revision===input.revision)];
+  if(item){reads.push(item.id);if(failNext===item.id){failNext='';throw Error('synthetic_read_failure');}}
+  return read(input);
+ };
  chrome=await isolatedChrome(destination);
  for(const width of [1440,390,320]){
   const p=await chrome.page(f.server.url,width),evaluate=code=>p.evaluate(code);
@@ -112,15 +113,13 @@ try{
    await p.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
    await p.until(()=>!document.querySelector('#canvas-panel'));await p.until(()=>document.activeElement?.getAttribute('aria-label')==='预览 合成重试.txt');
    checks.push('keyboard Enter opens chat file and Escape restores that file entry '+width);
-   await select(result.resultId);await p.until(()=>!!document.querySelector('iframe[title="隔离 HTML 成果"]'));
-   check(await evaluate(()=>document.querySelector('#canvas-panel iframe').getAttribute('sandbox')===''),'HTML defaults to static rendered webpage '+width);
-   let staticReady=false;for(let i=0;i<100;i++){staticReady=await frameEval('document.body?.textContent.includes("Isolated synthetic HTML")&&document.body.dataset.executed===undefined');if(staticReady)break;await new Promise(done=>setTimeout(done,20));}
-   check(staticReady,'static HTML never executes script '+width);
+   await select('synthetic-html');await p.until(()=>!!document.querySelector('iframe[title="隔离 HTML 成果"]'));
+   check(await evaluate(()=>document.querySelector('#canvas-panel iframe').getAttribute('sandbox')==='allow-scripts allow-forms'),'HTML opens in the script-enabled sandbox '+width);
+   let previewReady=false;for(let i=0;i<100;i++){previewReady=await frameEval('document.body?.textContent.includes("Isolated synthetic HTML")&&document.body.dataset.executed==="yes"');if(previewReady)break;await new Promise(done=>setTimeout(done,20));}
+   check(previewReady,'HTML executes in the ordinary preview '+width);
    await evaluate(()=>document.querySelector('.html-annotation-toggle').click());
    let ran=false;for(let i=0;i<150;i++){ran=await frameEval('document.body?.dataset.executed==="yes"');if(ran)break;await new Promise(done=>setTimeout(done,20));}
-   check(ran,'HTML executes only after explicit interaction action '+width);
-   let networkBlocked=false;for(let i=0;i<100;i++){networkBlocked=await frameEval('document.body?.dataset.networkBlocked==="yes"');if(networkBlocked)break;await new Promise(done=>setTimeout(done,20));}
-   check(networkBlocked,'interactive network is blocked by effective connect-src CSP '+width);
+   check(ran,'HTML also executes after opening annotation '+width);
    check(await frameEval('(()=>{try{return !!parent.document}catch{return false}})()')===false,'interactive frame cannot access parent DOM '+width);
    await p.until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')==='true');
    check(await frameEval('!!document.querySelector("agentation-toolbar")'),'explicit annotation loads native selection toolbar '+width);

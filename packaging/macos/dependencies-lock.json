@@ -22,6 +22,73 @@
     "LICENSE": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
     "NOTICE": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
   },
+  "cuaDriver": {
+    "version": "0.46.1",
+    "archive": {
+      "file": "cua-driver-rs-0.46.1-darwin-universal-binary.tar.gz",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.46.1/cua-driver-rs-0.46.1-darwin-universal-binary.tar.gz",
+      "sha256": "7d39975454f3117baa8e20735ff5219dd40bfb97a4ba70a99861975ab07872ac"
+    },
+    "windowsArchive": {
+      "file": "cua-driver-rs-0.46.1-windows-x86_64-binary.zip",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.46.1/cua-driver-rs-0.46.1-windows-x86_64-binary.zip",
+      "sha256": "ec49cca509f25f65db2fa917718215f55f959d5ef650bf8ab2238a201d5666ac"
+    },
+    "windowsPackage": {
+      "name": "@trycua/cua-driver-win32-x64-msvc",
+      "version": "0.46.1",
+      "integrity": "sha512-fHxm7HOiFvt+/E/jciqWeA7rm2vmatXFTv5w31nr9lJYdphhTaM13vKmBoneJwc2Nr4r+F4VNNWGKa7fKzl2uw==",
+      "license": "MIT AND MPL-2.0"
+    },
+    "packages": [
+      {
+        "name": "@trycua/cua-driver",
+        "version": "0.46.1",
+        "integrity": "sha512-RC9wCZI02MNxJDZW36btivEWHXJZIaxbZLNSSzSakmgTSaLw89lnjR50QhEEYaib8d0Z7Nn+bNjKN2PkauZTVw==",
+        "license": "MIT"
+      },
+      {
+        "name": "@trycua/cua-driver-darwin-arm64",
+        "version": "0.46.1",
+        "integrity": "sha512-pzdJCrfpXN7cIR0FhHjmXd7NvOkkFljLh1J4iLq0ddXhlrQsX0umioyB/MT/XyykCND5iQTjrVIC32SYM1gMXA==",
+        "license": "MIT AND MPL-2.0"
+      },
+      {
+        "name": "@ubjs/core",
+        "version": "0.31.0-3",
+        "integrity": "sha512-39XrJgUZ2VVb561sSnkXPhczNoeBsNiSRArecsV0JE7CJq69ajFkcn9/tBAUS2NpgHkLIDU+z6Ks2+1wXnboxg==",
+        "license": "MPL-2.0"
+      },
+      {
+        "name": "@ubjs/node",
+        "version": "0.31.0-3",
+        "integrity": "sha512-qNMpi2LICNwxGXZyRF8fSDBSpbezyZbEsydrbiMPJOmtOWr4tmZIEl7jkWGHVGShoBvHfFo4eHp5B4UVP928Cg==",
+        "license": "MPL-2.0"
+      }
+    ],
+    "licenses": [
+      {
+        "file": "Cua-LICENSE.md",
+        "url": "https://raw.githubusercontent.com/trycua/cua/cua-driver-rs-v0.46.1/LICENSE.md",
+        "sha256": "c0779290c1d4783169aa3dbfb55feb505e563ef8a004bbf55298ceffcfbda8d9"
+      },
+      {
+        "file": "Cua-THIRD_PARTY_NOTICES.md",
+        "url": "https://raw.githubusercontent.com/trycua/cua/cua-driver-rs-v0.46.1/libs/cua-driver/rust/THIRD_PARTY_NOTICES.md",
+        "sha256": "5860ee54b73d3d84f8af8a3c3fc996739755297d91e259314416378548ee8f6d"
+      },
+      {
+        "file": "UniFFI-LICENSE",
+        "url": "https://raw.githubusercontent.com/jhugman/uniffi-bindgen-react-native/0.31.0-3/LICENSE",
+        "sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d"
+      },
+      {
+        "file": "MPL-2.0.txt",
+        "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/MPL-2.0.txt",
+        "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+      }
+    ]
+  },
   "verifiedAt": "2026-10-21",
   "verification": "ARM64 and generic archives only: Official HTTPS SHASUMS256 and npm registry SRI, independently pinned to these SHA-256 bytes; all 43 platform files retained. Not a PGP or npm-signature verification.",
   "nodeDarwinX64": {

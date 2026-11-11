@@ -5,7 +5,7 @@ import { spawn, fork } from "node:child_process";
 import {copyRuntimeDependencies,sealBuild,freezeToolchain} from "./trusted-build.mjs";
 
 const digest = value => createHash("sha256").update(value).digest("hex");
-const roots = ["scripts", "src", "prompts", "assets", "ui", ".codex/skills/homer-initialize", ".codex/skills/homer-tool-management", ".codex/skills/homer-feedback", ".codex/skills/homer-archive-review"];
+const roots = ["scripts", "src", "prompts", "assets", "ui", ".codex/skills/homer-tool-management", ".codex/skills/homer-feedback", ".codex/skills/homer-archive-review"];
 const excluded = path => path.replaceAll("\\", "/").split("/").some(part => part === "node_modules" || part === "dist" || part === ".vite" || part === ".DS_Store");
 export function sourceSnapshot(root, configPath) {
   const files = new Map();
@@ -48,7 +48,7 @@ export function trustedHash(snapshot) {
   return digest(Buffer.concat([...snapshot.files].filter(([path]) => (/^(src|ui|assets)\//.test(path)||["package.json","tsconfig.json"].includes(path))).flatMap(([path,bytes])=>[Buffer.from(path+"\0"),bytes,Buffer.from("\0")]).concat(snapshot.configBytes??Buffer.alloc(0))));
 }
 export function gatewayFingerprint(snapshot) {
-  return digest(Buffer.concat([...snapshot.files.keys()].filter(path=>path.startsWith("scripts/")||["src/mobile-turn.ts", "src/homer-account.ts", "src/mobile-devices.ts", "src/mobile-gateway.ts", "src/mobile-route.ts", "src/mobile-signaling.ts", "src/mobile-channel.ts", "src/mobile-session.ts", "src/mobile-rtc.ts", "src/web-chat.ts", "src/state-publication.ts", "src/web-server.ts", "src/web-contract.ts", "src/web-connection.ts", "src/update-review-page.ts", "src/channels/telegram-settings-page.ts", "src/web-upload.ts", "src/media-policy.ts", "src/web-history.ts", "src/processes.ts"].includes(path)).sort().flatMap(path => [Buffer.from(path+"\0"),snapshot.files.get(path)??Buffer.alloc(0),Buffer.from("\0")])));
+  return digest(Buffer.concat([...snapshot.files.keys()].filter(path=>path.startsWith("scripts/")||["src/mobile-turn.ts", "src/homer-account.ts", "src/mobile-devices.ts", "src/mobile-gateway.ts", "src/mobile-route.ts", "src/mobile-signaling.ts", "src/mobile-channel.ts", "src/mobile-session.ts", "src/mobile-rtc.ts", "src/web-chat.ts", "src/state-publication.ts", "src/web-server.ts", "src/web-contract.ts", "src/web-connection.ts", "src/update-review-page.ts", "src/web-upload.ts", "src/media-policy.ts", "src/web-history.ts", "src/processes.ts"].includes(path)).sort().flatMap(path => [Buffer.from(path+"\0"),snapshot.files.get(path)??Buffer.alloc(0),Buffer.from("\0")])));
 }
 export async function buildUiCandidate(root, configPath, snapshot, baseline, signal) {
   if (dependencyHash(snapshot) !== baseline.deps) throw Error("dev_dependencies_changed_restart_required");
@@ -68,9 +68,9 @@ export function dependencyHash(snapshot) {
   const p = JSON.parse(snapshot.files.get("package.json"));
   return digest(JSON.stringify([p.dependencies, p.devDependencies, p.engines, p.type, String(snapshot.files.get("package-lock.json")), String(snapshot.files.get("ui/package.json") ?? "")]));
 }
-// Every SQLite schema owner participates in the reviewed upgrade boundary.
+// SQLite schema and persisted input formats share the reviewed upgrade boundary.
 export function schemaHash(snapshot) {
-  return digest(Buffer.concat(["src/mobile-devices.ts", "src/store.ts", "src/pending-items.ts", "src/media-store.ts", "src/recursive-tasks.ts", "src/worker-interactions.ts", "src/web-history.ts", "src/channels/wechat-store.ts", "src/channels/wechat-homer.ts", "src/channels/telegram-store.ts", "src/channels/telegram-secrets.ts", "src/channels/telegram-migration.ts"].map(path => snapshot.files.get(path) ?? Buffer.from(""))));
+  return digest(Buffer.concat(["src/mobile-devices.ts", "src/store.ts", "src/media-store.ts", "src/recursive-tasks.ts", "src/worker-interactions.ts", "src/web-history.ts", "src/preview-reference.ts"].map(path => snapshot.files.get(path) ?? Buffer.from(""))));
 }
 export function command(bin, args, cwd, signal) {
   return new Promise((done, reject) => {

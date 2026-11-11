@@ -38,6 +38,10 @@ export default async function pinnedStatus(page,{destination}={}){
  const shot=async name=>{if(destination)await page.screenshot({path:destination+'/'+name+'.png',animations:'disabled'});};
  await trigger.waitFor();await page.getByRole('complementary',{name:'工作状态卡片'}).waitFor();await ready();
  ok(await trigger.getAttribute('aria-expanded')==='true','1440px 初次常驻');
+ ok(await panel.getByRole('heading',{name:'工作状态'}).count()===0&&await panel.getByRole('button',{name:'收起工作状态'}).count()===0,'状态摘要不显示标题与关闭按钮');
+ await trigger.evaluate(el=>Promise.allSettled(el.getAnimations().map(animation=>animation.finished)));
+ const icon=trigger.locator('.status-entry-icon');
+ const openStyle=await icon.evaluate(el=>getComputedStyle(el).backgroundColor);
  ok(await trigger.getAttribute('aria-label')==='工作状态，1 个任务工作中'&&await trigger.getAttribute('aria-controls')==='task-status-panel','图标入口名称及面板关系准确');
  ok(await trigger.innerText()==='1'&&await page.locator('.header-name').innerText()==='荷马','左侧仅保留品牌，入口图标与事项计数');
  ok(await page.locator('.header-actions> :last-child').getAttribute('aria-label')==='预览','预览入口保持应用最右');
@@ -48,7 +52,9 @@ export default async function pinnedStatus(page,{destination}={}){
  await page.keyboard.press('Escape');ok(await panel.isVisible(),'宽屏摘要为非模态，Escape 不关闭常驻');
  await shot('desktop-1440-pinned');
  const originalNode=await panel.locator('[data-todo-id]').first().getAttribute('data-todo-id');
- await trigger.click();await panel.waitFor({state:'hidden'});await shot('desktop-1440-closed');
+ await trigger.click();await panel.waitFor({state:'hidden'});await page.mouse.move(0,0);
+ await page.waitForFunction(openStyle=>getComputedStyle(document.querySelector('#task-status-trigger .status-entry-icon')).backgroundColor!==openStyle,openStyle);
+ ok(await trigger.getAttribute('aria-expanded')==='false'&&await trigger.innerText()==='1'&&await icon.evaluate(el=>getComputedStyle(el).backgroundColor)!==openStyle,'入口收起时状态样式改变且保留数量');await shot('desktop-1440-closed');
  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
  await page.setViewportSize({width:1024,height:900});await page.setViewportSize({width:1440,height:1000});
  ok(await trigger.getAttribute('aria-expanded')==='false','明确关闭后通知与跨断点不重开');
@@ -107,10 +113,10 @@ export default async function pinnedStatus(page,{destination}={}){
  ok(await page.locator('.composer').evaluate(el=>el.contains(document.activeElement)),'窄屏外点关闭，保留实际点击输入框的焦点');
  await page.reload();await ready();ok(await trigger.getAttribute('aria-expanded')==='false'&&await panel.count()===0,'窄屏新会话初次不弹层');
  await trigger.click();await panel.waitFor();
- await page.getByRole('button',{name:'收起工作状态',exact:true}).click();await panel.waitFor({state:'hidden'});
- await page.waitForFunction(()=>document.activeElement?.id==='task-status-trigger');ok(true,'窄屏关闭按钮返回入口');
+ await trigger.focus();await page.keyboard.press('Enter');await panel.waitFor({state:'hidden'});
+ ok(await trigger.getAttribute('aria-expanded')==='false'&&await trigger.evaluate(el=>document.activeElement===el),'窄屏键盘通过入口收起并保留焦点');
  await page.getByRole('button',{name:'预览',exact:true}).click();
- await page.getByRole('dialog',{name:'预览',exact:true}).waitFor();
+ await page.getByRole('dialog',{name:/^预览：/}).waitFor();
  ok(await trigger.evaluate(el=>!!el.closest('[inert]')||!!el.closest('[aria-hidden="true"]')),'手机预览模态保持背景工作状态入口不可达');
  await page.locator('.canvas-collapse, .conversation-header [aria-controls=canvas-panel][aria-expanded=true]:not([aria-hidden=true] *)').click();
  ok(errors.length===0,'所有路径无页面异常');

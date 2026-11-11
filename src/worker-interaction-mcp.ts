@@ -8,11 +8,16 @@ import { MAIN_INTERACTION_TOOLS } from "./worker-interaction-tools.js";
 import type { Tool } from "./engine.js";
 import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
 
-import {CAPABILITY_TOOLS} from "./native-capability-tools.js";
 import {INTERACTION_LIMITS} from './interaction-limits.js';
+import {MEMBERSHIP_TOOLS} from './membership-web-tools.js';
+import {CUA_TOOLS} from './desktop-cua.js';
 
-export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS];
-export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...CAPABILITY_TOOLS,...WORKER_MEDIA_TOOLS];
+export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS];
+export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS];
+export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false){
+  const tools=role==='worker'?(cua?[...WORKER_HOST_MCP_TOOLS,...CUA_TOOLS]:WORKER_HOST_MCP_TOOLS):HOST_MCP_TOOLS;
+  return membership?[...tools,...MEMBERSHIP_TOOLS.filter(tool=>!nativeWebSearch||tool.name!=='web_search')]:tools;
+}
 const allowed = (name: unknown, catalog:readonly Tool[]): name is string => typeof name === "string" && catalog.some(tool => tool.name === name);
 function code(error: unknown) {
   return error instanceof Error && /^[a-z][a-z0-9_]{1,70}$/.test(error.message) ? error.message : "interaction_mcp_failed";
@@ -23,7 +28,12 @@ export class WorkerInteractionMcp {
   readonly directory = process.cwd();
   private server?: Server;
   private sockets = new Set<Socket>();
-  constructor(runtime: string, private handle: (tool: string, args: unknown) => Promise<unknown>,private catalog:readonly Tool[]=HOST_MCP_TOOLS) {
+  constructor(runtime: string, private handle: (tool: string, args: unknown, meta: unknown) => Promise<unknown>,readonly catalog:Tool[]=HOST_MCP_TOOLS) {
+    if(process.platform==='win32'){
+      // Windows' default pipe ACL allows writing only as the owner, administrators or SYSTEM.
+      this.path="\\\\.\\pipe\\homer-hi-"+randomUUID();
+      return;
+    }
     const absolute = join(runtime, "hi-" + randomUUID().slice(0, 8) + ".sock");
     const local = relative(this.directory, absolute);
     this.path = Buffer.byteLength(local) < Buffer.byteLength(absolute) ? local : absolute;
@@ -50,7 +60,7 @@ export class WorkerInteractionMcp {
             const message = JSON.parse(buffer.slice(0, end));
             if (!allowed(message.tool,this.catalog)) throw new Error("interaction_tool_denied");
             socket.setTimeout(INTERACTION_LIMITS.businessMs);
-            const result = JSON.stringify({ result: await this.handle(message.tool, message.arguments) });
+            const result = JSON.stringify({ result: await this.handle(message.tool, message.arguments, message.meta) });
             if (Buffer.byteLength(result) > INTERACTION_LIMITS.responseBytes) throw new Error("interaction_response_too_large");
             socket.end(result + "\n");
           } catch (error) { socket.end(JSON.stringify({ error: code(error) }) + "\n"); }
@@ -60,7 +70,7 @@ export class WorkerInteractionMcp {
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
       this.server!.listen(this.path, () => {
-        try { chmodSync(this.path, 0o600); resolve(); }
+        try { if(process.platform!=='win32')chmodSync(this.path, 0o600); resolve(); }
         catch { reject(new Error("interaction_socket_permissions_failed")); }
       });
     });
@@ -70,13 +80,14 @@ export class WorkerInteractionMcp {
     if (this.server?.listening)
       await new Promise<void>(resolve => this.server!.close(() => resolve()));
     this.server = undefined;
+    if(process.platform==='win32')return; // Windows removes the pipe when its last handle closes.
     try { unlinkSync(this.path); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("interaction_socket_cleanup_failed");
     }
   }
 }
 
-function hostCall(path: string, tool: string, args: unknown): Promise<unknown> {
+function hostCall(path: string, tool: string, args: unknown, meta?: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(path);
     let buffer = "", settled = false, dispatched=false;
@@ -85,7 +96,7 @@ function hostCall(path: string, tool: string, args: unknown): Promise<unknown> {
     socket.on("error", fail);
     socket.on("end", () => { if (!settled) fail(); });
     socket.on("connect", () => {
-      const request=JSON.stringify({ tool, arguments: args }) + "\n";
+      const request=JSON.stringify({ tool, arguments: args, meta }) + "\n";
       // Once writing starts, a lost reply cannot prove that work did not run.
       dispatched=true;socket.setTimeout(INTERACTION_LIMITS.businessMs);socket.write(request);
     });
@@ -108,9 +119,9 @@ function hostCall(path: string, tool: string, args: unknown): Promise<unknown> {
   });
 }
 
-export function runWorkerInteractionMcp(path: string,role:string='main') {
-  if(!['main','worker'].includes(role))throw Error('interaction_role_denied');
-  const catalog=role==='worker'?WORKER_HOST_MCP_TOOLS:HOST_MCP_TOOLS;
+export function runWorkerInteractionMcp(path: string,role:string='main',membership=false,nativeWebSearch=false,plugins:Tool[]=[],cua=false) {
+  if(role!=='main'&&role!=='worker')throw Error('interaction_role_denied');
+  const catalog=[...hostMcpTools(role,membership,nativeWebSearch,cua),...(role==='main'?plugins:[])];
   const send = (message: unknown) => process.stdout.write(JSON.stringify(message) + "\n");
   createInterface({ input: process.stdin }).on("line", line => {
     void (async () => {
@@ -129,10 +140,23 @@ export function runWorkerInteractionMcp(path: string,role:string='main') {
         else if (message.method === "tools/call") {
           try {
             if (!allowed(message.params?.name,catalog)) throw new Error("interaction_tool_denied");
-            const value = await hostCall(path, message.params.name, message.params.arguments);
+            const meta = plugins.some(tool=>tool.name===message.params.name) ? message.params._meta : undefined;
+            const value = await hostCall(path, message.params.name, message.params.arguments, meta);
             const media=value as {mediaContent?:unknown[]};
             result = { isError: false, content: media?.mediaContent??[{ type: "text", text: JSON.stringify(value) }] };
-          } catch (error) { const failure=code(error);result = { isError: true, content: [{ type: "text", text: failure },...(failure==='interaction_result_unconfirmed'?[{type:'text',text:'The request may still complete. Do not replay it. Inspect current state and any original host receipt. This error does not confirm cancellation.'}]:[])] }; }
+          } catch (error) {
+            const failure=code(error);
+            const note=failure==='membership_web_fetch_unavailable'
+              ? '未能取得网页正文。可使用已有搜索摘要，或改用其他来源。'
+              : failure==='membership_image_result_unconfirmed'||(failure==='interaction_result_unconfirmed'&&message.params?.name==='generate_image')
+              ? '未能确认结果，可能已扣费。不要自动重试。'
+              : failure==='interaction_result_unconfirmed'&&message.params?.name==='generate_video'
+                ? '未能确认结果，可能已扣费。请用原回执继续取回，勿重新提交。'
+              : failure==='interaction_result_unconfirmed'
+                ? 'The request may still complete. Do not replay it. Inspect current state and any original host receipt. This error does not confirm cancellation.'
+                : undefined;
+            result={isError:true,content:[{type:'text',text:failure},...(note?[{type:'text',text:note}]:[])]};
+          }
         } else { send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "interaction_method_denied" } }); return; }
         send({ jsonrpc: "2.0", id: message.id, result });
       } catch {

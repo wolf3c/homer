@@ -43,6 +43,8 @@ function Client(){
  const [status,setStatus]=useState<ConnectionStatus>('restoring'),[wasConnected,setWasConnected]=useState(false),[canRestore,setCanRestore]=useState(false);
  const [update,setUpdate]=useState<MobileUpdate|null>(null),[openError,setOpenError]=useState(false),[updateBusy,setUpdateBusy]=useState(false),[pickerBusy,setPickerBusy]=useState(false);
  const [permission,requestPermission,getPermission]=useCameraPermissions();
+ const requestingCamera=useRef(false);
+ const isIOS=Platform.OS==='ios',cameraSettings=isIOS||permission?.canAskAgain===false;
  const web=useRef<WebView<object>>(null),scanLock=useRef(false),active=useRef(true),sharing=useRef(false),binding=useRef<Pairing|undefined>(undefined),savedBinding=useRef<Pairing|undefined>(undefined),replacing=useRef(false),saving=useRef(false),saveFailed=useRef(false),cancelRequested=useRef(false),cancelPreparing=useRef(false),cancelFinishing=useRef(false),cancelTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),initialSave=useRef<Promise<boolean>|undefined>(undefined),statusDuringSave=useRef<ConnectionStatus>('active'),bindingReady=useRef(false),loaded=useRef(false),nonce=useRef(randomUUID()),writes=useRef(Promise.resolve());
  const updateVisible=!!update&&!scanning&&!updateBusy&&!pickerBusy&&!['restoring','pending','saving','save-error','cancelling','cancel-error','cancel-approved','cancel-manual'].includes(status)&&!replacing.current;
  const updateSnapshot=updateVisible?{version:update!.version,openError}:null;
@@ -93,6 +95,10 @@ function Client(){
   }catch{if(active.current&&attempt===nonce.current){saveFailed.current=true;setStatus('save-error');}}finally{saving.current=false;}
  }
  function openPrivacy(){void Linking.openURL('https://super-tree.com/homer/privacy').catch(()=>Alert.alert('无法打开隐私政策','请检查网络后重试。'));}
+ async function openCameraSettings(){
+  try{await Linking.openSettings();}
+  catch{if(active.current)Alert.alert('无法打开设置','请在系统设置中找到 Homer，检查相机权限。');}
+ }
  async function message(data:string,url:string){
   try{
    if(data.length>12*1024*1024||navigation(url,LOCAL_ORIGIN)!=='internal')return;
@@ -103,7 +109,7 @@ function Client(){
    if(item.type==='update-busy'&&typeof item.busy==='boolean'){setPickerBusy(item.busy);return;}
    if(item.type==='update-dismiss'){void dismissUpdate();return;}
    if(item.type==='update-open'){void openUpdate();return;}
-   if(item.type==='open-scanner'&&connectionScreen(status,wasConnected)==='chat'){beginScan();return;}
+   if(item.type==='open-scanner'&&connectionScreen(status,wasConnected)==='chat'){void beginScan();return;}
    if(item.type==='open-privacy'&&connectionScreen(status,wasConnected)==='chat'){openPrivacy();return;}
    if(item.type==='cancel-result'&&cancelRequested.current){
     if(cancelTimer.current)clearTimeout(cancelTimer.current);cancelTimer.current=undefined;
@@ -164,7 +170,22 @@ function Client(){
  }
  const button=(text:string,onPress:()=>void)=><Pressable accessibilityRole="button" onPress={onPress} style={styles.button}><Text style={styles.buttonText}>{text}</Text></Pressable>;
  const primary=(text:string,onPress:()=>void)=><Pressable accessibilityRole="button" onPress={onPress} style={styles.primary}><Text style={styles.primaryText}>{text}</Text></Pressable>;
- const beginScan=()=>{scanLock.current=false;setScanError(false);setScanning(true);};
+ const beginScan=async()=>{
+  if(isIOS){
+   if(requestingCamera.current)return;
+   requestingCamera.current=true;
+   try{
+    const current=await getPermission();
+    if(!active.current)return;
+    if(!current.granted&&current.canAskAgain)await requestPermission();
+   }catch{
+    if(active.current)Alert.alert('无法请求相机权限','请重试，或在系统设置中检查相机权限。');
+    return;
+   }finally{requestingCamera.current=false;}
+   if(!active.current)return;
+  }
+  scanLock.current=false;setScanError(false);setScanning(true);
+ };
  const failChatPage=()=>{loaded.current=false;setLoading(false);setWebFailed(true);setError('聊天页面加载失败，请重试。');};
  const privacyLink=<Pressable accessibilityRole="link" onPress={openPrivacy} style={styles.privacyLink}><Text style={styles.privacyText}>隐私政策</Text></Pressable>;
  const screen=connectionScreen(status,wasConnected);
@@ -211,7 +232,11 @@ function Client(){
    <SafeAreaView style={styles.page}>
     <View style={styles.toolbar}><Text style={styles.title}>连接 Homer</Text>{button('取消',()=>setScanning(false))}</View>
     <Text style={styles.message}>在电脑打开「设置 → 移动设备」，点击「添加移动设备」，再扫描二维码。</Text>
-    {scanError?<View style={styles.scanContent}><Text accessibilityRole="header" style={styles.scanHeading}>二维码无法识别</Text><Text style={styles.description}>请扫描电脑 Homer「移动设备」中生成的二维码。</Text>{primary('重新扫码',()=>{setScanError(false);scanLock.current=false;})}</View>:permission?.granted?<View style={styles.cameraContainer}><CameraView style={styles.camera} facing="back" barcodeScannerSettings={{barcodeTypes:['qr']}} onBarcodeScanned={({data})=>void scanned(data)}/><View pointerEvents="none" style={styles.cameraFrame}/></View>:<View style={styles.scanContent}><Text accessibilityRole="header" style={styles.scanHeading}>{permission?.canAskAgain===false?'相机权限未开启':'开启相机，扫描二维码'}</Text><Text style={styles.description}>{permission?.canAskAgain===false?'请在设置中开启相机权限，返回后即可扫码。':'需要使用相机扫描电脑上的二维码。'}</Text>{primary(permission?.canAskAgain===false?'去设置开启':'允许使用相机',()=>{if(permission?.canAskAgain===false)void Linking.openSettings();else void requestPermission();})}</View>}
+    {scanError?<View style={styles.scanContent}><Text accessibilityRole="header" style={styles.scanHeading}>二维码无法识别</Text><Text style={styles.description}>请扫描电脑 Homer「移动设备」中生成的二维码。</Text>{primary('重新扫码',()=>{setScanError(false);scanLock.current=false;})}</View>:permission?.granted?<View style={styles.cameraContainer}><CameraView style={styles.camera} facing="back" barcodeScannerSettings={{barcodeTypes:['qr']}} onBarcodeScanned={({data})=>void scanned(data)}/><View pointerEvents="none" style={styles.cameraFrame}/></View>:<View style={styles.scanContent}>
+     <Text accessibilityRole="header" style={styles.scanHeading}>{cameraSettings?'相机权限未开启':'开启相机，扫描二维码'}</Text>
+     <Text style={styles.description}>{cameraSettings?'请在设置中开启相机权限，返回后即可扫码。':'需要使用相机扫描电脑上的二维码。'}</Text>
+     {cameraSettings?primary('去设置开启',openCameraSettings):primary('允许使用相机',()=>void requestPermission())}
+    </View>}
     {privacyLink}
    </SafeAreaView>
    </SafeAreaProvider>

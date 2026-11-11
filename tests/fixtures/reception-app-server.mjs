@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Offline protocol peer for reception/IPC acceptance. No account or network.
 import {createInterface} from 'node:readline';
-if(process.argv.includes('--version')){console.log('codex-cli synthetic-reception');process.exit(0);}
+import {join} from 'node:path';
+if(process.argv.includes('--version')){console.log('codex-cli 0.163.0');process.exit(0);}
 const send=value=>process.stdout.write(JSON.stringify(value)+'\n');
 const argument=process.argv.find(value=>value.startsWith('mcp_servers.homer_interactions='));
 const trusted=argument?JSON.parse(argument.slice(argument.indexOf('=')+1).replace(/("(?:[^"\\]|\\.)*")=/g,'$1:')):undefined;
@@ -9,13 +10,17 @@ let thread='synthetic-reception-main',turn,sequence=0,generation=0;
 const event=(method,params)=>send({method,params:{threadId:thread,turnId:turn,...params}});
 createInterface({input:process.stdin}).on('line',line=>void receive(JSON.parse(line)));
 async function receive(message){
- if(message.method==='initialize')send({id:message.id,result:{userAgent:'synthetic-reception'}});
+ if(message.method==='initialize')send({id:message.id,result:{userAgent:'synthetic-reception/0.163.0',codexHome:process.env.CODEX_HOME}});
  if (message.method === 'model/list') send({id:message.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
- if(message.method==='config/read')send({id:message.id,result:{config:{mcp_servers:trusted?{homer_interactions:trusted}:{}}}});
+ if(message.method==='config/read')send({id:message.id,result:{config:{features:{memories:true},memories:{dedicated_tools:true},mcp_servers:trusted?{homer_interactions:trusted}:{}},layers:[{name:{type:'user',file:join(process.env.CODEX_HOME,'config.toml')},version:'synthetic-config',config:{}}]}});
  if(message.method==='mcpServerStatus/list')send({id:message.id,result:{data:[{name:'homer_interactions',tools:Object.fromEntries((trusted?.enabled_tools??[]).map(name=>[name,{}]))}]}});
+ if(message.method==='environment/info')send({id:message.id,result:{shell:'/bin/zsh'}});
+ if(message.method==='thread/backgroundTerminals/list')send({id:message.id,result:{data:[]}});
+ if(message.method==='config/mcpServer/reload')send({id:message.id,result:{}});
+ if(message.method==='skills/list')send({id:message.id,result:{data:[]}});
  if(message.method==='thread/memoryMode/set')send({id:message.id,result:{}});
  if(['thread/start','thread/resume'].includes(message.method)){
-  thread=message.params.threadId??thread;send({id:message.id,result:{thread:{id:thread},activePermissionProfile:{id:'homer'},approvalPolicy:'never'}});
+  thread=message.params.threadId??thread;send({id:message.id,result:{thread:{id:thread},activePermissionProfile:{id:'homer'},approvalPolicy:message.params.approvalPolicy??'never'}});
  }
  if(message.method==='turn/start'){
   turn='synthetic-native-'+ ++sequence;const own=++generation;

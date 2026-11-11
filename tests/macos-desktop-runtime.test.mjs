@@ -22,7 +22,7 @@ function profile(state={}){
  for(const part of ['host-home','tmp'])mkdirSync(join(root,part));return root;
 }
 function launch(root,daily=false){
- const child=spawn(node,[join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',root,'--test-profile',...(daily?['--deepseek-daily']:[])],{cwd:root,env:{PATH:'/usr/bin:/bin',HOME:join(root,'host-home'),TMPDIR:join(root,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','pipe',...(daily?['pipe']:[])]});
+ const child=spawn(node,[join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',root,'--test-profile',...(daily?['--deepseek-daily']:[])],{cwd:root,env:{PATH:dirname(node)+':/usr/bin:/bin',HOME:join(root,'host-home'),TMPDIR:join(root,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','pipe',...(daily?['pipe']:[])]});
  if(daily){
   const baseUrl=JSON.parse(readFileSync(join(resources,'desktop-manifest.json'))).account.gatewayOrigin+'/v1';
   child.stdio[3].end(JSON.stringify(daily==='manual-token'?{token:'synthetic-deepseek-token'}:{token:'synthetic-deepseek-token',subject:'fixture_user',config:{main:{baseUrl,model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl,model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}}));
@@ -43,7 +43,7 @@ function recordSyntheticShutdown(root,events,exit){
  assert.equal(ownerPresent,false);assert.equal(runtimeLockPresent,false);assert.equal(gatewayLockPresent,false);assert.equal(leases,0);
 }
 const request=(url,path,input,headers={})=>fetch(url+path,{method:input===undefined?'GET':'POST',headers:{Origin:url,'X-Homer-Desktop-Access':runtimeAccess.get(new URL(url).origin),...(input===undefined?{}:{'Content-Type':'application/json'}),...headers},...(input===undefined?{}:{body:JSON.stringify(input)})});
-async function stateWhen(url,predicate){for(let i=0;i<500;i++){const r=await request(url,'/api/state');if(r.ok){const s=await r.json();if(predicate(s))return s;}await wait(20);}throw Error('state timeout');}
+async function stateWhen(url,predicate){for(let i=0;i<500;i++){const r=await request(url,'/api/history/state');if(r.ok){const s=await r.json();if(predicate(s))return s;}await wait(20);}throw Error('state timeout');}
 const methods=root=>existsSync(join(root,'fixture-methods.jsonl'))?readFileSync(join(root,'fixture-methods.jsonl'),'utf8').trim().split('\n').map(x=>JSON.parse(x).method):[];
 test('a pending transport discovered under the gateway lock exits before spawning the host',{timeout:15000},async()=>{
  const root=profile(),runtime=join(root,'runtime'),homer=join(resources,'homer'),manifest=JSON.parse(readFileSync(join(resources,'desktop-manifest.json')));
@@ -53,18 +53,19 @@ test('a pending transport discovered under the gateway lock exits before spawnin
  const build={directory:homer,hash:manifest.sourceHash,manifest:manifest.manifest,schema:manifest.schema,toolsHash:manifest.toolsHash,boundary:'synthetic-binding',config:{runtime,pauseOldDesktopWork:true},thread:'synthetic'};
  const previous=process.exitCode;
  try{
-  const result=await runDev({root:homer,input,output,webPort:0,fixedBuild:build,fixedUi:build,fallbackUi:build,desktop:{onEvent(){}}});
+  const result=await runDev({root:homer,input,output,webPort:0,fixedBuild:build,desktop:{onEvent(){}}});
   assert.equal(result.noHostStarted,true);assert.equal(result.startupError,'desktop_transport_review_required');
   assert.equal(existsSync(join(runtime,'gateway/cli.lock')),false);
   const check=new DatabaseSync(join(runtime,'gateway/transport.sqlite'),{readOnly:true});try{assert.equal(check.prepare("SELECT count(*) n FROM transport_requests WHERE state='pending'").get().n,1);}finally{check.close();}
  }finally{process.exitCode=previous;input.destroy();}
 });
-test('Finder requests reach the existing artifact owner and missing authorization cannot launch Finder',{timeout:20000},async()=>{
+test('Finder requests reach the existing message attachment owner and missing authorization cannot launch Finder',{timeout:20000},async()=>{
  const root=profile({loggedIn:true}),run=launch(root);
  try{
   const url=await run.url();await stateWhen(url,s=>s.upgrade.phase==='running');
-  const response=await request(url,'/api/files/result-synthetic-missing/reveal',{});
-  assert.equal(response.status,409);assert.equal((await response.json()).error,'artifact_not_authorized');
+  const response=await request(url,'/api/media/message-missing/asset-00000000-0000-4000-8000-000000000001/1/reveal',{});
+  assert.equal(response.status,409);assert.equal((await response.json()).error,'media_scope_denied');
+  assert.equal((await request(url,'/api/files/result-synthetic-missing/reveal',{})).status,404);
  }finally{await run.stop();}
 });
 test('desktop unopened account stays read-only and cannot restore deleted login endpoints',{timeout:30000},async()=>{
@@ -82,14 +83,20 @@ test('desktop unopened account stays read-only and cannot restore deleted login 
   await run.stop();
  }finally{if(run.child.exitCode===null)run.child.stdin.end('{"kind":"quit"}\n');}
 });
-test('packaged current history, queue, upload and same-thread restart retain synthetic data',{timeout:45000},async()=>{
+test('packaged desktop retains current history, uploads and the same thread across a source hash change',{timeout:45000},async()=>{
  const root=profile({loggedIn:true});let run=launch(root);
  try{
   const url=await run.url(),s=await stateWhen(url,s=>s.upgrade.phase==='running');
   assert.equal(s.threadId,'synthetic-desktop-main');
+  const bundled=join(resources,'homer');
+  for(const name of ['scripts/dev-build.mjs','dist/update-review-page.js'])assert.equal(existsSync(join(bundled,name)),false,name);
+  for(const path of ['/settings/update','/update-review.js','/update-review.css','/api/update/review']){
+   const absent=await request(url,path);assert.equal(absent.status,404,path);await absent.arrayBuffer();
+  }
+  const approval=await request(url,'/api/update/approve',{hash:'synthetic'});assert.equal(approval.status,404);await approval.arrayBuffer();
   const history=await (await request(url,'/api/history/state')).json();assert.equal(history.history.protocol,3);assert.equal(history.threadId,s.threadId);
   assert.equal((await request(url,'/api/capabilities')).status,404);
-  assert.equal((await fetch(url+'/api/state',{headers:{Origin:'https://example.invalid'}})).status,403);
+  assert.equal((await fetch(url+'/api/history/state',{headers:{Origin:'https://example.invalid'}})).status,403);
   const sent=await request(url,'/api/messages',{requestId:'synthetic-conversation',text:'synthetic retained request'});
   assert.equal(sent.status,202,await sent.text());
   await stateWhen(url,s=>s.messages.some(m=>m.role==='assistant'&&m.requestId==='synthetic-conversation'&&m.status==='completed'&&m.text.includes('隔离测试答复')));
@@ -99,8 +106,17 @@ test('packaged current history, queue, upload and same-thread restart retain syn
   await run.stop();writeFileSync(join(root,'workspace/synthetic-retained'),'unchanged');
   const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
   let before;
-  try{before=db.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all();assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);}finally{db.close();}
+  try{
+   before=db.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all();
+   const manifest=JSON.parse(readFileSync(join(resources,'desktop-manifest.json'),'utf8'));
+   assert.equal(manifest.toolsHash,db.prepare("SELECT value FROM meta WHERE key='mainToolsHash'").get().value);
+   assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
+  }finally{db.close();}
+  const profileMarker=join(root,'desktop-profile.json');
+  writeFileSync(profileMarker,JSON.stringify({...JSON.parse(readFileSync(profileMarker)),schema:'0a79d7312b9c'}));
+  const oldMarker=readFileSync(profileMarker);
   run=launch(root);const next=await stateWhen(await run.url(),s=>s.upgrade.phase==='running');assert.equal(next.threadId,s.threadId);
+  assert.deepEqual(readFileSync(profileMarker),oldMarker);
   assert.equal(readFileSync(join(root,'workspace/synthetic-retained'),'utf8'),'unchanged');
   const after=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});try{assert.deepEqual(after.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all(),before);}finally{after.close();}
   assert.equal(methods(root).filter(m=>m==='thread/start').length,1);assert.ok(methods(root).includes('thread/resume'));await run.stop();
@@ -127,7 +143,7 @@ test('sealed runtime rejects nested gateway/database/lock escapes before first S
   assert.equal(run.events.some(e=>e.kind==='url'),false);
  }
 });
-async function adoptedFixture({legacyTools=false,effort='high'}={}){
+async function adoptedFixture({effort='high'}={}){
  // Seed a real package-owned synthetic profile, then arrange only these fake
  // files in the exact historical Homer layout. No production data is read.
  const seed=profile({loggedIn:true}),first=launch(seed);
@@ -140,13 +156,13 @@ async function adoptedFixture({legacyTools=false,effort='high'}={}){
   writeFileSync(join(p,'.homer-desktop-test-profile'),'{"format":1}');writeFileSync(join(p,'fixture-control.json'),'{"loggedIn":true}');
  }
  copyFileSync(resolve('tests/fixtures/desktop-app-server.mjs'),join(shell,'fixture-codex.mjs'));chmodSync(join(shell,'fixture-codex.mjs'),0o700);
- const config={workspace:'workspace',runtime:'runtime-local-subscription',codexHome:paths.codexHome,codexBin:join(seed,'fixture-codex.mjs'),model:'synthetic',effort,requiresOpenaiAuth:true,mainTimeoutMs:600000};
+ const config={workspace:'workspace',runtime:'runtime-local-subscription',codexHome:paths.codexHome,codexBin:join(seed,'fixture-codex.mjs'),model:'synthetic',effort,requiresOpenaiAuth:true};
  const source=join(privateRoot,'local-chatgpt.config.json');writeFileSync(source,JSON.stringify(config),{mode:0o600});
  writeFileSync(join(shell,'desktop-adoption.json'),JSON.stringify({format:1,test:true,sourceConfig:source,sha256:digest(readFileSync(source,'utf8'))}),{mode:0o600});
- const db=new DatabaseSync(join(paths.runtime,'homer.sqlite'));
+ const db=new DatabaseSync(join(paths.runtime,'homer.sqlite'));let toolsHash;
  try{
   db.prepare("UPDATE meta SET value=? WHERE key='binding'").run(digest({workspace:paths.workspace,codexHome:paths.codexHome,requiresOpenaiAuth:true}));
-  if(legacyTools)db.prepare("UPDATE meta SET value=? WHERE key='mainToolsHash'").run('e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a');
+  toolsHash=db.prepare("SELECT value FROM meta WHERE key='mainToolsHash'").get().value;assert.match(toolsHash,/^[a-f0-9]{64}$/);
   db.prepare("INSERT INTO meta(key,value) VALUES('publicMainNodeSeq:v1','99') ON CONFLICT(key) DO UPDATE SET value='99'").run();
   db.prepare('INSERT INTO meta VALUES(?,?)').run('publicMainNode:v1:adoption-unknown',JSON.stringify({id:'adoption-unknown',threadId:'synthetic-desktop-main',seq:99,revision:1,sourceKind:'user',sourceMessageIds:[],messageId:'synthetic-unknown-reply',state:'working',status:'running',turnIds:['synthetic-prior-turn'],items:[{id:'synthetic-old-command',kind:'tool',seq:1,revision:1,label:'运行命令',category:'command',status:'running'}],completedItemIds:[],itemPhases:{}}));
  }finally{db.close();}
@@ -156,7 +172,7 @@ async function adoptedFixture({legacyTools=false,effort='high'}={}){
   gateway.prepare("UPDATE transport_meta SET value=? WHERE key='binding'").run(oldBinding);
   gateway.prepare("INSERT INTO transport_requests(id,payload,hash,state,error) VALUES(?,?,?,?,?)").run('synthetic-rejected','','synthetic-hash','rejected','synthetic-error');
  }finally{gateway.close();}
- return {shell,original,paths,source,oldBinding,config,dbPath:join(paths.runtime,'homer.sqlite'),gatewayPath:join(paths.runtime,'gateway/transport.sqlite')};
+ return {shell,original,paths,source,oldBinding,config,toolsHash,dbPath:join(paths.runtime,'homer.sqlite'),gatewayPath:join(paths.runtime,'gateway/transport.sqlite')};
 }
 async function refused(run,code){
  for(let i=0;i<500&&!run.events.some(e=>e.kind==='error')&&run.child.exitCode===null&&!run.events.some(e=>e.kind==='url');i++)await wait(20);
@@ -164,16 +180,31 @@ async function refused(run,code){
  assert.ok(run.events.some(e=>e.kind==='error'&&e.code===code),JSON.stringify(run.events));
  assert.equal((await run.exited).code,1);
 }
-test('review refusal releases the desktop owner so a reviewed synthetic delivery can restart',{timeout:60000},async()=>{
+test('review refusal preserves an unowned active Worker and releases the desktop owner',{timeout:60000},async()=>{
  const f=await adoptedFixture();adoptGateway(f);
- const db=new DatabaseSync(f.dbPath);
- try{db.exec("PRAGMA foreign_keys=OFF; INSERT INTO deliveries(id,taskId,version,resultIdsJson,routeSourceRequestId,text,historyMessageId,state,operationKey) VALUES('synthetic-delivery','synthetic-task',1,'[]','synthetic-source','synthetic','synthetic-message','prepared','synthetic-operation')");}finally{db.close();}
- const blocked=launch(f.shell,true);await refused(blocked,'desktop_delivery_review_required');
- assert.ok(blocked.events.some(e=>e.kind==='startup_refused'));
+ const fromBundle=path=>import(pathToFileURL(join(resources,'homer/dist',path)).href);
+ const [{Store},{Files},{RecursiveTasks},{ConversationHistory},{MainInputs}]=await Promise.all(['store.js','files.js','recursive-tasks.js','web-history.js','recursive-main-inputs.js'].map(fromBundle));
+ const store=new Store(f.dbPath);
+ let runId;
+ try{
+  const tasks=new RecursiveTasks(store,new Files(f.paths.workspace)),history=new ConversationHistory(store.db),inputs=new MainInputs(tasks,history);
+  const threadId=store.meta('mainThread'),sourceRequestId='synthetic-worker-owner';
+  store.db.prepare("UPDATE meta SET value=json_set(value,'$.state','worked','$.status','unknown') WHERE key='publicMainNode:v1:adoption-unknown'").run();
+  inputs.accept({requestId:sourceRequestId,text:'Synthetic unowned work'});const source=inputs.claim();inputs.finish(source.messageId,source.revision,'completed');
+  const actor={agentId:store.meta('mainAgentId'),threadId,sourceRequestId};
+  runId=tasks.workerOpen(actor,{operationId:'synthetic-worker-open',text:'Inspect current work',workingDirectory:f.paths.workspace,authority:{sourceRequestId,description:'Synthetic test work'}}).runId;
+  const run=tasks.claim(runId);tasks.bind(run.id,run.epoch,'worker-owner-thread','worker-owner-turn');
+ }finally{store.close();}
+ const blocked=launch(f.shell);await refused(blocked,'desktop_run_review_required');
+ assert.ok(blocked.events.some(event=>event.kind==='startup_refused'));
  assert.equal(existsSync(join(f.paths.codexHome,'desktop-owner.json')),false);
+ assert.equal(existsSync(join(f.paths.runtime,'cli.lock')),false);
  const reviewed=new DatabaseSync(f.dbPath);
- try{assert.equal(reviewed.prepare("SELECT state FROM deliveries WHERE id='synthetic-delivery'").get().state,'prepared');reviewed.prepare("UPDATE deliveries SET state='recorded' WHERE id='synthetic-delivery'").run();}finally{reviewed.close();}
- const run=launch(f.shell,true);
+ try{
+  assert.equal(reviewed.prepare('SELECT status FROM runs WHERE id=?').get(runId).status,'running');
+  reviewed.prepare("UPDATE runs SET checkpointJson=? WHERE id=?").run('{"workerExitConfirmed":1}',runId);
+ }finally{reviewed.close();}
+ const run=launch(f.shell);
  try{await stateWhen(await run.url(),s=>s.upgrade.phase==='running');await run.stop();}finally{if(run.child.exitCode===null)run.child.stdin.end('{"kind":"quit"}\n');}
 });
 function adoptGateway(f){
@@ -185,8 +216,8 @@ function adoptGateway(f){
   assert.deepEqual(db.prepare("SELECT * FROM transport_meta WHERE key<>'binding' ORDER BY key").all(),meta);
  }finally{db.close();}
 }
-test('adoption requires reviewed gateway CAS, then original owner retains current schema facts and unknown results',{timeout:45000},async()=>{
- const f=await adoptedFixture({legacyTools:true}),before=readFileSync(f.source),blocked=launch(f.shell);
+test('adoption requires reviewed gateway CAS, then original owner retains current schema facts and unknown work',{timeout:45000},async()=>{
+ const f=await adoptedFixture(),before=readFileSync(f.source),blocked=launch(f.shell);
  await refused(blocked,'desktop_adoption_gateway_review_required');
  assert.ok(blocked.events.some(e=>e.kind==='startup_refused'));
  assert.equal(existsSync(join(f.paths.codexHome,'desktop-owner.json')),false);
@@ -195,8 +226,8 @@ test('adoption requires reviewed gateway CAS, then original owner retains curren
   const s=await stateWhen(await run.url(),s=>s.upgrade.phase==='running');assert.equal(s.threadId,'synthetic-desktop-main');
   const db=new DatabaseSync(f.dbPath,{readOnly:true});
   try{
-   assert.equal(db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get().value,'4');
-   assert.equal(db.prepare("SELECT value FROM meta WHERE key='mainToolsHash'").get().value,'e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a');
+   assert.equal(db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get().value,'6');
+   assert.equal(db.prepare("SELECT value FROM meta WHERE key='mainToolsHash'").get().value,f.toolsHash);
    const node=JSON.parse(db.prepare("SELECT value FROM meta WHERE key='publicMainNode:v1:adoption-unknown'").get().value);
    assert.equal(node.status,'running');assert.equal(node.items[0].status,'running');
    assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
@@ -226,19 +257,24 @@ for(const effort of ['high','max'])test(`daily website uses max and preserves or
   assert.equal((await request(url,'/api/messages',{requestId:'synthetic-daily-new',text:'synthetic new'})).status,202);
   await stateWhen(url,()=>methods(f.original).includes('turn/start'));
   for(let i=0;i<500;i++){const db=new DatabaseSync(f.dbPath,{readOnly:true});const row=db.prepare("SELECT status FROM conversation_messages WHERE requestId='synthetic-daily-new' AND role='assistant'").get();db.close();if(row?.status==='completed')break;if(i===499)throw Error('synthetic_reply_timeout');await wait(20);}
-  mkdirSync(join(f.paths.workspace,'materials'),{recursive:true});writeFileSync(join(f.paths.workspace,'materials/synthetic.md'),'Synthetic daily material');
+  writeFileSync(join(f.paths.workspace,'synthetic.md'),'Synthetic daily material');
   assert.equal((await request(url,'/api/messages',{requestId:'synthetic-daily-worker',text:'dispatch-synthetic'})).status,202);
-  for(let i=0;i<1000;i++){
-   const db=new DatabaseSync(f.dbPath,{readOnly:true});let delivered;
-   try{delivered=db.prepare("SELECT r.filePath AS artifact FROM results r JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) selected ON selected.value=r.id WHERE r.kind='file' AND r.state='accepted' AND d.state='recorded' AND d.revokedAt IS NULL").get();}finally{db.close();}
-   if(delivered){assert.equal(readFileSync(delivered.artifact,'utf8'),'DeepSeek Worker 已运行（离线合成）');break;}
-   if(i===999)throw Error('synthetic_worker_delivery_timeout');await wait(20);
-  }
+  const delivered=await stateWhen(url,s=>s.artifacts?.some(file=>file.title==='hello.md'));
+  const file=delivered.artifacts.find(file=>file.title==='hello.md');
+  const downloaded=await request(url,'/api/media/'+file.messageId+'/'+file.assetId+'/'+file.revision);
+  assert.equal(downloaded.status,200);assert.equal(await downloaded.text(),'DeepSeek Worker 已运行（离线合成）');
+  assert.equal(downloaded.headers.get('x-homer-artifact-hash'),file.sha256);
   await run.stop();
   const models=readFileSync(join(f.original,'fixture-models.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
   for(const worker of [false,true])assert.ok(models.some(model=>model.worker===worker&&model.model==='deepseek-flash'&&model.effort==='max'&&model.serviceTier===null&&model.keyPresent));
   const turnCount=methods(f.original).filter(x=>x==='turn/start').length;
-  run=launch(f.shell);assert.equal((await stateWhen(await run.url(),s=>s.upgrade.phase==='running')).threadId,state.threadId);await run.stop();
+  run=launch(f.shell);const resumedUrl=await run.url();
+  assert.equal((await stateWhen(resumedUrl,s=>s.upgrade.phase==='running')).threadId,state.threadId);
+  const retained=await request(resumedUrl,'/api/media/'+file.messageId+'/'+file.assetId+'/'+file.revision);
+  assert.equal(retained.status,200);
+  assert.equal(retained.headers.get('x-homer-artifact-hash'),file.sha256);
+  assert.equal(createHash('sha256').update(Buffer.from(await retained.arrayBuffer())).digest('hex'),file.sha256);
+  await run.stop();
   const after=new DatabaseSync(f.dbPath,{readOnly:true});try{assert.equal(after.prepare("SELECT value FROM meta WHERE key='publicMainNode:v1:adoption-unknown'").get().value,old);}finally{after.close();}
   assert.deepEqual(readFileSync(f.source),originalConfig);
   assert.equal(methods(f.original).filter(x=>x==='turn/start').length,turnCount);
@@ -254,9 +290,9 @@ for(const kind of ['active','unknown'])test(`adoption refuses ${kind} original o
  assert.equal(methods(f.original).includes('thread/resume'),false);
 });
 
-test('unsupported schema3 adoption is refused before engine launch or database mutation',{timeout:45000},async()=>{
+test('unsupported schema5 adoption is refused before engine launch or database mutation',{timeout:45000},async()=>{
  const f=await adoptedFixture();adoptGateway(f);
- const db=new DatabaseSync(f.dbPath);db.prepare("UPDATE meta SET value='3' WHERE key='recursiveSchemaVersion'").run();db.close();
+ const db=new DatabaseSync(f.dbPath);db.prepare("UPDATE meta SET value='5' WHERE key='recursiveSchemaVersion'").run();db.close();
  const before=readFileSync(f.dbPath),run=launch(f.shell);
  await refused(run,'desktop_schema_incompatible');
  assert.deepEqual(readFileSync(f.dbPath),before);assert.equal(existsSync(join(f.paths.codexHome,'desktop-owner.json')),false);

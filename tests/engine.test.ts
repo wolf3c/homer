@@ -7,11 +7,9 @@ const config: Config = {
   workspace: resolve(".codex/scratch"),
   runtime: resolve(".codex/scratch/engine-tests"),
   codexBin: resolve("tests/fixtures/mock-app-server.mjs"),
-  codexHome: resolve(".codex/scratch/engine-tests/home"),
+  codexHome: resolve(".codex/scratch/engine-tests/home"), nativeCodexHome: resolve(".codex/scratch/engine-tests/home"),
   model: "mock",
   requiresOpenaiAuth: false,
-  timeoutMs: 1000,
-  mainTimeoutMs: 1000,
   stopGraceMs: 100,
 };
 const options: EngineOptions = {
@@ -54,33 +52,6 @@ test('native failed turn is terminal while its process stays usable for a new re
   try{await engine.start();const failed=await engine.turn('first');assert.equal(failed.status,'failed');assert.equal(engine.available,true);
     assert.equal((await engine.turn('new request')).text,'SECOND');assert.equal(engine.available,true);
   }finally{await engine.close();assert.equal(engine.available,false);}
-});
-
-test("T11: an MCP server that ignores session disable overrides is refused before starting a thread", async () => {
-  const engine = new CodexEngine(
-    { ...config, model: "external-tools-stubborn" },
-    options,
-    async () => ({}),
-  );
-  try {
-    await assert.rejects(
-      () => engine.start(),
-      /engine_external_tools_configured/,
-    );
-  } finally {
-    await engine.close();
-  }
-});
-
-// Regression: reuse local account authentication even when the user has MCPs.
-test("T11: inherited MCP tools are disabled for Homer without rejecting the logged-in account", async () => {
-  const engine = new CodexEngine({ ...config, model: "external-tools" }, options, async () => ({}));
-  try {
-    await engine.start();
-    assert.equal((await engine.turn("hi")).text, "FIRST");
-  } finally {
-    await engine.close();
-  }
 });
 
 test("T11: official tool execution host remains enabled while Homer limits actual tools", async () => {

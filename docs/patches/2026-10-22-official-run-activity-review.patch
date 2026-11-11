@@ -1,0 +1,92 @@
+--- a/ui/vendor/assistant-ui/run-activity.tsx
++++ b/ui/vendor/assistant-ui/run-activity.tsx
+@@ -83,7 +83,7 @@
+             <svg aria-hidden="true" className="run-activity-chevron size-3.5 shrink-0 transition-transform duration-200 group-data-open/trigger:rotate-90 group-data-panel-open/trigger:rotate-90 motion-reduce:transition-none" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+             {summary}
+           </CollapsibleTrigger>
+-          <CollapsibleContent {...contentProps} className={["run-activity-content peer", contentProps?.className].filter(Boolean).join(" ")}>
++          <CollapsibleContent {...contentProps} inert={!open} aria-hidden={!open} className={["run-activity-content peer", contentProps?.className].filter(Boolean).join(" ")}>
+             <ol className="run-activity-entries border-border ms-1.5 flex min-w-0 flex-col gap-3 border-s ps-3.5 pt-2 text-sm wrap-anywhere">
+               {entries.map((entry) => (
+                 <li key={entry.id} data-activity-kind={entry.kind}>
+--- a/ui/vendor/assistant-ui/README.md
++++ b/ui/vendor/assistant-ui/README.md
+@@ -16,6 +16,7 @@
+ - Preserve upstream markup, utility class strings, 12px root/list gaps, 14px type and chevron, 6px trigger gap/radius, 4px trigger padding, start-aligned tabular summary, 1px list rule with 6px start margin / 14px padding / 8px top padding, latest activity, status-only empty row and outside attention/final slots. No Homer header rule, full-width trigger, reduced font or second tool disclosure.
+ - `run-activity.css` provides exact component-scoped equivalents of those utilities. Bind upstream muted-foreground/foreground/border/ring roles to existing Homer variables locally. No global theme, Tailwind reset, shadcn initialization or dependency/runtime update. Font family inherits the host, as upstream does.
+ - Keep installed `@radix-ui/react-collapsible@1.2.1` instead of adding Base UI. Its measured height and Presence lifecycle implement upstream `collapsePanel`'s 200ms cubic-bezier(0.32,0.72,0,1) expansion/collapse using scoped keyframes; reduced motion is immediate. No caller forceMount/hidden override. The chevron's geometry is the upstream lucide ChevronRight rendered inline, without a package install.
++- Make the closing panel immediately `inert` and `aria-hidden` while Radix Presence finishes the 200ms exit animation. This prevents Tab or programmatic focus from entering content that is already folded, without disabling the animation or unmounting early. Reopening restores normal focusability.
+ - Add typed trigger/content props solely for existing focus refs and title; keep official styles. Homer owns persisted run identity, original event order, actual timing, lifecycle and terminal-once collapse, including the existing running-default-open contract. These are adapter behavior, not capabilities of the official component. Streaming and explicit expansion remain stable.
+ - Public commentary and each tool fact are supplied as ordinary entries. Original IDs/revisions/order and exact task/version/Run remain owned by existing projection. No raw tool arguments/results or model internals enter the UI. Returned calls are not passed checks. Independent Workers, important exceptions, valid pending decisions and formal answers/files retain their existing positions and contracts.
+ 
+--- a/tests/run-activity-style.browser.mjs
++++ b/tests/run-activity-style.browser.mjs
+@@ -1,7 +1,7 @@
+ // Focused rendering/animation contract for the pinned official component; synthetic owners only.
+ import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {readingFixture} from './process-reading-browser-fixture.mjs';import {isolatedChrome} from './web-history-browser-cdp.mjs';
+ const dest=path.resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/run-activity/browser-style');fs.mkdirSync(dest,{recursive:true});const browser=await isolatedChrome(dest),results=[];
+-try{for(const width of [1440,390,320]){const f=await readingFixture(),p=await browser.page(f.server.url,width);try{await p.navigate();await p.until(()=>!!document.querySelector('#message-node-88 .process-toggle'));const button='#message-node-88 .process-toggle',panel='#message-node-88 .process-content';
++try{for(const width of [1440,390,320]){const f=await readingFixture(),p=await browser.page(f.server.url,width);try{await p.navigate();await p.until(()=>!!document.querySelector('#message-node-88 .process-toggle'));
+ await p.evaluate(()=>{document.querySelector('.thread-viewport').scrollTop=document.querySelector('.thread-viewport').scrollHeight;document.querySelector('#message-node-88 .process-toggle').focus();});await p.command('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32,text:' '});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32});
+ await p.until(()=>document.querySelectorAll('#message-node-88 [data-tool-id]').length===8);await p.until(()=>document.querySelector('#message-node-88 .process-content').getAnimations().length===0);
+ const style=await p.evaluate(()=>{const root=document.querySelector('#message-node-88 [data-slot=run-activity]'),b=root.querySelector('button'),c=root.querySelector('.process-content'),o=root.querySelector('ol');return {rootGap:getComputedStyle(root).gap,font:getComputedStyle(b).fontSize,buttonWidth:b.getBoundingClientRect().width,rootWidth:root.getBoundingClientRect().width,iconTransition:getComputedStyle(b.querySelector('svg')).transitionDuration,iconEase:getComputedStyle(b.querySelector('svg')).transitionTimingFunction,panelDuration:getComputedStyle(c).animationDuration,panelEase:getComputedStyle(c).animationTimingFunction,listGap:getComputedStyle(o).gap,listBorder:getComputedStyle(o).borderInlineStartWidth,focus:getComputedStyle(b).boxShadow,active:document.activeElement===b,ids:[...root.querySelectorAll('[data-tool-id]')].map(e=>e.dataset.toolId)};});
+--- /dev/null
++++ b/tests/run-activity-focus.browser.mjs
+@@ -0,0 +1,57 @@
++// A closing disclosure must leave the tab order before its exit animation ends.
++import assert from 'node:assert/strict';
++import {mkdirSync,writeFileSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {readingFixture} from './process-reading-browser-fixture.mjs';
++import {isolatedChrome} from './web-history-browser-cdp.mjs';
++
++const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/run-activity-focus');
++mkdirSync(destination,{recursive:true});
++const browser=await isolatedChrome(destination),results=[];
++async function key(page,key,code,number){
++  await page.command('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode:number,...(key==='Enter'?{text:'\r'}:{})});
++  await page.command('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:number});
++}
++try{
++  for(const width of [1440,390,320]){
++    const fixture=await readingFixture(),page=await browser.page(fixture.server.url,width);
++    try{
++      fixture.setMode('streaming');
++      const node=JSON.parse(fixture.store.meta('publicMainNode:v1:node-89'));
++      node.revision++;
++      node.items[0].text='公开进展：[查看公开材料](https://example.invalid/)';
++      fixture.store.setMeta('publicMainNode:v1:node-89',JSON.stringify(node));
++      await page.navigate();
++      await page.until(()=>!!document.querySelector('#message-node-89 .process-content a'));
++      await page.until(()=>document.querySelector('#message-node-89 .process-content').getAnimations().length===0);
++      await page.evaluate(()=>document.querySelector('#message-node-89 .process-toggle').focus());
++      await key(page,'Enter','Enter',13);
++      const closing=await page.evaluate(()=>{
++        const trigger=document.querySelector('#message-node-89 .process-toggle'),panel=document.querySelector('#message-node-89 .process-content');
++        return {closed:trigger.getAttribute('aria-expanded')==='false',inert:panel.inert,ariaHidden:panel.getAttribute('aria-hidden')};
++      });
++      assert.deepEqual(closing,{closed:true,inert:true,ariaHidden:'true'});
++      await key(page,'Tab','Tab',9);
++      assert.equal(await page.evaluate(()=>document.querySelector('#message-node-89 .process-content').contains(document.activeElement)),false);
++      await page.evaluate(()=>document.querySelector('#message-node-89 .process-content a')?.focus());
++      assert.equal(await page.evaluate(()=>document.querySelector('#message-node-89 .process-content').contains(document.activeElement)),false);
++      await page.until(()=>document.querySelector('#message-node-89 .process-content').hidden);
++      assert.equal(await page.evaluate(()=>document.querySelectorAll('#message-node-89 .process-content a').length),0);
++      await page.evaluate(()=>document.querySelector('#message-node-89 .process-toggle').focus());
++      await key(page,'Enter','Enter',13);
++      await page.until(()=>!!document.querySelector('#message-node-89 .process-content a'));
++      await key(page,'Tab','Tab',9);
++      assert.equal(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-89 .process-content a')),true);
++      assert.equal(await page.evaluate(()=>document.querySelector('#message-node-89 .process-content').inert),false);
++      assert.deepEqual(page.errors,[]);
++      assert.deepEqual(page.blocked,[]);
++      assert.equal(fixture.fakeEngine.invocations,0);
++      assert.equal(fixture.submitted.length,0);
++      results.push({width,closing,closedPanelSkippedByTab:true,programmaticFocusBlocked:true,closedChildrenUnmounted:true,reopenedLinkFocusable:true});
++    }finally{await page.close();await fixture.close();}
++  }
++}finally{
++  await browser.close();
++  writeFileSync(join(destination,'focus-browser.json'),JSON.stringify({browser:browser.version,syntheticOnly:true,results},null,2)+'\n');
++}
++console.log(JSON.stringify({passed:results.length===3,widths:results.map(row=>row.width)}));

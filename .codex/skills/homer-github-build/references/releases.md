@@ -1,0 +1,166 @@
+# Homer GitHub Releases 分发
+
+准备分发、管理版本或获准发布时读取。按本次授权区分本地准备、仅构建、草稿上传与公开发布；下面命令为示例，不整段执行。默认发行路径是云端直接上传草稿，验收通过后公开同一份附件。
+
+## 仓库、版本与文件名
+
+本节及后文的构建、签名和 Release 命令针对桌面发行；移动端只在下方维护下载入口约定，不将桌面版本号、构建矩阵或 Latest 规则套用到移动端。
+
+- 桌面版使用现有公开仓库 `wolf3c/homer` 的 GitHub Releases 分发，官网和 README 只提供下载入口。不新建分发仓库、下载服务、OSS 镜像、跳转接口或版本查询接口，不恢复 `models.super-tree.com` 的 Homer 下载入口；不为分发改变仓库可见性或扩大源码公开范围。以下命令中的 `OWNER/REPO` 均替换为 `wolf3c/homer`。
+- 从目标源码提交的根 `package.json.version` 读取产品版本，与打包回执 `version`、安装包内部版本核对。正式标签采用 `vVERSION`；预发布采用如 `v1.2.0-rc.1`，对应产品版本也须一致。构建号是独立字段；正式构建必须以 `--build-number` 明确指定正整数，并事先核对已发行及已安装版本，确保递增。三平台同版使用同一构建号；同一 SHA 重跑保持原构建号，attempt 不是产品版本。候选包继续按提交历史计数。需要改版本时，先在授权范围内更新源码并重新构建、验收，不能只给旧包换标签。
+- 同源码仓库发布时，远端标签解析到的实际 commit 必须等于构建 `gitSha`（annotated tag 要解引用到 commit）。创建或推送标签需在授权范围内；缺少标签时停止，不让 `gh release create` 自动从默认分支创建。禁止移动已发布标签或用不同字节覆盖已发布同版本附件；修复使用新版本，保留旧版固定链接供回退。
+- 稳定附件名为 `Homer-mac-arm64.zip`、`Homer-mac-x64.zip`、`Homer-windows-x64.exe`；版本位于标签中，不在附件名重复。Mac 更新清单分别为 `RELEASES-darwin-arm64.json`、`RELEASES-darwin-x64.json`，其中 `updateTo.url` 指向同标签、同架构的固定名 ZIP。
+- 草稿直传由 `scripts/github-release-draft.mjs` 核对原始回执、流式计算包摘要，使用固定名上传原字节，不解包、重打包或修改签名包。平台脱敏清单保留来源与摘要供合并；最终生成 `SHA256SUMS` 和 `release-manifest.json`，记录版本、build、源码 SHA、run / attempt、包名映射、字节数、SHA-256、签名及最低系统。不上传含绝对路径的原始回执、凭据、用户数据或日志。
+
+## 固定下载链接
+
+本节统一维护下载入口，其他文档引用对应小节，不另建分发方案。每次以实际公开的 Release 为准；地址格式本身不能证明附件已发布或可用。
+
+### 桌面端
+
+官网与中英文 README 共用下表。`TAG` 为已发布标签，`ASSET` 必须与附件名大小写和后缀完全一致；URL 路径段按需编码。使用 GitHub 公布的链接，不保存其跳转后的临时存储 URL。
+
+| 用途 | URL 格式 |
+| --- | --- |
+| 最新正式版页面，用户选择平台 | `https://github.com/wolf3c/homer/releases/latest` |
+| 最新正式版 Mac ARM ZIP 直链 | `https://github.com/wolf3c/homer/releases/latest/download/Homer-mac-arm64.zip` |
+| 固定版本页面 | `https://github.com/wolf3c/homer/releases/tag/TAG` |
+| 固定版本附件，用于验收、复现和回退 | `https://github.com/wolf3c/homer/releases/download/TAG/ASSET` |
+
+Latest 指向最新已验收并设为 Latest 的正式版，不是每次构建，也不按平台分别找最新版。切换前，该 Release 必须包含官网和 README 已对外提供的所有平台固定名附件；缺平台时对应 Latest 直链会失效，不会自动回退到该平台旧版。此时应保持原 Latest，使用明确版本的测试链接或先与用户确定平台支持变更，不能混入旧版本冒充齐全。预发布版保持 `prerelease=true`、不设为 Latest，使用固定标签链接；草稿不能作为公开下载入口。链接只负责下载，不代表 App 内已实现自动更新。
+
+接入范围与顺序：
+
+- 官网 `https://super-tree.com/homer` 沿用现有“下载桌面版”和系统识别，提供手动选择其他平台的入口；macOS 区分 Apple 芯片与 Intel，不能仅凭识别为 macOS 就默认下载 ARM 包。无法确定架构时让用户选择；手机或未知系统保留通用桌面下载入口。
+- `README.md`、`README.zh-CN.md` 的安装区在获准切换桌面 Latest 时可使用 Latest 地址。保留原 Latest 或其指向移动版时使用固定标签链接。先讲下载、安装和开始使用，不让桌面入口误入移动 Release。
+- 完成 Release 分发核验后，按后文交接官网手动下载入口。README 改动和 Yezi2 部署按各自授权执行。首次正式发行前保留“安装包准备中”。
+- Intel Mac 和 Windows 使用本节列出的固定附件名；Linux 桌面尚未接通，不提供下载链接。既有本地包不能代替最新已审查源码的发行候选。
+
+### 移动端
+
+两个入口共用固定地址：`https://super-tree.com/homer/app`。复用最新官网首页的移动下载区域，不新增页面服务、跳转接口或分发仓库。
+
+| 入口 | 接入约定 |
+| --- | --- |
+| Homer 官网首页 | 在跨设备区域提供“下载手机 App”，进入该固定区域，分别展示 Android 与 iOS 的安装入口和实际可用状态。 |
+| 桌面 Homer「设置 → 移动设备」 | 提供“下载手机 App”按钮及编码同一固定地址的下载二维码。明确标注“下载安装”和“添加设备/扫码配对”，安装 App 后再按现有流程配对；下载码不含配对凭据。 |
+
+固定的是官网地址及下载二维码，页面内的平台链接随正式发行更新：
+
+- Android：使用现有 `wolf3c/homer` Releases 中已发布并验收的正式签名 APK，页面引用固定版本附件地址。移动 Release 使用不与桌面冲突的独立标签并保留移动端版本/build 序列，不覆盖旧附件，不设置为桌面 Latest，也不使用桌面的 `/releases/latest/download/…` 作为 APK 地址。发布时更新官网区域内链接，无需修改已安装桌面端或重新生成下载码；官网更新仍走既有部署流程。
+- iOS：指向原 Homer AI 应用的固定 App Store 页面，仅在该页面实际可获取安装包后开放；上传、审核中不等于可下载。Android 与 iOS 独立展示状态，不要求两端同步发版。
+- 首次接入前核对真实下载/商店状态；未发布的平台显示“准备中”，不提供失效链接。后续更新保留旧可用入口，待新包校验通过再切换。需验证两个入口定位到同一区域、下载二维码可打开正确页面、Android 下载摘要一致、iOS 指向原应用；不重复 TURN 长测。
+
+执行阶段以用户当前授权为准；准备授权本身不包含上传或发布。Android/iOS 打包、签名、安装与上线复用 [homer-mobile-release](../../homer-mobile-release/SKILL.md)。新版提示行为与验证维护在 [既有实现文档](../../../../docs/mobile-app-update-notice.md)；本流程不新增另一套版本查询、轮询、自动更新或强制升级机制。
+
+## 发布前验收
+
+以下证据齐全才发布；失败、跳过或未运行均记录为未验收，不靠工作流总体绿色替代。
+
+1. **来源与完整性**：所有承诺平台来自同一已审查源码 SHA，分别核对其完整 run ID / attempt 与请求平台集合；同一运行不能混用旧 attempt。包的版本、构建号、来源和哈希符合原始回执。若正式签名 / 公证另行改变了包字节，使用该获准流程产生的最终回执与哈希，并对最终包重新验收，不沿用候选包校验值。
+2. **安装与运行**：对本次实际分发的每个平台，在其承诺系统 / 架构上验收首次安装、首次启动、登录、任务、文件与图片、重启、升级后数据保留及卸载行为。媒体、手机通信和系统权限按承诺功能单独选择专项。使用独立测试目录 / 账号，不替换日常 Homer；没有目标环境证据的平台不标记通过。
+3. **签名与系统信任**：Mac 正式分发验证 Developer ID、公证、stapling 及真实下载后的 Gatekeeper 路径。Windows 当前按用户选择分发未签名 NSIS 安装包，明确标记且禁用自动更新；不可把未签名包称为已签名。
+4. **公开内容与附件集合**：公开包不含本机路径配置、凭据或个人数据；第三方许可证 / notices 随包保留。发行说明列出更新、最低系统、架构、安装方法、已知限制及回退版本。固定名附件、`SHA256SUMS` 和分发清单齐全，哈希对应最终字节；单个附件须小于 GitHub 当前的 2 GiB 上限。临时 Actions 产物不是长期用户下载入口。
+
+验收记录保存到正常 `docs/`，记录日期、版本、来源、证据及未覆盖项；操作临时文件留在上述 scratch。公开材料仅保留非敏感字段。
+
+### 每次桌面正式发行的更新说明
+
+每个正式桌面版的 GitHub Release 正文是完整用户更新日志的唯一维护处。发布前对照上一已公开的桌面正式标签与本次发行源码、验收记录，筛选已核实且用户能感知的变化；不把原有能力写成新增，不推断未验证的平台或效果。无法核实的变化不写成事实，明确验收缺口。
+
+正文先写中文「更新说明」，再写对应英文 “What’s new”：优先列 2–4 项实质变化，每项用简短、具体的用户场景标题（可用 emoji）及一小段通俗文字说明能做什么或解决了什么。按实际变化调整数量，不凑条目；不要以内部架构、提交或构建术语作开头。之后分别用中英文写系统要求、安装方式、签名和已知限制，明确旧资料兼容与平台验收边界；保留必要的构建号、源码标识和校验文件信息。技术记录放在用户说明之后。
+
+草稿阶段拟好并核对双语正文，公开前确认它与固定标签、附件、实际验收一致；公开后读取该固定标签 Release，核对正文、状态和附件集合。仅获准构建时只在本地准备，不创建或更新草稿；获准草稿时可更新该草稿。编辑已公开 Release 必须有相应授权。不得因补写说明而更改标签、附件或 Latest。
+
+## 云端直接上传草稿
+
+获准创建草稿及上传后，调用桌面工作流并传 `upload_release_draft=true`（默认）。仅构建时显式设为 `false`，避免将默认值当作额外授权。创建标签属于单独的远端写操作；工作流只接受已经存在且解析到 `expected_sha` 的标签，不自动创建或移动。
+
+1. 规划阶段在安装依赖前校验版本、build、源码 SHA、远端标签及已有草稿的 run / attempt；已公开同标签、旧轮次占用或只有残缺附件而没有来源清单时提前失败，不浪费打包额度。
+2. 每个平台在 runner 中构建、签名，直接将安装包、修正过 URL 的 Mac 更新清单及脱敏平台清单上传草稿。大包不再存入 Actions artifact；原始小回执保留 1 天。不需要额外 PAT，使用临时 `GITHUB_TOKEN`。
+3. 全部构建成功后，`verify-draft` 在云端完整流式下载所有请求平台的附件，对照同一 SHA / run / attempt 的清单校验大小和 SHA-256，生成合并分发清单及 `SHA256SUMS` 并上传、回下载核对。不在本机中转，也不保存第二份大包。
+4. 草稿不能公开下载。只为用户指定的平台从草稿下载并做产品验收；通过后补齐发行说明，公开同一 Release，不重新上传安装包。按后文执行公开链接及 Latest 核验，再交接 Yezi2。
+
+同标签工作流排队；失败或缺平台时保留草稿，不自动公开。已有同名附件只有字节数及摘要完全相同才复用，不覆盖或删除。换 SHA、build 或 attempt 不能混入原草稿；先核对已有结果，再按授权处理失败草稿或使用新版本，不能盲目整轮重跑。
+
+## 手工上传备用路径与公开发布
+
+先核对发布授权涵盖的仓库、标签、附件、正式 / 预发布及是否切换 Latest，再操作。确认远端标签已正确存在、该版本尚未发布；若已有草稿，检查其身份、附件和哈希后继续，不重复创建。请求超时或上传失败时先查询状态，只补传明确缺失的附件；不自动重试、不使用 `--clobber`，不删除原附件来绕过冲突。草稿上传不完整时保持草稿并报告，不提前发布。
+
+只有已有包、旧工作流或关闭草稿直传时才使用下面的手工上传备用路径。将已核验原包仅重命名外层文件放入 `.codex/scratch/github-build/releases/TAG/`，准备脱敏分发清单和摘要；禁止解包重打包。示例针对 Mac ARM；实际平台清单以本次请求为准，显式列出文件，不上传整个 scratch。
+
+```sh
+gh release create TAG --repo OWNER/REPO --verify-tag --draft --latest=false --title "Homer VERSION" --notes-file .codex/scratch/github-build/releases/TAG/release-notes.md
+gh release upload TAG --repo OWNER/REPO .codex/scratch/github-build/releases/TAG/Homer-mac-arm64.zip .codex/scratch/github-build/releases/TAG/SHA256SUMS .codex/scratch/github-build/releases/TAG/release-manifest.json
+gh release view TAG --repo OWNER/REPO --json tagName,isDraft,isPrerelease,assets,url
+gh release download TAG --repo OWNER/REPO --dir .codex/scratch/github-build/releases/TAG/draft-verification --pattern Homer-mac-arm64.zip --pattern SHA256SUMS --pattern release-manifest.json
+```
+
+手工上传须回下载比较字节数及 SHA-256；草稿直传已由 `verify-draft` 完成这一步，无需全平台重复下载到本机。两条路径都要确认附件集合、说明、标签及产品验收记录。发布前保留本次已完整校验的 Release ID / 标签、附件 ID、大小及 SHA-256。另在未登录状态记录原 Latest 的 Release ID / 标签及各附件的同类元数据，作为保留原 Latest 时的比较基线。紧邻发布前复核，发生变化先核对原因。
+
+若原 Latest 不存在，先确认仓库确实公开且可以访问，并从公开版本列表确认没有已发布的正式版，才能记录“无 Latest”；单个 404、鉴权失败、限流或网络错误都不能直接当作该结论。获得本次发布授权且上述验收已通过后，按本次是否切换 Latest 选择命令。下面仅适用于获准切换 Latest 的正式版：
+
+```sh
+gh release edit TAG --repo OWNER/REPO --verify-tag --draft=false --prerelease=false --latest
+```
+
+正式版保留原 Latest 时使用下面的第一条；预发布（包括首次只有预发布版）使用第二条。只执行符合本次授权的一条，不能沿用切换 Latest 的示例：
+
+```sh
+gh release edit TAG --repo OWNER/REPO --verify-tag --draft=false --prerelease=false --latest=false
+gh release edit TAG --repo OWNER/REPO --verify-tag --draft=false --prerelease --latest=false
+```
+
+已授权整段发布流程时不重复索要同一授权，授权仅到草稿时停在草稿。
+
+## 发布后的分支验收
+
+默认复用同一 Release 在发布前的完整下载校验（云端 `verify-draft` 或手工回下载），发布后按以下步骤做匿名核验。
+
+1. 核对固定标签版本页的公开状态及正式 / 预发布标记。用公开 Release API 核对 Release ID、标签及完整附件集合。逐项比对附件名称、ID、大小和 `digest`，与发布前的基线一致才复用完整 SHA-256 证据。
+2. 对每个承诺平台的固定标签直链发匿名 GET，最多请求起始 1 KiB（`Range: bytes=0-1023`，较小附件的末尾按已知大小截断）。跟随 HTTPS 重定向，核对文件名、`206`、`Content-Range` 的起止位置及总大小、实际收到的样本长度。读响应体前确认 `206`，并限制读取大小。服务器忽略 Range 时中止抽查并排查，单凭 HEAD 或跳转不能判定通过。
+3. 完整下载并比对 `SHA256SUMS`、`release-manifest.json` 和适用的更新清单，再按下表核验 Latest。
+
+完整校验证据缺失、附件 ID / 大小 / 摘要变化，或公开下载异常需要排查时，按受影响附件补做完整下载并与预期 SHA-256 比对。出现不一致时先定位原因，不能用重算结果覆盖基线。用户明确要求发布后全量复核时按其要求执行。记录发布前的完整 SHA-256 校验和发布后的匿名抽查各自结果。
+
+| 本次发布方式 | Latest 的验收标准 |
+| --- | --- |
+| 正式版且获准切换 Latest | Latest 的 Release ID / 标签须为本次版本；按本次附件基线比对公开元数据，并匿名抽查各平台 Latest 直链。每条直链须跳转到该附件的固定标签 URL。 |
+| 未切换 Latest，且发布前已有 Latest（正式版或预发布均适用） | Latest 的 Release ID / 标签须保持发布前基线；按原 Latest 的附件基线比对公开元数据，并匿名抽查其已有下载入口。每条 Latest 直链须跳转到原附件的固定标签 URL。本次包只通过本次固定标签链接验收和交付。 |
+| 首次只有预发布版，发布前已确认无 Latest | 确认本次为已公开预发布、没有正式版，Latest 继续不存在；Latest 页面 / 直链返回 404 属预期，不要求下载成功。本次固定标签直链仍按上文核验，不能把该处 404 豁免应用到本次包。 |
+
+无法取得发布前基线、状态不明确、原 Latest 意外改变，或任何实际附件缺失 / 哈希不符时，保留未验收状态并定位，不通过擅自切换 Latest、重发或覆盖附件来迎合检查。只有本次固定标签下载与所选 Latest 分支都通过，才报告分发验收通过；未切换时明确说明 Latest 仍为旧版，首次只有预发布版时只交付固定标签链接，不宣传“最新版正式下载”。
+
+保留 GitHub 标准下载 URL，不保存跳转后的临时地址或输出鉴权值。在 `docs/` 留下版本、源码与标签映射、附件名 / 哈希、原 Latest 基线（或确认不存在的依据）、本次切换决策、分支验收结果和下载链接。失败时明确区分“Release 已发布”和“分发验收通过”。
+
+发现已发布问题时保留原包和证据，说明受影响版本。需要把 Latest 指回已验收旧版、修改公开说明或撤回发行时，按用户授权执行；不擅自删 Release、删包或移动标签。包字节修复仍走新版本流程。
+
+## Yezi2 配置交接与上线核验
+
+桌面正式 Release 公开且固定标签与 Latest 分支均通过分发核验后，按用户长期授权直接交接官网手动下载。用实际 Release 和清单补齐本次 `docs/` 发布记录，并把以下内容交给 Yezi2：
+
+- 版本、build、标签、源码 SHA，以及本次选择的 Latest 策略。
+- 已发布平台的附件名、标准下载 URL、字节数与 SHA-256、最低系统、签名状态和已知限制；未发布的平台不提供下载入口。
+- 在发行记录和 Yezi2 交接中写明安装方式及旧资料限制。官网是否展示提示、展示什么文案，以用户对该版本的最新决定为准。
+- 本次获准切换自动更新时，另交接对应平台的网站路径及清单来源。Mac 按 `darwin-arm64`、`darwin-x64` 分开，清单的版本及 `updateTo.url` 须对应最终公开附件。Windows 未签名且禁用自动更新时只提供手动下载。
+
+从当前会话或项目记忆定位用户已指定的 Yezi2 会话，先查最新进展，再把本次发行记录及手动下载接入要求发过去。同一版本已在处理时复用该任务，跟进到交付可审阅改动及本地渲染核验。长期授权覆盖该会话的交接、官网手动下载配置和本地验收。生产部署、提交推送、自动更新清单及 GitHub Latest 变更按各自授权处理。用户明确限制本次范围时，以本次要求为准。
+
+本地验收实际渲染的下载入口、版本／build、系统要求及适用的安装提示。官网手动下载用已核验的固定标签直链，Mac 架构无法识别时让用户选择。获准变更自动更新时，部署前还要核对清单引用的标签、平台及附件名。保留与本次无关的移动端配置及其他任务改动。
+
+已获准部署时，沿用 Yezi2 的发布流程，上线后核验本次接入项：
+
+1. 打开实际线上首页，确认渲染后的版本／build、系统要求及各平台链接；客户端渲染页面不能凭初始 HTML 缺少文字就判定未接入。检查链接指向本次选定的已发布版本和平台，不误用移动 Latest。
+2. 本次变更了自动更新时，匿名请求对应更新路径。Mac 使用 `/homer/updates/stable/darwin-{arm64,x64}/RELEASES.json`；验证 HTTP 状态、JSON MIME、实际可解析内容、版本和同架构附件 URL，与交接清单一致。`200 text/html` 或 SPA 首页回退不能算通过。
+3. 本次变更了自动更新时，检查更新清单缓存策略与部署版本，确认缺失清单返回真实 404。复用已有分发证据核对目标附件可访问及摘要。
+
+分别记录 Release 分发、Yezi2 本地配置与验收、网站部署和线上核验的状态。未部署或无法取得生产响应时明确剩余项。
+
+## 官方依据
+
+- [Release 下载链接](https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases)
+- [Releases 权限与附件限制](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
+- [创建草稿及验证远端标签](https://cli.github.com/manual/gh_release_create)
+- [发布及 Latest / prerelease 标记](https://cli.github.com/manual/gh_release_edit)
+- [Latest 排除草稿和预发布版](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)
+- [上传及覆盖附件的行为](https://cli.github.com/manual/gh_release_upload)

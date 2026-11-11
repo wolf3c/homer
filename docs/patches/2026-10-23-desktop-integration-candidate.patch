@@ -1,0 +1,2590 @@
+diff --git a/packaging/macos/HomerApplication.swift b/packaging/macos/HomerApplication.swift
+new file mode 100644
+index 0000000..4448ab4
+--- /dev/null
++++ b/packaging/macos/HomerApplication.swift
+@@ -0,0 +1,336 @@
++import AppKit
++import WebKit
++
++@MainActor
++final class HomerApplication: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
++    private var window: NSWindow!
++    private var web: WKWebView!
++    private var status: NSTextField!
++    private var engine: Process?
++    private var input: FileHandle?
++    private var output: FileHandle?
++    private var actualOrigin: URL?
++    private var stopping = false
++    private var stoppingConfirmed = false
++    private var launchTime = Date()
++    private var ipcBuffer = Data()
++    private var loginPopup: WKWebView?
++    private var testProfile: URL?
++    private var testEvidence: URL?
++    private var testSteps: [[String: Any]] = []
++    private var testTimer: Timer?
++    private var testPanelActions = false
++    private var runtimeEOF = false
++    private var runtimeExitCode: Int32?
++    private var firstOpenProbe = false
++
++    func applicationDidFinishLaunching(_ notification: Notification) {
++        let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "app.homer.desktop.candidate")
++            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
++        if let other = others.first { other.activate(options: []); NSApp.terminate(nil); return }
++        NSApp.setActivationPolicy(.regular)
++        installMenu()
++        createWindow()
++        NSApp.activate(ignoringOtherApps: true)
++        do {
++            let args = CommandLine.arguments
++            if let at = args.firstIndex(of: "--test-profile"), at + 1 < args.count {
++                let profile = URL(fileURLWithPath: args[at + 1], isDirectory: true).standardizedFileURL
++                guard profile.path.hasPrefix("/"), profile.path != "/", FileManager.default.fileExists(atPath: profile.appendingPathComponent(".homer-desktop-test-profile").path) else { throw AppError.invalidTestProfile }
++                testProfile = profile
++                if args.contains("--self-test") { testEvidence = profile.appendingPathComponent("wk-evidence", isDirectory: true); try FileManager.default.createDirectory(at: testEvidence!, withIntermediateDirectories: true) }
++                firstOpenProbe = testEvidence != nil && args.contains("--first-open-probe")
++                if firstOpenProbe && args.contains("--probe-seed-draft") {
++                    // Fixed synthetic fixture only; no general script/file bridge.
++                    let seed = "sessionStorage.setItem('homer-draft:synthetic-desktop-main',JSON.stringify({text:'Synthetic retained draft 中文',requestId:'synthetic-first-open-draft'}));"
++                    web.configuration.userContentController.addUserScript(WKUserScript(source: seed, injectionTime: .atDocumentStart, forMainFrameOnly: true))
++                }
++            }
++            if testProfile == nil,
++               let bytes = try? Data(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("desktop-manifest.json")),
++               let manifest = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
++               manifest["preparation"] as? Bool == true { throw AppError.invalidTestProfile }
++            let profile = try selectDataDirectory()
++            try startRuntime(profile: profile)
++        } catch { showStatus("无法启动荷马。\n\(safeError(error))\n请保留应用数据，核对后重新打开。") }
++    }
++
++    private func installMenu() {
++        let main = NSMenu()
++        let appItem = NSMenuItem(); let appMenu = NSMenu(title: "荷马")
++        appMenu.addItem(withTitle: "关于荷马", action: #selector(showAbout), keyEquivalent: "")
++        appMenu.addItem(.separator())
++        appMenu.addItem(withTitle: "关闭窗口", action: #selector(closeWindow), keyEquivalent: "w")
++        appMenu.addItem(withTitle: "隐藏荷马", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
++        appMenu.addItem(.separator())
++        appMenu.addItem(withTitle: "退出荷马", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
++        appItem.submenu = appMenu; main.addItem(appItem)
++        let editItem = NSMenuItem(); let edit = NSMenu(title: "编辑")
++        for (title, action, key) in [("撤销", "undo:", "z"), ("重做", "redo:", "Z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { edit.addItem(withTitle: title, action: Selector(action), keyEquivalent: key) }
++        editItem.submenu = edit; main.addItem(editItem)
++        let viewItem = NSMenuItem(); let view = NSMenu(title: "显示")
++        view.addItem(withTitle: "放大", action: #selector(zoomIn), keyEquivalent: "+")
++        view.addItem(withTitle: "缩小", action: #selector(zoomOut), keyEquivalent: "-")
++        view.addItem(withTitle: "实际大小", action: #selector(zoomReset), keyEquivalent: "0")
++        view.addItem(withTitle: "显示主窗口", action: #selector(showWindow), keyEquivalent: "1")
++        viewItem.submenu = view; main.addItem(viewItem); NSApp.mainMenu = main
++    }
++    @objc private func showAbout() { let alert = NSAlert(); alert.messageText = "荷马 0.1.0 · 本地候选"; alert.informativeText = "随包 Node 22.22.0 / Codex 0.163.0。此候选尚未完成 Developer ID 签名、公证及干净 Mac 验收。\n应用更新不删除专属数据。PDF/Office/语音识别未随包，文件传输与图片处理可独立使用。"; alert.runModal() }
++    @objc private func zoomIn() { web.pageZoom = min(3, web.pageZoom + 0.1) }
++    @objc private func zoomOut() { web.pageZoom = max(0.5, web.pageZoom - 0.1) }
++    @objc private func zoomReset() { web.pageZoom = 1 }
++    @objc private func showWindow() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
++    @objc private func closeWindow() { window.performClose(nil) }
++
++    private func createWindow() {
++        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 780), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
++        window.title = "荷马"; window.minSize = NSSize(width: 380, height: 420); window.center(); window.delegate = self
++        window.isReleasedWhenClosed = false
++        let config = WKWebViewConfiguration()
++        config.websiteDataStore = .nonPersistent()
++        // No script-message handlers, native execution bridge or file URL access.
++        web = WKWebView(frame: window.contentView!.bounds, configuration: config)
++        web.autoresizingMask = [.width, .height]; web.navigationDelegate = self; web.uiDelegate = self; web.isHidden = true
++        window.contentView!.addSubview(web)
++        status = NSTextField(wrappingLabelWithString: "正在启动荷马…\n正在核对本地应用与专属数据。")
++        status.font = .systemFont(ofSize: 16); status.alignment = .center; status.textColor = .secondaryLabelColor
++        status.translatesAutoresizingMaskIntoConstraints = false
++        window.contentView!.addSubview(status)
++        NSLayoutConstraint.activate([status.centerXAnchor.constraint(equalTo: window.contentView!.centerXAnchor), status.centerYAnchor.constraint(equalTo: window.contentView!.centerYAnchor), status.widthAnchor.constraint(lessThanOrEqualTo: window.contentView!.widthAnchor, constant: -48)])
++        window.makeKeyAndOrderFront(nil)
++    }
++    private func showStatus(_ message: String) { status.stringValue = message; status.isHidden = false; web.isHidden = true }
++    private func safeError(_ error: Error) -> String { (error as? AppError)?.description ?? "启动未确认；未重发任何请求。" }
++    private func selectDataDirectory() throws -> URL {
++        if let testProfile { return testProfile }
++        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("Homer Desktop", isDirectory: true)
++        if !FileManager.default.fileExists(atPath: root.path) {
++            let alert = NSAlert(); alert.messageText = "新建荷马的专属数据空间"; alert.informativeText = "聊天、账号与成果保存在本机“Application Support/Homer Desktop”。本次不会连接或迁入已有 Homer 数据。替换或移除应用不会删除这些数据。"; alert.addButton(withTitle: "新建并打开"); alert.addButton(withTitle: "取消")
++            guard alert.runModal() == .alertFirstButtonReturn else { throw AppError.cancelled }
++            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
++            // The runtime creates its versioned marker only after compatibility checks.
++            try Data("{\"format\":1}\n".utf8).write(to: root.appendingPathComponent(".homer-desktop-new"), options: .withoutOverwriting)
++        }
++        return root
++    }
++    private func startRuntime(profile: URL) throws {
++        let resources = Bundle.main.resourceURL!
++        let verifier = Process(); verifier.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
++        verifier.arguments = ["--verify", "--deep", "--strict", Bundle.main.bundleURL.path]
++        verifier.standardOutput = FileHandle.nullDevice; verifier.standardError = FileHandle.nullDevice
++        try verifier.run(); verifier.waitUntilExit()
++        guard verifier.terminationStatus == 0 else { throw AppError.bundleChanged }
++        let process = Process(); let inbound = Pipe(); let outbound = Pipe()
++        process.executableURL = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/node")
++        process.arguments = ["--disable-warning=ExperimentalWarning", resources.appendingPathComponent("homer/scripts/desktop-runtime.mjs").path, "--profile", profile.path] + (testProfile == nil ? [] : ["--test-profile"])
++        process.currentDirectoryURL = profile
++        // Explicit allowlist: no Codex/Cindy config, model keys or user launcher env.
++        var env = ["PATH": Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS").path + ":/usr/bin:/bin:/usr/sbin:/sbin", "HOME": profile.appendingPathComponent("host-home").path, "TMPDIR": profile.appendingPathComponent("tmp").path, "LANG": "zh_CN.UTF-8", "HOMER_DESKTOP_RESOURCES": resources.path]
++        env["USER"] = NSUserName()
++        process.environment = env; process.standardInput = inbound; process.standardOutput = outbound; process.standardError = FileHandle.nullDevice
++        input = inbound.fileHandleForWriting
++        output = outbound.fileHandleForReading
++        outbound.fileHandleForReading.readabilityHandler = { [weak self] handle in
++            let data = handle.availableData
++            if data.isEmpty {
++                handle.readabilityHandler = nil
++                RunLoop.main.perform(inModes: [.default, .modalPanel, .eventTracking]) { self?.runtimeEOF = true; self?.finishRuntimeIfComplete() }
++                return
++            }
++            RunLoop.main.perform(inModes: [.default, .modalPanel, .eventTracking]) { self?.receive(data) }
++        }
++        process.terminationHandler = { [weak self] process in RunLoop.main.perform(inModes: [.default, .modalPanel, .eventTracking]) {
++            self?.runtimeExitCode = process.terminationStatus
++            self?.finishRuntimeIfComplete()
++        } }
++        engine = process; try process.run()
++        // The parent must close the child's pipe ends; retaining its own writer
++        // prevents EOF forever even after the runtime has exited successfully.
++        try? outbound.fileHandleForWriting.close()
++        try? inbound.fileHandleForReading.close()
++    }
++    private func finishRuntimeIfComplete() {
++        // Data and EOF enter the main queue in pipe order. A process-exit
++        // callback alone must not race the final private stop acknowledgement.
++        guard let code = runtimeExitCode, runtimeEOF || stoppingConfirmed else { return }
++        record("runtime_exit", ["code": code, "stopAcknowledged": stoppingConfirmed])
++        if stopping && stoppingConfirmed && code == 0 { NSApp.reply(toApplicationShouldTerminate: true) }
++        else { stopping = false; showStatus("荷马服务已退出或停止尚未确认。\n已提交请求的结果需要核对，应用不会自动重发。\n请保留数据并核对 owner 后重新打开。") }
++    }
++    private func receive(_ data: Data) {
++        ipcBuffer.append(data)
++        guard ipcBuffer.count < 64 * 1024 else { showStatus("启动通道无效。请退出后核对应用完整性。"); return }
++        while let newline = ipcBuffer.firstIndex(of: 10) {
++            let line = ipcBuffer[..<newline]; ipcBuffer.removeSubrange(...newline)
++            guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let kind = value["kind"] as? String else { continue }
++            if kind == "url", let raw = value["url"] as? String, let url = URL(string: raw), url.scheme == "http", url.host == "127.0.0.1", url.port != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil {
++                actualOrigin = url; web.load(URLRequest(url: url)); record("url", ["loopback": true, "port": url.port!])
++            } else if kind == "stopped" { stoppingConfirmed = true; record("stopped", [:]); finishRuntimeIfComplete() }
++            else if kind == "error" { showStatus("无法打开荷马。\n" + messageForCode(value["code"] as? String ?? "desktop_start_failed")); record("error", ["code": value["code"] as? String ?? "desktop_start_failed"]) }
++        }
++    }
++    private func messageForCode(_ code: String) -> String {
++        let messages = ["desktop_owner_conflict": "此数据空间已有实例或未确认的 owner。请核对原实例；不会清锁或接管。", "desktop_data_unrecognized": "此目录不是经确认的新建桌面数据空间。未迁入或修改已有数据。", "desktop_schema_incompatible": "数据版本与此应用不兼容。请保留原数据并使用兼容版本。", "desktop_resource_changed": "应用资源完整性校验失败。请换回完整应用。", "desktop_lease_review_required": "上次运行留下未确认执行。需核对后处理，应用不会终止旧进程或重放请求。"]
++        return messages[code] ?? "启动尚未确认（\(code.range(of: "^[a-z_]{1,70}$", options: .regularExpression) == nil ? "desktop_start_failed" : code)）。未自动重试或重发。"
++    }
++    func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); record("window_hidden", ["runtimeAlive": engine?.isRunning == true]); return false }
++    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
++    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
++    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
++        if stoppingConfirmed || engine?.isRunning != true { return .terminateNow }
++        if stopping { return .terminateCancel }
++        let alert = NSAlert(); alert.messageText = "退出荷马？"; alert.informativeText = "退出会停止当前回复和后台工作。尚未发送的草稿与未确认发送仅在当前窗口保留，真正退出后不能保证恢复。请先核对并保存。"; alert.addButton(withTitle: "取消，继续使用"); alert.addButton(withTitle: "退出并停止工作")
++        guard alert.runModal() == .alertSecondButtonReturn else { record("quit_cancelled", [:]); return .terminateCancel }
++        stopping = true; showStatus("正在停止荷马…\n等待本次服务与原生执行确认退出。不会重发未知请求。")
++        try? input?.write(contentsOf: Data("{\"kind\":\"quit\"}\n".utf8))
++        let stopTimer = Timer(timeInterval: 20, repeats: false) { [weak self] _ in
++            guard let self, self.stopping, !self.stoppingConfirmed else { return }
++            self.stopping = false; NSApp.reply(toApplicationShouldTerminate: false); self.showStatus("停止尚未确认。\n请保留此窗口并核对后台进程。数据owner仍受保护，不能开启第二实例。")
++        }
++        RunLoop.main.add(stopTimer, forMode: .common)
++        return .terminateLater
++    }
++    private func sameOrigin(_ url: URL) -> Bool { guard let origin = actualOrigin else { return false }; return url.scheme == origin.scheme && url.host == origin.host && url.port == origin.port && url.user == nil && url.password == nil }
++    private func ownedResource(_ url: URL) -> Bool { sameOrigin(url) || (url.scheme == "blob" && actualOrigin.map { url.absoluteString.hasPrefix("blob:" + $0.absoluteString + "/") } == true) }
++    private func openExternal(_ url: URL, userInitiated: Bool) {
++        guard userInitiated, ["https", "http"].contains(url.scheme ?? ""), url.user == nil, url.password == nil else { return }
++        if testEvidence != nil { record("external_suppressed_in_test", ["scheme": url.scheme ?? ""]); return }
++        NSWorkspace.shared.open(url)
++    }
++    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
++        guard let url = action.request.url else { decisionHandler(.cancel); return }
++        if webView === loginPopup {
++            if url.absoluteString == "about:blank" { decisionHandler(.allow); return }
++            // Public WKNavigationAction does not expose a reliable user-gesture
++            // bit for an asynchronous popup redirect. Require a native click.
++            let alert = NSAlert(); alert.messageText = "在默认浏览器打开登录页？"; alert.informativeText = "荷马将打开 Codex 原生返回的账号连接页。请在系统浏览器核对地址并完成登录。"; alert.addButton(withTitle: "打开浏览器"); alert.addButton(withTitle: "取消")
++            let approved = testEvidence == nil && alert.runModal() == .alertFirstButtonReturn
++            openExternal(url, userInitiated: approved); decisionHandler(.cancel); loginPopup = nil; return
++        }
++        if ownedResource(url) { decisionHandler(action.shouldPerformDownload ? .download : .allow); return }
++        if action.targetFrame?.isMainFrame == false && ["about", "blob", "https", "http"].contains(url.scheme ?? "") { decisionHandler(.allow); return }
++        openExternal(url, userInitiated: action.navigationType == .linkActivated)
++        decisionHandler(.cancel)
++    }
++    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
++        guard let url = action.request.url, sameOrigin(action.sourceFrame.request.url ?? url) else { return nil }
++        if url.absoluteString == "about:blank", action.sourceFrame.isMainFrame,
++           webView.url?.path == "/settings/capabilities" {
++            // A detached blank target serves only the existing user-clicked native
++            // login flow. It has no opener and never displays an external page.
++            let popup = WKWebView(frame: .zero, configuration: configuration); popup.navigationDelegate = self; loginPopup = popup; return popup
++        }
++        openExternal(url, userInitiated: action.navigationType == .linkActivated); return nil
++    }
++    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
++        guard frame.isMainFrame, let url = frame.request.url, sameOrigin(url) else { completionHandler(nil); return }
++        let panel = NSOpenPanel(); panel.allowsMultipleSelection = parameters.allowsMultipleSelection; panel.canChooseDirectories = false; panel.canChooseFiles = true
++        if testEvidence != nil { record("file_panel_presented", ["mainOrigin": true]); if !firstOpenProbe { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { panel.cancel(nil) } } }
++        panel.beginSheetModal(for: window) { result in completionHandler(result == .OK ? panel.urls : nil) }
++    }
++    func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
++        guard let url = response.response.url else { decisionHandler(.cancel); return }
++        if response.isForMainFrame && !ownedResource(url) { decisionHandler(.cancel); return }
++        let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
++        decisionHandler(disposition.lowercased().contains("attachment") || !response.canShowMIMEType ? (ownedResource(url) ? .download : .cancel) : .allow)
++    }
++    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
++    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
++    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
++        guard let url = response.url, ownedResource(url) else { completionHandler(nil); return }
++        let panel = NSSavePanel(); panel.nameFieldStringValue = URL(fileURLWithPath: suggestedFilename).lastPathComponent
++        if let testEvidence { panel.directoryURL = testEvidence; record("download_panel_presented", ["ownedOrigin": true]) }
++        panel.beginSheetModal(for: window) { [weak self] result in
++            completionHandler(result == .OK ? panel.url : nil)
++            self?.record("download_panel_result", ["approved": result == .OK])
++            if self?.testEvidence != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.testAccountScreen() } }
++        }
++    }
++    func downloadDidFinish(_ download: WKDownload) { record("download_finished", [:]) }
++    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
++        guard webView === web else { return }; status.isHidden = true; web.isHidden = false
++        record("rendered", ["elapsedMs": Int(Date().timeIntervalSince(launchTime) * 1000), "path": web.url?.path ?? ""])
++        if testEvidence != nil { runRenderedTest() }
++    }
++    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { showStatus("页面进程已退出。\n后台工作状态需要核对；不会自动重新发送消息。") }
++    private func record(_ name: String, _ facts: [String: Any]) {
++        guard let testEvidence else { return }
++        testSteps.append(["check": name, "facts": facts])
++        if let data = try? JSONSerialization.data(withJSONObject: testSteps, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: testEvidence.appendingPathComponent("native-observations.json")) }
++    }
++    private func runRenderedTest() {
++        guard testTimer == nil else { return }
++        if firstOpenProbe {
++            var samples = 0
++            testTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in Task { @MainActor in
++                guard let self else { timer.invalidate(); return }; samples += 1
++                if samples > 90 { timer.invalidate(); return }
++                self.web.evaluateJavaScript("({title:document.title,text:document.body.innerText.slice(0,4000),editable:!!document.querySelector('[contenteditable=true]'),draft:document.querySelector('[contenteditable]')?.innerText??'',connectionActions:[...document.querySelectorAll('a[href=\"/settings/capabilities\"]')].map(a=>a.innerText),sendDisabled:document.querySelector('.send-button')?.disabled,overflow:document.documentElement.scrollWidth>innerWidth})") { value, error in
++                    self.record("first_open_dom", ["value": value ?? NSNull(), "error": error != nil])
++                    self.web.takeSnapshot(with: WKSnapshotConfiguration()) { image, _ in
++                        if let image, let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) { try? png.write(to: self.testEvidence!.appendingPathComponent("homer-first-open.png")) }
++                    }
++                }
++            } }
++            return
++        }
++        testTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in Task { @MainActor in
++            guard let self else { return }
++            self.web.evaluateJavaScript("({title:document.title, text:document.body.innerText.slice(0,2000), editable:!!document.querySelector('[contenteditable=true]'), width:innerWidth, overflow:document.documentElement.scrollWidth>innerWidth})") { result, error in
++                self.record("wk_dom", ["value": result ?? NSNull(), "error": error == nil ? false : true])
++                let config = WKSnapshotConfiguration()
++                self.web.takeSnapshot(with: config) { image, _ in
++                    if let image, let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) { try? png.write(to: self.testEvidence!.appendingPathComponent("homer-wkwebview.png")) }
++                    self.window.performClose(nil); self.showWindow(); self.record("window_reopened", ["sameWebView": true, "runtimeAlive": self.engine?.isRunning == true])
++                    self.web.pageZoom = 2; self.record("page_zoom", ["value": 2, "systemScaleTest": false]); self.web.pageZoom = 1
++                    self.testSystemInteractions()
++                }
++            }
++        } }
++    }
++    private func testSystemInteractions() {
++        guard testEvidence != nil, !testPanelActions else { return }; testPanelActions = true
++        // Synthetic DOM only. No real account, model, external browser or data.
++        web.evaluateJavaScript("(()=>{const f=document.createElement('input');f.type='file';document.body.append(f);f.click();return 'synthetic-file-panel';})()") { _, _ in }
++        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
++            guard let self else { return }
++            self.web.evaluateJavaScript("(()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['synthetic Homer download'],{type:'text/plain'}));a.download='homer-synthetic-download.txt';document.body.append(a);a.click();return true;})()") { _, _ in }
++        }
++    }
++    private func testAccountScreen() {
++                guard let origin = self.actualOrigin else { return }
++                self.web.load(URLRequest(url: origin.appendingPathComponent("settings/capabilities")))
++                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
++                    guard let self else { return }
++                    self.web.evaluateJavaScript("({path:location.pathname,text:document.body.innerText.slice(0,3000),overflow:document.documentElement.scrollWidth>innerWidth})") { value, error in
++                        self.record("account_settings", ["value": value ?? NSNull(), "error": error != nil])
++                        self.web.takeSnapshot(with: WKSnapshotConfiguration()) { image, _ in
++                            if let image, let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) { try? png.write(to: self.testEvidence!.appendingPathComponent("homer-account-settings.png")) }
++                            self.testQuit(confirm: false)
++                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.testQuit(confirm: true) }
++                        }
++                    }
++                }
++    }
++    private func testQuit(confirm: Bool) {
++        guard testEvidence != nil else { return }
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
++            func buttons(_ view: NSView) -> [NSButton] { (view as? NSButton).map { [$0] } ?? view.subviews.flatMap { buttons($0) } }
++            if let content = NSApp.modalWindow?.contentView { buttons(content).first { $0.title == (confirm ? "退出并停止工作" : "取消，继续使用") }?.performClick(nil) }
++        }
++        NSApp.terminate(nil)
++    }
++    enum AppError: Error { case cancelled, invalidTestProfile, bundleChanged
++        var description: String { switch self { case .cancelled: return "尚未新建数据空间。"; case .invalidTestProfile: return "隔离测试入口需要明确的临时profile标记。"; case .bundleChanged: return "应用资源完整性校验失败，请换回完整应用。" } }
++    }
++}
++
++@main
++struct HomerMain {
++    @MainActor static func main() {
++        let app = NSApplication.shared
++        let delegate = HomerApplication()
++        app.delegate = delegate
++        app.run()
++    }
++}
+diff --git a/packaging/macos/ImageDecoder.swift b/packaging/macos/ImageDecoder.swift
+new file mode 100644
+index 0000000..319070f
+--- /dev/null
++++ b/packaging/macos/ImageDecoder.swift
+@@ -0,0 +1,34 @@
++import Foundation
++import ImageIO
++import UniformTypeIdentifiers
++import CoreGraphics
++
++// A bounded stdin -> one-frame PNG transformer. No paths, URLs or metadata exit.
++do {
++    guard CommandLine.arguments.count == 2,
++          let edge = Int(CommandLine.arguments[1]), [0, 320].contains(edge) else { exit(2) }
++    let input = FileHandle.standardInput.readDataToEndOfFile()
++    guard input.count <= 50 * 1024 * 1024,
++          let source = CGImageSourceCreateWithData(input as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
++          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
++          let width = properties[kCGImagePropertyPixelWidth] as? Int,
++          let height = properties[kCGImagePropertyPixelHeight] as? Int,
++          width > 0, height > 0, width <= 40_000_000 / height else { exit(3) }
++    let options: [CFString: Any] = [
++        kCGImageSourceCreateThumbnailFromImageAlways: true,
++        kCGImageSourceThumbnailMaxPixelSize: edge == 0 ? max(width, height) : min(edge, max(width, height)),
++        kCGImageSourceCreateThumbnailWithTransform: true,
++        kCGImageSourceShouldCacheImmediately: true
++    ]
++    guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
++          let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
++                                  bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
++                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(4) }
++    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
++    let output = NSMutableData()
++    guard let clean = context.makeImage(),
++          let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else { exit(5) }
++    CGImageDestinationAddImage(destination, clean, [:] as CFDictionary)
++    guard CGImageDestinationFinalize(destination) else { exit(6) }
++    FileHandle.standardOutput.write(output as Data)
++}
+diff --git a/packaging/macos/Info.plist b/packaging/macos/Info.plist
+new file mode 100644
+index 0000000..b034689
+--- /dev/null
++++ b/packaging/macos/Info.plist
+@@ -0,0 +1,17 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0"><dict>
++<key>CFBundleIdentifier</key><string>app.homer.desktop.candidate</string>
++<key>CFBundleName</key><string>Homer</string>
++<key>CFBundleDisplayName</key><string>荷马</string>
++<key>CFBundleExecutable</key><string>Homer</string>
++<key>CFBundleIconFile</key><string>Homer.icns</string>
++<key>CFBundlePackageType</key><string>APPL</string>
++<key>CFBundleShortVersionString</key><string>0.1.0</string>
++<key>CFBundleVersion</key><string>4</string>
++<key>LSMinimumSystemVersion</key><string>27.0</string>
++<key>LSArchitecturePriority</key><array><string>arm64</string></array>
++<key>NSHighResolutionCapable</key><true/>
++<key>NSPrincipalClass</key><string>NSApplication</string>
++<key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
++</dict></plist>
+diff --git a/packaging/macos/dependencies-lock.json b/packaging/macos/dependencies-lock.json
+new file mode 100644
+index 0000000..26f1f43
+--- /dev/null
++++ b/packaging/macos/dependencies-lock.json
+@@ -0,0 +1,23 @@
++{
++  "format": 1,
++  "node": {
++    "version": "22.22.0",
++    "url": "https://nodejs.org/dist/v22.22.0/node-v22.22.0-darwin-arm64.tar.gz",
++    "sha256": "5ed4db0fcf1eaf84d91ad12462631d73bf4576c1377e192d222e48026a902640"
++  },
++  "codex": {
++    "version": "0.163.0",
++    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0.tgz",
++    "sha256": "1a71db36560bb446d2c2e63ae675c4a3018c38ace38ca533f8d1b25d3e6555b4",
++    "integrity": "sha512-HNd7vR9oTK6M2ikxFnvNDCdYUgAsyo9VVnd5KnEd2ON0GYI++7MiX9XNPUkhtdgGKFPsWS+CEppQ1UU63uVhUw=="
++  },
++  "codexDarwinArm64": {
++    "version": "0.163.0-darwin-arm64",
++    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0-darwin-arm64.tgz",
++    "sha256": "1193ff4ce72387a5d6c34820b54a9dc57d007c67a958e8acb4715924facd3c31",
++    "integrity": "sha512-i7Dzk2a5aGmuGM9aNZgaUVTojZ/4bc5lRfosz++Y7X2BGhDkz+cySgbD+NYS1pOxfm0VEbLi9PZ3pAulI4kchw=="
++  },
++  "codexLicenseTag": "rust-v0.163.0",
++  "verifiedAt": "2026-10-21",
++  "verification": "Official HTTPS SHASUMS256 and npm registry SRI, independently pinned to these SHA-256 bytes; all 43 platform files retained. Not a PGP or npm-signature verification."
++}
+diff --git a/packaging/macos/distribution-policy.json b/packaging/macos/distribution-policy.json
+new file mode 100644
+index 0000000..bd78298
+--- /dev/null
++++ b/packaging/macos/distribution-policy.json
+@@ -0,0 +1,7 @@
++{
++  "format": 1,
++  "nodeVersion": "22.22.0",
++  "nodeOriginalSha256": "913b144fdb40638b1acef7974ab3c33fbd527cc0974cb5da467ab1e6ac51b4d4",
++  "nodeArchiveSha256": "5ed4db0fcf1eaf84d91ad12462631d73bf4576c1377e192d222e48026a902640",
++  "scope": "Node release-copy signature only; original dependency lock/cache and Codex/voice hashes unchanged"
++}
+diff --git a/packaging/macos/node-distribution-entitlements.plist b/packaging/macos/node-distribution-entitlements.plist
+new file mode 100644
+index 0000000..cd8b4dc
+--- /dev/null
++++ b/packaging/macos/node-distribution-entitlements.plist
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0"><dict>
++  <key>com.apple.security.cs.allow-jit</key><true/>
++  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
++  <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
++  <key>com.apple.security.cs.disable-executable-page-protection</key><true/>
++  <key>com.apple.security.cs.disable-library-validation</key><true/>
++</dict></plist>
+diff --git a/scripts/build-macos-desktop.mjs b/scripts/build-macos-desktop.mjs
+new file mode 100644
+index 0000000..a206670
+--- /dev/null
++++ b/scripts/build-macos-desktop.mjs
+@@ -0,0 +1,122 @@
++// Reproducible local arm64 candidate. Build outputs stay under task scratch.
++import {readFileSync,writeFileSync,readdirSync,mkdirSync,cpSync,existsSync,lstatSync,symlinkSync,unlinkSync,statSync,realpathSync} from 'node:fs';
++import {resolve,join,dirname,relative} from 'node:path';
++import {fileURLToPath,pathToFileURL} from 'node:url';
++import {execFileSync} from 'node:child_process';
++import {createHash} from 'node:crypto';
++import {prepareDependencies} from './prepare-desktop-dependencies.mjs';
++import {prepareDesktopSource} from './desktop-source.mjs';
++import {distributionOptions,reserveDistributionOutput,signingPlan,nativeDistributionSigner,signDistributionResources,sealDistribution} from './macos-distribution.mjs';
++const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
++if(process.version!=='v22.22.0')throw Error('desktop_build_node_version_required');
++const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
++const digest=value=>hash(JSON.stringify(value));
++const option=(name,fallback)=>{const at=process.argv.indexOf(name);return at<0?fallback:resolve(process.argv[at+1]);};
++const distribution=distributionOptions(process.argv.slice(2),root);
++const maintenance=option('--maintenance',undefined),scratch=distribution.scratch;
++const archiveSource=option('--archive-source',distribution.archiveSource);
++const release=distribution.mode==='distribution',entitlementsPath=join(root,'packaging/macos/node-distribution-entitlements.plist');
++const policy=release?JSON.parse(readFileSync(join(root,'packaging/macos/distribution-policy.json'),'utf8')):undefined;
++if(release){
++ const lock=JSON.parse(readFileSync(join(root,'packaging/macos/dependencies-lock.json'),'utf8'));
++ if(policy.format!==1||policy.nodeVersion!==lock.node.version||policy.nodeArchiveSha256!==lock.node.sha256)throw Error('desktop_distribution_source_policy_changed');
++}
++if(distribution.planOnly){
++ reserveDistributionOutput(distribution);
++ writeFileSync(join(scratch,'distribution-signing-plan.json'),JSON.stringify(signingPlan(distribution,policy,entitlementsPath),null,2)+'\n');
++ console.log(JSON.stringify({mode:'distribution plan only',scratch,signingPerformed:false,notarizationSubmitted:false}));
++ process.exit(0);
++}
++if(!maintenance)throw Error('desktop_explicit_maintenance_required');
++const sourceAt=process.argv.indexOf('--source-sha'),sourceSha=sourceAt<0?undefined:process.argv[sourceAt+1];
++const prepareCandidate=process.argv.includes('--prepare-candidate');
++if(prepareCandidate&&release)throw Error('desktop_preparation_not_distributable');
++if(!scratch.startsWith(join(root,'.codex/scratch/')))throw Error('desktop_build_scratch_required');
++if(release)reserveDistributionOutput(distribution);else mkdirSync(scratch,{recursive:true});
++const stage=join(scratch,'compiled-product'),bundle=join(scratch,'Homer.app'),resources=join(bundle,'Contents/Resources'),homer=join(resources,'homer');
++const provenance=prepareDesktopSource({root,sourceSha,stage,prepareCandidate});
++const dependencies=prepareDependencies(scratch,archiveSource?{archiveSource}:undefined);
++const signer=release?nativeDistributionSigner(distribution.identity):undefined;
++function copyFile(source,target){mkdirSync(dirname(target),{recursive:true});cpSync(source,target);}
++function visit(source,prefix,accept,{sourceOnly=false}={}){for(const name of readdirSync(source).sort()){
++  if(name==='.DS_Store'||sourceOnly&&['node_modules','dist','.vite'].includes(name))continue;
++  const path=join(source,name),rel=join(prefix,name),stat=lstatSync(path);
++  if(stat.isSymbolicLink())throw Error('desktop_source_symlink_denied');
++  if(stat.isDirectory())visit(path,rel,accept,{sourceOnly});else if(stat.isFile())accept(path,rel);
++}}
++const runtimeScripts=['dev.mjs','dev-build.mjs','trusted-build.mjs','pinned-build.mjs','dev-ingress.mjs','desktop-runtime.mjs','desktop-profile.mjs'];
++const finalSources=[];visit(stage,'',(path,rel)=>finalSources.push({path:rel,sha256:hash(readFileSync(path))}));
++const desktopSources=[];visit(join(stage,'packaging/macos'),'packaging/macos',(path,rel)=>desktopSources.push({path:rel,sha256:hash(readFileSync(path))}));
++for(const rel of ['scripts/build-macos-desktop.mjs','scripts/desktop-source.mjs','scripts/prepare-desktop-dependencies.mjs','scripts/macos-distribution.mjs'])desktopSources.push({path:rel,sha256:hash(readFileSync(join(stage,rel)))});
++const modules=realpathSync(join(maintenance,'node_modules'));symlinkSync(modules,join(stage,'node_modules'),'dir');
++const run=(bin,args,cwd=stage)=>execFileSync(bin,args,{cwd,stdio:'inherit',env:{PATH:dirname(process.execPath)+':/usr/bin:/bin',HOME:join(scratch,'build-home'),TMPDIR:join(scratch,'build-tmp'),LANG:'en_US.UTF-8'},timeout:180000});
++mkdirSync(join(scratch,'build-home'),{recursive:true});mkdirSync(join(scratch,'build-tmp'),{recursive:true});
++run(process.execPath,[join(modules,'typescript/bin/tsc'),'-p',join(stage,'tsconfig.json')]);
++run(process.execPath,[join(modules,'typescript/bin/tsc'),'--noEmit','-p',join(stage,'ui/tsconfig.json')]);
++copyFile(join(stage,'src/media-documents.py'),join(stage,'dist/media-documents.py'));
++const {build:buildVite}=await import(pathToFileURL(join(modules,'vite/dist/node/index.js')).href);
++const uiIdentity=digest(finalSources.filter(x=>x.path.startsWith('ui/')||x.path.startsWith('assets/branding/')));
++await buildVite({configFile:false,envFile:false,root:join(stage,'ui'),base:`/ui/${uiIdentity}/`,build:{assetsInlineLimit:0,outDir:join(stage,'dist/web'),emptyOutDir:true,sourcemap:false}});
++if(existsSync(bundle))throw Error('desktop_fresh_bundle_required');
++mkdirSync(join(bundle,'Contents/MacOS'),{recursive:true});mkdirSync(resources,{recursive:true});
++copyFile(join(stage,'packaging/macos/Info.plist'),join(bundle,'Contents/Info.plist'));
++const moduleCache=join(scratch,'native-build/module-cache');
++run('/usr/bin/xcrun',['swiftc','-parse-as-library','-O','-target','arm64-apple-macos27.0','-module-cache-path',moduleCache,join(stage,'packaging/macos/HomerApplication.swift'),'-o',join(bundle,'Contents/MacOS/Homer')]);
++run('/usr/bin/xcrun',['swiftc','-O','-target','arm64-apple-macos27.0','-module-cache-path',moduleCache,join(stage,'packaging/macos/ImageDecoder.swift'),'-o',join(bundle,'Contents/MacOS/homer-image-decoder')]);
++for(const part of ['dist','prompts','assets','package.json','package-lock.json','.codex/skills'])cpSync(join(stage,part),join(homer,part),{recursive:true});
++for(const name of runtimeScripts)copyFile(join(stage,'scripts',name),join(homer,'scripts',name));
++// Runtime dependency closure only (89 current public JS packages), no dev tools.
++const {dependencyIdentity,pinnedInventory}=await import(pathToFileURL(join(stage,'scripts/pinned-build.mjs')).href);
++const identity=dependencyIdentity(stage);const notices=[];
++for(const pkg of identity.packages){
++  const rel=relative(modules,pkg.path);if(rel.startsWith('..'))throw Error('desktop_external_dependency');
++  cpSync(pkg.path,join(homer,'node_modules',rel),{recursive:true,dereference:false,filter:path=>path===pkg.path||!relative(pkg.path,path).split('/').includes('node_modules')});
++  const license=JSON.parse(readFileSync(join(pkg.path,'package.json'),'utf8')).license;
++  notices.push({name:pkg.name,version:pkg.version,license,contentsHash:pkg.filesHash,path:rel});
++}
++copyFile(join(dependencies.node,'bin/node'),join(bundle,'Contents/MacOS/node'));
++copyFile(join(dependencies.node,'LICENSE'),join(resources,'licenses/Node-LICENSE'));
++cpSync(dependencies.codex,join(resources,'runtime/codex'),{recursive:true});cpSync(dependencies.cli,join(resources,'runtime/codex-cli'),{recursive:true});
++copyFile(join(scratch,'codex-LICENSE'),join(resources,'licenses/Codex-LICENSE'));copyFile(join(scratch,'codex-NOTICE'),join(resources,'licenses/Codex-NOTICE'));
++writeFileSync(join(resources,'licenses/Homer-runtime-notices.json'),JSON.stringify({dependencies:notices,official:dependencies.components,notes:'Original dependency license/notice files are retained alongside every package. Codex voice LGPL sources and offer are in its original NOTICE/sources.json.'},null,2)+'\n');
++// Use only the current committed brand asset, without legacy UI overlays.
++const iconSource=join(stage,'assets/branding/homer-river-stone-256.de41791ce5c1.png');
++const iconset=join(scratch,'Homer.iconset');mkdirSync(iconset,{recursive:true});
++for(const size of [16,32,128,256,512])for(const scale of [1,2])run('/usr/bin/sips',['-z',String(size*scale),String(size*scale),iconSource,'--out',join(iconset,`icon_${size}x${size}${scale===2?'@2x':''}.png`)]);
++run('/usr/bin/iconutil',['-c','icns',iconset,'-o',join(resources,'Homer.icns')]);
++// Local mode preserves all upstream signatures. Explicit distribution mode
++// transforms only its fresh Node copy, leaving Codex/voice original bytes.
++const executables=[join(bundle,'Contents/MacOS/node')];visit(join(resources,'runtime'),'',(path)=>{const header=readFileSync(path).subarray(0,4).toString('hex');if(['cffaedfe','cffaedfe','feedfacf','cafebabe','bebafeca'].includes(header))executables.push(path);});
++for(const path of executables)run('/usr/bin/codesign',['--verify','--strict',path]);
++const nodeDistribution=release?signDistributionResources({resources,signer,policy,entitlementsPath}):undefined;
++if(!release)run('/usr/bin/codesign',['--force','--sign','-',join(bundle,'Contents/MacOS/homer-image-decoder')]);
++const voiceRoot=join(resources,'runtime/codex/vendor/aarch64-apple-darwin');
++const voiceManifest=JSON.parse(readFileSync(join(voiceRoot,'codex-resources/voice/manifest.json'),'utf8'));
++for(const [rel,expected]of Object.entries(voiceManifest.sha256))if(hash(readFileSync(join(voiceRoot,rel)))!==expected)throw Error('desktop_codex_original_manifest_changed');
++const files=pinnedInventory(homer),sourceHash=digest({finalSources,desktopSources,gitSha:provenance.gitSha,preparation:provenance.preparation});
++const manifest=digest(files);writeFileSync(join(homer,'build-manifest.json'),JSON.stringify({sourceHash,manifest,files})+'\n');
++const {schemaHash,sourceSnapshot}=await import(pathToFileURL(join(stage,'scripts/dev-build.mjs')).href);
++const schema=schemaHash(sourceSnapshot(stage));
++const {MAIN_TOOLS}=await import(pathToFileURL(join(homer,'dist/tools.js')).href);
++const toolsHash=hash(JSON.stringify(MAIN_TOOLS));
++const resourceFiles=[];visit(resources,'',(path,rel)=>{resourceFiles.push({path:rel,sha256:hash(readFileSync(path))});});
++const codeFiles=['Contents/MacOS/homer-image-decoder','Contents/MacOS/node'].map(path=>({path,sha256:hash(readFileSync(join(bundle,path)))}));
++const metadata={format:2,codeFiles,version:'0.1.0',build:4,gitSha:provenance.gitSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash:uiIdentity,schema,toolsHash,node:'22.22.0',codex:'0.163.0',minimumTestedMacOS:'27.0',files:resourceFiles};
++const writeManifest=()=>writeFileSync(join(resources,'desktop-manifest.json'),JSON.stringify(metadata,null,2)+'\n');
++const zip=join(scratch,release?'Homer-0.1.0-macos-arm64-distribution-unnotarized.zip':'Homer-0.1.0-macos-arm64-local-candidate.zip');
++const publish=()=>{
++ if(existsSync(zip))unlinkSync(zip);
++ try{run('/usr/bin/ditto',['-c','-k','--sequesterRsrc','--keepParent',bundle,zip]);}
++ catch(error){if(existsSync(zip))unlinkSync(zip);throw error;}
++};
++if(release)sealDistribution({bundle,codePaths:[...executables,join(bundle,'Contents/MacOS/homer-image-decoder')],signer,writeManifest,publish});
++else{
++ writeManifest();
++ run('/usr/bin/codesign',['--force','--sign','-',bundle]);
++ run('/usr/bin/codesign',['--verify','--deep','--strict',bundle]);
++ publish();
++}
++let bundleBytes=0;visit(bundle,'',(path)=>{bundleBytes+=statSync(path).size;});
++const result={format:1,buildNode:process.version,provenance,at:new Date().toISOString(),bundle,zip,bundleBytes,zipBytes:statSync(zip).size,zipSha256:hash(readFileSync(zip)),signature:release?'Developer ID signed; NOT notarized or approved for distribution':'ad-hoc local candidate; not Developer ID or notarized',...(release?{nodeDistribution,notarized:false}:{}),sourceHash,manifest,schema,toolsHash,uiHash:uiIdentity,dependencies:dependencies.components,runtimePackages:identity.packages.length,inputFiles:finalSources.length};
++writeFileSync(join(scratch,'desktop-build-result.json'),JSON.stringify(result,null,2)+'\n');
++console.log(JSON.stringify({...result,provenance:{...provenance,candidateInputs:provenance.candidateInputs.length}},null,2));
+diff --git a/scripts/desktop-source.mjs b/scripts/desktop-source.mjs
+new file mode 100644
+index 0000000..30adfd3
+--- /dev/null
++++ b/scripts/desktop-source.mjs
+@@ -0,0 +1,39 @@
++// Build input is an explicit committed tree. Preparation overlays are finite,
++// opt-in, recorded, and never represented as a publishable committed build.
++import {execFileSync} from 'node:child_process';
++import {readFileSync,writeFileSync,mkdirSync,existsSync,cpSync,lstatSync,realpathSync} from 'node:fs';
++import {resolve,join,dirname} from 'node:path';
++import {createHash} from 'node:crypto';
++export const DESKTOP_CANDIDATE_PATHS=[
++ 'packaging/macos/HomerApplication.swift','packaging/macos/ImageDecoder.swift','packaging/macos/Info.plist',
++ 'packaging/macos/dependencies-lock.json','packaging/macos/distribution-policy.json','packaging/macos/node-distribution-entitlements.plist',
++ 'scripts/build-macos-desktop.mjs','scripts/desktop-source.mjs','scripts/desktop-runtime.mjs','scripts/desktop-profile.mjs',
++ 'scripts/prepare-desktop-dependencies.mjs','scripts/macos-distribution.mjs','scripts/dev.mjs','scripts/seamless-synthetic-fixture.mjs',
++ 'src/desktop-resources.ts','src/desktop-management.ts','src/config.ts','src/dev-host.ts','src/service.ts','src/engine.ts','src/media-decode.ts','ui/homer-app.tsx',
++];
++const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
++export function prepareDesktopSource({root,sourceSha,stage,prepareCandidate=false}){
++ root=realpathSync(root);stage=resolve(stage);
++ if(!/^[a-f0-9]{40}$/.test(sourceSha??''))throw Error('desktop_full_git_sha_required');
++ if(!stage.startsWith(join(root,'.codex/scratch/'))||existsSync(stage))throw Error('desktop_fresh_source_stage_required');
++ mkdirSync(dirname(stage),{recursive:true});
++ if(realpathSync(dirname(stage))!==dirname(stage))throw Error('desktop_source_symlink_denied');
++ const commit=execFileSync('/usr/bin/git',['rev-parse',sourceSha+'^{commit}'],{cwd:root,encoding:'utf8'}).trim();
++ if(commit!==sourceSha)throw Error('desktop_full_git_sha_required');
++ const archive=execFileSync('/usr/bin/git',['archive','--format=tar',sourceSha],{cwd:root,maxBuffer:64*1024*1024});
++ mkdirSync(stage);execFileSync('/usr/bin/tar',['-xf','-','-C',stage],{input:archive});
++ const candidateInputs=[];
++ for(const path of DESKTOP_CANDIDATE_PATHS){
++  const source=join(root,path),target=join(stage,path);
++  if(prepareCandidate){
++   if(!lstatSync(source).isFile()||realpathSync(source)!==source)throw Error('desktop_source_symlink_denied');
++   mkdirSync(dirname(target),{recursive:true});cpSync(source,target);
++   candidateInputs.push({path,sha256:sha(readFileSync(target))});
++  }else if(!existsSync(target)||sha(readFileSync(source))!==sha(readFileSync(target))){
++   throw Error('desktop_build_entry_not_committed:'+path);
++  }
++ }
++ const provenance={format:1,gitSha:sourceSha,preparation:prepareCandidate,publishable:!prepareCandidate,candidateInputs};
++ writeFileSync(join(dirname(stage),'source-provenance.json'),JSON.stringify(provenance,null,2)+'\n');
++ return provenance;
++}
+diff --git a/scripts/desktop-profile.mjs b/scripts/desktop-profile.mjs
+new file mode 100644
+index 0000000..0afaf28
+--- /dev/null
++++ b/scripts/desktop-profile.mjs
+@@ -0,0 +1,48 @@
++// Dedicated desktop data. Existing development data is never adopted implicitly.
++import {readFileSync,writeFileSync,existsSync,mkdirSync,lstatSync,realpathSync,unlinkSync,openSync,closeSync} from 'node:fs';
++import {resolve,join,dirname} from 'node:path';
++import {createHash} from 'node:crypto';
++const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
++const markerName='desktop-profile.json';
++function assertDirectory(path){
++ if(lstatSync(path,{throwIfNoEntry:false})?.isSymbolicLink())throw Error('desktop_profile_symlink_denied');
++ mkdirSync(path,{recursive:true,mode:0o700});
++ if(realpathSync(path)!==resolve(path))throw Error('desktop_profile_symlink_denied');
++}
++export function prepareDesktopProfile(root,version,{test=false}={}){
++ root=resolve(root);
++ if(!lstatSync(root,{throwIfNoEntry:false})?.isDirectory()||lstatSync(root).isSymbolicLink()||realpathSync(root)!==root)throw Error('desktop_data_unrecognized');
++ const marker=join(root,markerName),fresh=join(root,'.homer-desktop-new'),fixture=join(root,'.homer-desktop-test-profile');
++ const acceptedVersion={format:1,schema:version.schema,codex:version.codex};
++ if(existsSync(marker)){
++   const saved=JSON.parse(readFileSync(marker,'utf8'));
++   if(saved.format!==1||saved.schema!==version.schema||saved.codex!==version.codex)throw Error('desktop_schema_incompatible');
++   if(saved.test!==test)throw Error('desktop_profile_mode_mismatch');
++ }else{
++   const permission=test?fixture:fresh;
++   if(!existsSync(permission)||JSON.parse(readFileSync(permission,'utf8')).format!==1)throw Error('desktop_data_unrecognized');
++   // Even a new-marker cannot authorize adopting pre-existing business/account data.
++   if(['runtime','codex','workspace'].some(name=>existsSync(join(root,name))))throw Error('desktop_data_unrecognized');
++   writeFileSync(marker,JSON.stringify({...acceptedVersion,test})+'\n',{flag:'wx',mode:0o600});
++   if(!test)unlinkSync(fresh);
++ }
++ const paths={root,runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'codex')};
++ for(const path of [paths.runtime,paths.workspace,paths.codexHome,join(root,'host-home'),join(root,'tmp')])assertDirectory(path);
++ return paths;
++}
++// Unlike the dev-runtime lock, an unconfirmed desktop owner is never auto-stale.
++// OS exit alone cannot prove a detached native execution was stopped.
++export function acquireDesktopOwner(codexHome,identity){
++ assertDirectory(codexHome);const file=join(codexHome,'desktop-owner.json');
++ const value={format:1,pid:process.pid,identity:identity(process.pid)};
++ if(!value.identity)throw Error('desktop_process_identity_unavailable');
++ let fd;try{fd=openSync(file,'wx',0o600);}catch{throw Error('desktop_owner_conflict');}
++ try{writeFileSync(fd,JSON.stringify(value)+'\n');}finally{closeSync(fd);}
++ let released=false;
++ return ()=>{if(released)return;const current=JSON.parse(readFileSync(file,'utf8'));if(hash(current)!==hash(value))throw Error('desktop_owner_release_unconfirmed');unlinkSync(file);released=true;};
++}
++export function desktopBoundary(config,componentIdentity){
++ // Stable across relocation/replacement of the .app. Account and data paths
++ // retain their original exact identities; the fixed engine is content-bound.
++ return hash([config.runtime,config.workspace,componentIdentity,config.codexHome,config.baseUrl,config.keyEnv,config.requiresOpenaiAuth]);
++}
+diff --git a/scripts/desktop-runtime.mjs b/scripts/desktop-runtime.mjs
+new file mode 100644
+index 0000000..ce0fd9f
+--- /dev/null
++++ b/scripts/desktop-runtime.mjs
+@@ -0,0 +1,97 @@
++// Release-only entry: no source reads, npm, compiler, watcher, or port scan.
++import {readFileSync,writeFileSync,existsSync,realpathSync,readdirSync,lstatSync,mkdirSync} from 'node:fs';
++import {resolve,join,dirname,relative} from 'node:path';
++import {fileURLToPath,pathToFileURL} from 'node:url';
++import {createHash} from 'node:crypto';
++import {PassThrough,Writable} from 'node:stream';
++import {createInterface} from 'node:readline';
++import {DatabaseSync} from 'node:sqlite';
++import {prepareDesktopProfile,acquireDesktopOwner,desktopBoundary} from './desktop-profile.mjs';
++const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
++const send=value=>new Promise((accept,reject)=>process.stdout.write(JSON.stringify(value)+'\n',error=>error?reject(error):accept()));
++let releaseOwner;
++try{
++ const homer=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'..'));
++ const resources=resolve(homer,'..'),bundle=resolve(resources,'../..');
++ if(realpathSync(process.execPath)!==join(bundle,'Contents/MacOS/node')||process.version!=='v22.22.0'||process.arch!=='arm64')throw Error('desktop_runtime_incompatible');
++ const manifestBytes=readFileSync(join(resources,'desktop-manifest.json')),manifest=JSON.parse(manifestBytes);
++ if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.163.0')throw Error('desktop_runtime_incompatible');
++ const observed=[];
++ function inventory(directory,prefix=''){
++   for(const name of readdirSync(directory).sort()){
++     if(name==='.DS_Store'||!prefix&&name==='desktop-manifest.json')continue;
++     const path=join(directory,name),rel=join(prefix,name),stat=lstatSync(path);
++     if(stat.isSymbolicLink())throw Error('desktop_resource_changed');
++     if(stat.isDirectory())inventory(path,rel);else if(stat.isFile())observed.push({path:rel,sha256:sha(readFileSync(path))});else throw Error('desktop_resource_changed');
++   }
++ }
++ const codeFiles=['Contents/MacOS/homer-image-decoder','Contents/MacOS/node'].map(path=>{
++   const file=join(bundle,path);if(realpathSync(file)!==file)throw Error('desktop_resource_changed');
++   return {path,sha256:sha(readFileSync(file))};
++ });
++ if(JSON.stringify(codeFiles)!==JSON.stringify(manifest.codeFiles))throw Error('desktop_resource_changed');
++ inventory(resources);
++ if(JSON.stringify(observed)!==JSON.stringify(manifest.files))throw Error('desktop_resource_changed');
++ const args=process.argv.slice(2),at=args.indexOf('--profile');
++ if(at<0||!args[at+1]||args.some((arg,index)=>index!==at+1&&!['--profile','--test-profile'].includes(arg))||args.filter(arg=>arg==='--profile').length!==1)throw Error('desktop_explicit_profile_required');
++ const profile=resolve(args[at+1]),test=args.includes('--test-profile');
++ if(manifest.preparation===true&&!test)throw Error('desktop_preparation_profile_required');
++ if(process.cwd()!==profile||process.env.HOME!==join(profile,'host-home')||process.env.TMPDIR!==join(profile,'tmp'))throw Error('desktop_environment_isolation_required');
++ // No inherited provider/account/config environment reaches the host.
++ const env={PATH:join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'};
++ for(const key of Object.keys(process.env))delete process.env[key];Object.assign(process.env,env);
++ const paths=prepareDesktopProfile(profile,manifest,{test});
++ const {processIdentity}=await import(pathToFileURL(join(homer,'dist/processes.js')).href);
++ releaseOwner=acquireDesktopOwner(paths.codexHome,processIdentity);
++ const database=join(paths.runtime,'homer.sqlite');let thread;
++ if(existsSync(database)){
++   const db=new DatabaseSync(database,{readOnly:true});
++   try{
++     const hasMeta=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").get();
++     if(hasMeta){
++       thread=db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()?.value;
++       if(db.prepare("SELECT 1 FROM meta WHERE key LIKE 'lease:%' LIMIT 1").get())throw Error('desktop_lease_review_required');
++       const {RECURSIVE_SCHEMA_VERSION}=await import(pathToFileURL(join(homer,'dist/recursive-tasks.js')).href);
++       for(const [key,supported]of[['pendingSchemaVersion',['1']],['recursiveSchemaVersion',['3',RECURSIVE_SCHEMA_VERSION]]]){
++         const row=db.prepare('SELECT value FROM meta WHERE key=?').get(key);if(row&&!supported.includes(row.value))throw Error('desktop_schema_incompatible');
++       }
++     }
++   }finally{db.close();}
++ }
++ const transport=join(paths.runtime,'gateway/transport.sqlite');
++ if(existsSync(transport)){
++   const db=new DatabaseSync(transport,{readOnly:true});
++   try{
++     if(db.prepare('PRAGMA user_version').get().user_version!==1)throw Error('desktop_schema_incompatible');
++     if(db.prepare("SELECT 1 FROM transport_requests WHERE state='pending' LIMIT 1").get())throw Error('desktop_transport_review_required');
++   }finally{db.close();}
++ }
++ let codexBin=join(resources,'runtime/codex/vendor/aarch64-apple-darwin/bin/codex');
++ if(test){
++   const fake=join(profile,'fixture-codex.mjs');
++   if(!existsSync(fake)||realpathSync(fake)!==fake||JSON.parse(readFileSync(join(profile,'.homer-desktop-test-profile'),'utf8')).format!==1)throw Error('desktop_test_fixture_required');
++   codexBin=fake;
++ }
++ const {PRODUCT_MODEL_DEFAULTS}=await import(pathToFileURL(join(homer,'dist/model-config.js')).href);
++ const config={appData:profile,nativeCodexHome:paths.codexHome,workspace:paths.workspace,runtime:paths.runtime,codexHome:paths.codexHome,codexBin,model:PRODUCT_MODEL_DEFAULTS.model,effort:PRODUCT_MODEL_DEFAULTS.effort,requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:{bundleRoot:bundle,manifestSha256:sha(manifestBytes)}};
++ // Retain exact original account/memory defaults; no loadConfig fallback to HOME.
++ const build={directory:homer,hash:manifest.sourceHash,manifest:manifest.manifest,version:manifest.sourceHash.slice(0,12),uiHash:manifest.uiHash,schema:manifest.schema,toolsHash:manifest.toolsHash,boundary:desktopBoundary(config,manifest.codex),config,thread};
++ const {verifyBuild}=await import('./trusted-build.mjs');verifyBuild(build);
++ const {runDev}=await import('./dev.mjs');
++ const input=new PassThrough(),output=new Writable({write(_chunk,_encoding,done){done();}});
++ let quitting=false;
++ const quit=()=>{if(quitting)return;quitting=true;input.write('/quit\n');};
++ const reader=createInterface({input:process.stdin});
++ reader.on('line',line=>{if(line.length>128)return;try{if(JSON.parse(line).kind==='quit')quit();}catch{}});
++ reader.on('close',quit);
++ const result=await runDev({root:homer,input,output,json:false,webPort:0,fixedBuild:build,fixedUi:build,fallbackUi:build,desktop:{onEvent:value=>{void send(value);}}});
++ reader.close();input.destroy();process.stdin.pause();
++ if(!result?.stoppedConfirmed)throw Error('desktop_stop_unconfirmed');
++ // A successful host close includes all main/control/Worker/MCP owner evidence.
++ releaseOwner();releaseOwner=undefined;await send({kind:'stopped'});
++}catch(error){
++ const code=error instanceof Error&&/^[a-z_]{1,70}$/.test(error.message)?error.message:'desktop_start_failed';
++ await send({kind:'error',code}).catch(()=>{});
++ // Never remove the owner on an unconfirmed startup/exit. No stale takeover.
++ process.exitCode=1;
++}
+diff --git a/scripts/prepare-desktop-dependencies.mjs b/scripts/prepare-desktop-dependencies.mjs
+new file mode 100644
+index 0000000..422295e
+--- /dev/null
++++ b/scripts/prepare-desktop-dependencies.mjs
+@@ -0,0 +1,54 @@
++// Build-time only. Fixed official archives; no package-manager installs or caches.
++import {createHash} from 'node:crypto';
++import {readFileSync,writeFileSync,mkdirSync,existsSync,rmSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {execFileSync} from 'node:child_process';
++const lock=JSON.parse(readFileSync(new URL('../packaging/macos/dependencies-lock.json',import.meta.url),'utf8'));
++
++export const NODE_VERSION='22.22.0',CODEX_VERSION='0.163.0';
++const sha=(data,algorithm='sha256')=>createHash(algorithm).update(data).digest('hex');
++export function prepareDependencies(scratch,{archiveSource}={}){
++  scratch=resolve(scratch);mkdirSync(scratch,{recursive:true});
++  const archives=new Map();
++  const fetch=(url,name,max)=>{
++    const file=join(archiveSource?resolve(archiveSource):scratch,name);
++    if(archiveSource&&!existsSync(file))throw Error('desktop_readonly_archive_missing');
++    if(!existsSync(file))execFileSync('/usr/bin/curl',['--fail','--silent','--show-error','--location','--proto','=https','--tlsv1.2','--max-time','180','--max-filesize',String(max),url,'-o',file],{stdio:'inherit'});
++    archives.set(name,file);
++    return file;
++  };
++  const components=[];
++  const sums=readFileSync(fetch(`https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt`,'node-shasums256.txt',50000),'utf8');
++  const nodeName=`node-v${NODE_VERSION}-darwin-arm64.tar.gz`;
++  const nodeUrl=`https://nodejs.org/dist/v${NODE_VERSION}/${nodeName}`;
++  const nodeArchive=fetch(nodeUrl,nodeName,60000000);
++  const nodeSha=sums.split('\n').find(line=>line.endsWith('  '+nodeName))?.split(' ')[0];
++  if(!nodeSha||nodeSha!==lock.node.sha256||sha(readFileSync(nodeArchive))!==nodeSha)throw Error('desktop_node_integrity_failed');
++  components.push({name:'Node.js',version:NODE_VERSION,archive:nodeName,url:nodeUrl,sha256:nodeSha,verification:'official HTTPS SHASUMS256.txt; not an independent PGP signature',license:'Node.js LICENSE (MIT and bundled third-party notices)'});
++  for(const [version,name]of[[CODEX_VERSION,'codex-registry.json'],[CODEX_VERSION+'-darwin-arm64','codex-arm64-registry.json']]){
++    const metadata=JSON.parse(readFileSync(fetch(`https://registry.npmjs.org/@openai/codex/${version}`,name,30000),'utf8'));
++    if(metadata.name!=='@openai/codex'||metadata.version!==version||metadata.license!=='Apache-2.0')throw Error('desktop_codex_metadata_mismatch');
++    const url=metadata.dist.tarball;
++    if(url!==`https://registry.npmjs.org/@openai/codex/-/codex-${version}.tgz`)throw Error('desktop_codex_source_invalid');
++    const archive=fetch(url,`codex-${version}.tgz`,150000000);
++    const bytes=readFileSync(archive);
++    const pinned=version.endsWith('darwin-arm64')?lock.codexDarwinArm64:lock.codex;
++    if(sha(bytes)!==pinned.sha256||metadata.dist.integrity!==pinned.integrity||'sha512-'+createHash('sha512').update(bytes).digest('base64')!==metadata.dist.integrity)throw Error('desktop_codex_integrity_failed');
++    components.push({name:'@openai/codex',version,archive:`codex-${version}.tgz`,url,sha256:sha(bytes),integrity:metadata.dist.integrity,license:metadata.license,completePlatformArchive:version.endsWith('darwin-arm64')});
++  }
++  for(const name of ['LICENSE','NOTICE']){
++    const metadata=JSON.parse(readFileSync(fetch(`https://api.github.com/repos/openai/codex/contents/${name}?ref=rust-v${CODEX_VERSION}`,`codex-${name}-source.json`,50000),'utf8'));
++    if(metadata.path!==name||metadata.encoding!=='base64'||!metadata.content)throw Error('desktop_codex_license_invalid');
++    writeFileSync(join(scratch,'codex-'+name),Buffer.from(metadata.content,'base64'));
++  }
++  const paths={node:join(scratch,'official-node'),codex:join(scratch,'official-codex'),cli:join(scratch,'official-codex-cli')};
++  for(const [key,name]of[['node',nodeName],['codex',`codex-${CODEX_VERSION}-darwin-arm64.tgz`],['cli',`codex-${CODEX_VERSION}.tgz`]]){
++    const path=paths[key];if(existsSync(path))rmSync(path,{recursive:true});mkdirSync(path);
++    const listing=execFileSync('/usr/bin/tar',['-tzf',archives.get(name)],{encoding:'utf8'}).split('\n').filter(Boolean);
++    if(listing.some(p=>p.startsWith('/')||p.split('/').includes('..')))throw Error('desktop_archive_path_invalid');
++    execFileSync('/usr/bin/tar',['-xzf',archives.get(name),'-C',path,'--strip-components=1',...(key==='node'?[`node-v${NODE_VERSION}-darwin-arm64/bin/node`,`node-v${NODE_VERSION}-darwin-arm64/LICENSE`]:[])],{stdio:'inherit'});
++  }
++  writeFileSync(join(scratch,'official-dependencies.json'),JSON.stringify({format:1,components},null,2)+'\n');
++  return {...paths,components};
++}
++if(process.argv[1]&&resolve(process.argv[1])===new URL(import.meta.url).pathname){const paths=prepareDependencies(process.argv[2]??'.codex/scratch/macos-desktop-application');console.log(JSON.stringify(paths));}
+diff --git a/scripts/macos-distribution.mjs b/scripts/macos-distribution.mjs
+new file mode 100644
+index 0000000..9c3e466
+--- /dev/null
++++ b/scripts/macos-distribution.mjs
+@@ -0,0 +1,99 @@
++// Build-time signing policy. Importing this module performs no OS operations.
++import {readFileSync,writeFileSync,existsSync,mkdirSync,realpathSync} from 'node:fs';
++import {join,resolve,dirname,basename} from 'node:path';
++import {createHash} from 'node:crypto';
++import {spawnSync} from 'node:child_process';
++const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
++export function distributionOptions(args,root,environment=process.env){
++ const value=name=>{const at=args.indexOf(name);if(at<0)return undefined;if(!args[at+1]||args[at+1].startsWith('--'))throw Error('desktop_distribution_option_missing');return args[at+1];};
++ const mode=value('--mode')??'local',base=resolve(root,'.codex/scratch/macos-desktop-application');
++ if(!['local','distribution'].includes(mode))throw Error('desktop_distribution_mode_invalid');
++ const explicit=value('--scratch'),scratch=explicit?resolve(explicit):base,planOnly=args.includes('--plan-only');
++ if(mode==='local'){
++  if(planOnly)throw Error('desktop_distribution_mode_required');
++  return {mode,scratch,planOnly:false};
++ }
++ // Fresh direct children only. No deletion/reuse of accepted output, symlink
++ // aliases, or nested paths inside another candidate/accepted-v1 are allowed.
++ if(!explicit||dirname(scratch)!==base||!basename(scratch).startsWith('distribution-')||existsSync(scratch)||realpathSync(base)!==base)throw Error('desktop_distribution_output_invalid');
++ const identity=planOnly?undefined:environment.HOMER_DISTRIBUTION_SIGNING_IDENTITY;
++ if(!planOnly&&(!identity||identity==='-'||/[\r\n\0]/.test(identity)))throw Error('desktop_distribution_identity_required');
++ return {mode,scratch,planOnly,identity,archiveSource:base};
++}
++export function reserveDistributionOutput(options){
++ if(options.mode!=='distribution')throw Error('desktop_distribution_mode_required');
++ try{mkdirSync(options.scratch);}catch{throw Error('desktop_distribution_output_not_fresh');}
++}
++export function readNodeEntitlements(path){
++ const xml=readFileSync(path,'utf8'),matches=[...xml.matchAll(/<key>([^<]+)<\/key>\s*<true\s*\/>/g)];
++ const expected=['allow-jit','allow-unsigned-executable-memory','allow-dyld-environment-variables','disable-executable-page-protection','disable-library-validation'].map(k=>'com.apple.security.cs.'+k).sort();
++ const keys=matches.map(m=>m[1]).sort();
++ if(JSON.stringify(keys)!==JSON.stringify(expected)||(xml.match(/<key>/g)??[]).length!==5||/<(?:false|string|integer|data|array)\b/.test(xml))throw Error('desktop_distribution_entitlements_invalid');
++ return Object.fromEntries(keys.map(k=>[k,true]));
++}
++export function assertSubmissionReady(items){
++ if(!items.length||items.some(x=>!x.developerId||!x.hardenedRuntime||!x.secureTimestamp||!x.entitlements||Object.hasOwn(x.entitlements,'com.apple.security.get-task-allow')))throw Error('desktop_distribution_submission_not_ready');
++ return true;
++}
++export function signDistributionResources({resources,signer,policy,entitlementsPath}){
++ const node=resolve(resources,'../MacOS/node'),originalSha256=sha(readFileSync(node));
++ if(originalSha256!==policy.nodeOriginalSha256)throw Error('desktop_distribution_original_node_changed');
++ const entitlements=readNodeEntitlements(entitlementsPath);
++ signer.sign({target:node,kind:'node',entitlementsPath});signer.verify(node);
++ const facts=signer.inspect(node);assertSubmissionReady([facts]);
++ if(JSON.stringify(Object.entries(facts.entitlements).filter(([,v])=>v===true).sort())!==JSON.stringify(Object.entries(entitlements).sort()))throw Error('desktop_distribution_node_entitlements_changed');
++ const transformedSha256=sha(readFileSync(node));
++ if(transformedSha256===originalSha256)throw Error('desktop_distribution_node_not_transformed');
++ signer.sign({target:resolve(resources,'../MacOS/homer-image-decoder'),kind:'helper'});signer.verify(resolve(resources,'../MacOS/homer-image-decoder'));
++ const helperFacts=signer.inspect(resolve(resources,'../MacOS/homer-image-decoder'));assertSubmissionReady([helperFacts]);
++ if(Object.entries(helperFacts.entitlements).some(([key,v])=>key.startsWith('com.apple.security.')&&v===true))throw Error('desktop_distribution_own_entitlements_changed');
++ const identity={format:1,node:'22.22.0',originalSha256,transformedSha256,entitlements,scope:'release copy only; original official archive identity retained in dependency notices'};
++ mkdirSync(join(resources,'licenses'),{recursive:true});writeFileSync(join(resources,'licenses/Homer-node-distribution.json'),JSON.stringify(identity,null,2)+'\n');
++ return identity;
++}
++export function sealDistribution({bundle,codePaths,signer,writeManifest,publish}){
++ for(const path of ['node','homer-image-decoder'].map(name=>join(bundle,'Contents/MacOS',name)))if(!codePaths.includes(path))throw Error('desktop_distribution_code_inventory_incomplete');
++ // All embedded mutations precede resource inventory; the outer seal follows.
++ writeManifest();signer.sign({target:bundle,kind:'app'});signer.verify(bundle,true);
++ // --deep does not discover code stored as Resources. Verify the explicit
++ // complete Mach-O inventory as well; never infer nested validity from outer.
++ for(const path of codePaths)signer.verify(path);
++ const facts=[...codePaths,bundle].map(path=>signer.inspect(path));assertSubmissionReady(facts);
++ if(Object.entries(facts.at(-1).entitlements).some(([key,v])=>key.startsWith('com.apple.security.')&&v===true))throw Error('desktop_distribution_own_entitlements_changed');
++ return publish(); // No artifact/result is published on any earlier failure.
++}
++export function signingPlan({scratch},policy,entitlementsPath){
++ return {format:1,mode:'distribution plan only; no signing, compilation or submission',scratch,identityEntry:'HOMER_DISTRIBUTION_SIGNING_IDENTITY (local only; value never recorded)',notaryEntry:'local notarytool --keychain-profile reference; submission not implemented here',policy,nodeEntitlements:readNodeEntitlements(entitlementsPath),order:['verify official archive/source SHA','sign Node release copy: timestamp/runtime, explicit five-key plist','sign ImageIO helper: timestamp/runtime, no exceptions','verify unchanged Codex/voice SHA','generate post-transformation resource manifests','sign outer app: timestamp/runtime, no exceptions','verify every executable: Developer ID/runtime/timestamp/no get-task-allow','create submission ZIP (not notarized)'],remaining:['OS private-key authorization and timestamp network access require later authorization','review current nonstandard Resources/runtime layout','notarization, stapling, final re-ZIP and clean Mac validation are separate authorized actions']};
++}
++// Only an explicit non-plan distribution build constructs this backend. No
++// identity/keychain enumeration, profile creation, notarization or shell eval.
++export function nativeDistributionSigner(identity,{invoke}={}){
++ const command=args=>{
++  const r=invoke?invoke(args):spawnSync('/usr/bin/codesign',args,{encoding:'utf8',timeout:120000,maxBuffer:2*1024*1024,stdio:['ignore','pipe','pipe']});
++  if(r.status!==0)throw Error('desktop_distribution_codesign_failed');
++  return r;
++ };
++ return {
++  sign({target,kind,entitlementsPath}){
++   const args=['--force','--sign',identity,'--timestamp','--options','runtime'];
++   if(kind==='node')args.push('--preserve-metadata=identifier','--entitlements',entitlementsPath);
++   if(kind==='helper')args.push('--identifier','app.homer.desktop.candidate.image-decoder');
++   command([...args,target]);
++  },
++  verify(target,deep=false){command(['--verify','--strict',...(deep?['--deep']:[]),target]);},
++  inspect(target){
++   const display=command(['-d','--verbose=4',target]).stderr;
++   const raw=command(['-d','--entitlements','-',target]).stdout;
++   let entitlements={};
++   if(raw.includes('[Dict]')){
++    for(const m of raw.matchAll(/\[Key\]\s+(com\.apple\.security\.[\w.\-]+)\s+\[Value\]\s+\[Bool\]\s+(true|false)/g))entitlements[m[1]]=m[2]==='true';
++    if([...raw.matchAll(/\[Key\]\s+(com\.apple\.security\.[\w.\-]+)/g)].length!==Object.keys(entitlements).length)throw Error('desktop_distribution_entitlements_unreadable');
++   }else if(raw.includes('<plist')){
++    const r=spawnSync('/usr/bin/plutil',['-convert','json','-o','-','-'],{input:raw,encoding:'utf8',timeout:10000});
++    if(r.status!==0)throw Error('desktop_distribution_entitlements_unreadable');
++    entitlements=JSON.parse(r.stdout);
++   }else if(raw.trim())throw Error('desktop_distribution_entitlements_unreadable');
++   return {developerId:/^Authority=Developer ID Application:/m.test(display),hardenedRuntime:/^CodeDirectory .*flags=.*\bruntime\b/m.test(display),secureTimestamp:/^Timestamp=/m.test(display),entitlements};
++  }
++ };
++}
+diff --git a/scripts/dev.mjs b/scripts/dev.mjs
+index 306f870..5d0c9cf 100644
+--- a/scripts/dev.mjs
++++ b/scripts/dev.mjs
+@@ -11,8 +11,10 @@ import { sourceSnapshot, buildCandidate, buildUiCandidate, backendHash, uiHash,
+ import {verifyBuild,sealBuild,copyRuntimeDependencies} from "./trusted-build.mjs";
+ import { IngressJournal } from "./dev-ingress.mjs";
+ 
+-export async function runDev({ root, configPath, json = false, webPort, pollMs = 300, debounceMs = 600, input = process.stdin, output = process.stdout, fixedBuild, fixedUi, fallbackUi }) {
+-  if(fixedBuild){
++export async function runDev({ root, configPath, json = false, webPort, pollMs = 300, debounceMs = 600, input = process.stdin, output = process.stdout, fixedBuild, fixedUi, fallbackUi, desktop }) {
++  if(desktop&&!fixedBuild)throw Error("desktop_fixed_build_required");
++  const managementAllowed=desktop?(await import(pathToFileURL(join(fixedBuild.directory,'dist/desktop-management.js')).href)).desktopManagementAllowed:()=>false;
++  if(fixedBuild&&!desktop){
+     const dependencies=copyRuntimeDependencies(fixedBuild.directory,fixedBuild.config.runtime);
+     const config=fixedBuild.config;
+     fixedBuild=sealBuild(fixedBuild,dependencies);
+@@ -23,7 +25,7 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+   let building = false, lastHash, changedAt = 0, rejectedHash, checking = false;
+   let expectedThread, handoffThread, timer, readyTimer, initial = true, upgradeProbe = false;
+   let buildController;
+-  let web, cachedState, cachedHistoryState, webHistoryProtocol=0, finishing = false;
++  let web, cachedState, cachedHistoryState, webHistoryProtocol=0, finishing = false, desktopStoppedConfirmed=false,desktopChatError;
+   let review, approvedSourceHash, acceptedSnapshot, pendingUi, drainingReads=false;
+   let recoveryCode;
+   let journal, unlockGateway, uiCurrent, observedHash, rejectedUiHash;
+@@ -59,10 +61,11 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+     // live context and fail visibly instead of running later in a new version.
+     if (method.startsWith("history.") || ["taskOverview.progress", "taskOverview.list", "taskOverview.detail", "taskOverview.summary", "taskOverview.origin", "wechat.state", "wechat.qr", "telegram.state", "artifact", "artifactOrigin"].includes(method)) {
+       const deadline = Date.now() + 5000;
+-      while (phase !== "running" && !stopped && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
++      while (phase !== "running" && !(desktop&&phase==='management'&&managementAllowed(method,request)) && !stopped && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+     }
+     return new Promise((accept, reject) => {
+-    if (phase !== "running" || !child?.connected || stopped) return reject(new Error("service_upgrading"));
++    const management=desktop&&phase==='management'&&managementAllowed(method,request);
++    if ((!management&&phase !== "running") || !child?.connected || stopped) return reject(new Error("service_upgrading"));
+     const id = randomUUID();
+     // QR poll allows 35s protocol wait plus dedicated Keychain write/read and
+     // old-reference cleanup. This is a bounded management call, not main work.
+@@ -79,6 +82,7 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+   const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","wechat.state","wechat.qr","telegram.state","artifact","artifactOrigin","media.read"].includes(item.method));
+   const acceptInput = input => {
+     if (stopped || !journal) throw Error("service_not_ready");
++    if(desktop&&phase!=="running")throw Error("desktop_chat_not_ready");
+     const stored = journal.store(input);publish();
+     if (phase !== "running") return stored;
+     const receipt = new Promise((accept, reject) => {
+@@ -105,20 +109,20 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+     if (webPort === undefined || web) return;
+     const { createWebServer } = await import(pathToFileURL(join(build.directory, "dist/web-server.js")).href);
+     const state = async () => {
+-      if (phase === "running") {
++      if (phase === "running" || desktop&&phase==='management') {
+         const owner=child,value=await invokeWeb("state");
+         if(owner!==child)throw Error("service_generation_changed");
+         cachedState=value;
+       }
+       if (!cachedState) throw new Error("service_not_ready");
+-      return { ...cachedState, upgrade: { reviewRequired:!!review, phase, ...(phase==='recovery_required'&&recoveryCode?{code:recoveryCode}:{}), version: current?.version, uiVersion: uiCurrent?.uiHash, accepting: !!journal && !stopped, transportPending: journal?.pending().map(item => item.id) ?? [], transportRejected: journal?.rejected() ?? [] } };
++      return { ...cachedState, upgrade: { reviewRequired:!!review, phase, ...(phase==='recovery_required'&&recoveryCode?{code:recoveryCode}:desktop&&desktopChatError?{code:desktopChatError}:{}), version: current?.version, uiVersion: uiCurrent?.uiHash, accepting: !!journal && !stopped && (!desktop||phase==='running'), transportPending: journal?.pending().map(item => item.id) ?? [], transportRejected: journal?.rejected() ?? [] } };
+     };
+     const historyState=async()=>{
+-      if(phase==='running'){
++      if(phase==='running'||desktop&&phase==='management'){
+         const owner=child,value=await invokeWeb('history.state');if(owner!==child)throw Error('service_generation_changed');cachedHistoryState=value;
+       }
+       if(!cachedHistoryState)throw Error('service_not_ready');
+-      return {...cachedHistoryState,upgrade:{reviewRequired:!!review,phase,...(phase==='recovery_required'&&recoveryCode?{code:recoveryCode}:{}),version:current?.version,uiVersion:uiCurrent?.uiHash,accepting:!!journal&&!stopped}};
++      return {...cachedHistoryState,upgrade:{reviewRequired:!!review,phase,...(phase==='recovery_required'&&recoveryCode?{code:recoveryCode}:desktop&&desktopChatError?{code:desktopChatError}:{}),version:current?.version,uiVersion:uiCurrent?.uiHash,accepting:!!journal&&!stopped&&(!desktop||phase==='running')}};
+     };
+     web = await createWebServer({ port: webPort,
+       updateReview:{read:()=>review?{hash:review.hash,files:review.files}:null,approve:hash=>{
+@@ -133,6 +137,7 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+         queue:{edit:input=>invokeWeb('queue.edit',input),cancel:input=>invokeWeb('queue.cancel',input),move:input=>invokeWeb('queue.move',input),interrupt:(input,target)=>invokeWeb('queue.interrupt',{input,target})},
+         feedback: (messageId, value) => invokeWeb("feedback", { messageId, value }),
+         respond: (id, input) => invokeWeb("respond", { ...input, id }), artifact: runId => invokeWeb("artifact", { runId }), artifactOrigin: resultId => invokeWeb("artifactOrigin", {resultId}),
++        revealArtifact:resultId=>invokeWeb('revealArtifact',{resultId}),
+         wechat: { state: () => invokeWeb("wechat.state"), beginLogin: () => invokeWeb("wechat.login"),
+           pollLogin: (id, verifyCode) => invokeWeb("wechat.poll", { id, verifyCode }), qrPng: id => invokeWeb("wechat.qr", { id }),
+           disable: () => invokeWeb("wechat.disable"), reconnect: () => invokeWeb("wechat.reconnect"), disconnect: () => invokeWeb("wechat.disconnect") },
+@@ -142,6 +147,7 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+           connect: () => invokeWeb("telegram.connect"), disconnect: () => invokeWeb("telegram.disconnect"), forget: () => invokeWeb("telegram.forget") },
+       },
+     });
++    if(desktop)desktop.onEvent?.({kind:"url",url:web.url});
+     await notice(`本地界面已启动：${web.url}；直接打开此地址即可继续；Web 与本终端共用原主对话，关闭页面不会停止后台工作。`);
+   }
+   const flush = () => {
+@@ -202,7 +208,7 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+     phase = rollback ? "rollback" : "starting";web?.reset();
+     handoffThread = undefined;
+     const own = fork(join(build.directory, "dist/dev-host.js"), [], {
+-      cwd: root, execPath: process.execPath, execArgv: ["--disable-warning=ExperimentalWarning"], stdio: ["ignore", "ignore", "ignore", "ipc"],
++      cwd: desktop?build.config.appData:root, execPath: process.execPath, execArgv: ["--disable-warning=ExperimentalWarning"], stdio: ["ignore", "ignore", "ignore", "ipc"],
+     });
+     child = own;
+     // Do not kill a timed-out startup: it may still own an engine lease/lock.
+@@ -216,9 +222,17 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+       clearTimeout(readyTimer); child = undefined;
+       void exited(code, exitSignal);
+     });
+-    own.send({ kind: "init", config: build.config, buildHash:build.hash,terminalDeltas:json,webUploadProtocol:fixedBuild?0:webPort===undefined?0:1,nativeCapabilitiesProtocol:fixedBuild?0:webPort===undefined?0:1, thread: expectedThread });
++    own.send({ kind: "init", desktop:!!desktop, config: build.config, buildHash:build.hash,terminalDeltas:json,webUploadProtocol:fixedBuild&&!desktop?0:webPort===undefined?0:1,nativeCapabilitiesProtocol:fixedBuild&&!desktop?0:webPort===undefined?0:1, thread: expectedThread });
+     async function receive(m) {
+       if(own!==child)return;
++      if(desktop&&m.kind==='desktop_stopped'){desktopStoppedConfirmed=m.confirmed===true;return;}
++      if(desktop&&m.kind==='management_ready'){
++        if(m.stateInvalidationProtocol!==1)throw Error('state_invalidation_protocol_required');
++        webHistoryProtocol=m.webHistoryProtocol??0;
++        clearTimeout(readyTimer);current=build;phase='management';cachedState=undefined;
++        await startWeb(build);publish();return;
++      }
++      if(desktop&&m.kind==='chat_unavailable'){desktopChatError=m.code;desktop.onEvent?.({kind:'chat_unavailable',code:m.code});publish();return;}
+       if(m.kind==="state_invalidated"&&m.protocol===1){publish();return;}
+       if (m.kind === "ingress_result") {
+         ingressSending.delete(m.id);
+@@ -239,6 +253,7 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+       else if (m.kind === "settled") { inFlight.delete(m.id); flush(); }
+       else if (m.kind === "fatal") await notice(`开发服务启动／运行失败：${m.code}；未自动重放请求。`);
+       else if (m.kind === "ready") {
++        desktopChatError=undefined;
+         webHistoryProtocol=m.webHistoryProtocol??0;
+         clearTimeout(readyTimer);
+         if(webPort!==undefined&&m.stateInvalidationProtocol!==1){await recoveryRequired("state_invalidation_protocol_required");return;}
+@@ -386,7 +401,8 @@ export async function runDev({ root, configPath, json = false, webPort, pollMs =
+     timer = setInterval(() => void tick(), pollMs);
+     await tick();
+   }
+-  return done;
++  await done;
++  if(desktop)return {stoppedConfirmed:desktopStoppedConfirmed};
+ }
+ 
+ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+diff --git a/scripts/seamless-synthetic-fixture.mjs b/scripts/seamless-synthetic-fixture.mjs
+index 48367f3..0a1e076 100644
+--- a/scripts/seamless-synthetic-fixture.mjs
++++ b/scripts/seamless-synthetic-fixture.mjs
+@@ -9,7 +9,7 @@ export function seamlessFixture(withUi=false){
+  for(const name of ['home','runtime','workspace/materials'])mkdirSync(join(base,name),{recursive:true});
+  writeFileSync(join(base,'src/synthetic-engine.ts'),readFileSync(join(root,'tests/fixtures/seamless-engine.ts'),'utf8').replace('../../src/engine.js','./engine.js'));
+  const host=join(base,'src/dev-host.ts');
+- writeFileSync(host,'import {syntheticEngine} from "./synthetic-engine.js";\n'+readFileSync(host,'utf8').replace('engineError, codexVersion','engineError').replace('await output(message);\n    });','await output(message);\n    }, syntheticEngine);').replace('codexVersion(m.config.codexBin)','"synthetic-injected-engine"'));
++ writeFileSync(host,'import {syntheticEngine} from "./synthetic-engine.js";\n'+readFileSync(host,'utf8').replace('engineError, codexVersion','engineError').replace('await output(message);\n    });','await output(message);\n    }, syntheticEngine);').replaceAll(/codexVersion\([^()]*\)/g,'"synthetic-injected-engine"'));
+  const config=join(base,'synthetic.config.json');writeFileSync(config,JSON.stringify({workspace:'workspace',runtime:'runtime',codexHome:join(base,'home'),codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,mainTimeoutMs:600000,stopGraceMs:100}));
+  return {root:base,configPath:config,base};
+ }
+diff --git a/src/desktop-resources.ts b/src/desktop-resources.ts
+new file mode 100644
+index 0000000..f5edc79
+--- /dev/null
++++ b/src/desktop-resources.ts
+@@ -0,0 +1,23 @@
++import {readFileSync,realpathSync} from 'node:fs';
++import {join,resolve} from 'node:path';
++import {createHash} from 'node:crypto';
++
++// Only the verified release entry supplies this in-memory identity. loadConfig
++// intentionally does not accept it from JSON or inherited environment.
++export type DesktopResourceIdentity={bundleRoot:string;manifestSha256:string};
++export function verifiedDesktopResources(identity:DesktopResourceIdentity){
++ const root=resolve(identity.bundleRoot),resources=join(root,'Contents/Resources');
++ if(realpathSync(root)!==root||realpathSync(process.execPath)!==join(root,'Contents/MacOS/node'))throw Error('desktop_resource_identity_invalid');
++ const manifestBytes=readFileSync(join(resources,'desktop-manifest.json'));
++ if(createHash('sha256').update(manifestBytes).digest('hex')!==identity.manifestSha256)throw Error('desktop_resource_changed');
++ const manifest=JSON.parse(manifestBytes.toString('utf8'));
++ const helper=join(root,'Contents/MacOS/homer-image-decoder');
++ const codeFiles=['Contents/MacOS/homer-image-decoder','Contents/MacOS/node'].map(path=>{
++  const file=join(root,path);if(realpathSync(file)!==file)throw Error('desktop_resource_changed');
++  return {path,sha256:createHash('sha256').update(readFileSync(file)).digest('hex')};
++ });
++ if(JSON.stringify(codeFiles)!==JSON.stringify(manifest.codeFiles))throw Error('desktop_resource_changed');
++ const expected=manifest.codeFiles?.find((file:{path:string;sha256:string})=>file.path==='Contents/MacOS/homer-image-decoder')?.sha256;
++ if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.163.0'||!expected||realpathSync(helper)!==helper||createHash('sha256').update(readFileSync(helper)).digest('hex')!==expected)throw Error('desktop_resource_changed');
++ return {bundleRoot:root,imageDecoder:helper,imageDecoderSha256:expected as string};
++}
+diff --git a/src/desktop-management.ts b/src/desktop-management.ts
+new file mode 100644
+index 0000000..c3861b4
+--- /dev/null
++++ b/src/desktop-management.ts
+@@ -0,0 +1,5 @@
++// The current product removed the capability/login HTTP surface. Desktop
++// startup may inspect its own account internally; it cannot restore that API.
++export function desktopManagementAllowed(method:string,_input?:unknown){
++ return method==='state'||method==='history.state';
++}
+diff --git a/src/config.ts b/src/config.ts
+index 81a83c1..2c55bbb 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -5,6 +5,8 @@ import { execFileSync } from "node:child_process";
+ import { canonicalDir, inside } from "./files.js";
+ import { PRODUCT_MODEL_DEFAULTS, type ReasoningEffort } from "./model-config.js";
+ export type Config = {
++  // Internal verified release identity; never accepted from loadConfig input.
++  desktopResources?: import('./desktop-resources.js').DesktopResourceIdentity;
+   controlBrowserData?:string[];
+   appData?: string;
+   nativeCodexHome?: string;
+diff --git a/src/dev-host.ts b/src/dev-host.ts
+index 5884822..b58f223 100644
+--- a/src/dev-host.ts
++++ b/src/dev-host.ts
+@@ -8,6 +8,8 @@ import { HomerWechat } from "./channels/wechat-homer.js";
+ import { TelegramHomerBridge } from "./channels/telegram-homer-bridge.js";
+ import { TelegramManagement } from "./channels/telegram-management.js";
+ import { prepareTelegramMigration } from "./channels/telegram-migration.js";
++import {desktopManagementAllowed} from './desktop-management.js';
++import {configureDesktopImageDecoder} from './media-decode.js';
+ 
+ const send = (value: unknown) => new Promise<void>((resolve, reject) => {
+   if (!process.send) return reject(new Error("dev_ipc_required"));
+@@ -35,6 +37,40 @@ async function flushStateInvalidation(){
+   catch{stateInvalidationPending=true;stateInvalidationRetry=setTimeout(()=>{stateInvalidationRetry=undefined;void flushStateInvalidation();},500);stateInvalidationRetry.unref();}
+   finally{stateInvalidationSending=false;if(stateInvalidationPending&&!stateInvalidationRetry)invalidateState();}
+ }
++let desktop=false,chatReady=false,desktopRetryBlocked=false;
++let desktopChatStarting:Promise<void>|undefined;
++async function announceReady(restoring:boolean){
++  if(webUploadProtocol)app!.webHistoryPages();
++  await send({kind:'ready',thread:app!.store.meta('mainThread'),restoring,stateInvalidationProtocol:1,webHistoryProtocol:3,model:app!.config.model,effort:app!.config.effort,engine:codexVersion(app!.config.codexBin)});
++}
++async function startDesktopChat(){
++  if(!desktop||!app||stopping||chatReady||desktopRetryBlocked)return;
++  if(desktopChatStarting)return desktopChatStarting;
++  desktopChatStarting=(async()=>{
++    const account=await app!.manageCapabilities({action:'account_state'});
++    if(stopping)return;
++    if(!account.connected){await send({kind:'chat_unavailable',code:'desktop_account_required'});invalidateState();return;}
++    const restoring=!!app!.store.meta('mainThread');
++    starting=(async()=>{await prepareTelegramMigration(app!.store.db,app!.config.runtime);await app!.start({keepManagementOnFailure:true});})();
++    try{
++      await starting;if(stopping)return;
++      // Commit core readiness exactly once before optional channel restoration.
++      chatReady=true;
++      await announceReady(restoring);
++    }catch(error){
++      const blocked=error instanceof Error&&['main_stop_unconfirmed','orphan_stop_unconfirmed','desktop_start_owner_unconfirmed'].includes(error.message);
++      const code=blocked?(error as Error).message:'desktop_chat_unavailable';
++      if(blocked)desktopRetryBlocked=true;
++      await send({kind:'chat_unavailable',code});
++    }finally{starting=undefined;invalidateState();}
++    if(chatReady&&!stopping){
++      telegram=new TelegramHomerBridge(app!);telegramManagement=new TelegramManagement(telegram.channel);
++      try{await wechat!.restore();}catch{await send({kind:'desktop_channel_unavailable',channel:'wechat'});}
++      try{await telegram.restore();}catch{await send({kind:'desktop_channel_unavailable',channel:'telegram'});}
++    }
++  })().finally(()=>{desktopChatStarting=undefined;});
++  return desktopChatStarting;
++}
+ let nativeCapabilitiesProtocol=false;
+ let webUploadProtocol=false;
+ const receipts = new Map<string, { resolve: () => void; reject: (error: Error) => void; requestId?:string;startedAt:number;sentAt?:number;measured:boolean }>();
+@@ -61,8 +97,10 @@ async function stop() {
+   stopping = true;
+   if(stateInvalidationRetry)clearTimeout(stateInvalidationRetry);
+   frozen = true;
+-  try { await starting?.catch(() => {}); await telegram?.close(); await wechat?.management.close(); await app?.close(); }
++  let confirmed=false;
++  try { await desktopChatStarting?.catch(() => {}); await starting?.catch(() => {}); await telegram?.close(); await wechat?.management.close(); await app?.close({requireAllOwnersConfirmed:desktop});confirmed=!!app; }
+   catch { process.exitCode = 1; }
++  if(desktop){try{await send({kind:'desktop_stopped',confirmed});}catch{process.exitCode=1;}}
+   process.disconnect?.();
+ }
+ process.on("SIGINT", () => void stop());
+@@ -79,13 +117,15 @@ process.on("message", (raw: unknown) => {
+   });
+ });
+ async function receive(raw: unknown) {
+-  const m = raw as { kind: string; config: Config; buildHash?:string; terminalDeltas?:boolean;webUploadProtocol?:number;nativeCapabilitiesProtocol?:number;thread?: string; id: string; text: string; method: string; input: any };
++  const m = raw as { desktop?:boolean; kind: string; config: Config; buildHash?:string; terminalDeltas?:boolean;webUploadProtocol?:number;nativeCapabilitiesProtocol?:number;thread?: string; id: string; text: string; method: string; input: any };
+   if (m.kind === "written") {
+     const pending=receipts.get(m.id);
+     if(pending?.measured)app?.receptionTimings.mark('output_ipc_ack',{outputId:m.id,requestId:pending.requestId});
+     pending?.resolve();
+   } else if (m.kind === "init") {
+     if (app) throw new Error("dev_already_initialized");
++    desktop=m.desktop===true;
++    if(desktop){if(!m.config.desktopResources)throw Error('desktop_resource_identity_required');configureDesktopImageDecoder(m.config.desktopResources);}
+     webUploadProtocol=m.webUploadProtocol===1;nativeCapabilitiesProtocol=m.nativeCapabilitiesProtocol===1;
+     // Only an explicit plain-terminal opt-out skips IPC. Legacy/private host
+     // callers keep their existing stream until they declare otherwise.
+@@ -105,6 +145,12 @@ async function receive(raw: unknown) {
+     wechat = new HomerWechat(app);
+     if (m.thread && app.store.meta("mainThread") !== m.thread)
+       throw new Error("main_resume_thread_mismatch");
++    if(desktop){
++      frozen=false;
++      await send({kind:'management_ready',stateInvalidationProtocol:1,webHistoryProtocol:3});
++      void startDesktopChat().catch(async()=>{try{await send({kind:'chat_unavailable',code:'desktop_chat_unavailable'});}catch{}});
++      return;
++    }
+     const restoring = !!app.store.meta("mainThread");
+     starting = (async () => {
+       await prepareTelegramMigration(app!.store.db, m.config.runtime);
+@@ -125,6 +171,11 @@ async function receive(raw: unknown) {
+   } else if (m.kind === "web") {
+     try {
+       if (!app || frozen || stopping) throw new Error("service_upgrading");
++      if(desktop&&!chatReady){
++        if(!desktopManagementAllowed(m.method,m.input))throw Error('desktop_chat_not_ready');
++        await send({kind:'web_result',id:m.id,value:{...app.conversationControlState(),threadId:'',messages:[],queue:[],work:[],interactions:[],upgrade:{phase:'management',accepting:false}}});
++        return;
++      }
+       const bridge = homerWebBridge(app,{draftUpload:webUploadProtocol,nativeCapabilities:!!nativeCapabilitiesProtocol});
+       let value: unknown;
+       if(m.method==='history.state')value=await bridge.history!.state();
+@@ -153,6 +204,7 @@ async function receive(raw: unknown) {
+       else if (m.method === "stop") value = await bridge.stop(m.input.messageId);
+       else if (m.method === "respond") value = await bridge.respond(m.input.id, m.input);
+       else if (m.method === "artifactOrigin") value = await bridge.artifactOrigin!(m.input.resultId);
++      else if (m.method === "revealArtifact") value = await bridge.revealArtifact!(m.input.resultId);
+       else if (m.method === "artifact") value = await bridge.artifact(m.input.runId);
+       else if (wechat && m.method === "wechat.state") value = await wechat.management.state();
+       else if (wechat && m.method === "wechat.login") value = await wechat.management.beginLogin();
+@@ -175,6 +227,7 @@ async function receive(raw: unknown) {
+   } else if (m.kind === "ingress") {
+     try {
+       if (!app || frozen || stopping) throw Error("service_upgrading");
++      if(desktop&&!chatReady)throw Error("desktop_chat_not_ready");
+       const value = app.submitMessage(m.input);
+       await send({ kind: "ingress_result", id: m.id, value });
+     } catch (error) { await send({ kind: "ingress_result", id: m.id, error: engineError(error) }); }
+diff --git a/src/engine.ts b/src/engine.ts
+index 25de723..6ed43f6 100644
+--- a/src/engine.ts
++++ b/src/engine.ts
+@@ -1,4 +1,5 @@
+ import {homedir} from 'node:os';
++import {verifiedDesktopResources} from './desktop-resources.js';
+ import{materializeNativeImage}from"./native-generated-files.js";
+ import {
+   spawn,
+@@ -150,6 +151,7 @@ export function nativeExecutableRoots(config:Config){
+   }
+   const companion=join(dirname(config.codexBin),'codex-code-mode-host');
+   if(existsSync(companion))roots.add(realpathSync(companion));
++  if(config.desktopResources)roots.add(verifiedDesktopResources(config.desktopResources).bundleRoot);
+   return [...roots];
+ }
+ export function profileOverrides(config: Config, options: EngineOptions) {
+diff --git a/src/media-decode.ts b/src/media-decode.ts
+index a85c47f..e216dd4 100644
+--- a/src/media-decode.ts
++++ b/src/media-decode.ts
+@@ -1,9 +1,25 @@
+ import {spawn} from 'node:child_process';
+-import {existsSync} from 'node:fs';
++import {existsSync,realpathSync} from 'node:fs';
++import {join} from 'node:path';
++import {verifiedDesktopResources,type DesktopResourceIdentity} from './desktop-resources.js';
+ import {MEDIA_POLICY,imageDimensions} from './media-policy.js';
+ // Fixed executable and argument vectors only. No shell, inherited environment or remote URLs.
+ export const ffmpegPath=['/opt/homebrew/bin/ffmpeg','/usr/local/bin/ffmpeg','/usr/bin/ffmpeg'].find(existsSync);
++let desktopIdentity:DesktopResourceIdentity|undefined;
++export function configureDesktopImageDecoder(identity:DesktopResourceIdentity){
++ verifiedDesktopResources(identity);
++ if(desktopIdentity&&JSON.stringify(desktopIdentity)!==JSON.stringify(identity))throw Error('desktop_resource_identity_conflict');
++ desktopIdentity={...identity};
++}
+ export async function mediaProcess(bin:string,args:string[],input:Buffer,maxBytes:number,signal?:AbortSignal,timeoutMs=20000,allowEmpty=false):Promise<Buffer>{
++ if(desktopIdentity){
++  const trusted=verifiedDesktopResources(desktopIdentity),resources=join(trusted.bundleRoot,'Contents/Resources');
++  // Optional Homebrew/Python/ASR installations never become implicit desktop
++  // dependencies. Keep only the verified ImageIO helper and bundled SILK codec.
++  const image=bin===trusted.imageDecoder&&args.length===1&&['0','320'].includes(args[0]!);
++  const silk=bin===process.execPath&&realpathSync(bin)===join(trusted.bundleRoot,'Contents/MacOS/node')&&args.length===2&&args[0]===join(resources,'homer/dist/media-silk.js')&&['decode','encode'].includes(args[1]!);
++  if(!image&&!silk)throw Error('media_decoder_unavailable');
++ }
+  if(signal?.aborted)throw Error('media_decode_cancelled');
+  return new Promise((resolve,reject)=>{
+   const child=spawn(bin,args,{stdio:['pipe','pipe','pipe'],env:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8'}});
+@@ -25,7 +41,8 @@ export async function imageThumbnail(bytes:Buffer,mime:string,signal?:AbortSigna
+  return normalizeImage(bytes,mime,320,signal);
+ }
+ async function normalizeImage(bytes:Buffer,mime:string,edge:number|undefined,signal?:AbortSignal){
+- if(!ffmpegPath)throw Error('media_decoder_unavailable');
++ const imageIO=desktopIdentity?verifiedDesktopResources(desktopIdentity).imageDecoder:undefined;
++ if(!imageIO&&!ffmpegPath)throw Error('media_decoder_unavailable');
+  if(signal?.aborted)throw Error('media_decode_cancelled');
+  const dims=imageDimensions(bytes,mime);if(dims&&(!dims.width||!dims.height||dims.width*dims.height>MEDIA_POLICY.maxPixels))throw Error('media_pixel_limit');
+  // Intake and result readers retain their distinct source byte budgets.
+@@ -33,7 +50,7 @@ async function normalizeImage(bytes:Buffer,mime:string,edge:number|undefined,sig
+  // Lossless PNG can exceed the compressed source budget. Bound it by the pixel
+  // budget instead: up to 16-bit RGBA plus scanline and compression overhead.
+  const maxBytes=edge?512*1024:Math.max(MEDIA_POLICY.imageBytes,(dims?dims.width*dims.height:MEDIA_POLICY.maxPixels)*9+1024*1024);
+- const normalized=await mediaProcess(ffmpegPath,['-v','error','-nostdin','-threads','1','-filter_threads','1','-max_alloc','134217728','-max_pixels',String(MEDIA_POLICY.maxPixels),'-probesize','5000000','-protocol_whitelist','pipe','-i','pipe:0',...(edge?['-vf',`scale=w='min(${edge},iw)':h='min(${edge},ih)':force_original_aspect_ratio=decrease`]:[]),'-frames:v','1','-map_metadata','-1','-f','image2pipe','-vcodec','png','-threads','1','pipe:1'],bytes,maxBytes,signal);
++ const normalized=imageIO?await mediaProcess(imageIO,[String(edge??0)],bytes,maxBytes,signal):await mediaProcess(ffmpegPath!,['-v','error','-nostdin','-threads','1','-filter_threads','1','-max_alloc','134217728','-max_pixels',String(MEDIA_POLICY.maxPixels),'-probesize','5000000','-protocol_whitelist','pipe','-i','pipe:0',...(edge?['-vf',`scale=w='min(${edge},iw)':h='min(${edge},ih)':force_original_aspect_ratio=decrease`]:[]),'-frames:v','1','-map_metadata','-1','-f','image2pipe','-vcodec','png','-threads','1','pipe:1'],bytes,maxBytes,signal);
+  const output=imageDimensions(normalized,'image/png');if(!output||!output.width||!output.height||output.width*output.height>MEDIA_POLICY.maxPixels||edge&&(output.width>edge||output.height>edge))throw Error('media_pixel_limit');
+- return {bytes:normalized,mime:'image/png',transform:edge?`ffmpeg-first-frame-fit${edge}-strip-metadata-v1`:'ffmpeg-first-frame-source-size-strip-metadata-v1',...output};
++ return {bytes:normalized,mime:'image/png',transform:imageIO?(edge?`imageio-first-frame-fit${edge}-strip-metadata-v1`:'imageio-first-frame-source-size-strip-metadata-v1'):edge?`ffmpeg-first-frame-fit${edge}-strip-metadata-v1`:'ffmpeg-first-frame-source-size-strip-metadata-v1',...output};
+ }
+diff --git a/src/service.ts b/src/service.ts
+index 7a0f0eb..f33bf32 100644
+--- a/src/service.ts
++++ b/src/service.ts
+@@ -160,15 +160,16 @@ export class Homer {
+   registerChannelCapabilities(name:string,read:()=>unknown){this.channelViews.set(name,read);}
+   async capabilities(){
+     const imageInput=this.main?.imageCapability?await this.main.imageCapability().catch(()=>false):false;
+-    const decoder=!!ffmpegPath,asr=decoder&&!!whisperPath&&existsSync(whisperModel),documents=existsSync(documentPython);
++    const desktop=!!this.config.desktopResources;
++    const decoder=desktop||!!ffmpegPath,avDecoder=!desktop&&!!ffmpegPath,asr=avDecoder&&!!whisperPath&&existsSync(whisperModel),documents=!desktop&&existsSync(documentPython);
+     const web=this.channelViews.get('web')?.() as {draftUpload:boolean}|undefined;
+     return {runtime:{version:this.runtimeBuild?.slice(0,12)??null,buildHash:this.runtimeBuild},model:this.config.model,imageInput,
+       currentInput:{nativeImagesSubmitted:this.mainContext?.nativeImageCount??0,attachments:(this.mainContext?.queuedInput?.input.attachments??[]).map(ref=>this.media.view(ref))},channels:Object.fromEntries([...this.channelViews].map(([name,read])=>[name,read()])),
+       surfaces:{web:{receive:web?(web.draftUpload?'scoped_draft_upload_and_history':'text_and_history'):'unavailable',draftUpload:web?.draftUpload===true,uploadLimit:web?.draftUpload?'8MiB_per_file_10_files':null,send:web?'published_artifact_download':'unavailable'},wechat:{receive:'bound_owner_media',send:'published_artifacts_to_original_bound_owner',phoneMediaVerification:'unverified'},telegram:{receive:'text_only',send:'published_artifact_files'},cli:{receive:'text_only'}},
+       media:{image:{receive:'available',understanding:imageInput&&decoder?'native_image_input':'unavailable',send:'image_publication'},
+         file:{receive:'available',understanding:documents?'local_txt_pdf_docx_xlsx_pptx':'utf8_text_only',send:'binary_publication'},
+-        voice:{receive:'available',understanding:asr?'local_asr_first60s_or_protocol_transcription':'protocol_transcription_only',send:decoder&&existsSync('/usr/bin/say')?'local_tts_native_silk_unverified_phone':'unavailable'},
+-        video:{receive:'available',understanding:decoder&&imageInput?'six_frames_first60s_and_optional_local_asr':'unavailable',send:'video_publication_unverified_phone'}},
++        voice:{receive:'available',understanding:asr?'local_asr_first60s_or_protocol_transcription':'protocol_transcription_only',send:avDecoder&&existsSync('/usr/bin/say')?'local_tts_native_silk_unverified_phone':'unavailable'},
++        video:{receive:'available',understanding:avDecoder&&imageInput?'six_frames_first60s_and_optional_local_asr':'unavailable',send:'video_publication_unverified_phone'}},
+       // null: Homer imposes no generated-image count limit; input attachment limits still apply.
+       limits:{attachmentsPerMessage:10,nativeImagesPerTurn:null,audioVideoAnalyzedSeconds:60},
+       warning:'收存、传输和本地解码不等于已理解或手机已播放；只可描述本轮实际传入的图像或抽取内容。未知编码明确受限。不得要求从尚未接通的入口重传。'};
+@@ -551,7 +552,13 @@ export class Homer {
+     engine.on("spawn", () => {if(this.main===engine)this.lease("main", engine);});
+     return engine;
+   }
+-  async start() {
++  private desktopStartOwnerUnconfirmed=false;
++  private desktopShutdownStrict=false;
++  private desktopCloseConfirmed=false;
++  private workerMcpStopUnconfirmed=false;
++  async start(options:{keepManagementOnFailure?:boolean}={}) {
++    if(options.keepManagementOnFailure&&this.desktopStartOwnerUnconfirmed)throw Error('desktop_start_owner_unconfirmed');
++    let attemptMain:EngineLike|undefined;
+     try {
+       this.prompts = loadPrompts();
+       this.history.reconcile();
+@@ -559,6 +566,7 @@ export class Homer {
+         .prepare("SELECT key,value FROM meta WHERE key LIKE 'lease:%'")
+         .all() as { key: string; value: string }[];
+       for (const lease of leases) {
++        if(options.keepManagementOnFailure&&lease.key==='lease:native-control'&&this.nativeControl?.pid===JSON.parse(lease.value).pid)continue;
+         if (!(await terminateLease(JSON.parse(lease.value))))
+           throw new Error("orphan_stop_unconfirmed");
+         this.store.db.prepare("DELETE FROM meta WHERE key=?").run(lease.key);
+@@ -581,6 +589,7 @@ export class Homer {
+       this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args) => this.mainActivity(tool,()=>PENDING_TOOLS.some(t=>t.name===tool)?this.pendingTool(tool,args):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):tool==="capabilities"?this.manageCapabilities(args,"agent"):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):RECURSIVE_TOOLS.some(t=>t.name===tool)?this.recursiveTool(this.mainActor(),tool,args):this.interactionTool(tool, args),args),catalog);
+       await this.interactionMcp.start();
+       this.main = this.createMain(cwd,savedThread);
++      attemptMain=this.main;
+       const start = this.main.start();
+       this.lease("main", this.main);
+       const threadId = await start;
+@@ -600,8 +609,24 @@ export class Homer {
+       this.scheduleInternal();
+       this.drainMain();
+     } catch (e) {
+-      await this.main?.close();
++      const failedMain=options.keepManagementOnFailure?attemptMain:this.main;
++      const mainStopped=failedMain?await failedMain.close():undefined;
+       await this.interactionMcp?.close();
++      if(options.keepManagementOnFailure){
++        const orphan=e instanceof Error&&e.message==='orphan_stop_unconfirmed';
++        if(orphan||mainStopped===false){
++          this.desktopStartOwnerUnconfirmed=true;this.mainBroken=true;
++          this.mainRecoveryError=orphan?'orphan_stop_unconfirmed':'main_stop_unconfirmed';
++          throw Error(this.mainRecoveryError);
++        }
++        if(attemptMain&&mainStopped===true){
++          const lease=this.store.meta('lease:main');
++          if(lease&&JSON.parse(lease).pid===attemptMain.pid)this.store.db.prepare("DELETE FROM meta WHERE key='lease:main'").run();
++          if(this.main===attemptMain)this.main=undefined;
++        }
++        this.interactionMcp=undefined;
++        throw e;
++      }
+       await this.nativeControl?.close();
+       this.store.close();
+       this.closed = true;
+@@ -1100,7 +1125,8 @@ export class Homer {
+   cancelQueued(input:Parameters<MainInputs['cancel']>[0]){const result=this.inputs.cancel(input);this.scheduleInputs();return result;}
+   moveQueued(input:Parameters<MainInputs['move']>[0]){const result=this.inputs.move(input);this.scheduleInputs();return result;}
+   conversationState(){
+-    const threadId=this.store.meta('mainThread')!;
++    const threadId=this.store.meta('mainThread');
++    if(!threadId)return {observedAtMs:Date.now(),threadId:'',processNodes:[],...projectConversation([],[],[]),acceptedRequestIds:[],conversationView:2 as const,isRunning:false,activeMessageId:null,generation:null,mainActivity:null,usage:null};
+     const processNodes=this.processes.list(threadId),history=this.history.list(threadId).map(message=>({...message,...(message.attachments?{media:message.attachments.map(ref=>this.media.view(ref))}:{})}));
+     const display=projectConversation(history,processNodes,this.inputs.list());
+     return {observedAtMs:Date.now(),threadId,processNodes,...display,acceptedRequestIds:this.history.acceptedRequestIds(threadId),conversationView:2 as const,isRunning:!!this.mainContext?.messageId,activeMessageId:this.mainContext?.messageId??null,generation:this.mainContext?.generation??null,mainActivity:this.mainActivityState(),usage:nativeTokenUsage(JSON.parse(this.store.meta('mainUsage')??'null'))};
+@@ -1536,8 +1562,9 @@ export class Homer {
+     this.mainApprovals.end('worker-native:'+slot.id);
+     let stopped=false;
+     try{stopped=await slot.engine.close();}catch(error){this.store.event(slot.id,'engine_stop_unconfirmed',engineError(error));}
+-    try{await slot.mcp?.close();}catch(error){this.store.event(slot.id,'mcp_close_failed',engineError(error));}
+-    return stopped;
++    let mcpStopped=true;
++    try{await slot.mcp?.close();}catch(error){mcpStopped=false;this.workerMcpStopUnconfirmed=true;this.store.event(slot.id,'mcp_close_failed',engineError(error));}
++    return stopped&&(!this.desktopShutdownStrict||mcpStopped);
+   }
+   private title(r: Run) {
+     return (
+@@ -1853,8 +1880,9 @@ export class Homer {
+       !this.interactions.list().some(i => i.state === "pending_main" || i.state === "pending_user") && this.tasks.safeToUpgrade();
+     return { safe };
+   }
+-  async close() {
+-    if (this.closing || this.closed) return;
++  async close(options:{requireAllOwnersConfirmed?:boolean}={}) {
++    if (this.closing || this.closed) {if(options.requireAllOwnersConfirmed&&!this.desktopCloseConfirmed)throw Error('desktop_owner_stop_unconfirmed');return;}
++    this.desktopShutdownStrict=!!options.requireAllOwnersConfirmed;
+     this.closing = true;
+     this.uploadAbort.abort();await Promise.allSettled([...this.uploads]);
+     // Pending native account operations must settle before their serial queue
+@@ -1878,19 +1906,27 @@ export class Homer {
+     while (this.executions.size) await new Promise((r) => setTimeout(r, 10));
+     await this.interactionMcp?.close();
+     await this.accountManager?.close();
+-    if(controlStopped)this.store.db.prepare("DELETE FROM meta WHERE key='lease:native-control'").run();
++    const releaseOwnLease=(key:string,engine:EngineLike|undefined,confirmed:boolean)=>{
++      if(!confirmed)return;
++      if(options.requireAllOwnersConfirmed){const saved=this.store.meta(key);if(!engine||saved&&JSON.parse(saved).pid!==engine.pid)return;}
++      this.store.db.prepare("DELETE FROM meta WHERE key=?").run(key);
++    };
++    releaseOwnLease('lease:native-control',this.nativeControl,controlStopped);
+     if (mainStopped)
+-      this.store.db.prepare("DELETE FROM meta WHERE key='lease:main'").run();
++      releaseOwnLease('lease:main',this.main,mainStopped);
+     else
+       await this.emit({
+         type: "error",
+         text: "主 Agent 停止未获确认：main_stop_unconfirmed；重启时将继续对账。",
+       });
++    const desktopOwnersRemain=options.requireAllOwnersConfirmed&&(this.desktopStartOwnerUnconfirmed||this.workerMcpStopUnconfirmed||!!this.store.db.prepare("SELECT 1 FROM meta WHERE key LIKE 'lease:%' LIMIT 1").get());
+     this.receptionTimings?.close();
+     this.store.close();
+     this.closed = true;
+     this.unlock();
+     if (!mainStopped) throw new Error("main_stop_unconfirmed");
+     if(!controlStopped)throw Error("capability_control_stop_unconfirmed");
++    if(desktopOwnersRemain)throw Error('desktop_owner_stop_unconfirmed');
++    this.desktopCloseConfirmed=true;
+   }
+ }
+diff --git a/ui/homer-app.tsx b/ui/homer-app.tsx
+index bf0fd70..3aaef00 100644
+--- a/ui/homer-app.tsx
++++ b/ui/homer-app.tsx
+@@ -487,7 +487,10 @@ function HomerApp() {
+     events.addEventListener("state", event => {
+       if (disposed || activeEvents !== events) return;
+       const next = JSON.parse((event as MessageEvent<string>).data) as WebState;
+-      if (!next.threadId) { setConnected(false); setConnectionError("服务尚未就绪，正在等待主对话。"); return; }
++      if (!next.threadId || next.upgrade.phase==='management') {
++        if(next.upgrade.phase==='management')setState(next);
++        setConnected(false);setConnectionError(next.upgrade.code==='desktop_account_required'?'荷马尚未连接账号，请完成账号连接后重新打开。':next.upgrade.code?'荷马启动未完成，请核对后重新打开。':'服务尚未就绪，正在等待主对话。');return;
++      }
+       if (verifiedThread.current && next.threadId !== verifiedThread.current) {
+         for(const controller of activeReads.current.controllers)controller.abort();for(const timer of activeReads.current.timers)clearTimeout(timer);activeReads.current.timers.clear();
+         activePages.current.queue.invalidate();activePages.current.interactions.invalidate();
+diff --git a/tests/desktop-service-startup.test.mjs b/tests/desktop-service-startup.test.mjs
+new file mode 100644
+index 0000000..59eeb7e
+--- /dev/null
++++ b/tests/desktop-service-startup.test.mjs
+@@ -0,0 +1,41 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {EventEmitter} from 'node:events';
++import {mkdirSync,mkdtempSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++// The caller points this at the complete bounded maintenance-source build.
++const {Homer}=await import(process.env.HOMER_TEST_SERVICE_MODULE);
++const {Store}=await import(new URL('./store.js',process.env.HOMER_TEST_SERVICE_MODULE));
++const parent=resolve('.codex/scratch/macos-desktop-application/startup-unit-tests');mkdirSync(parent,{recursive:true});
++function fixture(){const root=mkdtempSync(join(parent,'synthetic-'));mkdirSync(join(root,'runtime'));let starts=0;
++ class Engine extends EventEmitter{async start(){starts++;throw Error('synthetic_start_failed');}async close(){return true;}async interrupt(){return true;}async turn(){return {status:'completed',text:''};}}
++ const cfg={workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
++ const app=new Homer(cfg,async()=>{},()=>new Engine());return {root,app,starts:()=>starts};
++}
++test('desktop retains an unconfirmed old main lease when no new main was created',async()=>{
++ const f=fixture(),lease=JSON.stringify({pid:process.pid,identity:'synthetic-unverified-identity'});
++ f.app.store.setMeta('lease:main',lease);
++ await assert.rejects(f.app.start({keepManagementOnFailure:true}),/orphan_stop_unconfirmed/);
++ assert.equal(f.starts(),0);assert.equal(f.app.store.meta('lease:main'),lease);
++ await assert.rejects(f.app.start({keepManagementOnFailure:true}),/desktop_start_owner_unconfirmed/);
++ assert.equal(f.starts(),0);
++ await assert.rejects(f.app.close({requireAllOwnersConfirmed:true}),/desktop_owner_stop_unconfirmed/);
++ const db=new Store(join(f.root,'runtime/homer.sqlite'));assert.equal(db.meta('lease:main'),lease);db.close();
++});
++test('desktop closes only a newly created failed main and keeps management store open',async()=>{
++ const f=fixture();process.chdir(f.root);await assert.rejects(f.app.start({keepManagementOnFailure:true}),/synthetic_start_failed/);
++ assert.equal(f.starts(),1);assert.equal(f.app.store.meta('lease:main'),undefined);
++ assert.equal(f.app.conversationState().threadId,'');await f.app.close({requireAllOwnersConfirmed:true});
++});
++test('desktop shutdown rejects a leftover Worker owner even when close() did not throw',async()=>{
++ const f=fixture();f.app.store.setMeta('lease:synthetic-worker',JSON.stringify({pid:99999999,identity:'synthetic'}));
++ f.app.workers.set('synthetic-worker',{id:'synthetic-worker',engine:{close:async()=>false}});
++ await assert.rejects(f.app.close({requireAllOwnersConfirmed:true}),/desktop_owner_stop_unconfirmed/);
++ const db=new Store(join(f.root,'runtime/homer.sqlite'));assert.ok(db.meta('lease:synthetic-worker'));db.close();
++});
++for(const kind of ['main','native-control'])test(`desktop shutdown never claims ${kind} stop=false as confirmed`,async()=>{
++ const f=fixture();f.app[kind==='main'?'main':'nativeControl']={close:async()=>false};
++ f.app.store.setMeta('lease:'+kind,JSON.stringify({pid:99999999,identity:'synthetic'}));
++ await assert.rejects(f.app.close({requireAllOwnersConfirmed:true}),/stop_unconfirmed/);
++ const db=new Store(join(f.root,'runtime/homer.sqlite'));assert.ok(db.meta('lease:'+kind));db.close();
++});
+diff --git a/tests/desktop-profile.test.mjs b/tests/desktop-profile.test.mjs
+new file mode 100644
+index 0000000..1313aa7
+--- /dev/null
++++ b/tests/desktop-profile.test.mjs
+@@ -0,0 +1,27 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {prepareDesktopProfile,acquireDesktopOwner} from '../scripts/desktop-profile.mjs';
++
++const parent=resolve('.codex/scratch/macos-desktop-application/profile-unit-tests');mkdirSync(parent,{recursive:true});
++const make=()=>mkdtempSync(join(parent,'synthetic-'));
++const version={format:1,schema:'synthetic-schema',codex:'0.163.0'};
++test('desktop refuses an unmarked existing directory without mutating it',()=>{
++ const root=make();writeFileSync(join(root,'sentinel'),'untouched');
++ assert.throws(()=>prepareDesktopProfile(root,version),/desktop_data_unrecognized/);
++ assert.equal(readFileSync(join(root,'sentinel'),'utf8'),'untouched');assert.equal(existsSync(join(root,'runtime')),false);
++});
++test('desktop explicitly creates and reuses only its own compatible profile',()=>{
++ const root=make();writeFileSync(join(root,'.homer-desktop-new'),'{"format":1}');
++ const first=prepareDesktopProfile(root,version);writeFileSync(join(first.runtime,'synthetic-history'),'retained');
++ const second=prepareDesktopProfile(root,version);assert.equal(first.runtime,second.runtime);assert.equal(readFileSync(join(second.runtime,'synthetic-history'),'utf8'),'retained');
++ assert.throws(()=>prepareDesktopProfile(root,{...version,schema:'future'}),/desktop_schema_incompatible/);
++ assert.equal(readFileSync(join(second.runtime,'synthetic-history'),'utf8'),'retained');
++});
++test('codexHome ownership refuses same-home copies and never clears a stale owner',()=>{
++ const root=make();const release=acquireDesktopOwner(root,()=> 'synthetic-identity');
++ assert.throws(()=>acquireDesktopOwner(root,()=> 'another-identity'),/desktop_owner_conflict/);release();
++ writeFileSync(join(root,'desktop-owner.json'),'{"pid":99999999,"identity":"synthetic-stale"}');
++ assert.throws(()=>acquireDesktopOwner(root,()=> 'new-owner'),/desktop_owner_conflict/);assert.equal(JSON.parse(readFileSync(join(root,'desktop-owner.json'))).pid,99999999);
++});
+diff --git a/tests/desktop-management.test.mjs b/tests/desktop-management.test.mjs
+new file mode 100644
+index 0000000..d1faadc
+--- /dev/null
++++ b/tests/desktop-management.test.mjs
+@@ -0,0 +1,9 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {desktopManagementAllowed} from '../src/desktop-management.ts';
++test('desktop before readiness exposes state only; removed capability APIs stay removed',()=>{
++ for(const method of ['state','history.state'])assert.equal(desktopManagementAllowed(method),true);
++ for(const method of ['capabilities.state','capabilities.manage','submit','history.page','queue.move','media.upload','respond']){
++  for(const action of ['account_state','account_login','mcp_save'])assert.equal(desktopManagementAllowed(method,{action,approve:true}),false);
++ }
++});
+diff --git a/tests/desktop-source.test.mjs b/tests/desktop-source.test.mjs
+new file mode 100644
+index 0000000..16ed479
+--- /dev/null
++++ b/tests/desktop-source.test.mjs
+@@ -0,0 +1,29 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {mkdtempSync,mkdirSync,readFileSync,existsSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {execFileSync} from 'node:child_process';
++import {prepareDesktopSource,DESKTOP_CANDIDATE_PATHS} from '../scripts/desktop-source.mjs';
++const root=resolve('.'),parent=join(root,'.codex/scratch/desktop-integration-20261023/source-tests');mkdirSync(parent,{recursive:true});
++// This historical committed tree deliberately lacks desktop support.
++const sourceSha='3c5461180575aa90f9430f35152f444530185913';
++test('source SHA must be complete and extraction cannot overwrite an existing stage',()=>{
++ const stage=join(mkdtempSync(join(parent,'invalid-')),'stage');
++ assert.throws(()=>prepareDesktopSource({root,sourceSha:'main',stage}),/desktop_full_git_sha_required/);
++ mkdirSync(stage);assert.throws(()=>prepareDesktopSource({root,sourceSha,stage}),/desktop_fresh_source_stage_required/);
++});
++test('normal input cannot silently package the uncommitted desktop integration',()=>{
++ const stage=join(mkdtempSync(join(parent,'normal-')),'stage');
++ assert.throws(()=>prepareDesktopSource({root,sourceSha,stage}),/desktop_build_entry_not_committed/);
++});
++test('explicit preparation overlays only desktop owners and retains exact committed business tree',()=>{
++ const out=mkdtempSync(join(parent,'preparation-')),stage=join(out,'stage');
++ const provenance=prepareDesktopSource({root,sourceSha,stage,prepareCandidate:true});
++ assert.equal(provenance.gitSha,sourceSha);assert.equal(provenance.preparation,true);assert.equal(provenance.publishable,false);
++ assert.deepEqual(provenance.candidateInputs.map(x=>x.path),DESKTOP_CANDIDATE_PATHS);
++ for(const path of ['src/recursive-tasks.ts','src/web-history.ts','src/tools.ts','src/web-server.ts','ui/task-status.tsx']){
++  assert.deepEqual(readFileSync(join(stage,path)),execFileSync('/usr/bin/git',['show',sourceSha+':'+path]));
++ }
++ assert.equal(existsSync(join(stage,'.codex/private')),false);
++ assert.equal(JSON.parse(readFileSync(join(out,'source-provenance.json'))).publishable,false);
++});
+diff --git a/tests/macos-desktop-runtime.test.mjs b/tests/macos-desktop-runtime.test.mjs
+new file mode 100644
+index 0000000..16f56d7
+--- /dev/null
++++ b/tests/macos-desktop-runtime.test.mjs
+@@ -0,0 +1,74 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {spawn} from 'node:child_process';
++import {mkdirSync,mkdtempSync,copyFileSync,chmodSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {createServer} from 'node:net';
++import {DatabaseSync} from 'node:sqlite';
++const scratch=resolve('.codex/scratch/macos-desktop-application'),app=resolve(process.env.HOMER_TEST_APP??join(scratch,'Homer.app'));
++const resources=join(app,'Contents/Resources'),node=join(app,'Contents/MacOS/node');
++const wait=ms=>new Promise(r=>setTimeout(r,ms));
++const parent=resolve(process.env.HOMER_TEST_SCRATCH??join(scratch,'runtime-tests'));mkdirSync(parent,{recursive:true});
++function profile(state={}){
++ const root=mkdtempSync(join(parent,'中文 空格-'));
++ writeFileSync(join(root,'.homer-desktop-test-profile'),'{"format":1}');
++ copyFileSync(resolve('tests/fixtures/desktop-app-server.mjs'),join(root,'fixture-codex.mjs'));chmodSync(join(root,'fixture-codex.mjs'),0o700);
++ writeFileSync(join(root,'fixture-control.json'),JSON.stringify(state));
++ for(const part of ['host-home','tmp'])mkdirSync(join(root,part));return root;
++}
++function launch(root){
++ const child=spawn(node,[join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',root,'--test-profile'],{cwd:root,env:{PATH:'/usr/bin:/bin',HOME:join(root,'host-home'),TMPDIR:join(root,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','pipe']});
++ const events=[];let buffer='',stderr='';child.stdout.on('data',bytes=>{buffer+=bytes;let at;while((at=buffer.indexOf('\n'))>=0){events.push(JSON.parse(buffer.slice(0,at)));buffer=buffer.slice(at+1);}});child.stderr.on('data',b=>{stderr+=b;});
++ const exited=new Promise(r=>child.once('exit',(code,signal)=>r({code,signal})));
++ return {child,events,exited,stderr:()=>stderr,async url(){for(let i=0;i<500;i++){const event=events.find(e=>e.kind==='url');if(event)return event.url;const error=events.find(e=>e.kind==='error');if(error)throw Error(error.code);if(child.exitCode!==null)throw Error('runtime exited');await wait(20);}throw Error('URL timeout');},async stop(){child.stdin.end('{"kind":"quit"}\n');let timer;const exit=await Promise.race([exited,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('stop timeout')),20000)})]).finally(()=>clearTimeout(timer));assert.equal(exit.code,0,JSON.stringify(events));assert.ok(events.some(e=>e.kind==='stopped'));assert.equal(existsSync(join(root,'codex/desktop-owner.json')),false);}};
++}
++const request=(url,path,input,headers={})=>fetch(url+path,{method:input===undefined?'GET':'POST',headers:{Origin:url,...(input===undefined?{}:{'Content-Type':'application/json'}),...headers},...(input===undefined?{}:{body:JSON.stringify(input)})});
++async function stateWhen(url,predicate){for(let i=0;i<500;i++){const r=await request(url,'/api/state');if(r.ok){const s=await r.json();if(predicate(s))return s;}await wait(20);}throw Error('state timeout');}
++const methods=root=>existsSync(join(root,'fixture-methods.jsonl'))?readFileSync(join(root,'fixture-methods.jsonl'),'utf8').trim().split('\n').map(x=>JSON.parse(x).method):[];
++test('Finder requests reach the existing artifact owner and missing authorization cannot launch Finder',{timeout:20000},async()=>{
++ const root=profile({loggedIn:true}),run=launch(root);
++ try{
++  const url=await run.url();await stateWhen(url,s=>s.upgrade.phase==='running');
++  const response=await request(url,'/api/files/result-synthetic-missing/reveal',{});
++  assert.equal(response.status,409);assert.equal((await response.json()).error,'artifact_not_authorized');
++ }finally{await run.stop();}
++});
++test('desktop unopened account stays read-only and cannot restore deleted login endpoints',{timeout:30000},async()=>{
++ const root=profile(),run=launch(root);
++ try{
++  const url=await run.url();assert.equal((await fetch(url)).status,200);
++  const s=await stateWhen(url,s=>s.upgrade.phase==='management'&&s.upgrade.code==='desktop_account_required');
++  assert.equal(s.threadId,'');assert.equal(s.upgrade.accepting,false);
++  assert.equal((await request(url,'/api/capabilities')).status,404);
++  assert.equal((await request(url,'/api/capabilities',{action:'account_login',approve:true})).status,404);
++  assert.equal((await request(url,'/api/messages',{requestId:'synthetic-blocked',text:'synthetic'})).status,409);
++  const db=new DatabaseSync(join(root,'runtime/gateway/transport.sqlite'),{readOnly:true});
++  try{assert.equal(db.prepare('SELECT count(*) n FROM transport_requests').get().n,0);}finally{db.close();}
++  assert.equal(methods(root).includes('thread/start'),false);
++  await run.stop();
++ }finally{if(run.child.exitCode===null)run.child.stdin.end('{"kind":"quit"}\n');}
++});
++test('packaged current history, queue, upload and same-thread restart retain synthetic data',{timeout:45000},async()=>{
++ const root=profile({loggedIn:true});let run=launch(root);
++ try{
++  const url=await run.url(),s=await stateWhen(url,s=>s.upgrade.phase==='running');
++  assert.equal(s.threadId,'synthetic-desktop-main');
++  const history=await (await request(url,'/api/history/state')).json();assert.equal(history.history.protocol,3);assert.equal(history.threadId,s.threadId);
++  assert.equal((await request(url,'/api/capabilities')).status,404);
++  assert.equal((await fetch(url+'/api/state',{headers:{Origin:'https://example.invalid'}})).status,403);
++  const sent=await request(url,'/api/messages',{requestId:'synthetic-conversation',text:'synthetic retained request'});
++  assert.equal(sent.status,202,await sent.text());
++  await stateWhen(url,s=>s.messages.some(m=>m.role==='assistant'&&m.requestId==='synthetic-conversation'&&m.status==='completed'&&m.text.includes('隔离测试答复')));
++  const upload=await fetch(url+'/api/uploads',{method:'POST',headers:{Origin:url,'Content-Type':'application/octet-stream','X-Homer-Thread':s.threadId,'X-Homer-Request':'synthetic-draft','X-Homer-Upload':'synthetic-upload','X-Homer-Filename':encodeURIComponent('synthetic.txt')},body:Buffer.from('synthetic attachment')});
++  assert.equal(upload.status,201,await upload.text());
++  const second=launch(root);assert.equal((await second.exited).code,1);assert.ok(second.events.some(e=>e.code==='desktop_owner_conflict'));
++  await run.stop();writeFileSync(join(root,'workspace/synthetic-retained'),'unchanged');
++  const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
++  let before;
++  try{before=db.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all();assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);}finally{db.close();}
++  run=launch(root);const next=await stateWhen(await run.url(),s=>s.upgrade.phase==='running');assert.equal(next.threadId,s.threadId);
++  assert.equal(readFileSync(join(root,'workspace/synthetic-retained'),'utf8'),'unchanged');
++  const after=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});try{assert.deepEqual(after.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all(),before);}finally{after.close();}
++  assert.equal(methods(root).filter(m=>m==='thread/start').length,1);assert.ok(methods(root).includes('thread/resume'));await run.stop();
++ }finally{if(run.child.exitCode===null)run.child.stdin.end('{"kind":"quit"}\n');}
++});
+diff --git a/tests/fixtures/desktop-app-server.mjs b/tests/fixtures/desktop-app-server.mjs
+new file mode 100644
+index 0000000..5fd4dcb
+--- /dev/null
++++ b/tests/fixtures/desktop-app-server.mjs
+@@ -0,0 +1,59 @@
++#!/usr/bin/env node
++// Offline native-protocol fixture. All files, prompts and accounts are synthetic.
++import {createInterface} from 'node:readline';
++import {existsSync,readFileSync,appendFileSync,writeFileSync,mkdirSync,readdirSync} from 'node:fs';
++import {join,dirname,resolve} from 'node:path';
++if(process.argv.includes('--version')){console.log('codex-cli 0.163.0');process.exit(0);}
++const home=process.env.CODEX_HOME;
++if(!home||!existsSync(join(dirname(home),'.homer-desktop-test-profile')))process.exit(80);
++mkdirSync(home,{recursive:true});
++const statePath=join(dirname(home),'fixture-control.json');
++const state=()=>existsSync(statePath)?JSON.parse(readFileSync(statePath,'utf8')):{};
++const send=value=>process.stdout.write(JSON.stringify(value)+'\n');
++const settings=Object.fromEntries(process.argv.flatMap((arg,i)=>{
++  if(process.argv[i-1]!=='-c')return [];const at=arg.indexOf('=');let value=arg.slice(at+1);
++  try{value=JSON.parse(value.replace(/("(?:[^"\\]|\\.)*")=/g,'$1:'));}catch{}
++  return [[arg.slice(0,at),value]];
++}));
++const mcp=settings['mcp_servers.homer_interactions'];
++let thread,turn;
++const trace=method=>appendFileSync(join(dirname(home),'fixture-methods.jsonl'),JSON.stringify({method,pid:process.pid})+'\n');
++process.on('SIGTERM',()=>{if(state().refuseStop)return;process.exit(0);});
++createInterface({input:process.stdin}).on('line',line=>{void receive(JSON.parse(line));});
++async function receive(m){
++  if(!m.method)return;trace(m.method);if(m.id===undefined)return;
++  const reply=result=>send({id:m.id,result});
++  if(m.method==='initialize')return reply({userAgent:'desktop-synthetic/0.163.0',codexHome:home});
++  if(m.method==='config/read')return reply({config:{features:{memories:true},memories:{dedicated_tools:true},mcp_servers:mcp?{homer_interactions:mcp}:{}},layers:[{name:{type:'sessionFlags'},config:{mcp_servers:mcp?{homer_interactions:mcp}:{}}},{name:{type:'user',file:join(home,'config.toml')},version:'synthetic-config-1',config:{}}]});
++  if(m.method==='account/read'){
++    if(state().offline)return send({id:m.id,error:{code:-32000,message:'synthetic offline'}});
++    return reply({account:state().loggedIn?{type:'chatgpt',email:'synthetic@example.invalid',planType:'synthetic'}:null});
++  }
++  if(m.method==='account/login/start')return reply({type:'chatgpt',loginId:'synthetic-login',authUrl:'https://example.invalid/homer-login'});
++  if(m.method==='account/login/cancel')return reply({status:'canceled'});
++  if(m.method==='account/logout'){writeFileSync(statePath,JSON.stringify({...state(),loggedIn:false}));return reply({});}
++  if(m.method==='skills/list'){
++    const skills=join(home,'skills');return reply({data:[{skills:existsSync(skills)?readdirSync(skills).filter(name=>!name.startsWith('.')).map(name=>({name,path:join(skills,name,'SKILL.md'),enabled:true,description:'合成初始化技能'})):[],errors:[]}]});
++  }
++  if(m.method==='environment/info')return reply({shell:'/bin/zsh'});
++  if(m.method==='model/list')return reply({data:[]});
++  if(m.method==='thread/start'||m.method==='thread/resume'){
++    if(state().failThread)return send({id:m.id,error:{code:-32000,message:'synthetic thread failure'}});
++    thread=m.params.threadId??'synthetic-desktop-main';
++    return reply({thread:{id:thread},activePermissionProfile:{id:'homer'},approvalPolicy:'on-request'});
++  }
++  if(m.method==='mcpServerStatus/list')return reply({data:mcp?[{name:'homer_interactions',tools:Object.fromEntries(mcp.enabled_tools.map(name=>[name,{}]))}]:[]});
++  if(m.method==='thread/backgroundTerminals/list')return reply({data:[]});
++  if(m.method==='turn/start'){
++    if(state().crashOnTurn){process.exit(70);return;}
++    turn='synthetic-turn-'+m.id;reply({turn:{id:turn,status:'inProgress'}});
++    send({method:'turn/started',params:{threadId:thread,turn:{id:turn,status:'inProgress'}}});
++    if(state().holdTurn)return;
++    send({method:'item/completed',params:{threadId:thread,turnId:turn,item:{id:'synthetic-answer-'+turn,type:'agentMessage',phase:'final_answer',text:'这是隔离测试答复；没有调用真实模型。'}}});
++    send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'completed'}}});return;
++  }
++  if(m.method==='turn/interrupt'){
++    reply({});send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'interrupted'}}});return;
++  }
++  return reply({data:[]});
++}
+diff --git a/docs/2026-10-23-desktop-integration-candidate.md b/docs/2026-10-23-desktop-integration-candidate.md
+new file mode 100644
+index 0000000..642cbda
+--- /dev/null
++++ b/docs/2026-10-23-desktop-integration-candidate.md
+@@ -0,0 +1,59 @@
++# 桌面整合候选计划（未发布）
++
++2026-10-23，基线 `3c5461180575aa90f9430f35152f444530185913`。本任务只在登记隔离 worktree 制作候选及补丁；不修改 main、不提交、不安装。完成标准是可审阅的准确差异、来源清单和有边界的构建/冷启动证据。
++
++目前 CLI/Web 与桌面旧候选分离。目标是复用已有 Swift/AppKit/WKWebView 包装，包内运行当前前后端，同时保持应用身份、桌面专属数据路径、原业务状态机和权限合同。风险集中在未就绪状态、严格退出、资源身份和编译输入；用隔离合成数据验证，不接生产账号、不调用模型。
++
++准确计划范围：
++
++- 新增 `packaging/macos/{HomerApplication.swift,ImageDecoder.swift,Info.plist,dependencies-lock.json,distribution-policy.json,node-distribution-entitlements.plist}`：取归档已核 SHA 文件，不引入旧137文件基线。
++- 新增 `scripts/{desktop-runtime.mjs,desktop-profile.mjs,prepare-desktop-dependencies.mjs,macos-distribution.mjs}`：复用现有脚本，按当前schema/历史协议接线；生产配置/账号迁入不在本候选执行。
++- 新增 `scripts/{build-macos-desktop.mjs,desktop-source.mjs}`：重写输入选择部分，以显式准确Git SHA完整树导出；不覆盖7个旧owner、不套旧Logo补丁。准备模式只能覆盖本计划明确文件，并记录候选来源hash及不可发布标记；正式构建拒绝准备输入。
++- 新增 `src/{desktop-resources.ts,desktop-management.ts}`；按hunk修改 `src/{config.ts,dev-host.ts,service.ts,engine.ts,media-decode.ts}` 与 `scripts/dev.mjs`：接入包身份、随包解码器、就绪与严格退出。保留当前主队列/自动回传/schema/权限owner。桌面未就绪只允许状态读取，不恢复已经删除的能力管理/登录HTTP页面。
++- 修改 `ui/homer-app.tsx` 中未就绪状态说明，保留原组件/布局，不新增登录入口或旧能力页面。
++- 新增 `tests/{desktop-service-startup.test.mjs,desktop-profile.test.mjs,desktop-source.test.mjs,desktop-management.test.mjs,macos-desktop-runtime.test.mjs}` 及 `tests/fixtures/desktop-app-server.mjs`；仅保留适用于当前合同的隔离用例，不导入旧逻辑记忆断言。
++- 补充范围：`scripts/seamless-synthetic-fixture.mjs` 的现有假引擎注入需要覆盖新桌面就绪函数的版本读取；仍只替换 `codexVersion(...)`，避免夹具删掉导入后编译失败，不改真实运行入口或测试断言。
++- 补充接线：已提交Finder owner在当前launcher/host遗漏转发。包内合成红例得到 `artifact_reveal_unsupported`，将在已有 `scripts/dev.mjs`、`src/dev-host.ts` 各补一个转发分支；沿原 `homerWebBridge.revealArtifact` 和成果授权校验，不增加系统命令或新权限。
++- 本说明与 `docs/2026-10-23-desktop-release-readiness.md`、最终非敏感来源/补丁清单和验收记录。
++
++先运行严格停止/启动失败的红例，再适配原有行为，随后源码类型、Web类型/build、官方CSS、准确Git输入与准备标记检查、隔离包冷启动/同thread重启/数据保留/未知owner拒绝。完整系统签名要在宿主上下文验证；准备包采用原有本机候选签名，不声称Developer ID、公证或已安装。若当前无登录入口与旧桌面首次登录合同发生冲突，保持删除决定，准确列为发布待决事项，不通过旧页面重新引入。
++
++## 2026-10-23 候选结果
++
++已在原登记worktree完成最小桌面接线，main和本分支HEAD仍为上述基线，没有commit/merge/main写入或安装。代码建议提交范围为来源清单中的28个文件；本说明、近期盘点及两个身份/验收JSON为配套文档。补丁：[完整候选](patches/2026-10-23-desktop-integration-candidate.patch)；[来源与逐文件身份](patches/2026-10-23-desktop-integration-sources.json)；[脱敏验收索引](patches/2026-10-23-desktop-integration-verification.json)。暂存区保持未改动，本任务临时依赖链接已移除。完整补丁从准确基线执行dry-run及独立重放，32个结果文件与候选逐字节一致（28个代码文件、4个配套文档），没有依赖隐藏dirty或暂存输入。
++
++构建入口为 `scripts/build-macos-desktop.mjs --source-sha <完整SHA>`。正式模式从Git archive读取完整已提交树，逐项核对执行中的桌面构建入口；缺未提交桌面代码时拒绝，而不是回退读dirty。准备模式必须显式 `--prepare-candidate`，仅覆盖 `DESKTOP_CANDIDATE_PATHS` 中22个桌面/夹具文件，记录路径及SHA，不能使用distribution模式。其manifest为 `preparation:true,publishable:false`，原生壳和runtime均拒绝真实profile。旧137项产品锁、7个旧owner覆盖以及旧Logo/UI补丁拼装已移除。源码输入、构建输出与维护源分离，仅只读复用维护源依赖。
++
++共享owner只合入桌面增量：包身份保护、随包ImageIO/解码边界、已有账号就绪判断、当前history protocol3、未就绪禁写和严格退出。保留当前主队列与自动回传、schema4以及原授权校验；未修改schema owner或权限政策。未就绪空状态复用原 `projectConversation`，避免另建字段合同。Finder仅补launcher/host转发，缺授权请求必须在原成果owner被拒绝，不执行系统动作。旧能力/登录HTTP页面仍为404；管理阶段只读状态，未恢复登录或安装入口。
++
++准备包位于任务scratch `desktop-integration-20261023/build-006/Homer.app`，版本0.1.0 build4，稳定bundle identifier `app.homer.desktop.candidate`，Git基线 `3c5461180575aa90f9430f35152f444530185913`。它是**未提交准备包**，不是仅凭该基线即可复现的正式发布；准确候选还依赖来源清单所列桌面增量。构建Node固定22.22.0，随包Node22.22.0/Codex0.163.0、89个生产JS包。sourceHash `71a077e3aad139f78be2c90b2bfa29d801442b080b2e7d687446e942fd918261`，Homer manifest `26d96f8d5e8970aa388542edeedee5812c696be019ba055432bf26ecda79b86e`，UI hash `6a055aa6cec649409da84baaf352efa58fa685ddc839c4cfb3aac68476aea2a5`。ZIP 182800933字节，SHA256 `d6f83c44477bb2ab44e1cc2c227f867bfc7b7f04571d05d8a6c90062e29c0db6`。正常宿主深度严格签名验证exit0；当前是原有ad-hoc本机候选签名，没有Developer ID/公证/Gatekeeper或干净Mac新验收，未清quarantine。
++
++| 验证 | 实际结果与限界 |
++| --- | --- |
++| 启动/停止红绿 | 原main 5项中3失败，接回旧租约/管理保留/严格停止合同后5/5通过 |
++| 最终桌面合同/完整Git输入/profile | 12/12通过；普通模式拒绝未提交入口，准备模式只覆盖明确名单；原主队列、history、tools、web-server和状态UI字节保留准确Git输入 |
++| 最终源码/Web类型、Vite、Swift | 准确build006实际构建通过；Swift保留归档已有actor隔离警告，未冒称零警告 |
++| 官方CSS | 从候选源码source-only快照重现全部官方CSS分支，通过 |
++| 包内原入口 | build006的3项完整测试通过：Finder原owner拒绝、未连接账号只读/空journal、当前history3/队列/上传/原thread重启/文件保留/integrity ok/FK0/第二owner拒绝。全部使用合成profile/假原生协议，无真实模型或Finder动作 |
++| 浏览器 | 最终包实际UI资源：148项通过，320/390/1440等屏宽；2000任务首批20行、折叠0进展请求、下一批40且保焦点；8000任务320px无横溢。独立无账号Chrome、无外网/业务写入；合成耗时不是生产性能承诺 |
++| 真实原生窗口 | 最终build006实际WK渲染/可编辑/无横溢，重开原合成profile保留thread及历史。最终build006由用户在确认框正常退出，实际回执stopAcknowledged=true/exit0；进程消失、桌面owner及两层租约已释放。自动操作曾受CUA_UNAVAILABLE阻断，未强杀或清锁 |
++| 共享回归 | 原组合52项通过；修正假引擎夹具的版本读取替换后，完整网关另1项通过。Web宿主1项401期望/409实际，在准确未修改main的Node22前像同样复现；未改弱断言 |
++| 旧T08累计超时 | 原main准确前像Node22的单项12秒内仍不结束，正常终止本次合成进程组；候选组合按精确名称排除，不记作通过 |
++| 全项目类型 | 准确提交前像137条、最终候选137条，归一化源码绝对路径后逐条完全一致，新增0。其他任务“24条”属于当时组合工作区，不能套用于本次Git提交树 |
++
++全部原始检查位于本worktree `.codex/scratch/desktop-integration-20261023/`；索引只包含非敏感身份和结果，不纳入真实账号或对话正文。WK验收窗口后来出现人工新增输入，这份profile及原生探针证据保持原位；它不再视为可以直接删除的纯合成数据，不把内容写入本说明或公开验收JSON。已提示其使用合成引擎而非已安装生产应用。
++
++本轮发现并修正：旧schema指纹引用已移除的memory-store、重启只接受旧schema3、准备包可能选择真实profile、未就绪返回类型丢orderWarning合同、已提交Finder缺IPC转发。现有数据schema、历史、业务实体和原账号owner没有迁移或重写。改动均在隔离候选，未拼入正式发行包。
++
++## 尚未满足的正式安装条件
++
++1. CTO审阅准确28文件补丁并处理具体提交授权，使闭包真实进入main；后续才选择并冻结完整提交SHA。当前不代提交或合并他人dirty，不以本准备包直接安装。
++2. 原桌面保持 `Application Support/Homer Desktop/{runtime,workspace,codex,host-home,tmp}` 及标记/owner合同。当前开发版Homer的独立HOME、账号、原thread、数据和引用**没有迁入、复制或重绑定**；已有桌面迁入脚本仅合成演练。真实数据采用方式需要准确mapping、owner/租约停写证据和维护点预演，不能新建空账号冒充连续性。
++3. 最新产品删除了能力/登录页，本候选保留删除决定。因此已有账号可自动启动，未连接账号明确停在只读阶段；没有可用的首次登录入口。需要原owner明确“原账号采用/首次连接”路径，不在发布任务恢复旧页面或引入新认证方案。
++最终原生窗口退出条件已满足：用户确认点击“退出并停止工作”，随后核实最终包stopAcknowledged=true、exit0、无进程及owner/锁残留。人工新增输入和对应profile仍保留，不随构建清理。
++
++这些是准确待审事项，不是已安装结果。正式安装仍按发布Skill：候选冷启动通过→实际owner/写入核查→正常退出与一致维护点→正常安装→已安装路径/包/前后端身份及数据连续性验收→清理本次和旧无用安装包。没有真实模型/Fast速度、生产迁入、真实Finder选中、第二Mac或无障碍/IME实测结论。
++
++## 本次准备材料清理
++
++期间出现ENOSPC，先核每一旧准备目录lsof无运行引用、保留来源和构建身份，再删除本任务已替代的build001部分输出及build002–005目录。累计删除逻辑文件大小6151386088字节；这是准备阶段废弃副本回收，不等于APFS物理释放，也不等于安装后的全量收尾。保留build006、所需官方原档案缓存、日志与最小重现材料，旧公证恢复包、真实用户数据、源码历史和当前WK profile均未删。没有挂载DMG/临时卷。
+diff --git a/docs/2026-10-23-desktop-release-readiness.md b/docs/2026-10-23-desktop-release-readiness.md
+new file mode 100644
+index 0000000..a998b54
+--- /dev/null
++++ b/docs/2026-10-23-desktop-release-readiness.md
+@@ -0,0 +1,71 @@
++# Homer 桌面安装发布准备与近期提交盘点
++
++核查时间：2026-10-23 16:48 Asia/Shanghai。状态：两指定前置均已提交且main可达，桌面基线仍缺；**尚未冻结、打包、安装或清理**。本记录不是安装完成证明。后续须重新核对桌面闭包提交、main、运行占用和维护点。
++
++继续进展：已按CTO补充授权在隔离worktree构建未提交的桌面整合准备候选，正式发布仍未冻结或安装。准确范围、补丁、来源及验证见[桌面整合候选](2026-10-23-desktop-integration-candidate.md)。下文“未打包/清理”是16:48历史观察，不代表后来未发生准备构建或本任务废弃副本回收；两者不冒充正式安装交付。
++
++## 仓库与运行边界
++
++- 维护仓库 `/Users/wolf3c/Project/homer`，分支 main；本任务使用现有宿主 worktree `/Users/wolf3c/Project/homer/.cindy-worktrees/proud-kernighan`、分支 `cindy/proud-kernighan`，未创建或切换分支。首次检查 HEAD/main 均为 `ab0c706d22fd8c25bef73f0004cf90367f914037`；核查末 main 为 `3c5461180575aa90f9430f35152f444530185913`。这些是观察值，**不是发布冻结 SHA**。
++- 宿主项目登记仍为维护仓库；本目录在 `git worktree list --porcelain` 中。真正构建前须核宿主对本独立目录的任务登记并正常移动隔离 HEAD 到冻结提交；不得在开发 main 执行切换或使用其可写输出。
++- 维护 main 有大量其他任务的 tracked/untracked/暂存工作，不纳入本版、不代提交。本任务未修改维护树、暂存区或业务数据。
++- 两个标准安装目录 `/Applications`、`~/Applications` 中按 Info.plist 的 bundle identifier 查询均未发现 Homer。历史桌面候选存在不等于曾安装或正在运行。
++- 宿主只读进程核查未发现 Homer 桌面、`scripts/dev.mjs` launcher、桌面构建/签名/公证/镜像切换进程；`lsof -nP -iTCP:4780 -sTCP:LISTEN` 无输出。此为当时快照，不证明其他端口/其他时间没有服务，正式操作前必须重新核查。
++- 旧发布 session `3f6cfa9d-c41f-45b5-b81c-25e4d22ff844` 的 runtime 返回 completed、active=false、record_status=deleted；digest 为 NOT_FOUND。`e6306dcb-0c56-45ec-a458-7c6bd561eb51` 在当前 Cindy runtime/digest 均 NOT_FOUND，不能据此推断其他任务系统中的 engine 状态。本次未停止、恢复或控制这些任务。
++
++## 近期任务与 main
++
++范围为约 15:18–16:48，另保留指定任务。逐项读取 digest 和必要最后交付，再以实际 Git commit/ancestor 核对；表中已有验证是 owner 的提交证据，本轮未重复执行，后续冻结提交仍须补组合验证。
++
++| 任务（session 前缀） | 最终性质 | 实际完整 SHA | main 可达 | 待提交增量 | 可复用证据及限制 | 本版范围 |
++| --- | --- | --- | --- | --- | --- | --- |
++| 移除能力入口 f93d24e3 | 产品 | `280f428a2e9e2f416baf5df00d7c2c4ffb26f7fc` | 是 | owner 已交提交；共享 dirty 不归因 | 22 种旧动作404、三屏、类型/build；后台55/57，2项基线失败 | 纳入候选 |
++| 历史归档/恢复/删除 d6785264 | 产品 | `d8e0bd776e10588d5f99ecd7f97d702869d0b5b8` | 是 | 同上 | 精确暂存快照18/18、服务类型；扩展11项既有失败；真实删除0 | 纳入候选 |
++| 统一主队列 0bab0a53 | 产品 | `ab0c706d22fd8c25bef73f0004cf90367f914037` | 是 | 同上 | 69回归、微信1、浏览器19、前后端类型；旧记忆失败已对照 | 纳入候选 |
++| Finder成果定位 dfbe2c85 | 产品 | `9b5d97c092e558d2d1863634abf4eb1827901e81` | 是 | 同上 | 25回归、浏览器12、类型/build；Finder准确选中GUI未验 | 纳入候选 |
++| Working排查 0417df34 | 后续获准产品修正 | `f365c54850782608e6e9f66f806f36bdf4044407` | 是 | 同上 | 27回归、类型/build、三屏；合成性能无退化 | 纳入候选 |
++| 视觉审查 ea9ab438 | 后续获准产品删减 | `ec34e5d9113fc29171fb81e0bc159ad53afc67cf` | 是 | 同上 | 状态10、消息48、任务卡及8000合成任务；当时全类型有既有TS2345 | 纳入候选 |
++| 样式对比 2bc5b95a | 只读调查/用户纠偏 | 无产品提交 | 不适用 | 无待提交产品要求；后续修正在其他任务 | 只读源码/资源比较；未运行浏览器 | 不为调查补造提交 |
++| Quote默认/焦点 1b83873c | 产品 | `1b52588d5725b343f6095f90ef6fcfe9cad5f4e0` | 是 | owner已交提交；共享dirty不归因 | 16单测、浏览器109、类型/CSS/build；旧多引用1失败 | 纳入候选 |
++| Background Inbox 3f818f42 | Demo后获准产品实施/提交，指定前置 | `3c5461180575aa90f9430f35152f444530185913` | 是 | owner最终交付已读；共享dirty不归因 | review21测试/148浏览器、Web类型/build；2000任务首批20行、折叠0请求；24条既有全类型诊断 | 纳入候选 |
++| 自动回传 1aa0def2 | 产品，指定前置 | `b3f3e1359e713d8d0faf7b32b8ae7da934010c53` | 是 | owner已交提交；共享dirty不归因 | 精确提交61+22=83合成测试、源码类型；261为组合工作区，不能混计 | 纳入候选 |
++| TaskCard事件 ec05972a | **Demo后实际产品实施并提交** | `c84977626af7e234c82a096d18c3d96ebbbdead1` | 是 | owner已交提交；共享dirty不归因 | 34测试、四屏、顶部74、类型/build | 已在main；按最终授权纳入，非纯Demo |
++| 交互架构图 8e2ad9fd | 设计/说明 | 无需产品提交 | 不适用 | 不等待，不混入图件 | 非产品验收 | 排除 |
++
++不能仅凭任务标题的 Demo/排查/审查判断最终性质；上述三项后来已有明确实施及提交。已提交只证明变更进入 main，不代表已安装。没有将工作树残余自动认定为对应任务缺交或批量合并。
++
++## 桌面发布的必要缺口
++
++当前 main 的完整历史未包含 `scripts/build-macos-desktop.mjs`、`scripts/desktop-runtime.mjs` 或 `packaging/macos`。`package.json` 只有 CLI/Web build/start，没有可用于最新 main 的桌面打包入口；当前产品也无 `desktopResources`、桌面管理启动/严格退出接线。
++
++真实已有框架是 Swift/AppKit/WKWebView，应用身份 `app.homer.desktop.candidate`，版本0.1.0 build3，随包Node22.22.0/Codex0.163.0，UI与后端包内绑定、随机本地端口。无需引入Electron/Tauri或新更新平台。
++
++保存的源码入口：`/Users/wolf3c/Project/homer/docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/`。根据 `docs/patches/2026-10-22-macos-source-relocation.json` 枚举的38个文件，本轮全部存在且SHA匹配。它们仍是未整合的旧候选，不能直接执行旧构建得到本版：旧脚本固定137项旧前像，再覆盖7个旧owner；产物将排除今天的main增量，且不绑定完整Git SHA。
++
++交CTO/原owner在main形成独立、可审阅提交的最小闭包：
++
++1. 恢复已有macOS原生包装、资源身份与运行/profile脚本；对 `src/config.ts`、`dev-host.ts`、`service.ts`、`engine.ts`、`media-decode.ts`、`scripts/dev.mjs`、`ui/homer-app.tsx` 逐hunk适配今天的main，保留今天删除能力/登录界面的产品边界，不能整文件覆盖。
++2. 将打包输入改为准确完整已提交树，记录Git SHA、sourceHash、UI/后端manifest和包版本/build；取消旧137文件/旧owner overlay拼装。沿现有签名/公证工具和稳定bundle身份，不绕过系统校验。
++3. 明确日常数据连续性：旧桌面默认新建 `Application Support/Homer Desktop`，不自动采用开发版账号/原线程；现有 `rehearse-desktop-migration.mjs` 仅合成演练，不能把它当生产迁入程序。先提交能保护既有Homer独立HOME、配置、线程、库和引用的准确采用方案，再执行维护点切换；不要求用户重新建立账号来冒充保留成功。
++
++以上涉及当前产品启动/认证/退出和数据采用合同，不属于release内的构建参数修正。本轮只读确定缺口并交协调，没有在release修产品、复制归档源码或创建新框架。
++
++## 已核旧恢复材料
++
++路径 `/Users/wolf3c/Project/homer/.codex/private/releases/homer-macos/0.1.0-3-notarized/`，不是已安装位置：
++
++- `Homer.app`：0.1.0 build3，sourceHash `b791bea4d667195616cdcf09381589f134e23e22ed153d4758bf912036d689a9`，manifest `1b3a38148feb5393d360a9178d8c8840e768b6fc6d261d7b5dff0bea32bcf93c`，uiHash `7f048ac5b20bb71955e7bf0bcf60401ab3d4f973a078f5baad1e258ed129b1cb`。
++- `Homer-0.1.0-macos-arm64-notarized.zip`：176056216字节，SHA256 `17b84f4f0c1b1519030d5e6dcbab0a73d99c3ad342e81e538b4f2299d30ed69f`，匹配归档记录。
++- 宿主正常上下文 `codesign --verify --deep --strict` exit0。第一次受限沙箱内同命令exit1，未据此误判包损坏；复核并未修改包。本轮没有重新做公证/Gatekeeper或第二台Mac验收。
++
++## 条件齐备后的执行计划与完成标准
++
++1. 先读两前置最终提交和桌面闭包提交，以 `git merge-base --is-ancestor` 核main；只冻结一次完整SHA，并在宿主已登记的独立worktree构建，后续main提交留下一版。已有无关dirty不阻塞，也不进入包。
++2. 在候选执行前后端类型、构建、source-only官方CSS一致性及真实桌面原入口隔离冷启动。以当前前像归因既有全类型/旧测试失败，不宣称全绿。离线副本核schema/history/queue/artifact/权限、主线程/uncertain/FK及引用完整性，再补320/390/1440合成界面与新状态交互。
++3. 候选冷启动通过后才核实际App/launcher/host/engine和原生操作/上传/审批/渠道写入，以正常退出管理入口进入停写维护点。保护业务库、gateway、配置和引用，私有材料只写Gitignored `.codex/private/`。无未知写者/停机冲突才安装，不清锁、不强杀、不重放。
++4. 标准安装目标拟为 `/Applications/Homer.app`（当前未发现已安装Homer，实际若发现原目标则沿原路径更新）。由已安装App启动，核实际路径/版本/build/GitSHA/sourceHash/manifest及所有后端/UI资源来源，不能新前端连旧服务。只读核历史/原线程/队列/成果/权限连续性及新UI；不消耗真实模型或外发，不把合成验证称Fast实测。
++5. 安装并验收成功后，先保全非敏感发布身份和同维护点最小恢复组合，核运行引用并卸载临时卷，再删除本次及旧无用DMG/ZIP/PKG和无引用打包目录；正常worktree收尾，保全独有工作。记录实际逻辑清理量，APFS空间变化不称物理释放。
++
++完成必须同时具备：准确冻结SHA、实际安装路径/时间/包身份、已安装App运行来源、核心验收和连续性、保留限制、清理清单及回退边界。当前这些尚未发生。没有新安装成功，故未删除唯一旧恢复材料、旧安装包或其他任务目录；本轮清理量为0。
++
++接续方式：CTO收到前置与桌面整合结果后续接本任务；本轮不建立sleep轮询、定时任务，不催改/重派/代提交他人任务。新基线启动若失败，回main由原owner修复、审阅提交，再显式重新冻结，不在release拼补源码。
+diff --git a/docs/patches/2026-10-23-desktop-integration-sources.json b/docs/patches/2026-10-23-desktop-integration-sources.json
+new file mode 100644
+index 0000000..2bb4a10
+--- /dev/null
++++ b/docs/patches/2026-10-23-desktop-integration-sources.json
+@@ -0,0 +1,405 @@
++{
++  "format": 1,
++  "date": "2026-10-23",
++  "status": "uncommitted-review-candidate-not-installable-release",
++  "baseGit": "3c5461180575aa90f9430f35152f444530185913",
++  "codeFileCount": 28,
++  "candidateBuildInputCount": 22,
++  "archivedSourceVerification": {
++    "manifest": "docs/patches/2026-10-22-macos-source-relocation.json",
++    "manifestSha256": "c8d348fab6ca7f7d41500b3f242b300a207c828b593270e9e5077c5116c11636",
++    "filesVerified": 38,
++    "allMatched": true,
++    "archivedProductOverlayApplied": false,
++    "old137InputLockUsed": false,
++    "old7OwnerReplacementUsed": false
++  },
++  "files": [
++    {
++      "path": "packaging/macos/HomerApplication.swift",
++      "sha256": "8d51979b26f72606782cc3202d1891432bcacda262844e156f0dfde29bf39c46",
++      "bytes": 28655,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/packaging/macos/HomerApplication.swift",
++      "archivedSha256": "c8a33e7696fe530396314b2ef9a94c2fd02094cc4a883068848085a7e870118c",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "packaging/macos/ImageDecoder.swift",
++      "sha256": "cfe636caa2f462f1237bca51a26a6f1b6f6e5ddfd240ad5711e9e33176b194c2",
++      "bytes": 2072,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/packaging/macos/ImageDecoder.swift",
++      "archivedSha256": "cfe636caa2f462f1237bca51a26a6f1b6f6e5ddfd240ad5711e9e33176b194c2",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "packaging/macos/Info.plist",
++      "sha256": "5f9dd9a7f24414299c163517e175c35500ae00633b00999609c892ae49ac561f",
++      "bytes": 938,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/packaging/macos/Info.plist",
++      "archivedSha256": "573f380deb1a7907a355a2ba54af6c3a78adfb62264e96ceb33a87df4dfd1bfa",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "packaging/macos/dependencies-lock.json",
++      "sha256": "ac01610c939acfa7fc30089411a55bce40873aa650fe186a59feb7f127295332",
++      "bytes": 1147,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/packaging/macos/dependencies-lock.json",
++      "archivedSha256": "ac01610c939acfa7fc30089411a55bce40873aa650fe186a59feb7f127295332",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "packaging/macos/distribution-policy.json",
++      "sha256": "ee99379f4e028ef24512af234aee9f55b1aefe4a1c15a96f9d73373cfc20d432",
++      "bytes": 341,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/packaging/macos/distribution-policy.json",
++      "archivedSha256": "ee99379f4e028ef24512af234aee9f55b1aefe4a1c15a96f9d73373cfc20d432",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "packaging/macos/node-distribution-entitlements.plist",
++      "sha256": "61ca9536355826999351061950f02e76e3a4b2139ad3f8cee6f141d365b1f340",
++      "bytes": 534,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/packaging/macos/node-distribution-entitlements.plist",
++      "archivedSha256": "61ca9536355826999351061950f02e76e3a4b2139ad3f8cee6f141d365b1f340",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "scripts/build-macos-desktop.mjs",
++      "sha256": "8122b109c22386908cf22682324546482525edd15fe6e75842fa81933c79ca3a",
++      "bytes": 12390,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/scripts/build-macos-desktop.mjs",
++      "archivedSha256": "2c2b1d7f135579b8677e5249f2c34542488159d25efe33957652a5e2020b218e",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "scripts/desktop-source.mjs",
++      "sha256": "18a255041e43bd5d9b3331215bbbd6e424f7bb9863aa42e3b18f8d6c07223eec",
++      "bytes": 2851,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "origin": "new-integration-code-or-focused-test"
++    },
++    {
++      "path": "scripts/desktop-profile.mjs",
++      "sha256": "de4744195d20a8ad22c96d254b330ca9c991331d923af2d57a4c4442b07b51a5",
++      "bytes": 3369,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/scripts/desktop-profile.mjs",
++      "archivedSha256": "de4744195d20a8ad22c96d254b330ca9c991331d923af2d57a4c4442b07b51a5",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "scripts/desktop-runtime.mjs",
++      "sha256": "3c45201413eff39e256c5b7bda03240b2f0d917c0d4d60f8da463e94d41138ea",
++      "bytes": 7236,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/scripts/desktop-runtime.mjs",
++      "archivedSha256": "9f9b3b523aa9fca275b84ce683a3b7f83d2973ff53b5846eefa48dd59958b93a",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "scripts/prepare-desktop-dependencies.mjs",
++      "sha256": "01e4fbef32ae49118ebee9fc36620c03186f5e498e2ec026252d8c44e9ed0510",
++      "bytes": 4789,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/scripts/prepare-desktop-dependencies.mjs",
++      "archivedSha256": "01e4fbef32ae49118ebee9fc36620c03186f5e498e2ec026252d8c44e9ed0510",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "scripts/macos-distribution.mjs",
++      "sha256": "cffce9f95a1bb9c4a12dc62026016e9d88e7564eabaabffa6dd2aeae674988fe",
++      "bytes": 8620,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/scripts/macos-distribution.mjs",
++      "archivedSha256": "cffce9f95a1bb9c4a12dc62026016e9d88e7564eabaabffa6dd2aeae674988fe",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "scripts/dev.mjs",
++      "sha256": "96001e2d6832c007d119661434a69d071b9838bc7535f36a6d5719675f172999",
++      "bytes": 31219,
++      "change": "modify",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": "f90cf739a80dac1378cf83203e23b2aac17c4727dada62c2599a81572bef90b7",
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/scripts/dev.mjs",
++      "archivedSha256": "d78face617df8c9074ebbec3ce7f9908c4576c6639d7867e852fb56ddcb6f693",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "scripts/seamless-synthetic-fixture.mjs",
++      "sha256": "f7c9bd4c2e0fa2db246eab8741e95577f77f1400d8c548113bf317b0400629c1",
++      "bytes": 1707,
++      "change": "modify",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": "1f3e157dae4761d98e46a4489affa9a84d1cb32f3d5cb359029b02c9ae47cc99",
++      "origin": "current-main-with-scoped-desktop-delta"
++    },
++    {
++      "path": "src/desktop-resources.ts",
++      "sha256": "fb515bdf9c68a3632663d42a2fc9a150baa8694f27ed0b51b6f0301734a49fb3",
++      "bytes": 1846,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/src/desktop-resources.ts",
++      "archivedSha256": "fb515bdf9c68a3632663d42a2fc9a150baa8694f27ed0b51b6f0301734a49fb3",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "src/desktop-management.ts",
++      "sha256": "441862a89192642bf1cb47a77c906dcb9e93d1899255db06f331296f3f57f99f",
++      "bytes": 280,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/src/desktop-management.ts",
++      "archivedSha256": "f999b2c54b8f40c8ba9b048437bb9e8f9c2170172cfdf393b78cc301512cb0cc",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "src/config.ts",
++      "sha256": "6a619256f7548df489dd5ed9acae173beab8b7cc7458f0825bc10f815a9e8a39",
++      "bytes": 4614,
++      "change": "modify",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": "2b6367fbf1fdf28cb620e13c1a72f17f1d22033ba025b4c5a0284f03842c4699",
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/src/config.ts",
++      "archivedSha256": "6d8af2e1589967e56707de3f75c6dcb344df4d42105d37a99ec27bead8757573",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "src/dev-host.ts",
++      "sha256": "a166d4ad6e9762dd9e4b034d4f45da7281acd1f6a4635cb697bd72546981d2dc",
++      "bytes": 17555,
++      "change": "modify",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": "8944f6fcea8a7196616350b8bf19ff8e30c0c491707fc6b5375a8f8c4b9125db",
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/src/dev-host.ts",
++      "archivedSha256": "f0d457b737e337e9c35a32096306d89c9f316108500b2f85164ad23f3d7ebf07",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "src/engine.ts",
++      "sha256": "e6d313736634af2a4f47c1f1ddd181773f9a1f9d518a9d66da84e87a7aa736a9",
++      "bytes": 51629,
++      "change": "modify",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": "68ef00dd51749d59c17a32f239f07a637aec6517e889bcea52e2fb225a3230f8",
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/src/engine.ts",
++      "archivedSha256": "295b36ed9b35d0b938df14bf7c8c02272bf282a9f105db33562da6cb852aab82",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "src/media-decode.ts",
++      "sha256": "e36482544bd7a5a6fec921480cd74b6293147e52d7d93868f448bbfc359fe477",
++      "bytes": 5182,
++      "change": "modify",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": "2ea05033d8d84207e015e696c65d146604e182b5ce4116a3ede18e5716383f99",
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/src/media-decode.ts",
++      "archivedSha256": "a20e2e030cee272f5129abb794448e37c2a3b0a410f7a6b4669c1c5db9ba595c",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "src/service.ts",
++      "sha256": "0b6cf9a5e1e828313e38092fca30043a55d8bf1f9aa200e8538f803b722bd7d4",
++      "bytes": 147946,
++      "change": "modify",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": "7bb001ecd1bb4538bac387cd469150a49efe622a0a3db51f2c49a8464a9b16c5",
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/src/service.ts",
++      "archivedSha256": "67f41080b55e9bd9ee93db25586981e2246c4871b9410f19edc2d4290441f747",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "ui/homer-app.tsx",
++      "sha256": "75f5717b9b03706ac88b6bf98605890c70f93c56d40420b08f32dbfd8b157cb3",
++      "bytes": 75043,
++      "change": "modify",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": "02b08984745766d2b980e67005433eca35945d521a173a7fde1a4e8baf4666e6",
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/ui/homer-app.tsx",
++      "archivedSha256": "3f9cc52871115d5c47996f38f0a8045452683ea1ee2fa3b7ec80e3a5f18324b7",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "tests/desktop-service-startup.test.mjs",
++      "sha256": "3198b6c1c5f9dddd75fbbbffcbb24b5a6913b30174a9735ac6f7cbf4b6268a8c",
++      "bytes": 3372,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/tests/desktop-service-startup.test.mjs",
++      "archivedSha256": "d130c33f2d27731b2c5fb873d2b67fc7ff23778e8b9a6585ccd3426d2b56fbee",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "tests/desktop-profile.test.mjs",
++      "sha256": "9449bf6a995c8163d35a0f84e200778e02a1412ab3c94ba3a6645c1e135c64d5",
++      "bytes": 2113,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/tests/desktop-profile.test.mjs",
++      "archivedSha256": "9449bf6a995c8163d35a0f84e200778e02a1412ab3c94ba3a6645c1e135c64d5",
++      "archiveRelationship": "identical"
++    },
++    {
++      "path": "tests/desktop-management.test.mjs",
++      "sha256": "c07c96a9fd9c48898cc48801ea204c6aec5f6305d84744da257947580b6d6953",
++      "bytes": 619,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "origin": "new-integration-code-or-focused-test"
++    },
++    {
++      "path": "tests/desktop-source.test.mjs",
++      "sha256": "04cfc85d40c0b1a66b8b9eb084e8ecda87eacfe6f48db96ac464eb9892986249",
++      "bytes": 2116,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "origin": "new-integration-code-or-focused-test"
++    },
++    {
++      "path": "tests/macos-desktop-runtime.test.mjs",
++      "sha256": "12067f54f8ae4a358f0ecb9df4a8b4eb5cb0c4643d131d9da85370a2e75fc6c8",
++      "bytes": 7406,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/tests/macos-desktop-runtime.test.mjs",
++      "archivedSha256": "4c1148e9debb12793d0834f7c2793a95ea8b724d7b561fdc229563b230a8d552",
++      "archiveRelationship": "adapted-to-current-main"
++    },
++    {
++      "path": "tests/fixtures/desktop-app-server.mjs",
++      "sha256": "815a82be8a6b75c522cb5fd7cd772842e3d3992e6a67efd5b3e6c455acdf091d",
++      "bytes": 4352,
++      "change": "add",
++      "gitBase": "3c5461180575aa90f9430f35152f444530185913",
++      "beforeSha256": null,
++      "archivedSource": "docs/workspace-retirement/2026-10-22/radiant-hertz/candidate-source/tests/fixtures/desktop-app-server.mjs",
++      "archivedSha256": "815a82be8a6b75c522cb5fd7cd772842e3d3992e6a67efd5b3e6c455acdf091d",
++      "archiveRelationship": "identical"
++    }
++  ],
++  "dependenciesAndLicenses": {
++    "newFramework": null,
++    "packageLockModified": false,
++    "pinnedOfficialArchives": [
++      {
++        "name": "Node.js",
++        "version": "22.22.0",
++        "archive": "node-v22.22.0-darwin-arm64.tar.gz",
++        "url": "https://nodejs.org/dist/v22.22.0/node-v22.22.0-darwin-arm64.tar.gz",
++        "sha256": "5ed4db0fcf1eaf84d91ad12462631d73bf4576c1377e192d222e48026a902640",
++        "verification": "official HTTPS SHASUMS256.txt; not an independent PGP signature",
++        "license": "Node.js LICENSE (MIT and bundled third-party notices)"
++      },
++      {
++        "name": "@openai/codex",
++        "version": "0.163.0",
++        "archive": "codex-0.163.0.tgz",
++        "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0.tgz",
++        "sha256": "1a71db36560bb446d2c2e63ae675c4a3018c38ace38ca533f8d1b25d3e6555b4",
++        "integrity": "sha512-HNd7vR9oTK6M2ikxFnvNDCdYUgAsyo9VVnd5KnEd2ON0GYI++7MiX9XNPUkhtdgGKFPsWS+CEppQ1UU63uVhUw==",
++        "license": "Apache-2.0",
++        "completePlatformArchive": false
++      },
++      {
++        "name": "@openai/codex",
++        "version": "0.163.0-darwin-arm64",
++        "archive": "codex-0.163.0-darwin-arm64.tgz",
++        "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0-darwin-arm64.tgz",
++        "sha256": "1193ff4ce72387a5d6c34820b54a9dc57d007c67a958e8acb4715924facd3c31",
++        "integrity": "sha512-i7Dzk2a5aGmuGM9aNZgaUVTojZ/4bc5lRfosz++Y7X2BGhDkz+cySgbD+NYS1pOxfm0VEbLi9PZ3pAulI4kchw==",
++        "license": "Apache-2.0",
++        "completePlatformArchive": true
++      }
++    ],
++    "productionJavaScriptPackages": 89,
++    "notices": "Existing builder retains Node LICENSE and third-party notices, Codex Apache-2.0 LICENSE/NOTICE and bundled voice component LGPL notices, and production JavaScript licenses in the App bundle. No new dependency introduced."
++  },
++  "commitScope": [
++    "packaging/macos/HomerApplication.swift",
++    "packaging/macos/ImageDecoder.swift",
++    "packaging/macos/Info.plist",
++    "packaging/macos/dependencies-lock.json",
++    "packaging/macos/distribution-policy.json",
++    "packaging/macos/node-distribution-entitlements.plist",
++    "scripts/build-macos-desktop.mjs",
++    "scripts/desktop-source.mjs",
++    "scripts/desktop-profile.mjs",
++    "scripts/desktop-runtime.mjs",
++    "scripts/prepare-desktop-dependencies.mjs",
++    "scripts/macos-distribution.mjs",
++    "scripts/dev.mjs",
++    "scripts/seamless-synthetic-fixture.mjs",
++    "src/desktop-resources.ts",
++    "src/desktop-management.ts",
++    "src/config.ts",
++    "src/dev-host.ts",
++    "src/engine.ts",
++    "src/media-decode.ts",
++    "src/service.ts",
++    "ui/homer-app.tsx",
++    "tests/desktop-service-startup.test.mjs",
++    "tests/desktop-profile.test.mjs",
++    "tests/desktop-management.test.mjs",
++    "tests/desktop-source.test.mjs",
++    "tests/macos-desktop-runtime.test.mjs",
++    "tests/fixtures/desktop-app-server.mjs",
++    "docs/2026-10-23-desktop-integration-candidate.md",
++    "docs/2026-10-23-desktop-release-readiness.md",
++    "docs/patches/2026-10-23-desktop-integration-sources.json",
++    "docs/patches/2026-10-23-desktop-integration-verification.json"
++  ],
++  "excluded": [
++    "node_modules temporary symlink",
++    ".codex/scratch",
++    "generated App/ZIP",
++    "private data",
++    "archived old product overlays",
++    "unrelated main dirty tree"
++  ],
++  "applicationIdentity": {
++    "bundleIdentifier": "app.homer.desktop.candidate",
++    "version": "0.1.0",
++    "build": "4",
++    "framework": "Swift/AppKit/WKWebView",
++    "installed": false
++  }
++}
+diff --git a/docs/patches/2026-10-23-desktop-integration-verification.json b/docs/patches/2026-10-23-desktop-integration-verification.json
+new file mode 100644
+index 0000000..52d270d
+--- /dev/null
++++ b/docs/patches/2026-10-23-desktop-integration-verification.json
+@@ -0,0 +1,244 @@
++{
++  "format": 1,
++  "date": "2026-10-23",
++  "baseGit": "3c5461180575aa90f9430f35152f444530185913",
++  "committed": false,
++  "mainModified": false,
++  "installed": false,
++  "productionDataMigrationPerformed": false,
++  "package": {
++    "buildNode": "v22.22.0",
++    "sourceHash": "71a077e3aad139f78be2c90b2bfa29d801442b080b2e7d687446e942fd918261",
++    "manifest": "26d96f8d5e8970aa388542edeedee5812c696be019ba055432bf26ecda79b86e",
++    "schema": "c83bb6bd26960c4efbaf30c27825c642e96458685081716f12742f53ce97d2b7",
++    "toolsHash": "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056",
++    "uiHash": "6a055aa6cec649409da84baaf352efa58fa685ddc839c4cfb3aac68476aea2a5",
++    "bundleBytes": 471983021,
++    "zipBytes": 182800933,
++    "zipSha256": "d6f83c44477bb2ab44e1cc2c227f867bfc7b7f04571d05d8a6c90062e29c0db6",
++    "signature": "ad-hoc local candidate; not Developer ID or notarized"
++  },
++  "provenance": {
++    "preparation": true,
++    "publishable": false,
++    "candidateInputCount": 22,
++    "allCandidateHashesRechecked": true
++  },
++  "checks": {
++    "startupRedGreen": {
++      "baselinePassed": 2,
++      "baselineFailed": 3,
++      "candidatePassed": 5
++    },
++    "finalDesktopUnit": {
++      "passed": 12,
++      "failed": 0
++    },
++    "backendAndWebBuild": {
++      "passed": true,
++      "swiftWarnings": "inherited actor-isolation warnings remain"
++    },
++    "officialCss": {
++      "passed": true,
++      "mode": "source-only generated snapshot"
++    },
++    "packagedRuntime": {
++      "passed": 3,
++      "failed": 0,
++      "syntheticOnly": true,
++      "covers": [
++        "existing Finder authorization rejection via full IPC forwarding",
++        "unconnected readonly state and no journal writes",
++        "history protocol 3",
++        "main queue",
++        "file upload",
++        "same thread restart",
++        "artifact persistence",
++        "integrity_check ok",
++        "foreign_key_check zero",
++        "unknown second owner rejected"
++      ]
++    },
++    "browser": {
++      "passed": 148,
++      "failed": 0,
++      "resourceSource": "final build-006 App resources",
++      "syntheticOnly": true,
++      "viewports": [
++        320,
++        390,
++        704,
++        1440
++      ],
++      "scaleCases": [
++        2000,
++        8000
++      ],
++      "externalNetworkRequests": 0,
++      "businessWrites": 0,
++      "consoleErrors": 0
++    },
++    "nativeWK": {
++      "finalBuild": "006",
++      "rendered": true,
++      "editable": true,
++      "horizontalOverflow": false,
++      "sameProfileReopened": true,
++      "historyAndThreadRetained": true,
++      "quitConfirmedByUser": true,
++      "stopAcknowledged": true,
++      "exitCode": 0,
++      "processExited": true,
++      "ownerAndLeasesReleased": true,
++      "automationLimitation": "CUA_UNAVAILABLE at final quit dialog; user completed normal exit",
++      "profileContainsHumanInput": true,
++      "profilePreserved": true,
++      "rawDomAndScreenshotsExcludedFromTrackedRecords": true
++    },
++    "sharedRegression": {
++      "originalCombinedPassed": 52,
++      "gatewayRetestPassed": 1,
++      "knownBaselineFailure": "Web host expects 401 but actual409; reproduced untouched exact Git main under Node22.22.0",
++      "excluded": "Old T08 cumulative-timeout test does not end within 12s on exact Git baseline; own synthetic process group normally terminated, not counted as pass"
++    },
++    "allTypes": {
++      "baselineDiagnostics": 137,
++      "candidateDiagnostics": 137,
++      "normalizedIdentical": true
++    },
++    "hostCodesign": {
++      "deepStrictPassed": true,
++      "exitCode": 0,
++      "developerIdOrNotarization": false,
++      "quarantineBypassed": false
++    },
++    "patchReplay": {
++      "baseGit": "3c5461180575aa90f9430f35152f444530185913",
++      "dryRunPassed": true,
++      "replayPassed": true,
++      "files": 32,
++      "allResultHashesMatch": true,
++      "noStagingOrCommit": true,
++      "receipt": ".codex/scratch/desktop-integration-20261023/patch-review-receipt.json"
++    }
++  },
++  "evidence": [
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/startup-red.log",
++      "sha256": "6f1ce63b9df22fca9ee20abfbabf3bac09ed027f9c11c7cf19212d6ef74f3913",
++      "bytes": 3543
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/startup-green.log",
++      "sha256": "1c8d15bbbb2fde6ee224d2bd844341bcfe855e0e1d6b22e42231dd71e2f1a95a",
++      "bytes": 1370
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/final-desktop-unit.log",
++      "sha256": "333fc94b1d24dc22b58e8676ec8d0c864529b8eb917d0f26a0f0070cb19b6a55",
++      "bytes": 2939
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/build-006.log",
++      "sha256": "f18c6312c55473355b042d8bc4fd5f99db80c43ab6c2943c025a1b5a6018971e",
++      "bytes": 289320
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/css-source.log",
++      "sha256": "c9f0f40c018498f7fedafc72f35eb4d15bfc7aab04ff599ce1869d2bab89fd7a",
++      "bytes": 201
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/runtime-final-006.log",
++      "sha256": "047cd24320d30fd04960678deb48a859b6048671da9adf0dc322bdc8e06dba53",
++      "bytes": 1042
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/browser-final.log",
++      "sha256": "aa1dec2b01e1757b49cd87d80dda630a1e31d28bc12c4e6d3e2b27d4b78c41c1",
++      "bytes": 786
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/browser/browser-results.json",
++      "sha256": "5dcedbebef191f1f6f2b79c420c4c4aac383d9288a4bb3b416c11abfbd897215",
++      "bytes": 12357
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/shared-regression-bounded.log",
++      "sha256": "11e606035bccd53cbc3fa004b389d914ceaa45b173b722bf5c2dfeb98be8ef74",
++      "bytes": 15065
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/gateway-after-build.log",
++      "sha256": "dc21b5fb3707a59fe7d4ab81936947bd32ea92945e34349e0fe279d60ccd2199",
++      "bytes": 569
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/baseline-web-host.log",
++      "sha256": "fbc35f0d528efa00885979134e2384f450a961a8109eeaab7faa15737a66952e",
++      "bytes": 1737
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/baseline-timeout-node22.json",
++      "sha256": "405f62bfa97d3dfd33021d10ad77c3516bd485b4fc770c289d85d95a16639d0f",
++      "bytes": 173
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/baseline-timeout-node22.log",
++      "sha256": "2bb0969403f661cab4b3ab42642e4214899ea2b40012d3a934bbbd3778bcb2e3",
++      "bytes": 188
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/baseline-all-types.log",
++      "sha256": "49425f0ba14496e32e3adbfeb9ea53bb6ce9ac9f40a2c46098499bafa40c74f2",
++      "bytes": 18534
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/final-all-types.log",
++      "sha256": "d67e6efcc6dc768d46836bba9e23f81624bbc3190bef01eea9d128895728cd0a",
++      "bytes": 18457
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/types-comparison.json",
++      "sha256": "ac5c08c24bb50bea300e829e90937e70304528b2f8830a866c66ca1e69b68a7c",
++      "bytes": 95
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/preparation-cleanup.json",
++      "sha256": "a8b373167459b4682de3fe85a7901aa56534a5bc712d43ec59e1a1b3c0c89acb",
++      "bytes": 2696
++    }
++  ],
++  "privateNativeEvidence": {
++    "tracked": false,
++    "containsHumanInput": true,
++    "location": ".codex/scratch/desktop-integration-20261023/wk-profile"
++  },
++  "cleanup": {
++    "logicalBytesRemoved": 6151386088,
++    "physicalApfsReclamationAsserted": false,
++    "scope": "only this task superseded unused preparation build outputs001-005",
++    "retained": [
++      "final build006",
++      "required official archives",
++      "source and verification identities",
++      "native profile containing human input",
++      "old notarized recovery App/ZIP",
++      "all original user data and source history"
++    ]
++  },
++  "remainingReleaseConditions": [
++    "CTO review and specifically authorized integration commit on main, then explicitly freeze actual full SHA",
++    "Accurate original-account/Homer HOME/thread/data adoption mapping and owner maintenance-point rehearsal",
++    "Current product has no first-connection UI after login/capability page removal; original owner must define account adoption/connection path",
++    "Normal signed-policy installation and actual installed path/backend/UI/version/data acceptance, then release cleanup"
++  ],
++  "notVerified": [
++    "real model or Fast throughput",
++    "production data migration",
++    "real Finder selected file",
++    "Developer ID/notarization of new candidate",
++    "second Mac",
++    "IME/VoiceOver/system200%"
++  ]
++}

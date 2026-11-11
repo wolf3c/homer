@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "sourceOfTruth": "exact working-file preimages; never Git HEAD",
+  "registeredDirectory": "/Users/wolf3c/Project/homer",
+  "executionDirectory": "/Users/wolf3c/Project/homer",
+  "gitRoot": "/Users/wolf3c/Project/homer",
+  "patchSha256": "3ce9da5ab8cf1678db2601751a17c907fc4065da9db558e0e2ddd96d50e5cc46",
+  "files": [
+    {
+      "file": "src/main-process.ts",
+      "initialSha256": "8b8eabd0da7ea3075dbb4f8ebc3ab276f2db359753e5d9f55bb878f4aa8b943b",
+      "effectivePreimageSha256": "8b8eabd0da7ea3075dbb4f8ebc3ab276f2db359753e5d9f55bb878f4aa8b943b",
+      "candidateSha256": "1214e412d2c55e465d3e9eae082ff2a68da6add2b7257b2ce36ac69b9a167c88",
+      "added": 5,
+      "removed": 4
+    },
+    {
+      "file": "src/service.ts",
+      "initialSha256": "e85e6ed732fcae5ae62537741bb78dd061b21c0bb54da52fd4e9b5facf84a280",
+      "effectivePreimageSha256": "e85e6ed732fcae5ae62537741bb78dd061b21c0bb54da52fd4e9b5facf84a280",
+      "candidateSha256": "321b7f30195bd04ebcdff85f9210d08af350944ec884062d597ecdca73bab945",
+      "added": 16,
+      "removed": 7
+    },
+    {
+      "file": "src/recursive-tasks.ts",
+      "initialSha256": "625d59a909c4272e0a5b3c5c13fcfec0c73af6087a8c5c68890fad626a51dbd1",
+      "effectivePreimageSha256": "625d59a909c4272e0a5b3c5c13fcfec0c73af6087a8c5c68890fad626a51dbd1",
+      "candidateSha256": "3c7e3e7067829abbb1bc7ea999b907925fad91f1007f0d026e3c8f00ffe3a798",
+      "added": 77,
+      "removed": 0
+    },
+    {
+      "file": "src/web-homer.ts",
+      "initialSha256": "e73080ba3a9b34184284b8ef886e5d28dbceeabc47ad73eb19d6f92c67c754b6",
+      "effectivePreimageSha256": "e73080ba3a9b34184284b8ef886e5d28dbceeabc47ad73eb19d6f92c67c754b6",
+      "candidateSha256": "47a38b0d61c843cd9092354c2e73614e0c795141c735d72d09d4839fbe18a2f5",
+      "added": 18,
+      "removed": 2
+    },
+    {
+      "file": "src/web-contract.ts",
+      "initialSha256": "41ef6ddc81593cb6daef4d333d40b330bbd0472e4437d251a819eb01eb50b1fa",
+      "effectivePreimageSha256": "41ef6ddc81593cb6daef4d333d40b330bbd0472e4437d251a819eb01eb50b1fa",
+      "candidateSha256": "442de1ee1de63ee5698e6896c17a3b2dfff212dc127e106e9ac1de74709d7188",
+      "added": 2,
+      "removed": 1
+    },
+    {
+      "file": "ui/process-nodes.tsx",
+      "initialSha256": "119c610af4da1192719ebda52e9def9c3b84f948d7396dc97c29b5c65d03ff35",
+      "effectivePreimageSha256": "119c610af4da1192719ebda52e9def9c3b84f948d7396dc97c29b5c65d03ff35",
+      "candidateSha256": "7c7557446e5991ccd97b492f6f92687009b9066e05ee145181b11733dcd7994b",
+      "added": 57,
+      "removed": 8
+    },
+    {
+      "file": "ui/process-nodes.css",
+      "initialSha256": "eccbb1aef58111395f68826d77e977b8f4df825d591bbc00c261b7b4ba0ecff9",
+      "effectivePreimageSha256": "eccbb1aef58111395f68826d77e977b8f4df825d591bbc00c261b7b4ba0ecff9",
+      "candidateSha256": "e547d40997cdcbbe8f12b733b4a2a82bcf0b66d922b12dac6420b20131fdb2d8",
+      "added": 11,
+      "removed": 0
+    },
+    {
+      "file": "ui/task-overview.tsx",
+      "initialSha256": "99dfbd145999ebeeca70fb281bb2f5d3cee853056f9ba6fe38c4e3bbff716772",
+      "effectivePreimageSha256": "99dfbd145999ebeeca70fb281bb2f5d3cee853056f9ba6fe38c4e3bbff716772",
+      "candidateSha256": "fa691c88c3204cb84ef7085855e16d6b539f4c8744234d4d043ce252ac1acccd",
+      "added": 17,
+      "removed": 4
+    },
+    {
+      "file": "ui/homer-app.tsx",
+      "initialSha256": "0e8af49e04320da6d5aa5b6d96fe1e0d5c5e7d6a8ae40388412ae942ab21f4a6",
+      "effectivePreimageSha256": "de61ef8cfb487c675ce9e82bca1304742fa3c000e93b2fcc42ad4013b76a5cc9",
+      "candidateSha256": "55e541b05fbf8a1dc4c5d12e206549d68b802fd5d2adefcde6ad047d77f3ac6a",
+      "added": 7,
+      "removed": 5
+    },
+    {
+      "file": "ui/DESIGN.md",
+      "initialSha256": "895acb665d7c396cbddb6cfe7b127276c603e1066698bc604a7fd77c0bd17c2b",
+      "effectivePreimageSha256": "895acb665d7c396cbddb6cfe7b127276c603e1066698bc604a7fd77c0bd17c2b",
+      "candidateSha256": "7fda6f4f3eab91a05ef03051be2def318cdb86fae422a8a0ea46b89580952c74",
+      "added": 8,
+      "removed": 0
+    },
+    {
+      "file": "ui/vendor/assistant-ui/README.md",
+      "initialSha256": "b172d671f41329dd00e2b2e96867bf746242aa0ea6b92aa90403d9e410fd5c02",
+      "effectivePreimageSha256": "8cfe80baf6b33177dd042f03c9b3a0f104930843bd396a61c4d90d1e41c0115f",
+      "candidateSha256": "03472d485d202b89ea536abbdac3acbdfcc57f96371aee9830e8ed3df511f17b",
+      "added": 8,
+      "removed": 0
+    },
+    {
+      "file": "src/activity-facts.ts",
+      "initialSha256": null,
+      "effectivePreimageSha256": null,
+      "candidateSha256": "39b33fe1e779cec9469cbefd22e662e072d53e3d41b58d35ac5ef69b5e798250",
+      "added": 14,
+      "removed": 0
+    },
+    {
+      "file": "src/task-overview.ts",
+      "initialSha256": "4c633b14efbd3c9810e80d53f09505ce242f83580af10b1293f2575f360b37e5",
+      "effectivePreimageSha256": "4c633b14efbd3c9810e80d53f09505ce242f83580af10b1293f2575f360b37e5",
+      "candidateSha256": "77252d12c17bd084ee2b5d3698d8b7be7623de8d2d5f8ad683f92433701da35f",
+      "added": 2,
+      "removed": 1
+    },
+    {
+      "file": "tests/helpers/process-ui-loader.mjs",
+      "initialSha256": "83376d6b5050cd5d2926e6a120eb1ce8eeea631a66ec0bb492547251b23ddfb0",
+      "effectivePreimageSha256": "83376d6b5050cd5d2926e6a120eb1ce8eeea631a66ec0bb492547251b23ddfb0",
+      "candidateSha256": "7db09ae0e99b3cd320b73a729ffe8628d85e5982bac234d7b95a89a2067aa613",
+      "added": 1,
+      "removed": 1
+    },
+    {
+      "file": "tests/run-activity-facts.test.ts",
+      "initialSha256": null,
+      "effectivePreimageSha256": null,
+      "candidateSha256": "5efbb18f95097ca1355226c0c8488f8c061483ad1927ab055ba81a3f4413f1b6",
+      "added": 98,
+      "removed": 0
+    },
+    {
+      "file": "tests/run-activity-facts-ui.test.mjs",
+      "initialSha256": null,
+      "effectivePreimageSha256": null,
+      "candidateSha256": "6573b00f5e77c54553690de951a9edd193e58b072b7c30befd7cab266ab7e12b",
+      "added": 17,
+      "removed": 0
+    },
+    {
+      "file": "tests/run-activity-facts-browser-fixture.mjs",
+      "initialSha256": null,
+      "effectivePreimageSha256": null,
+      "candidateSha256": "616b68e3695174767ebf525579820b9e4ddc01cc1f207b940d5e2de03d3a3a85",
+      "added": 35,
+      "removed": 0
+    },
+    {
+      "file": "tests/run-activity-facts.browser.mjs",
+      "initialSha256": null,
+      "effectivePreimageSha256": null,
+      "candidateSha256": "b0ca1a05e537ee15124f423ba224272b43a89089d0e5979437e9fb124a4ba4a6",
+      "added": 49,
+      "removed": 0
+    },
+    {
+      "file": "docs/2026-10-22-run-activity-facts-candidate.md",
+      "initialSha256": null,
+      "effectivePreimageSha256": null,
+      "candidateSha256": "b794af030f6f4f32ddddff74d8c94df489bcdfbaf97add3e6cd5256fcec3110d",
+      "added": 104,
+      "removed": 0
+    }
+  ],
+  "added": 546,
+  "removed": 33,
+  "preservedParallel": [
+    "ui/homer-app.tsx queue/composer changes",
+    "ui/vendor/assistant-ui/README.md standalone Message Queue section"
+  ],
+  "validation": [
+    {
+      "name": "activity-contracts",
+      "code": 0,
+      "tests": 32,
+      "pass": 32,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "owners-history",
+      "code": 1,
+      "tests": 31,
+      "pass": 29,
+      "fail": 2,
+      "skipped": 0
+    },
+    {
+      "name": "source-types",
+      "code": 0
+    },
+    {
+      "name": "ui-types",
+      "code": 0
+    },
+    {
+      "name": "all-types",
+      "code": 2
+    },
+    {
+      "name": "service-build",
+      "code": 0
+    },
+    {
+      "name": "ui-build",
+      "code": 0
+    },
+    {
+      "name": "activity-browser",
+      "code": 0
+    },
+    {
+      "name": "process-browser",
+      "code": 0
+    },
+    {
+      "name": "official-style",
+      "code": 0
+    },
+    {
+      "name": "official-focus",
+      "code": 0
+    }
+  ],
+  "browserWidths": [
+    320,
+    390,
+    1440
+  ],
+  "activityBrowserChecks": 30,
+  "processBrowserChecks": 24,
+  "deployment": "none",
+  "rollback": "reverse only this patch after --check; never restore whole dirty files"
+}

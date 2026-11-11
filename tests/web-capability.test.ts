@@ -4,7 +4,7 @@ import {Homer} from '../src/service.js';
 import {homerWebBridge} from '../src/web-homer.js';
 test('actual Web gateway handshake controls both advertised and callable upload capability',async()=>{
  const app=Object.create(Homer.prototype) as Homer;
- Object.assign(app,{config:{model:'synthetic'},channelViews:new Map()});
+ Object.assign(app,{config:{model:'synthetic'}});
  assert.equal((await app.capabilities()).surfaces.web.receive,'unavailable');
  const legacy=homerWebBridge(app,{draftUpload:false});
  assert.equal(legacy.media?.upload,undefined);assert.equal(legacy.media?.discard,undefined);

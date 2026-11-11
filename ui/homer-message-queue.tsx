@@ -10,7 +10,7 @@ import './homer-message-queue.css';
 
 type QueueItem=DispatchQueuePage<'all'>['items'][number];
 const textOf=(item:QueueItem)=>item.origin==='worker'?item.text:item.input.text||item.user?.media?.map(asset=>asset.filename).join('、')||'引用消息';
-const summaryOf=(item:QueueItem)=>[item.origin==='worker'?'Worker':undefined,item.origin==='user'&&(!item.editable||item.state!=='queued')?item.statusText:undefined,textOf(item)].filter(Boolean).join(' · ');
+const summaryOf=(item:QueueItem)=>[item.origin==='user'&&(!item.editable||item.state!=='queued')?item.statusText:undefined,textOf(item)].filter(Boolean).join(' · ');
 export function HomerMessageQueue({state,connected,operations,editorBusy=false}:{state:WebState;connected:boolean;operations:QueueOperations;editorBusy?:boolean}){
  const [page,setPage]=useState<DispatchQueuePage<'all'>>(),[checking,setChecking]=useState(true),[cursor,setCursor]=useState<string>(),[refresh,setRefresh]=useState(0);
  const [loadedFor,setLoadedFor]=useState('');

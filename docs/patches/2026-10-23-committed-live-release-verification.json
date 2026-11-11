@@ -1,0 +1,169 @@
+{
+  "publishedAt": "2026-10-23T05:53:43.584Z",
+  "verifiedThrough": "2026-10-23T05:54:48.677395+00:00",
+  "releaseCommit": "bff579afd679bc3198bc755800d86f164929050c",
+  "prerequisiteCommit": "5fc7087809b72c1a75af8bcddefa2b301fe2d0c2",
+  "cssRepairCommit": "bff579afd679bc3198bc755800d86f164929050c",
+  "sourceHash": "f42ba8ea7f6cb1770388dc8d862f6f8b1e6d012724e64d83a083ba60e656f728",
+  "uiHash": "e3f996878dc0ab1ee2b261005f5057901a43ce5c485ea53f6f99142234c45517",
+  "manifest": "77a6afdf07d5380d973d64b2ece91b023347f9b48f740fd528f1faad7e9dff1f",
+  "sourceFiles": 292,
+  "sealedFiles": 260,
+  "exactGitTree": true,
+  "includesSources": true,
+  "excludedReleaseCommit": "f2b76701a54349149912fcb289ec9203d80ff93f",
+  "production": {
+    "at": "2026-10-23T05:53:43.584Z",
+    "passes": true,
+    "commit": "bff579afd679bc3198bc755800d86f164929050c",
+    "sourceHash": "f42ba8ea7f6cb1770388dc8d862f6f8b1e6d012724e64d83a083ba60e656f728",
+    "manifest": "77a6afdf07d5380d973d64b2ece91b023347f9b48f740fd528f1faad7e9dff1f",
+    "version": "f42ba8ea7f6c",
+    "launcherPid": 20557,
+    "hostPid": 21363,
+    "sealedFiles": 260,
+    "defaults": {
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "mainFast": true,
+      "workerFast": true
+    },
+    "configured": {
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "fast": true,
+      "catalogListed": true,
+      "effortListed": true
+    },
+    "mainThreadSha256": "bba235fe11eddb5c678fccb0ecb7b68479d4349bbc7ceb761e3f9a7d17ac9077",
+    "toolsHash": "e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a",
+    "configUnchanged": true,
+    "uiHash": "e3f996878dc0ab1ee2b261005f5057901a43ce5c485ea53f6f99142234c45517",
+    "assets": [
+      {
+        "path": "/ui/e3f996878dc0ab1ee2b261005f5057901a43ce5c485ea53f6f99142234c45517/assets/index-JN5uOAXQ.js",
+        "sha256": "b06e7234dfa07df70393e5f0f92075df783523a6bc745539513c821641f269a8"
+      },
+      {
+        "path": "/ui/e3f996878dc0ab1ee2b261005f5057901a43ce5c485ea53f6f99142234c45517/assets/index-DWgFQQ7Y.css",
+        "sha256": "314d118d5374bce352c352341112d448591ef627765b4bca0eda5a3ca0493b93"
+      }
+    ],
+    "dependencyPackages": 89,
+    "dependencyContentsUnchanged": true,
+    "queueCount": 0,
+    "interactionCount": 0,
+    "mainRunning": false,
+    "wechatState": "connected",
+    "telegramState": "offline",
+    "realModelCalls": 0
+  },
+  "continuity": {
+    "at": "2026-10-23T05:53:59.294019+00:00",
+    "passes": true,
+    "schemaIdentical": true,
+    "businessTables": 61,
+    "gatewayTables": 3,
+    "allOldRowsAndColumnsPreserved": true,
+    "normalChanges": [
+      "two live host-owned engine leases (main and existing read-only native configuration control)",
+      "wechat generation +1",
+      "gateway contract fingerprint updated after zero-pending check"
+    ],
+    "mainThreadUnchanged": true,
+    "mainToolsHashUnchanged": true,
+    "uncertainRowsUnchanged": {
+      "agent_receipts": 3,
+      "wechat_outbox": 6
+    },
+    "referencesUnchanged": 210,
+    "integrity": "ok",
+    "foreignKeyViolations": 0,
+    "configUnchanged": true,
+    "nativeCredentialsNotCopiedOrManuallyEdited": true,
+    "dedicatedNativeConfigBytesPreserved": true,
+    "noTaskReplay": true
+  },
+  "onlineReadChecks": {
+    "at": "2026-10-23T05:54:48.677395+00:00",
+    "passes": true,
+    "checks": [
+      {
+        "endpoint": "/api/history/receipts",
+        "http": 200,
+        "noBusinessSubmission": true
+      },
+      {
+        "endpoint": "/api/history/page",
+        "http": 200,
+        "noBusinessSubmission": true
+      },
+      {
+        "endpoint": "/api/history/queue",
+        "http": 200,
+        "noBusinessSubmission": true
+      }
+    ],
+    "noRealModelCalls": true,
+    "noQueueMutationOrApprovalReplay": true
+  },
+  "maintenancePoint": {
+    "at": "2026-10-23T05:13:11.530511+00:00",
+    "files": 449,
+    "references": 210,
+    "oldNewOldCompatibility": true,
+    "backendByteIdenticalToPreview": true
+  },
+  "validation": {
+    "focusedExistingEvidence": {
+      "accepted": true,
+      "selectedTests": 240,
+      "verifiedPassing": 239,
+      "knownBaselineFailures": 1,
+      "knownFailureReproducedOnSealedLive": true,
+      "browserChecks": 133,
+      "allBuildAndTypesPassed": true,
+      "nativeBoundaryExactLive": true,
+      "schemaOldNewOldAllTablesPassed": true,
+      "syntheticGatewayPassed": true,
+      "notClaimingFullSuiteGreen": true,
+      "commit": "bff579afd679bc3198bc755800d86f164929050c",
+      "sourceOnlyColdBuildPassed": true,
+      "allOfficialCssSnapshotBranchesPassed": true,
+      "finalSourcesBrowserChecks": 45,
+      "updatedAt": "2026-10-23T05:53:13.477733+00:00"
+    },
+    "sourceOnlyColdBuildPassed": true,
+    "allDeclaredOfficialCssBranchesPassed": true,
+    "finalBuiltSourcesBrowserChecks": 45,
+    "finalBrowserWidths": [
+      320,
+      390,
+      1440
+    ],
+    "actualScreenshotReviewed": 320,
+    "fullSuiteAllGreen": false,
+    "knownFailure": "main recovery: rejected preserves failure and receives the next message without replay; expected failed vs actual uncertain, reproduced on previous sealed source",
+    "realModelTurns": 0,
+    "realFastServicePerformanceTested": false
+  },
+  "firstAttempt": {
+    "commit": "5fc7087809b72c1a75af8bcddefa2b301fe2d0c2",
+    "error": "dev_candidate_check_failed / run-activity_css_stale",
+    "noBusinessOwnerStarted": true,
+    "noDatabaseRestore": true,
+    "fixedOnMainThenRefrozen": true
+  },
+  "rollback": {
+    "consistentPrivateMaintenancePointRetained": true,
+    "previousSealedSourceRetained": true,
+    "oldDatabaseMustNotOverwriteNewFacts": true
+  },
+  "runtimeRetention": {
+    "sourceInputOutsideTaskWorktree": true,
+    "actualSealAndDependenciesOutsideTaskWorktree": true,
+    "privateBackupOutsideTaskWorktree": true,
+    "activeRuntimeDirectoriesMustNotBeDeleted": true,
+    "noPushTagOrRemote": true
+  }
+}

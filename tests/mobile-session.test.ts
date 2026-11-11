@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {MobileDevices} from '../src/mobile-devices.js';
 import {mobileChannel,type MobileChannelPort} from '../src/mobile-channel.js';
 import {openMobileSession} from '../src/mobile-session.js';
+import {WEB_PROTOCOL} from '../src/web-contract.js';
 import {build} from 'esbuild';
 
 function connection(devices:MobileDevices,calls:string[]){
@@ -16,24 +17,44 @@ function connection(devices:MobileDevices,calls:string[]){
 }
 async function bind(devices:MobileDevices,c:ReturnType<typeof connection>){
  const invitation=devices.invite('https://example.test').url.split('#')[1];
- const paired=await c.call('pair',{invitation});
+ const paired=await c.call('pair',{invitation,protocol:WEB_PROTOCOL});
  assert.equal(paired.result.status,'pending');assert.equal(typeof paired.result.credential,'string');
  devices.approve(devices.state().pending!.id,'手机');
  const status=await c.call('status',{credential:paired.result.credential});
  assert.equal(status.result.status,'active');return paired.result.credential as string;
 }
+test('old mobile pairing reports a version mismatch without consuming the invitation',async()=>{
+ const devices=new MobileDevices(':memory:'),calls:string[]=[],c=connection(devices,calls);
+ try{
+  const invitation=devices.invite('https://example.test').url.split('#')[1];
+  for(const protocol of [undefined,1]){
+   const old=await c.call('pair',{invitation,protocol});
+   assert.equal(old.result.status,'incompatible');
+   assert.equal(old.result.protocol,WEB_PROTOCOL);
+   assert.notEqual(old.result.protocol,1);
+   assert.equal(old.result.credential,undefined);
+   assert.equal(devices.state().pending,null);
+  }
+  assert.equal((await c.call('history.state')).error,'mobile_device_denied');
+  assert.equal((await c.call('pair',{invitation,protocol:WEB_PROTOCOL})).result.status,'pending');
+  assert.deepEqual(calls,[]);
+ }finally{c.host.close();c.client.close();devices.close();}
+});
 test('channel uses the existing pending approval and credential before allowing business',async()=>{
  const devices=new MobileDevices(':memory:'),calls:string[]=[],c=connection(devices,calls);
  try{
   assert.equal((await c.call('history.state')).error,'mobile_device_denied');
   const invitation=devices.invite('https://example.test').url.split('#')[1];
-  const paired=await c.call('pair',{invitation});assert.equal(paired.result.status,'pending');
+  const paired=await c.call('pair',{invitation,protocol:WEB_PROTOCOL});assert.equal(paired.result.status,'pending');
   const credential=paired.result.credential;
   assert.equal((await c.call('status',{credential})).result.status,'pending');
   assert.equal((await c.call('history.state')).error,'mobile_device_denied');assert.equal(calls.length,0);
   devices.approve(devices.state().pending!.id,'我的手机');
-  const active=await c.call('status',{credential});assert.equal(active.result.status,'active');assert.equal(active.result.protocol,1);
-  assert.deepEqual((await c.call('history.state',{synthetic:true})).result,{synthetic:true});assert.deepEqual(calls,['history.state']);
+  const active=await c.call('status',{credential});assert.equal(active.result.status,'active');assert.equal(active.result.protocol,WEB_PROTOCOL);
+  assert.deepEqual((await c.call('history.state',{synthetic:true})).result,{synthetic:true});
+  const attachment={messageId:'message-one',assetId:'asset-00000000-0000-0000-0000-000000000000',revision:3};
+  assert.deepEqual((await c.call('media.read',attachment)).result,attachment);
+  assert.deepEqual(calls,['history.state','media.read']);
  }finally{c.host.close();c.client.close();devices.close();}
 });
 test('disable/delete close only that device and enable permits the same credential on a new channel',async()=>{
@@ -55,10 +76,10 @@ test('pending approval timeout reaches the phone without granting chat access',a
  let now=1000;const devices=new MobileDevices(':memory:',()=>now),calls:string[]=[],c=connection(devices,calls);
  try{
   const invitation=devices.invite('https://example.test').url.split('#')[1];
-  const paired=await c.call('pair',{invitation});const credential=paired.result.credential;
+  const paired=await c.call('pair',{invitation,protocol:WEB_PROTOCOL});const credential=paired.result.credential;
   assert.equal((await c.call('status',{credential})).result.status,'pending');
   now+=300000;
-  const expired=await c.call('status',{credential});assert.equal(expired.result.status,'expired');assert.equal(expired.result.protocol,1);
+  const expired=await c.call('status',{credential});assert.equal(expired.result.status,'expired');assert.equal(expired.result.protocol,WEB_PROTOCOL);
   assert.equal((await c.call('history.state')).error,'mobile_device_denied');assert.deepEqual(calls,[]);
  }finally{c.host.close();c.client.close();devices.close();}
 });
@@ -67,8 +88,8 @@ test('a second scan reports an existing request without approving either device'
  const devices=new MobileDevices(':memory:'),calls:string[]=[],first=connection(devices,calls),second=connection(devices,calls);
  try{
   const invitation=devices.invite('https://example.test').url.split('#')[1];
-  const paired=await first.call('pair',{invitation});assert.equal(paired.result.status,'pending');
-  const duplicate=await second.call('pair',{invitation});assert.equal(duplicate.error,'mobile_pairing_busy');
+  const paired=await first.call('pair',{invitation,protocol:WEB_PROTOCOL});assert.equal(paired.result.status,'pending');
+  const duplicate=await second.call('pair',{invitation,protocol:WEB_PROTOCOL});assert.equal(duplicate.error,'mobile_pairing_busy');
   assert.equal((await second.call('history.state')).error,'mobile_device_denied');
   assert.equal((await first.call('status',{credential:paired.result.credential})).result.status,'pending');
   assert.deepEqual(calls,[]);
@@ -79,7 +100,7 @@ test('only the matching candidate can cancel a pending request; cancellation is 
  const devices=new MobileDevices(':memory:'),calls:string[]=[],first=connection(devices,calls),other=connection(devices,calls);
  try{
   const invitation=devices.invite('https://example.test').url.split('#')[1];
-  const paired=await first.call('pair',{invitation});const credential=paired.result.credential;
+  const paired=await first.call('pair',{invitation,protocol:WEB_PROTOCOL});const credential=paired.result.credential;
   assert.equal((await other.call('pair.cancel',{credential:'x'.repeat(43)})).result.status,'absent');
   assert.ok(devices.state().pending,'an unrelated credential cannot cancel another request');
   assert.equal((await other.call('pair.cancel',{})).error,'mobile_credential_invalid');
@@ -134,12 +155,12 @@ test('phone name travels with the pending request without granting authorization
  const devices=new MobileDevices(':memory:'),calls:string[]=[],c=connection(devices,calls),other=connection(devices,calls);
  try{
   const invitation=devices.invite('https://example.test').url.split('#')[1];
-  const paired=await c.call('pair',{invitation,deviceName:'  测试手机  '});
+  const paired=await c.call('pair',{invitation,protocol:WEB_PROTOCOL,deviceName:'  测试手机  '});
   const display=devices.state().pending!;
   assert.equal(display.name,'测试手机');assert.equal(paired.result.verificationCode,undefined);
-  await c.call('pair',{invitation,credential:paired.result.credential,deviceName:'不同名称'});
+  await c.call('pair',{invitation,protocol:WEB_PROTOCOL,credential:paired.result.credential,deviceName:'不同名称'});
   assert.equal(devices.state().pending?.name,'测试手机');
-  assert.equal((await other.call('pair',{invitation})).error,'mobile_pairing_busy');
+  assert.equal((await other.call('pair',{invitation,protocol:WEB_PROTOCOL})).error,'mobile_pairing_busy');
   assert.equal((await c.call('history.state')).error,'mobile_device_denied');
   devices.approve(display.id,display.name);
   assert.equal((await c.call('status',{credential:paired.result.credential})).result.status,'active');
@@ -152,14 +173,14 @@ test('missing and unsafe device names fall back, while replacement and timeout c
  try{
   const invite=()=>devices.invite('https://example.test').url.split('#')[1];
   for(const deviceName of [undefined,null,'   ','\u202e欺骗', 'a'.repeat(61),{name:'伪造'}]){
-   const paired=await c.call('pair',{invitation:invite(),deviceName});
+   const paired=await c.call('pair',{invitation:invite(),protocol:WEB_PROTOCOL,deviceName});
    assert.equal(devices.state().pending?.name,'未知设备');
    assert.equal(paired.result.status,'pending');
   }
-  const first=await c.call('pair',{invitation:invite(),deviceName:'第一台'});
+  const first=await c.call('pair',{invitation:invite(),protocol:WEB_PROTOCOL,deviceName:'第一台'});
   devices.invite('https://example.test');assert.equal(devices.state().pending,null);
   assert.equal((await c.call('status',{credential:first.result.credential})).result.status,'denied');
-  const second=await c.call('pair',{invitation:invite(),deviceName:'第二台'});
+  const second=await c.call('pair',{invitation:invite(),protocol:WEB_PROTOCOL,deviceName:'第二台'});
   assert.equal(devices.state().pending?.name,'第二台');now+=300000;
   assert.equal(devices.state().pending,null);
   assert.equal((await c.call('status',{credential:second.result.credential})).result.status,'expired');

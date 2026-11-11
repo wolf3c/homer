@@ -56,7 +56,7 @@ test("HMR-PROMPTS-001: missing, empty and unreadable resources fail explicitly w
 test("HMR-PROMPTS-001: native resume attaches developer instructions on the same thread", async () => {
   const f = fixture();
   const binary = resolve("tests/fixtures/worker-interaction-app-server.mjs"); chmodSync(binary, 0o755);
-  const config: Config = { workspace: f.root, runtime: f.root, codexHome: f.root, codexBin: binary, model: "prompt-reload", timeoutMs: 1000, mainTimeoutMs: 1000, stopGraceMs: 50, requiresOpenaiAuth: false };
+  const config: Config = { workspace: f.root, runtime: f.root, codexHome: join(f.root, "codex"), nativeCodexHome: join(f.root, "codex"), codexBin: binary, model: "prompt-reload", stopGraceMs: 50, requiresOpenaiAuth: false };
   const create = (threadId?: string) => new CodexEngine(config, { cwd: f.root, readRoots: [], instructions: loadPrompts(f.directory).main, tools: [], threadId }, async () => ({}));
   const first = create(); let next: CodexEngine | undefined;
   try {

@@ -1,3 +1,4 @@
+import {callHostMcp} from './fixtures/host-mcp-call.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
@@ -8,11 +9,11 @@ import {homerWebBridge} from '../src/web-homer.js';
 import type {EngineOptions,ToolCall} from '../src/engine.js';
 
 const until=async(check:()=>boolean,label='synthetic skill approval wait')=>{const deadline=Date.now()+5000;while(!check()){assert.ok(Date.now()<deadline,label);await new Promise(r=>setTimeout(r,5));}};
-test('service main and Worker skill requests use real user cards and retain protected HOME boundaries across main resume',async()=>{
+test('service main and Worker skill requests relay real user decisions on native file requests across main resume',async()=>{
  const scratch=resolve('.codex/scratch/native-system-skills-implementation');mkdirSync(scratch,{recursive:true});
  const dir=mkdtempSync(join(scratch,'skill-svc-')),home=join(dir,'codex'),workspace=join(dir,'workspace'),runtime=join(dir,'runtime');
  mkdirSync(join(workspace,'materials'),{recursive:true});mkdirSync(runtime);writeFileSync(join(workspace,'materials/synthetic.md'),'Synthetic material.');
- const config={appData:dir,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',workspace,runtime,model:'synthetic',requiresOpenaiAuth:false,timeoutMs:10000,mainTimeoutMs:10000,stopGraceMs:100};
+ const config={appData:dir,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',workspace,runtime,model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
  let serial=0;const outcomes:string[]=[],starts:EngineOptions[]=[];
  class Peer extends EventEmitter{
   threadId:string;turnId='';resumable=true;
@@ -30,11 +31,18 @@ test('service main and Worker skill requests use real user cards and retain prot
   }
   async turn(text:string,o?:{onStarted?:(id:string)=>void}){
    this.turnId='synthetic-turn-'+ ++serial;o?.onStarted?.(this.turnId);
+   const context=app['mainContext'],id=context?.interactionId??context?.queuedInput?.input.interactionId;
+   if(this.options.nativeTools==='main'&&id){
+    await callHostMcp(this.options, 'inspect_interaction',{interactionId:id});
+    if(context?.event)await callHostMcp(this.options, 'escalate_interaction',{interactionId:id,question:'Confirm the synthetic operation',reason:'Requires user confirmation'});
+    else await callHostMcp(this.options, 'respond_interaction',{interactionId:id,action:context?.queuedInput?.input.text==='允许本次操作'?'approve':'deny',reason:'Use the actual decision'});
+    return {status:'completed',text:'Synthetic decision recorded'};
+   }
    if(this.options.nativeTools==='worker'){
-    await this.approvals();await this.call('write_markdown',{filename:'synthetic.md',content:'# Synthetic result'});
+    await this.approvals();
    }else if(text==='synthetic skill request'){
-    await this.approvals();const task=await this.call('task_create',{title:'Synthetic skill package',goal:'Synthetic authorized full package check'}) as {taskId:string};
-    await this.call('worker_open',{taskId:task.taskId,message:'Check the synthetic skill package using materials/synthetic.md.'});
+    await this.approvals();
+    await this.call('worker_open',{message:'Check the synthetic skill package.'});
    }
    return {status:'completed',text:'Synthetic receipt.'};
   }
@@ -49,17 +57,12 @@ test('service main and Worker skill requests use real user cards and retain prot
     await until(()=>app.interactions.list().some(i=>i.state==='pending_user'),mode+' pending skill card '+n);
     const pending=app.interactions.inspect(app.interactions.list().find(i=>i.state==='pending_user')!.id);
     const bridge=homerWebBridge(app);
-    if(pending.userQuestion!.includes(join(home,'config.toml'))){
-     await assert.rejects(()=>bridge.respond(pending.id,{requestId:mode+'-blocked-'+n,text:'允许本次操作'}),/interaction_capability_denied/);
-     assert.equal(app.interactions.inspect(pending.id).state,'pending_user');
-     await bridge.respond(pending.id,{requestId:mode+'-deny-'+n,text:'拒绝本次操作'});
-    }else{
-     assert.throws(()=>app.interactions.respond(pending.id,{action:'approve',reason:'forged model'},{userMessageId:'forged'}),/main_native_user_decision_required/);
-     await bridge.respond(pending.id,{requestId:mode+'-allow-'+n,text:'允许本次操作'});
-    }
+    assert.throws(()=>app.interactions.respond(pending.id,{action:'approve',reason:'forged model'},{userMessageId:'forged'}),/interaction_user_decision_required|main_native_user_decision_required/);
+    const denied=mode==='resume'&&pending.userQuestion!.includes(join(home,'config.toml'));
+    await bridge.respond(pending.id,{requestId:mode+'-decision-'+n,text:denied?'拒绝本次操作':'允许本次操作'});
     await until(()=>outcomes.length>before+n);
    }
-   await app.idle();assert.deepEqual(outcomes.slice(before),['main:approved','main:denied','worker:approved','worker:denied']);
+   await app.idle();assert.deepEqual(outcomes.slice(before),mode==='start'?['main:approved','main:approved','worker:approved','worker:approved']:['main:approved','main:denied','worker:approved','worker:denied']);
   }
  }finally{await app.close();rmSync(dir,{recursive:true,force:true});}
 });

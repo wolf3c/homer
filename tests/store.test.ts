@@ -37,13 +37,18 @@ test('stop intent is separate from confirmed exit and restart never replays old 
  }finally{f.close();}
 });
 
-test('terminal raw replies are idempotent and an unknown delivery survives reconciliation',()=>{
+test('terminal replies are idempotent and unknown steering survives reconciliation',()=>{
  const f=chatFixture();try{
-  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId);
+  const task=f.create(),first=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(first.workerId);
   const terminal={status:'completed' as const,text:'Observed answer'},reply=f.tasks.endSegment(run.id,run.epoch,terminal,true)!;
-  assert.deepEqual(f.tasks.endSegment(run.id,run.epoch,terminal,true),reply);assert.equal(f.tasks.inbox(f.actor).filter(message=>message.kind==='worker_reply').length,1);assert.equal(f.tasks.pendingDeliveries().length,0);
-  const result=f.tasks.adoptResult(f.actor,{operationId:'accept',taskId:task.taskId,version:1,messageId:reply.messageId}),publication=f.tasks.publish(f.actor,{operationId:'publish',taskId:task.taskId,version:1,resultIds:[result.resultId],text:'Answer'});
-  f.tasks.markDelivery(publication.deliveryId,'submitting');f.tasks.reconcile();f.tasks.reconcile();assert.equal(f.tasks.delivery(publication.deliveryId).state,'uncertain');assert.equal(f.tasks.pendingDeliveries().length,0);assert.throws(()=>f.tasks.markDelivery(publication.deliveryId,'submitting'),/transition_denied/);
+  assert.deepEqual(f.tasks.endSegment(run.id,run.epoch,terminal,true),reply);
+  assert.equal(f.tasks.inbox(f.actor).filter(message=>message.kind==='worker_reply').length,1);
+  const worker=f.tasks.workerOpen(f.actor,{operationId:'new',taskId:task.taskId,text:'Inspect next'}),second=f.start(worker.workerId);
+  const sent=f.tasks.workerSend(f.actor,{operationId:'supplement',workerId:second.workerId,text:'Confirm unknown effect',immediate:true});
+  f.tasks.markSteer(sent.operationKey,'dispatching');f.tasks.reconcile();f.tasks.reconcile();
+  assert.equal(f.tasks.operation(sent.operationKey).state,'uncertain');
+  assert.equal(f.tasks.claim(),undefined);
+  assert.throws(()=>f.tasks.workerSend(f.actor,{operationId:'retry',workerId:second.workerId,text:'Retry unknown',immediate:true}),/operation_uncertain/);
  }finally{f.close();}
 });
 
@@ -64,5 +69,34 @@ test('unsupported older layouts are refused before writes; transactions and requ
   assert.throws(()=>f.store.transaction(()=>{f.store.setMeta('rollback-test','written');throw Error('rollback');}),/rollback/);assert.equal(f.store.meta('rollback-test'),undefined);
   f.store.startRequest('request-id','same');f.store.finishRequest('request-id','saved response');assert.equal(f.store.startRequest('request-id','same').response,'saved response');assert.throws(()=>f.store.startRequest('request-id','different'),/request_conflict/);
   const path=f.dir+'/legacy.sqlite',legacy=new DatabaseSync(path);legacy.exec('CREATE TABLE matters(id TEXT PRIMARY KEY)');legacy.close();const before=readFileSync(path);assert.throws(()=>new Store(path),/schema_unsupported/);assert.deepEqual(readFileSync(path),before);
+ }finally{f.close();}
+});
+
+for(const [name,ddl] of [
+ ['old-media','CREATE TABLE media_schema(version INTEGER); INSERT INTO media_schema VALUES(1);'],
+ ['old-attachments','CREATE TABLE conversation_attachments(requestId TEXT PRIMARY KEY,refsJson TEXT);'],
+] as const)test('Store rejects '+name+' before any database mutation',()=>{
+ const f=chatFixture();try{
+  const path=f.dir+'/'+name+'.sqlite',db=new DatabaseSync(path);
+  db.exec('CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); '+ddl);db.close();
+  const before=readFileSync(path);
+  assert.throws(()=>new Store(path),/schema_unsupported/);
+  assert.deepEqual(readFileSync(path),before);
+ }finally{f.close();}
+});
+
+test('input uncertainty leaves committed reply and additions intact',()=>{
+ const f=chatFixture();try{
+  const requestId='explicit-unknown',threadId='thread:main';
+  f.inputs.accept({requestId,text:'Give two replies'});
+  const input=f.inputs.claim()!;
+  f.inputs.started(input.messageId,input.revision,'generation:unknown','turn:unknown');
+  const ids=f.store.transaction(()=>['first','second'].map(text=>f.history.commitAssistant({threadId,requestId,text,operationKey:'operation:'+text})));
+  assert.equal(ids[0],input.replyId);
+  assert.equal(f.inputs.uncertain(input.messageId,input.revision),true);
+  assert.deepEqual(ids.map(id=>f.history.message(id)?.status),['completed','completed']);
+  assert.deepEqual(ids.map(id=>f.history.message(id)?.text),['first','second']);
+  f.inputs.reconcile();
+  assert.deepEqual(ids.map(id=>f.history.message(id)?.status),['completed','completed']);
  }finally{f.close();}
 });

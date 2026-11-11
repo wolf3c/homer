@@ -1,6 +1,8 @@
 // Real native RPC receipts and Task/Worker state; no native process or model.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {CodexEngine} from '../src/engine.js';
 import {Homer} from '../src/service.js';
 import {RecursiveTools} from '../src/recursive-tools.js';
@@ -11,9 +13,9 @@ const flush=()=>new Promise<void>(done=>setImmediate(done));
 async function peer(){
  const f=fixture(),worker=openWorker(f),actor=running(f,worker.runId);
  const engine=new CodexEngine({workspace:f.files.workspace,stopGraceMs:100} as Config,{cwd:f.files.workspace,readRoots:[],instructions:'synthetic',tools:[]},async()=>({}));
- const sent:{id:number;method:string;params:any}[]=[];engine.threadId=actor.threadId;engine['send']=(message:any)=>{sent.push(message);};
+ const sent:{id:number;method:string;params:any}[]=[];engine.threadId=actor.threadId;engine['send']=(message:any)=>{if(message.method==='config/read')void receive({id:message.id,result:{config:{},layers:[]}});else sent.push(message);};
  const receive=(message:unknown)=>engine['receive'](JSON.stringify(message));
- const turn=engine.turn('synthetic');turn.catch(()=>{});await receive({id:sent[0]!.id,result:{turn:{id:actor.turnId}}});await flush();
+ const turn=engine.turn('synthetic');turn.catch(()=>{});await flush();await receive({id:sent[0]!.id,result:{turn:{id:actor.turnId}}});await flush();
  const app=Object.assign(Object.create(Homer.prototype),{store:f.store,tasks:f.tasks,workers:new Map([[actor.runId,{id:actor.runId,epoch:actor.epoch,engine}]])}) as Homer;
  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.tasks.authority(f.task.taskId,1),wake(){},stop:async r=>r,steer:r=>app['applySteer'](r)});
  const input={workerId:worker.workerId,message:'Synthetic immediate correction',immediate:true};
@@ -30,7 +32,7 @@ for(const ending of ['disconnect','close'] as const)test('native steer lost ACK 
   const receipt=await pending;assert.equal(receipt.state,'uncertain');assert.equal(receipt.code,ending==='close'?'engine_closed':'engine_disconnected');
   assert.equal(p.operation().state,'uncertain');assert.equal(JSON.parse(p.operation().detailsJson).rpcState,'uncertain');assert.equal(p.tasks.run(p.actor.runId!).phase,'uncertain');
   assert.equal(p.tasks.run(p.actor.runId!).version,1);assert.equal(p.tasks.task(p.task.taskId).headVersion,1);
-  assert.throws(()=>p.tasks.writeMarkdown(p.actor,{operationId:'stale-write',filename:'stale.md',content:'must not write'}),/phase/);
+  assert.throws(()=>p.tasks.writeFile(p.actor,{operationId:'stale-write',filename:'stale.md',bytes:Buffer.from('must not write')}),/phase/);
   await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});
   assert.equal((await p.steer()).state,'uncertain');assert.equal(p.writes().length,1);assert.equal(p.engine['pending'].size,0);
   p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original partial facts'},true);
@@ -78,7 +80,7 @@ for(const reason of ['before-send','not-applicable','sync-send','mismatched-ack'
  }finally{await p.dispose();}
 });
 
-test('an old-version return survives a goal change and cannot be adopted as the new version',async()=>{
+test('an old-version return survives a goal change and retains its original version',async()=>{
  const p=await peer();try{
   const pending=p.steer();await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});await pending;
   const change=p.tasks.updateTask(main,{...mutation(p,'goal-change'),patch:{goal:'New explicit user requirement'},authority:authority()});
@@ -86,7 +88,7 @@ test('an old-version return survives a goal change and cannot be adopted as the 
   p.tasks.confirmWorkerExit(p.actor.runId!,undefined);p.tasks.confirmStop(change.operationKey,true);
   const reply=p.tasks.workerRead(main,{workerId:p.worker.workerId}).messages.find(message=>message.kind==='worker_reply')!;
   assert.equal(reply.taskVersion,1);assert.equal(reply.text,'Original version draft');assert.equal(p.tasks.task(p.task.taskId).headVersion,2);assert.equal(p.tasks.task(p.task.taskId).outcome,null);
-  assert.throws(()=>p.tasks.adoptResult(main,{operationId:'wrong-version',taskId:p.task.taskId,version:2,messageId:reply.id}),/source_denied/);
+  assert.equal(reply.payload.version,1);
   const input={operationId:'followup',workerId:p.worker.workerId,text:'Continue under the new goal'};
   const next=p.tasks.workerSend(main,input);assert.deepEqual(p.tasks.workerSend(main,input),next);assert.equal(p.store.runs().length,2);
   assert.equal(p.tasks.run(next.runId!).version,2);assert.equal(p.tasks.run(next.runId!).threadId,p.actor.threadId);
@@ -114,7 +116,9 @@ for(const identity of ['threadId','turnId','epoch'] as const)test('late native A
  const p=await peer();try{
   const pending=p.steer();p.store.db.prepare('UPDATE runs SET '+identity+'=? WHERE id=?').run(identity==='epoch'?99:'other-'+identity,p.actor.runId!);
   await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});
-  assert.equal((await pending).state,'failed');assert.equal(p.operation().state,'failed');
+  const target=p.tasks.run(p.actor.runId!);
+  assert.equal((await pending).state,'uncertain');assert.equal(p.operation().state,'uncertain');
+  assert.equal(p.tasks.run(p.actor.runId!).stateRevision,target.stateRevision);assert.equal(p.tasks.run(p.actor.runId!).phase,target.phase);
   const details=JSON.parse(p.operation().detailsJson);assert.notEqual(p.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(details.messageId)!.state,'processed');
   assert.equal(p.writes().length,1);
  }finally{await p.dispose();}
@@ -124,21 +128,23 @@ test('confirmed stop retires a pending steer and a late ACK cannot revive its re
  const p=await peer();try{
   const pending=p.steer(),stop=p.tasks.workerStop(main,{operationId:'stop',workerId:p.worker.workerId});
   p.tasks.confirmWorkerExit(p.actor.runId!,undefined);p.tasks.confirmStop(stop.operationKey,true);
-  await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});await pending;
+  await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});assert.equal((await pending).state,'cancelled');
   assert.equal(p.operation().state,'cancelled');assert.equal((await p.steer()).state,'cancelled');assert.equal(p.writes().length,1);
-  assert.throws(()=>p.tasks.writeMarkdown(p.actor,{operationId:'late',filename:'late.md',content:'late'}),/stale|live/);
+  assert.throws(()=>p.tasks.writeFile(p.actor,{operationId:'late',filename:'late.md',bytes:Buffer.from('late')}),/stale|live/);
  }finally{await p.dispose();}
 });
 
-for(const state of ['submitting','uncertain','recorded'] as const)test('settlement respects this Task delivery state='+state,async()=>{
+for(const state of ['dispatching','uncertain','confirmed'] as const)test('settlement respects scoped steering state='+state,async()=>{
  const p=await peer();try{
+  const sent=p.tasks.workerSend(main,{operationId:'steer',workerId:p.worker.workerId,text:'Supplement',immediate:true});
+  p.tasks.markSteer(sent.operationKey,'dispatching');
+  if(state==='confirmed')p.tasks.markSteer(sent.operationKey,'received');
+  else if(state==='uncertain')p.tasks.markSteer(sent.operationKey,'uncertain');
   const returned=p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original draft'},true)!;
-  const result=p.tasks.adoptResult(main,{operationId:'adopt',taskId:p.task.taskId,version:1,messageId:returned.messageId});
-  const delivery=p.tasks.publish(main,{operationId:'publish',taskId:p.task.taskId,version:1,resultIds:[result.resultId],text:'Original delivery'});p.tasks.markDelivery(delivery.deliveryId,'submitting');if(state!=='submitting')p.tasks.markDelivery(delivery.deliveryId,state);
-  if(state==='recorded')assert.equal(p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}).state,'settled');
+  if(state==='confirmed')assert.equal(p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}).state,'settled');
   else assert.throws(()=>p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}),/operation_uncertain/);
   assert.equal(p.tasks.workerRead(main,{workerId:p.worker.workerId,messageId:returned.messageId}).messages[0]!.text,'Original draft');
-  assert.equal(p.tasks.deliveries().length,1);assert.equal(p.tasks.delivery(delivery.deliveryId).state,state);
+  assert.equal(p.tasks.operation(sent.operationKey).state,state);
  }finally{await p.dispose();}
 });
 
@@ -170,25 +176,27 @@ test('ACK after a returned draft cannot launch a successor before the exact exit
 test('lost file-write receipt preserves the raw return and blocks settlement without replaying the write',async()=>{
  const p=await peer();try{
   const write=p.files.writeBinary.bind(p.files);p.files.writeBinary=(...args)=>{write(...args);throw Error('synthetic_write_receipt_lost');};
-  assert.throws(()=>p.tasks.writeMarkdown(p.actor,{operationId:'unfinished-write',filename:'pending.md',content:'Actual preserved bytes'}),/synthetic_write_receipt_lost/);
+  assert.throws(()=>p.tasks.writeFile(p.actor,{operationId:'unfinished-write',filename:'pending.md',bytes:Buffer.from('Actual preserved bytes')}),/synthetic_write_receipt_lost/);
   p.files.writeBinary=write;
   const returned=p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original draft'},true)!;
   const operation=p.store.db.prepare("SELECT * FROM operations WHERE operationId='unfinished-write'").get()!;
   assert.equal(operation.state,'accepted');assert.throws(()=>p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}),/operation_uncertain/);
   assert.deepEqual(p.store.db.prepare("SELECT * FROM operations WHERE operationId='unfinished-write'").get(),operation);
-  assert.equal(p.files.verify(p.files.prepareRun(p.task.taskId,p.actor.runId!),p.files.prepareRun(p.task.taskId,p.actor.runId!)+'/pending.md').content,'Actual preserved bytes');
+  const runDirectory=p.files.prepareRun(p.task.taskId,p.actor.runId!);
+  assert.equal(readFileSync(join(runDirectory,'pending.md'),'utf8'),'Actual preserved bytes');
   assert.equal(p.tasks.workerRead(main,{workerId:p.worker.workerId,messageId:returned.messageId}).messages[0]!.text,'Original draft');
  }finally{await p.dispose();}
 });
 
-test('another Task unknown send does not block this Task settlement or alter the original send receipt',async()=>{
+test('another Task unknown steer does not block this Task settlement or alter its receipt',async()=>{
  const p=await peer();try{
   const other=p.tasks.createTask(main,{operationId:'other-task',goal:'Separate goal',authority:authority()}),worker=p.tasks.workerOpen(main,{operationId:'other-worker',taskId:other.taskId,text:'Inspect separate input'}),actor=running(p,worker.runId);
-  const returned=p.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'Separate checked facts'},true)!;
-  const result=p.tasks.adoptResult(main,{operationId:'adopt-other',taskId:other.taskId,version:1,messageId:returned.messageId});
-  const delivery=p.tasks.publish(main,{operationId:'publish-other',taskId:other.taskId,version:1,resultIds:[result.resultId],text:'Separate delivery'});
-  p.tasks.markDelivery(delivery.deliveryId,'submitting');p.tasks.markDelivery(delivery.deliveryId,'uncertain');const original=p.tasks.delivery(delivery.deliveryId);
+  const sent=p.tasks.workerSend(main,{operationId:'steer-other',workerId:worker.workerId,text:'Separate supplement',immediate:true});
+  p.tasks.markSteer(sent.operationKey,'dispatching');p.tasks.markSteer(sent.operationKey,'uncertain');
+  p.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'Separate checked facts'},true);
+  const original=p.tasks.operation(sent.operationKey);
   p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Current checked facts'},true);
-  assert.equal(p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}).state,'settled');assert.deepEqual(p.tasks.delivery(delivery.deliveryId),original);
+  assert.equal(p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}).state,'settled');
+  assert.deepEqual(p.tasks.operation(sent.operationKey),original);
  }finally{await p.dispose();}
 });

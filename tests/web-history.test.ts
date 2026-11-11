@@ -45,6 +45,53 @@ test("reconcile retains partial replies without replaying accepted inputs", () =
   db.close();
 });
 
+test("explicit replies bind attachments to the committed message and protect the first reply from native completion", () => {
+  const db = new DatabaseSync(":memory:"), history = new ConversationHistory(db);
+  try {
+    const inputRef = {assetId: "asset-00000000-0000-4000-8000-000000000001", revision: 1};
+    const outputRef = {assetId: "asset-00000000-0000-4000-8000-000000000002", revision: 1};
+    const {replyId} = history.accept("thread-a", {requestId: "source", text: "合成输入", attachments: [inputRef]});
+    const first = {threadId: "thread-a", requestId: "source", text: "合成交付", attachments: [outputRef], operationKey: "operation-1"};
+    db.exec("BEGIN");
+    assert.equal(history.commitAssistant(first), replyId);
+    db.exec("ROLLBACK");
+    assert.equal(history.message(replyId)?.status, "running");
+    assert.equal(history.message(replyId)?.attachments, undefined);
+    db.exec("BEGIN");
+    assert.equal(history.commitAssistant(first), replyId);
+    assert.equal(history.commitAssistant(first), replyId);
+    assert.throws(() => history.commitAssistant({...first, text: "不同正文"}), /message_operation_conflict/);
+    const later = history.commitAssistant({...first, operationKey: "operation-2", text: "补充说明", attachments: []});
+    const notification = history.commitAssistant({threadId: "thread-a", operationKey: "operation-3", text: "后台通知"});
+    db.exec("COMMIT");
+    assert.notEqual(later, replyId);
+    assert.equal(history.message(later)?.requestId, "source");
+    assert.equal(history.message(notification)?.requestId, null);
+    history.append(replyId, "迟到增量");
+    history.finish(replyId, "迟到的最终回答", "failed");
+    const [input, output] = history.list("thread-a");
+    assert.deepEqual(input?.attachments, [inputRef]);
+    assert.deepEqual(output?.attachments, [outputRef]);
+    assert.equal(output?.text, "合成交付");
+    assert.equal(output?.status, "completed");
+    assert.deepEqual(history.byIds("thread-a", [replyId])[0]?.attachments, [outputRef]);
+    assert.deepEqual(history.byIds("thread-b", [replyId]), []);
+    assert.equal(history.revokeMessage("thread-b", replyId), false);
+    assert.equal(history.revokeMessage("thread-a", replyId), true);
+    assert.equal(typeof history.message(replyId)?.revokedAt, "number");
+    assert.equal(history.message(later)?.revokedAt, null);
+  } finally { db.close(); }
+});
+
+test("legacy request-keyed history schema fails before creating any tables", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec("CREATE TABLE conversation_attachments(requestId TEXT PRIMARY KEY,refsJson TEXT NOT NULL)");
+    assert.throws(() => new ConversationHistory(db), /conversation_schema_unsupported/);
+    assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name), ["conversation_attachments"]);
+  } finally { db.close(); }
+});
+
 test("quotes match visible Markdown in the exact source message, including formatting, links, tables and line breaks", () => {
   const db = new DatabaseSync(":memory:"), history = new ConversationHistory(db);
   const first = history.accept("thread-a", { requestId: "markdown-source", text: "合成来源" });

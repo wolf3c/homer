@@ -12,18 +12,21 @@ export function configureDesktopImageDecoder(identity:DesktopResourceIdentity){
  if(desktopIdentity&&JSON.stringify(desktopIdentity)!==JSON.stringify(identity))throw Error('desktop_resource_identity_conflict');
  desktopIdentity={...identity};
 }
-export async function mediaProcess(bin:string,args:string[],input:Buffer,maxBytes:number,signal?:AbortSignal,timeoutMs=20000,allowEmpty=false):Promise<Buffer>{
+export async function mediaProcess(bin:string,args:string[],input:Buffer,maxBytes:number,signal?:AbortSignal,timeoutMs=20000):Promise<Buffer>{
  if(desktopIdentity){
   const trusted=verifiedDesktopResources(desktopIdentity),resources=join(trusted.bundleRoot,process.platform==='win32'?'resources':'Contents/Resources');
   // Optional Homebrew/Python/ASR installations never become implicit desktop
   // dependencies. Keep only the verified ImageIO helper and bundled SILK codec.
-  const image=process.platform==='win32'?bin===process.execPath&&args.length===2&&args[0]===trusted.imageDecoder&&['0','320'].includes(args[1]!):bin===trusted.imageDecoder&&args.length===1&&['0','320'].includes(args[0]!);
-  const silk=bin===process.execPath&&realpathSync(bin)===join(trusted.bundleRoot,process.platform==='win32'?'resources/node.exe':'Contents/MacOS/node')&&args.length===2&&args[0]===join(resources,'homer/dist/media-silk.js')&&['decode','encode'].includes(args[1]!);
+  const crop=(parts:string[])=>parts.length===5&&parts[0]==='crop'&&parts.slice(1).every(value=>/^[0-9]{1,8}$/.test(value));
+  const image=process.platform==='win32'?bin===process.execPath&&args[0]===trusted.imageDecoder&&
+   (args.length===2&&['0','320'].includes(args[1]!)||args.length===7&&crop(args.slice(1,-1))&&['0','600','1100'].includes(args[6]!)):
+   bin===trusted.imageDecoder&&(args.length===1&&['0','320'].includes(args[0]!)||crop(args));
+  const silk=bin===process.execPath&&realpathSync(bin)===join(trusted.bundleRoot,process.platform==='win32'?'resources/node.exe':'Contents/MacOS/node')&&args.length===2&&args[0]===join(resources,'homer/dist/media-silk.js')&&args[1]==='decode';
   if(!image&&!silk)throw Error('media_decoder_unavailable');
  }
  if(signal?.aborted)throw Error('media_decode_cancelled');
  return new Promise((resolve,reject)=>{
-  const child=spawn(bin,args,{stdio:['pipe','pipe','pipe'],env:process.platform==='win32'?{SystemRoot:process.env.SystemRoot,PATH:join(process.env.SystemRoot!,'System32'),TEMP:process.env.TEMP}:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8'}});
+  const child=spawn(bin,args,{stdio:['pipe','pipe','pipe'],windowsHide:true,env:process.platform==='win32'?{SystemRoot:process.env.SystemRoot,PATH:join(process.env.SystemRoot!,'System32'),TEMP:process.env.TEMP}:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8'}});
   const chunks:Buffer[]=[];let size=0,settled=false,failure:string|undefined;
   // Wait for close even on cancellation: the caller may release a decoder slot
   // or remove its private input only after the child has actually exited.
@@ -31,7 +34,7 @@ export async function mediaProcess(bin:string,args:string[],input:Buffer,maxByte
   const timer=setTimeout(()=>fail('media_decode_timeout'),timeoutMs),cancel=()=>fail('media_decode_cancelled');signal?.addEventListener('abort',cancel,{once:true});
   child.stderr.resume();child.stdin.on('error',()=>{});child.on('error',()=>fail('media_decoder_unavailable'));
   child.stdout.on('data',chunk=>{if(failure)return;size+=chunk.length;if(size>maxBytes)fail('media_decode_size_limit');else chunks.push(Buffer.from(chunk));});
-  child.on('close',code=>{clearTimeout(timer);signal?.removeEventListener('abort',cancel);if(settled)return;settled=true;if(failure){reject(Error(failure));return;}code===0&&(size||allowEmpty)?resolve(Buffer.concat(chunks)):reject(Error('media_decode_failed'));});
+  child.on('close',code=>{clearTimeout(timer);signal?.removeEventListener('abort',cancel);if(settled)return;settled=true;if(failure){reject(Error(failure));return;}code===0&&size?resolve(Buffer.concat(chunks)):reject(Error('media_decode_failed'));});
   child.stdin.end(input);
  });
 }
@@ -46,10 +49,11 @@ export async function imageThumbnail(bytes:Buffer,mime:string,signal?:AbortSigna
 // once, and avoid any decoder work for an image already within the envelope.
 export async function toolImage(image:{bytes:Buffer;mime:string},signal?:AbortSignal){
  if(signal?.aborted)throw Error('media_decode_cancelled');
- const source=imageDimensions(image.bytes,image.mime);
+ const input=image.mime==='image/gif'||image.mime==='image/webp'?await modelImage(image.bytes,image.mime,signal):image;
+ const source=imageDimensions(input.bytes,input.mime);
  if(!source||!source.width||!source.height||source.width*source.height>MEDIA_POLICY.maxPixels)throw Error('media_pixel_limit');
- const resized=image.bytes.length>TOOL_IMAGE_BYTES;
- const view=resized?await imageThumbnail(image.bytes,image.mime,signal):{...image,...source};
+ const resized=input.bytes.length>TOOL_IMAGE_BYTES;
+ const view=resized?await imageThumbnail(input.bytes,input.mime,signal):{...input,...source};
  return {bytes:view.bytes,mime:view.mime,modelView:{source,width:view.width,height:view.height,resized,...(resized?{notice:'Downsampled tool view; fine detail may be lost. The original file is unchanged.'}:{})}};
 }
 async function normalizeImage(bytes:Buffer,mime:string,edge:number|undefined,signal?:AbortSignal){

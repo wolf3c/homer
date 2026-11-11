@@ -31,26 +31,16 @@ PY="$HOMER_TOOLS/office/venv/bin/python"
 
 ## Skill
 
-读取原生 Installer 的 `SKILL.md`，用清单中的 repo、path、ref、dest 安装**完整目录**。目标已存在时先比较用户修改；该安装器没有 `--force`／`--update`，多条目安装也不是事务。纯入口 `skill_save` 不包含 references、scripts、assets，不能代替整目录发布。
+读取原生 Installer 的 `SKILL.md`，用清单中的 repo、path、ref、dest 安装**完整目录**。目标已存在时先比较用户修改；该安装器没有 `--force`／`--update`，多条目安装也不是事务。
 
 本地完整目录通过既有文件工具进入专属 `skills/<name>/`：先比较清单和 hash、备份，有冲突不覆盖。结构校验后原生强制重扫、读取实际文件并在任务中使用；不要求重启。移除或回退只处理本次拥有且未被后来修改的文件，不删共享依赖。
 
 ## MCP
 
-优先用 Homer 当前 `capabilities` 的 `mcp_save`、`mcp_toggle`、`mcp_remove`。先读取当前 schema 和配置版本；本版本允许 `command`、`args` 或 `url` 等字段，**本地 command 必须绝对路径**，command 与 url 二选一。启动 npm 包时使用已安装的绝对 Node 路径及包 `bin` 指向的脚本；Python 使用私有环境内真实可执行文件。不复制 Claude 的 `mcpServers` JSON 当 Codex 配置，也不把 npm 安装成功当 MCP 注册完成。
-
-例如 Playwright MCP 安装后，由包的 bin 映射解析出绝对 CLI 文件，将服务器字段设为 `command=绝对Node路径`、`args=[绝对CLI路径]`。再由实际 `mcp_save` 请求提交，不手工伪造 expectedVersion、reviewHash 或本人审批回执。MCP HTTP 服务填写经过核验的 URL；OAuth、secret env 等当前 schema 未暴露的配置，先核原生支持通道，不把 Token 填进聊天、URL 或日志，也不伪造已连接。
-
-需要 CLI 管理时，仅使用实际可用的固定 Codex，并显式绑定 Homer 专属 HOME；先核该版本 `mcp --help`，不要默默操作全局配置。
+按会话给出的固定 Codex 可执行文件和专属 `CODEX_HOME` 执行原生命令。用 `mcp add NAME --url URL` 接入 HTTP 服务，用 `mcp add NAME -- COMMAND ARGS` 接入本地服务。命令使用实际可执行文件地址。查询、移除和 OAuth 走 `mcp list/get/remove/login/logout`，细节以本版本帮助为准。高级配置沿 Codex 的 `config.toml`，凭据使用服务支持的原生方式。
 
 ## Plugin、采用和停止
 
-原生 `plugin_search` → `plugin_read`，核对发布者、版本、内容和依赖，再用该详情回执的精确 target、reviewHash、expectedVersion 提交 `plugin_install`，沿已有具体审批执行。不要从仓库路径拼 target，也不从搜索结果的 enabled 字段推断安装状态。市场入口见 [认可的工具库](trusted-sources.md#codex-原生插件市场)；配置市场、安装插件和连接账号分别检查。
+按同一实例的原生市场和 `plugin list` 确认来源，再用 `plugin add NAME@MARKETPLACE` 或现有原生安装建议，卸载用 `plugin remove`。原生请求需要确认时沿当前待答处理。
 
-Skill／MCP 变化沿 Homer 现有自动刷新和同请求、同 thread 续接。发现更新不代表当前模型轮已换工具 schema；新工具须最小调用，不能靠管理进程查询冒充主 Agent 使用。任意 Hooks 即时热加载未获全面保证，须按类型验收；不要自行杀进程、新建主对话或重放未知操作。
-
-## 最小验收与报告
-
-先验证工具对应的真实功能，再完成原任务。浏览器打开受控页、点击、截图并回收本次会话；电脑操作读应用／窗口并执行已授权的小动作；办公检查见 [办公工具](office-tools.md)。失败说明实际原因和必要下一步，不无限重试。
-
-普通联网开发使用现有网络能力；管理接口仍须本人连接身份与真实授权，不能以可联网冒充用户审批。目录不是运行状态库，不复制第二份安装事实；取消后停止后续步骤，未知结果先核实际状态。
+安装结果以 Codex 实际发现及最小调用为准。已完成操作沿原生状态核对，结果未知时先查询再决定。配置更新随原生刷新和下一可用轮采用，执行中的会话保持原上下文。

@@ -5,21 +5,17 @@ import type { Config } from "./config.js";
 import { effectiveEffort } from "./model-config.js";
 import { engineError, codexVersion } from "./engine.js";
 import { homerWebBridge } from "./web-homer.js";
-import { HomerWechat } from "./channels/wechat-homer.js";
-import { TelegramHomerBridge } from "./channels/telegram-homer-bridge.js";
-import { TelegramManagement } from "./channels/telegram-management.js";
-import { prepareTelegramMigration } from "./channels/telegram-migration.js";
 import {desktopManagementAllowed} from './desktop-management.js';
 import {configureDesktopImageDecoder} from './media-decode.js';
+import {dingtalkChannel} from './dingtalk-channel.js';
+import {telegramChannel} from './telegram-channel.js';
+import {wechatChannel} from './wechat-channel.js';
 
 const send = (value: unknown) => new Promise<void>((resolve, reject) => {
   if (!process.send) return reject(new Error("dev_ipc_required"));
   process.send(value, error => error ? reject(error) : resolve());
 });
 let app: Homer | undefined;
-let wechat: HomerWechat | undefined;
-let telegram: TelegramHomerBridge | undefined;
-let telegramManagement: TelegramManagement | undefined;
 let frozen = true;
 let stopping = false;
 let starting: Promise<void> | undefined;
@@ -55,16 +51,15 @@ async function startDesktopChat(){
       // Presence permits local startup; only a real response proves validity.
       if(!config.baseUrl||!process.env[config.keyEnv]){await send({kind:'chat_unavailable',code:'desktop_account_required'});invalidateState();return;}
     }else{
-      const account=await app!.manageCapabilities({action:'account_state'});
+      const account=await app!.manageNativeAccount({action:'account_state'});
       if(stopping)return;
       if(!account.connected){await send({kind:'chat_unavailable',code:'desktop_account_required'});invalidateState();return;}
     }
     if(stopping)return;
     const restoring=!!app!.store.meta('mainThread');
-    starting=(async()=>{if(!app!.config.pauseOldDesktopWork)await prepareTelegramMigration(app!.store.db,app!.config.runtime);await app!.start({keepManagementOnFailure:true});})();
+    starting=app!.start({keepManagementOnFailure:true});
     try{
       await starting;if(stopping)return;
-      // Commit core readiness exactly once before optional channel restoration.
       chatReady=true;
       await announceReady(restoring);
     }catch(error){
@@ -73,15 +68,9 @@ async function startDesktopChat(){
       if(blocked)desktopRetryBlocked=true;
       await send({kind:'chat_unavailable',code});
     }finally{starting=undefined;invalidateState();}
-    if(chatReady&&!stopping&&!app!.config.pauseOldDesktopWork){
-      telegram=new TelegramHomerBridge(app!);telegramManagement=new TelegramManagement(telegram.channel);
-      try{await wechat!.restore();}catch{await send({kind:'desktop_channel_unavailable',channel:'wechat'});}
-      try{await telegram.restore();}catch{await send({kind:'desktop_channel_unavailable',channel:'telegram'});}
-    }
   })().finally(()=>{desktopChatStarting=undefined;});
   return desktopChatStarting;
 }
-let nativeCapabilitiesProtocol=false;
 let webUploadProtocol=false;
 const receipts = new Map<string, { resolve: () => void; reject: (error: Error) => void; requestId?:string;startedAt:number;sentAt?:number;measured:boolean }>();
 async function output(message: Message) {
@@ -89,9 +78,9 @@ async function output(message: Message) {
   const source=message.requestId??('sourceRequestId' in message?message.sourceRequestId:undefined);
   const requestId=source&&/^[\w:.-]{1,150}$/.test(source)?source:undefined;
   // Keep per-write metadata on the original receipt, never a second outbox.
-  // Only final replies/deliveries add history points; high-volume deltas remain
+  // Only final replies add history points; high-volume deltas remain
   // inspectable while pending without evicting an entire turn's timing trail.
-  const measured=message.type==='reply'||message.type==='delivery';
+  const measured=message.type==='reply';
   const receipt = new Promise<void>((resolve, reject) => receipts.set(id, { resolve, reject,requestId,startedAt:Date.now(),measured }));
   if(measured)app?.receptionTimings.mark('output_ipc_start',{outputId:id,requestId});
   try {
@@ -108,7 +97,7 @@ async function stop() {
   if(stateInvalidationRetry)clearTimeout(stateInvalidationRetry);
   frozen = true;
   let confirmed=false;
-  try { await desktopChatStarting?.catch(() => {}); await starting?.catch(() => {}); await telegram?.close(); await wechat?.management.close(); await app?.close({requireAllOwnersConfirmed:desktop});confirmed=!!app||constructorRefused; }
+  try { await desktopChatStarting?.catch(() => {}); await starting?.catch(() => {}); await app?.close({requireAllOwnersConfirmed:desktop});confirmed=!!app||constructorRefused; }
   catch { process.exitCode = 1; }
   if(desktop){try{await send({kind:'desktop_stopped',confirmed});}catch{process.exitCode=1;}}
   process.disconnect?.();
@@ -127,7 +116,7 @@ process.on("message", (raw: unknown) => {
   });
 });
 async function receive(raw: unknown) {
-  const m = raw as { desktop?:boolean; kind: string; config: Config; buildHash?:string; terminalDeltas?:boolean;webUploadProtocol?:number;nativeCapabilitiesProtocol?:number;thread?: string; id: string; text: string; method: string; input: any };
+  const m = raw as { desktop?:boolean; kind: string; config: Config; buildHash?:string; terminalDeltas?:boolean;webUploadProtocol?:number;thread?: string; id: string; text: string; method: string; input: any };
   if (m.kind === "written") {
     const pending=receipts.get(m.id);
     if(pending?.measured)app?.receptionTimings.mark('output_ipc_ack',{outputId:m.id,requestId:pending.requestId});
@@ -135,26 +124,27 @@ async function receive(raw: unknown) {
   } else if (m.kind === "init") {
     if (app) throw new Error("dev_already_initialized");
     desktop=m.desktop===true;
-    if(!desktop&&(m.config.pauseOldDesktopWork||m.config.dailyDeepSeek||m.config.desktopConnection||m.config.desktopModelSource))throw Error('desktop_pause_scope_invalid');
+    if(!desktop&&(m.config.pauseOldDesktopWork||m.config.dailyDeepSeek||m.config.desktopConnection||m.config.desktopModelSource||m.config.desktopAdopted))throw Error('desktop_pause_scope_invalid');
     if(desktop){if(!m.config.desktopResources)throw Error('desktop_resource_identity_required');configureDesktopImageDecoder(m.config.desktopResources);}
-    webUploadProtocol=m.webUploadProtocol===1;nativeCapabilitiesProtocol=m.nativeCapabilitiesProtocol===1;
+    webUploadProtocol=m.webUploadProtocol===1;
     // Only an explicit plain-terminal opt-out skips IPC. Legacy/private host
     // callers keep their existing stream until they declare otherwise.
     const terminalDeltas=m.terminalDeltas!==false;
+    const telegram=telegramChannel(m.config.runtime);
+    const wechat=wechatChannel(m.config.runtime);
+    const dingtalk=dingtalkChannel(m.config.runtime);
+    const adapters=[...(telegram?[telegram]:[]),...(wechat?[wechat]:[]),...(dingtalk?[dingtalk]:[])];
     try {
     app = new Homer(m.config, async (message: Message) => {
-      // Only local durable acceptance here. The channel's independent sender
-      // owns external delivery; its network outcome cannot replay the Worker.
-      if(!app?.config.pauseOldDesktopWork){await wechat?.onMessage(message);await telegram?.handleMessage(message);}
       if (["main_start", "main_terminal", "tool_progress"].includes(message.type)) return;
       if(message.type==='delta'&&!terminalDeltas)return;
       await output(message);
-    });
-    } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;throw error; }
+    },undefined,adapters);
+    for(const adapter of adapters)adapter.applyBindings(app.channels!);
+    } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;await app?.close();throw error; }
     app.onStateChange(reason=>{invalidateState();if(desktop&&(reason==='model-turn'||reason==='user-input'))void send({kind:reason==='model-turn'?'account_usage_dirty':'account_config_check'}).catch(()=>{});});
     if(m.buildHash)app.registerRuntimeBuild(m.buildHash);
-    if(webUploadProtocol)app.registerChannelCapabilities('web',()=>({draftUpload:true}));
-    if(!m.config.pauseOldDesktopWork)wechat = new HomerWechat(app);
+    if(webUploadProtocol)app.registerWebSurface(true);
     if (m.thread && app.store.meta("mainThread") !== m.thread)
       throw new Error("main_resume_thread_mismatch");
     if(desktop){
@@ -164,16 +154,7 @@ async function receive(raw: unknown) {
       return;
     }
     const restoring = !!app.store.meta("mainThread");
-    starting = (async () => {
-      await prepareTelegramMigration(app!.store.db, m.config.runtime);
-      await app!.start();
-      telegram = new TelegramHomerBridge(app!);
-      telegramManagement = new TelegramManagement(telegram.channel);
-      await wechat!.restore();
-      // A broken/revoked external credential must not prevent local Homer use.
-      try { await telegram.restore(); }
-      catch { await output({ type: "progress", text: "Telegram 恢复未确认；请在本地设置页核对凭据或消费者冲突。" }); }
-    })();
+    starting = app.start();
     await starting;
     if (stopping) return;
     if(webUploadProtocol)app.webHistoryPages();
@@ -182,9 +163,14 @@ async function receive(raw: unknown) {
       effort: effectiveEffort(m.config.effort), engine: codexVersion(m.config.codexBin) });
   } else if(m.kind==='desktop_account'){
     try{
-      if(!desktop||!app||frozen||stopping||!['state','connect','cancel'].includes(m.method))throw Error('desktop_account_forbidden');
-      const state=await app.manageCapabilities({action:'account_state'});
-      const value=m.method==='connect'?await app.manageCapabilities({action:'account_login',approve:true}):m.method==='cancel'&&state.loginId?await app.manageCapabilities({action:'account_cancel',approve:true,loginId:state.loginId}):state;
+      if(!desktop||!app||frozen||stopping)throw Error('desktop_account_forbidden');
+      if(m.method==='channel-state'){
+        await send({kind:'web_result',id:m.id,value:app.channels?.connectionStatus()??[]});
+        return;
+      }
+      if(!['state','connect','cancel'].includes(m.method))throw Error('desktop_account_forbidden');
+      const state=await app.manageNativeAccount({action:'account_state'});
+      const value=m.method==='connect'?await app.manageNativeAccount({action:'account_login',approve:true}):m.method==='cancel'&&state.loginId?await app.manageNativeAccount({action:'account_cancel',approve:true,loginId:state.loginId}):state;
       await send({kind:'web_result',id:m.id,value});
     }catch(error){await send({kind:'web_result',id:m.id,error:engineError(error)});}
   } else if (m.kind === "web") {
@@ -195,7 +181,7 @@ async function receive(raw: unknown) {
         await send({kind:'web_result',id:m.id,value:{...app.conversationControlState(),threadId:'',messages:[],queue:[],work:[],interactions:[],upgrade:{phase:'management',accepting:false}}});
         return;
       }
-      const bridge = homerWebBridge(app,{draftUpload:webUploadProtocol,nativeCapabilities:!!nativeCapabilitiesProtocol});
+      const bridge = homerWebBridge(app,{draftUpload:webUploadProtocol});
       let value: unknown;
       if(m.method==='history.state')value=await bridge.history!.state();
       else if(m.method==='history.page')value=await bridge.history!.page(m.input);
@@ -211,9 +197,11 @@ async function receive(raw: unknown) {
       else if(m.method==='taskOverview.origin')value=await bridge.taskOverview!.origin!(m.input.id,m.input.messageId);
       else if(m.method==='taskOverview.detail'){const {id,...query}=m.input;value=await bridge.taskOverview!.detail(id,Object.keys(query).length?query:undefined);}
       else if(m.method === 'media.read')value=await bridge.media!.read(m.input);
+      else if(m.method === 'media.origin'&&bridge.media?.origin)value=await bridge.media.origin(m.input);
+      else if(m.method === 'media.reveal'&&bridge.media?.reveal)value=await bridge.media.reveal(m.input);
       else if(m.method === 'media.upload'){if(!bridge.media?.upload)throw Error('web_upload_unavailable');value=await bridge.media.upload(m.input);}
+      else if(m.method === 'media.preview'){if(!bridge.media?.previewDraft)throw Error('web_upload_unavailable');value=await bridge.media.previewDraft(m.input);}
       else if(m.method === 'media.discard'){if(!bridge.media?.discard)throw Error('web_upload_unavailable');value=await bridge.media.discard(m.input);}
-      else if (m.method === "state") value = await bridge.state();
       else if (m.method === "submit") value = await bridge.submit(m.input);
       else if (m.method === "feedback") value = await bridge.feedback!(m.input.messageId, m.input.value);
       else if(m.method==='queue.edit')value=await bridge.queue!.edit(m.input);
@@ -222,24 +210,6 @@ async function receive(raw: unknown) {
       else if(m.method==='queue.interrupt')value=await bridge.queue!.interrupt(m.input.input,m.input.target);
       else if (m.method === "stop") value = await bridge.stop(m.input.messageId);
       else if (m.method === "respond") value = await bridge.respond(m.input.id, m.input);
-      else if (m.method === "artifactOrigin") value = await bridge.artifactOrigin!(m.input.resultId);
-      else if (m.method === "revealArtifact") value = await bridge.revealArtifact!(m.input.resultId);
-      else if (m.method === "artifact") value = await bridge.artifact(m.input.runId);
-      else if (wechat && m.method === "wechat.state") value = await wechat.management.state();
-      else if (wechat && m.method === "wechat.login") value = await wechat.management.beginLogin();
-      else if (wechat && m.method === "wechat.poll") value = await wechat.management.pollLogin(m.input.id, m.input.verifyCode);
-      else if (wechat && m.method === "wechat.qr") value = await wechat.management.qrPng(m.input.id);
-      else if (wechat && m.method === "wechat.disable") value = await wechat.management.disable();
-      else if (wechat && m.method === "wechat.reconnect") value = await wechat.management.reconnect();
-      else if (wechat && m.method === "wechat.disconnect") value = await wechat.management.disconnect();
-      else if (telegramManagement && m.method === "telegram.state") value = await telegramManagement.state();
-      else if (telegramManagement && m.method === "telegram.configure") value = await telegramManagement.configure(m.input.token);
-      else if (telegramManagement && m.method === "telegram.pair") value = await telegramManagement.beginPairing();
-      else if (telegramManagement && m.method === "telegram.candidate") value = await telegramManagement.candidate(m.input.code);
-      else if (telegramManagement && m.method === "telegram.approve") value = await telegramManagement.approve(m.input.code, m.input.userId, m.input.chatId);
-      else if (telegramManagement && m.method === "telegram.connect") value = await telegramManagement.connect();
-      else if (telegramManagement && m.method === "telegram.disconnect") value = await telegramManagement.disconnect();
-      else if (telegramManagement && m.method === "telegram.forget") value = await telegramManagement.forget();
       else throw new Error("web_method_denied");
       await send({ kind: "web_result", id: m.id, value });
     } catch (error) { await send({ kind: "web_result", id: m.id, error: engineError(error) }); }
@@ -260,24 +230,15 @@ async function receive(raw: unknown) {
   } else if (m.kind === "probe") {
     // A busy owner stays fully available. Only a positive preflight permits
     // the launcher to freeze ingress; prepare still performs the final check.
-    const safe = !!app && !frozen && !stopping && app.upgradeStatus().safe && !!wechat?.management.canUpgrade() && !!telegramManagement?.canUpgrade();
+    const safe = !!app && !frozen && !stopping && app.upgradeStatus().safe;
     await send({kind: "upgrade_probe", id: m.id, safe});
   } else if (m.kind === "prepare") {
     if (!app || frozen) return;
     frozen = true;
-    if (!app.upgradeStatus().safe || !wechat?.management.canUpgrade() || !telegramManagement?.canUpgrade()) {
+    if (!app.upgradeStatus().safe) {
       frozen = false;
       await send({ kind: "busy" });
       return;
-    }
-    // Stop ingress before the final safety check. An update accepted during
-    // the initial check must remain in this host's original main queue.
-    await wechat.management.close();
-    await telegram!.close();
-    if (!app.upgradeStatus().safe) {
-      wechat = new HomerWechat(app); await wechat.restore();
-      telegram = new TelegramHomerBridge(app); telegramManagement = new TelegramManagement(telegram.channel); await telegram.restore();
-      frozen = false; await send({ kind: "busy" }); return;
     }
     await send({ kind: "handoff", thread: app.store.meta("mainThread") });
     await stop(); // Parent waits for process exit, never just this notification.

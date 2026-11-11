@@ -21,7 +21,7 @@ export function workerStatus(worker:OverviewWorker):{state:StatusIcon;label:stri
  const labels:Record<string,string>={ready:'等待调度',starting:'正在启动',parked:'等待协作事件',rpc_wait:'等待工具或交互',yielding:'正在交接',sealing:'正在收束'};
  return {state:'waiting',label:labels[run.phase]??'状态待核实'};
 }
-export type TaskSemanticIcon='Send'|'CornerDownRight'|'Clock3'|'RotateCcw'|'MessagesSquare'|'MessageCircleQuestion'|'ShieldQuestion'|'Activity'|'Inbox'|'Check'|'CircleDashed'|'CircleX'|'OctagonAlert'|'CircleStop'|'Pause'|'RefreshCw'|'CheckCheck';
+export type TaskSemanticIcon='Send'|'CornerDownRight'|'Clock3'|'LoaderCircle'|'RotateCcw'|'MessagesSquare'|'MessageCircleQuestion'|'ShieldQuestion'|'Activity'|'Inbox'|'Check'|'CircleDashed'|'CircleX'|'OctagonAlert'|'CircleStop'|'Pause'|'RefreshCw'|'CheckCheck';
 export function taskCardPresentation(task:OverviewTask,worker?:OverviewWorker):{state:StatusIcon;label:string;owner:'main'|'worker'|'user'|'ended'|'unknown';icon:TaskSemanticIcon;attention:'none'|'user'}{
  const make=(state:StatusIcon,label:string,owner:'main'|'worker'|'user'|'ended'|'unknown',icon:TaskSemanticIcon,attention:'none'|'user'='none')=>({state,label,owner,icon,attention});
  if(!worker){
@@ -40,7 +40,7 @@ export function taskCardPresentation(task:OverviewTask,worker?:OverviewWorker):{
   return make(status.state,status.label,status.state==='working'?'worker':'main',status.state==='working'?'Activity':status.state==='failed'?'CircleX':status.state==='cancelled'?'CircleStop':status.state==='done'?'MessagesSquare':status.label==='状态待核实'?'Pause':'Clock3');
  }
  const classification=classifyTask(task);
- if(classification.key==='running')return make('working','运行中','worker','Activity');
+ if(classification.key==='running')return make('working','运行中','worker','LoaderCircle');
  if(classification.key==='unknown')return make('waiting',classification.label,'main','Pause');
  if(classification.key==='main')return make('waiting','主 Agent 处理中','main','MessagesSquare');
  return make('waiting',classification.label,'main','Clock3');
@@ -71,7 +71,6 @@ export function statusCountSnapshot(_tasks:OverviewTask[],matters=statusTree(_ta
  }
  return {workingKnown,counts:{working:matches.working.size,queued:matches.queued.size,done,needsUser:interactions.size+unlocatedPending},matches};
 }
-export function statusCounts(tasks:OverviewTask[],matters=statusTree(tasks)){return statusCountSnapshot(tasks,matters).counts;}
 export function matterStatus(matter:StatusMatter){return taskCardPresentation(matter.task);}
 export type StatusSortKey={priority:0|1|2|3|4;enteredAtMs:number;creationOrder:number;id:string};
 export type RankedStatusMatter={matter:StatusMatter;key:StatusSortKey};

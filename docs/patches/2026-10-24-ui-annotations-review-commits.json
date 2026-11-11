@@ -1,0 +1,1238 @@
+{
+  "dateUTC": "2026-10-24T15:42:18.432191+00:00",
+  "baseline": "5afa91483870fd69fb281bc1bd5c2e24470dd3ba",
+  "commits": [
+    {
+      "stage": "A-worker",
+      "parent": "5afa91483870fd69fb281bc1bd5c2e24470dd3ba",
+      "tree": "f346b345f5d63fb6980f06878174577a4cf1c49a",
+      "paths": [
+        "docs/worker-event-cards.md",
+        "tests/process-nodes-ui.test.mjs",
+        "tests/process-presentation.test.mjs",
+        "tests/worker-card-outside-activity.browser.mjs",
+        "ui/DESIGN.md",
+        "ui/process-nodes.tsx"
+      ],
+      "patchSha256": "a552ba9d51a3db54a9dfe46ca272e2d2444b61ab53562bcebba71aacf3628b8f",
+      "sharedIndexSha256": "40df958c9eb6d604a0e881698cbc20aa50e9084dfa2508b82d56a0efa052f0d2",
+      "candidateHashes": {
+        "docs/worker-event-cards.md": "9064258ec68e9e53792d8e1348cc110ae2ca77b7f74cbd838c2ae245068ba8f7",
+        "tests/process-nodes-ui.test.mjs": "30d6b8fe3622e93c395ce8eb8d73ba9117f394bff8368510671932ee941b319b",
+        "tests/process-presentation.test.mjs": "c0542060c2f2b41f29c68402234ae9b743c036eb93e1aa9b08d93d43fd0430f1",
+        "tests/worker-card-outside-activity.browser.mjs": "881531d8ed9cc74348d71751854a586632c03775e8084ba8eed7d85d5065c8fa",
+        "ui/DESIGN.md": "e14c8461f683a983602439ab465aef3b5e397128b6c4514a2cc5fb712aa019c4",
+        "ui/process-nodes.tsx": "d5c1ac279d2a03f91a2fbac537bc9e21eb71864c8b1e70bd162c720fef8bdd85"
+      },
+      "baselineBuildRegeneration": {
+        "path": "ui/vendor/task-status/components.css",
+        "sha256": "aa8415197c2ef3528f51c4ea87d94962d0759b0d43b82df84b73859ca740d871",
+        "sameAsBaselineBuild": true,
+        "includedInCommit": false
+      },
+      "commit": "094121b5de3a781b085f47cf6947300ef1d0c1cf",
+      "indexAfterSha256": "d1151abd9c2ca31bcce623c5b3cddcfa52ead22e8f735acc4ed4d2bec6d423e5"
+    },
+    {
+      "stage": "B-scroll",
+      "parent": "094121b5de3a781b085f47cf6947300ef1d0c1cf",
+      "tree": "d278c97687e73ba8949e202f6e7ea4458c17af56",
+      "paths": [
+        "docs/2026-10-24-thread-viewport-scroll-fix.md",
+        "tests/thread-viewport.browser.mjs",
+        "ui/homer-styles.css"
+      ],
+      "patchSha256": "57a379a783721c85839f452219eebd27e9e8f6cdff28275a2c099736d8b1e687",
+      "sharedIndexSha256": "d1151abd9c2ca31bcce623c5b3cddcfa52ead22e8f735acc4ed4d2bec6d423e5",
+      "candidateHashes": {
+        "docs/2026-10-24-thread-viewport-scroll-fix.md": "a9aa2af8a2332e9503a7e9d8bd9d45b98d7472bca87d5abe9a0c996f3f1b0908",
+        "tests/thread-viewport.browser.mjs": "7802c9f9b8f74c93348fb3929c7b86ae3046f48e69451af27c5321cb3e81a5d0",
+        "ui/homer-styles.css": "424f457fa93ff387f5c9f402077a3fee5ee5f267f90a85493fb6008fd18f864e"
+      },
+      "baselineBuildRegeneration": {
+        "path": "ui/vendor/task-status/components.css",
+        "sha256": "aa8415197c2ef3528f51c4ea87d94962d0759b0d43b82df84b73859ca740d871",
+        "sameAsBaselineBuild": true,
+        "includedInCommit": false
+      },
+      "commit": "fcb87df64aa0d8cb25bb9859b1e2e0c8df39afcb",
+      "indexAfterSha256": "21b69cb73e51b6e20ad9d666a5c2672a7a40d3f1ba72b50740f6f5277cc866dc"
+    },
+    {
+      "stage": "C-text",
+      "parent": "fcb87df64aa0d8cb25bb9859b1e2e0c8df39afcb",
+      "tree": "1c176eaa6714932e7fcadecde329b4aab29a7cbe",
+      "paths": [
+        "docs/2026-10-24-canvas-selection-add-to-chat.md",
+        "docs/2026-10-24-text-file-multi-annotations.md",
+        "src/preview-reference.ts",
+        "src/service.ts",
+        "src/user-intent.ts",
+        "tests/canvas-selection-toolbar.browser.mjs",
+        "tests/preview-annotation-edge-cases.browser.mjs",
+        "tests/preview-annotation.browser.mjs",
+        "tests/preview-reference.test.ts",
+        "tests/text-file-annotations.browser.mjs",
+        "tests/web-service.test.ts",
+        "ui/DESIGN.md",
+        "ui/canvas-panel.css",
+        "ui/canvas-panel.tsx",
+        "ui/homer-app.tsx",
+        "ui/preview-reference.tsx",
+        "ui/preview-selection-toolbar.tsx",
+        "ui/preview-selection.ts",
+        "ui/vendor/assistant-ui/README.md"
+      ],
+      "patchSha256": "aa2bcca12c4dde6ea3331fd9a2f868f7fc28c2a07dd9017ea21ea2a0cf38b463",
+      "sharedIndexSha256": "21b69cb73e51b6e20ad9d666a5c2672a7a40d3f1ba72b50740f6f5277cc866dc",
+      "candidateHashes": {
+        "docs/2026-10-24-canvas-selection-add-to-chat.md": "2151d1bd85afc5b3cada367150f1c83043013b7440d429a2aaf49398bb6d5b8b",
+        "docs/2026-10-24-text-file-multi-annotations.md": "d12c321933cf7bf21e715c9b4ac8b45c9dbcaa757f2003779c19f0cc9f90c128",
+        "src/preview-reference.ts": "9c415d783f9f2ad5ee15909a1965d59fca7a56a470bc3419fcd514cf9723b0fe",
+        "src/service.ts": "f61d5b737264a9fad52d1d2a82ac8dabb06e5688e0920603776fd21c82adc46e",
+        "src/user-intent.ts": "b72b061dace9ec652899c264d94b35662b3362c87f5a5824df59ae7b3bd0a5d6",
+        "tests/canvas-selection-toolbar.browser.mjs": "fc73b760e5a2f3e8815bfc40f8f00d531c6800dee76a571d673c7cdb21bc6bdf",
+        "tests/preview-annotation-edge-cases.browser.mjs": "6b2c2d8bde0b1db0bdb9777d2a9863bd7561f5c7ba61450760cfd9c5153b005a",
+        "tests/preview-annotation.browser.mjs": "827b3ab5c4267b2d74ef1267abb1bc17f55992fa53a0039462c03c3326f1db33",
+        "tests/preview-reference.test.ts": "f967445a6523568e992d2f2b031b04ee533a21c884f4f3ad1889bb748558f5fe",
+        "tests/text-file-annotations.browser.mjs": "7c0b0178c8c655cefe37183d71ccb241f2f1d3b6b44a907c48790d8677424282",
+        "tests/web-service.test.ts": "eb7945268ae926346baef2a87ca587642e5985dde179d1f1ce8e210cf308d636",
+        "ui/DESIGN.md": "aa7f8f2bca4f3e6650d629df71384e6e2f6788c53e5f2b8d27c1a5325ce06437",
+        "ui/canvas-panel.css": "22120cfef231a2b2e9db90664d025054fd71253c907b0c535d862071c7c39718",
+        "ui/canvas-panel.tsx": "c560aada792fc3a41163dfcf500815f6e0d3630d2a5f042e95be186787cba998",
+        "ui/homer-app.tsx": "7d78b3cb5ea21acd1eb6e285a030e25fa5369f348c9ff12017a54f0b155e2cd8",
+        "ui/preview-reference.tsx": "fc5b2c96cee1d949338531f534c1e9e78c8c7419302ecea64225201d7925e496",
+        "ui/preview-selection-toolbar.tsx": "83819db75a182b566009be499eeee4d21d114f24132fcb8c3e0a0cd1e0c63508",
+        "ui/preview-selection.ts": "6d730665725eecb592bdc68c3893d08640f862cea0b4ad55aae4744ebdee2d02",
+        "ui/vendor/assistant-ui/README.md": "6c3328853d16f192b44dd42a4ea527fab808274c57e18fa782d202b945e17705"
+      },
+      "baselineBuildRegeneration": {
+        "path": "ui/vendor/task-status/components.css",
+        "sha256": "aa8415197c2ef3528f51c4ea87d94962d0759b0d43b82df84b73859ca740d871",
+        "sameAsBaselineBuild": true,
+        "includedInCommit": false
+      },
+      "commit": "9609d258c4fd0ab59fb6be20d91f988d9587d687",
+      "indexAfterSha256": "704b75b4b5aae43fec87633f4d447ddc3020bb0d3206f03ca887f352dd34178e"
+    },
+    {
+      "stage": "D-html",
+      "parent": "9609d258c4fd0ab59fb6be20d91f988d9587d687",
+      "tree": "905f7bed37dc8f5c6b9897f0ffa4434a0e667c28",
+      "paths": [
+        "docs/2026-10-24-html-render-first-integration.md",
+        "scripts/build-preview-annotation.mjs",
+        "scripts/patch-preview-agentation.mjs",
+        "src/html-preview.ts",
+        "tests/agentation-preview-compat.browser.mjs",
+        "tests/agentation-preview-patch.test.mjs",
+        "tests/canvas-html-publication-fixture.ts",
+        "tests/canvas-html-publication.test.ts",
+        "tests/canvas-selection-toolbar.browser.mjs",
+        "tests/helpers/html-preview-browser.mjs",
+        "tests/html-annotation-lifecycle.browser.mjs",
+        "tests/html-preview-layout.browser.mjs",
+        "tests/html-render-first.browser.mjs",
+        "tests/official-canvas.browser.mjs",
+        "tests/preview-annotation-edge-cases.browser.mjs",
+        "tests/preview-annotation.browser.mjs",
+        "tests/web-service.test.ts",
+        "ui/DESIGN.md",
+        "ui/annotation-frame.tsx",
+        "ui/canvas-panel.css",
+        "ui/canvas-panel.tsx",
+        "ui/homer-app.tsx",
+        "ui/vendor/agentation-3.1.2/INPUT-SHA256.json",
+        "ui/vendor/agentation-3.1.2/LICENSE",
+        "ui/vendor/agentation-3.1.2/MODIFIED-SOURCE.md",
+        "ui/vendor/agentation-3.1.2/agentation-local.patch",
+        "ui/vendor/agentation-3.1.2/index.d.mts",
+        "ui/vendor/agentation-3.1.2/index.d.ts",
+        "ui/vendor/agentation-3.1.2/index.mjs",
+        "ui/vendor/agentation-3.1.2/patch-statistics.json",
+        "ui/vendor/agentation-3.1.2/upstream/LICENSE",
+        "ui/vendor/agentation-3.1.2/upstream/index.d.ts",
+        "ui/vendor/agentation-3.1.2/upstream/index.mjs",
+        "ui/vendor/agentation-3.1.2/upstream/package.json",
+        "ui/vendor/assistant-ui/README.md",
+        "ui/vendor/assistant-ui/canvas-split.tsx",
+        "ui/vite.config.ts"
+      ],
+      "patchSha256": "f3cb5bda81959239ac08a06c4097566b9675eb53c6206979f8c2e1bd2db44689",
+      "sharedIndexSha256": "704b75b4b5aae43fec87633f4d447ddc3020bb0d3206f03ca887f352dd34178e",
+      "candidateHashes": {
+        "docs/2026-10-24-html-render-first-integration.md": "eae4d5a8736d1e20bbaf0d8fc4748d183ae875417665b14c9e9828a3f24ebc8e",
+        "scripts/build-preview-annotation.mjs": "9f7b5ed716a665413ef1309857fb22c15c9c678d3c9fb445b13ce11a4f2403de",
+        "scripts/patch-preview-agentation.mjs": "f7f2fc2c028a450b20106656ba045d0265d3dd0edb1a6aad32954c79ec6149e0",
+        "src/html-preview.ts": "89f9985787fe8a76b75170e61265cba186c92cc4c5c34b8f87a072bb1c417fcd",
+        "tests/agentation-preview-compat.browser.mjs": "cdde9dad91bc2e6d286537876edc8f032787d003dd33fb3ee9b73dfc6ea559e6",
+        "tests/agentation-preview-patch.test.mjs": "6a48107a366709a566dbfdacd66f3c2ad09c722f175c29193ca4e925007ba65f",
+        "tests/canvas-html-publication-fixture.ts": "9d7ddf25a17524eb32d9c7b406936033be9e0aaaeffae39bdafbe32b3bb1deba",
+        "tests/canvas-html-publication.test.ts": "b42c9d4dff417b608429e82e40845a8ce7bd525a5ce711eef767b5f710afc323",
+        "tests/canvas-selection-toolbar.browser.mjs": "1fe97a2d874f9286296ccb78ed79efef3896ff187f4c2c4241bab823d468623a",
+        "tests/helpers/html-preview-browser.mjs": "15bb0026ab8f3bf4e768043b215a7dc713c146666398a43d42cf7e7001e67658",
+        "tests/html-annotation-lifecycle.browser.mjs": "379a7a3e4bebea259d9a388d85fee1746c4f06421406e9d056bfed377de95e07",
+        "tests/html-preview-layout.browser.mjs": "98ea8f674f1352b1f9f05f9244d551184bee4e7b204602cdc6753f3d731ee093",
+        "tests/html-render-first.browser.mjs": "23f11e623f83a81f256b0258062e2c104469d19a2affeb194b0e3438ea7a32a2",
+        "tests/official-canvas.browser.mjs": "17b30d43e7af59fc4c362c91e8b43ac83cb3ca1f2a2727958e9bf8e8dd48c04e",
+        "tests/preview-annotation-edge-cases.browser.mjs": "c34058bbe958558bde730f84680b68154d27a29bbe18c5dfda82228d40fa2b3d",
+        "tests/preview-annotation.browser.mjs": "a3869d01259ad44e0f9207513b01582966adc73b514ca771cdd953473f8ffae7",
+        "tests/web-service.test.ts": "3067bb2f43003380464ecff827d54fc3fe22ab021f1d95798898e13ab85cc04d",
+        "ui/DESIGN.md": "bb68132d41a439ce8cf2454b5b32bbc88123a15de7492a42b3e2f4a48e8221e8",
+        "ui/annotation-frame.tsx": "e635558857644b3245fc21a8eb1095da7f6911d33bd131276d2d92eaa8f58411",
+        "ui/canvas-panel.css": "5340cda51158e677aab196cae7ab7ad57087a317c7140a13fcc3dc8beabfb3ce",
+        "ui/canvas-panel.tsx": "7ae947c64901c84e0e97ad845618fd7e2e0de1daf55c6046195cca93030d5d08",
+        "ui/homer-app.tsx": "083b2e07aaf7b6b861727200437ecf27b16cfc0f6710e0a366b845599a816609",
+        "ui/vendor/agentation-3.1.2/INPUT-SHA256.json": "75459c3a7faee032bd6f709a271d62d9973b20f5ea72b647e477a6e504645691",
+        "ui/vendor/agentation-3.1.2/LICENSE": "29eb64b5c188e2d6f739a8beadf09bcbb3a386bf78ae44e07343975331fd9775",
+        "ui/vendor/agentation-3.1.2/MODIFIED-SOURCE.md": "148dbef3925de5ee2cb41c48db088a85e9fb707a6609cc500b90f261077ff1ad",
+        "ui/vendor/agentation-3.1.2/agentation-local.patch": "6b05ce6d487a6f39414d07d2c0a4c56d57ae6302b8cf2bc79bfe93e0afa952f4",
+        "ui/vendor/agentation-3.1.2/index.d.mts": "c26b1e60aff2a341cd0462cdf12621896f0c192a8d126085f437e57650c273c8",
+        "ui/vendor/agentation-3.1.2/index.d.ts": "c26b1e60aff2a341cd0462cdf12621896f0c192a8d126085f437e57650c273c8",
+        "ui/vendor/agentation-3.1.2/index.mjs": "dad6472d5c828cf9ebfa70a37b8317ac63fdd31fbe1731ca436d22a5782ab629",
+        "ui/vendor/agentation-3.1.2/patch-statistics.json": "88ba18d03ae0e3b87024d6d1f3baadb04d8cac20aae23047dbca84780b52e919",
+        "ui/vendor/agentation-3.1.2/upstream/LICENSE": "29eb64b5c188e2d6f739a8beadf09bcbb3a386bf78ae44e07343975331fd9775",
+        "ui/vendor/agentation-3.1.2/upstream/index.d.ts": "ad53930a48adf24d58dd40e6d469c2e54f8133c619e490af9a4a77e84c78b438",
+        "ui/vendor/agentation-3.1.2/upstream/index.mjs": "1a4d069438c9f218d20eab31150e5c2b1c6ef05c526135bd10dd492950023b1e",
+        "ui/vendor/agentation-3.1.2/upstream/package.json": "3d802cfa04a77e4b6e2f7d8bb173d292268ea61c1cf52078e003c3e4e37d0e19",
+        "ui/vendor/assistant-ui/README.md": "6ef6bead4bdf3357de525f9f6c69841c6eccdd68a3ce37c7280e51afdb91e556",
+        "ui/vendor/assistant-ui/canvas-split.tsx": "0fb94b5cdffa320d32bb298c78a971ec76363105dab3b55ba9cc9e99ab39cf2b",
+        "ui/vite.config.ts": "c0c0752014e54d568f615ec322c2bdb437f48024d85c7514429212a888441fca"
+      },
+      "baselineBuildRegeneration": {
+        "path": "ui/vendor/task-status/components.css",
+        "sha256": "aa8415197c2ef3528f51c4ea87d94962d0759b0d43b82df84b73859ca740d871",
+        "sameAsBaselineBuild": true,
+        "includedInCommit": false
+      },
+      "commit": "683aec4486e172e3ddcfb1d5a534ad88872bde1f",
+      "indexAfterSha256": "decb9f9ef0808f88e2af77e451619dd2ac4002a5639328a08562fa7fe0bfb2ee"
+    },
+    {
+      "stage": "E-image",
+      "parent": "683aec4486e172e3ddcfb1d5a534ad88872bde1f",
+      "tree": "3434977ce3306aeb7ef504a14dd86f0b8546112d",
+      "paths": [
+        "docs/2026-10-24-image-file-multi-annotations.md",
+        "src/media-store.ts",
+        "src/preview-reference.ts",
+        "src/service.ts",
+        "src/user-intent.ts",
+        "tests/image-file-annotations.browser.mjs",
+        "tests/preview-annotation.browser.mjs",
+        "tests/preview-reference.test.ts",
+        "tests/web-service.test.ts",
+        "ui/DESIGN.md",
+        "ui/canvas-panel.css",
+        "ui/canvas-panel.tsx",
+        "ui/homer-app.tsx",
+        "ui/image-annotation.css",
+        "ui/image-annotation.tsx",
+        "ui/preview-reference.tsx",
+        "ui/vendor/assistant-ui/README.md",
+        "ui/vendor/assistant-ui/attachment-icon-button.tsx",
+        "ui/vendor/assistant-ui/attachment-tooltip.tsx",
+        "ui/vendor/assistant-ui/attachment.css"
+      ],
+      "patchSha256": "e4113a83b93387a07b7ead6c7260af61f384def97e756990cc73e84a60fcc6d0",
+      "sharedIndexSha256": "decb9f9ef0808f88e2af77e451619dd2ac4002a5639328a08562fa7fe0bfb2ee",
+      "candidateHashes": {
+        "docs/2026-10-24-image-file-multi-annotations.md": "0818b767d417d421ae2926a66c1d1a9d0e516d6da436ac318610808e0d0efa92",
+        "src/media-store.ts": "aa44cbd4223e7de481ec2e4cbd8f9ca1fffde1631cda536c79045ae1d75d509f",
+        "src/preview-reference.ts": "70d90aa4b5bd3df60f06c301631417084afebf1a82cfe7de28fc500f88f07a43",
+        "src/service.ts": "24e0221812e97646e403d74ad3306a8ef4f31b79b22a9eeecdf8a2f6ae3ee723",
+        "src/user-intent.ts": "466840ffe969d4037b4c7b305532790891f6b246c91ebc17c298c43cd7e50d3f",
+        "tests/image-file-annotations.browser.mjs": "f5956f8901a2a0fb67d199e63c4169144f218d101bb16ad2ac00d3ba5020860b",
+        "tests/preview-annotation.browser.mjs": "af3ac508c14c90e03250cc8de18a18e7ae24d4c80cbdb6597f31e2596d04e188",
+        "tests/preview-reference.test.ts": "c014ad0d6be28442ed476a276be6ddcec6d3614791c2f2925d4928e3b7f0af63",
+        "tests/web-service.test.ts": "6de69e06d108421747715be33d165851275d9720d8afd33751bc311271151c4b",
+        "ui/DESIGN.md": "9163e44378cc546096f40582e001acfba12cd9cde2cc85fb0b4e5c990fbf967d",
+        "ui/canvas-panel.css": "43f32c6acb359f2631404717a3a05693a9e21b43e53d735d5a94c6b35cb47395",
+        "ui/canvas-panel.tsx": "fb2e28d611963d129f1bf598b52cf0b95107d5f507f070851e9e68953a9bc2c1",
+        "ui/homer-app.tsx": "7d2f84cd0c7421819a10a7860b4a695f783ea0d49e1ea789f41be3fe6e03b57d",
+        "ui/image-annotation.css": "6ff6617815860de45fcb0bd814cd63607ed1dd6cb461fe130622b4d7488488a1",
+        "ui/image-annotation.tsx": "52fa28f191133d88ef7c0ec687c771ead2bfa2f58606d8c9df3190ff5189dd1c",
+        "ui/preview-reference.tsx": "51a08da7f7de630d8b8b1b0fff39a5a1f897022dcfc6c30ed26c5899ffd7615e",
+        "ui/vendor/assistant-ui/README.md": "95c02940256276f16e907f3010ebc4a3f8a57f31bf98cf354bc6d854ddfea136",
+        "ui/vendor/assistant-ui/attachment-icon-button.tsx": "aec67ab21c658132558f5a4a106e96a4370ec3940a3c5ea9f05dd347f82ec0a2",
+        "ui/vendor/assistant-ui/attachment-tooltip.tsx": "08921a5b0d1be9d554f63982abd8338c0e48aa3bdafe0627a42de38d5fd40000",
+        "ui/vendor/assistant-ui/attachment.css": "44c6d3f8a7daa6ab536a8eacd9b7782ce03f5d5c5d3cfdb3dc0360539d81ac5c"
+      },
+      "baselineBuildRegeneration": {
+        "path": "ui/vendor/task-status/components.css",
+        "sha256": "aa8415197c2ef3528f51c4ea87d94962d0759b0d43b82df84b73859ca740d871",
+        "sameAsBaselineBuild": true,
+        "includedInCommit": false
+      },
+      "commit": "53c53e8b51803e6e161957c15a91816e5ba6db30",
+      "indexAfterSha256": "03d3a0826d67d551d79e9e5927e006e4f5aa49745d3c75809082e82b09cd5290"
+    }
+  ],
+  "verification": {
+    "base": {
+      "server-types": {
+        "exit": 0,
+        "seconds": 2.29,
+        "log": "base-server-types.log"
+      },
+      "full-types": {
+        "exit": 2,
+        "seconds": 3.22,
+        "log": "base-full-types.log"
+      },
+      "ui-build": {
+        "exit": 0,
+        "seconds": 7.56,
+        "log": "base-ui-build.log"
+      },
+      "css-check": {
+        "exit": 0,
+        "seconds": 0.21,
+        "log": "base-css-check.log"
+      }
+    },
+    "A-worker": {
+      "server-types": {
+        "exit": 0,
+        "seconds": 1.94,
+        "log": "A-worker-server-types.log"
+      },
+      "full-types": {
+        "exit": 2,
+        "seconds": 3.14,
+        "log": "A-worker-full-types.log"
+      },
+      "ui-build": {
+        "exit": 0,
+        "seconds": 7.01,
+        "log": "A-worker-ui-build.log"
+      },
+      "css-check": {
+        "exit": 0,
+        "seconds": 0.26,
+        "log": "A-worker-css-check.log"
+      },
+      "process-tests": {
+        "exit": 0,
+        "seconds": 0.72,
+        "log": "A-worker-process-tests.log"
+      }
+    },
+    "B-scroll": {
+      "server-types": {
+        "exit": 0,
+        "seconds": 2.24,
+        "log": "B-scroll-server-types.log"
+      },
+      "full-types": {
+        "exit": 2,
+        "seconds": 7.1,
+        "log": "B-scroll-full-types.log"
+      },
+      "ui-build": {
+        "exit": 0,
+        "seconds": 9.83,
+        "log": "B-scroll-ui-build.log"
+      },
+      "css-check": {
+        "exit": 0,
+        "seconds": 0.32,
+        "log": "B-scroll-css-check.log"
+      }
+    },
+    "C-text": {
+      "server-types": {
+        "exit": 0,
+        "seconds": 3.71,
+        "log": "C-text-server-types.log"
+      },
+      "full-types": {
+        "exit": 2,
+        "seconds": 5.49,
+        "log": "C-text-full-types.log"
+      },
+      "ui-build": {
+        "exit": 0,
+        "seconds": 10.34,
+        "log": "C-text-ui-build.log"
+      },
+      "css-check": {
+        "exit": 0,
+        "seconds": 0.42,
+        "log": "C-text-css-check.log"
+      },
+      "reference-tests": {
+        "exit": 0,
+        "seconds": 1.24,
+        "log": "C-text-reference-tests.log"
+      },
+      "service-tests": {
+        "exit": 0,
+        "seconds": 1.4,
+        "log": "C-text-service-tests.log"
+      }
+    },
+    "D-html": {
+      "server-types": {
+        "exit": 0,
+        "seconds": 3.58,
+        "log": "D-html-server-types.log"
+      },
+      "full-types": {
+        "exit": 2,
+        "seconds": 4.52,
+        "log": "D-html-full-types.log"
+      },
+      "ui-build": {
+        "exit": 0,
+        "seconds": 7.23,
+        "log": "D-html-ui-build.log"
+      },
+      "css-check": {
+        "exit": 0,
+        "seconds": 0.18,
+        "log": "D-html-css-check.log"
+      },
+      "html-tests": {
+        "exit": 0,
+        "seconds": 0.51,
+        "log": "D-html-html-tests.log"
+      },
+      "service-tests": {
+        "exit": 0,
+        "seconds": 0.36,
+        "log": "D-html-service-tests.log"
+      }
+    },
+    "E-image": {
+      "server-types": {
+        "exit": 0,
+        "seconds": 1.61,
+        "log": "E-image-server-types.log"
+      },
+      "full-types": {
+        "exit": 2,
+        "seconds": 4.34,
+        "log": "E-image-full-types.log"
+      },
+      "ui-build": {
+        "exit": 0,
+        "seconds": 8.2,
+        "log": "E-image-ui-build.log"
+      },
+      "css-check": {
+        "exit": 0,
+        "seconds": 0.21,
+        "log": "E-image-css-check.log"
+      },
+      "reference-tests": {
+        "exit": 0,
+        "seconds": 0.62,
+        "log": "E-image-reference-tests.log"
+      },
+      "service-tests": {
+        "exit": 0,
+        "seconds": 0.92,
+        "log": "E-image-service-tests.log"
+      }
+    }
+  },
+  "typeComparison": {
+    "base": {
+      "count": 137,
+      "newComparedToCommittedHEAD": [],
+      "removedComparedToCommittedHEAD": []
+    },
+    "A-worker": {
+      "count": 137,
+      "newComparedToCommittedHEAD": [],
+      "removedComparedToCommittedHEAD": []
+    },
+    "B-scroll": {
+      "count": 137,
+      "newComparedToCommittedHEAD": [],
+      "removedComparedToCommittedHEAD": []
+    },
+    "C-text": {
+      "count": 137,
+      "newComparedToCommittedHEAD": [],
+      "removedComparedToCommittedHEAD": []
+    },
+    "D-html": {
+      "count": 137,
+      "newComparedToCommittedHEAD": [],
+      "removedComparedToCommittedHEAD": []
+    },
+    "E-image": {
+      "count": 137,
+      "newComparedToCommittedHEAD": [],
+      "removedComparedToCommittedHEAD": []
+    }
+  },
+  "unitResults": {
+    "A-worker-process-tests.log": {
+      "tests": 22,
+      "pass": 22,
+      "fail": 0,
+      "skipped": 0
+    },
+    "C-text-reference-tests.log": {
+      "tests": 38,
+      "pass": 38,
+      "fail": 0,
+      "skipped": 0
+    },
+    "C-text-service-tests.log": {
+      "tests": 7,
+      "pass": 7,
+      "fail": 0,
+      "skipped": 0
+    },
+    "D-html-html-tests.log": {
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    },
+    "D-html-service-tests.log": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0
+    },
+    "E-image-reference-tests.log": {
+      "tests": 41,
+      "pass": 41,
+      "fail": 0,
+      "skipped": 0
+    },
+    "E-image-service-tests.log": {
+      "tests": 9,
+      "pass": 9,
+      "fail": 0,
+      "skipped": 0
+    }
+  },
+  "browser": [
+    {
+      "stage": "A-worker",
+      "test": "tests/worker-card-outside-activity.browser.mjs",
+      "exit": 0,
+      "seconds": 9.55,
+      "log": "A-worker-worker-card-outside-activity.log",
+      "evidence": "A-worker-worker-card-outside-activity-browser",
+      "evidenceResults": {
+        "browser.json": {
+          "sha256": "90a6e3adf4d641f563fe49f5a14a65bfe8bb449079376d61f0daea3a76886b5f",
+          "checks": 19,
+          "rows": 3,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "b5b02caf83f037ef706d77bed551e0b20267036e7a75f2258d91200014976a94"
+    },
+    {
+      "stage": "B-scroll",
+      "test": "tests/thread-viewport.browser.mjs",
+      "exit": 0,
+      "seconds": 15.46,
+      "log": "B-scroll-thread-viewport.log",
+      "evidence": "B-scroll-thread-viewport-browser",
+      "evidenceResults": {
+        "results.json": {
+          "sha256": "8c492243199b67c89458ef126be6883aa63d6fb80687919f7cdb49166b0501e3",
+          "checks": 0,
+          "rows": 8,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          },
+          "scenarioCount": 8
+        }
+      },
+      "logSha256": "e6a1a1cdc8c203c10c62d4564f30cdd63fa5349f7c4b1e0e6a712d01e1ffd060"
+    },
+    {
+      "stage": "C-text",
+      "test": "tests/canvas-selection-toolbar.browser.mjs",
+      "exit": 0,
+      "seconds": 7.76,
+      "log": "C-text-canvas-selection-toolbar.log",
+      "evidence": "C-text-canvas-selection-toolbar-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "9d91c41bf30957fb4093754967d767fb0a341562075ff3482d92e0f3edffcbc0",
+          "checks": 45,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "f1708f9cc140faedbc7730e0c8429a866c8e35be109f7c1cb5f6fd69f359e0ff"
+    },
+    {
+      "stage": "C-text",
+      "test": "tests/preview-annotation-edge-cases.browser.mjs",
+      "exit": 0,
+      "seconds": 16.62,
+      "log": "C-text-preview-annotation-edge-cases.log",
+      "evidence": "C-text-preview-annotation-edge-cases-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "2e84855a651307d8d929948ae2cad6398d1ee5d3999253b1227704dc5a3b5474",
+          "checks": 34,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "da15cb6b3b597dad1624367a15924f7f1bc568f2dceb5c9e232fffbac5373f57"
+    },
+    {
+      "stage": "C-text",
+      "test": "tests/text-file-annotations.browser.mjs",
+      "exit": 0,
+      "seconds": 35.32,
+      "log": "C-text-text-file-annotations.log",
+      "evidence": "C-text-text-file-annotations-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "91b54ba9127eb460de60aeb23575836ce7da8c1368497f1a6146d29a987f3b9d",
+          "checks": 43,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "5aa0d1284b4fc5c4b54b6546ce4d9d644eaab50bac217a2ba48711dce549ea2d"
+    },
+    {
+      "stage": "D-html",
+      "test": "tests/agentation-preview-compat.browser.mjs",
+      "exit": 0,
+      "seconds": 6.1,
+      "log": "D-html-agentation-preview-compat.log",
+      "evidence": "D-html-agentation-preview-compat-browser",
+      "evidenceResults": {
+        "compat-results.json": {
+          "sha256": "4c124bce6b851f543dfe2bf16d74fd06accd74bd58db70d1083742a751676b9c",
+          "checks": 13,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "53a41c1d515ff430360034975c4aa4c0c7b2318b3ae661f73b53d4ed411c587b"
+    },
+    {
+      "stage": "D-html",
+      "test": "tests/html-annotation-lifecycle.browser.mjs",
+      "exit": 0,
+      "seconds": 18.13,
+      "log": "D-html-html-annotation-lifecycle.log",
+      "evidence": "D-html-html-annotation-lifecycle-browser",
+      "evidenceResults": {
+        "results.json": {
+          "sha256": "2542535244a5c7243005fd137a0ecf1a93d607ad6a96a8821adec1b9ad0b3f8e",
+          "checks": 19,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "be366f30c9b01c5746b7c055f0ea32d74ba1c447666cffc51ed615e94be69066"
+    },
+    {
+      "stage": "D-html",
+      "test": "tests/html-preview-layout.browser.mjs",
+      "exit": 0,
+      "seconds": 4.21,
+      "log": "D-html-html-preview-layout.log",
+      "evidence": "D-html-html-preview-layout-browser",
+      "evidenceResults": {
+        "results.json": {
+          "sha256": "b0b4ba71a7f5f1427582da73dd01c34aee3bf3fe95101e114c80e8357d850900",
+          "checks": 4,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "88410e667b7e78c7646e75f5d14320a5b79040424ca19d89bc4b105a6cb07e24"
+    },
+    {
+      "stage": "D-html",
+      "test": "tests/html-render-first.browser.mjs",
+      "exit": 0,
+      "seconds": 8.85,
+      "log": "D-html-html-render-first.log",
+      "evidence": "D-html-html-render-first-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "5fc71765bd11ce4994a4d78a52c0cf8998b366ade888f05f9ea9bcc54422026f",
+          "checks": 54,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "a937cd0b84df06459dab21d8fb87b21a747089aba8d5fef8f71a82edda380b89"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/html-annotation-lifecycle.browser.mjs",
+      "exit": 0,
+      "seconds": 18.54,
+      "log": "E-image-html-annotation-lifecycle.log",
+      "evidence": "E-image-html-annotation-lifecycle-browser",
+      "evidenceResults": {
+        "results.json": {
+          "sha256": "2542535244a5c7243005fd137a0ecf1a93d607ad6a96a8821adec1b9ad0b3f8e",
+          "checks": 19,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "be366f30c9b01c5746b7c055f0ea32d74ba1c447666cffc51ed615e94be69066"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/html-preview-layout.browser.mjs",
+      "exit": 0,
+      "seconds": 4.78,
+      "log": "E-image-html-preview-layout.log",
+      "evidence": "E-image-html-preview-layout-browser",
+      "evidenceResults": {
+        "results.json": {
+          "sha256": "b0b4ba71a7f5f1427582da73dd01c34aee3bf3fe95101e114c80e8357d850900",
+          "checks": 4,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "ccc2f0e5cf6a0425d6f0432c98b5b765ee3e6c0fd041faf81d8829a80c34b825"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/html-render-first.browser.mjs",
+      "exit": 0,
+      "seconds": 9.38,
+      "log": "E-image-html-render-first.log",
+      "evidence": "E-image-html-render-first-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "5fc71765bd11ce4994a4d78a52c0cf8998b366ade888f05f9ea9bcc54422026f",
+          "checks": 54,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "6befb9eba49a104bdcc8aa3948e6955cea52c50a52f13edd903d1c3c9360faf8"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/image-file-annotations.browser.mjs",
+      "exit": 0,
+      "seconds": 17.69,
+      "log": "E-image-image-file-annotations.log",
+      "evidence": "E-image-image-file-annotations-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "eba02182f2919adaf0659fa1ec5cfc545d61890ea5b5756c16fe023d19409e1b",
+          "checks": 60,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "b2c64208dee5b13fb526182715d3e37ae5fe0577b54141fcf313cd5ebd37b1a9"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/official-canvas.browser.mjs",
+      "exit": 1,
+      "seconds": 66.33,
+      "log": "E-image-official-canvas.log",
+      "evidence": "E-image-official-canvas-browser",
+      "limitation": "First run lost CDP iframe session; unchanged isolated retry passed 102 checks. Trigger not independently reproduced; assertions and product source unchanged.",
+      "evidenceResults": {},
+      "logSha256": "85e9c3d818e9911eb5fd0d61ad6c06c1609ccc9c0392d74f6c06c84cf304e795"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/official-canvas.browser.mjs",
+      "exit": 0,
+      "seconds": 21.43,
+      "log": "E-image-official-canvas-retry.log",
+      "evidence": "E-image-official-canvas-retry-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "423648abeee68579ad93bf43c93e94e098b3d85cffb1a697d7f8185ab495e8b7",
+          "checks": 102,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "29a40d91a3960d1aa18034ad8bb62e568f909df39ea558c52e2fdfe041019b2a"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/preview-annotation.browser.mjs",
+      "exit": 0,
+      "seconds": 6.25,
+      "log": "E-image-preview-annotation.log",
+      "evidence": "E-image-preview-annotation-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "e1c8161e41ed2ad0612876a6d6529d849cf83a376ab7110d6c80c01d4e142aca",
+          "checks": 31,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "80e067b2dba848025a01c7dae8b13ba908f9a02e640341b615b10b09172ceb12"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/text-file-annotations.browser.mjs",
+      "exit": 0,
+      "seconds": 37.47,
+      "log": "E-image-text-file-annotations.log",
+      "evidence": "E-image-text-file-annotations-browser",
+      "evidenceResults": {
+        "browser-results.json": {
+          "sha256": "91b54ba9127eb460de60aeb23575836ce7da8c1368497f1a6146d29a987f3b9d",
+          "checks": 43,
+          "rows": 0,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "974e15025eecb56fea3ea41fcd34943d189165a45b0152c0aa75bda6284d67df"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/thread-viewport.browser.mjs",
+      "exit": 0,
+      "seconds": 15.26,
+      "log": "E-image-thread-viewport.log",
+      "evidence": "E-image-thread-viewport-browser",
+      "evidenceResults": {
+        "results.json": {
+          "sha256": "cb57f2266abc2a20715960187aaeb776d3793866e0203201cb0eb1faff3d89ed",
+          "checks": 0,
+          "rows": 8,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          },
+          "scenarioCount": 8
+        }
+      },
+      "logSha256": "f87168feca0392075f39ced5cf5b69665a6d30609f2fdd3047791bf74af7ca6e"
+    },
+    {
+      "stage": "E-image",
+      "test": "tests/worker-card-outside-activity.browser.mjs",
+      "exit": 0,
+      "seconds": 9.8,
+      "log": "E-image-worker-card-outside-activity.log",
+      "evidence": "E-image-worker-card-outside-activity-browser",
+      "evidenceResults": {
+        "browser.json": {
+          "sha256": "90a6e3adf4d641f563fe49f5a14a65bfe8bb449079376d61f0daea3a76886b5f",
+          "checks": 19,
+          "rows": 3,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/156.0.8078.48",
+            "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+            "jsVersion": "15.6.75.19"
+          }
+        }
+      },
+      "logSha256": "e6f0ae61bac7410ae9dc894d3bf03654cbb9c02a580d847e5f7565f3f9c445cb"
+    }
+  ],
+  "bundleMetrics": {
+    "base": {
+      "fileCount": 72,
+      "assets": {
+        "image-annotation-BFINvudL.css": {
+          "raw": 5930,
+          "gzip6": 1383,
+          "sha256": "486f6b6ec72fccf356eebf0a5bfec7d684e3e0293b32be6151cb74187459cfe2"
+        },
+        "image-annotation-y8mnmRxp.js": {
+          "raw": 131029,
+          "gzip6": 40997,
+          "sha256": "f3d4cd4cce712804eee474ff82d8e4641222a93f5c4fa80a40c2621848e636d5"
+        },
+        "index-C6lgpaEA.js": {
+          "raw": 2499757,
+          "gzip6": 803300,
+          "sha256": "a8c3b56ea36a905db7b76bb9e15ac593753656e1063f9ca7c2d4fe0dc3a8d97b"
+        },
+        "index-uAni_2LB.css": {
+          "raw": 436151,
+          "gzip6": 42470,
+          "sha256": "4b3725a16a8b33f2d432c8f76bc8005e18ec65fb14da616643114d1c0a867680"
+        },
+        "runtime-C5cScwhm.js": {
+          "raw": 665505,
+          "gzip6": 167733,
+          "sha256": "e9e07c3c6973a5c963325b94826d6e2258bb4ab1d09354cfcfd7494d5f861c75"
+        }
+      }
+    },
+    "A-worker": {
+      "fileCount": 72,
+      "assets": {
+        "image-annotation-BFINvudL.css": {
+          "raw": 5930,
+          "gzip6": 1383,
+          "sha256": "486f6b6ec72fccf356eebf0a5bfec7d684e3e0293b32be6151cb74187459cfe2"
+        },
+        "image-annotation-DN8231UI.js": {
+          "raw": 131029,
+          "gzip6": 40997,
+          "sha256": "16b5aa9f1a33e10181df6b1fd1eb5f80adf303bd264d656c3116ef3fe82f2088"
+        },
+        "index-DyUcil2F.js": {
+          "raw": 2499638,
+          "gzip6": 803263,
+          "sha256": "d89957ac484cec64d9fd044fca36f2629731fe2d8e93d3c599ae02c415aa58da"
+        },
+        "index-uAni_2LB.css": {
+          "raw": 436151,
+          "gzip6": 42470,
+          "sha256": "4b3725a16a8b33f2d432c8f76bc8005e18ec65fb14da616643114d1c0a867680"
+        },
+        "runtime-C5cScwhm.js": {
+          "raw": 665505,
+          "gzip6": 167733,
+          "sha256": "e9e07c3c6973a5c963325b94826d6e2258bb4ab1d09354cfcfd7494d5f861c75"
+        }
+      }
+    },
+    "B-scroll": {
+      "fileCount": 72,
+      "assets": {
+        "image-annotation-BFINvudL.css": {
+          "raw": 5930,
+          "gzip6": 1383,
+          "sha256": "486f6b6ec72fccf356eebf0a5bfec7d684e3e0293b32be6151cb74187459cfe2"
+        },
+        "image-annotation-DZGaF3ms.js": {
+          "raw": 131029,
+          "gzip6": 40997,
+          "sha256": "bba540f912769b54c1ca0e70ff5cdc35fdcb56ccd2e701957d277ef38513136a"
+        },
+        "index-BXmUlBrt.js": {
+          "raw": 2499638,
+          "gzip6": 803262,
+          "sha256": "c438dcd4b83d66485db8c274ff5dea18667133ed860abfb2bc4e67e5670d3564"
+        },
+        "index-Cja5E9fj.css": {
+          "raw": 436169,
+          "gzip6": 42470,
+          "sha256": "c401eb692dddc26b5d17a62875233397279c649840af96439ab7d637f86738fd"
+        },
+        "runtime-C5cScwhm.js": {
+          "raw": 665505,
+          "gzip6": 167733,
+          "sha256": "e9e07c3c6973a5c963325b94826d6e2258bb4ab1d09354cfcfd7494d5f861c75"
+        }
+      }
+    },
+    "C-text": {
+      "fileCount": 72,
+      "assets": {
+        "image-annotation-BFINvudL.css": {
+          "raw": 5930,
+          "gzip6": 1383,
+          "sha256": "486f6b6ec72fccf356eebf0a5bfec7d684e3e0293b32be6151cb74187459cfe2"
+        },
+        "image-annotation-Do7sUkVj.js": {
+          "raw": 131029,
+          "gzip6": 40998,
+          "sha256": "cf365bcca12b92b30abc9cf05539f6a92c59ab9f9dd2192f6073bd1cd2568f33"
+        },
+        "index-BDo_n7jM.js": {
+          "raw": 2514771,
+          "gzip6": 808208,
+          "sha256": "53588f4af1a7f1af04882e7e78061c2ffdb9c669de5ac0d6b4bebf174f203bbc"
+        },
+        "index-CGIxXmJ0.css": {
+          "raw": 439043,
+          "gzip6": 43019,
+          "sha256": "3fd0aa156ec0826fb8d6acd23033c019546f2cd254056910161e70961ee6edbe"
+        },
+        "runtime-C5cScwhm.js": {
+          "raw": 665505,
+          "gzip6": 167733,
+          "sha256": "e9e07c3c6973a5c963325b94826d6e2258bb4ab1d09354cfcfd7494d5f861c75"
+        }
+      }
+    },
+    "D-html": {
+      "fileCount": 72,
+      "assets": {
+        "image-annotation-BFINvudL.css": {
+          "raw": 5930,
+          "gzip6": 1383,
+          "sha256": "486f6b6ec72fccf356eebf0a5bfec7d684e3e0293b32be6151cb74187459cfe2"
+        },
+        "image-annotation-BJIIveQM.js": {
+          "raw": 131029,
+          "gzip6": 40998,
+          "sha256": "fea8d6423d995721b109740a2889d7cfcb750629c4977cdab79c0201ab40b879"
+        },
+        "index-B8viNkTE.js": {
+          "raw": 2517702,
+          "gzip6": 808882,
+          "sha256": "1f74e55d65a4ce186dd53d5978d3ace0dbb3c195675d657ab8dd15878e3e7094"
+        },
+        "index-DTd47-Y6.css": {
+          "raw": 439758,
+          "gzip6": 43187,
+          "sha256": "6cfe7349e734a402edafc13d1a6d695924c28266cc182649f295fbdf76dcb596"
+        },
+        "runtime-BIgAza5X.js": {
+          "raw": 666781,
+          "gzip6": 168224,
+          "sha256": "f8d031dc48eae024a3f32bedcea52d745435f66ac85bb4f2b60c81a09bcc6377"
+        }
+      }
+    },
+    "E-image": {
+      "fileCount": 72,
+      "assets": {
+        "image-annotation-DL0Rx0Jv.css": {
+          "raw": 9083,
+          "gzip6": 2333,
+          "sha256": "0cf0aa14d916105adf4cb2532adb1bdedf73eaddc738aa8429c91547f6c4ac38"
+        },
+        "image-annotation-PohkIfwb.js": {
+          "raw": 137127,
+          "gzip6": 43139,
+          "sha256": "6abf8f62af297c5fe8f9c0dc0a5befceb23bc1fef55f7a6776b39aa995c95d44"
+        },
+        "index-BFssjNMV.css": {
+          "raw": 441367,
+          "gzip6": 43309,
+          "sha256": "e373064aa9c587b15e12f885abc94b9690ce00d1e44e691aed603e1b878adddf"
+        },
+        "index-BoXiuBuW.js": {
+          "raw": 2520503,
+          "gzip6": 809665,
+          "sha256": "96c867426dad77a3aaf59d01e34af82f0385461f35944670a3c294daf09b1920"
+        },
+        "runtime-BIgAza5X.js": {
+          "raw": 666781,
+          "gzip6": 168224,
+          "sha256": "f8d031dc48eae024a3f32bedcea52d745435f66ac85bb4f2b60c81a09bcc6377"
+        }
+      }
+    }
+  },
+  "htmlBuildReproducibility": {
+    "identical": true,
+    "files": 72,
+    "manifest": {
+      "assets/KaTeX_AMS-Regular-BQhdFMY1.woff2": "0cdd387c9590a1a9f9794560022dbb59654a7d86f187aa0c81495ad42d3a7308",
+      "assets/KaTeX_AMS-Regular-DMm9YOAa.woff": "30da91e84c893f875e252689faebdc590b2871145e8adc7f9a9d4dbd8ce0b251",
+      "assets/KaTeX_AMS-Regular-DRggAlZN.ttf": "68534840bcfdd2bffb6f0e8deb48684dd01e7f04ea2813267577afb906de1d13",
+      "assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf": "07d8e303ce4fc12b4bb54f1004170dd190a1f3db45d400fe68060df3e0897268",
+      "assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff": "1ae6bd7475590e97e7f145a89e09ccde322f7a6bc0b91607b1c8b8ee28290fed",
+      "assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2": "de7701e42cf1f4cf0b766c03fb27977207eee2f4fd5d76fa82188406da43ea4c",
+      "assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff": "3398dd02302557a793f2863f88e02d96ce10df2abffa07c8e9fa90775116e65c",
+      "assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2": "5d53e70ad607c2352162dec9e0923fb54ecdafaccbf604cd8dcf7d00facb989b",
+      "assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf": "ed0b74372feefcbb9c0666b2e210da37b7e49fa7fbbf3eeb11db5f693dacfbb7",
+      "assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf": "9163df9c7122432e6495b4229fa9071cf9ae86a758ae5efc4924ec2e1a6dbce1",
+      "assets/KaTeX_Fraktur-Bold-BsDP51OF.woff": "9be7ceb88004ab8ad124082246fbfcca4091e36385d4ec6ed1df67375dad50fb",
+      "assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2": "74444efd593c005e3f4573b44524704c0af0a937fe911cca9e94068d0d140d3f",
+      "assets/KaTeX_Fraktur-Regular-CB_wures.ttf": "1e6f9579e90e2cac37f8f60a597c436e075c114385652b7cbeb0dec0421291b3",
+      "assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2": "51814d270d06ff0255dba0799994fa4d8c84d11f09951d47595f4abb1f3602dc",
+      "assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff": "5e28753be717dac97f559f49bc10be9cf3c124ddcabda6659d11cb68febc6463",
+      "assets/KaTeX_Main-Bold-Cx986IdX.woff2": "0f60d1b897938ec918c8ce073092411baf9438f6739465693ff18b0f9d20b021",
+      "assets/KaTeX_Main-Bold-Jm3AIy58.woff": "c76c5d696297d51b9cb1639c7da4334f0e7dec81b42b11213b5e25ef671bb822",
+      "assets/KaTeX_Main-Bold-waoOVXN0.ttf": "138ac28d1663b3037e9c5f52371fa5c63d8324f4a38d22cd573e6ea3a3fd0cf8",
+      "assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2": "99cd42a3c072d918f2f44984a807cf7aa16e13545fd0875fc07c6c65f99e715b",
+      "assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf": "70ee1f64a20f2048c21940ef46d0144fd215baa953ca69afd1e31e98544f708f",
+      "assets/KaTeX_Main-BoldItalic-SpSLRI95.woff": "a6f7ec0d846ac7ad975adb8959c37ed49b94acbc4ae436db9ce9e20287e4a64c",
+      "assets/KaTeX_Main-Italic-3WenGoN9.ttf": "0d85ae7cc30f23790a7f1a58c4a112fdca8aae769b6ba11429af1d98b1b6cb3a",
+      "assets/KaTeX_Main-Italic-BMLOBm91.woff": "f1d6ef86f3b11a528bd5185199bd2443ecb2b0dead96d88674b5a2c12be24bdf",
+      "assets/KaTeX_Main-Italic-NWA7e6Wa.woff2": "97479ca6cce906abc961ecac96faa5f9ca2e61b8e7670d475826bcdee9a7c267",
+      "assets/KaTeX_Main-Regular-B22Nviop.woff2": "c2342cd8b869e01752a9321dc17213fc40d4d04c79688c1d43f2cf316abd7866",
+      "assets/KaTeX_Main-Regular-Dr94JaBh.woff": "c6368d87e8a1a3a5d337623d83d8dc4b868f242a9ad476237d6f8d1e0f168cdc",
+      "assets/KaTeX_Main-Regular-ypZvNtVU.ttf": "d0332f52868370fd83ae7fa46470f90c8f2eab2fcf12bc4f88080b340c95a830",
+      "assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf": "f9377ab0271cda59af24bcffbd46a4d0c8a3572ffafdbb38de2ad5ea7b0d5ee5",
+      "assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2": "dc47344dbb6cb5b655c8460d561f4df5f501b90c804ad3c6cec65fe322351ab1",
+      "assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff": "850c0af5c2238497febaf5e461d880bf458c341f42f4f330f1b1ab5698b1998e",
+      "assets/KaTeX_Math-Italic-DA0__PXp.woff": "8a8d244581371912b8f3f5a23e2437cb2a59cd9bcaebb0346e722c05737a2571",
+      "assets/KaTeX_Math-Italic-flOr_0UB.ttf": "08ce98e51b04d58945a301e639e02b6998af29fdfd61a7b8afdd07bbfc479d4a",
+      "assets/KaTeX_Math-Italic-t53AETM-.woff2": "7af58c5ec8f132a2ddde9027c6d7814decce4d3b822a11192a42a20e2e973264",
+      "assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf": "1ece03f79f95277d57dc7f6b435a74e1379b0d46104a8530286b60ff49369ea0",
+      "assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2": "e99ae51144bf1232efcc1bfe5add36262c6866b0faab24fa75740e1b98577a62",
+      "assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff": "ece03cfd83e22c212cdef66feb8442d25a083beb988db3f1883f3f9738d750ba",
+      "assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2": "00b26ac825e2095056396e0553b8ac26d3f8ad158c3826e28b4c45b385c4714a",
+      "assets/KaTeX_SansSerif-Italic-DN2j7dab.woff": "91ee67500cc0129aa0ace3ac5c61ff1692102f0f31d02b69347fba35dcb75bf2",
+      "assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf": "3931dd81faed86ba021bb2bbdc36f5bed9a38d6b4f4077aca59b265aa1b02083",
+      "assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf": "f36ea897e19f4a2e571d1e900e4e3710e438deb05a842486045ba0a3e616a4ad",
+      "assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff": "11e4dc8a6471ff6d6ee561d53d10fde8f7489e798257ff449c5d37c197435605",
+      "assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2": "68e8c73ef42afd3ccec58bf0fba302cce448938e7fc020a5e31f8a952eee1342",
+      "assets/KaTeX_Script-Regular-C5JkGWo-.ttf": "1c67f068fea8bb09bf099c088b1cf64bd27516a6e07f4684344873564bb66a67",
+      "assets/KaTeX_Script-Regular-D3wIWfF6.woff2": "036d4e95149b69ff9bcc0cd55771efeb25ffa3947293e69acd78d5ac328c684b",
+      "assets/KaTeX_Script-Regular-D5yQViql.woff": "d96cdf2b3bdd4d64a8fd5f74a4c467f123a8a73931cd435889f08ffaf9bf947a",
+      "assets/KaTeX_Size1-Regular-C195tn64.woff": "c943cc986384f59e86bea5fd7dc50a9c4dfe567a7c05eb40d6790720dead97c9",
+      "assets/KaTeX_Size1-Regular-Dbsnue_I.ttf": "95b6d2f1a50173bfedb8c63e1d1c99b10427d0a4df4201cb44513b226951a22b",
+      "assets/KaTeX_Size1-Regular-mCD8mA8B.woff2": "6b47c40166b6dbe21a5dfca7718413f2147fd2399be1ba605d8ad39cedf25dfe",
+      "assets/KaTeX_Size2-Regular-B7gKUWhC.ttf": "a6b2099fb555c60e3a0db3a08842ebf1d732c6eb4e4bf44913613bed4fc4e39b",
+      "assets/KaTeX_Size2-Regular-Dy4dx90m.woff2": "d04c54219f9eaec6d4d4fd42dfb28785975a4794d6b2fc71e566b9cd6db842dd",
+      "assets/KaTeX_Size2-Regular-oD1tc_U0.woff": "2014c523c3210bcc166648c4d4cc57f05b747df07a24277bf71c51e67dc79e3d",
+      "assets/KaTeX_Size3-Regular-CTq5MqoE.woff": "6ab6b62e9b62dae2c00dd90f791bd10950be0ecc3490d7d6045f51c2e8fe0949",
+      "assets/KaTeX_Size3-Regular-DgpXs0kz.ttf": "500e04d54f0d51666332c9d2089aa803be22aa878eca539e59fa53c6e522b082",
+      "assets/KaTeX_Size3-Regular-gV2CO0n9.woff2": "73d591271b1604960cb10bb90fee021670af7297017e0e98480b332d11f51995",
+      "assets/KaTeX_Size4-Regular-BF-4gkZK.woff": "99f9c6750b489c9462bf04900bd3f939df9b829339daaaaa99ef5495cdddea58",
+      "assets/KaTeX_Size4-Regular-DWFBv043.ttf": "c647367d1dd4e162468717d020e1fc0f1dc5c26ebfdffbe55261713bf88c5877",
+      "assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2": "a4af7d414440a1c1790825cfb700cf9cf43b0f2c4b04f0ebc523011ad9853ec0",
+      "assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff": "e14fed02b1aba7ce9f5afd5844b5d0321b22351febc720e0de8b8723527609f7",
+      "assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2": "71d517d67827787cfabdf186914cc3358eda539e37931941f2b2fd4a21f68c0b",
+      "assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf": "f01f3e87d9c6a61c0c081ceb577abd864eb00a612f7ac1620dd6915fad2ef5aa",
+      "assets/homer-river-stone-16.4eeba81471bd-B19nodgU.png": "4eeba81471bd37881098fb3e5a4306dc65f8bf5df37d803f996c97fe8743db7d",
+      "assets/homer-river-stone-256.de41791ce5c1-vdb4AowY.png": "de41791ce5c16e9663fe88853f37cddaaa72c537398dc2fba859edda072f2212",
+      "assets/homer-river-stone-32.e7d757c1e016-td13j3VJ.png": "e7d757c1e0160b5940195367c53c919cc784022caa968538606f637f81b8de39",
+      "assets/homer-river-stone-64.e3015ec6baed-BHiRnlsl.png": "e3015ec6baedd734d422fb297baa66fb94184423412ebfab7781d3e3f9e81913",
+      "assets/image-annotation-BFINvudL.css": "486f6b6ec72fccf356eebf0a5bfec7d684e3e0293b32be6151cb74187459cfe2",
+      "assets/image-annotation-BJIIveQM.js": "fea8d6423d995721b109740a2889d7cfcb750629c4977cdab79c0201ab40b879",
+      "assets/index-B8viNkTE.js": "1f74e55d65a4ce186dd53d5978d3ace0dbb3c195675d657ab8dd15878e3e7094",
+      "assets/index-DTd47-Y6.css": "6cfe7349e734a402edafc13d1a6d695924c28266cc182649f295fbdf76dcb596",
+      "assets/runtime-BIgAza5X.js": "f8d031dc48eae024a3f32bedcea52d745435f66ac85bb4f2b60c81a09bcc6377",
+      "assets/task-status-NOTICES.txt": "d8f1c09689242fd4c359d89ccbe4651f69e1e756a2f13e50c394f0e4f4ee46d1",
+      "composer-icons.LICENSE.txt": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
+      "index.html": "ed6ecf0d931d619dc075940060b98d61508b1a108c86ae9b8ca4c9dfabe80c43"
+    }
+  },
+  "preservation": {
+    "originalTrackedFileCount": 737,
+    "originalWorkingBytesUnchanged": true,
+    "unrelatedIndexEntriesByteIdentical": true,
+    "originalStagedDiffEmpty": true,
+    "finalStagedDiffEmpty": true,
+    "initialIndexFileSha256": "328c32478c425bc994dd2f4abde275e5de5354ae69664a44db5b71fa50c1c521",
+    "originalEntriesSha256": "08d982d17a37d9106f9f82e09ae3772b8d2a4a6fcf721db8fa423df6207923d7",
+    "finalEntriesSha256": "8dbb7d297c920c997d4edce31719a7c2f85e15b07c2ca141c2a064dcde4f2d3f",
+    "scopedPathCount": 63
+  },
+  "remainingDirty": {
+    "total": 424,
+    "tracked": 99,
+    "untracked": 325,
+    "scopedResidualPaths": [
+      "src/service.ts",
+      "tests/web-service.test.ts",
+      "ui/DESIGN.md",
+      "ui/vendor/assistant-ui/README.md"
+    ]
+  },
+  "sourceInputs": {
+    "worker-card-outside-activity": "9f49a629970cda10e4a0c0e677fba0773ff824472094eb02b4e9b291797beb58",
+    "page-scroll-fix": "01226202278e954f1603e9bf3388268c4a083e422b4c650e5e1da4aebf0103fa",
+    "canvas-selection-add-to-chat": "ebb71a22ee8de1d1d227ef2cfadad9b7bfd5fcaf41e05972a1b6eadcb528cc36",
+    "canvas-selection-zh": "0593af8dde235921b481c81c6b50e51da236f5d4e7cc40d93ee88c113aecf8f4",
+    "text-file-multi-annotations": "cf39b85e31a0cd033cd05f952919d5b53b697e4f8ba408cd1c0feb25d682da94",
+    "html-preview-product-integration": "a91f5bf3e9ef7570811dface60002e478656877d070bd00339e4e412c56e30a2",
+    "image-multi-annotation-product": "522ef0ed7d1462ffb84b8d28a901d95e3173786ca0aa241fd87a4a9c5eceef0f"
+  },
+  "scopeComplete": true,
+  "externalActionsPerformed": []
+}

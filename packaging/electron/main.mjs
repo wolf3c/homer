@@ -1,12 +1,20 @@
-import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences,autoUpdater} from 'electron';
+import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences,autoUpdater,globalShortcut,screen,desktopCapturer} from 'electron';
 import {readFileSync,existsSync,mkdirSync} from 'node:fs';
+import {lstat,writeFile} from 'node:fs/promises';
 import {join,resolve,win32} from 'node:path';
 import {userInfo} from 'node:os';
 import {execFileSync,execFile,spawn} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {randomUUID} from 'node:crypto';
+import {types} from 'node:util';
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
-import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource} from '../homer/scripts/desktop-profile.mjs';
+import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopCaptureShortcut,saveDesktopCaptureShortcut} from '../homer/scripts/desktop-profile.mjs';
 import {processIdentity,leaseOwnerGone} from '../homer/dist/processes.js';
+import {DesktopChannels} from '../homer/dist/desktop-channels.js';
+import {webMediaRoute} from '../homer/dist/web-contract.js';
+import {WEB_UPLOAD_BYTES} from '../homer/dist/web-upload.js';
+import {MEDIA_POLICY,detectMedia,imageDimensions} from '../homer/dist/media-policy.js';
+import {parseWindowAX,previewImageAnnotations} from '../homer/dist/preview-reference.js';
 
 import {validateHomerOrigins,readHomerConnection,authorizeHomerConnection,disconnectHomerConnection,queryHomerWallet,queryHomerRuntimeConfig,saveHomerRuntimeConfig} from '../homer/dist/homer-account.js';
 
@@ -137,6 +145,319 @@ function permissionCaller(event,frame){
    &&!frame.isDestroyed()&&frame.detached===false&&frame.origin===origin
    &&permissionPage(frame.url)&&permissionPage(contents.getURL());
  }catch{return false;}
+}
+let captureSubscriber,captureAbort,capturePanel;
+const capturePanelPage=join(resources,'homer/dist/capture-panel/capture-panel.html');
+const capturePanelUrl=pathToFileURL(capturePanelPage).href;
+function cancelDesktopCapture(){
+ captureAbort?.abort();
+ capturePanel?.panel.destroy();
+}
+function currentCapture(target){
+ return target===captureSubscriber&&!closed&&!quitPending&&permissionCaller(target,target.senderFrame);
+}
+function deliverCapture(target,result){
+ if(!currentCapture(target))return;
+ if(result.kind==='image'){
+  if(window.isMinimized())window.restore();
+  showWindow();
+ }
+ target.senderFrame.send('homer:capture:result',target.scope,result);
+}
+function prepareCapturePanel(target){
+ const cursor=screen.getCursorScreenPoint(),display=screen.getDisplayNearestPoint(cursor),windows=process.platform==='win32';
+ const panel=new BrowserWindow({...display.bounds,show:false,frame:false,alwaysOnTop:true,
+  ...(windows?{skipTaskbar:true}:{type:'panel',enableLargerThanScreen:true,acceptFirstMouse:true,hiddenInMissionControl:true}),
+  fullscreenable:false,resizable:false,transparent:true,hasShadow:false,
+  webPreferences:{preload:fileURLToPath(new URL('./capture-panel-preload.cjs',import.meta.url)),sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:false,
+   partition:'homer-capture-panel',...(windows?{backgroundThrottling:false}:{})}});
+ const ready=Promise.withResolvers();
+ const owner={panel,target,ready,...(windows?{display,cursor}:{})};
+ capturePanel=owner;
+ const contents=panel.webContents,{session}=contents;
+ contents.setWindowOpenHandler(()=>({action:'deny'}));
+ contents.on('will-navigate',event=>event.preventDefault());
+ contents.once('render-process-gone',()=>fallbackCapturePanel(owner));
+ const denyPermissions=()=>{
+  session.setPermissionRequestHandler((_contents,_permission,respond)=>respond(false));
+  session.setPermissionCheckHandler(()=>false);
+ };
+ if(windows){
+  const displayPermission=(sender,permission,details)=>sender===contents&&permission==='display-capture'&&details?.isMainFrame===true
+   &&!!owner.choice?.source&&!panel.isDestroyed()&&capturePanelFrame(owner,contents.mainFrame);
+  session.setPermissionRequestHandler((sender,permission,respond,details)=>respond(displayPermission(sender,permission,details)));
+  session.setPermissionCheckHandler((sender,permission,_origin,details)=>displayPermission(sender,permission,details));
+  session.setDisplayMediaRequestHandler((request,respond)=>{
+   const choice=owner.choice;
+   if(!choice?.source||choice.used||!capturePanelFrame(owner,request.frame)
+    ||!request.userGesture||!request.videoRequested||request.audioRequested)return respond(null);
+   if(choice.id===null){
+    // The screen frame must be taken before the region picker is visible.
+    if(!captureDisplayAvailable(owner.display))return respond(null);
+    panel.hide();
+    if(panel.isVisible())return respond(null);
+   }
+   choice.used=true;
+   respond({video:choice.source});
+  });
+  owner.presentTimeout=setTimeout(()=>fallbackCapturePanel(owner),10000);
+ }else denyPermissions();
+ panel.once('closed',()=>{
+  clearTimeout(owner.presentTimeout);
+  ready.resolve();
+  owner.handoff?.settle(false);
+  if(capturePanel===owner){
+   capturePanel=undefined;
+   if(windows){
+    session.setDisplayMediaRequestHandler((_request,respond)=>respond(null));
+    denyPermissions();
+   }
+  }
+ });
+ void panel.loadFile(capturePanelPage).catch(()=>fallbackCapturePanel(owner));
+ return owner;
+}
+function fallbackCapturePanel(owner){
+ if(capturePanel!==owner||owner.panel.isDestroyed())return;
+ const result=owner.handoff?undefined:owner.result??(owner.display?{kind:'unavailable'}:undefined);
+ owner.panel.destroy();
+ if(result)deliverCapture(owner.target,result);
+}
+function supplyCaptureImage(owner,result,bounds){
+ const area=Array.isArray(bounds)&&bounds.length===4&&bounds.every(Number.isSafeInteger)&&bounds[2]>0&&bounds[3]>0
+  ?{x:bounds[0],y:bounds[1],width:bounds[2],height:bounds[3]}:undefined;
+ const cursor=owner.cursor??screen.getCursorScreenPoint();
+ const display=owner.display??(area?screen.getDisplayMatching(area):screen.getDisplayNearestPoint(cursor));
+ const work=owner.display&&area?display.bounds:display.workArea,top=display.bounds.y,bottom=work.y+work.height;
+ const preferredWidth=Math.min(area?.width??Math.round(result.width/display.scaleFactor),work.width);
+ // Small selections can zoom and scroll so the inset controls fit over the image.
+ const imageWidth=Math.max(preferredWidth,result.ax?200:104,Math.ceil(60*result.width/result.height));
+ const width=Math.min(imageWidth,work.width);
+ const height=Math.min(Math.round(result.height*imageWidth/result.width),bottom-top);
+ const clamp=(value,min,max)=>Math.max(min,Math.min(value,max));
+ const x=clamp(area?.x??cursor.x-Math.floor(width/2),work.x,work.x+work.width-width);
+ const y=clamp(area?.y??cursor.y-Math.floor(height/2),top,bottom-height);
+ const placement={x:x-display.bounds.x,y:y-display.bounds.y,width,height};
+ owner.panel.setBounds(display.bounds);
+ owner.result=result;
+ clearTimeout(owner.presentTimeout);
+ owner.presentTimeout=setTimeout(()=>fallbackCapturePanel(owner),3000);
+ const image={png:result.png,ax:result.ax,imageWidth,placement};
+ owner.ready.resolve(image);
+ return image;
+}
+function capturePanelFrame(owner,frame){
+ return capturePanel===owner&&currentCapture(owner.target)&&!owner.panel.isDestroyed()
+  &&!!frame&&frame===owner.panel.webContents.mainFrame&&!frame.isDestroyed()&&!frame.detached&&frame.url===capturePanelUrl;
+}
+function capturePanelCaller(event,actualArgs,expectedArgs){
+ const owner=capturePanel;
+ if(actualArgs!==expectedArgs||!owner||!capturePanelFrame(owner,event.senderFrame)||event.sender!==owner.panel.webContents)
+  throw Error('capture_panel_forbidden');
+ return owner;
+}
+const captureSources=type=>desktopCapturer.getSources({types:[type],thumbnailSize:{width:0,height:0}});
+function captureDisplayAvailable(display){
+ const current=screen.getDisplayMatching(display.bounds);
+ return current.id===display.id&&current.scaleFactor===display.scaleFactor
+  &&['x','y','width','height'].every(key=>current.bounds[key]===display.bounds[key]);
+}
+function captureDesktop(select=false){
+ const target=captureSubscriber;
+ if(!target||captureAbort||capturePanel||!currentCapture(target))return;
+ if(process.platform==='win32'){
+  if(target.panel)try{prepareCapturePanel(target);}catch{
+   capturePanel?.panel.destroy();
+   deliverCapture(target,{kind:'unavailable'});
+  }
+  return;
+ }
+ const operation=captureAbort=new AbortController();
+ let owner;
+ execFile(join(bundle,'Contents/MacOS/homer-window-capture'),select?['--select']:[],{
+  signal:operation.signal,timeout:65000,maxBuffer:Math.ceil(WEB_UPLOAD_BYTES/3)*4+128*1024,
+ },(error,output)=>{
+  try{
+   if(operation.signal.aborted||!currentCapture(target))return;
+   let result={kind:'unavailable'};
+   if(!error)try{
+    const value=JSON.parse(output);
+    if(value?.kind==='cancelled')return;
+    if(value?.kind==='permission-required'&&!select){openSettings('permissions');return;}
+    if(value?.kind==='too-large')result={kind:'too-large'};
+    if(value?.kind==='image'&&typeof value.png==='string'){
+     const png=Buffer.from(value.png,'base64'),dimensions=imageDimensions(png,'image/png'),{width,height}=value;
+     if(png.length<=WEB_UPLOAD_BYTES&&detectMedia(png)==='image/png'&&width===dimensions?.width&&height===dimensions?.height
+      &&width>0&&height>0&&width*height<=MEDIA_POLICY.maxPixels){
+      result={kind:'image',png,width,height};
+      if(value.ax!==undefined)try{result.ax=parseWindowAX(value.ax);}catch{}
+      if(owner&&capturePanel===owner){
+       supplyCaptureImage(owner,result,value.bounds);
+       return;
+      }
+     }
+    }
+   }catch{}
+   deliverCapture(target,result);
+  }finally{if(owner&&capturePanel===owner&&!owner.result)owner.panel.destroy();}
+ }).once('close',()=>{captureAbort=undefined;});
+ if(target.panel)try{owner=prepareCapturePanel(target);}catch{capturePanel?.panel.destroy();}
+}
+function captureAccelerator(value){
+ const order=['Control','Alt','Shift','Command'];
+ if(typeof value!=='string'||value.length>32)return {error:'invalid'};
+ const parts=value.split('+'),key=parts.pop(),mods=new Set(parts);
+ if(process.platform==='win32')return parts.length===2&&mods.has('Control')&&mods.has('Shift')&&/^(?:[A-Z0-9]|F[1-9]|F1[01])$/.test(key)
+  ?{shortcut:'Control+Shift+'+key}:{error:'invalid'};
+ const controlDigit=parts.length===1&&mods.has('Control')&&/^[0-9]$/.test(key);
+ if(!/^[A-Z0-9]$/.test(key)||(!controlDigit&&parts.length<2)||mods.size!==parts.length
+  ||!parts.every(mod=>order.includes(mod))||!mods.has('Control')&&!mods.has('Command'))return {error:'invalid'};
+ const shortcut=[...order.filter(mod=>mods.has(mod)),key].join('+');
+ if(mods.has('Command')&&(key==='Q'||mods.has('Shift')&&/^[3-6]$/.test(key))
+  ||['Alt+Command+D','Control+Command+F','Shift+Command+S','Shift+Command+Z'].includes(shortcut))return {error:'reserved'};
+ return {shortcut};
+}
+function registerDesktopCapture(profile){
+ const windows=process.platform==='win32';
+ if(!windows&&process.platform!=='darwin')return;
+ ipcMain.handle('homer:capture-panel:read',async(event,...args)=>{
+  const owner=capturePanelCaller(event,args.length,0);
+  if(windows){
+   const sources=await captureSources('window').catch(error=>{fallbackCapturePanel(owner);throw error;});
+   if(capturePanelCaller(event,args.length,0)!==owner||owner.windowIds)throw Error('capture_panel_forbidden');
+   const panelId=owner.panel.getMediaSourceId();
+   const windows=sources.filter(source=>source.id!==panelId&&/^window:[^:]+:[01]$/.test(source.id)&&source.name)
+    .map(({id,name})=>({id,name}));
+   owner.windowIds=new Set(windows.map(({id})=>id));
+   return {windows};
+  }
+  const image=await owner.ready.promise;
+  if(capturePanelCaller(event,args.length,0)!==owner||!image)throw Error('capture_panel_forbidden');
+  return image;
+ });
+ ipcMain.handle('homer:capture-panel:present',(event,...args)=>{
+  const owner=capturePanelCaller(event,args.length,0);
+  if(!owner.result&&!owner.windowIds)throw Error('capture_panel_forbidden');
+  owner.panel.show();
+  clearTimeout(owner.presentTimeout);
+ });
+ ipcMain.handle('homer:capture-panel:close',(event,...args)=>{
+  const {panel}=capturePanelCaller(event,args.length,0);
+  panel.hide();
+  panel.close();
+ });
+ if(windows){
+  ipcMain.handle('homer:capture-panel:choose-source',async(event,...args)=>{
+   const owner=capturePanelCaller(event,args.length,1),[id]=args;
+   const unavailable='所选截图来源已不可用，请重试。';
+   if(!owner.windowIds||owner.choice||(id!==null&&!owner.windowIds.has(id)))throw Error(unavailable);
+   const choice=owner.choice={id,used:false};
+   clearTimeout(owner.presentTimeout);
+   owner.presentTimeout=setTimeout(()=>fallbackCapturePanel(owner),10000);
+   try{
+    const sources=await captureSources(id===null?'screen':'window');
+    if(capturePanelCaller(event,args.length,1)!==owner)throw Error('capture_panel_forbidden');
+    const matches=sources.filter(source=>id===null
+     ?source.id.startsWith('screen:')&&source.display_id===String(owner.display.id)
+     :source.id===id);
+    if(matches.length!==1||id===null&&!captureDisplayAvailable(owner.display))throw Error(unavailable);
+    choice.source=matches[0];
+   }catch(error){
+    owner.choice=undefined;
+    clearTimeout(owner.presentTimeout);
+    throw error;
+   }
+  });
+  ipcMain.handle('homer:capture-panel:accept-image',async(event,...args)=>{
+   const owner=capturePanelCaller(event,args.length,2),[bytes,region]=args;
+   if(!owner.choice?.used||owner.result)throw Error('capture_panel_forbidden');
+   if(!types.isUint8Array(bytes))throw Error('无法读取截图图片。');
+   if(bytes.byteLength>WEB_UPLOAD_BYTES)throw Error('截图过大，请选择较小的区域或窗口。');
+   const png=Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength),dimensions=imageDimensions(png,'image/png');
+   if(detectMedia(png)!=='image/png'||!dimensions?.width||!dimensions.height)throw Error('无法读取截图图片。');
+   if(dimensions.width*dimensions.height>MEDIA_POLICY.maxPixels)throw Error('截图过大，请选择较小的区域或窗口。');
+   let bounds;
+   if(owner.choice.id===null){
+    if(!captureDisplayAvailable(owner.display)||!Array.isArray(region)||region.length!==4
+     ||!Array.from(region).every(value=>Number.isFinite(value)&&value>=0&&value<=1))
+     throw Error('截图区域无效。');
+    const {x,y,width,height}=owner.display.bounds;
+    const [left,top,right,bottom]=region.map((value,index)=>Math.round(value*(index%2?height:width)));
+    if(right<=left||bottom<=top)throw Error('截图区域无效。');
+    bounds=[x+left,y+top,right-left,bottom-top];
+   }else if(region!==null)throw Error('截图区域无效。');
+   return supplyCaptureImage(owner,{kind:'image',png,...dimensions},bounds);
+  });
+ }
+ ipcMain.handle('homer:capture-panel:finish',(event,...args)=>{
+  const owner=capturePanelCaller(event,args.length,2),{target,result}=owner;
+  if(!result||owner.handoff)throw Error('主对话暂时无法接收截图。');
+  const [notes,includeAX]=args;
+  if(typeof includeAX!=='boolean')throw Error('capture_panel_arguments');
+  let annotations;
+  try{annotations=previewImageAnnotations(notes,result.width,result.height,true);}
+  catch{throw Error('批注超出图片范围或长度限制。');}
+  const id=randomUUID();
+  return new Promise((resolve,reject)=>{
+   const settle=accepted=>{
+    clearTimeout(timer);
+    owner.handoff=undefined;
+    if(!accepted){reject(Error('主对话尚未确认接收。可在这里重试。'));return;}
+    owner.panel.close();
+    if(window.isMinimized())window.restore();
+    showWindow();
+    resolve();
+   };
+   const timer=setTimeout(()=>settle(false),6000);
+   owner.handoff={id,settle};
+   try{target.senderFrame.send('homer:capture:result',target.scope,{...result,ax:includeAX?result.ax:undefined,draft:{id,action:'send',annotations}});}
+   catch{settle(false);}
+  });
+ });
+ ipcMain.handle('homer:capture:accept-draft',(event,...args)=>{
+  const owner=capturePanel;
+  if(args.length!==1||!owner?.handoff||owner.handoff.id!==args[0]||!currentCapture(owner.target)
+     ||!permissionCaller(event,owner.target.senderFrame))return false;
+  owner.handoff.settle(true);
+  return true;
+ });
+ const defaultShortcut=windows?'Control+Shift+F2':'Control+1';
+ let override,active;
+ try{override=captureAccelerator(readDesktopCaptureShortcut(profile)).shortcut;}catch{}
+ const status=error=>({shortcut:override??defaultShortcut,defaultShortcut,active:active!==undefined,...(error?{error}:{})});
+ const register=key=>{
+  try{return globalShortcut.register(key,()=>{if(active===key)captureDesktop();});}catch{return false;}
+ };
+ const initial=override??defaultShortcut;
+ if(register(initial))active=initial;
+ app.once('will-quit',()=>{if(active)globalShortcut.unregister(active);active=undefined;});
+ ipcMain.handle('homer:capture:shortcut-state',(event,...args)=>{
+  if(args.length||!permissionCaller(event,event.senderFrame))throw Error('desktop_capture_forbidden');
+  return status();
+ });
+ ipcMain.handle('homer:capture:shortcut-set',(event,...args)=>{
+  if(args.length!==1||!permissionCaller(event,event.senderFrame))throw Error('desktop_capture_forbidden');
+  if(closed||quitPending)return status('unavailable');
+  const {shortcut,error}=args[0]===null?{}:captureAccelerator(args[0]);
+  if(error)return status(error);
+  const next=shortcut??defaultShortcut,changed=next!==active;
+  if(changed&&!register(next))return status('unavailable');
+  try{if(shortcut!==override)saveDesktopCaptureShortcut(profile,shortcut);}
+  catch{if(changed)globalShortcut.unregister(next);return status('save_failed');}
+  if(changed&&active)globalShortcut.unregister(active);
+  active=next;override=shortcut;
+  return status();
+ });
+ ipcMain.handle('homer:capture:ready',async(event,...args)=>{
+  const scope=args[0],frame=event.senderFrame;
+  const panel=args.length===2&&args[1]===true&&scope!==null;
+  if(args.length!==1&&!panel||!permissionCaller(event,frame)||scope!==null&&(!scope||typeof scope!=='object'||Object.keys(scope).length!==3
+   ||![scope.threadId,scope.requestId].every(id=>typeof id==='string'&&/^[\w:-]{1,100}$/.test(id))
+   ||!Number.isSafeInteger(scope.epoch)||scope.epoch<0))throw Error('desktop_capture_forbidden');
+  cancelDesktopCapture();
+  captureSubscriber=scope?{sender:event.sender,senderFrame:frame,scope,panel}:undefined;
+  return active!==undefined;
+ });
 }
 let windowsUpdater,windowsCandidate,windowsPublishers,windowsInstall;
 function requestQuit(){if(windowsRecovery())void recoverWindowsExit();else app.quit();}
@@ -275,12 +596,69 @@ function registerDesktopPermissions(){
   return result;
  });
 }
+let channels,channelBindings,channelResult,channelReadError=false;
+const channelPending=()=>channels?.snapshot().pending.length??0;
+const channelStopConfirmed=()=>closed&&acknowledged&&exitCode===0&&!exitSignal;
+async function channelState(refresh){
+ if(refresh&&!closed&&!quitPending){
+  try{
+   const bindings=await nativeAccount('channel-state');
+   if(!Array.isArray(bindings))throw Error('channel_status_invalid');
+   channelBindings=bindings;channelReadError=false;
+  }catch{channelReadError=true;}
+ }
+ let bindings=channelBindings,readError=channelReadError;
+ if(!bindings){
+  try{bindings=channels.configured();}
+  catch{bindings=[];readError=true;}
+ }
+ if(closed&&channelResult){
+  try{bindings=channels.configured();}catch{readError=true;}
+ }
+ return {bindings,...channels.snapshot(),readError,busy:quitPending&&quitAction==='channels',
+  stopped:channelStopConfirmed(),result:channelResult};
+}
+function registerDesktopChannels(){
+ ipcMain.handle('homer:chat-apps',async(event,action,input)=>{
+  const frame=event.senderFrame,navigation=permissionNavigation;
+  if(!channels||!permissionCaller(event,frame))throw Error('desktop_channels_forbidden');
+  if(action==='state'){
+   if(typeof input!=='boolean')throw Error('desktop_channels_arguments');
+   const value=await channelState(input);
+   if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_channels_forbidden');
+   return value;
+  }
+  if(quitPending||updateStopping||(updateState?.status==='ready'&&!closed))throw Error('desktop_channels_busy');
+  if(action==='apply'){
+   if(input!==undefined||(!channelPending()&&!channelStopConfirmed())||channels.snapshot().flow||!child||closed&&!channelStopConfirmed())
+    throw Error('desktop_channels_unavailable');
+   quitAction='channels';
+   requestQuit();
+   return;
+  }
+  if(action==='discard'){if(input!==undefined)throw Error('desktop_channels_arguments');channels.discard();channelResult=undefined;return;}
+  if(!input||typeof input!=='object')throw Error('desktop_channels_arguments');
+  if(action==='cancel'){if(typeof input.id!=='string')throw Error('desktop_channels_arguments');channels.cancel(input.id);return;}
+  if(action==='undo'){if(typeof input.key!=='string')throw Error('desktop_channels_arguments');channels.undo(input.channel,input.key);return;}
+  if(closed)throw Error('desktop_channels_unavailable');
+  if(action==='start')return channels.start(input.channel,input.target,input.token,input.credentials);
+  if(action==='code')return channels.code(input.id,input.code);
+  if(action==='confirm')return channels.confirm(input.id);
+  if(action==='remove'&&typeof input.key==='string'){
+   const label=channelBindings?.find(row=>row.adapterId===input.channel&&row.accountKey===input.key)?.label??input.key;
+   return channels.remove(input.channel,input.key,label);
+  }
+  throw Error('desktop_channels_arguments');
+ });
+}
+
 // Only the current main page may announce its settings component is mounted.
-let settingsPending=false,settingsSubscriber;
+let settingsPending,settingsSubscriber;
 function flushSettings(){
  if(!settingsPending||!settingsSubscriber||!permissionCaller(settingsSubscriber,settingsSubscriber.senderFrame))return;
- settingsPending=false;
- settingsSubscriber.senderFrame.send('homer:settings:open');
+ const args=settingsPending;
+ settingsPending=undefined;
+ settingsSubscriber.senderFrame.send('homer:settings:open',...args);
 }
 function registerDesktopSettings(){
  ipcMain.handle('homer:settings:ready',async(event,...args)=>{
@@ -288,9 +666,32 @@ function registerDesktopSettings(){
   settingsSubscriber=args[0]?{sender:event.sender,senderFrame:event.senderFrame}:undefined;
   flushSettings();
  });
+ ipcMain.handle('homer:settings:open-about-link',async(event,...args)=>{
+  const [link]=args;
+  if(args.length!==1||(link!=='website'&&link!=='github')||!permissionCaller(event,event.senderFrame))throw Error('desktop_settings_forbidden');
+  try{await shell.openExternal(link==='website'?'https://super-tree.com/homer':'https://github.com/wolf3c/homer');}
+  catch{throw Error('desktop_settings_link_unavailable');}
+ });
 }
-function openSettings(){
- settingsPending=true;
+function registerDesktopFeatureTour(profile){
+ const marker=join(profile,'desktop-feature-tour-v1.seen');
+ const actions={
+  pending:async()=>{
+   try{await lstat(marker);return false;}
+   catch(error){if(error.code!=='ENOENT')throw error;return true;}
+  },
+  dismiss:async()=>{
+   try{await writeFile(marker,'',{flag:'wx',mode:0o600});}
+   catch(error){if(error.code!=='EEXIST')throw error;}
+  },
+ };
+ for(const [name,action] of Object.entries(actions))ipcMain.handle('homer:feature-tour:'+name,async(event,...args)=>{
+  if(args.length||!permissionCaller(event,event.senderFrame))throw Error('desktop_feature_tour_forbidden');
+  try{return await action();}catch{throw Error('desktop_feature_tour_unavailable');}
+ });
+}
+function openSettings(target){
+ settingsPending=target==='permissions'?['permissions']:[];
  if(!window||window.isDestroyed()){
   createWindow();
   if(origin)void window.loadURL(origin+'/').then(()=>window.setTitle('荷马')).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
@@ -303,6 +704,7 @@ const showWindow=()=>{if(window&&!window.isDestroyed()){window.show();window.foc
 const startupFailed=error=>{void app.whenReady().then(async()=>{await showError('无法启动荷马（'+code(error)+'）。请保留原账号与数据，核对后重新打开。');if(!child){allowQuit=true;app.quit();}});};
 function finishQuit(){
  if(allowQuit)return;
+ if(!quitPending&&channelPending())return;
  if(updateStopping?!updateConfirmed():!confirmed())return;
  if(windowsUpdater&&updateStopping&&updateState?.status==='error'){windowsUpdateFailed();return;}
  if(updateState?.status==='ready'&&!updateStopping){updateFailed('update_service_stopped');return;}
@@ -312,6 +714,20 @@ function finishQuit(){
   try{
    if(quitAction==='disconnect'){disconnectHomerConnection(dailyTokenFile,accountBoundary());connection=readHomerConnection(dailyTokenFile,accountBoundary());}
    if(switchSource)saveDesktopModelSource(desktopProfile,switchSource);
+   if(quitAction==='channels'){
+    if(!channelStopConfirmed())throw Error('desktop_channel_stop_unconfirmed');
+    try{
+     const result=channels.apply();
+     channelResult={saved:[...(channelResult?.saved??[]),...result.saved],failed:result.failed};
+    }
+    catch{channelResult={saved:channelResult?.saved??[],failed:[...new Set(channels.snapshot().pending.map(row=>row.channel))]};}
+    if(channelResult.failed.length){
+     quitPending=false;quitAction=undefined;
+     const saved=channelResult.saved.join('、')||'无';
+     void showError('连接变更未全部保存。已保存：'+saved+'。请回到「连接聊天应用」重试剩余变更。');
+     return;
+    }
+   }
    if(quitAction&&!updateStopping)app.relaunch();
   }catch(error){if(updateStopping)updateFailed('update_service_stopped');quitPending=false;quitAction=undefined;switchSource=undefined;connectionError=accountCode(error);accountChanged();void showError('本机账号或来源设置未能保存，原设置已保留。请核对后重试。');return;}
   if(windowsUpdater&&updateStopping){
@@ -323,10 +739,11 @@ function finishQuit(){
  }
 }
 app.on('before-quit',event=>{
+ cancelDesktopCapture();
  if(allowQuit||!child){cancelConnection();return;}
  event.preventDefault();
  if(windowsRecovery())return;
- if(confirmed()&&updateState?.status!=='ready'){quitPending=true;finishQuit();return;}
+ if(confirmed()&&updateState?.status!=='ready'&&(!channelPending()||quitAction==='channels')){quitPending=true;finishQuit();return;}
  if(quitPending)return;
  quitPending=true;
  if(pendingConnection){cancelConnection();accountChanged();}
@@ -343,7 +760,7 @@ app.on('before-quit',event=>{
      const mayLeave=await contents.executeJavaScript("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))");
      if(!mayLeave||window!==currentWindow||contents.isDestroyed()||navigation!==permissionNavigation){updateFailed('update_unsaved');return;}
     }
-    const options={type:'question',title:'荷马',message:stopped?'更新尚未确认，如何继续？':'重启并更新荷马？',detail:stopped?'服务已安全停止。可重试更新，或退出后重新打开荷马；退出也可能应用已暂存更新。':'请先保存草稿及未提交编辑；仅在当前工作安全结束后重启。',buttons:stopped?['取消','重试更新','退出荷马']:['取消，继续使用','重启并更新'],defaultId:0,cancelId:0};
+    const options={type:'question',title:'荷马',message:stopped?'更新尚未确认，如何继续？':'重启并更新荷马？',detail:stopped?'服务已安全停止。可重试更新，或退出后重新打开荷马；退出也可能应用已暂存更新。':'请先保存草稿及未提交编辑；仅在当前工作安全结束后重启。'+(channelPending()?' 待应用的聊天应用连接变更会丢弃。':''),buttons:stopped?['取消','重试更新','退出荷马']:['取消，继续使用','重启并更新'],defaultId:0,cancelId:0};
     const {response}=await(contents?dialog.showMessageBox(currentWindow,options):dialog.showMessageBox(options));
     if(window!==currentWindow||contents?.isDestroyed()||navigation!==permissionNavigation){updateFailed(undefined);return;}
     if(stopped&&response===2){cancelConnection();allowQuit=true;app.quit();return;}
@@ -357,10 +774,12 @@ app.on('before-quit',event=>{
   })();
   return;
  }
- const disconnecting=quitAction==='disconnect',restarting=quitAction==='restart';
- void dialog.showMessageBox(window,{type:'question',title:'荷马',message:disconnecting?'退出本机登录？':restarting?'重启荷马？':'退出荷马？',detail:disconnecting?'将先停止当前回复和后台工作，请先保存草稿。退出仅清除本机登录凭据，保留历史对话、任务和文件；不会注销网站账号。':restarting?'将先停止当前回复和后台工作，请先保存草稿。重启后应用已保存的配置，保留历史对话、任务和文件。':'退出会停止当前回复和后台工作。请先核对并保存草稿。',buttons:['取消，继续使用',disconnecting?'退出登录并重启':restarting?'重启并应用':'退出并停止工作'],defaultId:0,cancelId:0}).then(({response})=>{
+ const disconnecting=quitAction==='disconnect',applyingChannels=quitAction==='channels',restarting=quitAction==='restart'||applyingChannels;
+ const pendingHint=!applyingChannels&&channelPending()?' 「连接聊天应用」中待应用的变更会丢弃。':'';
+ void dialog.showMessageBox(window,{type:'question',title:'荷马',message:disconnecting?'退出本机登录？':restarting?'重启荷马？':'退出荷马？',detail:(disconnecting?'将先停止当前回复和后台工作，请先保存草稿。退出仅清除本机登录凭据，保留历史对话、任务和文件；不会注销网站账号。':restarting?'将先停止当前回复和后台工作，请先保存草稿。重启后应用已保存的配置，保留历史对话、任务和文件。':'退出会停止当前回复和后台工作。请先核对并保存草稿。')+pendingHint,buttons:['取消，继续使用',disconnecting?'退出登录并重启':restarting?'重启并应用':'退出并停止工作'],defaultId:0,cancelId:0}).then(({response})=>{
   if(response!==1){quitPending=false;quitAction=undefined;switchSource=undefined;return;}
-  if(updateState?.status==='ready'){quitPending=false;app.quit();return;}
+  if(updateState?.status==='ready'){quitPending=false;if(applyingChannels)quitAction=undefined;app.quit();return;}
+  channels?.cancel();
   cancelConnection();
   if(confirmed()){finishQuit();return;}
   if(closed){quitPending=false;quitAction=undefined;switchSource=undefined;void showError('停止尚未确认。请保留数据并核对后台 owner；不会强制终止或自动重发。');return;}
@@ -368,7 +787,7 @@ app.on('before-quit',event=>{
   stopTimer=setTimeout(()=>{if(confirmed())return;quitPending=false;quitAction=undefined;switchSource=undefined;void showError('停止尚未确认。请保留此窗口并核对后台进程；不会清锁或强制终止。');},20000);
  });
 });
-app.on('activate',showWindow);
+app.on('activate',()=>{if(!capturePanel)showWindow();});
 app.on('second-instance',showWindow);
 app.on('window-all-closed',()=>{});
 
@@ -380,6 +799,7 @@ async function external(raw){
 }
 function createWindow(){
  settingsSubscriber=undefined;
+ captureSubscriber=undefined;cancelDesktopCapture();
  const nativeMac=process.platform==='darwin';
  window=new BrowserWindow({title:'荷马 · 正在启动',width:1080,height:780,minWidth:380,minHeight:420,...(nativeMac?{titleBarStyle:'hiddenInset',titleBarOverlay:true,trafficLightPosition:{x:12,y:15}}:{}),webPreferences:{preload:fileURLToPath(new URL('./preload.cjs',import.meta.url)),nodeIntegration:false,contextIsolation:true,sandbox:true,webviewTag:false,partition:'homer-desktop'}});
  if(nativeMac)window.on('resize',()=>{
@@ -394,20 +814,21 @@ function createWindow(){
   for(const key of Object.keys(requestHeaders))if(key.toLowerCase()==='x-homer-desktop-access')delete requestHeaders[key];
   try{
    const target=new URL(details.url);
-   if(desktopAccessToken&&owned(details.url)&&!target.search&&target.pathname.startsWith('/api/')
+   if(desktopAccessToken&&owned(details.url)&&target.pathname.startsWith('/api/')
+    &&(!target.search||webMediaRoute(details.method,target)?.preview)
     &&['xhr','image','media','other'].includes(details.resourceType)&&details.initiatorOrigin===origin
     &&permissionCaller({sender:details.webContents,senderFrame:details.frame},details.frame))
      requestHeaders['X-Homer-Desktop-Access']=desktopAccessToken;
   }catch{} // Missing or detached request identity fails closed.
   callback({requestHeaders});
  });
- contents.on('did-start-navigation',details=>{if(details.isMainFrame){permissionNavigation++;if(!details.isSameDocument&&window?.webContents===contents)settingsSubscriber=undefined;}});
+ contents.on('did-start-navigation',details=>{if(details.isMainFrame){permissionNavigation++;if(window?.webContents===contents){cancelDesktopCapture();if(!details.isSameDocument){captureSubscriber=undefined;settingsSubscriber=undefined;channels?.cancel();}}}});
  contents.setWindowOpenHandler(({url})=>{void external(url).catch(()=>showError('链接未能打开，请核对系统浏览器后重试。'));return {action:'deny'};});
  contents.on('will-navigate',event=>{if(!owned(event.url))event.preventDefault();});
  contents.on('will-redirect',event=>{if(!owned(event.url))event.preventDefault();});
  contents.on('will-frame-navigate',event=>{if(!owned(event.url)&&!['about:blank','about:srcdoc'].includes(event.url))event.preventDefault();});
  contents.on('will-attach-webview',event=>event.preventDefault());
- contents.on('render-process-gone',()=>{void showError('页面进程已退出。后台工作状态需要核对；不会自动重发消息或重启服务。');});
+ contents.on('render-process-gone',()=>{if(window?.webContents===contents){captureSubscriber=undefined;cancelDesktopCapture();}void showError('页面进程已退出。后台工作状态需要核对；不会自动重发消息或重启服务。');});
  const canWriteClipboard=(webContents,permission,details)=>{
   if(permission!=='clipboard-sanitized-write'||webContents!==contents
    ||!window||window.isDestroyed()||window.webContents!==contents
@@ -431,7 +852,8 @@ function refreshMenu(){
  Menu.setApplicationMenu(Menu.buildFromTemplate([
   {label:'荷马',submenu:[{role:'about'},...(updateState?[{id:'update',label:windowsRecovery()?'退出后重新打开以重试更新…':updateState.status==='ready'?'重启并更新…':updateState.status==='downloading'?'正在后台下载…':updateState.status==='checking'?'正在检查更新…':'检查更新…',enabled:!['checking','downloading'].includes(updateState.status)&&!quitPending&&!(updateState.status==='ready'&&!updateState.version),click:()=>windowsRecovery()?void recoverWindowsExit():updateState.status==='ready'?app.quit():checkUpdate(true)}]:[]),...(deepseek?[{label:'模型连接信息…',click:()=>dialog.showMessageBox(window,{type:'info',title:'荷马',message:activeConnection?'已连接网站账号':'未连接网站账号',detail:(activeConnection?['main','worker'].map(role=>(role==='main'?'主 Agent':'Worker')+'：'+activeConnection.config[role].model+' · '+activeConnection.config[role].effort+' · Fast 关闭\n入口：'+activeConnection.config[role].baseUrl).join('\n'):'请在设置 → 账号中通过网站登录并连接。')+'\nCodex：0.163.0\n连接更新后正常重启生效。实际可用性以模型回复为准。',buttons:['返回会话']})}]:[]), {type:'separator'},{label:'设置…',accelerator:'CmdOrCtrl+,',click:openSettings},{type:'separator'},{label:'关闭窗口',accelerator:'Command+W',click:()=>window.hide()},{role:'hide'},{type:'separator'},{id:'quit',label:'退出荷马',accelerator:'Command+Q',click:()=>windowsRecovery()?void recoverWindowsExit():app.quit()}]},
   {label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},
-  {label:'显示',submenu:[{role:'zoomIn'},{role:'zoomOut'},{role:'resetZoom'},{label:'显示主窗口',accelerator:'Command+1',click:showWindow}]},
+  {label:'显示',submenu:[{role:'zoomIn'},{role:'zoomOut'},{role:'resetZoom'},{label:'显示主窗口',accelerator:'Command+1',click:showWindow},
+   ...(['darwin','win32'].includes(process.platform)?[{type:'separator'},{id:'capture-selection',label:'选取窗口或区域…',click:()=>captureDesktop(true)}]:[])]},
  ]));
 }
 try{
@@ -464,6 +886,10 @@ try{
   app.whenReady().then(async()=>{
   registerDesktopPermissions();
   registerDesktopSettings();
+  registerDesktopFeatureTour(profile);
+  registerDesktopCapture(profile);
+  channels=new DesktopChannels(paths.runtime);
+  registerDesktopChannels();
   registerDesktopUpdate();
   const updateReady=setupDesktopUpdate(manifest,test);
   if(process.platform!=='win32')await updateReady;
@@ -506,6 +932,7 @@ try{
    for(const pending of nativeRequests.values()){clearTimeout(pending.timer);pending.reject(Error('native_account_unconfirmed'));}nativeRequests.clear();
    desktopAccessToken=undefined;
    closed=true;exitCode=status;exitSignal=signal;
+   cancelDesktopCapture();
    if(windowsUpdater&&updateStopping&&status===0&&!signal&&!updateAcknowledged)return;
    if(updateStopping?updateConfirmed():confirmed())finishQuit();
    else if(updateState?.status==='ready'){updateFailed('update_service_stopped');}

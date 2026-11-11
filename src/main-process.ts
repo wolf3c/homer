@@ -28,13 +28,10 @@ export type ProcessNode = ProcessTiming & {
   state: 'working' | 'worked'; status: 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown';
   turnIds: string[]; endEventId?: string; items: ProcessItem[];
   toolStatusCounts?: Partial<Record<Extract<ProcessItem,{kind:'tool'}>['status'],number>>;
-  deliveryMessageId?: string;
-  deliveryMessageIds?: string[];
-  publicationArchive?: {id:string;text:string};
   final?: { id: string; text: string };
   details?:'unloaded';
 };
-type Stored = ProcessNode & { turnClocks?: Record<string, TurnClock>; itemClocks?: Record<string, TurnClock>; deliveryFinal?: {id:string;text:string}; finalCandidate?: { id: string; text: string }; completedItemIds: string[]; itemPhases: Record<string, string | null>; uncertainTurnIds?:string[] };
+type Stored = ProcessNode & { turnClocks?: Record<string, TurnClock>; itemClocks?: Record<string, TurnClock>; finalCandidate?: { id: string; text: string }; completedItemIds: string[]; itemPhases: Record<string, string | null>; uncertainTurnIds?:string[] };
 const prefix = 'publicMainNode:v1:';
 
 function clockTiming(clock: TurnClock): ProcessTiming {
@@ -80,8 +77,8 @@ export class MainProcessHistory {
   }
   exact(id:string):ProcessNode|undefined{
     const stored=this.load(id);if(!stored)return;
-    const {deliveryFinal,finalCandidate:_candidate,completedItemIds:_ids,itemPhases:_phases,uncertainTurnIds:_uncertain,turnClocks:_clocks,itemClocks:_itemClocks,...node}=stored;
-    return this.hydrate([{...node,...(deliveryFinal?{publicationArchive:deliveryFinal}:{})}])[0]!;
+    const {finalCandidate:_candidate,completedItemIds:_ids,itemPhases:_phases,uncertainTurnIds:_uncertain,turnClocks:_clocks,itemClocks:_itemClocks,...node}=stored;
+    return this.hydrate([node])[0]!;
   }
   headers(ids:readonly string[],details=false):ProcessNode[]{
     if(!ids.length)return [];if(ids.length>80)throw Error('process_ids_limit');
@@ -93,25 +90,14 @@ export class MainProcessHistory {
         FROM json_each(meta.value,'$.items') item WHERE json_extract(item.value,'$.kind')='tool'
       ) WHERE latest=1 AND status IN ('running','completed','failed','declined','interrupted','unknown','blocked') GROUP BY status
     ))`;
-    const selection=details?'value':`CASE WHEN json_extract(value,'$.state')='working' THEN value ELSE json_set(json_remove(value,'$.completedItemIds','$.itemPhases','$.finalCandidate','$.deliveryFinal','$.turnClocks','$.itemClocks','$.uncertainTurnIds'),'$.items',json(coalesce((SELECT json_group_array(json(CASE WHEN json_extract(item.value,'$.kind')='tool' THEN json_object('id',json_extract(item.value,'$.id'),'seq',json_extract(item.value,'$.seq'),'revision',json_extract(item.value,'$.revision'),'kind','tool','label',json_extract(item.value,'$.label'),'status',json_extract(item.value,'$.status'),'activity',json_extract(item.value,'$.activity')) ELSE item.value END)) FROM json_each(meta.value,'$.items') item WHERE json_extract(item.value,'$.kind') IN ('worker','workerEvent') OR (json_extract(item.value,'$.kind')='tool' AND json_extract(item.value,'$.activity.action') IN ('update_task','stop_task','continue_task','review_result','create_task','prepare_delivery')) OR (json_extract(meta.value,'$.sourceKind')='user' AND json_extract(item.value,'$.kind')='commentary' AND json_extract(item.value,'$.phase')='final_answer')),'[]')),'$.toolStatusCounts',json(${counts}),'$.details','unloaded') END`;
+    const selection=details?'value':`CASE WHEN json_extract(value,'$.state')='working' THEN value ELSE json_set(json_remove(value,'$.completedItemIds','$.itemPhases','$.finalCandidate','$.turnClocks','$.itemClocks','$.uncertainTurnIds'),'$.items',json(coalesce((SELECT json_group_array(json(CASE WHEN json_extract(item.value,'$.kind')='tool' THEN json_object('id',json_extract(item.value,'$.id'),'seq',json_extract(item.value,'$.seq'),'revision',json_extract(item.value,'$.revision'),'kind','tool','label',json_extract(item.value,'$.label'),'status',json_extract(item.value,'$.status'),'activity',json_extract(item.value,'$.activity')) ELSE item.value END)) FROM json_each(meta.value,'$.items') item WHERE json_extract(item.value,'$.kind') IN ('worker','workerEvent') OR (json_extract(item.value,'$.kind')='tool' AND json_extract(item.value,'$.activity.action') IN ('update_task','stop_task','continue_task','create_task')) OR (json_extract(meta.value,'$.sourceKind')='user' AND json_extract(item.value,'$.kind')='commentary' AND json_extract(item.value,'$.phase')='final_answer')),'[]')),'$.toolStatusCounts',json(${counts}),'$.details','unloaded') END`;
     return this.hydrate(this.db.prepare(`SELECT ${selection} value FROM meta WHERE key IN (${ids.map(()=>'?').join(',')})`).all(...ids.map(id=>prefix+id)).map(row=>{
-      const {deliveryFinal,finalCandidate:_candidate,completedItemIds:_ids,itemPhases:_phases,uncertainTurnIds:_uncertain,turnClocks:_clocks,itemClocks:_itemClocks,...node}=JSON.parse(String(row.value)) as Stored;return {...node,...(deliveryFinal?{publicationArchive:deliveryFinal}:{})};
+      const {finalCandidate:_candidate,completedItemIds:_ids,itemPhases:_phases,uncertainTurnIds:_uncertain,turnClocks:_clocks,itemClocks:_itemClocks,...node}=JSON.parse(String(row.value)) as Stored;return node;
     }));
   }
   private load(id: string): Stored | undefined {
     const row = this.db.prepare('SELECT value FROM meta WHERE key=?').get(prefix + id);
     return row ? JSON.parse(String(row.value)) : undefined;
-  }
-  // A delivery already submitted by this input must not be sent again as chat.
-  hasSourceDelivery(id:string,sourceMessageId:string,text?:string):boolean{
-    const node=this.exact(id);
-    if(!node?.sourceMessageIds.includes(sourceMessageId))return false;
-    return (node.deliveryMessageIds??[]).some(messageId=>!!this.db.prepare(`SELECT 1 FROM agent_messages m
-      JOIN deliveries d ON d.taskId=m.taskId
-      JOIN operations o ON o.id=d.operationKey AND json_extract(o.detailsJson,'$.inputMessageId')=m.id
-      WHERE m.id=? AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')
-      AND d.historyMessageId=? AND d.revokedAt IS NULL AND d.state IN ('prepared','submitting','recorded','uncertain')
-      AND (? IS NULL OR d.text=?)`).get(sourceMessageId,messageId,text??null,text??null));
   }
   coordination(id:string){
     const node=this.load(id);
@@ -231,6 +217,13 @@ export class MainProcessHistory {
     node.items.push({ ...fact,id:'worker:'+fact.taskId,kind:'worker',seq:node.items.length+1,revision:1 });
     node.revision++; this.save(node);
   }
+  discardNativeFinal(id:string){
+    const node=this.load(id);if(!node||node.state!=='working')return;
+    const items=node.items.filter(item=>item.kind!=='commentary'||item.phase!=='final_answer');
+    if(items.length===node.items.length&&!node.final&&!node.finalCandidate)return;
+    node.items=items;delete node.final;delete node.finalCandidate;
+    node.revision++;this.save(node);
+  }
   finish(id: string, status: ProcessNode['status'], endEventId?: string,publicText?:string) {
     const node = this.load(id); if (!node || node.state === 'worked') return;
     if (!endEventId) {
@@ -243,17 +236,8 @@ export class MainProcessHistory {
     if(node.sourceKind==='worker'&&publicText?.trim())node.final={id:node.messageId,text:publicText};
     if(node.startedAtMs!==undefined&&node.timingState!=='terminal')node.timingState='unknown';
     for (const item of node.items) if (item.kind === 'tool' && item.status === 'running') { if(item.label==='创建任务')item.label='创建结果待核对'; item.status = item.category&&item.category!=='host'?'unknown':'blocked'; item.revision++; }
-    if (node.finalCandidate&&status!=='unknown') node.final = node.finalCandidate;
+    if(node.finalCandidate&&status!=='unknown') node.final = node.finalCandidate;
     delete node.finalCandidate; node.revision++; this.save(node);
-  }
-  delivery(id:string,delivery:{historyMessageId:string;text:string}) {
-    const node=this.load(id);if(!node||node.state!=='working')return;
-    // Publication callbacks can replay. A successful old publication keeps its
-    // original owner, including when another main segment retries the operation.
-    if(this.list(node.threadId).some(owner=>(owner.deliveryMessageIds??(owner.deliveryMessageId?[owner.deliveryMessageId]:[])).includes(delivery.historyMessageId)))return;
-    const ids=node.deliveryMessageIds??(node.deliveryMessageId?[node.deliveryMessageId]:[]);
-    node.deliveryMessageIds=[...ids,delivery.historyMessageId];node.deliveryMessageId=node.deliveryMessageIds[0];
-    node.revision++;this.save(node);
   }
   reconcileUnknown(threadId:string,engineClosed=false){
     for(const node of this.list(threadId))if(node.state==='working'){
@@ -266,6 +250,6 @@ export class MainProcessHistory {
   list(threadId: string): ProcessNode[] {
     return this.hydrate(this.db.prepare('SELECT value FROM meta WHERE key LIKE ?').all(prefix + '%').map(row => JSON.parse(String(row.value)) as Stored)
       .filter(node => node.threadId === threadId).sort((a,b) => a.seq-b.seq)
-      .map(({deliveryFinal: _delivery, finalCandidate: _candidate, completedItemIds: _ids, itemPhases: _phases,uncertainTurnIds:_uncertain,turnClocks:_clocks,itemClocks:_itemClocks, ...node}) => ({...node,...(_delivery?{publicationArchive:_delivery}:{})})));
+      .map(({finalCandidate: _candidate, completedItemIds: _ids, itemPhases: _phases,uncertainTurnIds:_uncertain,turnClocks:_clocks,itemClocks:_itemClocks, ...node}) => node));
   }
 }

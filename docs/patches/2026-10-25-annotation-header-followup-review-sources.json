@@ -1,0 +1,511 @@
+{
+  "date": "2026-10-25",
+  "baseCommit": "493ead1576ba08e59987f9db96a55ae4843a90b9",
+  "branch": "main",
+  "initialIndexSHA256": "304f897b35e6837cbdafa25da58c489a85e5d4cf9a25a2e9d795bc79fc821d40",
+  "scope": [
+    "A Enter save",
+    "B duplicate preview header removal",
+    "C unified icon",
+    "D compact header, finalized before review"
+  ],
+  "commits": [
+    {
+      "stage": "A",
+      "parent": "493ead1576ba08e59987f9db96a55ae4843a90b9",
+      "tree": "b77e9ad34d34e91bf3942c88e515cb8933b0ea09",
+      "entries": [
+        {
+          "path": "ui/annotation-comment-form.tsx",
+          "beforeTreeEntry": "100644 blob 19adad90d43d59edd75fec3cf2adc194631676e5\tui/annotation-comment-form.tsx",
+          "blob": "1b47244100d82ecad35af83a2a74f8a8d40dafc1",
+          "sha256": "a20a195a69b006f0584a974a7f852af0daace0317f5097a2cd91af2e62d1a1e8"
+        },
+        {
+          "path": "tests/annotation-enter-save.browser.mjs",
+          "beforeTreeEntry": null,
+          "blob": "473bcef9b69c44df0f6e591e8b28e0b5fc762df6",
+          "sha256": "86be89514724237b7cc45a785cafc9364e7d48476d473a13c97d3b8808d9d762"
+        },
+        {
+          "path": "docs/2026-10-25-annotation-comment-form-unification.md",
+          "beforeTreeEntry": "100644 blob ed1df316a78448be9f8dff22229a6de7c24c72b3\tdocs/2026-10-25-annotation-comment-form-unification.md",
+          "blob": "ff9a638e18c7ec086dc3c0607319a86260d07b64",
+          "sha256": "fe59d7ff00c35b852f076d20d21821f5362850f26efbe7b33153d9fc4b80646c"
+        },
+        {
+          "path": "docs/2026-10-25-annotation-composer-sync.md",
+          "beforeTreeEntry": "100644 blob 18a578d32b18632ba345ef310450782f0aff1b0e\tdocs/2026-10-25-annotation-composer-sync.md",
+          "blob": "597d72136e0f7516d97ae9142e0cf074fb767820",
+          "sha256": "ae05af30c3862dcc130b1f6c631e2c68332056d976d08dfa7c442deed02d5d56"
+        },
+        {
+          "path": "ui/DESIGN.md",
+          "beforeTreeEntry": "100644 blob eef024a65e4b8df64eef09006027cdae6b7c9a51\tui/DESIGN.md",
+          "blob": "1b53431edabe4bb9492135fdad15f7143bb0629f",
+          "sha256": "c92afc9ae47b8ab3f6d0469930679c0d4bcdf8ccb08d6d2d8e1686ca2732d469"
+        }
+      ],
+      "commit": "ceefd3e5ed81dbc53b513d6f6ed0839fe231bf57"
+    },
+    {
+      "stage": "C",
+      "parent": "ceefd3e5ed81dbc53b513d6f6ed0839fe231bf57",
+      "tree": "ec3ab10d455de9cdab605caf0296d555ccab7751",
+      "entries": [
+        {
+          "path": "ui/homer-app.tsx",
+          "beforeTreeEntry": "100644 blob 3dee2ee34f15c51782ebbfb4be92baa5a5abdfa2\tui/homer-app.tsx",
+          "blob": "7553781032d0be1be7f1e62d666f71c118d315d6",
+          "sha256": "cdfdf41582a934c8378815b85e4b104aec0b71012227a0313b64bab139d9b6d6"
+        },
+        {
+          "path": "ui/canvas-panel.tsx",
+          "beforeTreeEntry": "100644 blob f233862211dd98dc6b25d1dcabbe00f560fab256\tui/canvas-panel.tsx",
+          "blob": "f28bbe0f448f8246a7ad2f218980c657e9ce873a",
+          "sha256": "f464e5e81b51b586145f8ee8fbaa313a35cba1bf26cd851124861b9f7a64fcf9"
+        },
+        {
+          "path": "ui/image-annotation.tsx",
+          "beforeTreeEntry": "100644 blob 34acebbf472779aaa22b291d57669cb5776c05dc\tui/image-annotation.tsx",
+          "blob": "7c3794c38401a34b13e55599072a5870c705df76",
+          "sha256": "570f5af61c42ffd1430bb3aa19ecd7ce971d4a2de3d3c5148693467c8a178258"
+        },
+        {
+          "path": "ui/preview-reference.tsx",
+          "beforeTreeEntry": "100644 blob 0427befb13e4861f2622c7dd71a181ae53375002\tui/preview-reference.tsx",
+          "blob": "4a1381e866eabba393b3f53ebf3087a7b70cded2",
+          "sha256": "3dc3764091b772f0fe48948c6bee567341d0475635797a149f08ead01dade20b"
+        },
+        {
+          "path": "ui/preview-selection-toolbar.tsx",
+          "beforeTreeEntry": "100644 blob 5f3ebf7fc824469ed015a1bd4d6c653bee6a494f\tui/preview-selection-toolbar.tsx",
+          "blob": "01dcd8ff7bd2cb21192342bffb9bb6ed95b8162b",
+          "sha256": "81794b0ed49474245dcdf486476be838093a7832231475e35dcb24f3526d9ebd"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/message-actions.tsx",
+          "beforeTreeEntry": "100644 blob 904d3f6a0d4c565badb00c7d86544bcdc899a104\tui/vendor/assistant-ui/message-actions.tsx",
+          "blob": "fccd64e19bb84e83b9eb9380217d6c6a155c1f11",
+          "sha256": "9634027d577b38c5189649dabec8d6971d73a63e542de1f5d6b27f80d77d3aea"
+        },
+        {
+          "path": "ui/DESIGN.md",
+          "beforeTreeEntry": "100644 blob 1b53431edabe4bb9492135fdad15f7143bb0629f\tui/DESIGN.md",
+          "blob": "57c4cb20b07dfd0f4a25a791084a3ed20e9c406d",
+          "sha256": "eff8a8cc3ead0c372c649b720de02a5d297224e7dfd06031906ffbfa0c835448"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/README.md",
+          "beforeTreeEntry": "100644 blob 233d378a0816878f9bdb5c2f773a049594d7b71d\tui/vendor/assistant-ui/README.md",
+          "blob": "7ca578064fc70eccb0f6a6e0ef48028c411fec25",
+          "sha256": "06f9e72c933f28aa23417f8cfe84554fe4f84f04936eb6d92e4d1d048549c457"
+        },
+        {
+          "path": "docs/2026-10-25-unified-reference-annotation-icon.md",
+          "beforeTreeEntry": null,
+          "blob": "525b0d2e6de969aaa97975506a9dbf074ac6889c",
+          "sha256": "1bb896037e9bdb023f7c261a72b6b56ca59c75715870df92a09c9f50c79a567d"
+        },
+        {
+          "path": "tests/unified-reference-icon.browser.mjs",
+          "beforeTreeEntry": null,
+          "blob": "032d3d8006330bd6b237158aad8b8e9b996c1388",
+          "sha256": "8c1be73469bf56a3926f86e96fa2ab884e2ae11e2971a45961f8c20b69991747"
+        },
+        {
+          "path": "tests/unified-reference-icon-history.browser.mjs",
+          "beforeTreeEntry": null,
+          "blob": "c854d07d5ede15975a95571d14d1148337e1ce46",
+          "sha256": "a8a2f37e3348ff2ae6b725ac29b18456839aa206ae3a4e63e60e0b99d701f4bb"
+        }
+      ],
+      "commit": "40e0e9081e071deca02d1ebfb5060f2907bc5662"
+    },
+    {
+      "stage": "BD",
+      "parent": "40e0e9081e071deca02d1ebfb5060f2907bc5662",
+      "tree": "85d46497b182c4a0f0aff825530e9e0f6a586629",
+      "entries": [
+        {
+          "path": "ui/canvas-panel.tsx",
+          "beforeTreeEntry": "100644 blob f28bbe0f448f8246a7ad2f218980c657e9ce873a\tui/canvas-panel.tsx",
+          "blob": "de97ee463e56c554e327305de5f9a8001d4b6429",
+          "sha256": "5b788fde8aa6c73b52ecd615873ce7f46f24e6ff13d9e95f9b0f0d5d2d2a0e8f"
+        },
+        {
+          "path": "ui/canvas-panel.css",
+          "beforeTreeEntry": "100644 blob e8f399f9f2fdd8bb1d90c3dd33d01a5fb65a1b9f\tui/canvas-panel.css",
+          "blob": "3025aceecb74fff01419af12fd7ee4f0217cf0a8",
+          "sha256": "4b0d544be2e5bb042c4ee6a652dd77102cdcb942c42b0850c40a708a12a5e004"
+        },
+        {
+          "path": "ui/homer-app.tsx",
+          "beforeTreeEntry": "100644 blob 7553781032d0be1be7f1e62d666f71c118d315d6\tui/homer-app.tsx",
+          "blob": "a00491ba9d45e5aed10e381a9d9f6c200a4aa53f",
+          "sha256": "367e4517d6f4feaf1087bead718dd3802c600bb6912e4f169915bc7ec03a0c9c"
+        },
+        {
+          "path": "ui/homer-styles.css",
+          "beforeTreeEntry": "100644 blob 60397d4857a4cbf2148889dff25057f4ea53e93b\tui/homer-styles.css",
+          "blob": "38ae4d4bc60da82efe349216502f49430610e061",
+          "sha256": "34f66e6d4b43ca413f13a70514f5f7ce7af6a31cc415ca66346955457cd6d2a4"
+        },
+        {
+          "path": "tests/html-annotation-lifecycle.browser.mjs",
+          "beforeTreeEntry": "100644 blob 801c25c6750643cd404a9e416eac6a09da352576\ttests/html-annotation-lifecycle.browser.mjs",
+          "blob": "bbca5e46ce737812eae20e3064e24997999ad612",
+          "sha256": "090a2e7ef75623666d34d1834ace7d51bc9f5f73b979e6aac2d3635248ba8f91"
+        },
+        {
+          "path": "tests/text-file-annotations.browser.mjs",
+          "beforeTreeEntry": "100644 blob c049505524e804f094760f013fac24de69c6d39a\ttests/text-file-annotations.browser.mjs",
+          "blob": "0e3f145fea4b1bbb6c6a3c3ded5b83133ee5d5f4",
+          "sha256": "8e1881113239d870b80e4d76ce791b109295296983c90a54a4b9b77222aeb3bf"
+        },
+        {
+          "path": "tests/worker-card-outside-activity.browser.mjs",
+          "beforeTreeEntry": "100644 blob e55a73ea79a0239413f87af82b34e3f1a283d43a\ttests/worker-card-outside-activity.browser.mjs",
+          "blob": "613f90471bcb0ae57633651a2785904f72c991ef",
+          "sha256": "bf51c7db42ac7158f8b31c9c6b3935e5edce61966e07207b9e28f8da53ccaf9d"
+        },
+        {
+          "path": "tests/restore-official-components.browser.mjs",
+          "beforeTreeEntry": "100644 blob d914af88e9b4a5e1a0ceb1a1af62c584c1ae3892\ttests/restore-official-components.browser.mjs",
+          "blob": "a2ccea66c8b9bc1db9abbc45efcd84ec43cf2fc4",
+          "sha256": "4b56355a1fed1c01f060793dcce3b20e87fd32d9cc1ef4b9fb5d80ea0c89ff99"
+        },
+        {
+          "path": "tests/preview-tabs.browser.mjs",
+          "beforeTreeEntry": "100644 blob 3e4a5394a41281faff39a5b368b8dadfaefa6242\ttests/preview-tabs.browser.mjs",
+          "blob": "d9f6039586f50ac6c4d21ca198d4ef77d3f3d5a4",
+          "sha256": "196736f45984b48908e7e5893419b8020dc40144491bd739c92b3e657e51d210"
+        },
+        {
+          "path": "tests/annotation-enter-save.browser.mjs",
+          "beforeTreeEntry": "100644 blob 473bcef9b69c44df0f6e591e8b28e0b5fc762df6\ttests/annotation-enter-save.browser.mjs",
+          "blob": "abd3548f78b6e0b2a5901012ed77ee63b88630ec",
+          "sha256": "3da32e4740b4b8f9c6643ee5696bd7dae65783e7fdab7efdadf8684d2c3c6580"
+        },
+        {
+          "path": "tests/official-canvas.browser.mjs",
+          "beforeTreeEntry": "100644 blob b1b515b465d469abaf22c1b0f5bb39696cd45ac4\ttests/official-canvas.browser.mjs",
+          "blob": "07e769340b5cf9444c82148fe5a2e85551a16cdb",
+          "sha256": "94d5eae7b969f376080e7dc80a8281616da690ee0b17d28972984b3295195240"
+        },
+        {
+          "path": "tests/canvas-selection-toolbar.browser.mjs",
+          "beforeTreeEntry": "100644 blob 89fc5eb4a04e9d822e41d6a5fc11da779646944a\ttests/canvas-selection-toolbar.browser.mjs",
+          "blob": "f8521189021dff5f1fc25f0567740a7d6eb03041",
+          "sha256": "2c6ba1994c0746045c74b15ffe78462fae4f350535d97cecdf0427a54a68a8a7"
+        },
+        {
+          "path": "tests/task-status-pinned.browser.mjs",
+          "beforeTreeEntry": "100644 blob 161ce699ef810813b97d417fba4ec2b0893e0980\ttests/task-status-pinned.browser.mjs",
+          "blob": "810073d38fc952f7daeb893bda2e3d6c1525dc7b",
+          "sha256": "927fd473a825ae65c832d9e69e85a0b99581d9cad97a1c00339bce7859a923d7"
+        },
+        {
+          "path": "tests/web-preview-bridge.browser.mjs",
+          "beforeTreeEntry": "100644 blob 850a9b7a92cf0f5e37c23102ec4a27db366972bd\ttests/web-preview-bridge.browser.mjs",
+          "blob": "e4009dd680b8da9df2912dc928ef203a75c49ad2",
+          "sha256": "37e3040ba9de77e64ec70a508f0885d535d3163b7cf6215a62c870dc150d4c8b"
+        },
+        {
+          "path": "tests/annotation-composer-sync.browser.mjs",
+          "beforeTreeEntry": "100644 blob 031c9d8126caf51658ba58ad0dc8e73a26350609\ttests/annotation-composer-sync.browser.mjs",
+          "blob": "ec47d6c8d60a017bc62b37cbacd63ac6a8499cff",
+          "sha256": "2411b4453bcc2c020fb8d49518ca02472192a60234c043638db6d6a7c25014c0"
+        },
+        {
+          "path": "tests/image-file-components.browser.mjs",
+          "beforeTreeEntry": "100644 blob 0f647cbb12da868f3a260cca3645fdcdd27f2b92\ttests/image-file-components.browser.mjs",
+          "blob": "01aaacfdf4ec8db428c84a2a96fa87824ee2f4d2",
+          "sha256": "6a30febec9f6428d0917d579652779bd8724fe46024645e6ea72f101240846df"
+        },
+        {
+          "path": "tests/preview-annotation-edge-cases.browser.mjs",
+          "beforeTreeEntry": "100644 blob f84533e2ab535cb76a67e7a68b1521bd9cd48b41\ttests/preview-annotation-edge-cases.browser.mjs",
+          "blob": "c9cdb2cc5607dbb4bef8cba1f751896a7854f3ab",
+          "sha256": "ba1611bafe85b193ba19e64e6a3f273540465d36811524ee8407b194dd9ee750"
+        },
+        {
+          "path": "tests/image-file-annotations.browser.mjs",
+          "beforeTreeEntry": "100644 blob 70106c8ea43a8f160d51b370fa56f01f57ab933e\ttests/image-file-annotations.browser.mjs",
+          "blob": "031227686ea180ebc2483cc3ce8f00617cfce11f",
+          "sha256": "e309ccb7d913f4264d85681221075724c89e1924e01ec399144155bb8e3b7711"
+        },
+        {
+          "path": "tests/html-render-first.browser.mjs",
+          "beforeTreeEntry": "100644 blob d77de76a4d00d6ccef8e3a10396e4ec496f3adb6\ttests/html-render-first.browser.mjs",
+          "blob": "509b6b4e63ddb4e8b5dedf19ddbafe4bfb40b084",
+          "sha256": "02dd8d5c406105f84ddba1ed5c976e0cb310e49393112baff3c10321e0188299"
+        },
+        {
+          "path": "tests/preview-annotation.browser.mjs",
+          "beforeTreeEntry": "100644 blob 9bb9e1ca07ebf7cc6a00755c615887a09cfa81f0\ttests/preview-annotation.browser.mjs",
+          "blob": "9c576d223434b7441befcaf0baa17956163bc7cb",
+          "sha256": "900c874e6ef8d0681d24a82e3892774da32309182482c83997af3664146001a4"
+        },
+        {
+          "path": "tests/annotation-comment-form.browser.mjs",
+          "beforeTreeEntry": "100644 blob a20e01c577fb60fddb3880fbed6f715af6566177\ttests/annotation-comment-form.browser.mjs",
+          "blob": "f720652732fb074db2bd52e32ba2aac9c887d762",
+          "sha256": "0dd35fcbdfae693e67a8561b1630c58f358f256f91d1e439eaade63c5a6b18b8"
+        },
+        {
+          "path": "tests/preview-header-row.browser.mjs",
+          "beforeTreeEntry": null,
+          "blob": "6c107fdde12d2e786f1d4cb966c41b7c3b64c09f",
+          "sha256": "e8f1b117af3c25a57b073f22a9cbe3d83a16fd18ff558b25bbc361e88357e0b4"
+        },
+        {
+          "path": "tests/preview-header-fallback.browser.mjs",
+          "beforeTreeEntry": null,
+          "blob": "22f6f3d9c21e406be1a6c4b314442949af87f511",
+          "sha256": "aa05b5a4d36eeca471b099a117eb9f84a104bf65fcb1af178174187ef0659c4b"
+        },
+        {
+          "path": "tests/compact-header.browser.mjs",
+          "beforeTreeEntry": null,
+          "blob": "c62384ec88bee6c04042e7ffe48dcdab0da5197b",
+          "sha256": "112da2d36a2a6d89992f5e5f048fd268e90e443d437b07356a943a69fa3d9e61"
+        },
+        {
+          "path": "ui/DESIGN.md",
+          "beforeTreeEntry": "100644 blob 57c4cb20b07dfd0f4a25a791084a3ed20e9c406d\tui/DESIGN.md",
+          "blob": "c2d275ebf8c6aac5f8906f1fe3e3ebe86aebe294",
+          "sha256": "cb74d73336ec91ac1e18c668f6da2814e258a9d431ac75e308281f9db0dff60b"
+        },
+        {
+          "path": "ui/vendor/assistant-ui/README.md",
+          "beforeTreeEntry": "100644 blob 7ca578064fc70eccb0f6a6e0ef48028c411fec25\tui/vendor/assistant-ui/README.md",
+          "blob": "ab76efce90c3f926eb908230ac681acd56bd5706",
+          "sha256": "675cd91822ca87f9656239f3c047db436432c09ea14e296931379bbf4e9092d8"
+        },
+        {
+          "path": "docs/2026-10-25-preview-header-row-removal.md",
+          "beforeTreeEntry": null,
+          "blob": "a24c1805594e31c0a9b7910aabdaae8517247742",
+          "sha256": "da22a10222f6adc7f57d96370a5fa6edd4a828dc5d5fb89cce0fcb3c05ddb311"
+        },
+        {
+          "path": "docs/2026-10-25-compact-header.md",
+          "beforeTreeEntry": null,
+          "blob": "215a94da1b6f8888acfa7b452ad9a1e74226a41c",
+          "sha256": "0b8254eeeb95a0ebbb24424763f470191ee79bdd958a9b13003f60c5c3dd0028"
+        }
+      ],
+      "commit": "669da73cb0044aa630461958bee47b01f59fcaee"
+    }
+  ],
+  "sourcePatchProvenance": {
+    "A": {
+      "path": ".codex/scratch/annotation-enter-save-20261025/own-review.patch",
+      "sha256": "92219fb5a3ef45799e51624edfa9bcc27dea53687316243901bcdb406b733462",
+      "role": "Provenance only; incremental patch reconstructed against HEAD, not mechanically applied."
+    },
+    "B": {
+      "path": ".codex/scratch/preview-header-row-removal-20261025/task-only.patch",
+      "sha256": "3a1726df2478473bd9606a533232d5fdaab8021c284376d3d2ac7d212390fd5f",
+      "role": "Provenance only; incremental patch reconstructed against HEAD, not mechanically applied."
+    },
+    "C": {
+      "path": ".codex/scratch/unified-reference-annotation-icon-20261025/icon-only.patch",
+      "sha256": "788ff827eb7c1b844e67ab51bd1442322efeeacb0a601b0dcbe3743c16e44c74",
+      "role": "Provenance only; incremental patch reconstructed against HEAD, not mechanically applied."
+    },
+    "D": {
+      "path": ".codex/scratch/compact-header-implementation-20261025/task-only.patch",
+      "sha256": "7e8b2d39c7898111f4029ff3a41057631483fbb1ae1048c47cfff2f38e9cd7b9",
+      "role": "Provenance only; incremental patch reconstructed against HEAD, not mechanically applied."
+    }
+  },
+  "checks": {
+    "A": [
+      {
+        "check": "A-ui-types",
+        "exit": 0
+      },
+      {
+        "check": "A-service-types",
+        "exit": 0
+      },
+      {
+        "check": "A-units",
+        "exit": 0
+      },
+      {
+        "check": "A-build",
+        "exit": 0
+      }
+    ],
+    "C": [
+      {
+        "check": "C-ui-types",
+        "exit": 0
+      },
+      {
+        "check": "C-quote-css",
+        "exit": 0
+      },
+      {
+        "check": "C-build",
+        "exit": 0
+      }
+    ],
+    "BD": [
+      {
+        "check": "BD-ui-types",
+        "exit": 0
+      },
+      {
+        "check": "BD-canvas-css",
+        "exit": 0
+      },
+      {
+        "check": "BD-units",
+        "exit": 0
+      },
+      {
+        "check": "BD-build",
+        "exit": 0
+      }
+    ],
+    "BD-browser-primary": [
+      {
+        "check": "BD-layout",
+        "exit": 0
+      },
+      {
+        "check": "BD-tabs",
+        "exit": 0
+      }
+    ],
+    "BD-browser-secondary": [
+      {
+        "check": "BD-header",
+        "exit": 0
+      },
+      {
+        "check": "BD-enter",
+        "exit": 0
+      },
+      {
+        "check": "BD-fallback",
+        "exit": 0
+      },
+      {
+        "check": "BD-icon",
+        "exit": 0
+      },
+      {
+        "check": "BD-icon-history",
+        "exit": 0
+      },
+      {
+        "check": "BD-actions",
+        "exit": 0
+      }
+    ]
+  },
+  "browserGroups": {
+    "A": 15,
+    "C-interaction": 9,
+    "C-history": 3,
+    "final-layout": 18,
+    "final-tabs": 127,
+    "final-header": 20,
+    "final-enter": 15,
+    "final-fallback": 3,
+    "final-icon": 9,
+    "final-icon-history": 3,
+    "final-message-actions": 48
+  },
+  "unitTests": {
+    "A": 6,
+    "final": 16,
+    "note": "A is a subset of final; do not add as unique coverage."
+  },
+  "performance": {
+    "node": "v22.22.0",
+    "compression": "Node gzipSync default, per JS/CSS asset; includes lazy chunks and annotation runtime",
+    "baseline": {
+      "bytes": 3866875,
+      "gzipBytes": 1090225,
+      "assets": {
+        "assets/image-annotation-B8zk7NG9.css": "8a2421bd780ddfb49b72bce329fe5deaaa8d12f9a3ee2ae6ec3f0b40a56018ef",
+        "assets/image-annotation-kYF46nxM.js": "0b74ee25c4a152af1a6179a5564749e1153e018bd920dba1a80087e2493c8868",
+        "assets/index-5E6GP0yU.js": "df039e0c26e93b049d87561df94287623ea3c76fd73c5abb5db401fbf7a828cc",
+        "assets/index-j_cNVq57.css": "291e60561c984e5753b807407904ee3d93f5d117e457b3e38c82c771b5938618",
+        "assets/mermaid-diagram-BCf_MOQS.js": "3a5f3f0ef7570f9621f1c2523b4a280ce7f04aa791de96b0d36fffe515a3fe50",
+        "assets/runtime-BhS8tLY6.js": "ca641004dae4fc725a371a155a5e5d0236f315fb1bbeb2cf88ea7453db467d59"
+      }
+    },
+    "A": {
+      "bytes": 3867150,
+      "gzipBytes": 1090302,
+      "assets": {
+        "assets/image-annotation-B8zk7NG9.css": "8a2421bd780ddfb49b72bce329fe5deaaa8d12f9a3ee2ae6ec3f0b40a56018ef",
+        "assets/image-annotation-BJgHZsTH.js": "e75b07df4cbe2de6172c66085835d73137fe7634a6f289301cbba4fe10473b72",
+        "assets/index-CR0_rtbp.js": "23b8e4b37e4238fb62d767cf5f731750674eb0fb75ca15fdf463f13f4debcc45",
+        "assets/index-j_cNVq57.css": "291e60561c984e5753b807407904ee3d93f5d117e457b3e38c82c771b5938618",
+        "assets/mermaid-diagram-B40B4B-c.js": "85933383d0a36ab8ac438f572104901f0bbc4228c7e80216ca56928125b9005b",
+        "assets/runtime-BhS8tLY6.js": "ca641004dae4fc725a371a155a5e5d0236f315fb1bbeb2cf88ea7453db467d59"
+      }
+    },
+    "C": {
+      "bytes": 3867157,
+      "gzipBytes": 1090283,
+      "assets": {
+        "assets/image-annotation-B8zk7NG9.css": "8a2421bd780ddfb49b72bce329fe5deaaa8d12f9a3ee2ae6ec3f0b40a56018ef",
+        "assets/image-annotation-BWxhju1F.js": "9efa06b2e77b532be2355c86d8c3929a5c79d1c5731bab2c6118b7fc1e2bce88",
+        "assets/index-DuH8vLY2.js": "9a19613b1c779fa629620b80fba9c4f0317ebdc4a6c09786d5e58f30caf4ad26",
+        "assets/index-j_cNVq57.css": "291e60561c984e5753b807407904ee3d93f5d117e457b3e38c82c771b5938618",
+        "assets/mermaid-diagram-B7bvNzba.js": "4d9465481ee5e11c9c93227e98aec0799cf7a0f4862fb26c1d8a9df95cd258d3",
+        "assets/runtime-BhS8tLY6.js": "ca641004dae4fc725a371a155a5e5d0236f315fb1bbeb2cf88ea7453db467d59"
+      }
+    },
+    "BD": {
+      "bytes": 3868913,
+      "gzipBytes": 1090581,
+      "assets": {
+        "assets/image-annotation-B8zk7NG9.css": "8a2421bd780ddfb49b72bce329fe5deaaa8d12f9a3ee2ae6ec3f0b40a56018ef",
+        "assets/image-annotation-hV5IITH2.js": "26fdffa7798f7ebc3327b63cec1edd4c4938d5e31fba169846552260ce6b3153",
+        "assets/index-BiJn2o0Z.css": "c25f028c70b5baee67adec40df677215725ea6d323f33b9b09243ec25d1e76f7",
+        "assets/index-C3WNKmFK.js": "7ce912e5994f05295a5a66489d78dc81cbf845ea420c5776ccee849fa85e40f0",
+        "assets/mermaid-diagram-DNqFep0O.js": "10cf845fbad52f3ac4d9f749c83286b1f21f31f1304493ee15d475cedb52d655",
+        "assets/runtime-BhS8tLY6.js": "ca641004dae4fc725a371a155a5e5d0236f315fb1bbeb2cf88ea7453db467d59"
+      }
+    }
+  },
+  "treeEquivalence": {
+    "candidateEqualsFinalTrackedTree": true,
+    "trackedPathsCompared": 831,
+    "tree": "85d46497b182c4a0f0aff825530e9e0f6a586629"
+  },
+  "preservation": {
+    "initialPathsHashed": 489,
+    "changedWithinReview": [
+      "docs/2026-10-25-compact-header.md",
+      "docs/2026-10-25-preview-header-row-removal.md",
+      "docs/2026-10-25-unified-reference-annotation-icon.md",
+      "tests/html-render-first.browser.mjs",
+      "tests/official-canvas.browser.mjs",
+      "tests/restore-official-components.browser.mjs"
+    ],
+    "unrelatedBytesChanged": [],
+    "unrelatedIndexEntriesChanged": [],
+    "cachedDiffEmpty": true,
+    "excludedPreExistingUntrackedSuite": "tests/artifact-file-list.browser.mjs",
+    "installedApp": "build62 / 493ead1576ba08e59987f9db96a55ae4843a90b9 not operated on",
+    "note": "Initial .cindy-worktrees subtree excluded from content enumeration and never accessed or mutated."
+  },
+  "limitations": [
+    "Local synthetic Chrome/HTTP only; no installed Electron, physical mobile, virtual keyboard, native IME or production pressure test.",
+    "Legacy reader-scroll baseline has 13 useMediaQuery fixture failures; old lifecycle baseline has 3 confirmed unrelated failures; not rerun or modified.",
+    "Legacy browser suites received only header selector and approved geometry maintenance, not a claim of full old-contract suite migration.",
+    "No install, restart, push, branch, worktree, tag, deployment, real model/channel or production-data access."
+  ],
+  "reviewRecord": "docs/2026-10-25-annotation-header-followup-review-commits.md; its commit is the next documentation-only commit, avoiding a self-referential hash."
+}

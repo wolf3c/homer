@@ -1,0 +1,1670 @@
+--- a/src/recursive-main-inputs.ts
++++ b/src/recursive-main-inputs.ts
+@@ -12,6 +12,7 @@
+   inputHash: string;
+   inputRevision: number;
+   priority: number;
++  queueOrder?: number;
+   interrupt?: InterruptTarget;
+   interruptState?: 'requested' | 'confirmed' | 'failed' | 'uncertain';
+   terminal?: 'completed' | 'failed' | 'interrupted' | 'cancelled';
+@@ -26,8 +27,10 @@
+   replyId: string;
+   threadId: string;
+   detailsJson: string | null;
+-};
+-const inputRows = `SELECT m.id,m.seq,m.payloadJson,r.state AS receiptState,r.revision,r.offeredTurnId,i.replyId,i.threadId,o.detailsJson
++  hasRequest: number;
++};
++const inputRows = `SELECT m.id,m.seq,m.payloadJson,r.state AS receiptState,r.revision,r.offeredTurnId,i.replyId,i.threadId,o.detailsJson,
++  EXISTS(SELECT 1 FROM requests q WHERE q.id=json_extract(m.payloadJson,'$.requestId')) AS hasRequest
+   FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
+   LEFT JOIN conversation_inputs i ON i.requestId=json_extract(m.payloadJson,'$.requestId')
+   LEFT JOIN operations o ON o.id=m.operationKey`;
+@@ -54,7 +57,14 @@
+   accepted?(input:ConversationInput,threadId:string):void;
+   edited?(input:ConversationInput,threadId:string):void;
+   cancelled?(requestId:string):void;
+-};
++  mutation?(scope:QueueScope):void;
++};
++export type QueueScope={threadId?:string;readEpoch?:string};
++export type QueueChange=QueueScope&{requestId:string;operationId:string;expectedRevision:number};
++export type QueueMove=QueueChange&{threadId:string;readEpoch:string;expectedOrderVersion:string;beforeRequestId:string|null};
++export type DispatchInput=QueuedInput&{movable:boolean;position?:number;segmentStartRequestId?:string;nextRequestId?:string|null;moveUpBeforeRequestId?:string;moveDownBeforeRequestId?:string|null};
++export type QueueOperationResult={requestId:string;state:string;revision:number;inputRevision?:number;action?:'move';messageId?:string;orderVersion?:string;changed?:{requestId:string;revision:number}[];noOp?:true};
++const dispatchOrder="json_extract(m.payloadJson,'$.priority') DESC,coalesce(json_extract(m.payloadJson,'$.queueOrder'),m.seq),m.seq";
+ export class MainInputClaimError extends Error{
+   constructor(readonly messageId:string,readonly requestId:string,readonly revision:number,cause:unknown){
+     super(cause instanceof Error&&/^[a-z][a-z0-9_]{1,70}$/.test(cause.message)?cause.message:'queue_claim_failed');
+@@ -69,13 +79,14 @@
+   private get agent() { return this.store.meta('mainAgentId')!; }
+   private row(requestId: string) { return this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? AND json_extract(m.payloadJson,'$.requestId')=?").get(this.agent, requestId) as Row | undefined; }
+   private payload(row: Row): InputPayload { return JSON.parse(row.payloadJson); }
++  private rowEditable(row:Row){return row.receiptState==='pending'&&!row.offeredTurnId&&!JSON.parse(row.detailsJson??'{}').turnId&&!row.hasRequest;}
+   private current(row: Row, message?: ConversationMessage): QueuedInput {
+     const p = this.payload(row);
+     message ??= this.history.inputs(row.threadId, [p.requestId]).get(p.requestId);
+     if (!message) throw Error('queue_input_missing');
+     const details = JSON.parse(row.detailsJson ?? '{}');
+     const input = conversationInput({ requestId: p.requestId, text: message.text,...(message.attachments?{attachments:message.attachments}:{}), ...(message.quotes ? { quotes: message.quotes } : message.quote ? { quote: message.quote } : {}), ...(details.interactionId ? { interactionId: details.interactionId } : {}) });
+-    return { messageId: row.id, seq: row.seq, revision: row.revision, inputRevision: p.inputRevision, input, replyId: row.replyId, source: p.source,editable:row.receiptState==='pending'&&!row.offeredTurnId&&!details.turnId&&!this.store.request(p.requestId),...(row.receiptState==='pending'?{preparation:this.preparation(input)}:{}), state: row.receiptState === 'pending' ? 'queued' : ['offered', 'received'].includes(row.receiptState) ? 'processing' : row.receiptState === 'uncertain' ? 'uncertain' : p.terminal ?? 'failed', ...(row.offeredTurnId ? { generationId: row.offeredTurnId } : {}), ...(p.interruptState ? { interruptState: p.interruptState, interruptTarget: p.interrupt } : {}) };
++    return { messageId: row.id, seq: row.seq, revision: row.revision, inputRevision: p.inputRevision, input, replyId: row.replyId, source: p.source,editable:this.rowEditable(row),...(row.receiptState==='pending'?{preparation:this.preparation(input)}:{}), state: row.receiptState === 'pending' ? 'queued' : ['offered', 'received'].includes(row.receiptState) ? 'processing' : row.receiptState === 'uncertain' ? 'uncertain' : p.terminal ?? 'failed', ...(row.offeredTurnId ? { generationId: row.offeredTurnId } : {}), ...(p.interruptState ? { interruptState: p.interruptState, interruptTarget: p.interrupt } : {}) };
+   }
+   list(): QueuedInput[] {
+     const rows=this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? ORDER BY m.seq").all(this.agent) as Row[];
+@@ -97,6 +108,75 @@
+     const rows=this.db.prepare(inputRows.replace('FROM agent_messages m','FROM web_active_inputs w CROSS JOIN agent_messages m ON m.id=w.messageId')+" WHERE w.seq>? AND m.kind='user_input' AND m.recipientAgentId=? ORDER BY w.seq LIMIT 81").all(after,this.agent) as Row[];
+     return {items:rows.slice(0,80).map(row=>this.current(row)),after:rows.length>80?rows[79]!.seq:null};
+   }
++  // Only identities and receipt metadata are read for ordering. Bodies are
++  // hydrated for the selected bounded page, never for the entire waiting set.
++  private dispatchSnapshot(){
++    // Start at the existing recipient/state index; completed inbox history must
++    // not be scanned on each streaming state publication. No body is selected.
++    const sql=inputRows.replace('FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id','FROM agent_receipts r CROSS JOIN agent_messages m ON m.id=r.messageId');
++    const rows=this.db.prepare(sql+" WHERE r.recipientAgentId=? AND r.state IN ('pending','offered','received','uncertain') AND m.recipientAgentId=r.recipientAgentId AND i.threadId=? AND m.kind='user_input' ORDER BY "+dispatchOrder).all(this.agent,this.store.meta('mainThread')!) as Row[];
++    const movable=rows.map(row=>{const p=this.payload(row);return this.rowEditable(row)&&p.priority===0&&!p.interrupt&&!JSON.parse(row.detailsJson??'{}').interactionId;});
++    const orderVersion=recursiveHash(rows.map((row,index)=>[row.id,row.revision,row.receiptState,this.payload(row).queueOrder??row.seq,movable[index]]));
++    return {rows,movable,orderVersion,totalWaiting:rows.filter(row=>row.receiptState==='pending').length};
++  }
++  dispatchSummary(){const {orderVersion,totalWaiting}=this.dispatchSnapshot();return {orderVersion,totalWaiting};}
++  dispatchPage(cursor?:string,readEpoch=''){
++    const snapshot=this.dispatchSnapshot(),{rows,movable,orderVersion,totalWaiting}=snapshot,threadId=this.store.meta('mainThread')!;
++    let start=0;
++    if(cursor){
++      let value;try{if(cursor.length>1000)throw Error();value=JSON.parse(Buffer.from(cursor,'base64url').toString('utf8'));}catch{throw Error('queue_cursor_invalid');}
++      if(value?.v!==1||value.threadId!==threadId||value.readEpoch!==readEpoch||value.orderVersion!==orderVersion)throw Error('queue_cursor_expired');
++      const index=rows.findIndex(row=>row.id===value.last);if(index<0)throw Error('queue_cursor_expired');start=index+1;
++    }
++    const end=Math.min(start+80,rows.length),selected=rows.slice(start,end),messages=this.history.inputs(threadId,selected.map(row=>this.payload(row).requestId));
++    let position=rows.slice(0,start).filter(row=>row.receiptState==='pending').length;
++    const items:DispatchInput[]=selected.map((row,offset)=>{
++      const index=start+offset,item:DispatchInput={...this.current(row,messages.get(this.payload(row).requestId)),movable:movable[index]!,...(row.receiptState==='pending'?{position:++position}:{})};
++      if(item.movable){
++        let first=index,last=index;while(first>0&&movable[first-1])first--;while(last+1<rows.length&&movable[last+1])last++;
++        item.segmentStartRequestId=this.payload(rows[first]!).requestId;
++        item.nextRequestId=index<last?this.payload(rows[index+1]!).requestId:null;
++        if(index>first)item.moveUpBeforeRequestId=this.payload(rows[index-1]!).requestId;
++        if(index<last)item.moveDownBeforeRequestId=index+2<=last?this.payload(rows[index+2]!).requestId:null;
++      }
++      return item;
++    });
++    const nextCursor=end<rows.length?Buffer.from(JSON.stringify({v:1,threadId,readEpoch,orderVersion,last:rows[end-1]!.id})).toString('base64url'):null;
++    return {items,orderVersion,totalWaiting,nextCursor};
++  }
++  operationReceipt(requestId:string,operationId:string){
++    const row=this.db.prepare("SELECT responseJson FROM operations WHERE actorAgentId=? AND scopeId=? AND operationId=? AND kind='user_queue_change'").get('user:'+this.agent,requestId,operationId);
++    return row?JSON.parse(String(row.responseJson)) as QueueOperationResult:undefined;
++  }
++  private scope(row:Row,input:QueueScope){
++    const thread=this.store.meta('mainThread');
++    if(row.threadId!==thread||(input.threadId!==undefined&&input.threadId!==thread))throw Error('queue_thread_conflict');
++    this.lifecycle?.mutation?.(input);
++  }
++  move(input:QueueMove){
++    return this.mutate(input.requestId,input.operationId,{action:'move',...input},row=>{
++      this.scope(row,input);this.editable(row,input.expectedRevision);
++      const {rows,movable,orderVersion}=this.dispatchSnapshot(),index=rows.findIndex(item=>item.id===row.id);
++      if(input.expectedOrderVersion!==orderVersion)throw Error('queue_order_conflict');
++      if(index<0||!movable[index])throw Error('queue_input_not_movable');
++      let first=index,last=index;while(first>0&&movable[first-1])first--;while(last+1<rows.length&&movable[last+1])last++;
++      const segment=rows.slice(first,last+1),target=input.beforeRequestId===null?segment.length:segment.findIndex(item=>this.payload(item).requestId===input.beforeRequestId);
++      if(target<0)throw Error('queue_anchor_invalid');
++      const reordered=segment.filter(item=>item.id!==row.id);
++      const insert=input.beforeRequestId===input.requestId?index-first:input.beforeRequestId===null?reordered.length:reordered.findIndex(item=>this.payload(item).requestId===input.beforeRequestId);
++      reordered.splice(insert,0,row);
++      const changed:{requestId:string;revision:number}[]=[];
++      for(let n=0;n<segment.length;n++){
++        const item=reordered[n]!,slot=this.payload(segment[n]!).queueOrder??segment[n]!.seq;
++        if(item.id===segment[n]!.id)continue;
++        const p=this.payload(item);
++        this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({...p,queueOrder:slot}),item.id);
++        this.db.prepare('UPDATE agent_receipts SET revision=revision+1 WHERE messageId=?').run(item.id);
++        changed.push({requestId:p.requestId,revision:item.revision+1});
++      }
++      return {action:'move' as const,requestId:input.requestId,messageId:row.id,state:'queued' as const,revision:row.revision+(changed.some(item=>item.requestId===input.requestId)?1:0),inputRevision:this.payload(row).inputRevision,orderVersion:changed.length?this.dispatchSummary().orderVersion:orderVersion,changed,...(!changed.length?{noOp:true as const}:{})};
++    });
++  }
+   pendingInterrupts(){
+     return (this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? AND r.state='pending' AND json_extract(m.payloadJson,'$.interruptState')='requested' ORDER BY m.seq").all(this.agent) as Row[]).map(row=>this.current(row));
+   }
+@@ -104,7 +184,7 @@
+   // Readiness observes the same priority/FIFO head that transactional claim
+   // owns. A preparing head blocks both selectors without skipping later inputs.
+   private candidate():Row|undefined {
+-    return this.db.prepare(inputRows+" WHERE m.recipientAgentId=? AND m.kind='user_input' AND r.state='pending' ORDER BY json_extract(m.payloadJson,'$.priority') DESC,m.seq LIMIT 1").get(this.agent) as Row|undefined;
++    return this.db.prepare(inputRows+" WHERE m.recipientAgentId=? AND m.kind='user_input' AND r.state='pending' ORDER BY "+dispatchOrder+" LIMIT 1").get(this.agent) as Row|undefined;
+   }
+   runnableHead(){const row=this.candidate();if(!row)return;const head=this.current(row);return head.preparation==='preparing'?undefined:head;}
+   runnable(){return !!this.runnableHead();}
+@@ -166,7 +246,7 @@
+       throw Error('queue_revision_conflict');
+     if(!this.current(row).editable)throw Error('queue_input_locked');
+   }
+-  edit(input: {
++  edit(input: QueueScope & {
+     requestId: string;
+     operationId: string;
+     expectedRevision: number;
+@@ -176,6 +256,7 @@
+     if (updated.requestId !== input.requestId)
+       throw Error('queue_request_id_conflict');
+     return this.mutate(input.requestId, input.operationId, input, (row, p) => {
++      this.scope(row,input);
+       this.editable(row, input.expectedRevision);
+       if(updated.interactionId!==this.current(row).input.interactionId)throw Error('queue_interaction_conflict');
+       if (this.validateQuotes)
+@@ -199,12 +280,13 @@
+       return { requestId: p.requestId, state: 'queued', revision: row.revision + 1, inputRevision: p.inputRevision + 1 };
+     });
+   }
+-  cancel(input: {
++  cancel(input: QueueScope & {
+     requestId: string;
+     operationId: string;
+     expectedRevision: number;
+   }) {
+     return this.mutate(input.requestId, input.operationId, input, (row, p) => {
++      this.scope(row,input);
+       this.editable(row, input.expectedRevision);
+       this.db.prepare("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE messageId=? AND state='pending'").run(row.id);
+       this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, terminal: 'cancelled' }), row.id);
+--- a/src/service.ts
++++ b/src/service.ts
+@@ -405,6 +405,7 @@
+         claim:input=>{this.media.validate(input.requestId,input.attachments);},
+         edited:input=>{this.media.retainRefs(input.requestId,input.attachments);},
+         cancelled:requestId=>{if(this.history.inputs(this.store.meta('mainThread')!,[requestId]).get(requestId)?.status==='cancelled')this.media.revoke(requestId);},
++        mutation:scope=>{if(scope.readEpoch!==undefined&&scope.readEpoch!==this.webReadEpoch)throw Error('history_epoch_changed');},
+       });
+       this.media.gc();this.mediaGcTimer=setInterval(()=>{try{this.media.gc();}catch(error){this.store.event(null,'media_gc_failed',engineError(error));}},3600000);this.mediaGcTimer.unref();
+       this.pendingTools=new PendingTools(this.tasks);
+@@ -1079,7 +1080,8 @@
+     this.scheduleInputs();
+   }
+   editQueued(input:Parameters<MainInputs['edit']>[0]){const result=this.inputs.edit(input);this.scheduleInputs();return result;}
+-  cancelQueued(input:Parameters<MainInputs['cancel']>[0]){return this.inputs.cancel(input);}
++  cancelQueued(input:Parameters<MainInputs['cancel']>[0]){const result=this.inputs.cancel(input);this.scheduleInputs();return result;}
++  moveQueued(input:Parameters<MainInputs['move']>[0]){const result=this.inputs.move(input);this.scheduleInputs();return result;}
+   conversationState(){
+     const threadId=this.store.meta('mainThread')!;
+     const processNodes=this.processes.list(threadId),history=this.history.list(threadId).map(message=>({...message,...(message.attachments?{media:message.attachments.map(ref=>this.media.view(ref))}:{})}));
+--- a/src/web-contract.ts
++++ b/src/web-contract.ts
+@@ -5,12 +5,15 @@
+ import type { ConversationInput } from "./web-history.js";
+ import type { WechatManagementBridge } from "./channels/wechat-management.js";
+ import type { TelegramManagementBridge } from "./channels/telegram-management.js";
+-import type {QueuedInput} from './recursive-main-inputs.js';
++import type {QueuedInput,DispatchInput,QueueChange,QueueMove,QueueOperationResult} from './recursive-main-inputs.js';
+ import type {MainGeneration} from './service.js';
+ import type {NativeTokenUsage} from './native-usage.js';
+ 
+ export type ActiveReadVersion={threadId:string;readEpoch:string;revision:number};
+ export type ActiveReadResult<T>=ActiveReadVersion&{items:T[];after:number|null};
++export type DispatchQueuePage=ActiveReadVersion&{view:'dispatch-v1';orderVersion:string;totalWaiting:number;items:(DispatchInput&{user:import('./web-history.js').ConversationMessage&{media?:import('./media-store.js').MediaView[]};statusText:string})[];nextCursor:string|null};
++export type QueueReceiptsRequest={requestIds:string[];threadId?:string;readEpoch?:string;operations?:{requestId:string;operationId:string}[]};
++export type QueueReceipts={acceptedRequestIds:string[];statuses:{requestId:string;state:string;revision?:number;inputRevision?:number;editable?:boolean}[];operations?:{requestId:string;operationId:string;committed:boolean;result?:QueueOperationResult}[]};
+ export type WebArtifact={id:string;title:string;workTitle:string;historyMessageId?:string;messageId?:string;version?:number;outcome?:string};
+ export type ArtifactOrigin={message:import('./web-history.js').ConversationMessage;files:WebArtifact[]};
+ export type WebWork = { id: string; title: string; status: string; summary: string | null; hasArtifact: boolean; artifacts?: {id:string;title:string;historyMessageId?:string;version?:number;outcome?:string}[] };
+@@ -21,11 +24,12 @@
+   history?:{protocol:3;readEpoch:string;page:Omit<import('./web-history-pages.js').HistoryPage,'messages'|'queue'>;moreQueue:number|null;moreInteractions:number|null};
+   inactiveInteractions?:InactiveInteraction[];
+   orderWarning?:string;
++  queueDispatch?:{orderVersion:string;totalWaiting:number};
+   conversationView?:2; acceptedRequestIds?:string[];
+   artifacts?:WebArtifact[];
+   mainActivity?:MainActivity|null;
+   processNodes?: import('./main-process.js').ProcessNode[];
+-  features?:{draftUpload?:boolean;nativeCapabilities?:boolean;taskOverview?:boolean;workerEventCards?:1};
++  features?:{draftUpload?:boolean;nativeCapabilities?:boolean;taskOverview?:boolean;workerEventCards?:1;queueDispatch?:1};
+   threadId: string; messages: import('./conversation-projection.js').DisplayMessage[]; isRunning: boolean; activeMessageId: string | null;
+   queue?: (QueuedInput & Partial<import('./conversation-projection.js').DisplayQueueInput>)[];generation?:MainGeneration|null;
+   usage?:NativeTokenUsage|null;
+@@ -38,8 +42,9 @@
+     page(input:{readEpoch:string;request:import('./web-history-pages.js').HistoryPageRequest}):Promise<import('./web-history-pages.js').HistoryPage>;
+     process(input:{readEpoch:string;id:string;itemId?:string}):Promise<WebProcessNode>;
+     resolve(input:{readEpoch:string;id:string}):Promise<{messageId:string;sourceMessageId?:string}>;
+-    receipts(input:{requestIds:string[]}):Promise<{acceptedRequestIds:string[];statuses:{requestId:string;state:string}[]}>;
++    receipts(input:QueueReceiptsRequest):Promise<QueueReceipts>;
+     queue(after:number,readEpoch?:string):Promise<ActiveReadResult<QueuedInput>>;
++    dispatchQueue?(input:{readEpoch:string;cursor?:string}):Promise<DispatchQueuePage>;
+     interactions(after:number,readEpoch?:string):Promise<ActiveReadResult<WebInteraction>>;
+   };
+   onStateChange?(listener:()=>void):()=>void;
+@@ -51,8 +56,9 @@
+   state(): Promise<WebState>;
+   submit(input: ConversationInput): Promise<unknown>;
+   queue?:{
+-    edit(input:{requestId:string;operationId:string;expectedRevision:number;input:ConversationInput}):Promise<unknown>;
+-    cancel(input:{requestId:string;operationId:string;expectedRevision:number}):Promise<unknown>;
++    edit(input:QueueChange&{input:ConversationInput}):Promise<unknown>;
++    cancel(input:QueueChange):Promise<unknown>;
++    move?(input:QueueMove):Promise<unknown>;
+     interrupt(input:ConversationInput,target:{messageId:string;generationId:string}):Promise<unknown>;
+   };
+   stop(messageId: string): Promise<unknown>;
+--- a/src/web-server.ts
++++ b/src/web-server.ts
+@@ -173,10 +173,18 @@
+         }
+         if(path==='/api/history/process'||path==='/api/history/resolve'){
+           if(typeof input.readEpoch!=='string'||input.readEpoch.length>100||typeof input.id!=='string'||!/^[\w:-]{1,100}$/.test(input.id))throw Error('history_request_invalid');
++          if(input.itemId!==undefined&&(path!=='/api/history/process'||typeof input.itemId!=='string'||!/^[\w:-]{1,300}$/.test(input.itemId)))throw Error('history_request_invalid');
+           return json(response,200,await boundedRead<unknown>(()=>path==='/api/history/resolve'?bridge.history!.resolve(input):bridge.history!.process(input)));
+         }
+         if(path==='/api/history/receipts')return json(response,200,await boundedRead(()=>bridge.history!.receipts(input)));
+-        if(path==='/api/history/queue')return json(response,200,await boundedRead(()=>bridge.history!.queue(input.after??0,input.readEpoch)));
++        if(path==='/api/history/queue'){
++          if(input.view!==undefined){
++            if(input.view!=='dispatch-v1'||typeof input.readEpoch!=='string'||input.readEpoch.length>100||(input.cursor!==undefined&&(typeof input.cursor!=='string'||input.cursor.length>1000)))throw Error('history_request_invalid');
++            if(!bridge.history.dispatchQueue)throw Error('queue_dispatch_unavailable');
++            return json(response,200,await boundedRead(()=>bridge.history!.dispatchQueue!({readEpoch:input.readEpoch,cursor:input.cursor})));
++          }
++          return json(response,200,await boundedRead(()=>bridge.history!.queue(input.after??0,input.readEpoch)));
++        }
+         if(path==='/api/history/interactions')return json(response,200,await boundedRead(()=>bridge.history!.interactions(input.after??0,input.readEpoch)));
+       }
+       if(path==="/api/capabilities"){if(!bridge.capabilities)throw Error("capability_unavailable");return json(response,200,await bridge.capabilities.manage(input));}
+@@ -219,10 +227,17 @@
+         if(typeof target?.messageId!=='string'||typeof target?.generationId!=='string'||! /^[\w:-]{1,100}$/.test(target.messageId)||! /^[\w:-]{1,100}$/.test(target.generationId))throw Error('queue_interrupt_target_invalid');
+         return json(response,202,await bridge.queue.interrupt(conversationInput(input.input),{messageId:target.messageId,generationId:target.generationId}));
+       }
+-      if(path==='/api/messages/edit'||path==='/api/messages/cancel'){
++      if(path==='/api/messages/edit'||path==='/api/messages/cancel'||path==='/api/messages/move'){
+         if(!bridge.queue)throw Error('queue_unavailable');
+         if(typeof input?.requestId!=='string'||! /^[\w:.-]{1,150}$/.test(input.requestId)||typeof input?.operationId!=='string'||! /^[\w:.-]{1,150}$/.test(input.operationId)||!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<0)throw Error('queue_mutation_invalid');
+-        const change={requestId:input.requestId,operationId:input.operationId,expectedRevision:input.expectedRevision};
++        const scoped=input.threadId!==undefined||input.readEpoch!==undefined;
++        if(scoped&&(typeof input.threadId!=='string'||!input.threadId||input.threadId.length>150||typeof input.readEpoch!=='string'||!input.readEpoch||input.readEpoch.length>100))throw Error('queue_scope_invalid');
++        const change={requestId:input.requestId,operationId:input.operationId,expectedRevision:input.expectedRevision,...(scoped?{threadId:input.threadId,readEpoch:input.readEpoch}:{})};
++        if(path.endsWith('/move')){
++          if(!bridge.queue.move)throw Error('queue_move_unavailable');
++          if(!scoped||typeof input.expectedOrderVersion!=='string'||! /^[a-f0-9]{64}$/.test(input.expectedOrderVersion)||(input.beforeRequestId!==null&&(typeof input.beforeRequestId!=='string'||! /^[\w:-]{1,100}$/.test(input.beforeRequestId))))throw Error('queue_move_invalid');
++          return json(response,200,await bridge.queue.move({...change,threadId:input.threadId,readEpoch:input.readEpoch,expectedOrderVersion:input.expectedOrderVersion,beforeRequestId:input.beforeRequestId}));
++        }
+         return json(response,200,path.endsWith('/edit')?await bridge.queue.edit({...change,input:conversationInput(input.input)}):await bridge.queue.cancel(change));
+       }
+       if (path === "/api/stop") {
+--- a/src/web-homer.ts
++++ b/src/web-homer.ts
+@@ -68,12 +68,22 @@
+         return {messageId:String(message.id),...(user?{sourceMessageId:String(user.id)}:{})};
+       },
+       queue:async(after,readEpoch)=>{if(readEpoch!==undefined)epoch(readEpoch);const result=queuePage(after);return {...result,threadId:app.store.meta('mainThread')!,readEpoch:app.webReadEpoch,revision:pageReader().revision};},
++      dispatchQueue:async({cursor,readEpoch})=>{
++        epoch(readEpoch);const result=pageReader().dispatchQueue(cursor,readEpoch);
++        return {...result,view:'dispatch-v1',threadId:app.store.meta('mainThread')!,readEpoch,revision:pageReader().revision,items:result.items.map(item=>({...item,user:{...item.user,...(item.user.attachments?{media:item.user.attachments.map(ref=>app.media.view(ref))}:{})}}))};
++      },
+       interactions:async(after,readEpoch)=>{if(readEpoch!==undefined)epoch(readEpoch);const result=interactionPage(after);return {...result,threadId:app.store.meta('mainThread')!,readEpoch:app.webReadEpoch,revision:pageReader().revision};},
+-      receipts:async({requestIds})=>{
++      receipts:async({requestIds,operations,threadId,readEpoch})=>{
+         if(!Array.isArray(requestIds)||requestIds.length>80||requestIds.some(id=>typeof id!=='string'||! /^[\w:-]{1,100}$/.test(id)))throw Error('receipt_ids_invalid');
++        if(readEpoch!==undefined)epoch(readEpoch);
++        if(threadId!==undefined&&threadId!==app.store.meta('mainThread'))throw Error('queue_thread_conflict');
++        if(operations!==undefined&&(!Array.isArray(operations)||operations.length>80||operations.some(op=>!op||typeof op.requestId!=='string'||!/^[\w:-]{1,100}$/.test(op.requestId)||typeof op.operationId!=='string'||!/^[\w:.-]{1,150}$/.test(op.operationId))))throw Error('queue_operation_invalid');
+         const thread=app.store.meta('mainThread')!,acceptedRequestIds=requestIds.filter(id=>!!app.store.db.prepare('SELECT 1 FROM conversation_inputs WHERE threadId=? AND requestId=?').get(thread,id));
+-        const states=new Map(app.inputs.byRequestIds(acceptedRequestIds).map(item=>[item.input.requestId,item.state]));
+-        return {acceptedRequestIds,statuses:requestIds.map(requestId=>({requestId,state:states.get(requestId)??(acceptedRequestIds.includes(requestId)?'accepted':'unconfirmed')}))};
++        const states=new Map(app.inputs.byRequestIds(acceptedRequestIds).map(item=>[item.input.requestId,item]));
++        return {acceptedRequestIds,statuses:requestIds.map(requestId=>{const item=states.get(requestId);return {requestId,state:item?.state??(acceptedRequestIds.includes(requestId)?'accepted':'unconfirmed'),...(item?{revision:item.revision,inputRevision:item.inputRevision,editable:item.editable===true}:{})};}),...(operations?{operations:operations.map(op=>{
++          const belongs=app.store.db.prepare('SELECT 1 FROM conversation_inputs WHERE threadId=? AND requestId=?').get(thread,op.requestId),result=belongs?app.inputs.operationReceipt(op.requestId,op.operationId):undefined;
++          return {...op,committed:!!result,...(result?{result}:{})};
++        })}:{})};
+       },
+       state:async()=>{
+         const recent=page(),threadId=recent.threadId,queue=queuePage();
+@@ -81,7 +91,7 @@
+         const pending=interactionPage(),interactions=pending.items;
+         const current=app.conversationControlState();
+         return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:2,acceptedRequestIds:[],processNodes:[],
+-        features:{draftUpload,nativeCapabilities,taskOverview:true,workerEventCards:1},upgrade:{phase:'running'},
++        queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,nativeCapabilities,taskOverview:true,workerEventCards:1,queueDispatch:1},upgrade:{phase:'running'},
+         history:{protocol:3,readEpoch:app.webReadEpoch,page:pageInfo,moreQueue:queue.after,moreInteractions:pending.after}};
+       },
+     },
+@@ -127,7 +137,7 @@
+       const visible=new Set(conversation.messages.map(message=>message.id));
+       const artifacts=work.flatMap(work=>work.artifacts.map(file=>({...file,workTitle:work.title,...(visible.has(file.historyMessageId)?{messageId:file.historyMessageId}:{})})));
+       return {
+-        features:{draftUpload,nativeCapabilities,taskOverview:true,workerEventCards:1},
++        queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,nativeCapabilities,taskOverview:true,workerEventCards:1,queueDispatch:1},
+         ...conversation,
+         processNodes:conversation.processNodes,
+         messages:conversation.messages.map(message=>({...message,requestId:message.requestId??deliverySources.get(message.id)??null})),
+@@ -153,7 +163,7 @@
+       }finally{app.receptionTimings?.mark('state_end',{},undefined,performance.now()-started);}
+     },
+     submit: async input => app.submitMessage(input),
+-    queue:{edit:async input=>app.editQueued(input),cancel:async input=>app.cancelQueued(input),interrupt:async(input,target)=>app.submitMessage(input,undefined,target)},
++    queue:{edit:async input=>app.editQueued(input),cancel:async input=>app.cancelQueued(input),move:async input=>app.moveQueued(input),interrupt:async(input,target)=>app.submitMessage(input,undefined,target)},
+     stop: id => app.stopMain(id),
+     feedback: async (id, value) => app.history.feedback(app.store.meta('mainThread')!, id, value),
+     respond: async (id, input) => app.submitMessage({ ...input, interactionId: id }),
+--- a/src/web-history-pages.ts
++++ b/src/web-history-pages.ts
+@@ -192,15 +192,22 @@
+   this.db.exec('DELETE FROM web_dirty_tasks');return rows;
+  }
+  queuePage(after=0){
+-  const page=this.inputs.activePage(after),requests=page.items.map(item=>item.input.requestId),users=[...this.history.inputs(String(this.db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()!.value),requests).values()];
++  const page=this.inputs.activePage(after);return {items:this.projectQueue(page.items),after:page.after};
++ }
++ dispatchQueue(cursor:string|undefined,readEpoch:string){
++  const page=this.inputs.dispatchPage(cursor,readEpoch),visible=new Map(this.projectQueue(page.items).map(item=>[item.messageId,item]));
++  return {...page,items:page.items.flatMap(item=>{const projected=visible.get(item.messageId);return projected?[{...item,...projected}]:[];})};
++ }
++ private projectQueue(items:import('./recursive-main-inputs.js').QueuedInput[]){
++  const requests=items.map(item=>item.input.requestId),users=[...this.history.inputs(String(this.db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()!.value),requests).values()];
+   const requestsWithNodes=new Set<string>(),legacyReplies=new Set<string>();
+   for(const requestId of requests){
+    const thread=users.find(user=>user.requestId===requestId)?.threadId;if(!thread)continue;
+    if(this.db.prepare("SELECT 1 FROM web_process_ids WHERE threadId=? AND requestId=? AND sourceKind='user' AND position IS NOT NULL LIMIT 1").get(thread,requestId))requestsWithNodes.add(requestId);
+    if(this.db.prepare(`SELECT 1 FROM web_legacy_ids WHERE threadId=? AND requestId=? AND NOT EXISTS(SELECT 1 FROM conversation_messages o WHERE o.threadId=? AND o.requestId=? AND o.id GLOB 'input-outcome:*') LIMIT 1`).get(thread,requestId,thread,requestId))legacyReplies.add(requestId);
+   }
+-  const view=projectConversation(users,[],page.items,{visibleIds:new Set(),requestsWithNodes,legacyReplies,outcomes:new Set(),nodeRequests:new Map(),continuedNodes:new Set()});
+-  return {items:view.queue,after:page.after};
++  const view=projectConversation(users,[],items,{visibleIds:new Set(),requestsWithNodes,legacyReplies,outcomes:new Set(),nodeRequests:new Map(),continuedNodes:new Set()});
++  return view.queue;
+  }
+  process(id:string,threadId:string):ProcessNode{
+   const node=this.processes.exact(id);if(!node||node.threadId!==threadId)throw Error('history_process_not_found');return node;
+--- a/src/dev-host.ts
++++ b/src/dev-host.ts
+@@ -133,6 +133,7 @@
+       else if(m.method==='history.resolve')value=await bridge.history!.resolve(m.input);
+       else if(m.method==='history.receipts')value=await bridge.history!.receipts(m.input);
+       else if(m.method==='history.queue')value=await bridge.history!.queue(m.input.after,m.input.readEpoch);
++      else if(m.method==='history.dispatchQueue')value=await bridge.history!.dispatchQueue!(m.input);
+       else if(m.method==='history.interactions')value=await bridge.history!.interactions(m.input.after,m.input.readEpoch);
+       else if(m.method==='taskOverview.list')value=await bridge.taskOverview!.list();
+       else if(m.method==='taskOverview.summary')value=await bridge.taskOverview!.summary!(m.input.id);
+@@ -148,6 +149,7 @@
+       else if (m.method === "feedback") value = await bridge.feedback!(m.input.messageId, m.input.value);
+       else if(m.method==='queue.edit')value=await bridge.queue!.edit(m.input);
+       else if(m.method==='queue.cancel')value=await bridge.queue!.cancel(m.input);
++      else if(m.method==='queue.move')value=await bridge.queue!.move!(m.input);
+       else if(m.method==='queue.interrupt')value=await bridge.queue!.interrupt(m.input.input,m.input.target);
+       else if (m.method === "stop") value = await bridge.stop(m.input.messageId);
+       else if (m.method === "respond") value = await bridge.respond(m.input.id, m.input);
+--- a/scripts/dev.mjs
++++ b/scripts/dev.mjs
+@@ -126,11 +126,11 @@
+         approvedSourceHash=hash;review=undefined;publish();return {approved:true};
+       }},
+       getAssets: version => ({ uiDirectory: version ? uiBuilds.has(version) ? join(uiBuilds.get(version).directory, "dist/web") : undefined : join(uiCurrent.directory, "dist/web"), logoPath: join(current.directory, "assets/branding/homer-river-stone-256.de41791ce5c1.png") }),
+-      bridge: { state,history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
++      bridge: { state,history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
+         const value=await invokeWeb('history.receipts',input),transport=journal?.receipts(input.requestIds)??[];
+         return {...value,statuses:value.statuses.map(item=>value.acceptedRequestIds.includes(item.requestId)?item:transport.find(row=>row.requestId===item.requestId)??item)};
+       }},taskOverview:{summary:id=>invokeWeb("taskOverview.summary",{id}),origin:(id,messageId)=>invokeWeb("taskOverview.origin",{id,messageId}),list:()=>invokeWeb("taskOverview.list"),detail:id=>invokeWeb("taskOverview.detail",{id})},capabilities:{state:()=>invokeWeb("capabilities.state"),manage:input=>invokeWeb("capabilities.manage",input)},media:{read:input=>invokeWeb('media.read',input),upload:input=>invokeWeb('media.upload',input),discard:input=>invokeWeb('media.discard',input)}, submit: async input => acceptInput(input), stop: messageId => invokeWeb("stop", { messageId }),
+-        queue:{edit:input=>invokeWeb('queue.edit',input),cancel:input=>invokeWeb('queue.cancel',input),interrupt:(input,target)=>invokeWeb('queue.interrupt',{input,target})},
++        queue:{edit:input=>invokeWeb('queue.edit',input),cancel:input=>invokeWeb('queue.cancel',input),move:input=>invokeWeb('queue.move',input),interrupt:(input,target)=>invokeWeb('queue.interrupt',{input,target})},
+         feedback: (messageId, value) => invokeWeb("feedback", { messageId, value }),
+         respond: (id, input) => invokeWeb("respond", { ...input, id }), artifact: runId => invokeWeb("artifact", { runId }), artifactOrigin: resultId => invokeWeb("artifactOrigin", {resultId}),
+         wechat: { state: () => invokeWeb("wechat.state"), beginLogin: () => invokeWeb("wechat.login"),
+--- a/ui/homer-app.tsx
++++ b/ui/homer-app.tsx
+@@ -24,6 +24,8 @@
+ import { HomerComposerInput } from './homer-composer-input';
+ import { ComposerIcon } from './composer-icons';
+ import {HomerAttachments} from './homer-attachments';
++import {HomerMessageQueue,type QueueEditTarget} from './homer-message-queue';
++import {useQueueOperations,type QueueOperations} from './queue-operations';
+ import {createHomerAttachmentAdapter,attachmentAsset,type HomerAttachment,type HomerAttachmentAdapter,type DraftContext} from './homer-attachment-adapter';
+ import { MessageDetails, MessageActionsContext } from './message-details';
+ import { ProcessMessageContent,ProcessObservationContext,ProcessDetailsContext,ActivityNavigationContext,InactiveInteractionNotes } from './process-nodes';
+@@ -36,9 +38,8 @@
+ import type { WebState, WebInteraction, WebArtifact, ArtifactOrigin } from "../src/web-contract";
+ import { QuestionFlow } from './question-flow';
+ import type { ConversationInput, MessageQuote, AnnotatedQuote } from "../src/web-history";
+-import { canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, restoreComposerDraft,singleComposerDraft,unconfirmedInputs,type UnconfirmedInput } from "./conversation-client";
++import { canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, restoreComposerDraft,singleComposerDraft,unconfirmedInputs,queuedEditInput,type UnconfirmedInput } from "./conversation-client";
+ import type {MediaView} from '../src/media-store';
+-import type {QueuedInput} from '../src/recursive-main-inputs';
+ import { WechatConnection } from "./wechat-connection";
+ import "highlight.js/styles/github.css";
+ import "./homer-styles.css";
+@@ -59,36 +60,6 @@
+     const safe = href?.startsWith("https://") || href?.startsWith("http://") || href?.startsWith("#");
+     return safe ? <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> : <span>{children}</span>;
+   } }} />;
+-}
+-const QueueContext=createContext<{connected:boolean;error:(value:string)=>void}>({connected:false,error:()=>{}});
+-type QueueItem=QueuedInput & {editable?:boolean;statusText?:string};
+-function QueueMessage({item,media}:{item:QueueItem;media:MediaView[]}){
+-  const {connected,error}=useContext(QueueContext),key='homer-queue-edit:'+item.input.requestId;
+-  const saved=useRef(storage.read<{text:string;quotes:AnnotatedQuote[];attachments:NonNullable<ConversationInput['attachments']>;editing:boolean;operation?:{payload:string;id:string}}>(key));
+-  const [editing,setEditing]=useState(saved.current?.editing??false),[text,setText]=useState(saved.current?.text??item.input.text),[quotes,setQuotes]=useState(saved.current?.quotes??draftQuotes(item.input)),[attachments,setAttachments]=useState(saved.current?.attachments??item.input.attachments??[]),[busy,setBusy]=useState(false);
+-  const operation=useRef(saved.current?.operation);
+-  useEffect(()=>{if(editing)storage.write(key,{text,quotes,attachments,editing,operation:operation.current});},[key,text,quotes,attachments,editing]);
+-  const editable=item.editable===true&&item.state==='queued';
+-  async function change(action:'edit'|'cancel'){
+-    if(!connected||!editable||busy)return;setBusy(true);
+-    const payload={requestId:item.input.requestId,expectedRevision:item.revision,...(action==='edit'?{input:{...item.input,text,quote:undefined,quotes:quotes.length?quotes:undefined,attachments:attachments.length?attachments:undefined}}:{})},hash=JSON.stringify({action,payload});
+-    if(operation.current?.payload!==hash)operation.current={payload:hash,id:crypto.randomUUID()};
+-    storage.write(key,{text,quotes,attachments,editing:true,operation:operation.current});
+-    try{await post('/api/messages/'+action,{...payload,operationId:operation.current.id});storage.write(key,undefined);setEditing(false);}
+-    catch(e){error('排队消息修改未确认，编辑草稿已保留，请核对状态：'+(e instanceof Error?e.message:'queue_change_failed'));}
+-    finally{setBusy(false);}
+-  }
+-  return <div className="queue-message-state"><span role="status">{item.statusText??'状态待核对'}{item.interruptState==='requested'?' · 打断请求待确认':item.interruptState==='uncertain'?' · 停止未确认':''}</span>
+-    {editable&&!editing&&<><button type="button" disabled={!connected||busy} onClick={()=>{if(!saved.current){setText(item.input.text);setQuotes(draftQuotes(item.input));setAttachments(item.input.attachments??[]);}setEditing(true);}}>编辑</button><button type="button" disabled={!connected||busy} onClick={()=>void change('cancel')}>取消发送</button></>}
+-    {editing&&<form className="queue-editor" onSubmit={event=>{event.preventDefault();void change('edit');}}><textarea aria-label="编辑等待处理的消息" value={text} onChange={e=>setText(e.target.value)} disabled={busy}/>{quotes.map((q,i)=><div key={i}><blockquote>{q.text}</blockquote>{q.annotation&&<p>{q.annotation}</p>}<button type="button" disabled={busy||!editable} onClick={()=>setQuotes(old=>old.filter((_,n)=>n!==i))}>删除引用</button></div>)}{attachments.map((ref,i)=><div key={ref.assetId}><span>{media.find(asset=>asset.assetId===ref.assetId&&asset.revision===ref.revision)?.filename??'附件 '+(i+1)}</span><button type="button" disabled={busy||!editable} onClick={()=>setAttachments(old=>old.filter(asset=>asset.assetId!==ref.assetId))}>移除附件 {i+1}</button></div>)}<button disabled={busy||!connected||!editable||!canSubmitMessage(text,quotes,attachments)}>保存</button>{!editable&&<p>消息已锁定；这些修改尚未应用，草稿已保留。</p>}<button type="button" disabled={busy} onClick={()=>{storage.write(key,undefined);setEditing(false);}}>关闭编辑</button></form>}
+-  </div>;
+-}
+-function PendingMessages({items}:{items:NonNullable<WebState['queue']>}){
+- if(!items.length)return null;
+- return <section className="pending-messages" aria-label="待发送与接收待确认">{items.map(item=>item.user&&<article key={item.user.id} id={'message-'+item.user.id} data-queued-message={item.user.id} tabIndex={-1} className="message user-message" aria-label="等待送交的消息"><div className="user-message-bubble">
+- {draftQuotes(item.input).map((quote,index)=><blockquote className="quote-block" key={index}>{quote.text}{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}
+- <MediaAttachments media={item.user.media??[]} messageId={item.user.id}/>{item.input.text.trim()&&<p className="pending-body">{item.input.text}</p>}
+- <QueueMessage item={item} media={item.user.media??[]}/></div><MessageDetails message={item.user}/></article>)}</section>;
+ }
+ function ResourceDownload({path,filename,children,className}:{path:string;filename?:string;children:ReactNode;className?:string}){
+  const [error,setError]=useState('');
+@@ -161,11 +132,13 @@
+     <MessageTimestamp messageId={String(metadata.messageId)}/>
+   </MessagePrimitive.Root></>;
+ }
+-function MainComposer({ state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,bindAttachments }: {
++type QueueEditSession={item:QueueEditTarget;text:string;quotes:AnnotatedQuote[];attachments:NonNullable<ConversationInput['attachments']>;original:{text:string;quotes:AnnotatedQuote[]};operationId?:string};
++function MainComposer({ state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,bindAttachments,queueEditTarget,queueOperations,queueContent,onQueueBusy,onQueueEditing }: {
+   state: WebState; connected: boolean; stopping: string | null;
+   editDraft?: {text:string;id:string};
+   attachmentOwner:HomerAttachmentAdapter;bindAttachments:(read:()=>DraftContext)=>void;
+   onSend: (input: ConversationInput,target?:UnconfirmedInput['target']) => Promise<void>;onStop:()=>void;
++  queueEditTarget?:QueueEditTarget;queueOperations?:QueueOperations;queueContent?:ReactNode;onQueueBusy?:(busy:boolean)=>void;onQueueEditing?:(requestId:string|undefined)=>void;
+ }) {
+   const aui = useAui();
+   const text = useAuiState(s => s.composer.text), selected = useAuiState(s => s.composer.quote);
+@@ -180,8 +153,11 @@
+   const draftRequest=useRef<string>(crypto.randomUUID()),fileInput=useRef<HTMLInputElement>(null),editorInput=useRef<HTMLDivElement>(null);
+   function focusInput(){editorInput.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();}
+   const [receiptStatuses,setReceiptStatuses]=useState<Record<string,string>>({});
++  const [queueEditing,setQueueEditing]=useState<QueueEditSession|null>(null),[queueFact,setQueueFact]=useState<{state:string;revision?:number;inputRevision?:number;editable?:boolean}|null>(null);
++  const editingRef=useRef<QueueEditSession|null>(null);editingRef.current=queueEditing;
+   const restored = useRef(false), submitting = useRef(false),pendingRef=useRef<UnconfirmedInput[]>([]);
+   const key = "homer-draft:" + state.threadId, pendingKey = "homer-unconfirmed:" + state.threadId;
++  const editorKey='homer-queue-editor:'+state.threadId;
+   function savePending(items:UnconfirmedInput[]){pendingRef.current=items;setPending(items);storage.write(pendingKey,items.length?items:undefined);}
+   useEffect(()=>{const sync=()=>savePending(storage.read<UnconfirmedInput[]>(pendingKey)??[]);window.addEventListener('homer-unconfirmed-updated',sync);return()=>window.removeEventListener('homer-unconfirmed-updated',sync);},[pendingKey]);
+   useEffect(() => {
+@@ -191,12 +167,14 @@
+     savePending(unconfirmedInputs(cached,state.acceptedRequestIds??[]));storage.write(legacyKey,undefined);
+     const draft=storage.read<{text:string;quote?:MessageQuote;quotes?:AnnotatedQuote[];requestId?:string;attachments?:MediaView[];unconfirmedUploads?:boolean}>(key);
+     const restore=restoreComposerDraft(draft,legacy,!!legacy&&!!state.acceptedRequestIds?.includes(legacy.requestId));
+-    if(restore){const single=singleComposerDraft(restore);aui.composer().setText(single.text);setQuotes(single.quotes);if(single.requestId)draftRequest.current=single.requestId;setDraftNotice(single.notice??'');void (async()=>{for(const asset of single.attachments??[])await aui.composer().addAttachment(attachmentOwner.restore(asset));setRestoring(false);})();}else setRestoring(false);
++    const editing=storage.read<QueueEditSession>(editorKey);
++    if(restore){const single=singleComposerDraft(restore);aui.composer().setText(editing?.text??single.text);setQuotes(editing?.quotes??single.quotes);if(single.requestId)draftRequest.current=single.requestId;setDraftNotice(single.notice??'');void (async()=>{for(const asset of single.attachments??[])await aui.composer().addAttachment(attachmentOwner.restore(asset));setRestoring(false);})();}else{if(editing){aui.composer().setText(editing.text);setQuotes(editing.quotes);}setRestoring(false);}
++    if(editing)setQueueEditing(editing);
+     if(draft?.unconfirmedUploads)setDraftNotice('上次未确认的附件需重新选择；已确认附件仍保留。');
+     restored.current=true;
+   }, [state.threadId, aui, key, pendingKey, state.acceptedRequestIds]);
+   useEffect(()=>{if(restored.current){const next=unconfirmedInputs(pendingRef.current,state.acceptedRequestIds??[]);if(next.length!==pendingRef.current.length)savePending(next);}},[state.acceptedRequestIds]);
+-  useEffect(() => { if(selected){setQuotes([{messageId:selected.messageId,text:selected.text,annotation:''}]);aui.composer().setQuote(undefined);} },[selected,aui]);
++  useEffect(() => { if(selected){if(!editingRef.current)setQuotes([{messageId:selected.messageId,text:selected.text,annotation:''}]);else setDraftNotice('排队编辑只能保留或移除原引用。');aui.composer().setQuote(undefined);} },[selected,aui]);
+   useEffect(()=>{
+     if(!connected||!state.history||!pending.length)return;
+     const controller=new AbortController();
+@@ -209,11 +187,51 @@
+       if(Array.isArray(receipt.acceptedRequestIds))savePending(unconfirmedInputs(pendingRef.current,receipt.acceptedRequestIds));
+     }};void check().catch(()=>{});return()=>controller.abort();
+   },[connected,state.history?.page.revision,pending.map(item=>item.input.requestId).join('|')]);
+-  useEffect(()=>{if(state.threadId&&restored.current&&!restoring)storage.write(key,{text,quotes,requestId:draftRequest.current,attachments,unconfirmedUploads:uploading||retryAttachments.length>0});},[state.threadId,key,text,quotes,draftAttachments,uploading,restoring]);
++  useEffect(()=>{if(state.threadId&&restored.current&&!restoring){if(queueEditing)storage.write(editorKey,{...queueEditing,text,quotes});else storage.write(key,{text,quotes,requestId:draftRequest.current,attachments,unconfirmedUploads:uploading||retryAttachments.length>0});}},[state.threadId,key,text,quotes,draftAttachments,uploading,restoring,queueEditing]);
+   const blocked=restoring||!canAcceptInput(connected,state.upgrade);
+-  bindAttachments(()=>({threadId:state.threadId,requestId:draftRequest.current,enabled:!blocked&&!!state.features?.draftUpload&&state.upgrade.phase==='running',attachments:aui.composer().getState().attachments,notice:setDraftNotice}));
+-  useEffect(()=>{if(editDraft){const current=aui.composer().getState().text;aui.composer().setText(current.trim()?current+'\n\n'+editDraft.text:editDraft.text);setDraftNotice('已复制原消息到草稿，编辑后将作为新消息发送；历史记录保留。');}},[editDraft?.id,aui]);
++  bindAttachments(()=>({threadId:state.threadId,requestId:draftRequest.current,enabled:!blocked&&!queueEditing&&!!state.features?.draftUpload&&state.upgrade.phase==='running',attachments:aui.composer().getState().attachments,notice:setDraftNotice}));
++  useEffect(()=>{onQueueBusy?.(uploading||restoring||!!queueEditing);},[uploading,restoring,!!queueEditing]);
++  useEffect(()=>{onQueueEditing?.(queueEditing?.item.input.requestId);},[queueEditing?.item.input.requestId]);
++  useEffect(()=>{
++    if(!queueEditTarget||restoring||uploading)return;
++    if(editingRef.current){if(editingRef.current.item.input.requestId!==queueEditTarget.input.requestId)setDraftNotice('请先保存或取消当前排队编辑，再编辑另一条消息。');return;}
++    const legacyKey='homer-queue-edit:'+queueEditTarget.input.requestId,legacy=storage.read<{text:string;quotes:AnnotatedQuote[];attachments:NonNullable<ConversationInput['attachments']>;operation?:{id:string;payload:string}}>(legacyKey);
++    const session:QueueEditSession={item:queueEditTarget,text:legacy?.text??queueEditTarget.input.text,quotes:legacy?.quotes??draftQuotes(queueEditTarget.input),attachments:legacy?.attachments??queueEditTarget.input.attachments??[],original:{text:aui.composer().getState().text,quotes}};
++    if(legacy?.operation){try{const original=JSON.parse(legacy.operation.payload);if(original.payload?.requestId===queueEditTarget.input.requestId&&['edit','cancel'].includes(original.action)){session.operationId=legacy.operation.id;queueOperations?.adopt({action:original.action,payload:{...original.payload,operationId:legacy.operation.id}});}}catch{/* Keep the legacy source draft when its operation cannot be decoded. */}}
++    // Freeze the ordinary draft before switching text; leave its runtime File
++    // objects and upload owner untouched, so neither clear nor discard runs.
++    storage.write(key,{text:session.original.text,quotes,requestId:draftRequest.current,attachments,unconfirmedUploads:retryAttachments.length>0});
++    storage.write(editorKey,session);setQueueEditing(session);setQueueFact(null);aui.composer().setText(session.text);setQuotes(session.quotes);setDraftNotice('正在核对这条待发送消息；编辑期间仍可能被领取。');focusInput();
++  },[queueEditTarget,restoring,uploading]);
++  useEffect(()=>{
++    const session=queueEditing;if(!session||!connected||!state.history)return;const controller=new AbortController();setQueueFact(null);
++    void fetch('/api/history/receipts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestIds:[session.item.input.requestId],threadId:state.threadId,readEpoch:state.history.readEpoch}),signal:controller.signal}).then(async response=>{
++      if(!response.ok)throw Error();const value=await response.json();if(controller.signal.aborted)return;
++      const fact=value.statuses?.find((item:{requestId:string})=>item.requestId===session.item.input.requestId);
++      const legacy=!state.features?.queueDispatch&&state.queue?.find(item=>item.input.requestId===session.item.input.requestId);
++      setQueueFact(fact?.state==='queued'&&legacy&&fact.editable===undefined?{...fact,editable:legacy.editable,revision:legacy.revision,inputRevision:legacy.inputRevision}:fact??{state:'unconfirmed'});
++    }).catch(()=>{if(!controller.signal.aborted)setDraftNotice('排队消息状态未能核对，编辑草稿已保留。');});return()=>controller.abort();
++  },[queueEditing?.item.input.requestId,queueEditing?.operationId,connected,state.history?.readEpoch,state.features?.queueDispatch?state.queueDispatch?.orderVersion:state.history?.page.revision]);
++  function closeQueueEditor(){
++    const session=editingRef.current;if(!session)return;storage.write(editorKey,undefined);storage.write('homer-queue-edit:'+session.item.input.requestId,undefined);aui.composer().setText(session.original.text);setQuotes(session.original.quotes);setQueueEditing(null);setQueueFact(null);setDraftNotice('已恢复原新消息草稿。');
++    requestAnimationFrame(()=>{const button=document.querySelector<HTMLElement>(`[data-queue-edit="${CSS.escape(session.item.input.requestId)}"]`);if(button)button.focus({preventScroll:true});else focusInput();});
++  }
++  useEffect(()=>{
++    const completed=queueOperations?.completed,session=editingRef.current;if(!completed||!session||session.operationId!==completed.operation.payload.operationId)return;
++    const submitted=completed.operation.payload.input as ConversationInput|undefined,applied=submitted??session.item.input;
++    const currentText=aui.composer().getState().text;
++    const newer=currentText!==applied.text||JSON.stringify(quotes)!==JSON.stringify(draftQuotes(applied))||JSON.stringify(session.attachments)!==JSON.stringify(applied.attachments??[]);
++    if(newer){
++      // A legacy uncertain operation can predate later local typing. Confirming
++      // that operation must not discard the later, still-unsubmitted draft.
++      const next={...session,text:currentText,quotes,operationId:undefined,item:{...session.item,input:applied,revision:completed.result.revision,inputRevision:completed.result.inputRevision??session.item.inputRevision}};
++      storage.write(editorKey,next);setQueueEditing(next);setQueueFact(null);setDraftNotice('原操作已确认，还有未提交的本地修改，编辑草稿已保留。');return;
++    }
++    closeQueueEditor();
++  },[queueOperations?.completed]);
++  useEffect(()=>{if(editDraft){if(editingRef.current){setDraftNotice('请先保存或取消当前排队编辑，再把历史文字加入新草稿。');return;}const current=aui.composer().getState().text;aui.composer().setText(current.trim()?current+'\n\n'+editDraft.text:editDraft.text);setDraftNotice('已复制原消息到草稿，编辑后将作为新消息发送；历史记录保留。');}},[editDraft?.id,aui]);
+   async function uploadFiles(files:File[]){
++    if(editingRef.current){setDraftNotice('排队编辑只可保留或移除原附件，不能添加新附件。');return;}
+     if(uploadingRef.current||!state.features?.draftUpload||blocked||state.upgrade.phase!=='running'){setDraftNotice('暂时无法添加附件，请等待当前上传或连接恢复后重试。');return;}
+     files=files.map(file=>file.name?file:new File([file],'screenshot-'+Date.now()+'.'+(file.type==='image/jpeg'?'jpg':'png'),{type:file.type}));
+     const existingIds=new Set(draftAttachments.map(attachment=>attachment.id));
+@@ -235,6 +253,11 @@
+     finally{setUploading(false);}
+   }
+   function submit(){
++    if(queueEditing){
++      if(blocked||!queueOperations||queueOperations.locked||queueFact?.editable!==true||queueFact.state!=='queued'||queueFact.inputRevision!==queueEditing.item.inputRevision||!canSubmitMessage(text,quotes,queueEditing.attachments))return;
++      const operationId=crypto.randomUUID(),session={...queueEditing,text,quotes,operationId};setQueueEditing(session);storage.write(editorKey,session);
++      void queueOperations.run('edit',{requestId:session.item.input.requestId,operationId,expectedRevision:queueFact.revision,threadId:state.threadId,readEpoch:state.history?.readEpoch,input:queuedEditInput(session.item.input,text,quotes,session.attachments)});return;
++    }
+     if(submitting.current||uploading||retryAttachments.length||blocked||!canSubmitMessage(text,quotes,attachments))return;
+     submitting.current=true;
+     const input=prepareMessage(text,quotes[0],undefined,()=>draftRequest.current,attachments);
+@@ -242,29 +265,33 @@
+     attachmentOwner.markSubmitted(draftAttachments);void aui.composer().clearAttachments();aui.composer().setText('');setQuotes([]);draftRequest.current=crypto.randomUUID();setDraftNotice('');storage.write(key,undefined);
+     void onSend(input).catch(()=>{});focusInput();queueMicrotask(()=>{submitting.current=false;});
+   }
+-  const queued=state.queue?.filter(item=>item.state==='queued').length??0;
+   const activityText=composerActivityText(state,connected),showActivity=activityText!=='可继续发送';
+   const notice=blocked?(connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):draftNotice;
+   return <div className="composer-area">
++    {queueContent}
++    {queueOperations?.notice&&<div className="queue-operation-notice" role="status">{queueOperations.notice}{queueOperations.pending&&<><button type="button" disabled={!connected||queueOperations.busy} onClick={()=>void queueOperations.reconcile()}>核对修改状态</button><button type="button" disabled={!connected||queueOperations.busy} onClick={()=>void queueOperations.retry()}>用原操作重试</button></>}</div>}
+     {pending.length>0&&<div className="unconfirmed-inputs" aria-label="发送待确认">{pending.map(item=><div key={item.input.requestId}><span>{receiptStatuses[item.input.requestId]==='gateway_stored'?'已暂存，等待业务接收：':receiptStatuses[item.input.requestId]==='rejected'?'未获业务接收，请核对原请求：':receiptStatuses[item.input.requestId]==='unconfirmed'?'接收尚未确认，未自动重发：':state.upgrade.transportRejected?.some(r=>r.requestId===item.input.requestId)?'未获业务接收：'+state.upgrade.transportRejected.find(r=>r.requestId===item.input.requestId)!.error:state.upgrade.transportPending?.includes(item.input.requestId)?'已暂存，等待业务接收：':'发送待确认：'}{item.input.text||'带批注的引用'}</span><button type="button" disabled={blocked} onClick={()=>void onSend(item.input,item.target).catch(()=>{})}>核对并重试</button></div>)}</div>}
+-    {(showActivity||queued>0)&&<div className="composer-run-line" role="status">{showActivity&&<span>{activityText}</span>}{queued>0&&<span className="composer-queued-count">{queued} 条排队</span>}</div>}
++    {showActivity&&<div className="composer-run-line" role="status"><span>{activityText}</span></div>}
+     <ComposerPrimitive.Root className={'composer'+(blocked?' is-blocked':'')} onSubmit={event=>{event.preventDefault();submit();}}
+       onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=blocked||uploading||!state.features?.draftUpload||state.upgrade.phase!=='running'?'none':'copy';}}}
+       onDrop={event=>{if(event.defaultPrevented)return;const files=Array.from(event.dataTransfer.files);if(files.length){event.preventDefault();void uploadFiles(files);}}}>
+-    {(quotes[0]||attachments.length>0||retryAttachments.length>0||uploading)&&<div className="composer-context">
++    {queueEditing&&<div className="queue-editor-bar"><span>编辑待发送消息</span><button type="button" disabled={queueOperations?.locked} onClick={closeQueueEditor}>取消编辑</button></div>}
++    {queueEditing&&<div className="queue-edit-context">{quotes.map((quote,index)=><div key={index}><blockquote>{quote.text}{quote.annotation&&<p>{quote.annotation}</p>}</blockquote><button type="button" disabled={queueOperations?.locked} aria-label={`移除原引用 ${index+1}`} onClick={()=>setQuotes(old=>old.filter((_,n)=>n!==index))}>移除引用</button></div>)}{queueEditing.attachments.map((ref,index)=><div key={ref.assetId}><span>{queueEditing.item.user?.media?.find(asset=>asset.assetId===ref.assetId&&asset.revision===ref.revision)?.filename??`原附件 ${index+1}`}</span><button type="button" disabled={queueOperations?.locked} aria-label={`移除原附件 ${index+1}`} onClick={()=>setQueueEditing(old=>old?{...old,attachments:old.attachments.filter(asset=>asset.assetId!==ref.assetId)}:old)}>移除附件</button></div>)}</div>}
++    {queueEditing&&(!queueFact||queueFact.editable!==true||queueFact.state!=='queued'||queueFact.inputRevision!==queueEditing.item.inputRevision)&&<p className="draft-notice" role="status">{!connected?'连接中断，编辑草稿已保留。':!queueFact?'正在核对原消息，暂不能保存。':queueFact.state!=='queued'?'消息已被领取或状态待核对，这些修改尚未应用，草稿已保留。':queueFact.inputRevision!==queueEditing.item.inputRevision?'原消息已被其他设备修改，本地编辑草稿已保留，请核对后再编辑。':'消息已锁定，这些修改尚未应用。'}</p>}
++    {!queueEditing&&(quotes[0]||attachments.length>0||retryAttachments.length>0||uploading)&&<div className="composer-context">
+     {quotes[0]&&<section className="composer-quote-card" aria-label="引用原文">
+       <div className="composer-quote-content"><span className="composer-context-label">引用原文</span><blockquote id={quoteId} className={quoteExpanded?'is-expanded':undefined}>{quotes[0].text}</blockquote></div>
+       <div className="quote-card-actions"><button type="button" aria-label={quoteExpanded?'收起引用':'展开引用'} aria-expanded={quoteExpanded} aria-controls={quoteId} onClick={()=>setQuoteExpanded(value=>!value)}>{quoteExpanded?'收起':'展开'}</button><button type="button" aria-label="删除引用" title="删除引用" onClick={()=>{setQuotes([]);focusInput();}}><ComposerIcon name="close"/></button></div>
+     </section>}
+     {(draftAttachments.length>0||uploading)&&<HomerAttachments blocked={blocked} busy={uploading} removing={setUploading} removed={focusInput}/>}
+     </div>}
+-    {retryAttachments.length>0&&<div className="composer-upload-actions"><button type="button" disabled={uploading||blocked||state.upgrade.phase!=='running'} onClick={()=>void uploadFiles(retryAttachments.map(attachment=>attachmentOwner.retryFile(attachment)))}>重试上传</button><button type="button" disabled={uploading||blocked} onClick={()=>void discardUnconfirmed()}>不添加这些附件</button></div>}
+-    <HomerComposerInput ref={editorInput} className="composer-input" aria-label="给荷马发消息" placeholder={connected ? quotes.length ? "说说你对这段原文的要求…" : "说说你想办的事…" : "连接恢复后继续发送，草稿会保留"} autoFocus disabled={blocked} onFiles={files=>void uploadFiles(files)}/>
++    {!queueEditing&&retryAttachments.length>0&&<div className="composer-upload-actions"><button type="button" disabled={uploading||blocked||state.upgrade.phase!=='running'} onClick={()=>void uploadFiles(retryAttachments.map(attachment=>attachmentOwner.retryFile(attachment)))}>重试上传</button><button type="button" disabled={uploading||blocked} onClick={()=>void discardUnconfirmed()}>不添加这些附件</button></div>}
++    <HomerComposerInput ref={editorInput} className="composer-input" aria-label="给荷马发消息" placeholder={queueEditing?'编辑这条待发送消息…':connected ? quotes.length ? "说说你对这段原文的要求…" : "说说你想办的事…" : "连接恢复后继续发送，草稿会保留"} autoFocus disabled={blocked||!!queueEditing&&!!queueOperations?.locked} onFiles={files=>void uploadFiles(files)} onPaste={queueEditing?event=>{if(event.clipboardData?.files.length){event.preventDefault();setDraftNotice('排队编辑不能添加新附件。');}}:undefined}/>
+     <div className="composer-toolbar">
+-      {state.features?.draftUpload&&<><input ref={fileInput} type="file" multiple hidden aria-label="选择附件" onChange={event=>void uploadFiles(Array.from(event.target.files??[]))}/><button type="button" className="attach-button" aria-label="添加附件" title="添加附件" aria-busy={uploading} disabled={blocked||uploading||state.upgrade.phase!=='running'} onClick={()=>fileInput.current?.click()}><ComposerIcon name="paperclip"/></button></>}
++      {!queueEditing&&state.features?.draftUpload&&<><input ref={fileInput} type="file" multiple hidden aria-label="选择附件" onChange={event=>void uploadFiles(Array.from(event.target.files??[]))}/><button type="button" className="attach-button" aria-label="添加附件" title="添加附件" aria-busy={uploading} disabled={blocked||uploading||state.upgrade.phase!=='running'} onClick={()=>fileInput.current?.click()}><ComposerIcon name="paperclip"/></button></>}
+       <div className="composer-actions">
+       {state.activeMessageId&&<button type="button" className="stop-button" aria-label="停止回复" title="停止回复" aria-busy={!!stopping} disabled={!!stopping||!connected} onClick={onStop}><ComposerIcon name="square"/><span>{stopping?'停止中':'停止'}</span></button>}
+-      <button type="submit" className="send-button" aria-label={state.isRunning?'排队发送':'发送消息'} title={state.isRunning?'排队发送':'发送消息'} disabled={blocked||uploading||retryAttachments.length>0||!canSubmitMessage(text,quotes,attachments)}><ComposerIcon name="arrow"/></button>
++      <button type="submit" className={'send-button'+(queueEditing?' queue-save':'')} aria-label={queueEditing?'保存修改':state.isRunning?'排队发送':'发送消息'} title={queueEditing?'保存修改':state.isRunning?'排队发送':'发送消息'} disabled={queueEditing?blocked||queueOperations?.locked||queueFact?.editable!==true||queueFact.state!=='queued'||queueFact.inputRevision!==queueEditing.item.inputRevision||!canSubmitMessage(text,quotes,queueEditing.attachments):blocked||uploading||retryAttachments.length>0||!canSubmitMessage(text,quotes,attachments)}>{queueEditing?'保存修改':<ComposerIcon name="arrow"/>}</button>
+     </div></div>
+   </ComposerPrimitive.Root>
+   {notice&&<p className="draft-notice" role="status">{notice}</p>}
+@@ -303,17 +330,19 @@
+   </form>;
+ }
+ function HomerApp() {
+-  const [activityTask,setActivityTask]=useState<ActivityTaskRequest>();
+-  const visitActivityTask=useCallback((target:ActivityTaskRequest['target'],trigger:HTMLElement)=>setActivityTask({target,trigger,serial:Date.now()}),[]);
+   const attachmentContext=useRef<()=>DraftContext>(()=>({threadId:'',requestId:'',enabled:false,attachments:[],notice:()=>{}}));
+   const attachmentOwner=useMemo(()=>createHomerAttachmentAdapter(()=>attachmentContext.current()),[]);
+   const [origin,setOrigin]=useState<ArtifactOrigin|null>(null);
++  const [activityTask,setActivityTask]=useState<ActivityTaskRequest>();
++  const visitActivityTask=useCallback((target:ActivityTaskRequest['target'],trigger:HTMLElement)=>setActivityTask({target,trigger,serial:Date.now()}),[]);
+   const originDialog=useRef<HTMLDialogElement>(null),originTrigger=useRef<HTMLElement|null>(null);
+   const originRead=useRef<AbortController|null>(null);
+   useEffect(()=>()=>originRead.current?.abort(),[]);
+   function cancelOriginRead(){originRead.current?.abort();originRead.current=null;}
+ 
+   const [editDraft,setEditDraft]=useState<{text:string;id:string}>();
++  const [queueEditTarget,setQueueEditTarget]=useState<QueueEditTarget>(),[queueEditorBusy,setQueueEditorBusy]=useState(false);
++  const [queueEditorRequest,setQueueEditorRequest]=useState<string>();
+   const [canvasOpen,setCanvasOpen]=useState(false);
+   const canvasFromOrigin=useRef(false);
+   useLayoutEffect(()=>{
+@@ -338,8 +367,8 @@
+     const restore=()=>{const saved=anchor.current;if(!saved||saved.version!==userScroll.current)return;const element=document.getElementById('message-'+saved.id);if(element)view.scrollTop+=element.getBoundingClientRect().top-view.getBoundingClientRect().top-saved.offset;};
+     restore();const observer=new ResizeObserver(restore);const messages=view.querySelector('.messages');if(messages)observer.observe(messages);return()=>observer.disconnect();
+   },[state.messages,canvasOpen]);
+-  const loadProcess=useCallback(async(id:string,signal:AbortSignal)=>{
+-    const epoch=history.current.epoch,response=await fetch('/api/history/process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({readEpoch:epoch,id}),signal});const value=await response.json();if(!response.ok)throw Error(value.error??'history_process_unavailable');if(epoch!==history.current.epoch)throw Error('history_epoch_changed');return value as ProcessNode;
++  const loadProcess=useCallback(async(id:string,signal:AbortSignal,itemId?:string)=>{
++    const epoch=history.current.epoch,response=await fetch('/api/history/process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({readEpoch:epoch,id,...(itemId?{itemId}:{})}),signal});const value=await response.json();if(!response.ok)throw Error(value.error??'history_process_unavailable');if(epoch!==history.current.epoch)throw Error('history_epoch_changed');return value as ProcessNode;
+   },[state.history?.readEpoch]);
+   async function loadPage(direction:'before'|'after'|'around',id?:string){
+     if(pageBusy)return;const cache=history.current,epoch=cache.epoch,position=direction==='around'?id:direction==='before'?cache.before:cache.after;if(!position)return;
+@@ -379,6 +408,7 @@
+   function locateMessage(id:string){navigation.current++;userScroll.current++;anchor.current=null;const element=document.getElementById('message-'+id);if(element){element.scrollIntoView({block:'center'});element.focus({preventScroll:true});}else void loadPage('around',id);}
+ 
+   const [connected, setConnected] = useState(false);
++  const queueOperations=useQueueOperations(state,connected);
+   const [stateRefresh,setStateRefresh]=useState(0);
+   const [connectionError, setConnectionError] = useState("");
+   const [uiUpdate, setUiUpdate] = useState(false);
+@@ -433,7 +463,7 @@
+       activePages.current.queue.snapshot(version,next.queue??[],next.history.moreQueue);
+       activePages.current.interactions.snapshot(version,next.interactions,next.history.moreInteractions);
+       setState({...next,queue:activePages.current.queue.items,interactions:activePages.current.interactions.items,messages:history.current.messages,artifacts:history.current.artifacts,inactiveInteractions:history.current.inactiveInteractions,history:{...next.history,moreQueue:activePages.current.queue.more,moreInteractions:activePages.current.interactions.more}});
+-      for(const kind of ['queue','interactions'] as const)if(activePages.current[kind].needsRead)void readActivePage(kind);
++      for(const kind of ['queue','interactions'] as const)if((kind!=='queue'||!next.features?.queueDispatch)&&activePages.current[kind].needsRead)void readActivePage(kind);
+       setConnected(true); setConnectionError("");
+       // Absence from a bounded page cannot expire an off-page form draft.
+       // Only exact inactive identities invalidate their per-tab cache.
+@@ -559,7 +589,7 @@
+     if(!pending.some(item=>item.input.requestId===requestId)){storage.write(key,[...pending,{input}]);window.dispatchEvent(new Event('homer-unconfirmed-updated'));}
+     return sendInput(input);
+   }};
+-  return <ActivityNavigationContext.Provider value={{task:state.features?.taskOverview?visitActivityTask:undefined,artifact:(file,trigger)=>openArtifact(file,trigger),message:locateMessage}}><ProcessDetailsContext.Provider value={loadProcess}><ProcessObservationContext.Provider value={{connected,threadId:state.threadId,serviceRunning:state.upgrade.phase==='running',observedAtMs:state.observedAtMs,mainActivity:state.mainActivity,generationTurnId:state.generation?.turnId}}><MessageActionsContext.Provider value={actions}><QueueContext.Provider value={{connected:connected&&!activePages.current.queue.checking,error:setError}}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}>
++  return <ActivityNavigationContext.Provider value={{task:state.features?.taskOverview?visitActivityTask:undefined,artifact:(file,trigger)=>openArtifact(file,trigger),message:locateMessage}}><ProcessDetailsContext.Provider value={loadProcess}><ProcessObservationContext.Provider value={{connected,threadId:state.threadId,serviceRunning:state.upgrade.phase==='running',observedAtMs:state.observedAtMs,mainActivity:state.mainActivity,generationTurnId:state.generation?.turnId}}><MessageActionsContext.Provider value={actions}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}>
+     <div className={canvasOpen?"app-shell canvas-open":"app-shell"}>
+       <main className="conversation">
+         <header className="conversation-header">
+@@ -578,23 +608,22 @@
+             {connected && state.threadId && <ThreadPrimitive.Empty><div className="welcome"><img src={riverStone256} srcSet={`${riverStone64} 64w, ${riverStone256} 256w`} sizes="(max-width: 480px) 58px, 70px" alt="" width={70} height={70} style={{borderRadius:0,objectFit:"contain"}} /><h1>想办什么，和我说。</h1><p>整理材料、推进事项、核对成果。<br />从一段话开始。</p></div></ThreadPrimitive.Empty>}
+             <div className="messages"><MessageTimestamps messages={state.messages}><ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} /></MessageTimestamps></div>
+             {history.current.after&&<nav className="history-navigation"><button type="button" disabled={pageBusy} onClick={()=>void loadPage('after')}>加载后续消息</button><button type="button" onClick={returnLatest}>有新消息 · 回到最新</button></nav>}
+-            <PendingMessages items={state.queue??[]}/>
+-            {(['queue','interactions'] as const).map(kind=>activePages.current[kind].checking&&<p key={kind} role="status">{kind==='queue'?'待发送页':'待答页'}正在核对；编辑草稿保留，提交暂不可用。<button type="button" disabled={!activePages.current[kind].needsRead} onClick={()=>void readActivePage(kind)}>重新核对</button></p>)}
+-            {activePages.current.queue.cursor>0&&<button type="button" disabled={activePages.current.queue.checking} onClick={()=>void readActivePage('queue',0)}>返回待发送首页</button>}
++            {(['queue','interactions'] as const).map(kind=>(kind!=='queue'||!state.features?.queueDispatch)&&activePages.current[kind].checking&&<p key={kind} role="status">{kind==='queue'?'待发送页':'待答页'}正在核对；编辑草稿保留，提交暂不可用。<button type="button" disabled={!activePages.current[kind].needsRead} onClick={()=>void readActivePage(kind)}>重新核对</button></p>)}
++            {!state.features?.queueDispatch&&activePages.current.queue.cursor>0&&<button type="button" disabled={activePages.current.queue.checking} onClick={()=>void readActivePage('queue',0)}>返回待发送首页</button>}
+             {activePages.current.interactions.cursor>0&&<button type="button" disabled={activePages.current.interactions.checking} onClick={()=>void readActivePage('interactions',0)}>返回待答首页</button>}
+-            {state.history?.moreQueue&&<button type="button" disabled={activePages.current.queue.checking} onClick={()=>loadMore('queue')}>还有待发送记录，查看下一页</button>}
++            {!state.features?.queueDispatch&&state.history?.moreQueue&&<button type="button" disabled={activePages.current.queue.checking} onClick={()=>loadMore('queue')}>还有待发送记录，查看下一页</button>}
+             {state.history?.moreInteractions&&<button type="button" disabled={activePages.current.interactions.checking} onClick={()=>loadMore('interactions')}>还有待答事项，查看下一页</button>}
+             {queueDrafts.map(draft=><details className="queue-draft-recovery" key={draft.key}><summary>未提交的排队编辑草稿</summary><p style={{whiteSpace:'pre-wrap'}}>{draft.text}</p>{draft.quotes?.map((quote,i)=><blockquote key={i}>{quote.text}{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}{!!draft.attachments?.length&&<p>已保留 {draft.attachments.length} 个原附件引用；如另发消息，请重新添加文件。</p>}<button type="button" onClick={()=>setEditDraft({text:[draft.text,...(draft.quotes??[]).map(quote=>quote.text+(quote.annotation?'\n批注：'+quote.annotation:''))].filter(Boolean).join('\n\n'),id:crypto.randomUUID()})}>复制文字与引用到输入草稿</button></details>)}
+             <div className="interaction-list">{state.interactions.map(item => <InteractionCard key={item.id} verified={connected&&!activePages.current.interactions.checking} item={item} threadId={state.threadId} messages={state.messages} acceptedRequestIds={state.acceptedRequestIds??[]} onError={setError} onNotLive={interactionNotLive} />)}</div>
+             <ThreadPrimitive.ScrollToBottom className="scroll-latest" aria-label="滚动到最新消息">↓ 最新消息</ThreadPrimitive.ScrollToBottom>
+           </ThreadPrimitive.Viewport>
+-          <MainComposer attachmentOwner={attachmentOwner} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft}/>
++          <MainComposer attachmentOwner={attachmentOwner} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} queueEditTarget={queueEditTarget} queueOperations={queueOperations} onQueueBusy={setQueueEditorBusy} onQueueEditing={setQueueEditorRequest} queueContent={<HomerMessageQueue state={state} connected={connected} operations={queueOperations} onEdit={item=>setQueueEditTarget({...item})} editingRequestId={queueEditorRequest} editorBusy={queueEditorBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
+           <SelectionToolbarPrimitive.Root className="selection-toolbar"><SelectionToolbarPrimitive.Quote>“ 引用</SelectionToolbarPrimitive.Quote></SelectionToolbarPrimitive.Root>
+         </ThreadPrimitive.Root>
+       </main>
+       <dialog ref={originDialog} className="artifact-origin" aria-label="任务原记录" onCancel={()=>{setOrigin(null);requestAnimationFrame(()=>originTrigger.current?.focus({preventScroll:true}));}}><button type="button" onClick={()=>{setOrigin(null);requestAnimationFrame(()=>originTrigger.current?.focus({preventScroll:true}));}}>关闭原答复</button>{origin&&<><h2>任务原记录</h2><p className="secondary">原对话：{origin.message.threadId} · 原记录，只读</p><p style={{whiteSpace:'pre-wrap'}}>{origin.message.text}</p><ArtifactFiles files={origin.files}/></>}</dialog>
+       {canvasOpen&&<CanvasPanel artifact={canvasArtifact} files={canvasFiles} onSelect={openArtifact} onLocate={locateArtifact} onClose={closeCanvas} returnFocusTo={canvasTrigger.current}/>}
+     </div>
+-  </AssistantRuntimeProvider></ArtifactsContext.Provider></QueueContext.Provider></MessageActionsContext.Provider></ProcessObservationContext.Provider></ProcessDetailsContext.Provider></ActivityNavigationContext.Provider>;
++  </AssistantRuntimeProvider></ArtifactsContext.Provider></MessageActionsContext.Provider></ProcessObservationContext.Provider></ProcessDetailsContext.Provider></ActivityNavigationContext.Provider>;
+ }
+ createRoot(document.getElementById("homer-root")!).render(window.location.pathname==="/settings/capabilities"?<CapabilitySettings/>:<HomerApp />);
+--- a/ui/conversation-client.ts
++++ b/ui/conversation-client.ts
+@@ -6,6 +6,12 @@
+   return value.quotes ?? (value.quote ? [{ ...value.quote, annotation: "" }] : []);
+ }
+ export type ComposerDraft = { text: string; quotes: AnnotatedQuote[]; requestId?:string; attachments?:import('../src/media-store.js').MediaView[] };
++// Queue edits keep the original identity, legacy quote shape and attachment
++// references. They never pass through prepareMessage/singleComposerDraft.
++export function queuedEditInput(original:ConversationInput,text:string,quotes:AnnotatedQuote[],attachments:NonNullable<ConversationInput['attachments']>):ConversationInput{
++ const {quote:_quote,quotes:_quotes,attachments:_attachments,...rest}=original;
++ return {...rest,text,...(quotes.length?(original.quote&&!original.quotes&&quotes.length===1&&!quotes[0]!.annotation?{quote:{messageId:quotes[0]!.messageId,text:quotes[0]!.text}}:{quotes:quotes.map(quote=>({...quote}))}):{}),...(attachments.length?{attachments:attachments.map(ref=>({assetId:ref.assetId,revision:ref.revision}))}:{})};
++}
+ export function singleComposerDraft(draft:ComposerDraft):ComposerDraft&{notice?:string}{
+   if(draft.quotes.length<=1&&!draft.quotes.some(q=>q.annotation))return draft;
+   const restored=draft.quotes.map(q=>`引用原文（来源 ${q.messageId}）：\n${q.text}${q.annotation?'\n说明：\n'+q.annotation:''}`).join('\n\n');
+--- a/ui/homer-styles.css
++++ b/ui/homer-styles.css
+@@ -16,7 +16,7 @@
+ 
+ .message-quotes{display:flex;flex-direction:column;gap:12px}.message-quote .quote-block{margin:0 0 8px;white-space:pre-wrap;overflow-wrap:anywhere}.quote-annotation{white-space:pre-wrap;font-size:14px;line-height:1.7;margin:0 0 10px}.quote-annotation span{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
+ .header-actions{display:flex;align-items:center;gap:12px}
+- .queue-message-state{font-size:12px;color:var(--muted);margin-top:10px;display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}.queue-message-state button,.unconfirmed-inputs button{background:transparent;color:var(--link);font-size:12px;padding:4px 6px}.queue-editor{width:100%;display:flex;gap:8px;flex-wrap:wrap;text-align:left}.queue-editor textarea{display:block;width:100%;border:1px solid var(--strong-line);border-radius:8px;padding:10px;background:var(--surface);color:var(--ink);resize:vertical;min-height:70px}.queue-editor label{width:100%}.unconfirmed-inputs{max-width:760px;margin:0 auto 10px;font-size:12px;max-height:120px;overflow:auto;color:var(--muted)}.unconfirmed-inputs>div{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:5px 0}.unconfirmed-inputs span{overflow-wrap:anywhere}@media(max-width:605px){.queue-editor textarea{min-width:0}}
++.unconfirmed-inputs button{background:transparent;color:var(--link);font-size:12px;padding:4px 6px}.unconfirmed-inputs{max-width:760px;margin:0 auto 10px;font-size:12px;max-height:120px;overflow:auto;color:var(--muted)}.unconfirmed-inputs>div{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:5px 0}.unconfirmed-inputs span{overflow-wrap:anywhere}
+ 
+ .message-attachments{display:flex;flex-wrap:wrap;gap:12px;max-width:100%}.message-attachment{margin:0;max-width:100%;min-width:0}.message-attachment img,.message-attachment video{display:block;max-width:min(100%,320px);max-height:300px;object-fit:contain;border-radius:10px}.message-attachment audio{max-width:100%;width:300px}.message-attachment figcaption{font-size:14px;overflow-wrap:anywhere}.message-attachment a{color:var(--ink,#272523)}
+ 
+@@ -42,15 +42,11 @@
+ .user-message .message-actions{justify-content:flex-end;margin-top:2px}
+ .user-message .message-actions button{width:44px;height:44px;min-width:44px;min-height:44px;padding:0;border-radius:9px}
+ .user-message .message-action-notice{margin:0 0 4px;text-align:right;line-height:1.7;overflow-wrap:anywhere}
+-.user-message .queue-message-state{justify-content:flex-start;gap:6px 10px;margin-top:0;padding-top:9px;border-top:1px solid var(--line);font-size:13px}
+-.user-message .queue-message-state button{min-height:44px;min-width:44px;padding:8px 10px}
+-.user-message .queue-editor>div{min-width:0;max-width:100%;overflow-wrap:anywhere}
+ @media(max-width:480px){.user-message{max-width:100%;padding:0}.user-message-bubble{padding:11px 14px}}
+ 
+ /* Main composer: compact surface; runtime, upload and receipt ownership stay in MainComposer. */
+ .composer-area{min-width:0;container-type:inline-size;max-height:calc(100dvh - 80px);overflow-y:auto;scrollbar-width:thin}
+ .composer-run-line{max-width:760px;margin:0 auto 6px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;color:var(--muted);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+-.composer-queued-count{margin-left:auto}
+ .composer{position:relative;width:100%;max-width:760px;min-width:0;margin:0 auto;background:var(--surface);border:1px solid var(--strong-line);border-radius:14px;padding:12px 12px 8px;box-shadow:0 2px 3px #29282503}
+ .composer:focus-within{border-color:var(--strong-line);box-shadow:0 2px 3px #29282503}
+ .composer:has(.aui-lexical-input:focus){border-color:var(--focus)}
+@@ -120,10 +116,10 @@
+ .message-source-label{font-size:13px;line-height:1.6;color:var(--muted);margin:0 0 10px;overflow-wrap:anywhere}
+ 
+ /* The queue is a separate readable region, not part of the formal runtime. */
+-.pending-messages,.queue-draft-recovery{width:min(760px,100%);margin:24px auto;padding:16px;box-sizing:border-box}
++.queue-draft-recovery{width:min(760px,100%);margin:24px auto;padding:16px;box-sizing:border-box}
+ .queue-draft-recovery{border-top:1px solid var(--border,#ddd9d2)}
+-.pending-messages .user-message{margin-top:16px}.pending-body{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+-.queue-editor{min-width:0}.queue-editor textarea{max-width:100%;box-sizing:border-box}.queue-message-state{flex-wrap:wrap;overflow-wrap:anywhere}
++
++
+ .artifact-origin{background:#faf9f6;color:#2b2925;width:min(760px,calc(100vw - 32px));max-height:85dvh;border:1px solid #d9d5cd;border-radius:16px;padding:24px;box-sizing:border-box;overflow:auto;overflow-wrap:anywhere}.artifact-origin::backdrop{background:#25231f66}.artifact-origin>button{float:right;min-height:44px}.artifact-origin .secondary{font-size:13px}
+ 
+ .history-navigation { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px; margin:12px 0; font-size:14px; color:var(--muted); }
+--- a/ui/package.json
++++ b/ui/package.json
+@@ -7,13 +7,17 @@
+     "dev": "vite --host 127.0.0.1"
+   },
+   "dependencies": {
++    "@assistant-ui/core": "0.3.30",
+     "@assistant-ui/react": "0.15.29",
+     "@assistant-ui/react-lexical": "0.2.19",
+     "@assistant-ui/react-markdown": "0.14.23",
++    "@dnd-kit/react": "0.5.1",
+     "@lexical/history": "0.51.0",
+     "@lexical/plain-text": "0.51.0",
+     "@lexical/react": "0.51.0",
+     "@lexical/utils": "0.51.0",
++    "@radix-ui/react-collapsible": "1.2.1",
++    "@radix-ui/react-focus-scope": "1.3.1",
+     "highlight.js": "11.11.1",
+     "katex": "0.19.0",
+     "lexical": "0.51.0",
+@@ -23,10 +27,7 @@
+     "react-markdown": "10.1.0",
+     "rehype-katex": "7.0.1",
+     "remark-gfm": "4.0.1",
+-    "remark-math": "6.0.0",
+-    "@radix-ui/react-collapsible": "1.2.1",
+-    "@assistant-ui/core": "0.3.30",
+-    "@radix-ui/react-focus-scope": "1.3.1"
++    "remark-math": "6.0.0"
+   },
+   "devDependencies": {
+     "@types/react": "19.3.0",
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -178,6 +178,77 @@
+       "license": "MIT",
+       "engines": {
+         "node": ">=6.9.0"
++      }
++    },
++    "node_modules/@dnd-kit/abstract": {
++      "version": "0.5.1",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/abstract/-/abstract-0.5.1.tgz",
++      "integrity": "sha512-XI13sUYRvRgggMocjHlQhLRgENm/2GF94KF7mk+c0uxse7sbn75r0BgxoNPDlzLTDPWx6PkS0YHoeXN9JWhnOA==",
++      "license": "MIT",
++      "dependencies": {
++        "@dnd-kit/geometry": "^0.5.1",
++        "@dnd-kit/state": "^0.5.1",
++        "tslib": "^2.6.2"
++      }
++    },
++    "node_modules/@dnd-kit/collision": {
++      "version": "0.5.1",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/collision/-/collision-0.5.1.tgz",
++      "integrity": "sha512-exQmBlWWQ6calIup4KNQudiEF8Do61Lpzw/F0M3UOhqdKi9dx0ZXGf+qfdfmew8rJzPMj3MzKeGqNMEbCKA22g==",
++      "license": "MIT",
++      "dependencies": {
++        "@dnd-kit/abstract": "^0.5.1",
++        "@dnd-kit/geometry": "^0.5.1",
++        "tslib": "^2.6.2"
++      }
++    },
++    "node_modules/@dnd-kit/dom": {
++      "version": "0.5.1",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/dom/-/dom-0.5.1.tgz",
++      "integrity": "sha512-r7/l4D+nsH1mFXWkplXCkZC9JlY7UjxsVuTu4yCqzC00XgX+SXiK3Oazp42KKG3mshfBNVtm15BI9rKNlkw2fA==",
++      "license": "MIT",
++      "dependencies": {
++        "@dnd-kit/abstract": "^0.5.1",
++        "@dnd-kit/collision": "^0.5.1",
++        "@dnd-kit/geometry": "^0.5.1",
++        "@dnd-kit/state": "^0.5.1",
++        "tslib": "^2.6.2"
++      }
++    },
++    "node_modules/@dnd-kit/geometry": {
++      "version": "0.5.1",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/geometry/-/geometry-0.5.1.tgz",
++      "integrity": "sha512-7X/Ro2U5qW96SihIukMitnc3pYc5n/PmHmJ28oApLBIJRfLxPLgrL6X0ZbQT7qUEfdUIqXnehobJ3jXAc4hdAA==",
++      "license": "MIT",
++      "dependencies": {
++        "@dnd-kit/state": "^0.5.1",
++        "tslib": "^2.6.2"
++      }
++    },
++    "node_modules/@dnd-kit/react": {
++      "version": "0.5.1",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/react/-/react-0.5.1.tgz",
++      "integrity": "sha512-WL8LvALUL9PqUUVun4xu4e8HO3x6rPwTxnnNwovj/VOUVyWpTmIaAK5Yj8jkzqNK01W74sQbwtffpLep1Ckj/Q==",
++      "license": "MIT",
++      "dependencies": {
++        "@dnd-kit/abstract": "^0.5.1",
++        "@dnd-kit/dom": "^0.5.1",
++        "@dnd-kit/state": "^0.5.1",
++        "tslib": "^2.6.2"
++      },
++      "peerDependencies": {
++        "react": "^18.0.0 || ^19.0.0",
++        "react-dom": "^18.0.0 || ^19.0.0"
++      }
++    },
++    "node_modules/@dnd-kit/state": {
++      "version": "0.5.1",
++      "resolved": "https://registry.npmjs.org/@dnd-kit/state/-/state-0.5.1.tgz",
++      "integrity": "sha512-SN0BZ0d/ob9dK8sTqk/0z3eNBWV6xPSrLbHUBbiCo9Sj3xfhPFk6ej2oZpDcqk7LWaujT57ocgdtznY7wQ2yFw==",
++      "license": "MIT",
++      "dependencies": {
++        "@preact/signals-core": "^1.10.0",
++        "tslib": "^2.6.2"
+       }
+     },
+     "node_modules/@esbuild/aix-ppc64": {
+@@ -6345,13 +6416,17 @@
+     "ui": {
+       "name": "homer-web",
+       "dependencies": {
++        "@assistant-ui/core": "0.3.30",
+         "@assistant-ui/react": "0.15.29",
+         "@assistant-ui/react-lexical": "0.2.19",
+         "@assistant-ui/react-markdown": "0.14.23",
++        "@dnd-kit/react": "0.5.1",
+         "@lexical/history": "0.51.0",
+         "@lexical/plain-text": "0.51.0",
+         "@lexical/react": "0.51.0",
+         "@lexical/utils": "0.51.0",
++        "@radix-ui/react-collapsible": "1.2.1",
++        "@radix-ui/react-focus-scope": "1.3.1",
+         "highlight.js": "11.11.1",
+         "katex": "0.19.0",
+         "lexical": "0.51.0",
+@@ -6361,10 +6436,7 @@
+         "react-markdown": "10.1.0",
+         "rehype-katex": "7.0.1",
+         "remark-gfm": "4.0.1",
+-        "remark-math": "6.0.0",
+-        "@radix-ui/react-collapsible": "1.2.1",
+-        "@assistant-ui/core": "0.3.30",
+-        "@radix-ui/react-focus-scope": "1.3.1"
++        "remark-math": "6.0.0"
+       },
+       "devDependencies": {
+         "@types/react": "19.3.0",
+--- a/ui/DESIGN.md
++++ b/ui/DESIGN.md
+@@ -1,4 +1,14 @@
+ # Homer Web 视觉与交互
++
++## 2026-10-22 官方待发送队列与主输入框编辑
++
++待发送区位于主输入框上方，采用固定官方 standalone Message Queue 的运行行、数量、编号、单层列表与取消按钮结构，样式局部映射既有主题。Homer 提供准确身份、总数、顺序、编辑/锁定状态及附件引用摘要；不从最近用户泡猜运行来源，不接第二个队列 runtime。未知接收项单列且不可修改，不充当 waiting 项。旧服务仅说明已加载数量并隐藏排序。
++
++排序使用独立44px手柄，文本选择和普通触屏滚动不触发排序；更多菜单提供上移、下移、移到待发送最前。仅服务确认的当前线程普通 pending 同段可移动，不能跨越交互或特殊优先项。分页、领取或其他设备改变顺序后，草稿保留并重新核对；焦点和结果播报随准确身份恢复，不恢复过时数组。触屏长按激活，取消拖动不提交，reduced-motion 禁用位移动画。
++
++编辑复用同一个 Composer/Lexical，显示“编辑待发送消息”“保存修改”“取消编辑”；停止当前回复仍独立。原新消息草稿、请求身份与 runtime 附件对象保留。原引用和附件只可保留或移除，保存成功才生效；不新增上传，不把旧多引用批注转换成新请求。保存或取消恢复原新消息草稿；编辑与原草稿分别支持刷新恢复。编辑期间继续允许领取，领取后禁止保存并保留未应用内容。保存结果未知时锁定修改，按原操作核对或明确重试，不自动另发。
++
++列表默认短摘要，可就地展开正文/引用/文件名；不铺附件缩略图。桌面约三行后局部滚动，窄屏动作可换行，320px 无页面横向溢出。进入编辑时收为数量，退出恢复先前展开状态；低视口自动收起，确保正文、保存和独立停止可用。原来源记录及实施/回退说明见 `docs/2026-10-22-message-queue-implementation.md`。本节覆盖旧逐行气泡和 textarea 编辑描述，其余正式历史、Worker事件卡、活动阅读与权限合同保持。
+ 
+ ## 2026-10-22 成果文件紧凑列表（覆盖旧文件卡展示描述）
+ 
+--- a/ui/vendor/assistant-ui/README.md
++++ b/ui/vendor/assistant-ui/README.md
+@@ -25,3 +25,29 @@
+ The installed Attachment primitives/adapter own the draft attachment collection. Homer retains the upload/discard transport, stable request/upload identity, confirmed asset metadata, batch validation, and running-send/IME form adapter. `unstable_Thumb` in this installed version has no image URL lifecycle; the small per-row object URL effect, keyed by the original attachment ID, supplies the existing local preview.
+ 
+ When updating, recheck the pinned source and license, Radix Presence/animation semantics, original terminal/focus behavior, copy failures/user activation, and attachment send-clear versus explicit discard. Do not replace Homer business owners with a component runtime.
++
++## Pinned standalone Message Queue (2026-10-22)
++
++Same upstream commit `1f41f91643fdb56e5d8dbd14db65f742740738a1`, same unmodified MIT `LICENSE`.
++Files were fetched as bytes and SHA-256 checked before adapting:
++
++| Input under `packages/ui/src/components/react/assistant-ui/elements/` | Original SHA-256 | Bytes |
++| --- | --- | ---: |
++| `message-queue.tsx` | `5eb1cd94c8e5a2a927a1f7a41e7af69947e5b7821a77e47daefb1498a97e0e3b` | 2860 |
++| `surfaces.tsx` | `5d81fbb669e67ae20026cd30ed57efc51a5e3ee0f4f5d265e1723de75359b8fa` | 4462 |
++
++Upstream standalone API: required `running: string`, `queued: readonly {id: string; text: string}[]`, optional `onCancel(id)`, root `div` props. It does not edit, persist, reorder, paginate, reconcile receipts or lock individual rows. The runtime example on the documentation page is a different integration; Homer does not bind its queue to the assistant-ui runtime.
++
++`message-queue.tsx` retains the running row, count row, single `ul/li` list, tabular numbering, row arrow and delete button placement. Deliberate extensions: optional running row; authoritative total; row-render/leading/trailing slots; ref and item attributes; disabled delete; Chinese labels; 44px controls, 14px row text and the host's 760px width. No selection of a recent unrelated user message. `homer-message-queue.tsx` supplies expand/edit/menu/handle slots and the service-backed data, including separate locked rows. The stylesheet maps the four used `surfaces` roles (`paper`, `field`, `ghostButton`, `mono`) to existing Homer variables locally. Running blue maps to host ink; idle row entrance animation is omitted to keep refresh/reorder stable; reduced motion disables the live-dot pulse and sortable transition.
++
++Direct source imports were React types, `lucide-react` (`ArrowUpIcon`, `XIcon`), `cn`, and the four `surfaces` constants. Upstream `packages/ui/src/lib/utils.ts` merely reexports `cn` from the `cn` package. Homer uses the same two icon geometries inline, ordinary scoped class names and the used CSS equivalents; it does not import the unused interactive `surfaces` functions or introduce `cn`, lucide, Tailwind/reset, shadcn or Base UI dependencies.
++
++Drag sorting uses exactly `@dnd-kit/react@0.5.1`, MIT, Claudéric Demers, release commit `01bc678e93477e56a78aa2244c69b08a96cb0da6`. `DragDropProvider` comes from the root export and `useSortable` from `/sortable`; its `handleRef` binds only the 44px handle. No helpers/core/sortable legacy packages, Queue Adapter, `createMessageQueue` or steer lane. Published transitive dependencies are fixed by the reviewed root lockfile. Sorting is a temporary interaction preview; only `MainInputs.move` commits order.
++
++
++2026-10-22 public activity facts candidate:
++
++- No changes to `run-activity.tsx`, `run-activity.css`, `collapsible-root.tsx` or the license. The pinned official disclosure, list, typography, rule and metrics remain the presentation owner.
++- Homer supplies whitelisted action/object/outcome facts as entry content, from existing business receipts and versioned public display metadata. This is Homer data adaptation, not automatic Run Activity summarization. A returned call does not prove business success; prepared delivery does not prove recorded publication.
++- Entry buttons and the small read-only activity dialog are Homer additions. They reuse the existing process read endpoint, task panel, Canvas and exact message navigation. No Tool Timeline, second process hierarchy, generic detail framework, arbitrary reader, model summarizer or new persisted database is introduced.
++- The optional fact is stored only on the original process item. `MainProgress` channel events stay unchanged. Current navigation is not persisted: task/result/Run/version/thread and publication revocation are checked again by their owners. Historical Worker event cards remain immutable and have no buttons.
+--- /dev/null
++++ b/ui/vendor/assistant-ui/message-queue.tsx
+@@ -0,0 +1,22 @@
++// MIT, AgentbaseAI Inc. Pinned source and deliberate extensions: see README.md.
++import {forwardRef,type ComponentProps,type ReactNode} from 'react';
++import './message-queue.css';
++export interface QueuedMessage{id:string;text:string}
++const ArrowUpIcon=()=> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 7-7 7 7M12 19V5"/></svg>;
++const XIcon=()=> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg>;
++export const MessageQueueRow=forwardRef<HTMLLIElement,ComponentProps<'li'>&{message:QueuedMessage;index:number;onCancel?:(id:string)=>void;cancelDisabled?:boolean;leading?:ReactNode;trailing?:ReactNode}>(function MessageQueueRow({message,index,onCancel,cancelDisabled,leading,trailing,children,className,...props},ref){
++ return <li {...props} ref={ref} className={['aui-queue-field',className].filter(Boolean).join(' ')}>
++  {leading}<span className="aui-queue-number">{index+1}</span>
++  <div className="aui-queue-text">{children??message.text}</div>
++  <span className="aui-queue-arrow"><ArrowUpIcon/></span>
++  {onCancel&&<button type="button" className="aui-queue-remove" aria-label={`取消发送第 ${index+1} 条待发送消息`} disabled={cancelDisabled} onClick={()=>onCancel(message.id)}><XIcon/></button>}
++  {trailing}
++ </li>;
++});
++export function MessageQueue({running,queued,onCancel,totalWaiting=queued.length,countLabel,renderRow,className,...props}:Omit<ComponentProps<'div'>,'children'|'onCancel'>&{running?:string;queued:readonly QueuedMessage[];onCancel?:(id:string)=>void;totalWaiting?:number;countLabel?:string;renderRow?:(message:QueuedMessage,index:number)=>ReactNode}){
++ return <div data-slot="message-queue" className={['aui-message-queue',className].filter(Boolean).join(' ')} {...props}>
++  {running&&<div className="aui-queue-running"><span className="aui-queue-dot"/><span className="aui-queue-running-text">{running}</span><span className="aui-queue-label">处理中</span></div>}
++  {totalWaiting>0&&<div className="aui-queue-count"><span>{countLabel??`${totalWaiting} 条待发送`}</span><span>按顺序送交</span></div>}
++  <ul className="aui-queue-list">{queued.map((message,index)=>renderRow?renderRow(message,index):<MessageQueueRow key={message.id} message={message} index={index} onCancel={onCancel}/>)}</ul>
++ </div>;
++}
+--- /dev/null
++++ b/ui/vendor/assistant-ui/message-queue.css
+@@ -0,0 +1,19 @@
++/* Component-scoped equivalents of the pinned standalone utilities. */
++.aui-message-queue{display:flex;width:100%;flex-direction:column;gap:8px;min-width:0}
++.aui-queue-running{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--surface)}
++.aui-queue-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0;animation:aui-queue-pulse 1.5s ease-out infinite}
++.aui-queue-running-text{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
++.aui-queue-label,.aui-queue-count,.aui-queue-number{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
++.aui-queue-count{display:flex;justify-content:space-between;gap:8px;padding:0 4px}
++.aui-queue-list{display:flex;flex-direction:column;gap:6px;padding:0;margin:0;list-style:none;min-width:0}
++.aui-queue-field{display:flex;align-items:center;gap:10px;border-radius:14px;padding:2px 6px 2px 12px;background:color-mix(in srgb,var(--ink) 4%,transparent);min-width:0}
++.aui-queue-number{flex-shrink:0;min-width:1ch}
++.aui-queue-text{flex:1;min-width:0;font-size:14px}
++.aui-queue-arrow{opacity:.25;flex-shrink:0;display:flex}
++.aui-queue-remove{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:44px;height:44px;border:0;border-radius:50%;background:transparent;color:var(--muted)}
++.aui-queue-remove:hover:not(:disabled){background:color-mix(in srgb,var(--ink) 6%,transparent);color:var(--ink)}
++.aui-queue-remove:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
++.aui-queue-remove:disabled{opacity:.4;cursor:default}
++@keyframes aui-queue-pulse{50%{opacity:.35}}
++@media(prefers-reduced-motion:reduce){.aui-queue-dot{animation:none}}
++@media(forced-colors:active){.aui-queue-field{border:1px solid CanvasText}}
+--- /dev/null
++++ b/ui/queue-operations.ts
+@@ -0,0 +1,57 @@
++import {useEffect,useRef,useState} from 'react';
++import type {WebState,QueueReceipts} from '../src/web-contract';
++import type {QueueOperationResult} from '../src/recursive-main-inputs';
++import {connectionFetch} from './web-connection-client';
++
++export type PendingQueueOperation={action:'edit'|'cancel'|'move';payload:Record<string,unknown>&{requestId:string;operationId:string}};
++export function queueStorage<T>(key:string):T|undefined{try{return JSON.parse(sessionStorage.getItem(key)??'null')??undefined;}catch{return;}}
++export function saveQueueStorage(key:string,value:unknown){try{if(value===undefined)sessionStorage.removeItem(key);else sessionStorage.setItem(key,JSON.stringify(value));}catch{/* Existing per-tab draft policy. */}}
++class QueueRequestError extends Error{constructor(message:string,readonly definitive:boolean){super(message);}}
++function rejectedNotice(code:string){
++ if(code==='queue_input_processing'||code==='queue_input_locked')return '消息已被领取或锁定，这次修改未提交，编辑草稿已保留。';
++ if(code==='history_epoch_changed')return '服务已更新，这次修改未提交；请核对最新状态，编辑草稿已保留。';
++ if(code==='media_scope_denied')return '原附件引用未能通过校验，这次修改未提交，编辑草稿已保留。';
++ if(code==='invalid_quote')return '原引用未能通过校验，这次修改未提交，编辑草稿已保留。';
++ if(code==='invalid_message'||code==='invalid_attachments')return '消息内容或附件不符合限制，这次修改未提交，编辑草稿已保留。';
++ if(code==='queue_operation_conflict')return '操作身份与已有记录冲突，这次修改未提交，请核对原操作；编辑草稿已保留。';
++ return '消息状态、所属对话或顺序已变化，这次修改未提交；请核对最新记录，编辑草稿已保留。';
++}
++export async function queuePost<T>(path:string,input:unknown,signal?:AbortSignal):Promise<T>{
++ const response=await connectionFetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal});
++ const value=await response.json();if(!response.ok)throw new QueueRequestError(value.error??'queue_request_failed',/^queue_(revision_conflict|order_conflict|input_processing|input_locked|input_not_found|input_not_movable|anchor_invalid|thread_conflict|operation_conflict)$|^history_epoch_changed$|^media_scope_denied$|^invalid_(message|quote|attachments)$/.test(value.error));return value;
++}
++export function useQueueOperations(state:WebState,connected:boolean){
++ const key='homer-queue-operation:'+state.threadId;
++ const [pending,setPending]=useState<PendingQueueOperation>(),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[completed,setCompleted]=useState<{operation:PendingQueueOperation;result:QueueOperationResult}>();
++ const current=useRef<PendingQueueOperation|undefined>(undefined),flight=useRef(false),mounted=useRef(true);
++ useEffect(()=>()=>{mounted.current=false;},[]);
++ useEffect(()=>{current.current=queueStorage(key);setPending(current.current);setNotice(current.current?'上次修改结果待核对，未自动重试。':'');},[key]);
++ function retain(value:PendingQueueOperation|undefined){current.current=value;saveQueueStorage(key,value);setPending(value);}
++ function finish(operation:PendingQueueOperation,result:QueueOperationResult){
++  if(current.current!==operation)return;
++  retain(undefined);setCompleted({operation,result});setNotice('修改已确认。');window.dispatchEvent(new Event('homer-queue-updated'));
++ }
++ async function send(operation:PendingQueueOperation){
++  if(flight.current||!connected)return;flight.current=true;setBusy(true);
++  try{const result=await queuePost<QueueOperationResult>('/api/messages/'+operation.action,operation.payload);if(mounted.current)finish(operation,result);return result;}
++  catch(error){if(mounted.current&&current.current===operation){if(error instanceof QueueRequestError&&error.definitive){retain(undefined);setNotice(rejectedNotice(error.message));window.dispatchEvent(new Event('homer-queue-updated'));}else setNotice('修改结果待核对，原操作身份和草稿已保留；请先核对，也可用同一操作重试。');}}
++  finally{flight.current=false;if(mounted.current)setBusy(false);}
++ }
++ async function reconcile(signal?:AbortSignal){
++  const operation=current.current;if(!operation||!connected||!state.history)return;
++  try{
++   const value=await queuePost<QueueReceipts>('/api/history/receipts',{requestIds:[operation.payload.requestId],operations:[{requestId:operation.payload.requestId,operationId:operation.payload.operationId}],threadId:state.threadId,readEpoch:state.history.readEpoch},signal);
++   if(signal?.aborted||current.current!==operation)return;
++   const receipt=value.operations?.find(item=>item.operationId===operation.payload.operationId);
++   if(receipt?.committed&&receipt.result)finish(operation,receipt.result);
++   else setNotice('尚未查到该操作的提交记录，不能排除原请求稍后到达；未自动重试。');
++  }catch{if(!signal?.aborted)setNotice('修改状态仍待核对，草稿已保留，暂不能提交其他修改。');}
++ }
++ useEffect(()=>{if(!pending||!connected)return;const controller=new AbortController();void reconcile(controller.signal);return()=>controller.abort();},[pending,connected,state.history?.readEpoch,state.queueDispatch?.orderVersion]);
++ async function run(action:PendingQueueOperation['action'],payload:PendingQueueOperation['payload']){
++  if(current.current||flight.current||!connected)return;
++  const operation={action,payload};retain(operation);return send(operation);
++ }
++ return {pending,busy,notice,completed,run,adopt:(operation:PendingQueueOperation)=>{if(!current.current)retain(operation);},reconcile:()=>reconcile(),retry:()=>current.current?send(current.current):undefined,locked:!!pending||busy};
++}
++export type QueueOperations=ReturnType<typeof useQueueOperations>;
+--- /dev/null
++++ b/ui/homer-message-queue.tsx
+@@ -0,0 +1,101 @@
++import {useEffect,useRef,useState,type Ref} from 'react';
++import {DragDropProvider,PointerSensor,KeyboardSensor} from '@dnd-kit/react';
++import {useSortable,isSortable} from '@dnd-kit/react/sortable';
++import type {DispatchQueuePage,WebState} from '../src/web-contract';
++import {MessageQueue,MessageQueueRow} from './vendor/assistant-ui/message-queue';
++import {queuePost,type QueueOperations} from './queue-operations';
++import './homer-message-queue.css';
++
++export type QueueEditTarget=DispatchQueuePage['items'][number];
++type RowProps={item:QueueEditTarget;index:number;disabled:boolean;sorting:boolean;onEdit:(item:QueueEditTarget)=>void;onCancel:()=>void;onMove:(beforeRequestId:string|null)=>void};
++function SortableRow(props:RowProps){
++ const {item,index,disabled}=props;
++ const reduce=typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;
++ const {ref,handleRef,isDragSource}=useSortable({id:item.input.requestId,index,group:item.segmentStartRequestId,disabled,transition:reduce?null:{duration:180,easing:'ease-out'}});
++ return <QueueRow {...props} rowRef={ref} handleRef={handleRef} dragging={isDragSource}/>;
++}
++// A disabled sortable without a handle marks its whole row aria-disabled.
++// Static/legacy rows must remain ordinary rows so their edit buttons work.
++function QueueRow({item,index,disabled,onEdit,onCancel,onMove,sorting,rowRef,handleRef,dragging}:{rowRef?:Ref<HTMLLIElement>;handleRef?:Ref<HTMLButtonElement>;dragging?:boolean}&RowProps){
++ const [expanded,setExpanded]=useState(false);
++ const number=item.position??index+1,media=item.user?.media??[];
++ return <MessageQueueRow ref={rowRef} data-queue-request={item.input.requestId} data-dragging={dragging||undefined} message={{id:item.input.requestId,text:item.input.text}} index={number-1} onCancel={item.editable?onCancel:undefined} cancelDisabled={disabled}
++  leading={sorting&&item.movable?<button type="button" ref={handleRef} className="queue-handle" disabled={disabled} aria-label={`拖动第 ${number} 条待发送消息`}>⠿</button>:undefined}
++  trailing={<div className="queue-row-actions">{item.editable&&<button type="button" data-queue-edit={item.input.requestId} disabled={disabled} onClick={()=>onEdit(item)}>编辑</button>}{sorting&&item.movable&&<details className="queue-more"><summary aria-label={`第 ${number} 条待发送消息的更多操作`} aria-disabled={disabled}>⋯</summary><div className="queue-more-actions"><button type="button" disabled={disabled||item.moveUpBeforeRequestId===undefined} onClick={event=>{event.currentTarget.closest('details')!.open=false;onMove(item.moveUpBeforeRequestId!);}}>上移</button><button type="button" disabled={disabled||item.moveDownBeforeRequestId===undefined} onClick={event=>{event.currentTarget.closest('details')!.open=false;onMove(item.moveDownBeforeRequestId!);}}>下移</button><button type="button" disabled={disabled||item.segmentStartRequestId===item.input.requestId} onClick={event=>{event.currentTarget.closest('details')!.open=false;onMove(item.segmentStartRequestId!);}}>移到待发送最前</button></div></details>}</div>}>
++  <button type="button" className="queue-summary" aria-expanded={expanded} onClick={event=>{const selection=window.getSelection();if(event.detail>0&&selection&&!selection.isCollapsed&&event.currentTarget.contains(selection.anchorNode))return;setExpanded(!expanded);}}>{item.input.text||media.map(asset=>asset.filename).join('、')||'引用消息'}</button>
++  {(media.length>0||item.input.quotes?.length||item.input.quote)&&<span className="queue-context-summary">{media.length?`${media.length} 个附件`:''}{media.length&&(item.input.quotes?.length||item.input.quote)?' · ':''}{item.input.quotes?.length?`${item.input.quotes.length} 段引用`:item.input.quote?'1 段引用':''}</span>}
++  {expanded&&<div className="queue-full-text">{item.input.text}{(item.input.quotes??(item.input.quote?[item.input.quote]:[])).map((quote,n)=><blockquote key={n}>{quote.text}{'annotation' in quote&&!!quote.annotation&&<p>{String(quote.annotation)}</p>}</blockquote>)}{media.map(asset=><p key={asset.assetId}>{asset.filename}</p>)}</div>}
++  {!item.editable&&<span className="queue-context-summary">{item.statusText}</span>}
++ </MessageQueueRow>;
++}
++export function HomerMessageQueue({state,connected,operations,onEdit,editorBusy=false,editingRequestId}:{state:WebState;connected:boolean;operations:QueueOperations;onEdit:(item:QueueEditTarget)=>void;editorBusy?:boolean;editingRequestId?:string}){
++ const [page,setPage]=useState<DispatchQueuePage>(),[checking,setChecking]=useState(true),[cursor,setCursor]=useState<string>(),[refresh,setRefresh]=useState(0),[notice,setNotice]=useState('');
++ const [loadedFor,setLoadedFor]=useState('');
++ const [open,setOpen]=useState(()=>!matchMedia('(max-height:600px)').matches);
++ const restoreFocus=useRef<string|undefined>(undefined);
++ const previousEdit=useRef<string|undefined>(undefined),openBeforeEdit=useRef(open);
++ const latest=useRef(state);latest.current=state;
++ const drag=useRef<{version:string;items:QueueEditTarget[]}|undefined>(undefined);
++ const supported=state.features?.queueDispatch===1,epoch=state.history?.readEpoch,version=state.queueDispatch?.orderVersion;
++ const queryKey=JSON.stringify([state.threadId,epoch,version,cursor,refresh]);
++ useEffect(()=>{const low=matchMedia('(max-height:600px)'),collapse=()=>{if(low.matches)setOpen(false);};low.addEventListener('change',collapse);return()=>low.removeEventListener('change',collapse);},[]);
++ useEffect(()=>{
++  if(editingRequestId&&!previousEdit.current){openBeforeEdit.current=open;setOpen(false);}
++  else if(!editingRequestId&&previousEdit.current){restoreFocus.current=previousEdit.current;setOpen(openBeforeEdit.current&&!matchMedia('(max-height:600px)').matches);}
++  previousEdit.current=editingRequestId;
++ },[editingRequestId]);
++ useEffect(()=>{const update=()=>{setCursor(undefined);setRefresh(n=>n+1);};window.addEventListener('homer-queue-updated',update);return()=>window.removeEventListener('homer-queue-updated',update);},[]);
++ useEffect(()=>{setCursor(undefined);},[version,epoch]);
++ useEffect(()=>{
++  if(!connected||!supported||!epoch)return;
++  const controller=new AbortController();setChecking(true);
++  void queuePost<DispatchQueuePage>('/api/history/queue',{view:'dispatch-v1',readEpoch:epoch,...(cursor?{cursor}:{})},controller.signal).then(value=>{
++   if(controller.signal.aborted||latest.current.threadId!==value.threadId||latest.current.history?.readEpoch!==value.readEpoch)return;
++   setPage(value);setLoadedFor(queryKey);setChecking(false);setNotice('');
++  }).catch(error=>{if(controller.signal.aborted)return;if(error.message==='queue_cursor_expired'&&cursor){setCursor(undefined);return;}setNotice('待发送顺序未能核对，已有记录和草稿保留，修改暂不可用。');});
++  return()=>controller.abort();
++ },[connected,supported,state.threadId,epoch,version,cursor,refresh]);
++ const legacy=(state.queue??[]).flatMap((item,index)=>item.user?[{...item,user:item.user,movable:false,position:index+1,statusText:item.statusText??'状态待核对'} as QueueEditTarget]:[]);
++ const items=supported?page?.items??[]:legacy,waiting=items.filter(item=>item.state==='queued'),locked=items.filter(item=>item.state!=='queued');
++ const verified=!supported||!!page&&loadedFor===queryKey&&page.readEpoch===epoch&&page.orderVersion===version;
++ const disabled=!connected||!verified||(supported&&checking)||operations.locked||editorBusy;
++ const sorting=supported&&(page?.totalWaiting??0)>1;
++ async function change(item:QueueEditTarget,action:'move'|'cancel',beforeRequestId?:string|null){
++  if(disabled)return;
++  const focusId=item.input.requestId;
++  const result=await operations.run(action,{requestId:focusId,operationId:crypto.randomUUID(),expectedRevision:item.revision,threadId:state.threadId,readEpoch:epoch,...(action==='move'?{expectedOrderVersion:page!.orderVersion,beforeRequestId}:{} )});
++  if(result){restoreFocus.current=focusId;setNotice(action==='move'?'待发送顺序已更新。':'已取消发送。');}
++ }
++ useEffect(()=>{
++  const id=restoreFocus.current;if(!id||disabled)return;
++  requestAnimationFrame(()=>{const exact=document.querySelector<HTMLElement>(`[data-queue-edit="${CSS.escape(id)}"]`),first=document.querySelector<HTMLElement>('[data-queue-edit]'),button=exact?.getClientRects().length?exact:first?.getClientRects().length?first:document.querySelector<HTMLElement>('[contenteditable="true"]');button?.focus({preventScroll:true});});restoreFocus.current=undefined;
++ },[page,disabled]);
++ const runningUser=state.generation&&state.messages.find(message=>message.role==='user'&&message.requestId===state.generation?.sourceRequestId);
++ if(!items.length&&!state.queueDispatch?.totalWaiting&&!notice&&!operations.pending)return null;
++ return <section className="homer-message-queue" aria-label="待发送消息队列">
++  <details className="queue-disclosure" open={open} onToggle={event=>setOpen(event.currentTarget.open)}><summary>{open?'收起待发送消息':`${supported?state.queueDispatch?.totalWaiting??page?.totalWaiting??0:waiting.length} 条待发送消息`}</summary>
++   <div className="queue-scroll">
++    <DragDropProvider sensors={[PointerSensor,KeyboardSensor]} onDragStart={()=>{if(page)drag.current={version:page.orderVersion,items:waiting};}} onDragEnd={event=>{
++     const original=drag.current;drag.current=undefined;if(event.canceled||disabled||!original)return;
++     if(original.version!==latest.current.queueDispatch?.orderVersion){setCursor(undefined);setRefresh(n=>n+1);setNotice('拖动期间队列已变化，请按最新顺序重试。');return;}
++     // The 0.5 sortable plugin previews DOM order and can make the source its
++     // own final collision target. Its projected index is the drop position.
++     const dragged=event.operation.source;
++     const from=original.items.findIndex(item=>item.input.requestId===dragged?.id),to=dragged&&isSortable(dragged)?dragged.index:original.items.findIndex(item=>item.input.requestId===event.operation.target?.id);
++     if(from<0||to<0||to>=original.items.length||from===to)return;const source=original.items[from]!,target=original.items[to]!;
++     if(source.segmentStartRequestId!==target.segmentStartRequestId)return;
++     // A page tail is not the segment tail. The server supplies its actual
++     // successor even when that row's body is on an unloaded page.
++     const before=from<to?target.nextRequestId:target.input.requestId;
++     if(before===undefined)return;
++     void change(source,'move',before);
++    }}>
++     <MessageQueue countLabel={!supported?`已加载 ${waiting.length} 条待发送`:undefined} running={runningUser?runningUser.text||'正在处理附件请求':undefined} totalWaiting={supported?page?.totalWaiting??0:waiting.length} queued={waiting.map(item=>({id:item.input.requestId,text:item.input.text}))} renderRow={(_,index)=>{const item=waiting[index]!,Row=sorting&&item.movable?SortableRow:QueueRow;return <Row key={item.input.requestId} item={item} index={index} disabled={disabled} sorting={sorting} onEdit={onEdit} onCancel={()=>void change(item,'cancel')} onMove={before=>void change(item,'move',before)}/>;}}/>
++    </DragDropProvider>
++    {locked.map(item=><div className="queue-locked" key={item.messageId}><span>{item.state==='processing'?'正在送交，接收待确认':'接收结果待核对'}</span><p>{item.input.text||'附件请求'}</p></div>)}
++   </div>
++   {supported&&<div className="queue-pages">{cursor&&<button type="button" disabled={checking} onClick={()=>setCursor(undefined)}>返回待发送首页</button>}{page?.nextCursor&&<button type="button" disabled={disabled} onClick={()=>setCursor(page.nextCursor!)}>查看下一页</button>}{(!verified||checking)&&<span role="status">正在核对待发送顺序</span>}</div>}
++  </details>
++  {notice&&<p role="status" className="queue-notice">{notice}{checking&&<button type="button" disabled={!connected} onClick={()=>setRefresh(n=>n+1)}>重新核对</button>}</p>}
++ </section>;
++}
+--- /dev/null
++++ b/ui/homer-message-queue.css
+@@ -0,0 +1,43 @@
++.homer-message-queue{width:100%;max-width:760px;min-width:0;margin:0 auto 8px;font-size:14px}
++.queue-disclosure>summary{min-height:44px;align-content:center;cursor:pointer;color:var(--muted);padding:0 8px}
++.queue-disclosure>summary:focus-visible{outline:2px solid var(--focus);outline-offset:0}
++.queue-disclosure[open]>summary{display:none}
++.queue-scroll{max-height:272px;overflow:auto;overscroll-behavior:contain;padding:3px;scrollbar-gutter:stable}
++.queue-row-actions{display:flex;align-items:center;flex-shrink:0}
++.homer-message-queue button,.homer-message-queue summary{font:inherit;color:inherit}
++.queue-row-actions button,.queue-more>summary,.queue-pages button,.queue-notice button{min-width:44px;min-height:44px;border:0;background:transparent;border-radius:8px;padding:6px 8px;cursor:pointer}
++.queue-row-actions button:hover:not(:disabled),.queue-more>summary:hover,.queue-pages button:hover{background:var(--soft)}
++.homer-message-queue button:disabled{opacity:.4;cursor:default}
++.homer-message-queue button:focus-visible,.queue-more>summary:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
++.queue-handle{display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;background:transparent;touch-action:none;flex-shrink:0;cursor:grab;font-size:22px!important;color:var(--muted)!important}
++.queue-summary{display:block;width:100%;min-height:44px;border:0;padding:8px 0;background:transparent;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;user-select:text;-webkit-user-select:text}
++.queue-context-summary{display:block;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
++.queue-full-text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto;line-height:1.7;padding:6px 0}
++.queue-full-text blockquote{margin:8px 0;padding-left:8px;border-left:1px solid var(--line)}
++.queue-more>summary{display:flex;align-items:center;justify-content:center;list-style:none;cursor:pointer}
++.queue-more>summary::-webkit-details-marker{display:none}
++.queue-more[open]{display:contents}
++.queue-more[open]>summary{background:var(--soft)}
++.queue-more-actions{display:flex;flex-basis:100%;flex-wrap:wrap;gap:4px;padding:0 0 6px}
++.aui-queue-field:has(.queue-more[open]){flex-wrap:wrap}
++.aui-queue-field[data-dragging]{opacity:.6;outline:1px solid var(--strong-line)}
++.queue-locked{padding:8px 12px;color:var(--muted);border-top:1px solid var(--line)}
++.queue-locked p{margin:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
++.queue-pages{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:12px}
++.queue-notice{margin:4px 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
++.queue-operation-notice{max-width:760px;margin:0 auto 6px;font-size:13px;color:var(--muted)}
++.queue-operation-notice button,.queue-editor-bar button{min-height:44px;min-width:44px;font:inherit;border:0;background:transparent;color:var(--ink);padding:6px 10px;border-radius:8px}
++.queue-editor-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;color:var(--muted);font-size:14px}
++.composer .send-button.queue-save{width:auto;min-width:88px;padding:0 12px;white-space:nowrap;font-size:14px;border-radius:10px}
++.queue-edit-context{max-height:120px;overflow:auto;font-size:14px;overflow-wrap:anywhere}
++.queue-edit-context>div{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
++.queue-edit-context blockquote{margin:0;white-space:pre-wrap}
++.queue-edit-context button{min-width:44px;min-height:44px;flex-shrink:0}
++.composer-area:has(.queue-editor-bar){display:flex;flex-direction:column;flex-shrink:1;min-height:0}
++.composer-area:has(.queue-editor-bar)>.homer-message-queue,.composer-area:has(.queue-editor-bar)>.composer-run-line,.composer-area:has(.queue-editor-bar)>.queue-operation-notice,.composer-area:has(.queue-editor-bar)>.draft-notice{flex-shrink:0;width:100%}
++.composer:has(.queue-editor-bar){display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:hidden}
++.composer:has(.queue-editor-bar) .queue-editor-bar,.composer:has(.queue-editor-bar) .composer-toolbar{flex-shrink:0}
++.composer:has(.queue-editor-bar) .queue-edit-context{min-height:0;flex:0 1 auto}
++.composer:has(.queue-editor-bar) .composer-input{min-height:24px;flex:1 1 auto}
++@media(max-width:600px){.aui-queue-field{gap:4px;padding-left:6px;flex-wrap:wrap}.aui-queue-text{min-width:80px}.aui-queue-arrow{display:none}.queue-row-actions{margin-left:auto}}
++@media(max-height:600px){.queue-disclosure>summary{display:list-item!important}.queue-disclosure[open] .queue-scroll{max-height:18dvh}.queue-edit-context{max-height:64px}}
+--- /dev/null
++++ b/tests/message-queue-order.test.ts
+@@ -0,0 +1,104 @@
++// Requirements-derived synthetic contracts. In-memory SQLite; no account or production service.
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {historyFixture} from './web-history-loading-fixture.js';
++import {WebHistoryPages} from '../src/web-history-pages.js';
++import {mkdtempSync,rmSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++
++function fixture(){
++ const f=historyFixture(0);new WebHistoryPages(f.history,f.processes,f.inputs);
++ for(const requestId of ['B','C','D'])f.inputs.accept({requestId,text:'同名合成消息'});
++ return f;
++}
++function move(f:ReturnType<typeof fixture>,requestId='D',beforeRequestId:string|null='B',operationId='move-D'){
++ const page=f.inputs.dispatchPage(undefined,'epoch');
++ const item=f.inputs.byRequestIds([requestId])[0]!;
++ return {threadId:'synthetic-history',readEpoch:'epoch',requestId,operationId,expectedRevision:item.revision,expectedOrderVersion:page.orderVersion,beforeRequestId};
++}
++test('queue order: durable slot permutation drives readiness and claim, preserving input and admission hashes',()=>{
++ const f=fixture();try{
++  const before=f.store.db.prepare('SELECT requestId,hash FROM conversation_inputs ORDER BY requestId').all();
++  const operation=move(f),result=f.inputs.move(operation);
++  assert.equal(result.action,'move');assert.equal(result.changed.length,3);
++  assert.deepEqual(f.inputs.dispatchPage(undefined,'epoch').items.map(i=>i.input.requestId),['D','B','C']);
++  assert.deepEqual(f.inputs.move(operation),result);
++  assert.deepEqual(f.store.db.prepare('SELECT requestId,hash FROM conversation_inputs ORDER BY requestId').all(),before);
++  for(const requestId of ['D','B','C']){assert.equal(f.inputs.runnableHead()!.input.requestId,requestId);const next=f.inputs.claim()!;assert.equal(next.input.requestId,requestId);assert.equal(next.inputRevision,1);f.inputs.finish(next.messageId,next.revision,'completed');}
++  assert.deepEqual(f.inputs.move(operation),result,'committed operation survives claim');
++  assert.throws(()=>f.inputs.move({...operation,beforeRequestId:null}),/queue_operation_conflict/);
++ }finally{f.close();}
++});
++test('queue order: stale devices, claim winner, invalid anchors and no-op are explicit',()=>{
++ const f=fixture();try{
++  const stale=move(f,'C','B','device-two');f.inputs.move(move(f));
++  assert.throws(()=>f.inputs.move(stale),/queue_(revision|order)_conflict/);
++  assert.throws(()=>f.inputs.move({...move(f),beforeRequestId:'missing',operationId:'bad-anchor'}),/queue_anchor_invalid/);
++  const noop=f.inputs.move(move(f,'D','D','no-op'));assert.equal(noop.noOp,true);assert.equal(noop.changed.length,0);
++  const pending=move(f,'D','B','after-claim');f.inputs.claim();assert.throws(()=>f.inputs.move(pending),/queue_input_processing/);
++ }finally{f.close();}
++});
++test('queue order: partial rank update failure rolls back slots, revisions and operation',()=>{
++ const f=fixture();try{
++  const snapshot=()=>['agent_messages','agent_receipts','operations'].map(t=>f.store.db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all());
++  const before=snapshot(),operation=move(f);
++  f.store.db.exec("CREATE TEMP TRIGGER synthetic_move_failure BEFORE UPDATE OF revision ON agent_receipts WHEN new.revision>old.revision BEGIN SELECT RAISE(ABORT,'synthetic_move_failure'); END");
++  assert.throws(()=>f.inputs.move(operation),/synthetic_move_failure/);assert.deepEqual(snapshot(),before);
++  f.store.db.exec('DROP TRIGGER synthetic_move_failure');f.inputs.move(operation);
++ }finally{f.close();}
++});
++test('queue order: nonmovable interactions fence segments; preparing stays movable and blocks the head',()=>{
++ const f=historyFixture(0);try{
++  f.inputs.accept({requestId:'A',text:'准备中'});f.inputs.accept({requestId:'answer',text:'待答',interactionId:'synthetic'});f.inputs.accept({requestId:'B',text:'后段'});
++  assert.throws(()=>f.inputs.move(move(f,'B','A')),/queue_anchor_invalid/);
++  assert.equal(f.inputs.dispatchPage().items.find(i=>i.input.requestId==='answer')!.movable,false);
++  f.inputs.cancel({requestId:'answer',operationId:'cancel-answer',expectedRevision:0});
++  f.inputs.preparation=input=>input.requestId==='A'?'preparing':'ready';assert.equal(f.inputs.runnableHead(),undefined);
++  f.inputs.move(move(f,'B','A'));assert.equal(f.inputs.runnableHead()!.input.requestId,'B');
++ }finally{f.close();}
++});
++test('queue order: bounded dispatch cursor expires after reorder; segment front is supplied beyond page one',()=>{
++ const f=historyFixture(0);new WebHistoryPages(f.history,f.processes,f.inputs);try{
++  for(let n=0;n<165;n++)f.inputs.accept({requestId:'q'+n,text:'合成 '+n});
++  const first=f.inputs.dispatchPage(undefined,'epoch');assert.equal(first.items.length,80);assert.equal(first.totalWaiting,165);assert.ok(first.nextCursor);
++  assert.equal(first.items.at(-1)!.nextRequestId,'q80','dropping after the page tail must retain its unloaded successor');
++  const second=f.inputs.dispatchPage(first.nextCursor!,'epoch');assert.equal(second.items[0]!.input.requestId,'q80');assert.equal(second.items[0]!.segmentStartRequestId,'q0');assert.equal(second.items[0]!.position,81);
++  assert.throws(()=>f.inputs.dispatchPage(first.nextCursor!,'other-epoch'),/queue_cursor_expired/);
++  f.inputs.move(move(f,'q100','q0'));assert.throws(()=>f.inputs.dispatchPage(first.nextCursor!,'epoch'),/queue_cursor_expired/);
++  assert.equal(f.inputs.dispatchPage(undefined,'epoch').items[0]!.input.requestId,'q100');
++ }finally{f.close();}
++});
++test('queue order: reopen retains slots and operation; the old FIFO reader remains explicitly different',()=>{
++ const dir=mkdtempSync(resolve('.codex/scratch/message-queue-implementation/reopen-')),database=join(dir,'synthetic.sqlite');
++ let f=historyFixture(0,160,false,database);
++ try{
++  for(const requestId of ['B','C','D'])f.inputs.accept({requestId,text:'合成 '+requestId});
++  const operation=move(f),result=f.inputs.move(operation);f.close();f=historyFixture(0,160,false,database);
++  assert.deepEqual(f.inputs.dispatchPage(undefined,'reopened').items.map(item=>item.input.requestId),['D','B','C']);
++  assert.deepEqual(f.inputs.move(operation),result);
++  assert.deepEqual(f.inputs.list().map(item=>item.input.requestId),['B','C','D'],'legacy numeric reader intentionally keeps admission order');
++  assert.equal(f.inputs.claim()!.input.requestId,'D');f.inputs.reconcile();
++  assert.equal(f.inputs.byRequestIds(['D'])[0]!.state,'uncertain');assert.equal(f.inputs.dispatchPage().items.find(item=>item.input.requestId==='D')!.movable,false);
++ }finally{f.close();rmSync(dir,{recursive:true,force:true});}
++});
++test('queue order: ordering metadata never reads request responses and hydrates at most one bounded body page',()=>{
++ const f=historyFixture(0);try{
++  for(let n=0;n<100;n++)f.inputs.accept({requestId:'bounded-'+n,text:'合成有界读取 '+n});
++  f.store.request=()=>{throw Error('request_response_body_forbidden');};
++  let bodies=0;const read=f.history.inputs.bind(f.history);f.history.inputs=(thread,ids)=>{assert.ok(ids.length<=80);bodies+=ids.length;return read(thread,ids);};
++  let queries=0;const prepare=f.store.db.prepare.bind(f.store.db);f.store.db.prepare=(...args:Parameters<typeof prepare>)=>{queries++;return prepare(...args);};
++  assert.equal(f.inputs.dispatchSummary().totalWaiting,100);assert.equal(bodies,0);
++  assert.ok(queries<=4,`metadata summary must not issue one query per input: ${queries}`);
++  assert.equal(f.inputs.dispatchPage().items.length,80);assert.equal(bodies,80);
++ }finally{f.close();}
++});
++test('queue order: a recorded execution locks pending metadata without reading its response',()=>{
++ const f=fixture();try{
++  const before=f.inputs.dispatchSummary();
++  f.store.db.prepare("INSERT INTO requests(id,hash,state,response,createdAt) VALUES('B','synthetic','running','private synthetic response',0)").run();
++  f.store.request=()=>{throw Error('request_response_body_forbidden');};
++  const page=f.inputs.dispatchPage(),item=page.items.find(item=>item.input.requestId==='B')!;
++  assert.equal(item.editable,false);assert.equal(item.movable,false);assert.notEqual(page.orderVersion,before.orderVersion);
++  assert.throws(()=>f.inputs.move(move(f,'B','C','locked-execution')),/queue_input_locked/);
++ }finally{f.close();}
++});
+--- /dev/null
++++ b/tests/message-queue-web.test.ts
+@@ -0,0 +1,56 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {readFileSync} from 'node:fs';
++import ts from 'typescript';
++import {historyFixture} from './web-history-loading-fixture.js';
++import {WebHistoryPages} from '../src/web-history-pages.js';
++import {homerWebBridge} from '../src/web-homer.js';
++import {createWebServer} from '../src/web-server.js';
++import type {Homer} from '../src/service.js';
++
++function host(){
++ const f=historyFixture(0),reader=new WebHistoryPages(f.history,f.processes,f.inputs);
++ for(const requestId of ['B','C','D'])f.inputs.accept({requestId,text:'合成 '+requestId});
++ return {...f,webReadEpoch:'queue-epoch',registerChannelCapabilities(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('no-media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),editQueued:f.inputs.edit.bind(f.inputs),cancelQueued:f.inputs.cancel.bind(f.inputs),moveQueued:f.inputs.move.bind(f.inputs)};
++}
++test('dispatch HTTP: scope, move, exact operation receipt, current state and legacy numeric page coexist',async()=>{
++ const app=host(),bridge=homerWebBridge(app as unknown as Homer),server=await createWebServer({bridge,port:0});
++ const post=async(path:string,value:unknown,origin=server.url)=>{const r=await fetch(server.url+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(value)});return {status:r.status,value:await r.json()};};
++ try{
++  const page=(await post('/api/history/queue',{view:'dispatch-v1',readEpoch:app.webReadEpoch})).value;
++  assert.equal(page.totalWaiting,3);assert.equal(page.items[0].user.text,'合成 B');assert.equal(page.items[2].segmentStartRequestId,'B');
++  const operation={threadId:'synthetic-history',readEpoch:app.webReadEpoch,requestId:'D',operationId:'move',expectedRevision:0,expectedOrderVersion:page.orderVersion,beforeRequestId:'B'};
++  assert.equal((await post('/api/messages/move',operation,'https://untrusted.invalid')).status,403);
++  assert.equal((await post('/api/messages/move',{...operation,threadId:'wrong'})).value.error,'queue_thread_conflict');
++  const moved=await post('/api/messages/move',operation);assert.equal(moved.status,200);
++  const legacy=(await post('/api/history/queue',{after:0,readEpoch:app.webReadEpoch})).value;assert.deepEqual(legacy.items.map((i:{input:{requestId:string}})=>i.input.requestId),['B','C','D']);
++  assert.deepEqual((await post('/api/history/queue',{view:'dispatch-v1',readEpoch:app.webReadEpoch})).value.items.map((i:{input:{requestId:string}})=>i.input.requestId),['D','B','C']);
++  const claimed=app.inputs.claim()!;
++  const receipt=(await post('/api/history/receipts',{requestIds:['D'],operations:[{requestId:'D',operationId:'move'},{requestId:'D',operationId:'not-committed'}]})).value;
++  assert.equal(receipt.statuses[0].state,'processing');assert.equal(receipt.statuses[0].editable,false);assert.equal(receipt.operations[0].committed,true);assert.deepEqual(receipt.operations[0].result,moved.value);assert.equal(receipt.operations[1].committed,false);
++  assert.deepEqual((await post('/api/messages/move',operation)).value,moved.value);
++  assert.equal((await post('/api/messages/edit',{requestId:'D',operationId:'edit-late',expectedRevision:claimed.revision,input:{requestId:'D',text:'不能改写'}})).value.error,'queue_input_processing');
++  assert.equal((await post('/api/history/queue',{view:'dispatch-v1',readEpoch:'stale'})).value.error,'history_epoch_changed');
++ }finally{await server.close();app.close();}
++});
++function productionNode(file:string,predicate:(node:ts.Node)=>boolean){
++ const source=ts.createSourceFile(file,readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);let found:ts.Node|undefined;
++ const visit=(node:ts.Node)=>{if(predicate(node))found=node;else ts.forEachChild(node,visit);};visit(source);assert.ok(found);return found.getText(source);
++}
++test('actual gateway and business IPC forward dispatch cursor, mutation scope and operation receipts without loss',async()=>{
++ const app=host();try{
++  const literal=productionNode('scripts/dev.mjs',n=>ts.isPropertyAssignment(n)&&n.name.getText()==='bridge'&&ts.isObjectLiteralExpression(n.initializer)).replace(/^bridge\s*:/,'');
++  const receive=productionNode('src/dev-host.ts',n=>ts.isFunctionDeclaration(n)&&n.name?.text==='receive');
++  const js=ts.transpileModule(receive,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
++  let response:{error?:string;value:unknown};
++  const dispatch=new Function('app','frozen','stopping','homerWebBridge','send','engineError','webUploadProtocol','nativeCapabilitiesProtocol','wechat','telegramManagement',`${js};return receive;`)(app,false,false,homerWebBridge,(m:typeof response)=>{response=m;},(e:Error)=>e.message,false,false,undefined,undefined);
++  const invokeWeb=async(method:string,input:unknown)=>{await dispatch({kind:'web',id:'queue-test',method,input});if(response.error)throw Error(response.error);return response.value;};
++  const gateway=new Function('invokeWeb','state','historyState','journal',`return (${literal});`)(invokeWeb,()=>({}),()=>({}),{receipts:()=>[]});
++  const page=await gateway.history.dispatchQueue({readEpoch:app.webReadEpoch});
++  const operation={threadId:'synthetic-history',readEpoch:app.webReadEpoch,requestId:'D',operationId:'ipc-move',expectedRevision:0,expectedOrderVersion:page.orderVersion,beforeRequestId:'B'};
++  const result=await gateway.queue.move(operation);assert.equal(app.inputs.runnableHead()!.input.requestId,'D');
++  const receipt=await gateway.history.receipts({requestIds:['D'],operations:[{requestId:'D',operationId:'ipc-move'}]});assert.deepEqual(receipt.operations[0].result,result);
++  await assert.rejects(gateway.history.dispatchQueue({readEpoch:'wrong'}),/history_epoch_changed/);
++  assert.deepEqual(await gateway.queue.move(operation),result);
++ }finally{app.close();}
++});
+--- /dev/null
++++ b/tests/message-queue-scheduler.test.ts
+@@ -0,0 +1,17 @@
++import {test} from 'node:test';import assert from 'node:assert/strict';
++import {queueBrowserFixture,queueUntil} from './fixtures/message-queue-browser-server.js';
++
++for(const action of ['cancel','move'] as const)test(`queue scheduler: ${action} wakes the next valid input after a preparing head`,async()=>{
++ const f=await queueBrowserFixture('.codex/scratch/message-queue-implementation/web');
++ try{
++  f.app.inputs.preparation=input=>input.requestId==='B'?'preparing':'ready';
++  f.release();await queueUntil(()=>f.app.inputs.byRequestIds(['A'])[0]!.state==='completed');await f.app.idle();
++  assert.equal(f.turns.length,1);assert.equal(f.app.inputs.runnableHead(),undefined);
++  if(action==='cancel')f.app.cancelQueued({requestId:'B',operationId:'cancel-preparing',expectedRevision:0});
++  else{
++   const input={threadId:f.app.store.meta('mainThread')!,readEpoch:f.app.webReadEpoch,requestId:'C',operationId:'move-preparing',expectedRevision:0,expectedOrderVersion:f.app.inputs.dispatchSummary().orderVersion,beforeRequestId:'B'};
++   assert.throws(()=>f.app.moveQueued({...input,readEpoch:'stale'}),/history_epoch_changed/);f.app.moveQueued(input);
++  }
++  await queueUntil(()=>f.app.inputs.byRequestIds(['C'])[0]!.state==='processing');assert.equal(f.turns.length,2);assert.match(f.turns[1]!,/补充验收/);
++ }finally{await f.close();}
++});
+--- /dev/null
++++ b/tests/queue-edit-input.test.ts
+@@ -0,0 +1,10 @@
++import {test} from 'node:test';import assert from 'node:assert/strict';
++import {queuedEditInput,draftQuotes} from '../ui/conversation-client.js';
++test('queue editing preserves original ID, interaction, legacy multi quotes and exact attachment refs',()=>{
++ const original={requestId:'original',interactionId:'answer',text:'旧正文',quotes:[{messageId:'first',text:'第一段',annotation:'原批注'},{messageId:'second',text:'第二段',annotation:''}],attachments:[{assetId:'asset-first',revision:1},{assetId:'asset-second',revision:2}]};
++ assert.deepEqual(queuedEditInput(original,'新正文',draftQuotes(original),[original.attachments[1]!]),{...original,text:'新正文',attachments:[original.attachments[1]]});
++ assert.equal(original.attachments.length,2,'local removal has no mutation/discard side effect');
++ const single={requestId:'single',text:'原文',quote:{messageId:'source',text:'来源'}};
++ assert.deepEqual(queuedEditInput(single,'修改',draftQuotes(single),[]),{...single,text:'修改'});
++ assert.deepEqual(queuedEditInput(single,'修改',[],[]),{requestId:'single',text:'修改'});
++});
+--- /dev/null
++++ b/tests/message-queue.browser.mjs
+@@ -0,0 +1,85 @@
++// Real isolated service and browser, synthetic content only. No production access.
++import assert from 'node:assert/strict';
++import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
++import path from 'node:path';
++import {queueBrowserFixture,queueUntil} from './fixtures/message-queue-browser-server.ts';
++const {chromium}=await import(process.env.HOMER_PLAYWRIGHT_MODULE||'playwright');
++const dir=path.resolve('.codex/scratch/message-queue-implementation');await mkdir(dir,{recursive:true});
++const profile=await mkdtemp(path.join(dir,'browser-profile-'));
++const context=await chromium.launchPersistentContext(profile,{channel:'chrome',headless:true,viewport:{width:1440,height:1000},hasTouch:true});
++const results={checks:[],errors:[],geometry:[],screenshots:[]};let fixture,page,origin='';
++const check=(name,value,details)=>{results.checks.push({name,passed:!!value,...(details===undefined?{}:{details})});assert.ok(value,name+(details===undefined?'':': '+JSON.stringify(details)));};
++const input=()=>page.getByRole('textbox',{name:'给荷马发消息'}),row=id=>page.locator(`[data-queue-request="${id}"]`);
++const wait=()=>page.waitForTimeout(180);
++async function scene(count=3){
++ if(fixture){await page.goto('about:blank');await fixture.close();}fixture=await queueBrowserFixture(path.join(dir,'web'),count);origin=fixture.server.url;
++ await page.goto(origin);await input().waitFor();await row(count===3?'B':'q0').waitFor();await wait();
++}
++async function edit(id){await row(id).getByRole('button',{name:'编辑',exact:true}).click();await page.getByText('编辑待发送消息',{exact:true}).waitFor();await page.getByRole('button',{name:'保存修改',exact:true}).waitFor({state:'visible'});await wait();}
++async function move(id,label){await row(id).locator('summary').click();const button=row(id).getByRole('button',{name:label,exact:true});await button.focus();await button.press('Enter');await wait();}
++async function shot(name){const file=name+'.png';await page.screenshot({path:path.join(dir,file),animations:'disabled'});results.screenshots.push(file);}
++async function layout(name){const value=await page.evaluate(()=>{const send=document.querySelector('.send-button').getBoundingClientRect(),editor=document.querySelector('[contenteditable]');return {width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,send:send.toJSON(),editor:editor.getBoundingClientRect().toJSON(),font:getComputedStyle(editor).fontSize,queue:document.querySelector('.queue-scroll')?.getBoundingClientRect().toJSON()};});results.geometry.push({name,...value});check(name+' no horizontal overflow',value.scrollWidth<=value.width,value);check(name+' submit visible',value.send.bottom<=value.height&&value.send.top>=0,value);check(name+' text stays 16px',value.font==='16px',value);}
++try{
++ await context.route('**/*',route=>{const url=route.request().url();if(url.startsWith(origin+'/')||url.startsWith('data:')||url.startsWith('blob:'))return route.continue();results.errors.push('blocked external '+url.split('?')[0]);return route.abort();});
++ page=await context.newPage();page.on('pageerror',error=>results.errors.push(error.message));
++ await scene();await layout('desktop queue');await shot('Queue-1440-Waiting');
++ await input().fill('这是一条尚未发送的新消息草稿。');
++ await page.locator('input[type=file]').setInputFiles({name:'新草稿材料.txt',mimeType:'text/plain',buffer:Buffer.from('Synthetic new draft')});await page.getByText('附件已准备；发送后才会交给荷马处理。',{exact:true}).waitFor();
++ const originalDraft=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('homer-draft:synthetic-queue-browser')));
++ await edit('B');check('one main editor, no row textarea',await page.locator('[contenteditable]').count()===1&&await page.locator('textarea').count()===0);
++ check('edit has ten original attachments',await page.getByRole('button',{name:/移除原附件/}).count()===10);
++ await input().fill('修改后的需求说明，先核对范围。');await page.getByRole('button',{name:'移除原附件 1',exact:true}).click();
++ check('local removal never discards',fixture.discards.length===0&&fixture.app.inputs.byRequestIds(['B'])[0].input.attachments.length===10);
++ await shot('Queue-1440-Editing');await page.getByRole('button',{name:'取消编辑',exact:true}).click();await wait();
++ check('cancel restores original new draft',(await input().innerText())===originalDraft.text&&await page.locator('.composer-file-preview').count()===1);
++ check('cancel keeps server attachment refs',fixture.app.inputs.byRequestIds(['B'])[0].input.attachments.length===10&&fixture.discards.length===0);
++ await edit('B');await input().fill('保存到原身份的需求说明。');await page.getByRole('button',{name:'移除原附件 1',exact:true}).click();
++ await input().dispatchEvent('keydown',{key:'Enter',code:'Enter',keyCode:229,isComposing:true,bubbles:true});check('IME Enter never saves',fixture.changes.filter(c=>c.action==='edit').length===0);
++ await input().press('Shift+Enter');await page.keyboard.insertText('第二行');check('Shift Enter keeps edit open',await page.getByText('编辑待发送消息',{exact:true}).isVisible());
++ await input().press('Enter');await page.getByText('编辑待发送消息',{exact:true}).waitFor({state:'hidden'});await wait();
++ check('save uses original identity once',fixture.changes.filter(c=>c.action==='edit').length===1&&fixture.changes.find(c=>c.action==='edit').input.requestId==='B');
++ check('save restores exact draft and attached metadata',(await input().innerText())===originalDraft.text&&JSON.stringify(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('homer-draft:synthetic-queue-browser')).attachments))===JSON.stringify(originalDraft.attachments));
++ check('saved attachment removal uses retainRefs',fixture.app.inputs.byRequestIds(['B'])[0].input.attachments.length===9&&fixture.app.media.asset(fixture.refs[0]).state==='revoked'&&fixture.discards.length===0);
++ await move('D','移到待发送最前');check('keyboard menu updates real dispatch order',fixture.order().join(',')==='D,B,C',fixture.order());
++ await row('D').getByRole('button',{name:'编辑',exact:true}).waitFor();check('move returns focus to exact identity',await row('D').getByRole('button',{name:'编辑',exact:true}).evaluate(e=>e===document.activeElement));await shot('Queue-1440-Reordered');
++ const handle=await row('D').getByRole('button',{name:/拖动/}).boundingBox(),target=await row('C').boundingBox();
++ await page.mouse.move(handle.x+22,handle.y+22);await page.mouse.down();await page.waitForTimeout(300);await page.mouse.move(target.x+80,target.y+target.height-6,{steps:15});await page.mouse.up();await wait();
++ check('mouse handle drag commits order',fixture.order().join(',')==='B,C,D',fixture.order());
++ const before=fixture.changes.length;await row('D').getByRole('button',{name:/拖动/}).click();await wait();check('handle click does not reorder',fixture.changes.length===before);
++ const cancelHandle=await row('D').getByRole('button',{name:/拖动/}).boundingBox(),cancelTarget=await row('B').boundingBox();await page.mouse.move(cancelHandle.x+20,cancelHandle.y+20);await page.mouse.down();await page.mouse.move(cancelTarget.x+80,cancelTarget.y+20,{steps:12});await page.keyboard.press('Escape');await page.mouse.up();await wait();check('Escape cancels drag without submission',fixture.changes.length===before&&fixture.order().join(',')==='B,C,D');
++ // Touch drag uses Chrome's trusted input channel, independent of normal scroll.
++ await page.setViewportSize({width:390,height:844});await wait();await row('D').getByRole('button',{name:/拖动/}).scrollIntoViewIfNeeded();const touchHandle=await row('D').getByRole('button',{name:/拖动/}).boundingBox(),touchTarget=await row('C').boundingBox();
++ const cdp=await context.newCDPSession(page);await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:touchHandle.x+20,y:touchHandle.y+20}]});await page.waitForTimeout(350);
++ for(let n=1;n<=12;n++){await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:touchHandle.x+20,y:touchHandle.y+20+(touchTarget.y-touchHandle.y)*n/12}]});await page.waitForTimeout(25);}
++ await page.waitForTimeout(150);await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await wait();check('touch handle drag commits order',fixture.order().join(',')==='B,D,C',fixture.order());await cdp.detach();
++ for(const width of [1440,390,320]){await page.setViewportSize({width,height:width===1440?1000:844});await wait();await layout(width+' waiting');await shot('Queue-'+width+'-Waiting-Final');await edit('B');await input().fill('长中文说明，保留所有需要确认的事项。'.repeat(50));await layout(width+' editing');await shot('Queue-'+width+'-Editing-Long');await page.getByRole('button',{name:'取消编辑',exact:true}).click();}
++ await edit('B');await page.setViewportSize({width:320,height:420});await input().fill('低视口下继续编辑。'.repeat(30));await layout('320 low-height editing');await shot('Queue-320-Low-Height');await page.getByRole('button',{name:'取消编辑',exact:true}).click();
++ // A committed move with a lost response remains locked until exact receipt/retry.
++ await page.setViewportSize({width:1440,height:1000});await scene();fixture.mode.loseNextMove=true;fixture.mode.hideOperations=true;
++ await move('D','移到待发送最前');await page.getByRole('button',{name:'用原操作重试',exact:true}).waitFor();const uncertain=fixture.changes.at(-1).input;
++ check('unknown move keeps mutation identity and locks rows',await row('B').getByRole('button',{name:'编辑',exact:true}).isDisabled());await shot('Queue-1440-Unknown-Receipt');
++ await page.reload();await page.getByRole('button',{name:'用原操作重试',exact:true}).waitFor();check('refresh never replays unknown move',fixture.changes.length===1);
++ await page.getByRole('button',{name:'用原操作重试',exact:true}).click();await wait();check('explicit retry uses identical payload',JSON.stringify(fixture.changes.at(-1).input)===JSON.stringify(uncertain));check('committed retry never moves twice',fixture.order().join(',')==='D,B,C');
++ // Claim while editing keeps both drafts, including after refresh.
++ await scene();await input().fill('领取竞态前的新消息草稿');await edit('B');await input().fill('领取后尚未应用的编辑草稿');fixture.release();await queueUntil(()=>fixture.app.inputs.byRequestIds(['B'])[0].state==='processing');await wait();
++ check('claim locks save without erasing edit',await page.getByRole('button',{name:'保存修改',exact:true}).isDisabled()&&(await input().innerText())==='领取后尚未应用的编辑草稿');await shot('Queue-1440-Claim-During-Edit');
++ await page.reload();await page.getByText('编辑待发送消息',{exact:true}).waitFor();await wait();check('refresh restores off-page locked edit',(await input().innerText())==='领取后尚未应用的编辑草稿'&&await page.getByRole('button',{name:'保存修改',exact:true}).isDisabled());
++ await page.getByRole('button',{name:'取消编辑',exact:true}).click();await wait();check('claim cancel restores original new draft',(await input().innerText())==='领取竞态前的新消息草稿');check('ACK shows original user once',await page.locator('[data-conversation-message]').filter({has:page.getByText('整理需求说明，保留需要确认的事项。',{exact:true})}).count()===1);
++ // The second page knows the real segment front without fetching all bodies.
++ await scene(165);const loaded=await page.locator('[data-queue-request]').count();check('dispatch renders at most 80 items',loaded>0&&loaded<=80,{loaded});check('total is server total',await page.getByText('165 条待发送',{exact:true}).isVisible());
++ const scrollBefore=fixture.changes.length,scrollSummary=await row('q0').locator('.queue-summary').boundingBox(),scrollCdp=await context.newCDPSession(page);await scrollCdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:scrollSummary.x+20,y:scrollSummary.y+25}]});for(let n=1;n<=8;n++){await scrollCdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:scrollSummary.x+20,y:scrollSummary.y+25-12*n}]});await page.waitForTimeout(30);}await scrollCdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await wait();check('ordinary touch scroll never sorts',fixture.changes.length===scrollBefore&&await page.locator('.queue-scroll').evaluate(e=>e.scrollTop>0));await scrollCdp.detach();
++ await page.getByRole('button',{name:'查看下一页',exact:true}).click();await row('q80').waitFor();await page.locator('.queue-scroll').evaluate(e=>e.scrollTop=1000);await row('q100').scrollIntoViewIfNeeded();await edit('q100');await input().fill('分页外仍保留的修改');await page.reload();await page.getByText('编辑待发送消息',{exact:true}).waitFor();await wait();check('off-page edit validates exact ID after refresh',await page.getByRole('button',{name:'保存修改',exact:true}).isEnabled());await page.getByRole('button',{name:'取消编辑',exact:true}).click();
++ await page.getByRole('button',{name:'查看下一页',exact:true}).click();await row('q80').waitFor();await row('q100').scrollIntoViewIfNeeded();await move('q100','移到待发送最前');await page.waitForFunction(()=>document.querySelector('[data-queue-request]')?.getAttribute('data-queue-request')==='q100');check('page-two move uses true segment front',fixture.order()[0]==='q100');await shot('Queue-1440-Pagination');
++ // The final loaded row still has a real successor on the next page. A drop
++ // after it must not silently mean the end of the entire movable segment.
++ await scene(165);const tail=await page.locator('[data-queue-request]').last().getAttribute('data-queue-request'),tailNumber=Number(tail.slice(1)),sourceId='q'+(tailNumber-1);
++ await row(tail).scrollIntoViewIfNeeded();const pageHandle=await row(sourceId).getByRole('button',{name:/拖动/}).boundingBox(),pageTarget=await row(tail).boundingBox();
++ await page.mouse.move(pageHandle.x+22,pageHandle.y+22);await page.mouse.down();await page.waitForTimeout(300);await page.mouse.move(pageTarget.x+80,pageTarget.y+pageTarget.height-6,{steps:15});await page.mouse.up();await wait();
++ const order=fixture.order(),firstPage=fixture.app.inputs.dispatchPage(),nextPage=fixture.app.inputs.dispatchPage(firstPage.nextCursor);
++ check('drop after page tail stays before unloaded successor',order[tailNumber]===sourceId&&nextPage.items[0].input.requestId==='q'+(tailNumber+1),{tail:order.slice(tailNumber-2),next:nextPage.items[0].input.requestId});
++ await page.waitForFunction(id=>document.querySelector(`[data-queue-edit="${id}"]`)?.disabled===false,sourceId);
++ await shot('Queue-1440-Page-Tail-Drop');
++ check('browser has no JS or external network errors',results.errors.length===0,results.errors);
++}catch(error){results.failure=String(error.stack||error);console.error(error);process.exitCode=1;if(page)await shot('Queue-Failure').catch(()=>{});}
++finally{await writeFile(path.join(dir,'browser-results.json'),JSON.stringify(results,null,2)+'\n');await context.close();if(fixture)await fixture.close();await rm(profile,{recursive:true,force:true});}
++console.log(JSON.stringify({checks:results.checks.length,passed:results.checks.filter(c=>c.passed).length,failure:results.failure,screenshots:results.screenshots}));
+--- /dev/null
++++ b/tests/message-queue-recovery.browser.mjs
+@@ -0,0 +1,48 @@
++// Additional real-browser recovery/compatibility contracts, synthetic service only.
++import assert from 'node:assert/strict';
++import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
++import path from 'node:path';
++import {queueBrowserFixture,queueUntil} from './fixtures/message-queue-browser-server.ts';
++const {chromium}=await import(process.env.HOMER_PLAYWRIGHT_MODULE||'playwright');
++const dir=path.resolve('.codex/scratch/message-queue-implementation');await mkdir(dir,{recursive:true});const profile=await mkdtemp(path.join(dir,'recovery-profile-'));
++const context=await chromium.launchPersistentContext(profile,{channel:'chrome',headless:true,viewport:{width:390,height:844},hasTouch:true});
++const results={checks:[],errors:[]};let page,fixture,origin='';
++const check=(name,value)=>{results.checks.push({name,passed:!!value});console.log('CHECK '+name+': '+!!value);assert.ok(value,name);};
++const input=()=>page.getByRole('textbox',{name:'给荷马发消息'}),row=id=>page.locator(`[data-queue-request="${id}"]`);
++const wait=()=>page.waitForTimeout(250);
++async function scene(mode={}){if(fixture){await page.goto('about:blank');await fixture.close(stage=>console.log('CLOSE '+stage));}fixture=await queueBrowserFixture(path.join(dir,'web'));Object.assign(fixture.mode,mode);origin=fixture.server.url;await page.goto(origin);await row('B').waitFor();await wait();}
++async function edit(id='B'){await row(id).getByRole('button',{name:'编辑',exact:true}).click();await page.getByText('编辑待发送消息',{exact:true}).waitFor();await wait();}
++try{
++ await context.route('**/*',route=>{const url=route.request().url();if(url.startsWith(origin+'/')||url.startsWith('data:')||url.startsWith('blob:'))return route.continue();results.errors.push('blocked external '+url.split('?')[0]);return route.abort();});
++ page=await context.newPage();page.on('pageerror',error=>results.errors.push(error.message));
++ await scene();await input().fill('未知保存前的新消息草稿');await edit();await input().fill('已提交但回执丢失的编辑正文');
++ fixture.mode.loseNextEdit=true;fixture.mode.hideOperations=true;await input().press('Enter');await page.getByRole('button',{name:'用原操作重试',exact:true}).waitFor();
++ check('unknown save locks editor against later text loss',await input().getAttribute('contenteditable')==='false');
++ await page.reload();await page.getByText('编辑待发送消息',{exact:true}).waitFor();await wait();check('unknown edit and original draft survive refresh',(await input().innerText())==='已提交但回执丢失的编辑正文'&&fixture.changes.filter(c=>c.action==='edit').length===1);
++ fixture.mode.hideOperations=false;await page.getByRole('button',{name:'核对修改状态',exact:true}).click();await page.getByText('编辑待发送消息',{exact:true}).waitFor({state:'hidden'});await wait();
++ check('exact saved operation restores original draft without another send',(await input().innerText())==='未知保存前的新消息草稿'&&fixture.changes.filter(c=>c.action==='edit').length===1&&fixture.app.inputs.byRequestIds(['B'])[0].input.text==='已提交但回执丢失的编辑正文');
++ await page.screenshot({path:path.join(dir,'Queue-390-Recovered-Save.png'),animations:'disabled'});
++ await scene();await input().fill('设备一的新消息草稿');await edit();await input().fill('设备一尚未保存的修改');const first=page;
++ const second=await context.newPage();second.on('pageerror',error=>results.errors.push(error.message));page=second;await page.goto(origin);await row('B').waitFor();await edit();await input().fill('设备二已经保存的正文');await input().press('Enter');await page.getByText('编辑待发送消息',{exact:true}).waitFor({state:'hidden'});
++ page=first;await page.getByRole('button',{name:'保存修改',exact:true}).waitFor();await page.waitForFunction(()=>document.querySelector('.queue-save')?.disabled===true);
++ check('other device edit locks save and keeps local draft',(await input().innerText())==='设备一尚未保存的修改'&&fixture.app.inputs.byRequestIds(['B'])[0].input.text==='设备二已经保存的正文');await page.screenshot({path:path.join(dir,'Queue-390-Other-Device.png'),animations:'disabled'});await second.close();
++ fixture.mode.offline=true;fixture.server.publish();await page.waitForFunction(()=>document.querySelector('[contenteditable]')?.getAttribute('contenteditable')==='false');check('offline retains unsubmitted edit',(await input().innerText())==='设备一尚未保存的修改');
++ fixture.mode.offline=false;fixture.server.publish();await page.waitForFunction(()=>document.querySelector('[contenteditable]')?.getAttribute('contenteditable')==='true');check('reconnect never replays local edit',fixture.changes.filter(c=>c.action==='edit').length===1);
++ await page.getByRole('button',{name:'取消编辑',exact:true}).click();await wait();check('other device conflict cancel restores new draft',(await input().innerText())==='设备一的新消息草稿');
++ await scene();await edit();await input().fill('');check('attachment-only queue edit can save',await page.getByRole('button',{name:'保存修改',exact:true}).isEnabled());await input().press('Enter');await page.getByText('编辑待发送消息',{exact:true}).waitFor({state:'hidden'});await wait();
++ check('attachment-only body is saved at original ID',fixture.app.inputs.byRequestIds(['B'])[0].input.text===''&&fixture.app.inputs.byRequestIds(['B'])[0].input.attachments.length===10);
++ await edit();for(let n=0;n<10;n++)await page.getByRole('button',{name:'移除原附件 1',exact:true}).click();check('empty after final attachment cannot save',await page.getByRole('button',{name:'保存修改',exact:true}).isDisabled());
++ check('unsaved removal never revokes server refs',fixture.refs.every(ref=>fixture.app.media.asset(ref).state==='ready')&&fixture.discards.length===0);await page.getByRole('button',{name:'取消编辑',exact:true}).click();
++ await scene();const original=fixture.app.inputs.byRequestIds(['B'])[0].input,previous={requestId:'B',operationId:'legacy-unknown-save',expectedRevision:0,input:{...original,text:'旧操作已保存的正文'}};fixture.app.inputs.edit(previous);fixture.server.publish();await wait();
++ await page.evaluate(value=>sessionStorage.setItem('homer-queue-edit:B',JSON.stringify({text:'旧操作之后尚未提交的修改',quotes:[],attachments:value.input.attachments,editing:true,operation:{id:value.operationId,payload:JSON.stringify({action:'edit',payload:{requestId:value.requestId,expectedRevision:value.expectedRevision,input:value.input}})}})),previous);
++ await edit();await page.getByText('原操作已确认，还有未提交的本地修改，编辑草稿已保留。',{exact:true}).waitFor();check('legacy committed receipt never discards later local edits',(await input().innerText())==='旧操作之后尚未提交的修改'&&fixture.app.inputs.byRequestIds(['B'])[0].input.text==='旧操作已保存的正文');await page.getByRole('button',{name:'取消编辑',exact:true}).click();
++ await scene();for(const id of ['C','D']){await row(id).getByRole('button',{name:/取消发送/}).click();await row(id).waitFor({state:'hidden'});await wait();}await edit();check('single static queue row remains editable',fixture.order().join(',')==='B'&&await page.getByRole('button',{name:'保存修改',exact:true}).isEnabled());await page.getByRole('button',{name:'取消编辑',exact:true}).click();
++ await scene({legacy:true});check('old service hides reordering and labels loaded count',await page.getByRole('button',{name:/拖动第/}).count()===0&&await page.getByText('已加载 3 条待发送',{exact:true}).isVisible());await edit();await input().fill('旧服务兼容编辑');await input().press('Enter');await page.getByText('编辑待发送消息',{exact:true}).waitFor({state:'hidden'});check('old receipt shape uses the same composer and CAS',fixture.app.inputs.byRequestIds(['B'])[0].input.text==='旧服务兼容编辑');
++ await scene();await edit();await input().fill('停止期间的未保存编辑');await page.getByRole('button',{name:'停止回复',exact:true}).click();await queueUntil(()=>fixture.app.inputs.byRequestIds(['A'])[0].state==='interrupted');await wait();check('stop keeps edit draft and does not rewrite claimed body',(await input().innerText())==='停止期间的未保存编辑'&&fixture.app.inputs.byRequestIds(['B'])[0].input.text==='整理需求说明，保留需要确认的事项。');
++ await scene();await page.emulateMedia({reducedMotion:'reduce'});await page.reload();await row('B').waitFor();check('reduced motion disables live-dot animation',await page.locator('.aui-queue-dot').evaluate(e=>getComputedStyle(e).animationName)==='none');
++ const before=fixture.changes.length,summary=await row('B').locator('.queue-summary').boundingBox();await page.mouse.move(summary.x+3,summary.y+22);await page.mouse.down();await page.mouse.move(summary.x+Math.min(summary.width-4,100),summary.y+22,{steps:10});await page.mouse.up();check('pointer selects summary text without sorting or expanding',await page.evaluate(()=>!!getSelection()?.toString())&&fixture.changes.length===before&&await row('B').locator('.queue-summary').getAttribute('aria-expanded')==='false');
++ await scene();for(let n=0;n<16;n++)fixture.app.history.record('synthetic-reading-'+n,fixture.app.store.meta('mainThread'),'合成历史答复，用于检查排序不会拉动正式历史阅读位置。'.repeat(8),'completed');fixture.server.publish();await page.waitForFunction(()=>{const view=document.querySelector('.thread-viewport');return view.scrollHeight>view.clientHeight+200;});const viewport=page.locator('.thread-viewport');await viewport.evaluate(e=>e.scrollTop=120);await wait();const readingTop=await viewport.evaluate(e=>e.scrollTop);await row('D').locator('summary').click();await row('D').getByRole('button',{name:'移到待发送最前',exact:true}).click();await wait();check('reorder preserves formal history reading position',Math.abs(await viewport.evaluate(e=>e.scrollTop)-readingTop)<=1);
++ check('no browser JS or external network errors',results.errors.length===0);
++}catch(error){results.failure=String(error.stack||error);console.error(error);process.exitCode=1;await page?.screenshot({path:path.join(dir,'Queue-Recovery-Failure.png'),animations:'disabled'}).catch(()=>{});}
++finally{await writeFile(path.join(dir,'recovery-browser-results.json'),JSON.stringify(results,null,2)+'\n');await context.close();if(fixture)await fixture.close();await rm(profile,{recursive:true,force:true});}
++console.log(JSON.stringify({checks:results.checks.length,passed:results.checks.filter(c=>c.passed).length,failure:results.failure}));
+--- /dev/null
++++ b/tests/fixtures/message-queue-browser-server.ts
+@@ -0,0 +1,47 @@
++// Isolated real Homer/SQLite/Web bridge with a deterministic held engine.
++// Never reads config, native HOME, credentials or a production listener.
++import {EventEmitter} from 'node:events';
++import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {Homer} from '../../src/service.js';
++import type {EngineLike,TurnResult} from '../../src/engine.js';
++import {homerWebBridge} from '../../src/web-homer.js';
++import {createWebServer} from '../../src/web-server.js';
++
++export const queueUntil=async(check:()=>boolean)=>{const end=Date.now()+8000;while(!check()){if(Date.now()>end)throw Error('synthetic_queue_timeout');await new Promise(done=>setTimeout(done,10));}};
++export async function queueBrowserFixture(webDir:string,count=3){
++ const parent=resolve('.codex/scratch/message-queue-implementation');mkdirSync(parent,{recursive:true});const dir=mkdtempSync(join(parent,'isolated-host-'));mkdirSync(join(dir,'runtime'));
++ const turns:string[]=[];let release:((value:TurnResult)=>void)|undefined,closed=false;
++ class Engine extends EventEmitter implements EngineLike{
++  threadId='synthetic-queue-browser';turnId?:string;
++  async start(){return this.threadId;}
++  async turn(text:string,options?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
++   this.turnId='synthetic-turn-'+turns.length;options?.onStarted?.(this.turnId);turns.push(text);
++   return new Promise(done=>{release=result=>{release=undefined;done(result);};});
++  }
++  async close(){closed=true;release?.({status:'interrupted',text:''});return true;}
++  async interrupt(){release?.({status:'interrupted',text:'合成回复已停止'});return true;}
++ }
++ const app=new Homer({workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},()=>new Engine());
++ await app.start();app.submitMessage({requestId:'A',text:'正在核对第一份合成材料，后续消息依次处理。'});await queueUntil(()=>!!release);
++ const refs=[];
++ for(let n=0;n<10;n++){
++  const ref=app.media.intent('B','web:'+app.store.meta('mainThread'),'file',`合成需求说明_第${n+1}份_待核对的完整文件名.txt`),lease=app.media.claim(ref)!;
++  app.media.ready(ref,lease,Buffer.from('Synthetic queue attachment '+n),'text/plain');refs.push(ref);
++ }
++ if(count===3){
++  app.submitMessage({requestId:'B',text:'整理需求说明，保留需要确认的事项。',attachments:refs});
++  app.submitMessage({requestId:'C',text:'补充验收条件，核对负责人和交付时间。'});
++  app.submitMessage({requestId:'D',text:'最后检查这个很长的中文说明，以及 https://example.invalid/'+ 'long-path-without-spaces'.repeat(16)});
++ }else for(let n=0;n<count;n++)app.submitMessage({requestId:'q'+n,text:'合成排队消息 '+n});
++ const bridge=homerWebBridge(app),changes:{action:string;input:unknown}[]=[],discards:unknown[]=[];
++ const mode={loseNextMove:false,loseNextEdit:false,hideOperations:false,legacy:false,offline:false};
++ const move=bridge.queue!.move!;bridge.queue!.move=async input=>{changes.push({action:'move',input});const value=await move(input);if(mode.loseNextMove){mode.loseNextMove=false;throw Error('synthetic_response_lost');}return value;};
++ const edit=bridge.queue!.edit;bridge.queue!.edit=async input=>{changes.push({action:'edit',input});const result=await edit(input);if(mode.loseNextEdit){mode.loseNextEdit=false;throw Error('synthetic_edit_response_lost');}return result;};
++ const cancel=bridge.queue!.cancel;bridge.queue!.cancel=async input=>{changes.push({action:'cancel',input});return cancel(input);};
++ const receipts=bridge.history!.receipts;bridge.history!.receipts=async input=>{const value=await receipts(input);if(mode.legacy)return {acceptedRequestIds:value.acceptedRequestIds,statuses:value.statuses.map(({requestId,state})=>({requestId,state}))};return mode.hideOperations?{...value,operations:value.operations?.map(item=>({requestId:item.requestId,operationId:item.operationId,committed:false}))}:value;};
++ const state=bridge.history!.state;bridge.history!.state=async()=>{if(mode.offline)throw Error('synthetic_offline');const value=await state();if(!mode.legacy)return value;const {queueDispatch:_queueDispatch,...rest}=value;return {...rest,features:{...value.features,queueDispatch:undefined}};};
++ const discard=bridge.media!.discard!;bridge.media!.discard=async input=>{discards.push(input);return discard(input);};
++ const server=await createWebServer({bridge,port:0,uiDirectory:resolve(webDir),logoPath:resolve('assets/branding/homer-river-stone-256.de41791ce5c1.png')});
++ return {app,server,dir,refs,turns,changes,discards,mode,closed:()=>closed,release(){release?.({status:'completed',text:'合成材料已核对，等待处理后续消息。'});},order:()=>app.inputs.dispatchPage().items.filter(item=>item.state==='queued').map(item=>item.input.requestId),close:async(stage:((name:string)=>void)=()=>{})=>{stage('server');await server.close();stage('app');await app.close();stage('files');rmSync(dir,{recursive:true,force:true});}};
++}
+--- /dev/null
++++ b/docs/2026-10-22-message-queue-implementation.md
+@@ -0,0 +1,69 @@
++# 待发送消息队列：排序、官方呈现与主输入框编辑
++
++本项承接已批准的复核方案，在 `/Users/wolf3c/Project/homer` 局部实施；不新建 worktree，不恢复旧 serene-engelbart，不修改宿主数据库或生产数据，不部署。执行期间的公开活动事实、过程导航、日期时间呈现及相关文档变更属于其他并行任务，继续保留。
++
++## 实际合同
++
++- `MainInputs` 在原 `agent_messages.payloadJson` 持久保存可选整数 `queueOrder`，缺省取原 `seq`。readiness 与 claim 共用 `priority DESC / effectiveQueueOrder / seq`。原 numeric 分页仍按接受次序，正式历史与 `seq` 不重排。
++- 普通 priority 0、当前线程、可编辑 pending 且无 interaction/interrupt 的消息可移动。不可移动项形成分段边界。preparing 不自动跳过，用户可主动调整同段顺序。
++- move 复用原 operations owner 和 `BEGIN IMMEDIATE`。先返回已提交的相同操作，再检查 scope/CAS/顺序版本；同 ID 不同 payload 冲突。重排受影响行、receipt revision、operation 回执同时提交或回滚。内容 hash/inputRevision 不因排序变化。
++- 不新增表、列或持久队列索引。排序摘要读取原 inbox 的活动身份元信息；正文仅水合当前最多80项，正式流归属仍沿现有 TEMP 关系投影。入站 admission hash 保持最初内容，编辑仍更新实际排队内容 hash。
++- `POST /api/messages/move`：`threadId, readEpoch, requestId, operationId, expectedRevision, expectedOrderVersion, beforeRequestId`。null 为当前分段末尾，其他锚点必须真实属于同段。无变化移动也登记幂等结果，不递增内容/receipt 版本。
++- edit/cancel 保留旧参数入口，并支持新的线程/世代 fence。取消、编辑、移动均在返回后唤醒现有调度器，不直接启动 turn，不 stop/interrupt/steer。
++- `POST /api/history/queue` 增加 `view:"dispatch-v1"`、`readEpoch`、可选 `cursor`。返回实际顺序、pending 总数、锁定项、当前页及 `nextCursor`。游标绑定线程、世代和队列顺序摘要，变化后重读首页。`segmentStartRequestId` 等定位信息由服务返回，跨页“移到最前”不把页首当队首；可移动项的 `nextRequestId` 是同段真实后继（段末为null），分页末行拖动不把页末误作段末。
++- `/api/history/receipts` 保留 `requestIds` admission 核对，增加可选 `operations:[{requestId,operationId}]`；返回已提交操作的原回执，以及当前消息状态、revision、inputRevision、editable。未查到不等同于不会晚到；回执不包含正文或附件内容。
++- 上述路径贯通 `web-server / web-contract / web-homer / scripts/dev.mjs / dev-host`。网关仍分别合并 `gateway_stored/rejected` 的传输事实，不能冒充业务修改回执。
++
++## 界面与草稿
++
++官方 standalone Message Queue 的固定来源、字节 SHA 和 MIT 许可证见 `ui/vendor/assistant-ui/README.md`。Homer 沿该单层列表扩展编辑、展开、44px手柄、取消、更多菜单和锁定状态；不接 Queue Adapter 或自动派发。
++
++鼠标、触屏与键盘菜单均提交同一 move。dnd-kit 0.5.1 的 sortable DOM 预览以拖动源 projected index 为最终落点，不能仅使用最终碰撞目标 ID；取消拖动不提交。SSE 或操作结果导致队列变化时，必须完成对应读取快照的核对才恢复动作与焦点，不把旧本地数组当作回滚事实。
++
++主输入框显式切换新消息/排队编辑。进入前保存原新消息草稿，runtime 的原附件集合与 File 对象留在原 owner，不清空或 discard；编辑附件是独立的原引用集合，只可移除。保存继续使用原 requestId，经过服务 CAS 才更新内容和 retainRefs。旧多引用与批注不经新草稿格式转换。取消或保存成功恢复原文字、引用、请求身份与附件。
++
++新消息草稿沿原 `homer-draft:<thread>` 保存；编辑会话沿 `homer-queue-editor:<thread>` 保存；未确认修改沿 `homer-queue-operation:<thread>` 保存精确操作及原 payload。旧逐行编辑草稿进入主输入框时保留正文、引用、附件及可解码的旧操作身份。未确认发送的原存储/核对路径继续保留，不因队列刷新自动重放。
++
++编辑不会暂停领取。原消息已领取、状态未核实或另一设备改过正文时，禁止保存并保留本地草稿。判断来自准确 requestId 的回执，当前页没有该项不构成失效证据。保存结果未知时锁定修改和编辑输入，按原 operation 核对或明确重试，避免继续输入后被较早保存结果覆盖。
++
++进入编辑时列表收为数量，退出恢复原展开状态；低视口收起列表，正文/原引用附件分别局部滚动。当前主回复停止按钮继续独立。旧服务不声明 dispatch 能力时仅呈现已加载数量、隐藏排序，复用主输入框编辑，不新增第二套 textarea。
++
++## 验证与交付
++
++维护的合成回归：
++
++- `tests/message-queue-order.test.ts`：领取一致性、稳定身份、版本冲突、幂等、事务回滚、分段、preparing、165项分页、持久重开、旧 FIFO 读取及元信息不读取请求响应正文/当前页最多80项的有界水合。
++- `tests/message-queue-web.test.ts`：真实 HTTP Origin/scope、修改回执、领取后核对、旧 numeric 页面，以及准确生产网关/业务 IPC 闭包转发。
++- `tests/message-queue-scheduler.test.ts`：真实假引擎宿主中，取消/移动 preparing 队首后的唤醒。
++- `tests/queue-edit-input.test.ts`：原请求、旧多引用/批注、单引用形态与附件引用保持。
++- `tests/message-queue.browser.mjs`、`tests/message-queue-recovery.browser.mjs` 与 `tests/fixtures/message-queue-browser-server.ts`：真实 Homer/SQLite/HTTP/UI，固定假引擎、独立 scratch runtime/HOME 和随机端口；独立 Chrome profile，拦截外部网络。
++
++前端只构建到 `.codex/scratch/message-queue-implementation/web`，服务类型检查使用 noEmit，不覆盖日常 dist。截图与原始检查结果存于同一 scratch 交付目录。准确队列增量及持久验证元数据为 `docs/patches/2026-10-22-message-queue.patch` 和 `docs/patches/2026-10-22-message-queue-identities.json`；增量比较基线保留并行活动/日期改动，不等同于整份 Git HEAD。
++
++### 2026-10-22 实际结果
++
++| 检查 | 结果 |
++| --- | --- |
++| 相关行为回归（13个文件） | 审阅后64项通过，0失败；排序、有界读取与查询次数均先建立失败断言再修正 |
++| 编辑/调度局部复测 | 11项通过，与上述覆盖重叠，不另加总 |
++| 主队列浏览器用例 | 审阅后55项通过，含鼠标/触屏手柄、普通触屏滚动、Escape、IME、44px动作、1440/390/320px、低视口、未知移动回执及165项分页末行拖动 |
++| 恢复与兼容浏览器用例 | 20项通过，含保存回执丢失、两设备编辑、离线恢复、纯附件、旧未确认操作之后的本地修改、单项/旧服务编辑、独立停止、真实鼠标选文、reduced-motion及历史阅读位置 |
++| UI noEmit / 服务 noEmit | 均通过 |
++| 隔离 Vite 构建 | 初次和审阅后均通过；初次构建前后UI/lock输入哈希一致 |
++| 准确队列补丁反向 dry run | 通过；只检查，不执行回退 |
++
++当前仓库总 `tsconfig.check.json` 仍未通过：23条诊断来自附件适配测试、跨UI的中断恢复测试、历史观察声明及并行日期时间测试，涉及 NodeNext/JSX、`.ts`扩展名、缺少声明及已有测试类型。这些文件/配置未为通过检查而改写；独立服务/UI检查和上述运行行为检查通过，不能称全库检查通过。
++
++额外扩展的接待回归曾为38通过/1失败；`tests/reception-host.test.ts`的连续接待断言把瞬态 `observedAtMs` 当作固定快照，进一步诊断也遇到旧Worker条目查找与当前卡片合同不一致。未保留该测试的诊断性改动，也未把它作为本项通过证据。
++
++一轮隔离恢复浏览器进程超过7分钟未返回，确认身份后仅终止该测试进程；带场景/清理阶段诊断的重试20项全过，未复现原因，不推断为已修复的产品故障。所有最终夹具目录与独立浏览器profile均已清理。实际截图及校验摘要保留，失败轮次的过时截图不作为交付。
++
++审阅修正、性能实测及本次Git提交边界见 `docs/2026-10-22-message-queue-review.md`。当前HEAD尚未包含既有共享整合源码，准确补丁以保留并行成果的比较基线为前提，不能直接应用到HEAD或把本次提交称为独立可构建源码快照。
++
++## 回退
++
++本任务未执行上线，不以维护源码修改表示生产已采用。源码回退应仅撤销队列增量，保留其他并行成果和普通未确认请求/草稿，不恢复整份旧文件。
++
++新版服务兼容缺少 queueOrder 的 FIFO 数据，旧 numeric 页面仍保持原次序。旧服务回退会忽略已保存的 queueOrder：需先让自定义队列自然清空，或明确接受剩余 pending 恢复 FIFO。不得把这称为透明回退，不得自动重放 offered/uncertain 项。
++
++单独回退前端会丢失新编辑会话和修改核对入口；应先确认没有未核实修改、保存或取消编辑并恢复普通草稿，再切回旧界面。不能把未知操作视为失败后换新身份发送。无需删除/重写生产数据、运行 schema 降级或改变原生线程。

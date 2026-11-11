@@ -6,9 +6,11 @@ import {createHash} from 'node:crypto';
 import {sourceSnapshot} from './dev-build.mjs';
 export const DESKTOP_CANDIDATE_PATHS=[
  'packaging/electron/main.mjs','packaging/electron/preload.cjs','packaging/electron/forge.config.mjs','packaging/electron/node-entitlements.plist',
+ 'packaging/electron/capture-panel-preload.cjs','ui/capture-panel.html','ui/capture-panel.tsx','ui/capture-panel.css','ui/capture-panel-vite.config.mjs','ui/screenshot-dialog.tsx',
  'scripts/pinned-build.mjs','scripts/trusted-build.mjs','scripts/windows-security.mjs','scripts/windows-security.d.mts','packaging/windows/image-decoder.mjs','src/processes.ts','src/desktop-resources.ts','src/media-decode.ts','src/homer-account.ts','ui/desktop-permissions.tsx',
+ 'packaging/windows/CuaWindows.cs','packaging/macos/ChromeViewport.swift','src/desktop-cua.ts','src/cua-processes.ts',
  'src/mobile-turn.ts','src/mobile-gateway.ts','src/mobile-rtc.ts','ui/mobile-devices.tsx',
- 'scripts/prepare-desktop-dependencies.mjs','packaging/macos/dependencies-lock.json','packaging/macos/codex-license/LICENSE','packaging/macos/codex-license/NOTICE',
+ 'scripts/prepare-desktop-dependencies.mjs','packaging/macos/WindowCapture.swift','packaging/macos/dependencies-lock.json','packaging/macos/codex-license/LICENSE','packaging/macos/codex-license/NOTICE',
  'package.json','package-lock.json','scripts/build-desktop.mjs','scripts/desktop-source.mjs','scripts/desktop-profile.mjs','src/web-server.ts',
  'scripts/desktop-runtime.mjs','scripts/dev-build.mjs','scripts/dev.mjs','scripts/dev-ingress.mjs','src/dev-host.ts',
  'src/service.ts','src/config.ts','src/engine.ts','src/native-history-bridge.ts','src/recursive-main-inputs.ts',

@@ -4,6 +4,10 @@ import { loadConfig } from "./config.js";
 import { effectiveEffort, effectiveFast } from "./model-config.js";
 import { Homer, type Message } from "./service.js";
 import { codexVersion, engineError } from "./engine.js";
+import {dingtalkChannel} from './dingtalk-channel.js';
+import {telegramChannel} from './telegram-channel.js';
+import {authorizeWechat,bindWechat,unbindWechat,wechatChannel,wechatStatus} from './wechat-channel.js';
+import {acquireLock} from './processes.js';
 process.stdout.on("error", () => {});
 const args = process.argv.slice(2);
 function value(flag: string) {
@@ -18,22 +22,57 @@ async function write(message: string) {
     process.stdout.write(message + "\n", (e) => (e ? reject(e) : resolve()));
   });
 }
+async function manageWechat(runtime:string){
+  if(args[1]==='status')return write(JSON.stringify(wechatStatus(runtime)));
+  if(args[1]!=='bind'&&args[1]!=='unbind')throw Error('wechat_command_invalid');
+  const unlock=acquireLock(runtime);
+  try{
+    if(args[1]==='unbind'){
+      if(!args[2]||args[2].startsWith('--'))throw Error('wechat_account_required');
+      unbindWechat(runtime,args[2]);
+      return await write('已解绑。下次启动 Homer 时生效。');
+    }
+    if(!process.stdin.isTTY||!process.stdout.isTTY)throw Error('wechat_terminal_required');
+    const {default:QRCode}=await import('qrcode');
+    const {createInterface}=await import('node:readline/promises');
+    const terminal=createInterface({input:process.stdin,output:process.stdout});
+    const abort=new AbortController();
+    const stop=()=>abort.abort();
+    terminal.on('SIGINT',stop);
+    process.once('SIGINT',stop);process.once('SIGTERM',stop);
+    try{
+      const credential=await authorizeWechat({
+        showQr:async url=>{await write('请使用要绑定的微信扫码确认。');await write(await QRCode.toString(url,{type:'terminal',small:true}));},
+        verifyCode:signal=>terminal.question('请输入手机上显示的验证码：',{signal})
+      },fetch,abort.signal);
+      abort.signal.throwIfAborted();
+      await write('已绑定 '+bindWechat(runtime,credential)+'。启动 Homer 后，在该微信的 ClawBot 私聊发一条消息。');
+    }finally{
+      terminal.close();process.off('SIGINT',stop);process.off('SIGTERM',stop);
+    }
+  }finally{unlock();}
+}
 async function main() {
   if (args.includes("--help")) {
     await write(
-      'Homer M0\n用法：npm start -- [--config 路径] [--json] [--message "自然语言"] [--request-id ID]\n不传 --message 时逐行输入；/status 查看事实，/quit 停止任务并退出。\nJSON 模式每行输出一个完整事件。标准输入 EOF 会等当前工作交付后退出，Ctrl-C 请求安全停止。',
+      'Homer M0\n用法：npm start -- [--config 路径] [--json] [--message "自然语言"] [--request-id ID]\n微信：homer wechat bind|status|unbind <标识> [--config 路径]\n不传 --message 时逐行输入；/status 查看事实，/quit 停止任务并退出。\nJSON 模式每行输出一个完整事件。标准输入 EOF 会等当前工作交付后退出，Ctrl-C 请求安全停止。',
     );
     return;
   }
   const config = loadConfig(value("--config"));
+  if(args[0]==='wechat')return manageWechat(config.runtime);
   const json = args.includes("--json");
   const sink = async (message: Message) => (message.type === "main_start" || message.type === "main_terminal" || message.type === 'tool_progress' || (message.type === "delta" && !json)) ? undefined :
     write(
       json
         ? JSON.stringify(message)
-        : `${message.type === "reply" ? "荷马" : message.type === "delivery" ? "交付" : "状态"}：${message.text}`,
+        : `${message.type === "reply" ? "荷马" : "状态"}：${message.text}`,
     );
-  const app = new Homer(config, sink);
+  const telegram=telegramChannel(config.runtime);
+  const wechat=wechatChannel(config.runtime);
+  const dingtalk=dingtalkChannel(config.runtime);
+  const adapters=[...(telegram?[telegram]:[]),...(wechat?[wechat]:[]),...(dingtalk?[dingtalk]:[])];
+  const app = new Homer(config, sink, undefined, adapters);
   let stopping = false;
   const stop = () => {
     if (!stopping) {
@@ -53,6 +92,7 @@ async function main() {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {
+    for(const adapter of adapters)adapter.applyBindings(app.channels!);
     const restoring = !!app.store.meta("mainThread");
     await app.start();
     await sink({

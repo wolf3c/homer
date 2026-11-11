@@ -8,7 +8,7 @@ import {resolve,join} from 'node:path';
 const run=promisify(execFile),binary=process.env.HOMER_TEST_CODEX_BIN;
 assert.ok(binary,'HOMER_TEST_CODEX_BIN must explicitly name the fixed Codex 0.163.0 executable');
 const fixed=resolve(binary),root=resolve('.codex/scratch/native-protocol-suite');mkdirSync(root,{recursive:true});
-for(const name of ['native-mcp-config-acceptance','project-mcp-acceptance','project-mcp-runtime-acceptance','native-rpc-lifecycle-probe','native-system-skills-probe','native-skill-writes-probe','native-capabilities-acceptance','native-tool-acceptance']){
+for(const name of ['project-mcp-acceptance','project-mcp-runtime-acceptance','native-rpc-lifecycle-probe','native-system-skills-probe','native-plugin-acceptance','native-tool-acceptance']){
  test(name,{timeout:190000},async()=>{
   const home=mkdtempSync(join(root,name+'-'));mkdirSync(join(home,'tmp'));mkdirSync(join(home,'codex'));
   const env={PATH:process.env.PATH,HOME:home,CODEX_HOME:join(home,'codex'),TMPDIR:join(home,'tmp'),NO_PROXY:'127.0.0.1,localhost',CI:'1'};

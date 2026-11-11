@@ -19,10 +19,9 @@ test('reception host: continuous user reception with a real background task; com
   call(tool:string,args:unknown):Promise<any>{return this.handler({threadId:this.threadId,turnId:this.turnId!,callId:'synthetic-call-'+ ++sequence,tool,arguments:args});}
   async turn(text:string,options?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
    this.turnId='synthetic-turn-'+ ++sequence;options?.onStarted?.(this.turnId);
-   if(this.options.tools.some(t=>t.name==='read_material'))return new Promise(r=>releaseWorker=r);
+   if(this.options.role==='worker')return new Promise(r=>releaseWorker=r);
    if(text==='synthetic:delegate'){
-    const task=await this.call('task_create',{title:'Synthetic background',goal:'Synthetic background'});taskId=task.taskId;
-    await this.call('worker_open',{taskId,message:'Inspect synthetic background'});
+    taskId=(await this.call('worker_open',{message:'Inspect synthetic background'})).taskId;
    }else if(text.startsWith('[内部协作输入')){
     await new Promise<void>(r=>releaseInternal=r);
    }else turns.push(text);
@@ -32,30 +31,35 @@ test('reception host: continuous user reception with a real background task; com
   async close(){releaseWorker?.({status:'failed',text:'',errorCode:'synthetic_closed'});releaseInternal?.();return true;}
   async interrupt(){return this.close();}
  }
- const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},(options,handler)=>new Engine(options,handler));
+ const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},(options,handler)=>new Engine(options,handler));
  const seen:{internal:boolean;messageId:string|null}[]=[];app.onStateChange(()=>seen.push({internal:!!app['mainContext']?.event,messageId:app['mainContext']?.messageId??null}));
  try{
-  await app.start();await app.message('synthetic:delegate','synthetic-delegate');await until(()=>!!releaseWorker);
+  await app.start();
+  const fullInputReads=t.mock.method(app.inputs,'list');
+  await app.message('synthetic:delegate','synthetic-delegate');await until(()=>!!releaseWorker);
   for(let i=0;i<6;i++)app.submitMessage({requestId:'synthetic-user-'+i,text:'synthetic-question-'+i});
-  await until(()=>app.inputs.list().filter(item=>item.state==='completed').length===7);
+  const requestIds=Array.from({length:6},(_,i)=>'synthetic-user-'+i);
+  await until(()=>app.inputs.byRequestIds(requestIds).filter(item=>item.state==='completed').length===requestIds.length);
+  assert.equal(fullInputReads.mock.callCount(),0,'native completion does not load the full input queue');
   assert.deepEqual(turns,Array.from({length:6},(_,i)=>'synthetic-question-'+i));assert.equal(app.tasks.task(taskId).state,'open');
-  const bridge=homerWebBridge(app),before=app.store.db.prepare('SELECT total_changes() n').get()!.n;
+  const bridge=homerWebBridge(app);app.webHistoryPages();
+  const before=app.store.db.prepare('SELECT total_changes() n').get()!.n;
   const observedAt=Date.now(),clock=t.mock.method(Date,'now',()=>observedAt);
-  const a=await bridge.state(),b=await bridge.state();assert.deepEqual(a,b);clock.mock.restore();assert.equal(app.store.db.prepare('SELECT total_changes() n').get()!.n,before);
+  const a=await bridge.history!.state(),b=await bridge.history!.state();assert.deepEqual(a,b);clock.mock.restore();assert.equal(app.store.db.prepare('SELECT total_changes() n').get()!.n,before);
   const node=a.messages.map(message=>message.process).find(node=>node?.items.some(item=>item.kind==='workerEvent'&&item.event?.taskId===taskId))!;assert.ok(node);
   const delegated=node.items.find(item=>item.kind==='workerEvent')!;assert.equal(delegated.kind,'workerEvent');if(delegated.kind!=='workerEvent')throw Error('delegation_missing');
   assert.equal(delegated.event?.eventKind,'delegated');const original=app.processes.exact(node.id);
   releaseWorker!({status:'failed',text:'',errorCode:'synthetic_failure'});await until(()=>!!releaseInternal);
-  const busyAt=Date.now(),busyClock=t.mock.method(Date,'now',()=>busyAt);const busy=await bridge.state();assert.equal(busy.isRunning,false);assert.equal(busy.activeMessageId,null);assert.equal(busy.generation,null);
+  const busyAt=Date.now(),busyClock=t.mock.method(Date,'now',()=>busyAt);const busy=await bridge.history!.state();assert.equal(busy.isRunning,false);assert.equal(busy.activeMessageId,null);assert.equal(busy.generation,null);
   assert.ok(app['mainContext']?.event,'internal context remains live');
   assert.ok(seen.some(state=>state.internal&&state.messageId===null),'internal round start invalidates state without inventing a stop target');
   const internalChanges=app.store.db.prepare('SELECT total_changes() n').get()!.n;
-  assert.deepEqual(await bridge.state(),busy);busyClock.mock.restore();assert.equal(app.store.db.prepare('SELECT total_changes() n').get()!.n,internalChanges);
+  assert.deepEqual(await bridge.history!.state(),busy);busyClock.mock.restore();assert.equal(app.store.db.prepare('SELECT total_changes() n').get()!.n,internalChanges);
   await assert.rejects(app.stopMain('invented-internal-message'),/main_reply_not_active/);
   assert.deepEqual(app.processes.exact(node.id),original,'historical delegation stays frozen when the live Run fails');
   const run=app.tasks.runs(taskId)[0]!;assert.equal(run.errorCode,'synthetic_failure');assert.equal(run.status,'failed');assert.equal(app.tasks.task(taskId).outcome,null,'execution failure is not a reviewed business outcome');
   const beforeInternalEnd=seen.length;
-  releaseInternal!();await app.idle();assert.equal((await bridge.state()).isRunning,false);
+  releaseInternal!();await app.idle();assert.equal((await bridge.history!.state()).isRunning,false);
   assert.equal(app['mainContext'],undefined);assert.ok(seen.slice(beforeInternalEnd).some(state=>!state.internal&&state.messageId===null),'internal round end invalidates state');
   assert.ok(seen.some(state=>!state.internal&&state.messageId!==null),'user round retains its real reply target');
   const records=app.receptionTimings.read().records;
@@ -74,7 +78,7 @@ test('native completion timing precedes real engine background-terminal settleme
  await until(()=>!!release);assert.deepEqual(observed,['native_completed']);release();await work;assert.deepEqual(observed,['native_completed','background_refreshed','engine_settled']);
 });
 
-test('reception host: preparing first_launch interrupt stays idle until one readiness event drains the FIFO head',async()=>{
+test('reception host: preparing interrupt stays idle until one readiness event drains the FIFO head',async()=>{
  const parent=resolve('.codex/scratch/main-agent-reception-optimization');mkdirSync(parent,{recursive:true});const base=mkdtempSync(join(parent,'head-order-host-'));mkdirSync(join(base,'runtime'));
  const turns:string[]=[];let ready=false,claims=0;
  class Engine extends EventEmitter implements EngineLike{
@@ -84,7 +88,7 @@ test('reception host: preparing first_launch interrupt stays idle until one read
   async close(){return true;}
   async interrupt(){return this.close();}
  }
- const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},()=>new Engine());
+ const app=new Homer({workspace:join(base,'workspace'),runtime:join(base,'runtime'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},()=>new Engine());
  try{
   await app.start();await app.idle();
   app.inputs.preparation=input=>input.requestId==='synthetic-head-first'&&!ready?'preparing':'ready';
@@ -98,7 +102,7 @@ test('reception host: preparing first_launch interrupt stays idle until one read
   }
   app.inputs.claim=guardedClaim;
   const target={generationId:'synthetic-ended-generation',messageId:'synthetic-ended-reply'};
-  app.submitMessage({requestId:'synthetic-head-first',text:'Synthetic first interrupt'},{source:'first_launch',persist(){}},target);
+  app.submitMessage({requestId:'synthetic-head-first',text:'Synthetic first interrupt'},undefined,target);
   app.submitMessage({requestId:'synthetic-head-second',text:'Synthetic second interrupt'},undefined,target);
   await app.idle();assert.equal(claims,0);assert.deepEqual(turns,[]);
   assert.deepEqual(app.inputs.list().map(row=>row.state),['queued','queued']);

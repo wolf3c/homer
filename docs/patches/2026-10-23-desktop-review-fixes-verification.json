@@ -1,0 +1,262 @@
+{
+  "format": 1,
+  "date": "2026-10-23",
+  "reviewBaseGit": "03190d99090649df27a4928e304984f1666ae98e",
+  "newFreezeSelected": false,
+  "installed": false,
+  "productionModified": false,
+  "candidateSources": [
+    {
+      "path": "packaging/macos/HomerApplication.swift",
+      "sha256": "1f7921bee946c6dd4014be03d7dac3a525f259a0ed15612b05505d2eac6659f3"
+    },
+    {
+      "path": "scripts/desktop-profile.mjs",
+      "sha256": "9e5a35ed34e6b23d9fb70b66ad39d98adcfea027f7f700ee70c7bbdc39a3f1d8"
+    },
+    {
+      "path": "tests/desktop-profile.test.mjs",
+      "sha256": "4ba485b60d31f55df860a8e52cedec4f26bf0fc574d0839f4b3b5cfe937d9e99"
+    },
+    {
+      "path": "tests/desktop-adoption.test.mjs",
+      "sha256": "3bc7d0fa33af8eb3a8d8818960a87b71a9235b84b9eb27171780befbce0c0c76"
+    },
+    {
+      "path": "tests/macos-desktop-runtime.test.mjs",
+      "sha256": "2e43c60b0d83b176ffeacbf9c2232bd27b879ca14d7c7b4b51e2d8226efcf052"
+    },
+    {
+      "path": "tests/desktop-termination.test.mjs",
+      "sha256": "ced982da6501756cc70ada624e14ba0de0d1cbe54d7a4e4682d5cb4565d0bff3"
+    }
+  ],
+  "results": {
+    "unitPassed": 26,
+    "unitFailed": 0,
+    "nestedPathFaultCases": 60,
+    "ownerReleaseSymlinkCase": true,
+    "packagedRuntimePassed": 7,
+    "packagedRuntimeFailed": 0,
+    "sealedFirstAccessEscapeCases": 5,
+    "syntheticShutdownReceipts": [
+      {
+        "synthetic": true,
+        "adopted": false,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      },
+      {
+        "synthetic": true,
+        "adopted": false,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      },
+      {
+        "synthetic": true,
+        "adopted": false,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      },
+      {
+        "synthetic": true,
+        "adopted": false,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      },
+      {
+        "synthetic": true,
+        "adopted": false,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      },
+      {
+        "synthetic": true,
+        "adopted": true,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      },
+      {
+        "synthetic": true,
+        "adopted": true,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      },
+      {
+        "synthetic": true,
+        "adopted": false,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      },
+      {
+        "synthetic": true,
+        "adopted": false,
+        "stopped": [
+          {
+            "kind": "stopped"
+          }
+        ],
+        "runtimeExit": {
+          "code": 0,
+          "signal": null
+        },
+        "ownerPresent": false,
+        "runtimeLockPresent": false,
+        "gatewayLockPresent": false,
+        "leases": 0
+      }
+    ],
+    "nativeDelegateFinalTestPassed": 1,
+    "nativeDelegateUsesActualIPCParserAndLiveSyntheticProcess": true,
+    "nativeDelegateCases": [
+      "acknowledged + running + repeated quit: cancel",
+      "acknowledged + running + deadline: unconfirmed; process preserved",
+      "unobserved process exit: cancel",
+      "acknowledged + observed real exit0: allowed",
+      "exit0 without acknowledgement: cancel",
+      "nonzero exit with acknowledgement: cancel"
+    ],
+    "realModelTurns": 0,
+    "humanInputProfileRead": false
+  },
+  "package": {
+    "sourceHash": "1c22f4095a88f605b957388c93c507b6477a1e7b9cddc145d68f55531b0e6ffd",
+    "manifest": "26b98bf47087e7335a377c46ae70a0d744053011cdf93b6a9ee0e84e477ad8a0",
+    "schema": "c83bb6bd26960c4efbaf30c27825c642e96458685081716f12742f53ce97d2b7",
+    "toolsHash": "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056",
+    "uiHash": "6a055aa6cec649409da84baaf352efa58fa685ddc839c4cfb3aac68476aea2a5",
+    "zipSha256": "8d5135a0d2fec7df6526040ee79f81295ed0e02bb239b921eac0488987a129cd",
+    "zipBytes": 182803314,
+    "bundleBytes": 471990685,
+    "signature": "ad-hoc local candidate; not Developer ID or notarized"
+  },
+  "preparation": true,
+  "publishable": false,
+  "desktopInputHashesRechecked": 23,
+  "unchangedNativeCompatibilityEvidence": {
+    "source": "build-010 native-tools-resume.log, 1/1 fixed real protocol; zero model turns",
+    "matchingFiles": [
+      {
+        "path": "Contents/Resources/homer/dist/tools.js",
+        "sha256": "89be17b535b706538457cdf92398100fc3e0fbe50fb083ab43cc7a2785857739",
+        "identicalToBuild010": true
+      },
+      {
+        "path": "Contents/Resources/homer/dist/service.js",
+        "sha256": "d32ac6912b7f10e82260ba67ba82d8d59ead941a88dbca22a88ba95a13c05d53",
+        "identicalToBuild010": true
+      },
+      {
+        "path": "Contents/Resources/homer/dist/engine.js",
+        "sha256": "01d4b827e658ff0b04ff84d60d485a4d6336c39657a3494001fcc8d79276aada",
+        "identicalToBuild010": true
+      },
+      {
+        "path": "Contents/Resources/runtime/codex/vendor/aarch64-apple-darwin/bin/codex",
+        "sha256": "8813367285524ac798dd96d1b071aea30d58708c7226fd236cd275cf1cfdee31",
+        "identicalToBuild010": true
+      }
+    ]
+  },
+  "types": {
+    "backendAndUiBuildPassed": true,
+    "allTypesBaseline": 137,
+    "allTypesCandidate": 137,
+    "normalizedDiagnosticsIdentical": true,
+    "reusedReason": "No TypeScript or UI changes after build-010; affected product sources are Swift and desktop-profile.mjs"
+  },
+  "priorShaPackage": {
+    "gitSha": "03190d99090649df27a4928e304984f1666ae98e",
+    "installAllowed": false,
+    "reason": "P1/P2 rejected; build-011 is preparation only"
+  },
+  "nextGate": "Independent targeted review of exact committed correction plus final tools compatibility; then explicit new freeze, normal Git-archive build and installed-App verification"
+}

@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "c77dedcbdd0043d9bc4e16efeda76083c0abfc27",
+  "sourceType": "historical-mobile-web-ui-rendered-in-browser",
+  "nativeIpadVerified": false,
+  "uiModified": false,
+  "simulatorDownloaded": false,
+  "modelCalls": 0,
+  "syntheticContent": true,
+  "cssViewport": [
+    1032,
+    1376
+  ],
+  "deviceScaleFactor": 2,
+  "bundledUiSha256": "01466445f854c373f6980a61abb79540351eaeb41b0a9d86ea9be655b4a74585",
+  "files": [
+    {
+      "file": "02-follow-up.png",
+      "width": 2064,
+      "height": 2752,
+      "sha256": "a3cee355f0c301249d363820bbfb65c93a0684ea7d2a1b9a274986ca27c9fef7"
+    }
+  ],
+  "status": "archived layout reference; excluded from the iPhone-only first release; not a native iPad screenshot"
+}

@@ -1,0 +1,742 @@
+--- a/ui/DESIGN.md
++++ b/ui/DESIGN.md
+@@ -1,4 +1,8 @@
+ # Homer Web 视觉与交互
++
++## 2026-10-22 官方 Run Activity 过程区
++
++过程区完整采用固定官方 Run Activity 的布局、14px 字体、间距、chevron、列表细线和 200ms 展开呈现；样式限定在组件内并映射现有主题，不再使用 Homer 的整行横线或第二层工具折叠。Homer 仅提供有序公开事实、真实状态/计时与原有生命周期适配；同名任务、不同版本不合并，调用返回不标检查通过。运行默认展开、真实终态仅自动收起一次、用户重开及分页展开意图沿原合同保持。正式答复、有效待答、多文件成果和独立 Worker 仍在折叠区外。此条覆盖下文旧过程区布局描述，其余界面、权限、队列与成果合同保持。
+ 
+ ## 2026-10-20 用户消息气泡
+ 
+--- a/ui/process-nodes.tsx
++++ b/ui/process-nodes.tsx
+@@ -3,7 +3,7 @@
+ import type { WebState } from '../src/web-contract';
+ import { confirmedTerminal, fixedDuration, formatDuration, projectProcessItems, snapshotDuration, toolStatusText, workerPrimaryStatus, workerOccurrenceKey, type ProcessObservation, type ToolItem } from './process-presentation';
+ import './process-nodes.css';
+-import { RunActivity } from './vendor/assistant-ui/run-activity';
++import { RunActivity, type RunActivityEntry } from './vendor/assistant-ui/run-activity';
+ 
+ export function workerDescription(item: Extract<ProcessItem,{kind:'worker'}>) {
+   const state:Record<string,string>={queued:'排队中',working:'执行中',waiting:'等待协作事件',reviewing:'候选待验收',accepted:'已验收',settled:'已结案',recovery:'恢复待核实',cancelled:'已取消'};
+@@ -46,21 +46,6 @@
+ function toolFact(item:ToolItem,stale:boolean) {
+   return item.status==='running'&&stale?'上次调用中，结束未确认':toolStatusText[item.status];
+ }
+-function ToolRows({items,stale}:{items:ToolItem[];stale:boolean}) {
+-  const statuses = new Map<ToolItem['status'],number>();
+-  for (const item of items) statuses.set(item.status,(statuses.get(item.status)??0)+1);
+-  const first=items[0];
+-  const fileFact=(item:ToolItem)=>item.category==='fileChange'&&item.fileCount!==undefined?' · 本次涉及 '+item.fileCount+' 个文件':'';
+-  const returned=items.every(item=>item.status==='completed');
+-  if (items.length===1&&!returned) return <p className="process-tool-row" data-tool-id={first.id}>{first.label}<span className="process-fact" data-tool-status={first.status}>{toolFact(first,stale)}{fileFact(first)}</span></p>;
+-  const purposes=new Map<string,number>();for(const item of items)purposes.set(item.label,(purposes.get(item.label)??0)+1);
+-  return <details className="process-tool-group" data-tool-group={first.id}>
+-    <summary>{returned?<>{items.length} 次调用已返回<span className="process-tool-purposes">{[...purposes].map(([label,count])=>label+' '+count+' 次').join('、')}</span></>:<>{first.label} · {items.length} 次调用<span className="process-fact">{[...statuses].map(([status,count])=><span key={status} data-tool-status={status}>{count} 次{status==='running'&&stale?'上次调用中，结束未确认':toolStatusText[status]} </span>)}</span></>}</summary>
+-    <p className="process-record-note">本处理段的调用记录；返回不代表检查通过。</p>
+-    <ol>{items.map((item,index)=><li key={item.id} data-tool-id={item.id}><span>{index+1}. {item.label}</span><span className="process-fact" data-tool-status={item.status}>{toolFact(item,stale)}{fileFact(item)}</span></li>)}</ol>
+-  </details>;
+-}
+-
+ // The body remains the existing message slot, never read from raw node.final/items.
+ export function ProcessMessageContent({node,renderText,activityText,children}:{node?:ProcessNode;renderText:(text:string)=>ReactNode;activityText?:string;children:ReactNode}) {
+   const observation=useContext(ProcessObservationContext);
+@@ -117,13 +102,15 @@
+   const problems=Object.entries(counts).filter(([status])=>status!=='running'&&status!=='completed').map(([status,count])=>count+' 次'+toolStatusText[status as ToolItem['status']]).join(' · ');
+   const label=node.status==='unknown'?'待核实':terminal?node.sourceKind==='worker'?'Worked · 协作记录':'Worked':'Working';
+   const status=node.status==='failed'?'处理失败':node.status==='interrupted'?'已中断':node.status==='unknown'?'结束状态待核实':!terminal&&activityText?activityText:'';
+-  const entries=rows.map(row=>({id:row.id,kind:row.kind==='commentary'?'commentary' as const:'tool' as const,label:row.kind==='commentary'?activityText||'公开进展':row.items[0].label,content:<div className={'process-item process-'+row.kind}>{row.kind==='commentary'?renderText(row.text):<ToolRows items={row.items} stale={stale}/>}</div>}));
++  // Upstream owns the single disclosure/list. The adapter supplies public facts
++  // as ordered entries; returned calls are never interpreted as passed checks.
++  const entries=rows.flatMap<RunActivityEntry>(row=>row.kind==='commentary'?[{id:row.id,kind:'commentary' as const,label:activityText||'公开进展',content:<div className="process-item process-commentary">{renderText(row.text)}</div>}]:row.items.map(item=>({id:item.id,kind:'tool' as const,label:item.label,content:<p className="process-tool-row" data-tool-id={item.id}>{item.label}<span className="process-fact" data-tool-status={item.status}>{toolFact(item,stale)}{item.category==='fileChange'&&item.fileCount!==undefined?' · 本次涉及 '+item.fileCount+' 个文件':''}</span></p>})));
+   if(!entries.length)entries.push({id:node.id+':status',kind:'commentary',label:activityText??'',content:<p role={!loaded?'status':undefined}>{!loaded?error||'过程详情尚未加载…':terminal?'本次主处理已结束。':node.status==='unknown'?'本次处理是否结束尚待核实。':activityText||'当前处理阶段待确认'}</p>});
+   return <RunActivity className="process-node" status={node.status==='unknown'?'incomplete':node.status==='failed'?'error':node.status==='interrupted'?'cancelled':terminal?'complete':'running'}
+     statusLabel={label} durationLabel={<><ProcessDuration node={node} observation={observation}/>{status&&<span className="process-status"> · {status}</span>}{!active.open&&terminal&&node.status==='completed'&&!problems&&counts.completed?<span className="process-return-count"> · {counts.completed} 次调用已返回</span>:null}</>}
+     entries={entries} open={active.open} onOpenChange={open=>setDisclosure({...active,open})}
+     triggerProps={{ref:button,className:'process-toggle',title:node.status==='unknown'?'本次处理结束状态待核实，未自动重跑':terminal?'本次主 Agent 处理已结束，后台 Worker 状态独立显示':'本次主 Agent 正在处理'}}
+-    contentProps={{ref:content,className:'process-content',forceMount:true,hidden:!active.open,onFocusCapture:()=>{focusedWithin.current=true;},onBlurCapture:event=>{if(event.relatedTarget)focusedWithin.current=event.currentTarget.contains(event.relatedTarget as Node);}}}
++    contentProps={{ref:content,className:'process-content',onFocusCapture:()=>{focusedWithin.current=true;},onBlurCapture:event=>{if(event.relatedTarget)focusedWithin.current=event.currentTarget.contains(event.relatedTarget as Node);}}}
+     attention={problems?<p className="process-attention" role="status">{problems}</p>:undefined}
+     >{active.open&&<p className="process-record-note">{fixedDuration(node)===undefined&&snapshotDuration(node,observation)===undefined&&(node.timingState==='unknown'||node.status==='unknown'||!terminal?'没有完整耗时证据，未估算时间。':'耗时未记录。')}{node.sourceKind==='worker'?'内部协作处理记录；公开答复与正式成果保留在原位置。':''}</p>}</RunActivity>;
+ }
+--- a/ui/process-nodes.css
++++ b/ui/process-nodes.css
+@@ -1,16 +1,11 @@
+-.process-node{color:var(--muted);margin:0 0 12px;min-width:0;font-size:13px}
+-.process-tool-group summary:focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:4px}
++.process-node{margin:0 0 12px;min-width:0}
+ .process-duration{font-variant-numeric:tabular-nums}
+ .process-status,.process-clock-source{font-size:12px}
+-.process-item{margin:6px 0;overflow-wrap:anywhere;min-width:0}
+-.process-item .markdown{font-size:13px;color:var(--muted)}
+-.process-item p{margin:4px 0;line-height:1.65}
++.process-item{overflow-wrap:anywhere;min-width:0}
++.process-item .markdown{font-size:inherit;line-height:inherit;color:var(--ink)}
++.process-item p,.process-tool-row{margin:0;line-height:inherit}
+ .process-item pre{max-width:100%;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+-.process-fact{margin-left:10px;font-size:12px}
+-.process-tool-group summary{cursor:pointer;min-height:44px;align-content:center;line-height:1.65;overflow-wrap:anywhere}
+-.process-tool-group ol{list-style:none;margin:0 0 8px;padding:0 0 0 16px}
+-.process-tool-group li{padding:3px 0;line-height:1.65}
+-.process-tool-purposes{display:block;font-size:12px;color:var(--muted);line-height:1.6}
++.process-fact{margin-inline-start:10px;color:var(--muted)}
+ .process-record-note{font-size:12px;line-height:1.6;color:var(--muted);margin:4px 0 8px}
+ .process-attention{font-size:13px;line-height:1.65;color:var(--ink);margin:0 0 8px;padding-left:24px}
+ .process-workers{margin:4px 0 8px;color:var(--muted);font-size:13px;min-width:0}
+@@ -23,6 +18,6 @@
+ .process-worker-repeat{font-size:12px;grid-column:2;text-align:right}
+ .process-worker-facts,.process-worker-name,.process-worker-row>.process-record-note{padding-left:20px;margin:4px 0 8px;font-size:12px}
+ .assistant-message .message-actions button,.user-message .message-actions button{min-height:44px;min-width:44px}
+-@media(max-width:390px){.process-clock-source{display:block}.process-fact{margin-left:6px}}
++@media(max-width:390px){.process-clock-source{display:block}}
+ @media(prefers-reduced-motion:reduce){.process-node *,.process-workers *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+ .process-worker-stale{grid-column:1/-1;font-size:12px}
+--- a/ui/vendor/assistant-ui/run-activity.tsx
++++ b/ui/vendor/assistant-ui/run-activity.tsx
+@@ -1,13 +1,14 @@
+-// Adapted from assistant-ui commit 1f41f91643fdb56e5d8dbd14db65f742740738a1. MIT; see LICENSE and README.md.
++// assistant-ui 1f41f91643fdb56e5d8dbd14db65f742740738a1, MIT. Host imports and focus props only; see README.md.
+ "use client";
+ 
+ import type { ReactNode, ComponentPropsWithRef } from "react";
++import "./run-activity.css";
+ import {
+   CollapsibleRoot as Collapsible,
+   CollapsibleContent,
+   CollapsibleTrigger,
+ } from "./collapsible-root";
+-import "./run-activity.css";
++
+ 
+ export type RunActivityStatus =
+   | "running"
+@@ -37,7 +38,6 @@
+   /** Final-answer content remains outside the disclosure. */
+   children?: ReactNode;
+   className?: string;
+-  /** Homer owns lifecycle/focus; the primitive owns disclosure semantics. */
+   triggerProps?: ComponentPropsWithRef<typeof CollapsibleTrigger>;
+   contentProps?: ComponentPropsWithRef<typeof CollapsibleContent>;
+ };
+@@ -61,7 +61,7 @@
+       : undefined;
+ 
+   const summary = (
+-    <span className="run-activity-summary">
++    <span className="run-activity-summary text-start tabular-nums">
+       {statusLabel}
+       {durationLabel != null && <> {durationLabel}</>}
+     </span>
+@@ -71,20 +71,20 @@
+     <div
+       data-slot="run-activity"
+       data-status={status}
+-      className={["run-activity", className].filter(Boolean).join(" ")}
++      className={["run-activity flex min-w-0 flex-col gap-3", className].filter(Boolean).join(" ")}
+     >
+       {entries.length > 0 ? (
+         <Collapsible open={open} onOpenChange={onOpenChange}>
+           <CollapsibleTrigger
+             {...triggerProps}
+             aria-busy={status === "running"}
+-            className={["run-activity-trigger", triggerProps?.className].filter(Boolean).join(" ")}
++            className={["run-activity-trigger group/trigger text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex max-w-full items-center gap-1.5 rounded-md py-1 text-sm outline-none focus-visible:ring-[3px]", triggerProps?.className].filter(Boolean).join(" ")}
+           >
+-            <svg aria-hidden="true" className="run-activity-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
++            <svg aria-hidden="true" className="run-activity-chevron size-3.5 shrink-0 transition-transform duration-200 group-data-open/trigger:rotate-90 group-data-panel-open/trigger:rotate-90 motion-reduce:transition-none" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+             {summary}
+           </CollapsibleTrigger>
+-          <CollapsibleContent {...contentProps} className={["run-activity-content", contentProps?.className].filter(Boolean).join(" ")}>
+-            <ol className="run-activity-entries">
++          <CollapsibleContent {...contentProps} className={["run-activity-content peer", contentProps?.className].filter(Boolean).join(" ")}>
++            <ol className="run-activity-entries border-border ms-1.5 flex min-w-0 flex-col gap-3 border-s ps-3.5 pt-2 text-sm wrap-anywhere">
+               {entries.map((entry) => (
+                 <li key={entry.id} data-activity-kind={entry.kind}>
+                   {entry.content}
+@@ -94,13 +94,13 @@
+           </CollapsibleContent>
+           {!open && latestActivity && (
+             // The panel stays mounted during its exit transition.
+-            <p className="run-activity-latest">
++            <p className="run-activity-latest text-muted-foreground ps-5 text-sm wrap-anywhere peer-[:not([hidden])]:hidden">
+               {latestActivity}
+             </p>
+           )}
+         </Collapsible>
+       ) : (
+-        <p className="run-activity-empty">{summary}</p>
++        <p className="run-activity-empty text-muted-foreground py-1 text-sm">{summary}</p>
+       )}
+       {/* Announce the settled duration without announcing streaming timer ticks. */}
+       <span role="status" aria-atomic="true" className="sr-only">
+--- a/ui/vendor/assistant-ui/run-activity.css
++++ b/ui/vendor/assistant-ui/run-activity.css
+@@ -1,14 +1,20 @@
+-.run-activity{display:flex;flex-direction:column;min-width:0;gap:3px}
+-.run-activity-trigger{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:8px 0;border:0;border-radius:4px;font-size:13px;background:transparent;color:var(--muted);text-align:left}
+-.run-activity-trigger::after{content:"";height:1px;background:var(--line);flex:1 1 24px}
+-.run-activity-trigger:hover{color:var(--ink)}
+-.run-activity-trigger:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+-.run-activity-summary{font-variant-numeric:tabular-nums;min-width:0;overflow-wrap:anywhere}
+-.run-activity-chevron{flex:0 0 16px;transition:transform 150ms ease-out}
++/* Exact scoped equivalents of upstream RunActivity utilities and collapsePanel.
++   Color roles bind to the existing host theme; no global reset or Tailwind init. */
++.run-activity{--run-activity-muted:var(--muted);--run-activity-foreground:var(--ink);--run-activity-border:var(--line);--run-activity-ring:var(--focus);display:flex;min-width:0;flex-direction:column;gap:.75rem}
++.run-activity .run-activity-trigger{display:flex;max-width:100%;align-items:center;gap:.375rem;border:0;border-radius:.375rem;padding:.25rem 0;background:transparent;color:var(--run-activity-muted);font-size:.875rem;line-height:1.25rem;outline:none;transition:none}
++.run-activity .run-activity-trigger:hover{color:var(--run-activity-foreground)}
++.run-activity .run-activity-trigger:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--run-activity-ring) 50%,transparent)}
++.run-activity-summary{text-align:start;font-variant-numeric:tabular-nums;min-width:0;overflow-wrap:anywhere}
++.run-activity-chevron{width:.875rem;height:.875rem;flex-shrink:0;transition:transform .2s cubic-bezier(.4,0,.2,1)}
+ .run-activity-trigger[data-state="open"] .run-activity-chevron{transform:rotate(90deg)}
+-.run-activity-content{padding:0 0 2px 24px;min-width:0}
++.run-activity-content{min-width:0;overflow:hidden}
+ .run-activity-content[hidden]{display:none}
+-.run-activity-entries{list-style:none;margin:0;padding:0;min-width:0}
+-.run-activity-latest{padding-left:24px;overflow-wrap:anywhere;font-size:13px}
+-@media(max-width:390px){.run-activity-content,.run-activity-latest{padding-left:16px}}
+-@media(prefers-reduced-motion:reduce){.run-activity-chevron{transition:none}}
++.run-activity-content[data-state="open"]{animation:run-activity-expand .2s cubic-bezier(.32,.72,0,1)}
++.run-activity-content[data-state="closed"]{animation:run-activity-collapse .2s cubic-bezier(.32,.72,0,1)}
++.run-activity-entries{display:flex;min-width:0;flex-direction:column;gap:.75rem;border:0;border-inline-start:1px solid var(--run-activity-border);margin:0;margin-inline-start:.375rem;list-style:none;padding:0;padding-inline-start:.875rem;padding-top:.5rem;font-size:.875rem;line-height:1.25rem;overflow-wrap:anywhere}
++.run-activity-latest{color:var(--run-activity-muted);margin:0;padding-inline-start:1.25rem;font-size:.875rem;line-height:1.25rem;overflow-wrap:anywhere}
++.run-activity-content:not([hidden])~.run-activity-latest{display:none}
++.run-activity-empty{color:var(--run-activity-muted);margin:0;padding:.25rem 0;font-size:.875rem;line-height:1.25rem}
++@keyframes run-activity-expand{from{height:0}to{height:var(--radix-collapsible-content-height)}}
++@keyframes run-activity-collapse{from{height:var(--radix-collapsible-content-height)}to{height:0}}
++@media(prefers-reduced-motion:reduce){.run-activity-chevron{transition:none}.run-activity-content{animation:none!important}}
+--- a/ui/vendor/assistant-ui/README.md
++++ b/ui/vendor/assistant-ui/README.md
+@@ -11,15 +11,16 @@
+ | surfaces.tsx | 5d81fbb669e67ae20026cd30ed57efc51a5e3ee0f4f5d265e1723de75359b8fa | 4462 | Inspected; not vendored |
+ | repository LICENSE | eafb05991a572efa34097474b31fef45b14a8879ed1d1a8fd77de62e6fa7d275 | 1073 | Unmodified |
+ 
+-Local changes:
++Official presentation adopted on 2026-10-22:
+ 
+-- Preserve the standalone controlled component, entries, status, summary, live region, latest activity, and outside attention/final slots. Homer supplies original ordered entries and lifecycle; no tool execution or state classification is added here.
+-- Replace upstream Base UI collapsible neighbor with installed `@radix-ui/react-collapsible@1.2.1`. Replace Tailwind, `cn`, and `collapsePanel` with ordinary Homer CSS. No Base UI, Tailwind, surfaces package, theme initialization, or dependency upgrade.
+-- Replace the single lucide chevron with its equivalent inline SVG. No lucide dependency.
+-- Add typed trigger/content props for caller-owned focus refs and mounted-hidden content, `aria-busy`, and whitespace between the status and duration. CSS retains Homer spacing, focus treatment, narrow layouts, and reduced motion.
++- Preserve upstream markup, utility class strings, 12px root/list gaps, 14px type and chevron, 6px trigger gap/radius, 4px trigger padding, start-aligned tabular summary, 1px list rule with 6px start margin / 14px padding / 8px top padding, latest activity, status-only empty row and outside attention/final slots. No Homer header rule, full-width trigger, reduced font or second tool disclosure.
++- `run-activity.css` provides exact component-scoped equivalents of those utilities. Bind upstream muted-foreground/foreground/border/ring roles to existing Homer variables locally. No global theme, Tailwind reset, shadcn initialization or dependency/runtime update. Font family inherits the host, as upstream does.
++- Keep installed `@radix-ui/react-collapsible@1.2.1` instead of adding Base UI. Its measured height and Presence lifecycle implement upstream `collapsePanel`'s 200ms cubic-bezier(0.32,0.72,0,1) expansion/collapse using scoped keyframes; reduced motion is immediate. No caller forceMount/hidden override. The chevron's geometry is the upstream lucide ChevronRight rendered inline, without a package install.
++- Add typed trigger/content props solely for existing focus refs and title; keep official styles. Homer owns persisted run identity, original event order, actual timing, lifecycle and terminal-once collapse, including the existing running-default-open contract. These are adapter behavior, not capabilities of the official component. Streaming and explicit expansion remain stable.
++- Public commentary and each tool fact are supplied as ordinary entries. Original IDs/revisions/order and exact task/version/Run remain owned by existing projection. No raw tool arguments/results or model internals enter the UI. Returned calls are not passed checks. Independent Workers, important exceptions, valid pending decisions and formal answers/files retain their existing positions and contracts.
+ 
+ Direct dependencies also declared by this change: existing `@assistant-ui/core@0.3.30` (MIT, public `@assistant-ui/core/react` copy hook), existing `@radix-ui/react-focus-scope@1.3.1` (MIT, WorkOS; task dialog focus loop). No new installed packages or transitive lock entries. The copy hook uses a Homer writer for pending/error feedback and one synchronous clipboard initiation; it does not use the Copy primitive, whose installed API cannot supply this writer.
+ 
+ The installed Attachment primitives/adapter own the draft attachment collection. Homer retains the upload/discard transport, stable request/upload identity, confirmed asset metadata, batch validation, and running-send/IME form adapter. `unstable_Thumb` in this installed version has no image URL lifecycle; the small per-row object URL effect, keyed by the original attachment ID, supplies the existing local preview.
+ 
+-When updating, recheck the pinned source and license, Radix mounted-hidden semantics, original terminal/focus behavior, copy failures/user activation, and attachment send-clear versus explicit discard. Do not replace Homer business owners with a component runtime.
++When updating, recheck the pinned source and license, Radix Presence/animation semantics, original terminal/focus behavior, copy failures/user activation, and attachment send-clear versus explicit discard. Do not replace Homer business owners with a component runtime.
+--- a/tests/process-reading.test.mjs
++++ b/tests/process-reading.test.mjs
+@@ -15,11 +15,11 @@
+  const result=presentation.projectProcessItems([...tools,{...tools[0],revision:2},worker]);
+  assert.equal(result.rows.length,1);assert.deepEqual(result.rows[0].items.map(t=>t.id),tools.map(t=>t.id));assert.equal(result.rows[0].items[0].revision,2);assert.equal(result.workers.length,1);
+ });
+-test('ordinary returns stay compact after opening the process; every original call remains readable on demand',async()=>withDom(async d=>{
++test('official single disclosure exposes every original returned call without a second Homer tool disclosure',async()=>withDom(async d=>{
+  await d.render(view());await d.click(d.find(n=>n.tagName==='BUTTON'));
+- const visible=visibleText(d.container);assert.match(visible,/8 次调用已返回/);assert.doesNotMatch(visible,/执行已结束.*已验收.*部分完成/);
++ const visible=visibleText(d.container);assert.equal((visible.match(/调用已返回/g)||[]).length,8);assert.doesNotMatch(visible,/执行已结束.*已验收.*部分完成/);
+  assert.equal(d.all().filter(n=>'data-tool-id' in n.attrs).length,8);assert.deepEqual(d.all().filter(n=>'data-tool-id' in n.attrs).map(n=>n.attrs['data-tool-id']),tools.map(t=>t.id));
+- const group=d.find(n=>n.tagName==='DETAILS'&&'data-tool-group' in n.attrs);assert.ok(group);assert.match(group.textContent,/检查资料.*核对成果/);assert.doesNotMatch(group.childNodes[0].textContent,/检查通过|同一原生轮次|同一轮次/);assert.match(group.textContent,/返回不代表检查通过/);
++ assert.equal(d.all().filter(n=>n.tagName==='DETAILS'&&'data-tool-group' in n.attrs).length,0);assert.doesNotMatch(visible,/检查通过|同一原生轮次|同一轮次/);
+ }));
+ test('Worker default shows a truthful primary outcome; the current snapshot and evidence are available in details',async()=>withDom(async d=>{
+  await d.render(view());const row=d.find(n=>n.attrs['aria-label']==='关联 Worker 状态');assert.equal(row.tagName,'DETAILS');assert.match(visibleText(row),/核对材料与交付范围.*部分完成/);assert.doesNotMatch(visibleText(row),/已结案|执行已结束|已验收/);assert.match(row.textContent,/当前任务快照/);assert.match(row.textContent,/已验收/);
+--- a/tests/process-presentation.test.mjs
++++ b/tests/process-presentation.test.mjs
+@@ -9,25 +9,25 @@
+ const tool=(id,patch={})=>({id,seq:1,revision:1,kind:'tool',category:'readFiles',turnId:'turn-1',threadId:node.threadId,label:'读取文件',status:'running',invocationCount:1,...patch});
+ const commentary=(id,text='公开说明')=>({id,seq:1,revision:1,kind:'commentary',phase:'commentary',text});
+ const worker={id:'worker-synthetic',seq:5,revision:1,kind:'worker',taskId:'task-private',version:1,taskRevision:2,runId:'run-synthetic',runRevision:1,runStatus:'running',resultState:null,epoch:0,state:'working',controlState:'normal',outcome:null,phase:'executing',stopRequested:false,label:'后台研究'};
+-const view=(n=node,o=observation)=>h(ProcessNodeView,{node:n,observation:o,renderText:text=>h('p',null,text)});
++const view=(n=node,o=observation)=>h(ProcessNodeView,{key:JSON.stringify([n.threadId,n.id]),node:n,observation:o,renderText:text=>h('p',null,text)});
+ const button=d=>d.find(n=>n.tagName==='BUTTON');
+ const groups=d=>d.all().filter(n=>'data-tool-group' in n.attrs);
+ const rows=d=>d.all().filter(n=>'data-tool-id' in n.attrs);
+ const done=n=>({...n,state:'worked',status:'completed',timingState:'terminal',durationMs:32000,endedAtMs:33000});
+ 
+-test('adjacent categories/actual turns/host purposes group; commentary, Worker and legacy fields break groups',async()=>withDom(async d=>{
++test('official entries retain all original calls across categories, turns and commentary; independent Workers remain outside',async()=>withDom(async d=>{
+  const items=[commentary('a','A'),tool('r1'),tool('r2'),commentary('b','B'),tool('r3'),worker,tool('r4'),tool('r5',{turnId:'turn-2'}),tool('r6',{turnId:'turn-2'}),tool('old1',{category:undefined}),tool('old2',{category:undefined}),tool('old3',{turnId:undefined}),tool('old4',{turnId:undefined}),tool('h1',{category:'host',label:'检查资料'}),tool('h2',{category:'host',label:'检查资料'}),tool('h3',{category:'host',label:'核对成果'})];
+  await d.render(view({...node,items}));
+- assert.deepEqual(groups(d).map(g=>g.attrs['data-tool-group']),['r1','r5','h1']);
+- assert.equal(rows(d).length,13);assert.match(groups(d)[0].textContent,/2 次调用/);
++ assert.equal(groups(d).length,0);
++ assert.deepEqual(rows(d).map(r=>r.attrs['data-tool-id']),items.filter(i=>i.kind==='tool').map(i=>i.id));
+  assert.ok(d.container.textContent.indexOf('A')<d.container.textContent.indexOf('读取文件'));assert.ok(d.container.textContent.indexOf('B')>d.container.textContent.indexOf('读取文件'));
+  assert.equal(d.all().some(n=>n.attrs['aria-label']==='关联 Worker 状态'),false);
+ }));
+ 
+ test('completion duplicate updates first identity, never counts start/end twice; failures remain explicit',async()=>withDom(async d=>{
+- const r1=tool('r1'),r2=tool('r2');await d.render(view({...node,items:[r1,r2]}));const group=groups(d)[0];
++ const r1=tool('r1'),r2=tool('r2');await d.render(view({...node,items:[r1,r2]}));const first=rows(d)[0];
+  await d.render(view({...node,items:[r1,r2,{...r1,revision:2,status:'failed'},{...r2,revision:2,status:'completed'}]}));
+- assert.equal(groups(d)[0],group);assert.equal(rows(d).length,2);assert.match(group.textContent,/2 次调用/);assert.match(group.textContent,/1 次调用失败/);assert.match(group.textContent,/1 次调用已返回/);
++ assert.equal(rows(d)[0],first);assert.equal(rows(d).length,2);assert.match(rows(d)[0].textContent,/调用失败/);assert.match(rows(d)[1].textContent,/调用已返回/);
+  await d.render(view({...done(node),items:[r1,r2,{...r1,revision:2,status:'failed'},{...r2,revision:2,status:'completed'}]}));
+  assert.match(visibleText(d.container),/1 次调用失败/);assert.equal(button(d).attrs['aria-expanded'],'false');
+ }));
+@@ -35,8 +35,8 @@
+ test('all seven tool statuses stay distinct, file counts are per call and not cross-call unique files',async()=>withDom(async d=>{
+  const states=['running','completed','failed','declined','interrupted','unknown','blocked'];
+  await d.render(view({...node,items:states.map((status,i)=>tool('s'+i,{status,category:'fileChange',label:'修改文件',fileCount:2}))}));
+- const group=groups(d)[0];for(const label of ['调用中','调用已返回','调用失败','调用被拒绝','调用已中断','结束状态待核实','调用受阻，待核实'])assert.ok(group.textContent.includes(label),label);
+- assert.match(group.textContent,/7 次调用/);assert.equal(group.textContent.match(/本次涉及 2 个文件/g).length,7);assert.doesNotMatch(group.textContent,/14 个文件|已完成 7/);
++ const rendered=rows(d).map(r=>r.textContent).join('');for(const label of ['调用中','调用已返回','调用失败','调用被拒绝','调用已中断','结束状态待核实','调用受阻，待核实'])assert.ok(rendered.includes(label),label);
++ assert.equal(rows(d).length,7);assert.equal(rendered.match(/本次涉及 2 个文件/g).length,7);assert.doesNotMatch(rendered,/14 个文件|已完成 7/);
+  await d.render(view({...node,items:[tool('single',{category:'fileChange',label:'修改文件',status:'declined',fileCount:2})]}));assert.match(rows(d)[0].textContent,/调用被拒绝.*本次涉及 2 个文件/);
+ }));
+ 
+@@ -49,9 +49,10 @@
+  await d.remount();await d.render(view(done(node)));assert.equal(button(d).attrs['aria-expanded'],'true');
+ }));
+ 
+-test('new node and thread isolate disclosure; terminal collapse returns focused descendant to stable toggle',async()=>withDom(async d=>{
+- await d.render(view({...node,items:[tool('r1'),tool('r2')]}));const toggle=button(d),summary=d.find(n=>n.tagName==='SUMMARY');summary.focus();assert.equal(d.doc.activeElement,summary);
+- await d.render(view(done({...node,items:[tool('r1'),tool('r2')]})));assert.equal(d.doc.activeElement,toggle);assert.equal(toggle.attrs['aria-expanded'],'false');
++// Real focus removal is checked in web-working-combination.browser.mjs. This
++// synthetic DOM does not move activeElement when React removes its subtree.
++test('new node and thread isolate disclosure using the production caller key',async()=>withDom(async d=>{
++ await d.render(view(node));await d.click(button(d));assert.equal(button(d).attrs['aria-expanded'],'false');
+  await d.render(view({...node,id:'new-node'}));assert.equal(button(d).attrs['aria-expanded'],'true');await d.click(button(d));
+  await d.render(view({...node,threadId:'new-thread'}));assert.equal(button(d).attrs['aria-expanded'],'true');
+ }));
+--- a/tests/process-reading.browser.mjs
++++ b/tests/process-reading.browser.mjs
+@@ -16,15 +16,14 @@
+   await page.screenshot('reading-summary-'+width+'.png');
+   assert.ok(before.headers.every(x=>!x.includes('耗时')),'missing clocks must not fill headers');
+   assert.deepEqual(before.names,['核对材料与交付范围','核对材料与交付范围']);
+-  assert.equal(await page.evaluate(()=>document.querySelectorAll('#message-node-88 [data-tool-group]').length),1);
+-  assert.ok(await page.evaluate(()=>document.querySelector('#message-node-88 .process-tool-group summary').textContent.includes('8 次调用已返回')));
+-  assert.equal(await page.evaluate(()=>document.querySelector('#message-node-88 [data-tool-id]')?.checkVisibility()),false);
+-  assert.ok(await page.evaluate(()=>document.querySelector('#message-node-89 .process-worker-repeat')?.textContent.includes('相同快照')));mark('reference: neutral eight-call summary, honest names/outcome, repeated exact snapshot compact, no clock in title');
+-  await press(page,'#message-node-88 .process-tool-group summary');
++  assert.equal(await page.evaluate(()=>document.querySelectorAll('#message-node-88 [data-tool-group]').length),0);
++  const style=await page.evaluate(()=>{const root=document.querySelector('#message-node-88 [data-slot=run-activity]'),trigger=root.querySelector('.process-toggle'),list=root.querySelector('ol'),icon=trigger.querySelector('svg'),a=getComputedStyle(root),b=getComputedStyle(trigger),c=getComputedStyle(list),d=getComputedStyle(icon);return {gap:a.gap,font:b.fontSize,lineHeight:b.lineHeight,triggerGap:b.gap,padding:b.paddingTop,radius:b.borderRadius,width:d.width,height:d.height,listGap:c.gap,listBorder:c.borderInlineStartWidth,listMargin:c.marginInlineStart,listPadding:c.paddingInlineStart,listTop:c.paddingTop,listFont:c.fontSize,after:getComputedStyle(trigger,'::after').content};});
++  assert.deepEqual(style,{gap:'12px',font:'14px',lineHeight:'20px',triggerGap:'6px',padding:'4px',radius:'6px',width:'14px',height:'14px',listGap:'12px',listBorder:'1px',listMargin:'6px',listPadding:'14px',listTop:'8px',listFont:'14px',after:'none'});mark('official pinned style metrics: 12px rhythm, 14px type/icon, 6px trigger gap/radius, 1px list rule, no Homer header rule');
++  await wait(()=>[...document.querySelectorAll('#message-node-88 [data-tool-id]')].every(e=>e.checkVisibility()));
+   const calls=await page.evaluate(()=>[...document.querySelectorAll('#message-node-88 [data-tool-id]')].map(e=>({id:e.dataset.toolId,label:e.textContent,visible:e.checkVisibility()})));
+   assert.deepEqual(calls.map(x=>x.id),f.tools.map(x=>x.id));assert.ok(calls.every(x=>x.visible));assert.ok(calls[5].label.includes('核对成果'));
+   await press(page,'#message-node-88 .process-worker-row summary');assert.ok(await page.evaluate(()=>document.querySelector('#message-node-88 .process-worker-row').textContent.includes('当前任务快照')));await page.screenshot('reading-all-facts-'+width+'.png');mark('expanded reading: all eight original calls in order and current Worker evidence remain accessible');
+-  await page.evaluate(()=>document.querySelector('#message-node-88 .process-toggle').focus());await key(page,'Tab');assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-tool-group summary')));await key(page,'Tab');assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-worker-row summary')));await key(page,'Tab');assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-89 .process-toggle')));await page.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:8});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:8});assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-worker-row summary')));await key(page,'Escape');assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-worker-row summary')&&document.querySelector('#message-node-88 .process-worker-row').open));mark('Tab and Shift+Tab follow document order through native disclosures; Escape preserves native nonmodal focus');
++  await page.evaluate(()=>document.querySelector('#message-node-88 .process-toggle').focus());await key(page,'Tab');assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-worker-row summary')));await key(page,'Tab');assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-89 .process-toggle')));await page.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:8});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:8});assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-worker-row summary')));await key(page,'Escape');assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-worker-row summary')&&document.querySelector('#message-node-88 .process-worker-row').open));mark('Tab and Shift+Tab follow document order through official RunActivity and independent Worker disclosures; Escape preserves native nonmodal focus');
+   await press(page,'#message-node-88 .process-toggle');assert.ok(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-toggle')));await press(page,'#message-node-88 .process-toggle');
+   await page.command('Page.reload');await wait(()=>document.querySelector('#message-node-88 .process-toggle')?.getAttribute('aria-expanded')==='true');mark('native keyboard and refresh preserve explicit process expansion');
+   f.setMode('same-name');await wait(()=>!document.querySelector('#message-node-89 .process-worker-repeat'));assert.equal(await page.evaluate(()=>document.querySelectorAll('#message-node-88 .process-worker-row,#message-node-89 .process-worker-row').length),2);mark('same displayed name, distinct task identities: both retained without repeat label');
+--- a/tests/web-working-combination.browser.mjs
++++ b/tests/web-working-combination.browser.mjs
+@@ -3,13 +3,15 @@
+ const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/web-logo-release/browser-frozen-working'),pause=ms=>new Promise(r=>setTimeout(r,ms));mkdirSync(destination,{recursive:true});const chrome=await isolatedChrome(destination),rows=[];
+ try{for(const width of [1440,390,320]){const f=await fixture(260,'after'),page=await chrome.page(f.server.url,width);try{
+  let clock=6000,holdReconnect=false,releaseReconnect;const main=f.processes.exact('node-258'),background=f.processes.exact('node-259');main.state='working';main.status='running';delete main.endEventId;Object.assign(main,{startedAtMs:1000,timingSource:'hostObserved',timingState:'running'});main.items=['running','completed','failed','declined','interrupted','unknown','blocked'].map((status,n)=>({id:'tool-'+n,kind:'tool',seq:n+1,revision:1,category:'readFiles',threadId:'synthetic-history',turnId:'turn-258',label:'读取文件',status,invocationCount:1}));
++ main.items.push({id:'public-link',kind:'commentary',seq:8,revision:1,phase:'commentary',text:'[公开资料](https://example.invalid/)'});
+  f.store.startRequest('request-259','synthetic-frozen-working');const roots=Array.from({length:3},(_,n)=>f.tasks.createRoot({agentId:f.store.meta('mainAgentId'),sourceRequestId:'request-259'},{operationId:'synthetic-frozen-worker-'+n,title:'合成后台 '+n,executorKind:'worker',contract:{goal:'Synthetic UI observation',inputs:[],resultKind:'markdown',acceptance:{criteria:[]}},authority:{sourceRequestId:'request-259',description:'Synthetic only',materials:[],resultIds:[],collaborateTaskIds:[],maxActiveMs:10000}}));background.items=['running','unknown','stopping'].map((mode,n)=>({id:'worker:'+n,kind:'worker',seq:n+1,revision:1,taskId:roots[n].taskId,version:1,taskRevision:1,runId:roots[n].runId,runRevision:1,runStatus:mode==='unknown'?'unknown':'running',resultState:null,epoch:0,state:mode==='unknown'?'recovery':'working',controlState:mode==='stopping'?'stopping':'normal',outcome:null,phase:mode==='unknown'?'uncertain':'executing',stopRequested:mode==='stopping'}));Object.assign(background,{startedAtMs:1000,endedAtMs:33000,durationMs:32000,timingSource:'native',timingState:'terminal'});background.deliveryFinal={id:'removed-summary',text:'REMOVED_ARCHIVE_SENTINEL'};
+  const save=n=>f.store.setMeta('publicMainNode:v1:'+n.id,JSON.stringify(n));save(main);save(background);const state=f.bridge.history.state;f.bridge.history.state=async()=>{const current={observedAtMs:clock,isRunning:main.state==='working',activeMessageId:main.state==='working'?main.messageId:null,generation:{generationId:'synthetic-current',turnId:'turn-258',messageId:main.messageId,threadId:main.threadId},mainActivity:{source:'user',stage:main.status==='unknown'?'unknown':'native',processId:main.id,turnId:'turn-258'}};if(main.state!=='working')current.generation=null;const snapshot=await state();if(holdReconnect)await new Promise(done=>releaseReconnect=done);return {...snapshot,...current};};
+  const originalUntil=page.until;page.until=async check=>{try{return await originalUntil(check,10000);}catch(e){console.log(JSON.stringify({check:String(check),header:await page.evaluate(()=>({text:document.querySelector('#message-node-258 .process-toggle')?.textContent,open:document.querySelector('#message-node-258 .process-toggle')?.getAttribute('aria-expanded'),detail:document.querySelector('#message-node-258 .process-content')?.textContent}))}));throw e;}};await page.navigate();await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.textContent.includes('for 5s'));assert.equal(await page.evaluate(()=>document.querySelector('#message-node-259 .process-toggle').getAttribute('aria-expanded')),'false');assert.equal(await page.evaluate(()=>[...document.querySelectorAll('#message-node-259 .process-worker-row')].filter(e=>e.getBoundingClientRect().height>0).length),3);assert.ok((await page.evaluate(()=>document.querySelector('#message-node-259 .process-workers').textContent)).includes('执行状态待核实'));assert.equal(await page.evaluate(()=>document.querySelector('#message-node-259 .process-content').contains(document.querySelector('#message-node-259 .process-worker-row'))),false);
+- const toolGroup=await page.evaluate(()=>({count:document.querySelectorAll('#message-node-258 [data-tool-group]').length,text:document.querySelector('#message-node-258 [data-tool-group]').textContent}));assert.equal(toolGroup.count,1);for(const label of ['调用中','调用已返回','调用失败','调用被拒绝','调用已中断','结束状态待核实','调用受阻，待核实'])assert.ok(toolGroup.text.includes(label),label);
++ const toolRows=await page.evaluate(()=>({count:document.querySelectorAll('#message-node-258 [data-tool-id]').length,text:document.querySelector('#message-node-258 .process-content').textContent}));assert.equal(toolRows.count,7);for(const label of ['调用中','调用已返回','调用失败','调用被拒绝','调用已中断','结束状态待核实','调用受阻，待核实'])assert.ok(toolRows.text.includes(label),label);
++
+  holdReconnect=true;f.server.disconnectClients();await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.textContent.includes('上次快照'));assert.ok((await page.evaluate(()=>document.querySelector('#message-node-258 .process-toggle').textContent)).includes('for 5s'));await page.until('true');for(let n=0;n<100&&!releaseReconnect;n++)await pause(20);assert.ok(releaseReconnect);holdReconnect=false;releaseReconnect();clock=10000;f.server.publish();await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.textContent.includes('for 9s'));main.status='unknown';main.timingState='unknown';main.revision++;clock=99000;save(main);f.server.publish();await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.textContent.replace(/\s+/g,'').includes('待核实for9s'));assert.ok((await page.evaluate(()=>document.querySelector('#message-node-258 .process-toggle').textContent)).includes('上次快照'));main.status='running';main.timingState='running';main.revision++;clock=12000;save(main);f.server.publish();await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.textContent.includes('for 11s'));
+- await page.evaluate(()=>document.querySelector('#message-node-258 summary').focus());console.log(JSON.stringify({focusBefore:await page.evaluate(()=>({tag:document.activeElement.tagName,inside:document.querySelector('#message-node-258 .process-content').contains(document.activeElement)}))}));Object.assign(main,{state:'worked',status:'completed',endedAtMs:33000,durationMs:32000,timingSource:'native',timingState:'terminal',revision:main.revision+1});save(main);f.server.publish();await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.getAttribute('aria-expanded')==='false');console.log(JSON.stringify({focusAfter:await page.evaluate(()=>({tag:document.activeElement.tagName,cls:document.activeElement.className,outer:document.activeElement.outerHTML.slice(0,200)}))}));assert.equal(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-258 .process-toggle')),true);assert.ok((await page.evaluate(()=>document.querySelector('#message-node-258 .process-toggle').textContent)).replace(/\s+/g,'').includes('Workedfor32s'));
+- await page.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await page.until(()=>document.querySelector('#message-node-258 .process-toggle').getAttribute('aria-expanded')==='true'&&document.querySelector('#message-node-258 [data-tool-group]')?.textContent.includes('7 次调用'));clock=1999999;background.revision++;save(background);f.server.publish();await pause(100);assert.ok((await page.evaluate(()=>document.querySelector('#message-node-258 .process-toggle').textContent)).replace(/\s+/g,'').includes('Workedfor32s'));assert.equal(await page.evaluate(()=>document.querySelector('#message-node-258 .process-toggle').getAttribute('aria-expanded')),'true');
+- let unmounted=false;for(let n=0;n<5;n++){await page.evaluate(()=>{document.querySelector('.thread-viewport').scrollTop=0;const earlier=[...document.querySelectorAll('button')].find(b=>b.textContent==='加载更早消息');earlier.focus();earlier.click();});await page.until(()=>![...document.querySelectorAll('button')].some(b=>b.textContent==='正在读取…'));await pause(80);if(!await page.evaluate(()=>!!document.querySelector('#message-node-258'))){unmounted=true;break;}}assert.equal(unmounted,true);await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='回到最新消息').click());await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.getAttribute('aria-expanded')==='true'&&document.querySelector('#message-node-258 [data-tool-group]')?.textContent.includes('7 次调用'));
++ await page.evaluate(()=>document.querySelector('#message-node-258 .process-content a').focus());console.log(JSON.stringify({focusBefore:await page.evaluate(()=>({tag:document.activeElement.tagName,inside:document.querySelector('#message-node-258 .process-content').contains(document.activeElement)}))}));Object.assign(main,{state:'worked',status:'completed',endedAtMs:33000,durationMs:32000,timingSource:'native',timingState:'terminal',revision:main.revision+1});save(main);f.server.publish();await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.getAttribute('aria-expanded')==='false');console.log(JSON.stringify({focusAfter:await page.evaluate(()=>({tag:document.activeElement.tagName,cls:document.activeElement.className,outer:document.activeElement.outerHTML.slice(0,200)}))}));assert.equal(await page.evaluate(()=>document.activeElement===document.querySelector('#message-node-258 .process-toggle')),true);assert.ok((await page.evaluate(()=>document.querySelector('#message-node-258 .process-toggle').textContent)).replace(/\s+/g,'').includes('Workedfor32s'));
++ await page.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await page.until(()=>document.querySelector('#message-node-258 .process-toggle').getAttribute('aria-expanded')==='true'&&document.querySelectorAll('#message-node-258 [data-tool-id]').length===7);clock=1999999;background.revision++;save(background);f.server.publish();await pause(100);assert.ok((await page.evaluate(()=>document.querySelector('#message-node-258 .process-toggle').textContent)).replace(/\s+/g,'').includes('Workedfor32s'));assert.equal(await page.evaluate(()=>document.querySelector('#message-node-258 .process-toggle').getAttribute('aria-expanded')),'true');
++ let unmounted=false;for(let n=0;n<5;n++){await page.evaluate(()=>{document.querySelector('.thread-viewport').scrollTop=0;const earlier=[...document.querySelectorAll('button')].find(b=>b.textContent==='加载更早消息');earlier.focus();earlier.click();});await page.until(()=>![...document.querySelectorAll('button')].some(b=>b.textContent==='正在读取…'));await pause(80);if(!await page.evaluate(()=>!!document.querySelector('#message-node-258'))){unmounted=true;break;}}assert.equal(unmounted,true);await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='回到最新消息').click());await page.until(()=>document.querySelector('#message-node-258 .process-toggle')?.getAttribute('aria-expanded')==='true'&&document.querySelectorAll('#message-node-258 [data-tool-id]').length===7);
+  assert.equal(await page.evaluate(()=>document.body.textContent.includes('REMOVED_ARCHIVE_SENTINEL')||document.body.textContent.includes('旧交付汇总存档')),false);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot('frozen-working-keyboard-pagination-'+width+'.png');assert.deepEqual(page.errors,[]);assert.equal(f.fakeEngine.invocations,0);assert.equal(f.submitted.length,0);rows.push({width,defaultWorkedWorkersOutside:3,sevenToolStates:true,unknownTimerFrozen:true,authorityResumed:true,realSseDisconnectReconnect:true,terminalTimerFrozen:true,keyboardReopen:true,terminalFocusRestored:true,paginationRemountReopen:true,noArchive:true,overflow:false,engineCalls:0,submits:0});
+  }finally{await page.close();await f.close();}}}finally{await chrome.close();writeFileSync(join(destination,'frozen-working-browser.json'),JSON.stringify({browser:chrome.version,syntheticOnly:true,rows},null,2)+'\n');}console.log(JSON.stringify({pass:true,widths:rows.map(r=>r.width)}));
+--- /dev/null
++++ b/tests/run-activity-style.browser.mjs
+@@ -0,0 +1,11 @@
++// Focused rendering/animation contract for the pinned official component; synthetic owners only.
++import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {readingFixture} from './process-reading-browser-fixture.mjs';import {isolatedChrome} from './web-history-browser-cdp.mjs';
++const dest=path.resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/run-activity/browser-style');fs.mkdirSync(dest,{recursive:true});const browser=await isolatedChrome(dest),results=[];
++try{for(const width of [1440,390,320]){const f=await readingFixture(),p=await browser.page(f.server.url,width);try{await p.navigate();await p.until(()=>!!document.querySelector('#message-node-88 .process-toggle'));const button='#message-node-88 .process-toggle',panel='#message-node-88 .process-content';
++await p.evaluate(()=>{document.querySelector('.thread-viewport').scrollTop=document.querySelector('.thread-viewport').scrollHeight;document.querySelector('#message-node-88 .process-toggle').focus();});await p.command('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32,text:' '});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32});
++await p.until(()=>document.querySelectorAll('#message-node-88 [data-tool-id]').length===8);await p.until(()=>document.querySelector('#message-node-88 .process-content').getAnimations().length===0);
++const style=await p.evaluate(()=>{const root=document.querySelector('#message-node-88 [data-slot=run-activity]'),b=root.querySelector('button'),c=root.querySelector('.process-content'),o=root.querySelector('ol');return {rootGap:getComputedStyle(root).gap,font:getComputedStyle(b).fontSize,buttonWidth:b.getBoundingClientRect().width,rootWidth:root.getBoundingClientRect().width,iconTransition:getComputedStyle(b.querySelector('svg')).transitionDuration,iconEase:getComputedStyle(b.querySelector('svg')).transitionTimingFunction,panelDuration:getComputedStyle(c).animationDuration,panelEase:getComputedStyle(c).animationTimingFunction,listGap:getComputedStyle(o).gap,listBorder:getComputedStyle(o).borderInlineStartWidth,focus:getComputedStyle(b).boxShadow,active:document.activeElement===b,ids:[...root.querySelectorAll('[data-tool-id]')].map(e=>e.dataset.toolId)};});
++assert.equal(style.rootGap,'12px');assert.equal(style.font,'14px');assert.equal(style.iconTransition,'0.2s');assert.equal(style.iconEase,'cubic-bezier(0.4, 0, 0.2, 1)');assert.equal(style.panelDuration,'0.2s');assert.equal(style.panelEase,'cubic-bezier(0.32, 0.72, 0, 1)');assert.equal(style.listGap,'12px');assert.equal(style.listBorder,'1px');assert.ok(style.buttonWidth<style.rootWidth);assert.equal(style.active,true);assert.notEqual(style.focus,'none');assert.deepEqual(style.ids,f.tools.map(t=>t.id));await p.screenshot('official-style-expanded-focus-'+width+'.png');
++await p.evaluate(()=>document.querySelector('#message-node-88 .process-toggle').click());await p.until(()=>document.querySelector('#message-node-88 .process-content').hidden);assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-toggle')),true);
++await p.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});await p.evaluate(()=>document.querySelector('#message-node-88 .process-toggle').click());await p.until(()=>document.querySelectorAll('#message-node-88 [data-tool-id]').length===8);const reduced=await p.evaluate(()=>({panel:getComputedStyle(document.querySelector('#message-node-88 .process-content')).animationName,icon:getComputedStyle(document.querySelector('#message-node-88 .run-activity-chevron')).transitionDuration}));assert.equal(reduced.panel,'none');assert.equal(reduced.icon,'0s');assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(p.errors,[]);assert.equal(f.fakeEngine.invocations,0);results.push({width,style,reduced,spaceKeyboard:true,focusKept:true,overflow:false});
++}finally{await p.close();await f.close();}}}finally{await browser.close();fs.writeFileSync(path.join(dest,'official-style-browser.json'),JSON.stringify({browser:browser.version,syntheticOnly:true,results},null,2)+'\n');}console.log(JSON.stringify({pass:results.length===3,widths:results.map(x=>x.width)}));
+--- /dev/null
++++ b/docs/2026-10-22-official-run-activity-plan.md
+@@ -0,0 +1,17 @@
++# 官方 Run Activity 替换与 Web 发布计划
++
++2026-10-22，Asia/Shanghai。用户明确授权实施、Web 验证和上线；不包含 Git commit/tag/remote、工具权限、业务数据语义及无关清理。
++
++维护源 `/Users/wolf3c/Project/homer` 的243项输入与当前实际 source `f93e3a8e7c29987b06359d9b137009d4674e0fcb5bfb02e866a71cebcefea036` 一致，manifest `5d18546df90ee6d168587fa4fb1b0911a407866fb01ec36ad8e1b6c653b7c521` 的268项和线上 JS/CSS核验通过。HEAD不是产品身份。候选仅写 Cindy `create_project` 已登记的 `.codex/scratch/official-run-activity-20261022/candidate`，不覆盖维护源并行工作。
++
++采用现有官方固定commit `1f41f91643fdb56e5d8dbd14db65f742740738a1`，MIT，来源为 https://www.assistant-ui.com/elements/run-activity 及 https://github.com/assistant-ui/assistant-ui/tree/1f41f91643fdb56e5d8dbd14db65f742740738a1/packages/ui/src/components/react/assistant-ui/elements 。沿用原官方组件源码和LICENSE；只取 Run Activity，不叠加 Tool Timeline。官网应用的external-store脚本、时钟、最终答复分类和演示文本不属于组件内置能力，不移植到业务状态。
++
++当前差别是Homer用13px、44px整行触发器、横线和自绘列表/第二层工具折叠替换了官方呈现。本批修改 `ui/vendor/assistant-ui/run-activity.tsx/.css/README.md`、`ui/process-nodes.tsx/.css`、`ui/DESIGN.md`及对应定向测试。恢复官方完整markup/utility表达及 scoped CSS精确等价：12px节奏、14px字体/图标、6px触发器间距/圆角、列表1px细线、200ms展开。无需依赖、锁文件或共享runtime升级。
++
++必要适配仅为原主题角色映射、现有Radix measured-height/Presence对官方Base UI collapsePanel的等价接入、原触发器/内容焦点ref及业务事实。原有默认运行展开/真实终态收起一次、真实计时、Task/version/Run/事件身份和原序保持；不推测结论。有效待答、正式答复/多文件与后台Worker保留在外；失败/拒绝/受阻/未知/停止待确认不随折叠消失。分页、队列、附件、草稿、返工/终止、审批、成果许可、MAIN_TOOLS及线程不变。
++
++验收使用既有合成真实Web：八次无turn调用、两个内部段、同名不同task、同task不同version、partial已验收、无耗时无final、运行/异常/后台独立状态、待答与成果。1440/390/320px对照官方真实网页及前像截图；检查单层展开、官方计算样式、键盘、焦点、流式/断连/分页稳定、必要行为/类型/生产构建。只做一套Web，不重复App打包公证，不向真实服务提交模型/上传/审批/外发测试。
++
++采用前生成准确hunk、逐路径前后SHA，重核维护输入未漂移。使用既有release-reviewed-local-agent-version流程，核schema/gateway/工具/依赖兼容，等待安全空闲；正常生命周期停写后做0700/0600一致维护点，保全两库/WAL/SHM、原配置/入口、旧密封、源码前像、uncertain及引用，并用实际数据库owner离线预演。正常Terminal原入口启动，核实际source/manifest/密封、真实Chrome所加载JS/CSS及原会话/配置/事实保全。原线程兼容失败不得换线程绕过。
++
++回退只限本批准确展示代码和对应构建，核维护点身份并保留新事实；不旧库覆盖新增业务，不清锁、伪造停止或重放未知操作。完成报告保留补丁、逐路径SHA、依赖许可、实际三宽截图、验证结果、实际采用及保全/回退证据；阻塞必须如实列明。
+--- /dev/null
++++ b/docs/patches/2026-10-22-official-run-activity-verification.json
+@@ -0,0 +1,352 @@
++{
++  "at": "2026-10-22T03:15:29.745223+00:00",
++  "candidateWorkspace": "/Users/wolf3c/Project/homer/.codex/scratch/official-run-activity-20261022/candidate",
++  "syntheticOnly": true,
++  "upstream": {
++    "commit": "1f41f91643fdb56e5d8dbd14db65f742740738a1",
++    "url": "https://www.assistant-ui.com/elements/run-activity",
++    "license": "MIT",
++    "inputs": [
++      {
++        "path": "run-activity.tsx",
++        "sha256": "1b838ae6054c2c45535701af231291436e77da1d6215a2c2a80a313de5aaeace"
++      },
++      {
++        "path": "surfaces.tsx",
++        "sha256": "5d81fbb669e67ae20026cd30ed57efc51a5e3ee0f4f5d265e1723de75359b8fa"
++      },
++      {
++        "path": "LICENSE",
++        "sha256": "eafb05991a572efa34097474b31fef45b14a8879ed1d1a8fd77de62e6fa7d275"
++      }
++    ]
++  },
++  "productFiles": [
++    "ui/DESIGN.md",
++    "ui/process-nodes.tsx",
++    "ui/process-nodes.css",
++    "ui/vendor/assistant-ui/run-activity.tsx",
++    "ui/vendor/assistant-ui/run-activity.css",
++    "ui/vendor/assistant-ui/README.md"
++  ],
++  "tests": [
++    "tests/process-reading.test.mjs",
++    "tests/process-presentation.test.mjs",
++    "tests/process-reading.browser.mjs",
++    "tests/web-working-combination.browser.mjs",
++    "tests/run-activity-style.browser.mjs"
++  ],
++  "results": {
++    "targeted": {
++      "passed": 45,
++      "failed": 0,
++      "skipped": 0
++    },
++    "productionBuild": "passed on Node 22.22.0; existing large chunk warning",
++    "UITypecheck": "passed",
++    "projectTypecheck": {
++      "passed": false,
++      "baselineErrors": 18,
++      "candidateErrors": 18,
++      "identicalAfterPathNormalization": true
++    },
++    "readingBrowser": {
++      "widths": [
++        1440,
++        390,
++        320
++      ],
++      "checks": 42,
++      "passed": true
++    },
++    "lifecycleBrowser": {
++      "widths": [
++        1440,
++        390,
++        320
++      ],
++      "passed": true
++    },
++    "publicationBrowser": {
++      "widths": [
++        1440,
++        390,
++        320
++      ],
++      "passed": true
++    },
++    "officialStyleBrowser": {
++      "widths": [
++        1440,
++        390,
++        320
++      ],
++      "passed": true,
++      "includes": [
++        "Space",
++        "focus ring",
++        "200ms panel and icon",
++        "reduced motion"
++      ]
++    },
++    "baselineRed": "three widths fail the newly required single-disclosure official contract"
++  },
++  "evidence": [
++    {
++      "path": ".codex/scratch/run-activity/targeted-green.log",
++      "sha256": "3910e4dc1c34ce54ff3e7ad0af9f6f4627b25255390432e24bd7d9fbb735955c",
++      "bytes": 12878
++    },
++    {
++      "path": ".codex/scratch/run-activity/production-final.log",
++      "sha256": "690aa82f5c776e77c000f194fa486a6c692b0543e0dc34650119ae7d6eb905c7",
++      "bytes": 6235
++    },
++    {
++      "path": ".codex/scratch/run-activity/typecheck-final.log",
++      "sha256": "00972a8adb12a9b60165da8a64eb8460edafa4443cad2d51428af8314502f41c",
++      "bytes": 2669
++    },
++    {
++      "path": ".codex/scratch/run-activity/typecheck-baseline.log",
++      "sha256": "dfb2b228e71db8dc9e5e986cce9119a74368a26d519c4b09b85264e665dd872f",
++      "bytes": 2717
++    },
++    {
++      "path": ".codex/scratch/run-activity/typecheck-comparison.json",
++      "sha256": "426e81231aee71d415df1490ce14792e9a2267a384677289aa162cc3e545917b",
++      "bytes": 94
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/process-reading-browser.json",
++      "sha256": "0ffccb34e0962bdd92d03425c264938e74b7626e2ec80d65f55430f1ad06a0d8",
++      "bytes": 2439
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/process-reading-browser.json",
++      "sha256": "d0b79a70ce630c70f320fc9df9ea295ecb9b8a2320593585055a5b7bd92aeefd",
++      "bytes": 7487
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-lifecycle/frozen-working-browser.json",
++      "sha256": "9181c3e2edb68c32ef00f1c753e0e20f5ce5bfcfdace5d85b7f51c88794e4824",
++      "bytes": 1709
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-publication/frozen-publication-large-browser.json",
++      "sha256": "7a1c6d2e8ed7eb06d5e8325f940836a9b66dd397c1eccfd36fde3eaf943c516f",
++      "bytes": 2406
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-style/official-style-browser.json",
++      "sha256": "0e85df401d44f8b428a29f9141c7c1893cf5ee0eb2f8249091ea68105698ed81",
++      "bytes": 3095
++    },
++    {
++      "path": ".codex/scratch/run-activity/official-reference/official-reference.json",
++      "sha256": "7bea912678a4e214ea65aae1d79058719e6d5fe2b43d6f43c6f5cde885745ee1",
++      "bytes": 814
++    }
++  ],
++  "screenshots": [
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-all-facts-1440.png",
++      "sha256": "ef44d2e3a6b0ab2352dfc5bb4eb8f7e2375157fa326da08d175168953d93beb3",
++      "bytes": 81415
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-all-facts-320.png",
++      "sha256": "e88e2c9f174a843a0f96dbcb20a8e98a401403792b1e8a1354bbf6ff3df23d6b",
++      "bytes": 51780
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-all-facts-390.png",
++      "sha256": "4c1db698381ff7047f3e0bd39546d2e068cd0644640f0dfa7f9d0630a25b4fa2",
++      "bytes": 72221
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-default-1440.png",
++      "sha256": "b961d0ec020995b51eb21be71bfce863af221b0c3b337f0bbc8f382bea80a5da",
++      "bytes": 48040
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-default-320.png",
++      "sha256": "cd7ed71762b1217023453e22bf84f9263f25b482cb7a296c5f4ac49ec510f0b6",
++      "bytes": 36955
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-default-390.png",
++      "sha256": "30b79d0a13f1e246d573bc6246591562e66badda283e73637c6ea39d2754f0f9",
++      "bytes": 41207
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-final-workers-1440.png",
++      "sha256": "be63ab01d00a9619fa24a93eb7a7027a1e71646b8804dff34e956f212f195f15",
++      "bytes": 70715
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-final-workers-320.png",
++      "sha256": "bf9861a98010bd00adf0af1e4bafd05daffe483c870e8578033e01878226e6ea",
++      "bytes": 57374
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-final-workers-390.png",
++      "sha256": "0f29b2b8882e951324f7fed8f3b7211351e0734e98e1e1b3902014f1511d336f",
++      "bytes": 61044
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-long-chinese-1440.png",
++      "sha256": "2ea6f5d36988de1b6270075af5c62392aa0327602f216dcf5d8d005570458078",
++      "bytes": 70766
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-long-chinese-320.png",
++      "sha256": "96b2909673fb0c2ca2705a5b091039899c923c0bdab1c4800b8b4bc8d9b12963",
++      "bytes": 46193
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-long-chinese-390.png",
++      "sha256": "178069b9442e37c145ebebc14ddb3e96488633f3a626991ccd3c45e40215a4c8",
++      "bytes": 51740
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-long-worker-full-1440.png",
++      "sha256": "727a996e889d95f3e6bc698b350daf416745c8ac1a1433ea54ce77e2516b934f",
++      "bytes": 179410
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-long-worker-full-320.png",
++      "sha256": "ec283f2d30b8915f60cde2e1126ac3c6b2b778d33251f0cdcbbc3a0946d6073f",
++      "bytes": 98528
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-long-worker-full-390.png",
++      "sha256": "ef3d6952459cac8efd1db8261889eb99e7128f50a5bcb50a5829c79742116869",
++      "bytes": 97748
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-pending-question-1440.png",
++      "sha256": "7550ee93d4c9b7836404e3f28010e98d71cd5f6c4a021a99efb3d2dbbb135b91",
++      "bytes": 64036
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-pending-question-320.png",
++      "sha256": "55d942d2f1d26d3ca84070cb9f6fd160e351ad9ff2ff2f57448cde701a874477",
++      "bytes": 55768
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-pending-question-390.png",
++      "sha256": "7008e9711dd6ca47262308b32505c5ca3fe94fcc1f4a961d56baff6af54302ca",
++      "bytes": 68452
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-summary-1440.png",
++      "sha256": "9c22a42b2570b6f64e3a634f0b61cf1d4122662f7ad9850253f311b206e14358",
++      "bytes": 53742
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-summary-320.png",
++      "sha256": "4014e94da5c8680a832252516f830461e4325cdec5b160bae30461900e84cf96",
++      "bytes": 37488
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-summary-390.png",
++      "sha256": "b8b2c7104e062612ba3d1e74f6049e4c1c74dde601042055d400c7272b38b710",
++      "bytes": 43944
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-visible-risks-1440.png",
++      "sha256": "dcb1e8d2a2ad8e9491c1faf2ac6eeb31c927e6df63dbf341e540afee69bef713",
++      "bytes": 59883
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-visible-risks-320.png",
++      "sha256": "71fc9227c06a935364d1242b496b3659e26065056a2be09a33766898a4e2d649",
++      "bytes": 52108
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-green/reading-visible-risks-390.png",
++      "sha256": "c26a373d3b82aa1452f0f3b26f480322c596e39623142520d14eb607483d5e3f",
++      "bytes": 52438
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-default-1440.png",
++      "sha256": "73fb4780ef3d74a4336e4e09f2e189494319ab4ad0712e995d282df187577267",
++      "bytes": 45876
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-default-320.png",
++      "sha256": "85cfd1b0fc07db179d3cd9ce3f7e301fbe896a66d32837e7f1f11b3f5814b3de",
++      "bytes": 36279
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-default-390.png",
++      "sha256": "18ae2969414d5e77485ad0ab7c90ef6792a0f52651ac834cce8981274bc756a7",
++      "bytes": 37906
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-failure-reference-1440.png",
++      "sha256": "63c8504c40d464d292c8af55df8ea16c34e6ffe9fe07393fc41f6aecd6bbbbe1",
++      "bytes": 51632
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-failure-reference-320.png",
++      "sha256": "4df19ddbf5c14c74d85e5f54b7475e4d28728be6061eb5b1194ef110618287c8",
++      "bytes": 39640
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-failure-reference-390.png",
++      "sha256": "f2e8052cb40c796f3aa645d4e2884946b21a1defd364b07aa43312b11bb85b5e",
++      "bytes": 41057
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-summary-1440.png",
++      "sha256": "68ae1321b878f50e764ff99850dd25c3d7bccbd82181e06e3a2bb5ed24787685",
++      "bytes": 51757
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-summary-320.png",
++      "sha256": "79445484081645e32860e6693d55a07b541f810474d4f19fc9c214ed4823748b",
++      "bytes": 39753
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-red/reading-summary-390.png",
++      "sha256": "4ea43257438c26144b0c062aea8315597491e267911cff2d1ca8845911b3da5c",
++      "bytes": 41237
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-style/official-style-expanded-focus-1440.png",
++      "sha256": "9107bfaef8ea691dbc0f9d7677752d22e81b7b4a5be804aaade9fcf33d2c777e",
++      "bytes": 49299
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-style/official-style-expanded-focus-320.png",
++      "sha256": "c57e41e4a6f0ee927cefc68b1a3c479013b655a51f6069b937d6d0016c0de4be",
++      "bytes": 25894
++    },
++    {
++      "path": ".codex/scratch/run-activity/browser-style/official-style-expanded-focus-390.png",
++      "sha256": "1d30bbbe00d3a77899177e0f342a5b15a7898ab72367f995b2879159e19aa25d",
++      "bytes": 41868
++    },
++    {
++      "path": ".codex/scratch/run-activity/official-reference/official-live-complete.png",
++      "sha256": "84bc1639c5100600f3fa89795c702eca1abfad27523022e3e9d6ee47807c8494",
++      "bytes": 107994
++    },
++    {
++      "path": ".codex/scratch/run-activity/official-reference/official-live-running.png",
++      "sha256": "eb7031222d41984bb55b3520459cb91961cf3c8b45187c758d3331d4c05b11e9",
++      "bytes": 98451
++    }
++  ],
++  "limitations": [
++    "No actual model/production uploads/channel send",
++    "No App build/sign/notarization",
++    "No physical phone IME/VoiceOver/WebKit/200% zoom test",
++    "Synthetic DOM cannot simulate activeElement on removed subtree; exact real-browser focus test owns this assertion",
++    "Prior three extraction-test failures not rerun; not part of this batch"
++  ],
++  "dependenciesChanged": false,
++  "schemaToolsRuntimeContractsChanged": false
++}

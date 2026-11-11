@@ -27,7 +27,7 @@ for(const mode of ['confirmed','false','throw','interrupt_throw'])test('whole-ta
   const results=await Promise.all([f.host.applyStop(receipt),f.host.applyStop(receipt)]),confirmed=['confirmed','interrupt_throw'].includes(mode),run=f.tasks.run(f.bb.id);
   assert.equal(results[0].state,confirmed?'confirmed':'uncertain');assert.equal(run.phase,confirmed?'ended':'uncertain');assert.equal(f.workers.has(run.id),!confirmed);assert.equal(!!f.store.meta('lease:'+run.id),!confirmed);assert.deepEqual(f.counts.get(run.id),{interrupt:1,close:1});assert.equal(run.epoch,epoch);
   assert.equal((await request.response).status,'cancelled');assert.equal(callbacks,1);
-  assert.throws(()=>f.tasks.writeMarkdown({agentId:'worker:'+f.bb.workerId,runId:f.bb.id,epoch:f.bb.epoch,threadId:f.bb.threadId!,turnId:f.bb.turnId!},{operationId:'late',filename:'late.md',content:'Synthetic'}),/epoch|stop|live/);
+  assert.throws(()=>f.tasks.writeFile({agentId:'worker:'+f.bb.workerId,runId:f.bb.id,epoch:f.bb.epoch,threadId:f.bb.threadId!,turnId:f.bb.turnId!},{operationId:'late',filename:'late.md',bytes:Buffer.from('Synthetic')}),/epoch|stop|live/);
   assert.deepEqual({task:f.tasks.task(f.peer.taskId),run:f.tasks.run(f.peer.id)},before);assert.deepEqual(f.counts.get(f.peer.id),{interrupt:0,close:0});
   if(!confirmed)assert.throws(()=>f.tasks.controlTask(f.actor,{operationId:'resume',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,action:'resume'}),/unconfirmed/);
  }finally{f.close();}
@@ -40,7 +40,7 @@ test('a Worker lease without its owning slot stays uncertain',async()=>{
 test('accepted original text survives closing a residual owned engine',async()=>{
  const f=setup();try{
   const reply=f.tasks.endSegment(f.bb.id,f.bb.epoch,{status:'completed',text:'Original accepted text'},true)!;
-  const result=f.tasks.adoptResult(f.actor,{operationId:'accept',taskId:f.task.taskId,version:1,messageId:reply.messageId}),before=f.tasks.readResult(f.actor,result.resultId);
-  assert.equal(await f.host.stopOwnedWorker(f.bb.id),true);assert.equal(f.tasks.run(f.bb.id).status,'succeeded');assert.equal(f.workers.has(f.bb.id),false);assert.deepEqual(f.tasks.readResult(f.actor,result.resultId),before);assert.equal(f.tasks.task(f.task.taskId).state,'open');
+  const read=()=>f.tasks.workerRead(f.actor,{workerId:f.bb.workerId,messageId:reply.messageId}).messages[0],before=read();
+  assert.equal(await f.host.stopOwnedWorker(f.bb.id),true);assert.equal(f.tasks.run(f.bb.id).status,'succeeded');assert.equal(f.workers.has(f.bb.id),false);assert.deepEqual(read(),before);assert.equal(f.tasks.task(f.task.taskId).state,'open');
  }finally{f.close();}
 });

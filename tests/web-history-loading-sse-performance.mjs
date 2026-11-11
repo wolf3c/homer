@@ -10,7 +10,7 @@ for(const total of [1000,10000]){
  const f=historyFixture(total,160,true),reader=new WebHistoryPages(f.history,f.processes,f.inputs);let queries=0,rows=0;
  const prepare=f.store.db.prepare.bind(f.store.db);
  f.store.db.prepare=sql=>{const statement=prepare(sql);for(const method of ['all','get']){const original=statement[method].bind(statement);statement[method]=(...args)=>{queries++;const value=original(...args);rows+=Array.isArray(value)?value.length:value?1:0;return value;};}return statement;};
- const host={...f,webReadEpoch:'synthetic-sse-epoch',webHistoryPages:()=>reader,registerChannelCapabilities(){},onStateChange(){return()=>{};},media:{view(){throw Error('no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');}};
+ const host={...f,webReadEpoch:'synthetic-sse-epoch',webHistoryPages:()=>reader,registerWebSurface(){},onStateChange(){return()=>{};},media:{view(){throw Error('no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');}};
  const bridge=homerWebBridge(host),state=bridge.history.state,builds=[];
  bridge.history.state=async()=>{const q=queries,r=rows,start=performance.now(),value=await state();builds.push({ms:performance.now()-start,queries:queries-q,returnedRows:rows-r,jsonBytes:Buffer.byteLength(JSON.stringify(value)),messages:value.messages.length});return value;};
  const server=await createWebServer({bridge,port:0}),controller=new AbortController();

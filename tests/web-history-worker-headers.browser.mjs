@@ -9,7 +9,7 @@ const f=await fixture(0,'after'),chrome=await isolatedChrome(destination),report
 const base={title:'保持历史消息阅读位置，并检查历史图片延迟加载时的阅读位置',taskId:'synthetic-task-1',version:1,runId:'synthetic-run-1',sourceMessageId:null,operationKey:null,observedAtMs:1};
 const bodies=['保持用户正在阅读的历史消息位置。\n新消息到达、历史图片延迟加载、窗口变窄时保留原阅读位置，不自动拉回底部。'.repeat(3),'已核对 3 项，1 项仍需确认。\n<img src=x onerror=never()> **保留原文**','认证失败，Worker 未能启动。'];
 try{
- f.store.db.prepare('INSERT INTO conversation_messages VALUES(?,?,?,?,?,?,?,?)').run('synthetic-user','synthetic-history',null,'user','请核对会议记录中的日期。','completed',null,1);
+ f.store.db.prepare('INSERT INTO conversation_messages(id,threadId,requestId,role,text,status,quote,createdAt) VALUES(?,?,?,?,?,?,?,?)').run('synthetic-user','synthetic-history',null,'user','请核对会议记录中的日期。','completed',null,1);
  for(const [n,eventKind] of ['delegated','reply_received','start_failed'].entries()){
   const id='event-node-'+n;f.processes.start({id,threadId:'synthetic-history',sourceKind:n?'worker':'user',sourceMessageIds:[],messageId:id},'turn-'+n);
   f.history.record(id,'synthetic-history','','completed');

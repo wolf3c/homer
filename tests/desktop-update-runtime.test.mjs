@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
+import {EventEmitter} from 'node:events';
 import {PassThrough,Writable} from 'node:stream';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -18,7 +19,7 @@ async function link(source,modules,context,url){
 async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestArch=arch,platform='darwin'}={}){
  const events=[],stdin=new PassThrough(),profile='/fixture/profile',bundle='/fixture/Homer.app',resources=bundle+(platform==='win32'?'/resources':'/Contents/Resources'),homer=resources+'/homer';let complete,stopCalls=0;
  const digest=createHash('sha256').update('').digest('hex');
- const manifest={format:2,node:'22.22.0',codex:'0.163.0',arch:manifestArch,files:[],codeFiles:(platform==='win32'?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node']).map(path=>({path,sha256:digest})),sourceHash:'synthetic-hash'};
+ const manifest={format:2,node:'22.22.0',codex:'0.163.0',arch:manifestArch,files:[],codeFiles:(platform==='win32'?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>({path,sha256:digest})),sourceHash:'synthetic-hash'};
  const proc={argv:['node','desktop-runtime','--profile',profile,'--test-profile'],version:'v22.22.0',arch,platform,execPath:platform==='win32'?resources+'/node.exe':bundle+'/Contents/MacOS/node',stdin,stdout:new Writable({write(bytes,_e,done){events.push(JSON.parse(String(bytes)));done();}}),env:{HOME:profile+'/host-home',TMPDIR:profile+'/tmp',SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'},cwd:()=>profile};
  const modules={
   'node:fs':{realpathSync:path=>path,existsSync:path=>path===profile+'/fixture-codex.mjs',readFileSync:path=>Buffer.from(path.endsWith('desktop-manifest.json')?JSON.stringify(manifest):path.endsWith('.homer-desktop-test-profile')?'{"format":1}':''),readdirSync:()=>[],lstatSync(){throw Error('unexpected_lstat');},mkdirSync(){},writeFileSync(){throw Error('unexpected_write');},closeSync(){}},
@@ -41,6 +42,19 @@ async function dependencyFixture(arch,corrupt=false,platform='darwin'){
  const licenses={LICENSE:Buffer.from('synthetic-license'),NOTICE:Buffer.from('synthetic-notice')};
  const locks={node:pin(nodeBytes),nodeDarwinX64:pin(nodeBytes),nodeWin32X64:pin(nodeBytes),codexWin32X64:pin(native),codex:pin(cli),codexDarwinArm64:pin(native),codexDarwinX64:{integrity:sri(native)},codexLicenseTag:'rust-v'+version,codexLicenseSha256:{LICENSE:sha(licenses.LICENSE),NOTICE:sha(licenses.NOTICE)}};
  const put=(name,bytes)=>files.set('/archives/'+name,Buffer.from(bytes));
+ const cua=Buffer.from('synthetic-driver'),sdk=Buffer.from('synthetic-sdk'),notice=Buffer.from('synthetic-notice');
+ const nativeSdk=Buffer.from('synthetic-platform-sdk');
+ locks.cuaDriver={version:'0.46.1',archive:{file:'driver.tar.gz',url:'https://example.invalid/driver',sha256:sha(cua)},windowsArchive:{file:'driver.zip',url:'https://example.invalid/windows',sha256:sha(cua)},
+  windowsPackage:{name:'@trycua/cua-driver-win32-x64-msvc',version:'0.46.1',integrity:sri(nativeSdk),license:'MIT AND MPL-2.0'},packages:[
+  {name:'@trycua/cua-driver',version:'0.46.1',integrity:sri(sdk),license:'MIT'},
+  {name:'@trycua/cua-driver-darwin-arm64',version:'0.46.1',integrity:sri(nativeSdk),license:'MIT AND MPL-2.0'},
+ ],licenses:[{file:'Cua-NOTICE',url:'https://example.invalid/notice',sha256:sha(notice)}]};
+ put('driver.tar.gz',corrupt==='driver'?'tampered':cua);
+ put('driver.zip',corrupt==='driver'?'tampered':cua);
+ put('cua-driver-0.46.1.tgz',corrupt==='sdk'?'tampered':sdk);
+ put('cua-driver-darwin-arm64-0.46.1.tgz',nativeSdk);
+ put('cua-driver-win32-x64-msvc-0.46.1.tgz',corrupt==='native-sdk'?'tampered':nativeSdk);
+ put('Cua-NOTICE',corrupt==='notice'?'tampered':notice);
  put('node-shasums256.txt',sha(nodeBytes)+'  '+nodeName+'\n');put(nodeName,nodeBytes);
  for(const [v,name,bytes]of [[version,'codex-registry.json',cli],[version+'-'+target,`codex-${arch}-registry.json`,native]]){
   put(name,JSON.stringify({name:'@openai/codex',version:v,license:'Apache-2.0',dist:{tarball:`https://registry.npmjs.org/@openai/codex/-/codex-${v}.tgz`,integrity:sri(bytes)}}));
@@ -62,6 +76,134 @@ if(!vm.SourceTextModule){
   const proc={argv:['node','helper',edge],stdin:(async function*(){yield Buffer.from('synthetic image');})(),stdout:{write:bytes=>output.push(String(bytes))}};
   const entry=await link(readFileSync('packaging/windows/image-decoder.mjs','utf8'),{'node:module':{createRequire:()=>name=>{assert.equal(name,'sharp');return(bytes,options)=>{assert.equal(String(bytes),'synthetic image');assert.equal(options.limitInputPixels,40_000_000);assert.equal(options.animated,false);assert.equal(options.failOn,'error');return image;};}}},vm.createContext({process:proc,Buffer,URL}),'file:///fixture/resources/homer-image-decoder.mjs');await entry.evaluate();
   if(edge==='invalid'){assert.equal(proc.exitCode,1);assert.equal(output.length,0);assert.equal(calls.length,0);}else{assert.equal(proc.exitCode,undefined);assert.deepEqual(output,['png']);assert.equal(calls[0],'rotate');if(edge==='320')assert.equal(calls[1].withoutEnlargement,true);else assert.equal(calls.length,2);}
+ });
+ test('Windows decoder crops the original pixels before making an optional preview',async()=>{
+  const sharp=require('sharp'),pixels=Buffer.from([255,0,0,255,0,0,255,0,0, 255,0,0,0,255,0,0,255,0, 255,0,0,0,255,0,0,255,0]);
+  const image=await sharp(pixels,{raw:{width:3,height:3,channels:3}}).png().toBuffer();
+  for(const [rect,width]of [[['1','1','2','2'],2],[['2','2','2','2'],0]]){
+   let output;
+   const proc={argv:['node','helper','crop',...rect,'0'],stdin:[image],stdout:{write:bytes=>output=bytes}};
+   const entry=await link(readFileSync('packaging/windows/image-decoder.mjs','utf8'),{'node:module':{createRequire:()=>()=>sharp}},vm.createContext({process:proc,Buffer,URL}),'file:///fixture/resources/homer-image-decoder.mjs');
+   await entry.evaluate();
+   if(!width){assert.equal(proc.exitCode,1);assert.equal(output,undefined);continue;}
+   const cropped=await sharp(output).raw().toBuffer({resolveWithObject:true});
+   assert.equal(cropped.info.width,width);assert.equal(cropped.info.height,width);
+   assert.deepEqual(cropped.data,Buffer.from([0,255,0,0,255,0,0,255,0,0,255,0]));
+  }
+ });
+ test('Windows CUA preserves the profile when the job has no confirmed stop receipt',async()=>{
+  const dir='/fixture/runtime/homer-cua-Ab123c',helper='/fixture/resources/runtime/cua/homer-cua-windows.exe',calls=[];
+  let stopped=false,acknowledge=false;
+  const modules={'node:fs':{...require('node:fs'),lstatSync:()=>({isDirectory:()=>true}),realpathSync:path=>path,
+   readdirSync:()=>['unrelated', 'homer-cua-Ab123c'],rmSync:(path)=>calls.push(['remove',path])},
+   'node:child_process':{...require('node:child_process'),spawn:()=>{
+    const child=new EventEmitter();child.stdout=new PassThrough();
+    child.stdin=new Writable({write(_value,_encoding,done){done();}});
+    child.stdin.once('finish',()=>{child.stdout.end(acknowledge?'stopped\r\n':'');child.emit('close',0);});
+    queueMicrotask(()=>child.stdout.write('ready\r\n'));return child;
+   },execFile:(file,args,options,done)=>{
+    calls.push([file,[...args]]);assert.equal(options.env.HOMER_DEEPSEEK_TOKEN,undefined);
+    done(null,{stdout:stopped?'stopped\r\n':'unknown'});
+   }},'./processes.js':{leaseOwnerGone(){},processIdentity(){}}};
+  const source=transpileModule(readFileSync('src/cua-processes.ts','utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
+  const entry=await link(source,modules,vm.createContext({process:{env:{SystemRoot:'C:\\Windows',HOMER_DEEPSEEK_TOKEN:'fixture-only'}},Buffer,setTimeout,clearTimeout}),'file:///fixture/src/cua-processes.js');
+  await entry.evaluate();
+  await assert.rejects(entry.namespace.recoverCuaSessions('/fixture/runtime',helper),/cua_stop_unconfirmed/);
+  assert.deepEqual(calls,[[helper,['stop',dir]]]);calls.length=0;
+  stopped=true;await entry.namespace.recoverCuaSessions('/fixture/runtime',helper);
+  assert.deepEqual(calls,[[helper,['stop',dir]],['remove',dir]]);
+  for(acknowledge of [false,true]){
+   calls.length=0;stopped=false;
+   const job=entry.namespace.holdCuaWindowsJob(helper,dir);await job.ready;
+   assert.equal(await entry.namespace.reclaimCuaSession(dir,undefined,helper,job),acknowledge);
+   assert.deepEqual(calls,acknowledge?[['remove',dir]]:[[helper,['stop',dir]]]);
+  }
+ });
+ test('Windows Worker uses a named pipe without filesystem permissions or cleanup',async()=>{
+  let listening,unlinked=false,chmod=false;
+  const modules={'./execution-tools.js':{EXECUTION_TOOLS:[]},'./worker-interaction-tools.js':{MAIN_INTERACTION_TOOLS:[]},
+   './media-tools.js':{MEDIA_TOOLS:[],WORKER_MEDIA_TOOLS:[]},'./interaction-limits.js':{INTERACTION_LIMITS:{}},
+   './membership-web-tools.js':{MEMBERSHIP_TOOLS:[]},'./desktop-cua.js':{CUA_TOOLS:[]},
+   'node:fs':{chmodSync:()=>{chmod=true;},unlinkSync:()=>{unlinked=true;}},
+   'node:net':{createConnection(){},createServer:()=>({listening:true,once(){},listen(path,done){
+    listening=path;done();
+   },close(done){done();}})}};
+  const source=transpileModule(readFileSync('src/worker-interaction-mcp.ts','utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
+  const entry=await link(source,modules,vm.createContext({process:{platform:'win32',cwd:()=>'/fixture'},Buffer}),'file:///fixture/src/worker-interaction-mcp.js');
+  await entry.evaluate();
+  const server=new entry.namespace.WorkerInteractionMcp('/fixture/runtime',async()=>null);
+  await server.start();
+  assert.match(listening,/^\\\\\.\\pipe\\homer-hi-[0-9a-f-]{36}$/);
+  await server.close();assert.equal(chmod||unlinked,false);
+ });
+ test('Windows CUA confirms the Chrome address and rejects desktop-region fallback images',async()=>{
+  const calls=[],edges=[],url='https://example.test/work',target={pid:17,window_id:314},helper='runtime/cua/homer-cua-windows.exe';
+  const window={x:4,y:2,width:800,height:600};
+  const sha=value=>createHash('sha256').update(value).digest('hex');
+  let typed=false,confirmed=true,starts=0,shotWidth=800,shotHeight=600;
+  const driver={metadata:async()=>({pid:777,driverVersion:'0.46.1'}),shutdown:async()=>{},uniffiDestroy(){},callTool:async(name,input)=>{
+   const args=JSON.parse(input);calls.push(name);
+   const screenshot=name==='get_window_state'&&args.include_screenshot!==false;
+   if(name==='hotkey')assert.deepEqual(args.keys,['ctrl','l']);
+   if(name==='type_text'){assert.equal(args.text,url);typed=true;}
+   if(name==='press_key')assert.equal(args.key,'Return');
+   if(['bring_to_front','hotkey','type_text','press_key'].includes(name)){
+    assert.equal(args.pid,target.pid);assert.equal(args.window_id,target.window_id);
+   }
+   const data=name==='list_windows'?{windows:[{...target,title:'Fixture',app_name:'chrome.exe',layer:0,is_on_screen:true,z_index:1}]}:
+    name==='check_permissions'?{uia:true}:name==='bring_to_front'?{landed_on_target:true}:
+    screenshot?{...target,window_bounds:window,screenshot_width:shotWidth,screenshot_height:shotHeight,capture_id:'fixture-capture'}:{};
+   return {isError:false,structuredJson:JSON.stringify(data),images:screenshot?[{mimeType:'image/png',dataBase64:'AQ=='}]:undefined};
+  }};
+  const root='/fixture/Homer',resources=root+'/resources',trusted={bundleRoot:root,resources,imageDecoder:resources+'/homer-image-decoder.mjs',files:[{path:helper.replaceAll('/','\\'),sha256:sha('helper')}]};
+  const modules={
+   'node:fs':{...require('node:fs'),existsSync:path=>path===resources+'/'+helper,realpathSync:path=>path,readFileSync:()=>Buffer.from('helper'),mkdtempSync:()=>'/fixture/runtime/homer-cua-Ab123c',writeFileSync(_path,body){assert.deepEqual(JSON.parse(body).resources.desktop.windows,[target]);}},
+   'node:path':{...require('node:path'),join:(...paths)=>require('node:path').join(...paths.map(path=>path.replaceAll('\\','/')))},
+   'node:timers/promises':{setTimeout:async()=>{}},
+   './desktop-resources.js':{verifiedDesktopResources:()=>trusted},'./interaction-limits.js':{TOOL_IMAGE_BYTES:1},'./media-decode.js':{mediaProcess(_bin,args){
+    edges.push(args.at(-1));return args.at(-1)==='600'?Buffer.from([2]):Buffer.from([2,2]);
+   }},
+   './media-policy.js':{MEDIA_POLICY:{imageBytes:10,maxPixels:1_000_000},
+    imageDimensions:bytes=>bytes[0]===2?{width:300,height:200}:{width:shotWidth,height:shotHeight}},
+   './processes.js':{processIdentity:()=>'fixture-owner'},
+   '../scripts/windows-security.mjs':{windowsCommandAsync:()=>assert.fail('ordinary Chrome must not start a browser')},
+   './cua-processes.js':{CUA_SESSION_PREFIX:'homer-cua-',WINDOWS_CUA_HELPER:helper,holdCuaWindowsJob:()=>({ready:Promise.resolve()}),
+    reclaimCuaSession:async()=>true,pinCuaChrome:()=>assert.fail('wrong platform'),
+    runCuaWindows:async(_file,[mode])=>{calls.push(mode);return {stdout:mode==='window'?'window':mode==='frame'?JSON.stringify(window):
+     mode==='page'?JSON.stringify({window,viewport:{x:5,y:100,width:798,height:501},page:'fixture-tab'}):sha(typed&&confirmed?url:'unconfirmed')};}},
+   [new URL('runtime/cua/node_modules/@trycua/cua-driver/dist/index.js','file://'+resources+'/').href]:{
+    SessionPermissionMode:{Bounded:'bounded'},CuaDriver:{create:()=>driver,createPrivateWorker:options=>{
+     starts++;assert.equal(options.binaryPath,resources+'/'+helper);
+     assert.equal(options.configuredDriver.authorization.compatibilityMode,'bounded');return driver;
+    }},
+   },
+  };
+  const source=transpileModule(readFileSync('src/desktop-cua.ts','utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
+  const entry=await link(source,modules,vm.createContext({process:{platform:'win32',arch:'x64'},URL,Buffer,setTimeout,clearTimeout}),'file:///fixture/src/desktop-cua.js');
+  await entry.evaluate();
+  const cua=entry.namespace.DesktopCua.create({bundleRoot:root},'/fixture/runtime');
+  assert.equal(starts,0);
+  const open=()=>cua.invoke('owner','browser_open',{url},()=>{},()=>assert.fail('navigation does not save'),()=>assert.fail('browser does not need a window approval'));
+  assert.equal((await open()).state,'submitted');
+  assert.deepEqual(calls.slice(-8),['window','get_window_state','bring_to_front','hotkey','address','type_text','address','press_key']);
+  const before=calls.length;
+  shotWidth=798;shotHeight=598;
+  const preview=await cua.invoke('owner','browser_read',{},()=>{},()=>assert.fail('preview does not save'),()=>assert.fail('browser does not need approval'));
+  assert.equal(JSON.parse(preview.mediaContent[0].text).capture_id,'fixture-capture');
+  assert.deepEqual(edges,['1100','600']);
+  assert.equal(calls.slice(before).filter(name=>name==='get_window_state').length,1);
+  assert.equal(await cua.close('owner'),true);assert.equal(starts,1);
+  typed=false;confirmed=false;
+  await assert.rejects(open(),/chrome_address_unconfirmed/);
+  assert.equal(calls.filter(name=>name==='press_key').length,1);
+  assert.equal(await cua.close('owner'),true);
+  let saved=0;shotWidth=800;shotHeight=600;
+  const read=()=>cua.invoke('owner','desktop_read',{app:'chrome.exe',save_as:'fixture.png'},()=>{},()=>++saved,async()=>{});
+  await assert.rejects(read(),/desktop_screenshot_unavailable/);
+  assert.equal(saved,0);
+  shotWidth=798;shotHeight=598;
+  assert.equal(await read(),1);
+  assert.equal(await cua.close('owner'),true);
  });
  test('Windows source snapshots retain schema owner bytes under canonical keys',async()=>{
   let bytes=Buffer.from('schema one');const source=readFileSync('scripts/dev-build.mjs','utf8');
@@ -107,7 +249,7 @@ if(!vm.SourceTextModule){
   assert.equal(stopped,want);assert.equal(kills,0);
  });
  test('Windows ACL validation uses a fixed system executable and fails closed',async()=>{
-  let output='private',commands=[];const source=readFileSync('scripts/windows-security.mjs','utf8');const modules={'node:child_process':{execFileSync:(bin,args,options)=>{commands.push({bin,args,options});return output;}}};
+  let output='private',commands=[];const source=readFileSync('scripts/windows-security.mjs','utf8');const modules={'node:child_process':{execFile(){throw Error('unexpected_async_call');},execFileSync:(bin,args,options)=>{commands.push({bin,args,options});return output;}}};
   const entry=await link(source,modules,vm.createContext({process:{env:{SystemRoot:'C:\\Windows'}}}),'file:///fixture/scripts/windows-security.mjs');await entry.evaluate();
   entry.namespace.assertWindowsPrivate("C:\\private\\a'b.json");assert.equal(commands[0].bin,'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');assert.equal(commands[0].args.some(arg=>arg.includes("a'b.json")),false);assert.equal(commands[0].options.env.HOMER_PRIVATE_PATH,"C:\\private\\a'b.json");assert.equal(commands[0].options.env.PATH,undefined);assert.ok(commands[0].args.at(-1).includes('[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)'));
   output='';assert.throws(()=>entry.namespace.assertWindowsPrivate('C:\\private'),/windows_private_acl_required/);
@@ -120,10 +262,34 @@ if(!vm.SourceTextModule){
  });
  test('Windows runtime validates its own helpers and releases owner before update acknowledgement',async()=>{const f=await runtimeFixture({updateStopped:true,stoppedConfirmed:true},{platform:'win32',arch:'x64'});await f.complete();assert.deepEqual(f.events.map(v=>v.kind),['owner-release','update-stopped']);assert.equal(f.proc.exitCode,undefined);assert.equal(f.proc.env.HOME,'/fixture/profile/host-home');assert.ok(f.proc.env.SystemRoot);assert.equal(f.proc.env.LOCALAPPDATA,'C:\\RedirectedLocal');});
  for(const arch of ['arm64','x64'])test(arch+' dependencies select pinned matching archives without network or executable invocation',async()=>{
-  const f=await dependencyFixture(arch),result=f.prepare();assert.equal(result.vendor,arch==='arm64'?'aarch64-apple-darwin':'x86_64-apple-darwin');assert.equal(result.components.at(-1).completePlatformArchive,true);
+  const f=await dependencyFixture(arch),result=f.prepare();assert.equal(result.vendor,arch==='arm64'?'aarch64-apple-darwin':'x86_64-apple-darwin');assert.equal(result.components.find(component=>component.version===`0.163.0-darwin-${arch}`)?.completePlatformArchive,true);
   assert.ok(f.commands.some(([_bin,args])=>args.includes(`/archives/codex-0.163.0-darwin-${arch}.tgz`)));
   assert.ok(f.commands.some(([_bin,args])=>args.includes(`node-v22.22.0-darwin-${arch}/bin/node`)));
   const bad=await dependencyFixture(arch,true);assert.throws(bad.prepare,/desktop_codex_integrity_failed/);assert.equal(bad.commands.length,0,'all bytes must pass pins before extraction');
+ });
+ test('Cua Driver selects only the pinned native files for macOS ARM64 and Windows x64',async()=>{
+  const arm=await dependencyFixture('arm64'),prepared=arm.prepare();
+  assert.equal(prepared.cua,'/scratch/official-cua');
+  assert.ok(arm.commands.some(([,args])=>args.includes('/archives/driver.tar.gz')&&args.includes('cua-driver')));
+  assert.ok(arm.commands.some(([,args])=>args.includes('/scratch/official-cua/node_modules/@trycua/cua-driver')));
+  const intel=await dependencyFixture('x64','sdk');
+  assert.equal(intel.prepare().cua,undefined);
+  assert.ok(intel.commands.every(([,args])=>args.every(arg=>!arg.includes('cua-driver'))));
+  const win=await dependencyFixture('x64',false,'win32');
+  assert.equal(win.prepare().cua,'/scratch/official-cua');
+  assert.ok(win.commands.some(([,args])=>args.includes('/archives/driver.zip')&&args.includes('cua-driver.exe')));
+  assert.ok(win.commands.some(([,args])=>args.includes('/scratch/official-cua/node_modules/@trycua/cua-driver-win32-x64-msvc')));
+  assert.ok(win.commands.every(([,args])=>args.every(arg=>!arg.includes('cua-driver-darwin'))));
+  for(const corrupt of ['driver','sdk','notice']){
+   const f=await dependencyFixture('arm64',corrupt);
+   assert.throws(f.prepare,/desktop_cua_integrity_failed/);
+   assert.equal(f.commands.length,0);
+  }
+  for(const corrupt of ['driver','native-sdk']){
+   const f=await dependencyFixture('x64',corrupt,'win32');
+   assert.throws(f.prepare,/desktop_cua_integrity_failed/);
+   assert.equal(f.commands.length,0);
+  }
  });
  test('Windows selects pinned ZIP Node and the full x64 Codex archive offline',async()=>{const f=await dependencyFixture('x64',false,'win32'),result=f.prepare();assert.equal(result.vendor,'x86_64-pc-windows-msvc');assert.ok(f.commands.some(([_bin,args])=>args.includes('/archives/node-v22.22.0-win-x64.zip')));assert.ok(f.commands.some(([_bin,args])=>args.includes('node-v22.22.0-win-x64/node.exe')));const bad=await dependencyFixture('x64',true,'win32');assert.throws(bad.prepare,/desktop_codex_integrity_failed/);assert.equal(bad.commands.length,0);});
  test('a tampered bundled Codex license fails before extraction',async()=>{const f=await dependencyFixture('arm64','LICENSE');assert.throws(f.prepare,/desktop_codex_license_integrity_failed: LICENSE/);assert.equal(f.commands.length,0);});

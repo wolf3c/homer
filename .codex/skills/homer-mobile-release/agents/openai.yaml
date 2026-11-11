@@ -1,0 +1,4 @@
+interface:
+  display_name: "Homer 移动端打包与发布"
+  short_description: "复用固定签名完成 Android 与 iOS 打包、安装、发布和官网状态核验"
+  default_prompt: "使用 $homer-mobile-release 完成本次授权的 Homer 移动端打包或发布，核对签名、版本和来源，并报告实际完成状态。"

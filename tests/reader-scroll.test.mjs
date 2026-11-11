@@ -1,3 +1,4 @@
+import {CONVERSATION_VIEW} from '../src/web-contract.ts';
 // Component policy and real assistant-ui scroll hook with controlled geometry.
 // No browser layout, Lexical DOM, SSE transport or production host is simulated.
 import {test} from 'node:test';
@@ -31,7 +32,7 @@ function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureB
  const appHooks=hooks(true),scrollHooks=hooks(),frames=new Map(),events=new Map(),listeners=new Map(),observers=new Set();const writes=[];let seq=0,resizeContent,viewportProps,scrollRef;
  const frame=fn=>{frames.set(++seq,fn);return seq;},cancel=id=>frames.delete(id);
  const messages=Array.from({length:30},(_,i)=>({id:'row-'+i,role:i%2?'assistant':'user',text:'history',createdAt:1700000000000,status:'completed'}));
- let state={conversationView:3,threadId:'reader',messages,isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running'},queue:[],acceptedRequestIds:[]};
+ let state={conversationView:CONVERSATION_VIEW,threadId:'reader',messages,isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running'},queue:[],acceptedRequestIds:[]};
  const page={protocol:3,threadId:'reader',revision:1,messages,units:messages.map(m=>m.id),before:'older-page',after:null};
  state.history={protocol:3,readEpoch:'reader-epoch',page,moreQueue:null,moreInteractions:null};
  const {HistoryWindow}=load(resolve('ui/history-window.ts'),{}),history=new HistoryWindow();history.snapshot(state);
@@ -55,7 +56,7 @@ function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureB
  const empty=state;
  const projectProcessMessage=load(resolve('ui/process-message.tsx'),{projectProcessItems,toolActivityText,toolStatusText,activityOutcomes,messageSourceParts,recorded:value=>value?.state==='recorded'||value?.state==='truncated',valueNote:()=>''},'projectProcessMessage');
  const app=load(process.env.HOMER_READER_SOURCE??resolve('ui/homer-app.tsx'),{
-  ...appHooks,...metrics,...contexts,empty,mobileView:false,liveMainActivity,processActivityText:()=>'',readerContentSignature:load(resolve('ui/homer-app.tsx'),{messageSourceParts,isVisibleConversationMessage:()=>true},'readerContentSignature'),projectProcessMessage,createHomerAttachmentAdapter:()=>({}),createAnnotationDraft:()=>({}),useMediaQuery:()=>false,matchMedia:()=>({matches:false}),useProcessDetails:messages=>({messages,load(){}}),ActiveReadPage:class{items=[];version={};snapshot(version,items,more){this.version=version;this.items=items;this.more=more;}invalidate(){}},HistoryWindow:class{constructor(){return history;}},useQueueOperations:()=>({}),useExternalStoreRuntime:value=>{nextRuntimeState=value;if(!deferRuntime)runtimeState=value;return runtime;},canAcceptInput:()=>true,isVisibleConversationMessage:()=>true,
+  ...appHooks,...metrics,...contexts,empty,mobileView:false,CONVERSATION_VIEW,liveMainActivity,processActivityText:()=>'',readerContentSignature:load(resolve('ui/homer-app.tsx'),{messageSourceParts,isVisibleConversationMessage:()=>true},'readerContentSignature'),projectProcessMessage,createHomerAttachmentAdapter:()=>({}),createAnnotationDraft:()=>({}),useMediaQuery:()=>false,matchMedia:()=>({matches:false}),useProcessDetails:messages=>({messages,load(){}}),ActiveReadPage:class{items=[];version={};snapshot(version,items,more){this.version=version;this.items=items;this.more=more;}invalidate(){}},HistoryWindow:class{constructor(){return history;}},useQueueOperations:()=>({}),useExternalStoreRuntime:value=>{nextRuntimeState=value;if(!deferRuntime)runtimeState=value;return runtime;},canAcceptInput:()=>true,isVisibleConversationMessage:()=>true,
   homerLogo64:'',homerLogo256:'',Group:'group',Panel:'panel',PanelRightIcon:'preview-icon',AssistantRuntimeProvider:'runtime',TaskStatusPopover:'tasks',WechatConnection:'wechat',DesktopSettings:'settings',ThreadPrimitive:{Root:'thread',Viewport:'viewport',Empty:'empty',Messages:'messages',ScrollToBottom:'bottom'},MessageTimestamps:'timestamps',UserMessage:'user',AssistantMessage:'assistant',MainComposer:'composer',HomerMessageQueue:'queue',HomerSelectionToolbar:'selection',CanvasPanel:'canvas',InteractionCard:'interaction',
   ConnectionEvents:class{constructor(){stateEvents=this;}listeners=new Map();addEventListener(name,fn){this.listeners.set(name,fn);}close(){}},sessionStorage:{},localStorage:{length:0},storage:{read(){}},ResizeObserver,requestAnimationFrame:frame,cancelAnimationFrame:cancel,document:Object.assign(new EventTarget(),{getElementById:id=>rows.find(r=>r.id===id)}),Element:class Element{},window:{getSelection:()=>quoteSelection},
   locateSourceQuote:quoteRange,
@@ -171,6 +172,16 @@ test('a gesture before the first verified snapshot prevents initialization',()=>
 });
 test('a same-ID reply crossing the viewport top keeps its negative root offset',()=>{
  const f=fixture();f.rows[29].height=3000;f.view.scrollHeight=5900;f.gesture(3100);const before=f.offset(f.rows[29]);assert.equal(before,-200);for(let i=0;i<6;i++){f.rows[29].height+=500;f.growBelow(500);}assert.equal(f.offset(f.rows[29]),-200);f.close();
+});
+test('a hidden process-only anchor keeps the viewport and reanchors to a visible reply',()=>{
+ const f=fixture();f.gesture(1250);
+ const offset=f.offset(f.rows[13]);
+ f.rows[12].getBoundingClientRect=()=>({top:0,bottom:0});
+ for(const row of f.rows.slice(13))row.y-=100;
+ f.view.scrollHeight-=100;f.resize();
+ assert.equal(f.offset(f.rows[13]),offset);
+ f.growAbove(f.rows[13],150);assert.equal(f.offset(f.rows[13]),offset);
+ f.close();
 });
 test('a new message does not move the original bottom and lights the content cue',()=>{
  const f=fixture(),before=f.view.scrollTop,m={...f.state.messages.at(-1),id:'new',text:'new answer'};f.addRow(m);f.view.scrollHeight+=100;f.snapshot({messages:[...f.state.messages,m]});assert.equal(f.view.scrollTop,before);assert.ok(f.cue().includes('有新内容'));f.latest();assert.equal(f.view.scrollTop,2500);f.growBelow(400);assert.equal(f.view.scrollTop,2500);f.close();

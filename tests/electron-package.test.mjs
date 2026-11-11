@@ -1,15 +1,15 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import forgeConfig,* as packaging from '../packaging/electron/forge.config.mjs';
 import {DESKTOP_CANDIDATE_PATHS} from '../scripts/desktop-source.mjs';
 import {createHash} from 'node:crypto';
-test('final resource inventory includes bytes changed by native addon signing',()=>{
+test('final resource inventory includes bytes changed by native addon signing',t=>{
  const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});
- const root=mkdtempSync(join(parent,'signed-addon-')),bundle=join(root,'Homer.app'),resources=join(bundle,'Contents/Resources');
+ const root=mkdtempSync(join(parent,'signed-addon-')),bundle=join(root,'Homer.app'),resources=join(bundle,'Contents/Resources');t.after(()=>rmSync(root,{recursive:true,force:true}));
  mkdirSync(resources,{recursive:true});mkdirSync(join(bundle,'Contents/MacOS'));
- for(const name of ['node','homer-image-decoder'])writeFileSync(join(bundle,'Contents/MacOS',name),'synthetic-helper');
+ for(const name of ['node','homer-image-decoder','homer-window-capture'])writeFileSync(join(bundle,'Contents/MacOS',name),'synthetic-helper');
  const addon=join(resources,'synthetic.node');writeFileSync(addon,'synthetic-original');
  assert.equal(typeof packaging.writeDesktopManifest,'function');
  packaging.writeDesktopManifest(bundle,{format:2});writeFileSync(addon,'synthetic-signed-bytes');
@@ -18,26 +18,34 @@ test('final resource inventory includes bytes changed by native addon signing',(
  assert.deepEqual(manifest.files,[{path:'synthetic.node',sha256:createHash('sha256').update('synthetic-signed-bytes').digest('hex')}]);
 });
 
-test('Forge places existing helpers in the app and inventories its finalized ASAR before signing',async()=>{
+test('Forge places existing helpers in the app and inventories its finalized ASAR before signing',async(t)=>{
  const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});
- const root=mkdtempSync(join(parent,'synthetic-')),payload=join(root,'payload'),bundle=join(root,'packager/Homer.app');
+ const root=mkdtempSync(join(parent,'synthetic-')),payload=join(root,'payload'),bundle=join(root,'packager/Homer.app');t.after(()=>rmSync(root,{recursive:true,force:true}));
  mkdirSync(payload);mkdirSync(join(bundle,'Contents/Resources'),{recursive:true});mkdirSync(join(bundle,'Contents/MacOS'));
- for(const name of ['node','homer-image-decoder'])writeFileSync(join(payload,name),'synthetic-'+name);
+ for(const name of ['node','homer-image-decoder','homer-window-capture'])writeFileSync(join(payload,name),'synthetic-'+name);
  writeFileSync(join(bundle,'Contents/Resources/app.asar'),'synthetic-asar');
  writeFileSync(join(bundle,'Contents/MacOS/Homer'),Buffer.from('cffaedfe07000001030000000200000000000000000000000000000000000000','hex'));
  const config=forgeConfig({payload,metadata:{format:2,preparation:true,publishable:false,electron:'45.0.0'},icon:''});
  await config.packagerConfig.afterCopyExtraResources[0]({buildPath:join(root,'packager')});
- for(const name of ['node','homer-image-decoder'])assert.equal(readFileSync(join(bundle,'Contents/MacOS',name),'utf8'),'synthetic-'+name);
+ for(const name of ['node','homer-image-decoder','homer-window-capture'])assert.equal(readFileSync(join(bundle,'Contents/MacOS',name),'utf8'),'synthetic-'+name);
  const manifest=JSON.parse(readFileSync(join(bundle,'Contents/Resources/desktop-manifest.json')));
- assert.equal(manifest.files[0].path,'app.asar');assert.equal(manifest.codeFiles.length,2);assert.equal(manifest.publishable,false);
+ assert.equal(manifest.files[0].path,'app.asar');assert.equal(manifest.codeFiles.length,3);assert.equal(manifest.publishable,false);
  assert.equal(existsSync(join(root,'packager/Contents')),false);
  assert.equal(config.packagerConfig.osxSign.continueOnError,false);
  assert.equal(config.packagerConfig.osxSign.ignore(join(bundle,'Contents/MacOS/node')),true);
+ assert.equal(config.packagerConfig.osxSign.ignore(join(bundle,'Contents/MacOS/homer-window-capture')),true);
  assert.equal(config.packagerConfig.osxSign.ignore(join(bundle,'Contents/MacOS/Homer')),false);
+ const runtime=join(bundle,'Contents/Resources/runtime');
+ assert.equal(config.packagerConfig.osxSign.ignore(join(runtime,'cua/cua-driver')),true);
+ assert.equal(config.packagerConfig.osxSign.ignore(join(runtime,'cua/chrome-viewport')),false);
+ assert.equal(config.packagerConfig.osxSign.ignore(join(runtime,'cua/node_modules/@trycua/cua-driver/dist/index.js')),true);
+ for(const name of ['cua_driver_node_runtime.node','libcua_driver_sdk.dylib']){
+  assert.equal(config.packagerConfig.osxSign.ignore(join(runtime,'cua/node_modules/@trycua/cua-driver-darwin-arm64',name)),false);
+ }
 });
 
-for(const arch of ['arm64','x64'])test('formal '+arch+' configuration uses an immutable tag and finalizes native Forge JSON only',async()=>{
- const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'update-'+arch+'-'));
+for(const arch of ['arm64','x64'])test('formal '+arch+' configuration uses an immutable tag and finalizes native Forge JSON only',async(t)=>{
+ const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'update-'+arch+'-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const metadata={version:'0.2.0',build:200,appId:'app.homer.desktop',releaseChannel:'stable',publishable:true,preparation:false,arch,minimumMacOS:'14.0'};
  const distribution={identity:'a'.repeat(40),keychainProfile:'synthetic',releaseTag:'v0.2.0'};
  const config=forgeConfig({payload:root,metadata,icon:'',distribution});
@@ -79,19 +87,38 @@ test('explicit unsigned Windows release does not configure signing or automatic 
  assert.equal(nsis.win.verifyUpdateCodeSignature,true);
  assert.throws(()=>packaging.windowsInstallerConfig({metadata,distribution:{releaseTag:'v0.2.0'}}),/desktop_distribution_inputs_required/);
 });
-test('Windows resource seal refuses elevate helper and records finalized native helpers',()=>{
- const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'windows-'));mkdirSync(join(root,'resources'));for(const name of ['node.exe','homer-image-decoder.mjs'])writeFileSync(join(root,'resources',name),'signed-synthetic');writeFileSync(join(root,'Homer.exe'),'signed-shell');
+test('Windows resource seal refuses elevate helper and records finalized native helpers',t=>{
+ const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'windows-'));t.after(()=>rmSync(root,{recursive:true,force:true}));mkdirSync(join(root,'resources'));for(const name of ['node.exe','homer-image-decoder.mjs'])writeFileSync(join(root,'resources',name),'signed-synthetic');writeFileSync(join(root,'Homer.exe'),'signed-shell');
+ const cua=join(root,'resources/runtime/cua');mkdirSync(cua,{recursive:true});writeFileSync(join(cua,'homer-cua-windows.exe'),'signed-cua');
  packaging.writeDesktopManifest(root,{platform:'win32',format:2});const sealed=readFileSync(join(root,'resources/desktop-manifest.json'),'utf8');assert.ok(JSON.parse(sealed).files.some(f=>f.path==='node.exe'));
+ assert.doesNotThrow(()=>packaging.assertWindowsPayload(root));
+ writeFileSync(join(cua,'homer-cua-windows.exe'),'tampered-cua');
+ assert.throws(()=>packaging.assertWindowsPayload(root),/desktop_resource_changed/);
  writeFileSync(join(root,'resources/elevate.exe'),'injected');assert.throws(()=>packaging.writeDesktopManifest(root,{platform:'win32',format:2}),/desktop_elevation_helper_denied/);assert.equal(readFileSync(join(root,'resources/desktop-manifest.json'),'utf8'),sealed);
 });
 
-test('Windows native manifest keeps hashes and moves every installer URL to the same immutable asset',()=>{
- const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'latest-')),installer=join(root,'Homer-win32-x64-0.2.0.exe');writeFileSync(installer,'signed-synthetic-installer');
+test('Windows native manifest keeps hashes and moves every installer URL to the same immutable asset',t=>{
+ const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'latest-')),installer=join(root,'Homer-win32-x64-0.2.0.exe');t.after(()=>rmSync(root,{recursive:true,force:true}));writeFileSync(installer,'signed-synthetic-installer');
  const sha512=createHash('sha512').update(readFileSync(installer)).digest('base64');const native={version:'0.2.0',files:[{url:'Homer-win32-x64-0.2.0.exe',sha512,size:readFileSync(installer).length}],path:'Homer-win32-x64-0.2.0.exe',sha512,releaseNotes:'discarded'};
  const final=packaging.windowsRelease(native,installer,{version:'0.2.0'},'v0.2.0');assert.equal(final.files[0].url,'https://github.com/wolf3c/homer/releases/download/v0.2.0/Homer-win32-x64-0.2.0.exe');assert.equal(final.path,final.files[0].url);assert.equal(final.sha512,sha512);assert.equal(final.releaseNotes,undefined);
  for(const bad of [{...final,version:'0.1.0'},{...final,sha512:'wrong'},{...final,files:[{...final.files[0],size:0}]},{...final,files:[{...final.files[0],isAdminRightsRequired:true}]}])assert.throws(()=>packaging.windowsRelease(bad,installer,{version:'0.2.0'},'v0.2.0'),/desktop_update_artifacts_invalid/);
 });
-test('NSIS cannot mutate an already sealed Windows payload',()=>{
- const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'sealed-'));mkdirSync(join(root,'resources'));writeFileSync(join(root,'Homer.exe'),'signed-shell');writeFileSync(join(root,'resources/node.exe'),'signed-node');packaging.writeDesktopManifest(root,{format:2,platform:'win32'});packaging.assertWindowsPayload(root);
+test('NSIS cannot mutate an already sealed Windows payload',t=>{
+ const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const root=mkdtempSync(join(parent,'sealed-'));t.after(()=>rmSync(root,{recursive:true,force:true}));mkdirSync(join(root,'resources'));writeFileSync(join(root,'Homer.exe'),'signed-shell');writeFileSync(join(root,'resources/node.exe'),'signed-node');packaging.writeDesktopManifest(root,{format:2,platform:'win32'});packaging.assertWindowsPayload(root);
  writeFileSync(join(root,'resources/node.exe'),'mutated');assert.throws(()=>packaging.assertWindowsPayload(root),/desktop_resource_changed/);
+});
+test('Windows resource seal covers the capture panel and the shell archive that carries its preload',t=>{
+ const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});
+ const root=mkdtempSync(join(parent,'capture-panel-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const resources=join(root,'resources'),panel='homer/dist/capture-panel/capture-panel.html';
+ mkdirSync(join(resources,'homer/dist/capture-panel'),{recursive:true});
+ writeFileSync(join(root,'Homer.exe'),'synthetic-shell');
+ writeFileSync(join(resources,'app.asar'),'synthetic-preload-archive');
+ writeFileSync(join(resources,panel),'synthetic-capture-page');
+ packaging.writeDesktopManifest(root,{format:2,platform:'win32'});
+ const manifest=JSON.parse(readFileSync(join(resources,'desktop-manifest.json'),'utf8'));
+ assert.deepEqual(manifest.files.map(file=>file.path),['app.asar',panel]);
+ packaging.assertWindowsPayload(root);
+ writeFileSync(join(resources,panel),'mutated');
+ assert.throws(()=>packaging.assertWindowsPayload(root),/desktop_resource_changed/);
 });

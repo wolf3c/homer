@@ -1,0 +1,168 @@
+{
+  "at": "2026-10-22T03:15:29.745223+00:00",
+  "status": "reviewed-candidate-not-yet-adopted",
+  "baselineSourceHash": "f93e3a8e7c29987b06359d9b137009d4674e0fcb5bfb02e866a71cebcefea036",
+  "baselineManifest": "5d18546df90ee6d168587fa4fb1b0911a407866fb01ec36ad8e1b6c653b7c521",
+  "patch": {
+    "path": "docs/patches/2026-10-22-official-run-activity.patch",
+    "sha256": "12c00931cc3d969265eebcce811581e7e79f1310b66c0fe1c463b3c82ee26e4d",
+    "bytes": 71879,
+    "paths": 13
+  },
+  "beforeIdentity": "0902b6a363d86fbc56eefe7e9539fb4fbba8ac35791f852773ec41055c2f6d33",
+  "afterIdentity": "038a40df9b000ad252a6a4169ba46ad74943aeba7ae934fc2c47460a702baebc",
+  "files": [
+    {
+      "path": "ui/DESIGN.md",
+      "role": "product",
+      "beforeSha256": "481f938cb1cb953abb4b1138d7849e7ec751ca3c028696defe17bbe8d1d2865c",
+      "afterSha256": "8fd89c6742de075516dae1fd5216eefeef68a14e0189b3908ba525d7784834d6",
+      "beforeBytes": 16186,
+      "afterBytes": 16921
+    },
+    {
+      "path": "ui/process-nodes.tsx",
+      "role": "product",
+      "beforeSha256": "1a03d80ba8fe430ea5a422c1ccdd11e35e41f3aa4afd6dc929b7a936b7eba55e",
+      "afterSha256": "61f8a056546ba4b93fc02ddc21ea916c13573f0676911c3758300315825d3d69",
+      "beforeBytes": 14116,
+      "afterBytes": 12824
+    },
+    {
+      "path": "ui/process-nodes.css",
+      "role": "product",
+      "beforeSha256": "1aab377a70a8b89a12dd743b67aac6e12b6a520e06f13996d71d6fc2e65ace65",
+      "afterSha256": "272655ac3d99ddc66be38f08153abcc8c72fcbf513e059ccfbe9b1a7cfea6e97",
+      "beforeBytes": 2487,
+      "afterBytes": 2011
+    },
+    {
+      "path": "ui/vendor/assistant-ui/run-activity.tsx",
+      "role": "product",
+      "beforeSha256": "f27d0c39d70e696c999ceeaadcb1b527be8f46a866f88b99da3af740178bbe31",
+      "afterSha256": "f3c56c03ce37d5af0d94224924fb3ac254d118fc94e6267ef70bf290fab684a7",
+      "beforeBytes": 3590,
+      "afterBytes": 4119
+    },
+    {
+      "path": "ui/vendor/assistant-ui/run-activity.css",
+      "role": "product",
+      "beforeSha256": "f0d071a6df4289684ffb1d5272e2e7125b20f74100fc409ba3c66177b02823f3",
+      "afterSha256": "0f11f5a8c894cbd9fe7cef3d5651f84792fd72fe767540741e9a832c8327b042",
+      "beforeBytes": 1162,
+      "afterBytes": 2463
+    },
+    {
+      "path": "ui/vendor/assistant-ui/README.md",
+      "role": "product",
+      "beforeSha256": "1a3e1c82fdf74449a75a8fab3bcefafd2e168697a40d8e69dcb977ca37a91961",
+      "afterSha256": "580ed6d807a6f38cc66914a6a2016b936545cb0ccd0d1d291f184a7e851eb611",
+      "beforeBytes": 2908,
+      "afterBytes": 4024
+    },
+    {
+      "path": "tests/process-reading.test.mjs",
+      "role": "test",
+      "beforeSha256": "b832fd8ba9d891442d54198dc033f1ac14a0f728f285fb0efd880e63ae26d9e9",
+      "afterSha256": "0efdebd0fb9a5414e57c8e6d3068cb3fa28971b968b3051782f7ce174ca49a53",
+      "beforeBytes": 7169,
+      "afterBytes": 7041
+    },
+    {
+      "path": "tests/process-presentation.test.mjs",
+      "role": "test",
+      "beforeSha256": "57223ed3199c15144e70e383f71ab261120cb58c16620e1ea4d2a024054b39af",
+      "afterSha256": "c3b85cfc0e033c777e70ea73746be368e09955bcee5d8d6204fc2d026e3eb4aa",
+      "beforeBytes": 16206,
+      "afterBytes": 16052
+    },
+    {
+      "path": "tests/process-reading.browser.mjs",
+      "role": "test",
+      "beforeSha256": "aeb883d68462099296bd3ce5f2686bb930c25434f87e262042495b3e63612cef",
+      "afterSha256": "571c524aa893c275819a90859d6345452e095217d530bcd1c99a7dfce80d5ca9",
+      "beforeBytes": 13249,
+      "afterBytes": 13705
+    },
+    {
+      "path": "tests/web-working-combination.browser.mjs",
+      "role": "test",
+      "beforeSha256": "da579de0599424ab428fda912d5a3fbd24605ab3d6e421b3002da7b2cef76a73",
+      "afterSha256": "613343ff9bc9b385c5a6e668c4e9a2e691e50b81427fc1cd453bfcea7d70d4f1",
+      "beforeBytes": 9845,
+      "afterBytes": 9938
+    },
+    {
+      "path": "tests/run-activity-style.browser.mjs",
+      "role": "test",
+      "beforeSha256": null,
+      "afterSha256": "0d67478e20429906007d5a03cdbcf6621765462ac3851e77ce11d2951f0dd9fe",
+      "beforeBytes": 0,
+      "afterBytes": 4335
+    },
+    {
+      "path": "docs/2026-10-22-official-run-activity-plan.md",
+      "role": "documentation",
+      "beforeSha256": null,
+      "afterSha256": "257aa625023603dfe79f2995a90fd70da9af0964ff304b51ce39988550858da4",
+      "beforeBytes": 0,
+      "afterBytes": 3574
+    },
+    {
+      "path": "docs/patches/2026-10-22-official-run-activity-verification.json",
+      "role": "documentation",
+      "beforeSha256": null,
+      "afterSha256": "7117c74a9fc2175693549edc7814d43e9ede893bac1457479c26b9b288898276",
+      "beforeBytes": 0,
+      "afterBytes": 12822
+    }
+  ],
+  "dependencyAndLockChanges": 0,
+  "appliesOnlyExactMaintenanceIncrement": true,
+  "replay": {
+    "passes": true,
+    "forwardReverseForwardExact": true,
+    "checks": [
+      {
+        "command": [
+          "git",
+          "apply",
+          "--check"
+        ],
+        "exitCode": 0
+      },
+      {
+        "command": [
+          "git",
+          "apply",
+          "/Users/wolf3c/Project/homer/.codex/scratch/official-run-activity-20261022/candidate/docs/patches/2026-10-22-official-run-activity.patch"
+        ],
+        "exitCode": 0
+      },
+      {
+        "command": [
+          "git",
+          "apply",
+          "--reverse"
+        ],
+        "exitCode": 0
+      },
+      {
+        "command": [
+          "git",
+          "apply",
+          "--reverse"
+        ],
+        "exitCode": 0
+      },
+      {
+        "command": [
+          "git",
+          "apply",
+          "/Users/wolf3c/Project/homer/.codex/scratch/official-run-activity-20261022/candidate/docs/patches/2026-10-22-official-run-activity.patch"
+        ],
+        "exitCode": 0
+      }
+    ]
+  }
+}

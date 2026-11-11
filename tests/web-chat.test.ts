@@ -49,3 +49,16 @@ test('execution reads identify only the task and run and reject extra scope fiel
  await assert.rejects(chat('tasks.execution',{taskId:'../task-one',runId:'run-one'}),/task_execution_invalid/);
  assert.equal(calls.length,1);
 });
+
+test('device media reads forward the exact selector and only allow voice preview on the read',async()=>{
+ const calls:unknown[]=[];
+ const read=async(input:unknown)=>{calls.push(input);return {mime:'audio/wav',data:'eA=='};};
+ const chat=createWebChat({media:{read,origin:read}} as unknown as WebBridge);
+ const ref={messageId:'message-one',assetId:'asset-00000000-0000-0000-0000-000000000000',revision:3};
+ await chat('media.read',ref);
+ await chat('media.read',{...ref,preview:'voice'});
+ await assert.rejects(chat('media.read',{...ref,preview:'html'}),/media_request_invalid/);
+ await assert.rejects(chat('media.origin',{...ref,preview:'voice'}),/media_request_invalid/);
+ await assert.rejects(chat('media.read',{...ref,preview:'voice',path:'/etc/hosts'}),/media_request_invalid/);
+ assert.deepEqual(calls,[ref,{...ref,preview:'voice'}]);
+});

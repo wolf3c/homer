@@ -3,7 +3,6 @@
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-import {createHash} from 'node:crypto';
 import {deflateSync} from 'node:zlib';
 import {fixture} from './web-history-followup-fixture.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
@@ -22,21 +21,15 @@ function imageBytes(){
  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',head),chunk('IDAT',deflateSync(raw)),chunk('IEND',Buffer.alloc(0))]);
 }
 const text=Array.from({length:150},(_,i)=>`第${i}行：${'完整引用内容，'.repeat(12)}`).join('\n'),png=imageBytes();
-const files=[{id:'result-comment-text',title:'很长的文件标题'.repeat(15)+'.txt',mime:'text/plain',bytes:Buffer.from(text)},{id:'result-comment-image',title:'很长的图片标题'.repeat(15)+'.png',mime:'image/png',bytes:png}];
+const files=[{id:'result-comment-text',title:'很长的文件标题'.repeat(12)+'.txt',mime:'text/plain',bytes:Buffer.from(text)},{id:'result-comment-image',title:'很长的图片标题'.repeat(12)+'.png',mime:'image/png',bytes:png}];
 const f=await fixture(4,'after'),checks=[],metrics=[];
-const artifact=f.bridge.artifact.bind(f.bridge);
-f.bridge.artifact=async id=>{const file=files.find(x=>x.id===id);return file?{filename:file.title,mime:file.mime,data:file.bytes.toString('base64'),sha256:createHash('sha256').update(file.bytes).digest('hex')}:artifact(id);};
-for(const owner of [f.bridge,f.bridge.history]){
- const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,artifacts:[...(value.artifacts??[]),...files.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic form'}))]};};
-}
+f.attach('Synthetic form',files.map(({title,mime,bytes})=>({filename:title,mime,content:bytes})));
 try{
  for(const zoom of [1,2]){
-  const chrome=await isolatedChrome(join(destination,'zoom-'+zoom),{zoomFactor:zoom});
+  const chrome=await isolatedChrome(join(destination,'zoom-'+zoom));
   try{for(const width of (zoom===1?[1440,1000,390,320]:[1440,390,320])){
    const p=await chrome.page(f.server.url,width),ev=expression=>p.evaluate(expression),until=expression=>p.until(expression,10000);
-   // The existing helper's Chrome preference is not applied in headless mode.
-   // Explicitly emulate 200% CSS scaling and assert it, rather than counting
-   // an unchanged DPR=1 run as a zoom check.
+   // Apply 200% scaling once via device metrics.
    if(zoom===2)await p.command('Emulation.setDeviceMetricsOverride',{width:Math.round(width/2),height:450,deviceScaleFactor:2,mobile:false});
    const record=label=>{checks.push({width,zoom,label});console.log(width,zoom,label);};
    const key=async(key,n)=>{await p.command('Input.dispatchKeyEvent',{type:'keyDown',key,code:key,windowsVirtualKeyCode:n,...(key==='Enter'?{text:'\r'}:{})});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key,code:key,windowsVirtualKeyCode:n});};
@@ -70,6 +63,7 @@ try{
     metrics.push({width,zoom,label,...m});
     assert.equal(m.horizontalOverflow,0);assert.equal(m.labelled,true);assert.equal(m.described,true);assert.equal(m.rows,2);assert.equal(m.radius,'16px');assert.equal(m.padding,'12px 16px');assert.equal(m.textareaRadius,'8px');assert.equal(m.font,m.width<=800?'16px':'13px');
     assert.ok(m.rect.left>=0&&m.rect.right<=m.width+1&&m.rect.top>=0&&m.rect.bottom<=m.height+1,JSON.stringify({label,...m}));
+    assert.equal(m.width,Math.round(width/zoom));
     assert.equal(m.devicePixelRatio,zoom);
     for(const b of m.buttons){assert.equal(b.font,'12px');assert.equal(b.lineHeight,'18px');assert.ok(b.hit,'visible and hit-testable '+b.text+' '+label);assert.ok(b.rect.left>=m.rect.left&&b.rect.right<=m.rect.right+1&&b.rect.top>=m.rect.top&&b.rect.bottom<=m.rect.bottom+1,'whole button fits '+b.text+' '+label);}
     assert.deepEqual(m.buttons.slice(-2).map(b=>b.text),['取消','保存']);

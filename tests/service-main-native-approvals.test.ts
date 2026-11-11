@@ -16,7 +16,7 @@ test('main native permission stays on the original turn and accepts user decisio
     const scratch = resolve('.codex/scratch');
     mkdirSync(scratch, { recursive: true });
     const dir = mkdtempSync(join(scratch, 'main-native-'));
-    const config: Config = { workspace: join(dir, 'workspace'), runtime: join(dir, 'runtime'), codexHome: join(dir, 'codex'), nativeCodexHome: join(dir, 'codex'), codexBin: '/usr/bin/false', requiresOpenaiAuth: false, model: 'synthetic', effort: 'medium', timeoutMs: 1000, mainTimeoutMs: 2000, stopGraceMs: 100 };
+    const config: Config = { workspace: join(dir, 'workspace'), runtime: join(dir, 'runtime'), codexHome: join(dir, 'codex'), nativeCodexHome: join(dir, 'codex'), codexBin: '/usr/bin/false', requiresOpenaiAuth: false, model: 'synthetic', effort: 'medium', stopGraceMs: 100 };
     for (const p of [config.workspace, config.runtime, config.codexHome])
         mkdirSync(p, { recursive: true });
     let turns = 0, options: EngineOptions | undefined;
@@ -29,7 +29,7 @@ test('main native permission stays on the original turn and accepts user decisio
         async start() { return this.threadId; }
         async turn(_text: string, opts?: {
             onStarted?: (id: string) => void;
-        }): Promise<TurnResult> { turns++; this.turnId = 'synthetic-turn'; opts?.onStarted?.(this.turnId); assert.equal(options?.permissionRequests, true); assert.equal(options?.nativeTools, 'main'); const result = await options!.onInteraction!({ method: 'item/commandExecution/requestApproval', threadId: this.threadId, turnId: this.turnId, itemId: 'synthetic-command', requestId: 123, kind: 'authorization', details: { command: 'synthetic project operation', availableDecisions: ['accept', 'decline'] } }); return { status: 'completed', text: 'Synthetic result: ' + result.status }; }
+        }): Promise<TurnResult> { turns++; this.turnId = 'synthetic-turn'; opts?.onStarted?.(this.turnId); assert.equal(options?.nativeTools, 'main'); const result = await options!.onInteraction!({ method: 'item/commandExecution/requestApproval', threadId: this.threadId, turnId: this.turnId, itemId: 'synthetic-command', requestId: 123, kind: 'authorization', details: { command: 'synthetic project operation', availableDecisions: ['accept', 'decline'] } }); return { status: 'completed', text: 'Synthetic result: ' + result.status }; }
         async close() { return true; }
         async interrupt() { return false; }
     }
@@ -40,7 +40,7 @@ test('main native permission stays on the original turn and accepts user decisio
         const bridge = homerWebBridge(app);
         app.submitMessage({ requestId: 'original-user', text: 'Synthetic authorized project operation' });
         await until(() => app.interactions.list().some(i => i.state === 'pending_user'));
-        const state = await bridge.state();
+        const state = await bridge.history!.state();
         const pending = state.interactions[0]!;
         assert.equal(pending.kind, 'authorization');
         assert.match(pending.question, /synthetic project operation/);
@@ -55,7 +55,7 @@ test('main native permission stays on the original turn and accepts user decisio
         assert.equal(app.store.meta('mainThread'), 'synthetic-main-thread');
         assert.equal(app.interactions.inspect(pending.id).decision?.action, 'deny');
         assert.equal(app.inputs.list().length, 1);
-        assert.equal((await bridge.state()).interactions.length, 0);
+        assert.equal((await bridge.history!.state()).interactions.length, 0);
         assert.equal(app.upgradeStatus().safe, true);
         peer!.nativeBusy = true;
         assert.equal(app.upgradeStatus().safe, false);

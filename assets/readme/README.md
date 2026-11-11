@@ -2,7 +2,7 @@
 
 These visuals come from the Homer homepage concept dated 2026-11-02. They illustrate the product and its intended workflow; the animation is a visual demonstration, not a recording of a live model task.
 
-- `homer-logo.png`: the homepage logo, with embedded generation metadata removed; image pixels are unchanged.
+- The README logo reuses [`homer-odysseus-256.png`](../branding/odysseus-20261030/homer-odysseus-256.png), which is byte-identical to the former homepage export.
 - `home-hero.png`: the homepage's book-and-sword hero artwork, copied unchanged.
 - `homer-workflow.gif`: a capture of the original collaboration animation, cropped to the workflow area and played at twice the original speed. Chinese example text is retained. The loop shows task assignment, assistant collaboration, feedback, review, and delivery.
 
@@ -13,5 +13,5 @@ Export: 980 × 780 pixels, 10 frames per second, approximately 25 seconds, 128-c
 | File | SHA-256 |
 | --- | --- |
 | `home-hero.png` | `d218a04908e00165f140ec22085a3f5adfdeb6cd53e272ea886c5f018d25dd53` |
-| `homer-logo.png` | `6582c941f9c7f5132dc06e844f1921e0d019120de21088935400f2a49c8718fa` |
+| `../branding/odysseus-20261030/homer-odysseus-256.png` | `6582c941f9c7f5132dc06e844f1921e0d019120de21088935400f2a49c8718fa` |
 | `homer-workflow.gif` | `5b479482948aac841f89a5d3a2f611a1c68201d287a0af534be8f1d5c5e480d0` |

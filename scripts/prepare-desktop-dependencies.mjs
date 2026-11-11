@@ -49,11 +49,44 @@ export function prepareDependencies(scratch,{archiveSource,arch=process.arch,pla
     writeFileSync(join(scratch,'codex-'+name),bytes);
   }
   const paths={node:join(scratch,'official-node'),codex:join(scratch,'official-codex'),cli:join(scratch,'official-codex-cli')};
-  for(const [key,name]of[['node',nodeName],['codex',`codex-${CODEX_VERSION}-${target}.tgz`],['cli',`codex-${CODEX_VERSION}.tgz`]]){
-    const path=paths[key];if(existsSync(path))rmSync(path,{recursive:true});mkdirSync(path);
+  const nodePrefix=`node-v${NODE_VERSION}-${windows?'win-x64':target}`;
+  const extracts=[
+    [paths.node,nodeName,1,[`${nodePrefix}/${windows?'node.exe':'bin/node'}`,`${nodePrefix}/LICENSE`]],
+    [paths.codex,`codex-${CODEX_VERSION}-${target}.tgz`,1,[]],
+    [paths.cli,`codex-${CODEX_VERSION}.tgz`,1,[]],
+  ];
+  if(windows||target==='darwin-arm64'){
+    paths.cua=join(scratch,'official-cua');
+    const {version,licenses}=lock.cuaDriver;
+    const archive=windows?lock.cuaDriver.windowsArchive:lock.cuaDriver.archive;
+    const packages=windows?lock.cuaDriver.packages.map(pkg=>pkg.name==='@trycua/cua-driver-darwin-arm64'?lock.cuaDriver.windowsPackage:pkg):lock.cuaDriver.packages;
+    const verify=({file,url,sha256,integrity},max)=>{
+      const bytes=readFileSync(fetch(url,file,max)),digest=sha(bytes);
+      if((!sha256&&!integrity)||(sha256&&digest!==sha256)||(integrity&&'sha512-'+createHash('sha512').update(bytes).digest('base64')!==integrity)){
+        throw Error('desktop_cua_integrity_failed: '+file);
+      }
+      return {archive:file,url,sha256:digest,...(integrity?{integrity}:{})};
+    };
+    components.push({name:'Cua Driver',version,...verify(archive,70000000),license:'MIT',source:'https://github.com/trycua/cua/tree/cua-driver-rs-v'+version,licenses});
+    extracts.push([paths.cua,archive.file,0,[windows?'cua-driver.exe':'cua-driver']]);
+    for(const pkg of packages){
+      const file=`${pkg.name.split('/').at(-1)}-${pkg.version}.tgz`,url=`https://registry.npmjs.org/${pkg.name}/-/${file}`;
+      components.push({...pkg,...verify({file,url,integrity:pkg.integrity},70000000),...(pkg.name.startsWith('@ubjs/')?{source:'https://github.com/jhugman/uniffi-bindgen-react-native/tree/'+pkg.version}:{})});
+      extracts.push([join(paths.cua,'node_modules',pkg.name),file,1,[]]);
+    }
+    for(const license of licenses)verify(license,100000);
+  }
+  for(const [path,name,strip,items]of extracts){
+    if(existsSync(path))rmSync(path,{recursive:true});
+    mkdirSync(path,{recursive:true});
     const listing=execFileSync(tar,['-tf',archives.get(name)],{encoding:'utf8'}).split('\n').filter(Boolean);
     if(listing.some(p=>p.startsWith('/')||p.split('/').includes('..')))throw Error('desktop_archive_path_invalid');
-    execFileSync(tar,['-xf',archives.get(name),'-C',path,'--strip-components=1',...(key==='node'?[`node-v${NODE_VERSION}-${windows?'win-x64':target}/${windows?'node.exe':'bin/node'}`,`node-v${NODE_VERSION}-${windows?'win-x64':target}/LICENSE`]:[])],{stdio:'inherit'});
+    execFileSync(tar,['-xf',archives.get(name),'-C',path,'--strip-components='+strip,...items],{stdio:'inherit'});
+  }
+  if(paths.cua){
+    const directory=join(paths.cua,'licenses');
+    mkdirSync(directory);
+    for(const {file}of lock.cuaDriver.licenses)writeFileSync(join(directory,file),readFileSync(archives.get(file)));
   }
   writeFileSync(join(scratch,'official-dependencies.json'),JSON.stringify({format:1,components},null,2)+'\n');
   return {...paths,components,vendor:windows?'x86_64-pc-windows-msvc':arch==='arm64'?'aarch64-apple-darwin':'x86_64-apple-darwin'};

@@ -7,7 +7,6 @@ import {createRequire} from 'node:module';
 import {loadConfig,effectiveModelConfig,type Config} from '../src/config.js';
 import {deepseekProfile} from '../src/deepseek-model.js';
 import {CodexEngine,type EngineOptions} from '../src/engine.js';
-import {Homer} from '../src/service.js';
 
 const scratch=resolve('.codex/scratch/homer-main-medium-20261027/model-config-tests');
 test('daily desktop uses website roles only and has no model endpoint before login',()=>{
@@ -26,7 +25,7 @@ test('daily desktop uses website roles only and has no model endpoint before log
 mkdirSync(scratch,{recursive:true});
 function fixture(){
   const dir=mkdtempSync(join(scratch,'case-'));
-  const raw={appData:join(dir,'data'),nativeCodexHome:join(dir,'native-home'),codexBin:process.execPath,workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'home'),timeoutMs:1000,mainTimeoutMs:1000};
+  const raw={appData:join(dir,'data'),nativeCodexHome:join(dir,'home'),codexBin:process.execPath,workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'home')};
   for(const path of [raw.workspace,raw.runtime,raw.codexHome])mkdirSync(path);
   const path=join(dir,'config.json');
   return {dir,raw,read(extra:Record<string,unknown>={}){writeFileSync(path,JSON.stringify({...raw,...extra}));return loadConfig(path);},close(){rmSync(dir,{recursive:true,force:true});}};
@@ -131,7 +130,7 @@ for(const role of [undefined,'main','worker'] as const)for(const resume of [fals
   test(`${role} ${resume?'resume':'new'} requests Fast ${fast??'by default'} on every turn`,async()=>{
     const f=fixture();
     const config:Config={...f.raw,nativeCodexHome:f.raw.codexHome,codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'gpt-6.1-sol',...(fast===undefined?{}:{fast}),requiresOpenaiAuth:false,stopGraceMs:100};
-    const engine=new CodexEngine(config,{role,cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic protocol fixture',tools:[],nativeTools:role,nativeCapabilities:true,...(resume?{threadId:'synthetic-model-thread'}:{})},async()=>({}));
+    const engine=new CodexEngine(config,{role,cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic protocol fixture',tools:[],nativeTools:role,...(resume?{threadId:'synthetic-model-thread'}:{})},async()=>({}));
     try{
       await engine.start();
       for(let turn=0;turn<2;turn++){
@@ -158,15 +157,6 @@ test('explicitly disabling Fast allows a standard-only model without changing it
     await engine.start();const result=JSON.parse((await engine.turn('Synthetic protocol check')).text);
     assert.equal(result.model,'synthetic-standard-only');assert.equal(result.turnServiceTier,null);
   }finally{await engine.close();f.close();}
-});
-
-for(const fast of [undefined,true,false])test(`model status reports effective Fast ${fast??'default'}`,async()=>{
-  const f=fixture();const app=new Homer({...f.raw,model:'gpt-6.1-sol',codexBin:process.execPath,requiresOpenaiAuth:false,stopGraceMs:100,...(fast===undefined?{}:{fast})},async()=>{});
-  app['nativeRpc']=async()=>({data:[{id:'gpt-6.1-sol',model:'gpt-6.1-sol',supportedReasoningEfforts:[{reasoningEffort:'medium'}]}]});
-  try{
-    const value=await app.manageCapabilities({action:'models'},'user');
-    assert.equal(value.configured.fast,fast??true);assert.equal(value.configured.model,'gpt-6.1-sol');assert.equal(value.configured.effort,'medium');assert.equal(value.configured.effortListed,true);
-  }finally{await app.close();f.close();}
 });
 
 test('explicit local connection and reasoning settings override product defaults',()=>cleanEnvironment(()=>{
@@ -200,7 +190,7 @@ test('invalid effort, credential-bearing URLs and invalid key references retain 
 for(const role of [undefined,'main','worker'] as const)for(const resume of [false,true])for(const effort of [undefined,'low','medium','high','xhigh','max','ultra'] as const){
   test(role+' engine '+(resume?'resume':'new')+' transmits '+(effort??'role default')+' on every turn',async()=>{
     const f=fixture();
-    const config:Config={...f.raw,codexBin:resolve('tests/fixtures/mock-app-server.mjs'),model:'effort-check',...(effort?{effort}:{}),requiresOpenaiAuth:false,timeoutMs:1000,mainTimeoutMs:1000,stopGraceMs:100};
+    const config:Config={...f.raw,codexBin:resolve('tests/fixtures/mock-app-server.mjs'),model:'effort-check',...(effort?{effort}:{}),requiresOpenaiAuth:false,stopGraceMs:100};
     const options:EngineOptions={role,cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic model configuration check',tools:[],...(resume?{threadId:'mock-thread'}:{})};
     const engine=new CodexEngine(config,options,async()=>({}));
     try{

@@ -9,6 +9,7 @@
 | 市场／入口 | 能找到什么 | 如何查找与安装 |
 | --- | --- | --- |
 | **skills.sh**：[目录](https://www.skills.sh/)、[使用文档](https://www.skills.sh/docs) | Vercel 提供的 Skill 检索、分类与排行榜，链接到发布者仓库 | 按任务关键词搜索，读取条目对应的 repo 与 Skill 子目录，回上游确认完整内容、引用和版本；优先使用 Homer 原生 Installer 指定 `--repo`、`--path`、`--ref`、`--dest`，不整仓安装。站点支持的 `skills` CLI 不是访问目录的前提，不要求另装 CLI 或启用统计。 |
+| **find-skills**／[Vercel Skill 入口](https://www.skills.sh/vercel-labs/skills/find-skills) | 按任务描述搜索候选 Skill，查看上游仓库和安装信息 | 可直接阅读入口并使用 skills.sh 搜索。把结果当作候选线索，核对发布者、固定版本和依赖后，沿用 Homer 的 [安装方法](execution.md#skill) |
 
 ## MCP 市场与注册目录
 
@@ -20,7 +21,7 @@
 
 ## Codex 原生插件市场
 
-当前 Homer 已配置的原生市场优先使用，按任务用 `plugin_search` 检索；具体插件候选见 [精选安装表](curated-tools.md#可选平台插件与开发文档)。安装流程见 [执行方法](execution.md#plugin采用和停止)。
+当前 Homer 已配置的原生市场优先使用，按任务用 Codex 原生市场检索；具体插件候选见 [精选安装表](curated-tools.md#可选平台插件与开发文档)。安装流程见 [执行方法](execution.md#plugin采用和停止)。
 
 需要添加公开 OpenAI 仓库时，其 [marketplace manifest](https://github.com/openai/plugins/blob/main/.agents/plugins/marketplace.json) 当前名称是 `openai-curated`；运行环境可能还有 `openai-curated-remote`，不能强行替换。若当前管理面没有添加入口，先核固定 Codex 的 CLI 帮助，支持时在显式 Homer 专属 HOME 下执行：
 

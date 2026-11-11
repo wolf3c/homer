@@ -7,13 +7,13 @@ import {Homer} from '../src/service.js';
 import {processActivityText} from '../ui/waiting-status.js';
 
 // No constructor/start, account, database, subprocess or HTTP request is used.
-const config={workspace:resolve('.codex/scratch/waiting-status-review/synthetic'),runtime:resolve('.codex/scratch/waiting-status-review/synthetic/runtime'),codexHome:resolve('.codex/scratch/waiting-status-review/synthetic/home'),codexBin:'/synthetic/never-executed',model:'synthetic',requiresOpenaiAuth:false,timeoutMs:1000,mainTimeoutMs:1000,stopGraceMs:1};
+const config={workspace:resolve('.codex/scratch/waiting-status-review/synthetic'),runtime:resolve('.codex/scratch/waiting-status-review/synthetic/runtime'),codexHome:resolve('.codex/scratch/waiting-status-review/synthetic/home'),codexBin:'/synthetic/never-executed',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:1};
 const flush=async()=>{for(let i=0;i<16;i++)await Promise.resolve();};
-function peer(){
-  const engine=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'synthetic',tools:[]},async()=>({}));
-  const sent:any[]=[];engine['send']=m=>{sent.push(m);};engine.threadId='native-thread';
+function peer(cwd=config.workspace){
+  const engine=new CodexEngine(config,{cwd,readRoots:[],instructions:'synthetic',tools:[]},async()=>({}));
+  const sent:any[]=[];engine['send']=(m:any)=>{if(m.method==='config/read')void receive({id:m.id,result:{config:{},layers:[]}});else sent.push(m);};engine.threadId='native-thread';
   const receive=(m:any)=>engine['receive'](JSON.stringify(m));
-  return {engine,sent,event:(method:string,params:any={})=>receive({method,params:{threadId:'native-thread',...params}}),ack:()=>receive({id:sent[0].id,result:{turn:{id:'native-turn'}}})};
+  return {engine,sent,event:(method:string,params:any={})=>receive({method,params:{threadId:'native-thread',...params}}),ack:async()=>{await flush();return receive({id:sent[0].id,result:{turn:{id:'native-turn'}}});}};
 }
 
 test('native notifications keep exact identity, hold pre-ACK events, sanitize retry and observe terminal before background query',async()=>{
@@ -127,12 +127,13 @@ test('complete-only new items advance while previously observed items cannot rec
 });
 
 function host(){
+  const hostConfig={...config,workspace:process.cwd()};
   const app=Object.create(Homer.prototype) as any;
   const engine=new EventEmitter() as any;engine.threadId='native-thread';engine.available=true;
   let finish!:(value:any)=>void;
   engine.turn=async(_text:string,options:any)=>{engine.turnId='native-turn';options.onStarted(engine.turnId);return new Promise(r=>{finish=r;});};
-  Object.assign(app,{config,prompts:{main:'synthetic'},factory:()=>engine,stateObservers:new Set(),mainBroken:false,mainSuspended:[],workers:new Map(),closing:false,mcpOptions:()=>({}),recoverMain:async()=>{},refreshMainCapabilities:async()=>{},validateMainMemory:()=>{},mainActor:()=>({}),memory:{settings:()=>({epoch:0,enabled:true}),snapshot:()=>({entries:[],epoch:0})},tasks:{pending:{summary:()=>({totalOpen:0})}},store:{db:{exec:()=>{}},meta:(key:string)=>key==='mainThread'?'public-thread':undefined,setMeta:()=>{}},processes:{start:()=>true,list:()=>[],finish:()=>{}},history:{record:()=>{},list:()=>[]},inputs:{list:()=>[],started:()=>{}},mainApprovals:{end:()=>{}},finishMainProcess:()=>{},emitMain:()=>{}});
-  app.main=app.createMain(config.workspace);
+  Object.assign(app,{config:hostConfig,prompts:{main:'synthetic'},factory:()=>engine,stateObservers:new Set(),mainBroken:false,mainSuspended:[],workers:new Map(),closing:false,mcpOptions:()=>({}),recoverMain:async()=>{},refreshMainCapabilities:async()=>{},validateMainMemory:()=>{},mainActor:()=>({}),memory:{settings:()=>({epoch:0,enabled:true}),snapshot:()=>({entries:[],epoch:0})},tasks:{pending:{summary:()=>({totalOpen:0})}},store:{db:{exec:()=>{}},meta:(key:string)=>key==='mainThread'?'public-thread':undefined,setMeta:()=>{}},processes:{start:()=>true,list:()=>[],finish:()=>{}},history:{record:()=>{},list:()=>[]},inputs:{list:()=>[],started:()=>{}},mainApprovals:{end:()=>{}},finishMainProcess:()=>{},emitMain:()=>{}});
+  app.main=app.createMain(hostConfig.workspace);
   app.store.transaction=(work:()=>unknown)=>work();
   app.history.acceptedRequestIds=()=>[];
   app.processes.uncertain=()=>{};
@@ -170,7 +171,7 @@ test('main summaries are transient, deduplicated and fenced by current context',
 });
 
 test('native summary events survive a fresh client snapshot without becoming process history',async()=>{
- const p=peer(),h=host();h.app.factory=()=>p.engine;h.app.main=h.app.createMain(config.workspace);
+ const p=peer(process.cwd()),h=host();h.app.factory=()=>p.engine;h.app.main=h.app.createMain(process.cwd());
  const context:any={event:true,allowEmptyReply:true,inspected:new Set()};
  const work=h.app.mainTurn('synthetic',context);await flush();await p.ack();await flush();
  try{
@@ -186,7 +187,7 @@ test('native summary events survive a fresh client snapshot without becoming pro
 test('current main context owns monotone compaction evidence, not Worker state or stale engine/turns',async()=>{
   const h=host(),context:any={event:true,allowEmptyReply:true,inspected:new Set()};let changes=0;h.app.onStateChange(()=>changes++);
   const work=h.app.mainTurn('synthetic',context);await flush();
-  const state=()=>h.app.conversationState();
+  const state=()=>h.app.conversationControlState();
   assert.equal(state().isRunning,false);assert.equal(state().activeMessageId,null);
   assert.equal(state().mainActivity.source,'internal');assert.equal(state().mainActivity.stage,'native');
   const fact={threadId:'native-thread',turnId:'native-turn',itemId:'compact'};
@@ -209,10 +210,10 @@ test('main uncertainty clears live detail, and a fresh context does not resurrec
   const h=host(),context:any={event:true,allowEmptyReply:true,inspected:new Set()};const work=h.app.mainTurn('synthetic',context);await flush();
   const fact={threadId:'native-thread',turnId:'native-turn'};
   h.engine.emit('contextCompaction',{...fact,itemId:'compact',state:'started'});h.engine.emit('turnUnavailable',fact);
-  assert.equal(h.app.conversationState().mainActivity.stage,'unknown');
-  h.engine.emit('contextCompaction',{...fact,itemId:'compact',state:'started'});assert.equal(h.app.conversationState().mainActivity.stage,'unknown');
+  assert.equal(h.app.conversationControlState().mainActivity.stage,'unknown');
+  h.engine.emit('contextCompaction',{...fact,itemId:'compact',state:'started'});assert.equal(h.app.conversationControlState().mainActivity.stage,'unknown');
   h.finish({status:'completed',text:''});await work;
   const next=h.app.mainTurn('synthetic',{event:true,allowEmptyReply:true,inspected:new Set()});await flush();
-  assert.equal(h.app.conversationState().mainActivity.stage,'native');assert.equal(h.app.conversationState().mainActivity.retryObserved,undefined);
+  assert.equal(h.app.conversationControlState().mainActivity.stage,'native');assert.equal(h.app.conversationControlState().mainActivity.retryObserved,undefined);
   h.finish({status:'completed',text:''});await next;
 });

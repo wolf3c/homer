@@ -22,17 +22,21 @@ test('terminal headers preserve exact public action and drop a MiB raw body; act
 });
 test('a reply remains a plain conversation fact and matching event cards suppress only the same occurrence',()=>{
  const f=setup();try{
-  assert.equal(f.tasks.readTask(f.actor,f.task.taskId).results.length,0);assert.equal(f.tasks.task(f.task.taskId).state,'open');
+  assert.equal(f.tasks.workerRead(f.actor,{workerId:f.worker.workerId}).messages.at(-1)?.text,'PRIVATE_REPLY');assert.equal(f.tasks.task(f.task.taskId).state,'open');
   const event={schemaVersion:1 as const,eventKind:'reply_received' as const,title:'Worker',body:'Public short preview',bodySource:'reply' as const,taskId:f.task.taskId,version:1,runId:f.run.id,sourceMessageId:f.reply.messageId,operationKey:null,observedAtMs:1,failureStage:null,errorCode:null};
   const n=node([f.reply.messageId],[{id:'e',kind:'workerEvent',seq:1,revision:1,eventKey:'e',event}]);assert.equal(f.project(message(n)).taskSources,undefined);
   (n.items[0] as any).event={...event,sourceMessageId:'unrelated'};assert.equal(f.project(message(n)).taskSources?.length,1);
  }finally{f.close();}
 });
-test('delivery links retain exact Task/version and distinguish a revoked receipt from Main settlement',()=>{
+test('verified sources distinguish a literal title from an unavailable public name',()=>{
  const f=setup();try{
-  const result=f.tasks.adoptResult(f.actor,{operationId:'adopt',taskId:f.task.taskId,version:1,messageId:f.reply.messageId}),delivery=f.tasks.publish(f.actor,{operationId:'publish',taskId:f.task.taskId,version:1,resultIds:[result.resultId],text:'PUBLIC_DELIVERY'});f.tasks.markDelivery(delivery.deliveryId,'submitting');f.tasks.markDelivery(delivery.deliveryId,'recorded');
-  const m={...message(node([])),id:delivery.historyMessageId},read=()=>f.project(m).taskSources![0]!;assert.equal(read().target.version,1);assert.equal(read().target.taskId,f.task.taskId);assert.equal(read().target.runId,undefined);assert.equal(read().icon,'Check');
-  f.tasks.markDelivery(delivery.deliveryId,'revoked');assert.equal(read().icon,'Pause');assert.match(read().phaseLabel,/已撤回/);
+  const input=message(node([f.reply.messageId])),rename=f.store.db.prepare('UPDATE tasks SET title=? WHERE id=?');
+  rename.run('后台工作',f.task.taskId);
+  assert.equal(f.project(input).taskSources?.[0]?.title,'后台工作');
+  rename.run('file:synthetic',f.task.taskId);
+  const source=f.project(input).taskSources?.[0];
+  assert.equal(source?.target.taskId,f.task.taskId);
+  assert.equal(source?.title,'');
  }finally{f.close();}
 });
 test('creation provenance authenticates the actual returned Task and never a neighbouring Task',()=>{

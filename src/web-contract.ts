@@ -1,5 +1,6 @@
 export type WebProcessNode=import('./main-process.js').ProcessNode&{activityLinks?:Record<string,import('./activity-facts.js').ActivityLink>};
-export const WEB_PROTOCOL = 1;
+export const WEB_PROTOCOL = 2;
+export const CONVERSATION_VIEW = 4;
 // One mapping for the existing chat callers and the two transports.
 export const WEB_CHAT_POST:Readonly<Record<string,{op:string;status:number}>>={
   '/api/history/page':{op:'history.page',status:200},'/api/history/process':{op:'history.process',status:200},
@@ -16,11 +17,14 @@ export function webChatPost(path:string):{op:string;status:number;id?:string}|un
   const match=path.match(/^\/api\/interactions\/([\w-]{1,100})$/);
   return match?{op:'interactions.respond',status:202,id:match[1]}:undefined;
 }
+export function webMediaRoute(method:string|undefined,target:URL){
+  const match=target.pathname.match(/^\/api\/media\/([\w:-]{1,100})\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})(?:\/(origin|reveal))?$/);
+  if(!match||target.search&&(method!=='GET'||target.search!=='?preview=voice'||match[4]))return;
+  return {attachment:{messageId:match[1]!,assetId:match[2]!,revision:Number(match[3])},action:match[4],preview:target.search?'voice' as const:undefined};
+}
 // Live observation only; never persisted or used as an execution/stop target.
 export type MainActivity={processId:string;source:'user'|'internal';turnId?:string;stage:'preparing'|'native'|'compacting'|'finishing'|'unknown';summary?:string;retryObserved?:true;connectionIssue?:true};
 import type { ConversationInput } from "./web-history.js";
-import type { WechatManagementBridge } from "./channels/wechat-management.js";
-import type { TelegramManagementBridge } from "./channels/telegram-management.js";
 import type {QueuedInput,DispatchInput,MainDispatchInput,QueueChange,QueueMove,QueueOperationResult} from './recursive-main-inputs.js';
 import type {MainGeneration} from './service.js';
 import type {NativeTokenUsage} from './native-usage.js';
@@ -30,11 +34,13 @@ export type ActiveReadResult<T>=ActiveReadVersion&{items:T[];after:number|null};
 type QueueUser=import('./web-history.js').ConversationMessage&{media?:import('./media-store.js').MediaView[]};
 export type DispatchQueuePage<S extends 'all'|undefined=undefined>=ActiveReadVersion&{view:'dispatch-v1';sources?:S;orderVersion:string;totalWaiting:number;items:(S extends 'all'?MainDispatchInput&{user?:QueueUser;statusText:string}:DispatchInput&{user:QueueUser;statusText:string})[];nextCursor:string|null};
 export type QueueReceiptsRequest={requestIds:string[];threadId?:string;readEpoch?:string;operations?:({requestId:string;messageId?:never;operationId:string}|{messageId:string;requestId?:never;operationId:string})[]};
-export type QueueReceipts={acceptedRequestIds:string[];statuses:{requestId:string;state:string;revision?:number;inputRevision?:number;editable?:boolean}[];operations?:{requestId?:string;messageId?:string;operationId:string;committed:boolean;result?:QueueOperationResult}[]};
-export type WebArtifact={id:string;title:string;workTitle:string;historyMessageId?:string;messageId?:string;version?:number;outcome?:string};
+export type QueueReceipts={acceptedRequestIds:string[];statuses:{requestId:string;state:string;error?:string;revision?:number;inputRevision?:number;editable?:boolean}[];operations?:{requestId?:string;messageId?:string;operationId:string;committed:boolean;result?:QueueOperationResult}[]};
+export type MessageAttachment={messageId:string;assetId:string;revision:number};
+export type WebArtifact=MessageAttachment&{id:string;title:string;sha256:string};
 export type ArtifactOrigin={message:import('./web-history.js').ConversationMessage;files:WebArtifact[]};
-export type WebWork = { id: string; title: string; status: string; summary: string | null; hasArtifact: boolean; artifacts?: {id:string;title:string;historyMessageId?:string;version?:number;outcome?:string}[] };
-export type WebInteraction = { canCancel?:true; id: string; runId: string; workTitle?: string; sourceRequestId?: string; sourceMessageId?:string; kind: "question" | "authorization"; question: string; reason: string | null; questions?: import('./question-schema.js').WebQuestion[] };
+export type WebWork={id:string;title:string;status:string;summary:string|null};
+export type WebApproval = { title: string; scope: string; canApprove?: false; context?: string; explanation?: string; detailLabel?: string; details?: string };
+export type WebInteraction = { approval?: WebApproval; canCancel?:true; id: string; runId: string; workTitle?: string; sourceRequestId?: string; sourceMessageId?:string; kind: "question" | "authorization"; question: string; reason: string | null; questions?: import('./question-schema.js').WebQuestion[] };
 export type InactiveInteraction = {code?:string;id:string;kind:"question"|"authorization";state:"expired"|"cancelled";sourceRequestId:string;messageId?:string;processId?:string};
 export type WebState = {
   observedAtMs?:number;
@@ -42,18 +48,18 @@ export type WebState = {
   inactiveInteractions?:InactiveInteraction[];
   orderWarning?:string;
   queueDispatch?:{orderVersion:string;totalWaiting:number;unscoped?:number;awaitingUser?:true};
-  conversationView?:3; acceptedRequestIds?:string[];
+  conversationView?:typeof CONVERSATION_VIEW; acceptedRequestIds?:string[];
   artifacts?:WebArtifact[];
   mainActivity?:MainActivity|null;
   // Current host observation only; never reconstruct it from legacy message text.
   modelFailure?:{messageId:string;code:'engine_quota_insufficient'|'engine_rate_limited'|'engine_authentication_failed'|'engine_account_status_unconfirmed'|'main_turn_failed';source?:'codex'|'website'};
   processNodes?: import('./main-process.js').ProcessNode[];
-  features?:{draftUpload?:boolean;nativeCapabilities?:boolean;taskOverview?:boolean;workerExecution?:1;workerEventCards?:1;queueDispatch?:1;queueSources?:1;nativeQuestionAnswers?:1;previewReferences?:1;previewReferenceCollections?:1|2};
+  features?:{draftUpload?:boolean;taskOverview?:boolean;workerExecution?:1;workerEventCards?:1;queueDispatch?:1;queueSources?:1;nativeQuestionAnswers?:1;previewReferences?:1;previewReferenceCollections?:1|2};
   threadId: string; messages: import('./conversation-projection.js').DisplayMessage[]; isRunning: boolean; activeMessageId: string | null;
   queue?: (QueuedInput & Partial<import('./conversation-projection.js').DisplayQueueInput>)[];generation?:MainGeneration|null;
   usage?:NativeTokenUsage|null;
   work: WebWork[]; interactions: WebInteraction[];
-  upgrade: { reviewRequired?: boolean; phase: string; version?: string; uiVersion?: string; accepting?: boolean; transportPending?: string[]; transportRejected?: {requestId: string; error: string}[]; code?: string };
+  upgrade: { reviewRequired?: boolean; phase: string; version?: string; uiVersion?: string; accepting?: boolean; code?: string };
 };
 export type WebBridge = {
   history?:{
@@ -68,10 +74,7 @@ export type WebBridge = {
   };
   onStateChange?(listener:()=>void):()=>void;
   taskOverview?: {execution?(selector:import('./worker-execution.js').ExecutionSelector,before?:string):Promise<import('./worker-execution.js').WorkerExecutionPage>;call?(selector:import('./worker-execution.js').ExecutionSelector,callKey:string):Promise<import('./worker-execution.js').WorkerCallDetail>;progress?(id:string):Promise<import('./task-status.js').TaskProgress>;list():Promise<import('./task-overview.js').TaskOverview>;detail(id:string,query?:import('./task-overview.js').WorkerConversationQuery):Promise<import('./task-overview.js').TaskDetail>;summary?(id:string):Promise<import('./task-overview.js').TaskDetail>;origin?(id:string,messageId:string):Promise<ArtifactOrigin>};
-  media?:{read(input:{messageId:string;assetId:string;revision:number}):Promise<{filename:string;mime:string;data:string}>;upload?(input:import('./web-upload.js').WebUpload):Promise<import('./media-store.js').MediaView>;discard?(input:unknown):Promise<unknown>;previewDraft?(input:unknown):Promise<{mime:string;data:string}>};
-  wechat?: WechatManagementBridge;
-  telegram?: TelegramManagementBridge;
-  state(): Promise<WebState>;
+  media?:{read(input:MessageAttachment&{preview?:'voice'}):Promise<{filename:string;mime:string;data:string;sha256?:string}>;origin?(input:MessageAttachment):Promise<ArtifactOrigin>;reveal?(input:MessageAttachment):Promise<{target:'source'|'snapshot';device:'homer-host'}>;upload?(input:import('./web-upload.js').WebUpload):Promise<import('./media-store.js').MediaView>;discard?(input:unknown):Promise<unknown>;previewDraft?(input:unknown):Promise<{mime:string;data:string}>};
   submit(input: ConversationInput): Promise<unknown>;
   queue?:{
     edit(input:QueueChange&{input:ConversationInput}):Promise<unknown>;
@@ -82,7 +85,4 @@ export type WebBridge = {
   stop(messageId: string): Promise<unknown>;
   feedback?(messageId: string, value: 'up' | 'down' | null): Promise<unknown>;
   respond(id: string, input: Pick<ConversationInput,'requestId'|'text'|'questionAnswers'>): Promise<unknown>;
-  artifactOrigin?(resultId:string):Promise<ArtifactOrigin>;
-  revealArtifact?(resultId:string):Promise<{target:'source'|'published';device:'homer-host'}>;
-  artifact(id: string): Promise<{ filename: string; content: string;data?:string;mime?:string;sha256?:string }>;
 };

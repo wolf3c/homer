@@ -21,9 +21,10 @@ test('gateway accepts Web/CLI during handoff, survives crash and reconciles a lo
   child.stdout.on('data',data=>{text+=data;const lines=text.split('\n');text=lines.pop();for(const line of lines)try{events.push(JSON.parse(line));}catch{}});
   child.stderr.on('data',()=>{});return child;
  }
- const state=async()=>{try{return await(await fetch(url+'/api/state')).json();}catch{return undefined;}};
+ const state=async()=>{try{return await(await fetch(url+'/api/history/state')).json();}catch{return undefined;}};
  const post=async input=>{const r=await fetch(url+'/api/messages',{method:'POST',headers:{'Content-Type':'application/json',Origin:url},body:JSON.stringify(input)});return {status:r.status,value:await r.json()};};
  const query=sql=>{const db=new DatabaseSync(join(base,'runtime/homer.sqlite'));try{return db.prepare(sql).all();}finally{db.close();}};
+ const pendingTransport=()=>{const db=new DatabaseSync(join(base,'runtime/gateway/transport.sqlite'),{readOnly:true});try{return db.prepare("SELECT count(*) n FROM transport_requests WHERE state='pending'").get().n;}finally{db.close();}};
  const lock=()=>JSON.parse(readFileSync(join(base,'runtime/cli.lock'))).pid;
  let launcher=launch(),gatewayCrashPid;
  try{
@@ -39,23 +40,23 @@ test('gateway accepts Web/CLI during handoff, survives crash and reconciles a lo
   const results=await Promise.all(inputs.flatMap(input=>[post(input),post(input)]));
   for(const r of results){assert.equal(r.status,202);assert.equal(r.value.transportState,'stored');assert.equal(r.value.accepted,false);}
   assert.equal((await post({...inputs[0],text:'conflict'})).status,409);
-  launcher.stdin.write('Synthetic CLI in handoff\n');await until(async()=>(await state())?.upgrade?.transportPending?.length===9);
-  // SSE remains live and carries a full reconnectable state while child restores.
-  const response=await fetch(url+'/api/events');const reader=response.body.getReader();const event=await reader.read();assert.match(Buffer.from(event.value).toString(),/event: state/);await reader.cancel();
+  launcher.stdin.write('Synthetic CLI in handoff\n');await until(async()=>pendingTransport()===9);
+  // SSE remains live and carries a bounded reconnectable state while child restores.
+  const response=await fetch(url+'/api/history/events');const reader=response.body.getReader();const event=await reader.read();assert.match(Buffer.from(event.value).toString(),/event: state/);await reader.cancel();
   gatewayCrashPid=lock();const exited=new Promise(r=>launcher.once('exit',r));launcher.kill('SIGKILL');await exited;
   // Startup stop intentionally waits for a known owner; release only this synthetic gate.
   writeFileSync(join(base,'runtime/release-resume'),'1');
   await until(()=>{try{process.kill(gatewayCrashPid,0);return false;}catch{return true;}});
   launcher=launch();await until(async()=>(await state())?.upgrade?.phase==='running');
   await until(()=>query('SELECT * FROM conversation_inputs').length===10);
-  await until(async()=>(await state())?.queue.every(r=>r.state==='completed'));
+  await until(async()=>(await state())?.queue.length===0);
   assert.equal((await state()).threadId,original.threadId);
   for(const input of inputs){const r=await post(input);assert.equal(r.status,202);assert.equal(r.value.fresh,false);}
   assert.equal((await post({...inputs[0],text:'Changed after business acceptance'})).status,409);
   assert.equal((await post(inputs[0])).value.fresh,false,'transport rejection must not override original business identity');
   assert.equal(query('SELECT count(*) n FROM requests')[0].n,10);
   assert.equal(query('SELECT count(*) n FROM conversation_inputs')[0].n,10);
-  await until(async()=>(await state())?.upgrade?.transportPending?.length===0);
+  await until(async()=>pendingTransport()===0);
   assert.throws(()=>process.kill(gatewayCrashPid,0));
   // A dead business owner never restarts itself or replays unknown execution.
   // The stable endpoint stays available for durable ordinary input.
@@ -67,7 +68,7 @@ test('gateway accepts Web/CLI during handoff, survives crash and reconciles a lo
   const end=new Promise(r=>launcher.once('exit',r));launcher.kill('SIGINT');await end;
   launcher=launch();await until(async()=>(await state())?.upgrade?.phase==='running');
   await until(()=>query('SELECT count(*) n FROM conversation_inputs')[0].n===11);
-  await until(async()=>(await state())?.queue.every(row=>row.state==='completed'));
+  await until(async()=>(await state())?.queue.length===0);
   const proof={synthetic:true,codexBin:'/usr/bin/false',threadPreserved:true,concurrentWebPosts:16,distinctWebInputs:8,cliInputs:1,transportCrashRecovery:true,requestsBeforeOwnerFailure:10,requestsAfterExplicitRecovery:11,ownerCrashRetainedGateway:true,sseDuringHandoff:true};
   writeFileSync(join(base,'verified-checks.json'),JSON.stringify(proof,null,2));
  }finally{

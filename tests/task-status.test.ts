@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {OverviewTask,OverviewWorker} from '../src/task-overview.js';
-import {workerStatus,taskCardPresentation,statusCounts,statusCountSnapshot,statusTree,matterSortKey,rankedStatusMatters,statusVisibleLimit,linearPlanIndex} from '../src/task-status.js';
+import {workerStatus,taskCardPresentation,statusCountSnapshot,statusTree,matterSortKey,rankedStatusMatters,statusVisibleLimit,linearPlanIndex} from '../src/task-status.js';
 const worker=(id:string,status='running',phase='executing'):OverviewWorker=>({id,taskId:'task',run:{id,taskId:'task',workerId:id,version:1,epoch:1,status,phase,sourceRequestId:null,createdAt:100,startedAt:200,endedAt:phase==='ended'?300:null},pendingUser:0,pendingMain:0,pendingUsers:[]});
-const task=(change:Partial<OverviewTask>={}):OverviewTask=>({id:'task',title:'Matter',goal:'Goal',notes:'',headVersion:1,revision:1,state:'open',outcome:null,controlState:'normal',historyState:'visible',sourceRequestId:null,creationOrder:1,createdAt:10,workers:[],results:[],deliveries:[],...change});
+const task=(change:Partial<OverviewTask>={}):OverviewTask=>({id:'task',title:'Matter',goal:'Goal',notes:'',headVersion:1,revision:1,state:'open',outcome:null,controlState:'normal',historyState:'visible',sourceRequestId:null,creationOrder:1,createdAt:10,workers:[],...change});
 
 test('Worker success failure interruption and queue are execution facts only',()=>{
  for(const [status,phase,state,label] of [['succeeded','ended','done','已回复'],['failed','ended','failed','执行失败'],['cancelled','ended','cancelled','本轮已停止'],['interrupted','ended','waiting','执行已中断'],['queued','ready','waiting','等待调度']] as const){
@@ -11,9 +11,9 @@ test('Worker success failure interruption and queue are execution facts only',()
  }
 });
 
-test('explicit Main outcomes render independently from all formal delivery states',()=>{
+test('explicit Main outcomes render without separate delivery states',()=>{
  for(const outcome of ['succeeded','partial','failed','cancelled']){
-  const t=task({state:'settled',outcome,deliveries:[{id:'old-delivery',version:1,state:'recorded',resultIds:[]}]});
+  const t=task({state:'settled',outcome});
   assert.equal(taskCardPresentation(t).state,outcome==='failed'?'failed':outcome==='cancelled'?'cancelled':'done');
  }
  assert.equal(taskCardPresentation(task({controlState:'stopping'})).label,'停止待确认');
@@ -35,15 +35,15 @@ test('tree deduplicates real matters and rejects unrelated or malformed session 
 
 test('one root contributes once while session and interaction units remain distinct',()=>{
  const a=worker('a'),b=worker('b');a.pendingUser=2;a.pendingUsers=[{id:'q',after:0},{id:'q2',after:1}];b.pendingUser=1;b.pendingUsers=[{id:'q',after:0}];
- const t=task({workers:[a,b]});assert.deepEqual(statusCounts([t,t]),{working:1,queued:0,done:0,needsUser:2});
- a.pendingUser=3;assert.equal(statusCounts([t]).needsUser,3,'unlocated requests retain their count');
- b.run.phase='ended';b.run.status='succeeded';assert.equal(statusCounts([t]).done,1);assert.equal(statusCountSnapshot([t]).matches.done.has('task'),true);
+ const t=task({workers:[a,b]});assert.deepEqual(statusCountSnapshot([t,t]).counts,{working:1,queued:0,done:0,needsUser:2});
+ a.pendingUser=3;assert.equal(statusCountSnapshot([t]).counts.needsUser,3,'unlocated requests retain their count');
+ b.run.phase='ended';b.run.status='succeeded';assert.equal(statusCountSnapshot([t]).counts.done,1);assert.equal(statusCountSnapshot([t]).matches.done.has('task'),true);
 });
 
 test('queued work and successful old rounds do not inflate current active sessions',()=>{
  const t=task({workers:[worker('a'),worker('b','queued','ready'),worker('c','succeeded','ended')]});
- assert.deepEqual(statusCounts([t]),{working:1,queued:1,done:1,needsUser:0});
- t.state='paused';assert.equal(statusCounts([t]).working,0);assert.equal(statusCounts([t]).queued,0);
+ assert.deepEqual(statusCountSnapshot([t]).counts,{working:1,queued:1,done:1,needsUser:0});
+ t.state='paused';assert.equal(statusCountSnapshot([t]).counts.working,0);assert.equal(statusCountSnapshot([t]).counts.queued,0);
 });
 
 test('unknown current work with no active proof suppresses an exact quantity',()=>{

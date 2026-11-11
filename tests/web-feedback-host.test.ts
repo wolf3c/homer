@@ -19,10 +19,10 @@ function productionNode(file:string,predicate:(node:ts.Node)=>boolean){
 test('actual gateway bridge and host web dispatch preserve feedback arguments and result',async()=>{
  const binding=productionNode('scripts/dev.mjs',n=>ts.isPropertyAssignment(n)&&n.name.getText()==='feedback'&&ts.isArrowFunction(n.initializer)&&ts.isObjectLiteralExpression(n.parent)&&ts.isPropertyAssignment(n.parent.parent)&&n.parent.parent.name.getText()==='bridge').replace(/^feedback\s*:/,'');
  const calls:unknown[]=[];const result={messageId:'assistant-1',value:'down'};
- const app={registerChannelCapabilities:()=>{},history:{feedback:(...args:unknown[])=>{calls.push(args);if(args[1]==='unknown-message')throw Error('feedback_message_not_found');return result;}},store:{meta:()=> 'thread-1'}};
+ const app={registerWebSurface:()=>{},history:{feedback:(...args:unknown[])=>{calls.push(args);if(args[1]==='unknown-message')throw Error('feedback_message_not_found');return result;}},store:{meta:()=> 'thread-1'}};
  const receive=productionNode('src/dev-host.ts',n=>ts.isFunctionDeclaration(n)&&n.name?.text==='receive');
  const js=ts.transpileModule(receive,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
- let response:any;const dispatch=new Function('app','frozen','stopping','homerWebBridge','send','engineError','webUploadProtocol','nativeCapabilitiesProtocol','wechat','telegramManagement','desktop',`${js};return receive;`)(app,false,false,homerWebBridge,(m:unknown)=>{response=m;},(e:Error)=>e.message,false,false,undefined,undefined,false);
+ let response:any;const dispatch=new Function('app','frozen','stopping','homerWebBridge','send','engineError','webUploadProtocol','nativeCapabilitiesProtocol','desktop',`${js};return receive;`)(app,false,false,homerWebBridge,(m:unknown)=>{response=m;},(e:Error)=>e.message,false,false,false);
  const invokeWeb=async(method:string,input:unknown)=>{await dispatch({kind:'web',id:'receipt-1',method,input});if(response.error)throw Error(response.error);return response.value;};
  const feedback=new Function('invokeWeb',`return (${binding});`)(invokeWeb);
  assert.equal(typeof feedback,'function','launcher must bind feedback');

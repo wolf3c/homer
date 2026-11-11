@@ -13,6 +13,8 @@ try {
     for (const width of [1440,390,320]) {
         const f = await fixture(1000, 'after', true), page = await chrome.page(f.server.url, width);
         try {
+            const firstNode = 'node-920';
+            const process=f.processes.exact(firstNode);process.revision++;process.status='failed';process.items.unshift({id:'pagination-progress',kind:'commentary',phase:'commentary',seq:0,revision:1,text:'合成历史过程'});f.store.setMeta('publicMainNode:v1:'+firstNode,JSON.stringify(process));
             let releaseReceipt;const receiptGate=new Promise(done=>{releaseReceipt=done;}),receiptOwner=f.bridge.history.receipts;f.bridge.history.receipts=async input=>{const receipt=await receiptOwner(input);await receiptGate;return receipt;};
             await page.command('Page.addScriptToEvaluateOnNewDocument',{source:probeScript+`;sessionStorage.setItem('homer-unconfirmed:synthetic-history',JSON.stringify([{input:{requestId:'request-0',text:'合成问题 0'}}]));sessionStorage.setItem('homer-interaction:synthetic-history:off-page:draft',JSON.stringify('离窗待答草稿'));`});
             await page.navigate();
@@ -42,9 +44,8 @@ try {
             await page.screenshot('candidate-prepend-' + width + '.png');
             await page.command('Input.dispatchMouseEvent',{type:'mouseWheel',x:Math.min(width/2,700),y:400,deltaY:1,deltaX:0});
             await page.evaluate(()=>document.querySelector('.thread-viewport').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})));
-            const firstNode = 'node-920';
-            const process=f.processes.exact(firstNode);process.revision++;process.items.unshift({id:'pagination-progress',kind:'commentary',phase:'commentary',seq:0,revision:1,text:'合成历史过程'});f.store.setMeta('publicMainNode:v1:'+firstNode,JSON.stringify(process));f.server.publish();
             await page.evaluate(`document.getElementById('message-'+${JSON.stringify(firstNode)})?.scrollIntoView({block:'center'})`);
+            await page.until(()=>!!document.querySelector('#message-node-920 [data-slot=collapsible-trigger]'));
             await page.evaluate(`document.getElementById('message-'+${JSON.stringify(firstNode)})?.querySelector('[data-slot=collapsible-trigger]')?.click()`);
             await page.until(() => document.querySelectorAll('[data-slot=collapsible-content]').length === 1);
             await page.evaluate(`document.getElementById('message-'+${JSON.stringify(firstNode)})?.querySelector('[data-slot=collapsible-trigger]')?.click()`);

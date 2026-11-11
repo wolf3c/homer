@@ -17,12 +17,12 @@ test('the original disclosure explains a silent Worker turn, displays its live s
 
 test('tool facts use plain paragraphs with one result, retaining each call and non-success states',async()=>withDom(async d=>{
  const activity={schemaVersion:1,action:'inspect_task',objectName:'公开任务',outcome:'record_read'};
- const tools=[{id:'read',kind:'tool',seq:2,revision:1,label:'检查资料',status:'completed',activity},{id:'review',kind:'tool',seq:3,revision:1,label:'核对成果',status:'completed',activity:{...activity,action:'review_result',outcome:'changes_requested'}},{id:'failed',kind:'tool',seq:4,revision:1,label:'检查资料',status:'failed',activity}];
+ const tools=[{id:'read',kind:'tool',seq:2,revision:1,label:'检查资料',status:'completed',activity},{id:'update',kind:'tool',seq:3,revision:1,label:'调整任务',status:'completed',activity:{...activity,action:'update_task',outcome:'update_queued'}},{id:'failed',kind:'tool',seq:4,revision:1,label:'检查资料',status:'failed',activity}];
  await d.render(h(ProcessNodeView,{node:{...node,items:tools},observation:{connected:true,serviceRunning:true},renderText:t=>t}));
  await d.click(d.find(n=>n.tagName==='BUTTON'));
  const rows=d.all().filter(n=>n.attrs['data-tool-id']);
  assert.deepEqual(rows.map(n=>n.tagName),['P','P','P']);
  assert.match(rows[0].textContent,/查看任务记录：公开任务 · 已读取/);assert.doesNotMatch(rows[0].textContent,/调用已返回|记录已读取/);
- assert.match(rows[1].textContent,/已要求修改/);assert.match(rows[2].textContent,/调用失败/);assert.doesNotMatch(rows[2].textContent,/已读取/);
+ assert.match(rows[1].textContent,/后续要求已排队/);assert.match(rows[2].textContent,/调用失败/);assert.doesNotMatch(rows[2].textContent,/已读取/);
  assert.equal(d.all().filter(n=>n.attrs.class==='process-tool-row').length,0);
 }));

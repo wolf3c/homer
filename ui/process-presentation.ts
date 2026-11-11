@@ -14,7 +14,7 @@ export function toolActivityText(item:Pick<ToolItem,'label'|'status'|'activity'|
   const action=fact?activityActions[fact.action]+(fact.objectName?'：'+fact.objectName:''):item.label||'工具名称未保留';
   let result=toolStatusText[item.status]??'结束状态待核实';
   if(item.status==='running'&&stale)result='上次调用中，结束未确认';
-  else if(item.status==='completed'&&fact)result=['record_read','file_read','attachment_read'].includes(fact.outcome)?'已读取':activityOutcomes[fact.outcome];
+  else if(item.status==='completed'&&fact)result=['record_read','attachment_read'].includes(fact.outcome)?'已读取':activityOutcomes[fact.outcome];
   return action+' · '+result+(item.category==='fileChange'&&item.fileCount!==undefined?' · 本次涉及 '+item.fileCount+' 个文件':'');
 }
 

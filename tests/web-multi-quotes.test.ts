@@ -52,7 +52,7 @@ test("old quote rows and exact legacy input hashes remain readable and idempoten
     const quote={messageId:f.first,text:"合成原文"},input={requestId:"old",text:"旧要求",quote};
     const hash=createHash("sha256").update(JSON.stringify([input.text,quote,null,"synthetic_channel"])).digest("hex");
     f.db.prepare("INSERT INTO conversation_inputs VALUES(?,?,?,?)").run(input.requestId,"thread-a",hash,"message-old-reply");
-    f.db.prepare("INSERT INTO conversation_messages VALUES(?,?,?,?,?,?,?,?)").run("message-old-user","thread-a",input.requestId,"user",input.text,"completed",JSON.stringify(quote),1);
+    f.db.prepare("INSERT INTO conversation_messages(id,threadId,requestId,role,text,status,quote,createdAt) VALUES(?,?,?,?,?,?,?,?)").run("message-old-user","thread-a",input.requestId,"user",input.text,"completed",JSON.stringify(quote),1);
     assert.deepEqual(f.history.list("thread-a").find(m=>m.id==='message-old-user')?.quote,quote);
     assert.equal(f.history.accept("thread-a",input,{source:"synthetic_channel"}).fresh,false);
     assert.throws(()=>f.history.accept("thread-a",input),/request_id_conflict/);

@@ -21,6 +21,7 @@ export function ApprovalCard({
   title,
   subtitle,
   description,
+  reviewDetails,
   details,
   variant = "default",
   icon,
@@ -42,6 +43,7 @@ export function ApprovalCard({
   | "title"
   | "subtitle"
   | "description"
+  | "reviewDetails"
   | "details"
   | "variant"
   | "icon"
@@ -57,7 +59,8 @@ export function ApprovalCard({
   command?: string | undefined;
   title: string;
   subtitle: ReactNode;
-  description?: string | undefined;
+  description?: ReactNode;
+  reviewDetails?: ReactNode;
   details?: readonly { label: string; value: string }[] | undefined;
   variant?: "default" | "destructive" | undefined;
   icon?: ReactNode | undefined;
@@ -143,6 +146,8 @@ export function ApprovalCard({
           ))}
         </dl>
       ) : null}
+
+      {reviewDetails}
 
       <div className="flex min-h-8 flex-wrap items-center justify-end gap-2">
         {state === "request" ? (

@@ -8,7 +8,7 @@ import {prepareMessage,restoreComposerDraft,canSubmitMessage,unconfirmedInputs} 
 import {conversationUserText,userAuthorityDescription,previewIntentTooLong,USER_AUTHORITY_MAX_LENGTH} from '../src/user-intent.js';
 
 // Requirement-derived, synthetic source identities and content only.
-const source={kind:'artifact' as const,id:'result-synthetic',sha256:'a'.repeat(64),title:'示例.md'};
+const source={kind:'attachment' as const,messageId:'message-synthetic',assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64),title:'示例.md'};
 const reference={kind:'text' as const,source,text:'准确原文'};
 test('preview reference survives history and retry without creating a second record',()=>{
  const db=new DatabaseSync(':memory:'),history=new ConversationHistory(db);
@@ -35,7 +35,7 @@ test('old request hash remains byte compatible and preview descriptions preserve
  history.accept('thread-a',{requestId:'legacy',text:'old'});
  const expected=createHash('sha256').update(JSON.stringify(['old',null,null])).digest('hex');
  assert.equal((db.prepare('SELECT hash FROM conversation_inputs WHERE requestId=?').get('legacy') as {hash:string}).hash,expected);
- assert.match(resourceReferenceText(reference),/result-synthetic/);
+ assert.match(resourceReferenceText(reference),/message-synthetic/);
  assert.match(resourceReferenceText(reference),/准确原文/);
  db.close();
 });

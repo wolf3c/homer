@@ -1,10 +1,10 @@
 // Existing Chrome only, fresh task-local profile; no user browser/account/model.
-import {spawn} from 'node:child_process';
-import {readFileSync,writeFileSync,mkdirSync,existsSync,rmSync} from 'node:fs';
+import {spawn,spawnSync} from 'node:child_process';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,existsSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 const wait=ms=>new Promise(done=>setTimeout(done,ms));
 export async function isolatedChrome(destination,{zoomFactor}={}){
- const profile=join(resolve(destination),'isolated-chrome-profile-'+Date.now());mkdirSync(profile,{recursive:true});
+ const parent=resolve(destination);mkdirSync(parent,{recursive:true});const profile=mkdtempSync(join(parent,'isolated-chrome-profile-'));
  // Chromium ChromeZoomLevelPrefs stores the default partition under the key 'x'.
  if(zoomFactor){mkdirSync(join(profile,'Default'),{recursive:true});writeFileSync(join(profile,'Default','Preferences'),JSON.stringify({partition:{default_zoom_level:{x:Math.log(zoomFactor)/Math.log(1.2)}}}));}
  const activeFile=join(profile,'DevToolsActivePort');rmSync(activeFile,{force:true});
@@ -39,7 +39,7 @@ export async function isolatedChrome(destination,{zoomFactor}={}){
   const screenshot=async filename=>{const data=await command('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});writeFileSync(join(destination,filename),Buffer.from(data.data,'base64'));};
   return {browserContextId,command,evaluate,until,screenshot,errors,requests,blocked,navigate:async()=>{await command('Page.navigate',{url:origin});},close:async()=>{unpause();unerror();await send('Target.disposeBrowserContext',{browserContextId});}};
  };
- return {page,version,command:send,close:async()=>{try{await send('Browser.close');}catch{}socket.close();for(const p of pending.values()){clearTimeout(p.timeout);p.reject(Error('browser_closed'));}pending.clear();if(process.exitCode===null)await new Promise(done=>{const timer=setTimeout(()=>{process.kill('SIGTERM');done();},2000);process.once('exit',()=>{clearTimeout(timer);done();});});}};
+ return {page,version,command:send,close:async()=>{try{await send('Browser.close');}catch{}socket.close();for(const p of pending.values()){clearTimeout(p.timeout);p.reject(Error('browser_closed'));}pending.clear();if(process.exitCode===null)await new Promise(done=>{const timer=setTimeout(()=>{process.kill('SIGTERM');done();},2000);process.once('exit',()=>{clearTimeout(timer);done();});});if(process.exitCode!==null||process.signalCode!==null)for(const name of ['GraphiteDawnCache','Default/GPUCache','Default/DawnGraphiteCache','Default/DawnWebGPUCache']){const cache=join(profile,name);if(existsSync(cache)){const probe=spawnSync('/usr/sbin/lsof',['+D',cache]);if(probe.status===1&&!probe.stdout?.length&&!probe.stderr?.length)rmSync(cache,{recursive:true,force:true});}}}};
 }
 export const probeScript=`(()=>{
  window.__historyProbe={longTasks:[],parseMs:[],started:performance.now()};

@@ -1,0 +1,134 @@
+{
+  "at": "2026-10-22T03:56:56.636340+00:00",
+  "reviewedLiveSourceHash": "6f996e5e405dc8d38680618b9d2597d5dece391540a042713e256e7bb83d6803",
+  "patch": {
+    "path": "docs/patches/2026-10-22-official-run-activity-review.patch",
+    "sha256": "3c18b463fe307a3e3cf0f31b3f0381cfcbd85c138f2b95bcedd8ecb6db6e24da"
+  },
+  "files": [
+    {
+      "path": "ui/vendor/assistant-ui/run-activity.tsx",
+      "beforeSha256": "f3c56c03ce37d5af0d94224924fb3ac254d118fc94e6267ef70bf290fab684a7",
+      "afterSha256": "5b6fbe0e0d783941cf40a2c6aa153bbcdc5088ef21035b1aab7e30e48f6c25cb"
+    },
+    {
+      "path": "ui/vendor/assistant-ui/README.md",
+      "beforeSha256": "580ed6d807a6f38cc66914a6a2016b936545cb0ccd0d1d291f184a7e851eb611",
+      "afterSha256": "b172d671f41329dd00e2b2e96867bf746242aa0ea6b92aa90403d9e410fd5c02"
+    },
+    {
+      "path": "tests/run-activity-style.browser.mjs",
+      "beforeSha256": "0d67478e20429906007d5a03cdbcf6621765462ac3851e77ce11d2951f0dd9fe",
+      "afterSha256": "87477eedf0022bc718f29eee8be3318902a00d6709618b656b3203600c2d2e88"
+    },
+    {
+      "path": "tests/run-activity-focus.browser.mjs",
+      "beforeSha256": null,
+      "afterSha256": "5c5af0b962193a71e9afe2b245727f0417deafbc85fc2a749b95e88562481f66"
+    }
+  ],
+  "replayForwardReverseForward": true,
+  "finding": {
+    "severity": "P2",
+    "path": "ui/vendor/assistant-ui/run-activity.tsx",
+    "problem": "关闭动画期间约40ms，Tab可进入已折叠公开链接",
+    "fix": "组件owner在open=false同一提交立即加inert/aria-hidden，不移除200ms动画；重开恢复"
+  },
+  "checks": {
+    "targetedTests": 45,
+    "failed": 0,
+    "uiTypecheck": "passed in production build",
+    "productionBuild": "passed",
+    "focusBrowser": {
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/156.0.8078.48",
+        "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+        "jsVersion": "15.6.75.19"
+      },
+      "syntheticOnly": true,
+      "results": [
+        {
+          "width": 1440,
+          "closing": {
+            "closed": true,
+            "inert": true,
+            "ariaHidden": "true"
+          },
+          "closedPanelSkippedByTab": true,
+          "programmaticFocusBlocked": true,
+          "closedChildrenUnmounted": true,
+          "reopenedLinkFocusable": true
+        },
+        {
+          "width": 390,
+          "closing": {
+            "closed": true,
+            "inert": true,
+            "ariaHidden": "true"
+          },
+          "closedPanelSkippedByTab": true,
+          "programmaticFocusBlocked": true,
+          "closedChildrenUnmounted": true,
+          "reopenedLinkFocusable": true
+        },
+        {
+          "width": 320,
+          "closing": {
+            "closed": true,
+            "inert": true,
+            "ariaHidden": "true"
+          },
+          "closedPanelSkippedByTab": true,
+          "programmaticFocusBlocked": true,
+          "closedChildrenUnmounted": true,
+          "reopenedLinkFocusable": true
+        }
+      ]
+    },
+    "performance": {
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/156.0.8078.48",
+        "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+        "jsVersion": "15.6.75.19"
+      },
+      "syntheticOnly": true,
+      "localSingleSampleNotSLO": true,
+      "results": [
+        {
+          "name": "preReplacement",
+          "calls": 2000,
+          "collapsedBefore": 0,
+          "openReadyMs": 82,
+          "expandedDescendants": 6008,
+          "collapsedAfter": {
+            "tools": 0,
+            "descendants": 3
+          }
+        },
+        {
+          "name": "reviewCandidate",
+          "calls": 2000,
+          "collapsedBefore": 0,
+          "openReadyMs": 258,
+          "expandedDescendants": 6001,
+          "collapsedAfter": {
+            "tools": 0,
+            "descendants": 0
+          }
+        }
+      ]
+    }
+  },
+  "dependencyChanges": false,
+  "liveRedeployed": false,
+  "commitScope": {
+    "userSelection": "提交精确补丁记录（推荐）",
+    "kind": "patch-and-evidence-only",
+    "sourceBaselineIncluded": false,
+    "sourceAndTestChangesRemainInWorkingTree": true
+  }
+}

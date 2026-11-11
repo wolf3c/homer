@@ -21,7 +21,7 @@ async function fixture({missingThread=false}={}){
   'node:child_process':{fork(){const child=new EventEmitter();child.connected=true;child.send=value=>sent.push(value);children.push(child);return child;}},
   'node:fs':{existsSync:()=>false,readFileSync(){throw Error('unexpected_source_read');},mkdirSync(){},rmSync(){throw Error('unexpected_cleanup');}},
   './dev-ingress.mjs':{IngressJournal:Journal},
-  './trusted-build.mjs':{verifyBuild(){},sealBuild(){throw Error('unexpected_build');},copyRuntimeDependencies(){throw Error('unexpected_build');}},
+  './trusted-build.mjs':{verifyBuild(){}},
   './dev-build.mjs':Object.fromEntries(['sourceSnapshot','buildCandidate','buildUiCandidate','backendHash','uiHash','trustedHash','candidateGuard'].map(name=>[name,()=>{throw Error('unexpected_build');}])),
  };
  const dynamic={
@@ -33,7 +33,7 @@ async function fixture({missingThread=false}={}){
  const entry=new vm.SourceTextModule(readFileSync('scripts/dev.mjs','utf8'),{context,initializeImportMeta:meta=>{meta.url='file:///fixture/scripts/dev.mjs';},importModuleDynamically:name=>{assert.ok(dynamic[name],name);return synthetic(dynamic[name]);}});
  await entry.link(name=>synthetic(modules[name]??createRequire(import.meta.url)(name)));await entry.evaluate();
  const build={directory:'/fixture',config:{runtime:'/fixture/runtime',appData:'/fixture/profile'},boundary:'fixture',schema:'schema',toolsHash:'tools',thread:missingThread?undefined:'original-thread',hash:'build',version:'0.1.0',uiHash:'ui'};
- const done=entry.namespace.runDev({root:'/fixture',input,output,fixedBuild:build,fixedUi:build,fallbackUi:build,desktop:{bindAccount:fn=>{account=fn;},bindUpdateStop:fn=>{stop=fn;},onEvent:event=>events.push(event)}});
+ const done=entry.namespace.runDev({root:'/fixture',input,output,fixedBuild:build,desktop:{bindAccount:fn=>{account=fn;},bindUpdateStop:fn=>{stop=fn;},onEvent:event=>events.push(event)}});
  await tick();assert.equal(children.length,1);
  const child=children[0];child.emit('message',{kind:'ready',thread:build.thread});await tick();
  return {done,events,sent,pending,children,locks,stop,account,input,child,cleanup:async()=>{input.write('/quit\n');child.emit('exit',0,null);await done;input.destroy();}};

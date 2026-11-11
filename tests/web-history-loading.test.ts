@@ -53,10 +53,13 @@ test('TEMP identity updates roll back atomically and rebuild after connection lo
 
 import {homerWebBridge} from '../src/web-homer.js';
 import type {Homer} from '../src/service.js';
-import {syntheticFile} from './recursive-publication-fixture.js';
-function bridgeFixture(f:ReturnType<typeof historyFixture>){
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
+import {MediaStore} from '../src/media-store.js';
+import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
+import {resolve} from 'node:path';
+function bridgeFixture(f:ReturnType<typeof historyFixture>,media?:MediaStore){
  const reader=new WebHistoryPages(f.history,f.processes,f.inputs);
- const host={...f,webReadEpoch:'synthetic-epoch',webHistoryPages:()=>reader,registerChannelCapabilities(){},onStateChange(){return()=>{};},media:{view(){throw Error('synthetic_no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');}};
+ const host={...f,webReadEpoch:'synthetic-epoch',webHistoryPages:()=>reader,registerWebSurface(){},onStateChange(){return()=>{};},media:media??{view(){throw Error('synthetic_no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');}};
  return homerWebBridge(host as unknown as Homer);
 }
 test('new state and off-window receipts do not call full snapshot; received user is formal once',async()=>{
@@ -123,16 +126,19 @@ test('worker relation selects only affected node and dirty acknowledgement rolls
   assert.ok(!workerPlan.some(detail=>detail.startsWith('SCAN w')),workerPlan.join('\n'));
  }finally{f.close();}
 });
-test('page publication keeps every authorized file at its exact original message and revocation removes all',()=>{
- const f=historyFixture(100);try{
-  f.inputs.accept({requestId:'publication-source',text:'Publish the two synthetic files'});
-  const source=f.inputs.claim()!;f.inputs.finish(source.messageId,source.revision,'completed');
-  const made=syntheticFile({...f,files:f.tasks.files} as unknown as Homer,'publication-source','first.md','# First',[{filename:'second.md',content:'# Second'}]),delivery=made.publish();
-  f.history.record(delivery.historyMessageId,'synthetic-history',delivery.text);f.tasks.markDelivery(delivery.id,'recorded');
-  assert.deepEqual(f.tasks.publishedForMessages([delivery.historyMessageId]).map(file=>file.resultId).sort(),made.resultIds.sort());
-  assert.deepEqual(f.tasks.publishedForMessages(['node-99']),[]);
-  f.store.db.prepare('UPDATE deliveries SET revokedAt=1 WHERE id=?').run(delivery.id);assert.deepEqual(f.tasks.publishedForMessages([delivery.historyMessageId]),[]);
- }finally{f.close();}
+test('page projects every attachment at its exact message and revocation removes its files',async()=>{
+ const root=resolve('.codex/scratch/history-message-attachments');mkdirSync(root,{recursive:true});
+ const dir=mkdtempSync(root+'/fixture-'),f=historyFixture(100);try{
+  const media=new MediaStore(f.store.db,dir),thread='synthetic-history',bridge=bridgeFixture(f,media);
+  const files=[{filename:'first.md',content:'# First'},{filename:'second.md',content:'# Second'}];
+  const sent=commitSyntheticMessage({...f,media},thread,'Two synthetic attachments',files);
+  const page=await bridge.history!.page({readEpoch:'synthetic-epoch',request:{around:sent.messageId}});
+  assert.deepEqual(page.artifacts?.map(({messageId,assetId,revision})=>({messageId,assetId,revision})),sent.attachments.map(ref=>({messageId:sent.messageId,...ref})));
+  assert.ok(!page.artifacts?.some(file=>file.messageId==='node-99'));
+  assert.ok(f.history.revokeMessage(thread,sent.messageId));
+  const after=await bridge.history!.state();
+  assert.ok(!after.artifacts?.some(file=>file.messageId===sent.messageId));
+ }finally{f.close();rmSync(dir,{recursive:true,force:true});}
 });
 test('more than 80 native pending forms retain exact sources; interaction-only changes invalidate the read revision',async()=>{
  const f=historyFixture(100);try{

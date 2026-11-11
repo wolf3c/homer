@@ -1,0 +1,278 @@
+{
+  "schemaVersion": 1,
+  "sourceOfTruth": "working-file preimages, not Git HEAD",
+  "reviewPatch": {
+    "path": "docs/patches/2026-10-22-run-activity-facts-review.patch",
+    "sha256": "1322753728e44226a59c090d74baa9d884c59f1e91c6e83a14a4e924c0c6016d"
+  },
+  "files": [
+    {
+      "path": "src/recursive-tasks.ts",
+      "observedBeforeSha256": "3c7e3e7067829abbb1bc7ea999b907925fad91f1007f0d026e3c8f00ffe3a798",
+      "effectiveBeforeSha256": "3c7e3e7067829abbb1bc7ea999b907925fad91f1007f0d026e3c8f00ffe3a798",
+      "reviewedSnapshotSha256": "d36977b6f0221205e591c28241509be19bd6c37fc7f06e45b7fe27e8f9f16881",
+      "currentAfterSha256": "d36977b6f0221205e591c28241509be19bd6c37fc7f06e45b7fe27e8f9f16881"
+    },
+    {
+      "path": "src/web-homer.ts",
+      "observedBeforeSha256": "47a38b0d61c843cd9092354c2e73614e0c795141c735d72d09d4839fbe18a2f5",
+      "effectiveBeforeSha256": "47a38b0d61c843cd9092354c2e73614e0c795141c735d72d09d4839fbe18a2f5",
+      "reviewedSnapshotSha256": "f32bcc04a788932ee5368a236f324b2b2b1794b65ce75f108e2e97aa68ec0c4d",
+      "currentAfterSha256": "f32bcc04a788932ee5368a236f324b2b2b1794b65ce75f108e2e97aa68ec0c4d"
+    },
+    {
+      "path": "src/web-contract.ts",
+      "observedBeforeSha256": "442de1ee1de63ee5698e6896c17a3b2dfff212dc127e106e9ac1de74709d7188",
+      "effectiveBeforeSha256": "442de1ee1de63ee5698e6896c17a3b2dfff212dc127e106e9ac1de74709d7188",
+      "reviewedSnapshotSha256": "d540187a930a29a188b7cdab5c6542374354f51d4e71038afc51911963dca0f9",
+      "currentAfterSha256": "d540187a930a29a188b7cdab5c6542374354f51d4e71038afc51911963dca0f9"
+    },
+    {
+      "path": "src/web-server.ts",
+      "observedBeforeSha256": "8f84681f8370e23bdb5967ea3c9ead67b53e75eefc06d83cb781536f84d4c60d",
+      "effectiveBeforeSha256": "8f84681f8370e23bdb5967ea3c9ead67b53e75eefc06d83cb781536f84d4c60d",
+      "reviewedSnapshotSha256": "78b4cb11ab2f9760bb5f289655d0d501d6811ea3ebc0af50be22cc1cc14669e7",
+      "currentAfterSha256": "78b4cb11ab2f9760bb5f289655d0d501d6811ea3ebc0af50be22cc1cc14669e7"
+    },
+    {
+      "path": "ui/process-nodes.tsx",
+      "observedBeforeSha256": "7c7557446e5991ccd97b492f6f92687009b9066e05ee145181b11733dcd7994b",
+      "effectiveBeforeSha256": "7c7557446e5991ccd97b492f6f92687009b9066e05ee145181b11733dcd7994b",
+      "reviewedSnapshotSha256": "2a839aee5ce78d3464cc0fae04f89bc9e2aa147fdfeb1d55daaa3e73af3ec3b4",
+      "currentAfterSha256": "2a839aee5ce78d3464cc0fae04f89bc9e2aa147fdfeb1d55daaa3e73af3ec3b4"
+    },
+    {
+      "path": "ui/task-overview.tsx",
+      "observedBeforeSha256": "fa691c88c3204cb84ef7085855e16d6b539f4c8744234d4d043ce252ac1acccd",
+      "effectiveBeforeSha256": "fa691c88c3204cb84ef7085855e16d6b539f4c8744234d4d043ce252ac1acccd",
+      "reviewedSnapshotSha256": "deb8cfc44508531b5f152fd51ee3d256058549792f6f82ee112f8079927e5609",
+      "currentAfterSha256": "deb8cfc44508531b5f152fd51ee3d256058549792f6f82ee112f8079927e5609"
+    },
+    {
+      "path": "ui/homer-app.tsx",
+      "observedBeforeSha256": "1cd8d9328636aa96236a00aaee1e97c5841d40d3f5ff80ff24839e85d0fcfddf",
+      "effectiveBeforeSha256": "f4e6e0f1cf05f5f326c107318ad065271cc55f98786493a4d4ff6902113acc39",
+      "reviewedSnapshotSha256": "133ca85459df7394ae9c546c615524d9f466c29bedee78e6852ae5a89c19f3ed",
+      "currentAfterSha256": "f8764f320956f47d4fd8eece464e60b4f4ad4ba0f6555fe1f7da2550adc159ec"
+    },
+    {
+      "path": "tests/run-activity-facts.test.ts",
+      "observedBeforeSha256": "5efbb18f95097ca1355226c0c8488f8c061483ad1927ab055ba81a3f4413f1b6",
+      "effectiveBeforeSha256": "5efbb18f95097ca1355226c0c8488f8c061483ad1927ab055ba81a3f4413f1b6",
+      "reviewedSnapshotSha256": "1d9ba6089af337aacd0642db178641779ec453097db12f69eb445855eb2b3d5c",
+      "currentAfterSha256": "1d9ba6089af337aacd0642db178641779ec453097db12f69eb445855eb2b3d5c"
+    },
+    {
+      "path": "tests/run-activity-facts-browser-fixture.mjs",
+      "observedBeforeSha256": "616b68e3695174767ebf525579820b9e4ddc01cc1f207b940d5e2de03d3a3a85",
+      "effectiveBeforeSha256": "616b68e3695174767ebf525579820b9e4ddc01cc1f207b940d5e2de03d3a3a85",
+      "reviewedSnapshotSha256": "42649470b14ebe49906b323b26d94d0d15f0e19e7ed67642e11f0fd4d3971c6b",
+      "currentAfterSha256": "42649470b14ebe49906b323b26d94d0d15f0e19e7ed67642e11f0fd4d3971c6b"
+    },
+    {
+      "path": "tests/run-activity-facts.browser.mjs",
+      "observedBeforeSha256": "b0ca1a05e537ee15124f423ba224272b43a89089d0e5979437e9fb124a4ba4a6",
+      "effectiveBeforeSha256": "b0ca1a05e537ee15124f423ba224272b43a89089d0e5979437e9fb124a4ba4a6",
+      "reviewedSnapshotSha256": "56f255d6f6e6f3a0fc4c9a2bcb311da0156ce9574b0e193c437183941dd6b44d",
+      "currentAfterSha256": "56f255d6f6e6f3a0fc4c9a2bcb311da0156ce9574b0e193c437183941dd6b44d"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "P2",
+      "fixed": true,
+      "problem": "all-activity navigation/file hydration and unrelated streaming rereads"
+    },
+    {
+      "severity": "P2",
+      "fixed": true,
+      "problem": "unrecorded/missing/cross-thread origin button"
+    },
+    {
+      "severity": "P2",
+      "fixed": true,
+      "problem": "stale activity version after switching tasks"
+    }
+  ],
+  "validation": {
+    "targetedTests": 35,
+    "passed": 35,
+    "failed": 0,
+    "sourceBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "fullTypecheck": {
+      "passed": false,
+      "existingDiagnostics": 18,
+      "newDiagnostics": 0
+    },
+    "browser": {
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/156.0.8078.48",
+        "revision": "@d0c02bfad08ec92a6ffcf989e53cd995e6381a4c",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+        "jsVersion": "15.6.75.19"
+      },
+      "syntheticOnly": true,
+      "results": [
+        {
+          "width": 1440,
+          "checks": [
+            "动作、对象与有依据结果清晰；返回不等于业务成功；同名调用各自保留",
+            "官方字体、图标、间距、列表线与单层列表保持",
+            "所选详情读取一次，流式节点更新不重复读取",
+            "活动绑定原任务v1；当前v2不替换原要求；原任务面板按需读取",
+            "离开原关联后切换其他任务不残留旧版本说明",
+            "同名第二任务准确定位，关闭返回原活动按钮焦点",
+            "授权成果复用Canvas，关闭恢复活动位置与焦点",
+            "原答复沿准确消息定位",
+            "快速关闭重开后迟到响应不覆盖新活动",
+            "读取失败如实说明可重试，不声称永久丢失",
+            "旧缺失如实说明；准确旧关联可读；缺失版本无空按钮",
+            "线程变化沿原合同暂停连接，详情中止读取，迟到响应不恢复旧导航"
+          ],
+          "style": {
+            "rootGap": "12px",
+            "font": "14px",
+            "triggerGap": "6px",
+            "listGap": "12px",
+            "line": "1px",
+            "padding": "14px",
+            "icon": "14px"
+          },
+          "passed": true
+        },
+        {
+          "width": 390,
+          "checks": [
+            "动作、对象与有依据结果清晰；返回不等于业务成功；同名调用各自保留",
+            "官方字体、图标、间距、列表线与单层列表保持",
+            "所选详情读取一次，流式节点更新不重复读取",
+            "活动绑定原任务v1；当前v2不替换原要求；原任务面板按需读取",
+            "离开原关联后切换其他任务不残留旧版本说明",
+            "同名第二任务准确定位，关闭返回原活动按钮焦点",
+            "授权成果复用Canvas，关闭恢复活动位置与焦点",
+            "原答复沿准确消息定位",
+            "快速关闭重开后迟到响应不覆盖新活动",
+            "读取失败如实说明可重试，不声称永久丢失",
+            "旧缺失如实说明；准确旧关联可读；缺失版本无空按钮",
+            "线程变化沿原合同暂停连接，详情中止读取，迟到响应不恢复旧导航"
+          ],
+          "style": {
+            "rootGap": "12px",
+            "font": "14px",
+            "triggerGap": "6px",
+            "listGap": "12px",
+            "line": "1px",
+            "padding": "14px",
+            "icon": "14px"
+          },
+          "passed": true
+        },
+        {
+          "width": 320,
+          "checks": [
+            "动作、对象与有依据结果清晰；返回不等于业务成功；同名调用各自保留",
+            "官方字体、图标、间距、列表线与单层列表保持",
+            "所选详情读取一次，流式节点更新不重复读取",
+            "活动绑定原任务v1；当前v2不替换原要求；原任务面板按需读取",
+            "离开原关联后切换其他任务不残留旧版本说明",
+            "同名第二任务准确定位，关闭返回原活动按钮焦点",
+            "授权成果复用Canvas，关闭恢复活动位置与焦点",
+            "原答复沿准确消息定位",
+            "快速关闭重开后迟到响应不覆盖新活动",
+            "读取失败如实说明可重试，不声称永久丢失",
+            "旧缺失如实说明；准确旧关联可读；缺失版本无空按钮",
+            "线程变化沿原合同暂停连接，详情中止读取，迟到响应不恢复旧导航"
+          ],
+          "style": {
+            "rootGap": "12px",
+            "font": "14px",
+            "triggerGap": "6px",
+            "listGap": "12px",
+            "line": "1px",
+            "padding": "14px",
+            "icon": "14px"
+          },
+          "passed": true
+        }
+      ]
+    }
+  },
+  "performance": {
+    "syntheticOnly": true,
+    "fileBytes": 64017,
+    "samplesPerMode": 6,
+    "baseline": "exact pre-review Web process handler; same current task owner for both modes",
+    "results": [
+      {
+        "calls": 1,
+        "beforeExpansion": {
+          "medianMs": 0.447,
+          "maxMs": 1.399,
+          "fileReadsPerRequest": 1,
+          "navigationResolutionsPerRequest": 1
+        },
+        "afterExpansion": {
+          "medianMs": 0.02,
+          "maxMs": 0.075,
+          "fileReadsPerRequest": 0,
+          "navigationResolutionsPerRequest": 0
+        },
+        "selectedActivity": {
+          "medianMs": 0.356,
+          "maxMs": 0.405,
+          "fileReadsPerRequest": 1,
+          "navigationResolutionsPerRequest": 1
+        }
+      },
+      {
+        "calls": 100,
+        "beforeExpansion": {
+          "medianMs": 31.604,
+          "maxMs": 33.153,
+          "fileReadsPerRequest": 100,
+          "navigationResolutionsPerRequest": 100
+        },
+        "afterExpansion": {
+          "medianMs": 0.15,
+          "maxMs": 0.176,
+          "fileReadsPerRequest": 0,
+          "navigationResolutionsPerRequest": 0
+        },
+        "selectedActivity": {
+          "medianMs": 0.412,
+          "maxMs": 1.234,
+          "fileReadsPerRequest": 1,
+          "navigationResolutionsPerRequest": 1
+        }
+      },
+      {
+        "calls": 1000,
+        "beforeExpansion": {
+          "medianMs": 295.931,
+          "maxMs": 334.856,
+          "fileReadsPerRequest": 1000,
+          "navigationResolutionsPerRequest": 1000
+        },
+        "afterExpansion": {
+          "medianMs": 1.381,
+          "maxMs": 1.721,
+          "fileReadsPerRequest": 0,
+          "navigationResolutionsPerRequest": 0
+        },
+        "selectedActivity": {
+          "medianMs": 1.67,
+          "maxMs": 1.815,
+          "fileReadsPerRequest": 1,
+          "navigationResolutionsPerRequest": 1
+        }
+      }
+    ]
+  },
+  "stagingMode": "exact patches and validation only; no unrelated source baseline",
+  "preservedParallel": "date/time UI hunks in ui/homer-app.tsx",
+  "deployment": "none",
+  "forwardReverseReplay": true
+}

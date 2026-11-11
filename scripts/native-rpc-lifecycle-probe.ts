@@ -25,7 +25,7 @@ const server=createServer(async(req,res)=>{
 });
 await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
 process.env.NO_PROXY='127.0.0.1,localhost';
-const engine=new CodexEngine({appData:dir,workspace:cwd,runtime:join(dir,'runtime'),codexHome:home,nativeCodexHome:home,codexBin:bin,baseUrl:'http://127.0.0.1:'+(server.address() as any).port+'/v1',model:'gpt-6.1-sol',requiresOpenaiAuth:false,timeoutMs:1000,mainTimeoutMs:1000,stopGraceMs:1000},{cwd,readRoots:[cwd],instructions:'Synthetic local protocol validation.',tools:[],nativeCapabilities:true,nativeTools:'main'},async()=>({}));
+const engine=new CodexEngine({appData:dir,workspace:cwd,runtime:join(dir,'runtime'),codexHome:home,nativeCodexHome:home,codexBin:bin,baseUrl:'http://127.0.0.1:'+(server.address() as any).port+'/v1',model:'gpt-6.1-sol',requiresOpenaiAuth:false,stopGraceMs:1000},{cwd,readRoots:[cwd],instructions:'Synthetic local protocol validation.',tools:[],nativeTools:'main'},async()=>({}));
 const timeline:string[]=[];
 const receive=engine['receive'].bind(engine);
 engine['receive']=async line=>{

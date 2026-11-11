@@ -8,16 +8,19 @@ import type { Config } from '../src/config.js';
 
 const config: Config = {
   workspace: resolve('.codex/scratch'), runtime: resolve('.codex/scratch/rpc-lifecycle-tests'),
-  codexHome: resolve('.codex/scratch/rpc-lifecycle-tests/home'),
+  codexHome: resolve('.codex/scratch/rpc-lifecycle-tests/home'), nativeCodexHome: resolve('.codex/scratch/rpc-lifecycle-tests/home'),
   codexBin: resolve('tests/fixtures/rpc-lifecycle-app-server.mjs'),
-  model: 'silent', requiresOpenaiAuth: false, timeoutMs: 1000, mainTimeoutMs: 1000, stopGraceMs: 100,
+  model: 'silent', requiresOpenaiAuth: false, stopGraceMs: 100,
 };
 mkdirSync(config.workspace,{recursive:true});
 const options = { cwd: config.workspace, readRoots: [], instructions: 'transport only', tools: [] };
 function peer(role?:'main'|'worker',patch:Partial<Config>={}) {
   const engine = new CodexEngine({...config,...patch}, { ...options,role }, async () => ({}));
   const sent: {id:number;method:string;params:any}[] = [];
-  engine['send'] = (message: any) => { sent.push(message); };
+  engine['send'] = (message: any) => {
+    if(message.method==='config/read'&&message.params?.includeLayers)void receive({id:message.id,result:{config:{},layers:[]}});
+    else sent.push(message);
+  };
   engine.threadId = 'thread';
   const receive = (message: unknown) => engine['receive'](JSON.stringify(message));
   const reply = (index: number, result: unknown = {}) => receive({id: sent[index]!.id, result});
@@ -33,7 +36,7 @@ for(const role of ['main','worker'] as const)test(role+' resolves ambiguous webs
  t.mock.method(globalThis,'fetch',async(url:RequestInfo|URL,init?:RequestInit)=>{calls++;assert.equal(String(url),'https://gateway.example.invalid/api/usage/token/');assert.equal(new Headers(init?.headers).get('Authorization'),'Bearer synthetic-active');return Response.json({code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:0}});});
  try{
   const rpc=observed(p.engine.request('config/read',{}));await p.receive({id:p.sent[0]!.id,error:{message:'HTTP 401 Unauthorized: invalid token'}});await assert.rejects(rpc.result,/^Error: engine_quota_insufficient$/);
-  const turn=p.engine.turn('synthetic');await p.reply(1,{turn:{id:'turn'}});await flush();
+  const turn=p.engine.turn('synthetic'); await flush();await p.reply(1,{turn:{id:'turn'}});await flush();
   await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'HTTP 401 Unauthorized: invalid token'}}});
   assert.equal((await turn).errorCode,'engine_quota_insufficient');assert.equal(terminals[0].result.errorCode,'engine_quota_insufficient');assert.equal(calls,2);assert.deepEqual(p.sent.map(x=>x.method),['config/read','turn/start']);
  }finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
@@ -46,7 +49,7 @@ test('website quota diagnosis cannot outlive closure or overwrite a replacement 
  t.mock.method(globalThis,'fetch',async()=>{calls++;entered();return new Promise<Response>(r=>{release=r;});});
  const terminals:any[]=[],nativeEnds:any[]=[];p.engine.on('nativeCompleted',v=>terminals.push(v));p.engine.on('turnTerminal',v=>nativeEnds.push(v));
  try{
-  const turn=observed(p.engine.turn('synthetic'));await p.reply(0,{turn:{id:'turn'}});await flush();
+  const turn=observed(p.engine.turn('synthetic')); await flush();await p.reply(0,{turn:{id:'turn'}});await flush();
   const event=p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'}}});await started;
   assert.equal(nativeEnds.length,1,'quota verification must not delay native terminal timing evidence');
   await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'}}});assert.equal(calls,1);
@@ -83,7 +86,7 @@ for(const role of ['main','worker'] as const)test(role+' freezes terminal work w
  t.mock.method(globalThis,'fetch',async()=>{entered();return new Promise<Response>(resolve=>{release=resolve;});});
  let terminal:Promise<void>|undefined;
  try{
-  const work=observed(p.engine.turn('synthetic'));await p.reply(0,{turn:{id:'turn'}});await flush();
+  const work=observed(p.engine.turn('synthetic')); await flush();await p.reply(0,{turn:{id:'turn'}});await flush();
   terminal=p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'},itemsView:'full',items:[{type:'agentMessage',id:'final',phase:'final_answer',text:'Terminal snapshot'}]}});await started;
   await p.event('item/completed',{turnId:'turn',item:{id:'late',type:'agentMessage',phase:'final_answer',text:'After-terminal text'}});
   await p.receive({id:99,method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'late-tool',name:'synthetic',arguments:{}}});
@@ -108,21 +111,21 @@ for(const [source,body,expected,queries]of [
  const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
  const p=peer('main',{desktopModelSource:source,...(source==='codex'?{pauseOldDesktopWork:true,desktopResources:{bundleRoot:'synthetic',manifestSha256:'0'.repeat(64)}}:{}),baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});let calls=0;
  t.mock.method(globalThis,'fetch',async()=>{calls++;if(body===null)throw Error('PRIVATE_DIAGNOSTICS');return Response.json(body);});
- try{const work=p.engine.turn('synthetic');await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'}}});assert.equal((await work).errorCode,expected);assert.equal(calls,queries);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+ try{const work=p.engine.turn('synthetic'); await flush();await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'}}});assert.equal((await work).errorCode,expected);assert.equal(calls,queries);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
 });
 
 test('explicit quota failure avoids a supplementary website query',async t=>{
  const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
  const p=peer('main',{desktopModelSource:'website',baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});
  t.mock.method(globalThis,'fetch',async()=>assert.fail('explicit quota must not query or replay'));
- try{const work=p.engine.turn('synthetic');await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 Unauthorized insufficient_quota'}}});assert.equal((await work).errorCode,'engine_quota_insufficient');assert.equal(p.sent.length,1);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+ try{const work=p.engine.turn('synthetic'); await flush();await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 Unauthorized insufficient_quota'}}});assert.equal((await work).errorCode,'engine_quota_insufficient');assert.equal(p.sent.length,1);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
 });
 
 test('successful website turns add no account request',async t=>{
  const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';
  const p=peer('main',{desktopModelSource:'website',baseUrl:'https://gateway.example.invalid/v1',keyEnv:key});
  t.mock.method(globalThis,'fetch',async()=>assert.fail('successful turns must not query account status'));
- try{const work=p.engine.turn('synthetic');await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'completed'}});assert.equal((await work).status,'completed');assert.equal(p.sent.length,1);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
+ try{const work=p.engine.turn('synthetic'); await flush();await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'completed'}});assert.equal((await work).status,'completed');assert.equal(p.sent.length,1);}finally{await p.engine.close();if(previous===undefined)delete process.env[key];else process.env[key]=previous;}
 });
 
 for(const status of ['completed','failed'])test('Worker '+status+' returns public items before an unrelated background refresh',async()=>{
@@ -141,7 +144,7 @@ for(const status of ['completed','failed'])test('Worker '+status+' returns publi
  assert.deepEqual(result.messages!.filter(m=>m.phase==='final_answer').map(m=>m.text),[final.text,summaryOnly.text]);
  release();await terminal;await p.engine.close();
 });
-async function flush() { await Promise.resolve(); await Promise.resolve(); }
+const flush=()=>new Promise<void>(resolve=>setImmediate(resolve));
 function observed<T>(work: Promise<T>) {
   let state = 'pending';
   const result = work.then(value => { state='resolved'; return value; }, error => {state='rejected'; throw error;});
@@ -167,7 +170,7 @@ for(const role of ['main','worker'] as const)for(const [message,code] of [
   const rpc=observed(p.engine.request('config/read',{}));
   await p.receive({id:p.sent[0]!.id,error:{message}});
   await assert.rejects(rpc.result,error=>error instanceof Error&&error.message===code);
-  const turn=p.engine.turn('synthetic');await p.reply(1,{turn:{id:'turn'}});await flush();
+  const turn=p.engine.turn('synthetic'); await flush();await p.reply(1,{turn:{id:'turn'}});await flush();
   await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message}}});
   assert.equal((await turn).errorCode,code);
   assert.deepEqual(p.sent.map(x=>x.method),['config/read','turn/start']);
@@ -310,7 +313,7 @@ test('send failure, duplicate response and close clean pending and refuse furthe
 test('interrupt without native confirmation remains unconfirmed and close settles both pending calls', async t => {
   t.mock.timers.enable({apis:['setTimeout']});
   const p=peer();
-  const turn=observed(p.engine.turn('synthetic')); await p.reply(0,{turn:{id:'turn'}}); await flush();
+  const turn=observed(p.engine.turn('synthetic')); await flush();await p.reply(0,{turn:{id:'turn'}}); await flush();
   const stopped=p.engine.interrupt(); t.mock.timers.tick(config.stopGraceMs); assert.equal(await stopped,false);
   assert.equal(turn.state(),'pending'); assert.equal(p.engine['pending'].size,1);
   await p.engine.close(); await assert.rejects(turn.result,/engine_closed/); assert.equal(p.engine['pending'].size,0);
@@ -319,7 +322,7 @@ test('interrupt without native confirmation remains unconfirmed and close settle
 test('native retry notifications do not retry or finish the host turn before terminal completion', async t => {
   t.mock.timers.enable({apis:['setTimeout']});
   const p=peer(); const turn=observed(p.engine.turn('synthetic'));
-  await p.event('turn/started',{turn:{id:'turn',status:'inProgress'}});
+  await flush();await p.event('turn/started',{turn:{id:'turn',status:'inProgress'}});
   t.mock.timers.tick(15001); await flush(); assert.equal(turn.state(),'pending');
   await p.reply(0,{turn:{id:'turn'}});
   await p.event('error',{turnId:'turn',willRetry:true,error:{message:'retry native'}});

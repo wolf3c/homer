@@ -1,0 +1,244 @@
+{
+  "format": 1,
+  "date": "2026-10-23",
+  "baseGit": "3c5461180575aa90f9430f35152f444530185913",
+  "committed": false,
+  "mainModified": false,
+  "installed": false,
+  "productionDataMigrationPerformed": false,
+  "package": {
+    "buildNode": "v22.22.0",
+    "sourceHash": "71a077e3aad139f78be2c90b2bfa29d801442b080b2e7d687446e942fd918261",
+    "manifest": "26d96f8d5e8970aa388542edeedee5812c696be019ba055432bf26ecda79b86e",
+    "schema": "c83bb6bd26960c4efbaf30c27825c642e96458685081716f12742f53ce97d2b7",
+    "toolsHash": "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056",
+    "uiHash": "6a055aa6cec649409da84baaf352efa58fa685ddc839c4cfb3aac68476aea2a5",
+    "bundleBytes": 471983021,
+    "zipBytes": 182800933,
+    "zipSha256": "d6f83c44477bb2ab44e1cc2c227f867bfc7b7f04571d05d8a6c90062e29c0db6",
+    "signature": "ad-hoc local candidate; not Developer ID or notarized"
+  },
+  "provenance": {
+    "preparation": true,
+    "publishable": false,
+    "candidateInputCount": 22,
+    "allCandidateHashesRechecked": true
+  },
+  "checks": {
+    "startupRedGreen": {
+      "baselinePassed": 2,
+      "baselineFailed": 3,
+      "candidatePassed": 5
+    },
+    "finalDesktopUnit": {
+      "passed": 12,
+      "failed": 0
+    },
+    "backendAndWebBuild": {
+      "passed": true,
+      "swiftWarnings": "inherited actor-isolation warnings remain"
+    },
+    "officialCss": {
+      "passed": true,
+      "mode": "source-only generated snapshot"
+    },
+    "packagedRuntime": {
+      "passed": 3,
+      "failed": 0,
+      "syntheticOnly": true,
+      "covers": [
+        "existing Finder authorization rejection via full IPC forwarding",
+        "unconnected readonly state and no journal writes",
+        "history protocol 3",
+        "main queue",
+        "file upload",
+        "same thread restart",
+        "artifact persistence",
+        "integrity_check ok",
+        "foreign_key_check zero",
+        "unknown second owner rejected"
+      ]
+    },
+    "browser": {
+      "passed": 148,
+      "failed": 0,
+      "resourceSource": "final build-006 App resources",
+      "syntheticOnly": true,
+      "viewports": [
+        320,
+        390,
+        704,
+        1440
+      ],
+      "scaleCases": [
+        2000,
+        8000
+      ],
+      "externalNetworkRequests": 0,
+      "businessWrites": 0,
+      "consoleErrors": 0
+    },
+    "nativeWK": {
+      "finalBuild": "006",
+      "rendered": true,
+      "editable": true,
+      "horizontalOverflow": false,
+      "sameProfileReopened": true,
+      "historyAndThreadRetained": true,
+      "quitConfirmedByUser": true,
+      "stopAcknowledged": true,
+      "exitCode": 0,
+      "processExited": true,
+      "ownerAndLeasesReleased": true,
+      "automationLimitation": "CUA_UNAVAILABLE at final quit dialog; user completed normal exit",
+      "profileContainsHumanInput": true,
+      "profilePreserved": true,
+      "rawDomAndScreenshotsExcludedFromTrackedRecords": true
+    },
+    "sharedRegression": {
+      "originalCombinedPassed": 52,
+      "gatewayRetestPassed": 1,
+      "knownBaselineFailure": "Web host expects 401 but actual409; reproduced untouched exact Git main under Node22.22.0",
+      "excluded": "Old T08 cumulative-timeout test does not end within 12s on exact Git baseline; own synthetic process group normally terminated, not counted as pass"
+    },
+    "allTypes": {
+      "baselineDiagnostics": 137,
+      "candidateDiagnostics": 137,
+      "normalizedIdentical": true
+    },
+    "hostCodesign": {
+      "deepStrictPassed": true,
+      "exitCode": 0,
+      "developerIdOrNotarization": false,
+      "quarantineBypassed": false
+    },
+    "patchReplay": {
+      "baseGit": "3c5461180575aa90f9430f35152f444530185913",
+      "dryRunPassed": true,
+      "replayPassed": true,
+      "files": 32,
+      "allResultHashesMatch": true,
+      "noStagingOrCommit": true,
+      "receipt": ".codex/scratch/desktop-integration-20261023/patch-review-receipt.json"
+    }
+  },
+  "evidence": [
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/startup-red.log",
+      "sha256": "6f1ce63b9df22fca9ee20abfbabf3bac09ed027f9c11c7cf19212d6ef74f3913",
+      "bytes": 3543
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/startup-green.log",
+      "sha256": "1c8d15bbbb2fde6ee224d2bd844341bcfe855e0e1d6b22e42231dd71e2f1a95a",
+      "bytes": 1370
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/final-desktop-unit.log",
+      "sha256": "333fc94b1d24dc22b58e8676ec8d0c864529b8eb917d0f26a0f0070cb19b6a55",
+      "bytes": 2939
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/build-006.log",
+      "sha256": "f18c6312c55473355b042d8bc4fd5f99db80c43ab6c2943c025a1b5a6018971e",
+      "bytes": 289320
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/css-source.log",
+      "sha256": "c9f0f40c018498f7fedafc72f35eb4d15bfc7aab04ff599ce1869d2bab89fd7a",
+      "bytes": 201
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/runtime-final-006.log",
+      "sha256": "047cd24320d30fd04960678deb48a859b6048671da9adf0dc322bdc8e06dba53",
+      "bytes": 1042
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/browser-final.log",
+      "sha256": "aa1dec2b01e1757b49cd87d80dda630a1e31d28bc12c4e6d3e2b27d4b78c41c1",
+      "bytes": 786
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/browser/browser-results.json",
+      "sha256": "5dcedbebef191f1f6f2b79c420c4c4aac383d9288a4bb3b416c11abfbd897215",
+      "bytes": 12357
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/shared-regression-bounded.log",
+      "sha256": "11e606035bccd53cbc3fa004b389d914ceaa45b173b722bf5c2dfeb98be8ef74",
+      "bytes": 15065
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/gateway-after-build.log",
+      "sha256": "dc21b5fb3707a59fe7d4ab81936947bd32ea92945e34349e0fe279d60ccd2199",
+      "bytes": 569
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/baseline-web-host.log",
+      "sha256": "fbc35f0d528efa00885979134e2384f450a961a8109eeaab7faa15737a66952e",
+      "bytes": 1737
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/baseline-timeout-node22.json",
+      "sha256": "405f62bfa97d3dfd33021d10ad77c3516bd485b4fc770c289d85d95a16639d0f",
+      "bytes": 173
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/baseline-timeout-node22.log",
+      "sha256": "2bb0969403f661cab4b3ab42642e4214899ea2b40012d3a934bbbd3778bcb2e3",
+      "bytes": 188
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/baseline-all-types.log",
+      "sha256": "49425f0ba14496e32e3adbfeb9ea53bb6ce9ac9f40a2c46098499bafa40c74f2",
+      "bytes": 18534
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/final-all-types.log",
+      "sha256": "d67e6efcc6dc768d46836bba9e23f81624bbc3190bef01eea9d128895728cd0a",
+      "bytes": 18457
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/types-comparison.json",
+      "sha256": "ac5c08c24bb50bea300e829e90937e70304528b2f8830a866c66ca1e69b68a7c",
+      "bytes": 95
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/preparation-cleanup.json",
+      "sha256": "a8b373167459b4682de3fe85a7901aa56534a5bc712d43ec59e1a1b3c0c89acb",
+      "bytes": 2696
+    }
+  ],
+  "privateNativeEvidence": {
+    "tracked": false,
+    "containsHumanInput": true,
+    "location": ".codex/scratch/desktop-integration-20261023/wk-profile"
+  },
+  "cleanup": {
+    "logicalBytesRemoved": 6151386088,
+    "physicalApfsReclamationAsserted": false,
+    "scope": "only this task superseded unused preparation build outputs001-005",
+    "retained": [
+      "final build006",
+      "required official archives",
+      "source and verification identities",
+      "native profile containing human input",
+      "old notarized recovery App/ZIP",
+      "all original user data and source history"
+    ]
+  },
+  "remainingReleaseConditions": [
+    "CTO review and specifically authorized integration commit on main, then explicitly freeze actual full SHA",
+    "Accurate original-account/Homer HOME/thread/data adoption mapping and owner maintenance-point rehearsal",
+    "Current product has no first-connection UI after login/capability page removal; original owner must define account adoption/connection path",
+    "Normal signed-policy installation and actual installed path/backend/UI/version/data acceptance, then release cleanup"
+  ],
+  "notVerified": [
+    "real model or Fast throughput",
+    "production data migration",
+    "real Finder selected file",
+    "Developer ID/notarization of new candidate",
+    "second Mac",
+    "IME/VoiceOver/system200%"
+  ]
+}

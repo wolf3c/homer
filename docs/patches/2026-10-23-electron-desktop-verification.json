@@ -1,0 +1,364 @@
+{
+  "format": 1,
+  "date": "2026-10-23",
+  "status": "implementation verified; preparation only; not committed or installed",
+  "source": {
+    "format": 1,
+    "gitSha": "184239e693700e2f56ea8937477453e10cd96dfe",
+    "preparation": true,
+    "publishable": false,
+    "candidateInputs": [
+      {
+        "path": "packaging/electron/main.mjs",
+        "sha256": "9192ab49904c8a299a048ebe317b4bfc1dab7d99b509c17dd66ed950a6c9a01a"
+      },
+      {
+        "path": "packaging/electron/forge.config.mjs",
+        "sha256": "835e78377a7c8369c1ebf172f693805d1d1cd387f22d34a9926d290225c60815"
+      },
+      {
+        "path": "package.json",
+        "sha256": "f602edb038b26158c4e7bad5e8be23624402779cfc5e2b3b95d4e8a92c1349c8"
+      },
+      {
+        "path": "package-lock.json",
+        "sha256": "2e80f0ef518d95840196a2ad1b079df182d0d21bb2a441b10acbda4ae9b8070f"
+      },
+      {
+        "path": "scripts/build-desktop.mjs",
+        "sha256": "0bc8cd07a1da6ef3f63ad327c2e101b8dc15b43ef18d43ae51cb1d62429d3490"
+      },
+      {
+        "path": "scripts/desktop-source.mjs",
+        "sha256": "07826ff2a543d731f9938b3e89c1d922ee2e341b5414a2b044542de22276635c"
+      },
+      {
+        "path": "scripts/desktop-profile.mjs",
+        "sha256": "f0ab254fd1f4dc473ecb99b4b05b49e46e9374e3aec86f8650a56b0ad1d0920f"
+      },
+      {
+        "path": "src/web-server.ts",
+        "sha256": "9a2d4e0798e791d6eb2a04a0d90487cd6ea0f8a097262f6193f084db415ac2a2"
+      }
+    ],
+    "removedInputs": [
+      "packaging/macos/HomerApplication.swift",
+      "packaging/macos/Info.plist",
+      "packaging/macos/distribution-policy.json",
+      "packaging/macos/node-distribution-entitlements.plist",
+      "scripts/build-macos-desktop.mjs",
+      "scripts/macos-distribution.mjs",
+      "tests/desktop-termination.test.mjs"
+    ]
+  },
+  "identity": {
+    "version": "0.1.0",
+    "build": 44,
+    "sourceHash": "d197dbe2faa076ffe2515e398861ec77f7b2999f96430686f992b9b05cd1a7fe",
+    "backendManifest": "7f777e02086507f90cb94850550cec74c0355382ae3f5ca27f18d54b45183388",
+    "uiHash": "6a055aa6cec649409da84baaf352efa58fa685ddc839c4cfb3aac68476aea2a5",
+    "schema": "1f03dbe35afa7027133e311cd846f280159ffef67af0b1dbeb87d0aebd0e5df2",
+    "toolsHash": "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056",
+    "node": "22.22.0",
+    "codex": "0.163.0",
+    "toolchain": {
+      "electron": "45.0.0",
+      "@electron-forge/core": "8.0.1",
+      "@electron-forge/maker-zip": "8.0.1",
+      "playwright-core": "1.59.1"
+    }
+  },
+  "candidate": {
+    "platform": "darwin-arm64",
+    "minimumTestedMacOS": "27.0",
+    "bundle": ".codex/scratch/electron-implementation-20261023/.codex/scratch/build-006/forge/Homer-darwin-arm64/Homer.app",
+    "signature": "ad-hoc local candidate; not Developer ID or notarized",
+    "zip": {
+      "bytes": 301256684,
+      "sha256": "6e95c05fd0a560af6c9acfe597e3e5b35b83c10ac1dc0c892867e980cf442a67"
+    }
+  },
+  "tests": [
+    {
+      "scope": "Current source; packaged backend from build-005",
+      "passed": 34,
+      "failed": 0,
+      "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/desktop-contracts-final-passed.log",
+      "sha256": "94cc7dbb6d132f479d8fc23aa89e61ef1a2a14d7635070abf4df99543c3c4ad4"
+    },
+    {
+      "scope": "Current source",
+      "passed": 6,
+      "failed": 0,
+      "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/web-final.log",
+      "sha256": "5962c083ef5e302037f1a508dc74d5dfe3d46a632a3017f0407094483c61731d"
+    },
+    {
+      "scope": "Packaged build-005 backend, byte-identical to build-006",
+      "passed": 7,
+      "failed": 0,
+      "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/runtime-build005.log",
+      "sha256": "9d820e3c28388377bd875d83d721f0ce8aa3f6e700ac19a328f5154e91537b8f"
+    },
+    {
+      "scope": "Actual packaged build-006",
+      "passed": 2,
+      "failed": 0,
+      "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/electron-window-build006.log",
+      "sha256": "9c4adc7627eb0f4370741d36430a942f77cc7beee69b8908691b4aa87d246227"
+    },
+    {
+      "scope": "Merged main working tree",
+      "passed": 16,
+      "failed": 0,
+      "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/main-integration-contracts.log",
+      "sha256": "1ff2e4fdd5b0ab10eb81326adc735612eb34ef0e297068cb864af3a50c00b453"
+    },
+    {
+      "scope": "Merged main working tree",
+      "passed": 6,
+      "failed": 0,
+      "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/main-integration-web.log",
+      "sha256": "9ef47cf49b6347c1a39b1129f8cab6adab1c225abcd8695133dea50916dff95e"
+    }
+  ],
+  "testSources": [
+    {
+      "path": "tests/electron-shell.test.mjs",
+      "sha256": "005d3db7dee476718106e21f45ae7a248b52aad4a41eee27ba458ced573b1f9f"
+    },
+    {
+      "path": "tests/electron-package.test.mjs",
+      "sha256": "e55559d14f7f65604756ed3aeef56f370bf329d3ee50912b53adbbdaf6e2dc19"
+    },
+    {
+      "path": "tests/electron-desktop.test.mjs",
+      "sha256": "79542ef22cd8d07dd8742ec8dea1bdd2e1f83cb2f934a5fce8366597760b0414"
+    },
+    {
+      "path": "tests/desktop-source.test.mjs",
+      "sha256": "9d896853828a647fd603f2cdf0fd45596482032d3e0f99968b2708cff559102e"
+    },
+    {
+      "path": "tests/desktop-profile.test.mjs",
+      "sha256": "83cd64f61e994ce67d34787af11c4db989d012759792780e21d38d3da79ff179"
+    },
+    {
+      "path": "tests/desktop-adoption.test.mjs",
+      "sha256": "3bc7d0fa33af8eb3a8d8818960a87b71a9235b84b9eb27171780befbce0c0c76"
+    },
+    {
+      "path": "tests/desktop-management.test.mjs",
+      "sha256": "c07c96a9fd9c48898cc48801ea204c6aec5f6305d84744da257947580b6d6953"
+    },
+    {
+      "path": "tests/desktop-service-startup.test.mjs",
+      "sha256": "3198b6c1c5f9dddd75fbbbffcbb24b5a6913b30174a9735ac6f7cbf4b6268a8c"
+    },
+    {
+      "path": "tests/desktop-browser-boundary.test.mjs",
+      "sha256": "3cb33590b68b48af58f586958c3c3163639ef4cd997e945eaea8e45952b2b450"
+    },
+    {
+      "path": "tests/main-tools-resume-compatibility.test.mjs",
+      "sha256": "13274dba625d7876f4a68d8e7d7e292e7fbb2cfa0dd4f514eeddd4b7b8ef4264"
+    },
+    {
+      "path": "tests/macos-desktop-runtime.test.mjs",
+      "sha256": "2e43c60b0d83b176ffeacbf9c2232bd27b879ca14d7c7b4b51e2d8226efcf052"
+    },
+    {
+      "path": "tests/web-server.test.ts",
+      "sha256": "497a42a3c2cb377e4ead0c6ae6eb1c32d85444dda8127d3f0f16b05448bdc534"
+    },
+    {
+      "path": "tests/fixtures/desktop-app-server.mjs",
+      "sha256": "815a82be8a6b75c522cb5fd7cd772842e3d3992e6a67efd5b3e6c455acdf091d"
+    }
+  ],
+  "observedFixes": [
+    "Forge resource hook receives the parent of Homer.app.",
+    "Electron ESM readiness must be handled without top-level await.",
+    "Pending SSE initial reads must return 503 with Connection: close after server shutdown. Two deterministic tests failed before the fix and passed after it.",
+    "Error dialogs use the existing BrowserWindow as their native parent."
+  ],
+  "failedTestCleanup": "The obsolete build-004 synthetic UI shell was reaped only after its backend exited naturally and its owner/CLI locks were gone. No backend or real profile was signaled. This is excluded from normal-exit evidence; build-005 and build-006 GUI checks exited through the actual application menu.",
+  "integration": "Applied to main working files without staging or committing; unrelated package, UI and Web changes retained. The verified candidate was built from the isolated baseline and listed overlays, not from unrelated dirty main work.",
+  "limitations": [
+    "No real profile, chats, credentials or production/model access in verification.",
+    "Preparation builds refuse real profiles and are not formal installation artifacts.",
+    "No Windows/Linux builds, first-login flow, automatic updater or performance measurements.",
+    "Local ad-hoc signature only; no Developer ID or notarization.",
+    "No repeated full-repository test/typecheck claim.",
+    "Formal packaging and installation still require a committed exact SHA."
+  ],
+  "review20261024": {
+    "date": "2026-10-24",
+    "decision": "ready_for_commit",
+    "source": {
+      "format": 1,
+      "gitSha": "184239e693700e2f56ea8937477453e10cd96dfe",
+      "preparation": true,
+      "publishable": false,
+      "candidateInputs": [
+        {
+          "path": "packaging/electron/main.mjs",
+          "sha256": "844e434d95e89f0ae0474dc42f753d785b1d341cde0c99e8c4955d7d952de7bc"
+        },
+        {
+          "path": "packaging/electron/forge.config.mjs",
+          "sha256": "835e78377a7c8369c1ebf172f693805d1d1cd387f22d34a9926d290225c60815"
+        },
+        {
+          "path": "package.json",
+          "sha256": "f602edb038b26158c4e7bad5e8be23624402779cfc5e2b3b95d4e8a92c1349c8"
+        },
+        {
+          "path": "package-lock.json",
+          "sha256": "2e80f0ef518d95840196a2ad1b079df182d0d21bb2a441b10acbda4ae9b8070f"
+        },
+        {
+          "path": "scripts/build-desktop.mjs",
+          "sha256": "162929f7292c3a015390f28442578b79363a0a017a7267702923915dbf936604"
+        },
+        {
+          "path": "scripts/desktop-source.mjs",
+          "sha256": "07826ff2a543d731f9938b3e89c1d922ee2e341b5414a2b044542de22276635c"
+        },
+        {
+          "path": "scripts/desktop-profile.mjs",
+          "sha256": "f0ab254fd1f4dc473ecb99b4b05b49e46e9374e3aec86f8650a56b0ad1d0920f"
+        },
+        {
+          "path": "src/web-server.ts",
+          "sha256": "9a2d4e0798e791d6eb2a04a0d90487cd6ea0f8a097262f6193f084db415ac2a2"
+        }
+      ],
+      "removedInputs": [
+        "packaging/macos/HomerApplication.swift",
+        "packaging/macos/Info.plist",
+        "packaging/macos/distribution-policy.json",
+        "packaging/macos/node-distribution-entitlements.plist",
+        "scripts/build-macos-desktop.mjs",
+        "scripts/macos-distribution.mjs",
+        "tests/desktop-termination.test.mjs"
+      ]
+    },
+    "sourceHash": "8236960b6a134ca64157620052402cf8baa0a5e98f920f74d92d782f39608d90",
+    "backendManifest": "7f777e02086507f90cb94850550cec74c0355382ae3f5ca27f18d54b45183388",
+    "zip": {
+      "bytes": 301256682,
+      "sha256": "31d6813a3e78460b2cb0f15251e3e0de447befd0c3d6b9e7603841d112940d87"
+    },
+    "validatedBundle": ".codex/scratch/electron-implementation-20261023/.codex/scratch/review-archive-validation/Homer.app",
+    "signature": "ad-hoc local candidate; not Developer ID or notarized",
+    "tests": [
+      {
+        "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/review-contracts.log",
+        "sha256": "0343bd33095ff182757965df9bb3f9c591de952d2f251c2895ad0d644d75c9d8",
+        "passed": 37,
+        "failed": 0
+      },
+      {
+        "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/review-web.log",
+        "sha256": "7d6391082122d115a7ae86f4c1c254b46fa6bfe0041bfb6bc9d8adbc1616a8b9",
+        "passed": 6,
+        "failed": 0
+      },
+      {
+        "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/review-runtime.log",
+        "sha256": "477c64980b91b342605cc916dd6646c739869a5baa8b9af05f6bbcce62fd392f",
+        "passed": 7,
+        "failed": 0
+      },
+      {
+        "log": ".codex/scratch/electron-implementation-20261023/.codex/scratch/review-window-verified.log",
+        "sha256": "ca67e21dd8e26ef5e671fcce13d53e15fe4a1ea9b60364a074a279daf98362ed",
+        "passed": 2,
+        "failed": 0
+      }
+    ],
+    "testSources": [
+      {
+        "path": "tests/electron-shell.test.mjs",
+        "sha256": "91a5e8ce127442ad74ebc76b093377322211c693f30fbbbefa2ccc6aa68d57cc"
+      },
+      {
+        "path": "tests/electron-package.test.mjs",
+        "sha256": "fabbe0a271de25427b92ef51d37beb163ba737b667d84ed58fa72a05de5a34c7"
+      },
+      {
+        "path": "tests/electron-desktop.test.mjs",
+        "sha256": "7da066289f9f327cad638edabfa5f6e2987f9994a51db718c1a538021c4f0cdd"
+      },
+      {
+        "path": "tests/desktop-source.test.mjs",
+        "sha256": "9d896853828a647fd603f2cdf0fd45596482032d3e0f99968b2708cff559102e"
+      },
+      {
+        "path": "tests/desktop-profile.test.mjs",
+        "sha256": "83cd64f61e994ce67d34787af11c4db989d012759792780e21d38d3da79ff179"
+      },
+      {
+        "path": "tests/desktop-adoption.test.mjs",
+        "sha256": "3bc7d0fa33af8eb3a8d8818960a87b71a9235b84b9eb27171780befbce0c0c76"
+      },
+      {
+        "path": "tests/desktop-management.test.mjs",
+        "sha256": "c07c96a9fd9c48898cc48801ea204c6aec5f6305d84744da257947580b6d6953"
+      },
+      {
+        "path": "tests/desktop-service-startup.test.mjs",
+        "sha256": "3198b6c1c5f9dddd75fbbbffcbb24b5a6913b30174a9735ac6f7cbf4b6268a8c"
+      },
+      {
+        "path": "tests/desktop-browser-boundary.test.mjs",
+        "sha256": "3cb33590b68b48af58f586958c3c3163639ef4cd997e945eaea8e45952b2b450"
+      },
+      {
+        "path": "tests/main-tools-resume-compatibility.test.mjs",
+        "sha256": "13274dba625d7876f4a68d8e7d7e292e7fbb2cfa0dd4f514eeddd4b7b8ef4264"
+      },
+      {
+        "path": "tests/macos-desktop-runtime.test.mjs",
+        "sha256": "2e43c60b0d83b176ffeacbf9c2232bd27b879ca14d7c7b4b51e2d8226efcf052"
+      },
+      {
+        "path": "tests/web-server.test.ts",
+        "sha256": "497a42a3c2cb377e4ead0c6ae6eb1c32d85444dda8127d3f0f16b05448bdc534"
+      },
+      {
+        "path": "tests/fixtures/desktop-app-server.mjs",
+        "sha256": "815a82be8a6b75c522cb5fd7cd772842e3d3992e6a67efd5b3e6c455acdf091d"
+      }
+    ],
+    "performance": [
+      {
+        "synthetic": true,
+        "metric": "first_ready_ms",
+        "value": 9818
+      },
+      {
+        "synthetic": true,
+        "metric": "electron_idle_1s",
+        "electronProcesses": 4,
+        "cpuPercent": 0.9366363350768723,
+        "workingSetMiB": 537.046875
+      },
+      {
+        "synthetic": true,
+        "metric": "restart_ready_ms",
+        "value": 3464
+      }
+    ],
+    "performanceScope": "Single synthetic conversation on macOS 27 arm64 under Playwright. OS file cache and other machine load uncontrolled. CPU/working-set sums cover Electron only, include shared-memory double counting, and exclude Node/Codex. No production or comparative throughput guarantee.",
+    "fixes": [
+      "Handle rejected system-browser opens without an unhandled promise or raw URL diagnostics.",
+      "Show the existing window before confirming quit from a hidden window.",
+      "Reject installed build-tool versions that differ from the Git lock before compiling or packaging.",
+      "Remove duplicate cache-path and origin checks; keep the existing canonical-path owner."
+    ],
+    "artifactIntegrity": "The original loose candidate lost sealed node_modules after packaging. Startup correctly refused it before opening profiles. The unchanged ZIP SHA256 was checked, a fresh copy extracted, its full signature verified, and real-window tests passed against that copy. Failed empty startup shells were reaped separately and do not count as normal-exit evidence.",
+    "installation": "Not performed"
+  }
+}

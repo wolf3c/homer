@@ -12,7 +12,7 @@ try{
   const f=await fixture(90,'after');
   const key='publicMainNode:v1:node-89',startedAtMs=Date.now()-36000;
   const source={id:'node-89:source',seq:1,revision:1,kind:'commentary',phase:'commentary',text:'处理 Worker 提问：保持历史消息阅读位置'};
-  const update=items=>{const node=JSON.parse(f.store.meta(key));f.store.setMeta(key,JSON.stringify({...node,revision:node.revision+1,sourceKind:'worker',replyPolicy:'explicitFinal',sourceMessageIds:[],replyMessageId:undefined,final:undefined,deliveryMessageId:undefined,deliveryMessageIds:undefined,state:'working',status:'running',turnIds:['turn-89'],startedAtMs,timingState:'running',timingSource:'hostObserved',items}));f.store.db.prepare("UPDATE conversation_messages SET text='',status='running' WHERE id='node-89'").run();f.server.publish();};
+  const update=items=>{const node=JSON.parse(f.store.meta(key));f.store.setMeta(key,JSON.stringify({...node,revision:node.revision+1,sourceKind:'worker',replyPolicy:'explicitFinal',sourceMessageIds:[],replyMessageId:undefined,final:undefined,state:'working',status:'running',turnIds:['turn-89'],startedAtMs,timingState:'running',timingSource:'hostObserved',items}));f.store.db.prepare("UPDATE conversation_messages SET text='',status='running' WHERE id='node-89'").run();f.server.publish();};
   update([source]);f.inputs.accept({requestId:'synthetic-pending-question',text:'合成：请概括两项结果'});
   let stage='native';const original=f.bridge.history.state;
   f.bridge.history.state=async()=>({...await original(),observedAtMs:Date.now(),isRunning:false,generation:null,mainActivity:{processId:'node-89',source:'internal',turnId:'turn-89',stage}});
@@ -29,9 +29,9 @@ try{
    assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=run-activity]').textContent.includes('处理 Worker 提问')),true);
    stage='native';
    const tools=[{id:'coordination',seq:2,revision:1,kind:'tool',category:'host',label:'检查协作请求',status:'completed'},
-    {id:'review',seq:3,revision:1,kind:'tool',category:'host',label:'核对成果',status:'completed',activity:{schemaVersion:1,action:'review_result',objectName:'合成公开任务',outcome:'changes_requested'}}];
+    {id:'update',seq:3,revision:1,kind:'tool',category:'host',label:'调整任务',status:'completed',activity:{schemaVersion:1,action:'update_task',objectName:'合成公开任务',outcome:'update_queued'}}];
    update([source,...tools]);
-   await p.until(()=>document.querySelector('#message-node-89 [data-slot=run-activity]').textContent.includes('已要求修改'));
+   await p.until(()=>document.querySelector('#message-node-89 [data-slot=run-activity]').textContent.includes('后续要求已排队'));
    await p.evaluate(()=>{const button=document.querySelector('#message-node-89 button');button.focus();button.click();});
    await p.until(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===2);
    await p.until(()=>document.querySelector('#message-node-89 [data-slot=collapsible-content]').getAnimations().length===0);

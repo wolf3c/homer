@@ -5,21 +5,20 @@ import path from 'node:path';
 export async function composerFixture({webDir,beforeDir,branding,resource,interaction,historyPage}) {
  const streams=new Set(),received={messages:[],uploads:[],stops:[],discards:[],denied:[]};
  let state,mode={},held=[],revision=0;
- const task={id:"synthetic-task",headVersion:1,revision:1,goal:"核对合成材料",notes:"",state:"open",outcome:null,controlState:"normal",historyState:"visible",workers:[],results:[],deliveries:[],sourceRequestId:null};
+ const task={id:"synthetic-task",headVersion:1,revision:1,goal:"核对合成材料",notes:"",state:"open",outcome:null,controlState:"normal",historyState:"visible",workers:[],sourceRequestId:null};
  function snapshot(){return {...state,history:{protocol:3,readEpoch:"composer-synthetic-epoch",moreQueue:null,moreInteractions:null,page:{protocol:3,threadId:state.threadId,revision:++revision,messages:state.messages,units:state.messages.map(m=>m.id),before:null,after:null,artifacts:state.artifacts??[]}}};}
  const history=()=>Array.from({length:18},(_,i)=>({id:'fixture-'+i,threadId:'composer-review',requestId:'fixture-request-'+Math.floor(i/2),role:i%2?'assistant':'user',text:i%2?'已整理这份合成材料。先核对目标，再逐项检查细节。\n\n这是隔离浏览器检查使用的示例内容。'.repeat(2):'请整理这份示例材料，并保留需要核对的事项。',status:'completed',createdAt:1700000000000+i*1000}));
- function reset(overrides={}){state={conversationView:3,acceptedRequestIds:[],queue:[],threadId:'composer-review',messages:history(),isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running',accepting:true},features:{draftUpload:true,taskOverview:true},...overrides};mode={};for(const r of held)r.end(JSON.stringify({error:'fixture_reset'}));held=[];for(const a of Object.values(received))a.length=0;broadcast();}
+ function reset(overrides={}){state={conversationView:4,acceptedRequestIds:[],queue:[],threadId:'composer-review',messages:history(),isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running',accepting:true},features:{draftUpload:true,taskOverview:true},...overrides};mode={};for(const r of held)r.end(JSON.stringify({error:'fixture_reset'}));held=[];for(const a of Object.values(received))a.length=0;broadcast();}
  function broadcast(event='state'){for(const r of streams)r.write('event: '+event+'\ndata: '+JSON.stringify(snapshot())+'\n\n');}
  reset();
  const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.svg':'image/svg+xml','.woff2':'font/woff2'};
  const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,'http://127.0.0.1');
   const json=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
-  if(req.method==='GET'&&/^\/api\/(media|files)\//.test(url.pathname)&&resource)return resource(req,res,url);
-  if(['/api/events','/api/history/events'].includes(url.pathname)){if(mode.offline)return json({error:'synthetic_offline'},503);res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache'});streams.add(res);res.write('event: state\ndata: '+JSON.stringify(snapshot())+'\n\n');req.on('close',()=>streams.delete(res));return;}
-  if(url.pathname==='/api/channels/wechat'&&req.method==='GET')return json({status:'disabled',bound:false,enabled:false,pending:0,uncertain:0,failed:0});
+  if(req.method==='GET'&&url.pathname.startsWith('/api/media/')&&resource)return resource(req,res,url);
+  if(url.pathname==='/api/history/events'){if(mode.offline)return json({error:'synthetic_offline'},503);res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache'});streams.add(res);res.write('event: state\ndata: '+JSON.stringify(snapshot())+'\n\n');req.on('close',()=>streams.delete(res));return;}
   if(url.pathname==='/api/tasks'&&req.method==='GET')return json({tasks:[task]});
-  if(url.pathname==='/api/tasks/'+task.id&&req.method==='GET')return json({taskId:task.id,requirements:[{taskId:task.id,version:task.headVersion,goal:task.goal,sourceRequestId:null}],runs:[],publications:[]});
+  if(url.pathname==='/api/tasks/'+task.id&&req.method==='GET')return json({taskId:task.id,requirements:[{taskId:task.id,version:task.headVersion,goal:task.goal,sourceRequestId:null}],runs:[],artifacts:[]});
   if(req.method==='POST'){
    const chunks=[];for await(const c of req)chunks.push(c);const data=Buffer.concat(chunks);
    if(url.pathname==='/api/uploads'){

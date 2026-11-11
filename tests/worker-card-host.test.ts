@@ -25,15 +25,15 @@ for(const scenario of ['result','forged-notice','missing','startup-failure','sta
    }
    if(text==='请核对日期'){
     if(scenario==='dispatch-rejected'){await assert.rejects(this.call('task_create',{bad:'invalid'}),/invalid_tool_arguments/);return {status:'completed',text:'交办未成功。'};}
-    const task=await this.call('task_create',{title:'核对日期',goal:'PRIVATE_LONG_INTERNAL_GOAL'}) as {taskId:string};
-    await this.call('worker_open',{taskId:task.taskId,message:'检查会议记录中的日期。'});return {status:'completed',text:'已交办这项工作。'};
+    const workingDirectory=join(dir,'PRIVATE_SELECTED_PROJECT');mkdirSync(workingDirectory);
+    await this.call('worker_open',{message:'检查会议记录中的日期。',workingDirectory});return {status:'completed',text:'已交办这项工作。'};
    }
    return {status:'completed',text:''};
   }
   async interrupt(){return true;}async close(){return true;}
  }
  mkdirSync(join(dir,'runtime'));
- app=new Homer({runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexBin:'/usr/bin/false',codexHome:join(dir,'empty-home'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},(options,handler)=>new Peer(options,handler));
+ app=new Homer({runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),codexBin:'/usr/bin/false',codexHome:join(dir,'empty-home'),nativeCodexHome:join(dir,'empty-home'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},(options,handler)=>new Peer(options,handler));
  try{
   await app.start();await app.message('请核对日期','user-card-test');await app.idle();
   const nodes=app.processes.list(app.store.meta('mainThread')!),cards=nodes.flatMap(node=>node.items.flatMap(item=>item.kind==='workerEvent'?[{node,item,event:item.event!}]:[]));
@@ -45,8 +45,8 @@ for(const scenario of ['result','forged-notice','missing','startup-failure','sta
   assert.doesNotMatch(JSON.stringify(cards.map(card=>card.event)),/PRIVATE_/);
   const publicNodes=nodes.map(node=>({...node,items:node.items.map(item=>{if(item.kind!=='tool')return item;const {content:_content,...publicItem}=item;return publicItem;})}));assert.doesNotMatch(JSON.stringify(publicNodes),/PRIVATE_/);
   const bridge=homerWebBridge(app);assert.doesNotMatch(JSON.stringify(await bridge.history!.state()),/PRIVATE_/);
-  const detail=await bridge.history!.process({id:cards[0]!.node.id,readEpoch:app.webReadEpoch}),call=detail.items.find(item=>item.kind==='tool'&&item.toolName==='task_create')!;
-  assert.equal(call.kind,'tool');if(call.kind!=='tool')throw Error('create_call_missing');assert.equal(call.content?.input.state,'recorded');assert.ok(call.content&&'value' in call.content.input);assert.equal((call.content.input.value as Record<string,unknown>).goal,'PRIVATE_LONG_INTERNAL_GOAL');
+  const detail=await bridge.history!.process({id:cards[0]!.node.id,readEpoch:app.webReadEpoch}),call=detail.items.find(item=>item.kind==='tool'&&item.toolName==='worker_open')!;
+  assert.equal(call.kind,'tool');if(call.kind!=='tool')throw Error('worker_open_call_missing');assert.equal(call.content?.input.state,'recorded');assert.ok(call.content&&'value' in call.content.input);assert.equal((call.content.input.value as Record<string,unknown>).workingDirectory,join(dir,'PRIVATE_SELECTED_PROJECT'));
   const first=JSON.stringify(cards[0]!.event);app.store.db.prepare('UPDATE tasks SET outcome=?,revision=revision+1 WHERE id=?').run('partial',cards[0]!.event.taskId);assert.equal(JSON.stringify(app.processes.exact(cards[0]!.node.id)!.items.find(i=>i.kind==='workerEvent')!.event),first);
  }finally{await app.close();rmSync(dir,{recursive:true,force:true});}
 });

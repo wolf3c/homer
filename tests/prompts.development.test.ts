@@ -24,9 +24,9 @@ test("HMR-PROMPTS-001: package dry run contains dist and the two maintained prom
     const files: string[] = JSON.parse(pack.stdout)[0].files.map((file: { path: string }) => file.path);
     for (const name of ["dist/cli.js", "dist/prompts.js", "prompts/main.md", "prompts/worker.md"]) assert.ok(files.includes(name), name);
     const skills=files.filter(name=>name.startsWith('.codex/'));
-    assert.equal(skills.length,13,'release carries only the four complete maintained Skill directories');
+    assert.equal(skills.length,12,'release carries only the three complete maintained Skill directories');
     assert.ok(files.filter(name=>name.startsWith("prompts/")).every(name=>["prompts/main.md","prompts/worker.md"].includes(name)));
-    const bundled=['homer-initialize','homer-tool-management','homer-feedback','homer-archive-review'];
+    const bundled=['homer-tool-management','homer-feedback','homer-archive-review'];
     assert.ok(skills.every(name=>bundled.some(skill=>name.startsWith('.codex/skills/'+skill+'/'))));
     for(const name of bundled)assert.ok(skills.includes('.codex/skills/'+name+'/SKILL.md'));
     assert.ok(skills.includes('.codex/skills/homer-feedback/scripts/submit-feedback.mjs'));
@@ -41,7 +41,7 @@ test("HMR-PROMPTS-001: packaged CLI reports the missing resource and releases it
     cpSync(resolve("scripts/windows-security.mjs"), join(f.root, "scripts/windows-security.mjs"));
     writeFileSync(join(f.root, "package.json"), '{"type":"module"}');
     const runtime = join(f.root, "runtime");
-    writeFileSync(join(f.root, "test.config.json"), JSON.stringify({ runtime, workspace: join(f.root, "workspace"), codexBin: process.execPath, codexHome: f.root, model: "mock", requiresOpenaiAuth: false }));
+    writeFileSync(join(f.root, "test.config.json"), JSON.stringify({ runtime, workspace: join(f.root, "workspace"), codexBin: process.execPath, codexHome: f.root, nativeCodexHome: f.root, model: "mock", requiresOpenaiAuth: false }));
     const probe = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", join(f.root, "dist/cli.js"), "--json", "--config", join(f.root, "test.config.json")], { cwd: f.root, encoding: "utf8" });
     assert.equal(probe.status, 1);
     const message = JSON.parse(probe.stdout.trim());

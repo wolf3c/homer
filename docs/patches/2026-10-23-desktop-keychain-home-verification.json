@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "baseGit": "a33e43df6dd28b4d61544e90e48c2dbbfb2162de",
+  "scope": "Keychain child HOME only; identify corrected local App as 0.1.0 build5",
+  "sources": [
+    {
+      "path": "src/channels/wechat-secrets.ts",
+      "sha256": "ecca72f0054186dc96bea164c9176cda77050d3d53f951bf27f7713338472870"
+    },
+    {
+      "path": "src/channels/telegram-secrets.ts",
+      "sha256": "5383e3c7bfd31dd16ad014f296f7faa3312731edefeecb33023ad124187c76a3"
+    },
+    {
+      "path": "scripts/desktop-source.mjs",
+      "sha256": "153683cd15fbdfd976b44fd062aad634f37b9eb7573a340f837aa22c2567bc3b"
+    },
+    {
+      "path": "scripts/build-macos-desktop.mjs",
+      "sha256": "8fa0cc21e1765c9edad72ff8c129987e37d24dd699838ca0db449c33bc04284a"
+    },
+    {
+      "path": "packaging/macos/Info.plist",
+      "sha256": "8313e21117613670b68d884d527cb306670446d545831f6dcfe4aecf913c4a9d"
+    },
+    {
+      "path": "tests/macos-keychain-home.test.mjs",
+      "sha256": "ecba2599fe4fa1f970fb4a009b9a107df8542e2bebfff91b0ebc145b11ec6d8a"
+    }
+  ],
+  "proof": {
+    "sameExistingItemMetadataLookupNormalHomeExit": 0,
+    "sameExistingItemMetadataLookupIsolatedHomeExit": 44,
+    "passwordRequested": false,
+    "credentialBytesRead": false,
+    "actualLookupMetadataOnly": true,
+    "fixtureRedPassed": 0,
+    "fixtureRedFailed": 2,
+    "fixtureGreenPassed": 2,
+    "fixtureGreenFailed": 0,
+    "existingTelegramSecretsPassed": 3,
+    "desktopSourceGuardPassed": 3,
+    "desktopInputs": 25,
+    "backendTypesBuilt": true,
+    "allTypesBaseline": 137,
+    "allTypesCandidate": 137,
+    "exactNormalizedDiagnosticsIdentical": true
+  },
+  "parentHomeAndTmpUnchanged": true,
+  "keychainServiceReferenceCommandsAndAclUnchanged": true,
+  "noCredentialsCopied": true,
+  "noShellHomeChanged": true,
+  "noProviderOrPermissionChanges": true,
+  "installedA33CoreChatRunning": true,
+  "installedA33WechatStatus": "invalid/wechat_keychain_unavailable; binding and original terminal outbox retained",
+  "productionFixApplied": false,
+  "requiredNext": "exact main commit and targeted independent review; normal Git archive build+entry checks before normal App stop/update; preserve new business facts and restore original enabled intent via existing channel owner"
+}

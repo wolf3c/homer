@@ -22,7 +22,7 @@ export async function queueBrowserFixture(webDir:string,count=3,parent=resolve('
   async close(){closed=true;release?.({status:'interrupted',text:''});return true;}
   async interrupt(){release?.({status:'interrupted',text:'合成回复已停止'});return true;}
  }
- const app=new Homer({workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},()=>new Engine());
+ const app=new Homer({workspace:join(dir,'workspace'),runtime:join(dir,'runtime'),codexHome:join(dir,'empty-home'),nativeCodexHome:join(dir,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},()=>new Engine());
  await app.start();app.submitMessage({requestId:'A',text:'正在核对第一份合成材料，后续消息依次处理。'});await queueUntil(()=>!!release);
  const refs=[];
  for(let n=0;n<10;n++){

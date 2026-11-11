@@ -5,13 +5,12 @@ const send = message => process.stdout.write(JSON.stringify(message) + "\n");
 let model, instructions, turn = "native-turn";
 const trustedArgument = process.argv.find(arg => arg.startsWith("mcp_servers.homer_interactions="));
 const trusted = trustedArgument ? JSON.parse(trustedArgument.slice(trustedArgument.indexOf("=") + 1).replace(/("(?:[^"\\]|\\.)*")=/g, "$1:")) : undefined;
-const names = ["work_directory", "file_checkpoint", "capabilities", "inspect_interaction", "respond_interaction", "escalate_interaction", "runtime_capabilities", "inspect_attachment", "inspect_result_file", "quote_current_message", "prepare_combined_delivery"];
+const names = ["work_directory", "inspect_interaction", "respond_interaction", "escalate_interaction", "runtime_capabilities", "inspect_attachment"];
 createInterface({ input: process.stdin }).on("line", line => {
   const m = JSON.parse(line);
-  if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});
-  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fixture/0.163.0" } });
+  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fixture/0.163.0", codexHome: process.env.CODEX_HOME } });
   if (m.method === 'model/list') send({id:m.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
-  if (m.method === "config/read") send({ id: m.id, result: { config: { mcp_servers: trusted ? { homer_interactions: trusted } : {} } } });
+  if (m.method === "config/read") send({ id: m.id, result: { layers: [], config: { features: { memories: true }, memories: { dedicated_tools: true }, mcp_servers: trusted ? { homer_interactions: trusted } : {} } } });
   if (m.method === "mcpServerStatus/list") send({ id: m.id, result: { data: [{ name: "homer_interactions", tools: Object.fromEntries(names.map(name => [name, {}])) }] } });
   if (m.method === "thread/start" || m.method === "thread/resume") {
     model = m.params.model;

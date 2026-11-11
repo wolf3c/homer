@@ -1,0 +1,167 @@
+{
+  "format": 1,
+  "date": "2026-10-23",
+  "baseGit": "3c5461180575aa90f9430f35152f444530185913",
+  "committed": false,
+  "installed": false,
+  "productionModified": false,
+  "package": {
+    "sourceHash": "0a6f43ecb551f4485c51f074fbf58c4591a95b3513a8e1a9bb77c108f3257c0a",
+    "manifest": "ed83aea0a8a5ed2aa2f50e8aa1b70a3d21011f783faf098cce055806bfdc56ed",
+    "schema": "c83bb6bd26960c4efbaf30c27825c642e96458685081716f12742f53ce97d2b7",
+    "toolsHash": "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056",
+    "uiHash": "6a055aa6cec649409da84baaf352efa58fa685ddc839c4cfb3aac68476aea2a5",
+    "zipSha256": "9c9d4dcb4c83b5fddd0bd3082d0454ea35c566c29c5fe8aac7a35d262a8840ed",
+    "zipBytes": 182802794,
+    "bundleBytes": 471989002,
+    "buildNode": "v22.22.0",
+    "signature": "ad-hoc local candidate; not Developer ID or notarized"
+  },
+  "preparation": true,
+  "publishable": false,
+  "candidateInputsRechecked": 23,
+  "uiHashMatchesPrior148CheckPackage": true,
+  "results": {
+    "finalUnitPassed": 22,
+    "finalUnitFailed": 0,
+    "finalPackagedRuntimePassed": 6,
+    "finalPackagedRuntimeFailed": 0,
+    "fixedNativeProtocolPassed": 1,
+    "nativeProtocolUsesIsolatedCredentialFreeHomeAndLoopbackProvider": true,
+    "nativeProtocolModelTurns": 0,
+    "nativeIndexOriginalThreadExists": true,
+    "userRolloutRead": false,
+    "originalBrowserDenyRootsPreservedUnderIsolatedHome": true,
+    "allTypes": {
+      "baselineDiagnostics": 137,
+      "candidateDiagnostics": 137,
+      "normalizedIdentical": true,
+      "normalization": "only exact absolute exported source roots replaced"
+    },
+    "initialPrivateRehearsal": {
+      "format": 1,
+      "at": "2026-10-23T09:58:30.290Z",
+      "sourceAccess": "readOnly SQLite snapshot; no auth/native sessions copied",
+      "initialSnapshotOnly": true,
+      "maintenancePointConfirmed": false,
+      "productionModified": false,
+      "schemaBefore": "3",
+      "schemaAfter": "4",
+      "allOriginalTablesOldColumnsAndRowsRetained": 60,
+      "changedColumns": [
+        {
+          "table": "tasks",
+          "added": [
+            "historyState"
+          ]
+        }
+      ],
+      "onlyBusinessMetaChange": "recursiveSchemaVersion",
+      "integrity": "ok",
+      "foreignKeyViolations": 0,
+      "originalThreadRetained": true,
+      "originalBusinessBindingRetained": true,
+      "originalMainToolsHashRetained": true,
+      "mainToolsMatchCandidate": false,
+      "blockingError": "main_tools_migration_required",
+      "gatewayCasRequired": true,
+      "gatewayCasRehearsed": true,
+      "gatewayOnlyChange": "binding",
+      "allGatewayRowsContractAndThreadRetained": true,
+      "realAccountRead": false,
+      "realModelCalls": 0
+    },
+    "historicalToolsMismatchNowAcceptedOnlyByReviewedExactPair": true,
+    "earlierFailures": [
+      "build007 second-owner error precedence corrected without relaxing original test",
+      "build008 first URL cold-ready timeout; same-package isolated retry and final build009/010 all6 pass; no test deadline changes"
+    ]
+  },
+  "logs": [
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-red.log",
+      "sha256": "d2139afc287876b2400ae9d74fa9d9136de03cdeb6eeb179a519c49f87ae7e24"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-unit-green.log",
+      "sha256": "543207dc23123ad66a934295f6977eb7d81f0e4018914bbcb599d661e8edfea1"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-red.log",
+      "sha256": "c4186c14446646db0d26ebf24a0ae0fc0bf69c06fee84e24a78af8dbcb3e3150"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-green.log",
+      "sha256": "3ffd45470932d2550453d1caaa6b56dee1f0ba67b79e96f5afef7bdd0f56c072"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-final.log",
+      "sha256": "f581e88f5a896e085b96f9a68d91110cc343ceb7ea9f012f24ceb9228298d188"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-finder-recheck.log",
+      "sha256": "c6eb0e561a92077eb5d996820568e1ce144f12dd3505f99c5c1b497a693bef23"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/browser-boundary-red.log",
+      "sha256": "ca2a821835c915670ca486ff4239b96e60e31aada5d97857c4c9e62dd18b0f31"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-final-unit.log",
+      "sha256": "59469e538dacb7617f54ba49231b308d10f3b9fd2b155d9b14001a3a0f8118a4"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-009.log",
+      "sha256": "98a01cdb6caaa4881b598c936e2bd345a78afecd50d4eb555b4471cd78c13627"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-private-rehearsal-summary.json",
+      "sha256": "ebf1ee2607df6beca65c6b33dccc0a549598afafee815d2de618b1cd6f658166"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/build-009.log",
+      "sha256": "78442dd5fcfba636fe5d61ed0e970ede4a1a604e52f2666a97f24d6fc236e8fc"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/build-010.log",
+      "sha256": "1ec1968bf80dc6859ee3f9d4ff64984a4e09c35a8b809a3f7adda7b91c9c0025"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/tools-resume-red.log",
+      "sha256": "001de334ec9db013d8f973dd43cbddc2dd9e8ac3cb0cdaafb77fce566c5951f3"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/closure-unit-010.log",
+      "sha256": "45dad144c0239323173a3299ca7a0e3b242705c965bfc2605b8106ac0d0144f5"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/closure-runtime-010.log",
+      "sha256": "c56600d275c4d537ac2aad0cd598a6eca7817425c3caae49d769ae5537968187"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/native-tools-resume.log",
+      "sha256": "361525e180c149ea5df28567164f4cda510cc154d85d9b84774b1bbf321cea6e"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/closure-all-types-010.log",
+      "sha256": "288872caf2ec463aa250e973377f4572f0e15c75abd930138034fa89ffeea072"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/closure-types-comparison.json",
+      "sha256": "5880dadd8b3c42ff7663d68097c5cb864efd17fa917e34ff6235e3e5b9095257"
+    },
+    {
+      "path": ".codex/scratch/desktop-integration-20261023/adoption-preparation-cleanup.json",
+      "sha256": "9c28d36cd0f2af41b39925f31402254d2526d22cbbc1d7c70150e2e242dc451e"
+    }
+  ],
+  "remainingConditions": [
+    "commit the reviewed exact closure to main, freeze full SHA and rebuild without preparation overlays",
+    "fresh real maintenance-point confirmation/private backup and exact gateway binding CAS",
+    "normal installation, actual installed App acceptance and unused package cleanup"
+  ],
+  "realModelCalls": 0,
+  "realAccountRead": false,
+  "realFinderAction": false,
+  "noDeveloperIdOrNotarizationClaim": true
+}

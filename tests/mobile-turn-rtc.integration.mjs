@@ -4,6 +4,7 @@ import {generateKeyPairSync,createHash,sign} from 'node:crypto';
 import {MobileDevices} from '../src/mobile-devices.ts';
 import {openMobileSignal} from '../src/mobile-signaling.ts';
 import {startMobileRtc} from '../src/mobile-rtc.ts';
+import {WEB_PROTOCOL} from '../src/web-contract.ts';
 const root=process.env.HOMER_YEZI2_ROOT;if(!root)throw Error('HOMER_YEZI2_ROOT_required');
 const {startHomerRtcLab}=await import(pathToFileURL(resolve(root,'scripts/homer-rtc-lab.mjs')));
 test('RTC waits for shared TURN credentials; shutdown cannot create a late peer',{timeout:10000},async()=>{
@@ -68,7 +69,7 @@ test('native direct peer with TURN configuration closes with its owner and never
   peer.onDataChannel(channel=>{channel.onClosed(closedResolve);channel.onOpen(()=>{client=mobileChannel({send:bytes=>{channel.sendMessageBinary(bytes);},buffered:()=>channel.bufferedAmount(),closed:()=>!channel.isOpen(),close:()=>channel.close(),receive:fn=>channel.onMessage(bytes=>fn(new Uint8Array(bytes)))},value=>{pending.get(value.id)?.(value);pending.delete(value.id);});readyResolve();});});
   await wait(signal.call('connect',{routeId}),'native_connect_timeout');await wait(ready,'native_direct_ready_timeout');
   const selected=peer.getSelectedCandidatePair();assert.ok(selected);assert.equal(selected.local.type,'host');assert.equal(selected.remote.type,'host');
-  const invitation=devices.invite('https://example.test').url.split('#')[1],paired=await call('pair',{invitation});devices.approve(devices.state().pending.id,'合成手机');
+  const invitation=devices.invite('https://example.test').url.split('#')[1],paired=await call('pair',{invitation,protocol:WEB_PROTOCOL});devices.approve(devices.state().pending.id,'合成手机');
   assert.equal((await call('status',{credential:paired.result.credential})).result.status,'active');assert.deepEqual((await call('history.state')).result,{synthetic:true});
   // Observe per-peer removal before process-wide rtc.cleanup also tears down the synthetic phone.
   host.disconnect();await wait(closed,'native_owner_close_timeout');assert.equal(host.connected,false);

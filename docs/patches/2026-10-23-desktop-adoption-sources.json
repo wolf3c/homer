@@ -1,0 +1,115 @@
+{
+  "format": 1,
+  "date": "2026-10-23",
+  "status": "reviewed-uncommitted-preparation-closure",
+  "baseGit": "3c5461180575aa90f9430f35152f444530185913",
+  "applyAfter": {
+    "path": "docs/patches/2026-10-23-desktop-integration-candidate.patch",
+    "sha256": "915800b901002a249e3a87f68aeb24ee138ed9f8736bc21bd45844d93543a3a8"
+  },
+  "files": [
+    {
+      "path": "scripts/desktop-profile.mjs",
+      "sha256": "ebd76477987fb8f93f9e3edec8b3a666d7af289035292a998fa38c3912c81fbb",
+      "bytes": 7192,
+      "beforeSha256": "de4744195d20a8ad22c96d254b330ca9c991331d923af2d57a4c4442b07b51a5"
+    },
+    {
+      "path": "scripts/desktop-runtime.mjs",
+      "sha256": "fdba1acfd8e473e78d09cfea01200eb79db3e62c58d367e1279238ddac57c7ca",
+      "bytes": 8825,
+      "beforeSha256": "3c45201413eff39e256c5b7bda03240b2f0d917c0d4d60f8da463e94d41138ea"
+    },
+    {
+      "path": "scripts/desktop-source.mjs",
+      "sha256": "5b06c9c26e198ef52dcf203b0b87e8fbf65869b26eed2d5d58d2ea9e33f941f9",
+      "bytes": 2866,
+      "beforeSha256": "18a255041e43bd5d9b3331215bbbd6e424f7bb9863aa42e3b18f8d6c07223eec"
+    },
+    {
+      "path": "src/engine.ts",
+      "sha256": "cac6c54b3f67ff4586afe2399b7b09ef1b453204921b39cc3dd92da167451d15",
+      "bytes": 51639,
+      "beforeSha256": "e6d313736634af2a4f47c1f1ddd181773f9a1f9d518a9d66da84e87a7aa736a9"
+    },
+    {
+      "path": "src/service.ts",
+      "sha256": "b23921212bb9a9e8ef4fe6f5563a7434c796a623a9bc9460d4827a81b3d15a09",
+      "bytes": 148001,
+      "beforeSha256": "0b6cf9a5e1e828313e38092fca30043a55d8bf1f9aa200e8538f803b722bd7d4"
+    },
+    {
+      "path": "src/tools.ts",
+      "sha256": "5092510fe443b55a02c2fc75ec28a29e6043da962efce29502a7d3d727236aa7",
+      "bytes": 3327,
+      "beforeSha256": "b6da07b4e55200af682a3df3ad4860406ca2501ff9f97a038faad15fde75094f"
+    },
+    {
+      "path": "tests/desktop-adoption.test.mjs",
+      "sha256": "c7b8963013681996d20343c3cc86f366a4e5325a43f88e10354c4d788d08aa3b",
+      "bytes": 4707,
+      "beforeSha256": null
+    },
+    {
+      "path": "tests/desktop-browser-boundary.test.mjs",
+      "sha256": "3cb33590b68b48af58f586958c3c3163639ef4cd997e945eaea8e45952b2b450",
+      "bytes": 1638,
+      "beforeSha256": null
+    },
+    {
+      "path": "tests/desktop-source.test.mjs",
+      "sha256": "da9a1c85d83c55f9713dc4d808c31dfe7d8e6ecb4183512fbad54b808a39f7f3",
+      "bytes": 2542,
+      "beforeSha256": "04cfc85d40c0b1a66b8b9eb084e8ecda87eacfe6f48db96ac464eb9892986249"
+    },
+    {
+      "path": "tests/macos-desktop-runtime.test.mjs",
+      "sha256": "f628c3a82febc6de27a7e8716954fbad45c00d293fbee8171be3a3a69589b0eb",
+      "bytes": 15388,
+      "beforeSha256": "12067f54f8ae4a358f0ecb9df4a8b4eb5cb0c4643d131d9da85370a2e75fc6c8"
+    },
+    {
+      "path": "tests/main-tools-resume-compatibility.test.mjs",
+      "sha256": "13274dba625d7876f4a68d8e7d7e292e7fbb2cfa0dd4f514eeddd4b7b8ef4264",
+      "bytes": 2873,
+      "beforeSha256": null
+    },
+    {
+      "path": "tests/native-main-tools-resume.test.mjs",
+      "sha256": "0fa041a50721ab7b36203ec1b1def49a688b4786cc0ddc94227a9c3ec50937b2",
+      "bytes": 5189,
+      "beforeSha256": null
+    }
+  ],
+  "incrementCodeFiles": 12,
+  "combinedCodeFileCount": 33,
+  "candidateBuildInputs": 23,
+  "newDependencies": false,
+  "originalDataModified": false,
+  "userAuthorizedFixReviewMainCommitAndInstall": true,
+  "mainToolsCompatibility": {
+    "historicalHash": "e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a",
+    "targetHash": "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056",
+    "exactPairOnly": true,
+    "originalNativeDefinitionsAndStoredHashPreserved": true,
+    "unknownHashRejected": true
+  },
+  "commitScope": [
+    "scripts/desktop-profile.mjs",
+    "scripts/desktop-runtime.mjs",
+    "scripts/desktop-source.mjs",
+    "src/engine.ts",
+    "src/service.ts",
+    "src/tools.ts",
+    "tests/desktop-adoption.test.mjs",
+    "tests/desktop-browser-boundary.test.mjs",
+    "tests/desktop-source.test.mjs",
+    "tests/macos-desktop-runtime.test.mjs",
+    "tests/main-tools-resume-compatibility.test.mjs",
+    "tests/native-main-tools-resume.test.mjs",
+    "docs/2026-10-23-desktop-account-adoption.md",
+    "docs/2026-10-23-homer-desktop-release.md",
+    "docs/patches/2026-10-23-desktop-adoption-sources.json",
+    "docs/patches/2026-10-23-desktop-adoption-verification.json"
+  ]
+}

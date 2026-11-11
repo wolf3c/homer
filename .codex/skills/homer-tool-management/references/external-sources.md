@@ -10,9 +10,9 @@
 | 本地 Skill 文件夹／解压后的 Skill | 完整目录、frontmatter 与实际依赖 | 审阅后复制完整目录到专属 `skills/<name>`，见下方命令；仅上传一个入口且有缺引用时先补齐 |
 | npm CLI／MCP 包 | 真实包名、所选版本、Node 要求及 bin | `npm install --prefix "$TOOL_PREFIX" --save-exact "$PACKAGE@$VERSION"`；CLI 直接执行真实 bin；MCP 另走原生注册 |
 | PyPI CLI／MCP 包 | 真实包名、所选版本及 Python 要求 | `"$VENV_PYTHON" -m pip install "$PACKAGE==$VERSION"`；执行 venv 内真实入口；MCP 另注册 stdio |
-| 远程 HTTP MCP | 发布者提供的真实 URL 与认证要求 | 走原生 `mcp_save`，URL 和 command 二选一；本人 OAuth 或安全秘密配置完成后再调用 |
+| 远程 HTTP MCP | 发布者提供的真实 URL 与认证要求 | 使用原生 `mcp add`，URL 和 command 二选一；本人 OAuth 或安全秘密配置完成后再调用 |
 | ZIP／GitLab／其他源码包 | 发布来源、版本／commit、校验信息、manifest／README | 下载到任务 scratch，检查归档路径穿越、符号链接和目录内容，再按其实际类型安装；不把任意 URL 传给只支持 GitHub 的 Installer |
-| Codex Plugin 仓库／目录 | `.codex-plugin/plugin.json`、声明的 Skill／MCP／资源及对应市场 manifest | 读取该版本原生市场／本地源安装说明，经真实 `plugin_read/install` 路径安装；未提供兼容入口时不能复制到缓存冒充安装成功 |
+| Codex Plugin 仓库／目录 | `.codex-plugin/plugin.json`、声明的 Skill／MCP／资源及对应市场 manifest | 读取该版本原生市场／本地源安装说明，用 Codex 原生 `plugin add` 安装；未提供兼容入口时不能复制到缓存冒充安装成功 |
 
 ### GitHub Skill 的直接安装
 

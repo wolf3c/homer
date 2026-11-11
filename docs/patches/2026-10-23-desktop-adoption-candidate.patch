@@ -1,0 +1,947 @@
+diff --git a/scripts/desktop-profile.mjs b/scripts/desktop-profile.mjs
+index 0afaf28..5eefb7f 100644
+--- a/scripts/desktop-profile.mjs
++++ b/scripts/desktop-profile.mjs
+@@ -4,6 +4,48 @@ import {resolve,join,dirname} from 'node:path';
+ import {createHash} from 'node:crypto';
+ const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+ const markerName='desktop-profile.json';
++const bytesHash=bytes=>createHash('sha256').update(bytes).digest('hex');
++function privateFile(path){
++ const stat=lstatSync(path,{throwIfNoEntry:false});
++ if(!stat?.isFile()||realpathSync(path)!==path||stat.uid!==process.getuid()||(stat.mode&0o077)!==0)throw Error('desktop_adoption_private_file_required');
++ return readFileSync(path);
++}
++function existingOwnedDirectory(path){
++ const stat=lstatSync(path,{throwIfNoEntry:false});
++ if(!stat?.isDirectory()||realpathSync(path)!==path||stat.uid!==process.getuid())throw Error('desktop_adoption_paths_invalid');
++}
++function readAdoption(root,test){
++ const record=JSON.parse(privateFile(join(root,'desktop-adoption.json')));
++ if(record.format!==1||typeof record.test!=='boolean'||!/^([a-f0-9]{64})$/.test(record.sha256??'')||typeof record.sourceConfig!=='string'||Object.keys(record).some(k=>!['format','test','sha256','sourceConfig'].includes(k)))throw Error('desktop_adoption_source_invalid');
++ if(record.test!==test)throw Error('desktop_profile_mode_mismatch');
++ const source=resolve(record.sourceConfig),privateRoot=dirname(source);
++ if(source!==record.sourceConfig||!source.endsWith('/.codex/private/local-chatgpt.config.json')||realpathSync(source)!==source)throw Error('desktop_adoption_source_invalid');
++ const bytes=privateFile(source);
++ if(bytesHash(bytes)!==record.sha256)throw Error('desktop_adoption_source_changed');
++ const raw=JSON.parse(bytes),appData=join(dirname(root),'Homer'),codexHome=join(appData,'codex');
++ if(['runtime','workspace','codexHome','codexBin'].some(name=>typeof raw[name]!=='string'))throw Error('desktop_adoption_paths_invalid');
++ const fromBase=(value,fallback,base)=>resolve(base,value??fallback);
++ // This is the one existing local Homer layout. No arbitrary data roots,
++ // executable, environment or command can be supplied by the descriptor.
++ const paths={runtime:join(privateRoot,'runtime-local-subscription'),workspace:join(privateRoot,'workspace'),codexHome};
++ if(fromBase(raw.appData,appData,dirname(dirname(privateRoot)))!==appData||fromBase(raw.nativeCodexHome,codexHome,dirname(dirname(privateRoot)))!==codexHome||fromBase(raw.codexHome,codexHome,dirname(dirname(privateRoot)))!==codexHome||fromBase(raw.runtime,paths.runtime,privateRoot)!==paths.runtime||fromBase(raw.workspace,paths.workspace,privateRoot)!==paths.workspace||raw.baseUrl||raw.keyEnv||raw.requiresOpenaiAuth===false)throw Error('desktop_adoption_paths_invalid');
++ for(const path of [appData,...Object.values(paths)])existingOwnedDirectory(path);
++ return {...paths,appData,nativeCodexHome:codexHome,sourceConfig:source,sha256:record.sha256};
++}
++// A disappeared process is only an ownership fact. Homer.start retains unknown
++// tool/results through its existing recovery; this function deletes nothing.
++export function assertDesktopAdoptionLeasesRecoverable(leases,alive=pid=>{
++ try{process.kill(pid,0);return true;}catch(error){return error.code==='ESRCH'?false:undefined;}
++}){
++ for(const row of leases){
++  let lease;try{lease=JSON.parse(row.value);}catch{throw Error('desktop_adoption_owner_unknown');}
++  if(!row.key?.startsWith('lease:')||!Number.isSafeInteger(lease.pid)||lease.pid<1||typeof lease.identity!=='string'||!lease.identity)throw Error('desktop_adoption_owner_unknown');
++  const state=alive(lease.pid);
++  if(state===true)throw Error('desktop_adoption_owner_active');
++  if(state!==false)throw Error('desktop_adoption_owner_unknown');
++ }
++ return {count:leases.length,recovery:'existing-homer-start',sideEffectsConfirmed:false};
++}
+ function assertDirectory(path){
+  if(lstatSync(path,{throwIfNoEntry:false})?.isSymbolicLink())throw Error('desktop_profile_symlink_denied');
+  mkdirSync(path,{recursive:true,mode:0o700});
+@@ -12,6 +54,7 @@ function assertDirectory(path){
+ export function prepareDesktopProfile(root,version,{test=false}={}){
+  root=resolve(root);
+  if(!lstatSync(root,{throwIfNoEntry:false})?.isDirectory()||lstatSync(root).isSymbolicLink()||realpathSync(root)!==root)throw Error('desktop_data_unrecognized');
++ const adoption=existsSync(join(root,'desktop-adoption.json'))?readAdoption(root,test):undefined;
+  const marker=join(root,markerName),fresh=join(root,'.homer-desktop-new'),fixture=join(root,'.homer-desktop-test-profile');
+  const acceptedVersion={format:1,schema:version.schema,codex:version.codex};
+  if(existsSync(marker)){
+@@ -20,11 +63,15 @@ export function prepareDesktopProfile(root,version,{test=false}={}){
+    if(saved.test!==test)throw Error('desktop_profile_mode_mismatch');
+  }else{
+    const permission=test?fixture:fresh;
+-   if(!existsSync(permission)||JSON.parse(readFileSync(permission,'utf8')).format!==1)throw Error('desktop_data_unrecognized');
++   if(!adoption&&(!existsSync(permission)||JSON.parse(readFileSync(permission,'utf8')).format!==1))throw Error('desktop_data_unrecognized');
+    // Even a new-marker cannot authorize adopting pre-existing business/account data.
+    if(['runtime','codex','workspace'].some(name=>existsSync(join(root,name))))throw Error('desktop_data_unrecognized');
+    writeFileSync(marker,JSON.stringify({...acceptedVersion,test})+'\n',{flag:'wx',mode:0o600});
+-   if(!test)unlinkSync(fresh);
++   if(!test&&!adoption)unlinkSync(fresh);
++ }
++ if(adoption){
++  for(const name of ['host-home','tmp'])assertDirectory(join(root,name));
++  return {root,runtime:adoption.runtime,workspace:adoption.workspace,codexHome:adoption.codexHome,adoption};
+  }
+  const paths={root,runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'codex')};
+  for(const path of [paths.runtime,paths.workspace,paths.codexHome,join(root,'host-home'),join(root,'tmp')])assertDirectory(path);
+diff --git a/scripts/desktop-runtime.mjs b/scripts/desktop-runtime.mjs
+index ce0fd9f..5250a5e 100644
+--- a/scripts/desktop-runtime.mjs
++++ b/scripts/desktop-runtime.mjs
+@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
+ import {PassThrough,Writable} from 'node:stream';
+ import {createInterface} from 'node:readline';
+ import {DatabaseSync} from 'node:sqlite';
+-import {prepareDesktopProfile,acquireDesktopOwner,desktopBoundary} from './desktop-profile.mjs';
++import {prepareDesktopProfile,acquireDesktopOwner,desktopBoundary,assertDesktopAdoptionLeasesRecoverable} from './desktop-profile.mjs';
+ const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+ const send=value=>new Promise((accept,reject)=>process.stdout.write(JSON.stringify(value)+'\n',error=>error?reject(error):accept()));
+ let releaseOwner;
+@@ -41,8 +41,28 @@ try{
+  const env={PATH:join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'};
+  for(const key of Object.keys(process.env))delete process.env[key];Object.assign(process.env,env);
+  const paths=prepareDesktopProfile(profile,manifest,{test});
++ if(existsSync(join(paths.codexHome,'desktop-owner.json')))throw Error('desktop_owner_conflict');
+  const {processIdentity}=await import(pathToFileURL(join(homer,'dist/processes.js')).href);
+- releaseOwner=acquireDesktopOwner(paths.codexHome,processIdentity);
++ let codexBin=join(resources,'runtime/codex/vendor/aarch64-apple-darwin/bin/codex');
++ if(test){
++   const fake=join(profile,'fixture-codex.mjs');
++   if(!existsSync(fake)||realpathSync(fake)!==fake||JSON.parse(readFileSync(join(profile,'.homer-desktop-test-profile'),'utf8')).format!==1)throw Error('desktop_test_fixture_required');
++   codexBin=fake;
++ }
++ const {PRODUCT_MODEL_DEFAULTS}=await import(pathToFileURL(join(homer,'dist/model-config.js')).href);
++ const resourceIdentity={bundleRoot:bundle,manifestSha256:sha(manifestBytes)};
++ let config={appData:profile,nativeCodexHome:paths.codexHome,workspace:paths.workspace,runtime:paths.runtime,codexHome:paths.codexHome,codexBin,model:PRODUCT_MODEL_DEFAULTS.model,effort:PRODUCT_MODEL_DEFAULTS.effort,requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:resourceIdentity};
++ if(paths.adoption){
++   const {loadConfig}=await import(pathToFileURL(join(homer,'dist/config.js')).href);
++   const original=loadConfig(paths.adoption.sourceConfig);
++   if(sha(readFileSync(paths.adoption.sourceConfig))!==paths.adoption.sha256)throw Error('desktop_adoption_source_changed');
++   if(original.runtime!==paths.runtime||original.workspace!==paths.workspace||original.codexHome!==paths.codexHome)throw Error('desktop_adoption_paths_invalid');
++   // Source config owns model, effort, timeouts and browser protections. Only
++   // the verified binary and shell HOME/tmp come from the installed App.
++   config={...original,appData:paths.adoption.appData,nativeCodexHome:paths.adoption.nativeCodexHome,codexBin,desktopResources:resourceIdentity};
++   const lock=join(paths.runtime,'cli.lock');
++   if(existsSync(lock))assertDesktopAdoptionLeasesRecoverable([{key:'lease:runtime',value:readFileSync(lock,'utf8')}]);
++ }
+  const database=join(paths.runtime,'homer.sqlite');let thread;
+  if(existsSync(database)){
+    const db=new DatabaseSync(database,{readOnly:true});
+@@ -50,7 +70,11 @@ try{
+      const hasMeta=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").get();
+      if(hasMeta){
+        thread=db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()?.value;
+-       if(db.prepare("SELECT 1 FROM meta WHERE key LIKE 'lease:%' LIMIT 1").get())throw Error('desktop_lease_review_required');
++       const leases=db.prepare("SELECT key,value FROM meta WHERE key LIKE 'lease:%'").all();
++       if(paths.adoption){
++         if(!thread)throw Error('desktop_adoption_original_thread_required');
++         assertDesktopAdoptionLeasesRecoverable(leases);
++       }else if(leases.length)throw Error('desktop_lease_review_required');
+        const {RECURSIVE_SCHEMA_VERSION}=await import(pathToFileURL(join(homer,'dist/recursive-tasks.js')).href);
+        for(const [key,supported]of[['pendingSchemaVersion',['1']],['recursiveSchemaVersion',['3',RECURSIVE_SCHEMA_VERSION]]]){
+          const row=db.prepare('SELECT value FROM meta WHERE key=?').get(key);if(row&&!supported.includes(row.value))throw Error('desktop_schema_incompatible');
+@@ -58,22 +82,17 @@ try{
+      }
+    }finally{db.close();}
+  }
++ if(paths.adoption&&!thread)throw Error('desktop_adoption_original_thread_required');
+  const transport=join(paths.runtime,'gateway/transport.sqlite');
+  if(existsSync(transport)){
+    const db=new DatabaseSync(transport,{readOnly:true});
+    try{
+      if(db.prepare('PRAGMA user_version').get().user_version!==1)throw Error('desktop_schema_incompatible');
+      if(db.prepare("SELECT 1 FROM transport_requests WHERE state='pending' LIMIT 1").get())throw Error('desktop_transport_review_required');
++     if(paths.adoption&&db.prepare("SELECT value FROM transport_meta WHERE key='binding'").get()?.value!==desktopBoundary(config,manifest.codex))throw Error('desktop_adoption_gateway_review_required');
+    }finally{db.close();}
+  }
+- let codexBin=join(resources,'runtime/codex/vendor/aarch64-apple-darwin/bin/codex');
+- if(test){
+-   const fake=join(profile,'fixture-codex.mjs');
+-   if(!existsSync(fake)||realpathSync(fake)!==fake||JSON.parse(readFileSync(join(profile,'.homer-desktop-test-profile'),'utf8')).format!==1)throw Error('desktop_test_fixture_required');
+-   codexBin=fake;
+- }
+- const {PRODUCT_MODEL_DEFAULTS}=await import(pathToFileURL(join(homer,'dist/model-config.js')).href);
+- const config={appData:profile,nativeCodexHome:paths.codexHome,workspace:paths.workspace,runtime:paths.runtime,codexHome:paths.codexHome,codexBin,model:PRODUCT_MODEL_DEFAULTS.model,effort:PRODUCT_MODEL_DEFAULTS.effort,requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:{bundleRoot:bundle,manifestSha256:sha(manifestBytes)}};
++ releaseOwner=acquireDesktopOwner(paths.codexHome,processIdentity);
+  // Retain exact original account/memory defaults; no loadConfig fallback to HOME.
+  const build={directory:homer,hash:manifest.sourceHash,manifest:manifest.manifest,version:manifest.sourceHash.slice(0,12),uiHash:manifest.uiHash,schema:manifest.schema,toolsHash:manifest.toolsHash,boundary:desktopBoundary(config,manifest.codex),config,thread};
+  const {verifyBuild}=await import('./trusted-build.mjs');verifyBuild(build);
+diff --git a/scripts/desktop-source.mjs b/scripts/desktop-source.mjs
+index 30adfd3..e174b8f 100644
+--- a/scripts/desktop-source.mjs
++++ b/scripts/desktop-source.mjs
+@@ -9,7 +9,7 @@ export const DESKTOP_CANDIDATE_PATHS=[
+  'packaging/macos/dependencies-lock.json','packaging/macos/distribution-policy.json','packaging/macos/node-distribution-entitlements.plist',
+  'scripts/build-macos-desktop.mjs','scripts/desktop-source.mjs','scripts/desktop-runtime.mjs','scripts/desktop-profile.mjs',
+  'scripts/prepare-desktop-dependencies.mjs','scripts/macos-distribution.mjs','scripts/dev.mjs','scripts/seamless-synthetic-fixture.mjs',
+- 'src/desktop-resources.ts','src/desktop-management.ts','src/config.ts','src/dev-host.ts','src/service.ts','src/engine.ts','src/media-decode.ts','ui/homer-app.tsx',
++ 'src/desktop-resources.ts','src/desktop-management.ts','src/config.ts','src/dev-host.ts','src/service.ts','src/engine.ts','src/media-decode.ts','src/tools.ts','ui/homer-app.tsx',
+ ];
+ const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+ export function prepareDesktopSource({root,sourceSha,stage,prepareCandidate=false}){
+diff --git a/src/engine.ts b/src/engine.ts
+index 6ed43f6..6c4d9b7 100644
+--- a/src/engine.ts
++++ b/src/engine.ts
+@@ -1,4 +1,4 @@
+-import {homedir} from 'node:os';
++import {userInfo} from 'node:os';
+ import {verifiedDesktopResources} from './desktop-resources.js';
+ import{materializeNativeImage}from"./native-generated-files.js";
+ import {
+@@ -176,7 +176,7 @@ export function profileOverrides(config: Config, options: EngineOptions) {
+     filesystem[join(config.codexHome,"skills")]="write";
+     filesystem[join(config.codexHome,"skills/.system")]="read";
+   }
+-  const browserRoots=["Library/Cookies","Library/Safari","Library/Containers/com.apple.Safari","Library/Group Containers/group.com.apple.Safari","Library/Application Support/Google/Chrome","Library/Application Support/Microsoft Edge","Library/Application Support/BraveSoftware","Library/Application Support/Arc","Library/Application Support/Firefox",...(config.controlBrowserData??[])].map(path=>isAbsolute(path)?path:join(homedir(),path));
++  const browserRoots=["Library/Cookies","Library/Safari","Library/Containers/com.apple.Safari","Library/Group Containers/group.com.apple.Safari","Library/Application Support/Google/Chrome","Library/Application Support/Microsoft Edge","Library/Application Support/BraveSoftware","Library/Application Support/Arc","Library/Application Support/Firefox",...(config.controlBrowserData??[])].map(path=>isAbsolute(path)?path:join(userInfo().homedir,path));
+   for(const path of browserRoots)filesystem[path]="deny";
+   const executableRoots=nativeExecutableRoots(config);
+   for(const path of executableRoots)filesystem[path]="read";
+diff --git a/src/service.ts b/src/service.ts
+index f33bf32..01fbcaa 100644
+--- a/src/service.ts
++++ b/src/service.ts
+@@ -40,7 +40,7 @@ import {MainNativeApprovals} from "./main-native-approvals.js";
+ import {nativeMcpLogout} from "./native-mcp-logout.js";
+ import {NativeCapabilities} from "./native-capabilities.js";
+ import { loadPrompts, type Prompts } from "./prompts.js";
+-import { MAIN_TOOLS, WORKER_TOOLS, object, string } from "./tools.js";
++import { MAIN_TOOLS, WORKER_TOOLS, object, string, canResumeMainTools } from "./tools.js";
+ import { acquireLock, processIdentity, terminateLease } from "./processes.js";
+ import { WorkerInteractions, type InteractionInput } from "./worker-interactions.js";
+ import { WorkerInteractionMcp, HOST_MCP_TOOLS, WORKER_HOST_MCP_TOOLS } from "./worker-interaction-mcp.js";
+@@ -582,7 +582,7 @@ export class Homer {
+       const toolsHash = createHash("sha256").update(JSON.stringify(MAIN_TOOLS)).digest("hex");
+       const savedThread = this.store.meta("mainThread");
+       if(!savedThread&&automaticFirstLaunch(this.config)){try{seedFirstLaunchSkills(capabilityHome(this.config));}catch(error){this.store.event(null,'first_launch_seed_failed',engineError(error));}}
+-      const sameTools = this.store.meta("mainToolsHash") === toolsHash;
++      const sameTools = canResumeMainTools(this.store.meta("mainToolsHash"), toolsHash);
+       if (savedThread && !sameTools)
+         throw new Error("main_tools_migration_required");
+       const catalog=HOST_MCP_TOOLS;
+@@ -601,7 +601,7 @@ export class Homer {
+       }
+       this.store.transaction(()=>{
+         this.store.setMeta("mainThread", threadId);
+-        this.store.setMeta("mainToolsHash", toolsHash);
++        if (!savedThread) this.store.setMeta("mainToolsHash", toolsHash);
+         if(!savedThread&&automaticFirstLaunch(this.config))this.store.setMeta('firstLaunchRequestId','first-launch-'+randomUUID());
+       });
+       this.scheduleDelivery();
+diff --git a/src/tools.ts b/src/tools.ts
+index 5520ec7..52bc6bb 100644
+--- a/src/tools.ts
++++ b/src/tools.ts
+@@ -47,6 +47,12 @@ export const MAIN_TOOLS = [
+     { runId: str },
+   ),
+ ];
++// Exact historical five-tool contract before bounded list_work. Native resume
++// retains these original definitions; its {} input remains valid today. Fence
++// the pair so an unrelated future tool change still requires explicit review.
++export function canResumeMainTools(saved: string | undefined, current: string) {
++  return saved === current || saved === "e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a" && current === "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056";
++}
+ export const WORKER_TOOLS = [
+   tool(
+     "read_material",
+diff --git a/tests/desktop-adoption.test.mjs b/tests/desktop-adoption.test.mjs
+new file mode 100644
+index 0000000..73ac32e
+--- /dev/null
++++ b/tests/desktop-adoption.test.mjs
+@@ -0,0 +1,53 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,chmodSync,symlinkSync,existsSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {createHash} from 'node:crypto';
++import * as profile from '../scripts/desktop-profile.mjs';
++const parent=resolve('.codex/scratch/macos-desktop-application/adoption-unit-tests');mkdirSync(parent,{recursive:true});
++const sha=b=>createHash('sha256').update(b).digest('hex');
++const version={schema:'synthetic-schema',codex:'0.163.0'};
++function fixture(){
++ const root=mkdtempSync(join(parent,'synthetic-')),desktop=join(root,'Application Support/Homer Desktop'),original=join(root,'Application Support/Homer'),privateRoot=join(root,'project/.codex/private');
++ const paths={root:desktop,appData:original,nativeCodexHome:join(original,'codex'),codexHome:join(original,'codex'),runtime:join(privateRoot,'runtime-local-subscription'),workspace:join(privateRoot,'workspace')};
++ for(const p of Object.values(paths))mkdirSync(p,{recursive:true,mode:0o700});
++ const source=join(privateRoot,'local-chatgpt.config.json'),config={workspace:'workspace',runtime:'runtime-local-subscription',codexHome:paths.codexHome,codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:true};
++ writeFileSync(source,JSON.stringify(config),{mode:0o600});
++ const descriptor=join(desktop,'desktop-adoption.json'),record={format:1,test:true,sourceConfig:source,sha256:sha(readFileSync(source))};
++ writeFileSync(descriptor,JSON.stringify(record),{mode:0o600});writeFileSync(join(desktop,'.homer-desktop-test-profile'),'{"format":1}');
++ return {root,desktop,paths,source,config,descriptor,record,saveConfig(){writeFileSync(source,JSON.stringify(config));record.sha256=sha(readFileSync(source));writeFileSync(descriptor,JSON.stringify(record));}};
++}
++test('explicit private adoption retains exact original account, runtime and workspace paths',()=>{
++ const f=fixture(),before=readFileSync(f.source),p=profile.prepareDesktopProfile(f.desktop,version,{test:true});
++ for(const name of ['runtime','workspace','codexHome'])assert.equal(p[name],f.paths[name]);
++ assert.equal(p.adoption.sourceConfig,f.source);assert.deepEqual(readFileSync(f.source),before);
++ assert.equal(existsSync(join(f.desktop,'runtime')),false);assert.equal(existsSync(join(f.desktop,'codex')),false);
++});
++test('adoption refuses edited source configuration before creating an owner or profile marker',()=>{
++ const f=fixture();writeFileSync(f.source,JSON.stringify({...f.config,model:'changed'}));
++ assert.throws(()=>profile.prepareDesktopProfile(f.desktop,version,{test:true}),/desktop_adoption_source_changed/);
++ assert.equal(existsSync(join(f.desktop,'desktop-profile.json')),false);assert.equal(existsSync(join(f.paths.codexHome,'desktop-owner.json')),false);
++});
++test('adoption cannot substitute another account home, an arbitrary workspace or a source symlink',()=>{
++ for(const field of ['codexHome','workspace']){
++  const f=fixture();f.config[field]=f.root;f.saveConfig();
++  assert.throws(()=>profile.prepareDesktopProfile(f.desktop,version,{test:true}),/desktop_adoption_paths_invalid/);
++ }
++ const f=fixture(),linked=join(f.root,'linked.config.json');symlinkSync(f.source,linked);f.record.sourceConfig=linked;writeFileSync(f.descriptor,JSON.stringify(f.record));
++ assert.throws(()=>profile.prepareDesktopProfile(f.desktop,version,{test:true}),/desktop_adoption_source_invalid/);
++});
++test('adoption requires a private same-mode descriptor and cannot turn a test profile into production',()=>{
++ const f=fixture();chmodSync(f.descriptor,0o644);
++ assert.throws(()=>profile.prepareDesktopProfile(f.desktop,version,{test:true}),/desktop_adoption_private_file_required/);
++ chmodSync(f.descriptor,0o600);
++ assert.throws(()=>profile.prepareDesktopProfile(f.desktop,version),/desktop_profile_mode_mismatch/);
++});
++test('old leases go only to existing owner recovery; missing PID never confirms tool side effects',()=>{
++ const leases=[{key:'lease:main',value:JSON.stringify({pid:99999999,identity:'synthetic-prior-owner'})}];
++ const before=JSON.stringify(leases);
++ assert.deepEqual(profile.assertDesktopAdoptionLeasesRecoverable(leases,()=>false),{count:1,recovery:'existing-homer-start',sideEffectsConfirmed:false});
++ assert.throws(()=>profile.assertDesktopAdoptionLeasesRecoverable(leases,()=>true),/desktop_adoption_owner_active/);
++ assert.throws(()=>profile.assertDesktopAdoptionLeasesRecoverable(leases,()=>undefined),/desktop_adoption_owner_unknown/);
++ assert.throws(()=>profile.assertDesktopAdoptionLeasesRecoverable([{key:'lease:main',value:'{}'}],()=>false),/desktop_adoption_owner_unknown/);
++ assert.equal(JSON.stringify(leases),before);
++});
+diff --git a/tests/desktop-browser-boundary.test.mjs b/tests/desktop-browser-boundary.test.mjs
+new file mode 100644
+index 0000000..39ec64a
+--- /dev/null
++++ b/tests/desktop-browser-boundary.test.mjs
+@@ -0,0 +1,19 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {mkdirSync,mkdtempSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {userInfo} from 'node:os';
++const {profileOverrides}=await import(process.env.HOMER_TEST_ENGINE_MODULE);
++test('isolating desktop HOME retains actual user browser denies and explicit browser protections',()=>{
++ const parent=resolve('.codex/scratch/macos-desktop-application/browser-boundary');mkdirSync(parent,{recursive:true});
++ const root=mkdtempSync(join(parent,'synthetic-'));
++ for(const name of ['runtime','workspace','codex','isolated-home','custom-browser'])mkdirSync(join(root,name));
++ const cfg={appData:root,nativeCodexHome:join(root,'codex'),codexHome:join(root,'codex'),runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexBin:'/usr/bin/false',controlBrowserData:[join(root,'custom-browser')]};
++ const previous=process.env.HOME;process.env.HOME=join(root,'isolated-home');
++ try{
++  const rules=profileOverrides(cfg,{cwd:cfg.workspace,readRoots:[cfg.workspace],tools:[],nativeTools:'main',nativeCapabilities:true}).filesystem;
++  for(const path of ['Library/Application Support/Google/Chrome','Library/Safari','Library/Cookies'])assert.equal(rules[join(userInfo().homedir,path)],'deny');
++  assert.equal(rules[join(root,'custom-browser')],'deny');assert.equal(rules[cfg.runtime],'deny');assert.equal(rules[cfg.codexHome],'deny');
++  assert.equal(rules[join(cfg.codexHome,'skills')],'write');assert.equal(rules[join(cfg.codexHome,'skills/.system')],'read');
++ }finally{if(previous===undefined)delete process.env.HOME;else process.env.HOME=previous;}
++});
+diff --git a/tests/desktop-source.test.mjs b/tests/desktop-source.test.mjs
+index 16ed479..9f81cf7 100644
+--- a/tests/desktop-source.test.mjs
++++ b/tests/desktop-source.test.mjs
+@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
+ import {mkdtempSync,mkdirSync,readFileSync,existsSync} from 'node:fs';
+ import {resolve,join} from 'node:path';
+ import {execFileSync} from 'node:child_process';
++import {createHash} from 'node:crypto';
+ import {prepareDesktopSource,DESKTOP_CANDIDATE_PATHS} from '../scripts/desktop-source.mjs';
+ const root=resolve('.'),parent=join(root,'.codex/scratch/desktop-integration-20261023/source-tests');mkdirSync(parent,{recursive:true});
+ // This historical committed tree deliberately lacks desktop support.
+@@ -21,9 +22,15 @@ test('explicit preparation overlays only desktop owners and retains exact commit
+  const provenance=prepareDesktopSource({root,sourceSha,stage,prepareCandidate:true});
+  assert.equal(provenance.gitSha,sourceSha);assert.equal(provenance.preparation,true);assert.equal(provenance.publishable,false);
+  assert.deepEqual(provenance.candidateInputs.map(x=>x.path),DESKTOP_CANDIDATE_PATHS);
+- for(const path of ['src/recursive-tasks.ts','src/web-history.ts','src/tools.ts','src/web-server.ts','ui/task-status.tsx']){
++ for(const path of ['src/recursive-tasks.ts','src/web-history.ts','src/web-server.ts','ui/task-status.tsx']){
+   assert.deepEqual(readFileSync(join(stage,path)),execFileSync('/usr/bin/git',['show',sourceSha+':'+path]));
+  }
++ // Explicitly authorized tool-contract compatibility is an overlay as well;
++ // every selected source must match both the input bytes and its recorded hash.
++ for(const input of provenance.candidateInputs){
++  const bytes=readFileSync(join(stage,input.path));assert.deepEqual(bytes,readFileSync(join(root,input.path)));
++  assert.equal(createHash('sha256').update(bytes).digest('hex'),input.sha256);
++ }
+  assert.equal(existsSync(join(stage,'.codex/private')),false);
+  assert.equal(JSON.parse(readFileSync(join(out,'source-provenance.json'))).publishable,false);
+ });
+diff --git a/tests/macos-desktop-runtime.test.mjs b/tests/macos-desktop-runtime.test.mjs
+index 16f56d7..496f3d7 100644
+--- a/tests/macos-desktop-runtime.test.mjs
++++ b/tests/macos-desktop-runtime.test.mjs
+@@ -1,9 +1,11 @@
+ import {test} from 'node:test';
+ import assert from 'node:assert/strict';
+ import {spawn} from 'node:child_process';
+-import {mkdirSync,mkdtempSync,copyFileSync,chmodSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
++import {mkdirSync,mkdtempSync,copyFileSync,chmodSync,writeFileSync,readFileSync,existsSync,renameSync} from 'node:fs';
+ import {resolve,join} from 'node:path';
+ import {createServer} from 'node:net';
++import {createHash} from 'node:crypto';
++import {desktopBoundary} from '../scripts/desktop-profile.mjs';
+ import {DatabaseSync} from 'node:sqlite';
+ const scratch=resolve('.codex/scratch/macos-desktop-application'),app=resolve(process.env.HOMER_TEST_APP??join(scratch,'Homer.app'));
+ const resources=join(app,'Contents/Resources'),node=join(app,'Contents/MacOS/node');
+@@ -72,3 +74,83 @@ test('packaged current history, queue, upload and same-thread restart retain syn
+   assert.equal(methods(root).filter(m=>m==='thread/start').length,1);assert.ok(methods(root).includes('thread/resume'));await run.stop();
+  }finally{if(run.child.exitCode===null)run.child.stdin.end('{"kind":"quit"}\n');}
+ });
++
++const digest=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
++async function adoptedFixture({legacyTools=false}={}){
++ // Seed a real package-owned synthetic profile, then arrange only these fake
++ // files in the exact historical Homer layout. No production data is read.
++ const seed=profile({loggedIn:true}),first=launch(seed);
++ try{await stateWhen(await first.url(),s=>s.upgrade.phase==='running');}finally{await first.stop();}
++ const base=mkdtempSync(join(parent,'adoption-')),shell=join(base,'Application Support/Homer Desktop'),original=join(base,'Application Support/Homer'),privateRoot=join(base,'project/.codex/private');
++ for(const p of [shell,original,privateRoot,join(shell,'host-home'),join(shell,'tmp')])mkdirSync(p,{recursive:true,mode:0o700});
++ const paths={runtime:join(privateRoot,'runtime-local-subscription'),workspace:join(privateRoot,'workspace'),codexHome:join(original,'codex')};
++ for(const name of ['runtime','workspace','codex'])renameSync(join(seed,name),paths[name==='codex'?'codexHome':name]);
++ for(const p of [shell,original]){
++  writeFileSync(join(p,'.homer-desktop-test-profile'),'{"format":1}');writeFileSync(join(p,'fixture-control.json'),'{"loggedIn":true}');
++ }
++ copyFileSync(resolve('tests/fixtures/desktop-app-server.mjs'),join(shell,'fixture-codex.mjs'));chmodSync(join(shell,'fixture-codex.mjs'),0o700);
++ const config={workspace:'workspace',runtime:'runtime-local-subscription',codexHome:paths.codexHome,codexBin:join(seed,'fixture-codex.mjs'),model:'synthetic',effort:'high',requiresOpenaiAuth:true,mainTimeoutMs:600000};
++ const source=join(privateRoot,'local-chatgpt.config.json');writeFileSync(source,JSON.stringify(config),{mode:0o600});
++ writeFileSync(join(shell,'desktop-adoption.json'),JSON.stringify({format:1,test:true,sourceConfig:source,sha256:digest(readFileSync(source,'utf8'))}),{mode:0o600});
++ const db=new DatabaseSync(join(paths.runtime,'homer.sqlite'));
++ try{
++  db.prepare("UPDATE meta SET value=? WHERE key='binding'").run(digest({workspace:paths.workspace,codexHome:paths.codexHome,requiresOpenaiAuth:true}));
++  if(legacyTools)db.prepare("UPDATE meta SET value=? WHERE key='mainToolsHash'").run('e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a');
++  db.exec('ALTER TABLE tasks DROP COLUMN historyState');db.prepare("UPDATE meta SET value='3' WHERE key='recursiveSchemaVersion'").run();
++  db.prepare('INSERT INTO meta VALUES(?,?)').run('lease:main',JSON.stringify({pid:99999999,identity:'synthetic-ended-owner'}));
++  db.prepare('INSERT INTO meta VALUES(?,?)').run('publicMainNode:v1:adoption-unknown',JSON.stringify({id:'adoption-unknown',threadId:'synthetic-desktop-main',seq:99,revision:1,sourceKind:'user',sourceMessageIds:[],messageId:'synthetic-unknown-reply',state:'working',status:'running',turnIds:['synthetic-prior-turn'],items:[{id:'synthetic-old-command',kind:'tool',seq:1,revision:1,label:'运行命令',category:'command',status:'running'}],completedItemIds:[],itemPhases:{}}));
++ }finally{db.close();}
++ writeFileSync(join(paths.runtime,'cli.lock'),JSON.stringify({pid:99999999,identity:'synthetic-ended-host'}),{mode:0o600});
++ const gateway=new DatabaseSync(join(paths.runtime,'gateway/transport.sqlite'));
++ const oldBinding=digest([paths.runtime,paths.workspace,config.codexBin,paths.codexHome,undefined,undefined,true]);
++ try{
++  gateway.prepare("UPDATE transport_meta SET value=? WHERE key='binding'").run(oldBinding);
++  gateway.prepare("INSERT INTO transport_requests(id,payload,hash,state,error) VALUES(?,?,?,?,?)").run('synthetic-rejected','','synthetic-hash','rejected','synthetic-error');
++ }finally{gateway.close();}
++ return {shell,original,paths,source,oldBinding,config,dbPath:join(paths.runtime,'homer.sqlite'),gatewayPath:join(paths.runtime,'gateway/transport.sqlite')};
++}
++async function refused(run,code){
++ for(let i=0;i<500&&!run.events.some(e=>e.kind==='error')&&run.child.exitCode===null&&!run.events.some(e=>e.kind==='url');i++)await wait(20);
++ if(run.child.exitCode===null&&!run.events.some(e=>e.kind==='error'))await run.stop();
++ assert.ok(run.events.some(e=>e.kind==='error'&&e.code===code),JSON.stringify(run.events));
++ assert.equal((await run.exited).code,1);
++}
++function adoptGateway(f){
++ const db=new DatabaseSync(f.gatewayPath),before=db.prepare('SELECT * FROM transport_requests ORDER BY seq').all(),meta=db.prepare("SELECT * FROM transport_meta WHERE key<>'binding' ORDER BY key").all();
++ try{
++  const target=desktopBoundary({...f.paths,requiresOpenaiAuth:true},'0.163.0');
++  assert.equal(db.prepare("UPDATE transport_meta SET value=? WHERE key='binding' AND value=?").run(target,f.oldBinding).changes,1);
++  assert.deepEqual(db.prepare('SELECT * FROM transport_requests ORDER BY seq').all(),before);
++  assert.deepEqual(db.prepare("SELECT * FROM transport_meta WHERE key<>'binding' ORDER BY key").all(),meta);
++ }finally{db.close();}
++}
++test('adoption requires reviewed gateway CAS, then original owner retains schema3 facts and unknown results',{timeout:45000},async()=>{
++ const f=await adoptedFixture({legacyTools:true}),before=readFileSync(f.source),blocked=launch(f.shell);
++ await refused(blocked,'desktop_adoption_gateway_review_required');
++ assert.equal(existsSync(join(f.paths.codexHome,'desktop-owner.json')),false);
++ adoptGateway(f);let run=launch(f.shell);
++ try{
++  const s=await stateWhen(await run.url(),s=>s.upgrade.phase==='running');assert.equal(s.threadId,'synthetic-desktop-main');
++  const db=new DatabaseSync(f.dbPath,{readOnly:true});
++  try{
++   assert.equal(db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get().value,'4');
++   assert.equal(db.prepare("SELECT value FROM meta WHERE key='mainToolsHash'").get().value,'e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a');
++   const node=JSON.parse(db.prepare("SELECT value FROM meta WHERE key='publicMainNode:v1:adoption-unknown'").get().value);
++   assert.equal(node.status,'unknown');assert.equal(node.items[0].status,'unknown');
++   assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
++  }finally{db.close();}
++  await run.stop();run=launch(f.shell);assert.equal((await stateWhen(await run.url(),s=>s.upgrade.phase==='running')).threadId,s.threadId);await run.stop();
++  assert.deepEqual(readFileSync(f.source),before);assert.equal(existsSync(join(f.shell,'runtime')),false);assert.equal(existsSync(join(f.shell,'codex')),false);
++  const calls=methods(f.original);assert.equal(calls.filter(m=>m==='thread/start').length,0);assert.equal(calls.filter(m=>m==='turn/start').length,0);assert.ok(calls.includes('thread/resume'));
++  const gateway=new DatabaseSync(f.gatewayPath,{readOnly:true});try{assert.equal(gateway.prepare("SELECT count(*) n FROM transport_requests WHERE state='rejected'").get().n,1);}finally{gateway.close();}
++ }finally{if(run.child.exitCode===null)run.child.stdin.end('{"kind":"quit"}\n');}
++});
++for(const kind of ['active','unknown'])test(`adoption refuses ${kind} original ownership without deleting its records`,{timeout:30000},async()=>{
++ const f=await adoptedFixture();adoptGateway(f);
++ const db=new DatabaseSync(f.dbPath),lease=JSON.stringify({pid:kind==='active'?process.pid:0,identity:'synthetic-owner'});
++ try{db.prepare("UPDATE meta SET value=? WHERE key='lease:main'").run(lease);}finally{db.close();}
++ const run=launch(f.shell);await refused(run,`desktop_adoption_owner_${kind}`);
++ assert.equal(existsSync(join(f.paths.codexHome,'desktop-owner.json')),false);assert.equal(existsSync(join(f.paths.runtime,'cli.lock')),true);
++ const verify=new DatabaseSync(f.dbPath,{readOnly:true});try{assert.equal(verify.prepare("SELECT value FROM meta WHERE key='lease:main'").get().value,lease);}finally{verify.close();}
++ assert.equal(methods(f.original).includes('thread/resume'),false);
++});
+diff --git a/tests/main-tools-resume-compatibility.test.mjs b/tests/main-tools-resume-compatibility.test.mjs
+new file mode 100644
+index 0000000..47c5c32
+--- /dev/null
++++ b/tests/main-tools-resume-compatibility.test.mjs
+@@ -0,0 +1,42 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {EventEmitter} from 'node:events';
++import {mkdirSync,mkdtempSync} from 'node:fs';
++import {join,resolve} from 'node:path';
++import {createHash} from 'node:crypto';
++const serviceUrl=process.env.HOMER_TEST_SERVICE_MODULE;
++const {Homer}=await import(serviceUrl),{MAIN_TOOLS,canResumeMainTools}=await import(new URL('./tools.js',serviceUrl));
++const originalHash='e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a';
++const currentHash=createHash('sha256').update(JSON.stringify(MAIN_TOOLS)).digest('hex');
++const parent=resolve('.codex/scratch/macos-desktop-application/tools-resume');mkdirSync(parent,{recursive:true});
++function fixture(savedHash){
++ const root=mkdtempSync(join(parent,'synthetic-'));mkdirSync(join(root,'runtime'));let starts=0,resumed;
++ class Engine extends EventEmitter{
++  constructor(options){super();this.threadId=options.threadId;resumed=options.threadId;}
++  async start(){starts++;return this.threadId??'synthetic-new-thread';}
++  async close(){return true;}async interrupt(){return true;}
++  async turn(){throw Error('no_model_turn_authorized');}
++ }
++ const app=new Homer({appData:root,workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Engine(options));
++ app.store.setMeta('mainThread','synthetic-original-thread');app.store.setMeta('mainToolsHash',savedHash);
++ return {app,starts:()=>starts,resumed:()=>resumed};
++}
++for(const [name,hash] of [['historical exact five-tool contract',originalHash],['current contract',currentHash]])test(`resume retains ${name} and the original fingerprint`,async()=>{
++ const f=fixture(hash);
++ try{
++  await f.app.start({keepManagementOnFailure:true});assert.equal(f.starts(),1);assert.equal(f.resumed(),'synthetic-original-thread');
++  assert.equal(f.app.store.meta('mainThread'),'synthetic-original-thread');assert.equal(f.app.store.meta('mainToolsHash'),hash);
++ }finally{await f.app.close({requireAllOwnersConfirmed:true});}
++});
++test('unknown tools fingerprint cannot create or replace an existing thread',async()=>{
++ const f=fixture('f'.repeat(64));
++ try{
++  await assert.rejects(f.app.start({keepManagementOnFailure:true}),/main_tools_migration_required/);assert.equal(f.starts(),0);
++  assert.equal(f.app.store.meta('mainToolsHash'),'f'.repeat(64));assert.equal(f.app.store.meta('mainThread'),'synthetic-original-thread');
++ }finally{await f.app.close({requireAllOwnersConfirmed:true});}
++});
++test('historical compatibility is fenced to the exact reviewed target contract',()=>{
++ assert.equal(canResumeMainTools(originalHash,currentHash),true);
++ assert.equal(canResumeMainTools(originalHash,'a'.repeat(64)),false);
++ assert.equal(canResumeMainTools(undefined,currentHash),false);
++});
+diff --git a/tests/native-main-tools-resume.test.mjs b/tests/native-main-tools-resume.test.mjs
+new file mode 100644
+index 0000000..902b078
+--- /dev/null
++++ b/tests/native-main-tools-resume.test.mjs
+@@ -0,0 +1,42 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {spawn} from 'node:child_process';
++import {createInterface} from 'node:readline';
++import {mkdirSync,mkdtempSync,readFileSync} from 'node:fs';
++import {join,resolve} from 'node:path';
++import {createHash} from 'node:crypto';
++const {MAIN_TOOLS}=await import(new URL('./tools.js',process.env.HOMER_TEST_SERVICE_MODULE));
++test('fixed native engine resumes the exact historical tools without replacing definitions or calling a model',{timeout:45000},async()=>{
++ const bin=process.env.HOMER_TEST_CODEX_BIN;assert.ok(bin?.startsWith('/'),'explicit bundled engine required');
++ const parent=resolve('.codex/scratch/macos-desktop-application/native-tools-resume');mkdirSync(parent,{recursive:true});
++ const root=mkdtempSync(join(parent,'synthetic-')),home=join(root,'codex');
++ for(const name of ['codex','host-home','tmp','workspace'])mkdirSync(join(root,name),{mode:0o700});
++ const original=MAIN_TOOLS.map(tool=>tool.name==='list_work'?{...tool,description:'Read current persistent matters, runs, statuses and available prepared material names.',inputSchema:{type:'object',properties:{},required:[],additionalProperties:false}}:tool);
++ assert.equal(createHash('sha256').update(JSON.stringify(original)).digest('hex'),'e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a');
++ const calls=[];
++ function peer(){
++  const settings={approval_policy:'never',web_search:'disabled','features.shell_tool':false,'features.plugins':false,'features.apps':false,'features.memories':false,'memories.generate_memories':false,'memories.use_memories':false,'features.skip_host_skill_discovery':true,'analytics.enabled':false,'feedback.enabled':false,model_provider:'synthetic_boundary','model_providers.synthetic_boundary':{name:'Synthetic local boundary',base_url:'http://127.0.0.1:9/v1',wire_api:'responses',supports_websockets:false,requires_openai_auth:false}};
++  const toml=value=>value&&typeof value==='object'&&!Array.isArray(value)?'{'+Object.entries(value).map(([k,v])=>JSON.stringify(k)+'='+toml(v)).join(',')+'}':JSON.stringify(value);
++  const child=spawn(bin,['app-server','--stdio',...Object.entries(settings).flatMap(([k,v])=>['-c',k+'='+toml(v)])],{cwd:join(root,'workspace'),env:{HOME:join(root,'host-home'),CODEX_HOME:home,TMPDIR:join(root,'tmp'),PATH:'/usr/bin:/bin:/usr/sbin:/sbin'},stdio:['pipe','pipe','pipe']});
++  child.stderr.resume();const pending=new Map();let seq=0;
++  const exited=new Promise(done=>child.once('exit',(code,signal)=>done({code,signal})));
++  createInterface({input:child.stdout}).on('line',line=>{
++   const m=JSON.parse(line),p=pending.get(m.id);
++   if(p&&!m.method){pending.delete(m.id);clearTimeout(p.timer);m.error?p.reject(Error('synthetic_native_rpc_failed:'+m.error.code)):p.resolve(m.result);}
++  });
++  return {async request(method,params){calls.push(method);return new Promise((resolve,reject)=>{const id=++seq,timer=setTimeout(()=>{pending.delete(id);reject(Error('synthetic_native_timeout:'+method));},12000);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({id,method,params})+'\n');});},async init(){await this.request('initialize',{clientInfo:{name:'homer-tools-resume-synthetic',version:'1'},capabilities:{experimentalApi:true}});child.stdin.write('{"method":"initialized","params":{}}\n');},async close(){child.kill('SIGTERM');let timer;await Promise.race([exited,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('synthetic_native_stop_unconfirmed')),5000);})]).finally(()=>clearTimeout(timer));for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('synthetic_native_closed'));}pending.clear();}};
++ }
++ let first=peer(),second;
++ const metadata=path=>{assert.ok(path.startsWith(home+'/'));return readFileSync(path,'utf8').split('\n').filter(Boolean).map(x=>JSON.parse(x)).find(x=>x.type==='session_meta').payload;};
++ try{
++  await first.init();
++  const created=await first.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'synthetic_boundary',cwd:join(root,'workspace'),approvalPolicy:'never',sandbox:'read-only',environments:[],config:{mcp_servers:{}},dynamicTools:original});
++  const thread=created.thread.id;await first.request('thread/memoryMode/set',{threadId:thread,mode:'disabled'});
++  await first.request('thread/inject_items',{threadId:thread,items:[{type:'message',role:'user',content:[{type:'input_text',text:'Synthetic tool resume marker. No model execution.'}]}]});
++  const before=await first.request('thread/read',{threadId:thread,includeTurns:true});assert.deepEqual(metadata(before.thread.path).dynamic_tools,original);
++  await first.close();first=undefined;second=peer();await second.init();
++  const resumed=await second.request('thread/resume',{threadId:thread,excludeTurns:true,cwd:join(root,'workspace'),approvalPolicy:'never'});assert.equal(resumed.thread.id,thread);
++  const after=await second.request('thread/read',{threadId:thread,includeTurns:true});assert.deepEqual(metadata(after.thread.path).dynamic_tools,original);
++  assert.equal(calls.filter(x=>x==='thread/start').length,1);assert.equal(calls.includes('turn/start'),false);
++ }finally{await first?.close();await second?.close();}
++});
+diff --git a/docs/2026-10-23-desktop-account-adoption.md b/docs/2026-10-23-desktop-account-adoption.md
+new file mode 100644
+index 0000000..9d713be
+--- /dev/null
++++ b/docs/2026-10-23-desktop-account-adoption.md
+@@ -0,0 +1,73 @@
++# 桌面使用原账号和聊天的采用方案（待整合）
++
++2026-10-23，延续同一桌面发布任务。用户再次要求直接安装并打开使用；本说明把尚缺的实际接线与数据边界具体化，不把隔离假引擎准备包当作可日常使用版本。没有复制、迁移、重绑定真实数据，没有创建新账号、thread或模型轮，也没有清锁或修改租约。
++
++## 已核准确来源
++
++原维护配置为维护仓库 `.codex/private/local-chatgpt.config.json`。只读取必要路径和配置元数据，未输出凭据或聊天。配置中无provider URL/keyEnv覆盖，模型为gpt-6.1-sol，effort/fast未显式设置，requiresOpenaiAuth=true；正式采用须按当前产品默认与原配置语义解析，不能继承Cindy或外部shell环境。
++
++| 项目 | 原路径／元数据 | 建议桌面采用方式 |
++| --- | --- | --- |
++| 应用数据根 | `~/Library/Application Support/Homer` | 保持现有目录，不将它复制为新用户空间 |
++| 原生账号、sessions、Skill/MCP及记忆 | `~/Library/Application Support/Homer/codex`，codexHome与nativeCodexHome相同 | 保持准确原路径；不复制auth、不软链其他Codex目录；真实connected状态仍须原生account/read确认，文件存在不能作登录证据 |
++| 工作文件／成果根 | `<维护仓库>/.codex/private/workspace` | 沿原绝对路径，不重写成果/授权引用 |
++| 业务库／媒体／队列 | `<维护仓库>/.codex/private/runtime-local-subscription` | 沿原路径，保留当前mainThread/mainAgentId、历史、任务、权限及未决事实 |
++| 网关 | 上述runtime下 `gateway/transport.sqlite` | 保留请求行及原thread；发布如改变边界只通过具体维护点CAS，不重放 |
++| 桌面壳专属管理根 | `~/Library/Application Support/Homer Desktop`，当前不存在 | 可作机器私有的明确采用描述、壳HOME/tmp与版本身份根；不得因此默认建立空白业务账号 |
++| 执行代码 | 原固定Codex0.163.0路径位于维护私有engines目录 | 改为已安装App内同版本、校验过的Codex；业务数据路径保持，网关边界须精确处理 |
++
++业务bindingVersion=2，按原配置／原路径以现有owner公式重算与库内binding吻合。业务与网关的thread指针吻合；本说明不记录原thread正文或原ID。业务schema为pending1/recursive3，目标产品为recursive4。读到73条runs、67条tasks，6条open pending；网关3条rejected、0条pending。不能把open pending或旧rejected当作应清空的安装障碍，也不能重放这些事实。
++
++原生state_5.sqlite存在且SQLite文件头有效，但当前受限上下文SQLite只读连接返回unable to open database file；没有绕过为可写连接。因此原thread在原生索引的可恢复性仍未核实，不能以文件存在冒充恢复通过。后续可在宿主正常权限下做明确readOnly检查，不读取rollout正文。
++
++## owner与维护点状态
++
++原runtime仍有cli.lock以及lease:main/lease:native-control两条持久记录。只读宿主核查记录中的PID21363、21366、21546及原PGID20554均不存在，身份查询为空；lsof未发现原业务库、网关或锁的打开引用。扫描未见Homer launcher/host/App。此为当前快照，不自动授权删除锁/租约，不能证明任意脱离父进程的原生操作或未知审批已停止。
++
++准备包runtime当前遇任何持久lease均以desktop_lease_review_required拒绝，profile也只接受固定子目录。故现成build006不能沿原数据启动，单纯复制App到Applications不能实现用户要求。
++
++## 建议的最小整合闭包
++
++1. 保持稳定bundle id、默认壳管理根及现有删除登录/能力页面的产品决定。仅为已有用户增加显式、私有、可验证的原配置采用描述：包含上述准确canonical路径、来源身份和受控配置快照；不成为任意环境／代码执行入口，不接受跨用户或软链路径，不默认扫描别的账号。首次新用户连接能力另列，不通过旧登录页回退实现。
++2. `desktop-profile.mjs` 与 `desktop-runtime.mjs` 在采用模式返回准确原runtime/workspace/codexHome及nativeCodexHome；原生HOME/sqlite_home/log/session绝对路径均沿原配置。壳的host-home/tmp仍隔离。已安装代码与数据输入分别核验，不把原配置或凭据放入App/manifest/文档。未采用的全新profile逻辑保持明确区分。
++3. 以原owner正常生命周期处理旧租约和严格退出；未知原生执行/权限事实不清除。准备包目前的全租约拒绝需要原owner给出受控采用流程，不能在本机通过删lease绕过。对同原路径的业务binding不改写；若网关因执行路径／组件身份变化需更新binding，必须在维护点使用现有公式生成准确新值、CAS旧值、保留contract/thread/全部请求行，禁止删除网关库。
++4. schema3→4及history/queue/artifact/权限需在私有一致副本上预演，核旧表列行／重要元数据与uncertain、FK、引用完整性，准确列出目标schema新增的正常差异。先验证候选原入口，再操作真实维护点；不先停服务后试错。此阶段尚未复制真实库。
++5. 把准确采用增量和已审桌面闭包真实提交main，然后显式冻结完整SHA、从普通模式重新构建，不能将preparation标记或假引擎fixture改掉后冒充正式包。用户已授权正常安装/打开，无需重复询问相同授权；首次正式运行只确认原生account/read与原thread恢复，不代发模型消息或外发。
++
++## 正式切换与恢复边界
++
++停前再次核真实owner／未知原生操作／上传／审批／渠道与transport状态；无需等待全部历史开发或open pending完成。正常退出确认后制作Gitignored私有维护点，保护业务库、网关、配置、引用和最小对应构建；凭据不复制到发布材料。真实写入按阶段CAS，失败先核准确阶段，不反复执行。
++
++正常安装到准确目标，从安装后的App启动并核包版本/Git SHA/sourceHash/manifest、前后端和引擎真实来源、原账号、原thread、历史、队列、成果及授权连续性。产生任何新业务事实后只能保留事实前向修复，不能旧库覆盖。安装验收通过后才执行旧无用安装包及无运行引用构建目录的最终清理；含人工输入的WK测试profile仍保留。
++
++本方案不是已经完成的采用实现或安装证明。既有28文件桌面补丁及其SHA保持不变，独立review可继续；本说明作为单独的采用闭包交CTO／原owner审阅。
++
++## 采用候选实施范围
++
++后续授权仅在隔离候选修改 `scripts/desktop-profile.mjs`、`scripts/desktop-runtime.mjs`，补充 `tests/desktop-adoption.test.mjs` 和 `tests/macos-desktop-runtime.test.mjs`。采用描述只接受同用户私有文件、已核原配置及固定Homer数据路径，不接受执行命令、环境变量或客户端路径。运行时不迁移账号、不改网关binding；需要维护点CAS时准确拒绝。旧租约只有确认为不存在的进程才交回现有 `Homer.start` 恢复，活跃或无法核实者拒绝，未知工具结果仍由原owner记为unknown，不推断成功或重放。
++
++先跑采用路径的合成红例，再验证私有描述／路径／配置hash／模式拒绝、旧schema3与原thread恢复、活跃及无法确认的租约、网关精确CAS副本与全部事实保留。真实只读备份离线预演只在Gitignored private执行，不触及原库。原28文件patch保持原样，新增采用差异单独交付，未审查提交前仍不安装。
++
++补充自身桌面接线的必要边界修正：`src/engine.ts` 的既有浏览器deny根从环境HOME解析改为同一OS用户的真实home，防止隔离壳HOME后遗漏原Safari/Chrome等保护。目录名单、custom controlBrowserData与原审批/权限不变；`tests/desktop-browser-boundary.test.mjs` 用隔离HOME验证实际用户目录仍受保护。不新增访问能力或浏览器桥。
++
++## 采用候选验收与明确剩余缺口
++
++最终采用候选为本任务scratch `build-009/Homer.app`，仍为preparation/test-only、未提交、未安装。18项桌面/采用/浏览器保护合同通过，最终包6项完整入口通过：原包功能、旧schema3经原owner升级4、同原路径/账号/主thread重开、未知命令结果保持unknown、精确gateway CAS副本保留全部行/contract/thread、活跃及无法核实的原owner拒绝。没有真实模型轮或权限审批重放。
++
++中间build007暴露原第二owner错误优先级回归（desktop_lease_review_required遮盖desktop_owner_conflict），已改成只读预检并保留后续原子owner创建；最终原断言通过。build008一次首个URL就绪超时，未改弱测试或延长deadline；准确同包该项独立复核通过，最终build009全部6项通过。保留失败及复核原始日志。
++
++宿主正常readOnly原生索引核对已成功：原唯一主thread存在，rollout路径位于原Homer专属sessions；没有读取rollout正文。此前受限SQLite打开失败不再是待解决阻断，但原生account/read的真实connected状态仍未执行。
++
++Gitignored `.codex/private/desktop-adoption-20261023/initial-readonly/` 已保存真实业务/网关只读一致快照及离线候选副本。原迁移owner在副本执行schema3→4：60张原表全部原列行保持，只有tasks增加historyState及recursiveSchemaVersion更新；integrity=ok、FK=0，原thread/business binding/mainToolsHash均保留。网关经原公式确认确需binding变化，副本唯一CAS该值，所有请求行/contract/thread不变。这只是初始只读快照，不能替代正式停写维护点。真实库/绑定/账号/权限没有更改，不含auth或native sessions副本。
++
++目前实际阻断为旧主thread工具合同：原库mainToolsHash=`e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a`；准确Git候选为`0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056`。`d8e0bd7^:src/tools.ts` 的MAIN_TOOLS实算与原库完全一致。与当前五定义相比，仅list_work描述及三个可选分页参数变化；其他四工具及名称不变。`Homer.start` 对已有thread明确抛main_tools_migration_required，不能改库指纹假装原native工具已更新。
++
++可审阅的最小兼容方向：仅为准确历史五工具hash允许原thread恢复；保留旧mainToolsHash，原native thread/resume仍不发送dynamicTools、不替换原定义，既有list_work handler接受旧{}参数。未知hash继续拒绝，新thread继续当前定义；不新建替代thread，不改原权限、审批或持久业务事实。该方向已交CTO；实施/审阅/提交的准确授权仍待收口，未把这一产品合同修复偷偷混入采用patch。未完成此项及准确main提交、正式普通模式重建前，不能安装日常使用。
++
++## 用户追加授权后的准确兼容闭包
++
++用户已明确授权最小兼容修复、审阅提交main、直接安装打开。现已在隔离候选完成：src/tools.ts仅对已核历史hash→当前hash这一个准确组合提供兼容判断；src/service.ts恢复已有thread时保留原mainToolsHash，只给新thread写当前hash。旧原生定义不替换，未知hash及未来不相关合同继续拒绝。源码准备白名单明确追加src/tools.ts（23项），来源测试逐项核对名单内实际字节及SHA，名单外schema/history/权限owner继续保持Git树。新增工具合同与原生协议聚焦测试，未扩大权限或复制账号。
++
++build010最终验证：22项合同、6项包内入口全部通过；采用测试使用准确旧五工具hash，原thread与指纹经两次重启保持。另用固定随包Codex0.163.0在完全隔离无凭据HOME、本机废端口provider验证真实原生thread恢复：旧五工具定义逐字节保留，原thread不变、turn/start=0。只读合成rollout，不接触用户rollout。全项目类型前像137／候选137，只有准确导出根绝对路径不同，归一化后逐条一致，无新增。
++
++原28文件补丁保持原SHA；后续采用／兼容增量见独立[补丁](patches/2026-10-23-desktop-adoption-candidate.patch)、[来源](patches/2026-10-23-desktop-adoption-sources.json)及[验收](patches/2026-10-23-desktop-adoption-verification.json)。上节工具合同“待实施”是build009阶段历史状态，已由本节验证解决；此前准备包仍不作为正式安装输入。实际提交、冻结、安装与原数据验收另记[正式发布记录](2026-10-23-homer-desktop-release.md)。
+diff --git a/docs/2026-10-23-homer-desktop-release.md b/docs/2026-10-23-homer-desktop-release.md
+new file mode 100644
+index 0000000..8372dc4
+--- /dev/null
++++ b/docs/2026-10-23-homer-desktop-release.md
+@@ -0,0 +1,17 @@
++# Homer 桌面整合与安装发布
++
++2026-10-23。用户已明确授权必要的旧对话兼容修复、审阅提交main并安装打开，保留原账号、主thread、聊天、任务、成果与权限事实。
++
++本记录创建时仍处于最终提交前：没有安装、没有改变原库/账号/真实绑定。准备基线3c5461180575aa90f9430f35152f444530185913，两个指定功能前置与近期提交均已核main可达，详见[审计表](2026-10-23-desktop-release-readiness.md)。旧桌面包装未在Git树，已形成独立整合闭包，未混入维护树其他未提交产品功能。
++
++完整准备来源为[原桌面补丁](patches/2026-10-23-desktop-integration-candidate.patch)及[采用/兼容增量](patches/2026-10-23-desktop-adoption-candidate.patch)。沿现有Swift/AppKit/WKWebView、稳定bundle id app.homer.desktop.candidate、0.1.0 build4、固定Node22.22.0/Codex0.163.0及89生产JS包；没有新框架、依赖或发布平台。原五工具合同仅精确版本对兼容，保留原native定义/主thread/工具hash，未知合同拒绝。真实采用方案、路径和副本预演见[采用记录](2026-10-23-desktop-account-adoption.md)。
++
++最终准备验证为22合同+6包内完整入口+1真实隔离原生协议，另复用字节相同UI的148浏览器检查及官方CSS。全项目137条既有诊断逐条与准确Git前像一致；原Web宿主401/409与旧T08问题的前像归因保持，不冒称全仓全绿。没有真实模型或Fast服务吞吐实测。
++
++提交时仅暂存准确候选版本；维护main中service.ts和homer-app.tsx的其他未提交内容已做无冲突三方合并预演，按必要hunk保留，不纳入本次提交。其余dirty/staged/untracked不收编。提交后选完整准确SHA一次冻结，普通模式从Git archive重建；准备包不直接安装。
++
++正式切换仍须新鲜核owner/原生操作/渠道/队列；当前只读观察原main无pending收件、2个uncertain用户输入保持，微信6个uncertain不重放、无待发送，所有Task已settled。确认维护点与私有备份后只CAS原网关必要binding，contract由原owner在无pending时正常采用，不删除请求行或改business binding。桌面只写机器私有采用描述，原账号和数据根保持原路径，不复制auth或native sessions。
++
++正常安装目标为/Applications/Homer.app（此前未发现已安装实例，安装前复核）。用安装后的App核真实代码、Node/host/Codex路径、版本/完整SHA/sourceHash/manifest/UI、原账号就绪、原thread及历史/任务/成果/权限连续性。正常系统校验，沿现有本机ad-hoc签名路径，不声称新Developer ID/公证，不清quarantine或绕过Gatekeeper。成功后核引用并清理本次及旧无用安装包/构建目录，保留已安装App、数据、人工输入测试profile及最小一致恢复材料。
++
++产生新业务事实后不以旧库覆盖回退；正式安装与验收结果、实际身份、时间、清理和恢复边界将在此续记。当前文档不是已安装证明。
+diff --git a/docs/patches/2026-10-23-desktop-adoption-sources.json b/docs/patches/2026-10-23-desktop-adoption-sources.json
+new file mode 100644
+index 0000000..dc723b3
+--- /dev/null
++++ b/docs/patches/2026-10-23-desktop-adoption-sources.json
+@@ -0,0 +1,115 @@
++{
++  "format": 1,
++  "date": "2026-10-23",
++  "status": "reviewed-uncommitted-preparation-closure",
++  "baseGit": "3c5461180575aa90f9430f35152f444530185913",
++  "applyAfter": {
++    "path": "docs/patches/2026-10-23-desktop-integration-candidate.patch",
++    "sha256": "915800b901002a249e3a87f68aeb24ee138ed9f8736bc21bd45844d93543a3a8"
++  },
++  "files": [
++    {
++      "path": "scripts/desktop-profile.mjs",
++      "sha256": "ebd76477987fb8f93f9e3edec8b3a666d7af289035292a998fa38c3912c81fbb",
++      "bytes": 7192,
++      "beforeSha256": "de4744195d20a8ad22c96d254b330ca9c991331d923af2d57a4c4442b07b51a5"
++    },
++    {
++      "path": "scripts/desktop-runtime.mjs",
++      "sha256": "fdba1acfd8e473e78d09cfea01200eb79db3e62c58d367e1279238ddac57c7ca",
++      "bytes": 8825,
++      "beforeSha256": "3c45201413eff39e256c5b7bda03240b2f0d917c0d4d60f8da463e94d41138ea"
++    },
++    {
++      "path": "scripts/desktop-source.mjs",
++      "sha256": "5b06c9c26e198ef52dcf203b0b87e8fbf65869b26eed2d5d58d2ea9e33f941f9",
++      "bytes": 2866,
++      "beforeSha256": "18a255041e43bd5d9b3331215bbbd6e424f7bb9863aa42e3b18f8d6c07223eec"
++    },
++    {
++      "path": "src/engine.ts",
++      "sha256": "cac6c54b3f67ff4586afe2399b7b09ef1b453204921b39cc3dd92da167451d15",
++      "bytes": 51639,
++      "beforeSha256": "e6d313736634af2a4f47c1f1ddd181773f9a1f9d518a9d66da84e87a7aa736a9"
++    },
++    {
++      "path": "src/service.ts",
++      "sha256": "b23921212bb9a9e8ef4fe6f5563a7434c796a623a9bc9460d4827a81b3d15a09",
++      "bytes": 148001,
++      "beforeSha256": "0b6cf9a5e1e828313e38092fca30043a55d8bf1f9aa200e8538f803b722bd7d4"
++    },
++    {
++      "path": "src/tools.ts",
++      "sha256": "5092510fe443b55a02c2fc75ec28a29e6043da962efce29502a7d3d727236aa7",
++      "bytes": 3327,
++      "beforeSha256": "b6da07b4e55200af682a3df3ad4860406ca2501ff9f97a038faad15fde75094f"
++    },
++    {
++      "path": "tests/desktop-adoption.test.mjs",
++      "sha256": "c7b8963013681996d20343c3cc86f366a4e5325a43f88e10354c4d788d08aa3b",
++      "bytes": 4707,
++      "beforeSha256": null
++    },
++    {
++      "path": "tests/desktop-browser-boundary.test.mjs",
++      "sha256": "3cb33590b68b48af58f586958c3c3163639ef4cd997e945eaea8e45952b2b450",
++      "bytes": 1638,
++      "beforeSha256": null
++    },
++    {
++      "path": "tests/desktop-source.test.mjs",
++      "sha256": "da9a1c85d83c55f9713dc4d808c31dfe7d8e6ecb4183512fbad54b808a39f7f3",
++      "bytes": 2542,
++      "beforeSha256": "04cfc85d40c0b1a66b8b9eb084e8ecda87eacfe6f48db96ac464eb9892986249"
++    },
++    {
++      "path": "tests/macos-desktop-runtime.test.mjs",
++      "sha256": "f628c3a82febc6de27a7e8716954fbad45c00d293fbee8171be3a3a69589b0eb",
++      "bytes": 15388,
++      "beforeSha256": "12067f54f8ae4a358f0ecb9df4a8b4eb5cb0c4643d131d9da85370a2e75fc6c8"
++    },
++    {
++      "path": "tests/main-tools-resume-compatibility.test.mjs",
++      "sha256": "13274dba625d7876f4a68d8e7d7e292e7fbb2cfa0dd4f514eeddd4b7b8ef4264",
++      "bytes": 2873,
++      "beforeSha256": null
++    },
++    {
++      "path": "tests/native-main-tools-resume.test.mjs",
++      "sha256": "0fa041a50721ab7b36203ec1b1def49a688b4786cc0ddc94227a9c3ec50937b2",
++      "bytes": 5189,
++      "beforeSha256": null
++    }
++  ],
++  "incrementCodeFiles": 12,
++  "combinedCodeFileCount": 33,
++  "candidateBuildInputs": 23,
++  "newDependencies": false,
++  "originalDataModified": false,
++  "userAuthorizedFixReviewMainCommitAndInstall": true,
++  "mainToolsCompatibility": {
++    "historicalHash": "e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a",
++    "targetHash": "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056",
++    "exactPairOnly": true,
++    "originalNativeDefinitionsAndStoredHashPreserved": true,
++    "unknownHashRejected": true
++  },
++  "commitScope": [
++    "scripts/desktop-profile.mjs",
++    "scripts/desktop-runtime.mjs",
++    "scripts/desktop-source.mjs",
++    "src/engine.ts",
++    "src/service.ts",
++    "src/tools.ts",
++    "tests/desktop-adoption.test.mjs",
++    "tests/desktop-browser-boundary.test.mjs",
++    "tests/desktop-source.test.mjs",
++    "tests/macos-desktop-runtime.test.mjs",
++    "tests/main-tools-resume-compatibility.test.mjs",
++    "tests/native-main-tools-resume.test.mjs",
++    "docs/2026-10-23-desktop-account-adoption.md",
++    "docs/2026-10-23-homer-desktop-release.md",
++    "docs/patches/2026-10-23-desktop-adoption-sources.json",
++    "docs/patches/2026-10-23-desktop-adoption-verification.json"
++  ]
++}
+diff --git a/docs/patches/2026-10-23-desktop-adoption-verification.json b/docs/patches/2026-10-23-desktop-adoption-verification.json
+new file mode 100644
+index 0000000..19f701c
+--- /dev/null
++++ b/docs/patches/2026-10-23-desktop-adoption-verification.json
+@@ -0,0 +1,167 @@
++{
++  "format": 1,
++  "date": "2026-10-23",
++  "baseGit": "3c5461180575aa90f9430f35152f444530185913",
++  "committed": false,
++  "installed": false,
++  "productionModified": false,
++  "package": {
++    "sourceHash": "0a6f43ecb551f4485c51f074fbf58c4591a95b3513a8e1a9bb77c108f3257c0a",
++    "manifest": "ed83aea0a8a5ed2aa2f50e8aa1b70a3d21011f783faf098cce055806bfdc56ed",
++    "schema": "c83bb6bd26960c4efbaf30c27825c642e96458685081716f12742f53ce97d2b7",
++    "toolsHash": "0c28896bd6042284a909a8b692d41215f92a50df8abe9333f9ded11f3d540056",
++    "uiHash": "6a055aa6cec649409da84baaf352efa58fa685ddc839c4cfb3aac68476aea2a5",
++    "zipSha256": "9c9d4dcb4c83b5fddd0bd3082d0454ea35c566c29c5fe8aac7a35d262a8840ed",
++    "zipBytes": 182802794,
++    "bundleBytes": 471989002,
++    "buildNode": "v22.22.0",
++    "signature": "ad-hoc local candidate; not Developer ID or notarized"
++  },
++  "preparation": true,
++  "publishable": false,
++  "candidateInputsRechecked": 23,
++  "uiHashMatchesPrior148CheckPackage": true,
++  "results": {
++    "finalUnitPassed": 22,
++    "finalUnitFailed": 0,
++    "finalPackagedRuntimePassed": 6,
++    "finalPackagedRuntimeFailed": 0,
++    "fixedNativeProtocolPassed": 1,
++    "nativeProtocolUsesIsolatedCredentialFreeHomeAndLoopbackProvider": true,
++    "nativeProtocolModelTurns": 0,
++    "nativeIndexOriginalThreadExists": true,
++    "userRolloutRead": false,
++    "originalBrowserDenyRootsPreservedUnderIsolatedHome": true,
++    "allTypes": {
++      "baselineDiagnostics": 137,
++      "candidateDiagnostics": 137,
++      "normalizedIdentical": true,
++      "normalization": "only exact absolute exported source roots replaced"
++    },
++    "initialPrivateRehearsal": {
++      "format": 1,
++      "at": "2026-10-23T09:58:30.290Z",
++      "sourceAccess": "readOnly SQLite snapshot; no auth/native sessions copied",
++      "initialSnapshotOnly": true,
++      "maintenancePointConfirmed": false,
++      "productionModified": false,
++      "schemaBefore": "3",
++      "schemaAfter": "4",
++      "allOriginalTablesOldColumnsAndRowsRetained": 60,
++      "changedColumns": [
++        {
++          "table": "tasks",
++          "added": [
++            "historyState"
++          ]
++        }
++      ],
++      "onlyBusinessMetaChange": "recursiveSchemaVersion",
++      "integrity": "ok",
++      "foreignKeyViolations": 0,
++      "originalThreadRetained": true,
++      "originalBusinessBindingRetained": true,
++      "originalMainToolsHashRetained": true,
++      "mainToolsMatchCandidate": false,
++      "blockingError": "main_tools_migration_required",
++      "gatewayCasRequired": true,
++      "gatewayCasRehearsed": true,
++      "gatewayOnlyChange": "binding",
++      "allGatewayRowsContractAndThreadRetained": true,
++      "realAccountRead": false,
++      "realModelCalls": 0
++    },
++    "historicalToolsMismatchNowAcceptedOnlyByReviewedExactPair": true,
++    "earlierFailures": [
++      "build007 second-owner error precedence corrected without relaxing original test",
++      "build008 first URL cold-ready timeout; same-package isolated retry and final build009/010 all6 pass; no test deadline changes"
++    ]
++  },
++  "logs": [
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-red.log",
++      "sha256": "d2139afc287876b2400ae9d74fa9d9136de03cdeb6eeb179a519c49f87ae7e24"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-unit-green.log",
++      "sha256": "543207dc23123ad66a934295f6977eb7d81f0e4018914bbcb599d661e8edfea1"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-red.log",
++      "sha256": "c4186c14446646db0d26ebf24a0ae0fc0bf69c06fee84e24a78af8dbcb3e3150"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-green.log",
++      "sha256": "3ffd45470932d2550453d1caaa6b56dee1f0ba67b79e96f5afef7bdd0f56c072"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-final.log",
++      "sha256": "f581e88f5a896e085b96f9a68d91110cc343ceb7ea9f012f24ceb9228298d188"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-finder-recheck.log",
++      "sha256": "c6eb0e561a92077eb5d996820568e1ce144f12dd3505f99c5c1b497a693bef23"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/browser-boundary-red.log",
++      "sha256": "ca2a821835c915670ca486ff4239b96e60e31aada5d97857c4c9e62dd18b0f31"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-final-unit.log",
++      "sha256": "59469e538dacb7617f54ba49231b308d10f3b9fd2b155d9b14001a3a0f8118a4"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-runtime-009.log",
++      "sha256": "98a01cdb6caaa4881b598c936e2bd345a78afecd50d4eb555b4471cd78c13627"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-private-rehearsal-summary.json",
++      "sha256": "ebf1ee2607df6beca65c6b33dccc0a549598afafee815d2de618b1cd6f658166"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/build-009.log",
++      "sha256": "78442dd5fcfba636fe5d61ed0e970ede4a1a604e52f2666a97f24d6fc236e8fc"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/build-010.log",
++      "sha256": "1ec1968bf80dc6859ee3f9d4ff64984a4e09c35a8b809a3f7adda7b91c9c0025"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/tools-resume-red.log",
++      "sha256": "001de334ec9db013d8f973dd43cbddc2dd9e8ac3cb0cdaafb77fce566c5951f3"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/closure-unit-010.log",
++      "sha256": "45dad144c0239323173a3299ca7a0e3b242705c965bfc2605b8106ac0d0144f5"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/closure-runtime-010.log",
++      "sha256": "c56600d275c4d537ac2aad0cd598a6eca7817425c3caae49d769ae5537968187"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/native-tools-resume.log",
++      "sha256": "361525e180c149ea5df28567164f4cda510cc154d85d9b84774b1bbf321cea6e"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/closure-all-types-010.log",
++      "sha256": "288872caf2ec463aa250e973377f4572f0e15c75abd930138034fa89ffeea072"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/closure-types-comparison.json",
++      "sha256": "5880dadd8b3c42ff7663d68097c5cb864efd17fa917e34ff6235e3e5b9095257"
++    },
++    {
++      "path": ".codex/scratch/desktop-integration-20261023/adoption-preparation-cleanup.json",
++      "sha256": "9c28d36cd0f2af41b39925f31402254d2526d22cbbc1d7c70150e2e242dc451e"
++    }
++  ],
++  "remainingConditions": [
++    "commit the reviewed exact closure to main, freeze full SHA and rebuild without preparation overlays",
++    "fresh real maintenance-point confirmation/private backup and exact gateway binding CAS",
++    "normal installation, actual installed App acceptance and unused package cleanup"
++  ],
++  "realModelCalls": 0,
++  "realAccountRead": false,
++  "realFinderAction": false,
++  "noDeveloperIdOrNotarizationClaim": true
++}

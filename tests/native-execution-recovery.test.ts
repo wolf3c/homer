@@ -1,3 +1,4 @@
+import {readTestConversation} from './fixtures/read-test-conversation.js';
 // Synthetic engines and private temporary runtimes only; no live model or channel.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -5,6 +6,7 @@ import {mkdirSync,rmSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {Homer} from '../src/service.js';
 import {loadConfig} from '../src/config.js';
+import {loadPrompts} from '../src/prompts.js';
 import {fixture,openWorker,running,main} from './recursive-fixture.js';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
 
@@ -26,12 +28,12 @@ for(const [code,notice,absent] of [
   assert.match(reply,/不会自动重试/);
   assert.deepEqual(f.peers.flatMap(p=>p.seen),['synthetic failed request']);
   assert.equal(f.app.store.meta('mainThread'),original);
-  const failed=f.app.conversationState().messages.at(-1)!;
+  const failed=readTestConversation(f.app).messages.at(-1)!;
   assert.equal(failed.status,'failed');
   assert.match(failed.text,notice);assert.doesNotMatch(failed.text,absent);
   assert.equal(failed.process,undefined,'the existing host outcome remains visible outside native answer projection');
   assert.deepEqual(f.app.conversationControlState().modelFailure,{messageId:failed.id.slice('input-outcome:'.length),code,source:undefined});
-  assert.deepEqual((await homerWebBridge(f.app,{nativeCapabilities:false}).history!.state()).modelFailure,f.app.conversationControlState().modelFailure);
+  assert.deepEqual((await homerWebBridge(f.app,{}).history!.state()).modelFailure,f.app.conversationControlState().modelFailure);
   f.peers[0]!.behavior=async()=>({status:'completed',text:'new user request accepted'});
   assert.equal(await f.app.message('new explicit request','synthetic-next'),'new user request accepted');
   assert.equal(f.app.conversationControlState().modelFailure,undefined);
@@ -39,7 +41,7 @@ for(const [code,notice,absent] of [
  }finally{await f.close();}
 });
 
-test('native execution: a slow host tool and long main turn outlive legacy mainTimeoutMs',async()=>{
+test('native execution: a slow host tool and long main turn complete without a host deadline',async()=>{
   const f=host();try{await f.app.start();f.peers[0]!.behavior=async()=>{await wait(130);await f.peers[0]!.call('list_work',{});return{status:'completed',text:'slow tool completed'};};
     assert.equal(await f.app.message('slow','slow-request'),'slow tool completed');assert.equal(f.peers[0]!.closed,0);
     assert.equal(f.events.filter(e=>e.type==='main_terminal')[0]?.status,'completed');
@@ -68,7 +70,9 @@ test('main recovery: idle process exit rebuilds on original thread and latest se
     f.peers[0]!.available=false;f.peers[0]!.emit('exit');
     assert.equal(await f.app.message('after exit','second'),'after exit');
     assert.equal(f.peers.length,2);assert.equal(f.peers[0]!.closed,1);assert.equal(f.peers[1]!.options.threadId,'synthetic-original-thread');assert.equal(f.peers[1]!.options.cwd,cwd);
-    assert.equal(f.peers[1]!.options.instructions,f.peers[0]!.options.instructions);
+    assert.ok(f.peers[0]!.options.instructions.startsWith(loadPrompts().main));
+    assert.ok(f.peers[1]!.options.instructions.startsWith(loadPrompts().main));
+    assert.ok(f.peers[1]!.options.instructions.includes(cwd));
   }finally{await f.close();}
 });
 
@@ -95,7 +99,7 @@ for(const reason of ['resume-failed','thread-mismatch'] as const)test('main reco
 test('native execution: explicit main stop still ends a long turn on the same engine',async()=>{
   const f=host();try{await f.app.start();f.peers[0]!.behavior=async()=>{await new Promise<void>(resolve=>f.peers[0]!.release=resolve);return{status:'interrupted',text:''};};
     const reply=f.app.message('long','long');await until(()=>!!f.peers[0]!.release);await wait(80);
-    await f.app.stopMain(f.app.conversationState().activeMessageId!);assert.match(await reply,/已停止/);assert.equal(f.peers.length,1);assert.equal(f.peers[0]!.closed,0);
+    await f.app.stopMain(f.app.conversationControlState().activeMessageId!);assert.match(await reply,/已停止/);assert.equal(f.peers.length,1);assert.equal(f.peers[0]!.closed,0);
   }finally{await f.close();}
 });
 
@@ -130,15 +134,19 @@ test('execution time remains accounting and does not block an authorized peer or
     f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'interrupted',text:'Partial checked facts'},true);
     const resumed=f.tasks.workerSend(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checked work'});assert.ok(f.tasks.claim(resumed.runId!));
     assert.equal(f.tasks.run(resumed.runId!).threadId,actor.threadId);assert.equal(f.tasks.run(actor.runId!).activeMs,120001);
-    assert.equal(f.tasks.version(f.task.taskId,1).authorityJson,authorityBefore);assert.equal(Object.hasOwn(JSON.parse(authorityBefore),'maxActiveMs'),false);
+    assert.equal(f.tasks.version(f.task.taskId,1).authorityJson,authorityBefore);assert.equal(Object.hasOwn(JSON.parse(authorityBefore!),'maxActiveMs'),false);
   }finally{f.close();}
 });
 
-test('legacy timeout config is accepted without injecting an execution default',()=>{
+test('unused timeout settings are ignored while stop grace remains validated',()=>{
   const f=host();try{const path=join(f.dir,'synthetic-config.json');const base={workspace:f.config.workspace,runtime:f.config.runtime,codexBin:'/usr/bin/false',codexHome:f.config.codexHome};
-    writeFileSync(path,JSON.stringify(base));const fresh=loadConfig(path);assert.equal(fresh.mainTimeoutMs,undefined);assert.equal(fresh.timeoutMs,undefined);
-    writeFileSync(path,JSON.stringify({...base,mainTimeoutMs:90000,timeoutMs:120000}));const legacy=loadConfig(path);assert.equal(legacy.mainTimeoutMs,90000);assert.equal(legacy.timeoutMs,120000);
-    writeFileSync(path,JSON.stringify({...base,mainTimeoutMs:null,timeoutMs:null}));const nulls=loadConfig(path);assert.equal(nulls.mainTimeoutMs,undefined);assert.equal(nulls.timeoutMs,undefined);
+    for(const timeout of [undefined,120000,null,'unused']){
+      writeFileSync(path,JSON.stringify({...base,mainTimeoutMs:timeout,timeoutMs:timeout,stopGraceMs:500}));
+      const loaded=loadConfig(path);
+      assert.equal(loaded.stopGraceMs,500);
+      for(const key of ['mainTimeoutMs','timeoutMs'])assert.equal(Object.hasOwn(loaded,key),false,key);
+    }
+    writeFileSync(path,JSON.stringify({...base,stopGraceMs:1}));assert.throws(()=>loadConfig(path),/invalid_stopGraceMs/);
   }finally{f.app.store.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 
@@ -147,22 +155,22 @@ test('missing authorization cannot be hidden by execution accounting at open, se
     f.store.db.prepare('UPDATE task_versions SET authorityJson=?,sourceRequestId=? WHERE taskId=?').run(JSON.stringify({...authority,sourceRequestId:'missing-source'}),'missing-source',f.task.taskId);
     f.store.db.prepare('UPDATE runs SET sourceRequestId=? WHERE id=?').run('missing-source',worker.runId);
     const before=f.store.runs();
-    assert.throws(()=>openWorker(f,'unauthorized-peer'),/task_authority_source_denied|pending_source_denied/);
-    assert.throws(()=>f.tasks.workerSend(main,{operationId:'unauthorized-send',workerId:worker.workerId,text:'Continue'}),/task_authority_source_denied|pending_source_denied/);
-    assert.throws(()=>f.tasks.claim(worker.runId),/task_authority_source_denied|pending_source_denied/);
+    assert.throws(()=>openWorker(f,'unauthorized-peer'),/task_authority_source_denied/);
+    assert.throws(()=>f.tasks.workerSend(main,{operationId:'unauthorized-send',workerId:worker.workerId,text:'Continue'}),/task_authority_source_denied/);
+    assert.throws(()=>f.tasks.claim(worker.runId),/task_authority_source_denied/);
     assert.deepEqual(f.store.runs(),before);assert.equal(f.tasks.run(worker.runId).status,'queued');
   }finally{f.close();}
 });
 
-test('native execution: peer Workers exceed the old shared budget and publish once',async()=>{
-  const f=syntheticHost();f.app.config.timeoutMs=1;f.app.config.mainTimeoutMs=1;
+test('native execution: peer Workers exceed the old shared budget and send once',async()=>{
+  const f=syntheticHost();
   const original=f.app['factory']!;
   f.app['factory']=(options,handler)=>{const engine=original(options,handler),turn=engine.turn.bind(engine);
     engine.turn=async(text,hooks)=>{if(options.role==='worker')await wait(30);return turn(text,hooks);};return engine;};
-  try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await until(()=>f.events.some(e=>e.type==='delivery'));await f.app.idle();
+  try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await until(()=>f.events.some(e=>e.type==='reply'&&e.messageId!==undefined));await f.app.idle();
     assert.equal(f.app.tasks.tasks()[0]?.outcome,'succeeded');
-    assert.equal(f.events.filter(e=>e.type==='delivery').length,1);assert.equal(f.app.store.runs().length,4);
-    assert.ok(f.app.store.runs().every(r=>r.status==='succeeded'));assert.ok(f.app.tasks.tasks().every(t=>!Object.hasOwn(JSON.parse(f.app.tasks.version(t.id,1).authorityJson),'maxActiveMs')));
+    assert.equal(f.events.filter(e=>e.type==='reply'&&e.messageId!==undefined).length,1);assert.equal(f.app.store.runs().length,4);
+    assert.ok(f.app.store.runs().every(r=>r.status==='succeeded'));assert.ok(f.app.tasks.tasks().every(t=>!Object.hasOwn(JSON.parse(f.app.tasks.version(t.id,1).authorityJson!),'maxActiveMs')));
     assert.equal(new Set(f.app.store.runs().map(run=>run.workerId)).size,3);assert.equal(f.engines.filter(e=>e.worker).length,4);
   }finally{await f.close();}
 });
@@ -178,7 +186,7 @@ test('live model failure is absent for legacy error text and safely classifies a
   await f.app.message('new synthetic unknown failure','unknown');
   const notice=f.app.conversationControlState().modelFailure!;
   assert.equal(notice.code,'main_turn_failed');assert.equal(notice.source,'codex');
-  assert.equal(f.app.conversationState().modelFailure?.messageId,notice.messageId);
+  assert.equal(notice.messageId,f.app.inputs.byRequestIds(['unknown'])[0]!.replyId);
   assert.equal(f.app.history.message('legacy-error')?.text,'engine_rate_limited: old ambiguous quota error');
  }finally{await f.close();}
 });

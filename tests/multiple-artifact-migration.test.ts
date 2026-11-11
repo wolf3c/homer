@@ -1,22 +1,30 @@
-// Unsupported historical databases are refused; no compatibility conversion remains.
+// Historical database preflight rejects the old layout without touching its bytes.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture,openWorker,running,main,complete} from './recursive-fixture.js';
-import {RecursiveTasks} from '../src/recursive-tasks.js';
-import type {Store} from '../src/store.js';
-function capture(store:Store){return Object.fromEntries((store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as {name:string}[]).map(({name})=>[name,store.db.prepare('SELECT * FROM "'+name+'"').all()]));}
+import {DatabaseSync} from 'node:sqlite';
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {join,resolve} from 'node:path';
+import {Store} from '../src/store.js';
 
 test('unsupported historical layout is refused without rewriting columns, indexes or facts',()=>{
- const f=fixture();try{
-  const opened=openWorker(f),actor=running(f,opened.runId),written=f.tasks.writeMarkdown(actor,{operationId:'file',filename:'old.md',content:'# Historical bytes'});
-  complete(f,actor);
-  const accepted=f.tasks.adoptResult(main,{operationId:'adopt',taskId:f.task.taskId,version:1,runId:opened.runId,filePath:written.path});
-  const delivery=f.tasks.publish(main,{operationId:'publish',taskId:f.task.taskId,version:1,resultIds:[accepted.resultId],text:'Historical delivery'});
-  f.tasks.markDelivery(delivery.deliveryId,'submitting');f.tasks.markDelivery(delivery.deliveryId,'uncertain');
-  f.store.db.exec("ALTER TABLE deliveries RENAME COLUMN resultIdsJson TO publishedFileResultId;CREATE UNIQUE INDEX one_result_per_run ON results(runId) WHERE runId IS NOT NULL;");
-  f.store.setMeta('recursiveSchemaVersion','2');
-  const before=capture(f.store),schema=f.store.db.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').all();
-  assert.throws(()=>new RecursiveTasks(f.store,f.files).migrate(),/recursive_schema_unsupported/);
-  assert.deepEqual(capture(f.store),before);assert.deepEqual(f.store.db.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').all(),schema);
- }finally{f.close();}
+ const root=resolve('.codex/scratch/historical-schema-rejection');
+ mkdirSync(root,{recursive:true});
+ const dir=mkdtempSync(join(root,'fixture-')),path=join(dir,'old.sqlite');
+ try{
+  const old=new DatabaseSync(path);
+  try{old.exec(`
+   CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+   INSERT INTO meta VALUES('recursiveSchemaVersion','5');
+   CREATE TABLE results(id TEXT PRIMARY KEY,runId TEXT,bytes BLOB);
+   CREATE UNIQUE INDEX one_result_per_run ON results(runId) WHERE runId IS NOT NULL;
+   INSERT INTO results VALUES('old-result','old-run',x'504446');
+   CREATE TABLE deliveries(id TEXT PRIMARY KEY,publishedFileResultId TEXT,state TEXT);
+   INSERT INTO deliveries VALUES('old-delivery','old-result','uncertain');
+  `);}finally{old.close();}
+  const before=readFileSync(path);
+  assert.throws(()=>new Store(path),/recursive_schema_unsupported/);
+  assert.deepEqual(readFileSync(path),before);
+  assert.equal(existsSync(path+'-wal'),false);
+  assert.equal(existsSync(path+'-shm'),false);
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });

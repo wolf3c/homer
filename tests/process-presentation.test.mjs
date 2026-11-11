@@ -45,7 +45,7 @@ test('original disclosure starts closed and preserves user choice across complet
  await d.render(view({...node,items:[commentary('p','progress')]}));const toggle=button(d);assert.equal(toggle.attrs['aria-expanded'],'false');assert.equal(toggle.attrs.type,'button');
  await d.click(toggle);await d.render(view(done(node)));assert.equal(toggle.attrs['aria-expanded'],'true');
  await d.render(view({...done(node),revision:5,items:[...node.items,worker]},{...observation,connected:false}));assert.equal(toggle.attrs['aria-expanded'],'true');
- await d.click(toggle);await d.render(view({...done(node),revision:6}));assert.equal(toggle.attrs['aria-expanded'],'false');
+ await d.click(toggle);await d.render(view({...done(node),revision:6}));assert.equal(!!button(d),false);
 }));
 
 // Real focus removal is checked in run-activity-focus.browser.mjs. This
@@ -59,6 +59,7 @@ test('new node and thread start with the original closed disclosure using the pr
 test('authoritative snapshot calibrates elapsed time; terminal duration freezes despite newer observations and Worker updates',async()=>withDom(async d=>{
  await d.render(view());assert.match(button(d).textContent,/当前对话 · [^·]*\s*·\s*5s/);assert.doesNotMatch(button(d).textContent,/0s/);
  await d.render(view(node,{...observation,observedAtMs:9000}));assert.match(button(d).textContent,/· 8s/);
+ await d.click(button(d));
  await d.render(view({...done(node),timingSource:'native'},{...observation,observedAtMs:999999}));assert.match(button(d).textContent,/已结束\s*·\s*32s/);
  await d.render(view({...done(node),timingSource:'native',items:[...node.items,worker]}, {...observation,observedAtMs:1999999,connected:false}));assert.match(button(d).textContent,/· 32s/);assert.doesNotMatch(button(d).textContent,/上次快照|宿主观测/);
 }));
@@ -73,7 +74,8 @@ test('disconnect/unknown freeze last eligible snapshot; reconnect resumes; misma
 
 test('old/missing/invalid clocks do not invent zero/endpoints; finishing uses fixed native endpoint without completing node',async()=>withDom(async d=>{
  for(const patch of [{timingState:undefined},{timingSource:undefined},{startedAtMs:undefined},{startedAtMs:999999}]){await d.render(view({...node,id:JSON.stringify(patch),...patch}));assert.doesNotMatch(button(d).textContent,/· \d/);}
- await d.render(view({...done(node),startedAtMs:undefined,endedAtMs:undefined,durationMs:undefined}));assert.match(button(d).textContent,/已结束/);assert.doesNotMatch(button(d).textContent,/· 0s/);await d.click(button(d));assert.doesNotMatch(visibleText(d.container),/· 0s/);
+ await d.render(view());await d.click(button(d));
+ await d.render(view({...done(node),startedAtMs:undefined,endedAtMs:undefined,durationMs:undefined}));assert.match(button(d).textContent,/已结束/);assert.doesNotMatch(visibleText(d.container),/· 0s/);await d.click(button(d));
  await d.render(view({...node,timingState:'terminal',durationMs:2000}, {...observation,mainActivity:{...observation.mainActivity,stage:'finishing'},observedAtMs:999999}));assert.match(button(d).textContent,/当前对话 · [^·]*\s*·\s*2s/);assert.doesNotMatch(button(d).textContent,/已结束/);
 }));
 
@@ -107,6 +109,7 @@ test('local seconds refresh only duration; late ticks use elapsed time and dupli
 test('terminal evidence including zero freezes completed, failed, interrupted and still-finishing durations',async t=>withClock(t,async(d,clock)=>{
  for(const patch of [{state:'worked',status:'completed'},{state:'worked',status:'failed'},{state:'worked',status:'interrupted'},{state:'working',status:'running'}]){
   await d.remount();await d.render(view());await clock.advance(2000);assert.match(button(d).textContent,/· 7s/);
+  if(patch.status==='completed')await d.click(button(d));
   await d.render(view({...node,...patch,timingState:'terminal',durationMs:0},{...observation,mainActivity:{...observation.mainActivity,stage:'finishing'}}));
   assert.match(button(d).textContent,/· 0s/);assert.equal(clock.active.size,0);
   await clock.advance(9000);assert.match(button(d).textContent,/· 0s/);assert.doesNotMatch(button(d).textContent,/上次快照/);
@@ -176,6 +179,7 @@ test('real backend display projection -> production shell: multi final once, str
  const raw={...node,final:{id:'f2',text:'SECOND FINAL'},items:[commentary('c','公开进度'),{...commentary('f1','FIRST FINAL'),phase:'final_answer',completed:true},{...commentary('f2','SECOND DRAFT'),phase:'final_answer',completed:false}]};
  const messages=conversation([historyMessage('body','OLD CONCATENATION')],[raw]);await d.render(body(messages));const article=d.find(n=>n.attrs['data-message-id']==='body');
  assert.equal(d.container.textContent.match(/FIRST FINAL/g).length,1);assert.equal(d.container.textContent.match(/SECOND DRAFT/g).length,1);assert.doesNotMatch(d.container.textContent,/OLD CONCATENATION|SECOND FINAL/);
+ await d.click(button(d));
  const corrected={...done(raw),items:raw.items.map(item=>item.id==='f2'?{...item,text:'SECOND FINAL',completed:true,revision:2}:item)};await d.render(body(conversation([historyMessage('body')],[corrected])));assert.equal(d.find(n=>n.attrs['data-message-id']==='body'),article);
  assert.equal(visibleText(d.container).match(/FIRST FINAL/g).length,1);assert.equal(visibleText(d.container).match(/SECOND FINAL/g).length,1);assert.doesNotMatch(d.container.textContent,/SECOND DRAFT/);
  await d.click(button(d));assert.equal(d.container.textContent.match(/SECOND FINAL/g).length,1);
@@ -190,10 +194,11 @@ test('formal publications retain original IDs even after internal batch, same te
 
 test('ordinary Worker reply stays once inside original process disclosure across live transport',async()=>withDom(async d=>{
  const event={id:'event',seq:1,revision:1,kind:'workerEvent',eventKey:'reply:one',event:{eventKind:'reply_received',bodySource:'reply',title:'后台研究',body:'保留一个待确认事项。'}};
- const messages=conversation([historyMessage('body')],[{...done(node),items:[...node.items,event]}]);await d.render(body(messages));
+ const live={...node,items:[...node.items,event]};await d.render(body(conversation([historyMessage('body')],[live])));
  assert.equal(button(d).attrs['aria-expanded'],'false');assert.doesNotMatch(visibleText(d.container),/保留一个待确认事项/);
  assert.ok(!d.find(n=>n.attrs['data-worker-event']==='reply:one'),'reply DOM is unmounted while the process is closed');
  await d.click(button(d));
+ const messages=conversation([historyMessage('body')],[done(live)]);await d.render(body(messages));
  const card=d.find(n=>n.attrs['data-worker-event']==='reply:one'),cardButton=card.childNodes.find(n=>n.tagName==='BUTTON');
  assert.ok(d.find(n=>n.attrs['data-slot']==='run-activity').contains(card));
  assert.equal(cardButton.attrs['aria-expanded'],'false');await d.click(cardButton);assert.equal(d.container.textContent.match(/保留一个待确认事项。/g).length,1);
@@ -206,8 +211,8 @@ test('service/thread/generation mismatches never start snapshot growth; paired e
  for(const patch of [{serviceRunning:false},{threadId:'other-thread'},{generationTurnId:'other-turn'},{observedAtMs:undefined}]){
   await d.render(view({...node,id:JSON.stringify(patch)},{...observation,...patch}));assert.doesNotMatch(button(d).textContent,/· \d/);
  }
- await d.render(view({...done(node),id:'endpoints',durationMs:undefined,startedAtMs:1000,endedAtMs:6500}));assert.match(button(d).textContent,/· 5s/);
- await d.render(view({...done(node),id:'zero',durationMs:0}));assert.match(button(d).textContent,/· 0s/);
+ await d.render(view({...done(node),status:'failed',id:'endpoints',durationMs:undefined,startedAtMs:1000,endedAtMs:6500}));assert.match(button(d).textContent,/· 5s/);
+ await d.render(view({...done(node),status:'interrupted',id:'zero',durationMs:0}));assert.match(button(d).textContent,/· 0s/);
 }));
 
 test('Worker missing-version title remains unknown; failure/interrupt/unknown keep final body and honest process status',async()=>withDom(async d=>{

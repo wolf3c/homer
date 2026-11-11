@@ -1,0 +1,221 @@
+--- a/src/recursive-tasks.ts
++++ b/src/recursive-tasks.ts
+@@ -932,8 +932,9 @@
+       const file=id?this.publishedResult(id,{sourceRequestId:v.sourceRequestId}):undefined;
+       if(file&&(!d||file.deliveryId===d.id)){
+         link.artifact={id:file.resultId,title:publicActivityName(file.path.split(/[\\/]/).at(-1))??'成果文件'};
+-        link.messageId=file.historyMessageId;
+-      }else if(d?.state==='recorded')link.messageId=d.historyMessageId;
++      }
++      const publication=d??(file?this.delivery(file.deliveryId):undefined);
++      if(publication?.state==='recorded'&&this.one("SELECT 1 FROM conversation_messages WHERE id=? AND threadId=? AND role='assistant'",publication.historyMessageId,threadId))link.messageId=publication.historyMessageId;
+       return link;
+     }catch{return;}
+   }
+--- a/src/web-homer.ts
++++ b/src/web-homer.ts
+@@ -50,9 +50,13 @@
+       process:async input=>{
+         epoch(input.readEpoch);const thread=app.store.meta('mainThread')!,node=pageReader().process(input.id,thread);
+         const activityLinks:Record<string,import('./activity-facts.js').ActivityLink>={};
+-        for(const item of node.items){
++        // Opening the process reads facts only. Resolve navigation/file grants
++        // for one explicitly selected activity, never every completed call.
++        const item=input.itemId===undefined?undefined:node.items.find(item=>item.id===input.itemId);
++        if(input.itemId!==undefined&&!item)throw Error('history_activity_not_found');
++        if(item){
+           const target=item.kind==='tool'?item.activity?.target:item.kind==='worker'?{taskId:item.taskId,version:item.version,...(item.runId?{runId:item.runId}:{})}:undefined;
+-          if(!target)continue;const link=app.tasks.activityLink(target,thread);if(link)activityLinks[item.id]=link;
++          const link=target?app.tasks.activityLink(target,thread):undefined;if(link)activityLinks[item.id]=link;
+         }
+         return {...node,activityLinks};
+       },
+--- a/src/web-contract.ts
++++ b/src/web-contract.ts
+@@ -40,7 +40,7 @@
+   history?:{
+     state():Promise<WebState>;
+     page(input:{readEpoch:string;request:import('./web-history-pages.js').HistoryPageRequest}):Promise<import('./web-history-pages.js').HistoryPage>;
+-    process(input:{readEpoch:string;id:string}):Promise<WebProcessNode>;
++    process(input:{readEpoch:string;id:string;itemId?:string}):Promise<WebProcessNode>;
+     resolve(input:{readEpoch:string;id:string}):Promise<{messageId:string;sourceMessageId?:string}>;
+     receipts(input:QueueReceiptsRequest):Promise<QueueReceipts>;
+     queue(after:number,readEpoch?:string):Promise<ActiveReadResult<QueuedInput>>;
+--- a/src/web-server.ts
++++ b/src/web-server.ts
+@@ -173,6 +173,7 @@
+         }
+         if(path==='/api/history/process'||path==='/api/history/resolve'){
+           if(typeof input.readEpoch!=='string'||input.readEpoch.length>100||typeof input.id!=='string'||!/^[\w:-]{1,100}$/.test(input.id))throw Error('history_request_invalid');
++          if(input.itemId!==undefined&&(path!=='/api/history/process'||typeof input.itemId!=='string'||!/^[\w:-]{1,300}$/.test(input.itemId)))throw Error('history_request_invalid');
+           return json(response,200,await boundedRead<unknown>(()=>path==='/api/history/resolve'?bridge.history!.resolve(input):bridge.history!.process(input)));
+         }
+         if(path==='/api/history/receipts')return json(response,200,await boundedRead(()=>bridge.history!.receipts(input)));
+--- a/ui/process-nodes.tsx
++++ b/ui/process-nodes.tsx
+@@ -18,7 +18,7 @@
+ export function InactiveInteractionNotes({items=[]}:{items?:WebState['inactiveInteractions']}) {
+   return <>{items.map(item=><p key={item.id} className="message-state" style={{display:'block'}}>{item.kind==='authorization'?'原授权请求已失效，旧决定不能恢复此回调。':'原提问回调已失效，旧卡片不能继续提交。'}可在原事项对话核对当前状态。</p>)}</>;
+ }
+-export const ProcessDetailsContext=createContext<(id:string,signal:AbortSignal)=>Promise<WebProcessNode>>(async()=>{throw Error('history_protocol_required');});
++export const ProcessDetailsContext=createContext<(id:string,signal:AbortSignal,itemId?:string)=>Promise<WebProcessNode>>(async()=>{throw Error('history_protocol_required');});
+ export const ProcessObservationContext = createContext<ProcessObservation>({connected:false});
+ 
+ export const ActivityNavigationContext=createContext<{
+@@ -35,14 +35,16 @@
+  useEffect(()=>{
+   if(!observation.connected){setData(null);setError('连接已变化，活动详情当前无法核对，请关闭后重试。');return;}
+   const controller=new AbortController();setData(null);setError('');
+-  void load(node.id,controller.signal).then(value=>{
++  void load(node.id,controller.signal,item.id).then(value=>{
+    if(controller.signal.aborted)return;
+    const actual=value.items.find(i=>i.id===item.id);
+    if(value.id!==node.id||value.threadId!==node.threadId||value.revision<node.revision||!actual||actual.kind!==item.kind||actual.revision<item.revision)throw Error('activity_identity_changed');
+    setData(value);
+   }).catch(()=>{if(!controller.signal.aborted)setError('这次活动当前无法读取，请关闭后重试。');});
+   return()=>controller.abort();
+- },[load,node.id,node.threadId,node.revision,item.id,item.revision,item.kind,observation.connected]);
++ // A selected call is immutable; unrelated streaming node revisions must
++ // not reread it. Identity and connection changes still cancel this request.
++ },[load,node.id,node.threadId,item.id,item.revision,item.kind,observation.connected]);
+  const current=data?.items.find(i=>i.id===item.id),fact=current?.kind==='tool'?current.activity:undefined,link=data?.activityLinks?.[item.id];
+  function close(){dialog.current?.close();onClose();requestAnimationFrame(()=>{if(trigger.isConnected)trigger.focus({preventScroll:true});});}
+  function visit(action:()=>void){dialog.current?.close();onClose();requestAnimationFrame(action);}
+--- a/ui/task-overview.tsx
++++ b/ui/task-overview.tsx
+@@ -68,12 +68,12 @@
+  useEffect(()=>{if(!selected||!matched.current)return;const target=document.getElementById('task-child-'+matched.current);if(!target)return;for(let el:HTMLElement|null=target;el;el=el.parentElement){if(el instanceof HTMLDetailsElement)el.open=true;}target.querySelector('summary')?.focus();matched.current=null;},[selected,detail]);
+  function close(){active.current=false;invalidated.current=false;immediate.current=false;clearTimeout(timer.current);timer.current=undefined;controller.current?.abort();historyController.current?.abort();originController.current?.abort();setBusy(false);setHistoryBusy(false);setNavigating(false);dialog.current?.close();setOpen(false);setSelected(null);selectedRef.current=null;setDetail(null);setHistory(null);returnRow.current=null;setActivityTarget(null);const target=activityReturn.current;activityReturn.current=null;(target?.isConnected?target:entry.current)?.focus({preventScroll:true});}
+  function show(){setActivityTarget(null);activityReturn.current=null;active.current=true;dialog.current?.showModal();setOpen(true);void refresh();}
+- function select(id:string,match?:string){listY.current=list.current?.scrollTop??0;returnRow.current=id;matched.current=match??null;setSelected(id);selectedRef.current=id;setDetail(null);setHistory(null);historyController.current?.abort();setHistoryBusy(false);controller.current?.abort();void refresh();}
+- function back(){originController.current?.abort();historyController.current?.abort();setNavigating(false);setHistoryBusy(false);setSelected(null);selectedRef.current=null;setDetail(null);setHistory(null);if(controller.current){controller.current.abort();void refresh();}}
++ function select(id:string,match?:string){setActivityTarget(null);listY.current=list.current?.scrollTop??0;returnRow.current=id;matched.current=match??null;setSelected(id);selectedRef.current=id;setDetail(null);setHistory(null);historyController.current?.abort();setHistoryBusy(false);controller.current?.abort();void refresh();}
++ function back(){setActivityTarget(null);originController.current?.abort();historyController.current?.abort();setNavigating(false);setHistoryBusy(false);setSelected(null);selectedRef.current=null;setDetail(null);setHistory(null);if(controller.current){controller.current.abort();void refresh();}}
+  useEffect(()=>{
+   if(!activityRequest)return;
+   activityReturn.current=activityRequest.trigger;setActivityTarget(activityRequest.target);
+-  selectedRef.current=activityRequest.target.rootTaskId;setSelected(activityRequest.target.rootTaskId);setDetail(null);setHistory(null);historyController.current?.abort();controller.current?.abort();
++  selectedRef.current=activityRequest.target.rootTaskId;setSelected(activityRequest.target.rootTaskId);setDetail(null);setHistory(null);historyController.current?.abort();historyController.current=null;setHistoryBusy(false);controller.current?.abort();
+   active.current=true;dialog.current?.showModal();setOpen(true);void refresh();
+  },[activityRequest]);
+  useEffect(()=>{if(open&&activityTarget&&detail&&!history&&!historyBusy)void readHistory();},[open,activityTarget,detail]);
+@@ -119,7 +119,7 @@
+  {!visible.length&&<div className="task-empty"><h3>{data?tasks.length?'没有匹配的事项':'尚无任务记录':'任务记录尚未读取'}</h3><p>{tasks.length?'可调整筛选或搜索。':'这里只显示已存在的任务。'}</p>{tasks.length>0&&<button type="button" onClick={()=>{setFilter('all');setQuery('');search.current?.focus();}}>清除筛选与搜索</button>}</div>}
+  </div>
+  {selected&&<div className="task-panel-detail"><button type="button" className="task-back" onClick={back}>← 返回总览</button>{root?<><h3 tabIndex={-1} ref={heading}>{taskName(root).text}</h3><div className="task-detail-status"><span>{readableStatus(root,members)}</span>{questions.length>0&&<span className="task-attention">需你答复 {questions.length} 项</span>}</div><p className="task-conclusion">{taskProgress(root,members)}</p>
+- {activityTarget&&<section className="task-notice" aria-label="活动关联的准确记录"><h4>活动关联的原记录</h4><p>要求版本 {activityTarget.version}；以下当前任务信息与当时活动分别核对。</p>{!history?<p role="status">正在读取原版本与执行记录…</p>:<>{history.requirements?.find(r=>r.taskId===activityTarget.taskId&&r.version===activityTarget.version)?<p>该版本要求：{history.requirements.find(r=>r.taskId===activityTarget.taskId&&r.version===activityTarget.version)!.goal??'未记录'}</p>:<p>本次有界读取未返回该版本要求，未借用当前版本。</p>}{activityTarget.runId&&<p>准确 Run：<code>{activityTarget.runId}</code> · {history.runs.find(r=>r.id===activityTarget.runId&&r.taskId===activityTarget.taskId&&r.contractVersion===activityTarget.version)?.status??'本次读取未返回'}</p>}{activityTarget.resultId&&<p>准确成果记录：<code>{activityTarget.resultId}</code> · {history.recovery?.results.find(r=>r.id===activityTarget.resultId&&r.taskId===activityTarget.taskId&&r.version===activityTarget.version)?.state??'本次读取未返回'}</p>}</>}</section>}
++ {activityTarget?.rootTaskId===root.id&&<section className="task-notice" aria-label="活动关联的准确记录"><h4>活动关联的原记录</h4><p>要求版本 {activityTarget.version}；以下当前任务信息与当时活动分别核对。</p>{!history?<p role="status">正在读取原版本与执行记录…</p>:<>{history.requirements?.find(r=>r.taskId===activityTarget.taskId&&r.version===activityTarget.version)?<p>该版本要求：{history.requirements.find(r=>r.taskId===activityTarget.taskId&&r.version===activityTarget.version)!.goal??'未记录'}</p>:<p>本次有界读取未返回该版本要求，未借用当前版本。</p>}{activityTarget.runId&&<p>准确 Run：<code>{activityTarget.runId}</code> · {history.runs.find(r=>r.id===activityTarget.runId&&r.taskId===activityTarget.taskId&&r.contractVersion===activityTarget.version)?.status??'本次读取未返回'}</p>}{activityTarget.resultId&&<p>准确成果记录：<code>{activityTarget.resultId}</code> · {history.recovery?.results.find(r=>r.id===activityTarget.resultId&&r.taskId===activityTarget.taskId&&r.version===activityTarget.version)?.state??'本次读取未返回'}</p>}</>}</section>}
+  {questions.length>0&&<section className="task-notice"><h4>需要你处理</h4>{questions.map(item=>{const known=state.interactions.find(i=>i.id===item.id&&i.runId===item.task.currentRunId);return <div key={item.id}><p>{known?.question??`${taskName(item.task,members.filter(t=>t.parentTaskId!==null).indexOf(item.task)+1).text} 有一项待答，请在原卡核对具体问题。`}</p><button type="button" className="task-primary" disabled={navigating} onClick={()=>void visitPending(item.id,item.after)}>前往原待答卡</button></div>;})}</section>}
+  {members.some(t=>t.pendingUser>0&&!validPendingUsers(t).length)&&<p>旧协议未提供可核对的待答身份；请在主对话核对，当前不提供直接答复入口。</p>}
+  <section><h4>成果</h4>{!detail?<p role="status">正在核对成果记录…</p>:detail.publications?.length?<>{detail.publications.map(p=><div className="task-publication" key={p.id}><p>正式交付 · 要求版本 {p.version}{p.version!==root.headVersion?'（历史版本，不代表当前已交付）':''} · {p.outcome==='partial'?'部分成果':p.outcome==='succeeded'?'成功交付记录':p.outcome}</p>{p.historyMessageId?<button type="button" disabled={navigating} onClick={()=>void visitMessage(p.historyMessageId!)}>查看原交付答复</button>:<p>准确原消息位置未记录。</p>}{detail.artifacts?.filter(a=>a.historyMessageId===p.historyMessageId).map(file=><button key={file.id} type="button" onClick={()=>{close();onArtifact(file.id,file.title);}}>查看成果：{file.title}</button>)}</div>)}{detail.morePublications&&<p>仅显示最近 80 条交付记录，较早交付未在此加载。</p>}</>:<p>{members.some(t=>t.result?.state==='offered')?'候选成果尚待验收，当前没有可访问的正式交付。':'当前没有可访问的正式交付记录。'}</p>}{!detail?.publications&&detail?.artifacts?.map(file=><button key={file.id} type="button" onClick={()=>{close();onArtifact(file.id,file.title);}}>查看成果：{file.title}</button>)}</section>
+--- a/ui/homer-app.tsx
++++ b/ui/homer-app.tsx
+@@ -355,8 +355,8 @@
+     const restore=()=>{const saved=anchor.current;if(!saved||saved.version!==userScroll.current)return;const element=document.getElementById('message-'+saved.id);if(element)view.scrollTop+=element.getBoundingClientRect().top-view.getBoundingClientRect().top-saved.offset;};
+     restore();const observer=new ResizeObserver(restore);const messages=view.querySelector('.messages');if(messages)observer.observe(messages);return()=>observer.disconnect();
+   },[state.messages,canvasOpen]);
+-  const loadProcess=useCallback(async(id:string,signal:AbortSignal)=>{
+-    const epoch=history.current.epoch,response=await fetch('/api/history/process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({readEpoch:epoch,id}),signal});const value=await response.json();if(!response.ok)throw Error(value.error??'history_process_unavailable');if(epoch!==history.current.epoch)throw Error('history_epoch_changed');return value as ProcessNode;
++  const loadProcess=useCallback(async(id:string,signal:AbortSignal,itemId?:string)=>{
++    const epoch=history.current.epoch,response=await fetch('/api/history/process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({readEpoch:epoch,id,...(itemId?{itemId}:{})}),signal});const value=await response.json();if(!response.ok)throw Error(value.error??'history_process_unavailable');if(epoch!==history.current.epoch)throw Error('history_epoch_changed');return value as ProcessNode;
+   },[state.history?.readEpoch]);
+   async function loadPage(direction:'before'|'after'|'around',id?:string){
+     if(pageBusy)return;const cache=history.current,epoch=cache.epoch,position=direction==='around'?id:direction==='before'?cache.before:cache.after;if(!position)return;
+--- a/tests/run-activity-facts.test.ts
++++ b/tests/run-activity-facts.test.ts
+@@ -3,6 +3,7 @@
+ import assert from 'node:assert/strict';
+ import {historyFixture} from './web-history-loading-fixture.js';
+ import {Homer} from '../src/service.js';
++import {syntheticFile} from './recursive-publication-fixture.js';
+ function fixture(){
+  const f=historyFixture(2);f.store.setMeta('mainAgentId','main:activity');
+  f.store.startRequest('request-1','synthetic');
+@@ -63,6 +64,8 @@
+   assert.equal(prepared.outcome,'delivery_prepared');assert.equal(f.tasks.activityLink(prepared.target!,'synthetic-history')?.messageId,undefined);
+   f.tasks.markDelivery(publication.deliveryId,'submitting');f.tasks.markDelivery(publication.deliveryId,'recorded');
+   assert.equal(prepared.outcome,'delivery_prepared','historical receipt is immutable');
++  assert.equal(f.tasks.activityLink(prepared.target!,'synthetic-history')?.messageId,undefined);
++  f.history.record(publication.historyMessageId,'synthetic-history','合成正式答复');
+   assert.equal(f.tasks.activityLink(prepared.target!,'synthetic-history')?.messageId,publication.historyMessageId);
+   f.tasks.markDelivery(publication.deliveryId,'revoked');assert.equal(f.tasks.activityLink(prepared.target!,'synthetic-history'),undefined);
+  }finally{f.close();}
+@@ -76,7 +79,12 @@
+   f.processes.tool('activity-node',{id:'generic',label:'检查资料',phase:'end',status:'completed'});
+   const app:any={...f,webReadEpoch:'epoch',registerChannelCapabilities(){},webHistoryPages:()=>({process(id:string,thread:string){const node=f.processes.exact(id);if(node?.threadId!==thread)throw Error('history_process_not_found');return node;}})};
+   const {homerWebBridge}=await import('../src/web-homer.js'),bridge=homerWebBridge(app);
+-  const detail=await bridge.history!.process({readEpoch:'epoch',id:'activity-node'});
++  let resolutions=0;const resolve=f.tasks.activityLink.bind(f.tasks);f.tasks.activityLink=(...args)=>{resolutions++;return resolve(...args);};
++  const header=await bridge.history!.process({readEpoch:'epoch',id:'activity-node'});
++  assert.deepEqual(header.activityLinks,{});assert.equal(resolutions,0,'expansion must not hydrate activity navigation or file bytes');
++  const detail=await bridge.history!.process({readEpoch:'epoch',id:'activity-node',itemId:'call'});
++  assert.equal(resolutions,1,'only the selected activity is resolved');
++  await assert.rejects(bridge.history!.process({readEpoch:'epoch',id:'activity-node',itemId:'missing'}),/history_activity_not_found/);
+   assert.equal(detail.activityLinks?.call?.task.taskId,root.taskId);assert.equal(detail.activityLinks?.generic,undefined);
+   assert.equal((detail.items.find(i=>i.id==='generic') as any).activity,undefined);
+   await assert.rejects(bridge.history!.process({readEpoch:'old',id:'activity-node'}),/epoch_changed/);
+@@ -96,3 +104,35 @@
+   assert.equal(f.tasks.activityLink(fact.target!,'synthetic-history')?.task.version,1);
+  }finally{f.close();}
+ });
++
++
++test('prepared file publication has no nonexistent origin button; exact recorded message is required',()=>{
++ const f=fixture();try{
++  const file=syntheticFile({store:f.store,tasks:f.tasks} as any,'request-1','activity-public.md','# Synthetic file');
++  const delivery=file.publish(),run=f.tasks.run(file.run.id),target={taskId:run.taskId,version:1,runId:run.id,resultId:file.resultId};
++  assert.equal(f.tasks.activityLink(target,'synthetic-history')?.artifact?.id,file.resultId);
++  assert.equal(f.tasks.activityLink(target,'synthetic-history')?.messageId,undefined);
++  f.tasks.markDelivery(delivery.id,'recorded');
++  assert.equal(f.tasks.activityLink(target,'synthetic-history')?.messageId,undefined);
++  f.history.record(delivery.historyMessageId,'other-thread',delivery.text);
++  assert.equal(f.tasks.activityLink(target,'synthetic-history')?.messageId,undefined);
++  f.store.db.prepare('DELETE FROM conversation_messages WHERE id=?').run(delivery.historyMessageId);
++  f.history.record(delivery.historyMessageId,'synthetic-history',delivery.text);
++  assert.equal(f.tasks.activityLink(target,'synthetic-history')?.messageId,delivery.historyMessageId);
++  f.tasks.markDelivery(delivery.id,'revoked');assert.equal(f.tasks.activityLink(target,'synthetic-history')?.artifact,undefined);
++ }finally{f.close();}
++});
++
++
++test('HTTP validates the selected item identity and forwards only the existing process read',async()=>{
++ const {createWebServer}=await import('../src/web-server.js');const seen:unknown[]=[];
++ const bridge:any={history:{process:async(input:unknown)=>{seen.push(input);return {items:[]};}}};
++ const server=await createWebServer({bridge,port:0});
++ try{
++  for(const itemId of ['',null,42,'x'.repeat(301),'private/file']){
++   const response=await fetch(server.url+'/api/history/process',{method:'POST',headers:{Origin:server.url,'Content-Type':'application/json'},body:JSON.stringify({readEpoch:'epoch',id:'node',itemId})});assert.equal(response.status,409);assert.equal((await response.json()).error,'history_request_invalid');
++  }
++  assert.equal(seen.length,0);
++  const response=await fetch(server.url+'/api/history/process',{method:'POST',headers:{Origin:server.url,'Content-Type':'application/json'},body:JSON.stringify({readEpoch:'epoch',id:'node',itemId:'activity-call-0'})});assert.equal(response.status,200);assert.deepEqual(seen,[{readEpoch:'epoch',id:'node',itemId:'activity-call-0'}]);
++ }finally{await server.close();}
++});
+--- a/tests/run-activity-facts-browser-fixture.mjs
++++ b/tests/run-activity-facts-browser-fixture.mjs
+@@ -28,8 +28,8 @@
+  // A stale reference and a generic old record have no actionable arrow.
+  const legacy={...JSON.parse(f.store.meta('publicMainNode:v1:node-88')),revision:2,items:[{id:'unreadable-legacy',seq:1,revision:1,kind:'worker',taskId:a.taskId,version:77,runId:null}],final:undefined};
+  f.store.setMeta('publicMainNode:v1:node-88',JSON.stringify(legacy));f.store.db.prepare("UPDATE conversation_messages SET text='' WHERE id='node-88'").run();
+- let delay=0,deny=false;
+- const read=f.bridge.history.process;f.bridge.history.process=async input=>{const result=await read(input);if(delay)await new Promise(done=>setTimeout(done,delay));if(deny)throw Error('synthetic_read_denied');return result;};
++ let delay=0,deny=false;const activityReads=[];
++ const read=f.bridge.history.process;f.bridge.history.process=async input=>{activityReads.push(input.itemId??null);const result=await read(input);if(delay)await new Promise(done=>setTimeout(done,delay));if(deny)throw Error('synthetic_read_denied');return result;};
+  const state=f.bridge.history.state;f.bridge.history.state=async()=>({...await state(),isRunning:true,activeMessageId:'node-89',generation:{threadId:'synthetic-history',turnId:'turn-89',messageId:'node-89'},mainActivity:{source:'user',stage:'native',processId:'node-89',turnId:'turn-89'}});
+- setMode();return {...f,a,b,file,delivery:d,tools,setMode,delay(ms){delay=ms;},deny(value){deny=value;},thread(value){f.store.setMeta('mainThread',value);f.server.publish();}};
++ setMode();return {...f,a,b,file,delivery:d,tools,setMode,activityReads,stream(){const key='publicMainNode:v1:node-89',node=JSON.parse(f.store.meta(key));node.revision++;node.items=[...node.items.filter(item=>item.id!=='review-stream'),{id:'review-stream',kind:'commentary',seq:99,revision:node.revision,text:'合成新增公开进展 '+node.revision}];f.store.setMeta(key,JSON.stringify(node));f.server.publish();},delay(ms){delay=ms;},deny(value){deny=value;},thread(value){f.store.setMeta('mainThread',value);f.server.publish();}};
+ }
+--- a/tests/run-activity-facts.browser.mjs
++++ b/tests/run-activity-facts.browser.mjs
+@@ -24,9 +24,11 @@
+   const style=await p.evaluate(()=>{const r=document.querySelector('#message-node-89 [data-slot=run-activity]'),b=r.querySelector('.process-toggle'),o=r.querySelector('ol');return {rootGap:getComputedStyle(r).gap,font:getComputedStyle(b).fontSize,triggerGap:getComputedStyle(b).gap,listGap:getComputedStyle(o).gap,line:getComputedStyle(o).borderInlineStartWidth,padding:getComputedStyle(o).paddingInlineStart,icon:getComputedStyle(b.querySelector('svg')).width};});
+   assert.deepEqual(style,{rootGap:'12px',font:'14px',triggerGap:'6px',listGap:'12px',line:'1px',padding:'14px',icon:'14px'});checks.push('官方字体、图标、间距、列表线与单层列表保持');
+   await p.evaluate(()=>document.querySelector('[data-tool-id=activity-call-0] button').focus());await key(p,'Enter','Enter',13);await wait(reader);await wait(()=>document.querySelector('.activity-reader').textContent.includes('查看任务与版本'));
+-  assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('#activity-reader-title')),true);await p.screenshot('activity-detail-'+width+'.png');
++  assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('#activity-reader-title')),true);
++  const reads=f.activityReads.length;assert.equal(f.activityReads.at(-1),'activity-call-0');f.stream();await wait(()=>document.querySelector('#message-node-89 .process-commentary')?.textContent.includes('合成新增公开进展'));assert.equal(f.activityReads.length,reads,'unrelated streaming must not reread selected activity');checks.push('所选详情读取一次，流式节点更新不重复读取');await p.screenshot('activity-detail-'+width+'.png');
+   await click('.activity-reader-links button');await wait(()=>document.querySelector('.task-dialog[open] .task-notice')?.textContent.includes('该版本要求'));
+   const task=await p.evaluate(()=>document.querySelector('.task-panel-detail').textContent);assert.match(task,/要求版本 1/);assert.match(task,/该版本要求：核对这一次活动对应的原始要求/);assert.match(task,/与当时活动分别核对/);checks.push('活动绑定原任务v1；当前v2不替换原要求；原任务面板按需读取');
++  await click('.task-back');await wait(()=>document.querySelector('.task-panel-list:not([hidden])'));await click('#task-row-'+f.b.taskId);await wait(()=>document.querySelector('.task-panel-detail')?.textContent.includes('当前技术身份'));assert.equal(await p.evaluate(()=>document.querySelectorAll('[aria-label="活动关联的准确记录"]').length),0);checks.push('离开原关联后切换其他任务不残留旧版本说明');
+   await click('[aria-label="关闭任务总览"]');await wait(()=>!document.querySelector('.task-dialog[open]'));assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('[data-tool-id=activity-call-0] button')),true);
+   await click('[data-tool-id=activity-call-1] button');await wait(()=>document.querySelector('.activity-reader')?.textContent.includes('查看任务与版本'));await click('.activity-reader-links button');await wait(()=>document.querySelector('.task-dialog[open] .task-notice')?.textContent.includes('该版本要求'));
+   assert.equal(await p.evaluate(`document.querySelector('.task-panel-detail').textContent.includes(${JSON.stringify(f.b.taskId)})`),true);await click('[aria-label="关闭任务总览"]');checks.push('同名第二任务准确定位，关闭返回原活动按钮焦点');

@@ -1,0 +1,17 @@
+{
+  "tool": "built-in image_gen",
+  "mode": "edit / palette transfer",
+  "references": [
+    {
+      "role": "primary edit target: D hairstyle and character",
+      "path": "D-character-reference.png"
+    },
+    {
+      "role": "palette and background reference: A",
+      "path": "A-palette-reference.png"
+    }
+  ],
+  "prompt": "Use case: logo-brand, identity-preserve and palette transfer edit.\nAsset: ONE new refined Homer application icon, square 1024 x 1024.\nInput image 1 is the PRIMARY EDIT TARGET, the epic woodcut Odysseus portrait: preserve this exact character's flowing windswept hairstyle, swept-back loose curling locks, forehead headband, stronger three-quarter face, expressive alert eye, free-spirited mature seafarer personality, sculpted windswept beard, dynamic red shoulder cloak, and compact portrait arrangement. The user specifically prefers this hair and overall character style. Do not make the hair a stiff ornamental row of curls or copy the static profile from image 2.\nInput image 2 is ONLY the COLOR PALETTE AND TILE BACKGROUND reference, the Aegean fresco: borrow its vivid saturated Aegean ultramarine tile background, warm plaster-ivory skin, deep near-black/navy hair, and burnt red-ochre cloak and headband. The user finds these colors more eye-catching.\nPrimary edit: combine image 1's free windswept character and bold literary woodcut form with image 2's compelling blue/orange/ivory color system. Replace the primary target's ivory background with the same vivid ultramarine as reference 2. Keep the face warm plaster ivory, hair and beard deep ink navy (clearly darker than the blue field), cloak warm vermilion/red ochre, forehead headband matching warm red ochre. Add a restrained consistent warm-ivory outer contour wherever necessary to clearly separate the dark swept hair from the ultramarine field, as in reference 2. Preserve the characteristic windblown silhouette and a little of the strong angular woodcut face shadows from image 1, but simplify scratchy hatching and tiny stray strands into fewer purposeful larger cuts. Keep the expression intelligent, adventurous, calm and unconfined, not aggressive or saintly.\nComposition: rounded-square tile fills about 90 percent of canvas; portrait dominates, retains the primary target's dynamic forward gaze and swept-back hair. Only one broad simple ivory/blue sea-wave curl near the low edge integrated with the cloak, subordinate to the head, suggesting the Odyssey's voyage. No other scenery or objects.\nStyle: sophisticated flat graphic identity with a slight mineral-pigment / printed grain inside the tile only, strong shapes and controlled linework, not glossy 3D, not photoreal. Very recognizable and eye-catching at Dock scale, ancient Mediterranean character expressed in a contemporary emblem. Keep careful negative space and strong figure-ground contrast.\nTransparency: genuine transparent pixels outside the rounded tile. Clean geometric outer tile boundary without distressed edges, colored debris, grain, glow or stray pixels outside it.\nAvoid: hat or crown, armor, added gold ornament, halo, lightning, trident, Greek-key perimeter, additional props, extra people, lettering, words, watermark, labels, multiple options or a presentation board. This is one fused refinement, not a collage of the two references.",
+  "adopted": true,
+  "adoptedAt": "2026-10-30"
+}

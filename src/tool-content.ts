@@ -1,6 +1,7 @@
 // Authorized call history, never telemetry. Only sanitized, bounded JSON leaves
 // the execution boundary. Limits apply independently to input and output.
 import {isProxy} from 'node:util/types';
+import {isCuaTool} from './desktop-cua.js';
 export const TOOL_CONTENT_LIMITS={bytes:32*1024,stringBytes:16*1024,depth:8,nodes:512} as const;
 type JsonValue=null|boolean|number|string|JsonValue[]|{[key:string]:JsonValue};
 export type ToolValue={state:'recorded'|'truncated';value:JsonValue;redacted?:true}|{state:'not-recorded'|'pending'|'hidden';reason?:'non-json'|'binary';redacted?:never};
@@ -92,7 +93,9 @@ export function nativeToolContent(item:Record<string,unknown>,completed:boolean)
  let input:unknown,output:unknown;
  switch(item.type){
   case 'commandExecution':input=pick(item,['command','cwd']);output=Object.hasOwn(item,'aggregatedOutput')?{output:item.aggregatedOutput,...pick(item,['exitCode'])}:pick(item,['exitCode']);break;
-  case 'mcpToolCall':input=item.arguments;output=item.error!=null?{...pick(item,['result']),error:item.error}:item.result;break;
+  case 'mcpToolCall':
+   if(item.server==='homer_interactions'&&(item.tool==='generate_image'||item.tool==='generate_video'||isCuaTool(item.tool)))break;
+   input=item.arguments;output=item.error!=null?{...pick(item,['result']),error:item.error}:item.result;break;
   case 'dynamicToolCall':input=item.arguments;output=item.contentItems;break;
   case 'fileChange':input=pick(item,['changes']);break;
   case 'webSearch':input=pick(item,['query','action']);output=item.results;break;

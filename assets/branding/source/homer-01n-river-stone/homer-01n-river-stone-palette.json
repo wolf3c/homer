@@ -1,0 +1,453 @@
+{
+  "schemaVersion": 1,
+  "recordedDate": "2026-10-20",
+  "selection": {
+    "id": "01N",
+    "name": "河石灰",
+    "status": "user-selected direction; archive only; production resource not switched",
+    "file": "homer-01n-river-stone-transparent-original.png",
+    "sha256": "96d5c2e4cb68bdf0ea0b3df3ae3b51ea5b2d1c7f41d7b437d5d289b56488f152",
+    "bytes": 982669,
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "alphaExtrema": [
+      0,
+      255
+    ],
+    "colorSpaceAssumption": "PNG has no ICC/sRGB/gamma metadata; decoded 8-bit RGB treated as sRGB for analysis, no display calibration",
+    "originalScratchPath": ".codex/scratch/hippo-logo-design-review/iteration-02-natural-tones/originals/homer-01n-river-stone-transparent-original.png"
+  },
+  "generation": {
+    "tool": "image_gen__imagegen",
+    "output": "exec-4f405887-af9c-4358-b5ea-63412a61e7a6.png",
+    "transparentBackgroundRequested": true,
+    "reference": "Original 01 quiet-hello concept PNG; not an official hippo photo",
+    "promptIntent": {
+      "body": "#85807A",
+      "muzzle": "#B4AAA3",
+      "innerEar": "#B8A29A",
+      "features": "#262B30"
+    }
+  },
+  "samplingMethod": {
+    "coordinateSystem": "original image pixels, top-left origin, half-open boxes",
+    "alphaMinimum": 253,
+    "reason": "solid interiors are natively mostly alpha 254; 255-only would discard them",
+    "edges": "manually selected interior ROIs, away from silhouette antialiasing and region boundaries",
+    "shading": "discard outside within-region luminance 10th/90th percentile bounds; inclusive at ties",
+    "representative": "nearest actually observed retained RGB to rounded per-channel medians; frequency then RGB tiebreak",
+    "limits": "not a unique flat fill; mild gradients/texture remain; encoded RGB is uncomposited; no claim of biological color standard"
+  },
+  "observedSamples": {
+    "body": {
+      "label": "灰褐主体",
+      "boxes": [
+        [
+          520,
+          300,
+          730,
+          400
+        ]
+      ],
+      "promptHex": "#85807A",
+      "roiPixels": 21000,
+      "nearOpaquePixels": 21000,
+      "retainedPixels": 17916,
+      "roiAlphaCounts": {
+        "254": 21000
+      },
+      "trimLuminanceBounds": [
+        0.20196098470884694,
+        0.2082443515775334
+      ],
+      "trimmedMedianRGB": [
+        131,
+        124,
+        118
+      ],
+      "rgb": [
+        131,
+        124,
+        118
+      ],
+      "hex": "#837C76",
+      "retainedRGBMin": [
+        129,
+        123,
+        116
+      ],
+      "retainedRGBMax": [
+        132,
+        125,
+        119
+      ],
+      "representativeCoordinate": [
+        532,
+        300
+      ]
+    },
+    "muzzle": {
+      "label": "暖灰鼻吻",
+      "boxes": [
+        [
+          525,
+          650,
+          725,
+          950
+        ]
+      ],
+      "promptHex": "#B4AAA3",
+      "roiPixels": 60000,
+      "nearOpaquePixels": 60000,
+      "retainedPixels": 49073,
+      "roiAlphaCounts": {
+        "253": 367,
+        "254": 59633
+      },
+      "trimLuminanceBounds": [
+        0.38843866579565167,
+        0.3960561378674806
+      ],
+      "trimmedMedianRGB": [
+        178,
+        166,
+        158
+      ],
+      "rgb": [
+        178,
+        166,
+        158
+      ],
+      "hex": "#B2A69E",
+      "retainedRGBMin": [
+        176,
+        165,
+        156
+      ],
+      "retainedRGBMax": [
+        179,
+        167,
+        159
+      ],
+      "representativeCoordinate": [
+        525,
+        650
+      ]
+    },
+    "innerEar": {
+      "label": "局部灰粉内耳",
+      "boxes": [
+        [
+          285,
+          215,
+          335,
+          265
+        ],
+        [
+          920,
+          215,
+          970,
+          265
+        ]
+      ],
+      "promptHex": "#B8A29A",
+      "roiPixels": 5000,
+      "nearOpaquePixels": 5000,
+      "retainedPixels": 4121,
+      "roiAlphaCounts": {
+        "254": 5000
+      },
+      "trimLuminanceBounds": [
+        0.34620513617077786,
+        0.35524566138198693
+      ],
+      "trimmedMedianRGB": [
+        179,
+        155,
+        145
+      ],
+      "rgb": [
+        179,
+        155,
+        145
+      ],
+      "hex": "#B39B91",
+      "retainedRGBMin": [
+        178,
+        154,
+        143
+      ],
+      "retainedRGBMax": [
+        181,
+        156,
+        147
+      ],
+      "representativeCoordinate": [
+        305,
+        215
+      ]
+    },
+    "features": {
+      "label": "深色眼鼻",
+      "boxes": [
+        [
+          415,
+          430,
+          445,
+          460
+        ],
+        [
+          795,
+          690,
+          835,
+          730
+        ]
+      ],
+      "promptHex": "#262B30",
+      "roiPixels": 2500,
+      "nearOpaquePixels": 2500,
+      "retainedPixels": 2262,
+      "roiAlphaCounts": {
+        "253": 134,
+        "254": 2366
+      },
+      "trimLuminanceBounds": [
+        0.02590763818618506,
+        0.026978707946689908
+      ],
+      "trimmedMedianRGB": [
+        43,
+        46,
+        50
+      ],
+      "rgb": [
+        43,
+        46,
+        50
+      ],
+      "hex": "#2B2E32",
+      "retainedRGBMin": [
+        41,
+        45,
+        48
+      ],
+      "retainedRGBMax": [
+        43,
+        46,
+        51
+      ],
+      "representativeCoordinate": [
+        420,
+        430
+      ]
+    },
+    "muzzleOutline": {
+      "label": "吻部下缘主体灰，非独立深描边",
+      "boxes": [
+        [
+          550,
+          1120,
+          700,
+          1128
+        ]
+      ],
+      "promptHex": "#85807A",
+      "roiPixels": 1200,
+      "nearOpaquePixels": 1200,
+      "retainedPixels": 1002,
+      "roiAlphaCounts": {
+        "253": 1065,
+        "254": 135
+      },
+      "trimLuminanceBounds": [
+        0.19902698353027828,
+        0.20355805529957005
+      ],
+      "trimmedMedianRGB": [
+        131,
+        123,
+        116
+      ],
+      "rgb": [
+        131,
+        123,
+        116
+      ],
+      "hex": "#837B74",
+      "retainedRGBMin": [
+        128,
+        122,
+        115
+      ],
+      "retainedRGBMax": [
+        132,
+        123,
+        117
+      ],
+      "representativeCoordinate": [
+        556,
+        1120
+      ]
+    }
+  },
+  "uiReference": {
+    "status": "recommendations only; no CSS/token changes",
+    "source": "ui/homer-styles.css :root in archive worktree; not live UI evidence",
+    "cssSha256AtArchive": "fa9dc54d108d594927d155d6191ee433c739d3357ba45a772dd2fd89c9e385fa",
+    "designGuidance": "maintenance ui/DESIGN.md read-only; warm-gray direction retained, no design-file edit",
+    "colors": {
+      "canvas": {
+        "hex": "#F6F5F2",
+        "origin": "existing --canvas"
+      },
+      "surface": {
+        "hex": "#FFFFFF",
+        "origin": "existing --surface"
+      },
+      "softSurface": {
+        "hex": "#EEECE8",
+        "origin": "existing --soft"
+      },
+      "text": {
+        "hex": "#292825",
+        "origin": "existing --ink"
+      },
+      "mutedText": {
+        "hex": "#67645F",
+        "origin": "existing --muted"
+      },
+      "decorativeLine": {
+        "hex": "#DEDBD5",
+        "origin": "existing --line; not a sole control boundary"
+      },
+      "brandInkCandidate": {
+        "hex": "#69635E",
+        "origin": "observed body * 0.8 in encoded sRGB; future limited accent"
+      },
+      "controlBoundaryCandidate": {
+        "hex": "#837C76",
+        "origin": "observed body; future control edge candidate"
+      }
+    },
+    "brandInkMix": "round(observed body RGB channel * 0.8); 20% black in encoded sRGB"
+  },
+  "contrast": {
+    "method": "sRGB to linear: c<=0.04045 ? c/12.92 : ((c+0.055)/1.055)^2.4; L=0.2126R+0.7152G+0.0722B; (Lmax+0.05)/(Lmin+0.05)",
+    "assumptions": "opaque solid foreground/background, no opacity/blending/gradient; not actual UI validation or full WCAG conformance",
+    "pairs": [
+      {
+        "foregroundRole": "text",
+        "foreground": "#292825",
+        "backgroundRole": "surface",
+        "background": "#FFFFFF",
+        "ratio": 14.741866,
+        "normalTextAA4_5": true,
+        "largeTextAA3": true,
+        "nonTextContrast3": true
+      },
+      {
+        "foregroundRole": "text",
+        "foreground": "#292825",
+        "backgroundRole": "canvas",
+        "background": "#F6F5F2",
+        "ratio": 13.521583,
+        "normalTextAA4_5": true,
+        "largeTextAA3": true,
+        "nonTextContrast3": true
+      },
+      {
+        "foregroundRole": "mutedText",
+        "foreground": "#67645F",
+        "backgroundRole": "surface",
+        "background": "#FFFFFF",
+        "ratio": 5.89089,
+        "normalTextAA4_5": true,
+        "largeTextAA3": true,
+        "nonTextContrast3": true
+      },
+      {
+        "foregroundRole": "mutedText",
+        "foreground": "#67645F",
+        "backgroundRole": "canvas",
+        "background": "#F6F5F2",
+        "ratio": 5.403262,
+        "normalTextAA4_5": true,
+        "largeTextAA3": true,
+        "nonTextContrast3": true
+      },
+      {
+        "foregroundRole": "brandInkCandidate",
+        "foreground": "#69635E",
+        "backgroundRole": "surface",
+        "background": "#FFFFFF",
+        "ratio": 5.920466,
+        "normalTextAA4_5": true,
+        "largeTextAA3": true,
+        "nonTextContrast3": true
+      },
+      {
+        "foregroundRole": "brandInkCandidate",
+        "foreground": "#69635E",
+        "backgroundRole": "canvas",
+        "background": "#F6F5F2",
+        "ratio": 5.43039,
+        "normalTextAA4_5": true,
+        "largeTextAA3": true,
+        "nonTextContrast3": true
+      },
+      {
+        "foregroundRole": "controlBoundaryCandidate",
+        "foreground": "#837C76",
+        "backgroundRole": "surface",
+        "background": "#FFFFFF",
+        "ratio": 4.109814,
+        "normalTextAA4_5": false,
+        "largeTextAA3": true,
+        "nonTextContrast3": true
+      },
+      {
+        "foregroundRole": "controlBoundaryCandidate",
+        "foreground": "#837C76",
+        "backgroundRole": "canvas",
+        "background": "#F6F5F2",
+        "ratio": 3.769617,
+        "normalTextAA4_5": false,
+        "largeTextAA3": true,
+        "nonTextContrast3": true
+      },
+      {
+        "foregroundRole": "decorativeLine",
+        "foreground": "#DEDBD5",
+        "backgroundRole": "surface",
+        "background": "#FFFFFF",
+        "ratio": 1.381638,
+        "normalTextAA4_5": false,
+        "largeTextAA3": false,
+        "nonTextContrast3": false
+      },
+      {
+        "foregroundRole": "decorativeLine",
+        "foreground": "#DEDBD5",
+        "backgroundRole": "canvas",
+        "background": "#F6F5F2",
+        "ratio": 1.267271,
+        "normalTextAA4_5": false,
+        "largeTextAA3": false,
+        "nonTextContrast3": false
+      },
+      {
+        "foregroundRole": "whiteLabel",
+        "foreground": "#FFFFFF",
+        "backgroundRole": "brandInkCandidate",
+        "background": "#69635E",
+        "ratio": 5.920466,
+        "normalTextAA4_5": true
+      }
+    ]
+  },
+  "naturalReferences": [
+    "https://denverzoo.org/animals/river-hippopotamus/",
+    "https://www.pretoriazoo.org/animals/hippopotamus/"
+  ]
+}

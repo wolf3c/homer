@@ -29,7 +29,7 @@ f.bridge.artifact=async id=>{const file=files.find(x=>x.id===id);if(!file)throw 
 f.bridge.media.upload=async input=>{uploads.push({threadId:input.threadId,requestId:input.requestId,uploadId:input.uploadId});if(holdUpload)await new Promise(done=>{releaseUpload=done;});if(failUpload)throw Error('synthetic_upload_rejected');return {assetId:'asset-'+input.uploadId,revision:1,filename:input.filename,kind:'image',state:'ready',mime:'image/png',size:files[4].bytes.length,error:null};};
 f.bridge.media.discard=async input=>{discards.push(input);if(failDiscard)throw Error('synthetic_discard_rejected');return {state:'removed'};};
 f.bridge.submit=async input=>{attempts.push(structuredClone(input));throw Error('synthetic_unknown_receipt');};
-for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,features:{...value.features,draftUpload:true},artifacts:[...(value.artifacts??[]),...files.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic annotations'}))]};};}
+{const owner=f.bridge.history;const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,features:{...value.features,draftUpload:true},artifacts:[...(value.artifacts??[]),...files.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic annotations'}))]};};}
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 try{
  chrome=await isolatedChrome(destination);

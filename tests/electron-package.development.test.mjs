@@ -1,13 +1,13 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 test('builder refuses missing website origins before preparing any source or payload',{
  skip:process.version!=='v22.22.0'||process.platform!=='darwin'||process.arch!=='arm64',
-},()=>{
+},t=>{
  const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});
- const root=mkdtempSync(join(parent,'account-'));
+ const root=mkdtempSync(join(parent,'account-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  for(const args of [[],['--website-origin','https://super-tree.com'],['--gateway-origin','https://models.super-tree.com']]){
   assert.throws(()=>execFileSync(process.execPath,['scripts/build-desktop.mjs','--scratch',join(root,'output'),...args],{stdio:'pipe'}),
    error=>error.stderr.toString().includes('desktop_account_origins_required'));
@@ -16,9 +16,9 @@ test('builder refuses missing website origins before preparing any source or pay
 });
 test('builder rejects a maintenance toolchain that differs from its committed lock',{
  skip:process.version!=='v22.22.0'||process.platform!=='darwin'||process.arch!=='arm64',
-},()=>{
+},t=>{
  const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});
- const root=mkdtempSync(join(parent,'toolchain-')),modules=join(root,'maintenance/node_modules/typescript');mkdirSync(modules,{recursive:true});
+ const root=mkdtempSync(join(parent,'toolchain-')),modules=join(root,'maintenance/node_modules/typescript');t.after(()=>rmSync(root,{recursive:true,force:true}));mkdirSync(modules,{recursive:true});
  writeFileSync(join(modules,'package.json'),JSON.stringify({name:'typescript',version:'0.0.0'}));
  const sha=execFileSync('/usr/bin/git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
  assert.throws(()=>execFileSync(process.execPath,['scripts/build-desktop.mjs','--source-sha',sha,'--maintenance',join(root,'maintenance'),'--scratch',join(root,'output'),'--prepare-candidate','--website-origin','https://super-tree.com','--gateway-origin','https://models.super-tree.com'],{stdio:'pipe'}),
@@ -46,7 +46,7 @@ test('packaged UI includes the reviewed annotation runtime and full required not
  assert.ok(notices.includes('You may not use the Software to provide a product or service that competes'));
 });
 
- test('formal packaging requires a signed committed candidate and keeps the local mode',async()=>{
+ test('formal packaging requires a signed committed candidate and keeps the local mode',async(t)=>{
  const {default:forgeConfig}=await import('../packaging/electron/forge.config.mjs');
  const base={payload:'/synthetic/payload',metadata:{version:'0.1.1',build:1,publishable:true},icon:'/synthetic/icon'};
  const local=forgeConfig(base);assert.equal(local.packagerConfig.osxSign.identity,'-');
@@ -57,7 +57,7 @@ test('packaged UI includes the reviewed annotation runtime and full required not
  const formal=forgeConfig({...base,metadata,distribution});assert.equal(formal.packagerConfig.osxSign.identity,distribution.identity);
  assert.equal(formal.packagerConfig.osxSign.optionsForFile('/synthetic').hardenedRuntime,true);
  assert.equal(formal.packagerConfig.osxSign.ignore('/app/Contents/Resources/runtime/codex'),true);
- const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const dir=mkdtempSync(join(parent,'signing-'));
+ const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});const dir=mkdtempSync(join(parent,'signing-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const font=join(dir,'font.ttf');writeFileSync(font,Buffer.from([0,1,0,0]));assert.equal(formal.packagerConfig.osxSign.ignore(font),true);
  assert.equal(formal.packagerConfig.osxSign.ignore(process.execPath),false);
  });

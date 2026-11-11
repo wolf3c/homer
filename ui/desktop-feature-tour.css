@@ -1,0 +1,180 @@
+.desktop-feature-tour-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #23201c5c;
+}
+
+@media (prefers-color-scheme: dark) {
+  .desktop-feature-tour-backdrop { background: #0009; }
+}
+
+.desktop-feature-tour {
+  --tour-title-space: 32px;
+  --tour-navigation-space: 24px;
+  --tour-paper: #fffdf9;
+  --tour-ink: #282724;
+  --tour-muted: #69655f;
+  position: fixed;
+  z-index: 101;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(760px, calc(100vw - 24px),
+    calc((100dvh - 24px - var(--tour-title-space) - var(--tour-navigation-space)) * 1200 / 614));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  border-radius: 14px;
+  background: #f1eee7;
+  color: var(--tour-ink);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 14%);
+  -webkit-app-region: no-drag;
+}
+
+.desktop-feature-tour-close {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  color: var(--tour-muted);
+}
+
+.desktop-feature-tour-close:hover {
+  background: var(--tour-paper);
+  color: var(--tour-ink);
+}
+
+.desktop-feature-tour-slide {
+  margin: 0;
+  padding-block: var(--tour-title-space) var(--tour-navigation-space);
+}
+
+.desktop-feature-tour-title {
+  position: absolute;
+  z-index: 1;
+  inset: 12px 64px auto 16px;
+  margin: 0;
+  font-size: clamp(17px, 3vw, 22px);
+  line-height: 1.35;
+  font-weight: 650;
+  text-wrap: balance;
+}
+
+.desktop-feature-tour-concept {
+  position: absolute;
+  top: calc(var(--tour-title-space) + 7px);
+  right: 8px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  color: var(--tour-muted);
+  background: var(--tour-paper);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.desktop-feature-tour-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1200 / 614;
+  mask-image: linear-gradient(to bottom, transparent, black 6px, black calc(100% - 6px), transparent);
+}
+
+.desktop-feature-tour-image[data-motion] {
+  animation: desktop-feature-tour-slide-in 220ms ease-out;
+}
+
+@keyframes desktop-feature-tour-slide-in {
+  from { opacity: .75; transform: translateX(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.desktop-feature-tour-playback {
+  position: absolute;
+  z-index: 2;
+  inset: var(--tour-title-space) 0 0;
+  padding: 0;
+  background: transparent;
+  color: var(--tour-muted);
+}
+
+.desktop-feature-tour-playback:focus-visible { outline-offset: -3px; }
+
+.desktop-feature-tour-playback[data-paused]::after {
+  content: '';
+  position: absolute;
+  left: 19px;
+  bottom: 17px;
+  border-block: 5px solid transparent;
+  border-left: 7px solid currentColor;
+}
+
+.desktop-feature-tour-pages {
+  position: absolute;
+  z-index: 3;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+}
+
+.desktop-feature-tour-pages button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  min-height: 32px;
+  padding: 0;
+  background: transparent;
+}
+
+.desktop-feature-tour-pages button::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 6px;
+  background: var(--tour-muted);
+  opacity: .72;
+}
+
+.desktop-feature-tour-pages button[aria-pressed='true']::before {
+  width: 16px;
+  background: var(--tour-ink);
+  opacity: 1;
+}
+
+.desktop-feature-tour-pages button:hover::before { opacity: 1; }
+
+.desktop-feature-tour-next {
+  position: absolute;
+  z-index: 3;
+  right: 10px;
+  bottom: 6px;
+  min-width: 64px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: var(--tour-ink);
+  color: var(--tour-paper);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.desktop-feature-tour-next:hover { background: #403d37; }
+
+@media (max-width: 540px) {
+  .desktop-feature-tour { --tour-title-space: 58px; --tour-navigation-space: 36px; }
+  .desktop-feature-tour-title { top: 10px; left: 12px; }
+}
+
+@media (pointer: coarse) {
+  .desktop-feature-tour { --tour-navigation-space: 44px; }
+  .desktop-feature-tour button { min-height: 44px; }
+  .desktop-feature-tour-pages button, .desktop-feature-tour-close { width: 44px; }
+}

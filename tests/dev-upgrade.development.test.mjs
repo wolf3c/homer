@@ -21,12 +21,12 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
   const base = mkdtempSync(join(parent, "e2e-"));
   for (const name of ["src", "scripts", "prompts", "assets", "package.json", "package-lock.json", "tsconfig.json"]) if (existsSync(join(root, name))) cpSync(join(root, name), join(base, name), { recursive: true });
   symlinkSync(join(root, "node_modules"), join(base, "node_modules"), "dir");
-  for (const dir of ["home", "runtime", "workspace/materials"]) mkdirSync(join(base, dir), { recursive: true });
-  writeFileSync(join(base, "workspace/materials/meeting.md"), "# Synthetic\n林青：2026-10-20；待确认。");
+  for (const dir of ["home", "runtime", "workspace"]) mkdirSync(join(base, dir), { recursive: true });
+  writeFileSync(join(base, "workspace/meeting.md"), "# Synthetic\n林青：2026-10-20；待确认。");
   writeFileSync(join(base,"src/synthetic-self-development.ts"),'export const syntheticGreeting = "before";\n');
   const binary = join(base, "synthetic-codex.mjs"); cpSync(join(root, "tests/fixtures/dev-upgrade-app-server.mjs"), binary); chmodSync(binary, 0o755);
   const config = join(base, "synthetic.config.json");
-  writeFileSync(config, JSON.stringify({ workspace: "workspace", runtime: "runtime", codexHome: join(base, "home"), codexBin: binary, model: "synthetic-only", effort: "medium", requiresOpenaiAuth: false, timeoutMs: 60000, mainTimeoutMs: 60000, stopGraceMs: 200 }));
+  writeFileSync(config, JSON.stringify({ workspace: "workspace", runtime: "runtime", codexHome: join(base, "home"), nativeCodexHome:join(base,"home"), codexBin: binary, model: "synthetic-only", effort: "medium", requiresOpenaiAuth: false, stopGraceMs: 200 }));
   const reserve=createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
   const url='http://127.0.0.1:'+port,fetch=syntheticUserFetch();
   const approve=async()=>{await buildUntil(async()=>{try{return !!(await(await fetch(url+'/api/update/review')).json())?.hash;}catch{return false;}});const review=await(await fetch(url+'/api/update/review')).json();assert.ok(review.files.length);assert.equal((await fetch(url+'/api/update/approve',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({hash:review.hash})})).status,200);};
@@ -68,7 +68,17 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     writeFileSync(join(base, "home/release-worker"), "1");
     await until(() => active() === 2); assertDead(originalPid); assertDead(workerPid);
     assert.equal(query("SELECT value FROM meta WHERE key='mainThread'")[0].value, thread);
-    const savedRuns = query("SELECT * FROM runs"); assert.equal(savedRuns.length, 1); assert.equal(savedRuns[0].status, "succeeded"); assert.equal(query("SELECT state FROM deliveries WHERE taskId=?",savedRuns[0].taskId)[0]?.state,"recorded");
+    const savedRuns = query("SELECT * FROM runs"); assert.equal(savedRuns.length, 1); assert.equal(savedRuns[0].status, "succeeded");
+    const sent=query(`SELECT m.id,m.requestId,m.text,m.status,o.state,attachments.refsJson
+      FROM conversation_messages m JOIN operations o ON o.id=m.operationKey
+      JOIN conversation_attachments attachments ON attachments.messageId=m.id
+      WHERE m.taskId=? AND m.taskVersion=? AND o.kind='send_user_message'`,savedRuns[0].taskId,savedRuns[0].version);
+    assert.equal(sent.length,1);assert.equal(sent[0].requestId,null);assert.equal(sent[0].text,"synthetic-delivered");
+    assert.equal(sent[0].status,"completed");assert.equal(sent[0].state,"confirmed");
+    const refs=JSON.parse(sent[0].refsJson);assert.equal(refs.length,1);
+    const [{assetId,revision}]=refs;assert.match(assetId,/^asset-[a-f0-9-]{36}$/);
+    assert.equal(query("SELECT 1 FROM media_pins WHERE assetId=? AND revision=? AND scope=?",assetId,revision,"message:"+sent[0].id).length,1);
+    assert.equal(readFileSync(join(base,"runtime/media",assetId),"utf8"),"# Synthetic result\n林青：2026-10-20；待确认。");
     const savedRequests = query("SELECT * FROM requests");
     // A main round also blocks handoff; changes within debounce coalesce.
     send("hold-main"); await until(() => existsSync(join(base, "home/main-running")));
@@ -117,8 +127,22 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     writeFileSync(manifest, originalManifest);
     const tools = join(base, "src/tools.ts"), originalTools = readFileSync(tools, "utf8");
     writeFileSync(tools, originalTools+'\nMAIN_TOOLS[0]!.description += " Synthetic tool migration probe.";\n');await approve();
-    await buildUntil(() => notices("main_tools_migration_required").length > 0);
+    const toolRejected="候选未生效：main_tools_migration_required";
+    await buildUntil(() => notices(toolRejected).length === 1);
     writeFileSync(tools, originalTools);
+    const recursiveTools = join(base, "src/recursive-tools.ts"), originalRecursiveTools = readFileSync(recursiveTools, "utf8");
+    const changedTools = [
+      originalRecursiveTools.replace('Send a message to the existing Worker conversation.', 'Send a synthetic message to the existing Worker conversation.'),
+      originalRecursiveTools.replace("immediate: {type: 'boolean'}", "immediate: {type: 'string'}"),
+    ];
+    const beforeToolChanges = lockPid();
+    for (const [index, changed] of changedTools.entries()) {
+      assert.notEqual(changed, originalRecursiveTools);
+      writeFileSync(recursiveTools, changed);await approve();
+      await buildUntil(() => notices(toolRejected).length === index + 2);
+      assert.equal(lockPid(), beforeToolChanges, "tool changes must be rejected before host handoff");
+    }
+    writeFileSync(recursiveTools, originalRecursiveTools);
     const storePath = join(base, "src/store.ts"), originalStore = readFileSync(storePath, "utf8");
     appendFileSync(storePath, "\n// schema change guard\n");
     await buildUntil(() => notices("dev_schema_change_requires_review").length > 0);
@@ -137,9 +161,9 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     const engineEvents = readFileSync(join(base, "home/process-events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
     for (const e of engineEvents) assertDead(e.pid);
     assert.equal(query("PRAGMA integrity_check")[0].integrity_check, "ok");
-    writeFileSync(join(base, "verified-checks.json"), JSON.stringify({ verified: true, synthetic: true, realAccount: false, realModel: false, workerSourceModification: true, workerProjectTestExit:0, offline: true, realProcesses: true, handoffs: active() - 1, rollback: true, threadPreserved: true, runsPreserved: true, exactlyOnceInputCount: 8, engineProcessesCleaned: engineEvents.length, checks: ["busy-worker", "busy-main", "delivery-before-switch", "immutable-build", "failed-build", "failed-start-rollback", "input-handoff", "same-thread", "same-business-data", "dependencies-guard", "tools-guard", "schema-guard", "watch-exclusions", "exit-cleanup"] }, null, 2));
+    writeFileSync(join(base, "verified-checks.json"), JSON.stringify({ verified: true, synthetic: true, realAccount: false, realModel: false, workerSourceModification: true, workerProjectTestExit:0, offline: true, realProcesses: true, handoffs: active() - 1, rollback: true, threadPreserved: true, runsPreserved: true, exactlyOnceInputCount: 8, engineProcessesCleaned: engineEvents.length, checks: ["busy-worker", "busy-main", "message-attachment-before-switch", "immutable-build", "failed-build", "failed-start-rollback", "input-handoff", "same-thread", "same-business-data", "dependencies-guard", "tools-guard", "schema-guard", "watch-exclusions", "exit-cleanup"] }, null, 2));
   } finally {
-    if(!existsSync(join(base,'verified-checks.json')))t.diagnostic(JSON.stringify({fixture:'dev-upgrade',buildStages:fixtureBuildEvidence(base)}));
+    if(!existsSync(join(base,'verified-checks.json')))t.diagnostic(JSON.stringify({fixture:'dev-upgrade',buildStages:fixtureBuildEvidence(base),hostErrors:events.flatMap(event=>String(event.text??'').match(/(?:启动／运行失败：|检查未通过：)[a-z_]+/g)??[])}));
     if (!exited) { send("/quit"); await until(() => exited, 5000).catch(() => child.kill("SIGTERM")); }
     if (errors.length) writeFileSync(join(base, "test-stderr.txt"), errors.join(""));
   }

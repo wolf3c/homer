@@ -1,11 +1,18 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {synthesizeVoice,audioPcm,transcribeAudio,pcmWav} from '../src/media-audio.js';
-test('ILINK-AUDIO-01 local TTS creates real SILK, decoder creates playable WAV and local ASR hears unique words',async()=>{
- const voice=await synthesizeVoice('The secret animal is a purple otter. The number is seven four two.');
- assert.match(voice.bytes.subarray(0,16).toString(),/SILK_V3/);assert.ok(voice.duration>1000);
- const pcm=await audioPcm(voice.bytes,'audio/silk');assert.equal(pcmWav(pcm).subarray(0,4).toString(),'RIFF');
- const recognized=await transcribeAudio(pcm);assert.match(recognized.text.toLowerCase(),/purple/);assert.match(recognized.text.toLowerCase(),/seven|742|7/);
+import {readFileSync} from 'node:fs';
+import {audioPcm,transcribeAudio,pcmWav} from '../src/media-audio.js';
+const legacySilk=readFileSync(new URL('./fixtures/synthetic-legacy-voice.silk',import.meta.url));
+test('legacy SILK decodes to non-silent WAV without a synthesizer',async()=>{
+ const pcm=await audioPcm(legacySilk,'audio/silk');
+ assert.ok(pcm.length>32000&&pcm.some(byte=>byte!==0));
+ const wav=pcmWav(pcm);
+ assert.equal(wav.subarray(0,4).toString(),'RIFF');
+ assert.equal(wav.readUInt32LE(40),pcm.length);
+});
+test('local ASR hears unique words from an existing SILK attachment',async()=>{
+ const recognized=await transcribeAudio(await audioPcm(legacySilk,'audio/silk'));
+ assert.match(recognized.text.toLowerCase(),/purple/);assert.match(recognized.text.toLowerCase(),/seven|742|7/);
 });
 test('ILINK-AUDIO-02 unknown raw audio is explicitly unsupported and cannot be presented as understood',async()=>{
  await assert.rejects(audioPcm(Buffer.alloc(1024),'application/octet-stream'),/media_audio_encoding_unsupported/);

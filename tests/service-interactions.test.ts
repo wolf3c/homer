@@ -1,3 +1,4 @@
+import {callHostMcp} from './fixtures/host-mcp-call.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -7,6 +8,7 @@ import { Homer, type Message } from "../src/service.js";
 import type { Config } from "../src/config.js";
 import type { EngineOptions, ToolCall, TurnResult } from "../src/engine.js";
 import { loadPrompts } from "../src/prompts.js";
+import { homerWebBridge } from "../src/web-homer.js";
 
 async function until(check: () => boolean) {
   const end = Date.now() + 4000;
@@ -17,14 +19,14 @@ type InteractionScenario = {
   skipDecision?: boolean;
   skipDelivery?: boolean;
   handoff?: boolean;
+  namedTask?: boolean;
 };
 async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", workers = 1, scenario: InteractionScenario = {}) {
   const root = resolve(".codex/scratch/worker-interactions"); mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(root + "/svc-");
   const runtime = join(dir, "rt"), workspace = join(dir, "ws");
-  mkdirSync(runtime); mkdirSync(join(workspace, "materials"), { recursive: true });
-  writeFileSync(join(workspace, "materials", "input.md"), "# 合成材料\n已知格式 Markdown；负责人待确认。\n");
-  const config: Config = { runtime, workspace, codexHome: dir, codexBin: "/usr/bin/false", model: "mock", effort: "medium", requiresOpenaiAuth: false, timeoutMs: 150, mainTimeoutMs: 2000, stopGraceMs: 50 };
+  mkdirSync(runtime); mkdirSync(workspace);
+  const config: Config = { runtime, workspace, codexHome:join(dir,"home"),nativeCodexHome:join(dir,"home"), codexBin: "/usr/bin/false", model: "mock", effort: "medium", requiresOpenaiAuth: false, stopGraceMs: 50 };
   const messages: Message[] = [], resumes: string[] = [], engines: Fake[] = [], mainInputs:string[]=[];
   const handoffs: string[] = [], interactionTurns: string[] = [], pausedWorkers: (() => void)[] = [];
   const releaseWorkers = () => { for (const release of pausedWorkers.splice(0)) release(); };
@@ -34,7 +36,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
     threadId: string; turnId?: string; worker: boolean; closed = false;
     constructor(readonly options: EngineOptions, readonly handler: (call: ToolCall) => Promise<unknown>) {
       super(); this.threadId = options.threadId ?? "thread-" + ++sequence;
-      this.worker = options.tools.some(tool => tool.name === "ask_main"); engines.push(this);
+      this.worker = options.role === "worker"; engines.push(this);
     }
     async start() { return this.threadId; }
     async call(tool: string, args: unknown): Promise<any> {
@@ -46,26 +48,25 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
     async turn(text: string, hooks?: { onStarted?: (id: string) => void }): Promise<TurnResult> {
       this.turnId = "turn-" + ++sequence; hooks?.onStarted?.(this.turnId);
       if (this.worker) {
-        await this.call("read_material", {});
         let reply: any;
         if (mode === "approve" || mode === "deny") {
           const requestId = "native-" + this.threadId;
-          reply = await this.options.onInteraction!({ requestId, method: "item/permissions/requestApproval", threadId: this.threadId, turnId: this.turnId, itemId: "perm-1", kind: "authorization", details: { threadId: this.threadId, turnId: this.turnId, itemId: "perm-1", cwd: this.options.cwd, permissions: { network: { enabled: true }, fileSystem: { read: [this.options.cwd, resolve(this.options.cwd, "..")], write: null } } } });
+          reply = await this.options.onInteraction!({ requestId, method: "item/permissions/requestApproval", threadId: this.threadId, turnId: this.turnId, itemId: "perm-1", kind: "authorization", details: { threadId: this.threadId, turnId: this.turnId, itemId: "perm-1", cwd: this.options.cwd, permissions: { network: null, fileSystem: { read: [this.options.cwd], write: null } } } });
           if (!scenario.skipDelivery) this.emit("interactionDelivered", requestId);
         } else reply = await this.call("ask_main", { question: `合成问题 ${this.threadId}：采用哪个格式？` });
         if (scenario.skipDelivery) await new Promise<void>(done => pausedWorkers.push(done));
         if (this.closed || reply.status === "cancelled" || reply.status === "expired") return { status: "interrupted", text: "stopped" };
         resumes.push(this.threadId);
-        await this.call("write_markdown", { filename: "answer.md", content: `# 合成成果\n${reply.answer ?? reply.decision?.action ?? reply.status}` });
+        writeFileSync(join(this.options.cwd, "answer-" + this.threadId + ".md"), `# 合成成果\n${reply.answer ?? reply.decision?.action ?? reply.status}`);
         return { status: "completed", text: "Written" };
       }
       mainInputs.push(text);
       if (text === "dispatch") {
-        for (let i = 0; i < workers; i++) { const task = await this.call("task_create", { title: "合成任务" + i, goal: "按用户要求生成 Markdown" }); await this.call("worker_open", { taskId: task.taskId, message: "按用户要求生成 Markdown" }); }
+        for (let i = 0; i < workers; i++) await this.call("worker_open", { message: "按用户要求生成 Markdown " + i, ...(scenario.namedTask ? {title:"整理 Markdown " + i} : {}) });
       } else if (app["mainContext"]?.interactionId) {
         const id = app["mainContext"]!.interactionId!;
         interactionTurns.push(id);
-        const item = await this.call("inspect_interaction", { interactionId: id });
+        const item = await callHostMcp(this.options, "inspect_interaction", { interactionId: id });
         if (scenario.handoff) {
           const path = join(workspace, "handoff-" + id + ".json");
           writeFileSync(path, JSON.stringify({ source: "synthetic", format: "Markdown" }));
@@ -73,24 +74,31 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
           this.emit("nativeProcess", { threadId: this.threadId, turnId: this.turnId, itemId: "handoff-" + id, category: "fileChange", status: "completed", completed: true, fileCount: 1 });
         }
         if (mode === "user" || mode === "hang") {
-          await this.call("escalate_interaction", { interactionId: id, question: `请指定 ${item.runId} 的格式`, reason: "合成歧义" });
+          await callHostMcp(this.options, "escalate_interaction", { interactionId: id, question: `请指定 ${item.runId} 的格式`, reason: "合成歧义" });
           return scenario.reply ?? { status: "completed", text: `请指定 ${item.runId} 的格式。` };
         }
         if (scenario.skipDecision) return scenario.reply ?? { status: "completed", text: "已处理" };
         if (mode === "approve") {
-          for (const permissions of [{ network: { enabled: true } }, { fileSystem: { read: [resolve(item.details.params.cwd, "..")] } }]) {
-            await assert.rejects(() => this.call("respond_interaction", { interactionId: id, action: "approve", reason: "Synthetic overbroad request", answer: null, answers: null, permissions }), /interaction_capability_denied/);
-            assert.equal(app.interactions.inspect(id).state, "pending_main");
-          }
+          await assert.rejects(callHostMcp(this.options, "respond_interaction", { interactionId: id, action: "approve", reason: "No user decision" }), /interaction_user_decision_required/);
+          await callHostMcp(this.options, "escalate_interaction", { interactionId: id, question: "确认范围", reason: "需要用户决定" });
+          return {status:"completed",text:"需要用户确认。"};
         }
-        await this.call("respond_interaction", { interactionId: id, action: mode === "approve" ? "approve" : mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.threadId : null, answers: null, permissions: mode === "approve" ? { network: null, fileSystem: { read: [item.details.params.cwd], write: null } } : null });
+        await callHostMcp(this.options, "respond_interaction", { interactionId: id, action: mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.threadId : null, answers: null, permissions: null });
         return scenario.reply ?? { status: "completed", text: "已处理" };
+      } else if (mode === "approve" && text.includes("[用户答复原待答]")) {
+        const id = /interactionId=([^。]+)/.exec(text)![1]!;
+        const item = await callHostMcp(this.options, "inspect_interaction", { interactionId: id });
+        for (const permissions of [{network:{enabled:true}}, {fileSystem:{read:[resolve(item.details.params.cwd,"..")]}}]) {
+          await assert.rejects(callHostMcp(this.options, "respond_interaction", {interactionId:id,action:"approve",reason:"Overbroad",permissions}),/interaction_permission_scope/);
+          assert.equal(app.interactions.inspect(id).state,"pending_user");
+        }
+        await callHostMcp(this.options, "respond_interaction",{interactionId:id,action:"approve",reason:"应用用户的明确许可"});
       } else if (text === "empty-user-reply") {
         return { status: "completed", text: "" };
       } else if (text.startsWith("reply ")) {
         const id = text.slice(6).split(/\s/)[0]!;
-        await this.call("inspect_interaction", { interactionId: id });
-        await this.call("respond_interaction", { interactionId: id, action: "answer", reason: "用户补充", answer: "用户指定格式", answers: null, permissions: null });
+        await callHostMcp(this.options, "inspect_interaction", { interactionId: id });
+        await callHostMcp(this.options, "respond_interaction", { interactionId: id, action: "answer", reason: "用户补充", answer: "用户指定格式", answers: null, permissions: null });
 
       }
       return { status: "completed", text: "已处理" };
@@ -112,17 +120,26 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
   };
 }
 
+async function approveRequested(f:Awaited<ReturnType<typeof fixture>>,count:number){
+  await until(() => f.app.interactions.list().filter(item=>item.state==="pending_user").length===count);
+  const cards=await homerWebBridge(f.app).history!.interactions(0,f.app.webReadEpoch);
+  assert.equal(cards.items.length,count);assert.equal(f.resumes.length,0);
+  for(const [index,card] of cards.items.entries())f.app.submitMessage({requestId:"approval-"+index,interactionId:card.id,text:"允许本次操作"});
+}
+
 // Synthetic regression derived from a completed Worker decision followed by an
 // empty main reply; no production requests, file contents or identifiers.
 for (const mode of ["answer", "approve", "deny"] as const) {
   test(`HMR-INTERACTION-002: delivered ${mode} completes silent collaboration without replaying file writes`, async () => {
     const f = await fixture(mode, 2, { reply: { status: "completed", text: "" }, handoff: true });
     try {
-      await f.app.message("dispatch", "user-task"); await f.app.idle();
+      await f.app.message("dispatch", "user-task");
+      if(mode==="approve")await approveRequested(f,2);
+      await f.app.idle();
       const interactions = f.app.interactions.list();
       assert.equal(interactions.length, 2);
       assert.ok(interactions.every(item => item.state === (mode === "answer" ? "answered" : mode === "approve" ? "approved" : "denied") && item.deliveredAt !== null));
-      assert.equal(f.messages.filter(message => message.type === "reply").length, 1, "internal collaboration does not invent a public reply");
+      assert.equal(f.messages.filter(message => message.type === "reply").length, mode==="approve"?3:1, "only actual user requests get public replies");
       assert.equal(f.resumes.length, 2);
       assert.ok(f.app.store.runs().every(run => run.status === "succeeded"));
       assert.equal(f.handoffs.length, 2);
@@ -190,19 +207,21 @@ test("HMR-INTERACTION-002: ordinary user turns still reject an empty reply", asy
 });
 
 test("HMR-INTERACTION-001: service main answers and original two Workers finish without cross-routing", async () => {
-  const f = await fixture("answer", 2);
+  const f = await fixture("answer", 2, {namedTask:true});
   try {
     await f.app.message("dispatch", "user-task"); await f.app.idle();
     assert.equal(f.resumes.length, 2);
     assert.ok(f.app.store.runs().every(run => run.status === "succeeded"));
-    for (const run of f.app.store.runs()) assert.ok(readFileSync(join(f.app.files.prepareRun(run.taskId, run.id), "answer.md"), "utf8").includes(run.threadId!));
+    for (const run of f.app.store.runs()) assert.ok(readFileSync(join(f.config.workspace, "answer-" + run.threadId + ".md"), "utf8").includes(run.threadId!));
     assert.equal(f.app.interactions.list().length, 2);
     assert.ok(f.app.interactions.list().every(item => item.deliveredAt !== null));
+    assert.deepEqual(f.app.tasks.tasks().map(task=>task.title).sort(),["整理 Markdown 0","整理 Markdown 1"]);
+    assert.deepEqual(f.app.tasks.tasks().map(task=>f.app.tasks.version(task.id,task.headVersion).goal).sort(),["按用户要求生成 Markdown 0","按用户要求生成 Markdown 1"]);
     const mainTools=f.engines.find(engine => !engine.worker)!.options.tools.map(tool=>tool.name);
     assert.ok(mainTools.includes("task_create")&&mainTools.includes("worker_open"));assert.ok(!mainTools.includes("dispatch_work"));
     const prompts = loadPrompts();
-    assert.equal(f.engines.find(engine => !engine.worker)!.options.instructions, prompts.main);
-    assert.ok(f.engines.filter(engine => engine.worker).every(engine => engine.options.instructions === prompts.worker));
+    assert.ok(f.engines.find(engine => !engine.worker)!.options.instructions.startsWith(prompts.main));
+    assert.ok(f.engines.filter(engine => engine.worker).every(engine => engine.options.instructions.startsWith(prompts.worker)));
   } finally { await f.cleanup(); }
 });
 
@@ -210,8 +229,9 @@ test("HMR-INTERACTION-001: user escalation keeps Worker alive beyond timeout and
   const f = await fixture("user", 2);
   try {
     await f.app.message("dispatch", "user-task");
-    await until(() => f.app.interactions.list().filter(item=>item.state==='pending_user').length===2&&f.messages.filter(message=>message.type==='coordination').length===2);
+    await until(() => f.app.interactions.list().filter(item=>item.state==='pending_user').length===2);
     const pending = f.app.interactions.list();
+    assert.deepEqual((await homerWebBridge(f.app).history!.interactions(0,f.app.webReadEpoch)).items.map(card=>card.id).sort(),pending.map(item=>item.id).sort());
     assert.equal(f.app.upgradeStatus().safe, false, "waiting Workers retain ownership and block automatic upgrades");
     await new Promise(done => setTimeout(done, 200));
     assert.ok(f.app.store.runs().every(run => run.status === "running"));
@@ -234,7 +254,9 @@ test("HMR-INTERACTION-001: actual service native approvals and denials return to
   for (const mode of ["approve", "deny"] as const) {
     const f = await fixture(mode);
     try {
-      await f.app.message("dispatch", "user-task"); await f.app.idle();
+      await f.app.message("dispatch", "user-task");
+      if(mode==="approve")await approveRequested(f,1);
+      await f.app.idle();
       const item = f.app.interactions.list()[0]!;
       assert.equal(item.state, mode === "approve" ? "approved" : "denied");
       assert.equal(f.resumes.length, 1);

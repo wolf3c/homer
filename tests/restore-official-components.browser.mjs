@@ -13,6 +13,7 @@ const runtimeBase=resolve(process.env.HOMER_SYNTHETIC_ROOT??base);
 const browser=await isolatedChrome(root);
 const message=(id,text,extra={})=>({id,threadId:'composer-review',role:'assistant',requestId:null,status:'completed',text,createdAt:1700000000000,...extra});
 const longName='中英文完整文件名_'+('long-name-without-spaces_'.repeat(10))+'.txt';
+const preview={id:'synthetic-attachment',title:longName,messageId:'visual',assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64)};
 const sources=[{id:'source-a',title:'合成官方来源标题'.repeat(8),url:'https://example.invalid/a'},{id:'source-b',title:'另一来源',url:'https://example.invalid/b'},{id:'bad',title:'禁止',url:'https://name:secret@example.invalid'}];
 async function key(p,key){await p.command('Input.dispatchKeyEvent',{type:'keyDown',key,code:key,...(key==='Enter'?{text:'\r',windowsVirtualKeyCode:13}:{})});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key,code:key});}
 async function fill(p,text){await p.evaluate(()=>{const e=document.querySelector('[contenteditable=true]');e.focus();const r=document.createRange();r.selectNodeContents(e);getSelection().removeAllRanges();getSelection().addRange(r);});await p.command('Input.insertText',{text});}
@@ -33,14 +34,14 @@ try{
    await shot('code','.aui-code-header-root');
    if(phase==='after')check('24px code '+width,await p.evaluate(()=>document.querySelector('.aui-code-header-copy').getBoundingClientRect().height===24));
    const media={assetId:'synthetic-asset',revision:1,filename:longName,kind:'file',state:'ready',mime:'text/plain',size:100,error:null};
-   await scene({messages:[message('visual','合成文件列表。'),message('user-file','合成历史附件',{role:'user',media:[media]})],artifacts:[{id:'synthetic-result',title:longName,workTitle:'合成文件',historyMessageId:'visual',messageId:'visual'}]});
+   await scene({messages:[message('visual','合成文件列表。'),message('user-file','合成历史附件',{role:'user',media:[media]})],artifacts:[preview]});
    await wait(p,()=>document.querySelectorAll('[data-slot=file-name]').length===2);
    measurements.push({phase,width,category:'file',...await p.evaluate(()=>({names:[...document.querySelectorAll('[data-slot=file-name]')].map(e=>({height:e.getBoundingClientRect().height,whiteSpace:getComputedStyle(e).whiteSpace,overflow:e.scrollWidth>e.clientWidth,title:e.title}))}))});
    await shot('file','[data-slot=file-list]');
    if(phase==='after'){
     check('both FileName consumers truncate and preserve titles '+width,await p.evaluate(()=>[...document.querySelectorAll('[data-slot=file-name]')].every(e=>getComputedStyle(e).whiteSpace==='nowrap'&&getComputedStyle(e).textOverflow==='ellipsis'&&e.title===e.textContent)));
     await p.evaluate(()=>document.querySelector('.file-list-open').click());await wait(p,()=>document.querySelector('#canvas-panel')?.textContent.includes('Synthetic exact file content'));
-    check('accurate Canvas file owner '+width,p.requests.filter(r=>r.path==='/api/files/synthetic-result').length===1);
+    check('accurate Canvas file owner '+width,p.requests.filter(r=>r.path==='/api/media/'+preview.messageId+'/'+preview.assetId+'/'+preview.revision).length===1);
     const g=await p.evaluate(()=>({close:document.querySelector('.canvas-tab-close').getBoundingClientRect().height,title:getComputedStyle(document.querySelector('[role=tab][aria-selected=true]>span')).whiteSpace,duplicate:!!document.querySelector('[data-slot=canvas-split-header]')}));
     check('28px desktop / 44px mobile file close, single-line tab title and no duplicate header '+width,g.close===(width<=800?44:28)&&g.title==='nowrap'&&!g.duplicate);
     await shot('canvas','.canvas-tab-bar');await p.evaluate(()=>document.querySelector('.canvas-collapse, .conversation-header [aria-controls=canvas-panel][aria-expanded=true]:not([aria-hidden=true] *)').click());
@@ -94,7 +95,7 @@ try{
     const session={item,text:'尚未提交的旧队列修改',quotes:[{messageId:'old-one',text:'旧引用一',annotation:'旧批注'},{messageId:'old-two',text:'旧引用二',annotation:''}],attachments:input.attachments,original:ordinary,operationId:'unknown-original-edit'};
     const operation={action:'edit',payload:{requestId:'B',operationId:session.operationId,expectedRevision:item.revision,threadId:app.store.meta('mainThread'),readEpoch:app.webReadEpoch,input:{...input,text:'原未知操作正文'}}};
     const legacy={requestId:'legacy-archived-request',text:'旧单条编辑正文',quote:{messageId:'legacy-source',text:'旧单条准确引用'},attachments:input.attachments};
-    const previewLegacy={requestId:'legacy-preview-request',text:'旧预览编辑正文',resourceReference:{kind:'text',source:{kind:'artifact',id:'result-legacy',title:'旧来源.txt',sha256:'a'.repeat(64)},text:'旧预览来源摘录'}};
+    const previewLegacy={requestId:'legacy-preview-request',text:'旧预览编辑正文',resourceReference:{kind:'text',source:{kind:'attachment',messageId:'message-old',assetId:preview.assetId,revision:1,title:'旧来源.txt',sha256:'a'.repeat(64)},text:'旧预览来源摘录'}};
     const legacyKey='homer-queue-edit:'+legacy.requestId;
     await p.command('Page.addScriptToEvaluateOnNewDocument',{source:`if(!sessionStorage.getItem('restore-seeded')){sessionStorage.setItem('restore-seeded','1');sessionStorage.setItem('homer-draft:${app.store.meta('mainThread')}',${JSON.stringify(JSON.stringify(ordinary))});sessionStorage.setItem('homer-queue-editor:${app.store.meta('mainThread')}',${JSON.stringify(JSON.stringify(session))});sessionStorage.setItem('homer-queue-operation:${app.store.meta('mainThread')}',${JSON.stringify(JSON.stringify(operation))});sessionStorage.setItem(${JSON.stringify(legacyKey)},${JSON.stringify(JSON.stringify(legacy))});sessionStorage.setItem('homer-queue-edit:legacy-preview-request',${JSON.stringify(JSON.stringify(previewLegacy))});}`});
     await p.navigate();await wait(p,()=>document.querySelector('[contenteditable=true]'));await expandQueue(p);

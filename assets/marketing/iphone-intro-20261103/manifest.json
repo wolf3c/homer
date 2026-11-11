@@ -1,0 +1,65 @@
+{
+  "status": "historical QA introduction graphics; not verified against the current release build",
+  "createdDate": "2026-11-03",
+  "timezone": "Asia/Shanghai",
+  "device": "iPhone 11 Pro",
+  "app": "Homer Pairing QA",
+  "bundleIdentifier": "com.homer.mobile.pairingqa",
+  "version": "0.1.1",
+  "build": 3,
+  "sourceCommit": "c77dedcbdd0043d9bc4e16efeda76083c0abfc27",
+  "embeddedBundleSha256": "1ec2d8fd96b5bc4775069d5ce5b84a7e22bfd8fcbbb8868ecd448ef3b2fe394b",
+  "capture": "xcrun devicectl device capture screenshot",
+  "content": "fictional reading-group example, delivered through existing offline fixture and normal conversation UI; no real model calls",
+  "composition": "native AppKit typography and whole screenshot at original aspect ratio; no UI retouching or generated app pixels",
+  "validation": {
+    "installedVersionReadback": true,
+    "scanButtonRightOfHomer": true,
+    "sourceAndFinalVisualReview": true,
+    "privateContentOrCredentialsVisible": false,
+    "simulatorDownloaded": false,
+    "fixtureAndControlRestoredByteForByte": true,
+    "productCodeChanged": false,
+    "storeAcceptanceVerified": false
+  },
+  "images": [
+    {
+      "file": "01-continue-conversation.png",
+      "sha256": "f76e753e214ca9943aea92e232f028af592568d8152882cd4b76488aca579bd8",
+      "bytes": 328219,
+      "dimensions": [
+        1242,
+        2688
+      ],
+      "source": "source/iphone-intro-01-clean.png",
+      "sourceSha256": "6caf148822259e41dd0301ec2152d2299bb5aec7c74586aee8b4ed7d4fde6088",
+      "sourceDimensions": [
+        1125,
+        2436
+      ]
+    },
+    {
+      "file": "02-follow-up.png",
+      "sha256": "c9289e2d6248e08c988c4fd90fe4c40832dbabdf9c3cb585f1a8accda781dca4",
+      "bytes": 339475,
+      "dimensions": [
+        1242,
+        2688
+      ],
+      "source": "source/iphone-intro-02-clean.png",
+      "sourceSha256": "04000c69d22f4967c92f4cd005eaa1e303d09ad86ccddc792ee94a1129fb5464",
+      "sourceDimensions": [
+        1125,
+        2436
+      ]
+    }
+  ],
+  "rebuild": "swift render.swift source .",
+  "releaseReview": {
+    "reviewedDate": "2026-11-04",
+    "scope": "iPhone-only first release; supportsTablet is false",
+    "priorStoreUpload": "recorded in the iOS preparation chat; not independently read back in this review",
+    "currentBuildVisualAcceptanceVerified": false,
+    "reuseRequirement": "Compare against the final signed release build before reuse; original capture metadata below describes QA build 3."
+  }
+}

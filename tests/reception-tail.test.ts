@@ -24,7 +24,7 @@ test('reception tail: six accepted inputs distinguish engine settlement, public 
   async close(){engineTail.release();deltaAck.release();replyAck.release();return true;}
   async interrupt(){return this.close();}
  }
- const app=new Homer({runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async message=>{
+ const app=new Homer({runtime:join(base,'runtime'),workspace:join(base,'workspace'),codexHome:join(base,'empty-home'),nativeCodexHome:join(base,'empty-home'),codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async message=>{
   if(message.requestId==='synthetic-tail-0'&&message.type==='delta'){deltaBlocked=true;await deltaAck.promise;}
   if(message.requestId==='synthetic-tail-0'&&message.type==='reply'){replyBlocked=true;await replyAck.promise;}
  },()=>new Engine());
@@ -36,13 +36,13 @@ test('reception tail: six accepted inputs distinguish engine settlement, public 
   assert.deepEqual(app.inputs.list().map(item=>item.state),['processing','queued','queued','queued','queued','queued']);
   assert.ok(!records().some(row=>row.phase==='engine_settled'));
   engineTail.release();await until(()=>app.inputs.list()[0]?.state==='completed');
-  assert.equal(app.conversationState().processNodes[0]!.state,'worked');
+  assert.equal(app.processes.list(app.store.meta('mainThread')!)[0]!.state,'worked');
   assert.equal(starts,1);assert.ok(records().some(row=>row.phase==='host_finalize_end'));
   assert.ok(records().some(row=>row.phase==='output_wait_start'));assert.ok(!records().some(row=>row.phase==='output_wait_end'));
   // GET remains pure even while an old output is unacknowledged.
   const changes=app.store.db.prepare('SELECT total_changes() n').get()!.n;
-  const revision=app.conversationState().processNodes[0]!.revision;
-  for(let i=0;i<8;i++)assert.equal(app.conversationState().processNodes[0]!.revision,revision);
+  const revision=app.processes.list(app.store.meta('mainThread')!)[0]!.revision;
+  for(let i=0;i<8;i++)assert.equal(app.processes.list(app.store.meta('mainThread')!)[0]!.revision,revision);
   assert.equal(app.store.db.prepare('SELECT total_changes() n').get()!.n,changes);
   deltaAck.release();await until(()=>replyBlocked);assert.equal(starts,1);
   assert.ok(records().some(row=>row.phase==='output_wait_end'));assert.ok(records().some(row=>row.phase==='reply_delivery_start'));

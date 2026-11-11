@@ -15,7 +15,8 @@ export async function createMobileGateway(options:Parameters<typeof createWebSer
  const turn=turnAccount?createMobileTurn(turnAccount):undefined;
  const route=mobileRoute(routeKeyPath),devices=new MobileDevices(databasePath);
  const chat=createWebChat({...webOptions.bridge,submit:async input=>{
-  const state=await webOptions.bridge.state();
+  if(!webOptions.bridge.history)throw Error('history_protocol_required');
+  const state=await webOptions.bridge.history.state();
   if(state.upgrade.phase!=='running'||state.upgrade.accepting===false)throw Error('service_upgrading');
   return webOptions.bridge.submit(input);
  }});

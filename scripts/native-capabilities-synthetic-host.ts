@@ -12,7 +12,7 @@ const binary=process.argv[2];if(!binary)throw Error('fixed_native_binary_require
 const uiDirectory=resolve(process.env.HISTORY_FOLLOWUP_BUILD??'dist/web');accessSync(join(uiDirectory,'index.html'));
 const root=resolve('.codex/scratch/native-capabilities-implementation');mkdirSync(root,{recursive:true});
 const data=process.argv[3]?resolve(process.argv[3]):mkdtempSync(join(root,'synthetic-host-'));if(!data.startsWith(root+'/synthetic-host-'))throw Error('synthetic_data_path_required');
-const config={appData:data,codexHome:join(data,'codex'),codexBin:resolve(binary),workspace:join(data,'workspace'),runtime:join(data,'runtime'),model:'gpt-6.1-sol',effort:'medium' as const,requiresOpenaiAuth:false,timeoutMs:3000,mainTimeoutMs:30000,stopGraceMs:1000};mkdirSync(config.workspace,{recursive:true});mkdirSync(config.runtime,{recursive:true});
+const config={appData:data,codexHome:join(data,'codex'),codexBin:resolve(binary),workspace:join(data,'workspace'),runtime:join(data,'runtime'),model:'gpt-6.1-sol',effort:'medium' as const,requiresOpenaiAuth:false,stopGraceMs:1000};mkdirSync(config.workspace,{recursive:true});mkdirSync(config.runtime,{recursive:true});
 let seq=0;
 class SyntheticEngine extends CodexEngine{
  async start(){const id=await super.start();if(!this.resumable){await this.request('thread/inject_items',{threadId:id,items:[{type:'message',role:'user',content:[{type:'input_text',text:'Homer synthetic capabilities UI candidate only. No model execution.'}]}]});this.resumable=true;}return id;}

@@ -1,31 +1,57 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
-import {Homer} from '../src/service.js';
+import {writeFileSync} from 'node:fs';
+import {htmlAttachmentFixture} from './canvas-html-publication-fixture.js';
 
-// Exercise the current host entry with synthetic UTF-8 bytes, no media runtime or engine.
-function fixture(changed=false){
- const host=Object.create(Homer.prototype) as any;
- const data=Buffer.from('实际合成文档内容'),sha256=createHash('sha256').update(data).digest('hex');
- const context={event:false,requestId:'synthetic-request',inspected:new Set<string>()};let reads=0;
- Object.assign(host,{mainContext:context,closing:false,store:{meta:()=> 'synthetic-main'},tasks:{
-  readResult:(_actor:unknown,id:string)=>{assert.equal(id,'synthetic-result');return {id,file:{path:'/synthetic-output/answer.txt'}};},
- },files:{resultBytes:()=>({data,mime:'text/plain',sha256:changed&&reads++?'changed-hash':sha256})}});
- return {host,context,sha256,inspect:()=>host.mediaTool('inspect_result_file',{resultId:'synthetic-result'})};
+const body='实际合成文档内容';
+function fixture(){
+ const f=htmlAttachmentFixture('answer.txt',Buffer.from(body)),sent=f.send();
+ const {assetId,revision}=sent;
+ return {...f,sent,inspect:()=>f.app.mediaTool('inspect_attachment',{assetId,revision})};
 }
 
-test('result inspection returns actual text and source hash before marking the exact result inspected',async()=>{
- const f=fixture(),result=await f.inspect();
- assert.equal(result.extracted.text,'实际合成文档内容');assert.equal(result.extracted.sourceHash,f.sha256);
- assert.deepEqual([...f.context.inspected],['synthetic-result']);
+test('attachment inspection returns exact text and source digest without a separate inspection receipt',async()=>{
+ const f=fixture();
+ try{
+  const operations=()=>f.store.db.prepare("SELECT id,kind,state FROM operations ORDER BY rowid").all();
+  const before=operations();
+  const result=await f.inspect();
+  assert.equal(result.extraction.state,'ready');
+  assert.equal(result.extraction.text,body);assert.equal(result.extraction.sourceHash,f.sent.sha256);
+  assert.equal(result.assetId,f.sent.assetId);assert.equal(result.revision,f.sent.revision);
+  assert.deepEqual(operations(),before);
+ }finally{f.close();}
 });
 
-test('result inspection rejects changed bytes without marking the result inspected',async()=>{
- const f=fixture(true);await assert.rejects(f.inspect(),/artifact_changed/);assert.equal(f.context.inspected.size,0);
+test('attachment inspection rejects changed bytes and invalid message provenance',async()=>{
+ const f=fixture();
+ try{
+  writeFileSync(f.sent.path,Buffer.alloc(f.bytes.length,42));
+  await assert.rejects(f.inspect(),/media_integrity_failed/);
+  writeFileSync(f.sent.path,f.bytes);
+  const stage=f.media.asset(f.sent).originOperationKey!;
+  const edit=f.store.db.prepare('UPDATE operations SET state=? WHERE id=?');
+  edit.run('accepted',stage);
+  await assert.rejects(f.inspect(),/media_scope_denied/);
+  edit.run('confirmed',stage);
+  f.store.db.prepare('UPDATE operations SET detailsJson=? WHERE id=?').run('null',stage);
+  await assert.rejects(f.inspect(),/media_scope_denied/);
+ }finally{f.close();}
 });
 
-test('result inspection cannot complete into a replaced main context',async()=>{
- const f=fixture(),pending=f.inspect();f.host.mainContext={event:false,inspected:new Set()};
- await assert.rejects(pending,/tool_scope_denied/);
- assert.equal(f.context.inspected.size,0);assert.equal(f.host.mainContext.inspected.size,0);
+test('attachment inspection cannot complete into a replaced main context',async()=>{
+ const f=fixture();
+ try{
+  const pending=f.inspect();f.app.mainContext={...f.app.mainContext};
+  await assert.rejects(pending,/tool_scope_denied/);
+ }finally{f.close();}
+});
+
+test('revocation during extraction fences the in-flight attachment read',async()=>{
+ const f=fixture();
+ try{
+  const pending=f.inspect();
+  assert.ok(f.history.revokeMessage(f.threadId,f.sent.messageId));
+  await assert.rejects(pending,/media_scope_denied/);
+ }finally{f.close();}
 });

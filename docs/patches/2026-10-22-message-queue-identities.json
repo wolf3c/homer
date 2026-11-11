@@ -1,0 +1,528 @@
+{
+  "createdAt": "2026-10-22T15:48:43.028491+08:00",
+  "scope": "queue implementation only; parallel public-activity changes normalized into comparison base",
+  "files": [
+    {
+      "path": "src/recursive-main-inputs.ts",
+      "new": false,
+      "comparisonBaseSha256": "598994cf5969b63c851b69c2ca3c2d5f01715c93c32eb3932d044f4b6ef62958",
+      "currentSha256": "4b436c1de2da5ec3aa21a3c61a6d282d4b602b3dd8e8fd403729e7b94560cf5c",
+      "originalBaselineSha256": "598994cf5969b63c851b69c2ca3c2d5f01715c93c32eb3932d044f4b6ef62958",
+      "insertions": 89,
+      "deletions": 7
+    },
+    {
+      "path": "src/service.ts",
+      "new": false,
+      "comparisonBaseSha256": "7bfaa14a09f72d5b888cc94ced0ef4cd787fa1a244b32169a7a04055d11002c8",
+      "currentSha256": "321b7f30195bd04ebcdff85f9210d08af350944ec884062d597ecdca73bab945",
+      "originalBaselineSha256": "e780a8c8d55bd3045a3e58addfc18e7bd2c55a947a10f7756308972cd4414019",
+      "insertions": 3,
+      "deletions": 1
+    },
+    {
+      "path": "src/web-contract.ts",
+      "new": false,
+      "comparisonBaseSha256": "964ec8526de854bd1ddd85895e92e5b70d6d65a76221150cfdb2c9c069d1250a",
+      "currentSha256": "d540187a930a29a188b7cdab5c6542374354f51d4e71038afc51911963dca0f9",
+      "originalBaselineSha256": "6dfc06fca524b76ec15ba86cbafcb29ccd0e82ccc01d1bbb421ac8dc09896cc6",
+      "insertions": 11,
+      "deletions": 5
+    },
+    {
+      "path": "src/web-server.ts",
+      "new": false,
+      "comparisonBaseSha256": "9b8c36a4800f07a0ed7325126c9cfa525b0e9cd53b961643921176d91b86afa5",
+      "currentSha256": "78b4cb11ab2f9760bb5f289655d0d501d6811ea3ebc0af50be22cc1cc14669e7",
+      "originalBaselineSha256": "9b8c36a4800f07a0ed7325126c9cfa525b0e9cd53b961643921176d91b86afa5",
+      "insertions": 18,
+      "deletions": 3
+    },
+    {
+      "path": "src/web-homer.ts",
+      "new": false,
+      "comparisonBaseSha256": "11d83f6c015f915e588e730fb2df4aef19c8e9fa8335b18ad160a7b3c5cd579f",
+      "currentSha256": "f32bcc04a788932ee5368a236f324b2b2b1794b65ce75f108e2e97aa68ec0c4d",
+      "originalBaselineSha256": "c522b4dbea7764945bb44e25d6c46b1af63578f04b8f1acc50c2b5c5c1064208",
+      "insertions": 16,
+      "deletions": 6
+    },
+    {
+      "path": "src/web-history-pages.ts",
+      "new": false,
+      "comparisonBaseSha256": "ebaaa636343bee1a0b19a3b9474a3571890d9c0d9030bf8cd0732ac511c6c15a",
+      "currentSha256": "0854a2c057fb32bcbeb5b87ca48911908bffc4b6f54d4d40039aca23ce40c921",
+      "originalBaselineSha256": "ebaaa636343bee1a0b19a3b9474a3571890d9c0d9030bf8cd0732ac511c6c15a",
+      "insertions": 10,
+      "deletions": 3
+    },
+    {
+      "path": "src/dev-host.ts",
+      "new": false,
+      "comparisonBaseSha256": "878e68549152d3415d2cfb56a3a8cc9a347639bcad1ad6b3675700d485ad8fec",
+      "currentSha256": "5f8cd4dd6ff82c9a73a11aee713346ae2c3b7abe2cddbb2380092ae5a6da9ee3",
+      "originalBaselineSha256": "878e68549152d3415d2cfb56a3a8cc9a347639bcad1ad6b3675700d485ad8fec",
+      "insertions": 2,
+      "deletions": 0
+    },
+    {
+      "path": "scripts/dev.mjs",
+      "new": false,
+      "comparisonBaseSha256": "3ee71f722269d85bf175ca95be654914eeb1aec2a84f3c7ce4e630b42df3bb66",
+      "currentSha256": "dc6d621ec1c86456f1ad5548c339905649f102f63e18baf5f7b3cd82771c4e25",
+      "originalBaselineSha256": "b464e0d3194b2d7d46819b141c18b6c1b688e2ec1ff53c037c81f8d6080aeb53",
+      "insertions": 2,
+      "deletions": 2
+    },
+    {
+      "path": "ui/homer-app.tsx",
+      "new": false,
+      "comparisonBaseSha256": "f0c3b2b3e42118e8c165c68ffebfb72c812cd5b5a7cf67eaac7415fa667ff171",
+      "currentSha256": "ec38567deef16bcec89cc1d8b95d3d858303227025b2bf65190f7f99a8fae5c5",
+      "originalBaselineSha256": "0e8af49e04320da6d5aa5b6d96fe1e0d5c5e7d6a8ae40388412ae942ab21f4a6",
+      "insertions": 86,
+      "deletions": 57
+    },
+    {
+      "path": "ui/conversation-client.ts",
+      "new": false,
+      "comparisonBaseSha256": "b0b44d33b205415aa8cd54365773d68c5e445ee732821b7f19f51a54bacd7356",
+      "currentSha256": "247d19bb4f8bcbe88543343349d8e49e43d03d369a7caa265717d8ce59f7b476",
+      "originalBaselineSha256": "b0b44d33b205415aa8cd54365773d68c5e445ee732821b7f19f51a54bacd7356",
+      "insertions": 6,
+      "deletions": 0
+    },
+    {
+      "path": "ui/homer-styles.css",
+      "new": false,
+      "comparisonBaseSha256": "fe9cf8f1ef9bbb72f20c406893040bf13d9f3f564726b388ce3467b990d806ff",
+      "currentSha256": "b31f4b12d66001258e91e45d21b555ea29d04653820a223e6e6bdbe893b3df1b",
+      "originalBaselineSha256": "fe9cf8f1ef9bbb72f20c406893040bf13d9f3f564726b388ce3467b990d806ff",
+      "insertions": 4,
+      "deletions": 8
+    },
+    {
+      "path": "ui/package.json",
+      "new": false,
+      "comparisonBaseSha256": "a7e8c0ba035a9ceacbf31d45c3d60f0bc5ee950093ad23e52bed2e77a62f2357",
+      "currentSha256": "42f403b58137d680c8667d6abe37c63a5472dbfe4c5e525364166e354322c990",
+      "originalBaselineSha256": "a7e8c0ba035a9ceacbf31d45c3d60f0bc5ee950093ad23e52bed2e77a62f2357",
+      "insertions": 5,
+      "deletions": 4
+    },
+    {
+      "path": "package-lock.json",
+      "new": false,
+      "comparisonBaseSha256": "93523fed1f03d71eca346bec92b10980d0c480a188d60f16040fe8597a914672",
+      "currentSha256": "d698b002984c74c1878c5ef66c162f4a71b5bcde7439080f87aec9b4759e62fe",
+      "originalBaselineSha256": "93523fed1f03d71eca346bec92b10980d0c480a188d60f16040fe8597a914672",
+      "insertions": 76,
+      "deletions": 4
+    },
+    {
+      "path": "ui/DESIGN.md",
+      "new": false,
+      "comparisonBaseSha256": "7fda6f4f3eab91a05ef03051be2def318cdb86fae422a8a0ea46b89580952c74",
+      "currentSha256": "e3aa75770af3adc95fab704316a0e8b0f47168ad9ff5884074c6d0fbf78a5c14",
+      "originalBaselineSha256": "895acb665d7c396cbddb6cfe7b127276c603e1066698bc604a7fd77c0bd17c2b",
+      "insertions": 10,
+      "deletions": 0
+    },
+    {
+      "path": "ui/vendor/assistant-ui/README.md",
+      "new": false,
+      "comparisonBaseSha256": "b172d671f41329dd00e2b2e96867bf746242aa0ea6b92aa90403d9e410fd5c02",
+      "currentSha256": "03472d485d202b89ea536abbdac3acbdfcc57f96371aee9830e8ed3df511f17b",
+      "originalBaselineSha256": "b172d671f41329dd00e2b2e96867bf746242aa0ea6b92aa90403d9e410fd5c02",
+      "insertions": 26,
+      "deletions": 0
+    },
+    {
+      "path": "ui/vendor/assistant-ui/message-queue.tsx",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "5fc14620d0138ad989ab5527ed5a8499eaa7cb538a917abd2afb2fed3c547aea",
+      "originalBaselineSha256": null,
+      "insertions": 22,
+      "deletions": 0
+    },
+    {
+      "path": "ui/vendor/assistant-ui/message-queue.css",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "b3f433ddedf3933b24acbc2aeeb247e7f153f7948c65947e71b867c2c4b69a73",
+      "originalBaselineSha256": null,
+      "insertions": 19,
+      "deletions": 0
+    },
+    {
+      "path": "ui/queue-operations.ts",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "2b5964e040dedab43db4c045f02af8ffa639b930c869d74074afb2a7cc2db6f6",
+      "originalBaselineSha256": null,
+      "insertions": 57,
+      "deletions": 0
+    },
+    {
+      "path": "ui/homer-message-queue.tsx",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "5cd81bed64559dcda638fe6697b9e154c11e511cec4909fe63e261817001d5be",
+      "originalBaselineSha256": null,
+      "insertions": 101,
+      "deletions": 0
+    },
+    {
+      "path": "ui/homer-message-queue.css",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "725728ef9ea109457ef4e6d75709edb967a09bc670fad166b6340cdcd5506f56",
+      "originalBaselineSha256": null,
+      "insertions": 43,
+      "deletions": 0
+    },
+    {
+      "path": "tests/message-queue-order.test.ts",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "a4c8d95786d76de8beb18746c926e2da89125ba72fd25923ff4c34bae86512d4",
+      "originalBaselineSha256": null,
+      "insertions": 104,
+      "deletions": 0
+    },
+    {
+      "path": "tests/message-queue-web.test.ts",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "18107bbf1f4c8c1f8d3f836446d3bd21581393c24303108f21d25665e1aba2d8",
+      "originalBaselineSha256": null,
+      "insertions": 56,
+      "deletions": 0
+    },
+    {
+      "path": "tests/message-queue-scheduler.test.ts",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "1b7a3fd0497b866543cf25817d8d02172d1358ee51d2fd15f3cd304a11248df9",
+      "originalBaselineSha256": null,
+      "insertions": 17,
+      "deletions": 0
+    },
+    {
+      "path": "tests/queue-edit-input.test.ts",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "26439f0c2dd5a72ccc14c0331274eacd7e9e2561a69d0f4c777c8823663379cb",
+      "originalBaselineSha256": null,
+      "insertions": 10,
+      "deletions": 0
+    },
+    {
+      "path": "tests/message-queue.browser.mjs",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "96707677f6fdc85b4863ae59122f52a8c8157bd3a3389013e1eeb654e2c9e3e9",
+      "originalBaselineSha256": null,
+      "insertions": 85,
+      "deletions": 0
+    },
+    {
+      "path": "tests/message-queue-recovery.browser.mjs",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "bba9f287712c1e5fc1a477fc786ad6f28541ad4bdd82f753e09f0e81c23a16ad",
+      "originalBaselineSha256": null,
+      "insertions": 48,
+      "deletions": 0
+    },
+    {
+      "path": "tests/fixtures/message-queue-browser-server.ts",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "646b2efe853c47335cdc859ca57c323e8f396dfa615f3a9dbe3e7887f1699ef7",
+      "originalBaselineSha256": null,
+      "insertions": 47,
+      "deletions": 0
+    },
+    {
+      "path": "docs/2026-10-22-message-queue-implementation.md",
+      "new": true,
+      "comparisonBaseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentSha256": "da27e351d62358218d2c30f2782b461f967af8be37de8341e6fd7be71ffb8d1b",
+      "originalBaselineSha256": null,
+      "insertions": 69,
+      "deletions": 0
+    }
+  ],
+  "preservedParallelChanges": [
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/service.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/web-contract.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/web-contract.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/web-homer.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/web-homer.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "src/web-homer.ts",
+      "preserved": "public activity facts/navigation/types"
+    },
+    {
+      "path": "scripts/dev.mjs",
+      "preserved": "taskOverview.detail forwarding correction"
+    },
+    {
+      "path": "ui/homer-app.tsx",
+      "preserved": "message timestamps, day separators and visibility projection"
+    },
+    {
+      "path": "ui/homer-app.tsx",
+      "preserved": "ActivityNavigationContext, task activity request state/handler, header task binding"
+    }
+  ],
+  "patchSha256": "f423ac0b8283f0e2a2d63def12981d6d3ead798c9fed7bdd684aa9d507f9ce41",
+  "initialHead": "d9e40515845e451c115f69692d4e9cc1d8666590",
+  "headAtDelivery": "77c2c99b107ebbf1bc38d256f6842a447aa7ad69",
+  "headBeforeReviewCommit": "77c2c99b107ebbf1bc38d256f6842a447aa7ad69",
+  "validation": {
+    "behavior": {
+      "tests": 64,
+      "passed": 64,
+      "failed": 0,
+      "logSha256": "fbc1093dc850ec9223350a31d6bd42f7054c02b1237534d78e3c7d63d2e1dd20"
+    },
+    "browser": {
+      "browser-results.json": {
+        "checks": 55,
+        "passed": 55,
+        "logSha256": "1632302831650a82fd83ac01217fbb1861a81b70264f0a1e1f0a78307538aaa1"
+      },
+      "recovery-browser-results.json": {
+        "checks": 20,
+        "passed": 20,
+        "logSha256": "e4d5230657f76055c7efe2d52dc915f79aaa1dd01cdb86a59f5faad341dd661c"
+      }
+    },
+    "types": [
+      {
+        "check": "ui",
+        "exitCode": 0,
+        "diagnosticLines": 0,
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "check": "service",
+        "exitCode": 0,
+        "diagnosticLines": 0,
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "check": "repository",
+        "exitCode": 2,
+        "diagnosticLines": 23,
+        "logSha256": "78436dbe44523baf2a325f9a03423a736a7c058c244bfaebf7a18dd0d1fdd462"
+      }
+    ],
+    "isolatedBuild": {
+      "exitCode": 0,
+      "changedDuringBuild": [],
+      "browserVerifiedAssetsUnchanged": true,
+      "sourceIdentitySha256": "387217835d74031797e6ce79174604cc138961113fed64ac88be2a67d1de37ac"
+    },
+    "reversePatchCheck": "passed; no rollback executed",
+    "interruptedBrowserRun": {
+      "ownedProcessOnly": true,
+      "observed": "one run did not return for over 7 minutes",
+      "cause": "not reproduced; no cause inferred",
+      "retry": "20/20 checks passed with stage diagnostics"
+    },
+    "exactReplay": {
+      "files": 28,
+      "forwardMatchesCurrent": true,
+      "reverseMatchesBase": true
+    },
+    "performance": {
+      "historical": 20000,
+      "active": 1000,
+      "samples": 40,
+      "warmups": 5,
+      "method": "alternating same in-memory database",
+      "before": {
+        "queriesPerSummary": 1003,
+        "medianMs": 13.013292000000092,
+        "p95Ms": 28.153792000000067
+      },
+      "after": {
+        "queriesPerSummary": 3,
+        "medianMs": 9.25466600000027,
+        "p95Ms": 15.813874999999825
+      },
+      "scriptSha256": "7192205df6ea7fcf6da3448d9fa2e96f4b80d86cfd1f37ad63b91c74166fbe04",
+      "beforeSourceSha256": "7558630491c1be9e48680c2cdeadddd61aeefb25c227b1e6a4aec1537f945abe"
+    },
+    "redBrowserEvidenceSha256": "c76787cd030d6b21a3ec6ed8060056f34b815a8ed5fee45d4b30ee5703adc7a8"
+  },
+  "screenshots": [
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Claim-During-Edit.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "6b323cab0b29bf964e4946513731b9dd0169527990d128ca4bb4ea170bba3e58"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Editing-Long.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "ceb479478adc3552626ef5b34d950845c68d4b7041d52eb93adabe47f961183c"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Editing.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "a62bd8d369b66035d9456f6dd4bf102322a587d69fc3c68b018425edefc35376"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Page-Tail-Drop.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "5a865b97cd3c9f4703157b6029d61ebaeb3f76ee52db71d523447348c1ae1730"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Pagination.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "11c2c9c8bc76fcacd8a848054390543dfd13705469068b5f3ca831d2f0d5818c"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Reordered.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "eed8acf1552f88fd25331fa7f8fa095c5785366c272318b0d7c8f1764bcb58a0"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Unknown-Receipt.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "d5246f57d0eeca2cc4cb5d40aec2c9ba7cfec76fd9c1d21bb24e8ad51f14ca7c"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Waiting-Final.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "96726ec223f71293f5260d9f0899fcba2468b9b3560fb70ce7f5be962c1fad41"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-1440-Waiting.png",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "dde9d99e46d5ae684da8850b7f5e1704866412f8db605c55df5fbbace1f2f3b1"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-320-Editing-Long.png",
+      "width": 320,
+      "height": 844,
+      "sha256": "879e60754b7e934da462357731639b8a4b42f06cb63c0ae6e8f0aa0c78f4d889"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-320-Low-Height.png",
+      "width": 320,
+      "height": 420,
+      "sha256": "e24725fda3c530c3e14cb61fa92c1dfcc2a83eaf25db8955139ad882591cc9e2"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-320-Waiting-Final.png",
+      "width": 320,
+      "height": 844,
+      "sha256": "c63b76019d8589f746747c9cf68ab530ab9868140e765dde5c1948a902399031"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-390-Editing-Long.png",
+      "width": 390,
+      "height": 844,
+      "sha256": "7ca746df6f8979da8f0c4540634415ae6ac213b5ece978ace56342cffc0f735b"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-390-Other-Device.png",
+      "width": 390,
+      "height": 844,
+      "sha256": "98e2c97097d8af50714190a65288db85ef971ed0056d48a2f50180fd8dd396e2"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-390-Recovered-Save.png",
+      "width": 390,
+      "height": 844,
+      "sha256": "8f16af0d452008c71495354699596ac67e4ad7e007697043fed3f88c5206c960"
+    },
+    {
+      "path": ".codex/scratch/message-queue-implementation/Queue-390-Waiting-Final.png",
+      "width": 390,
+      "height": 844,
+      "sha256": "53a81cf7aed3b2490d4472a7212a26efd82b010310c1a482277d7f4b5540bc57"
+    }
+  ],
+  "reviewReport": {
+    "path": "docs/2026-10-22-message-queue-review.md",
+    "sha256": "c2a4c06f6eae7c1a9e5edc9fd6b42e94c3320bacdc62e3f1e3d3078910349ad7"
+  },
+  "generatedArtifactsExcludedFromPatch": [
+    "docs/patches/2026-10-22-message-queue.patch",
+    "docs/patches/2026-10-22-message-queue-identities.json",
+    "docs/2026-10-22-message-queue-review.md"
+  ],
+  "commitBoundary": {
+    "kind": "exact incremental patch and validation artifacts",
+    "sourceFilesStaged": false,
+    "requiresComparisonBase": true,
+    "standaloneBuildableHead": false,
+    "reason": "current index lacks pre-existing integrated source; preserve unrelated dirty work"
+  }
+}

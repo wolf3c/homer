@@ -1,5 +1,6 @@
 import {composerFixture} from './composer-browser-server.mjs';
-export const approval={id:'synthetic-approval',runId:'main-native:synthetic-generation',kind:'authorization',workTitle:'主对话',sourceRequestId:'synthetic-source',question:'确认本次操作：\n/bin/zsh -lc \'node /synthetic/中文目录/'+('long-command-path-'.repeat(15))+'/probe.mjs --说明="<script>仅作为文字</script>"\'\n工作目录：/synthetic/工作目录\n请求说明：隔离合成命令，请核对完整路径与参数。',reason:'仅授权当前请求；不授予永久权限或自动重试。'};
+const details='/bin/zsh -lc \'node /synthetic/中文目录/'+('long-command-path-'.repeat(45))+'/probe.mjs --说明="<script>仅作为文字</script>"\'\n工作目录：/synthetic/工作目录';
+export const approval={id:'synthetic-approval',runId:'main-native:synthetic-generation',kind:'authorization',workTitle:'主对话',sourceRequestId:'synthetic-source',question:'确认本次操作：\n'+details,reason:'仅授权当前请求；不授予永久权限或自动重试。',approval:{title:'允许执行这条命令？',explanation:'隔离合成命令，请核对完整路径与参数。',scope:'仅批准当前命令。',detailLabel:'查看完整命令与工作目录',details}};
 export async function approvalFixture(options){
  const decisions=[],held=[];let mode='unknown';
  const f=await composerFixture({...options,interaction({url,body,res,json}){

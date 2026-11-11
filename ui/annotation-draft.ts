@@ -1,5 +1,5 @@
 import {useSyncExternalStore} from 'react';
-import {referenceKey,referencesOf,type ResourceReferences,type ResourceReference,type PreviewRequest} from '../src/preview-reference.js';
+import {isDraftImageReference,referenceKey,referencesOf,type ResourceReferences,type ResourceReference,type PreviewRequest} from '../src/preview-reference.js';
 import type {AttachmentRef} from '../src/media-store.js';
 import type {Annotation} from './vendor/agentation-3.1.2/index.mjs';
 
@@ -39,7 +39,7 @@ export function createAnnotationDraft(){
     if(referenceKey(r)!==key)return [r];
     if(!r.annotations)return [];
     const annotations=r.annotations.filter(n=>n.id!==id);
-    return annotations.length?[{...r,annotations} as ResourceReference]:[];
+    return annotations.length||isDraftImageReference(r)&&r.ax?[{...r,annotations} as ResourceReference]:[];
    });
    const htmlMetadata={...state.htmlMetadata};if(htmlMetadata[key]){const sourceMetadata={...htmlMetadata[key]};delete sourceMetadata[id];if(Object.keys(sourceMetadata).length)htmlMetadata[key]=sourceMetadata;else delete htmlMetadata[key];}
    const preparingImages={...state.preparingImages},pending=preparingImages[key];

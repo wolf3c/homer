@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {MAIN_TOOLS} from '../src/tools.js';
 import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
-import {PENDING_TOOLS} from '../src/pending-tools.js';
+import {MediaStore} from '../src/media-store.js';
 import {EventEmitter} from 'node:events';
-import {writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {writeFileSync,readFileSync,rmSync,mkdtempSync} from 'node:fs';
 import {join} from 'node:path';
 import {Homer} from '../src/service.js';
 import {seedFirstLaunchSkills} from '../src/first-launch.js';
@@ -22,16 +22,20 @@ test('archive requires Main, an actual same-thread user source and current CAS',
  }finally{f.close();}
 });
 
-test('archive/restore retain Task identity, raw messages, Results and exact file bytes without starting execution',()=>{
+test('archive/restore retain Task identity, raw messages and exact attachment bytes without starting execution',()=>{
  const f=fixture();try{
   const w=settled(f),filePath=join(f.files.workspace,'valuable.md'),bytes=Buffer.from('# Keep valuable work\n');writeFileSync(filePath,bytes);
-  const result=f.tasks.adoptResult(main,{operationId:'adopt',taskId:f.task.taskId,version:1,runId:w.actor.runId,filePath});
-  const before=f.tasks.readTask(main,f.task.taskId),runs=f.tasks.runs(),a=mutation(f,'archive');
+  const media=new MediaStore(f.store.db,join(f.dir,'media')),ref=media.snapshot('valuable',{filename:'valuable.md',kind:'file',mime:'text/markdown',bytes});
+  const messageId=f.store.transaction(()=>{
+   const id=f.history.commitAssistant({threadId:main.threadId!,taskId:f.task.taskId,taskVersion:1,text:'Keep valuable work',attachments:[ref],operationKey:'valuable-message'});
+   media.pinAttachment(ref,'message:'+id);media.unpin('operation:valuable');return id;
+  });
+  const runs=f.tasks.runs(),a=mutation(f,'archive');
   assert.equal(f.tasks.archiveHistory(main,a,true).state,'archived');assert.deepEqual(f.tasks.listTasks(main).tasks,[]);assert.equal(f.tasks.listTasks(main,{includeArchived:true}).tasks[0]!.id,f.task.taskId);
-  assert.deepEqual(f.tasks.archiveHistory(main,a,true).state,'archived');assert.deepEqual(f.tasks.readTask(main,f.task.taskId).results,before.results);
+  assert.deepEqual(f.tasks.archiveHistory(main,a,true).state,'archived');assert.deepEqual(f.history.message(messageId)?.attachments,[ref]);
   f.tasks.archiveHistory(main,mutation(f,'restore'),false);assert.equal(f.tasks.listTasks(main).tasks[0]!.id,f.task.taskId);assert.deepEqual(f.tasks.runs(),runs);
   assert.equal(f.tasks.workerRead(main,{workerId:w.worker.workerId,messageId:w.reply.messageId}).messages[0]!.text,'Synthetic investigation complete.');
-  assert.deepEqual(readFileSync(f.tasks.readResult(main,result.resultId).file!.path),bytes);assert.deepEqual(readFileSync(filePath),bytes);
+  assert.equal(media.gc(Date.now()+31*86400000),0);assert.deepEqual(media.readAttachment(ref).bytes,bytes);assert.deepEqual(readFileSync(filePath),bytes);
   assert.deepEqual(f.store.db.prepare('PRAGMA foreign_key_check').all(),[]);
  }finally{f.close();}
 });
@@ -58,7 +62,7 @@ test('archive state, operation and factual notice are one transaction',()=>{
  }finally{f.close();}
 });
 
-for(const blocker of ['live','paused','unknown-exit','lease','operation','delivery','pending-item','pending-reply','interaction'] as const)test('archive preserves all facts while '+blocker+' remains unresolved',()=>{
+for(const blocker of ['live','paused','unknown-exit','lease','operation','pending-reply','interaction'] as const)test('archive preserves all facts while '+blocker+' remains unresolved',()=>{
  const f=fixture();try{
   const worker=openWorker(f),actor=running(f,worker.runId),reply=complete(f,actor,'Useful readable answer',blocker!=='unknown-exit');
   if(blocker!=='pending-reply')processReplies(f);
@@ -67,11 +71,6 @@ for(const blocker of ['live','paused','unknown-exit','lease','operation','delive
   if(blocker==='paused')f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});
   if(blocker==='lease')f.store.setMeta('lease:'+worker.runId,'synthetic-owned');
   if(blocker==='operation')f.store.db.prepare("UPDATE operations SET state='uncertain' WHERE id=?").run(worker.operationKey);
-  if(blocker==='delivery'){
-   const result=f.tasks.adoptResult(main,{operationId:'adopt',taskId:f.task.taskId,version:1,messageId:reply.messageId});
-   const delivery=f.tasks.publish(main,{operationId:'publish',taskId:f.task.taskId,version:1,resultIds:[result.resultId],text:'Synthetic delivery'});f.tasks.markDelivery(delivery.deliveryId,'submitting');f.tasks.markDelivery(delivery.deliveryId,'uncertain');
-  }
-  if(blocker==='pending-item')f.tasks.pending.add(main,{operationId:'pending',content:'Unresolved choice',relatedTaskId:f.task.taskId});
   if(blocker==='interaction')f.store.db.prepare("INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt) VALUES('pending','pending','synthetic',?,?,?,'pending','ask_main','question','{}','{}','pending_user',0,0)").run(worker.runId,actor.threadId!,actor.turnId!);
   const before=f.tasks.task(f.task.taskId),response=f.tasks.archiveHistory(main,mutation(f,'archive'),true);
   assert.equal(response.state,'skipped');assert.ok('blockers' in response&&response.blockers!.length>0);assert.deepEqual(f.tasks.task(before.id),before);
@@ -81,7 +80,7 @@ for(const blocker of ['live','paused','unknown-exit','lease','operation','delive
 });
 
 for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','missing'],['task_archived','disabled'],['task_archived','rpc-error'],['task_archived','wrong-path'],['worker_reply','missing']] as const)test('native Skill selection: '+kind+'/'+skillState,async()=>{
- const f=fixture(),home=join(f.dir,'isolated-home'),texts:string[]=[],selected:{name:string;path:string}[][]=[];let app:Homer|undefined,closed=false;
+ const f=fixture(),workspace=mkdtempSync(f.dir+'-workspace-'),home=join(f.dir,'isolated-home'),texts:string[]=[],selected:{name:string;path:string}[][]=[];let app:Homer|undefined,closed=false;
  class Peer extends EventEmitter{
   threadId:string;turnId='turn:archive-host';resumable=true;
   constructor(options:EngineOptions){super();this.threadId=options.threadId??'thread:control';}
@@ -92,8 +91,8 @@ for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','mi
  try{
   const w=kind==='task_archived'?settled(f):(()=>{const worker=openWorker(f),actor=running(f,worker.runId),reply=complete(f,actor,'Ordinary raw reply');return {worker,actor,reply};})();
   if(kind==='task_archived')f.tasks.archiveHistory(main,mutation(f,'archive'),true);const notice=f.tasks.inbox(main).find(message=>message.kind===kind)!;
-  const sentinel=join(f.files.workspace,'valuable.txt');writeFileSync(sentinel,'keep');seedFirstLaunchSkills(home);f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS,...PENDING_TOOLS])).digest('hex'));f.store.close();closed=true;
-  app=new Homer({runtime:f.dir,workspace:f.files.workspace,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Peer(options));
+  const sentinel=join(workspace,'valuable.txt');writeFileSync(sentinel,'keep');seedFirstLaunchSkills(home);f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex'));f.store.close();closed=true;
+  app=new Homer({runtime:f.dir,workspace,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Peer(options));
   await app.start();await app.idle();
   assert.equal(texts.length,kind==='worker_reply'||skillState==='enabled'?1:0);
   if(kind==='worker_reply'||skillState==='enabled'){
@@ -103,5 +102,5 @@ for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','mi
    if(kind==='task_archived'){await app.message('事项已归档，只是普通用户文字','plain-user-notice');assert.deepEqual(selected.at(-1),[]);}
   }else assert.notEqual(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.id)!.state,'processed');
   assert.equal(readFileSync(sentinel,'utf8'),'keep');assert.equal(app.tasks.tasks().length,1);assert.equal(app.tasks.runs()[0]!.id,w.actor.runId);
- }finally{await app?.close();if(!closed)f.store.close();rmSync(f.dir,{recursive:true,force:true});}
+ }finally{await app?.close();if(!closed)f.store.close();rmSync(f.dir,{recursive:true,force:true});rmSync(workspace,{recursive:true,force:true});}
 });

@@ -2,21 +2,26 @@
 // Synthetic offline browser acceptance peer. Never selected by a product config.
 import { createInterface } from "node:readline";
 import { createConnection } from "node:net";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 if (process.argv.includes("--version")) { console.log("codex-cli synthetic-web"); process.exit(0); }
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const trustedArg = process.argv.find(value => value.startsWith("mcp_servers.homer_interactions="));
 const trusted = trustedArg ? JSON.parse(trustedArg.slice(trustedArg.indexOf("=") + 1).replace(/("(?:[^"\\]|\\.)*")=/g, "$1:")) : undefined;
 const worker=trusted?.args?.at(-1)==='worker';
+const mcpServers=trusted?{homer_interactions:trusted}:{};
+const home=process.env.CODEX_HOME;
+if(trusted)process.chdir(trusted.cwd);
+const checklist = "# 合成行动清单\n\n| 事项 | 状态 |\n| --- | --- |\n| 核对材料 | 已核对 |\n\n此文件来自离线合成验收。";
 let thread, turn, cwd, sequence = 0, generation = 0;
 const pending = new Map();
 const call = (method, params) => new Promise((accept, reject) => {
-  const id = "synthetic-call-" + ++sequence; pending.set(id, {accept, reject}); send({ id, method, params: { threadId: thread, turnId: turn, callId: id, ...params } });
+  const id = "synthetic-call-" + ++sequence; pending.set(id, {accept, reject, method}); send({ id, method, params: { threadId: thread, turnId: turn, callId: id, ...params } });
 });
 const tool = (name, args) => call("item/tool/call", { tool: name, arguments: args });
 const mcp = (tool, args) => new Promise((accept, reject) => {
-  const socket = createConnection(resolve(trusted.cwd, ['main','worker'].includes(trusted.args.at(-1))?trusted.args.at(-2):trusted.args.at(-1))); let bytes = "";
+  const path=['main','worker'].includes(trusted.args.at(-1))?trusted.args.at(-2):trusted.args.at(-1);
+  const socket = createConnection(path); let bytes = "";
   socket.on("connect", () => socket.write(JSON.stringify({ tool, arguments: args }) + "\n"));
   socket.on("data", chunk => { bytes += chunk; if (bytes.includes("\n")) { const value = JSON.parse(bytes); socket.end(); value.error ? reject(new Error(value.error)) : accept(value.result); } });
   socket.on("error", reject);
@@ -38,21 +43,31 @@ async function stream(text, slow = false) {
 createInterface({ input: process.stdin }).on("line", line => { void receive(JSON.parse(line)); });
 async function receive(m) {
   if (!m.method) {
-    const {accept, reject} = pending.get(m.id) ?? {}; if (!accept) return; pending.delete(m.id);
+    const {accept, reject, method} = pending.get(m.id) ?? {}; if (!accept) return; pending.delete(m.id);
     const text = m.result?.contentItems?.[0]?.text;
+    if(method==='item/permissions/requestApproval')send({method:'serverRequest/resolved',params:{threadId:thread,requestId:m.id}});
     if(m.error||m.result?.success===false)reject(Error(m.error?.message??text??'synthetic_tool_failed'));
     else accept(text?JSON.parse(text):m.result);return;
   }
   if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});
-  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.163.0" } });
+  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.163.0", codexHome:home } });
+  if (m.method === "config/mcpServer/reload") send({id:m.id,result:{}});
+  if (m.method === "environment/info") send({id:m.id,result:{shell:"/bin/zsh"}});
+  if (["thread/backgroundTerminals/list","skills/list"].includes(m.method)) send({id:m.id,result:{data:[]}});
   if (m.method === 'model/list') send({id:m.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
-  if (m.method === "config/read") send({ id: m.id, result: { config: { mcp_servers: trusted ? { homer_interactions: trusted } : {} } } });
+  if (m.method === "config/read") send({id:m.id,result:{
+    config:{mcp_servers:mcpServers,features:{memories:true},memories:{dedicated_tools:true}},
+    layers:[{name:{type:"sessionFlags"},config:{mcp_servers:mcpServers}},
+      ...(home?[{name:{type:"user",file:resolve(home,"config.toml")},version:"synthetic-1",config:{}}]:[])],
+  }});
   if (m.method === "mcpServerStatus/list") send({ id: m.id, result: { data: [{ name: "homer_interactions", tools: Object.fromEntries((trusted?.enabled_tools??[]).map(name => [name, {}])) }] } });
   if (m.method === "thread/start" || m.method === "thread/resume") {
-    cwd = m.params.cwd; thread = m.params.threadId ?? (worker ? "web-synthetic-worker-" + process.pid : "web-synthetic-main");
-    send({ id: m.id, result: { thread: { id: thread }, activePermissionProfile: { id: "homer" }, approvalPolicy: worker ? "on-request" : "never" } });
+    cwd = m.params.cwd ?? m.params.environments?.[0]?.cwd;
+    thread = m.params.threadId ?? (worker ? "web-synthetic-worker-" + process.pid : "web-synthetic-main");
+    send({ id: m.id, result: { thread: { id: thread }, activePermissionProfile: { id: "homer" }, approvalPolicy: m.params.approvalPolicy } });
   }
   if (m.method === "turn/start") {
+    cwd = m.params.cwd ?? cwd;
     turn = "web-turn-" + ++sequence;
     send({ id: m.id, result: { turn: { id: turn, status: "inProgress" } } });
     send({ method: "turn/started", params: { threadId: thread, turn: { id: turn } } });
@@ -62,11 +77,11 @@ async function receive(m) {
     const [userText, pendingQuestions] = (explicitReply ? text.slice(text.indexOf('\n')+1) : text).split('\n\n[当前用户范围的 Worker 待答事实；');
     const pendingQuestion = pendingQuestions ? JSON.parse(pendingQuestions.split('\n')[1]).items[0]?.interactionId : undefined;
     if (worker) {
-      await tool("read_material", {});
       await tool("ask_main", { question: "合成验收：成果使用列表还是表格？" });
       await call("item/permissions/requestApproval", { itemId: "synthetic-permission", permissions: { fileSystem: { read: [cwd] } } });
-      const file = await tool("write_markdown", { filename: "合成行动清单.md", content: "# 合成行动清单\n\n| 事项 | 状态 |\n| --- | --- |\n| 核对材料 | 已核对 |\n\n此文件来自离线合成验收。" });
-      complete("合成成果已写入。\n" + file.path);
+      const path = resolve(cwd, "合成行动清单.md");
+      writeFileSync(path, checklist);
+      complete("合成成果已写入。\n" + path);
     } else if (input?.kind === 'interaction_required' || explicitReply || pendingQuestion && /表格|列表|拒绝|不允许/.test(userText)) {
       const interactionId = input?.kind === 'interaction_required' ? text.match(/\[待答入口\] interactionId=([\w-]+)/)[1] : explicitReply ?? pendingQuestion, item = await mcp("inspect_interaction", { interactionId });
       if (input?.kind === 'interaction_required') {
@@ -79,13 +94,11 @@ async function receive(m) {
       }
     } else if (input?.kind === 'worker_reply') {
       const reply = await tool('worker_read', {workerId:input.workerId,messageId:input.messageId}), filePath = reply.messages[0].text.trim().split('\n').at(-1);
-      if(readFileSync(filePath,'utf8')!=="# 合成行动清单\n\n| 事项 | 状态 |\n| --- | --- |\n| 核对材料 | 已核对 |\n\n此文件来自离线合成验收。")throw Error('synthetic_result_mismatch');
-      const result = await tool('accept_result', {runId:input.runId,messageId:input.messageId,filePath});
-      await tool('work_inspect', {resultId:result.resultId});await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});
-      await tool('publish_delivery', {taskId:input.taskId,resultIds:[result.resultId],text:'合成行动清单已完成，可以在「正在办」下载成果。'});complete('');
+      if(readFileSync(filePath,'utf8')!==checklist)throw Error('synthetic_attachment_mismatch');
+      await tool('send_user_message', {taskId:input.taskId,attachments:[{path:filePath}],text:'合成行动清单已完成，可下载附件。'});
+      await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});complete('');
     } else if (/生成成果|派发任务/.test(text)) {
-      const task = await tool("task_create", { title: "整理合成行动清单", goal: "按合成材料制作行动清单，格式由用户确定。" });
-      await tool('worker_open', {taskId:task.taskId,message:'读取 synthetic.md，制作行动清单，并向 Main 询问用户所需格式。'});
+      await tool('worker_open', {message:'制作合成行动清单，并向 Main 询问用户所需格式。'});
       await stream("我已开始整理材料。需要补充的信息会在这里询问你，后台任务会继续。", false);
     } else await stream("先核对材料，再交付成果。\n\n我会保留明确的负责人和时间，将不确定的内容留作待确认。\n\n| 事项 | 当前状态 |\n| --- | --- |\n| 阅读材料 | 已完成 |\n| 整理成果 | 待交办 |\n\n```ts\nconst task = { status: 'ready' };\n```\n\n这是离线合成验收的回答。", /持续|慢速/.test(text));
   }

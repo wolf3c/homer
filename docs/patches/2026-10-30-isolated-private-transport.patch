@@ -1,0 +1,118 @@
+--- a/.codex/scratch/impeccable-live-isolated-20261030/src/web-server.ts
++++ b/.codex/scratch/impeccable-live-isolated-20261030/src/web-server.ts
+@@ -50,13 +50,19 @@
+   const unsubscribe=bridge.onStateChange?.(()=>{publication.invalidate();historyPublication.invalidate();});
+   const isolatedTestStreams = new WeakMap<import('node:net').Socket, ServerResponse>();
+   const isolatedPairedSockets = new WeakSet<import('node:net').Socket>();
+-  const server = createServer((request, response) => {
++  const handleConnection = (request: IncomingMessage, response: ServerResponse) => {
+     if(request.url==='/api/events'||request.url==='/api/history/events'){isolatedTestStreams.set(request.socket,response);response.once('close',()=>isolatedTestStreams.delete(request.socket));}
+     void handle(request, response).catch(error => {
+       if (response.headersSent) { response.end(); return; }
+       json(response, 409, { error: code(error) });
+     });
+-  });
++  };
++  const server = createServer(handleConnection);
++  // Inherited descriptors cannot reconnect like TCP sockets. Only this private
++  // handler keeps idle connections; the ordinary loopback listener keeps defaults.
++  const inheritedServer = createServer(handleConnection);
++  inheritedServer.keepAliveTimeout = 0;
++  const inheritedSockets = new Set<import('node:net').Socket>();
+   async function handle(request: IncomingMessage, response: ServerResponse) {
+     response.setHeader("Cache-Control", "no-store");
+     response.setHeader("X-Content-Type-Options", "nosniff");
+@@ -311,10 +317,11 @@
+   const heartbeat = setInterval(() => { for (const client of [...clients,...historyClients]) client.write(": heartbeat\n\n"); }, 15000);
+   heartbeat.unref();
+   const disconnectClients=()=>{for(const client of [...clients,...historyClients])client.end();clients.clear();historyClients.clear();};
+-  return { url, attachIsolatedTestSocket:(socket: import('node:net').Socket,paired=false)=>{if(paired)isolatedPairedSockets.add(socket);return server.emit('connection',socket)}, finishIsolatedTestStream:(socket: import('node:net').Socket)=>{const response=isolatedTestStreams.get(socket);response?.end();return !!response;}, closeIsolatedTestListener:()=>new Promise<void>(done=>server.close(()=>done())), publish, reset:()=>{publication.reset();historyPublication.reset();}, disconnectClients, close: async () => {
++  return { url, attachIsolatedTestSocket:(socket: import('node:net').Socket,paired=false)=>{if(paired)isolatedPairedSockets.add(socket);inheritedSockets.add(socket);socket.once('close',()=>inheritedSockets.delete(socket));return inheritedServer.emit('connection',socket)}, finishIsolatedTestStream:(socket: import('node:net').Socket)=>{const response=isolatedTestStreams.get(socket);response?.end();return !!response;}, closeIsolatedTestListener:()=>new Promise<void>(done=>server.close(()=>done())), publish, reset:()=>{publication.reset();historyPublication.reset();}, disconnectClients, close: async () => {
+     unsubscribe?.();publication.close();historyPublication.close();
+     clearInterval(heartbeat);
+     disconnectClients();
++    for(const socket of inheritedSockets)socket.destroy();
+     if(server.listening)await new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
+   } };
+ }
+--- a/.codex/scratch/impeccable-live-bridge-20261030/bridge.mjs
++++ b/.codex/scratch/impeccable-live-bridge-20261030/bridge.mjs
+@@ -88,7 +88,7 @@
+   let url;
+   const server=createServer((req,res)=>{
+     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Cross-Origin-Resource-Policy','same-origin');res.setHeader('Referrer-Policy','no-referrer');
+-    const deny=(status)=>{denialCount++;res.writeHead(status,{'cache-control':'no-store'});res.end();};
++    const deny=(status,error)=>{denialCount++;res.writeHead(status,{'cache-control':'no-store',...(error?{'content-type':'application/json; charset=utf-8'}:{})});res.end(error?JSON.stringify({error}):undefined);};
+     if(req.headers.host!==new URL(url).host)return deny(403);
+     if(req.url==='/__bridge/enroll'&&req.method==='GET'){
+       res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"});return res.end(bootstrapHtml);
+@@ -119,7 +119,7 @@
+       try{let data=staticAssets?staticAssets.get(name):readFileSync(file);if(!data)throw Error('missing_asset');if(sessionHeartbeat&&name==='index.html'){const html=data.toString('utf8');if(!html.includes('</body>'))throw Error('invalid_index');data=Buffer.from(html.replace('</body>','<script src="/__bridge/heartbeat.js" defer></script></body>'));}const ext=name.split('.').pop(),mime={html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8',png:'image/png',woff:'font/woff',woff2:'font/woff2',ttf:'font/ttf'}[ext]??'application/octet-stream';res.writeHead(200,{'content-type':mime,'cache-control':'no-store','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self' blob: https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});return res.end(data);}catch{return deny(404)}
+     }
+     if(vite && !req.url.startsWith('/api/'))return vite.middlewares(req,res,()=>deny(404));
+-    if(bound&&!targetAlive())return deny(503);
++    if(bound&&!targetAlive())return deny(503,'bridge_target_unavailable');
+     const cookies=(req.headers.cookie??'').split(';').map(part=>part.trim()).filter(part=>part.startsWith('homer_test_session='));
+     const sessionId=cookies.length===1?cookies[0].slice('homer_test_session='.length):'';
+     const session=/^[a-f0-9]{64}$/.test(sessionId)?sessions.get(sessionId):undefined;
+@@ -142,13 +142,15 @@
+     req.on('data',chunk=>{if(done)return;size+=chunk.length;if(size>(upload?8*1024*1024:96*1024)){done=true;deny(413);req.resume();} else chunks.push(chunk)});
+     req.on('end',()=>{
+       if(done || res.destroyed || !sessions.has(sessionId) || session.expiresAt<=Date.now())return;
+-      if(bound&&!targetAlive())return deny(503);
++      if(bound&&!targetAlive())return deny(503,'bridge_target_unavailable');
+       const headers={};if(req.method==='POST'){headers.origin=backend.url;headers['content-type']=upload?'application/octet-stream':'application/json';}
+       if(upload){for(const key of ['content-length','x-homer-thread','x-homer-request','x-homer-upload','x-homer-filename'])if(req.headers[key]!==undefined)headers[key]=req.headers[key];}
+-      let slot;if(bound){for(let i=0;i<agents.length;i++){const candidate=agents[agentIndex++%agents.length];if(!candidate.socket.destroyed&&!Object.values(candidate.agent.sockets).some(list=>list.length)){slot=candidate;break;}}if(!slot)return deny(503);}
+-      let upstream,upstreamResponse;try{upstream=httpRequest(backend.url+req.url,{method:req.method,headers,...(bound?{agent:slot.agent}:{})},up=>{upstreamResponse=up;if(bound&&req.url==='/api/messages/move'&&dropMoveResponse){dropMoveResponse=false;up.resume();res.destroy();return;}res.writeHead(up.statusCode,{'content-type':up.headers['content-type']??'application/octet-stream','cache-control':'no-store',...(up.headers['content-disposition']?{'content-disposition':up.headers['content-disposition']}:{})});up.pipe(res);});}catch{return deny(503)}
++      let slot;if(bound){for(let i=0;i<agents.length;i++){const candidate=agents[agentIndex++%agents.length];if(!candidate.socket.destroyed&&!Object.values(candidate.agent.sockets).some(list=>list.length)){slot=candidate;break;}}if(!slot)return deny(503,agents.every(candidate=>candidate.socket.destroyed)?'bridge_transport_closed':'bridge_transport_busy');}
++      let upstream,upstreamResponse;try{upstream=httpRequest(backend.url+req.url,{method:req.method,headers,...(bound?{agent:slot.agent}:{})},up=>{upstreamResponse=up;if(res.destroyed){up.resume();return;}if(bound&&req.url==='/api/messages/move'&&dropMoveResponse){dropMoveResponse=false;up.resume();res.destroy();return;}res.writeHead(up.statusCode,{'content-type':up.headers['content-type']??'application/octet-stream','cache-control':'no-store',...(up.headers['content-disposition']?{'content-disposition':up.headers['content-disposition']}:{})});up.pipe(res);});}catch{return deny(503,'bridge_transport_closed')}
+       upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end();});
+-      res.on('close',()=>{if(bound&&(req.url==='/api/events'||req.url==='/api/history/events')&&!res.writableFinished&&targetAlive())(setImmediate(()=>upstreamResponse?.resume()),child.send({type:'endStream',index:slot.index}));else if(!res.writableFinished)upstream.destroy();});
++      // pipe() may pause the source while unpiping a closed browser response.
++      // Drain afterward so a canceled download cannot consume a private channel.
++      res.on('close',()=>{if(bound&&(req.url==='/api/events'||req.url==='/api/history/events')&&!res.writableFinished&&targetAlive())(setImmediate(()=>upstreamResponse?.resume()),child.send({type:'endStream',index:slot.index}));else if(!res.writableFinished){if(bound)setImmediate(()=>upstreamResponse?.resume());else upstream.destroy();}});
+       upstream.end(Buffer.concat(chunks));
+     });
+   });
+--- a/.codex/scratch/impeccable-live-bridge-20261030/private-transport.test.mjs
++++ b/.codex/scratch/impeccable-live-bridge-20261030/private-transport.test.mjs
+@@ -1,4 +1,37 @@
+-import {test} from 'node:test';import assert from 'node:assert/strict';import {createServer} from 'node:http';import {createBoundBridge} from './bridge.mjs';
++import {test} from 'node:test';import assert from 'node:assert/strict';import {createServer,request} from 'node:http';import {createBoundBridge} from './bridge.mjs';
++test('canceled large downloads release inherited channels after unpipe',{timeout:30000},async()=>{
++ const b=await createBoundBridge(),s=b.issueSession(),headers={cookie:s.cookie};
++ try{
++  const state=await(await fetch(b.url+'/api/state',{headers})).json();
++  const upload=await fetch(b.url+'/api/uploads',{method:'POST',headers:{...headers,origin:b.url,'content-type':'application/octet-stream','x-homer-thread':state.threadId,'x-homer-request':'cancel-download','x-homer-upload':'cancel-download','x-homer-filename':'synthetic.txt'},body:Buffer.alloc(4*1024*1024,65)});assert.equal(upload.status,201);const ref=await upload.json();
++  const sent=await fetch(b.url+'/api/messages',{method:'POST',headers:{...headers,origin:b.url,'content-type':'application/json'},body:JSON.stringify({requestId:'cancel-download',text:'',attachments:[ref]})});assert.equal(sent.status,202);await sent.text();
++  let msg;for(let i=0;i<100;i++){const st=await(await fetch(b.url+'/api/state',{headers})).json();msg=st.messages.find(x=>x.requestId==='cancel-download'&&x.role==='user');if(msg)break;await new Promise(r=>setTimeout(r,20));}assert.ok(msg);
++  const media=`/api/media/${msg.id}/${ref.assetId}/${ref.revision}`;
++  for(let i=0;i<40;i++){
++   const status=await new Promise((resolve,reject)=>{const r=request(b.url+media,{headers},res=>{res.once('data',()=>{r.destroy();resolve(res.statusCode)});res.on('error',()=>{});});r.setTimeout(2000,()=>{r.destroy();reject(Error('download_timeout'))});r.on('error',reject);r.end();});assert.equal(status,200,`download ${i}`);
++  }
++  const tasks=await fetch(b.url+'/api/tasks',{headers});assert.equal(tasks.status,200);await tasks.json();
++ }finally{await b.close()}
++});
++test('task reads survive repeated idle periods after all inherited channels have been used',{timeout:45000},async()=>{
++ const b=await createBoundBridge(),s=b.issueSession();
++ try{
++  for(let round=0;round<3;round++){
++   for(let i=0;i<40;i++){const r=await fetch(b.url+'/api/tasks',{headers:{cookie:s.cookie}});assert.equal(r.status,200,`round ${round} read ${i}`);assert.ok(Array.isArray((await r.json()).tasks));}
++   await new Promise(r=>setTimeout(r,6500));
++  }
++  const r=await fetch(b.url+'/api/tasks',{headers:{cookie:s.cookie}});assert.equal(r.status,200);await r.json();
++ }finally{await b.close()}
++});
++test('occupied channels report busy and recover after browser streams close',{timeout:30000},async()=>{
++ const b=await createBoundBridge(),s=b.issueSession(),streams=[];
++ try{
++  for(let i=0;i<32;i++){const controller=new AbortController();streams.push(controller);const r=await fetch(b.url+'/api/history/events',{headers:{cookie:s.cookie},signal:controller.signal});assert.equal(r.status,200);await r.body.getReader().read();}
++  const busy=await fetch(b.url+'/api/tasks',{headers:{cookie:s.cookie}});assert.equal(busy.status,503);assert.deepEqual(await busy.json(),{error:'bridge_transport_busy'});
++  for(const c of streams)c.abort();
++  let status;for(let i=0;i<30;i++){const r=await fetch(b.url+'/api/tasks',{headers:{cookie:s.cookie}});status=r.status;await r.text();if(status===200)break;await new Promise(r=>setTimeout(r,20));}assert.equal(status,200);
++ }finally{for(const c of streams)c.abort();await b.close()}
++});
+ test('replacing target TCP listener cannot intercept a request on the inherited transport',async()=>{
+  const b=await createBoundBridge(),session=b.issueSession();let decoy,seen=0;
+  try{const port=b.targetPort();await b.closeTargetListener();decoy=createServer((req,res)=>{seen++;res.end('fake')});await new Promise((r,j)=>decoy.once('error',j).listen(port,'127.0.0.1',r));

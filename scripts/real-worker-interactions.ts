@@ -1,9 +1,10 @@
+import {messageFilesForRun} from './message-file-evidence.js';
 // Explicit real CLI/model acceptance. Only newly prepared synthetic material is used.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.js";
@@ -15,10 +16,11 @@ if (!input) throw new Error("explicit_config_required");
 const stamp = Date.now();
 const base = resolve(".codex/scratch/worker-interactions/real-" + stamp);
 const runtime = resolve(".codex/private/wi-" + stamp);
-const config = { ...loadConfig(input), runtime, workspace: join(base, "workspace"), mainTimeoutMs: 180000, timeoutMs: 180000 };
+const config = { ...loadConfig(input), runtime, workspace: join(base, "workspace") };
 mkdirSync(runtime, { recursive: true, mode: 0o700 });
-mkdirSync(join(config.workspace, "materials"), { recursive: true });
-writeFileSync(join(config.workspace, "materials", "sample.md"), "# 合成材料\n这是公开合成的权限与问答回归材料，行动负责人和日期均待确认。\n");
+mkdirSync(config.workspace, { recursive: true });
+const samplePath=join(config.workspace, "sample.md");
+writeFileSync(samplePath, "# 合成材料\n这是公开合成的权限与问答回归材料，行动负责人和日期均待确认。\n");
 const configPath = join(runtime, "test.config.json");
 writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
 const marker = "合成标题-" + randomUUID().slice(0, 8), label = "合成版式-" + randomUUID().slice(0, 8);
@@ -43,20 +45,29 @@ function rows(table: "runs" | "worker_interactions" | "meta") {
   const db = new DatabaseSync(database, { readOnly: true });
   try { return db.prepare("SELECT * FROM " + table).all() as any[]; } finally { db.close(); }
 }
-function artifact(runId:string){
+function filesForRun(runId:string){
   const db=new DatabaseSync(database,{readOnly:true});
-  try{const files=db.prepare("SELECT r.filePath FROM results r JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) i ON i.value=r.id WHERE r.runId=? AND r.kind='file' AND d.state='recorded' AND d.revokedAt IS NULL").all(runId);assert.equal(files.length,1);return String(files[0]!.filePath);}finally{db.close();}
+  try{return db.prepare(messageFilesForRun).all(runId);}finally{db.close();}
 }
-async function until(check: () => boolean, timeout = 240000) {
+function artifactText(runId:string){
+  const files=filesForRun(runId);
+  assert.equal(files.length,1);
+  const file=files[0]!,id=String(file.assetId);
+  assert.match(id,/^asset-[a-f0-9-]{36}$/);
+  const bytes=readFileSync(join(runtime,"media",id));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"),file.sha256);
+  return bytes.toString("utf8");
+}
+async function until(check: () => boolean, timeout = 240000, whileCliOpen = true) {
   const deadline = Date.now() + timeout;
   while (!check()) {
-    if (exited) throw new Error("real_cli_exited");
+    if (whileCliOpen && exited) throw new Error("real_cli_exited");
     if (Date.now() > deadline) throw new Error("real_interaction_timeout");
     await new Promise(done => setTimeout(done, 100));
   }
 }
 const send = (text: string) => child.stdin.write(text + "\n");
-const count = (type: string) => messages.filter(message => message.type === type).length;
+const count = (type: Message["type"]) => messages.filter(message => message.type === type).length;
 const reportPath = join(base, "interaction-checks.json");
 try {
   await until(() => messages.some(message => message.type === "progress" && message.text.includes("Homer 已启动")));
@@ -67,19 +78,18 @@ try {
   const originalMain = rows("meta").find(item => item.key === "mainThread").value;
   assert.equal(originalMain, preparedThread!);
   stage = "ask_main_direct";
-  send("请现在派发一个独立文件任务，材料 sample.md。验收目标明确要求 Worker 先 read_material，再必须调用 ask_main 一次询问主Agent刚才记住的合成标题；即使goal带了标题也必须确认，然后把实际返回的合成标题和材料中的负责人/日期待确认写入 Markdown。主Agent知道答案，应直接 respond_interaction 回答，不用问用户。");
-  await until(() => count("delivery") >= 1);
+  send(`请现在派发一个独立文件任务，材料 ${samplePath}。验收目标明确要求 Worker 先按地址读取材料，再必须调用 ask_main 一次询问主Agent刚才记住的合成标题；即使goal带了标题也必须确认，然后把实际返回的合成标题和材料中的负责人/日期待确认写入 Markdown。主Agent知道答案，应直接 respond_interaction 回答，不用问用户。Worker 回报后核对正文和文件，用 send_user_message 发送选定的 Markdown 附件。`);
+  await until(() => rows("runs").some(run=>filesForRun(run.id).length>0));
   const direct = rows("worker_interactions").find(item => item.source === "ask_main");
   assert.ok(direct && direct.state === "answered" && direct.deliveredAt);
   assert.ok(JSON.parse(direct.decision).answer.includes(marker));
   const run = rows("runs").find(item => item.id === direct.runId);
-  assert.equal(run.status, "succeeded"); assert.ok(readFileSync(artifact(run.id), "utf8").includes(marker));
+  assert.equal(run.status, "succeeded"); assert.ok(artifactText(run.id).includes(marker));
   stage = "escalate_user";
-  send("请现在先派发第二个独立任务，材料 sample.md，不要在派发前问用户。Worker必须先 read_material，再调用 ask_main 询问‘用户专门指定的合成展示版式是什么？’。该版式尚未告知主Agent，用户要求禁止推测或替选；主Agent须使用 escalate_interaction 询问用户。Worker得到用户真实答复后，写入包含版式标签以及材料事实的Markdown。这是验收所必需的用户选择。");
-  await until(() => count("question") >= 1);
-  const question = messages.find(message => message.type === "question")!;
-  const waiting = rows("worker_interactions").find(item => item.id === question.interactionId);
-  assert.equal(waiting.state, "pending_user");
+  send(`请现在先派发第二个独立任务，材料 ${samplePath}，不要在派发前问用户。Worker 必须先按地址读取材料，再调用 ask_main 询问‘用户专门指定的合成展示版式是什么？’。该版式尚未告知主Agent，用户要求禁止推测或替选；主Agent须使用 escalate_interaction 询问用户，并通过 send_user_message 将问题呈现给 CLI 用户。Worker 得到真实答复后，写入包含版式标签及材料事实的 Markdown，回报路径后由主Agent 发送选定附件。这是验收所必需的用户选择。`);
+  await until(() => rows("worker_interactions").some(item=>item.source==="ask_main"&&item.state==="pending_user") && messages.some(message=>message.type==="reply"&&/版式/.test(message.text)));
+  const waiting = rows("worker_interactions").find(item=>item.source==="ask_main"&&item.state==="pending_user");
+  assert.ok(waiting.userQuestion);
   const originalWorker = rows("runs").find(item => item.id === waiting.runId);
   stage = "unrelated_chat";
   const before = count("reply");
@@ -89,21 +99,44 @@ try {
   assert.equal(rows("worker_interactions").find(item => item.id === waiting.id).state, "pending_user");
   stage = "original_worker_continue";
   send(`回答待答ID ${waiting.id}：用户指定合成展示版式为「${label}」。请查看该待答并 respond_interaction 返回原Worker继续，不能重新派任务。`);
-  await until(() => count("delivery") >= 2);
+  await until(() => filesForRun(waiting.runId).length>0);
   const answered = rows("worker_interactions").find(item => item.id === waiting.id);
   const continued = rows("runs").find(item => item.id === waiting.runId);
   assert.equal(answered.state, "answered"); assert.ok(answered.responseUserMessageId);
   assert.equal(continued.status, "succeeded"); assert.equal(continued.threadId, originalWorker.threadId); assert.equal(continued.pid, originalWorker.pid);
-  assert.ok(readFileSync(artifact(continued.id), "utf8").includes(label));
+  assert.ok(artifactText(continued.id).includes(label));
   const checkNative = process.argv.includes("--native");
   if (checkNative) {
-  stage = "native_read_approval";
-  send("请创建第三个独立任务，材料 sample.md。Worker先使用原生 request_permissions 工具请求仅对自己当前运行目录 cwd 的 filesystem read 权限（不要写、网络或会话授权），理由是合成审批回归。等待原生审批结果后再 read_material，写一个简短 Markdown 记录材料事实。主Agent对本Run已允许读取的明确子集应直接批准；任何越界请求应拒绝，不能问用户假装测试通过。");
-  await until(() => count("delivery") >= 3 || count("question") >= 2);
-  if (count("question") >= 2) throw new Error("native_request_unexpected_escalation");
-  const native = rows("worker_interactions").filter(item => item.source === "native");
-  const nativeApproved = native.some(item => item.kind === "authorization" && item.state === "approved" && item.deliveredAt);
-  assert.ok(nativeApproved, "native_approval_not_observed");
+    stage = "native_read_approval";
+    // Use the existing structured approval entry, which line-oriented CLI
+    // input cannot express, on the same resumed conversation and isolated DB.
+    send("/quit");await until(() => exited, 10000);assert.equal(exitCode,0);
+    const app=new Homer(config,async()=>{});
+    try {
+      await app.start();
+      assert.equal(app.store.meta("mainThread"),originalMain);
+      await app.message(`请派第三个独立任务，材料 ${samplePath}。Worker先使用原生 request_permissions 工具请求仅对自己当前运行目录 cwd 的 filesystem read 权限（不要写、网络或会话授权）。Homer 先查看原生请求，使用现有审批卡请求本次用户决定，得到决定后回复原 Worker。Worker 按地址读取材料并写一个简短 Markdown 记录材料事实，回报路径后由 Homer 发送选定附件。`,"interaction-native");
+      const pending=()=>app.interactions.list().find(item=>item.source==="native"&&item.kind==="authorization"&&item.state==="pending_user");
+      await until(()=>!!pending(),240000,false);
+      const card=app.interactions.inspect(pending()!.id),run=app.tasks.run(card.runId);
+      assert.equal(card.details.method,"item/permissions/requestApproval");
+      const {fileSystem,network}=(card.details.params as any).permissions;
+      const entries=fileSystem?.entries??[];
+      assert.ok(entries.every((entry:{access:string})=>entry.access==="read"));
+      const reads=[...(fileSystem?.read??[]),...entries.map((entry:{path:{path:string}})=>entry.path.path)];
+      assert.deepEqual(reads,[app.tasks.workingDirectory(run.id)]);
+      assert.notEqual(network?.enabled,true);
+      assert.equal(fileSystem?.write?.length??0,0);
+      const decision=app.submitMessage({requestId:"interaction-native-decision",interactionId:card.id,text:"允许本次操作"});
+      assert.equal(decision.fresh,true);
+      await until(()=>filesForRun(run.id).length>0,240000,false);
+      await app.idle();
+      const approved=app.interactions.inspect(card.id);
+      assert.equal(approved.state,"approved");assert.ok(approved.deliveredAt);
+      assert.equal(approved.responseUserMessageId,"interaction-native-decision");
+      assert.equal(app.tasks.run(run.id).threadId,run.threadId);
+      assert.match(artifactText(run.id),/待确认/);
+    } finally { await app.close(); }
   }
   const nativeApproved = rows("worker_interactions").some(item => item.source === "native" && item.kind === "authorization" && item.state === "approved" && item.deliveredAt);
   assert.ok(rows("runs").every(item => item.status === "succeeded"));

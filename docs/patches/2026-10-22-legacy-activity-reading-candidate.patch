@@ -1,0 +1,485 @@
+diff --git a/ui/process-nodes.tsx b/ui/process-nodes.tsx
+--- a/ui/process-nodes.tsx
++++ b/ui/process-nodes.tsx
+@@ -18,12 +18,15 @@
+  message?:(id:string)=>void;
+ }>({});
+ type ReadableActivity=Extract<ProcessItem,{kind:'tool'|'worker'}>;
+-function ActivityReader({node,item,trigger,onClose}:{node:ProcessNode;item:ReadableActivity;trigger:HTMLElement;onClose:()=>void}){
++type ActivitySelection={item?:ReadableActivity;trigger:HTMLElement};
++type ActivityReaderProps={node:ProcessNode;trigger:HTMLElement;fallbackTrigger?:HTMLElement|null;onClose:()=>void}&({item:ReadableActivity;records?:never}|{item?:never;records:readonly ToolItem[]});
++function ActivityReader({node,item,records,trigger,fallbackTrigger,onClose}:ActivityReaderProps){
+  const load=useContext(ProcessDetailsContext),navigate=useContext(ActivityNavigationContext),observation=useContext(ProcessObservationContext);
+  const dialog=useRef<HTMLDialogElement>(null),heading=useRef<HTMLHeadingElement>(null);
+  const [data,setData]=useState<WebProcessNode|null>(null),[error,setError]=useState('');
+  useLayoutEffect(()=>{dialog.current?.showModal();heading.current?.focus({preventScroll:true});return()=>{dialog.current?.close();};},[]);
+  useEffect(()=>{
++  if(!item)return; // Original call labels/statuses are already in the authorized process read.
+   if(!observation.connected){setData(null);setError('连接已变化，活动详情当前无法核对，请关闭后重试。');return;}
+   const controller=new AbortController();setData(null);setError('');
+   void load(node.id,controller.signal,item.id).then(value=>{
+@@ -35,13 +38,13 @@
+   return()=>controller.abort();
+  // A selected call is immutable; unrelated streaming node revisions must
+  // not reread it. Identity and connection changes still cancel this request.
+- },[load,node.id,node.threadId,item.id,item.revision,item.kind,observation.connected]);
+- const current=data?.items.find(i=>i.id===item.id),fact=current?.kind==='tool'?current.activity:undefined,link=data?.activityLinks?.[item.id];
+- function close(){dialog.current?.close();onClose();requestAnimationFrame(()=>{if(trigger.isConnected)trigger.focus({preventScroll:true});});}
++ },[load,node.id,node.threadId,item?.id,item?.revision,item?.kind,observation.connected]);
++ const current=data?.items.find(i=>i.id===item?.id),fact=current?.kind==='tool'?current.activity:undefined,link=item?data?.activityLinks?.[item.id]:undefined;
++ function close(){dialog.current?.close();onClose();requestAnimationFrame(()=>{const target=trigger.isConnected&&!trigger.closest('[inert]')?trigger:fallbackTrigger;target?.focus({preventScroll:true});});}
+  function visit(action:()=>void){dialog.current?.close();onClose();requestAnimationFrame(action);}
+  return <dialog ref={dialog} className="activity-reader" aria-labelledby="activity-reader-title" onCancel={event=>{event.preventDefault();close();}}>
+-  <header><h3 id="activity-reader-title" ref={heading} tabIndex={-1}>这次活动</h3><button type="button" onClick={close} aria-label="关闭活动详情">×</button></header>
+-  {error?<p role="alert">{error}</p>:!data?<p role="status">正在核对这次活动…</p>:<>
++  <header><h3 id="activity-reader-title" ref={heading} tabIndex={-1}>{records?'原调用记录':'这次活动'}</h3><button type="button" onClick={close} aria-label="关闭活动详情">×</button></header>
++  {records?<><p>按原过程顺序展示已记录的调用标签与状态。调用返回不代表检查通过；未保留的工作详情无法补回。</p>{records.length?<ol>{records.map(record=><li key={record.id} value={record.seq} data-record-tool-id={record.id}>{record.label}<span className="process-fact">{toolFact(record,!observation.connected||!observation.serviceRunning||node.status==='unknown')}</span></li>)}</ol>:<p role="status">过程记录已更新，请关闭后重新展开过程核对。</p>}</>:error?<p role="alert">{error}</p>:!data?<p role="status">正在核对这次活动…</p>:<>
+    {fact?<><p className="activity-reader-action">{activityActions[fact.action]}{fact.objectName&&<>：{fact.objectName}</>}</p><p>{activityOutcomes[fact.outcome]}</p><p className="process-record-note">以上来自这次调用的结构化回执；不代表后续状态。</p></>:<p>当时没有保留足够的活动详情。下方仅提供准确关联的当前记录，不补写历史。</p>}
+    {current?.kind==='tool'&&<p>调用状态：{toolStatusText[current.status]}</p>}
+    {link&&<><p className="process-record-note">关联要求版本 {link.task.version}{link.task.runId?' · 已核对准确 Run':''}。任务面板提供当前信息及原版本执行记录。</p><div className="activity-reader-links">
+@@ -49,7 +52,7 @@
+     {link.artifact&&navigate.artifact&&<button type="button" onClick={()=>visit(()=>navigate.artifact!(link.artifact!,trigger))}>查看成果：{link.artifact.title}</button>}
+     {link.messageId&&navigate.message&&<button type="button" onClick={()=>visit(()=>navigate.message!(link.messageId!))}>查看原交付答复</button>}
+    </div></>}
+-   {!link&&(fact?.target||item.kind==='worker')&&<p>当前关联无法读取，可能权限或准确关系已变化；这不表示记录永久丢失。</p>}
++   {!link&&(fact?.target||item?.kind==='worker')&&<p>当前关联无法读取，可能权限或准确关系已变化；这不表示记录永久丢失。</p>}
+   </>}
+  </dialog>;
+ }
+@@ -103,7 +106,7 @@
+   </article>;
+ }
+ export function ProcessNodeView({node,renderText,activityText,observation={connected:false}}:{node:ProcessNode;renderText:(text:string)=>ReactNode;activityText?:string;observation?:ProcessObservation}) {
+-  const [reading,setReading]=useState<{item:ReadableActivity;trigger:HTMLElement}|null>(null);
++  const [reading,setReading]=useState<ActivitySelection|null>(null);
+   const identity=JSON.stringify([node.threadId,node.id]),storageKey='homer-process-disclosure:'+identity;
+   const [disclosure,setDisclosure]=useState(()=>({key:identity,...initialDisclosure(storageKey,node)}));
+   if(disclosure.key!==identity)setDisclosure({key:identity,...initialDisclosure(storageKey,node)});
+@@ -145,11 +148,32 @@
+   const problems=Object.entries(counts).filter(([status])=>status!=='running'&&status!=='completed').map(([status,count])=>count+' 次'+toolStatusText[status as ToolItem['status']]).join(' · ');
+   const label=node.status==='unknown'?'待核实':terminal?node.sourceKind==='worker'?'Worked · 协作记录':'Worked':'Working';
+   const status=node.status==='failed'?'处理失败':node.status==='interrupted'?'已中断':node.status==='unknown'?'结束状态待核实':!terminal&&activityText?activityText:'';
++  const toolItems=rows.flatMap(row=>row.kind==='tools'?row.items:[]);
++  // Only confirmed returned internal calls without public facts use the compact
++  // reading entry. Native, running and abnormal calls stay individually visible.
++  const limited=new Set(toolItems.filter(item=>item.category==='host'&&!item.activity&&item.status==='completed').map(item=>item.id));
++  const firstLimited=limited.values().next().value;
+   // Upstream owns the single disclosure/list. The adapter supplies public facts
+   // as ordered entries; returned calls are never interpreted as passed checks.
+-  const entries=rows.filter(row=>active.open||row.kind!=='workerEvent').flatMap<RunActivityEntry>(row=>row.kind==='commentary'?[{id:row.id,kind:'commentary',label:activityText||'公开进展',content:<div className="process-item process-commentary">{renderText(row.text)}</div>}]:row.kind==='workerEvent'?[{id:row.id,kind:'commentary',label:'Worker 事件',content:<WorkerEventCard item={row}/>}]:row.items.map(item=>({id:item.id,kind:'tool',label:item.activity?activityActions[item.activity.action]+(item.activity.objectName?'：'+item.activity.objectName:''):item.label,content:<div className="process-tool-row" data-tool-id={item.id}><p>{item.activity?activityActions[item.activity.action]:item.label}{item.activity?.objectName&&<>：{item.activity.objectName}</>}<span className="process-fact" data-tool-status={item.status}>{toolFact(item,stale)}{item.category==='fileChange'&&item.fileCount!==undefined?' · 本次涉及 '+item.fileCount+' 个文件':''}</span></p>{item.activity?<><p className="process-activity-outcome">{activityOutcomes[item.activity.outcome]}</p><button type="button" className="process-activity-link" aria-label={'查看活动：'+(item.activity.objectName??activityActions[item.activity.action])} onClick={event=>setReading({item,trigger:event.currentTarget})}>查看活动</button></>:item.category==='host'&&<p className="process-record-note">此记录没有足够的公开工作详情。</p>}</div>})));
++  const entries=rows.filter(row=>active.open||row.kind!=='workerEvent').flatMap<RunActivityEntry>(row=>{
++    if(row.kind==='commentary')return [{id:row.id,kind:'commentary',label:activityText||'公开进展',content:<div className="process-item process-commentary">{renderText(row.text)}</div>}];
++    if(row.kind==='workerEvent')return [{id:row.id,kind:'commentary',label:'Worker 事件',content:<WorkerEventCard item={row}/>}];
++    return row.items.flatMap<RunActivityEntry>(item=>{
++      if(limited.has(item.id)){
++        if(item.id!==firstLimited)return [];
++        return [{id:node.id+':limited-calls',kind:'commentary',label:'内部调用缺少公开工作详情',content:<div className="process-tool-row">
++          <p>{limited.size} 次内部调用缺少公开工作详情，仅保留原标签和调用状态。</p>
++          <button type="button" className="process-activity-link" onClick={event=>setReading({trigger:event.currentTarget})}>查看原调用记录</button>
++        </div>}];
++      }
++      return [{id:item.id,kind:'tool',label:item.activity?activityActions[item.activity.action]+(item.activity.objectName?'：'+item.activity.objectName:''):item.label,content:<div className="process-tool-row" data-tool-id={item.id}>
++        <p>{item.activity?activityActions[item.activity.action]:item.label}{item.activity?.objectName&&<>：{item.activity.objectName}</>}<span className="process-fact" data-tool-status={item.status}>{toolFact(item,stale)}{item.category==='fileChange'&&item.fileCount!==undefined?' · 本次涉及 '+item.fileCount+' 个文件':''}</span></p>
++        {item.activity?<><p className="process-activity-outcome">{activityOutcomes[item.activity.outcome]}</p><button type="button" className="process-activity-link" aria-label={'查看活动：'+(item.activity.objectName??activityActions[item.activity.action])} onClick={event=>setReading({item,trigger:event.currentTarget})}>查看活动</button></>:item.category==='host'&&<p className="process-record-note">此记录没有足够的公开工作详情。</p>}
++      </div>}];
++    });
++  });
+   if(!entries.length)entries.push({id:node.id+':status',kind:'commentary',label:activityText??'',content:<p role={!loaded?'status':undefined}>{!loaded?error||'过程详情尚未加载…':terminal?'本次主处理已结束。':node.status==='unknown'?'本次处理是否结束尚待核实。':activityText||'当前处理阶段待确认'}</p>});
+-  return <>{reading&&<ActivityReader key={identity+reading.item.id} node={node} {...reading} onClose={()=>setReading(null)}/>}<RunActivity className="process-node" status={node.status==='unknown'?'incomplete':node.status==='failed'?'error':node.status==='interrupted'?'cancelled':terminal?'complete':'running'}
++  return <>{reading&&(reading.item?<ActivityReader key={identity+reading.item.id} node={node} item={reading.item} trigger={reading.trigger} onClose={()=>setReading(null)}/>:<ActivityReader key={identity+':records'} node={node} records={toolItems} trigger={reading.trigger} fallbackTrigger={button.current} onClose={()=>setReading(null)}/>)}<RunActivity className="process-node" status={node.status==='unknown'?'incomplete':node.status==='failed'?'error':node.status==='interrupted'?'cancelled':terminal?'complete':'running'}
+     statusLabel={label} durationLabel={<><ProcessDuration node={node} observation={observation}/>{status&&<span className="process-status"> · {status}</span>}{!active.open&&terminal&&node.status==='completed'&&!problems&&counts.completed?<span className="process-return-count"> · {counts.completed} 次调用已返回</span>:null}</>}
+     entries={entries} open={active.open} onOpenChange={open=>setDisclosure({...active,open})}
+     triggerProps={{ref:button,className:'process-toggle',title:node.status==='unknown'?'本次处理结束状态待核实，未自动重跑':terminal?'本次主 Agent 处理已结束，后台 Worker 状态独立显示':'本次主 Agent 正在处理'}}
+diff --git a/ui/DESIGN.md b/ui/DESIGN.md
+--- a/ui/DESIGN.md
++++ b/ui/DESIGN.md
+@@ -15,6 +15,14 @@
+ 主对话及准确原答复里的成果复用独立 FileList 组件。组件只负责文件顺序、类型图标、完整文件名、点击及可访问说明，不读取文件或判断业务权限；由调用方管理准确 ID、授权和预览。空列表不占位；文件按原集合顺序排布，常规行高约56px、窄屏58px，点击区域至少44px。长名自然换行，不增加可见标题/数量行、版本/状态、右侧类型标签、查看大按钮、下载或设计备注。类型合并进前导图标；不按同名去重。
+
+ Canvas 继续桌面并排、800px及以下全屏。原生选择框按准确结果ID切换已有授权文件，保留原答复兄弟文件与正确返回位置/焦点；原网页表单折叠可达。成果Canvas无应用内下载或失效下载提示，用户附件不变。HTML默认源码，静态与交互仍需主动选择并沿原隔离；保留既有格式、权限与资源清理。移除展示不修改实际任务结果、版本或交付归属。
++
++## 2026-10-22 缺少公开详情的内部调用阅读
++
++仅 `category=host`、无公开 activity、状态为 completed 的调用使用紧凑呈现：同一 Run 在首个符合条件的位置留一次数量和缺失说明，沿已有“查看原调用记录”只读弹窗按原过程顺序展示原标签与调用状态。该入口复用活动 reader；没有第二层工具折叠、工具时间线或新的过程组件。所有原调用仍参与准确计数，不按同名或文字合并；不改 ID、revision、seq、计时、分页或持久历史。
++
++具体公开活动与原生工具继续逐项呈现；运行中、失败、拒绝、中断、受阻及未知调用不进入紧凑范围，原异常汇总保持在折叠区外。全部缺详情时只显示一次说明；混合时具体活动保留相对原顺序，原调用阅读涵盖同一过程的全部已读取工具项，以便核对交错顺序；全部有详情时不增加缺失占位。缺少 category 时保守保留原行。Worker 不可变事件卡及旧快照缺失说明不属于工具行，此次保持。
++
++历史仍只在用户展开官方 Run Activity 时沿既有准确读取加载；原调用弹窗只使用已经获准读取的标签和状态，不新增工具参数/结果读取或补写。运行更新沿原调用身份与revision投影；入口在弹窗打开期间消失或进入已收起面板时，关闭返回同一Run的官方展开按钮。官方DOM、字体、间距、chevron、列表线和动画保持。实施与验证见 `docs/2026-10-22-legacy-activity-reading-candidate.md`。
+
+ ## 2026-10-22 Run Activity 公开活动事实与阅读入口
+
+diff --git a/tests/process-reading.test.mjs b/tests/process-reading.test.mjs
+--- a/tests/process-reading.test.mjs
++++ b/tests/process-reading.test.mjs
+@@ -15,10 +15,10 @@
+  const result=presentation.projectProcessItems([...tools,{...tools[0],revision:2},worker]);
+  assert.equal(result.rows.length,1);assert.deepEqual(result.rows[0].items.map(t=>t.id),tools.map(t=>t.id));assert.equal(result.rows[0].items[0].revision,2);assert.equal(result.workers.length,1);
+ });
+-test('official single disclosure exposes every original returned call without a second Homer tool disclosure',async()=>withDom(async d=>{
++test('official single disclosure offers one original-record entry without a second Homer tool disclosure',async()=>withDom(async d=>{
+  await d.render(view());await d.click(d.find(n=>n.tagName==='BUTTON'));
+- const visible=visibleText(d.container);assert.equal((visible.match(/调用已返回/g)||[]).length,8);assert.doesNotMatch(visible,/执行已结束.*已验收.*部分完成/);
+- assert.equal(d.all().filter(n=>'data-tool-id' in n.attrs).length,8);assert.deepEqual(d.all().filter(n=>'data-tool-id' in n.attrs).map(n=>n.attrs['data-tool-id']),tools.map(t=>t.id));
++ const visible=visibleText(d.container);assert.match(visible,/8 次内部调用缺少公开工作详情/);assert.doesNotMatch(visible,/执行已结束.*已验收.*部分完成/);
++ assert.equal(d.all().filter(n=>'data-tool-id' in n.attrs).length,0);assert.equal(d.all().filter(n=>n.tagName==='BUTTON'&&n.textContent==='查看原调用记录').length,1);
+  assert.equal(d.all().filter(n=>n.tagName==='DETAILS'&&'data-tool-group' in n.attrs).length,0);assert.doesNotMatch(visible,/检查通过|同一原生轮次|同一轮次/);
+ }));
+ test('legacy Worker rows do not imply their last projection was the historical event',async()=>withDom(async d=>{
+diff --git a/tests/process-reading.browser.mjs b/tests/process-reading.browser.mjs
+--- a/tests/process-reading.browser.mjs
++++ b/tests/process-reading.browser.mjs
+@@ -15,12 +15,14 @@
+   assert.equal(await page.evaluate(()=>document.querySelectorAll('.process-worker-row').length),0);
+   assert.ok(await page.evaluate(()=>document.querySelector('#message-node-89 .process-workers').textContent.includes('当时的事件内容未保留')));
+   assert.ok(await page.evaluate(()=>[...document.querySelectorAll('#message-node-88 .process-toggle,#message-node-89 .process-toggle')].every(e=>!e.textContent.includes('耗时'))));
+-  await open(88,true);await wait(()=>document.querySelectorAll('#message-node-88 [data-tool-id]').length===8&&[...document.querySelectorAll('#message-node-88 [data-tool-id]')].every(e=>e.checkVisibility()));
++  await open(88,true);await wait(()=>document.querySelector('#message-node-88 .process-content')?.textContent.includes('8 次内部调用缺少公开工作详情'));
+   const style=await page.evaluate(()=>{const root=document.querySelector('#message-node-88 [data-slot=run-activity]'),trigger=root.querySelector('.process-toggle'),list=root.querySelector('ol'),icon=trigger.querySelector('svg'),a=getComputedStyle(root),b=getComputedStyle(trigger),c=getComputedStyle(list),d=getComputedStyle(icon);return {gap:a.gap,font:b.fontSize,lineHeight:b.lineHeight,triggerGap:b.gap,padding:b.paddingTop,radius:b.borderRadius,width:d.width,height:d.height,listGap:c.gap,listBorder:c.borderInlineStartWidth,listMargin:c.marginInlineStart,listPadding:c.paddingInlineStart,listTop:c.paddingTop,listFont:c.fontSize,after:getComputedStyle(trigger,'::after').content};});
+   assert.deepEqual(style,{gap:'12px',font:'14px',lineHeight:'20px',triggerGap:'6px',padding:'4px',radius:'6px',width:'14px',height:'14px',listGap:'12px',listBorder:'1px',listMargin:'6px',listPadding:'14px',listTop:'8px',listFont:'14px',after:'none'});checks.push('官方过程组件字体、间距、图标和列表线保持原指标');
+   assert.equal(await page.evaluate(()=>document.querySelectorAll('#message-node-88 [data-tool-group]').length),0);
+-  const calls=await page.evaluate(()=>[...document.querySelectorAll('#message-node-88 [data-tool-id]')].map(e=>({id:e.dataset.toolId,visible:e.checkVisibility()})));
+-  assert.deepEqual(calls.map(x=>x.id),f.tools.map(x=>x.id));assert.ok(calls.every(x=>x.visible));checks.push('官方单层过程列表保留全部8次调用，未恢复第二层工具折叠');
++  assert.equal(await page.evaluate(()=>document.querySelectorAll('#message-node-88 [data-tool-id]').length),0);
++  await page.evaluate(()=>document.querySelector('#message-node-88 .process-content .process-activity-link').click());await wait(()=>document.querySelectorAll('[data-record-tool-id]').length===8);
++  const calls=await page.evaluate(()=>[...document.querySelectorAll('[data-record-tool-id]')].map(e=>({id:e.dataset.recordToolId,visible:e.checkVisibility()})));
++  assert.deepEqual(calls.map(x=>x.id),f.tools.map(x=>x.id));assert.ok(calls.every(x=>x.visible));await page.evaluate(()=>document.querySelector('.activity-reader header button').click());await wait(()=>!document.querySelector('.activity-reader'));checks.push('官方单层列表收起旧流水，原阅读弹窗按顺序保留全部8次调用');
+   for(const mode of ['same-name','changed','version-gap']){
+    f.setMode(mode);await wait(()=>document.querySelector('#message-node-89 .process-workers')?.textContent.includes('当时的事件内容未保留'));
+    const text=await page.evaluate(()=>document.querySelector('#message-node-89').textContent);assert.doesNotMatch(text,/另一版本的当前事项标题|相同快照|部分完成|已验收/);
+diff --git a/tests/run-activity-facts.browser.mjs b/tests/run-activity-facts.browser.mjs
+--- a/tests/run-activity-facts.browser.mjs
++++ b/tests/run-activity-facts.browser.mjs
+@@ -13,12 +13,12 @@
+  const reader=()=>!!document.querySelector('.activity-reader[open]');
+  const close=async()=>{await key(p,'Escape','Escape',27);await wait(()=>!document.querySelector('.activity-reader'));};
+  try{
+-  await p.navigate();await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===6);
++  await p.navigate();await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===5);
+   assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89 .process-toggle').getAttribute('aria-expanded')),'true');
+-  assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length),6);
++  assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length),5);
+   const facts=await p.evaluate(()=>[...document.querySelectorAll('#message-node-89 [data-tool-id]')].map(e=>({id:e.dataset.toolId,text:e.textContent})));
+   assert.match(facts[0].text,/查看任务记录：周报材料核对.*调用已返回.*记录已读取/);assert.match(facts[1].text,/周报材料核对/);assert.notEqual(facts[0].id,facts[1].id);
+-  assert.match(facts[2].text,/检查成果文件：季度经营数据/);assert.match(facts[3].text,/验收已接受/);assert.match(facts[4].text,/交付已准备，正式交付尚未确认/);assert.doesNotMatch(facts[5].text,/通过|成功|已交付|验收已接受/);
++  assert.match(facts[2].text,/检查成果文件：季度经营数据/);assert.match(facts[3].text,/验收已接受/);assert.match(facts[4].text,/交付已准备，正式交付尚未确认/);assert.match(await p.evaluate(()=>document.querySelector('#message-node-89 .process-content').textContent),/1 次内部调用缺少公开工作详情/);
+   assert.equal(await p.evaluate(()=>document.querySelectorAll('[data-tool-id=returned-only] button').length),0);checks.push('动作、对象与有依据结果清晰；返回不等于业务成功；同名调用各自保留');
+   await p.evaluate(()=>{const view=document.querySelector('.thread-viewport');view.scrollTop+=document.querySelector('#message-node-89').getBoundingClientRect().top-view.getBoundingClientRect().top;document.querySelector('#message-node-89 .process-toggle').focus({preventScroll:true});});await p.screenshot('default-expanded-'+width+'.png');
+   const style=await p.evaluate(()=>{const r=document.querySelector('#message-node-89 [data-slot=run-activity]'),b=r.querySelector('.process-toggle'),o=r.querySelector('ol');return {rootGap:getComputedStyle(r).gap,font:getComputedStyle(b).fontSize,triggerGap:getComputedStyle(b).gap,listGap:getComputedStyle(o).gap,line:getComputedStyle(o).borderInlineStartWidth,padding:getComputedStyle(o).paddingInlineStart,icon:getComputedStyle(b.querySelector('svg')).width};});
+@@ -40,7 +40,7 @@
+   f.delay(400);await click('[data-tool-id=activity-call-0] button');await wait(reader);await close();await click('[data-tool-id=activity-call-1] button');await wait(()=>document.querySelector('.activity-reader')?.textContent.includes('查看任务与版本'));
+   await p.evaluate(()=>new Promise(done=>setTimeout(done,500)));assert.equal(await p.evaluate(()=>document.querySelector('.activity-reader').textContent.includes('周报材料核对')),true);await click('.activity-reader-links button');await wait(()=>document.querySelector('.task-dialog[open] .task-notice')?.textContent.includes('该版本要求'));assert.equal(await p.evaluate(`document.querySelector('.task-panel-detail').textContent.includes(${JSON.stringify(f.b.taskId)})`),true);await click('[aria-label="关闭任务总览"]');f.delay(0);checks.push('快速关闭重开后迟到响应不覆盖新活动');
+   f.deny(true);await click('[data-tool-id=activity-call-0] button');await wait(()=>document.querySelector('.activity-reader [role=alert]'));assert.match(await p.evaluate(()=>document.querySelector('.activity-reader').textContent),/当前无法读取/);await close();f.deny(false);checks.push('读取失败如实说明可重试，不声称永久丢失');
+-  f.setMode('legacy');await wait(()=>document.querySelector('#message-node-89 .process-workers button'));await click('#message-node-89 .process-toggle');await wait(()=>document.querySelector('[data-tool-id=legacy-generic]'));
++  f.setMode('legacy');await wait(()=>document.querySelector('#message-node-89 .process-workers button'));await click('#message-node-89 .process-toggle');await wait(()=>document.querySelector('#message-node-89 .process-content')?.textContent.includes('1 次内部调用缺少公开工作详情'));
+   assert.equal(await p.evaluate(()=>document.querySelectorAll('[data-tool-id=legacy-generic] button').length),0);assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-88 .process-workers button').length),0);await p.evaluate(()=>document.querySelector('#message-node-89').scrollIntoView({block:'center'}));await p.screenshot('legacy-missing-'+width+'.png');
+   await click('#message-node-89 .process-workers button');await wait(()=>document.querySelector('.activity-reader')?.textContent.includes('不补写历史'));assert.match(await p.evaluate(()=>document.querySelector('.activity-reader').textContent),/准确关联的当前记录/);await close();checks.push('旧缺失如实说明；准确旧关联可读；缺失版本无空按钮');
+   f.setMode('running');await wait(()=>document.querySelector('[data-tool-id=activity-call-0] button'));f.delay(500);await click('[data-tool-id=activity-call-0] button');await wait(reader);f.thread('synthetic-other-thread');await wait(()=>document.querySelector('.activity-reader [role=alert]')?.textContent.includes('连接已变化'));await p.evaluate(()=>new Promise(done=>setTimeout(done,650)));assert.equal(await p.evaluate(()=>document.querySelectorAll('.activity-reader-links button').length),0);checks.push('线程变化沿原合同暂停连接，详情中止读取，迟到响应不恢复旧导航');
+diff --git a/tests/run-activity-style.browser.mjs b/tests/run-activity-style.browser.mjs
+--- a/tests/run-activity-style.browser.mjs
++++ b/tests/run-activity-style.browser.mjs
+@@ -3,9 +3,10 @@
+ const dest=path.resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/run-activity/browser-style');fs.mkdirSync(dest,{recursive:true});const browser=await isolatedChrome(dest),results=[];
+ try{for(const width of [1440,390,320]){const f=await readingFixture(),p=await browser.page(f.server.url,width);try{await p.navigate();await p.until(()=>!!document.querySelector('#message-node-88 .process-toggle'));
+ await p.evaluate(()=>{document.querySelector('.thread-viewport').scrollTop=document.querySelector('.thread-viewport').scrollHeight;document.querySelector('#message-node-88 .process-toggle').focus();});await p.command('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32,text:' '});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32});
+-await p.until(()=>document.querySelectorAll('#message-node-88 [data-tool-id]').length===8);await p.until(()=>document.querySelector('#message-node-88 .process-content').getAnimations().length===0);
++await p.until(()=>document.querySelector('#message-node-88 .process-content')?.textContent.includes('8 次内部调用缺少公开工作详情'));await p.until(()=>document.querySelector('#message-node-88 .process-content').getAnimations().length===0);
+ const style=await p.evaluate(()=>{const root=document.querySelector('#message-node-88 [data-slot=run-activity]'),b=root.querySelector('button'),c=root.querySelector('.process-content'),o=root.querySelector('ol');return {rootGap:getComputedStyle(root).gap,font:getComputedStyle(b).fontSize,buttonWidth:b.getBoundingClientRect().width,rootWidth:root.getBoundingClientRect().width,iconTransition:getComputedStyle(b.querySelector('svg')).transitionDuration,iconEase:getComputedStyle(b.querySelector('svg')).transitionTimingFunction,panelDuration:getComputedStyle(c).animationDuration,panelEase:getComputedStyle(c).animationTimingFunction,listGap:getComputedStyle(o).gap,listBorder:getComputedStyle(o).borderInlineStartWidth,focus:getComputedStyle(b).boxShadow,active:document.activeElement===b,ids:[...root.querySelectorAll('[data-tool-id]')].map(e=>e.dataset.toolId)};});
+-assert.equal(style.rootGap,'12px');assert.equal(style.font,'14px');assert.equal(style.iconTransition,'0.2s');assert.equal(style.iconEase,'cubic-bezier(0.4, 0, 0.2, 1)');assert.equal(style.panelDuration,'0.2s');assert.equal(style.panelEase,'cubic-bezier(0.32, 0.72, 0, 1)');assert.equal(style.listGap,'12px');assert.equal(style.listBorder,'1px');assert.ok(style.buttonWidth<style.rootWidth);assert.equal(style.active,true);assert.notEqual(style.focus,'none');assert.deepEqual(style.ids,f.tools.map(t=>t.id));await p.screenshot('official-style-expanded-focus-'+width+'.png');
++assert.equal(style.rootGap,'12px');assert.equal(style.font,'14px');assert.equal(style.iconTransition,'0.2s');assert.equal(style.iconEase,'cubic-bezier(0.4, 0, 0.2, 1)');assert.equal(style.panelDuration,'0.2s');assert.equal(style.panelEase,'cubic-bezier(0.32, 0.72, 0, 1)');assert.equal(style.listGap,'12px');assert.equal(style.listBorder,'1px');assert.ok(style.buttonWidth<style.rootWidth);assert.equal(style.active,true);assert.notEqual(style.focus,'none');assert.deepEqual(style.ids,[]);await p.screenshot('official-style-expanded-focus-'+width+'.png');
++await p.evaluate(()=>document.querySelector('#message-node-88 .process-content .process-activity-link').click());await p.until(()=>document.querySelectorAll('[data-record-tool-id]').length===8);assert.deepEqual(await p.evaluate(()=>[...document.querySelectorAll('[data-record-tool-id]')].map(e=>e.dataset.recordToolId)),f.tools.map(t=>t.id));await p.evaluate(()=>document.querySelector('.activity-reader header button').click());await p.until(()=>!document.querySelector('.activity-reader'));await p.evaluate(()=>document.querySelector('#message-node-88 .process-toggle').focus());
+ await p.evaluate(()=>document.querySelector('#message-node-88 .process-toggle').click());await p.until(()=>document.querySelector('#message-node-88 .process-content').hidden);assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('#message-node-88 .process-toggle')),true);
+-await p.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});await p.evaluate(()=>document.querySelector('#message-node-88 .process-toggle').click());await p.until(()=>document.querySelectorAll('#message-node-88 [data-tool-id]').length===8);const reduced=await p.evaluate(()=>({panel:getComputedStyle(document.querySelector('#message-node-88 .process-content')).animationName,icon:getComputedStyle(document.querySelector('#message-node-88 .run-activity-chevron')).transitionDuration}));assert.equal(reduced.panel,'none');assert.equal(reduced.icon,'0s');assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(p.errors,[]);assert.equal(f.fakeEngine.invocations,0);results.push({width,style,reduced,spaceKeyboard:true,focusKept:true,overflow:false});
++await p.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});await p.evaluate(()=>document.querySelector('#message-node-88 .process-toggle').click());await p.until(()=>document.querySelector('#message-node-88 .process-content')?.textContent.includes('8 次内部调用缺少公开工作详情'));const reduced=await p.evaluate(()=>({panel:getComputedStyle(document.querySelector('#message-node-88 .process-content')).animationName,icon:getComputedStyle(document.querySelector('#message-node-88 .run-activity-chevron')).transitionDuration}));assert.equal(reduced.panel,'none');assert.equal(reduced.icon,'0s');assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(p.errors,[]);assert.equal(f.fakeEngine.invocations,0);results.push({width,style,reduced,spaceKeyboard:true,focusKept:true,overflow:false});
+ }finally{await p.close();await f.close();}}}finally{await browser.close();fs.writeFileSync(path.join(dest,'official-style-browser.json'),JSON.stringify({browser:browser.version,syntheticOnly:true,results},null,2)+'\n');}console.log(JSON.stringify({pass:results.length===3,widths:results.map(x=>x.width)}));
+diff --git a/tests/legacy-activity-reading-ui.test.mjs b/tests/legacy-activity-reading-ui.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/tests/legacy-activity-reading-ui.test.mjs
+@@ -0,0 +1,44 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import React from 'react';
++import {ProcessNodeView,ProcessDetailsContext} from './helpers/process-ui-loader.mjs';
++import {withDom} from './helpers/process-dom.mjs';
++const h=React.createElement;
++const call=(id,status='completed',extra={})=>({id,kind:'tool',seq:Number(id.replace(/\D/g,''))||1,revision:1,category:'host',label:'检查资料',status,...extra});
++const node=items=>({id:'node',threadId:'thread',seq:1,revision:1,sourceKind:'user',sourceMessageIds:[],messageId:'node',state:'working',status:'running',turnIds:['turn'],items});
++const rows=d=>d.all().filter(n=>n.attrs['data-tool-id']).map(n=>n.attrs['data-tool-id']);
++test('returned internal calls without facts have one honest reading entry and unchanged count',async()=>withDom(async d=>{
++ const items=Array.from({length:12},(_,i)=>call('call-'+(i+1))),value=node(items),original=JSON.stringify(value);
++ await d.render(h(ProcessNodeView,{node:value,renderText:t=>t}));
++ assert.deepEqual(rows(d),[]);
++ assert.equal(d.all().filter(n=>n.tagName==='BUTTON'&&n.textContent==='查看原调用记录').length,1);
++ assert.match(d.container.textContent,/12 次内部调用缺少公开工作详情/);
++ assert.equal(JSON.stringify(value),original);
++ await d.render(h(ProcessNodeView,{node:{...value,revision:2,state:'worked',status:'completed'},renderText:t=>t}));
++ assert.match(d.container.textContent,/12 次调用已返回/);
++}));
++test('mixed facts, native calls and every unsettled or abnormal internal call remain in order through updates',async()=>withDom(async d=>{
++ const fact={schemaVersion:1,action:'inspect_task',objectName:'公开事项',outcome:'record_read'};
++ const items=[call('call-1'),call('call-2','completed',{activity:fact}),call('call-3'),...['running','failed','declined','interrupted','unknown','blocked'].map((s,i)=>call('call-'+(i+4),s)),call('call-10','completed',{category:'command'}),call('call-11','completed',{category:undefined})];
++ const render=items=>d.render(h(ProcessNodeView,{node:node(items),renderText:t=>t}));
++ await render(items);
++ assert.deepEqual(rows(d),items.filter(i=>!['call-1','call-3'].includes(i.id)).map(i=>i.id));
++ assert.match(d.container.textContent,/查看任务记录：公开事项/);
++ for(const status of ['调用失败','调用被拒绝','调用已中断','结束状态待核实','调用受阻'])assert.match(d.container.textContent,new RegExp(status));
++ await render([...items,call('call-4','completed',{revision:2,activity:fact})]);
++ assert.deepEqual(rows(d),items.filter(i=>!['call-1','call-3'].includes(i.id)).map(i=>i.id));
++ assert.equal(d.all().filter(n=>n.attrs['data-tool-id']==='call-4').length,1);
++ await render([...items,call('call-4','completed',{revision:3})]);
++ assert.equal(rows(d).includes('call-4'),false);
++ assert.match(d.container.textContent,/3 次内部调用缺少公开工作详情/);
++}));
++test('historical calls stay lazy, preserve manual reopening and show one entry after the exact read',async()=>withDom(async d=>{
++ const detail={...node([call('call-1'),call('call-2')]),state:'worked',status:'completed'},header={...detail,items:[],details:'unloaded',toolStatusCounts:{completed:2}};
++ let reads=0;const load=async()=>{reads++;return detail;};
++ const render=()=>d.render(h(ProcessDetailsContext.Provider,{value:load},h(ProcessNodeView,{node:header,renderText:t=>t})));
++ await render();assert.equal(reads,0);
++ const toggle=d.find(n=>n.tagName==='BUTTON');await d.click(toggle);await render();
++ assert.equal(reads,1);assert.deepEqual(rows(d),[]);assert.match(d.container.textContent,/2 次内部调用缺少公开工作详情/);
++ await d.click(toggle);await d.click(toggle);await render();
++ assert.equal(toggle.attrs['aria-expanded'],'true');assert.deepEqual(rows(d),[]);
++}));
+diff --git a/tests/legacy-activity-reading-browser-fixture.mjs b/tests/legacy-activity-reading-browser-fixture.mjs
+new file mode 100644
+--- /dev/null
++++ b/tests/legacy-activity-reading-browser-fixture.mjs
+@@ -0,0 +1,25 @@
++// Extends existing synthetic activity owners; never opens a product database.
++import {activityFixture} from './run-activity-facts-browser-fixture.mjs';
++export async function legacyActivityFixture(mode='all-old'){
++ const f=await activityFixture();
++ f.processes.workerEvent('node-89',{eventKey:'synthetic:delegated',eventKind:'delegated',title:'核对日期',body:'核对原材料中的日期。',bodySource:'description',taskId:f.a.taskId,version:1,runId:null,resultId:null,sourceMessageId:null,operationKey:'synthetic-event',observedAtMs:1});
++ const base=JSON.parse(f.store.meta('publicMainNode:v1:node-89'));
++ const old=Array.from({length:24},(_,i)=>({id:'old-'+i,seq:i+1,revision:1,kind:'tool',category:'host',label:i%2?'检查资料':'核对成果',status:'completed'}));
++ const facts=f.tools.filter(item=>item.activity);
++ const risks=['running','failed','declined','interrupted','unknown','blocked'].map((status,i)=>({id:'risk-'+i,seq:30+i,revision:1,kind:'tool',category:'host',label:'检查资料',status}));
++ const event={...base.items.find(item=>item.kind==='workerEvent'),seq:50};
++ let running=false;
++ const readState=f.bridge.history.state;
++ f.bridge.history.state=async()=>{const state=await readState();return {...state,isRunning:running,activeMessageId:running?'node-89':null,generation:running?state.generation:null,mainActivity:running?state.mainActivity:null};};
++ function setScenario(value){
++  const prior=JSON.parse(f.store.meta('publicMainNode:v1:node-89'));
++  const items=value==='all-old'?old:value==='detailed'?facts:value==='mixed'?[old[0],facts[0],old[1],facts[1],old[2],facts[2],event]:value==='risks'?[...old,...risks,event]:value==='running'?[...old,{...risks[0],id:'live-call'},facts[0]]:value==='updated'?[...old,{...risks[0],id:'live-call',revision:2,status:'completed',activity:facts[2].activity},facts[0]]:old;
++  const working=['mixed','detailed','running','updated'].includes(value);
++  running=working;
++  const node={...base,revision:prior.revision+1,final:undefined,state:working?'working':'worked',status:value==='risks'?'failed':value==='unknown'?'unknown':value==='interrupted'?'interrupted':working?'running':'completed',items:items.map((item,index)=>({...item,seq:index+1}))};
++  f.store.setMeta('publicMainNode:v1:node-89',JSON.stringify(node));
++  f.store.db.prepare("UPDATE conversation_messages SET text='',status=? WHERE id='node-89'").run(working?'running':'completed');f.server.publish();
++ }
++ setScenario(mode);
++ return {...f,old,facts,risks,setScenario};
++}
+diff --git a/tests/legacy-activity-reading.browser.mjs b/tests/legacy-activity-reading.browser.mjs
+new file mode 100644
+--- /dev/null
++++ b/tests/legacy-activity-reading.browser.mjs
+@@ -0,0 +1,68 @@
++import assert from 'node:assert/strict';
++import {mkdirSync,writeFileSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {legacyActivityFixture} from './legacy-activity-reading-browser-fixture.mjs';
++import {isolatedChrome} from './web-history-browser-cdp.mjs';
++const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/legacy-activity-reading-20261022/browser');mkdirSync(destination,{recursive:true});
++const baseline=process.env.HOMER_LEGACY_BASELINE==='1',browser=await isolatedChrome(destination),results=[];
++async function key(p,key,code,n){await p.command('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode:n,...(key==='Enter'?{text:'\r'}:{})});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:n});}
++try{for(const width of [1440,390,320]){
++ const f=await legacyActivityFixture(),p=await browser.page(f.server.url,width),checks=[];
++ const wait=fn=>p.until('Boolean(('+String(fn)+')())',12000);
++ const click=selector=>p.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
++ const open=async()=>{await p.evaluate(()=>{const b=document.querySelector('#message-node-89 .process-toggle');if(b.getAttribute('aria-expanded')!=='true')b.click();});};
++ const recordButton='#message-node-89 .process-content .process-activity-link';
++ const close=async()=>{await key(p,'Escape','Escape',27);await wait(()=>!document.querySelector('.activity-reader'));};
++ const shot=async name=>{await wait(()=>document.querySelector('#message-node-89 .process-content').getAnimations().length===0);await p.evaluate(()=>{const v=document.querySelector('.thread-viewport'),n=document.querySelector('#message-node-89');v.scrollTop+=n.getBoundingClientRect().top-v.getBoundingClientRect().top;});await p.screenshot(name+'-'+width+'.png');};
++ try{
++  await p.navigate();await wait(()=>document.querySelector('#message-node-89 .process-toggle'));
++  assert.equal(f.activityReads.length,0);assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89 .process-toggle').getAttribute('aria-expanded')),'false');
++  assert.match(await p.evaluate(()=>document.querySelector('#message-node-89 .process-toggle').textContent),/24 次调用已返回/);
++  await open();
++  if(baseline){
++   await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===24);await shot('all-old-expanded');
++   f.setScenario('mixed');await wait(()=>document.querySelector('[data-tool-id=activity-call-0]'));await shot('mixed-expanded');
++   results.push({width,baseline:true,oldRows:24,passed:true});continue;
++  }
++  await wait(()=>document.querySelector('#message-node-89 .process-content')?.textContent.includes('24 次内部调用缺少公开工作详情'));
++  assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length),0);
++  assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 .process-content li').length),1);
++  checks.push('全旧记录默认24行变为一次缺失说明，原折叠计数及按需读取保持');await shot('all-old-expanded');
++  const style=await p.evaluate(()=>{const r=document.querySelector('#message-node-89 [data-slot=run-activity]'),b=r.querySelector('.process-toggle'),o=r.querySelector('ol');return {rootGap:getComputedStyle(r).gap,font:getComputedStyle(b).fontSize,triggerGap:getComputedStyle(b).gap,listGap:getComputedStyle(o).gap,line:getComputedStyle(o).borderInlineStartWidth,padding:getComputedStyle(o).paddingInlineStart,icon:getComputedStyle(b.querySelector('svg')).width};});
++  assert.deepEqual(style,{rootGap:'12px',font:'14px',triggerGap:'6px',listGap:'12px',line:'1px',padding:'14px',icon:'14px'});checks.push('官方Run Activity结构、字号、图标、间距及细线保持');
++  const reads=f.activityReads.length;await p.evaluate(`document.querySelector(${JSON.stringify(recordButton)}).focus()`);await key(p,'Enter','Enter',13);
++  await wait(()=>document.querySelector('.activity-reader[open] [data-record-tool-id]'));
++  assert.equal(await p.evaluate(()=>document.activeElement.id),'activity-reader-title');
++  assert.deepEqual(await p.evaluate(()=>[...document.querySelectorAll('[data-record-tool-id]')].map(e=>e.dataset.recordToolId)),f.old.map(i=>i.id));
++  assert.deepEqual(await p.evaluate(()=>[...document.querySelectorAll('[data-record-tool-id]')].map(e=>e.value)),f.old.map(i=>i.seq));
++  assert.equal(f.activityReads.length,reads);assert.equal(await p.evaluate(()=>document.querySelectorAll('.activity-reader button').length),1);await p.screenshot('original-records-'+width+'.png');
++  await close();await wait(()=>document.activeElement?.textContent==='查看原调用记录');checks.push('原标签、调用状态和顺序逐项可读；无新增读取或空按钮；键盘关闭回焦');
++  await click('#message-node-89 .process-toggle');await open();await wait(()=>document.querySelector('#message-node-89 .process-content .process-activity-link'));
++  assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length),0);checks.push('手动重开不恢复重复流水');
++  f.setScenario('mixed');await wait(()=>document.querySelector('[data-tool-id=activity-call-1]'));
++  assert.deepEqual(await p.evaluate(()=>[...document.querySelectorAll('#message-node-89 [data-tool-id]')].map(e=>e.dataset.toolId)),['activity-call-0','activity-call-1','activity-call-2']);
++  assert.match(await p.evaluate(()=>document.querySelector('#message-node-89 .process-content').textContent),/3 次内部调用缺少公开工作详情/);await shot('mixed-expanded');
++  await click(recordButton);await wait(()=>document.querySelectorAll('[data-record-tool-id]').length===6);
++  assert.deepEqual(await p.evaluate(()=>[...document.querySelectorAll('[data-record-tool-id]')].map(e=>e.dataset.recordToolId)),['old-0','activity-call-0','old-1','activity-call-1','old-2','activity-call-2']);await close();
++  await click('[data-tool-id=activity-call-1] button');await wait(()=>document.querySelector('.activity-reader-links button'));
++  assert.equal(f.activityReads.at(-1),'activity-call-1');assert.match(await p.evaluate(()=>document.querySelector('.activity-reader').textContent),/周报材料核对/);await close();
++  await wait(()=>document.activeElement===document.querySelector('[data-tool-id=activity-call-1] button'));checks.push('混合条目顺序保持，同名不同调用独立保留，详情按准确调用身份读取');
++  f.setScenario('detailed');await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===5);
++  assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89').textContent.includes('查看原调用记录')),false);checks.push('全有详情时直接显示五项具体活动，没有缺失占位');await shot('detailed-expanded');
++  f.setScenario('risks');await wait(()=>document.querySelector('#message-node-89 .process-attention')?.textContent.includes('调用被拒绝'));await open();await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===6);
++  assert.deepEqual(await p.evaluate(()=>[...document.querySelectorAll('#message-node-89 [data-tool-id]')].map(e=>e.dataset.toolId)),f.risks.map(i=>i.id));await shot('risks-expanded');
++  await click('#message-node-89 .process-toggle');assert.match(await p.evaluate(()=>document.querySelector('#message-node-89 .process-attention').textContent),/调用失败.*调用被拒绝.*调用已中断.*结束状态待核实.*调用受阻/);
++  assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 [data-worker-event]').length),1);checks.push('失败、拒绝、中断、未知、受阻及运行中逐条保留；折叠异常与Worker原卡可见');
++  f.setScenario('running');await open();await wait(()=>document.querySelector('[data-tool-id=live-call]'));
++  await click(recordButton);await wait(()=>document.querySelector('[data-record-tool-id=live-call]'));f.setScenario('updated');
++  await wait(()=>document.querySelector('[data-record-tool-id=live-call]')?.textContent.includes('调用已返回'));await close();
++  await wait(()=>document.querySelector('[data-tool-id=live-call]')?.textContent.includes('检查成果文件：'));assert.equal(await p.evaluate(()=>document.querySelectorAll('[data-tool-id=live-call]').length),1);checks.push('运行中新增/同ID更新不重复，打开的原记录读取当前revision状态');
++  await click(recordButton);await wait(()=>document.querySelector('.activity-reader[open]'));f.setScenario('detailed');await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===5);await close();
++  await wait(()=>document.activeElement===document.querySelector('#message-node-89 .process-toggle'));checks.push('更新移除原阅读入口后，关闭回焦到同一Run的官方展开按钮');
++  f.setScenario('unknown');await wait(()=>document.querySelector('#message-node-89 .process-toggle')?.textContent.includes('结束状态待核实'));assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=run-activity]').dataset.status),'incomplete');
++  f.setScenario('interrupted');await wait(()=>document.querySelector('#message-node-89 .process-toggle')?.textContent.includes('已中断'));assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89 [data-slot=run-activity]').dataset.status),'cancelled');checks.push('主处理未知和中断保持真实语义，未伪装完成');
++  assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(p.errors,[]);assert.deepEqual(p.blocked,[]);assert.equal(f.fakeEngine.invocations,0);assert.equal(f.submitted.length,0);assert.equal(f.stopped.length,0);
++  results.push({width,checks,style,passed:true});
++ }finally{await p.close();await f.close();}
++}}finally{await browser.close();writeFileSync(join(destination,'legacy-reading-browser.json'),JSON.stringify({browser:browser.version,syntheticOnly:true,baseline,results},null,2)+'\n');}
++console.log(JSON.stringify({passed:results.length===3,widths:results.map(x=>x.width),checks:results.reduce((n,x)=>n+(x.checks?.length??0),0)}));
+diff --git a/scripts/preview-legacy-activity-reading.mjs b/scripts/preview-legacy-activity-reading.mjs
+new file mode 100644
+--- /dev/null
++++ b/scripts/preview-legacy-activity-reading.mjs
+@@ -0,0 +1,18 @@
++// Local synthetic candidate only. No Homer service/config/database/account/model.
++import {existsSync} from 'node:fs';
++import {resolve} from 'node:path';
++const scratch=resolve('.codex/scratch/legacy-activity-reading-20261022');
++process.env.HISTORY_FOLLOWUP_BUILD??=resolve(scratch,'candidate-web');
++process.env.HOMER_SYNTHETIC_ROOT??=resolve(scratch,'preview-synthetic');
++if(!existsSync(resolve(process.env.HISTORY_FOLLOWUP_BUILD,'index.html')))throw Error('candidate_bundle_missing: build the isolated candidate described in docs/2026-10-22-legacy-activity-reading-candidate.md');
++const {legacyActivityFixture}=await import('../tests/legacy-activity-reading-browser-fixture.mjs');
++const services=[];
++try{
++ for(const [mode,label] of [['all-old','旧调用（展开Worked查看）'],['mixed','具体活动与旧调用混合'],['risks','失败与待核实状态']]){
++  const f=await legacyActivityFixture(mode);services.push(f);console.log(label+'：'+f.server.url);
++ }
++ console.log('仅隔离合成数据；Ctrl+C关闭这三个预览。');
++ let closing=false;
++ const close=async()=>{if(closing)return;closing=true;await Promise.all(services.map(f=>f.close()));};
++ process.once('SIGINT',()=>void close());process.once('SIGTERM',()=>void close());
++}catch(error){await Promise.all(services.map(f=>f.close()));throw error;}
+diff --git a/docs/2026-10-22-legacy-activity-reading-candidate.md b/docs/2026-10-22-legacy-activity-reading-candidate.md
+new file mode 100644
+--- /dev/null
++++ b/docs/2026-10-22-legacy-activity-reading-candidate.md
+@@ -0,0 +1,112 @@
++# Working / Worked 缺详情内部调用阅读候选（2026-10-22）
++
++已完成界面实现、隔离候选、实际 Chrome 验收与前后截图。本次没有上线、提交 Git、创建分支/worktree、修改宿主数据库或联系其他任务。环境登记路径、实际目录及 Git 根均为 `/Users/wolf3c/Project/homer`。
++
++## 实际变化和规则
++
++原来展开 Worked 后，24次旧调用会逐条显示“检查资料／核对成果”“调用已返回”和重复缺失说明。现在同一过程在首个符合条件的位置保留一次说明和“查看原调用记录”，不再默认铺开24行。
++
++紧凑呈现的条件全部来自现有字段：`kind=tool`、`category=host`、没有 `activity`、`status=completed`。`host` 在 `MainProcessHistory.tool()` 中由内部业务进展 owner 明确提供，原生工具不进入该分支。不根据时间、文字相似度或同名判断历史；已返回但缺少公开事实的新内部调用也采用相同保守呈现，不编造详情。
++
++| 场景 | 默认阅读 |
++| --- | --- |
++| 全部符合紧凑条件 | 一条数量/缺失说明，一个已有 reader 的入口 |
++| 全部有公开事实 | 原具体动作、公开对象、回执结果及“查看活动”，无缺失占位 |
++| 同一 Run 混合新旧 | 具体条目保持相对原顺序；一次说明位于首个缺详情调用的位置；原记录阅读包括该过程全部已读取工具项，以便核对交错顺序 |
++| running / failed / declined / interrupted / unknown / blocked | 各自保留原行和真实状态；异常汇总仍在官方折叠区外 |
++| 原生类别或缺少 category | 保守保留原行 |
++| 同名、不同调用 ID | 各自计数、各自记录，不按名称去重 |
++| 同 ID 后续 revision | 沿已有投影更新；获得公开事实后显示具体活动；原记录弹窗同步读取当前已加载投影 |
++| 历史尚未展开 | 继续只读原轻量页头；展开才沿原 history/process 懒读 |
++| Worker 事件/旧快照 | 原不可变卡片、位置、正文及缺失说明保持，不当作工具行收起 |
++
++原调用记录弹窗只呈现原安全标签、调用状态、原过程顺序号。没有原始参数、工具输出、模型摘要、新后端接口或批量补写。调用返回不代表检查通过、验收成功或正式交付。原始 ID、revision、seq、计数、计时、分页、正式答复和成果归属没有改变。
++
++## 官方组件和 Homer 适配边界
++
++`ui/vendor/assistant-ui/run-activity.tsx`、`run-activity.css`、README 与 LICENSE 均未修改。仍是官方一个 disclosure、一个活动列表，保留14px字体/图标、12px间距、6px trigger gap、1px列表线、14px列表内距和200ms展开动画。没有 Tool Timeline、第二层工具折叠、过程树或新托盘。
++
++产品改动集中在 `ui/process-nodes.tsx`：筛选符合条件的默认行，提供一个普通列表条目，复用已有 `ActivityReader` 和44px阅读按钮样式。没有新增产品组件、CSS、Context、数据 owner、依赖或请求。原弹窗增加已读取调用列表模式；单项活动的准确身份读取、取消请求和任务/Canvas/原答复导航继续复用。
++
++验证补出了一个边界修正：弹窗打开期间，如果更新移除了原阅读入口，关闭会返回同一 Run 的官方展开按钮；原入口处于已收起的 inert 面板内时同样使用这个返回位置。若更新暂时移除了已读详情，弹窗明确提示关闭后重新展开核对，不留空白列表冒充已无记录。
++
++## 准确改动范围
++
++| 文件 | 本次增量 |
++| --- | --- |
++| `ui/process-nodes.tsx` | 默认阅读筛选、既有 reader 的原记录模式、返回焦点 |
++| `ui/DESIGN.md` | 仅增加本次缺详情调用规则；保留已有其他设计更新 |
++| `tests/legacy-activity-reading-ui.test.mjs` | 三项新增行为回归：全旧、混合/异常/原生/同ID更新、历史懒读 |
++| `tests/legacy-activity-reading-browser-fixture.mjs` | 复用现有内存合成 owner；事件经原 Worker owner 保存；没有生产数据 |
++| `tests/legacy-activity-reading.browser.mjs` | 三种宽度的新规则、顺序、身份、状态、动态更新、返回焦点及截图 |
++| `tests/process-reading.test.mjs` | 仅更新一个直接要求全部旧行展开的旧用例；保留原计数、投影和异常断言 |
++| `tests/process-reading.browser.mjs`、`tests/run-activity-facts.browser.mjs`、`tests/run-activity-style.browser.mjs` | 仅将旧行的读取改为本次已有阅读入口，继续验证准确身份、官方样式、其他活动和导航 |
++| `scripts/preview-legacy-activity-reading.mjs` | 可维护的隔离预览入口 |
++| 本文与 `docs/patches/2026-10-22-legacy-activity-reading-*` | 交付、准确补丁、身份与验证索引 |
++
++上述已有文件以任务开始时的实际字节保存前像，而非使用 Git HEAD；原本未跟踪的已有浏览器脚本也以其实际前像计算增量，未冒充本次整文件新增。每次共享文件修改前核对前像；没有恢复整个共享文件、清理其他任务或暂存文件。
++
++固定候选过程中观察到另一任务后来加入页头/任务面板改动（`ui/homer-app.tsx`、`ui/task-overview.tsx`、`ui/package.json`）。它们没有被本任务写入或回退。仅在临时候选源码中采用之前已验收的这三份页面基线，避免把另一任务的新界面一并作为本候选交付；排除记录在 `candidate-parallel-exclusions.json`。维护工作区继续保留其变化，本候选不宣称验收这些后续并行改动。
++
++## 验证结果
++
++所有业务夹具使用内存数据库、scratch合成文件和禁止执行的 fake engine；浏览器使用独立无账号 Chrome profile，非本地请求拦截。真实模型、发送、停止计数均为0，没有访问4780、生产数据库、真实聊天、凭据、上传、发布或权限配置。
++
++| 检查 | 结果 |
++| --- | --- |
++| 实施前新增行为用例 | 三项均在预期路径失败：旧调用仍逐条铺开 |
++| 最终定向行为回归（六个文件） | 34/34通过 |
++| UI类型检查 | 通过；固定候选源码另行通过 |
++| Vite生产构建 | 通过，输出仅在本任务scratch；原有大chunk提示仍在 |
++| 固定源码重建与已验收bundle对照 | 全部69个构建文件逐字节一致 |
++| 新过程阅读浏览器 | 320/390/1440px，30项检查通过 |
++| 已有公开活动浏览器 | 三种宽度，36项检查通过 |
++| 已有过程阅读浏览器 | 三种宽度，24项检查通过 |
++| 官方样式/动画/reduced-motion | 三种宽度通过 |
++| 官方收起期间焦点与重开 | 三种宽度通过 |
++| 前后截图 | 相同合成场景、相同视口，展开动画完成后采样 |
++| 增量审阅 | 只修改本次展示范围；没有vendor或后端产品源码改动 |
++
++新增场景覆盖全旧、全详情、交错混合、同名不同ID、全部异常状态、运行中新增/同ID更新、折叠计数、历史懒读、原记录/具体详情返回焦点及入口消失后的返回位置。既有浏览器继续验证原任务版本、Canvas、原交付定位、待答在区外、迟到响应和连接变化。实际阅读过320px紧凑过程、390px原记录弹窗及1440px混合过程截图，没有页面横向溢出。
++
++本次出现的验证失败均已区分并处理：旧用例的8行展开要求与新授权规则直接冲突，改为核对按需读取原8项；新增夹具最初未通过事件owner记录Worker快照，已修正夹具；焦点返回先等下一帧再断言，且额外复现并修正了入口消失时无法回焦的产品边界。没有通过删除异常断言或修改后端状态来通过检查。
++
++本次只改UI展示，未运行全仓测试、生产验收或独立发布流程；这些不在本候选通过结论内。
++
++## 可重复打开与重建
++
++任务证据根目录：`.codex/scratch/legacy-activity-reading-20261022/`。
++
++固定源码在 `candidate-source/`，依赖复用本机已有 `node_modules`；固定静态产物在 `candidate-fixed-web/`。在维护根目录启动：
++
++```sh
++node --import tsx .codex/scratch/legacy-activity-reading-20261022/demo.mjs
++```
++
++打印三个随机本地端口，分别是全旧、混合及异常。全旧页点击 Worked 展开即可看到一次缺失说明，再点击“查看原调用记录”。Ctrl+C仅关闭这三个合成服务。端口只在该进程存活期间有效。
++
++重建维护源码的候选（会包含当时工作区的其他变化，须重新审阅）：
++
++```sh
++node_modules/.bin/tsc --noEmit -p ui/tsconfig.json
++node_modules/.bin/vite build ui --config ui/vite.config.ts --configLoader runner --outDir /Users/wolf3c/Project/homer/.codex/scratch/legacy-activity-reading-20261022/rebuilt-web
++HISTORY_FOLLOWUP_BUILD=/Users/wolf3c/Project/homer/.codex/scratch/legacy-activity-reading-20261022/rebuilt-web node --import tsx scripts/preview-legacy-activity-reading.mjs
++```
++
++不要使用默认代理到4780的Vite dev服务。维护的测试与预览脚本是可重建场景来源；scratch中的构建、截图和HTML是本次取证，未加入产品资源或共享 `dist/`。
++
++## 截图与证据
++
++[自包含前后截图HTML](../.codex/scratch/legacy-activity-reading-20261022/comparison.html) 无外部资源或网络请求，手机可查看；它是实际截图对照，不代替交互候选。
++
++| 状态 | 320px | 390px | 1440px |
++| --- | --- | --- | --- |
++| 调整前全旧展开 | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-before/all-old-expanded-320.png) | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-before/all-old-expanded-390.png) | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-before/all-old-expanded-1440.png) |
++| 候选全旧展开 | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-after/all-old-expanded-320.png) | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-after/all-old-expanded-390.png) | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-after/all-old-expanded-1440.png) |
++| 原记录弹窗 | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-after/original-records-320.png) | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-after/original-records-390.png) | [图](../.codex/scratch/legacy-activity-reading-20261022/browser-after/original-records-1440.png) |
++
++`unit-final.tap`保存最终行为测试输出；各 `*-browser.json` 保存实际场景检查结果；`ui-types.log`、`fixed-build.log`、`fixed-build-validation.json` 保存固定源码类型/构建结果及bundle身份；`candidate-source-identities.json`保存候选源码hash。准确源码增量见[候选补丁](patches/2026-10-22-legacy-activity-reading-candidate.patch)，文件前后hash及证据索引见[候选绑定](patches/2026-10-22-legacy-activity-reading-bindings.json)。
++
++## 回退
++
++候选没有上线、数据库迁移或持久记录变更。停止demo即可撤下预览。源码回退以本次实际前像和准确补丁为准，先执行 `git apply --reverse --check docs/patches/2026-10-22-legacy-activity-reading-candidate.patch`；遇到后续并行修改应逐hunk核对，不恢复整个文件或HEAD。本次没有执行回退或任何Git提交。

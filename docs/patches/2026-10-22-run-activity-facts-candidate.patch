@@ -1,0 +1,888 @@
+--- a/src/main-process.ts
++++ b/src/main-process.ts
+@@ -1,5 +1,6 @@
+ import {WorkerCardEvents,type WorkerCardInput,type WorkerCardSnapshot} from './worker-card-events.js';
+ import type { DatabaseSync } from 'node:sqlite';
++import type {PublicActivity} from './activity-facts.js';
+ import { PROGRESS_LABELS } from './main-progress.js';
+ 
+ export type ProcessTiming = { startedAtMs?: number; endedAtMs?: number; durationMs?: number; timingSource?: 'native' | 'hostObserved'; timingState?: 'running' | 'terminal' | 'unknown' };
+@@ -15,7 +16,7 @@
+ type TurnClock = { hostStartedAtMs: number; nativeStartedAtMs?: number; hostEndedAtMs?: number; nativeEndedAtMs?: number; nativeDurationMs?: number };
+ export type ProcessItem = { id: string; seq: number; revision: number } & (
+   { kind: 'commentary'; text: string; phase?: 'commentary' | 'final_answer'; turnId?: string; itemId?: string; completed?: boolean } |
+-  ({ kind: 'tool'; label: string; status: NativeProcessEvent['status'] | 'blocked'; category?: NativeToolCategory | 'host'; threadId?: string; turnId?: string; itemId?: string; invocationCount?: number; fileCount?: number } & ProcessTiming) |
++  ({ kind: 'tool'; activity?:PublicActivity; label: string; status: NativeProcessEvent['status'] | 'blocked'; category?: NativeToolCategory | 'host'; threadId?: string; turnId?: string; itemId?: string; invocationCount?: number; fileCount?: number } & ProcessTiming) |
+   { kind: 'workerEvent'; eventKey:string; event?:WorkerCardSnapshot } |
+   { kind: 'worker'; label?: string; taskId: string; version: number; taskRevision: number; runId: string | null; runRevision: number | null; runStatus: string | null; resultState: string | null; epoch: number | null; state: string; controlState: string; outcome: string | null; phase: string | null; stopRequested: boolean }
+ );
+@@ -162,15 +163,15 @@
+     if (event.completed) node.completedItemIds.push(key);
+     node.revision++; this.save(node);
+   }
+-  tool(id: string, activity: { id: string; label: string; phase: 'start' | 'end'; status?: 'completed' | 'failed' | 'blocked'; turnId?:string }) {
++  tool(id: string, activity: { id: string; label: string; phase: 'start' | 'end'; status?: 'completed' | 'failed' | 'blocked'; turnId?:string; activity?:PublicActivity }) {
+     if (!(PROGRESS_LABELS as readonly string[]).includes(activity.label)) return;
+     const node = this.load(id); if (!node || node.state !== 'working') return;
+     const prior = node.items.find(item => item.id === activity.id);
+     const status = activity.phase === 'start' ? 'running' : activity.status ?? 'blocked';
+     if (prior?.kind === 'tool') {
+       if (prior.status !== 'running' || prior.status === status) return;
+-      prior.label = activity.label; prior.status = status; prior.revision++;
+-    } else node.items.push({ id: activity.id, kind: 'tool', seq: node.items.length + 1, revision: 1, label: activity.label, status,category:'host',turnId:activity.turnId,invocationCount:1 });
++      prior.label = activity.label; prior.status = status; if(activity.activity)prior.activity=activity.activity; prior.revision++;
++    } else node.items.push({ id: activity.id, kind: 'tool', seq: node.items.length + 1, revision: 1, label: activity.label, status,...(activity.activity?{activity:activity.activity}:{}),category:'host',turnId:activity.turnId,invocationCount:1 });
+     node.revision++; this.save(node);
+   }
+   worker(id: string, fact: Omit<Extract<ProcessItem, {kind:'worker'}>, 'id' | 'seq' | 'revision' | 'kind'>) {
+--- a/src/service.ts
++++ b/src/service.ts
+@@ -1,3 +1,4 @@
++import {publicActivityName,type PublicActivity} from './activity-facts.js';
+ import {startupErrorText,publicStartupCode,type WorkerCardInput} from './worker-card-events.js';
+ import {projectConversation} from './conversation-projection.js';
+ import {WebHistoryPages} from './web-history-pages.js';
+@@ -476,7 +477,7 @@
+         threadId: savedThread,
+         interactionMcp: { ...this.mcpOptions(this.interactionMcp!), catalog },
+       },
+-      (c) => {if(this.main!==engine)throw Error('tool_scope_denied');return this.mainActivity(c.tool,()=>this.mainTool(c));},
++      (c) => {if(this.main!==engine)throw Error('tool_scope_denied');return this.mainActivity(c.tool,()=>this.mainTool(c),c.arguments);},
+     );
+     engine.on('nativeCompleted',(value:{turnId:string;status:string})=>{
+       if(this.main!==engine)return;const context=this.mainContext;
+@@ -568,7 +569,7 @@
+       if (savedThread && !sameTools)
+         throw new Error("main_tools_migration_required");
+       const catalog=HOST_MCP_TOOLS;
+-      this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args) => this.mainActivity(tool,()=>PENDING_TOOLS.some(t=>t.name===tool)?this.pendingTool(tool,args):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):tool==="capabilities"?this.manageCapabilities(args,"agent"):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):RECURSIVE_TOOLS.some(t=>t.name===tool)?this.recursiveTool(this.mainActor(),tool,args):this.interactionTool(tool, args)),catalog);
++      this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args) => this.mainActivity(tool,()=>PENDING_TOOLS.some(t=>t.name===tool)?this.pendingTool(tool,args):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):tool==="capabilities"?this.manageCapabilities(args,"agent"):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):RECURSIVE_TOOLS.some(t=>t.name===tool)?this.recursiveTool(this.mainActor(),tool,args):this.interactionTool(tool, args),args),catalog);
+       await this.interactionMcp.start();
+       this.main = this.createMain(cwd,savedThread);
+       const start = this.main.start();
+@@ -743,10 +744,10 @@
+     }catch(error){this.store.db.exec('ROLLBACK');throw error;}
+   }
+   // Chain a user's start/deltas/terminal even if a local sink is asynchronous.
+-  private emitMain(context: MainContext, message: Message) {
++  private emitMain(context: MainContext, message: Message, activity?:PublicActivity) {
+     if (message.type === 'tool_progress') {
+       this.history.tool(message.messageId, message.progress);
+-      if(context.processId)this.processes.tool(context.processId,{...message.progress,turnId:context.nativeActivity?.turnId});
++      if(context.processId)this.processes.tool(context.processId,{...message.progress,turnId:context.nativeActivity?.turnId,...(activity?{activity}:{})});
+     }
+     context.output = (context.output ?? Promise.resolve()).then(() => this.emit(message));
+   }
+@@ -756,13 +757,21 @@
+       throw error;
+     }
+   }
+-  private async mainActivity<T>(tool:string,work:()=>Promise<T>):Promise<T>{
++  private async mainActivity<T>(tool:string,work:()=>Promise<T>,args?:unknown):Promise<T>{
+     const context=this.mainContext,label=progressLabel(tool),generation=context?.generation;
+     if(!context||this.closing||!label)return work();
+     let endLabel:MainProgress['label']=tool==='task_delegate'?'创建结果待核对':label;
++    let publicFact:PublicActivity|undefined;
+     const invoke=async()=>{
+       try{
+         const result=await work();
++        try{
++          if(tool==='inspect_attachment'){
++            const a=args as {assetId?:string;revision?:number},r=result as {extraction?:{state?:string}};
++            const ref=context.queuedInput?.input.attachments?.find(ref=>ref.assetId===a?.assetId&&ref.revision===a?.revision);
++            if(ref){const name=publicActivityName(this.media.view(ref).filename);publicFact={schemaVersion:1,action:'inspect_attachment',...(name?{objectName:name}:{}),outcome:r.extraction?.state==='ready'?'attachment_read':'extraction_unavailable'};}
++          }else publicFact=this.tasks.captureActivity(this.mainActor(),tool,args,result);
++        }catch{/* Public fact collection must never change the business receipt. */}
+         if(tool==='task_delegate'&&result&&typeof result==='object'&&'taskId' in result&&typeof result.taskId==='string'&&'operationKey' in result&&typeof result.operationKey==='string')endLabel='任务已创建';
+         return result;
+       }catch(error){if(tool==='task_delegate'&&error instanceof TaskCreationRejected)endLabel='未创建任务';throw error;}
+@@ -772,7 +781,7 @@
+       this.processes.tool(context.processId,{...activity,phase:'start'});
+       let status:'completed'|'failed'='failed';
+       try{const result=await invoke();status='completed';return result;}
+-      finally{this.processes.tool(context.processId,{...activity,label:endLabel,phase:'end',status});}
++      finally{this.processes.tool(context.processId,{...activity,label:endLabel,phase:'end',status,...(publicFact?{activity:publicFact}:{})});}
+     }
+     if(!generation)return work();
+     if(context.queuedInput?.source==='wechat'&&((context.progressCount??0)>=3||Date.now()-(context.progressAt??0)<5000))return work();
+@@ -783,7 +792,7 @@
+     this.emitMain(context,{type:'tool_progress',...generation,text:'',progress:{...activity,phase:'start'}});
+     let status:'completed'|'failed'='failed';
+     try{const result=await invoke();status='completed';return result;}
+-    finally{if(this.mainContext===context&&!this.closing&&context.toolActivities?.delete(activity.id))this.emitMain(context,{type:'tool_progress',...generation,text:'',progress:{...activity,label:endLabel,phase:'end',status}});}
++    finally{if(this.mainContext===context&&!this.closing&&context.toolActivities?.delete(activity.id))this.emitMain(context,{type:'tool_progress',...generation,text:'',progress:{...activity,label:endLabel,phase:'end',status}},publicFact);}
+   }
+   private runReceipt(run: Run) {
+     return `当前执行记录：${run.status}${run.errorCode ? `；原因 ${run.errorCode}` : ""}${run.status === "succeeded" ? `；成果 ${run.artifact}` : ""}。`;
+--- a/src/recursive-tasks.ts
++++ b/src/recursive-tasks.ts
+@@ -1,3 +1,4 @@
++import {publicActivityName,type PublicActivity,type ActivityTarget,type ActivityLink} from './activity-facts.js';
+ import {AttachmentInputError,parseAttachmentReference} from './attachment-reference.js';
+ import type {AttachmentRef} from './media-store.js';
+ import { createHash, randomUUID } from 'node:crypto';
+@@ -860,6 +861,82 @@
+     const primary = result.completionResultId ?? result.id;
+     return this.all<Result>('SELECT * FROM results WHERE id=? OR completionResultId=? ORDER BY rowid',primary,primary);
+   }
++  // Called only after the original operation returned. No extra inspection,
++  // model, file read or business mutation; collectors are best-effort at caller.
++  captureActivity(actor:Actor,name:string,args:unknown,receipt:unknown):PublicActivity|undefined {
++    if(!this.main(actor))return;
++    const a=args as Record<string,unknown>,r=receipt as Record<string,any>;
++    if(!a||!r||typeof a!=='object'||typeof r!=='object')return;
++    let action:PublicActivity['action'],outcome:PublicActivity['outcome'],taskId:string|undefined,version:number|undefined;
++    let result:Result|undefined,run:TaskRun|undefined,delivery:ReturnType<RecursiveTasks['delivery']>|undefined;
++    if(name==='work_inspect'||name==='inspect_run'||name==='inspect_result_file'){
++      if(name==='work_inspect'&&!r.task)return;
++      if(typeof a.resultId==='string')result=this.result(a.resultId);
++      if(typeof a.runId==='string')run=this.run(a.runId);
++      taskId=typeof a.taskId==='string'?a.taskId:result?.taskId??run?.taskId;
++      if(!taskId||name==='work_inspect'&&r.task.id!==taskId)return;
++      if(result&&result.taskId!==taskId||run&&run.taskId!==taskId)return;
++      if(name==='inspect_run'&&r.run?.id!==run?.id)return;
++      if(name==='inspect_result_file'&&!result?.filePath)return;
++      if(result?.runId)run=this.run(result.runId);
++      version=result?.version??run?.contractVersion??this.task(taskId).headVersion;
++      action=result?.filePath?'inspect_file':run?'inspect_run':'inspect_task';
++      outcome=result?.filePath?'file_read':'record_read';
++    }else if(name==='review_artifact'){
++      if(typeof a.runId!=='string')return;run=this.run(a.runId);taskId=run.taskId;version=run.contractVersion;action='review_result';
++      if(['review_required','review_blocked'].includes(r.state))outcome='review_required';
++      else{
++        if(r.runId!==run.id||a.accepted!==true)return;
++        result=this.one<Result>("SELECT * FROM results WHERE runId=? AND taskId=? AND version=? AND completionResultId IS NULL AND outcome IS NOT NULL AND state='accepted' AND reviewAgentId=? ORDER BY rowid LIMIT 1",run.id,taskId,version,actor.agentId);
++        if(!result)return;outcome='accepted';
++      }
++    }else if(name==='task_review'){
++      if(typeof a.resultId!=='string'||typeof a.taskId!=='string')return;
++      result=this.result(a.resultId);taskId=a.taskId;version=result.version;
++      if(result.taskId!==taskId||a.version!==version)return;
++      if(['review_required','review_blocked'].includes(r.state))outcome='review_required';
++      else if(r.resultId!==result.id)return;
++      else if(r.decision==='request_changes'&&result.state==='rejected')outcome='changes_requested';
++      else if(r.state==='accepted'&&result.state==='accepted')outcome='accepted';
++      else if(r.state==='rejected'&&result.state==='rejected')outcome='rejected';else return;
++      if(result.runId)run=this.run(result.runId);action='review_result';
++    }else if(name==='publish_delivery'){
++      if(typeof r.deliveryId!=='string')return;delivery=this.delivery(r.deliveryId);
++      if(delivery.rootTaskId!==a.taskId||delivery.version!==a.version||delivery.revokedAt!==null)return;
++      taskId=delivery.rootTaskId;version=delivery.version;action='prepare_delivery';
++      // The response itself, never a transport return or a later scheduler state.
++      if(r.state==='recorded')outcome='delivery_recorded';else if(r.state==='prepared')outcome='delivery_prepared';else return;
++    }else if(name==='task_delegate'){
++      if(typeof r.taskId!=='string'||typeof r.operationKey!=='string')return;
++      taskId=r.taskId;version=Number(r.version??1);action='create_task';outcome='created';
++    }else return;
++    const task=this.task(taskId);this.readAllowed(actor,task);
++    const v=this.version(task.id,version!);
++    const title=v.presentationJson?publicActivityName(JSON.parse(v.presentationJson).title):undefined;
++    const filename=result?.filePath?publicActivityName(result.filePath.split(/[\\/]/).at(-1)):undefined;
++    return {schemaVersion:1,action,outcome,...(filename??title?{objectName:filename??title}:{}),target:{taskId:task.id,version:v.version,...(run?{runId:run.id}:{}),...(result?{resultId:result.id}:{}),...(delivery?{deliveryId:delivery.id}:{})}};
++  }
++  // Existing Web thread scope + exact stored relationship, never ID-as-grant.
++  // Does not call inspect(), which would create acceptance inspection evidence.
++  activityLink(target:ActivityTarget,threadId:string):ActivityLink|undefined {
++    try{
++      const task=this.task(target.taskId),v=this.version(task.id,target.version);
++      if(!v.sourceRequestId||!this.one('SELECT 1 FROM conversation_inputs WHERE requestId=? AND threadId=?',v.sourceRequestId,threadId))return;
++      if(target.runId){const run=this.run(target.runId);if(run.taskId!==task.id||run.contractVersion!==v.version)return;}
++      if(target.resultId){const result=this.result(target.resultId);if(result.taskId!==task.id||result.version!==v.version||target.runId&&result.runId!==target.runId)return;}
++      if(target.deliveryId){const d=this.delivery(target.deliveryId);if(d.rootTaskId!==task.id||d.version!==v.version||d.revokedAt!==null||d.state==='revoked')return;}
++      const link:ActivityLink={task:{...target,rootTaskId:task.rootTaskId}};
++      // Publication owner still owns revocation, exact result scope and file grants.
++      const d=target.deliveryId?this.delivery(target.deliveryId):undefined;
++      const id=target.resultId??d?.publishedFileResultIds[0];
++      const file=id?this.publishedResult(id,{sourceRequestId:v.sourceRequestId}):undefined;
++      if(file&&(!d||file.deliveryId===d.id)){
++        link.artifact={id:file.resultId,title:publicActivityName(file.path.split(/[\\/]/).at(-1))??'成果文件'};
++        link.messageId=file.historyMessageId;
++      }else if(d?.state==='recorded')link.messageId=d.historyMessageId;
++      return link;
++    }catch{return;}
++  }
+   private inspectionKey(actor: Actor, resultId: string) { return json([actor.agentId, actor.runId ?? null, actor.epoch ?? null, actor.turnId ?? 'host', resultId]); }
+   inspect(actor: Actor, selector: TaskSelector & { operationId?: undefined; operationScopeId?: undefined }): ReturnType<RecursiveTasks['inspectTask']>;
+   inspect(actor: Actor, selector: InspectionSelector): ReturnType<RecursiveTasks['inspectTask']> | ReturnType<RecursiveTasks['inspectOperation']>;
+--- a/src/web-homer.ts
++++ b/src/web-homer.ts
+@@ -9,6 +9,14 @@
+   app.registerChannelCapabilities('web',()=>({draftUpload}));
+   const pageReader=()=>app.webHistoryPages();
+   const epoch=(value:string)=>{if(value!==app.webReadEpoch)throw Error('history_epoch_changed');};
++  const legacyLinks=(node:import('./main-process.js').ProcessNode)=>{
++    const activityLinks:Record<string,import('./activity-facts.js').ActivityLink>={};
++    for(const item of node.items)if(item.kind==='worker'){
++      const link=app.tasks.activityLink({taskId:item.taskId,version:item.version,...(item.runId?{runId:item.runId}:{})},node.threadId);
++      if(link)activityLinks[item.id]=link;
++    }
++    return {...node,activityLinks};
++  };
+   // Worker events already contain their immutable, explicitly public snapshot.
+   const page=(request:import('./web-history-pages.js').HistoryPageRequest={})=>{
+     const result=pageReader().read(app.store.meta('mainThread')!,request);
+@@ -26,7 +34,7 @@
+       if(!process&&!user)return [];
+       return [{id:item.id,kind:item.kind,state:item.state as 'cancelled'|'expired',sourceRequestId:item.authority.sourceRequestId,...(process?{processId:process.id}:{messageId:user!.id})}];
+     });
+-    return {...result,artifacts,inactiveInteractions,inactiveMore,messages:result.messages.map(message=>({...message,requestId:message.requestId??sources.get(message.id)??null,...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{})}))};
++    return {...result,artifacts,inactiveInteractions,inactiveMore,messages:result.messages.map(message=>({...message,...(message.process?{process:legacyLinks(message.process)}:{}),requestId:message.requestId??sources.get(message.id)??null,...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{})}))};
+   };
+   const queuePage=(after=0)=>{const page=pageReader().queuePage(after);return {...page,items:page.items.map(item=>({...item,user:{...item.user,...(item.user.attachments?{media:item.user.attachments.map(ref=>app.media.view(ref))}:{})}}))};};
+   const interactionPage=(after=0)=>{
+@@ -39,7 +47,15 @@
+   return {
+     history:{
+       page:async input=>{epoch(input.readEpoch);return page(input.request);},
+-      process:async input=>{epoch(input.readEpoch);return pageReader().process(input.id,app.store.meta('mainThread')!);},
++      process:async input=>{
++        epoch(input.readEpoch);const thread=app.store.meta('mainThread')!,node=pageReader().process(input.id,thread);
++        const activityLinks:Record<string,import('./activity-facts.js').ActivityLink>={};
++        for(const item of node.items){
++          const target=item.kind==='tool'?item.activity?.target:item.kind==='worker'?{taskId:item.taskId,version:item.version,...(item.runId?{runId:item.runId}:{})}:undefined;
++          if(!target)continue;const link=app.tasks.activityLink(target,thread);if(link)activityLinks[item.id]=link;
++        }
++        return {...node,activityLinks};
++      },
+       resolve:async input=>{
+         epoch(input.readEpoch);const thread=app.store.meta('mainThread')!;
+         const message=app.store.db.prepare('SELECT id,requestId FROM conversation_messages WHERE threadId=? AND id=?').get(thread,input.id);if(!message)throw Error('history_message_not_found');
+--- a/src/web-contract.ts
++++ b/src/web-contract.ts
+@@ -1,3 +1,4 @@
++export type WebProcessNode=import('./main-process.js').ProcessNode&{activityLinks?:Record<string,import('./activity-facts.js').ActivityLink>};
+ export const WEB_PROTOCOL = 1;
+ // Live observation only; never persisted or used as an execution/stop target.
+ export type MainActivity={processId:string;source:'user'|'internal';turnId?:string;stage:'preparing'|'native'|'compacting'|'finishing'|'unknown';retryObserved?:true;connectionIssue?:true};
+@@ -39,7 +40,7 @@
+   history?:{
+     state():Promise<WebState>;
+     page(input:{readEpoch:string;request:import('./web-history-pages.js').HistoryPageRequest}):Promise<import('./web-history-pages.js').HistoryPage>;
+-    process(input:{readEpoch:string;id:string}):Promise<import('./main-process.js').ProcessNode>;
++    process(input:{readEpoch:string;id:string}):Promise<WebProcessNode>;
+     resolve(input:{readEpoch:string;id:string}):Promise<{messageId:string;sourceMessageId?:string}>;
+     receipts(input:QueueReceiptsRequest):Promise<QueueReceipts>;
+     queue(after:number,readEpoch?:string):Promise<ActiveReadResult<QueuedInput>>;
+--- a/ui/process-nodes.tsx
++++ b/ui/process-nodes.tsx
+@@ -1,6 +1,7 @@
+ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+ import type { ProcessNode, ProcessItem } from '../src/main-process';
+-import type { WebState } from '../src/web-contract';
++import type { WebState,WebProcessNode } from '../src/web-contract';
++import {activityActions,activityOutcomes,type ActivityLink} from '../src/activity-facts';
+ import { confirmedTerminal, fixedDuration, formatDuration, projectProcessItems, snapshotDuration, toolStatusText, type ProcessObservation, type ToolItem } from './process-presentation';
+ import './process-nodes.css';
+ import { RunActivity, type RunActivityEntry } from './vendor/assistant-ui/run-activity';
+@@ -17,9 +18,48 @@
+ export function InactiveInteractionNotes({items=[]}:{items?:WebState['inactiveInteractions']}) {
+   return <>{items.map(item=><p key={item.id} className="message-state" style={{display:'block'}}>{item.kind==='authorization'?'原授权请求已失效，旧决定不能恢复此回调。':'原提问回调已失效，旧卡片不能继续提交。'}可在原事项对话核对当前状态。</p>)}</>;
+ }
+-export const ProcessDetailsContext=createContext<(id:string,signal:AbortSignal)=>Promise<ProcessNode>>(async()=>{throw Error('history_protocol_required');});
++export const ProcessDetailsContext=createContext<(id:string,signal:AbortSignal)=>Promise<WebProcessNode>>(async()=>{throw Error('history_protocol_required');});
+ export const ProcessObservationContext = createContext<ProcessObservation>({connected:false});
+ 
++export const ActivityNavigationContext=createContext<{
++ task?:(target:ActivityLink['task'],trigger:HTMLElement)=>void;
++ artifact?:(file:{id:string;title:string},trigger:HTMLElement)=>void;
++ message?:(id:string)=>void;
++}>({});
++type ReadableActivity=Extract<ProcessItem,{kind:'tool'|'worker'}>;
++function ActivityReader({node,item,trigger,onClose}:{node:ProcessNode;item:ReadableActivity;trigger:HTMLElement;onClose:()=>void}){
++ const load=useContext(ProcessDetailsContext),navigate=useContext(ActivityNavigationContext),observation=useContext(ProcessObservationContext);
++ const dialog=useRef<HTMLDialogElement>(null),heading=useRef<HTMLHeadingElement>(null);
++ const [data,setData]=useState<WebProcessNode|null>(null),[error,setError]=useState('');
++ useLayoutEffect(()=>{dialog.current?.showModal();heading.current?.focus({preventScroll:true});return()=>{dialog.current?.close();};},[]);
++ useEffect(()=>{
++  if(!observation.connected){setData(null);setError('连接已变化，活动详情当前无法核对，请关闭后重试。');return;}
++  const controller=new AbortController();setData(null);setError('');
++  void load(node.id,controller.signal).then(value=>{
++   if(controller.signal.aborted)return;
++   const actual=value.items.find(i=>i.id===item.id);
++   if(value.id!==node.id||value.threadId!==node.threadId||value.revision<node.revision||!actual||actual.kind!==item.kind||actual.revision<item.revision)throw Error('activity_identity_changed');
++   setData(value);
++  }).catch(()=>{if(!controller.signal.aborted)setError('这次活动当前无法读取，请关闭后重试。');});
++  return()=>controller.abort();
++ },[load,node.id,node.threadId,node.revision,item.id,item.revision,item.kind,observation.connected]);
++ const current=data?.items.find(i=>i.id===item.id),fact=current?.kind==='tool'?current.activity:undefined,link=data?.activityLinks?.[item.id];
++ function close(){dialog.current?.close();onClose();requestAnimationFrame(()=>{if(trigger.isConnected)trigger.focus({preventScroll:true});});}
++ function visit(action:()=>void){dialog.current?.close();onClose();requestAnimationFrame(action);}
++ return <dialog ref={dialog} className="activity-reader" aria-labelledby="activity-reader-title" onCancel={event=>{event.preventDefault();close();}}>
++  <header><h3 id="activity-reader-title" ref={heading} tabIndex={-1}>这次活动</h3><button type="button" onClick={close} aria-label="关闭活动详情">×</button></header>
++  {error?<p role="alert">{error}</p>:!data?<p role="status">正在核对这次活动…</p>:<>
++   {fact?<><p className="activity-reader-action">{activityActions[fact.action]}{fact.objectName&&<>：{fact.objectName}</>}</p><p>{activityOutcomes[fact.outcome]}</p><p className="process-record-note">以上来自这次调用的结构化回执；不代表后续状态。</p></>:<p>当时没有保留足够的活动详情。下方仅提供准确关联的当前记录，不补写历史。</p>}
++   {current?.kind==='tool'&&<p>调用状态：{toolStatusText[current.status]}</p>}
++   {link&&<><p className="process-record-note">关联要求版本 {link.task.version}{link.task.runId?' · 已核对准确 Run':''}。任务面板提供当前信息及原版本执行记录。</p><div className="activity-reader-links">
++    {navigate.task&&<button type="button" onClick={()=>visit(()=>navigate.task!(link.task,trigger))}>查看任务与版本</button>}
++    {link.artifact&&navigate.artifact&&<button type="button" onClick={()=>visit(()=>navigate.artifact!(link.artifact!,trigger))}>查看成果：{link.artifact.title}</button>}
++    {link.messageId&&navigate.message&&<button type="button" onClick={()=>visit(()=>navigate.message!(link.messageId!))}>查看原交付答复</button>}
++   </div></>}
++   {!link&&(fact?.target||item.kind==='worker')&&<p>当前关联无法读取，可能权限或准确关系已变化；这不表示记录永久丢失。</p>}
++  </>}
++ </dialog>;
++}
+ type Disclosure = { open: boolean; terminalSeen: boolean };
+ function initialDisclosure(key: string, node: ProcessNode): Disclosure {
+   try {
+@@ -47,12 +87,17 @@
+   return item.status==='running'&&stale?'上次调用中，结束未确认':toolStatusText[item.status];
+ }
+ // The body remains the existing message slot, never read from raw node.final/items.
+-export function ProcessMessageContent({node,renderText,activityText,children}:{node?:ProcessNode;renderText:(text:string)=>ReactNode;activityText?:string;children:ReactNode}) {
++export function ProcessMessageContent({node,renderText,activityText,children}:{node?:WebProcessNode;renderText:(text:string)=>ReactNode;activityText?:string;children:ReactNode}) {
+   const observation=useContext(ProcessObservationContext);
+   const projection=useMemo(()=>projectProcessItems(node?.items??[]),[node?.items]);
+   return <>{node&&<ProcessNodeView key={JSON.stringify([node.threadId,node.id])} node={node} renderText={renderText} activityText={activityText} observation={observation}/>}{children}
+-    {!!projection.workers.length&&<div className="process-workers" aria-label="旧后台工作记录">{projection.workers.map(item=><p key={item.id} className="process-record-note">旧后台工作记录（当时的事件内容未保留）</p>)}</div>}
++    {!!projection.workers.length&&<LegacyWorkerLinks node={node!} items={projection.workers}/>}
+   </>;
++}
++function LegacyWorkerLinks({node,items}:{node:WebProcessNode;items:Extract<ProcessItem,{kind:'worker'}>[]}){
++ const navigate=useContext(ActivityNavigationContext),links=node.activityLinks;
++ const [reading,setReading]=useState<{item:ReadableActivity;trigger:HTMLElement}|null>(null);
++ return <div className="process-workers" aria-label="旧后台工作记录">{items.map(item=><div key={item.id}><p className="process-record-note">旧后台工作记录（当时的事件内容未保留）</p>{navigate.task&&links?.[item.id]&&<button type="button" className="process-activity-link" onClick={event=>setReading({item,trigger:event.currentTarget})}>查看关联任务</button>}</div>)}{reading&&<ActivityReader key={reading.item.id} node={node} {...reading} onClose={()=>setReading(null)}/>}</div>;
+ }
+ export function WorkerEventCard({item}:{item:Extract<ProcessItem,{kind:'workerEvent'}>}){
+   const event=item.event;if(!event)return <p className="process-record-note">Worker 事件内容未能读取。</p>;
+@@ -65,6 +110,7 @@
+   </article>;
+ }
+ export function ProcessNodeView({node,renderText,activityText,observation={connected:false}}:{node:ProcessNode;renderText:(text:string)=>ReactNode;activityText?:string;observation?:ProcessObservation}) {
++  const [reading,setReading]=useState<{item:ReadableActivity;trigger:HTMLElement}|null>(null);
+   const identity=JSON.stringify([node.threadId,node.id]),storageKey='homer-process-disclosure:'+identity;
+   const [disclosure,setDisclosure]=useState(()=>({key:identity,...initialDisclosure(storageKey,node)}));
+   if(disclosure.key!==identity)setDisclosure({key:identity,...initialDisclosure(storageKey,node)});
+@@ -82,8 +128,11 @@
+   useEffect(()=>{try{sessionStorage.setItem(storageKey,JSON.stringify({open:active.open,terminalSeen:active.terminalSeen}));}catch{}},[storageKey,active.open,active.terminalSeen]);
+   const load=useContext(ProcessDetailsContext),[detail,setDetail]=useState<ProcessNode|null>(null),[error,setError]=useState('');
+   useEffect(()=>{
+-    if(!active.open||node.details!=='unloaded'){setDetail(null);return;}
+-    const controller=new AbortController();setError('');setDetail(null);
++    if(node.details!=='unloaded'){setDetail(null);return;}
++    // Keep an already-read newer revision when folded. A newer header still
++    // supersedes it through currentDetail's revision gate below.
++    if(!active.open)return;
++    const controller=new AbortController();setError('');
+     void load(node.id,controller.signal).then(value=>{if(!controller.signal.aborted&&value.id===node.id&&value.threadId===node.threadId&&value.revision>=node.revision)setDetail(value);}).catch(()=>{if(!controller.signal.aborted)setError('过程详情未能读取，请收起后重新展开。');});
+     return()=>controller.abort();
+   },[node.id,node.threadId,node.revision,node.details,active.open,load]);
+@@ -105,9 +154,9 @@
+   const status=node.status==='failed'?'处理失败':node.status==='interrupted'?'已中断':node.status==='unknown'?'结束状态待核实':!terminal&&activityText?activityText:'';
+   // Upstream owns the single disclosure/list. The adapter supplies public facts
+   // as ordered entries; returned calls are never interpreted as passed checks.
+-  const entries=rows.filter(row=>active.open||row.kind!=='workerEvent').flatMap<RunActivityEntry>(row=>row.kind==='commentary'?[{id:row.id,kind:'commentary',label:activityText||'公开进展',content:<div className="process-item process-commentary">{renderText(row.text)}</div>}]:row.kind==='workerEvent'?[{id:row.id,kind:'commentary',label:'Worker 事件',content:<WorkerEventCard item={row}/>}]:row.items.map(item=>({id:item.id,kind:'tool',label:item.label,content:<p className="process-tool-row" data-tool-id={item.id}>{item.label}<span className="process-fact" data-tool-status={item.status}>{toolFact(item,stale)}{item.category==='fileChange'&&item.fileCount!==undefined?' · 本次涉及 '+item.fileCount+' 个文件':''}</span></p>})));
++  const entries=rows.filter(row=>active.open||row.kind!=='workerEvent').flatMap<RunActivityEntry>(row=>row.kind==='commentary'?[{id:row.id,kind:'commentary',label:activityText||'公开进展',content:<div className="process-item process-commentary">{renderText(row.text)}</div>}]:row.kind==='workerEvent'?[{id:row.id,kind:'commentary',label:'Worker 事件',content:<WorkerEventCard item={row}/>}]:row.items.map(item=>({id:item.id,kind:'tool',label:item.activity?activityActions[item.activity.action]+(item.activity.objectName?'：'+item.activity.objectName:''):item.label,content:<div className="process-tool-row" data-tool-id={item.id}><p>{item.activity?activityActions[item.activity.action]:item.label}{item.activity?.objectName&&<>：{item.activity.objectName}</>}<span className="process-fact" data-tool-status={item.status}>{toolFact(item,stale)}{item.category==='fileChange'&&item.fileCount!==undefined?' · 本次涉及 '+item.fileCount+' 个文件':''}</span></p>{item.activity?<><p className="process-activity-outcome">{activityOutcomes[item.activity.outcome]}</p><button type="button" className="process-activity-link" aria-label={'查看活动：'+(item.activity.objectName??activityActions[item.activity.action])} onClick={event=>setReading({item,trigger:event.currentTarget})}>查看活动</button></>:item.category==='host'&&<p className="process-record-note">此记录没有足够的公开工作详情。</p>}</div>})));
+   if(!entries.length)entries.push({id:node.id+':status',kind:'commentary',label:activityText??'',content:<p role={!loaded?'status':undefined}>{!loaded?error||'过程详情尚未加载…':terminal?'本次主处理已结束。':node.status==='unknown'?'本次处理是否结束尚待核实。':activityText||'当前处理阶段待确认'}</p>});
+-  return <><RunActivity className="process-node" status={node.status==='unknown'?'incomplete':node.status==='failed'?'error':node.status==='interrupted'?'cancelled':terminal?'complete':'running'}
++  return <>{reading&&<ActivityReader key={identity+reading.item.id} node={node} {...reading} onClose={()=>setReading(null)}/>}<RunActivity className="process-node" status={node.status==='unknown'?'incomplete':node.status==='failed'?'error':node.status==='interrupted'?'cancelled':terminal?'complete':'running'}
+     statusLabel={label} durationLabel={<><ProcessDuration node={node} observation={observation}/>{status&&<span className="process-status"> · {status}</span>}{!active.open&&terminal&&node.status==='completed'&&!problems&&counts.completed?<span className="process-return-count"> · {counts.completed} 次调用已返回</span>:null}</>}
+     entries={entries} open={active.open} onOpenChange={open=>setDisclosure({...active,open})}
+     triggerProps={{ref:button,className:'process-toggle',title:node.status==='unknown'?'本次处理结束状态待核实，未自动重跑':terminal?'本次主 Agent 处理已结束，后台 Worker 状态独立显示':'本次主 Agent 正在处理'}}
+--- a/ui/process-nodes.css
++++ b/ui/process-nodes.css
+@@ -27,3 +27,14 @@
+ .worker-event-header{display:flex;align-items:center;gap:12px;margin-bottom:12px;min-width:0}.worker-event-header h3{margin:0;font-size:17px;font-weight:600;line-height:1.6;overflow-wrap:anywhere}.worker-event-card>p{margin:0;font-size:16px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}
+ .worker-event-icon{position:relative;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;flex:none;border-radius:8px;background:var(--soft);color:var(--ink)}.worker-event-icon>svg{width:22px;height:22px}.worker-event-icon svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.worker-event-badge{position:absolute;right:-4px;bottom:-3px;width:16px;height:16px;border:2px solid var(--surface);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff}.worker-event-badge svg{width:11px;height:11px;stroke-width:2.3}.worker-event-badge.is-delegated{background:#3269ab}.worker-event-badge.is-result_received{background:#198044}.worker-event-badge.is-start_failed{background:#bc3e42}
+ @media(max-width:600px){.worker-event-card{padding:16px 16px 17px}.worker-event-header h3{font-size:16px}}
++
++/* Homer activity content/reader only; official Run Activity metrics stay scoped to vendor CSS. */
++.process-tool-row>p{margin:0;line-height:inherit}
++.process-tool-row>.process-activity-outcome{margin:2px 0 0;color:var(--muted)}
++.process-activity-link{display:inline-flex;align-items:center;min-height:44px;max-width:100%;padding:4px 0;border:0;background:transparent;color:var(--ink);font:inherit;text-align:left;text-decoration:underline;text-underline-offset:3px;cursor:pointer;overflow-wrap:anywhere}
++.process-activity-link:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
++.activity-reader{box-sizing:border-box;width:min(560px,calc(100% - 24px));max-height:calc(100dvh - 32px);overflow:auto;padding:20px;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);font:16px/1.75 system-ui;overflow-wrap:anywhere}
++.activity-reader::backdrop{background:rgb(0 0 0 / .22)}
++.activity-reader header{display:flex;gap:12px;align-items:center;justify-content:space-between}.activity-reader h3{margin:0;font-size:18px}.activity-reader header button{min-width:44px;min-height:44px}
++.activity-reader button{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;min-height:44px;padding:6px 10px;max-width:100%;white-space:normal;overflow-wrap:anywhere;cursor:pointer}
++.activity-reader button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.activity-reader-links{display:flex;flex-wrap:wrap;gap:8px}.activity-reader-action{font-weight:500}
+--- a/ui/task-overview.tsx
++++ b/ui/task-overview.tsx
+@@ -1,4 +1,5 @@
+ import {useEffect,useMemo,useRef,useState} from 'react';
++import type {ActivityLink} from '../src/activity-facts';
+ import type {ArtifactOrigin,WebState} from '../src/web-contract';
+ import {classifyRoot,rootGroups,type TaskOverview,type TaskDetail,type OverviewTask} from '../src/task-overview';
+ import {connectionFetch} from './web-connection-client';
+@@ -30,12 +31,16 @@
+ }
+ type ReadFilter='all'|'user'|'active'|'complete'|'unknown'|'review'|'other';
+ const filters:[ReadFilter,string][]=[['all','全部'],['user','待我处理'],['active','在办'],['complete','已完成']];
+-export function TaskOverviewPanel({state,onConversation,onArtifact,onInteraction,onOrigin}:{state:WebState;onInteraction:(id:string,after?:number)=>void|boolean|Promise<void|boolean>;onConversation:(id:string)=>void;onArtifact:(id:string,title:string)=>void;onOrigin?:(origin:ArtifactOrigin)=>void}){
++export type ActivityTaskRequest={target:ActivityLink['task'];trigger:HTMLElement;serial:number};
++export function TaskOverviewPanel({state,onConversation,onArtifact,onInteraction,onOrigin,activityRequest}:{activityRequest?:ActivityTaskRequest;state:WebState;onInteraction:(id:string,after?:number)=>void|boolean|Promise<void|boolean>;onConversation:(id:string)=>void;onArtifact:(id:string,title:string)=>void;onOrigin?:(origin:ArtifactOrigin)=>void}){
+  const [open,setOpen]=useState(false),[data,setData]=useState<TaskOverview|null>(null),[detail,setDetail]=useState<TaskDetail|null>(null),[history,setHistory]=useState<TaskDetail|null>(null),[selected,setSelected]=useState<string|null>(null);
+  const [query,setQuery]=useState(''),[filter,setFilter]=useState<ReadFilter>('all'),[error,setError]=useState(''),[busy,setBusy]=useState(false),[updated,setUpdated]=useState(''),[historyBusy,setHistoryBusy]=useState(false),[navigating,setNavigating]=useState(false);
+  const dialog=useRef<HTMLDialogElement>(null),entry=useRef<HTMLButtonElement>(null),heading=useRef<HTMLHeadingElement>(null),search=useRef<HTMLInputElement>(null),list=useRef<HTMLDivElement>(null);
+  const active=useRef(false),selectedRef=useRef(selected),dataRef=useRef(data),timer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),controller=useRef<AbortController|null>(null),lastRead=useRef(0),returnRow=useRef<string|null>(null),listY=useRef(0),historyController=useRef<AbortController|null>(null),originController=useRef<AbortController|null>(null),matched=useRef<string|null>(null);
+- const invalidated=useRef(false),immediate=useRef(false);
++ const invalidated=useRef(false),immediate=useRef(false),activityReturn=useRef<HTMLElement|null>(null);
++ const [activityTarget,setActivityTarget]=useState<ActivityLink['task']|null>(null);
++ const activityThread=useRef(state.threadId);
++ useEffect(()=>{if(activityThread.current!==state.threadId&&activityTarget)close();activityThread.current=state.threadId;},[state.threadId]);
+  selectedRef.current=selected;dataRef.current=data;
+  async function refresh(urgent=true){
+   if(!active.current)return;
+@@ -61,10 +66,17 @@
+  useEffect(()=>()=>{active.current=false;clearTimeout(timer.current);controller.current?.abort();historyController.current?.abort();originController.current?.abort();},[]);
+  useEffect(()=>{if(!open)return;if(selected){heading.current?.focus({preventScroll:true});}else if(returnRow.current){if(list.current)list.current.scrollTop=listY.current;document.getElementById('task-row-'+returnRow.current)?.focus({preventScroll:true});}else search.current?.focus();},[selected,open]);
+  useEffect(()=>{if(!selected||!matched.current)return;const target=document.getElementById('task-child-'+matched.current);if(!target)return;for(let el:HTMLElement|null=target;el;el=el.parentElement){if(el instanceof HTMLDetailsElement)el.open=true;}target.querySelector('summary')?.focus();matched.current=null;},[selected,detail]);
+- function close(){active.current=false;invalidated.current=false;immediate.current=false;clearTimeout(timer.current);timer.current=undefined;controller.current?.abort();historyController.current?.abort();originController.current?.abort();setBusy(false);setHistoryBusy(false);setNavigating(false);dialog.current?.close();setOpen(false);setSelected(null);selectedRef.current=null;setDetail(null);setHistory(null);returnRow.current=null;entry.current?.focus();}
+- function show(){active.current=true;dialog.current?.showModal();setOpen(true);void refresh();}
++ function close(){active.current=false;invalidated.current=false;immediate.current=false;clearTimeout(timer.current);timer.current=undefined;controller.current?.abort();historyController.current?.abort();originController.current?.abort();setBusy(false);setHistoryBusy(false);setNavigating(false);dialog.current?.close();setOpen(false);setSelected(null);selectedRef.current=null;setDetail(null);setHistory(null);returnRow.current=null;setActivityTarget(null);const target=activityReturn.current;activityReturn.current=null;(target?.isConnected?target:entry.current)?.focus({preventScroll:true});}
++ function show(){setActivityTarget(null);activityReturn.current=null;active.current=true;dialog.current?.showModal();setOpen(true);void refresh();}
+  function select(id:string,match?:string){listY.current=list.current?.scrollTop??0;returnRow.current=id;matched.current=match??null;setSelected(id);selectedRef.current=id;setDetail(null);setHistory(null);historyController.current?.abort();setHistoryBusy(false);controller.current?.abort();void refresh();}
+  function back(){originController.current?.abort();historyController.current?.abort();setNavigating(false);setHistoryBusy(false);setSelected(null);selectedRef.current=null;setDetail(null);setHistory(null);if(controller.current){controller.current.abort();void refresh();}}
++ useEffect(()=>{
++  if(!activityRequest)return;
++  activityReturn.current=activityRequest.trigger;setActivityTarget(activityRequest.target);
++  selectedRef.current=activityRequest.target.rootTaskId;setSelected(activityRequest.target.rootTaskId);setDetail(null);setHistory(null);historyController.current?.abort();controller.current?.abort();
++  active.current=true;dialog.current?.showModal();setOpen(true);void refresh();
++ },[activityRequest]);
++ useEffect(()=>{if(open&&activityTarget&&detail&&!history&&!historyBusy)void readHistory();},[open,activityTarget,detail]);
+  async function readHistory(){
+   if(history||historyController.current||!selectedRef.current||!dataRef.current?.detailSummary&&detail)return;
+   const id=selectedRef.current,request=new AbortController();historyController.current=request;setHistoryBusy(true);
+@@ -107,6 +119,7 @@
+  {!visible.length&&<div className="task-empty"><h3>{data?tasks.length?'没有匹配的事项':'尚无任务记录':'任务记录尚未读取'}</h3><p>{tasks.length?'可调整筛选或搜索。':'这里只显示已存在的任务。'}</p>{tasks.length>0&&<button type="button" onClick={()=>{setFilter('all');setQuery('');search.current?.focus();}}>清除筛选与搜索</button>}</div>}
+  </div>
+  {selected&&<div className="task-panel-detail"><button type="button" className="task-back" onClick={back}>← 返回总览</button>{root?<><h3 tabIndex={-1} ref={heading}>{taskName(root).text}</h3><div className="task-detail-status"><span>{readableStatus(root,members)}</span>{questions.length>0&&<span className="task-attention">需你答复 {questions.length} 项</span>}</div><p className="task-conclusion">{taskProgress(root,members)}</p>
++ {activityTarget&&<section className="task-notice" aria-label="活动关联的准确记录"><h4>活动关联的原记录</h4><p>要求版本 {activityTarget.version}；以下当前任务信息与当时活动分别核对。</p>{!history?<p role="status">正在读取原版本与执行记录…</p>:<>{history.requirements?.find(r=>r.taskId===activityTarget.taskId&&r.version===activityTarget.version)?<p>该版本要求：{history.requirements.find(r=>r.taskId===activityTarget.taskId&&r.version===activityTarget.version)!.goal??'未记录'}</p>:<p>本次有界读取未返回该版本要求，未借用当前版本。</p>}{activityTarget.runId&&<p>准确 Run：<code>{activityTarget.runId}</code> · {history.runs.find(r=>r.id===activityTarget.runId&&r.taskId===activityTarget.taskId&&r.contractVersion===activityTarget.version)?.status??'本次读取未返回'}</p>}{activityTarget.resultId&&<p>准确成果记录：<code>{activityTarget.resultId}</code> · {history.recovery?.results.find(r=>r.id===activityTarget.resultId&&r.taskId===activityTarget.taskId&&r.version===activityTarget.version)?.state??'本次读取未返回'}</p>}</>}</section>}
+  {questions.length>0&&<section className="task-notice"><h4>需要你处理</h4>{questions.map(item=>{const known=state.interactions.find(i=>i.id===item.id&&i.runId===item.task.currentRunId);return <div key={item.id}><p>{known?.question??`${taskName(item.task,members.filter(t=>t.parentTaskId!==null).indexOf(item.task)+1).text} 有一项待答，请在原卡核对具体问题。`}</p><button type="button" className="task-primary" disabled={navigating} onClick={()=>void visitPending(item.id,item.after)}>前往原待答卡</button></div>;})}</section>}
+  {members.some(t=>t.pendingUser>0&&!validPendingUsers(t).length)&&<p>旧协议未提供可核对的待答身份；请在主对话核对，当前不提供直接答复入口。</p>}
+  <section><h4>成果</h4>{!detail?<p role="status">正在核对成果记录…</p>:detail.publications?.length?<>{detail.publications.map(p=><div className="task-publication" key={p.id}><p>正式交付 · 要求版本 {p.version}{p.version!==root.headVersion?'（历史版本，不代表当前已交付）':''} · {p.outcome==='partial'?'部分成果':p.outcome==='succeeded'?'成功交付记录':p.outcome}</p>{p.historyMessageId?<button type="button" disabled={navigating} onClick={()=>void visitMessage(p.historyMessageId!)}>查看原交付答复</button>:<p>准确原消息位置未记录。</p>}{detail.artifacts?.filter(a=>a.historyMessageId===p.historyMessageId).map(file=><button key={file.id} type="button" onClick={()=>{close();onArtifact(file.id,file.title);}}>查看成果：{file.title}</button>)}</div>)}{detail.morePublications&&<p>仅显示最近 80 条交付记录，较早交付未在此加载。</p>}</>:<p>{members.some(t=>t.result?.state==='offered')?'候选成果尚待验收，当前没有可访问的正式交付。':'当前没有可访问的正式交付记录。'}</p>}{!detail?.publications&&detail?.artifacts?.map(file=><button key={file.id} type="button" onClick={()=>{close();onArtifact(file.id,file.title);}}>查看成果：{file.title}</button>)}</section>
+--- a/ui/homer-app.tsx
++++ b/ui/homer-app.tsx
+@@ -6,7 +6,7 @@
+ import {composerActivityText,processActivityText,serviceActivityNotice} from './waiting-status';
+ import {connectionFetch as fetch,ConnectionEvents} from "./web-connection-client";
+ import {CapabilitySettings} from "./capability-settings";
+-import {TaskOverviewPanel} from './task-overview';
++import {TaskOverviewPanel,type ActivityTaskRequest} from './task-overview';
+ import {FileList} from './file-list';
+ import {CanvasPanel, type CanvasArtifact} from "./canvas-panel";
+ import { createRoot } from "react-dom/client";
+@@ -28,7 +28,7 @@
+ import {useQueueOperations,type QueueOperations} from './queue-operations';
+ import {createHomerAttachmentAdapter,attachmentAsset,type HomerAttachment,type HomerAttachmentAdapter,type DraftContext} from './homer-attachment-adapter';
+ import { MessageDetails, MessageActionsContext } from './message-details';
+-import { ProcessMessageContent,ProcessObservationContext,ProcessDetailsContext,InactiveInteractionNotes } from './process-nodes';
++import { ProcessMessageContent,ProcessObservationContext,ProcessDetailsContext,ActivityNavigationContext,InactiveInteractionNotes } from './process-nodes';
+ import type { ProcessNode } from '../src/main-process';
+ import {confirmedTerminal} from './process-presentation';
+ import ReactMarkdown from 'react-markdown';
+@@ -316,6 +316,8 @@
+   const attachmentContext=useRef<()=>DraftContext>(()=>({threadId:'',requestId:'',enabled:false,attachments:[],notice:()=>{}}));
+   const attachmentOwner=useMemo(()=>createHomerAttachmentAdapter(()=>attachmentContext.current()),[]);
+   const [origin,setOrigin]=useState<ArtifactOrigin|null>(null);
++  const [activityTask,setActivityTask]=useState<ActivityTaskRequest>();
++  const visitActivityTask=useCallback((target:ActivityTaskRequest['target'],trigger:HTMLElement)=>setActivityTask({target,trigger,serial:Date.now()}),[]);
+   const originDialog=useRef<HTMLDialogElement>(null),originTrigger=useRef<HTMLElement|null>(null);
+   const originRead=useRef<AbortController|null>(null);
+   useEffect(()=>()=>originRead.current?.abort(),[]);
+@@ -569,12 +571,12 @@
+     if(!pending.some(item=>item.input.requestId===requestId)){storage.write(key,[...pending,{input}]);window.dispatchEvent(new Event('homer-unconfirmed-updated'));}
+     return sendInput(input);
+   }};
+-  return <ProcessDetailsContext.Provider value={loadProcess}><ProcessObservationContext.Provider value={{connected,threadId:state.threadId,serviceRunning:state.upgrade.phase==='running',observedAtMs:state.observedAtMs,mainActivity:state.mainActivity,generationTurnId:state.generation?.turnId}}><MessageActionsContext.Provider value={actions}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}>
++  return <ActivityNavigationContext.Provider value={{task:state.features?.taskOverview?visitActivityTask:undefined,artifact:(file,trigger)=>openArtifact(file,trigger),message:locateMessage}}><ProcessDetailsContext.Provider value={loadProcess}><ProcessObservationContext.Provider value={{connected,threadId:state.threadId,serviceRunning:state.upgrade.phase==='running',observedAtMs:state.observedAtMs,mainActivity:state.mainActivity,generationTurnId:state.generation?.turnId}}><MessageActionsContext.Provider value={actions}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}>
+     <div className={canvasOpen?"app-shell canvas-open":"app-shell"}>
+       <main className="conversation">
+         <header className="conversation-header">
+           <span className="header-name"><img src={riverStone64} srcSet={`${riverStone64} 64w, ${riverStone256} 256w`} sizes="28px" alt="" width={28} height={28} style={{borderRadius:0,objectFit:"contain"}} />荷马</span>
+-          <div className="header-actions">{state.features?.taskOverview&&<TaskOverviewPanel state={state} onInteraction={locateTaskInteraction} onOrigin={value=>{cancelOriginRead();canvasFromOrigin.current=false;setCanvasOpen(false);originTrigger.current=document.querySelector<HTMLElement>('.task-entry');setOrigin(value);}} onConversation={locateMessage} onArtifact={(id,title)=>openArtifact({id,title})}/>}<button type="button" aria-expanded={canvasOpen} aria-controls="canvas-panel" onClick={event=>{if(canvasOpen){closeCanvas();return;}canvasTrigger.current=event.currentTarget;canvasFromOrigin.current=false;setOrigin(null);captureAnchor();setCanvasOpen(true);}}>Canvas</button>{state.features?.nativeCapabilities&&<a className="capability-link" href="/settings/capabilities">能力</a>}<WechatConnection /></div>
++          <div className="header-actions">{state.features?.taskOverview&&<TaskOverviewPanel state={state} activityRequest={activityTask} onInteraction={locateTaskInteraction} onOrigin={value=>{cancelOriginRead();canvasFromOrigin.current=false;setCanvasOpen(false);originTrigger.current=document.querySelector<HTMLElement>('.task-entry');setOrigin(value);}} onConversation={locateMessage} onArtifact={(id,title)=>openArtifact({id,title})}/>}<button type="button" aria-expanded={canvasOpen} aria-controls="canvas-panel" onClick={event=>{if(canvasOpen){closeCanvas();return;}canvasTrigger.current=event.currentTarget;canvasFromOrigin.current=false;setOrigin(null);captureAnchor();setCanvasOpen(true);}}>Canvas</button>{state.features?.nativeCapabilities&&<a className="capability-link" href="/settings/capabilities">能力</a>}<WechatConnection /></div>
+         </header>
+         {state.orderWarning&&<div className="upgrade-banner" role="status">{state.orderWarning}</div>}
+         {state.upgrade.reviewRequired && <div className="upgrade-banner" role="status">更新涉及用户身份或私有运行数据，当前版本继续可用。<a href="/settings/update">审阅更新</a></div>}
+@@ -604,6 +606,6 @@
+       <dialog ref={originDialog} className="artifact-origin" aria-label="任务原记录" onCancel={()=>{setOrigin(null);requestAnimationFrame(()=>originTrigger.current?.focus({preventScroll:true}));}}><button type="button" onClick={()=>{setOrigin(null);requestAnimationFrame(()=>originTrigger.current?.focus({preventScroll:true}));}}>关闭原答复</button>{origin&&<><h2>任务原记录</h2><p className="secondary">原对话：{origin.message.threadId} · 原记录，只读</p><p style={{whiteSpace:'pre-wrap'}}>{origin.message.text}</p><ArtifactFiles files={origin.files}/></>}</dialog>
+       {canvasOpen&&<CanvasPanel artifact={canvasArtifact} files={canvasFiles} onSelect={openArtifact} onLocate={locateArtifact} onClose={closeCanvas} returnFocusTo={canvasTrigger.current}/>}
+     </div>
+-  </AssistantRuntimeProvider></ArtifactsContext.Provider></MessageActionsContext.Provider></ProcessObservationContext.Provider></ProcessDetailsContext.Provider>;
++  </AssistantRuntimeProvider></ArtifactsContext.Provider></MessageActionsContext.Provider></ProcessObservationContext.Provider></ProcessDetailsContext.Provider></ActivityNavigationContext.Provider>;
+ }
+ createRoot(document.getElementById("homer-root")!).render(window.location.pathname==="/settings/capabilities"?<CapabilitySettings/>:<HomerApp />);
+--- a/ui/DESIGN.md
++++ b/ui/DESIGN.md
+@@ -5,6 +5,14 @@
+ 主对话及准确原答复里的成果复用独立 FileList 组件。组件只负责文件顺序、类型图标、完整文件名、点击及可访问说明，不读取文件或判断业务权限；由调用方管理准确 ID、授权和预览。空列表不占位；文件按原集合顺序排布，常规行高约56px、窄屏58px，点击区域至少44px。长名自然换行，不增加可见标题/数量行、版本/状态、右侧类型标签、查看大按钮、下载或设计备注。类型合并进前导图标；不按同名去重。
+ 
+ Canvas 继续桌面并排、800px及以下全屏。原生选择框按准确结果ID切换已有授权文件，保留原答复兄弟文件与正确返回位置/焦点；原网页表单折叠可达。成果Canvas无应用内下载或失效下载提示，用户附件不变。HTML默认源码，静态与交互仍需主动选择并沿原隔离；保留既有格式、权限与资源清理。移除展示不修改实际任务结果、版本或交付归属。
++
++## 2026-10-22 Run Activity 公开活动事实与阅读入口
++
++在下述官方组件中，Homer 提供固定动作、经过 owner 核验的公开名称和结构化回执类别；同一调用沿原 ID/revision 更新。调用返回、记录/文件已读取、验收接受/要求修改、交付准备及正式交付回执分别表达。没有可靠公开对象名时省略名称，不从目标、材料正文或工具输出生成摘要。详细事实仅进入过程记录，不扩展其他渠道的 MainProgress。
++
++“查看活动”是 Homer 增加的轻量只读 dialog，点击后沿既有 history/process 按准确线程、过程、条目身份读取；加载、暂不可读与连接失效明确呈现，关闭及切换中止旧读取。关联任务/准确版本/Run 复用任务面板，成果复用 Canvas，原交付复用准确消息定位。必要阅读按钮保持44px操作区；新增内容不改 vendor DOM/CSS、14px字体、列表细线和组件间距，不引入工具二次折叠或过程树。
++
++旧后台快照只在 owner 校验版本、Run 与来源线程关系后提供独立“查看关联任务”入口，阅读时说明当前信息不补写历史；仅通用标签或关联不可读时不提供空按钮。Worker 事件卡的标题、正文、事件身份、位置与不可点击语义保持原样。历史页头不加载活动详情；准确历史要求及 Run 仍按需、有界读取。
+ 
+ ## 2026-10-22 官方 Run Activity 过程区
+ 
+--- a/ui/vendor/assistant-ui/README.md
++++ b/ui/vendor/assistant-ui/README.md
+@@ -43,3 +43,11 @@
+ Direct source imports were React types, `lucide-react` (`ArrowUpIcon`, `XIcon`), `cn`, and the four `surfaces` constants. Upstream `packages/ui/src/lib/utils.ts` merely reexports `cn` from the `cn` package. Homer uses the same two icon geometries inline, ordinary scoped class names and the used CSS equivalents; it does not import the unused interactive `surfaces` functions or introduce `cn`, lucide, Tailwind/reset, shadcn or Base UI dependencies.
+ 
+ Drag sorting uses exactly `@dnd-kit/react@0.5.1`, MIT, Claudéric Demers, release commit `01bc678e93477e56a78aa2244c69b08a96cb0da6`. `DragDropProvider` comes from the root export and `useSortable` from `/sortable`; its `handleRef` binds only the 44px handle. No helpers/core/sortable legacy packages, Queue Adapter, `createMessageQueue` or steer lane. Published transitive dependencies are fixed by the reviewed root lockfile. Sorting is a temporary interaction preview; only `MainInputs.move` commits order.
++
++
++2026-10-22 public activity facts candidate:
++
++- No changes to `run-activity.tsx`, `run-activity.css`, `collapsible-root.tsx` or the license. The pinned official disclosure, list, typography, rule and metrics remain the presentation owner.
++- Homer supplies whitelisted action/object/outcome facts as entry content, from existing business receipts and versioned public display metadata. This is Homer data adaptation, not automatic Run Activity summarization. A returned call does not prove business success; prepared delivery does not prove recorded publication.
++- Entry buttons and the small read-only activity dialog are Homer additions. They reuse the existing process read endpoint, task panel, Canvas and exact message navigation. No Tool Timeline, second process hierarchy, generic detail framework, arbitrary reader, model summarizer or new persisted database is introduced.
++- The optional fact is stored only on the original process item. `MainProgress` channel events stay unchanged. Current navigation is not persisted: task/result/Run/version/thread and publication revocation are checked again by their owners. Historical Worker event cards remain immutable and have no buttons.
+--- /dev/null
++++ b/src/activity-facts.ts
+@@ -0,0 +1,14 @@
++// Public, fixed-template facts only. Never a tool argument/output archive.
++export type ActivityAction='inspect_task'|'inspect_run'|'inspect_file'|'inspect_attachment'|'review_result'|'prepare_delivery'|'create_task';
++export type ActivityOutcome='record_read'|'file_read'|'attachment_read'|'extraction_unavailable'|'accepted'|'changes_requested'|'rejected'|'review_required'|'delivery_prepared'|'delivery_recorded'|'created';
++export type ActivityTarget={taskId:string;version:number;runId?:string;resultId?:string;deliveryId?:string};
++export type PublicActivity={schemaVersion:1;action:ActivityAction;objectName?:string;outcome:ActivityOutcome;target?:ActivityTarget};
++// Web-only, freshly authorized navigation, never persisted with the historical fact.
++export type ActivityLink={task:ActivityTarget&{rootTaskId:string};artifact?:{id:string;title:string};messageId?:string};
++export const activityActions:Record<ActivityAction,string>={inspect_task:'查看任务记录',inspect_run:'查看执行记录',inspect_file:'检查成果文件',inspect_attachment:'读取附件材料',review_result:'验收成果',prepare_delivery:'准备正式交付',create_task:'创建任务'};
++export const activityOutcomes:Record<ActivityOutcome,string>={record_read:'记录已读取',file_read:'文件已读取',attachment_read:'材料已读取',extraction_unavailable:'附件记录已读取，内容当前不可读',accepted:'验收已接受',changes_requested:'已要求修改',rejected:'验收未接受',review_required:'验收决定待明确',delivery_prepared:'交付已准备，正式交付尚未确认',delivery_recorded:'正式交付回执已记录',created:'任务已创建'};
++// Only already-public display names; reject path-like or control-laden values.
++export function publicActivityName(value:unknown):string|undefined{
++ if(typeof value!=='string'||!value.trim()||value.length>240||/[\x00-\x1f\x7f/\\]/.test(value)||/https?:|file:|Bearer |(?:api[_-]?key|token|password)\s*[:=]/i.test(value))return;
++ return value.trim();
++}
+--- a/src/task-overview.ts
++++ b/src/task-overview.ts
+@@ -107,5 +107,6 @@
+  const operations=db.prepare(`SELECT o.id,o.scopeId AS taskId,o.kind,o.state,o.revision FROM operations o JOIN tasks t ON t.id=o.scopeId WHERE t.rootTaskId=? AND o.state IN ('accepted','dispatching','uncertain') ORDER BY o.rowid DESC LIMIT 81`).all(rootId) as RecoveryFacts['operations'];
+  const receipts=db.prepare(`SELECT m.id AS messageId,m.taskId,m.taskVersion,ar.state,ar.revision FROM agent_messages m JOIN tasks t ON t.id=m.taskId JOIN agent_receipts ar ON ar.messageId=m.id WHERE t.rootTaskId=? AND ar.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND ar.state IN ('blocked','uncertain') AND m.kind<>'user_input' AND m.targetRunId IS NULL ORDER BY m.seq DESC LIMIT 81`).all(rootId) as RecoveryFacts['receipts'];
+  const interactions=db.prepare(`SELECT i.id,i.runId,i.contractVersion,i.kind,i.state FROM worker_interactions i JOIN runs r ON r.id=i.runId JOIN tasks t ON t.id=r.taskId WHERE t.rootTaskId=? AND i.state IN ('expired','cancelled') ORDER BY i.rowid DESC LIMIT 81`).all(rootId) as RecoveryFacts['interactions'];
+- return {taskId:rootId,runs:runs.slice(0,80),moreHistory:[runs,results,deliveries,operations,receipts,interactions].some(rows=>rows.length>80),recovery:{results:results.slice(0,80),deliveries:deliveries.slice(0,80),operations:operations.slice(0,80),receipts:receipts.slice(0,80),interactions:interactions.slice(0,80)}};
++ const requirements=db.prepare(`SELECT v.taskId,v.version,v.goal,v.acceptanceJson,v.sourceRequestId FROM task_versions v JOIN tasks t ON t.id=v.taskId WHERE t.rootTaskId=? ORDER BY v.version DESC,v.rowid DESC LIMIT 81`).all(rootId) as TaskRequirement[];
++ return {taskId:rootId,requirements:requirements.slice(0,80),runs:runs.slice(0,80),moreHistory:[requirements,runs,results,deliveries,operations,receipts,interactions].some(rows=>rows.length>80),recovery:{results:results.slice(0,80),deliveries:deliveries.slice(0,80),operations:operations.slice(0,80),receipts:receipts.slice(0,80),interactions:interactions.slice(0,80)}};
+ }
+--- a/tests/helpers/process-ui-loader.mjs
++++ b/tests/helpers/process-ui-loader.mjs
+@@ -5,4 +5,4 @@
+ const result=buildSync({entryPoints:[fileURLToPath(new URL('../../ui/process-nodes.tsx',import.meta.url))],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',external:['react','react/jsx-runtime'],loader:{'.css':'empty'}});
+ const module={exports:{}};Function('require','module','exports',result.outputFiles[0].text)(require,module,module.exports);
+ const exports=module.exports;
+-export const {ProcessNodeView,ProcessMessageContent,ProcessObservationContext,workerDescription}=exports;
++export const {ProcessNodeView,ProcessMessageContent,ProcessObservationContext,ProcessDetailsContext,workerDescription}=exports;
+--- /dev/null
++++ b/tests/run-activity-facts.test.ts
+@@ -0,0 +1,98 @@
++// Isolated business-owner contracts. No runtime, model, account or production DB.
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import {historyFixture} from './web-history-loading-fixture.js';
++import {Homer} from '../src/service.js';
++function fixture(){
++ const f=historyFixture(2);f.store.setMeta('mainAgentId','main:activity');
++ f.store.startRequest('request-1','synthetic');
++ const actor={agentId:'main:activity',sourceRequestId:'request-1'};
++ const make=(id:string,title='同名事项',executorKind:'main'|'worker'='main')=>f.tasks.createRoot(actor,{operationId:id,title,executorKind,contract:{presentation:{title},goal:'PRIVATE_GOAL',inputs:[],resultKind:executorKind==='main'?'aggregate':'structured',acceptance:{criteria:[]}},authority:{sourceRequestId:'request-1',description:'PRIVATE_AUTHORITY',materials:[],resultIds:[],collaborateTaskIds:[]}});
++ return {...f,actor,make};
++}
++test('owner records exact public action/object and receipt, not private payload or transport success',()=>{
++ const f=fixture();try{
++  const a=f.make('a'),b=f.make('b');
++  for(const root of [a,b]){
++   const result=f.tasks.inspect(f.actor,{taskId:root.taskId});
++   const fact=f.tasks.captureActivity(f.actor,'work_inspect',{taskId:root.taskId},result)!;
++   assert.equal(fact.action,'inspect_task');assert.equal(fact.objectName,'同名事项');assert.equal(fact.outcome,'record_read');assert.equal(fact.target?.taskId,root.taskId);assert.equal(fact.target?.version,1);
++   assert.doesNotMatch(JSON.stringify(fact),/PRIVATE_|goal|authority|payload/);
++  }
++  assert.equal(f.tasks.captureActivity(f.actor,'publish_delivery',{taskId:a.taskId,version:1},{state:'completed'}),undefined);
++  assert.equal(f.tasks.captureActivity(f.actor,'work_inspect',{taskId:a.taskId},{task:{id:b.taskId}}),undefined);
++ }finally{f.close();}
++});
++test('activity associations check thread, exact version, Run and result relations without inspecting bytes',()=>{
++ const f=fixture();try{
++  const a=f.make('a'),b=f.make('b'),target={taskId:a.taskId,version:1};
++  assert.equal(f.tasks.activityLink(target,'synthetic-history')?.task.taskId,a.taskId);
++  for(const wrong of [{...target,version:2},{...target,runId:'missing'},{...target,resultId:'missing'},{...target,deliveryId:'missing'}])assert.equal(f.tasks.activityLink(wrong,'synthetic-history'),undefined);
++  assert.equal(f.tasks.activityLink(target,'other-thread'),undefined);
++  assert.equal(f.tasks.activityLink({taskId:b.taskId,version:1},'other-thread'),undefined);
++ }finally{f.close();}
++});
++test('same call updates original ID/revision; optional public facts do not enter MainProgress channel events',async()=>{
++ const f=fixture();try{
++  const root=f.make('a');f.processes.start({id:'live',threadId:'synthetic-history',sourceKind:'user',sourceMessageIds:[],messageId:'live'},'turn');f.history.record('live','synthetic-history','','running');
++  const output:any[]=[],app:any=Object.create(Homer.prototype);
++  const context:any={processId:'live',generation:{threadId:'synthetic-history',messageId:'live',turnId:'turn'}};
++  Object.assign(app,{tasks:f.tasks,processes:f.processes,history:f.history,mainContext:context,store:f.store,sink:async(e:any)=>output.push(e),mainActor:()=>f.actor});
++  const result=await app.mainActivity('work_inspect',async()=>f.tasks.inspect(f.actor,{taskId:root.taskId}),{taskId:root.taskId});await context.output;
++  const items=f.processes.exact('live')!.items.filter(i=>i.kind==='tool');assert.equal(items.length,1);assert.equal(items[0]!.revision,2);assert.equal(items[0]!.activity?.target?.taskId,root.taskId);assert.equal(result.task.id,root.taskId);
++  assert.equal(output.length,2);assert.ok(output.every(e=>!JSON.stringify(e).includes('同名事项')&&!JSON.stringify(e).includes('record_read')));
++  // Fact collector failure cannot turn a successful business operation into failure.
++  app.tasks={captureActivity(){throw Error('synthetic_fact_failure');}};
++  assert.deepEqual(await app.mainActivity('work_inspect',async()=>({returned:true}),{}),{returned:true});
++ }finally{f.close();}
++});
++
++test('real review and publication receipts distinguish acceptance, prepared delivery, recorded delivery and revocation',async()=>{
++ const f=fixture();try{
++  const root=f.make('review','待核验的合成事项','worker');const task=f.tasks.task(root.taskId),run=f.tasks.claim(root.runId!)!;
++  const worker={agentId:root.agentId,runId:run.id,epoch:run.epoch,threadId:'synthetic-worker',turnId:'synthetic-turn'};f.tasks.bind(run.id,run.epoch,worker.threadId,worker.turnId);
++  const completed=f.tasks.complete(worker,{operationId:'complete',taskId:task.id,version:1,expectedTaskRevision:f.tasks.task(task.id).revision,outcome:'succeeded',payload:{summary:'合成摘要',private:'PRIVATE_PAYLOAD'},evidence:{},children:[]});
++  f.tasks.endSegment(run.id,run.epoch,true,true);
++  f.tasks.inspect(f.actor,{resultId:completed.resultId});
++  const args={operationId:'review',taskId:task.id,version:1,expectedTaskRevision:f.tasks.task(task.id).revision,resultId:completed.resultId,accepted:true,outcome:'succeeded' as const,reason:'合成核验'};
++  const receipt=f.tasks.review(f.actor,args),fact=f.tasks.captureActivity(f.actor,'task_review',args,receipt)!;
++  assert.equal(fact.outcome,'accepted');assert.equal(fact.target?.resultId,completed.resultId);assert.doesNotMatch(JSON.stringify(fact),/PRIVATE_|summary|reason/);
++  const publicationArgs={operationId:'publish',taskId:task.id,version:1,expectedTaskRevision:f.tasks.task(task.id).revision,resultId:completed.resultId,publishedFileResultId:null,text:'合成正式答复'};
++  const publication=f.tasks.publish(f.actor,publicationArgs);
++  const prepared=f.tasks.captureActivity(f.actor,'publish_delivery',publicationArgs,publication)!;
++  assert.equal(prepared.outcome,'delivery_prepared');assert.equal(f.tasks.activityLink(prepared.target!,'synthetic-history')?.messageId,undefined);
++  f.tasks.markDelivery(publication.deliveryId,'submitting');f.tasks.markDelivery(publication.deliveryId,'recorded');
++  assert.equal(prepared.outcome,'delivery_prepared','historical receipt is immutable');
++  assert.equal(f.tasks.activityLink(prepared.target!,'synthetic-history')?.messageId,publication.historyMessageId);
++  f.tasks.markDelivery(publication.deliveryId,'revoked');assert.equal(f.tasks.activityLink(prepared.target!,'synthetic-history'),undefined);
++ }finally{f.close();}
++});
++
++test('Web detail rechecks epoch/thread and exact association; old generic rows gain no invented fact',async()=>{
++ const f=fixture();try{
++  const root=f.make('a'),item=f.tasks.captureActivity(f.actor,'work_inspect',{taskId:root.taskId},f.tasks.inspect(f.actor,{taskId:root.taskId}));
++  f.processes.start({id:'activity-node',threadId:'synthetic-history',sourceKind:'user',sourceMessageIds:[],messageId:'activity-node'},'turn');
++  f.processes.tool('activity-node',{id:'call',label:'检查资料',phase:'end',status:'completed',activity:item});
++  f.processes.tool('activity-node',{id:'generic',label:'检查资料',phase:'end',status:'completed'});
++  const app:any={...f,webReadEpoch:'epoch',registerChannelCapabilities(){},webHistoryPages:()=>({process(id:string,thread:string){const node=f.processes.exact(id);if(node?.threadId!==thread)throw Error('history_process_not_found');return node;}})};
++  const {homerWebBridge}=await import('../src/web-homer.js'),bridge=homerWebBridge(app);
++  const detail=await bridge.history!.process({readEpoch:'epoch',id:'activity-node'});
++  assert.equal(detail.activityLinks?.call?.task.taskId,root.taskId);assert.equal(detail.activityLinks?.generic,undefined);
++  assert.equal((detail.items.find(i=>i.id==='generic') as any).activity,undefined);
++  await assert.rejects(bridge.history!.process({readEpoch:'old',id:'activity-node'}),/epoch_changed/);
++  f.store.setMeta('mainThread','other');await assert.rejects(bridge.history!.process({readEpoch:'epoch',id:'activity-node'}),/process_not_found/);
++ }finally{f.close();}
++});
++
++test('request_changes remains the reviewed old result/version instead of the newly queued version',()=>{
++ const f=fixture();try{
++  Object.assign(f.tasks,{lifecycle:{validateActor:()=>{},reviewExitConfirmed:()=>true}}); // Synthetic executor has no live process.
++  const root=f.make('changes','需要修改的合成事项','worker'),run=f.tasks.claim(root.runId!)!;
++  const worker={agentId:root.agentId,runId:run.id,epoch:run.epoch,threadId:'changes-worker',turnId:'changes-turn'};f.tasks.bind(run.id,run.epoch,worker.threadId,worker.turnId);
++  const completed=f.tasks.complete(worker,{operationId:'complete',taskId:root.taskId,version:1,expectedTaskRevision:f.tasks.task(root.taskId).revision,outcome:'succeeded',payload:{},evidence:{},children:[]});f.tasks.endSegment(run.id,run.epoch,true,true);f.tasks.inspect(f.actor,{resultId:completed.resultId});
++  const args={operationId:'request-changes',taskId:root.taskId,version:1,expectedTaskRevision:f.tasks.task(root.taskId).revision,resultId:completed.resultId,outcome:'succeeded' as const,reason:'补齐明确缺项',decision:'request_changes' as const,revision:{contract:f.tasks.contract(root.taskId,1),children:[],queuedDisposition:[]}};
++  const receipt=f.tasks.review(f.actor,args),fact=f.tasks.captureActivity(f.actor,'task_review',args,receipt)!;
++  assert.equal(receipt.version,2);assert.equal(fact.outcome,'changes_requested');assert.equal(fact.target?.version,1);assert.equal(fact.target?.runId,run.id);assert.equal(fact.target?.resultId,completed.resultId);
++  assert.equal(f.tasks.activityLink(fact.target!,'synthetic-history')?.task.version,1);
++ }finally{f.close();}
++});
+--- /dev/null
++++ b/tests/run-activity-facts-ui.test.mjs
+@@ -0,0 +1,17 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import React from 'react';
++import {ProcessNodeView,ProcessDetailsContext} from './helpers/process-ui-loader.mjs';
++import {withDom} from './helpers/process-dom.mjs';
++const h=React.createElement;
++test('folding keeps a newer exact detail failure visible until the header catches up',async()=>withDom(async d=>{
++ const header={id:'node',threadId:'thread',seq:1,revision:1,sourceKind:'user',sourceMessageIds:[],messageId:'node',state:'worked',status:'completed',turnIds:['turn'],details:'unloaded',items:[],toolStatusCounts:{completed:1}};
++ const detail={...header,revision:2,items:[{id:'call',seq:1,revision:2,kind:'tool',category:'host',label:'检查资料',status:'failed'}]};
++ const load=async()=>detail;
++ const render=node=>d.render(h(ProcessDetailsContext.Provider,{value:load},h(ProcessNodeView,{node,renderText:t=>t})));
++ await render(header);const button=d.find(n=>n.tagName==='BUTTON');await d.click(button);await render(header);
++ assert.match(d.container.textContent,/1 次调用失败/);
++ await d.click(button);assert.equal(button.attrs['aria-expanded'],'false');assert.match(d.container.textContent,/1 次调用失败/);
++ // The newer header then owns both lifecycle and summary; no stale shadow result.
++ await render({...header,revision:3,toolStatusCounts:{completed:1}});assert.doesNotMatch(d.container.textContent,/1 次调用失败/);
++}));
+--- /dev/null
++++ b/tests/run-activity-facts-browser-fixture.mjs
+@@ -0,0 +1,35 @@
++// Isolated synthesis via real task/publication/HTTP owners; no Homer service, account or model.
++import {fixture} from './web-history-followup-fixture.mjs';
++import {syntheticFile} from './recursive-publication-fixture.js';
++export async function activityFixture(){
++ const f=await fixture(90,'after');
++ const source='request-89',actor={agentId:'main:activity-browser',sourceRequestId:source};
++ f.store.setMeta('mainAgentId',actor.agentId);f.store.startRequest(source,'synthetic-activity');
++ const create=(operationId,title)=>f.tasks.createRoot(actor,{operationId,title,executorKind:'main',contract:{presentation:{title},goal:'核对这一次活动对应的原始要求。',inputs:[],resultKind:'aggregate',acceptance:{criteria:[]}},authority:{sourceRequestId:source,description:'Synthetic activity only',materials:[],resultIds:[],collaborateTaskIds:[]}});
++ const a=create('activity-a','周报材料核对'),b=create('activity-b','周报材料核对');
++ const file=syntheticFile({...f},source,'季度经营数据核对与改进建议_待确认范围说明_2026年十月最终候选.md','# 隔离合成成果\n\n此文件只用于活动验收。');
++ const d=file.publish('合成正式答复：已记录这份成果，剩余范围按原要求核对。');f.tasks.markDelivery(d.id,'recorded');f.history.record(d.historyMessageId,'synthetic-history',d.text);
++ const taskId=f.tasks.run(file.run.id).taskId;
++ const fact=(tool,args,receipt)=>f.tasks.captureActivity(actor,tool,args,receipt);
++ const readTask=root=>fact('work_inspect',{taskId:root.taskId},f.tasks.inspect(actor,{taskId:root.taskId}));
++ const facts=[readTask(a),readTask(b),fact('work_inspect',{resultId:file.resultId},f.tasks.inspect(actor,{resultId:file.resultId})),fact('task_review',{taskId,version:1,resultId:file.resultId},{resultId:file.resultId,state:'accepted'}),fact('publish_delivery',{taskId,version:1},{deliveryId:d.id,state:'prepared'})];
++ // The recorded activity is v1 even though the task now has a newer v2.
++ f.store.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson) VALUES('synthetic-v2-op',?,?,'synthetic-v2','update','synthetic','confirmed','{}')").run(actor.agentId,a.taskId);
++ f.store.db.prepare(`INSERT INTO task_versions(taskId,version,goal,inputsJson,resultKind,acceptanceJson,authorityJson,sourceRequestId,triggerOpId,workingDirectory,presentationJson) SELECT taskId,2,'这是后续版本，不能替换活动中的原要求',inputsJson,resultKind,acceptanceJson,authorityJson,sourceRequestId,'synthetic-v2-op',workingDirectory,'{"title":"后续版本的新名称"}' FROM task_versions WHERE taskId=? AND version=1`).run(a.taskId);
++ f.store.db.prepare('UPDATE tasks SET headVersion=2 WHERE id=?').run(a.taskId);
++ const tools=facts.map((activity,i)=>({id:'activity-call-'+i,seq:i+1,revision:2,kind:'tool',category:'host',label:i===3?'核对成果':i===4?'整理交付':'检查资料',status:'completed',activity}));
++ tools.push({id:'returned-only',seq:6,revision:2,kind:'tool',category:'host',label:'检查资料',status:'completed'});
++ const base=JSON.parse(f.store.meta('publicMainNode:v1:node-89'));
++ function setMode(mode='running'){
++  const node={...base,revision:Number(JSON.parse(f.store.meta('publicMainNode:v1:node-89')).revision)+1,final:undefined,sourceKind:'user',state:mode==='running'?'working':'worked',status:'running',items:mode==='legacy'?[{id:'legacy-generic',kind:'tool',seq:1,revision:1,category:'host',label:'检查资料',status:'completed'},{id:'legacy-associated',kind:'worker',seq:2,revision:1,taskId:a.taskId,version:1,runId:null,taskRevision:1,runRevision:null,runStatus:null,resultState:null,epoch:null,state:'reviewing',controlState:'normal',outcome:null,phase:null,stopRequested:false}]:mode==='risks'?tools.concat(['failed','declined','interrupted','unknown','blocked'].map((status,i)=>({id:'risk-'+i,seq:7+i,revision:1,kind:'tool',category:'host',label:'检查资料',status}))):tools};
++  if(mode!=='running')node.status=mode==='risks'?'failed':'completed';
++  f.store.setMeta('publicMainNode:v1:node-89',JSON.stringify(node));f.store.db.prepare("UPDATE conversation_messages SET text='',status=? WHERE id='node-89'").run(node.state==='working'?'running':'completed');f.server.publish();
++ }
++ // A stale reference and a generic old record have no actionable arrow.
++ const legacy={...JSON.parse(f.store.meta('publicMainNode:v1:node-88')),revision:2,items:[{id:'unreadable-legacy',seq:1,revision:1,kind:'worker',taskId:a.taskId,version:77,runId:null}],final:undefined};
++ f.store.setMeta('publicMainNode:v1:node-88',JSON.stringify(legacy));f.store.db.prepare("UPDATE conversation_messages SET text='' WHERE id='node-88'").run();
++ let delay=0,deny=false;
++ const read=f.bridge.history.process;f.bridge.history.process=async input=>{const result=await read(input);if(delay)await new Promise(done=>setTimeout(done,delay));if(deny)throw Error('synthetic_read_denied');return result;};
++ const state=f.bridge.history.state;f.bridge.history.state=async()=>({...await state(),isRunning:true,activeMessageId:'node-89',generation:{threadId:'synthetic-history',turnId:'turn-89',messageId:'node-89'},mainActivity:{source:'user',stage:'native',processId:'node-89',turnId:'turn-89'}});
++ setMode();return {...f,a,b,file,delivery:d,tools,setMode,delay(ms){delay=ms;},deny(value){deny=value;},thread(value){f.store.setMeta('mainThread',value);f.server.publish();}};
++}
+--- /dev/null
++++ b/tests/run-activity-facts.browser.mjs
+@@ -0,0 +1,49 @@
++import assert from 'node:assert/strict';
++import {mkdirSync,writeFileSync} from 'node:fs';
++import {resolve,join} from 'node:path';
++import {activityFixture} from './run-activity-facts-browser-fixture.mjs';
++import {isolatedChrome} from './web-history-browser-cdp.mjs';
++const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/run-activity-facts-20261022/browser');mkdirSync(destination,{recursive:true});
++const browser=await isolatedChrome(destination),results=[];
++async function key(p,key,code,n){await p.command('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode:n,...(key==='Enter'?{text:'\r'}:{})});await p.command('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:n});}
++try{for(const width of [1440,390,320]){
++ const f=await activityFixture(),p=await browser.page(f.server.url,width),checks=[];
++ const click=selector=>p.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
++ const wait=fn=>p.until('Boolean(('+String(fn)+')())',12000);
++ const reader=()=>!!document.querySelector('.activity-reader[open]');
++ const close=async()=>{await key(p,'Escape','Escape',27);await wait(()=>!document.querySelector('.activity-reader'));};
++ try{
++  await p.navigate();await wait(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length===6);
++  assert.equal(await p.evaluate(()=>document.querySelector('#message-node-89 .process-toggle').getAttribute('aria-expanded')),'true');
++  assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-89 [data-tool-id]').length),6);
++  const facts=await p.evaluate(()=>[...document.querySelectorAll('#message-node-89 [data-tool-id]')].map(e=>({id:e.dataset.toolId,text:e.textContent})));
++  assert.match(facts[0].text,/查看任务记录：周报材料核对.*调用已返回.*记录已读取/);assert.match(facts[1].text,/周报材料核对/);assert.notEqual(facts[0].id,facts[1].id);
++  assert.match(facts[2].text,/检查成果文件：季度经营数据/);assert.match(facts[3].text,/验收已接受/);assert.match(facts[4].text,/交付已准备，正式交付尚未确认/);assert.doesNotMatch(facts[5].text,/通过|成功|已交付|验收已接受/);
++  assert.equal(await p.evaluate(()=>document.querySelectorAll('[data-tool-id=returned-only] button').length),0);checks.push('动作、对象与有依据结果清晰；返回不等于业务成功；同名调用各自保留');
++  await p.evaluate(()=>{const view=document.querySelector('.thread-viewport');view.scrollTop+=document.querySelector('#message-node-89').getBoundingClientRect().top-view.getBoundingClientRect().top;document.querySelector('#message-node-89 .process-toggle').focus({preventScroll:true});});await p.screenshot('default-expanded-'+width+'.png');
++  const style=await p.evaluate(()=>{const r=document.querySelector('#message-node-89 [data-slot=run-activity]'),b=r.querySelector('.process-toggle'),o=r.querySelector('ol');return {rootGap:getComputedStyle(r).gap,font:getComputedStyle(b).fontSize,triggerGap:getComputedStyle(b).gap,listGap:getComputedStyle(o).gap,line:getComputedStyle(o).borderInlineStartWidth,padding:getComputedStyle(o).paddingInlineStart,icon:getComputedStyle(b.querySelector('svg')).width};});
++  assert.deepEqual(style,{rootGap:'12px',font:'14px',triggerGap:'6px',listGap:'12px',line:'1px',padding:'14px',icon:'14px'});checks.push('官方字体、图标、间距、列表线与单层列表保持');
++  await p.evaluate(()=>document.querySelector('[data-tool-id=activity-call-0] button').focus());await key(p,'Enter','Enter',13);await wait(reader);await wait(()=>document.querySelector('.activity-reader').textContent.includes('查看任务与版本'));
++  assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('#activity-reader-title')),true);await p.screenshot('activity-detail-'+width+'.png');
++  await click('.activity-reader-links button');await wait(()=>document.querySelector('.task-dialog[open] .task-notice')?.textContent.includes('该版本要求'));
++  const task=await p.evaluate(()=>document.querySelector('.task-panel-detail').textContent);assert.match(task,/要求版本 1/);assert.match(task,/该版本要求：核对这一次活动对应的原始要求/);assert.match(task,/与当时活动分别核对/);checks.push('活动绑定原任务v1；当前v2不替换原要求；原任务面板按需读取');
++  await click('[aria-label="关闭任务总览"]');await wait(()=>!document.querySelector('.task-dialog[open]'));assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('[data-tool-id=activity-call-0] button')),true);
++  await click('[data-tool-id=activity-call-1] button');await wait(()=>document.querySelector('.activity-reader')?.textContent.includes('查看任务与版本'));await click('.activity-reader-links button');await wait(()=>document.querySelector('.task-dialog[open] .task-notice')?.textContent.includes('该版本要求'));
++  assert.equal(await p.evaluate(`document.querySelector('.task-panel-detail').textContent.includes(${JSON.stringify(f.b.taskId)})`),true);await click('[aria-label="关闭任务总览"]');checks.push('同名第二任务准确定位，关闭返回原活动按钮焦点');
++  await click('[data-tool-id=activity-call-2] button');await wait(()=>document.querySelector('.activity-reader')?.textContent.includes('查看成果：'));
++  await p.evaluate(()=>[...document.querySelectorAll('.activity-reader button')].find(e=>e.textContent.startsWith('查看成果：')).click());await wait(()=>document.querySelector('#canvas-panel')?.textContent.includes('隔离合成成果'));
++  await p.screenshot('canvas-'+width+'.png');await click('[aria-label="关闭 Canvas"]');await wait(()=>!document.querySelector('#canvas-panel'));assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('[data-tool-id=activity-call-2] button')),true);checks.push('授权成果复用Canvas，关闭恢复活动位置与焦点');
++  await click('[data-tool-id=activity-call-4] button');await wait(()=>document.querySelector('.activity-reader')?.textContent.includes('查看原交付答复'));await p.evaluate(()=>[...document.querySelectorAll('.activity-reader button')].find(e=>e.textContent==='查看原交付答复').click());await wait(()=>!document.querySelector('.activity-reader'));
++  await p.until(`document.activeElement.id==='message-'+${JSON.stringify(f.delivery.historyMessageId)}`,10000);checks.push('原答复沿准确消息定位');
++  f.delay(400);await click('[data-tool-id=activity-call-0] button');await wait(reader);await close();await click('[data-tool-id=activity-call-1] button');await wait(()=>document.querySelector('.activity-reader')?.textContent.includes('查看任务与版本'));
++  await p.evaluate(()=>new Promise(done=>setTimeout(done,500)));assert.equal(await p.evaluate(()=>document.querySelector('.activity-reader').textContent.includes('周报材料核对')),true);await click('.activity-reader-links button');await wait(()=>document.querySelector('.task-dialog[open] .task-notice')?.textContent.includes('该版本要求'));assert.equal(await p.evaluate(`document.querySelector('.task-panel-detail').textContent.includes(${JSON.stringify(f.b.taskId)})`),true);await click('[aria-label="关闭任务总览"]');f.delay(0);checks.push('快速关闭重开后迟到响应不覆盖新活动');
++  f.deny(true);await click('[data-tool-id=activity-call-0] button');await wait(()=>document.querySelector('.activity-reader [role=alert]'));assert.match(await p.evaluate(()=>document.querySelector('.activity-reader').textContent),/当前无法读取/);await close();f.deny(false);checks.push('读取失败如实说明可重试，不声称永久丢失');
++  f.setMode('legacy');await wait(()=>document.querySelector('#message-node-89 .process-workers button'));await click('#message-node-89 .process-toggle');await wait(()=>document.querySelector('[data-tool-id=legacy-generic]'));
++  assert.equal(await p.evaluate(()=>document.querySelectorAll('[data-tool-id=legacy-generic] button').length),0);assert.equal(await p.evaluate(()=>document.querySelectorAll('#message-node-88 .process-workers button').length),0);await p.evaluate(()=>document.querySelector('#message-node-89').scrollIntoView({block:'center'}));await p.screenshot('legacy-missing-'+width+'.png');
++  await click('#message-node-89 .process-workers button');await wait(()=>document.querySelector('.activity-reader')?.textContent.includes('不补写历史'));assert.match(await p.evaluate(()=>document.querySelector('.activity-reader').textContent),/准确关联的当前记录/);await close();checks.push('旧缺失如实说明；准确旧关联可读；缺失版本无空按钮');
++  f.setMode('running');await wait(()=>document.querySelector('[data-tool-id=activity-call-0] button'));f.delay(500);await click('[data-tool-id=activity-call-0] button');await wait(reader);f.thread('synthetic-other-thread');await wait(()=>document.querySelector('.activity-reader [role=alert]')?.textContent.includes('连接已变化'));await p.evaluate(()=>new Promise(done=>setTimeout(done,650)));assert.equal(await p.evaluate(()=>document.querySelectorAll('.activity-reader-links button').length),0);checks.push('线程变化沿原合同暂停连接，详情中止读取，迟到响应不恢复旧导航');
++  assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(p.errors,[]);assert.deepEqual(p.blocked,[]);assert.equal(f.fakeEngine.invocations,0);assert.equal(f.submitted.length,0);assert.equal(f.stopped.length,0);
++  results.push({width,checks,style,passed:true});
++ }finally{await p.close();await f.close();}
++}}finally{await browser.close();writeFileSync(join(destination,'activity-browser.json'),JSON.stringify({browser:browser.version,syntheticOnly:true,results},null,2)+'\n');}
++console.log(JSON.stringify({passed:results.length===3,widths:results.map(x=>x.width),checks:results.reduce((n,x)=>n+x.checks.length,0)}));
+--- /dev/null
++++ b/docs/2026-10-22-run-activity-facts-candidate.md
+@@ -0,0 +1,104 @@
++# Homer Run Activity 公开活动事实候选（2026-10-22）
++
++本批已完成可运行隔离候选与实际 Chrome 验收，尚未上线。没有创建 worktree、Git 提交、分支、标签或远程操作，没有访问生产 Homer 数据库、真实聊天、凭据、真实模型或 4780 接口，也没有改变其他任务状态。宿主登记目录（由当前任务工具只读返回）、`pwd` 和 Git 根目录均为 `/Users/wolf3c/Project/homer`。
++
++## 结果与采用边界
++
++官方 `ui/vendor/assistant-ui/run-activity.tsx`、`run-activity.css`、`collapsible-root.tsx` 和 LICENSE 未改动。沿既有固定 assistant-ui commit `1f41f91643fdb56e5d8dbd14db65f742740738a1` 的单层列表、字体、间距、chevron、细线、展开动画和键盘行为呈现，没有叠加 Tool Timeline。
++
++Homer 数据适配负责动作、公开对象名和结果证据。Homer 新增 UI 仅为条目的“查看活动”、小型只读阅读 dialog，以及现有任务面板中的准确版本/Run 定位区；这些均不是 Run Activity 自动生成的能力。任务、Canvas、原答复的原有阅读与导航容器继续复用。Worker 事件卡的历史正文、图标、位置、不可点击语义和事件身份保持。
++
++新调用的例子：`检查成果文件：季度经营数据…候选.md`，分别显示`调用已返回`与`文件已读取`；验收接受、要求修改和交付准备各用自己的回执类别。`交付已准备，正式交付尚未确认`不会因正常返回被写为交付成功，后续当前导航也不回填当时事实。
++
++## 准确增量与并行边界
++
++初始完整文件前像和 SHA-256 在 `.codex/scratch/run-activity-facts-20261022/before/` 与 `preimages.json`；源码不是以 Git HEAD 为前像。每次编辑使用 `expected.json` 校验当前字节。最终准确增量见 [候选补丁](patches/2026-10-22-run-activity-facts-candidate.patch)，逐文件 SHA、增删行和校验结果见 [候选绑定](patches/2026-10-22-run-activity-facts-bindings.json)。补丁只包含本批增量，不将原有未提交/未跟踪文件当成新增交付。
++
++| 文件 | 本批职责 |
++| --- | --- |
++| `src/activity-facts.ts`（新增） | 公开事实/关联类型、动作与结果固定模板、公开名称过滤 |
++| `src/recursive-tasks.ts` | 已完成调用的最少事实采集；按线程/准确版本/Run/结果关系和 publication/revocation 核验导航 |
++| `src/service.ts` | 将参数与业务回执仅交给事实 owner；采集异常不改变业务结果；附件事实沿原 context/ref 校验；不扩展 MainProgress 渠道事件 |
++| `src/main-process.ts` | 原工具条目的可选 activity 字段；原 ID、revision、seq 与终态去重保持 |
++| `src/web-contract.ts`、`src/web-homer.ts` | Web-only 临时导航投影；复用原 history/process 路由和 epoch/thread 校验 |
++| `src/task-overview.ts` | 详情按需、有界读取准确历史要求，不改变轻量当前摘要 |
++| `ui/process-nodes.tsx`、`ui/process-nodes.css` | 公开事实行、轻量阅读、取消读取和焦点返回；旧记录如实说明；保留较新已读详情直至较新页头接管 |
++| `ui/task-overview.tsx`、`ui/homer-app.tsx` | 接入原任务面板、Canvas、准确原消息；原版本与当前信息分别标示 |
++| `tests/run-activity-facts.test.ts`、`tests/run-activity-facts-ui.test.mjs`（新增） | 业务/权限/回执、原版本返工、折叠回退的红绿回归 |
++| `tests/run-activity-facts-browser-fixture.mjs`、`tests/run-activity-facts.browser.mjs`（新增） | 隔离合成场景与生产 UI/HTTP 的真实浏览器验收 |
++| `tests/helpers/process-ui-loader.mjs` | 仅为测试导出现有 ProcessDetailsContext |
++| `ui/DESIGN.md`、vendor README、本说明 | 设计、溯源、验证与回退边界 |
++
++期间消息队列任务修改了 `ui/homer-app.tsx` 并补充 vendor README；已暂停写这些文件、逐部分核对，确认其队列/输入框及独立队列溯源段落与本批过程接线不重叠。本批没有恢复或覆盖这些并行改动。最终补丁在保留其当前内容的上下文中只抽取本批增量。固定候选保存的是验证时的源码快照，之后其他任务改变的文件不自动进入已验收 bundle。
++
++## 事实与权限合同
++
++- `work_inspect`、`inspect_run`、`inspect_result_file`、`inspect_attachment`：只从已完成的 owner 操作确认记录/文件/材料是否读取。附件内容提取当前不可用单独表达，不把附件登记等同于内容读取。
++- `task_review`、`review_artifact`：接受、要求修改、拒绝/终止、待明确决定分别记录。要求修改关联的是原被审结果、原版本和原 Run，不能跳到新排队版本。
++- `publish_delivery`：保存本次结构化回执类别；prepared 不表示正式交付成功，recorded 只表示宿主/渠道回执，不表示用户已读。
++- `task_delegate`：只用明确创建回执记录任务创建。无可靠结构化事实的调用继续显示真实调用状态，不编造对象、业务成功或空详情入口。原生工具仍只显示既有安全类别，不解析原始 shell/文件参数。
++- 公开名来自明确公开的 `presentation.title` 或 owner 验证的成果文件 basename/附件名；不采用私有 goal、材料正文、模型正文或原始输出来生成摘要。路径形态、控制字符和明显凭据形式不进入名称。
++- 没有新增持久状态数据库、任意文件/URL/shell/原始工具结果读取接口或模型摘要服务。只有原过程条目增加可选字段；旧记录无需迁移或补写。公开事实采集失败不会改变原调用回执。
++- `activityLinks` 是 Web 按需投影，不持久化，ID 本身不构成权限。任务 owner 核验来源线程、版本、Run/result 关系；成果沿既有 publication、撤销、文件读取/hash 校验；原答复仍经既有准确消息入口。现有 dev-host 与 gateway 对 `history.process` 透明传递，无需修改路由或转发。
++- 旧 Worker 快照只有准确关系通过时提供独立关联入口，注明当时详情缺失、下方是当前记录。泛化旧工具记录说明公开详情不足；无可读内容不显示详情按钮。读取失败说明当前无法核对，不声称永久丢失。
++- 关闭、快速重开、节点/revision/线程及连接变化都有旧请求取消/身份检查。现有应用在线程标识改变时暂停连接并保留旧对话；活动阅读沿该合同停止读取并撤去导航，不改变主线程切换策略。
++- 修正了一个可稳定复现的显示竞态：较新详情返回后，收起曾清掉它并显示旧页头“调用已返回”。现在沿现有详情状态保留较新证据，更新页头按 revision 正常接管，没有增加第二份业务状态。
++
++任务生命周期、返工/停止决策、原生记忆、MAIN_TOOLS 指纹、审批权限、待发送队列和正式成果归属均未由本批改变。
++
++## 可打开候选与复现
++
++当前两个隔离入口（仅本机，进程存活期间可反复打开）：
++
++- [默认展开的公开活动](http://127.0.0.1:53061)：点击“查看活动”阅读；可进入任务原版本、Canvas、原交付答复。
++- [旧记录缺失与准确关联](http://127.0.0.1:53070)：展开 Worked；缺详情的条目没有空按钮，准确旧关联在卡片外提供入口。
++
++在维护根目录启动相同候选，端口每次随机分配并打印：
++
++```sh
++node --import tsx .codex/scratch/run-activity-facts-20261022/demo.mjs
++```
++
++Ctrl+C 只关闭这两个隔离服务。演示使用内存数据库、scratch 文件和不允许执行的 fake engine；不会打开 Homer 宿主或真实模型。正式静态 UI bundle 位于 `.codex/scratch/run-activity-facts-20261022/candidate/web/`，服务端候选及媒体 reader 位于 `candidate/service/`；固定源码与身份在 `candidate-source/`、`candidate-source-identities.json`。没有覆盖共享 `dist/`。
++
++验证入口为 `node .codex/scratch/run-activity-facts-20261022/validate.mjs`。它从固定源码依次执行行为测试、类型检查、隔离构建及四组浏览器验收，结果写入 `validation.json` 和 `logs/`。如需从维护源码重建，使用原 `tsconfig.json` 的 tsc（将 outDir 指向本任务 scratch），复制 `src/media-documents.py`，在 `ui/` 进行 `tsc --noEmit`，再用 Vite build 将产物输出到本任务 `candidate/web/`。不要启动默认代理到 4780 的 Vite dev server。
++
++维护的合成夹具与测试是可重建场景来源；scratch 内的 demo、截图和日志是临时证据，不放入产品资源目录。
++
++## 实际页面截图
++
++均来自已构建生产 UI、隔离 HTTP owner 与真实 Chrome，并非设计稿。
++
++| 状态 | 320px | 390px | 1440px |
++| --- | --- | --- | --- |
++| 默认展开 | [截图](../.codex/scratch/run-activity-facts-20261022/browser/default-expanded-320.png) | [截图](../.codex/scratch/run-activity-facts-20261022/browser/default-expanded-390.png) | [截图](../.codex/scratch/run-activity-facts-20261022/browser/default-expanded-1440.png) |
++| 查看活动详情 | [截图](../.codex/scratch/run-activity-facts-20261022/browser/activity-detail-320.png) | [截图](../.codex/scratch/run-activity-facts-20261022/browser/activity-detail-390.png) | [截图](../.codex/scratch/run-activity-facts-20261022/browser/activity-detail-1440.png) |
++| 旧数据缺失 | [截图](../.codex/scratch/run-activity-facts-20261022/browser/legacy-missing-320.png) | [截图](../.codex/scratch/run-activity-facts-20261022/browser/legacy-missing-390.png) | [截图](../.codex/scratch/run-activity-facts-20261022/browser/legacy-missing-1440.png) |
++
++## 验证结果与限制
++
++固定候选验证记录：`.codex/scratch/run-activity-facts-20261022/validation.json`。
++
++| 检查 | 观察结果 |
++| --- | --- |
++| 新活动/公开回执/权限/返工原版本/React过程合同 | 32/32 通过 |
++| 既有过程、任务面板、历史分页 owner 回归 | 29/31 通过；2项旧夹具错误见下 |
++| 服务端源码 `tsc -p tsconfig.json --noEmit` | 通过 |
++| UI `tsc --noEmit` | 通过；并行队列任务在固定快照前已修正其最初暂态类型错误 |
++| 全仓 `tsc -p tsconfig.check.json --noEmit` | 未通过；18条既有附件/旧测试与配置诊断，未出现本批文件的新诊断 |
++| 服务端构建 + media reader、Vite正式UI构建 | 通过；原有 >500kB chunk 提示保留 |
++| 新实际浏览器活动验收 | 320/390/1440px 全通过，共30项场景检查 |
++| 既有过程阅读浏览器验收 | 三种宽度全通过，共24项场景检查 |
++| 官方样式、动画、reduced-motion 与键盘焦点专项 | 三种宽度全通过 |
++
++两项旧后端失败是 `tests/main-process.test.ts` 的 `real accepted publication…` 与 `real publish tool…`，均因夹具的 `app.inputs` 缺 `dispatchSummary()` 报错。使用本次保存的准确 `src/web-homer.ts` 等前像运行同两项，得到同样两项错误，已记录在 `baseline-verification.json`；没有为本批改测试来掩盖它们。
++
++全仓类型诊断位于既有 `tests/homer-attachment-adapter.test.ts`、`tests/interruption-recovery-projection.test.ts`、`tests/web-history-observation.test.ts` 和 `ui/homer-attachment-adapter.ts`：`.ts` 导入配置、NodeNext 相对扩展名、缺 JSX、缺声明和既有类型不匹配。源码与 UI 各自正式构建配置通过。此次没有把全仓检查宣称通过，也没有重复所有历史验收。
++
++浏览器由 Chrome `156.0.8078.48` 的新任务专属 profile 执行；非本地请求均被拦截，合成场景的 fake engine、真实发送、停止调用计数为0。已检查长中文/长文件名、同名不同任务、原版本、失败/拒绝/中断/未知、只返回证据、读取失败、关闭/切换/线程失效、原答复位置、Canvas/任务返回焦点、折叠、单层列表及不横向溢出。历史分页、重复项、正式答复/成果归属和待答继续由相关现有行为测试与过程浏览器用例核对。
++
++未验证生产数据库/真实聊天/微信或 Telegram 实际收发/真实模型/生产上传或发布；本批也未运行独立发布/宿主换版集成。事实缺少安全公开名或业务回执时保留调用状态；旧通用记录不会自动获得无法证明的业务详情。任务原版本/Run 读取按现有上限有界，超出范围说明本次未返回，不冒用当前版本。此次只提供候选验收。
++
++## 回退
++
++候选未上线，无生产数据或数据库迁移需要回退。停止 demo 即撤下预览。源码回退应先核对候选绑定和当前并行改动，再仅反向应用本批补丁；`git apply --reverse --check docs/patches/2026-10-22-run-activity-facts-candidate.patch` 为只读预检。本次不执行回退，不使用 `git checkout`/`restore` 或整文件覆盖。旧程序会忽略可选 activity 字段；需要回退时不批量改写已存在记录。

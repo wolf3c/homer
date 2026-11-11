@@ -5,7 +5,6 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {deflateSync} from 'node:zlib';
 import {fixture} from './web-history-followup-fixture.mjs';
-import {syntheticFile} from './recursive-publication-fixture.js';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/canvas-implementation-20261023/browser');
 mkdirSync(destination,{recursive:true});
@@ -20,16 +19,13 @@ function png(){
 }
 const f=await fixture(4,'after');
 const formats=[{id:'result-preview-text',title:'Synthetic.txt',mime:'text/plain',bytes:Buffer.from('Exact synthetic text for quotation.')},{id:'result-preview-image',title:'Synthetic.png',mime:'image/png',bytes:png()}];
-const originalReference={kind:'text',source:{kind:'artifact',id:formats[0].id,title:formats[0].title,sha256:createHash('sha256').update(formats[0].bytes).digest('hex')},text:'Original request preview excerpt'};
+const textAndImage=f.attach('Synthetic formats',formats.map(({title,mime,bytes})=>({filename:title,mime,content:bytes})));
+const originalReference={kind:'text',source:{kind:'attachment',messageId:textAndImage.messageId,...textAndImage.attachments[0],title:formats[0].title,sha256:createHash('sha256').update(formats[0].bytes).digest('hex')},text:'Original request preview excerpt'};
 try{
- f.store.startRequest('request-0','preview-annotation-synthetic');
- const result=syntheticFile(f,'request-0','synthetic-preview.html','<!doctype html><h1>Target title</h1><button id="target" style="font-size:24px;margin:30px;padding:25px">Change this button</button>',[],true),delivery=result.publish('Synthetic preview reply');
- f.history.record(delivery.historyMessageId,'synthetic-history',delivery.text);f.tasks.markDelivery(delivery.id,'recorded');
- const read=f.bridge.artifact.bind(f.bridge);
- f.bridge.artifact=async id=>{const item=formats.find(item=>item.id===id);return item?{filename:item.title,mime:item.mime,data:item.bytes.toString('base64'),sha256:createHash('sha256').update(item.bytes).digest('hex')}:read(id);};
+ const html=f.attach('Synthetic preview reply',[{filename:'synthetic-preview.html',mime:'text/html',content:'<!doctype html><h1>Target title</h1><button id="target" style="font-size:24px;margin:30px;padding:25px">Change this button</button>'}]);
  f.bridge.media.upload=async input=>{uploads.push(input);return {assetId:'asset-'+input.uploadId,revision:1,filename:input.filename,kind:'image',state:'ready',mime:'image/png',size:Buffer.from(input.data,'base64').length,error:null};};
  f.bridge.media.discard=async()=>({ok:true});
- for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,messages:value.messages.map(m=>m.id==='node-3'?{...m,source:{id:'synthetic-original-request',threadId:'synthetic-history',requestId:'synthetic-original',role:'user',text:'Original user requirement',status:'completed',createdAt:1700000000000,resourceReference:originalReference},sources:[{id:'link-1',title:'Synthetic webpage',url:f.server.url+'/preview/interactive'}]}:m),features:{...value.features,draftUpload:true},artifacts:[...(value.artifacts??[]),...formats.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic formats'}))]};};}
+ {const owner=f.bridge.history;const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,messages:value.messages.map(m=>m.id==='node-3'?{...m,source:{id:'synthetic-original-request',threadId:'synthetic-history',requestId:'synthetic-original',role:'user',text:'Original user requirement',status:'completed',createdAt:1700000000000,resourceReference:originalReference},sources:[{id:'link-1',title:'Synthetic webpage',url:f.server.url+'/preview/interactive'}]}:m),features:{...value.features,draftUpload:true}};};}
  chrome=await isolatedChrome(destination);
  for(const width of [1440,390,320]){
   const p=await chrome.page(f.server.url,width),ev=code=>p.evaluate(code);
@@ -63,7 +59,7 @@ try{
    await ev(()=>document.querySelector('[contenteditable=true]').focus());await p.command('Input.insertText',{text:'Explain this exact excerpt'});
    await ev(()=>document.querySelector('.send-button').click());await p.until(()=>!document.querySelector('.composer-area .preview-reference'));
    await accepted(sent+1);const textInput=f.inputs.list().find(x=>x.input.requestId===f.submitted.at(-1)).input;
-   assert.equal(textInput.resourceReference.kind,'text');assert.equal(textInput.resourceReference.source.id,formats[0].id);assert.equal(textInput.resourceReference.annotations[0].text,'Exact synthetic text for quotation.');
+   assert.equal(textInput.resourceReference.kind,'text');assert.equal(textInput.resourceReference.source.messageId,textAndImage.messageId);assert.equal(textInput.resourceReference.source.assetId,textAndImage.attachments[0].assetId);assert.equal(textInput.resourceReference.annotations[0].text,'Exact synthetic text for quotation.');
    checks.push({width,label:'text reference survives real HTTP and original main queue'});
    await open(formats[1].id);await p.until(()=>document.querySelector('#canvas-panel img')?.naturalWidth===240);await ev(()=>document.querySelector('.image-annotation-toggle').click());
    await p.until(()=>!!document.querySelector('.a9s-annotationlayer'));
@@ -108,7 +104,7 @@ try{
    assert.equal(imageInput.resourceReference.kind,'image');assert.equal(imageInput.resourceReference.width,240);assert.equal(imageInput.resourceReference.height,120);assert.equal(imageInput.attachments[0].assetId,imageInput.resourceReference.image.assetId);
    assert.ok(Math.abs(imageInput.resourceReference.annotations[0].region.x-36)<2);assert.equal(uploads.at(-1).data,formats[1].bytes.toString('base64'));
    checks.push({width,label:'image sends original bytes plus pixel bounds, without generating a new image'});
-   await open(result.resultId);await p.until(()=>!!document.querySelector('iframe[title="隔离 HTML 成果"]'));
+   await open('synthetic-html');await p.until(()=>!!document.querySelector('iframe[title="隔离 HTML 成果"]'));
    await check('no horizontal overflow and intended accessible modal mode',()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('#canvas-panel').getAttribute('aria-modal')===(innerWidth<=800?'true':null));
    if(width>800){
     await ev(()=>document.querySelector('.html-annotation-toggle').click());
@@ -150,10 +146,10 @@ try{
     assert.equal(await frame('(()=>{try{return !!parent.document}catch{return false}})()'),false);
     const beforeWeb=f.submitted.length;await ev(()=>document.querySelector('.send-button').click());await p.until(()=>!document.querySelector('.composer-area .preview-reference'));await accepted(beforeWeb+1);
     const webInput=f.inputs.list().find(x=>x.input.requestId===f.submitted.at(-1)).input;
-    assert.equal(webInput.resourceReference.kind,'web');assert.equal(webInput.resourceReference.source.id,result.resultId);assert.match(webInput.resourceReference.annotations[0].elementPath,/button|target/);
+    assert.equal(webInput.resourceReference.kind,'web');assert.equal(webInput.resourceReference.source.messageId,html.messageId);assert.equal(webInput.resourceReference.source.assetId,html.attachments[0].assetId);assert.match(webInput.resourceReference.annotations[0].elementPath,/button|target/);
     checks.push({width,label:'real Agentation element selection submits structured callback via isolated bridge to existing queue'});
     await chrome.command('Target.detachFromTarget',{sessionId:frameSession});
-   }else await check('mobile default HTML is static and offers the same explicit annotation entry',()=>document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')===''&&!document.querySelector('.html-annotation-toggle').disabled);
+   }else await check('mobile HTML offers the same annotation entry',()=>document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')==='allow-scripts allow-forms'&&!document.querySelector('.html-annotation-toggle').disabled);
    const close=await ev(()=>document.querySelector('.canvas-collapse, .conversation-header [aria-controls=canvas-panel][aria-expanded=true]:not([aria-hidden=true] *)').getBoundingClientRect().toJSON());await p.command('Input.dispatchMouseEvent',{type:'mousePressed',x:close.left+close.width/2,y:close.top+close.height/2,button:'left',clickCount:1});await p.command('Input.dispatchMouseEvent',{type:'mouseReleased',x:close.left+close.width/2,y:close.top+close.height/2,button:'left',clickCount:1});await p.until(()=>!document.querySelector('#canvas-panel'));
    await p.until(()=>document.activeElement?.getAttribute('aria-label')==='预览 synthetic-preview.html');
    await check('closing returns focus to original entry',()=>document.activeElement?.getAttribute('aria-label')==='预览 synthetic-preview.html');

@@ -1,0 +1,329 @@
+{
+  "date": "2026-10-29",
+  "status": "both variants retained; standard is derivative base; cool adopted throughout current local application",
+  "tool": "built-in image_gen",
+  "export": "Pillow premultiplied-alpha LANCZOS resize only; no repaint, mask or alpha threshold",
+  "variants": {
+    "standard": {
+      "source": "source/homer-vermilion-standard-generated.png",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sourceSha256": "7ef9129b779af552c28a669cea78ee6966156c0c0db00844a7c881c65966d591",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "alpha8Bounds": [
+        86,
+        105,
+        1169,
+        1156
+      ],
+      "files": [
+        {
+          "file": "homer-vermilion-standard-16.png",
+          "dimensions": [
+            16,
+            16
+          ],
+          "mode": "RGBA",
+          "sha256": "3a807b45ee3740f3960833a45257b23b492136746636c77d2382244434b433bb"
+        },
+        {
+          "file": "homer-vermilion-standard-32.png",
+          "dimensions": [
+            32,
+            32
+          ],
+          "mode": "RGBA",
+          "sha256": "f40314ebd6ece1cc07b9894853686e3ca8e64236586e8063a37bdfc18afd88cc"
+        },
+        {
+          "file": "homer-vermilion-standard-48.png",
+          "dimensions": [
+            48,
+            48
+          ],
+          "mode": "RGBA",
+          "sha256": "0577f6a49678c4bb4acd952a80f290480e70a44ff06416148a6d20f8f25fb037"
+        },
+        {
+          "file": "homer-vermilion-standard-64.png",
+          "dimensions": [
+            64,
+            64
+          ],
+          "mode": "RGBA",
+          "sha256": "727b8da559a3bdba2fb7a93c8376c6a2f4c042f6df2bcd5117c9a9fa3d33498d"
+        },
+        {
+          "file": "homer-vermilion-standard-128.png",
+          "dimensions": [
+            128,
+            128
+          ],
+          "mode": "RGBA",
+          "sha256": "4f197bbd6e2ac9c5bd747b4beaf515f464b673b6c3dfd1bb84d7871e7cd7b0e2"
+        },
+        {
+          "file": "homer-vermilion-standard-256.png",
+          "dimensions": [
+            256,
+            256
+          ],
+          "mode": "RGBA",
+          "sha256": "f55d347f784aa7572c157f5dabc11c90c5682e7e8c68e870729822f44e539fa7"
+        },
+        {
+          "file": "homer-vermilion-standard-512.png",
+          "dimensions": [
+            512,
+            512
+          ],
+          "mode": "RGBA",
+          "sha256": "c712fc89dd76def4705e407c171188649f7ab786a9745beaf159c4a2331fc76b"
+        },
+        {
+          "file": "homer-vermilion-standard-1024.png",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "mode": "RGBA",
+          "sha256": "3b6be4f61c419af357b1da157ff0b05c3e2f7157ac1b193e3c9d8edd8286d38a"
+        }
+      ],
+      "icns": {
+        "file": "homer-vermilion-standard.icns",
+        "bytes": 1381271,
+        "sha256": "05872ceb935ef2547fbd75f0835e16b24a148001835a172fb06c14f0823f9fdd"
+      }
+    },
+    "cool": {
+      "source": "source/homer-vermilion-cool-generated.png",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sourceSha256": "072511e41085299c5559bdd8c6f9ebd0c220520ab6d77e8f33c7e381ff96bc69",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "cornerAlpha": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "alpha8Bounds": [
+        82,
+        104,
+        1171,
+        1155
+      ],
+      "files": [
+        {
+          "file": "homer-vermilion-cool-16.png",
+          "dimensions": [
+            16,
+            16
+          ],
+          "mode": "RGBA",
+          "sha256": "73729c31d079f192722855ddf4a3af11ebf089733f8a69184810545ccd663d13"
+        },
+        {
+          "file": "homer-vermilion-cool-32.png",
+          "dimensions": [
+            32,
+            32
+          ],
+          "mode": "RGBA",
+          "sha256": "926aebe2f0308f038dd6c6cca2909131dfbe75f99b0c15ac00b04e9e62f8f489"
+        },
+        {
+          "file": "homer-vermilion-cool-48.png",
+          "dimensions": [
+            48,
+            48
+          ],
+          "mode": "RGBA",
+          "sha256": "758d988da7933df1d71d125e02a1ebd2d404ad8ea249a5ce21959ecbc58e727c"
+        },
+        {
+          "file": "homer-vermilion-cool-64.png",
+          "dimensions": [
+            64,
+            64
+          ],
+          "mode": "RGBA",
+          "sha256": "b365791e6ee9ca39c8d5e859df118b34c43e7aa26717a31c77806b10e20f07c4"
+        },
+        {
+          "file": "homer-vermilion-cool-128.png",
+          "dimensions": [
+            128,
+            128
+          ],
+          "mode": "RGBA",
+          "sha256": "becf4d5826f1109fdc6ac0b9aafb559052a5887b91b7dd8ca0de34a64d5f6c24"
+        },
+        {
+          "file": "homer-vermilion-cool-256.png",
+          "dimensions": [
+            256,
+            256
+          ],
+          "mode": "RGBA",
+          "sha256": "bf947452be5a5c01e230b33a2a3a760843ad186159ae4283e91a2447371e9720"
+        },
+        {
+          "file": "homer-vermilion-cool-512.png",
+          "dimensions": [
+            512,
+            512
+          ],
+          "mode": "RGBA",
+          "sha256": "561eabc2d73e658432d36be617be63e5052c59dca0a79162d02a916b188b3046"
+        },
+        {
+          "file": "homer-vermilion-cool-1024.png",
+          "dimensions": [
+            1024,
+            1024
+          ],
+          "mode": "RGBA",
+          "sha256": "3417962e11626eec8a30504ece4eebf25819c462d52c5df89254ea2167217310"
+        }
+      ],
+      "icns": {
+        "file": "homer-vermilion-cool.icns",
+        "bytes": 1412615,
+        "sha256": "38abfb00959ce53cbc022c6daf1b8ee2f000316c763142a6c645ea89d8d84044"
+      }
+    }
+  },
+  "pillowVersion": "12.3.0",
+  "verification": {
+    "pngDecodeAndHashes": "passed: all 16 exports",
+    "icnsContainers": "passed: total length, block lengths and 12 required types",
+    "browserSmallSizes": "observed: 16/32/48/64 CSS px on light and dark backgrounds",
+    "nativeDock": "observed: existing gray Homer, standard and cool ICNS icons side by side in actual macOS Dock; previews exited afterward",
+    "installation": "all active local application branding unified; strict signature, trusted build, resources, original conversation, actual HTTP bytes and browser rendering verified"
+  },
+  "dockReview": {
+    "verifiedAt": "2026-10-29T22:37:20+08:00",
+    "screenshot": "review/dock-live-detail.png",
+    "screenshotSha256": "b6be8858028e790c7c203162d44ee453d511abd110688d002ba387dbdaab742f",
+    "screenshotDimensions": [
+      730,
+      124
+    ],
+    "capture": "Actual primary display capture by Cua Driver; pixel crop only, no compositing, regeneration or resizing",
+    "displayPoints": [
+      1470,
+      956
+    ],
+    "displayScale": 2,
+    "dockTileSizePoints": 40,
+    "cropPixels": {
+      "x": 1810,
+      "y": 1787,
+      "width": 730,
+      "height": 124
+    },
+    "leftToRight": "PowerPoint; existing gray Homer; standard preview; cool preview; documents; folder; Trash",
+    "scope": "two separate transient AppKit previews load their exact ICNS; installed Homer remains unchanged"
+  },
+  "selection": {
+    "decidedAt": "2026-10-29",
+    "baseVariant": "standard",
+    "currentDesktopVariant": "cool",
+    "preserve": [
+      "original generation outputs",
+      "actual prompts",
+      "all PNG sizes",
+      "both ICNS"
+    ],
+    "derivatives": "Start from standard original, save each variant separately; do not overwrite base.",
+    "scope": "all active application branding: desktop, header, welcome, favicon, channel settings",
+    "currentApplicationVariant": "cool"
+  },
+  "adoption": {
+    "date": "2026-10-29",
+    "variant": "cool",
+    "baseBuild": 123,
+    "baseGitSha": "0833d08b085e43003ebefac62cb7a2bac6903392",
+    "iconSha256": "38abfb00959ce53cbc022c6daf1b8ee2f000316c763142a6c645ea89d8d84044",
+    "manifestSha256": "6a0086372d47f025bb363d5cd1c7c6059d5eef06551a3a044cdb89c089e1996c",
+    "scope": "desktop icon only; installed base program and Web UI unchanged",
+    "changedBundleFiles": [
+      "Contents/MacOS/Homer",
+      "Contents/Resources/desktop-manifest.json",
+      "Contents/Resources/electron.icns",
+      "Contents/_CodeSignature/CodeResources"
+    ],
+    "resourcesVerified": 1716,
+    "runtimeCodeFilesVerified": 2,
+    "deepStrictCodesign": "passed",
+    "entitlementsUnchanged": true,
+    "normalRestart": true,
+    "sameMainThread": true,
+    "messageCountBefore": 1647,
+    "messageCountAfter": 1647,
+    "systemApplicationIcon": "NSRunningApplication.icon shows cool sunglasses hippo; macOS adds its own light icon plate",
+    "desktopIconTests": "2/2 passed",
+    "adoptedDockScreenshot": "not obtained: automatic Dock reveal attempts did not expose Dock; earlier real Dock comparison retained"
+  },
+  "unifiedAdoption": {
+    "date": "2026-10-29",
+    "variant": "cool",
+    "status": "installed and running",
+    "scope": "all active application branding: desktop, header, welcome, favicon, channel settings",
+    "baseBuild": 123,
+    "baseGitSha": "0833d08b085e43003ebefac62cb7a2bac6903392",
+    "uiHash": "3db44ec62b2c4520fcc30c663c43bf791d05fc38850cb0b37a207a0855b776bb",
+    "sourceHash": "be85bfb6351f5ba8892d91f8e927f1ef1070f8b5e0443b7341f86049a67a7125",
+    "manifestSha256": "17c0e7f79394faef644324232e0ad3d4e9ffaa49b58000812e6c7e4fe35e7ba6",
+    "strictDeepSignature": "passed",
+    "resourcesVerified": 1720,
+    "runtimeCodeFilesVerified": 2,
+    "trustedBuild": "passed",
+    "entitlementsUnchanged": true,
+    "baselineWebByteIdentical": true,
+    "compiledLogicUnchangedExceptAssetUrls": 6,
+    "runtime": {
+      "sameThread": true,
+      "messageCountBefore": 1647,
+      "messageCountAfter": 1647,
+      "isRunning": false,
+      "queueCount": 0,
+      "accepting": true,
+      "reviewRequired": false
+    },
+    "liveResponses": {
+      "faviconAndCompatibility": 4,
+      "exactCoolPngBytes": true
+    },
+    "desktopScreenshot": {
+      "file": "review/app-unified-desktop.png",
+      "sha256": "edd2087056873dcc0dbbe7b1e2679ff4a2c2852aecdb19325c93d80ef56eefd7",
+      "scope": "production UI synthetic empty state; 1280x720"
+    },
+    "installedHeaderScreenshot": {
+      "file": "review/app-unified-installed-header.png",
+      "sha256": "e8953246bf13b7fb6f94e3c747e4da51d46dd28c5ab5937d0a017f164a78e1a4",
+      "scope": "running installed service; header-only 1280x44; no conversation content"
+    },
+    "sourceCommitted": false,
+    "remotePublished": false
+  }
+}

@@ -1,0 +1,308 @@
+{
+  "at": "2026-10-22T03:29:44.947079+00:00",
+  "status": "actually-live-verified",
+  "candidateWorkspace": "/Users/wolf3c/Project/homer/.codex/scratch/official-run-activity-20261022/candidate",
+  "maintenance": "/Users/wolf3c/Project/homer",
+  "releaseSkill": "/Users/wolf3c/Library/Application Support/CindyGlobal/owners/87403691aa9be3434bfd/bots/bot_1792116750356_mf01yl/skills/release-reviewed-local-agent-version/SKILL.md",
+  "adoptedPatch": {
+    "path": "docs/patches/2026-10-22-official-run-activity.patch",
+    "sha256": "12c00931cc3d969265eebcce811581e7e79f1310b66c0fe1c463b3c82ee26e4d",
+    "bytes": 71879,
+    "paths": 13
+  },
+  "runtime": {
+    "sourceHash": "6f996e5e405dc8d38680618b9d2597d5dece391540a042713e256e7bb83d6803",
+    "manifest": "ee7423c684a6008df7926222401bf1f7e6d487a42c82f85f0a8521dcd47923c1",
+    "sealedFiles": 268,
+    "sourceFiles": 243,
+    "uiHash": "58a5dc83c7871997041481859c3ba3e085aecdca2354f4502b331669ac2ad537",
+    "launcherPid": 1956,
+    "hostPid": 2739,
+    "dependencies": {
+      "packages": 89,
+      "normalizedContentsHash": "8afe25cc2b98a519f20da082d20b733edf07e99eb1430c9ac5b88c4c73b2e45d",
+      "unchanged": true,
+      "existingToolchain": true,
+      "existingDependencies": true
+    },
+    "compiledBackendFilesUnchanged": 87,
+    "compiledBackendChanges": [],
+    "schemaUnchanged": true,
+    "gatewayUnchanged": true,
+    "toolsUnchanged": true,
+    "webProtocol": 1,
+    "historyProtocol": 3
+  },
+  "browser": {
+    "passed": true,
+    "fingerprints": [
+      {
+        "path": "/ui/58a5dc83c7871997041481859c3ba3e085aecdca2354f4502b331669ac2ad537/assets/index-CdOI9_St.js",
+        "bytes": 1561069,
+        "sha256": "8a660a29336faa1f56f20deb83ea45ea9b7a818bb3f0d14fab5f09936f012053"
+      },
+      {
+        "path": "/ui/58a5dc83c7871997041481859c3ba3e085aecdca2354f4502b331669ac2ad537/assets/index-BjA2PvUb.css",
+        "bytes": 68983,
+        "sha256": "4913bee578b91c8d407504e203bc39a0d44428f6ffd018d1130f8705fb56b1ac"
+      }
+    ],
+    "officialComputedStyle": true,
+    "allRequestsGET": true,
+    "noRawHistoryStored": true,
+    "noBusinessAction": true
+  },
+  "backup": {
+    "indexRelativeToCandidate": ".codex/private/official-run-activity-maintenance-20261022T031820Z/backup-index.json",
+    "indexSha256": "8b843313895898e25a65d6b78bd45af6d41a3a8b782aaad70878fe01903c3c8b",
+    "files": 446,
+    "references": 191,
+    "permissions0700_0600": true,
+    "databases": [
+      {
+        "role": "business",
+        "sha256": "b25df6c25ec1e78b00331280dcac228097741a7191e755e8138719b048393189",
+        "tables": 60,
+        "integrity": "ok",
+        "foreignKeyViolations": 0,
+        "allTableHashRoundtripMatches": true,
+        "sourceShmChanged": false
+      },
+      {
+        "role": "gateway",
+        "sha256": "d87aa1db4d1a8d2e66c68f7d73ceea8bf51ad4164a0b022f4d01b0629c01ff8d",
+        "tables": 3,
+        "integrity": "ok",
+        "foreignKeyViolations": 0,
+        "allTableHashRoundtripMatches": true,
+        "sourceShmChanged": false
+      }
+    ]
+  },
+  "preservation": {
+    "at": "2026-10-22T03:20:41.765538+00:00",
+    "passes": true,
+    "allOriginalTablesAndColumnsChecked": 63,
+    "businessOldTables": 60,
+    "gatewayOldTables": 3,
+    "allOldBusinessRowsPreservedExceptExpectedConnectionGeneration": true,
+    "normalMetadataChanges": {
+      "meta": "one current owner lease added; every old key/value unchanged",
+      "wechat_connection": "only generation +1; all account/binding/connection fields unchanged",
+      "gateway": "every table and row unchanged"
+    },
+    "persistentSchemaChanges": 0,
+    "userVersionsUnchanged": true,
+    "uncertainAllRowsByteEquivalent": {
+      "agent_receipts": 3,
+      "wechat_outbox": 6
+    },
+    "oldUnresolvedGateReceipts": 2,
+    "mainThreadSha256": "bba235fe11eddb5c678fccb0ecb7b68479d4349bbc7ceb761e3f9a7d17ac9077",
+    "referencesCheckedUnchanged": 191,
+    "fkViolations": 0,
+    "integrity": "ok",
+    "configurationAndAccountFieldsUnchanged": true,
+    "model": "gpt-6.1-sol",
+    "effort": "high",
+    "workerFast": false,
+    "singleCurrentLeaseOwnerMatchesEngine": true,
+    "activeRuns": 0,
+    "transportPending": 0,
+    "noBusinessActionOrReplay": true
+  },
+  "startup": {
+    "at": "2026-10-22T03:21:59.173023+00:00",
+    "sourceHashPrefix": "6f996e5e405d",
+    "receiptFound": true,
+    "modelMatched": true,
+    "effortMatched": true,
+    "originalThreadMarker": true,
+    "originalThreadVerified": true,
+    "mainThreadSha256": "bba235fe11eddb5c678fccb0ecb7b68479d4349bbc7ceb761e3f9a7d17ac9077",
+    "storedMainToolsHash": "e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062cf9a",
+    "toolsMatchRunningCode": true,
+    "terminalWindowId": 9829,
+    "terminalReadExitCode": 0,
+    "rawTerminalNotSavedOrEmitted": true,
+    "fullThreadIdPrinted": false,
+    "migrationRequired": false
+  },
+  "finalState": {
+    "at": "2026-10-22T03:22:29.991Z",
+    "mainRunning": false,
+    "mainActive": false,
+    "mainActivity": null,
+    "queueCount": 0,
+    "interactionCount": 0,
+    "upgradePhase": "running",
+    "version": "6f996e5e405d",
+    "accepting": true,
+    "historyProtocol": 3,
+    "mainThreadSha256": "bba235fe11eddb5c678fccb0ecb7b68479d4349bbc7ceb761e3f9a7d17ac9077",
+    "wechat": {
+      "state": "connected",
+      "loginStatus": null
+    },
+    "telegram": {
+      "state": "offline"
+    },
+    "readOnly": true,
+    "rawBodiesStored": false
+  },
+  "rollback": {
+    "at": "2026-10-22T03:26:46.892351+00:00",
+    "passes": true,
+    "actualMaintenanceAfterImagesUsed": true,
+    "exactPathCount": 13,
+    "reverseToEveryBeforeThenForwardToEveryAfter": true,
+    "liveRollbackExecuted": false,
+    "checks": [
+      {
+        "options": [
+          "--reverse",
+          "--check"
+        ],
+        "exitCode": 0
+      },
+      {
+        "options": [
+          "--reverse"
+        ],
+        "exitCode": 0
+      },
+      {
+        "options": [
+          "--check"
+        ],
+        "exitCode": 0
+      },
+      {
+        "options": [],
+        "exitCode": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "path": ".codex/scratch/run-activity-release/approved-build.json",
+      "sha256": "fa7cc20e976de229a5a08db1378b135e479fbab420890b9af229a558afb087b9"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/toolchain-reuse-audit.json",
+      "sha256": "b7b9004830da90156f437c699965de563c420a6e67b75a1d227e1d9b0a894a33"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/accepted-risk-metadata-preflight.json",
+      "sha256": "9d93010a64cfec470062a2be14474d0bdeee5c33c7704a3eb8da8a69ab70f24d"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/accepted-risk-normal-stop-result.json",
+      "sha256": "976124ace357e59b05c6ee8c116fcdf309beb3ee3c3c54be7ce29aad543e10a6"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/accepted-stop-maintenance-point.json",
+      "sha256": "d33b9ccf6ad6cea9bbda2523f2aa461e12001b6e2b005cd41604c359ef8dd71e"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/offline-owner-validation.json",
+      "sha256": "74715833c3f25b5de6e77576e1db2a03c41523642a714aa66e5a3940d7890af2"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/approved-adoption.json",
+      "sha256": "23665711cf3e39eb0a7db12899555aa8f014a0133d65b439d900b7bc54b16f56"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/normal-start-dispatch.json",
+      "sha256": "66e0060488e91fdd55bfc49ebca4aa96661a6e59e34f64d62ec37b30ad88b767"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/runtime-before.json",
+      "sha256": "d6f2e42de7ab1bb2a4047816792b3ff747f17b86fd1836cdd838d61b1cc5cee9"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/runtime-after.json",
+      "sha256": "21344e8cb339565ec2cfe92e89b4bb9f107127095514a96bd7c01a1e3080f68e"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/live-startup-receipt.json",
+      "sha256": "ee658b007ec2a706a210f51c0a7fc85c7e11d8fa82c25893da7926b35d4f5a50"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/live-preservation-verified.json",
+      "sha256": "7d9a455745cd7cbaa97c7f2938b14e6f408e4342b8fe7c48d36eb06301c0fa06"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/actual-adoption-rollback-replay.json",
+      "sha256": "5d359615c683654c3ca1350dbf893dae6715558ce08fcee2177627b17c396229"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/live-final-idle-metadata.json",
+      "sha256": "4147ecb09da5fc5479017bf1d321a37e6d83f6ec1abe9d227543b70f9ee5f98f"
+    },
+    {
+      "path": ".codex/scratch/run-activity-release/normal-browser/normal-browser-verification.json",
+      "sha256": "7cd781cb59a6d15ed1d0d0667599f6100383209d8ee3c768aaa50e404a0a1a97"
+    }
+  ],
+  "finalScreenshots": [
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/default-1440.png",
+      "sha256": "b961d0ec020995b51eb21be71bfce863af221b0c3b337f0bbc8f382bea80a5da",
+      "bytes": 48040
+    },
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/default-320.png",
+      "sha256": "cd7ed71762b1217023453e22bf84f9263f25b482cb7a296c5f4ac49ec510f0b6",
+      "bytes": 36955
+    },
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/default-390.png",
+      "sha256": "30b79d0a13f1e246d573bc6246591562e66badda283e73637c6ea39d2754f0f9",
+      "bytes": 41207
+    },
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/exceptions-1440.png",
+      "sha256": "0dbe0486b0106db8df3209c138ca327ccbac6bfed6b25b502a7f1837ace1f00f",
+      "bytes": 59234
+    },
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/exceptions-320.png",
+      "sha256": "cdd54b31b892bd09750fa8ffb22036b82171b1cf7fc50a3beccf41fcbac6b438",
+      "bytes": 49431
+    },
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/exceptions-390.png",
+      "sha256": "4374c6eb427ec8b432a7619fa7ebd3009c8adcfaf5186e8d93096562bc8681c0",
+      "bytes": 51850
+    },
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/expanded-1440.png",
+      "sha256": "cff7c705f2ae548c26d3a672780b06bcaec007191c0074ecb4010a6846476b56",
+      "bytes": 71824
+    },
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/expanded-320.png",
+      "sha256": "932863a875ebe9f81caad76a88a8a7b3f5bd66b7f19e7c0c7f0c6bdf395f66d1",
+      "bytes": 44185
+    },
+    {
+      "path": ".codex/scratch/run-activity/browser-final-screenshots/expanded-390.png",
+      "sha256": "53a11ad3e88d2a569d9eef64391e7b807846e19a9f61b892dfc3c56e53e5aeaa",
+      "bytes": 63572
+    }
+  ],
+  "limitations": [
+    "No actual model/production uploads/channel send",
+    "No App build/sign/notarization",
+    "No physical phone IME/VoiceOver/WebKit/200% zoom test",
+    "Synthetic DOM cannot simulate activeElement on removed subtree; exact real-browser focus test owns this assertion",
+    "Prior three extraction-test failures not rerun; not part of this batch",
+    "官方额外展开参考采集超时；官方默认/完成真实参考及固定源码已核对",
+    "未取得用户已有Safari标签页的资源身份；未强刷或清空用户草稿"
+  ],
+  "noGitCommitTagRemote": true,
+  "noAppPackaging": true,
+  "dependenciesInstalledOrCopied": 0,
+  "dataSemanticsChanged": false
+}

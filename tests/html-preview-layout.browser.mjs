@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {fixture} from './web-history-followup-fixture.mjs';
-import {syntheticFile} from './recursive-publication-fixture.js';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 import {actualClick,inspectHtmlFrame} from './helpers/html-preview-browser.mjs';
 const destination=resolve(process.env.HOMER_REVIEW_EVIDENCE_ROOT??'.codex/scratch/html-preview-product-integration-20261024/layout');mkdirSync(destination,{recursive:true});
 const f=await fixture(30,'after'),checks=[];let chrome,p,frame;
 try{
- f.store.startRequest('request-0','html-layout');const result=syntheticFile(f,'request-0','layout.html','<!doctype html><h1 style="margin:40px">合成网页成果</h1><p>可拖动分栏，工作状态与预览并列。</p>',[],true),d=result.publish('合成布局检查');f.history.record(d.historyMessageId,'synthetic-history',d.text);f.tasks.markDelivery(d.id,'recorded');
+ const actor={agentId:f.store.meta('mainAgentId'),threadId:'synthetic-history'};
+ const task=f.tasks.createTask(actor,{operationId:'layout-task',goal:'合成布局检查'});
+ f.attach('合成布局检查',[{filename:'layout.html',mime:'text/html',content:'<!doctype html><h1 style="margin:40px">合成网页成果</h1><p>可拖动分栏，工作状态与预览并列。</p>'}],{taskId:task.taskId,taskVersion:1});
  chrome=await isolatedChrome(destination);p=await chrome.page(f.server.url,2560);const target=(await chrome.command('Target.getTargets')).targetInfos.find(t=>t.type==='page'&&t.browserContextId===p.browserContextId);const {windowId}=await chrome.command('Browser.getWindowForTarget',{targetId:target.targetId});await chrome.command('Browser.setWindowBounds',{windowId,bounds:{width:2560,height:1000}});const ev=x=>p.evaluate(x),until=x=>p.until(x,15000),sleep=ms=>new Promise(r=>setTimeout(r,ms));
  const check=(label,value)=>{assert.ok(value,label);checks.push(label);console.log('PASS',label);};
  const click=async s=>actualClick(p,await ev(`document.querySelector(${JSON.stringify(s)}).getBoundingClientRect().toJSON()`));

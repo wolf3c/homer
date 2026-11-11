@@ -15,8 +15,14 @@ async function accountWhen(page,predicate){
 }
 async function runtimeWhen(page,predicate){
  const deadline=Date.now()+30000;
- while(Date.now()<deadline){const state=await page.evaluate(async()=>(await fetch('/api/state')).json());if(predicate(state))return state;await page.waitForTimeout(50);}
+ while(Date.now()<deadline){const state=await page.evaluate(async()=>(await fetch('/api/history/state')).json());if(predicate(state))return state;await page.waitForTimeout(50);}
  throw Error('synthetic_runtime_state_timeout');
+}
+async function readAttachment(page,{messageId,assetId,revision}){
+ return page.evaluate(async({messageId,assetId,revision})=>{
+  const response=await fetch('/api/media/'+messageId+'/'+assetId+'/'+revision);
+  return {status:response.status,text:await response.text(),sha256:response.headers.get('x-homer-artifact-hash')};
+ },{messageId,assetId,revision});
 }
 test('actual website delivers a finite native Token to Homer and preserves history',{skip:!bundle||!loginFile,timeout:180000},async t=>{
  const {_electron,chromium}=await import('playwright-core');
@@ -75,14 +81,12 @@ test('actual website delivers a finite native Token to Homer and preserves histo
   const restarted=desktop.waitForEvent('close',{timeout:25000});await page.getByRole('button',{name:'重启并应用',exact:true}).click();await restarted;desktop=undefined;
   for(const file of ['codex/desktop-owner.json','runtime/cli.lock','runtime/gateway/cli.lock'])assert.equal(existsSync(join(root,file)),false);
   page=await start();await runtimeWhen(page,s=>s.upgrade.phase==='running'&&s.threadId&&!s.isRunning);
+  await page.getByRole('heading',{name:'一语成真。'}).waitFor();
   const startup=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
   try{
-   const completed=startup.prepare("SELECT 1 FROM agent_messages WHERE kind='user_input' AND json_extract(payloadJson,'$.source')='first_launch' AND json_extract(payloadJson,'$.terminal')='completed'");
-   const deadline=Date.now()+30000;while(!completed.get()&&Date.now()<deadline)await page.waitForTimeout(50);
-   assert.ok(completed.get(),'fresh profile initialization must finish before normal work');
-   assert.equal(startup.prepare("SELECT count(*) n FROM agent_messages WHERE kind='user_input' AND json_extract(payloadJson,'$.source')='first_launch'").get().n,1);
+   assert.equal(startup.prepare("SELECT count(*) n FROM agent_messages WHERE kind='user_input'").get().n,0);
   }finally{startup.close();}
-  let delivered,history;
+  let delivered,downloaded,history;
   await page.getByRole('button',{name:'设置',exact:true}).click();
   await page.evaluate(()=>window.homerDesktopAccount.refresh());await accountWhen(page,s=>Boolean(s.wallet));
   const before=await page.evaluate(async()=>await window.homerDesktopAccount.state());
@@ -98,17 +102,29 @@ test('actual website delivers a finite native Token to Homer and preserves histo
    await page.getByRole('button',{name:'关闭设置',exact:true}).click();
    mkdirSync(join(root,'workspace/materials'),{recursive:true});writeFileSync(join(root,'workspace/materials/synthetic.md'),'Synthetic desktop acceptance material');
    await page.locator('[contenteditable=true]').fill('dispatch-synthetic');await page.locator('.send-button').click();
+   history=await runtimeWhen(page,s=>!s.isRunning&&s.artifacts?.some(file=>file.title==='hello.md'));
+   const files=history.artifacts.filter(file=>file.title==='hello.md');
+   assert.equal(files.length,1,'one user-visible message must carry the exact Worker attachment');
+   delivered=files[0];
    const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
    try{
-    const result=db.prepare("SELECT r.filePath AS artifact,r.sha256 FROM results r JOIN runs ON runs.id=r.runId JOIN deliveries d ON d.taskId=r.taskId JOIN json_each(d.resultIdsJson) selected ON selected.value=r.id WHERE runs.status='succeeded' AND r.kind='file' AND r.state='accepted' AND d.state='recorded' AND d.revokedAt IS NULL");
-    const deadline=Date.now()+30000;
-    while(!(delivered=result.get())&&Date.now()<deadline)await page.waitForTimeout(50);
-    assert.ok(delivered,'real Worker must finish, be inspected and deliver its actual file');
-    assert.ok(resolve(delivered.artifact).startsWith(join(root,'workspace/outputs')+'/'));
-    assert.equal(readFileSync(delivered.artifact,'utf8'),'DeepSeek Worker 已运行（合成上游）');
-    assert.equal(createHash('sha256').update(readFileSync(delivered.artifact)).digest('hex'),delivered.sha256);
+    const replies=db.prepare(`SELECT json_extract(w.payloadJson,'$.text') AS text, media.hash FROM conversation_messages m
+     JOIN conversation_attachments a ON a.messageId=m.id JOIN json_each(a.refsJson) ref
+     JOIN media_assets media ON media.id=json_extract(ref.value,'$.assetId') AND media.revision=json_extract(ref.value,'$.revision')
+     JOIN runs r ON r.taskId=m.taskId AND r.version=m.taskVersion
+     JOIN agent_messages w ON w.senderRunId=r.id AND w.kind='worker_reply'
+     JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
+     JOIN conversation_messages source ON source.threadId=m.threadId AND source.requestId=v.sourceRequestId AND source.role='user'
+     WHERE m.id=? AND media.id=? AND media.revision=? AND media.state='ready' AND m.status='completed'
+      AND m.role='assistant' AND m.audience='user' AND m.revokedAt IS NULL AND m.requestId IS NULL
+      AND r.status='succeeded' AND source.text=?`).all(delivered.messageId,delivered.assetId,delivered.revision,'dispatch-synthetic');
+    assert.equal(replies.length,1,'the completed original Worker response must belong to the same task and user request');
+    assert.ok(replies[0].text.trim());
+    assert.equal(replies[0].hash,delivered.sha256);
    }finally{db.close();}
-   history=await runtimeWhen(page,s=>!s.isRunning&&s.messages.some(m=>m.role==='user'&&m.text==='dispatch-synthetic'));
+   downloaded=await readAttachment(page,delivered);
+   assert.deepEqual(downloaded,{status:200,text:'DeepSeek Worker 已运行（合成上游）',sha256:delivered.sha256});
+   assert.equal(createHash('sha256').update(downloaded.text).digest('hex'),delivered.sha256);
    assert.equal(JSON.stringify(history).includes(saved.token),false);
   }
   if(realCodex){
@@ -116,7 +132,8 @@ test('actual website delivers a finite native Token to Homer and preserves histo
    const restored=await runtimeWhen(page,s=>s.upgrade.phase==='running'&&s.threadId&&!s.isRunning);
    assert.equal(restored.threadId,history.threadId);
    assert.deepEqual(restored.messages.filter(m=>m.role==='user').map(m=>m.text),history.messages.filter(m=>m.role==='user').map(m=>m.text));
-   assert.equal(readFileSync(delivered.artifact,'utf8'),'DeepSeek Worker 已运行（合成上游）');
+   assert.deepEqual(restored.artifacts.find(file=>file.id===delivered.id),delivered);
+   assert.deepEqual(await readAttachment(page,delivered),downloaded);
   }
   writeFileSync(join(root,'evidence.json'),JSON.stringify({synthetic:true,actualWebsite:true,actualAmh:true,actualElectron:true,automaticDelivery:true,normalRestart:true,sameKey:true,finiteNativeToken:true,sharedWalletAbsent:true,purchasesTested:false,realCodex163:realCodex,workerFileDelivered:Boolean(delivered),historyPreserved:Boolean(history),models:realCodex?'actual desktop real 163 through actual AMH to scripted upstream':'protocol fixture'})+'\n');
   t.diagnostic(JSON.stringify({synthetic:true,profile:root,realCodex163:realCodex,workerFileDelivered:Boolean(delivered)}));

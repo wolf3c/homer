@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-30",
+  "selection": "Odysseus: A palette + D character",
+  "source": "source/odysseus-fusion-original.png",
+  "sourceSha256": "59ad7741733e2cfefa11641af558db2857a6bcf449d89d113c7fa7234c632675",
+  "sourceDimensions": [
+    1254,
+    1254
+  ],
+  "sourceMode": "RGBA",
+  "export": {
+    "pillow": "12.3.0",
+    "resampling": "premultiplied alpha LANCZOS",
+    "canvas": "full original square; no crop, recolor or alpha threshold",
+    "visualRetouch": false
+  },
+  "files": [
+    {
+      "file": "homer-odysseus-16.png",
+      "dimensions": [
+        16,
+        16
+      ],
+      "mode": "RGBA",
+      "bytes": 951,
+      "sha256": "dbde369132cd6a4f08e5f5637977027a042d2766f68d08219b345e1ba0461697",
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "homer-odysseus-32.png",
+      "dimensions": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 3047,
+      "sha256": "e881817d1abf7f40c88a27b3caa569f48c8a4eee8c7d089798ce05ebc5444f60",
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "homer-odysseus-48.png",
+      "dimensions": [
+        48,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 6274,
+      "sha256": "3960baab0add6e17704d71b26ea8df0acf5f0e55c9e8bfe91c86aa1c4436a569",
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "homer-odysseus-64.png",
+      "dimensions": [
+        64,
+        64
+      ],
+      "mode": "RGBA",
+      "bytes": 10396,
+      "sha256": "addf7bcfda188b5eba7ca2d3f21bcb238be00bd0e70a3abe24f842164686faaf",
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "homer-odysseus-128.png",
+      "dimensions": [
+        128,
+        128
+      ],
+      "mode": "RGBA",
+      "bytes": 35584,
+      "sha256": "ae4cce575ebd7b0baffc5cd3f1103155aee08b425489f7fae53218276a8b3fff",
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "homer-odysseus-256.png",
+      "dimensions": [
+        256,
+        256
+      ],
+      "mode": "RGBA",
+      "bytes": 115829,
+      "sha256": "6582c941f9c7f5132dc06e844f1921e0d019120de21088935400f2a49c8718fa",
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "homer-odysseus-512.png",
+      "dimensions": [
+        512,
+        512
+      ],
+      "mode": "RGBA",
+      "bytes": 401790,
+      "sha256": "49688f681a182074d73aea49d4d84f8b88902b2464b845329a876ddae115242e",
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "homer-odysseus-1024.png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "mode": "RGBA",
+      "bytes": 1532310,
+      "sha256": "4a4899acb4efda8d2238134b0f49adb9d33ae8d8d76d83af3957a2f09ee95dc5",
+      "alphaRange": [
+        0,
+        255
+      ]
+    }
+  ],
+  "icns": {
+    "file": "homer-odysseus.icns",
+    "sha256": "093490e18b5e49bd69e858d94fd16fec820f4388e2f9e3ad8e6c30cd3e738289",
+    "bytes": 2713173,
+    "chunks": [
+      "is32",
+      "s8mk",
+      "ic11",
+      "il32",
+      "l8mk",
+      "ic12",
+      "ic07",
+      "ic13",
+      "ic08",
+      "ic14",
+      "ic09",
+      "ic10"
+    ],
+    "validated": true
+  }
+}

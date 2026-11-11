@@ -17,7 +17,10 @@ export function protocolQuote({messageId,text,itemIds,position}:MessageQuote):Me
 }
 export function protocolQuotes(quotes:readonly AnnotatedQuote[]):AnnotatedQuote[]{return quotes.map(q=>({...protocolQuote(q),annotation:q.annotation}));}
 export function singleComposerDraft(draft:ComposerDraft):ComposerDraft&{notice?:string}{return draft;}
-export type UnconfirmedInput={input:ConversationInput;target?:{messageId:string;generationId:string}};
+export type UnconfirmedInput={input:ConversationInput;target?:{messageId:string;generationId:string};draft?:{
+  clearedRequestId:string;attachments:NonNullable<ComposerDraft['attachments']>;quotes:QuoteDraft[];contextOrder:string[];
+  resources:Pick<import('./annotation-draft.js').AnnotationDraftState,'htmlMetadata'|'imageAssets'>;
+}};
 export function unconfirmedInputs(items:readonly UnconfirmedInput[],accepted:readonly (string|{role:string;requestId?:string|null})[]):UnconfirmedInput[]{
   const ids=new Set(accepted.flatMap(item=>typeof item==='string'?[item]:item.role==='user'&&item.requestId?[item.requestId]:[]));
   return items.filter(item=>!ids.has(item.input.requestId));

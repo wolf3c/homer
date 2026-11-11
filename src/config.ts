@@ -14,8 +14,8 @@ export type Config = {
   dailyDeepSeek?: boolean;
   desktopModelSource?: 'codex'|'website';
   desktopConnection?: import('./homer-account.js').HomerRuntimeConfig;
+  desktopAdopted?: boolean;
   pauseOldDesktopWork?: boolean;
-  controlBrowserData?:string[];
   appData?: string;
   nativeCodexHome?: string;
   workspace: string;
@@ -33,9 +33,6 @@ export type Config = {
   baseUrl?: string;
   keyEnv?: string;
   requiresOpenaiAuth: boolean;
-  // Legacy config values remain readable; execution timing belongs to Codex.
-  timeoutMs?: number;
-  mainTimeoutMs?: number;
   stopGraceMs: number;
 };
 export function loadConfig(path?: string): Config {
@@ -51,7 +48,6 @@ export function loadConfig(path?: string): Config {
   const appData = resolve(process.env.HOMER_DATA_HOME ?? raw.appData ?? (process.platform === "darwin" ? join(homedir(), "Library/Application Support/Homer") : join(homedir(), ".local/share/Homer")));
   const nativeCodexHome=resolve(process.env.HOMER_NATIVE_CODEX_HOME ?? raw.nativeCodexHome ?? join(appData,"codex"));
   const c: Config = {
-    ...(raw.controlBrowserData?{controlBrowserData:raw.controlBrowserData}:{}),
     appData,
     nativeCodexHome,
     workspace: resolve(base, raw.workspace ?? join(appData,"workspace")),
@@ -70,18 +66,12 @@ export function loadConfig(path?: string): Config {
     baseUrl: process.env.HOMER_CODEX_BASE_URL ?? raw.baseUrl ?? PRODUCT_MODEL_DEFAULTS.baseUrl,
     keyEnv: process.env.HOMER_CODEX_KEY_ENV ?? raw.keyEnv ?? PRODUCT_MODEL_DEFAULTS.keyEnv,
     requiresOpenaiAuth: raw.requiresOpenaiAuth ?? PRODUCT_MODEL_DEFAULTS.requiresOpenaiAuth,
-    ...(raw.timeoutMs!=null?{timeoutMs:raw.timeoutMs}:{}),
-    ...(raw.mainTimeoutMs!=null?{mainTimeoutMs:raw.mainTimeoutMs}:{}),
     stopGraceMs: raw.stopGraceMs ?? 3000,
   };
-  if(raw.controlBrowserData!==undefined&&(!Array.isArray(raw.controlBrowserData)||raw.controlBrowserData.some((p:unknown)=>typeof p!=="string"||!p.startsWith("/"))))throw Error("invalid_control_browser_data");
   if (c.effort !== undefined && !["low", "medium", "high", "xhigh", "max", "ultra"].includes(c.effort??''))
     throw new Error("invalid_effort");
-  for (const n of ["timeoutMs", "mainTimeoutMs", "stopGraceMs"] as const){
-    const value=c[n];
-    if (value!==undefined && (!Number.isInteger(value) || value < 100 || value > 900000))
-      throw new Error("invalid_" + n);
-  }
+  if (!Number.isInteger(c.stopGraceMs) || c.stopGraceMs < 100 || c.stopGraceMs > 900000)
+    throw new Error("invalid_stopGraceMs");
   if (
     c.runtime === c.workspace ||
     inside(c.workspace, c.runtime) ||
@@ -113,6 +103,11 @@ export function loadConfig(path?: string): Config {
 
 export function capabilityHome(config:Config){return config.nativeCodexHome??join(config.appData??join(config.runtime,'application-data'),'codex');}
 export function usesHomerNativeHome(config:Config){return resolve(config.codexHome)===resolve(capabilityHome(config));}
+export function configuredWebSearchMode(config:Config):'live'|'disabled'|undefined{
+  if(config.context && (config.capabilities || config.effort===null))
+    return config.capabilities?.webSearch===true?'live':'disabled';
+  if(config.desktopModelSource==='website' && config.dailyDeepSeek)return 'disabled';
+}
 export function effectiveModelConfig(config:Config,role:"main"|"worker"="main"):Config{
   validateExecutionLimits(config.executionLimits);
   if(config.desktopModelSource==='codex'){

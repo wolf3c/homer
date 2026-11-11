@@ -20,11 +20,13 @@ export function openMobileSession({devices,port,call}:{devices:MobileDevices;por
     let result:unknown;
     if(op==='pair'||op==='status'||op==='pair.cancel'){
      if(!input||typeof input!=='object'||Array.isArray(input))throw Error('mobile_pairing_invalid');
-     const fields=input as {credential?:unknown;invitation?:unknown;deviceName?:unknown};
+     const fields=input as {credential?:unknown;invitation?:unknown;deviceName?:unknown;protocol?:unknown};
      if(fields.credential!==undefined&&(typeof fields.credential!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(fields.credential)))throw Error('mobile_credential_invalid');
      if(op==='pair.cancel'){
       if(typeof fields.credential!=='string')throw Error('mobile_credential_invalid');
       result={status:devices.cancelPairing(fields.credential),protocol:WEB_PROTOCOL};
+     }else if(op==='pair'&&fields.protocol!==WEB_PROTOCOL){
+      result={status:'incompatible',protocol:WEB_PROTOCOL};
      }else if(op==='pair'){
       const paired=devices.pair(fields.invitation,fields.credential as string|undefined,fields.deviceName);
       credential=paired.credential;deviceId=devices.authorize(credential);result={...paired,protocol:WEB_PROTOCOL};

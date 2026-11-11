@@ -1,0 +1,11 @@
+# 冷启动 CSS 输入闭包修正
+
+2026-10-23：5fc7087准确发布输入在原launcher构建时被run-activity_css_stale拦截，未创建业务child、native lease或数据库写入。失败启动器正常退出，两库全部行/列/schema仍等于已停写维护点，未恢复旧库。
+
+原因：2f0b4bd加入官方ApprovalCard共享surfaces常量，但未同步Run Activity的生成CSS；直接Vite构建不会重生成该文件。保留既有编译器、源组件与启动检查，只提交其确定性生成结果，增加约5.8KB未压缩CSS；没有修改字号/布局合同、权限或业务逻辑。
+
+新增回归从生产sourceSnapshot复制与launcher相同的源码输入，逐个验证所有已声明官方CSS分支。修复前红灯准确复现stale；重新生成后绿灯。测试无配置、账户、数据库、模型或网络。
+
+修复提交落main，保留随后独立提交的8b99a7b Sources。实际release只在已冻结5fc7087上回移同一修复；不把冻结后的Sources功能静默纳入。main修复SHA、release冻结SHA和最终source/UI/manifest在实际发布记录绑定。首次尝试972a6c192acbc258a5e9c6b60cd6a9f348e64f302bcac383bd4739c01fb431c4未上线，不能当运行版本。
+
+原始诊断、红绿日志与准确CSS前后哈希在发布任务scratch。最终构建须继续通过真实buildCandidate、版本化UI和原入口，不取消一致性检查。备份始终留Gitignored持久私有目录。

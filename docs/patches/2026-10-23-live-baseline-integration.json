@@ -1,0 +1,854 @@
+{
+  "recordedAt": "2026-10-23T05:03:05.886Z",
+  "parent": "2f0b4bdc53957c83c5a91df399c51e1618ab908a",
+  "approvedParallelCommit": {
+    "commit": "2f0b4bdc53957c83c5a91df399c51e1618ab908a",
+    "scope": "Official ApprovalCard UI and request/receipt owner guards only; no backend authorization changes",
+    "reviewedIndependentEvidence": true
+  },
+  "liveSourceHash": "95ec060eed2f7f8f60767ee8e42264e1f9bc77d27b36fc3ea9f844f389bec3de",
+  "selectedProductSource": {
+    "sourceHash": "fd86cd0b5034d918a884d1185fc9482322a3297a7b9d0df3571167b55fa173c1",
+    "uiHash": "ed22dc534d74d8607597d73cf5f85b10b61f2c4e31e30c4d1d6a9867c0521f22",
+    "sourceFiles": 289,
+    "dependencyHash": "eb9ed1a0ce2e582b20d26dfe69429eb570f1d6952ba7ef6ffcfa2c855b11c69d",
+    "schemaHash": "858216c0d8cbd571a9d2d97f7bb8484dafd03b591e87f98cedd48dab33424f41",
+    "gatewayHash": "4b2f460d33c9dcd5148d7df41b61f9e73b50ebe3c320210cf92698deb3984177"
+  },
+  "scope": "Commit the necessary already-deployed runtime baseline, preserving schema3/history/queue/native boundaries and the already-committed official UI. No new authorization rules.",
+  "nativeBoundaryByteIdentical": true,
+  "backendDeltaFromLive": [
+    "src/message-quote.ts",
+    "src/model-config.ts",
+    "src/task-status.ts",
+    "src/web-history.ts"
+  ],
+  "changes": [
+    {
+      "path": "src/attachment-reference.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": null,
+      "after": "3e088edcfad29d973d27cb465197787a71fe1fa6aa53e926d3779bb863b4a863",
+      "liveSha256": "3e088edcfad29d973d27cb465197787a71fe1fa6aa53e926d3779bb863b4a863",
+      "exactLive": true
+    },
+    {
+      "path": "src/capability-operations.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "9b5609c3ecfcfa16aef8562ae17a53870cbaecf28f86e571caefd4d00d754f6f",
+      "after": "137ec4e29387dc76553924ac8df85e8f4a038b767faa72a4a0ca3efe420bfada",
+      "liveSha256": "137ec4e29387dc76553924ac8df85e8f4a038b767faa72a4a0ca3efe420bfada",
+      "exactLive": true
+    },
+    {
+      "path": "src/channels/telegram-homer-bridge.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "d52eaa482b244f9e78c07abc0885a7d4bead760e23c2a1cde594b203facb0033",
+      "after": "1f1c68dbe832305a4e28afee4cc37e39afed24080535be0fa847eb5a160a8165",
+      "liveSha256": "1f1c68dbe832305a4e28afee4cc37e39afed24080535be0fa847eb5a160a8165",
+      "exactLive": true
+    },
+    {
+      "path": "src/channels/telegram-settings-page.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "eea85db4d383c9b3fbd74750390a184e5688c676e209ce74ac8b543ec7dee8d1",
+      "after": "0b1da07ea1c2a2d48e3284d06304c655b41bc5fa14f4f05229ce043f85d9b2d3",
+      "liveSha256": "0b1da07ea1c2a2d48e3284d06304c655b41bc5fa14f4f05229ce043f85d9b2d3",
+      "exactLive": true
+    },
+    {
+      "path": "src/channels/wechat-homer.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "fd8e99ffb13c6d5c39c07f378b98d5c9f8e87695089bb8f39bb87dc65fa7beb4",
+      "after": "a2f67bdf36b9d82d212737535497abf48c82cd09befefeed88306b8ee3402dc0",
+      "liveSha256": "a2f67bdf36b9d82d212737535497abf48c82cd09befefeed88306b8ee3402dc0",
+      "exactLive": true
+    },
+    {
+      "path": "src/config.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "a3d80bde3d92da04728c44395d6a06b017712f126b11441a90cbba8745536b95",
+      "after": "2b6367fbf1fdf28cb620e13c1a72f17f1d22033ba025b4c5a0284f03842c4699",
+      "liveSha256": "2b6367fbf1fdf28cb620e13c1a72f17f1d22033ba025b4c5a0284f03842c4699",
+      "exactLive": true
+    },
+    {
+      "path": "src/dev-host.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "2b96f235f48a117a7a10e9e676862b83a99051b9c99f97b225fda697c46d537e",
+      "after": "ff2e5ca14ff9849d92881b203a56619d9a56bd027529b95267b349464ab87f17",
+      "liveSha256": "ff2e5ca14ff9849d92881b203a56619d9a56bd027529b95267b349464ab87f17",
+      "exactLive": true
+    },
+    {
+      "path": "src/engine.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "6cbd68777f0c6dbe7ce8b8b60d23a62bb2e3f0ea86c1ccac801df8b4a9a2b0d3",
+      "after": "aac5cd0f42652e0b87917a4f4595b230173d8b5fe97daf1e92d46d575c04695f",
+      "liveSha256": "aac5cd0f42652e0b87917a4f4595b230173d8b5fe97daf1e92d46d575c04695f",
+      "exactLive": true
+    },
+    {
+      "path": "src/files.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "d9d0dec16844574f144142e3fe2af32a6a01d57a7d85ec921ed46fd195094831",
+      "after": "f7915b6f35c4fbf33938876bc9763e6b5ca25e33dcd276414b0df56de14a12b3",
+      "liveSha256": "f7915b6f35c4fbf33938876bc9763e6b5ca25e33dcd276414b0df56de14a12b3",
+      "exactLive": true
+    },
+    {
+      "path": "src/first-launch.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "46f9074c6cff001f06e4a4031d24386461e1453d4479e0c79d04fc3f91a32c0b",
+      "after": "c79af2de59b1c779600babd3ab5106851075f1796c9979218d8c4320bad14ab1",
+      "liveSha256": "c79af2de59b1c779600babd3ab5106851075f1796c9979218d8c4320bad14ab1",
+      "exactLive": true
+    },
+    {
+      "path": "src/main-native-approvals.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "9f199e0ebacce0e3a01e49d177223fb1177061cdef74b28f76f7d1f7528a9e48",
+      "after": "cc01a7e61b179f0f176adc60e70ea28399a8703389ab6b4f4bb80d92f76013fa",
+      "liveSha256": "cc01a7e61b179f0f176adc60e70ea28399a8703389ab6b4f4bb80d92f76013fa",
+      "exactLive": true
+    },
+    {
+      "path": "src/main-progress.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "9f22edb3871362887c32e0995c7e9d21120403a6ecebc1019fdf169aa0a2835d",
+      "after": "8efb830074ecd998c5a57ba0fb15e8f9876082a561f18927c82df16eb631848e",
+      "liveSha256": "8efb830074ecd998c5a57ba0fb15e8f9876082a561f18927c82df16eb631848e",
+      "exactLive": true
+    },
+    {
+      "path": "src/media-decode.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "5301d92b443025b55f489d8fea5566c476cc9c69b96c760bfc5809e1209c8feb",
+      "after": "2ea05033d8d84207e015e696c65d146604e182b5ce4116a3ede18e5716383f99",
+      "liveSha256": "2ea05033d8d84207e015e696c65d146604e182b5ce4116a3ede18e5716383f99",
+      "exactLive": true
+    },
+    {
+      "path": "src/media-tools.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "0d8942a43bc45ba8288c624e4782703bf534205d706d2dd7ebf162cfd01c561f",
+      "after": "6b54478eb4484a1d241a4363ea7e445feed0956ff240d6e4693f6e552e786ea1",
+      "liveSha256": "6b54478eb4484a1d241a4363ea7e445feed0956ff240d6e4693f6e552e786ea1",
+      "exactLive": true
+    },
+    {
+      "path": "src/native-capabilities.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "fa775b72eb3cecc2c90f91db880df712401e9f0ace942330102fdd16a97b252e",
+      "after": "1f30307cd95f5090a8168b7fec30a5cc6717b07305c97049749c5bc64b3a9e97",
+      "liveSha256": "1f30307cd95f5090a8168b7fec30a5cc6717b07305c97049749c5bc64b3a9e97",
+      "exactLive": true
+    },
+    {
+      "path": "src/native-capability-tools.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "5227ce3a98c09c9c6c8ec7b937d672d1bfcaf9c3d94c402ec3f3805fb0d7974a",
+      "after": "2c8320fe7b45bd6edc12faa8c855a14aea50275f8eacf465bd314a043db81046",
+      "liveSha256": "2c8320fe7b45bd6edc12faa8c855a14aea50275f8eacf465bd314a043db81046",
+      "exactLive": true
+    },
+    {
+      "path": "src/native-mcp-config.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": null,
+      "after": "b13005c8cad06f68a87a06cdcf896ee9549f956ac171605851f24fc4cd4701d0",
+      "liveSha256": "b13005c8cad06f68a87a06cdcf896ee9549f956ac171605851f24fc4cd4701d0",
+      "exactLive": true
+    },
+    {
+      "path": "src/pending-items.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "59d9ab7796428e997c4b6ad268550cb00a669e2da9421be8a6ed5ca5b75d2f4c",
+      "after": "118c27d43cd64cd3ed32dc6a56828855b92d26a3b50a60318f610bc8ebd31794",
+      "liveSha256": "118c27d43cd64cd3ed32dc6a56828855b92d26a3b50a60318f610bc8ebd31794",
+      "exactLive": true
+    },
+    {
+      "path": "src/question-schema.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "07393444252054f33a2b6b6c96f4dbe4cdbf4f3f3616df49ee57e537fe98830d",
+      "after": "bb0f66afb382d584778ea639bf20327cee8578b52e33161e45db51295024761c",
+      "liveSha256": "bb0f66afb382d584778ea639bf20327cee8578b52e33161e45db51295024761c",
+      "exactLive": true
+    },
+    {
+      "path": "src/reception-timings.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": null,
+      "after": "1304051617a7aecfc3c1f491b740bed4ca44b1da1458bb5b9e9e8515aa63ad84",
+      "liveSha256": "1304051617a7aecfc3c1f491b740bed4ca44b1da1458bb5b9e9e8515aa63ad84",
+      "exactLive": true
+    },
+    {
+      "path": "src/recursive-main-inputs.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "f34fea2021543667bfdd46d0d72f076f53c5223f82d6a1e573ef84774c2a988e",
+      "after": "4b436c1de2da5ec3aa21a3c61a6d282d4b602b3dd8e8fd403729e7b94560cf5c",
+      "liveSha256": "4b436c1de2da5ec3aa21a3c61a6d282d4b602b3dd8e8fd403729e7b94560cf5c",
+      "exactLive": true
+    },
+    {
+      "path": "src/recursive-tasks.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "7958a82c5ae1a65227384a6505d740fd593822914135c5afcaa50835d3b6a7e6",
+      "after": "d36977b6f0221205e591c28241509be19bd6c37fc7f06e45b7fe27e8f9f16881",
+      "liveSha256": "d36977b6f0221205e591c28241509be19bd6c37fc7f06e45b7fe27e8f9f16881",
+      "exactLive": true
+    },
+    {
+      "path": "src/recursive-tools.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "44947a08f866bdac69f82ba29e071d13abcc39f802099cc2544320bdee1dd38b",
+      "after": "0fb56706007dd4c02e3d0583e695e53982889448a2ba1d8dce993b6dd7799056",
+      "liveSha256": "0fb56706007dd4c02e3d0583e695e53982889448a2ba1d8dce993b6dd7799056",
+      "exactLive": true
+    },
+    {
+      "path": "src/service.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "9129b3a1978ec06dc1b56fba6fe56a4bd044df1cd768f1a8dad8cee63376f611",
+      "after": "e82ac7c706208199b27af5e538339f67c5eb232a131021aa063ced376d3d5876",
+      "liveSha256": "e82ac7c706208199b27af5e538339f67c5eb232a131021aa063ced376d3d5876",
+      "exactLive": true
+    },
+    {
+      "path": "src/store.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "52c796d39d97bf56b1dc2046f4df9a4491498631018801dc100de4256167338e",
+      "after": "70a07bdcc44f2633ad8fb29f3fedac61a19c22a9c550c3d286db60fc9cd8b936",
+      "liveSha256": "70a07bdcc44f2633ad8fb29f3fedac61a19c22a9c550c3d286db60fc9cd8b936",
+      "exactLive": true
+    },
+    {
+      "path": "src/task-overview.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "5207528950c362a2e437aee50b7a825bfb4e453fcd7793e6e8e043fe805c9804",
+      "after": "11e19e3b84063e43fbd9bb103f9c118628c1794b486c5bef242dbf516072eacc",
+      "liveSha256": "11e19e3b84063e43fbd9bb103f9c118628c1794b486c5bef242dbf516072eacc",
+      "exactLive": true
+    },
+    {
+      "path": "src/tools.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "75221b8a7751eda667e4c3566c9460b9a5f018fefb3588c0bcb6ca843df0faf1",
+      "after": "a88b7a3ecd906fef1d92dd1273f5e729969fe2b21ff12dd61bc04c1cc19a30fa",
+      "liveSha256": "a88b7a3ecd906fef1d92dd1273f5e729969fe2b21ff12dd61bc04c1cc19a30fa",
+      "exactLive": true
+    },
+    {
+      "path": "src/update-review-page.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "098ee3bc0472610cf87900b4463f57f9ab201515fc8290c87696b6232b40c0cd",
+      "after": "c702aa5e1bef25e24e3176326d9f2d2d1722b3062714c903afef7f8005d4fd14",
+      "liveSha256": "c702aa5e1bef25e24e3176326d9f2d2d1722b3062714c903afef7f8005d4fd14",
+      "exactLive": true
+    },
+    {
+      "path": "src/web-contract.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "d00e1b982ae232620dd914d516685018a9b60fefe442650f2c75a27618c0694d",
+      "after": "a1bdc0aee45603e2fa726df928b01b78c2ba7fe57ab77ce4fd2c0cdd7860fdb4",
+      "liveSha256": "a1bdc0aee45603e2fa726df928b01b78c2ba7fe57ab77ce4fd2c0cdd7860fdb4",
+      "exactLive": true
+    },
+    {
+      "path": "src/web-homer.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "3a10843384c06cb098410bf7ddb279ad6f0eb5f8a00c1c37bc5656ec2d5736e7",
+      "after": "e6f0fe12c5b73b338cc5fde5ca734023c63995114dbe670faee37091feb53ecc",
+      "liveSha256": "e6f0fe12c5b73b338cc5fde5ca734023c63995114dbe670faee37091feb53ecc",
+      "exactLive": true
+    },
+    {
+      "path": "src/web-server.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "e835f721db4156bc73ad8163df4d36728a8415a6c71ba251641f8f2fac8d2412",
+      "after": "04cfe1e7270f6a0a25473ac048c405cd0eeee4866870bface41cf6e0c9a68e2a",
+      "liveSha256": "04cfe1e7270f6a0a25473ac048c405cd0eeee4866870bface41cf6e0c9a68e2a",
+      "exactLive": true
+    },
+    {
+      "path": "src/worker-interaction-mcp.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "3b7400954307d5b2efe7b85fd81b64c51a63a716d22058c07a30ab304335fd82",
+      "after": "bfc2ec3f6c1e4b37f855aaececfc4bebc231c43c7f917dd6c035d546930b91ba",
+      "liveSha256": "bfc2ec3f6c1e4b37f855aaececfc4bebc231c43c7f917dd6c035d546930b91ba",
+      "exactLive": true
+    },
+    {
+      "path": "src/memory-store.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "e948572d8425a40acd136092d048126f42f05efae9a8a3e62242e48713715666",
+      "after": null,
+      "liveSha256": null,
+      "exactLive": true
+    },
+    {
+      "path": "src/memory-tools.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "b9ca1eccb5fbe1db3311c06703a1c48246444de6a31e02d6e978d4dad74faf13",
+      "after": null,
+      "liveSha256": null,
+      "exactLive": true
+    },
+    {
+      "path": "src/memory.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "2eded6b3285ba1d405b8259da2ef6750903006c4b83cad526cebf0cc3ff49baf",
+      "after": null,
+      "liveSha256": null,
+      "exactLive": true
+    },
+    {
+      "path": "src/native-memory.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "144a6ef336683c6e9c81ae023855c3bb7e67766e2962814229c5b41143717013",
+      "after": null,
+      "liveSha256": null,
+      "exactLive": true
+    },
+    {
+      "path": "src/web-connection.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "76e688bcb224294adf02a084cacdc21809cc1ba3124c959e22a9256b3072b89a",
+      "after": null,
+      "liveSha256": null,
+      "exactLive": true
+    },
+    {
+      "path": "src/worker-execution-clock.ts",
+      "reason": "Existing sealed runtime owner/dependency; exclude rollback to old schema/native lifecycle.",
+      "before": "78e5ea537255e1dab4a47322a35840f43893fa5f7a6c6820b6d3d2d260fa7726",
+      "after": null,
+      "liveSha256": null,
+      "exactLive": true
+    },
+    {
+      "path": "src/web-history.ts",
+      "reason": "Sealed feedback/history owner plus already committed shared visible-quote parser.",
+      "before": "5409515b2a0d27d89eebe5bb923c62704c4f4616e8baa4a720b06fb768548381",
+      "after": "da3cd27b6a016bb3546a6589c54f6b20c95854aeb0b9628225ee8148a6a2c9db",
+      "liveSha256": "aa35c41859b0bc8977ed06f2bbf2d4fd49bcfb5c675437471dd2c08a09d3d644",
+      "exactLive": false
+    },
+    {
+      "path": "scripts/dev.mjs",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "b51b86d12268723c6f3881cc054da6a621573825ef6e18b3fd9537336d9a9c42",
+      "after": "f68ee8b35026303f00b2b7b343fa87cefb14411d30768f05a075de4c93f6bc7f",
+      "liveSha256": "f68ee8b35026303f00b2b7b343fa87cefb14411d30768f05a075de4c93f6bc7f",
+      "exactLive": true
+    },
+    {
+      "path": "scripts/dev-ingress.mjs",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "aa414e2ea6a115f5c6eb3ade780e9d9c38852597c52bc476fd4b95897eba687b",
+      "after": "c1022c78be21f989c5757154645c327dea218a7611d41b14297fd107cd91567a",
+      "liveSha256": "c1022c78be21f989c5757154645c327dea218a7611d41b14297fd107cd91567a",
+      "exactLive": true
+    },
+    {
+      "path": "scripts/pinned-build.mjs",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "a776a9e189b428648d021d5b90d2f40b38950e3c4010a23173068dabba2521c4",
+      "after": "436df789f9a529542d94c117f27f48ce250b12a5a56e36612a758a353f00c79f",
+      "liveSha256": "436df789f9a529542d94c117f27f48ce250b12a5a56e36612a758a353f00c79f",
+      "exactLive": true
+    },
+    {
+      "path": "scripts/pinned-rollback.mjs",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "80e8dd58a8829e6af90f994b5853a518475c6fe1839f91f547e2997f37505718",
+      "after": "be689337c733dbbfb7758eab7dc1074e38a95f02a3c6cc0f11d5737f17bf7a7c",
+      "liveSha256": "be689337c733dbbfb7758eab7dc1074e38a95f02a3c6cc0f11d5737f17bf7a7c",
+      "exactLive": true
+    },
+    {
+      "path": "scripts/check-worker-tool-compatibility.ts",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "75a6a6b34b0783da9bfca36ed443351e347cdf796f6c5edd9dbf28044f407b34",
+      "after": "54a62e57f8e14ae93fa47d73ddf34954b80a51935503fb7c10c5bc73ecdcc2d7",
+      "liveSha256": "54a62e57f8e14ae93fa47d73ddf34954b80a51935503fb7c10c5bc73ecdcc2d7",
+      "exactLive": true
+    },
+    {
+      "path": "scripts/database-migration-preview.ts",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "bcba603ebcb0c712d2af55a251901e49ab1357e5a389d891b61bc389dd1f8c04",
+      "after": "25f51caace5cac3ea219985e56a07c40e5f5c61869989c94e3868a22885280f5",
+      "liveSha256": "25f51caace5cac3ea219985e56a07c40e5f5c61869989c94e3868a22885280f5",
+      "exactLive": true
+    },
+    {
+      "path": "prompts/worker.md",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "b9e41383e3caa2fa2c14195b041ba11a7db76f9dd4a04c50c131d7dd57251586",
+      "after": "1b2fe739dd3cd5328970ea47ddb1befe273dbdac6eb49bfc5a2f5b7b3e631d3e",
+      "liveSha256": "1b2fe739dd3cd5328970ea47ddb1befe273dbdac6eb49bfc5a2f5b7b3e631d3e",
+      "exactLive": true
+    },
+    {
+      "path": "ui/homer-message-queue.tsx",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "e149277f79ad8fd73b2ec3ef7113657f44c583e690fc725e3d66514ffc9bb9e8",
+      "after": "5cd81bed64559dcda638fe6697b9e154c11e511cec4909fe63e261817001d5be",
+      "liveSha256": "5cd81bed64559dcda638fe6697b9e154c11e511cec4909fe63e261817001d5be",
+      "exactLive": true
+    },
+    {
+      "path": "ui/web-connection-client.ts",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "9b027ca0ef4ad6737514a17498fdc878281ac930ded1567966ec3de6e5e31547",
+      "after": "d4863e3c754ab57f72f44a274afdd3502a6d7d6e0bc574d61e2b5b0ffeca5b81",
+      "liveSha256": "d4863e3c754ab57f72f44a274afdd3502a6d7d6e0bc574d61e2b5b0ffeca5b81",
+      "exactLive": true
+    },
+    {
+      "path": "ui/capability-settings.tsx",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "c1fdffb5525784b43c39a59efe00dade7fbad494ad8b8fad53b3bd8f2839653e",
+      "after": "901cb642210445e71d5894c2b15d787d8b994019323270646aa706b56403441b",
+      "liveSha256": "901cb642210445e71d5894c2b15d787d8b994019323270646aa706b56403441b",
+      "exactLive": true
+    },
+    {
+      "path": "ui/index.html",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": "a98a3301bc685e6360e044a4203e559975dcddb1686b00539492f16d48098bf6",
+      "after": "c19823c1886cc2147ab56aacdbe207438d1d29d1bc444663b676c86d10f33607",
+      "liveSha256": "c19823c1886cc2147ab56aacdbe207438d1d29d1bc444663b676c86d10f33607",
+      "exactLive": true
+    },
+    {
+      "path": "assets/branding/homer-river-stone-16.4eeba81471bd.png",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": null,
+      "after": "4eeba81471bd37881098fb3e5a4306dc65f8bf5df37d803f996c97fe8743db7d",
+      "liveSha256": "4eeba81471bd37881098fb3e5a4306dc65f8bf5df37d803f996c97fe8743db7d",
+      "exactLive": true
+    },
+    {
+      "path": "assets/branding/homer-river-stone-32.e7d757c1e016.png",
+      "reason": "Exact sealed existing gateway/queue/native configuration/resource boundary.",
+      "before": null,
+      "after": "e7d757c1e0160b5940195367c53c919cc784022caa968538606f637f81b8de39",
+      "liveSha256": "e7d757c1e0160b5940195367c53c919cc784022caa968538606f637f81b8de39",
+      "exactLive": true
+    },
+    {
+      "path": "ui/vite.config.ts",
+      "reason": "Keep committed official notices; preserve sealed external asset fingerprinting.",
+      "before": "bb316e2ba15c2218a6ee4833c7769615f3771f325ddd36763ad97e43e41361cc",
+      "after": "8dae9113cbe51785a50a23a6b168a1f1c706b78a382349a96f3b0b3f5765faba",
+      "liveSha256": "9dc0604c1f62aeb600c19b5f4a97db3b022b3894e624c22eb35ded9f8e6caf36",
+      "exactLive": false
+    },
+    {
+      "path": "scripts/dev-build.mjs",
+      "reason": "Exact sealed guard/schema owner fingerprints plus f7db32f official Run Activity CSS check. Excludes uncommitted .DS_Store tweak.",
+      "before": "fe2995518c5d29b36483cb9564027f1ce90ade7110f3edfcbbecf5936ee319ea",
+      "after": "2d6ab0c52f9a92affe73c793e6ad33c48c3f2c1bbad7729fa194f374f1cb53be",
+      "liveSha256": "1d59600c4d8a573538f6c1c1ea4e284f0912e699225d216a11b45e52b5a54c32",
+      "exactLive": false
+    },
+    {
+      "path": "ui/homer-app.tsx",
+      "reason": "Three exact existing queue completion/scope hunks adapted to committed official Quote owner.",
+      "before": "7f1b38894abe399376906635f135444a3761638239e6d5dd6364afc319885669",
+      "after": "2f8a7df3a251c6d44663928b00ab967466e1fbdb89db3a198e7244db9220d642",
+      "exactLive": false
+    },
+    {
+      "path": "tests/message-queue-order.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "a4c8d95786d76de8beb18746c926e2da89125ba72fd25923ff4c34bae86512d4",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/message-queue-web.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "18107bbf1f4c8c1f8d3f836446d3bd21581393c24303108f21d25665e1aba2d8",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/message-queue-scheduler.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "1b7a3fd0497b866543cf25817d8d02172d1358ee51d2fd15f3cd304a11248df9",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/queue-edit-input.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "26439f0c2dd5a72ccc14c0331274eacd7e9e2561a69d0f4c777c8823663379cb",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/attachment-reference.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "df644fe8a97d707ef62d17409ea9af5f451cf384d2bc17bb583d63c05965ef30",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/engine-rpc-lifecycle.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "a2044401c81d58db2b7f073873a57e2ce6728251bec1d1e0c4d18396b53ece1f",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/native-execution-recovery.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "e54ac195b6bcae9dbe3459372d19cf223c0bd7a2074a866e543badd8420c10af",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/native-skill-writes.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "5109aee8a02b35031843f161e2121d72784fe7f1c076d3237e2b5f82362d2c80",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/service-native-skill-writes.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "1b89129da216d8d33352134802ef7f6a36be49356544e66038ea4417cc9de42e",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/native-mcp-config.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "be82b2a0513ec4c5a6db2168f5c09cc9378ad506cba4faba64ecb487f95cfbbc",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/mcp-operation-review.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "a2038a1cd6d469d0b6263a550df22f97aff93b2fe27dfa2bbc0f465e2f020abd",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/project-mcp-engine.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "bd5abd11f9b68b1c2f33037fb45fd370b798017014b6f6b6ef7b6ea9340d4613",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/project-mcp-lifecycle.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "6a87c3ccc7ca5dc4f66429c9403938e7595ca06b6eb17ef4c16c54e000f0a0f9",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/project-mcp-service-directory.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "c976a4b1010e4713e93aeabdfe1269777525c4cfc8f13927dfbde3eac2fbf2ee",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/native-memory-only.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "e62d27b9306323b6403fb6868dc66d395be61e425d3f980cb4f6452b9c3d435f",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/native-rpc-shutdown.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "98559de6536bdff3a1ba40083b02023c5284cb6d4283f933f68ea9cc0c0b1c00",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/recursive-tasks.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "7fdd2b19b8c77c689f3449165130ebed8e59619bbe30012296044dc033cfcc5f",
+      "after": "cb2efd722b05abb616993844beba38d4eb6e12ed0729bc36dbc4072eaeb089b1",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/recursive-fixture.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "d52a267bea53cd93923013298937917b8ea6a3fd84e71dfa13979cbfbecaea81",
+      "after": "b3729f6f0aba8eb6d004239be243eb0db295b3745c189c22a229a00df42eb1a4",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/recursive-publication-fixture.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "69c24f143bc88a1825eb91bbf64ce2ac00a9848fb38ef918e35677425fdb3b9a",
+      "after": "20ed4c412f865db8f92dec6c4a0965e0ed35044588588300e5d5c1f1861e852f",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/fixtures/mock-app-server.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "0f9ae51e53acfa2024278e6210d322b7674ef5cef49004f987647b57e2173c1f",
+      "after": "c3d7582c1585600949f39f90e9e440d0b4e5c3f7ba0deb594a52dffe337a2219",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/fixtures/native-feature-app-server.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "1ee1d026b07b30c008a5377a29c506d68682bf33ccdf5f9e3eb9b06256bcff5d",
+      "after": "9e90a19295ae24cb5da6694f3e5258575641452d0f20b3d0d57703cd5bc86826",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/fixtures/rpc-lifecycle-app-server.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "e344c230fc5e2baa6669293f3f3483f4be8cbc6f8b32ed03afa7dd00645d0499",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/fixtures/project-mcp-app-server.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "45f09023818a0c461395e9aa28bf91d6d815b13835caff7ab724be8a529577a3",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/fixtures/web-browser-app-server.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "5bc7a17f0faa35376308e19e25cddab17b1a16b1984afc5aa620e4a306075466",
+      "after": "cadc188e2e6fac0358b0aa0b700456f3279891b056a520fd4b459e118fde9956",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/web-user-connection.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "d10bdaeec9455f29895f86f4a42d8b7a8acb6aebef0ba8bceab496f3ac2e5ad8",
+      "after": "103f56f0786ee21df059aeed46269aeb665d285f12af72ff89d94f2cb1b2789c",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/message-queue.browser.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "4ad0af0b4f5a0eeaa47e0a16bd55cc6a462e7ab1b930b54f52fc869ad30c3f4f",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/message-queue-recovery.browser.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "bba9f287712c1e5fc1a477fc786ad6f28541ad4bdd82f753e09f0e81c23a16ad",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/fixtures/message-queue-browser-server.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "646b2efe853c47335cdc859ca57c323e8f396dfa615f3a9dbe3e7887f1699ef7",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/fixtures/historical-queue-state.mjs",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": null,
+      "after": "3d6cdc0b69a3d2080d0718849a2c6457dc269b37b7692c7303dfb5bad7b66b82",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/flexible-execution.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "a23de51a0dbae25882bf7f2d805433924d1e1eb662adba191c7edb1d56446e37",
+      "after": "1171dada88c018415e6ed925a552ce65f9095e7f21cfd8f3164bb50c954ee0dc",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/engine.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "7457ee3d0fadf520c83905a60dbd1641afcbd4e4bdafbf6cbb19800eb18d9bda",
+      "after": "72155fab8c266171afffdd0638d3b1299f392fed07615ff877306c563a397872",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/native-capabilities.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "13c8174dad11ab4a00e54706f1d5de398c48a2a9a5343fff4cdba743b6b05234",
+      "after": "f6c79855963fe4a9552f23e46538af9cd404d54caa3da849bca0e4e3513cbb39",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/native-capabilities-service.test.ts",
+      "reason": "Focused synthetic protection for existing sealed prerequisite contract; not product capability additions.",
+      "before": "54fc168f3237aa8c8f0dd19752ab95c4619f280b551e99566e0295d462eff2b9",
+      "after": "3a2fe73c0e4d128053a2e646019aea6178412ea7d759903e95297fac7fdf955d",
+      "liveSha256": null,
+      "exactLive": false
+    },
+    {
+      "path": "tests/web-connected-fixture.ts",
+      "reason": "Update shared synthetic HTTP fixture to actual sealed gateway protocol; avoids trying to pair against already unpaired live protocol.",
+      "before": "cab3971d6254bcd4686f303ef4c2a7cd602ea6cc776d3493c0cec8ec8d7e000c",
+      "after": "c3c0091145f267c988d9ed57431019a435ac54be9f87f9a4a5297bd858329aa7",
+      "exactLive": false
+    },
+    {
+      "path": "tests/fixtures/composer-browser-server.mjs",
+      "reason": "Synthetic static server supports existing versioned /ui/hash release asset paths, without changing assertions or product behavior.",
+      "before": "c50c395099544c25370b212b98cd7837a00723b9d139addf1c47b0aff1976177",
+      "after": "04d28d21a5d23e2bdb085248dede3ed53056645c4ba7051215a2c7ef83313dc5",
+      "exactLive": false
+    }
+  ],
+  "verification": {
+    "serviceBuild": true,
+    "uiTypes": true,
+    "cssBranches": 6,
+    "uiBuild": true,
+    "selectedTests": 240,
+    "verifiedPassingAfterFixtureCorrections": 239,
+    "knownBaselineFailures": [
+      {
+        "test": "main recovery: rejected preserves failure and receives the next message without replay",
+        "actual": "uncertain",
+        "expected": "failed",
+        "sealedLivePreimageReproduced": true
+      }
+    ],
+    "browser": {
+      "facts": 39,
+      "queue": 55,
+      "approval": 39,
+      "widths": [
+        320,
+        390,
+        1440
+      ]
+    },
+    "gateway": [
+      {
+        "method": "GET",
+        "path": "/api/history/state",
+        "status": 200,
+        "error": null
+      },
+      {
+        "method": "POST",
+        "path": "/api/history/receipts",
+        "status": 200,
+        "error": null
+      },
+      {
+        "method": "POST",
+        "path": "/api/messages/move",
+        "status": 409,
+        "error": "queue_input_not_found"
+      },
+      {
+        "method": "GET",
+        "path": "/api/files/result-synthetic/origin",
+        "status": 409,
+        "error": "artifact_not_authorized"
+      }
+    ],
+    "databasePreview": {
+      "at": "2026-10-23T04:50:10.232Z",
+      "input": "online-before",
+      "passes": true,
+      "results": [
+        {
+          "role": "business",
+          "tables": 61,
+          "integrity": "ok",
+          "fk": 0,
+          "stages": [
+            {
+              "owner": "old",
+              "preservedAllTablesRowsColumnsAndSchema": true
+            },
+            {
+              "owner": "candidate",
+              "preservedAllTablesRowsColumnsAndSchema": true
+            },
+            {
+              "owner": "rollback-old",
+              "preservedAllTablesRowsColumnsAndSchema": true
+            }
+          ]
+        },
+        {
+          "role": "gateway",
+          "tables": 3,
+          "integrity": "ok",
+          "fk": 0,
+          "stages": [
+            {
+              "owner": "old",
+              "preservedAllTablesRowsColumnsAndSchema": true
+            },
+            {
+              "owner": "candidate",
+              "preservedAllTablesRowsColumnsAndSchema": true
+            },
+            {
+              "owner": "rollback-old",
+              "preservedAllTablesRowsColumnsAndSchema": true
+            }
+          ]
+        }
+      ],
+      "mainThreadPreserved": true,
+      "noEngineChannelsOrCredentialAccess": true
+    },
+    "realModelCalls": 0
+  },
+  "excluded": [
+    "uncommitted product features and authorization changes",
+    "uncommitted Canvas changes",
+    "uncommitted .DS_Store snapshot tweak",
+    "unrelated dirty documentation/tests/artwork"
+  ],
+  "indexStrategy": "Separate temporary index; compare main HEAD and relevant real-index entries; preserve outside staging and all working-file bytes."
+}

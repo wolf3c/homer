@@ -23,17 +23,21 @@ for(const state of ['paused','stopping'] as const)test(state+' blocks queue inse
   assert.deepEqual(snapshot(f),before);assert.equal(f.tasks.claim(),undefined);
   assert.equal(f.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(queued.messageId)!.payloadJson,JSON.stringify({workerId:worker.workerId,text:'Accepted before pause'}));
   if(state==='paused'){
-   f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'});const next=f.tasks.claim()!;assert.equal(next.prompt,'Accepted before pause');assert.equal(f.tasks.claim(),undefined);
+   assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(queued.messageId)!.state,'rejected');
+   f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'});
+   assert.equal(f.tasks.claim(),undefined);
+   const fresh=f.tasks.workerSend(main,{operationId:'fresh',workerId:worker.workerId,text:'Explicit followup after resume'});
+   assert.equal(f.tasks.claim(fresh.runId!)?.prompt,'Explicit followup after resume');assert.equal(f.tasks.claim(),undefined);
   }
  }finally{f.close();}
 });
 
-test('cancellation rejects all pending input and cannot be converted into a resume or hidden replacement',()=>{
+test('cancellation rejects all pending input and denies a resume without new user authority',()=>{
  const f=fixture();try{
   const worker=openWorker(f),actor=running(f,worker.runId),queued=f.tasks.workerSend(main,{operationId:'accepted',workerId:worker.workerId,text:'Pending write'});
   const stop=f.tasks.controlTask(main,{...mutation(f,'cancel'),action:'cancel'});f.tasks.confirmWorkerExit(actor.runId!,undefined);f.tasks.confirmStop(stop.operationKey,true);
   assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(queued.messageId)!.state,'rejected');
-  const before=snapshot(f);assert.throws(()=>f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'}),/resume_unconfirmed|task_terminal/);
+  const before=snapshot(f);assert.throws(()=>f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'}),/task_authority_source_denied/);
   assert.deepEqual(snapshot(f),before);assert.equal(f.tasks.claim(),undefined);assert.equal(f.tasks.task(f.task.taskId).outcome,'cancelled');
  }finally{f.close();}
 });

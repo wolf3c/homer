@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import {parseResourceReference,parseResourceReferences,referencesOf,resourceHasComment,type ResourceReference} from './preview-reference.js';
+import {isDraftImageReference,parseResourceReference,parseResourceReferences,referencesOf,resourceHasComment,type ResourceReference} from './preview-reference.js';
 import { messageQuoteText,previewQuoteText,sourceQuoteText } from './message-quote.js';
 import type { AttachmentRef,MediaView } from './media-store.js';
 import { messageLinks, type MessageSource } from './message-links.js';
@@ -21,6 +21,11 @@ export type ConversationMessage = {
   role: "user" | "assistant"; text: string;
   status: "queued" | "processing" | "cancelled" | "running" | "completed" | "interrupted" | "failed";
   quote?: MessageQuote; quotes?: AnnotatedQuote[]; resourceReference?:ResourceReference; resourceReferences?:ResourceReference[]; createdAt: number;
+  taskId?: string | null;
+  taskVersion?: number | null;
+  operationKey?: string | null;
+  audience?: "user" | "internal";
+  revokedAt?: number | null;
   attachments?: AttachmentRef[];
   media?:MediaView[];
   sources?: MessageSource[];
@@ -30,6 +35,10 @@ export type ConversationMessage = {
 export type ConversationReceipt = { fresh: boolean; replyId: string };
 export type ConversationAcceptance = { source: string; persist: (receipt: ConversationReceipt) => void };
 type AcceptOptions = { source?: string; validateFresh?: () => void; persist?: ConversationAcceptance["persist"] };
+type AssistantMessage = {
+  threadId: string; requestId?: string | null; text: string; attachments?: readonly AttachmentRef[];
+  taskId?: string | null; taskVersion?: number | null; operationKey: string;
+};
 type Row = Omit<ConversationMessage, "quote" | "quotes" | "resourceReference" | "resourceReferences"> & { quote: string | null };
 // Preserve the legacy single-owner JSON bytes; only mixed inputs use both keys.
 export function encodeConversationReferences(input: Pick<ConversationInput, 'quote' | 'quotes' | 'resourceReference' | 'resourceReferences'>): string | null {
@@ -62,6 +71,7 @@ export function conversationInput(value: unknown): ConversationInput {
   if(input.resourceReference!==undefined&&input.resourceReferences!==undefined)throw Error('invalid_resource_reference');
   if((input.resourceReference!==undefined||input.resourceReferences!==undefined)&&input.interactionId!==undefined)throw Error('invalid_resource_reference');
   const resourceReference=input.resourceReference===undefined?undefined:parseResourceReference(input.resourceReference);
+  if(resourceReference&&isDraftImageReference(resourceReference))throw Error('invalid_resource_reference');
   const resourceReferences=input.resourceReferences===undefined?undefined:parseResourceReferences(input.resourceReferences);
   const references=referencesOf({resourceReference,resourceReferences});
   const quotes = input.quotes?.map(({ messageId, text, annotation,itemIds,position }) => ({ messageId, text, annotation,...(itemIds?{itemIds:[...itemIds]}:{}),...(position!==undefined?{position:quotePosition(position,text)}:{}) }));
@@ -88,12 +98,18 @@ export function conversationInput(value: unknown): ConversationInput {
 // It is neither engine context nor a diagnostic log. No browser owns this data.
 export class ConversationHistory {
   constructor(readonly db: DatabaseSync) {
+    const messages = db.prepare("PRAGMA table_info(conversation_messages)").all();
+    const attachments = db.prepare("PRAGMA table_info(conversation_attachments)").all();
+    if ((messages.length && ["taskId", "taskVersion", "operationKey", "audience", "revokedAt"].some(name => !messages.some(column => column.name === name))) ||
+        (attachments.length && !attachments.some(column => column.name === "messageId"))) throw Error("conversation_schema_unsupported");
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS conversation_inputs(requestId TEXT PRIMARY KEY,threadId TEXT NOT NULL,hash TEXT NOT NULL,replyId TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS conversation_messages(id TEXT PRIMARY KEY,threadId TEXT NOT NULL,requestId TEXT,role TEXT NOT NULL,text TEXT NOT NULL,status TEXT NOT NULL,quote TEXT,createdAt INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS conversation_messages(id TEXT PRIMARY KEY,threadId TEXT NOT NULL,requestId TEXT,role TEXT NOT NULL,text TEXT NOT NULL,status TEXT NOT NULL,quote TEXT,createdAt INTEGER NOT NULL,taskId TEXT,taskVersion INTEGER,operationKey TEXT,audience TEXT NOT NULL DEFAULT 'user' CHECK(audience IN ('user','internal')),revokedAt INTEGER);
       CREATE INDEX IF NOT EXISTS conversation_thread ON conversation_messages(threadId,createdAt);
       CREATE INDEX IF NOT EXISTS conversation_request_user ON conversation_messages(threadId,requestId,role,createdAt);
-      CREATE TABLE IF NOT EXISTS conversation_attachments(requestId TEXT PRIMARY KEY REFERENCES conversation_inputs(requestId),refsJson TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS conversation_task_message ON conversation_messages(threadId,taskId) WHERE taskId IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS conversation_message_operation ON conversation_messages(operationKey) WHERE operationKey IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS conversation_attachments(messageId TEXT PRIMARY KEY REFERENCES conversation_messages(id),refsJson TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS conversation_feedback(messageId TEXT PRIMARY KEY REFERENCES conversation_messages(id),value TEXT CHECK(value IN ('up','down')),updatedAt INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS conversation_tools(messageId TEXT NOT NULL REFERENCES conversation_messages(id),id TEXT NOT NULL,label TEXT NOT NULL,status TEXT NOT NULL,PRIMARY KEY(messageId,id));
       COMMIT;`);
@@ -104,7 +120,7 @@ export class ConversationHistory {
     for (let offset = 0; offset < requestIds.length; offset += 500) {
       const ids = requestIds.slice(offset, offset + 500);
       const rows = this.db.prepare(`SELECT m.*,a.refsJson FROM conversation_messages m
-        LEFT JOIN conversation_attachments a ON a.requestId=m.requestId
+        LEFT JOIN conversation_attachments a ON a.messageId=m.id
         WHERE m.threadId=? AND m.requestId IN (${ids.map(() => '?').join(',')}) AND m.role='user'
         ORDER BY m.createdAt,m.rowid`).all(threadId, ...ids) as unknown as (Row & {refsJson:string|null})[];
       for (const {refsJson, ...row} of rows) if (!result.has(row.requestId!))
@@ -114,7 +130,7 @@ export class ConversationHistory {
   }
   list(threadId: string): ConversationMessage[] {
     const rows = this.db.prepare(`SELECT m.*,a.refsJson,f.value AS feedbackValue FROM conversation_messages m
-      LEFT JOIN conversation_attachments a ON a.requestId=m.requestId AND m.role='user'
+      LEFT JOIN conversation_attachments a ON a.messageId=m.id
       LEFT JOIN conversation_feedback f ON f.messageId=m.id
       WHERE m.threadId=? ORDER BY m.rowid`).all(threadId) as unknown as (Row & {refsJson:string|null;feedbackValue:'up'|'down'|null})[];
     const tools = new Map<string, MessageToolActivity[]>(), ids=rows.filter(row=>row.role==='assistant').map(row=>row.id);
@@ -133,17 +149,57 @@ export class ConversationHistory {
     if(!ids.length)return [];
     if(ids.length>500)throw Error('history_ids_limit');
     const rows=this.db.prepare(`SELECT m.*,a.refsJson,f.value feedbackValue FROM json_each(?) wanted CROSS JOIN conversation_messages m ON m.id=wanted.value
-      LEFT JOIN conversation_attachments a ON a.requestId=m.requestId AND m.role='user'
+      LEFT JOIN conversation_attachments a ON a.messageId=m.id
       LEFT JOIN conversation_feedback f ON f.messageId=m.id
       WHERE m.threadId=? ORDER BY m.rowid`).all(JSON.stringify([...new Set(ids)]),threadId) as unknown as (Row&{refsJson:string|null;feedbackValue:'up'|'down'|null})[];
     const tools=new Map<string,MessageToolActivity[]>();
     for(const {messageId,...tool} of this.db.prepare(`SELECT messageId,id,label,status FROM conversation_tools WHERE messageId IN (${ids.map(()=>'?').join(',')}) ORDER BY rowid`).all(...ids) as (MessageToolActivity&{messageId:string})[]){const list=tools.get(messageId)??[];list.push(tool);tools.set(messageId,list);}
     return rows.map(({refsJson,feedbackValue,...row})=>({...parse(row),...(refsJson?{attachments:JSON.parse(refsJson)}:{}),...(row.role==='assistant'?{sources:messageLinks(row.text),toolActivities:tools.get(row.id)??[],feedback:feedbackValue??null}:{})}));
   }
-  // Internal exact identity lookup. Public callers must authorize a publication first.
+  // Internal exact identity lookup. Public callers must scope the message first.
   message(id: string): ConversationMessage | undefined {
-    const row=this.db.prepare('SELECT * FROM conversation_messages WHERE id=?').get(id) as Row | undefined;
-    return row ? parse(row) : undefined;
+    const entry=this.db.prepare(`SELECT m.*,a.refsJson FROM conversation_messages m
+      LEFT JOIN conversation_attachments a ON a.messageId=m.id WHERE m.id=?`).get(id) as (Row & {refsJson:string|null}) | undefined;
+    if (!entry) return;
+    const {refsJson, ...row} = entry;
+    return {...parse(row), ...(refsJson ? {attachments:JSON.parse(refsJson)} : {})};
+  }
+  revokeMessage(threadId: string, id: string): boolean {
+    return !!this.db.prepare("UPDATE conversation_messages SET revokedAt=? WHERE id=? AND threadId=? AND revokedAt IS NULL").run(Date.now(), id, threadId).changes;
+  }
+  // The owner commits the operation receipt and pin transfer in this transaction.
+  commitAssistant(input: AssistantMessage): string {
+    if (!this.db.isTransaction) throw Error("message_transaction_required");
+    const {threadId, requestId = null, text, attachments = [], taskId = null, taskVersion = null, operationKey} = input;
+    if ((!text.trim() && !attachments.length) || !operationKey) throw Error("invalid_message");
+    const prior = this.db.prepare("SELECT id FROM conversation_messages WHERE operationKey=?").get(operationKey);
+    if (prior) {
+      const message = this.message(String(prior.id))!;
+      if (message.threadId !== threadId || message.requestId !== requestId || message.text !== text ||
+          message.taskId !== taskId || message.taskVersion !== taskVersion ||
+          JSON.stringify(message.attachments ?? []) !== JSON.stringify(attachments)) throw Error("message_operation_conflict");
+      return message.id;
+    }
+    let id: string | undefined;
+    if (requestId !== null) {
+      const reply = this.db.prepare(`SELECT m.id,m.status,m.operationKey FROM conversation_inputs i
+        JOIN conversation_messages m ON m.id=i.replyId AND m.threadId=i.threadId AND m.requestId=i.requestId AND m.role='assistant'
+        WHERE i.requestId=? AND i.threadId=? AND m.revokedAt IS NULL`).get(requestId, threadId);
+      if (!reply || (reply.status !== "running" && !reply.operationKey)) throw Error("message_request_scope");
+      if (reply.status === "running") {
+        id = String(reply.id);
+        // The reserved identity predates its process. Place it in history when sent.
+        this.db.prepare(`UPDATE conversation_messages SET rowid=(SELECT max(rowid)+1 FROM conversation_messages),
+          text=?,status='completed',taskId=?,taskVersion=?,operationKey=? WHERE id=?`).run(text, taskId, taskVersion, operationKey, id);
+      }
+    }
+    if (!id) {
+      id = "message-" + randomUUID();
+      this.db.prepare(`INSERT INTO conversation_messages(id,threadId,requestId,role,text,status,createdAt,taskId,taskVersion,operationKey)
+        VALUES(?,?,?,'assistant',?,'completed',?,?,?,?)`).run(id, threadId, requestId, text, Date.now(), taskId, taskVersion, operationKey);
+    }
+    if (attachments.length) this.db.prepare("INSERT INTO conversation_attachments VALUES(?,?)").run(id, JSON.stringify(attachments));
+    return id;
   }
   feedback(threadId: string, messageId: string, value: unknown) {
     if (value !== 'up' && value !== 'down' && value !== null) throw Error('invalid_feedback');
@@ -159,8 +215,8 @@ export class ConversationHistory {
   validateQuotes(threadId: string, input: ConversationInput) {
     const quotes=input.quotes??(input.quote?[input.quote]:[]);if(!quotes.length)return;
     const ids=[...new Set(quotes.map(quote=>quote.messageId))];
-    const rows=this.db.prepare(`SELECT id,text FROM conversation_messages WHERE threadId=? AND id IN (${ids.map(()=>'?').join(',')})`).all(threadId,...ids);
-    const sources=new Map(rows.map(row=>[String(row.id),String(row.text)]));
+    const rows=this.db.prepare(`SELECT id,text,operationKey FROM conversation_messages WHERE threadId=? AND revokedAt IS NULL AND id IN (${ids.map(()=>'?').join(',')})`).all(threadId,...ids);
+    const sources=new Map(rows.map(row=>[String(row.id),row]));
     // Reuse the current reader's identity index when present. Exact node IDs
     // are the fallback before a history reader is initialized (no N+1 reads).
     const indexed=!!this.db.prepare("SELECT 1 FROM sqlite_temp_master WHERE type='table' AND name='web_process_ids'").get();
@@ -174,8 +230,9 @@ export class ConversationHistory {
     // overlapping quote, and never cache provider text beside its persistent item.
     const visible=new Map<string,string>();
     for(const quote of quotes){
-      if(!sources.has(quote.messageId))throw Error('quote_source_mismatch');
-      const node=processes.get(quote.messageId);let text:string,legacy:string|undefined;
+      const source=sources.get(quote.messageId);
+      if(!source)throw Error('quote_source_mismatch');
+      const node=source.operationKey?undefined:processes.get(quote.messageId);let text:string,legacy:string|undefined;
       if(node?.sourceKind==='user'&&!(node.messageId===quote.messageId&&node.final?.id===node.messageId&&!node.items.some(item=>item.kind==='commentary'&&item.phase==='final_answer'))){
         const parts=node.items.filter((item):item is Extract<import('./main-process.js').ProcessItem,{kind:'commentary'}>=>item.kind==='commentary');
         let selected=parts.filter(item=>item.phase==='final_answer');
@@ -191,15 +248,15 @@ export class ConversationHistory {
         text=selected.map(item=>{const key=JSON.stringify([quote.messageId,item.id,item.revision]);let value=visible.get(key);if(value===undefined){value=sourceQuoteText([item]);visible.set(key,value);}return value;}).join('\n\n');
       }else{
         if(quote.itemIds)throw Error('quote_source_mismatch');
-        text=previewQuoteText(sources.get(quote.messageId)!);legacy=messageQuoteText(sources.get(quote.messageId)!);
+        text=previewQuoteText(String(source.text));legacy=messageQuoteText(String(source.text));
       }
       if(!normalize(quote.text)||![text,...(legacy===undefined?[]:[legacy])].some(value=>normalize(value).includes(normalize(quote.text))))throw Error('quote_source_mismatch');
     }
   }
-  record(id: string, threadId: string, text: string, status: ConversationMessage['status'] = 'completed', requestId: string | null = null) {
-    const prior = this.db.prepare('SELECT text,threadId,requestId FROM conversation_messages WHERE id=?').get(id);
-    if (prior) { if (prior.threadId !== threadId || prior.text !== text || prior.requestId !== requestId) throw Error('delivery_history_conflict'); return; }
-    this.db.prepare("INSERT INTO conversation_messages VALUES(?,?,?,'assistant',?,?,NULL,?)").run(id, threadId, requestId, text, status, Date.now());
+  record(id: string, threadId: string, text: string, status: ConversationMessage['status'] = 'completed', requestId: string | null = null, audience: "user" | "internal" = "user") {
+    const prior = this.db.prepare('SELECT text,threadId,requestId,audience FROM conversation_messages WHERE id=?').get(id);
+    if (prior) { if (prior.threadId !== threadId || prior.text !== text || prior.requestId !== requestId || prior.audience !== audience) throw Error('message_history_conflict'); return; }
+    this.db.prepare("INSERT INTO conversation_messages(id,threadId,requestId,role,text,status,createdAt,audience) VALUES(?,?,?,'assistant',?,?,?,?)").run(id, threadId, requestId, text, status, Date.now(), audience);
   }
   accept(threadId: string, value: ConversationInput, options: AcceptOptions = {}) {
     const input = conversationInput(value);
@@ -221,11 +278,11 @@ export class ConversationHistory {
       }
       options.validateFresh?.();
       this.validateQuotes(threadId,input);
-      const replyId = "message-" + randomUUID(), now = Date.now();
+      const messageId = "message-" + randomUUID(), replyId = "message-" + randomUUID(), now = Date.now();
       this.db.prepare("INSERT INTO conversation_inputs VALUES(?,?,?,?)").run(input.requestId, threadId, hash, replyId);
-      if(input.attachments)this.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run(input.requestId,JSON.stringify(input.attachments));
-      const insert = this.db.prepare("INSERT INTO conversation_messages VALUES(?,?,?,?,?,?,?,?)");
-      insert.run("message-" + randomUUID(), threadId, input.requestId, "user", input.text, "completed", encodeConversationReferences(input), now);
+      const insert = this.db.prepare("INSERT INTO conversation_messages(id,threadId,requestId,role,text,status,quote,createdAt) VALUES(?,?,?,?,?,?,?,?)");
+      insert.run(messageId, threadId, input.requestId, "user", input.text, "completed", encodeConversationReferences(input), now);
+      if(input.attachments)this.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run(messageId,JSON.stringify(input.attachments));
       insert.run(replyId, threadId, input.requestId, "assistant", "", "running", null, now);
       const receipt = persist({ fresh: true, replyId });
       this.db.exec("COMMIT");
@@ -236,11 +293,11 @@ export class ConversationHistory {
     this.db.prepare("UPDATE conversation_messages SET text=text || ? WHERE id=? AND status='running'").run(delta, id);
   }
   finish(id: string, text: string, status: ConversationMessage["status"]) {
-    this.db.prepare("UPDATE conversation_messages SET text=?,status=? WHERE id=? AND status='running'").run(text, status, id);
+    return !!this.db.prepare("UPDATE conversation_messages SET text=?,status=? WHERE id=? AND status='running'").run(text, status, id).changes;
   }
   add(threadId: string, text: string, status: ConversationMessage["status"] = "completed") {
     const id = "message-" + randomUUID();
-    this.db.prepare("INSERT INTO conversation_messages VALUES(?,?,NULL,'assistant',?,?,NULL,?)").run(id, threadId, text, status, Date.now());
+    this.record(id, threadId, text, status);
     return id;
   }
   reconcile() {

@@ -7,17 +7,22 @@
 .status-aside{height:100%;min-height:0;border-inline-start:1px solid var(--line);background:var(--surface);padding:16px 12px}
 .status-content-body{min-width:0;min-height:0}
 .status-aside .status-content-body{height:100%}
-.homer-task-status .status-entry,.conversation-header .header-actions .status-entry{display:flex;flex:none;align-items:center;justify-content:flex-start;gap:4px;width:60px;height:44px;padding:0 8px}
-.homer-task-status .status-entry>svg{flex:none;width:18px;height:18px}
-.homer-task-status .status-count-slot{display:flex;flex:0 0 22px;align-items:center;justify-content:flex-start;width:22px;min-width:0;overflow:hidden}
-.homer-task-status .status-entry-count{display:inline-flex;align-items:center;justify-content:center;width:max-content;min-width:18px;max-width:22px;height:18px;border-radius:9px;background:var(--soft);color:var(--ink);font-size:11px;font-weight:600;line-height:18px;font-variant-numeric:tabular-nums;white-space:nowrap}
-.homer-task-status .status-entry-count[data-digits="multiple"]{width:22px}
+.homer-task-status .status-entry,.conversation-header .header-actions .status-entry{display:flex;flex:none;align-items:center;justify-content:center;width:50px;height:44px;padding:0}
+.conversation-header .header-actions .status-entry:hover{background:transparent}
+.homer-task-status .status-entry-icon{position:relative;display:grid;place-items:center;width:34px;height:34px;border-radius:8px}
+.homer-task-status .status-entry:is(:hover,[aria-expanded="true"]) .status-entry-icon{background:var(--soft);color:var(--ink)}
+.homer-task-status .status-entry-count{
+  position:absolute;top:calc(50% + 9px);left:calc(50% + 9px);transform:translate(-50%,-50%);
+  display:grid;place-items:center;min-width:15px;height:15px;padding:0 3px;border-radius:8px;
+  background:var(--soft);color:var(--ink);box-shadow:0 0 0 1px var(--surface);
+  font-size:11px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap
+}
 .homer-task-status .status-entry:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .homer-task-status .status-counts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:4px;min-width:0}
-.homer-task-status .status-count-filter{min-width:0;min-height:44px;padding:var(--spacing);border:1px solid transparent;border-radius:var(--radius-md);background:transparent;color:hsl(var(--muted-foreground));font-size:12px;font-weight:500;line-height:1.7;white-space:nowrap;cursor:pointer}
-.homer-task-status .status-count-filter:hover:not(:disabled):not([data-disabled]){background:hsl(var(--foreground)/0.06);color:hsl(var(--foreground))}
-.homer-task-status .status-count-filter[data-pressed]{border-color:hsl(var(--border));background:hsl(var(--muted));color:hsl(var(--foreground))}
-.homer-task-status .status-count-filter:active:not(:disabled):not([data-disabled]){background:hsl(var(--foreground)/0.09)}
+.homer-task-status .status-count-filter{position:relative;min-width:0;min-height:44px;padding:var(--spacing);border:1px solid transparent;border-radius:var(--radius-md);background:transparent;color:hsl(var(--muted-foreground));font-size:12px;font-weight:500;line-height:1.7;white-space:nowrap;cursor:pointer}
+.homer-task-status .status-count-filter:hover:not(:disabled):not([data-disabled]){color:hsl(var(--foreground))}
+.homer-task-status .status-count-filter[data-pressed]{color:hsl(var(--foreground));font-weight:650}
+.homer-task-status .status-count-filter[data-pressed]::after{content:"";position:absolute;bottom:3px;left:50%;width:20px;height:2px;border-radius:2px;background:currentColor;transform:translateX(-50%)}
 .homer-task-status .status-count-filter:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:3px}
 .homer-task-status .status-count-filter:is(:disabled,[data-disabled]){cursor:not-allowed;opacity:.5}
 .homer-task-status .status-list{max-height:min(59dvh,34rem);overflow:auto;overscroll-behavior:contain;padding:0 8px 4px 0;min-width:0;overflow-wrap:anywhere}
@@ -27,7 +32,7 @@
 /* Compact BackgroundInbox-style disclosure rows; the existing owner supplies facts. */
 .homer-task-status [data-slot="task-status-row"]{min-width:0}
 .homer-task-status .status-row-trigger{cursor:pointer}
-.homer-task-status .status-row-trigger:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:-2px}
+@media(forced-colors:none){.homer-task-status .status-row-trigger:focus-visible{outline:none;box-shadow:inset 2px 0 var(--focus)}}
 .homer-task-status .status-row-body{margin:0 6px 12px 13px;padding:8px 0 4px 17px;border-inline-start:1px solid hsl(var(--border));display:flex;flex-direction:column;gap:16px;min-width:0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
 .homer-task-status .status-row-heading{font-size:12px;line-height:1.6}
 .homer-task-status .status-row-heading>p{margin:0}

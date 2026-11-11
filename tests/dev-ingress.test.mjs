@@ -61,7 +61,7 @@ test('rejection clears protected payload; only an explicit retry may resubmit to
  try{
   const input={requestId:'bad-quote',text:'Synthetic rejected text'};
   journal.store(input);journal.reject(input.requestId,'quote_source_mismatch');
-  assert.deepEqual(journal.pending(),[]);assert.deepEqual(journal.rejected(),[{requestId:input.requestId,error:'quote_source_mismatch'}]);
+  assert.deepEqual(journal.pending(),[]);assert.deepEqual(journal.receipts([input.requestId]),[{requestId:input.requestId,state:'rejected',error:'quote_source_mismatch'}]);
   assert.equal(readFileSync(journal.path).includes(Buffer.from(input.text)),false);
   journal.store(input);assert.equal(journal.pending().length,1);
   assert.throws(()=>journal.store({...input,text:'Changed'}),/request_id_conflict/);

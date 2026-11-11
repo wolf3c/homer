@@ -3,6 +3,7 @@ import type {ConversationHistory} from './web-history.js';
 import type {MainProcessHistory,ProcessNode} from './main-process.js';
 import type {MainInputs} from './recursive-main-inputs.js';
 import {projectConversation,type ConversationBoundary} from './conversation-projection.js';
+import type {ChannelPlugin} from './channel-plugin.js';
 export type HistoryPageRequest={limit?:number;before?:string;after?:string;around?:string};
 type Identity={id:string;threadId:string;messageId:string;replyId:string|null;requestId:string|null;sourceKind:string;position:number|null};
 const processPrefix='publicMainNode:v1:';
@@ -14,7 +15,7 @@ function historyPredicates(){
   const inbox=(m:string,state:string)=>`EXISTS(SELECT 1 FROM agent_messages a JOIN agent_receipts r ON r.messageId=a.id WHERE a.kind='user_input' AND a.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND json_extract(a.payloadJson,'$.requestId')=${m}.requestId AND ${state})`;
   const queued=(m:string)=>`(${inbox(m,"r.state IN ('pending','offered','received','uncertain')")} AND NOT ${hasUserNode(m)} AND NOT ${legacy(m)})`;
   const cancelled=(m:string)=>inbox(m,"r.state NOT IN ('pending','offered','received','uncertain') AND json_extract(a.payloadJson,'$.terminal')='cancelled'");
-  const formal=`(EXISTS(SELECT 1 FROM web_process_ids p WHERE p.threadId=m.threadId AND p.messageId=m.id)
+  const formal=`((m.audience='user' AND m.operationKey IS NOT NULL) OR EXISTS(SELECT 1 FROM web_process_ids p WHERE p.threadId=m.threadId AND p.messageId=m.id)
    OR (m.role='user' AND NOT ${hasUserNode('m')} AND NOT ${queued('m')} AND NOT ${cancelled('m')} AND NOT ${outcome('m')})
    OR (m.role='assistant' AND NOT (EXISTS(SELECT 1 FROM web_process_ids p WHERE p.threadId=m.threadId AND p.replyId=m.id AND p.position IS NOT NULL) AND (m.status='running' OR EXISTS(SELECT 1 FROM web_process_ids f WHERE f.threadId=m.threadId AND f.replyId=m.id AND f.hasFinal=1)))
     AND NOT (${inbox('m',"EXISTS(SELECT 1 FROM conversation_inputs i WHERE i.requestId=m.requestId AND i.replyId=m.id)")} AND (${queued('m')} OR ${cancelled('m')} OR ${outcome('m')} OR m.text=''))))`;
@@ -27,7 +28,7 @@ function historyPredicates(){
 export class WebHistoryPages{
  readonly initialization:{version:1;nodes:number;ms:number;batches:number};
  private get db(){return this.history.db;}
- constructor(private history:ConversationHistory,private processes:MainProcessHistory,private inputs:MainInputs){
+ constructor(private history:ConversationHistory,private processes:MainProcessHistory,private inputs:MainInputs,private channels?:Pick<ChannelPlugin,'readMessageSources'>){
   const start=performance.now(),db=this.db;
   // DDL for TEMP read indexes is deliberately outside business change observers.
   // One savepoint prevents a partially installed trigger set on initialization failure.
@@ -44,7 +45,6 @@ export class WebHistoryPages{
     CREATE INDEX IF NOT EXISTS temp.web_process_reply ON web_process_ids(threadId,replyId,position);
     CREATE TEMP TABLE IF NOT EXISTS web_process_workers(nodeId TEXT,taskId TEXT,PRIMARY KEY(nodeId,taskId));
     CREATE INDEX IF NOT EXISTS temp.web_process_task ON web_process_workers(taskId,nodeId);
-    CREATE TEMP TABLE IF NOT EXISTS web_process_publications(messageId TEXT,nodeId TEXT,PRIMARY KEY(messageId,nodeId));
     CREATE TEMP TABLE IF NOT EXISTS web_dirty_tasks(taskId TEXT PRIMARY KEY);
     CREATE TEMP TABLE IF NOT EXISTS web_active_inputs(messageId TEXT PRIMARY KEY,seq INTEGER);
     CREATE INDEX IF NOT EXISTS temp.web_active_order ON web_active_inputs(seq);
@@ -64,13 +64,12 @@ export class WebHistoryPages{
     (SELECT rowid FROM conversation_messages WHERE id=json_extract(${value},'$.messageId')),CASE WHEN json_extract(${value},'$.replyPolicy')='explicitFinal' OR json_type(${value},'$.final')='object' OR (json_extract(${value},'$.sourceKind')='user' AND EXISTS(SELECT 1 FROM json_each(${value},'$.items') item WHERE json_extract(item.value,'$.kind')='commentary' AND json_extract(item.value,'$.phase')='final_answer')) THEN 1 ELSE 0 END;`;
   // Triggers execute in the original write transaction, including rollback.
   // Revision is a read invalidation fence, never a Run/version or stop target.
-  const publicationIds=(value:string)=>`CASE WHEN json_type(${value},'$.deliveryMessageIds')='array' THEN json_extract(${value},'$.deliveryMessageIds') ELSE json_array(json_extract(${value},'$.deliveryMessageId')) END`;
-  const updateNode=`DELETE FROM web_process_publications WHERE nodeId=json_extract(new.value,'$.id');INSERT INTO web_process_publications SELECT DISTINCT j.value,json_extract(new.value,'$.id') FROM json_each(${publicationIds('new.value')}) j WHERE j.value IS NOT NULL;DELETE FROM web_process_workers WHERE nodeId=json_extract(new.value,'$.id');DELETE FROM web_process_ids WHERE id=json_extract(new.value,'$.id');${indexNode('new.value')}
+  const updateNode=`DELETE FROM web_process_workers WHERE nodeId=json_extract(new.value,'$.id');DELETE FROM web_process_ids WHERE id=json_extract(new.value,'$.id');${indexNode('new.value')}
     INSERT INTO web_process_workers SELECT DISTINCT json_extract(new.value,'$.id'),json_extract(j.value,'$.taskId') FROM json_each(new.value,'$.items') j WHERE json_extract(j.value,'$.kind')='worker';${refreshLegacy(nodeIds('new.value'))}${refreshFormal(nodeIds('new.value'))}${refreshFormal(front("(SELECT requestId FROM web_process_ids WHERE id=json_extract(new.value,'$.id'))"))}`;
   for(const event of ['INSERT','UPDATE'])execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_meta_${event.toLowerCase()} AFTER ${event} ON main.meta WHEN new.key GLOB '${processPrefix}*' BEGIN ${updateNode}
     ${event==='UPDATE'?`${refreshLegacy(nodeIds('old.value'))}${refreshFormal(nodeIds('old.value'))}${refreshFormal(front("coalesce((SELECT json_extract(a.payloadJson,'$.requestId') FROM json_each(old.value,'$.sourceMessageIds') s JOIN agent_messages a ON a.id=s.value WHERE a.kind='user_input' ORDER BY cast(s.key AS INTEGER) LIMIT 1),(SELECT requestId FROM conversation_messages WHERE id=json_extract(old.value,'$.replyMessageId')))"))}`:''}UPDATE web_read_revision SET revision=revision+1; END;`);
   execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_meta_delete AFTER DELETE ON main.meta WHEN old.key GLOB '${processPrefix}*' BEGIN
-    DELETE FROM web_process_publications WHERE nodeId=json_extract(old.value,'$.id');DELETE FROM web_process_workers WHERE nodeId=json_extract(old.value,'$.id');DELETE FROM web_process_ids WHERE id=json_extract(old.value,'$.id');${refreshLegacy(nodeIds('old.value'))}${refreshFormal(nodeIds('old.value'))}${refreshFormal(front("(SELECT requestId FROM conversation_messages WHERE id=json_extract(old.value,'$.replyMessageId'))"))}UPDATE web_read_revision SET revision=revision+1;END;`);
+    DELETE FROM web_process_workers WHERE nodeId=json_extract(old.value,'$.id');DELETE FROM web_process_ids WHERE id=json_extract(old.value,'$.id');${refreshLegacy(nodeIds('old.value'))}${refreshFormal(nodeIds('old.value'))}${refreshFormal(front("(SELECT requestId FROM conversation_messages WHERE id=json_extract(old.value,'$.replyMessageId'))"))}UPDATE web_read_revision SET revision=revision+1;END;`);
   for(const event of ['INSERT','UPDATE','DELETE']){
    const ref=event==='DELETE'?'old':'new';
    execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_history_${event.toLowerCase()} AFTER ${event} ON main.conversation_messages BEGIN
@@ -79,10 +78,10 @@ export class WebHistoryPages{
     ${refreshFormal(`SELECT ${ref}.id UNION SELECT replyId FROM web_process_ids WHERE messageId=${ref}.id`)}
     ${refreshFormal(front(`coalesce(${ref}.requestId,(SELECT requestId FROM web_process_ids WHERE messageId=${ref}.id))`))}
     UPDATE web_read_revision SET revision=revision+1;END;`);
-   for(const table of ['tasks','runs','results'])execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_dirty_${table}_${event.toLowerCase()} AFTER ${event} ON main.${table} BEGIN
+   for(const table of ['tasks','runs'])execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_dirty_${table}_${event.toLowerCase()} AFTER ${event} ON main.${table} BEGIN
     INSERT INTO web_dirty_tasks SELECT ${ref}.${table==='tasks'?'id':'taskId'} WHERE ${ref}.${table==='tasks'?'id':'taskId'} IS NOT NULL AND NOT EXISTS(SELECT 1 FROM web_dirty_tasks WHERE taskId=${ref}.${table==='tasks'?'id':'taskId'});UPDATE web_read_revision SET revision=revision+1;END;`);
   }
-  for(const table of ['worker_interactions','deliveries','conversation_feedback','conversation_attachments','media_assets','media_derivatives']){
+  for(const table of ['worker_interactions','conversation_feedback','conversation_attachments','media_assets','media_derivatives']){
    if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))continue;
    for(const event of ['INSERT','UPDATE','DELETE'])execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_revision_${table}_${event.toLowerCase()} AFTER ${event} ON main.${table} BEGIN UPDATE web_read_revision SET revision=revision+1;END;`);
   }
@@ -111,7 +110,6 @@ export class WebHistoryPages{
      // Bind once through a CTE; statements contain only trusted SQL identifiers.
      db.prepare(`WITH source(value) AS (SELECT value FROM meta WHERE key=?) ${indexNode('(SELECT value FROM source)')}`).run(key);
      db.prepare(`INSERT OR IGNORE INTO web_process_workers SELECT json_extract(m.value,'$.id'),json_extract(j.value,'$.taskId') FROM meta m,json_each(m.value,'$.items') j WHERE m.key=? AND json_extract(j.value,'$.kind')='worker'`).run(key);
-     db.prepare(`INSERT OR IGNORE INTO web_process_publications SELECT DISTINCT j.value,json_extract(m.value,'$.id') FROM meta m,json_each(${publicationIds('m.value')}) j WHERE m.key=? AND j.value IS NOT NULL`).run(key);
     }
     execute('RELEASE web_index_batch');
    }catch(error){execute('ROLLBACK TO web_index_batch;RELEASE web_index_batch');throw error;}
@@ -180,8 +178,16 @@ export class WebHistoryPages{
   for(const node of nodeRows)if(node.requestId&&node.position!==null&&this.db.prepare("SELECT 1 FROM web_process_ids WHERE threadId=? AND requestId=? AND sourceKind='user' AND position IS NOT NULL AND position<? LIMIT 1").get(threadId,node.requestId,node.position))continuedNodes.add(node.id);
   const replies=[...new Set(nodeRows.flatMap(node=>node.replyId?[node.replyId]:[]))];
   for(const reply of replies)related.add(reply);
-  const history=this.history.byIds(threadId,[...related]),display=projectConversation(history,nodes,this.inputs.byRequestIds(requests),boundary);
-  if(!details)display.messages=display.messages.map(message=>message.process?.details==='unloaded'&&message.process.final?{...message,process:{...message.process,final:{id:message.process.final.id,text:''}}}:message);
+  const history=this.history.byIds(threadId,[...related]),inbox=this.inputs.byRequestIds(requests);
+  const display=projectConversation(history,nodes,inbox,boundary);
+  const sources=this.channels?.readMessageSources(inbox.filter(item=>item.source==='channel_plugin').map(item=>item.input.requestId),false);
+  if(!details||sources?.size)display.messages=display.messages.map(message=>{
+   const channelSource=message.role==='user'&&message.requestId?sources?.get(message.requestId):undefined;
+   if(channelSource)return {...message,channelSource};
+   if(!details&&message.process?.details==='unloaded'&&message.process.final)
+    return {...message,process:{...message.process,final:{id:message.process.final.id,text:''}}};
+   return message;
+  });
   const first=selected[0],last=selected.at(-1);
   return {protocol:3 as const,threadId,revision:this.revision,...display,units:selectedIds,
    before:first&&(request.after||inclusive||more)?this.cursor(threadId,first.id):null,
@@ -199,8 +205,21 @@ export class WebHistoryPages{
    const page=this.inputs.dispatchPage(cursor,readEpoch,'all');
    const users=page.items.filter(item=>item.origin==='user');
    const visible=new Map(this.projectQueue(users).map(item=>[item.messageId,item]));
+   const workers=page.items.filter(item=>item.origin==='worker');
+   const taskIds=[...new Set(workers.flatMap(item=>item.taskId?[item.taskId]:[]))];
+   const interactionIds=[...new Set(workers.flatMap(item=>item.kind==='interaction_required'&&item.payload&&typeof item.payload==='object'&&typeof (item.payload as {interactionId?:unknown}).interactionId==='string'?[(item.payload as {interactionId:string}).interactionId]:[]))];
+   let titles=new Map<string,string>(),interactions=new Map<string,{kind:string;runId:string}>();
+   try{if(taskIds.length)titles=new Map((this.db.prepare(`SELECT id,title FROM tasks WHERE id IN (${marks(taskIds)})`).all(...taskIds) as {id:string;title:string}[]).map(row=>[row.id,row.title]));}catch{/* Missing metadata must not block the queue. */}
+   try{if(interactionIds.length)interactions=new Map((this.db.prepare(`SELECT id,kind,runId FROM worker_interactions WHERE id IN (${marks(interactionIds)})`).all(...interactionIds) as {id:string;kind:string;runId:string}[]).map(row=>[row.id,row]));}catch{/* Fall back to a generic interaction. */}
    return {...page,items:page.items.flatMap<import('./recursive-main-inputs.js').MainDispatchInput&{user?:import('./web-history.js').ConversationMessage;statusText:string}>(item=>{
-    if(item.origin==='worker')return [{...item,statusText:item.state==='queued'?'等待主 Agent 处理':'接收结果待核对'}];
+    if(item.origin==='worker'){
+     const payload=item.payload&&typeof item.payload==='object'?item.payload as {interactionId?:unknown}:{};
+     const interaction=typeof payload.interactionId==='string'?interactions.get(payload.interactionId):undefined;
+     const kind=item.kind==='interaction_required'?(interaction?.runId===item.runId?(interaction.kind==='question'?'提问':interaction.kind==='authorization'?'操作或授权请求':'交互请求'):'交互请求'):item.kind==='worker_reply'?'执行信息已返回':item.kind==='task_archived'?'事项归档通知':'协作消息';
+     const statusText=item.state==='queued'?'等待主 Agent 处理':item.state==='processing'?'主 Agent 正在接收或处理':'接收状态待核对';
+     const title=item.taskId?titles.get(item.taskId)?.replace(/\s+/g,' ').trim():undefined;
+     return [{...item,payload:null,text:[kind,statusText,title?'事项：'+title:'事项标题暂不可用'].join(' · '),statusText}];
+    }
     const projected=visible.get(item.messageId);return projected?[{...item,...projected}]:[];
    })};
   }

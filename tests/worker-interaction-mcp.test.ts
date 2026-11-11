@@ -20,7 +20,8 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
   let child: ReturnType<typeof spawn> | undefined;
   try {
     await server.start();
-    assert.equal(statSync(server.path).mode & 0o777, 0o600);
+    if(process.platform==='win32')assert.match(server.path,/^\\\\\.\\pipe\\homer-hi-/);
+    else assert.equal(statSync(server.path).mode & 0o777, 0o600);
     child = spawn(process.execPath, ["--import", "tsx", resolve("src/worker-interaction-mcp-stdio.ts"), server.path,role], { stdio: ["pipe", "pipe", "pipe"] });
     const pending = new Map<number, (value: any) => void>();
     let seq = 0, stderr = "";
@@ -38,7 +39,7 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
     });
     assert.equal((await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "synthetic-test", version: "1" } })).result.serverInfo.name, "homer-interactions");
     const tools = (await rpc("tools/list", {})).result.tools;
-    assert.deepEqual(tools.map((tool: any) => tool.name), role==='main'?['work_directory','file_checkpoint','capabilities','inspect_interaction','respond_interaction','escalate_interaction','runtime_capabilities','inspect_attachment','inspect_result_file','quote_current_message','prepare_combined_delivery']:['work_directory','file_checkpoint','capabilities','inspect_attachment']);
+    assert.deepEqual(tools.map((tool: any) => tool.name), role==='main'?['work_directory','inspect_interaction','respond_interaction','escalate_interaction','runtime_capabilities','inspect_attachment']:['work_directory','inspect_attachment']);
     const inspected=role==='main'?'inspect_interaction':'work_directory';
     const response = await rpc("tools/call", { name: inspected, arguments: { interactionId: "request-a" } });
     assert.equal(response.result.isError, false);
@@ -46,7 +47,7 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
     const failure = await rpc("tools/call", { name: inspected, arguments: { interactionId: "fail" } });
     assert.equal(failure.result.content[0].text, "interaction_mcp_failed");
     assert.equal((await rpc("tools/call", { name: "shell", arguments: {} })).result.isError, true);
-    for(const forbidden of ['task_create','task_update','worker_open','worker_send','worker_read','worker_interrupt','work_inspect','accept_result','task_delegate','task_review','task_stop','task_continue','task_takeover','agent_send','inbox_read','inbox_ack','adopt_version','pending_add','pending_list','pending_update','memory_search','memory_forget','publish_delivery'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
+    for(const forbidden of ['file_checkpoint','task_create','task_update','worker_open','worker_send','worker_read','worker_interrupt','work_inspect','accept_result','task_delegate','task_review','task_stop','task_continue','task_takeover','agent_send','inbox_read','inbox_ack','adopt_version','pending_add','pending_list','pending_update','memory_search','memory_forget','publish_delivery'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
     if(role==='worker')for(const forbidden of ['quote_current_message','prepare_combined_delivery','runtime_capabilities','inspect_result_file'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
     const wait=await rpc('tools/call',{name:'task_wait',arguments:{}});
     assert.equal(wait.result.isError,true);
@@ -60,7 +61,8 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
       });
       assert.equal(direct.error,'interaction_tool_denied');
     }
-    if(role==='worker'){assert.equal((await rpc('tools/call',{name:'capabilities',arguments:{action:'discover'}})).result.isError,false);assert.deepEqual(calls,[inspected,inspected,'capabilities']);}else assert.deepEqual(calls, [inspected, inspected]);
+    assert.equal((await rpc('tools/call',{name:'capabilities',arguments:{action:'discover'}})).result.isError,true);
+    assert.deepEqual(calls,[inspected,inspected]);
     assert.equal(stderr, "");
   } finally {
     child?.kill();

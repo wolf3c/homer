@@ -1,3 +1,4 @@
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
@@ -9,7 +10,7 @@ import {WorkerInteractions} from '../src/worker-interactions.js';
 import {ConversationHistory} from '../src/web-history.js';
 import {MainInputs} from '../src/recursive-main-inputs.js';
 import {MainProcessHistory} from '../src/main-process.js';
-import {Homer} from '../src/service.js';
+import {projectConversation} from '../src/conversation-projection.js';
 import {unconfirmedInputs} from '../ui/conversation-client.js';
 function fixture(){
  mkdirSync(resolve('.codex/scratch/conversation-projection-implementation'),{recursive:true});
@@ -17,13 +18,13 @@ function fixture(){
  const store=new Store(join(root,'synthetic.sqlite'));new WorkerInteractions(store.db);
  const history=new ConversationHistory(store.db),tasks=new RecursiveTasks(store,new Files(join(root,'workspace')));tasks.migrate();store.setMeta('mainThread','synthetic');
  const inputs=new MainInputs(tasks,history),processes=new MainProcessHistory(store.db);
- const host={store,history,inputs,processes,media:{view:()=>{throw Error('no_media_fixture');}},mainActivityState:()=>null};
- const state=()=>Homer.prototype.conversationState.call(host as unknown as Homer);
- function ack(item:ReturnType<MainInputs['claim']>,id:string,previous?:{generationId:string;turnId:string}){assert.ok(item);store.transaction(()=>{
+ const state=()=>projectConversation(history.list('synthetic'),processes.list('synthetic'),inputs.list());
+ const accepted=()=>history.acceptedRequestIds('synthetic');
+ function ack(item:ReturnType<MainInputs['claim']>,id:string){assert.ok(item);store.transaction(()=>{
   processes.start({id,threadId:'synthetic',sourceKind:'user',sourceMessageIds:[item.messageId],messageId:id,replyMessageId:item.replyId},id+'-turn');history.record(id,'synthetic','','running');
-  if(previous)inputs.continuedInTransaction(item.messageId,item.revision,previous.generationId,previous.turnId,id+'-turn');else inputs.startedInTransaction(item.messageId,item.revision,'generation-'+item.input.requestId,id+'-turn');
+  inputs.startedInTransaction(item.messageId,item.revision,'generation-'+item.input.requestId,id+'-turn');
  });}
- return{root,store,history,inputs,processes,tasks,state,ack,close(){store.close();rmSync(root,{recursive:true,force:true});}};
+ return{root,store,history,inputs,processes,tasks,state,accepted,ack,close(){store.close();rmSync(root,{recursive:true,force:true});}};
 }
 test('B: pending is a separate queue; edit/cancel, claim lock and exact ACK move the original identity once',()=>{
  const f=fixture();try{
@@ -34,7 +35,7 @@ test('B: pending is a separate queue; edit/cancel, claim lock and exact ACK move
  assert.deepEqual(f.state().queue.map(q=>q.input.requestId),['B','C']);
  const edit={requestId:'B',operationId:'edit-B',expectedRevision:b.revision,input:{...b.input,text:'查最新资料'}};f.inputs.edit(edit);f.inputs.edit(edit);
  f.inputs.cancel({requestId:'C',operationId:'cancel-C',expectedRevision:c.revision});f.inputs.accept(c.input);
- assert.deepEqual(f.state().acceptedRequestIds,['A','B','C']);assert.deepEqual(unconfirmedInputs([{input:b.input},{input:c.input},{input:{requestId:'D',text:'查资料'}}],f.state().acceptedRequestIds).map(item=>item.input.requestId),['D']);assert.deepEqual(f.state().queue.map(q=>q.input.text),['查最新资料']);
+ assert.deepEqual(f.accepted(),['A','B','C']);assert.deepEqual(unconfirmedInputs([{input:b.input},{input:c.input},{input:{requestId:'D',text:'查资料'}}],f.accepted()).map(item=>item.input.requestId),['D']);assert.deepEqual(f.state().queue.map(q=>q.input.text),['查最新资料']);
  f.processes.finish('A1','completed','turn:A:terminal:completed');f.inputs.finish(a.messageId,a.revision,'completed');
  const claimed=f.inputs.claim()!;assert.equal(claimed.input.text,'查最新资料');assert.equal(f.state().queue[0]!.editable,false);
  assert.throws(()=>f.inputs.edit({...edit,operationId:'late'}),/processing/);assert.throws(()=>f.inputs.cancel({requestId:'B',operationId:'late-cancel',expectedRevision:claimed.revision}),/processing/);
@@ -53,18 +54,18 @@ test('ACK local failure rolls node/history/receipt back together, then uncertain
  const reopened=new Store(join(f.root,'synthetic.sqlite'));try{const again=new MainInputs(new RecursiveTasks(reopened,new Files(join(f.root,'workspace'))),new ConversationHistory(reopened.db));again.reconcile();assert.equal(again.list()[0]!.state,'uncertain');assert.equal(again.claim(),undefined);}finally{reopened.close();}
  }finally{f.close();}
 });
-test('formal scan preserves publication text/multiple files, final identity and A1 B A2 without node.seq sorting',()=>{
+test('formal scan preserves explicit message text, final identity and A1 B A2 without node.seq sorting',()=>{
  const f=fixture();try{
  f.inputs.accept({requestId:'A',text:'same text'});const a=f.inputs.claim()!;f.ack(a,'A1');
  f.processes.agent('A1',{turnId:'A1-turn',itemId:'earlier',phase:'final_answer',text:'Earlier public answer',completed:true});
  f.processes.agent('A1',{turnId:'A1-turn',itemId:'final',phase:'final_answer',text:'Final answer',completed:true});
  f.history.finish(a.replyId,'Earlier public answer\n\nFinal answer','completed');
- f.processes.delivery('A1',{historyMessageId:'publication',text:'Original publication'});f.history.record('publication','synthetic','Original publication');f.processes.finish('A1','completed','turn:A:terminal:completed');
+ const sent=commitSyntheticMessage(f,'synthetic','Original explicit message');f.processes.finish('A1','completed','turn:A:terminal:completed');
  f.inputs.finish(a.messageId,a.revision,'completed');f.inputs.accept({requestId:'B',text:'same text'});const b=f.inputs.claim()!;f.ack(b,'B1');f.inputs.finish(b.messageId,b.revision,'completed');
  f.processes.start({id:'A2',threadId:'synthetic',sourceKind:'user',sourceMessageIds:[a.messageId],messageId:'A2',replyMessageId:a.replyId},'A2-turn');f.history.record('A2','synthetic','','running');
  const stored=f.store.db.prepare('SELECT value FROM meta WHERE key=?').get('publicMainNode:v1:A1')!;f.store.db.prepare('UPDATE meta SET value=? WHERE key=?').run(JSON.stringify({...JSON.parse(String(stored.value)),seq:50}),'publicMainNode:v1:A1');
  const state=f.state();assert.ok(state.orderWarning);assert.equal(state.messages[1]?.id,'A1');assert.equal(state.messages.filter(m=>m.role==='user'&&m.requestId==='A').length,1);assert.equal(state.messages.filter(m=>m.role==='user').length,2);
- assert.equal(state.messages.find(m=>m.id==='publication')?.text,'Original publication');assert.match(state.messages.at(-1)!.sourceLabel!,/继续处理/);
+ assert.equal(state.messages.find(m=>m.id===sent.messageId)?.text,'Original explicit message');assert.match(state.messages.at(-1)!.sourceLabel!,/继续处理/);
  const node=f.processes.list('synthetic').find(node=>node.id==='A1')!;assert.equal(node.final?.text,'Final answer');assert.equal(node.items.length,2,'store retains all public items');assert.ok(node.items[0]?.kind==='commentary');assert.equal(node.items[0].phase,'final_answer');
  const rendered=state.messages.find(m=>m.id==='A1')!;assert.equal(rendered.text,'Earlier public answer\n\nFinal answer');assert.deepEqual(rendered.finalAnswers?.map(item=>item.id),['A1-turn:earlier','A1-turn:final']);assert.deepEqual(rendered.process!.items.map(item=>item.id),['A1-turn:earlier','A1-turn:final'],'source items survive projection; the adapter renders each once');
  assert.ok(!state.messages.some(message=>message.id===a.replyId));assert.equal(f.history.message(a.replyId)?.text,'Earlier public answer\n\nFinal answer','aggregate receipt remains stored');
@@ -75,16 +76,15 @@ test('74 terminal queue records and legacy replies stay in history; similar inpu
  const before=f.history.list('synthetic');const state=f.state();assert.deepEqual(state.messages.map(m=>m.id),before.map(m=>m.id));assert.equal(state.queue.length,0);assert.equal(new Set(state.messages.map(m=>m.id)).size,148);
  }finally{f.close();}
 });
-test('preparing inputs remain editable until claim; continued ACK retains generation/turn fences',()=>{
+test('preparing inputs remain editable until claim and retain their original ACK',()=>{
  const f=fixture();try{
   let ready=false;
   const inputs=new MainInputs(f.tasks,f.history,undefined,{claim:()=>{},readiness:()=>ready?'ready':'preparing'});
   inputs.accept({requestId:'prepare',text:'合成附件准备'});let item=inputs.list()[0]!;assert.equal(item.preparation,'preparing');assert.equal(item.editable,true);assert.equal(inputs.claim(),undefined);
   inputs.edit({requestId:'prepare',operationId:'prepare-edit',expectedRevision:item.revision,input:{requestId:'prepare',text:'合成新版'}});item=inputs.list()[0]!;
   ready=true;const claimed=inputs.claim()!;assert.equal(inputs.list()[0]!.editable,false);assert.throws(()=>inputs.cancel({requestId:'prepare',operationId:'claimed-cancel',expectedRevision:claimed.revision}),/queue_input_processing/);f.ack(claimed,'prepare1');
-  assert.throws(()=>f.store.transaction(()=>inputs.continuedInTransaction(claimed.messageId,claimed.revision,'wrong-generation','prepare1-turn','next')),/revision/);
-  assert.throws(()=>f.store.transaction(()=>inputs.continuedInTransaction(claimed.messageId,claimed.revision,'generation-prepare','wrong-turn','next')),/revision/);
-  inputs.continued(claimed.messageId,claimed.revision,'generation-prepare','prepare1-turn','next');
+  assert.equal(f.store.db.prepare('SELECT offeredTurnId FROM agent_receipts WHERE messageId=?').get(claimed.messageId)?.offeredTurnId,'generation-prepare');
+  assert.throws(()=>f.ack(claimed,'duplicate-ack'),/revision/);
  }finally{f.close();}
 });
 test('insertion order survives clock rollback, no-final host text survives unknown, same text publications remain distinct',()=>{

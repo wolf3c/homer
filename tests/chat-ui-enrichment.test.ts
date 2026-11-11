@@ -39,7 +39,7 @@ test('native question wrapper projects only whitelisted choices and rejects ambi
 
 test('feedback route requires authenticated same-origin mutation, validates and forwards an explicit null', async () => {
   let value:unknown;
-  const bridge:WebBridge={state:async()=>({threadId:'t',messages:[],isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running'}}),submit:async()=>{},stop:async()=>{},respond:async()=>{},artifact:async()=>{throw Error('not_found');},feedback:async(id,rating)=>{value={id,rating};return value;}};
+  const bridge:WebBridge={submit:async()=>{},stop:async()=>{},respond:async()=>{},feedback:async(id,rating)=>{value={id,rating};return value;}};
   const web=await createWebServer({bridge,port:0});
   try {
     const post=(payload:unknown,origin?:string)=>fetch(web.url+'/api/messages/feedback',{method:'POST',headers:{'Content-Type':'application/json',...(origin?{Origin:origin}:{})},body:JSON.stringify(payload)});

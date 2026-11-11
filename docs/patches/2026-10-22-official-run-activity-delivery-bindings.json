@@ -1,0 +1,36 @@
+{
+  "at": "2026-10-22T03:29:44.947079+00:00",
+  "kind": "documentation-only-finalization",
+  "productSourceHashUnchanged": "6f996e5e405dc8d38680618b9d2597d5dece391540a042713e256e7bb83d6803",
+  "patch": {
+    "path": "docs/patches/2026-10-22-official-run-activity-delivery.patch",
+    "sha256": "798d1879d4dfaadf29851921ae0777b476af7cf06f1a9a2192909d0576703f3f"
+  },
+  "files": [
+    {
+      "path": "docs/patches/2026-10-22-official-run-activity.patch",
+      "beforeSha256": null,
+      "afterSha256": "12c00931cc3d969265eebcce811581e7e79f1310b66c0fe1c463b3c82ee26e4d"
+    },
+    {
+      "path": "docs/patches/2026-10-22-official-run-activity-bindings.json",
+      "beforeSha256": null,
+      "afterSha256": "1868ef714bfaa7435473be56e849c6df93e4682a16424939d9c8739308dac824"
+    },
+    {
+      "path": "docs/patches/2026-10-22-official-run-activity-verification.json",
+      "beforeSha256": "7117c74a9fc2175693549edc7814d43e9ede893bac1457479c26b9b288898276",
+      "afterSha256": "58f5464dc476c087bc4bf3ce0b72bba3147b1d593eed30f5f755c6f63ee88301"
+    },
+    {
+      "path": "docs/patches/2026-10-22-official-run-activity-live-verification.json",
+      "beforeSha256": null,
+      "afterSha256": "ba0455155ae5331e026817e5abaf91d550a019be5d0da9725939d302a958963d"
+    },
+    {
+      "path": "docs/2026-10-22-official-run-activity-live-release.md",
+      "beforeSha256": null,
+      "afterSha256": "c745edd7b8192c448d6f87fe481ef5f808834d52831627b0c967cb67ad92c8e0"
+    }
+  ]
+}

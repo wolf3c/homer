@@ -6,8 +6,8 @@ import {createRequire} from 'node:module';
 import {EventEmitter} from 'node:events';
 import {transpileModule,ModuleKind} from 'typescript';
 test('desktop before readiness exposes state only; removed capability APIs stay removed',()=>{
- for(const method of ['state','history.state'])assert.equal(desktopManagementAllowed(method),true);
- for(const method of ['capabilities.state','capabilities.manage','submit','history.page','queue.move','media.upload','respond']){
+ assert.equal(desktopManagementAllowed('history.state'),true);
+ for(const method of ['state','capabilities.state','capabilities.manage','submit','history.page','queue.move','media.upload','respond']){
   for(const action of ['account_state','account_login','mcp_save'])assert.equal(desktopManagementAllowed(method,{action,approve:true}),false);
  }
 });
@@ -19,13 +19,16 @@ test('desktop private IPC reuses native state/login/cancel and exposes no web ac
   constructor(config){this.config=config;this.modelConfig={keyEnv:'SYNTHETIC_MISSING',baseUrl:'http://127.0.0.1'};}
   onStateChange(){}
   async close(){}
-  async manageCapabilities(input){calls.push(input);if(input.action==='account_login')return state={...state,phase:'waiting',loginId:'synthetic-login'};if(input.action==='account_cancel')return state={account:'none',connected:false,phase:'cancelled'};return state;}
+  async manageNativeAccount(input){calls.push(input);if(input.action==='account_login')return state={...state,phase:'waiting',loginId:'synthetic-login'};if(input.action==='account_cancel')return state={account:'none',connected:false,phase:'cancelled'};return state;}
  }
  const require=createRequire(import.meta.url),code=transpileModule(readFileSync('src/dev-host.ts','utf8'),{compilerOptions:{module:ModuleKind.CommonJS}}).outputText;
  const receive=Function('require','process','exports',code+'\nreturn receive;')(name=>{
   if(name==='./service.js')return {Homer,DesktopReviewRequired:class extends Error{}};
   if(name==='./engine.js')return {engineError:error=>error.message};
   if(name==='./desktop-management.js')return {desktopManagementAllowed};
+  if(name==='./telegram-channel.js')return {telegramChannel:()=>undefined};
+  if(name==='./wechat-channel.js')return {wechatChannel:()=>undefined};
+  if(name==='./dingtalk-channel.js')return {dingtalkChannel:()=>undefined};
   if(name==='./media-decode.js')return {configureDesktopImageDecoder(){}};
   if(name.startsWith('./'))return {};
   return require(name);

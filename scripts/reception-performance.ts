@@ -16,7 +16,7 @@ for (const size of [60,120,240]) {
   const queue=new MainInputs(tasks,history);
   for(let i=0;i<size;i++){queue.accept({requestId:'synthetic-'+i,text:'Synthetic input '+i});const next=queue.claim();queue.finish(next.messageId,next.revision,'completed');}
   queue.accept({requestId:'synthetic-pending',text:'Synthetic pending'});
-  const app=Object.create(Homer.prototype);Object.assign(app,{store,history,tasks,files,interactions,inputs:queue,processes:new MainProcessHistory(store.db),channelViews:new Map(),workers:new Map()});
+  const app=Object.create(Homer.prototype);Object.assign(app,{store,history,tasks,files,interactions,inputs:queue,processes:new MainProcessHistory(store.db),workers:new Map()});
   const bridge=homerWebBridge(app),pendingRow=queue.row('synthetic-pending');
   let prepares=0, historyLists=0, returnedRows=0,candidateSql='';
   const prepare=store.db.prepare.bind(store.db), list=history.list.bind(history);
@@ -32,8 +32,8 @@ for (const size of [60,120,240]) {
    store.db.prepare("UPDATE conversation_messages SET status=CASE WHEN role='user' THEN 'queued' ELSE 'running' END WHERE requestId='synthetic-pending'").run();
    store.db.prepare("DELETE FROM requests WHERE id='synthetic-pending'").run();
   };
-  const measurements=[await sample('input.current',()=>queue.current(pendingRow)),await sample('queue.list',()=>queue.list()),await sample('queue.runnable',()=>queue.runnable()),await sample('queue.claim',()=>queue.claim(),restoreClaim),await sample('history.list',()=>history.list('synthetic-thread')),await sample('web.state+serialize',async()=>JSON.stringify(await bridge.state()))];
-  const state=await bridge.state();
+  const measurements=[await sample('input.current',()=>queue.current(pendingRow)),await sample('queue.list',()=>queue.list()),await sample('queue.runnable',()=>queue.runnable()),await sample('queue.claim',()=>queue.claim(),restoreClaim),await sample('history.list',()=>history.list('synthetic-thread')),await sample('web.history.state+serialize',async()=>JSON.stringify(await bridge.history!.state()))];
+  const state=await bridge.history!.state();
   assert.ok(candidateSql,'pending queue query was not captured');
   results.push({historicalInputs:size,pending:1,serializedStateBytes:Buffer.byteLength(JSON.stringify(state)),measurements,plan:prepare("EXPLAIN QUERY PLAN SELECT text,quote FROM conversation_messages WHERE threadId=? AND requestId=? AND role='user' ORDER BY createdAt,rowid LIMIT 1").all('synthetic-thread','synthetic-pending'),candidatePlan:prepare('EXPLAIN QUERY PLAN '+candidateSql).all(store.meta('mainAgentId'),store.meta('mainThread'))});
  } finally {store.close();rmSync(dir,{recursive:true,force:true});}

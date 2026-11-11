@@ -6,10 +6,19 @@ import {build} from 'esbuild';
 
 const require=createRequire(import.meta.url),React=require('react'),Renderer=require('react-test-renderer');
 const {act}=React;
+const cameraGranted={status:'granted',expires:'never',granted:true,canAskAgain:true};
+const cameraUndetermined={status:'undetermined',expires:'never',granted:false,canAskAgain:true};
+const cameraDenied={status:'denied',expires:'never',granted:false,canAskAgain:false};
 const mocks={
- 'react-native':`const React=require('react'); exports.View='View';exports.Text='Text';exports.Image='Image';exports.Pressable='Pressable';exports.ActivityIndicator='ActivityIndicator';exports.StatusBar='StatusBar';exports.Modal=({visible,children,...props})=>visible?React.createElement('NativeModal',props,children):null;exports.StyleSheet={create:v=>v,hairlineWidth:1};exports.Platform={get OS(){return globalThis.__rebindTest.platform??'ios'},get Version(){return globalThis.__rebindTest.platform==='android'?33:'17.0'}};exports.PermissionsAndroid={};exports.Linking={openURL:url=>globalThis.__rebindTest.openURL?.(url)};exports.Alert={alert:(...args)=>globalThis.__rebindTest.alerts?.push(args)};exports.AppState={addEventListener:(_,fn)=>{globalThis.__rebindTest.foreground=fn;return {remove(){}}}};`,
+ 'react-native':`const React=require('react'); exports.View='View';exports.Text='Text';exports.Image='Image';exports.Pressable='Pressable';exports.ActivityIndicator='ActivityIndicator';exports.StatusBar='StatusBar';exports.Modal=({visible,children,...props})=>visible?React.createElement('NativeModal',props,children):null;exports.StyleSheet={create:v=>v,hairlineWidth:1};exports.Platform={get OS(){return globalThis.__rebindTest.platform??'ios'},get Version(){return globalThis.__rebindTest.platform==='android'?33:'17.0'}};exports.PermissionsAndroid={};exports.Linking={openURL:url=>globalThis.__rebindTest.openURL?.(url),openSettings:async()=>globalThis.__rebindTest.openSettings?.()};exports.Alert={alert:(...args)=>globalThis.__rebindTest.alerts?.push(args)};exports.AppState={addEventListener:(_,fn)=>{globalThis.__rebindTest.foreground=fn;return {remove(){}}}};`,
  'react-native-safe-area-context':`exports.SafeAreaProvider='SafeAreaProvider';exports.SafeAreaView='SafeAreaView';`,
- 'expo-camera':`exports.CameraView='CameraView';exports.useCameraPermissions=()=>[{granted:true},async()=>{},async()=>{}];`,
+ 'expo-camera':`const {useState}=require('react');const granted=${JSON.stringify(cameraGranted)};
+ exports.CameraView='CameraView';exports.useCameraPermissions=()=>{
+  const camera=globalThis.__rebindTest.camera;
+  const [permission,setPermission]=useState(camera?camera.initial:granted);
+  const update=async result=>{const value=await result;setPermission(value);return value;};
+  return [permission,()=>update(camera.request()),()=>update(camera?.get?.()??granted)];
+ };`,
  'expo-secure-store':`exports.getItemAsync=key=>key.startsWith('homer.mobile-update-dismissed.')?(globalThis.__rebindTest.readUpdate?.(key)??Promise.resolve(null)):key==='homer.mobile-cancel'?Promise.resolve(globalThis.__rebindTest.cancel??null):globalThis.__rebindTest.read();exports.setItemAsync=(key,value)=>key.startsWith('homer.mobile-update-dismissed.')?(globalThis.__rebindTest.writeUpdate?.(key,value)??Promise.resolve()):key==='homer.mobile-cancel'?(globalThis.__rebindTest.storeCancel?globalThis.__rebindTest.storeCancel(value):(globalThis.__rebindTest.cancel=value,Promise.resolve())):globalThis.__rebindTest.write(value);exports.deleteItemAsync=key=>key==='homer.mobile-cancel'?(globalThis.__rebindTest.removeCancel?globalThis.__rebindTest.removeCancel():(globalThis.__rebindTest.cancel=null,Promise.resolve())):globalThis.__rebindTest.remove();`,
  'expo-application':`Object.defineProperties(exports,{applicationId:{get:()=>globalThis.__rebindTest.applicationId??'com.homer.mobile.qa'},nativeApplicationVersion:{get:()=> '0.1.1'},nativeBuildVersion:{get:()=> '3'}});exports.getAppleStoreEnvironmentAsync=async()=>('storeEnvironment' in globalThis.__rebindTest?globalThis.__rebindTest.storeEnvironment:'production');`,
  'expo':`exports.requireOptionalNativeModule=()=>globalThis.__rebindTest.storefrontMissing?null:({current:()=>globalThis.__rebindTest.readStorefront?.()??Promise.resolve('storefront' in globalThis.__rebindTest?globalThis.__rebindTest.storefront:'CHN')});`,
@@ -310,6 +319,72 @@ test('waiting requests computer confirmation without depending on a code',async(
   await act(async()=>send(tree,ctx,{type:'connection-status',code:'pending'}));
   assert.match(text(tree),/请在电脑确认绑定/);assert.doesNotMatch(text(tree),/核对码|未提供/);
  }finally{if(tree)await act(async()=>tree.unmount());delete globalThis.__rebindDeviceName;delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
+});
+
+test('iOS scanner requests system permission from the scan action before opening the scanner',async()=>{
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+ let reads=0,requests=0,resolvePermission,opening;
+ const systemPrompt=new Promise(resolve=>{resolvePermission=resolve;});
+ const ctx={injections:[],uuid:()=> 'ios-camera-request',read:async()=>null,camera:{initial:null,get:async()=>{reads++;return cameraUndetermined;},request:()=>{requests++;return systemPrompt;}}};
+ globalThis.__rebindTest=ctx;let tree;
+ try{
+  await act(async()=>{tree=Renderer.create(React.createElement(App));});
+  assert.equal(requests,0,'launch must not request camera access');
+  await act(async()=>{opening=press(tree,'开始扫码');press(tree,'开始扫码');});
+  assert.equal(reads,1,'rapid taps share a single native permission check');
+  assert.equal(requests,1,'the scan action must trigger one native request');
+  assert.equal(tree.root.findAllByType('NativeModal').length,0,'no app permission screen before the system decision');
+  await act(async()=>{resolvePermission(cameraGranted);await opening;});
+  assert.equal(tree.root.findAllByType('CameraView').length,1);
+ }finally{if(tree)await act(async()=>tree.unmount());delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
+});
+
+test('iOS scanner can exit after denial or resume from Settings without requesting again',async()=>{
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+ let current=cameraUndetermined,requests=0,settingsAttempts=0,settingsUnavailable=true;
+ const alerts=[];
+ const ctx={injections:[],uuid:()=> 'ios-camera-denied',read:async()=>null,alerts,
+  openSettings:async()=>{settingsAttempts++;if(settingsUnavailable)throw Error('Unable to open app settings');},
+  camera:{initial:current,get:async()=>current,request:async()=>{requests++;return current=cameraDenied;}}};
+ globalThis.__rebindTest=ctx;let tree;
+ try{
+  await act(async()=>{tree=Renderer.create(React.createElement(App));});
+  await act(async()=>press(tree,'开始扫码'));
+  assert.equal(requests,1);
+  assert.equal(tree.root.findAllByType('CameraView').length,0);
+  assert.doesNotMatch(text(tree),/允许使用相机/);
+  assert.equal(settingsAttempts,0,'denial must not open Settings automatically');
+  await act(async()=>press(tree,'去设置开启'));
+  assert.match(alerts[0]?.[0]??'',/无法打开设置/);
+  await act(async()=>press(tree,'取消'));
+  assert.equal(tree.root.findAllByType('NativeModal').length,0);
+  await act(async()=>press(tree,'开始扫码'));
+  assert.equal(requests,1,'denied permission must not trigger another request');
+  settingsUnavailable=false;
+  await act(async()=>press(tree,'去设置开启'));
+  assert.equal(settingsAttempts,2);
+  await act(async()=>ctx.foreground('active'));
+  assert.equal(tree.root.findAllByType('CameraView').length,0,'returning without granting must keep the camera closed');
+  current=cameraGranted;
+  await act(async()=>ctx.foreground('active'));
+  assert.equal(tree.root.findAllByType('CameraView').length,1);
+  assert.equal(requests,1);
+ }finally{if(tree)await act(async()=>tree.unmount());delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
+});
+
+test('Android scanner still waits for its in-app permission action',async()=>{
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+ let requests=0;
+ const ctx={platform:'android',injections:[],uuid:()=> 'android-camera',read:async()=>null,camera:{initial:cameraUndetermined,request:async()=>{requests++;return cameraGranted;}}};
+ globalThis.__rebindTest=ctx;let tree;
+ try{
+  await act(async()=>{tree=Renderer.create(React.createElement(App));});
+  await act(async()=>press(tree,'开始扫码'));
+  assert.equal(requests,0);
+  await act(async()=>press(tree,'允许使用相机'));
+  assert.equal(requests,1);
+  assert.equal(tree.root.findAllByType('CameraView').length,1);
+ }finally{if(tree)await act(async()=>tree.unmount());delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
 });
 
 test('chat scanner bridge opens only for the current local page and preserves the binding on cancel',async()=>{

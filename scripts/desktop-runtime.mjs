@@ -29,7 +29,7 @@ try{
      if(stat.isDirectory())inventory(path,rel);else if(stat.isFile())observed.push({path:rel,sha256:sha(readFileSync(path))});else throw Error('desktop_resource_changed');
    }
  }
- const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node']).map(path=>{
+ const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>{
    const file=join(bundle,path);if(realpathSync(file)!==file)throw Error('desktop_resource_changed');
    return {path,sha256:sha(readFileSync(file))};
  });
@@ -78,9 +78,9 @@ try{
    const original=loadConfig(paths.adoption.sourceConfig);
    if(sha(readFileSync(paths.adoption.sourceConfig))!==paths.adoption.sha256)throw Error('desktop_adoption_source_changed');
    if(original.runtime!==paths.runtime||original.workspace!==paths.workspace||original.codexHome!==paths.codexHome)throw Error('desktop_adoption_paths_invalid');
-   // Source config owns model, effort, timeouts and browser protections. Only
+   // Source config owns model, effort and timeouts. Only
    // the verified binary and shell HOME/tmp come from the installed App.
-   config={...original,appData:paths.adoption.appData,nativeCodexHome:paths.adoption.nativeCodexHome,codexBin,desktopResources:resourceIdentity,pauseOldDesktopWork:true,...(daily?{dailyDeepSeek:true}:{})};
+   config={...original,appData:paths.adoption.appData,nativeCodexHome:paths.adoption.nativeCodexHome,codexBin,desktopResources:resourceIdentity,desktopAdopted:true,pauseOldDesktopWork:true,...(daily?{dailyDeepSeek:true}:{})};
  }
  if(daily&&modelSource==='website'&&connection?.token)process.env[DEEPSEEK_KEY_ENV]=connection.token;
  const mobileTurnAccount=daily&&connection?.token?{gatewayOrigin:manifest.account.gatewayOrigin,token:connection.token,allowSyntheticLoopback:test}:undefined;
@@ -100,9 +100,8 @@ try{
        try{assertDesktopAdoptionLeasesRecoverable(leases,pid=>!leaseOwnerGone(pid));}
        catch{throw Error(paths.adoption?'desktop_adoption_owner_unknown':'desktop_lease_review_required');}
        const {RECURSIVE_SCHEMA_VERSION}=await import(pathToFileURL(join(homer,'dist/recursive-tasks.js')).href);
-       for(const [key,supported]of[['pendingSchemaVersion',['1']],['recursiveSchemaVersion',[RECURSIVE_SCHEMA_VERSION]]]){
-         const row=db.prepare('SELECT value FROM meta WHERE key=?').get(key);if(row&&!supported.includes(row.value))throw Error('desktop_schema_incompatible');
-       }
+       const schema=db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get();
+       if(schema?.value!==RECURSIVE_SCHEMA_VERSION)throw Error('desktop_schema_incompatible');
      }
    }finally{db.close();}
  }
@@ -120,6 +119,11 @@ try{
  // Retain exact original account/memory defaults; no loadConfig fallback to HOME.
  const build={directory:homer,hash:manifest.sourceHash,manifest:manifest.manifest,version:manifest.sourceHash.slice(0,12),uiHash:manifest.uiHash,schema:manifest.schema,toolsHash:manifest.toolsHash,boundary:desktopBoundary(config,manifest.codex),config,thread};
  const {verifyBuild}=await import('./trusted-build.mjs');verifyBuild(build);
+ if((windows||process.arch==='arm64')&&observed.some(file=>file.path.replaceAll('\\','/').startsWith('runtime/cua/'))){
+   const {recoverCuaSessions,WINDOWS_CUA_HELPER}=await import(pathToFileURL(join(homer,'dist/cua-processes.js')).href);
+   if(observed.some(file=>file.path.replaceAll('\\','/')===(windows?WINDOWS_CUA_HELPER:'runtime/cua/cua-driver')))
+     await recoverCuaSessions(paths.runtime,windows?join(resources,WINDOWS_CUA_HELPER):undefined);
+ }
  const {runDev}=await import('./dev.mjs');
  const {readMobileConfig}=await import(pathToFileURL(join(homer,'dist/mobile-gateway.js')).href);
  const mobileConfig=readMobileConfig(join(profile,'mobile.json'));
@@ -132,13 +136,13 @@ try{
   try{const value=JSON.parse(line);
    if(value.kind==='quit')quit();
    else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
-   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel'].includes(value.action)){
+   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','channel-state'].includes(value.action)){
     void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action)});}catch{await send({kind:'native_account_result',id:value.id,error:'native_account_unconfirmed'});}})();
    }
   }catch{}
  });
  reader.on('close',quit);
- const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,fixedUi:build,fallbackUi:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
+ const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
  reader.close();input.destroy();process.stdin.pause();
  if(!result?.stoppedConfirmed&&!result?.noHostStarted)throw Error('desktop_stop_unconfirmed');
  // A successful host close includes all main/control/Worker/MCP owner evidence.

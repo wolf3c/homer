@@ -20,8 +20,9 @@ test('fixed native engine initializes only fresh main memory and preserves resum
  const originalExecPath=process.execPath,tokenBefore=process.env.HOMER_DEEPSEEK_TOKEN;
  copyFileSync(originalExecPath,join(mac,'node'),constants.COPYFILE_FICLONE);
  writeFileSync(join(mac,'homer-image-decoder'),'synthetic helper; never executed');
+ writeFileSync(join(mac,'homer-window-capture'),'synthetic capture helper; never executed');
  const hash=path=>createHash('sha256').update(readFileSync(path)).digest('hex');
- const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node'].map(path=>({path,sha256:hash(join(bundleRoot,path))}))});
+ const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node'].map(path=>({path,sha256:hash(join(bundleRoot,path))}))});
  writeFileSync(join(resources,'desktop-manifest.json'),manifest);
  const configPath=join(home,'config.toml'),notes=join(home,'memories/extensions/ad_hoc/notes');mkdirSync(notes,{recursive:true});
  writeFileSync(configPath,'[memories]\nuse_memories = true\n');
@@ -47,7 +48,7 @@ test('fixed native engine initializes only fresh main memory and preserves resum
   finally{db.close();}
  };
  async function start(role,threadId,controlOnly=false){
-  const engine=new CodexEngine(config,{role,threadId,controlOnly,cwd:workspace,readRoots:[],instructions:'Synthetic offline metadata check.',tools:[],nativeCapabilities:true,nativeTools:role??'main'},async()=>{throw Error('no_tools_allowed');});
+  const engine=new CodexEngine(config,{role,threadId,controlOnly,cwd:workspace,readRoots:[],instructions:'Synthetic offline metadata check.',tools:[],nativeTools:role??'main'},async()=>{throw Error('no_tools_allowed');});
   const abort=()=>{void engine.close();};t.signal.addEventListener('abort',abort,{once:true});
   try{
    const id=await engine.start();
@@ -55,7 +56,13 @@ test('fixed native engine initializes only fresh main memory and preserves resum
    assert.equal(actual.model_provider,'homer');
    assert.equal(actual.model_providers.homer.base_url,connection.baseUrl,'provider must remain on scripted loopback before any turn');
    const effective=actual.memories;
-   assert.equal(effective.extract_model,'deepseek-flash');assert.equal(effective.consolidation_model,'deepseek-flash');
+   if(controlOnly){
+    assert.notEqual(actual.features.memories,true);
+    assert.equal(id,'');assert.equal(engine.threadId,undefined);
+    await engine.request('account/read',{refreshToken:false});
+   }else{
+    assert.equal(effective.extract_model,'deepseek-flash');assert.equal(effective.consolidation_model,'deepseek-flash');
+   }
    if(!threadId&&!controlOnly)assert.equal((await engine.turn('Synthetic metadata persistence only.')).status,'completed');
    for(const [path,before] of preserved)assert.equal(hash(path),before);
    return id;
@@ -68,7 +75,9 @@ test('fixed native engine initializes only fresh main memory and preserves resum
   const worker=await start('worker');assert.equal(mode(worker),'disabled');
   assert.equal(await start('main',worker),worker);assert.equal(mode(worker),'disabled');
   assert.equal(await start('worker',main),main);assert.equal(mode(main),'enabled');
+  const beforeControl=requests.length;
   assert.equal(await start(undefined,undefined,true),'');
+  assert.equal(requests.length,beforeControl);
   assert.ok(requests.length>=2);
   assert.ok(requests.every(request=>request.model==='deepseek-flash'),'all scripted requests must use the explicitly bound model');
   const efforts=Object.fromEntries([...new Set(requests.map(request=>request.effort))].map(effort=>[effort,requests.filter(request=>request.effort===effort).length]));

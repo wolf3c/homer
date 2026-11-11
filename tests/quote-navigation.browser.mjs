@@ -5,6 +5,7 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {composerFixture} from './fixtures/composer-browser-server.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
+import {actualClick} from './helpers/html-preview-browser.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/quote-navigation-20261028/navigation-browser');
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??'.codex/scratch/quote-navigation-20261028/candidate-web');mkdirSync(destination,{recursive:true});
 const text='开头。重复原文。中间。重复原文。末尾。',exact='重复原文',start=text.lastIndexOf(exact),flow=text+'\n';
@@ -20,7 +21,7 @@ const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('a
  if(hold&&id==='archived-source'){held=respond;return;}respond();
 }});
 let chrome;const checks=[];
-async function key(page,key){for(const type of ['keyDown','keyUp'])await page.command('Input.dispatchKeyEvent',{type,key,code:key,...(key==='Enter'?{windowsVirtualKeyCode:13,...(type==='keyDown'?{text:'\r'}:{})}:{})});}
+async function key(page,key){for(const type of ['keyDown','keyUp'])await page.command('Input.dispatchKeyEvent',{type,key,code:key,...(key==='Escape'?{windowsVirtualKeyCode:27}:key==='Enter'?{windowsVirtualKeyCode:13,...(type==='keyDown'?{text:'\r'}:{})}:{})});}
 async function press(page,selector){await page.evaluate('document.querySelector('+JSON.stringify(selector)+').focus()');await key(page,'Enter');}
 async function click(page,index){const selector='#message-quoted .message-quote-source',r=await page.evaluate(`(()=>{const a=document.querySelectorAll(${JSON.stringify(selector)})[${index}];a.closest('.thread-viewport').dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-1}));a.scrollIntoView({block:'center'});return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(a.getBoundingClientRect().toJSON()))));})()`);for(const type of ['mousePressed','mouseReleased'])await page.command('Input.dispatchMouseEvent',{type,x:r.left+r.width/2,y:r.top+r.height/2,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});}
 try{
@@ -67,5 +68,55 @@ try{
    await page.screenshot('history-loaded-'+width+'.png');assert.deepEqual(page.errors,[]);assert.deepEqual(page.blocked,[]);
   }catch(error){writeFileSync(join(destination,'failure-'+width+'.json'),JSON.stringify({error:String(error),state:await page.evaluate(()=>({title:document.title,body:document.body.innerText,selection:getSelection()?.toString(),offset:getSelection()?.anchorOffset,active:document.activeElement?.id})),errors:page.errors,requests},null,2));await page.screenshot('failure-'+width+'.png');throw error;}finally{await page.close();}
  }
+ fixture.reset({messages:structuredClone(messages),features:{draftUpload:true,taskOverview:false}});
+ const page=await chrome.page(fixture.url),wait=predicate=>page.until('Boolean(('+String(predicate)+')())',10000);
+ const check=async(label,predicate)=>{assert.ok(await page.evaluate(predicate),label);checks.push({width:1440,label});};
+ try{
+  await page.navigate();
+  await wait(()=>!!document.querySelector('#message-quoted')&&!!document.querySelector('.aui-lexical-input:focus'));
+  await page.command('Input.insertText',{text:'保留主草稿'});
+  await page.evaluate(async()=>{
+   const source=document.querySelector('#message-quoted [data-aui-quote-selectable] p');
+   source.scrollIntoView({block:'center'});
+   await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+   const range=document.createRange();
+   range.selectNodeContents(source);
+   getSelection().removeAllRanges();
+   getSelection().addRange(range);
+   document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+  });
+  await wait(()=>!!document.querySelector('[data-slot="selection-toolbar-quote"]'));
+  await actualClick(page,await page.evaluate(()=>document.querySelector('[data-slot="selection-toolbar-quote"]').getBoundingClientRect().toJSON()));
+  await wait(()=>!!document.querySelector('.message-quote-editor textarea:focus'));
+  await page.command('Input.insertText',{text:'新引用批注'});
+  await actualClick(page,await page.evaluate(()=>document.querySelector('.message-quote-editor button[type="submit"]').getBoundingClientRect().toJSON()));
+  await wait(()=>!!document.querySelector('.annotation-chip-open')&&!document.querySelector('.message-quote-editor textarea'));
+  await check('saving a message quote returns directly to the real composer',()=>document.activeElement.matches('.aui-lexical-input')&&document.activeElement.innerText==='保留主草稿');
+  await page.screenshot('quote-saved-focus.png');
+  await page.command('Input.insertText',{text:'继续输入'});
+  await check('typing after saving appends to the existing draft',()=>document.activeElement.innerText==='保留主草稿继续输入');
+  await press(page,'.annotation-chip-open');
+  await wait(()=>!!document.querySelector('.message-quote-editor textarea:focus'));
+  await page.command('Input.insertText',{text:'，键盘保存'});
+  await key(page,'Enter');
+  await wait(()=>!document.querySelector('.message-quote-editor textarea'));
+  await check('saving with Enter returns focus and preserves the draft',()=>document.activeElement.matches('.aui-lexical-input')&&document.activeElement.innerText==='保留主草稿继续输入');
+  await press(page,'.annotation-chip-open');
+  await wait(()=>!!document.querySelector('.message-quote-editor textarea:focus'));
+  await key(page,'Escape');
+  await wait(()=>!document.querySelector('.message-quote-editor textarea'));
+  await check('Escape restores focus to the existing quote chip',()=>document.activeElement.matches('.annotation-chip-open'));
+  await press(page,'.annotation-chip-open');
+  await wait(()=>!!document.querySelector('.message-quote-editor textarea:focus'));
+  await press(page,'.message-quote-editor [aria-label="删除此批注"]');
+  await wait(()=>!document.querySelector('.annotation-chip-open'));
+  await check('deleting a quote returns to the editor without clearing the draft',()=>document.activeElement.matches('.aui-lexical-input')&&document.activeElement.innerText==='保留主草稿继续输入');
+  await press(page,'#message-quoted .message-quote:nth-child(5) .message-quote-source');
+  await wait(()=>document.activeElement.id==='message-current-source');
+  await check('keyboard navigation marks the source without a native outline',()=>{const style=getComputedStyle(document.activeElement);return style.outlineStyle==='none'&&style.boxShadow!=='none';});
+  await page.screenshot('legacy-quote-source-focus.png');
+  assert.equal(fixture.received.messages.length,0);
+  assert.deepEqual(page.errors,[]);assert.deepEqual(page.blocked,[]);
+ }finally{await page.close();}
  writeFileSync(join(destination,'results.json'),JSON.stringify({checks,version:chrome.version},null,2));console.log(JSON.stringify({passed:checks.length,widths:[1440,390,320],evidence:destination}));
 }finally{await chrome?.close();await fixture.close();}

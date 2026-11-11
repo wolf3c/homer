@@ -6,7 +6,7 @@
 
 - 本页是源码参考，不是可直接安装的 Cindy 插件清单。有独立 CLI／MCP／Skill 可满足任务时，按 [精选安装表](curated-tools.md) 安装，无需适配原包；独立方案不承诺与原插件全部功能等价。
 - 需要 Cindy 特有逻辑时，读取对应源码目录的 `ghost.json`、`main.js`、README、Node worker 和许可，选定 tag／commit `REF`。完整源码可由 `https://github.com/makecindy/cindy-official-plugins/archive/REF.zip` 获取，在本任务 scratch 解包检查；不用为下载创建项目 Git 仓库。
-- `.cindy` 是 Cindy 包，`ghost.json`／Host 消息不是 Codex Plugin manifest 或 MCP 协议；不要交给 `plugin_install` 或 `mcp_save` 假装能直接运行。原 worker 的 `json-rpc-stdio` 也不自动等于 MCP。
+- `.cindy` 是 Cindy 包，`ghost.json`／Host 消息不是 Codex Plugin manifest 或 MCP 协议；原生 Plugin 和 MCP 入口仅识别各自格式。原 worker 的 `json-rpc-stdio` 也不自动等于 MCP。
 - 适配只提取当前任务所需逻辑，替换 `cindy.fetch`／`cindy.fs`／`callId`、秘密注入或 UI 等依赖，做成独立脚本／CLI／MCP；若涉及新增宿主开发或扩大任务范围，先确认，再按 [执行方法](execution.md) 验证和采用。需要新增宿主开发时如实说明，不能声称“安装完成”。不为使用一个插件开发整个 Cindy 兼容层。
 
 仓库整体标为 Apache-2.0；保留 LICENSE／NOTICE，复用前核具体目录、依赖与第三方材料许可。开源源码不授予 Cindy 托管服务、付费额度、品牌背书或他人 OAuth 凭据。独立方案的账号由本人授权；不复制其他应用的秘密。没有实测中国大陆全网可达性，Google／xAI 等仅供对应用户按需选择。

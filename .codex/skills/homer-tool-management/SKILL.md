@@ -24,4 +24,4 @@ description: 为 Homer 的实际任务选择并获取工具。缺少能力、依
 
 临时断网、缺少账号或权限，不直接成为重造工具的理由。
 
-预装本 Skill、`homer-initialize` 和 `homer-feedback`；反馈 Skill 仅在用户明确要求反馈时调用，初始化不发送反馈。清单条目的来源与安装入口经过核对，不代表已安装或已在 Homer 实测；使用边界统一见 [执行方法](references/execution.md)。
+标准新实例预装本 Skill、`homer-feedback` 和 `homer-archive-review`。反馈 Skill 仅在用户明确要求反馈时调用。清单条目的来源与安装入口经过核对，不代表已安装或已在 Homer 实测；使用边界统一见 [执行方法](references/execution.md)。

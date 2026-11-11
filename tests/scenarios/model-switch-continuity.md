@@ -1,10 +1,10 @@
 # HMR-MODEL-001：切换指定模型并保留主对话
 
-流程来源：requirements-derived，用户明确要求 gpt-6.1-sol / medium，并保留原主对话与事项。输入来源：synthetic，随机暗号和公开 Markdown；不采集用户对话或凭据。
+流程来自用户要求保留原主对话与事项。夹具使用随机暗号和公开合成事项。
 
-初始状态为独立 scratch runtime/workspace、已授权本机订阅。先用原配置记住随机暗号，关闭服务，再用目标引擎／模型恢复同一 runtime。必须保持 mainThread、成功回忆暗号、通过 list_work 读取真实合成材料名，并保留切换前请求记录。禁止换 runtime、删除历史或只改启动文字。返回错误线程／恢复失败时不得新建主线程。
+使用独立 scratch runtime 和 workspace，以及已授权的模型连接。用原配置记录合成事项和随机暗号，关闭服务，再用目标配置恢复同一 runtime。验证 `mainThread`、暗号、`list_work` 返回的原事项 ID 和标题，以及切换前请求记录。恢复失败时保留原线程指针。
 
-离线 `npm test` 中 T09 legacy bindings：旧版 binding 只能先用原配置升级；升级后 model/effort 可变，workspace、codexHome、baseUrl、keyEnv、requiresOpenaiAuth 的变化仍拒绝。结合已有 normal restarts / tool upgrades 测试保留恢复失败边界。
+离线 `npm test` 验证当前 schema 下的连接绑定和线程恢复。独立的 schema 边界测试验证旧库在业务写入前拒绝。
 
 显式真实入口：`npx tsx scripts/real-model-switch.ts <原配置> <目标配置>`。两份配置的账号／供应商字段必须相同；脚本只更改独立测试目录。报告仅包含版本、模型、effort、线程标识和断言结果，不保存对话正文，费用金额未知。重复执行自动建立新目录；失败证据先保留，清理只限本次测试目录且须确认进程退出。Codex 自身按引擎机制保留测试线程。
 

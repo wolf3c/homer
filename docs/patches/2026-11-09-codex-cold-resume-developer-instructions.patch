@@ -1,0 +1,163 @@
+--- a/codex-rs/core/src/session/mod.rs
++++ b/codex-rs/core/src/session/mod.rs
+@@ -1681,7 +1681,11 @@
+                     self.agent_status.send_replace(AgentStatus::Interrupted);
+                 }
+                 let previous_turn_settings = self
+-                    .apply_rollout_reconstruction(&turn_context, &rollout_items)
++                    .apply_rollout_reconstruction(
++                        &turn_context,
++                        &rollout_items,
++                        turn_context.developer_instructions.as_deref(),
++                    )
+                     .await;
+
+                 // If resuming, warn when the last recorded model differs from the current one.
+@@ -1729,8 +1733,12 @@
+             InitialHistory::Forked(mut rollout_items) => {
+                 let turn_context = self.new_default_turn().await;
+                 Self::assign_missing_rollout_response_item_ids(&mut rollout_items);
+-                self.apply_rollout_reconstruction(&turn_context, &rollout_items)
+-                    .await;
++                self.apply_rollout_reconstruction(
++                    &turn_context,
++                    &rollout_items,
++                    /*resumed_developer_instructions*/ None,
++                )
++                .await;
+
+                 // Seed usage info from the recorded rollout so UIs can show token counts
+                 // immediately on resume/fork.
+@@ -1799,6 +1807,73 @@
+         }
+     }
+
++    fn is_homer_main_instructions(text: &str) -> bool {
++        // The legacy content kind is shared with namespace updates. Homer appends
++        // this footer independently of the configured main prompt text.
++        text.ends_with("。Worker 可选择获准的项目目录。") && text.contains("\n默认工作目录：")
++    }
++
++    fn homer_main_instruction_part(item: &ResponseItem) -> Option<(usize, &str)> {
++        let ResponseItem::Message {
++            role,
++            content,
++            internal_chat_message_metadata_passthrough: Some(metadata),
++            ..
++        } = item
++        else {
++            return None;
++        };
++        let kinds = metadata.content_item_kinds.as_deref()?;
++        if role != "developer" || kinds.len() != content.len() {
++            return None;
++        }
++        content
++            .iter()
++            .zip(kinds)
++            .enumerate()
++            .find_map(|(index, (part, kind))| {
++                if kind.as_str() == "generic.developer_instructions"
++                    && let ContentItem::InputText { text } = part
++                    && Self::is_homer_main_instructions(text)
++                {
++                    Some((index, text.as_str()))
++                } else {
++                    None
++                }
++            })
++    }
++
++    fn update_homer_main_instruction_part(
++        item: &mut ResponseItem,
++        replacement: &mut Option<&str>,
++    ) -> bool {
++        let Some((index, _)) = Self::homer_main_instruction_part(item) else {
++            return true;
++        };
++        let ResponseItem::Message {
++            content,
++            internal_chat_message_metadata_passthrough: Some(metadata),
++            ..
++        } = item
++        else {
++            return true;
++        };
++        if let Some(replacement) = replacement.take() {
++            if let ContentItem::InputText { text } = &mut content[index]
++                && text.as_str() != replacement
++            {
++                text.clear();
++                text.push_str(replacement);
++            }
++        } else {
++            if let Some(kinds) = metadata.content_item_kinds.as_mut() {
++                kinds.remove(index);
++            }
++            content.remove(index);
++        }
++        !content.is_empty()
++    }
++
+     #[instrument(
+         level = "trace",
+         skip_all,
+@@ -1811,6 +1886,7 @@
+         &self,
+         turn_context: &Arc<TurnContext>,
+         rollout_items: &[RolloutItem],
++        resumed_developer_instructions: Option<&str>,
+     ) -> Option<PreviousTurnSettings> {
+         let rollout_reconstruction::RolloutReconstruction {
+             mut history,
+@@ -1828,6 +1904,18 @@
+         } = self
+             .reconstruct_history_from_rollout(turn_context, rollout_items)
+             .await;
++        if let Some(instructions) =
++            resumed_developer_instructions.filter(|text| Self::is_homer_main_instructions(text))
++        {
++            // Pre-turn compaction can use replayed history before full context is rebuilt.
++            let mut replacement = Some(instructions);
++            history.retain_mut(|ResponseItemEnvelope { item, metadata }| {
++                metadata
++                    .as_ref()
++                    .is_some_and(|metadata| metadata.client_authored)
++                    || Self::update_homer_main_instruction_part(item, &mut replacement)
++            });
++        }
+         // Keep the recorded rollout unchanged. Prepare its reconstructed history before
+         // installing it, so legacy media is processed once for this resume or fork and
+         // will be processed again if the rollout is reconstructed in a future session.
+@@ -4870,13 +4958,25 @@
+             let (context_updates, snapshot) = self
+                 .build_initial_context_with_world_state(step_context, &world_state)
+                 .await;
+-            let context_items =
++            let mut context_items =
+                 crate::context_manager::updates::merge_world_state_updates(context_updates);
+-            self.state
+-                .lock()
+-                .await
+-                .history
+-                .set_world_state_baseline(snapshot.clone());
++            let mut state = self.state.lock().await;
++            if let Some(instructions) = turn_context.developer_instructions.as_deref()
++                && Self::is_homer_main_instructions(instructions)
++                && state.history.annotated_items().iter().any(|envelope| {
++                    !envelope
++                        .metadata
++                        .as_ref()
++                        .is_some_and(|metadata| metadata.client_authored)
++                        && Self::homer_main_instruction_part(&envelope.item)
++                            .is_some_and(|(_, text)| text == instructions)
++                })
++            {
++                // The host instructions survived replay, even though the context checkpoint did not.
++                context_items
++                    .retain_mut(|item| Self::update_homer_main_instruction_part(item, &mut None));
++            }
++            state.history.set_world_state_baseline(snapshot.clone());
+             (
+                 context_items,
+                 Some(WorldStateItem::full(snapshot.into_object())),

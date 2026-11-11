@@ -16,7 +16,21 @@ python3 "$SKILL_INSTALLER" --repo hugohe3/ppt-master --ref "$REF" --path skills/
 
 安装后读取其实际 `SKILL.md` 与 `requirements.txt`，按选定路线在专属 venv 安装所需依赖；该 requirements 同时包含 PDF 转换、旁白、图生等可选组件，不因一次普通 PPT 任务默认安装全部或配置外部服务。保留其署名／完整性检查，不绕过失败。生成后检查页数、文本、可编辑对象及逐页渲染，再交付 `.pptx`。
 
+#### PPT Master 原生公司模板编辑
+
+1. 准备公司模板或用该模板做好的 `.pptx`，最好包含封面、章节、图表和正文示例页。另准备新材料，明确要保留、替换或复用的页面。以原文件为设计依据，在独立工作目录生成新稿。
+2. 从已安装版本的路由进入 **Edit Native PPTX**。用 `pptx_to_svg.py --inheritance-mode both --roundtrip` 导入，读取 `authoring_summary.json`，将新内容映射到对应版式。选页、重排或复制时按上游格式写 `page_plan.json`。按页修改可编辑对象，保留原生回填的 SmartArt、复杂效果等代理对象。
+3. 编辑后刷新摘要，运行 `svg_quality_checker.py --roundtrip --json`，通过后用 `svg_to_pptx.py --roundtrip` 导出。修改原生图表或表格数据时加 `--native-charts-and-tables`。按实际输出路径运行 `pptx_delivery_check.py`，核对页数和导出回执，再用 WPS 或 PowerPoint 打开检查母版、主题字体、页脚和长中文换行，实际编辑一个标题。改过图表数据时，再打开「编辑数据」核对一项已知值。[上游原生编辑流程](https://github.com/hugohe3/ppt-master/blob/main/skills/ppt-master/workflows/edit-native-pptx.md)
+
+### 大师 PPT（Dashi）
+
+- 核对 [官方发行包](https://www.npmjs.com/package/dashi-ppt-skill) 的精确版本、安装器及随包许可。授权范围覆盖本次使用后，按 [官方安装说明](https://github.com/chuspeeism/dashi-ppt-skill/blob/main/README.en.md#get-started-in-30-seconds) 用 `npx dashi-ppt-skill@"$VERSION" --dir "$HOMER_CODEX_HOME/skills"` 指定 Homer 专属目录。安装器会更新已存在的目标，先检查冲突。需要 Node.js 20+ 和 npm，PPTX／PDF 导出需要本机 Chrome、Chromium 或 Edge。
+- 主体采用 AGPL-3.0。发行包内 `skill/project/packages/html-deck-to-pptx/LICENSE` 是专有导出引擎的独立许可，仅覆盖作为完整 Dashi Skill 的组成部分生成、预览和导出。单独提取、复制、再分发、修改或用于其他产品或服务需核对条款并取得相应书面许可。上游提到的 MIT 授权仅覆盖导出子包 v0.2.7 及更早的历史版本。[上游许可说明](https://github.com/chuspeeism/dashi-ppt-skill/blob/main/README.md#开源协议-license)
+- 最小验证用非敏感样稿做中文封面、指标图表和图文正文，修改一处标题，再用当前版本的 `export:pptx` 导出。用 WPS 或 PowerPoint 打开，核对页数、文字、图表和版式，实际编辑一个标题与一个形状。需要可编辑图表数据时，单独验证「编辑数据」。[上游导出说明](https://github.com/chuspeeism/dashi-ppt-skill/blob/main/README.md#导出)
+
 ### BrandDocs
+
+固定公司模板需要反复生成报表或汇报时按需采用。首次从模板提取并验证配置，后续用同一配置生成不同期次的文件。
 
 按 [上游安装说明](https://github.com/ferdinandobons/brand-docs#installation) 将选定 commit 的**完整仓库**保存到 `$HOMER_TOOLS/brand-docs`，在其私有 venv 安装该版本 requirements。`skills/brand-docx`、`skills/brand-pptx`、`skills/brand-xlsx` 共同依赖仓库内 `scripts/brandkit/`；单独安装一个子目录会破坏共享路径。
 

@@ -16,14 +16,16 @@ registerHooks({resolve(specifier,context,next){
    import {factory} from ${JSON.stringify(import.meta.url)};
    export class Homer extends Base {constructor(config,sink){super(config,sink,factory);}}`);
   if(specifier==='./engine.js')return data(`export {engineError} from ${JSON.stringify(pathToFileURL(join(executable,'dist/engine.js')).href)};export const codexVersion=()=>"synthetic-pinned-engine";`);
-  if(specifier==='./channels/wechat-homer.js')return data(`export class HomerWechat {management={canUpgrade:()=>true,close:async()=>{},state:async()=>({status:'disabled',bound:false,pending:0,uncertain:0})};async restore(){}async onMessage(){}}`);
-  if(specifier==='./channels/telegram-homer-bridge.js')return data(`export class TelegramHomerBridge {channel={};async restore(){}async close(){}async handleMessage(){}}`);
-  if(specifier==='./channels/telegram-management.js')return data(`export class TelegramManagement {canUpgrade(){return true;}async state(){return {status:'disabled'};}}`);
-  if(specifier==='./channels/telegram-migration.js')return data('export async function prepareTelegramMigration(){}');
  }
  return next(specifier,context);
 }});
-if(process.argv[1]===join(executable,'dist/dev-host.js'))globalThis.fetch=()=>{throw Error('synthetic_external_network_denied');};
+if(process.argv[1]===join(executable,'dist/dev-host.js')){
+ globalThis.fetch=()=>{throw Error('synthetic_external_network_denied');};
+ if(process.env.HOMER_PINNED_TEST_NO_HISTORY==='1'){
+  const send=process.send.bind(process);
+  process.send=(message,...args)=>send(message.kind==='ready'?{...message,webHistoryProtocol:undefined}:message,...args);
+ }
+}
 export const factory=options=>new Synthetic(options);
 class Synthetic extends EventEmitter{
  resumable=true;turnId;closed=false;

@@ -5,7 +5,7 @@ const root=resolve('.codex/scratch/local-development-web-access-implementation')
 writeFileSync(join(ui,'index.html'),'<!doctype html><title>Synthetic trusted-control boundary</title><p>Synthetic UI</p><script src="/assets/synthetic.js"></script>');writeFileSync(join(ui,'assets/synthetic.js'),'document.title="Synthetic baseline";');
 let controls=0;const bridge:any={state:async()=>({threadId:'synthetic'}),submit:async()=>{},stop:async()=>{controls++;},respond:async()=>{},artifact:async()=>({filename:'x',content:'x'})};
 const web=await createWebServer({bridge,port:0,uiDirectory:ui});
-const config={appData:d,codexHome:home,runtime,workspace:ui,codexBin:resolve(process.argv[2]!),model:'synthetic-only',requiresOpenaiAuth:false,timeoutMs:10000,mainTimeoutMs:10000,stopGraceMs:100};const engine=new CodexEngine(config,{cwd:ui,readRoots:[],instructions:'No model.',tools:[],nativeTools:'worker',nativeCapabilities:true,controlOnly:true},async()=>{throw Error('no_model');});
+const config={appData:d,codexHome:home,runtime,workspace:ui,codexBin:resolve(process.argv[2]!),model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100};const engine=new CodexEngine(config,{cwd:ui,readRoots:[],instructions:'No model.',tools:[],nativeTools:'worker',controlOnly:true},async()=>{throw Error('no_model');});
 const browser=await chromium.launchPersistentContext(mkdtempSync(join(d,'browser-profile-')),{headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});const page=await browser.newPage();const receipt:any={synthetic:true,realAccount:false,realModel:false,userBrowserTouched:false};
 try{
  await page.goto(web.url+'/');await page.waitForFunction(()=>document.title==='Synthetic baseline');

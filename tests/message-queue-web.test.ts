@@ -150,6 +150,7 @@ test('queue header counts every loaded row across states and pages without repla
   assert.equal(text(tree).includes('发送消息，说明如何继续'),false,'resume hint belongs in the composer placeholder, not a queue row');
   const queue=find(tree,node=>node?.type==='queue');
   assert.deepEqual(queue.props.messages.map((item:any)=>[item.id,item.state]),source.map(item=>[item.messageId,item.state]),'original identity, state and barrier order survive projection');
+  assert.equal(queue.props.messages[0].text,source[0]!.text,'the Worker icon identifies the source without adding a text prefix');
   const list=rows.exports.MessageQueue(queue.props).props.children.props.children;
   const first=list[0].type(list[0].props);
   assert.equal(first.props['data-queue-state'],scenario.first);
@@ -214,7 +215,7 @@ test('move receipt deadlines, mismatched identities and unmount never clear unkn
 function host(){
  const f=historyFixture(0),reader=new WebHistoryPages(f.history,f.processes,f.inputs);
  for(const requestId of ['B','C','D'])f.inputs.accept({requestId,text:'合成 '+requestId});
- return {...f,webReadEpoch:'queue-epoch',registerChannelCapabilities(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('no-media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),editQueued:f.inputs.edit.bind(f.inputs),cancelQueued:f.inputs.cancel.bind(f.inputs),moveQueued:f.inputs.move.bind(f.inputs)};
+ return {...f,webReadEpoch:'queue-epoch',registerWebSurface(){},webHistoryPages:()=>reader,onStateChange(){return()=>{};},media:{view(){throw Error('no-media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),editQueued:f.inputs.edit.bind(f.inputs),cancelQueued:f.inputs.cancel.bind(f.inputs),moveQueued:f.inputs.move.bind(f.inputs)};
 }
 test('unified messageId HTTP move confirms exact receipt after claim and preserves normal edit/cancel',async()=>{
  const app=host(),server=await createWebServer({bridge:homerWebBridge(app as unknown as Homer),port:0});
@@ -264,7 +265,7 @@ test('actual gateway and business IPC forward dispatch cursor, mutation scope an
   const receive=productionNode('src/dev-host.ts',n=>ts.isFunctionDeclaration(n)&&n.name?.text==='receive');
   const js=ts.transpileModule(receive,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
   let response:{error?:string;value:unknown};
-  const dispatch=new Function('app','frozen','stopping','homerWebBridge','send','engineError','webUploadProtocol','nativeCapabilitiesProtocol','wechat','telegramManagement','desktop',`${js};return receive;`)(app,false,false,homerWebBridge,(m:typeof response)=>{response=m;},(e:Error)=>e.message,false,false,undefined,undefined,false);
+  const dispatch=new Function('app','frozen','stopping','homerWebBridge','send','engineError','webUploadProtocol','wechat','telegramManagement','desktop',`${js};return receive;`)(app,false,false,homerWebBridge,(m:typeof response)=>{response=m;},(e:Error)=>e.message,false,undefined,undefined,false);
   const invokeWeb=async(method:string,input:unknown)=>{await dispatch({kind:'web',id:'queue-test',method,input});if(response.error)throw Error(response.error);return response.value;};
   const gateway=new Function('invokeWeb','state','historyState','journal',`return (${literal});`)(invokeWeb,()=>({}),()=>({}),{receipts:()=>[]});
   const page=await gateway.history.dispatchQueue({readEpoch:app.webReadEpoch});

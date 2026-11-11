@@ -1,150 +1,137 @@
-// Isolated SQLite/media and real host attachment checks; no engine or account.
+// Real Homer attachment routing and transactions with local synthetic engines.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {unlinkSync} from 'node:fs';
 import {join} from 'node:path';
-import {chatFixture} from './task-chat-fixture.js';
-import {RecursiveTasks, type Authority} from '../src/recursive-tasks.js';
-import {MediaStore} from '../src/media-store.js';
-import {Homer} from '../src/service.js';
-import {RecursiveTools} from '../src/recursive-tools.js';
+import {existsSync,readFileSync,writeFileSync} from 'node:fs';
+import {fixture,until} from './fixtures/worker-chat-host.js';
+import type {AttachmentRef} from '../src/media-store.js';
 
-function setup(){
- const f=chatFixture(),media=new MediaStore(f.store.db,join(f.dir,'media'));
- const ref=media.intent(f.actor.sourceRequestId!,'synthetic','file');
- media.ready(ref,media.claim(ref)!,Buffer.from('Synthetic text'),'text/plain');
- const host=Object.create(Homer.prototype) as any;host.media=media;
- const tasks=new RecursiveTasks(f.store,f.files,{validateActor(){},validateAttachments:(source,refs)=>host.validateTaskAttachments(source,refs)});
- const id=ref.assetId+'@1',authority:Authority={...f.authority,attachments:[id]};
- const input=(operationId:string,ids=[id])=>({operationId,goal:'Inspect the assigned synthetic attachment',authority:{...authority,attachments:ids}});
- const counts=()=>Object.fromEntries(['tasks','runs','task_versions','operations'].map(t=>[t,f.store.db.prepare('SELECT count(*) n FROM '+t).get()!.n]));
- return {...f,tasks,media,host,ref,id,authority,input,counts};
+function upload(f:ReturnType<typeof fixture>,requestId:string){
+ const ref=f.app.media.intent(requestId,'web:'+f.app.store.meta('mainThread'),'file','selected.txt');
+ f.app.media.ready(ref,f.app.media.claim(ref)!,Buffer.from('Synthetic source'),'text/plain');
+ return ref;
 }
+function state(f:ReturnType<typeof fixture>){
+ const db=f.app.store.db;
+ return Object.fromEntries(['tasks','task_versions','runs','agent_messages','media_pins'].map(table=>[table,db.prepare('SELECT count(*) n FROM '+table).get()!.n]));
+}
+function running(f:ReturnType<typeof fixture>,workerId:string){
+ const run=f.app.tasks.runs().find(run=>run.workerId===workerId&&run.phase==='executing');
+ return run&&f.app['workers'].get(run.id);
+}
+type Opened={taskId:string;workerId:string;runId:string;operationKey:string};
 
-test('task creation rejects noncanonical, unavailable and foreign attachment authority atomically',()=>{
- const f=setup();try{
-  const before=f.counts();
-  for(const id of [f.ref.assetId,f.ref.assetId+'@01',f.ref.assetId+'@1e0',f.ref.assetId+'@1@2']){
-   assert.throws(()=>f.tasks.createTask(f.actor,f.input('invalid-'+id,[id])),/task_attachment_reference_invalid/);
-   assert.deepEqual(f.counts(),before);
-  }
-  assert.throws(()=>f.tasks.createTask(f.actor,f.input('version',[f.ref.assetId+'@2'])),/task_authority_input_denied/);
-  const other=f.media.intent('other-source','synthetic','file');
-  assert.throws(()=>f.tasks.createTask(f.actor,f.input('other',[other.assetId+'@1'])),/task_authority_input_denied/);
-  f.media.revoke(f.actor.sourceRequestId!);
-  assert.throws(()=>f.tasks.createTask(f.actor,f.input('revoked')),/task_authority_input_denied/);
-  assert.deepEqual(f.counts(),before);
- }finally{f.close();}
+test('Worker attachment input rejects malformed selectors and foreign sources before accepting a task',async()=>{
+ const f=fixture();let checked=false;
+ try{
+  await f.app.start();
+  const requestId='selected-input',ref=upload(f,requestId),other=upload(f,'foreign-unsubmitted-input');
+  f.setScript(async(main,text)=>{
+   if(text.includes('Inspect the source')){
+    const before=state(f);
+    for(const invalid of [{assetId:ref.assetId},{...ref,revision:'1'},{...ref,revision:0},{...ref,path:'/tmp/synthetic'}])
+     await assert.rejects(main.call('worker_open',{message:'Inspect',attachments:[invalid]}),/invalid_tool_arguments|invalid_attachment/);
+    for(const unavailable of [{...ref,revision:2},other])
+     await assert.rejects(main.call('worker_open',{message:'Inspect',attachments:[unavailable]}),/media_scope_denied/);
+    assert.deepEqual(state(f),before);checked=true;
+   }
+   return {status:'completed',text:'Synthetic reply'};
+  });
+  f.app.submitMessage({requestId,text:'Inspect the source',attachments:[ref]});
+  await f.app.message('Barrier','selection-barrier');assert.ok(checked);
+ }finally{await f.close();}
 });
 
-test('same operation recovers its original receipt after revocation; changed payload and uncertainty stay distinct',()=>{
- const f=setup();try{
-  const input=f.input('lost-reply'),receipt=f.tasks.createTask(f.actor,input),before=f.counts();
-  const hash=f.store.db.prepare('SELECT payloadHash FROM operations WHERE id=?').get(receipt.operationKey)!.payloadHash;
-  f.media.revoke(f.actor.sourceRequestId!);
-  assert.deepEqual(f.tasks.createTask(f.actor,input),receipt);assert.deepEqual(f.counts(),before);
-  assert.equal(f.store.db.prepare('SELECT payloadHash FROM operations WHERE id=?').get(receipt.operationKey)!.payloadHash,hash);
-  assert.throws(()=>f.tasks.createTask(f.actor,{...input,goal:'Changed'}),/operation_payload_conflict/);
-  assert.throws(()=>f.tasks.workerOpen(f.actor,{operationId:'new-open',taskId:receipt.taskId,text:'Use revoked attachment'}),/task_authority_input_denied/);
-  assert.deepEqual(f.counts(),before);
-  f.store.db.prepare('UPDATE operations SET responseJson=NULL WHERE id=?').run(receipt.operationKey);
-  assert.throws(()=>f.tasks.createTask(f.actor,input),/operation_uncertain/);
- }finally{f.close();}
+test('only the addressed Worker can read the offered revision and a revoked source denies a later read',async()=>{
+ const f=fixture();let selected:Opened|undefined,other:Opened|undefined;
+ try{
+  await f.app.start();
+  const requestId='selected-worker-source',ref=upload(f,requestId);
+  f.setScript(async(main,text)=>{
+   if(text.includes('Inspect the source')){
+    selected=await main.call('worker_open',{message:'Inspect selected source',attachments:[ref]});
+    other=await main.call('worker_open',{taskId:selected!.taskId,message:'Check a separate issue'});
+   }
+   return {status:'completed',text:'Synthetic reply'};
+  });
+  f.app.submitMessage({requestId,text:'Inspect the source',attachments:[ref]});
+  await until(()=>!!selected&&!!other&&!!running(f,selected.workerId)&&!!running(f,other.workerId));
+  const receiver=running(f,selected!.workerId)!,bystander=running(f,other!.workerId)!;
+  const read=(slot:typeof receiver,selector:AttachmentRef=ref)=>f.app['workerMediaTool'](slot,'inspect_attachment',selector);
+  const checked=await read(receiver) as AttachmentRef;
+  assert.deepEqual({assetId:checked.assetId,revision:checked.revision},ref);
+  await assert.rejects(read(receiver,{...ref,revision:2}),/media_scope_denied/);
+  await assert.rejects(read(bystander),/media_scope_denied/);
+  const task=f.app.tasks.task(selected!.taskId),source=f.app.history.list(f.app.store.meta('mainThread')!).find(message=>message.role==='user'&&message.requestId===requestId)!;
+  const move=f.app.store.db.prepare('UPDATE media_assets SET requestId=? WHERE id=?');
+  move.run('foreign-source',ref.assetId);
+  await assert.rejects(read(receiver),/media_scope_denied/);
+  assert.throws(()=>f.app.readAttachment({...ref,messageId:source.id}),/media_scope_denied/);
+  move.run(requestId,ref.assetId);
+  await read(receiver);
+  const peer=f.engines.find(engine=>engine.threadId===receiver.engine.threadId)!;
+  const exportArgs={...ref,filename:'retained.txt'},exported=await peer.call('stage_file_result',exportArgs,'retained-export');
+  assert.ok(f.app.history.revokeMessage(source.threadId,source.id));
+  await assert.rejects(read(receiver),/media_scope_denied/);
+  await assert.rejects(peer.call('stage_file_result',{...ref,filename:'revoked.txt'}),/media_scope_denied/);
+  assert.deepEqual(await peer.call('stage_file_result',exportArgs,'retained-export'),exported);
+  assert.equal(readFileSync(exported.path,'utf8'),'Synthetic source');
+  assert.deepEqual(f.app.tasks.task(task.id),task);
+  assert.equal(f.app.tasks.run(selected!.runId).status,'running');
+ }finally{await f.close();}
 });
 
-test('goal updates preserve CAS and roll back invalid or revoked attachment authority',()=>{
- const f=setup();try{
-  const root=f.tasks.createTask(f.actor,f.input('create')),task=f.tasks.task(root.taskId);
-  f.tasks.updateTask(f.actor,{operationId:'notes',taskId:task.id,expectedRevision:task.revision,patch:{notes:'Read the actual source'}});
-  assert.throws(()=>f.tasks.updateTask(f.actor,{operationId:'stale',taskId:task.id,expectedRevision:task.revision,patch:{notes:'stale'}}),/task_revision_conflict/);
-  const before=f.counts(),revision=f.tasks.task(task.id).revision;
-  const update={taskId:task.id,expectedRevision:revision,patch:{goal:'Recheck assigned source'},authority:f.authority};
-  assert.throws(()=>f.tasks.updateTask(f.actor,{...update,operationId:'invalid',authority:{...f.authority,attachments:[f.ref.assetId]}}),/task_attachment_reference_invalid/);
-  assert.deepEqual(f.counts(),before);assert.equal(f.tasks.task(task.id).headVersion,1);
-  f.media.revoke(f.actor.sourceRequestId!);
-  assert.throws(()=>f.tasks.updateTask(f.actor,{...update,operationId:'revoked'}),/task_authority_input_denied/);
-  assert.deepEqual(f.counts(),before);assert.equal(f.tasks.task(task.id).revision,revision);
- }finally{f.close();}
+test('an exact accepted Worker receipt survives revocation, but a missing receipt stays uncertain',async()=>{
+ const f=fixture();let checked=false;
+ try{
+  await f.app.start();
+  const requestId='selected-receipt-source',ref=upload(f,requestId);
+  f.setScript(async(main,text)=>{
+   if(text.includes('Inspect the source')){
+    const args={message:'Inspect selected source',attachments:[ref]};
+    const accepted=await main.call('worker_open',args,'selected-receipt'),before=state(f);
+    f.app.media.revoke(requestId);
+    assert.deepEqual(await main.call('worker_open',args,'selected-receipt'),accepted);
+    assert.deepEqual(state(f),before);
+    await assert.rejects(main.call('worker_open',{...args,message:'Different scope'},'selected-receipt'),/operation_payload_conflict/);
+    await assert.rejects(main.call('worker_open',args,'fresh-selection'),/media_scope_denied/);
+    f.app.store.db.prepare('UPDATE operations SET responseJson=NULL WHERE id=?').run(accepted.operationKey);
+    await assert.rejects(main.call('worker_open',args,'selected-receipt'),/operation_uncertain/);
+    assert.deepEqual(state(f),before);checked=true;
+   }
+   return {status:'completed',text:'Synthetic reply'};
+  });
+  f.app.submitMessage({requestId,text:'Inspect the source',attachments:[ref]});
+  await f.app.message('Barrier','selected-receipt-barrier');assert.ok(checked);
+ }finally{await f.close();}
 });
 
-test('Worker reads the exact authorized attachment and cannot read a foreign source or revision',async()=>{
- const f=setup();try{
-  const task=f.tasks.createTask(f.actor,f.input('create')),opened=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect source'}),run=f.start(opened.workerId);
-  const actor={agentId:'worker:'+opened.workerId,runId:run.id,epoch:run.epoch,threadId:run.threadId!,turnId:run.turnId!};
-  Object.assign(f.host,{tasks:f.tasks,store:f.store,files:f.files,workerActor:()=>actor,closing:false,accountClocks(){}});
-  const read=()=>f.host.workerToolWork({id:run.id,epoch:run.epoch},{tool:'read_material',arguments:{},threadId:actor.threadId,turnId:actor.turnId,callId:'read'});
-  const result=await read();assert.deepEqual(result.attachments[0].reference,{type:'attachment',id:f.id});
-  f.store.db.prepare('UPDATE media_assets SET requestId=? WHERE id=?').run('foreign-source',f.ref.assetId);
-  await assert.rejects(read,/media_scope_denied/);
-  f.store.db.prepare('UPDATE media_assets SET requestId=?,revision=2 WHERE id=?').run(f.actor.sourceRequestId!,f.ref.assetId);
-  await assert.rejects(read,/media_asset_not_found/);
- }finally{f.close();}
-});
-
-test('a note source exposes a copiable reference without changing persisted source or enabling dispatch',()=>{
- const f=setup();try{
-  const sourceRequestId='source:attachment-note',ref=f.media.intent(sourceRequestId,'synthetic','file'),id=ref.assetId+'@1';
-  f.media.ready(ref,f.media.claim(ref)!,Buffer.from('Synthetic note attachment'),'text/plain');
-  f.inputs.accept({requestId:sourceRequestId,text:'Synthetic attachment',attachments:[ref]});
-  const q=f.inputs.claim()!;f.inputs.started(q.messageId,q.revision,'generation:note','turn:note');f.inputs.finish(q.messageId,q.revision,'completed');
-  const actor={...f.actor,sourceRequestId,inputMessageId:q.messageId};
-  const raw=()=>f.store.db.prepare('SELECT refsJson FROM conversation_attachments WHERE requestId=?').get(sourceRequestId)!.refsJson;
-  const before=raw(),source=f.tasks.pending.source(actor,sourceRequestId);
-  assert.deepEqual(source.attachments[0],{...ref,reference:{type:'attachment',id}});assert.equal(raw(),before);
-  const note=f.tasks.pending.add(actor,{operationId:'remember',content:'Synthetic note'});assert.equal(f.tasks.tasks().length,0);assert.equal(f.tasks.runs().length,0);
-  const input={...f.input('from-source',[id]),authority:{...f.authority,sourceRequestId,attachments:[id]}};
-  const receipt=f.tasks.createTask(actor,input);assert.equal(f.tasks.pending.list(actor,{id:note.id}).items[0]!.linkedTaskId,null);
-  f.media.revoke(sourceRequestId);assert.deepEqual(f.tasks.createTask(actor,input),receipt);
-  const counts=f.counts();assert.throws(()=>f.tasks.createTask(actor,{...input,operationId:'revoked-source'}),/task_authority_input_denied/);assert.deepEqual(f.counts(),counts);
- }finally{f.close();}
-});
-
-test('rollback failure remains unknown rather than claiming no creation',()=>{
- const f=setup();try{
-  const original=f.store.db.exec.bind(f.store.db);
-  f.store.db.exec=(sql:string)=>{if(sql==='ROLLBACK')throw Error('synthetic_rollback_failure');return original(sql);};
-  try{assert.throws(()=>f.tasks.createTask(f.actor,f.input('rollback',[f.ref.assetId])),/synthetic_rollback_failure/);}
-  finally{f.store.db.exec=original;original('ROLLBACK');}
- }finally{f.close();}
-});
-
-test('availability remains metadata-only and rejects missing, old revision, expired, deleted or revoked refs',()=>{
- const f=setup();try{
-  unlinkSync(join(f.dir,'media',f.ref.assetId));assert.ok(f.tasks.createTask(f.actor,f.input('metadata-only')).taskId);
-  for(const state of ['expired','deleted','revoked']){
-   f.store.db.prepare('UPDATE media_assets SET state=? WHERE id=?').run(state,f.ref.assetId);
-   assert.throws(()=>f.tasks.createTask(f.actor,f.input('state-'+state)),/task_authority_input_denied/);
-  }
-  f.store.db.prepare("UPDATE media_assets SET state='ready',revision=2 WHERE id=?").run(f.ref.assetId);
-  assert.throws(()=>f.tasks.createTask(f.actor,f.input('old-version')),/task_authority_input_denied/);
-  assert.throws(()=>f.tasks.createTask(f.actor,f.input('missing',['asset-00000000-0000-4000-8000-000000000009@1'])),/task_authority_input_denied/);
- }finally{f.close();}
-});
-
-test('a fully rolled back operation can be explicitly corrected and then replays only that exact payload',()=>{
- const f=setup();try{
-  assert.throws(()=>f.tasks.createTask(f.actor,f.input('correction',[f.ref.assetId])),/task_attachment_reference_invalid/);
-  const receipt=f.tasks.createTask(f.actor,f.input('correction'));assert.ok(receipt.taskId);
-  assert.deepEqual(f.tasks.createTask(f.actor,f.input('correction')),receipt);
-  assert.throws(()=>f.tasks.createTask(f.actor,f.input('correction',[f.ref.assetId])),/operation_payload_conflict/);
- }finally{f.close();}
-});
-
-test('existing Pending selection replays the native receipt before checking newly revoked attachments',async()=>{
- const f=setup();try{
-  const sourceRequestId='source:selected-attachment',ref=f.media.intent(sourceRequestId,'synthetic','file');
-  f.media.ready(ref,f.media.claim(ref)!,Buffer.from('Synthetic selected attachment'),'text/plain');
-  f.inputs.accept({requestId:sourceRequestId,text:'Synthetic selected source',attachments:[ref]});
-  const q=f.inputs.claim()!;f.inputs.started(q.messageId,q.revision,'generation:selected','turn:selected');f.inputs.finish(q.messageId,q.revision,'completed');
-  const actor={...f.actor,sourceRequestId,inputMessageId:q.messageId};
-  Object.assign(f.host,{tasks:f.tasks,files:f.files,mainContext:{event:false,requestId:sourceRequestId,queuedInput:{input:{attachments:[ref]}}}});
-  const tools=new RecursiveTools(f.tasks,{rootAuthority:(actor,sources)=>f.host.selectedAuthority(actor,sources),wake(){},stop:async()=>({}),steer:async()=>({})});
-  const pending=f.tasks.pending.add(actor,{operationId:'select-pending',content:'Inspect the assigned attachment'});
-  const args={goal:'Inspect selected Pending',pendingIds:[pending.id]};
-  const receipt=await tools.call(actor,'task_create',args,'selected-create'),before=f.counts();
-  f.media.revoke(sourceRequestId);
-  assert.deepEqual(await tools.call(actor,'task_create',args,'selected-create'),receipt);
-  assert.deepEqual(f.counts(),before);
-  await assert.rejects(tools.call(actor,'task_create',args,'new-create'),/task_authority_input_denied/);
- }finally{f.close();}
+test('a Worker message commit failure rolls back the task and releases only its staged snapshot',async()=>{
+ const f=fixture();let checked=false;
+ try{
+  await f.app.start();
+  const path=join(f.app.config.workspace,'selected.txt');writeFileSync(path,'Synthetic local file');
+  f.setScript(async(main,text)=>{
+   if(text.includes('Inspect the source')){
+    const db=f.app.store.db,before=state(f);
+    db.exec("CREATE TEMP TRIGGER reject_worker_input BEFORE INSERT ON agent_messages WHEN NEW.kind='worker_input' BEGIN SELECT RAISE(ABORT,'synthetic_worker_commit_abort'); END");
+    try{await assert.rejects(main.call('worker_open',{message:'Inspect',attachments:[{path}]}),/synthetic_worker_commit_abort/);}
+    finally{db.exec('DROP TRIGGER reject_worker_input');}
+    assert.deepEqual(state(f),before);
+    const stage=db.prepare("SELECT state,responseJson FROM operations WHERE kind='attachment_stage'").get()!;
+    assert.equal(stage.state,'failed');
+    const [snapshot]=JSON.parse(String(stage.responseJson)) as AttachmentRef[];
+    assert.ok(snapshot);
+    assert.equal(f.app.media.asset(snapshot).state,'deleted');
+    assert.equal(existsSync(join(f.app.config.runtime,'media',snapshot.assetId)),false);
+    const corrected=await main.call('worker_open',{message:'Inspect',attachments:[{path}]});
+    assert.ok(corrected.taskId);
+    assert.equal(db.prepare("SELECT count(*) n FROM operations WHERE kind='worker_open'").get()?.n,1);
+    checked=true;
+   }
+   return {status:'completed',text:'Synthetic reply'};
+  });
+  await f.app.message('Inspect the source','worker-commit-abort');
+  await until(()=>checked);
+ }finally{await f.close();}
 });

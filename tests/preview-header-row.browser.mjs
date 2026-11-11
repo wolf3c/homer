@@ -3,7 +3,6 @@
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-import {createHash} from 'node:crypto';
 import {fixture} from './web-history-followup-fixture.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 import {actualClick,inspectHtmlFrame} from './helpers/html-preview-browser.mjs';
@@ -17,8 +16,7 @@ const files=[
  {id:'result-header-unsupported',title:'不支持格式.bin',mime:'application/octet-stream',text:'unsupported'},
 ];
 const f=await fixture(4,'after');let chrome;
-f.bridge.artifact=async id=>{const file=files.find(x=>x.id===id);assert.ok(file);return {filename:file.title,mime:file.mime,data:Buffer.from(file.text).toString('base64'),sha256:createHash('sha256').update(file.text).digest('hex')};};
-for(const owner of [f.bridge,f.bridge.history]){const state=owner.state.bind(owner);owner.state=async()=>{const value=await state();return {...value,artifacts:[...(value.artifacts??[]),...files.map(({id,title})=>({id,title,messageId:'node-3',workTitle:'Synthetic header'}))]};};}
+f.attach('Synthetic header',files.map(({title,mime,text})=>({filename:title,mime,content:text})));
 const delay=ms=>new Promise(done=>setTimeout(done,ms));
 try{
  chrome=await isolatedChrome(destination);
@@ -69,7 +67,7 @@ try{
    await p.command('Network.enable');await p.command('Network.emulateNetworkConditions',{offline:false,latency:1200,downloadThroughput:-1,uploadThroughput:-1});
    await click('.html-annotation-toggle');await until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-busy')==='true');await click('.html-annotation-toggle');
    await until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-busy')==='false');await p.command('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});await delay(1400);
-   assert.equal(await ev(()=>__frame===document.querySelector('iframe[title="隔离 HTML 成果"]')&&document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')===''),true);record('busy annotation action cancels loading and a late import leaves the original static document untouched');
+   assert.equal(await ev(()=>__frame===document.querySelector('iframe[title="隔离 HTML 成果"]')&&document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')==='allow-scripts allow-forms'),true);record('busy annotation action cancels loading and a late import leaves the original preview untouched');
    await click('.html-annotation-toggle');await until(()=>document.querySelector('.html-annotation-toggle').getAttribute('aria-pressed')==='true');
    frame=await inspectHtmlFrame(chrome,p,'!!document.querySelector("agentation-toolbar")?.shadowRoot');assert.equal(await frame.evaluate('document.body.dataset.executed'),'yes');
    await ev(()=>{window.__frame=document.querySelector('iframe[title="隔离 HTML 成果"]');});
@@ -84,10 +82,10 @@ try{
    record('HTML action is outside Tab/List; one click activates native selection; resizing preserves iframe and actions identity');
    await p.screenshot('html-'+width+'.png');
    await frame.evaluate('__all("button").find(b=>b.getAttribute("aria-label")?.startsWith("Exit")).click()');
-   await until(()=>document.querySelector('iframe[title="隔离 HTML 成果"]').getAttribute('sandbox')==='');await frame.close();frame=undefined;
+   await until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')==='false');await frame.close();frame=undefined;
    await ev(`(${tab(0)}).click()`);await until(()=>!!document.querySelector('[data-preview-text]'));assert.equal(await ev(()=>!!document.querySelector('.html-annotation-toggle')),false);
    await open(2);assert.equal(await ev(()=>document.querySelector('.canvas-tab-actions').childElementCount),0);
-   record('native Exit returns static; switching removes actions; unsupported formats add no action row');
+   record('native Exit returns to preview; switching removes actions; unsupported formats add no action row');
    for(const index of [1,2,0])await ev(`(${tab(index)}).parentElement.querySelector('.canvas-tab-close').click()`);
    await until(()=>!document.querySelector('#canvas-panel'));await until(`document.activeElement?.getAttribute('aria-label')===${JSON.stringify('预览 '+files[0].title)}`);
    await reopen();assert.equal(await ev(()=>document.querySelectorAll('[role=tab]').length),0);assert.equal(await ev(()=>!!document.querySelector('[data-slot=canvas-split-header]')),false);

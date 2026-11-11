@@ -33,7 +33,6 @@ export class CommittedDatabase extends DatabaseSync {
   override exec(sql:string):void {
     super.exec(sql);
     // Callers use explicit transaction controls; schema batches run at startup.
-    // Savepoints also appear inside history acceptance (Telegram intake).
     for(const command of sql.split(';').map(part=>part.trim()).filter(Boolean)){
       if(/^BEGIN\b/i.test(command))this.frames.push({name:'',tables:new Set()});
       else if(/^SAVEPOINT\s+/i.test(command))this.frames.push({name:command.replace(/^SAVEPOINT\s+/i,'').toLowerCase(),tables:new Set()});

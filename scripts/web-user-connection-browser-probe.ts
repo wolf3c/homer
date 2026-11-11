@@ -17,7 +17,7 @@ let revision=0;
 const readState=async()=>{
  if(!ready)throw Error('service_not_ready');
  const threadId=missingThread?'':state.threadId;
- return {...state,threadId,conversationView:3,queue:[],acceptedRequestIds:[],artifacts:[],inactiveInteractions:[],
+ return {...state,threadId,conversationView:4,queue:[],acceptedRequestIds:[],artifacts:[],inactiveInteractions:[],
   history:{protocol:3,readEpoch:'synthetic-browser-epoch',page:{protocol:3,threadId,revision:++revision,units:state.messages.map((message:any)=>message.id),before:null,after:null},moreQueue:null,moreInteractions:null}};
 };
 const bridge:any={state:readState,history:{state:readState},submit:async()=>{submissions++;return{};},stop:async()=>{},respond:async()=>{},artifact:async()=>({filename:'synthetic.md',content:'# synthetic'}),media:{read:async(input:any)=>{mediaReads++;return input.assetId===file.assetId?{filename:file.filename,mime:file.mime,data:Buffer.from('synthetic').toString('base64')}:{filename:asset.filename,mime:asset.mime,data:png};}}};
@@ -57,7 +57,7 @@ try{
  receipt.stage='old-bookmark';await page.goto(web.url+'/connect#synthetic-obsolete-key');await waitText('合成多页 SSE 更新');assert.equal(new URL(page.url()).hash,'');receipt.oldBookmarkClearsFragment=true;
  receipt.stage='html-preview-isolation';await page.evaluate(()=>new Promise<void>(accept=>{const frame=document.createElement('iframe');frame.title='合成隔离检查';frame.sandbox.add('allow-scripts');frame.onload=()=>accept();frame.src='/preview/interactive';document.body.append(frame);}));
  const preview=page.frames().find((frame:any)=>frame.url().endsWith('/preview/interactive'));assert.ok(preview);
- const isolation=await preview.evaluate(async()=>{let parentDenied=false,networkDenied=false;try{void parent.document.body}catch{parentDenied=true}try{await fetch('/api/state')}catch{networkDenied=true}return {parentDenied,networkDenied};});
+ const isolation=await preview.evaluate(async()=>{let parentDenied=false,networkDenied=false;try{void parent.document.body}catch{parentDenied=true}try{await fetch('/api/history/state')}catch{networkDenied=true}return {parentDenied,networkDenied};});
  assert.equal(isolation.networkDenied,true);assert.equal(isolation.parentDenied,true);await page.getByTitle('合成隔离检查',{exact:true}).evaluate((frame:Element)=>frame.remove());receipt.htmlPreviewNetworkAndParentIsolation=true;
  receipt.stage='empty-thread';state.messages=[];await web.publish();
  // A bounded empty snapshot preserves pinned history; a fresh page verifies the empty welcome.

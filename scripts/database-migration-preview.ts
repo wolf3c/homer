@@ -10,8 +10,6 @@ import {Files} from '../src/files.js';
 import {ConversationHistory} from '../src/web-history.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
 import {RecursiveTasks} from '../src/recursive-tasks.js';
-import {WechatStore} from '../src/channels/wechat-store.js';
-import {TelegramStore} from '../src/channels/telegram-store.js';
 const sha=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fileHash=(path:string)=>createHash('sha256').update(readFileSync(path)).digest('hex');
 const quote=(value:string)=>'"'+value.replaceAll('"','""')+'"';
@@ -29,9 +27,8 @@ function capture(db:DatabaseSync){
   tables[table]={columns,...fingerprint(db,table,columns)};
  }
  const meta=has(db,'meta')?db.prepare('SELECT key,value FROM meta ORDER BY key').all():[];
- const uncertain=has(db,'wechat_outbox')?db.prepare("SELECT * FROM wechat_outbox WHERE state='uncertain' ORDER BY id").all().map(row=>({identityHash:sha(row.id),rowHash:sha(row)})):[];
  const thread=meta.find(r=>r.key==='mainThread')?.value;
- return {tables,meta,uncertain,thread};
+ return {tables,meta,thread};
 }
 export async function previewMigration(snapshot:string,directory:string){
  snapshot=resolve(snapshot);directory=resolve(directory);
@@ -54,8 +51,6 @@ export async function previewMigration(snapshot:string,directory:string){
   new ConversationHistory(store.db);stages.push('history');
   new MediaStore(store.db);stages.push('media-schema-only');
   new RecursiveTasks(store,new Files(join(directory,'empty-workspace'))).migrate();stages.push('recursive');
-  new WechatStore(store.db);stages.push('wechat-schema-only');
-  new TelegramStore(store.db);stages.push('telegram-schema-only');
  }catch(e){error=e instanceof Error&&/^[a-z][a-z0-9_]{1,90}$/.test(e.message)?e.message:'migration_preview_failed';}
  finally{store?.close();}
  const migrated=new DatabaseSync(candidate,{readOnly:true});
@@ -64,11 +59,11 @@ export async function previewMigration(snapshot:string,directory:string){
  }));
  const current=capture(migrated);
  const oldMetaPreserved=original.meta.every(row=>current.meta.some(after=>after.key===row.key&&after.value===row.value));
- const schemaVersions=Object.fromEntries(['recursiveSchemaVersion','pendingSchemaVersion'].map(key=>[key,migrated.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value??null]));
+ const schemaVersions=Object.fromEntries(['recursiveSchemaVersion'].map(key=>[key,migrated.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value??null]));
  const candidateSchemaHash=sha(migrated.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all());
  const integrityAfter=migrated.prepare('PRAGMA quick_check').get()?.quick_check;
  const foreignKeyViolations=migrated.prepare('PRAGMA foreign_key_check').all().length;
- const counts=Object.fromEntries(['tasks','deliveries','pending_items'].filter(t=>has(migrated,t)).map(t=>[t,migrated.prepare('SELECT count(*) n FROM '+quote(t)).get()?.n]));
+ const counts=Object.fromEntries(['tasks','operations'].filter(t=>has(migrated,t)).map(t=>[t,migrated.prepare('SELECT count(*) n FROM '+quote(t)).get()?.n]));
  migrated.close();
  // Restore preview is an OFFLINE copy, never an overwrite of the source/live DB.
  copyFileSync(before,rollback);chmodSync(rollback,0o600);
@@ -77,17 +72,16 @@ export async function previewMigration(snapshot:string,directory:string){
  const rollbackFacts=capture(restored);restored.close();
  const receipt={at:new Date().toISOString(),offline:true,originalSchemaHash:originalSchema,candidateSchemaHash,schemaUnchanged:originalSchema===candidateSchemaHash,noEngineChannelOrKeychain:true,stages,error:error??null,integrityBefore,integrityAfter,foreignKeyViolations,schemaVersions,counts,
   mainThreadPreserved:current.thread===original.thread,originalMetadataPreserved:oldMetaPreserved,allowedMetadataChanges:[],tables:comparisons,
-  uncertainBefore:original.uncertain,uncertainAfter:current.uncertain,uncertainRowsUnchanged:sha(original.uncertain)===sha(current.uncertain),
   rollback:{fileBytesMatch:fileHash(before)===fileHash(rollback),schemaUnchanged:rollbackSchemaUnchanged,factsUnchanged:sha(rollbackFacts)===sha(original)},
   permissions:{directory:statSync(directory).mode&0o777,before:statSync(before).mode&0o777,candidate:statSync(candidate).mode&0o777,rollback:statSync(rollback).mode&0o777},
   beforeFileHash:fileHash(before),candidateFileHash:fileHash(candidate),automaticActivationAllowed:false,
-  passed:!error&&integrityBefore==='ok'&&integrityAfter==='ok'&&!foreignKeyViolations&&oldMetaPreserved&&current.thread===original.thread&&Object.values(comparisons).every(v=>v.unchanged)&&sha(original.uncertain)===sha(current.uncertain)};
+  passed:!error&&integrityBefore==='ok'&&integrityAfter==='ok'&&!foreignKeyViolations&&oldMetaPreserved&&current.thread===original.thread&&Object.values(comparisons).every(v=>v.unchanged)};
  writeFileSync(join(directory,'migration-preview-receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
  return receipt;
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const [snapshot,directory]=process.argv.slice(2);if(!snapshot||!directory)throw Error('migration_preview_requires_snapshot_and_new_directory');
  const receipt=await previewMigration(snapshot,directory);
- process.stdout.write(JSON.stringify({passed:receipt.passed,error:receipt.error,stages:receipt.stages,mainThreadPreserved:receipt.mainThreadPreserved,uncertainCount:receipt.uncertainAfter.length,uncertainRowsUnchanged:receipt.uncertainRowsUnchanged,changedTables:Object.entries(receipt.tables).filter(([,v])=>!v.unchanged).map(([name])=>name),rollback:receipt.rollback})+'\n');
+ process.stdout.write(JSON.stringify({passed:receipt.passed,error:receipt.error,stages:receipt.stages,mainThreadPreserved:receipt.mainThreadPreserved,changedTables:Object.entries(receipt.tables).filter(([,v])=>!v.unchanged).map(([name])=>name),rollback:receipt.rollback})+'\n');
  if(!receipt.passed)process.exitCode=1;
 }

@@ -1,7 +1,7 @@
 // Real fixed desktop gateway, real loopback HTTP; synthetic IPC host, no engine.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
+import {copyFileSync,mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -13,7 +13,8 @@ test('desktop gateway privately supplies a fresh enforced key on each launch wit
  const parent=resolve('.codex/scratch/open-source-web-boundary-20261102/gateway');mkdirSync(parent,{recursive:true});
  const directory=mkdtempSync(join(parent,'synthetic-')),buildDir=join(directory,'build');
  mkdirSync(buildDir);execFileSync(process.execPath,['node_modules/typescript/bin/tsc','-p','tsconfig.json','--outDir',join(buildDir,'dist')],{stdio:'pipe'});
- for(const name of ['prompts','assets','runtime'])mkdirSync(join(buildDir,name));
+ for(const name of ['prompts','assets','runtime','scripts'])mkdirSync(join(buildDir,name));
+ copyFileSync('scripts/windows-security.mjs',join(buildDir,'scripts/windows-security.mjs'));
  writeFileSync(join(buildDir,'package.json'),'{"type":"module"}');writeFileSync(join(buildDir,'package-lock.json'),'{}');
  writeFileSync(join(buildDir,'dist/dev-host.js'),`
  let credentialPassedToHost=false;
@@ -36,12 +37,12 @@ test('desktop gateway privately supplies a fresh enforced key on each launch wit
   const urlEvent=new Promise(r=>{ready=r;});
   const output=new Writable({write(chunk,_encoding,done){text+=String(chunk);done();}});
   let account;
-  const done=runDev({root:buildDir,input,output,fixedBuild:build,fixedUi:build,fallbackUi:build,webPort:0,desktop:{bindAccount:callback=>{account=callback;},onEvent:event=>{if(event.kind==='url')ready(event);}}});
+  const done=runDev({root:buildDir,input,output,fixedBuild:build,webPort:0,desktop:{bindAccount:callback=>{account=callback;},onEvent:event=>{if(event.kind==='url')ready(event);}}});
   let timer;
   try{
    const event=await Promise.race([urlEvent,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('synthetic_desktop_gateway_timeout')),15000);})]);clearTimeout(timer);
    assert.equal(typeof event.desktopAccessToken==='string'&&/^[a-f0-9]{64}$/.test(event.desktopAccessToken),true,'private desktop credential format');assert.equal(event.url.includes(event.desktopAccessToken),false);
-   const request=async key=>{const response=await fetch(event.url+'/api/state',{headers:{Connection:'close',...(key?{'X-Homer-Desktop-Access':key}:{})}});const value=await response.json();return {status:response.status,value};};
+   const request=async key=>{const response=await fetch(event.url+'/api/history/state',{headers:{Connection:'close',...(key?{'X-Homer-Desktop-Access':key}:{})}});const value=await response.json();return {status:response.status,value};};
    assert.equal((await request()).status,401);
    if(previous){assert.equal(previous===event.desktopAccessToken,false,'desktop credential must change between launches');assert.equal((await request(previous)).status,401);}
    const authenticated=await request(event.desktopAccessToken);assert.equal(authenticated.status,200);assert.equal(authenticated.value.credentialPassedToHost,false);

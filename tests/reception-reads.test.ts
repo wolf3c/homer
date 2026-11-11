@@ -18,6 +18,34 @@ test('reception: queue projection, runnable and claim never hydrate full convers
   assert.equal(f.queue.claim()!.input.requestId,'one');
  }finally{f.store.close();}
 });
+test('reception: terminal interrupt lookup returns only IDs for the original generation',()=>{
+ const f=fixture(input=>input.requestId==='preparing'?'preparing':'ready');try{
+  for(let i=0;i<160;i++){
+   f.queue.accept({requestId:'history-'+i,text:'Synthetic history'});
+   const row=f.queue.claim()!;f.queue.finish(row.messageId,row.revision,'completed');
+  }
+  f.queue.accept({requestId:'active',text:'Synthetic target'});
+  const target=f.queue.claim()!;
+  f.queue.started(target.messageId,target.revision,'generation','turn');
+  f.queue.finish(target.messageId,target.revision,'interrupted');
+  const interrupt={messageId:target.replyId,generationId:'generation'};
+  const pending=f.queue.accept({requestId:'preparing',text:'Synthetic preparing'},undefined,interrupt);
+  const unknown=f.queue.accept({requestId:'unknown',text:'Synthetic unknown'},undefined,interrupt);
+  const late=f.queue.accept({requestId:'late',text:'Synthetic late'},undefined,interrupt);
+  const confirmed=f.queue.accept({requestId:'confirmed',text:'Synthetic confirmed'},undefined,interrupt);
+  f.queue.accept({requestId:'unrelated',text:'Synthetic unrelated'},undefined,{...interrupt,generationId:'other'});
+  f.queue.interruptReceipt(unknown.queueMessageId!,'uncertain');
+  f.queue.interruptReceipt(late.queueMessageId!,'failed');
+  f.queue.interruptReceipt(confirmed.queueMessageId!,'confirmed');
+  assert.equal(f.queue.list().length,166);
+  f.history.inputs=()=>{throw Error('terminal_lookup_must_not_hydrate_input');};
+  const sql:string[]=[],prepare=f.store.db.prepare.bind(f.store.db);
+  f.store.db.prepare=query=>{sql.push(query);return prepare(query);};
+  assert.deepEqual(f.queue.interruptIdsForGeneration('generation'),[pending.queueMessageId,unknown.queueMessageId,late.queueMessageId]);
+  assert.equal(sql.filter(query=>query.includes('agent_messages')).length,1);
+  assert.doesNotMatch(sql.join('\n'),/conversation_messages|conversation_inputs/);
+ }finally{f.store.close();}
+});
 test('reception: history association loading is batched and does not duplicate messages',()=>{
  const f=fixture();try{
   for(let i=0;i<1100;i++){const r=f.history.accept('synthetic-thread',{requestId:'input-'+i,text:'Synthetic '+i});f.history.feedback('synthetic-thread',r.replyId,'up');for(let t=0;t<2;t++)f.history.tool(r.replyId,{id:'t'+t,label:'Synthetic tool',phase:'start'});}
@@ -27,10 +55,11 @@ test('reception: history association loading is batched and does not duplicate m
 });
 test('reception: durable FIFO ignores legacy priorities and only a preparing head blocks later inputs',()=>{
  const preparing=new Set(['ordinary']);const f=fixture(input=>preparing.has(input.requestId)?'preparing':'ready');try{
-  f.queue.accept({requestId:'launch',text:'Synthetic first launch'},{source:'first_launch',persist(){}});
+  f.queue.accept({requestId:'first',text:'Synthetic first input'});
   f.queue.accept({requestId:'ordinary',text:'Synthetic ordinary'});
-  f.queue.accept({requestId:'urgent',text:'Synthetic interrupt'},undefined,{messageId:'synthetic-reply',generationId:'synthetic-generation'});
-  assert.equal(f.queue.runnable(),true);const launch=f.queue.claim()!;assert.equal(launch.input.requestId,'launch');f.queue.finish(launch.messageId,launch.revision,'completed');
+  const urgent=f.queue.accept({requestId:'urgent',text:'Synthetic interrupt'},undefined,{messageId:'synthetic-reply',generationId:'synthetic-generation'});
+  f.store.db.prepare("UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.priority',1) WHERE id=?").run(urgent.queueMessageId!);
+  assert.equal(f.queue.runnable(),true);const claimed=f.queue.claim()!;assert.equal(claimed.input.requestId,'first');f.queue.finish(claimed.messageId,claimed.revision,'completed');
   assert.equal(f.queue.runnable(),false);assert.equal(f.queue.claim(),undefined);preparing.clear();
   for(const id of ['ordinary','urgent']){assert.equal(f.queue.runnable(),true);const next=f.queue.claim()!;assert.equal(next.input.requestId,id);f.queue.finish(next.messageId,next.revision,'completed');}
   assert.equal(f.queue.runnable(),false);assert.deepEqual(f.queue.list().map(q=>q.state),['completed','completed','completed']);
@@ -51,20 +80,20 @@ test('reception: current queue index avoids historical receipt scans',()=>{
   assert.ok(!plan.some(row=>/\bSCAN r\b/.test(String(row.detail))),JSON.stringify(plan));
  }finally{f.store.close();}
 });
-test('reception: runnable and claim share durable FIFO for preparing, ready and failed first_launch interrupts',()=>{
+test('reception: runnable and claim share durable FIFO for preparing, ready and failed interrupts',()=>{
  for(const initial of ['preparing','ready','failed'] as const){
   let preparation:'preparing'|'ready'|'failed'=initial;
-  const f=fixture(input=>input.requestId==='launch-interrupt'?preparation:'ready');try{
+  const f=fixture(input=>input.requestId==='first-interrupt'?preparation:'ready');try{
    const target={generationId:'synthetic-generation',messageId:'synthetic-reply'};
-   const first=f.queue.accept({requestId:'launch-interrupt',text:'Synthetic first launch interrupt'},{source:'first_launch',persist(){}},target);
+   const first=f.queue.accept({requestId:'first-interrupt',text:'Synthetic first interrupt'},undefined,target);
    f.queue.accept({requestId:'ordinary-interrupt',text:'Synthetic ordinary interrupt'},undefined,target);
-   f.queue.accept({requestId:'launch-normal',text:'Synthetic ordinary first launch'},{source:'first_launch',persist(){}});
+   f.queue.accept({requestId:'first-normal',text:'Synthetic first ordinary input'});
    for(const id of ['ordinary-1','ordinary-2'])f.queue.accept({requestId:id,text:'Synthetic ordinary FIFO'});
    if(initial==='preparing'){
     assert.equal(f.queue.runnableHead(),undefined);assert.equal(f.queue.runnable(),false);assert.equal(f.queue.claim(),undefined);
     assert.equal(f.queue.list()[0]!.preparation,'preparing');preparation='ready';
    }
-   assert.equal(f.queue.runnableHead()!.input.requestId,'launch-interrupt');assert.equal(f.queue.runnable(),true);
+   assert.equal(f.queue.runnableHead()!.input.requestId,'first-interrupt');assert.equal(f.queue.runnable(),true);
    if(initial==='failed'){
     let failure:MainInputClaimError|undefined;try{f.queue.claim();}catch(error){assert.ok(error instanceof MainInputClaimError);failure=error;}
     assert.ok(failure);assert.equal(failure.message,'media_preparation_failed');assert.equal(failure.messageId,first.queueMessageId);
@@ -72,7 +101,7 @@ test('reception: runnable and claim share durable FIFO for preparing, ready and 
     assert.deepEqual({...f.store.db.prepare('SELECT state,revision FROM agent_receipts WHERE messageId=?').get(first.queueMessageId!)},{state:'rejected',revision:1});
     assert.equal(f.queue.list()[0]!.state,'failed');assert.match(f.history.list('synthetic-thread').find(m=>m.id===first.replyId)!.text,/附件准备失败/);
    }
-   for(const id of [...(initial==='failed'?[]:['launch-interrupt']),'ordinary-interrupt','launch-normal','ordinary-1','ordinary-2']){
+   for(const id of [...(initial==='failed'?[]:['first-interrupt']),'ordinary-interrupt','first-normal','ordinary-1','ordinary-2']){
     assert.equal(f.queue.runnableHead()!.input.requestId,id);
     const next=f.queue.claim()!;assert.equal(next.input.requestId,id);
     assert.deepEqual({...f.store.db.prepare('SELECT state,revision FROM agent_receipts WHERE messageId=?').get(next.messageId)},{state:'offered',revision:1});
@@ -83,7 +112,7 @@ test('reception: runnable and claim share durable FIFO for preparing, ready and 
     assert.deepEqual({...f.store.db.prepare('SELECT state,revision FROM agent_receipts WHERE messageId=?').get(next.messageId)},{state:'processed',revision:2});
    }
    assert.equal(f.queue.runnable(),false);assert.equal(f.queue.claim(),undefined);
-   assert.ok(f.queue.list().every(row=>row.state==='completed'||(initial==='failed'&&row.input.requestId==='launch-interrupt'&&row.state==='failed')));
+   assert.ok(f.queue.list().every(row=>row.state==='completed'||(initial==='failed'&&row.input.requestId==='first-interrupt'&&row.state==='failed')));
   }finally{f.store.close();}
  }
 });

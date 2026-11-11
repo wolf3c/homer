@@ -24,22 +24,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     return;
   }
   if (m.method === "initialize")
-    send({ id: m.id, result: { userAgent: "mock/0.154.0" } });
-  if (m.method === "config/read") {
-    const external = process.argv.some((a) => a.includes("external-tools"));
-    const disabled = process.argv.includes('mcp_servers.unexpected.enabled=false');
-    const stubborn = process.argv.some((a) => a.includes("external-tools-stubborn"));
-    send({
-      id: m.id,
-      result: {
-        config: {
-          mcp_servers: external ? { unexpected: { command: "blocked", enabled: stubborn || !disabled } } : {},
-        },
-        origins: {},
-        layers: null,
-      },
-    });
-  }
+    send({ id: m.id, result: { userAgent: "mock/0.163.0", codexHome: process.env.CODEX_HOME } });
+  if (m.method === "config/read")
+    send({ id: m.id, result: { config: { features: { memories: true }, memories: { dedicated_tools: true }, mcp_servers: {} }, layers: [] } });
   if (m.method === "thread/start" || m.method === "thread/resume") {
     model = m.params.model;
     if (model === "missing-rollout" && m.method === "thread/resume") {

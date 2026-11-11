@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+const macCode=['homer-image-decoder','homer-window-capture','node'].map(name=>'Contents/MacOS/'+name);
 function desktopManifest(bundle,metadata){
  const windows=metadata.platform==='win32',resources=windows?join(bundle,'resources'):join(bundle,'Contents/Resources'),files=[];
  if(windows&&lstatSync(join(resources,'elevate.exe'),{throwIfNoEntry:false}))throw Error('desktop_elevation_helper_denied');
@@ -16,7 +17,7 @@ function desktopManifest(bundle,metadata){
   }
  }
  visit(resources);
- const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/node']).map(path=>({path,sha256:sha(readFileSync(join(bundle,path)))}));
+ const codeFiles=(windows?['Homer.exe']:macCode).map(path=>({path,sha256:sha(readFileSync(join(bundle,path)))}));
  return {...metadata,codeFiles,files};
 }
 export function writeDesktopManifest(bundle,metadata){
@@ -36,17 +37,19 @@ export default function forgeConfig({payload,metadata,icon,distribution}){
  return {
   packagerConfig:{
    name:'Homer',executableName:'Homer',appBundleId:distribution?metadata.appId:'app.homer.desktop.candidate',appVersion:metadata.version,buildVersion:String(metadata.build),appCategoryType:'public.app-category.productivity',darwinDarkModeSupport:true,
-   extendInfo:{CFBundleDisplayName:'荷马',LSMinimumSystemVersion:metadata.minimumMacOS??'27.0'},icon,asar:true,prune:false,
+   extendInfo:{CFBundleDisplayName:'荷马',LSMinimumSystemVersion:metadata.minimumMacOS??'27.0',NSScreenCaptureUsageDescription:'截取你选择的窗口或区域，用于图片批注。'},icon,asar:true,prune:false,
    extraResource:['homer','runtime','licenses'].map(name=>join(payload,name)),
    tmpdir:join(payload,'../packager-tmp'),
-   // Preserve original upstream signatures and the already signed ImageIO helper.
+   // Keep upstream executable signatures. The Cua SDK addons load inside Electron and need its team signature.
    osxSign:{identity:distribution?.identity??'-',identityValidation:!!distribution,continueOnError:false,preAutoEntitlements:false,preEmbedProvisioningProfile:false,
     optionsForFile:()=>distribution?{hardenedRuntime:true,timestamp:'http://timestamp.apple.com/ts01'}:{hardenedRuntime:false,timestamp:'none'},
-    ignore:path=>path.includes('/Contents/Resources/runtime/')||path.endsWith('/Contents/MacOS/node')||path.endsWith('/Contents/MacOS/homer-image-decoder')||lstatSync(path).isFile()&&!execFileSync('/usr/bin/file',['--brief',path],{encoding:'utf8'}).startsWith('Mach-O'),
+    ignore:path=>path.includes('/Contents/Resources/runtime/')
+      ?!/\/Contents\/Resources\/runtime\/cua\/(?:chrome-viewport$|node_modules\/.*\.(?:node|dylib)$)/.test(path)
+      :macCode.some(file=>path.endsWith('/'+file))||lstatSync(path).isFile()&&!execFileSync('/usr/bin/file',['--brief',path],{encoding:'utf8'}).startsWith('Mach-O'),
    },
    afterCopyExtraResources:[async({buildPath})=>{
     const bundle=join(buildPath,'Homer.app');
-    for(const name of ['node','homer-image-decoder'])cpSync(join(payload,name),join(bundle,'Contents/MacOS',name));
+    for(const file of macCode)cpSync(join(payload,basename(file)),join(bundle,file));
     writeDesktopManifest(bundle,metadata);
    }],
   },
@@ -70,7 +73,7 @@ export default function forgeConfig({payload,metadata,icon,distribution}){
     // Nested native addons are signed by Forge; seal their final bytes in the outer signature.
     writeDesktopManifest(bundle,metadata);
     execFileSync('/usr/bin/codesign',['--force','--sign',distribution?.identity??'-',...(distribution?['--timestamp=http://timestamp.apple.com/ts01','--options','runtime','--preserve-metadata=entitlements']:['--timestamp=none']),bundle],{stdio:'inherit'});
-    for(const path of [bundle,join(bundle,'Contents/MacOS/node'),join(bundle,'Contents/MacOS/homer-image-decoder')])execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',path],{stdio:'inherit'});
+    for(const path of [bundle,...macCode.map(file=>join(bundle,file))])execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',path],{stdio:'inherit'});
     if(realpathSync(bundle)!==bundle)throw Error('desktop_bundle_symlink_denied');
     if(distribution){
      const archive=join(app,'Homer-notary.zip');
