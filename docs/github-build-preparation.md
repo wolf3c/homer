@@ -2,6 +2,8 @@
 
 ## 当前流程（2026-11-11）
 
+本轮已按用户要求准备桌面 `v0.1.8` / build `293`：三平台构建、仅 Apple 芯片 Mac 实机验收，沿用草稿直传及云端完整校验。版本元数据与只读核对结果见 [v0.1.8 构建准备](desktop-release-0.1.8-preparation.md)。本轮尚未提交、推送、创建标签或开始构建，准备完成后再确认执行。以下 v0.1.2 段落及后续历史准备记录不构成本轮授权。
+
 2026-11-06 已按用户确认准备桌面 `v0.1.2`（拟用 build `287`），三平台构建、仅 Apple 芯片 Mac 实机验收。源码、公开候选、静态验证及后续执行条件见 [0.1.2 构建准备](desktop-release-0.1.2-preparation.md)。准备阶段未提交、同步、创建标签、触发构建或发布；用户随后已授权提交、同步、创建标签及开始构建。
 
 `desktop-three` 构建 Apple 芯片 Mac、Intel Mac 和 Windows x64，系统要求分别为 macOS 27、macOS 14 和 Windows 11。Mac 使用 Developer ID 签名、公证及临时钥匙串；Windows 当前未签名且禁用自动更新。版本由 `release_tag` 对齐 `package.json.version`，三平台共用显式 `build_number`，构建提交固定为 `expected_sha`。平台和 runner 以 `scripts/github-build-plan.mjs` 为准。
