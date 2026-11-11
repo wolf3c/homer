@@ -1,30 +1,61 @@
-<img src="assets/readme/homer-logo.png" alt="荷马 Homer 标志" width="80" />
+<img src="assets/branding/odysseus-20261030/homer-odysseus-256.png" alt="荷马 Homer 标志" width="80" />
 
 # 荷马 Homer
 
 [English](README.md) | **简体中文**
 
-荷马调度 AI 助手完成你交办的工作，审核并交付成果。在同一对话中交代任务、补充材料、提出修改。
+![荷马首页头图](assets/readme/home-hero.png)
 
-## 安装与开始使用
+荷马（Homer）是一款开源 AI 工作助手。你只需与荷马对话，随时交办多项工作；荷马调度 AI 军团分工协作、审核成果，让你的目标持续向前。
 
-**桌面安装包准备中。** 发布并完成验证后，这里会提供下载链接和安装步骤。
-
-开发者现在可以按[源码运行指南](docs/public/getting-started.md)构建并启动。当前为开发预览，存在[已知限制](docs/public/getting-started.md#当前源码状态)。
-
-启动后，连接可用的模型服务，告诉荷马你要完成什么，并提供相关材料。在同一对话中回答问题、提出修改。具体操作见[使用指南](docs/public/using-homer.md)。
-
-## 模型与费用
-
-客户端计划免费，模型调用另计。可选的荷马按量模型服务和 ChatGPT 套餐接入正在准备，可用性与使用资格仍待确认。详见[费用与数据](docs/public/data-and-costs.md)。
+- **一个对话，管理所有工作**：不用在多个 Agent 会话之间来回切换、梳理关系；你只需与荷马沟通，它负责协调各项工作。
+- **新想法随时说，后续工作有人跟进**：前面的任务还在进行时，也可以告诉荷马下一步想做什么。荷马会记录并协调安排，不必打断当前工作或等它完成后再开新会话。
+- **过程有人协调，成果有人审核**：荷马先处理 AI 助手的问题，审核成果，发现问题就安排返工；需要你提供信息或作决定时再询问你。
+- **离开电脑，工作也能继续**：手机配对电脑主端后，可以查看进展、补充想法、回应问题和接收成果。也可以接入 Telegram 机器人、个人微信或钉钉机器人，在私聊中交办任务、追问进展，并订阅事项更新及附件。
 
 ## 荷马如何工作
 
 ![荷马协调任务、助手协作、审核与交付的动画示意](assets/readme/homer-workflow.gif)
 
-协作流程示意。
+## 安装与开始使用
 
-![荷马首页头图](assets/readme/home-hero.png)
+### 下载荷马
+
+桌面正式版 v0.1.7（build 292）已发布，请选择适合你电脑的安装包：
+
+- [macOS · Apple 芯片](https://github.com/wolf3c/homer/releases/download/v0.1.7/Homer-mac-arm64.zip)，需要 macOS 27 或更高版本。
+- [macOS · Intel](https://github.com/wolf3c/homer/releases/download/v0.1.7/Homer-mac-x64.zip)，需要 macOS 14 或更高版本。
+- [Windows · x64](https://github.com/wolf3c/homer/releases/download/v0.1.7/Homer-windows-x64.exe)，需要 Windows 11。
+
+Mac 版已签名和公证，解压后将 Homer 移入「应用程序」。Windows 安装包未签名，运行安装器手动安装，自动更新关闭。Linux 桌面安装包尚未提供。
+
+Intel Mac 和 Windows x64 的目标系统安装与运行验收尚待完成。完整更新说明及校验文件见 [v0.1.7 Release](https://github.com/wolf3c/homer/releases/tag/v0.1.7)。
+
+### 开始使用
+
+1. 打开荷马，按提示连接可用的模型服务。
+2. 告诉荷马你想完成什么，并提供相关材料。
+3. 随时补充想法、查看进展和接收成果。
+
+模型服务的使用资格、额度和费用以实际发布信息及服务规则为准。详见[使用指南](docs/public/using-homer.md)。
+
+### 在手机上继续工作
+
+安装手机 App 后，在电脑端荷马的「设置 → 移动设备」中扫码配对。手机 App 需要连接可用的电脑主端。
+
+- Android：下载入口待补充
+- iPhone / iPad：下载入口待发布
+
+开发者也可以[从源码构建和运行](docs/public/getting-started.md)。当前为开发预览，存在[已知限制](docs/public/getting-started.md#当前源码状态)。
+
+## 模型与费用
+
+荷马自有代码免费开源。桌面端代码已支持两种模型来源：
+
+- **[荷马会员服务](https://super-tree.com/homer#homer-pricing-title)**：计划按需购买模型额度，费用根据实际用量计算。
+- **自己的 ChatGPT 套餐**：通过 Codex 接入，使用资格和额度遵循对应套餐规则。
+
+模型使用可能产生费用；一个任务中的助手协作、审核和修改都会消耗用量。两种方式的实际可用性、接入资格、购买流程和计费规则须在正式发布前确认。详见[费用与数据](docs/public/data-and-costs.md)。
 
 ## 相关链接与许可
 
@@ -32,4 +63,4 @@
 - [使用指南](docs/public/using-homer.md) · [源码运行指南](docs/public/getting-started.md)
 - [反馈问题](https://github.com/wolf3c/homer/issues)：请勿提供凭据或私密材料。
 
-荷马自有代码采用 [Apache-2.0](LICENSE)。[第三方许可](THIRD_PARTY_NOTICES.md)单独适用；Agentation 额外授权询问仍待答复。
+荷马自有代码采用 [Apache-2.0](LICENSE)。[第三方许可](THIRD_PARTY_NOTICES.md)单独适用；仓库尚未记录 Agentation 额外授权确认。
