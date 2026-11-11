@@ -14,7 +14,7 @@
 .assistant-message[data-process-completed]:not(:has(> :not(.message-timestamp))){display:none}
 .homer-task-status.worker-event-card { max-width:100%; }
 .homer-task-status [data-slot="task-card-transcript"] { overflow-wrap:anywhere; }
-.homer-task-status [data-attention="user"] > .status-row-trigger { background:var(--accent); outline:1px solid currentColor; }
+.homer-task-status [data-attention="user"] > .status-row-trigger { background:var(--accent); }
 @media(max-width:620px) {
  .worker-event-card > button > .truncate { white-space:normal; overflow:visible; overflow-wrap:anywhere; }
 }
