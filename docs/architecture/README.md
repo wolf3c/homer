@@ -10,7 +10,7 @@
 | [桌面版内嵌 Cua Driver](desktop-computer-use.md) | macOS ARM64 签名候选已用真实 Worker 验证已有和临时 Chrome、指定桌面窗口、附件及资源回收。本地启动／AX／错误与绑定回收修复通过 90 项离线回归及隔离源码模块的真实 SDK、桌面审批读取、Chrome 点击截图和失败回收验收，尚未重打包或安装。Windows x64 已接入，签名包与交互桌面待验收。 |
 | [多渠道接入架构](multi-channel-architecture.md) | 首版覆盖文字收件、消息及附件外送和聊天内订阅。Telegram 私聊已通过双 Bot 实网验收。群入口已接入主 Agent，最近 10 条与多级上游的合并通过离线验证，实际群回复待验。桌面 Telegram 绑定列表的 BotFather 小程序指引及命令备选已通过隔离浏览器核对。个人微信已通过双账号实网验收，覆盖解绑、重启和 30 分钟延迟交付。真实模型订阅意图和 macOS ARM64 候选包的双渠道收发及重启已通过。隔日探测待完成。桌面「连接聊天应用」已在隔离源码完成，macOS ARM64 候选包通过双渠道绑定、原入口回复、重启和解绑实网对照，Windows 待验收。钉钉专用机器人已通过隔离 macOS ARM64 候选包的桌面绑定、原私聊回复、订阅重启、后台文字及附件和解绑验收。 |
 | [账号与模型连接](account-and-model-connection.md) | 网站授权、模型配置交付、凭据保存及失败保全。正文区分本地定向验证和线上生效证据。 |
-| [移动设备配对与连接](mobile-device-pairing-architecture.md) | 移动端、主端和 Yezi2 的配对、撤销、WebRTC 及中继边界。正文分别记录真机闭环和中继验收范围。iOS 扫码直接请求系统相机权限，离线回归通过，真机待验。 |
+| [移动设备配对与连接](mobile-device-pairing-architecture.md) | 移动端、主端和 Yezi2 的配对、撤销、WebRTC 及中继边界。正文分别记录真机闭环和中继验收范围。iOS 扫码授权、拒绝恢复和配对已通过 iPhone 验收，App Store build 8 已复提并等待审核。 |
 
 桌面普通重启已在 `41a24f7` 的隔离 macOS App 中用真实 ChatGPT 验证原线程、原回执和不重放边界。旧首启轮退役合入 `4aa2612` 后，隔离 macOS 包 `a9ddfb0` 用真实 ChatGPT 验证首启零模型轮、只取消从未领取的旧输入、未知轮次不重放，以及普通排队消息沿原线程执行一次。见[重启验证](main-worker-chat-architecture.md#重启后原任务怎样继续)与[精简方案基线](homer-simplification-plan.md#1-从现状继续精简)。
 
