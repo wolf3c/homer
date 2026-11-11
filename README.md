@@ -1,12 +1,36 @@
-<img src="assets/branding/odysseus-20261030/homer-odysseus-256.png" alt="Homer logo" width="80" />
+<p align="center">
+  <img src="assets/readme/home-hero.png" alt="Homer with a book and sword, coordinating an AI team" width="720" />
+</p>
 
-# Homer
+<h1 align="center">Homer — Your AI Work Assistant</h1>
 
-**English** | [简体中文](README.zh-CN.md)
+<p align="center">
+  <strong>One conversation. A team of AI assistants. Work that keeps moving.</strong>
+</p>
 
-![Artwork from the Homer homepage concept](assets/readme/home-hero.png)
+<p align="center">
+  <a href="https://github.com/wolf3c/homer/releases/latest"><img src="https://img.shields.io/github/v/release/wolf3c/homer?label=release&amp;color=c45a3c" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="Homer code license: Apache 2.0" /></a>
+  <a href="#download-homer"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows-586069" alt="Desktop downloads: macOS and Windows" /></a>
+</p>
+
+<p align="center">
+  <a href="https://super-tree.com/homer">Website</a> ·
+  <a href="#install-and-start">Download &amp; start</a> ·
+  <a href="docs/public/using-homer.en.md">User guide</a> ·
+  <a href="docs/public/getting-started.en.md">Build from source</a> ·
+  <a href="docs/architecture/README.md">Architecture</a>
+</p>
+
+<p align="center">
+  <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+---
 
 Homer is an open-source AI work assistant. Talk to Homer and assign tasks whenever you like; it coordinates a team of AI assistants and reviews their work to keep your goals moving forward.
+
+## What Homer does
 
 - **One conversation for all your work**: Instead of switching between agent sessions and managing their relationships, talk to Homer and let it coordinate the work.
 - **Share ideas as they come**: Tell Homer what you want to do next while earlier work is still underway. It records and coordinates follow-up work without interrupting the current task or requiring a new session.

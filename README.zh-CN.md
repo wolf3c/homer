@@ -1,12 +1,36 @@
-<img src="assets/branding/odysseus-20261030/homer-odysseus-256.png" alt="荷马 Homer 标志" width="80" />
+<p align="center">
+  <img src="assets/readme/home-hero.png" alt="荷马手持书与剑，协调 AI 军团" width="720" />
+</p>
 
-# 荷马 Homer
+<h1 align="center">荷马 Homer — 你的 AI 工作助手</h1>
 
-[English](README.md) | **简体中文**
+<p align="center">
+  <strong>你交办目标，荷马协调 AI 军团，审核并交付成果。</strong>
+</p>
 
-![荷马首页头图](assets/readme/home-hero.png)
+<p align="center">
+  <a href="https://github.com/wolf3c/homer/releases/latest"><img src="https://img.shields.io/github/v/release/wolf3c/homer?label=release&amp;color=c45a3c" alt="最新发布版本" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="荷马自有代码许可：Apache 2.0" /></a>
+  <a href="#下载荷马"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows-586069" alt="桌面下载：macOS 与 Windows" /></a>
+</p>
+
+<p align="center">
+  <a href="https://super-tree.com/homer">官网</a> ·
+  <a href="#安装与开始使用">下载与开始</a> ·
+  <a href="docs/public/using-homer.md">使用指南</a> ·
+  <a href="docs/public/getting-started.md">源码运行</a> ·
+  <a href="docs/architecture/README.md">架构文档</a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> | <strong>简体中文</strong>
+</p>
+
+---
 
 荷马（Homer）是一款开源 AI 工作助手。你只需与荷马对话，随时交办多项工作；荷马调度 AI 军团分工协作、审核成果，让你的目标持续向前。
+
+## 荷马能做什么
 
 - **一个对话，管理所有工作**：不用在多个 Agent 会话之间来回切换、梳理关系；你只需与荷马沟通，它负责协调各项工作。
 - **新想法随时说，后续工作有人跟进**：前面的任务还在进行时，也可以告诉荷马下一步想做什么。荷马会记录并协调安排，不必打断当前工作或等它完成后再开新会话。
