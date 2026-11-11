@@ -14,6 +14,13 @@ test('one in-place summary has unique source title, safe live action and continu
 test('missing timing is explicit and an old turn cannot retain a live command',async()=>withDom(async d=>{
  await d.render(h(ProcessNodeView,{node:{...node,startedAtMs:undefined},observation:{...observation,generationTurnId:'old'},renderText:t=>t}));assert.match(d.container.textContent,/状态待确认.*耗时未提供/);assert.doesNotMatch(d.container.textContent,/pnpm|SECRET/);
 }));
+test('Worker process summary leaves its task name to the surrounding message title',async()=>withDom(async d=>{
+ const worker={...node,sourceKind:'worker',sourceMessageIds:['notice']};
+ await d.render(h(ProcessMessageContent,{node:worker,taskSources:[{title:'关于荷马显示版本号'}],activityText:'当前处理阶段待确认',renderText:t=>t},null));
+ const toggle=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');
+ assert.match(toggle.textContent,/^处理过程 · 当前处理阶段待确认/);
+ assert.doesNotMatch(toggle.textContent,/关于荷马显示版本号/);
+}));
 
 // Bundle the actual private row for a component test; no test export in product.
 import {buildSync} from 'esbuild';

@@ -4,7 +4,7 @@ import type {MainDispatchInput} from '../../../src/recursive-main-inputs';
 import {BotIcon,UserRoundIcon,XIcon} from 'lucide-react';
 import {useSortable} from '@dnd-kit/react/sortable';
 import './message-queue.css';
-export interface QueueMessage{id:string;text:string;origin:'user'|'worker';state:MainDispatchInput['state'];position?:number;cancellable?:boolean;movable?:boolean}
+export interface QueueMessage{id:string;text:string;origin:'user'|'worker';state:MainDispatchInput['state'];position?:number;cancellable?:boolean;movable?:boolean;hidden?:boolean}
 function QueueRow({message,index,group,dragDisabled,cancelDisabled,onCancel}:{message:QueueMessage;index:number;group:string;dragDisabled:boolean;cancelDisabled?:boolean;onCancel?:(id:string)=>void}){
  const {ref,handleRef,isDragging}=useSortable({id:message.id,index,group,type:group,accept:group,disabled:dragDisabled});
  const position=message.position??index+1;
@@ -23,7 +23,7 @@ export function MessageQueue({messages,onCancel,cancelDisabled,dragDisabled=true
    const movable=message.state==='queued'&&message.movable;
    if(!movable||messages[index-1]?.state!=='queued'||!messages[index-1]?.movable)start=index;
    const alone=start===index&&(messages[index+1]?.state!=='queued'||!messages[index+1]?.movable);
-   return <QueueRow key={message.id} message={{...message,position:message.position??index+1}} index={index-start} group={messages[start].id} dragDisabled={dragDisabled||!movable||alone} cancelDisabled={cancelDisabled} onCancel={onCancel}/>;
+   return message.hidden?null:<QueueRow key={message.id} message={{...message,position:message.position??index+1}} index={index-start} group={messages[start].id} dragDisabled={dragDisabled||!movable||alone} cancelDisabled={cancelDisabled} onCancel={onCancel}/>;
   })}</ul>
  </div>;
 }

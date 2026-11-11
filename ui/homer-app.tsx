@@ -206,24 +206,28 @@ function AssistantMessage() {
   const compact=internal&&completed&&!hasBody&&!messageFiles.length&&!(metadata.inactiveInteractions as unknown[]|undefined)?.length;
   let taskTitle='';
   const titledEvents=new Set<string>();
-  if(hasBubble){
+  if(hasBubble||internal&&process.turnIds.length>0&&!completed){
     const titles=new Map<string,string>();
     for(const {title,target} of original?.taskSources??[]){
       if(title&&!titles.has('task:'+target.taskId))titles.set('task:'+target.taskId,title);
     }
     for(const item of process?.items??[]){
-      if(item.kind!=='workerEvent'||item.event?.eventKind!=='delegated'||item.event.bodySource!=='description'||!item.event.title)continue;
+      if(item.kind!=='workerEvent'||!item.event?.title)continue;
+      const delegated=item.event.eventKind==='delegated'&&item.event.bodySource==='description';
+      const received=internal&&item.event.eventKind==='reply_received'&&item.event.sourceMessageId&&process.sourceMessageIds.includes(item.event.sourceMessageId);
+      if(!delegated&&!received)continue;
       const key=item.event.taskId?'task:'+item.event.taskId:'event:'+item.eventKey;
       if(!titles.has(key))titles.set(key,item.event.title);
-      titledEvents.add(item.eventKey);
+      if(delegated)titledEvents.add(item.eventKey);
     }
-    taskTitle=[...titles.values()].join('、');
+    taskTitle=[...titles.values()].join('、')||(internal?'事项标题待确认':'');
   }
   return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-process-completed={completed||undefined} data-message-source={process?.sourceKind==='user'&&(!original||messageSourceParts(original)!==undefined)?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className={'message assistant-message'+(compact?' is-process-record':'')} aria-label="荷马的回复">
     {!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
+    {internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
     <ProcessMessageContent taskSources={original?.taskSources} taskSourceUnresolved={original?.taskSourceUnresolved} titledEvents={titledEvents} node={process} activityText={metadata.activityText as string} renderText={renderProcessText} parts={parts}>
     {hasBubble&&<>
-    {taskTitle&&<p className="message-task-title">{taskTitle}</p>}
+    {!internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
     <div className="assistant-message-bubble">
     {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
     {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i} expanded/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}{referencesOf(original.source).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}

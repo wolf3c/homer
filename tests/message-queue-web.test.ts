@@ -7,6 +7,7 @@ import {WebHistoryPages} from '../src/web-history-pages.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {createWebServer} from '../src/web-server.js';
 import type {Homer} from '../src/service.js';
+import {isVisibleConversationMessage} from '../ui/chat-date.js';
 
 test('queueMoveBefore uses the final source index and a same-segment global successor',async()=>{
  const {queueMoveBefore}=await import('../ui/queue-operations.js');
@@ -34,7 +35,7 @@ function hookHost(file:string,modules:Record<string,unknown>={}){
   useLayoutEffect(fn:()=>void|(()=>void),deps:unknown[]=[]){react.useEffect(fn,deps);},
  };
  const exports:any={},js=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
- new Function('require','exports',js)((id:string)=>id==='react'?react:modules[id]??(()=>{throw Error('unexpected unit import '+id);})(),exports);
+ new Function('require','exports',js)((id:string)=>id==='react'?react:id==='./chat-date'?{isVisibleConversationMessage}:modules[id]??(()=>{throw Error('unexpected unit import '+id);})(),exports);
  return {exports,render(fn:()=>unknown){let count=0;do{cursor=0;effects=[];dirty=false;value=fn();for(const effect of effects)effect();assert.ok(++count<20,'unit lifecycle settles');}while(dirty);return value;},unmount(){for(const slot of slots)slot?.cleanup?.();}};
 }
 function ownerUnit(t:any,transport:(path:string,input:any,signal?:AbortSignal)=>Promise<Response>){
@@ -92,7 +93,7 @@ test('queue drag handlers write once using source final index; cancellation, bar
  const item=(messageId:string,nextMessageId:string|null)=>({messageId,nextMessageId,state:'queued',movable:true,editable:true,revision:3,position:1,origin:'worker',text:'Same summary'});
  for(const scenario of ['valid','observed-at','cancel','same','no-target','cross-group','new-message','claim','delete','thread','epoch','capability','locked','disconnect','editor','unmount']){
   const writes:any[]=[],items=[item('A','B'),item('B','C'),item('C','unloaded')];
-  let state:any={threadId:'T',features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:'V',totalWaiting:3}},connected=true,editorBusy=false;
+  let state:any={threadId:'T',messages:[],features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:'V',totalWaiting:3}},connected=true,editorBusy=false;
   const page={items,threadId:'T',readEpoch:'E',orderVersion:'V',nextCursor:null,totalWaiting:3};
   const jsx=(type:unknown,props:unknown,key?:string)=>({type,props,key});
   const host=hookHost('ui/homer-message-queue.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'provider'},'@dnd-kit/react/sortable':{isSortable:(source:any)=>source?.initialIndex!==undefined},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue'},'./queue-operations':{queueMoveBefore,queuePost:async()=>page},'./homer-message-queue.css':{}});
@@ -131,7 +132,7 @@ test('queue header counts every loaded row across states and pages without repla
  for(const [index,scenario] of [{first:'queued',total:4},{first:'processing',total:3},{first:'uncertain',total:3},{first:'uncertain',total:0,onlyFirst:true},{first:'uncertain',total:103},{first:'uncertain',total:3,awaitingUser:true}].entries()){
   const source=(scenario.onlyFirst?items.slice(0,1):items).map((item,i)=>({...item,state:i===0?scenario.first:item.state}));
   page={threadId:'T',readEpoch:'E',orderVersion:'V'+index,items:source,totalWaiting:scenario.total,nextCursor:scenario.total===103?'next':null};
-  state={threadId:'T',features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:page.orderVersion,totalWaiting:scenario.total,...(scenario.awaitingUser?{awaitingUser:true}:{})}};
+  state={threadId:'T',messages:[],features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:page.orderVersion,totalWaiting:scenario.total,...(scenario.awaitingUser?{awaitingUser:true}:{})}};
   const before=JSON.stringify(page);render();await settle();const tree=render();
   const toggle=find(tree,node=>node?.type==='button'&&node.props.className==='queue-toggle');
   assert.equal(text(toggle),'消息队列 · 已加载 '+source.length+' 条','header and rendered rows use the same snapshot, including processing/unknown rows and partial pages');
@@ -181,12 +182,64 @@ test('queue rows bind segment-local sortable type/accept and disable both barrie
  assert.equal(rendered[5].props.children.at(-1),false,'claimed state blocks cancellation despite cancellable metadata');
  assert.equal(rendered[6].props.ref,undefined,'a singleton has no disabled draggable ancestor that mislabels its cancel action');
 });
+test('only an exact started Worker source hides a processing row without changing receipts',async t=>{
+ const oldWindow=Object.getOwnPropertyDescriptor(globalThis,'window');Object.defineProperty(globalThis,'window',{value:new EventTarget(),configurable:true});
+ const jsx=(type:unknown,props:unknown,key?:string)=>({type,props,key});
+ const find=(node:any,predicate:(node:any)=>boolean):any=>predicate(node)?node:Array.isArray(node)?node.map(child=>find(child,predicate)).find(Boolean):node?.props?find(node.props.children,predicate):undefined;
+ const text=(node:any):string=>typeof node==='string'||typeof node==='number'?String(node):Array.isArray(node)?node.map(text).join(''):node?.props?text(node.props.children):'';
+ const worker=(messageId:string,state='processing')=>({origin:'worker',messageId,state,movable:false,revision:1,text:'同名事项'});
+ const items=[worker('notice'),worker('other'),worker('uncertain','uncertain'),{origin:'user',messageId:'user',state:'queued',movable:true,editable:true,revision:0,input:{requestId:'user',text:'用户待发送'}}];
+ const page={items,threadId:'T',readEpoch:'E',orderVersion:'V',totalWaiting:1,nextCursor:null},before=JSON.stringify(page);
+ const process={id:'process',threadId:'T',sourceKind:'worker',sourceMessageIds:['notice','uncertain'],turnIds:['turn'],state:'working',status:'running'};
+ const message={id:'process',threadId:'T',role:'assistant',status:'running',text:'',process};
+ let state:any={threadId:'T',messages:[],features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:'V',totalWaiting:1}};
+ const host=hookHost('ui/homer-message-queue.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'provider'},'@dnd-kit/react/sortable':{isSortable:()=>false},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue'},'./queue-operations':{queuePost:async()=>page},'./homer-message-queue.css':{}});
+ t.after(()=>{host.unmount();oldWindow?Object.defineProperty(globalThis,'window',oldWindow):delete (globalThis as any).window;});
+ const render=()=>host.render(()=>host.exports.HomerMessageQueue({state,connected:true,operations:{locked:false,run:()=>assert.fail('display never writes')}}));
+ render();await settle();
+ for(const [name,value,hidden] of [
+  ['not loaded',undefined,false],['unstarted',{...message,process:{...process,turnIds:[]}},false],
+  ['other message thread',{...message,threadId:'other'},false],['other process thread',{...message,process:{...process,threadId:'other'}},false],
+  ['user process',{...message,process:{...process,sourceKind:'user'}},false],['placeholder',{...message,status:'queued'},false],
+  ['started',message,true],['finished before queue refresh',{...message,process:{...process,state:'worked',status:'completed'}},true],
+ ] as const){
+  state={...state,messages:value?[value]:[]};const tree=render(),queue=find(tree,node=>node?.type==='queue');
+  assert.deepEqual(queue.props.messages.map((item:any)=>!!item.hidden),[hidden,false,false,false],name);
+  assert.equal(text(find(tree,node=>node?.props?.className==='queue-toggle')),'消息队列 · 已加载 '+(hidden?3:4)+' 条',name);
+ }
+ state={...state,history:{readEpoch:'new-epoch'}};
+ assert.equal(find(render(),node=>node?.type==='queue').props.messages[0].hidden,false,'stale queue pages cannot hide rows');
+ assert.equal(JSON.stringify(page),before);
+});
+test('hidden Worker barriers keep the two visible movable segments separate',()=>{
+ const bindings:any[]=[],jsx=(type:unknown,props:unknown,key?:string)=>({type,props,key});
+ const host=hookHost('ui/vendor/assistant-ui/message-queue.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{BotIcon:'bot',UserRoundIcon:'user',XIcon:'cancel'},'@dnd-kit/react/sortable':{useSortable:(input:unknown)=>{bindings.push(input);return {}; }},'./message-queue.css':{}});
+ const messages=['A','B','processing','C','D'].map(id=>({id,origin:'worker',state:id==='processing'?'processing':'queued',movable:true,hidden:id==='processing',text:id}));
+ const rows=host.exports.MessageQueue({messages,dragDisabled:false}).props.children.props.children;
+ for(const row of rows)if(row)row.type(row.props);
+ assert.deepEqual(bindings.map(({id,index,group})=>({id,index,group})),[{id:'A',index:0,group:'A'},{id:'B',index:1,group:'A'},{id:'C',index:0,group:'C'},{id:'D',index:1,group:'C'}]);
+ host.unmount();
+});
+test('an entirely represented queue page keeps both next and home navigation',async t=>{
+ const oldWindow=Object.getOwnPropertyDescriptor(globalThis,'window');Object.defineProperty(globalThis,'window',{value:new EventTarget(),configurable:true});
+ const jsx=(type:unknown,props:unknown,key?:string)=>({type,props,key});
+ const find=(node:any,predicate:(node:any)=>boolean):any=>predicate(node)?node:Array.isArray(node)?node.map(child=>find(child,predicate)).find(Boolean):node?.props?find(node.props.children,predicate):undefined;
+ const text=(node:any):string=>typeof node==='string'||typeof node==='number'?String(node):Array.isArray(node)?node.map(text).join(''):node?.props?text(node.props.children):'';
+ const state={threadId:'T',messages:[{id:'process',threadId:'T',role:'assistant',text:'',status:'running',process:{threadId:'T',sourceKind:'worker',turnIds:['turn'],sourceMessageIds:['first','last']}}],features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:'V',totalWaiting:0}};
+ const host=hookHost('ui/homer-message-queue.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'provider'},'@dnd-kit/react/sortable':{isSortable:()=>false},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue'},'./queue-operations':{queuePost:async(_path:string,input:any)=>({threadId:'T',readEpoch:'E',orderVersion:'V',totalWaiting:0,nextCursor:input.cursor?null:'next',items:[{origin:'worker',messageId:input.cursor?'last':'first',state:'processing',text:'事项'}]})},'./homer-message-queue.css':{}});
+ t.after(()=>{host.unmount();oldWindow?Object.defineProperty(globalThis,'window',oldWindow):delete (globalThis as any).window;});
+ const render=()=>host.render(()=>host.exports.HomerMessageQueue({state,connected:true,operations:{locked:false}}));
+ render();await settle();let tree=render();assert.equal(text(find(tree,node=>node?.props?.className==='queue-toggle')),'消息队列 · 已加载 0 条');
+ find(tree,node=>node?.type==='button'&&node.props.children==='查看下一页').props.onClick();render();await settle();tree=render();
+ assert.ok(find(tree,node=>node?.type==='button'&&node.props.children==='返回待发送首页'));
+ assert.equal(text(find(tree,node=>node?.props?.className==='queue-toggle')),'消息队列 · 已加载 0 条');
+});
 test('queued focus restoration cannot scroll or focus a different page after navigation',async t=>{
  const frames:FrameRequestCallback[]=[],lookups:string[]=[];
  for(const [name,value] of Object.entries({window:new EventTarget(),CSS:{escape:(value:string)=>value},requestAnimationFrame:(fn:FrameRequestCallback)=>{frames.push(fn);return frames.length;},document:{querySelector:(selector:string)=>{lookups.push(selector);return null;}}})){
   const old=Object.getOwnPropertyDescriptor(globalThis,name);Object.defineProperty(globalThis,name,{value,configurable:true});t.after(()=>old?Object.defineProperty(globalThis,name,old):delete (globalThis as any)[name]);
  }
- const jsx=(type:unknown,props:unknown,key?:string)=>({type,props,key}),state={threadId:'T',features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:'V',totalWaiting:3}};
+ const jsx=(type:unknown,props:unknown,key?:string)=>({type,props,key}),state={threadId:'T',messages:[],features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:'V',totalWaiting:3}};
  const items=['A','B','C'].map((id,index)=>({messageId:id,state:'queued',origin:'worker',movable:true,revision:0,position:index+1,text:id,nextMessageId:['B','C','unloaded'][index]}));
  const host=hookHost('ui/homer-message-queue.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'provider'},'@dnd-kit/react/sortable':{isSortable:()=>true},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue'},'./queue-operations':{queuePost:async()=>({items,threadId:'T',readEpoch:'E',orderVersion:'V',nextCursor:'next'}),queueMoveBefore:()=>undefined},'./homer-message-queue.css':{}});
  const render=()=>host.render(()=>host.exports.HomerMessageQueue({state,connected:true,operations:{locked:false,run:()=>{throw Error('unexpected move');}}}));

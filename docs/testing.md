@@ -2,6 +2,33 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## Worker 消息移入对话区
+
+2026-11-11：现有来源、消息包装、过程、队列和主输入回归共143项通过，无跳过；前后端类型检查及隔离 Vite 构建通过。新行为先以9项预期失败确认，再验证实现。覆盖无正文但已开始的可信来源、未开始及跨线程拒绝、精确收到回复快照、缺标题、静默成功、隐藏后的排序屏障、零可见行分页、回焦及用户待发送消息；原有安全、回执和排序断言保留。
+
+```sh
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test --test-concurrency=1 \
+  tests/{taskcard-sources,taskcard-performance,chat-timestamps,message-queue-web,main-queue-sources}.test.ts \
+  tests/{main-chat-display-ui,process-nodes-ui,internal-coordination-ui,restore-official-components,main-composer}.test.mjs
+npx --no-install tsc --noEmit -p ui/tsconfig.json
+npm run typecheck
+```
+
+真实组件验收扩展已有 `web-history-active-pages.browser.mjs`，复用原合成宿主和临时 Chrome profile。先构建当前产品入口到独立 scratch，再显式执行专项：
+
+```sh
+node scripts/build-preview-annotation.mjs
+(cd ui && ../node_modules/.bin/vite build --configLoader runner \
+  --outDir ../.codex/scratch/worker-processing-implementation-20261111/web --emptyOutDir)
+HISTORY_FOLLOWUP_BUILD="$PWD/.codex/scratch/worker-processing-implementation-20261111/web" \
+HOMER_SYNTHETIC_ROOT="$PWD/.codex/scratch/worker-processing-implementation-20261111/synthetic" \
+HOMER_BROWSER_EVIDENCE="$PWD/.codex/scratch/worker-processing-implementation-20261111/browser" \
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx tests/web-history-active-pages.browser.mjs
+```
+
+1440、390、320px三组新增场景及原390px分页/草稿场景通过，验证接收前后、标题早于答复、同一消息接续、混合队列与持久取消、展开保留、焦点、草稿、历史阅读位置、刷新和尺寸切换，零真实模型调用。缺少过程条目时仍为原状态行；展开验收使用已有 `start(initialText)` 合成公开进展。取消通过同一 `MainInputs.cancel` 真实 owner 绑定到合成 bridge，未替换产品服务或隐藏 DOM 冒充取消。结果和截图保存在上述 browser 目录，产品源码及专项脚本是复验来源。本次复核在 Node 22.22.0 上通过完整默认核心回归：2130项通过，零失败、取消或跳过。未进行真实账号/模型、日常实例、安装或发布验收。
+
+
 ## 三类范围
 
 | 类别 | 入口 | 选择依据与前提 |

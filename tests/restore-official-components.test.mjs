@@ -39,7 +39,7 @@ async function queueEnvironment(run){
  try{await withDom(async d=>{globalThis.window.dispatchEvent=()=>true;await run(d);});}finally{Object.assign(globalThis,old);}
 }
 const queueItem={origin:'user',input:{requestId:'request-b',text:'kept row'},messageId:'message-b',state:'queued',editable:true,user:{media:[]},revision:7,position:1};
-const queueState={threadId:'test',features:{queueSources:1},history:{readEpoch:'epoch'},queueDispatch:{orderVersion:1,totalWaiting:1,unscoped:3}};
+const queueState={threadId:'test',messages:[],features:{queueSources:1},history:{readEpoch:'epoch'},queueDispatch:{orderVersion:1,totalWaiting:1,unscoped:3}};
 const queuePage={threadId:'test',readEpoch:'epoch',orderVersion:1,items:[queueItem],totalWaiting:1};
 test('queue removes all local notices and empty shells while read failure keeps rows disabled',async()=>queueEnvironment(async d=>{
  let fail=false;globalThis.fetch=async()=>{if(fail)throw Error('offline');return {ok:true,json:async()=>queuePage};};
@@ -49,7 +49,18 @@ test('queue removes all local notices and empty shells while read failure keeps 
  fail=true;await d.render(h(HomerMessageQueue,{...props,state:{...queueState,queueDispatch:{...queueState.queueDispatch,orderVersion:2}}}));await flush();
  assert.ok(d.find(n=>n.tagName==='LI'));assert.equal(d.find(n=>/取消发送/.test(n.attrs['aria-label']??'')).attrs.disabled!==undefined,true);
  assert.equal(d.container.textContent.includes('重新核对'),false);
- await d.remount();await d.render(h(HomerMessageQueue,{...props,state:{threadId:'test',queue:[],queueDispatch:{unscoped:2}},operations:{pending:{},locked:true}}));assert.equal(d.container.textContent,'');assert.equal(d.find(n=>n.tagName==='SECTION'),undefined);
+ await d.remount();await d.render(h(HomerMessageQueue,{...props,state:{threadId:'test',messages:[],queue:[],queueDispatch:{unscoped:2}},operations:{pending:{},locked:true}}));assert.equal(d.container.textContent,'');assert.equal(d.find(n=>n.tagName==='SECTION'),undefined);
+}));
+test('automatic Worker queue removal restores only focus owned by that queue',async()=>queueEnvironment(async d=>{
+ const worker={origin:'worker',messageId:'notice',state:'processing',text:'Worker 事项',movable:false};
+ globalThis.fetch=async()=>({ok:true,json:async()=>({...queuePage,items:[worker],totalWaiting:0})});
+ const started={id:'process',threadId:'test',role:'assistant',status:'running',text:'',process:{threadId:'test',sourceKind:'worker',turnIds:['turn'],sourceMessageIds:['notice']}};
+ const render=messages=>d.render(h(React.Fragment,null,h('div',{'data-composer':true,contentEditable:true}),h('button',{'data-other':true},'其他操作'),h(HomerMessageQueue,{state:{...queueState,messages,queueDispatch:{orderVersion:1,totalWaiting:0}},connected:true,operations:{locked:false}})));
+ d.doc.querySelector=selector=>selector==='[contenteditable="true"]'?d.find(n=>n.attrs['data-composer']):null;
+ await render([]);await flush();const composer=d.find(n=>n.attrs['data-composer']),other=d.find(n=>n.attrs['data-other']);
+ const toggle=d.find(n=>n.attrs.class==='queue-toggle');toggle.focus();await render([]);await flush();assert.ok(d.doc.activeElement===toggle,'background refresh retains queue focus');
+ await render([started]);await flush();assert.ok(!d.find(n=>n.tagName==='SECTION'),'represented Worker leaves no empty queue');assert.ok(d.doc.activeElement===composer,'removed queue hands focus back to the composer');
+ await render([]);await flush();other.focus();await render([started]);await flush();assert.ok(d.doc.activeElement===other,'unrelated focus is not stolen');
 }));
 test('queue retains actual next and home page buttons with exact cursor requests',async()=>queueEnvironment(async d=>{
  const requests=[];globalThis.fetch=async(_url,options)=>{const input=JSON.parse(options.body);requests.push(input);return {ok:true,json:async()=>({...queuePage,...(!input.cursor?{nextCursor:'next'}:{})})};};

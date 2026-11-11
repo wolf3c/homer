@@ -17,6 +17,7 @@ import {MainInputs} from '../src/recursive-main-inputs.ts';
 import {WebHistoryPages} from '../src/web-history-pages.ts';
 import {Homer} from '../src/service.ts';
 import {homerWebBridge} from '../src/web-homer.ts';
+import {isVisibleConversationMessage} from '../ui/chat-date.ts';
 import {recoveryFixture} from './main-history-recovery-fixture.ts';
 
 // Execute the production component's handlers with deterministic hook storage.
@@ -65,7 +66,7 @@ function fixture({text='draft',draft,queueEditor,request,queueRead,collections=2
   const queueModule={};
   if(queueRead){
    const js=ts.transpileModule(readFileSync(new URL('../ui/homer-message-queue.tsx',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
-   const modules={'react':{useState,useRef,useEffect,useLayoutEffect:useEffect,useId:()=>useRef('queue-id').current},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'queue-provider'},'@dnd-kit/react/sortable':{isSortable:()=>false},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue-rows'},'./queue-operations':{queuePost:queueRead},'./homer-message-queue.css':{}};
+   const modules={'react':{useState,useRef,useEffect,useLayoutEffect:useEffect,useId:()=>useRef('queue-id').current},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'queue-provider'},'@dnd-kit/react/sortable':{isSortable:()=>false},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue-rows'},'./queue-operations':{queuePost:queueRead},'./chat-date':{isVisibleConversationMessage},'./homer-message-queue.css':{}};
    Function('require','exports','window',js)(id=>id in modules?modules[id]:require(id),queueModule,queueEvents);
   }
   const Queue=queueModule.HomerMessageQueue;

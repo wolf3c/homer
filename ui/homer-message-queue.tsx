@@ -6,11 +6,15 @@ import {RestrictToVerticalAxis} from '@dnd-kit/abstract/modifiers';
 import type {DispatchQueuePage,WebState} from '../src/web-contract';
 import {MessageQueue} from './vendor/assistant-ui/message-queue';
 import {queuePost,queueMoveBefore,type QueueOperations} from './queue-operations';
+import {isVisibleConversationMessage} from './chat-date';
 import './homer-message-queue.css';
 
 type QueueItem=DispatchQueuePage<'all'>['items'][number];
 const textOf=(item:QueueItem)=>item.origin==='worker'?item.text:item.input.text||item.user?.media?.map(asset=>asset.filename).join('、')||'引用消息';
 const summaryOf=(item:QueueItem)=>[item.origin==='user'&&(!item.editable||item.state!=='queued')?item.statusText:undefined,textOf(item)].filter(Boolean).join(' · ');
+function queueFocus(element:HTMLElement|null){
+ return ()=>{if(element?.contains(document.activeElement))document.querySelector<HTMLElement>('[contenteditable="true"]')?.focus({preventScroll:true});};
+}
 export function HomerMessageQueue({state,connected,operations,editorBusy=false}:{state:WebState;connected:boolean;operations:QueueOperations;editorBusy?:boolean}){
  const [page,setPage]=useState<DispatchQueuePage<'all'>>(),[checking,setChecking]=useState(true),[cursor,setCursor]=useState<string>(),[refresh,setRefresh]=useState(0);
  const [loadedFor,setLoadedFor]=useState('');
@@ -72,14 +76,20 @@ export function HomerMessageQueue({state,connected,operations,editorBusy=false}:
    const exact=saved.cursor===cursor?document.querySelector<HTMLElement>(`[data-queue-message="${CSS.escape(saved.id)}"] button:not(:disabled)`):null,first=document.querySelector<HTMLElement>('[data-slot="message-queue"] button:not(:disabled)'),button=exact?.getClientRects().length?exact:first?.getClientRects().length?first:document.querySelector<HTMLElement>('[contenteditable="true"]');button?.focus({preventScroll:true});
   });
  },[page,disabled,dragging,dragReset,state.threadId,epoch,cursor,expanded]);
- if(!items.length&&!state.queueDispatch?.totalWaiting)return null;
- return <section className="homer-message-queue" aria-label="消息队列">
+ const displayedWorkers=new Set(state.messages.flatMap(message=>{
+  const node=message.process;
+  return isVisibleConversationMessage(message)&&message.role==='assistant'&&message.threadId===state.threadId&&node?.threadId===state.threadId&&node.sourceKind==='worker'&&node.turnIds.length>0?node.sourceMessageIds:[];
+ }));
+ const messages=items.map(item=>({id:item.messageId,origin:item.origin,state:item.state,position:item.position,text:summaryOf(item),movable:supported&&item.state==='queued'&&item.movable,cancellable:item.origin==='user'&&item.state==='queued'&&item.editable,hidden:verified&&item.origin==='worker'&&item.state==='processing'&&displayedWorkers.has(item.messageId)}));
+ const visibleCount=messages.filter(message=>!message.hidden).length;
+ if(!visibleCount&&!state.queueDispatch?.totalWaiting&&!cursor&&!page?.nextCursor)return null;
+ return <section ref={queueFocus} className="homer-message-queue" aria-label="消息队列">
   <button className="queue-toggle" type="button" aria-expanded={expanded} aria-controls={contentId} disabled={dragging} onClick={()=>setExpanded(!expanded)}>
-   <span className="queue-toggle-label"><ChevronRightIcon size={16} aria-hidden="true"/><span>消息队列 · 已加载 {items.length} 条</span></span>
+   <span className="queue-toggle-label"><ChevronRightIcon size={16} aria-hidden="true"/><span>消息队列 · 已加载 {visibleCount} 条</span></span>
   </button>
   <div id={contentId} hidden={!expanded}>
   <DragDropProvider key={JSON.stringify([dragScope,dragReset])} modifiers={[RestrictToVerticalAxis]} onDragStart={dragStart} onDragEnd={dragEnd}>
-   <MessageQueue messages={items.map(item=>({id:item.messageId,origin:item.origin,state:item.state,position:item.position,text:summaryOf(item),movable:supported&&item.state==='queued'&&item.movable,cancellable:item.origin==='user'&&item.state==='queued'&&item.editable}))} dragDisabled={disabled||!supported} cancelDisabled={disabled||dragging} onCancel={id=>void cancel(id)}/>
+   <MessageQueue messages={messages} dragDisabled={disabled||!supported} cancelDisabled={disabled||dragging} onCancel={id=>void cancel(id)}/>
   </DragDropProvider>
    {supported&&(cursor||page?.nextCursor)&&<div className="queue-pages">{cursor&&<button type="button" disabled={disabled||dragging} onClick={()=>setCursor(undefined)}>返回待发送首页</button>}{page?.nextCursor&&<button type="button" disabled={disabled||dragging} onClick={()=>setCursor(page.nextCursor!)}>查看下一页</button>}</div>}
   </div>

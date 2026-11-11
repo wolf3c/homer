@@ -7,9 +7,22 @@ test('only consumed authenticated scoped replies become sources, with immutable 
  const f=setup();try{
   const input=message(node([f.reply.messageId])),source=f.project(input);assert.equal(source.taskSources?.length,1);assert.equal(source.taskSources![0]!.phaseLabel,'收到 Worker 回复');assert.ok(source.taskSources![0]!.originalRequestMessageId);assert.doesNotMatch(JSON.stringify(source),/PRIVATE/);
   f.store.db.prepare("UPDATE agent_receipts SET state='rejected' WHERE messageId=?").run(f.reply.messageId);assert.deepEqual(f.project(input).taskSources,source.taskSources);
-  assert.equal(f.project({...input,process:{...input.process!,turnIds:[]}}).taskSources,undefined);assert.equal(f.project(input,'other').taskSources,undefined);assert.equal(f.project({...input,text:''}).taskSources,undefined);assert.equal(f.project(message(node([]))).taskSources,undefined);
+  assert.equal(f.project({...input,process:{...input.process!,turnIds:[]}}).taskSources,undefined);assert.equal(f.project(input,'other').taskSources,undefined);assert.deepEqual(f.project({...input,text:''}).taskSources,source.taskSources);assert.equal(f.project(message(node([]))).taskSources,undefined);
   f.tasks.updateTask(f.actor,{operationId:'next',taskId:f.task.taskId,expectedRevision:1,patch:{goal:'Changed scope'},authority:f.authority});assert.equal(f.project(input).taskSources![0]!.target.version,1);
   for(const column of ['senderAgentId','senderRunId','recipientAgentId']){const previous=f.store.db.prepare(`SELECT ${column} value FROM agent_messages WHERE id=?`).get(f.reply.messageId)!.value;f.store.db.prepare(`UPDATE agent_messages SET ${column}=? WHERE id=?`).run(column==='senderRunId'?null:'forged',f.reply.messageId);assert.equal(f.project(input).taskSources,undefined);f.store.db.prepare(`UPDATE agent_messages SET ${column}=? WHERE id=?`).run(previous??null,f.reply.messageId);}
+ }finally{f.close();}
+});
+test('an acknowledged Worker process has its authenticated title before any public answer',()=>{
+ const f=setup();try{
+  f.store.db.prepare('UPDATE tasks SET title=? WHERE id=?').run('关于荷马显示版本号',f.task.taskId);
+  const input=message({...node([f.reply.messageId]),state:'working',status:'running'},'');
+  const source=f.project(input);
+  assert.equal(source.taskSources?.[0]?.title,'关于荷马显示版本号');
+  assert.doesNotMatch(JSON.stringify(source),/PRIVATE/);
+  assert.equal(f.project({...input,process:{...input.process!,turnIds:[]}}).taskSources,undefined);
+  assert.equal(f.project({...input,process:{...input.process!,threadId:'other'}}).taskSources,undefined);
+  f.store.db.prepare("UPDATE agent_messages SET senderAgentId='forged' WHERE id=?").run(f.reply.messageId);
+  assert.equal(f.project(input).taskSources,undefined);
  }finally{f.close();}
 });
 test('terminal headers preserve exact public action and drop a MiB raw body; action kinds cannot be forged',()=>{

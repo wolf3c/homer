@@ -246,6 +246,35 @@ test('a reply also names its immutable delegation events when taskSources are ab
   assert.equal(rendered[1].titledEvents.size, 0, 'a standalone event retains its own visible entry');
 });
 
+test('a started Worker names its task above the process before an answer and keeps that position afterwards', () => {
+  const process={id:'worker-process',threadId:'thread',sourceKind:'worker',sourceMessageIds:['notice'],turnIds:['turn'],state:'working',status:'running',items:[]};
+  const source=m('worker-process',1000,{role:'assistant',text:'',process,taskSources:[{title:'关于荷马显示版本号',target:{taskId:'task',version:1}}]});
+  const before=renderConversation([source]);
+  assert.match(before,/<p class="message-task-title">关于荷马显示版本号<\/p><section data-working="true">/);
+  assert.doesNotMatch(before,/class="assistant-message-bubble"/);
+  const after=renderConversation([{...source,text:'唯一答复',process:{...process,state:'worked',status:'completed'}}]);
+  assert.equal((after.match(/class="message-task-title"/g)??[]).length,1);
+  assert.match(after,/<p class="message-task-title">关于荷马显示版本号<\/p><section data-working="true">/);
+  assert.equal((after.match(/唯一答复/g)??[]).length,1);
+  assert.match(after,/data-conversation-message="worker-process"/);
+  const unknown=renderConversation([{...source,taskSources:[],taskSourceUnresolved:true}]);
+  assert.match(unknown,/事项标题待确认/);
+  const unstarted=renderConversation([{...source,process:{...process,turnIds:[]}}]);
+  assert.doesNotMatch(unstarted,/class="message-task-title"/);
+  const silent=renderConversation([{...source,process:{...process,state:'worked',status:'completed'}}]);
+  assert.doesNotMatch(silent,/class="message-task-title"|class="assistant-message-bubble"/);
+});
+
+test('only exact received Worker snapshots name the process without hiding missing event content', () => {
+  calls.length=0;
+  const event=(key:string,sourceMessageId:string,title:string)=>({id:key,kind:'workerEvent',eventKey:key,event:{eventKind:'reply_received',sourceMessageId,taskId:'task',title,bodySource:'missing',body:'未提供摘要'}});
+  const process={sourceKind:'worker',sourceMessageIds:['notice'],turnIds:['turn'],state:'working',status:'running',items:[event('exact','notice','准确事项'),event('other','unrelated','无关事项')]};
+  const html=renderConversation([m('worker-snapshot',1000,{role:'assistant',text:'',process})]);
+  assert.match(html,/<p class="message-task-title">准确事项<\/p><section data-working="true">/);
+  assert.doesNotMatch(html,/无关事项/);
+  assert.equal(calls.find(([name])=>name==='process')?.[1].titledEvents.size,0,'a missing received body retains its visible event card');
+});
+
 test('production wrappers integrate installed runtime and retain rich slots with semantic keyboard-readable times', () => {
   calls.length = 0;
   const source = [
