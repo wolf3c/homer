@@ -48,7 +48,7 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
     assert.equal(failure.result.content[0].text, "interaction_mcp_failed");
     assert.equal((await rpc("tools/call", { name: "shell", arguments: {} })).result.isError, true);
     for(const forbidden of ['file_checkpoint','task_create','task_update','worker_open','worker_send','worker_read','worker_interrupt','work_inspect','accept_result','task_delegate','task_review','task_stop','task_continue','task_takeover','agent_send','inbox_read','inbox_ack','adopt_version','pending_add','pending_list','pending_update','memory_search','memory_forget','publish_delivery'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
-    if(role==='worker')for(const forbidden of ['quote_current_message','prepare_combined_delivery','runtime_capabilities','inspect_result_file'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
+    if(role==='worker')for(const forbidden of ['inspect_interaction','respond_interaction','escalate_interaction','quote_current_message','prepare_combined_delivery','runtime_capabilities','inspect_result_file'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
     const wait=await rpc('tools/call',{name:'task_wait',arguments:{}});
     assert.equal(wait.result.isError,true);
     if(role==='main'){

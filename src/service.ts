@@ -1676,7 +1676,7 @@ export class Homer {
     if(this.mainApprovals.owns(id))throw Error("main_native_user_decision_required");
     if (tool === "inspect_interaction") {
       (context.inspectedInteractions ??= new Set()).add(id);
-      return { ...item, run: this.store.run(item.runId), hostCapabilities: "Worker在事项契约目录执行普通文件、测试、构建和联网；Run目录用于附件导出。审批依据真实用户任务与原生请求。主Agent不能批准本人请求。" };
+      return { ...item, run: this.store.run(item.runId), hostCapabilities: "执行权限取决于本实例的 Codex 配置。主 Agent 核对真实用户委托和原生请求后，可直接批准或拒绝范围内的 Worker 操作及必要临时权限；已升级的请求须遵循真实用户决定。主 Agent 不能批准本人请求。" };
     }
     if (!context.inspectedInteractions?.has(id)) throw new Error("interaction_inspection_required");
     if(item.state==='pending_main'&&context.interactionId!==id){

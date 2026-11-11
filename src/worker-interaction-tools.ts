@@ -10,7 +10,7 @@ function tool(name: string, description: string, properties: Record<string, unkn
 
 export const MAIN_INTERACTION_TOOLS: Tool[] = [
   tool("inspect_interaction", "Read one pending Worker question or authorization request, its exact operation and captured user authority. Inspect the run/material too when necessary. No decision is made by inspection.", { interactionId: str }),
-  tool("respond_interaction", "Record a reasoned answer, explicit approval or explicit denial for the inspected request. Answering a question never grants action permission. Only requested permission subsets and a single operation are supported. A user reply is associated by the host, not by tool arguments.", {
+  tool("respond_interaction", "Record a reasoned answer, approval or denial for the inspected Worker request. Before escalation, directly approve or deny within the captured user delegation, including necessary bounded implementation, verification and temporary permissions. After escalation, approval requires the actual user decision. Answering a question never grants action permission. Only requested permission subsets and a single operation are supported. A user reply is associated by the host, not by tool arguments.", {
     interactionId: str,
     action: { type: "string", enum: ["answer", "approve", "deny"] },
     reason: str,
@@ -36,7 +36,7 @@ export const MAIN_INTERACTION_TOOLS: Tool[] = [
       }, required: ["network", "fileSystem"], additionalProperties: false,
     },
   }),
-  tool("escalate_interaction", "Mark this request as waiting for the user only when its authority or needed information is missing or unclear. Return from this main turn and ask the recorded question naturally; the original Worker remains pending.", { interactionId: str, question: str, reason: str }),
+  tool("escalate_interaction", "Wait for the user only when the request exceeds the captured delegation, its authority or impact is unclear, needed information is missing, or personal confirmation is required. A read-only sandbox, temporary permission request or changed command alone is not a reason to escalate. End this main turn with a brief, nonempty final reply asking for the user's decision and explaining the necessity, scope and impact; the original Worker remains pending.", { interactionId: str, question: str, reason: str }),
 ];
 
 export const WORKER_INTERACTION_TOOLS: Tool[] = [

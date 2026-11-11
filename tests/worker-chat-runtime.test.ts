@@ -431,8 +431,8 @@ for(const action of ['approve','deny'] as const)test('a desktop Worker command w
         const notice=f.app.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(id)!;
         seen=JSON.parse(String(notice.payloadJson)).interactionId;
         await callHostMcp(main.options, 'inspect_interaction',{interactionId:seen});
-        await assert.rejects(callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action:'approve',reason:'No user approval'}),/user.*required/);
         await callHostMcp(main.options, 'escalate_interaction',{interactionId:seen,question:'Confirm the operation',reason:'Needs user authorization'});
+        await assert.rejects(callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action:'approve',reason:'No user approval'}),/user.*required/);
       }else if(text.includes('[用户答复原待答]')){
         assert.equal(resolved,false);mediated=true;
         await callHostMcp(main.options, 'inspect_interaction',{interactionId:seen});

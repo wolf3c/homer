@@ -36,6 +36,7 @@ test('same connection child approvals resolve allow/deny once; first-in last-out
   const a=f.request(1),b=f.request(2);
   assert.equal(f.tasks.run(f.slot.id).phase,'rpc_wait');assert.equal(f.interactions.list().length,2);
   const [one,two]=f.interactions.list();assert.equal(one!.threadId,'native-child-1');
+  f.interactions.escalate(one!.id,'Review operation','Requires a user decision');
   assert.throws(()=>f.interactions.respond(one!.id,{action:'approve',reason:'forged'}),/interaction_user_decision_required/);
   f.respond(one!.id,{requestId:'synthetic-user-allow',text:'允许本次操作'});await a;
   assert.equal(f.tasks.run(f.slot.id).phase,'rpc_wait');assert.deepEqual(f.sent,[{id:1,result:{decision:'accept'}}]);
@@ -44,6 +45,63 @@ test('same connection child approvals resolve allow/deny once; first-in last-out
   f.respond(two!.id,{requestId:'synthetic-user-deny',text:'拒绝本次操作'});await b;
   assert.equal(f.tasks.run(f.slot.id).phase,'executing');assert.deepEqual(f.sent[1],{id:2,result:{decision:'decline'}});
   await f.request(2);assert.equal(f.sent.length,2);
+ }finally{f.engine['active']=undefined;await f.engine.close();f.close();}
+});
+
+test('Main directly reviews successive Worker native operations without user receipts or duplicate execution',async()=>{
+ const f=setup();try{
+  const requests=[
+   {method:'item/commandExecution/requestApproval',details:{command:'synthetic modify about page'},decision:{action:'approve',reason:'Necessary implementation'},result:{decision:'accept'}},
+   {method:'item/commandExecution/requestApproval',details:{command:'synthetic test about page'},decision:{action:'approve',reason:'Necessary verification'},result:{decision:'accept'}},
+   {method:'item/commandExecution/requestApproval',details:{command:'synthetic preview --corrected'},decision:{action:'approve',reason:'Correct the preview within the same task'},result:{decision:'accept'}},
+   {method:'item/fileChange/requestApproval',details:{},decision:{action:'approve',reason:'Related file change'},result:{decision:'accept'}},
+   {method:'item/permissions/requestApproval',details:{permissions:{fileSystem:{read:[f.dir],write:[f.dir+'/output']}}},decision:{action:'approve',reason:'Only the necessary requested write access',permissions:{fileSystem:{write:[f.dir+'/output']}}},result:{permissions:{fileSystem:{read:null,write:[f.dir+'/output']}},scope:'turn'}},
+   {method:'mcpServer/elicitation/request',details:{serverName:'synthetic',mode:'form',message:'Read synthetic task facts',requestedSchema:{type:'object',properties:{}},_meta:{codex_approval_kind:'mcp_tool_call'}},decision:{action:'approve',reason:'Read facts required by the task'},result:{action:'accept',content:null,_meta:null}},
+  ];
+  for(const [index,request] of requests.entries()){
+   const id=index+1,threadId='native-child',turnId='child-turn',itemId='operation-'+id;
+   if(request.method==='item/fileChange/requestApproval')await f.receive({method:'item/started',params:{threadId,turnId,item:{type:'fileChange',id:itemId,changes:[{path:f.dir+'/about.ts',kind:{type:'add'},diff:'+Synthetic about page'}]}}});
+   const pending=f.receive({id,method:request.method,params:{threadId,turnId,itemId,cwd:f.dir,availableDecisions:['accept','decline'],...request.details}});
+   const item=f.interactions.list().at(-1)!;
+   f.host.mainContext={event:true,interactionId:item.id};
+   const args={interactionId:item.id,...request.decision};
+   await assert.rejects(f.host.interactionTool('respond_interaction',args),/interaction_inspection_required/);
+   const inspected=await f.host.interactionTool('inspect_interaction',{interactionId:item.id});
+   assert.equal(inspected.state,'pending_main');assert.ok(inspected.details.review);
+   if(request.method==='item/permissions/requestApproval'){
+    await assert.rejects(f.host.interactionTool('respond_interaction',{...args,permissions:{fileSystem:{write:[f.dir+'/unrequested']}}}),/interaction_permission_scope/);
+    assert.equal(f.interactions.inspect(item.id).state,'pending_main');
+   }
+   assert.equal((await f.host.interactionTool('respond_interaction',args)).duplicate,false);
+   await pending;
+   assert.equal((await f.host.interactionTool('respond_interaction',args)).duplicate,true);
+   assert.deepEqual(f.sent.at(-1),{id,result:request.result});
+   assert.equal(f.sent.filter(message=>message.id===id).length,1);
+   const decided=f.interactions.inspect(item.id);
+   assert.equal(decided.state,'approved');assert.equal(decided.userQuestion,null);assert.equal(decided.responseUserMessageId,null);
+   await f.receive({method:'serverRequest/resolved',params:{threadId,requestId:id}});
+   assert.ok(f.interactions.inspect(item.id).deliveredAt);
+  }
+  assert.equal(f.interactions.list().some(item=>item.state==='pending_user'),false);
+  assert.equal(f.tasks.run(f.slot.id).phase,'executing');
+ }finally{f.engine['active']=undefined;await f.engine.close();f.close();}
+});
+
+test('escalated Worker approvals reject forged and cross-request receipts and preserve user refusals',async()=>{
+ const f=setup();try{
+  const a=f.request(1),b=f.request(2),[one,two]=f.interactions.list();
+  for(const item of [one!,two!])f.interactions.escalate(item.id,'Review operation','Requires the user');
+  const approve={action:'approve' as const,reason:'Apply the actual decision'};
+  assert.throws(()=>f.interactions.respond(one!.id,approve,{userMessageId:'forged',userText:'允许本次操作'}),/interaction_user_decision_required/);
+  f.store.transaction(()=>f.interactions.recordUserDecision(one!.id,approve,'actual-user-a','允许本次操作'));
+  assert.equal(f.sent.length,0);
+  assert.throws(()=>f.interactions.respond(two!.id,approve,{userMessageId:'actual-user-a',userText:'允许本次操作'}),/interaction_user_decision_required/);
+  f.interactions.respond(one!.id,approve,{userMessageId:'actual-user-a',userText:'允许本次操作'});await a;
+  const deny={action:'deny' as const,reason:'User refused'};
+  f.store.transaction(()=>f.interactions.recordUserDecision(two!.id,deny,'actual-user-b','拒绝本次操作'));
+  assert.throws(()=>f.interactions.respond(two!.id,approve,{userMessageId:'actual-user-b',userText:'允许本次操作'}),/interaction_user_decision_required/);
+  f.interactions.respond(two!.id,deny,{userMessageId:'actual-user-b',userText:'拒绝本次操作'});await b;
+  assert.deepEqual(f.sent,[{id:1,result:{decision:'accept'}},{id:2,result:{decision:'decline'}}]);
  }finally{f.engine['active']=undefined;await f.engine.close();f.close();}
 });
 test('child end invalidates its own callback, parent end fences all remaining callbacks',async()=>{

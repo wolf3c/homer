@@ -21,7 +21,7 @@ type InteractionScenario = {
   handoff?: boolean;
   namedTask?: boolean;
 };
-async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", workers = 1, scenario: InteractionScenario = {}) {
+async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" | "hang", workers = 1, scenario: InteractionScenario = {}) {
   const root = resolve(".codex/scratch/worker-interactions"); mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(root + "/svc-");
   const runtime = join(dir, "rt"), workspace = join(dir, "ws");
@@ -49,7 +49,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
       this.turnId = "turn-" + ++sequence; hooks?.onStarted?.(this.turnId);
       if (this.worker) {
         let reply: any;
-        if (mode === "approve" || mode === "deny") {
+        if (mode === "approve" || mode === "deny" || mode === "direct") {
           const requestId = "native-" + this.threadId;
           reply = await this.options.onInteraction!({ requestId, method: "item/permissions/requestApproval", threadId: this.threadId, turnId: this.turnId, itemId: "perm-1", kind: "authorization", details: { threadId: this.threadId, turnId: this.turnId, itemId: "perm-1", cwd: this.options.cwd, permissions: { network: null, fileSystem: { read: [this.options.cwd], write: null } } } });
           if (!scenario.skipDelivery) this.emit("interactionDelivered", requestId);
@@ -79,11 +79,11 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "hang", wo
         }
         if (scenario.skipDecision) return scenario.reply ?? { status: "completed", text: "已处理" };
         if (mode === "approve") {
-          await assert.rejects(callHostMcp(this.options, "respond_interaction", { interactionId: id, action: "approve", reason: "No user decision" }), /interaction_user_decision_required/);
           await callHostMcp(this.options, "escalate_interaction", { interactionId: id, question: "确认范围", reason: "需要用户决定" });
+          await assert.rejects(callHostMcp(this.options, "respond_interaction", { interactionId: id, action: "approve", reason: "No user decision" }), /interaction_user_decision_required/);
           return {status:"completed",text:"需要用户确认。"};
         }
-        await callHostMcp(this.options, "respond_interaction", { interactionId: id, action: mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.threadId : null, answers: null, permissions: null });
+        await callHostMcp(this.options, "respond_interaction", { interactionId: id, action: mode === "direct" ? "approve" : mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.threadId : null, answers: null, permissions: mode === "direct" ? item.details.params.permissions : null });
         return scenario.reply ?? { status: "completed", text: "已处理" };
       } else if (mode === "approve" && text.includes("[用户答复原待答]")) {
         const id = /interactionId=([^。]+)/.exec(text)![1]!;
@@ -126,6 +126,25 @@ async function approveRequested(f:Awaited<ReturnType<typeof fixture>>,count:numb
   assert.equal(cards.items.length,count);assert.equal(f.resumes.length,0);
   for(const [index,card] of cards.items.entries())f.app.submitMessage({requestId:"approval-"+index,interactionId:card.id,text:"允许本次操作"});
 }
+
+test('Main approves native Worker requests through its MCP without showing user cards',async()=>{
+  const f=await fixture('direct',2,{reply:{status:'completed',text:''}});
+  try{
+    await f.app.message('dispatch','user-task');
+    await until(()=>f.resumes.length===2||f.events().some(event=>event.type==='internal_processing_failed'));
+    assert.equal(f.resumes.length,2);
+    await f.app.idle();
+    const items=f.app.interactions.list();assert.equal(items.length,2);
+    for(const item of items){
+      const decided=f.app.interactions.inspect(item.id);
+      assert.equal(decided.state,'approved');assert.ok(decided.details.review);assert.ok(decided.deliveredAt);
+      assert.equal(decided.userQuestion,null);assert.equal(decided.responseUserMessageId,null);
+    }
+    assert.equal((await homerWebBridge(f.app).history!.interactions(0,f.app.webReadEpoch)).items.length,0);
+    assert.equal(f.messages.filter(message=>message.type==='reply').length,1);
+    assert.ok(f.app.store.runs().every(run=>run.status==='succeeded'));
+  }finally{await f.cleanup();}
+});
 
 // Synthetic regression derived from a completed Worker decision followed by an
 // empty main reply; no production requests, file contents or identifiers.

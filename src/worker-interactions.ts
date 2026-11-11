@@ -174,7 +174,7 @@ export class WorkerInteractions {
     if (decision.action === "answer" && row.source === "ask_main" && !text(decision.answer, 16000)) throw new Error("interaction_answer_required");
     if (decision.action === "answer" && row.source === "native" && (!decision.answers || !Object.keys(decision.answers).length)) throw new Error("interaction_answer_required");
     if (decision.action === "approve" && !JSON.parse(row.authority).nativeApprovals) throw new Error("interaction_capability_denied");
-    if (details.review && (decision.action === 'approve' || decision.action === 'cancel')) {
+    if (details.review && row.userQuestion !== null && (decision.action === 'approve' || decision.action === 'cancel')) {
       const expected = decision.action === 'approve' ? '允许本次操作' : '取消本次请求';
       if (!row.responseUserMessageId || row.responseUserMessageId !== context.userMessageId || row.responseUserText !== expected)
         throw Error('interaction_user_decision_required');
