@@ -29,16 +29,24 @@ func digest(_ value: String) -> String {
 
 let args = CommandLine.arguments
 guard (args.count == 3 || args.count == 4 && ["address", "window"].contains(args[3])),
-      let pid = pid_t(args[1]), let wanted = CGWindowID(args[2]),
-      NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.google.Chrome",
-      AXIsProcessTrusted() else { exit(2) }
+      let pid = pid_t(args[1]), let wanted = CGWindowID(args[2]) else { exit(2) }
+if let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+   session["CGSSessionScreenIsLocked"] as? Bool == true { exit(11) }
 let app = AXUIElementCreateApplication(pid)
 AXUIElementSetMessagingTimeout(app, 0.25)
-let windows: [AXUIElement] = attribute(app, kAXWindowsAttribute) ?? []
-guard let window = windows.first(where: { element in
-    var id = CGWindowID(0)
-    return windowID(element, &id) == .success && id == wanted
-}) else { exit(3) }
+func boundWindow() -> AXUIElement {
+    guard NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.google.Chrome" else { exit(5) }
+    guard AXIsProcessTrusted() else { exit(6) }
+    var raw: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw) == .success,
+          let windows = raw as? [AXUIElement] else { exit(10) }
+    guard let window = windows.first(where: { element in
+        var id = CGWindowID(0)
+        return windowID(element, &id) == .success && id == wanted
+    }) else { exit(3) }
+    return window
+}
+let window = boundWindow()
 
 if args.count == 4 {
     if args[3] == "window" { exit(0) }
@@ -70,28 +78,47 @@ struct Frame: Encodable {
     }
 }
 
-guard let windowFrame = frame(window) else { exit(4) }
-var budget = 150
-var matches: [(CGRect, URL)] = []
-func findViewport(_ element: AXUIElement, inside scrollArea: AXUIElement? = nil) {
-    guard budget > 0 else { return }
-    budget -= 1
-    let role: String? = attribute(element, kAXRoleAttribute)
-    if role == "AXWebArea" {
-        if let scrollArea, let bounds = frame(element), bounds == frame(scrollArea),
-           windowFrame.contains(bounds), let url: URL = attribute(element, kAXURLAttribute),
-           url.scheme == "http" || url.scheme == "https" {
-            matches.append((bounds, url))
+func viewport(_ window: AXUIElement) -> (CGRect, CGRect, URL)? {
+    guard let windowFrame = frame(window) else { exit(8) }
+    var budget = 150, webAreas = 0, unsupported = 0
+    var matches: [(CGRect, URL)] = []
+    func scan(_ element: AXUIElement, inside scrollArea: AXUIElement? = nil) {
+        guard budget > 0 else { return }
+        budget -= 1
+        let role: String? = attribute(element, kAXRoleAttribute)
+        if role == "AXWebArea" {
+            webAreas += 1
+            if let url: URL = attribute(element, kAXURLAttribute) {
+                if url.scheme != "http" && url.scheme != "https" { unsupported += 1 }
+                else if let scrollArea, let bounds = frame(element), bounds == frame(scrollArea), windowFrame.contains(bounds) {
+                    matches.append((bounds, url))
+                }
+            }
+            return // Ignore nested documents.
         }
-        return // Ignore nested documents.
+        let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) ?? []
+        for child in children {
+            scan(child, inside: role == "AXScrollArea" ? element : nil)
+        }
     }
-    let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) ?? []
-    for child in children {
-        findViewport(child, inside: role == "AXScrollArea" ? element : nil)
-    }
+    scan(window)
+    guard budget > 0 else { exit(8) }
+    if webAreas == 0 { return nil }
+    if unsupported == webAreas { exit(9) }
+    guard matches.count == 1 else { exit(8) }
+    return (windowFrame, matches[0].0, matches[0].1)
 }
-findViewport(window)
-guard budget > 0, matches.count == 1 else { exit(4) }
+var found = viewport(window)
+if found == nil {
+    // Chromium debounces this request for two seconds, even when AppKit returns an error.
+    AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    let until = ProcessInfo.processInfo.systemUptime + 3
+    repeat {
+        Thread.sleep(forTimeInterval: 0.1)
+        found = viewport(boundWindow())
+    } while found == nil && ProcessInfo.processInfo.systemUptime < until
+    guard found != nil else { exit(7) }
+}
 
 struct Geometry: Encodable {
     let window: Frame
@@ -99,7 +126,7 @@ struct Geometry: Encodable {
     let page: String
     let origin: String?
 }
-let (bounds, url) = matches[0]
+let (windowFrame, bounds, url) = found!
 var origin = URLComponents()
 origin.scheme = url.scheme
 origin.percentEncodedHost = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedHost

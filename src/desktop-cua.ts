@@ -7,6 +7,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {pathToFileURL} from 'node:url';
 import {promisify} from 'node:util';
 import {verifiedDesktopResources,type DesktopResourceIdentity} from './desktop-resources.js';
+import {createPrivateCuaDriver,cuaDriverFailure,type CuaDriver as Driver,type CuaReply as Reply} from './desktop-cua-driver.js';
 import type {Tool} from './engine.js';
 import {TOOL_IMAGE_BYTES} from './interaction-limits.js';
 import {mediaProcess} from './media-decode.js';
@@ -37,8 +38,6 @@ type Target={pid:number;window_id:number};
 type Window=Target&{title:string;app_name:string;layer:number;is_on_screen:boolean;z_index:number};
 type Snapshot=Target&{window_bounds:Frame;screenshot_frame_valid?:boolean;screenshot_width:number;screenshot_height:number;capture_id?:string};
 type Image={dataBase64:string;mimeType:string};
-type Reply={isError:boolean;errorCode?:string;text?:string;structuredJson?:string;images?:Image[]};
-type Driver={callTool(name:string,args:string):Promise<Reply>;metadata():Promise<{pid:number;driverVersion:string}>;shutdown():Promise<void>;uniffiDestroy():void};
 type Mode='chrome'|'desktop'|'isolated';
 type Session={owner:string;mode?:Mode;dir?:string;job?:ReturnType<typeof holdCuaWindowsJob>;target?:Target;app?:string;title?:string;origin?:string;driver?:Driver;pid?:number;ready?:true;closing?:Promise<boolean>;pending?:Promise<unknown>;capture?:{id:string;rect:Frame;width:number;height:number;geometry:Geometry};tokens?:Set<string>};
 type Args={window_title?:string;url?:string;isolated?:boolean;save_as?:string;capture_id?:string;x?:number;y?:number;app?:string;element_token?:string;text?:string};
@@ -47,6 +46,8 @@ const chromeExecutable='/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 const windowsChrome='chrome.exe';
 const nativeActions=['click','bring_to_front','hotkey','type_text','press_key'];
 const driverTools={chrome:['get_window_state',...nativeActions],desktop:['get_window_state','click','type_text']};
+const chromeHelperErrors:Record<number,string>={2:'chrome_helper_invalid_arguments',3:'chrome_bound_window_unavailable',4:'chrome_address_not_focused',
+ 5:'chrome_process_unavailable',6:'cua_macos_permissions_required',7:'chrome_ax_web_area_unavailable',8:'chrome_viewport_invalid',9:'chrome_page_unsupported',10:'chrome_ax_window_list_unavailable',11:'cua_screen_locked'};
 const sameFrame=(a:Frame,b:Frame)=>!!b&&a.x===b.x&&a.y===b.y&&a.width===b.width&&a.height===b.height;
 const samePage=(a:Geometry,b:Geometry)=>a.page===b.page&&sameFrame(a.window,b.window)&&sameFrame(a.viewport,b.viewport);
 const sameTarget=(a:Target,b:Target)=>a.pid===b.pid&&a.window_id===b.window_id;
@@ -133,16 +134,21 @@ export class DesktopCua {
   catch(error){
    const current=this.active;
    if(current?.driver===driver&&error instanceof Error&&error.message==='cua_driver_timeout')void this.close(current.owner,false).catch(()=>{});
-   throw Error(action?'cua_action_unconfirmed':error instanceof Error&&error.message==='cua_driver_timeout'?'cua_driver_timeout':'cua_driver_unavailable');
+   const safe=error instanceof Error&&/^cua_driver_[a-z_]+$/.test(error.message)?error.message:cuaDriverFailure(error,'call');
+   throw Error(action?'cua_action_unconfirmed':safe);
   }
-  guard();
+  try{guard();}catch(error){if(action)throw Error('cua_action_unconfirmed');throw error;}
+  let data;
+  try{
+   if(!reply||typeof reply!=='object'||Array.isArray(reply)||typeof reply.isError!=='boolean')throw Error();
+   data=JSON.parse(reply.structuredJson??'{}');if(!data||typeof data!=='object'||Array.isArray(data))throw Error();
+  }
+  catch{throw Error(action?'cua_action_unconfirmed':'cua_driver_protocol_failed');}
   if(reply.isError){
-   const data=JSON.parse(reply.structuredJson??'{}');
    const code=reply.errorCode??data.code??(reply.text?.startsWith('AX action failed:')?'ax_action_failed':undefined);
    const detail=typeof code==='string'&&/^[a-z][a-z_0-9]{1,40}$/.test(code)?'_'+code:'';
    throw Error((action?'cua_action_unconfirmed':'cua_driver_refused')+detail);
   }
-  const data=JSON.parse(reply.structuredJson??'{}');
   if(name==='get_window_state'&&typeof data.degraded_reason==='string'&&data.degraded_reason.startsWith('screen_locked:'))throw Error('cua_screen_locked');
   return {data,image:reply.images?.[0]};
  }
@@ -164,7 +170,7 @@ export class DesktopCua {
     return chosen;
    }
    throw Error(frontmost||pid?'chrome_window_not_found':'desktop_window_not_found');
-  }finally{try{await discover.shutdown();}finally{discover.uniffiDestroy();}}
+  }finally{try{await discover.shutdown();}finally{await discover.uniffiDestroy();}}
  }
  private async sessionDir(current:Session,guard:()=>void){
   guard();
@@ -187,12 +193,22 @@ export class DesktopCua {
   writeFileSync(manifest,JSON.stringify({version:3,expires_after:'15m',idle_timeout:'5m',resources:{desktop:{windows:[current.target]}},
    allow:{tools:['check_permissions','start_session','end_session',...driverTools[desktop?'desktop':'chrome']]}}),{mode:0o600});
   const bounded=SessionPermissionMode.Bounded;
-  const driver:Driver=current.driver=CuaDriver.createPrivateWorker({
-   binaryPath:binary,hostBundleId:bundleId,startupTimeoutMs:3000n,shutdownTimeoutMs:3000n,inheritStderr:false,
+  const startupMs=this.windowsHelper?3000:15000;
+  const options={
+   binaryPath:binary,hostBundleId:bundleId,startupTimeoutMs:BigInt(startupMs),shutdownTimeoutMs:3000n,inheritStderr:false,
    environment:[{name:'HOME',value:dir},...(this.windowsHelper?[{name:'CUA_DRIVER_RS_HOME',value:dir}]:[]),{name:'CUA_DRIVER_RS_TELEMETRY_ENABLED',value:'0'},{name:'CUA_DRIVER_RS_UPDATE_CHECK',value:'0'}],
    configuredDriver:{claudeCodeCompatibility:false,authorization:{allowedModes:[bounded],compatibilityMode:bounded,compatibilityCapabilityManifestPath:manifest,unrestrictedAcknowledged:false,maxSessionTtlSeconds:900n,maxIdleTtlSeconds:300n}},
-  });
-  const {pid,driverVersion}=await deadline(driver.metadata(),3000);
+  };
+  let metadata:{pid:number;driverVersion:string};
+  try{
+   const driver:Driver=current.driver=this.windowsHelper?CuaDriver.createPrivateWorker(options):
+    createPrivateCuaDriver(pathToFileURL(join(this.directory,'node_modules/@trycua/cua-driver/dist/index.js')).href,options);
+   metadata=await deadline(driver.metadata(),startupMs);
+  }catch(error){
+   if(error instanceof Error&&/^cua_driver_startup_[a-z_]+$/.test(error.message))throw error;
+   throw Error(error instanceof Error&&error.message==='cua_driver_timeout'?'cua_driver_startup_timeout':cuaDriverFailure(error,'startup'));
+  }
+  const {pid,driverVersion}=metadata,driver=current.driver!;
   if(!Number.isSafeInteger(pid)||pid<=1||driverVersion!=='0.46.1')throw Error('cua_driver_unavailable');
   current.pid=pid;
   const {data}=await this.call(driver,'check_permissions',{session,prompt:false},guard);
@@ -248,7 +264,7 @@ foreach ($candidate in $candidates) {
   const dir=current.dir=mkdtempSync(join(realpathSync(this.runtime),CUA_SESSION_PREFIX));
   const profile=join(dir,'profile');mkdirSync(profile,{mode:0o700});
   // A guest window keeps site state in memory and avoids persistent cookie Keychain startup.
-  const child=spawn(chromeExecutable,['--guest','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check',url.href],
+  const child=spawn(chromeExecutable,['--guest','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','--force-renderer-accessibility',url.href],
    {detached:true,stdio:'ignore',env:{HOME:dir,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:process.env.LANG??'en_US.UTF-8'}});
   try{await once(child,'spawn');}catch{throw Error('chrome_launch_failed');}
   child.unref();
@@ -260,9 +276,14 @@ foreach ($candidate in $candidates) {
   try{
    const ids=[String(pid),String(window_id)];
    const {stdout}=this.windowsHelper?await runCuaWindows(this.windowsHelper,[mode??'page',...ids,...(current.mode==='isolated'?[current.dir!]:[])]):
-    await run(join(this.directory,'chrome-viewport'),[...ids,...(mode?[mode]:[])],{timeout:3000,maxBuffer:2048});
+    await run(join(this.directory,'chrome-viewport'),[...ids,...(mode?[mode]:[])],{timeout:mode?3000:5000,maxBuffer:2048});
    return stdout.trim();
-  }catch{throw Error(mode==='address'?'chrome_address_not_focused':mode==='window'?'chrome_window_not_found':
+  }catch(error){
+   if(!this.windowsHelper){
+    const e=error as {code?:number|string;killed?:boolean};
+    throw Error(e.killed||e.code==='ETIMEDOUT'?'chrome_helper_timeout':typeof e.code==='number'?chromeHelperErrors[e.code]??'chrome_helper_failed':'chrome_helper_failed');
+   }
+   throw Error(mode==='address'?'chrome_address_not_focused':mode==='window'?'chrome_window_not_found':
     mode==='frame'?'desktop_screenshot_unavailable':'chrome_viewport_unavailable');}
  }
  private async confirmAddress(current:Session,guard:()=>void,expected?:string){
@@ -275,18 +296,15 @@ foreach ($candidate in $candidates) {
   throw Error(expected===undefined?'chrome_address_not_focused':'chrome_address_unconfirmed');
  }
  private async page(current:Session):Promise<Geometry>{
-  const geometry:Geometry=JSON.parse(await this.geometry(current));
+  const output=await this.geometry(current);
+  let geometry:Geometry;
+  try{geometry=JSON.parse(output);}catch{throw Error('chrome_helper_invalid_response');}
   if(current.origin&&(!geometry.origin||new URL(geometry.origin).origin!==current.origin))throw Error('cua_isolated_origin_denied');
   return geometry;
  }
  private async capture(current:Session,edge:number,guard:()=>void){
   const target=current.target!,driver=current.driver!;
-  const before=await this.page(current).catch(async(error:Error)=>{
-   if(error.message!=='chrome_viewport_unavailable')throw error;
-   // A fresh Chromium page may have only its native chrome in the AX tree.
-   await this.call(driver,'get_window_state',{session,...target,include_screenshot:false,max_elements:40},guard);
-   return this.page(current);
-  });
+  const before=await this.page(current);
   const windows=!!this.windowsHelper;
   const {data,image}=await this.call(driver,'get_window_state',{session,...target,include_accessibility_tree:false,max_image_dimension:windows?0:edge},guard);
   const after=await this.page(current);
@@ -308,12 +326,20 @@ foreach ($candidate in $candidates) {
  }
  invoke(owner:string,name:string,args:Args,guard:()=>void,save:(filename:string,bytes:Buffer)=>unknown,approve:(app:string,title:string)=>Promise<void>){
   guard();
-  if(this.active&&(this.active.owner!==owner||this.active.pending||this.active.closing))throw Error('cua_busy');
+  if(this.active&&(this.active.owner!==owner||this.active.pending))throw Error('cua_busy');
+  if(this.active?.closing)throw Error('cua_session_stopped');
+  const fresh=!this.active;
   const current=this.active??={owner};
   const check=()=>{guard();if(current.closing)throw Error('cua_stopped');};
   const pending=this.perform(current,name,args,check,save,approve);
   current.pending=pending;
-  return pending.finally(()=>{current.pending=undefined;});
+  return pending.then(result=>{current.pending=undefined;return result;},async error=>{
+   current.pending=undefined;
+   if(fresh&&(!current.ready||name==='desktop_read'||name==='browser_read')){
+    if(!await this.close(owner,current.mode!=='isolated').catch(()=>false))throw Error('cua_cleanup_unconfirmed');
+   }
+   throw error;
+  });
  }
  private async perform(current:Session,name:string,args:Args,guard:()=>void,save:(filename:string,bytes:Buffer)=>unknown,approve:(app:string,title:string)=>Promise<void>){
   let url:URL|undefined;
@@ -427,16 +453,22 @@ foreach ($candidate in $candidates) {
   const current=this.active;
   if(!current||current.owner!==owner)return true;
   const stopped=await (current.closing??=Promise.resolve().then(async()=>{
+   let driverStopped=!current.driver;
    const graceful=(async()=>{
     await current.pending?.catch(()=>{});
     if(!current.driver)return;
     const driver=current.driver;
     try{await driver.callTool('end_session',JSON.stringify({session}));}catch{}
-    try{await driver.shutdown();}finally{driver.uniffiDestroy();}
+    try{await driver.shutdown();}finally{await driver.uniffiDestroy();driverStopped=true;}
    })();
    await deadline(graceful,4000).catch(()=>{});
+   if(!driverStopped&&!this.windowsHelper){
+    await deadline(Promise.resolve().then(()=>current.driver!.uniffiDestroy()).then(()=>{driverStopped=true;}),2000).catch(()=>{});
+    if(!driverStopped)return false;
+   }
    if(current.dir&&!await reclaimCuaSession(current.dir,current.pid,this.windowsHelper,current.job))return false;
    await deadline(graceful,2000).catch(()=>{});
+   if(!driverStopped)return false;
    if(current.pid&&!this.windowsHelper){
     try{process.kill(current.pid,0);return false;}
     catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')return false;}
@@ -445,6 +477,7 @@ foreach ($candidate in $candidates) {
   }));
   // A timed-out isolated call must not fall back to a personal tab in the same turn.
   if(stopped&&release&&this.active===current)this.active=undefined;
+  else if(stopped){current.capture=undefined;current.tokens=undefined;current.target=undefined;current.driver=undefined;current.ready=undefined;}
   return stopped;
  }
 }

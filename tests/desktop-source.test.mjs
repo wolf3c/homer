@@ -9,16 +9,19 @@ const root=resolve('.'),parent=join(root,'.codex/scratch/desktop-integration-202
 // Construct the old tree locally so the test does not depend on private Git history.
 const fixtureRoot=mkdtempSync(join(parent,'source-repo-'));
 const businessPaths=['src/recursive-tasks.ts','src/web-history.ts','src/web-contract.ts','ui/task-status.tsx'];
-for(const path of new Set([...DESKTOP_CANDIDATE_PATHS,...businessPaths])){
+const cuaWorker='src/desktop-cua-driver.ts';
+for(const path of new Set([...DESKTOP_CANDIDATE_PATHS,...businessPaths,cuaWorker])){
  const target=join(fixtureRoot,path);mkdirSync(dirname(target),{recursive:true});copyFileSync(join(root,path),target);
 }
 const git=(...args)=>execFileSync('/usr/bin/git',['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=Homer test','-c','user.email=homer-test@example.invalid',...args],{cwd:fixtureRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
 git('init','-q');
 // The committed tree predates this desktop entry; the working copy has it.
 rmSync(join(fixtureRoot,'packaging/electron/main.mjs'));
+rmSync(join(fixtureRoot,cuaWorker));
 git('add','-f','--all');git('commit','-qm','Synthetic source before desktop integration');
 const sourceSha=git('rev-parse','HEAD');
 copyFileSync(join(root,'packaging/electron/main.mjs'),join(fixtureRoot,'packaging/electron/main.mjs'));
+copyFileSync(join(root,cuaWorker),join(fixtureRoot,cuaWorker));
 const fixtureParent=join(fixtureRoot,'.codex/scratch/source-tests');mkdirSync(fixtureParent,{recursive:true});
 after(()=>rmSync(fixtureRoot,{recursive:true,force:true}));
 test('source SHA must be complete and extraction cannot overwrite an existing stage',()=>{
@@ -35,6 +38,7 @@ test('explicit preparation overlays only desktop owners and retains exact commit
  const provenance=prepareDesktopSource({root:fixtureRoot,sourceSha,stage,prepareCandidate:true});
  assert.equal(provenance.gitSha,sourceSha);assert.equal(provenance.preparation,true);assert.equal(provenance.publishable,false);
  assert.deepEqual(provenance.candidateInputs.map(x=>x.path),DESKTOP_CANDIDATE_PATHS);
+ assert.deepEqual(readFileSync(join(stage,cuaWorker)),readFileSync(join(fixtureRoot,cuaWorker)));
  for(const path of ['src/recursive-tasks.ts','src/web-history.ts','src/web-contract.ts','ui/task-status.tsx']){
   assert.deepEqual(readFileSync(join(stage,path)),execFileSync('/usr/bin/git',['show',sourceSha+':'+path],{cwd:fixtureRoot}));
  }

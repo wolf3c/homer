@@ -166,6 +166,7 @@ if(!vm.SourceTextModule){
    './media-policy.js':{MEDIA_POLICY:{imageBytes:10,maxPixels:1_000_000},
     imageDimensions:bytes=>bytes[0]===2?{width:300,height:200}:{width:shotWidth,height:shotHeight}},
    './processes.js':{processIdentity:()=>'fixture-owner'},
+   './desktop-cua-driver.js':{createPrivateCuaDriver:()=>assert.fail('macOS SDK worker must not replace Windows startup'),cuaDriverFailure:()=> 'cua_driver_unavailable'},
    '../scripts/windows-security.mjs':{windowsCommandAsync:()=>assert.fail('ordinary Chrome must not start a browser')},
    './cua-processes.js':{CUA_SESSION_PREFIX:'homer-cua-',WINDOWS_CUA_HELPER:helper,holdCuaWindowsJob:()=>({ready:Promise.resolve()}),
     reclaimCuaSession:async()=>true,pinCuaChrome:()=>assert.fail('wrong platform'),

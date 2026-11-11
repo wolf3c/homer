@@ -20,7 +20,7 @@ Windows x64 源码已接入同一组 Worker 工具。官方驱动 ZIP 和 SDK �
 
 1. 经包资源校验的本机 Worker 沿现有 MCP 发现 `browser_open`、`browser_read` 和 `browser_click`，发现时零驱动启动。底层用原厂 `list_windows`、`get_window_state`、`click` 和键盘工具。导航把目标 Chrome 窗口切到前台，核对焦点在该窗口的工具栏，输入后核对地址再回车。点击用最近一次视口快照及原厂 `capture_id`，由宿主换算到窗口像素。 [Worker MCP](../../src/worker-interaction-mcp.ts) · [原厂窗口与输入](https://cua.ai/docs/cua-driver/concepts/how-cua-driver-works)
 2. 仅对主会话本机来源的当前 Worker 轮次开放。已配对移动端沿用主会话来源，外部聊天渠道的任务不注册这些工具。宿主绑定 `PID + window_id`，调用前核对事项版本和轮次。明确的浏览器任务省去标签页和网站审批卡。桌面首次读取时由用户批准具体窗口，宿主在批准后重新核对窗口和进程身份。点击和键入只接受该窗口最新快照的元素令牌。macOS 沿「本机权限」授予辅助功能和屏幕录制；Windows 使用同一桌面会话的原生 UI Automation，不额外安装工具或申请管理员权限。 [宿主接线](../../src/service.ts)
-3. 从目标 Chrome 的原生无障碍树读取可见网页区域。区域尚未出现时，用一次原厂窗口读取唤醒 Chromium 的无障碍树。快照前后核对页面和尺寸，匹配原厂截图坐标，再由包内解码器裁剪。Windows 用 UI Automation 定位唯一可见的 `RootWebArea` 和地址栏，不匹配本地化标题；原厂窗口帧裁掉的 1 px 边缘不计入截图，无法确认坐标就拒绝裁剪。`browser_read` 返回预览和坐标，指定 `save_as` 时保存原尺寸 PNG 并只返回文件回执，沿用 2 MiB MCP 回包上限。主 Agent 从原会话交付原件。 [macOS 视口定位](../../packaging/macos/ChromeViewport.swift) · [Windows 视口定位](../../packaging/windows/CuaWindows.cs) · [消息与附件统一交付](main-worker-chat-architecture.md#消息与附件统一交付)
+3. 从目标 Chrome 的原生无障碍树读取可见网页区域。macOS 缺少网页 AX 节点时，helper 只向已绑定的 Chrome 进程请求一次 `AXEnhancedUserInterface`，随后最多等待约三秒；Chromium 有两秒防抖，不能根据设置调用的返回值立即判失败，也不能在轮询中反复设置。每次重读均复核同一窗口，保留原有节点预算、唯一视口、HTTP(S)、父子边界及窗口包含关系检查。Homer 自建访客 Chrome 同时带 `--force-renderer-accessibility`，已有 Chrome 不重启、不追加启动参数。快照前后核对页面和尺寸，匹配原厂截图坐标，再由包内解码器裁剪。Windows 用 UI Automation 定位唯一可见的 `RootWebArea` 和地址栏，不匹配本地化标题；原厂窗口帧裁掉的 1 px 边缘不计入截图，无法确认坐标就拒绝裁剪。`browser_read` 返回预览和坐标，指定 `save_as` 时保存原尺寸 PNG 并只返回文件回执，沿用 2 MiB MCP 回包上限。主 Agent 从原会话交付原件。 [macOS 视口定位](../../packaging/macos/ChromeViewport.swift) · [Windows 视口定位](../../packaging/windows/CuaWindows.cs) · [消息与附件统一交付](main-worker-chat-architecture.md#消息与附件统一交付)
 4. Homer 只为显式隔离的任务启动 Chrome。Windows 先以全新 profile 打开空白页，按新进程和窗口归属确认目标，再走同一导航流程。发现企业策略覆盖 profile 或禁用访客模式时拒绝隔离。宿主在临时会话中校验网页来源后才返回截图或派发点击。桌面窗口 PNG 和两种网页 PNG 沿用同一文件回执与附件交付。
 
 Windows 的 Worker 工具走本机命名管道；Unix 仍使用私有文件套接字。Windows 桌面截图在捕获前后核对窗口外框，拒绝无法区分为原厂桌面区域回退的图像。浏览器预览超过回包限制时，从同一帧缩小，点击仍绑定原始捕获 ID。
@@ -28,6 +28,14 @@ Windows 的 Worker 工具走本机命名管道；Unix 仍使用私有文件套�
 ## 按需启停
 
 首次浏览器调用或桌面审批通过后，由签名的随包 Worker 宿主经原厂 SDK 启动私有驱动。每个 Worker 轮次绑定一个控制目标。私有会话目录承载启动标记和临时 Chrome profile，原厂驱动二进制仍在签名包内。 [桌面操作](../../src/desktop-cua.ts) · [桌面运行时](../../scripts/desktop-runtime.mjs)
+
+macOS 的私有 SDK 对象由随包 Node 的独立子进程持有，仅代理 metadata、工具调用、shutdown 和句柄销毁，使用支持 BigInt 的私有 IPC。启动握手与 metadata 共用十五秒预算，宿主事件循环不等待同步构造器；审批、目标选择、文件回执和进程归属仍由原宿主维护。真实 SDK `0.46.1` 的主线程／Node 工作线程双重加载探针出现 SIGABRT，因此不采用线程承载。父连接断开时代理退出；优雅关闭超时后，宿主独立终止代理并等待退出，再核实所属驱动与 Chrome 回收，无法确认就保留占用。Windows 保留原三秒启动和 Job 路线。异常只传递受控错误码，不记录 SDK 原始异常、stderr、窗口内容或工具输入输出。 [SDK 进程代理](../../src/desktop-cua-driver.ts)
+
+初始化失败或本轮首次 `desktop_read`／`browser_read` 失败时，先结算 pending，再关闭自身驱动并确认资源回收，成功后撤销未完成绑定。清理无法确认则返回 `cua_cleanup_unconfirmed` 并保留占用。隔离启动失败保留本轮停止状态，后续调用返回 `cua_session_stopped`，不能隐式回落个人 Chrome。已有成功会话和结果未知的输入不自动重绑或重放。
+
+启动握手超时返回 `cua_driver_startup_timeout`，其余启动失败返回 `cua_driver_startup_failed`。macOS helper 将进程不可用、系统权限不足、AX 窗口列表不可读、原绑定窗口无法匹配、网页 AX 树缺失、视口无效及页面协议不支持分别编码；执行超时返回 `chrome_helper_timeout`。已确认锁屏时优先返回 `cua_screen_locked`，无法读取会话信息时继续原窗口校验。`chrome_bound_window_unavailable` 仅说明原绑定窗口未匹配，不能解释为系统没有 Chrome 窗口。MCP 仍只接受受控错误码，未知原始异常继续脱敏。
+
+2026-11-11，先在独立签名测试实例和自建 Chrome 中确认：旧 helper 先无法读取视口，单次 AX 启用请求后约 2.2 秒恢复，设置返回 `-25208` 不代表启用未发生。随后在同一隔离边界验证 scratch 中编译的候选模块、新 helper 与包内真实 SDK、解码器：复用路径首次 helper 约 2.19 秒后成功；复用与显式隔离均完成读取、一次点击及原尺寸纯视口 PNG，分别为 `2400 × 1472` 和 `2400 × 1584`。错误窗口和非 Chrome 进程均被明确拒绝。一次审批后桌面读取返回 14 个元素；首次网页 AX 读取失败后清理并显式重绑成功，隔离取消后后续读取保持停止，无个人窗口发现。真实 SDK 连续两轮启动关闭、1 ms 握手超时分类与启动中取消均确认回收。新 helper 编译及实际锁屏专用码通过；定向离线回归 90 项通过，覆盖启动、错误分类、绑定回滚、隔离停止边界和候选源码带入。以上为隔离源码模块验收，未重打包产品或调用真实模型，不代替安装包验收；未安装或发布。
 
 任务结束、取消、撤权、超时或应用退出时，先封住调用，再让原厂结束会话。macOS 按会话启动路径和 profile 回收进程组。Windows 将原厂私有驱动和临时 Chrome 放入同一 [Windows Job Object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)，已有 Chrome 不加入。驱动无响应时结束 Job，确认成员归零才删除临时目录。宿主进程退出也会触发回收；启动阶段复查残留会话。Homer 对原生引擎和旧宿主的接管仍要求原有退出证明，强杀整个进程树后的产品重启须单独验收。点击或输入发出后若丢失回执，恢复后先观察，结果保持未知。 [进程回收](../../src/cua-processes.ts) · [任务重启恢复](main-worker-chat-architecture.md#重启后原任务怎样继续)
 

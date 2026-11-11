@@ -139,6 +139,22 @@ Homer 内置文字反馈的离线契约：`node --import tsx --test tests/homer-
 
 已存在的 71 份 `*.browser.mjs` 和 4 份 `*.integration.mjs` 不由默认入口收集。它们仍按各文件的明确入口运行：四份移动联调需要 `HOMER_YEZI2_ROOT`，并非 `test:rtc` 单个依赖互通案例的替代。`scripts/real-*` 等真实模型任务仍需单独的授权、数据范围和预算；发版选择专项不自动授权付费调用。
 
+## macOS CUA 启动与失败收尾
+
+macOS CUA 启动与失败收尾的定向离线检查：
+
+```bash
+node --experimental-vm-modules --import tsx --test tests/desktop-cua-driver.test.mjs tests/desktop-cua-lifecycle.test.mjs tests/chrome-cua.test.ts tests/worker-interaction-mcp.test.ts tests/desktop-update-runtime.test.mjs tests/desktop-source.test.mjs
+```
+
+这两份新增测试属于默认核心：SDK 子进程仅导入测试临时目录里的合成 SDK，生命周期用 VM 替身，不启动 Chrome、不调用原生驱动或模型、不读取账号。覆盖独立进程与 BigInt、异步启动、十五秒预算、SDK 原因脱敏、父连接断开、阻塞构造器取消、关闭挂起时强制退出、首次读取回滚、清理未确认占用、隔离失败停止、helper 错误分类及未知输入不重放。上述六份定向测试 90 项通过；新增模块已纳入候选源码清单。真实 SDK 的主线程／工作线程双重加载探针曾出现 SIGABRT，产品改为独立 Node 子进程。合入前复核另覆盖损坏／缺字段回执与输入派发后取消：读取失败返回受控协议码，动作保留结果未确认及绑定，不继续输入；合法省略结构化 JSON 的动作回执仍可成功。
+
+2026-11-11 原生验收使用已安装签名 Homer 的独立测试资料和本任务新建的 Chrome，只将 scratch 编译的候选模块与新 helper 用于探针，SDK、驱动和解码器仍为经资源校验的包内版本。先确认旧 helper 无法读取视口，单次 AX 启用请求约 2.2 秒后恢复；候选复用路径首个 helper 约 2.19 秒成功，显式隔离带 AX 启动参数。两条路径均完成真实读取、一次点击和原尺寸纯视口 PNG，尺寸分别为 `2400 × 1472`、`2400 × 1584`，已检查截图；错误窗口与非 Chrome 目标被拒绝，回收均确认。另验一次审批后桌面读取、首读 AX 失败清理后显式重绑、隔离取消后禁止默认回落；真实 SDK 连续启停、1 ms 启动超时分类和启动中取消均通过。新 Swift helper 编译及实际锁屏专用码通过。此范围未使用真实模型、日常资料或既有浏览器窗口，未重打包、安装或发布，不能代替完整安装包与真实 Worker 验收。
+
+合入前使用普通 Node 22.22.0 在独立 worktree 运行完整默认核心：2142 项通过，零失败、取消与跳过；后端及测试类型检查通过。签名安装包的 Node 会拒载开发目录中 Team ID 不同的原生依赖，不用于本轮完整源码检查。
+
+合成 SDK 的独立 IPC 测量（Node 22.22.0）只验证代理传输开销：6 次子进程引导中位数约 24.5 ms，100 次小回包往返 p95 约 0.08 ms，40 次 1 MiB 回包 p95 约 1.09 ms；不代表真实截图、冷系统启动或低配设备的端到端时延。
+
 ## Windows x64 CUA
 
 离线回归验证 Windows 依赖锁和签名后资源清单、Worker 命名管道、Chrome 地址栏校验、截图范围、同帧预览缩小以及未确认退出时保留 profile。使用 Node 22.22.0：
