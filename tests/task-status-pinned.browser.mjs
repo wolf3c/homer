@@ -30,6 +30,62 @@ export async function pinnedPerformance(page){
  return {checksPassed:11,tasks:tasks.length,samples,progressReadsWhileCollapsed:progressReads,localControlledObservation:true};
 }
 
+async function statusScroll(page,{destination,ok}){
+ const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
+ const {task,worker}=workerNamed(original,'核对九月供应商比较报告'),run=worker.run;
+ const paragraphs=Array.from({length:24},(_,i)=>`合成核对条目 ${i+1}：长事项与 Worker 执行记录应在工作状态列表中独立滚动。`).join('\n\n');
+ const snapshot={...original,tasks:[{...task,title:'长事项滚动检查',goal:paragraphs,notes:'合成工作笔记\n\n'+paragraphs.slice(0,300)}]};
+ const output='合成长 Worker 回复\n\n'+paragraphs.slice(0,900);
+ await page.route('**/api/tasks',route=>route.fulfill({json:snapshot}));
+ await page.route('**/api/tasks/*/progress',route=>route.fulfill({json:{taskId:task.id,workers:[{taskId:task.id,version:run.version,runId:run.id,epoch:run.epoch,threadId:run.threadId,turnId:run.turnId,revision:1,observedAtMs:1,output:{type:'text',text:output}}]}}));
+ const metrics=[],settle=()=>page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));
+ const measure=()=>page.evaluate(()=>{
+  const doc=document.scrollingElement,panel=document.querySelector('.preview-main-panel'),list=document.querySelector('.status-list'),view=document.querySelector('.thread-viewport');
+  return {documentTop:doc.scrollTop,documentRange:doc.scrollHeight-doc.clientHeight,panelTop:panel.scrollTop,panelRange:panel.scrollHeight-panel.clientHeight,headerY:document.querySelector('.conversation-header').getBoundingClientRect().y,composerBottom:document.querySelector('.composer-area').getBoundingClientRect().bottom,height:innerHeight,listTop:list?.scrollTop,listRange:list?list.scrollHeight-list.clientHeight:0,messageTop:view.scrollTop,messageRange:view.scrollHeight-view.clientHeight};
+ });
+ const contained=async label=>{
+  const sample=await measure();metrics.push({label,...sample});
+  console.log(JSON.stringify({label,...sample}));
+  ok(sample.documentRange===0&&sample.documentTop===0&&sample.panelRange===0&&sample.panelTop===0&&sample.headerY===0&&Math.abs(sample.composerBottom-sample.height)<=1,label+'：整页无滚动范围，顶栏与输入框保持窗口边界');
+  return sample;
+ };
+ const wheel=async(locator,deltaY)=>{const box=await locator.boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.wheel(0,deltaY);await settle();};
+ try{
+  for(const viewport of [{width:1440,height:900},{width:1440,height:520},{width:390,height:780}]){
+   const label=`${viewport.width}x${viewport.height}`,narrow=viewport.width<1120;
+   await page.setViewportSize(viewport);await page.reload();
+   const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel'),view=page.locator('.thread-viewport');
+   await trigger.waitFor();if(narrow)await trigger.click();await panel.waitFor();
+   const item=panel.getByRole('button',{name:/^长事项滚动检查/});await item.click();
+   await panel.getByText(output,{exact:true}).waitFor();
+   ok(await panel.locator('[data-slot="run-activity"] > .sr-only[role="status"]').count()===1,label+'：保留真实执行记录和隐藏读屏状态，防止空场景误报通过');
+   const list=panel.locator('.status-list');
+   ok(await list.evaluate(el=>el.scrollHeight>el.clientHeight),label+'：长详情确实超出列表高度');
+   await view.evaluate(el=>{el.scrollTop=el.scrollHeight;});
+   if(!narrow)await wheel(view,240);
+   if(destination)await page.screenshot({path:destination+'/status-scroll-'+label+'.png',animations:'disabled'});
+   const before=await contained(label+' 展开后消息到底继续滚轮');
+   await wheel(list,200);const scrolled=await contained(label+' 列表滚轮');
+   ok(scrolled.listTop>before.listTop&&Math.abs(scrolled.messageTop-before.messageTop)<1,label+'：侧栏滚动不移动消息区');
+   await list.focus();await page.keyboard.press('End');await page.waitForFunction(()=>{const el=document.querySelector('.status-list');return Math.abs(el.scrollHeight-el.clientHeight-el.scrollTop)<1;});await contained(label+' 列表键盘 End');
+   const saved=await list.evaluate(el=>el.scrollTop);
+   if(narrow){await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});ok(await trigger.evaluate(el=>document.activeElement===el),label+'：Escape 回焦入口');}
+   else{await trigger.focus();await page.keyboard.press('Enter');await panel.waitFor({state:'hidden'});}
+   await page.keyboard.press('Enter');await panel.waitFor();
+   await page.waitForFunction(saved=>Math.abs(document.querySelector('.status-list').scrollTop-saved)<1,saved);
+   ok(Math.abs(await list.evaluate(el=>el.scrollTop)-saved)<1&&await item.getAttribute('aria-expanded')==='true',label+'：关闭重开保留列表位置与事项展开');
+   await contained(label+' 关闭重开');
+   await item.click();await contained(label+' 收起详情');await item.click();await panel.getByText(output,{exact:true}).waitFor();await contained(label+' 再次展开');
+   if(narrow){await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});}
+   const messageBefore=await view.evaluate(el=>el.scrollTop);
+   await wheel(view,-160);const moved=await contained(label+' 消息向上滚动');
+   ok(moved.messageTop<messageBefore,label+'：消息区仍能独立向上滚动');
+  }
+ }finally{await page.unroute('**/api/tasks/*/progress');await page.unroute('**/api/tasks');}
+ await page.setViewportSize({width:1440,height:1000});await page.reload();await page.locator('#task-status-panel').waitFor();
+ return metrics;
+}
+
 export default async function pinnedStatus(page,{destination}={}){
  const checks=[],metrics=[],errors=[],ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
  page.on('pageerror',error=>errors.push(error.message));
@@ -37,6 +93,7 @@ export default async function pinnedStatus(page,{destination}={}){
  const ready=()=>page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('工作中'));
  const shot=async name=>{if(destination)await page.screenshot({path:destination+'/'+name+'.png',animations:'disabled'});};
  await trigger.waitFor();await page.getByRole('complementary',{name:'工作状态卡片'}).waitFor();await ready();
+ metrics.push(...await statusScroll(page,{destination,ok}));await ready();
  ok(await trigger.getAttribute('aria-expanded')==='true','1440px 初次常驻');
  ok(await panel.getByRole('heading',{name:'工作状态'}).count()===0&&await panel.getByRole('button',{name:'收起工作状态'}).count()===0,'状态摘要不显示标题与关闭按钮');
  await trigger.evaluate(el=>Promise.allSettled(el.getAnimations().map(animation=>animation.finished)));

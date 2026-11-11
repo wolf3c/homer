@@ -233,6 +233,8 @@ node --import tsx tests/preview-tabs.browser.mjs
 
 工作状态与事项标题可定向运行 `tests/task-status-count.browser.mjs` 和 `tests/task-status-pinned-runner.mjs pinned`，截图写入显式指定的 `HOMER_BROWSER_EVIDENCE`。完整产品入口使用 `HISTORY_FOLLOWUP_BUILD` 指定当前源码的 UI 构建，合成数据使用独立 `HOMER_SYNTHETIC_ROOT`。
 
+`pinned` 同时覆盖长事项、长 Worker 回复及真实执行记录的整页滚动回归，先确认隐藏读屏状态元素存在，再检查 1440×900、1440×520 与 390×780 下整页和外层分栏无滚动范围，顶栏与输入区保持窗口边界。实际滚轮及键盘检查列表独立滚动、关闭重开后的阅读位置、事项展开收起和窄窗 Escape 回焦；测试仅使用合成数据与独立 Chrome profile。2026-11-11 本机 Chrome 合成验收 69 项通过，相关离线检查 11 项及 UI 类型检查通过；未打包安装。
+
 HTML 预览定向运行 `node --import tsx tests/html-annotation-lifecycle.browser.mjs` 与 `node --import tsx tests/html-render-first.browser.mjs`，分别指定独立 `HOMER_REVIEW_EVIDENCE_ROOT`；后者还需上述 UI 构建与合成目录。覆盖原生 Add 失败保留输入、重试和 ACK、退出与跨断点、1440／390／320px 的实际 Tab 焦点环、脚本预览与主输入发送。保存即写主草稿，测试沿原 Add／update／delete／clear 协议，不等待旧 Send 导入。
 
 macOS 启动 Chrome 的执行会话需要具备 LaunchServices 和 WindowServer 访问权限。若在 `_RegisterApplication` 阶段 SIGABRT，先按崩溃报告中的进程号及实际启动时间核对系统日志；仅有退出信号不足以判定根因。2026-11-07 的 PID 94978 被明确记录为 `Sandbox restriction`。在具备相应权限的执行会话中使用原启动器及全新 profile 验证，保留 Chrome 沙箱，独立 profile 不访问日常浏览器资料。
