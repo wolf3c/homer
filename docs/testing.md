@@ -282,6 +282,8 @@ HTML 预览定向运行 `node --import tsx tests/html-annotation-lifecycle.brows
 
 macOS 启动 Chrome 的执行会话需要具备 LaunchServices 和 WindowServer 访问权限。若在 `_RegisterApplication` 阶段 SIGABRT，先按崩溃报告中的进程号及实际启动时间核对系统日志；仅有退出信号不足以判定根因。2026-11-07 的 PID 94978 被明确记录为 `Sandbox restriction`。在具备相应权限的执行会话中使用原启动器及全新 profile 验证，保留 Chrome 沙箱，独立 profile 不访问日常浏览器资料。
 
+2026-11-09 在 Homer 0.1.6 build 291 的实际 Worker 中，默认 `:read-only` 同时拒绝了 profile 写入和上述系统服务访问，Chrome 在加载页面前 SIGABRT。经单次审批后，Chrome 157.0.8103.38 的 `--screenshot` 能写出 PNG，但退出时线程池仍有 Chrome Safe Storage 的 Keychain 查询，watchdog 以退出码 2 终止进程。若需用 Chrome 命令行截图验证本地合成页面，可在全新、一次性且无账号数据的 profile 上加 `--use-mock-keychain`。同一 Worker 仅增加此参数后，`--dump-dom` 和 `--screenshot` 均以 0 退出，PNG 字节与对照一致。该参数只用于合成测试，实际浏览器资料或登录流程应使用正常的 Keychain。项目浏览器专项继续使用下文的 CDP 流程。
+
 `scripts/test.mjs --browser` 显式运行 12 个已维护入口（另有一份共享 fixture），不自动收集其他历史浏览器脚本，也不进入默认测试。本专项沿现有 macOS Chrome 路径运行，需要 Node 22、项目现有依赖和当前源码的 UI 构建；在独立源码副本生成 annotation runtime、CSS 和 Vite 产物，不使用日常账号、runtime 或 CODEX_HOME。
 
 ```sh
