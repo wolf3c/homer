@@ -666,6 +666,10 @@ function registerDesktopSettings(){
   settingsSubscriber=args[0]?{sender:event.sender,senderFrame:event.senderFrame}:undefined;
   flushSettings();
  });
+ ipcMain.handle('homer:settings:version',async(event,...args)=>{
+  if(args.length||!permissionCaller(event,event.senderFrame))throw Error('desktop_settings_forbidden');
+  return app.getVersion();
+ });
  ipcMain.handle('homer:settings:open-about-link',async(event,...args)=>{
   const [link]=args;
   if(args.length!==1||(link!=='website'&&link!=='github')||!permissionCaller(event,event.senderFrame))throw Error('desktop_settings_forbidden');

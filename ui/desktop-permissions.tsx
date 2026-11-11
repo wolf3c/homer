@@ -19,7 +19,7 @@ type PermissionsBridge={check:()=>Promise<PermissionState>;openSystemSettings:(t
 type CaptureShortcutState={shortcut:string;defaultShortcut:string;active:boolean;error?:'invalid'|'reserved'|'unavailable'|'save_failed'};
 export type CaptureShortcutBridge={platform?:'win32';getShortcut:()=>Promise<CaptureShortcutState>;setShortcut:(shortcut:string|null)=>Promise<CaptureShortcutState>};
 type AboutLink='website'|'github';
-declare global{interface Window{homerDesktopPermissions?:PermissionsBridge;homerDesktopSettings?:{onOpen:(callback:(target?:'permissions')=>void)=>()=>void;openAboutLink?:(link:AboutLink)=>Promise<void>};}}
+declare global{interface Window{homerDesktopPermissions?:PermissionsBridge;homerDesktopSettings?:{onOpen:(callback:(target?:'permissions')=>void)=>()=>void;getVersion?:()=>Promise<string>;openAboutLink?:(link:AboutLink)=>Promise<void>};}}
 
 type SettingsView='closed'|'settings'|'opening-tour'|'tour'|'returning-to-about';
 
@@ -87,7 +87,8 @@ export function DesktopSettings({ref,onVisibilityChange}:{ref?:Ref<{openAccount:
 function DesktopAbout({openLink,tourEntry,onTour}: {
  openLink:(link:AboutLink)=>Promise<void>;tourEntry:Ref<HTMLButtonElement>;onTour:()=>void;
 }){
- const [notice,setNotice]=useState('');
+ const [notice,setNotice]=useState(''),[version,setVersion]=useState('');
+ useEffect(()=>{let active=true;void window.homerDesktopSettings?.getVersion?.().then(value=>{if(active)setVersion(value);},()=>{});return()=>{active=false;};},[]);
  async function open(link:AboutLink){
   setNotice('');
   try{await openLink(link);}
@@ -95,6 +96,7 @@ function DesktopAbout({openLink,tourEntry,onTour}: {
  }
  return <div className="desktop-about">
   <h2>关于荷马</h2>
+  {version&&<p>版本 {version}</p>}
   <div className="desktop-about-links">
    <Button type="button" onClick={()=>void open('website')}>官网<ExternalLink size={16} aria-hidden/></Button>
    <Button type="button" onClick={()=>void open('github')}>GitHub<ExternalLink size={16} aria-hidden/></Button>

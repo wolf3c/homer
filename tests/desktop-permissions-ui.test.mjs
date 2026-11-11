@@ -56,6 +56,15 @@ test('one settings dialog exposes permissions and mobile devices without startin
   assert.equal(calls.length,0);
  }finally{globalThis.fetch=original;}
 }));
+test('about displays the version supplied by the desktop app',async()=>withDom(async d=>{
+ let reads=0;
+ window.homerDesktopFeatureTour={pending:async()=>false,dismiss:async()=>{}};
+ window.homerDesktopSettings={onOpen:()=>()=>{},openAboutLink:async()=>{},getVersion:async()=>{reads++;return '9.8.7';}};
+ await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
+ assert.equal(reads,0);
+ await d.click(d.find(n=>n.getAttribute('role')==='tab'&&n.textContent==='关于'));
+ assert.equal(reads,1);assert.match(d.find(n=>n.getAttribute('role')==='tabpanel').textContent,/版本 9\.8\.7/);
+}));
 test('the screenshot annotation settings introduce capture and let users edit and restore the global shortcut',async()=>withDom(async d=>{
  const changes=[],visibility=[];let reads=0,resetAttempts=0;
  let state={shortcut:'Control+Shift+A',defaultShortcut:'Control+1',active:true};

@@ -678,6 +678,12 @@ const permissionEvent=f=>({sender:f.windows[0].webContents,senderFrame:f.windows
 async function permissionFixture(native){const f=await fixture(undefined,undefined,undefined,native);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;}
 const settingsItem=f=>f.handlers.get('menu')[0].submenu.find(item=>item.label==='设置…');
 const settingsReady=(f,w=f.windows.at(-1),...args)=>f.handlers.get('homer:settings:ready')({sender:w.webContents,senderFrame:w.webContents.mainFrame},...args);
+test('desktop about reads the running app version only from the trusted main page',async()=>{
+ const f=await permissionFixture(),event=permissionEvent(f),version=f.handlers.get('homer:settings:version');
+ assert.equal(await version(event),'0.1.0');
+ await assert.rejects(()=>version(event,'extra'),/desktop_settings_forbidden/);
+ await assert.rejects(()=>version({...event,senderFrame:{...event.senderFrame}}),/desktop_settings_forbidden/);
+});
 test('desktop about opens only the two product links from the trusted main page',async()=>{
  let unavailable=false;
  const f=await permissionFixture({external:async()=>{if(unavailable)throw Error('private_browser_detail');}});
@@ -778,6 +784,8 @@ test('settings preload subscribes before readiness, strips IPC event and dispose
  vm.runInNewContext(source,{process:{isMainFrame:true},require:()=>({contextBridge:{exposeInMainWorld:(name,api)=>exposed[name]=api},ipcRenderer:{on:(channel,listener)=>listeners.set(channel,listener),removeListener:(channel,listener)=>{assert.equal(listeners.get(channel),listener);listeners.delete(channel);},invoke:async(...args)=>{calls.push(args);assert.ok(listeners.has('homer:settings:open')||args[1]===false);}}})});
  assert.ok(exposed.homerDesktopSettings);const received=[];const off=exposed.homerDesktopSettings.onOpen((...args)=>received.push(args));assert.deepEqual(calls,[['homer:settings:ready',true]]);
  const listener=listeners.get('homer:settings:open');listener({sender:'private'},'ignored');listener({sender:'private'},'permissions');assert.deepEqual(received,[[],['permissions']]);
+ await exposed.homerDesktopSettings.getVersion();assert.deepEqual(calls.at(-1),['homer:settings:version']);
+ await assert.rejects(()=>exposed.homerDesktopSettings.getVersion('extra'));
  await exposed.homerDesktopSettings.openAboutLink('github');assert.deepEqual(calls.at(-1),['homer:settings:open-about-link','github']);
  off();off();assert.equal(listeners.size,0);assert.deepEqual(calls.at(-1),['homer:settings:ready',false]);
 });

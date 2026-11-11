@@ -49,6 +49,7 @@ if(process.isMainFrame===true){
    .map(action=>[action,input=>ipcRenderer.invoke('homer:chat-apps',action,input)]),
  ));
  contextBridge.exposeInMainWorld('homerDesktopSettings',{
+  getVersion:(...args)=>invoke('homer:settings:version',args),
   openAboutLink:(...args)=>ipcRenderer.invoke('homer:settings:open-about-link',...args),
   onOpen:callback=>{
    if(typeof callback!=='function')throw new TypeError('desktop_settings_callback');
