@@ -239,7 +239,7 @@ HTML 预览定向运行 `node --import tsx tests/html-annotation-lifecycle.brows
 
 macOS 启动 Chrome 的执行会话需要具备 LaunchServices 和 WindowServer 访问权限。若在 `_RegisterApplication` 阶段 SIGABRT，先按崩溃报告中的进程号及实际启动时间核对系统日志；仅有退出信号不足以判定根因。2026-11-07 的 PID 94978 被明确记录为 `Sandbox restriction`。在具备相应权限的执行会话中使用原启动器及全新 profile 验证，保留 Chrome 沙箱，独立 profile 不访问日常浏览器资料。
 
-`scripts/test.mjs --browser` 显式运行 11 个已维护入口（另有一份共享 fixture），不自动收集其他历史浏览器脚本，也不进入默认测试。本专项沿现有 macOS Chrome 路径运行，需要 Node 22、项目现有依赖和当前源码的 UI 构建；在独立源码副本生成 annotation runtime、CSS 和 Vite 产物，不使用日常账号、runtime 或 CODEX_HOME。
+`scripts/test.mjs --browser` 显式运行 12 个已维护入口（另有一份共享 fixture），不自动收集其他历史浏览器脚本，也不进入默认测试。本专项沿现有 macOS Chrome 路径运行，需要 Node 22、项目现有依赖和当前源码的 UI 构建；在独立源码副本生成 annotation runtime、CSS 和 Vite 产物，不使用日常账号、runtime 或 CODEX_HOME。
 
 ```sh
 HISTORY_FOLLOWUP_BUILD="$PWD/.codex/scratch/browser-regression/web" \
@@ -272,3 +272,24 @@ HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test tests/nati
 2026-11-08 固定 UI 维护入口复验（基线 `9d47409`）。固定 UI 启动器与同版本冻结后端共用完整动态工具指纹。隔离合成测试 3 项通过，覆盖原线程启动、UI 回退、篡改与锁拒绝，以及旧的部分指纹被拒绝。固定 Codex 0.163.0 回环专项在主服务中以原 `threadId` 续聊，上游收到前一轮用户消息和助手回复。桌面服务、CLI 和恢复检查 88 项通过，服务构建及类型检查通过。历史冻结包与新启动器混用未验。
 
 交互式合成调试可显式准备独立的 UI 构建和 `HISTORY_FOLLOWUP_BUILD`，再运行 `node --import tsx scripts/recursive-acceptance.ts`。真实账号、打包桌面及 Chrome 的结果分别记录。Chrome 使用独立 profile，以 DevTools 就绪和原进程退出为准。
+
+## 授权与咨询完成卡片
+
+离线回归（Node 22，合成数据与临时数据库）：
+
+```sh
+node --import tsx --test tests/web-history-loading.test.ts tests/main-native-approvals.test.ts tests/service-main-native-approvals.test.ts tests/worker-interactions.test.ts tests/question-flow-contract.test.ts tests/approval-card-ui.test.mjs tests/user-message-bubble-ui.test.mjs
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p ui/tsconfig.json
+```
+
+显式浏览器专项：
+
+```sh
+node scripts/build-preview-annotation.mjs
+HOMER_BROWSER_EVIDENCE="$PWD/.codex/scratch/interaction-completion-browser" node --import tsx tests/interaction-completion.browser.mjs
+```
+
+脚本构建实际产品界面，复用合成 HTTP/SSE 服务、原审批处理器和历史展示投影；使用本机已有 Chrome、独立浏览器资料及 scratch 内合成 SQLite 数据库，不连接账号或真实模型。覆盖 1440、390、320px 的允许、拒绝、多题和自由回答，允许流程先模拟回执未知并显式重试，再核对刷新、关闭并重开数据库后仍只有一张完成卡片。审批完成态检查固定 ApprovalCard 的原生状态区与准确决定文案，移除所有审批按钮和详情入口；咨询完成态检查固定 QuestionFlow 的 `receipt` 状态、全部原问题和答案同时可见、自由文字原样换行，且没有提交控件、自定义箭头或题号；刷新及重开数据库后保留同一份完整回执。每种场景保存 PNG，汇总写入指定证据目录的 `results.json`。可用 `HOMER_COMPONENT_BUILD` 指定已构建的隔离产品 UI。此脚本登记于显式 browser 清单，不进入默认离线测试。
+
+审批、咨询原有专项继续使用 `tests/approval-card.browser.mjs` 和 `tests/question-flow.browser.mjs`，分别检查提交、重复点击、连接变化、迟到回执、失效与草稿。以上均为合成验收，不代表日常资料、真实账号或已安装 App 验收。

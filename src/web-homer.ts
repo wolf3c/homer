@@ -58,6 +58,56 @@ import {revealAttachmentFile} from './artifact-reveal.js';
 import type { Homer } from "./service.js";
 import { CONVERSATION_VIEW,type WebBridge,type DispatchQueuePage,type WebArtifact,type MessageAttachment,type WebApproval } from "./web-contract.js";
 
+// Enrich only the authorized page. User decisions stay on their original message;
+// the projection cannot grant authority or release an interaction callback.
+export function withInteractionResponses(db:DatabaseSync,messages:readonly DisplayMessage[],threadId:string):DisplayMessage[]{
+ const requests=[...new Set(messages.flatMap(m=>m.threadId===threadId&&m.requestId?[m.requestId]:[]))];
+ if(!requests.length)return [...messages];
+ const rows=db.prepare(`SELECT w.id,w.kind,w.runId,w.userQuestion,w.responseUserText,
+  json_extract(w.details,'$.approval') approval,json_extract(w.details,'$.method') method,
+  json_extract(w.details,'$.params.questions') questions,w.decision,c.requestId,c.replyId,u.id userId
+  FROM worker_interactions w
+  JOIN conversation_inputs c ON c.requestId=w.responseUserMessageId AND c.threadId=?
+  JOIN conversation_messages u ON u.threadId=c.threadId AND u.requestId=c.requestId AND u.role='user' AND u.text=w.responseUserText
+  JOIN conversation_inputs source ON source.requestId=json_extract(w.authority,'$.sourceRequestId') AND source.threadId=c.threadId
+  WHERE w.responseUserMessageId IN (${requests.map(()=>'?').join(',')})
+  AND (json_type(w.details,'$.historyThreadId') IS NULL OR json_extract(w.details,'$.historyThreadId')=c.threadId)`)
+  .all(threadId,...requests) as {id:string;kind:'authorization'|'question';runId:string;userQuestion:string|null;responseUserText:string;approval:string|null;method:string|null;questions:string|null;decision:string|null;requestId:string;replyId:string;userId:string}[];
+ const byRequest=new Map<string,typeof rows[number]|null>();
+ for(const row of rows)byRequest.set(row.requestId,byRequest.has(row.requestId)?null:row);
+ const cards=new Map<string,NonNullable<DisplayMessage['interaction']>>(),hidden=new Set<string>();
+ const text=(value:unknown):value is string=>typeof value==='string'&&!!value.trim();
+ for(const row of byRequest.values()){
+  if(!row)continue;
+  const approval:WebApproval|undefined=row.approval?JSON.parse(row.approval):undefined;
+  const card:NonNullable<DisplayMessage['interaction']>={id:row.id,kind:row.kind,title:row.userQuestion??'',answers:[{text:row.responseUserText}]};
+  if(row.kind==='authorization'){
+   card.title=text(approval?.title)?approval.title:'';
+   const description=[approval?.context,approval?.explanation];
+   // Commands and permission paths have no separate object field in old records.
+   if(['item/commandExecution/requestApproval','item/permissions/requestApproval'].includes(row.method??''))description.push(approval?.details);
+   const parts=[...new Set(description.filter(text))].filter(value=>value!==card.title&&value!==approval?.scope);
+   if(parts.length)card.description=parts.join('\n');
+   if(text(approval?.scope))card.scope=approval.scope;
+   card.answers=[{text:({'允许本次操作':'你已允许本次操作','拒绝本次操作':'你已拒绝本次操作','取消本次请求':'你已取消本次请求'} as Record<string,string>)[row.responseUserText]??row.responseUserText}];
+  }else if(row.runId.startsWith('main-native:')&&row.method==='item/tool/requestUserInput'){
+   const questions=projectQuestions('question',{questions:row.questions?JSON.parse(row.questions):undefined});
+   const answers=row.decision?JSON.parse(row.decision).answers:undefined;
+   if(questions&&answers&&typeof answers==='object'&&!Array.isArray(answers)&&Object.keys(answers).length===questions.length&&questions.every(q=>Array.isArray(answers[q.id])&&answers[q.id].length&&answers[q.id].every(text))){
+    card.title=questions.length===1?questions[0]!.question:'';
+    card.answers=questions.map(q=>({...(!card.title?{question:q.question}:{}),text:answers[q.id].join('\n')}));
+   }else card.unavailable=true;
+  }
+  if(!card.title&&!card.answers.some(a=>a.question))card.unavailable=true;
+  cards.set(row.userId,card);
+  const reply=messages.find(m=>m.id===row.replyId);
+  if(row.runId.startsWith('main-native:')&&reply?.role==='assistant'&&reply.status==='completed'&&!reply.process&&!reply.attachments?.length&&!reply.media?.length&&[
+   '已批准本次操作，等待执行结果。','已拒绝本次操作。','已记录取消，等待原生处理。','已提交本轮补充。'
+  ].includes(reply.text))hidden.add(row.replyId);
+ }
+ return messages.filter(m=>!hidden.has(m.id)).map(m=>cards.has(m.id)?{...m,interaction:cards.get(m.id)}:m);
+}
+
 export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boolean}={}): WebBridge {
   app.registerWebSurface(draftUpload);
   const files=(messages:readonly import('./web-history.js').ConversationMessage[]):WebArtifact[]=>messages.flatMap(message=>{
@@ -99,7 +149,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
       if(!process&&!user)return [];
       return [{id:item.id,kind:item.kind,state:item.state as 'cancelled'|'expired',...(item.code?{code:item.code}:{}),sourceRequestId:item.authority.sourceRequestId,...(process?{processId:process.id}:{messageId:user!.id})}];
     });
-    return {...result,artifacts,inactiveInteractions,inactiveMore,messages:withTaskSources(app.store.db,result.messages,result.threadId).map(message=>({...message,...(message.process?{process:message.process}:{}),...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{}),...(message.source?.attachments?{source:{...message.source,media:message.source.attachments.map(ref=>app.media.view(ref))}}:{})}))};
+    return {...result,artifacts,inactiveInteractions,inactiveMore,messages:withInteractionResponses(app.store.db,withTaskSources(app.store.db,result.messages,result.threadId),result.threadId).map(message=>({...message,...(message.process?{process:message.process}:{}),...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{}),...(message.source?.attachments?{source:{...message.source,media:message.source.attachments.map(ref=>app.media.view(ref))}}:{})}))};
   };
   const queuePage=(after=0)=>{const page=pageReader().queuePage(after);return {...page,items:page.items.map(item=>({...item,user:{...item.user,...(item.user.attachments?{media:item.user.attachments.map(ref=>app.media.view(ref))}:{})}}))};};
   const interactionPage=(after=0)=>{

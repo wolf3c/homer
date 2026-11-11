@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 // Explicit ownership keeps optional environments out of the default core regression.
 const candidates=readdirSync('tests').filter(file=>/\.test\.(ts|mjs)$/.test(file)).sort();
 const suites={
- browser:["artifact-file-list.browser.mjs", "run-activity-focus.browser.mjs", "run-activity-style.browser.mjs", "web-history-active-pages.browser.mjs", "web-history-artifact-origin.browser.mjs", "web-history-kerning-content.browser.mjs", "web-history-kerning.browser.mjs", "web-history-loading.browser.mjs", "web-history-media-anchor.browser.mjs", "web-history-native-zoom.browser.mjs", "web-working-publication-large.browser.mjs"],
+ browser:["interaction-completion.browser.mjs", "artifact-file-list.browser.mjs", "run-activity-focus.browser.mjs", "run-activity-style.browser.mjs", "web-history-active-pages.browser.mjs", "web-history-artifact-origin.browser.mjs", "web-history-kerning-content.browser.mjs", "web-history-kerning.browser.mjs", "web-history-loading.browser.mjs", "web-history-media-anchor.browser.mjs", "web-history-native-zoom.browser.mjs", "web-working-publication-large.browser.mjs"],
  desktop:['desktop-service-startup.test.mjs','main-tools-resume-compatibility.test.mjs','macos-desktop-runtime.test.mjs','electron-desktop.test.mjs','native-main-tools-resume.test.mjs'],
  'cua-windows':['windows-cua-package.test.mjs'],
  'prompt-resume':['native-main-tools-resume.test.mjs','native-main-prompt-resume.test.mjs'],

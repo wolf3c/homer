@@ -98,6 +98,7 @@ export class WebHistoryPages{
     CREATE INDEX IF NOT EXISTS conversation_request_identity ON conversation_messages(requestId,role);
     CREATE INDEX IF NOT EXISTS conversation_outcome_identity ON conversation_messages(threadId,requestId) WHERE id GLOB 'input-outcome:*';
     CREATE INDEX IF NOT EXISTS web_interaction_state ON worker_interactions(state);
+    CREATE INDEX IF NOT EXISTS web_interaction_response ON worker_interactions(responseUserMessageId);
     CREATE INDEX IF NOT EXISTS web_interaction_source ON worker_interactions(json_extract(authority,'$.sourceRequestId'),state);`);
   // Explicit bounded batches for the one-time O(total) identity reconstruction.
   // No body copies or JS process JSON parsing. Not charged as a page read.

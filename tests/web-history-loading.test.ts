@@ -172,3 +172,144 @@ test('synthetic streaming updates the public final without replacing commentary'
   assert.equal(state.messages.find(message=>message.id==='node-0')!.text,'显式正式答复');
  }finally{f.close();}
 });
+
+import {withInteractionResponses} from '../src/web-homer.js';
+function answeredInteraction(f:ReturnType<typeof historyFixture>,key:string,kind:'authorization'|'question'='authorization',details:Record<string,unknown>={},text='允许本次操作',runId='main-native:'+key){
+ const thread='synthetic-history',source='source-'+key;
+ f.history.accept(thread,{requestId:source,text:'原请求 '+key});
+ const opened=f.interactions.open({runId,threadId:runId.startsWith('main-native:')?thread:'worker-thread',turnId:'turn-'+key,requestId:key,source:kind==='question'&&!(details.params as any)?.questions?'ask_main':'native',kind,details:{question:'原 Worker 问题',historyThreadId:thread,...details},authority:{sourceRequestId:source,description:'合成授权',nativeApprovals:true}},()=>true);
+ f.interactions.escalate(opened.id,'当时的问题 '+key,'需要用户决定');
+ const receipt=f.history.accept(thread,{requestId:'answer-'+key,text,interactionId:opened.id});
+ const questions=(details.params as any)?.questions;
+ f.interactions.respond(opened.id,kind==='authorization'?{action:text==='拒绝本次操作'?'deny':text==='取消本次请求'?'cancel':'approve',reason:'真实用户决定'}:{action:'answer',reason:'真实用户回答',...(questions?{answers:Object.fromEntries(questions.map((q:any)=>[q.id,['答案 '+q.id]]))}:{answer:'主 AI 转述，不应作为用户原文'})},{userMessageId:'answer-'+key,userText:text});
+ f.history.finish(receipt.replyId,kind==='authorization'?'已批准本次操作，等待执行结果。':'已提交本轮补充。','completed');
+ return {id:opened.id,requestId:'answer-'+key,replyId:receipt.replyId};
+}
+test('completed interaction projection preserves operation and exact user decision across native and Worker sources',()=>{
+ const f=historyFixture(0);try{
+  const cases=[
+   {method:'item/commandExecution/requestApproval',approval:{title:'允许执行这条命令？',details:'/bin/echo synthetic\n工作目录：/synthetic',scope:'仅批准当前命令。'}},
+   {method:'item/fileChange/requestApproval',approval:{title:'允许本次文件改动？',context:'文件：/synthetic/a.ts',details:'diff 不应外露',scope:'仅批准本次操作。'}},
+   {method:'item/permissions/requestApproval',approval:{title:'允许本轮使用额外权限？',details:'读取：/synthetic',scope:'本轮结束失效。'}},
+   {method:'mcpServer/elicitation/request',approval:{title:'允许调用这个工具？',context:'服务：合成\n工具：合成工具',details:'不展示原参数',scope:'仅批准本次操作。'}},
+   {method:'homer_capability_operation',approval:{title:'安装合成插件',scope:'只安装本次插件'}}
+  ];
+  for(const [i,details]of cases.entries())for(const worker of [false,true]){
+   const key=i+'-'+worker,ref=answeredInteraction(f,key,'authorization',details,'允许本次操作',worker?'worker-'+key:'main-native:'+key);
+   const projected=withInteractionResponses(f.store.db,f.history.list('synthetic-history'),'synthetic-history');
+   const card=projected.find(m=>m.requestId===ref.requestId&&m.role==='user')!;
+   assert.equal(card.interaction?.id,ref.id);assert.equal(card.interaction?.answers[0]?.text,'你已允许本次操作');
+   assert.equal(card.text,'允许本次操作');assert.equal(card.role,'user');
+   assert.ok(card.interaction?.title);assert.ok(!JSON.stringify(card.interaction).includes('diff 不应外露'));
+   assert.ok(!JSON.stringify(card.interaction).includes('不展示原参数'));
+   if(i===0)assert.match(card.interaction!.description!,/\/bin\/echo synthetic/);
+   if(i===2)assert.match(card.interaction!.description!,/读取：\/synthetic/);
+   assert.equal(projected.some(m=>m.id===ref.replyId),worker);
+  }
+ }finally{f.close();}
+});
+test('completed questions pair original questions by ID and keep free user text instead of Worker paraphrase',()=>{
+ const f=historyFixture(0);try{
+  const questions=[{id:'b',question:'第二个问题',options:[{label:'答案 b'}]},{id:'a',question:'第一个问题',isOther:true}];
+  const native=answeredInteraction(f,'multi','question',{method:'item/tool/requestUserInput',params:{questions}},'旧版答案 JSON');
+  const free=answeredInteraction(f,'free','question',{},'用户逐字回答\n<script>原样</script>','worker-free');
+  const messages=withInteractionResponses(f.store.db,f.history.list('synthetic-history'),'synthetic-history');
+  assert.deepEqual(messages.find(m=>m.requestId===native.requestId&&m.role==='user')!.interaction?.answers,[{question:'第二个问题',text:'答案 b'},{question:'第一个问题',text:'答案 a'}]);
+  const card=messages.find(m=>m.requestId===free.requestId&&m.role==='user')!.interaction!;
+  assert.equal(card.title,'当时的问题 free');assert.equal(card.answers[0]?.text,'用户逐字回答\n<script>原样</script>');
+  assert.ok(!JSON.stringify(card).includes('主 AI 转述'));assert.equal(messages.some(m=>m.id===native.replyId),false);
+ }finally{f.close();}
+});
+test('interaction history never infers permission from prose, foreign ownership, ambiguous or unconfirmed records',()=>{
+ const f=historyFixture(0);try{
+  const ref=answeredInteraction(f,'identity');
+  f.history.accept('synthetic-history',{requestId:'ordinary',text:'允许本次操作'});
+  const read=()=>withInteractionResponses(f.store.db,f.history.list('synthetic-history'),'synthetic-history');
+  assert.ok(!read().find(m=>m.requestId==='ordinary'&&m.role==='user')?.interaction);
+  f.store.db.prepare("UPDATE worker_interactions SET responseUserText='不一致' WHERE id=?").run(ref.id);
+  assert.ok(!read().find(m=>m.requestId===ref.requestId&&m.role==='user')?.interaction);
+  f.store.db.prepare("UPDATE worker_interactions SET responseUserText='允许本次操作',details=json_set(details,'$.historyThreadId','foreign') WHERE id=?").run(ref.id);
+  assert.ok(!read().find(m=>m.requestId===ref.requestId&&m.role==='user')?.interaction);
+  f.store.db.prepare("UPDATE worker_interactions SET details=json_set(details,'$.historyThreadId','synthetic-history'),responseUserMessageId=NULL WHERE id=?").run(ref.id);
+  assert.ok(!read().find(m=>m.requestId===ref.requestId&&m.role==='user')?.interaction);
+ }finally{f.close();}
+});
+test('history enrichment hides only exact native host acknowledgments and preserves useful replies',()=>{
+ const f=historyFixture(0);try{
+  const ref=answeredInteraction(f,'ack','question',{},'答复');
+  const read=()=>withInteractionResponses(f.store.db,f.history.list('synthetic-history'),'synthetic-history');
+  assert.ok(!read().some(m=>m.id===ref.replyId));
+  for(const text of ['已批准本次视频生成。取回编号 synthetic','已提交本轮补充。还有业务内容','具体错误说明']){
+   f.store.db.prepare('UPDATE conversation_messages SET text=? WHERE id=?').run(text,ref.replyId);assert.ok(read().some(m=>m.id===ref.replyId));
+  }
+  f.history.record('other-ack','synthetic-history','已提交本轮补充。');assert.ok(read().some(m=>m.id==='other-ack'));
+ }finally{f.close();}
+});
+test('completed cards survive bounded page, around reads and history reader reconstruction without changing stored history',async()=>{
+ const f=historyFixture(0);try{
+  const ref=answeredInteraction(f,'reload','authorization',{approval:{title:'合成操作',scope:'仅一次'}});
+  const raw=JSON.stringify(f.history.list('synthetic-history')),bridge=bridgeFixture(f);
+  const state=await bridge.history!.state(),card=state.messages.find(m=>m.requestId===ref.requestId&&m.role==='user')!;
+  assert.equal(card.interaction?.id,ref.id);
+  const around=await bridge.history!.page({readEpoch:'synthetic-epoch',request:{around:card.id,limit:1}});
+  assert.equal(around.messages.find(m=>m.id===card.id)?.interaction?.id,ref.id);
+  assert.equal((await bridgeFixture(f).history!.state()).messages.find(m=>m.id===card.id)?.interaction?.id,ref.id);
+  assert.equal(JSON.stringify(f.history.list('synthetic-history')),raw);
+ }finally{f.close();}
+});
+
+test('denial and cancel retain the user decision even when no operation is delivered',()=>{
+ const f=historyFixture(0);try{
+  for(const [key,text,expected]of [['deny','拒绝本次操作','你已拒绝本次操作'],['cancel','取消本次请求','你已取消本次请求']]){
+   const ref=answeredInteraction(f,key!,'authorization',{method:'mcpServer/elicitation/request',params:{_meta:{codex_approval_kind:'mcp_tool_call'}},approval:{title:'合成工具请求',scope:'仅本次'}},text!);
+   const card=withInteractionResponses(f.store.db,f.history.list('synthetic-history'),'synthetic-history').find(m=>m.requestId===ref.requestId&&m.role==='user')!.interaction!;
+   assert.equal(card.answers[0]?.text,expected);assert.equal(f.interactions.inspect(ref.id).deliveredAt,null);
+  }
+ }finally{f.close();}
+});
+test('ambiguous response or a foreign original request cannot enrich a same-text message',()=>{
+ const f=historyFixture(0);try{
+  const a=answeredInteraction(f,'ambiguous-a'),b=answeredInteraction(f,'ambiguous-b');
+  f.store.db.prepare('UPDATE worker_interactions SET responseUserMessageId=? WHERE id=?').run(a.requestId,b.id);
+  const read=()=>withInteractionResponses(f.store.db,f.history.list('synthetic-history'),'synthetic-history');
+  assert.ok(!read().find(m=>m.requestId===a.requestId&&m.role==='user')?.interaction);
+  f.store.db.prepare('UPDATE worker_interactions SET responseUserMessageId=? WHERE id=?').run(b.requestId,b.id);
+  f.store.db.prepare("UPDATE conversation_inputs SET threadId='foreign' WHERE requestId='source-ambiguous-a'").run();
+  assert.ok(!read().find(m=>m.requestId===a.requestId&&m.role==='user')?.interaction);
+  assert.ok(read().find(m=>m.requestId===b.requestId&&m.role==='user')?.interaction);
+ }finally{f.close();}
+});
+test('response identity lookup has an index and does not include unrelated interaction bodies',()=>{
+ const f=historyFixture(100);try{
+  answeredInteraction(f,'indexed');new WebHistoryPages(f.history,f.processes,f.inputs);
+  const query=f.store.db.prepare('EXPLAIN QUERY PLAN SELECT id FROM worker_interactions WHERE responseUserMessageId IN (?)').all('answer-indexed');
+  assert.match(JSON.stringify(query),/web_interaction_response/);
+  const read=withInteractionResponses(f.store.db,f.history.byIds('synthetic-history',['user-0']),'synthetic-history');
+  assert.equal(read.length,1);assert.ok(!read[0]!.interaction);
+ }finally{f.close();}
+});
+
+test('legacy authorization without a safe summary never publishes raw diff or tool parameters',()=>{
+ const f=historyFixture(0);try{
+  for(const method of ['item/fileChange/requestApproval','mcpServer/elicitation/request']){
+   const ref=answeredInteraction(f,method.split('/')[1]!,'authorization',{method});
+   f.store.db.prepare('UPDATE worker_interactions SET userQuestion=? WHERE id=?').run('确认本次操作：\n文件：/synthetic/a.ts\n@@ diff @@\n+ RAW_DIFF_MARKER\nRAW_TOOL_PARAMETERS',ref.id);
+   const projected=withInteractionResponses(f.store.db,f.history.list('synthetic-history'),'synthetic-history');
+   const card=projected.find(m=>m.requestId===ref.requestId&&m.role==='user')!.interaction!;
+   assert.ok(card.unavailable);assert.doesNotMatch(JSON.stringify(card),/RAW_DIFF_MARKER|RAW_TOOL_PARAMETERS/);
+   assert.equal(card.answers[0]?.text,'你已允许本次操作');
+  }
+ }finally{f.close();}
+});
+
+test('completed question projection contains every original pair without paging state',()=>{
+ const f=historyFixture(0);try{
+  for(const mixed of [false,true]){
+   const questions=[{id:'b',question:'问题 B',options:[{label:'答案 b'}]},{id:'a',question:'问题 A',options:[{label:'答案 a'}],...(mixed?{isOther:true}:{})}];
+   const ref=answeredInteraction(f,'paging-'+mixed,'question',{method:'item/tool/requestUserInput',params:{questions}},'原始答复');
+   const message=withInteractionResponses(f.store.db,f.history.list('synthetic-history'),'synthetic-history').find(m=>m.requestId===ref.requestId&&m.role==='user')!;
+   assert.equal('paged' in message.interaction!,false);
+   assert.deepEqual(message.interaction?.answers.map(a=>a.question),['问题 B','问题 A']);
+  }
+ }finally{f.close();}
+});

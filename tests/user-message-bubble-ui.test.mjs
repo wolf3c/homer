@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import ts from 'typescript';
 import React from 'react';
+import {buildSync} from 'esbuild';
 import {referencesOf,referenceKey} from '../src/preview-reference.js';
 import {renderToStaticMarkup} from 'react-dom/server';
 
@@ -11,22 +12,27 @@ import {renderToStaticMarkup} from 'react-dom/server';
 // Adjacent date, copy, quote and media components are boundary doubles;
 // the separate queue's lifecycle is covered by message-history-recovery.
 const require=createRequire(import.meta.url);
+const flowModule={exports:{}};
+const flowBuild=buildSync({stdin:{contents:'export {QuestionFlow} from "./question-flow";export {ApprovalCard} from "./approval-card";',resolveDir:new URL('../ui/vendor/assistant-ui/',import.meta.url).pathname,loader:'tsx'},bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',external:['react','react/jsx-runtime'],loader:{'.css':'empty'}});
+Function('require','module','exports',flowBuild.outputFiles[0].text)(require,flowModule,flowModule.exports);
+const {QuestionFlow,ApprovalCard}=flowModule.exports;
 const source=readFileSync(process.env.HOMER_BUBBLE_SOURCE??new URL('../ui/homer-app.tsx',import.meta.url),'utf8');
 const ast=ts.createSourceFile('homer-app.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 const declaration=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='UserMessage');
-const js=ts.transpileModule('export '+declaration.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
+const completed=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='CompletedInteractionCard');
+const js=ts.transpileModule((completed?'export '+completed.getText(ast)+'\n':'')+'export '+declaration.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
 
 function render(metadata){
  const calls={};
  const exports={};
- Function('require','exports','useAuiState','draftQuotes','MessagePrimitive','Markdown','MediaAttachments','MessageDetails','MessageDaySeparator','MessageTimestamp','InactiveInteractionNotes','QuoteSource','referencesOf','referenceKey','ResourceReferenceBlock',js)(
+ Function('require','exports','useAuiState','draftQuotes','MessagePrimitive','Markdown','MediaAttachments','MessageDetails','MessageDaySeparator','MessageTimestamp','InactiveInteractionNotes','QuoteSource','referencesOf','referenceKey','ResourceReferenceBlock','QuestionFlow','ApprovalCard',js)(
   require,exports,selector=>selector({message:{metadata:{custom:metadata},content:[{type:'text',text:metadata.original?.text??''}]}}),value=>value.quotes??(value.quote?[value.quote]:[]),
   {Root:props=>React.createElement('article',props),Parts:()=>React.createElement('p',null,metadata.original?.text)},()=>null,
   props=>{calls.media=props;return props.media.length?React.createElement('figure',null,props.media.map(m=>m.filename).join(', ')):null;},
   props=>{calls.details=props;return props.message.text?React.createElement('button',{'aria-label':'复制'},'复制'):null;},
   props=>{calls.day=props;return null;},props=>{calls.timestamp=props;return null;},
   props=>{calls.inactive=props;return null;},props=>{(calls.quotes??=[]).push(props);return React.createElement('blockquote',null,props.quote.text);},
-  referencesOf,referenceKey,props=>{(calls.references??=[]).push(props.reference);return React.createElement('aside',null,props.reference.source.title);}
+  referencesOf,referenceKey,props=>{(calls.references??=[]).push(props.reference);return React.createElement('aside',null,props.reference.source.title);},QuestionFlow,ApprovalCard
  );
  return{html:renderToStaticMarkup(React.createElement(exports.UserMessage)),calls};
 }
@@ -84,4 +90,59 @@ test('formal message passes original references and inactive notes while uncerta
  const {html,calls}=render({messageId:'synthetic-user',original:{text:'问题'},resourceReferences:[reference],inactiveInteractions:inactive,inputState:'uncertain'});
  assert.equal(calls.references[0],reference);assert.equal(calls.inactive.items,inactive);
  assert.match(html,/接收或结束结果待核实，未自动重跑/);
+});
+
+for(const kind of ['authorization','question'])test('completed '+kind+' uses a single left card, original identity and no replay controls',()=>{
+ const original={id:'synthetic-decision',role:'user',text:kind==='authorization'?'允许本次操作':'答案原文',interaction:{id:'exact',kind,title:'原请求 <script>原样</script>',description:'合成说明',scope:kind==='authorization'?'仅本次':undefined,answers:[{text:kind==='authorization'?'你已允许本次操作':'答案原文'}]}};
+ const {html,calls}=render({messageId:original.id,original,media:[]});
+ assert.match(html,/class="message interaction-message"/);assert.doesNotMatch(html,/user-message-bubble/);
+ assert.match(html,/原请求 &lt;script&gt;原样&lt;\/script&gt;/);assert.match(html,kind==='authorization'?/你已允许本次操作/:/答案原文/);
+ assert.doesNotMatch(html,/你的回答|决定已接收|查看完整|查看原问题|<details|<script>/);
+ assert.equal((html.match(/aria-label="复制"/g)??[]).length,1);assert.equal(calls.details.message,original);assert.equal(calls.day.messageId,original.id);
+});
+test('multiple completed questions retain ordered pairing and plain multiline answers',()=>{
+ const original={id:'multi',role:'user',text:'原始提交',interaction:{id:'exact',kind:'question',title:'',answers:[{question:'问题 B',text:'回答 B\n第二行'},{question:'问题 A',text:'回答 A'}]}};
+ const {html}=render({messageId:original.id,original,media:[]});
+ assert.ok(html.indexOf('问题 B')<html.indexOf('回答 B'));assert.ok(html.indexOf('回答 B')<html.indexOf('问题 A'));assert.match(html,/第二行/);
+});
+
+test('completed consultation retains original channel, quotes, media, references and uncertainty',()=>{
+ const reference={kind:'text',source:{kind:'artifact',id:'result-synthetic',sha256:'a'.repeat(64),title:'合成引用'}};
+ const quote={messageId:'source',text:'QUOTE_SENTINEL',annotation:'原注释'},media=[{assetId:'synthetic-file',revision:1,filename:'附件.txt'}];
+ const original={id:'with-context',role:'user',text:'请结合附件',channelSource:{source:'telegram',entryLabel:'homer_work_bot'},interaction:{id:'exact',kind:'question',title:'请补充信息',answers:[{text:'请结合附件'}]}};
+ const {html,calls}=render({messageId:original.id,original,media,quotes:[quote],resourceReferences:[reference],inputState:'uncertain'});
+ for(const expected of ['Telegram@homer_work_bot','QUOTE_SENTINEL','原注释','附件.txt','合成引用','接收或结束结果待核实'])assert.ok(html.includes(expected),expected);
+ assert.equal(calls.media.media,media);assert.equal(calls.quotes[0].quote,quote);assert.equal(calls.references[0],reference);
+});
+
+test('completed questions use the native read-only receipt, show every pair and have no navigation',()=>{
+ const original={id:'receipt',role:'user',text:'原始答复',interaction:{id:'exact',kind:'question',title:'',answers:[{question:'问题 B',text:'回答 B\n第二行'},{question:'问题 A',text:'回答 A'}]}};
+ const {html,calls}=render({messageId:original.id,original,media:[]});
+ assert.match(html,/data-slot="question-flow"/);assert.match(html,/data-state="receipt"/);
+ for(const text of ['问题 B','回答 B','第二行','问题 A','回答 A'])assert.ok(html.includes(text));
+ assert.doesNotMatch(html,/completed-interaction-navigation|上一题|下一题|查看已回答的问题|\d\/\d/);
+ assert.equal((html.match(/<button/g)??[]).length,1,'only original copy action remains');
+ assert.equal(calls.details.message,original);
+});
+
+for(const text of ['你已允许本次操作','你已拒绝本次操作','你已取消本次请求'])test('approval receipt uses native card for '+text,()=>{
+ const original={id:'approval-receipt',role:'user',text:'原始决定',interaction:{id:'exact',kind:'authorization',title:'具体操作',description:'说明\nnode /synthetic/检查.mjs',scope:'仅本次',answers:[{text}]}};
+ const {html,calls}=render({messageId:original.id,original,media:[]});
+ assert.match(html,/data-slot="approval-card"/);assert.match(html,/role="status"/);
+ for(const value of ['具体操作','说明','node /synthetic/检查.mjs','仅本次',text])assert.ok(html.includes(value));
+ assert.doesNotMatch(html,/Finished|Approved, running|Denied|completed-interaction-card|completed-interaction-answer|<details/);
+ assert.equal((html.match(/<button/g)??[]).length,1,'only original copy action remains');
+ assert.equal(calls.details.message,original);
+});
+test('unavailable approval retains its decision and explicit missing-request notice in native card',()=>{
+ const original={id:'unavailable',role:'user',text:'允许本次操作',interaction:{id:'exact',kind:'authorization',title:'',unavailable:true,answers:[{text:'你已允许本次操作'}]}};
+ const {html}=render({messageId:original.id,original,media:[]});
+ assert.match(html,/data-slot="approval-card"/);assert.match(html,/原请求详情不可用。/);assert.match(html,/你已允许本次操作/);
+});
+
+test('unavailable consultation preserves its original title, answer and missing-request notice',()=>{
+ const original={id:'unavailable-question',role:'user',text:'原始回答',interaction:{id:'exact',kind:'question',title:'原问题',unavailable:true,answers:[{text:'原始回答'}]}};
+ const {html}=render({messageId:original.id,original,media:[]});
+ for(const text of ['原问题','原始回答','原请求详情不可用。'])assert.ok(html.includes(text));
+ assert.doesNotMatch(html,/data-slot="approval-card"|<details/);
 });

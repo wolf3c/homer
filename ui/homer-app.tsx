@@ -146,6 +146,21 @@ function QuoteSource({quote,index,expanded=false}:{quote:MessageQuote;index:numb
   locate(quote);
  }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text className={expanded?'line-clamp-none whitespace-pre-wrap':undefined}>{quote.text}</QuoteBlock.Text></QuoteBlock.Root></a>;
 }
+function CompletedInteractionCard({item}:{item:NonNullable<WebState['messages'][number]['interaction']>}){
+ if(item.kind==='authorization'){
+  const decision=item.answers[0]?.text;
+  return <ApprovalCard state={decision==='你已允许本次操作'?'done':['你已拒绝本次操作','你已取消本次请求'].includes(decision??'')?'denied':'request'}
+   title={item.title||'授权请求'} subtitle={item.scope}
+   description={[item.description,item.unavailable?'原请求详情不可用。':undefined].filter(Boolean).join('\n')}
+   statusLabel={decision}/>;
+ }
+ if(item.unavailable)return <div className="assistant-message-bubble">
+  {item.title&&<p>{item.title}</p>}<p>原请求详情不可用。</p>{item.answers.map((answer,index)=><p key={index}>{answer.text}</p>)}
+ </div>;
+ return <QuestionFlow
+  steps={item.answers.map((answer,index)=>({id:String(index),question:answer.question??item.title,options:[{id:'answer',label:answer.text}]}))}
+  choice={Object.fromEntries(item.answers.map((_,index)=>[String(index),['answer']]))}/>;
+}
 function UserMessage() {
   const metadata = useAuiState(s => s.message.metadata.custom);
   const original=metadata.original as WebState['messages'][number]|undefined;
@@ -153,8 +168,8 @@ function UserMessage() {
   const channelName=channelSource?.source==='wechat'?'微信':channelSource?.source==='telegram'?'Telegram':channelSource?.source==='dingtalk'?'钉钉':channelSource?.source;
   const hasText = useAuiState(s => s.message.content.some(part => part.type === 'text' && part.text.trim().length > 0));
   const quotes = draftQuotes(metadata as { quote?: MessageQuote; quotes?: AnnotatedQuote[] });
-  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className="message user-message" aria-label="你的消息">
-    <div className="user-message-bubble">
+  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className={"message "+(original?.interaction?"interaction-message":"user-message")} aria-label="你的消息">
+    <div className={original?.interaction?undefined:"user-message-bubble"} data-kind={original?.interaction?.kind} role={original?.interaction?"group":undefined} aria-label={original?.interaction?(original.interaction.kind==='authorization'?'授权请求与用户决定':'咨询问题与用户回答'):undefined}>
     {channelSource&&<p className="message-source-label">{channelName+'@'+channelSource.entryLabel}</p>}
     {quotes.length > 0 && <div className="message-quotes">{quotes.map((quote, index) => <div className="message-quote" key={index}>
       <QuoteSource quote={quote} index={index} expanded={quotes.length>1||!!quote.annotation}/>
@@ -162,7 +177,7 @@ function UserMessage() {
     </div>)}</div>}
     {referencesOf(metadata as {resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]}).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)}
     <MediaAttachments media={(metadata.media as MediaView[])??[]} messageId={String(metadata.messageId)}/>
-    {hasText&&<div data-aui-quote-selectable><MessagePrimitive.Parts components={{ Text: Markdown }} /></div>}
+    {original?.interaction?<CompletedInteractionCard item={original.interaction}/>:hasText&&<div data-aui-quote-selectable><MessagePrimitive.Parts components={{ Text: Markdown }} /></div>}
     {metadata.inputState==='uncertain'&&<p className="message-state">接收或结束结果待核实，未自动重跑</p>}
     </div>
     <InactiveInteractionNotes items={metadata.inactiveInteractions as WebState['inactiveInteractions']}/>
