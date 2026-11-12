@@ -102,7 +102,12 @@ export function assertWindowsPayload(bundle){
 export function windowsRelease(native,installer,metadata,releaseTag){
  if(!installer||basename(installer)!==`Homer-win32-x64-${metadata.version}.exe`||native?.version!==metadata.version||!Array.isArray(native.files)||native.files.length!==1||!/^v?[0-9][A-Za-z0-9._-]*$/.test(releaseTag??''))throw Error('desktop_update_artifacts_invalid');
  const bytes=readFileSync(installer),digest=createHash('sha512').update(bytes).digest('base64'),file=native.files[0];
- if(file.sha512!==digest||file.size!==bytes.length||basename(file.url)!==basename(installer)||native.path!==undefined&&basename(native.path)!==basename(installer)||native.sha512!==undefined&&native.sha512!==digest||native.isAdminRightsRequired===true||file.isAdminRightsRequired===true||native.packages)throw Error('desktop_update_artifacts_invalid');
+ if(file.sha512!==digest||native.sha512!==undefined&&native.sha512!==digest)throw Error('desktop_update_artifacts_invalid: sha512');
+ if(file.size!==undefined&&file.size!==bytes.length)throw Error('desktop_update_artifacts_invalid: size');
+ if(basename(file.url)!==basename(installer)||native.path!==undefined&&basename(native.path)!==basename(installer))throw Error('desktop_update_artifacts_invalid: installer_reference');
+ if(native.isAdminRightsRequired===true||file.isAdminRightsRequired===true)throw Error('desktop_update_artifacts_invalid: elevation');
+ if(native.packages)throw Error('desktop_update_artifacts_invalid: packages');
+ file.size=bytes.length;
  const url=`https://github.com/wolf3c/homer/releases/download/${releaseTag}/${basename(installer)}`;
  file.url=url;if(native.path!==undefined)native.path=url;delete native.releaseNotes;delete native.releaseName;
  return native;

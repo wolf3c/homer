@@ -61,3 +61,28 @@ test('packaged UI includes the reviewed annotation runtime and full required not
  const font=join(dir,'font.ttf');writeFileSync(font,Buffer.from([0,1,0,0]));assert.equal(formal.packagerConfig.osxSign.ignore(font),true);
  assert.equal(formal.packagerConfig.osxSign.ignore(process.execPath),false);
  });
+
+test('real electron-builder non-differential YAML is normalized with the installer size',async t=>{
+ const {createUpdateInfoTasks,writeUpdateInfoFiles}=await import('app-builder-lib/out/publish/updateInfoBuilder.js');
+ const {Platform}=await import('app-builder-lib/out/core.js');
+ const {load,dump}=await import('js-yaml');
+ const {createHash}=await import('node:crypto');
+ const {windowsInstallerConfig,windowsRelease}=await import('../packaging/electron/forge.config.mjs');
+ const parent=resolve('.codex/scratch/electron-package-tests');mkdirSync(parent,{recursive:true});
+ const root=mkdtempSync(join(parent,'real-builder-feed-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const installer=join(root,'Homer-win32-x64-0.2.0.exe');writeFileSync(installer,'synthetic-installer-bytes');
+ const config=windowsInstallerConfig({metadata:{arch:'x64',version:'0.2.0',preparation:true}});
+ assert.equal(config.nsis.differentialPackage,false);
+ const packager={appInfo:{version:'0.2.0'},platform:Platform.WINDOWS,platformSpecificBuildOptions:config.win,config,getResource:async()=>null};
+ const tasks=await createUpdateInfoTasks({file:installer,packager,target:{outDir:root},arch:1},[config.publish]);
+ await writeUpdateInfoFiles(tasks,{emitArtifactCreated:async()=>{}});
+ const native=load(readFileSync(join(root,'latest.yml'),'utf8'));
+ assert.equal(native.files[0].size,undefined);
+ assert.equal(native.files[0].sha512,createHash('sha512').update(readFileSync(installer)).digest('base64'));
+ const final=load(dump(windowsRelease(native,installer,{version:'0.2.0'},'v0.2.0')));
+ assert.equal(final.files[0].size,readFileSync(installer).length);
+ assert.equal(final.files[0].url,'https://github.com/wolf3c/homer/releases/download/v0.2.0/Homer-win32-x64-0.2.0.exe');
+ assert.equal(final.path,final.files[0].url);
+ assert.throws(()=>windowsRelease({...final,files:[{...final.files[0],size:0}]},installer,{version:'0.2.0'},'v0.2.0'),/desktop_update_artifacts_invalid: size/);
+ assert.throws(()=>windowsRelease({...final,files:[{...final.files[0],sha512:'wrong'}]},installer,{version:'0.2.0'},'v0.2.0'),/desktop_update_artifacts_invalid: sha512/);
+});

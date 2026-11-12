@@ -145,6 +145,9 @@ jobs:
           xcrun notarytool store-credentials homer-ci --key "$RUNNER_TEMP/homer-notary.p8" --key-id "$APPLE_KEY_ID" --issuer "$APPLE_ISSUER_ID"
           rm -f "$RUNNER_TEMP/homer-notary.p8"
       - run: npm ci --no-audit --no-fund
+      - name: Verify Windows update manifest contract
+        if: inputs.kind == 'desktop' && matrix.platform == 'win32'
+        run: node --test --test-name-pattern='real electron-builder' tests/electron-package.development.test.mjs
       - name: Install Electron runtime
         if: inputs.kind == 'desktop'
         run: node node_modules/electron/install.js

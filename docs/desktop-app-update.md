@@ -45,7 +45,7 @@ Windows ARM64、32 位、Linux 不纳入本次范围。不能以 Apple Silicon �
 - **发行流程：** 冻结候选安装包和清单，先在隔离环境验证已启用平台的真实原生升级、该模式的完整性／签名校验、安全停止及数据保留。上传固定标签附件并完成完整摘要校验后，复用隔离夹具和临时 feed，以最终清单原文及最终固定标签 URL 验证原生更新器解析、拉取和校验；普通 HTTP 下载不能替代。草稿附件需鉴权时只在隔离夹具提供，或获准公开并保持旧 Latest 后验证最终公开地址；未经验证不切换 Latest。候选未变不重复全部业务验收，变化时重验受影响项。
 - **Latest 即更新放量：** 只允许包含全部公开平台安装包、Mac 两架构清单、Windows latest.yml、摘要和发行清单的桌面正式版占用 Latest；移动版和预发布版明确不设为 Latest。目标必须兼容全部已启用来源版本；数据不兼容、系统门槛变化或原生升级缺证据时保持原 Latest，只交付固定标签测试链接。符合条件并获准后才切换，随后核验匿名 Latest 重定向、清单原文与固定标签包的一致性。失败按授权恢复已验收旧 Latest；不覆盖附件或移动标签，回退不撤销已暂存更新，也不承诺自动降级。
 
-Mac 使用 Forge 的 currentRelease／releases／updateTo 原生结构；name 为纯公开版本，updateTo.url 指向同标签、同架构的不可变 ZIP。postMake 只保留本次版本记录、校验架构、改写实际 ZIP 地址并省略 notes。Windows 两种签名模式均使用 electron-builder 原生 latest.yml，files[].url 和兼容 path 指向同一固定标签的 Homer-windows-x64.exe，保留 SHA-512 与长度；草稿上传复用 windowsRelease() 校验生成器的实际安装包，再改写外层固定附件名。三平台完整草稿为 11 个附件，Windows 清单进入原 updateFeeds、SHA256SUMS 和云端完整下载校验；finalize 不解析 YAML 或安装项目依赖。两者都不手写占位数据，不引入自定义 JSON、手机 schema、update.electronjs.org 或二次下载协议。
+Mac 使用 Forge 的 currentRelease／releases／updateTo 原生结构；name 为纯公开版本，updateTo.url 指向同标签、同架构的不可变 ZIP。postMake 只保留本次版本记录、校验架构、改写实际 ZIP 地址并省略 notes。Windows 两种签名模式均使用 electron-builder 原生 latest.yml，files[].url 和兼容 path 指向同一固定标签的 Homer-windows-x64.exe，保留 SHA-512；非差分构建器未提供长度时，从已通过摘要复核的安装器补入实际长度，已提供但不一致则拒绝；草稿上传复用 windowsRelease() 校验生成器的实际安装包，再改写外层固定附件名。三平台完整草稿为 11 个附件，Windows 清单进入原 updateFeeds、SHA256SUMS 和云端完整下载校验；finalize 不解析 YAML 或安装项目依赖。两者都不手写占位数据，不引入自定义 JSON、手机 schema、update.electronjs.org 或二次下载协议。
 
 原生清单提供更新版本和下载位置；不解析 Release 标题或正文。公开版本须与 app.getVersion()、包内版本一致，Mac build 单调增加。GitHub Latest 重定向及缓存由 GitHub 管理，不承诺官网的 no-store 行为；发行核验须检查 HTTPS、实际 JSON 原文、架构、版本和最终固定标签 URL，下载期间 Latest 变化也须纳入原生专项。网络、404 或缓存异常保留失败状态，不回退到官网或其他平台。
 
