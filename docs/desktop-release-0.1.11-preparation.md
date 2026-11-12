@@ -1,6 +1,6 @@
 # Homer 桌面 v0.1.11 发行准备
 
-状态：2026-11-12，本地准备完成，用户已确认执行下述提交、推送、标签、三平台构建、签名公证、草稿直传及 Apple 芯片隔离验收；尚未执行，未获准公开或切换 Latest。
+状态：2026-11-12，提交、推送和标签完成；三平台 attempt 1 均在源码归档阶段失败，无草稿或附件，未进入产品验收。未公开或切换 Latest。
 
 ## 候选与边界
 
@@ -59,3 +59,15 @@ What's new
 已知限制 / Known limitations：仅计划 Apple 芯片隔离验收，Intel / Windows 目标设备、真实账号与付费模型、原生升级及真实睡眠唤醒未验收；不能据此承诺升级数据保留 / Only isolated Apple Silicon acceptance is planned; Intel/Windows devices, real accounts and paid models, native upgrades and real sleep/wake remain unverified. Upgrade data retention has not been established for this release.
 
 技术信息 / Build information：0.1.11 / build 296；最终源码 SHA、run / attempt、三平台附件与 SHA256SUMS 待构建填入。固定旧版 v0.1.10 可手动获取；跨版本资料回退未验证。Latest 保持 v0.1.8，直到另获授权且升级证据齐全。
+
+## 本轮执行及失败证据
+
+- 准备提交 `59291165605d8606f60bad2cb7317e9d67dc14d2`，只包含根版本文件、锁文件及本记录。完整推送 main 后回读，远端 main 与标签 v0.1.11 均指向该完整 SHA；其他任务未提交工作保持原状。
+- [运行 43241848369 / attempt 1](https://github.com/wolf3c/homer/actions/runs/43241848369/attempts/1)，操作者 wolf3c，workflow_dispatch，ref v0.1.11，2026-11-12 22:53:11（Asia/Shanghai）触发。输入为 desktop / desktop-three / build 296 / 草稿直传，运行 headSha 与目标一致。
+- plan 通过；Apple 芯片 job 131264311316、Intel job 131264311196、Windows job 131264310970 全部失败。三者均为 `scripts/desktop-source.mjs:52` 的 `git archive --format=tar` 同步输出超过 `maxBuffer:64*1024*1024`，分别报告 `/usr/bin/git` 或 `git.exe ENOBUFS`。没有进入产品编译、打包或上传。
+- 本机用相同 SHA 归档测得 67,215,360 字节；上限 67,108,864 字节，超出 106,496 字节。使用原上限调用 spawnSync 已复现 ENOBUFS / SIGTERM，不写归档或解压目录。
+- verify-draft skipped；运行最终结论 failure。固定标签 Release 查询为 not found，没有草稿附件；Latest 回读仍为 v0.1.8。两端 Mac 临时签名材料清理步骤均成功。
+- 没有下载或启动候选包，Apple 芯片产品验收、签名公证及三平台产物完整性均未通过；不将依赖准备、签名材料配置或 Windows 生成器契约步骤视为产品验收。
+- 未自动重跑、移动标签或删除旧资源。本轮本机未产生临时归档、测试 profile 或安装包，无新增临时资源需要清理。日常安装与其他任务文件未修改。
+
+建议修复边界：`scripts/desktop-source.mjs` 改为在受控 scratch 临时目录生成归档文件，解包后通过 finally 清理，保留完整 SHA、路径和已提交源码校验；`tests/desktop-source.test.mjs` 增加大于 64 MiB 的归档回归和清理断言。修复需另获本轮扩展授权，再以新版本 v0.1.12 / build 297 创建新标签和新运行，保留 v0.1.11 失败标签，不复用旧 SHA 重跑。

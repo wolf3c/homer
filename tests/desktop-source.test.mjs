@@ -1,6 +1,6 @@
 import {test,after} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,readFileSync,existsSync,copyFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,readdirSync,existsSync,copyFileSync,rmSync} from 'node:fs';
 import {resolve,join,dirname} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -25,6 +25,22 @@ copyFileSync(join(root,'packaging/electron/main.mjs'),join(fixtureRoot,'packagin
 copyFileSync(join(root,cuaWorker),join(fixtureRoot,cuaWorker));
 const fixtureParent=join(fixtureRoot,'.codex/scratch/source-tests');mkdirSync(fixtureParent,{recursive:true});
 after(()=>rmSync(fixtureRoot,{recursive:true,force:true}));
+test('committed archives larger than 64 MiB extract exactly and leave no temporary archive',t=>{
+ const largeRoot=mkdtempSync(join(parent,'large-repo-'));t.after(()=>rmSync(largeRoot,{recursive:true,force:true}));
+ for(const path of DESKTOP_CANDIDATE_PATHS){const target=join(largeRoot,path);mkdirSync(dirname(target),{recursive:true});copyFileSync(join(root,path),target);}
+ const bytes=Buffer.alloc(65*1024*1024,7);writeFileSync(join(largeRoot,'large.bin'),bytes);
+ const run=(...args)=>execFileSync('/usr/bin/git',['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=Homer test','-c','user.email=homer-test@example.invalid',...args],{cwd:largeRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ run('init','-q');run('add','-f','--all');run('commit','-qm','Large synthetic source');
+ const sourceSha=run('rev-parse','HEAD'),out=join(largeRoot,'.codex/scratch/output'),stage=join(out,'stage');
+ const provenance=prepareDesktopSource({root:largeRoot,sourceSha,stage});
+ assert.equal(provenance.publishable,true);assert.equal(provenance.gitSha,sourceSha);
+ assert.deepEqual(readFileSync(join(stage,'large.bin')),bytes);
+ assert.deepEqual(readdirSync(out).sort(),['source-provenance.json','stage']);
+ writeFileSync(join(largeRoot,DESKTOP_CANDIDATE_PATHS[0]),'uncommitted');
+ const rejected=join(largeRoot,'.codex/scratch/rejected');
+ assert.throws(()=>prepareDesktopSource({root:largeRoot,sourceSha,stage:join(rejected,'stage')}),/desktop_build_entry_not_committed/);
+ assert.deepEqual(readdirSync(rejected),['stage']);
+});
 test('source SHA must be complete and extraction cannot overwrite an existing stage',()=>{
  const stage=join(mkdtempSync(join(fixtureParent,'invalid-')),'stage');
  assert.throws(()=>prepareDesktopSource({root:fixtureRoot,sourceSha:'main',stage}),/desktop_full_git_sha_required/);

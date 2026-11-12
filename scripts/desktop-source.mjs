@@ -1,6 +1,6 @@
 // Uncommitted inputs require an explicit mode and are never publishable.
 import {execFileSync} from 'node:child_process';
-import {readFileSync,writeFileSync,mkdirSync,existsSync,cpSync,lstatSync,realpathSync,rmSync,readdirSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,existsSync,cpSync,lstatSync,realpathSync,rmSync,readdirSync} from 'node:fs';
 import {resolve,join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {sourceSnapshot} from './dev-build.mjs';
@@ -49,8 +49,11 @@ export function prepareDesktopSource({root,sourceSha,stage,prepareCandidate=fals
    const provenance={format:1,gitSha:sourceSha,localWorkingTree:true,preparation:true,publishable:false,candidateInputs,removedInputs:[]};
    writeFileSync(join(dirname(stage),'source-provenance.json'),JSON.stringify(provenance,null,2)+'\n');return provenance;
  }
- const archive=execFileSync(process.platform==='win32'?'git.exe':'/usr/bin/git',['archive','--format=tar',sourceSha],{cwd:root,maxBuffer:64*1024*1024});
- mkdirSync(stage);execFileSync(process.platform==='win32'?join(process.env.SystemRoot,'System32/tar.exe'):'/usr/bin/tar',['-xf','-','-C',stage],{input:archive});
+ const temporary=mkdtempSync(join(dirname(stage),'.source-archive-')),archive=join(temporary,'source.tar');
+ try{
+  execFileSync(process.platform==='win32'?'git.exe':'/usr/bin/git',['archive','--format=tar','--output',archive,sourceSha],{cwd:root});
+  mkdirSync(stage);execFileSync(process.platform==='win32'?join(process.env.SystemRoot,'System32/tar.exe'):'/usr/bin/tar',['-xf',archive,'-C',stage]);
+ }finally{rmSync(temporary,{recursive:true,force:true});}
  const candidateInputs=[];
  for(const path of DESKTOP_CANDIDATE_PATHS){
   const source=join(root,path),target=join(stage,path);
