@@ -243,6 +243,27 @@ node scripts/test.mjs --cua-windows
 
 `scripts/test.mjs` 是入口分类的唯一维护清单；默认核心排除所有显式清单文件，本地媒体沿用 `*.local-media.test.ts/mjs` 命名。新增专项文件必须登记，入口回归 `tests/test-suites.test.mjs` 用合成失败案例验证专项不会泄漏到默认运行。
 
+桌面更新签名要求真实命令专项：需要 macOS、项目 Node 22.22.0 和现有项目依赖。明确指定已签名的官方 Homer 应用，运行 `HOMER_TEST_APP=/Applications/Homer.app node scripts/test.mjs --desktop-codesign`。此入口只读取应用签名，不启动应用或访问账号、runtime、CODEX_HOME；本机已安装官方包仅可作为此只读专项的受测对象，不将它用于其他运行时验收。测试从产品 `setupDesktopUpdate` 内唯一的 codesign 调用提取实际参数，执行 `/usr/bin/codesign --verify --strict -R '=anchor apple generic and identifier "app.homer.desktop" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' /Applications/Homer.app`；同时验证去掉 `=` 的旧参数和错误身份要求均被拒绝。缺少应用、非 macOS、执行错误或超时均失败，不静默跳过，不进入默认测试。
+
+Mac 的签名初始化失败会将 `updateState` 置空，导致启动 runtime URL 触发和菜单手动触发均无法执行 `checkForUpdates()`。产品只补 `-R` 要求的 `=` 前缀，保留失败关闭与身份限制。该结论不扩大到 Windows。两条调用路径通过现有 VM 壳入口分别验证，使用合成 stable 清单、runtime URL 和 Electron API 替身，不在默认测试中运行真实 codesign：
+
+```sh
+node --experimental-vm-modules --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test --test-name-pattern='stable Mac |Intel Mac |update remains disabled|test profile never' tests/electron-shell.test.mjs
+node --test --test-name-pattern='default core excludes every audited specialist|explicit desktop-codesign' tests/test-suites.test.mjs
+```
+
+2026-11-12 本地验证：macOS 27.2／arm64、Node 22.22.0，只读受测对象为官方 Homer 0.1.10（build 295）。真实命令专项 1/1、Mac 控制流定向回归 10/10、入口分类定向回归 2/2 通过，均为零跳过。真实命令使用产品参数退出 0、去掉 `=` 退出 1、错误身份退出 3。三个独立的内存源码对照也按预期失败：恢复旧参数使真实专项失败；断开 runtime URL 自动触发使更新器调用数为 0（应为 1）；断开菜单手动触发使调用数停留在 1（应为 2）。对照未修改共享源码或已安装应用，最终检查沿修复后的产品源码执行。
+
+此前高负载试跑出现 codesign 超时，完整入口分类试跑为 11 通过／6 个子进程超时失败，随后两项定向试跑也曾超时；较宽的 Electron 回归另观察到 5 项失败（四项资料迁移锁恢复、一项 preload 方法数量断言），入口测试当时被中断。以上共享工作区试跑均不计为通过，当时未扩展修复这些案例；后续独立提交候选的复核结果如下。
+
+2026-11-12 提交候选复核：在 `a4c6822` 上仅叠加本次 codesign 修复、测试和验证文档，排除并行任务的改动，使用独立源码副本和 Node 22.22.0 运行以下两文件完整离线回归，398/398 通过、零跳过；同一候选中的真实签名专项再次 1/1 通过、零跳过。此结果仅覆盖该提交候选，不代表共享工作区或完整 `npm test` 通过。
+
+```sh
+node --experimental-vm-modules --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test --test-concurrency=1 tests/electron-shell.test.mjs tests/test-suites.test.mjs
+```
+
+VM 验证仅证明产品控制流，真实命令专项仅证明产品签名参数；真实原生更新器、最终 feed/URL 拉取、原生菜单交互、安装重启和数据保留仍需新版构建及原生升级验收。
+
 | 原混合文件 | 默认保留 | 移出的文件 |
 | --- | --- | --- |
 | `dev-upgrade.test.mjs` | 监视排除范围 | `dev-upgrade.development.test.mjs` |

@@ -522,7 +522,7 @@ async function setupDesktopUpdate(manifest,test){
    windowsUpdater.logger=null;
    Object.assign(windowsUpdater,{autoDownload:true,autoInstallOnAppQuit:false,allowPrerelease:false,allowDowngrade:false,disableDifferentialDownload:true,disableWebInstaller:true,verifyUpdateCodeSignature:verifyWindowsUpdate});
   }else{
-  execFileSync('/usr/bin/codesign',['--verify','--strict','-R','anchor apple generic and identifier "app.homer.desktop" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists',bundle],{stdio:'ignore',timeout:30000});
+  execFileSync('/usr/bin/codesign',['--verify','--strict','-R','=anchor apple generic and identifier "app.homer.desktop" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists',bundle],{stdio:'ignore',timeout:30000});
   autoUpdater.setFeedURL({url:`https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-${process.arch}.json`,serverType:'json'});
   }
   updateState={status:'idle',noticeHidden:false};

@@ -9,6 +9,7 @@ const suites={
  browser:["interaction-completion.browser.mjs", "artifact-file-list.browser.mjs", "run-activity-focus.browser.mjs", "run-activity-style.browser.mjs", "web-history-active-pages.browser.mjs", "web-history-artifact-origin.browser.mjs", "web-history-kerning-content.browser.mjs", "web-history-kerning.browser.mjs", "web-history-loading.browser.mjs", "web-history-media-anchor.browser.mjs", "web-history-native-zoom.browser.mjs", "web-working-publication-large.browser.mjs"],
  desktop:['desktop-service-startup.test.mjs','main-tools-resume-compatibility.test.mjs','macos-desktop-runtime.test.mjs','electron-desktop.test.mjs','native-main-tools-resume.test.mjs'],
  'cua-windows':['windows-cua-package.test.mjs'],
+ 'desktop-codesign':['desktop-update-codesign.test.mjs'],
  'prompt-resume':['native-main-tools-resume.test.mjs','native-main-prompt-resume.test.mjs'],
  'local-media':candidates.filter(file=>/\.local-media\.test\.(ts|mjs)$/.test(file)),
  engine:["native-protocol.engine.test.mjs","channel-native.engine.test.ts","deepseek-continuation.test.ts","deepseek-pinned.test.ts","desktop-source-resume.test.mjs","homer-account-native.test.mjs","native-memory-defaults-offline.test.mjs"],
@@ -40,7 +41,7 @@ const files=(suite==='browser'?suites.browser:candidates.filter(file=>suite==='c
 if(!files.length)throw Error('test_suite_empty: '+suite);
 if(suite==='core'){
  console.error('[homer-tests] Local media integration: not run / unverified. Run npm run test:local-media with the documented local tools.');
- console.error('[homer-tests] Other explicit suites not run / unverified: '+Object.keys(suites).filter(name=>name!=='local-media').map(name=>['browser','cua-windows'].includes(name)?'node scripts/test.mjs --'+name:'npm run test:'+(name==='desktop'?'desktop:acceptance':name)).join(', '));
+ console.error('[homer-tests] Other explicit suites not run / unverified: '+Object.keys(suites).filter(name=>name!=='local-media').map(name=>['browser','cua-windows','desktop-codesign'].includes(name)?'node scripts/test.mjs --'+name:'npm run test:'+(name==='desktop'?'desktop:acceptance':name)).join(', '));
 }else console.error('[homer-tests] Explicit '+suite+' suite: skipped or not-run checks remain unverified; exit 0 alone is not acceptance.');
 const preload=suite==='core'?['--import',new URL('../tests/fixtures/core-system-proxy.mjs',import.meta.url).href]:[];
 const env={...process.env};

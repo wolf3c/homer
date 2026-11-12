@@ -314,12 +314,20 @@ for(const changed of ['valid-cache','tampered-cache','withdrawn'])test('Windows 
  if(changed!=='withdrawn')f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();const state=await updateCall(f,'state');assert.equal(state.status,changed==='valid-cache'?'ready':changed==='withdrawn'?'idle':'error');
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
 });
-test('stable Mac starts one native check after ready and deduplicates reconnect and manual checks',async()=>{
- const f=await updateFixture();assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='feed'))),[['feed',{url:'https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-arm64.json',serverType:'json'}]]);
+test('stable Mac automatically calls the native updater when the runtime URL arrives after signature initialization',async()=>{
+ const f=await fixture(['Homer'],undefined,'darwin',{adopted:true,published:true,manifest:stableManifest});
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,0);
+ assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='feed'))),[['feed',{url:'https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-arm64.json',serverType:'json'}]]);
+ f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
  f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});f.app.emit('activate');updateMenu(f).click();await f.tick();
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
- f.updater.emit('update-not-available');updateMenu(f).click();assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,2);
+});
+test('stable Mac manual menu calls the native updater after signature initialization and a completed automatic check',async()=>{
+ const f=await updateFixture();
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
+ f.updater.emit('update-not-available');assert.equal(updateMenu(f).enabled,true);
+ updateMenu(f).click();assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,2);
 });
 test('Intel Mac reads only its own feed',async()=>{
  const f=await updateFixture({arch:'x64'});assert.equal(f.nativeCalls.find(c=>c[0]==='feed')[1].url,'https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-x64.json');

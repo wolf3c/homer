@@ -20,7 +20,7 @@ function fixture(t){
  put('audio.local-media.test.ts',"import {test} from 'node:test';const value:number=1;test('local audio acceptance',()=>{if(value!==1)throw Error('fixture');});");
  // A desktop fixture must never be reached through either source suite.
  put('electron-desktop.test.mjs',"throw Error('desktop_test_must_require_explicit_artifacts');");
- const run=(...args)=>spawnSync(process.execPath,['scripts/test.mjs',...args,'--test-reporter=tap'],{cwd:root,encoding:'utf8',timeout:20000,env:{PATH:process.env.PATH,HOME:join(root,'home'),TMPDIR:join(root,'tmp'),CODEX_HOME:join(root,'codex'),HOMER_TEST_CODEX:'/synthetic/codex',HOMER_TEST_CODEX_BIN:'/synthetic/codex',HOMER_OFFLINE_CODEX_BIN:'/synthetic/codex',HOMER_TEST_CONNECTION:'/synthetic/connection.json',HOMER_TEST_SYNTHETIC_LOGIN:'/synthetic/login.json',...(process.env.NODE_OPTIONS?{NODE_OPTIONS:process.env.NODE_OPTIONS}:{})}});
+ const run=(...args)=>spawnSync(process.execPath,['scripts/test.mjs',...args,'--test-reporter=tap'],{cwd:root,encoding:'utf8',timeout:20000,env:{PATH:process.env.PATH,HOME:join(root,'home'),TMPDIR:join(root,'tmp'),CODEX_HOME:join(root,'codex'),HOMER_TEST_APP:'/synthetic/Homer.app',HOMER_TEST_CODEX:'/synthetic/codex',HOMER_TEST_CODEX_BIN:'/synthetic/codex',HOMER_OFFLINE_CODEX_BIN:'/synthetic/codex',HOMER_TEST_CONNECTION:'/synthetic/connection.json',HOMER_TEST_SYNTHETIC_LOGIN:'/synthetic/login.json',...(process.env.NODE_OPTIONS?{NODE_OPTIONS:process.env.NODE_OPTIONS}:{})}});
  return {root,put,run};
 }
 
@@ -51,6 +51,7 @@ test('empty optional suite fails explicitly and desktop acceptance still require
 
 // Audited ownership: optional environment settings must never activate these through npm test.
 const explicitSuites={
+ "desktop-codesign": ["desktop-update-codesign.test.mjs"],
  "engine": [
   "channel-native.engine.test.ts",
   "deepseek-continuation.test.ts",
@@ -104,7 +105,7 @@ test('default core excludes every audited specialist even when connection enviro
  for(const name of Object.values(explicitSuites).flat())f.put(name,"throw Error('specialist_must_be_explicit');");
  const result=f.run();assert.equal(result.status,0,result.stdout+result.stderr);
  assert.match(result.stdout,/core contract/);assert.doesNotMatch(result.stdout,/specialist_must_be_explicit|SKIP/);
- for(const suite of Object.keys(explicitSuites))assert.ok(result.stderr.includes('test:'+suite));
+ for(const suite of Object.keys(explicitSuites))assert.ok(result.stderr.includes('node scripts/test.mjs --'+suite)||result.stderr.includes('test:'+suite));
 });
 
 for(const [suite,names] of Object.entries(explicitSuites))test('explicit '+suite+' selects only its audited files and forwards Node options',t=>{
