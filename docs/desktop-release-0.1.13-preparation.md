@@ -1,6 +1,6 @@
 # Homer 桌面 v0.1.13 发行记录
 
-状态：2026-11-13，三平台正式构建、草稿直传和云端完整下载校验通过，Apple 芯片隔离验收完成。草稿尚未公开，Latest 保持 v0.1.8；公开发布另行授权。
+状态：2026-11-13，v0.1.13 / build 298 已按用户确认公开，固定标签分发验收通过；Latest 保持 v0.1.8。三平台构建、云端完整校验及 Apple 芯片隔离验收通过；完整原生升级仍未验收。
 
 ## 本轮范围
 
@@ -60,7 +60,7 @@ plan、三平台 build、verify-draft 五个 job 全部 success，attempt 为 1�
 
 验收入口基于本次提交的 tests/electron-desktop.test.mjs 前四项场景，在 scratch 副本预置首启导览已读标记、适配 SILK fixture 路径，并追加实际电源设置、profile 保存及保护释放场景；未修改 App 或原签名 ZIP。测试仅使用独立合成 profile，不调用要求回环账号服务的 daily 场景。没有替换日常安装、调用真实账号或付费模型、注册唤醒事件或改变系统权限。
 
-## 草稿正文与下一授权边界
+## 草稿验收完成时的授权边界
 
 草稿中英文用户更新说明已按本次实际验收完善并逐字回读一致；包含定时消息、电源设置、Mac 更新检查、系统要求、安装方式、签名和未覆盖项。完整用户日志以该 Release 正文为唯一维护处，本记录不再复制草案。
 
@@ -71,3 +71,36 @@ plan、三平台 build、verify-draft 五个 job 全部 success，attempt 为 1�
 ## 本轮资源清理
 
 已按 work-cleanup 核对无本轮 App / profile 进程，删除本轮 ZIP、解压 App 和五个合成 profile，精确目录占用合计约 1.33 GiB；未以此声称等量 APFS 可用空间回收。核对后磁盘可用空间约 32 GiB。本轮 scratch 仅余约 624 KiB，包含三张审核截图、临时验收入口、脱敏 TAP、三份回执、小清单及草稿基线，供待公开审核和分发核验；同一草稿公开并验收后可清理。产品源码与本记录提供重建和追溯依据。日常安装、旧失败标签／草稿及其他任务未提交工作保留。
+
+## 公开及发布后核验（2026-11-13）
+
+用户确认公开，并询问为何不切 Latest。已说明本机五项隔离验收通过，但未执行旧客户端从最终 URL 下载、原生安装、安全重启及原资料保留的完整升级；不将该问句视为切 Latest 授权。本轮按确认公开同一草稿，保留 v0.1.8 为 Latest。
+
+公开命令为 `gh release edit v0.1.13 --repo wolf3c/homer --verify-tag --draft=false --prerelease=false --latest=false`。没有重传附件、移动标签或部署官网。
+
+[固定版本页面](https://github.com/wolf3c/homer/releases/tag/v0.1.13)，Release ID `443142581`，公开时间 `2026-11-12T16:05:58Z`，draft=false、prerelease=false。
+
+- 公开前重新核对标签来源、同一草稿正文和全部 11 个附件身份；匿名记录原 Latest 的 Release ID、标签及全附件元数据。
+- 公开后匿名 API 核对本版的 Release ID、状态、正文和 11 个附件名称／ID／大小／SHA-256 均与发布前基线相同，复用本轮 verify-draft 的完整下载证据。
+- 八个小附件全部匿名完整下载，大小和 SHA-256 与基线一致，包括 SHA256SUMS、合并与平台清单及三份原生更新清单。
+- 三平台固定标签安装包各匿名 GET 起始 1024 字节，均为 206、Content-Range 总大小与基线一致、实际样本长 1024、文件名正确。
+- Latest 的 Release ID／标签及全部附件元数据保持原基线；三平台 Latest 安装包各匿名 GET 1024 字节均通过，并核对中途重定向经过 v0.1.8 的同名固定标签 URL。未保存临时存储 URL 或鉴权值。
+
+原 Latest：v0.1.8 / Release ID 441835374。发布前后匿名元数据逐项一致，基线如下；本次 v0.1.13 附件基线见上方完整构建表。
+
+| 原 Latest 附件 | ID | 字节数 | SHA-256 |
+| --- | ---: | ---: | --- |
+| `Homer-mac-arm64.zip` | 735881549 | 409621096 | `abf8c12ca7974757b0b3685f0528e04d4145e73a581445a7234f75946c424a7e` |
+| `Homer-mac-x64.zip` | 735904620 | 377626200 | `890e828cd1f5c60f1fb206ab65faa440b92c05206d79a079a7cc632ff56da1fe` |
+| `Homer-windows-x64.exe` | 735924149 | 291000164 | `5097361db77c7a74a0ad5eba235fa0e662b36e8dbbc3b7c5bbff4bf3394bed50` |
+| `release-manifest-macos-arm64.json` | 735882178 | 973 | `fa9bac27aaaaf82982fd3cca47afa52f31578b52bbb31dde5968f074a1a6f52a` |
+| `release-manifest-macos-x64.json` | 735905148 | 959 | `b35bc7b8f62efa414e8e19b4378a3cdb6ac3290c0e50efdae996aa2b55d5c0db` |
+| `release-manifest-windows-x64.json` | 735924724 | 704 | `154def9baf83c7fec01a97f2691fe227fb43f64b2f4d0b6126f6b21a5676cdc4` |
+| `release-manifest.json` | 735927557 | 2354 | `bf82f3b239ce445b5518d67fa364e12cb751360df97907287a24b31b0ff05d0b` |
+| `RELEASES-darwin-arm64.json` | 735882135 | 314 | `d224ef1ff036a68dec46a823b78b379e572b25254f4d43b6a55e835bd186dd9e` |
+| `RELEASES-darwin-x64.json` | 735905105 | 312 | `5f1c8d0d17d4efb1ef1f4ade7537b763670703bf3046c4b976da52e11dc7dde7` |
+| `SHA256SUMS` | 735927511 | 442 | `676be0481126779794e8815853f5d702ae7c8ffcc3fa97bb4f57208be81d8159` |
+
+本版请使用固定标签链接。官网及 README 的 Latest 入口继续提供 v0.1.8；本次固定标签已公开且验收通过，不将其称为已放量的自动更新。后续切换 Latest 仍需各启用平台的来源兼容与完整原生升级证据及相应授权。
+
+公开分发核验完成后，本轮 scratch 的保留条件已解除；回执、TAP、截图、下载清单、草稿与公开核验快照和临时脚本均可按任务收尾回收。永久来源、附件摘要及验收结论保留在本记录、Git 历史、固定 Release 和 Actions 中；不保留原始敏感日志。
