@@ -118,7 +118,7 @@ if(windows){
  // Carry runtime dependencies into the generated shell before ASAR sealing.
  const shellInputs=join(scratch,'shell-dependencies');mkdirSync(shellInputs);writeFileSync(join(shellInputs,'package.json'),readFileSync(join(shell,'package.json')));cpSync(join(stage,'package-lock.json'),join(shellInputs,'package-lock.json'));symlinkSync(modules,join(shellInputs,'node_modules'),windows?'junction':'dir');
  for(const pkg of dependencyIdentity(shellInputs).packages){const rel=relative(modules,pkg.path);notices.push({name:pkg.name,version:pkg.version,license:JSON.parse(readFileSync(join(pkg.path,'package.json'))).license,contentsHash:pkg.filesHash,path:'app.asar/node_modules/'+rel});cpSync(pkg.path,join(shell,'node_modules',rel),{recursive:true,dereference:false,filter:path=>path===pkg.path||!relative(pkg.path,path).split(/[\\/]/).includes('node_modules')});}
- if(distribution&&!unsignedWindows)writeFileSync(join(payload,'app-update.yml'),JSON.stringify({provider:'generic',url:'https://super-tree.com/homer/updates/stable/win32-x64/',channel:'latest',publisherName:[distribution.publisher]})+'\n');
+ if(distribution&&!unsignedWindows)writeFileSync(join(payload,'app-update.yml'),JSON.stringify({provider:'generic',url:'https://github.com/wolf3c/homer/releases/latest/download/',channel:'latest',publisherName:[distribution.publisher]})+'\n');
 }
 writeFileSync(join(payload,'licenses/Homer-runtime-notices.json'),JSON.stringify({dependencies:notices,official:dependencies.components},null,2)+'\n');
 let result;

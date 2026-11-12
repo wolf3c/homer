@@ -45,15 +45,15 @@ Homer is an open-source AI work assistant. Talk to Homer and assign tasks whenev
 
 ### Download Homer
 
-Desktop release v0.1.8 (build 293) is available. Choose the installer for your computer:
+Download the latest stable desktop release for your computer:
 
-- [macOS · Apple silicon](https://github.com/wolf3c/homer/releases/download/v0.1.8/Homer-mac-arm64.zip), requiring macOS 27 or later.
-- [macOS · Intel](https://github.com/wolf3c/homer/releases/download/v0.1.8/Homer-mac-x64.zip), requiring macOS 14 or later.
-- [Windows · x64](https://github.com/wolf3c/homer/releases/download/v0.1.8/Homer-windows-x64.exe), requiring Windows 11.
+- [macOS · Apple silicon](https://github.com/wolf3c/homer/releases/latest/download/Homer-mac-arm64.zip), requiring macOS 27 or later.
+- [macOS · Intel](https://github.com/wolf3c/homer/releases/latest/download/Homer-mac-x64.zip), requiring macOS 14 or later.
+- [Windows · x64](https://github.com/wolf3c/homer/releases/latest/download/Homer-windows-x64.exe), requiring Windows 11.
 
 The Mac packages are signed and notarized. Unzip the download and move Homer to Applications. The Windows installer is unsigned and requires manual installation, with automatic updates disabled. A Linux desktop installer is not yet available.
 
-Installation and runtime validation on Intel Macs and Windows x64 remains pending. See the [v0.1.8 Release](https://github.com/wolf3c/homer/releases/tag/v0.1.8) for release notes and checksums.
+Installation and runtime validation on Intel Macs and Windows x64 remains pending. See the [latest release](https://github.com/wolf3c/homer/releases/latest) for its version, build, release notes and checksums.
 
 ### Get started
 

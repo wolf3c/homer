@@ -1,12 +1,12 @@
 # 桌面 App 自动更新实施方案
 
-整理日期：2026-11-04（Asia/Shanghai）。状态：Mac 与 Windows 的源码接点已完成；Windows 已接入 electron-updater＋NSIS 及最小相关离线验证。三目标真实原生升级、签名与最终 URL 验收均未验证。本轮仅源码、依赖锁、合成验证和文档，不构建、安装、提交或发布。
+更新日期：2026-11-12（Asia/Shanghai）。Mac 更新清单和官网下载入口的源码已改为 GitHub Latest；签名校验、身份校验及安全重启不变。Windows 继续仅手动下载、禁用自动更新，既有签名 NSIS 接点保留但不启用。本轮只改源码、定向测试、文档与 Skill，不提交、构建、发布或部署；新的下载链路尚未进入安装包或生产官网，真实原生升级仍待验收。
 
 > 第 8、9 节区分源码与离线检查、原生验收及发行。源码通过不代表正式包可用；构建、安装和公开发行继续分别等待授权。
 
 **目标：** 后台检查、下载并准备正式安装包，准备好后在操作栏下方显示“新版本 {version} 已准备好　重启并更新　×”。
 
-**架构：** Yezi2 托管固定路径的更新库原生清单；Homer 主进程持有唯一状态、安全停止及重启入口。Mac 继续使用 Electron 内置 autoUpdater＋Forge ZIP；Windows 使用 electron-updater 的 NsisUpdater，Forge 准备包目录，electron-builder 仅以 --prepackaged 生成 NSIS 安装器与清单。包存放 GitHub 固定标签附件；不新增更新服务器、数据库、下载器或通用更新管理器。
+**架构：** GitHub Latest 直接提供原生更新清单和手动下载入口；Homer 主进程持有唯一状态、安全停止及重启入口。Mac 继续使用 Electron 内置 autoUpdater＋Forge ZIP，清单内的 ZIP 使用不可变固定标签地址。Windows 当前只分发手动下载的未签名 NSIS 安装包；保留的签名更新接点使用 electron-updater，不因改地址而启用。不新增更新服务器、数据库、GitHub API 查询、下载器或通用更新管理器。
 
 **依赖基础：** Electron 45.0.0、Forge 8.0.1 保持。已精确锁定 electron-updater 6.8.11、electron-builder 26.18.0、js-yaml 4.1.1 和 Sharp 0.35.5 及传递依赖；根工程均为构建依赖，生成的 Windows 壳声明 updater／YAML 运行依赖，Windows Homer payload 声明 Sharp 运行依赖，Mac 运行依赖保持原集合；不采用 alpha 或自动升级。库的默认验签不能作为完整保证，须按第 7 节严格调用 Windows 验签。Mac 不引入 Windows 更新器；不再加入 maker-squirrel、electron-squirrel-startup 或 MSIX maker。
 
@@ -18,9 +18,9 @@
 | --- | --- | --- |
 | Apple Silicon Mac，darwin-arm64 | Squirrel.Mac，静态 JSON | 签名并公证的完整 .app ZIP |
 | Intel Mac，darwin-x64 | 同上，独立架构清单 | 对应 x64 .app ZIP |
-| Windows，win32-x64（Intel／AMD 64 位） | electron-updater／NSIS | 首装与更新均使用同一完整签名安装器 .exe；清单 latest.yml |
+| Windows，win32-x64（Intel／AMD 64 位） | 当前禁用自动更新，仅手动下载 | 未签名 NSIS .exe，不提供 latest.yml；签名更新能力另行验收和启用 |
 
-Windows ARM64、32 位、Linux 不纳入本次三目标验收。三目标均须完成，不能以 Apple Silicon 成功代替其余平台；平台不可用时只影响自己的清单，不误发其他架构的包。
+Windows ARM64、32 位、Linux 不纳入本次范围。不能以 Apple Silicon 成功代替其他平台验收；Latest 是整份 Release 的选择，不按平台回退，切换时必须包含全部已公开平台的固定名安装包及已启用平台的更新清单。下文 Windows 签名更新的协议与验收要求只约束保留的接点，不表示当前发行已启用。
 
 不增加更新内容入口、摘要、弹窗、Markdown 渲染或相关状态；原生附带的说明直接忽略。手机合同、手机关闭记录及下载入口不变。
 
@@ -30,26 +30,28 @@ Windows ARM64、32 位、Linux 不纳入本次三目标验收。三目标均须�
 
 ## 2. 接口归属与对齐
 
-公开接口、清单格式及官网发布／缓存规则唯一维护在 Yezi2 的 [桌面发行数据合同](../../yezi2/docs/homer/desktop-release-data-contract.md)。本文维护 Homer 实施接点与验收，不复制完整字段表或示例 JSON。跨仓链接按 Homer 与 Yezi2 同级检出解析。
+本文维护客户端更新接点、原生清单和安全验收；GitHub 发行与下载地址规则见 [Releases 分发流程](../.codex/skills/homer-github-build/references/releases.md)。Yezi2 的 [桌面发行数据合同](../../yezi2/docs/homer/desktop-release-data-contract.md) 维护官网入口和旧官网 feed 的边界。跨仓链接按 Homer 与 Yezi2 同级检出解析。
 
-Mac 合同保持；Yezi2 已将 Windows 合同改为 latest.yml，Homer 已逐项核对并回传一致性确认，结果见第 9 节。以下固定路径是已接入客户端的约定，不表示官网已经部署：
+当前源码约定如下；地址变化本身不证明安装包或生产官网已经采用：
 
-| 平台 | 官网静态清单 | 主进程更新器配置 |
+| 平台 | GitHub 来源 | 主进程更新器配置 |
 | --- | --- | --- |
-| darwin-arm64 | https://super-tree.com/homer/updates/stable/darwin-arm64/RELEASES.json | url 为完整 JSON 地址，serverType: 'json' |
-| darwin-x64 | https://super-tree.com/homer/updates/stable/darwin-x64/RELEASES.json | 同上 |
-| win32-x64 | https://super-tree.com/homer/updates/stable/win32-x64/latest.yml | NsisUpdater：provider 为 generic，url 为该目录，channel 为 latest |
+| darwin-arm64 | https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-arm64.json | url 为完整 JSON 地址，serverType: 'json' |
+| darwin-x64 | https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-x64.json | 同上，按 process.arch 选择 |
+| win32-x64 | 手动下载 Homer-windows-x64.exe | 当前无 app-update.yml、不初始化更新器；保留的签名配置使用 generic 目录 https://github.com/wolf3c/homer/releases/latest/download/，channel 为 latest |
 
-- **Yezi2：** 托管原始静态清单、核对 HTTP 和缓存行为；官网人工下载入口引用同一已验收发行。只维护自己的公开合同。
-- **Homer：** 三平台真实包、版本／身份／签名、生成清单、包地址校验、主进程检查、安全重启和客户端验收。
-- **发行流程：** 冻结同一次候选产物及其原生清单，先在隔离环境完成真实签名升级和数据保留验收；获准后上传不可变固定标签安装包，核对匿名下载、摘要和清单匹配。上传后、公开切换前，复用同一隔离夹具及临时 feed，以待发布的最终清单原文和已上传的最终固定标签 URL，由三目标各自实际版本的原生更新器完成解析、拉取和校验，尤其验证 Windows latest.yml 中最终安装器 .exe 的绝对 URL；普通 HTTP 下载和摘要核对不能替代此项。候选包及清单未变时不重复全部业务验收，变化时重做受影响验收。上述检查通过且获准公开更新后，才切换对应 stable 清单；切换后只做线上响应和缓存复核，不把真实升级验收留给正式用户。失败保留或恢复上一份已验收清单；撤回不能撤销已暂存更新。现阶段不执行这些操作。
-- 不使用 update.electronjs.org、GitHub Latest 解析或第二份自定义 desktop-releases.json；不把手机 schema 交给桌面更新器。
+- **Homer：** 负责安装包、版本／身份／签名、生成清单、固定标签地址校验、GitHub Latest 选择、主进程检查、安全重启和客户端验收。
+- **Yezi2：** 三平台手动下载直接链接同一桌面 Latest；以“查看最新版本”链接展示发行详情，不再维护版本/build 副本，不查询 Release API。链接接入上线后，常规版本更新无需再修改、交接或部署官网。
+- **发行流程：** 冻结候选安装包和清单，先在隔离环境验证已启用平台的真实签名升级、安全停止及数据保留。上传固定标签附件并完成完整摘要校验后，复用隔离夹具和临时 feed，以最终清单原文及最终固定标签 URL 验证原生更新器解析、拉取和校验；普通 HTTP 下载不能替代。草稿附件需鉴权时只在隔离夹具提供，或获准公开并保持旧 Latest 后验证最终公开地址；未经验证不切换 Latest。候选未变不重复全部业务验收，变化时重验受影响项。
+- **Latest 即更新放量：** 只允许包含全部公开平台安装包、Mac 两架构清单、摘要和发行清单的桌面正式版占用 Latest；移动版和预发布版明确不设为 Latest。目标必须兼容全部已启用来源版本；数据不兼容、系统门槛变化或原生升级缺证据时保持原 Latest，只交付固定标签测试链接。符合条件并获准后才切换，随后核验匿名 Latest 重定向、清单原文与固定标签包的一致性。失败按授权恢复已验收旧 Latest；不覆盖附件或移动标签，回退不撤销已暂存更新，也不承诺自动降级。
 
-Mac 使用 Forge 的 currentRelease／releases／updateTo 原生结构；name 固定为纯公开版本供提示显示，生成时将目标 ZIP 的 url 指向已验收 GitHub 固定标签。Windows 使用 electron-builder 生成的原生 latest.yml，完整字段只在 Yezi2 合同维护；Homer 的产物处理将 files[].url 及存在的兼容 path 指向同一固定标签安装器，保留其 SHA-512 与长度并核对一致性，不手写占位清单。业务渠道仍只有 stable；latest 是库的清单文件名，不是 GitHub Latest。不继续提供旧 RELEASES／.nupkg 接口，不增加双格式兼容。MVP 禁用差分和 web installer，无需官网托管 blockmap 或额外包体。该处理只操作发布产物，不重复实现版本协议、下载或解包。Mac 源码的 postMake 仅保留 Forge 生成的本次版本记录，校验其版本和架构、将 name 改为纯版本、指向 --release-tag 下实际 ZIP 附件并删除 notes；不读取或修改官网 stable 清单。
+Mac 使用 Forge 的 currentRelease／releases／updateTo 原生结构；name 为纯公开版本，updateTo.url 指向同标签、同架构的不可变 ZIP。postMake 只保留本次版本记录、校验架构、改写实际 ZIP 地址并省略 notes。保留的 Windows 签名更新路径使用 electron-builder 原生 latest.yml，files[].url 和兼容 path 指向同一固定标签安装器，保留 SHA-512 与长度；当前未签名发行不生成或上传该清单。两者都不手写占位数据，不引入自定义 JSON、手机 schema、update.electronjs.org 或二次下载协议。
 
-原生清单是版本和下载位置的同一来源；GitHub Release 标题不再承担客户端版本接口。两平台公开版本与 app.getVersion()、包内版本一致，Mac 原生 build 单调增加；正式版本不得以覆盖旧附件的方式修订。
+原生清单提供更新版本和下载位置；不解析 Release 标题或正文。公开版本须与 app.getVersion()、包内版本一致，Mac build 单调增加。GitHub Latest 重定向及缓存由 GitHub 管理，不承诺官网的 no-store 行为；发行核验须检查 HTTPS、实际 JSON 原文、架构、版本和最终固定标签 URL，下载期间 Latest 变化也须纳入原生专项。网络、404 或缓存异常保留失败状态，不回退到官网或其他平台。
 
-清单匿名 HTTPS，缺失／撤回必须返回真实 404，不能返回 SPA HTML、登录页或手机占位 JSON。清单禁缓存目标、响应类型、CDN 清理和撤回顺序以 Yezi2 合同为准。Yezi2 已核对：现有普通静态文件 maxAge 为 0，但不是 no-store；缺失路径会回退应用 HTML，Windows latest.yml 的 application/yaml 尚未验证。后续先评估现有配置，必要时仅在该更新前缀修正静态 HTTP 边界；本轮不改服务端代码。native 请求不能靠浏览器 cache 选项或 Expo fetch 请求头实现全平台禁缓存。撤回阻止后续发现，不承诺撤销已暂存包。
+### 旧客户端过渡
+
+已发行的 v0.1.8 及此前客户端仍内置官网 feed 地址，源码修改不会让它们自动转向 GitHub。用户可手动安装采用新地址的版本；若需要旧客户端无感过渡，须另获授权后一次性更新旧官网 feed，并单独部署、验收。现有 Yezi2 handler 与旧清单本轮保留且不改；第 9 节早期官网合同与验收记录仅描述当时状态，不再要求每版更新官网清单。
 
 ## 3. 当前基础、必改文件与平台缺口
 
@@ -242,13 +244,15 @@ before-quit-for-update／before-quit 不能承接全部异步安全准备；显�
 - [ ] 在隔离验收夹具中使用临时 feed，三目标各验证冻结的“正式签名旧基线→正式签名新目标”：Mac json 与 Windows 原生格式、版本/build、签名或篡改拒绝、截断、空间不足、只读安装位置、断网／恢复、清单在下载间切换。复用现有夹具，不新增公共渠道或常驻服务；普通 QA／测试 profile 仍禁用正式检查，不能为验收改写公开 stable 清单。
 - [ ] 覆盖 Windows 按用户 NSIS 首装／升级／卸载、最终 payload 与封存清单一致且无提权 helper、无 UAC、库缓存、签名拒绝、主窗口关闭、失败后取消／退出及手动重开再试的进程次序；Mac 两架构原生 helper、公证和安装位置；两平台普通退出及显式重启。原生重开测试不得延续上次停止证明，也不以模拟安装错误代替外部安装器失败证据。
 - [ ] 验证原账号、thread、历史、已保存草稿、未知请求和渠道单 owner；包替换／启动／会话恢复失败均按第 7 节记录恢复边界，不能以版本号改变代替。
-- [ ] Yezi2 托管边界在公开清单切换前完成隔离验收，覆盖 HTTPS、Content-Type、404、无 HTML、无持久缓存及撤回传播；固定标签包上传后核对下载地址、摘要和清单一致性，再按第 2 节复用原隔离夹具，完成最终清单及 URL 的三目标原生解析、拉取和校验。全部前置验收通过且另行获准后才切换 stable 清单，随后复核线上响应与 CDN；失败按合同保留／恢复旧清单或撤回，并记录已暂存更新无法撤销的边界。全程保留实际版本、目标平台、时间、退出码和证据，通过验收不自动发布。
+- [ ] 按第 2 节验证 GitHub 固定标签及 Latest 的 HTTPS 重定向、原生清单、架构和摘要，并完成已启用平台最终 URL 的原生解析、拉取和校验。全部前置验收通过且获准后才切换 Latest，随后复核公开响应；失败按授权保留／恢复旧 Latest，记录已暂存更新无法撤销的边界。旧官网 feed 过渡仅在另获授权时单独验收。全程保留平台、版本、时间、退出码和证据，验收通过不自动发布。
 
 ### 审查重点
 
 五类最容易遗漏的输入已分别归入任务断言：错误架构／错误身份及验证环境失效（A.W、7）、缓存命中或安装前绕过验签（A.W、D）、HTML／缓存旧清单和清单切换（A、D）、busy／未知 owner 被误当停止成功（B）、有新业务事实后盲目回退或草稿丢失（C、D）。不新增付费模型或无关全量检查。
 
 ## 9. 对齐及验证记录
+
+2026-11-12 GitHub Latest 源码切换：main 的 Mac 两架构 feed、保留的 Windows generic 配置及打包输入已对齐 GitHub Latest。原身份、验签、安全停止、重启确认和未签名 Windows 禁用条件未改。相关 shell、package、草稿分发三文件离线回归通过；官网下载改用三平台 Latest 直链及发行详情入口，本地设备识别和隔离浏览器回归通过。准确命令见 [测试说明](testing.md)。未提交、构建、安装、公开切换或部署，既有安装包和旧官网 feed 保持原状；真实 GitHub 原生升级未验收。以下记录为历史证据。
 
 2026-11-04 提交前复核：基于当前 main 的干净候选，仅纳入本任务的 Windows 实现、停止证明及恢复修复。十文件定向回归 455/455、浏览器权限边界 2/2、正式签名配置静态断言 1/1 通过，均无跳过；后端／UI noEmit 和差异检查通过。数量不包含共享工作区其他任务的未提交用例；下列历史记录保留其原验证范围。未新增轮询、重试调度或持久状态；Mac、关闭规则与 Yezi2 合同不变。未构建、安装或发布，真实原生功能和性能均未验证；既有共享脏树 schema 指纹失败仍保留原证据边界，不更改兼容门槛。
 

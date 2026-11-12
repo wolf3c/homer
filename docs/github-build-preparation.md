@@ -4,7 +4,9 @@
 
 本轮桌面 `v0.1.8` / build `293` 已完成三平台构建、云端完整校验及正式公开分发核验，Latest 已从 v0.1.7 切到本版；Apple 芯片 Mac 的签名与隔离合成验收通过，Intel / Windows 未实机验收。源码、运行、包摘要、官网交接状态及完整验收边界见 [v0.1.8 发行记录](desktop-release-0.1.8-preparation.md)。官网部署尚未执行。以下 v0.1.2 段落及后续历史准备记录不构成本轮授权。
 
-历史 v0.1.2（build 287）的准备与后续失败记录见 [0.1.2 构建准备](desktop-release-0.1.2-preparation.md)，不作为当前发行状态或执行条件。现行默认入口、阶段确认及新版本 Yezi2 聊天交接规则统一见 [homer-github-build](../.codex/skills/homer-github-build/SKILL.md)。
+2026-11-12 后续源码调整：Mac 原生清单、官网下载及 README 入口已改为 GitHub Latest，Windows 继续仅手动下载、禁用自动更新；尚未构建或部署。本次改动没有改变上述 v0.1.8 的发行事实。常规发版不再复制官网清单或逐版交接 Yezi2；首次上线新入口仍需获准部署一次，旧客户端另按 [旧客户端过渡](desktop-app-update.md#旧客户端过渡) 处理。
+
+历史 v0.1.2（build 287）的准备与后续失败记录见 [0.1.2 构建准备](desktop-release-0.1.2-preparation.md)，不作为当前发行状态或执行条件。现行默认入口、阶段确认及必要时的官网交接统一见 [homer-github-build](../.codex/skills/homer-github-build/SKILL.md)。
 
 `desktop-three` 构建 Apple 芯片 Mac、Intel Mac 和 Windows x64，系统要求分别为 macOS 27、macOS 14 和 Windows 11。Mac 使用 Developer ID 签名、公证及临时钥匙串；Windows 当前未签名且禁用自动更新。版本由 `release_tag` 对齐 `package.json.version`，三平台共用显式 `build_number`，构建提交固定为 `expected_sha`。平台和 runner 以 `scripts/github-build-plan.mjs` 为准。
 
@@ -13,7 +15,7 @@
 - 已存在的版本标签必须解析到本次源码 SHA；不自动创建或移动标签。旧轮次草稿冲突或残缺上传在依赖安装前失败，避免重复打包消耗额度。
 - 构建后直接上传固定名安装包、Mac 更新清单和脱敏平台清单到草稿。原签名包字节保持不变；不将大包重复存入 Actions artifact，原始小回执只保留 1 天。
 - `verify-draft` 在全部请求平台构建成功后，在云端完整流式下载并校验大小和 SHA-256，再上传 `SHA256SUMS` 和合并的 `release-manifest.json`。同一发行不混合 SHA / run / attempt，不覆盖同名不同字节的附件。
-- 只下载本次需要产品验收的平台。验收通过并获准公开后，发布同一草稿，无需重新上传。随后按 [Releases 分发流程](../.codex/skills/homer-github-build/references/releases.md) 核验公开链接、Latest，并交接 Yezi2 首页及更新配置。
+- 只下载本次需要产品验收的平台。验收通过并获准公开后，发布同一草稿，无需重新上传。按 [Releases 分发流程](../.codex/skills/homer-github-build/references/releases.md) 核验固定标签；切换 Latest 还须完成启用平台的原生升级、签名、安全停止及兼容验收，并获得对应授权。保持旧 Latest 时官网及新客户端继续使用旧版，只有官网实际需改动时才交接。
 
 仅构建时显式设置 `upload_release_draft=false`，包保存在 Actions artifact 1 天；源码编译仍走 artifact。默认输入不构成用户上传或发布授权。工作流只手动触发，同标签排队，草稿操作使用临时 `GITHUB_TOKEN` 的 `contents: write`；不自动公开、改 Latest 或删除旧包，不使用额外长期 Token。
 

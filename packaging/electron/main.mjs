@@ -508,12 +508,12 @@ async function setupDesktopUpdate(manifest,test){
    if(config?.verifyUpdateCodeSignature===false||!windowsPublishers.length||windowsPublishers.some(name=>typeof name!=='string'||!/(?:^|,)\s*CN=/.test(name)||!/(?:^|,)\s*(?:O|OU|C|ST|L)=/.test(name)))return;
    if(await verifyWindowsUpdate(windowsPublishers,process.execPath))return;
    const {NsisUpdater}=(await import('electron-updater')).default;
-   windowsUpdater=new NsisUpdater({provider:'generic',url:'https://super-tree.com/homer/updates/stable/win32-x64/',channel:'latest'});
+   windowsUpdater=new NsisUpdater({provider:'generic',url:'https://github.com/wolf3c/homer/releases/latest/download/',channel:'latest'});
    windowsUpdater.logger=null;
    Object.assign(windowsUpdater,{autoDownload:true,autoInstallOnAppQuit:false,allowPrerelease:false,allowDowngrade:false,disableDifferentialDownload:true,disableWebInstaller:true,verifyUpdateCodeSignature:verifyWindowsUpdate});
   }else{
   execFileSync('/usr/bin/codesign',['--verify','--strict','-R','anchor apple generic and identifier "app.homer.desktop" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists',bundle],{stdio:'ignore',timeout:30000});
-  autoUpdater.setFeedURL({url:`https://super-tree.com/homer/updates/stable/darwin-${process.arch}/RELEASES.json`,serverType:'json'});
+  autoUpdater.setFeedURL({url:`https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-${process.arch}.json`,serverType:'json'});
   }
   updateState={status:'idle',noticeHidden:false};
   nativeUpdater().on('checking-for-update',()=>{if(windowsRecovery())return;updateState={status:'checking',noticeHidden:false};updateChanged();});

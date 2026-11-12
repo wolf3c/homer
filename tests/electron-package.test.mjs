@@ -74,7 +74,7 @@ test('root-executed dependency preparation and pins participate in the existing 
 test('Windows config seals per-user NSIS payload without elevation helper',()=>{
  const metadata={platform:'win32',arch:'x64',version:'0.2.0',build:200,preparation:true,publishable:false};
  const config=forgeConfig({payload:'/fixture',metadata,icon:''});assert.equal(config.packagerConfig.osxSign,undefined);assert.equal(config.packagerConfig.executableName,'Homer');assert.equal(config.makers.length,0);
- const nsis=packaging.windowsInstallerConfig({metadata});assert.deepEqual(nsis.nsis,{oneClick:true,perMachine:false,packElevateHelper:false,deleteAppDataOnUninstall:false,differentialPackage:false});assert.equal(nsis.win.requestedExecutionLevel,'asInvoker');
+ const nsis=packaging.windowsInstallerConfig({metadata});assert.deepEqual(nsis.nsis,{oneClick:true,perMachine:false,packElevateHelper:false,deleteAppDataOnUninstall:false,differentialPackage:false});assert.equal(nsis.win.requestedExecutionLevel,'asInvoker');assert.equal(nsis.publish.url,'https://github.com/wolf3c/homer/releases/latest/download/');
 });
 test('explicit unsigned Windows release does not configure signing or automatic updates',()=>{
  const metadata={platform:'win32',arch:'x64',version:'0.2.0',build:269,preparation:false,publishable:true,appId:'app.homer.desktop',releaseChannel:'stable'};

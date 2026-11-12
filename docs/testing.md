@@ -103,7 +103,15 @@ npm run test:windows-capture
 
 ### 桌面自动更新：源码离线检查
 
-Windows electron-updater＋NSIS 的源码与合成验证已接入；Mac、关闭规则及 Yezi2 接口保持。详细范围和四组补充断言唯一见 [桌面更新方案第 8.A.W 节](desktop-app-update.md#aw-windows-最小实施顺序)，不在此复制。使用原 VM／合成归档 fixture，拒绝真实 PowerShell、网络、产品构建或安装器；根主进程先退出和未知身份不得证明其后代已停止。以下本轮结果与更早的 Mac 历史记录分开。
+当前 Mac 更新源及官网下载入口为 GitHub Latest；Windows 继续仅手动下载，保留 electron-updater＋NSIS 签名接点但不启用。签名、关闭规则与安全停止不变。详细范围和四组补充断言见 [桌面更新方案第 8.A.W 节](desktop-app-update.md#aw-windows-最小实施顺序)。使用原 VM／合成归档 fixture，不调用真实 PowerShell、网络、产品构建或安装器；根主进程先退出和未知身份不得证明其后代已停止。
+
+2026-11-12 更新源切换先以旧地址复现四项定向断言失败，再修改主进程、Forge Windows 配置及生成壳的配置 URL；下列三文件离线回归通过，覆盖 Mac 两架构 feed、Windows generic 地址、未签名禁用、验签及原安全重启合同。未运行产品构建、原生更新、安装或日常 App：
+
+```sh
+node --experimental-vm-modules --import tsx --test tests/electron-shell.test.mjs tests/electron-package.test.mjs tests/github-release-draft.test.mjs
+```
+
+Yezi2 的设备识别／三平台 Latest 链接和旧 feed／下载 handler 共 11 项离线检查通过；现有真实 Svelte 组件的隔离浏览器回归通过，覆盖中英文、1280／390px、发行详情链接、无固定 build、44px、Escape 和焦点恢复。夹具只转译组件并使用合成账号与商品，不运行 Meteor 或发行构建，不代表生产官网或 GitHub 原生更新已验收。准确网站命令与旧 feed 保留边界见 [官网合同](../../yezi2/docs/homer/desktop-release-data-contract.md)。以下为此前实现的历史验证记录。
 
 2026-11-04 提交前在当前 main 的干净候选重验：下述十文件主命令 455/455、浏览器边界 2/2、静态签名配置 1/1 通过，均无跳过；后端／UI noEmit 与差异检查通过。候选排除其他任务的未提交用例，因此不直接沿用共享脏树的历史数量。未安装新增依赖、构建、安装或发布；真实原生功能与性能未验证，下列共享脏树 schema 基线失败保留原证据范围。
 

@@ -148,7 +148,7 @@ async function windowsFixture(native={}){const f=await fixture(['Homer'],undefin
 test('Windows uses only NSIS generic latest with explicit safety switches and quiet logger',async()=>{
  const f=await windowsFixture();assert.ok(f.updater);assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
  assert.equal(f.launches[0].options.env.LOCALAPPDATA,'C:\\RedirectedLocal');assert.equal(f.updater.logger,null);for(const [name,value]of Object.entries({autoDownload:true,autoInstallOnAppQuit:false,allowPrerelease:false,allowDowngrade:false,disableDifferentialDownload:true,disableWebInstaller:true}))assert.equal(f.updater[name],value);
- assert.equal(f.nativeCalls.find(c=>c[0]==='nsis')[1].url,'https://super-tree.com/homer/updates/stable/win32-x64/');
+ assert.equal(f.nativeCalls.find(c=>c[0]==='nsis')[1].url,'https://github.com/wolf3c/homer/releases/latest/download/');
 });
 for(const readyFirst of [false,true])test('Windows startup stays usable while signature validation is pending '+readyFirst,async()=>{
  const f=await fixture(['Homer'],undefined,'win32',{arch:'x64',published:true,publishable:true,manifest:stableManifest,holdVerify:true});
@@ -224,14 +224,14 @@ for(const changed of ['valid-cache','tampered-cache','withdrawn'])test('Windows 
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
 });
 test('stable Mac starts one native check after ready and deduplicates reconnect and manual checks',async()=>{
- const f=await updateFixture();assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='feed'))),[['feed',{url:'https://super-tree.com/homer/updates/stable/darwin-arm64/RELEASES.json',serverType:'json'}]]);
+ const f=await updateFixture();assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='feed'))),[['feed',{url:'https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-arm64.json',serverType:'json'}]]);
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
  f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});f.app.emit('activate');updateMenu(f).click();await f.tick();
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
  f.updater.emit('update-not-available');updateMenu(f).click();assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,2);
 });
 test('Intel Mac reads only its own feed',async()=>{
- const f=await updateFixture({arch:'x64'});assert.equal(f.nativeCalls.find(c=>c[0]==='feed')[1].url,'https://super-tree.com/homer/updates/stable/darwin-x64/RELEASES.json');
+ const f=await updateFixture({arch:'x64'});assert.equal(f.nativeCalls.find(c=>c[0]==='feed')[1].url,'https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-x64.json');
 });
 for(const [name,options]of [['missing channel',{manifest:{}}],['QA',{manifest:{...stableManifest,releaseChannel:'qa'}}],['candidate ID',{manifest:{...stableManifest,appId:'app.homer.desktop.candidate'}}],['local tree',{manifest:{...stableManifest,localWorkingTree:true}}],['untrusted signer',{untrustedSigner:true}],['unknown arch',{arch:'riscv64'}]])test('update remains disabled for '+name,async()=>{
  const f=await updateFixture(options);assert.equal(await updateCall(f,'state'),null);assert.equal(f.nativeCalls.some(c=>c[0]==='feed'||c[0]==='check-update'),false);
