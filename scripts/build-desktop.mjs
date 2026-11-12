@@ -90,7 +90,7 @@ if(windows){
  cpSync(join(stage,'packaging/windows/image-decoder.mjs'),join(payload,'homer-image-decoder.mjs'));
 }else{
  const {buildMacPower}=await import(pathToFileURL(join(stage,'scripts/build-macos-power.mjs')).href);
- buildMacPower({root:stage,output:payload,arch,minimumMacOS,identity:distribution?.identity??'-',run});
+ buildMacPower({root:stage,output:payload,arch,minimumMacOS,identity:distribution?.identity??'-',run:(bin,args)=>bin==='/usr/bin/codesign'?execFileSync(bin,args,{stdio:'inherit'}):run(bin,args)});
  for(const [name,source] of [['homer-image-decoder','ImageDecoder.swift'],['homer-window-capture','WindowCapture.swift']]){
   const executable=join(payload,name);
   run('/usr/bin/xcrun',['swiftc','-O',...(name==='homer-window-capture'?['-parse-as-library']:[]),'-target',`${arch==='arm64'?'arm64':'x86_64'}-apple-macos${minimumMacOS}`,'-module-cache-path',join(scratch,'native-build/module-cache'),join(stage,'packaging/macos',source),'-o',executable]);

@@ -1,8 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,rmSync,existsSync} from 'node:fs';
-import {resolve,join} from 'node:path';
+import {resolve,join,dirname} from 'node:path';
+import {runInNewContext} from 'node:vm';
 import forgeConfig from '../packaging/electron/forge.config.mjs';
+
+test('power helper signing retains host keychain context while compilation keeps isolated HOME',()=>{
+ const source=readFileSync('scripts/build-desktop.mjs','utf8'),calls=[];
+ const run=source.match(/^const run=.*$/m)?.[0],power=source.match(/^ buildMacPower\(.*$/m)?.[0];
+ assert.ok(run);assert.ok(power);
+ runInNewContext(run+'\n'+power,{
+  stage:'/synthetic/source',payload:'/synthetic/payload',scratch:'/synthetic/scratch',arch:'arm64',minimumMacOS:'27.0',windows:false,distribution:{identity:'A'.repeat(40)},
+  process:{execPath:'/synthetic/node',env:{HOME:'/synthetic/signing-home',PATH:'/synthetic/bin'}},join,dirname,
+  execFileSync:(bin,args,options)=>calls.push({bin,args,options}),
+  buildMacPower:options=>{options.run('/usr/bin/xcrun',['swiftc']);options.run('/usr/bin/codesign',['--force','--sign',options.identity]);options.run('/usr/bin/codesign',['--verify','--strict']);},
+ });
+ assert.equal(calls[0].bin,'/usr/bin/xcrun');assert.equal(calls[0].options.env.HOME,'/synthetic/scratch/build-home');
+ for(const call of calls.slice(1)){assert.equal(call.bin,'/usr/bin/codesign');assert.equal(call.options.env,undefined);assert.equal(call.options.stdio,'inherit');}
+});
 
 test('macOS packaging embeds and inventories the two power binaries and launchd property list',async t=>{
  const scratch=resolve('.codex/scratch/power-implementation/package-tests');mkdirSync(scratch,{recursive:true});
