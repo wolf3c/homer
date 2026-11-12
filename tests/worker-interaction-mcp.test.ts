@@ -12,9 +12,11 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(root + "/mcp-");
   const calls: string[] = [];
+  const metadata:unknown[]=[];
+  const scheduled=['schedule_create','schedule_list','schedule_update','schedule_cancel'];
   const cuaErrors=['cua_driver_startup_timeout','chrome_bound_window_unavailable','chrome_ax_web_area_unavailable','cua_cleanup_unconfirmed','cua_session_stopped'];
-  const server = new WorkerInteractionMcp(dir, async (name, args) => {
-    calls.push(name);
+  const server = new WorkerInteractionMcp(dir, async (name, args,meta) => {
+    calls.push(name);metadata.push(meta);
     if ((args as any).interactionId === "fail") throw new Error("private provider body token=synthetic");
     if(cuaErrors.includes((args as any).interactionId))throw Error((args as any).interactionId);
     return { state: "pending_main", details: { question: "synthetic business question" } };
@@ -41,11 +43,12 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
     });
     assert.equal((await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "synthetic-test", version: "1" } })).result.serverInfo.name, "homer-interactions");
     const tools = (await rpc("tools/list", {})).result.tools;
-    assert.deepEqual(tools.map((tool: any) => tool.name), role==='main'?['work_directory','inspect_interaction','respond_interaction','escalate_interaction','runtime_capabilities','inspect_attachment']:['work_directory','inspect_attachment']);
+    assert.deepEqual(tools.map((tool: any) => tool.name), [...(role==='main'?['work_directory','inspect_interaction','respond_interaction','escalate_interaction','runtime_capabilities','inspect_attachment']:['work_directory','inspect_attachment']),...scheduled]);
     const inspected=role==='main'?'inspect_interaction':'work_directory';
-    const response = await rpc("tools/call", { name: inspected, arguments: { interactionId: "request-a" } });
+    const response = await rpc("tools/call", { name: inspected, arguments: { interactionId: "request-a" },_meta:{callId:'not-a-governed-tool'} });
     assert.equal(response.result.isError, false);
     assert.equal(JSON.parse(response.result.content[0].text).details.question, "synthetic business question");
+    assert.equal(metadata[0],undefined,'ordinary host tools keep the existing metadata boundary');
     const failure = await rpc("tools/call", { name: inspected, arguments: { interactionId: "fail" } });
     assert.equal(failure.result.content[0].text, "interaction_mcp_failed");
     for(const code of cuaErrors){
@@ -68,7 +71,13 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
       assert.equal(direct.error,'interaction_tool_denied');
     }
     assert.equal((await rpc('tools/call',{name:'capabilities',arguments:{action:'discover'}})).result.isError,true);
-    assert.deepEqual(calls,Array(2+cuaErrors.length).fill(inspected));
+    for(const name of scheduled){
+      const meta={callId:role+'-'+name,'x-codex-turn-metadata':{turn_id:'native-turn'}};
+      assert.equal((await rpc('tools/call',{name,arguments:{},_meta:meta})).result.isError,false);
+      assert.deepEqual(metadata.at(-1),meta,'scheduled tools preserve both pieces of native call evidence');
+    }
+    assert.equal((await rpc('tools/call',{name:'schedule_create_extra',arguments:{}})).result.isError,true);
+    assert.deepEqual(calls,[...Array(2+cuaErrors.length).fill(inspected),...scheduled]);
     assert.equal(stderr, "");
   } finally {
     child?.kill();

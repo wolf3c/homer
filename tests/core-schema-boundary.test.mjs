@@ -1,4 +1,4 @@
-// Current schema only; older schemas are refused before WAL/schema writes.
+// Only the reviewed schema 6 upgrade is admitted; older schemas remain refused before writes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync,rmSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
@@ -18,7 +18,7 @@ test('current schema reopens idempotently and preserves uncertain operations',()
   store.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson) VALUES('unknown','main','synthetic-scope','operation-id','worker_steer','hash','uncertain','{}')").run();
   const capture=()=>Object.fromEntries(store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(({name})=>[name,store.db.prepare('SELECT * FROM '+name+' ORDER BY rowid').all()]));
   const before=capture();store.close();store=new Store(path);const reopened=new RecursiveTasks(store,files);reopened.migrate();reopened.migrate();
-  assert.deepEqual(capture(),before);assert.equal(store.meta('recursiveSchemaVersion'),'6');
+  assert.deepEqual(capture(),before);assert.equal(store.meta('recursiveSchemaVersion'),'7');
   assert.equal(store.db.prepare("SELECT state FROM operations WHERE id='unknown'").get().state,'uncertain');
   for(const table of ['pending_items','deliveries','results','worker_authorities','wechat_outbox','tg_outbox'])assert.equal(before[table],undefined);
   assert.deepEqual(store.db.prepare('PRAGMA foreign_key_check').all(),[]);assert.equal(store.db.prepare('PRAGMA quick_check').get().quick_check,'ok');
@@ -45,7 +45,7 @@ test('pinned ABI refuses a missing or unsupported current schema owner before cr
  const dir=mkdtempSync(join(base,'pinned-')),path=join(dir,'homer.sqlite'),store=new Store(path);
  try{
   const tasks=new RecursiveTasks(store,new Files(join(dir,'workspace')));tasks.migrate();store.setMeta('mainThread','synthetic-thread');store.close();
-  assert.equal(pinnedDatabaseIdentity(path).metadata.recursiveSchemaVersion,'6');
+  assert.equal(pinnedDatabaseIdentity(path).metadata.recursiveSchemaVersion,'7');
   mkdirSync(join(dir,'dist'));
   const config=join(dir,'config.json');writeFileSync(config,JSON.stringify({runtime:'runtime',workspace:'workspace'}));
   const args={directory:dir,configPath:config,snapshot:path,thread:'synthetic-thread',manifestPath:join(dir,'manifest.json')};

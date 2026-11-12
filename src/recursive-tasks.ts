@@ -20,7 +20,7 @@ export type Worker={workerId:string;taskId:string;threadId:string|null;run:TaskR
 export type Operation={id:string;actorAgentId:string;scopeId:string;operationId:string;kind:string;payloadHash:string;state:string;detailsJson:string;responseJson:string|null;revision:number};
 export type AgentMessage={seq:number;id:string;senderAgentId:string;senderRunId:string|null;senderEpoch:number|null;recipientAgentId:string;taskId:string|null;taskVersion:number|null;targetRunId:string|null;kind:string;replyTo:string|null;causationId:string|null;operationKey:string;payloadJson:string};
 export type FileReceipt={path:string;sha256:string;bytes:number;state:'written';operationKey:string};
-export type RecursiveTaskLifecycle={validateActor(actor:Actor):void;validateFileRead?(path:string):void;validateWorkerAttachment?(ref:AttachmentRef,messageId:string):void;reviewExitConfirmed?(run:TaskRun):boolean;operationConfirmed?(actor:Actor,key:string,kind:string,response:Record<string,unknown>):void};
+export type RecursiveTaskLifecycle={validateActor(actor:Actor):void;validateScheduledSource?(requestId:string):void;validateFileRead?(path:string):void;validateWorkerAttachment?(ref:AttachmentRef,messageId:string):void;reviewExitConfirmed?(run:TaskRun):boolean;operationConfirmed?(actor:Actor,key:string,kind:string,response:Record<string,unknown>):void};
 export type WorkerMessageScope={taskId:string;version:number;workerId:string;messageId:string;operationId:string};
 type PrepareAttachments=(operationKey:string,scope:WorkerMessageScope)=>AttachmentRef[];
 export const RECURSIVE_SCHEMA_VERSION=STORE_SCHEMA_VERSION;
@@ -134,7 +134,14 @@ export class RecursiveTasks{
   if(!actor.inputMessageId)return;
   return this.one<AgentMessage>(`SELECT m.* FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id AND r.recipientAgentId=m.recipientAgentId
    WHERE m.id=? AND m.recipientAgentId=? AND m.senderAgentId='host' AND r.state IN ('offered','received')
-   AND m.kind IN ('task_archived','worker_reply','interaction_required')`,actor.inputMessageId,actor.agentId);
+   AND m.kind IN ('task_archived','worker_reply','interaction_required','scheduled_message')`,actor.inputMessageId,actor.agentId);
+ }
+ scheduledAuthority(actor:Actor):Authority|undefined{
+  const message=this.activeEvent(actor);if(message?.kind!=='scheduled_message')return;
+  const payload=JSON.parse(message.payloadJson),source=JSON.parse(payload.sourceRef);
+  if(payload.instanceId!==actor.agentId||source.instanceId!==actor.agentId||payload.threadId!==this.store.meta('mainThread')||source.threadId!==payload.threadId)throw Error('task_authority_source_denied');
+  for(const requestId of this.validateAuthority(actor,source.authority))this.lifecycle?.validateScheduledSource?.(requestId);
+  return source.authority;
  }
  private creationSource(actor:Actor,authority:Authority){
   const sources=this.validateAuthority(actor,authority);
@@ -143,6 +150,8 @@ export class RecursiveTasks{
    return;
   }
   const message=this.activeEvent(actor);
+  const scheduled=this.scheduledAuthority(actor);
+  if(scheduled){const allowed=[scheduled.sourceRequestId,...(scheduled.sourceRequestIds??[])];if(sources.some(source=>!allowed.includes(source)))throw Error('task_authority_source_denied');return;}
   if(!message?.taskId||!message.taskVersion)throw Error('task_authority_source_denied');
   const task=this.task(message.taskId);
   if(message.taskVersion!==task.headVersion||task.controlState!=='normal')throw Error('task_authority_source_denied');
@@ -158,6 +167,7 @@ export class RecursiveTasks{
   const authority=this.authority(task.id,task.headVersion);
   this.validateAuthority(actor,authority);
   if(actor.sourceRequestId){this.trustedSource(actor,actor.sourceRequestId);return authority;}
+  if(this.scheduledAuthority(actor)){this.creationSource(actor,authority);return authority;}
   const message=this.activeEvent(actor),created=this.operation(this.version(task.id,1).triggerOpId);
   if(message?.taskId!==task.id&&(!message||JSON.parse(created.detailsJson).inputMessageId!==message.id))throw Error('task_authority_source_denied');
   if(allowSettled&&task.state==='settled'&&message?.taskId===task.id&&message.taskVersion===task.headVersion)return authority;

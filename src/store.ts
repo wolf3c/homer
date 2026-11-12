@@ -1,6 +1,8 @@
 import {CommittedDatabase} from './committed-database.js';
+import {SCHEDULE_SCHEMA} from './schedules.js';
 
-export const STORE_SCHEMA_VERSION='6';
+export const STORE_SCHEMA_VERSION='7';
+export const READABLE_STORE_SCHEMA_VERSIONS:readonly string[]=['6',STORE_SCHEMA_VERSION];
 export type Status='queued'|'running'|'succeeded'|'failed'|'cancelled'|'interrupted';
 export type Run={
  id:string;taskId:string;workerId:string;version:number;sourceRequestId:string;
@@ -24,8 +26,9 @@ export class Store {
    }
    if(tables.includes('meta')){
     const recursive=this.meta('recursiveSchemaVersion');
-    if(recursive!==undefined&&recursive!==STORE_SCHEMA_VERSION)throw Error('recursive_schema_unsupported');
-    if(recursive===STORE_SCHEMA_VERSION&&['tasks','task_versions','operations','agent_messages','agent_receipts'].some(table=>!tables.includes(table)))throw Error('recursive_schema_unsupported');
+    if(recursive!==undefined&&!READABLE_STORE_SCHEMA_VERSIONS.includes(recursive))throw Error('recursive_schema_unsupported');
+    if(recursive!==undefined&&['tasks','task_versions','operations','agent_messages','agent_receipts'].some(table=>!tables.includes(table)))throw Error('recursive_schema_unsupported');
+    if(recursive===STORE_SCHEMA_VERSION&&!tables.includes('schedules'))throw Error('recursive_schema_unsupported');
     if(recursive===undefined&&['runs','tasks','matters'].some(table=>tables.includes(table)&&this.db.prepare('SELECT 1 FROM '+table+' LIMIT 1').get()))throw Error('recursive_schema_unsupported');
    }else if(tables.some(table=>!table.startsWith('sqlite_')))throw Error('recursive_schema_unsupported');
    if(tables.includes('media_schema')||tables.includes('media_assets')){
@@ -46,6 +49,10 @@ export class Store {
     CREATE INDEX IF NOT EXISTS runs_worker ON runs(workerId);
     CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,runId TEXT REFERENCES runs(id),type TEXT NOT NULL,code TEXT,at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,hash TEXT NOT NULL,state TEXT NOT NULL,response TEXT,createdAt INTEGER NOT NULL);`);
+   this.transaction(()=>{
+    this.db.exec(SCHEDULE_SCHEMA);
+    if(this.meta('recursiveSchemaVersion')==='6')this.setMeta('recursiveSchemaVersion',STORE_SCHEMA_VERSION);
+   });
   }catch(error){this.db.close();throw error;}
  }
  close(){this.db.close();}

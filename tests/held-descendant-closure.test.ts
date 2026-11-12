@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Homer} from '../src/service.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
+import {HostToolCalls} from '../src/host-tool-calls.js';
 import {chatFixture} from './task-chat-fixture.js';
 function setup(mode='confirmed'){
  const f=chatFixture(),task=f.create(),other=f.create('Independent task','other');
@@ -15,7 +16,7 @@ function setup(mode='confirmed'){
    async close(){count.close++;if(run.id===bb.id&&mode==='throw')throw Error('synthetic_close_failure');return !(run.id===bb.id&&mode==='false');}}});
   f.store.setMeta('lease:'+run.id,lease);
  }
- const host:any=Object.create(Homer.prototype);Object.assign(host,{store:f.store,tasks:f.tasks,interactions,workers,mainApprovals:{end(){}},pauseClock(){},pump(){},scheduleInternal(){},scheduleDelivery(){}});
+ const host:any=Object.create(Homer.prototype);Object.assign(host,{store:f.store,tasks:f.tasks,interactions,workers,scheduleCalls:new HostToolCalls(),mainApprovals:{end(){}},pauseClock(){},pump(){},scheduleInternal(){},scheduleDelivery(){}});
  const pause=()=>f.tasks.controlTask(f.actor,{operationId:'pause',taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision,action:'pause'});
  return {...f,task,aa,bb,peer,host,workers,counts,interactions,pause};
 }

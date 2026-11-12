@@ -57,7 +57,8 @@ run(process.execPath,[join(modules,'vite/bin/vite.js'),'build','--config',join(s
 const dependencies=prepareDependencies(scratch,option('--archive-source')?{archiveSource:resolve(option('--archive-source'))}:undefined);
 const homer=join(payload,'homer');
 for(const part of ['dist','prompts','assets','package.json','package-lock.json','.codex/skills'])cpSync(join(stage,part),join(homer,part),{recursive:true,filter:path=>path!==join(stage,'dist/update-review-page.js')});
-for(const name of ['dev.mjs','trusted-build.mjs','pinned-build.mjs','dev-ingress.mjs','desktop-runtime.mjs','desktop-profile.mjs','windows-security.mjs']){mkdirSync(join(homer,'scripts'),{recursive:true});cpSync(join(stage,'scripts',name),join(homer,'scripts',name));}
+for(const name of ['dev.mjs','trusted-build.mjs','pinned-build.mjs','dev-ingress.mjs','desktop-runtime.mjs','desktop-profile.mjs','windows-security.mjs','macos-power.mjs','windows-power.mjs','desktop-wake.mjs']){mkdirSync(join(homer,'scripts'),{recursive:true});cpSync(join(stage,'scripts',name),join(homer,'scripts',name));}
+mkdirSync(join(homer,'packaging/windows'),{recursive:true});cpSync(join(stage,'packaging/windows/power-task.ps1'),join(homer,'packaging/windows/power-task.ps1'));
 const {dependencyIdentity,pinnedInventory}=await import(pathToFileURL(join(stage,'scripts/pinned-build.mjs')).href);
 let dependencyRoot=stage;
 if(windows){dependencyRoot=join(scratch,'windows-dependencies');mkdirSync(dependencyRoot);const product=JSON.parse(readFileSync(join(stage,'package.json')));product.dependencies.sharp=product.devDependencies.sharp;writeFileSync(join(dependencyRoot,'package.json'),JSON.stringify(product));cpSync(join(stage,'package-lock.json'),join(dependencyRoot,'package-lock.json'));symlinkSync(modules,join(dependencyRoot,'node_modules'),'junction');cpSync(join(dependencyRoot,'package.json'),join(homer,'package.json'));}
@@ -88,6 +89,8 @@ cpSync(join(modules,'electron/dist/LICENSES.chromium.html'),join(payload,'licens
 if(windows){
  cpSync(join(stage,'packaging/windows/image-decoder.mjs'),join(payload,'homer-image-decoder.mjs'));
 }else{
+ const {buildMacPower}=await import(pathToFileURL(join(stage,'scripts/build-macos-power.mjs')).href);
+ buildMacPower({root:stage,output:payload,arch,minimumMacOS,identity:distribution?.identity??'-',run});
  for(const [name,source] of [['homer-image-decoder','ImageDecoder.swift'],['homer-window-capture','WindowCapture.swift']]){
   const executable=join(payload,name);
   run('/usr/bin/xcrun',['swiftc','-O',...(name==='homer-window-capture'?['-parse-as-library']:[]),'-target',`${arch==='arm64'?'arm64':'x86_64'}-apple-macos${minimumMacOS}`,'-module-cache-path',join(scratch,'native-build/module-cache'),join(stage,'packaging/macos',source),'-o',executable]);
@@ -104,7 +107,7 @@ const product=JSON.parse(readFileSync(join(stage,'package.json'))),electron=prod
 const build=distribution?.build??Number(execFileSync(git,['rev-list','--count',sourceSha],{cwd:root,encoding:'utf8'}));
 const {validateHomerOrigins}=await import(pathToFileURL(join(homer,'dist/homer-account.js')).href);
 const account=validateHomerOrigins({websiteOrigin,gatewayOrigin},provenance.preparation);
-const metadata={account,arch,minimumMacOS,...(windows?{platform:'win32'}:{}),...(distribution?{appId:'app.homer.desktop',releaseChannel:'stable'}:{}),...(provenance.localWorkingTree?{localWorkingTree:true}:{}),format:2,version:product.version,build,gitSha:sourceSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash,schema:schemaHash(sourceSnapshot(stage)),toolsHash:MAIN_TOOLS_HASH,node:'22.22.0',codex:'0.163.0',electron};
+const metadata={account,arch,minimumMacOS,powerWake:1,...(windows?{platform:'win32'}:{}),...(distribution?{appId:'app.homer.desktop',releaseChannel:'stable'}:{}),...(provenance.localWorkingTree?{localWorkingTree:true}:{}),format:2,version:product.version,build,gitSha:sourceSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash,schema:schemaHash(sourceSnapshot(stage)),toolsHash:MAIN_TOOLS_HASH,node:'22.22.0',codex:'0.163.0',electron};
 cpSync(join(stage,'packaging/electron/main.mjs'),join(shell,'main.mjs'));
 cpSync(join(stage,'packaging/electron/preload.cjs'),join(shell,'preload.cjs'));
 cpSync(join(stage,'packaging/electron/capture-panel-preload.cjs'),join(shell,'capture-panel-preload.cjs'));

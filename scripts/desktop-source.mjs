@@ -9,11 +9,16 @@ export const DESKTOP_CANDIDATE_PATHS=[
  'packaging/electron/capture-panel-preload.cjs','ui/capture-panel.html','ui/capture-panel.tsx','ui/capture-panel.css','ui/capture-panel-vite.config.mjs','ui/screenshot-dialog.tsx',
  'scripts/pinned-build.mjs','scripts/trusted-build.mjs','scripts/windows-security.mjs','scripts/windows-security.d.mts','packaging/windows/image-decoder.mjs','src/processes.ts','src/desktop-resources.ts','src/media-decode.ts','src/homer-account.ts','ui/desktop-permissions.tsx',
  'packaging/windows/CuaWindows.cs','packaging/macos/ChromeViewport.swift','src/desktop-cua.ts','src/desktop-cua-driver.ts','src/cua-processes.ts',
+ 'scripts/macos-power.mjs','scripts/macos-power.d.mts','scripts/windows-power.mjs','scripts/windows-power.d.mts','scripts/desktop-wake.mjs','scripts/build-macos-power.mjs',
+ 'packaging/windows/power-task.ps1','packaging/macos/PowerClient.swift','packaging/macos/PowerHelper.swift','packaging/macos/PowerShared.swift','packaging/macos/PowerEvents.swift','packaging/macos/app.homer.desktop.power.plist',
+ 'src/desktop-power.ts','ui/desktop-power-settings.tsx','ui/homer-styles.css','scripts/desktop-profile.d.mts',
  'src/mobile-turn.ts','src/mobile-gateway.ts','src/mobile-rtc.ts','ui/mobile-devices.tsx',
  'scripts/prepare-desktop-dependencies.mjs','packaging/macos/WindowCapture.swift','packaging/macos/dependencies-lock.json','packaging/macos/codex-license/LICENSE','packaging/macos/codex-license/NOTICE',
  'package.json','package-lock.json','scripts/build-desktop.mjs','scripts/desktop-source.mjs','scripts/desktop-profile.mjs','src/web-server.ts',
  'scripts/desktop-runtime.mjs','scripts/dev-build.mjs','scripts/dev.mjs','scripts/dev-ingress.mjs','src/dev-host.ts',
  'src/service.ts','src/config.ts','src/engine.ts','src/native-history-bridge.ts','src/recursive-main-inputs.ts',
+ 'src/schedules.ts','src/host-tool-calls.ts','src/schedule-tools.ts','src/store.ts','src/worker-interaction-mcp.ts','src/recursive-tasks.ts','src/channel-plugin.ts','src/main-process.ts','src/conversation-projection.ts','src/web-history-pages.ts','src/telegram-channel.ts',
+ 'ui/homer-app.tsx','ui/homer-message-queue.tsx','ui/vendor/assistant-ui/message-queue.tsx','ui/process-nodes.tsx','ui/chat-date.ts','prompts/main.md','prompts/worker.md',
 ];
 const retired=['packaging/macos/HomerApplication.swift','packaging/macos/Info.plist','packaging/macos/distribution-policy.json','packaging/macos/node-distribution-entitlements.plist','scripts/build-macos-desktop.mjs','scripts/macos-distribution.mjs','tests/desktop-termination.test.mjs','scripts/desktop-deepseek.mjs','scripts/deepseek-desktop.mjs','tests/desktop-deepseek.test.mjs'];
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');

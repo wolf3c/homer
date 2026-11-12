@@ -211,11 +211,22 @@ Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','
 
 
 function ConversationHarness({ source }: { source: any[] }) {
-  const messages: ThreadMessageLike[] = source.map(m => ({ id: m.id, role: m.role, content: m.text ? [{ type: 'text', id: 'answer:' + m.id, text: m.text }] : [], createdAt: new Date(m.createdAt), metadata: { custom: { activityPresentation: { entries: { ['text:answer:' + m.id]: { kind: 'answer' } } }, original: m, messageId: m.id, media: m.media, quotes: m.quotes, process: m.process, inactiveInteractions: m.notes } }, ...(m.role === 'assistant' ? { status: { type: 'complete', reason: 'stop' } as const } : {}) }));
+  const messages: ThreadMessageLike[] = source.map(m => ({ id: m.id, role: m.role, content: m.text ? [{ type: 'text', id: 'answer:' + m.id, text: m.text }] : [], createdAt: new Date(m.createdAt), metadata: { custom: { activityPresentation: { entries: { ['text:answer:' + m.id]: { kind: 'answer' } } }, original: m, messageId: m.id, media: m.media, quotes: m.quotes, process: m.process, sourceLabel: m.sourceLabel, sourceMessageId: m.sourceMessageId, inactiveInteractions: m.notes } }, ...(m.role === 'assistant' ? { status: { type: 'complete', reason: 'stop' } as const } : {}) }));
   const runtime = useExternalStoreRuntime({ messages, convertMessage: m => m, isRunning: false, onNew: async () => {} });
   return h(AssistantRuntimeProvider, { runtime }, h(timestampExports.MessageTimestamps, { messages: source }, h(processes.Provider, { value: new Map(source.map(m => [m.id, m])) }, h(ThreadPrimitive.Root, null, h(ThreadPrimitive.Messages, { components: wrappers })))));
 }
 const renderConversation = (source: any[]) => renderToStaticMarkup(h(ConversationHarness, { source }));
+
+test('scheduled processing stays one labeled internal record without user bubbles, task title or date segment', () => {
+  const process = { id:'scheduled-process', sourceKind:'scheduled', sourceMessageIds:['scheduled-delivery'], turnIds:['scheduled-turn'], state:'working', status:'running', items:[] };
+  const source = [m('original-user','2025-01-01T10:00:00Z'),m('scheduled-process','2030-01-01T10:00:00Z',{role:'assistant',text:'',sourceLabel:'定时消息',process}),m('public-delivery','2025-01-02T10:00:00Z',{role:'assistant',text:'公开交付'})];
+  const times = conversationTimestamps(source,{now:at('2025-01-02T11:00:00Z'),timeZone:'UTC'});
+  assert.deepEqual([...times.keys()],['original-user','public-delivery']);
+  const html = renderConversation(source);
+  assert.equal((html.match(/class="user-message-bubble"/g)??[]).length,1);assert.equal((html.match(/class="message-source-label">定时消息/g)??[]).length,1);
+  assert.equal((html.match(/data-conversation-message="scheduled-process"/g)??[]).length,1);assert.equal((html.match(/class="message-day-separator"/g)??[]).length,2);
+  assert.doesNotMatch(html,/事项标题待确认|当前事项|2030年/);
+});
 
 test('each reply displays its verified task names directly above its own bubble', () => {
   const task = (taskId: string, title: string, version = 1) => ({ target: { taskId, version }, title });

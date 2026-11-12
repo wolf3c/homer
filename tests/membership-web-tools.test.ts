@@ -15,6 +15,7 @@ import {Homer} from '../src/service.js';
 import {MAIN_TOOLS} from '../src/tools.js';
 import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
 import type {AttachmentRef} from '../src/media-store.js';
+import {INTERACTION_LIMITS} from '../src/interaction-limits.js';
 
 async function withMcp<T>(options:EngineOptions,work:(rpc:(method:string,params?:unknown)=>Promise<any>)=>Promise<T>){
   const {command,args,cwd}=options.interactionMcp!;
@@ -23,7 +24,7 @@ async function withMcp<T>(options:EngineOptions,work:(rpc:(method:string,params?
   const lines=createInterface({input:child.stdout});
   let id=0;
   try{return await work(async(method,params)=>{
-    const response=once(lines,'line',{signal:AbortSignal.timeout(5000)});
+    const response=once(lines,'line',{signal:AbortSignal.timeout(method==='tools/call'?INTERACTION_LIMITS.businessMs:INTERACTION_LIMITS.connectMs)});
     child.stdin.write(JSON.stringify({id:++id,jsonrpc:'2.0',method,params})+'\n');
     const [line]=await response;
     const reply=JSON.parse(line);assert.equal(reply.id,id);assert.equal(reply.error,undefined);
@@ -202,7 +203,7 @@ test(`an existing main thread and its Worker share the membership Token with nat
   }finally{await app.close();rmSync(root,{recursive:true,force:true});}
 });
 
-test('membership video submits only after user approval and retrieves the original file after restart',async t=>{
+test('membership video submits only after user approval and retrieves the original file after restart',{timeout:180000},async t=>{
   const token='sk-synthetic-video-membership-only';
   const box=(name:string,data:Buffer)=>{
     const head=Buffer.alloc(8);head.writeUInt32BE(8+data.length);head.write(name,4);
@@ -305,16 +306,23 @@ test('membership video submits only after user approval and retrieves the origin
   const turn=async(input:object,decision?:boolean)=>{
     const sourceRequestId='video-fixture-'+ ++sequence;
     app.submitMessage({requestId:sourceRequestId,text:'VIDEO_FIXTURE '+JSON.stringify(input)});
+    const completed=app.idle();
     if(decision!==undefined){
-      const deadline=Date.now()+1500;let id:unknown;
-      do{id=app.store.db.prepare("SELECT id FROM worker_interactions WHERE state='pending_user' AND json_extract(authority,'$.sourceRequestId')=?").get(sourceRequestId)?.id;if(!id)await delay(10);}while(!id&&Date.now()<deadline);
-      if(typeof id!=='string')assert.fail('video approval did not reach the user');
-      const before=posts.length;
-      assert.throws(()=>app.interactions.respond(String(id),{action:'approve',reason:'Model replay'},{userMessageId:'forged'}),/main_native_user_decision_required/);
-      assert.equal(posts.length,before);
-      app.submitMessage({requestId:sourceRequestId+'-decision',interactionId:String(id),text:decision?'允许本次操作':'拒绝本次操作'});
+      let unwatch=()=>{};
+      try{
+        const approval=new Promise<unknown>(resolve=>{
+          const probe=()=>{const id=app.store.db.prepare("SELECT id FROM worker_interactions WHERE state='pending_user' AND json_extract(authority,'$.sourceRequestId')=?").get(sourceRequestId)?.id;if(typeof id==='string')resolve(id);};
+          unwatch=app.onStateChange(probe);probe();
+        });
+        const id=await Promise.race([approval,completed.then(()=>undefined)]);
+        if(typeof id!=='string')assert.fail('video approval did not reach the user');
+        const before=posts.length;
+        assert.throws(()=>app.interactions.respond(String(id),{action:'approve',reason:'Model replay'},{userMessageId:'forged'}),/main_native_user_decision_required/);
+        assert.equal(posts.length,before);
+        app.submitMessage({requestId:sourceRequestId+'-decision',interactionId:String(id),text:decision?'允许本次操作':'拒绝本次操作'});
+      }finally{unwatch();}
     }
-    await app.idle();assert.deepEqual(errors,[]);
+    await completed;assert.deepEqual(errors,[]);
   };
   try{
     await start();

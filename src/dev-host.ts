@@ -11,6 +11,7 @@ import {saveDesktopModelSource} from '../scripts/desktop-profile.mjs';
 import {dingtalkChannel} from './dingtalk-channel.js';
 import {telegramChannel} from './telegram-channel.js';
 import {wechatChannel} from './wechat-channel.js';
+import type {PowerFacts} from './desktop-power.js';
 
 const send = (value: unknown) => new Promise<void>((resolve, reject) => {
   if (!process.send) return reject(new Error("dev_ipc_required"));
@@ -21,6 +22,31 @@ let frozen = true;
 let stopping = false;
 let starting: Promise<void> | undefined;
 let constructorRefused = false;
+let powerRuntimeAvailable=false,powerSequence=0,lastPowerState='',lastPowerActivity='';
+let powerTimer:ReturnType<typeof setInterval>|undefined;
+const powerAcks=new Map<number,()=>void>();
+function powerActivity(execution?:{executing:boolean;displayRequired:boolean}):Omit<PowerFacts,'nextScheduledAt'>{
+ return {runtimeAvailable:powerRuntimeAvailable,...(execution??app!.desktopPowerFacts()),channels:app!.channels?.wakePollingChannels()??[]};
+}
+function publishPower(refreshCalendar=false){
+ if(!desktop||!app||!process.connected)return;
+ try{
+  const activity=powerActivity(),activityKey=JSON.stringify(activity);
+  if(!refreshCalendar&&activityKey===lastPowerActivity)return;
+  const facts={...activity,nextScheduledAt:app.nextScheduledMessageAt()},key=JSON.stringify(facts);
+  lastPowerActivity=activityKey;if(key===lastPowerState)return;lastPowerState=key;
+  void send({kind:'power_state',facts}).catch(()=>{lastPowerState='';lastPowerActivity='';});
+ }catch{lastPowerActivity='';} // The next owner notification retries without blocking a task.
+}
+function protectPower(execution:{executing:boolean;displayRequired:boolean}){
+ if(!desktop||!app||!process.connected)return Promise.resolve();
+ return new Promise<void>(resolve=>{
+  const id=++powerSequence,timer=setTimeout(()=>finish(),1000);
+  const finish=()=>{clearTimeout(timer);powerAcks.delete(id);resolve();};
+  powerAcks.set(id,finish);
+  try{void send({kind:'power_acquire',id,facts:{...powerActivity(execution),nextScheduledAt:app!.nextScheduledMessageAt()}}).catch(finish);}catch{finish();}
+ });
+}
 let stateInvalidationScheduled=false,stateInvalidationPending=false,stateInvalidationSending=false;
 let stateInvalidationRetry:ReturnType<typeof setTimeout>|undefined;
 function invalidateState(){
@@ -95,11 +121,14 @@ async function output(message: Message) {
 async function stop() {
   if (stopping) return;
   stopping = true;
+  clearInterval(powerTimer);powerTimer=undefined;
+  for(const finish of powerAcks.values())finish();
   if(stateInvalidationRetry)clearTimeout(stateInvalidationRetry);
   frozen = true;
   let confirmed=false;
   try { await desktopChatStarting?.catch(() => {}); await starting?.catch(() => {}); await app?.close({requireAllOwnersConfirmed:desktop});confirmed=!!app||constructorRefused; }
   catch { process.exitCode = 1; }
+  if(confirmed){powerRuntimeAvailable=false;publishPower();}
   if(desktop){try{await send({kind:'desktop_stopped',confirmed});}catch{process.exitCode=1;}}
   process.disconnect?.();
 }
@@ -143,12 +172,17 @@ async function receive(raw: unknown) {
     },undefined,adapters);
     for(const adapter of adapters)adapter.applyBindings(app.channels!);
     } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;await app?.close();throw error; }
-    app.onStateChange(reason=>{invalidateState();if(desktop&&(reason==='model-turn'||reason==='user-input'))void send({kind:reason==='model-turn'?'account_usage_dirty':'account_config_check'}).catch(()=>{});});
+    app.onStateChange(reason=>{invalidateState();publishPower();if(desktop&&(reason==='model-turn'||reason==='user-input'))void send({kind:reason==='model-turn'?'account_usage_dirty':'account_config_check'}).catch(()=>{});});
+    if(desktop){
+      powerRuntimeAvailable=true;app.bindDesktopPowerProtection(protectPower);app.onScheduleChanged(()=>publishPower(true));publishPower(true);
+      powerTimer=setInterval(()=>publishPower(true),5000);powerTimer.unref();
+    }
     if(m.buildHash)app.registerRuntimeBuild(m.buildHash);
     if(webUploadProtocol)app.registerWebSurface(true);
     if (m.thread && app.store.meta("mainThread") !== m.thread)
       throw new Error("main_resume_thread_mismatch");
     if(desktop){
+      app.schedules.start();
       frozen=false;
       await send({kind:'management_ready',stateInvalidationProtocol:1,webHistoryProtocol:3});
       void startDesktopChat().catch(async()=>{try{await send({kind:'chat_unavailable',code:'desktop_chat_unavailable'});}catch{}});
@@ -162,6 +196,15 @@ async function receive(raw: unknown) {
     frozen = false;
     await send({ kind: "ready", thread: app.store.meta("mainThread"), restoring, stateInvalidationProtocol:1,webHistoryProtocol:3, model: m.config.model,
       effort: effectiveEffort(m.config.effort), engine: codexVersion(m.config.codexBin) });
+  } else if(m.kind==='desktop_power_ack'){
+    const id=(raw as {id:unknown}).id;
+    if(desktop&&typeof id==='number'&&Number.isSafeInteger(id))powerAcks.get(id)?.();
+  } else if(m.kind==='desktop_power'){
+    try{
+      if(!desktop||!app||stopping||m.method!=='resume')throw Error('desktop_power_forbidden');
+      app.recheckScheduledMessages();await app.channels?.resumeAfterSleep(m.input?.afterSleep!==false);publishPower(true);
+      await send({kind:'web_result',id:m.id,value:true});
+    }catch{await send({kind:'web_result',id:m.id,error:'power_recheck_unconfirmed'});}
   } else if(m.kind==='desktop_account'){
     try{
       if(!desktop||!app||frozen||stopping)throw Error('desktop_account_forbidden');

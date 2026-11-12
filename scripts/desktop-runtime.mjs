@@ -29,7 +29,7 @@ try{
      if(stat.isDirectory())inventory(path,rel);else if(stat.isFile())observed.push({path:rel,sha256:sha(readFileSync(path))});else throw Error('desktop_resource_changed');
    }
  }
- const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>{
+ const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node',...(manifest.powerWake===1?['Contents/MacOS/homer-power-client','Contents/MacOS/homer-power-helper','Contents/Library/LaunchDaemons/app.homer.desktop.power.plist']:[])]).map(path=>{
    const file=join(bundle,path);if(realpathSync(file)!==file)throw Error('desktop_resource_changed');
    return {path,sha256:sha(readFileSync(file))};
  });
@@ -100,9 +100,9 @@ try{
        if(paths.adoption&&!thread)throw Error('desktop_adoption_original_thread_required');
        try{assertDesktopAdoptionLeasesRecoverable(leases,pid=>!leaseOwnerGone(pid));}
        catch{throw Error(paths.adoption?'desktop_adoption_owner_unknown':'desktop_lease_review_required');}
-       const {RECURSIVE_SCHEMA_VERSION}=await import(pathToFileURL(join(homer,'dist/recursive-tasks.js')).href);
+       const {READABLE_STORE_SCHEMA_VERSIONS}=await import(pathToFileURL(join(homer,'dist/store.js')).href);
        const schema=db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get();
-       if(schema?.value!==RECURSIVE_SCHEMA_VERSION)throw Error('desktop_schema_incompatible');
+       if(!READABLE_STORE_SCHEMA_VERSIONS.includes(schema?.value))throw Error('desktop_schema_incompatible');
      }
    }finally{db.close();}
  }
@@ -129,13 +129,17 @@ try{
  const {readMobileConfig}=await import(pathToFileURL(join(homer,'dist/mobile-gateway.js')).href);
  const mobileConfig=readMobileConfig(join(profile,'mobile.json'));
  const input=new PassThrough(),output=new Writable({write(_chunk,_encoding,done){done();}});
- let quitting=false,nativeAccount,updateStop;
+ let quitting=false,nativeAccount,updateStop,power;
  const quit=()=>{if(quitting)return;quitting=true;input.write('/quit\n');};
  const reader=createInterface({input:process.stdin});
  reader.on('line',line=>{
   if(line.length>4096)return;
   try{const value=JSON.parse(line);
    if(value.kind==='quit')quit();
+   else if(value.kind==='power_ack'&&Number.isSafeInteger(value.id)&&value.id>0){void power?.('ack',{id:value.id});}
+   else if(value.kind==='power_resume'&&Number.isSafeInteger(value.id)&&value.id>0&&(value.afterSleep===undefined||typeof value.afterSleep==='boolean')){
+    void (async()=>{try{if(quitting||!power)throw Error('power_recheck_unconfirmed');if(value.afterSleep===undefined)await power('resume');else await power('resume',{afterSleep:value.afterSleep});await send({kind:'power_result',id:value.id});}catch{await send({kind:'power_result',id:value.id,error:'power_recheck_unconfirmed'});}})();
+   }
    else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
    else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','apply-models','channel-state'].includes(value.action)){
     void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action,value.input)});}catch(error){await send({kind:'native_account_result',id:value.id,error:value.action==='apply-models'?chatgptModelError(error?.message):'native_account_unconfirmed'});}})();
@@ -143,7 +147,7 @@ try{
   }catch{}
  });
  reader.on('close',quit);
- const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
+ const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
  reader.close();input.destroy();process.stdin.pause();
  if(!result?.stoppedConfirmed&&!result?.noHostStarted)throw Error('desktop_stop_unconfirmed');
  // A successful host close includes all main/control/Worker/MCP owner evidence.

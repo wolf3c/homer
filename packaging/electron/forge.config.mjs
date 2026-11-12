@@ -1,10 +1,13 @@
-import {cpSync,readFileSync,writeFileSync,readdirSync,lstatSync,realpathSync} from 'node:fs';
+import {cpSync,readFileSync,writeFileSync,readdirSync,lstatSync,realpathSync,mkdirSync} from 'node:fs';
 import {join,basename} from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const macCode=['homer-image-decoder','homer-window-capture','node'].map(name=>'Contents/MacOS/'+name);
+const powerCode=['homer-power-client','homer-power-helper'].map(name=>'Contents/MacOS/'+name);
+const powerPlist='Contents/Library/LaunchDaemons/app.homer.desktop.power.plist';
+const macFiles=metadata=>metadata.powerWake===1?[...macCode,...powerCode,powerPlist]:macCode;
 function desktopManifest(bundle,metadata){
  const windows=metadata.platform==='win32',resources=windows?join(bundle,'resources'):join(bundle,'Contents/Resources'),files=[];
  if(windows&&lstatSync(join(resources,'elevate.exe'),{throwIfNoEntry:false}))throw Error('desktop_elevation_helper_denied');
@@ -17,7 +20,7 @@ function desktopManifest(bundle,metadata){
   }
  }
  visit(resources);
- const codeFiles=(windows?['Homer.exe']:macCode).map(path=>({path,sha256:sha(readFileSync(join(bundle,path)))}));
+ const codeFiles=(windows?['Homer.exe']:macFiles(metadata)).map(path=>({path,sha256:sha(readFileSync(join(bundle,path)))}));
  return {...metadata,codeFiles,files};
 }
 export function writeDesktopManifest(bundle,metadata){
@@ -45,11 +48,11 @@ export default function forgeConfig({payload,metadata,icon,distribution}){
     optionsForFile:()=>distribution?{hardenedRuntime:true,timestamp:'http://timestamp.apple.com/ts01'}:{hardenedRuntime:false,timestamp:'none'},
     ignore:path=>path.includes('/Contents/Resources/runtime/')
       ?!/\/Contents\/Resources\/runtime\/cua\/(?:chrome-viewport$|node_modules\/.*\.(?:node|dylib)$)/.test(path)
-      :macCode.some(file=>path.endsWith('/'+file))||lstatSync(path).isFile()&&!execFileSync('/usr/bin/file',['--brief',path],{encoding:'utf8'}).startsWith('Mach-O'),
+      :macFiles(metadata).some(file=>path.endsWith('/'+file))||lstatSync(path).isFile()&&!execFileSync('/usr/bin/file',['--brief',path],{encoding:'utf8'}).startsWith('Mach-O'),
    },
    afterCopyExtraResources:[async({buildPath})=>{
     const bundle=join(buildPath,'Homer.app');
-    for(const file of macCode)cpSync(join(payload,basename(file)),join(bundle,file));
+    for(const file of macFiles(metadata)){mkdirSync(join(bundle,file,'..'),{recursive:true});cpSync(join(payload,basename(file)),join(bundle,file));}
     writeDesktopManifest(bundle,metadata);
    }],
   },
@@ -73,7 +76,7 @@ export default function forgeConfig({payload,metadata,icon,distribution}){
     // Nested native addons are signed by Forge; seal their final bytes in the outer signature.
     writeDesktopManifest(bundle,metadata);
     execFileSync('/usr/bin/codesign',['--force','--sign',distribution?.identity??'-',...(distribution?['--timestamp=http://timestamp.apple.com/ts01','--options','runtime','--preserve-metadata=entitlements']:['--timestamp=none']),bundle],{stdio:'inherit'});
-    for(const path of [bundle,...macCode.map(file=>join(bundle,file))])execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',path],{stdio:'inherit'});
+    for(const path of [bundle,...macCode.map(file=>join(bundle,file)),...(metadata.powerWake===1?powerCode.map(file=>join(bundle,file)):[])])execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',path],{stdio:'inherit'});
     if(realpathSync(bundle)!==bundle)throw Error('desktop_bundle_symlink_denied');
     if(distribution){
      const archive=join(app,'Homer-notary.zip');

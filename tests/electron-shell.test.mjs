@@ -76,7 +76,19 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  Object.assign(modules['../homer/scripts/desktop-profile.mjs'],{
   readDesktopCaptureShortcut:()=>native.captureShortcut,
   saveDesktopCaptureShortcut:(_root,shortcut)=>{if(native.shortcutWriteError)throw Error('private_write_failure');native.captureShortcut=shortcut;},
+  readDesktopPowerConfig:()=>native.powerConfig,
+  saveDesktopPowerConfig:(_root,power)=>{if(native.powerWriteError)throw Error('private_write_failure');native.powerConfig=power;},
  });
+ const wakeEvents=[],powerMonitor=new EventEmitter(),powerLocks=new Map();let powerLockId=0;
+ electron.powerMonitor=powerMonitor;
+ electron.powerSaveBlocker={start:type=>{nativeCalls.push(['power-start',type]);const id=++powerLockId;powerLocks.set(id,type);return id;},stop:id=>{nativeCalls.push(['power-stop',id]);powerLocks.delete(id);}};
+ const wakeAdapter={status:async()=>({supported:true,authorization:native.powerAuthorization??'authorized'}),authorize:async()=>{nativeCalls.push(['power-authorize']);return {supported:true,authorization:native.powerAuthorization??'authorized'};},list:async()=>wakeEvents.map(event=>({...event})),schedule:async event=>{nativeCalls.push(['power-schedule',event.at]);wakeEvents.push(event);return event;},cancel:async event=>{nativeCalls.push(['power-cancel',event.at]);const index=wakeEvents.findIndex(item=>item.id===event.id);if(index>=0)wakeEvents.splice(index,1);},close:async()=>{nativeCalls.push(['power-close']);}};
+ wakeAdapter.prepareUpdate=async()=>{nativeCalls.push(['power-update-cleanup']);await native.powerUpdatePending;if(native.powerUpdateError)throw Error('private_power_failure');};
+ const createWakeAdapter=()=>{if(native.powerConstructorError)throw Error('private_wake_context');return wakeAdapter;};
+ modules['../homer/scripts/macos-power.mjs']={createMacWakeAdapter:createWakeAdapter};
+ modules['../homer/scripts/windows-power.mjs']={createWindowsWakeAdapter:createWakeAdapter};
+ const powerSource=transpileModule(readFileSync('src/desktop-power.ts','utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
+ modules['../homer/dist/desktop-power.js']=await import('data:text/javascript;base64,'+Buffer.from(powerSource).toString('base64'));
  Object.assign(account,native.accountApi);
  let timer;const context=vm.createContext({process:{argv:['Homer','--test-profile','/synthetic/profile'],resourcesPath:'/synthetic/Homer.app/Contents/Resources',platform:'darwin',execPath:'C:\\Homer\\Homer.exe',arch:native.arch??'arm64',env:{SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'}},Buffer,URL,AbortController,console:native.console??console,performance:{now:()=>monotonic},setTimeout:cb=>{timer=cb;return 1;},clearTimeout(){}});
  context.process.argv=args;context.process.platform=platform;
@@ -86,10 +98,14 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  const entry=new vm.SourceTextModule(readFileSync(path,'utf8')+'\nexport {createWindow,windowsUpdater}; export const forgetWindowForTest=()=>{window=undefined;};',{context,identifier:path,importModuleDynamically:synthetic,initializeImportMeta:meta=>{meta.url='file://'+path;}});
  await entry.link(async name=>{const exports=modules[name]??createRequire(import.meta.url)(name);const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);},{context});return m;});
  await entry.evaluate();await new Promise(r=>setImmediate(r));
- return {options:native,paths,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,ownershipCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
+ return {options:native,paths,wakeEvents,powerMonitor,powerLocks,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,ownershipCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
 }
 if(!vm.SourceTextModule){
- test('Electron shell contracts run with Node VM module support',()=>{execFileSync(process.execPath,['--experimental-vm-modules','--test',fileURLToPath(import.meta.url)],{stdio:'pipe'});});
+ test('Electron shell contracts run with Node VM module support',()=>{
+  const env={...process.env};delete env.NODE_TEST_CONTEXT;
+  const output=execFileSync(process.execPath,['--import','tsx','--experimental-vm-modules','--test',fileURLToPath(import.meta.url)],{stdio:'pipe',env}).toString();
+  assert.match(output,/# tests [1-9]\d*/);
+ });
 }else{
 
 test('desktop home lock serializes different profiles and runtimes while caches remain profile-local',async()=>{
@@ -142,6 +158,7 @@ for(const mode of ['dead','runtime-live','gateway-live','runtime-unknown','lease
   ['file://'+homer+'/dist/model-config.js']:await import('../src/model-config.ts'),
   ['file://'+homer+'/dist/config.js']:{loadConfig:path=>{assert.equal(path,sourceConfig);return config;}},
   ['file://'+homer+'/dist/recursive-tasks.js']:{RECURSIVE_SCHEMA_VERSION},
+  ['file://'+homer+'/dist/store.js']:await import('../src/store.ts'),
   ['file://'+homer+'/dist/mobile-gateway.js']:{readMobileConfig:()=>({})},
   './trusted-build.mjs':{verifyBuild(){}},
   './dev.mjs':{runDev:async options=>{
@@ -782,6 +799,106 @@ test('retired manual Token launch flags never prompt or spawn a backend',async()
  ]){const f=await fixture(args);assert.equal(f.spawnCount(),0);assert.deepEqual(f.credentials,[]);}
 });
 const permissionEvent=f=>({sender:f.windows[0].webContents,senderFrame:f.windows[0].webContents.mainFrame});
+const powerFacts=patch=>({runtimeAvailable:true,executing:false,displayRequired:false,nextScheduledAt:null,channels:[],...patch});
+for(const platform of ['darwin','win32'])test('optional wake adapter construction cannot prevent startup or execution protection: '+platform,async()=>{
+ const f=await fixture(undefined,undefined,platform,{powerConstructorError:true});
+ assert.equal(f.spawnCount(),1);
+ f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();
+ f.event({kind:'power_acquire',id:31,facts:powerFacts({executing:true,nextScheduledAt:Date.now()+600_000})});await f.tick();
+ const state=await f.handlers.get('homer:power:state')(permissionEvent(f));
+ assert.equal(state.protection,'system');assert.equal(state.wake.status,'unavailable');
+ assert.equal(state.preferences.wakeScheduled,true);
+ assert.ok(f.sent.some(line=>JSON.parse(line).kind==='power_ack'&&JSON.parse(line).id===31));
+ assert.equal(f.nativeCalls.some(call=>call[0]==='power-schedule'||call[0]==='power-authorize'),false);
+ f.child.emit('close',1,null);await f.tick();assert.equal(f.powerLocks.size,0);
+});
+test('malformed saved power identity cannot block the normal desktop host',async()=>{
+ const f=await permissionFixture({powerConfig:{instanceId:['a'.repeat(64)],preferences:{keepAwake:false,pollMessages:true,wakeScheduled:true,pollIntervalMinutes:15}}});
+ assert.equal(f.spawnCount(),1);
+ const state=await f.handlers.get('homer:power:state')(permissionEvent(f));assert.equal(state.wake.error,'power_preferences_unconfirmed');
+ f.child.emit('close',1,null);await f.tick();
+});
+test('the first actual wake demand offers authorization once and remembers postponement',async()=>{
+ const response=options=>options.message==='允许 Homer 请求系统唤醒？'?0:1;
+ const f=await permissionFixture({powerAuthorization:'required',response});
+ assert.equal(f.messages.some(message=>message.message==='允许 Homer 请求系统唤醒？'),false);
+ f.event({kind:'power_state',facts:powerFacts({nextScheduledAt:Date.now()+600_000})});await f.tick();
+ assert.equal(f.messages.filter(message=>message.message==='允许 Homer 请求系统唤醒？').length,1);
+ assert.equal(f.options.powerConfig.authorizationAsked,true);assert.equal(f.nativeCalls.some(call=>call[0]==='power-authorize'),false);
+ f.event({kind:'power_state',facts:powerFacts({nextScheduledAt:Date.now()+300_000})});await f.tick();
+ assert.equal(f.messages.filter(message=>message.message==='允许 Homer 请求系统唤醒？').length,1);
+ const next=await permissionFixture({powerAuthorization:'required',powerConfig:f.options.powerConfig,response});
+ next.event({kind:'power_state',facts:powerFacts({nextScheduledAt:Date.now()+600_000})});await next.tick();
+ assert.equal(next.messages.some(message=>message.message==='允许 Homer 请求系统唤醒？'),false);
+ f.child.emit('close',1,null);next.child.emit('close',1,null);await f.tick();await next.tick();
+});
+for(const failure of [false,true])test('macOS update cleans the authorized power helper before replacing the app '+failure,async()=>{
+ const f=await updateFixture({powerUpdateError:failure});
+ f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ const names=f.nativeCalls.map(call=>call[0]);
+ assert.ok(names.includes('power-update-cleanup'));
+ assert.ok(names.indexOf('power-close')<names.indexOf('power-update-cleanup'));
+ assert.equal(names.includes('install-update'),!failure);
+ if(failure)assert.equal((await updateCall(f,'state')).error,'update_power_cleanup_unconfirmed');
+});
+test('quitting a staged Mac update retries native cleanup and cannot bypass a prior cleanup failure',async()=>{
+ const f=await updateFixture({powerUpdateError:true,response:options=>options.message==='更新尚未确认，如何继续？'?2:1});let exits=0;f.app.on('quit',()=>{exits++;});
+ f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal((await updateCall(f,'state')).error,'update_power_cleanup_unconfirmed');
+ f.app.quit();await f.tick();assert.equal(exits,0);
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='power-update-cleanup').length,2);
+ f.options.powerUpdateError=false;f.app.quit();await f.tick();assert.equal(exits,1);
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='power-update-cleanup').length,3);
+ assert.equal(f.nativeCalls.some(call=>call[0]==='install-update'),false);
+});
+test('staged Mac update quit rechecks its caller after asynchronous native cleanup',async()=>{
+ const f=await updateFixture({powerUpdateError:true,response:options=>options.message==='更新尚未确认，如何继续？'?2:1});let exits=0;f.app.on('quit',()=>{exits++;});
+ f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ let release;f.options.powerUpdateError=false;f.options.powerUpdatePending=new Promise(resolve=>{release=resolve;});
+ f.app.quit();await f.tick();assert.equal(exits,0);
+ await f.windows[0].loadURL('http://127.0.0.1:56789/');release();await f.tick();
+ assert.equal(exits,0);assert.equal(f.nativeCalls.some(call=>call[0]==='install-update'),false);
+});
+test('unavailable native wake cleanup prevents replacing the Mac helper while ordinary startup remains usable',async()=>{
+ const f=await updateFixture({powerConstructorError:true});
+ assert.equal(f.spawnCount(),1);
+ f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(f.nativeCalls.some(call=>call[0]==='install-update'),false);
+ assert.equal((await updateCall(f,'state')).error,'update_power_cleanup_unconfirmed');
+});
+test('desktop power IPC restricts settings to the trusted page and acknowledges protection before native wake work',async()=>{
+ const f=await permissionFixture(),event=permissionEvent(f),state=f.handlers.get('homer:power:state'),update=f.handlers.get('homer:power:update');
+ assert.equal(typeof state,'function');assert.equal(typeof update,'function');
+ await assert.rejects(()=>state({...event,senderFrame:{...event.senderFrame}}),/desktop_power_forbidden/);
+ await assert.rejects(()=>update(event,{keepAwake:true,command:'unsafe'}),/power_preferences_invalid/);
+ f.event({kind:'power_acquire',id:17,facts:powerFacts({executing:true})});
+ assert.equal(f.powerLocks.size,1);assert.ok(f.sent.some(line=>JSON.parse(line).kind==='power_ack'&&JSON.parse(line).id===17));
+ const at=Math.ceil((Date.now()+600_000)/1000)*1000;
+ f.event({kind:'power_state',facts:powerFacts({executing:true,nextScheduledAt:at})});await f.tick();
+ await update(event,{keepAwake:true,pollMessages:false});assert.equal(f.wakeEvents.length,1);
+ assert.equal(f.options.powerConfig.preferences.keepAwake,true);
+ assert.equal(f.nativeCalls.some(call=>call[0]==='power-authorize'),false);
+ f.child.emit('close',1,null);await f.tick();assert.equal(f.powerLocks.size,0);assert.equal(f.wakeEvents.length,0);
+});
+test('a failed preference save cannot apply unsaved power changes',async()=>{
+ const f=await permissionFixture({powerWriteError:true}),event=permissionEvent(f),update=f.handlers.get('homer:power:update');
+ assert.equal(typeof update,'function');
+ await assert.rejects(()=>update(event,{keepAwake:true}),/power_preferences_unconfirmed/);
+ assert.equal(f.powerLocks.size,0);
+});
+test('desktop power preload forwards fixed actions without exposing Electron events',async()=>{
+ const exposed={},calls=[],listeners=new Map();
+ vm.runInNewContext(readFileSync('packaging/electron/preload.cjs','utf8'),{process:{isMainFrame:true},require:()=>({contextBridge:{exposeInMainWorld:(name,api)=>exposed[name]=api},ipcRenderer:{invoke:async(...args)=>{calls.push(args);},on:(name,listener)=>listeners.set(name,listener),removeListener:(name,listener)=>{assert.equal(listeners.get(name),listener);listeners.delete(name);}}})});
+ const api=exposed.homerDesktopPower;assert.ok(api);
+ await api.state();await api.update({keepAwake:true});await api.authorize();
+ assert.deepEqual(calls,[['homer:power:state'],['homer:power:update',{keepAwake:true}],['homer:power:authorize']]);
+ await assert.rejects(api.state('extra'),/arguments/);await assert.rejects(api.update({},{}),/arguments/);
+ let count=0;const off=api.onChanged((...args)=>{assert.deepEqual(args,[]);count++;});listeners.get('homer:power:changed')({secret:true});assert.equal(count,1);off();assert.equal(listeners.size,0);
+});
 async function permissionFixture(native){const f=await fixture(undefined,undefined,undefined,native);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;}
 const settingsItem=f=>f.handlers.get('menu')[0].submenu.find(item=>item.label==='设置…');
 const settingsReady=(f,w=f.windows.at(-1),...args)=>f.handlers.get('homer:settings:ready')({sender:w.webContents,senderFrame:w.webContents.mainFrame},...args);
@@ -1367,7 +1484,7 @@ test('preload exposes fixed Promise methods and only the screen settings token i
  for(const isMainFrame of [true,false,undefined]){
   const exposed=[],calls=[];vm.runInNewContext(source,{process:{isMainFrame},require:name=>{assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(...args)=>exposed.push(args)},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {synthetic:true};}}};}});
   if(isMainFrame!==true){assert.equal(exposed.length,0);continue;}
-  assert.equal(exposed.length,6);
+  assert.equal(exposed.length,7);
   const tour=exposed.find(([name])=>name==='homerDesktopFeatureTour')[1];
   assert.deepEqual(Object.keys(tour),['pending','dismiss']);
   for(const name of Object.keys(tour)){

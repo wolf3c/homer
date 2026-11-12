@@ -11,6 +11,7 @@ import {ConversationHistory} from '../src/web-history.js';
 import {MainInputs} from '../src/recursive-main-inputs.js';
 import {MainProcessHistory} from '../src/main-process.js';
 import {projectConversation} from '../src/conversation-projection.js';
+import {withTaskSources} from '../src/web-homer.js';
 import {unconfirmedInputs} from '../ui/conversation-client.js';
 function fixture(){
  mkdirSync(resolve('.codex/scratch/conversation-projection-implementation'),{recursive:true});
@@ -92,6 +93,23 @@ test('insertion order survives clock rollback, no-final host text survives unkno
   f.history.record('first','synthetic','同文');f.history.record('second','synthetic','同文');f.store.db.prepare('UPDATE conversation_messages SET createdAt=-1 WHERE id=?').run('second');
   f.processes.start({id:'no-final',threadId:'synthetic',sourceKind:'worker',sourceMessageIds:[],messageId:'no-final'},'turn');f.history.record('no-final','synthetic','公开历史正文','running');f.processes.finish('no-final','unknown');
   assert.deepEqual(f.state().messages.map(m=>m.id),['first','second','no-final']);assert.equal(f.state().messages.at(-1)!.text,'公开历史正文');assert.equal(f.state().messages.at(-1)!.status,'interrupted');
+ }finally{f.close();}
+});
+test('scheduled processing has its own source label, preserves host text and never projects a user final or Worker task',()=>{
+ const f=fixture();try{
+  f.processes.start({id:'scheduled-node',threadId:'synthetic',sourceKind:'scheduled',sourceMessageIds:['scheduled-delivery'],messageId:'scheduled-node'},'scheduled-turn');
+  f.history.record('scheduled-node','synthetic','定时输入的原处理记录','running');
+  f.processes.finish('scheduled-node','unknown');
+  let message=f.state().messages[0]!;
+  assert.equal(message.sourceLabel,'定时消息');assert.equal(message.text,'定时输入的原处理记录');assert.equal(message.requestId,null);assert.equal(message.source,undefined);
+  assert.equal(message.process?.sourceKind,'scheduled');assert.equal(message.status,'interrupted');assert.equal(f.state().messages.filter(m=>m.role==='user').length,0);
+  const enriched=withTaskSources(f.store.db,[message],'synthetic')[0]!;
+  assert.equal(enriched.taskSources,undefined);assert.equal(enriched.taskSourceUnresolved,undefined);
+  const node=message.process!,native={id:'scheduled-turn:native-final',text:'非公开内部最终答复'};
+  message=projectConversation([{...message,text:''}],[{...node,final:native,items:[{...native,kind:'commentary',phase:'final_answer',seq:1,revision:1,completed:true}]}],[]).messages[0]!;
+  assert.equal(message.text,'');assert.equal(message.finalAnswers,undefined);assert.equal(message.process?.final,undefined);
+  message=projectConversation([{...message,text:'已保存的宿主处理记录'}],[{...node,final:{id:node.messageId,text:'已保存的宿主处理记录'}}],[]).messages[0]!;
+  assert.equal(message.text,'已保存的宿主处理记录');assert.equal(message.process?.final?.id,node.messageId);
  }finally{f.close();}
 });
 test('a resumed attempt with no ACK appends its own host outcome and does not duplicate the original user or change the ended node',()=>{

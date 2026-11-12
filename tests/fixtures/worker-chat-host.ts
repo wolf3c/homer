@@ -5,8 +5,8 @@ import {Homer,type Message} from '../../src/service.js';
 import type {EngineLike,EngineOptions,ToolCall,TurnResult} from '../../src/engine.js';
 import type {ChannelAdapter} from '../../src/channel-plugin.js';
 export const until=async(check:()=>boolean)=>{
-  const end=Date.now()+4000;
-  while(!check()){if(Date.now()>end)throw Error('worker_chat_test_timeout');await new Promise(resolve=>setTimeout(resolve,5));}
+  const end=performance.now()+4000;
+  while(!check()){if(performance.now()>end)throw Error('worker_chat_test_timeout');await new Promise(resolve=>setTimeout(resolve,5));}
 };
 export function fixture(adapters?:readonly ChannelAdapter[], beforeEngineStart?:()=>Promise<void>){
   const scratch=resolve('.codex/scratch/worker-chat-b');mkdirSync(scratch,{recursive:true});

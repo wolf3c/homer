@@ -77,6 +77,16 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     webRequests.set(id,{accept,reject,timeout,method:action==='channel-state'?'channel-state':'desktop_account'});
     if(!send({kind:'desktop_account',id,method:action,...(input===undefined?{}:{input})})){clearTimeout(timeout);webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));}
   }));
+  desktop?.bindPower?.((action,input)=>{
+    if(!['running','management'].includes(phase)||!child?.connected||stopped)return Promise.reject(Error('desktop_power_unavailable'));
+    if(action==='ack'&&Number.isSafeInteger(input?.id)&&input.id>0){send({kind:'desktop_power_ack',id:input.id});return Promise.resolve();}
+    if(action!=='resume'||input!==undefined&&(!input||typeof input!=='object'||Object.keys(input).length!==1||typeof input.afterSleep!=='boolean'))return Promise.reject(Error('desktop_power_forbidden'));
+    return new Promise((accept,reject)=>{
+      const id=randomUUID(),timeout=setTimeout(()=>{webRequests.delete(id);reject(Error('power_recheck_unconfirmed'));},15000);
+      webRequests.set(id,{accept,reject,timeout,method:'desktop_power'});
+      if(!send({kind:'desktop_power',id,method:'resume',...(input===undefined?{}:{input})})){clearTimeout(timeout);webRequests.delete(id);reject(Error('power_recheck_unconfirmed'));}
+    });
+  });
   // UI adoption keeps the same executor and transport. Read-only refreshes
   // cannot starve it; mutations must settle before adopting trusted assets.
   const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["channel-state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read","media.preview"].includes(item.method));
@@ -224,6 +234,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     own.send({ kind: "init", desktop:!!desktop, config: build.config, buildHash:build.hash,terminalDeltas:json,webUploadProtocol:webPort===undefined?0:1, thread: expectedThread });
     async function receive(m) {
       if(own!==child)return;
+      if(desktop&&(m.kind==='power_state'||m.kind==='power_acquire')){desktop.onEvent?.({kind:m.kind,...(m.kind==='power_acquire'?{id:m.id}:{}),facts:m.facts});return;}
       if(desktop&&m.kind==='desktop_stopped'){desktopStoppedConfirmed=m.confirmed===true;return;}
       if(desktop&&m.kind==='management_ready'){
         if(m.stateInvalidationProtocol!==1)throw Error('state_invalidation_protocol_required');

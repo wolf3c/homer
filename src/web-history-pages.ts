@@ -213,11 +213,12 @@ export class WebHistoryPages{
    try{if(taskIds.length)titles=new Map((this.db.prepare(`SELECT id,title FROM tasks WHERE id IN (${marks(taskIds)})`).all(...taskIds) as {id:string;title:string}[]).map(row=>[row.id,row.title]));}catch{/* Missing metadata must not block the queue. */}
    try{if(interactionIds.length)interactions=new Map((this.db.prepare(`SELECT id,kind,runId FROM worker_interactions WHERE id IN (${marks(interactionIds)})`).all(...interactionIds) as {id:string;kind:string;runId:string}[]).map(row=>[row.id,row]));}catch{/* Fall back to a generic interaction. */}
    return {...page,items:page.items.flatMap<import('./recursive-main-inputs.js').MainDispatchInput&{user?:import('./web-history.js').ConversationMessage;statusText:string}>(item=>{
-    if(item.origin==='worker'){
+    if(item.origin!=='user'){
+     const statusText=item.state==='queued'?'等待主 Agent 处理':item.state==='processing'?'主 Agent 正在接收或处理':'接收状态待核对';
+     if(item.origin==='scheduled')return [{...item,payload:null,text:'定时消息 · '+statusText,statusText}];
      const payload=item.payload&&typeof item.payload==='object'?item.payload as {interactionId?:unknown}:{};
      const interaction=typeof payload.interactionId==='string'?interactions.get(payload.interactionId):undefined;
      const kind=item.kind==='interaction_required'?(interaction?.runId===item.runId?(interaction.kind==='question'?'提问':interaction.kind==='authorization'?'操作或授权请求':'交互请求'):'交互请求'):item.kind==='worker_reply'?'执行信息已返回':item.kind==='task_archived'?'事项归档通知':'协作消息';
-     const statusText=item.state==='queued'?'等待主 Agent 处理':item.state==='processing'?'主 Agent 正在接收或处理':'接收状态待核对';
      const title=item.taskId?titles.get(item.taskId)?.replace(/\s+/g,' ').trim():undefined;
      return [{...item,payload:null,text:[kind,statusText,title?'事项：'+title:'事项标题暂不可用'].join(' · '),statusText}];
     }

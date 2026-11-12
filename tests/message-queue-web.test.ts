@@ -49,6 +49,39 @@ function ownerUnit(t:any,transport:(path:string,input:any,signal?:AbortSignal)=>
  t.after(()=>host.unmount());return {storage,host,render,scope:(threadId:string)=>{state={...state,threadId};return render();}};
 }
 const settle=()=>new Promise<void>(done=>setImmediate(done));
+test('all-source queue keeps scheduled receipts without exposing payload or inventing Worker task metadata',()=>{
+ const f=historyFixture(0),reader=new WebHistoryPages(f.history,f.processes,f.inputs);
+ try{
+  for(const [state,statusText] of [['queued','等待主 Agent 处理'],['processing','主 Agent 正在接收或处理'],['uncertain','接收状态待核对']] as const){
+   const item={origin:'scheduled' as const,source:'scheduled' as const,kind:'scheduled_message',messageId:'scheduled-delivery',seq:1,revision:2,state,editable:false as const,movable:false,taskId:null,taskVersion:null,runId:null,senderAgentId:'host',payload:{text:'PRIVATE_SCHEDULE_BODY',sourceRequestId:'PRIVATE_SOURCE'},text:'PRIVATE_SCHEDULE_BODY'};
+   const original=JSON.stringify(item);
+   f.inputs.dispatchPage=((_cursor?:string,_readEpoch?:string,sources?:'all')=>{assert.equal(sources,'all');return {items:[item],totalWaiting:state==='queued'?1:0,nextCursor:null,orderVersion:'scheduled-order'};}) as unknown as typeof f.inputs.dispatchPage;
+   const page=reader.dispatchQueue(undefined,'scheduled-epoch','all');
+   assert.equal(page.items.length,1);const projected=page.items[0]!;
+   assert.ok(projected.origin==='scheduled');assert.equal(projected.text,'定时消息 · '+statusText);assert.equal(projected.statusText,statusText);assert.equal(projected.state,state);assert.equal(projected.movable,false);assert.equal(projected.editable,false);
+   assert.equal(projected.payload,null);assert.equal(projected.taskId,null);assert.equal(projected.taskVersion,null);assert.equal(projected.runId,null);assert.equal('user' in projected,false);
+   assert.doesNotMatch(JSON.stringify(page),/PRIVATE|Worker|事项/);assert.equal(JSON.stringify(item),original);
+  }
+ }finally{f.close();}
+});
+test('scheduled queue rows render the timer source and stay immutable barriers without user actions',async t=>{
+ const oldWindow=Object.getOwnPropertyDescriptor(globalThis,'window');Object.defineProperty(globalThis,'window',{value:new EventTarget(),configurable:true});
+ const jsx=(type:unknown,props:unknown,key?:string)=>({type,props,key});
+ const find=(node:any,predicate:(node:any)=>boolean):any=>predicate(node)?node:Array.isArray(node)?node.map(child=>find(child,predicate)).find(Boolean):node?.props?find(node.props.children,predicate):undefined;
+ const bindings:any[]=[],items=[{origin:'user',messageId:'before',state:'queued',movable:true,editable:true,input:{requestId:'before',text:'前面的用户消息'}},{origin:'scheduled',messageId:'scheduled-delivery',state:'queued',movable:false,editable:false,text:'定时消息 · 等待主 Agent 处理'},{origin:'user',messageId:'after',state:'queued',movable:true,editable:true,input:{requestId:'after',text:'后面的用户消息'}}];
+ const page={items,threadId:'T',readEpoch:'E',orderVersion:'V',totalWaiting:3,nextCursor:null},state={threadId:'T',messages:[],features:{queueSources:1},history:{readEpoch:'E'},queueDispatch:{orderVersion:'V',totalWaiting:3}};
+ const host=hookHost('ui/homer-message-queue.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{ChevronRightIcon:'chevron'},'@dnd-kit/react':{DragDropProvider:'provider'},'@dnd-kit/react/sortable':{isSortable:()=>false},'@dnd-kit/abstract/modifiers':{RestrictToVerticalAxis:{}},'./vendor/assistant-ui/message-queue':{MessageQueue:'queue'},'./queue-operations':{queuePost:async()=>page},'./homer-message-queue.css':{}});
+ const rows=hookHost('ui/vendor/assistant-ui/message-queue.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'lucide-react':{BotIcon:'bot',ClockIcon:'clock',UserRoundIcon:'user',XIcon:'cancel'},'@dnd-kit/react/sortable':{useSortable:(input:unknown)=>{bindings.push(input);return {}; }},'./message-queue.css':{}});
+ t.after(()=>{host.unmount();rows.unmount();oldWindow?Object.defineProperty(globalThis,'window',oldWindow):delete (globalThis as any).window;});
+ const render=()=>host.render(()=>host.exports.HomerMessageQueue({state,connected:true,operations:{locked:false,run:()=>assert.fail('scheduled display never writes')}}));
+ render();await settle();const queue=find(render(),node=>node?.type==='queue');
+ assert.equal(queue.props.messages[1].origin,'scheduled');assert.equal(queue.props.messages[1].text,'定时消息 · 等待主 Agent 处理');assert.equal(queue.props.messages[1].cancellable,false);assert.equal(queue.props.messages[1].movable,false);assert.equal(queue.props.messages[1].hidden,false);
+ const rendered=rows.exports.MessageQueue(queue.props).props.children.props.children.map((row:any)=>row.type(row.props)),scheduled=rendered[1];
+ assert.equal(scheduled.props.children[0].props['aria-label'],'定时消息，第 2 条');assert.equal(scheduled.props.children[0].props.title,'定时消息');assert.equal(scheduled.props.children[0].props.children.type,'clock');assert.equal(find(scheduled,node=>node?.type==='button'),undefined);
+ assert.deepEqual(bindings.map(({id,group,disabled})=>({id,group,disabled})),[{id:'before',group:'before',disabled:true},{id:'scheduled-delivery',group:'scheduled-delivery',disabled:true},{id:'after',group:'after',disabled:true}]);
+ const standalone=rows.exports.MessageQueue({messages:[{...queue.props.messages[1],cancellable:undefined}],onCancel:()=>assert.fail('scheduled messages cannot be cancelled as user messages')}).props.children.props.children[0];
+ assert.equal(find(standalone.type(standalone.props),node=>node?.type==='button'),undefined,'a scheduled source never inherits the default user cancellation control');
+});
 test('move owner times out only move, keeps exact unknown identity, then automatically reads its receipt once',async t=>{
  const deadlines:{ms:number;controller:AbortController}[]=[],writes:any[]=[],reads:any[]=[];let committed=false;
  t.mock.method(AbortSignal,'timeout',(ms:number)=>{const controller=new AbortController();deadlines.push({ms,controller});return controller.signal;});

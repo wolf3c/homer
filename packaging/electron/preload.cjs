@@ -17,6 +17,16 @@ if(process.isMainFrame===true){
  const invoke=(channel,args)=>args.length
   ?Promise.reject(new Error('desktop_permissions_arguments'))
   :ipcRenderer.invoke(channel);
+ contextBridge.exposeInMainWorld('homerDesktopPower',{
+  state:(...args)=>invoke('homer:power:state',args),
+  update:(...args)=>args.length===1?ipcRenderer.invoke('homer:power:update',args[0]):Promise.reject(new Error('desktop_power_arguments')),
+  authorize:(...args)=>invoke('homer:power:authorize',args),
+  onChanged:callback=>{
+   if(typeof callback!=='function')throw new TypeError('desktop_power_callback');
+   const listener=()=>callback();ipcRenderer.on('homer:power:changed',listener);
+   return ()=>ipcRenderer.removeListener('homer:power:changed',listener);
+  },
+ });
  contextBridge.exposeInMainWorld('homerDesktopPermissions',{
   check:(...args)=>invoke('homer:desktop-permissions:check',args),
   promptAccessibility:(...args)=>invoke('homer:desktop-permissions:prompt-accessibility',args),

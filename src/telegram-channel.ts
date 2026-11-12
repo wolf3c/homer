@@ -143,6 +143,7 @@ function parseTelegramAccounts(value:unknown):TelegramAccount[]{
 
 export class TelegramChannel implements ChannelAdapter {
   readonly id='telegram';
+  readonly offlineReplayMs=24*60*60_000;
   private readonly bots=new Map<string,Bot>();
   private groups?:ReturnType<ChannelPlugin['telegramGroups']>;
 
@@ -179,6 +180,7 @@ export class TelegramChannel implements ChannelAdapter {
   async connect(...[address,receive,signal,boundAt,bindingId]:Parameters<NonNullable<ChannelAdapter['connect']>>){
     const bot=this.bot(address);
     if(!bot)throw Error('telegram_binding_invalid');
+    this.health.set(address.accountKey,'checking');
     const groups=bindingId&&this.groups||undefined;
     const recent=new Map<number,Map<number|null,TelegramContextMessage[]>>();
     let upstream:TelegramUpstream|undefined;

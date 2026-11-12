@@ -22,6 +22,8 @@ export function readDesktopCaptureShortcut(root){
 export function saveDesktopCaptureShortcut(root,shortcut){
  writeDesktopProfile(root,{captureShortcut:shortcut});
 }
+export function readDesktopPowerConfig(root){return JSON.parse(privateFile(join(root,markerName))).power;}
+export function saveDesktopPowerConfig(root,power){writeDesktopProfile(root,{power});}
 function writeDesktopProfile(root,fields){
  const file=join(root,markerName),temporary=file+'.pending';
  let fd,created=false;

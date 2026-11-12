@@ -12,7 +12,7 @@ export function verifiedDesktopResources(identity:DesktopResourceIdentity){
  if(createHash('sha256').update(manifestBytes).digest('hex')!==identity.manifestSha256)throw Error('desktop_resource_changed');
  const manifest=JSON.parse(manifestBytes.toString('utf8'));
  const helper=join(root,windows?'resources/homer-image-decoder.mjs':'Contents/MacOS/homer-image-decoder');
- const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>{
+ const codeFiles=(windows?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node',...(manifest.powerWake===1?['Contents/MacOS/homer-power-client','Contents/MacOS/homer-power-helper','Contents/Library/LaunchDaemons/app.homer.desktop.power.plist']:[])]).map(path=>{
   const file=join(root,path);if(realpathSync(file)!==file)throw Error('desktop_resource_changed');
   return {path,sha256:createHash('sha256').update(readFileSync(file)).digest('hex')};
  });

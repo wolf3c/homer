@@ -20,7 +20,7 @@ export function fixture(scratch='.codex/scratch/chat-architecture-implementation
   inputs.accept({requestId,text});
   for(;;){const q=inputs.claim([],'all');if(!q)throw Error('synthetic_source_not_claimable');
    const generation='generation:'+q.messageId;inputs.started(q.messageId,q.revision,generation,'turn:'+q.messageId);
-   if(q.origin==='worker')store.transaction(()=>tasks.completeMainMessagesInTransaction([q.messageId],generation));else {inputs.finish(q.messageId,q.revision,'completed');store.finishRequest(q.input.requestId,'Synthetic source handled');}
+   if(q.origin!=='user')store.transaction(()=>tasks.completeMainMessagesInTransaction([q.messageId],generation));else {inputs.finish(q.messageId,q.revision,'completed');store.finishRequest(q.input.requestId,'Synthetic source handled');}
    if(q.origin==='user'){if(q.input.requestId!==requestId)throw Error('synthetic_source_order_conflict');break;}
   }
   return {...main,sourceRequestId:requestId};

@@ -1,4 +1,4 @@
-import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences,autoUpdater,globalShortcut,screen,desktopCapturer} from 'electron';
+import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences,autoUpdater,globalShortcut,screen,desktopCapturer,powerSaveBlocker,powerMonitor} from 'electron';
 import {readFileSync,existsSync,mkdirSync,createReadStream} from 'node:fs';
 import {lstat,writeFile} from 'node:fs/promises';
 import {join,resolve,win32} from 'node:path';
@@ -8,7 +8,10 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {randomUUID,createHash} from 'node:crypto';
 import {types} from 'node:util';
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
-import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopChatGPTConfig,readDesktopCaptureShortcut,saveDesktopCaptureShortcut} from '../homer/scripts/desktop-profile.mjs';
+import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopChatGPTConfig,readDesktopCaptureShortcut,saveDesktopCaptureShortcut,readDesktopPowerConfig,saveDesktopPowerConfig} from '../homer/scripts/desktop-profile.mjs';
+import {DesktopPowerCoordinator,POWER_DEFAULTS,validatePowerPreferences} from '../homer/dist/desktop-power.js';
+import {createMacWakeAdapter} from '../homer/scripts/macos-power.mjs';
+import {createWindowsWakeAdapter} from '../homer/scripts/windows-power.mjs';
 import {CHATGPT_MODEL_DEFAULTS,chatgptModelConfig,chatgptModelError,validateChatGPTSelection} from '../homer/dist/model-config.js';
 import {processIdentity,leaseOwnerGone} from '../homer/dist/processes.js';
 import {DesktopChannels} from '../homer/dist/desktop-channels.js';
@@ -23,6 +26,82 @@ const resources=process.resourcesPath,bundle=process.platform==='win32'?resolve(
 let window,child,origin,acknowledged=false,startupRefused=false,closed=false,exitCode,exitSignal,quitPending=false,quitSent=false,allowQuit=false,stopTimer,permissionNavigation=0;
 let deepseek=false;
 let desktopAccessToken;
+let power,powerWakeAdapter,powerProfile,powerConfiguration,powerPreferenceError,powerAuthorizationOffering=false,powerClosing,powerExitReady=false,powerExitChecking=false,powerUpdateReady=false,powerUpdatePending;
+const powerRequests=new Map();
+function powerChanged(){
+ if(!window||window.isDestroyed()||!origin)return;
+ const frame=window.webContents.mainFrame,event={sender:window.webContents,senderFrame:frame};
+ if(permissionCaller(event,frame))frame.send('homer:power:changed');
+ offerPowerAuthorization();
+}
+function offerPowerAuthorization(){
+ if(!power||!origin||powerPreferenceError||powerAuthorizationOffering||powerConfiguration.authorizationAsked||quitPending||closed)return;
+ const frame=window?.webContents.mainFrame;
+ if(!permissionCaller({sender:window?.webContents,senderFrame:frame},frame))return;
+ const state=power.state();
+ if(!state.runtimeAvailable||state.wake.status!=='authorization-required'||state.wake.authorization!=='required')return;
+ powerAuthorizationOffering=true;powerConfiguration={...powerConfiguration,authorizationAsked:true};
+ try{saveDesktopPowerConfig(powerProfile,powerConfiguration);}catch{powerPreferenceError=true;powerAuthorizationOffering=false;return;}
+ const currentWindow=window,navigation=permissionNavigation;
+ void dialog.showMessageBox(currentWindow,{type:'question',title:'荷马',message:'允许 Homer 请求系统唤醒？',detail:'定时消息或渠道检查需要系统授权。允许后，Homer 可按设置请求唤醒电脑；不会自动解锁。也可以稍后在「电源与唤醒」中授权或关闭自动唤醒。',buttons:['稍后','授权系统唤醒'],defaultId:0,cancelId:0}).then(async({response})=>{
+  if(response===1&&window===currentWindow&&!currentWindow.isDestroyed()&&navigation===permissionNavigation&&!quitPending&&!closed)await power.authorize();
+ }).catch(()=>{}).finally(()=>{powerAuthorizationOffering=false;});
+}
+function powerState(){
+ const state=power.state();
+ return powerPreferenceError?{...state,wake:{...state.wake,status:'error',error:'power_preferences_unconfirmed'}}:state;
+}
+function recheckRuntimePower(afterSleep){
+ if(!child||closed||quitSent)return Promise.resolve();
+ return new Promise((resolve,reject)=>{
+  const id=++nativeSequence,timer=setTimeout(()=>{powerRequests.delete(id);reject(Error('power_recheck_unconfirmed'));},18000);
+  powerRequests.set(id,{resolve,reject,timer});
+  child.stdin.write(JSON.stringify({kind:'power_resume',id,afterSleep})+'\n',error=>{if(error){clearTimeout(timer);powerRequests.delete(id);reject(Error('power_recheck_unconfirmed'));}});
+ });
+}
+function registerDesktopPower(profile){
+ powerProfile=profile;
+ try{
+  powerConfiguration=readDesktopPowerConfig(profile);
+  if(powerConfiguration===undefined){powerConfiguration={instanceId:randomUUID().replaceAll('-','')+randomUUID().replaceAll('-',''),preferences:{...POWER_DEFAULTS}};saveDesktopPowerConfig(profile,powerConfiguration);}
+  if(!powerConfiguration||typeof powerConfiguration.instanceId!=='string'||!/^[a-f0-9]{64}$/.test(powerConfiguration.instanceId)||Object.keys(powerConfiguration).some(key=>!['instanceId','preferences','authorizationAsked'].includes(key))||powerConfiguration.authorizationAsked!==undefined&&typeof powerConfiguration.authorizationAsked!=='boolean')throw Error('power_preferences_invalid');
+  powerConfiguration={...powerConfiguration,preferences:validatePowerPreferences(powerConfiguration.preferences)};
+ }catch{
+  powerPreferenceError=true;
+  powerConfiguration={instanceId:createHash('sha256').update('homer-power-recovery:'+profile).digest('hex'),preferences:{...POWER_DEFAULTS,pollMessages:false,wakeScheduled:false}};
+ }
+ const options={bundle,resources,profile,instanceId:powerConfiguration.instanceId,onWake:()=>{void power?.resume(false);}};
+ try{powerWakeAdapter=process.platform==='darwin'?createMacWakeAdapter(options):createWindowsWakeAdapter(options);}
+ catch{
+  const unavailable=async()=>({supported:false,authorization:'unavailable'}),reject=async()=>{throw Error('wake_adapter_unavailable');};
+  powerWakeAdapter={status:unavailable,authorize:unavailable,list:reject,schedule:reject,cancel:reject,close:async()=>{},prepareUpdate:reject};
+ }
+ power=new DesktopPowerCoordinator({blocker:powerSaveBlocker,wake:powerWakeAdapter,preferences:powerConfiguration.preferences,eventId:()=>randomUUID().replaceAll('-',''),check:recheckRuntimePower,onChanged:powerChanged});
+ powerMonitor.on('resume',()=>{void power.resume();});
+ for(const event of ['on-ac','on-battery','unlock-screen'])powerMonitor.on(event,()=>{void power.refresh();});
+ for(const action of ['state','update','authorize'])ipcMain.handle('homer:power:'+action,async(event,...args)=>{
+  const frame=event.senderFrame,navigation=permissionNavigation;
+  if(!permissionCaller(event,frame)||args.length!==(action==='update'?1:0)||quitSent)throw Error('desktop_power_forbidden');
+  if(action==='update'){
+   const patch=args[0];
+   if(!patch||typeof patch!=='object'||Array.isArray(patch)||!Object.keys(patch).length)throw Error('power_preferences_invalid');
+   const preferences=validatePowerPreferences({...powerConfiguration.preferences,...patch});
+   const updated={...powerConfiguration,preferences};
+   try{saveDesktopPowerConfig(profile,updated);}catch{throw Error('power_preferences_unconfirmed');}
+   powerConfiguration=updated;powerPreferenceError=undefined;await power.setPreferences(preferences);
+  }else if(action==='authorize')await power.authorize();
+  else await power.refresh();
+  if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_power_forbidden');
+  return powerState();
+ });
+}
+function closeDesktopPower(){return powerClosing??=power?.close()??Promise.resolve(true);}
+async function preparePowerUpdate(){
+ if(process.platform!=='darwin'||powerUpdateReady)return;
+ const wasAuthorized=power?.state().wake.authorization==='authorized';await powerWakeAdapter?.prepareUpdate();
+ if(wasAuthorized){const updated={...powerConfiguration,authorizationAsked:false};saveDesktopPowerConfig(powerProfile,updated);powerConfiguration=updated;}
+ powerUpdateReady=true;
+}
 let desktopProfile,modelSource='codex',switchSource,nativeStatus,nativeError,nativeSequence=0,nativeRead;
 const nativeRequests=new Map();
 function nativeAccount(action,input){
@@ -749,6 +828,17 @@ function finishQuit(){
  if(updateStopping?!updateConfirmed():!confirmed())return;
  if(windowsUpdater&&updateStopping&&updateState?.status==='error'){windowsUpdateFailed();return;}
  if(updateState?.status==='ready'&&!updateStopping){updateFailed('update_service_stopped');return;}
+ if(!powerExitReady){
+  if(powerExitChecking)return;powerExitChecking=true;
+  void closeDesktopPower().then(async clean=>{
+   if(!clean){const {response}=await dialog.showMessageBox(window,{type:'warning',title:'荷马',message:'系统唤醒清理未确认',detail:'荷马已停止待命，但可能仍有本实例的系统唤醒事件或保护未清除。可保留窗口核对，或退出后在下次启动时重新检查。',buttons:['保留窗口核对','仍然退出'],defaultId:0,cancelId:0});if(response!==1){quitPending=false;powerExitChecking=false;return;}}
+   powerExitReady=true;finishQuit();
+  });return;
+ }
+ if(updateStopping&&process.platform==='darwin'&&!powerUpdateReady){
+  if(!powerUpdatePending)powerUpdatePending=preparePowerUpdate().then(()=>{finishQuit();}).catch(()=>{updateFailed('update_power_cleanup_unconfirmed');}).finally(()=>{powerUpdatePending=undefined;});
+  return;
+ }
  clearTimeout(stopTimer);
  if(quitPending){
   cancelConnection();
@@ -804,7 +894,12 @@ app.on('before-quit',event=>{
     const options={type:'question',title:'荷马',message:stopped?'更新尚未确认，如何继续？':'重启并更新荷马？',detail:stopped?'服务已安全停止。可重试更新，或退出后重新打开荷马；退出也可能应用已暂存更新。':'请先保存草稿及未提交编辑；仅在当前工作安全结束后重启。'+(channelPending()?' 待应用的聊天应用连接变更会丢弃。':''),buttons:stopped?['取消','重试更新','退出荷马']:['取消，继续使用','重启并更新'],defaultId:0,cancelId:0};
     const {response}=await(contents?dialog.showMessageBox(currentWindow,options):dialog.showMessageBox(options));
     if(window!==currentWindow||contents?.isDestroyed()||navigation!==permissionNavigation){updateFailed(undefined);return;}
-    if(stopped&&response===2){cancelConnection();allowQuit=true;app.quit();return;}
+    if(stopped&&response===2){
+     try{if(!await closeDesktopPower())throw Error('power_cleanup_unconfirmed');await preparePowerUpdate();}
+     catch{updateFailed('update_power_cleanup_unconfirmed');return;}
+     if(window!==currentWindow||contents?.isDestroyed()||navigation!==permissionNavigation){updateFailed(undefined);return;}
+     cancelConnection();allowQuit=true;app.quit();return;
+    }
     if(response!==1){updateFailed(undefined);return;}
     updateStopping=true;
     if(stopped){finishQuit();return;}
@@ -929,6 +1024,7 @@ try{
   registerDesktopSettings();
   registerDesktopFeatureTour(profile);
   registerDesktopCapture(profile);
+  registerDesktopPower(profile);
   channels=new DesktopChannels(paths.runtime);
   registerDesktopChannels();
   registerDesktopUpdate();
@@ -951,6 +1047,17 @@ try{
     if(value.kind==='native_account_result'){
      const pending=nativeRequests.get(value.id);if(pending){clearTimeout(pending.timer);nativeRequests.delete(value.id);value.error?pending.reject(Error(pending.action==='apply-models'?chatgptModelError(value.error):'native_account_unconfirmed')):pending.resolve(value.value);}
     }
+    else if(value.kind==='power_result'){
+     const pending=powerRequests.get(value.id);if(pending){clearTimeout(pending.timer);powerRequests.delete(value.id);value.error?pending.reject(Error('power_recheck_unconfirmed')):pending.resolve();}
+    }
+    else if(value.kind==='power_state'||value.kind==='power_acquire'){
+     try{
+      if(!power||closed)continue;
+      void power.updateFacts(value.facts);
+      // Only blocker acquisition is on the start path; native wake I/O is independent.
+      if(value.kind==='power_acquire'&&Number.isSafeInteger(value.id)&&value.id>0)runtime.stdin.write(JSON.stringify({kind:'power_ack',id:value.id})+'\n');
+     }catch{void showError('电源状态未能确认，当前任务会沿原流程继续。');}
+    }
     else if(value.kind==='account_config_check'){if(modelSource==='website')void syncHomerConfig('message');}
     else if(value.kind==='account_usage_dirty'){walletRevision++;walletDirty=true;accountChanged();}
     else if(value.kind==='update-busy'&&updateStopping)updateFailed('update_busy');
@@ -964,7 +1071,7 @@ try{
       void showError('桌面服务认证信息无效。请保留数据并核对应用完整性。');continue;
      }
      desktopAccessToken=value.desktopAccessToken;
-     origin=url.origin;if(process.platform==='win32')void updateReady.then(()=>{if(!closed)checkUpdate();});else checkUpdate();void window.loadURL(value.url).then(()=>window.setTitle(deepseek?'荷马 · DeepSeek':'荷马')).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
+     origin=url.origin;if(process.platform==='win32')void updateReady.then(()=>{if(!closed)checkUpdate();});else checkUpdate();void window.loadURL(value.url).then(()=>{window.setTitle(deepseek?'荷马 · DeepSeek':'荷马');offerPowerAuthorization();}).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
     }else if(value.kind==='error')void showError('无法启动荷马（'+code({message:value.code})+'）。请保留原账号和数据，核对后重新打开。');
    }
   });
@@ -973,6 +1080,8 @@ try{
    for(const pending of nativeRequests.values()){clearTimeout(pending.timer);pending.reject(Error('native_account_unconfirmed'));}nativeRequests.clear();
    desktopAccessToken=undefined;
    closed=true;exitCode=status;exitSignal=signal;
+   for(const pending of powerRequests.values()){clearTimeout(pending.timer);pending.reject(Error('power_recheck_unconfirmed'));}powerRequests.clear();
+   void closeDesktopPower();
    cancelDesktopCapture();
    if(windowsUpdater&&updateStopping&&status===0&&!signal&&!updateAcknowledged)return;
    if(updateStopping?updateConfirmed():confirmed())finishQuit();

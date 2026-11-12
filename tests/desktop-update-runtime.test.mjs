@@ -17,7 +17,7 @@ async function link(source,modules,context,url){
  await entry.link(name=>synthetic(modules[name]??require(name)));return entry;
 }
 async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestArch=arch,platform='darwin'}={}){
- const events=[],stdin=new PassThrough(),profile='/fixture/profile',bundle='/fixture/Homer.app',resources=bundle+(platform==='win32'?'/resources':'/Contents/Resources'),homer=resources+'/homer';let complete,stopCalls=0;
+ const events=[],powerCalls=[],stdin=new PassThrough(),profile='/fixture/profile',bundle='/fixture/Homer.app',resources=bundle+(platform==='win32'?'/resources':'/Contents/Resources'),homer=resources+'/homer';let complete,stopCalls=0;
  const digest=createHash('sha256').update('').digest('hex');
  const manifest={format:2,node:'22.22.0',codex:'0.163.0',arch:manifestArch,files:[],codeFiles:(platform==='win32'?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>({path,sha256:digest})),sourceHash:'synthetic-hash'};
  const proc={argv:['node','desktop-runtime','--profile',profile,'--test-profile'],version:'v22.22.0',arch,platform,execPath:platform==='win32'?resources+'/node.exe':bundle+'/Contents/MacOS/node',stdin,stdout:new Writable({write(bytes,_e,done){events.push(JSON.parse(String(bytes)));done();}}),env:{HOME:profile+'/host-home',TMPDIR:profile+'/tmp',SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'},cwd:()=>profile};
@@ -29,10 +29,10 @@ async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestAr
   [new URL('dist/model-config.js','file://'+homer+'/').href]:{...await import('../src/model-config.ts'),PRODUCT_MODEL_DEFAULTS:{model:'fixture'}},
   [new URL('dist/mobile-gateway.js','file://'+homer+'/').href]:{readMobileConfig:()=>({})},
   './trusted-build.mjs':{verifyBuild(){}},
-  './dev.mjs':{runDev:async options=>{options.desktop.onHostSpawn();options.desktop.bindUpdateStop(()=>stopCalls++);return new Promise(resolve=>{complete=()=>resolve(result);});}},
+  './dev.mjs':{runDev:async options=>{options.desktop.onHostSpawn();options.desktop.bindUpdateStop(()=>stopCalls++);options.desktop.bindPower?.(async(...args)=>{powerCalls.push(args);return true;});return new Promise(resolve=>{complete=()=>resolve(result);});}},
  };
  const context=vm.createContext({process:proc,Buffer,console});const entry=await link(readFileSync('scripts/desktop-runtime.mjs','utf8'),modules,context,'file://'+homer+'/scripts/desktop-runtime.mjs');const done=entry.evaluate();await tick();
- return {events,proc,get stopCalls(){return stopCalls;},complete:async()=>{complete?.();await done;stdin.destroy();}};
+ return {events,powerCalls,proc,get stopCalls(){return stopCalls;},complete:async()=>{complete?.();await done;stdin.destroy();}};
 }
 async function dependencyFixture(arch,corrupt=false,platform='darwin'){
  const target=platform+'-'+arch,nodeName=platform==='win32'?'node-v22.22.0-win-x64.zip':`node-v22.22.0-${platform}-${arch}.tar.gz`,version='0.163.0',nodeVersion='22.22.0',files=new Map(),commands=[];
@@ -69,8 +69,24 @@ async function dependencyFixture(arch,corrupt=false,platform='darwin'){
  return {prepare:()=>entry.namespace.prepareDependencies('/scratch',{archiveSource:'/archives',arch}),commands};
 }
 if(!vm.SourceTextModule){
- test('desktop runtime update contracts use isolated VM modules',()=>execFileSync(process.execPath,['--experimental-vm-modules','--test',fileURLToPath(import.meta.url)],{stdio:'pipe'}));
+ test('desktop runtime update contracts use isolated VM modules',()=>{
+  const env={...process.env};delete env.NODE_TEST_CONTEXT;
+  const output=execFileSync(process.execPath,['--import','tsx','--experimental-vm-modules','--test',fileURLToPath(import.meta.url)],{stdio:'pipe',env}).toString();
+  assert.match(output,/# tests [1-9]\d*/);
+ });
 }else{
+ test('desktop runtime limits power controls to resume and numeric acknowledgement',async()=>{
+  const f=await runtimeFixture({stoppedConfirmed:true});
+  try{
+   f.proc.stdin.write(JSON.stringify({kind:'power_resume',id:9})+'\n');
+   f.proc.stdin.write(JSON.stringify({kind:'power_ack',id:17})+'\n');
+   f.proc.stdin.write(JSON.stringify({kind:'power_ack',id:'forged'})+'\n');
+   f.proc.stdin.write(JSON.stringify({kind:'power_resume',id:10,afterSleep:false})+'\n');
+   f.proc.stdin.write(JSON.stringify({kind:'power_resume',id:11,afterSleep:'forged'})+'\n');
+   await tick();assert.deepEqual(JSON.parse(JSON.stringify(f.powerCalls)),[['resume'],['ack',{id:17}],['resume',{afterSleep:false}]]);
+   assert.ok(f.events.some(event=>event.kind==='power_result'&&event.id===9&&!event.error));
+  }finally{await f.complete();}
+ });
  for(const edge of ['0','320','invalid'])test('Windows image helper uses bounded single-frame decoding '+edge,async()=>{
   const calls=[],output=[];const image={rotate(){calls.push('rotate');return this;},resize(value){calls.push(value);return this;},png(){calls.push('png');return this;},async toBuffer(){return Buffer.from('png');}};
   const proc={argv:['node','helper',edge],stdin:(async function*(){yield Buffer.from('synthetic image');})(),stdout:{write:bytes=>output.push(String(bytes))}};
@@ -123,7 +139,7 @@ if(!vm.SourceTextModule){
   let listening,unlinked=false,chmod=false;
   const modules={'./execution-tools.js':{EXECUTION_TOOLS:[]},'./worker-interaction-tools.js':{MAIN_INTERACTION_TOOLS:[]},
    './media-tools.js':{MEDIA_TOOLS:[],WORKER_MEDIA_TOOLS:[]},'./interaction-limits.js':{INTERACTION_LIMITS:{}},
-   './membership-web-tools.js':{MEMBERSHIP_TOOLS:[]},'./desktop-cua.js':{CUA_TOOLS:[]},
+   './membership-web-tools.js':{MEMBERSHIP_TOOLS:[]},'./desktop-cua.js':{CUA_TOOLS:[]},'./schedules.js':{SCHEDULE_TOOLS:[]},
    'node:fs':{chmodSync:()=>{chmod=true;},unlinkSync:()=>{unlinked=true;}},
    'node:net':{createConnection(){},createServer:()=>({listening:true,once(){},listen(path,done){
     listening=path;done();

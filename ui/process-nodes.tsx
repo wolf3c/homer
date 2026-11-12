@@ -59,7 +59,7 @@ export function ProcessMessageContent({node,renderText,activityText,children,par
   const observation=useContext(ProcessObservationContext);
   const workers=useMemo(()=>projectProcessItems(node?.items??[]).items.filter((item):item is Extract<ProcessItem,{kind:'worker'}>=>item.kind==='worker'),[node?.items]);
   return <>
-    {node&&<ProcessNodeView key={JSON.stringify([node.threadId,node.id])} node={node} renderText={renderText} activityText={activityText} observation={observation} parts={parts} titledEvents={titledEvents} name={node.sourceKind==='worker'?'处理过程':!taskSourceUnresolved&&taskSources?.length===1?taskSources[0].title:undefined}/>}
+    {node&&<ProcessNodeView key={JSON.stringify([node.threadId,node.id])} node={node} renderText={renderText} activityText={activityText} observation={observation} parts={parts} titledEvents={titledEvents} name={node.sourceKind==='worker'?'处理过程':node.sourceKind==='scheduled'?'定时消息':!taskSourceUnresolved&&taskSources?.length===1?taskSources[0].title:undefined}/>}
     {taskSourceUnresolved&&<p className="process-record-note">部分任务来源尚未核实。</p>}
     {children}
     {!!workers.length&&<LegacyWorkerNotes items={workers}/>}
@@ -113,7 +113,7 @@ export function ProcessNodeView({node,renderText,activityText,observation={conne
   let activity:ReactNode;
   if(!hide||!hidden){
     const stale=!observation.connected||!observation.serviceRunning||node.status==='unknown';
-    const label=(name||(node.sourceKind==='user'?'当前对话':'当前事项'))+' · '+(terminal?compactProcessAction(node,observation):activityText||compactProcessAction(node,observation));
+    const label=(name||(node.sourceKind==='user'?'当前对话':node.sourceKind==='scheduled'?'定时消息':'当前事项'))+' · '+(terminal?compactProcessAction(node,observation):activityText||compactProcessAction(node,observation));
     const entries=parts?parts.entries.map(entry=>({...entry,label:''})):items.filter(item=>item.kind!=='worker'&&item.kind!=='workerEvent').flatMap<RunActivityEntry>(item=>{
       if(item.kind==='commentary')return item.text&&item.phase!=='final_answer'?[{id:item.id,kind:'commentary',label:'',content:<div className="process-item">{renderText(item.text)}</div>}]:[];
       if(item.content)return []; // New content belongs to the message parts renderer.

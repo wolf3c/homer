@@ -281,14 +281,15 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   get nativeBusy(){return this.backgroundUnconfirmed;}
   get turnActive(){return !!this.active&&!this.active.settling;}
   get available(){return !this.failure&&!this.closing&&!this.exited;}
+  private backgroundActivity(busy:boolean){if(this.backgroundUnconfirmed!==busy){this.backgroundUnconfirmed=busy;this.emit('powerActivity');}}
   private async refreshBackground(){
     if(!this.options.nativeTools||!this.threadId||this.closing||this.exited)return;
     if(this.backgroundCheck)return this.backgroundCheck;
     if(this.backgroundTimer){clearTimeout(this.backgroundTimer);this.backgroundTimer=undefined;}
     const work=(async()=>{let confirmed=false;try{
       const result=await this.request('thread/backgroundTerminals/list',{threadId:this.threadId,limit:100});
-      confirmed=Array.isArray(result.data);this.backgroundUnconfirmed=!confirmed||result.data.length>0||!!result.nextCursor;
-    }catch{this.backgroundUnconfirmed=true;}
+      confirmed=Array.isArray(result.data);this.backgroundActivity(!confirmed||result.data.length>0||!!result.nextCursor);
+    }catch{this.backgroundActivity(true);}
     finally{this.backgroundCheck=undefined;if(confirmed&&this.backgroundUnconfirmed&&!this.closing&&!this.exited){this.backgroundTimer=setTimeout(()=>void this.refreshBackground(),500);this.backgroundTimer.unref();}}
     })();this.backgroundCheck=work;return work;
   }
@@ -345,7 +346,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private publishNativeProcess(method:string,p:any){
     const hostTool=p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions'||p.item?.type==='dynamicToolCall'&&this.options.tools.some(tool=>tool.name===p.item.tool);
     const workerMcp=this.options.nativeTools==='worker'&&p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions';
-    if(method==='item/started'&&this.options.nativeTools==='main'&&hostTool&&p.item.type==='mcpToolCall'&&typeof p.item.id==='string'&&typeof p.item.tool==='string')
+    if(method==='item/started'&&this.options.nativeTools&&hostTool&&p.item.type==='mcpToolCall'&&typeof p.item.id==='string'&&typeof p.item.tool==='string')
       this.emit('hostMcpToolStarted',{threadId:p.threadId,turnId:p.turnId,itemId:p.item.id,tool:p.item.tool,arguments:p.item.arguments});
     const safe=hostTool&&!workerMcp?undefined:safeNativeProcess(p.threadId,p.turnId,p.item,method==='item/completed');
     if(safe)this.emit('nativeProcess',safe);
@@ -476,6 +477,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     this.child.on("exit", () => {
       this.exited = true;
       this.fail(new Error("engine_disconnected"));
+      this.emit('powerActivity');
       this.emit("exit");
     });
     createInterface({ input: this.child.stdout }).on("line", (line) => {
@@ -767,7 +769,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         catch(error){this.active.nativeOutputError=engineError(error);}
       }
     }
-    if (m.method === "item/started" && p.turnId === this.turnId && this.options.nativeTools && p.item?.type==='commandExecution') this.backgroundUnconfirmed=true;
+    if (m.method === "item/started" && p.turnId === this.turnId && this.options.nativeTools && p.item?.type==='commandExecution') this.backgroundActivity(true);
     if(m.method==='item/completed'&&p.item?.type==='commandExecution'&&this.options.nativeTools)void this.refreshBackground();
     if (m.method === "turn/started" && this.active && p.turn.id === this.turnId) {
       this.emit("turn", p.turn.id);

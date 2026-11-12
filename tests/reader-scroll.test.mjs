@@ -157,6 +157,27 @@ test('incoming same-ID public body changes light the cue and latest confirms onl
 test('ACK and tool/worker-only changes do not light the content cue',()=>{
  const f=fixture(),base=f.state.messages;f.snapshot({observedAtMs:123,acceptedRequestIds:['ack'],messages:[...base,{...base[1],id:'input-outcome:ack',text:'received'},{...base[1],id:'internal',text:'worker progress',process:{sourceKind:'worker',items:[]}},{...base[1],id:'process',text:'host status',process:{sourceKind:'user',items:[{id:'tool',kind:'tool',status:'running'}]}}]});assert.ok(!f.cue().includes('有新内容'));f.close();
 });
+test('scheduled tools keep live status only for the exact current internal process and turn',()=>{
+ const f=fixture();try{
+  const process={id:'scheduled-process',threadId:'reader',sourceKind:'scheduled',state:'working',status:'running',turnIds:['scheduled-turn'],items:[{id:'scheduled-tool',kind:'tool',seq:1,revision:1,category:'host',threadId:'reader',turnId:'scheduled-turn',toolName:'schedule_list',label:'查看安排',status:'running',startedAtMs:1000}]};
+  const activity={processId:process.id,source:'internal',turnId:'scheduled-turn',stage:'native'},message={...f.state.messages[1],id:process.id,text:'',status:'running',process};
+  const current=()=>nodes(f.render()).find(node=>node.type==='runtime').props.runtime.thread.getState().messages.find(row=>row.id===message.id);
+  f.snapshot({messages:[...f.state.messages,message],processNodes:[process],mainActivity:activity});
+  let entry=current().metadata.custom.activityPresentation.entries['tool-call:scheduled-tool'];
+  assert.equal(entry.live,true);assert.equal(entry.statusLabel,'调用中');assert.equal(current().content.find(part=>part.toolCallId==='scheduled-tool').timing.startedAt,1000);
+  for(const changed of [{...activity,source:'user'},{...activity,turnId:'other-turn'},{...activity,processId:'other-process'}]){
+   f.snapshot({mainActivity:changed});entry=current().metadata.custom.activityPresentation.entries['tool-call:scheduled-tool'];
+   assert.equal(entry.live,false);assert.equal(entry.statusLabel,'上次调用中，结束未确认');
+  }
+ }finally{f.close();}
+});
+test('scheduled coordination does not light the reader cue, while its separate public delivery does',()=>{
+ const f=fixture();try{
+  f.gesture(1000);const base=f.state.messages,scheduled={...base[1],id:'scheduled-process',text:'定时内部处理记录',process:{id:'scheduled-process',sourceKind:'scheduled',state:'worked',status:'completed',items:[],final:{id:'scheduled-process',text:'定时内部处理记录'}}};
+  f.snapshot({messages:[...base,scheduled]});assert.ok(!f.cue().includes('有新内容'));
+  f.snapshot({messages:[...base,scheduled,{...base[1],id:'scheduled-public-delivery',text:'定时工作的公开交付'}]});assert.ok(f.cue().includes('有新内容'));
+ }finally{f.close();}
+});
 test('a quote owner is invalidated by newer navigation, gestures and readEpoch',()=>{
  const f=fixture();let writes=0;const old=f.claim();f.latest();assert.equal(old(()=>writes++),false);const next=f.claim();f.gesture(1000);assert.equal(next(()=>writes++),false);const epoch=f.claim();f.snapshot({history:{...f.state.history,readEpoch:'replacement'}});assert.equal(epoch(()=>writes++),false);assert.equal(writes,0);f.close();
 });

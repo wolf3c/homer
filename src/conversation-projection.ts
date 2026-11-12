@@ -50,9 +50,9 @@ export function projectConversation(history:readonly ConversationMessage[],nodes
    const finals=publicFinals(node).flatMap(item=>item.kind==='commentary'?[{id:item.id,text:item.text,completed:item.completed??(node.state==='worked'&&item.id===nativeFinal?.id)}]:[]);
    const hostFinal=node.final?.id===node.messageId?node.final:undefined;
    const displayNode={...node,final:nativeFinal??hostFinal};
-   messages.push({...message,requestId,text:finals.length?finals.map(item=>item.text).join('\n\n'):(hostFinal||node.sourceKind==='worker'&&!node.final?message.text:''),status:node.status==='unknown'?'interrupted':node.status==='failed'?'failed':node.status==='interrupted'?'interrupted':node.state==='working'?'running':'completed',process:displayNode,...(finals.length?{finalAnswers:finals}:{}),
+   messages.push({...message,requestId,text:finals.length?finals.map(item=>item.text).join('\n\n'):(hostFinal||node.sourceKind!=='user'&&!node.final?message.text:''),status:node.status==='unknown'?'interrupted':node.status==='failed'?'failed':node.status==='interrupted'?'interrupted':node.state==='working'?'running':'completed',process:displayNode,...(finals.length?{finalAnswers:finals}:{}),
     ...(continuation&&source?{sourceMessageId:source.id}:{}),
-    sourceLabel:node.sourceKind==='worker'?'处理协作结果':!source?'处理来源未关联':continuation?'继续处理：'+(source!.text.slice(0,80)||'附件请求'):undefined,toolActivities:[]});continue;
+    sourceLabel:node.sourceKind==='worker'?'处理协作结果':node.sourceKind==='scheduled'?'定时消息':!source?'处理来源未关联':continuation?'继续处理：'+(source!.text.slice(0,80)||'附件请求'):undefined,toolActivities:[]});continue;
   }
   // Keep a historical host reply at its original identity when no segment has
   // a final; it may be the only public answer for that request.

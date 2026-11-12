@@ -8,7 +8,8 @@ import {prepareDesktopSource,DESKTOP_CANDIDATE_PATHS} from '../scripts/desktop-s
 const root=resolve('.'),parent=join(root,'.codex/scratch/desktop-integration-20261023/source-tests');mkdirSync(parent,{recursive:true});
 // Construct the old tree locally so the test does not depend on private Git history.
 const fixtureRoot=mkdtempSync(join(parent,'source-repo-'));
-const businessPaths=['src/recursive-tasks.ts','src/web-history.ts','src/web-contract.ts','ui/task-status.tsx'];
+const businessPaths=['src/tools.ts','src/web-history.ts','src/web-contract.ts','ui/task-status.tsx'];
+const scheduleInputs=['src/schedules.ts','src/host-tool-calls.ts','src/schedule-tools.ts','src/store.ts','src/worker-interaction-mcp.ts','src/recursive-tasks.ts','src/channel-plugin.ts','src/main-process.ts','src/conversation-projection.ts','src/web-history-pages.ts','ui/homer-app.tsx','ui/homer-message-queue.tsx','ui/vendor/assistant-ui/message-queue.tsx','ui/process-nodes.tsx','ui/chat-date.ts','prompts/main.md','prompts/worker.md','src/service.ts','src/engine.ts','src/recursive-main-inputs.ts','package.json','package-lock.json','scripts/desktop-runtime.mjs','scripts/dev-build.mjs'];
 const cuaWorker='src/desktop-cua-driver.ts';
 for(const path of new Set([...DESKTOP_CANDIDATE_PATHS,...businessPaths,cuaWorker])){
  const target=join(fixtureRoot,path);mkdirSync(dirname(target),{recursive:true});copyFileSync(join(root,path),target);
@@ -33,13 +34,13 @@ test('normal input cannot silently package the uncommitted desktop integration',
  const stage=join(mkdtempSync(join(fixtureParent,'normal-')),'stage');
  assert.throws(()=>prepareDesktopSource({root:fixtureRoot,sourceSha,stage}),/desktop_build_entry_not_committed/);
 });
-test('explicit preparation overlays only desktop owners and retains exact committed business tree',()=>{
+test('explicit preparation overlays selected product inputs and retains exact unrelated committed tree',()=>{
  const out=mkdtempSync(join(fixtureParent,'preparation-')),stage=join(out,'stage');
  const provenance=prepareDesktopSource({root:fixtureRoot,sourceSha,stage,prepareCandidate:true});
  assert.equal(provenance.gitSha,sourceSha);assert.equal(provenance.preparation,true);assert.equal(provenance.publishable,false);
  assert.deepEqual(provenance.candidateInputs.map(x=>x.path),DESKTOP_CANDIDATE_PATHS);
  assert.deepEqual(readFileSync(join(stage,cuaWorker)),readFileSync(join(fixtureRoot,cuaWorker)));
- for(const path of ['src/recursive-tasks.ts','src/web-history.ts','src/web-contract.ts','ui/task-status.tsx']){
+ for(const path of businessPaths){
   assert.deepEqual(readFileSync(join(stage,path)),execFileSync('/usr/bin/git',['show',sourceSha+':'+path],{cwd:fixtureRoot}));
  }
  // Every selected source must match both the input bytes and its recorded hash.
@@ -57,10 +58,14 @@ test('Electron preparation removes retired shells and manual Token entries from 
  assert.equal(provenance.removedInputs.length,10);
  for(const path of ['scripts/desktop-deepseek.mjs','scripts/deepseek-desktop.mjs','tests/desktop-deepseek.test.mjs'])assert.ok(provenance.removedInputs.includes(path));
  for(const path of provenance.removedInputs)assert.equal(existsSync(join(stage,path)),false);
- for(const path of ['src/tools.ts','ui/homer-app.tsx','packaging/macos/ImageDecoder.swift']){
+ for(const path of ['src/tools.ts','packaging/macos/ImageDecoder.swift']){
   assert.deepEqual(readFileSync(join(stage,path)),execFileSync('/usr/bin/git',['show',sourceSha+':'+path]));
  }
  for(const path of ['src/service.ts','src/config.ts','src/engine.ts','src/recursive-main-inputs.ts'])assert.deepEqual(readFileSync(join(stage,path)),readFileSync(join(root,path)));
+ for(const path of [...scheduleInputs,'src/telegram-channel.ts']){
+  assert.ok(provenance.candidateInputs.some(input=>input.path===path),'missing candidate input: '+path);
+  assert.deepEqual(readFileSync(join(stage,path)),readFileSync(join(root,path)));
+ }
  completed=true;
 });
 test('local working-tree build freezes current product inputs without private data or deleted sources',t=>{

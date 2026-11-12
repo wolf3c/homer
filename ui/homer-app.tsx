@@ -892,7 +892,7 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
   </section>;
 }
 function readerContentSignature(message:WebState['messages'][number]){
-  if(message.id.startsWith('input-outcome:')||message.process?.sourceKind==='worker'||!isVisibleConversationMessage(message))return '';
+  if(message.id.startsWith('input-outcome:')||message.process&&message.process.sourceKind!=='user'||!isVisibleConversationMessage(message))return '';
   let hash=2166136261,length=0;const add=(text:string)=>{length+=text.length;for(let i=0;i<text.length;i++)hash=Math.imul(hash^text.charCodeAt(i),16777619);hash=Math.imul(hash^0,16777619);};
   const parts=message.role==='assistant'?messageSourceParts(message):undefined;
   if(parts)for(const part of parts){if(part.text.trim()){add(part.id);add(part.text);}}else if(message.role==='user'||!message.process||message.process.final?.id===message.id)add(message.text);
@@ -1243,7 +1243,7 @@ function HomerApp() {
   const messageCache=useRef(new Map<string,{source:WebState['messages'][number];key:string;value:ThreadMessageLike}>());
   const alive=new Set(state.messages.map(message=>message.id));for(const id of messageCache.current.keys())if(!alive.has(id))messageCache.current.delete(id);
   const messages:ThreadMessageLike[]=processDetails.messages.map(message=>{
-    const stale=!nativeActivity||nativeActivity.processId!==message.process?.id||message.process?.threadId!==state.threadId||nativeActivity.source!==(message.process?.sourceKind==='worker'?'internal':'user')||!['native','compacting'].includes(nativeActivity.stage);
+    const stale=!nativeActivity||nativeActivity.processId!==message.process?.id||message.process?.threadId!==state.threadId||nativeActivity.source!==(message.process?.sourceKind==='user'?'user':'internal')||!['native','compacting'].includes(nativeActivity.stage);
     const activity=message.process?processActivityText(state,connected,message.process):'',notes=state.inactiveInteractions?.filter(i=>i.processId?i.processId===message.process?.id:i.messageId===message.id),key=activity+JSON.stringify(notes)+String(stale)+nativeActivity?.turnId;
     const cached=messageCache.current.get(message.id);if(cached?.source===message&&cached.key===key)return cached.value;
     const projected=projectProcessMessage(message,stale,nativeActivity?.turnId);

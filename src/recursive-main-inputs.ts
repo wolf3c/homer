@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {validatePreviewIntent} from './user-intent.js';
 import type { AgentMessage, RecursiveTasks } from './recursive-tasks.js';
 import { recursiveHash } from './recursive-tasks.js';
+import type {ScheduleDelivery} from './schedules.js';
 import { conversationInput, encodeConversationReferences, type ConversationHistory, type ConversationInput, type ConversationAcceptance, type ConversationReceipt, type ConversationMessage } from './web-history.js';
 type InterruptTarget = {
   generationId: string;
@@ -40,14 +41,14 @@ const workerSource = `LEFT JOIN operations o ON o.id=m.operationKey
     THEN json_extract(o.detailsJson,'$.sourceRequestId') ELSE v.sourceRequestId END`;
 const inputRows = `SELECT m.id,m.seq,m.kind,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,
   CASE WHEN m.kind='user_input' THEN m.payloadJson ELSE '{}' END payloadJson,
-  r.state AS receiptState,r.revision,r.offeredTurnId,i.replyId,CASE WHEN m.kind='user_input' THEN i.threadId ELSE s.threadId END threadId,o.detailsJson,
+  r.state AS receiptState,r.revision,r.offeredTurnId,i.replyId,CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END threadId,o.detailsJson,
   (m.kind='user_input' AND EXISTS(SELECT 1 FROM requests q WHERE q.id=json_extract(m.payloadJson,'$.requestId'))) AS hasRequest
   FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
   LEFT JOIN conversation_inputs i ON i.requestId=CASE WHEN m.kind='user_input' THEN json_extract(m.payloadJson,'$.requestId') END
   ${workerSource}`;
 const recoveryRows = `FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
   ${workerSource}
-  WHERE m.recipientAgentId=? AND s.threadId=? AND m.kind<>'user_input' AND m.targetRunId IS NULL
+  WHERE m.recipientAgentId=? AND s.threadId=? AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL
     AND r.state IN ('blocked','uncertain')
     AND EXISTS(SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') source
       WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=s.threadId
@@ -69,7 +70,10 @@ export type QueuedInput = {
   interruptTarget?: InterruptTarget;
 };
 export type WorkerInput={origin:'worker';messageId:string;seq:number;revision:number;state:QueuedInput['state'];source:string;editable:false;kind:string;taskId:string|null;taskVersion:number|null;senderAgentId:string;runId:string|null;payload:unknown;text:string;};
-export type MainInput=QueuedInput|WorkerInput;
+export type ScheduledInput=Omit<WorkerInput,'origin'|'source'>&{origin:'scheduled';source:'scheduled'};
+export type InternalInput=WorkerInput|ScheduledInput;
+export type MainInput=QueuedInput|InternalInput;
+export const MAIN_INBOX_CAPACITY={backgroundMessages:512,messages:1024,backgroundBytes:4*1024*1024,bytes:8*1024*1024};
 export type MainInputLifecycle = {
   // Runs inside the claim transaction after the exact revision is fenced.
   // Only claim adopts the actual revision; enqueue merely records its source.
@@ -98,13 +102,31 @@ export class MainInputClaimError extends Error{
 // Message body and quotes remain in conversation_messages. No second queue table.
 export class MainInputs {
   private readonly pausedActiveMessages:Set<string>;
-  constructor(readonly tasks: RecursiveTasks, readonly history: ConversationHistory, private validateQuotes?: (input: ConversationInput) => void, private lifecycle?: MainInputLifecycle, private dispatchPolicy?:{pausedThroughSeq:number;userPausedThroughSeq?:number;pausedThroughProcessSeq?:number;resumeWorkers?:boolean}) {
+  constructor(readonly tasks: RecursiveTasks, readonly history: ConversationHistory, private validateQuotes?: (input: ConversationInput) => void, private lifecycle?: MainInputLifecycle, private dispatchPolicy?:{pausedThroughSeq:number;userPausedThroughSeq?:number;pausedThroughProcessSeq?:number;resumeWorkers?:boolean;resumeScheduled?:boolean}) {
     if(dispatchPolicy&&[dispatchPolicy.pausedThroughSeq,dispatchPolicy.userPausedThroughSeq??0,dispatchPolicy.pausedThroughProcessSeq??0].some(seq=>!Number.isSafeInteger(seq)||seq<0))throw Error('queue_pause_boundary_invalid');
     this.pausedActiveMessages=new Set(dispatchPolicy?this.db.prepare("SELECT r.messageId FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE r.recipientAgentId=? AND m.seq<=? AND r.state IN ('offered','received')").all(this.agent,dispatchPolicy.pausedThroughSeq).map(row=>String(row.messageId)):[]);
   }
   private get store() { return this.tasks.store; }
   private get db() { return this.store.db; }
   private get agent() { return this.store.meta('mainAgentId')!; }
+  private admit(bytes:number,background=false){
+    const row=this.db.prepare(`SELECT count(*) n,coalesce(sum(length(cast(CASE WHEN m.kind='user_input' THEN coalesce((SELECT text FROM conversation_messages c WHERE c.requestId=json_extract(m.payloadJson,'$.requestId') AND c.role='user'),'') ELSE m.payloadJson END AS BLOB))),0) bytes
+      FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE r.recipientAgentId=? AND r.state IN ('pending','offered','received','uncertain')`).get(this.agent)!;
+    if(Number(row.n)>=(background?MAIN_INBOX_CAPACITY.backgroundMessages:MAIN_INBOX_CAPACITY.messages)||Number(row.bytes)+bytes>(background?MAIN_INBOX_CAPACITY.backgroundBytes:MAIN_INBOX_CAPACITY.bytes))throw Error('main_inbox_capacity');
+  }
+  // The scheduler owns this transaction; a duplicate must succeed even at capacity.
+  enqueueScheduled(delivery:ScheduleDelivery):string{
+    const operationId=delivery.deliveryId,hash=recursiveHash(delivery);
+    const prior=this.db.prepare("SELECT payloadHash,responseJson FROM operations WHERE actorAgentId='host' AND scopeId='scheduled-deliveries' AND operationId=?").get(operationId);
+    if(prior){if(prior.payloadHash!==hash)throw Error('schedule_delivery_conflict');return JSON.parse(String(prior.responseJson)).messageId;}
+    const threadId=this.store.meta('mainThread');if(!threadId)throw Error('queue_thread_missing');
+    const payload=JSON.stringify({...delivery,threadId,instanceId:this.agent});this.admit(Buffer.byteLength(payload),true);
+    const key='schedule-delivery:'+operationId,messageId='scheduled-message:'+operationId;
+    this.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson) VALUES(?,'host','scheduled-deliveries',?,'schedule_delivery',?,'confirmed',?,?)").run(key,operationId,hash,JSON.stringify({threadId}),JSON.stringify({messageId}));
+    this.db.prepare("INSERT INTO agent_messages(id,senderAgentId,recipientAgentId,kind,operationKey,payloadJson) VALUES(?,'host',?,'scheduled_message',?,?)").run(messageId,this.agent,key,payload);
+    this.db.prepare("INSERT INTO agent_receipts(messageId,recipientAgentId,state) VALUES(?,?,'pending')").run(messageId,this.agent);
+    return messageId;
+  }
   private row(requestId: string) { return this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? AND json_extract(m.payloadJson,'$.requestId')=?").get(this.agent, requestId) as Row | undefined; }
   private payload(row: Row): InputPayload { return JSON.parse(row.payloadJson); }
   confirmedReplyStatus(requestId: string, replyId: string) {
@@ -147,11 +169,11 @@ export class MainInputs {
     return {items:rows.slice(0,80).map(row=>this.current(row)),after:rows.length>80?rows[79]!.seq:null};
   }
   private order(row:Row){return row.kind==='user_input'?this.payload(row).queueOrder??row.seq:JSON.parse(row.detailsJson??'{}').mainQueueOrder??row.seq;}
-  private workerCurrent(row:Row,body?:string):WorkerInput{
+  private workerCurrent(row:Row,body?:string):InternalInput{
     const payload=JSON.parse(body??String(this.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(row.id)!.payloadJson));
     const fields=Object(payload) as Record<string,unknown>;
     let text=typeof fields.text==='string'?fields.text:typeof fields.question==='string'?fields.question:JSON.stringify(payload,null,2);
-    return {origin:'worker',messageId:row.id,seq:row.seq,revision:row.revision,state:row.receiptState==='pending'?'queued':['offered','received'].includes(row.receiptState)?'processing':'uncertain',source:'worker',editable:false,kind:row.kind,taskId:row.taskId,taskVersion:row.taskVersion,senderAgentId:row.senderAgentId,runId:row.senderRunId??(row.senderAgentId==='host'&&typeof fields.runId==='string'?fields.runId:null),payload,text};
+    return {...(row.kind==='scheduled_message'?{origin:'scheduled' as const,source:'scheduled' as const}:{origin:'worker' as const,source:'worker'}),messageId:row.id,seq:row.seq,revision:row.revision,state:row.receiptState==='pending'?'queued':['offered','received'].includes(row.receiptState)?'processing':'uncertain',editable:false,kind:row.kind,taskId:row.taskId,taskVersion:row.taskVersion,senderAgentId:row.senderAgentId,runId:row.senderRunId??(row.senderAgentId==='host'&&typeof fields.runId==='string'?fields.runId:null),payload,text};
   }
   private rowByMessage(messageId:string){return this.db.prepare(inputRows+' WHERE m.id=? AND m.recipientAgentId=? AND m.targetRunId IS NULL').get(messageId,this.agent) as Row|undefined;}
   private dispatchRows(view:'all'|'head'|'active'='all'){
@@ -162,9 +184,14 @@ export class MainInputs {
     const resumeUser=` OR (m.seq>? AND m.kind='user_input' AND r.offeredTurnId IS NULL AND hasRequest=0
       AND json_extract(m.payloadJson,'$.source')='local' AND json_extract(m.payloadJson,'$.interrupt') IS NULL
       AND json_extract(o.detailsJson,'$.interactionId') IS NULL AND json_extract(o.detailsJson,'$.turnId') IS NULL)`;
-    const eligible=paused?" AND (m.seq>?"+resumeUser+(this.dispatchPolicy?.resumeWorkers?" OR m.kind<>'user_input'":'')+")":'';
+    const resumeScheduled=this.dispatchPolicy?.resumeScheduled!==false?" OR (m.kind='scheduled_message' AND m.senderAgentId='host' AND r.offeredTurnId IS NULL AND json_extract(m.payloadJson,'$.instanceId')=m.recipientAgentId)":'';
+    const eligible=paused?" AND (m.seq>?"+resumeUser+resumeScheduled+(this.dispatchPolicy?.resumeWorkers?" OR m.kind<>'user_input'":'')+")":'';
+    const sourceRequest="CASE WHEN json_valid(json_extract(m.payloadJson,'$.sourceRef')) THEN json_extract(json_extract(m.payloadJson,'$.sourceRef'),'$.authority.sourceRequestId') END";
+    // A newly enqueued reminder still belongs to its original owner and source.
+    const scheduledOwner=paused&&this.dispatchPolicy?.resumeScheduled===false&&!this.dispatchPolicy.resumeWorkers
+      ?` AND (m.kind<>'scheduled_message' OR EXISTS(SELECT 1 FROM agent_messages original WHERE original.kind='user_input' AND original.recipientAgentId=m.recipientAgentId AND original.seq>${this.dispatchPolicy.userPausedThroughSeq??cutoff} AND json_extract(original.payloadJson,'$.requestId')=${sourceRequest}))`:'';
     const activeSource=view==='head'?` AND (m.kind<>'user_input' OR ${activeUserSource})`:'';
-    const rows=this.db.prepare(sql+" WHERE r.recipientAgentId=? AND r.state "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId ELSE s.threadId END)=?"+eligible+activeSource+' ORDER BY '+dispatchOrder+(view==='head'?' LIMIT 1':'')).all(this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,this.dispatchPolicy?.userPausedThroughSeq??cutoff]:[])) as Row[];
+    const rows=this.db.prepare(sql+" WHERE r.recipientAgentId=? AND r.state "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END)=?"+eligible+scheduledOwner+activeSource+' ORDER BY '+dispatchOrder+(view==='head'?' LIMIT 1':'')).all(this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,this.dispatchPolicy?.userPausedThroughSeq??cutoff]:[])) as Row[];
     // Ignore only owners inherited at startup. A newly claimed old message still owns dispatch.
     return view==='active'&&this.dispatchPolicy?rows.filter(row=>!this.pausedActiveMessages.has(row.id)):rows;
   }
@@ -182,7 +209,7 @@ export class MainInputs {
     const unscoped=Number(this.db.prepare(`SELECT count(*) total FROM agent_receipts r CROSS JOIN agent_messages m ON m.id=r.messageId
       LEFT JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
       LEFT JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
-      WHERE r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND m.recipientAgentId=r.recipientAgentId AND m.kind<>'user_input' AND m.targetRunId IS NULL
+      WHERE r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND m.recipientAgentId=r.recipientAgentId AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL
         AND r.state IN ('pending','offered','received','uncertain','blocked') AND i.threadId IS NULL`).get()!.total);
     return {orderVersion,totalWaiting,...(awaitingUser?{awaitingUser:true as const}:{}),...(unscoped?{unscoped}:{})};
   }
@@ -298,6 +325,7 @@ export class MainInputs {
     const receipt = this.history.accept(thread, input, {
       source: acceptance?.source,validateFresh:()=>{validatePreviewIntent(input);this.validateQuotes?.(input);}, persist: receipt => {
         if (receipt.fresh) {
+          this.admit(Buffer.byteLength(input.text));
           const key = 'op-' + randomUUID(), messageId = 'message-' + randomUUID();
           const payload: InputPayload = { requestId: input.requestId, source: acceptance?.source ?? 'local', inputHash: recursiveHash(input), inputRevision: 1, ...(interrupt ? { interrupt, interruptState: 'requested' } : {}) };
           this.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson,revision) VALUES(?,?,?,?,?,?,'confirmed',?,?,0)").run(key, 'user:' + this.agent, input.requestId, 'accept', 'user_accept', recursiveHash(input), JSON.stringify(input.interactionId ? { interactionId: input.interactionId } : {}), JSON.stringify({ messageId, replyId: receipt.replyId }));
@@ -512,7 +540,8 @@ export class MainInputs {
       this.db.prepare(`UPDATE agent_receipts SET state='pending',offeredTurnId=NULL,revision=revision+1
         WHERE recipientAgentId=? AND state IN ('offered','received','uncertain') AND messageId IN (
           SELECT m.id FROM agent_messages m ${workerSource}
-          WHERE m.recipientAgentId=? AND m.senderAgentId='host' AND m.kind<>'user_input' AND m.targetRunId IS NULL AND s.threadId=?)`).run(this.agent,this.agent,this.store.meta('mainThread')??'');
+          WHERE m.recipientAgentId=? AND m.senderAgentId='host' AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL AND s.threadId=?)`).run(this.agent,this.agent,this.store.meta('mainThread')??'');
+      this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE recipientAgentId=? AND state IN ('offered','received') AND messageId IN (SELECT id FROM agent_messages WHERE kind='scheduled_message')").run(this.agent);
       const active = this.list().filter(r => r.state === 'processing' || r.state === 'uncertain');
       for (const item of active) {
         if(item.state==='processing')this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE messageId=?").run(item.messageId);

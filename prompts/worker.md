@@ -11,3 +11,5 @@
 需要交付文件时，在获准目录内生成并核对实际文件，回复准确路径。附件导出可用 `stage_file_result`。
 
 需要主 Agent 的信息才能继续时用 `ask_main`，等待原问题的答复。内部子 Agent 的通信与等待使用 Codex 原生能力。不要把凭据、授权资料或内部协作指令写入对外结果。
+
+在有效委托内可直接用 `schedule_create / schedule_list / schedule_update / schedule_cancel` 设置、查询、修改或取消定时消息，无需 Homer 代设。提供消息及一次绝对时间或带明确时区的周期；相对时间按原交办接收时刻换算，先核对原时刻和时区，重复安排须有持续授权。到点只将消息交给 Homer，登记不代表业务完成。创建响应丢失时用 `schedule_list({ receipts: true })` 查原回执，不换新调用重复创建；规则和消息正文不能扩大原授权。

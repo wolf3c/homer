@@ -32,6 +32,8 @@ export type ChannelStatus={adapterId:string;accountKey:string;label:string;state
 
 export type ChannelAdapter = {
   id:string;
+  // Set only when the upstream retains messages created while disconnected.
+  offlineReplayMs?:number;
   connectionState?: (accountKey:string) => ChannelHealth;
   accountLabel?: (accountKey:string) => string | undefined;
   // Both operations must settle after stopping on abort. The adapter owns protocol recovery.
@@ -39,6 +41,17 @@ export type ChannelAdapter = {
   connect?: (address:Readonly<ChannelAddress>, receive:(event:ChannelEvent)=>string, signal:AbortSignal, boundAt:number, bindingId?:string) => Promise<void>;
 };
 export type ChannelMessageSource = {source:string;entryLabel:string};
+
+export function channelSourceAuthorized(runtime:string,requestId:string):boolean{
+  let db:DatabaseSync|undefined;
+  try{
+    db=new DatabaseSync(join(runtime,'channels.sqlite'),{readOnly:true});
+    const row=db.prepare(`SELECT b.id,b.revokedAt,g.chatId,g.changeId FROM channel_requests r JOIN channel_bindings b ON b.id=r.bindingId
+      LEFT JOIN telegram_group_routes g ON g.requestId=r.id WHERE r.id=?`).get(requestId);
+    return !!row&&row.revokedAt===null&&(row.chatId===null||!!db.prepare('SELECT 1 FROM telegram_groups WHERE bindingId=? AND chatId=? AND changeId=? AND active=1').get(row.id!,row.chatId!,row.changeId!));
+  }catch{return false;}
+  finally{db?.close();}
+}
 
 const subscriptionTool = {
   type:'function', name:'set_notification_destination',
@@ -129,6 +142,33 @@ export class ChannelPlugin {
       return {adapterId,accountKey,label:adapter?.accountLabel?.(accountKey)??accountKey,
         state:adapter?.connectionState?.(accountKey)??'checking',failed,unknown};
     });
+  }
+
+  private wakePollingBindings():Binding[]{
+    if(this.shutdown)return [];
+    const rows=this.db.prepare('SELECT * FROM channel_bindings WHERE revokedAt IS NULL').all() as Binding[];
+    return rows.filter(({adapterId,accountKey})=>{
+      const adapter=this.adapters.get(adapterId),health=adapter?.connectionState?.(accountKey);
+      return typeof adapter?.connect==='function'&&Number.isFinite(adapter.offlineReplayMs)&&adapter.offlineReplayMs!>=60*60_000+20_000&&health!=='setup'&&health!=='reauthorize';
+    });
+  }
+
+  wakePollingChannels():string[]{
+    if(!this.unsubscribe)return [];
+    return [...new Set(this.wakePollingBindings().map(row=>row.adapterId))].sort();
+  }
+
+  async resumeAfterSleep(force=true){
+    if(this.shutdown||!this.unsubscribe)return;
+    const bindings=this.wakePollingBindings(),accounts=new Set(bindings.map(binding=>this.accountKey(binding)));
+    const connections=[...this.connections].filter(([key])=>{const [adapterId,accountKey]=JSON.parse(key);return accounts.has(key)&&(force||this.adapters.get(adapterId)?.connectionState?.(accountKey)!=='ready');}).map(([,connection])=>connection);
+    for(const connection of connections)connection.abort.abort();
+    await Promise.allSettled(connections.map(connection=>connection.done));
+    if(this.shutdown)return;
+    for(const binding of bindings)if(this.binding(binding.id))this.connect(binding);
+    const deadline=Date.now()+15_000;
+    while(!this.shutdown&&Date.now()<deadline&&bindings.some(binding=>this.adapters.get(binding.adapterId)?.connectionState?.(binding.accountKey)==='checking'))await new Promise(resolve=>setTimeout(resolve,50));
+    if(!this.shutdown)await this.synchronize();
   }
 
   readMessageSources(requestIds:readonly string[],activeOnly:boolean):Map<string,ChannelMessageSource> {

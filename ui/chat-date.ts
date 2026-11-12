@@ -36,7 +36,7 @@ export function conversationTimestamps(messages: readonly DatedConversationMessa
   const result = new Map<string, MessageTimestamp>();
   let precedingDay: string | undefined;
   for (const message of messages) {
-    if (!isVisibleConversationMessage(message) || !['user', 'assistant'].includes(message.role) || message.process?.sourceKind === 'worker') continue;
+    if (!isVisibleConversationMessage(message) || !['user', 'assistant'].includes(message.role) || message.process && message.process.sourceKind !== 'user') continue;
     const date = realDate(message.createdAt);
     if (!date) continue; // Unknown time never creates a date segment or a fallback time.
     const dayKey = day(date);

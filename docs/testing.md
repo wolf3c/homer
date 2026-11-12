@@ -2,6 +2,49 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## 桌面防休眠与系统唤醒
+
+使用普通 Node **22.22.0**。默认核心包含 `desktop-power` 协调／执行／profile／IPC／设置／打包契约、`channel-power`，以及 Mac／Windows 的合成适配检查；不会注册系统计划或修改电源策略。相关平台和工具专项必须显式选择：
+
+```sh
+node scripts/test.mjs --power-macos
+node scripts/test.mjs --power-electron
+node scripts/test.mjs --power-browser
+# 仅在 Windows 上运行：
+node scripts/test.mjs --power-windows
+```
+
+- `power-macos`：macOS＋已安装 Swift SDK，内存中的 owner／事件解析、arm64 优化编译、ad-hoc 签名标识及未授权状态；不注册、注销 helper 或安排真实事件。
+- `power-electron`：macOS／Windows 交互桌面及项目 Electron。隔离进程短暂申请系统／显示保护，并验证所有 ID 在结束时释放；不让机器休眠。API 接受保护不等于真实睡眠验收。
+- `power-browser`：已安装 Chrome；实际设置组件、1440px 与 320px、开关／间隔、键盘／焦点、失败／未知／重试与迟到回执。夹具仅用内存桥，结束关闭浏览器和服务。
+- `power-windows`：Windows 自带 PowerShell／ScheduledTasks 的真实构造与序列化边界，注册／查询／撤销函数由测试替身接收；Mac 不满足平台前置，不能算通过。
+
+2026-11-12 在冻结的 103 文件隔离候选中执行 `node scripts/test.mjs`：**2352/2352 通过，零失败／取消／跳过，退出码 0，耗时约 243 秒**。父 Node 与 PATH 子进程均为 22.22.0；统计为默认入口报告总数，未重复加总 VM 子套件。首轮仅 Unix socket 测试夹具因深目录路径截断失败；修为 Unix 相对路径／Windows 原生命名管道后，相关 10 项及完整默认回归通过，伪造、超限和无 owner 拒绝断言均保留。VM 子套件保持非空断言，视频夹具仍保留真实超限流、审批及精确文件校验。
+
+主目录和候选中的 985 个源码／测试输入运行前后相同，SHA-256 指纹为 `5d9275aa4096b0700fefa0b74875972c99c78c4fce4ca22d2130748b8a87cfd8`。两端类型检查、后台编译、联合定向 98 项及归档 5 项通过。性能断言覆盖 1000 次相同状态通知不再计算日期、100 次执行变化不再额外查询原生事件；安排改变、5 秒校准、恢复、执行前保护及 60 秒原生复核保持有效。此前 Mac JS／原生／打包 31 项、隔离 Electron 1 项（7 个真实 API 断言）、39 项实际设置检查及 Vite 构建证据保留，本次未重复可选专项。
+
+真实电源验收仍需独立资料与账号、Developer ID 签名的完整 Mac 候选或 Windows 签名候选和对应设备。由用户明确授权系统组件及休眠操作后，分别记录请求读回、实际醒来、宿主恢复、一次持久入箱；覆盖接电／电池、主动睡眠／合盖／锁屏、授权拒绝／撤销、崩溃、升级和卸载。Telegram 先测所有提供间隔及长轮询断连边界；微信、钉钉的离线保留契约未证实，保持正常在线收件。详细门槛见[电源架构](architecture/desktop-power-management.md#7-实施归属与验证)。本轮未执行上述签名安装、真实休眠或实网收件。
+
+## 定时消息
+
+以下四个文件由默认核心自动收集，仅使用项目 Node/npm 依赖、可控时钟、独立 SQLite、合成引擎与本地 socket，不运行日常 Homer 或访问外部模型。
+
+```sh
+node --disable-warning=ExperimentalWarning --import tsx --test --test-concurrency=1 \
+  tests/schedules.test.ts tests/host-tool-calls.test.ts \
+  tests/schedule-inbox.test.ts tests/schedule-host.test.ts
+```
+
+2026-11-12：普通 Node 22.22.0 下上述四文件 46 项通过，覆盖日期／DST、COMMIT 故障和重开库、背压、坏规则、两角色四工具、回执、撤权、schema 6→7、普通恢复和接管暂停；入箱即停用一次安排。未登录仍到期入箱、Main 初始化与群 `preparing` 期间保持原 `pending`、就绪后仅消费一次、期间撤权拒绝均已覆盖。最终联合候选完整默认核心 **2352/2352，零失败／取消／跳过，退出码 0**，985 输入指纹稳定，两端类型检查及归档 5 项通过。队列显示沿原投影验证，不新增管理页或工具。
+
+固定引擎专项登记在 `engine` 清单，可仅运行本文件：
+
+```sh
+node --disable-warning=ExperimentalWarning --import tsx --test tests/scheduled-native.engine.test.ts
+```
+
+专项使用仓库已准备的固定 Codex 0.163.0、独立 runtime／CODEX_HOME 和回环 Responses 服务，不读取日常账号，也不安装引擎。已验证 Main／Worker 的原线程恢复、四工具目录、真实原生调用证据、原回执查询及隔离；两条规则、六条变更操作。它不验证真实模型的时间理解或业务判断，也不替代安装包和系统睡眠／唤醒专项。架构与联合全量状态见[定时任务方案](architecture/scheduled-tasks-architecture.md#8-当前状态)。
+
 ## ChatGPT 模型设置
 
 配置、原生目录、账号桥、持久化、线程参数及设置草稿的离线回归沿现有测试文件维护，自动进入默认核心；固定上游组件源码校验登记在显式 `vendor` 分组。

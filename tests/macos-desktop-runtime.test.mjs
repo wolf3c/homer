@@ -226,7 +226,7 @@ test('adoption requires reviewed gateway CAS, then original owner retains curren
   const s=await stateWhen(await run.url(),s=>s.upgrade.phase==='running');assert.equal(s.threadId,'synthetic-desktop-main');
   const db=new DatabaseSync(f.dbPath,{readOnly:true});
   try{
-   assert.equal(db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get().value,'6');
+   assert.equal(db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get().value,'7');
    assert.equal(db.prepare("SELECT value FROM meta WHERE key='mainToolsHash'").get().value,f.toolsHash);
    const node=JSON.parse(db.prepare("SELECT value FROM meta WHERE key='publicMainNode:v1:adoption-unknown'").get().value);
    assert.equal(node.status,'running');assert.equal(node.items[0].status,'running');

@@ -5,7 +5,7 @@ const send = message => process.stdout.write(JSON.stringify(message) + "\n");
 let model, instructions, turn = "native-turn";
 const trustedArgument = process.argv.find(arg => arg.startsWith("mcp_servers.homer_interactions="));
 const trusted = trustedArgument ? JSON.parse(trustedArgument.slice(trustedArgument.indexOf("=") + 1).replace(/("(?:[^"\\]|\\.)*")=/g, "$1:")) : undefined;
-const names = ["work_directory", "inspect_interaction", "respond_interaction", "escalate_interaction", "runtime_capabilities", "inspect_attachment"];
+const names = ["work_directory", "inspect_interaction", "respond_interaction", "escalate_interaction", "runtime_capabilities", "inspect_attachment", "schedule_create", "schedule_list", "schedule_update", "schedule_cancel"];
 createInterface({ input: process.stdin }).on("line", line => {
   const m = JSON.parse(line);
   if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fixture/0.163.0", codexHome: process.env.CODEX_HOME } });

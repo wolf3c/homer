@@ -13,7 +13,7 @@ async function fixture({missingThread=false}={}){
  const events=[],sent=[],pending=[],children=[],locks=[];
  const input=new PassThrough(),output=new Writable({write(_b,_e,done){done();}}),proc=new EventEmitter();
  Object.assign(proc,{env:{},argv:[],execPath:process.execPath});
- let stop,account;
+ let stop,account,power;
  class Journal{
   pending(){return pending;} rejected(){return [];} bindContract(){} bindThread(thread){this.thread=thread;} close(){locks.push('journal-closed');}
  }
@@ -33,14 +33,33 @@ async function fixture({missingThread=false}={}){
  const entry=new vm.SourceTextModule(readFileSync('scripts/dev.mjs','utf8'),{context,initializeImportMeta:meta=>{meta.url='file:///fixture/scripts/dev.mjs';},importModuleDynamically:name=>{assert.ok(dynamic[name],name);return synthetic(dynamic[name]);}});
  await entry.link(name=>synthetic(modules[name]??createRequire(import.meta.url)(name)));await entry.evaluate();
  const build={directory:'/fixture',config:{runtime:'/fixture/runtime',appData:'/fixture/profile'},boundary:'fixture',schema:'schema',toolsHash:'tools',thread:missingThread?undefined:'original-thread',hash:'build',version:'0.1.0',uiHash:'ui'};
- const done=entry.namespace.runDev({root:'/fixture',input,output,fixedBuild:build,desktop:{bindAccount:fn=>{account=fn;},bindUpdateStop:fn=>{stop=fn;},onEvent:event=>events.push(event)}});
+ const done=entry.namespace.runDev({root:'/fixture',input,output,fixedBuild:build,desktop:{bindAccount:fn=>{account=fn;},bindPower:fn=>{power=fn;},bindUpdateStop:fn=>{stop=fn;},onEvent:event=>events.push(event)}});
  await tick();assert.equal(children.length,1);
  const child=children[0];child.emit('message',{kind:'ready',thread:build.thread});await tick();
- return {done,events,sent,pending,children,locks,stop,account,input,child,cleanup:async()=>{input.write('/quit\n');child.emit('exit',0,null);await done;input.destroy();}};
+ return {done,events,sent,pending,children,locks,stop,account,power,input,child,cleanup:async()=>{input.write('/quit\n');child.emit('exit',0,null);await done;input.destroy();}};
 }
 if(!vm.SourceTextModule){
- test('desktop update stop contracts run with VM modules',()=>execFileSync(process.execPath,['--experimental-vm-modules','--test',fileURLToPath(import.meta.url)],{stdio:'pipe'}));
+ test('desktop update stop contracts run with VM modules',()=>{
+  const env={...process.env};delete env.NODE_TEST_CONTEXT;
+  const output=execFileSync(process.execPath,['--import','tsx','--experimental-vm-modules','--test',fileURLToPath(import.meta.url)],{stdio:'pipe',env}).toString();
+  assert.match(output,/# tests [1-9]\d*/);
+ });
 }else{
+ test('desktop power forwards only owner facts and bounded resume/ack controls to the existing host',async()=>{
+  const f=await fixture();try{
+   assert.equal(typeof f.power,'function');
+   const facts={runtimeAvailable:true,executing:true,displayRequired:false,nextScheduledAt:null,channels:[]};
+   f.child.emit('message',{kind:'power_acquire',id:3,facts});await tick();
+   assert.deepEqual(JSON.parse(JSON.stringify(f.events.at(-1))),{kind:'power_acquire',id:3,facts});
+   await f.power('ack',{id:3});assert.deepEqual(JSON.parse(JSON.stringify(f.sent.at(-1))),{kind:'desktop_power_ack',id:3});
+   const recheck=f.power('resume'),request=f.sent.at(-1);assert.equal(request.kind,'desktop_power');assert.equal(request.method,'resume');
+   f.child.emit('message',{kind:'web_result',id:request.id,value:true});await recheck;
+   const passive=f.power('resume',{afterSleep:false}),passiveRequest=f.sent.at(-1);assert.equal(passiveRequest.input.afterSleep,false);
+   f.child.emit('message',{kind:'web_result',id:passiveRequest.id,value:true});await passive;
+   await assert.rejects(()=>f.power('resume',{afterSleep:'forged'}),/desktop_power_forbidden/);
+   await assert.rejects(()=>f.power('shell',{command:'unsafe'}),/desktop_power_forbidden/);
+  }finally{await f.cleanup();}
+ });
  test('safe desktop update freezes ingress and releases gateway only after confirmed host exit, without relaunch',async()=>{
   const f=await fixture();try{
    assert.equal(typeof f.stop,'function','missing safe update-stop binding');f.stop();

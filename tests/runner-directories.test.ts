@@ -47,7 +47,9 @@ test('Main and peer Workers select independent accessible directories without ex
    seen.push({assignment,cwd});assert.equal(readFileSync(join(cwd,'AGENTS.md'),'utf8'),'Synthetic rules for '+cwd.split('/').at(-1));
    const local=(path:string,name:string)=>{
     execFileSync(process.execPath,['-e',"require('node:fs').writeFileSync(process.argv[1],'synthetic')",name],{cwd:path,stdio:'ignore'});
-    execFileSync(process.execPath,['--test','project.test.mjs'],{cwd:path,stdio:'ignore'});
+    const env={...process.env};delete env.NODE_TEST_CONTEXT;
+    const output=execFileSync(process.execPath,['--test','project.test.mjs'],{cwd:path,stdio:'pipe',env}).toString();
+    assert.match(output,/# tests [1-9]\d*/);
    };
    if(assignment==='parent'){
     parentRun=run.id;local(cwd,'worker-edit.txt');

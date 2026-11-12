@@ -70,7 +70,7 @@ export function dependencyHash(snapshot) {
 }
 // SQLite schema and persisted input formats share the reviewed upgrade boundary.
 export function schemaHash(snapshot) {
-  return digest(Buffer.concat(["src/mobile-devices.ts", "src/store.ts", "src/media-store.ts", "src/recursive-tasks.ts", "src/worker-interactions.ts", "src/web-history.ts", "src/preview-reference.ts"].map(path => snapshot.files.get(path) ?? Buffer.from(""))));
+  return digest(Buffer.concat(["src/mobile-devices.ts", "src/store.ts", "src/schedules.ts", "src/media-store.ts", "src/recursive-tasks.ts", "src/worker-interactions.ts", "src/web-history.ts", "src/preview-reference.ts"].map(path => snapshot.files.get(path) ?? Buffer.from(""))));
 }
 export function command(bin, args, cwd, signal) {
   return new Promise((done, reject) => {

@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "desktop:make": "node scripts/build-desktop.mjs",
-    "test:desktop:shell": "node --experimental-vm-modules --test tests/electron-shell.test.mjs",
+    "test:desktop:shell": "node --import tsx --experimental-vm-modules --test tests/electron-shell.test.mjs",
     "build": "tsc -p tsconfig.json && node scripts/copy-media-readers.mjs && npm run build --workspace=homer-web",
     "build:service": "tsc -p tsconfig.json && node scripts/copy-media-readers.mjs",
     "start": "node --disable-warning=ExperimentalWarning dist/cli.js",
@@ -60,6 +60,7 @@
     "sharp": "0.35.5"
   },
   "dependencies": {
+    "croner": "11.0.0",
     "mdast-util-from-markdown": "2.1.0",
     "mdast-util-gfm": "3.1.0",
     "mdast-util-math": "3.0.0",

@@ -4,12 +4,13 @@ import type {WebState} from '../src/web-contract';
 import {DesktopChatApps} from './desktop-chat-apps';
 import {FeatureTourDialog} from './desktop-feature-tour';
 import {MobileDeviceSettings} from './mobile-devices';
+import {DesktopPowerSettings} from './desktop-power-settings';
 import {accountErrors,useDesktopAccount,type AccountState} from './desktop-account-state';
 import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
 import {Button} from '@base-ui/react/button';
 import {useMediaQuery} from '@mantine/hooks';
-import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2,Scan,RotateCcw,Pause,Play,Info,ExternalLink,ChevronRight,Zap,Check} from 'lucide-react';
+import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2,Scan,RotateCcw,Pause,Play,Info,ExternalLink,ChevronRight,Zap,Check,Power} from 'lucide-react';
 import {Menu} from '@base-ui/react/menu';
 import {ModelSelectorRoot,ModelSelectorTrigger,ModelSelectorValue,ModelSelectorContent,ModelSelectorList,ModelSelectorEffort} from './vendor/assistant-ui/model-selector';
 import {validateChatGPTSelection,type ChatGPTModelConfig,type ModelRole,type NativeModelSettings} from '../src/model-config';
@@ -57,12 +58,13 @@ export function DesktopSettings({ref,onVisibilityChange}:{ref?:Ref<{openAccount:
    <Dialog.Popup className="desktop-settings-popup" initialFocus={()=>panel==='about'?tourEntry.current??tab.current:tab.current}
     finalFocus={view==='opening-tour'?false:opener.current?()=>opener.current?.isConnected?opener.current:entry.current:entry}>
     <header className="desktop-settings-heading"><div><Settings size={19}/><Dialog.Title>设置</Dialog.Title></div><Dialog.Close aria-label="关闭设置"><X size={19}/></Dialog.Close></header>
-    <Dialog.Description className="desktop-settings-description">{captureAvailable?'管理账号、本机权限、截图批注、移动设备与聊天应用。':'管理账号、本机权限、移动设备与聊天应用。'}</Dialog.Description>
+    <Dialog.Description className="desktop-settings-description">管理账号、本机权限{captureAvailable?'、截图批注':''}{window.homerDesktopPower?'、电源与唤醒':''}、移动设备与聊天应用。</Dialog.Description>
     <Tabs.Root className="desktop-settings-layout" value={panel} orientation={narrow?'horizontal':'vertical'} onValueChange={setPanel}>
      <Tabs.List className="desktop-settings-nav" aria-label="设置分类" activateOnFocus={false}>
       {window.homerDesktopAccount&&<Tabs.Tab value="account" ref={panel==='account'?tab:undefined}><UserRound size={18}/>账号</Tabs.Tab>}
       <Tabs.Tab value="permissions" ref={panel==='permissions'?tab:undefined}><ShieldCheck size={18}/>本机权限</Tabs.Tab>
       {captureAvailable&&<Tabs.Tab value="capture" ref={panel==='capture'?tab:undefined}><Scan size={18} aria-hidden/>截图批注</Tabs.Tab>}
+      {window.homerDesktopPower&&<Tabs.Tab value="power" ref={panel==='power'?tab:undefined}><Power size={18} aria-hidden/>电源与唤醒</Tabs.Tab>}
       <Tabs.Tab value="mobile" ref={panel==='mobile'?tab:undefined}><Smartphone size={18}/>移动设备</Tabs.Tab>
       {window.homerDesktopChatApps&&<Tabs.Tab value="chat-apps" ref={panel==='chat-apps'?tab:undefined}><Link2 size={18}/>连接聊天应用</Tabs.Tab>}
       {aboutLink&&<Tabs.Tab value="about" ref={panel==='about'?tab:undefined}><Info size={18} aria-hidden/>关于</Tabs.Tab>}
@@ -71,6 +73,7 @@ export function DesktopSettings({ref,onVisibilityChange}:{ref?:Ref<{openAccount:
       {window.homerDesktopAccount&&<Tabs.Panel value="account" className="desktop-account-panel">{open&&panel==='account'&&<DesktopAccount/>}</Tabs.Panel>}
       <Tabs.Panel value="permissions">{open&&panel==='permissions'&&<DesktopPermissions/>}</Tabs.Panel>
       {captureAvailable&&<Tabs.Panel value="capture">{open&&panel==='capture'&&<DesktopCaptureSettings/>}</Tabs.Panel>}
+      {window.homerDesktopPower&&<Tabs.Panel value="power">{open&&panel==='power'&&<DesktopPowerSettings/>}</Tabs.Panel>}
       <Tabs.Panel value="mobile">{open&&panel==='mobile'&&<MobileDeviceSettings/>}</Tabs.Panel>
       {window.homerDesktopChatApps&&<Tabs.Panel value="chat-apps">{open&&panel==='chat-apps'&&<DesktopChatApps/>}</Tabs.Panel>}
       {aboutLink&&<Tabs.Panel value="about">{open&&panel==='about'&&<DesktopAbout openLink={aboutLink}

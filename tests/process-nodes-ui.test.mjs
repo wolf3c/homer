@@ -10,6 +10,13 @@ const node={id:'node',threadId:'t',seq:1,revision:2,sourceKind:'user',sourceMess
 const projected=(history,nodes,inbox=[])=>projectConversation(history,nodes,inbox);
 const page=(messages,revision=1,units=messages.map(m=>m.id),artifacts=[])=>({protocol:3,threadId:'t',revision,messages,units,queue:[],before:null,after:null,artifacts});
 const snapshot=(p)=>({threadId:'t',messages:p.messages,artifacts:p.artifacts,history:{protocol:3,readEpoch:'epoch',page:p}});
+test('scheduled processing keeps its own source name in composed and direct process controls',()=>{
+ const scheduled={...node,sourceKind:'scheduled'};
+ for(const View of [ProcessMessageContent,ProcessNodeView]){
+  const html=renderToStaticMarkup(h(View,{node:scheduled,renderText:text=>text},null));
+  assert.match(html,/定时消息 · 状态待确认/);assert.doesNotMatch(html,/当前事项|当前对话|事项标题待确认/);
+ }
+});
 test('activity updates keep one header and the original disclosure selection',async()=>withDom(async d=>{
  const observation={connected:true,serviceRunning:true,threadId:'t',generationTurnId:'turn',mainActivity:{processId:'node',source:'user',turnId:'turn',stage:'native',summary:'准备只读诊断'}};
  const render=(activityText,value=node)=>d.render(h(ProcessNodeView,{node:value,activityText,observation,renderText:t=>h('p',null,t)}));

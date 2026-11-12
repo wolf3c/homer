@@ -62,8 +62,9 @@ test('S14 only the exact original lease can confirm an uncertain exit',t=>{
 for(const closed of [false,true])test('S14 actual terminal stop owner: close='+closed+' retains or clears the exact lease',async t=>{
  const f=fixture(t),a=running(f);f.tasks.failRun(a.runId!,a.epoch!,'synthetic_close_unconfirmed',true);
  const calls:string[]=[],slot={id:a.runId,lease:'synthetic-owned-lease',engine:{interrupt:async()=>{calls.push('interrupt');},close:async()=>{calls.push('close');return closed;}}};f.store.setMeta('lease:'+a.runId,slot.lease);
- const app=Object.assign(Object.create(Homer.prototype),{store:f.store,tasks:f.tasks,interactions:f.interactions,workers:new Map([[a.runId,slot]]),mainApprovals:{end(){}},pauseClock(){},accountClocks(){}}) as Homer;
+ const app=Object.assign(Object.create(Homer.prototype),{store:f.store,tasks:f.tasks,interactions:f.interactions,workers:new Map([[a.runId,slot]]),scheduleCalls:new HostToolCalls(),mainApprovals:{end(){}},pauseClock(){},accountClocks(){}}) as Homer;
  await app.stop(a.runId!);assert.deepEqual(calls,['interrupt','close']);assert.equal(f.tasks.run(a.runId!).phase,closed?'ended':'uncertain');assert.equal(f.store.meta('lease:'+a.runId),closed?undefined:slot.lease);
  if(closed)assert.ok(f.tasks.workerSend(main,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'}).runId);
  else{assert.equal(f.tasks.workerSend(main,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'}).runId,null);assert.equal(f.tasks.claim(),undefined);assert.equal(f.store.runs().length,1);}
 });
+import {HostToolCalls} from '../src/host-tool-calls.js';

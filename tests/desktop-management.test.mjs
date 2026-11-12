@@ -17,8 +17,12 @@ test('desktop private IPC reuses native state/login/cancel and exposes no web ac
  Object.assign(process,{connected:true,env:{},send:(value,callback)=>{sent.push(value);callback();},disconnect(){}});
  let state={account:'none',connected:false,phase:'idle'};
  class Homer{
-  constructor(config){this.config=config;this.modelConfig={keyEnv:'SYNTHETIC_MISSING',baseUrl:'http://127.0.0.1'};}
+  constructor(config){this.config=config;this.modelConfig={keyEnv:'SYNTHETIC_MISSING',baseUrl:'http://127.0.0.1'};this.schedules={start(){}};}
   onStateChange(){}
+  bindDesktopPowerProtection(){return ()=>{};}
+  onScheduleChanged(){return ()=>{};}
+  desktopPowerFacts(){return {executing:false,displayRequired:false};}
+  nextScheduledMessageAt(){return null;}
   async close(){}
   async manageNativeAccount(input){calls.push(input);if(input.action==='account_login')return state={...state,phase:'waiting',loginId:'synthetic-login'};if(input.action==='account_cancel')return state={account:'none',connected:false,phase:'cancelled'};return state;}
  }

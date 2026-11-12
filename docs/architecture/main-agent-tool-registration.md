@@ -10,6 +10,8 @@ Homer 业务插件启动时向宿主注册自有工具的定义及处理函数�
 
 各工具的参数和业务授权规则由所属模块定义，业务状态由各插件保存。渠道工具见[多渠道方案](multi-channel-architecture.md#3-主程序的最小接口)。
 
+[定时任务方案](scheduled-tasks-architecture.md)已接通 Croner 和创建、查询、修改、取消四个薄工具，分别加入 Main／Worker 的宿主业务 MCP 目录，共用定时模块及规则存储。两角色均由宿主将原生调用元数据与同一引擎的工具开始事件匹配，再核验当前交办或委托；保留真实用户轮专属门禁。创建响应全丢时，两角色通过 `schedule_list({ receipts: true })` 查询获准范围内的原操作回执，无需预知安排或调用 ID；宿主复用持久操作身份，同原调用重取原结果，过期旧写仍拒绝。模块只负责到点向 Homer 投递消息，不增加工具、独立 MCP 服务或业务执行状态。隔离宿主和实际固定 Codex 0.163.0 的双角色旧线程、调用证据及回执恢复专项已通过，未替换日常安装。
+
 ### 旧主会话如何加载工具
 
 **采用现有主 Agent 专用 `homer_interactions` MCP 入口，在宿主重启时加载 Homer 业务插件目录。** 固定 Codex 0.163.0 生成的实验协议只在 `thread/start` 声明 `dynamicTools`。Homer 恢复时沿用旧线程的动态目录，目录哈希变化会触发 `main_tools_migration_required`。把业务插件工具接入主 Agent 的 `homer_interactions` 可沿用动态目录及其哈希。该服务的注册目录、宿主分发、stdio MCP `tools/list` 和引擎可调用名称须一致，并由恢复后的 `mcpServerStatus/list` 核对。名称冲突在注册时拒绝。Worker 沿其独立的 Homer 业务工具目录启动。源码入口见 [service.ts](../../src/service.ts)、[engine.ts](../../src/engine.ts) 和 [worker-interaction-mcp.ts](../../src/worker-interaction-mcp.ts)。

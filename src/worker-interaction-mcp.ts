@@ -11,9 +11,10 @@ import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {MEMBERSHIP_TOOLS} from './membership-web-tools.js';
 import {CUA_TOOLS} from './desktop-cua.js';
+import {SCHEDULE_TOOLS} from './schedules.js';
 
-export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS];
-export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS];
+export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS,...SCHEDULE_TOOLS];
+export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS,...SCHEDULE_TOOLS];
 export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false){
   const tools=role==='worker'?(cua?[...WORKER_HOST_MCP_TOOLS,...CUA_TOOLS]:WORKER_HOST_MCP_TOOLS):HOST_MCP_TOOLS;
   return membership?[...tools,...MEMBERSHIP_TOOLS.filter(tool=>!nativeWebSearch||tool.name!=='web_search')]:tools;
@@ -140,7 +141,7 @@ export function runWorkerInteractionMcp(path: string,role:string='main',membersh
         else if (message.method === "tools/call") {
           try {
             if (!allowed(message.params?.name,catalog)) throw new Error("interaction_tool_denied");
-            const meta = plugins.some(tool=>tool.name===message.params.name) ? message.params._meta : undefined;
+            const meta = plugins.some(tool=>tool.name===message.params.name)||SCHEDULE_TOOLS.some(tool=>tool.name===message.params.name) ? message.params._meta : undefined;
             const value = await hostCall(path, message.params.name, message.params.arguments, meta);
             const media=value as {mediaContent?:unknown[]};
             result = { isError: false, content: media?.mediaContent??[{ type: "text", text: JSON.stringify(value) }] };

@@ -10,7 +10,7 @@ import {isVisibleConversationMessage} from './chat-date';
 import './homer-message-queue.css';
 
 type QueueItem=DispatchQueuePage<'all'>['items'][number];
-const textOf=(item:QueueItem)=>item.origin==='worker'?item.text:item.input.text||item.user?.media?.map(asset=>asset.filename).join('、')||'引用消息';
+const textOf=(item:QueueItem)=>item.origin==='user'?item.input.text||item.user?.media?.map(asset=>asset.filename).join('、')||'引用消息':item.text;
 const summaryOf=(item:QueueItem)=>[item.origin==='user'&&(!item.editable||item.state!=='queued')?item.statusText:undefined,textOf(item)].filter(Boolean).join(' · ');
 function queueFocus(element:HTMLElement|null){
  return ()=>{if(element?.contains(document.activeElement))document.querySelector<HTMLElement>('[contenteditable="true"]')?.focus({preventScroll:true});};

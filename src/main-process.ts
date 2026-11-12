@@ -23,7 +23,7 @@ export type ProcessItem = { id: string; seq: number; revision: number } & (
 );
 export type ProcessNode = ProcessTiming & {
   id: string; threadId: string; seq: number; revision: number;
-  sourceKind: 'user' | 'worker'; sourceMessageIds: string[]; sourceEventId?: string; messageId: string; replyMessageId?: string;
+  sourceKind: 'user' | 'worker' | 'scheduled'; sourceMessageIds: string[]; sourceEventId?: string; messageId: string; replyMessageId?: string;
   replyPolicy?: 'explicitFinal';
   state: 'working' | 'worked'; status: 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown';
   turnIds: string[]; endEventId?: string; items: ProcessItem[];
@@ -101,7 +101,11 @@ export class MainProcessHistory {
   }
   coordination(id:string){
     const node=this.load(id);
-    if(!node||node.sourceKind!=='worker'||node.state!=='worked'||node.final?.id!==node.messageId||!node.final.text.trim()||node.sourceMessageIds.length!==1)return;
+    if(!node||node.sourceKind==='user'||node.state!=='worked'||node.final?.id!==node.messageId||!node.final.text.trim()||node.sourceMessageIds.length!==1)return;
+    if(node.sourceKind==='scheduled'){
+      const row=this.db.prepare("SELECT 1 FROM agent_messages m JOIN conversation_messages h ON h.id=? WHERE m.id=? AND m.kind='scheduled_message' AND m.senderAgentId='host' AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND json_extract(m.payloadJson,'$.threadId')=? AND h.threadId=? AND h.text=?").get(node.messageId,node.sourceMessageIds[0]!,node.threadId,node.threadId,node.final.text);
+      return row?{messageId:node.messageId,text:node.final.text,sourceRequestId:undefined}:undefined;
+    }
     const source=this.db.prepare(`SELECT v.sourceRequestId,CASE WHEN m.senderAgentId='host' AND m.kind='interaction_required' THEN json_extract(m.payloadJson,'$.interactionId') END interactionId FROM agent_messages m
       JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
       JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
@@ -167,7 +171,7 @@ export class MainProcessHistory {
   }
   agent(id: string, event: { turnId: string; itemId: string; phase?: string | null; text?: string; delta?: string; completed: boolean; snapshot?:boolean; order?:string[] }) {
     const node = this.load(id);
-    if (!node || node.state !== 'working' || node.sourceKind === 'worker' || !node.turnIds.includes(event.turnId)) return;
+    if (!node || node.state !== 'working' || node.sourceKind !== 'user' || !node.turnIds.includes(event.turnId)) return;
     const key = event.turnId + ':' + event.itemId;
     if (node.completedItemIds.includes(key)&&!event.snapshot) return;
     const prior = node.items.find(item => item.id === key);
@@ -233,7 +237,7 @@ export class MainProcessHistory {
       node.revision++; this.save(node); return;
     }
     node.state = 'worked'; node.status = status; node.endEventId = endEventId;
-    if(node.sourceKind==='worker'&&publicText?.trim())node.final={id:node.messageId,text:publicText};
+    if(node.sourceKind!=='user'&&publicText?.trim())node.final={id:node.messageId,text:publicText};
     if(node.startedAtMs!==undefined&&node.timingState!=='terminal')node.timingState='unknown';
     for (const item of node.items) if (item.kind === 'tool' && item.status === 'running') { if(item.label==='创建任务')item.label='创建结果待核对'; item.status = item.category&&item.category!=='host'?'unknown':'blocked'; item.revision++; }
     if(node.finalCandidate&&status!=='unknown') node.final = node.finalCandidate;
