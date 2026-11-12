@@ -69,7 +69,7 @@ App 外部网页交给系统浏览器；主聊天、受保护成果和预览留�
 
 ## 手机新版轻提示
 
-2026-11-12：安卓 App 和官网安卓下载入口的源码改为读取 GitHub 上的 [`mobile/android-releases.json`](android-releases.json)，沿用现有字段校验及提醒规则；更新按钮直接打开已校验的固定标签 APK，由系统浏览器下载、用户确认安装。iOS 继续使用原官网 JSON、StoreKit 条件和 `/homer/app` 更新入口。新清单需后续获准提交、推送后才可公开读取，新 App 来源需随下一次 APK 安装采用；本轮没有打包或上线。
+2026-11-12：安卓 App 和官网安卓下载入口的源码改为读取 GitHub 上的 [`mobile/android-releases.json`](android-releases.json)，沿用现有字段校验及提醒规则；更新按钮直接打开已校验的固定标签 APK，由系统浏览器下载、用户确认安装。iOS 继续使用原官网 JSON、StoreKit 条件和 `/homer/app` 更新入口。Android 0.1.1 / build 6 已采用新来源并公开分发，GitHub 清单已上线且匿名完整下载／摘要通过；同签名覆盖安装与 Activity 启动通过。手机真实更新查询和绑定／数据保留仍待验，官网读取代码尚未部署。
 
 源码已接入，详见[方案与实际验证](../docs/mobile-app-update-notice.md)。仅 `com.homer.mobile` 的非开发包且显式 `EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=stable` 才检查；iOS 还须 App Store production 环境与可靠 storefront。QA、TestFlight、未知身份默认禁用。
 

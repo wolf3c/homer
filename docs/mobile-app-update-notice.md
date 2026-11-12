@@ -1,6 +1,6 @@
 # Homer 手机 App 新版轻提示方案
 
-当前源码（2026-11-12）：安卓 App 与官网安卓入口共用 GitHub 清单 `https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json`，维护文件为 [`mobile/android-releases.json`](../mobile/android-releases.json)。安卓更新按钮直接打开校验后的固定标签 APK；iOS 继续读取原官网 JSON、打开原官网更新入口。版本、系统、ABI、关闭规则和轻提示不变。此为源码接入，GitHub 新清单、正式 APK 和生产官网均尚未采用本轮改动。
+当前源码（2026-11-12）：安卓 App 与官网安卓入口共用 GitHub 清单 `https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json`，维护文件为 [`mobile/android-releases.json`](../mobile/android-releases.json)。安卓更新按钮直接打开校验后的固定标签 APK；iOS 继续读取原官网 JSON、打开原官网更新入口。版本、系统、ABI、关闭规则和轻提示不变。当前 Android 0.1.1 / build 6 已采用该来源并公开分发，GitHub 清单已上线；已完成同签名覆盖安装与启动，真实更新查询和绑定／数据保留待验。官网读取代码尚未部署，iOS 不变。
 
 确认日期：2026-11-03（Asia/Shanghai）。客户端更新提示已接入源码并提交（`a3b8059`，固定入口调整为 `0ff46e4`）。源码和离线验证不代表正式包已完成启动检查或覆盖安装验收。
 
@@ -138,7 +138,7 @@ GitHub 清单沿用 schemaVersion 1，只维护 releases.stable.android；iOS �
 - APK 实读：`com.homer.mobile`、versionName 0.1.1／versionCode 6、最低 API 24、target 37、仅 arm64-v8a、不可调试。apksigner 校验通过，证书 SHA-256 与正式基线及重新下载、核对摘要后的公开 build 5 一致：`a99360f0b7b12f5fab09dd41f3a7a18ec53c954253e2caca7399b14a9af28382`。
 - 包内 Hermes bundle 与本次构建输出逐字一致；最终及中间 source map 均确认 App.tsx、update.mjs、重新生成的 chat.mjs 与候选原文一致。已确认新 GitHub 查询地址、stable 编译替换及内嵌许可；未发现 keystore、source map、环境文件或签名密码进入 APK。保留最终 source map、R8 mapping、摘要与脱敏 verification.json，供本包后续崩溃定位和验收；不公开调试映射。
 
-构建阶段只完成制品核验，后续安装和公开分发结果见下文；不能据此宣称更新提示、绑定／数据保留通过。GitHub 新清单及真实跨域／缓存、官网下载入口上线、原生更新查询均需后续授权与实际验收。本轮未修改共享版本、签名材料、iOS、Release、Latest 或远端；构建阶段未提交记录。
+构建阶段只完成制品核验，后续安装和公开分发结果见下文；不能据此宣称更新提示、绑定／数据保留通过。构建阶段尚未上线 GitHub 新清单，后续公开下载和清单跨域／缓存核验见下文；官网下载入口上线与原生更新查询仍待验。该构建阶段未修改共享版本、签名材料、iOS、Release、Latest 或远端，未提交记录。
 
 ### 2026-11-12 build 6 ADB 覆盖安装
 
@@ -150,6 +150,6 @@ GitHub 清单沿用 schemaVersion 1，只维护 releases.stable.android；iOS �
 
 按用户本轮授权，将已经安装且核验过的原包发布为 [mobile-android-0.1.1-6](https://github.com/wolf3c/homer/releases/tag/mobile-android-0.1.1-6)，Release ID 442637345。标签指向原构建基线 edbf4c6，versionCode-only 候选覆盖仍按上文记录，不把它称为纯标签源码构建。先创建草稿，仅上传 APK 与 SHA256SUMS；对照 GitHub 附件大小、digest 后公开同一 Release，附件身份未变，make_latest=false。
 
-匿名完整回下载 APK 为 41,766,177 字节，SHA-256 与交付及手机回读包一致（ae441df98bfee1a44e5132c680421d3977c0d8600e3bfd47c753c0f95d64d8f5）；公开 SHA256SUMS 与本地原文逐字一致。完成上述核验后，安卓发行清单由 build 5 更新到 6，URL 使用同一不可变移动标签 APK，保持 API 24、arm64-v8a 及原 schema。固定读取地址为 `https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json`。
+匿名完整回下载 APK 为 41,766,177 字节，SHA-256 与交付及手机回读包一致（ae441df98bfee1a44e5132c680421d3977c0d8600e3bfd47c753c0f95d64d8f5）；公开 SHA256SUMS 与本地原文逐字一致。完成上述核验后，安卓发行清单由 build 5 更新到 6，URL 使用同一不可变移动标签 APK，保持 API 24、arm64-v8a 及原 schema。固定读取地址为 `https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json`。清单提交 `f394d95` 已推送 main；匿名回读 HTTP 200，JSON 原文与交付清单一致（SHA-256 `75aeca3f6a595341868357c11b16b7e32c86d4317c87930236ec784aebf1fd35`），Content-Type 为 `text/plain; charset=utf-8`，Cache-Control 为 `max-age=300`，Access-Control-Allow-Origin 为 `*`。这仅证明当前公开响应，不承诺固定缓存撤回时限；实际更新模块校验确认 build 5 可识别 build 6，build 6 不重复提醒。
 
 本次只更新安卓 GitHub 清单；iOS 和 Yezi2 原 JSON 不改，不部署官网。公开后回读桌面 Latest 仍为 v0.1.8；不将此移动版设为 Latest。手机真实查询、完整绑定／数据保持及业务流程仍待验收；公开包不包含私有 verification、R8 mapping 或 source map。

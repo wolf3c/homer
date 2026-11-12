@@ -9,7 +9,7 @@
 | [主 Agent 插件工具注册](main-agent-tool-registration.md) | 注册契约仅适用于 Homer 自有业务工具。渠道订阅的工具发现、调用和用户轮绑定已通过合成测试及固定 Codex 0.163.0 的旧会话恢复专项，专项使用回环模型替身。隔离候选已删除通用能力管理工具。固定引擎已验原生 MCP、Skill 和插件。 |
 | [桌面版内嵌 Cua Driver](desktop-computer-use.md) | macOS ARM64 签名候选已用真实 Worker 验证已有和临时 Chrome、指定桌面窗口、附件及资源回收。本地启动／AX／错误与绑定回收修复通过 90 项离线回归及隔离源码模块的真实 SDK、桌面审批读取、Chrome 点击截图和失败回收验收，尚未重打包或安装。Windows x64 已接入，签名包与交互桌面待验收。 |
 | [桌面 App 更新](../desktop-app-update.md) | Mac／Windows 原生清单及官网下载入口源码直接使用 GitHub Latest。未签名 Windows 已接入下载后确认安装，ready 前及安装前复核大小／SHA-512；签名模式与安全重启保持。定向离线及隔离官网组件检查通过，尚未构建、部署或验收真实 GitHub 原生升级；旧客户端过渡单独处理。 |
-| [手机 App 更新提示](../mobile-app-update-notice.md) | 安卓 App 与官网下载入口源码共用 GitHub 安卓清单，更新按钮直达校验后的固定标签 APK；复用原校验和关闭规则。iOS 查询与入口保持。相关离线与隔离组件验证见正文，GitHub 清单及实际包／官网上线、真机覆盖更新待验。 |
+| [手机 App 更新提示](../mobile-app-update-notice.md) | 安卓 App 与官网下载入口源码共用 GitHub 安卓清单，更新按钮直达校验后的固定标签 APK；复用原校验和关闭规则。iOS 查询与入口保持。相关离线与隔离组件验证见正文；Android 0.1.1 / build 6 已公开，匿名完整下载、清单响应及同签名覆盖安装／启动通过。官网读取代码未部署，原生更新查询与绑定／数据保留待验。 |
 | [多渠道接入架构](multi-channel-architecture.md) | 首版覆盖文字收件、消息及附件外送和聊天内订阅。Telegram 私聊已通过双 Bot 实网验收。群入口已接入主 Agent，最近 10 条与多级上游的合并通过离线验证，实际群回复待验。桌面 Telegram 绑定列表的 BotFather 小程序指引及命令备选已通过隔离浏览器核对。个人微信已通过双账号实网验收，覆盖解绑、重启和 30 分钟延迟交付。真实模型订阅意图和 macOS ARM64 候选包的双渠道收发及重启已通过。隔日探测待完成。桌面「连接聊天应用」已在隔离源码完成，macOS ARM64 候选包通过双渠道绑定、原入口回复、重启和解绑实网对照，Windows 待验收。钉钉专用机器人已通过隔离 macOS ARM64 候选包的桌面绑定、原私聊回复、订阅重启、后台文字及附件和解绑验收。 |
 | [账号与模型连接](account-and-model-connection.md) | 网站授权、模型配置交付、凭据保存及失败保全。ChatGPT 的 Homer／Worker 参数同来源自动保存、下一轮生效，保留当前任务和线程；跨来源仍安全重启。已补充真实 preload 桥接、保存失败与固定 Codex 0.163.0 同线程切换回归，实际设置组件检查自动保存与窄窗；本次未安装发布，真实 Pro $500 待验。 |
 | [移动设备配对与连接](mobile-device-pairing-architecture.md) | 移动端、主端和 Yezi2 的配对、撤销、WebRTC 及中继边界。正文分别记录真机闭环和中继验收范围。iOS 扫码授权、拒绝恢复和配对已通过 iPhone 验收，App Store build 8 已复提并等待审核。 |
