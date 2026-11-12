@@ -1,10 +1,10 @@
 # GitHub 多平台构建准备
 
-## 当前流程（2026-11-11）
+## 当前流程（2026-11-12 复核）
 
-本轮已按用户要求准备桌面 `v0.1.8` / build `293`：三平台构建、仅 Apple 芯片 Mac 实机验收，沿用草稿直传及云端完整校验。版本元数据与只读核对结果见 [v0.1.8 构建准备](desktop-release-0.1.8-preparation.md)。本轮尚未提交、推送、创建标签或开始构建，准备完成后再确认执行。以下 v0.1.2 段落及后续历史准备记录不构成本轮授权。
+本轮桌面 `v0.1.8` / build `293` 已完成三平台构建、云端完整校验及正式公开分发核验，Latest 已从 v0.1.7 切到本版；Apple 芯片 Mac 的签名与隔离合成验收通过，Intel / Windows 未实机验收。源码、运行、包摘要、官网交接状态及完整验收边界见 [v0.1.8 发行记录](desktop-release-0.1.8-preparation.md)。官网部署尚未执行。以下 v0.1.2 段落及后续历史准备记录不构成本轮授权。
 
-2026-11-06 已按用户确认准备桌面 `v0.1.2`（拟用 build `287`），三平台构建、仅 Apple 芯片 Mac 实机验收。源码、公开候选、静态验证及后续执行条件见 [0.1.2 构建准备](desktop-release-0.1.2-preparation.md)。准备阶段未提交、同步、创建标签、触发构建或发布；用户随后已授权提交、同步、创建标签及开始构建。
+历史 v0.1.2（build 287）的准备与后续失败记录见 [0.1.2 构建准备](desktop-release-0.1.2-preparation.md)，不作为当前发行状态或执行条件。现行默认入口、阶段确认及新版本 Yezi2 聊天交接规则统一见 [homer-github-build](../.codex/skills/homer-github-build/SKILL.md)。
 
 `desktop-three` 构建 Apple 芯片 Mac、Intel Mac 和 Windows x64，系统要求分别为 macOS 27、macOS 14 和 Windows 11。Mac 使用 Developer ID 签名、公证及临时钥匙串；Windows 当前未签名且禁用自动更新。版本由 `release_tag` 对齐 `package.json.version`，三平台共用显式 `build_number`，构建提交固定为 `expected_sha`。平台和 runner 以 `scripts/github-build-plan.mjs` 为准。
 
@@ -17,7 +17,7 @@
 
 仅构建时显式设置 `upload_release_draft=false`，包保存在 Actions artifact 1 天；源码编译仍走 artifact。默认输入不构成用户上传或发布授权。工作流只手动触发，同标签排队，草稿操作使用临时 `GITHUB_TOKEN` 的 `contents: write`；不自动公开、改 Latest 或删除旧包，不使用额外长期 Token。
 
-v0.1.1 三平台已发行，见 [公开版本页](https://github.com/wolf3c/homer/releases/tag/v0.1.1)。本次新增草稿直传流程通过离线协议、规划及模板检查，尚未云端执行；本次维护不触发构建或改动现有 Release。离线命令：`node --test tests/github-build-plan.test.mjs tests/github-release-draft.test.mjs`。
+草稿直传及云端完整校验已在本版三平台运行中通过，证据见上方 v0.1.8 发行记录；离线协议检查入口仍为 `node --test tests/github-build-plan.test.mjs tests/github-release-draft.test.mjs`，不替代云端或目标设备验收。
 
 以下为最初准备及 TURN 整合的历史记录，涉及平台、权限、产物保留期和分发顺序的旧描述不再作为当前操作指令。
 
