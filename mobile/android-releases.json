@@ -5,13 +5,13 @@
       "android": {
         "status": "available",
         "version": "0.1.1",
-        "versionCode": 5,
+        "versionCode": 6,
         "minApiLevel": 24,
         "supportedAbis": [
           "arm64-v8a"
         ],
-        "downloadUrl": "https://github.com/wolf3c/homer/releases/download/mobile-android-0.1.1-5/Homer-0.1.1-5-android-arm64.apk",
-        "sha256": "859e293c451b43b2c24242152b115fa6388ecf1e4ccef771cb2774fa201e50d5"
+        "downloadUrl": "https://github.com/wolf3c/homer/releases/download/mobile-android-0.1.1-6/Homer-0.1.1-6-android-arm64.apk",
+        "sha256": "ae441df98bfee1a44e5132c680421d3977c0d8600e3bfd47c753c0f95d64d8f5"
       }
     }
   }

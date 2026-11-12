@@ -127,3 +127,29 @@ GitHub 清单沿用 schemaVersion 1，只维护 releases.stable.android；iOS �
 - 制品：`.codex/private/releases/homer-android/0.1.1-5/Homer-0.1.1-5-android-arm64.apk`，42,784,844 字节，SHA-256 `859e293c451b43b2c24242152b115fa6388ecf1e4ccef771cb2774fa201e50d5`，最低 API 24、target 37。原密钥签名，无换签。
 - 已通过 ADB 对 Pixel 8 Pro 的 user 0 覆盖安装，回读版本和安装后 APK 摘要一致；未卸载、清数据、操作 VPN 或 QA App。解锁后实际启动可见，原绑定进入自动重试，当前提示暂时无法连接电脑；没有据此宣称配对或 TURN 验收通过，也未操作桌面主端。
 - 本次仅本地打包和安装，未上传 GitHub、更新官网发行 JSON、部署或变更 iOS 审核。私有核验在同版本 verification.json；旧正式制品保留。
+
+## 2026-11-12 Android v0.1.1 / build 6 隔离构建
+
+桌面发行聊天 `01a1ce49-48c0-7482-b65e-c8e2974e3465` 本轮完成后启动，范围仅限安卓隔离构建与包核验；未安装、上传、公开或部署，不修改 GitHub 清单及官网数据。
+
+- 源码基线：`edbf4c6a16bf3f566ba973b066bd547aab8e3757`。只在独立候选将 `mobile/app.json` 的 Android versionCode 从 4 改为 6，完整覆盖差异记录在私有 verification.json；未纳入共享工作区未提交改动。移动版本保持 0.1.1，iOS 配置不变。不是纯提交无覆盖构建。
+- 复用 Node 22.22.0、已安装 JDK 21／Android SDK 37 和原正式密钥，候选中重新生成原生工程与内嵌聊天页面。已安装移动依赖的 479 个版本与锁文件一致；38 项离线移动测试及类型检查通过。Gradle `assembleRelease` 使用 ARM64、两 worker、非 daemon，保留 Release lintVital、启用 R8 与资源收缩；353 个任务执行，14 分 35 秒成功。构建日志含既有第三方弃用提示。
+- 产物：`.codex/private/releases/homer-android/0.1.1-6/Homer-0.1.1-6-android-arm64.apk`，41,766,177 字节；SHA-256 `ae441df98bfee1a44e5132c680421d3977c0d8600e3bfd47c753c0f95d64d8f5`。
+- APK 实读：`com.homer.mobile`、versionName 0.1.1／versionCode 6、最低 API 24、target 37、仅 arm64-v8a、不可调试。apksigner 校验通过，证书 SHA-256 与正式基线及重新下载、核对摘要后的公开 build 5 一致：`a99360f0b7b12f5fab09dd41f3a7a18ec53c954253e2caca7399b14a9af28382`。
+- 包内 Hermes bundle 与本次构建输出逐字一致；最终及中间 source map 均确认 App.tsx、update.mjs、重新生成的 chat.mjs 与候选原文一致。已确认新 GitHub 查询地址、stable 编译替换及内嵌许可；未发现 keystore、source map、环境文件或签名密码进入 APK。保留最终 source map、R8 mapping、摘要与脱敏 verification.json，供本包后续崩溃定位和验收；不公开调试映射。
+
+构建阶段只完成制品核验，后续安装和公开分发结果见下文；不能据此宣称更新提示、绑定／数据保留通过。GitHub 新清单及真实跨域／缓存、官网下载入口上线、原生更新查询均需后续授权与实际验收。本轮未修改共享版本、签名材料、iOS、Release、Latest 或远端；构建阶段未提交记录。
+
+### 2026-11-12 build 6 ADB 覆盖安装
+
+用户另行授权安装后，唯一已连接 Pixel 8 Pro（当前 Android user 0、API 37、arm64-v8a）上原正式 build 5 的证书与本次 build 6 一致。使用 `adb install -r --user 0` 成功覆盖安装，未执行卸载、数据清除或降级。安装后回读 versionName 0.1.1／versionCode 6，拉取已安装 base.apk 的 SHA-256 与本次交付包一致；启动 MainActivity 成功，Homer Activity 已在前台恢复。
+
+这里只确认安装及 Activity 启动；未读取聊天或应用私有数据，未验收绑定／数据完整保留、配对、真实模型及 GitHub 更新查询。核验 JSON 已更新，无设备序列号进入维护记录。安装阶段未上传、公开或部署，后续分发见下文。
+
+### 2026-11-12 build 6 GitHub 公开分发
+
+按用户本轮授权，将已经安装且核验过的原包发布为 [mobile-android-0.1.1-6](https://github.com/wolf3c/homer/releases/tag/mobile-android-0.1.1-6)，Release ID 442637345。标签指向原构建基线 edbf4c6，versionCode-only 候选覆盖仍按上文记录，不把它称为纯标签源码构建。先创建草稿，仅上传 APK 与 SHA256SUMS；对照 GitHub 附件大小、digest 后公开同一 Release，附件身份未变，make_latest=false。
+
+匿名完整回下载 APK 为 41,766,177 字节，SHA-256 与交付及手机回读包一致（ae441df98bfee1a44e5132c680421d3977c0d8600e3bfd47c753c0f95d64d8f5）；公开 SHA256SUMS 与本地原文逐字一致。完成上述核验后，安卓发行清单由 build 5 更新到 6，URL 使用同一不可变移动标签 APK，保持 API 24、arm64-v8a 及原 schema。固定读取地址为 `https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json`。
+
+本次只更新安卓 GitHub 清单；iOS 和 Yezi2 原 JSON 不改，不部署官网。公开后回读桌面 Latest 仍为 v0.1.8；不将此移动版设为 Latest。手机真实查询、完整绑定／数据保持及业务流程仍待验收；公开包不包含私有 verification、R8 mapping 或 source map。
