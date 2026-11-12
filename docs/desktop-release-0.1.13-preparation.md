@@ -1,6 +1,6 @@
 # Homer 桌面 v0.1.13 发行记录
 
-状态：2026-11-12，本地修复和定向检查完成；用户已授权提交、推送、创建标签、三平台正式构建、Mac 签名公证、草稿直传及 Apple 芯片隔离验收。公开发布和 Latest 变更另行授权。
+状态：2026-11-13，三平台正式构建、草稿直传和云端完整下载校验通过，Apple 芯片隔离验收完成。草稿尚未公开，Latest 保持 v0.1.8；公开发布另行授权。
 
 ## 本轮范围
 
@@ -22,24 +22,52 @@
 
 ## 执行记录
 
-最终 SHA、远端 main / v0.1.13 标签回读、run / attempt、逐平台结果、草稿完整校验及 Apple 芯片验收在实际执行后补齐。任一失败先报告，不自动重跑或覆盖附件。Latest 保持 v0.1.8，公开与原生升级放量另行授权。
+- 提交、远端 main 及标签 v0.1.13 回读均为 `0184dd81bca18df5f4de7070eefabc0440af9291`；提交仅上述五个文件，其他任务未提交工作保留。
+- [运行 43247531635 / attempt 1](https://github.com/wolf3c/homer/actions/runs/43247531635/attempts/1)，操作者 wolf3c，workflow_dispatch，ref v0.1.13，2026-11-12 23:24:57（Asia/Shanghai）触发；headSha 与目标完整 SHA 一致，输入为 desktop / desktop-three / build 298 / 草稿直传。
+- Apple 芯片 job 131284294780 success，已越过旧电源辅助程序签名失败点，正式包及原生更新清单上传成功。取回原始小回执，版本/build、来源、preparation=false、publishable=true、Developer ID / notarized and stapled、macOS 27.0 和双服务地址均核对通过。
+- Apple 芯片 ZIP `Homer-mac-arm64.zip` 为 409832399 字节，回执 SHA-256 `10d71d4a786484f875567e26260a1f64d8732b7662fde0886db5a9cbee2ffcef`。此时尚待最终云端完整下载校验和本机产品验收。
 
-## 双语更新说明草案
+本轮无重跑，全部产物来自同一 SHA / run / attempt；最终结果如下。Latest 保持 v0.1.8，公开与原生升级放量另行授权。
 
-更新说明
+## 完整构建与草稿校验
 
-- 定时消息：让 Homer 按日期或重复规则向原会话投递消息；修改和取消只影响未来投递。
-- 电源与唤醒：增加执行期间的防休眠保护与设置。系统唤醒受平台、设备和用户授权限制，真实睡眠唤醒尚未验收。
-- Mac 更新检查：修正原生更新初始化的签名检查参数；实际包及原生升级结果按本轮证据补齐。
+plan、三平台 build、verify-draft 五个 job 全部 success，attempt 为 1。Windows 真实 electron-builder 更新清单契约步骤通过；两端 Mac 临时签名材料清理步骤成功。verify-draft 完整流式下载三平台包及原生更新清单，比对大小和 SHA-256 后上传合并清单与 SHA256SUMS。
 
-What's new
+草稿 Release ID `443142581`，11 个附件齐全。三份原始回执、平台与合并清单及 GitHub 附件摘要一致；所有回执版本、build、完整 SHA、正式包标记和双服务地址均符合本轮输入。Intel 实际最低系统为 macOS 14.0，Windows 回执明确未签名。本机只完整下载 Apple 芯片包，其余大包的完整下载证据来自云端 verify-draft；小清单均回读并核对摘要及固定标签 URL，Windows 原生清单 size=291108006。
 
-- Scheduled messages: deliver a message to the original conversation on a date or recurring schedule. Changes and cancellation affect future deliveries.
-- Power and wake settings: add sleep prevention during execution. System wake depends on platform, hardware and user authorization; real sleep/wake remains unverified.
-- Mac update checks: correct the signature requirement argument used during native update initialization. Package and native upgrade results depend on this release's acceptance evidence.
+| 附件 | ID | 字节数 | SHA-256 |
+| --- | ---: | ---: | --- |
+| `Homer-mac-arm64.zip` | 740011033 | 409832399 | `10d71d4a786484f875567e26260a1f64d8732b7662fde0886db5a9cbee2ffcef` |
+| `Homer-mac-x64.zip` | 740053869 | 377847271 | `fa3b49029039f36785ed334880246a1a7a2343ec830f5f8f03d008315d7762ad` |
+| `Homer-windows-x64.exe` | 740082401 | 291108006 | `544fb8a7025c743afd6e34184538687b8d9db96ba65cfb7a7fdf682637a0b5bc` |
+| `latest.yml` | 740082905 | 484 | `f3cc1bf55dac3dd28e50b929105f148e5b85563924e23d2bdaf9977ff269993e` |
+| `release-manifest-macos-arm64.json` | 740011801 | 977 | `c713c96db5c173ffb97e77b17a6f2e63b25d9b57935d263da5a2d9e37a401173` |
+| `release-manifest-macos-x64.json` | 740054827 | 963 | `97c9312ec0b010f98e70ce787e596a0e5d5546df74631d1acbd48ee47ad5ebdf` |
+| `release-manifest-windows-x64.json` | 740082959 | 961 | `16ab927307fb176d663e9339733cdc054ac4ce54681a80cb12621e7e5171b464` |
+| `release-manifest.json` | 740084706 | 2643 | `8d7064e723a6484dbfca10148e9b832dc19dee3e4a0aa9991e8cb38b17b9ccbe` |
+| `RELEASES-darwin-arm64.json` | 740011756 | 319 | `1ecfe4dd44043c2647640862da04755992efcf1e3cb8249d4af33fe956f2695f` |
+| `RELEASES-darwin-x64.json` | 740054759 | 317 | `8854b1e6f75b37a6c152b964c233c0223ce49c3b80a5aa6b17533b278bdfd1c2` |
+| `SHA256SUMS` | 740084651 | 519 | `937d489f47388d1806d535a370a3111fa5613c2f349e3210635c7b3e97f226b0` |
 
-要求及安装 / Requirements and installation：Apple Silicon macOS 27+；Intel macOS 14+；Windows x64 Windows 11。Mac 解压 ZIP 后拖入 Applications，Windows 运行 NSIS 安装器 / Extract the Mac ZIP and move Homer to Applications, or run the Windows NSIS installer. Planned Developer ID signing and notarization on Mac; unsigned Windows installer.
+## Apple 芯片实际包隔离验收（2026-11-13）
 
-限制 / Limitations：仅计划 Apple 芯片隔离产品验收；Intel / Windows 实机、真实账号及付费模型、原生升级、真实睡眠唤醒与系统授权仍未验收，不能据此承诺升级数据保留 / Only isolated Apple Silicon product acceptance is planned. Intel/Windows devices, real accounts and paid models, native upgrades, real sleep/wake and system authorization remain unverified; upgrade data retention is not established.
+本机 macOS 27.2 / arm64。ZIP 完整下载后的大小和 SHA-256 与本轮回执及合并清单一致；包内 desktop-manifest 与原始回执的版本、build、来源、正式包标记、双服务地址和 powerWake=1 一致，两个电源可执行文件和 launchd plist 均进入封存清单。
 
-构建信息 / Build information：0.1.13 / build 298；最终源码、run / attempt、附件及 SHA256SUMS 待执行补齐。固定旧版 v0.1.10 保留，跨版本资料回退未验证；Latest 保持 v0.1.8。
+- codesign 深度严格校验、stapler 和 Gatekeeper 均通过，Gatekeeper 报告 Notarized Developer ID。真实 codesign 更新表达式专项 1/1 通过，旧表达式和错误标识均拒绝；不等同于完整原生升级验收。
+- 本轮正式 Electron App 的五项隔离合成验收 5/5 通过，零失败、取消或跳过：发送与正常重启；未连接账号只读；完整进程崩溃后的同一线程与精确附件恢复；SILK 预览及访问控制；电源默认值、实际设置保存、真实系统防休眠保护申请与释放。
+- 电源设置经实际界面开关验证，profile 持久化值与状态一致；390 / 1440 宽度无页面横向溢出。会话截图和宽窄电源设置截图均已查看。五项正常退出后的 owner、runtime/gateway 锁和 lease 释放断言均通过；崩溃恢复未手动删锁。
+- 正式包双服务地址和批注运行时/notices 两项定向检查 2/2 通过，无跳过。
+
+验收入口基于本次提交的 tests/electron-desktop.test.mjs 前四项场景，在 scratch 副本预置首启导览已读标记、适配 SILK fixture 路径，并追加实际电源设置、profile 保存及保护释放场景；未修改 App 或原签名 ZIP。测试仅使用独立合成 profile，不调用要求回环账号服务的 daily 场景。没有替换日常安装、调用真实账号或付费模型、注册唤醒事件或改变系统权限。
+
+## 草稿正文与下一授权边界
+
+草稿中英文用户更新说明已按本次实际验收完善并逐字回读一致；包含定时消息、电源设置、Mac 更新检查、系统要求、安装方式、签名和未覆盖项。完整用户日志以该 Release 正文为唯一维护处，本记录不再复制草案。
+
+草稿状态仍为 draft=true、prerelease=false，11 个附件身份不变；Latest 回读仍为 v0.1.8 / Release ID 441835374。下一步可确认公开同一草稿、保留原 Latest；不重新上传安装包或部署官网。
+
+未覆盖：Intel / Windows 实机、真实账号与付费模型、系统唤醒授权／拒绝／撤销／升级卸载、真实睡眠唤醒及实网渠道补收、各平台最终 URL 的完整原生升级及真实数据迁移。合成恢复与表达式验签不能替代这些验收，因此不提出切换 Latest。
+
+## 本轮资源清理
+
+已按 work-cleanup 核对无本轮 App / profile 进程，删除本轮 ZIP、解压 App 和五个合成 profile，精确目录占用合计约 1.33 GiB；未以此声称等量 APFS 可用空间回收。核对后磁盘可用空间约 32 GiB。本轮 scratch 仅余约 624 KiB，包含三张审核截图、临时验收入口、脱敏 TAP、三份回执、小清单及草稿基线，供待公开审核和分发核验；同一草稿公开并验收后可清理。产品源码与本记录提供重建和追溯依据。日常安装、旧失败标签／草稿及其他任务未提交工作保留。
