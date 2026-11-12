@@ -5,12 +5,23 @@ import {resolve,join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
 import * as desktopProfile from '../scripts/desktop-profile.mjs';
 import {prepareDesktopProfile,acquireDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource} from '../scripts/desktop-profile.mjs';
 
 const parent=resolve('.codex/scratch/macos-desktop-application/profile-unit-tests');mkdirSync(parent,{recursive:true});
 const make=()=>mkdtempSync(join(parent,'synthetic-'));
 const version={format:1,schema:'synthetic-schema',codex:'0.163.0'};
+test('profile writers merge only after acquiring the existing exclusive pending file',()=>{
+ const root=make();prepareDesktopProfile(root,version,{initialize:true});const marker=join(root,'desktop-profile.json'),open=fs.openSync;
+ desktopProfile.saveDesktopCaptureShortcut(root,'Control+Shift+A');let interleaved=false;
+ fs.openSync=(...args)=>{if(args[0]===marker+'.pending'&&!interleaved){interleaved=true;desktopProfile.saveDesktopCaptureShortcut(root,'Control+Shift+B');}return open(...args);};syncBuiltinESMExports();
+ try{
+  const roles={main:{model:'synthetic',effort:'high',serviceTier:null}};saveDesktopModelSource(root,'codex',roles);
+  const saved=JSON.parse(readFileSync(marker));assert.equal(interleaved,true);assert.equal(saved.captureShortcut,'Control+Shift+B');assert.deepEqual(saved.chatgpt,roles);assert.equal(existsSync(marker+'.pending'),false);
+ }finally{fs.openSync=open;syncBuiltinESMExports();rmSync(root,{recursive:true,force:true});}
+});
 test('model source retains the existing profile and validates without changing credentials',()=>{
  const root=make();prepareDesktopProfile(root,version,{initialize:true});
  const marker=join(root,'desktop-profile.json'),before=JSON.parse(readFileSync(marker));

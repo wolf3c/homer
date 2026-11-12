@@ -13,6 +13,16 @@ export const CHATGPT_MODEL_DEFAULTS:Readonly<Record<ModelRole,Readonly<ChatGPTMo
 });
 export type NativeModel={model:string;displayName:string;defaultReasoningEffort:string;supportedReasoningEfforts:{reasoningEffort:string}[];serviceTiers:{id:string;name:string}[]};
 export type NativeModelSettings={current:Record<ModelRole,ChatGPTModelConfig>;defaults:Record<ModelRole,Readonly<ChatGPTModelConfig>>;models?:NativeModel[];error?:string};
+export const CHATGPT_MODEL_ERRORS:Record<string,string>={
+  chatgpt_model_config_invalid:'模型参数无效，请重新选择。',
+  chatgpt_model_selection_unavailable:'所选模型、思考深度或速度已不可用，请重新选择。',
+  chatgpt_model_save_failed:'模型设置未能保存，原设置已保留，请检查磁盘后重试。',
+  chatgpt_model_source_changed:'模型来源已变化，请重新打开账号设置。',
+  native_models_unconfirmed:'模型列表暂时无法确认，请重试。',
+  native_account_not_connected:'ChatGPT 登录状态未确认，请重新检查登录。',
+  chatgpt_model_apply_unconfirmed:'模型设置保存结果未确认，请重试。',
+};
+export const chatgptModelError=(message:unknown)=>Object.keys(CHATGPT_MODEL_ERRORS).find(code=>typeof message==='string'&&(message===code||message.endsWith(': '+code)))??'chatgpt_model_apply_unconfirmed';
 
 export function chatgptModelConfig(value:unknown=undefined):Record<ModelRole,ChatGPTModelConfig>{
   if(value!==undefined&&(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>key!=='main'&&key!=='worker')))throw Error('chatgpt_model_config_invalid');

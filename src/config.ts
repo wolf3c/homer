@@ -13,6 +13,7 @@ export type Config = {
   // Trusted desktop entry only; never accepted from a user config file.
   dailyDeepSeek?: boolean;
   desktopModelSource?: 'codex'|'website';
+  desktopProfile?:string;
   desktopConnection?: import('./homer-account.js').HomerRuntimeConfig;
   chatgpt?:ChatGPTModelOverrides;
   desktopAdopted?: boolean;

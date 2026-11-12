@@ -38,6 +38,7 @@ test('fixed Codex preserves foreign and native reasoning across openai → homer
  const pool=dispatcher.get('https://chatgpt.com');
  const modelCatalog=membershipModelCatalog('gpt-6.1-sol','high',128000,{inputModalities:['text','image'],reasoningEfforts:['low','high'],webSearch:false,toolSearch:false});
  modelCatalog.models[0].service_tiers=[{id:'priority',name:'Fast',description:'Synthetic Fast'},{id:'ultrafast',name:'Ultrafast',description:'Synthetic Ultrafast'}];
+ modelCatalog.models.push({...structuredClone(modelCatalog.models[0]),slug:'synthetic-live-model',display_name:'Synthetic live model'});
  writeFileSync(join(root,'models.json'),JSON.stringify(modelCatalog),{mode:0o600});
  pool.intercept({path:/^\/backend-api\/codex\/models/,method:'GET'}).reply(200,modelCatalog).persist();
  pool.intercept({path:'/backend-api/codex/responses',method:'POST'}).reply(options=>({statusCode:200,data:reply(JSON.parse(String(options.body)),'openai'),responseOptions:{headers:{'content-type':'text/event-stream'}}})).persist();
@@ -51,7 +52,7 @@ test('fixed Codex preserves foreign and native reasoning across openai → homer
   else settings['model_providers.homer']={name:'homer',base_url:origin+'/homer',wire_api:'responses',requires_openai_auth:false,supports_websockets:false};
   const child=spawn(bin,['app-server','--stdio',...Object.entries(settings).flatMap(([k,v])=>['-c',k+'='+toml(v)])],{cwd:join(root,'workspace'),env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(root,'home'),CODEX_HOME:join(root,'codex'),TMPDIR:join(root,'tmp')}});
   child.stderr.resume();const exited=new Promise(r=>child.once('exit',r));
-  const pending=new Map(),events=[];let sequence=0;
+  const pending=new Map(),events=[];let sequence=0,started=false;
   createInterface({input:child.stdout}).on('line',line=>{
    const value=JSON.parse(line),request=pending.get(value.id);
    if(request&&!value.method){pending.delete(value.id);clearTimeout(request.timer);value.error?request.reject(Error(JSON.stringify(value.error))):request.resolve(value.result);}else events.push(value);
@@ -61,12 +62,14 @@ test('fixed Codex preserves foreign and native reasoning across openai → homer
    pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({id,method,params})+'\n');
   });
   return {async run(marker,selection){
-   await rpc('initialize',{clientInfo:{name:'homer-dual-source-test',version:'1'},capabilities:{experimentalApi:true}});child.stdin.write('{"method":"initialized"}\n');
-   const value=await rpc(thread?'thread/resume':'thread/start',{...(thread?{threadId:thread}:{}),model:'gpt-6.1-sol',cwd:join(root,'workspace'),approvalPolicy:'never',sandbox:'read-only',environments:[]});
-   if(thread)assert.equal(value.thread.id,thread);thread=value.thread.id;assert.equal(value.thread.modelProvider,provider);
+   if(!started){
+    await rpc('initialize',{clientInfo:{name:'homer-dual-source-test',version:'1'},capabilities:{experimentalApi:true}});child.stdin.write('{"method":"initialized"}\n');
+    const value=await rpc(thread?'thread/resume':'thread/start',{...(thread?{threadId:thread}:{}),model:'gpt-6.1-sol',cwd:join(root,'workspace'),approvalPolicy:'never',sandbox:'read-only',environments:[]});
+    if(thread)assert.equal(value.thread.id,thread);thread=value.thread.id;assert.equal(value.thread.modelProvider,provider);started=true;
+   }
    if(selection)await rpc('thread/settings/update',{threadId:thread,...selection});
    {
-    const turn=await rpc('turn/start',{threadId:thread,environments:[],input:[{type:'text',text:marker}]});
+    const turn=await rpc('turn/start',{threadId:thread,...selection,environments:[],input:[{type:'text',text:marker}]});
     const deadline=Date.now()+15000;let completed;
     while(Date.now()<deadline){completed=events.find(e=>e.method==='turn/completed'&&e.params.turn.id===turn.turn.id);if(completed)break;await new Promise(r=>setTimeout(r,10));}
     assert.equal(completed?.params.turn.status,'completed');
@@ -85,10 +88,12 @@ test('fixed Codex preserves foreign and native reasoning across openai → homer
   assert.equal(readFileSync(artifact,'utf8'),'synthetic artifact');
   assert.equal(readFileSync(join(root,'codex/auth.json'),'utf8'),'{"OPENAI_API_KEY":"synthetic-offline-key"}');
 
+  peer=connect('openai');
   for(const serviceTier of ['priority','ultrafast',null]){
-   const selection={model:'gpt-6.1-sol',effort:'low',serviceTier};peer=connect('openai');await peer.run('synthetic-speed-'+(serviceTier??'standard'),selection);await peer.close();peer=undefined;
-   assert.equal(requests.at(-1).model,'gpt-6.1-sol');assert.equal(requests.at(-1).effort,'low');assert.equal(requests.at(-1).serviceTier,serviceTier);
+   const selection={model:serviceTier==='priority'?'gpt-6.1-sol':'synthetic-live-model',effort:'low',serviceTier};await peer.run('synthetic-speed-'+(serviceTier??'standard'),selection);
+   assert.equal(requests.at(-1).model,selection.model);assert.equal(requests.at(-1).effort,'low');assert.equal(requests.at(-1).serviceTier,serviceTier);
   }
+  await peer.close();peer=undefined;
   passed=true;
  }finally{await peer?.close();server.closeAllConnections();await new Promise(r=>server.close(r));await bridge.close();if(passed)rmSync(root,{recursive:true,force:true});}
 });

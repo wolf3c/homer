@@ -14,16 +14,16 @@ export async function desktopModelSettingsBrowser(){
   {model:'synthetic-standard',displayName:'示例标准模型',defaultReasoningEffort:'medium',supportedReasoningEfforts:['medium','high'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:[]},
   {model:'synthetic-basic',displayName:'示例无思考模型',defaultReasoningEffort:'none',supportedReasoningEfforts:[],serviceTiers:[]},
  ];
- let current=chatgptModelConfig(),calls=0,revoked=false;const reads=new Map();
+ let current=chatgptModelConfig(),calls=0,revoked=false,saveFailed=false;const reads=new Map();
  const result=await build({stdin:{contents:`
  import React,{useEffect,useRef} from 'react';import {createRoot} from 'react-dom/client';
  import {DesktopSettings} from './ui/desktop-permissions.tsx';import './ui/homer-styles.css';
  const query=location.search,scenario=new URLSearchParams(query).get('scenario'),listeners=new Set();let accountReads=0;
- const account={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
+ const account={supported:true,configured:false,source:['website','cancel'].includes(scenario)?'website':'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
  const read=async path=>{const response=await fetch(path+query);if(!response.ok)throw Error('synthetic_bridge_failure');return response.json();};
  window.homerDesktopAccount={state:async()=>scenario==='account-error'&&accountReads++===1?{...account,native:undefined,nativeError:'Codex 登录状态未能确认，请重试。'}:account,onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeModels:()=>read('/fixture/models'),applyCodex:async roles=>{
   if(scenario==='account-error'){for(const fn of listeners)fn();throw Error('synthetic_account_read_failure');}
-  const response=await fetch('/fixture/apply'+query,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(roles)});if(!response.ok)throw Error('synthetic_apply_failure');const value=await response.json();document.getElementById('fixture-note').textContent=value.note;for(const fn of listeners)fn();return account;
+  const response=await fetch('/fixture/apply'+query,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(roles)});const value=await response.json();if(!response.ok)throw Error(value.error);document.getElementById('fixture-note').textContent=value.note;if(scenario!=='cancel')account.source='codex';for(const fn of listeners)fn();return account;
  }};
  function App(){const ref=useRef(null);useEffect(()=>ref.current?.openAccount(),[]);return <DesktopSettings ref={ref}/>;}
  createRoot(document.getElementById('app')).render(<App/>);
@@ -41,8 +41,9 @@ export async function desktopModelSettingsBrowser(){
   }
   if(url.pathname==='/fixture/apply'&&req.method==='POST'){
    let body='';for await(const chunk of req){body+=chunk;if(body.length>16384)return json({error:'invalid_synthetic_selection'},400);}
-   if(scenario==='stale-apply'){revoked=true;return json({error:'synthetic_permission_changed'},400);}
-   try{const roles=JSON.parse(body);validateChatGPTSelection(roles,catalog);calls++;if(scenario!=='cancel')current=chatgptModelConfig(roles);return json({note:(scenario==='cancel'?'模拟取消，草稿保留':'模拟应用已保存')+' · '+calls+' 次'});}catch{return json({error:'invalid_synthetic_selection'},400);}
+   if(scenario==='stale-apply'){revoked=true;return json({error:'chatgpt_model_selection_unavailable'},400);}
+   if(scenario==='save-failure'&&!saveFailed){saveFailed=true;return json({error:'chatgpt_model_save_failed'},400);}
+   try{const roles=JSON.parse(body);validateChatGPTSelection(roles,catalog);calls++;if(scenario!=='cancel')current=chatgptModelConfig(roles);return json({note:(scenario==='cancel'?'模拟取消，草稿保留':'模拟保存成功')+' · '+calls+' 次'});}catch{return json({error:'chatgpt_model_config_invalid'},400);}
   }
   if(url.pathname==='/app.js'){res.writeHead(200,{'Content-Type':'text/javascript'});return res.end(js);}
   if(url.pathname==='/app.css'){res.writeHead(200,{'Content-Type':'text/css'});return res.end(css);}

@@ -10,7 +10,7 @@
 node --experimental-vm-modules --import tsx --test \
   tests/model-config.test.ts tests/native-account.test.ts tests/native-account-service.test.ts \
   tests/desktop-profile.test.mjs tests/desktop-permissions-ui.test.mjs \
-  tests/electron-shell.test.mjs tests/mobile-turn-build.test.mjs
+  tests/electron-shell.test.mjs tests/desktop-management.test.mjs tests/mobile-turn-build.test.mjs
 node --test tests/model-selector-upstream.test.mjs
 node scripts/build-run-activity-css.mjs --model-selector --check
 npm run typecheck
@@ -19,17 +19,19 @@ npm run build
 npm test
 ```
 
-测试使用合成 native control、VM Electron、隔离 profile 及本地协议替身，覆盖完整两角色校验、默认覆盖删除、原子保存、分页与隐藏模型、速度权限、失效目录、草稿保留、可信窗口和确认期间导航失效。真实固定引擎的检查扩展既有 `desktop-source-resume.test.mjs`（显式 `engine` 分组）：
+测试使用合成 native control、VM Electron、隔离 profile 及本地协议替身，覆盖完整两角色校验、默认覆盖删除、原子保存、分页与隐藏模型、速度权限、失效目录、选择保留、可信窗口和跨来源确认期间导航失效。`electron-shell` 执行真实 `preload.cjs` 并接入实际注册的账号处理器，断言完整两角色参数转发、同来源不停止／重启和安全错误；实际 runtime 输入解析另验证超过原 128 字符上限的配置能完整到达绑定回调。`desktop-management` 验证采用旧资料时写入实际 profile、磁盘失败保全文件与内存；`desktop-profile` 交错两个实际写入器，验证取得排他文件后再读取合并，不丢快捷键或模型字段。`model-config` 验证活跃轮次不变、下一轮使用新模型／深度／三档速度、标准清除、图片能力变化和原生更新失败后重试。UI 延迟回执覆盖后台刷新先于／晚于保存失败的情况，错误提示均保留。真实固定引擎的检查扩展既有 `desktop-source-resume.test.mjs`（显式 `engine` 分组）：
 
 ```sh
 HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test tests/desktop-source-resume.test.mjs
 ```
 
-要求已存在的 Codex 0.163.0；独立 HOME／CODEX_HOME、合成模型目录和回环 Responses 验证 `thread/settings/update`、Standard／Fast／Ultrafast、标准清除旧档以及 openai → homer → openai 保留原线程及推理历史。不访问日常账号或收费模型，不以原生模型目录缺少测试档位来推断服务档生效。
+要求已存在的 Codex 0.163.0；独立 HOME／CODEX_HOME、合成模型目录和回环 Responses 验证同一原生线程、进程内通过 `thread/settings/update` 切换模型、深度、Standard／Fast／Ultrafast、标准清除旧档，以及 openai → homer → openai 保留原线程及推理历史。不访问日常账号或收费模型，不以原生模型目录缺少测试档位来推断服务档生效。
 
-交互式 UI 复验运行 `node --import tsx tests/fixtures/desktop-model-settings-browser.mjs --serve`，用内置浏览器打开打印出的回环地址。该 fixture 打包实际 DesktopSettings 与局部官方 CSS，桌面桥完全合成；默认、`?scenario=failure`（首读失败后可重试）、`missing`、`plus` 和 `cancel` 分别检查保存重读、缺失模型、权限收回及取消。`stale-apply` 验证应用被拒后单次重读目录和失效提示；`account-error` 验证账号暂时未知时草稿保留、操作禁用及重查恢复。需要验证桌面、390px、320px、无搜索、无可调深度、三档闪电、键盘、Escape、焦点与 Portal 102；截图保存到 `.codex/scratch/`。此入口仅供显式浏览器检查，不进入默认测试，Ctrl+C 清理该次临时目录。
+交互式 UI 复验运行 `node --import tsx tests/fixtures/desktop-model-settings-browser.mjs --serve`，用内置浏览器打开打印出的回环地址。该 fixture 打包实际 DesktopSettings 与局部官方 CSS，桌面桥完全合成；默认自动保存、`?scenario=failure`（首读失败后可重试）、`missing`、`plus` 分别检查保存重读、缺失模型与权限收回。`website`／`cancel` 验证跨来源的应用及取消，`save-failure` 首次保存失败后可重试；`stale-apply` 验证保存被拒后单次重读目录和失效提示；`account-error` 验证账号暂时未知时选择保留、操作禁用及重查恢复。需要验证桌面、390px、320px、无搜索、无可调深度、三档闪电、键盘、Escape、焦点与 Portal 102；截图保存到 `.codex/scratch/`。此入口仅供显式浏览器检查，不进入默认测试，Ctrl+C 清理该次临时目录。
 
 2026-11-11 在 Node 22.22.0 上，定向七文件584项通过；补充完整角色与草稿、目录未知及失效深度提示，以及复审发现的应用拒绝后单次重读、临时账号未知时保留草稿回归后，设置 UI 94项通过。固定上游源码4项、两端类型检查、构建及最终默认核心2177项通过，均无失败或跳过。固定引擎专项1项通过，包含全部三档与同线程断言；实际设置 Dialog 在桌面、390px及320px完成交互检查，复审新增两条异常路径也通过实际组件的合成浏览器复验。源码通过不表示已安装；真实 Pro $500／企业权限及收费调用、打包后的 Windows／macOS 验收未执行。
+
+2026-11-12 修复 preload 参数拒绝和 runtime 行长度导致的完整角色参数丢失，同来源改为自动保存、下一轮生效。真实 preload／主进程组合、活跃轮次隔离、profile 交错写入和后台读取吞掉保存错误均补充回归；相关新增失败先复现后修正。最终 Node 22.22.0 默认核心2187项、账号／移动设备界面116项全部通过，零失败、零跳过；两端类型检查、构建及固定 Codex 0.163.0 的隔离专项1项通过。构建保留现有大分包提示。实际组件在内置浏览器复验桌面、390px、320px、自动保存、重开保留、保存失败及重试、恢复默认、控件回焦、Escape、三档闪电及 Portal 102；跨来源仍需明确应用，未误触自动切换。测试页、临时服务和重复中间产物已清理；未安装、发布或调用真实账号与收费模型。
 
 ## Worker 消息移入对话区
 

@@ -206,20 +206,22 @@ export function codexProxyEnvironment(
   return proxy;
 }
 export class CodexEngine extends EventEmitter implements EngineLike {
-  private imageSupported?:boolean;
-  private async modelInfo(){
+  private readonly sourceConfig:Config;
+  private imageSupported?:{model:string;supported:boolean};
+  private async modelInfo(name=this.config.model){
     let cursor:string|undefined;const cursors=new Set<string>();
     do{
       const response=await this.request('model/list',{includeHidden:true,...(cursor?{cursor}:{})});
-      const model=response.data?.find((value:any)=>value.model===this.config.model||value.id===this.config.model);if(model)return model;
+      const model=response.data?.find((value:any)=>value.model===name||value.id===name);if(model)return model;
       const next=response.nextCursor;if(next!=null&&(typeof next!=='string'||!next||cursors.has(next)))throw Error('engine_model_catalog_invalid');
       cursor=next??undefined;if(cursor)cursors.add(cursor);
     }while(cursor);
   }
   async imageCapability(){
-    if(this.imageSupported!==undefined)return this.imageSupported;
-    const model=await this.modelInfo();
-    this.imageSupported=!!model?.inputModalities?.includes('image');return this.imageSupported;
+    const model=this.config.desktopModelSource==='codex'&&!this.active&&!this.preparation&&!this.compaction?effectiveModelConfig(this.sourceConfig,this.options.role).model:this.config.model;
+    if(this.imageSupported?.model===model)return this.imageSupported.supported;
+    const info=await this.modelInfo(model),supported=!!info?.inputModalities?.includes('image');
+    this.imageSupported={model,supported};return supported;
   }
   private child?: ChildProcessWithoutNullStreams;
   private preparation?: object;
@@ -303,6 +305,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     readonly handleTool: (call: ToolCall) => Promise<unknown>,
   ) {
     super();
+    this.sourceConfig=config;
     this.config=effectiveModelConfig(config,options.role);
     if(this.config.desktopModelSource==='website'&&this.config.keyEnv)this.websiteToken=process.env[this.config.keyEnv];
     this.nativeRequests = this.requestBridge();
@@ -889,6 +892,17 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if (!this.threadId) throw new Error("engine_not_started");
     const operation={};this.preparation=operation;
     try{
+    if(this.config.desktopModelSource==='codex'){
+      const next=effectiveModelConfig(this.sourceConfig,this.options.role);
+      if(next.model!==this.config.model||next.effort!==this.config.effort||next.serviceTier!==this.config.serviceTier){
+        if(next.serviceTier){
+          const model=await this.prepared(operation,this.modelInfo(next.model));
+          if(Array.isArray(model?.serviceTiers)&&!model.serviceTiers.some((tier:any)=>tier.id===next.serviceTier))throw Error('engine_fast_unavailable');
+        }
+        await this.prepared(operation,this.request('thread/settings/update',{threadId:this.threadId,model:next.model,effort:effectiveEffort(next.effort,this.options.role),serviceTier:next.serviceTier}));
+        Object.assign(this.config,next);
+      }
+    }
     if(options?.cwd&&resolve(options.cwd)!==resolve(this.options.cwd)){
 
         this.assertInteractionMcpBoundary(await this.prepared(operation,this.request('config/read',{includeLayers:true,cwd:options.cwd})));
@@ -927,6 +941,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         cwd:this.options.cwd, runtimeWorkspaceRoots:[this.options.cwd],
         ...(this.options.nativeTools?{environments:[{environmentId:"local",cwd:this.options.cwd,runtimeWorkspaceRoots:[this.options.cwd]}]}:{}),
         threadId: this.threadId,
+        ...(this.config.desktopModelSource==='codex'?{model:this.config.model}:{}),
         input: [{ type: "text", text, text_elements: [] },...(options?.skills??[]).map(skill=>({type:"skill",...skill})),...(options?.images??[]).map(image=>({type:'image',url:image.url}))],
         effort: effectiveEffort(this.config.effort, this.options.role),
         serviceTier: this.serviceTier,

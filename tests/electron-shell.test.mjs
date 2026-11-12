@@ -26,8 +26,8 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();child.stdin.on('data',value=>{
   const message=JSON.parse(String(value));
   if(message.kind==='native_account'){
-   nativeCalls.push(['native-account',message.action]);
-   void Promise.resolve().then(()=>native.nativeAction?native.nativeAction(message.action):native.nativeState??{account:'none',connected:false,phase:'idle'}).then(value=>child.stdout.write(JSON.stringify({kind:'native_account_result',id:message.id,value})+'\n'),()=>child.stdout.write(JSON.stringify({kind:'native_account_result',id:message.id,error:'native_account_unconfirmed'})+'\n'));
+   nativeCalls.push(['native-account',message.action,...(message.input===undefined?[]:[message.input])]);
+   void Promise.resolve().then(()=>native.nativeAction?native.nativeAction(message.action,message.input):native.nativeState??{account:'none',connected:false,phase:'idle'}).then(value=>child.stdout.write(JSON.stringify({kind:'native_account_result',id:message.id,value})+'\n'),error=>child.stdout.write(JSON.stringify({kind:'native_account_result',id:message.id,error:error?.message??'native_account_unconfirmed'})+'\n'));
   }else sent.push(String(value));
  });child.exitCode=null;child.signalCode=null;
  child.stdio=[child.stdin,child.stdout,child.stderr,new PassThrough()];child.stdio[3].on('data',value=>credentials.push(String(value)));
@@ -113,7 +113,7 @@ for(const mode of ['dead','runtime-live','gateway-live','runtime-unknown','lease
  const parent=resolve('.codex/scratch/chat-architecture-implementation-20261105/adoption-runtime-tests');mkdirSync(parent,{recursive:true});
  const profile=mkdtempSync(join(parent,'case-'));t.after(()=>rmSync(profile,{recursive:true,force:true}));
  const runtime=join(profile,'old-runtime'),codexHome=join(profile,'codex'),workspace=join(profile,'workspace');
- for(const path of [runtime,join(runtime,'gateway'),codexHome,workspace,join(profile,'host-home'),join(profile,'tmp')])mkdirSync(path,{recursive:true,mode:0o700});
+ for(const path of [runtime,join(runtime,'gateway'),codexHome,workspace,join(profile,'legacy-app'),join(profile,'host-home'),join(profile,'tmp')])mkdirSync(path,{recursive:true,mode:0o700});
  const dead=Number(execFileSync(process.execPath,['-e','process.stdout.write(String(process.pid))'],{encoding:'utf8'}));assert.equal(processIdentity(dead),undefined);
  const locks=[join(runtime,'cli.lock'),join(runtime,'gateway/cli.lock')];
  for(const [index,path]of locks.entries())writeFileSync(path,mode==='runtime-unknown'&&index===0?'{}':JSON.stringify({pid:mode===(index===0?'runtime-live':'gateway-live')?process.pid:dead,identity:'unverified-old-identity'}),{mode:0o600});
@@ -126,12 +126,12 @@ for(const mode of ['dead','runtime-live','gateway-live','runtime-unknown','lease
   meta.run('lease:main',JSON.stringify({pid:mode==='lease-live'?process.pid:dead,identity:'old-native'}));
  }finally{db.close();}
  const config={runtime,codexHome,workspace,requiresOpenaiAuth:true},sourceConfig=join(profile,'source.json'),sourceBytes=Buffer.from(JSON.stringify(config));writeFileSync(sourceConfig,sourceBytes,{mode:0o600});
- const digest=bytes=>createHash('sha256').update(bytes).digest('hex'),paths={runtime,codexHome,workspace,adoption:{sourceConfig,sha256:digest(sourceBytes),appData:profile,nativeCodexHome:codexHome}};
+ const digest=bytes=>createHash('sha256').update(bytes).digest('hex'),paths={runtime,codexHome,workspace,adoption:{sourceConfig,sha256:digest(sourceBytes),appData:join(profile,'legacy-app'),nativeCodexHome:codexHome}};
  writeFileSync(join(profile,'.homer-desktop-test-profile'),'{"format":1}');writeFileSync(join(profile,'fixture-codex.mjs'),'synthetic');
  const ownerFile=join(codexHome,'desktop-owner.json');
  if(mode==='dead'){writeFileSync(ownerFile,JSON.stringify({format:1,pid:dead,identity:'old-runtime',runtime}),{mode:0o600});desktop.recoverDesktopOwner(codexHome,processIdentity,leaseOwnerGone);assert.equal(existsSync(ownerFile),false);for(const path of locks)assert.equal(existsSync(path),true);}
  if(mode==='home-owned')writeFileSync(ownerFile,JSON.stringify({format:1,pid:process.pid,identity:processIdentity(process.pid),runtime}),{mode:0o600});
- const before=readFileSync(database),lockBefore=locks.map(path=>readFileSync(path)),events=[],stdin=new PassThrough();let lockAttempts=0;
+ const before=readFileSync(database),lockBefore=locks.map(path=>readFileSync(path)),events=[],nativeModelCalls=[],stdin=new PassThrough();let lockAttempts=0;
  const bundle='/synthetic/Homer.app',resources=bundle+'/Contents/Resources',homer=resources+'/homer',empty=Buffer.alloc(0);
  const manifest={format:2,node:'22.22.0',codex:'0.163.0',arch:'arm64',files:[],sourceHash:'synthetic-hash',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node'].map(path=>({path,sha256:digest(empty)}))};
  const proc={argv:['node','desktop-runtime','--profile',profile,'--test-profile'],version:'v22.22.0',arch:'arm64',platform:'darwin',execPath:bundle+'/Contents/MacOS/node',stdin,stdout:new Writable({write(bytes,_encoding,done){events.push(JSON.parse(String(bytes)));done();}}),env:{HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp')},cwd:()=>profile};
@@ -144,12 +144,21 @@ for(const mode of ['dead','runtime-live','gateway-live','runtime-unknown','lease
   ['file://'+homer+'/dist/recursive-tasks.js']:{RECURSIVE_SCHEMA_VERSION},
   ['file://'+homer+'/dist/mobile-gateway.js']:{readMobileConfig:()=>({})},
   './trusted-build.mjs':{verifyBuild(){}},
-  './dev.mjs':{runDev:async options=>{assert.equal(options.fixedBuild.thread,'original-main');const releases=[];try{for(const path of [join(runtime,'gateway'),runtime]){lockAttempts++;releases.push(acquireLock(path));}return {noHostStarted:true};}catch(error){return {noHostStarted:true,startupError:error.message};}finally{for(const release of releases.reverse())release();}}},
+  './dev.mjs':{runDev:async options=>{
+   assert.equal(options.fixedBuild.thread,'original-main');assert.equal(options.fixedBuild.config.desktopProfile,profile);assert.equal(options.fixedBuild.config.appData,join(profile,'legacy-app'));
+   if(mode==='dead'){
+    const roles={main:{model:'synthetic-model-main',effort:'high',serviceTier:'priority'},worker:{model:'synthetic-model-worker',effort:'low',serviceTier:null}};
+    options.desktop.bindAccount(async(action,input)=>{nativeModelCalls.push({action,input});return true;});
+    stdin.write(JSON.stringify({kind:'native_account',id:77,action:'apply-models',input:roles})+'\n');await new Promise(resolve=>setImmediate(resolve));
+   }
+   const releases=[];try{for(const path of [join(runtime,'gateway'),runtime]){lockAttempts++;releases.push(acquireLock(path));}return {noHostStarted:true};}catch(error){return {noHostStarted:true,startupError:error.message};}finally{for(const release of releases.reverse())release();}
+  }},
  };
  const context=vm.createContext({process:proc,Buffer,console}),require=createRequire(import.meta.url);
  async function synthetic(name){const exports=modules[name]??require(name),module=new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);},{context});await module.link(()=>{});await module.evaluate();return module;}
  const entry=new vm.SourceTextModule(readFileSync('scripts/desktop-runtime.mjs','utf8'),{context,initializeImportMeta:meta=>{meta.url='file://'+homer+'/scripts/desktop-runtime.mjs';},importModuleDynamically:synthetic});
  await entry.link(synthetic);await entry.evaluate();stdin.destroy();
+ if(mode==='dead'){assert.equal(nativeModelCalls.length,1);assert.equal(nativeModelCalls[0].action,'apply-models');assert.equal(nativeModelCalls[0].input.worker.effort,'low');assert.ok(events.some(event=>event.kind==='native_account_result'&&event.id===77&&event.value===true));}
  if(mode==='dead'){assert.equal(proc.exitCode,undefined,JSON.stringify(events));assert.equal(lockAttempts,2);assert.ok(events.some(event=>event.kind==='stopped'));for(const path of locks)assert.equal(existsSync(path),false);}
  else{assert.equal(proc.exitCode,1);assert.equal(events.some(event=>event.kind==='stopped'),false);assert.equal(events.find(event=>event.kind==='error')?.code,mode==='home-owned'?'desktop_owner_conflict':mode==='lease-live'?'desktop_adoption_owner_unknown':mode==='runtime-unknown'?'runtime_already_open':'runtime_lock_identity_unverified');assert.equal(lockAttempts,mode==='gateway-live'?1:mode==='lease-live'||mode==='home-owned'?0:2);if(mode==='runtime-live'||mode==='runtime-unknown')assert.deepEqual(readFileSync(locks[0]),lockBefore[0]);if(mode==='gateway-live')assert.deepEqual(readFileSync(locks[1]),lockBefore[1]);}
  assert.deepEqual(readFileSync(database),before);assert.deepEqual(readFileSync(sourceConfig),sourceBytes);
@@ -469,6 +478,14 @@ test('desktop access injects only into current main UI requests and strips crede
 
 const accountEvent=f=>({sender:f.windows[0].webContents,senderFrame:f.windows[0].webContents.mainFrame});
 const accountCall=(f,name,...args)=>f.handlers.get('homer:account:'+name)(accountEvent(f),...args);
+test('real account preload forwards one complete role payload and keeps other account methods zero-argument',async()=>{
+ const exposed={},calls=[];
+ vm.runInNewContext(readFileSync('packaging/electron/preload.cjs','utf8'),{process:{isMainFrame:true},require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>exposed[name]=value},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {supported:true};},on(){},removeListener(){}}})});
+ const api=exposed.homerDesktopAccount,roles={main:{model:'synthetic-main',effort:'high',serviceTier:null},worker:{model:'synthetic-worker',effort:'low',serviceTier:'priority'}};
+ await api.applyCodex(roles);assert.deepEqual(calls.at(-1),['homer:account:applyCodex',roles]);
+ await api.applyCodex();assert.deepEqual(calls.at(-1),['homer:account:applyCodex']);
+ const count=calls.length;await assert.rejects(api.applyCodex(roles,roles),/arguments/);await assert.rejects(api.state(roles),/arguments/);await assert.rejects(api.nativeModels(roles),/arguments/);assert.equal(calls.length,count);
+});
 async function accountFixture(native={}){const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,...native});f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;}
 test('native login uses the private account channel and never exposes its URL or login ID to the page',async()=>{
  const f=await accountFixture({nativeAction:action=>action==='connect'?{account:'none',connected:false,phase:'waiting',loginId:'synthetic-private-id',authUrl:'https://auth.openai.com/synthetic-login'}:{account:'none',connected:false,phase:action==='cancel'?'cancelled':'idle'}});
@@ -1598,6 +1615,16 @@ for(const modelSource of ['codex','website'])for(const response of [0,1])test(`r
 const nativeCatalog=()=>['gpt-6.1-terra','custom-model'].map(model=>({model,displayName:model,defaultReasoningEffort:'high',supportedReasoningEfforts:['low','medium','high','xhigh'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:[{id:'priority',name:'Fast'},{id:'ultrafast',name:'Ultrafast'}]}));
 const selectedNativeRoles={main:{model:'custom-model',effort:'medium',serviceTier:'ultrafast'},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}};
 const nativeModelAction=action=>action==='models'?nativeCatalog():{account:'chatgpt',connected:true,phase:'idle'};
+test('real preload and host forward live role settings to the running service without stopping or relaunching',async()=>{
+ let applied;const f=await accountFixture({modelSource:'codex',nativeAction:(action,input)=>{if(action==='apply-models'){applied=input;return true;}return nativeModelAction(action);}}),exposed={};
+ vm.runInNewContext(readFileSync('packaging/electron/preload.cjs','utf8'),{process:{isMainFrame:true},require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>exposed[name]=value},ipcRenderer:{invoke:(channel,...args)=>f.handlers.get(channel)(accountEvent(f),...args),on(){},removeListener(){}}})});
+ await exposed.homerDesktopAccount.applyCodex(selectedNativeRoles);await f.tick();
+ assert.deepEqual(applied,selectedNativeRoles);assert.equal(f.sent.length,0);assert.equal(f.messages.some(message=>message.message==='重启荷马？'),false);assert.equal(f.nativeCalls.some(call=>['source','relaunch'].includes(call[0])),false);
+});
+for(const [error,want]of [['chatgpt_model_save_failed','chatgpt_model_save_failed'],['PRIVATE_DISK_PATH','chatgpt_model_apply_unconfirmed']])test(`live model errors preserve safe classifications through the host: ${error}`,async()=>{
+ const f=await accountFixture({modelSource:'codex',nativeAction:action=>{if(action==='apply-models')throw Error(error);return nativeModelAction(action);}});
+ await assert.rejects(accountCall(f,'applyCodex',selectedNativeRoles),new RegExp(want));assert.equal(f.nativeCalls.some(call=>call[0]==='source'||call[0]==='relaunch'),false);
+});
 test('native model settings project saved roles and defaults while failed reads preserve selections',async()=>{
  const f=await accountFixture({nativeAction:nativeModelAction,chatgpt:{main:selectedNativeRoles.main}});
  assert.equal(typeof f.handlers.get('homer:account:nativeModels'),'function');
@@ -1606,21 +1633,21 @@ test('native model settings project saved roles and defaults while failed reads 
  const retained=await accountCall(failed,'nativeModels');assert.equal(retained.current.main.model,'custom-model');assert.equal(retained.models,undefined);assert.equal(retained.error,'native_models_unconfirmed');assert.equal(JSON.stringify(retained).includes('PRIVATE'),false);
 });
 test('ChatGPT model application saves source and normalized roles only after confirmed stop',async()=>{
- const f=await accountFixture({nativeAction:nativeModelAction});
+ const f=await accountFixture({modelSource:'website',nativeAction:nativeModelAction});
  await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
  f.event({kind:'stopped'});await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
  f.child.emit('close',0,null);await f.tick();
  assert.deepEqual(f.nativeCalls.filter(c=>['source','relaunch'].includes(c[0])),[['source','codex',{main:selectedNativeRoles.main}],['relaunch']]);
 });
 for(const failure of ['cancel','stop','save'])test(`ChatGPT role transaction ${failure} never writes a partial selection`,async()=>{
- const f=await accountFixture({nativeAction:nativeModelAction,response:failure==='cancel'?0:1,sourceWriteError:failure==='save'});
+ const f=await accountFixture({modelSource:'website',nativeAction:nativeModelAction,response:failure==='cancel'?0:1,sourceWriteError:failure==='save'});
  await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();
  if(failure==='stop'){f.timeout();await f.tick();}
  if(failure!=='cancel'){f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();}
  assert.equal(f.nativeCalls.some(c=>c[0]==='source'||c[0]==='relaunch'),false);
 });
 test('ChatGPT host rejects malformed and stale role selections without opening restart confirmation',async()=>{
- const f=await accountFixture({nativeAction:nativeModelAction});
+ const f=await accountFixture({modelSource:'website',nativeAction:nativeModelAction});
  for(const roles of [{main:selectedNativeRoles.main},{main:undefined,worker:selectedNativeRoles.worker},{...selectedNativeRoles,extra:{}},{...selectedNativeRoles,main:{...selectedNativeRoles.main,serviceTier:'not-advertised'}},{...selectedNativeRoles,main:{...selectedNativeRoles.main,extra:true}}])await assert.rejects(accountCall(f,'applyCodex',roles));
  assert.equal(f.messages.some(m=>m.message==='重启荷马？'),false);assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
  await assert.rejects(accountCall(f,'nativeModels',{}),/desktop_account_forbidden/);
@@ -1628,13 +1655,13 @@ test('ChatGPT host rejects malformed and stale role selections without opening r
 
 test('ChatGPT restart confirmation invalidated by navigation cannot stop or save',async()=>{
  let confirm;const decision=new Promise(resolve=>confirm=resolve);
- const f=await accountFixture({nativeAction:nativeModelAction,response:options=>options.message==='重启荷马？'?decision:1});
+ const f=await accountFixture({modelSource:'website',nativeAction:nativeModelAction,response:options=>options.message==='重启荷马？'?decision:1});
  await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();
  await f.windows[0].loadURL('http://127.0.0.1:56789/preview/changed');confirm(1);await f.tick();
  assert.equal(f.sent.some(message=>JSON.parse(message).kind==='quit'),false);assert.equal(f.nativeCalls.some(call=>call[0]==='source'||call[0]==='relaunch'),false);
 });
 test('ChatGPT source transaction invalidated during stop cannot save or relaunch',async()=>{
- const f=await accountFixture({nativeAction:nativeModelAction});await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();
+ const f=await accountFixture({modelSource:'website',nativeAction:nativeModelAction});await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();
  assert.equal(f.sent.some(message=>JSON.parse(message).kind==='quit'),true);
  await f.windows[0].loadURL('http://127.0.0.1:56789/preview/changed');f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();
  assert.equal(f.nativeCalls.some(call=>call[0]==='source'||call[0]==='relaunch'),false);

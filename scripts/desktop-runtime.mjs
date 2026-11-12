@@ -70,7 +70,7 @@ try{
    if(!existsSync(fake)||realpathSync(fake)!==fake||JSON.parse(readFileSync(join(profile,'.homer-desktop-test-profile'),'utf8')).format!==1)throw Error('desktop_test_fixture_required');
    codexBin=fake;
  }
- const {PRODUCT_MODEL_DEFAULTS,chatgptModelConfig}=await import(pathToFileURL(join(homer,'dist/model-config.js')).href);
+ const {PRODUCT_MODEL_DEFAULTS,chatgptModelConfig,chatgptModelError}=await import(pathToFileURL(join(homer,'dist/model-config.js')).href);
  const resourceIdentity={bundleRoot:bundle,manifestSha256:sha(manifestBytes)};
  let config={appData:profile,nativeCodexHome:paths.codexHome,workspace:paths.workspace,runtime:paths.runtime,codexHome:paths.codexHome,codexBin,model:PRODUCT_MODEL_DEFAULTS.model,requiresOpenaiAuth:true,stopGraceMs:3000,desktopResources:resourceIdentity};
  if(paths.adoption){
@@ -87,7 +87,7 @@ try{
  if(daily){
    config={...config,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopConnection:modelSource==='website'&&connection?.token?connection.config:undefined};connection=undefined;
  }
- if(modelSource)config={...config,desktopModelSource:modelSource,pauseOldDesktopWork:true};
+ if(modelSource)config={...config,desktopModelSource:modelSource,desktopProfile:profile,pauseOldDesktopWork:true};
  if(modelSource==='codex')config={...config,chatgpt:chatgptModelConfig(readDesktopChatGPTConfig(profile))};
  const database=join(paths.runtime,'homer.sqlite');let thread;
  if(existsSync(database)){
@@ -133,12 +133,12 @@ try{
  const quit=()=>{if(quitting)return;quitting=true;input.write('/quit\n');};
  const reader=createInterface({input:process.stdin});
  reader.on('line',line=>{
-  if(line.length>128)return;
+  if(line.length>4096)return;
   try{const value=JSON.parse(line);
    if(value.kind==='quit')quit();
    else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
-   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','channel-state'].includes(value.action)){
-    void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action)});}catch{await send({kind:'native_account_result',id:value.id,error:'native_account_unconfirmed'});}})();
+   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','apply-models','channel-state'].includes(value.action)){
+    void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action,value.input)});}catch(error){await send({kind:'native_account_result',id:value.id,error:value.action==='apply-models'?chatgptModelError(error?.message):'native_account_unconfirmed'});}})();
    }
   }catch{}
  });

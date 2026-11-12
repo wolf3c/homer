@@ -25,7 +25,8 @@ if(process.isMainFrame===true){
    :invoke('homer:desktop-permissions:open-system-settings',args),
  });
  contextBridge.exposeInMainWorld('homerDesktopAccount',{
-  ...Object.fromEntries(['state','connect','cancel','reopen','refresh','openWebsite','disconnect','restart','nativeConnect','nativeCancel','nativeReopen','nativeModels','applyCodex','applyWebsite'].map(name=>[name,(...args)=>invoke('homer:account:'+name,args)])),
+  ...Object.fromEntries(['state','connect','cancel','reopen','refresh','openWebsite','disconnect','restart','nativeConnect','nativeCancel','nativeReopen','nativeModels','applyWebsite'].map(name=>[name,(...args)=>invoke('homer:account:'+name,args)])),
+  applyCodex:(...args)=>args.length<=1?ipcRenderer.invoke('homer:account:applyCodex',...args):Promise.reject(new Error('desktop_permissions_arguments')),
   onChange:callback=>{
    if(typeof callback!=='function')throw new TypeError('desktop_account_callback');
    const listener=()=>callback();ipcRenderer.on('homer:account:changed',listener);

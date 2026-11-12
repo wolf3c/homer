@@ -23,10 +23,11 @@ export function saveDesktopCaptureShortcut(root,shortcut){
  writeDesktopProfile(root,{captureShortcut:shortcut});
 }
 function writeDesktopProfile(root,fields){
- const file=join(root,markerName),value=JSON.parse(privateFile(file)),temporary=file+'.pending';
+ const file=join(root,markerName),temporary=file+'.pending';
  let fd,created=false;
  try{
-  fd=openSync(temporary,'wx',0o600);created=true;writeFileSync(fd,JSON.stringify({...value,...fields})+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
+  fd=openSync(temporary,'wx',0o600);created=true;
+  const value=JSON.parse(privateFile(file));writeFileSync(fd,JSON.stringify({...value,...fields})+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
   renameSync(temporary,file);created=false;
  }finally{if(fd!==undefined)closeSync(fd);if(created)unlinkSync(temporary);}
 }

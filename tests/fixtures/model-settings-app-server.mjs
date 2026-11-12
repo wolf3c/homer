@@ -3,7 +3,7 @@
 import {createInterface} from 'node:readline';
 import {join} from 'node:path';
 if(process.argv.includes('--version')){console.log('codex-cli 0.163.0');process.exit(0);}
-let threadMethod,threadParams,threadSettings={model:"old-model",effort:"xhigh",serviceTier:"priority"};
+let threadMethod,threadParams,threadStarts=0,settingsUpdates=0,threadSettings={model:"old-model",effort:"xhigh",serviceTier:"priority"};
 const args=process.argv.slice(2),model=JSON.parse(args.find(arg=>arg.startsWith('model='))?.slice(6)??'null');
 const setting=name=>{const value=args.find(arg=>arg.startsWith(name+'='));return value?JSON.parse(value.slice(name.length+1)):undefined;};
 const consolidationModel=setting('memories.consolidation_model'),extractionModel=setting('memories.extract_model'),generateMemories=setting('memories.generate_memories');
@@ -17,17 +17,22 @@ createInterface({input:process.stdin}).on('line',line=>{
   if(m.method==='mcpServerStatus/list')result={data:trusted?[{name:'homer_interactions',tools:Object.fromEntries(trusted.enabled_tools.map(name=>[name,{}]))}]:[]};
   if(m.method==='environment/info')result={shell:'/bin/zsh'};
   if(m.method==='model/list'){const page={data:[{id:model,model,defaultReasoningEffort:'high',supportedReasoningEfforts:['low','high','max'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:model==='synthetic-standard-only'?[]:[{id:'priority',name:'Fast',description:'Synthetic catalog'},...(model==='synthetic-ultrafast'?[{id:'ultrafast',name:'Ultrafast',description:'Synthetic catalog'}]:[])]}],nextCursor:null};page.data[0].inputModalities=['text','image'];if(model==='synthetic-page-standard')page.data[0].serviceTiers=[];result=['synthetic-page-two','synthetic-page-standard'].includes(model)&&!m.params.cursor?{data:[{id:'first',model:'first',inputModalities:['text'],serviceTiers:[]}],nextCursor:'second'}:page;}
+  if(model?.startsWith('synthetic-hot')){
+    if(m.method==='account/read')result={account:{type:'chatgpt',planType:'promax'}};
+    if(m.method==='configRequirements/read')result={requirements:null};
+    if(m.method==='model/list')result={data:['synthetic-hot-text','synthetic-hot-image','gpt-6.1-terra'].map(name=>({id:name,model:name,displayName:name,hidden:false,defaultReasoningEffort:'high',supportedReasoningEfforts:['low','medium','high','xhigh'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:[{id:'priority',name:'Fast'},{id:'ultrafast',name:'Ultrafast'}],inputModalities:name==='synthetic-hot-text'?['text']:['text','image']})),nextCursor:null};
+  }
   if(m.method==='thread/start'||m.method==='thread/resume'){
-    threadMethod=m.method;threadParams=m.params;
+    threadMethod=m.method;threadParams=m.params;threadStarts++;
     result={thread:{id:'synthetic-model-thread'},activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy};
   }
-  if(m.method==='thread/settings/update')threadSettings={...threadSettings,...m.params};
+  if(m.method==='thread/settings/update'){threadSettings={...threadSettings,...m.params};settingsUpdates++;}
   if(m.method==='thread/backgroundTerminals/list')result={data:[]};
   if(m.method==='turn/start')result={turn:{id:'synthetic-turn'}};
   send({id:m.id,result});
   if(m.method==='turn/start'){
     // Missing fields remain absent, so tests detect omission rather than inheritance.
-    const text=JSON.stringify({contextWindow:setting('model_context_window'),autoCompactTokenLimit:setting('model_auto_compact_token_limit'),autoCompactTokenLimitScope:setting('model_auto_compact_token_limit_scope'),openaiBaseUrl:setting('openai_base_url'),requestCompression:setting('features.enable_request_compression'),threadMethod,threadSettings,threadServiceTier:threadParams.serviceTier,turnServiceTier:m.params.serviceTier,model:threadParams.model,effort:m.params.effort,consolidationModel,extractionModel,generateMemories});
+    const text=JSON.stringify({contextWindow:setting('model_context_window'),autoCompactTokenLimit:setting('model_auto_compact_token_limit'),autoCompactTokenLimitScope:setting('model_auto_compact_token_limit_scope'),openaiBaseUrl:setting('openai_base_url'),requestCompression:setting('features.enable_request_compression'),threadMethod,threadSettings,threadServiceTier:threadParams.serviceTier,turnServiceTier:m.params.serviceTier,model:m.params.model??threadParams.model,effort:m.params.effort,consolidationModel,extractionModel,generateMemories,...(model?.startsWith('synthetic-hot')?{threadStarts,settingsUpdates}:{})});
     send({method:'item/completed',params:{threadId:'synthetic-model-thread',turnId:'synthetic-turn',item:{id:'synthetic-item',type:'agentMessage',phase:'final_answer',text}}});
     send({method:'turn/completed',params:{threadId:'synthetic-model-thread',turn:{id:'synthetic-turn',status:'completed'}}});
   }

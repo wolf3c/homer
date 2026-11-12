@@ -15,7 +15,7 @@ import {EXECUTION_TOOLS} from './execution-tools.js';
 import {attachmentRevealTarget} from './artifact-reveal.js';
 import {seedFirstLaunchSkills,shouldSeedFirstLaunchSkills} from './first-launch.js';
 import {NativeAccount,type NativeAccountState} from './native-account.js';
-import type {NativeModel} from './model-config.js';
+import {validateChatGPTSelection,type ChatGPTModelOverrides,type NativeModel} from './model-config.js';
 import {createMembershipTools,isMembershipTool} from './membership-web-tools.js';
 import {runMembershipVideo} from './membership-video.js';
 import {materializePng} from './native-generated-files.js';
@@ -438,6 +438,14 @@ export class Homer {
   private nativeOperations=0;
   private accountManager?:NativeAccount;
   private nativeAccount(){return this.accountManager??=new NativeAccount((method,params)=>this.nativeRpc(method,params));}
+  async applyChatGPTModels(value:unknown,persist:(overrides:ChatGPTModelOverrides)=>void){
+    if(this.config.desktopModelSource!=='codex'||!this.config.appData)throw Error('chatgpt_model_source_changed');
+    const overrides=validateChatGPTSelection(value,await this.manageNativeAccount({action:'model_list'}));
+    if(this.closing||this.closed)throw Error('service_upgrading');
+    try{persist(overrides);}catch{throw Error('chatgpt_model_save_failed');}
+    this.config.chatgpt=overrides;
+    this.invalidateState();
+  }
   private async nativeRpc(method:string,params:any){
       if(this.closing||this.closed)throw Error('service_upgrading');
       if(!this.nativeControl){
@@ -669,7 +677,7 @@ export class Homer {
     this.validateWorkDirectory(options.cwd);
     return this.factory
       ? this.factory(options, handler)
-      : new CodexEngine(effectiveModelConfig(this.config,options.role), options, handler);
+      : new CodexEngine(this.config, options, handler);
   }
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
     this.mainJobs++;

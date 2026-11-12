@@ -268,3 +268,31 @@ for(const model of ['synthetic-page-two','synthetic-page-standard'])test(`pagina
  const f=fixture();const engine=new CodexEngine({...f.raw,codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model,requiresOpenaiAuth:false,stopGraceMs:100},{cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic paginated catalog',tools:[]},async()=>({}));
  try{if(model==='synthetic-page-standard')await assert.rejects(engine.start(),/engine_fast_unavailable/);else{await engine.start();assert.equal(await engine.imageCapability(),true);}}finally{await engine.close();f.close();}
 });
+
+for(const role of ['main','worker'] as const)test(`live ${role} model settings keep the active turn and take effect on the next turn in the same thread`,async()=>{
+ const f=fixture(),config:Config={...f.raw,model:'synthetic-hot-text',codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),requiresOpenaiAuth:true,stopGraceMs:100,desktopModelSource:'codex',desktopResources:{bundleRoot:'synthetic',manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true,chatgpt:{main:{model:'synthetic-hot-text',effort:'high',serviceTier:'priority'},worker:{model:'synthetic-hot-text',effort:'xhigh',serviceTier:null}}};
+ const engine=new CodexEngine(config,{role,cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic live settings',tools:[]},async()=>({}));
+ try{
+  const thread=await engine.start(),pid=engine.pid;assert.equal(await engine.imageCapability(),false);
+  const first=JSON.parse((await engine.turn('Synthetic first turn',{onStarted:()=>{config.chatgpt={...config.chatgpt,[role]:{model:'synthetic-hot-image',effort:'low',serviceTier:'ultrafast'}};assert.equal(engine.config.model,'synthetic-hot-text');}})).text);
+  assert.equal(first.model,'synthetic-hot-text');assert.equal(first.effort,role==='main'?'high':'xhigh');assert.equal(first.turnServiceTier,role==='main'?'priority':null);
+  assert.equal(await engine.imageCapability(),true);
+  const next=JSON.parse((await engine.turn('Synthetic next turn')).text);
+  assert.equal(next.model,'synthetic-hot-image');assert.equal(next.effort,'low');assert.equal(next.turnServiceTier,'ultrafast');assert.equal(next.threadSettings.model,'synthetic-hot-image');
+  assert.equal(next.threadStarts,1);assert.equal(next.settingsUpdates,2);assert.equal(engine.threadId,thread);assert.equal(engine.pid,pid);
+  config.chatgpt={...config.chatgpt,[role]:{model:'synthetic-hot-image',effort:'medium',serviceTier:null}};
+  const standard=JSON.parse((await engine.turn('Synthetic standard turn')).text);assert.equal(standard.turnServiceTier,null);assert.equal(standard.threadSettings.serviceTier,null);assert.equal(standard.effort,'medium');
+ }finally{await engine.close();f.close();}
+});
+
+test('failed native settings update keeps the previous snapshot and retries before the next turn',async()=>{
+ const f=fixture(),config:Config={...f.raw,codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'synthetic-hot-text',requiresOpenaiAuth:true,stopGraceMs:100,desktopModelSource:'codex',desktopResources:{bundleRoot:'synthetic',manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true,chatgpt:{main:{model:'synthetic-hot-text',effort:'high',serviceTier:'priority'}}};
+ const engine=new CodexEngine(config,{cwd:f.raw.workspace,readRoots:[],instructions:'Synthetic settings retry',tools:[]},async()=>({}));
+ try{
+  const thread=await engine.start(),pid=engine.pid,previous=engine.config.model,request=engine.request.bind(engine);let failed=false;
+  config.chatgpt={main:{model:'synthetic-hot-image',effort:'low',serviceTier:null}};
+  engine.request=async(method,params)=>{if(method==='thread/settings/update'&&!failed){failed=true;throw Error('synthetic_settings_failure');}return request(method,params);};
+  await assert.rejects(engine.turn('Synthetic rejected turn'),/synthetic_settings_failure/);assert.equal(engine.config.model,previous);
+  const next=JSON.parse((await engine.turn('Synthetic retried turn')).text);assert.equal(next.model,'synthetic-hot-image');assert.equal(next.effort,'low');assert.equal(next.turnServiceTier,null);assert.equal(next.settingsUpdates,2);assert.equal(engine.threadId,thread);assert.equal(engine.pid,pid);
+ }finally{await engine.close();f.close();}
+});

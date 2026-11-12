@@ -9,7 +9,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {types} from 'node:util';
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
 import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopChatGPTConfig,readDesktopCaptureShortcut,saveDesktopCaptureShortcut} from '../homer/scripts/desktop-profile.mjs';
-import {CHATGPT_MODEL_DEFAULTS,chatgptModelConfig,validateChatGPTSelection} from '../homer/dist/model-config.js';
+import {CHATGPT_MODEL_DEFAULTS,chatgptModelConfig,chatgptModelError,validateChatGPTSelection} from '../homer/dist/model-config.js';
 import {processIdentity,leaseOwnerGone} from '../homer/dist/processes.js';
 import {DesktopChannels} from '../homer/dist/desktop-channels.js';
 import {webMediaRoute} from '../homer/dist/web-contract.js';
@@ -25,12 +25,12 @@ let deepseek=false;
 let desktopAccessToken;
 let desktopProfile,modelSource='codex',switchSource,nativeStatus,nativeError,nativeSequence=0,nativeRead;
 const nativeRequests=new Map();
-function nativeAccount(action){
+function nativeAccount(action,input){
  if(!child||closed||quitPending)return Promise.reject(Error('native_account_unconfirmed'));
  return new Promise((resolve,reject)=>{
   const id=++nativeSequence,timer=setTimeout(()=>{nativeRequests.delete(id);reject(Error('native_account_unconfirmed'));},20000);
-  nativeRequests.set(id,{resolve,reject,timer});
-  child.stdin.write(JSON.stringify({kind:'native_account',id,action})+'\n',error=>{if(error){clearTimeout(timer);nativeRequests.delete(id);reject(Error('native_account_unconfirmed'));}});
+  nativeRequests.set(id,{resolve,reject,timer,action});
+  child.stdin.write(JSON.stringify({kind:'native_account',id,action,...(input===undefined?{}:{input})})+'\n',error=>{if(error){clearTimeout(timer);nativeRequests.delete(id);reject(Error('native_account_unconfirmed'));}});
  });
 }
 async function readNativeAccount(action='state'){
@@ -85,6 +85,10 @@ function registerDesktopAccount(){
   applyCodex:async(roles,validCaller=()=>true)=>{
    const selected=roles===undefined?undefined:chatgptModelConfig(roles);
    if(selected&&(Object.keys(roles).length!==2||Object.values(roles).includes(undefined)))throw Error('chatgpt_model_config_invalid');
+   if(selected&&modelSource==='codex'){
+    if(!validCaller())throw Error('desktop_account_forbidden');
+    await nativeAccount('apply-models',selected);accountChanged();return accountState();
+   }
    await readNativeAccount();
    const chatgpt=selected?validateChatGPTSelection(selected,await nativeAccount('models')):undefined;
    if(!validCaller())throw Error('desktop_account_forbidden');
@@ -945,7 +949,7 @@ try{
    let at;while((at=buffer.indexOf('\n'))>=0){
     const line=buffer.slice(0,at);buffer=buffer.slice(at+1);let value;try{value=JSON.parse(line);}catch{continue;}
     if(value.kind==='native_account_result'){
-     const pending=nativeRequests.get(value.id);if(pending){clearTimeout(pending.timer);nativeRequests.delete(value.id);value.error?pending.reject(Error('native_account_unconfirmed')):pending.resolve(value.value);}
+     const pending=nativeRequests.get(value.id);if(pending){clearTimeout(pending.timer);nativeRequests.delete(value.id);value.error?pending.reject(Error(pending.action==='apply-models'?chatgptModelError(value.error):'native_account_unconfirmed')):pending.resolve(value.value);}
     }
     else if(value.kind==='account_config_check'){if(modelSource==='website')void syncHomerConfig('message');}
     else if(value.kind==='account_usage_dirty'){walletRevision++;walletDirty=true;accountChanged();}

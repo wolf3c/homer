@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import type {ChatGPTModelConfig,ModelRole,NativeModelSettings} from '../src/model-config';
+import {CHATGPT_MODEL_ERRORS,chatgptModelError,type ChatGPTModelConfig,type ModelRole,type NativeModelSettings} from '../src/model-config';
 
 export type AccountState={supported:boolean;configured:boolean;source?:'codex'|'website';native?:{account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:string;pending:boolean;canReopen:boolean};nativeError?:string;websiteReady?:boolean;connection:'website'|'disconnected';active:'website'|'disconnected';pending:boolean;canReopen:boolean;needsRestart:boolean;error?:string;wallet?:{available:number;used:number;unit:string;expiresAt?:number};updatedAt?:string;walletError?:string;stale:boolean};
 type AccountAction='state'|'connect'|'cancel'|'reopen'|'refresh'|'openWebsite'|'disconnect'|'restart'|'nativeConnect'|'nativeCancel'|'nativeReopen'|'applyCodex'|'applyWebsite';
@@ -22,24 +22,31 @@ export function useDesktopAccount({currentSourceOnly=false,withWallet=true}:{cur
  const bridge=window.homerDesktopAccount;
  const [state,setState]=useState<AccountState>(),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const live=useRef(false),request=useRef(0),running=useRef(false);
- const apply=useCallback(async(action:AccountAction='state',roles?:Record<ModelRole,ChatGPTModelConfig>)=>{
+ const apply=useCallback(async(action:AccountAction='state',roles?:Record<ModelRole,ChatGPTModelConfig>,background=false)=>{
   if(!bridge)return;
   const id=++request.current;
   try{
    let value=action==='applyCodex'?await bridge.applyCodex(roles):await bridge[action]();
    if(action==='openWebsite'&&!value.configured)throw Error('unavailable');
-   if(live.current&&id===request.current){setState(value);setNotice('');}
+   if(live.current&&id===request.current){setState(value);setNotice(previous=>background&&CHATGPT_MODEL_ERRORS[previous]?previous:'');}
    if(withWallet&&action==='state'&&live.current&&id===request.current&&value.stale&&!value.walletError&&(value.active==='website'||!currentSourceOnly&&value.source==='codex'&&value.connection!=='disconnected'))value=await bridge.refresh();
-   if(live.current&&id===request.current){setState(value);setNotice('');}
+   if(live.current&&id===request.current){setState(value);setNotice(previous=>background&&CHATGPT_MODEL_ERRORS[previous]?previous:'');}
    return value;
-  }catch{if(live.current&&id===request.current){if(action==='refresh'||action==='state')setState(value=>value?{...value,stale:true}:value);setNotice(action==='openWebsite'?'购买积分页面未能打开，请稍后重试。':'状态未能确认，请重试。');}}
+  }catch(error){if(live.current&&(id===request.current||action==='applyCodex')){
+   if(action==='refresh'||action==='state')setState(value=>value?{...value,stale:true}:value);
+   if(action==='applyCodex'){
+    const code=chatgptModelError(error instanceof Error?error.message:'');
+    if(code==='native_account_not_connected')setState(value=>value?{...value,nativeError:CHATGPT_MODEL_ERRORS[code]}:value);
+    setNotice(code);
+   }else setNotice(previous=>background&&CHATGPT_MODEL_ERRORS[previous]?previous:action==='openWebsite'?'购买积分页面未能打开，请稍后重试。':'状态未能确认，请重试。');
+  }}
  },[bridge,currentSourceOnly,withWallet]);
- useEffect(()=>{live.current=true;void apply();const dispose=bridge?.onChange(()=>{void apply();});return()=>{live.current=false;request.current++;dispose?.();};},[bridge,apply]);
+ useEffect(()=>{live.current=true;void apply();const dispose=bridge?.onChange(()=>{void apply('state',undefined,true);});return()=>{live.current=false;request.current++;dispose?.();};},[bridge,apply]);
  useEffect(()=>{
   const expiresAt=state?.wallet?.expiresAt;
   if(!withWallet||currentSourceOnly&&state?.source!=='website'||!expiresAt||expiresAt<=Date.now()/1000||state.stale||state.walletError)return;
   // Reconcile once at expiry; long-lived credentials respect the timer limit.
-  const timer=window.setTimeout(()=>void apply(),Math.min(expiresAt*1000-Date.now(),2147483647));
+  const timer=window.setTimeout(()=>void apply('state',undefined,true),Math.min(expiresAt*1000-Date.now(),2147483647));
   return()=>window.clearTimeout(timer);
  },[state,apply,currentSourceOnly,withWallet]);
  useEffect(()=>{
@@ -49,14 +56,14 @@ export function useDesktopAccount({currentSourceOnly=false,withWallet=true}:{cur
   let active=true,reading=false;
   const timer=window.setInterval(()=>{
    if(!active||reading)return;reading=true;
-   void apply().finally(()=>{reading=false;});
+   void apply('state',undefined,true).finally(()=>{reading=false;});
   },1000);
   return()=>{active=false;window.clearInterval(timer);};
  },[state?.pending,state?.native?.pending,apply,currentSourceOnly]);
  async function run(action:AccountAction,roles?:Record<ModelRole,ChatGPTModelConfig>){
-  if(running.current)return;running.current=true;setBusy(true);
+  if(running.current)return;running.current=true;setBusy(true);setNotice('');
   try{return await apply(action,roles);}finally{running.current=false;if(live.current)setBusy(false);}
  }
- return {state,busy,notice,run};
+ return {state,busy,notice:CHATGPT_MODEL_ERRORS[notice]??notice,run};
 }
 

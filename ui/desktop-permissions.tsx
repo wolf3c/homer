@@ -313,6 +313,12 @@ function NativeSpeedControl({name,value,tiers,disabled,onChange}:{name:string;va
 function DesktopChatGPTModels({connected,unconfirmed,busy,different,apply}:{connected:boolean;unconfirmed:boolean;busy:boolean;different:boolean;apply:(roles:Record<ModelRole,ChatGPTModelConfig>)=>Promise<AccountState|undefined>}){
  const bridge=window.homerDesktopAccount!;
  const [settings,setSettings]=useState<NativeModelSettings>(),[draft,setDraft]=useState<Record<ModelRole,ChatGPTModelConfig>>(),[reading,setReading]=useState(true),[retry,setRetry]=useState(0),[notice,setNotice]=useState('');
+ const focus=useRef<{elements:HTMLElement[];pending:boolean}>({elements:[],pending:false});
+ useEffect(()=>{
+  if(busy||reading||!focus.current.pending)return;
+  focus.current.pending=false;
+  if(document.activeElement===document.body||document.activeElement?.matches('.desktop-settings-popup'))focus.current.elements.find(element=>element.isConnected&&!element.matches(':disabled'))?.focus();
+ },[busy,reading]);
  useEffect(()=>{
   if(!connected)return;
   let live=true,request=0;
@@ -323,16 +329,24 @@ function DesktopChatGPTModels({connected,unconfirmed,busy,different,apply}:{conn
  if(!connected&&(!unconfirmed||!draft))return null;
  const disabled=!connected||busy||reading||!!settings?.error;
  let valid=false;if(draft&&settings?.models&&!disabled){try{validateChatGPTSelection(draft,settings.models);valid=true;}catch{}}
- function change(role:ModelRole,patch:Partial<ChatGPTModelConfig>){if(disabled)return;setDraft(current=>current?{...current,[role]:{...current[role],...patch}}:current);setNotice('');}
+ function applyDraft(next:Record<ModelRole,ChatGPTModelConfig>){
+  focus.current.pending=!different;
+  setNotice('');void apply(next).then(result=>{
+   if(!result){setReading(true);setRetry(value=>value+1);return;}
+   if(!different){setSettings(current=>current?{...current,current:next}:current);setNotice(previous=>(previous?previous+' ':'')+'已保存，下一轮生效。');}
+  });
+ }
+ function save(next:Record<ModelRole,ChatGPTModelConfig>){if(disabled)return;setDraft(next);setNotice('');if(!different)applyDraft(next);}
+ function change(role:ModelRole,patch:Partial<ChatGPTModelConfig>){if(draft)save({...draft,[role]:{...draft[role],...patch}});}
  function chooseModel(role:ModelRole,id:string){
   const model=settings?.models?.find(model=>model.model===id);if(disabled||!model||!draft)return;
   const previous=draft[role],effort=model.supportedReasoningEfforts.some(option=>option.reasoningEffort===previous.effort)?previous.effort:model.defaultReasoningEffort;
   const serviceTier=model.serviceTiers.some(tier=>tier.id===previous.serviceTier)?previous.serviceTier:null;
-  change(role,{model:id,effort,serviceTier});if(effort!==previous.effort||serviceTier!==previous.serviceTier)setNotice(nativeRoleNames[role]+'：已按所选模型调整思考深度或速度，请核对后应用。');
+  change(role,{model:id,effort,serviceTier});if(effort!==previous.effort||serviceTier!==previous.serviceTier)setNotice(nativeRoleNames[role]+'：已按所选模型调整思考深度或速度。'+(different?'请核对后应用。':''));
  }
  if(!draft||!settings)return <div className="desktop-chatgpt-models"><p role="status">{reading?'正在读取模型列表…':'模型列表读取失败。'}</p>{!reading&&<Button onClick={()=>setRetry(value=>value+1)}>重试模型列表</Button>}</div>;
  const models=(settings.models??[]).map(model=>({id:model.model,name:model.displayName,efforts:model.supportedReasoningEfforts.map(option=>({id:option.reasoningEffort,name:nativeEffortNames[option.reasoningEffort]??option.reasoningEffort}))}));
- return <div className="desktop-chatgpt-models">
+ return <div className="desktop-chatgpt-models" onFocusCapture={event=>{if(event.currentTarget.contains(event.target))focus.current.elements=[event.target,...event.currentTarget.querySelectorAll<HTMLElement>('[role="combobox"]')];}}>
   {(['main','worker'] as const).map(role=>{
    const selected=draft[role],model=settings.models?.find(model=>model.model===selected.model);
    return <section key={role} aria-labelledby={'chatgpt-'+role}>
@@ -345,8 +359,8 @@ function DesktopChatGPTModels({connected,unconfirmed,busy,different,apply}:{conn
    </section>;
   })}
   {settings.error&&<p role="status">模型列表读取失败，已保留当前选择。<Button disabled={!connected||busy||reading} onClick={()=>setRetry(value=>value+1)}>重试模型列表</Button></p>}
-  <p className="desktop-model-hint">分别配置，重启后生效。闪电调整速度，加速会消耗更多用量。</p>
-  <div className="desktop-permission-actions"><Button type="button" className="primary-button" onClick={()=>{if(valid)void apply(draft).then(result=>{if(!result)setRetry(value=>value+1);});}} disabled={!valid||!different&&sameNativeModels(draft,settings.current)}>应用并重启</Button><Button className="desktop-model-restore" type="button" disabled={!connected||busy||reading||sameNativeModels(draft,settings.defaults)} onClick={()=>{setDraft(settings.defaults);setNotice('已恢复默认选择，应用并重启后生效。');}}>恢复默认</Button></div>
+  <p className="desktop-model-hint">分别配置，{different?'切换来源后生效':'下一轮生效，不打断当前任务'}。闪电调整速度，加速会消耗更多用量。</p>
+  <div className="desktop-permission-actions">{(different||!busy&&!sameNativeModels(draft,settings.current))&&<Button type="button" className="primary-button" onClick={()=>{if(valid)applyDraft(draft);}} disabled={!valid}>{different?'应用并重启':'重试保存'}</Button>}<Button className="desktop-model-restore" type="button" disabled={!connected||busy||reading||sameNativeModels(draft,settings.defaults)} onClick={()=>save(settings.defaults)}>恢复默认</Button></div>
   {notice&&<p role="status">{notice}</p>}
  </div>;
 }
@@ -381,7 +395,7 @@ export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
      {state?.nativeError&&<p role="status">{state.nativeError}</p>}
      <div className="desktop-permission-actions">
       {native?.pending?<><Button disabled={busy||!native.canReopen} onClick={()=>void run('nativeReopen')}>重新打开 Codex 登录页面</Button><Button disabled={busy} onClick={()=>void run('nativeCancel')}>取消 Codex 登录</Button></>:native?.account==='none'&&<Button className="primary-button" disabled={busy} onClick={()=>void run('nativeConnect')}>通过 Codex 登录</Button>}
-      {state&&(nativeLabel==='状态未确认'||native?.phase==='unconfirmed'||native?.phase==='cancel_unconfirmed'||notice)&&<Button disabled={busy} onClick={()=>void run('state')}>重新检查 Codex 登录</Button>}
+      {state&&(nativeLabel==='状态未确认'||native?.phase==='unconfirmed'||native?.phase==='cancel_unconfirmed')&&<Button disabled={busy} onClick={()=>void run('state')}>重新检查 Codex 登录</Button>}
       {onboarding&&!different&&native?.connected&&!state?.nativeError&&<Button className="primary-button" disabled={busy} onClick={()=>void run('restart')}>重启并应用</Button>}
      </div>
      {!onboarding&&<DesktopChatGPTModels connected={!!native?.connected&&!state?.nativeError} unconfirmed={!native||!!state?.nativeError||native.account==='unknown'} busy={busy} different={different} apply={roles=>run('applyCodex',roles)}/>}

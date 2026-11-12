@@ -71,11 +71,11 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     }
     });
   };
-  desktop?.bindAccount?.(action=>new Promise((accept,reject)=>{
-    if(!['state','connect','cancel','models','channel-state'].includes(action)||!['running','management'].includes(phase)||!child?.connected||stopped)return reject(Error('desktop_account_unavailable'));
+  desktop?.bindAccount?.((action,input)=>new Promise((accept,reject)=>{
+    if(!['state','connect','cancel','models','apply-models','channel-state'].includes(action)||!['running','management'].includes(phase)||!child?.connected||stopped)return reject(Error('desktop_account_unavailable'));
     const id=randomUUID(),timeout=setTimeout(()=>{webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));},15000);
     webRequests.set(id,{accept,reject,timeout,method:action==='channel-state'?'channel-state':'desktop_account'});
-    if(!send({kind:'desktop_account',id,method:action})){clearTimeout(timeout);webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));}
+    if(!send({kind:'desktop_account',id,method:action,...(input===undefined?{}:{input})})){clearTimeout(timeout);webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));}
   }));
   // UI adoption keeps the same executor and transport. Read-only refreshes
   // cannot starve it; mutations must settle before adopting trusted assets.
