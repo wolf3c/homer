@@ -67,7 +67,9 @@ App 外部网页交给系统浏览器；主聊天、受保护成果和预览留�
 
 验证基于 Node 22.22.0：仅导出待提交内容的隔离副本完成服务端／UI 构建和类型检查，92/92 项定向检查通过，覆盖共享 HTTP、RTC、信令、运行时封装、浏览器图片草稿恢复及双设备隔离；App 类型检查、原生壳单元检查和当前主工作树全仓类型检查通过。其他未提交改动仍留在工作区，未纳入本次提交。本轮没有重新安装真机包、调用真实模型或部署；历史真机结果不等同于合并后安装包验收。
 
-## 手机新版轻提示（2026-11-03）
+## 手机新版轻提示
+
+2026-11-12：安卓 App 和官网安卓下载入口的源码改为读取 GitHub 上的 [`mobile/android-releases.json`](android-releases.json)，沿用现有字段校验及提醒规则；更新按钮直接打开已校验的固定标签 APK，由系统浏览器下载、用户确认安装。iOS 继续使用原官网 JSON、StoreKit 条件和 `/homer/app` 更新入口。新清单需后续获准提交、推送后才可公开读取，新 App 来源需随下一次 APK 安装采用；本轮没有打包或上线。
 
 源码已接入，详见[方案与实际验证](../docs/mobile-app-update-notice.md)。仅 `com.homer.mobile` 的非开发包且显式 `EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=stable` 才检查；iOS 还须 App Store production 环境与可靠 storefront。QA、TestFlight、未知身份默认禁用。
 

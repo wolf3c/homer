@@ -19,8 +19,12 @@ export function releaseEnabled(local){
 function validUrl(value,platform){
  if(typeof value!=='string')return false;
  try{const url=new URL(value);
-  return url.protocol==='https:'&&!url.username&&!url.password&&!url.port&&!url.search&&!url.hash&&
-   (platform==='android'?url.hostname==='github.com'&&/^\/wolf3c\/homer\/releases\/download\/[^/]+\/[^/]+\.apk$/.test(url.pathname):url.hostname==='apps.apple.com'&&/^(?:\/[a-z]{2})?\/app\/(?:[^/]+\/)?id6830019784\/?$/.test(url.pathname));
+  if(url.protocol!=='https:'||url.username||url.password||url.port||url.search||url.hash)return false;
+  if(platform==='android'){
+   const match=/^\/wolf3c\/homer\/releases\/download\/([\w.-]+)\/[\w.-]+\.apk$/.exec(url.pathname);
+   return url.hostname==='github.com'&&!!match&&!/^latest$/i.test(match[1]);
+  }
+  return url.hostname==='apps.apple.com'&&/^(?:\/[a-z]{2})?\/app\/(?:[^/]+\/)?id6830019784\/?$/.test(url.pathname);
  }catch{return false;}
 }
 export function availableUpdate(data,local,dismissed){
@@ -31,18 +35,18 @@ export function availableUpdate(data,local,dismissed){
   if(!positive(record.versionCode)||!positive(record.minApiLevel)||!Array.isArray(record.supportedAbis)||!record.supportedAbis.length||!record.supportedAbis.every(abi=>typeof abi==='string'&&/^[a-z0-9_-]+$/.test(abi))||typeof record.sha256!=='string'||! /^[a-f\d]{64}$/i.test(record.sha256)||!validUrl(record.downloadUrl,'android'))return null;
   if(local.apiLevel<record.minApiLevel||!local.abis.some(abi=>record.supportedAbis.includes(abi))||record.versionCode<=Number(local.build))return null;
   if(dismissed!==null&&(!/^\d+$/.test(dismissed)||!positive(Number(dismissed))||record.versionCode<=Number(dismissed)))return null;
-  return {version:record.version,identifier:String(record.versionCode)};
+  return {version:record.version,identifier:String(record.versionCode),downloadUrl:record.downloadUrl};
  }
  if(!numeric(record.minOsVersion)||!Array.isArray(record.verifiedStorefronts)||!record.verifiedStorefronts.length||!record.verifiedStorefronts.every(code=>typeof code==='string'&&/^[A-Z]{3}$/.test(code))||!validUrl(record.storeUrl,'ios'))return null;
  if(compareVersions(local.osVersion,record.minOsVersion)<0||!record.verifiedStorefronts.includes(local.storefront)||compareVersions(record.version,local.version)!==1)return null;
  if(dismissed!==null&&compareVersions(record.version,dismissed)!==1)return null;
  return {version:record.version,identifier:parts(record.version).join('.').replace(/(?:\.0)+$/,'')};
 }
-export async function fetchRelease(){
+export async function fetchRelease(platform){
  const controller=new AbortController();let timer;
  try{return await Promise.race([
   (async()=>{
-   const response=await fetch('https://super-tree.com/homer/mobile-releases.json',{signal:controller.signal,credentials:'omit',headers:{'Cache-Control':'no-cache, no-store'}});
+   const response=await fetch(platform==='android'?'https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json':'https://super-tree.com/homer/mobile-releases.json',{signal:controller.signal,credentials:'omit',headers:{'Cache-Control':'no-cache, no-store'}});
    if(!response.ok||Number(response.headers.get('content-length'))>32768||!response.body)return null;
    const reader=response.body.getReader(),chunks=[];let size=0;
    while(!controller.signal.aborted){

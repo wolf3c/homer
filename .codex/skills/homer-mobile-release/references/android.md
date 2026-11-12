@@ -58,6 +58,6 @@ signingConfigs {
 - 相同签名使用 `adb -s SERIAL install -r --user USER APK`；先确认不是降级，不用 `-d`。首次安装省略 `-r`。签名不同须先说明将丢失绑定/本地设置并取得卸载授权，确认其他 Android user 未安装该包，才卸载原正式标识下的旧开发版。保留独立 `com.homer.mobile.pairingqa`。
 - 安装成功后重新读 package/version、启动 `com.homer.mobile/.MainActivity` 并看实际画面；记录安装对象与结果，不把进程存在等同于功能验收。
 
-APK 发布先采用草稿和明确附件列表，重下载比较，再公开。移动标签使用独立的 `mobile-android-<version>-<build>`；既有其他标签约定优先核对再沿用，始终 `latest=false`。匿名下载核验通过后，才按发行合同更新官网 Android 一项。
+APK 发布先采用草稿和明确附件列表，重下载比较，再公开。移动标签使用独立的 `mobile-android-<version>-<build>`；既有其他标签约定优先核对再沿用，始终 `latest=false`。匿名下载、摘要和覆盖更新验收通过后，才按发行合同及当前授权更新 Homer `mobile/android-releases.json`；安卓 App 与官网安卓入口共用其 GitHub Raw 原文。普通安卓发版无需再次部署官网；iOS 和旧官网安卓过渡快照保持，确需改动时另行授权。
 
 首次仓库没有正式 Release 时，不能据 `latest=false` 承诺 `/releases/latest` 仍为 404：2026-11-03 实测首个正式 Android Release 仍被该接口选中。发布前识别此情况，沿用已确认处理决定；未决定时说明“保留正式版、桌面首发后接管 Latest”与“改为预发布”的差异再确认，不伪造桌面 Release，不擅自改渠道。发布后始终核验实际 Latest，已有桌面 Latest 时必须保持其身份和附件。

@@ -49,12 +49,14 @@ async function scan(tree){await act(async()=>send(tree,globalThis.__rebindTest,{
 const credential=(tree,ctx)=>send(tree,ctx,{type:'credential',routeId:next.routeId,credential:next.credential});
 async function cancelAndReturn(tree,ctx){const attempt=token(ctx);await act(async()=>press(tree,'返回原连接'));await act(async()=>send(tree,ctx,{type:'cancel-result',result:'absent'},attempt));}
 
-test('update check runs once across foreground, ready, reconnect and WebView reload; native owns URL and dismissal',async()=>{
+for(const platform of ['ios','android'])test('update check runs once across foreground, ready, reconnect and WebView reload; native owns URL and dismissal '+platform,async()=>{
  const originalFetch=globalThis.fetch,channel=process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;
  globalThis.IS_REACT_ACT_ENVIRONMENT=true;globalThis.__DEV__=false;process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL='stable';
  let count=0,serial=0,failOpen=true,written=[],opened=[];
- const ctx={applicationId:'com.homer.mobile',injections:[],uuid:()=>`update-${++serial}`,read:async()=>JSON.stringify(old),write:async()=>{},readUpdate:async()=>null,writeUpdate:async(key,value)=>{written.push([key,value]);throw Error('disk failed');},openURL:async url=>{opened.push(url);if(failOpen)throw Error('cannot open');}};
- globalThis.__rebindTest=ctx;globalThis.fetch=async()=>{count++;return new Response(JSON.stringify(releaseFixture));};
+ const ctx={platform,applicationId:'com.homer.mobile',injections:[],uuid:()=>`update-${++serial}`,read:async()=>JSON.stringify(old),write:async()=>{},readUpdate:async()=>null,writeUpdate:async(key,value)=>{written.push([key,value]);throw Error('disk failed');},openURL:async url=>{opened.push(url);if(failOpen)throw Error('cannot open');}};
+ const destination=platform==='android'?'https://github.com/wolf3c/homer/releases/download/mobile-0.1.2/Homer.apk':'https://super-tree.com/homer/app';
+ const release=platform==='android'?{schemaVersion:1,releases:{stable:{android:{status:'available',version:'0.1.2',versionCode:4,minApiLevel:33,supportedAbis:['arm64-v8a'],downloadUrl:destination,sha256:'a'.repeat(64)}}}}:releaseFixture;
+ globalThis.__rebindTest=ctx;globalThis.fetch=async url=>{assert.equal(url,platform==='android'?'https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json':'https://super-tree.com/homer/mobile-releases.json');count++;return new Response(JSON.stringify(release));};
  const Client=createApp();let tree=await boot(ctx,Client);
  const snapshot=()=>JSON.parse(ctx.updates.at(-1).match(/window\.__homerMobileUpdate=([^;]+);/)[1]);
  try{
@@ -67,7 +69,7 @@ test('update check runs once across foreground, ready, reconnect and WebView rel
   await act(async()=>send(tree,ctx,{type:'update-open',url:'https://evil.example'},'stale'));assert.equal(opened.length,0);
   await act(async()=>web(tree).props.onMessage({nativeEvent:{url:'https://evil.example',data:JSON.stringify({type:'update-dismiss',nonce:token(ctx)})}}));assert.equal(snapshot().version,'0.1.2');
   await act(async()=>send(tree,ctx,{type:'update-open',url:'https://evil.example'}));assert.equal(snapshot().openError,true);
-  assert.deepEqual(opened,['https://super-tree.com/homer/app']);
+  assert.deepEqual(opened,[destination]);
   failOpen=false;await act(async()=>send(tree,ctx,{type:'update-open'}));assert.equal(snapshot().openError,false);assert.equal(snapshot().version,'0.1.2');
   await act(async()=>send(tree,ctx,{type:'update-busy',busy:true},'stale'));assert.equal(snapshot().version,'0.1.2');
   await act(async()=>send(tree,ctx,{type:'update-busy',busy:true}));assert.equal(snapshot(),null);
@@ -80,7 +82,7 @@ test('update check runs once across foreground, ready, reconnect and WebView rel
   await scan(tree);assert.equal(snapshot(),null);await act(async()=>send(tree,ctx,{type:'connection-status',code:'pending'}));assert.equal(snapshot(),null);
   await cancelAndReturn(tree,ctx);assert.equal(snapshot().version,'0.1.2');assert.equal(count,1);
   await act(async()=>send(tree,ctx,{type:'update-dismiss',version:'999'}));assert.equal(snapshot(),null);
-  assert.deepEqual(written,[['homer.mobile-update-dismissed.stable.ios','0.1.2']]);
+  assert.deepEqual(written,[[`homer.mobile-update-dismissed.stable.${platform}`,platform==='android'?'4':'0.1.2']]);
   await act(async()=>send(tree,ctx,{type:'ready'}));assert.equal(snapshot(),null);
   await act(async()=>tree.unmount());tree=await boot(ctx,Client);assert.equal(snapshot(),null);assert.equal(count,1);
  }finally{await act(async()=>tree.unmount());globalThis.fetch=originalFetch;if(channel===undefined)delete process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;else process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=channel;delete globalThis.__DEV__;delete globalThis.__rebindTest;delete globalThis.IS_REACT_ACT_ENVIRONMENT;}
@@ -105,13 +107,17 @@ test('unknown/QA/development/sandbox identity and unreadable dismissal skip with
 test('Android native metadata and connection-page notice share the platform-specific dismissal key',async()=>{
  const originalFetch=globalThis.fetch,channel=process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL;
  globalThis.IS_REACT_ACT_ENVIRONMENT=true;globalThis.__DEV__=false;process.env.EXPO_PUBLIC_HOMER_RELEASE_CHANNEL='stable';
- let stored=null,requests=0;
- const ctx={platform:'android',applicationId:'com.homer.mobile',injections:[],uuid:()=> 'android-update',read:async()=>null,readUpdate:async key=>{assert.equal(key,'homer.mobile-update-dismissed.stable.android');return stored;},writeUpdate:async(key,value)=>{assert.equal(key,'homer.mobile-update-dismissed.stable.android');stored=value;}};
- globalThis.__rebindTest=ctx;globalThis.fetch=async()=>{requests++;return Response.json({schemaVersion:1,releases:{stable:{android:{status:'available',version:'0.1.2',versionCode:4,minApiLevel:33,supportedAbis:['arm64-v8a'],downloadUrl:'https://github.com/wolf3c/homer/releases/download/mobile-0.1.2/Homer.apk',sha256:'a'.repeat(64)}}}});};
+ let stored=null,requests=0,failOpen=true;const opened=[];
+ const ctx={platform:'android',applicationId:'com.homer.mobile',injections:[],uuid:()=> 'android-update',read:async()=>null,readUpdate:async key=>{assert.equal(key,'homer.mobile-update-dismissed.stable.android');return stored;},writeUpdate:async(key,value)=>{assert.equal(key,'homer.mobile-update-dismissed.stable.android');stored=value;},openURL:async url=>{opened.push(url);if(failOpen)throw Error('fixture open failure');}};
+ globalThis.__rebindTest=ctx;globalThis.fetch=async url=>{assert.equal(url,'https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json');requests++;return Response.json({schemaVersion:1,releases:{stable:{android:{status:'available',version:'0.1.2',versionCode:4,minApiLevel:33,supportedAbis:['arm64-v8a'],downloadUrl:'https://github.com/wolf3c/homer/releases/download/mobile-0.1.2/Homer.apk',sha256:'a'.repeat(64)}}}});};
  let tree;
  try{
   await act(async()=>{tree=Renderer.create(React.createElement(createApp()));});
   assert.match(text(tree),/连接你的电脑/);assert.match(text(tree),/有新版本 0.1.2/);
+  await act(async()=>press(tree,'前往更新'));assert.match(text(tree),/未能打开下载页/);
+  assert.deepEqual(opened,['https://github.com/wolf3c/homer/releases/download/mobile-0.1.2/Homer.apk']);
+  failOpen=false;await act(async()=>press(tree,'前往更新'));assert.doesNotMatch(text(tree),/未能打开下载页/);assert.match(text(tree),/有新版本 0.1.2/);
+  await act(async()=>ctx.foreground('active'));assert.equal(requests,1);
   const close=tree.root.findAllByType('Pressable').find(node=>node.props.accessibilityLabel==='关闭更新提示');
   await act(async()=>close.props.onPress());assert.doesNotMatch(text(tree),/有新版本/);assert.equal(stored,'4');
   await act(async()=>tree.unmount());await act(async()=>{tree=Renderer.create(React.createElement(createApp()));});assert.doesNotMatch(text(tree),/有新版本/);assert.equal(requests,2);

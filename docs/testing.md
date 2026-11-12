@@ -285,7 +285,20 @@ Homer → New API 正常路径在隔离环境通过。New API 为 `v1.0.0-rc.45-
 
 常规离线回归运行 `node --import tsx --test tests/membership-web-tools.test.ts`，覆盖 Main 和 Worker、审批拒绝、提交结果丢失、停止与重启取回、回执权限及异常下载。本次隔离验收费用为零。生产真实生成、百炼账单、网关跨 Token 隔离及零余额取回仍待单独验收。
 
-## 手机新版轻提示定向检查（2026-11-03）
+## 手机新版轻提示定向检查
+
+2026-11-12 安卓 GitHub 清单接入：复用 schema、五秒／32 KiB 限制、安装包身份和最高关闭版本。新增来源选择、原生校验后直开 APK、旧官网安卓记录不参与新版选择及平台故障隔离断言；iOS 仍使用原官网 JSON、StoreKit 条件和固定更新入口。在 Node 22.22.0、仅含本任务补丁的隔离源码中，移动端 38/38、网页桥接／请求 21/21、官网四文件离线 19/19、隔离浏览器 1/1 通过，均 0 失败、0 跳过；移动端 noEmit 通过。浏览器覆盖桌面／390px、中英文、原来源快照隔离、单平台失败及准备中状态，使用合成数据和 CORS 响应，不访问真实账号或下载 APK。未运行产品构建、原生安装或真实模型。GitHub 新清单、真机网络、签名覆盖安装和生产缓存均未验收。
+
+以下为既有检查入口，UI 打包及浏览器专项仍按当轮授权选择；本轮只执行离线回归和隔离组件验证。
+
+官网隔离检查（从同级 Yezi2 源码副本执行）：
+
+```sh
+node --test tests/homer_mobile_releases.test.mjs tests/homer_desktop_releases.test.mjs tests/homer_update_feeds.test.mjs tests/installer_downloads.test.mjs
+HOMER_FULL_APP=0 HOMER_BROWSER_TEST_PORT=3197 node --test tests/homer_authorize_browser.test.mjs
+```
+
+后一项只编译合成浏览器夹具并启动独立 Chrome／本地测试服务，退出时关闭；不运行 Meteor 或生成产品发行包。
 
 源码验证入口：
 

@@ -44,7 +44,7 @@ Latest 指向最新已验收并设为 Latest 的桌面正式版，不是每次�
 
 ### 移动端
 
-两个入口共用固定地址：`https://super-tree.com/homer/app`。复用最新官网首页的移动下载区域，不新增页面服务、跳转接口或分发仓库。
+官网及桌面下载二维码共用固定地址：`https://super-tree.com/homer/app`；新版安卓 App 的更新按钮直接打开校验后的 APK，iOS 更新按钮保持原官网入口。复用最新官网首页的移动下载区域，不新增页面服务、跳转接口或分发仓库。
 
 | 入口 | 接入约定 |
 | --- | --- |
@@ -53,7 +53,7 @@ Latest 指向最新已验收并设为 Latest 的桌面正式版，不是每次�
 
 固定的是官网地址及下载二维码，页面内的平台链接随正式发行更新：
 
-- Android：使用现有 `wolf3c/homer` Releases 中已发布并验收的正式签名 APK，页面引用固定版本附件地址。移动 Release 使用不与桌面冲突的独立标签并保留移动端版本/build 序列，不覆盖旧附件，不设置为桌面 Latest，也不使用桌面的 `/releases/latest/download/…` 作为 APK 地址。发布时更新官网区域内链接，无需修改已安装桌面端或重新生成下载码；官网更新仍走既有部署流程。
+- Android：使用现有 `wolf3c/homer` Releases 中已发布并验收的正式签名 APK，页面引用固定版本附件地址。移动 Release 使用不与桌面冲突的独立标签并保留移动端版本/build 序列，不覆盖旧附件，不设置为桌面 Latest，也不使用桌面的 `/releases/latest/download/…` 作为 APK 地址。APK 公开并验收后，按授权更新 Homer 的 `mobile/android-releases.json`，由 `https://raw.githubusercontent.com/wolf3c/homer/main/mobile/android-releases.json` 提供给安卓 App 及官网安卓入口。首次采用官网读取代码需单独部署；此后每版只更新 GitHub 清单，不逐版部署官网。iOS 和旧版安卓过渡数据仍保留在 Yezi2 原 JSON；不将旧记录回退为新版安卓来源，无需修改下载二维码。
 - iOS：指向原 Homer AI 应用的固定 App Store 页面，仅在该页面实际可获取安装包后开放；上传、审核中不等于可下载。Android 与 iOS 独立展示状态，不要求两端同步发版。
 - 首次接入前核对真实下载/商店状态；未发布的平台显示“准备中”，不提供失效链接。后续更新保留旧可用入口，待新包校验通过再切换。需验证两个入口定位到同一区域、下载二维码可打开正确页面、Android 下载摘要一致、iOS 指向原应用；不重复 TURN 长测。
 

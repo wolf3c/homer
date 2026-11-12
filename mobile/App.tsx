@@ -34,7 +34,7 @@ async function checkForUpdate():Promise<MobileUpdate|null>{
   }else{local.apiLevel=Number(Platform.Version);local.abis=Device.supportedCpuArchitectures;}
   if(!releaseEnabled(local))return null;
   const dismissed=await SecureStore.getItemAsync(updateKey());
-  return availableUpdate(await fetchRelease(),local,dismissed);
+  return availableUpdate(await fetchRelease(local.platform),local,dismissed);
  }catch{return null;}finally{clearTimeout(timer);}
 }
 export default function App(){return <SafeAreaProvider><StatusBar barStyle="dark-content"/><Client/></SafeAreaProvider>;}
@@ -55,7 +55,7 @@ function Client(){
   if(!updateVisible||!update)return;const dismissed=update;setUpdate(null);startupUpdate=Promise.resolve(null);
   try{await SecureStore.setItemAsync(updateKey(),dismissed.identifier);}catch{/* This launch stays dismissed; a failed write cannot promise cross-launch deduplication. */}
  }
- async function openUpdate(){if(!updateVisible)return;try{await Linking.openURL(downloadPage);if(active.current)setOpenError(false);}catch{if(active.current)setOpenError(true);}}
+ async function openUpdate(){if(!updateVisible)return;try{await Linking.openURL(update?.downloadUrl??downloadPage);if(active.current)setOpenError(false);}catch{if(active.current)setOpenError(true);}}
  useEffect(()=>{syncUpdate();},[updateVisible,update?.version,openError]);
  function restorePrevious(){
   if(saving.current||!savedBinding.current)return;
