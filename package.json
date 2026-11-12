@@ -1,6 +1,6 @@
 {
   "name": "homer-cli",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "description": "Local Codex task and Worker conversation host",
   "type": "module",
