@@ -103,7 +103,19 @@ npm run test:windows-capture
 
 ### 桌面自动更新：源码离线检查
 
-当前 Mac 更新源及官网下载入口为 GitHub Latest；Windows 继续仅手动下载，保留 electron-updater＋NSIS 签名接点但不启用。签名、关闭规则与安全停止不变。详细范围和四组补充断言见 [桌面更新方案第 8.A.W 节](desktop-app-update.md#aw-windows-最小实施顺序)。使用原 VM／合成归档 fixture，不调用真实 PowerShell、网络、产品构建或安装器；根主进程先退出和未知身份不得证明其后代已停止。
+当前 Mac／Windows 更新源及官网下载入口为 GitHub Latest。未签名 Windows 正式包携带显式配置和 latest.yml，后台下载、确认后安全安装；ready 前及安装前流式复核普通文件、大小和 SHA-512，签名模式仍严格验签。复用原 VM／合成归档，不调用真实 PowerShell、安装器、产品构建或日常账号。真实原生升级仍待单独验收。
+
+2026-11-12 未签名 Windows 实施：关键行为用例先红后绿，提交前五文件离线回归 460/460 通过、0 失败、0 跳过；补充的读取期间路径替换用例覆盖两种签名模式及两个校验阶段。未签名构建显式禁用 electron-builder 的 signExecutable，避免环境证书意外启用签名。运行时夹具补齐了当前源码已导入的 readDesktopChatGPTConfig 和 chatgptModelConfig，复用真实模型配置函数，原停止断言保持。准确复验命令：
+
+```sh
+node --experimental-vm-modules --import tsx --test tests/electron-shell.test.mjs tests/electron-package.test.mjs tests/github-release-draft.test.mjs tests/desktop-update-stop.test.mjs tests/desktop-update-runtime.test.mjs
+```
+
+性能抽查（macOS ARM64、Node 22.22.0，合成 256 MiB 文件，直接执行当前验证函数）：ready／安装前分别 513／502 ms，最大读取块 64 KiB，采样 RSS 峰值增量 45 MiB，事件循环最大延迟 10.7 ms。此为本机合成样本，不能替代 Windows 磁盘、杀毒软件及原生升级性能验收。
+
+覆盖显式未签名／签名及畸形配置、损坏／缺失／非普通文件、SHA-512／大小缺失或不符、缓存及 ready 后替换、异步候选更换、确认／ACK／exit0、失败退出重开、原生清单固定名改写、11 附件集合、缺清单及云端坏下载。官网实际 Svelte 组件隔离回归通过，检查中英文桌面／390px 的“未签名”及原下载／焦点行为；Svelte 静态检查无错误。未运行 Meteor、安装包构建、真实模型、Windows 原生升级、生产官网或 CDN 验收。
+
+以下为上一轮切换 GitHub 来源的历史验证记录。
 
 2026-11-12 更新源切换先以旧地址复现四项定向断言失败，再修改主进程、Forge Windows 配置及生成壳的配置 URL；下列三文件离线回归通过，覆盖 Mac 两架构 feed、Windows generic 地址、未签名禁用、验签及原安全重启合同。未运行产品构建、原生更新、安装或日常 App：
 

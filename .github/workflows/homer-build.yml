@@ -188,6 +188,7 @@ jobs:
             .codex/scratch/github-build/desktop/forge/make/**/*.zip
             .codex/scratch/github-build/desktop/forge/make/**/RELEASES.json
             .codex/scratch/github-build/desktop/nsis/*.exe
+            .codex/scratch/github-build/desktop/nsis/latest.yml
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1

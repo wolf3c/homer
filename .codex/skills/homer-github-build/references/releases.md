@@ -9,7 +9,7 @@
 - 桌面版使用现有公开仓库 `wolf3c/homer` 的 GitHub Releases 分发，官网和 README 只提供下载入口。不新建分发仓库、下载服务、OSS 镜像、跳转接口或版本查询接口，不恢复 `models.super-tree.com` 的 Homer 下载入口；不为分发改变仓库可见性或扩大源码公开范围。以下命令中的 `OWNER/REPO` 均替换为 `wolf3c/homer`。
 - 从目标源码提交的根 `package.json.version` 读取产品版本，与打包回执 `version`、安装包内部版本核对。正式标签采用 `vVERSION`；预发布采用如 `v1.2.0-rc.1`，对应产品版本也须一致。构建号是独立字段；正式构建必须以 `--build-number` 明确指定正整数，并事先核对已发行及已安装版本，确保递增。三平台同版使用同一构建号；同一 SHA 重跑保持原构建号，attempt 不是产品版本。候选包继续按提交历史计数。需要改版本时，先在授权范围内更新源码并重新构建、验收，不能只给旧包换标签。
 - 同源码仓库发布时，远端标签解析到的实际 commit 必须等于构建 `gitSha`（annotated tag 要解引用到 commit）。创建或推送标签需在授权范围内；缺少标签时停止，不让 `gh release create` 自动从默认分支创建。禁止移动已发布标签或用不同字节覆盖已发布同版本附件；修复使用新版本，保留旧版固定链接供回退。
-- 稳定附件名为 `Homer-mac-arm64.zip`、`Homer-mac-x64.zip`、`Homer-windows-x64.exe`；版本位于标签中，不在附件名重复。Mac 更新清单分别为 `RELEASES-darwin-arm64.json`、`RELEASES-darwin-x64.json`，其中 `updateTo.url` 指向同标签、同架构的固定名 ZIP。
+- 稳定附件名为 `Homer-mac-arm64.zip`、`Homer-mac-x64.zip`、`Homer-windows-x64.exe`；版本位于标签中，不在附件名重复。Mac 更新清单分别为 `RELEASES-darwin-arm64.json`、`RELEASES-darwin-x64.json`，其中 `updateTo.url` 指向同标签、同架构的固定名 ZIP。Windows 原生清单名为 `latest.yml`，指向同标签的 `Homer-windows-x64.exe`，保留真实 SHA-512 和大小。
 - 草稿直传由 `scripts/github-release-draft.mjs` 核对原始回执、流式计算包摘要，使用固定名上传原字节，不解包、重打包或修改签名包。平台脱敏清单保留来源与摘要供合并；最终生成 `SHA256SUMS` 和 `release-manifest.json`，记录版本、build、源码 SHA、run / attempt、包名映射、字节数、SHA-256、签名及最低系统。不上传含绝对路径的原始回执、凭据、用户数据或日志。
 
 ## 固定下载链接
@@ -25,14 +25,15 @@
 | 最新正式版页面，用户选择平台 | `https://github.com/wolf3c/homer/releases/latest` |
 | 最新正式版 Mac ARM ZIP 直链 | `https://github.com/wolf3c/homer/releases/latest/download/Homer-mac-arm64.zip` |
 | 最新正式版 Mac Intel ZIP 直链 | `https://github.com/wolf3c/homer/releases/latest/download/Homer-mac-x64.zip` |
-| 最新正式版 Windows 手动安装器直链 | `https://github.com/wolf3c/homer/releases/latest/download/Homer-windows-x64.exe` |
+| 最新正式版 Windows NSIS 安装器直链 | `https://github.com/wolf3c/homer/releases/latest/download/Homer-windows-x64.exe` |
 | Mac ARM／Intel 原生更新清单 | `https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-arm64.json` ／ `RELEASES-darwin-x64.json`（同目录） |
+| Windows 原生更新清单 | `https://github.com/wolf3c/homer/releases/latest/download/latest.yml` |
 | 固定版本页面 | `https://github.com/wolf3c/homer/releases/tag/TAG` |
 | 固定版本附件，用于验收、复现和回退 | `https://github.com/wolf3c/homer/releases/download/TAG/ASSET` |
 
-Latest 指向最新已验收并设为 Latest 的桌面正式版，不是每次构建，也不按平台分别找最新版。切换前，该 Release 必须包含官网和 README 已提供的全部平台固定名安装包、Mac 两架构原生清单及摘要／分发清单；缺附件不会自动回退到该平台旧版。此时保持原 Latest，用固定标签测试链接交付，不能混入旧版本冒充齐全。移动版必须明确 `--latest=false`；预发布版同时保持 `prerelease=true`。草稿不能作为公开入口。
+Latest 指向最新已验收并设为 Latest 的桌面正式版，不是每次构建，也不按平台分别找最新版。切换前，该 Release 必须包含官网和 README 已提供的全部平台固定名安装包、Mac 两架构原生清单、Windows latest.yml 及摘要／分发清单；缺附件不会自动回退到该平台旧版。此时保持原 Latest，用固定标签测试链接交付，不能混入旧版本冒充齐全。移动版必须明确 `--latest=false`；预发布版同时保持 `prerelease=true`。草稿不能作为公开入口。
 
-采用新来源的 Mac 客户端直接读取 Latest 的原生清单，因此 Latest 切换同时是自动更新放量，须验证所有启用来源版本的兼容、签名、安全停止、数据保留及最终 URL 的真实原生升级；缺证据不切换。清单内 ZIP 仍指向同一不可变固定标签，不解析 GitHub 标题／正文，也不新增 API 查询。Windows 未签名发行只提供手动安装器，不生成或上传 latest.yml；保留的签名 NSIS 配置不因此启用。客户端合同及旧客户端过渡见 [桌面自动更新](../../../../docs/desktop-app-update.md)。
+采用新来源的桌面客户端直接读取 Latest 原生清单，因此切换同时是自动更新放量，须验证所有启用来源版本的兼容、完整性、适用的签名、安全停止、数据保留及最终 URL 的真实原生升级；缺证据不切换。清单内 ZIP 仍指向同一不可变固定标签，不解析 GitHub 标题／正文，也不新增 API 查询。Windows 未签名正式包同样生成并上传 latest.yml，包内显式关闭 Authenticode 且没有发布者时才允许更新；ready 前和安全停止后的安装前都复核 SHA-512／大小。签名模式继续严格验签，不把摘要称为发布者证明。客户端合同及旧客户端过渡见 [桌面自动更新](../../../../docs/desktop-app-update.md)。
 
 接入范围与顺序：
 
@@ -64,7 +65,7 @@ Latest 指向最新已验收并设为 Latest 的桌面正式版，不是每次�
 
 1. **来源与完整性**：所有承诺平台来自同一已审查源码 SHA，分别核对其完整 run ID / attempt 与请求平台集合；同一运行不能混用旧 attempt。包的版本、构建号、来源和哈希符合原始回执。若正式签名 / 公证另行改变了包字节，使用该获准流程产生的最终回执与哈希，并对最终包重新验收，不沿用候选包校验值。
 2. **安装与运行**：对本次实际分发的每个平台，在其承诺系统 / 架构上验收首次安装、首次启动、登录、任务、文件与图片、重启、升级后数据保留及卸载行为。媒体、手机通信和系统权限按承诺功能单独选择专项。使用独立测试目录 / 账号，不替换日常 Homer；没有目标环境证据的平台不标记通过。
-3. **签名与系统信任**：Mac 正式分发验证 Developer ID、公证、stapling 及真实下载后的 Gatekeeper 路径。Windows 当前按用户选择分发未签名 NSIS 安装包，明确标记且禁用自动更新；不可把未签名包称为已签名。
+3. **签名与系统信任**：Mac 正式分发验证 Developer ID、公证、stapling 及真实下载后的 Gatekeeper 路径。Windows 当前按用户选择分发未签名 NSIS，须明确未签名及一次手动安装基线，验收双阶段完整性检查、确认后安装和原数据保留；签名路径继续验证发布者，不可把未签名包称为已签名。
 4. **公开内容与附件集合**：公开包不含本机路径配置、凭据或个人数据；第三方许可证 / notices 随包保留。发行说明列出更新、最低系统、架构、安装方法、已知限制及回退版本。固定名附件、`SHA256SUMS` 和分发清单齐全，哈希对应最终字节；单个附件须小于 GitHub 当前的 2 GiB 上限。临时 Actions 产物不是长期用户下载入口。
 
 公开固定标签与切换 Latest 分开判断。Latest 前须按 [桌面自动更新](../../../../docs/desktop-app-update.md#2-接口归属与对齐) 完成已启用平台的原生升级、最终 URL 和来源兼容验收；可先按授权公开并保持旧 Latest，以最终公开地址完成验证。不得先切 Latest 再让正式用户承担首次原生验收。
@@ -84,7 +85,7 @@ Latest 指向最新已验收并设为 Latest 的桌面正式版，不是每次�
 获准创建草稿及上传后，调用桌面工作流并传 `upload_release_draft=true`（默认）。仅构建时显式设为 `false`，避免将默认值当作额外授权。创建标签属于单独的远端写操作；工作流只接受已经存在且解析到 `expected_sha` 的标签，不自动创建或移动。
 
 1. 规划阶段在安装依赖前校验版本、build、源码 SHA、远端标签及已有草稿的 run / attempt；已公开同标签、旧轮次占用或只有残缺附件而没有来源清单时提前失败，不浪费打包额度。
-2. 每个平台在 runner 中构建、签名，直接将安装包、修正过 URL 的 Mac 更新清单及脱敏平台清单上传草稿。大包不再存入 Actions artifact；原始小回执保留 1 天。不需要额外 PAT，使用临时 `GITHUB_TOKEN`。
+2. 每个平台在 runner 中按其签名策略构建，直接将安装包、修正过 URL 的原生更新清单及脱敏平台清单上传草稿。三平台完整草稿为 11 个附件；Windows latest.yml 与两份 Mac 清单同样进入摘要和流式下载验证。大包不再存入 Actions artifact；原始小回执保留 1 天。不需要额外 PAT，使用临时 `GITHUB_TOKEN`。
 3. 全部构建成功后，`verify-draft` 在云端完整流式下载所有请求平台的附件，对照同一 SHA / run / attempt 的清单校验大小和 SHA-256，生成合并分发清单及 `SHA256SUMS` 并上传、回下载核对。不在本机中转，也不保存第二份大包。
 4. 草稿不能公开下载。只为用户指定的平台从草稿下载并做产品验收；通过后补齐发行说明，按授权公开同一 Release，不重新上传安装包。按后文执行固定标签及获准的 Latest 核验；只有官网实际需改动时交接 Yezi2。
 
@@ -140,7 +141,7 @@ gh release edit TAG --repo OWNER/REPO --verify-tag --draft=false --prerelease --
 
 保留 GitHub 标准下载 URL，不保存跳转后的临时地址或输出鉴权值。在 `docs/` 留下版本、源码与标签映射、附件名 / 哈希、原 Latest 基线（或确认不存在的依据）、本次切换决策、分支验收结果和下载链接。失败时明确区分“Release 已发布”和“分发验收通过”。
 
-发现已发布问题时保留原包和证据，说明受影响版本。需要把 Latest 指回已验收旧版、修改公开说明或撤回发行时，按用户授权执行；不擅自删 Release、删包或移动标签。包字节修复仍走新版本流程。
+发现已发布问题时保留原包和证据，说明受影响版本。需要把 Latest 指回已验收旧版、修改公开说明或撤回发行时，按用户授权执行；不擅自删 Release、删包或移动标签。包字节修复仍走新版本流程。 回指不含 latest.yml 的旧版时，新 Windows 客户端可能无法检查更新，不能宣称已自动降级；按实际附件状态核验，不增加兜底更新地址。
 
 ## Yezi2 配置交接与上线核验
 
@@ -149,7 +150,7 @@ gh release edit TAG --repo OWNER/REPO --verify-tag --draft=false --prerelease --
 - 版本、build、标签、源码 SHA，以及本次选择的 Latest 策略。
 - 已发布平台的附件名、标准下载 URL、字节数与 SHA-256、最低系统、签名状态和已知限制；未发布的平台不提供下载入口。
 - 在发行记录和 Yezi2 交接中写明安装方式及旧资料限制。官网是否展示提示、展示什么文案，以用户对该版本的最新决定为准。
-- 仅旧客户端过渡涉及官网 feed：列明原路径、最终清单与固定标签包、启用来源和已完成的原生验收。v0.1.8 及以前仍内置旧官网 URL，新源码不会自动迁移它们；未获授权则保留原 handler／字节，通过手动安装新版过渡。Windows 继续仅手动下载。
+- 仅旧客户端过渡涉及官网 feed：列明原路径、最终清单与固定标签包、启用来源和已完成的原生验收。Mac v0.1.8 及以前仍内置旧官网 URL，新源码不会自动迁移它们；未获授权则保留原 handler／字节，通过手动安装新版过渡。旧未签名 Windows 需手动安装支持更新版本一次，不新增 Windows 官网 feed 或桥接服务。
 
 确需交接且本轮允许创建聊天时，每个新发行版本在 Yezi2 项目新建独立聊天，例如「Homer vVERSION 官网下载接入」，不恢复跨版本旧长聊天。同版本已有目标时复用并记录标识；用户本轮指定目标或禁止新建时以该指令为准。
 

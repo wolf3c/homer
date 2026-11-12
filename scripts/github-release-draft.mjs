@@ -3,6 +3,7 @@ import {createReadStream,readFileSync,realpathSync} from 'node:fs';
 import {basename,isAbsolute,relative,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {planBuild} from './github-build-plan.mjs';
+import {windowsRelease} from '../packaging/electron/forge.config.mjs';
 
 const json=value=>Buffer.from(JSON.stringify(value,null,2)+'\n');
 async function hashStream(stream){
@@ -63,7 +64,7 @@ export async function runReleaseDraft(mode,context,{fetch=globalThis.fetch,token
  let uploads=[],manifest;
  if(mode==='upload'){
   const row=include[0],windows=row.platform==='win32',receipt=JSON.parse(readFileSync(receiptPath,'utf8'));
-  const signature=windows?'unsigned Windows; automatic updates disabled':'Developer ID; notarized and stapled';
+  const signature=windows?'unsigned Windows; native acceptance unverified':'Developer ID; notarized and stapled';
   if(receipt.version!==version||receipt.build!==build||receipt.gitSha!==sha||receipt.arch!==row.arch||(receipt.platform??'darwin')!==row.platform||receipt.preparation!==false||receipt.publishable!==true||receipt.appId!=='app.homer.desktop'||receipt.releaseChannel!=='stable'||receipt.signature!==signature||(!windows&&!/^\d+\.\d+$/.test(receipt.minimumMacOS??'')))throw Error('release_receipt_identity_invalid');
   const root=realpathSync(directory);
   async function artifact(name){
@@ -86,6 +87,12 @@ export async function runReleaseDraft(mode,context,{fetch=globalThis.fetch,token
    feed.releases[0].updateTo.url=downloadBase+name;
    const {body,...info}=bufferAsset(`RELEASES-darwin-${row.arch}.json`,json(feed));
    uploads.push({...info,body});updateFeeds.push({arch:row.arch,...info,url:downloadBase+info.name});
+  }else{
+   const {load,dump}=(await import('js-yaml')).default,source=await artifact('latest.yml');
+   const feed=windowsRelease(load(readFileSync(source.path,'utf8')),pkg.path,receipt,tag);
+   feed.files[0].url=downloadBase+name;if(feed.path!==undefined)feed.path=downloadBase+name;
+   const {body,...info}=bufferAsset('latest.yml',Buffer.from(dump(feed)));
+   uploads.push({...info,body});updateFeeds.push({arch:row.arch,...info,url:downloadBase+info.name});
   }
   manifest={...identity,assets,updateFeeds};
   uploads.push(bufferAsset(receiptName(target),json(manifest)));
@@ -102,8 +109,8 @@ export async function runReleaseDraft(mode,context,{fetch=globalThis.fetch,token
   const manifests=[];
   for(const row of include){
    const part=parts.get(find(receiptName(row.target)).name);
-   if(part.assets?.length!==1||part.assets[0].platform!==row.target||part.updateFeeds?.length!==(row.platform==='darwin'?1:0))throw Error('release_manifest_identity_invalid');
-   const names=[`Homer-${row.platform==='darwin'?'mac':'windows'}-${row.arch}.${row.platform==='darwin'?'zip':'exe'}`,...(row.platform==='darwin'?[`RELEASES-darwin-${row.arch}.json`]:[])];
+   if(part.assets?.length!==1||part.assets[0].platform!==row.target||part.updateFeeds?.length!==1)throw Error('release_manifest_identity_invalid');
+   const names=[`Homer-${row.platform==='darwin'?'mac':'windows'}-${row.arch}.${row.platform==='darwin'?'zip':'exe'}`,row.platform==='darwin'?`RELEASES-darwin-${row.arch}.json`:'latest.yml'];
    if(JSON.stringify([...part.assets,...part.updateFeeds].map(file=>file.name))!==JSON.stringify(names))throw Error('release_manifest_assets_invalid');
    manifests.push(part);
   }

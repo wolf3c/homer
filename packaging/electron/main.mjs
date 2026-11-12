@@ -1,11 +1,11 @@
 import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences,autoUpdater,globalShortcut,screen,desktopCapturer} from 'electron';
-import {readFileSync,existsSync,mkdirSync} from 'node:fs';
+import {readFileSync,existsSync,mkdirSync,createReadStream} from 'node:fs';
 import {lstat,writeFile} from 'node:fs/promises';
 import {join,resolve,win32} from 'node:path';
 import {userInfo} from 'node:os';
 import {execFileSync,execFile,spawn} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {types} from 'node:util';
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
 import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopChatGPTConfig,readDesktopCaptureShortcut,saveDesktopCaptureShortcut} from '../homer/scripts/desktop-profile.mjs';
@@ -504,9 +504,15 @@ async function setupDesktopUpdate(manifest,test){
   if(process.platform==='win32'){
    const {load}=(await import('js-yaml')).default;
    const config=load(readFileSync(join(resources,'app-update.yml'),'utf8'));
-   windowsPublishers=Array.isArray(config?.publisherName)?config.publisherName:[config?.publisherName];
-   if(config?.verifyUpdateCodeSignature===false||!windowsPublishers.length||windowsPublishers.some(name=>typeof name!=='string'||!/(?:^|,)\s*CN=/.test(name)||!/(?:^|,)\s*(?:O|OU|C|ST|L)=/.test(name)))return;
-   if(await verifyWindowsUpdate(windowsPublishers,process.execPath))return;
+   if(![undefined,true,false].includes(config?.verifyUpdateCodeSignature))return;
+   if(config?.verifyUpdateCodeSignature===false){
+    if(config.publisherName!==undefined)return;
+    windowsPublishers=[];
+   }else{
+    windowsPublishers=Array.isArray(config?.publisherName)?config.publisherName:[config?.publisherName];
+    if(!windowsPublishers.length||windowsPublishers.some(name=>typeof name!=='string'||!/(?:^|,)\s*CN=/.test(name)||!/(?:^|,)\s*(?:O|OU|C|ST|L)=/.test(name)))return;
+    if(await verifyWindowsUpdate(windowsPublishers,process.execPath))return;
+   }
    const {NsisUpdater}=(await import('electron-updater')).default;
    windowsUpdater=new NsisUpdater({provider:'generic',url:'https://github.com/wolf3c/homer/releases/latest/download/',channel:'latest'});
    windowsUpdater.logger=null;
@@ -527,8 +533,21 @@ async function setupDesktopUpdate(manifest,test){
   nativeUpdater().on('error',updateCheckFailed);
  }catch{updateState=null;}
 }
-async function verifyWindowsUpdate(publishers,path){
- if(!win32.isAbsolute(process.env.SystemRoot??'')||typeof path!=='string'||!win32.isAbsolute(path)||!publishers?.length)return 'update_signature_unconfirmed';
+async function verifyWindowsUpdate(publishers,path,candidate){
+ if(typeof path!=='string'||!win32.isAbsolute(path)||!Array.isArray(publishers))return 'update_check_failed';
+ if(candidate){
+  try{
+   const stat=await lstat(path);
+   if(!stat.isFile()||stat.isSymbolicLink()||stat.size!==candidate.size)return 'update_check_failed';
+   const hash=createHash('sha512');let bytes=0;
+   for await(const chunk of createReadStream(path)){bytes+=chunk.length;if(bytes>candidate.size)return 'update_check_failed';hash.update(chunk);}
+   if(bytes!==candidate.size||hash.digest('base64')!==candidate.sha512)return 'update_check_failed';
+   const current=await lstat(path);
+   if(!current.isFile()||current.isSymbolicLink()||['dev','ino','size','mtimeMs','ctimeMs'].some(key=>current[key]!==stat[key]))return 'update_check_failed';
+  }catch{return 'update_check_failed';}
+ }
+ if(!publishers.length)return candidate?null:'update_signature_unconfirmed';
+ if(!win32.isAbsolute(process.env.SystemRoot??''))return 'update_signature_unconfirmed';
  try{
   const result=await new Promise((accept,reject)=>execFile(join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoLogo','-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $s=Get-AuthenticodeSignature -LiteralPath $env:HOMER_UPDATE_FILE; @{valid=($s.Status -eq 'Valid');embedded=($s.SignatureType -eq 'Authenticode');subject=$s.SignerCertificate.Subject;path=$s.Path}|ConvertTo-Json -Compress"],{env:{SystemRoot:process.env.SystemRoot,HOMER_UPDATE_FILE:path},windowsHide:true,timeout:20000,maxBuffer:16384,encoding:'utf8'},(error,stdout)=>{if(error){reject(error);return;}try{accept(JSON.parse(stdout));}catch{reject(Error('update_signature_unconfirmed'));}}));
   return result.valid===true&&result.embedded===true&&publishers.includes(result.subject)&&typeof result.path==='string'&&win32.normalize(result.path).toLowerCase()===win32.normalize(path).toLowerCase()?null:'update_signature_unconfirmed';
@@ -536,11 +555,12 @@ async function verifyWindowsUpdate(publishers,path){
 }
 async function windowsDownloaded(info){
  if(windowsRecovery())return;
- if(info?.isAdminRightsRequired===true||info?.files?.some(file=>file.isAdminRightsRequired===true)||typeof info?.version!=='string'||!/^\d+\.\d+\.\d+$/.test(info.version)||typeof info.downloadedFile!=='string'){updateCheckFailed();return;}
- const candidate={path:info.downloadedFile,version:info.version};windowsCandidate=candidate;
- const error=await verifyWindowsUpdate(windowsPublishers,candidate.path);
+ const file=Array.isArray(info?.files)&&info.files.length===1?info.files[0]:undefined;
+ if(info?.isAdminRightsRequired===true||!file||file.isAdminRightsRequired===true||typeof file.sha512!=='string'||!Number.isSafeInteger(file.size)||file.size<=0||typeof info?.version!=='string'||!/^\d+\.\d+\.\d+$/.test(info.version)||typeof info.downloadedFile!=='string'){updateCheckFailed();return;}
+ const candidate={path:info.downloadedFile,version:info.version,sha512:file.sha512,size:file.size};windowsCandidate=candidate;
+ const error=await verifyWindowsUpdate(windowsPublishers,candidate.path,candidate);
  if(windowsCandidate!==candidate||windowsRecovery())return;
- updateManual=false;updateState={...updateState,status:error?'error':'ready',version:info.version,error:error??undefined};updateChanged();
+ updateManual=false;updateState={...updateState,status:error?'error':'ready',version:candidate.version,error:error??undefined};updateChanged();
 }
 function windowsUpdateFailed(){
  if(windowsRecovery()&&!updateStopping)return;
@@ -749,7 +769,7 @@ function finishQuit(){
   }catch(error){if(updateStopping)updateFailed('update_service_stopped');quitPending=false;quitAction=undefined;switchSource=undefined;connectionError=accountCode(error);accountChanged();void showError('本机账号或来源设置未能保存，原设置已保留。请核对后重试。');return;}
   if(windowsUpdater&&updateStopping){
    if(windowsInstall)return;
-   windowsInstall=(async()=>{const candidate=windowsCandidate;if(!candidate||await verifyWindowsUpdate(windowsPublishers,candidate.path)||candidate!==windowsCandidate||!updateConfirmed()){windowsUpdateFailed();return;}allowQuit=true;try{windowsUpdater.quitAndInstall(true,true);}catch{windowsUpdateFailed();}})().finally(()=>{windowsInstall=undefined;});return;
+   windowsInstall=(async()=>{const candidate=windowsCandidate;if(!candidate||await verifyWindowsUpdate(windowsPublishers,candidate.path,candidate)||candidate!==windowsCandidate||!updateConfirmed()){windowsUpdateFailed();return;}allowQuit=true;try{windowsUpdater.quitAndInstall(true,true);}catch{windowsUpdateFailed();}})().finally(()=>{windowsInstall=undefined;});return;
   }
   allowQuit=true;
   if(updateStopping){try{autoUpdater.quitAndInstall();}catch{allowQuit=false;updateFailed('update_install_unconfirmed');}}else app.quit();

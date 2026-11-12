@@ -13,6 +13,9 @@ import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 
+const installerBytes=Buffer.from('synthetic Windows installer');
+function windowsUpdate(info){return {files:[{url:'https://github.com/wolf3c/homer/releases/download/v'+info.version+'/Homer-windows-x64.exe',sha512:createHash('sha512').update(installerBytes).digest('base64'),size:installerBytes.length}],...info};}
+
 // Link the real entry to OS fixtures. No test switches or probes in the app.
 async function fixture(args=['Homer','--test-profile','/synthetic/profile'],openExternal=async()=>{},platform='darwin',native={}){
  let monotonic=0;
@@ -50,12 +53,25 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  },ipcMain:{handle:(name,cb)=>{assert.equal(handlers.has(name),false);handlers.set(name,cb);}},systemPreferences:{isTrustedAccessibilityClient:prompt=>{nativeCalls.push(['ax',prompt]);return native.ax?native.ax(prompt):false;},getMediaAccessStatus:kind=>{nativeCalls.push(['screen',kind]);return native.screen?native.screen(kind):'not-determined';}},Menu:{buildFromTemplate:value=>value,setApplicationMenu:value=>handlers.set('menu',value)},dialog:{showMessageBox:async(_window,options)=>{const o=options??_window;messages.push({...o,parent:options?_window:undefined});return {response:typeof native.response==='function'?await native.response(o):native.response??1};}},shell:{openExternal:url=>{nativeCalls.push(['external',url]);return native.external?native.external(url):openExternal(url);},openPath:path=>{nativeCalls.push(['open',path]);return native.open?native.open(path):Promise.resolve('');}}};
  electron.desktopCapturer={getSources:async options=>{nativeCalls.push(['capture-sources',options]);return native.captureSources?.(options)??[];}};
  const fs={readFileSync:path=>Buffer.from(JSON.stringify(String(path).endsWith('app-update.yml')?{publisherName:native.publisher??['CN=Homer, O=Homer, C=CN'],...native.updateConfig}:({format:2,preparation:!native.published,localWorkingTree:native.localWorkingTree,publishable:native.publishable,version:'0.1.0',build:5,account:{websiteOrigin:'https://website.example.invalid',gatewayOrigin:'https://models.super-tree.com'},...native.manifest}))),existsSync:()=>true,mkdirSync(){},realpathSync:value=>value};
+ const readUpdateConfig=fs.readFileSync;
+ fs.readFileSync=path=>{if(String(path).endsWith('app-update.yml')&&native.missingUpdateConfig)throw Object.assign(Error('private_update_config'),{code:'ENOENT'});return readUpdateConfig(path);};
+ fs.createReadStream=path=>{
+  if(platform!=='win32'||!String(path).endsWith('.exe'))return filesystem.createReadStream(path);
+  nativeCalls.push(['read-update',path]);const stream=new PassThrough(),body=native.fileData??installerBytes;
+  const finish=()=>native.fileError?stream.destroy(Error('private_update_read_error')):stream.end(body);
+  if(native.holdHash)native.releaseHash=finish;else queueMicrotask(finish);return stream;
+ };
  const cp={execFile:(bin,args,options,done)=>{if(bin.endsWith('/homer-window-capture')){const process=new EventEmitter();native.capture?.(bin,args,options,(...result)=>{done(...result);process.emit('close');});return process;}nativeCalls.push(['verify',bin,args]);const finish=()=>done(native.verifyError&&!options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?Error('private_verify'):null,native.verifyOutput&&!options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?native.verifyOutput:JSON.stringify({valid:options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')||!native.invalidSignature,subject:options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?'CN=Homer, O=Homer, C=CN':native.signer??'CN=Homer, O=Homer, C=CN',path:options.env.HOMER_UPDATE_FILE,embedded:true}));if(native.holdVerify)native.releaseVerify=finish;else queueMicrotask(finish);},execFileSync:(_bin,args)=>{if(args.includes('-R')&&native.untrustedSigner)throw Error('signer');return Buffer.alloc(0);},spawn(bin,args,options){spawnCount++;launches.push({bin,args,options});return child;}};
  const config=()=>({main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}});
  let stored=native.connection??{token:'synthetic-file-token',subject:'fixture_user',config:config()};
  const account={queryHomerRuntimeConfig:async options=>{nativeCalls.push(['config']);return native.config?native.config(options):config();},saveHomerRuntimeConfig:(_path,value)=>{if(native.writeError)throw Error('CONNECTION_WRITE_FAILED');stored={token:stored.token,subject:stored.subject,config:value};nativeCalls.push(['save-config']);return stored;},readHomerConnection:path=>{tokenFiles.push(path);if(native.invalidTokenFile)throw Error('CONNECTION_FILE_INVALID');return stored;},validateHomerOrigins:v=>v,authorizeHomerConnection:async options=>{const value=native.authorize?await native.authorize(options):{token:'synthetic-website-token',subject:'fixture_user',config:config()};if(!options.signal.aborted)stored=value;return value;},disconnectHomerConnection:()=>{nativeCalls.push(['disconnect']);if(native.disconnectError)throw Error('CONNECTION_WRITE_FAILED');stored=stored?.subject?{...stored,token:undefined}:null;},queryHomerWallet:async()=>{nativeCalls.push(['wallet']);return native.wallet?native.wallet():{available:5,used:2,unit:'原生额度'};}};
  class NsisUpdater extends EventEmitter{constructor(options){super();nativeCalls.push(['nsis',options]);this.on('error',()=>{if(this.logger!==null)console.error('private_library_log');});}checkForUpdates(){nativeCalls.push(['check-update',this.logger]);if(native.checkReject){this.emit('error',Error('private_check'));return Promise.reject(Error('private_check'));}return Promise.resolve(native.nullCheck?null:{downloadPromise:native.downloadReject?Promise.resolve().then(()=>{this.emit('error',Error('private_download'));throw Error('private_download');}):Promise.resolve([])});}quitAndInstall(...args){if(this.quitAndInstallCalled)return;this.quitAndInstallCalled=true;nativeCalls.push(['install-update',...args]);if(native.closeBeforeInstallError)for(const w of windows){w.destroyed=true;w.contentsDestroyed=true;}if(native.installError)throw Error('private_install');if(native.installAsyncError)this.emit('error',Error('EACCES UNKNOWN private_install'));queueMicrotask(()=>app.quit());}}
  const modules={'../homer/dist/model-config.js':await import('../src/model-config.ts'),'../homer/dist/web-contract.js':await import('../src/web-contract.ts'),'../homer/dist/desktop-channels.js':{DesktopChannels:class {start(...args){nativeCalls.push(['channel-start',...args]);return 'fixture-flow';} snapshot(){return {pending:native.channelPending??[]};} configured(){return [];} cancel(){} apply(){nativeCalls.push(['channel-apply']);return {saved:['Telegram@example_bot'],failed:[]};}}},'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'../homer/dist/processes.js':{processIdentity:()=> 'synthetic-process',leaseOwnerGone:()=>true},'electron':electron,'../homer/dist/web-upload.js':{WEB_UPLOAD_BYTES:8*1024*1024},'../homer/dist/media-policy.js':await import('../src/media-policy.ts'),'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:root=>({root,runtime:native.runtime??join(root,'runtime'),workspace:join(root,'workspace'),codexHome:native.codexHome??join(root,'codex'),...(native.adopted?{adoption:{appData:'/synthetic/original-app'}}:{})}),recoverDesktopOwner:home=>{assert.equal(ownsLock,true);ownershipCalls.push(['recover-owner',home]);if(native.recoveryError)throw Error('desktop_owner_unknown');},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,readDesktopChatGPTConfig:()=>native.chatgpt,saveDesktopModelSource:(_root,source,chatgpt)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(chatgpt===undefined?['source',source]:['source',source,chatgpt]);if(chatgpt!==undefined)native.chatgpt=chatgpt;}}};
+ modules['node:fs/promises']={...filesystem.promises,lstat:async path=>{
+  if(platform!=='win32'||!String(path).endsWith('.exe'))return filesystem.promises.lstat(path);
+  if(native.fileMissing)throw Object.assign(Error('private_update_missing'),{code:'ENOENT'});
+  return {isFile:()=>!native.fileDirectory&&!native.fileSymlink,isSymbolicLink:()=>!!native.fileSymlink,size:(native.fileData??installerBytes).length,dev:1,ino:native.fileRevision??0,mtimeMs:1,ctimeMs:1};
+ }};
  modules['../homer/dist/preview-reference.js']=await import('../src/preview-reference.ts');
  Object.assign(modules['../homer/scripts/desktop-profile.mjs'],{
   readDesktopCaptureShortcut:()=>native.captureShortcut,
@@ -145,6 +161,72 @@ async function updateFixture(native={}){return accountFixture({manifest:stableMa
 const updateCall=async(f,name,...args)=>{const action=f.handlers.get('homer:update:'+name);assert.equal(typeof action,'function','missing trusted update action: '+name);return action(accountEvent(f),...args);};
 const updateMenu=f=>f.handlers.get('menu')[0].submenu.find(item=>item.id==='update');
 async function windowsFixture(native={}){const f=await fixture(['Homer'],undefined,'win32',{arch:'x64',published:true,publishable:true,manifest:stableManifest,...native});f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;}
+const unsignedConfig={verifyUpdateCodeSignature:false,publisherName:undefined};
+test('Windows unsigned updates prepare a verified package without calling Authenticode or installing on ordinary quit',async()=>{
+ const f=await windowsFixture({updateConfig:unsignedConfig});
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
+ assert.equal(f.updater.autoDownload,true);assert.equal(f.updater.autoInstallOnAppQuit,false);
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\缓存\\installer.exe'}));await f.tick();
+ assert.equal((await updateCall(f,'state')).status,'ready');
+ f.app.quit();await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'||c[0]==='verify'),false);
+});
+test('Windows unsigned updates install once after confirmation and complete stop proof',async()=>{
+ const f=await windowsFixture({updateConfig:unsignedConfig,response:1});
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\缓存\\installer.exe'}));await f.tick();
+ await updateCall(f,'restart');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+ f.child.emit('close',0,null);await f.tick();
+ assert.deepEqual(f.nativeCalls.filter(c=>c[0]==='install-update'),[['install-update',true,true]]);
+ assert.equal(f.nativeCalls.filter(c=>c[0]==='read-update').length,2);assert.equal(f.sent.length,1);
+});
+for(const [name,ack,code,signal]of [['no ACK',false,0,null],['nonzero exit',true,1,null],['signal exit',true,null,'SIGTERM']])test('Windows unsigned updates require stop proof: '+name,async()=>{
+ const f=await windowsFixture({updateConfig:unsignedConfig,response:1});
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();
+ await updateCall(f,'restart');await f.tick();if(ack)f.event({kind:'update-stopped'});f.child.emit('close',code,signal);await f.tick();
+ assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+for(const [name,options,change]of [
+ ['tampered bytes',{fileData:Buffer.from('tampered')},{}],['missing file',{fileMissing:true},{}],['directory',{fileDirectory:true},{}],['symlink',{fileSymlink:true},{}],['read failure',{fileError:true},{}],
+ ['relative path',{}, {downloadedFile:'installer.exe'}],['missing hash',{}, {files:[{size:installerBytes.length}]}],['wrong size',{}, {files:[{sha512:createHash('sha512').update(installerBytes).digest('base64'),size:1}]}],['multiple files',{}, {files:[{},{}]}],
+])for(const unsigned of [false,true])test('Windows candidate integrity rejects '+name+' unsigned='+unsigned,async()=>{
+ const f=await windowsFixture({...options,...(unsigned?{updateConfig:unsignedConfig}:{})});
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe',...change}));await f.tick();
+ assert.equal((await updateCall(f,'state')).status,'error');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('Windows unsigned update rechecks prepared bytes after stopping and recovers without installation',async()=>{
+ const f=await windowsFixture({updateConfig:unsignedConfig,response:options=>options.buttons.includes('重启并更新')?1:0});
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();
+ await updateCall(f,'restart');await f.tick();f.options.fileData=Buffer.from('replaced after ready');
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);assert.deepEqual(Array.from(f.messages.at(-1).buttons),['取消','退出荷马']);
+});
+for(const unsigned of [false,true])for(const installing of [false,true])test('Windows integrity rejects replacement during hashing unsigned='+unsigned+' installing='+installing,async()=>{
+ const f=await windowsFixture({holdHash:!installing,response:1,...(unsigned?{updateConfig:unsignedConfig}:{})});
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();
+ if(installing){
+  assert.equal((await updateCall(f,'state')).status,'ready');f.options.holdHash=true;
+  await updateCall(f,'restart');await f.tick();f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ }
+ f.options.fileRevision=1;f.options.releaseHash();await f.tick();
+ assert.equal((await updateCall(f,'state')).status,'error');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('Windows unsigned update ignores obsolete hash results when another candidate arrives',async()=>{
+ const f=await windowsFixture({updateConfig:unsignedConfig,holdHash:true});
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\first.exe'}));await f.tick();
+ const release=f.options.releaseHash;assert.equal(typeof release,'function');assert.notEqual((await updateCall(f,'state')).status,'ready');
+ f.options.holdHash=false;f.updater.emit('update-downloaded',windowsUpdate({version:'0.3.0',downloadedFile:'C:\\cache\\second.exe'}));await f.tick();
+ release();await f.tick();assert.equal((await updateCall(f,'state')).version,'0.3.0');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('Windows unsigned update keeps the candidate metadata snapshot while hashing',async()=>{
+ const f=await windowsFixture({updateConfig:unsignedConfig,holdHash:true}),info=windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});
+ f.updater.emit('update-downloaded',info);await f.tick();
+ info.version='0.3.0';info.files[0].sha512='replaced';info.files[0].size=1;
+ f.options.releaseHash();await f.tick();assert.equal((await updateCall(f,'state')).version,'0.2.0');assert.equal((await updateCall(f,'state')).status,'ready');
+});
+for(const config of [undefined,{verifyUpdateCodeSignature:'false',publisherName:undefined},{verifyUpdateCodeSignature:false,publisherName:null},{verifyUpdateCodeSignature:true,publisherName:undefined}])test('Windows malformed or missing packaged verification config stays disabled '+JSON.stringify(config),async()=>{
+ const f=await windowsFixture(config===undefined?{missingUpdateConfig:true}:{updateConfig:config});
+ assert.equal(await updateCall(f,'state'),null);assert.equal(f.nativeCalls.some(c=>c[0]==='nsis'||c[0]==='check-update'),false);
+});
 test('Windows uses only NSIS generic latest with explicit safety switches and quiet logger',async()=>{
  const f=await windowsFixture();assert.ok(f.updater);assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
  assert.equal(f.launches[0].options.env.LOCALAPPDATA,'C:\\RedirectedLocal');assert.equal(f.updater.logger,null);for(const [name,value]of Object.entries({autoDownload:true,autoInstallOnAppQuit:false,allowPrerelease:false,allowDowngrade:false,disableDifferentialDownload:true,disableWebInstaller:true}))assert.equal(f.updater[name],value);
@@ -160,34 +242,34 @@ for(const readyFirst of [false,true])test('Windows startup stays usable while si
 for(const options of [{checkReject:true},{downloadReject:true},{nullCheck:true}])test('Windows consumes updater Promise rejection or null '+JSON.stringify(options),async()=>{const f=await windowsFixture(options);await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.sent.length,0);});
 test('Windows signature verification preserves a Unicode path and full publisher subject',async()=>{
  const unicode=await windowsFixture({publisher:['CN=Homer, O=Homer, C=CN','CN=荷马, O=荷马, C=CN'],signer:'CN=荷马, O=荷马, C=CN'});
- unicode.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\Users\\测试\\缓存\\安装.exe'});await unicode.tick();assert.equal((await updateCall(unicode,'state')).status,'ready');
+ unicode.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\Users\\测试\\缓存\\安装.exe'}));await unicode.tick();assert.equal((await updateCall(unicode,'state')).status,'ready');
  for(const call of unicode.nativeCalls.filter(c=>c[0]==='verify'))assert.ok(call[2].at(-1).includes('[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)'));
 });
-for(const invalid of [{invalidSignature:true},{verifyError:true},{signer:'CN=Other, O=Other, C=CN'}])test('Windows cached candidate is verified before ready '+JSON.stringify(invalid),async()=>{const f=await windowsFixture(invalid);f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();assert.equal((await updateCall(f,'state')).status,'error');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);});
+for(const invalid of [{invalidSignature:true},{verifyError:true},{signer:'CN=Other, O=Other, C=CN'}])test('Windows cached candidate is verified before ready '+JSON.stringify(invalid),async()=>{const f=await windowsFixture(invalid);f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();assert.equal((await updateCall(f,'state')).status,'error');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);});
 test('Windows revalidates a replacement candidate for the same version without reopening a dismissed notice',async()=>{
- const f=await windowsFixture();f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\first.exe'});await f.tick();await updateCall(f,'dismiss');
- f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\second.exe'});await f.tick();assert.equal((await updateCall(f,'state')).noticeHidden,true);f.options.invalidSignature=true;
- f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\tampered.exe'});await f.tick();const state=await updateCall(f,'state');assert.equal(state.status,'error');assert.equal(state.noticeHidden,true);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+ const f=await windowsFixture();f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\first.exe'}));await f.tick();await updateCall(f,'dismiss');
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\second.exe'}));await f.tick();assert.equal((await updateCall(f,'state')).noticeHidden,true);f.options.invalidSignature=true;
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\tampered.exe'}));await f.tick();const state=await updateCall(f,'state');assert.equal(state.status,'error');assert.equal(state.noticeHidden,true);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
 });
 for(const closeFirst of [false,true])test('Windows verifies before ready and again only after safe stop closeFirst='+closeFirst,async()=>{
- const f=await windowsFixture();f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();assert.equal((await updateCall(f,'state')).status,'ready');await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();if(closeFirst)f.child.emit('close',0,null);f.event({kind:'update-stopped'});if(!closeFirst)f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='verify').length,3);assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='install-update'))),[['install-update',true,true]]);
+ const f=await windowsFixture();f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();assert.equal((await updateCall(f,'state')).status,'ready');await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();if(closeFirst)f.child.emit('close',0,null);f.event({kind:'update-stopped'});if(!closeFirst)f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='verify').length,3);assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='install-update'))),[['install-update',true,true]]);
 });
 for(const closeFirst of [false,true])for(const failure of ['sync','async'])for(const action of ['cancel','quit'])test('Windows '+failure+' failed install '+(closeFirst?'after window destruction ':'')+action+' does not reuse installer state',async()=>{
  let response=0;const f=await windowsFixture({installError:failure==='sync',installAsyncError:failure==='async',closeBeforeInstallError:closeFirst,response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);
- f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
  assert.equal(f.updater.quitAndInstallCalled,true);const prompts=f.messages.filter(m=>m.type==='question').length;f.app.quit();await f.tick();assert.equal(f.messages.filter(m=>m.type==='question').length,prompts,'delayed library quit is intercepted');assert.equal(exits,0);
- f.updater.emit('update-downloaded',{version:'0.3.0',downloadedFile:'C:\\cache\\other.exe'});f.updater.emit('error',Error('private_late'));await f.tick();assert.equal(f.messages.filter(m=>m.type==='question').length,prompts);
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.3.0',downloadedFile:'C:\\cache\\other.exe'}));f.updater.emit('error',Error('private_late'));await f.tick();assert.equal(f.messages.filter(m=>m.type==='question').length,prompts);
  response=action==='quit'?1:0;updateMenu(f).click();await f.tick();assert.deepEqual(Array.from(f.messages.at(-1).buttons),['取消','退出荷马']);if(closeFirst)assert.equal(f.messages.at(-1).parent,undefined);assert.equal(exits,action==='quit'?1:0);assert.equal(f.nativeCalls.filter(c=>c[0]==='install-update').length,1);assert.equal(f.sent.length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='relaunch'),false);
  if(action==='cancel'){response=1;f.windows[0].close();await f.tick();assert.equal(exits,1);}
  const reopened=await windowsFixture();reopened.event({kind:'update-stopped'});reopened.child.emit('close',0,null);await reopened.tick();assert.equal(reopened.nativeCalls.some(c=>c[0]==='install-update'),false);assert.equal(reopened.nativeCalls.filter(c=>c[0]==='check-update').length,1);
 });
 for(const destroyed of [false,true])for(const order of ['ack-close','close-ack'])for(const errorAfterFirst of [false,true])test('Windows stop-time error recovers cancel and exit '+order+' destroyed='+destroyed+' errorAfterFirst='+errorAfterFirst,async()=>{
  let response=0;const f=await windowsFixture({response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);
- f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();await updateCall(f,'dismiss');await updateCall(f,'restart');await f.tick();
  if(destroyed){f.windows[0].destroyed=true;f.windows[0].contentsDestroyed=true;}
  if(errorAfterFirst){if(order==='ack-close')f.event({kind:'update-stopped'});else f.child.emit('close',0,null);}
  f.updater.emit('error',Error('synthetic_stop_error'));await f.tick();
- f.updater.emit('update-not-available');f.updater.emit('update-available',{version:'0.3.0'});f.updater.emit('update-downloaded',{version:'0.3.0',downloadedFile:'C:\\cache\\late.exe'});await f.tick();
+ f.updater.emit('update-not-available');f.updater.emit('update-available',{version:'0.3.0'});f.updater.emit('update-downloaded',windowsUpdate({version:'0.3.0',downloadedFile:'C:\\cache\\late.exe'}));await f.tick();
  if(!errorAfterFirst){if(order==='ack-close')f.event({kind:'update-stopped'});else f.child.emit('close',0,null);}
  if(order==='ack-close')f.child.emit('close',0,null);else f.event({kind:'update-stopped'});await f.tick();
  assert.deepEqual(Array.from(f.messages.at(-1).buttons),['取消','退出荷马']);if(destroyed)assert.equal(f.messages.at(-1).parent,undefined);
@@ -196,31 +278,31 @@ for(const destroyed of [false,true])for(const order of ['ack-close','close-ack']
  response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'||c[0]==='relaunch'),false);assert.equal(f.sent.length,1);
 });
 for(const [name,ack,status,signal]of [['no-ack',false,0,null],['nonzero',true,1,null],['signal',true,null,'SIGTERM'],['timeout',false,0,null]])test('Windows stop-time error without proof still refuses exit '+name,async()=>{
- const f=await windowsFixture({response:1});let exits=0;f.app.on('quit',()=>exits++);f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'restart');await f.tick();f.updater.emit('error',Error('synthetic_stop_error'));if(ack)f.event({kind:'update-stopped'});f.child.emit('close',status,signal);await f.tick();if(name==='timeout'){f.timeout();f.event({kind:'update-stopped'});await f.tick();}updateMenu(f).click();f.app.quit();await f.tick();assert.equal(exits,0);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+ const f=await windowsFixture({response:1});let exits=0;f.app.on('quit',()=>exits++);f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();await updateCall(f,'restart');await f.tick();f.updater.emit('error',Error('synthetic_stop_error'));if(ack)f.event({kind:'update-stopped'});f.child.emit('close',status,signal);await f.tick();if(name==='timeout'){f.timeout();f.event({kind:'update-stopped'});await f.tick();}updateMenu(f).click();f.app.quit();await f.tick();assert.equal(exits,0);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
 });
 test('Windows recovery invalidates an in-flight pre-install verification',async()=>{
  let response=0;const f=await windowsFixture({response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);
- f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'restart');await f.tick();f.options.holdVerify=true;f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();await updateCall(f,'restart');await f.tick();f.options.holdVerify=true;f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
  assert.equal(typeof f.options.releaseVerify,'function');f.updater.emit('error',Error('synthetic_verification_error'));await f.tick();assert.deepEqual(Array.from(f.messages.at(-1).buttons),['取消','退出荷马']);
  f.options.holdVerify=false;f.options.releaseVerify();await f.tick();assert.equal(exits,0);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
  response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.sent.length,1);
 });
 test('Windows rejects malformed signature output and required elevation without leaking raw errors',async()=>{
- const f=await windowsFixture({verifyOutput:'private malformed response https://example.invalid/?secret=sentinel'});f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();assert.equal((await updateCall(f,'state')).status,'error');assert.equal(JSON.stringify(f.messages).includes('sentinel'),false);
- const elevated=await windowsFixture();elevated.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe',files:[{isAdminRightsRequired:true}]});await elevated.tick();assert.equal((await updateCall(elevated,'state')).status,'error');
+ const f=await windowsFixture({verifyOutput:'private malformed response https://example.invalid/?secret=sentinel'});f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();assert.equal((await updateCall(f,'state')).status,'error');assert.equal(JSON.stringify(f.messages).includes('sentinel'),false);
+ const elevated=await windowsFixture();elevated.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe',files:[{isAdminRightsRequired:true}]}));await elevated.tick();assert.equal((await updateCall(elevated,'state')).status,'error');
 });
 test('Windows installation-time signature failure preserves proof and requires exit/reopen',async()=>{
- let response=0;const f=await windowsFixture({response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();await updateCall(f,'restart');await f.tick();f.options.invalidSignature=true;f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);assert.equal(exits,0);response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.sent.length,1);
+ let response=0;const f=await windowsFixture({response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();await updateCall(f,'restart');await f.tick();f.options.invalidSignature=true;f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);assert.equal(exits,0);response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.sent.length,1);
 });
 for(const publisher of [[],['CN=OnlyName'],['']])test('Windows disables updates without a full trusted publisher '+JSON.stringify(publisher),async()=>{const f=await windowsFixture({publisher});assert.equal(f.nativeCalls.some(c=>c[0]==='nsis'),false);assert.equal(await updateCall(f,'state'),null);});
-test('Windows disables updates when packaged verification is disabled',async()=>{const f=await windowsFixture({updateConfig:{verifyUpdateCodeSignature:false}});assert.equal(f.nativeCalls.some(c=>c[0]==='nsis'),false);});
+test('Windows rejects conflicting publisher and unsigned update configuration',async()=>{const f=await windowsFixture({updateConfig:{verifyUpdateCodeSignature:false}});assert.equal(f.nativeCalls.some(c=>c[0]==='nsis'),false);});
 test('Windows errors publish safe state without library or signature output',async()=>{
  const logs=[],f=await windowsFixture({console:{error:(...v)=>logs.push(v),log:(...v)=>logs.push(v),warn:(...v)=>logs.push(v)}}),sentinel='synthetic_secret_body https://example.invalid/?private=1 C:\\Users\\Private';
  f.updater.emit('error',Error(sentinel));await f.tick();const state=await updateCall(f,'state');assert.equal(state.error,'update_check_failed');assert.equal(JSON.stringify([logs,f.messages,state,f.windows.map(w=>w.settingsMessages)]).includes(sentinel),false);assert.equal(logs.length,0);
 });
 for(const changed of ['valid-cache','tampered-cache','withdrawn'])test('Windows reopened process rechecks '+changed+' and cannot reuse a previous stop ACK',async()=>{
  const f=await windowsFixture({invalidSignature:changed==='tampered-cache',nullCheck:changed==='withdrawn'});f.event({kind:'update-stopped'});await f.tick();
- if(changed!=='withdrawn')f.updater.emit('update-downloaded',{version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'});await f.tick();const state=await updateCall(f,'state');assert.equal(state.status,changed==='valid-cache'?'ready':changed==='withdrawn'?'idle':'error');
+ if(changed!=='withdrawn')f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();const state=await updateCall(f,'state');assert.equal(state.status,changed==='valid-cache'?'ready':changed==='withdrawn'?'idle':'error');
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
 });
 test('stable Mac starts one native check after ready and deduplicates reconnect and manual checks',async()=>{

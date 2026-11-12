@@ -5,7 +5,7 @@ description: 准备或执行 Homer 的 GitHub Actions 多平台构建及 GitHub 
 
 # Homer GitHub 构建
 
-**当前流程：**桌面发行默认云端构建后直接上传 Release 草稿，云端完整下载校验后再验收、公开，不经本机中转。Mac 使用 Developer ID 签名及公证；Windows 当前未签名、仅手动下载且禁用自动更新。新客户端和官网入口直接使用 GitHub Latest，常规发版无需再更新或部署官网；Latest 切换同时影响下载和 Mac 自动更新，须满足相应验收及授权。
+**当前流程：**桌面发行默认云端构建后直接上传 Release 草稿，云端完整下载校验后再验收、公开，不经本机中转。Mac 使用 Developer ID 签名及公证；Windows 当前未签名；源码已接入后台下载、确认后安全安装及双阶段摘要复核，真实 Windows 升级仍待验收。新客户端和官网入口直接使用 GitHub Latest，常规发版无需再更新或部署官网；Latest 切换同时影响下载和桌面自动更新，须满足相应验收及授权。
 
 在 Homer 仓库根目录工作。复用[构建准备说明](../../../docs/github-build-preparation.md)、[工作流维护模板](../../../packaging/github/homer-build.yml.template)和[平台规划入口](../../../scripts/github-build-plan.mjs)。`.github/workflows/homer-build.yml` 与模板同步。以 GitHub 与本地共用的 `main` 为源码主线，完整推送已提交内容，不按目录导出白名单或另建公开源码副本。隐私、凭据和内部运营材料保存在 Git 忽略的 `.codex/private/`，公开边界与历史整合记录见 [仓库公开与同步](../../../docs/repository-publication.md)。
 
@@ -14,7 +14,7 @@ description: 准备或执行 Homer 的 GitHub Actions 多平台构建及 GitHub 
 - 单独调用本 Skill 即启动桌面发行流程，主动完成本地准备，不以只读预检或要求用户重新填写惯例参数结束。默认 `kind=desktop`、`target=desktop-three`、草稿直传，仅 Apple 芯片 Mac 做实机验收；沿用已确认的服务地址和系统基线。用户明确要求只读咨询、检查、准备、维护 Skill 或其他构建范围时，以该请求为准，不执行未授权的构建或远端写操作。
 - 未指定源码时，以本地最新已提交的 `main` 为候选，核对上版以来的完整发行差异并保留其他任务的未提交工作，不假设其他优化已经完成。没有指定版本时，已有未发行的产品版本优先作为候选，否则从上一桌面正式版推导下一补丁版本；build 核对已发行和可核对的已安装值后，取已核对最大值加一。检查标签占用与版本一致性后更新本地版本元数据和准备记录；存在冲突或缺少关键输入时先完成独立准备，再集中澄清，不猜测。
 - 准备完成即给出可审阅的源码差异、版本/build、平台、服务地址、签名、验收范围及检查结果，并一次性确认尚缺授权的执行动作：提交、推送、创建标签、Mac 正式签名、公证、构建、草稿上传及相应验收。默认参数本身不构成这些动作的授权。本轮已明确授权的动作直接连续完成，不再要求用户重复说“开始构建”；不自动监控其他聊天或安排延时构建。
-- 满足本轮约定的构建、云端校验与指定平台验收条件后，立即报告结果并推进到下一授权边界；未满足时先报告失败或验收缺口，不提出无条件发布。默认发行流程若尚缺公开发布或 Latest 决策，同次回复中给出公开同一草稿及明确 Latest 策略的具体确认，不等用户询问“下一步是什么”；已有授权则继续发布和分发核验。Mac 自动更新另须验证来源兼容、真实签名升级及安全重启；缺证据时可按授权公开固定标签并保持旧 Latest，不将 Apple 芯片安装验收代替两架构升级验收。用户明确限定仅构建、仅准备或仅到草稿时，交付该范围并说明剩余状态，不扩大任务。仅在官网实际需改动或另获准旧 feed 过渡时交接，官网部署仍单独授权。
+- 满足本轮约定的构建、云端校验与指定平台验收条件后，立即报告结果并推进到下一授权边界；未满足时先报告失败或验收缺口，不提出无条件发布。默认发行流程若尚缺公开发布或 Latest 决策，同次回复中给出公开同一草稿及明确 Latest 策略的具体确认，不等用户询问“下一步是什么”；已有授权则继续发布和分发核验。自动更新另须验证来源兼容、实际模式的原生升级及安全重启；Mac 和签名 Windows 保留验签，未签名 Windows 复核大小／SHA-512。缺证据时可按授权公开固定标签并保持旧 Latest，不将 Apple 芯片安装验收代替其他平台升级验收。用户明确限定仅构建、仅准备或仅到草稿时，交付该范围并说明剩余状态，不扩大任务。仅在官网实际需改动或另获准旧 feed 过渡时交接，官网部署仍单独授权。
 - 将请求明确映射为 `kind=source`（源码编译）或 `kind=desktop`（桌面候选包）。源码 `dist/` 不是可安装桌面产品；用户要安装包时不能以源码编译产物替代。
 - 平台范围优先沿用用户要求。系统最低版本、安装器格式或签名要求会改变交付而又未知时，先完成可独立进行的准备，再集中澄清。
 - 仅构建时显式传 `upload_release_draft=false`。获准准备 Release 草稿或执行发行流程时传 `true`（工作流默认值），包含创建草稿和上传，不等于公开发布。commit、push、创建标签、正式签名、购买资源、公开发布及 Latest 变更仍须在当前授权范围内。
@@ -47,7 +47,7 @@ description: 准备或执行 Homer 的 GitHub Actions 多平台构建及 GitHub 
 2. 核对 `.github/workflows/homer-build.yml` 已在远端默认分支存在，包含 `workflow_dispatch`，且工作流未被禁用。GitHub 要求默认分支先注册该工作流；仅上传到候选分支不足以首次触发。用 GitHub 文件读取工具或 `gh api --method GET repos/OWNER/REPO/contents/.github/workflows/homer-build.yml -f ref=DEFAULT_BRANCH` 核对，缺失时报告需要上传到默认分支，不盲目 dispatch。
 3. 将用户选定 ref 解析为完整 SHA，核对该提交也包含已审查的工作流、规划脚本及构建入口。只有满足这些前提才触发；`expected_sha` 必须传刚核对的完整 SHA。工作流会在规划阶段将它与 `github.sha` 比较，ref 漂移即失败，尚不安装项目依赖。
 
-模板在依赖安装前核对 Node、架构和 Mac SDK，正式构建通过 `--distribution --release-tag TAG --build-number BUILD` 显式指定版本。Mac 签名与公证 Secrets 仅进入临时钥匙串并在结束时清理；Intel 显式设置最低 macOS 14，ARM 为 macOS 27。Windows 当前传 `--unsigned-windows`，不生成自动更新清单。SDK 可编译不等于目标设备验收通过。
+模板在依赖安装前核对 Node、架构和 Mac SDK，正式构建通过 `--distribution --release-tag TAG --build-number BUILD` 显式指定版本。Mac 签名与公证 Secrets 仅进入临时钥匙串并在结束时清理；Intel 显式设置最低 macOS 14，ARM 为 macOS 27。Windows 当前传 `--unsigned-windows`，仅跳过代码签名；正式包仍封存显式未签名的 app-update.yml，生成原生 latest.yml 并参与草稿校验。SDK 可编译不等于目标设备验收通过。
 
 桌面构建必须显式同时传入 `--website-origin`、`--gateway-origin`，沿用本次确认的服务地址；缺少任一项应由构建入口拒绝，不省略参数或绕过校验。
 
@@ -68,7 +68,7 @@ gh release download TAG --repo OWNER/REPO --pattern Homer-mac-arm64.zip --patter
 
 两个触发命令是不同请求的示例，只执行符合本次请求的一条。所跟踪运行的 `headSha` 必须等于 `expected_sha`；优先记录 dispatch 返回的运行 URL / ID，再核对工作流、输入目标、触发时间、操作者及 attempt。若需操作者信息，用运行详情 API，不从展示标题猜测。若 ref 漂移、运行 ID 不确定或触发请求结果不明，先核对已有运行，不盲目再次触发。长任务使用有界等待，保持进度更新。
 
-草稿模式先核对远端标签指向本次 SHA，标签须已在授权内创建。构建 job 直接上传固定名安装包、Mac 更新清单和脱敏的平台清单；最终 `verify-draft` job 完整流式下载所有请求平台的附件，比对大小及 SHA-256，再上传 `SHA256SUMS` 和合并的 `release-manifest.json`。它不安装依赖，不在本机或 Actions artifact 重复保存大包。原始构建回执只在 Actions 保存 1 天。
+草稿模式先核对远端标签指向本次 SHA，标签须已在授权内创建。构建 job 直接上传固定名安装包、Mac／Windows 原生更新清单和脱敏的平台清单；最终 `verify-draft` job 完整流式下载所有请求平台的附件，比对大小及 SHA-256，再上传 `SHA256SUMS` 和合并的 `release-manifest.json`。它不安装依赖，不在本机或 Actions artifact 重复保存大包。原始构建回执只在 Actions 保存 1 天。
 
 只下载本次获准验收的平台，目录按 run ID / attempt 隔离。验收通过后公开同一草稿，不重新上传安装包。源码编译或 `upload_release_draft=false` 才使用 `gh run download` 取回 Actions 产物，保留期同为 1 天。所有平台须来自同一 SHA / run / attempt，不能从旧轮补齐；Mac `.app` 始终保持在原签名 ZIP 内。
 
@@ -98,7 +98,7 @@ gh run rerun RUN_ID --repo OWNER/REPO
 
 准备分发、管理版本或获准发布时，读取 [Releases 分发流程](references/releases.md)。每次桌面正式发布前按该文档准备并核对固定标签 Release 的中英文用户更新说明，发布后回读验证；Release 正文是完整日志的唯一维护处。流程为“云端构建 → 草稿直传及云端完整校验 → 指定平台验收 → 公开同一 Release 并核验固定标签 → 满足升级验收且获准后切换并核验 Latest”。不把工作流绿色当作产品或原生升级验收通过。
 
-桌面下载统一使用现有 `wolf3c/homer` Releases；官网与中英文 README 使用参考文档中的 [Latest 地址约定](references/releases.md#固定下载链接)，详情链接 Latest 页面，不复制版本/build、不查询 GitHub API。固定标签链接用于验收、复现和回退；草稿不能作为公开入口。不得让移动版、预发布版或缺平台／Mac 清单的版本占用 Latest。
+桌面下载统一使用现有 `wolf3c/homer` Releases；官网与中英文 README 使用参考文档中的 [Latest 地址约定](references/releases.md#固定下载链接)，详情链接 Latest 页面，不复制版本/build、不查询 GitHub API。固定标签链接用于验收、复现和回退；草稿不能作为公开入口。不得让移动版、预发布版或缺平台／任一原生清单的版本占用 Latest。
 
 官网和桌面「设置 → 移动设备」的手机 App 下载入口统一引用[移动端约定](references/releases.md#移动端)。本 Skill 的构建矩阵、版本号和 Latest 执行流程仍针对桌面；Android/iOS 的打包、签名、安装和上线使用 [homer-mobile-release](../homer-mobile-release/SKILL.md)。
 

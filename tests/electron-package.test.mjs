@@ -76,15 +76,21 @@ test('Windows config seals per-user NSIS payload without elevation helper',()=>{
  const config=forgeConfig({payload:'/fixture',metadata,icon:''});assert.equal(config.packagerConfig.osxSign,undefined);assert.equal(config.packagerConfig.executableName,'Homer');assert.equal(config.makers.length,0);
  const nsis=packaging.windowsInstallerConfig({metadata});assert.deepEqual(nsis.nsis,{oneClick:true,perMachine:false,packElevateHelper:false,deleteAppDataOnUninstall:false,differentialPackage:false});assert.equal(nsis.win.requestedExecutionLevel,'asInvoker');assert.equal(nsis.publish.url,'https://github.com/wolf3c/homer/releases/latest/download/');
 });
-test('explicit unsigned Windows release does not configure signing or automatic updates',()=>{
+test('explicit unsigned Windows release carries update configuration without enabling signing',()=>{
  const metadata={platform:'win32',arch:'x64',version:'0.2.0',build:269,preparation:false,publishable:true,appId:'app.homer.desktop',releaseChannel:'stable'};
  const distribution={unsignedWindows:true,releaseTag:'v0.2.0'};
  const forge=forgeConfig({payload:'/fixture',metadata,distribution});
  assert.equal(forge.packagerConfig.windowsSign,undefined);
- assert.ok(!forge.packagerConfig.extraResource.some(p=>p.endsWith('app-update.yml')));
+ assert.ok(forge.packagerConfig.extraResource.some(p=>p.endsWith('app-update.yml')));
  const nsis=packaging.windowsInstallerConfig({metadata,distribution});
- assert.equal(nsis.forceCodeSigning,undefined);assert.equal(nsis.win.signtoolOptions,undefined);
- assert.equal(nsis.win.verifyUpdateCodeSignature,true);
+ assert.equal(nsis.forceCodeSigning,undefined);assert.equal(nsis.win.signtoolOptions,undefined);assert.equal(nsis.win.signExecutable,false);
+ assert.equal(nsis.win.verifyUpdateCodeSignature,false);assert.equal(nsis.win.publisherName,undefined);
+ const signed={identity:'a'.repeat(40),publisher:'CN=Homer, O=Homer, C=CN',releaseTag:'v0.2.0'};
+ const signedConfig=packaging.windowsInstallerConfig({metadata,distribution:signed});
+ assert.equal(signedConfig.forceCodeSigning,true);assert.equal(signedConfig.win.verifyUpdateCodeSignature,true);
+ assert.equal(signedConfig.win.publisherName,signed.publisher);
+ const candidate=forgeConfig({payload:'/fixture',metadata:{...metadata,appId:'app.homer.desktop.candidate',releaseChannel:undefined,publishable:false,preparation:true}});
+ assert.ok(!candidate.packagerConfig.extraResource.some(p=>p.endsWith('app-update.yml')));
  assert.throws(()=>packaging.windowsInstallerConfig({metadata,distribution:{releaseTag:'v0.2.0'}}),/desktop_distribution_inputs_required/);
 });
 test('Windows resource seal refuses elevate helper and records finalized native helpers',t=>{

@@ -29,7 +29,7 @@ export default function forgeConfig({payload,metadata,icon,distribution}){
  if(metadata.platform==='win32'){
   windowsInstallerConfig({metadata,distribution});
   const signed=distribution&&!distribution.unsignedWindows;
-  return {packagerConfig:{name:'Homer',executableName:'Homer',appVersion:metadata.version,buildVersion:String(metadata.build),asar:true,prune:false,extraResource:['homer','runtime','licenses','node.exe','homer-image-decoder.mjs',...(signed?['app-update.yml']:[])].map(name=>join(payload,name)),...(signed?{windowsSign:{certificateSha1:distribution.identity}}:{})},makers:[],hooks:{postPackage:async(_config,{outputPaths})=>{for(const directory of outputPaths)writeDesktopManifest(directory,metadata);}}};
+  return {packagerConfig:{name:'Homer',executableName:'Homer',appVersion:metadata.version,buildVersion:String(metadata.build),asar:true,prune:false,extraResource:['homer','runtime','licenses','node.exe','homer-image-decoder.mjs',...(distribution?['app-update.yml']:[])].map(name=>join(payload,name)),...(signed?{windowsSign:{certificateSha1:distribution.identity}}:{})},makers:[],hooks:{postPackage:async(_config,{outputPaths})=>{for(const directory of outputPaths)writeDesktopManifest(directory,metadata);}}};
  }
  if(distribution&&(!/^[0-9A-Fa-f]{40}$/.test(distribution.identity??'')||!distribution.keychainProfile||metadata.preparation||metadata.localWorkingTree||metadata.publishable!==true||metadata.appId!=='app.homer.desktop'||metadata.releaseChannel!=='stable'||!['arm64','x64'].includes(metadata.arch)||!/^\d+\.\d+\.\d+$/.test(metadata.version??'')||!/^\d+\.\d+$/.test(metadata.minimumMacOS??'')||!Number.isSafeInteger(metadata.build)||metadata.build<1||!/^v?[0-9][A-Za-z0-9._-]*$/.test(distribution.releaseTag??'')))throw Error('desktop_distribution_inputs_required');
  if(!distribution&&metadata.releaseChannel==='stable')throw Error('desktop_distribution_inputs_required');
@@ -91,7 +91,7 @@ export default function forgeConfig({payload,metadata,icon,distribution}){
 export function windowsInstallerConfig({metadata,distribution}){
  if(metadata.arch!=='x64'||distribution&&((!distribution.unsignedWindows&&(!/^[a-f0-9]{40}$/i.test(distribution.identity??'')||!/^CN=.+,/.test(distribution.publisher??'')))||!/^v?[0-9][A-Za-z0-9._-]*$/.test(distribution.releaseTag??'')||!/^\d+\.\d+\.\d+$/.test(metadata.version??'')||!Number.isSafeInteger(metadata.build)||metadata.build<1||metadata.preparation||metadata.localWorkingTree||metadata.publishable!==true||metadata.appId!=='app.homer.desktop'||metadata.releaseChannel!=='stable')||!distribution&&metadata.releaseChannel==='stable')throw Error('desktop_distribution_inputs_required');
  const signed=distribution&&!distribution.unsignedWindows;
- return {appId:distribution?'app.homer.desktop':'app.homer.desktop.candidate',productName:'Homer',...(signed?{forceCodeSigning:true}:{}),electronVersion:metadata.electron,artifactName:'Homer-win32-x64-${version}.exe',publish:{provider:'generic',url:'https://github.com/wolf3c/homer/releases/latest/download/',channel:'latest'},nsis:{oneClick:true,perMachine:false,packElevateHelper:false,deleteAppDataOnUninstall:false,differentialPackage:false},win:{target:[{target:'nsis',arch:['x64']}],requestedExecutionLevel:'asInvoker',verifyUpdateCodeSignature:true,...(signed?{publisherName:distribution.publisher,signtoolOptions:{certificateSha1:distribution.identity}}:{})}};
+ return {appId:distribution?'app.homer.desktop':'app.homer.desktop.candidate',productName:'Homer',...(signed?{forceCodeSigning:true}:{}),electronVersion:metadata.electron,artifactName:'Homer-win32-x64-${version}.exe',publish:{provider:'generic',url:'https://github.com/wolf3c/homer/releases/latest/download/',channel:'latest'},nsis:{oneClick:true,perMachine:false,packElevateHelper:false,deleteAppDataOnUninstall:false,differentialPackage:false},win:{target:[{target:'nsis',arch:['x64']}],requestedExecutionLevel:'asInvoker',verifyUpdateCodeSignature:!distribution?.unsignedWindows,...(distribution?.unsignedWindows?{signExecutable:false}:{}),...(signed?{publisherName:distribution.publisher,signtoolOptions:{certificateSha1:distribution.identity}}:{})}};
 }
 
 export function assertWindowsPayload(bundle){
@@ -100,9 +100,9 @@ export function assertWindowsPayload(bundle){
 }
 
 export function windowsRelease(native,installer,metadata,releaseTag){
- if(!installer||basename(installer)!==`Homer-win32-x64-${metadata.version}.exe`||native?.version!==metadata.version||native.files?.length!==1||!/^v?[0-9][A-Za-z0-9._-]*$/.test(releaseTag??''))throw Error('desktop_update_artifacts_invalid');
+ if(!installer||basename(installer)!==`Homer-win32-x64-${metadata.version}.exe`||native?.version!==metadata.version||!Array.isArray(native.files)||native.files.length!==1||!/^v?[0-9][A-Za-z0-9._-]*$/.test(releaseTag??''))throw Error('desktop_update_artifacts_invalid');
  const bytes=readFileSync(installer),digest=createHash('sha512').update(bytes).digest('base64'),file=native.files[0];
- if(file.sha512!==digest||file.size!==bytes.length||basename(file.url)!==basename(installer)||native.path!==undefined&&basename(native.path)!==basename(installer)||native.sha512!==undefined&&native.sha512!==digest||file.isAdminRightsRequired===true||native.packages)throw Error('desktop_update_artifacts_invalid');
+ if(file.sha512!==digest||file.size!==bytes.length||basename(file.url)!==basename(installer)||native.path!==undefined&&basename(native.path)!==basename(installer)||native.sha512!==undefined&&native.sha512!==digest||native.isAdminRightsRequired===true||file.isAdminRightsRequired===true||native.packages)throw Error('desktop_update_artifacts_invalid');
  const url=`https://github.com/wolf3c/homer/releases/download/${releaseTag}/${basename(installer)}`;
  file.url=url;if(native.path!==undefined)native.path=url;delete native.releaseNotes;delete native.releaseName;
  return native;

@@ -51,7 +51,7 @@
 - [macOS · Intel](https://github.com/wolf3c/homer/releases/latest/download/Homer-mac-x64.zip)，需要 macOS 14 或更高版本。
 - [Windows · x64](https://github.com/wolf3c/homer/releases/latest/download/Homer-windows-x64.exe)，需要 Windows 11。
 
-Mac 版已签名和公证，解压后将 Homer 移入「应用程序」。Windows 安装包未签名，运行安装器手动安装，自动更新关闭。Linux 桌面安装包尚未提供。
+Mac 版已签名和公证，解压后将 Homer 移入「应用程序」。Windows 安装包未签名，首次安装需运行安装器。Linux 桌面安装包尚未提供。
 
 Intel Mac 和 Windows x64 的目标系统安装与运行验收尚待完成。版本、build、完整更新说明及校验文件见[最新正式版](https://github.com/wolf3c/homer/releases/latest)。
 

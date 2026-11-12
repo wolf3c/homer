@@ -5,6 +5,7 @@ import {mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {createServer} from 'node:http';
 import {join,resolve} from 'node:path';
 import {runReleaseDraft} from '../scripts/github-release-draft.mjs';
+import yaml from 'js-yaml';
 
 const context={repository:'wolf3c/homer',sha:'a'.repeat(40),version:'1.2.3',tag:'v1.2.3',build:300,runId:'123',attempt:1,target:'desktop-three'};
 const digest=data=>createHash('sha256').update(data).digest('hex');
@@ -39,8 +40,9 @@ function fixture(t){
   const directory=join(root,target);mkdirSync(directory,{recursive:true});
   const artifacts=[],add=(name,data)=>{const path=join(directory,name);writeFileSync(path,data);artifacts.push({path,bytes:Buffer.byteLength(data),sha256:digest(data)});};
   add(`Homer-${windows?'win32':'darwin'}-${arch}-${context.version}.${windows?'exe':'zip'}`,'synthetic sealed package '+target);
+  if(windows){const name=`Homer-win32-x64-${context.version}.exe`,body=readFileSync(join(directory,name)),sha512=createHash('sha512').update(body).digest('base64');add('latest.yml',yaml.dump({version:context.version,files:[{url:name,sha512,size:body.length}],path:name,sha512}));}
   if(!windows)add('RELEASES.json',JSON.stringify({currentRelease:context.version,releases:[{version:context.version,updateTo:{version:context.version,pub_date:'2026-11-05T00:00:00Z',url:'https://example.invalid/old-name.zip'}}]}));
-  const value={version:context.version,build:context.build,gitSha:context.sha,arch,...(windows?{platform:'win32'}:{minimumMacOS:arch==='arm64'?'27.0':'14.0'}),preparation:false,publishable:true,appId:'app.homer.desktop',releaseChannel:'stable',signature:windows?'unsigned Windows; automatic updates disabled':'Developer ID; notarized and stapled',bundle:'/private/runner/app',artifacts};
+  const value={version:context.version,build:context.build,gitSha:context.sha,arch,...(windows?{platform:'win32'}:{minimumMacOS:arch==='arm64'?'27.0':'14.0'}),preparation:false,publishable:true,appId:'app.homer.desktop',releaseChannel:'stable',signature:windows?'unsigned Windows; native acceptance unverified':'Developer ID; notarized and stapled',bundle:'/private/runner/app',artifacts};
   const receiptPath=join(directory,'desktop-build-result.json');writeFileSync(receiptPath,JSON.stringify(value));
   return {directory,receiptPath,value};
  }
@@ -80,7 +82,7 @@ test('preflight refuses a partial upload without a provenance manifest',async t=
  assert.ok(!f.files.has('release-manifest.json'));
 });
 
-test('three targets upload unchanged packages, correct Mac feeds and sanitized manifests, then verify in cloud',async t=>{
+test('three targets upload unchanged packages and native feeds, then verify all eleven draft assets',async t=>{
  const f=fixture(t);
  for(const target of ['macos-arm64','macos-x64','windows-x64'])await f.run('upload',{target},f.receipt(target));
  await f.run('finalize');
@@ -92,9 +94,13 @@ test('three targets upload unchanged packages, correct Mac feeds and sanitized m
   const feed=JSON.parse(f.files.get(`RELEASES-darwin-${arch}.json`));
   assert.equal(feed.releases[0].updateTo.url,`https://github.com/wolf3c/homer/releases/download/v1.2.3/Homer-mac-${arch}.zip`);
  }
- assert.ok(![...f.files.keys()].some(name=>name.endsWith('.yml')));
+ const windowsFeed=yaml.load(f.files.get('latest.yml').toString()),windowsBody=f.files.get('Homer-windows-x64.exe');
+ assert.equal(windowsFeed.files[0].url,'https://github.com/wolf3c/homer/releases/download/v1.2.3/Homer-windows-x64.exe');
+ assert.equal(windowsFeed.path,windowsFeed.files[0].url);assert.equal(windowsFeed.files[0].size,windowsBody.length);
+ assert.equal(windowsFeed.files[0].sha512,createHash('sha512').update(windowsBody).digest('base64'));
+ assert.equal(manifest.updateFeeds.length,3);assert.equal(f.files.size,11);
  for(const [name,data]of f.files)if(name.endsWith('.json'))assert.ok(!data.toString().includes('/private/runner'));
- assert.equal(f.files.get('SHA256SUMS').toString().trim().split('\n').length,5);
+ assert.equal(f.files.get('SHA256SUMS').toString().trim().split('\n').length,6);
  assert.ok(f.calls.every(row=>['GET','POST'].includes(row.method)),'no publish, replacement or deletion');
 });
 
@@ -134,7 +140,27 @@ test('missing platforms or corrupted downloads leave the release in draft and no
 test('a single requested platform can finalize without unrelated packages',async t=>{
  const f=fixture(t);await f.run('upload',{target:'windows-x64'},f.receipt('windows-x64'));
  await f.run('finalize',{target:'windows-x64'});
- assert.equal(JSON.parse(f.files.get('release-manifest.json')).assets.length,1);
+ const manifest=JSON.parse(f.files.get('release-manifest.json'));
+ assert.equal(manifest.assets.length,1);assert.equal(manifest.updateFeeds.length,1);assert.equal(manifest.updateFeeds[0].name,'latest.yml');assert.equal(f.files.size,5);
+});
+
+for(const problem of ['missing','hash','size','version','elevation','root-elevation','array-like-files','web-installer'])test('Windows native feed rejects '+problem+' before uploading any asset',async t=>{
+ const f=fixture(t),input=f.receipt('windows-x64'),artifact=input.value.artifacts.find(file=>file.path.endsWith('latest.yml'));
+ if(problem==='missing')input.value.artifacts=input.value.artifacts.filter(file=>file!==artifact);
+ else{
+  const feed=yaml.load(readFileSync(artifact.path,'utf8'));
+  if(problem==='hash')feed.files[0].sha512='invalid';
+  if(problem==='size')feed.files[0].size++;
+  if(problem==='version')feed.version='1.0.0';
+  if(problem==='elevation')feed.files[0].isAdminRightsRequired=true;
+  if(problem==='root-elevation')feed.isAdminRightsRequired=true;
+  if(problem==='array-like-files')feed.files={0:feed.files[0],length:1};
+  if(problem==='web-installer')feed.packages={x64:{path:'web-package.7z'}};
+  const body=yaml.dump(feed);writeFileSync(artifact.path,body);artifact.bytes=Buffer.byteLength(body);artifact.sha256=digest(body);
+ }
+ writeFileSync(input.receiptPath,JSON.stringify(input.value));
+ await assert.rejects(()=>f.run('upload',{target:'windows-x64'},input),problem==='missing'?/release_receipt_artifact_missing/:/desktop_update_artifacts_invalid/);
+ assert.equal(f.files.size,0);assert.ok(f.calls.every(row=>row.method==='GET'));
 });
 
 test('native HTTP transport streams uploads and follows binary-download redirects without changing bytes',async t=>{

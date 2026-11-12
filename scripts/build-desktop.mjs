@@ -118,7 +118,7 @@ if(windows){
  // Carry runtime dependencies into the generated shell before ASAR sealing.
  const shellInputs=join(scratch,'shell-dependencies');mkdirSync(shellInputs);writeFileSync(join(shellInputs,'package.json'),readFileSync(join(shell,'package.json')));cpSync(join(stage,'package-lock.json'),join(shellInputs,'package-lock.json'));symlinkSync(modules,join(shellInputs,'node_modules'),windows?'junction':'dir');
  for(const pkg of dependencyIdentity(shellInputs).packages){const rel=relative(modules,pkg.path);notices.push({name:pkg.name,version:pkg.version,license:JSON.parse(readFileSync(join(pkg.path,'package.json'))).license,contentsHash:pkg.filesHash,path:'app.asar/node_modules/'+rel});cpSync(pkg.path,join(shell,'node_modules',rel),{recursive:true,dereference:false,filter:path=>path===pkg.path||!relative(pkg.path,path).split(/[\\/]/).includes('node_modules')});}
- if(distribution&&!unsignedWindows)writeFileSync(join(payload,'app-update.yml'),JSON.stringify({provider:'generic',url:'https://github.com/wolf3c/homer/releases/latest/download/',channel:'latest',publisherName:[distribution.publisher]})+'\n');
+ if(distribution)writeFileSync(join(payload,'app-update.yml'),JSON.stringify({provider:'generic',url:'https://github.com/wolf3c/homer/releases/latest/download/',channel:'latest',...(unsignedWindows?{verifyUpdateCodeSignature:false}:{publisherName:[distribution.publisher]})})+'\n');
 }
 writeFileSync(join(payload,'licenses/Homer-runtime-notices.json'),JSON.stringify({dependencies:notices,official:dependencies.components},null,2)+'\n');
 let result;
@@ -129,9 +129,9 @@ if(windows){
  const {build}=await import(pathToFileURL(join(modules,'electron-builder/out/index.js')).href);
  const output=join(scratch,'nsis');artifacts=await build({prepackaged:bundle,publish:'never',config:{...windowsInstallerConfig({metadata,distribution}),directories:{output,app:shell}}});
  assertWindowsPayload(bundle);
- if(distribution&&!unsignedWindows){const {load,dump}=(await import(pathToFileURL(join(modules,'js-yaml/index.js')).href)).default;const feed=join(output,'latest.yml'),native=load(readFileSync(feed,'utf8')),installer=artifacts.find(path=>path.endsWith('.exe'));writeFileSync(feed,dump(windowsRelease(native,installer,metadata,distribution.releaseTag)));artifacts.push(feed);}
+ if(distribution){const {load,dump}=(await import(pathToFileURL(join(modules,'js-yaml/index.js')).href)).default;const feed=join(output,'latest.yml'),native=load(readFileSync(feed,'utf8')),installer=artifacts.find(path=>path.endsWith('.exe'));writeFileSync(feed,dump(windowsRelease(native,installer,metadata,distribution.releaseTag)));artifacts.push(feed);}
 }
 if(JSON.stringify(JSON.parse(readFileSync(join(bundle,windows?'resources/desktop-manifest.json':'Contents/Resources/desktop-manifest.json'),'utf8')).account)!==JSON.stringify(account))throw Error('desktop_account_manifest_mismatch');
-const receipt={...metadata,provenance,bundle,signature:distribution?(windows?(unsignedWindows?'unsigned Windows; automatic updates disabled':'Authenticode NSIS; native acceptance unverified'):'Developer ID; notarized and stapled'):'ad-hoc local candidate; not Developer ID or notarized',artifacts:artifacts.map(path=>({path,bytes:statSync(path).size,sha256:hash(readFileSync(path))})),runtimePackages:identity.packages.length};
+const receipt={...metadata,provenance,bundle,signature:distribution?(windows?(unsignedWindows?'unsigned Windows; native acceptance unverified':'Authenticode NSIS; native acceptance unverified'):'Developer ID; notarized and stapled'):'ad-hoc local candidate; not Developer ID or notarized',artifacts:artifacts.map(path=>({path,bytes:statSync(path).size,sha256:hash(readFileSync(path))})),runtimePackages:identity.packages.length};
 writeFileSync(join(scratch,'desktop-build-result.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify(receipt,null,2));

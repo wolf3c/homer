@@ -1,12 +1,12 @@
 # 桌面 App 自动更新实施方案
 
-更新日期：2026-11-12（Asia/Shanghai）。Mac 更新清单和官网下载入口的源码已改为 GitHub Latest；签名校验、身份校验及安全重启不变。Windows 继续仅手动下载、禁用自动更新，既有签名 NSIS 接点保留但不启用。本轮只改源码、定向测试、文档与 Skill，不提交、构建、发布或部署；新的下载链路尚未进入安装包或生产官网，真实原生升级仍待验收。
+更新日期：2026-11-12（Asia/Shanghai）。Mac 更新清单、Windows 原生清单及官网下载入口源码直接使用 GitHub Latest。Windows 未签名正式包已接入后台下载、确认后安全重启安装；签名模式仍保留严格验签，两种 Windows 模式均在 ready 前及安装前复核大小和 SHA-512。本轮改动仅涉及源码、定向测试、文档与 Skill；未构建、发布或部署，新的下载链路尚未进入安装包或生产官网，真实原生升级仍待验收。
 
 > 第 8、9 节区分源码与离线检查、原生验收及发行。源码通过不代表正式包可用；构建、安装和公开发行继续分别等待授权。
 
 **目标：** 后台检查、下载并准备正式安装包，准备好后在操作栏下方显示“新版本 {version} 已准备好　重启并更新　×”。
 
-**架构：** GitHub Latest 直接提供原生更新清单和手动下载入口；Homer 主进程持有唯一状态、安全停止及重启入口。Mac 继续使用 Electron 内置 autoUpdater＋Forge ZIP，清单内的 ZIP 使用不可变固定标签地址。Windows 当前只分发手动下载的未签名 NSIS 安装包；保留的签名更新接点使用 electron-updater，不因改地址而启用。不新增更新服务器、数据库、GitHub API 查询、下载器或通用更新管理器。
+**架构：** GitHub Latest 直接提供原生更新清单和手动下载入口；Homer 主进程持有唯一状态、安全停止及重启入口。Mac 继续使用 Electron 内置 autoUpdater＋Forge ZIP，清单内的 ZIP 使用不可变固定标签地址。Windows 使用 electron-updater＋完整 NSIS，未签名正式包通过包内显式配置启用更新；签名路径继续验签，普通退出不自动安装。不新增更新服务器、数据库、GitHub API 查询、下载器或通用更新管理器。
 
 **依赖基础：** Electron 45.0.0、Forge 8.0.1 保持。已精确锁定 electron-updater 6.8.11、electron-builder 26.18.0、js-yaml 4.1.1 和 Sharp 0.35.5 及传递依赖；根工程均为构建依赖，生成的 Windows 壳声明 updater／YAML 运行依赖，Windows Homer payload 声明 Sharp 运行依赖，Mac 运行依赖保持原集合；不采用 alpha 或自动升级。库的默认验签不能作为完整保证，须按第 7 节严格调用 Windows 验签。Mac 不引入 Windows 更新器；不再加入 maker-squirrel、electron-squirrel-startup 或 MSIX maker。
 
@@ -18,9 +18,9 @@
 | --- | --- | --- |
 | Apple Silicon Mac，darwin-arm64 | Squirrel.Mac，静态 JSON | 签名并公证的完整 .app ZIP |
 | Intel Mac，darwin-x64 | 同上，独立架构清单 | 对应 x64 .app ZIP |
-| Windows，win32-x64（Intel／AMD 64 位） | 当前禁用自动更新，仅手动下载 | 未签名 NSIS .exe，不提供 latest.yml；签名更新能力另行验收和启用 |
+| Windows，win32-x64（Intel／AMD 64 位） | electron-updater／NSIS，后台下载后确认安装 | 完整 .exe 和原生 latest.yml；当前未签名，原生升级待验收 |
 
-Windows ARM64、32 位、Linux 不纳入本次范围。不能以 Apple Silicon 成功代替其他平台验收；Latest 是整份 Release 的选择，不按平台回退，切换时必须包含全部已公开平台的固定名安装包及已启用平台的更新清单。下文 Windows 签名更新的协议与验收要求只约束保留的接点，不表示当前发行已启用。
+Windows ARM64、32 位、Linux 不纳入本次范围。不能以 Apple Silicon 成功代替其他平台验收；Latest 是整份 Release 的选择，不按平台回退，切换时必须包含全部已公开平台的固定名安装包及已启用平台的更新清单。Windows 未签名模式不要求 Authenticode，但不能跳过包内模式选择、完整性校验或安全停止；已签名模式的严格验签断言保持。源码接入不表示已发行客户端获得该能力。
 
 不增加更新内容入口、摘要、弹窗、Markdown 渲染或相关状态；原生附带的说明直接忽略。手机合同、手机关闭记录及下载入口不变。
 
@@ -38,20 +38,22 @@ Windows ARM64、32 位、Linux 不纳入本次范围。不能以 Apple Silicon �
 | --- | --- | --- |
 | darwin-arm64 | https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-arm64.json | url 为完整 JSON 地址，serverType: 'json' |
 | darwin-x64 | https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-x64.json | 同上，按 process.arch 选择 |
-| win32-x64 | 手动下载 Homer-windows-x64.exe | 当前无 app-update.yml、不初始化更新器；保留的签名配置使用 generic 目录 https://github.com/wolf3c/homer/releases/latest/download/，channel 为 latest |
+| win32-x64 | https://github.com/wolf3c/homer/releases/latest/download/latest.yml | generic 目录为 https://github.com/wolf3c/homer/releases/latest/download/，channel 为 latest；未签名模式需包内 verifyUpdateCodeSignature: false 且不含 publisherName |
 
 - **Homer：** 负责安装包、版本／身份／签名、生成清单、固定标签地址校验、GitHub Latest 选择、主进程检查、安全重启和客户端验收。
 - **Yezi2：** 三平台手动下载直接链接同一桌面 Latest；以“查看最新版本”链接展示发行详情，不再维护版本/build 副本，不查询 Release API。链接接入上线后，常规版本更新无需再修改、交接或部署官网。
-- **发行流程：** 冻结候选安装包和清单，先在隔离环境验证已启用平台的真实签名升级、安全停止及数据保留。上传固定标签附件并完成完整摘要校验后，复用隔离夹具和临时 feed，以最终清单原文及最终固定标签 URL 验证原生更新器解析、拉取和校验；普通 HTTP 下载不能替代。草稿附件需鉴权时只在隔离夹具提供，或获准公开并保持旧 Latest 后验证最终公开地址；未经验证不切换 Latest。候选未变不重复全部业务验收，变化时重验受影响项。
-- **Latest 即更新放量：** 只允许包含全部公开平台安装包、Mac 两架构清单、摘要和发行清单的桌面正式版占用 Latest；移动版和预发布版明确不设为 Latest。目标必须兼容全部已启用来源版本；数据不兼容、系统门槛变化或原生升级缺证据时保持原 Latest，只交付固定标签测试链接。符合条件并获准后才切换，随后核验匿名 Latest 重定向、清单原文与固定标签包的一致性。失败按授权恢复已验收旧 Latest；不覆盖附件或移动标签，回退不撤销已暂存更新，也不承诺自动降级。
+- **发行流程：** 冻结候选安装包和清单，先在隔离环境验证已启用平台的真实原生升级、该模式的完整性／签名校验、安全停止及数据保留。上传固定标签附件并完成完整摘要校验后，复用隔离夹具和临时 feed，以最终清单原文及最终固定标签 URL 验证原生更新器解析、拉取和校验；普通 HTTP 下载不能替代。草稿附件需鉴权时只在隔离夹具提供，或获准公开并保持旧 Latest 后验证最终公开地址；未经验证不切换 Latest。候选未变不重复全部业务验收，变化时重验受影响项。
+- **Latest 即更新放量：** 只允许包含全部公开平台安装包、Mac 两架构清单、Windows latest.yml、摘要和发行清单的桌面正式版占用 Latest；移动版和预发布版明确不设为 Latest。目标必须兼容全部已启用来源版本；数据不兼容、系统门槛变化或原生升级缺证据时保持原 Latest，只交付固定标签测试链接。符合条件并获准后才切换，随后核验匿名 Latest 重定向、清单原文与固定标签包的一致性。失败按授权恢复已验收旧 Latest；不覆盖附件或移动标签，回退不撤销已暂存更新，也不承诺自动降级。
 
-Mac 使用 Forge 的 currentRelease／releases／updateTo 原生结构；name 为纯公开版本，updateTo.url 指向同标签、同架构的不可变 ZIP。postMake 只保留本次版本记录、校验架构、改写实际 ZIP 地址并省略 notes。保留的 Windows 签名更新路径使用 electron-builder 原生 latest.yml，files[].url 和兼容 path 指向同一固定标签安装器，保留 SHA-512 与长度；当前未签名发行不生成或上传该清单。两者都不手写占位数据，不引入自定义 JSON、手机 schema、update.electronjs.org 或二次下载协议。
+Mac 使用 Forge 的 currentRelease／releases／updateTo 原生结构；name 为纯公开版本，updateTo.url 指向同标签、同架构的不可变 ZIP。postMake 只保留本次版本记录、校验架构、改写实际 ZIP 地址并省略 notes。Windows 两种签名模式均使用 electron-builder 原生 latest.yml，files[].url 和兼容 path 指向同一固定标签的 Homer-windows-x64.exe，保留 SHA-512 与长度；草稿上传复用 windowsRelease() 校验生成器的实际安装包，再改写外层固定附件名。三平台完整草稿为 11 个附件，Windows 清单进入原 updateFeeds、SHA256SUMS 和云端完整下载校验；finalize 不解析 YAML 或安装项目依赖。两者都不手写占位数据，不引入自定义 JSON、手机 schema、update.electronjs.org 或二次下载协议。
 
 原生清单提供更新版本和下载位置；不解析 Release 标题或正文。公开版本须与 app.getVersion()、包内版本一致，Mac build 单调增加。GitHub Latest 重定向及缓存由 GitHub 管理，不承诺官网的 no-store 行为；发行核验须检查 HTTPS、实际 JSON 原文、架构、版本和最终固定标签 URL，下载期间 Latest 变化也须纳入原生专项。网络、404 或缓存异常保留失败状态，不回退到官网或其他平台。
 
 ### 旧客户端过渡
 
-已发行的 v0.1.8 及此前客户端仍内置官网 feed 地址，源码修改不会让它们自动转向 GitHub。用户可手动安装采用新地址的版本；若需要旧客户端无感过渡，须另获授权后一次性更新旧官网 feed，并单独部署、验收。现有 Yezi2 handler 与旧清单本轮保留且不改；第 9 节早期官网合同与验收记录仅描述当时状态，不再要求每版更新官网清单。
+已发行的 v0.1.8 及此前 Mac 客户端仍内置官网 feed 地址，源码修改不会让它们自动转向 GitHub。用户可手动安装采用新地址的版本；若需要旧客户端无感过渡，须另获授权后一次性更新旧官网 feed，并单独部署、验收。现有 Yezi2 handler 与旧清单本轮保留且不改；第 9 节早期官网合同与验收记录仅描述当时状态，不再要求每版更新官网清单。
+
+Windows v0.1.8 及此前的未签名包没有更新配置，须先手动安装一次支持新流程的正式版本，之后才可应用内更新；不新增旧版桥接服务，不修改旧发行标签、附件或安装器。
 
 ## 3. 当前基础、必改文件与平台缺口
 
@@ -73,7 +75,7 @@ Mac 使用 Forge 的 currentRelease／releases／updateTo 原生结构；name �
 1. Node、Codex、native helper 必须为目标架构与平台；不把 ARM64 资源塞入 Intel 包，也不把 .app 路径搬到 Windows。沿现有固定版本与官方发行来源核对摘要，构建发生在对应获准环境。
 2. Mac ImageDecoder 的 Swift 编译目标、现有 helper 签名及资源清单覆盖两架构；Windows 图片／权限／登录等调用沿现有跨平台 owner，未适配的 Mac API 必须完成对应平台实现或准确说明不支持，不能以 App 能启动代替功能可用。优先复用平台库，不另起并行服务。
 3. 源码将正式 Mac 身份固定为 app.homer.desktop；本地候选仍为 app.homer.desktop.candidate，不能直接作为正式自动更新基线。Developer ID、安装位置及一次正式基线安装仍待原生验收。构建沿原生 Mac 主机架构执行：ARM64 保留原 27.0 声明；Intel 必须显式传入经后续验收核定的 --minimum-macos，不默认照抄 27.0。该值同时用于 plist 和 Swift target，仅是构建声明，不是“已测试系统”。Windows 最低系统同样待实际依赖和验收。
-4. Windows 冻结正式 appId 为 app.homer.desktop、exe 名称为 Homer.exe、NSIS 安装身份和发布者证书完整 Subject；只支持 x64、按用户安装，不请求提升权限。NSIS 显式设置 oneClick=true、perMachine=false、packElevateHelper=false；资源封存前及最终 NSIS payload 均须确认没有 resources/elevate.exe，防止打包阶段追加提权 helper。只接受同用户的正式安装基线，拒绝声明 isAdminRightsRequired=true 的目标，不增加该远端字段。QA 继续隔离身份。NsisUpdater 及其运行依赖、app-update.yml 必须打入生成的壳工程／ASAR 与 resources，不能只加入仓库根 package.json；不接 Squirrel 安装参数或 MSIX 身份。
+4. Windows 冻结正式 appId 为 app.homer.desktop、exe 名称为 Homer.exe、NSIS 安装身份和签名模式的发布者证书完整 Subject；只支持 x64、按用户安装，不请求提升权限。NSIS 显式设置 oneClick=true、perMachine=false、packElevateHelper=false；资源封存前及最终 NSIS payload 均须确认没有 resources/elevate.exe，防止打包阶段追加提权 helper。只接受同用户的正式安装基线，拒绝声明 isAdminRightsRequired=true 的目标，不增加该远端字段。QA 继续隔离身份。NsisUpdater 及其运行依赖、app-update.yml 必须打入生成的壳工程／ASAR 与 resources，不能只加入仓库根 package.json；不接 Squirrel 安装参数或 MSIX 身份。
 5. 数据保存在安装目录之外。Mac 原 profile 路径保持；Windows 以原平台数据路径为准，无旧基线时使用 join(app.getPath('appData'),'Homer Desktop')，其 host-home/electron 仍归原 profile。更新不得创建替代主对话、迁移到包内数据目录或清凭据。
 6. Windows NSIS 完整包必须在原生 Windows 环境验收，系统下限由 Electron／Node／Codex 共同支持范围确定，不以 maker 默认值代替。没有已验证资源／系统组合时，该目标维持未就绪，不生成可下载占位包。
 
@@ -83,9 +85,9 @@ Windows 图片沿原媒体入口使用 10 行 Sharp helper，覆盖现有 WebP �
 
 ### 初始化与检查
 
-仅对应的三项目标正式包、releaseChannel: stable、核定平台身份和有效版本启用。渠道写入已有 desktop-manifest.json 并由原完整性路径保护；publishable 不能代替正式签名。源码仅 --distribution、有效签名输入、显式 --release-tag 和正整数 --build-number 才写入 stable 及正式 appId；构建号由发行时核对现有版本后指定，不能依赖公开仓库的提交数量。候选仍按 Git 提交数量生成构建号，不生成更新清单。原脚本及依赖锁纳入既有 source freeze guard。
+仅对应的三项目标正式包、releaseChannel: stable、核定平台身份和有效版本启用。渠道写入已有 desktop-manifest.json 并由原完整性路径保护；publishable 不构成签名证明，未签名路径须由包内配置显式启用。源码仅 --distribution、有效签名输入或显式 --unsigned-windows、显式 --release-tag 和正整数 --build-number 才写入 stable 及正式 appId；构建号由发行时核对现有版本后指定，不能依赖公开仓库的提交数量。候选仍按 Git 提交数量生成构建号，不生成更新清单。原脚本及依赖锁纳入既有 source freeze guard。
 
-先注册原生事件，再在既有服务 ready 后后台检查一次，不阻塞业务启动。Windows 验证当前 exe 与业务启动并行，由原服务 ready 分支等待局部初始化 Promise 后检查；两个到达顺序都只检查一次。Windows 只在正式 NSIS 安装的普通业务进程启用；不处理旧 Squirrel 首启锁或增加延迟重试定时器。菜单可手动发起；checking／downloading 去重，ready 后不再发起第二次更新。
+先注册原生事件，再在既有服务 ready 后后台检查一次，不阻塞业务启动。Windows 签名模式的当前 exe 验证与业务启动并行，未签名模式不调用该验签；原服务 ready 分支等待局部初始化 Promise 后检查，两个到达顺序都只检查一次。Windows 只在正式 NSIS 安装的普通业务进程启用；不处理旧 Squirrel 首启锁或增加延迟重试定时器。菜单可手动发起；checking／downloading 去重，ready 后不再发起第二次更新。
 
 Mac 内置 autoUpdater、Windows NsisUpdater 各负责版本判断、下载及准备；不写手机数字比较器、不使用手机 5 秒／32 KiB 限制、不新增 Homer 安装包缓存。Windows 配置 autoDownload=true、autoInstallOnAppQuit=false、allowPrerelease=false、allowDowngrade=false、disableDifferentialDownload=true、disableWebInstaller=true；只使用完整稳定版安装器。库缓存归库管理，命中缓存也须通过第 7 节验证；Homer 不持久保存发行结果。菜单继续仅显示“正在后台下载…”，不增加进度 UI。
 
@@ -157,10 +159,10 @@ Windows 的原 terminateLease owner 在 EOF 前后各取一次 CIM 进程快照�
 
 Windows 采用“退出荷马 → 用户手动重新打开 → 重新检查与验证 → 再确认更新”。6.8.11 的安装调用会设置内部 quitAndInstallCalled，并可能已排入一次退出；异步启动失败不保证重置该标记，因此本次不提供同进程“重试更新”，不修改库内部字段、不打补丁、不重建更新器实例。
 
-1. 壳仍存活且观察到安装 API 同步／异步失败时，立即撤销 allowQuit、清理原退出等待及待提交配置动作，进入 error，保留 noticeHidden 和本进程的安全停止证明。安装前验签失败且服务已停时也走此分支；服务已停的事实不能被 error 状态抹掉。若更新器在停止途中先报错，先保持 error 及本次停止等待，冻结迟到的更新事件；本次 update-stopped 与无信号 exit0 均齐备后，才清理退出等待并进入同一恢复流程。回执与退出任一先到均可，缺失回执仍由原超时拒绝，不复用普通 stopped 或下次进程的证明。进入恢复时清除原候选引用，使尚在等待的安装前验签即使成功返回也不能继续安装。
+1. 壳仍存活且观察到安装 API 同步／异步失败时，立即撤销 allowQuit、清理原退出等待及待提交配置动作，进入 error，保留 noticeHidden 和本进程的安全停止证明。安装前校验失败且服务已停时也走此分支；服务已停的事实不能被 error 状态抹掉。若更新器在停止途中先报错，先保持 error 及本次停止等待，冻结迟到的更新事件；本次 update-stopped 与无信号 exit0 均齐备后，才清理退出等待并进入同一恢复流程。回执与退出任一先到均可，缺失回执仍由原超时拒绝，不复用普通 stopped 或下次进程的证明。进入恢复时清除原候选引用，使尚在等待的安装前校验即使成功返回也不能继续安装。
 2. 沿上述共用保护显示“服务已安全停止，更新未完成。请退出后重新打开荷马再试。”，操作只有“取消”“退出荷马”。取消不恢复服务、不安装、不退出；菜单明确提示需退出重开，本进程禁用检查和安装。不会把该错误当作普通下载失败重新请求。
 3. 库随后触发的退出在原 before-quit owner 中只拦截，不自动退出或重复弹窗。用户的退出菜单／关窗由原退出入口进入同一确认；只有用户确认“退出荷马”且 updateConfirmed() 仍成立，才设置 allowQuit 并正常退出。取消后仍可再次主动退出，无父窗口同样可用；不再发 update-stop，不清数据，autoInstallOnAppQuit=false 保持。复用原错误状态、quitPending 和 allowQuit，不增加第二份退出状态。
-4. 用户手动重新打开后使用新进程的正常检查路径；库内部安装标记自然重置。目标以当次最新清单为准，库按清单核对缓存完整性，Homer 复核签名及安装范围；缓存不匹配则正常下载，撤回／无效清单不安装。不延续上次 ready、关闭标记或安全停止证明；再次安装须重新确认并取得本次停止证明。不自动 relaunch 或直接执行旧缓存。
+4. 用户手动重新打开后使用新进程的正常检查路径；库内部安装标记自然重置。目标以当次最新清单为准，库按清单核对缓存完整性，Homer 复核大小、SHA-512、适用的签名及安装范围；缓存不匹配则正常下载，撤回／无效清单不安装。不延续上次 ready、关闭标记或安全停止证明；再次安装须重新确认并取得本次停止证明。不自动 relaunch 或直接执行旧缓存。
 
 若 NSIS 已接管或壳已退出，不能保证捕获后续安装器失败；用户重新打开后按当前版本与清单判断，不将“已调用安装器”记为安装成功。此边界保留到原生验收，不增加安装监控器。
 
@@ -168,48 +170,50 @@ Windows 采用“退出荷马 → 用户手动重新打开 → 重新检查与�
 
 before-quit-for-update／before-quit 不能承接全部异步安全准备；显式调用安装 API 前就必须完成检查。系统强退、断电、崩溃不可保证拦截，须以原数据和身份恢复验收约束。
 
-## 7. 真实性、兼容与恢复门槛
+## 7. 真实性、完整性与恢复门槛
 
-- 三目标分别需要正式基线；没有 updater 的旧包只能通过一次获准的正式安装进入，不能远程补齐。Mac 核对同一 bundle ID／designated requirement、Developer ID、公证、可写安装位置；Windows 核对正式签名 NSIS 安装器、发布者、固定 appId、按用户安装位置与可写缓存目录，便携 ZIP 不冒充更新基线。
-- 完整包包含所有平台资源；不增加 Node／Codex 独立更新器。Windows 的 .exe／原生模块、路径和凭据必须在目标系统真实验收，不以 Mac fixture 通过替代。
-- 原 Squirrel.Windows 可行性路线已撤销：SHA-1／长度不是发布者证明，且其应用更新早于 update-downloaded。MSIX 的 OS 验签也不能直接证明目标属于 Homer，不作为本次替代。Windows 按下述 NSIS 严格验证路线推进源码，原生签名拒绝仍是正式发行前置条件；Mac 签名验证独立验收。
-- 静态清单不新增业务兼容字段。发布前按 [HMR-UPDATE-PRODUCT-001～009](20-product-update-requirements.md)核对全部支持来源、系统下限、协议、运行时和权限；需要迁移时先用原固定迁移／一致性备份与副本预演路径，未知来源或新 schema 继续拒绝。
-- 区分包替换、服务 ready、原会话恢复及新输入被采用；安装成功不是业务验收通过。新版产生业务事实前的恢复、产生事实后的前向修复分别沿长期要求，不把旧快照覆盖新数据，不自动降级已迁移 profile。
-- 撤回清单不撤销已下载包；不得用 CDN 刷新承诺完整回退。一个目标失败保留该目标旧的已验收版本，其余目标的验收状态独立。
+- 三目标分别需要正式安装基线；没有 updater 的旧包只能先手动安装支持版本，不能远程补齐。Mac 核对同一 bundle ID、Developer ID、公证及安装位置；Windows 保持固定 appId、按用户 NSIS 安装及可写缓存目录，便携 ZIP 不冒充更新基线。
+- 完整包包含平台资源，不增加 Node／Codex 独立更新器。Windows .exe、原生模块、路径与凭据须在目标系统验收，Mac fixture 或离线通过不证明 Windows 可用；不恢复旧 Squirrel 或另接 MSIX。
+- 静态清单不新增业务兼容字段。发行前继续按 [正式产品更新要求](20-product-update-requirements.md)核对来源、系统下限、协议、运行时和权限；迁移仍由原数据 owner 预演，未知来源和新 schema 继续拒绝。
+- 安装成功不等于原账号、会话及业务恢复通过；产生新业务事实后不盲目覆盖旧快照，不自动降级已迁移 profile。撤回 Latest 也不能撤销已暂存更新。
 
-### Windows 严格验签：源码已接，原生未验证
+### Windows 两种签名模式共用验证入口
 
-只在 packaging/electron/main.mjs 增加一个可复用的 verifyWindowsUpdate(publisherNames, path): Promise<string|null> 函数，作为 NsisUpdater 公开 verifyUpdateCodeSignature 钩子；null 仅表示成功，其余返回固定安全错误码。它调用 Windows Authenticode，不实现签名算法，不新增原生模块、服务或验签管理器。
+沿 packaging/electron/main.mjs 的 verifyWindowsUpdate(publisherNames, path, candidate?) 完成验证，不新增验证管理器、持久状态或 IPC。模式只由随包封存的 app-update.yml 决定，远端清单和网页不能传入或改写模式。
 
-- 信任根是正式壳随包携带的 app-update.yml.publisherName（证书完整 Subject），不接受清单或网页提供发布者。配置缺失、空值、仅 CN 或验证被关闭均禁用本次 Windows 更新，不依赖库的跳过行为。正式构建同时要求有效签名输入，拒绝默默产出 unsigned 包。
-- 用系统绝对路径的 Windows PowerShell、固定命令和 LiteralPath 验证指定候选；文件路径按数据传递，不拼接 shell 命令。要求有效的嵌入 Authenticode 签名、完整发布者身份匹配、返回路径与候选一致。进程超过 20 秒／不可用、空或畸形输出、非零退出、证书或路径不匹配均失败；不打印原始验签输出。
-- 新下载由钩子验证；update-downloaded 处理在发布 ready 前复用同一函数，覆盖库复用缓存而跳过下载钩子的路径；安全停止后、每次启动安装器前再复核同一候选。验证失败进入 error，不得保留可安装的 ready 或执行安装；若原业务已停则准确提示，保留停止证明，并在原退出分支允许正常退出。此时原生弹窗只提供“取消”“退出荷马”，不盲重试无效候选，也不伪装服务在线。
-- SHA-512／长度由库校验，不能替代发布者验证。锁定稳定库版本的源码已确认存在 PowerShell 不可用时跳过验证的分支，不能只设置 verifyUpdateCodeSignature=true 就标为完成。签名回调、缓存和安装前复核必须分别有负向测试。
-- 原生验收仍需确认有效签名与时间戳、错误发布者、未签名、篡改包、验证环境不可用、缓存替换、只读／空间不足及重启时序。签名证书、私钥及账号只由获准环境提供，不进入 docs 或仓库。
+- **未签名：** 只接受 verifyUpdateCodeSignature 明确为 false 且不含 publisherName 的配置；复用 windowsPublishers 的空数组表示已经明确选择此模式。缺配置、错误类型、冲突字段或签名异常不会降级到此模式。不伪造发布者、不用始终成功的签名钩子；锁定的 6.8.11 依据未配置 publisherName 跳过库内验签。
+- **已签名：** flag 缺省或 true 时，仍要求完整发布者 Subject，并验证当前 exe。保留系统绝对路径 PowerShell、固定命令／LiteralPath、有效嵌入 Authenticode、发布者与返回路径精确匹配、20 秒超时及环境异常拒绝。签名回调不可直接赋 false；原负向断言不放宽。
+- **候选完整性：** 下载完成事件必须包含唯一安装器及有效版本、文件路径、SHA-512 和正整数长度。现有 windowsCandidate 只增加 sha512、size，不进入 renderer、日志或持久记录。
+- **两次复核：** ready 前和本次停止 ACK／无信号 exit0 均齐备后的安装前，都对同一普通文件验证绝对路径、长度及流式 SHA-512。读取前后核对文件设备、标识、大小及修改时间，拒绝读取期间的路径替换；读取超过声明长度、读取错误或不匹配进入原错误流程；异步返回后继续核对候选引用和停止证明，迟到结果不能放行旧候选。签名模式在完整性检查后继续原验签。
+- **失败恢复：** 安装前校验失败且服务已停时，沿第 6 节保留停止事实、取消或退出后重开；不在错误进程内重建更新器或直接执行旧缓存。普通退出不因已下载而自动安装。
+
+未签名路径依赖 GitHub 官方发行来源、HTTPS 和文件摘要，不具备 Authenticode 发布者真实性证明，也不能用摘要宣称防住发行账号被接管。真实 Windows 原生升级、系统拦截、中文路径、缓存、只读／空间不足、失败恢复和数据保留均须另行验收；不承诺绕过系统安全提示。
 
 ## 8. 实施任务与检查状态
 
 勾选仅表示本轮相应源码和离线检查完成，不代表原生／生产验收。未勾选项及 D 节继续等待其前置关卡或授权；不以模拟结果代替真实包。
 
-三平台完整包与运行基础、更新功能分别验收；基础包通过不代表自动更新通过。以下勾选覆盖已有的 Mac／共享源码和本次提交的 Windows 源码；均不能推定三目标真实包已通过。Windows NSIS 源码与离线验证已完成，构建／安装／原生验收仍另行授权；不再等待旧 Squirrel 路线的实验。
+三平台完整包与运行基础、更新功能分别验收；基础包通过不代表自动更新通过。以下勾选覆盖已有的 Mac／共享源码和现有 Windows 源码；均不能推定三目标真实包已通过。Windows NSIS 源码与离线验证已完成，构建／安装／原生验收仍另行授权；不再等待旧 Squirrel 路线的实验。
 
 ### A. 接口和三目标配置
 
-- [x] Mac 两架构固定官网 feed、未知目标／渠道／身份／测试 profile 禁用、正式包 Developer ID requirement 接点；扩展原 shell 和打包 fixture，先红后绿。
+- [x] Mac 两架构 GitHub Latest feed、未知目标／渠道／身份／测试 profile 禁用、正式包 Developer ID requirement 接点；扩展原 shell 和打包 fixture，先红后绿。
 - [x] 原构建、依赖准备及 runtime 选择匹配的 Mac 资源；Forge 原生清单按实际 ZIP 和固定标签处理；未知架构、缺少 Intel 系统声明、无签名输入／固定标签直接拒绝。
 - [x] x64 Node 摘要与 Codex SRI 来自固定版本官方元数据；合成归档断言两架构路由与篡改拒绝。真实二进制内容、架构和系统下限未验证。
 - [x] 按下面 A.W 接入 Windows 源码、依赖锁、包配置及离线断言；未构建或安装任何产物，Windows 发行就绪状态不变。
 
 ### A.W Windows 最小实施顺序
 
+2026-11-12 已接入未签名正式包；包内模式、原生 latest.yml 及双阶段摘要复核以第 2、7 节为准。以下签名专项继续验证签名模式，不能将未签名模式误报为签名验收通过。
+
 步骤 1～5 的源码已接入并沿原 fixture 定向验证，步骤 6 及 D 节仍未执行；实际结果见第 9 节和测试说明。不提前运行构建或原生安装。不新增更新后端接口、并行状态或仅为 Windows 复制一套 UI。
 
-1. **固定依赖与包接点。** package.json／package-lock.json 锁定上述版本；scripts/build-desktop.mjs、scripts/desktop-source.mjs、packaging/electron/forge.config.mjs 原文件增加 Windows 分支。Forge package 生成同一 payload 的 win32-x64 目录，按第 3 节固定按用户安装并禁用提权 helper，最终签名／资源清单完成后使用 electron-builder --prepackaged 的 NSIS 目标，显式 --publish never；打包工具不再编译或重打业务源码。生成壳的 package.json 必须声明并携带 electron-updater 运行依赖；resources/app-update.yml 写入 generic 目录、latest 和正式 publisherName。prepackaged 不假定会自动补此文件或签名。tests/electron-package.test.mjs／tests/desktop-update-runtime.test.mjs 合成断言正式／QA 隔离、依赖入包、配置完整、签名后再封资源清单及两个 Mac 分支保持。
+1. **固定依赖与包接点。** package.json／package-lock.json 锁定上述版本；scripts/build-desktop.mjs、scripts/desktop-source.mjs、packaging/electron/forge.config.mjs 原文件增加 Windows 分支。Forge package 生成同一 payload 的 win32-x64 目录，按第 3 节固定按用户安装并禁用提权 helper，最终签名／资源清单完成后使用 electron-builder --prepackaged 的 NSIS 目标，显式 --publish never；打包工具不再编译或重打业务源码。生成壳的 package.json 必须声明并携带 electron-updater 运行依赖；resources/app-update.yml 在封存前写入 generic 目录、latest 及明确模式：签名包保留正式 publisherName，未签名包写 verifyUpdateCodeSignature: false 且不含 publisherName。prepackaged 不假定会自动补此文件或签名。tests/electron-package.test.mjs／tests/desktop-update-runtime.test.mjs 合成断言正式／QA 隔离、依赖入包、配置完整、签名后再封资源清单及两个 Mac 分支保持。
 2. **补齐平台运行基础。** scripts/prepare-desktop-dependencies.mjs 与原锁文件选择 Windows Node／Codex x64 归档和摘要；scripts/desktop-runtime.mjs、packaging/electron/main.mjs 选择 node.exe、Codex .exe、resources 路径、Windows PATH／SystemRoot／TEMP，保留最小环境。src/processes.ts 在原 owner 内补 Windows 创建时间／身份与进程结束证明；scripts/desktop-profile.mjs、src/homer-account.ts 的 POSIX 私有文件校验改用 Windows 等价的用户／ACL 与路径校验，不能删除安全检查。现有媒体／登录调用按真实 Windows 资源适配，不用空 helper 或“能启动”替代。tests/desktop-profile.test.mjs／tests/desktop-update-runtime.test.mjs 先验证路径、PID 复用、未知 owner、凭据越权及不清数据；新增真正可复用的底层适配才抽函数。
-3. **接更新器与验签。** packaging/electron/main.mjs 仅在合法 Windows 正式身份下加载 NsisUpdater；配置第 4 节开关、Promise 终结处理及 logger=null，复用第 7 节唯一验签函数，适配 UpdateDownloadedEvent.version／downloadedFile。tests/electron-shell.test.mjs 原 VM 注入合成库及验签输出，先覆盖一次检查、自动失败不重试、渠道隔离、签名／安装范围／配置失败及缓存命中后仍拒绝未验证候选。测试不得调用真实 PowerShell 或网络。
-4. **复用安全重启及恢复。** main 的 finishQuit／before-quit 保持原停止证明，Windows 安装前复核、只调用一次 quitAndInstall(true,true)；标准关窗若结束进程也进入同一门。Windows 可观察到的安装失败及服务停止后的验签失败均按第 6 节退出重开，不套用 Mac 的同进程重试；Mac 原流程不变。沿 tests/electron-shell.test.mjs、tests/desktop-update-stop.test.mjs 原夹具验证停止证明及下表断言，不新增恢复框架。
+3. **接更新器与验签。** packaging/electron/main.mjs 仅在合法 Windows 正式身份下加载 NsisUpdater；配置第 4 节开关、Promise 终结处理及 logger=null，复用第 7 节唯一验证函数，适配 UpdateDownloadedEvent.version／downloadedFile。tests/electron-shell.test.mjs 原 VM 注入合成库及验签输出，先覆盖一次检查、自动失败不重试、渠道隔离、签名／安装范围／配置失败及缓存命中后仍拒绝未验证候选。测试不得调用真实 PowerShell 或网络。
+4. **复用安全重启及恢复。** main 的 finishQuit／before-quit 保持原停止证明，Windows 安装前复核、只调用一次 quitAndInstall(true,true)；标准关窗若结束进程也进入同一门。Windows 可观察到的安装失败及服务停止后的校验失败均按第 6 节退出重开，不套用 Mac 的同进程重试；Mac 原流程不变。沿 tests/electron-shell.test.mjs、tests/desktop-update-stop.test.mjs 原夹具验证停止证明及下表断言，不新增恢复框架。
 5. **生成 Windows 清单并做离线检查。** build-desktop 与原打包 fixture 验证实际产物元数据：latest.yml 的版本、SHA-512、长度及所有安装器地址一致，发布目标为固定标签绝对 URL，不修改公开清单；差分／web installer 关闭且不展示说明。沿第 8.C 所引命令运行受影响的 shell／package／runtime／profile／stop／UI 和类型检查；新增共享平台适配的测试只运行该接点相关案例，并保持 scripts/test.mjs 分类。此阶段不执行包含产品构建的 development 专项。
-6. **另获准后执行 D 节。** 先冻结按用户安装的正式 Windows 基线及升级目标，在隔离环境完成严格签名拒绝、安全停止、覆盖升级和数据保留；再按第 2 节上传及最终 URL 验证，全部通过才具备请求公开切换的条件。无 updater 的旧包须先手动安装正式基线；不增加 Squirrel→NSIS 自动迁移或通用恢复框架。
+6. **另获准后执行 D 节。** 先冻结按用户安装的正式 Windows 基线及升级目标，在隔离环境完成大小／摘要、适用的签名拒绝、安全停止、覆盖升级和数据保留；再按第 2 节上传及最终 URL 验证，全部通过才具备请求公开切换的条件。无 updater 的旧包须先手动安装正式基线；不增加 Squirrel→NSIS 自动迁移或通用恢复框架。
 
 下表四组断言已沿原 fixture 实现并离线通过；仅模拟库、文件、签名和退出次序，不替代真实 PowerShell／缓存／安装器。具体断言唯一维护在此，不新增专项文件：
 
@@ -241,7 +245,7 @@ before-quit-for-update／before-quit 不能承接全部异步安全准备；显�
 ### D. 原生、安装与发行：每阶段另行批准
 
 - [ ] 原生构建前在 scripts/test.mjs 登记 tests/desktop-update-acceptance.test.mjs 等真实专项，按目标校验受测包和引擎路径；docs/testing.md 写精确平台命令和环境，不让 Windows 绕过原 Mac 包校验。
-- [ ] 在隔离验收夹具中使用临时 feed，三目标各验证冻结的“正式签名旧基线→正式签名新目标”：Mac json 与 Windows 原生格式、版本/build、签名或篡改拒绝、截断、空间不足、只读安装位置、断网／恢复、清单在下载间切换。复用现有夹具，不新增公共渠道或常驻服务；普通 QA／测试 profile 仍禁用正式检查，不能为验收改写公开 stable 清单。
+- [ ] 在隔离验收夹具中使用临时 feed，三目标各验证冻结旧基线到新目标：Mac 保持正式签名，Windows 分别按已启用签名模式验证，覆盖 json 与 Windows 原生格式、版本/build、签名或篡改拒绝、截断、空间不足、只读安装位置、断网／恢复、清单在下载间切换。复用现有夹具，不新增公共渠道或常驻服务；普通 QA／测试 profile 仍禁用正式检查，不能为验收改写公开 stable 清单。
 - [ ] 覆盖 Windows 按用户 NSIS 首装／升级／卸载、最终 payload 与封存清单一致且无提权 helper、无 UAC、库缓存、签名拒绝、主窗口关闭、失败后取消／退出及手动重开再试的进程次序；Mac 两架构原生 helper、公证和安装位置；两平台普通退出及显式重启。原生重开测试不得延续上次停止证明，也不以模拟安装错误代替外部安装器失败证据。
 - [ ] 验证原账号、thread、历史、已保存草稿、未知请求和渠道单 owner；包替换／启动／会话恢复失败均按第 7 节记录恢复边界，不能以版本号改变代替。
 - [ ] 按第 2 节验证 GitHub 固定标签及 Latest 的 HTTPS 重定向、原生清单、架构和摘要，并完成已启用平台最终 URL 的原生解析、拉取和校验。全部前置验收通过且获准后才切换 Latest，随后复核公开响应；失败按授权保留／恢复旧 Latest，记录已暂存更新无法撤销的边界。旧官网 feed 过渡仅在另获授权时单独验收。全程保留平台、版本、时间、退出码和证据，验收通过不自动发布。
@@ -251,6 +255,8 @@ before-quit-for-update／before-quit 不能承接全部异步安全准备；显�
 五类最容易遗漏的输入已分别归入任务断言：错误架构／错误身份及验证环境失效（A.W、7）、缓存命中或安装前绕过验签（A.W、D）、HTML／缓存旧清单和清单切换（A、D）、busy／未知 owner 被误当停止成功（B）、有新业务事实后盲目回退或草稿丢失（C、D）。不新增付费模型或无关全量检查。
 
 ## 9. 对齐及验证记录
+
+2026-11-12 未签名 Windows 更新实施：复用原 NSIS、候选包与停止证明，显式配置启用未签名路径；ready 前和安装前均流式复核大小／SHA-512，签名模式仍严格验签。构建封存 app-update.yml，草稿上传并完整校验 latest.yml，三平台完整集合为 11 项。提交前五文件离线回归 460/460、官网隔离浏览器回归通过；相关检查见 [测试说明](testing.md)。未构建安装包、安装、公开切换或部署；Windows 原生升级未验收。
 
 2026-11-12 GitHub Latest 源码切换：main 的 Mac 两架构 feed、保留的 Windows generic 配置及打包输入已对齐 GitHub Latest。原身份、验签、安全停止、重启确认和未签名 Windows 禁用条件未改。相关 shell、package、草稿分发三文件离线回归通过；官网下载改用三平台 Latest 直链及发行详情入口，本地设备识别和隔离浏览器回归通过。准确命令见 [测试说明](testing.md)。未提交、构建、安装、公开切换或部署，既有安装包和旧官网 feed 保持原状；真实 GitHub 原生升级未验收。以下记录为历史证据。
 
