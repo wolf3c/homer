@@ -1071,7 +1071,7 @@ try{
       void showError('桌面服务认证信息无效。请保留数据并核对应用完整性。');continue;
      }
      desktopAccessToken=value.desktopAccessToken;
-     origin=url.origin;if(process.platform==='win32')void updateReady.then(()=>{if(!closed)checkUpdate();});else checkUpdate();void window.loadURL(value.url).then(()=>{window.setTitle(deepseek?'荷马 · DeepSeek':'荷马');offerPowerAuthorization();}).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
+     origin=url.origin;if(process.platform==='win32')void updateReady.then(()=>{if(!closed)checkUpdate();});else checkUpdate();void window.loadURL(value.url).then(()=>{window.setTitle('荷马');offerPowerAuthorization();}).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
     }else if(value.kind==='error')void showError('无法启动荷马（'+code({message:value.code})+'）。请保留原账号和数据，核对后重新打开。');
    }
   });

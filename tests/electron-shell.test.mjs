@@ -33,7 +33,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  child.stdio=[child.stdin,child.stdout,child.stderr,new PassThrough()];child.stdio[3].on('data',value=>credentials.push(String(value)));
  class BrowserWindow extends EventEmitter{
   constructor(options){super();this.options=options;this.hidden=options.show===false;this.webContents=new EventEmitter();this.webContents.session=session;this.settingsMessages=[];this.webContents.executeJavaScript=async()=>{if(this.contentsDestroyed)throw Error('Object has been destroyed');return native.unsaved!==true;};this.webContents.getURL=()=>this.url??'about:blank';this.webContents.isDestroyed=()=>this.contentsDestroyed??false;this.webContents.setWindowOpenHandler=cb=>handlers.set('window-open',cb);windows.push(this);}
-  async loadURL(url){this.webContents.emit('did-start-navigation',{url,isSameDocument:false,isMainFrame:true});this.url=url;this.webContents.mainFrame={url,origin:new URL(url).origin,detached:false,isDestroyed:()=>false,send:(...args)=>this.settingsMessages.push(args)};}isMinimized(){return this.minimized??false;}restore(){this.minimized=false;}show(){this.hidden=false;}hide(){this.hidden=true;}focus(){this.focused=true;}isDestroyed(){return this.destroyed??false;}setTitle(){}
+  async loadURL(url){this.webContents.emit('did-start-navigation',{url,isSameDocument:false,isMainFrame:true});this.url=url;this.webContents.mainFrame={url,origin:new URL(url).origin,detached:false,isDestroyed:()=>false,send:(...args)=>this.settingsMessages.push(args)};}isMinimized(){return this.minimized??false;}restore(){this.minimized=false;}show(){this.hidden=false;}hide(){this.hidden=true;}focus(){this.focused=true;}isDestroyed(){return this.destroyed??false;}setTitle(value){this.title=value;}
   async loadFile(path){await this.loadURL(pathToFileURL(path).href);this.emit('ready-to-show');}
   showInactive(){this.show();}
   isVisible(){return !this.hidden&&!this.isDestroyed();}
@@ -1563,6 +1563,14 @@ test('macOS keeps real window controls aligned with the original 44/52px toolbar
 for(const platform of ['linux'])test(`${platform} retains the packaged macOS guard without invoking window controls`,async()=>{
  const f=await fixture(undefined,undefined,platform);assert.equal(f.windows.length,0);assert.equal(f.spawnCount(),0);
  assert.ok(f.messages.some(m=>m.detail?.includes('desktop_packaged_macos_required')));
+});
+test('primary window title stays 荷马 across desktop startup modes and model sources',async()=>{
+ for(const [args,modelSource]of [[['Homer'],'website'],[['Homer'],'codex'],[['Homer','--deepseek-daily'],'website'],[['Homer','--native'],'codex']]){
+  const f=await fixture(args,undefined,'darwin',{published:true,modelSource});
+  assert.equal(f.spawnCount(),1);
+  f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();
+  assert.equal(f.windows[0].title,'荷马',args.join(' ')+' / '+modelSource);
+ }
 });
 test('shell starts one isolated bundled backend with sandbox and only the narrow preload',async()=>{
  const f=await fixture();assert.equal(f.spawnCount(),1);assert.equal(f.windows.length,1);
