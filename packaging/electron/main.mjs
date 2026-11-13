@@ -486,10 +486,9 @@ function registerDesktopCapture(profile){
   });
  }
  ipcMain.handle('homer:capture-panel:finish',(event,...args)=>{
-  const owner=capturePanelCaller(event,args.length,2),{target,result}=owner;
+  const owner=capturePanelCaller(event,args.length,1),{target,result}=owner;
   if(!result||owner.handoff)throw Error('主对话暂时无法接收截图。');
-  const [notes,includeAX]=args;
-  if(typeof includeAX!=='boolean')throw Error('capture_panel_arguments');
+  const [notes]=args;
   let annotations;
   try{annotations=previewImageAnnotations(notes,result.width,result.height,true);}
   catch{throw Error('批注超出图片范围或长度限制。');}
@@ -506,7 +505,7 @@ function registerDesktopCapture(profile){
    };
    const timer=setTimeout(()=>settle(false),6000);
    owner.handoff={id,settle};
-   try{target.senderFrame.send('homer:capture:result',target.scope,{...result,ax:includeAX?result.ax:undefined,draft:{id,action:'send',annotations}});}
+   try{target.senderFrame.send('homer:capture:result',target.scope,{...result,draft:{id,action:'send',annotations}});}
    catch{settle(false);}
   });
  });

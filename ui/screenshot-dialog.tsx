@@ -5,7 +5,6 @@ import {readDraftAttachmentImage} from './homer-attachments';
 import type {HomerAttachment} from './homer-attachment-adapter';
 import type {ImageAnnotationControl} from './image-annotation';
 import type {PreviewImageAnnotation,WindowAXNode} from '../src/preview-reference';
-import {WindowAXExcerpt} from './preview-reference';
 
 const ImageAnnotation=lazy(()=>import('./image-annotation'));
 type ScreenshotAction=(notes:PreviewImageAnnotation[],ax?:WindowAXNode[])=>Promise<void>;
@@ -17,7 +16,6 @@ export default function ScreenshotDialog({file,attachment,annotations,ax,focusAn
 }){
  const ImageEditor=imageEditor??ImageAnnotation;
  const [notes,setNotes]=useState(annotations??[]);
- const [includeAX,setIncludeAX]=useState(true);
  const [url,setUrl]=useState(''),[error,setError]=useState(initialError),[busy,setBusy]=useState(false),[cancelling,setCancelling]=useState(false);
  const [actions,setActions]=useState<HTMLDivElement|null>(null);
  const control=useRef<ImageAnnotationControl|null>(null);
@@ -50,13 +48,10 @@ export default function ScreenshotDialog({file,attachment,annotations,ax,focusAn
   if(busy||!url||pointerDown.current)return;
   if(!cancelling&&control.current?.editing()){setError('请先保存或取消正在编辑的批注。');return;}
   setError('');setBusy(true);
-  try{await onDone(notes,includeAX?ax:undefined);}
+  try{await onDone(notes,ax);}
   catch(error){setError(error instanceof Error?error.message:floating?'截图未发送，请重试。':'截图未加入草稿，请重试。');}
   finally{setBusy(false);}
  }
- const windowText=ax&&<WindowAXExcerpt ax={ax}>
-  <label className="flex items-center gap-2"><input type="checkbox" checked={includeAX} onChange={event=>setIncludeAX(event.target.checked)}/>随截图附上窗口文字</label>
- </WindowAXExcerpt>;
  return <Dialog open disablePointerDismissal onOpenChange={(open,details)=>{
   if(open)return;
   details.cancel();
@@ -80,9 +75,7 @@ export default function ScreenshotDialog({file,attachment,annotations,ax,focusAn
      <ImageEditor url={url} title={file.name} actions={actions??undefined} control={control} notes={notes} focusAnnotation={focusAnnotation}
       onSave={async notes=>{setNotes(notes);setError('');}} onRemove={id=>setNotes(notes=>notes.filter(note=>note.id!==id))}/>
     </Suspense>}
-    {!floating&&windowText}
    </div>
-   {floating&&windowText&&<div className="capture-window-text" inert={busy||cancelling}>{windowText}</div>}
    {error&&<p className="shrink-0" role="alert">{error}</p>}
    {busy&&<p className="shrink-0" role="status">{cancelling?'正在核对并撤销暂存附件…':'正在准备截图…'}</p>}
    <div className={floating?'capture-toolbar':'flex shrink-0 items-center justify-end gap-2'}>

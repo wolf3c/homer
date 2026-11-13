@@ -6,7 +6,7 @@
 
 [Homer 核心架构](architecture/README.md)汇总当前协作、Hook、插件工具注册与多渠道接入设计及各自的验收边界。
 
-[桌面截屏批注方案](desktop-screenshot-annotation.md)已实现窗口／区域截图、图片批注及原主草稿接续，可选附带窗口 AX 文字。Apple 芯片 Mac 隔离签名候选通过采集、批注、发送和历史查看；Windows 原生探针及合成产品路径通过，Windows 11 安装包端到端、多显示器等边界仍按正文待验。
+[桌面截屏批注方案](desktop-screenshot-annotation.md)已实现窗口／区域截图、图片批注及原主草稿接续。2026-11-13 源码移除 AX 预览和开关，采集成功的 AX 自动附带；实际组件效果已确认，审查后精确候选的 35 项定向回归及 UI 类型检查通过。Apple 芯片 Mac 原隔离签名候选通过采集、批注、发送和历史查看；Windows 原生探针及合成产品路径通过，Windows 11 安装包端到端、多显示器等边界仍按正文待验。
 
 [会话架构实施计划](superpowers/plans/2026-11-05-worker-chat-architecture.md)：已实现单一会话路径，普通回复直接回传，不保留旧库迁移与旧调用兼容。七个 chat 分工及独立审核，离线、桌面与实际 ChatGPT 验证分别记录；尚未部署到日常实例。
 

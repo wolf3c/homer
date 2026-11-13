@@ -1136,8 +1136,8 @@ test('Windows window capture grants one trusted source and uses the existing dir
  assert.equal(Buffer.from(result.png).toString('base64'),capturePng);
  await winBridge(f,'present')(fromPanel);
  const note={id:'win-note',region:{x:0,y:0,width:1,height:1},comment:'合成批注'};
- const sent=winBridge(f,'finish')(fromPanel,[note],false);
- await assert.rejects(async()=>winBridge(f,'finish')(fromPanel,[note],false),/暂时无法接收/);
+ const sent=winBridge(f,'finish')(fromPanel,[note]);
+ await assert.rejects(async()=>winBridge(f,'finish')(fromPanel,[note]),/暂时无法接收/);
  const [channel,scope,submitted]=f.windows[0].settingsMessages.at(-1);
  assert.equal(channel,'homer:capture:result');assert.deepEqual(plain(scope),captureScope);
  assert.deepEqual(plain(submitted.draft.annotations),[note]);assert.equal(submitted.ax,undefined);
@@ -1248,19 +1248,19 @@ test('the macOS capture panel hands the screenshot and direct-send intent to the
  assert.equal(panel.hidden,true);
  assert.deepEqual(plain(panel.bounds),{x:0,y:0,width:1200,height:800});
  await present(fromPanel);assert.equal(panel.hidden,false);
- await assert.rejects(async()=>complete({...fromPanel,senderFrame:{...fromPanel.senderFrame}},[],false),/capture_panel_forbidden/);
- await assert.rejects(async()=>complete(fromPanel,'add',[],false),/capture_panel_forbidden/);
- await assert.rejects(async()=>complete(fromPanel,[{id:'a',comment:'bad region',region:{x:0,y:0,width:2,height:1}}],false),/批注超出/);
+ await assert.rejects(async()=>complete({...fromPanel,senderFrame:{...fromPanel.senderFrame}},[]),/capture_panel_forbidden/);
+ await assert.rejects(async()=>complete(fromPanel,[],false),/capture_panel_forbidden/);
+ await assert.rejects(async()=>complete(fromPanel,[{id:'a',comment:'bad region',region:{x:0,y:0,width:2,height:1}}]),/批注超出/);
  assert.equal(Buffer.from(png).toString('base64'),capturePng);
  assert.deepEqual(plain(placement),{x:0,y:0,width:1200,height:784});
  const note={id:'note',region:{x:0,y:0,width:1,height:1},comment:'合成批注'};
- const completeOnce=complete(fromPanel,[note],false);
- await assert.rejects(async()=>complete(fromPanel,[note],false),/暂时无法接收/);
+ const completeOnce=complete(fromPanel,[note]);
+ await assert.rejects(async()=>complete(fromPanel,[note]),/暂时无法接收/);
  const [channel,scope,result]=window.settingsMessages.at(-1);
  assert.equal(channel,'homer:capture:result');assert.deepEqual(plain(scope),captureScope);
  assert.equal(Buffer.from(result.png).toString('base64'),capturePng);
  assert.deepEqual(plain(result.draft),{id:result.draft.id,action:'send',annotations:[note]});
- assert.equal('ocrText' in result,false);
+ assert.equal('ocrText' in result,false);assert.equal(result.ax,undefined);
  assert.equal(await accept(fromPanel,result.draft.id),false);
  assert.equal(await accept(event,'wrong'),false);
  assert.equal(await accept(event,result.draft.id),true);
@@ -1277,7 +1277,7 @@ test('changing the main draft invalidates a pending panel handoff',async()=>{
  finish(null,JSON.stringify({kind:'image',png:capturePng,width:1,height:1}));await f.tick();
  const panel=f.windows[1];
  assert.equal(panel?.options.type,'panel');
- const complete=f.handlers.get('homer:capture-panel:finish')(panelEvent(panel),[],false);
+ const complete=f.handlers.get('homer:capture-panel:finish')(panelEvent(panel),[]);
  const rejection=assert.rejects(complete,/尚未确认接收/);
  const id=f.windows[0].settingsMessages.at(-1)[2].draft.id;
  await ready(event,{...captureScope,epoch:2});await rejection;
@@ -1310,7 +1310,7 @@ for(const sending of [false,true])test('a crashed capture panel is released '+(s
  finish(null,JSON.stringify({kind:'image',png:capturePng,width:1,height:1}));await f.tick();
  const [window,panel]=f.windows;
  await f.handlers.get('homer:capture-panel:present')(panelEvent(panel));
- const rejected=sending?assert.rejects(f.handlers.get('homer:capture-panel:finish')(panelEvent(panel),[],false),/尚未确认接收/):undefined;
+ const rejected=sending?assert.rejects(f.handlers.get('homer:capture-panel:finish')(panelEvent(panel),[]),/尚未确认接收/):undefined;
  panel.webContents.emit('render-process-gone');
  assert.equal(panel.isDestroyed(),true);
  await rejected;
@@ -1331,6 +1331,19 @@ for(const valid of [true,false])test('native screenshot preserves the PNG with '
  const result=await f.handlers.get('homer:capture-panel:read')(panelEvent(f.windows[1]));
  assert.equal(Buffer.from(result.png).toString('base64'),capturePng);
  assert.deepEqual(plain(result.ax??null),valid?ax:null);
+ const sent=f.handlers.get('homer:capture-panel:finish')(panelEvent(f.windows[1]),[]);
+ const submitted=f.windows[0].settingsMessages.at(-1)[2];
+ assert.deepEqual(plain(submitted.ax??null),valid?ax:null,'sending always preserves valid AX and never invents invalid AX');
+ assert.equal(await f.handlers.get('homer:capture:accept-draft')(permissionEvent(f),submitted.draft.id),true);
+ await sent;
+});
+test('cancelling an AX capture panel discards the image and text without sending',async()=>{
+ let finish;const f=await permissionFixture({capture:(_bin,_args,_options,callback)=>{finish=callback;}});
+ await f.handlers.get(captureReady)(permissionEvent(f),captureScope,true);f.handlers.get(captureShortcut)();
+ finish(null,JSON.stringify({kind:'image',png:capturePng,width:1,height:1,ax:[{role:'AXButton',name:'Synthetic Save'}]}));
+ await f.tick();const panel=f.windows[1];
+ await f.handlers.get('homer:capture-panel:close')(panelEvent(panel));
+ assert.equal(panel.isDestroyed(),true);assert.equal(f.windows[0].settingsMessages.length,0);
 });
 test('a main frame without the capture panel contract receives the original image result',async()=>{
  let finish;
@@ -1366,6 +1379,20 @@ test('a shortcut conflict is reported to the draft, and cancel or malformed outp
  trigger();finish(null,'{"kind":"cancelled"}');assert.equal(window.settingsMessages.length,0);
  trigger();finish(null,JSON.stringify({kind:'image',png:capturePng,width:2,height:1}));
  assert.equal(window.focused,undefined);assert.equal(window.settingsMessages.at(-1)[2].kind,'unavailable');
+});
+test('capture panel preload forwards annotations alone on macOS and Windows and stays absent in subframes',async()=>{
+ const source=readFileSync('packaging/electron/capture-panel-preload.cjs','utf8');
+ for(const platform of ['darwin','win32'])for(const isMainFrame of [true,false]){
+  const exposed={},calls=[];
+  vm.runInNewContext(source,{process:{platform,isMainFrame},require:()=>({
+   contextBridge:{exposeInMainWorld:(name,api)=>exposed[name]=api},
+   ipcRenderer:{invoke:async(...args)=>calls.push(args)},
+  })});
+  if(!isMainFrame){assert.equal(exposed.homerCapturePanel,undefined);continue;}
+  const notes=[{id:'note',region:{x:0,y:0,width:1,height:1},comment:'Synthetic note'}];
+  await exposed.homerCapturePanel.finish(notes);
+  assert.deepEqual(calls,[['homer:capture-panel:finish',notes]]);
+ }
 });
 test('capture preload exposes readiness and result subscription only on supported desktop main frames',async()=>{
  const source=readFileSync('packaging/electron/preload.cjs','utf8');

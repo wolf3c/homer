@@ -6,9 +6,8 @@ body{background:rgba(0,0,0,.55);color:#fff}
 .capture-dialog>[role=region]{flex:1;min-height:0;outline:none}
 .capture-dialog>[role=region]:focus-visible{outline:1px solid #fff7;outline-offset:2px}
 .capture-dialog .image-annotation{width:var(--capture-image-width);max-width:none;margin:0}
-.capture-toolbar,.capture-window-text{position:absolute;bottom:8px;z-index:1}
-.capture-window-text{left:8px;max-width:min(22rem,calc(100% - 106px));max-height:calc(100% - 16px);overflow:auto}
-.capture-window-text,.capture-dialog>[role=alert],.capture-dialog>[role=status]{padding:4px 8px;border-radius:6px;background:#181818ed}
+.capture-toolbar{position:absolute;bottom:8px;z-index:1}
+.capture-dialog>[role=alert],.capture-dialog>[role=status]{padding:4px 8px;border-radius:6px;background:#181818ed}
 .capture-dialog>[role=alert],.capture-dialog>[role=status]{position:absolute;top:8px;left:8px;max-width:calc(100% - 16px);z-index:1}
 .capture-toolbar{right:8px;display:flex;align-items:center;gap:4px;padding:4px;background:#181818ed;border:1px solid #fff4;border-radius:10px}
 .capture-toolbar .capture-button{display:grid;place-items:center;width:34px;height:34px;padding:0;border-radius:6px;color:#fff}

@@ -166,7 +166,7 @@ test('captured image is added once with a lagging composer client and reopens fr
  }finally{ui.close();}
 });
 
-test('screenshot AX follows its attachment through edits and can be removed without another upload',async()=>{
+test('screenshot AX survives note removal and attachment edits without another upload',async()=>{
  const ax=[{role:'AXStaticText',value:'Synthetic E101'}];
  const ui=fixture({capture:true,request:async path=>{assert.equal(path,'/api/uploads');return ok(screenshotAsset);}});
  try{
@@ -180,8 +180,8 @@ test('screenshot AX follows its attachment through edits and can be removed with
   assert.deepEqual(references.referencesOf(ui.annotationDraft.read()),[{...ref,annotations:[]}]);
   ui.find(n=>n.type==='attachment').props.edit();
   assert.deepEqual(dialog().ax,ax);
-  await dialog().onDone([],undefined);ui.render();
-  assert.deepEqual(references.referencesOf(ui.annotationDraft.read()),[]);
+  await dialog().onDone([],dialog().ax);ui.render();
+  assert.deepEqual(references.referencesOf(ui.annotationDraft.read()),[{...ref,annotations:[]}]);
   assert.equal(ui.runtime.attachments.length,1);assert.equal(ui.calls.length,1);
  }finally{ui.close();}
 });

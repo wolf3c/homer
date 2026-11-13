@@ -8,5 +8,5 @@ if(process.isMainFrame===true)contextBridge.exposeInMainWorld('homerCapturePanel
   chooseSource:id=>ipcRenderer.invoke('homer:capture-panel:choose-source',id),
   acceptImage:(png,region)=>ipcRenderer.invoke('homer:capture-panel:accept-image',png,region),
  }:{}),
- finish:(notes,includeAX)=>ipcRenderer.invoke('homer:capture-panel:finish',notes,includeAX),
+ finish:notes=>ipcRenderer.invoke('homer:capture-panel:finish',notes),
 });

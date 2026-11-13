@@ -18,7 +18,7 @@ declare global{
    close():Promise<void>;
    chooseSource(id:string|null):Promise<void>;
    acceptImage(png:Uint8Array<ArrayBuffer>,region:Region|null):Promise<PanelImage>;
-   finish(notes:PreviewImageAnnotation[],includeAX:boolean):Promise<void>;
+   finish(notes:PreviewImageAnnotation[]):Promise<void>;
   };
  }
 }
@@ -32,7 +32,7 @@ const close=()=>{void bridge.close().catch(()=>{});};
 function renderImage({png,ax,imageWidth,placement}:PanelImage,ImageEditor:typeof import('./image-annotation').default){
  for(const [name,value] of Object.entries({...placement,'image-width':imageWidth}))document.documentElement.style.setProperty('--capture-'+name,value+'px');
  root.render(<ScreenshotDialog floating file={new File([png],'截图.png',{type:'image/png'})} ax={ax} imageEditor={ImageEditor}
-  onImageLoad={present} onDone={(notes,excerpt)=>bridge.finish(notes,!!excerpt)} onCancel={()=>bridge.close()} focusInput={()=>{}}/>);
+  onImageLoad={present} onDone={notes=>bridge.finish(notes)} onCancel={()=>bridge.close()} focusInput={()=>{}}/>);
 }
 
 async function freezeFrame(){
