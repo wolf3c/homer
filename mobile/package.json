@@ -8,7 +8,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "test": "node --test connection.test.mjs local-network.test.mjs rebind.test.mjs update.test.mjs",
+    "test": "node --test connection.test.mjs local-network.test.mjs rebind.test.mjs update.test.mjs privacy.test.mjs",
     "bundle": "npm run build:ui && expo export --platform ios --platform android --max-workers 1",
     "build:ui": "node ../scripts/build-mobile-ui.mjs"
   },

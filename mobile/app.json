@@ -7,7 +7,10 @@
     "ios": {
       "bundleIdentifier": "com.homer.mobile",
       "supportsTablet": false,
-      "buildNumber": "7"
+      "buildNumber": "10",
+      "infoPlist": {
+        "NSPhotoLibraryAddUsageDescription": "将你选择的 Homer 图片保存到相册。"
+      }
     },
     "android": {
       "package": "com.homer.mobile",
