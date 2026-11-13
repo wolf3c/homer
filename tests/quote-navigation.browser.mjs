@@ -33,7 +33,7 @@ try{
   try{
    await page.navigate();await wait(()=>document.querySelectorAll('#message-quoted .message-quote-source').length===6&&!!document.querySelector('[contenteditable=true]'));
    await check('identity, meaningful UI and no framework error overlay',()=>location.hostname==='127.0.0.1'&&document.title.includes('Homer')&&!document.querySelector('vite-error-overlay')&&!!document.querySelector('.composer'));
-   await check('grey excerpts hide message and native item identifiers',()=>!document.querySelector('#message-quoted .message-quotes').textContent.includes('source')&&!document.querySelector('#message-quoted [title*="source"]'));
+   await check('grey excerpts hide message and native item identifiers',()=>!document.querySelector('#message-quoted .user-message-bubble').textContent.includes('source')&&!document.querySelector('#message-quoted [title*="source"]'));
    await page.evaluate(()=>{const e=document.querySelector('[contenteditable=true]');e.focus();});await page.command('Input.insertText',{text:'保留主草稿'});
    await page.screenshot('history-excerpts-'+width+'.png');
    await click(page,0);await wait(()=>getSelection()?.toString()==='重复原文'&&getSelection().anchorOffset===11);
@@ -44,7 +44,7 @@ try{
    await page.evaluate(()=>{const a=document.querySelector('#message-quoted .message-quote-source'),r=document.createRange();r.selectNodeContents(a.querySelector('[data-slot="quote-block-text"]'));getSelection().removeAllRanges();getSelection().addRange(r);a.click();});
    await check('copy selection in the excerpt remains at the quote',()=>getSelection().anchorNode.parentElement.closest('[data-conversation-message]').id==='message-quoted');
    await page.evaluate(()=>getSelection().removeAllRanges());
-   await press(page,'#message-quoted .message-quote:nth-child(5) .message-quote-source');
+   await press(page,'#message-quoted .message-quote-source:nth-of-type(5)');
    await wait(()=>document.querySelector('.history-navigation')?.textContent.includes('暂无法准确定位'));
    await check('legacy source still navigates with a clear exact-range limitation',()=>document.activeElement.id==='message-current-source'&&document.querySelector('#message-quoted').textContent.includes('旧引用摘录'));
    await click(page,5);await wait(()=>document.querySelector('.history-navigation')?.textContent.includes('暂无法准确定位'));
@@ -111,7 +111,7 @@ try{
   await press(page,'.message-quote-editor [aria-label="删除此批注"]');
   await wait(()=>!document.querySelector('.annotation-chip-open'));
   await check('deleting a quote returns to the editor without clearing the draft',()=>document.activeElement.matches('.aui-lexical-input')&&document.activeElement.innerText==='保留主草稿继续输入');
-  await press(page,'#message-quoted .message-quote:nth-child(5) .message-quote-source');
+  await press(page,'#message-quoted .message-quote-source:nth-of-type(5)');
   await wait(()=>document.activeElement.id==='message-current-source');
   await check('keyboard navigation marks the source without a native outline',()=>{const style=getComputedStyle(document.activeElement);return style.outlineStyle==='none'&&style.boxShadow!=='none';});
   await page.screenshot('legacy-quote-source-focus.png');

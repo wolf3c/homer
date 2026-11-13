@@ -466,3 +466,21 @@ HOMER_BROWSER_EVIDENCE="$PWD/.codex/scratch/interaction-completion-browser" node
 脚本构建实际产品界面，复用合成 HTTP/SSE 服务、原审批处理器和历史展示投影；使用本机已有 Chrome、独立浏览器资料及 scratch 内合成 SQLite 数据库，不连接账号或真实模型。覆盖 1440、390、320px 的允许、拒绝、多题和自由回答，允许流程先模拟回执未知并显式重试，再核对刷新、关闭并重开数据库后仍只有一张完成卡片。审批完成态检查固定 ApprovalCard 的原生状态区与准确决定文案，移除所有审批按钮和详情入口；咨询完成态检查固定 QuestionFlow 的 `receipt` 状态、全部原问题和答案同时可见、自由文字原样换行，且没有提交控件、自定义箭头或题号；刷新及重开数据库后保留同一份完整回执。每种场景保存 PNG，汇总写入指定证据目录的 `results.json`。可用 `HOMER_COMPONENT_BUILD` 指定已构建的隔离产品 UI。此脚本登记于显式 browser 清单，不进入默认离线测试。
 
 审批、咨询原有专项继续使用 `tests/approval-card.browser.mjs` 和 `tests/question-flow.browser.mjs`，分别检查提交、重复点击、连接变化、迟到回执、失效与草稿。以上均为合成验收，不代表日常资料、真实账号或已安装 App 验收。
+
+
+## 2026-11-13 引用与批注显示简化
+
+`QuoteSource` 统一使用固定 assistant-ui `QuoteBlock.Text` 默认两行截断；每段引用后紧接对应批注，批注使用普通消息正文样式，保留原始文字与换行。取消编号、专用分组及其间距 CSS，不改输入、发送协议、持久化或来源定位。
+
+定向离线回归（Node 22.22.0）：
+
+```sh
+node --import tsx --test tests/quote-navigation-ui.test.mjs tests/message-quote.test.ts tests/web-multi-quotes.test.ts
+node scripts/build-run-activity-css.mjs --quote --check
+```
+
+本次 17 项通过，零失败或跳过；官方 Quote CSS 检查通过。独立 Vite 构建通过；真实 HomerApp 接入内存 HTTP/SSE 合成消息，在隔离 Chrome 的 1100×675 视口截图核对单引用、长原文两行显示、多引用与逐段批注、普通正文，并点击第二段引用定位到对应原消息。未连接日常资料、账号或真实模型，未安装或部署。未执行完整浏览器脚本、移动视口及浏览器控制台专项检查；现有浏览器脚本仅同步本次截断预期及删除外层后的选择器。
+
+用户已确认上述合成截图。独立只读代码审查未发现阻断提交的问题；同步更正 vendor 说明中历史引用取消截断的旧描述。提交前在最新工作树复验上述 17 项和 Quote CSS 检查均通过，UI 与项目类型检查也均通过（`tsc --noEmit -p ui/tsconfig.json`、`tsc --noEmit -p tsconfig.check.json`）。前一轮并行渠道文件导致的类型错误已消失；完整浏览器脚本、移动视口及控制台专项仍未验证。临时合成服务已退出、端口已释放，独立 web 构建已回收。
+
+恢复提交时补齐 `user-message-bubble-ui` 与 `chat-timestamps` 两个生产组件 eval 夹具的 `React.Fragment` 绑定，保留全部原断言；定向执行 `node --import tsx --test tests/user-message-bubble-ui.test.mjs tests/chat-timestamps.test.ts`，33 项通过，零失败或跳过。

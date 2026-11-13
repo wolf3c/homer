@@ -28,7 +28,7 @@ import {connectionFetch as fetch,ConnectionEvents,mobileView} from "./web-connec
 import {FileList} from './file-list';
 import {CanvasPanel, type CanvasArtifact} from "./canvas-panel";
 import { createRoot } from "react-dom/client";
-import { createContext,useContext,useCallback,useLayoutEffect, useEffect, useRef, useState,useMemo, type FormEvent, type ReactNode } from "react";
+import { Fragment,createContext,useContext,useCallback,useLayoutEffect, useEffect, useRef, useState,useMemo, type FormEvent, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider, ComposerPrimitive, MessagePrimitive,
   ThreadPrimitive, useAui, useAuiState, useExternalStoreRuntime, type AppendMessage,
@@ -138,13 +138,13 @@ function ArtifactFiles({files}:{files:WebArtifact[]}){
 }
 type PositionClaim=()=>((write:()=>void)=>boolean);
 const QuoteNavigationContext=createContext<(quote:MessageQuote)=>void>(()=>{});
-function QuoteSource({quote,index,expanded=false}:{quote:MessageQuote;index:number;expanded?:boolean}){
+function QuoteSource({quote,index}:{quote:MessageQuote;index:number}){
  const locate=useContext(QuoteNavigationContext);
  return <a className="message-quote-source" href={'#message-'+encodeURIComponent(quote.messageId)} aria-label={'查看引用 '+(index+1)+' 的原消息'} onClick={event=>{
   event.preventDefault();event.stopPropagation();
   const selection=window.getSelection();if(selection&&!selection.isCollapsed&&selection.containsNode(event.currentTarget,true))return;
   locate(quote);
- }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text className={expanded?'line-clamp-none whitespace-pre-wrap':undefined}>{quote.text}</QuoteBlock.Text></QuoteBlock.Root></a>;
+ }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text>{quote.text}</QuoteBlock.Text></QuoteBlock.Root></a>;
 }
 function CompletedInteractionCard({item}:{item:NonNullable<WebState['messages'][number]['interaction']>}){
  if(item.kind==='authorization'){
@@ -171,10 +171,10 @@ function UserMessage() {
   return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className={"message "+(original?.interaction?"interaction-message":"user-message")} aria-label="你的消息">
     <div className={original?.interaction?undefined:"user-message-bubble"} data-kind={original?.interaction?.kind} role={original?.interaction?"group":undefined} aria-label={original?.interaction?(original.interaction.kind==='authorization'?'授权请求与用户决定':'咨询问题与用户回答'):undefined}>
     {channelSource&&<p className="message-source-label">{channelName+'@'+channelSource.entryLabel}</p>}
-    {quotes.length > 0 && <div className="message-quotes">{quotes.map((quote, index) => <div className="message-quote" key={index}>
-      <QuoteSource quote={quote} index={index} expanded={quotes.length>1||!!quote.annotation}/>
-      {quote.annotation && <p className="quote-annotation"><span>批注 {index + 1}</span>{quote.annotation}</p>}
-    </div>)}</div>}
+    {quotes.map((quote, index) => <Fragment key={index}>
+      <QuoteSource quote={quote} index={index}/>
+      {quote.annotation && <div className="markdown"><p style={{whiteSpace:'pre-wrap'}}>{quote.annotation}</p></div>}
+    </Fragment>)}
     {referencesOf(metadata as {resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]}).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)}
     <MediaAttachments media={(metadata.media as MediaView[])??[]} messageId={String(metadata.messageId)}/>
     {original?.interaction?<CompletedInteractionCard item={original.interaction}/>:hasText&&<div data-aui-quote-selectable><MessagePrimitive.Parts components={{ Text: Markdown }} /></div>}
@@ -230,7 +230,7 @@ function AssistantMessage() {
     {!internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
     <div className="assistant-message-bubble">
     {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
-    {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i} expanded/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}{referencesOf(original.source).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
+    {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}{referencesOf(original.source).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
     <ArtifactFiles files={messageFiles}/>
     </div></>}
     {!!original&&!process&&status?.type === "running" && !content.some(part => part.type === "text" && part.text) && <p className="thinking" role="status">处理阶段待确认</p>}
@@ -1385,7 +1385,7 @@ function HomerApp() {
             {activePages.current.interactions.cursor>0&&<button type="button" disabled={activePages.current.interactions.checking} onClick={()=>void readActivePage('interactions',0)}>返回待答首页</button>}
             {!state.features?.queueDispatch&&state.history?.moreQueue&&<button type="button" disabled={activePages.current.queue.checking} onClick={()=>loadMore('queue')}>还有待发送记录，查看下一页</button>}
             {state.history?.moreInteractions&&<button type="button" disabled={activePages.current.interactions.checking} onClick={()=>loadMore('interactions')}>还有待答事项，查看下一页</button>}
-            {queueDrafts.map(draft=><details className="queue-draft-recovery" key={draft.key}><summary>未提交的排队编辑草稿</summary><p style={{whiteSpace:'pre-wrap'}}>{draft.text}</p>{draftQuotes(draft).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i} expanded/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}{referencesOf(draft).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)} {!!draft.attachments?.length&&<p>已保留 {draft.attachments.length} 个原附件引用；如另发消息，请重新添加文件。</p>}<button type="button" onClick={()=>setEditDraft({text:[draft.text,...draftQuotes(draft).map(quote=>quote.text+(quote.annotation?'\n批注：'+quote.annotation:''))].filter(Boolean).join('\n\n'),id:crypto.randomUUID()})}>{referencesOf(draft).length?'复制正文到输入草稿':'复制文字与引用到输入草稿'}</button></details>)}
+            {queueDrafts.map(draft=><details className="queue-draft-recovery" key={draft.key}><summary>未提交的排队编辑草稿</summary><p style={{whiteSpace:'pre-wrap'}}>{draft.text}</p>{draftQuotes(draft).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}{referencesOf(draft).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)} {!!draft.attachments?.length&&<p>已保留 {draft.attachments.length} 个原附件引用；如另发消息，请重新添加文件。</p>}<button type="button" onClick={()=>setEditDraft({text:[draft.text,...draftQuotes(draft).map(quote=>quote.text+(quote.annotation?'\n批注：'+quote.annotation:''))].filter(Boolean).join('\n\n'),id:crypto.randomUUID()})}>{referencesOf(draft).length?'复制正文到输入草稿':'复制文字与引用到输入草稿'}</button></details>)}
             {questionDrafts.map(draft=><details className="queue-draft-recovery" key={draft.id}><summary>已保留的答复内容</summary><p>{draft.expired?'原问题已失效':'旧版问题状态需要核对'}；内容不会自动发送，接收情况以原请求回执为准。</p><p style={{whiteSpace:'pre-wrap'}}>{draft.text}</p><button type="button" onClick={()=>setEditDraft({text:draft.text,id:crypto.randomUUID()})}>复制到普通消息草稿</button></details>)}
             <div className="interaction-list">{state.interactions.map(item => <InteractionCard key={state.threadId+':'+item.id} verified={connected&&!activePages.current.interactions.checking} item={item} threadId={state.threadId} messages={state.messages} acceptedRequestIds={state.acceptedRequestIds??[]} onError={setError} onNotLive={interactionNotLive} onAnswer={item=>setAnswerTarget({...item,historyThreadId:state.threadId})} onReveal={card=>claimPosition()(()=>card.scrollIntoView({block:'nearest',behavior:'instant'}))} structuredAnswers={!!state.features?.nativeQuestionAnswers} />)}</div>
             {!accountRequired&&<button type="button" className="scroll-latest" disabled={!history.current.archived&&isAtBottom&&!hasNewContent} onClick={returnLatest}>↓ {hasNewContent?'有新内容 · 最新消息':'最新消息'}</button>}

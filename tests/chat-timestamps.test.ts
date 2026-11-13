@@ -180,7 +180,7 @@ Function('require', 'exports', 'useContext', 'useLayoutEffect', 'useRef', 'useSt
 const processExports: any = {};
 Function('require', 'exports', 'useMemo', 'useAuiState', 'MessagePrimitive', 'HomerToolFallback', declarations('../ui/process-message.tsx', ['useProcessParts']))(
   require, processExports, React.useMemo, useAuiState, MessagePrimitive, () => null);
-const wrapperJs = declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage', 'renderProcessText','QuoteSource']);
+const wrapperJs = 'const Fragment = require("react").Fragment;\n'+declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage', 'renderProcessText','QuoteSource']);
 // Keep the current production quote renderer in this rich-content boundary.
 // Only its stylesheet is omitted; installed primitives and icons stay real.
 const quotePath = new URL('../ui/vendor/assistant-ui/quote.tsx', import.meta.url);

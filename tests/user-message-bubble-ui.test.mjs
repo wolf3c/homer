@@ -20,7 +20,7 @@ const source=readFileSync(process.env.HOMER_BUBBLE_SOURCE??new URL('../ui/homer-
 const ast=ts.createSourceFile('homer-app.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 const declaration=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='UserMessage');
 const completed=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='CompletedInteractionCard');
-const js=ts.transpileModule((completed?'export '+completed.getText(ast)+'\n':'')+'export '+declaration.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
+const js='const Fragment = require("react").Fragment;\n'+ts.transpileModule((completed?'export '+completed.getText(ast)+'\n':'')+'export '+declaration.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
 
 function render(metadata){
  const calls={};

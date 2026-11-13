@@ -25,7 +25,7 @@ try{
   try{
    await page.navigate();await wait(()=>!!document.querySelector('#message-single-quote [data-slot="quote-block"]')&&!!document.querySelector('[contenteditable=true]'));
    await check('ordinary historical quote uses official icon/text and two-line clamp',()=>{const e=document.querySelector('#message-single-quote [data-slot="quote-block-text"]');return !!document.querySelector('#message-single-quote [data-slot="quote-block-icon"]')&&getComputedStyle(e).webkitLineClamp==='2';});
-   await check('legacy quotes retain full text and both annotations',()=>{const e=document.querySelector('#message-legacy-quote'),q=e.querySelector('[data-slot="quote-block-text"]');return e.querySelectorAll('[data-slot="quote-block"]').length===2&&q.textContent.length>700&&getComputedStyle(q).webkitLineClamp==='none'&&e.textContent.includes('原批注完整保留')&&e.textContent.includes('第二条批注');});
+   await check('legacy quotes retain full data and annotations with the default two-line display',()=>{const e=document.querySelector('#message-legacy-quote'),q=e.querySelector('[data-slot="quote-block-text"]');return e.querySelectorAll('[data-slot="quote-block"]').length===2&&q.textContent.length>700&&getComputedStyle(q).webkitLineClamp==='2'&&e.textContent.includes('原批注完整保留')&&e.textContent.includes('第二条批注');});
    await input(page,'保留现有说明');
    await press(page,'#message-source-assistant [data-slot="message-actions"] [aria-label="引用"]');
    await wait(()=>!!document.querySelector('[data-slot="composer-quote"]'));
