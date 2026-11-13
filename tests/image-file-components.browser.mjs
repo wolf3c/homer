@@ -1,7 +1,7 @@
 // Real UI, private-byte adapters and isolated Chrome; all data and HTTP are synthetic.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {existsSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync,statSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {composerFixture} from './fixtures/composer-browser-server.mjs';
@@ -51,8 +51,9 @@ try{
   const check=async(label,predicate)=>{assert.ok(await page.evaluate(predicate),label);checks.push({width,label});};
   try{
    await page.command('Browser.setDownloadBehavior',{behavior:'deny',browserContextId:page.browserContextId});
-   await page.command('Page.addScriptToEvaluateOnNewDocument',{source:'window.__urls={live:[],revoked:[]};const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);URL.createObjectURL=b=>{const u=create(b);window.__urls.live.push(u);return u;};URL.revokeObjectURL=u=>{window.__urls.revoked.push(u);window.__urls.live=window.__urls.live.filter(x=>x!==u);revoke(u);};'});
+   await page.command('Page.addScriptToEvaluateOnNewDocument',{source:'window.__urls={live:[],revoked:[],sizes:[]};const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);URL.createObjectURL=b=>{window.__urls.sizes.push(b.size);const u=create(b);window.__urls.live.push(u);return u;};URL.revokeObjectURL=u=>{window.__urls.revoked.push(u);window.__urls.live=window.__urls.live.filter(x=>x!==u);revoke(u);};'});
    await page.navigate();await wait(()=>!!document.querySelector('#message-image-user .lazy-media')&&!!document.querySelector('[data-slot="file-list"]'));
+   await check('a ready offscreen image offers original download before its preview loads',()=>{const row=document.querySelector('#message-offscreen .message-attachment');return !!row?.querySelector('[data-slot="file-download"]')&&!row.querySelector('[data-slot="image-preview"]');});
    const viewport=await page.evaluate(()=>document.querySelector('.thread-viewport').getBoundingClientRect().toJSON());
    await page.command('Input.dispatchMouseEvent',{type:'mouseWheel',x:viewport.left+viewport.width/2,y:viewport.top+viewport.height/2,deltaX:0,deltaY:-1});
    await page.evaluate(()=>document.querySelector('#message-image-user .message-attachment').scrollIntoView({block:'center'}));
@@ -60,11 +61,25 @@ try{
    await page.evaluate(()=>document.querySelectorAll('#message-image-user .message-attachment')[3].scrollIntoView({block:'center'}));
    await wait(()=>!!document.querySelector('[data-slot="image-preview-error"]'));
    assert.ok(!requests.some(p=>assistantFiles.some(file=>file.path===p)||p.includes('/document/')||p.includes('/old/')));assert.ok(peak<=2);checks.push({width,label:'only nearby images load; result/document bodies stay lazy and shared request budget stays at two'});
-   await check('image/file official structures replace the custom file drawings',()=>!document.querySelector('#message-image-user .message-attachment:first-child [data-slot="file-root"]')&&!!document.querySelector('#message-image-user .message-attachment:nth-child(3) [data-slot="file-root"]')&&!!document.querySelector('#message-image-user [data-slot="image-preview-error"]')&&document.querySelectorAll('[data-slot="file-list"] [data-slot="file-root"]').length===2&&!document.querySelector('.file-list-icon,.file-list-name'));
+   await check('image stays a clean preview while non-image attachments keep official file rows',()=>!document.querySelector('#message-image-user .message-attachment:first-child [data-slot="file-root"]')&&!!document.querySelector('#message-image-user .message-attachment:nth-child(3) [data-slot="file-root"]')&&!!document.querySelector('#message-image-user [data-slot="image-preview-error"]')&&document.querySelectorAll('[data-slot="file-list"] [data-slot="file-root"]').length===2&&!document.querySelector('.file-list-icon,.file-list-name'));
+   await check('decoded image keeps a visible 44px original-file download in its top-right corner',()=>{const row=document.querySelector('#message-image-user .message-attachment:first-child'),frame=row.querySelector('[data-slot="image-root"]'),link=row.querySelector('[data-slot="file-download"]');if(!frame||!link)return false;const f=frame.getBoundingClientRect(),r=link.getBoundingClientRect(),bubble=row.closest('.user-message-bubble').getBoundingClientRect(),style=getComputedStyle(link);return f.left>=0&&f.right<=innerWidth&&f.left>=bubble.left&&f.right<=bubble.right&&link.getAttribute('aria-label')==='下载 wide.png'&&link.title==='下载 wide.png'&&style.display!=='none'&&style.visibility==='visible'&&style.opacity==='1'&&r.width>=44&&r.height>=44&&r.top>=f.top&&r.top-f.top<=12&&r.right<=f.right&&f.right-r.right<=12&&!link.closest('.aui-image-zoom-trigger')&&!row.querySelector('[data-slot="file-name"],[data-slot="file-size"]');});
+   const urlsBeforeDownload=await page.evaluate(()=>window.__urls.sizes.length);
+   if(width<800){
+    await page.evaluate(()=>document.querySelector('#message-image-user [aria-label="下载 wide.png"]').scrollIntoView({block:'center'}));
+    await page.command('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
+    const point=await page.evaluate(()=>{const r=document.querySelector('#message-image-user [aria-label="下载 wide.png"]').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};});
+    await page.command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...point,id:1}]});
+    await page.command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+   }else await press(page,'#message-image-user .message-attachment:first-child [aria-label="下载 wide.png"]');
+   await page.until('window.__urls.sizes.length>'+urlsBeforeDownload+'&&window.__urls.sizes.at(-1)==='+wide.length);
+   assert.equal(requests.filter(path=>path==='/api/media/image-user/wide/1').length,2,'image download reads the exact authorized message/asset/revision');
+   await check('downloading the image does not open its zoom dialog',()=>!document.querySelector('[data-slot="image-zoom-overlay"]'));
    await check('expired and unsupported silk attachments remain factual and have no fake player',()=>document.querySelector('#message-image-user').textContent.includes('已过期')&&!document.querySelector('#message-image-user audio')&&document.querySelectorAll('#message-image-user .lazy-media').length===3);
    await check('full accessible names, ellipsis, official size and authorized download survive narrow width',()=>{const rows=[...document.querySelectorAll('[data-slot="file-name"]')];return rows.some(e=>e.textContent.length>70&&e.title===e.textContent&&getComputedStyle(e).whiteSpace==='nowrap'&&getComputedStyle(e).textOverflow==='ellipsis')&&!!document.querySelector('[data-slot="file-size"]')&&document.documentElement.scrollWidth<=innerWidth;});
    await page.evaluate(()=>document.querySelector('#message-image-user .message-attachment').scrollIntoView({block:'center'}));
    await wait(()=>document.querySelector('#message-image-user [data-slot="image-preview"] img')?.naturalWidth===640);
+   await page.evaluate(()=>document.activeElement?.blur());
+   await page.screenshot('image-original-download-'+width+'.png');
    await press(page,'#message-image-user .aui-image-zoom-trigger');await wait(()=>!!document.querySelector('[data-slot="image-zoom-overlay"]'));
    await wait(()=>document.activeElement===document.querySelector('[data-slot="image-zoom-close"]'));
    await check('official zoom uses only an authorized blob, focuses close and retains official icon/padding geometry',()=>{const e=document.querySelector('[data-slot="image-zoom-overlay"]'),b=e.querySelector('button'),r=b.getBoundingClientRect();return e.querySelector('img').src.startsWith('blob:')&&document.activeElement===b&&r.width===36&&r.height===36&&document.body.style.overflow==='hidden';});
@@ -79,7 +94,8 @@ try{
    assert.equal(await page.evaluate(()=>document.querySelector('.thread-viewport').scrollTop),scroll);checks.push({width,label:'Space opens image zoom without scrolling the conversation'});
    const old=await page.evaluate(()=>document.querySelector('[data-slot="image-zoom-content"]').src);
    messages.find(m=>m.id==='image-user').media[0].revision=2;fixture.update({messages:structuredClone(messages)});
-   await wait(()=>!document.querySelector('[data-slot="image-zoom-overlay"]')&&document.querySelector('#message-image-user .message-attachment')?.querySelector('[data-slot="image-preview"] img')?.naturalWidth===80);
+   try{await wait(()=>!document.querySelector('[data-slot="image-zoom-overlay"]')&&document.querySelector('#message-image-user .message-attachment')?.querySelector('[data-slot="image-preview"] img')?.naturalWidth===80);}
+   catch(error){await page.screenshot('revision-failure-'+width+'.png');console.error('synthetic revision state',await page.evaluate(()=>{const row=document.querySelector('#message-image-user .message-attachment'),image=row?.querySelector('[data-slot="image-preview"] img');return {zoomOpen:!!document.querySelector('[data-slot="image-zoom-overlay"]'),naturalWidth:image?.naturalWidth,placeholder:!!row?.querySelector('.media-preview-placeholder'),downloadRevision:row?.querySelector('[data-slot="file-download"]')?.href.endsWith('/wide/2')};}),{requestedNewRevision:requests.includes('/api/media/image-user/wide/2')});throw error;}
    assert.ok(requests.includes('/api/media/image-user/wide/2'));assert.ok(await page.evaluate('window.__urls.revoked.includes('+JSON.stringify(old)+')'));checks.push({width,label:'revision change tears down old zoom/blob and reads the exact new revision'});
    await press(page,'#message-image-user [aria-label^="下载 合成文件名"]');await wait(()=>document.querySelector('#message-image-user [role="status"]')?.textContent.includes('下载未完成'));
    downloadFail=false;await press(page,'#message-image-user [aria-label^="下载 合成文件名"]');await wait(()=>!document.querySelector('#message-image-user [role="status"]')?.textContent.includes('下载未完成'));
@@ -97,7 +113,7 @@ try{
    await chrome.command('Browser.setDownloadBehavior',{behavior:'allow',browserContextId:page.browserContextId,downloadPath:downloads});
    await press(page,'#canvas-panel [aria-label="下载 合成图片成果.png"]');
    const downloaded=join(downloads,'合成图片成果.png');
-   for(let attempt=0;attempt<150&&!existsSync(downloaded);attempt++)await new Promise(resolve=>setTimeout(resolve,20));
+   for(let attempt=0;attempt<150&&(!existsSync(downloaded)||statSync(downloaded).size!==portrait.length);attempt++)await new Promise(resolve=>setTimeout(resolve,20));
    assert.deepEqual(readFileSync(downloaded),portrait);
    assert.equal(requests.filter(p=>p===assistantFiles[0].path).length,1);
    checks.push({width,label:'Canvas downloads the original bytes without another artifact request'});

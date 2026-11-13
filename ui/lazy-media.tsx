@@ -4,9 +4,8 @@ let active=0;
 const waiting=new Set<()=>void>();
 function drain(){for(const run of waiting){if(active>=2)return;waiting.delete(run);run();}}
 // A shared two-request budget covers both attachment and Markdown previews.
-export function LazyMedia({path,children,kind='image',onUrlChange}:{path:string;kind?:'image'|'video'|'voice';children:(url:string)=>ReactNode;onUrlChange?:(url:string)=>void}){
+export function LazyMedia({path,children,kind='image'}:{path:string;kind?:'image'|'video'|'voice';children:(url:string)=>ReactNode}){
  const element=useRef<HTMLSpanElement>(null),[near,setNear]=useState(false),[url,setUrl]=useState('');
- useEffect(()=>{onUrlChange?.(url);return()=>onUrlChange?.('');},[url,onUrlChange]);
  useEffect(()=>{const node=element.current;if(!node)return;
   const observer=new IntersectionObserver(entries=>setNear(entries.some(entry=>entry.isIntersecting)),{root:node.closest('.thread-viewport'),rootMargin:'400px 0px'});observer.observe(node);return()=>observer.disconnect();
  },[path]);

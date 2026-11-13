@@ -1,0 +1,6 @@
+.message-attachment>.homer-image-attachment[data-slot=image-root]{position:relative;width:320px;max-width:100%}
+.homer-image-attachment .lazy-media{width:100%}
+.homer-image-attachment .image-original-download{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:1px solid var(--line,#d8d6d0);border-radius:8px;background:var(--surface,#fff);color:var(--ink,#272523);text-decoration:none}
+.homer-image-attachment .image-original-download:hover{background:var(--soft,#eeeae4)}
+.homer-image-attachment .image-original-download:focus-visible{outline:2px solid var(--focus,#797265);outline-offset:2px}
+.homer-image-attachment>[role=status]{display:block;padding:8px;font-size:12px}
