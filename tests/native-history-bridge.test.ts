@@ -1,7 +1,13 @@
-import {test} from 'node:test';
+import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
-import {createServer} from 'node:net';
+import {createServer,connect} from 'node:net';
+import {createServer as httpServer} from 'node:http';
+import {once} from 'node:events';
 import {MockAgent} from 'undici';
+import WebSocket,{WebSocketServer} from 'ws';
+import {HttpsProxyAgent} from 'https-proxy-agent';
+import {SocksProxyAgent} from 'socks-proxy-agent';
+import tls from 'node:tls';
 // The real 0.163.0 rejection is input[6].content: array_above_max_length.
 const bridgeModule=await import('../src/native-history-bridge.js');
 test('foreign plaintext reasoning is projected without changing stored history or native reasoning',()=>{
@@ -60,4 +66,142 @@ test('closing an active stream aborts the upstream and releases the loopback lis
  await bridge.close();assert.equal(destroyed,true);
  await assert.rejects(reader.read());await assert.rejects(fetch(bridge.baseUrl+'/unknown'));
  assert.equal(aborted,true);
+});
+
+async function socketFixture(t:TestContext,options:{status?:number;wait?:Promise<void>;bypass?:boolean;socks?:string}={}){
+ const server=httpServer(),sockets=new WebSocketServer({noServer:true,perMessageDeflate:false,handleProtocols:protocols=>protocols.has('native-v2')?'native-v2':[...protocols][0]??false});
+ const handshakes:any[]=[],messages:any[]=[],peers:WebSocket[]=[];
+ sockets.on('headers',headers=>headers.push('x-codex-turn-state: synthetic-turn-state'));
+ server.on('upgrade',async(req,socket,head)=>{
+  handshakes.push(req.headers);await options.wait;
+  if(socket.destroyed)return;
+  if(options.status){socket.end(`HTTP/1.1 ${options.status} Rejected\r\nContent-Type: application/json\r\nRetry-After: 3\r\nConnection: close\r\n\r\n{"error":{"code":"synthetic_rejection"}}`);return;}
+  sockets.handleUpgrade(req,socket,head,peer=>{peers.push(peer);peer.on('error',()=>{});peer.on('message',(data,binary)=>{messages.push({text:data.toString(),binary});peer.send(data.toString(),{binary:false});});});
+ });
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ t.mock.method(HttpsProxyAgent.prototype,'connect',async(_req:unknown,options:any)=>{
+  assert.equal(options.host,'chatgpt.com');assert.equal(options.port,443);
+  return connect((server.address() as any).port,'127.0.0.1');
+ });
+ const dispatcher=new MockAgent();dispatcher.disableNetConnect();Object.assign(dispatcher,{destroy:()=>dispatcher.close()});
+ if(options.bypass)t.mock.method(tls,'connect',()=>connect((server.address() as any).port,'127.0.0.1'));
+ if(options.socks)t.mock.method(SocksProxyAgent.prototype,'connect',async function(this:SocksProxyAgent,_req:unknown,request:any){
+  assert.equal(this.shouldLookup,false);assert.equal(this.proxy.userId,'synthetic-user');assert.equal(this.proxy.password,'synthetic-password');assert.equal(request.host,'chatgpt.com');
+  return connect((server.address() as any).port,'127.0.0.1');
+ });
+ const bridge=await bridgeModule.nativeHistoryBridge({HTTPS_PROXY:options.socks??'http://127.0.0.1:9',...(options.bypass?{NO_PROXY:'.chatgpt.com:443'}:{})},dispatcher);
+ const clients:WebSocket[]=[];
+ function client(path='/responses',headers:Record<string,string>={authorization:'Bearer synthetic-only'},protocols:string[]=[]){
+  const ws=new WebSocket(bridge.baseUrl.replace('http:','ws:')+path,protocols,{headers,perMessageDeflate:false});ws.on('error',()=>{});clients.push(ws);return ws;
+ }
+ t.after(async()=>{for(const ws of clients)ws.terminate();await bridge.close();for(const ws of peers)ws.terminate();sockets.close();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
+ return {server,bridge,client,handshakes,messages,peers};
+}
+
+test('WebSocket preserves handshake metadata, fragmented text, prewarm and incremental requests',async t=>{
+ const f=await socketFixture(t),ws=f.client('/responses',{authorization:'Bearer synthetic-only','openai-beta':'synthetic-beta',session_id:'synthetic-session','x-codex-turn-state':'prior-state'},['native-v1','native-v2']);
+ let state:unknown;ws.on('upgrade',res=>state=res.headers['x-codex-turn-state']);await once(ws,'open');
+ assert.equal(ws.protocol,'native-v2');assert.equal(state,'synthetic-turn-state');
+ assert.equal(f.handshakes[0]['openai-beta'],'synthetic-beta');assert.equal(f.handshakes[0].session_id,'synthetic-session');assert.equal(f.handshakes[0]['x-codex-turn-state'],'prior-state');assert.equal(f.handshakes[0]['sec-websocket-extensions'],undefined);
+ const input=[{type:'reasoning',content:[{type:'reasoning_text',text:'foreign text'}],encrypted_content:'foreign-stub'},{type:'reasoning',content:[],encrypted_content:'native-cipher'},{type:'function_call_output',call_id:'synthetic-call',output:'42'}];
+ const request={type:'response.create',generate:false,input,previous_response_id:'synthetic-response',model:'synthetic-model',reasoning:{effort:'high'},tools:[]};
+ const text=JSON.stringify(request),reply=once(ws,'message');ws.send(text.slice(0,25),{fin:false});ws.send(text.slice(25),{fin:true});
+ const [data,binary]=await reply;assert.equal(binary,false);
+ const projected=JSON.parse(data.toString());assert.deepEqual(projected,{...request,input:bridgeModule.nativeHistoryInput(input)});assert.equal(f.messages[0].binary,false);
+ assert.equal(input[0]!.type,'reasoning');assert.equal(f.messages.length,1);
+ for(const body of [{type:'response.create',previous_response_id:'synthetic-response',input:[]},{type:'response.create',generate:false},{type:'response.cancel'}]){
+  const received=once(ws,'message');ws.send(JSON.stringify(body));assert.deepEqual(JSON.parse((await received)[0].toString()),body);
+ }
+ const inbound=once(ws,'message');f.peers[0]!.send('{"type":"response.',{fin:false});f.peers[0]!.send('completed"}',{fin:true});assert.equal((await inbound)[0].toString(),'{"type":"response.completed"}');
+});
+
+test('WebSocket waits for the real upstream upgrade and cancels pending handshakes',{timeout:5000},async t=>{
+ let release!:()=>void;const wait=new Promise<void>(r=>release=r),f=await socketFixture(t,{wait});
+ const ws=f.client();let opened=false;ws.on('open',()=>opened=true);
+ await once(f.server,'upgrade');await new Promise(r=>setImmediate(r));assert.equal(opened,false);
+ const stopped=new Promise<void>(r=>ws.once('close',()=>r()));await f.bridge.close();release();await stopped;await new Promise(r=>setImmediate(r));assert.equal(opened,false);assert.equal(f.messages.length,0);
+ await f.bridge.close();
+});
+
+for(const status of [401,403,426,429,502,503])test(`WebSocket preserves upstream HTTP ${status} without replay`,async t=>{
+ const f=await socketFixture(t,{status}),ws=f.client();
+ const rejected=new Promise<{status:number|undefined;retry:unknown;body:string}>(resolve=>ws.on('unexpected-response',async(_req,res)=>{let body='';for await(const chunk of res)body+=chunk;resolve({status:res.statusCode,retry:res.headers['retry-after'],body});}));
+ assert.deepEqual(await rejected,{status,retry:'3',body:'{"error":{"code":"synthetic_rejection"}}'});assert.equal(f.handshakes.length,1);assert.equal(f.messages.length,0);
+});
+
+test('WebSocket rejects unsafe routes and caller headers before contacting upstream',async t=>{
+ const f=await socketFixture(t);
+ for(const [path,headers,status] of [['/responses?unexpected=1',{authorization:'Bearer synthetic-only'},404],['/models',{authorization:'Bearer synthetic-only'},404],['/responses',{},401],['/responses',{authorization:'Bearer synthetic-only',origin:'https://example.invalid'},403],['/responses',{authorization:'Bearer synthetic-only',host:'example.invalid'},401]] as const){
+  const ws=f.client(path,headers),rejected=new Promise<number|undefined>(r=>ws.on('unexpected-response',(_req,res)=>{res.resume();r(res.statusCode);}));assert.equal(await rejected,status);ws.terminate();
+ }
+ assert.equal(f.handshakes.length,0);
+});
+
+for(const [name,payload]of [['invalid JSON','{'],['invalid input','{"type":"response.create","input":{}}'],['binary',Buffer.from('{}')]] as const)test(`WebSocket rejects ${name} without dispatch`,async t=>{
+ const f=await socketFixture(t),ws=f.client();await once(ws,'open');const closed=once(ws,'close');ws.send(payload);await closed;assert.equal(f.messages.length,0);
+});
+
+test('closing an active WebSocket releases both peers and remains idempotent',async t=>{
+ const f=await socketFixture(t),ws=f.client();await once(ws,'open');const closed=once(ws,'close'),upstreamClosed=once(f.peers[0]!,'close');
+ await f.bridge.close();await closed;await upstreamClosed;await f.bridge.close();assert.equal(f.messages.length,0);
+});
+
+test('WebSocket uses NO_PROXY and preserves ordered messages under backpressure',async t=>{
+ const f=await socketFixture(t,{bypass:true}),ws=f.client();await once(ws,'open');ws.pause();
+ const received:number[]=[];const finished=new Promise<void>(r=>ws.on('message',(body,binary)=>{assert.equal(binary,false);received.push(JSON.parse(body.toString()).index);if(received.length===40)r();}));
+ for(let index=0;index<40;index++)f.peers[0]!.send(JSON.stringify({index,text:'x'.repeat(65536)}));
+ await new Promise(r=>setTimeout(r,10));ws.resume();await finished;
+ assert.deepEqual(received,Array.from({length:40},(_,index)=>index));
+});
+
+test('WebSocket handshake timeout emits one 504 and does not accept a late upstream',async t=>{
+ let release!:()=>void;const wait=new Promise<void>(r=>release=r),f=await socketFixture(t,{wait});
+ t.mock.timers.enable({apis:['setTimeout']});
+ const ws=f.client(),rejected=new Promise<{status:number|undefined;body:string}>(r=>ws.on('unexpected-response',async(_req,res)=>{let body='';for await(const chunk of res)body+=chunk;r({status:res.statusCode,body});}));
+ await once(f.server,'upgrade');t.mock.timers.tick(15000);assert.deepEqual(await rejected,{status:504,body:''});release();await new Promise(r=>setImmediate(r));assert.equal(f.messages.length,0);
+});
+
+test('WebSocket forwards an upstream message-size close code',async t=>{
+ const f=await socketFixture(t),ws=f.client();await once(ws,'open');const closed=once(ws,'close');f.peers[0]!.close(1009,'synthetic message limit');
+ const [code,reason]=await closed;assert.equal(code,1009);assert.equal(reason.toString(),'synthetic message limit');
+});
+
+test('WebSocket forwards server failure events unchanged without synthesizing completion',async t=>{
+ const f=await socketFixture(t),ws=f.client();await once(ws,'open');
+ const failure={type:'error',error:{code:'server_is_overloaded',message:'synthetic upstream failure'}};
+ const reply=once(ws,'message');f.peers[0]!.send(JSON.stringify(failure));assert.deepEqual(JSON.parse((await reply)[0].toString()),failure);assert.equal(f.messages.length,0);
+});
+
+test('WebSocket rejects a message exceeding the existing 64 MiB limit',async t=>{
+ const f=await socketFixture(t),ws=f.client();await once(ws,'open');const closed=once(ws,'close');ws.send(Buffer.alloc(64*1024*1024+1));await closed;assert.equal(f.messages.length,0);
+});
+
+for(const protocol of ['http','socks5','socks5h'])test(`WebSocket retains ${protocol} proxy routing without credential leakage or direct fallback`,async()=>{
+ let attempts=0;
+ const proxy=createServer(socket=>socket.once('data',chunk=>{
+  attempts++;if(protocol==='http'){assert.match(chunk.toString(),/^CONNECT chatgpt.com:443 /);assert.match(chunk.toString(),/Proxy-Authorization: Basic /i);assert.doesNotMatch(chunk.toString(),/Bearer /);socket.end('HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');}
+  else{assert.equal(chunk[0],5);socket.end(Buffer.from([5,255]));}
+ }));
+ await new Promise<void>(r=>proxy.listen(0,'127.0.0.1',r));
+ const bridge=await bridgeModule.nativeHistoryBridge({ALL_PROXY:protocol+'://synthetic-user:synthetic-password@127.0.0.1:'+String((proxy.address() as any).port)});
+ const ws=new WebSocket(bridge.baseUrl.replace('http:','ws:')+'/responses',{headers:{authorization:'Bearer synthetic-only'}});ws.on('error',()=>{});
+ try{const rejected=await new Promise<number|undefined>(r=>ws.on('unexpected-response',(_req,res)=>{res.resume();r(res.statusCode);}));assert.equal(rejected,protocol==='http'?407:502);assert.equal(attempts,1);}
+ finally{ws.terminate();await bridge.close();await new Promise<void>(r=>proxy.close(()=>r()));}
+});
+
+for(const protocol of ['socks5','socks5h'])test(`WebSocket ${protocol} preserves remote DNS and proxy credentials`,async t=>{
+ const f=await socketFixture(t,{socks:protocol+'://synthetic-user:synthetic-password@127.0.0.1:9'}),ws=f.client();await once(ws,'open');
+ const reply=once(ws,'message');ws.send('{"type":"response.create","input":[]}');await reply;assert.equal(f.messages.length,1);
+});
+
+test('a rejected half-open Upgrade cannot keep the bridge close pending',async()=>{
+ const dispatcher=new MockAgent();dispatcher.disableNetConnect();Object.assign(dispatcher,{destroy:()=>dispatcher.close()});
+ const bridge=await bridgeModule.nativeHistoryBridge({},dispatcher),address=new URL(bridge.baseUrl);
+ const socket=connect({host:'127.0.0.1',port:Number(address.port),allowHalfOpen:true});socket.on('error',()=>{});socket.resume();
+ let closed=false;
+ try{
+  await once(socket,'connect');socket.write('GET /responses HTTP/1.1\r\nHost: '+address.host+'\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: c3ludGhldGljLWtleS0xMg==\r\n\r\n');
+  await once(socket,'end');const closing=bridge.close().then(()=>{closed=true;});
+  let forced=false;const timeout=setTimeout(()=>{forced=true;socket.destroy();},250);await closing;clearTimeout(timeout);assert.equal(forced,false,'close must not depend on the peer closing its writable side');
+ }finally{socket.destroy();if(!closed)await bridge.close();}
 });

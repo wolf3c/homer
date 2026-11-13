@@ -16,6 +16,7 @@ const suites={
  'desktop-codesign':['desktop-update-codesign.test.mjs'],
  'prompt-resume':['native-main-tools-resume.test.mjs','native-main-prompt-resume.test.mjs'],
  'local-media':candidates.filter(file=>/\.local-media\.test\.(ts|mjs)$/.test(file)),
+ 'live-transport':['native-history-transport.live.test.mjs'],
  engine:["native-protocol.engine.test.mjs","channel-native.engine.test.ts","scheduled-native.engine.test.ts","deepseek-continuation.test.ts","deepseek-pinned.test.ts","desktop-source-resume.test.mjs","homer-account-native.test.mjs","native-memory-defaults-offline.test.mjs"],
  account:["homer-account-gateway.test.mjs","homer-account-integration.test.mjs"],
  rtc:["mobile-webrtc-runtime.test.mjs"],

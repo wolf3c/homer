@@ -494,3 +494,35 @@ node scripts/build-run-activity-css.mjs --quote --check
 用户进一步反馈后，移除图片角落下载按钮及专用交互样式，预览与放大图均不增加新下载入口；保留窄屏容器约束、相册用途声明、非图片与成果文件的原下载通路。`tests/image-file-components.browser.mjs` 在冻结 main 加本次图片组件改动的独立构建上完成 60 项浏览器检查，覆盖 1440／390／320px，包含无重复文件信息及下载控件、气泡／视口边界、原图 Blob 和默认图片菜单事件不被取消、触摸打开缩放、键盘／焦点、准确修订替换、旧 URL 回收及原有文件下载／失败重试。已查看两种手机宽度的最终截图，UI 类型检查、Vite 与移动内嵌 HTML 构建通过。
 
 复验使用项目 Node 22.22.0：先在独立候选运行 `node scripts/build-preview-annotation.mjs` 及标准 Vite UI 构建，再设置 `HOMER_COMPONENT_BUILD` 为该构建目录、`HOMER_BROWSER_EVIDENCE` 为本轮 scratch 输出目录，执行 `node tests/image-file-components.browser.mjs`。夹具仅使用合成数据及独立 Chrome，阻断外部请求。DOM contextmenu 未被取消只证明源码保留默认菜单行为，不能替代 iOS／Android 原生菜单及保存的新真机验收；本轮未重复该真机操作。已送审 build 10 和公开安卓 APK 均未替换。
+
+## 2026-11-13 ChatGPT WebSocket 模型传输
+
+桥接和默认测试隔离：
+
+```sh
+node --import tsx --test tests/native-history-bridge.test.ts tests/test-suites.test.mjs
+```
+
+固定 Codex 0.163.0（包内引擎、合成凭据与回环上游，不使用真实模型）：
+
+```sh
+HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test tests/desktop-source-resume.test.mjs
+```
+
+本轮桥29项、测试边界及驱动故障22项合计51/51通过；固定引擎10个场景整批通过。默认离线回归保留 HTTP 断言，新增 WS 双跳握手及头部、原历史不变、分片文本、预热／增量、背压、服务错误透传、代理／NO_PROXY／远端 DNS／认证、64 MiB、15 秒握手和半开连接关闭。显式 suite 的默认排除、过滤与失败传播由 test-suites 回归覆盖。实模驱动另以假引擎、假授权及拒绝出站代理验证初始化超时、已开始生成后取消、源授权变化及关闭异常：都只启动一组、零模型请求、私有目录为空；测试不以 Node 超时会自动中断 async 回调为前提。
+
+固定引擎专项覆盖 HTTP 426 回退，WS 混合来源及纯 ChatGPT 原线程冷恢复、动态工具一次执行与增量；401／429／503、断线、1009 及工具已完成后断线均遵循原生恢复／报错，工具不重复执行。源授权、原 thread 及 rollout 保留。该专项属于原有 engine 分组，不从默认 npm test 进入。
+
+提交前使用 `c8517ef` 加本轮精确差异的独立候选，并显式固定 Node 22.22.0，完整 `npm run typecheck` 通过，默认核心 2382/2384；两项图片预览失败已在未改造基线复现，无取消或跳过。并行渠道、UI、电源和模型默认值改动未纳入候选及本提交。
+
+真实性能是新增的 **live-transport 显式专项**，默认核心回归不会运行。必须明确提供测试授权路径及包内引擎；缺少条件报错，不自动发现日常账号，也不以跳过冒充通过：
+
+```sh
+HOMER_TEST_CODEX_BIN=/absolute/path/to/codex \
+HOMER_TEST_AUTH_FILE=/absolute/path/to/test-auth.json \
+npm run test:live-transport
+```
+
+测试使用当前候选 `nativeHistoryBridge`、固定 Terra/high/标准档与相同合成语料，约3.5万／37万token各做HTTP→WS、WS→HTTP。先读模型目录、关闭项目文档自动注入并核对初始usage差值≤64token，记录应用层字节、首文本、三轮耗时、预热、usage及错误类别。代理沿用现有引擎的代理解析；不保存认证头、请求／响应原文或用户内容。临时授权和原生运行数据仅在独立私有目录，退出后回收；源授权核对位于回收之后。测试取消会终止当前引擎，等待退出后删除HOME；任何样本或上游模型错误立即停止整个专项。测试观察器是回环测量入口，不增加生产配置或监控状态。
+
+本轮包内Node22.22.0/Codex0.163.0的首次八样本实测完成，后续最终专项在第三个样本遇到服务端 `server_is_overloaded` 并停止，明确未通过；拒绝以早先成功结果替代。约37万token的既有完整样本显示上传约减少75%，耗时随上游容量明显波动。所有成功、失败和中止样本及真实Homer主／Worker原线程续办结果见[架构正文](architecture/account-and-model-connection.md#chatgpt-恢复会话的模型传输)。源码未安装；Windows实机与最终完整实网性能仍未验证。

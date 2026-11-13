@@ -41,7 +41,8 @@
     "test:development": "node scripts/test.mjs --development",
     "test:vendor": "node scripts/test.mjs --vendor",
     "test:desktop:acceptance": "node scripts/test.mjs --desktop",
-    "test:windows-capture": "node scripts/test.mjs --windows-capture"
+    "test:windows-capture": "node scripts/test.mjs --windows-capture",
+    "test:live-transport": "node scripts/test.mjs --live-transport"
   },
   "devDependencies": {
     "@electron-forge/core": "8.0.1",
@@ -71,6 +72,8 @@
     "node-datachannel": "0.33.6",
     "teleproto": "1.233.0",
     "undici": "7.30.1",
-    "ws": "8.22.2"
+    "ws": "8.22.2",
+    "https-proxy-agent": "7.0.6",
+    "socks-proxy-agent": "8.0.4"
   }
 }

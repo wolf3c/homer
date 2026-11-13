@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdirSync,mkdtempSync,copyFileSync,writeFileSync,symlinkSync,rmSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {mkdirSync,mkdtempSync,copyFileSync,writeFileSync,readFileSync,readdirSync,symlinkSync,rmSync} from 'node:fs';
+import {join,resolve,dirname} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {spawnSync} from 'node:child_process';
 
 function fixture(t){
@@ -23,6 +24,27 @@ function fixture(t){
  const run=(...args)=>spawnSync(process.execPath,['scripts/test.mjs',...args,'--test-reporter=tap'],{cwd:root,encoding:'utf8',timeout:20000,env:{PATH:process.env.PATH,HOME:join(root,'home'),TMPDIR:join(root,'tmp'),CODEX_HOME:join(root,'codex'),HOMER_TEST_APP:'/synthetic/Homer.app',HOMER_TEST_CODEX:'/synthetic/codex',HOMER_TEST_CODEX_BIN:'/synthetic/codex',HOMER_OFFLINE_CODEX_BIN:'/synthetic/codex',HOMER_TEST_CONNECTION:'/synthetic/connection.json',HOMER_TEST_SYNTHETIC_LOGIN:'/synthetic/login.json',...(process.env.NODE_OPTIONS?{NODE_OPTIONS:process.env.NODE_OPTIONS}:{})}});
  return {root,put,run};
 }
+
+for(const stage of ['initialize','generation','source-refresh','close-failure'])test('live transport '+stage+' failure stops requests and removes private runtime',t=>{
+ const f=fixture(t),auth=join(f.root,'synthetic-auth.json'),engine=join(f.root,'fixture-codex.mjs'),methods=join(f.root,'methods.jsonl');
+ writeFileSync(auth,'{"OPENAI_API_KEY":"synthetic-only"}',{mode:0o600});
+ const body=stage==='source-refresh'||stage==='close-failure'?'process.exitCode=7;':`process.stdin.setEncoding('utf8');let pending='';process.stdin.on('data',chunk=>{pending+=chunk;let i;while((i=pending.indexOf('\\n'))>=0){const m=JSON.parse(pending.slice(0,i));pending=pending.slice(i+1);fs.appendFileSync(${JSON.stringify(methods)},m.method+'\\n');if(m.id===undefined||${JSON.stringify(stage)}==='initialize')continue;const result=m.method==='thread/start'?{thread:{id:'synthetic-thread'}}:m.method==='turn/start'?{turn:{id:'synthetic-turn'}}:{};process.stdout.write(JSON.stringify({id:m.id,result})+'\\n');}});`;
+ writeFileSync(engine,`import fs from 'node:fs';${body}\n`);
+ const source=readFileSync(resolve('tests/native-history-transport.live.test.mjs'),'utf8').replaceAll("'../src/","'"+pathToFileURL(resolve('src')).href+'/').replace('timeout:900000','timeout:500');
+ f.put('native-history-transport.live.test.mjs',source);
+ const shim=join(f.root,'fault.mjs');
+ // Route the explicitly supplied executable to Node + our fixture on every OS.
+ const executable=`import cp from 'node:child_process';import{syncBuiltinESMExports}from'node:module';const spawn=cp.spawn,exec=cp.execFileSync;cp.spawn=function(bin,args,opts){return bin===process.env.HOMER_TEST_CODEX_BIN?spawn.call(this,bin,[${JSON.stringify(engine)},...args],opts):spawn.call(this,bin,args,opts)};cp.execFileSync=function(bin,args,opts){return bin===process.env.HOMER_TEST_CODEX_BIN&&args[0]==='--version'?'codex-cli 0.163.0\\n':exec.call(this,bin,args,opts)};`;
+ writeFileSync(shim,executable+(stage==='source-refresh'?`import fs from 'node:fs';const read=fs.readFileSync;let count=0;fs.readFileSync=function(path,...args){return path===process.env.HOMER_TEST_AUTH_FILE&&++count>1?Buffer.from('synthetic-refresh'):read.call(this,path,...args)};`:stage==='close-failure'?`import http from 'node:http';const close=http.Server.prototype.close;http.Server.prototype.close=function(...args){close.apply(this,args);throw Error('synthetic_close_failure');};`:'')+'syncBuiltinESMExports();');
+ const result=spawnSync(process.execPath,['--import','tsx','--import',shim,'--test','tests/native-history-transport.live.test.mjs'],{cwd:f.root,encoding:'utf8',timeout:10000,env:{PATH:dirname(process.execPath),HOME:join(f.root,'home'),HOMER_TEST_CODEX_BIN:process.execPath,HOMER_TEST_AUTH_FILE:auth,HTTPS_PROXY:'http://127.0.0.1:9',NO_PROXY:'localhost,127.0.0.1'}});
+ assert.equal(result.status,1,result.stdout+result.stderr);
+ if(stage==='initialize'||stage==='generation')assert.match(result.stdout,/test timed out after 500ms/);
+ const privateParent=join(f.root,'.codex/private/native-history-transport');assert.deepEqual(readdirSync(privateParent),[]);
+ const runs=join(f.root,'.codex/scratch/native-history-transport'),samples=readdirSync(runs);assert.equal(samples.length,1);
+ const metrics=JSON.parse(readFileSync(join(runs,samples[0],'metrics.json'),'utf8'));assert.equal(metrics.results.length,1);assert.equal(metrics.results[0].requests.length,0);
+ if(stage==='generation')assert.match(readFileSync(methods,'utf8'),/turn\/start/);
+ assert.doesNotMatch(result.stdout+result.stderr,/Cannot read properties|synthetic-only/);
+});
 
 test('default suite keeps core checks and explicitly reports local media as unverified',t=>{
  const f=fixture(t);
@@ -51,6 +73,7 @@ test('empty optional suite fails explicitly and desktop acceptance still require
 
 // Audited ownership: optional environment settings must never activate these through npm test.
 const explicitSuites={
+ "live-transport": ["native-history-transport.live.test.mjs"],
  "desktop-codesign": ["desktop-update-codesign.test.mjs"],
  "engine": [
   "channel-native.engine.test.ts",
