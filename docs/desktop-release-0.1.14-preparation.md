@@ -1,6 +1,6 @@
 # Homer 桌面 v0.1.14 发行准备
 
-状态：2026-11-13，准备检查完成；用户已确认仅提交本轮三个发行文件、推送 main、创建标签、正式签名公证、构建验收，通过后公开并直接设为 Latest。以下执行结果按实际证据补充；工作区未提交产品改动不纳入候选。
+状态：2026-11-13，v0.1.14 / build 299 已公开并设为 Latest。三平台构建、云端完整校验及 Apple 芯片隔离验收通过；固定标签与 Latest 公开下载核验通过；本机安全安装因未结束的待授权工作阻塞，状态见下文。工作区未提交产品改动未纳入候选。
 
 ## 来源与边界
 
@@ -60,3 +60,78 @@
 本轮用户明确授权：「确认，提交这三个发行文件、推送 main、创建标签并正式签名公证，继续构建和验收，通过后公开并直接设为 Latest。」按此连续推进，无需再次确认已授权动作；不以工作流绿色代替产品验收或升级证据。其他未提交文件、旧失败草稿、旧标签、手机发行及官网部署均不在本轮修改范围。
 
 准备阶段不安装依赖、不编译产品、不调用真实模型、不操作日常实例。静态检查的临时输出使用 `.codex/scratch/`，完成后按 `work-cleanup` 回收；本记录和版本元数据保留供用户审阅与继续发行。
+
+## 执行记录
+
+- 发行提交 `65125aae77472bd7f99d330ce68261e307d470c4` 仅含本记录及两个根版本文件。远端 main、v0.1.14 标签和目标工作流回读均符合该完整 SHA；此前本地已提交 main 完整同步，未提交产品工作保留。
+- [运行 43408212732 / attempt 1](https://github.com/wolf3c/homer/actions/runs/43408212732/attempts/1)，workflow_dispatch，操作者 wolf3c，2026-11-13 18:19:00（Asia/Shanghai）触发，ref v0.1.14；目标 SHA、desktop / desktop-three、build 299、草稿直传均符合本轮输入。未重跑或混合 attempt。
+- Mac ARM 正式签名、公证、打包和上传已成功；原始回执版本/build、SHA、preparation=false、publishable=true、双服务地址及 Developer ID / notarized and stapled 标记均通过检查。Intel / Windows 和最终云端 verify-draft 随后全部成功；plan、三平台 build、verify-draft 五个 job 全部 success，来自同一 SHA / run / attempt。Windows 的真实 electron-builder 更新清单契约检查及 Mac 临时签名材料清理步骤均成功。
+
+## 固定源码的本地回归
+
+从最终提交导出独立源码快照，复用项目依赖，不读取工作区未提交产品覆盖。快照目录不会自动采用根 `.nvmrc`，首轮系统 Node 26 的检查不作为最终工具链证据；改用绝对 Node 22.22.0 路径及对应 npm PATH 后完整重跑。
+
+- `npm run build`、`npm run typecheck`：Node 22.22.0 下通过。
+- Node 22.22.0 / tsx / VM modules，定向 `native-history-bridge.test.ts`、`electron-shell.test.mjs`、`quote-navigation-ui.test.mjs`、`user-message-bubble-ui.test.mjs`、`test-suites.test.mjs`：465/465 通过，零失败、取消或跳过。原生桥只用合成本地协议，不调用真实模型。
+- 图片组件实际浏览器检查 60 项，引用定位 42 项，覆盖 1440 / 390 / 320 宽度。另用当前引用操作验证新增、删除不丢草稿、刷新恢复、编辑批注、发送精确来源及正文呈现，共 24 项通过。已查看合成截图，无横向溢出或未解释的运行时错误。
+- 实际图片批注组件验证绘制模式 computed cursor=crosshair、真实鼠标拖拽、Enter 保存备注及合法区域；已查看合成截图。首轮指针早于组件布局完成，按既有浏览器辅助程序等待布局并分段拖拽后通过；未改产品源码。
+- 旧 `quote-components.browser.mjs` 的 composer-quote 选择器在上一版已失效；旧 `image-file-annotations.browser.mjs` 在 fixture 的已移除 artifact 接口处失败。这两项保留为未通过，不改断言迎合实现；本轮使用上述当前交互和独立组件检查覆盖实际变更，不声称旧脚本或其全部场景已通过。
+
+尚未执行默认全量测试、真实账号、付费模型、跨渠道通信或完整原生自动升级。上述源码浏览器检查尚须结合实际正式包验收。
+
+## Apple 芯片正式包验收
+
+完整下载 `Homer-mac-arm64.zip`，409875670 字节，SHA-256 `765d8c8b34dcbb36728ca8990c612bfc32c983e419ecc5ee89ce9c79b93b13b5`，与原始回执及平台清单一致。ZIP 内封存清单的版本/build、SHA、正式包标记及双服务地址与回执一致；仅正常解压，未修改 App 或重新打包。
+
+- `codesign --verify --deep --strict`、stapler validate、Gatekeeper 均通过，系统报告 Notarized Developer ID。
+- `desktop-update-codesign.test.mjs` 真实验签表达式专项 1/1 通过；正式包双服务地址和批注运行时/许可证定向检查 2/2 通过。
+- 基于本次提交 `electron-desktop.test.mjs` 前四项的正式 Electron 隔离验收 4/4 通过，零失败或跳过：发送与正常重启、未连接账号只读、完整进程崩溃后同一会话及精确附件恢复、SILK 预览与访问控制；追加实际窗口标题「荷马」断言。每次正常退出均核对 owner、runtime/gateway 锁及 lease 释放，崩溃恢复未手动删锁。
+- 测试使用独立合成 profile，只预置首启导览已读标记；未调用需要回环网站账号服务的 daily 场景，未改签名包、发送真实消息、调用付费模型、注册唤醒或扩大权限。
+- 本地与云端网页构建的部分资源文件名/字节不同，因此未复用“本地 UI 等同正式包”的假设；直接用正式包 `homer/dist/web` 重新执行图片 60 项、引用交互 24 项、引用定位 42 项浏览器检查，全部通过，覆盖 1440 / 390 / 320 宽度，并查看合成截图。正式包实际界面验收与源码检查分别记录。
+
+本机自动安装尚待日常执行结束：只读核对日常实际资料根为 `~/Library/Application Support/Homer Desktop`，无 adoption 外部路径；仍存在未结束 Worker、pending_main 授权/问答及运行中消息。已安装的 `upgradeStatus().safe` 明确要求 Worker、执行与 pending_main/pending_user 全部清空，不能把 rpc_wait 当作常驻空闲。未停止日常实例、取消任务、清队列、替换应用或改动资料；保留同一已验证 ZIP 供后续安全安装；完成验收后的解压 App 在下方收尾中回收，需要安装时从该 ZIP 正常解压。
+
+## 完整草稿校验与公开
+
+三平台原始回执、平台与合并清单、全部 11 个附件身份/大小/SHA-256、正式包标记及双服务地址均核对通过。Windows 回执明确未签名，原生 latest.yml 的固定版本 URL、size 和 SHA-512 字段一致；Intel 最低系统为 macOS 14.0。只在本机完整下载 ARM 大包；其余平台完整下载校验证据来自云端 verify-draft。
+
+中英文更新说明在公开前写入并逐字回读一致，完整用户日志只维护于同一 Release 正文。发布前匿名 API 曾限流，等待重置后成功核对原 Latest v0.1.13 / Release ID 443142581 及全部 11 个附件 ID、大小和摘要未变化；没有把限流或 404 当作无 Latest。原基线与 [v0.1.13 发行记录](desktop-release-0.1.13-preparation.md) 中同版表格一致。
+
+公开前再次核对本次草稿 ID、附件身份、不可变标签和原 Latest；随后按本轮明确授权执行 `gh release edit v0.1.14 --repo wolf3c/homer --verify-tag --draft=false --prerelease=false --latest`。没有重传附件、移动标签或部署官网。
+
+[固定版本页面](https://github.com/wolf3c/homer/releases/tag/v0.1.14)，Release ID 444092207，公开时间 `2026-11-13T10:50:06Z`（北京时间 18:50:06），draft=false、prerelease=false。认证与匿名 API 回读 Latest 均为本版；匿名分发核验通过。
+
+| 附件 | ID | 字节数 | SHA-256 |
+| --- | ---: | ---: | --- |
+| `Homer-mac-arm64.zip` | 743224045 | 409875670 | `765d8c8b34dcbb36728ca8990c612bfc32c983e419ecc5ee89ce9c79b93b13b5` |
+| `Homer-mac-x64.zip` | 743245804 | 377890511 | `943d2df988dab520d59f652ce16771f9f4271187b1ed4f91ea3981f88fd47b84` |
+| `Homer-windows-x64.exe` | 743270881 | 291073609 | `8c85ea6313ec1ae351d08a85aa01c8576bb6ebcba89ba977eaa724407f05ce59` |
+| `latest.yml` | 743271352 | 484 | `c0d9e6da3ffd4599270b44529118041e04fdf6c9849afe34f93f7991c412d98e` |
+| `release-manifest-macos-arm64.json` | 743224823 | 977 | `6e4465d099755d4dd511a00a25676a95ba310addd0e4da8d132c4b5272b9ca73` |
+| `release-manifest-macos-x64.json` | 743246616 | 963 | `456bc37228cdc5ec064c9adece9104883a2984869bc8c91059a53ad00afab188` |
+| `release-manifest-windows-x64.json` | 743271469 | 961 | `8e4f07214b91c2f2fdfa07124ca38810ebeab9f87a0b1493297ad02ba21109a4` |
+| `release-manifest.json` | 743273660 | 2643 | `37b6f9f2e62a8238434971a172508153805228e619988d116bba178ae0243eb1` |
+| `RELEASES-darwin-arm64.json` | 743224784 | 319 | `4be1495dbc1892970abdc97f91712aed2824b85bd2af580e975ac253861111e4` |
+| `RELEASES-darwin-x64.json` | 743246564 | 317 | `bffdb7ad76754f403e477ce0e8d2510843ad99c74ff0e0f046e050b78e8d3c12` |
+| `SHA256SUMS` | 743273615 | 519 | `fa23a9ad487623bb8ca6f97ea20ae0055e2cda38bce604b98d83fb5e006863f9` |
+
+## 发布后匿名分发核验
+
+- 固定标签及 Latest 匿名 API 均为 v0.1.14 / Release ID 444092207，draft=false、prerelease=false，中英文正文逐字一致。全部 11 个附件名称、ID、大小和 SHA-256 与公开前基线一致，复用同一运行 verify-draft 的完整下载证据。
+- 三平台固定标签和 Latest 大包各匿名 GET 起始 1024 字节，共 6 次均为 206，Content-Range 总大小、样本长度和文件名符合基线；Latest 重定向均经过 v0.1.14 同名固定标签 URL。未保存临时存储 URL 或鉴权值。
+- 8 个小附件的固定标签及 Latest 入口全部匿名完整下载，共 16 次大小和 SHA-256 一致，包括 SHA256SUMS、合并/平台清单和三份原生更新清单。
+- 官网及 README 的现有 GitHub Latest 入口现已交付本版；本轮未部署或修改官网，也未迁移旧官网 feed 客户端。Intel / Windows 实机和所有平台完整原生自动升级仍未验收；Latest 切换按本轮明确决定执行，没有将该缺口改记为通过。
+
+## 本机安装阻塞与保留材料
+
+公开后再次只读核对：日常仍安装 v0.1.13 / build 298，7 个未结束 Worker 处于 rpc_wait，另有 7 项 pending_main 授权及 1 条运行中会话消息。持续观察过程中已从最初 8 个未结束 Worker 降为 7 个，但尚未满足实际运行代码的安全升级条件；需要日常 Agent 处理待授权工作并结束执行，不能由本发行任务代为批准、取消或清理。
+
+因此本轮本机升级在安全停机前阻塞：未退出/强停日常实例，未清队列、删锁或处理用户草稿，未做停机备份和应用替换，未声称日常数据迁移/保留核验完成。不重复索要安装授权；现有安装授权仍适用于后续空闲后的完整安全流程。
+
+保留 `.codex/scratch/github-build/43408212732/1/Homer-mac-arm64.zip`、ARM 原始小回执、合并清单与 SHA256SUMS，供按同一版本/SHA/run/attempt 安全安装和摘要复核；不重新下载或改包。安装及原资料核验完成、或明确不再需要本机安装时清理这些材料。解压 App、合成 profile、源码快照及已完成检查的中间资料按 work-cleanup 回收，签名包未来可从保留 ZIP 正常解压。
+
+## 本轮收尾
+
+按 work-cleanup 核对本轮 App/浏览器进程及两个任务目录均无打开文件后，实际删除源码快照、合成 profile、解压 App、浏览器 profile、截图、临时脚本、日志及已完成分发的小清单副本，分配块合计约 1056 MiB；不将该值等同于 APFS 可用空间变化。收尾后文件系统可用空间约 24 GiB。
+
+仅保留上述 ARM ZIP、ARM 小回执、合并清单与 SHA256SUMS（约 391 MiB），用途及清理条件见本机安装阻塞段。公开来源、全部附件摘要及验收结论已在本记录、固定 Release 和 Git/Actions 留存。本轮没有停机资料备份，因为安全停机条件尚未满足；没有删除任何日常数据、原安装、其他任务未提交工作、旧标签或草稿。观察到其他任务继续修改 src/service.ts 和 ui/desktop-chat-apps.tsx，均未暂存或纳入本次发行。
