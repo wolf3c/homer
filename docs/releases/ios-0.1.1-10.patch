@@ -1,0 +1,120 @@
+--- a/mobile/app.json
++++ b/mobile/app.json
+@@ -7,7 +7,10 @@
+     "ios": {
+       "bundleIdentifier": "com.homer.mobile",
+       "supportsTablet": false,
+-      "buildNumber": "7"
++      "buildNumber": "10",
++      "infoPlist": {
++        "NSPhotoLibraryAddUsageDescription": "将你选择的 Homer 图片保存到相册。"
++      }
+     },
+     "android": {
+       "package": "com.homer.mobile",
+--- a/mobile/package.json
++++ b/mobile/package.json
+@@ -8,7 +8,7 @@
+     "android": "expo run:android",
+     "ios": "expo run:ios",
+     "typecheck": "tsc --noEmit",
+-    "test": "node --test connection.test.mjs local-network.test.mjs rebind.test.mjs update.test.mjs",
++    "test": "node --test connection.test.mjs local-network.test.mjs rebind.test.mjs update.test.mjs privacy.test.mjs",
+     "bundle": "npm run build:ui && expo export --platform ios --platform android --max-workers 1",
+     "build:ui": "node ../scripts/build-mobile-ui.mjs"
+   },
+--- /dev/null
++++ b/mobile/privacy.test.mjs
+@@ -0,0 +1,8 @@
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {readFileSync} from 'node:fs';
++
++test('iOS declares why a WebView image may be saved to Photos',()=>{
++ const {expo}=JSON.parse(readFileSync(new URL('./app.json',import.meta.url),'utf8'));
++ assert.ok(expo.ios.infoPlist?.NSPhotoLibraryAddUsageDescription?.trim(),'saving an image must have an add-only Photos purpose string');
++});
+--- a/ui/homer-app.tsx
++++ b/ui/homer-app.tsx
+@@ -115,17 +115,15 @@
+  return <><FileDownload data={new URL(path,location.href).href} sourceType="url" filename={filename} mimeType={mimeType} onClick={event=>{event.preventDefault();void download();}}/>{error&&<span role="status">{error}</span>}</>;
+ }
+ function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:string;index:number}){
+- const [previewUrl,setPreviewUrl]=useState(''),[loadedImageUrl,setLoadedImageUrl]=useState('');
+  const labels:Record<string,string>={received:'等待下载',downloading:'准备中',retryable_failed:'等待重试',failed:'准备失败',expired:'已过期',deleted:'已清理',revoked:'已撤回'};
+  const path='/api/media/'+messageId+'/'+asset.assetId+'/'+asset.revision;
+  const previewPath=asset.kind==='voice'?path+'?preview=voice':path;
+  const previewable=asset.state==='ready'&&(asset.kind==='image'||asset.kind==='video'||(asset.kind==='voice'&&(!!asset.previewMime||asset.mime!=='audio/silk')));
+- const imagePreviewReady=previewable&&asset.kind==='image'&&!!previewUrl&&loadedImageUrl===previewUrl;
+  return <figure className="message-attachment">
+-  {previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'} onUrlChange={asset.kind==='image'?setPreviewUrl:undefined}>{preview=>asset.kind==='image'?<ImageRoot><ImageZoom src={preview} alt={asset.filename}><ImagePreview src={preview} alt={asset.filename} ratio="4:3" onLoad={()=>setLoadedImageUrl(preview)} onError={()=>setLoadedImageUrl('')}/></ImageZoom></ImageRoot>:asset.kind==='voice'?<audio controls preload="none" src={preview} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={preview} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>}
+-  {!imagePreviewReady&&<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
++  {previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'}>{preview=>asset.kind==='image'?<ImageRoot><ImageZoom src={preview} alt={asset.filename}><ImagePreview src={preview} alt={asset.filename} ratio="4:3"/></ImageZoom></ImageRoot>:asset.kind==='voice'?<audio controls preload="none" src={preview} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={preview} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>}
++  <figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
+    {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
+-   {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
++   {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>
+  </figure>;
+ }
+ function MediaAttachments({media,messageId}:{media:MediaView[];messageId:string}){
+--- a/ui/lazy-media.tsx
++++ b/ui/lazy-media.tsx
+@@ -4,9 +4,8 @@
+ const waiting=new Set<()=>void>();
+ function drain(){for(const run of waiting){if(active>=2)return;waiting.delete(run);run();}}
+ // A shared two-request budget covers both attachment and Markdown previews.
+-export function LazyMedia({path,children,kind='image',onUrlChange}:{path:string;kind?:'image'|'video'|'voice';children:(url:string)=>ReactNode;onUrlChange?:(url:string)=>void}){
++export function LazyMedia({path,children,kind='image'}:{path:string;kind?:'image'|'video'|'voice';children:(url:string)=>ReactNode}){
+  const element=useRef<HTMLSpanElement>(null),[near,setNear]=useState(false),[url,setUrl]=useState('');
+- useEffect(()=>{onUrlChange?.(url);return()=>onUrlChange?.('');},[url,onUrlChange]);
+  useEffect(()=>{const node=element.current;if(!node)return;
+   const observer=new IntersectionObserver(entries=>setNear(entries.some(entry=>entry.isIntersecting)),{root:node.closest('.thread-viewport'),rootMargin:'400px 0px'});observer.observe(node);return()=>observer.disconnect();
+  },[path]);
+--- a/tests/image-file-components.browser.mjs
++++ b/tests/image-file-components.browser.mjs
+@@ -1,7 +1,7 @@
+ // Real UI, private-byte adapters and isolated Chrome; all data and HTTP are synthetic.
+ import assert from 'node:assert/strict';
+ import {createHash} from 'node:crypto';
+-import {existsSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
++import {existsSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync,statSync} from 'node:fs';
+ import {resolve,join} from 'node:path';
+ import {deflateSync} from 'node:zlib';
+ import {composerFixture} from './fixtures/composer-browser-server.mjs';
+@@ -51,7 +51,7 @@
+   const check=async(label,predicate)=>{assert.ok(await page.evaluate(predicate),label);checks.push({width,label});};
+   try{
+    await page.command('Browser.setDownloadBehavior',{behavior:'deny',browserContextId:page.browserContextId});
+-   await page.command('Page.addScriptToEvaluateOnNewDocument',{source:'window.__urls={live:[],revoked:[]};const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);URL.createObjectURL=b=>{const u=create(b);window.__urls.live.push(u);return u;};URL.revokeObjectURL=u=>{window.__urls.revoked.push(u);window.__urls.live=window.__urls.live.filter(x=>x!==u);revoke(u);};'});
++   await page.command('Page.addScriptToEvaluateOnNewDocument',{source:'window.__urls={live:[],revoked:[],sizes:[]};const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);URL.createObjectURL=b=>{window.__urls.sizes.push(b.size);const u=create(b);window.__urls.live.push(u);return u;};URL.revokeObjectURL=u=>{window.__urls.revoked.push(u);window.__urls.live=window.__urls.live.filter(x=>x!==u);revoke(u);};'});
+    await page.navigate();await wait(()=>!!document.querySelector('#message-image-user .lazy-media')&&!!document.querySelector('[data-slot="file-list"]'));
+    const viewport=await page.evaluate(()=>document.querySelector('.thread-viewport').getBoundingClientRect().toJSON());
+    await page.command('Input.dispatchMouseEvent',{type:'mouseWheel',x:viewport.left+viewport.width/2,y:viewport.top+viewport.height/2,deltaX:0,deltaY:-1});
+@@ -60,11 +60,17 @@
+    await page.evaluate(()=>document.querySelectorAll('#message-image-user .message-attachment')[3].scrollIntoView({block:'center'}));
+    await wait(()=>!!document.querySelector('[data-slot="image-preview-error"]'));
+    assert.ok(!requests.some(p=>assistantFiles.some(file=>file.path===p)||p.includes('/document/')||p.includes('/old/')));assert.ok(peak<=2);checks.push({width,label:'only nearby images load; result/document bodies stay lazy and shared request budget stays at two'});
+-   await check('image/file official structures replace the custom file drawings',()=>!document.querySelector('#message-image-user .message-attachment:first-child [data-slot="file-root"]')&&!!document.querySelector('#message-image-user .message-attachment:nth-child(3) [data-slot="file-root"]')&&!!document.querySelector('#message-image-user [data-slot="image-preview-error"]')&&document.querySelectorAll('[data-slot="file-list"] [data-slot="file-root"]').length===2&&!document.querySelector('.file-list-icon,.file-list-name'));
++   await check('image/file official structures replace the custom file drawings',()=>!!document.querySelector('#message-image-user .message-attachment:first-child [data-slot="file-root"]')&&!!document.querySelector('#message-image-user .message-attachment:nth-child(3) [data-slot="file-root"]')&&!!document.querySelector('#message-image-user [data-slot="image-preview-error"]')&&document.querySelectorAll('[data-slot="file-list"] [data-slot="file-root"]').length===2&&!document.querySelector('.file-list-icon,.file-list-name'));
++   await check('decoded image keeps its original-file download accessible',()=>{const row=document.querySelector('#message-image-user .message-attachment:first-child'),link=row.querySelector('[data-slot="file-download"]');return !!link&&link.getAttribute('aria-label')==='下载 wide.png'&&getComputedStyle(link).display!=='none';});
++   const urlsBeforeDownload=await page.evaluate(()=>window.__urls.sizes.length);
++   await press(page,'#message-image-user .message-attachment:first-child [aria-label="下载 wide.png"]');
++   await page.until('window.__urls.sizes.length>'+urlsBeforeDownload+'&&window.__urls.sizes.at(-1)==='+wide.length);
++   assert.equal(requests.filter(path=>path==='/api/media/image-user/wide/1').length,2,'image download reads the exact authorized message/asset/revision');
+    await check('expired and unsupported silk attachments remain factual and have no fake player',()=>document.querySelector('#message-image-user').textContent.includes('已过期')&&!document.querySelector('#message-image-user audio')&&document.querySelectorAll('#message-image-user .lazy-media').length===3);
+    await check('full accessible names, ellipsis, official size and authorized download survive narrow width',()=>{const rows=[...document.querySelectorAll('[data-slot="file-name"]')];return rows.some(e=>e.textContent.length>70&&e.title===e.textContent&&getComputedStyle(e).whiteSpace==='nowrap'&&getComputedStyle(e).textOverflow==='ellipsis')&&!!document.querySelector('[data-slot="file-size"]')&&document.documentElement.scrollWidth<=innerWidth;});
+    await page.evaluate(()=>document.querySelector('#message-image-user .message-attachment').scrollIntoView({block:'center'}));
+    await wait(()=>document.querySelector('#message-image-user [data-slot="image-preview"] img')?.naturalWidth===640);
++   await page.screenshot('image-original-download-'+width+'.png');
+    await press(page,'#message-image-user .aui-image-zoom-trigger');await wait(()=>!!document.querySelector('[data-slot="image-zoom-overlay"]'));
+    await wait(()=>document.activeElement===document.querySelector('[data-slot="image-zoom-close"]'));
+    await check('official zoom uses only an authorized blob, focuses close and retains official icon/padding geometry',()=>{const e=document.querySelector('[data-slot="image-zoom-overlay"]'),b=e.querySelector('button'),r=b.getBoundingClientRect();return e.querySelector('img').src.startsWith('blob:')&&document.activeElement===b&&r.width===36&&r.height===36&&document.body.style.overflow==='hidden';});
+@@ -97,7 +103,7 @@
+    await chrome.command('Browser.setDownloadBehavior',{behavior:'allow',browserContextId:page.browserContextId,downloadPath:downloads});
+    await press(page,'#canvas-panel [aria-label="下载 合成图片成果.png"]');
+    const downloaded=join(downloads,'合成图片成果.png');
+-   for(let attempt=0;attempt<150&&!existsSync(downloaded);attempt++)await new Promise(resolve=>setTimeout(resolve,20));
++   for(let attempt=0;attempt<150&&(!existsSync(downloaded)||statSync(downloaded).size!==portrait.length);attempt++)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.deepEqual(readFileSync(downloaded),portrait);
+    assert.equal(requests.filter(p=>p===assistantFiles[0].path).length,1);
+    checks.push({width,label:'Canvas downloads the original bytes without another artifact request'});

@@ -1,0 +1,37 @@
+--- a/mobile/app.json
++++ b/mobile/app.json
+@@ -7,7 +7,10 @@
+     "ios": {
+       "bundleIdentifier": "com.homer.mobile",
+       "supportsTablet": false,
+-      "buildNumber": "7"
++      "buildNumber": "9",
++      "infoPlist": {
++        "NSPhotoLibraryAddUsageDescription": "将你选择的 Homer 图片保存到相册。"
++      }
+     },
+     "android": {
+       "package": "com.homer.mobile",
+--- a/ui/homer-app.tsx
++++ b/ui/homer-app.tsx
+@@ -108,17 +108,15 @@
+  return <><FileDownload data={new URL(path,location.href).href} sourceType="url" filename={filename} mimeType={mimeType} onClick={event=>{event.preventDefault();void download();}}/>{error&&<span role="status">{error}</span>}</>;
+ }
+ function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:string;index:number}){
+- const [previewUrl,setPreviewUrl]=useState(''),[loadedImageUrl,setLoadedImageUrl]=useState('');
+  const labels:Record<string,string>={received:'等待下载',downloading:'准备中',retryable_failed:'等待重试',failed:'准备失败',expired:'已过期',deleted:'已清理',revoked:'已撤回'};
+  const path='/api/media/'+messageId+'/'+asset.assetId+'/'+asset.revision;
+  const previewPath=asset.kind==='voice'?path+'?preview=voice':path;
+  const previewable=asset.state==='ready'&&(asset.kind==='image'||asset.kind==='video'||(asset.kind==='voice'&&(!!asset.previewMime||asset.mime!=='audio/silk')));
+- const imagePreviewReady=previewable&&asset.kind==='image'&&!!previewUrl&&loadedImageUrl===previewUrl;
+  return <figure className="message-attachment">
+-  {previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'} onUrlChange={asset.kind==='image'?setPreviewUrl:undefined}>{preview=>asset.kind==='image'?<ImageRoot><ImageZoom src={preview} alt={asset.filename}><ImagePreview src={preview} alt={asset.filename} ratio="4:3" onLoad={()=>setLoadedImageUrl(preview)} onError={()=>setLoadedImageUrl('')}/></ImageZoom></ImageRoot>:asset.kind==='voice'?<audio controls preload="none" src={preview} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={preview} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>}
+-  {!imagePreviewReady&&<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
++  {previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'}>{preview=>asset.kind==='image'?<ImageRoot><ImageZoom src={preview} alt={asset.filename}><ImagePreview src={preview} alt={asset.filename} ratio="4:3"/></ImageZoom></ImageRoot>:asset.kind==='voice'?<audio controls preload="none" src={preview} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={preview} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>}
++  <figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
+    {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
+-   {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
++   {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>
+  </figure>;
+ }
+ function MediaAttachments({media,messageId}:{media:MediaView[];messageId:string}){
