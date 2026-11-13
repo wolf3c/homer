@@ -22,6 +22,8 @@ npm run ios
 
 `android` / `ios` 使用 Expo 自动生成各自原生工程，不维护第二份聊天前端。生成的原生目录与构建结果不提交；发布前仍需配置自己的应用标识、签名和分发渠道。当前技术组合要求 Android SDK 37 和 NDK 27.1.12297006，target SDK 为 37；Android 37 起通过 React Native 的系统权限 API 请求本地网络访问。iOS 依赖 Expo 58 的 Xcode / CocoaPods 环境。`bundle` 只验证 JavaScript / Hermes 包，不生成可安装 APK / IPA。
 
+iOS 正式签名、导出和上传通过 `node scripts/ios-xcodebuild.mjs <原 xcodebuild 参数>` 执行；入口等待 Mac 解锁，并在执行期间保持显示器和系统防空闲休眠，遇到钥匙串／账号凭据错误则停止且不重试。调用链使用失败即停及 `pipefail`，避免继续下一次签名或上传。手动锁屏、合盖和系统强制锁定仍不能由此防止。完整命令及账号恢复边界见 [iOS 发行流程](../.codex/skills/homer-mobile-release/references/ios.md#锁屏与账号保护)。
+
 旧 HTTP 候选依赖的固定 HTTPS Tunnel 与 `mobile.json` 旧 `publicOrigin`／`port` 字段不属于新方案，不应据本文新建公网入口。主端二维码已迁移为共享信令 origin、主端 routeId 与一次性邀请。桌面默认信令为 `https://super-tree.com`，可选 `profile/mobile.json` 只配置 `signalOrigin`。公网信令已随 Yezi2 6.1.35 上线并通过验收，iPhone 实际扫码后已建立业务连接，Android 核心产品闭环已通过，证据及限制见文末。流程为「设置 → 移动设备 → 添加移动设备」，扫码、主端改名确认，再继续原主聊天；主端分别停用、启用或删除设备。
 
 App 外部网页交给系统浏览器；主聊天、受保护成果和预览留在 WebView。文件经现有网页取回后，用 Expo FileSystem / Sharing 打开系统分享页，临时文件在动作结束后清除。首版单文件最多 8 MiB；不转交凭据，不增加原生聊天客户端。相册、定位、麦克风和后台通知均未申请。

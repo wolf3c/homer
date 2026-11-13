@@ -282,6 +282,10 @@ node scripts/test.mjs --cua-windows
 
 移动设备下载弹窗的焦点回归可单独运行 `node --test tests/mobile-download-focus.development.test.mjs`。该开发专项需要项目 Node 依赖及已安装的 Chrome；使用隔离浏览器配置和合成设备数据，阻断页面外部请求。
 
+iOS 签名防护的离线回归：`node --test tests/ios-xcodebuild.development.test.mjs`，使用 Node 22.22.0 和 POSIX 进程组（macOS／Linux）。以合成控制台状态和独立 Node 子进程替代 ioreg、caffeinate、xcodebuild，验证解锁前不得签名、无法读状态时失败关闭、防休眠进程丢失、输出分块中的凭据错误、退出码和取消／终止回收。属于 development 显式清单，不访问真实账号、钥匙串或 Apple 服务，不执行真实构建／上传，也不主动锁屏复现账号丢失。
+
+2026-11-13：该防护与 `tests/test-suites.test.mjs` 联合 **28/28** 通过，零失败／取消／跳过；新文件已登记 development，默认核心不会隐式运行。真实 macOS 只读冒烟经防护入口调用 `-version`，返回 Xcode 27.2 / 27B52、退出 0；首次冒烟发现登录完成字段应为 `kCGSessionLoginDoneKey`，已用本机实际字段修正夹具和识别逻辑，保留未知状态拒绝断言。未执行真实签名、导出、上传或账号变更；手动／强制锁屏及合盖仍无法由防休眠断言阻止。
+
 ## 分类维护与本次拆分
 
 `scripts/test.mjs` 是入口分类的唯一维护清单；默认核心排除所有显式清单文件，本地媒体沿用 `*.local-media.test.ts/mjs` 命名。新增专项文件必须登记，入口回归 `tests/test-suites.test.mjs` 用合成失败案例验证专项不会泄漏到默认运行。

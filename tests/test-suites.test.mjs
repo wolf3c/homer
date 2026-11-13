@@ -80,6 +80,7 @@ const explicitSuites={
   "mobile-runtime-packaging.test.mjs",
   "mobile-ui-build.test.mjs",
   "mobile-download-focus.development.test.mjs",
+  "ios-xcodebuild.development.test.mjs",
   "deepseek-isolated.test.mjs",
   "dev-fixture-wait.test.mjs",
   "dev-upgrade.development.test.mjs",

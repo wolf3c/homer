@@ -13,15 +13,25 @@
 
 在独立候选先重建移动页面并完成定向检查；显式设置 `EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=stable`、`EXPO_NO_DOTENV=1`。使用当前 Expo/Xcode/CocoaPods 链生成并安装现有锁定依赖，不为截图自动下载模拟器或升级 SDK。
 
-现有命令形状（从候选根目录执行，版本和路径替换为本次值）：
+### 锁屏与账号保护
+
+签名 archive、export（包括 destination=upload）统一使用 `scripts/ios-xcodebuild.mjs`，保持已有用户 HOME、Xcode 账号和钥匙串。该入口先启动 `caffeinate -di`，检查控制台锁屏状态；锁屏时每秒检查并等待解锁，状态无法读取则失败关闭，不启动 Xcode。执行期间防休眠进程退出也会停止 Xcode；结束或取消后回收自己的防休眠进程及被中止的构建进程组。不修改系统电源设置、账号或钥匙串。纯 `xcodebuild -version`／`-help` 不涉及签名，可直接读取。
+
+输出出现 `-25308`、`errSecInteractionNotAllowed`、`missing Xcode-Username/Token` 或账号凭据错误时，入口立即停止命令并返回非零，不自动重试、重登录、清空钥匙串或递增 build。调用链必须在失败后停止；若输出经过管道写私有日志，须保留 `pipefail`，不能用 `;` 接下一条签名／上传命令。先解锁并检查 Xcode 账号状态及私有日志，再决定是否需要用户恢复登录；上传失败另查商店是否已有结果。
+
+限制：`caffeinate` 防止自动息屏和空闲休眠，不能阻止手动锁屏、合盖或系统强制锁定；操作期间出现这些情况仍可能触发 Xcode 的账号加载缺陷。错误监测发生在 Xcode 已报错之后，不能撤销它已发生的账号配置写入。无人值守 API Key 认证尚未接入。
+
+现有命令形状（bash，从候选根目录执行；`IOS_XCODEBUILD` 指向含此防护的已审查检出，不要求旧版冻结候选已包含脚本；版本和路径替换为本次值）：
 
 ```sh
-xcodebuild -workspace mobile/ios/Homer.xcworkspace -scheme Homer \
+set -euo pipefail
+IOS_XCODEBUILD="/absolute/path/to/reviewed-homer-checkout/scripts/ios-xcodebuild.mjs"
+node "$IOS_XCODEBUILD" -workspace mobile/ios/Homer.xcworkspace -scheme Homer \
   -configuration Release -destination 'generic/platform=iOS' \
   -archivePath "$IOS_RELEASE/Homer.xcarchive" -derivedDataPath "$IOS_SCRATCH/derived-data" \
   -allowProvisioningUpdates DEVELOPMENT_TEAM=FUNQ8PQ8CX CODE_SIGN_STYLE=Automatic \
   MARKETING_VERSION="$IOS_VERSION" CURRENT_PROJECT_VERSION="$IOS_BUILD" archive
-xcodebuild -exportArchive -archivePath "$IOS_RELEASE/Homer.xcarchive" \
+node "$IOS_XCODEBUILD" -exportArchive -archivePath "$IOS_RELEASE/Homer.xcarchive" \
   -exportOptionsPlist "$IOS_RELEASE/ExportOptions.plist" \
   -exportPath "$IOS_RELEASE/export" -allowProvisioningUpdates
 ```

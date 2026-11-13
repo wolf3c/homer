@@ -26,7 +26,7 @@ description: 为 Homer 的 Android APK 和 iOS App 执行打包、签名核验�
 
 1. 读 `AGENTS.md`、`mobile/README.md`、`mobile/app.json`、锁文件及[更新约定](../../../docs/mobile-app-update-notice.md)，并核对本地既有发行记录（如存在）。核对 Git HEAD、目标路径 diff、既有本地/商店 build；从最大已用 build 递增，不只看可能滞后的 app.json，不套用 Yezi2 或桌面版本。
 2. 用户提到其他 chat 的“最新优化”时，先 `read_thread`，再核对实际提交和文件。正式新制品默认从已审查的精确提交冻结；不把整个 dirty 工作区打包，也不偷带未确认改动。若用户明确指定已有的基线加补丁候选，保留该候选 SHA、完整补丁、输入摘要与限制，不伪称纯提交构建。准确提交与候选不一致时先解决来源差异。
-3. 使用独立 `.codex/scratch/mobile-release-<日期>/` 工作目录，先核对可用磁盘和已有缓存，不清其他项目或证据。Node 读取 `.nvmrc`；复用当前 SDK、依赖锁和正式签名材料，不顺带升级工具链。不要直接在共享主工作区运行可能清空生成目录的 Expo prebuild。
+3. 使用独立 `.codex/scratch/mobile-release-<日期>/` 工作目录，先核对可用磁盘和已有缓存，不清其他项目或证据。Node 读取 `.nvmrc`；复用当前 SDK、依赖锁和正式签名材料，不顺带升级工具链。不要直接在共享主工作区运行可能清空生成目录的 Expo prebuild。iOS 签名 archive、export 和 upload 统一通过仓库 `scripts/ios-xcodebuild.mjs` 入口；按 [iOS 参考](references/ios.md#锁屏与账号保护) 等待解锁、保持防休眠并在凭据错误后停止，不裸跑这些 `xcodebuild` 操作。
 4. 正式包显式设置 `EXPO_PUBLIC_HOMER_RELEASE_CHANNEL=stable` 和 `EXPO_NO_DOTENV=1`，不带 QA 诊断、测试答复、私有环境文件。更新提示还校验正式应用 ID；iOS TestFlight/非 production 商店环境不会提醒，不能为测试绕过。
 5. 在候选执行 `npm run build:ui`，使用新生成的 `mobile/.generated/chat.mjs`；不能只改源码或复用旧 Metro/Hermes bundle。许可说明必须随内嵌页面进入包内；保留移除开发调试注入的现有构建步骤。
 6. 定向执行移动端 `npm test`、`npm run typecheck`；没有相关协议/RTC 改动，不重复 TURN 长测或真实模型矩阵。`npm run bundle` 只是 JS 验证，不是 APK/IPA。完成平台构建后核对包内版本、签名、内嵌页面来源与最终摘要，不能降低校验取得通过。
