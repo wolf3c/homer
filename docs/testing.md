@@ -489,8 +489,8 @@ node scripts/build-run-activity-css.mjs --quote --check
 
 恢复提交时补齐 `user-message-bubble-ui` 与 `chat-timestamps` 两个生产组件 eval 夹具的 `React.Fragment` 绑定，保留全部原断言；定向执行 `node --import tsx --test tests/user-message-bubble-ui.test.mjs tests/chat-timestamps.test.ts`，33 项通过，零失败或跳过。
 
-## 2026-11-13 图片角落下载入口
+## 2026-11-13 图片沿用现有菜单保存
 
-`tests/image-file-components.browser.mjs` 在冻结 main 加本次图片组件改动的独立构建上完成 60 项浏览器检查，覆盖 1440／390／320px，含窄屏触摸下载、44px 常驻入口、预览未加载时的原图入口、气泡／视口边界、不重复显示文件信息、下载不误开缩放、准确 message／asset／revision、失败重试、修订替换、旧 URL 回收和原有成果下载。保留原修订／授权断言；过程中捕获并修复重复组件 key 导致的旧缩放残留，以及官方 max-width utility 优先级导致的窄屏溢出。UI 类型检查、Vite 和移动内嵌 HTML 构建通过，已查看两种手机宽度的最终截图。
+用户进一步反馈后，移除图片角落下载按钮及专用交互样式，预览与放大图均不增加新下载入口；保留窄屏容器约束、相册用途声明、非图片与成果文件的原下载通路。`tests/image-file-components.browser.mjs` 在冻结 main 加本次图片组件改动的独立构建上完成 60 项浏览器检查，覆盖 1440／390／320px，包含无重复文件信息及下载控件、气泡／视口边界、原图 Blob 和默认图片菜单事件不被取消、触摸打开缩放、键盘／焦点、准确修订替换、旧 URL 回收及原有文件下载／失败重试。已查看两种手机宽度的最终截图，UI 类型检查、Vite 与移动内嵌 HTML 构建通过。
 
-复验使用项目 Node 22.22.0：先在独立候选运行 `node scripts/build-preview-annotation.mjs` 及标准 Vite UI 构建，再设置 `HOMER_COMPONENT_BUILD` 为该构建目录、`HOMER_BROWSER_EVIDENCE` 为本轮 scratch 输出目录，执行 `node tests/image-file-components.browser.mjs`。夹具只使用合成数据及独立 Chrome，阻断外部请求；不是 iOS／Android 原生分享的新真机验收。相册声明的移动端离线回归为 39/39。已送审的 build 10 和公开安卓 APK 均未被替换。
+复验使用项目 Node 22.22.0：先在独立候选运行 `node scripts/build-preview-annotation.mjs` 及标准 Vite UI 构建，再设置 `HOMER_COMPONENT_BUILD` 为该构建目录、`HOMER_BROWSER_EVIDENCE` 为本轮 scratch 输出目录，执行 `node tests/image-file-components.browser.mjs`。夹具仅使用合成数据及独立 Chrome，阻断外部请求。DOM contextmenu 未被取消只证明源码保留默认菜单行为，不能替代 iOS／Android 原生菜单及保存的新真机验收；本轮未重复该真机操作。已送审 build 10 和公开安卓 APK 均未替换。

@@ -109,11 +109,11 @@ function Markdown() {
     return safe ? <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> : <span>{children}</span>;
   } }} />;
 }
-function ResourceDownload({path,filename,mimeType,className}:{path:string;filename:string;mimeType:string;className?:string}){
+function ResourceDownload({path,filename,mimeType}:{path:string;filename:string;mimeType:string}){
  const [error,setError]=useState('');
  async function download(){try{const response=await fetch(path);if(!response.ok)throw Error();await saveBlob(await response.blob(),filename);setError('');
  }catch{setError('下载未完成，请重新连接后重试。');}}
- return <><FileDownload className={className} title={'下载 '+filename} data={new URL(path,location.href).href} sourceType="url" filename={filename} mimeType={mimeType} onClick={event=>{event.preventDefault();void download();}}/>{error&&<span role="status">{error}</span>}</>;
+ return <><FileDownload data={new URL(path,location.href).href} sourceType="url" filename={filename} mimeType={mimeType} onClick={event=>{event.preventDefault();void download();}}/>{error&&<span role="status">{error}</span>}</>;
 }
 function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:string;index:number}){
  const labels:Record<string,string>={received:'等待下载',downloading:'准备中',retryable_failed:'等待重试',failed:'准备失败',expired:'已过期',deleted:'已清理',revoked:'已撤回'};
@@ -123,7 +123,7 @@ function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:stri
  const image=previewable&&asset.kind==='image';
  const preview=previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'}>{url=>image?<ImageZoom src={url} alt={asset.filename}><ImagePreview src={url} alt={asset.filename} ratio="4:3"/></ImageZoom>:asset.kind==='voice'?<audio controls preload="none" src={url} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={url} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>;
  return <figure className="message-attachment">
-  {image?<ImageRoot className="homer-image-attachment">{preview}<ResourceDownload key={'download:'+path} className="image-original-download" path={path} filename={asset.filename} mimeType={asset.mime??'application/octet-stream'}/></ImageRoot>:<>{preview}<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
+  {image?<ImageRoot className="homer-image-attachment">{preview}</ImageRoot>:<>{preview}<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
    {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
    {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption></>}
  </figure>;
