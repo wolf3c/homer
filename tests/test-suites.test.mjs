@@ -73,6 +73,7 @@ test('empty optional suite fails explicitly and desktop acceptance still require
 
 // Audited ownership: optional environment settings must never activate these through npm test.
 const explicitSuites={
+ "directory-native": ["worker-directory-context.engine.test.mjs"],
  "live-transport": ["native-history-transport.live.test.mjs"],
  "desktop-codesign": ["desktop-update-codesign.test.mjs"],
  "engine": [
@@ -129,6 +130,7 @@ test('default core excludes every audited specialist even when connection enviro
  for(const name of Object.values(explicitSuites).flat())f.put(name,"throw Error('specialist_must_be_explicit');");
  const result=f.run();assert.equal(result.status,0,result.stdout+result.stderr);
  assert.match(result.stdout,/core contract/);assert.doesNotMatch(result.stdout,/specialist_must_be_explicit|SKIP/);
+ assert.match(result.stderr,/node scripts\/test\.mjs --directory-native/);
  for(const suite of Object.keys(explicitSuites))assert.ok(result.stderr.includes('node scripts/test.mjs --'+suite)||result.stderr.includes('test:'+suite));
 });
 

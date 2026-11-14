@@ -12,6 +12,9 @@ import {ReceptionTimings} from './reception-timings.js';
 import {createHooks} from './hooks.js';
 import {attachmentReference} from './attachment-reference.js';
 import {EXECUTION_TOOLS} from './execution-tools.js';
+import {LIST_WORK_DIRECTORIES,listWorkDirectories,systemWorkDirectoryFacts,type WorkDirectoryFacts} from './work-directories.js';
+import {prepareWorkerProjectRoot} from './worker-project-root.js';
+import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {attachmentRevealTarget} from './artifact-reveal.js';
 import {seedFirstLaunchSkills,shouldSeedFirstLaunchSkills} from './first-launch.js';
 import {NativeAccount,type NativeAccountState} from './native-account.js';
@@ -595,6 +598,7 @@ export class Homer {
     readonly sink: (message: Message) => Promise<void>,
     private factory?: EngineFactory,
     channelAdapters:readonly ChannelAdapter[] = [],
+    private directoryFacts:(includeFolders?:boolean)=>Promise<WorkDirectoryFacts> = systemWorkDirectoryFacts,
   ) {
     if(!usesHomerNativeHome(config))throw Error('engine_native_tools_home_required');
     this.cua=DesktopCua.create(config.desktopResources,config.runtime);
@@ -738,6 +742,14 @@ export class Homer {
     handler: (call: ToolCall) => Promise<unknown>,
   ) {
     this.validateWorkDirectory(options.cwd);
+    if(options.role==='worker')options.prepareProjectContext=async(cwd,signal)=>{
+      const current=()=>!signal.aborted&&!this.closing&&!this.closed;
+      if(!current())throw Error('engine_configuration_cancelled');
+      const native=await this.nativeRpc('config/read',{cwd,includeLayers:true});
+      if(!native?.config)throw Error('worker_project_root_config_invalid');
+      const facts=await this.directoryFacts(false);
+      return prepareWorkerProjectRoot(cwd,facts.home,native.config.project_root_markers,current);
+    };
     const handle=(call:ToolCall)=>call.tool==='ask_main'?handler(call):this.withDesktopPower(()=>handler(call));
     const engine=this.factory?this.factory(options,handle):new CodexEngine(this.config,options,handle);
     engine.on('powerActivity',()=>this.invalidateState());
@@ -984,7 +996,7 @@ export class Homer {
       this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args, meta) =>
         SCHEDULE_TOOLS.some(entry=>entry.name===tool)?this.scheduleTool(tool,args,meta):
         this.mainPluginTools.has(tool)?this.mainPluginTool(tool,args,meta):
-          this.mainActivity(tool,()=>this.withDesktopPower(power=>isMembershipTool(tool)?this.membershipTool(tool,args,undefined,power):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):this.interactionTool(tool, args)),args),catalog,()=>this.scheduleMainTransportRecovery());
+          this.mainActivity(tool,()=>tool===LIST_WORK_DIRECTORIES.name?this.workDirectoryReference(args):this.withDesktopPower(power=>isMembershipTool(tool)?this.membershipTool(tool,args,undefined,power):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):this.interactionTool(tool, args)),args),catalog,()=>this.scheduleMainTransportRecovery());
       await this.interactionMcp.start();
       if(this.closing)throw Error('application_closing');
       this.main = this.createMain(cwd,savedThread);
@@ -2377,6 +2389,20 @@ export class Homer {
   private validateWorkDirectory(cwd:string){
     if(!isAbsolute(cwd)||!statSync(cwd,{throwIfNoEntry:false})?.isDirectory()||realpathSync(cwd)!==cwd)throw Error('task_working_directory_invalid');
     if(this.managedFilePaths().some(root=>cwd===root||inside(root,cwd)))throw Error('engine_native_tools_workspace_invalid');
+  }
+  private async workDirectoryReference(args:unknown){
+    const context=this.mainContext;
+    if(!context)throw Error('tool_scope_denied');
+    this.validateMainContext(context);
+    validateToolArguments(args,LIST_WORK_DIRECTORIES.inputSchema);
+    const deadline=Date.now()+INTERACTION_LIMITS.businessMs;
+    const roots=[this.config.workspace,this.store.meta('mainWorkingDirectory')??this.config.workspace,
+      ...this.store.db.prepare("SELECT DISTINCT v.workingDirectory FROM task_versions v JOIN tasks t ON t.id=v.taskId AND t.headVersion=v.version WHERE t.state='open'").all().map(row=>String(row.workingDirectory)),
+      ...[...this.workers.keys()].map(id=>this.tasks.workingDirectory(id))];
+    const facts=await this.directoryFacts();
+    const result=await listWorkDirectories(facts,roots,{deadline,isCurrent:()=>this.mainContext===context&&!this.closing&&!context.stopRequested});
+    this.validateMainContext(context);
+    return result;
   }
   private validateTaskFile(path:string,write=false){
     const roots=this.managedFilePaths();

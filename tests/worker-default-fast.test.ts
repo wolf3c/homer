@@ -94,7 +94,8 @@ for(const effortOverride of ['default','local-low','env-high'] as const)for(cons
     assert.equal(options[0]!.role,undefined);
     for(const execution of [options[0]!,...workers]){
       const effective=override==='default'||override.endsWith('true');
-      const engine=new CodexEngine({...config,codexBin:resolve('tests/fixtures/model-settings-app-server.mjs')},{...execution,interactionMcp:undefined},async()=>({}));
+      // This tier replay uses the protocol fixture; native directory preparation has its own isolated suite.
+      const engine=new CodexEngine({...config,codexBin:resolve('tests/fixtures/model-settings-app-server.mjs')},{...execution,interactionMcp:undefined,prepareProjectContext:undefined},async()=>({}));
       try{await engine.start();const result=JSON.parse((await engine.turn('Synthetic captured execution options')).text);assert.equal(result.threadServiceTier,effective?'priority':null);assert.equal(result.turnServiceTier,effective?'priority':null);assert.equal(result.model,'gpt-6.1-sol');assert.equal(result.effort,effortOverride==='env-high'?'high':effortOverride==='local-low'?'low':execution.role==='worker'?'high':'medium');}finally{await engine.close();}
     }
   }finally{await app.close();f.close();}

@@ -15,6 +15,8 @@ createInterface({input:process.stdin}).on('line',line=>{
  if(m.method==='config/read'){
   result=structuredClone(state.config);
   result.config.features={memories:true};result.config.memories={dedicated_tools:true};
+  const markers=process.argv.find(value=>value.startsWith('project_root_markers='));
+  if(markers)result.config.project_root_markers=JSON.parse(markers.slice('project_root_markers='.length));
   for(const name of Object.keys(result.config.mcp_servers??{}))if(process.argv.includes('mcp_servers.'+name+'.enabled=false'))result.config.mcp_servers[name].enabled=false;
  }
  if(m.method==='skills/list')result={data:[]};

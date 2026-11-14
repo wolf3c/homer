@@ -54,3 +54,21 @@ test('only ChatGPT model processes enable bounded JSON transport observation',as
   finally{await e.close();}
  }}finally{f.close();}
 });
+
+test('Worker root preparation runs before every cold load and close fences a pending preparation',async()=>{
+ const f=fixture(),prepared:string[]=[];
+ const prepareProjectContext=async(cwd:string)=>{prepared.push(cwd);return ['.custom','.git','.homer-project-root'];};
+ const e=f.engine('root-first',{role:'worker',threadId:'root-resume',prepareProjectContext});f.engine('root-second');
+ try{
+  await e.start();await e.turn('synthetic only',{cwd:join(f.dir,'root-second')});
+  assert.deepEqual(prepared,[join(f.dir,'root-first'),join(f.dir,'root-second')]);
+  const state=await e.request('fixture/inspect',{});
+  assert.deepEqual(JSON.parse(state.argv.find((arg:string)=>arg.startsWith('project_root_markers=')).slice('project_root_markers='.length)),['.custom','.git','.homer-project-root']);
+ }finally{await e.close();}
+ let release!:(value:string[])=>void;const delayed=new Promise<string[]>(r=>release=r);
+ const pending=f.engine('root-delayed',{role:'worker',prepareProjectContext:()=>delayed});
+ try{
+  const started=pending.start();await pending.close();release(['.git','.homer-project-root']);
+  await assert.rejects(started,/engine_configuration_cancelled/);assert.equal(pending.pid,undefined);
+ }finally{await pending.close();f.close();}
+});

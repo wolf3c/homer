@@ -43,7 +43,7 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
     });
     assert.equal((await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "synthetic-test", version: "1" } })).result.serverInfo.name, "homer-interactions");
     const tools = (await rpc("tools/list", {})).result.tools;
-    assert.deepEqual(tools.map((tool: any) => tool.name), [...(role==='main'?['work_directory','inspect_interaction','respond_interaction','escalate_interaction','runtime_capabilities','inspect_attachment']:['work_directory','inspect_attachment']),...scheduled]);
+    assert.deepEqual(tools.map((tool: any) => tool.name), [...(role==='main'?['work_directory','list_work_directories','inspect_interaction','respond_interaction','escalate_interaction','runtime_capabilities','inspect_attachment']:['work_directory','inspect_attachment']),...scheduled]);
     const inspected=role==='main'?'inspect_interaction':'work_directory';
     const response = await rpc("tools/call", { name: inspected, arguments: { interactionId: "request-a" },_meta:{callId:'not-a-governed-tool'} });
     assert.equal(response.result.isError, false);
@@ -57,7 +57,7 @@ for(const role of ['main','worker'] as const)test("HMR-INTERACTION-PROTOCOL: bou
     }
     assert.equal((await rpc("tools/call", { name: "shell", arguments: {} })).result.isError, true);
     for(const forbidden of ['file_checkpoint','task_create','task_update','worker_open','worker_send','worker_read','worker_interrupt','work_inspect','accept_result','task_delegate','task_review','task_stop','task_continue','task_takeover','agent_send','inbox_read','inbox_ack','adopt_version','pending_add','pending_list','pending_update','memory_search','memory_forget','publish_delivery'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
-    if(role==='worker')for(const forbidden of ['inspect_interaction','respond_interaction','escalate_interaction','quote_current_message','prepare_combined_delivery','runtime_capabilities','inspect_result_file'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
+    if(role==='worker')for(const forbidden of ['list_work_directories','inspect_interaction','respond_interaction','escalate_interaction','quote_current_message','prepare_combined_delivery','runtime_capabilities','inspect_result_file'])assert.equal((await rpc('tools/call',{name:forbidden,arguments:{ownerId:'main'}})).result.isError,true);
     const wait=await rpc('tools/call',{name:'task_wait',arguments:{}});
     assert.equal(wait.result.isError,true);
     if(role==='main'){

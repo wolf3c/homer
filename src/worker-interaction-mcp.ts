@@ -1,4 +1,5 @@
 import {EXECUTION_TOOLS} from './execution-tools.js';
+import {LIST_WORK_DIRECTORIES} from './work-directories.js';
 import { createServer, createConnection, type Server, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { chmodSync, unlinkSync } from "node:fs";
@@ -13,7 +14,7 @@ import {MEMBERSHIP_TOOLS} from './membership-web-tools.js';
 import {CUA_TOOLS} from './desktop-cua.js';
 import {SCHEDULE_TOOLS} from './schedules.js';
 
-export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS,...SCHEDULE_TOOLS];
+export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,LIST_WORK_DIRECTORIES,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS,...SCHEDULE_TOOLS];
 export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS,...SCHEDULE_TOOLS];
 export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false){
   const tools=role==='worker'?(cua?[...WORKER_HOST_MCP_TOOLS,...CUA_TOOLS]:WORKER_HOST_MCP_TOOLS):HOST_MCP_TOOLS;

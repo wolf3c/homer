@@ -90,6 +90,7 @@ export type EngineOptions = {
   onInteraction?: (request: NativeRequest) => Promise<InteractionResolution>;
   nativeTools?: "main" | "worker";
   controlOnly?: boolean;
+  prepareProjectContext?: (cwd:string,signal:AbortSignal)=>Promise<string[]>;
 };
 export type EngineLike = {
   request?(method:string,params:any):Promise<any>;
@@ -410,6 +411,9 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     this.websocketSupported=false;
     if(this.failureChecks.signal.aborted)this.failureChecks=new AbortController();
     if (!usesHomerNativeHome(this.config)) throw Error("engine_native_tools_home_required");
+    const preparationSignal=this.failureChecks.signal;
+    const projectMarkers=this.options.prepareProjectContext?await this.options.prepareProjectContext(this.options.cwd,preparationSignal):undefined;
+    if(this.closing||preparationSignal.aborted)throw Error('engine_configuration_cancelled');
     const proxy=codexProxyEnvironment();
     const deepseek=deepseekProfile(this.config);
     const context=this.config.context?validateContextTuning(this.config.context):deepseek;
@@ -418,6 +422,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     const generateMemories=!this.options.threadId&&this.options.role!=="worker";
     const memorySettings={"features.memories":true,"memories.dedicated_tools":true,...(this.config.dailyDeepSeek?{"memories.generate_memories":generateMemories,"memories.extract_model":this.config.model,"memories.consolidation_model":this.config.model}:{})};
     const settings: Record<string, unknown> = {
+      ...(projectMarkers?{project_root_markers:projectMarkers}:{}),
       ...(this.options.controlOnly ? {
         default_permissions: "homer_control",
         "permissions.homer_control": controlPermissions(this.config, this.options.readRoots),
@@ -556,6 +561,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       includeLayers: true,
       cwd: this.options.cwd,
     });
+    if(projectMarkers&&JSON.stringify(effective.config?.project_root_markers)!==JSON.stringify(projectMarkers))throw Error('worker_project_root_config_mismatch');
     if(this.membershipWebSocket&&(effective.config?.model_provider!=='homer'||effective.config?.model_providers?.homer?.supports_websockets!==true))throw Error('engine_websocket_config_mismatch');
     if(this.config.context){
       const actual=effective.config;

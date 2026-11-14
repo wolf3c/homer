@@ -127,6 +127,10 @@ Homer 打开的是同一条任务记录。表格最后三行是随任务一起�
 
 ## Worker 会话工具
 
+Main 不确定派工位置时，通过现有宿主 MCP 的只读 `list_work_directories({})` 按需查五类 Codex 位置标记，先返回压缩一级入口，再用原有文件工具查看相关分支。查询不切换 cwd，也不逐条注入消息、创建索引或注册给 Worker；已知目录或默认适用时直接传 `worker_open.workingDirectory`。`work_directory` 及固定动态声明和指纹保持不变，旧 Main 在原线程的安全冷恢复边界取得新 MCP 目录和短规则。
+
+Worker 每次原生冷初始化，复用配置控制连接读取生效根标记，保留已有标记及 `.git`，追加 `.homer-project-root`。需要无 Git 主目录兜底时才在真实系统用户主目录独占创建空标记；普通文件复用，链接或类型冲突拒绝，有有效 Git／自定义根的任务不依赖主目录写入。最终配置和原线程新建／恢复在标记准备后冷加载；原生规则负责继承、信任及 Skill，不自动信任主目录或补载其他分支。配置或必需兜底失败时，该 Worker 在模型任务前失败，任务与回执保留。见[v0.8 设计及流程图](../superpowers/specs/2026-11-12-worker-directory-context-design.md)、[验收边界](../testing.md#worker-目录上下文-v08)。
+
 | Homer 想做什么 | 需要提供什么，会发生什么 |
 | --- | --- |
 | `worker_open` 开会话 | 给 `message`，可附选定附件、指定工作目录；普通文件直接给地址。提供 `taskId` 就在该事项下开会话；省略则用本条说明作为初始 `goal`，同时创建任务行。宿主绑定可信来源和现有权限，返回 `taskId / workerId`；受理不等于引擎已启动。 |
