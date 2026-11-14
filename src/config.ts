@@ -33,6 +33,7 @@ export type Config = {
   // Provider-neutral context delivered by the trusted desktop connection.
   context?: import('./model-context.js').ContextTuning;
   capabilities?: import('./model-catalog.js').ModelCapabilities;
+  supportsWebSocket?: boolean;
   baseUrl?: string;
   keyEnv?: string;
   requiresOpenaiAuth: boolean;
@@ -116,12 +117,12 @@ export function effectiveModelConfig(config:Config,role:"main"|"worker"="main"):
   if(config.desktopModelSource==='codex'){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('desktop_model_source_scope_invalid');
     const selected=chatgptModelConfig(config.chatgpt)[role];
-    return {...config,dailyDeepSeek:false,desktopConnection:undefined,context:undefined,capabilities:undefined,...selected,fast:selected.serviceTier!==null,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true};
+    return {...config,dailyDeepSeek:false,desktopConnection:undefined,context:undefined,capabilities:undefined,supportsWebSocket:undefined,...selected,fast:selected.serviceTier!==null,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true};
   }
   if(config.dailyDeepSeek){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('daily_deepseek_desktop_required');
     const selected=config.desktopConnection?.[role];
-    config={...config,...selected,baseUrl:selected?.baseUrl,context:selected?.context,capabilities:selected?.capabilities,keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
+    config={...config,...selected,baseUrl:selected?.baseUrl,context:selected?.context,capabilities:selected?.capabilities,supportsWebSocket:selected?.supportsWebSocket===true,keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
   }
   const profile=deepseekProfile(config);
   return profile?{...config,effort:profile.effort,fast:profile.fast}:config;

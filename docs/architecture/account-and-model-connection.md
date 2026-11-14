@@ -48,7 +48,7 @@
 
 ## ChatGPT 恢复会话的模型传输
 
-2026-11-13 源码实现，尚未安装或发布。新 ChatGPT 会话继续走 Codex 原生连接；恢复的 Main／Worker 会话继续经过现有历史桥，现在同时支持 WebSocket 与 HTTP/SSE。网站模型来源仍遵守原有 HTTP 合同。`nativeHistoryBridge(proxy, dispatcher?)` 及 `{baseUrl, close}` 接口不变，无新配置、数据库或会话缓存。
+2026-11-13 源码实现，尚未安装或发布。新 ChatGPT 会话继续走 Codex 原生连接；恢复的 Main／Worker 会话继续经过现有历史桥，现在同时支持 WebSocket 与 HTTP/SSE。会员来源另按下述显式能力直接连接会员网关。`nativeHistoryBridge(proxy, dispatcher?)` 及 `{baseUrl, close}` 接口不变，无新配置、数据库或会话缓存。
 
 桥仅监听回环，只接受原有认证及来源边界。WS 上游固定为 ChatGPT Codex 的 Responses 地址；真实上游 101 成功后才接受下游升级。两跳握手由 `ws` 分别校验生成，保留端到端会话头和实际子协议。只将 `response.create.input` 交给现有 `nativeHistoryInput()`；预热、增量、工具及原生加密推理保留，原 rollout 不改写。`createWebSocketStream()` 保持文本消息边界并提供背压；请求与消息上限为 64 MiB，压缩继续关闭。
 
@@ -60,13 +60,27 @@ HTTP／HTTPS 代理使用直接依赖 `https-proxy-agent@7.0.6`，SOCKS 使用 `
 
 源码在 `src/engine.ts` 识别原生传输事实，在 `src/service.ts` 复用 Main 串行队列及 `retireMain()`／`recoverMain()`。不新增业务实体、数据库、设置、依赖或传输重试器；Worker 只提供成功信号，生命周期保持原样。
 
-- 仅 ChatGPT 来源、有效 `openai` provider 支持 WS、当前 Main 已确认使用 HTTP 时参与。原生配置明确关闭 WS 时不尝试；网站／会员 provider 不参与。未知传输不推测为 HTTP。
+- ChatGPT 来源的有效 `openai` provider 支持 WS，或会员来源明确声明且原生回读确认 `homer.supports_websockets:true`，并且当前 Main 已确认使用 HTTP 时参与。未声明能力的会员及其他 provider 不参与。未知传输不推测为 HTTP。
 - 同来源 Worker 当前子进程、原生根线程的 WS 请求成功后，还必须收到无错误、输出 token 大于零的 `response.completed`，每个 Worker 子进程只提示一次。预热、HTTP 完成、其他原生子 Agent、旧子进程和停止中的 Worker 都不触发。采用固定 Codex **0.163.0** 的 [`codex_otel.trace_safe` JSON stderr 元数据](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/otel/src/events/session_telemetry.rs)；不转发或保存原始行，整行最多 64 KiB，错误、非 JSON、越界行丢弃且不影响执行。升级引擎前须复验该信号合同。
 - Worker 提示与周期触发共用两次实际尝试时间，任意滚动 10 分钟最多重建 Main 两次。距离上次实际尝试满 15 分钟可再尝试；首次从确认 HTTP 起计时。仅一个非保活定时器，无轮询、合成消息或补发积压尝试。限频只约束 Homer 发起的重建，Codex 内部原生重试不变；宿主重启后内存计时重新开始。
 - 没有新消息也可提前恢复，但只在 Main 完整业务任务退出、回复交付结束，且无本机工具／反向 RPC 回执、Main MCP 调用及端点响应连接、原生交互、后台终端、准备／压缩、账号与配置操作时进入。恢复与用户消息、Worker 回传进入同一串行执行边界；先恢复，再认领下一条持久输入，恢复期间到达的输入继续排队。运行中的 Worker 不因 Main 维护而被重建。MCP 客户端提前断开时仍等待正在执行的回调；账号异步登录完成、断开与超时释放安全门后会重新唤醒调度器。
 - 复用原线程 ID、工作目录及当前配置。旧进程退出未确认时不启动替代进程；关闭 Homer 后不再启动。新进程启动与原线程恢复失败沿现有失败保全处理，不重放已执行工具或失败业务。新进程已加载且版本未变化的原生配置不会在下一轮重复冷恢复；恢复期间的新配置修订仍保留待应用。
 
 定向离线测试、固定引擎及整仓验证结果见[测试说明](../testing.md#2026-11-14-主-agent-自动恢复-websocket)。本次未安装、发布或调用真实模型；该策略让新的 Codex 进程重新尝试 WS，不能保证服务端始终接受 WS，也不承诺固定提速。
+
+### 会员 Responses WebSocket（2026-11-14）
+
+网站仍是唯一能力来源：现有 main／worker 角色各增加可选布尔值 `supportsWebSocket`，缺省或 false 继续 HTTP，只有 true 才启用。该字段独立于 `capabilities`，不增加开关界面、传输 URL、连接桥或数据库。新客户端在配置 GET 和 PKCE 兑换上都发送 `X-Homer-Config-Features: responses-websocket`；网站仅向精确声明此能力的请求交付 true，旧请求保留原有精确字段结构。两入口使用同一投影，保持 `Cache-Control:no-store`，并声明 `Vary`。兑换正文仍为原五字段。显式非布尔值拒绝，false 在响应和本地缓存规范化为字段缺省。
+
+客户端沿原校验、原子保存、角色投影和安全重启采用配置，直接在现有 `homer` provider 设置 `supports_websockets`。出站仍是受信任会员 baseUrl 的 `/responses`，由 Codex 维护 WS、HTTP、认证、预热、增量和会话；ChatGPT 历史桥不参与。启动时回读 provider 和 true 能力，不被引擎采用则拒绝启动。ChatGPT 和原生配置控制连接清除会员能力；未声明能力的旧缓存、新客户端连接旧网站均保持 HTTP。
+
+支持 WS 的会员 Main 复用上述空闲恢复。Worker 的有效根线程 WS 完成信号仍须通过当前子进程、版本、停止状态及正输出 token 校验，且其角色快照的 baseUrl、model 必须与 Main 一致；不同模型或地址不提供提前提示，Main 仍可按自己的 15 分钟周期尝试。消息认领、工具回执、交付、安全门和滚动限频不新增一套状态。
+
+会员请求及流重试仍显式为 0，宿主不重发 `response.create`。固定 Codex **0.163.0** 的预热失败和部分断线可自行降为 HTTP；实测 426、401／429／503、错误帧和工具回执后断线的原生行为须按专项核对，不能把“非 426 绝不回退”当作客户端保证。不会把真实拒绝状态改成 426，也不以握手成功代表已生成或已结算。
+
+计费继续归会员网关：每次 create 独立鉴权、预占和结算；连接、预热与业务生成分别计数，重复终态不能重复扣款。`generate:false` 不承诺免费：按 token 的价格使用实际 usage，按请求定价仍可能收费。客户端不估算或缓存余额，也不自行重发生成请求；Codex 原生预热仍按网关价目结算。源码与合成验收边界见[会员配置契约](../2026-11-04-membership-context-config.md#会员-websocket-兼容交付2026-11-14)和[测试说明](../testing.md#2026-11-14-会员-websocket)。本次没有启用网站正式设置；上线前仍须验证实际部署网关及上游协议和计费。
+
+本轮以 `c6f8fd2` 加精确差异的独立候选、Node22.22.0／Codex0.163.0 验证：原生专项31/31、完整类型检查通过；核心2423/2425，两项图片预览失败在未改基线2413/2415同样复现。网站Node22回归29/29，本地网关真实源码的合成计费123项测试／子测试通过。独立审查的证据归属问题已修正，生产代码无阻断项；不以本地结果代替线上验收，本轮提交范围仅限源码；未安装、发布或启用正式设置。
 
 ### 实施与验证边界
 

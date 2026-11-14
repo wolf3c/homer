@@ -29,6 +29,7 @@
 - `fast`：固定为 false；网站和客户端均拒绝 true。会员/API 模式不支持 Fast，ChatGPT 登录模式保留原做法。
 - `context`：通用必填对象，严格只有示例中的三个字段。窗口为 32768–1048576 的整数；阈值为正整数，且不超过 `floor(window * 9 / 10)`；口径固定为 total。范围是当前产品契约，不能据此推断供应商容量。
 - `baseUrl`：仍须匹配受信任会员网关的 `/v1`；仅显式隔离测试允许回环 HTTP。移除模型白名单不放开网关地址、私有凭据、任意进程参数或文件路径。
+- `supportsWebSocket`（可选）：布尔值，只有 true 启用会员 Responses WS；false／缺省继续 HTTP，false 在响应和缓存中省略。不是 `capabilities` 成员，不按模型名推测支持。
 
 角色另可声明一个完整 `capabilities` 对象，用于原生目录不能准确描述的模型；所有能力都由数据决定，不按模型名猜测：
 
@@ -51,13 +52,23 @@
 
 GET / 兑换 → 客户端完整校验 → 私有连接文件原子保存 → 启动或正常重启采用快照 → `effectiveModelConfig` 选择 main / worker → `CodexEngine` 设置模型、强度、Fast、窗口、阈值及可选目录。配置回读与声明不符时拒绝启动；运行中保存新配置不会热切换当前进程。
 
-会员配置不再进入按模型名选择的 DeepSeek 专属分支。独立 BYOK 的 DeepSeek profile / 目录仍保留；上下文校验移到 `src/model-context.ts`，会员不依赖 DeepSeek 调优类型。ChatGPT 分支明确清除会员 endpoint、context 和 capabilities，保留主 Agent high / Fast、Worker xhigh / 非 Fast 的原做法。
+会员配置不再进入按模型名选择的 DeepSeek 专属分支。独立 BYOK 的 DeepSeek profile / 目录仍保留；上下文校验移到 `src/model-context.ts`，会员不依赖 DeepSeek 调优类型。ChatGPT 分支明确清除会员 endpoint、context、capabilities 和 supportsWebSocket；ChatGPT 参数按现行独立角色设置。
 
 会员网页工具继续走现有宿主 MCP。主 Agent 和 Worker 分别采用自己的生效配置：模型目录可用且该角色启用原生 `web_search=live` 时，宿主和 stdio 都不列出会员 `web_search`，并拒绝直接调用。其余网站会员角色明确关闭原生搜索，保留会员搜索。会员搜索和抓取使用同一会员网关和模型 Token，搜索最多返回五条来源，抓取返回单页 Markdown 并标记截断。超时或结果不明时不自动重试。有会员 Token 时继续提供 `web_fetch` 和付费图片、视频生成。Codex 登录沿用原生配置，无会员 Token 时不注册会员工具。原有主会话的动态工具清单无需迁移。
 
 本地旧四字段 DeepSeek 角色，以及上一版带 `deepseek` 的五字段角色，只恢复 subject / Token 后重新拉取新配置，不将旧模型设置交给引擎；旧版本的格式校验保留用于识别历史缓存。已有合法 context 缓存继续可读。刷新 503、非法响应或写入失败均保留原文件与凭据，下次启动可恢复；主动退出状态不恢复 Token。私有连接文件读写上限统一为 32768 字节，支持完整能力列表和长 Token，超限在替换前拒绝。
 
 旧客户端对新字段、模型或参数可能不兼容。发布顺序、维护窗口和完整回退见 [发布方案](2026-11-04-membership-context-release-plan.md)。
+
+## 会员 WebSocket 兼容交付（2026-11-14）
+
+本次仅实现源码，未修改网站 settings、安装或发布。新客户端为 GET `/api/homer/v1/config` 和 POST `/api/homer/v1/token` 都增加精确请求头 `X-Homer-Config-Features: responses-websocket`。网站默认使用旧投影，仅向带该头的请求返回 true；未知值或未提供均省略此字段。保持无查询参数、`Cache-Control:no-store`，并增加对应 `Vary`。PKCE 正文仍严格为原五字段；配置在消费 code 之前校验，两个接口不会产生不同的角色配置。非法非布尔值使整体配置拒绝，即使请求方是旧客户端。
+
+会员 main／worker 独立采用能力，Codex 原生 `homer` provider 直接连接同一个 baseUrl `/responses`，启动回读确认 true。已有线程和 rollout 由 Codex 恢复，宿主不重放工具，也不把会员流量送往 ChatGPT 历史桥。沿现有配置刷新和安全重启生效，不热切换正在运行的进程。支持 WS 的 Main 复用现有自动恢复规则；只有相同 baseUrl 和 model 的当前 Worker WS 完成才加速下一次尝试。普通 BYOK、控制连接及未声明能力的角色不启用此路径。
+
+先发布网站的兼容投影，再发布客户端，最后仅为已完成 Responses WS、错误及计费验收的角色配置 true；本次不执行这些发布步骤。关闭时删字段或设 false，新客户端刷新后缓存省略字段，并正常重启。直接降级到不认识该字段的旧二进制可能拒绝含 true 的本地缓存，因此先用新客户端刷新关闭能力，再降级，不删除 Token 或历史。新客户端连接旧网站时仍走 HTTP。
+
+预热、生成、usage 与扣款分开验证，`generate:false` 不等于免费。网关沿原价目结算：零 token 的预热在 token 定价下可为零，请求定价仍可收费；重复终态、错误和断线必须只结算一次。固定客户端的预热和断线回退由 Codex 决定，不能保证所有非 426 错误均不尝试 HTTP。明确的 401／429／5xx 不被宿主改写。合成专项入口及实际结果见 [测试说明](testing.md#2026-11-14-会员-websocket)；真实部署协议、余额和付费模型仍未验证。
 
 ## 离线验证
 

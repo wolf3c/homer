@@ -284,6 +284,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private transport?:'http'|'websocket';
   private websocketSupported=false;
   private serverRequests=0;
+  private get membershipWebSocket(){return this.config.desktopModelSource==='website'&&this.config.dailyDeepSeek===true&&this.config.supportsWebSocket===true&&!this.options.controlOnly;}
   get modelTransport(){return this.transport;}
   get supportsWebSocket(){return this.websocketSupported;}
   get canRestart(){return !!this.threadId&&this.resumable&&this.available&&!this.active&&!this.compaction&&!this.preparation&&!this.pending.size&&!this.serverRequests&&!this.nativeInteractionPending&&!this.backgroundCheck&&!this.nativeBusy;}
@@ -447,7 +448,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         name: "Homer authorized connection",
         base_url: this.config.baseUrl,
         wire_api: "responses",
-        supports_websockets: false,
+        supports_websockets: this.membershipWebSocket,
         request_max_retries: 0,
         stream_max_retries: 0,
         requires_openai_auth: this.config.keyEnv
@@ -494,7 +495,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       ...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TEMP,USERPROFILE:join(this.config.codexHome,'host-home')}:{ }),
       ...proxy,
     };
-    if(this.config.desktopModelSource==='codex'&&!this.options.controlOnly){env.LOG_FORMAT='json';env.RUST_LOG='error,codex_otel.trace_safe=info';}
+    if((this.config.desktopModelSource==='codex'||this.membershipWebSocket)&&!this.options.controlOnly){env.LOG_FORMAT='json';env.RUST_LOG='error,codex_otel.trace_safe=info';}
     if(this.historyBridge){env.NO_PROXY=[proxy.NO_PROXY??proxy.no_proxy,'127.0.0.1'].filter(Boolean).join(',');env.no_proxy=env.NO_PROXY;}
     if (this.config.keyEnv)
       env[this.config.keyEnv] = this.config.desktopModelSource==='website'?this.websiteToken:process.env[this.config.keyEnv];
@@ -555,6 +556,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       includeLayers: true,
       cwd: this.options.cwd,
     });
+    if(this.membershipWebSocket&&(effective.config?.model_provider!=='homer'||effective.config?.model_providers?.homer?.supports_websockets!==true))throw Error('engine_websocket_config_mismatch');
     if(this.config.context){
       const actual=effective.config;
       if(actual?.model!==this.config.model||actual?.model_context_window!==context!.contextWindow||actual?.model_auto_compact_token_limit!==context!.autoCompactTokenLimit||actual?.model_auto_compact_token_limit_scope!==context!.autoCompactTokenLimitScope)throw Error('engine_model_context_mismatch');
@@ -682,7 +684,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         this.pending.delete(m.id);
         if(!error&&p.method==='config/read'){
           const config=m.result?.config,provider=config?.model_provider??(this.config.baseUrl?'homer':'openai'),info=config?.model_providers?.[provider];
-          this.websocketSupported=!!config&&this.config.desktopModelSource==='codex'&&!this.options.controlOnly&&provider==='openai'&&(info?info.supports_websockets===true:true);
+          this.websocketSupported=!!config&&!this.options.controlOnly&&(this.config.desktopModelSource==='codex'&&provider==='openai'&&(info?info.supports_websockets===true:true)||this.membershipWebSocket&&provider==='homer'&&info?.supports_websockets===true);
         }
         error ? p.reject(error) : p.resolve(m.result);
         this.emitIdle();

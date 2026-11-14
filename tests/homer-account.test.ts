@@ -221,7 +221,7 @@ test('real loopback performs exact exchange once; invalid callback cannot write,
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-flow-'))),file=join(dir,'runtime-config.json');let posts=0,release:()=>void=()=>{};
  let hold=false;
  const website=await localServer(async(req,res)=>{
-  assert.equal(req.url,'/api/homer/v1/token');assert.equal(req.method,'POST');posts++;
+  assert.equal(req.url,'/api/homer/v1/token');assert.equal(req.method,'POST');assert.equal(req.headers['x-homer-config-features'],'responses-websocket');posts++;
   let text='';for await(const chunk of req)text+=chunk;
   const body=JSON.parse(text);assert.deepEqual(Object.keys(body).sort(),['clientId','code','codeVerifier','grantType','redirectUri'].sort());
   assert.equal(body.codeVerifier.length,43);
@@ -365,7 +365,7 @@ test('old membership cache recovery rejects malformed roles and unsafe credentia
 test('public configuration GET sends no secret, bypasses cache, rejects redirects and invalid payloads',async()=>{
  let mode='good';const seen:(string|undefined)[]=[];
  const website=await localServer((req,res)=>{
-  seen.push(req.url);assert.equal(req.method,'GET');assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
+  seen.push(req.url);assert.equal(req.method,'GET');assert.equal(req.headers['x-homer-config-features'],'responses-websocket');assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
   if(mode==='redirect'){res.writeHead(302,{Location:'/leak'});res.end();return;}
   if(mode==='missing'){res.writeHead(503);res.end('{}');return;}
   res.end(JSON.stringify(mode==='invalid'?{main:runtimeConfig().main}:runtimeConfig()));
@@ -420,4 +420,22 @@ test('disconnecting an old alias connection removes Token and accountRef while r
 for(const [name,expires,expected] of [['no expiry',0,null],['future',4102444800,null],['expired',1,'TOKEN_UNAVAILABLE'],['missing',undefined,'USAGE_UNAVAILABLE'],['invalid',-1,'USAGE_UNAVAILABLE']] as const)test('wallet query verifies credential expiry before offering purchase: '+name,async()=>{
  const gateway=await localServer((req,res)=>res.end(JSON.stringify(req.url==='/api/status'?{success:false}:{code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:expires}})));
  try{const result=api.queryHomerWallet({subject:'synthetic-user',token:'synthetic-key'},{gatewayOrigin:gateway.origin,allowSyntheticLoopback:true});if(expected)await assert.rejects(result,new RegExp(expected));else{const wallet=await result;assert.equal(wallet.available,0);assert.equal(wallet.expiresAt,expires);}}finally{await gateway.close();}
+});
+
+
+test('membership WS is explicit per role and disabled snapshots retain the legacy shape',()=>{
+ const legacy=runtimeConfig(),enabled={...legacy,main:{...legacy.main,supportsWebSocket:true}};
+ assert.deepEqual(api.validateHomerRuntimeConfig(enabled,boundary),enabled);
+ assert.deepEqual(api.validateHomerRuntimeConfig({...legacy,worker:{...legacy.worker,supportsWebSocket:false}},boundary),legacy);
+ for(const name of ['main','worker'])for(const supportsWebSocket of [null,undefined,'true',1,[],{}])assert.throws(()=>api.validateHomerRuntimeConfig({...legacy,[name]:{...legacy[name as 'main'|'worker'],supportsWebSocket}},boundary),/INVALID_REQUEST/);
+});
+
+test('membership WS enable and rollback preserve Token and atomically replace only valid config',()=>{
+ const parent=join(process.cwd(),'.codex/scratch/membership-ws-20261114/caches');mkdirSync(parent,{recursive:true});const dir=realpathSync(mkdtempSync(join(parent,'case-'))),file=join(dir,'runtime-config.json');
+ try{
+  api.saveHomerConnection(file,credentials(),boundary);const config=runtimeConfig();const enabled={...config,worker:{...config.worker,supportsWebSocket:true}};
+  api.saveHomerRuntimeConfig(file,enabled,boundary);assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',token:'synthetic-key',config:enabled});
+  const bytes=readFileSync(file,'utf8');assert.throws(()=>api.saveHomerRuntimeConfig(file,{...enabled,main:{...enabled.main,supportsWebSocket:'true'}},boundary),/INVALID_REQUEST/);assert.equal(readFileSync(file,'utf8'),bytes);
+  api.saveHomerRuntimeConfig(file,{...config,worker:{...config.worker,supportsWebSocket:false}},boundary);assert.deepEqual(JSON.parse(readFileSync(file,'utf8')),{subject:'user_a',token:'synthetic-key',config});
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });

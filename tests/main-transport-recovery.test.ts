@@ -10,11 +10,11 @@ import type {EngineLike,EngineOptions,ToolCall,TurnResult} from '../src/engine.j
 const flush=()=>new Promise<void>(r=>setImmediate(r));
 async function until(check:()=>boolean){for(let n=0;!check();n++){assert.ok(n<1000,'synthetic operation did not settle');await flush();}}
 function gate(){let release!:()=>void;const promise=new Promise<void>(r=>release=r);return {promise,release};}
-async function fixture(settings:Partial<{supports:boolean;source:'codex'|'website'}>={}){
+async function fixture(settings:Partial<{supports:boolean;source:'codex'|'website';workerModel:string}>={}){
  const parent=resolve('.codex/scratch/main-transport-recovery');mkdirSync(parent,{recursive:true});
  const root=mkdtempSync(join(parent,'case-'));for(const name of ['runtime','workspace'])mkdirSync(join(root,name));
  const holds:ReturnType<typeof gate>[]=[],mains:Peer[]=[],workers:Peer[]=[],messages:Message[]=[],turns:{thread:string;request?:string}[]=[],calls:string[]=[];
- const state={supports:settings.supports??true,initialTransport:'http' as 'http'|'websocket'|undefined,replacementTransport:undefined as 'http'|'websocket'|undefined,stopConfirmed:true,startFails:false,startGate:undefined as ReturnType<typeof gate>|undefined,closeGate:undefined as ReturnType<typeof gate>|undefined,turnGate:undefined as ReturnType<typeof gate>|undefined,deliveryGate:undefined as ReturnType<typeof gate>|undefined,deliveryWaiting:false,duringMain:undefined as (()=>Promise<void>)|undefined};
+ const state={supports:settings.supports??(settings.source!=='website'),initialTransport:'http' as 'http'|'websocket'|undefined,replacementTransport:undefined as 'http'|'websocket'|undefined,stopConfirmed:true,startFails:false,startGate:undefined as ReturnType<typeof gate>|undefined,closeGate:undefined as ReturnType<typeof gate>|undefined,turnGate:undefined as ReturnType<typeof gate>|undefined,deliveryGate:undefined as ReturnType<typeof gate>|undefined,deliveryWaiting:false,duringMain:undefined as (()=>Promise<void>)|undefined};
  const hold=()=>{const value=gate();holds.push(value);return value;};let sequence=0,app:Homer;
  class Peer extends EventEmitter implements EngineLike{
   threadId:string;turnId='';modelTransport?:'http'|'websocket';supportsWebSocket=state.supports;canRestart=true;available=true;resumable=true;nativeBusy=false;nativeInteractionPending=false;closes=0;workerGate?:ReturnType<typeof gate>;
@@ -36,6 +36,7 @@ async function fixture(settings:Partial<{supports:boolean;source:'codex'|'websit
   }
  }
  const config={workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:20,desktopModelSource:settings.source??'codex',pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)}};
+ if(settings.source==='website')Object.assign(config,{dailyDeepSeek:true,desktopConnection:{main:{baseUrl:'https://gateway.example.invalid/v1',model:'synthetic',effort:'high',fast:false,supportsWebSocket:state.supports,context:{contextWindow:128000,autoCompactTokenLimit:100000,autoCompactTokenLimitScope:'total'}},worker:{baseUrl:'https://gateway.example.invalid/v1',model:settings.workerModel??'synthetic',effort:'high',fast:false,supportsWebSocket:state.supports,context:{contextWindow:128000,autoCompactTokenLimit:100000,autoCompactTokenLimitScope:'total'}}}});
  app=new Homer(config,async message=>{messages.push(message);if(message.type==='reply'&&state.deliveryGate){state.deliveryWaiting=true;await state.deliveryGate.promise;}},(options,tool)=>new Peer(options,tool));
  await app.start();
  const settle=async()=>{for(let n=0;n<10;n++){await flush();const queue=app['mainQueue'];await queue;if(queue===app['mainQueue']&&!app['inputScheduled'])return;}throw Error('main queue did not settle');};
@@ -208,4 +209,15 @@ for(const finish of ['completed','disconnected','timeout'] as const)test('an asy
   else t.mock.timers.tick(600000);
   await until(()=>!f.app['accountManager']!.pending);await f.settle();assert.equal(f.mains.length,2);assert.equal(f.calls.length,1);
  }finally{await f.close();}
+});
+
+
+test('supported membership Main recovers on matching Worker WS success without replaying its tool',async t=>{
+ t.mock.timers.enable({apis:['Date','setTimeout'],now:0});const f=await fixture({source:'website',supports:true});
+ try{const worker=await f.delegate();worker.emit('webSocketSucceeded');await f.settle();assert.equal(f.mains.length,2);assert.equal(f.mains[1]!.threadId,'original-main');assert.equal(f.calls.length,1);assert.equal(f.workers[0]!.closes,0);}finally{await f.close();}
+});
+
+test('a different membership Worker model is no recovery hint; Main still uses its own periodic budget',async t=>{
+ t.mock.timers.enable({apis:['Date','setTimeout'],now:0});const f=await fixture({source:'website',supports:true,workerModel:'other-model'});
+ try{const worker=await f.delegate();worker.emit('webSocketSucceeded');await f.settle();assert.equal(f.mains.length,1);t.mock.timers.tick(900000);await f.settle();assert.equal(f.mains.length,2);assert.equal(f.calls.length,1);}finally{await f.close();}
 });

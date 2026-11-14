@@ -544,3 +544,58 @@ node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test \
 此前共享工作区的完整 `npm run typecheck` 通过；修复 review 问题后的默认 `npm test` 为 **2462/2468**，零取消／跳过：6 项失败分别为 `diff-viewer-preview.test.mjs` 的 ResizeObserver 夹具、`image-reference-message.test.mjs` 的 3 项引用／AX 断言、`message-image-preview.test.mjs` 的 2 项下载卡断言。三份 UI 测试不导入本轮引擎／服务模块，按名称单独运行仍为相同 6 项失败；未修改并行 UI 或删除／跳过断言。独立 code review 的两项重要问题已修复并通过上述回归，无延后的小问题。真实网络提速、Windows 实机和安装验收未运行，该次验收未提交、安装或发布。
 
 提交前从 `319093f` 构造独立候选，只叠加本轮 12 个文件的精确差异，排除并行渠道、UI、电源和模型默认值改动。Node **22.22.0** 下完整 `npm run typecheck` 通过，相关流程（含历史桥）**220/220**、固定 Codex **0.163.0** 回环专项 **10/10** 通过；默认核心 **2413/2415**，零取消／跳过。两项失败均在 `message-image-preview.test.mjs`，已在没有本轮改动的同一 `319093f` 干净基线及相同依赖中重现（1 通过／2 失败）。未修改、删除或跳过断言。本次仅提交源码，未安装或发布。
+
+## 2026-11-14 会员 WebSocket
+
+Homer 基线 `c6f8fd2`、网站基线 `877318c`；本轮差异由修改前快照单独归属，保留两仓并行工作。共享 Homer 工作区的配置／引擎／队列及会员工具定向 **306/306**、原生控制连接与专项分类 **28/28**、Electron 壳 **405/405** 通过，均无跳过；这些结果包含共享树当时的其他改动，不代表独立候选验收。配置交付及启用分支先复现失败，再实现通过；共享工作区完整类型检查通过。独立候选的执行版本和结果另行记录。
+
+```sh
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test --test-concurrency=1 \
+  tests/homer-account.test.ts tests/model-config.test.ts tests/desktop-deepseek-engine.test.mjs \
+  tests/engine-rpc-lifecycle.test.ts tests/main-transport-recovery.test.ts \
+  tests/main-queue-sources.test.ts tests/project-mcp-engine.test.ts \
+  tests/membership-web-tools.test.ts tests/worker-interaction-mcp.test.ts \
+  tests/native-account-service.test.ts tests/test-suites.test.mjs
+node --import tsx --experimental-vm-modules --test tests/electron-shell.test.mjs
+npm run typecheck
+```
+
+网站仓库执行 `node --test tests/homer_runtime_config.test.mjs tests/homer_entry.test.mjs tests/homer_boundary_regressions.test.mjs`。新增断言覆盖旧客户端精确响应字段、未知能力头、独立角色、false 省略、非法值、真实 HTTP GET／兑换一致、五字段 PKCE 正文和失败原子保全；没有启动 Meteor 生产配置或真实账户。
+
+`tests/native-membership-websocket.engine.test.mjs` 登记于显式 `engine` 专项，直接调用共享源码的生产 `CodexEngine`，**20/20** 通过。Main／Worker 的 WS、旧 HTTP、426、401／429／503、429 错误帧、断线、1009 及工具回执后断线均到达原生终态。成功路径核对相同 thread ID 冷恢复、完整历史、一次工具、后续增量和文本保全；WS 根线程正 token 完成才产生 Worker 提示，预热不提示。共享源码的原有混合来源专项 **11/11** 通过，新增 `openai → homer(WS) → openai`，保留原生加密及外国明文推理、工具结果、rollout 和文件。
+
+```sh
+: "${HOMER_TEST_CODEX_BIN:?明确指定固定 Codex 0.163.0 二进制}"
+node --import tsx --test --test-concurrency=1 \
+  tests/native-membership-websocket.engine.test.mjs tests/desktop-source-resume.test.mjs
+```
+
+专项使用独立 HOME／runtime／工作目录、合成 Token 和回环上游；缺二进制的跳过不能算验收。独立原生记忆连接与业务请求分开计数。实测部分预热失败和断线会由固定 Codex 自行转 HTTP，会员 `request_max_retries`／`stream_max_retries` 仍为 0；401／429／503 在上游两种传输都拒绝时正常失败。工具已执行后的断线转 HTTP 保留回执，工具仍只执行一次。宿主没有额外重发、截断历史或伪造终态。
+
+最终从未改动的 `c6f8fd2` 导出独立源码，仅应用本轮生产代码和测试差异，不混入并行改动，也不移动主工作区 HEAD。使用显式绝对路径固定 Node **22.22.0**：完整类型检查通过，固定 Codex **0.163.0** 的会员及混合来源联合专项 **31/31** 通过，零跳过；默认核心 **2423/2425**，两项失败均为 `message-image-preview.test.mjs`。相同依赖、相同 Node 下，未叠加本轮改动的 `c6f8fd2` 基线为 **2413/2415**，相同两项失败，零取消／跳过。共享树默认核心另为 **2472/2478**，其余四项失败来自并行 `diff-viewer-preview.test.mjs` 与 `image-reference-message.test.mjs`。未修改这些 UI 文件或删减断言。隔离目录首次误用系统 Node 26.9.0 的不完整运行已作废，未作为上述 Node22 验收。网站源码以显式 Node22 复验 **29/29**，零跳过。
+
+独立只读 code review 未发现生产代码阻断问题，指出共享与候选测试证据归属的措辞问题，已更正并用上述独立检查收口。原工作区的并行改动及其暂存状态均保留；本轮仅提交会员 WS 的精确差异，不混入并行改动。临时 SDK、模块缓存、源码副本和合成运行目录在验收后回收，维护测试入口及脱敏结果留作复验依据。
+
+计费专项执行本地 `homer-rc45/upstream` 的真实网关代码副本，Go **1.26.11**、全新 HOME 和 SQLite、内存 Redis、回环上游，控制器与 relay 共 **123** 个测试／子测试通过，零失败或跳过。源码 `.go`、go.mod、go.sum 的排序路径及内容 SHA-256 为 `b3f0a445491046b431c8b967ba478b3e67b95e5c44ccbf61287e2b3b0a246310`（不含 Homer 夹具）；这不证明线上网关版本。复用既有鉴权、请求结算和余额断言，新增可重复使用的 `tests/fixtures/membership-websocket-billing_test.go`，复制到独立网关 controller 测试包后运行：
+
+```sh
+# 只在不含私有配置／日常数据库的独立网关副本中执行。
+SQL_DSN= LOG_SQL_DSN= TEST_RESPONSES_SQL_DSN= TEST_RESPONSES_LOG_SQL_DSN= \
+go test -mod=readonly -p 4 ./controller ./relay \
+  -run 'HomerMembershipWebSocket|ResponsesWS|ResponsesWebSocket|ResponsesStreamOutcomes' \
+  -count=1 -timeout=180s
+```
+
+夹具初始化正式启动同样使用的嵌入翻译库，避免只运行既有撤权案例时缺启动初始化导致的空指针，不改网关产品源码。核对连接复用、每次 create 撤权／限流、重复终态一次结算、初始拒绝退款、已交付部分输出断线结算、HTTP／WS 相同价目及用户／Token／日志配平。新增预热与增量生成组合：token 定价下 usage 为零的预热扣零，按请求定价仍按价目扣费，重复预热终态不会扣第二次或结清后续生成。没有真实余额、支付、凭据或模型请求。
+
+本次未启用网站 WS 设置、安装或发布；实际部署网关及上游兼容性、真实会员计费和网络性能仍待独立验收后才可启用。
+
+### 提交前复核（2026-11-14）
+
+本轮按明确的本地提交授权再次复核精确候选，保留并行目录、渠道、UI 和电源改动及已有暂存内容。Node22.22.0 完整类型检查、固定 Codex0.163.0 原生专项31/31、网站独立协议回归29/29通过，均无跳过。完整核心复验2423/2425，仍仅为前述在未改基线复现的两项图片预览失败。网站兼容配置的本地提交为 `7d4fe165`，未部署或改动正式设置。计费123项为上一阶段相同网关源码及未修改夹具的合成验收记录，本次复核未重复运行 Go 或调用真实金融／模型接口。
+
+首次在托管隔离路径运行核心回归时，未修改的 Windows 模拟夹具创建114字节 Unix socket路径，出现五项管道错误并卡在等待循环；该运行已中止，无完整汇总。把同一生产与测试文件逐字节导出至项目 scratch 的短路径后，socket路径102字节，原 Windows 文件8/8通过，再完成上述完整核心复验。未改任何 Windows 源码或断言。
+
+新增测试诊断只保留数值：Main、Worker 的WS样本均为恢复前最大请求 `input` 57659字节、最后热轮增量141字节；HTTP对应热轮58397字节。指标仅覆盖JSON `input`，总传输、真实网络延迟及供应商容量需另行测量。生产实现继续复用Codex原生传输和既有队列，无新代理层、历史副本缓存、依赖或重试管理器。独立只读复核未发现实现阻断项；作者同时澄清预热可能按原价目收费，未增加收费或补偿策略。
+
+提交前又将合成WS上游的响应缓存限定到每条物理连接，使跨连接旧 `previous_response_id` 直接失败，避免全局测试缓存掩盖冷恢复缺陷。收紧后重新运行会员原生专项20/20，零失败或跳过，独立审查者复核通过；混合来源11项及核心执行路径未改动。

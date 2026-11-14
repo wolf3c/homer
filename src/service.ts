@@ -457,7 +457,7 @@ export class Homer {
       if(this.closing||this.closed)throw Error('service_upgrading');
       if(!this.nativeControl){
         const home=capabilityHome(this.config),cwd=canonicalDir(join(home,'homer-control'));
-        this.nativeControl=new CodexEngine({...this.config,codexHome:home,dailyDeepSeek:false,desktopModelSource:undefined,desktopConnection:undefined,context:undefined,capabilities:undefined,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true},{cwd,readRoots:[cwd],instructions:'Homer native configuration service. No model turns.',tools:[],controlOnly:true},async()=>{throw Error('capability_control_tool_denied');});
+        this.nativeControl=new CodexEngine({...this.config,codexHome:home,dailyDeepSeek:false,desktopModelSource:undefined,desktopConnection:undefined,context:undefined,capabilities:undefined,supportsWebSocket:undefined,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true},{cwd,readRoots:[cwd],instructions:'Homer native configuration service. No model turns.',tools:[],controlOnly:true},async()=>{throw Error('capability_control_tool_denied');});
         const control=this.nativeControl;let initialized=false,lease:string|undefined;
         const release=()=>{
           if(this.nativeControl!==control||this.closed)return;
@@ -767,7 +767,7 @@ export class Homer {
   private scheduleMainTransportRecovery(hint=false){
     if(this.mainTransportTimer){clearTimeout(this.mainTransportTimer);this.mainTransportTimer=undefined;}
     const engine=this.main;
-    if(this.closing||this.closed||this.mainBroken||this.config.desktopModelSource!=='codex'||engine?.supportsWebSocket!==true||engine.modelTransport!=='http'){
+    if(this.closing||this.closed||this.mainBroken||!['codex','website'].includes(this.config.desktopModelSource??'')||engine?.supportsWebSocket!==true||engine.modelTransport!=='http'){
       this.mainTransportPending=false;this.mainHttpSince=undefined;return;
     }
     const now=Date.now();this.mainHttpSince??=now;
@@ -781,7 +781,7 @@ export class Homer {
   private async recoverMainTransport(){
     if(!this.mainTransportPending)return;
     const engine=this.main,now=Date.now();
-    if(this.closing||this.closed||this.startup||this.mainBroken||this.mainRecovery||this.config.desktopModelSource!=='codex'||engine?.supportsWebSocket!==true||engine.modelTransport!=='http'||engine.canRestart!==true||engine.nativeBusy||engine.nativeInteractionPending||this.mainContext||this.interactionMcp?.pending||this.nativeOperations||this.accountManager?.pending)return;
+    if(this.closing||this.closed||this.startup||this.mainBroken||this.mainRecovery||!['codex','website'].includes(this.config.desktopModelSource??'')||engine?.supportsWebSocket!==true||engine.modelTransport!=='http'||engine.canRestart!==true||engine.nativeBusy||engine.nativeInteractionPending||this.mainContext||this.interactionMcp?.pending||this.nativeOperations||this.accountManager?.pending)return;
     if(this.mainTransportAttempts.filter(at=>now-at<600000).length>=2){this.scheduleMainTransportRecovery();return;}
     this.mainTransportPending=false;this.mainHttpSince=undefined;
     this.mainTransportAttempts.push(now);if(this.mainTransportAttempts.length>2)this.mainTransportAttempts.shift();
@@ -2229,6 +2229,7 @@ export class Homer {
         created={id:run.id,epoch:run.epoch,engine,requests:new Map(),mcp:endpoint};pendingEndpoint=undefined;slot=created;this.workers.set(run.id,slot);
         engine.on('hostMcpToolStarted',call=>this.scheduleCalls.observe(engine,call));
         engine.on('webSocketSucceeded',()=>{
+          if(this.config.desktopModelSource==='website'){const main=effectiveModelConfig(this.config,'main'),worker=effectiveModelConfig(this.config,'worker');if(main.baseUrl!==worker.baseUrl||main.model!==worker.model)return;}
           if(this.workers.get(run.id)===created&&!created.stopping&&created.epoch===this.tasks.run(run.id).epoch&&!this.tasks.run(run.id).stopRequestedAt&&engine.supportsWebSocket===true)this.scheduleMainTransportRecovery(true);
         });
         const delivered=(source:string,id:string|number)=>{const key=created.requests.get(JSON.stringify([source,id]));if(key)try{this.interactions.markDelivered(key);}catch{}};

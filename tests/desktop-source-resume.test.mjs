@@ -15,7 +15,7 @@ import {WebSocketServer} from 'ws';
 import {HttpsProxyAgent} from 'https-proxy-agent';
 const bin=process.env.HOMER_TEST_CODEX_BIN;
 const toml=value=>value&&typeof value==='object'?'{'+Object.entries(value).map(([k,v])=>JSON.stringify(k)+'='+toml(v)).join(',')+'}':JSON.stringify(value);
-for(const transport of ['http','websocket','websocket-native','reject-401','reject-429','reject-503','disconnect','message-limit','tool-disconnect','overloaded'])test(`fixed Codex preserves original threads and history via ${transport}`,{skip:!bin,timeout:120000},async t=>{
+for(const transport of ['http','websocket','websocket-native','websocket-member','reject-401','reject-429','reject-503','disconnect','message-limit','tool-disconnect','overloaded'])test(`fixed Codex preserves original threads and history via ${transport}`,{skip:!bin,timeout:120000},async t=>{
  const rejection=transport.startsWith('reject-')?Number(transport.slice(7)):undefined;
  const fault=!!rejection||['disconnect','message-limit','tool-disconnect','overloaded'].includes(transport);let rejected=0,broken=0;
  const providers=transport==='websocket-native'?['openai','openai']:['openai','homer','openai'];
@@ -59,7 +59,7 @@ for(const transport of ['http','websocket','websocket-native','reject-401','reje
    }
    if(transport==='tool-disconnect'&&!broken&&data.input.some(item=>item.type==='function_call_output')){broken++;ws.terminate();return;}
    if(data.generate!==false&&['disconnect','message-limit'].includes(transport)){broken++;if(transport==='message-limit')ws.close(1009,'synthetic message limit');else ws.terminate();return;}
-   for(const event of reply(data,'openai','websocket'))ws.send(JSON.stringify(event));
+   for(const event of reply(data,req.url.startsWith('/homer/')?'homer':'openai','websocket'))ws.send(JSON.stringify(event));
   }));
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -80,7 +80,7 @@ for(const transport of ['http','websocket','websocket-native','reject-401','reje
   settings['features.enable_request_compression']=false;
   settings.model_catalog_json=join(root,'models.json');
   if(provider==='openai')settings.openai_base_url=bridge.baseUrl;
-  else settings['model_providers.homer']={name:'homer',base_url:origin+'/homer',wire_api:'responses',requires_openai_auth:false,supports_websockets:false};
+  else settings['model_providers.homer']={name:'homer',base_url:origin+'/homer',wire_api:'responses',requires_openai_auth:false,supports_websockets:transport==='websocket-member'};
   const child=spawn(bin,['app-server','--stdio',...Object.entries(settings).flatMap(([k,v])=>['-c',k+'='+toml(v)])],{cwd:join(root,'workspace'),env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(root,'home'),CODEX_HOME:join(root,'codex'),TMPDIR:join(root,'tmp'),LOG_FORMAT:'json',RUST_LOG:'error,codex_otel.trace_safe=info'}});
   const observer=new CodexEngine({workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:bin,model:'gpt-6.1-sol',desktopModelSource:'codex',pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'0'.repeat(64)}},{role:'worker',cwd:join(root,'workspace'),readRoots:[],instructions:'Synthetic observer.',tools:[]},async()=>{throw Error('observer_cannot_run_tools');});
   const observation={provider,signals:0};observations.push(observation);observer.threadId=thread;observer['child']=child;observer['observeTransport'](child);observer.on('webSocketSucceeded',()=>observation.signals++);
@@ -144,7 +144,7 @@ for(const transport of ['http','websocket','websocket-native','reject-401','reje
   await peer.run('synthetic-final-turn');
   if(transport!=='http'){assert.ok(prewarms>0);assert.ok(requests.at(-1).previous);assert.ok(requests.at(-1).wireInput.length<1000);assert.doesNotMatch(requests.at(-1).wireInput,/synthetic-large-context/);}
   await peer.close();peer=undefined;
-  assert.deepEqual(observations.map(value=>value.signals),observations.map(value=>transport!=='http'&&value.provider==='openai'?1:0),'production observer emits once per WS Worker process, never for HTTP or prewarm');
+  assert.deepEqual(observations.map(value=>value.signals),observations.map(value=>transport!=='http'&&(value.provider==='openai'||transport==='websocket-member')?1:0),'production observer emits once per WS Worker process, never for HTTP or prewarm');
   passed=true;
  }finally{await peer?.close();await bridge.close();for(const ws of sockets.clients)ws.terminate();sockets.close();server.closeAllConnections();await new Promise(r=>server.close(r));if(passed)rmSync(root,{recursive:true,force:true});}
 });

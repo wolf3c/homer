@@ -8,7 +8,7 @@ import {validateContextTuning} from './model-context.js';
 import {validateModelCapabilities,type ModelCapabilities} from './model-catalog.js';
 import {validReasoningEffort} from './model-config.js';
 
-export type HomerRoleConfig = {baseUrl:string;model:string;effort:string|null;fast:false;capabilities?:ModelCapabilities;context:{contextWindow:number;autoCompactTokenLimit:number;autoCompactTokenLimitScope:'total'}};
+export type HomerRoleConfig = {baseUrl:string;model:string;effort:string|null;fast:false;supportsWebSocket?:boolean;capabilities?:ModelCapabilities;context:{contextWindow:number;autoCompactTokenLimit:number;autoCompactTokenLimitScope:'total'}};
 export type HomerRuntimeConfig = {main:HomerRoleConfig;worker:HomerRoleConfig};
 
 export type HomerCredentials = {
@@ -48,7 +48,8 @@ function allowedOrigin(origin: string, synthetic = false) {
 }
 
 function validateHomerRoleConfig(input:unknown,boundary:HomerCredentialBoundary):HomerRoleConfig {
-    const value=record(input);fields(value,['baseUrl','model','effort','fast','context',...(Object.hasOwn(value,'capabilities')?['capabilities']:[])]);
+    const value=record(input);fields(value,['baseUrl','model','effort','fast','context',...(Object.hasOwn(value,'capabilities')?['capabilities']:[]),...(Object.hasOwn(value,'supportsWebSocket')?['supportsWebSocket']:[])]);
+    if(Object.hasOwn(value,'supportsWebSocket')&&typeof value.supportsWebSocket!=='boolean')invalid();
     if(value.baseUrl!==boundary.gatewayOrigin+'/v1'||typeof value.model!=='string'||!/^[\x21-\x7e]{1,256}$/.test(value.model)||(value.effort!==null&&!validReasoningEffort(value.effort))||value.fast!==false)invalid();
     const tuning=record(value.context);fields(tuning,['contextWindow','autoCompactTokenLimit','autoCompactTokenLimitScope']);
     if(tuning.autoCompactTokenLimitScope!=='total'||!Number.isInteger(tuning.contextWindow)||!Number.isInteger(tuning.autoCompactTokenLimit))invalid();
@@ -56,7 +57,7 @@ function validateHomerRoleConfig(input:unknown,boundary:HomerCredentialBoundary)
     try{context=validateContextTuning(tuning);}catch{invalid();}
     let capabilities;
     try{if(Object.hasOwn(value,'capabilities'))capabilities=validateModelCapabilities(value.capabilities,value.effort as string|null);}catch{invalid();}
-    return {baseUrl:value.baseUrl,model:value.model,effort:value.effort as string|null,fast:value.fast,...(capabilities?{capabilities}:{}),context:{...context,autoCompactTokenLimitScope:'total'}};
+    return {baseUrl:value.baseUrl,model:value.model,effort:value.effort as string|null,fast:value.fast,...(value.supportsWebSocket===true?{supportsWebSocket:true}:{}),...(capabilities?{capabilities}:{}),context:{...context,autoCompactTokenLimitScope:'total'}};
 }
 export function validateHomerRuntimeConfig(input:unknown,boundary:HomerCredentialBoundary):HomerRuntimeConfig {
   allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
@@ -331,7 +332,7 @@ async function jsonRequest(url:string,options:RequestInit,authenticationStatus=f
 }
 export async function queryHomerRuntimeConfig(options:HomerCredentialBoundary&{websiteOrigin:string},signal?:AbortSignal):Promise<HomerRuntimeConfig> {
   allowedOrigin(options.websiteOrigin,options.allowSyntheticLoopback);
-  const response=await jsonRequest(options.websiteOrigin+'/api/homer/v1/config',{signal,cache:'no-store'});
+  const response=await jsonRequest(options.websiteOrigin+'/api/homer/v1/config',{signal,cache:'no-store',headers:{'X-Homer-Config-Features':'responses-websocket'}});
   if(response.status!==200)throw Error('UNAVAILABLE');
   return validateHomerRuntimeConfig(response.body,options);
 }
@@ -400,7 +401,7 @@ export async function authorizeHomerConnection(options:HomerCredentialBoundary&{
     await Promise.race([options.openBrowser(attempt.authorizationUrl),callback.then(()=>{})]);
     const exchange=await callback;
     attempt.assertActive();signal.throwIfAborted();
-    const result=await jsonRequest(options.websiteOrigin+'/api/homer/v1/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(exchange),signal});
+    const result=await jsonRequest(options.websiteOrigin+'/api/homer/v1/token',{method:'POST',headers:{'Content-Type':'application/json','X-Homer-Config-Features':'responses-websocket'},body:JSON.stringify(exchange),signal});
     attempt.assertActive();signal.throwIfAborted();
     if(result.status!==200){
       let code='UNAVAILABLE';try{const error=record(record(result.body).error);if(['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE'].includes(String(error.code)))code=String(error.code);}catch{}

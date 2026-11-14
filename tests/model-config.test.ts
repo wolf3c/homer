@@ -296,3 +296,12 @@ test('failed native settings update keeps the previous snapshot and retries befo
   const next=JSON.parse((await engine.turn('Synthetic retried turn')).text);assert.equal(next.model,'synthetic-hot-image');assert.equal(next.effort,'low');assert.equal(next.turnServiceTier,null);assert.equal(next.settingsUpdates,2);assert.equal(engine.threadId,thread);assert.equal(engine.pid,pid);
  }finally{await engine.close();f.close();}
 });
+
+
+test('membership WS follows independent role snapshots and cannot leak into ChatGPT',()=>{
+ const selected={baseUrl:'https://gateway.example.invalid/v1',model:'synthetic',effort:'high',fast:false,context:{contextWindow:128000,autoCompactTokenLimit:100000,autoCompactTokenLimitScope:'total'}};
+ const base={workspace:'/synthetic/work',runtime:'/synthetic/runtime',codexHome:'/synthetic/codex',codexBin:'/synthetic/bin',model:'old',requiresOpenaiAuth:false,stopGraceMs:3000,desktopResources:{bundleRoot:'/synthetic/app',manifestSha256:'0'.repeat(64)},pauseOldDesktopWork:true,dailyDeepSeek:true,desktopModelSource:'website',supportsWebSocket:true,desktopConnection:{main:{...selected,supportsWebSocket:true},worker:{...selected,supportsWebSocket:false}}} as Config;
+ assert.equal(effectiveModelConfig(base,'main').supportsWebSocket,true);assert.equal(effectiveModelConfig(base,'worker').supportsWebSocket,false);
+ assert.equal(effectiveModelConfig({...base,desktopConnection:undefined},'main').supportsWebSocket,false);
+ assert.equal(effectiveModelConfig({...base,desktopModelSource:'codex'},'main').supportsWebSocket,undefined);
+});

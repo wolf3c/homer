@@ -195,3 +195,27 @@ for(const role of ['main','worker'])test(`website desktop ${role} sends its conf
   assert.equal(original.model,'original');assert.equal(original.baseUrl,undefined);
  }finally{assert.equal(await engine.close(),true);}
 });
+
+
+for(const role of ['main','worker'])for(const enabled of [false,true])test('membership '+role+' opts into native WS only from its role snapshot: '+enabled,async()=>{
+ const root=mkdtempSync(join(parent,'ws-')),selected={baseUrl:'http://127.0.0.1:1/v1',model:'synthetic-member',effort:'high',fast:false,supportsWebSocket:enabled,context:{contextWindow:128000,autoCompactTokenLimit:100000,autoCompactTokenLimitScope:'total'}};
+ const config={runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'home'),nativeCodexHome:join(root,'home'),codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'old',requiresOpenaiAuth:false,stopGraceMs:100,desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'0'.repeat(64)},desktopConnection:{main:{...selected,supportsWebSocket:role==='main'&&enabled},worker:{...selected,supportsWebSocket:role==='worker'&&enabled}}};
+ for(const path of [config.runtime,config.workspace,config.codexHome])mkdirSync(path);
+ const engine=new CodexEngine(config,{role,threadId:'synthetic-model-thread',cwd:config.workspace,readRoots:[],instructions:'Synthetic WS protocol.',tools:[]},async()=>({}));
+ try{
+  assert.equal(await engine.start(),'synthetic-model-thread');const actual=(await engine.request('config/read',{})).config;
+  assert.equal(actual.model_provider,'homer');assert.equal(actual.model_providers.homer.supports_websockets,enabled);assert.equal(actual.model_providers.homer.requires_openai_auth,false);assert.equal(actual.model_providers.homer.base_url,selected.baseUrl);assert.equal(engine.supportsWebSocket,enabled);
+  const observed=await engine.request('fixture/inspect',{});assert.deepEqual(observed.diagnostics,enabled?{format:'json',filter:'error,codex_otel.trace_safe=info'}:{});
+  assert.equal((await engine.turn('Protocol only.')).status,'completed');
+ }finally{await engine.close();rmSync(root,{recursive:true,force:true});}
+});
+
+test('membership refuses native WS configuration that was not adopted',async()=>{
+ const root=mkdtempSync(join(parent,'ws-mismatch-'));
+ const bin=resolve('tests/fixtures/model-settings-app-server.mjs');
+ const selected={baseUrl:'http://127.0.0.1:1/v1',model:'synthetic-ws-ignored',effort:'high',fast:false,supportsWebSocket:true,context:{contextWindow:128000,autoCompactTokenLimit:100000,autoCompactTokenLimitScope:'total'}};
+ const config={runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'home'),nativeCodexHome:join(root,'home'),codexBin:bin,model:'old',requiresOpenaiAuth:false,stopGraceMs:100,desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'0'.repeat(64)},desktopConnection:{main:selected,worker:selected}};
+ for(const path of [config.runtime,config.workspace,config.codexHome])mkdirSync(path);
+ const engine=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'Synthetic rejected settings.',tools:[]},async()=>({}));
+ try{await assert.rejects(engine.start(),/engine_websocket_config_mismatch/);}finally{await engine.close();rmSync(root,{recursive:true,force:true});}
+});
