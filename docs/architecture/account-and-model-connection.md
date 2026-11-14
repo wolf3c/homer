@@ -56,6 +56,18 @@ HTTP／HTTPS 代理使用直接依赖 `https-proxy-agent@7.0.6`，SOCKS 使用 `
 
 实现参考 [Cindy 的握手与错误语义](https://github.com/makecindy/cindy/blob/19184428ffbb6ec25d143050af4568a85deae68c/packages/anthropic-compat-proxy/src/server.ts) 与[完整消息转换边界](https://github.com/makecindy/cindy/blob/6afea2c125a2a087a432bcd6d226e2a776586875/packages/anthropic-compat-proxy/src/websocket-message-transform.ts)，使用已有 ws 处理帧和分片。没有移植其路由注册、握手缓存、回探或附件外置体系。
 
+### 主 Agent 从 HTTP 恢复 WebSocket（2026-11-14）
+
+源码在 `src/engine.ts` 识别原生传输事实，在 `src/service.ts` 复用 Main 串行队列及 `retireMain()`／`recoverMain()`。不新增业务实体、数据库、设置、依赖或传输重试器；Worker 只提供成功信号，生命周期保持原样。
+
+- 仅 ChatGPT 来源、有效 `openai` provider 支持 WS、当前 Main 已确认使用 HTTP 时参与。原生配置明确关闭 WS 时不尝试；网站／会员 provider 不参与。未知传输不推测为 HTTP。
+- 同来源 Worker 当前子进程、原生根线程的 WS 请求成功后，还必须收到无错误、输出 token 大于零的 `response.completed`，每个 Worker 子进程只提示一次。预热、HTTP 完成、其他原生子 Agent、旧子进程和停止中的 Worker 都不触发。采用固定 Codex **0.163.0** 的 [`codex_otel.trace_safe` JSON stderr 元数据](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/otel/src/events/session_telemetry.rs)；不转发或保存原始行，整行最多 64 KiB，错误、非 JSON、越界行丢弃且不影响执行。升级引擎前须复验该信号合同。
+- Worker 提示与周期触发共用两次实际尝试时间，任意滚动 10 分钟最多重建 Main 两次。距离上次实际尝试满 15 分钟可再尝试；首次从确认 HTTP 起计时。仅一个非保活定时器，无轮询、合成消息或补发积压尝试。限频只约束 Homer 发起的重建，Codex 内部原生重试不变；宿主重启后内存计时重新开始。
+- 没有新消息也可提前恢复，但只在 Main 完整业务任务退出、回复交付结束，且无本机工具／反向 RPC 回执、Main MCP 调用及端点响应连接、原生交互、后台终端、准备／压缩、账号与配置操作时进入。恢复与用户消息、Worker 回传进入同一串行执行边界；先恢复，再认领下一条持久输入，恢复期间到达的输入继续排队。运行中的 Worker 不因 Main 维护而被重建。MCP 客户端提前断开时仍等待正在执行的回调；账号异步登录完成、断开与超时释放安全门后会重新唤醒调度器。
+- 复用原线程 ID、工作目录及当前配置。旧进程退出未确认时不启动替代进程；关闭 Homer 后不再启动。新进程启动与原线程恢复失败沿现有失败保全处理，不重放已执行工具或失败业务。新进程已加载且版本未变化的原生配置不会在下一轮重复冷恢复；恢复期间的新配置修订仍保留待应用。
+
+定向离线测试、固定引擎及整仓验证结果见[测试说明](../testing.md#2026-11-14-主-agent-自动恢复-websocket)。本次未安装、发布或调用真实模型；该策略让新的 Codex 进程重新尝试 WS，不能保证服务端始终接受 WS，也不承诺固定提速。
+
 ### 实施与验证边界
 
 - Node 22.22.0；macOS ARM64 包内 Codex 0.163.0。生产源码独立编译、桥及目标测试严格类型检查通过。生产依赖清单复制检查已包含两个代理库及传递依赖，无打包流程改造。

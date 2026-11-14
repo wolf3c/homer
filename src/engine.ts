@@ -99,6 +99,9 @@ export type EngineLike = {
   readonly nativeInteractionPending?:boolean;
   // A failed turn and an unavailable process are separate facts.
   readonly available?:boolean;
+  readonly modelTransport?:'http'|'websocket';
+  readonly supportsWebSocket?:boolean;
+  readonly canRestart?:boolean;
   imageCapability?():Promise<boolean>;
   resumable?: boolean;
   pid?: number;
@@ -278,6 +281,40 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private backgroundCheck?:Promise<void>;
   private backgroundUnconfirmed=false;
   private appliedVersion?:string;
+  private transport?:'http'|'websocket';
+  private websocketSupported=false;
+  private serverRequests=0;
+  get modelTransport(){return this.transport;}
+  get supportsWebSocket(){return this.websocketSupported;}
+  get canRestart(){return !!this.threadId&&this.resumable&&this.available&&!this.active&&!this.compaction&&!this.preparation&&!this.pending.size&&!this.serverRequests&&!this.nativeInteractionPending&&!this.backgroundCheck&&!this.nativeBusy;}
+  private emitIdle(){try{if(this.canRestart)this.emit('idle');}catch{/* Recovery observation cannot fail a native request. */}}
+  private observeTransport(child:ChildProcessWithoutNullStreams){
+    this.transport=undefined;try{this.emit('modelTransport',undefined);}catch{/* Observation is optional. */}
+    let buffer='',size=0,dropping=false,reported=false;
+    const record=(line:string)=>{
+      try{
+        if(this.child!==child||this.closing||this.exited)return;
+        const event=JSON.parse(line),fields=event.fields;
+        if(event.target!=='codex_otel.trace_safe'||!fields||fields['app.version']!=='0.163.0'||!this.threadId||fields['conversation.id']!==this.threadId)return;
+        let transport:'http'|'websocket'|undefined;
+        if(fields['event.name']==='codex.websocket_request'&&fields.success==='true'&&!fields['error.message'])transport='websocket';
+        if(fields['event.name']==='codex.api_request'&&fields.endpoint==='/responses')transport='http';
+        if(transport&&transport!==this.transport){this.transport=transport;this.emit('modelTransport',transport);}
+        const output=Number(fields.output_token_count);
+        if(!reported&&this.options.role==='worker'&&this.transport==='websocket'&&fields['event.name']==='codex.sse_event'&&fields['event.kind']==='response.completed'&&!fields['error.message']&&Number.isFinite(output)&&output>0){reported=true;this.emit('webSocketSucceeded');}
+      }catch{/* Discard diagnostics; never store or forward native stderr. */}
+    };
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data',(chunk:string)=>{
+      let start=0;
+      while(start<chunk.length){
+        const end=chunk.indexOf('\n',start),part=chunk.slice(start,end<0?undefined:end);
+        if(!dropping){size+=Buffer.byteLength(part);if(size>65536){buffer='';dropping=true;}else buffer+=part;}
+        if(end<0)break;
+        if(!dropping)record(buffer);buffer='';size=0;dropping=false;start=end+1;
+      }
+    });
+  }
   get nativeBusy(){return this.backgroundUnconfirmed;}
   get turnActive(){return !!this.active&&!this.active.settling;}
   get available(){return !this.failure&&!this.closing&&!this.exited;}
@@ -290,7 +327,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       const result=await this.request('thread/backgroundTerminals/list',{threadId:this.threadId,limit:100});
       confirmed=Array.isArray(result.data);this.backgroundActivity(!confirmed||result.data.length>0||!!result.nextCursor);
     }catch{this.backgroundActivity(true);}
-    finally{this.backgroundCheck=undefined;if(confirmed&&this.backgroundUnconfirmed&&!this.closing&&!this.exited){this.backgroundTimer=setTimeout(()=>void this.refreshBackground(),500);this.backgroundTimer.unref();}}
+    finally{this.backgroundCheck=undefined;if(confirmed&&this.backgroundUnconfirmed&&!this.closing&&!this.exited){this.backgroundTimer=setTimeout(()=>void this.refreshBackground(),500);this.backgroundTimer.unref();}this.emitIdle();}
     })();this.backgroundCheck=work;return work;
   }
   pid?: number;
@@ -369,6 +406,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   // Native 0.163.0: priority is Fast; explicit null clears an inherited tier.
   private get serviceTier(){return this.config.serviceTier!==undefined?this.config.serviceTier:effectiveFast(this.config.fast,this.options.role)?"priority":null;}
   private async startConfigured(): Promise<string> {
+    this.websocketSupported=false;
     if(this.failureChecks.signal.aborted)this.failureChecks=new AbortController();
     if (!usesHomerNativeHome(this.config)) throw Error("engine_native_tools_home_required");
     const proxy=codexProxyEnvironment();
@@ -456,6 +494,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       ...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TEMP,USERPROFILE:join(this.config.codexHome,'host-home')}:{ }),
       ...proxy,
     };
+    if(this.config.desktopModelSource==='codex'&&!this.options.controlOnly){env.LOG_FORMAT='json';env.RUST_LOG='error,codex_otel.trace_safe=info';}
     if(this.historyBridge){env.NO_PROXY=[proxy.NO_PROXY??proxy.no_proxy,'127.0.0.1'].filter(Boolean).join(',');env.no_proxy=env.NO_PROXY;}
     if (this.config.keyEnv)
       env[this.config.keyEnv] = this.config.desktopModelSource==='website'?this.websiteToken:process.env[this.config.keyEnv];
@@ -472,7 +511,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     this.child.stdin.on("error", () =>
       this.fail(new Error("engine_stdin_closed")),
     );
-    this.child.stderr.resume(); // Never echo provider bodies, arguments, or engine diagnostics.
+    if(env.LOG_FORMAT==='json')this.observeTransport(child);
+    else this.child.stderr.resume(); // Never echo provider bodies, arguments, or engine diagnostics.
     this.child.on("error", () => this.fail(new Error("engine_spawn_failed")));
     this.child.on("exit", () => {
       this.exited = true;
@@ -640,7 +680,12 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         let error:Error|undefined;
         if(m.error){p.checking=true;error=await this.modelError(m.error);if(this.pending.get(m.id)!==p)return;}
         this.pending.delete(m.id);
+        if(!error&&p.method==='config/read'){
+          const config=m.result?.config,provider=config?.model_provider??(this.config.baseUrl?'homer':'openai'),info=config?.model_providers?.[provider];
+          this.websocketSupported=!!config&&this.config.desktopModelSource==='codex'&&!this.options.controlOnly&&provider==='openai'&&(info?info.supports_websockets===true:true);
+        }
         error ? p.reject(error) : p.resolve(m.result);
+        this.emitIdle();
       }
       return;
     }
@@ -652,6 +697,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       return;
     }
     if (m.id !== undefined) {
+      this.serverRequests++;
+      try{
       const item = this.nativeItems.get(JSON.stringify([p?.threadId,p?.turnId,p?.itemId]));
       const details = item ? { ...p, operation: item, ...(p.command == null && item.command ? { command: item.command } : {}) } : p;
       if (await this.nativeRequests.receive(m.id, m.method, details)) return;
@@ -707,6 +754,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         if (bound) this.emit("toolResponse", p.callId);
       }
       return;
+      }finally{this.serverRequests--;this.emitIdle();}
     }
     if(m.method==='account/login/completed'){this.emit('accountLoginCompleted',{loginId:typeof p?.loginId==='string'?p.loginId:null,success:p?.success===true});return;}
     if(m.method==='mcpServer/oauthLogin/completed'){this.emit('oauthCompleted',{success:p?.success===true});return;}
@@ -959,7 +1007,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       this.active = undefined;
       throw e;
     }
-    }finally{if(this.preparation===operation)this.preparation=undefined;}
+    }finally{if(this.preparation===operation)this.preparation=undefined;this.emitIdle();}
   }
   // Registry/credential changes may force resume; Skill-only writes use native reload.
   async refreshCapabilities(force=true){
@@ -987,7 +1035,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       const resumed=await this.prepared(operation,this.start());if(resumed!==threadId)throw Error('main_resume_thread_mismatch');
     }
     return {pending:false};
-    }finally{if(this.preparation===operation)this.preparation=undefined;}
+    }finally{if(this.preparation===operation)this.preparation=undefined;this.emitIdle();}
   }
   async steer(expectedTurnId:string,text:string):Promise<{turnId:string}> {
     if(!this.active||this.active.settling||!this.threadId||this.turnId!==expectedTurnId||this.closing)throw Error('engine_steer_not_applicable');
@@ -1006,6 +1054,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       await completed;
     } finally {
       if (this.compaction === compact) this.compaction = undefined;
+      this.emitIdle();
     }
   }
   async interrupt() {

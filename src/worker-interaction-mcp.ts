@@ -29,7 +29,10 @@ export class WorkerInteractionMcp {
   readonly directory = process.cwd();
   private server?: Server;
   private sockets = new Set<Socket>();
-  constructor(runtime: string, private handle: (tool: string, args: unknown, meta: unknown) => Promise<unknown>,readonly catalog:Tool[]=HOST_MCP_TOOLS) {
+  private calls=0;
+  get pending(){return this.calls>0||this.sockets.size>0;}
+  private notifyIdle(){try{if(!this.pending)this.onIdle?.();}catch{/* Observation cannot fail a tool response. */}}
+  constructor(runtime: string, private handle: (tool: string, args: unknown, meta: unknown) => Promise<unknown>,readonly catalog:Tool[]=HOST_MCP_TOOLS,private onIdle?:()=>void) {
     if(process.platform==='win32'){
       // Windows' default pipe ACL allows writing only as the owner, administrators or SYSTEM.
       this.path="\\\\.\\pipe\\homer-hi-"+randomUUID();
@@ -44,7 +47,7 @@ export class WorkerInteractionMcp {
     if (this.server) throw new Error("interaction_mcp_already_started");
     this.server = createServer(socket => {
       this.sockets.add(socket);
-      socket.on("close", () => this.sockets.delete(socket));
+      socket.on("close", () => {this.sockets.delete(socket);this.notifyIdle();});
       socket.on("error", () => {});
       socket.setTimeout(INTERACTION_LIMITS.connectMs, () => socket.destroy());
       let received = false, buffer = "";
@@ -56,6 +59,7 @@ export class WorkerInteractionMcp {
         const end = buffer.indexOf("\n");
         if (end < 0) return;
         received = true;
+        this.calls++;
         void (async () => {
           try {
             const message = JSON.parse(buffer.slice(0, end));
@@ -65,6 +69,7 @@ export class WorkerInteractionMcp {
             if (Buffer.byteLength(result) > INTERACTION_LIMITS.responseBytes) throw new Error("interaction_response_too_large");
             socket.end(result + "\n");
           } catch (error) { socket.end(JSON.stringify({ error: code(error) }) + "\n"); }
+          finally{this.calls--;this.notifyIdle();}
         })();
       });
     });

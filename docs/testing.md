@@ -526,3 +526,21 @@ npm run test:live-transport
 测试使用当前候选 `nativeHistoryBridge`、固定 Terra/high/标准档与相同合成语料，约3.5万／37万token各做HTTP→WS、WS→HTTP。先读模型目录、关闭项目文档自动注入并核对初始usage差值≤64token，记录应用层字节、首文本、三轮耗时、预热、usage及错误类别。代理沿用现有引擎的代理解析；不保存认证头、请求／响应原文或用户内容。临时授权和原生运行数据仅在独立私有目录，退出后回收；源授权核对位于回收之后。测试取消会终止当前引擎，等待退出后删除HOME；任何样本或上游模型错误立即停止整个专项。测试观察器是回环测量入口，不增加生产配置或监控状态。
 
 本轮包内Node22.22.0/Codex0.163.0的首次八样本实测完成，后续最终专项在第三个样本遇到服务端 `server_is_overloaded` 并停止，明确未通过；拒绝以早先成功结果替代。约37万token的既有完整样本显示上传约减少75%，耗时随上游容量明显波动。所有成功、失败和中止样本及真实Homer主／Worker原线程续办结果见[架构正文](architecture/account-and-model-connection.md#chatgpt-恢复会话的模型传输)。源码未安装；Windows实机与最终完整实网性能仍未验证。
+
+## 2026-11-14 主 Agent 自动恢复 WebSocket
+
+默认离线定向入口（Node 22.22.0，合成引擎／工具和独立 scratch 数据）：
+
+```sh
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test \
+  tests/engine-rpc-lifecycle.test.ts tests/main-transport-recovery.test.ts \
+  tests/main-queue-sources.test.ts tests/project-mcp-engine.test.ts
+```
+
+当前定向 **121/121** 通过，零失败／取消／跳过。覆盖根线程／当前进程／版本过滤、分片及整行上限、预热与 HTTP 排除、一次 Worker 信号、真实子进程诊断环境、显式禁用 provider、15 分钟无消息触发及滚动 10 分钟两次。恢复等待回复交付、Main MCP 回调及端点响应连接、原生反向工具回执和其他安全门；消息在恢复期间保持未认领，之后沿原线程执行一次；停止未确认及关闭不启动新 Main。新增队列排空边界与原生配置重复重建问题均先复现失败，再修复为通过。失败恢复保留原输入与线程，不产生工具派发或后台启动重试循环。恢复期间到达的 Worker 回传也在原队列保全，恢复后只处理一次。独立 review 的两项问题均补充 RED→GREEN：登录异步完成／断开／超时的唤醒，以及真实本机 MCP socket 的响应关闭边界（含客户端先断开、回调仍在运行）。较宽的受影响流程联合回归 **191/191** 通过，另有未修改的历史桥 **29/29** 通过，均零跳过。
+
+前述固定引擎入口仍登记于显式 `engine` 专项。`desktop-source-resume.test.mjs` 将 Codex **0.163.0** 实际 stderr 交给候选 `CodexEngine` 的生产观察器，**10/10** 通过，零跳过；WS 原线程恢复、混合来源、模型设置、工具一次执行及增量断言保留，另断言 HTTP／预热／401／429／503／断线／1009／过载不误报 WS 完成。工具完成后断线的场景只执行一次工具。该验证使用合成凭据与回环上游，没有发现或读取日常授权文件。
+
+此前共享工作区的完整 `npm run typecheck` 通过；修复 review 问题后的默认 `npm test` 为 **2462/2468**，零取消／跳过：6 项失败分别为 `diff-viewer-preview.test.mjs` 的 ResizeObserver 夹具、`image-reference-message.test.mjs` 的 3 项引用／AX 断言、`message-image-preview.test.mjs` 的 2 项下载卡断言。三份 UI 测试不导入本轮引擎／服务模块，按名称单独运行仍为相同 6 项失败；未修改并行 UI 或删除／跳过断言。独立 code review 的两项重要问题已修复并通过上述回归，无延后的小问题。真实网络提速、Windows 实机和安装验收未运行，该次验收未提交、安装或发布。
+
+提交前从 `319093f` 构造独立候选，只叠加本轮 12 个文件的精确差异，排除并行渠道、UI、电源和模型默认值改动。Node **22.22.0** 下完整 `npm run typecheck` 通过，相关流程（含历史桥）**220/220**、固定 Codex **0.163.0** 回环专项 **10/10** 通过；默认核心 **2413/2415**，零取消／跳过。两项失败均在 `message-image-preview.test.mjs`，已在没有本轮改动的同一 `319093f` 干净基线及相同依赖中重现（1 通过／2 失败）。未修改、删除或跳过断言。本次仅提交源码，未安装或发布。

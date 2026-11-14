@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CodexEngine } from '../src/engine.js';
@@ -27,6 +28,84 @@ function peer(role?:'main'|'worker',patch:Partial<Config>={}) {
   const event = (method: string, params: any) => receive({method, params: {threadId:'thread', ...params}});
   return {engine, sent, receive, reply, event};
 }
+
+function transportPeer(){
+ const p=peer('worker',{desktopModelSource:'codex',pauseOldDesktopWork:true,desktopResources:{bundleRoot:'synthetic',manifestSha256:'0'.repeat(64)}}),child=Object.assign(new EventEmitter(),{stderr:new PassThrough()});
+ p.engine.version='0.163.0';p.engine['child']=child as any;
+ assert.equal(typeof (p.engine as any).observeTransport,'function','native transport observation must exist');
+ (p.engine as any).observeTransport(child);
+ const record=(name:string,fields:Record<string,unknown>={},patch:Record<string,unknown>={})=>JSON.stringify({target:'codex_otel.trace_safe',fields:{'app.version':'0.163.0','conversation.id':'thread','event.name':name,...fields},...patch})+'\n';
+ return {...p,child,record,async close(){child.stderr.destroy();p.engine['child']=undefined;await p.engine.close();}};
+}
+
+test('native JSON transport facts exclude warmup, HTTP fallback and other threads',async()=>{
+ const p=transportPeer(),successes:unknown[]=[],changes:unknown[]=[];
+ p.engine.on('webSocketSucceeded',value=>successes.push(value));p.engine.on('modelTransport',value=>changes.push(value));
+ try{
+  for(const fields of [{'conversation.id':'child-thread'},{'app.version':'0.164.0'}])p.child.stderr.write(p.record('codex.websocket_request',{success:'true',...fields}));
+  p.child.stderr.write(p.record('codex.websocket_request',{success:'true'},{target:'untrusted_tool'}));
+  p.child.stderr.write(p.record('other',{message:p.record('codex.websocket_request',{success:'true'})}));
+  assert.equal((p.engine as any).modelTransport,undefined);
+  p.child.stderr.write(p.record('codex.api_request',{endpoint:'/models'}));assert.equal(changes.length,0);
+  p.child.stderr.write(p.record('codex.websocket_request',{success:'false'}));assert.equal(changes.length,0);
+  p.child.stderr.write(p.record('codex.websocket_request',{success:'true'}));assert.equal((p.engine as any).modelTransport,'websocket');
+  p.child.stderr.write(p.record('codex.sse_event',{'event.kind':'response.completed',output_token_count:'0'}));assert.equal(successes.length,0);
+  p.child.stderr.write(p.record('codex.api_request',{endpoint:'/responses'}));assert.equal((p.engine as any).modelTransport,'http');
+  p.child.stderr.write(p.record('codex.sse_event',{'event.kind':'response.completed',output_token_count:'3'}));assert.equal(successes.length,0,'a WS send followed by HTTP completion is not WS success');
+  p.child.stderr.write(p.record('codex.websocket_request',{success:'true'}));
+  p.child.stderr.write(p.record('codex.sse_event',{'event.kind':'response.completed',output_token_count:'3','error.message':'synthetic'}));assert.equal(successes.length,0);
+  p.child.stderr.write(p.record('codex.sse_event',{'event.kind':'response.completed',output_token_count:'3'}));
+  p.child.stderr.write(p.record('codex.sse_event',{'event.kind':'response.completed',output_token_count:'4'}));assert.equal(successes.length,1,'one signal per Worker process');
+ }finally{await p.close();}
+});
+
+test('native JSON observation bounds whole lines, preserves fragments and ignores a retired child',async()=>{
+ const p=transportPeer();let successes=0;p.engine.on('webSocketSucceeded',()=>successes++);
+ try{
+  p.child.stderr.write('{bad json}\n');
+  const ws=p.record('codex.websocket_request',{success:'true'}),complete=p.record('codex.sse_event',{'event.kind':'response.completed',output_token_count:'1'});
+  p.child.stderr.write('x'.repeat(65537)+ws);assert.equal((p.engine as any).modelTransport,undefined);
+  const bytes=Buffer.from(ws);p.child.stderr.write(bytes.subarray(0,17));assert.equal((p.engine as any).modelTransport,undefined);p.child.stderr.write(bytes.subarray(17));
+  p.child.stderr.write(complete);assert.equal(successes,1);
+  const replacement=Object.assign(new EventEmitter(),{stderr:new PassThrough()});p.engine['child']=replacement as any;(p.engine as any).observeTransport(replacement);
+  assert.equal((p.engine as any).modelTransport,undefined);p.child.stderr.write(ws+complete);assert.equal(successes,1);
+  replacement.stderr.write(ws+complete);assert.equal(successes,2);replacement.stderr.destroy();
+ }finally{await p.close();}
+});
+
+test('restart readiness waits for preparations, requests and late deduplicated tool responses',async t=>{
+ const p=peer('main');p.engine.resumable=true;
+ assert.equal((p.engine as any).canRestart,true);
+ let release!:()=>void,tools=0;t.mock.method(p.engine,'handleTool',async()=>{tools++;await new Promise<void>(r=>release=r);return {};});
+ try{
+  const rpc=p.engine.request('fixture/read',{});assert.equal((p.engine as any).canRestart,false);await p.reply(0);await rpc;assert.equal((p.engine as any).canRestart,true);
+  p.engine['preparation']={};assert.equal((p.engine as any).canRestart,false);p.engine['preparation']=undefined;
+  const work=p.engine.turn('synthetic');await flush();await p.reply(1,{turn:{id:'turn'}});await flush();
+  const call={id:101,method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'same-tool',name:'synthetic',arguments:{}}};
+  const first=p.receive(call),duplicate=p.receive({...call,id:102});await flush();assert.equal(tools,1);
+  await p.event('turn/completed',{turn:{id:'turn',status:'completed'}});await work;
+  assert.equal((p.engine as any).canRestart,false,'terminal must not release live host callbacks');
+  release();await Promise.all([first,duplicate]);assert.equal((p.engine as any).canRestart,true);assert.equal(tools,1);
+  assert.equal(p.sent.filter(message=>[101,102].includes(message.id)).length,2);
+ }finally{release?.();await p.engine.close();}
+});
+
+test('WS support follows effective provider configuration and never the current fallback state',async()=>{
+ const p=peer('main',{desktopModelSource:'codex',pauseOldDesktopWork:true,desktopResources:{bundleRoot:'synthetic',manifestSha256:'0'.repeat(64)}});
+ try{
+  assert.equal((p.engine as any).supportsWebSocket,false);
+  const first=p.engine.request('config/read',{});await p.reply(0,{config:{model_provider:'openai'}});await first;assert.equal((p.engine as any).supportsWebSocket,true);
+  const disabled=p.engine.request('config/read',{});await p.reply(1,{config:{model_provider:'openai',model_providers:{openai:{supports_websockets:false}}}});await disabled;assert.equal((p.engine as any).supportsWebSocket,false);
+  const website=p.engine.request('config/read',{});await p.reply(2,{config:{model_provider:'homer',model_providers:{homer:{supports_websockets:true}}}});await website;assert.equal((p.engine as any).supportsWebSocket,false,'only the approved ChatGPT source participates');
+ }finally{await p.engine.close();}
+});
+
+test('a broken diagnostic subscriber cannot fail transport startup',async()=>{
+ const p=transportPeer();p.engine.on('modelTransport',()=>{throw Error('synthetic_observer_failure');});
+ const next=Object.assign(new EventEmitter(),{stderr:new PassThrough()});p.engine['child']=next as any;
+ try{assert.doesNotThrow(()=>(p.engine as any).observeTransport(next));next.stderr.write(p.record('codex.api_request',{endpoint:'/responses'}));assert.equal((p.engine as any).modelTransport,'http');}
+ finally{next.stderr.destroy();await p.close();}
+});
 
 for(const role of ['main','worker'] as const)test(role+' resolves ambiguous website auth using the exact engine credential before terminal persistence',async t=>{
  const key='HOMER_TEST_FAILURE_TOKEN',previous=process.env[key];process.env[key]='synthetic-active';

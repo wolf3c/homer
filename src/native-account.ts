@@ -8,12 +8,13 @@ type Attempt={id?:string;authUrl?:string;expiresAt:number;completed?:boolean;ear
 export class NativeAccount{
  private attempt?:Attempt;private phase:Phase='idle';private timer?:NodeJS.Timeout;
  private queue:Promise<unknown>=Promise.resolve();private closed=false;private lastId?:string;
- constructor(private rpc:NativeRpc,private options:{timeoutMs?:number}={}){}
+ constructor(private rpc:NativeRpc,private options:{timeoutMs?:number;onIdle?:()=>void}={}){}
  get pending(){return !!this.attempt;}
- private serial<T>(work:()=>Promise<T>):Promise<T>{const p=this.queue.then(work);this.queue=p.catch(()=>{});return p;}
+ private notifyIdle(){try{if(!this.pending)this.options.onIdle?.();}catch{/* Observation cannot fail account work. */}}
+ private serial<T>(work:()=>Promise<T>):Promise<T>{const p=this.queue.then(work).finally(()=>this.notifyIdle());this.queue=p.catch(()=>{});return p;}
  private clear(){if(this.timer)clearTimeout(this.timer);this.timer=undefined;this.attempt=undefined;}
  completed(value:Completion){const a=this.attempt;if(!a||typeof value.loginId!=='string'||typeof value.success!=='boolean')return;if(!a.id){a.early={loginId:value.loginId,success:value.success};return;}if(value.loginId===a.id){a.completed=value.success;void this.state();}}
- disconnected(){const pending=this.pending;this.clear();if(pending)this.phase='failed';}
+ disconnected(){const pending=this.pending;this.clear();if(pending)this.phase='failed';this.notifyIdle();}
  private async read(refreshToken=false):Promise<NativeAccountState>{
   let account:NativeAccountState['account']='unknown',planType:string|undefined;
   try{const r=await this.rpc('account/read',{refreshToken});account=r?.account===null?'none':r?.account?.type==='chatgpt'?'chatgpt':typeof r?.account?.type==='string'?'other':'unknown';if(account==='chatgpt'&&typeof r.account.planType==='string')planType=r.account.planType;}catch{}

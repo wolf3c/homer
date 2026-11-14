@@ -444,7 +444,7 @@ export class Homer {
   private nativeRevision=0;
   private nativeOperations=0;
   private accountManager?:NativeAccount;
-  private nativeAccount(){return this.accountManager??=new NativeAccount((method,params)=>this.nativeRpc(method,params));}
+  private nativeAccount(){return this.accountManager??=new NativeAccount((method,params)=>this.nativeRpc(method,params),{onIdle:()=>this.scheduleMainTransportRecovery()});}
   async applyChatGPTModels(value:unknown,persist:(overrides:ChatGPTModelOverrides)=>void){
     if(this.config.desktopModelSource!=='codex'||!this.config.appData)throw Error('chatgpt_model_source_changed');
     const overrides=validateChatGPTSelection(value,await this.manageNativeAccount({action:'model_list'}));
@@ -508,7 +508,7 @@ export class Homer {
         const result=await account.logout();this.nativeReconnect=true;this.nativeRevision++;return result;
       }
       throw Error('native_account_action_denied');
-    }finally{this.nativeOperations--;}
+    }finally{this.nativeOperations--;this.scheduleMainTransportRecovery();}
   }
 
   private stateObservers = new Set<(reason?:'model-turn'|'user-input')=>void>();
@@ -573,6 +573,10 @@ export class Homer {
   private inputScheduled=false;
   private inputWaiters=new Map<string,{resolve:(value:string)=>void;reject:(error:Error)=>void}>();
   private mainJobs = 0;
+  private mainTransportAttempts:number[]=[];
+  private mainHttpSince?:number;
+  private mainTransportPending=false;
+  private mainTransportTimer?:NodeJS.Timeout;
   private mainContext?: MainContext;
   private modelFailure?:import('./web-contract.js').WebState['modelFailure'];
   private closing = false;
@@ -752,11 +756,39 @@ export class Homer {
   }
   private drainMain(){
     if(!this.mainDraining){this.mainDraining=true;this.mainQueue=Promise.resolve().then(async()=>{
-      while(this.mainPending.length){
+      try{while(this.mainPending.length||this.mainTransportPending){
+        await this.recoverMainTransport();
+        const job=this.mainPending.shift();if(!job)break;
         // Business jobs claim their durable head at the execution boundary.
-        await this.mainPending.shift()!.run();
-      }
-    }).finally(()=>{this.mainDraining=false;if(this.mainPending.length)this.drainMain();});}
+        await job.run();
+      }}finally{this.mainDraining=false;if(this.mainPending.length)this.drainMain();}
+    });}
+  }
+  private scheduleMainTransportRecovery(hint=false){
+    if(this.mainTransportTimer){clearTimeout(this.mainTransportTimer);this.mainTransportTimer=undefined;}
+    const engine=this.main;
+    if(this.closing||this.closed||this.mainBroken||this.config.desktopModelSource!=='codex'||engine?.supportsWebSocket!==true||engine.modelTransport!=='http'){
+      this.mainTransportPending=false;this.mainHttpSince=undefined;return;
+    }
+    const now=Date.now();this.mainHttpSince??=now;
+    const last=this.mainTransportAttempts.at(-1)??this.mainHttpSince;
+    if(hint||now-last>=900000)this.mainTransportPending=true;
+    const recent=this.mainTransportAttempts.filter(at=>now-at<600000);
+    const due=this.mainTransportPending?(recent.length<2?now:recent[0]!+600000):last+900000;
+    if(due>now){this.mainTransportTimer=setTimeout(()=>this.scheduleMainTransportRecovery(),due-now);this.mainTransportTimer.unref();}
+    else this.drainMain();
+  }
+  private async recoverMainTransport(){
+    if(!this.mainTransportPending)return;
+    const engine=this.main,now=Date.now();
+    if(this.closing||this.closed||this.startup||this.mainBroken||this.mainRecovery||this.config.desktopModelSource!=='codex'||engine?.supportsWebSocket!==true||engine.modelTransport!=='http'||engine.canRestart!==true||engine.nativeBusy||engine.nativeInteractionPending||this.mainContext||this.interactionMcp?.pending||this.nativeOperations||this.accountManager?.pending)return;
+    if(this.mainTransportAttempts.filter(at=>now-at<600000).length>=2){this.scheduleMainTransportRecovery();return;}
+    this.mainTransportPending=false;this.mainHttpSince=undefined;
+    this.mainTransportAttempts.push(now);if(this.mainTransportAttempts.length>2)this.mainTransportAttempts.shift();
+    this.mainJobs++;
+    try{await this.retireMain();if(!this.closing&&!this.closed&&this.mainRecovery)await this.recoverMain();}
+    catch(error){this.store.event(null,'main_transport_recovery_failed',engineError(error));}
+    finally{this.mainJobs--;this.scheduleMainTransportRecovery();}
   }
   private async emit(message: Message) {
     this.invalidateState();
@@ -810,6 +842,7 @@ export class Homer {
       },
       (c) => {if(this.main!==engine)throw Error('tool_scope_denied');return this.mainActivity(c.tool,()=>this.mainTool(c),c.arguments);},
     );
+    for(const event of ['modelTransport','idle'])engine.on(event,()=>{if(this.main===engine)this.scheduleMainTransportRecovery();});
     engine.on('hostMcpToolStarted',(call:Omit<ToolCall,'callId'>&{itemId:string})=>{
       this.scheduleCalls.observe(engine,call);
       if(!this.mainPluginTools.has(call.tool)||!this.validPluginCallId(call.itemId))return;
@@ -902,7 +935,7 @@ export class Homer {
   async start(options:{keepManagementOnFailure?:boolean}={}) {
     if(this.closing||this.closed)throw Error('application_closing');
     return this.startup??=Promise.resolve().then(()=>{this.schedules.start();return this.withDesktopPower(()=>this.startMain(options));})
-      .finally(()=>{this.startup=undefined;if(this.main&&!this.closing&&!this.closed)this.scheduleInputs();});
+      .finally(()=>{this.startup=undefined;if(this.main&&!this.closing&&!this.closed){this.scheduleInputs();this.scheduleMainTransportRecovery();}});
   }
   private async startMain(options:{keepManagementOnFailure?:boolean}) {
     if(this.closing)throw Error('application_closing');
@@ -951,7 +984,7 @@ export class Homer {
       this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args, meta) =>
         SCHEDULE_TOOLS.some(entry=>entry.name===tool)?this.scheduleTool(tool,args,meta):
         this.mainPluginTools.has(tool)?this.mainPluginTool(tool,args,meta):
-          this.mainActivity(tool,()=>this.withDesktopPower(power=>isMembershipTool(tool)?this.membershipTool(tool,args,undefined,power):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):this.interactionTool(tool, args)),args),catalog);
+          this.mainActivity(tool,()=>this.withDesktopPower(power=>isMembershipTool(tool)?this.membershipTool(tool,args,undefined,power):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):this.interactionTool(tool, args)),args),catalog,()=>this.scheduleMainTransportRecovery());
       await this.interactionMcp.start();
       if(this.closing)throw Error('application_closing');
       this.main = this.createMain(cwd,savedThread);
@@ -1299,6 +1332,7 @@ export class Homer {
     const thread=this.store.meta('mainThread');
     if(!thread)throw Error('main_thread_missing');
     this.prompts=loadPrompts();
+    const nativeRevision=this.nativeRevision;
     const engine=this.createMain(canonicalDir(this.store.meta('mainWorkingDirectory')??this.config.workspace),thread);
     this.main=engine;
     try{
@@ -1306,6 +1340,7 @@ export class Homer {
       if(await start!==thread)throw Error('main_resume_thread_mismatch');
       if(engine.nativeBusy)throw Error('main_background_unresolved');
       await this.adoptMainPrompt(engine,thread,true);
+      if(nativeRevision===this.nativeRevision)this.nativeReconnect=false;
       this.mainRecovery=false;
       this.mainRecoveryError=undefined;
       this.store.event(null,'main_recovered');
@@ -1919,7 +1954,7 @@ export class Homer {
       }
       this.nativeReconnect=true;this.nativeRevision++;
       return decision;
-    }finally{this.nativeOperations--;}
+    }finally{this.nativeOperations--;this.scheduleMainTransportRecovery();}
   }
   private archiveApprovalScope(context:MainContext|undefined) {
     const input=context?.workerInput,turnId=context?.nativeActivity?.turnId,threadId=this.main?.threadId;
@@ -2193,6 +2228,9 @@ export class Homer {
         const engine=this.engine({role:"worker",threadId:run.threadId??undefined,cwd:project,readRoots:[project],instructions:this.prompts.worker+this.nativeToolInstructions()+cuaInstructions,tools:[...WORKER_INTERACTION_TOOLS,...WORKER_FILE_TOOLS],nativeTools:"worker",interactionMcp:this.mcpOptions(endpoint,true),onInteraction:request=>this.nativeInteractionPower(created.engine,request,()=>request.method==='mcpServer/elicitation/request'&&(request.details._meta as any).codex_approval_kind==='tool_suggestion'?this.openNativePluginInteraction(request,created,project):this.openInteraction({runId:run.id,threadId:request.threadId,turnId:request.turnId,requestId:request.requestId,source:'native',kind:request.kind,details:{method:request.method,params:request.details}},request).response)},call=>this.workerTool(created,call).catch(error=>{this.store.event(run.id,'tool_rejected',engineError(error));throw error;}));
         created={id:run.id,epoch:run.epoch,engine,requests:new Map(),mcp:endpoint};pendingEndpoint=undefined;slot=created;this.workers.set(run.id,slot);
         engine.on('hostMcpToolStarted',call=>this.scheduleCalls.observe(engine,call));
+        engine.on('webSocketSucceeded',()=>{
+          if(this.workers.get(run.id)===created&&!created.stopping&&created.epoch===this.tasks.run(run.id).epoch&&!this.tasks.run(run.id).stopRequestedAt&&engine.supportsWebSocket===true)this.scheduleMainTransportRecovery(true);
+        });
         const delivered=(source:string,id:string|number)=>{const key=created.requests.get(JSON.stringify([source,id]));if(key)try{this.interactions.markDelivered(key);}catch{}};
         const publicScope=(event:{threadId?:string;turnId?:string}):WorkerScope|undefined=>{
           if(this.closing||this.closed)return;
@@ -2503,6 +2541,7 @@ export class Homer {
     if (this.closing || this.closed) {if(options.requireAllOwnersConfirmed&&!this.desktopCloseConfirmed)throw Error('desktop_owner_stop_unconfirmed');return;}
     this.desktopShutdownStrict=!!options.requireAllOwnersConfirmed;
     this.closing = true;
+    this.scheduleMainTransportRecovery();
     this.schedules.close();this.scheduleListeners.clear();if(this.main)this.scheduleCalls.clear(this.main);
     clearInterval(this.mediaGcTimer);
     return this.shutdown=this.closeOwned(options);

@@ -43,3 +43,14 @@ test('an empty native thread fails a CWD switch clearly instead of using old pro
 test('project preparation excludes another turn and configuration refresh until resume finishes',async()=>{
  const f=fixture(),e=f.engine('first',{threadId:'synthetic-resume'});f.engine('second');try{await e.start();const request=e.request.bind(e);let release!:()=>void;const pending=new Promise<void>(r=>release=r);e.request=async(method,params:any)=>{if(method==='config/read'&&params.cwd===join(f.dir,'second'))await pending;return request(method,params);};const first=e.turn('fixture only',{cwd:join(f.dir,'second')});await assert.rejects(()=>e.turn('must wait'),/engine_turn_busy/);await assert.rejects(()=>e.refreshCapabilities(),/capability_engine_busy/);release();assert.equal((await first).status,'completed');}finally{await e.close();f.close();}
 });
+
+
+test('only ChatGPT model processes enable bounded JSON transport observation',async()=>{
+ const f=fixture();
+ try{for(const source of [undefined,'codex'] as const){
+  Object.assign(f.config,{desktopModelSource:source,pauseOldDesktopWork:true,desktopResources:{bundleRoot:f.dir,manifestSha256:'0'.repeat(64)}});
+  const e=f.engine(source??'ordinary',{threadId:'synthetic-resume'});
+  try{await e.start();const r=await e.request('fixture/inspect',{});assert.deepEqual(r.diagnostics,source?{format:'json',filter:'error,codex_otel.trace_safe=info'}:{});assert.equal(e.supportsWebSocket,!!source);}
+  finally{await e.close();}
+ }}finally{f.close();}
+});
