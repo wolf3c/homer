@@ -13,6 +13,7 @@ assert.ok(bin&&isAbsolute(bin),'explicit fixed native binary required');
 const {Homer}=await import(moduleUrl);
 const {CodexEngine}=await import(new URL('./engine.js',moduleUrl));
 const {MAIN_DYNAMIC_TOOLS,MAIN_TOOLS_HASH}=await import(new URL('./recursive-tools.js',moduleUrl));
+const {loadPrompts}=await import(new URL('./prompts.js',moduleUrl));
 const {prepareWorkerProjectRoot}=await import(new URL('./worker-project-root.js',moduleUrl));
 const toml=value=>value&&typeof value==='object'&&!Array.isArray(value)?'{'+Object.entries(value).map(([k,v])=>JSON.stringify(k)+'='+toml(v)).join(',')+'}':JSON.stringify(value);
 const configText=value=>Object.entries(value).map(([k,v])=>k+'='+toml(v)).join('\n')+'\n';
@@ -81,6 +82,9 @@ test('native new and legacy Main expose and call the new MCP tool on the same th
    const project=join(f.user,'Projects/atlas');mkdirSync(project,{recursive:true});writeFileSync(join(project,'TEAM_GUIDE.md'),'SYNTHETIC_PRIVATE_BODY');
    f.hold(true);const count=f.requests.length;app.submitMessage({requestId:'native-directory-'+legacy,text:'Find the atlas work location for a later Worker.'});
    await until(()=>f.requests.length>count);const mainRequest=f.requests[count];
+   const developer=(mainRequest.input??[]).filter(item=>item.role==='developer').flatMap(item=>item.content??[]).map(part=>part.text??'');
+   const currentPrompt=loadPrompts().main;assert.equal(developer.filter(text=>text.includes(currentPrompt)).length,1,'the complete current Main prompt must reach the native request once');
+   if(oldThread)assert.ok(developer.findIndex(text=>text.includes(currentPrompt))>developer.findIndex(text=>text.includes('LEGACY_DIRECTORY_MAIN')),'the adopted prompt must follow any replayed legacy guidance');
    const result=await main.request('mcpServer/tool/call',{threadId:main.threadId,server:'homer_interactions',tool:'list_work_directories',arguments:{}});
    assert.notEqual(result.isError,true);const reference=JSON.parse(result.content[0].text);assert.equal(reference.complete,true);assert.match(reference.directoryReference,/atlas/);assert.doesNotMatch(result.content[0].text,/SYNTHETIC_PRIVATE_BODY/);
    let receipt;

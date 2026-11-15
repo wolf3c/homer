@@ -1,0 +1,1369 @@
+{
+  "at": "2026-11-14T10:25:33.185Z",
+  "endedAt": "2026-11-14T10:27:49.341Z",
+  "baseCommit": "423863e91fe4399bf1b59d3ab713bd24d27bbc9b",
+  "changedRuntimeFiles": [
+    "src/work-directories.ts",
+    "prompts/main.md"
+  ],
+  "snapshotHashes": {
+    "src/work-directories.ts": "e7909123767c0dff327b127b0e91204a4efa552bdc7f391fb9d7145b1dcda991",
+    "prompts/main.md": "5137a0cc99cad84298b232ef35a07cf9c96b7b24b0544dd5729c1c8c6a1f9718"
+  },
+  "model": "gpt-6.1-terra",
+  "effort": "medium",
+  "serviceTier": null,
+  "node": "22.22.0",
+  "nativeEngine": "0.163.0",
+  "scenarioSource": "scripts/worker-directory-llm-validation.mjs",
+  "validationScriptHashAtExecution": "ccbe016397348a14f7906880cefb874ff6b0d14e5a579f16ed80400894cf33bc",
+  "replayScriptHash": "727583ae2d33cc345ef6d3ce060130feb2a23b86005b6192b49b15ee67a36811",
+  "fixtureSource": "synthetic",
+  "trialPlan": "six original cases once, U1/U2 twice more each; no retry or prompt edits during trials",
+  "workerMode": "real native engine, held loopback model requests only",
+  "trials": [
+    {
+      "id": "K1",
+      "trial": "K1",
+      "expected": [
+        "Projects/clients/星桥/contracts",
+        "Projects/clients/星桥/contracts/current"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Projects/clients/星桥/contracts/current",
+          "atMs": 7629,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Projects/clients/星桥/contracts/current",
+          "rules": [
+            "CLIENT",
+            "CONTRACT"
+          ]
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13559,
+          "outputTokens": 166,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13894,
+          "outputTokens": 34,
+          "cachedInputTokens": 13568,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "tools": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 1159,
+      "tokens": {
+        "totalTokens": 27653,
+        "inputTokens": 27453,
+        "cachedInputTokens": 13568,
+        "outputTokens": 200,
+        "reasoningOutputTokens": 0
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 9222,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": true,
+      "status": "completed",
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "cwdCorrect": true,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "observedAllResponseTokens": {
+        "inputTokens": 37357,
+        "outputTokens": 200
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": false,
+          "guidance": false,
+          "cwd": false,
+          "targetSubdirs": true,
+          "reference": false
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": false
+        }
+      ],
+      "filesystemOutputHintLabels": []
+    },
+    {
+      "id": "K2",
+      "trial": "K2",
+      "expected": [
+        "Projects/tools/atlas/native"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Projects/tools/atlas/native",
+          "atMs": 6971,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Projects/tools/atlas/native",
+          "rules": [
+            "ATLAS",
+            "NATIVE"
+          ]
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13569,
+          "outputTokens": 200,
+          "cachedInputTokens": 9728,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13951,
+          "outputTokens": 32,
+          "cachedInputTokens": 13568,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "tools": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 1125,
+      "tokens": {
+        "totalTokens": 27752,
+        "inputTokens": 27520,
+        "cachedInputTokens": 23296,
+        "outputTokens": 232,
+        "reasoningOutputTokens": 0
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 10705,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": true,
+      "status": "completed",
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "cwdCorrect": true,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "observedAllResponseTokens": {
+        "inputTokens": 37424,
+        "outputTokens": 232
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": true,
+          "guidance": false,
+          "cwd": false,
+          "targetSubdirs": true,
+          "reference": true
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": true
+        }
+      ],
+      "filesystemOutputHintLabels": []
+    },
+    {
+      "id": "K3",
+      "trial": "K3",
+      "expected": [
+        "Main"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Main",
+          "atMs": 5001,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Main",
+          "rules": []
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13549,
+          "outputTokens": 110,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13826,
+          "outputTokens": 61,
+          "cachedInputTokens": 13440,
+          "reasoningOutputTokens": 37,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "tools": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 888,
+      "tokens": {
+        "totalTokens": 27546,
+        "inputTokens": 27375,
+        "cachedInputTokens": 13440,
+        "outputTokens": 171,
+        "reasoningOutputTokens": 37
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 6956,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": true,
+      "status": "completed",
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "cwdCorrect": true,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "observedAllResponseTokens": {
+        "inputTokens": 37279,
+        "outputTokens": 171
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": false,
+          "guidance": false,
+          "cwd": false,
+          "targetSubdirs": false,
+          "reference": false
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": false
+        }
+      ],
+      "filesystemOutputHintLabels": []
+    },
+    {
+      "id": "U1",
+      "trial": "U1",
+      "expected": [
+        "Projects/clients/星桥/contracts",
+        "Projects/clients/星桥/contracts/current"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Projects/clients/星桥",
+          "atMs": 20228,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Projects/clients/星桥",
+          "rules": [
+            "CLIENT"
+          ]
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13551,
+          "outputTokens": 81,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13867,
+          "outputTokens": 41,
+          "cachedInputTokens": 13440,
+          "reasoningOutputTokens": 7,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14009,
+          "outputTokens": 76,
+          "cachedInputTokens": 13696,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14108,
+          "outputTokens": 64,
+          "cachedInputTokens": 13952,
+          "reasoningOutputTokens": 7,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14267,
+          "outputTokens": 154,
+          "cachedInputTokens": 13952,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14604,
+          "outputTokens": 47,
+          "cachedInputTokens": 14208,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Projects",
+            "clients",
+            "星桥"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        },
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Projects",
+            "clients"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        }
+      ],
+      "tools": [
+        {
+          "tool": "list_work_directories",
+          "atMs": 12283
+        }
+      ],
+      "lookup": 1,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 1047,
+      "tokens": {
+        "totalTokens": 84869,
+        "inputTokens": 84406,
+        "cachedInputTokens": 69248,
+        "outputTokens": 463,
+        "reasoningOutputTokens": 14
+      },
+      "usageUpdates": 6,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 22026,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": false,
+      "status": "completed",
+      "toolRounds": 5,
+      "modelResponses": 6,
+      "usageMatchesNative": true,
+      "cwdCorrect": false,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": false,
+      "queryBehaviorCorrect": true,
+      "passed": false,
+      "observedAllResponseTokens": {
+        "inputTokens": 94310,
+        "outputTokens": 463
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": true,
+          "guidance": false,
+          "cwd": true,
+          "targetSubdirs": false,
+          "reference": false
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": true
+        }
+      ],
+      "filesystemOutputHintLabels": [
+        [],
+        [
+          "星桥"
+        ]
+      ]
+    },
+    {
+      "id": "U2",
+      "trial": "U2",
+      "expected": [
+        "Projects/tools/atlas/native"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Main",
+          "atMs": 5837,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Main",
+          "rules": []
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13542,
+          "outputTokens": 171,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13889,
+          "outputTokens": 39,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "tools": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 1272,
+      "tokens": {
+        "totalTokens": 27641,
+        "inputTokens": 27431,
+        "cachedInputTokens": 0,
+        "outputTokens": 210,
+        "reasoningOutputTokens": 0
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 7581,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": false,
+      "status": "completed",
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "cwdCorrect": false,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": false,
+      "queryBehaviorCorrect": false,
+      "passed": false,
+      "observedAllResponseTokens": {
+        "inputTokens": 37335,
+        "outputTokens": 210
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": true,
+          "guidance": false,
+          "cwd": false,
+          "targetSubdirs": false,
+          "reference": false
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": true
+        }
+      ],
+      "filesystemOutputHintLabels": []
+    },
+    {
+      "id": "U3",
+      "trial": "U3",
+      "expected": [
+        "Documents/operations/ledger-assistant",
+        "Documents/operations/ledger-assistant/rules"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Main",
+          "atMs": 6181,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Main",
+          "rules": []
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13567,
+          "outputTokens": 194,
+          "cachedInputTokens": 9728,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13926,
+          "outputTokens": 70,
+          "cachedInputTokens": 13568,
+          "reasoningOutputTokens": 24,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "tools": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 1040,
+      "tokens": {
+        "totalTokens": 27757,
+        "inputTokens": 27493,
+        "cachedInputTokens": 23296,
+        "outputTokens": 264,
+        "reasoningOutputTokens": 24
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 10548,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": false,
+      "status": "completed",
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "cwdCorrect": false,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": false,
+      "queryBehaviorCorrect": false,
+      "passed": false,
+      "observedAllResponseTokens": {
+        "inputTokens": 37397,
+        "outputTokens": 264
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": true,
+          "guidance": true,
+          "cwd": false,
+          "targetSubdirs": false,
+          "reference": true
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": true
+        }
+      ],
+      "filesystemOutputHintLabels": []
+    },
+    {
+      "id": "U1",
+      "trial": "U1-2",
+      "expected": [
+        "Projects/clients/星桥/contracts",
+        "Projects/clients/星桥/contracts/current"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Projects/clients/星桥",
+          "atMs": 14415,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Projects/clients/星桥",
+          "rules": [
+            "CLIENT"
+          ]
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13557,
+          "outputTokens": 85,
+          "cachedInputTokens": 9728,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13877,
+          "outputTokens": 42,
+          "cachedInputTokens": 13440,
+          "reasoningOutputTokens": 8,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14020,
+          "outputTokens": 82,
+          "cachedInputTokens": 13696,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14125,
+          "outputTokens": 51,
+          "cachedInputTokens": 13952,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14271,
+          "outputTokens": 142,
+          "cachedInputTokens": 13952,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14595,
+          "outputTokens": 46,
+          "cachedInputTokens": 14208,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Main",
+            "Projects",
+            "clients",
+            "星桥"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        },
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Main",
+            "Projects",
+            "clients"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        }
+      ],
+      "tools": [
+        {
+          "tool": "list_work_directories",
+          "atMs": 6539
+        }
+      ],
+      "lookup": 1,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 824,
+      "tokens": {
+        "totalTokens": 84893,
+        "inputTokens": 84445,
+        "cachedInputTokens": 78976,
+        "outputTokens": 448,
+        "reasoningOutputTokens": 8
+      },
+      "usageUpdates": 6,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 16518,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": false,
+      "status": "completed",
+      "toolRounds": 5,
+      "modelResponses": 6,
+      "usageMatchesNative": true,
+      "cwdCorrect": false,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": false,
+      "queryBehaviorCorrect": true,
+      "passed": false,
+      "observedAllResponseTokens": {
+        "inputTokens": 94349,
+        "outputTokens": 448
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": true,
+          "guidance": false,
+          "cwd": true,
+          "targetSubdirs": false,
+          "reference": false
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": true
+        }
+      ],
+      "filesystemOutputHintLabels": [
+        [],
+        [
+          "星桥"
+        ]
+      ]
+    },
+    {
+      "id": "U2",
+      "trial": "U2-2",
+      "expected": [
+        "Projects/tools/atlas/native"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Main",
+          "atMs": 6156,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Main",
+          "rules": []
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13548,
+          "outputTokens": 174,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13897,
+          "outputTokens": 37,
+          "cachedInputTokens": 13568,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "tools": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 1334,
+      "tokens": {
+        "totalTokens": 27656,
+        "inputTokens": 27445,
+        "cachedInputTokens": 13568,
+        "outputTokens": 211,
+        "reasoningOutputTokens": 0
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 9745,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": false,
+      "status": "completed",
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "cwdCorrect": false,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": false,
+      "queryBehaviorCorrect": false,
+      "passed": false,
+      "observedAllResponseTokens": {
+        "inputTokens": 37349,
+        "outputTokens": 211
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": true,
+          "guidance": false,
+          "cwd": false,
+          "targetSubdirs": false,
+          "reference": false
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": true
+        }
+      ],
+      "filesystemOutputHintLabels": []
+    },
+    {
+      "id": "U1",
+      "trial": "U1-3",
+      "expected": [
+        "Projects/clients/星桥/contracts",
+        "Projects/clients/星桥/contracts/current"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Projects/clients/星桥/contracts/current",
+          "atMs": 18761,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Projects/clients/星桥/contracts/current",
+          "rules": [
+            "CLIENT",
+            "CONTRACT"
+          ]
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13558,
+          "outputTokens": 84,
+          "cachedInputTokens": 9728,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13877,
+          "outputTokens": 43,
+          "cachedInputTokens": 13440,
+          "reasoningOutputTokens": 9,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14021,
+          "outputTokens": 92,
+          "cachedInputTokens": 13696,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14136,
+          "outputTokens": 65,
+          "cachedInputTokens": 13952,
+          "reasoningOutputTokens": 8,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14296,
+          "outputTokens": 58,
+          "cachedInputTokens": 14080,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14497,
+          "outputTokens": 59,
+          "cachedInputTokens": 14208,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 14675,
+          "outputTokens": 157,
+          "cachedInputTokens": 14336,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 15003,
+          "outputTokens": 41,
+          "cachedInputTokens": 14592,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Projects",
+            "clients",
+            "星桥"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        },
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Projects",
+            "clients"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        },
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Projects",
+            "clients",
+            "星桥"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        },
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Projects",
+            "clients",
+            "星桥",
+            "contracts"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        }
+      ],
+      "tools": [
+        {
+          "tool": "list_work_directories",
+          "atMs": 6157
+        }
+      ],
+      "lookup": 1,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 795,
+      "tokens": {
+        "totalTokens": 114662,
+        "inputTokens": 114063,
+        "cachedInputTokens": 108032,
+        "outputTokens": 599,
+        "reasoningOutputTokens": 17
+      },
+      "usageUpdates": 8,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 20392,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": true,
+      "status": "completed",
+      "toolRounds": 7,
+      "modelResponses": 8,
+      "usageMatchesNative": true,
+      "cwdCorrect": true,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "observedAllResponseTokens": {
+        "inputTokens": 123967,
+        "outputTokens": 599
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": false,
+          "guidance": false,
+          "cwd": true,
+          "targetSubdirs": false,
+          "reference": false
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": false
+        }
+      ],
+      "filesystemOutputHintLabels": [
+        [],
+        [
+          "星桥"
+        ],
+        [
+          "contracts",
+          "AGENTS.md",
+          "README.md"
+        ],
+        [
+          "current",
+          "AGENTS.md"
+        ]
+      ]
+    },
+    {
+      "id": "U2",
+      "trial": "U2-3",
+      "expected": [
+        "Projects/tools/atlas/native"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Main",
+          "atMs": 5530,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Main",
+          "rules": []
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13547,
+          "outputTokens": 160,
+          "cachedInputTokens": 9728,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 13868,
+          "outputTokens": 41,
+          "cachedInputTokens": 13568,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "tools": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "retries": 0,
+      "bootMs": 824,
+      "tokens": {
+        "totalTokens": 27616,
+        "inputTokens": 27415,
+        "cachedInputTokens": 23296,
+        "outputTokens": 201,
+        "reasoningOutputTokens": 0
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 7201,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": false,
+      "status": "completed",
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "cwdCorrect": false,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": false,
+      "queryBehaviorCorrect": false,
+      "passed": false,
+      "observedAllResponseTokens": {
+        "inputTokens": 37319,
+        "outputTokens": 201
+      },
+      "newMainRuleInNativeHistory": true,
+      "workerAssignmentFeatures": [
+        {
+          "locate": true,
+          "guidance": false,
+          "cwd": false,
+          "targetSubdirs": false,
+          "reference": false
+        }
+      ],
+      "businessTraceMatchesUsage": true,
+      "extraZeroOutputResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "workerLocationRequestFeatures": [
+        {
+          "asksLocateBeforeWork": false,
+          "asksLocateProjectOrFiles": false
+        }
+      ],
+      "filesystemOutputHintLabels": []
+    }
+  ],
+  "baseSixPassed": 3,
+  "allPassed": 4,
+  "mainUsageTotals": {
+    "totalTokens": 478045,
+    "inputTokens": 475046,
+    "cachedInputTokens": 366720,
+    "outputTokens": 2999,
+    "reasoningOutputTokens": 100
+  },
+  "observedResponseTotals": {
+    "inputTokens": 574086,
+    "outputTokens": 2999,
+    "cachedInputTokens": 366720,
+    "reasoningOutputTokens": 100,
+    "totalTokens": 577085
+  },
+  "totalToolRounds": 24,
+  "accountTotalTokens": null,
+  "currencyCost": null,
+  "isolation": {
+    "shutdownConfirmed": true,
+    "protectedFilesUnchanged": true,
+    "realHomeFallbackExists": false
+  },
+  "comparison": {
+    "baseline": "worker-directory-llm-validation-2026-11-14.json",
+    "baselinePassed": 4,
+    "baselineCases": 6,
+    "revisionBaseSixPassed": 3,
+    "revisionBaseSixCases": 6
+  },
+  "measurementNotes": [
+    "Main usage is matched against native history and positive-output response counters for every trial.",
+    "Each Main trial also yielded one 9904-input, zero-output native response. These are separately observed counters, not proof of extra billing.",
+    "Only generated feature flags, fixed synthetic branch labels, tool names, timing and token counts are retained; no raw command, prompt, tool payload, account identity or provider body.",
+    "Synthetic absolute root prefixes differ across rounds; shared provider cache and small non-random samples preclude causal latency/cost or population accuracy claims."
+  ]
+}

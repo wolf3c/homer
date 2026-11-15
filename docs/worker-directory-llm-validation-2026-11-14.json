@@ -1,0 +1,279 @@
+{
+  "at": "2026-11-14T07:53:05.294Z",
+  "sourceCommit": "423863e91fe4399bf1b59d3ab713bd24d27bbc9b",
+  "node": "22.22.0",
+  "nativeEngine": "0.163.0",
+  "mainModel": "gpt-6.1-terra",
+  "effort": "medium",
+  "serviceTier": null,
+  "fixtureSource": "synthetic",
+  "workerModelRequests": "loopback-only synthetic responses, held during Main turn",
+  "cases": [
+    {
+      "id": "K1",
+      "kind": "explicit-file",
+      "expectedCwdChoices": [
+        "Projects/clients/星桥/contracts",
+        "Projects/clients/星桥/contracts/current"
+      ],
+      "chosenCwd": "Projects/clients/星桥/contracts/current",
+      "cwdCorrect": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "directoryLookups": 0,
+      "workDirectoryCalls": 0,
+      "nativeFsCalls": 0,
+      "fsCallsAfterLookup": 0,
+      "businessCalls": 1,
+      "toolRounds": 1,
+      "modelResponsesWithUsage": 2,
+      "nativeCompletionEvents": 3,
+      "mainTokens": {
+        "totalTokens": 27658,
+        "inputTokens": 27429,
+        "cachedInputTokens": 13568,
+        "outputTokens": 229,
+        "reasoningOutputTokens": 0
+      },
+      "dispatchMs": 8304,
+      "mainTurnMs": 10983,
+      "bootMs": 1001,
+      "retriesObserved": 0,
+      "nativeCwdMatchesDispatch": true,
+      "workerEvidence": [
+        {
+          "cwd": "Projects/clients/星桥/contracts/current",
+          "loadedRuleIds": [
+            "CLIENT",
+            "CONTRACT"
+          ]
+        }
+      ],
+      "tokenCountersMatchNativeHistory": true
+    },
+    {
+      "id": "K2",
+      "kind": "explicit-directory-with-reference",
+      "expectedCwdChoices": [
+        "Projects/tools/atlas/native"
+      ],
+      "chosenCwd": "Projects/tools/atlas/native",
+      "cwdCorrect": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "directoryLookups": 0,
+      "workDirectoryCalls": 0,
+      "nativeFsCalls": 0,
+      "fsCallsAfterLookup": 0,
+      "businessCalls": 1,
+      "toolRounds": 1,
+      "modelResponsesWithUsage": 2,
+      "nativeCompletionEvents": 3,
+      "mainTokens": {
+        "totalTokens": 27691,
+        "inputTokens": 27466,
+        "cachedInputTokens": 13568,
+        "outputTokens": 225,
+        "reasoningOutputTokens": 0
+      },
+      "dispatchMs": 6960,
+      "mainTurnMs": 9940,
+      "bootMs": 997,
+      "retriesObserved": 0,
+      "nativeCwdMatchesDispatch": true,
+      "workerEvidence": [
+        {
+          "cwd": "Projects/tools/atlas/native",
+          "loadedRuleIds": [
+            "ATLAS",
+            "NATIVE"
+          ]
+        }
+      ],
+      "tokenCountersMatchNativeHistory": true
+    },
+    {
+      "id": "K3",
+      "kind": "default-suitable",
+      "expectedCwdChoices": [
+        "Main"
+      ],
+      "chosenCwd": "Main",
+      "cwdCorrect": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "directoryLookups": 0,
+      "workDirectoryCalls": 0,
+      "nativeFsCalls": 0,
+      "fsCallsAfterLookup": 0,
+      "businessCalls": 2,
+      "toolRounds": 2,
+      "modelResponsesWithUsage": 3,
+      "nativeCompletionEvents": 4,
+      "mainTokens": {
+        "totalTokens": 42087,
+        "inputTokens": 41883,
+        "cachedInputTokens": 27136,
+        "outputTokens": 204,
+        "reasoningOutputTokens": 17
+      },
+      "dispatchMs": 5749,
+      "mainTurnMs": 13341,
+      "bootMs": 752,
+      "retriesObserved": 0,
+      "nativeCwdMatchesDispatch": true,
+      "workerEvidence": [
+        {
+          "cwd": "Main",
+          "loadedRuleIds": []
+        }
+      ],
+      "tokenCountersMatchNativeHistory": true
+    },
+    {
+      "id": "U1",
+      "kind": "lookup-client",
+      "expectedCwdChoices": [
+        "Projects/clients/星桥/contracts",
+        "Projects/clients/星桥/contracts/current"
+      ],
+      "chosenCwd": "Projects/clients/星桥",
+      "cwdCorrect": false,
+      "queryBehaviorCorrect": true,
+      "passed": false,
+      "directoryLookups": 1,
+      "workDirectoryCalls": 0,
+      "nativeFsCalls": 1,
+      "fsCallsAfterLookup": 1,
+      "businessCalls": 1,
+      "toolRounds": 4,
+      "modelResponsesWithUsage": 5,
+      "nativeCompletionEvents": 6,
+      "mainTokens": {
+        "totalTokens": 70191,
+        "inputTokens": 69815,
+        "cachedInputTokens": 64768,
+        "outputTokens": 376,
+        "reasoningOutputTokens": 0
+      },
+      "dispatchMs": 13459,
+      "mainTurnMs": 15283,
+      "bootMs": 756,
+      "retriesObserved": 0,
+      "nativeCwdMatchesDispatch": true,
+      "workerEvidence": [
+        {
+          "cwd": "Projects/clients/星桥",
+          "loadedRuleIds": [
+            "CLIENT"
+          ]
+        }
+      ],
+      "tokenCountersMatchNativeHistory": true
+    },
+    {
+      "id": "U2",
+      "kind": "lookup-project-module",
+      "expectedCwdChoices": [
+        "Projects/tools/atlas/native"
+      ],
+      "chosenCwd": "Projects/tools/atlas",
+      "cwdCorrect": false,
+      "queryBehaviorCorrect": true,
+      "passed": false,
+      "directoryLookups": 1,
+      "workDirectoryCalls": 0,
+      "nativeFsCalls": 1,
+      "fsCallsAfterLookup": 1,
+      "businessCalls": 1,
+      "toolRounds": 4,
+      "modelResponsesWithUsage": 5,
+      "nativeCompletionEvents": 6,
+      "mainTokens": {
+        "totalTokens": 70125,
+        "inputTokens": 69736,
+        "cachedInputTokens": 64640,
+        "outputTokens": 389,
+        "reasoningOutputTokens": 0
+      },
+      "dispatchMs": 14732,
+      "mainTurnMs": 17123,
+      "bootMs": 778,
+      "retriesObserved": 0,
+      "nativeCwdMatchesDispatch": true,
+      "workerEvidence": [
+        {
+          "cwd": "Projects/tools/atlas",
+          "loadedRuleIds": [
+            "ATLAS"
+          ]
+        }
+      ],
+      "tokenCountersMatchNativeHistory": true
+    },
+    {
+      "id": "U3",
+      "kind": "lookup-project-with-input-reference",
+      "expectedCwdChoices": [
+        "Documents/operations/ledger-assistant",
+        "Documents/operations/ledger-assistant/rules"
+      ],
+      "chosenCwd": "Documents/operations/ledger-assistant",
+      "cwdCorrect": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "directoryLookups": 1,
+      "workDirectoryCalls": 0,
+      "nativeFsCalls": 3,
+      "fsCallsAfterLookup": 2,
+      "businessCalls": 1,
+      "toolRounds": 5,
+      "modelResponsesWithUsage": 6,
+      "nativeCompletionEvents": 7,
+      "mainTokens": {
+        "totalTokens": 86518,
+        "inputTokens": 86046,
+        "cachedInputTokens": 66432,
+        "outputTokens": 472,
+        "reasoningOutputTokens": 0
+      },
+      "dispatchMs": 18928,
+      "mainTurnMs": 22496,
+      "bootMs": 822,
+      "retriesObserved": 0,
+      "nativeCwdMatchesDispatch": true,
+      "workerEvidence": [
+        {
+          "cwd": "Documents/operations/ledger-assistant",
+          "loadedRuleIds": [
+            "LEDGER"
+          ]
+        }
+      ],
+      "tokenCountersMatchNativeHistory": true
+    }
+  ],
+  "mainUsageTotals": {
+    "inputTokens": 322375,
+    "cachedInputTokens": 250112,
+    "outputTokens": 1895,
+    "reasoningOutputTokens": 17,
+    "totalTokens": 324270,
+    "toolRounds": 17
+  },
+  "accountTotalTokens": null,
+  "accountTotalCost": null,
+  "accountingNotes": [
+    "Token totals cover six Main business turns including their acknowledgements, not all native background requests.",
+    "All six Main token counters match native token_count history. Cached input is part of input; reasoning output is part of output.",
+    "Six extra native response.completed events have no corresponding Main token_usage_record. Their usage was not captured.",
+    "A separate fresh-profile loopback replay reproduced an auxiliary gpt-5.6-terra request with a title-generation signal. It can overwrite a last-request-only Worker-rule probe.",
+    "Tool rounds are groups with tool calls between native token_usage_record boundaries; native auxiliary completions are excluded."
+  ],
+  "isolation": {
+    "shutdownConfirmed": true,
+    "dailyAuthUnchanged": true,
+    "dailyProfileUnchanged": true,
+    "realHomeMarkerUnchanged": true
+  }
+}

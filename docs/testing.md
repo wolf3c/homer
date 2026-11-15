@@ -25,7 +25,30 @@ node scripts/test.mjs --directory-native
 
 本机 macOS ARM64／APFS 的合成负载为 300 个一级分支、3301 个业务目录，同一目录连续五次只读查询中位数 290 ms，范围 256–322 ms。仅代表本机合成负载。沿用按需元数据遍历，不增加缓存、后台扫描或并发框架。
 
-真实用户主目录 `.homer-project-root` 未创建，日常 Homer 数据未使用，原 `work_directory` 文件和动态工具声明按基线做字节比较。Windows Known Folders、junction 和原生加载尚未实机验收；LLM 是否准确选择 cwd、查询轮次、实际 token 和净收益尚未验证，付费验证另行确认。
+真实用户主目录 `.homer-project-root` 未创建，日常 Homer 数据未使用，原 `work_directory` 文件和动态工具声明按基线做字节比较。Windows Known Folders、junction 和原生加载尚未实机验收。2026-11-14 经单独付费授权，在提交 `423863e` 的独立快照上完成 6 个真实 Main 场景：目录查询门控 6/6 符合预期，含子层规则加载的 cwd 标准 4/6 通过；两个样本选在父目录，仍需改进。Main 用量为 324,270 token、17 个工具轮次；原生后台请求用量未采集，不能当作账号总消耗。逐例耗时、隔离方式、计量修正及限制见[真实 LLM 报告](worker-directory-llm-validation-2026-11-14.md)。未做旧实现对照，净收益仍未证实。
+
+2026-11-14 后续最小调整只修改 `list_work_directories` 说明和 Main 目录短规则，明确导航入口、任务子目录定位及原生指令加载边界。Node 22.22.0 全项目类型检查通过；目录发现／宿主 MCP／根准备／提示资源／派工契约六文件 35 项，以及旧 Main 提示采用与失败重试单项通过，共 36 项，零失败、零跳过。扫描逻辑、`work_directory`、`worker_open` 动态声明与原指纹按修改前内容核对保持不变。该离线阶段未重跑真实引擎、付费模型或完整默认核心，不把此前六例结果视为新说明的效果验证。
+
+```sh
+node node_modules/typescript/bin/tsc -p tsconfig.check.json --noEmit
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test --test-concurrency=1 \
+  tests/work-directories.test.ts tests/work-directories-service.test.ts \
+  tests/worker-project-root.test.ts tests/worker-interaction-mcp.test.ts \
+  tests/prompts.test.ts tests/recursive-tools.test.ts
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test \
+  --test-name-pattern='a legacy main adopts the current prompt once and retries an unacknowledged injection' \
+  tests/service.test.ts
+```
+
+2026-11-14 随后经当轮付费授权，以 `423863e` 独立快照只叠加两处说明完成十次真实 Main 复验：原六场景通过 3/6（原说明为 4/6），客户合同含重复为 1/3，Atlas 为 0/3，账簿助手为 0/1；明确／默认适用三例均零查询通过。十次实际 Main 均加载新规则、Worker cwd 均与回执一致，不能确认这版修改改善选择。Main 用量 478,045 token、24 个工具轮次；另记同线程十条零输出响应的 99,040 输入，是否收费未知。指标、任务范围、源快照哈希和实际观察边界见[第二轮报告](worker-directory-llm-validation-2026-11-14-r2.md)。显式复验入口为 `scripts/worker-directory-llm-validation.mjs --paid <spec.json>`；`--self-check` 仅本地合成请求，不进入默认测试或自动付费流程。未更改提示词以追求通过，未推送或部署。
+
+2026-11-14 第三轮先原样复现 R2 Atlas 一次，确认新工具可用、Main 规则已采用但省略 `workingDirectory`，默认派工失败。随后只在隔离 Main 候选中明确“目录由 Main 在派工前定位并显式传入”，固定十次、首败即停，最终十次均通过：合同及 Atlas 各 3/3，账簿助手 1/1，明确／默认适用 3/3 均零查询；九个本机资料任务全部显式给出正确 cwd，规则与调整后派工句均进入原生历史。候选提示资源离线五项通过，脚本语法检查及每阶段本地合成隔离自检通过。候选 Main 用量 826,454 token、46 个工具轮次；本轮另有 27,658 token 的失败诊断。该实验当时未替换正式提示词，扫描、查询说明、业务接口及动态指纹保持原样；2026-11-15 集成状态见下文。根因、备选方案、逐例数据、成本与限制见[第三轮报告](worker-directory-llm-validation-2026-11-14-r3.md)。复验入口支持在私有 spec 中用 `trials` 选择既有样本、`stopOnFailure` 控制预定的首败停止；只增加测试观测与预算控制，不进入默认测试，也不代表旧会话、Windows 或真实 Worker 任务已验收。
+
+2026-11-15 已按第三轮通过的候选原文同步正式 `prompts/main.md`：目录规则置于派工段落前，派工句改为先确定目录再调用 `worker_open`。仅更新这两处产品文字；扫描、工具说明、`work_directory`、`worker_open` 及动态工具指纹按本轮修改前的内容核对不变，历史 R3 JSON 保持原字节。Node 22.22.0 全项目类型检查通过，上述六份定向离线测试 35 项及旧 Main 提示采用／失败重试单项通过，共 36 项，零失败／取消／跳过。工具与原生根检查仍用合成目录和协议，无日常账号或运行资料；夹具自行清理临时数据。本轮未追加付费验证、完整默认核心或真实引擎专项，也未提交、推送、安装或部署；此前 10/10 仍只代表第三轮隔离候选的样本结果。
+
+2026-11-15 提交前复审：在 `423863e` 上只叠加目录上下文改动的独立候选中，整份 `prompts/main.md` 的 SHA-256 为 `b08f75fc3601b807b8fc95532cf6e8038efae16fd2c939142332e1713a5c4b82`，与 R3 通过的候选完全一致；查询说明也与当时快照相同。扫描、`work_directory`、`worker_open`、Main 动态声明、MCP 路由、根准备及提示采用的实现按基线逐字节核对未变。Node 22.22.0 类型检查与服务构建通过；上述 36 项加 `main-tools-resume-compatibility.test.mjs` 四项，共 **40/40** 定向离线通过。当前及 v0.1.4 指纹可沿原线程恢复，未知指纹仍拒绝。Codex 0.163.0 的 `directory-native` 三项及 `native-main-tools-resume.test.mjs` 单项共 **4/4** 通过；补充断言确认新建／旧 Main 实际请求恰有一份完整当前提示，旧线程中新提示位于旧规则之后，并保留线程、历史和工具声明。付费验证入口仅运行 `--self-check`，合成读写边界、token 观测及正常关闭通过；修正缺失 token 被转成零、空响应集合误报零及自检关闭未确认仍可退出成功的问题，不回写历史 JSON。全部请求仅到本地合成服务，无日常账号或 runtime。
+
+复审也执行了原生引擎自身替换提示的四项对照：官方 0.163.0 直接 `thread/resume` 仍保留旧提示，四项均失败，与[原生对照专项的既有边界](../tests/scenarios/prompt-resources.md#原生请求检查)一致；它要求测试中的原生替换行为，不能当作 Homer `thread/inject_items` 采用路径的结果。本轮未修改引擎或放宽断言，Homer 实际追加新版的恢复路径按上段独立验收。本次提交仅目录相关文件和混合文件中的对应片段，其他未提交／已暂存工作保留；未追加付费调用、推送、安装、部署或完整默认核心回归。
 
 ## 桌面防休眠与系统唤醒
 
