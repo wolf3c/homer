@@ -1,0 +1,501 @@
+{
+  "status": "completed",
+  "baseCommit": "5d901192756382a8f41e83aafcdbe4821e692cba",
+  "nativeEngine": "0.163.0",
+  "node": "22.22.0",
+  "model": "gpt-6.1-terra",
+  "effort": "medium",
+  "serviceTier": null,
+  "mainSourceHash": "b08f75fc3601b807b8fc95532cf6e8038efae16fd2c939142332e1713a5c4b82",
+  "legacyMainResourceCommit": "423863e",
+  "legacyMainResourceHash": "f693d77bc67a007a9e4fe83f325dc7aa64afa354d95fcfc5790308a9bec47a38",
+  "history": "complete synthetic native history, no seed model turn",
+  "trialPlan": [
+    {
+      "id": "K1",
+      "scenario": "explicit local file",
+      "queryExpected": 0
+    },
+    {
+      "id": "U2",
+      "scenario": "unknown Atlas native module",
+      "queryExpected": "at least one and relevant branch expansion"
+    },
+    {
+      "id": "K3",
+      "scenario": "default appropriate generic writing",
+      "queryExpected": 0
+    }
+  ],
+  "limits": {
+    "paidBusinessTurns": 3,
+    "millisecondsPerTrial": 180000,
+    "usageUpdatesPerTrial": 12,
+    "businessRetries": 0
+  },
+  "workerMode": "native engine plus held loopback Responses; no paid Worker task",
+  "results": [
+    {
+      "id": "K1",
+      "trial": "K1",
+      "expected": [
+        "Projects/clients/星桥/contracts",
+        "Projects/clients/星桥/contracts/current"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Projects/clients/星桥/contracts/current",
+          "atMs": 6653,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Projects/clients/星桥/contracts/current",
+          "rules": [
+            "CLIENT",
+            "CONTRACT"
+          ]
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "openAttempts": [
+        {
+          "workingDirectoryProvided": true,
+          "suppliedDirectory": "Projects/clients/星桥/contracts/current"
+        }
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 16293,
+          "outputTokens": 193,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 16664,
+          "outputTokens": 40,
+          "cachedInputTokens": 16256,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "tools": [],
+      "retries": 0,
+      "seededWithoutModel": true,
+      "promptInjections": 1,
+      "directoryToolInInventory": true,
+      "directoryDescriptionMatches": true,
+      "completeCurrentPromptInjected": true,
+      "bootMs": 167,
+      "originalThreadRetained": true,
+      "legacyHistoryPrefixRetained": true,
+      "legacyAttachmentRetained": true,
+      "legacyToolsRetained": true,
+      "legacyPromptAdopted": true,
+      "tokens": {
+        "totalTokens": 33190,
+        "inputTokens": 32957,
+        "cachedInputTokens": 16256,
+        "outputTokens": 233,
+        "reasoningOutputTokens": 0
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 8416,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": true,
+      "status": "completed",
+      "directoryRuleInNativeHistory": true,
+      "filesystemOutputHints": [],
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "workerAssignmentAsksLocate": false,
+      "cwdCorrect": true,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "observedAllResponseTokens": {
+        "inputTokens": 42861,
+        "outputTokens": 233
+      }
+    },
+    {
+      "id": "U2",
+      "trial": "U2",
+      "expected": [
+        "Projects/tools/atlas/native"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Projects/tools/atlas/native",
+          "atMs": 14752,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Projects/tools/atlas/native",
+          "rules": [
+            "ATLAS",
+            "NATIVE"
+          ]
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "openAttempts": [
+        {
+          "workingDirectoryProvided": true,
+          "suppliedDirectory": "Projects/tools/atlas/native"
+        }
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 16277,
+          "outputTokens": 72,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 16584,
+          "outputTokens": 32,
+          "cachedInputTokens": 16128,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 16717,
+          "outputTokens": 50,
+          "cachedInputTokens": 16384,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 16861,
+          "outputTokens": 63,
+          "cachedInputTokens": 16640,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 17030,
+          "outputTokens": 156,
+          "cachedInputTokens": 16768,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 17359,
+          "outputTokens": 34,
+          "cachedInputTokens": 17024,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Main",
+            "Projects"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        },
+        {
+          "category": "listFiles",
+          "afterLookup": true,
+          "branches": [
+            "Main",
+            "Projects",
+            "atlas"
+          ],
+          "mentionsMarkers": false,
+          "mentionsReadme": false
+        }
+      ],
+      "lookup": 1,
+      "workDirectory": 0,
+      "tools": [
+        {
+          "tool": "list_work_directories",
+          "atMs": 5959
+        }
+      ],
+      "retries": 0,
+      "seededWithoutModel": true,
+      "promptInjections": 1,
+      "directoryToolInInventory": true,
+      "directoryDescriptionMatches": true,
+      "completeCurrentPromptInjected": true,
+      "bootMs": 164,
+      "originalThreadRetained": true,
+      "legacyHistoryPrefixRetained": true,
+      "legacyAttachmentRetained": true,
+      "legacyToolsRetained": true,
+      "legacyPromptAdopted": true,
+      "tokens": {
+        "totalTokens": 101235,
+        "inputTokens": 100828,
+        "cachedInputTokens": 82944,
+        "outputTokens": 407,
+        "reasoningOutputTokens": 0
+      },
+      "usageUpdates": 6,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 16316,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": true,
+      "status": "completed",
+      "directoryRuleInNativeHistory": true,
+      "filesystemOutputHints": [
+        [
+          "atlas"
+        ],
+        [
+          "atlas",
+          "native",
+          "AGENTS.md",
+          "README.md"
+        ]
+      ],
+      "toolRounds": 5,
+      "modelResponses": 6,
+      "usageMatchesNative": true,
+      "workerAssignmentAsksLocate": true,
+      "cwdCorrect": true,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "observedAllResponseTokens": {
+        "inputTokens": 110732,
+        "outputTokens": 407
+      }
+    },
+    {
+      "id": "K3",
+      "trial": "K3",
+      "expected": [
+        "Main"
+      ],
+      "dispatches": [
+        {
+          "cwd": "Main",
+          "atMs": 5762,
+          "accepted": true
+        }
+      ],
+      "workers": [
+        {
+          "cwd": "Main",
+          "rules": []
+        }
+      ],
+      "business": [
+        "worker_open"
+      ],
+      "openAttempts": [
+        {
+          "workingDirectoryProvided": true,
+          "suppliedDirectory": "Main"
+        }
+      ],
+      "traceResponses": [
+        {
+          "inputTokens": 9904,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 16282,
+          "outputTokens": 121,
+          "cachedInputTokens": 9728,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        },
+        {
+          "inputTokens": 16579,
+          "outputTokens": 20,
+          "cachedInputTokens": 16256,
+          "reasoningOutputTokens": 0,
+          "model": "gpt-6.1-terra"
+        }
+      ],
+      "fs": [],
+      "lookup": 0,
+      "workDirectory": 0,
+      "tools": [],
+      "retries": 0,
+      "seededWithoutModel": true,
+      "promptInjections": 1,
+      "directoryToolInInventory": true,
+      "directoryDescriptionMatches": true,
+      "completeCurrentPromptInjected": true,
+      "bootMs": 162,
+      "originalThreadRetained": true,
+      "legacyHistoryPrefixRetained": true,
+      "legacyAttachmentRetained": true,
+      "legacyToolsRetained": true,
+      "legacyPromptAdopted": true,
+      "tokens": {
+        "totalTokens": 33002,
+        "inputTokens": 32861,
+        "cachedInputTokens": 25984,
+        "outputTokens": 141,
+        "reasoningOutputTokens": 0
+      },
+      "usageUpdates": 2,
+      "lastTurnStatus": "completed",
+      "lastTurnError": null,
+      "mainTurnMs": 7358,
+      "mainDirectoryUnchanged": true,
+      "workerTaskRequestObserved": true,
+      "workerRuleSeenInRequest": true,
+      "status": "completed",
+      "directoryRuleInNativeHistory": true,
+      "filesystemOutputHints": [],
+      "toolRounds": 1,
+      "modelResponses": 2,
+      "usageMatchesNative": true,
+      "workerAssignmentAsksLocate": false,
+      "cwdCorrect": true,
+      "workerNativeCwdMatches": true,
+      "requiredRuleLoaded": true,
+      "queryBehaviorCorrect": true,
+      "passed": true,
+      "observedAllResponseTokens": {
+        "inputTokens": 42765,
+        "outputTokens": 141
+      }
+    }
+  ],
+  "preflightFailures": [
+    {
+      "phase": "local sandbox probe before authentication",
+      "paidBusinessTurnsStarted": 0,
+      "reason": "broad synthetic-response matching; fixed with model and exact user-message binding plus two decoys"
+    }
+  ],
+  "at": "2026-11-15T04:51:11.049Z",
+  "endedAt": "2026-11-15T04:51:51.119Z",
+  "allPassed": true,
+  "mainUsageTotals": {
+    "totalTokens": 167427,
+    "inputTokens": 166646,
+    "cachedInputTokens": 125184,
+    "outputTokens": 781,
+    "reasoningOutputTokens": 0
+  },
+  "mainBusinessModelResponses": 10,
+  "totalToolRounds": 7,
+  "extraObservedZeroOutputResponses": {
+    "count": 3,
+    "inputTokens": 29712,
+    "outputTokens": 0,
+    "charged": null
+  },
+  "observedMainConversationResponseTotals": {
+    "inputTokens": 196358,
+    "outputTokens": 781,
+    "totalTokens": 197139
+  },
+  "independentCounterCrossCheck": {
+    "nativeHistoryMatchesUsage": true,
+    "positiveOutputTraceMatchesMainUsage": true,
+    "seedHasNoModelUsageRecords": true
+  },
+  "accountTotalTokens": null,
+  "currencyCost": null,
+  "isolation": {
+    "sourceAndRuntimeIndependent": true,
+    "syntheticHome": true,
+    "sourceCredentialFilesUnchanged": true,
+    "realHomeFallbackUnchanged": true,
+    "allOwnersShutdownConfirmed": true,
+    "refreshTokenUsed": false,
+    "dailyRuntimeOpened": false,
+    "paidWorkerGeneration": false
+  },
+  "limitsOfEvidence": [
+    "three fixed synthetic cases, one each, no randomization or business retry",
+    "complete old native history only; no paid compaction/interrupted-checkpoint matrix",
+    "no real Worker answer quality or daily data migration",
+    "no causal comparison with fresh Main, old prompt only, or duplicate-prompt elimination",
+    "observed response tokens are not an account-wide bill"
+  ],
+  "cleanup": {
+    "pending": false,
+    "completed": true,
+    "at": "2026-11-15T05:09:34.260801+00:00",
+    "isolatedSourceRemoved": true,
+    "isolatedCredentialsAndRuntimeRemoved": true,
+    "temporaryLogsRemoved": true,
+    "syntheticRootsRemoved": 4,
+    "noActiveProcessOrOpenFileReferences": true,
+    "sharedDependenciesAndNativeEngineRetained": true,
+    "unrelatedStagingUnchanged": true,
+    "removedAllocatedBytes": 123314176,
+    "filesystemFreeBytesChange": 124604416
+  },
+  "validationScriptHashAtExecution": "85f587525b73c813f28c77cfa43beea318597de975ead70c52cdc7f97ddcfa6e",
+  "trialPlanUnchanged": true,
+  "review": {
+    "at": "2026-11-15T08:49:57.790782+00:00",
+    "baseCommit": "5d901192756382a8f41e83aafcdbe4821e692cba",
+    "scriptHash": "d6dec28efda76a1298a279447edd14e3a8dc2ebe0d6990543b18afb16c8f0217",
+    "additionalPaidBusinessTurns": 0,
+    "savedTraceAndUsageReconciled": true,
+    "serviceBuildPassed": true,
+    "syntaxPassed": true,
+    "nativeSelfCheck": {
+      "passed": true,
+      "allowedReadAndDeniedReadWrite": true,
+      "legacyRestoreModelRequests": 0,
+      "allOwnersShutdownConfirmed": true,
+      "realHomeFallbackUnchanged": true
+    },
+    "preparationTimeoutRegression": {
+      "reproducedUnhandledRejectionBefore": true,
+      "preparationFailureReturnsAndClosesAfter": true,
+      "timerNowStartsAfterModelFreeLegacyPreparation": true
+    },
+    "cleanup": {
+      "runtimeAndSyntheticHomeRemoved": true,
+      "sharedResourcesRetained": true,
+      "removedAllocatedBytes": 11788288
+    }
+  }
+}
