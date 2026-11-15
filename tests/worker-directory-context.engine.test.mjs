@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createServer} from 'node:http';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,realpathSync} from 'node:fs';
+import {createServer,request as requestHttp} from 'node:http';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,realpathSync,truncateSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join,isAbsolute} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -27,6 +28,7 @@ async function fixture(t){
  let hold=false;
  const server=createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/v1/responses')return res.writeHead(403).end();
+  req.setEncoding('utf8');
   let body='';for await(const chunk of req)body+=chunk;const data=JSON.parse(body);requests.push(data);
   const finish=()=>{
    const n=String(requests.length),item={id:'msg-'+n,type:'message',role:'assistant',content:[{type:'output_text',text:'Synthetic local response.',annotations:[]}]};
@@ -56,8 +58,22 @@ async function fixture(t){
   assert.ok(stopped,'native process shutdown must be confirmed before removing fixture');rmSync(root,{recursive:true,force:true});
  };
  t.after(cleanup);
- return {root,home,user,cwd,requests,engines,config,nativeConfig,userConfig,cleanup,baseUrl:origin+'/v1',hold(value){hold=value;},release(){for(const finish of waiting.splice(0))finish();}};
+ return {root,home,user,cwd,requests,engines,config,nativeConfig,userConfig,cleanup,server,baseUrl:origin+'/v1',hold(value){hold=value;},release(){for(const finish of waiting.splice(0))finish();}};
 }
+
+test('the synthetic directory provider preserves UTF-8 split between HTTP chunks',{timeout:15000},async t=>{
+ const f=await fixture(t),text='目录规则_UTF8';
+ const body=Buffer.from(JSON.stringify({model:'synthetic',input:[{role:'developer',content:[{type:'input_text',text}]}]}));
+ const split=body.indexOf(Buffer.from('目'))+1;assert.ok(split>0);
+ const firstChunk=new Promise(resolve=>f.server.once('request',req=>req.once('readable',resolve)));
+ let send;
+ const completed=new Promise((resolve,reject)=>{
+  send=requestHttp(f.baseUrl+'/responses',{method:'POST',headers:{'Content-Type':'application/json'}},res=>{res.resume();res.on('end',resolve);res.on('error',reject);});
+  send.setTimeout(5000,()=>send.destroy(Error('synthetic_http_timeout')));send.on('error',reject);send.write(body.subarray(0,split));
+ });
+ await Promise.race([firstChunk,completed]);await new Promise(resolve=>setImmediate(resolve));send.end(body.subarray(split));await completed;
+ assert.equal(f.requests.length,1);assert.ok(f.requests[0].input[0].content[0].text===text,'split UTF-8 bytes must preserve the request text');
+});
 
 test('native new and legacy Main expose and call the new MCP tool on the same thread and retain dynamic declarations',{timeout:90000},async t=>{
  for(const legacy of [false,true]){
@@ -106,6 +122,84 @@ test('native new and legacy Main expose and call the new MCP tool on the same th
    }
   }finally{f.release();await app.close();await seed?.close();await f.cleanup();}
  }
+});
+
+for(const [history,checkpoint] of [['full',null],['compacted',null],['interrupted','initial'],['compact-first','initial'],['interrupted','after-history'],['compact-first','after-history']])test(`Homer prompt injection preserves ${history} native history${checkpoint?' ('+checkpoint+' checkpoint)':''}`,{timeout:60000},async t=>{
+ const f=await fixture(t),current=loadPrompts().main;
+ const directoryRule=current.split('\n').find(line=>line.includes('worker_open.workingDirectory'));assert.ok(directoryRule);
+ const legacy='SYNTHETIC_LEGACY_DIRECTORY_MAIN\n目录不明确时可先在默认目录派工，由 Worker 自己寻找项目。\n默认工作目录：'+f.cwd+'。Worker 可选择获准的项目目录。';
+ const savedUser='SYNTHETIC_DURABLE_DIRECTORY_USER',savedAssistant='SYNTHETIC_DURABLE_DIRECTORY_ASSISTANT';
+ const injections=[],copies=[];let seed,app,main,threadId;
+ const open=()=>new Homer(f.config,async()=>{},(options,handle)=>{
+  assert.equal(options.nativeTools,'main');assert.equal(options.threadId,threadId);
+  const engine=new CodexEngine(f.config,options,handle),request=engine.request.bind(engine);
+  engine.request=async(method,params)=>{const result=await request(method,params);if(method==='thread/inject_items')injections.push(params);return result;};
+  main=engine;f.engines.push(engine);return engine;
+ },[],async()=>({home:f.user,folders:[]}));
+ const promptHash=prompt=>createHash('sha256').update(JSON.stringify([threadId,prompt])).digest('hex');
+ function checkRequest(request,phase){
+  assert.ok(request,'the synthetic provider must receive the native request');
+  const developer=(request.input??[]).filter(item=>item.role==='developer').flatMap(item=>item.content??[]).map(part=>part.text??'').join('\n');
+  const count=developer.split(current).length-1;assert.ok(count>=1,'the complete current Main prompt must reach the native request');
+  assert.ok(developer.includes(directoryRule),'the entire directory rule must reach the native request');
+  assert.ok(developer.lastIndexOf(current)>developer.lastIndexOf('SYNTHETIC_LEGACY_DIRECTORY_MAIN'),'current guidance must follow any replayed legacy guidance');
+  const input=JSON.stringify(request.input);
+  if(history==='full'||checkpoint==='after-history'&&(history==='interrupted'||phase==='compact-before-business'))for(const marker of [savedUser,savedAssistant])assert.ok(input.includes(marker),'uncompacted business history must remain in the request');
+  if(history==='compacted'||history==='compact-first'&&phase!=='compact-before-business')assert.ok(input.includes('Synthetic local response.'),'the native compaction output must remain in the request');
+  copies.push({phase,currentPromptCopies:count,legacyPromptCopies:developer.split('SYNTHETIC_LEGACY_DIRECTORY_MAIN').length-1});
+ }
+ async function business(text,phase){
+  const count=f.requests.length;await app.message(text);
+  checkRequest(f.requests.slice(count).find(request=>JSON.stringify(request.input).includes(text)),phase);
+ }
+ try{
+  seed=peer({...f,calls:[]},bin,f.baseUrl);await seed.init();
+  const {thread}=await seed.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'synthetic_boundary',cwd:f.cwd,approvalPolicy:'on-request',sandbox:'read-only',environments:[],config:{mcp_servers:{}},developerInstructions:legacy,dynamicTools:MAIN_DYNAMIC_TOOLS});threadId=thread.id;
+  // Native injection persists its own checkpoint before these history items.
+  await seed.request('thread/inject_items',{threadId,items:[{type:'message',role:'user',content:[{type:'input_text',text:savedUser}]},{type:'message',role:'assistant',content:[{type:'output_text',text:savedAssistant}]}]});
+  const {attachment}=await seed.request('thread/attachment/add',{threadId,attachmentType:'synthetic.document',identityKey:'directory-resume-artifact',payload:{name:'fixture.txt',contents:'SYNTHETIC_DIRECTORY_ATTACHMENT'}});
+  let cursor=seed.events.length;
+  await seed.request('turn/start',{threadId,input:[{type:'text',text:'Synthetic legacy directory turn.'}]});
+  await until(()=>seed.events.slice(cursor).some(event=>event.method==='turn/completed'&&event.params.turn.status==='completed'));
+  if(history==='compacted'){
+   cursor=seed.events.length;await seed.request('thread/compact/start',{threadId});
+   await until(()=>seed.events.slice(cursor).some(event=>event.method==='turn/completed'&&event.params.turn.status==='completed'));
+   assert.ok(seed.events.slice(cursor).some(event=>event.method==='item/completed'&&event.params.item.type==='contextCompaction'));
+  }
+  const before=(await seed.request('thread/read',{threadId,includeTurns:true})).thread;
+  await seed.close();seed=undefined;
+  let prefix=readFileSync(before.path);
+  if(history==='interrupted'||history==='compact-first'){
+   const lines=prefix.toString('utf8').trimEnd().split('\n'),index=checkpoint==='initial'?lines.findIndex(line=>JSON.parse(line).type==='turn_context'):lines.findLastIndex(line=>JSON.parse(line).type==='turn_context');assert.ok(index>0);
+   prefix=Buffer.from(lines.slice(0,index).join('\n')+'\n');truncateSync(before.path,prefix.length);
+   assert.ok(prefix.toString('utf8').trimEnd().split('\n').some(line=>JSON.parse(line).payload?.content?.some(part=>part.text===legacy)),'the interrupted prefix must retain the old native context');
+  }
+  for(const marker of [savedUser,savedAssistant])assert.equal(prefix.includes(Buffer.from(marker)),checkpoint!=='initial','only the initial checkpoint precedes all saved business messages');
+  if(history==='compacted')assert.ok(prefix.toString('utf8').split('\n').filter(Boolean).some(line=>JSON.parse(line).type==='compacted'));
+  async function checkState(){
+   assert.equal(main.threadId,threadId);assert.equal(main.version,'0.163.0');
+   const after=(await main.request('thread/read',{threadId,includeTurns:true})).thread;assert.equal(after.path,before.path);
+   assert.ok(readFileSync(after.path).subarray(0,prefix.length).equals(prefix),'the durable rollout prefix must remain byte-for-byte intact');
+   assert.deepEqual(metadata(f,after.path).dynamic_tools,MAIN_DYNAMIC_TOOLS);
+   assert.deepEqual((await main.request('thread/attachment/list',{threadId})).data,[attachment]);
+   assert.equal(app.store.meta('mainThread'),threadId);assert.equal(app.store.meta('mainToolsHash'),MAIN_TOOLS_HASH);assert.equal(app.store.meta('mainPromptHash'),promptHash(current));
+  }
+  app=open();app.store.setMeta('mainThread',threadId);app.store.setMeta('mainToolsHash',MAIN_TOOLS_HASH);app.store.setMeta('mainPromptHash',promptHash(legacy));
+  let count=f.requests.length;await app.start();assert.equal(f.requests.length,count,'restoration and injection must not make model requests');
+  assert.equal(injections.length,1,'Homer must adopt the changed prompt exactly once');
+  assert.equal(injections[0].threadId,threadId);assert.equal(injections[0].items.length,1);assert.equal(injections[0].items[0].role,'developer');assert.ok(injections[0].items[0].content[0].text.endsWith(current));
+  await checkState();
+  if(history==='compact-first'){
+   count=f.requests.length;await main.compact();await until(()=>!main.nativeBusy);
+   checkRequest(f.requests[count],'compact-before-business');
+  }
+  await business('SYNTHETIC_FIRST_DIRECTORY_RESUME','first-business');await checkState();
+  await app.close({requireAllOwnersConfirmed:true});app=undefined;
+  app=open();count=f.requests.length;await app.start();assert.equal(f.requests.length,count,'cold restart must not make model requests');
+  assert.equal(injections.length,1,'acknowledged adoption must survive cold restart without reinjection');
+  await business('SYNTHETIC_RESTARTED_DIRECTORY_RESUME','after-cold-restart');await checkState();
+  t.diagnostic(JSON.stringify({history,checkpoint,requests:copies,injections:injections.length,originalThread:true,durableHistoryPrefix:true,savedBusinessHistory:checkpoint!=='initial',attachments:true,dynamicTools:true}));
+ }finally{await app?.close({requireAllOwnersConfirmed:true});await seed?.close();await f.cleanup();}
 });
 
 test('native Worker root preparation preserves hierarchy, Git/custom roots, trust, cold resume and failure before model',{timeout:90000},async t=>{
