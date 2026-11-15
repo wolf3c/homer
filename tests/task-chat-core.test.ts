@@ -315,7 +315,7 @@ test('a definitive steer failure rejects its targeted message while an unknown s
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId),steer=f.tasks.workerSend(f.actor,{operationId:'steer',workerId:worker.workerId,text:'Supplement',immediate:true});
   f.tasks.markSteer(steer.operationKey,'failed');f.tasks.markSteer(steer.operationKey,'received');assert.equal(f.tasks.operation(steer.operationKey).state,'failed');assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(steer.messageId)!.state,'rejected');
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Answer'},true);f.tasks.settleTask(f.actor,{operationId:'settle',taskId:task.taskId,expectedRevision:1,outcome:'succeeded'});
-  for(const message of f.tasks.inbox(f.actor))f.store.db.prepare("UPDATE agent_receipts SET state='processed' WHERE messageId=?").run(message.id);
+  for(const message of f.tasks.inbox(f.actor))f.consumeMain(message.id);
   assert.equal(f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:2},true).state,'archived');
  }finally{f.close();}
 });
@@ -324,7 +324,7 @@ test('cancelling without live executions rejects unbound queued conversation inp
  const f=chatFixture();try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId),queued=f.tasks.workerSend(f.actor,{operationId:'queue',workerId:worker.workerId,text:'Follow up'});assert.equal(queued.runId,null);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Answer'},true);const cancelled=f.tasks.controlTask(f.actor,{operationId:'cancel',taskId:task.taskId,expectedRevision:1,action:'cancel'});assert.deepEqual(cancelled.targets,[]);assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(queued.messageId)!.state,'rejected');assert.equal(f.tasks.claim(),undefined);
-  for(const message of f.tasks.inbox(f.actor))f.store.db.prepare("UPDATE agent_receipts SET state='processed' WHERE messageId=?").run(message.id);
+  for(const message of f.tasks.inbox(f.actor))f.consumeMain(message.id);
   assert.equal(f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:2},true).state,'archived');
  }finally{f.close();}
 });
@@ -416,7 +416,7 @@ test('a real cancelled-task archive permits lifecycle followup while old replies
   f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:old' WHERE messageId=?").run(reply.messageId);
   const old={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:old',inputMessageId:reply.messageId};
   assert.throws(()=>f.tasks.createTask(old,{operationId:'recreate-cancelled',goal:'Repeat the cancelled business work',authority:f.authority}),/task_authority_source_denied/);
-  f.store.db.prepare("UPDATE agent_receipts SET state='processed' WHERE messageId=?").run(reply.messageId);
+  f.consumeMain(reply.messageId);
   const archived=f.tasks.archiveHistory(f.actor,{operationId:'archive-cancelled',taskId:task.taskId,expectedRevision:2},true);assert.equal(archived.state,'archived');
   const notice=f.tasks.inbox(f.actor).find(message=>message.kind==='task_archived')!;f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:archive-cancelled' WHERE messageId=?").run(notice.id);
   const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:archive-cancelled',inputMessageId:notice.id},cleanup=f.tasks.createTask(event,{operationId:'lifecycle-followup',goal:'Review only authorized temporary-resource lifecycle cleanup',authority:f.authority}),next=f.tasks.workerOpen(event,{operationId:'cleanup-worker',taskId:cleanup.taskId,text:'Preserve useful work and review authorized resource cleanup'});

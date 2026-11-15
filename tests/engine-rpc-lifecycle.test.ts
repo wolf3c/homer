@@ -38,6 +38,19 @@ function transportPeer(){
  return {...p,child,record,async close(){child.stderr.destroy();p.engine['child']=undefined;await p.engine.close();}};
 }
 
+test('native acceptance followed by a failing receipt callback keeps execution fenced',async()=>{
+ const p=peer('main');
+ try{
+  const work=p.engine.turn('Synthetic accepted input',{onStarted:()=>{throw Error('synthetic_receipt_write_failed');}});
+  const failure=assert.rejects(work,/synthetic_receipt_write_failed/);
+  for(let n=0;n<20&&!p.sent.some(row=>row.method==='turn/start');n++)await new Promise(done=>setImmediate(done));
+  const index=p.sent.findIndex(row=>row.method==='turn/start');assert.ok(index>=0);
+  await p.reply(index,{turn:{id:'native:accepted',status:'inProgress'}});await failure;
+  assert.equal(p.engine.canRestart,false,'a local database failure is not native exit evidence');
+  await assert.rejects(p.engine.turn('Do not overlap'),/engine_turn_busy|engine_shutdown_unconfirmed/);
+ }finally{await p.engine.close();}
+});
+
 test('native JSON transport facts exclude warmup, HTTP fallback and other threads',async()=>{
  const p=transportPeer(),successes:unknown[]=[],changes:unknown[]=[];
  p.engine.on('webSocketSucceeded',value=>successes.push(value));p.engine.on('modelTransport',value=>changes.push(value));

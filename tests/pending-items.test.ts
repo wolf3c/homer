@@ -47,7 +47,7 @@ test('a live Worker reply cannot use another task’s source or manufacture one 
   const foreign=f.tasks.createTask(other,{operationId:'other',goal:'Separate work',authority:authority('other-source')});
   const worker=openWorker(f);complete(f,running(f,worker.runId),'Original checked');
   const input=f.inputs.claim([],'all')!;assert.equal(input.origin,'worker');
-  f.inputs.started(input.messageId,input.revision,'generation:event','turn:event');
+  f.store.transaction(()=>{f.processes.start({id:'generation:event',threadId:main.threadId!,sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:'generation:event'},'turn:event');f.tasks.receiveMainMessagesInTransaction([input.messageId],'turn:event');});
   const event={...main,sourceRequestId:undefined,inputMessageId:input.messageId,turnId:'turn:event'};
   assert.equal(f.tasks.workerRead(event,{workerId:worker.workerId,messageId:input.messageId}).messages[0]!.text,'Original checked');
   f.tasks.updateTask(event,{...mutation(f,'note'),patch:{notes:'Another task’s source cannot grant execution'}});

@@ -238,7 +238,7 @@ export class MediaStore{
  }
  gc(now=Date.now(),operationKey?:string){
   const has=(name:string)=>!!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
-  const queue=has('agent_receipts')?" AND NOT EXISTS(SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE json_extract(m.payloadJson,'$.requestId')=media_assets.requestId AND r.state IN ('pending','offered','received','uncertain','blocked'))":'';
+  const queue=has('agent_receipts')?" AND NOT EXISTS(SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE json_extract(m.payloadJson,'$.requestId')=media_assets.requestId AND (r.state IN ('pending','offered','uncertain','blocked') OR r.state='received' AND coalesce(json_extract(m.payloadJson,'$.terminal'),'') NOT IN ('completed','failed','interrupted','cancelled')))":'';
   const scope=operationKey===undefined?'':' AND originOperationKey=?';
   const candidates=this.db.prepare("SELECT * FROM media_assets WHERE expiresAt<? AND state NOT IN ('deleted','downloading') AND NOT EXISTS(SELECT 1 FROM media_pins p WHERE p.assetId=media_assets.id AND p.revision=media_assets.revision)"+queue+scope)
    .all(now,...(operationKey===undefined?[]:[operationKey])) as MediaAsset[];

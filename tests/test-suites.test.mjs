@@ -77,6 +77,7 @@ const explicitSuites={
  "live-transport": ["native-history-transport.live.test.mjs"],
  "desktop-codesign": ["desktop-update-codesign.test.mjs"],
  "engine": [
+  "main-mailbox-recovery.engine.test.ts",
   "channel-native.engine.test.ts",
   "deepseek-continuation.test.ts",
   "deepseek-pinned.test.ts",

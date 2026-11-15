@@ -61,7 +61,7 @@ test('a separate explicit user message cannot consume another Worker original or
   assert.equal(ordinary.outcome,null);assert.equal(ordinary.text,'Synthetic failed result');
   assert.notEqual(JSON.parse(operation.detailsJson).inputMessageId,ordinary.messageId);
   assert.equal(readTestConversation(f.app).messages.filter(m=>m.text==='Separate failure report').length,1);
-  for(const message of f.observed)assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(message.messageId)!.state,'processed');
+  for(const message of f.observed)assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(message.messageId)!.state,'received');
   assert.equal(f.inputs.filter(text=>text.startsWith('[内部协作输入')).length,2);
  }finally{await f.close();}
 });

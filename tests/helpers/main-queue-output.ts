@@ -8,11 +8,10 @@ export function mainQueueOutput(app:Pick<Homer,'store'|'tasks'|'processes'|'hist
  app.tasks.bind(run.id,run.epoch,'worker-'+id,'worker-turn-'+id);
  const returned=app.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic checked facts'},true)!;
  const inputs=new MainInputs(app.tasks,app.history),input=inputs.claim([],'all');if(!input||input.origin!=='worker'||input.messageId!==returned.messageId)throw Error('synthetic_coordination_not_claimed');
- inputs.started(input.messageId,input.revision,id,'main-turn-'+id);
  const text='主 Agent 已核对合成材料，交付范围仍待确认。';
  app.processes.start({id,threadId,sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:id},'main-turn-'+id);
  app.history.record(id,threadId,'','running');
- app.store.transaction(()=>app.tasks.completeMainMessagesInTransaction([input.messageId],id));
+ app.store.transaction(()=>app.tasks.receiveMainMessagesInTransaction([input.messageId],'main-turn-'+id));
  app.processes.finish(id,'completed','turn:main-turn-'+id+':terminal',text);app.history.finish(id,text,'completed');
  return {type:'coordination',messageId:id,text,requestId:sourceRequestId};
 }

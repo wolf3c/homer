@@ -34,8 +34,8 @@ test('later requirements preserve the original delegation evidence and Run versi
   const run=f.start(opened.workerId);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'First reply'},true);
   const notice=f.inputs.claim([],'all')!;assert.equal(notice.origin,'worker');
-  f.inputs.started(notice.messageId,notice.revision,'generation:return','turn:return');
-  f.store.transaction(()=>f.tasks.completeMainMessagesInTransaction([notice.messageId],'generation:return'));
+  f.store.transaction(()=>{f.processes.start({id:'generation:return',threadId:'thread:main',sourceKind:'worker',sourceMessageIds:[notice.messageId],messageId:'generation:return'},'turn:return');f.tasks.receiveMainMessagesInTransaction([notice.messageId],'turn:return');});
+  f.processes.finish('generation:return','completed','turn:turn:return:terminal:completed');
   const input=f.source('source:new','Use changed scope');
   const actor={...f.actor,sourceRequestId:'source:new',inputMessageId:input.messageId};
   f.tasks.updateTask(actor,{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Changed scope'},

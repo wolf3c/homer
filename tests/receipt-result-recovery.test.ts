@@ -75,15 +75,16 @@ test('long raw originals are recoverable in exact chunks and paging does not ado
  }finally{f.close();}
 });
 
-test('original committed actions travel with their input and unresolved actions block completion of that input',()=>{
+test('original committed actions travel with their received input and unknown effects independently block upgrade',()=>{
  const f=fixture();try{
   const w=openWorker(f),actor=running(f,w.runId),reply=complete(f,actor),input=f.inputs.claim([],'all')!;
-  f.inputs.started(input.messageId,input.revision,'generation:coordination','turn:coordination');
+  f.store.transaction(()=>{f.processes.start({id:'generation:coordination',threadId:main.threadId!,sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:'generation:coordination'},'turn:coordination');f.tasks.receiveMainMessagesInTransaction([input.messageId],'turn:coordination');});
   const owner={...main,inputMessageId:reply.messageId,turnId:'turn:coordination'},opened=f.tasks.workerOpen(owner,{operationId:'committed-action',taskId:f.task.taskId,text:'Follow the evidence'});
   assert.equal(f.tasks.operationsForInput(main,reply.messageId)[0]!.response.runId,opened.runId);
   f.store.db.prepare("UPDATE operations SET state='uncertain' WHERE id=?").run(opened.operationKey);
-  assert.throws(()=>f.store.transaction(()=>f.tasks.completeMainMessagesInTransaction([reply.messageId],'generation:coordination')),/coordination_operations_unresolved/);
-  assert.notEqual(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(reply.messageId)!.state,'processed');
+  f.processes.finish('generation:coordination','unknown','turn:turn:coordination:terminal:completed');
+  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(reply.messageId)!.state,'received');
+  assert.equal(f.tasks.safeToUpgrade(),false);
   assert.equal(f.tasks.operationsForInput(main,reply.messageId)[0]!.state,'uncertain');
  }finally{f.close();}
 });

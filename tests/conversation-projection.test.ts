@@ -85,7 +85,7 @@ test('preparing inputs remain editable until claim and retain their original ACK
   inputs.edit({requestId:'prepare',operationId:'prepare-edit',expectedRevision:item.revision,input:{requestId:'prepare',text:'合成新版'}});item=inputs.list()[0]!;
   ready=true;const claimed=inputs.claim()!;assert.equal(inputs.list()[0]!.editable,false);assert.throws(()=>inputs.cancel({requestId:'prepare',operationId:'claimed-cancel',expectedRevision:claimed.revision}),/queue_input_processing/);f.ack(claimed,'prepare1');
   assert.equal(f.store.db.prepare('SELECT offeredTurnId FROM agent_receipts WHERE messageId=?').get(claimed.messageId)?.offeredTurnId,'generation-prepare');
-  assert.throws(()=>f.ack(claimed,'duplicate-ack'),/revision/);
+  assert.throws(()=>f.ack(claimed,'duplicate-ack'),/identity|revision/);
  }finally{f.close();}
 });
 test('insertion order survives clock rollback, no-final host text survives unknown, same text publications remain distinct',()=>{

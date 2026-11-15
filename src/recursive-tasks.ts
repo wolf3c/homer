@@ -2,6 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {basename,isAbsolute} from 'node:path';
 import {realpathSync,statSync} from 'node:fs';
 import {STORE_SCHEMA_VERSION,type Store,type Run} from './store.js';
+import {mainInputProcessingSql,unconfirmedNativeEffectsSql} from './main-process.js';
 import type {Files} from './files.js';
 import type {TurnResult} from './engine.js';
 import type {AttachmentRef} from './media-store.js';
@@ -438,7 +439,7 @@ export class RecursiveTasks{
  private exitUnconfirmed(run:TaskRun){return run.phase==='uncertain'||run.startedAt!==null&&JSON.parse(run.checkpointJson??'{}').workerExitConfirmed!==1;}
  confirmWorkerExit(runId:string,expectedLease:string|undefined){return this.store.transaction(()=>{const key='lease:'+runId,actual=this.store.meta(key);if(actual!==expectedLease)return actual===undefined&&JSON.parse(this.run(runId).checkpointJson??'{}').workerExitConfirmed===1;this.sql("UPDATE runs SET checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.workerExitConfirmed',1),phase=CASE WHEN status NOT IN ('queued','running') THEN 'ended' ELSE phase END,stateRevision=stateRevision+1 WHERE id=?",runId);if(actual!==undefined)this.sql('DELETE FROM meta WHERE key=?',key);return true;});}
  interruptWorker(runId:string){const run=this.run(runId);if(!['queued','running'].includes(run.status)||run.stopRequestedAt)return;const checkpoint=JSON.parse(run.checkpointJson??'{}'),closed=checkpoint.workerExitConfirmed===1||run.status==='queued'&&run.startedAt===null&&!this.store.meta('lease:'+run.id);const result=this.endSegment(run.id,run.epoch,checkpoint.workerTerminal??{status:'unconfirmed',text:'',errorCode:'restart_unconfirmed'},closed);this.sql('UPDATE runs SET epoch=epoch+1,stateRevision=stateRevision+1 WHERE id=?',run.id);return result;}
- reconcile(pauseOldWork=false){for(const run of this.runs())if(['queued','running'].includes(run.status))this.interruptWorker(run.id);this.store.transaction(()=>{if(!pauseOldWork){this.sql("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE state IN ('offered','received')");this.sql("UPDATE operations SET state='uncertain',revision=revision+1 WHERE state='dispatching'");}});}
+ reconcile(pauseOldWork=false){for(const run of this.runs())if(['queued','running'].includes(run.status))this.interruptWorker(run.id);this.store.transaction(()=>{if(!pauseOldWork){this.sql("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE state='offered' OR state='received' AND recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId')");this.sql("UPDATE operations SET state='uncertain',revision=revision+1 WHERE state='dispatching'");}});}
  private requestStops(taskId:string,reason:string,workerId?:string){
   const runs=this.runs(taskId,workerId).filter(active);for(const run of runs){
    this.sql("UPDATE runs SET stopRequestedAt=coalesce(stopRequestedAt,?),stopReason=?,epoch=epoch+1,checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.outputEpoch',coalesce(json_extract(checkpointJson,'$.outputEpoch'),?)),stateRevision=stateRevision+1 WHERE id=?",Date.now(),reason,run.epoch,run.id);this.cancelInteractions(run.id,'worker_stopped');
@@ -519,12 +520,18 @@ export class RecursiveTasks{
    this.sql("UPDATE tasks SET state='settled',outcome=?,notes=?,settledAt=?,updatedAt=?,revision=revision+1 WHERE id=?",input.outcome,input.notes??task.notes,Date.now(),Date.now(),task.id);return {taskId:task.id,version:task.headVersion,revision:task.revision+1,state:'settled',outcome:input.outcome};
   });
  }
- inbox(actor:Actor,after=0){this.actorTask(actor);return this.all<AgentMessage>("SELECT m.* FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.recipientAgentId=? AND r.state NOT IN ('processed','rejected') AND m.kind<>'user_input' AND (m.targetRunId IS NULL OR m.targetRunId=?) AND m.seq>? ORDER BY m.seq LIMIT 100",actor.agentId,actor.runId??null,after).map(row=>({...row,payload:JSON.parse(row.payloadJson)}));}
- receiveMainMessagesInTransaction(messageIds:string[],turnId:string){for(const messageId of messageIds)this.sql("UPDATE agent_receipts SET state='received',offeredTurnId=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state='offered'",turnId,messageId,this.store.meta('mainAgentId')!);}
- completeMainMessagesInTransaction(messageIds:string[],turnId:string){for(const messageId of messageIds){
-  if(this.one("SELECT 1 FROM operations WHERE actorAgentId=? AND json_extract(detailsJson,'$.inputMessageId')=? AND state IN ('accepted','dispatching','uncertain')",this.store.meta('mainAgentId')!,messageId))throw Error('coordination_operations_unresolved');
-  this.sql("UPDATE agent_receipts SET state='processed',processedBy=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state IN ('received','offered') AND offeredTurnId=?",turnId,messageId,this.store.meta('mainAgentId')!,turnId);
- }}
+ inbox(actor:Actor,after=0){this.actorTask(actor);return this.all<AgentMessage>(`SELECT m.* FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.recipientAgentId=? AND
+   ((m.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected')) OR
+    (m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()})))
+   AND m.kind<>'user_input' AND (m.targetRunId IS NULL OR m.targetRunId=?) AND m.seq>? ORDER BY m.seq LIMIT 100`,actor.agentId,actor.runId??null,after).map(row=>({...row,payload:JSON.parse(row.payloadJson)}));}
+ receiveMainMessagesInTransaction(messageIds:string[],turnId:string){
+  if(!this.db.isTransaction)throw Error('main_receipt_transaction_required');
+  for(const messageId of messageIds){
+   const row=this.one<{state:string;offeredTurnId:string|null}>("SELECT r.state,r.offeredTurnId FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.id=? AND m.recipientAgentId=? AND r.recipientAgentId=m.recipientAgentId AND m.kind<>'user_input' AND m.targetRunId IS NULL",messageId,this.store.meta('mainAgentId')!);
+   if(!row||row.state!=='offered'&&!(row.state==='received'&&row.offeredTurnId===turnId))throw Error('main_receipt_identity_conflict');
+   if(row.state==='offered')this.sql("UPDATE agent_receipts SET state='received',offeredTurnId=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state='offered'",turnId,messageId,this.store.meta('mainAgentId')!);
+  }
+ }
  queueInteraction(interactionId:string){if(!this.table('worker_interactions'))throw Error('interaction_not_found');const interaction=this.one<{runId:string;threadId:string;turnId:string;kind:string}>('SELECT runId,threadId,turnId,kind FROM worker_interactions WHERE id=?',interactionId);if(!interaction)throw Error('interaction_not_found');const run=this.run(interaction.runId),key='interaction:'+interactionId;if(this.one('SELECT 1 FROM operations WHERE id=?',key))return;this.insertOperation(key,'host',run.taskId,key,'interaction_notice',{},'confirmed');this.message({agentId:'host',runId:run.id,epoch:run.epoch},key,this.store.meta('mainAgentId')!,run.taskId,run.version,'interaction_required',{interactionId,runId:run.id,workerId:run.workerId,threadId:interaction.threadId,turnId:interaction.turnId});}
  private unresolvedInteractions(taskId:string){
   return this.table('worker_interactions')?this.one<{id:string}>(`SELECT i.id FROM worker_interactions i JOIN runs r ON r.id=i.runId
@@ -533,14 +540,17 @@ export class RecursiveTasks{
  private historyBlockers(task:Task,except=''){
   const blocked:{reason:string;id?:string}[]=[],add=(reason:string,row:{id?:string}|undefined)=>{if(row)blocked.push({reason,...(row.id?{id:row.id}:{})});};if(task.state!=='settled'||task.controlState!=='normal')blocked.push({reason:'task_unsettled'});
   add('run_not_closed',this.runs(task.id).find(run=>active(run)||this.exitUnconfirmed(run)||this.store.meta('lease:'+run.id)||this.lifecycle?.reviewExitConfirmed?.(run)===false));add('operation_unresolved',this.unresolved(task.id,except));
-  add('message_unprocessed',this.one<AgentMessage>("SELECT m.* FROM agent_messages m LEFT JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND (r.state IS NULL OR r.state NOT IN ('processed','rejected')) LIMIT 1",task.id));
+  add('message_unprocessed',this.one<AgentMessage>(`SELECT m.* FROM agent_messages m LEFT JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND
+    (r.state IS NULL OR r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected') OR
+      r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()})) LIMIT 1`,task.id));
   add('interaction_unresolved',this.unresolvedInteractions(task.id));
   const sources="SELECT sourceRequestId FROM task_versions WHERE taskId=? UNION SELECT json_extract(authorityJson,'$.sourceRequestId') FROM task_versions WHERE taskId=? UNION SELECT s.value FROM task_versions v,json_each(v.authorityJson,'$.sourceRequestIds') s WHERE v.taskId=?";
-  add('source_input_unprocessed',this.one(`SELECT m.id FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${sources}) AND r.state NOT IN ('processed','rejected') LIMIT 1`,task.id,task.id,task.id));
+  add('source_input_unprocessed',this.one(`SELECT m.id FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${sources}) AND (r.state NOT IN ('received','rejected') OR r.state='received' AND (json_extract(m.payloadJson,'$.terminal') IS NULL OR json_extract(m.payloadJson,'$.terminal')='uncertain')) LIMIT 1`,task.id,task.id,task.id));
   if(this.table('media_assets'))add('attachment_in_progress',this.one(`SELECT id FROM media_assets WHERE requestId IN (${sources}) AND (lease IS NOT NULL OR state IN ('downloading','pending','preparing')) LIMIT 1`,task.id,task.id,task.id));
   add('coordination_consumer_unresolved',this.one(`SELECT m.id FROM agent_messages m JOIN meta p ON p.key GLOB 'publicMainNode:v1:*' JOIN json_each(p.value,'$.sourceMessageIds') source ON source.value=m.id WHERE m.taskId=? AND json_extract(p.value,'$.threadId')=? AND (json_extract(p.value,'$.state')<>'worked' OR json_extract(p.value,'$.status')='unknown') LIMIT 1`,task.id,this.store.meta('mainThread')!));
   if(['succeeded','partial'].includes(task.outcome??'')){
-   const reply=this.one("SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND m.taskVersion=? AND m.kind='worker_reply' AND length(json_extract(m.payloadJson,'$.text'))>0 AND r.state='processed' LIMIT 1",task.id,task.headVersion);
+   const reply=this.one(`SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND m.taskVersion=? AND m.kind='worker_reply' AND length(json_extract(m.payloadJson,'$.text'))>0 AND r.state='received' AND EXISTS(
+    SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') source WHERE p.key GLOB 'publicMainNode:v1:*' AND source.value=m.id AND json_extract(p.value,'$.state')='worked' AND json_extract(p.value,'$.status') IN ('completed','failed','interrupted')) LIMIT 1`,task.id,task.headVersion);
    const mainReply=this.table('conversation_messages')&&this.one(`SELECT 1 FROM conversation_messages c
     LEFT JOIN conversation_attachments a ON a.messageId=c.id
     WHERE c.role='assistant' AND c.audience='user' AND c.status='completed' AND c.revokedAt IS NULL
@@ -626,6 +636,11 @@ export class RecursiveTasks{
   return !this.one("SELECT 1 FROM runs WHERE status IN ('queued','running') OR phase='uncertain'")
     && !this.one("SELECT 1 FROM tasks WHERE controlState='stopping'")
     && !this.one("SELECT 1 FROM operations WHERE state IN ('accepted','dispatching','uncertain') AND kind<>'membership_video'")
-    && !this.one("SELECT 1 FROM agent_receipts WHERE state NOT IN ('processed','rejected')");
+    && !this.one(`SELECT 1 FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND ${unconfirmedNativeEffectsSql()} LIMIT 1`)
+    && !(this.table('worker_interactions')&&this.one("SELECT 1 FROM worker_interactions WHERE state IN ('pending_main','pending_user') OR state IN ('approved','denied','answered') AND deliveredAt IS NULL LIMIT 1"))
+    && !this.one(`SELECT 1 FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId
+      WHERE (r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected'))
+        OR (r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND
+          (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()}))`);
  }
 }

@@ -205,7 +205,7 @@ for(const revoked of [false,true])test('a scheduled Telegram group message waits
     assert.equal(f.app.store.db.prepare('SELECT enabled FROM schedules').get()!.enabled,0,'delivery still ends at the original inbox');
     if(revoked)plugin.revokeBinding(binding);else groups.caughtUp(binding);
     await f.app.idle();
-    assert.equal(receipt(),revoked?'rejected':'processed');assert.equal(consumed,revoked?0:1);
+    assert.equal(receipt(),revoked?'rejected':'received');assert.equal(consumed,revoked?0:1);
     groups.caughtUp(binding);f.app.recheckScheduledMessages();await f.app.idle();
     assert.equal(consumed,revoked?0:1);
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='scheduled_message'").get()!.n,1);

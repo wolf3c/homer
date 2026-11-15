@@ -39,7 +39,8 @@ test('normal restart reconciles user history before generic receipt recovery, pr
   await app.close();app=new Homer(config,async()=>{},options=>new Peer(options));await app.start();await app.idle();
   assert.equal(app.store.meta('mainThread'),thread);
   const original=app.inputs.list().find(q=>q.input.requestId==='original')!;
-  assert.equal(original.state,'uncertain');assert.equal(original.generationId,'original-generation');assert.equal(original.revision,active.revision+1);
+  assert.equal(original.state,'uncertain');assert.equal(original.generationId,'original-generation');assert.equal(original.revision,active.revision);
+  assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(active.messageId)!.state,'received');
   const user=app.history.inputs(thread,['original']).get('original')!;assert.equal(user.status,'interrupted');assert.equal(user.text,source.text);
   assert.equal(app.history.inputs(thread,['old-uncertain']).get('old-uncertain')!.status,'interrupted');
   assert.deepEqual(rows('conversation_inputs','requestId=?',['original']),before.input);

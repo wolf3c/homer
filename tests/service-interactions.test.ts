@@ -20,6 +20,8 @@ type InteractionScenario = {
   skipDelivery?: boolean;
   handoff?: boolean;
   namedTask?: boolean;
+  cancelBeforeDecision?:boolean;
+  misdirectHistoricalApproval?:boolean;
 };
 async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" | "hang", workers = 1, scenario: InteractionScenario = {}) {
   const root = resolve(".codex/scratch/worker-interactions"); mkdirSync(root, { recursive: true });
@@ -29,6 +31,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
   const config: Config = { runtime, workspace, codexHome:join(dir,"home"),nativeCodexHome:join(dir,"home"), codexBin: "/usr/bin/false", model: "mock", effort: "medium", requiresOpenaiAuth: false, stopGraceMs: 50 };
   const messages: Message[] = [], resumes: string[] = [], engines: Fake[] = [], mainInputs:string[]=[];
   const handoffs: string[] = [], interactionTurns: string[] = [], pausedWorkers: (() => void)[] = [];
+  const misdirected: {currentId:string;historicalId:string;currentBefore:unknown;messageBefore:unknown;errors:string[]}[] = [];
   const releaseWorkers = () => { for (const release of pausedWorkers.splice(0)) release(); };
   let sequence = 0;
   let app: Homer;
@@ -51,7 +54,11 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
         let reply: any;
         if (mode === "approve" || mode === "deny" || mode === "direct") {
           const requestId = "native-" + this.threadId;
-          reply = await this.options.onInteraction!({ requestId, method: "item/permissions/requestApproval", threadId: this.threadId, turnId: this.turnId, itemId: "perm-1", kind: "authorization", details: { threadId: this.threadId, turnId: this.turnId, itemId: "perm-1", cwd: this.options.cwd, permissions: { network: null, fileSystem: { read: [this.options.cwd], write: null } } } });
+          const itemId=scenario.misdirectHistoricalApproval?"file-"+this.threadId:"perm-1";
+          const details={threadId:this.threadId,turnId:this.turnId,itemId,cwd:this.options.cwd,...(scenario.misdirectHistoricalApproval
+            ? {grantRoot:null,availableDecisions:['accept','decline'],operation:{type:'fileChange',id:itemId,status:'inProgress',changes:[{path:join(this.options.cwd,'synthetic-'+this.threadId+'.txt'),kind:{type:'add'},diff:'+Synthetic approval fixture'}]}}
+            : {permissions:{network:null,fileSystem:{read:[this.options.cwd],write:null}}})};
+          reply = await this.options.onInteraction!({ requestId, method: scenario.misdirectHistoricalApproval?"item/fileChange/requestApproval":"item/permissions/requestApproval", threadId: this.threadId, turnId: this.turnId, itemId, kind: "authorization", details });
           if (!scenario.skipDelivery) this.emit("interactionDelivered", requestId);
         } else reply = await this.call("ask_main", { question: `合成问题 ${this.threadId}：采用哪个格式？` });
         if (scenario.skipDelivery) await new Promise<void>(done => pausedWorkers.push(done));
@@ -67,6 +74,17 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
         const id = app["mainContext"]!.interactionId!;
         interactionTurns.push(id);
         const item = await callHostMcp(this.options, "inspect_interaction", { interactionId: id });
+        const historical=scenario.misdirectHistoricalApproval&&app.interactions.list().find(other=>other.id!==id&&other.state==='approved'&&other.deliveredAt!==null);
+        if(historical){
+          const attempt={currentId:id,historicalId:historical.id,currentBefore:app.store.db.prepare('SELECT * FROM worker_interactions WHERE id=?').get(id),messageBefore:app.store.db.prepare("SELECT * FROM agent_messages WHERE kind='interaction_required' AND json_extract(payloadJson,'$.interactionId')=?").get(id),errors:[] as string[]};
+          misdirected.push(attempt);
+          for(let i=0;i<2;i++){
+            try{await callHostMcp(this.options,'respond_interaction',{interactionId:historical.id,action:'approve',reason:'Synthetic reply to the wrong historical approval'});attempt.errors.push('unexpectedly_accepted');}
+            catch(error){attempt.errors.push((error as Error).message);}
+          }
+          return {status:'completed',text:''};
+        }
+        if(scenario.cancelBeforeDecision)app.interactions.cancelRun(item.runId,'synthetic_original_execution_ended');
         if (scenario.handoff) {
           const path = join(workspace, "handoff-" + id + ".json");
           writeFileSync(path, JSON.stringify({ source: "synthetic", format: "Markdown" }));
@@ -108,7 +126,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
   }
   app = new Homer(config, async message => { messages.push(message); }, (options, handler) => new Fake(options, handler));
   await app.start();
-  return { app, config, messages, engines, resumes, handoffs, interactionTurns, releaseWorkers, mainInputs,
+  return { app, config, messages, engines, resumes, handoffs, interactionTurns, releaseWorkers, mainInputs, misdirected,
     events: () => app.store.db.prepare("SELECT type,code FROM events ORDER BY seq").all() as { type: string; code: string | null }[],
     async restart() {
       await app.close();
@@ -169,6 +187,99 @@ for (const mode of ["answer", "approve", "deny"] as const) {
     } finally { await f.cleanup(); }
   });
 }
+
+test('explicit user recovery answers the original live request without requeuing its received notice',async()=>{
+ const f=await fixture('answer',1,{skipDecision:true,reply:{status:'completed',text:''}});
+ try{
+  await f.app.message('dispatch','synthetic-dispatch');
+  await until(()=>f.events().some(event=>event.type==='internal_processing_failed'));
+  const item=f.app.interactions.list()[0]!,query=f.app.store.db.prepare("SELECT m.id,r.state FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='interaction_required' AND json_extract(m.payloadJson,'$.interactionId')=?");
+  const before=query.get(item.id)!;
+  await f.app.message('reply '+item.id,'synthetic-recovery');
+  assert.equal(f.app.interactions.inspect(item.id).state,'answered');
+  await f.app.idle();assert.equal(f.resumes.length,1);
+  assert.deepEqual(query.get(item.id),before);assert.equal(before.state,'received');
+  assert.equal(f.interactionTurns.length,1,'recovery is a new user round, never a second delivery of the notice');
+  assert.equal(f.app.store.runs().length,1);
+ }finally{await f.cleanup();}
+});
+
+test('a cancelled original callback can be consumed silently without dropping the delivered notice',async()=>{
+ const f=await fixture('answer',1,{skipDecision:true,cancelBeforeDecision:true,reply:{status:'completed',text:''}});
+ try{
+  await f.app.message('dispatch','synthetic-stale');await f.app.idle();
+  assert.equal(f.app.interactions.list()[0]!.state,'cancelled');
+  assert.equal(f.resumes.length,0);
+  assert.equal(f.events().filter(row=>row.code==='main_empty_reply').length,0);
+  assert.equal(f.app.store.db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='interaction_required'").get()!.state,'received');
+ }finally{await f.cleanup();}
+});
+
+test('mailbox receipt remains received when a nonempty reply fails to handle a live approval',async()=>{
+ const f=await fixture('answer',1,{skipDecision:true,reply:{status:'completed',text:'Synthetic statement without decision'}});
+ try{
+  await f.app.message('dispatch','synthetic-pending');
+  await until(()=>f.events().some(event=>event.type==='internal_processing_failed'));
+  const item=f.app.interactions.list()[0]!;assert.equal(item.state,'pending_main');
+  const receipt=f.app.store.db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='interaction_required' AND json_extract(m.payloadJson,'$.interactionId')=?").get(item.id)!;
+  assert.equal(receipt.state,'received');
+  assert.equal(f.app.upgradeStatus().safe,false);
+  assert.equal(f.app.processes.list(f.app.store.meta('mainThread')!).find(node=>node.sourceKind==='worker')!.status,'failed');
+ }finally{await f.cleanup();}
+});
+
+test('replying to a historical approval after inspecting the current one preserves received delivery and failed history',async()=>{
+ const f=await fixture('direct',1,{namedTask:true,misdirectHistoricalApproval:true});
+ try{
+  await f.app.message('empty-user-reply','synthetic-earlier-failure');
+  await f.app.message('dispatch','synthetic-historical-approval');await f.app.idle();
+  const db=f.app.store.db,thread=f.app.store.meta('mainThread')!;
+  const interaction=db.prepare('SELECT * FROM worker_interactions WHERE id=?');
+  const receipt=db.prepare("SELECT m.id,r.state,r.revision,r.offeredTurnId FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='interaction_required' AND json_extract(m.payloadJson,'$.interactionId')=?");
+  const storedProcess=db.prepare('SELECT value FROM meta WHERE key=?');
+  const historical=f.app.interactions.list()[0]!,historicalBefore=interaction.get(historical.id),historicalReceipt=receipt.get(historical.id);
+  assert.equal(historical.state,'approved');assert.ok(historical.deliveredAt);
+  const priorFailure=f.app.processes.list(thread).find(node=>node.status==='failed')!;
+  assert.ok(priorFailure);const priorFailureBefore=storedProcess.get('publicMainNode:v1:'+priorFailure.id),priorEvents=f.events();
+  assert.equal(f.resumes.length,1);
+
+  await f.app.message('dispatch','synthetic-current-approval');
+  await until(()=>f.events().some(event=>event.type==='internal_processing_failed'&&event.code==='main_empty_reply'));
+  assert.equal(f.misdirected.length,1);
+  const attempt=f.misdirected[0]!;
+  assert.notEqual(attempt.currentId,attempt.historicalId);assert.equal(attempt.historicalId,historical.id);
+  assert.deepEqual(attempt.errors,['interaction_inspection_required','interaction_inspection_required']);
+  const current=f.app.interactions.inspect(attempt.currentId);
+  assert.equal(current.details.method,'item/fileChange/requestApproval');
+  assert.notEqual(f.app.tasks.run(current.runId).taskId,f.app.tasks.run(historical.runId).taskId);
+  assert.deepEqual(interaction.get(current.id),attempt.currentBefore);
+  assert.equal(current.state,'pending_main');assert.equal(current.decision,null);assert.equal(current.deliveredAt,null);
+  assert.deepEqual(interaction.get(historical.id),historicalBefore);
+  assert.deepEqual(receipt.get(historical.id),historicalReceipt);
+  assert.deepEqual(db.prepare('SELECT * FROM agent_messages WHERE id=?').get((attempt.messageBefore as {id:string}).id),attempt.messageBefore);
+  assert.deepEqual(f.events().slice(0,priorEvents.length),priorEvents);
+  const received=receipt.get(current.id)!;assert.equal(received.state,'received');
+  const failed=f.app.processes.list(thread).find(node=>node.sourceMessageIds.includes(String(received.id)))!;
+  assert.equal(failed.state,'worked');assert.equal(failed.status,'failed');
+  assert.ok(failed.turnIds.includes(String(received.offeredTurnId)));
+  assert.deepEqual(failed.items.flatMap(item=>item.kind==='tool'&&item.toolName==='respond_interaction'?[item.status]:[]),['failed','failed']);
+  const failedBefore=storedProcess.get('publicMainNode:v1:'+failed.id),eventsBefore=f.events();
+
+  assert.equal(await f.app.message('Independent synthetic follow-up','synthetic-independent'),'已处理');
+  assert.deepEqual(receipt.get(current.id),received);
+  assert.deepEqual(interaction.get(current.id),attempt.currentBefore);
+  assert.deepEqual(interaction.get(historical.id),historicalBefore);
+  assert.deepEqual(receipt.get(historical.id),historicalReceipt);
+  assert.deepEqual(storedProcess.get('publicMainNode:v1:'+priorFailure.id),priorFailureBefore);
+  assert.deepEqual(storedProcess.get('publicMainNode:v1:'+failed.id),failedBefore);
+  assert.deepEqual(f.events().slice(0,eventsBefore.length),eventsBefore);
+  assert.equal(f.interactionTurns.filter(id=>id===current.id).length,1);
+  assert.equal(f.resumes.length,1,'the pending callback and completed historical callback are not replayed');
+  assert.equal(f.app.tasks.run(current.runId).phase,'rpc_wait');
+  assert.equal(f.app.store.runs().length,2);
+  assert.equal(db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='interaction_required' AND json_extract(payloadJson,'$.interactionId')=?").get(current.id)!.n,1);
+ }finally{await f.cleanup();}
+});
 
 test("HMR-INTERACTION-002: a successful file write without a decision does not excuse an empty reply", async () => {
   const f = await fixture("answer", 1, { reply: { status: "completed", text: "" }, skipDecision: true, handoff: true });

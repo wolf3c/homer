@@ -5,7 +5,8 @@ import { chmodSync, copyFileSync, mkdirSync, readFileSync, realpathSync, writeFi
 import { resolve, join, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { Store } from '../src/store.js';
+import { Store,STORE_SCHEMA_VERSION } from '../src/store.js';
+import {mainInputProcessingSql,unconfirmedNativeEffectsSql} from '../src/main-process.js';
 import { Files } from '../src/files.js';
 import { ConversationHistory } from '../src/web-history.js';
 import { RecursiveTasks } from '../src/recursive-tasks.js';
@@ -25,16 +26,19 @@ function capture(db: DatabaseSync) {
   };
 }
 export function freshMainReadiness(db: DatabaseSync) {
+  const current=db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get()?.value===STORE_SCHEMA_VERSION;
   const checks: Record<string, [string, string]> = {
     requests: ['requests', "state!='completed'"],
     runs: ['runs', "status IN ('queued','running') OR phase IN ('uncertain','stopping')"],
     tasks: ['tasks', "state!='settled' OR controlState='stopping'"],
-    receipts: ['agent_receipts', "state IN ('pending','offered','received','uncertain','blocked')"],
+    receipts: ['agent_receipts', current?`(recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND state NOT IN ('processed','rejected')) OR
+      (recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (state NOT IN ('received','rejected') OR state='received' AND EXISTS(SELECT 1 FROM agent_messages m WHERE m.id=agent_receipts.messageId AND ${mainInputProcessingSql()})))`:"state IN ('pending','offered','received','uncertain','blocked')"],
     interactions: ['worker_interactions', "state IN ('pending_main','pending_user') OR (state IN ('approved','denied','answered') AND deliveredAt IS NULL)"],
     operations: ['operations', "state IN ('accepted','dispatching','uncertain')"],
     conversation: ['conversation_messages', "status IN ('queued','processing','running')"],
   };
   const pending = Object.fromEntries(Object.entries(checks).map(([name, [table, where]]) => [name, Number(db.prepare('SELECT count(*) n FROM ' + identifier(table) + ' WHERE ' + where).get()!.n)]));
+  pending.nativeEffects=Number(db.prepare(`SELECT count(*) n FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND ${unconfirmedNativeEffectsSql()}`).get()!.n);
   return { pending, ready: !Object.values(pending).some(Boolean) };
 }
 export async function previewFreshMain(snapshot: string, directory: string) {

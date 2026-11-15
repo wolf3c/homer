@@ -1,0 +1,373 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-14",
+  "baseCommit": "423863e91fe4399bf1b59d3ab713bd24d27bbc9b",
+  "workingTreeIncludesUncommittedChanges": true,
+  "overall": "real_model_not_passed_boundary_fixed_offline",
+  "initialRealRun": {
+    "exitCode": 1,
+    "signal": null,
+    "spawnFailed": false,
+    "configuration": {
+      "model": "gpt-6.1-terra",
+      "effort": "medium",
+      "serviceTier": null
+    },
+    "authKind": "chatgpt-external",
+    "shortTokenOnly": true,
+    "refreshTokenCopied": false,
+    "historyCopied": false,
+    "dailyFilesUnchanged": true,
+    "scenarios": [
+      {
+        "scenario": "approval-recovery",
+        "passed": true,
+        "turns": 1,
+        "nativeAcceptedTurns": 1,
+        "tools": [
+          "work_inspect",
+          "inspect_interaction",
+          "worker_read",
+          "respond_interaction"
+        ],
+        "forbidden": [],
+        "toolErrors": [],
+        "status": "completed",
+        "delivered": 1,
+        "originalReceiptRead": false,
+        "receiptState": "received",
+        "interactionState": "approved",
+        "nativeIsolation": true,
+        "ownersClosed": true
+      },
+      {
+        "scenario": "expired",
+        "passed": true,
+        "turns": 1,
+        "nativeAcceptedTurns": 1,
+        "tools": [
+          "inspect_interaction"
+        ],
+        "forbidden": [],
+        "toolErrors": [],
+        "status": "completed",
+        "delivered": 0,
+        "originalReceiptRead": false,
+        "receiptState": "received",
+        "interactionState": "expired",
+        "nativeIsolation": true,
+        "ownersClosed": true
+      },
+      {
+        "scenario": "unknown-operation",
+        "passed": false,
+        "turns": 1,
+        "nativeAcceptedTurns": 1,
+        "tools": [
+          "work_inspect",
+          "work_inspect",
+          "worker_read",
+          "send_user_message"
+        ],
+        "forbidden": [],
+        "toolErrors": [],
+        "status": "unknown",
+        "delivered": 0,
+        "originalReceiptRead": true,
+        "receiptState": "received",
+        "nativeIsolation": true,
+        "ownersClosed": true
+      }
+    ],
+    "realModelPass": false
+  },
+  "startupBeforeModel": {
+    "businessTurns": 0,
+    "nativeAcceptedTurns": 0,
+    "failure": "harness_rejected_implicit_main_role",
+    "reconciliation": {
+      "cases": 3,
+      "nativeEngineNeverConstructed": true,
+      "testNodeExitConfirmed": true,
+      "noNativeLeases": true,
+      "noRuns": true,
+      "noOpenCaseFiles": true,
+      "removedSyntheticStartupCases": true
+    }
+  },
+  "unknownScenarioUnexecutedAssertions": [
+    "original_operation_deep_equal",
+    "original_operation_remains_uncertain",
+    "upgrade_remains_blocked"
+  ],
+  "harnessCorrections": {
+    "mainRoleAcceptsProductionDefault": true,
+    "unknownExpectedStatus": "unknown",
+    "postconditionsCapturedBeforeAssertions": true,
+    "newNativeModelTurnsAfterCorrections": 1
+  },
+  "offlineVerification": {
+    "node": "22.22.0",
+    "core": {
+      "tests": 2558,
+      "pass": 2558,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "focused": {
+      "tests": 38,
+      "pass": 38,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "typecheck": {
+      "command": "tsc -p tsconfig.check.json",
+      "exitCode": 0
+    },
+    "zeroCredentialNativePreflight": {
+      "native": "0.163.0",
+      "noCredentials": true,
+      "noModelTurns": true,
+      "permissions": "mailbox_model",
+      "syntheticRead": true,
+      "outsideReadDenied": true,
+      "workspaceWriteDenied": true,
+      "networkDenied": true,
+      "passed": true,
+      "closed": true
+    },
+    "supplementalNoOptInGuard": {
+      "negativeCases": 2,
+      "modelTurns": 0,
+      "passed": true
+    }
+  },
+  "currentSourceSha256": {
+    "src/engine.ts": "c170452c315a474c3c5f86da134f9e68ce914f739bc54d7caeeb4a7962b9f0a0",
+    "src/service.ts": "d2070ff28d6e9cb22edba77b1ef03474c9c14ffb130264d0ec45aecd3bbb3601",
+    "src/main-process.ts": "d65b6f11d0c8e197c79583e314b98ecdd80e0d22013d0680f4079aac73c5be66",
+    "src/recursive-main-inputs.ts": "61af9f7373661a723f6f705b8d066b795e698f2b5ae18f9b2428184fe49873f0",
+    "src/recursive-tasks.ts": "1ebc6fcecceb2560f4e6cd48f5afc6f3dd39a22c7452ac08dc1884cc380fa4dc",
+    "src/store.ts": "a437a635f69b519ffcd144922cc78e561514e70b11d87716e0df05c9db7a27ce",
+    "src/worker-interactions.ts": "2fce37968137b6860ff6e89fd73feafd8742c23861dc94cf21415852b55de080",
+    "src/worker-interaction-protocol.ts": "c1aa99fe7f2de9d9de78e2f8af9e3a69a5db4a7803839ba19024866516c4e1a6",
+    "src/model-config.ts": "dd5501dd2632f75da0233b32f109f67626cb61fb42d0bf8831dd567352ad6a02",
+    "prompts/main.md": "37d6b875b5367c56b6ec88365903c2a0d29eb33f3d18d0a058f240301cb86e16",
+    "scripts/test.mjs": "3d29c32969509e975578854cddb7c6b521d64a61ef8d37be845a747cf6a74bb6",
+    "tests/fixtures/mailbox-model-case.ts": "1683f2eb3eef3b58c0dc182d0163c1f00dc5c79a641c1d9bea26a9ca8f7a3855",
+    "tests/main-mailbox-model-fixture.test.ts": "aaeb9be380d472a7962428e958264da706a63065221fc9e09dc2ce1515adfa44",
+    "tests/main-mailbox-recovery.engine.test.ts": "46554139c7ae58ef81ac6a88bd437ea97335718427ae11adda846597dfa88f78"
+  },
+  "boundaries": {
+    "productionCodeEditedForModelAcceptance": false,
+    "dailyDatabaseOpenedByAcceptance": false,
+    "dailyAuthOrProfileWritten": false,
+    "dailyHistoryOrRuntimeCopied": false,
+    "refreshTokenCopied": false,
+    "realWorkersStarted": false,
+    "committed": false,
+    "pushed": false,
+    "released": false
+  },
+  "remaining": [
+    "explicit_authorization_and_future_real_model_unknown_operation_acceptance_using_new_purpose_evidence",
+    "daily_migration_confirmation_and_evidence",
+    "signed_candidate_and_native_upgrade_confirmation_and_evidence"
+  ],
+  "cleanup": {
+    "nativeOwnersConfirmedClosed": true,
+    "generatedAuthHomesAndNativeLogsRemoved": true,
+    "dailyAuthAndProfileStillUnchangedAtCleanup": true,
+    "removedLogicalBytes": 7021499,
+    "supplementalGeneratedAuthHomesAndNativeLogsRemoved": true,
+    "supplementalOneOffRunnerRemoved": true,
+    "supplementalDailyAuthAndProfileStillUnchangedAtCleanup": true
+  },
+  "indexUnchanged": true,
+  "supplementalRealRun": {
+    "exitCode": 1,
+    "signal": null,
+    "spawnFailed": false,
+    "configuration": {
+      "model": "gpt-6.1-terra",
+      "effort": "medium",
+      "serviceTier": null
+    },
+    "authKind": "chatgpt-external",
+    "shortTokenOnly": true,
+    "refreshTokenCopied": false,
+    "historyCopied": false,
+    "dailyFilesUnchanged": true,
+    "scenarios": [
+      {
+        "scenario": "unknown-operation",
+        "passed": false,
+        "turns": 1,
+        "nativeAcceptedTurns": 1,
+        "tools": [
+          "work_inspect",
+          "worker_read",
+          "work_inspect",
+          "task_update",
+          "send_user_message"
+        ],
+        "forbidden": [
+          "task_update"
+        ],
+        "toolErrors": [],
+        "status": "unknown",
+        "delivered": 0,
+        "originalReceiptRead": true,
+        "receiptState": "received",
+        "postconditions": {
+          "tasks": 1,
+          "workers": 1,
+          "operationUnchanged": true,
+          "operationState": "uncertain",
+          "upgradeSafe": false
+        },
+        "nativeIsolation": true,
+        "ownersClosed": true
+      }
+    ],
+    "realModelPass": false
+  },
+  "supplementalVerification": {
+    "selectedTests": 1,
+    "pass": 0,
+    "fail": 1,
+    "cancelled": 0,
+    "skipped": 0,
+    "exitCode": 1,
+    "automaticRetries": 0,
+    "initialRecordPreserved": true,
+    "sourceSnapshotUnchanged": true
+  },
+  "realModelBusinessTurnsTotal": 4,
+  "scenarioAcceptance": {
+    "approval-recovery": "passed_initial",
+    "expired": "passed_initial",
+    "unknown-operation": "not_passed_supplemental_tool_policy_failure"
+  },
+  "supplementalFailureReview": {
+    "failedRule": "unexpected_tool_not_in_predeclared_allowlist",
+    "tool": "task_update",
+    "taskUpdatePurpose": "not_recorded",
+    "productionToolSupports": [
+      "notes",
+      "goal",
+      "pause",
+      "resume",
+      "cancel",
+      "settle"
+    ],
+    "promptAllowsWorkNotes": true,
+    "observedCoreSafetyPostconditions": {
+      "tasks": 1,
+      "workers": 1,
+      "operationUnchanged": true,
+      "operationState": "uncertain",
+      "upgradeSafe": false
+    },
+    "toolErrors": [],
+    "inferenceLimit": "tool name alone cannot establish whether this was a permitted notes update or a business-state change; no retrospective pass"
+  },
+  "taskUpdateBoundaryRevision": {
+    "scope": "test_harness_and_synthetic_tests_only",
+    "newRealModelBusinessTurns": 0,
+    "modelBusinessTurnsTotalUnchanged": 4,
+    "originalResultsByteUnchanged": true,
+    "notesParameterRule": "plain_json_object_exact_taskId_and_notes_fields_matching_original_task_string_notes_max_24000",
+    "businessPurposesStillForbidden": [
+      "goal",
+      "pause",
+      "resume",
+      "cancel",
+      "settle"
+    ],
+    "invalidInputsRemainForbidden": true,
+    "notesEffectRequirements": [
+      "exact_notes_value",
+      "legal_notes_revision_timestamp_change_or_identical_idempotent_result",
+      "task_state_unchanged",
+      "task_version_and_authority_unchanged",
+      "worker_runs_unchanged",
+      "original_operation_unchanged"
+    ],
+    "pendingErrorOrUnknownEffectsFail": true,
+    "diagnosticFields": [
+      "purpose",
+      "targetMatches",
+      "allowed",
+      "outcome",
+      "notesEffectValid"
+    ],
+    "diagnosticContent": "fixed_enums_and_booleans_only_no_ids_arguments_bodies_paths_or_error_content",
+    "sharedObserverUsedByRealAndSyntheticTests": true,
+    "hostAuthorizationOrPromptChanged": false,
+    "redGreenReproduced": [
+      "notes_name_only_false_positive",
+      "action_type_coercion_and_inherited_fields",
+      "pending_notes_acceptance"
+    ],
+    "focused": {
+      "tests": 73,
+      "pass": 73,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "typecheck": {
+      "command": "tsc -p tsconfig.check.json",
+      "exitCode": 0
+    },
+    "core": {
+      "tests": 2589,
+      "pass": 2589,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "noOptInGuard": {
+      "passed": true,
+      "modelTurns": 0
+    },
+    "purposeTests": {
+      "tests": 36,
+      "pass": 36,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "finalSourceFrozenDuringVerification": true,
+    "cleanup": {
+      "noOpenFiles": true,
+      "syntheticRuntimeRemoved": true,
+      "obsoleteLogsAndBeforeCopiesRemoved": true,
+      "removedLogicalBytes": 1684326,
+      "retained": "compact ownership patch and safe verification metadata only"
+    }
+  },
+  "supplementalRunSourceSha256": {
+    "src/engine.ts": "c170452c315a474c3c5f86da134f9e68ce914f739bc54d7caeeb4a7962b9f0a0",
+    "src/service.ts": "d2070ff28d6e9cb22edba77b1ef03474c9c14ffb130264d0ec45aecd3bbb3601",
+    "src/main-process.ts": "d65b6f11d0c8e197c79583e314b98ecdd80e0d22013d0680f4079aac73c5be66",
+    "src/recursive-main-inputs.ts": "61af9f7373661a723f6f705b8d066b795e698f2b5ae18f9b2428184fe49873f0",
+    "src/recursive-tasks.ts": "1ebc6fcecceb2560f4e6cd48f5afc6f3dd39a22c7452ac08dc1884cc380fa4dc",
+    "src/store.ts": "a437a635f69b519ffcd144922cc78e561514e70b11d87716e0df05c9db7a27ce",
+    "src/worker-interactions.ts": "2fce37968137b6860ff6e89fd73feafd8742c23861dc94cf21415852b55de080",
+    "src/worker-interaction-protocol.ts": "c1aa99fe7f2de9d9de78e2f8af9e3a69a5db4a7803839ba19024866516c4e1a6",
+    "src/model-config.ts": "dd5501dd2632f75da0233b32f109f67626cb61fb42d0bf8831dd567352ad6a02",
+    "prompts/main.md": "37d6b875b5367c56b6ec88365903c2a0d29eb33f3d18d0a058f240301cb86e16",
+    "scripts/test.mjs": "3d29c32969509e975578854cddb7c6b521d64a61ef8d37be845a747cf6a74bb6",
+    "tests/fixtures/mailbox-model-case.ts": "bcc9841ec0321e22b07c1d9ade9845a487efb9ecac2d13ba272a08eecec35364",
+    "tests/main-mailbox-model-fixture.test.ts": "1a71a28b0509f4f52d8038d0c668be309ad7ca8b733899b6e2ed41f2c5138c74",
+    "tests/main-mailbox-recovery.engine.test.ts": "d1df638c33bb7426bbd1fe95c94f1f5ec466f3c5b1542b5144030413f64e1aff"
+  }
+}

@@ -1,6 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
 import type {ConversationHistory} from './web-history.js';
-import type {MainProcessHistory,ProcessNode} from './main-process.js';
+import {mainInputProcessingSql,type MainProcessHistory,type ProcessNode} from './main-process.js';
 import type {MainInputs} from './recursive-main-inputs.js';
 import {projectConversation,type ConversationBoundary} from './conversation-projection.js';
 import type {ChannelPlugin} from './channel-plugin.js';
@@ -13,7 +13,7 @@ function historyPredicates(){
   const outcome=(m:string)=>`EXISTS(SELECT 1 FROM conversation_messages o WHERE o.threadId=${m}.threadId AND o.requestId=${m}.requestId AND o.id GLOB 'input-outcome:*')`;
   const legacy=(m:string)=>`(EXISTS(SELECT 1 FROM web_legacy_ids l WHERE l.threadId=${m}.threadId AND l.requestId=${m}.requestId) AND NOT ${outcome(m)})`;
   const inbox=(m:string,state:string)=>`EXISTS(SELECT 1 FROM agent_messages a JOIN agent_receipts r ON r.messageId=a.id WHERE a.kind='user_input' AND a.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND json_extract(a.payloadJson,'$.requestId')=${m}.requestId AND ${state})`;
-  const queued=(m:string)=>`(${inbox(m,"r.state IN ('pending','offered','received','uncertain')")} AND NOT ${hasUserNode(m)} AND NOT ${legacy(m)})`;
+  const queued=(m:string)=>`(${inbox(m,`(r.state IN ('pending','offered','uncertain') OR r.state='received' AND ${mainInputProcessingSql('a')})`)} AND NOT ${hasUserNode(m)} AND NOT ${legacy(m)})`;
   const cancelled=(m:string)=>inbox(m,"r.state NOT IN ('pending','offered','received','uncertain') AND json_extract(a.payloadJson,'$.terminal')='cancelled'");
   const formal=`((m.audience='user' AND m.operationKey IS NOT NULL) OR EXISTS(SELECT 1 FROM web_process_ids p WHERE p.threadId=m.threadId AND p.messageId=m.id)
    OR (m.role='user' AND NOT ${hasUserNode('m')} AND NOT ${queued('m')} AND NOT ${cancelled('m')} AND NOT ${outcome('m')})
@@ -90,7 +90,7 @@ export class WebHistoryPages{
    const request=table==='agent_messages'?`json_extract(${ref}.payloadJson,'$.requestId')`:`(SELECT json_extract(payloadJson,'$.requestId') FROM agent_messages WHERE id=${ref}.messageId)`;
    const message=table==='agent_messages'?`${ref}.id`:`${ref}.messageId`;
    execute(`CREATE TEMP TRIGGER IF NOT EXISTS web_front_${table}_${event.toLowerCase()} AFTER ${event} ON main.${table} BEGIN
-    DELETE FROM web_active_inputs WHERE messageId=${message};INSERT INTO web_active_inputs SELECT m.id,m.seq FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.id=${message} AND m.kind='user_input' AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND r.state IN ('pending','offered','received','uncertain');
+    DELETE FROM web_active_inputs WHERE messageId=${message};INSERT INTO web_active_inputs SELECT m.id,m.seq FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.id=${message} AND m.kind='user_input' AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state IN ('pending','offered','uncertain') OR r.state='received' AND ${mainInputProcessingSql()});
     ${refreshFormal(front(request))} UPDATE web_read_revision SET revision=revision+1;END;`);
   }
   execute(`CREATE INDEX IF NOT EXISTS conversation_insert_order ON conversation_messages(threadId);
@@ -117,7 +117,7 @@ export class WebHistoryPages{
    nodes+=keys.length;batches++;last=keys.at(-1)!.key;
   }
   execute(`DELETE FROM web_legacy_ids;${refreshLegacy('SELECT id FROM conversation_messages')}DELETE FROM web_formal_ids;INSERT INTO web_formal_ids SELECT m.id,m.threadId,m.rowid FROM conversation_messages m WHERE ${formal};DELETE FROM web_dirty_tasks;
-    DELETE FROM web_active_inputs;INSERT INTO web_active_inputs SELECT m.id,m.seq FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input' AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND r.state IN ('pending','offered','received','uncertain');`);
+    DELETE FROM web_active_inputs;INSERT INTO web_active_inputs SELECT m.id,m.seq FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input' AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state IN ('pending','offered','uncertain') OR r.state='received' AND ${mainInputProcessingSql()});`);
   this.initialization={version:1,nodes,batches,ms:performance.now()-start};
   execute('RELEASE web_history_reader_initialize');
   }catch(error){execute('ROLLBACK TO web_history_reader_initialize;RELEASE web_history_reader_initialize');throw error;}

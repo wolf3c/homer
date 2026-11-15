@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
-import {Store} from '../src/store.js';
+import {Store,STORE_SCHEMA_VERSION,prepareMainReceiptMigration} from '../src/store.js';
 import {Files} from '../src/files.js';
 import {RecursiveTasks} from '../src/recursive-tasks.js';
 import {ConversationHistory} from '../src/web-history.js';
@@ -14,7 +14,7 @@ function fixture(){
   const root=mkdtempSync(join(base,'case-')),path=join(root,'homer.sqlite');
   let store=new Store(path);
   const files=new Files(join(root,'workspace')),tasks=new RecursiveTasks(store,files);tasks.migrate();
-  store.setMeta('mainThread','original-main');
+  store.setMeta('mainThread','original-main');store.setMeta('mainAgentId','main:synthetic');
   const history=new ConversationHistory(store.db),inputs=new MainInputs(tasks,history);
   return {root,path,store,tasks,history,inputs,close(){store.close();rmSync(root,{recursive:true,force:true});}};
 }
@@ -24,9 +24,9 @@ test('schema 6 upgrades additively and preserves original thread and operations'
   try{
     f.store.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson) VALUES('retain-unknown','main','scope','retain','worker_send','hash','uncertain','{}')").run();
     f.store.setMeta('recursiveSchemaVersion','6');f.store.db.exec('DROP TABLE IF EXISTS schedules');f.store.close();
-    const upgraded=new Store(f.path);
+    const upgraded=new Store(f.path,{mainReceiptMigration:prepareMainReceiptMigration(f.path)});
     try{
-      assert.equal(upgraded.meta('recursiveSchemaVersion'),'7');
+      assert.equal(upgraded.meta('recursiveSchemaVersion'),STORE_SCHEMA_VERSION);
       assert.equal(upgraded.meta('mainThread'),'original-main');
       assert.equal(upgraded.db.prepare("SELECT state FROM operations WHERE id='retain-unknown'").get()!.state,'uncertain');
       assert.ok(upgraded.db.prepare("SELECT 1 FROM sqlite_master WHERE name='schedules'").get());
@@ -39,7 +39,7 @@ test('failed schedule schema migration rolls back its DDL and version together',
   f.store.setMeta('recursiveSchemaVersion','6');f.store.db.exec('DROP TABLE schedules');f.store.close();
   try{
     CommittedDatabase.prototype.exec=function(sql){exec.call(this,sql);if(sql.includes('CREATE TABLE IF NOT EXISTS schedules'))throw Error('synthetic_schedule_schema_failure');};
-    assert.throws(()=>new Store(f.path),/synthetic_schedule_schema_failure/);
+    assert.throws(()=>new Store(f.path,{mainReceiptMigration:prepareMainReceiptMigration(f.path)}),/synthetic_schedule_schema_failure/);
   }finally{CommittedDatabase.prototype.exec=exec;}
   const db=new DatabaseSync(f.path,{readOnly:true});
   try{

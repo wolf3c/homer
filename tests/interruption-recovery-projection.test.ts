@@ -7,21 +7,21 @@ function paged(f:ReturnType<typeof fixture>,processes=new MainProcessHistory(f.s
  return homerWebBridge({...f,webReadEpoch:'synthetic-history',webHistoryPages:()=>pages,registerWebSurface(){},conversationControlState:()=>({isRunning:false,activeMessageId:null})} as unknown as Homer);
 }
 function reply(f:ReturnType<typeof fixture>){return f.tasks.endSegment(f.run.id,f.run.epoch,{status:'completed',text:'PRIVATE_SENTINEL'},true)!;}
-test('blocked receipt metadata remains read-only and cannot override the explicit Main settlement',()=>{
+test('unknown receipt metadata remains read-only and cannot override the explicit Main settlement',()=>{
  const f=fixture();try{
-  const returned=reply(f);f.store.db.prepare("UPDATE agent_receipts SET state='blocked' WHERE messageId=?").run(returned.messageId);f.tasks.settleTask(f.actor,{operationId:'settle',taskId:f.task.taskId,expectedRevision:1,outcome:'succeeded'});f.store.db.exec('PRAGMA query_only=ON');const before=changes(f),task=readTaskOverview(f.store.db).tasks[0]!;
+  const returned=reply(f);f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(returned.messageId);f.tasks.settleTask(f.actor,{operationId:'settle',taskId:f.task.taskId,expectedRevision:1,outcome:'succeeded'});f.store.db.exec('PRAGMA query_only=ON');const before=changes(f),task=readTaskOverview(f.store.db).tasks[0]!;
   assert.equal(classifyTask(task).key,'complete');const receipts=readTaskDetail(f.store.db,task.id).recovery!.receipts;assert.equal(receipts.length,1);assert.equal(receipts[0]!.taskVersion,1);assert.deepEqual(Object.keys(receipts[0]!).sort(),['messageId','revision','state','taskId','taskVersion']);assert.deepEqual(changes(f),before);
  }finally{f.close();}
 });
 test('historical Worker receipt retains its version and exact identity without private payload or grants',()=>{
  const f=fixture();try{
   const returned=reply(f);
-  f.store.db.prepare("UPDATE agent_receipts SET state='blocked' WHERE messageId=?").run(returned.messageId);
+  f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(returned.messageId);
   f.tasks.updateTask(f.actor,{operationId:'new-goal',taskId:f.task.taskId,expectedRevision:1,patch:{goal:'Changed scope'},authority:f.authority});
   f.tasks.workerSend(f.actor,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'});f.start(f.worker.workerId);f.tasks.reconcile();
   f.store.db.exec('PRAGMA query_only=ON');const before=changes(f),detail=readTaskDetail(f.store.db,f.task.taskId);
   const original=detail.recovery!.receipts.find(receipt=>receipt.messageId===returned.messageId)!;
-  assert.equal(original.taskVersion,1);assert.equal(original.state,'blocked');
+  assert.equal(original.taskVersion,1);assert.equal(original.state,'uncertain');
   assert.deepEqual(Object.keys(original).sort(),['messageId','revision','state','taskId','taskVersion']);
   assert.doesNotMatch(JSON.stringify(detail.recovery),/PRIVATE_SENTINEL|filePath|payload|details|authority|decision/);
   assert.deepEqual(changes(f),before);
@@ -53,7 +53,7 @@ test('exact process ownership wins over source proximity and foreign history ide
 });
 test('receipt projections exclude foreign recipients, targeted Runs and user input; old versions stay history',()=>{
  const f=fixture();try{
-  const returned=reply(f);f.store.db.prepare("UPDATE agent_receipts SET state='blocked' WHERE messageId=?").run(returned.messageId);
+  const returned=reply(f);f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(returned.messageId);
   const pending=()=>readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMain,receipts=()=>readTaskDetail(f.store.db,f.task.taskId).recovery!.receipts;
   assert.equal(pending(),1);assert.equal(receipts().length,1);
   const empty=()=>{const before=changes(f);assert.equal(pending(),0);assert.deepEqual(receipts(),[]);assert.deepEqual(changes(f),before);};

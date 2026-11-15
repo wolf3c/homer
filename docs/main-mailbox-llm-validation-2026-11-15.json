@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-15",
+  "timezone": "Asia/Shanghai",
+  "baseCommit": "423863e91fe4399bf1b59d3ab713bd24d27bbc9b",
+  "workingTreeIncludesUncommittedChanges": true,
+  "currentRun": {
+    "date": "2026-11-15",
+    "exitCode": 0,
+    "signal": null,
+    "spawnFailed": false,
+    "configuration": {
+      "model": "gpt-6.1-terra",
+      "effort": "medium",
+      "serviceTier": null
+    },
+    "authKind": "chatgpt-external",
+    "shortTokenOnly": true,
+    "refreshTokenCopied": false,
+    "historyCopied": false,
+    "dailyFilesUnchanged": true,
+    "sourceSha256": {
+      "src/engine.ts": "c170452c315a474c3c5f86da134f9e68ce914f739bc54d7caeeb4a7962b9f0a0",
+      "src/service.ts": "d2070ff28d6e9cb22edba77b1ef03474c9c14ffb130264d0ec45aecd3bbb3601",
+      "src/main-process.ts": "d65b6f11d0c8e197c79583e314b98ecdd80e0d22013d0680f4079aac73c5be66",
+      "src/recursive-main-inputs.ts": "61af9f7373661a723f6f705b8d066b795e698f2b5ae18f9b2428184fe49873f0",
+      "src/recursive-tasks.ts": "1ebc6fcecceb2560f4e6cd48f5afc6f3dd39a22c7452ac08dc1884cc380fa4dc",
+      "src/store.ts": "a437a635f69b519ffcd144922cc78e561514e70b11d87716e0df05c9db7a27ce",
+      "src/worker-interactions.ts": "2fce37968137b6860ff6e89fd73feafd8742c23861dc94cf21415852b55de080",
+      "src/worker-interaction-protocol.ts": "c1aa99fe7f2de9d9de78e2f8af9e3a69a5db4a7803839ba19024866516c4e1a6",
+      "src/model-config.ts": "dd5501dd2632f75da0233b32f109f67626cb61fb42d0bf8831dd567352ad6a02",
+      "prompts/main.md": "ef21bb69f2df1039b1a5b31eafdb3f6f3e6848a37ea58396eb6a1b0052872da9",
+      "scripts/test.mjs": "3d29c32969509e975578854cddb7c6b521d64a61ef8d37be845a747cf6a74bb6",
+      "tests/fixtures/mailbox-model-case.ts": "1683f2eb3eef3b58c0dc182d0163c1f00dc5c79a641c1d9bea26a9ca8f7a3855",
+      "tests/main-mailbox-model-fixture.test.ts": "aaeb9be380d472a7962428e958264da706a63065221fc9e09dc2ce1515adfa44",
+      "tests/main-mailbox-recovery.engine.test.ts": "46554139c7ae58ef81ac6a88bd437ea97335718427ae11adda846597dfa88f78"
+    },
+    "counts": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "scenarios": [
+      {
+        "scenario": "unknown-operation",
+        "passed": true,
+        "turns": 1,
+        "nativeAcceptedTurns": 1,
+        "tools": [
+          "work_inspect",
+          "work_inspect",
+          "worker_read",
+          "send_user_message"
+        ],
+        "forbidden": [],
+        "toolErrors": [],
+        "taskUpdates": [],
+        "originalReceiptRead": true,
+        "status": "unknown",
+        "delivered": 0,
+        "receiptState": "received",
+        "postconditions": {
+          "tasks": 1,
+          "workers": 1,
+          "operationUnchanged": true,
+          "operationState": "uncertain",
+          "upgradeSafe": false
+        },
+        "nativeIsolation": true,
+        "ownersClosed": true
+      }
+    ],
+    "realModelPass": true
+  },
+  "scope": {
+    "authorizedAdditionalBusinessTurns": 1,
+    "actualAdditionalBusinessTurns": 1,
+    "nativeAcceptedTurns": 1,
+    "modelRetries": 0,
+    "previousActualBusinessTurns": 4,
+    "totalActualBusinessTurns": 5,
+    "onlyUnknownOperationSelected": true,
+    "approvalAndExpiredCasesNotRerun": true
+  },
+  "preflight": {
+    "sourceChangeStoppedBeforeCredentialsOrEngine": true,
+    "stoppedBusinessTurns": 0,
+    "changedFile": "prompts/main.md",
+    "reviewedChange": "directory selection before dispatch only; mailbox/recovery/notes/approval rules unchanged",
+    "previousPromptReconstructedHashMatched": true,
+    "promptEditedByThisTask": false,
+    "currentSourceHashMatchedBeforeAndAfterModel": true,
+    "syntheticRecheck": {
+      "tests": 77,
+      "pass": 77,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "runnerSyntaxOptInAndTapParserSelfChecksPassed": true
+  },
+  "coverage": {
+    "unknownOperationCoreAcceptance": "passed",
+    "originalOperationActuallyRead": true,
+    "originalOperationDeepUnchanged": true,
+    "originalOperationState": "uncertain",
+    "taskCount": 1,
+    "workerCount": 1,
+    "receiptState": "received",
+    "coordinationStatus": "unknown",
+    "upgradeSafe": false,
+    "taskUpdateCalls": 0,
+    "notesPurposeBranchExercisedByRealModel": false,
+    "notesPurposeBranchHasSyntheticCoverage": true,
+    "approvalRecoveryAndExpiredPriorPassingEvidence": "2026-11-14 initial run; not repeated on this prompt revision"
+  },
+  "priorEvidence": {
+    "report": "main-mailbox-llm-validation-2026-11-14.md",
+    "machineReport": "main-mailbox-llm-validation-2026-11-14.json",
+    "rawResultSha256": {
+      "initial-three-scenarios.json": "11cb6530c75461d07f6288b1bd8304932028241c57cbc9cf2999b20eb6833808",
+      "supplemental-unknown.json": "92cb8865a207790e67cf6c89cf538a8ceaccea0db6a4dbb91b836b906ce01187"
+    },
+    "rawResultsByteUnchanged": true,
+    "originalFailuresRetainedNotReclassified": true
+  },
+  "boundaries": {
+    "productionSourceEdited": false,
+    "testOrPromptEditedForThisRun": false,
+    "refreshTokenCopied": false,
+    "dailyHistoryOrRuntimeCopied": false,
+    "dailyAuthOrProfileWritten": false,
+    "dailyDatabaseOpenedOrWritten": false,
+    "existingDailyTasksChanged": false,
+    "installedAppUpdated": false,
+    "committed": false,
+    "pushed": false,
+    "released": false
+  },
+  "remaining": [
+    "daily_backup_and_migration_confirmation_and_evidence",
+    "signed_candidate_and_native_upgrade_confirmation_and_evidence"
+  ],
+  "cleanup": {
+    "date": "2026-11-15",
+    "allOwnersConfirmedClosed": true,
+    "noOpenFilesBeforeDeletion": true,
+    "isolatedAuthHistoriesAndLogsRemoved": true,
+    "oneOffRunnerRemoved": true,
+    "dailyAuthAndProfileUnchangedAtCleanup": true,
+    "removedLogicalBytes": 1357945
+  }
+}

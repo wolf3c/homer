@@ -45,7 +45,7 @@ for(const confirmed of [true,false])test(`shutdown cancellation keeps the Worker
   try{
    assert.equal(db.prepare("SELECT value FROM meta WHERE key='mainThread'").get()!.value,thread);
    assert.equal(readFileSync(join(f.root,'workspace','saved.md'),'utf8'),'Synthetic preserved file');
-   assert.equal(db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(String(source.messageId))!.state,'uncertain');
+   assert.equal(db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(String(source.messageId))!.state,'received');
    const nodes=db.prepare("SELECT value FROM meta WHERE key GLOB 'publicMainNode:v1:*'").all().map(row=>JSON.parse(String(row.value)));
    const internal=nodes.filter(node=>node.sourceKind==='worker');assert.equal(internal.length,1);
    assert.equal(internal[0].status,'unknown');assert.equal(internal[0].state,confirmed?'worked':'working');if(confirmed)assert.match(internal[0].endEventId,/^host:engine_closed:/);else assert.equal(internal[0].endEventId,undefined);
@@ -75,7 +75,7 @@ test('shutdown cancels a user turn without inventing a native terminal or replay
   const db=new DatabaseSync(join(f.runtime,'homer.sqlite'),{readOnly:true});
   try{
    assert.equal(db.prepare("SELECT count(*) n FROM events WHERE type='main_turn_failed'").get()!.n,0);
-   assert.equal(db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE json_extract(m.payloadJson,'$.requestId')='synthetic-user-request'").get()!.state,'uncertain');
+   assert.equal(db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE json_extract(m.payloadJson,'$.requestId')='synthetic-user-request'").get()!.state,'received');
    const node=JSON.parse(String(db.prepare("SELECT value FROM meta WHERE key GLOB 'publicMainNode:v1:*'").get()!.value));
    assert.equal(node.status,'unknown');assert.equal(node.state,'worked');assert.match(node.endEventId,/^host:engine_closed:/);
    const reply=db.prepare("SELECT text FROM conversation_messages WHERE requestId='synthetic-user-request' AND role='assistant'").get()!;

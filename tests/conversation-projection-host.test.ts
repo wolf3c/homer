@@ -64,12 +64,12 @@ test('internal worker turn with host closure remains unknown and never promotes 
    const node=f.app.processes.list(peer.threadId)[0]!;assert.equal(node.status,'unknown');assert.equal(node.state,'worked');assert.match(node.endEventId!,/^host:engine_closed:/);assert.equal(node.final,undefined);assert.equal(node.items.length,1);assert.ok(!JSON.stringify(readTestConversation(f.app)).includes('PRIVATE_WORKER_BODY'));
  }finally{await f.close();}
 });
-test('new user input runs independently after Worker host closure while its old receipt stays uncertain',async()=>{
+test('new user input runs independently after Worker host closure while its received input retains unknown processing',async()=>{
  const f=syntheticHost();try{
   await f.app.start();const peer=f.engines[0]!;
   peer.turn=async(_text,options)=>{peer.turnId='synthetic-worker-receipt';options?.onStarted?.(peer.turnId);throw Error('synthetic_worker_connection_lost');};
   f.app.inputs.accept({requestId:'synthetic-worker-source',text:'Synthetic authorized file'});
-  const source=f.app.inputs.claim()!;f.app.inputs.finish(source.messageId,source.revision,'completed');
+  const source=f.app.inputs.claim()!;f.app.inputs.started(source.messageId,source.revision,'generation:worker-source','native:worker-source');f.app.inputs.finish(source.messageId,source.revision,'completed');f.app.store.finishRequest(source.input.requestId,'Synthetic source handled');
   const main={agentId:f.app.store.meta('mainAgentId')!,sourceRequestId:source.input.requestId,threadId:f.app.store.meta('mainThread')!};
   const opened=f.app.tasks.workerOpen(main,{operationId:'synthetic-open',text:'Read the synthetic file',authority:{sourceRequestId:source.input.requestId,description:'Synthetic authorized request'}});
   const run=f.app.tasks.claim(opened.runId)!;
@@ -78,14 +78,14 @@ test('new user input runs independently after Worker host closure while its old 
   const input=f.app.inputs.claim([],'all');assert.ok(input);assert.equal(input.origin,'worker');
   if(input.origin!=='worker')assert.fail('worker input required');
   await f.app['processWorkerInput'](input);await f.app.idle();
-  assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(input.messageId,f.app.store.meta('mainAgentId')!)!.state,'uncertain');
+  assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(input.messageId,f.app.store.meta('mainAgentId')!)!.state,'received');
   const node=f.app.processes.list(peer.threadId)[0]!;assert.equal(node.state,'worked');assert.equal(node.status,'unknown');assert.equal(node.final?.text.includes('主 Agent 本次协调未完成'),true);
   assert.equal(await f.app.message('Synthetic next input','synthetic-next-user'),'Synthetic reply: Synthetic next input');
   assert.ok(f.seen.includes('Synthetic next input'),'the new user input reaches the recovered engine');
   assert.equal(f.seen.filter(text=>text.includes(input.messageId)).length,0,'unrelated historical uncertainty adds no model round to the new request');
   assert.equal(f.app.inputs.byRequestIds(['synthetic-next-user'])[0]!.state,'completed');
   assert.equal(f.app.processes.list(peer.threadId).filter(item=>item.sourceKind==='worker'&&item.sourceMessageIds.includes(input.messageId)).length,1,'the old Worker input is not replayed');
-  assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(input.messageId,f.app.store.meta('mainAgentId')!)!.state,'uncertain');
+  assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(input.messageId,f.app.store.meta('mainAgentId')!)!.state,'received');
  }finally{await f.close();}
 });
 test('unknown/no-final process keeps the exact explicit message and both authorized files reachable',async()=>{

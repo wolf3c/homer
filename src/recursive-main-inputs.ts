@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {validatePreviewIntent} from './user-intent.js';
+import {mainInputProcessingSql} from './main-process.js';
 import type { AgentMessage, RecursiveTasks } from './recursive-tasks.js';
 import { recursiveHash } from './recursive-tasks.js';
 import type {ScheduleDelivery} from './schedules.js';
@@ -16,7 +17,7 @@ type InputPayload = {
   queueOrder?: number;
   interrupt?: InterruptTarget;
   interruptState?: 'requested' | 'confirmed' | 'failed' | 'uncertain';
-  terminal?: 'completed' | 'failed' | 'interrupted' | 'cancelled';
+  terminal?: 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'uncertain';
 };
 type Row = {
   kind:string;
@@ -49,10 +50,11 @@ const inputRows = `SELECT m.id,m.seq,m.kind,m.taskId,m.taskVersion,m.senderAgent
 const recoveryRows = `FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
   ${workerSource}
   WHERE m.recipientAgentId=? AND s.threadId=? AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL
-    AND r.state IN ('blocked','uncertain')
+    AND r.state IN ('received','uncertain')
     AND EXISTS(SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') source
       WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=s.threadId
-        AND json_extract(p.value,'$.sourceKind')='worker' AND json_extract(p.value,'$.state')='worked' AND source.value=m.id)`;
+        AND json_extract(p.value,'$.sourceKind')='worker' AND json_extract(p.value,'$.state')='worked'
+        AND json_extract(p.value,'$.status') IN ('failed','interrupted','unknown') AND source.value=m.id)`;
 export type QueuedInput = {
   origin:'user';
   messageId: string;
@@ -111,7 +113,8 @@ export class MainInputs {
   private get agent() { return this.store.meta('mainAgentId')!; }
   private admit(bytes:number,background=false){
     const row=this.db.prepare(`SELECT count(*) n,coalesce(sum(length(cast(CASE WHEN m.kind='user_input' THEN coalesce((SELECT text FROM conversation_messages c WHERE c.requestId=json_extract(m.payloadJson,'$.requestId') AND c.role='user'),'') ELSE m.payloadJson END AS BLOB))),0) bytes
-      FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE r.recipientAgentId=? AND r.state IN ('pending','offered','received','uncertain')`).get(this.agent)!;
+      FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE r.recipientAgentId=?
+        AND (r.state IN ('pending','offered','uncertain') OR r.state='received' AND ${mainInputProcessingSql()})`).get(this.agent)!;
     if(Number(row.n)>=(background?MAIN_INBOX_CAPACITY.backgroundMessages:MAIN_INBOX_CAPACITY.messages)||Number(row.bytes)+bytes>(background?MAIN_INBOX_CAPACITY.backgroundBytes:MAIN_INBOX_CAPACITY.bytes))throw Error('main_inbox_capacity');
   }
   // The scheduler owns this transaction; a duplicate must succeed even at capacity.
@@ -131,7 +134,7 @@ export class MainInputs {
   private payload(row: Row): InputPayload { return JSON.parse(row.payloadJson); }
   confirmedReplyStatus(requestId: string, replyId: string) {
     const row = this.row(requestId);
-    if (row?.replyId === replyId && ['processed', 'rejected'].includes(row.receiptState))
+    if (row?.replyId === replyId && ['received', 'rejected'].includes(row.receiptState))
       return this.payload(row).terminal;
   }
   private rowEditable(row:Row){
@@ -146,7 +149,7 @@ export class MainInputs {
     if (!message) throw Error('queue_input_missing');
     const details = JSON.parse(row.detailsJson ?? '{}');
     const input = conversationInput({ requestId: p.requestId, text: message.text,...(message.attachments?{attachments:message.attachments}:{}),...(message.resourceReference?{resourceReference:message.resourceReference}:{}),...(message.resourceReferences?{resourceReferences:message.resourceReferences}:{}), ...(message.quotes ? { quotes: message.quotes } : message.quote ? { quote: message.quote } : {}), ...(details.interactionId ? { interactionId: details.interactionId } : {}) });
-    return { origin:'user',messageId: row.id, seq: row.seq, revision: row.revision, inputRevision: p.inputRevision, input, replyId: row.replyId, source: p.source,editable:this.rowEditable(row),...(row.receiptState==='pending'?{preparation:this.preparation(input,p.source)}:{}), state: row.receiptState === 'pending' ? 'queued' : ['offered', 'received'].includes(row.receiptState) ? 'processing' : row.receiptState === 'uncertain' ? 'uncertain' : p.terminal ?? 'failed', ...(row.offeredTurnId ? { generationId: row.offeredTurnId } : {}), ...(p.interruptState ? { interruptState: p.interruptState, interruptTarget: p.interrupt } : {}) };
+    return { origin:'user',messageId: row.id, seq: row.seq, revision: row.revision, inputRevision: p.inputRevision, input, replyId: row.replyId, source: p.source,editable:this.rowEditable(row),...(row.receiptState==='pending'?{preparation:this.preparation(input,p.source)}:{}), state: p.terminal ?? (row.receiptState === 'pending' ? 'queued' : ['offered', 'received'].includes(row.receiptState) ? 'processing' : row.receiptState === 'uncertain' ? 'uncertain' : 'failed'), ...(row.offeredTurnId ? { generationId: row.offeredTurnId } : {}), ...(p.interruptState ? { interruptState: p.interruptState, interruptTarget: p.interrupt } : {}) };
   }
   list(): QueuedInput[] {
     const rows=this.db.prepare(inputRows+" WHERE m.kind='user_input' AND m.recipientAgentId=? ORDER BY m.seq").all(this.agent) as Row[];
@@ -178,7 +181,7 @@ export class MainInputs {
   private rowByMessage(messageId:string){return this.db.prepare(inputRows+' WHERE m.id=? AND m.recipientAgentId=? AND m.targetRunId IS NULL').get(messageId,this.agent) as Row|undefined;}
   private dispatchRows(view:'all'|'head'|'active'='all'){
     const sql=inputRows.replace('FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id','FROM agent_receipts r CROSS JOIN agent_messages m ON m.id=r.messageId');
-    const state=view==='head'?"='pending'":view==='active'?"IN ('offered','received')":"IN ('pending','offered','received','uncertain')";
+    const state=view==='head'?"r.state='pending'":view==='active'?`(r.state='offered' OR r.state='received' AND ${mainInputProcessingSql()})`:`(r.state IN ('pending','offered','uncertain') OR r.state='received' AND ${mainInputProcessingSql()})`;
     const paused=view==='head'&&this.dispatchPolicy!==undefined;
     const cutoff=this.dispatchPolicy?.pausedThroughSeq??0;
     const resumeUser=` OR (m.seq>? AND m.kind='user_input' AND r.offeredTurnId IS NULL AND hasRequest=0
@@ -191,7 +194,7 @@ export class MainInputs {
     const scheduledOwner=paused&&this.dispatchPolicy?.resumeScheduled===false&&!this.dispatchPolicy.resumeWorkers
       ?` AND (m.kind<>'scheduled_message' OR EXISTS(SELECT 1 FROM agent_messages original WHERE original.kind='user_input' AND original.recipientAgentId=m.recipientAgentId AND original.seq>${this.dispatchPolicy.userPausedThroughSeq??cutoff} AND json_extract(original.payloadJson,'$.requestId')=${sourceRequest}))`:'';
     const activeSource=view==='head'?` AND (m.kind<>'user_input' OR ${activeUserSource})`:'';
-    const rows=this.db.prepare(sql+" WHERE r.recipientAgentId=? AND r.state "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END)=?"+eligible+scheduledOwner+activeSource+' ORDER BY '+dispatchOrder+(view==='head'?' LIMIT 1':'')).all(this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,this.dispatchPolicy?.userPausedThroughSeq??cutoff]:[])) as Row[];
+    const rows=this.db.prepare(sql+" WHERE r.recipientAgentId=? AND "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END)=?"+eligible+scheduledOwner+activeSource+' ORDER BY '+dispatchOrder+(view==='head'?' LIMIT 1':'')).all(this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,this.dispatchPolicy?.userPausedThroughSeq??cutoff]:[])) as Row[];
     // Ignore only owners inherited at startup. A newly claimed old message still owns dispatch.
     return view==='active'&&this.dispatchPolicy?rows.filter(row=>!this.pausedActiveMessages.has(row.id)):rows;
   }
@@ -498,9 +501,11 @@ export class MainInputs {
   started(messageId: string, revision: number, generationId: string, turnId: string) { return this.store.transaction(() => this.startedInTransaction(messageId, revision, generationId, turnId)); }
   startedInTransaction(messageId: string, revision: number, generationId: string, turnId: string) {
     if (!this.db.isTransaction) throw Error('queue_transaction_required');
-      const r = this.db.prepare("SELECT m.payloadJson,r.revision FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.id=? AND m.recipientAgentId=? AND r.state='offered'").get(messageId, this.agent);
+      const r = this.db.prepare("SELECT m.payloadJson,r.revision,r.state,r.offeredTurnId,json_extract(o.detailsJson,'$.turnId') nativeTurnId FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id JOIN operations o ON o.id=m.operationKey WHERE m.id=? AND m.recipientAgentId=? AND m.kind='user_input'").get(messageId, this.agent);
       if (!r || r.revision !== revision)
         throw Error('queue_revision_conflict');
+      if(r.state==='received'&&r.offeredTurnId===generationId&&r.nativeTurnId===turnId)return;
+      if(r.state!=='offered')throw Error('queue_native_identity_conflict');
       this.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId=? WHERE messageId=?").run(generationId, messageId);
       // Native turnId is a transport reference only; it is never user identity.
       this.db.prepare('UPDATE operations SET detailsJson=json_set(detailsJson,\'$.turnId\',?) WHERE id=(SELECT operationKey FROM agent_messages WHERE id=?)').run(turnId, messageId);
@@ -509,13 +514,16 @@ export class MainInputs {
   finishInTransaction(messageId: string, revision: number, state: 'completed' | 'failed' | 'interrupted') {
     if (!this.db.isTransaction) throw Error('queue_transaction_required');
       const row = this.db.prepare("SELECT m.id,m.payloadJson,r.revision FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.id=? AND m.recipientAgentId=? AND r.state IN ('offered','received')").get(messageId, this.agent); if (!row || row.revision !== revision)
-        throw Error('queue_state_or_revision_conflict'); const p = JSON.parse(String(row.payloadJson)); this.db.prepare("UPDATE agent_receipts SET state='processed',revision=revision+1 WHERE messageId=?").run(messageId); this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, terminal: state }), messageId); this.db.prepare("UPDATE conversation_messages SET status=? WHERE requestId=? AND role='user'").run(state, p.requestId);
+        throw Error('queue_state_or_revision_conflict'); const p = JSON.parse(String(row.payloadJson)); this.db.prepare("UPDATE agent_receipts SET state=CASE WHEN state='received' THEN 'received' ELSE 'rejected' END,revision=revision+1 WHERE messageId=?").run(messageId); this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, terminal: state }), messageId); this.db.prepare("UPDATE conversation_messages SET status=? WHERE requestId=? AND role='user'").run(state, p.requestId);
   }
   uncertain(messageId:string,revision:number) { return this.store.transaction(() => this.uncertainInTransaction(messageId,revision)); }
   uncertainInTransaction(messageId:string,revision:number) {
     if (!this.db.isTransaction) throw Error('queue_transaction_required');
-      const changed=this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE messageId=? AND revision=? AND state IN ('offered','received')").run(messageId,revision);
-      if(changed.changes)this.db.prepare("UPDATE conversation_messages SET status='interrupted' WHERE requestId=(SELECT json_extract(payloadJson,'$.requestId') FROM agent_messages WHERE id=?) AND operationKey IS NULL AND status IN ('queued','processing','running')").run(messageId);
+      const changed=this.db.prepare("UPDATE agent_receipts SET state=CASE WHEN state='received' THEN 'received' ELSE 'uncertain' END,revision=revision+1 WHERE messageId=? AND revision=? AND state IN ('offered','received')").run(messageId,revision);
+      if(changed.changes){
+        this.db.prepare("UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.terminal','uncertain') WHERE id=?").run(messageId);
+        this.db.prepare("UPDATE conversation_messages SET status='interrupted' WHERE requestId=(SELECT json_extract(payloadJson,'$.requestId') FROM agent_messages WHERE id=?) AND operationKey IS NULL AND status IN ('queued','processing','running')").run(messageId);
+      }
       return !!changed.changes;
   }
   interruptReceipt(messageId: string, state: 'confirmed' | 'failed' | 'uncertain') { this.store.transaction(() => this.interruptReceiptInTransaction(messageId, state)); }
@@ -530,21 +538,17 @@ export class MainInputs {
       return;
     if (state === 'confirmed') {
       const target = this.db.prepare("SELECT m.payloadJson,r.state,r.offeredTurnId FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id JOIN conversation_inputs i ON i.requestId=json_extract(m.payloadJson,'$.requestId') WHERE m.kind='user_input' AND m.recipientAgentId=? AND i.replyId=?").get(this.agent, p.interrupt.messageId);
-      if (!target || target.offeredTurnId !== p.interrupt.generationId || target.state !== 'processed' || JSON.parse(String(target.payloadJson)).terminal !== 'interrupted')
+      if (!target || target.offeredTurnId !== p.interrupt.generationId || target.state !== 'received' || JSON.parse(String(target.payloadJson)).terminal !== 'interrupted')
         throw Error('queue_interrupt_target_not_ended');
     }
     this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, interruptState: state }), messageId);
   }
   reconcile() {
     this.store.transaction(() => {
-      this.db.prepare(`UPDATE agent_receipts SET state='pending',offeredTurnId=NULL,revision=revision+1
-        WHERE recipientAgentId=? AND state IN ('offered','received','uncertain') AND messageId IN (
-          SELECT m.id FROM agent_messages m ${workerSource}
-          WHERE m.recipientAgentId=? AND m.senderAgentId='host' AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL AND s.threadId=?)`).run(this.agent,this.agent,this.store.meta('mainThread')??'');
-      this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE recipientAgentId=? AND state IN ('offered','received') AND messageId IN (SELECT id FROM agent_messages WHERE kind='scheduled_message')").run(this.agent);
+      this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE recipientAgentId=? AND state='offered'").run(this.agent);
       const active = this.list().filter(r => r.state === 'processing' || r.state === 'uncertain');
       for (const item of active) {
-        if(item.state==='processing')this.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE messageId=?").run(item.messageId);
+        if(item.state==='processing')this.db.prepare("UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.terminal','uncertain') WHERE id=?").run(item.messageId);
         // An older generic recovery may already have made the receipt uncertain.
         // Synchronize only unfinished history; preserve terminal facts and the receipt.
         this.db.prepare("UPDATE conversation_messages SET status='interrupted' WHERE requestId=? AND threadId=? AND status IN ('queued','processing','running')").run(item.input.requestId,this.store.meta('mainThread')!);

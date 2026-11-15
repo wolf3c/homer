@@ -29,6 +29,7 @@ function fixture() {
 }
 function finish(f: ReturnType<typeof fixture>) {
   const item = f.inputs.claim()!;
+  f.inputs.started(item.messageId,item.revision,'synthetic-generation','synthetic-native');
   f.inputs.finish(item.messageId, item.revision, 'completed');
   f.history.finish(item.replyId, 'Synthetic completed reply.', 'completed');
   f.store.finishRequest(item.input.requestId, 'Synthetic completed reply.');

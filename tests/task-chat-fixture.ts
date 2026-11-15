@@ -6,6 +6,7 @@ import {Files} from '../src/files.js';
 import {ConversationHistory} from '../src/web-history.js';
 import {MainInputs} from '../src/recursive-main-inputs.js';
 import {RecursiveTasks,type Actor,type Authority,type RecursiveTaskLifecycle} from '../src/recursive-tasks.js';
+import {MainProcessHistory} from '../src/main-process.js';
 export function chatFixture(lifecycle?:RecursiveTaskLifecycle){
  const base=resolve('.codex/scratch/chat-architecture-implementation-20261105');mkdirSync(base,{recursive:true});const dir=mkdtempSync(join(base,'core-'));
  const path=join(dir,'test.sqlite'),store=new Store(path),files=new Files(join(dir,'workspace')),tasks=new RecursiveTasks(store,files,lifecycle);tasks.migrate();
@@ -17,6 +18,13 @@ export function chatFixture(lifecycle?:RecursiveTaskLifecycle){
  const original=source('source:test');actor.inputMessageId=original.messageId;
  const authority:Authority={sourceRequestId:'source:test',description:'Investigate only'};
  function create(goal='Investigate without edits',operationId='create',extra:Partial<Authority>={}){return tasks.createTask(actor,{operationId,goal,authority:{...authority,...extra}});}
+ function consumeMain(messageId:string){
+  let receipt=store.db.prepare('SELECT state,offeredTurnId FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(messageId,actor.agentId)!;
+  if(receipt.state==='pending'){if(inputs.claim([],'all')?.messageId!==messageId)throw Error('fixture_consumer_order');receipt=store.db.prepare('SELECT state,offeredTurnId FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(messageId,actor.agentId)!;}
+  const processes=new MainProcessHistory(store.db),turn=String(receipt.offeredTurnId??'turn:'+messageId),id='consumer:'+messageId;
+  store.transaction(()=>{processes.start({id,threadId:actor.threadId!,sourceKind:'worker',sourceMessageIds:[messageId],messageId:id},turn);tasks.receiveMainMessagesInTransaction([messageId],turn);});
+  processes.finish(id,'completed','turn:'+turn+':terminal:completed');
+ }
  function start(workerId:string){const worker=tasks.workers(tasks.run(workerId).taskId).find(worker=>worker.workerId===workerId)!;const run=tasks.claim(worker.run.id)!;if(!run)throw Error('fixture_not_claimed');tasks.bind(run.id,run.epoch,worker.threadId??'thread:'+workerId,'turn:'+run.id);return tasks.run(run.id);}
- return {dir,path,store,files,tasks,history,inputs,actor,authority,source,create,start,close(){store.close();rmSync(dir,{recursive:true,force:true});}};
+ return {dir,path,store,files,tasks,history,inputs,actor,authority,source,create,start,consumeMain,close(){store.close();rmSync(dir,{recursive:true,force:true});}};
 }

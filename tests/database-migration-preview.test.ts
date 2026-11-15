@@ -9,6 +9,7 @@ import {ConversationHistory} from '../src/web-history.js';
 import {RecursiveTasks} from '../src/recursive-tasks.js';
 import {Files} from '../src/files.js';
 import {previewMigration} from '../scripts/database-migration-preview.js';
+import {chatFixture} from './task-chat-fixture.js';
 const hash=(path:string)=>createHash('sha256').update(readFileSync(path)).digest('hex');
 function fixture(withOperations=false){
  const parent=resolve('.codex/scratch/seamless-migration');mkdirSync(parent,{recursive:true});
@@ -67,4 +68,15 @@ test('offline preview refuses unsupported historical schemas without activating 
   assert.equal(r.originalMetadataPreserved,true);assert.deepEqual(r.allowedMetadataChanges,[]);
   assert.deepEqual(r.rollback,{fileBytesMatch:true,schemaUnchanged:true,factsUnchanged:true});assert.equal(r.automaticActivationAllowed,false);
  }finally{rmSync(f.directory,{recursive:true,force:true});}
+});
+
+for(const version of ['6','7'])test('offline preview validates only the exact allowed receipt, audit and schema changes from '+version,async()=>{
+ const f=chatFixture();try{
+  f.store.setMeta('recursiveSchemaVersion',version);f.store.db.prepare("UPDATE agent_receipts SET state='processed' WHERE messageId=?").run(f.actor.inputMessageId!);
+  if(version==='6')f.store.db.exec('DROP TABLE schedules');
+  const source=hash(f.path),result=await previewMigration(f.path,join(f.dir,'migration-preview'));
+  assert.equal(result.passed,true);assert.equal(result.schemaVersions.recursiveSchemaVersion,'8');assert.equal(hash(f.path),source);
+  assert.equal(result.tables.agent_receipts!.unchanged,false);assert.equal(result.tables.operations!.unchanged,true);
+  assert.deepEqual(result.rollback,{fileBytesMatch:true,schemaUnchanged:true,factsUnchanged:true});
+ }finally{f.close();}
 });

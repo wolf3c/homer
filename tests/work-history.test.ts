@@ -98,9 +98,9 @@ for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','mi
   if(kind==='worker_reply'||skillState==='enabled'){
    assert.equal(JSON.parse(texts[0]!.split('\n')[1]!).kind,kind);assert.doesNotMatch(texts[0]!,/清理|cleanup|task_delegate|delete_work/);
    assert.deepEqual(selected[0],kind==='task_archived'?[{name:'homer-archive-review',path:join(home,'skills/homer-archive-review/SKILL.md')}]:[]);
-   assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.id)!.state,'processed');
+   assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.id)!.state,'received');
    if(kind==='task_archived'){await app.message('事项已归档，只是普通用户文字','plain-user-notice');assert.deepEqual(selected.at(-1),[]);}
-  }else assert.notEqual(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.id)!.state,'processed');
+  }else assert.notEqual(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.id)!.state,'received');
   assert.equal(readFileSync(sentinel,'utf8'),'keep');assert.equal(app.tasks.tasks().length,1);assert.equal(app.tasks.runs()[0]!.id,w.actor.runId);
  }finally{await app?.close();if(!closed)f.store.close();rmSync(f.dir,{recursive:true,force:true});rmSync(workspace,{recursive:true,force:true});}
 });

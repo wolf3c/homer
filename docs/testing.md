@@ -2,6 +2,58 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## 主信箱与审批恢复
+
+2026-11-15 本地提交候选复核：仅叠加本任务主信箱修复及错配审批回归，排除并行的图片、渠道与 UI 改动。独立候选的相关八文件 **127/127**、完整 `tsc -p tsconfig.check.json` 与 UI 类型检查通过。默认核心为 **2532/2534**，零取消／跳过；以下两项既有图片预览测试失败：
+
+- `decoded image removes its duplicate card and restores fallback across lazy reloads and revision changes`
+- `HTTP preview failure retains the named download card and reports a failed download`
+
+干净 HEAD 的 `tests/message-image-preview.test.mjs` 单独对照同样为 **1/3**，准确复现这两个失败；该文件与图片实现不在本提交内，未为全绿修改、删除或跳过断言。此前 **2590/2590** 对应包含其他改动的完整工作树，不能用于声明独立候选全绿。提交复核未使用日常资料或追加真实 LLM；既有实模记录只代表各自当时的源码快照。
+
+2026-11-15 补齐错配审批的隔离合成回归：`tests/service-interactions.test.ts` 使用真实 Homer 宿主、MCP 分派和独立 SQLite，合成引擎先检查当前文件审批，再两次回复另一事项已批准并送回的历史审批。两次均被 `interaction_inspection_required` 拒绝；当前通知保持 `received`，当前审批／原授权／消息正文、历史审批及两轮失败记录保留，独立新消息仍能处理，原通知和回调不重放。新增用例 **1/1**、相关四文件 **50/50**、默认核心 **2590/2590**，零失败／取消／跳过；`tsc -p tsconfig.check.json` 通过。在隔离源码副本中移除审批检查或恢复失败回执的 `blocked` 回写，新增用例均按预期失败。新增错配审批回归阶段仅修改测试与本记录，未改产品源码、日常资料或认证，未调用真实 LLM。
+
+2026-11-15 最新实模：修正边界后仅追加未知操作 **1 轮、1/1 通过**，零失败／取消／跳过，没有模型重试，历史实际业务轮共五个；前两轮原始结果保留。当前 `gpt-6.1-terra / medium / standard`，固定 Codex 0.163.0。准备时并行目录提示变更触发零业务轮源检查中止；精确审阅后，77/77 合成检查通过，再冻结并执行唯一模型轮。原操作完整不变且 uncertain、无新增 Worker、received 与升级阻塞保持，全部断言通过。本轮没有 task_update 调用，笔记用途分支仍只作此前合成覆盖；未重复前两例或重跑本次模型。详见[新记录](main-mailbox-llm-validation-2026-11-15.md)。日常认证／数据库／任务未改，迁移与原生安装未执行；下文 2026-11-14 的失败及离线结果按原观察窗口保留。
+
+2026-11-14 当前复核：基于 `423863e` 的未提交 main 工作树，默认核心 **2589/2589**，零失败／取消／跳过；相关协作与模型夹具联合 **73/73**，完整测试类型检查通过。此前源码／UI 类型及消息图片浏览器 **45 项**通过；本次真实验收只改测试、夹具和文档。私密路径祖先校验和原子迁移回归已纳入核心。经用户明确允许只借用 ChatGPT 短期凭据，三个真实 Main 场景各运行一次：**审批恢复、失效通知通过；未知操作首轮因测试断言错误中断，经用户批准的一次补验又触发 task_update 工具白名单限制，完整验收仍未通过**。合计四个实际业务轮，无自动重试；工具名不能区分笔记与业务动作，本次未追认通过。[详细结果与限制](main-mailbox-llm-validation-2026-11-14.md)。日常迁移与原生安装未运行。
+
+使用 Node 22.22.0，并将子进程 PATH 固定到同一 Node。以下核心用例只创建独立 SQLite、合成消息和执行器，不加载日常账号、原生历史或安装版：
+
+```sh
+node --import tsx --test --test-concurrency=1 \
+  tests/main-mailbox-delivery.test.ts tests/main-mailbox-projection.test.ts \
+  tests/main-receipt-migration.test.ts tests/main-receipt-transition.test.mjs \
+  tests/service-interactions.test.ts tests/engine-rpc-lifecycle.test.ts
+```
+
+覆盖 received 终态、准确 native 身份与 ACK 失败的执行归属、未处理/未送回的审批、显式用户恢复、旧库证据分类、跨库/过时预览拒绝、原子回滚与真实旧 Store 拒读，以及旧格式 CLI 的私密预览→兼容收束→新版迁移。合成资料验证不能代表日常迁移或原生安装已通过。验收记录与剩余门槛维护在[实施计划](superpowers/plans/2026-11-14-interaction-receipt-recovery.md)。
+
+真实模型入口为 `tests/main-mailbox-recovery.engine.test.ts`，登记在 engine 清单并从默认核心排除。固定 macOS／Codex 0.163.0。独立测试 API 入口显式设置 `HOMER_MAILBOX_MODEL_TEST=1`、绝对 `HOMER_TEST_CODEX_BIN`、`HOMER_MAILBOX_TEST_BASE_URL`（不含凭据/查询的 HTTPS）、`HOMER_MAILBOX_TEST_MODEL`、可选 `HOMER_MAILBOX_TEST_EFFORT`（默认 low）和仅进程内的 `HOMER_MAILBOX_TEST_TOKEN`，只运行该单文件。经用户明确允许的 ChatGPT 短期凭据路径，另设 `HOMER_MAILBOX_TEST_AUTH_KIND=chatgpt-external` 和仅进程内的 `HOMER_MAILBOX_TEST_CHATGPT_ACCOUNT_ID`，不设 BASE_URL；采用固定引擎的外部短期 token 接口，不提供 refresh token，不复制认证文件／历史。由获授权的一次性私密执行入口只读原配置，测试本身不发现日常路径。入口在校验 canonical 祖先、权限及 Git 忽略后，于 `.codex/private/mailbox-model/` 创建全新 workspace/runtime/CODEX_HOME；不发现日常账号或凭据。Main 使用真实模型，历史失败、原 Worker 回调与资料为合成。审批恢复、过期通知、未知操作各一个业务轮，不通过重试挑选成功样本。先实际验证合成文件可读、目录外不可读、工作区不可写；工具网络禁用，Apps／Plugins／Hook、宿主 Skill 发现及记忆生成关闭。失败和成功均只输出场景、工具名、状态与计数；确认所有者退出后回收原生资料，停止未确认则保留。缺条件或模型选错均失败，不能以宿主拦截冒称模型正确。
+
+2026-11-14 真实模型验收准备：原先正常审批案例已改成“已签收通知的历史协调失败→普通新用户消息恢复”，保留原通知和失败状态；用户消息没有偷偷绑定审批答案入口。调用通过真实宿主分派观测，不裁剪模型工具或替代授权检查；记录工具错误和禁止动作，检查审批原生回包只授予本轮目录读取且仅送回一次。失效通知不得答复或复活；未知操作必须实际读取原 operationKey 回执，不能只看任务概览，原回执、Worker 数及升级阻塞保持。预先定义的这些条件不会因模型表现而放宽。
+
+无凭据、零模型轮的固定原生预检证实：合成目录读取成功、目录外读取被拒、写入被拒、工具网络连接被拒，进程确认退出。实际 Main 使用当前 `gpt-6.1-terra / medium / standard`；认证文件与 Main 配置运行前后摘要相同。两例通过；未知操作实际读取原回执、无禁止动作／工具错误，宿主按契约保留 `unknown`，但测试误要求 `completed`，导致原操作完整比较和升级门禁断言未执行。测试已通过真实 Homer 的离线重放先复现再修正，并在断言前采集后置状态。另一个启动角色误判在零业务轮时修复，不能与实际模型轮混算。首轮结果未覆盖；在下一条单独授权前没有自动追加模型轮。
+
+用户随后明确批准仅补验未知操作一次，使用 `--test-name-pattern='^real Main mailbox decision: unknown-operation$'`，结果 **1 项失败、0 通过／取消／跳过**，退出码 1；前两例未重跑，没有自动重试。原操作完整不变、仍 uncertain，任务／Worker 各一个，received 保持，upgradeSafe=false；但 task_update 不在预先白名单。生产提示词允许用该工具维护笔记，它也承载目标／办理动作，本次只记录工具名，不能判断用途；保留失败，不放宽规则追认通过。该补验阶段没有改生产源码或白名单。随后获授权的用途边界修正仅改验收夹具与入口，见下方；未追认旧结果，任何新实模须明确授权。计划的真实 LLM 项继续未勾选，不能推进日常迁移或原生升级。
+
+本轮验收边界修正：共享 `mailboxModelTrace` 观察器按实际字段区分 task_update 用途，仅绑定原 taskId 的纯 notes 更新取得参数豁免。goal、pause／resume／cancel／settle、混合参数、跨任务、继承或未知字段、异常类型继续失败。执行后检查原任务状态、版本／授权、Worker 与原 operation 完整不变，笔记精确写入，仅允许合法笔记 revision／时间变化或完整不变的幂等结果；调用未完成、效果不明、错误或其他禁止动作均不能通过。原单轮、received、unknown、原操作和升级门禁检查不变，不裁剪真实工具或替代宿主授权。
+
+用途记录仅输出固定 purpose、targetMatches、allowed、outcome、notesEffectValid；不输出 ID、正文、参数、返回值、错误或路径。allowed 只表示本用例的参数分类，最终检查必须同时满足调用完成、效果核实和全部安全条件。真实入口与离线测试共用这一观察器，避免另写一套判断。真实 Homer＋合成引擎、类型伪装与跨任务、业务动作、异常效果、未完成调用及脱敏联合 **73/73** 通过。执行命令：
+
+```sh
+node --import tsx --test --test-concurrency=1 \
+  tests/main-mailbox-model-fixture.test.ts tests/main-mailbox-delivery.test.ts \
+  tests/service-interactions.test.ts tests/worker-interactions.test.ts
+```
+
+终版默认核心 **2589/2589**、完整 `tsc -p tsconfig.check.json` 退出 0，零失败／取消／跳过。未显式启用的实模入口仍在凭据读取和引擎启动前拒绝。本轮不追加真实 LLM，不读取日常认证或修改日常数据库／任务；两轮原模型结果保持原样，实际业务轮仍为 4，未知操作完整实模验收仍未通过。
+
+日常资料迁移、正式签名候选及真实原生更新另待确认。现有 Electron 合成测试和禁用 autoUpdater 的测试 profile 都不能替代这项验收。
+
+2026-11-15，另获本轮明确授权后，执行日常业务数据的在线备份和**只读副本门禁预演**；这不是默认测试的范围。源数据库连接保持 readOnly／query_only，使用 SQLite 在线 backup API，不普通复制活动 WAL；附件与原生历史按字节及引用核对，不加载账号、Homer、模型或渠道。备份完整性、保全与离线恢复比较通过；迁移预演在所有者及真实待办门禁下拒绝，副本仍为旧格式，未执行完整语义转换，更未写日常库。旧格式维护入口也只执行 preview，没有 apply。不能清 lease、改审批或重标历史状态来制造通过。
+
+本次相关纯数据库／分类／旧格式回归 **39/39**，零失败／取消／跳过；在线备份另用合成 WAL 并发写入验证读事务快照与源只读边界。实际资料备份、逐行身份与指纹是私密运营材料，只在 Git 忽略且访问受限的 `.codex/private/` 保留，公开文档不保存真实行、内容或凭据。副本指纹不得用于正式 live apply；正式操作前必须重新取得受控备份／预览并确认原所有者退出。备份副本不启动第二个实例，预演拦截也不等于 schema 迁移已通过。
+
 ## Worker 目录上下文 v0.8
 
 离线测试覆盖只读发现、五类标记、一级压缩、排除区、链接、路径转义、空与部分失败、截止时间／轮次失效、Main／Worker MCP 隔离和既有传输保护，以及根准备、独占创建、冲突、冷加载和关闭竞态。`work_directory` 和动态工具声明保持原样；测试使用合成目录事实，不扫描真实主目录。

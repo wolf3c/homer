@@ -86,8 +86,8 @@ try{
    await p.evaluate(()=>{window.__composer=document.querySelector('[contenteditable=true]');window.__composer.focus();});
    await p.command('Input.insertText',{text:'保留这份合成草稿'});
    await p.evaluate(()=>document.querySelector('.queue-toggle').focus());
-   work.inputs.started(input.messageId,input.revision,'context-generation','context-main-turn');
    work.processes.start({id:processId,threadId,sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:processId},'context-main-turn',undefined,'合成：已收到协作消息，核对公开结果。');
+   work.store.transaction(()=>work.tasks.receiveMainMessagesInTransaction([input.messageId],'context-main-turn'));
    work.history.record(processId,threadId,'','running');
    await p.evaluate('window.__processId='+JSON.stringify('message-'+processId));
    await p.until(()=>document.getElementById(window.__processId)?.querySelector('.message-task-title')?.textContent==='关于荷马显示版本号'&&!document.querySelector('.homer-message-queue'));
@@ -117,7 +117,6 @@ try{
    await p.until(()=>document.getElementById(window.__processId)?.textContent.includes('合成最终答复')&&!document.getElementById(window.__processId).querySelector('.process-node'));
    assert.equal(await p.evaluate(()=>document.querySelectorAll('[data-queue-message]').length),1,'the stale processing receipt stays out of the queue after completion');
    assert.equal(await p.evaluate(()=>document.getElementById(window.__processId).querySelectorAll('.message-task-title').length),1);
-   work.store.transaction(()=>work.tasks.completeMainMessagesInTransaction([input.messageId],'context-generation'));
    await p.command('Page.reload');await p.until(()=>document.querySelector('[data-conversation-message^="worker-context-"]')?.textContent.includes('合成最终答复'));
    await p.until(()=>document.querySelectorAll('[data-queue-message]').length===1);
    await p.screenshot('worker-context-completed-'+width+'.png');

@@ -151,7 +151,7 @@ test('the real host retains late old drafts, confirms both paused exits and resu
    const detail=readTaskDetail(f.app.store.db,taskId,{workerId:run.workerId,messageId:readback[0]!.messageId}).conversation!.messages[0]!;
    assert.equal(detail.text,newBodies.get(run.id));assert.equal(detail.version,3);
   }
-  assert.equal(notices.length,6);for(const notice of notices)assert.equal(receiptState(notice.messageId),'processed');
+  assert.equal(notices.length,6);for(const notice of notices)assert.equal(receiptState(notice.messageId),'received');
   for(const receipt of queued){
    const saved=f.app.store.db.prepare('SELECT m.taskVersion,m.targetRunId,r.offeredRunId,r.processedBy FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.id=?').get(receipt.messageId)!;
    assert.equal(receiptState(receipt.messageId),'rejected');assert.equal(saved.taskVersion,2);
@@ -160,7 +160,7 @@ test('the real host retains late old drafts, confirms both paused exits and resu
   for(const [receipt,requestId] of [[change,'lifecycle-change'],[pause,'lifecycle-pause'],[resume,'lifecycle-resume']] as const){
    const operation=f.app.tasks.operation(receipt.operationKey),inputMessageId=JSON.parse(operation.detailsJson).inputMessageId;
    assert.equal(operation.state,'confirmed');const input=f.app.store.db.prepare('SELECT kind,payloadJson FROM agent_messages WHERE id=?').get(inputMessageId)!;
-   assert.equal(input.kind,'user_input');assert.equal(JSON.parse(String(input.payloadJson)).requestId,requestId);assert.equal(receiptState(inputMessageId),'processed');
+   assert.equal(input.kind,'user_input');assert.equal(JSON.parse(String(input.payloadJson)).requestId,requestId);assert.equal(receiptState(inputMessageId),'received');
   }
   assert.equal(f.app.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name IN ('results','deliveries')").get(),undefined);
  }finally{for(const release of releases)release();await f.close();}

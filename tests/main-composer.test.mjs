@@ -285,7 +285,7 @@ for(const scenario of ['paused','ready','unowned','active','recoverable'])test('
  const f=historyFixture(0);let ui;
  try{
   f.inputs.accept({requestId:'source',text:'Synthetic authority'});
-  const source=f.inputs.claim();f.inputs.finish(source.messageId,source.revision,'completed');
+  const source=f.inputs.claim();f.inputs.started(source.messageId,source.revision,'synthetic-generation','synthetic-native');f.inputs.finish(source.messageId,source.revision,'completed');
   const agentId=f.store.meta('mainAgentId');
   const actor={agentId,threadId:'synthetic-history',sourceRequestId:'source'};
   const task=f.tasks.createTask(actor,{operationId:'task',goal:'Synthetic work',authority:{sourceRequestId:'source',description:'Synthetic work only',materials:[],resultIds:[]}});

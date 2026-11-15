@@ -39,15 +39,13 @@ test('archiving a record made without a user source routes its fact without gran
   assert.equal(input.kind,'task_archived');
   assert.equal(input.taskId,idea.taskId);
   assert.deepEqual(input.payload,{historyState:'archived',revision:f.tasks.task(idea.taskId).revision});
-  f.inputs.started(input.messageId,input.revision,'archive-generation','archive-turn');
+  f.store.transaction(()=>{f.processes.start({id:'archive-generation',threadId:main.threadId!,sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:'archive-generation'},'archive-turn');f.tasks.receiveMainMessagesInTransaction([input.messageId],'archive-turn');});
   const event={...main,sourceRequestId:undefined,inputMessageId:input.messageId};
   assert.throws(()=>f.tasks.workerOpen(event,{operationId:'dispatch-from-record',text:'Start work',authority:authority('archive-idea')}),/task_authority_source_denied/);
-  f.inputs.reconcile();
-  const resumed=f.inputs.claim([],'all');
-  assert.ok(resumed?.origin==='worker');
-  assert.equal(resumed.messageId,input.messageId);
-  f.inputs.started(resumed.messageId,resumed.revision,'retry-archive-generation','retry-archive-turn');
-  f.store.transaction(()=>f.tasks.completeMainMessagesInTransaction([resumed.messageId],'retry-archive-generation'));
+  f.processes.reconcileUnknown(main.threadId!,true);f.inputs.reconcile();
+  assert.equal(f.inputs.claim([],'all'),undefined,'confirmed receipt is never reoffered after owner closure');
+  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(input.messageId)!.state,'received');
+  assert.equal(f.processes.exact('archive-generation')!.status,'unknown');
   assert.equal(f.tasks.safeToUpgrade(),true);
  } finally {f.close();}
 });

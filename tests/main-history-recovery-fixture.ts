@@ -18,7 +18,7 @@ export async function recoveryFixture(count=1){
  f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex'));
  const originals:{id:string;seq:number;taskId:string;workerId:string;runId:string}[]=[];
  for(let n=0;n<count;n++){
-  const requestId='source-'+n;f.inputs.accept({requestId,text:'Synthetic original authority'});const source=f.inputs.claim()!;f.inputs.finish(source.messageId,source.revision,'completed');
+  const requestId='source-'+n;f.inputs.accept({requestId,text:'Synthetic original authority'});const source=f.inputs.claim()!;f.inputs.started(source.messageId,source.revision,'source-generation-'+n,'source-native-'+n);f.inputs.finish(source.messageId,source.revision,'completed');
   const actor={agentId,threadId,sourceRequestId:requestId},task=f.tasks.createTask(actor,{operationId:'task-'+n,goal:'Synthetic old work',authority:{sourceRequestId:requestId,description:'Synthetic only'}});
   const worker=f.tasks.workerOpen(actor,{operationId:'open-'+n,taskId:task.taskId,text:'Synthetic original input'}),run=f.tasks.claim(worker.runId)!;f.tasks.bind(run.id,run.epoch,'worker-thread-'+n,'worker-turn-'+n);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic original result '+n},true);

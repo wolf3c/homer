@@ -5,7 +5,7 @@ import {resolve,join,relative,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {MediaStore} from '../src/media-store.js';
-import {Store} from '../src/store.js';
+import {Store,STORE_SCHEMA_VERSION,prepareMainReceiptMigration,type MainReceiptPreview} from '../src/store.js';
 import {Files} from '../src/files.js';
 import {ConversationHistory} from '../src/web-history.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
@@ -42,11 +42,23 @@ export async function previewMigration(snapshot:string,directory:string){
  try{source.exec('PRAGMA query_only=ON;PRAGMA busy_timeout=3000');await backup(source,before,{rate:128});}finally{source.close();}
  chmodSync(before,0o600);copyFileSync(before,candidate);chmodSync(candidate,0o600);
  const baseline=new DatabaseSync(before,{readOnly:true});
- const original=capture(baseline),originalSchema=sha(baseline.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all());
+ const original=capture(baseline),originalObjects=baseline.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all(),originalSchema=sha(originalObjects);
  const integrityBefore=baseline.prepare('PRAGMA quick_check').get()?.quick_check;baseline.close();
  const stages:string[]=[];let error:string|undefined;let store:Store|undefined;
+ let migration:MainReceiptPreview|undefined,expectedReceipts:string|undefined;
  try{
-  store=new Store(candidate);stages.push('store');
+  migration=prepareMainReceiptMigration(candidate);
+  if(migration){
+   const input=new DatabaseSync(candidate,{readOnly:true});
+   try{
+    const expected=new Map(migration.rows.map(row=>[JSON.stringify([row.messageId,row.recipientAgentId]),row]));
+    expectedReceipts=sha(input.prepare('SELECT '+original.tables.agent_receipts!.columns.map(quote).join(',')+' FROM agent_receipts ORDER BY rowid').all().map(row=>{
+     const target=expected.get(JSON.stringify([row.messageId,row.recipientAgentId]));
+     return target&&target.sourceState!==target.targetState?{...row,state:target.targetState,revision:target.revision+1}:row;
+    }));
+   }finally{input.close();}
+  }
+  store=new Store(candidate,{mainReceiptMigration:migration});stages.push('store');
   new WorkerInteractions(store.db);stages.push('interactions');
   new ConversationHistory(store.db);stages.push('history');
   new MediaStore(store.db);stages.push('media-schema-only');
@@ -55,12 +67,18 @@ export async function previewMigration(snapshot:string,directory:string){
  finally{store?.close();}
  const migrated=new DatabaseSync(candidate,{readOnly:true});
  const comparisons=Object.fromEntries(Object.entries(original.tables).map(([table,prior])=>{
-  const after=fingerprint(migrated,table,prior.columns);return [table,{countBefore:prior.count,countAfter:after.count,unchanged:prior.count===after.count&&prior.sha256===after.sha256,beforeHash:prior.sha256,afterHash:after.sha256}];
+  const after=fingerprint(migrated,table,prior.columns);return [table,{countBefore:prior.count,countAfter:after.count,unchanged:prior.count===after.count&&prior.sha256===after.sha256,allowedChanges:table==='agent_receipts'&&expectedReceipts===after.sha256,beforeHash:prior.sha256,afterHash:after.sha256}];
  }));
  const current=capture(migrated);
- const oldMetaPreserved=original.meta.every(row=>current.meta.some(after=>after.key===row.key&&after.value===row.value));
+ const allowedMetadataChanges=migration?['recursiveSchemaVersion','mainReceiptMigration:startup:'+STORE_SCHEMA_VERSION]:[];
+ const oldMetaPreserved=original.meta.every(row=>current.meta.some(after=>after.key===row.key&&after.value===(migration&&row.key==='recursiveSchemaVersion'?STORE_SCHEMA_VERSION:row.value)))
+  &&(!migration||current.meta.every(row=>original.meta.some(before=>before.key===row.key)||row.key==='mainReceiptMigration:startup:'+STORE_SCHEMA_VERSION));
+ const audit=migration?current.meta.find(row=>row.key==='mainReceiptMigration:startup:'+STORE_SCHEMA_VERSION):undefined;
+ let saved;try{saved=audit?JSON.parse(String(audit.value)):undefined;}catch{/* Corrupt audit cannot pass preservation. */}
+ const auditPreserved=!migration||saved?.fingerprint===migration.fingerprint&&saved.sourceSchema===migration.sourceSchema&&saved.targetSchema===STORE_SCHEMA_VERSION&&sha(saved.rows)===sha(migration.rows);
  const schemaVersions=Object.fromEntries(['recursiveSchemaVersion'].map(key=>[key,migrated.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value??null]));
- const candidateSchemaHash=sha(migrated.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all());
+ const currentObjects=migrated.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all(),candidateSchemaHash=sha(currentObjects);
+ const originalSchemaRetained=originalObjects.every(row=>currentObjects.some(after=>sha(after)===sha(row)));
  const integrityAfter=migrated.prepare('PRAGMA quick_check').get()?.quick_check;
  const foreignKeyViolations=migrated.prepare('PRAGMA foreign_key_check').all().length;
  const counts=Object.fromEntries(['tasks','operations'].filter(t=>has(migrated,t)).map(t=>[t,migrated.prepare('SELECT count(*) n FROM '+quote(t)).get()?.n]));
@@ -71,11 +89,11 @@ export async function previewMigration(snapshot:string,directory:string){
  const rollbackSchemaUnchanged=sha(restored.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all())===originalSchema;
  const rollbackFacts=capture(restored);restored.close();
  const receipt={at:new Date().toISOString(),offline:true,originalSchemaHash:originalSchema,candidateSchemaHash,schemaUnchanged:originalSchema===candidateSchemaHash,noEngineChannelOrKeychain:true,stages,error:error??null,integrityBefore,integrityAfter,foreignKeyViolations,schemaVersions,counts,
-  mainThreadPreserved:current.thread===original.thread,originalMetadataPreserved:oldMetaPreserved,allowedMetadataChanges:[],tables:comparisons,
+  mainThreadPreserved:current.thread===original.thread,originalMetadataPreserved:oldMetaPreserved,allowedMetadataChanges,originalSchemaRetained,tables:comparisons,
   rollback:{fileBytesMatch:fileHash(before)===fileHash(rollback),schemaUnchanged:rollbackSchemaUnchanged,factsUnchanged:sha(rollbackFacts)===sha(original)},
   permissions:{directory:statSync(directory).mode&0o777,before:statSync(before).mode&0o777,candidate:statSync(candidate).mode&0o777,rollback:statSync(rollback).mode&0o777},
   beforeFileHash:fileHash(before),candidateFileHash:fileHash(candidate),automaticActivationAllowed:false,
-  passed:!error&&integrityBefore==='ok'&&integrityAfter==='ok'&&!foreignKeyViolations&&oldMetaPreserved&&current.thread===original.thread&&Object.values(comparisons).every(v=>v.unchanged)};
+  passed:!error&&integrityBefore==='ok'&&integrityAfter==='ok'&&!foreignKeyViolations&&oldMetaPreserved&&auditPreserved&&originalSchemaRetained&&current.thread===original.thread&&Object.values(comparisons).every(v=>v.unchanged||v.allowedChanges)};
  writeFileSync(join(directory,'migration-preview-receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
  return receipt;
 }

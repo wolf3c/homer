@@ -33,7 +33,7 @@ import { join,isAbsolute,dirname,basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { accessSync,constants,realpathSync,existsSync,statSync,lstatSync,openSync,fstatSync,closeSync,readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { Store, type Run } from "./store.js";
+import { Store,prepareMainReceiptMigration, type Run } from "./store.js";
 import { Files, canonicalDir } from "./files.js";
 import {
   CodexEngine,
@@ -99,7 +99,7 @@ type MainContext = {
   nativeActivity?:{turnId?:string;ended?:true;unavailable?:true;compactions:Map<string,'started'|'completed'>;summary?:string;retryObserved?:true;connectionIssue?:true};
   nativeStartAttempted?:boolean;
   processId?: string;
-  processStatus?: 'completed' | 'failed' | 'interrupted';
+  processStatus?: 'completed' | 'failed' | 'interrupted' | 'unknown';
   processEndEventId?: string;
   sourceMessageIds?: string[];
   sourceEventId?: string;
@@ -604,7 +604,7 @@ export class Homer {
     this.cua=DesktopCua.create(config.desktopResources,config.runtime);
     this.membershipTools=createMembershipTools(config);
     this.unlock = acquireLock(config.runtime);
-    try { this.store = new Store(join(config.runtime, "homer.sqlite")); }
+    try { const path=join(config.runtime,"homer.sqlite");this.store = new Store(path,{mainReceiptMigration:prepareMainReceiptMigration(path)}); }
     catch(error) { this.unlock();throw error; }
     try{
       if(config.pauseOldDesktopWork){
@@ -1162,15 +1162,16 @@ export class Homer {
           this.inputWaiters.get(error.requestId)?.reject(error);this.inputWaiters.delete(error.requestId);this.store.event(null,'input_claim_failed',engineError(error));this.scheduleInputs();
         }
         else {
+          this.mainBroken=true;
           if(current?.origin==='user'){
             if(this.inputs.uncertain(current.messageId,current.revision))this.mainBroken=true;
             this.inputWaiters.get(current.input.requestId)?.reject(error instanceof Error?error:Error(engineError(error)));this.inputWaiters.delete(current.input.requestId);
           }
-          if(current&&current.origin!=='user'&&this.store.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE messageId=? AND revision=? AND state IN ('offered','received')").run(current.messageId,current.revision).changes)this.mainBroken=true;
+          if(current&&current.origin!=='user')this.store.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE messageId=? AND revision=? AND state='offered'").run(current.messageId,current.revision);
           throw error;
         }
       }finally{if(current)this.scheduleInputs();}
-    }).catch(error=>{this.store.event(null,'input_processing_failed',engineError(error));});
+    }).catch(error=>{try{this.store.event(null,'input_processing_failed',engineError(error));}catch{/* A failed diagnostic write cannot release a broken owner. */}});
   }
   private async processMessage(queued:QueuedInput):Promise<string> {
     const {input,replyId}=queued,{text,requestId,quote,quotes,interactionId}=input;
@@ -1254,10 +1255,10 @@ export class Homer {
     if(context.nativeStartAttempted&&!context.processEndEventId?.startsWith('turn:'))status='unknown';
     this.store.db.exec('BEGIN IMMEDIATE');
     try{
-      if(status==='completed'&&context.interactionId&&this.interactions.inspect(context.interactionId).state==='pending_main'){status='unknown';context.publicText??='Worker 的待答事项尚未处理，原请求已保留。';}
+      if(status==='completed'&&context.interactionId&&this.interactions.inspect(context.interactionId).state==='pending_main'){status='failed';context.publicText??='Worker 的待答事项尚未处理，原请求已保留。';}
       if(status==='completed'&&context.workerMessages&&this.main?.turnId){
-        try{this.tasks.completeMainMessagesInTransaction(context.workerMessages.map(message=>message.id),this.main.turnId);}
-        catch(error){if(!(error instanceof Error&&error.message==='coordination_operations_unresolved'))throw error;status='unknown';context.publicText??='本次协调的操作结果尚未确认，原始消息和回执已保留。';}
+        const pending=this.store.db.prepare("SELECT 1 FROM operations WHERE actorAgentId=? AND json_extract(detailsJson,'$.inputMessageId') IN (SELECT value FROM json_each(?)) AND state IN ('accepted','dispatching','uncertain') LIMIT 1").get(this.store.meta('mainAgentId')!,JSON.stringify(context.workerMessages.map(message=>message.id)));
+        if(pending){status='unknown';context.publicText??='本次协调的操作结果尚未确认，原始消息和回执已保留。';}
       }
       this.processes.finish(context.processId,status,context.terminalConfirmed?context.processEndEventId:undefined,context.explicitSent?undefined:context.publicText);
       const node=this.processes.exact(context.processId);
@@ -1488,15 +1489,19 @@ export class Homer {
       // Missing phase evidence in legacy adapters remains a compatibility path.
       if(context.workerInput&&result.messages)result.text=result.messages.filter(message=>message.phase==='final_answer').map(message=>message.text).join('\n\n').trim();
       if(result.nativeOutputError)result.text+=(result.text?"\n\n":"")+`图片生成输出未能确认保存（${result.nativeOutputError}），尚未形成可交付成果。`;
+      const interaction=context.interactionId?this.interactions.inspect(context.interactionId):undefined;
+      const inactive=interaction&&['cancelled','expired'].includes(interaction.state)&&(!interaction.decision||interaction.deliveredAt!==null);
       if (!result.text.trim() && !context.allowEmptyReply && !context.explicitSent) {
-        if(!context.event||!context.interactionId||!this.interactions.hasDeliveredDecision(context.interactionId))throw new Error("main_empty_reply");
+        if(!context.event||!context.interactionId||!this.interactions.hasDeliveredDecision(context.interactionId)&&!inactive)throw new Error("main_empty_reply");
       }
+      if(interaction?.state==='pending_main')throw Error('main_interaction_unhandled');
+      if(interaction?.decision&&interaction.deliveredAt===null)throw Error('interaction_delivery_unconfirmed');
       if(context.explicitSent)return this.history.message(context.messageId??'')?.text??'';
       return result.text;
     } catch (e) {
       // Owned transport closure cancels an active turn during normal exit.
       const shutdown=this.closing&&engineError(e)==='engine_closed';
-      context.processStatus=shutdown||engineError(e)==='main_user_interrupted'?'interrupted':'failed';
+      context.processStatus=shutdown||engineError(e)==='main_user_interrupted'?'interrupted':engineError(e)==='interaction_delivery_unconfirmed'?'unknown':'failed';
       if(context.workerInput)context.publicText=context.processStatus==='interrupted'?'主 Agent 本次协调已停止，原回传和已记录操作已保留，未自动重跑。':'主 Agent 本次协调未完成，原回传和已记录操作已保留，未自动重跑。';
       if (engineError(e) === "main_user_interrupted") throw e;
       if(!shutdown)this.store.event(null, "main_turn_failed", engineError(e));
@@ -1859,8 +1864,9 @@ export class Homer {
     }
     if (!context.inspectedInteractions?.has(id)) throw new Error("interaction_inspection_required");
     if(item.state==='pending_main'&&context.interactionId!==id){
-      const blocked=!context.event&&this.store.db.prepare("SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.recipientAgentId=? AND m.kind='interaction_required' AND json_extract(m.payloadJson,'$.interactionId')=? AND r.state='blocked'").get(this.store.meta('mainAgentId')!,id);
-      if(!blocked)throw Error('message_not_claimed');
+      if(context.event||!context.queuedInput||context.requestId!==context.queuedInput.input.requestId)throw Error('message_not_claimed');
+      this.validateMainContext(context);
+      this.tasks.authorizeTask(this.mainActor(),this.tasks.run(item.runId).taskId);
     }
     if (tool === "escalate_interaction") {
       if(item.responseUserMessageId)throw Error('interaction_already_resolved');
@@ -2530,7 +2536,7 @@ export class Homer {
     finally{
       this.receptionTimings?.mark('host_finalize_start',{processId:context.processId,kind:'internal'});
       this.finishMainProcess(context,context.terminalConfirmed?context.processStatus??'completed':'unknown');
-      this.store.db.prepare("UPDATE agent_receipts SET state=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state IN ('offered','received')").run(input.origin==='scheduled'?(context.terminalConfirmed?'processed':'uncertain'):context.processEndEventId?.startsWith('turn:')?'blocked':'uncertain',input.messageId,this.store.meta('mainAgentId')!);
+      this.store.db.prepare("UPDATE agent_receipts SET state=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state='offered'").run(context.nativeStartAttempted?'uncertain':'rejected',input.messageId,this.store.meta('mainAgentId')!);
       this.receptionTimings?.mark('host_finalize_end',{processId:context.processId,kind:'internal'});
       await context.output;
       const output=context.processId?this.processes.coordination(context.processId):undefined;

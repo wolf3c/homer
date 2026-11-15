@@ -109,7 +109,8 @@ test('reception: runnable and claim share durable FIFO for preparing, ready and 
     assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(next.messageId)!.state,'received');
     if(next.interruptTarget)f.queue.interruptReceipt(next.messageId,'failed');
     f.queue.finish(next.messageId,next.revision,'completed');
-    assert.deepEqual({...f.store.db.prepare('SELECT state,revision FROM agent_receipts WHERE messageId=?').get(next.messageId)},{state:'processed',revision:2});
+    assert.deepEqual({...f.store.db.prepare('SELECT state,revision FROM agent_receipts WHERE messageId=?').get(next.messageId)},{state:'received',revision:2});
+    assert.equal(f.queue.byRequestIds([id])[0]!.state,'completed');
    }
    assert.equal(f.queue.runnable(),false);assert.equal(f.queue.claim(),undefined);
    assert.ok(f.queue.list().every(row=>row.state==='completed'||(initial==='failed'&&row.input.requestId==='first-interrupt'&&row.state==='failed')));

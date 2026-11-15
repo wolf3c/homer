@@ -1012,7 +1012,9 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       active.earlyEvents.length = 0;
       return await completion;
     } catch (e) {
-      this.active = undefined;
+      // An accepted turn outlives a failed local receipt callback. Only its
+      // native terminal or confirmed owner closure may release execution.
+      if(!this.turnId)this.active = undefined;
       throw e;
     }
     }finally{if(this.preparation===operation)this.preparation=undefined;this.emitIdle();}

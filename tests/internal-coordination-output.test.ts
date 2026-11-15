@@ -71,6 +71,6 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
    assert.equal(Buffer.from(file.data!,'base64').toString(),'# 已核对的材料');
   }
   assert.equal(f.app.store.db.prepare('SELECT count(*) n FROM agent_messages WHERE id=?').get(reply.id)!.n,1);
-  assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(reply.id)!.state,'processed');
+  assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(reply.id)!.state,'received');
  }finally{await f.close();}
 });

@@ -41,7 +41,7 @@ test('two Worker conversations return complete original text automatically witho
     }
     assert.equal(f.app.tasks.task(taskId).state,'open');
     assert.equal(f.app.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);
-    assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='worker_reply' AND r.state='processed'").get()!.n,2);
+    assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='worker_reply' AND r.state='received'").get()!.n,2);
   }finally{await f.close();}
 });
 
@@ -302,7 +302,7 @@ test('background Worker replies cannot delegate another user source’s attachme
  }finally{await f.close();}
 });
 
-test('a restored input exposes its committed open and cannot duplicate it with a new native call',async()=>{
+test('a failed received input retains its committed open and restart never replays it',async()=>{
   const f=fixture();let taskId='',originalWorker='',lost=false,recovered=false;
   try{
     f.setScript(async(main,text)=>{
@@ -310,28 +310,30 @@ test('a restored input exposes its committed open and cannot duplicate it with a
         taskId=(await main.call('worker_open',{message:'Recover an original action'})).taskId;
       }else if(!lost){
         lost=true;originalWorker=(await main.call('worker_open',{taskId,message:'Inspect the returned fact'},'committed-open')).workerId;
+        assert.equal((await main.call('worker_open',{taskId,message:'Inspect the returned fact'},'committed-open')).workerId,originalWorker);
         throw Error('synthetic_response_lost');
-      }else if(text.includes(originalWorker)&&text.includes('\"kind\":\"worker_open\"')){
+      }else if(text==='review originals'){
         recovered=true;
         const view=await main.call('work_inspect',{taskId});
         assert.equal(view.workers.filter((worker:any)=>worker.workerId===originalWorker).length,1);
-        await assert.rejects(main.call('worker_open',{taskId,message:'Inspect the returned fact'},'new-after-restart'),/coordination_action_already_committed/);
       }
-      return {status:'completed',text:text==='start'?'Started':'',messages:[]};
+      return {status:'completed',text:['start','review originals'].includes(text)?'Reviewed':'',messages:[]};
     });
     await f.app.start();await f.app.message('start','recovery-start');
     await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
     const first=f.engines.find(engine=>engine.options.role==='worker')!;
     first.finish!({status:'completed',text:'Original answer',messages:[{itemId:'original',phase:'final_answer',text:'Original answer'}]});
-    await until(()=>lost&&f.app.store.db.prepare("SELECT 1 FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='worker_reply' AND r.state='uncertain'").get()!==undefined);
+    await until(()=>lost);await f.app['mainQueue'];
+    const original=f.app.store.db.prepare("SELECT m.id FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='worker_reply' AND r.state='received'").get()!.id as string;
     const before=f.app.tasks.workers(taskId).length;
-    await f.restart();await until(()=>recovered);
+    await f.restart();await f.app.idle();assert.equal(recovered,false);
+    await f.app.message('review originals','review-originals');assert.equal(recovered,true);
     assert.equal(f.app.tasks.workers(taskId).length,before);await f.app.idle();
-    assert.ok(f.inputs.some(text=>text.includes(originalWorker)&&text.includes('worker_open')&&text.includes('operations')));
+    assert.equal(f.app.processes.list(f.app.store.meta('mainThread')!).filter(node=>node.sourceMessageIds.includes(original)).length,1);
   }finally{await f.close();}
 });
 
-test('a restored Worker input cannot repeat a committed immediate message',async()=>{
+test('a failed received Worker input cannot repeat its committed immediate message on restart',async()=>{
  const f=fixture();let workerId='',steers=0,attempted=false,recovered=false;
  try{
   f.setScript(async(main,text)=>{
@@ -343,20 +345,22 @@ test('a restored Worker input cannot repeat a committed immediate message',async
     if(!attempted){
      attempted=true;
      assert.equal((await main.call('worker_send',args,'committed-immediate')).state,'received');
+     assert.equal((await main.call('worker_send',args,'committed-immediate')).state,'received');
      throw Error('synthetic_response_lost');
     }
-    await assert.rejects(main.call('worker_send',args,'new-native-call'),/coordination_action_already_committed/);
-    recovered=true;
+   }else if(text==='review original steer'){
+    const view=await main.call('work_inspect',{taskId:f.app.tasks.run(workerId).taskId});assert.ok(view.workers.some((worker:any)=>worker.workerId===workerId));recovered=true;
    }
-   return {status:'completed',text:text==='start'?'Started':'',messages:[]};
+   return {status:'completed',text:['start','review original steer'].includes(text)?'Reviewed':'',messages:[]};
   });
   await f.app.start();await f.app.message('start','recovery-start');
   await until(()=>f.engines.filter(engine=>engine.options.role==='worker'&&engine.finish).length===2);
   const [producer,receiver]=f.engines.filter(engine=>engine.options.role==='worker');
   receiver!.steer=async(turnId,message)=>{assert.equal(turnId,receiver!.turnId);assert.equal(message,'Incorporate this exact finding');steers++;return {turnId};};
   producer!.finish!({status:'completed',text:'Exact synthetic finding'});
-  await until(()=>!!f.app.store.db.prepare("SELECT 1 FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='worker_reply' AND r.state='uncertain'").get());
-  assert.equal(steers,1);await f.restart();await until(()=>recovered);await f.app.idle();
+  await until(()=>attempted);await f.app['mainQueue'];
+  assert.equal(steers,1);await f.restart();await f.app.idle();assert.equal(recovered,false);
+  await f.app.message('review original steer','review-steer');assert.equal(recovered,true);await f.app.idle();
   assert.equal(steers,1);assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='worker_steer'").get()!.n,1);
  }finally{await f.close();}
 });
@@ -462,7 +466,7 @@ for(const action of ['approve','deny'] as const)test('a desktop Worker command w
   }finally{await f.close();}
 });
 
-test('a restored archive input cannot create another Task to duplicate an already opened Worker',async()=>{
+test('a received archive input cannot create another Task on restart after a lost response',async()=>{
   const f=fixture();let original='',followup='',workerId='',lost=false,recovered=false;
   try{
     f.setScript(async(main,text)=>{
@@ -475,16 +479,19 @@ test('a restored archive input cannot create another Task to duplicate an alread
         if(!lost){
           const opened=await main.call('worker_open',{message:'Inspect authorized temporary resources'},'committed-open');
           followup=opened.taskId;workerId=opened.workerId;
+          assert.equal((await main.call('worker_open',{message:'Inspect authorized temporary resources'},'committed-open')).workerId,workerId);
           lost=true;throw Error('synthetic_response_lost');
         }
-        recovered=true;assert.ok(text.includes(followup)&&text.includes(workerId));
-        await assert.rejects(main.call('worker_open',{message:'Inspect authorized temporary resources'},'replacement-open'),/coordination_action_already_committed/);
+      }else if(text==='review archive originals'){
+        const view=await main.call('work_inspect',{taskId:followup});assert.ok(view.workers.some((worker:any)=>worker.workerId===workerId));recovered=true;
       }
-      return {status:'completed',text:text==='prepare'?'Prepared':'',messages:[]};
+      return {status:'completed',text:['prepare','review archive originals'].includes(text)?'Reviewed':'',messages:[]};
     });
     await f.app.start();await f.app.message('prepare','archive-prepare');await f.app.message('archive','archive-request');
-    await until(()=>lost&&f.app.store.db.prepare("SELECT 1 FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='task_archived' AND r.state='uncertain'").get()!==undefined);
-    await f.restart();await until(()=>recovered);await f.app.idle();
+    await until(()=>lost);await f.app['mainQueue'];
+    assert.equal(f.app.store.db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='task_archived'").get()!.state,'received');
+    await f.restart();await f.app.idle();assert.equal(recovered,false);
+    await f.app.message('review archive originals','review-archive');assert.equal(recovered,true);await f.app.idle();
     assert.equal(f.app.tasks.tasks().length,2);assert.equal(f.app.tasks.workers(followup).length,1);
   }finally{await f.close();}
 });
@@ -527,7 +534,7 @@ test('a Worker question wakes Main and returns the persisted answer to that exac
     const answer=await worker.call('ask_main',{question:'A or B?'});assert.equal(answer.answer,'Use A');
     assert.ok(f.app.interactions.list().find(item=>item.source==='ask_main')!.deliveredAt);
     worker.finish!({status:'completed',text:'Used A',messages:[{itemId:'answer',phase:'final_answer',text:'Used A'}]});await f.app.idle();
-    assert.equal(f.app.store.db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='interaction_required'").get()!.state,'processed');
+    assert.equal(f.app.store.db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='interaction_required'").get()!.state,'received');
   }finally{await f.close();}
 });
 

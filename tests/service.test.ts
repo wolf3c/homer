@@ -452,7 +452,8 @@ test("T10: a result finishing while another delivery waits is drained without ne
   await f.app.idle();
   assert.ok(f.app.store.runs().every((r) => r.status === "succeeded"));
   assert.ok(f.app.store.runs().every(run=>!!reply(f.app,run.id)));
-  assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_receipts WHERE state IN ('offered','received')").get()?.n,0);
+  assert.equal(f.app.inputs.dispatchPage(undefined,f.app.webReadEpoch,'all').items.length,0);
+  assert.ok(f.app.processes.list(f.app.store.meta('mainThread')!).every(node=>node.state==='worked'));
   await f.app.close();
 });
 

@@ -28,7 +28,8 @@ for(const status of ['completed','failed','interrupted'] as const)test(`internal
   worker.finish!({status,text:body,messages:[{itemId:'original',phase:'final_answer',text:body}]});
   await f.app.idle();
   const row=f.app.store.db.prepare("SELECT m.payloadJson,r.state FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='worker_reply'").get()!;
-  assert.equal(JSON.parse(String(row.payloadJson)).text,body);assert.equal(row.state,'processed');
+  assert.equal(JSON.parse(String(row.payloadJson)).text,body);assert.equal(row.state,'received');
+  assert.equal(f.app.processes.list(f.app.store.meta('mainThread')!).find(node=>node.sourceMessageIds.includes(f.app.store.db.prepare("SELECT id FROM agent_messages WHERE kind='worker_reply'").get()!.id as string))?.status,'completed');
   assert.equal(f.app.tasks.task(taskId).state,'open');assert.equal(f.app.tasks.runs(taskId)[0]!.status,status==='completed'?'succeeded':status);
   assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='send_user_message'").get()!.n,0);
   assert.equal(f.events.filter(event=>event.type==='coordination').length,0);

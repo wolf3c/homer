@@ -96,7 +96,7 @@ for(const scenario of ['restart','switch','adopt'] as const)test('desktop restor
   const state=(id:string)=>app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(id)!.state;
   assert.equal(state(active.messageId),'offered');
   assert.equal(state(unknown.messageId),'uncertain');
-  assert.equal(state(original.queueMessageId!),scenario==='restart'?'processed':'pending');
+  assert.equal(state(original.queueMessageId!),scenario==='restart'?'received':'pending');
   assert.equal(app.inputs.byRequestIds(['old-interrupt','old-approval']).filter(input=>input.state==='queued').length,2);
   if(scenario==='restart')assert.equal(app.history.message(original.replyId)?.status,'completed');
   app.inputs.accept({requestId:'next',text:'later pending'});
@@ -104,7 +104,7 @@ for(const scenario of ['restart','switch','adopt'] as const)test('desktop restor
 
   app=open(target);await app.start();await app.idle();
   assert.deepEqual(turns,[...expected,'later pending']);
-  assert.equal(state(original.queueMessageId!),scenario==='restart'?'processed':'pending');
+  assert.equal(state(original.queueMessageId!),scenario==='restart'?'received':'pending');
   assert.equal(state(unknown.messageId),'uncertain');
   await app.message('new input','new');
   assert.deepEqual(turns,[...expected,'later pending','new input']);
@@ -167,7 +167,7 @@ for(const scenario of ['result','empty-report','model-failure','response-lost','
   await until(()=>turns.length===4);
   assert.deepEqual(turns,['W1','U1','U2','U3']);
   await app.idle();
-  if(!['model-failure','response-lost'].includes(scenario)){assert.equal(messages.filter(message=>message.type==='coordination').length,0);assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(worker.messageId)!.state,'processed');assert.equal(app.history.list(app.store.meta('mainThread')!).filter(message=>message.role==='user').length,4);return;}
+  if(!['model-failure','response-lost'].includes(scenario)){assert.equal(messages.filter(message=>message.type==='coordination').length,0);assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(worker.messageId)!.state,'received');assert.equal(app.history.list(app.store.meta('mainThread')!).filter(message=>message.role==='user').length,4);return;}
   const output=messages.find(message=>message.type==='coordination')!;
   assert.ok(output.messageId);assert.equal(app.processes.coordination(output.messageId!)?.text,output.text);
   assert.equal(app.history.message(output.messageId!)?.text,output.text);
@@ -234,7 +234,7 @@ for(const outcome of ['completed','failed','interrupted'] as const)test('desktop
  const factory=(options:EngineOptions,handler:(call:ToolCall)=>Promise<unknown>)=>new Peer(options,handler);
  app=new Homer(config,async()=>{},factory);
  try{
-  await app.start();app.inputs.accept({requestId:'seed',text:'Synthetic source'});const source=app.inputs.claim()!;app.inputs.finish(source.messageId,source.revision,'completed');
+  await app.start();app.inputs.accept({requestId:'seed',text:'Synthetic source'});const source=app.inputs.claim()!;app.inputs.started(source.messageId,source.revision,'synthetic-generation','synthetic-native');app.inputs.finish(source.messageId,source.revision,'completed');
   const agentId=app.store.meta('mainAgentId')!;
   const actor={agentId,threadId:app.store.meta('mainThread')!,sourceRequestId:'seed'};
   const task=app.tasks.createTask(actor,{operationId:'root',title:'Synthetic old task',goal:'Synthetic',authority:{sourceRequestId:'seed',description:'Synthetic only'}});
@@ -257,7 +257,8 @@ for(const outcome of ['completed','failed','interrupted'] as const)test('desktop
    const worker=app.tasks.workerOpen(actor,{operationId:'fresh-open',taskId:task.taskId,text:'Synthetic later report'}),freshRun=app.tasks.claim(worker.runId)!;app.tasks.bind(freshRun.id,freshRun.epoch,'later-worker','later-turn');
    const notice=app.tasks.endSegment(freshRun.id,freshRun.epoch,{status:'completed',text:'Synthetic later report'},true)!;
    // Direct task fixture writes need the same wake supplied by the Worker tool adapter.
-   (app as any).scheduleInputs();await until(()=>app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.messageId)?.state==='processed');await app.idle();
+   (app as any).scheduleInputs();await until(()=>app.processes.list(app.store.meta('mainThread')!).some(node=>node.sourceMessageIds.includes(notice.messageId)&&node.state==='worked'));await app.idle();
+   assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.messageId)?.state,'received');
    assert.ok(turns.splice(1).includes(notice.messageId));assert.equal(app.inputs.dispatchSummary().awaitingUser,true);
    app.tasks.controlTask(actor,{operationId:'fresh-cancel',taskId:task.taskId,expectedRevision:app.tasks.task(task.taskId).revision,action:'cancel'});
    await app.close();app=new Homer(paused,async()=>{},factory);await app.start();await app.idle();assert.deepEqual(turns,['fresh requirements']);

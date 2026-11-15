@@ -34,6 +34,23 @@ export type ProcessNode = ProcessTiming & {
 type Stored = ProcessNode & { turnClocks?: Record<string, TurnClock>; itemClocks?: Record<string, TurnClock>; finalCandidate?: { id: string; text: string }; completedItemIds: string[]; itemPhases: Record<string, string | null>; uncertainTurnIds?:string[] };
 const prefix = 'publicMainNode:v1:';
 
+// Delivery may already be terminal while the original consumer still runs.
+export function mainProcessSourceSql(message='m'){
+  return `${message}.id IN (
+      SELECT source.value FROM meta p,json_each(p.value,'$.sourceMessageIds') source
+      WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.state')='working'
+        AND json_extract(p.value,'$.threadId')=(SELECT value FROM meta WHERE key='mainThread'))`;
+}
+export function mainInputProcessingSql(message='m'){
+  return `((${message}.kind='user_input' AND json_extract(${message}.payloadJson,'$.terminal') IS NULL)
+    OR (${message}.kind<>'user_input' AND ${mainProcessSourceSql(message)}))`;
+}
+export function unconfirmedNativeEffectsSql(process='p'){
+  return `EXISTS(SELECT 1 FROM json_each(${process}.value,'$.items') item
+    WHERE json_extract(item.value,'$.kind')='tool' AND json_extract(item.value,'$.category')<>'host'
+      AND json_extract(item.value,'$.status') IN ('running','unknown','blocked'))`;
+}
+
 function clockTiming(clock: TurnClock): ProcessTiming {
   const native = validMs(clock.nativeStartedAtMs) && validMs(clock.nativeEndedAtMs) && clock.nativeEndedAtMs >= clock.nativeStartedAtMs;
   const startedAtMs = native ? clock.nativeStartedAtMs! : clock.hostStartedAtMs;

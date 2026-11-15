@@ -12,7 +12,7 @@ import {WebHistoryPages} from '../src/web-history-pages.js';
 function fixture(database=':memory:'){
  const f=historyFixture(0,160,false,database);
  f.inputs.accept({requestId:'source',text:'Synthetic authority'});
- const source=f.inputs.claim()!;f.inputs.finish(source.messageId,source.revision,'completed');
+ const source=f.inputs.claim()!;f.inputs.started(source.messageId,source.revision,'generation:source','native:source');f.inputs.finish(source.messageId,source.revision,'completed');
  const agentId=f.store.meta('mainAgentId')!;
  const actor={agentId,threadId:'synthetic-history',turnId:'main-turn',sourceRequestId:'source'};
  const task=f.tasks.createTask(actor,{operationId:'root',title:'Same title',goal:'Synthetic work',authority:{sourceRequestId:'source',description:'Synthetic work only'}});
@@ -22,8 +22,10 @@ function fixture(database=':memory:'){
   const current=f.tasks.run(opened.runId);return f.tasks.endSegment(current.id,current.epoch,{status:'completed',text},true)!;
  };
  const consume=(input:{messageId:string;revision:number},generationId='generation:'+input.messageId)=>{
-  f.inputs.started(input.messageId,input.revision,generationId,'turn:'+input.messageId);
-  f.store.transaction(()=>f.tasks.completeMainMessagesInTransaction([input.messageId],generationId));
+  const prior=f.processes.list('synthetic-history').find(node=>node.state==='working'&&node.sourceMessageIds.includes(input.messageId));
+  const id=prior?.id??generationId,turn=prior?.turnIds.at(-1)??'turn:'+input.messageId;
+  f.store.transaction(()=>{if(!prior)f.processes.start({id,threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:id},turn);f.tasks.receiveMainMessagesInTransaction([input.messageId],turn);});
+  if(!prior)f.processes.finish(id,'completed','turn:'+turn+':terminal:completed');
  };
 
  return {...f,send,agentId,actor,consume,task};
@@ -107,7 +109,7 @@ test('main queue: automatic receipt cannot release a live or unknown main proces
   const claimed=f.inputs.claim([],'all')!;
   f.processes.start({id:'live-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[worker.messageId],messageId:'live-process'},'live-turn');
   f.consume(claimed);
-  assert.equal(f.inputs.claim([],'all'),undefined,'a processed receipt does not end the actual turn');
+  assert.equal(f.inputs.claim([],'all'),undefined,'a received receipt does not end the actual turn');
   f.processes.finish('live-process','unknown');assert.equal(f.inputs.claim([],'all'),undefined);
   f.processes.reconcileUnknown('synthetic-history',true);
   assert.equal(f.processes.exact('live-process')!.status,'unknown');
@@ -123,24 +125,24 @@ test('main queue: recovery inspection reads only previously claimed closed input
  const f=fixture();try{
   const prior=f.send('prior'),later=f.send('later'),claimed=f.inputs.claim([],'all')!;
   f.processes.start({id:'failed-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[prior.messageId],messageId:'failed-process'},'failed-turn');
-  f.store.db.prepare("UPDATE agent_receipts SET state='blocked' WHERE messageId=?").run(prior.messageId);
+  f.store.transaction(()=>f.tasks.receiveMainMessagesInTransaction([prior.messageId],'failed-turn'));
   assert.deepEqual(f.inputs.recoveryMessages(),[]);
   f.processes.finish('failed-process','failed','turn:failed-turn:terminal');
   const before=f.store.db.prepare('SELECT total_changes() n').get()!.n;
   assert.deepEqual(f.inputs.recoveryMessages().map(message=>message.id),[prior.messageId]);
   assert.equal(f.store.db.prepare('SELECT total_changes() n').get()!.n,before);
-  f.store.transaction(()=>f.tasks.completeMainMessagesInTransaction([prior.messageId,later.messageId],'unrelated-turn'));
+  assert.throws(()=>f.store.transaction(()=>f.tasks.receiveMainMessagesInTransaction([prior.messageId,later.messageId],'unrelated-turn')),/identity_conflict/);
   assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(later.messageId)!.state,'pending');
-  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(claimed.messageId)!.state,'blocked');
+  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(claimed.messageId)!.state,'received');
   assert.equal(f.inputs.claim([],'all')!.messageId,later.messageId);
  }finally{f.close();}
 });
-for(const state of ['blocked','uncertain'] as const)test('recovery retains exact closed evidence and honors startup source boundary: '+state,()=>{
+for(const state of ['received','uncertain'] as const)test('recovery retains exact closed evidence and honors startup source boundary: '+state,()=>{
  const f=fixture();try{
   const prior=f.send('old-recovery');f.inputs.claim([],'all');
   f.processes.start({id:'old-process',threadId:'synthetic-history',sourceKind:'worker',sourceMessageIds:[prior.messageId],messageId:'old-process'},'old-turn');
   f.store.db.prepare('UPDATE agent_receipts SET state=? WHERE messageId=?').run(state,prior.messageId);
-  f.processes.finish('old-process',state==='blocked'?'failed':'unknown','host:restart:engine_closed');
+  f.processes.finish('old-process',state==='received'?'failed':'unknown','host:restart:engine_closed');
   const pending=f.send('old-pending'),cutoff=Number(f.store.db.prepare('SELECT max(seq) n FROM agent_messages').get()!.n);
   const inputs=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff});
   const messages=inputs.recoveryMessages();assert.deepEqual(messages.map(message=>message.id),[prior.messageId]);
