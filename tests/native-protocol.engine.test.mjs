@@ -1,3 +1,4 @@
+import './fixtures/synthetic-home.mjs';
 // Explicit fixed-native acceptance; synthetic providers and fresh HOME only.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

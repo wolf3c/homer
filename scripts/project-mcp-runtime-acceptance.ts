@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Explicitly authorized isolated native threads. No turn or model request.
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync} from 'node:fs';

@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Actual fixed Codex + scripted loopback Responses. All projects, HOME, notes,
 // threads and child agents are synthetic. No account or paid model is used.
 import {createServer} from 'node:http';import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,existsSync} from 'node:fs';import {join,resolve} from 'node:path';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {CodexEngine} from '../src/engine.js';

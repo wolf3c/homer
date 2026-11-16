@@ -1,3 +1,4 @@
+import './synthetic-home.mjs';
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
 

@@ -18,6 +18,22 @@
 
 网站向公开配置接口和 PKCE 兑换返回同一套经过校验的配置。主 Agent 与 Worker 各自声明运行参数。字段、取值和能力校验见[会员配置契约](../2026-11-04-membership-context-config.md#通用边界与能力)。
 
+## 真实 HOME 与独立 CODEX_HOME（2026-11-16）
+
+源码候选将正式桌面的 `HOME` 改为系统 `userInfo().homedir`；Windows 的 `USERPROFILE` 与之保持一致。Electron 启动 runtime，runtime 校验并重建环境，Main／Worker／账号控制连接继续传递这个 HOME。测试 profile 仍使用 `profile/host-home`，独立测试及诊断入口使用新建的合成 HOME，不读取真实用户的工具配置。
+
+`CODEX_HOME` 仍指向 Homer 原来的专属 Codex 目录，账号、原生配置、历史、runtime 和附件不迁移、不复制；旧 `host-home` 保留。不会采用普通 `HOME/.codex/auth.json` 作为 Homer 登录。Git 等工具现在可以按自身规则读取真实 HOME 下的配置，仓库本地配置、`includeIf` 及系统配置仍遵循工具自身的优先级；没有配置身份时仍可能无法提交，不增加默认身份或自动写入。
+
+引擎启动前要求 HOME 是已存在的绝对目录，仅创建自身的 CODEX_HOME。除了 App Server 的进程环境，还显式设置原生 `shell_environment_policy.set.HOME / CODEX_HOME`（Windows 加 `USERPROFILE`）：隔离原生测试已证明，单独设置 App Server 的 HOME，在 `inherit=none` 下不能保证实际命令使用该 HOME。现有环境过滤和提供方令牌排除保留，其余 shell 设置不覆盖。
+
+HOME 是工具环境，cwd 与项目根仍沿原有规则；本次不更改文件权限、审批、trust 或 Worker 工具接口。普通 `HOME/.codex/config.toml` 不成为独立 CODEX_HOME 的用户配置，但在无 Git 且以真实主目录兜底根的场景，它仍可能按原生规则成为祖先项目配置；是否加载取决于原有项目边界与信任，不额外绕过或屏蔽。
+
+独立 CODEX_HOME 不表示所有用户上下文隔离。固定 0.171 仍发现 `$CODEX_HOME/skills` 和 `$HOME/.agents/skills`；主目录进入项目配置层时，其 `.codex/skills` 也可能作为项目 Skill 来源。全局 AGENTS 从 CODEX_HOME 获取，`HOME/AGENTS.md` 仅在项目根到 cwd 的路径包含主目录时参与；Homer 仓库的 `.git` 根会截断上层项目指令。根准备只接入 Worker，Main 继续按自身 cwd 与原生配置发现，不因 HOME 改动自动继承 Worker 的兜底根。这里不新增过滤或自动禁用用户 Skill。依据见[固定版本 Skill 根解析](https://github.com/openai/codex/blob/rust-v0.171.0-alpha.7/codex-rs/ext/skills/src/host_roots.rs)及[宿主接线](../../src/service.ts)。
+
+早期独立 0.163 候选的 HOME 原生 5/5、目录原生 10/10 通过。随后在完整冻结的 `0.171.0-alpha.7` 候选上重新构建，HOME 原生 8/8、目录原生 10/10、生产绑定／旧版续办 6/6 及完整类型检查通过；旧历史包含真实 0.163 引擎与原适配器生成的 Main／Worker。核对原线程、历史字节前缀、附件及账号文件保全，比较 Main／Worker 的实际完整权限快照，并实际验证目录外写入、命令联网仍被拒绝。控制连接只采用自身合成账号，不回退普通 HOME 的账号。所有模型响应来自本地替身，目录驱动仅零付费自检；未再修改 HOME 运行实现，未操作日常实例。命令、源码／引擎摘要及未验证边界见[0.171 HOME 补验](../testing.md#0171-home-补验2026-11-16)，不替代整个升级或安装版验收。
+
+剩余 HOME 片段按当前 main 单独整理，本地提交候选的定向离线 490/490、服务编译及 16 份 MJS 语法检查通过；复用上述原生和冻结全量证据，不重复下载或运行引擎。共用已提交测试与其他工作区修改保持独立，详见[提交整理记录](../testing.md#home-剩余改动提交整理2026-11-16)。日常安装版及真实账号验收边界不变。
+
 ## Codex 0.171 升级候选（2026-11-16）
 
 源码固定为 `0.171.0-alpha.7`，会员 GPT-6.1 家族目录启用 `code_mode_only`，DeepSeek 仍为 `tool_mode: null`；未安装或重启日常 Homer。新版原生恢复禁止切换供应商，因此同来源继续 resume，ChatGPT／会员跨来源使用原生 fork，Homer 会话、任务、Worker 和历史关联保持原身份。

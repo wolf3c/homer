@@ -1003,6 +1003,7 @@ try{
  if(args.includes('--deepseek-profile')||args.includes('--deepseek')||args.filter(arg=>arg==='--deepseek-daily').length>1||args.filter(arg=>arg==='--native').length>1||native&&args.includes('--deepseek-daily'))throw Error('desktop_explicit_profile_required');
  if(preparation&&!test)throw Error('desktop_preparation_profile_required');
  const profile=test?resolve(args[at+1]):process.platform==='win32'?join(app.getPath('appData'),'Homer Desktop'):join(userInfo().homedir,'Library/Application Support/Homer Desktop');
+ const userHome=test?join(profile,'host-home'):userInfo().homedir;
  if(!test&&!daily&&!existsSync(join(profile,'desktop-adoption.json')))throw Error('desktop_existing_account_required');
  const paths=prepareDesktopProfile(profile,manifest,{test,initialize:daily});
  if(daily||native){dailyTokenFile=join(paths.adoption?.appData??profile,'runtime-config.json');desktopProfile=profile;modelSource=readDesktopModelSource(profile,daily?'website':'codex');}
@@ -1034,7 +1035,7 @@ try{
   createWindow();
   if(dailyTokenFile){try{connection=readHomerConnection(dailyTokenFile,accountBoundary());}catch(error){connection=null;connectionError=accountCode(error);}await syncHomerConfig('startup');activeConnection=connectionReady(connection)?connection:null;}
   if(daily&&modelSource==='website'&&activeConnection&&accountOrigins)void accountActions.refresh();
-  const runtime=spawn(process.platform==='win32'?join(resources,'node.exe'):join(bundle,'Contents/MacOS/node'),['--disable-warning=ExperimentalWarning',join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',profile,...(test?['--test-profile']:[]),...(deepseek?['--deepseek-daily']:[])],{cwd:profile,env:{...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,LOCALAPPDATA:process.env.LOCALAPPDATA,APPDATA:app.getPath('appData'),USERPROFILE:join(profile,'host-home'),TEMP:join(profile,'tmp'),TMP:join(profile,'tmp')}:{ }),PATH:process.platform==='win32'?resources+';'+join(process.env.SystemRoot,'System32'):join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','ignore',...(deepseek?['pipe']:[])]});
+  const runtime=spawn(process.platform==='win32'?join(resources,'node.exe'):join(bundle,'Contents/MacOS/node'),['--disable-warning=ExperimentalWarning',join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',profile,...(test?['--test-profile']:[]),...(deepseek?['--deepseek-daily']:[])],{cwd:profile,env:{...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,LOCALAPPDATA:process.env.LOCALAPPDATA,APPDATA:app.getPath('appData'),USERPROFILE:userHome,TEMP:join(profile,'tmp'),TMP:join(profile,'tmp')}:{ }),PATH:process.platform==='win32'?resources+';'+join(process.env.SystemRoot,'System32'):join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:userHome,TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','ignore',...(deepseek?['pipe']:[])]});
   if(deepseek){runtime.stdio[3].on('error',()=>{});runtime.stdio[3].end(JSON.stringify(activeConnection));}
   child=runtime;let buffer='';
   runtime.stdin.on('error',()=>{});

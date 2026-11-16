@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Fixed 0.171.0-alpha.7 project-layer acceptance. Default mode has no native thread,
 // accounts, model turns or external MCP. Trust is prewritten fixture data only.
 import assert from 'node:assert/strict';

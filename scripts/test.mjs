@@ -16,6 +16,7 @@ const suites={
  'desktop-codesign':['desktop-update-codesign.test.mjs'],
  'prompt-resume':['native-main-tools-resume.test.mjs','native-main-prompt-resume.test.mjs'],
  'directory-native':['worker-directory-context.engine.test.mjs'],
+ 'home-native':['user-home.engine.test.mjs'],
  'local-media':candidates.filter(file=>/\.local-media\.test\.(ts|mjs)$/.test(file)),
  'live-transport':['native-history-transport.live.test.mjs'],
  engine:["member-code-mode.live.test.mjs","native-thread-continuity.engine.test.ts","native-plugin-shutdown.engine.test.mjs","usage-optimization.engine.test.ts","main-mailbox-recovery.engine.test.ts","native-protocol.engine.test.mjs","channel-native.engine.test.ts","scheduled-native.engine.test.ts","deepseek-continuation.test.ts","deepseek-pinned.test.ts","desktop-source-resume.test.mjs","native-membership-websocket.engine.test.mjs","homer-account-native.test.mjs","native-memory-defaults-offline.test.mjs"],
@@ -50,9 +51,9 @@ const files=(['browser','power-browser'].includes(suite)?suites[suite]:candidate
 if(!files.length)throw Error('test_suite_empty: '+suite);
 if(suite==='core'){
  console.error('[homer-tests] Local media integration: not run / unverified. Run npm run test:local-media with the documented local tools.');
- console.error('[homer-tests] Other explicit suites not run / unverified: '+Object.keys(suites).filter(name=>name!=='local-media').map(name=>name.startsWith('power-')||['browser','cua-windows','desktop-codesign','directory-native'].includes(name)?'node scripts/test.mjs --'+name:'npm run test:'+(name==='desktop'?'desktop:acceptance':name)).join(', '));
+ console.error('[homer-tests] Other explicit suites not run / unverified: '+Object.keys(suites).filter(name=>name!=='local-media').map(name=>name.startsWith('power-')||['browser','cua-windows','desktop-codesign','directory-native','home-native'].includes(name)?'node scripts/test.mjs --'+name:'npm run test:'+(name==='desktop'?'desktop:acceptance':name)).join(', '));
 }else console.error('[homer-tests] Explicit '+suite+' suite: skipped or not-run checks remain unverified; exit 0 alone is not acceptance.');
-const preload=suite==='core'?['--import',new URL('../tests/fixtures/core-system-proxy.mjs',import.meta.url).href]:[];
+const preload=['--import',new URL('../tests/fixtures/synthetic-home.mjs',import.meta.url).href,...(suite==='core'?['--import',new URL('../tests/fixtures/core-system-proxy.mjs',import.meta.url).href]:[])];
 const env={...process.env};
 if(suite==='core')for(const key of ['HOMER_MCP_ENGINE_MODULE','HOMER_MCP_SERVICE_MODULE','HOMER_RECEPTION_SOURCE'])delete env[key];
 const child=spawn(process.execPath,[...preload,'--import','tsx','--test','--test-concurrency=1',...process.argv.slice(suite==='core'?2:3),...files],{stdio:'inherit',env});

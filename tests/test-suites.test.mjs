@@ -14,6 +14,7 @@ function fixture(t){
  // The runner loads this only for core; specialist fixtures must remain untouched.
  const proxyFixture=resolve('tests/fixtures/core-system-proxy.mjs');
  copyFileSync(proxyFixture,join(root,'tests/fixtures/core-system-proxy.mjs'));
+ copyFileSync(resolve('tests/fixtures/synthetic-home.mjs'),join(root,'tests/fixtures/synthetic-home.mjs'));
  symlinkSync(resolve('node_modules'),join(root,'node_modules'),'dir');
  t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(name,body)=>writeFileSync(join(root,'tests',name),body);
@@ -74,6 +75,7 @@ test('empty optional suite fails explicitly and desktop acceptance still require
 // Audited ownership: optional environment settings must never activate these through npm test.
 const explicitSuites={
  "directory-native": ["worker-directory-context.engine.test.mjs"],
+ "home-native": ["user-home.engine.test.mjs"],
  "live-transport": ["native-history-transport.live.test.mjs"],
  "desktop-codesign": ["desktop-update-codesign.test.mjs"],
  "engine": [
@@ -156,6 +158,18 @@ test('skipped prerequisite checks never get an acceptance-passed claim',t=>{
  const result=f.run('--engine');assert.equal(result.status,0,result.stdout+result.stderr);
  assert.match(result.stdout,/# skipped 1/);assert.match(result.stderr,/skipped.*unverified/i);
  assert.doesNotMatch(result.stderr,/acceptance passed/i);
+});
+
+test('core and explicit suites give their test subprocesses a fresh synthetic HOME and separate CODEX_HOME',t=>{
+ const f=fixture(t),body=`import {test} from 'node:test';import assert from 'node:assert/strict';import {existsSync} from 'node:fs';
+ import {execFileSync} from 'node:child_process';
+ test('synthetic user environment',()=>{
+  assert.ok(process.env.HOME.startsWith(${JSON.stringify(join(f.root,'.codex/scratch/test-user-homes'))}));
+  assert.ok(existsSync(process.env.HOME));assert.ok(existsSync(process.env.CODEX_HOME));assert.notEqual(process.env.HOME,process.env.CODEX_HOME);
+  assert.equal(execFileSync(process.execPath,['-p','process.env.HOME'],{encoding:'utf8'}).trim(),process.env.HOME);
+ });`;
+ f.put('core.test.mjs',body);f.put('homer-account-native.test.mjs',body);
+ for(const args of [[],['--engine']]){const result=f.run(...args);assert.equal(result.status,0,result.stdout+result.stderr);}
 });
 
 test('core substitutes only system proxy discovery; explicit suites retain their environment',t=>{

@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Fixed 0.163 native local plugin lifecycle; empty HOME, no model/auth/network.
 import {CodexEngine}from '../src/engine.js';
 import{mkdirSync,mkdtempSync,writeFileSync,rmSync}from'node:fs';import{resolve,join}from'node:path';import assert from'node:assert/strict';

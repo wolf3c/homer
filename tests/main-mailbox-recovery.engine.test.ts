@@ -1,3 +1,4 @@
+import './fixtures/synthetic-home.mjs';
 // Opt-in real Main model, synthetic history/Worker callbacks. One business turn per case.
 import test from 'node:test';
 import assert from 'node:assert/strict';

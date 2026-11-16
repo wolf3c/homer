@@ -1,3 +1,4 @@
+import './fixtures/synthetic-home.mjs';
 // Opt-in pinned binary check: fresh synthetic HOME and scripted loopback responses.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

@@ -11,8 +11,8 @@ import {
 } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
-import { mkdirSync, existsSync, realpathSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, existsSync, realpathSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve, isAbsolute } from "node:path";
 import type { Config } from "./config.js";
 import { effectiveEffort, effectiveFast, type ModelRole } from "./model-config.js";
 import {usesHomerNativeHome,effectiveModelConfig,configuredWebSearchMode} from "./config.js";
@@ -424,6 +424,9 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     this.websocketSupported=false;
     if(this.failureChecks.signal.aborted)this.failureChecks=new AbortController();
     if (!usesHomerNativeHome(this.config)) throw Error("engine_native_tools_home_required");
+    const userHome=process.env.HOME;
+    try{if(!userHome||!isAbsolute(userHome)||!statSync(userHome).isDirectory())throw Error();}
+    catch{throw Error('engine_home_unavailable');}
     const preparationSignal=this.failureChecks.signal;
     const sourceSnapshot=this.sourceSnapshot(this.config);
     let forking=false;
@@ -454,6 +457,10 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       "features.unbounded_connection_retries": false,
       "analytics.enabled": false,
       "feedback.enabled": false,
+      // Command snapshots and inherit=none must retain the host-selected profile paths.
+      "shell_environment_policy.set.HOME": userHome,
+      "shell_environment_policy.set.CODEX_HOME": this.config.codexHome,
+      ...(process.platform==='win32'?{"shell_environment_policy.set.USERPROFILE":userHome}:{}),
       model: this.config.model,
       model_provider: "openai",
     };
@@ -512,18 +519,18 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     ];
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      HOME: join(this.config.codexHome,"host-home"),
+      HOME: userHome,
       TMPDIR: process.env.TMPDIR,
       LANG: process.env.LANG,
       CODEX_HOME: this.config.codexHome,
-      ...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TEMP,USERPROFILE:join(this.config.codexHome,'host-home')}:{ }),
+      ...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TEMP,USERPROFILE:userHome}:{ }),
       ...proxy,
     };
     if((this.config.desktopModelSource==='codex'||this.membershipWebSocket)&&!this.options.controlOnly){env.LOG_FORMAT='json';env.RUST_LOG='error,codex_otel.trace_safe=info';}
     if(this.historyBridge){env.NO_PROXY=[proxy.NO_PROXY??proxy.no_proxy,'127.0.0.1'].filter(Boolean).join(',');env.no_proxy=env.NO_PROXY;}
     if (this.config.keyEnv)
       env[this.config.keyEnv] = this.config.desktopModelSource==='website'?this.websiteToken:process.env[this.config.keyEnv];
-    mkdirSync(env.HOME!,{recursive:true,mode:0o700});
+    mkdirSync(this.config.codexHome,{recursive:true,mode:0o700});
     const child = this.child = spawn(this.config.codexBin, args, {
       cwd: this.options.cwd,
       env,

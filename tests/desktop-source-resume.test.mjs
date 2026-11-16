@@ -1,3 +1,4 @@
+import './fixtures/synthetic-home.mjs';
 // Explicit opt-in: fixed Codex, synthetic credentials, isolated HOME and loopback Responses only.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

@@ -90,6 +90,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  const powerSource=transpileModule(readFileSync('src/desktop-power.ts','utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
  modules['../homer/dist/desktop-power.js']=await import('data:text/javascript;base64,'+Buffer.from(powerSource).toString('base64'));
  Object.assign(account,native.accountApi);
+ modules['node:os']={userInfo:()=>({homedir:native.userHome??(platform==='win32'?'C:\\Synthetic User':'/synthetic/user')})};
  let timer;const context=vm.createContext({process:{argv:['Homer','--test-profile','/synthetic/profile'],resourcesPath:'/synthetic/Homer.app/Contents/Resources',platform:'darwin',execPath:'C:\\Homer\\Homer.exe',arch:native.arch??'arm64',env:{SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'}},Buffer,URL,AbortController,console:native.console??console,performance:{now:()=>monotonic},setTimeout:cb=>{timer=cb;return 1;},clearTimeout(){}});
  context.process.argv=args;context.process.platform=platform;
  const path=resolve('packaging/electron/main.mjs');
@@ -107,6 +108,22 @@ if(!vm.SourceTextModule){
   assert.match(output,/# tests [1-9]\d*/);
  });
 }else{
+
+for(const platform of ['darwin','win32'])test('formal '+platform+' startup passes the system user home while retaining profile-local cache and temp',async()=>{
+ const userHome=platform==='win32'?'C:\\Synthetic User':'/synthetic/Real User';
+ const f=await fixture(['Homer'],undefined,platform,{published:true,userHome});
+ assert.equal(f.spawnCount(),1);const launch=f.launches[0],profile=launch.options.cwd;
+ assert.equal(launch.options.env.HOME,userHome);
+ assert.equal(launch.options.env.USERPROFILE,platform==='win32'?userHome:undefined);
+ assert.equal(launch.options.env.TMPDIR,join(profile,'tmp'));
+ assert.equal(f.paths.get('userData'),join(profile,'host-home/electron'));
+ assert.equal(f.paths.get('sessionData'),join(profile,'host-home/electron'));
+});
+for(const platform of ['darwin','win32'])test('test '+platform+' startup uses the synthetic profile home even when the OS home differs',async()=>{
+ const profile='/synthetic/qa profile',f=await fixture(['Homer','--test-profile',profile],undefined,platform,{userHome:'/synthetic/unused-real-user'});
+ assert.equal(f.spawnCount(),1);assert.equal(f.launches[0].options.env.HOME,join(profile,'host-home'));
+ assert.equal(f.launches[0].options.env.USERPROFILE,platform==='win32'?join(profile,'host-home'):undefined);
+});
 
 test('desktop home lock serializes different profiles and runtimes while caches remain profile-local',async()=>{
  const locks=new Set(),codexHome='/synthetic/shared-home';

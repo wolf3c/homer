@@ -12,6 +12,7 @@ const [sourcePath, targetPath] = process.argv.slice(2);
 if (!sourcePath || !targetPath) throw new Error('explicit_source_and_target_configs_required');
 const source = loadConfig(sourcePath);
 const target = loadConfig(targetPath);
+await import(new URL('../tests/fixtures/synthetic-home.mjs',import.meta.url).href);
 for (const field of ['codexHome', 'baseUrl', 'keyEnv', 'requiresOpenaiAuth'] as const)
   assert.equal(target[field], source[field], 'account_boundary_must_match');
 const base = resolve('.codex/scratch/model-switch-' + Date.now());

@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Fixed binary + loopback scripted Responses; no real account, login or plugin installation.
 import {createServer} from 'node:http';
 import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';

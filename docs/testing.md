@@ -2,6 +2,92 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## 真实 HOME 与独立 CODEX_HOME（2026-11-16）
+
+默认 runner 为每个测试进程预载 `tests/fixtures/synthetic-home.mjs`，新建合成 HOME 和独立 CODEX_HOME，子进程随之继承；直接使用 `core-system-proxy.mjs` 的离线入口也预载同一夹具。显式原生测试及诊断入口各自保留合成 HOME。测试 profile 的桌面入口和 runtime 继续使用 `profile/host-home`；正式入口的系统目录来自受信任 `userInfo()`，VM 测试用合成系统用户信息，不访问日常 profile。缺失、相对、不存在或非目录 HOME 均在引擎启动前拒绝，不自动创建任意用户目录。
+
+相关离线入口（项目 Node22.22.0）：
+
+```sh
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx \
+  --experimental-vm-modules --test --test-concurrency=1 \
+  tests/engine-user-home.test.ts tests/desktop-user-home.test.mjs \
+  tests/electron-shell.test.mjs tests/desktop-update-runtime.test.mjs \
+  tests/project-mcp-engine.test.ts tests/test-suites.test.mjs
+npm run typecheck
+npm test
+```
+
+HOME 原生检查登记为独立 `home-native`，默认 `npm test` 不运行，必须显式提供与源码候选匹配的固定二进制及已构建 service。当前夹具要求 macOS，不能用跳过代替 Windows 验收：
+
+```sh
+npm run build:service
+HOMER_TEST_SERVICE_MODULE=file:///absolute/candidate/dist/service.js \
+HOMER_TEST_CODEX_BIN=/absolute/path/to/candidate-pinned/codex \
+node scripts/test.mjs --home-native
+```
+
+专项只在新建的系统临时目录中使用合成 `.gitconfig`、账号文件、AGENTS、原生配置、历史和附件；独立回环 Responses 返回合成 SSE，不连接真实账号或模型。原生命令用只读 fixture 权限，配置 `inherit=none`，核对实际命令的 HOME／CODEX_HOME、Git 作者与提交者可解析、仓库局部覆盖、子目录、Git worktree 及无 Git 边界。提供方令牌不得进入命令环境；原有自定义 shell 设置保留，目录外写入必须失败。探针发现 HOME 超出允许的两个合成目录时不执行 Git，防止回归时读取真实身份。
+
+旧会话先在合成旧 host-home 下执行真实原生命令并持久化，再以新 HOME 恢复：Main 通过实际 Homer 启动路径，Worker 通过同一个原生 thread ID。核对原历史文件完整字节前缀、附件、动态工具声明和 cwd 保留；当前夹具同时比较 Main／Worker 的实际原生权限档、sandbox、审批策略、审核者及选中的文件系统／网络配置，不能比较两份缺失值。控制连接仅从独立 CODEX_HOME 读取用户配置与账号，不生成模型轮次。确认所有者退出后才核对保全摘要并回收夹具。下述早期 0.163 记录只比较权限档与审批策略，完整快照检查在 0.171 补验时加入。
+
+2026-11-16：从 `22a21bcee59b5b472be0042d66e12725319d00c8` 导出独立副本，只叠加 HOME 相关实现和测试差异；不混入共享工作区继续进行的 0.171 升级、用量／权限、渠道或 UI 改动。Node22.22.0／Codex0.163.0 下服务构建、完整类型检查、上述六文件定向离线 **488/488** 和 17 份 MJS 语法检查通过；HOME 原生 **5/5**、原有目录原生 **10/10** 通过，零取消／跳过，全部为本地合成上游。目录专项同时验证旧 Main 的完整、压缩与检查点缺失历史，以及原生项目根／指令／配置／信任的边界。冻结的 36 份实现／测试文件，按相对路径和文件字节排序计算 SHA-256（每项为路径、NUL、内容、NUL）：`8ea13b43894e6cf03eac29d1372b3feef81cbdb9be220282eb2c10bdfe26178a`。
+
+完整默认核心最后一轮为 **2536/2539**，零取消／跳过，不能声明全绿。两项 `message-image-preview.test.mjs` 失败在未叠加 HOME 改动的同一 HEAD、相同 Node／依赖中复现为 **1/3**。另一项旧回执 CLI 检查因本轮自检准备在测试副本中创建了 0755 的私有父目录而正确拒绝；仅将该合成父目录改为 0700 后，`main-receipt-transition.test.mjs` 整文件 **9/9** 通过，未放宽权限断言，此后没有再跑完整核心。第一轮另因深层副本超出 macOS Unix socket 路径上限中断 Windows 电源夹具；缩短副本路径后该文件 **8/8** 通过，最终全量中的该文件也全部通过，没有更改电源实现或断言。
+
+首轮原生检查证实仅传 App Server 的 HOME 不足，`inherit=none` 下实际命令回退到了系统 HOME；探针当场停止 Git 读取。显式传入原生命令路径后通过，未放宽权限或环境过滤。尝试给测试原生进程再包一层 OS 沙箱曾导致 `engine_permission_failed`，该夹具实验不计为产品回归；去掉额外层后沿原生沙箱验收。离线全量首次揭示旧 Windows runtime VM 缺 USERPROFILE，按新入口契约补齐合成字段，保留原停止确认与 owner 释放断言。
+
+目录付费验证驱动只运行 `--self-check`：合成文件可读、目录外不可读、写入被拒、token 计量及确认退出通过，付费 trials 为零，没有提供授权文件。两次夹具准备分别被源码范围检查和缺少相对脚本依赖拒绝，均在原生启动前；补齐独立副本的布局后通过，未修改范围检查或运行代码。历史六份目录 LLM 报告与基线逐字节相同。最终差异检查通过，原有三个 UI 暂存文件的补丁摘要未变；不提交本轮文件，也不处理并行任务的修改。
+
+收尾已确认测试所有者退出，回收隔离源码／基线副本、构建、合成 HOME／CODEX_HOME／runtime、日志和备份，逻辑大小约 163 MiB；共享依赖、固定原生二进制及日常资料保留。仅在本任务 scratch 留约 60 KiB 的 HOME 候选补丁与归属清单，供当前未提交改动复核；本轮改动完成审查并提交或明确撤销后删除，不作为运行依赖。验证结论及可重复入口以上述维护文档和测试源码为准。
+
+上述 0.163 阶段未安装或重启日常 Homer，不迁移、复制或删除日常账号、历史、runtime、附件或旧 host-home。没有付费 LLM 调用、提交、推送或部署。Windows 仅有 VM／协议证据；0.171 升级候选、本机真实 Git 配置／提交、真实账号／模型和安装验收不在当时结论内。正式环境及原生项目配置边界见[架构正文](architecture/account-and-model-connection.md#真实-home-与独立-codex_home2026-11-16)，当前候选补验如下。
+
+### 0.171 HOME 补验（2026-11-16）
+
+复核当前 `0.171.0-alpha.7` 候选，未再修改 HOME 运行实现。正式 Electron → runtime → Main／Worker／控制连接仍传真实系统 HOME；测试使用合成 HOME，专属 CODEX_HOME 和数据路径保持。HOME 差异不增加目录扫描、刷新或权限覆盖；启动前的目录存在检查及环境传递不改变 cwd、原生项目根、trust 或审批选择。
+
+Node22.22.0／macOS ARM64 下，从完整冻结源码重新构建 service 后，HOME 原生 **8/8**、目录原生 **10/10**、生产绑定／旧版续办 **6/6**、Worker 门禁定向离线 **7/7** 通过，最终完整核心 **2737/2737**，均无失败、取消或跳过；服务构建及完整类型检查通过。冻结源清单 SHA-256 为 `7e539ca6a82729fe4d20fac52681e10f0f505e893b01ee9b8920173ef26fb71f`，算法为排序后的相对路径、NUL、该文件 SHA-256 的十六进制文本、NUL。它覆盖当时完整源码，不是前述 36 文件摘要。0.171 二进制 SHA-256 为 `4e37dbc4dcad2aa285e1d246823e0466ea62171a8dbd6d1684d77e9da3abcb2e`。
+
+| 补验范围 | 实际断言 |
+| --- | --- |
+| HOME 与账号 | `inherit=none` 下真实原生命令采用所选 HOME／CODEX_HOME，自定义 shell 设置保留，提供方令牌不下传。控制连接能读到独立 CODEX_HOME 的合成 API 账号；移除该账号后，即使普通 HOME 中存在另一账号仍返回未登录；两个账号文件与保留文件摘要不变 |
+| 旧 Main／Worker | 分别覆盖 0.171 同版旧 HOME 和真实 0.163 引擎／旧适配器生成的历史；恢复原线程、原 rollout 路径、完整历史字节前缀及原附件。Main 经实际 Homer 启动，保留动态工具和 Store 指针；Worker 原生恢复，另以生产绑定专项覆盖旧版 Worker 续办 |
+| 目录与权限 | Main／Worker 恢复前后实际权限快照相等；命令目录外写入失败。先证明本地 HTTP 目标可达及 curl 可执行，再证明原生命令联网被拒。保留 Git 局部覆盖、子目录、linked worktree、无 Git 及用户主目录兜底；目录专项保留多级指令、配置／trust 和四种旧 Main 历史状态 |
+| 驱动自检 | 既有目录 LLM 驱动只运行 `--self-check`，核对可读／拒读／拒写、合成 token 计量、确认退出。旧 Main 原线程、历史、附件、工具和完整当前提示保留；提示恢复产生零模型请求，付费 trials 为零，未提供授权文件 |
+
+真实 0.163 旧历史的可重复入口要求同时提供旧固定二进制与旧版编译后的引擎模块；本次旧适配器来自 `22a21bcee59b5b472be0042d66e12725319d00c8` 原始导出，未叠加 HOME 或 0.171 改动。省略这对参数时 HOME 专项仅有同版的六例，不能声称验证过旧版本迁移：
+
+```sh
+HOMER_TEST_SERVICE_MODULE=file:///absolute/current-candidate/dist/service.js \
+HOMER_TEST_CODEX_BIN=/absolute/current-candidate/codex \
+HOMER_TEST_CODEX_BASELINE_BIN=/absolute/isolated-0.163/codex \
+HOMER_TEST_BASELINE_ENGINE_MODULE=file:///absolute/isolated-original-0.163/dist/engine.js \
+node scripts/test.mjs --home-native
+
+HOMER_TEST_CODEX_BIN=/absolute/current-candidate/codex \
+HOMER_TEST_PREVIOUS_CODEX_BIN=/absolute/isolated-0.163/codex \
+node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test \
+  --test-concurrency=1 --test-name-pattern='production (main|worker)|isolated 0.163' \
+  tests/native-thread-continuity.engine.test.ts
+```
+
+本轮修正测试观察边界：0.171 内部发送改走 `nativeRequest`，旧 spy 无法捕获真实权限，现要求快照非空并比较完整字段；测试及 LLM 驱动直接启动固定二进制，避免 shell `exec` 改变租约进程身份。目录历史种子使用生产支持的 `homer` provider，保留来源／线程校验；账号管理 fixture 与生产控制连接一致，原生目录请求也只指向本地替身。续办专项只忽略主动拒绝的 HTTP 426 握手连接上的预期 `ECONNRESET`，其他错误及所有业务断言保留。
+
+前序失败不计通过：不完整源码副本缺少 assets／mobile 的整轮作废；早期编译遇并行改动尚未接齐，后续完整快照已通过。一次原生续办出现上述预期连接重置，修正 fixture 后整组 6/6 通过。第一次完整核心为 2735/2736，失败是并行 Worker 签收失败红例；其所属修复纳入最终冻结源码后，门禁整组 7/7 通过。最后重跑期间共用临时引擎被另一任务清理，产生启动失败及取消；复制现有同摘要官方运行时到本任务目录后，HOME／目录整组重新通过，未安装任何程序。
+
+最终确认生产源、提示词与启动脚本和冻结候选一致。同期两个非 HOME 专项测试继续更新，追加当前专项分类定向 2/2 通过；共享 HEAD 因并行任务的独立提交变为 `e4b90213`，本轮未执行仓库 Git 写入，原三个 UI 暂存补丁摘要未变。确认测试所有者退出后，回收本任务源码／旧版副本、官方运行时副本、合成 HOME／CODEX_HOME／runtime、失败夹具和日志，合计约 532 MiB 逻辑体积；共享依赖、其他任务的固定引擎、日常数据与先前 HOME 归属材料保留。仅留本轮精简归属补丁与清单供未提交改动复核，审查提交或明确撤销后删除。
+
+上述隔离补验阶段未读取日常账号或真实 Git 身份，未迁移日常数据，未追加付费验证或执行提交、推送、部署、安装、重启。Windows 原生、真实 OAuth 刷新、真实模型行为及安装版效果仍未验证；本节的 API 账号和所有模型响应都是合成资料。真实 HOME 下用户级 Skill 的共享边界见[环境与账号边界](architecture/account-and-model-connection.md#真实-home-与独立-codex_home2026-11-16)，这些结果不能解释为全部用户上下文隔离，也没有验证真实仓库的提交。
+
+### HOME 剩余改动提交整理（2026-11-16）
+
+以本地 main 的 `860ca50a` 为基线，只提取尚未提交的 HOME 片段。目录上下文的 `423863e9`／`9a8c4487` 保持；`d0e46946` 已纳入合成 HOME 夹具、目录／续办共用测试及 Windows runtime 的合成 USERPROFILE，不重复纳入。共享文件保留原 HEAD 的其他行为，不混入工作区的渠道、UI、电源、模型默认值或测试清单删项；原有三个 UI 暂存文件保持独立。
+
+原生 HOME 专项、目录恢复、生产绑定／旧版续办及驱动的相关文件与已验版本逐字节一致，HOME 实现片段也保持；复用上述冻结候选的原生 8/8、10/10、6/6、零付费驱动自检、完整核心 2737/2737 和完整类型检查结果，未将其称为当前共享工作树的重新全量验收。新候选仅由该基线及 HOME 剩余片段组成，在无 Git 元数据的独立源码目录导出验证，复用项目依赖，不读取日常 profile。
+
+为核对当前 HEAD 的接合与共享片段分离，重新执行上述六文件定向离线 **490/490**、服务编译和 **16 份 MJS 语法检查**，均通过；定向测试零失败、取消、跳过。另核对独立暂存差异、原暂存摘要、原生已验文件摘要和敏感资料模式。没有重跑完整核心或原生专项，没有下载引擎、追加模型调用、安装、重启或修改日常 Homer 数据。构建与测试副本、两轮归属补丁／清单在本地提交确认后按任务收尾回收；维护测试与本记录保留，作为复现入口。
+
 ## Codex 0.171.0-alpha.7 源码升级
 
 2026-11-16：共享引擎、三平台官方包元数据、精确预发布版本握手和会员目录已接入源码。只有会员 GPT-6.1 家族生成 `tool_mode: code_mode_only`；DeepSeek 保持 `tool_mode: null`。ChatGPT／会员跨来源通过原生 fork 和 Homer 自有持久分支映射继续原 Homer 会话；同来源继续原生 resume。设计与维护成本见[跨来源兼容方案](superpowers/specs/2026-11-16-codex-0.171-provider-continuity-design.md)。

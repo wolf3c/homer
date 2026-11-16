@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Records the deliberately deferred local caller boundary, not authentication success.
 // Everything below is synthetic; no account, real user browser or data.
 import{mkdirSync,mkdtempSync,writeFileSync}from'node:fs';import{resolve,join}from'node:path';import{chromium}from'playwright-core';import assert from'node:assert/strict';import{createWebServer}from'../src/web-server.js';import{CodexEngine}from'../src/engine.js';

@@ -27,7 +27,7 @@ createInterface({input:process.stdin}).on('line',line=>{
  if(['thread/start','thread/resume'].includes(m.method))result={thread:{id:m.params.threadId??'synthetic-project-thread',modelProvider},modelProvider,activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy};
  if(m.method==='turn/start')result={turn:{id:'synthetic-turn'}};
  if(m.method==='mcpServerStatus/list')result={data:[{name:'homer_interactions',tools:Object.fromEntries((state.catalog??[]).map(name=>[name,{name}]))}]};
- if(m.method==='fixture/inspect')result={calls,argv:process.argv.slice(2),home:process.env.HOME,processCwd:process.cwd(),diagnostics:{format:process.env.LOG_FORMAT,filter:process.env.RUST_LOG}};
+ if(m.method==='fixture/inspect')result={calls,argv:process.argv.slice(2),home:process.env.HOME,codexHome:process.env.CODEX_HOME,userProfile:process.env.USERPROFILE,processCwd:process.cwd(),diagnostics:{format:process.env.LOG_FORMAT,filter:process.env.RUST_LOG}};
  if(m.method==='fixture/gate')gates.add(m.params.method);
  if(m.method==='fixture/release'){gates.delete(m.params.method);for(const pending of held.splice(0))if(pending.method===m.params.method)send(m.params.fail?{id:pending.id,error:{code:-1,message:'synthetic failure'}}:{id:pending.id,result:pending.result});else held.push(pending);}
  if(gates.has(m.method)){held.push({id:m.id,method:m.method,result});return;}

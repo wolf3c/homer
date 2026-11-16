@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Fixed native protocol on a fresh, unauthenticated HOME. No browser is opened,
 // no callback is followed, no model/thread, credentials or user HOME are read.
 import assert from 'node:assert/strict';import{mkdtempSync,mkdirSync,writeFileSync}from'node:fs';import{join,resolve}from'node:path';import{CodexEngine}from'../src/engine.js';import{NativeAccount}from'../src/native-account.js';

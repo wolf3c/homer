@@ -39,11 +39,12 @@ try{
  const args=process.argv.slice(2),at=args.indexOf('--profile');
  if(at<0||!args[at+1]||args.some((arg,index)=>index!==at+1&&!['--profile','--test-profile','--deepseek-daily'].includes(arg))||args.filter(arg=>arg==='--profile').length!==1||args.filter(arg=>arg==='--deepseek-daily').length>1)throw Error('desktop_explicit_profile_required');
  const profile=resolve(args[at+1]),test=args.includes('--test-profile'),daily=args.includes('--deepseek-daily');
+ const userHome=test?join(profile,'host-home'):userInfo().homedir;
  if(daily&&!test&&profile!==(windows?join(process.env.APPDATA??'','Homer Desktop'):join(userInfo().homedir,'Library/Application Support/Homer Desktop')))throw Error('deepseek_profile_invalid');
  if(preparation&&!test)throw Error('desktop_preparation_profile_required');
- if(process.cwd()!==profile||process.env.HOME!==join(profile,'host-home')||process.env.TMPDIR!==join(profile,'tmp'))throw Error('desktop_environment_isolation_required');
+ if(process.cwd()!==profile||process.env.HOME!==userHome||windows&&process.env.USERPROFILE!==userHome||process.env.TMPDIR!==join(profile,'tmp'))throw Error('desktop_environment_isolation_required');
  // No inherited provider/account/config environment reaches the host.
- const env={...(windows?{SystemRoot:process.env.SystemRoot,TEMP:join(profile,'tmp'),TMP:join(profile,'tmp'),APPDATA:process.env.APPDATA,LOCALAPPDATA:process.env.LOCALAPPDATA,USERPROFILE:join(profile,'host-home')}:{ }),PATH:windows?resources+';'+join(process.env.SystemRoot,'System32'):join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:join(profile,'host-home'),TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'};
+ const env={...(windows?{SystemRoot:process.env.SystemRoot,TEMP:join(profile,'tmp'),TMP:join(profile,'tmp'),APPDATA:process.env.APPDATA,LOCALAPPDATA:process.env.LOCALAPPDATA,USERPROFILE:userHome}:{ }),PATH:windows?resources+';'+join(process.env.SystemRoot,'System32'):join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:userHome,TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'};
  for(const key of Object.keys(process.env))delete process.env[key];Object.assign(process.env,env);
  let connection;
  if(daily){

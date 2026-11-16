@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Fixed native tools + new HOME + scripted loopback Responses only.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';

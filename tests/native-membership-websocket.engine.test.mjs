@@ -1,3 +1,4 @@
+import './fixtures/synthetic-home.mjs';
 // Explicit fixed-engine acceptance: synthetic credentials and loopback only.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

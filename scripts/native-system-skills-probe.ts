@@ -1,3 +1,4 @@
+import '../tests/fixtures/synthetic-home.mjs';
 // Fixed native protocol, isolated HOME and loopback fake Responses only.
 // Never pass a daily HOME or credentials. No real model or database edits.
 import assert from 'node:assert/strict';

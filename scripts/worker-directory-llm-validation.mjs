@@ -8,6 +8,8 @@ import {userInfo,tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
 import {setTimeout as delay} from 'node:timers/promises';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
 
 const mode=process.argv[2],specFile=process.argv[3];
 assert.ok(['--paid','--self-check'].includes(mode)&&specFile,'explicit_mode_and_spec_required');
@@ -34,13 +36,18 @@ if(spec.legacyPromptsDirectory!==undefined){
 }
 const directoryRule=readFileSync(join(source,'prompts/main.md'),'utf8').split('\n').find(line=>line.includes('worker_open.workingDirectory'));
 assert.ok(directoryRule,'directory_rule_required');
-const model='gpt-6.1-terra',wrapper=join(profiles,'codex');
+const model='gpt-6.1-terra';
 const realHomeFallbackBefore=existsSync(join(userInfo().homedir,'.homer-project-root'));
-writeFileSync(wrapper,'#!/bin/sh\nexport LOG_FORMAT=json\nexport RUST_LOG=error,codex_otel.trace_safe=info\nexec '+JSON.stringify(bin)+' "$@"\n',{mode:0o700});chmodSync(wrapper,0o700);
 const root=realpathSync(mkdtempSync(join(process.platform==='darwin'?'/private/tmp':realpathSync(tmpdir()),'hmwd2-')));chmodSync(root,0o700);
 const home=join(root,'home'),workspace=join(home,'Main');
 const put=(p,text='')=>{const path=join(home,p);mkdirSync(dirname(path),{recursive:true,mode:0o700});writeFileSync(path,text,{mode:0o600});return path;};
 mkdirSync(workspace,{recursive:true});
+process.env.HOME=home;
+if(process.platform==='win32')process.env.USERPROFILE=home;
+// Keep tracing without a shell exec changing the native process lease identity.
+const spawn=childProcess.spawn;
+childProcess.spawn=(file,args,options)=>spawn(file,args,file===bin?{...options,env:{...options.env,LOG_FORMAT:'json',RUST_LOG:'error,codex_otel.trace_safe=info'}}:options);
+syncBuiltinESMExports();
 const known=['Documents','Desktop','Downloads'].map(n=>join(home,n));for(const p of known)mkdirSync(p,{recursive:true});
 const rules={
  'Projects/clients/星桥/AGENTS.md':'SYNTHETIC_CLIENT_RULE\n客户星桥的业务文档。',
@@ -82,7 +89,7 @@ function profile(id){
   'permissions.trial.filesystem='+toml({':root':'deny',':minimal':'read',[userInfo().homedir]:'deny','/bin':'read','/sbin':'read','/usr':'read','/System':'read','/opt/homebrew':'read',[home]:'read',[dirname(bin)]:'read'}),
   'permissions.trial.network.enabled=false',
  ].join('\n')+'\n',{mode:0o600});
- return {workspace,runtime,codexHome:codex,nativeCodexHome:codex,codexBin:wrapper,model,effort:'medium',serviceTier:null,fast:false,requiresOpenaiAuth:true,stopGraceMs:1000};
+ return {workspace,runtime,codexHome:codex,nativeCodexHome:codex,codexBin:bin,model,effort:'medium',serviceTier:null,fast:false,requiresOpenaiAuth:true,stopGraceMs:1000};
 }
 const numeric=n=>(typeof n==='number'||typeof n==='string'&&/^\d+$/.test(n))&&Number.isSafeInteger(Number(n))&&Number(n)>=0?Number(n):null;
 const probeModel='gpt-6.1-sol',probeText='Run the local synthetic verification.';
