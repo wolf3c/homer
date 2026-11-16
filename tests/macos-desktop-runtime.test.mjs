@@ -113,10 +113,11 @@ test('packaged desktop retains current history, uploads and the same thread acro
    assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
   }finally{db.close();}
   const profileMarker=join(root,'desktop-profile.json');
-  writeFileSync(profileMarker,JSON.stringify({...JSON.parse(readFileSync(profileMarker)),schema:'0a79d7312b9c'}));
-  const oldMarker=readFileSync(profileMarker);
+  writeFileSync(profileMarker,JSON.stringify({...JSON.parse(readFileSync(profileMarker)),schema:'0a79d7312b9c',codex:'0.163.0'}));
+  const oldMarker=readFileSync(profileMarker),oldAccount=readFileSync(join(root,'fixture-control.json'));
   run=launch(root);const next=await stateWhen(await run.url(),s=>s.upgrade.phase==='running');assert.equal(next.threadId,s.threadId);
   assert.deepEqual(readFileSync(profileMarker),oldMarker);
+  assert.deepEqual(readFileSync(join(root,'fixture-control.json')),oldAccount);
   assert.equal(readFileSync(join(root,'workspace/synthetic-retained'),'utf8'),'unchanged');
   const after=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});try{assert.deepEqual(after.prepare("SELECT id,text FROM conversation_messages WHERE requestId='synthetic-conversation' ORDER BY id").all(),before);}finally{after.close();}
   assert.equal(methods(root).filter(m=>m==='thread/start').length,1);assert.ok(methods(root).includes('thread/resume'));await run.stop();

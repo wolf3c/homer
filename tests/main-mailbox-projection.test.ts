@@ -8,6 +8,10 @@ import {MediaStore} from '../src/media-store.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
 import {readTaskOverview} from '../src/task-overview.js';
 import {workerStatus} from '../src/task-status.js';
+import {Homer} from '../src/service.js';
+import {NativeThreadBindings} from '../src/native-thread-bindings.js';
+import {freshMainReadiness} from '../scripts/native-fresh-main-preview.js';
+const {previewLegacyMainReceipts}=await import(new URL('../scripts/reconcile-main-receipts.mjs',import.meta.url).href);
 
 test('finished received inputs leave the active history index at cold initialization and incremental completion',()=>{
  const f=chatFixture();try{
@@ -87,5 +91,36 @@ for(const category of ['command','fileChange'] as const)test('closed native '+ca
   processes.native('native-process',{...event,status:'completed',completed:true});
   assert.equal(f.tasks.safeToUpgrade(),true,'a late exact native completion resolves only the effect, not the old processing result');
   assert.equal(processes.exact('native-process')!.status,'unknown');
+ }finally{f.close();}
+});
+
+for(const [name,nodePatch,itemPatch,safe] of [
+ ['same completed native turn',{},{},true],
+ ['different native turn',{endEventId:'turn:other:terminal:completed'},{},false],
+ ['host closure only',{endEventId:'host:engine_closed:effect'},{},false],
+ ['missing terminal',{endEventId:undefined},{},false],
+ ['missing tool turn',{},{turnId:undefined},false],
+ ['empty tool turn',{endEventId:'turn::terminal:completed'},{turnId:''},false],
+ ['active search',{state:'working'},{status:'running'},false],
+ ['running tool in historical node',{},{status:'running'},false],
+ ['blocked tool',{},{status:'blocked'},false],
+ ['command',{},{category:'command'},false],
+ ['file modification',{},{category:'fileChange'},false],
+ ['external tool',{},{category:'externalTool'},false],
+ ['image view',{},{category:'imageView'},false],
+] as const)test('historical search uncertainty across upgrade, fork and recovery checks: '+name,()=>{
+ const f=chatFixture();try{
+  new WorkerInteractions(f.store.db);const bindings=new NativeThreadBindings(f.store),processes=new MainProcessHistory(f.store.db),input=f.source('search-effect');
+  processes.start({id:'search-process',threadId:'thread:main',sourceKind:'user',sourceMessageIds:[input.messageId],messageId:'search-reply'},'native:search');
+  processes.native('search-process',{threadId:'thread:main',turnId:'native:search',itemId:'search-item',category:'webSearch',status:'running',completed:false});
+  processes.finish('search-process','completed','turn:native:search:terminal:completed');
+  const key='publicMainNode:v1:search-process',node=JSON.parse(f.store.meta(key)!);
+  Object.assign(node,nodePatch);Object.assign(node.items[0],itemPatch);const before=JSON.stringify(node);f.store.setMeta(key,before);
+  assert.equal(f.tasks.safeToUpgrade(),safe);
+  assert.equal((Homer.prototype as any).nativeForkAllowed.call({store:f.store,nativeThreads:bindings},'thread:main'),safe);
+  assert.equal(freshMainReadiness(f.store.db).pending.nativeEffects,safe?0:1);
+  f.store.setMeta('recursiveSchemaVersion','7');
+  assert.equal(previewLegacyMainReceipts(f.store.db).blocked.includes('native_effect_unconfirmed'),!safe);
+  assert.equal(f.store.meta(key),before,'readiness checks must not rewrite unknown history');
  }finally{f.close();}
 });

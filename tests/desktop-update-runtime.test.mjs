@@ -1,6 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync} from 'node:fs';
+import {join,resolve} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {EventEmitter} from 'node:events';
@@ -9,29 +11,30 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import {transpileModule,ModuleKind,ScriptTarget} from 'typescript';
-import {assertDesktopAdoptionLeasesRecoverable} from '../scripts/desktop-profile.mjs';
+import {assertDesktopAdoptionLeasesRecoverable,prepareDesktopProfile} from '../scripts/desktop-profile.mjs';
 const require=createRequire(import.meta.url),tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function link(source,modules,context,url){
  const entry=new vm.SourceTextModule(source,{context,initializeImportMeta:meta=>{meta.url=url;},importModuleDynamically:name=>synthetic(modules[name]??require(name))});
  async function synthetic(exports){const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [k,v]of Object.entries(exports))this.setExport(k,v);},{context});await m.link(()=>{});await m.evaluate();return m;}
  await entry.link(name=>synthetic(modules[name]??require(name)));return entry;
 }
-async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestArch=arch,manifestCodex='0.171.0-alpha.7',platform='darwin',powerHandler=async()=>true}={}){
- const events=[],powerCalls=[],stdin=new PassThrough(),profile='/fixture/profile',bundle='/fixture/Homer.app',resources=bundle+(platform==='win32'?'/resources':'/Contents/Resources'),homer=resources+'/homer';let complete,stopCalls=0;
+async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestArch=arch,manifestCodex='0.171.0-alpha.7',platform='darwin',powerHandler=async()=>true,profileRoot}={}){
+ const events=[],powerCalls=[],stdin=new PassThrough(),profile=profileRoot??'/fixture/profile',bundle='/fixture/Homer.app',resources=bundle+(platform==='win32'?'/resources':'/Contents/Resources'),homer=resources+'/homer';let complete,stopCalls=0;
  const digest=createHash('sha256').update('').digest('hex');
  const manifest={format:2,node:'22.22.0',codex:manifestCodex,arch:manifestArch,files:[],codeFiles:(platform==='win32'?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>({path,sha256:digest})),sourceHash:'synthetic-hash'};
  const proc={argv:['node','desktop-runtime','--profile',profile,'--test-profile'],version:'v22.22.0',arch,platform,execPath:platform==='win32'?resources+'/node.exe':bundle+'/Contents/MacOS/node',stdin,stdout:new Writable({write(bytes,_e,done){events.push(JSON.parse(String(bytes)));done();}}),env:{HOME:profile+'/host-home',USERPROFILE:profile+'/host-home',TMPDIR:profile+'/tmp',SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'},cwd:()=>profile};
  const modules={
-  'node:fs':{realpathSync:path=>path,existsSync:path=>path===profile+'/fixture-codex.mjs',readFileSync:path=>Buffer.from(path.endsWith('desktop-manifest.json')?JSON.stringify(manifest):path.endsWith('.homer-desktop-test-profile')?'{"format":1}':''),readdirSync:()=>[],lstatSync(){throw Error('unexpected_lstat');},mkdirSync(){},writeFileSync(){throw Error('unexpected_write');},closeSync(){}},
-  'node:sqlite':{DatabaseSync:class{constructor(){throw Error('unexpected_database');}}},
-  './desktop-profile.mjs':{prepareDesktopProfile:()=>({codexHome:profile+'/codex',workspace:profile+'/workspace',runtime:profile+'/runtime'}),assertDesktopAdoptionLeasesRecoverable,acquireDesktopOwner:(home,identity,runtime)=>{assert.equal(home,profile+'/codex');assert.equal(runtime,profile+'/runtime');assert.equal(identity(),'fixture-owner');return ()=>{events.push({kind:'owner-release'});if(releaseError)throw Error('desktop_owner_release_failed');};},desktopBoundary:()=> 'fixture',readDesktopModelSource:()=> 'codex',readDesktopChatGPTConfig:()=>undefined},
+  'node:fs':{realpathSync:path=>path,existsSync:path=>path===profile+'/fixture-codex.mjs'||!!profileRoot&&require('node:fs').existsSync(path),readFileSync:path=>Buffer.from(path.endsWith('desktop-manifest.json')?JSON.stringify(manifest):path.endsWith('.homer-desktop-test-profile')?'{"format":1}':''),readdirSync:()=>[],lstatSync(){throw Error('unexpected_lstat');},mkdirSync(){},writeFileSync(){throw Error('unexpected_write');},closeSync(){}},
+  'node:sqlite':{DatabaseSync:profileRoot?DatabaseSync:class{constructor(){throw Error('unexpected_database');}}},
+  './desktop-profile.mjs':{prepareDesktopProfile:profileRoot?prepareDesktopProfile:()=>({codexHome:profile+'/codex',workspace:profile+'/workspace',runtime:profile+'/runtime'}),assertDesktopAdoptionLeasesRecoverable,acquireDesktopOwner:(home,identity,runtime)=>{assert.equal(home,profile+'/codex');assert.equal(runtime,profile+'/runtime');assert.equal(identity(),'fixture-owner');return ()=>{events.push({kind:'owner-release'});if(releaseError)throw Error('desktop_owner_release_failed');};},desktopBoundary:()=> 'fixture',readDesktopModelSource:()=> 'codex',readDesktopChatGPTConfig:()=>undefined},
+  [new URL('dist/store.js','file://'+homer+'/').href]:await import('../src/store.ts'),
   [new URL('dist/processes.js','file://'+homer+'/').href]:{processIdentity:()=> 'fixture-owner',leaseOwnerGone:()=>{throw Error('unexpected_lease_probe');}},
   [new URL('dist/model-config.js','file://'+homer+'/').href]:{...await import('../src/model-config.ts'),PRODUCT_MODEL_DEFAULTS:{model:'fixture'}},
   [new URL('dist/mobile-gateway.js','file://'+homer+'/').href]:{readMobileConfig:()=>({})},
   './trusted-build.mjs':{verifyBuild(){}},
-  './dev.mjs':{runDev:async options=>{options.desktop.onHostSpawn();options.desktop.bindUpdateStop(()=>stopCalls++);options.desktop.bindPower?.(async(...args)=>{powerCalls.push(args);return powerHandler(...args);});return new Promise(resolve=>{complete=()=>resolve(result);});}},
+  './dev.mjs':{runDev:async options=>{if(profileRoot)assert.equal(options.fixedBuild.thread,'synthetic-retained-thread');options.desktop.onHostSpawn();options.desktop.bindUpdateStop(()=>stopCalls++);options.desktop.bindPower?.(async(...args)=>{powerCalls.push(args);return powerHandler(...args);});return new Promise(resolve=>{complete=()=>resolve(result);});}},
  };
- const context=vm.createContext({process:proc,Buffer,console});const entry=await link(readFileSync('scripts/desktop-runtime.mjs','utf8'),modules,context,'file://'+homer+'/scripts/desktop-runtime.mjs');const done=entry.evaluate();await tick();
+ const context=vm.createContext({process:proc,Buffer,console,Error});const entry=await link(readFileSync('scripts/desktop-runtime.mjs','utf8'),modules,context,'file://'+homer+'/scripts/desktop-runtime.mjs');const done=entry.evaluate();await tick();
  return {events,powerCalls,proc,get stopCalls(){return stopCalls;},complete:async()=>{complete?.();await done;stdin.destroy();}};
 }
 async function dependencyFixture(arch,corrupt=false,platform='darwin'){
@@ -75,6 +78,21 @@ if(!vm.SourceTextModule){
   assert.match(output,/# tests [1-9]\d*/);
  });
 }else{
+ for(const schema of ['8','5'])test('packaged runtime reads an old engine profile and checks its actual database schema '+schema,async t=>{
+  const parent=resolve('.codex/scratch/desktop-profile-upgrade');mkdirSync(parent,{recursive:true});
+  const root=mkdtempSync(join(parent,'synthetic-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+  writeFileSync(join(root,'.homer-desktop-test-profile'),'{"format":1}');
+  const paths=prepareDesktopProfile(root,{schema:'synthetic-original-schema',codex:'0.163.0'},{test:true});
+  const marker=readFileSync(join(root,'desktop-profile.json')),auth=join(paths.codexHome,'auth.json');writeFileSync(auth,'synthetic-retained-account',{mode:0o600});
+  const database=join(paths.runtime,'homer.sqlite'),db=new DatabaseSync(database);
+  db.exec('CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE retained(text TEXT);');
+  db.prepare('INSERT INTO meta VALUES(?,?)').run('mainThread','synthetic-retained-thread');db.prepare('INSERT INTO meta VALUES(?,?)').run('recursiveSchemaVersion',schema);
+  db.prepare('INSERT INTO retained VALUES(?)').run('synthetic-retained-history');db.close();const before=readFileSync(database);
+  const f=await runtimeFixture({stoppedConfirmed:true},{profileRoot:root});await f.complete();
+  if(schema==='8')assert.deepEqual(f.events.map(v=>v.kind),['owner-release','stopped']);
+  else{assert.ok(f.events.some(v=>v.kind==='error'&&v.code==='desktop_schema_incompatible'));assert.equal(f.events.some(v=>v.kind==='owner-release'),false);}
+  assert.deepEqual(readFileSync(join(root,'desktop-profile.json')),marker);assert.equal(readFileSync(auth,'utf8'),'synthetic-retained-account');assert.deepEqual(readFileSync(database),before);
+ });
  test('runtime acknowledges wake recovery only after the host completes, and reports failure',async()=>{
   let release;const pending=new Promise(resolve=>{release=resolve;});let fail=false;
   const f=await runtimeFixture({stoppedConfirmed:true},{powerHandler:async()=>{if(fail)throw Error('synthetic_failure');await pending;}});

@@ -86,13 +86,20 @@ test('Electron cache cannot be redirected outside its profile through a symbolic
  assert.equal(lstatSync(join(root,'host-home/electron')).isSymbolicLink(),true);
 });
 
-test('a different engine or mode cannot mutate a recognized profile',()=>{
- const root=make(),paths=prepareDesktopProfile(root,version,{initialize:true});
+test('an engine upgrade retains the recognized profile, account and history without rewriting the marker',t=>{
+ const root=make(),paths=prepareDesktopProfile(root,version,{initialize:true});t.after(()=>rmSync(root,{recursive:true,force:true}));
  const marker=readFileSync(join(root,'desktop-profile.json'));writeFileSync(join(paths.runtime,'history'),'keep');
- assert.throws(()=>prepareDesktopProfile(root,{...version,codex:'0.164.0'}),/desktop_schema_incompatible/);
+ writeFileSync(join(paths.codexHome,'auth.json'),'synthetic-existing-account',{mode:0o600});
+ for(const codex of ['0.171.0-alpha.7','0.172.0'])assert.deepEqual(prepareDesktopProfile(root,{...version,codex}),paths);
  assert.throws(()=>prepareDesktopProfile(root,version,{test:true}),/desktop_profile_mode_mismatch/);
  assert.deepEqual(readFileSync(join(root,'desktop-profile.json')),marker);
  assert.equal(readFileSync(join(paths.runtime,'history'),'utf8'),'keep');
+ assert.equal(readFileSync(join(paths.codexHome,'auth.json'),'utf8'),'synthetic-existing-account');
+});
+for(const patch of [{format:2},{schema:''},{schema:null},{codex:undefined},{codex:''},{codex:42}])test('a malformed recognized profile remains rejected: '+JSON.stringify(patch),t=>{
+ const root=make();t.after(()=>rmSync(root,{recursive:true,force:true}));prepareDesktopProfile(root,version,{initialize:true});
+ const marker=join(root,'desktop-profile.json');writeFileSync(marker,JSON.stringify({...version,test:false,...patch}));
+ const before=readFileSync(marker);assert.throws(()=>prepareDesktopProfile(root,version),/desktop_schema_incompatible/);assert.deepEqual(readFileSync(marker),before);
 });
 test('first-install opt-in initializes only absent or empty paths and reuses recognized history',()=>{
  const root=join(make(),'new');

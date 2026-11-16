@@ -48,7 +48,11 @@ export function mainInputProcessingSql(message='m'){
 export function unconfirmedNativeEffectsSql(process='p'){
   return `EXISTS(SELECT 1 FROM json_each(${process}.value,'$.items') item
     WHERE json_extract(item.value,'$.kind')='tool' AND json_extract(item.value,'$.category')<>'host'
-      AND json_extract(item.value,'$.status') IN ('running','unknown','blocked'))`;
+      AND json_extract(item.value,'$.status') IN ('running','unknown','blocked')
+      AND NOT coalesce(json_extract(item.value,'$.category')='webSearch'
+        AND json_extract(item.value,'$.status')='unknown' AND json_extract(${process}.value,'$.state')='worked'
+        AND json_extract(item.value,'$.turnId')<>''
+        AND json_extract(${process}.value,'$.endEventId')='turn:'||json_extract(item.value,'$.turnId')||':terminal:completed',0))`;
 }
 
 function clockTiming(clock: TurnClock): ProcessTiming {

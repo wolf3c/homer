@@ -1057,3 +1057,37 @@ HTTP三轮、一次工具与冷恢复通过；WS首轮生成完成并收到原�
 观察器／五元额度闸门5项测试通过；固定Codex会员协议专项20/20通过、零跳过，覆盖Main／Worker旧配置缺省字段、426回退、401／429／503、事件限流、断线、超限及工具结果后断线。纯合成对照驱动4会话、20生成、4预热及原线程冷恢复通过。没有修改生产源码，本轮没有重复全量核心测试或安装验收。
 
 脱敏逐请求样本、汇总和独立Decimal价目复算保留于本次scratch供当前审阅，正文提供可持续保存的版本、方法、数值与范围。已停止隔离网关及全部所属引擎，停用并删除隔离Token、Key副本、数据库、rollout和原始日志，回收临时Go SDK、源码副本、编译缓存及依赖符号链接；共享依赖保留。正式入口／正式Azure渠道、37万token、附件场景及供应商最终账单未在本轮验收，正式启用仍须独立处理。
+
+## 桌面升级门禁最小修复（2026-11-16）
+
+生产仅调整 `prepareDesktopProfile` 的建档 Codex 相等检查及 `unconfirmedNativeEffectsSql` 的严格 webSearch 例外；不改资料或停止协议。新增回归先在旧代码下失败，再验证通过。
+
+定向离线检查（Node 以仓库 `.nvmrc` 为准）：
+
+```sh
+node --experimental-vm-modules --import ./tests/fixtures/synthetic-home.mjs --import tsx --test --test-concurrency=1 \
+  tests/desktop-profile.test.mjs tests/main-mailbox-projection.test.ts tests/desktop-update-runtime.test.mjs
+```
+
+106/106 通过、零跳过。覆盖 profile 建档版本不同仍保留原标记/账号/文件、损坏或缺字段拒绝、实际 schema 8 读取及不支持 schema 5 拒绝；runtime 入口集成使用真实 profile 读取和 SQLite，仅替换原生宿主启动。SQL 的升级、原生 fork、旧回执恢复预检及 fresh-main 预检四个调用方均覆盖同轮 completed 放行、轮次错配、空/缺失轮次、缺失或宿主终态、运行中、命令/文件/外部工具/其他类别继续阻塞，并比较未知历史原文不变。
+
+复用现有原生连续性专项，显式指定固定 0.171.0-alpha.7 与 0.163.0 两份二进制：
+
+```sh
+HOMER_TEST_CODEX_BIN=/absolute/candidate/codex \
+HOMER_TEST_PREVIOUS_CODEX_BIN=/absolute/baseline-0.163/codex \
+node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test --test-concurrency=1 \
+  tests/native-thread-continuity.engine.test.ts
+```
+
+7/7 通过、零跳过：两角色/两种记忆模式、原生目标保留，以及 0.163 旧线程在 0.171 中续接并保留原回执、工具不重放。只用独立合成 HOME/CODEX_HOME、合成凭据及本地 Responses 服务，不读取日常账号或调用生产模型。
+
+`tests/macos-desktop-runtime.test.mjs` 的既有包内资料保留案例补入 Codex 0.163.0 旧标记及账号记录逐字保留断言，沿现有 desktop 专项登记执行；本轮未重建安装包，该正式包专项未运行。VM 入口和原生协议通过不代替正式包安装、安全重启、回退或日常资料保留验收。
+
+最终候选从已提交 `ee89cce37b89691db09b8c3ed0b5a66dbf100c86` 导出，仅应用本轮增量，排除共享工作区其他未提交代码。最终定向组 106/106、固定引擎 7/7、完整类型检查和源码构建通过；共享工作区完整类型检查亦通过。
+
+默认 `npm test` 为 **2700/2702**，零跳过/取消。两项失败均为 `tests/message-image-preview.test.mjs` 的 `decoded image removes its duplicate card and restores fallback across lazy reloads and revision changes`、`HTTP preview failure retains the named download card and reports a failed download`。未应用任何本轮补丁的同一提交基线定向重跑 1/3 通过、相同两项失败；不为本轮全绿修改已有图片断言，也不混入其他任务的图片修复。
+
+本轮未提交、推送、重建或发布安装包，未停止、安装或改动日常 Homer。正式包专项和原生安装/安全重启/数据保留仍未验收；源码编译不是安装包构建。
+
+收尾：确认隔离目录无打开文件后，按 work-cleanup 回收源码/基线副本和原始日志约 171,044,864 分配字节，不将该数值等同于 APFS 可用空间变化。仅保留 `.codex/scratch/upgrade-blockers-20261116/` 内约 474,532 字节的初始快照、本轮补丁及验证摘要，用于区分并行未提交片段；完成精确审阅/暂存后删除。共享测试目录、原安装材料和日常数据未作跨任务清理。
