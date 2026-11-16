@@ -7,7 +7,7 @@ import {join,resolve,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {CodexEngine} from '../src/engine.js';
 
-assert.ok(process.argv[2], 'pass the fixed 0.163.0 executable explicitly');
+assert.ok(process.argv[2], 'pass the fixed 0.171.0-alpha.7 executable explicitly');
 const bin=resolve(process.argv[2]!);
 const root=resolve('.codex/scratch/native-system-skills-implementation');
 mkdirSync(root,{recursive:true});
@@ -40,17 +40,16 @@ try{
   mkdirSync(join(home,'skills/synthetic-invalid'),{recursive:true});
   writeFileSync(invalid,'---\nname: synthetic-invalid\n---\n\nMissing description.\n');
   const config={appData,codexHome:home,nativeCodexHome:home,codexBin:bin,workspace:cwd,runtime:join(appData,'runtime'),baseUrl,model:'gpt-6.1-sol',requiresOpenaiAuth:false,stopGraceMs:1000};
-  const make=(threadId?:string,legacy=false)=>{
+  const make=(threadId?:string,legacy:Skill[]=[])=>{
    const next=new CodexEngine(config,{cwd,readRoots:[],instructions:'Synthetic local protocol validation.',tools:[],nativeTools:role,threadId},async()=>{throw Error('unexpected_model_tool');});
-   if(legacy){
-    const request=next.request.bind(next);
-    next.request=async(method,params:any)=>{
-     if(method==='thread/start'){
-      const listed=await request('skills/list',{cwds:[cwd],forceReload:true});
-      const disabled=(listed.data??[]).flatMap((d:any)=>d.skills??[]).filter((s:Skill)=>s.path.startsWith(join(home,'skills/.system')+'/')).map((s:Skill)=>({path:s.path,enabled:false}));
-      params={...params,config:{...params.config,'skills.config':[...params.config['skills.config'],...disabled]}};
+   if(legacy.length){
+    const send=next['send'].bind(next);
+    next['send']=(message:any)=>{
+     if(message.method==='thread/start'){
+      const params=message.params,disabled=legacy.map(s=>({path:s.path,enabled:false}));
+      message={...message,params:{...params,config:{...params.config,'skills.config':[...params.config['skills.config'],...disabled]}}};
      }
-     return request(method,params);
+     send(message);
     };
    }
    return next;
@@ -80,7 +79,7 @@ try{
   };
   const proof:any={};receipt.roles[role]=proof;
   engine=make();const thread=await engine.start();
-  assert.equal(engine.version,'0.163.0');receipt.version=engine.version;
+  assert.equal(engine.version,'0.171.0-alpha.7');receipt.version=engine.version;
   let listed=await catalog();
   const system=listed.skills.filter(s=>s.path.startsWith(join(home,'skills/.system')+'/'));
   assert.ok(system.length>0);assert.ok(system.every(s=>s.enabled));
@@ -107,7 +106,7 @@ try{
   assert.ok(implicit.filter(s=>s!==disabled).every(s=>afterDisable.includes(s.description)));
   proof.nativeUserDisableSurvivesResume=true;
   assert.ok(await engine.close());
-  engine=make(undefined,true);const legacyThread=await engine.start();
+  engine=make(undefined,system);const legacyThread=await engine.start();
   const legacyPrompt=await turn();assert.ok(implicit.every(s=>!legacyPrompt.includes(s.description)));
   proof.oldBlanketOverrideReproduced=true;
   assert.ok(await engine.close());engine=make(legacyThread);assert.equal(await engine.start(),legacyThread);

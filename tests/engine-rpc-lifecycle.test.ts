@@ -31,12 +31,84 @@ function peer(role?:'main'|'worker',patch:Partial<Config>={}) {
 
 function transportPeer(){
  const p=peer('worker',{desktopModelSource:'codex',pauseOldDesktopWork:true,desktopResources:{bundleRoot:'synthetic',manifestSha256:'0'.repeat(64)}}),child=Object.assign(new EventEmitter(),{stderr:new PassThrough()});
- p.engine.version='0.163.0';p.engine['child']=child as any;
+ p.engine.version='0.171.0-alpha.7';p.engine['child']=child as any;
  assert.equal(typeof (p.engine as any).observeTransport,'function','native transport observation must exist');
  (p.engine as any).observeTransport(child);
- const record=(name:string,fields:Record<string,unknown>={},patch:Record<string,unknown>={})=>JSON.stringify({target:'codex_otel.trace_safe',fields:{'app.version':'0.163.0','conversation.id':'thread','event.name':name,...fields},...patch})+'\n';
+ const record=(name:string,fields:Record<string,unknown>={},patch:Record<string,unknown>={})=>JSON.stringify({target:'codex_otel.trace_safe',fields:{'app.version':'0.171.0-alpha.7','conversation.id':'thread','event.name':name,...fields},...patch})+'\n';
  return {...p,child,record,async close(){child.stderr.destroy();p.engine['child']=undefined;await p.engine.close();}};
 }
+
+test('logical root RPCs address the active native segment without rewriting other thread IDs',async()=>{
+ const p=peer('worker');(p.engine as any).nativeThreadId='native-segment';
+ try{
+  const read=p.engine.request('thread/read',{threadId:'thread',includeTurns:true});read.catch(()=>{});
+  assert.equal(p.sent[0]!.params.threadId,'native-segment');
+  await p.reply(0,{thread:{id:'native-segment',forkedFromId:'thread',turns:[]}});
+  assert.equal((await read).thread.id,'thread');
+  const child=p.engine.request('thread/read',{threadId:'native-child'});assert.equal(p.sent[1]!.params.threadId,'native-child');
+  await p.reply(1,{thread:{id:'native-child'}});assert.equal((await child).thread.id,'native-child');
+ }finally{await p.engine.close();}
+});
+
+test('native root events and dynamic calls retain actual identity and project only the live root',async t=>{
+ const p=peer('worker');(p.engine as any).nativeThreadId='native-segment';
+ const calls:any[]=[];t.mock.method(p.engine,'handleTool',async(call:any)=>{calls.push(call);return {};});
+ try{
+  const work=p.engine.turn('Synthetic logical continuation');work.catch(()=>{});await flush();await p.reply(0,{turn:{id:'turn'}});await flush();
+  await p.receive({id:101,method:'item/tool/call',params:{threadId:'native-segment',turnId:'turn',callId:'call',tool:'echo',arguments:{}}});
+  assert.equal(calls.length,1);assert.equal(calls[0].threadId,'thread');assert.equal(calls[0].nativeThreadId,'native-segment');
+  await p.event('item/completed',{threadId:'native-segment',turnId:'turn',item:{id:'reply',type:'agentMessage',text:'continued'}});
+  await p.event('turn/completed',{threadId:'native-segment',turn:{id:'turn',status:'completed'}});
+  assert.equal((await work).text,'continued');
+ }finally{await p.engine.close();}
+});
+
+for(const role of ['main','worker'] as const)test(role+' projects root approval ownership while preserving native details and child scope',async()=>{
+ const p=peer(role);p.engine.nativeThreadId='native-segment';const forwarded:any[]=[];
+ p.engine.options.onInteraction=async request=>{forwarded.push(request);return {status:'approved',decision:{action:'approve',reason:'Synthetic exact request'}};};
+ try{
+  const work=p.engine.turn('Synthetic approval continuation');work.catch(()=>{});await flush();await p.reply(0,{turn:{id:'turn'}});await flush();
+  const approval=(id:number,threadId:string,turnId='turn')=>({id,method:'item/commandExecution/requestApproval',params:{threadId,turnId,itemId:'command-'+id,kind:'command',command:'synthetic',cwd:'/synthetic',availableDecisions:['accept','decline']}});
+  await p.receive(approval(101,'native-segment'));
+  assert.equal(forwarded.length,1);assert.equal(forwarded[0].threadId,'thread');assert.equal(forwarded[0].details.threadId,'native-segment');
+  await p.receive(approval(102,'native-child','child-turn'));
+  assert.equal(forwarded.length,role==='worker'?2:1);
+  if(role==='worker'){assert.equal(forwarded[1].threadId,'native-child');assert.equal(forwarded[1].turnId,'child-turn');assert.equal(forwarded[1].details.threadId,'native-child');}
+  await p.receive(approval(103,'thread'));assert.equal(forwarded.length,role==='worker'?2:1,'an ancestor logical ID is not a live native root');
+  await p.event('item/completed',{threadId:'thread',turnId:'turn',item:{id:'stale',type:'agentMessage',text:'OLD SEGMENT'}});
+  await p.event('turn/completed',{threadId:'native-segment',turn:{id:'turn',status:'completed'}});assert.equal((await work).text,'');
+ }finally{await p.engine.close();}
+});
+
+test('Worker child effect facts preserve actual IDs and parent ownership without projecting child output',async()=>{
+ const p=peer('worker');p.engine.nativeThreadId='native-segment';const effects:any[]=[];
+ p.engine.on('nativeWorkerEffect',effect=>effects.push(effect));
+ try{
+  const work=p.engine.turn('Synthetic child effect');work.catch(()=>{});await flush();await p.reply(0,{turn:{id:'turn'}});await flush();
+  const item={id:'child-command',type:'commandExecution',command:'SYNTHETIC_PRIVATE_COMMAND',status:'inProgress'};
+  await p.event('item/started',{threadId:'native-child',turnId:'child-turn',item});
+  assert.deepEqual(effects,[{nativeId:'native-child',turnId:'child-turn',itemId:'child-command',status:'running',completed:false,ownerNativeId:'native-segment',ownerTurnId:'turn'}]);
+  await p.event('item/completed',{threadId:'native-child',turnId:'child-turn',item:{...item,status:'completed',exitCode:0}});
+  assert.equal(effects.length,2);assert.equal(effects[1]!.completed,true);assert.equal(effects[1]!.status,'completed');
+  await p.event('item/completed',{threadId:'native-child',turnId:'child-turn',item:{id:'child-text',type:'agentMessage',text:'CHILD INTERNAL'}});
+  await p.event('item/started',{threadId:'thread',turnId:'turn',item});assert.equal(effects.length,2);
+  await p.event('turn/completed',{threadId:'native-segment',turn:{id:'turn',status:'completed'}});assert.equal((await work).text,'');
+ }finally{await p.engine.close();}
+});
+
+test('Worker drain retains terminal effect metadata while refusing new effect starts',async()=>{
+ const p=peer('worker'),effects:any[]=[];p.engine.on('nativeWorkerEffect',effect=>effects.push(effect));
+ try{
+  const work=p.engine.turn('Synthetic drain');work.catch(()=>{});await flush();await p.reply(0,{turn:{id:'turn'}});await flush();
+  const item={id:'draining-command',type:'commandExecution',status:'inProgress'};
+  await p.event('item/started',{threadId:'native-child',turnId:'child-turn',item});
+  await p.engine.close();await assert.rejects(work,/engine_closed/);
+  p.engine['exited']=true;
+  await p.event('item/started',{threadId:'native-child',turnId:'child-turn',item:{...item,id:'late-start'}});
+  await p.event('item/completed',{threadId:'native-child',turnId:'child-turn',item:{...item,status:'completed',exitCode:0}});
+  assert.equal(effects.length,2);assert.equal(effects[1]!.itemId,item.id);assert.equal(effects[1]!.completed,true);assert.equal(effects[1]!.status,'completed');
+ }finally{await p.engine.close();}
+});
 
 test('native acceptance followed by a failing receipt callback keeps execution fenced',async()=>{
  const p=peer('main');
@@ -55,7 +127,7 @@ test('native JSON transport facts exclude warmup, HTTP fallback and other thread
  const p=transportPeer(),successes:unknown[]=[],changes:unknown[]=[];
  p.engine.on('webSocketSucceeded',value=>successes.push(value));p.engine.on('modelTransport',value=>changes.push(value));
  try{
-  for(const fields of [{'conversation.id':'child-thread'},{'app.version':'0.164.0'}])p.child.stderr.write(p.record('codex.websocket_request',{success:'true',...fields}));
+  for(const fields of [{'conversation.id':'child-thread'},...['0.163.0','0.171.0','0.171.0-alpha.6'].map(version=>({'app.version':version}))])p.child.stderr.write(p.record('codex.websocket_request',{success:'true',...fields}));
   p.child.stderr.write(p.record('codex.websocket_request',{success:'true'},{target:'untrusted_tool'}));
   p.child.stderr.write(p.record('other',{message:p.record('codex.websocket_request',{success:'true'})}));
   assert.equal((p.engine as any).modelTransport,undefined);

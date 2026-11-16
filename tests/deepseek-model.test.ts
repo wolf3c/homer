@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync,readFileSync,statSync,symlinkSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {deepseekProfile,deepseekCatalog,materializeDeepSeekCatalog} from '../src/deepseek-model.js';
+import {membershipModelCatalog} from '../src/model-catalog.js';
 const config={model:'deepseek-flash',baseUrl:'http://127.0.0.1:9999/v1'};
 test('DeepSeek profile has conservative defaults and explicit supported efforts',()=>{
  assert.deepEqual(deepseekProfile(config),{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total',effort:'high',fast:false});
@@ -44,6 +45,15 @@ test('versioned catalog declares pinned native tool and modality capabilities',(
  assert.equal(model.supports_search_tool,true);assert.equal(model.tool_mode,null);
  assert.equal(model.max_context_window,1048576);assert.equal(model.effective_context_window_percent,95);
  assert.deepEqual(model.input_modalities,['text','image']);assert.equal(model.multi_agent_version,'v2');
+});
+
+test('membership GPT-6.1 family uses Code Mode Only without changing other providers',()=>{
+ const capabilities={inputModalities:['text'] as ('text'|'image')[],reasoningEfforts:['high'],webSearch:false,toolSearch:false};
+ for(const model of ['gpt-6.1','gpt-6.1-sol','gpt-6.1-terra'])
+  assert.equal(membershipModelCatalog(model,'high',272000,capabilities).models[0]!.tool_mode,'code_mode_only',model);
+ for(const model of ['deepseek-flash','gpt-6.10-terra','gpt-6-sol','vendor/model'])
+  assert.equal(membershipModelCatalog(model,'high',272000,capabilities).models[0]!.tool_mode,null,model);
+ assert.equal(deepseekCatalog.models[0]!.tool_mode,null);
 });
 
 test('retired website aliases are absent from execution profiles and the pinned catalog',()=>{

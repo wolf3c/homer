@@ -5,7 +5,8 @@ import { existsSync, writeFileSync, appendFileSync, readFileSync } from "node:fs
 import { join, dirname } from "node:path";
 import {spawnSync} from "node:child_process";
 import {pathToFileURL} from "node:url";
-if (process.argv.includes("--version")) { console.log("codex-cli 0.163.0"); process.exit(0); }
+const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
+if (process.argv.includes("--version")) { console.log("codex-cli 0.171.0-alpha.7"); process.exit(0); }
 const home = process.env.CODEX_HOME;
 const log = record => appendFileSync(join(home, "process-events.jsonl"), JSON.stringify(record) + "\n");
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
@@ -34,7 +35,7 @@ async function receive(m) {
     }
     return;
   }
-  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.163.0", codexHome:home } });
+  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.171.0-alpha.7", codexHome:home } });
   if (m.method === "environment/info") send({id:m.id,result:{shell:"/bin/zsh"}});
   if (m.method === "thread/backgroundTerminals/list") send({id:m.id,result:{data:[]}});
   if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});
@@ -43,6 +44,7 @@ async function receive(m) {
   if (m.method === "config/mcpServer/reload") send({id:m.id,result:{}});
   if (m.method === "skills/list") send({id:m.id,result:{data:[]}});
   if (m.method === "mcpServerStatus/list") send({ id: m.id, result: { data: [{ name: "homer_interactions", tools: Object.fromEntries((trusted?.enabled_tools??[]).map(n => [n, {}])) }] } });
+  if(m.method==='thread/read')send({id:m.id,result:{thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}}});
   if (m.method === "thread/start" || m.method === "thread/resume") {
     worker = trusted?.args?.at(-1) === "worker";
     cwd = m.params.environments[0].cwd;
@@ -51,7 +53,7 @@ async function receive(m) {
     if (m.method === "thread/resume" && existsSync(join(home, "hold-resume"))) {
       writeFileSync(join(home, "resume-waiting"), "1"); await gate("release-resume");
     }
-    send({ id: m.id, result: { thread: { id: thread }, activePermissionProfile: { id: "homer" }, approvalPolicy: m.params.approvalPolicy } });
+    send({ id: m.id, result: { thread: { id: thread, modelProvider }, modelProvider, activePermissionProfile: { id: "homer" }, approvalPolicy: m.params.approvalPolicy } });
   }
   if (m.method === "turn/start") {
     turn = "turn-" + ++count;

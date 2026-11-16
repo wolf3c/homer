@@ -9,7 +9,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {peer,metadata} from './fixtures/native-main-resume.mjs';
 
 const moduleUrl=process.env.HOMER_TEST_SERVICE_MODULE,bin=process.env.HOMER_TEST_CODEX_BIN;
-assert.ok(moduleUrl?.startsWith('file://'),'explicit compiled service required');
+assert.ok(moduleUrl?.startsWith('file://'),'explicit service module required');
 assert.ok(bin&&isAbsolute(bin),'explicit fixed native binary required');
 const {Homer}=await import(moduleUrl);
 const {CodexEngine}=await import(new URL('./engine.js',moduleUrl));
@@ -79,8 +79,8 @@ test('native new and legacy Main expose and call the new MCP tool on the same th
  for(const legacy of [false,true]){
   const f=await fixture(t);let seed,oldThread;
   if(legacy){
-   seed=peer({...f,calls:[]},bin,f.baseUrl);await seed.init();
-   const {thread}=await seed.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'synthetic_boundary',cwd:f.cwd,approvalPolicy:'on-request',sandbox:'read-only',environments:[],config:{mcp_servers:{}},developerInstructions:'LEGACY_DIRECTORY_MAIN',dynamicTools:MAIN_DYNAMIC_TOOLS});oldThread=thread;
+   seed=peer({...f,calls:[],provider:'homer'},bin,f.baseUrl);await seed.init();
+   const {thread}=await seed.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'homer',cwd:f.cwd,approvalPolicy:'on-request',sandbox:'read-only',environments:[],config:{mcp_servers:{}},developerInstructions:'LEGACY_DIRECTORY_MAIN',dynamicTools:MAIN_DYNAMIC_TOOLS});oldThread=thread;
    const cursor=seed.events.length;await seed.request('turn/start',{threadId:thread.id,input:[{type:'text',text:'Synthetic saved Main history.'}]});
    await until(()=>seed.events.slice(cursor).some(e=>e.method==='turn/completed'));await seed.close();seed=undefined;
   }
@@ -93,7 +93,7 @@ test('native new and legacy Main expose and call the new MCP tool on the same th
   },[],async(includeFolders=true)=>{if(includeFolders&&!listingAvailable)throw Error('synthetic_known_folder_unavailable');return {home:f.user,folders:[]};});
   try{
    if(oldThread){app.store.setMeta('mainThread',oldThread.id);app.store.setMeta('mainToolsHash',MAIN_TOOLS_HASH);}
-   await app.start();assert.equal(main.version,'0.163.0');if(oldThread)assert.equal(main.threadId,oldThread.id);
+   await app.start();assert.equal(main.version,'0.171.0-alpha.7');if(oldThread)assert.equal(main.threadId,oldThread.id);
    const inventory=await main.request('mcpServerStatus/list',{threadId:main.threadId,detail:'full',limit:100});assert.ok(inventory.data.find(e=>e.name==='homer_interactions')?.tools.list_work_directories);
    const project=join(f.user,'Projects/atlas');mkdirSync(project,{recursive:true});writeFileSync(join(project,'TEAM_GUIDE.md'),'SYNTHETIC_PRIVATE_BODY');
    f.hold(true);const count=f.requests.length;app.submitMessage({requestId:'native-directory-'+legacy,text:'Find the atlas work location for a later Worker.'});
@@ -153,8 +153,8 @@ for(const [history,checkpoint] of [['full',null],['compacted',null],['interrupte
   checkRequest(f.requests.slice(count).find(request=>JSON.stringify(request.input).includes(text)),phase);
  }
  try{
-  seed=peer({...f,calls:[]},bin,f.baseUrl);await seed.init();
-  const {thread}=await seed.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'synthetic_boundary',cwd:f.cwd,approvalPolicy:'on-request',sandbox:'read-only',environments:[],config:{mcp_servers:{}},developerInstructions:legacy,dynamicTools:MAIN_DYNAMIC_TOOLS});threadId=thread.id;
+  seed=peer({...f,calls:[],provider:'homer'},bin,f.baseUrl);await seed.init();
+  const {thread}=await seed.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'homer',cwd:f.cwd,approvalPolicy:'on-request',sandbox:'read-only',environments:[],config:{mcp_servers:{}},developerInstructions:legacy,dynamicTools:MAIN_DYNAMIC_TOOLS});threadId=thread.id;
   // Native injection persists its own checkpoint before these history items.
   await seed.request('thread/inject_items',{threadId,items:[{type:'message',role:'user',content:[{type:'input_text',text:savedUser}]},{type:'message',role:'assistant',content:[{type:'output_text',text:savedAssistant}]}]});
   const {attachment}=await seed.request('thread/attachment/add',{threadId,attachmentType:'synthetic.document',identityKey:'directory-resume-artifact',payload:{name:'fixture.txt',contents:'SYNTHETIC_DIRECTORY_ATTACHMENT'}});
@@ -177,7 +177,7 @@ for(const [history,checkpoint] of [['full',null],['compacted',null],['interrupte
   for(const marker of [savedUser,savedAssistant])assert.equal(prefix.includes(Buffer.from(marker)),checkpoint!=='initial','only the initial checkpoint precedes all saved business messages');
   if(history==='compacted')assert.ok(prefix.toString('utf8').split('\n').filter(Boolean).some(line=>JSON.parse(line).type==='compacted'));
   async function checkState(){
-   assert.equal(main.threadId,threadId);assert.equal(main.version,'0.163.0');
+   assert.equal(main.threadId,threadId);assert.equal(main.version,'0.171.0-alpha.7');
    const after=(await main.request('thread/read',{threadId,includeTurns:true})).thread;assert.equal(after.path,before.path);
    assert.ok(readFileSync(after.path).subarray(0,prefix.length).equals(prefix),'the durable rollout prefix must remain byte-for-byte intact');
    assert.deepEqual(metadata(f,after.path).dynamic_tools,MAIN_DYNAMIC_TOOLS);
@@ -209,7 +209,7 @@ test('native Worker root preparation preserves hierarchy, Git/custom roots, trus
  const control=new CodexEngine(f.config,{cwd:f.cwd,readRoots:[],instructions:'Configuration only.',tools:[],controlOnly:true},async()=>{throw Error('no_tools');});f.engines.push(control);await control.start();
  async function open(path,threadId){
   const e=new CodexEngine(f.config,{role:'worker',cwd:path,readRoots:[path],instructions:'Synthetic Worker verification.',tools:[],nativeTools:'worker',threadId,
-   prepareProjectContext:async(path,signal)=>prepareWorkerProjectRoot(path,f.user,(await control.request('config/read',{cwd:path,includeLayers:true})).config.project_root_markers,()=>!signal.aborted)},async()=>{throw Error('no_tools');});f.engines.push(e);await e.start();assert.equal(e.version,'0.163.0');return e;
+   prepareProjectContext:async(path,signal)=>prepareWorkerProjectRoot(path,f.user,(await control.request('config/read',{cwd:path,includeLayers:true})).config.project_root_markers,()=>!signal.aborted)},async()=>{throw Error('no_tools');});f.engines.push(e);await e.start();assert.equal(e.version,'0.171.0-alpha.7');return e;
  }
  async function turn(e,text='Synthetic local task.'){
   const count=f.requests.length;assert.equal((await e.turn(text)).status,'completed');

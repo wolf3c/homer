@@ -19,7 +19,7 @@ export function verifiedDesktopResources(identity:DesktopResourceIdentity){
  if(JSON.stringify(codeFiles)!==JSON.stringify(manifest.codeFiles))throw Error('desktop_resource_changed');
  const expected=(windows?manifest.files:manifest.codeFiles)?.find((file:{path:string;sha256:string})=>file.path===(windows?'homer-image-decoder.mjs':'Contents/MacOS/homer-image-decoder'))?.sha256;
  if(windows)for(const name of ['node.exe','homer-image-decoder.mjs'])if(manifest.files?.find((file:{path:string;sha256:string})=>file.path===name)?.sha256!==createHash('sha256').update(readFileSync(join(resources,name))).digest('hex'))throw Error('desktop_resource_changed');
- if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.163.0'||!expected||realpathSync(helper)!==helper||createHash('sha256').update(readFileSync(helper)).digest('hex')!==expected)throw Error('desktop_resource_changed');
+ if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.171.0-alpha.7'||!expected||realpathSync(helper)!==helper||createHash('sha256').update(readFileSync(helper)).digest('hex')!==expected)throw Error('desktop_resource_changed');
  const files:{path:string;sha256:string}[]=Array.isArray(manifest.files)?manifest.files:[];
  return {bundleRoot:root,resources,files,imageDecoder:helper,imageDecoderSha256:expected as string};
 }

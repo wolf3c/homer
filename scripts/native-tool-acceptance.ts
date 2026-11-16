@@ -76,6 +76,9 @@ const server = createServer(async (req, res) => {
         raw += c;
     const data = JSON.parse(raw);
     const catalog = (data.input ?? []).filter((i: any) => i.type === 'additional_tools').flatMap((i: any) => i.tools ?? []);
+    // Replayed catalogs preserve history; the last exec declaration owns current nested tools.
+    const activeExec=catalog.flatMap((i:any)=>i.name==='functions'?i.tools??[]:[]).findLast((i:any)=>i.name==='exec');
+    assert.ok(activeExec,'current native exec declaration must be present');
     const outputs = (data.input ?? []).filter((i: any) => ['custom_tool_call_output', 'function_call_output'].includes(i.type) && i.call_id === activeCallId);
     const out = JSON.stringify(outputs);
     let imageParts = 0;
@@ -85,7 +88,7 @@ const server = createServer(async (req, res) => {
         if (x && typeof x === 'object')
             Array.isArray(x) ? x.forEach(countImages) : countImages(x); }
     countImages(outputs);
-    requests.push({ role:currentRole, ownSkillBodySeen: raw.includes('SYNTHETIC_NATIVE_SKILL_BODY_8K4'), mcpEchoSeen: out.includes('synthetic:SYNTHETIC_APPROVED_MCP_ECHO'), toolNames: catalog.flatMap((i: any) => i.type === 'namespace' ? (i.tools ?? []).map((t: any) => i.name + '.' + t.name) : [i.name ?? i.type]), nestedToolNames: catalog.flatMap((i: any) => i.tools ?? []).flatMap((i: any) => [...(i.description ?? '').matchAll(/### `([^`]+)`/g)].map((m: any) => m[1])), outputSeen: out.includes('exit_code'), exitCodes: [...out.matchAll(/exit_code[^0-9]*([0-9]+)/g)].map(m => Number(m[1])), privateSentinelSeen: out.includes('SYNTHETIC_PRIVATE_SENTINEL_3R7'), imageOutputSeen: imageParts > 0, viewUrlPresent: /probeViewUrlPresent.{0,10}true/.test(out), viewUrlUndefined: /probeViewUrlType.{0,10}undefined/.test(out), inputKinds: (data.input ?? []).map((x: any) => String(x.type ?? x.role)), toolMetadata: outputs.flatMap((x: any) => Array.isArray(x.output) ? x.output.filter((y: any) => y.type === 'input_text').flatMap((y: any) => { const match = y.text?.match(/\{\s*"probeNativeToolNames"[\s\S]*?\}/); if (!match)
+    requests.push({ role:currentRole, ownSkillBodySeen: raw.includes('SYNTHETIC_NATIVE_SKILL_BODY_8K4'), mcpEchoSeen: out.includes('synthetic:SYNTHETIC_APPROVED_MCP_ECHO'), toolNames: catalog.flatMap((i: any) => i.type === 'namespace' ? (i.tools ?? []).map((t: any) => i.name + '.' + t.name) : [i.name ?? i.type]), nestedToolNames: [...(activeExec.description ?? '').matchAll(/### `([^`]+)`/g)].map((m:any)=>m[1]), outputSeen: out.includes('exit_code'), exitCodes: [...out.matchAll(/exit_code[^0-9]*([0-9]+)/g)].map(m => Number(m[1])), privateSentinelSeen: out.includes('SYNTHETIC_PRIVATE_SENTINEL_3R7'), imageOutputSeen: imageParts > 0, viewUrlPresent: /probeViewUrlPresent.{0,10}true/.test(out), viewUrlUndefined: /probeViewUrlType.{0,10}undefined/.test(out), inputKinds: (data.input ?? []).map((x: any) => String(x.type ?? x.role)), toolMetadata: outputs.flatMap((x: any) => Array.isArray(x.output) ? x.output.filter((y: any) => y.type === 'input_text').flatMap((y: any) => { const match = y.text?.match(/\{\s*"probeNativeToolNames"[\s\S]*?\}/); if (!match)
             return []; try {
             return [JSON.parse(match[0])];
         }
@@ -161,7 +164,7 @@ try {
     ].join('\n')+'\n');
     engine = make('main');
     await engine.start();
-    assert.equal(engine.version, '0.163.0');
+    assert.equal(engine.version, '0.171.0-alpha.7');
     const effective = await engine.request('config/read', { includeLayers: true, cwd: workspace });
     assert.equal(effective.config.features.shell_tool, true);
     assert.equal(effective.config.features.view_image, true);
@@ -314,6 +317,9 @@ try {
         const beforeRefresh = requests.length;
         await run('after-safe-native-reconnect', sh('printf SYNTHETIC_RECONNECTED_OK'));
         assert.ok(requests.slice(beforeRefresh).every(r => !r.nestedToolNames.includes('view_image')));
+        const disabledTool=await run('disabled-view-image-not-exposed','text({probeNativeToolNames:Object.keys(tools)});');
+        assert.ok(disabledTool.toolMetadata.length>0);
+        assert.ok(disabledTool.toolMetadata.every((m:any)=>!m.probeNativeToolNames.includes('view_image')));
         checks.safeSameThreadReconnect = true;
         checks.backgroundPreventsReconnect = true;
         const timeoutMarker = join(workspace, 'should-not-write-after-close.txt');

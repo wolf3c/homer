@@ -9,7 +9,7 @@ mkdirSync(root, { recursive: true });
 function fixture() {
   const dir = mkdtempSync(join(root, 'synthetic-')), state = join(dir, 'status.json'), audit = join(dir, 'audit.json'), bin = join(dir, 'synthetic-native.cjs'), config = join(dir, 'homer.json');
   writeFileSync(state, JSON.stringify({ code: 1, text: 'Not logged in' }));
-  writeFileSync(bin, '#!' + process.execPath + '\n' + `const fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('codex-cli 0.163.0');process.exit(0);}fs.writeFileSync(${JSON.stringify(audit)},JSON.stringify({args,env:process.env}));const state=JSON.parse(fs.readFileSync(${JSON.stringify(state)}));console.error(state.text);process.exit(state.code);\n`, { mode: 0o700 });
+  writeFileSync(bin, '#!' + process.execPath + '\n' + `const fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('codex-cli 0.171.0-alpha.7');process.exit(0);}fs.writeFileSync(${JSON.stringify(audit)},JSON.stringify({args,env:process.env}));const state=JSON.parse(fs.readFileSync(${JSON.stringify(state)}));console.error(state.text);process.exit(state.code);\n`, { mode: 0o700 });
   const raw = { appData: join(dir, 'app-data'), codexHome: join(dir, 'legacy-native'), codexBin: bin, workspace: join(dir, 'workspace'), runtime: join(dir, 'runtime') };
   writeFileSync(config, JSON.stringify(raw));
   return { dir, state, audit, bin, config, raw };

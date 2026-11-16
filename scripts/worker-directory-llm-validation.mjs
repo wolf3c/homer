@@ -93,7 +93,7 @@ function observe(e,m,onBudget=()=>{}){
    if(!dropping){buffer+=part;if(Buffer.byteLength(buffer)>65536){buffer='';dropping=true;}}
    if(!part.endsWith('\n'))continue;
    if(!dropping)try{const event=JSON.parse(buffer),f=event.fields;
-    if(event.target==='codex_otel.trace_safe'&&f?.['app.version']==='0.163.0'&&f['conversation.id']===e.threadId&&f['event.name']==='codex.sse_event'&&f['event.kind']==='response.completed'){
+    if(event.target==='codex_otel.trace_safe'&&f?.['app.version']==='0.171.0-alpha.7'&&f['conversation.id']===e.threadId&&f['event.name']==='codex.sse_event'&&f['event.kind']==='response.completed'){
      m.traceResponses.push({inputTokens:numeric(f.input_token_count),outputTokens:numeric(f.output_token_count),cachedInputTokens:numeric(f.cached_input_token_count??f.cached_token_count),reasoningOutputTokens:numeric(f.reasoning_token_count),model:['gpt-6.1-terra','gpt-5.6-terra','gpt-6.1-sol'].includes(f.model)?f.model:null});
     }
    }catch{}buffer='';dropping=false;
@@ -135,7 +135,7 @@ async function prepareLegacyMain(config,app){
  const request=e.request.bind(e);e.request=async(method,params)=>{assert.ok(!['turn/start','thread/compact/start'].includes(method),'legacy_seed_model_turn_denied');return request(method,params);};
  let thread,attachment;
  try{
-  await e.start();assert.equal(e.version,'0.163.0');
+  await e.start();assert.equal(e.version,'0.171.0-alpha.7');
   await e.request('thread/inject_items',{threadId:e.threadId,items:[{type:'message',role:'user',content:[{type:'input_text',text:legacyUser}]},{type:'message',role:'assistant',content:[{type:'output_text',text:legacyAssistant}]}]});
   ({attachment}=await e.request('thread/attachment/add',{threadId:e.threadId,attachmentType:'synthetic.document',identityKey:'directory-resume',payload:{name:'fixture.txt',contents:'SYNTHETIC_LEGACY_ATTACHMENT'}}));
   ({thread}=await e.request('thread/read',{threadId:e.threadId,includeTurns:true}));assert.ok(inside(config.codexHome,realpathSync(thread.path)));
@@ -174,7 +174,7 @@ async function selfCheck(){
   for(const body of [{model:'gpt-5.6-terra',input:[{role:'user',content:[{type:'input_text',text:probeText}]}],tools:[]},{model:probeModel,input:[],tools:[]}]){
    const response=await fetch(local.url+'/responses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.equal(response.status,200);assert.ok(!(await response.text()).includes('custom_tool_call'),'background_request_must_not_consume_probe');
   }
-  await e.start();assert.equal(e.version,'0.163.0');assert.equal((await e.turn(probeText)).status,'completed');await delay(100);console.log(JSON.stringify({phase:'offline-probe',allowed:local.allowed,denied:local.denied,writeExists:existsSync(target('Main/blocked-write')),requestHasTools:local.requestHasTools,fs:m.fs.length,trace:m.traceResponses,tokens:m.tokens}));assert.ok(local.allowed&&local.denied&&!existsSync(target('Main/blocked-write')));assert.equal(m.fs.length,1);assert.equal(m.tokens.totalTokens,4);assert.ok(m.traceResponses.length>=2&&m.traceResponses.every(r=>r.inputTokens===1&&r.outputTokens===1));
+  await e.start();assert.equal(e.version,'0.171.0-alpha.7');assert.equal((await e.turn(probeText)).status,'completed');await delay(100);console.log(JSON.stringify({phase:'offline-probe',allowed:local.allowed,denied:local.denied,writeExists:existsSync(target('Main/blocked-write')),requestHasTools:local.requestHasTools,fs:m.fs.length,trace:m.traceResponses,tokens:m.tokens}));assert.ok(local.allowed&&local.denied&&!existsSync(target('Main/blocked-write')));assert.equal(m.fs.length,1);assert.equal(m.tokens.totalTokens,4);assert.ok(m.traceResponses.length>=2&&m.traceResponses.every(r=>r.inputTokens===1&&r.outputTokens===1));
  }
  finally{shutdownConfirmed=await e.close()&&shutdownConfirmed;await local.close();}
  assert.ok(shutdownConfirmed,'preflight_shutdown_unconfirmed');
@@ -259,7 +259,7 @@ try{
  if(mode==='--paid'){
   const auth=realpathSync(spec.authFile);protectedFiles.push({path:auth,hash:digest(auth)});if(spec.dailyProfile){const p=realpathSync(spec.dailyProfile);protectedFiles.push({path:p,hash:digest(p)});}
   const tokens=JSON.parse(readFileSync(auth,'utf8')).tokens;access=tokens.access_token;account=tokens.account_id;assert.ok(access&&account);assert.ok(JSON.parse(Buffer.from(access.split('.')[1],'base64url')).exp*1000>Date.now()+600000);
-  const seed=new CodexEngine(profile('auth-only'),{cwd:workspace,readRoots:[workspace],instructions:'No model turn.',tools:[],nativeTools:'main'},async()=>{});authenticate(seed);try{await seed.start();assert.equal(seed.version,'0.163.0');}finally{shutdownConfirmed=await seed.close()&&shutdownConfirmed;}
+  const seed=new CodexEngine(profile('auth-only'),{cwd:workspace,readRoots:[workspace],instructions:'No model turn.',tools:[],nativeTools:'main'},async()=>{});authenticate(seed);try{await seed.start();assert.equal(seed.version,'0.171.0-alpha.7');}finally{shutdownConfirmed=await seed.close()&&shutdownConfirmed;}
   for(const c of trials){const result=await run(c);report.results.push(result);if(result.status==='incomplete'||!shutdownConfirmed||!protectedFiles.every(f=>digest(f.path)===f.hash)||existsSync(join(userInfo().homedir,'.homer-project-root'))!==realHomeFallbackBefore||spec.stopOnFailure&&!result.passed)break;}
  }
 }catch(e){report.errorCode=safeError(e);process.exitCode=1;console.log(JSON.stringify({phase:'validation-failed',code:report.errorCode,name:e.name,frames:e.stack?.split('\n').filter(l=>/^\s+at /.test(l)).slice(0,2),expected:['number','boolean'].includes(typeof e.expected)?e.expected:undefined,actual:['number','boolean'].includes(typeof e.actual)?e.actual:undefined}));}

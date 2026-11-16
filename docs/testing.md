@@ -2,6 +2,60 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## Codex 0.171.0-alpha.7 源码升级
+
+2026-11-16：共享引擎、三平台官方包元数据、精确预发布版本握手和会员目录已接入源码。只有会员 GPT-6.1 家族生成 `tool_mode: code_mode_only`；DeepSeek 保持 `tool_mode: null`。ChatGPT／会员跨来源通过原生 fork 和 Homer 自有持久分支映射继续原 Homer 会话；同来源继续原生 resume。设计与维护成本见[跨来源兼容方案](superpowers/specs/2026-11-16-codex-0.171-provider-continuity-design.md)。
+
+环境固定为 macOS ARM64、Node 22.22.0、官方 Codex 0.171.0-alpha.7。专项均使用独立 HOME／CODEX_HOME／runtime、合成凭据和回环上游，不读取日常账号或调用付费模型。旧版迁移仅在新目录执行已有 0.163.0 二进制，不复用安装版数据。
+
+| 检查 | 通过证据与边界 |
+| --- | --- |
+| 打包 | runtime 46/46、Electron package 12/12。ARM 官方归档、43 个文件及 37 项 voice manifest 摘要已核验，包含 `codex-code-mode-host`；Intel／Windows 仅官方 SHA-256／SRI 元数据，未下载或执行 |
+| 分支适配 | 23/23：Main／Worker、双模式、同源恢复／双向分支、冷恢复、旧绑定、原生轮次审计、指针冲突、迟到／撤销／来源变化、错误原生 ID／供应商／父关系、记忆拒绝／缺失／错误；发布前零模型请求 |
+| 绑定与记忆 | 绑定／效果事实 67/67，只读记忆适配 12/12。实际 Store 事务／savepoint、重启、精确 root／child owner、未知结果不可清除、真实终态不可回退，无生命周期记录总量限制 |
+| Worker 门禁 | 签收／停止／原生请求／恢复联合 131/131。包括 `rpc_wait` 中并行开始、EOF 排空终态、签收写入失败、ACK 前取消；撤销 epoch 与权限保持，退出证明不能代替效果证明 |
+| 会员工具闭环 | 40/40：通用目录及 GPT-6.1 Code Mode Only × Main／Worker × HTTP／WS 与八类失败／回退。核对 custom `exec`／Lark 暴露、JavaScript、本地随机结果回传、最终文本、工具一次和冷恢复 |
+| 来源与交付 | 原生来源传输 11/11、实际 Homer 渠道 2/2、定时任务 1/1。三次来源切换后保持主会话、既有 Worker、原生祖先、准确轮次、消息／订阅／附件和未知发送边界 |
+| DeepSeek | 11/11：压缩／续办／冷恢复、错误码无宿主重试、真实 MCP、上下文及推理设置；原生请求的工具目录未混入 Code Mode 的 custom `exec` |
+| 原生继承 | 7/7：生产适配器的 Main／Worker × Enabled／Disabled、活跃 goal 的两次 fork／冷恢复、0.163 Enabled／Disabled 旧会话。祖先状态不改，工具不重放，启动不生成模型或预热请求 |
+| 原生能力与停机 | 原生协议 6/6，另有插件启用／真实 stdio MCP／受控目录连接及残留子进程退出 1/1。只按预先捕获身份清理，未知／重用身份继续阻塞 |
+| 提示词与目录 | 提示词／动态工具恢复 5/5（含 0.163 种子）、实际 Homer 目录专项 10/10。完整／压缩／检查点中断历史、附件、动态工具及原 rollout 字节前缀保留 |
+
+原生专项按文件显式选择，不能直接运行含真实账号入口的整个 engine 清单：
+
+```sh
+: "${HOMER_TEST_CODEX_BIN:?指定官方 0.171.0-alpha.7 的绝对路径}"
+: "${HOMER_TEST_PREVIOUS_CODEX_BIN:?指定仅用于合成旧目录的 0.163.0 二进制}"
+node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test \
+  tests/native-thread-continuity.engine.test.ts \
+  tests/native-membership-websocket.engine.test.mjs tests/desktop-source-resume.test.mjs \
+  tests/channel-native.engine.test.ts tests/scheduled-native.engine.test.ts \
+  tests/native-memory-defaults-offline.test.mjs tests/native-plugin-shutdown.engine.test.mjs \
+  tests/native-protocol.engine.test.mjs tests/deepseek-pinned.test.ts tests/deepseek-continuation.test.ts
+```
+
+`deepseek-continuation.test.ts` 还要求显式 `HOMER_OFFLINE_CODEX_BIN` 指向同一候选。提示词／目录入口要求 `HOMER_TEST_SERVICE_MODULE=file:///absolute/candidate/dist/service.js`，相邻 prompts 和脚本资源须来自同一源码候选；旧种子通过 `HOMER_TEST_CODEX_BASELINE_BIN` 显式选择，三者均不可指向日常数据目录。
+
+首轮原生联合 72/73 的唯一失败来自系统 Skill 旧夹具只拦截公开 request，漏掉新增的私有原生发送路径。已改在实际发送边界重现旧禁用行为，全部能力／恢复断言保留；随后原生协议整组 6/6 通过。提示词原生直接覆盖的旧假设在新版不成立，测试改为实际调用 Homer 已有 `adoptMainPrompt`，核对当前规则在旧规则之后且原历史不变，没有新增产品覆盖或重写历史。检查点中断可保留两份当前提示词，继续沿既有边界，不宣称严格去重。
+
+会员传输夹具关闭其合成目录的插件，插件能力由独立原生检查验证。记忆连接、业务连接、原生预热分别计数；成功 WS 的业务请求仍沿每个进程的原连接，最多允许一个未承载业务的原生预热连接。此处通过不证明真实网关的传输或计费行为。
+
+完整类型检查及服务编译通过；最终共享工作树默认核心 **2737/2737**，零失败／取消／跳过，生产源文件在该轮期间保持不变。前一轮 2734/2736 包含当时刚补入、尚未修复的签收失败红例，以及专项分类夹具的子进程超时。签收与停止修复后联合 131/131 通过，未放宽分类、退出、安全或真实结果断言。更早的 2640/2660 及 2612/2613 均保留原结果，不能当作全绿。
+
+已确认本轮测试所有者退出，回收下载／解压引擎、编译副本、原型和八个合成原生资料目录，逻辑大小约 571 MiB。约 8 MiB 改动前源码快照及少量脱敏检查记录暂留，用于这批未提交改动的精确归属与审阅；本轮审阅提交或撤回后删除。可重复入口和结论以上述维护源码与文档为准。
+
+本次仅本地提交源码及验收记录，不安装、不重启日常 Homer，不改日常配置／数据库／历史，不推送或发布。最终 Homer 候选已补验真实会员网关 HTTP Code Mode Only：本次下发 Main Terra／medium、Worker Terra／high，6 个请求全为 HTTP 200，双角色模型生成 JavaScript→本地 Code Mode Host→随机回执回传→匹配最终文本全部通过，宿主实际 Worker 回传成功。预检 1/1、注册边界 3/3，通过后只进行一次实网任务，无宿主重试；日常配置和进程身份不变，详见[实网报告及入口](member-code-mode-live-validation-2026-11-16.md)。Mac Intel／Windows 实机、真实 WS、Sol、签名和安装尚未验证。以下历史记录继续对应其明确记录的旧引擎。
+
+### 本地提交候选复核（2026-11-16）
+
+以当前 `e4b90213` 为基线，仅叠加本轮 Codex 升级、跨来源适配及会员验收相关的 82 个文件／精确片段；不混入并行 HOME 运行实现、渠道、UI、电源或模型默认值改动，保留现有三项 UI 暂存。升级原生测试复用的合成 HOME 夹具作为测试依赖一并纳入，不改变日常 HOME 行为。
+
+独立候选在 Node22.22.0 下完整类型检查和服务编译通过；默认核心 **2672/2674**，零取消／跳过。两项失败均为 `message-image-preview.test.mjs` 的既有预览／下载卡断言，在未叠加本轮改动的同一 `e4b90213`、同一依赖与 Node 下复现为 **1/3**，不改动、删除或跳过这些 UI 断言。不能用此前共享树的 2737/2737 声称该独立候选全绿。
+
+固定官方 0.171.0-alpha.7 的原生继承／0.163 迁移 7/7、实际 Homer 双角色 Code Mode Only 合成闭环 1/1、插件／MCP／捕获子进程停机 1/1 通过。显式专项使用独立 HOME／CODEX_HOME、合成凭据和回环上游，没有追加付费模型调用。此前六个实际会员请求对应实网报告明确散列的共享源码快照，包含未提交的并行 HOME 实现；本次窄提交的原生合成验证单独记录，不将它冒充为再一次实网验收。
+
+本轮仅本地提交，不推送、安装或重启日常 Homer，也不改日常配置或数据。提交后按既定审阅条件回收本任务的源码副本、下载包、旧归属快照及过时检查材料，维护源码与本文为复验依据。
+
 ## 用量优化与原生权限（2026-11-16）
 
 本次独立提交候选从 main `22a21bcee59b5b472be0042d66e12725319d00c8` 提取，仅包含本轮权限恢复、目录指引和模型审批投影；不混入共享工作区并行的 Codex 0.171、provider／HOME、渠道或 UI 改动。使用 Node **22.22.0**、主线固定 Codex **0.163.0**；子进程 PATH 固定到相同 Node。没有注入 200K 压缩值、scope 或模型窗口，未设置时沿原生默认，显式原生配置继续生效。

@@ -67,6 +67,47 @@ export function leaseOwnerGone(pid:number) {
   try {process.kill(-pid,0);return false;}
   catch(error){return (error as NodeJS.ErrnoException).code==='ESRCH';}
 }
+export type UnixChildrenSnapshot={pid:number;identity:string;children:{pid:number;identity:string}[]};
+export function captureUnixChildren(lease:{pid:number;identity:string}):UnixChildrenSnapshot|undefined {
+  if(process.platform==='win32'||!lease||!Number.isSafeInteger(lease.pid)||lease.pid<=1||!lease.identity)return;
+  try {
+    if(processIdentity(lease.pid)!==lease.identity)return;
+    const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,pgid='],{encoding:'utf8',timeout:3000}).trim().split('\n').map(line=>line.trim().split(/\s+/).map(Number));
+    if(rows.some(row=>row.length!==3||row.some(value=>!Number.isSafeInteger(value)||value<0))||new Set(rows.map(row=>row[0])).size!==rows.length)return;
+    const group=rows.filter(row=>row[2]===lease.pid);
+    if(!group.some(row=>row[0]===lease.pid))return;
+    const ids=new Set([lease.pid]);let changed=true;
+    while(changed){changed=false;for(const [pid,ppid]of group)if(ids.has(ppid!)&&!ids.has(pid!)){ids.add(pid!);changed=true;}}
+    if(group.some(row=>!ids.has(row[0]!)))return;
+    const children:{pid:number;identity:string}[]=[];
+    for(const [pid]of group){
+      if(pid===lease.pid)continue;
+      const identity=processIdentity(pid!);
+      if(!identity||Number(identity.split(/\s+/)[5])!==lease.pid)return;
+      children.push({pid:pid!,identity});
+    }
+    if(processIdentity(lease.pid)!==lease.identity)return;
+    return {...lease,children};
+  }catch{return;}
+}
+export async function terminateUnixChildren(snapshot:UnixChildrenSnapshot|undefined,graceMs:number):Promise<boolean> {
+  if(process.platform==='win32'||!snapshot||!Number.isSafeInteger(snapshot.pid)||snapshot.pid<=1||!Number.isSafeInteger(graceMs)||graceMs<0||processAlive(snapshot.pid))return false;
+  if(leaseOwnerGone(snapshot.pid))return true;
+  for(const signal of ['SIGTERM','SIGKILL'] as const){
+    for(const child of snapshot.children){
+      // Leader reuse invalidates cleanup; only captured child identities authorize signals.
+      if(processAlive(snapshot.pid))return false;
+      if(processIdentity(child.pid)===child.identity){try{process.kill(child.pid,signal);}catch{}}
+    }
+    const until=Date.now()+graceMs;
+    while(!leaseOwnerGone(snapshot.pid)){
+      const remaining=until-Date.now();if(remaining<=0)break;
+      await new Promise<void>(resolve=>setTimeout(resolve,Math.min(30,remaining)));
+    }
+    if(leaseOwnerGone(snapshot.pid))return true;
+  }
+  return false;
+}
 export async function terminateLease(lease: { pid: number; identity: string }, drain?:()=>Promise<void>) {
   if(!lease||!Number.isSafeInteger(lease.pid)||lease.pid<=1||typeof lease.identity!=='string'||!lease.identity)return false;
   if(process.platform==='win32'){

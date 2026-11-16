@@ -6,18 +6,18 @@
     "sha256": "5ed4db0fcf1eaf84d91ad12462631d73bf4576c1377e192d222e48026a902640"
   },
   "codex": {
-    "version": "0.163.0",
-    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0.tgz",
-    "sha256": "1a71db36560bb446d2c2e63ae675c4a3018c38ace38ca533f8d1b25d3e6555b4",
-    "integrity": "sha512-HNd7vR9oTK6M2ikxFnvNDCdYUgAsyo9VVnd5KnEd2ON0GYI++7MiX9XNPUkhtdgGKFPsWS+CEppQ1UU63uVhUw=="
+    "version": "0.171.0-alpha.7",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.171.0-alpha.7.tgz",
+    "sha256": "a081717814c6cab16dbf4b86af349744bbb21e9452058ffb012aa5fe48767ed4",
+    "integrity": "sha512-voD12s61yaV+xLlnZdTdhREVrPTCPJK4R1xEndWEZMY/5zhw66OfmVfAW8stbBgH1Kx5za/XnQ9k48fJJV2gbQ=="
   },
   "codexDarwinArm64": {
-    "version": "0.163.0-darwin-arm64",
-    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0-darwin-arm64.tgz",
-    "sha256": "1193ff4ce72387a5d6c34820b54a9dc57d007c67a958e8acb4715924facd3c31",
-    "integrity": "sha512-i7Dzk2a5aGmuGM9aNZgaUVTojZ/4bc5lRfosz++Y7X2BGhDkz+cySgbD+NYS1pOxfm0VEbLi9PZ3pAulI4kchw=="
+    "version": "0.171.0-alpha.7-darwin-arm64",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.171.0-alpha.7-darwin-arm64.tgz",
+    "sha256": "5a64e024f31df48705b04920a8ba6494b7967eddbe09ab5779d38ec5f018448e",
+    "integrity": "sha512-4afnmgd8qDG9RDEynPwwWds0Kv4K1UFyezEnSq3xElacx75nX4aIgbgUk5Hd/7dgWo0GDiJCrDmh2e7AcoiSlg=="
   },
-  "codexLicenseTag": "rust-v0.163.0",
+  "codexLicenseTag": "rust-v0.171.0-alpha.7",
   "codexLicenseSha256": {
     "LICENSE": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
     "NOTICE": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
@@ -89,8 +89,8 @@
       }
     ]
   },
-  "verifiedAt": "2026-10-21",
-  "verification": "ARM64 and generic archives only: Official HTTPS SHASUMS256 and npm registry SRI, independently pinned to these SHA-256 bytes; all 43 platform files retained. Not a PGP or npm-signature verification.",
+  "verifiedAt": "2026-11-16",
+  "verification": "Codex 0.171.0-alpha.7: official GitHub release npm-archive SHA-256 and npm registry SHA-512 SRI; generic and ARM64 archive bytes verified, complete 43-file ARM64 archive retained. Intel and Windows archive metadata pinned only. Node and CUA pins unchanged. No PGP, Sigstore or npm-signature verification.",
   "nodeDarwinX64": {
     "version": "22.22.0",
     "url": "https://nodejs.org/dist/v22.22.0/node-v22.22.0-darwin-x64.tar.gz",
@@ -98,10 +98,11 @@
     "verification": "Official HTTPS SHASUMS256.txt metadata pinned 2026-11-04; binary archive not downloaded or verified in this source phase"
   },
   "codexDarwinX64": {
-    "version": "0.163.0-darwin-x64",
-    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0-darwin-x64.tgz",
-    "integrity": "sha512-Ioj7h+B1ME9ZU1PH1ATfvFV5DiototEpFFaSSbg3kfDifB9djhl5fcJ++g5mpcL/+uVbcnReei+RiSXEx8o+kw==",
-    "verification": "npm registry SHA-512 SRI pinned 2026-11-04; binary archive not downloaded or verified in this source phase"
+    "version": "0.171.0-alpha.7-darwin-x64",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.171.0-alpha.7-darwin-x64.tgz",
+    "integrity": "sha512-+8IXK0ZtuqKyCpz4fxQbvGQq5/Fe2LIe/KI2FIV3VptNE0DctyugmSBpdb8c18aAqtCkeOW2U4bcXXC1zrXaTA==",
+    "verification": "Official GitHub release npm-archive SHA-256 and npm registry SHA-512 SRI pinned 2026-11-16; archive not downloaded or executed in this source phase",
+    "sha256": "41f8cdc70b6caa5ed4eac6100789e95092e8545d64fd59cbf5a0e7de18c7f72f"
   },
   "nodeWin32X64": {
     "version": "22.22.0",
@@ -110,9 +111,10 @@
     "verification": "Official HTTPS SHASUMS256.txt metadata pinned 2026-11-04; archive not downloaded or verified in source phase"
   },
   "codexWin32X64": {
-    "version": "0.163.0-win32-x64",
-    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.163.0-win32-x64.tgz",
-    "integrity": "sha512-QQGQ/q9dCJ5C5jqhgFrwycpWG3szIyFNThMiKl6hYtu6N/eM3Qd7StesgnCFAfzVED8IkE3N3oH71szzcludqw==",
-    "verification": "Official npm registry SHA-512 SRI pinned 2026-11-04; archive not downloaded or verified in source phase"
+    "version": "0.171.0-alpha.7-win32-x64",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.171.0-alpha.7-win32-x64.tgz",
+    "integrity": "sha512-aITDWUWdHEPaRKd1NWJSUJlb1wq1gPQj6Toe1ZCzIZkfSFY3dlF0isNB90m1qe8R2rXbX9xnPIcEERkQzcufLA==",
+    "verification": "Official GitHub release npm-archive SHA-256 and npm registry SHA-512 SRI pinned 2026-11-16; archive not downloaded or executed in this source phase",
+    "sha256": "fae3b8614c2629e0049078c02b83ce577cd69d266389d270f5cefe41b2083b31"
   }
 }

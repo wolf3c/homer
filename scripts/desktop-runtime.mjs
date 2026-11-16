@@ -19,7 +19,7 @@ try{
  if(realpathSync(process.execPath)!==(windows?join(resources,'node.exe'):join(bundle,'Contents/MacOS/node'))||process.version!=='v22.22.0'||!['arm64','x64'].includes(process.arch))throw Error('desktop_runtime_incompatible');
  const manifestBytes=readFileSync(join(resources,'desktop-manifest.json')),manifest=JSON.parse(manifestBytes);
  const preparation=manifest.preparation&&!(manifest.localWorkingTree===true&&manifest.publishable===false);
- if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.163.0'||manifest.arch!==undefined&&manifest.arch!==process.arch)throw Error('desktop_runtime_incompatible');
+ if(manifest.format!==2||manifest.node!=='22.22.0'||manifest.codex!=='0.171.0-alpha.7'||manifest.arch!==undefined&&manifest.arch!==process.arch)throw Error('desktop_runtime_incompatible');
  const observed=[];
  function inventory(directory,prefix=''){
    for(const name of readdirSync(directory).sort()){

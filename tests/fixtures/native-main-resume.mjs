@@ -5,7 +5,7 @@ import {mkdirSync,mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {isAbsolute,join,resolve,sep} from 'node:path';
 
 const serviceModule=process.env.HOMER_TEST_SERVICE_MODULE;
-assert.ok(serviceModule?.startsWith('file://'),'explicit compiled Homer service module required');
+assert.ok(serviceModule?.startsWith('file://'),'explicit Homer service module required');
 const {MAIN_TOOLS}=await import(new URL('./tools.js',serviceModule));
 const {RECURSIVE_TOOLS}=await import(new URL('./recursive-tools.js',serviceModule));
 export const tools=[...MAIN_TOOLS,...RECURSIVE_TOOLS];
@@ -20,12 +20,12 @@ export function fixture(t) {
  return {bin,root,home:join(root,'codex'),cwd:join(root,'workspace'),calls:[]};
 }
 
-export function peer({root,home,cwd,calls},bin,baseUrl='http://127.0.0.1:9/v1') {
+export function peer({root,home,cwd,calls,provider='synthetic_boundary'},bin,baseUrl='http://127.0.0.1:9/v1') {
  assert.ok(isAbsolute(bin),'explicit engine path required');
  const settings={approval_policy:'on-request',web_search:'disabled','features.shell_tool':false,
   'features.plugins':false,'features.apps':false,'features.memories':false,'memories.generate_memories':false,
   'memories.use_memories':false,'features.skip_host_skill_discovery':true,'analytics.enabled':false,'feedback.enabled':false,
-  model_provider:'synthetic_boundary','model_providers.synthetic_boundary':{
+  model_provider:provider,['model_providers.'+provider]:{
    name:'Synthetic local boundary',base_url:baseUrl,wire_api:'responses',supports_websockets:false,requires_openai_auth:false,
   },
  };

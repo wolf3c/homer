@@ -16,11 +16,11 @@ async function link(source,modules,context,url){
  async function synthetic(exports){const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [k,v]of Object.entries(exports))this.setExport(k,v);},{context});await m.link(()=>{});await m.evaluate();return m;}
  await entry.link(name=>synthetic(modules[name]??require(name)));return entry;
 }
-async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestArch=arch,platform='darwin'}={}){
+async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestArch=arch,manifestCodex='0.171.0-alpha.7',platform='darwin'}={}){
  const events=[],powerCalls=[],stdin=new PassThrough(),profile='/fixture/profile',bundle='/fixture/Homer.app',resources=bundle+(platform==='win32'?'/resources':'/Contents/Resources'),homer=resources+'/homer';let complete,stopCalls=0;
  const digest=createHash('sha256').update('').digest('hex');
- const manifest={format:2,node:'22.22.0',codex:'0.163.0',arch:manifestArch,files:[],codeFiles:(platform==='win32'?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>({path,sha256:digest})),sourceHash:'synthetic-hash'};
- const proc={argv:['node','desktop-runtime','--profile',profile,'--test-profile'],version:'v22.22.0',arch,platform,execPath:platform==='win32'?resources+'/node.exe':bundle+'/Contents/MacOS/node',stdin,stdout:new Writable({write(bytes,_e,done){events.push(JSON.parse(String(bytes)));done();}}),env:{HOME:profile+'/host-home',TMPDIR:profile+'/tmp',SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'},cwd:()=>profile};
+ const manifest={format:2,node:'22.22.0',codex:manifestCodex,arch:manifestArch,files:[],codeFiles:(platform==='win32'?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>({path,sha256:digest})),sourceHash:'synthetic-hash'};
+ const proc={argv:['node','desktop-runtime','--profile',profile,'--test-profile'],version:'v22.22.0',arch,platform,execPath:platform==='win32'?resources+'/node.exe':bundle+'/Contents/MacOS/node',stdin,stdout:new Writable({write(bytes,_e,done){events.push(JSON.parse(String(bytes)));done();}}),env:{HOME:profile+'/host-home',USERPROFILE:profile+'/host-home',TMPDIR:profile+'/tmp',SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'},cwd:()=>profile};
  const modules={
   'node:fs':{realpathSync:path=>path,existsSync:path=>path===profile+'/fixture-codex.mjs',readFileSync:path=>Buffer.from(path.endsWith('desktop-manifest.json')?JSON.stringify(manifest):path.endsWith('.homer-desktop-test-profile')?'{"format":1}':''),readdirSync:()=>[],lstatSync(){throw Error('unexpected_lstat');},mkdirSync(){},writeFileSync(){throw Error('unexpected_write');},closeSync(){}},
   'node:sqlite':{DatabaseSync:class{constructor(){throw Error('unexpected_database');}}},
@@ -35,7 +35,7 @@ async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestAr
  return {events,powerCalls,proc,get stopCalls(){return stopCalls;},complete:async()=>{complete?.();await done;stdin.destroy();}};
 }
 async function dependencyFixture(arch,corrupt=false,platform='darwin'){
- const target=platform+'-'+arch,nodeName=platform==='win32'?'node-v22.22.0-win-x64.zip':`node-v22.22.0-${platform}-${arch}.tar.gz`,version='0.163.0',nodeVersion='22.22.0',files=new Map(),commands=[];
+ const target=platform+'-'+arch,nodeName=platform==='win32'?'node-v22.22.0-win-x64.zip':`node-v22.22.0-${platform}-${arch}.tar.gz`,version='0.171.0-alpha.7',nodeVersion='22.22.0',files=new Map(),commands=[];
  const nodeBytes=Buffer.from('synthetic-node-'+arch),cli=Buffer.from('synthetic-cli'),native=Buffer.from('synthetic-codex-'+arch);
  const sha=bytes=>createHash('sha256').update(bytes).digest('hex'),sri=bytes=>'sha512-'+createHash('sha512').update(bytes).digest('base64');
  const pin=bytes=>({sha256:sha(bytes),integrity:sri(bytes)});
@@ -275,13 +275,13 @@ if(!vm.SourceTextModule){
  for(const arch of ['arm64','x64'])test(arch+' runtime releases outer owner before update-stopped and exits without source builds',async()=>{
   const f=await runtimeFixture({updateStopped:true,stoppedConfirmed:true},{arch});f.proc.stdin.write('{"kind":"update-stop"}\n');await tick();assert.equal(f.stopCalls,1);assert.deepEqual(f.events,[]);await f.complete();assert.deepEqual(f.events.map(v=>v.kind),['owner-release','update-stopped']);assert.equal(f.proc.exitCode,undefined);
  });
- for(const [name,result,options]of [['ordinary',{stoppedConfirmed:true},{}],['unconfirmed',{stoppedConfirmed:false},{}],['release-failed',{stoppedConfirmed:true,updateStopped:true},{releaseError:true}],['wrong-architecture',{stoppedConfirmed:true,updateStopped:true},{manifestArch:'x64'}]])test('runtime '+name+' never claims a successful update stop',async()=>{
+ for(const [name,result,options]of [['ordinary',{stoppedConfirmed:true},{}],['unconfirmed',{stoppedConfirmed:false},{}],['release-failed',{stoppedConfirmed:true,updateStopped:true},{releaseError:true}],['wrong-architecture',{stoppedConfirmed:true,updateStopped:true},{manifestArch:'x64'}],['obsolete-codex',{stoppedConfirmed:true,updateStopped:true},{manifestCodex:'0.163.0'}],['wrong-codex-prerelease',{stoppedConfirmed:true,updateStopped:true},{manifestCodex:'0.171.0-alpha.6'}]])test('runtime '+name+' never claims a successful update stop',async()=>{
   const f=await runtimeFixture(result,options);await f.complete();assert.equal(f.events.some(v=>v.kind==='update-stopped'),false);if(name==='ordinary')assert.deepEqual(f.events.map(v=>v.kind),['owner-release','stopped']);else assert.equal(f.proc.exitCode,1);
  });
  test('Windows runtime validates its own helpers and releases owner before update acknowledgement',async()=>{const f=await runtimeFixture({updateStopped:true,stoppedConfirmed:true},{platform:'win32',arch:'x64'});await f.complete();assert.deepEqual(f.events.map(v=>v.kind),['owner-release','update-stopped']);assert.equal(f.proc.exitCode,undefined);assert.equal(f.proc.env.HOME,'/fixture/profile/host-home');assert.ok(f.proc.env.SystemRoot);assert.equal(f.proc.env.LOCALAPPDATA,'C:\\RedirectedLocal');});
  for(const arch of ['arm64','x64'])test(arch+' dependencies select pinned matching archives without network or executable invocation',async()=>{
-  const f=await dependencyFixture(arch),result=f.prepare();assert.equal(result.vendor,arch==='arm64'?'aarch64-apple-darwin':'x86_64-apple-darwin');assert.equal(result.components.find(component=>component.version===`0.163.0-darwin-${arch}`)?.completePlatformArchive,true);
-  assert.ok(f.commands.some(([_bin,args])=>args.includes(`/archives/codex-0.163.0-darwin-${arch}.tgz`)));
+  const f=await dependencyFixture(arch),result=f.prepare();assert.equal(result.vendor,arch==='arm64'?'aarch64-apple-darwin':'x86_64-apple-darwin');assert.equal(result.components.find(component=>component.version===`0.171.0-alpha.7-darwin-${arch}`)?.completePlatformArchive,true);
+  assert.ok(f.commands.some(([_bin,args])=>args.includes(`/archives/codex-0.171.0-alpha.7-darwin-${arch}.tgz`)));
   assert.ok(f.commands.some(([_bin,args])=>args.includes(`node-v22.22.0-darwin-${arch}/bin/node`)));
   const bad=await dependencyFixture(arch,true);assert.throws(bad.prepare,/desktop_codex_integrity_failed/);assert.equal(bad.commands.length,0,'all bytes must pass pins before extraction');
  });
@@ -321,7 +321,7 @@ if(!vm.SourceTextModule){
    const noBuild=()=>{throw Error('unexpected_build_or_download');};
    const modules={
     'node:fs':{readFileSync:noBuild,writeFileSync:noBuild,readdirSync:noBuild,mkdirSync(){},cpSync:noBuild,lstatSync:noBuild,symlinkSync:noBuild,statSync:noBuild,realpathSync:path=>path},
-    'node:child_process':{execFileSync:noBuild},'./prepare-desktop-dependencies.mjs':{prepareDependencies:noBuild},'./desktop-source.mjs':{prepareDesktopSource:()=>{throw Error('fixture_source_boundary');}},
+    'node:child_process':{execFileSync:noBuild},'./prepare-desktop-dependencies.mjs':{prepareDependencies:noBuild,CODEX_VERSION:'0.171.0-alpha.7'},'./desktop-source.mjs':{prepareDesktopSource:()=>{throw Error('fixture_source_boundary');}},
    };
    const entry=await link(readFileSync('scripts/build-desktop.mjs','utf8')+'\nexport {arch,minimumMacOS,distribution};',modules,context,'file:///fixture/scripts/build-desktop.mjs');
    let error;try{await entry.evaluate();}catch(e){error=e.message;}

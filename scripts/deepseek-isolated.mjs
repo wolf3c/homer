@@ -8,14 +8,15 @@ import {createInterface} from 'node:readline';
 import {Writable} from 'node:stream';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
-const codexSha='8813367285524ac798dd96d1b071aea30d58708c7226fd236cd275cf1cfdee31';
+const codexSha='4e37dbc4dcad2aa285e1d246823e0466ea62171a8dbd6d1684d77e9da3abcb2e';
 const loader=join(root,'node_modules/tsx/dist/loader.mjs');
 let codexBin;
 function fixedEngine(){
+  if(process.env.HOMER_TEST_CODEX_BIN)return resolve(process.env.HOMER_TEST_CODEX_BIN);
   if(!codexBin){
     const common=execFileSync('/usr/bin/git',['rev-parse','--path-format=absolute','--git-common-dir'],
       {cwd:root,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:10000}).trim();
-    codexBin=join(dirname(common),'.codex/private/engines/codex-0.163.0/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex');
+    codexBin=join(dirname(common),'.codex/private/engines/codex-0.171.0-alpha.7/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex');
   }
   return codexBin;
 }
@@ -77,7 +78,7 @@ async function verifyRuntime(session){
   if(hash.digest('hex')!==codexSha)
     throw Error('deepseek_codex_binary_changed');
   const result=spawnSync(session.config.codexBin,['--version'],{env:environment(session),cwd:session.home,encoding:'utf8',timeout:15000});
-  if(result.status!==0||result.stdout.trim()!=='codex-cli 0.163.0')throw Error('deepseek_codex163_required');
+  if(result.status!==0||result.stdout.trim()!=='codex-cli 0.171.0-alpha.7')throw Error('deepseek_fixed_codex_required');
 }
 
 export async function runChild(spec){
@@ -117,7 +118,7 @@ async function main(){
   if(!args.length&&(!process.stdin.isTTY||!process.stdout.isTTY))throw Error('deepseek_personal_terminal_required');
   const session=createSession();await verifyRuntime(session);
   console.log('隔离目录：'+session.directory);
-  console.log('主 Agent / Worker：deepseek-flash · high · Fast 关闭 · Codex 0.163.0');
+  console.log('主 Agent / Worker：deepseek-flash · high · Fast 关闭 · Codex 0.171.0-alpha.7');
   if(args[0]==='--check'){
     // Fixed local native protocol; no Homer model turn or real key.
     const source=`import {loadConfig} from ${JSON.stringify(pathToFileURL(join(root,'src/config.ts')).href)};

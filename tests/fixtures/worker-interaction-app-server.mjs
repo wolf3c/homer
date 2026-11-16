@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Synthetic native AppServer peer; never used by the product or model checks.
 import { createInterface } from "node:readline";
+const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
 const send = message => process.stdout.write(JSON.stringify(message) + "\n");
 let model, instructions, turn = "native-turn";
 const trustedArgument = process.argv.find(arg => arg.startsWith("mcp_servers.homer_interactions="));
@@ -8,10 +9,11 @@ const trusted = trustedArgument ? JSON.parse(trustedArgument.slice(trustedArgume
 const names = ["work_directory", "list_work_directories", "inspect_interaction", "respond_interaction", "escalate_interaction", "runtime_capabilities", "inspect_attachment", "schedule_create", "schedule_list", "schedule_update", "schedule_cancel"];
 createInterface({ input: process.stdin }).on("line", line => {
   const m = JSON.parse(line);
-  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fixture/0.163.0", codexHome: process.env.CODEX_HOME } });
+  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fixture/0.171.0-alpha.7", codexHome: process.env.CODEX_HOME } });
   if (m.method === 'model/list') send({id:m.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
   if (m.method === "config/read") send({ id: m.id, result: { layers: [], config: { features: { memories: true }, memories: { dedicated_tools: true }, mcp_servers: trusted ? { homer_interactions: trusted } : {} } } });
   if (m.method === "mcpServerStatus/list") send({ id: m.id, result: { data: [{ name: "homer_interactions", tools: Object.fromEntries(names.map(name => [name, {}])) }] } });
+  if(m.method==='thread/read')send({id:m.id,result:{thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}}});
   if (m.method === "thread/start" || m.method === "thread/resume") {
     model = m.params.model;
     instructions = m.params.developerInstructions;
@@ -20,7 +22,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       const scoped = m.params.config.mcp_servers.homer_interactions;
       if (JSON.stringify(scoped) !== JSON.stringify(trusted) || scoped.enabled_tools.length !== names.length || scoped.default_tools_approval_mode !== "prompt" || names.some(name => scoped.tools[name]?.approval_mode !== "approve")) process.exit(2);
     }
-    send({ id: m.id, result: { thread: { id: "native-thread" }, activePermissionProfile: { id: "homer" }, approvalPolicy: "never" } });
+    send({ id: m.id, result: { thread: { id: "native-thread", modelProvider }, modelProvider, activePermissionProfile: { id: "homer" }, approvalPolicy: "never" } });
   }
   if (m.method === "turn/start") {
     send({ id: m.id, result: { turn: { id: turn, status: "inProgress" } } });

@@ -19,7 +19,7 @@ for(const transport of ['http','websocket','websocket-native','websocket-member'
  const rejection=transport.startsWith('reject-')?Number(transport.slice(7)):undefined;
  const fault=!!rejection||['disconnect','message-limit','tool-disconnect','overloaded'].includes(transport);let rejected=0,broken=0;
  const providers=transport==='websocket-native'?['openai','openai']:['openai','homer','openai'];
- assert.equal(execFileSync(bin,['--version'],{encoding:'utf8'}).trim(),'codex-cli 0.163.0');
+ assert.equal(execFileSync(bin,['--version'],{encoding:'utf8'}).trim(),'codex-cli 0.171.0-alpha.7');
  const parent=resolve('.codex/scratch/dual-source');mkdirSync(parent,{recursive:true});
  const root=mkdtempSync(join(parent,'resume-'));
  for(const name of ['home','codex','workspace','tmp'])mkdirSync(join(root,name));
@@ -30,7 +30,7 @@ for(const transport of ['http','websocket','websocket-native','websocket-member'
   const id=String(++sequence);
   const input=[...(responses.get(data.previous_response_id)??[]),...data.input];
   if(data.generate===false){prewarms++;responses.set('resp_'+id,input);return [{type:'response.completed',response:{id:'resp_'+id,object:'response',status:'completed',output:[],usage:{input_tokens:0,output_tokens:0,total_tokens:0}}}];}
-  requests.push({provider,transport,history:JSON.stringify(input),wireInput:JSON.stringify(data.input),previous:data.previous_response_id,model:data.model,effort:data.reasoning?.effort,serviceTier:data.service_tier??null});
+  requests.push({provider,transport,history:JSON.stringify(input),wireInput:JSON.stringify(data.input),previous:data.previous_response_id,model:data.model,effort:input.findLast(item=>item.type==='configuration_update'&&item.reasoning?.effort)?.reasoning.effort??data.reasoning?.effort,serviceTier:data.service_tier??null});
   if(provider==='openai')assert.ok(data.input.every(item=>item.type!=='reasoning'||!item.content?.length),'OpenAI rejects foreign reasoning.content beside encrypted_content');
   const reason={id:'rs_'+id,type:'reasoning',summary:[],content:provider==='homer'?[{type:'reasoning_text',text:'synthetic foreign reasoning'}]:[],encrypted_content:provider==='homer'?'synthetic-foreign-stub':'synthetic-native-cipher'};
   const item={id:'msg_'+id,type:'message',role:'assistant',content:[{type:'output_text',text:'synthetic-'+id,annotations:[]}]};
@@ -74,7 +74,7 @@ for(const transport of ['http','websocket','websocket-native','websocket-member'
  pool.intercept({path:/^\/backend-api\/codex\/models/,method:'GET'}).reply(200,modelCatalog).persist();
  pool.intercept({path:'/backend-api/codex/responses',method:'POST'}).reply(options=>rejection?{statusCode:rejection,data:'{"error":{"message":"synthetic rejection","code":"synthetic_rejection"}}'}:{statusCode:200,data:sse(reply(JSON.parse(String(options.body)),'openai')),responseOptions:{headers:{'content-type':'text/event-stream'}}}).persist();
  const bridge=await nativeHistoryBridge({HTTPS_PROXY:'http://127.0.0.1:9'},dispatcher);
- let thread,peer,passed=false;
+ let thread,activeProvider,peer,passed=false;const ancestorRollouts=[];
  function connect(provider){
   const settings={model:'gpt-6.1-sol',model_provider:provider,cli_auth_credentials_store:'file',approval_policy:'never',web_search:'disabled','features.unbounded_connection_retries':false,'features.responses_websockets':false,'features.responses_websockets_v2':false,'features.memories':false,'memories.generate_memories':false,'memories.use_memories':false,'features.apps':false,'features.plugins':false,'features.hooks':false,'features.shell_tool':false,'features.skip_host_skill_discovery':true,'analytics.enabled':false,'feedback.enabled':false};
   settings['features.enable_request_compression']=false;
@@ -99,8 +99,10 @@ for(const transport of ['http','websocket','websocket-native','websocket-member'
   return {async run(marker,selection,observeFailure=false){
    if(!started){
     await rpc('initialize',{clientInfo:{name:'homer-dual-source-test',version:'1'},capabilities:{experimentalApi:true}});child.stdin.write('{"method":"initialized"}\n');
-    const value=await rpc(thread?'thread/resume':'thread/start',{...(thread?{threadId:thread}:{dynamicTools:[{name:'benchmark_echo',description:'Synthetic constant tool',inputSchema:{type:'object',properties:{},additionalProperties:false}}]}),model:'gpt-6.1-sol',cwd:join(root,'workspace'),approvalPolicy:'never',sandbox:'read-only',environments:[]});
-    if(thread)assert.equal(value.thread.id,thread);thread=value.thread.id;observer.threadId=thread;assert.equal(value.thread.modelProvider,provider);started=true;
+    const fork=!!thread&&activeProvider!==provider,parent=thread;
+    const value=await rpc(thread?(fork?'thread/fork':'thread/resume'):'thread/start',{...(thread?{threadId:thread,...(fork?{deferGoalContinuation:true}:{})}:{dynamicTools:[{name:'benchmark_echo',description:'Synthetic constant tool',inputSchema:{type:'object',properties:{},additionalProperties:false}}]}),model:'gpt-6.1-sol',modelProvider:provider,cwd:join(root,'workspace'),approvalPolicy:'never',sandbox:'read-only',environments:[]});
+    if(parent){if(fork){assert.notEqual(value.thread.id,parent);assert.equal(value.thread.forkedFromId,parent);}else assert.equal(value.thread.id,parent);}
+    thread=value.thread.id;activeProvider=provider;observer.threadId=thread;assert.equal(value.thread.modelProvider,provider);started=true;
    }
    if(selection)await rpc('thread/settings/update',{threadId:thread,...selection});
    {
@@ -124,14 +126,15 @@ for(const transport of ['http','websocket','websocket-native','websocket-member'
    assert.equal(toolCalls,transport==='tool-disconnect'?1:0);await peer.close();peer=undefined;assert.equal(observations[0].signals,transport==='tool-disconnect'?1:0,'only a positive-token WS completion can signal recovery');passed=true;return;
   }
   let rollout;
-  for(const [index,provider]of providers.entries()){peer=connect(provider);rollout=await peer.run('synthetic-marker-'+index+(index===0?' synthetic-large-context '.repeat(2000):''));await peer.close();peer=undefined;}
+  for(const [index,provider]of providers.entries()){peer=connect(provider);rollout=await peer.run('synthetic-marker-'+index+(index===0?' synthetic-large-context '.repeat(2000):''));ancestorRollouts.push(rollout);await peer.close();peer=undefined;}
   assert.deepEqual(requests.map(r=>r.provider),providers);
   if(transport!=='websocket-native')assert.match(requests.at(-1).history,/synthetic foreign reasoning/);
   assert.match(requests.at(-1).history,/synthetic-native-cipher/);
   assert.match(requests.at(-1).history,/synthetic-marker-0/);
   assert.match(requests.at(-1).history,/synthetic-marker-1/);
-  if(transport!=='websocket-native')assert.match(readFileSync(rollout,'utf8'),/synthetic foreign reasoning/);
-  assert.match(readFileSync(rollout,'utf8'),/synthetic-native-cipher/);
+  const ancestry=ancestorRollouts.map(path=>readFileSync(path,'utf8')).join('\n');
+  if(transport!=='websocket-native'){assert.match(ancestry,/synthetic foreign reasoning/);assert.ok(JSON.parse(readFileSync(rollout,'utf8').split('\n')[0]).payload.history_base);}
+  assert.match(ancestry,/synthetic-native-cipher/);
   assert.equal(readFileSync(artifact,'utf8'),'synthetic artifact');
   assert.equal(readFileSync(join(root,'codex/auth.json'),'utf8'),'{"OPENAI_API_KEY":"synthetic-offline-key"}');
 

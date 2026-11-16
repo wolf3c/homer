@@ -42,7 +42,7 @@ async function captured(context, args) {
 }
 export async function nativeAccountStatus(context) {
   const version = await captured(context, ['--version']);
-  if (version.code !== 0 || version.text.trim() !== 'codex-cli 0.163.0') throw Error('native_login_fixed_version_required');
+  if (version.code !== 0 || version.text.trim() !== 'codex-cli 0.171.0-alpha.7') throw Error('native_login_fixed_version_required');
   const result = await captured(context, [...context.args, 'login', 'status']);
   // Never relay raw native status: other credential types may include key fragments.
   if (result.code === 0 && /Logged in using ChatGPT/i.test(result.text)) return { loggedIn: true, kind: 'chatgpt' };
@@ -54,7 +54,7 @@ export async function runNativeAccountLogin(configPath, action) {
   if (!['status', 'login'].includes(action)) throw Error('native_login_action_invalid');
   const context = nativeLoginContext(configPath), status = await nativeAccountStatus(context);
   if (action === 'login' && status.loggedIn && status.kind !== 'chatgpt') throw Error('native_subscription_login_required');
-  if (action === 'status' || status.loggedIn) { console.log(JSON.stringify({ ...status, codexHome: context.home, fixedVersion: '0.163.0', noModelRequest: true })); return; }
+  if (action === 'status' || status.loggedIn) { console.log(JSON.stringify({ ...status, codexHome: context.home, fixedVersion: '0.171.0-alpha.7', noModelRequest: true })); return; }
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw Error('native_login_requires_personal_terminal');
   console.log('请本人完成下方 Codex 原生设备登录。验证码只在此终端显示，不要发给助手。');
   console.log('登录目录：' + context.home);

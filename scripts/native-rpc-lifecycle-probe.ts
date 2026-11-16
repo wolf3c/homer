@@ -38,8 +38,8 @@ engine['receive']=async line=>{
 const safety=setTimeout(()=>void engine.close(),20000); // Validation-only cap on this isolated probe.
 let stopped=false;
 try {
- assert.match(codexVersion(bin),/0\.163\.0/);
- await engine.start();assert.equal(engine.version,'0.163.0');
+ assert.equal(codexVersion(bin),'codex-cli 0.171.0-alpha.7');
+ await engine.start();assert.equal(engine.version,'0.171.0-alpha.7');
  const account=await engine.request('account/read',{refreshToken:false});assert.equal(account.account,null);
  assert.equal((await engine.turn('Synthetic transport setup.')).status,'completed');
  timeline.length=0;

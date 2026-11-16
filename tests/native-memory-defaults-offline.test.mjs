@@ -10,7 +10,7 @@ import {CodexEngine} from '../src/engine.ts';
 
 const binary=process.env.HOMER_OFFLINE_CODEX_BIN;
 test('fixed native engine initializes only fresh main memory and preserves resumed modes and withdrawal notes',{
- skip:binary?false:'Set HOMER_OFFLINE_CODEX_BIN to the pinned 0.163.0 binary; never uses a real account or model.',
+ skip:binary?false:'Set HOMER_OFFLINE_CODEX_BIN to the pinned 0.171.0-alpha.7 binary; never uses a real account or model.',
  timeout:120000,
 },async(t)=>{
  const parent=resolve('.codex/scratch/main-memory-extraction-20261030');mkdirSync(parent,{recursive:true});
@@ -22,7 +22,7 @@ test('fixed native engine initializes only fresh main memory and preserves resum
  writeFileSync(join(mac,'homer-image-decoder'),'synthetic helper; never executed');
  writeFileSync(join(mac,'homer-window-capture'),'synthetic capture helper; never executed');
  const hash=path=>createHash('sha256').update(readFileSync(path)).digest('hex');
- const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node'].map(path=>({path,sha256:hash(join(bundleRoot,path))}))});
+ const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.171.0-alpha.7',codeFiles:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node'].map(path=>({path,sha256:hash(join(bundleRoot,path))}))});
  writeFileSync(join(resources,'desktop-manifest.json'),manifest);
  const configPath=join(home,'config.toml'),notes=join(home,'memories/extensions/ad_hoc/notes');mkdirSync(notes,{recursive:true});
  writeFileSync(configPath,'[memories]\nuse_memories = true\n');

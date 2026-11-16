@@ -17,7 +17,7 @@ const authKind=process.env.HOMER_MAILBOX_TEST_AUTH_KIND??'api',accountId=process
 if(!['api','chatgpt-external'].includes(authKind)||!binary||!isAbsolute(binary)||!model||!process.env.HOMER_MAILBOX_TEST_TOKEN||
  (authKind==='api'?!baseUrl:!accountId||!!baseUrl))throw Error('mailbox_model_acceptance_requires_isolated_provider');
 if(baseUrl){const provider=new URL(baseUrl);if(provider.protocol!=='https:'||provider.username||provider.password||provider.search||provider.hash)throw Error('mailbox_model_acceptance_provider_invalid');}
-const version=spawnSync(binary,['--version'],{encoding:'utf8'});assert.equal(version.status,0,'fixed native binary unavailable');assert.equal(version.stdout.trim(),'codex-cli 0.163.0');
+const version=spawnSync(binary,['--version'],{encoding:'utf8'});assert.equal(version.status,0,'fixed native binary unavailable');assert.equal(version.stdout.trim(),'codex-cli 0.171.0-alpha.7');
 
 for(const scenario of ['approval-recovery','expired','unknown-operation'] as MailboxModelScenario[])test('real Main mailbox decision: '+scenario,{timeout:120000},async t=>{
  const repo=resolve('.');assert.equal(realpathSync(repo),repo);assert.equal(lstatSync(repo).mode&0o022,0);

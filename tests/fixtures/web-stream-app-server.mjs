@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 // Synthetic protocol fixture. No model calls or user content.
 import { createInterface } from "node:readline";
+const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const event = (method, params) => send({ method, params });
 let count = 0, current, timer;
 const threadId = "web-synthetic-thread";
 createInterface({ input: process.stdin }).on("line", line => {
   const m = JSON.parse(line);
-  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fixture/0.163.0", codexHome: process.env.CODEX_HOME } });
+  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fixture/0.171.0-alpha.7", codexHome: process.env.CODEX_HOME } });
   if (m.method === 'model/list') send({id:m.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
   if (m.method === "config/read") send({ id: m.id, result: { layers: [], config: { features: { memories: true }, memories: { dedicated_tools: true }, mcp_servers: {} } } });
-  if (m.method === "thread/start" || m.method === "thread/resume") send({ id: m.id, result: { thread: { id: threadId, path: "/synthetic/not-yet-written-rollout.jsonl" }, activePermissionProfile: { id: "homer" }, approvalPolicy: "never" } });
+  if(m.method==='thread/read')send({id:m.id,result:{thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}}});
+  if (m.method === "thread/start" || m.method === "thread/resume") send({ id: m.id, result: { thread: { id: threadId, modelProvider, path: "/synthetic/not-yet-written-rollout.jsonl" }, modelProvider, activePermissionProfile: { id: "homer" }, approvalPolicy: "never" } });
   if (m.method === "turn/start") {
     const turnId = "web-turn-" + ++count, itemId = "web-item-" + count;
     current = turnId;

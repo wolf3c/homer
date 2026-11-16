@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "platform": "darwin-arm64",
-  "codexVersion": "0.163.0",
+  "codexVersion": "0.171.0-alpha.7",
   "node": {
     "version": "22.22.0",
     "url": "https://nodejs.org/dist/v22.22.0/node-v22.22.0-darwin-arm64.tar.gz",

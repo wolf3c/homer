@@ -4,8 +4,9 @@ const settingsFile=join(process.env.CODEX_HOME,'synthetic-skills.json');const sk
 const memoriesFile=join(process.env.CODEX_HOME,'synthetic-memories.json');const memoriesConfig=existsSync(memoriesFile)?JSON.parse(readFileSync(memoriesFile,'utf8')):{};
 let threadParams,threadMethod,installed=false;const memoryModeSets=[];const send=x=>process.stdout.write(JSON.stringify(x)+'\n');
 const setting=name=>{const arg=process.argv.find(value=>value.startsWith(name+'='));return arg?JSON.parse(arg.slice(name.length+1)):undefined;};
+const modelProvider=setting('model_provider')??'openai';
 createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id===undefined)return;let result={};
- if(m.method==='initialize')result={userAgent:'codex/0.163.0',codexHome:process.env.CODEX_HOME};
+ if(m.method==='initialize')result={userAgent:'codex/0.171.0-alpha.7',codexHome:process.env.CODEX_HOME};
  if(m.method==='config/read')result={config:{features:{},mcp_servers:{}},layers:[{name:{type:'user',file:join(process.env.CODEX_HOME,'config.toml')},version:'synthetic-v1',config:{mcp_servers:{'Office.Native':{command:'/usr/bin/true',env:{SYNTHETIC_SETTING:'local-fixture'},enabled:true}}}}]};
  if(m.method==='config/read'&&setting('model_catalog_json'))Object.assign(result.config,Object.fromEntries(['model','model_catalog_json','model_context_window','model_auto_compact_token_limit','model_auto_compact_token_limit_scope','web_search'].map(key=>[key,setting(key)])));
  if(m.method==='model/list'&&setting('model_catalog_json'))result={data:[{id:setting('model'),model:setting('model'),defaultReasoningEffort:'high',supportedReasoningEfforts:['low','high','max'].map(reasoningEffort=>({reasoningEffort}))}],nextCursor:null};
@@ -14,7 +15,8 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
  if(m.method==='skills/list')result={data:[{skills:[{name:'合成内置方法',path:join(process.env.CODEX_HOME,'skills/.system/native/SKILL.md')},{name:'合成插件方法',path:join(process.env.CODEX_HOME,'plugins/native/skills/example/SKILL.md')},{path:'/synthetic/outside/skills/untrusted/SKILL.md'}]}]};
  if(m.method==='environment/info')result={shell:{}};
  if(m.method==='thread/backgroundTerminals/list')result={data:[]};
- if(m.method==='thread/start'||m.method==='thread/resume'){threadMethod=m.method;threadParams=m.params;result={thread:{id:m.params.threadId??'synthetic-native-feature-thread'},activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy};}
+ if(m.method==='thread/read')result={thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}};
+ if(m.method==='thread/start'||m.method==='thread/resume'){threadMethod=m.method;threadParams=m.params;result={thread:{id:m.params.threadId??'synthetic-native-feature-thread',modelProvider},modelProvider,activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy};}
  if(m.method==='thread/memoryMode/set')memoryModeSets.push(m.params);
 
  if(m.method==='account/read')result={account:{type:'chatgpt',email:'SYNTHETIC_NOT_A_REAL_ACCOUNT',planType:'plus'},requiresOpenaiAuth:true};

@@ -5,7 +5,7 @@ import {resolve,join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 const lock=JSON.parse(readFileSync(new URL('../packaging/macos/dependencies-lock.json',import.meta.url),'utf8'));
 
-export const NODE_VERSION='22.22.0',CODEX_VERSION='0.163.0';
+export const NODE_VERSION='22.22.0',CODEX_VERSION='0.171.0-alpha.7';
 const sha=(data,algorithm='sha256')=>createHash(algorithm).update(data).digest('hex');
 export function prepareDependencies(scratch,{archiveSource,arch=process.arch,platform=process.platform}={}){
   if(!['arm64','x64'].includes(arch))throw Error('desktop_dependency_target_invalid');
@@ -36,7 +36,7 @@ export function prepareDependencies(scratch,{archiveSource,arch=process.arch,pla
     if(metadata.name!=='@openai/codex'||metadata.version!==version||metadata.license!=='Apache-2.0')throw Error('desktop_codex_metadata_mismatch');
     const url=metadata.dist.tarball;
     if(url!==`https://registry.npmjs.org/@openai/codex/-/codex-${version}.tgz`)throw Error('desktop_codex_source_invalid');
-    const archive=fetch(url,`codex-${version}.tgz`,windows?200000000:150000000);
+    const archive=fetch(url,`codex-${version}.tgz`,200000000);
     const bytes=readFileSync(archive);
     const pinned=version.endsWith(target)?codexPin:lock.codex;
     if((pinned.sha256&&sha(bytes)!==pinned.sha256)||metadata.dist.integrity!==pinned.integrity||'sha512-'+createHash('sha512').update(bytes).digest('base64')!==metadata.dist.integrity)throw Error('desktop_codex_integrity_failed');

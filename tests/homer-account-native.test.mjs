@@ -9,7 +9,7 @@ import {CodexEngine,codexVersion} from '../src/engine.ts';
 // Opt-in real pinned engine, scripted loopback Responses; no supplier or real Key.
 const binary=process.env.HOMER_TEST_CODEX;
 test('real Codex 163 uses both configured roles with max/non-Fast and writes files without the model Key in tools',{skip:!binary,timeout:60000},async t=>{
- assert.equal(codexVersion(binary),'codex-cli 0.163.0');
+ assert.equal(codexVersion(binary),'codex-cli 0.171.0-alpha.7');
  const bundle=resolve(binary).split('/Contents/')[0];assert.ok(bundle.endsWith('.app'),'use the pinned packaged engine');
  const desktopResources={bundleRoot:bundle,manifestSha256:createHash('sha256').update(readFileSync(join(bundle,'Contents/Resources/desktop-manifest.json'))).digest('hex')};
  const parent=resolve('.codex/scratch/account-mvp/native');mkdirSync(parent,{recursive:true});

@@ -23,7 +23,7 @@ function desktopIdentity(t,root){
  const entry=path=>({path,sha256:hash(readFileSync(join(bundleRoot,path)))});
  const codeFiles=(windows?['Homer.exe']:[decoder,'Contents/MacOS/homer-window-capture',node]).map(entry);
  const files=windows?[node,decoder].map(path=>({...entry(path),path:path.slice('resources/'.length)})):undefined;
- const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.163.0',codeFiles,files});
+ const manifest=JSON.stringify({format:2,node:'22.22.0',codex:'0.171.0-alpha.7',codeFiles,files});
  writeFileSync(join(resources,'desktop-manifest.json'),manifest);
  process.execPath=join(bundleRoot,node);
  t.after(()=>{process.execPath=executable;rmSync(root,{recursive:true,force:true});});
@@ -80,7 +80,7 @@ test('website search stays disabled when the declared capability has no model ca
   assert.equal(actual.web_search,'disabled');
  }finally{await engine.close();rmSync(root,{recursive:true,force:true});}
 });
-test('Codex and website role projections switch without replacing the thread, binding or history',async t=>{
+test('Codex and website role projections fork native segments while preserving the logical thread, binding and history',async t=>{
  const {effectiveModelConfig}=await import('../src/config.ts');
  const root=realpathSync(mkdtempSync(join(parent,'dual-'))),desktopResources=desktopIdentity(t,root),base={runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'synthetic-original',requiresOpenaiAuth:true,stopGraceMs:100,desktopResources,pauseOldDesktopWork:true,dailyDeepSeek:true,desktopConnection:{main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}};
  for(const p of [base.runtime,base.workspace,base.codexHome])mkdirSync(p);
@@ -112,7 +112,7 @@ test('Codex and website role projections switch without replacing the thread, bi
   thread=app.store.meta('mainThread');binding=app.store.meta('binding');
   const main=JSON.parse(await app.message('synthetic '+source));
   assert.equal(main.model,source==='codex'?'gpt-6.1-terra':'deepseek-flash');assert.equal(main.effort,source==='codex'?'high':'max');assert.equal(main.threadServiceTier,source==='codex'?'priority':null);assert.equal(main.turnServiceTier,source==='codex'?'priority':null);
-  if(source==='codex'){assert.equal(main.threadMethod,'thread/resume');assert.match(main.openaiBaseUrl,/^http:\/\/127\.0\.0\.1:\d+$/);assert.equal(main.requestCompression,false);assert.equal((await fetch(main.openaiBaseUrl+'/unknown')).status,404);}else assert.equal(main.openaiBaseUrl,undefined);
+  if(source==='codex'){assert.equal(main.threadMethod,'thread/fork');assert.match(main.openaiBaseUrl,/^http:\/\/127\.0\.0\.1:\d+$/);assert.equal(main.requestCompression,false);assert.equal((await fetch(main.openaiBaseUrl+'/unknown')).status,404);}else assert.equal(main.openaiBaseUrl,undefined);
   const workerConfig=effectiveModelConfig(config,'worker'),worker=new CodexEngine(workerConfig,{role:'worker',cwd:config.workspace,readRoots:[],instructions:'Offline source test',tools:[]},async()=>({}));
   try{await worker.start();const result=JSON.parse((await worker.turn('synthetic worker')).text);assert.equal(result.threadMethod,'thread/start');assert.equal(result.openaiBaseUrl,undefined);assert.equal(result.requestCompression,undefined);assert.equal(result.model,source==='codex'?'gpt-6.1-terra':'deepseek-flash');assert.equal(result.effort,source==='codex'?'xhigh':'max');assert.equal(result.threadServiceTier,null);assert.equal(result.turnServiceTier,null);}finally{assert.equal(await worker.close(),true);}
   assert.equal(readFileSync(artifact,'utf8'),'synthetic artifact');assert.equal(readFileSync(auth,'utf8'),'synthetic credential sentinel');
@@ -129,7 +129,7 @@ test('website desktop keeps the account binding and resumed thread while sending
   app=new Homer({...config,desktopResources,pauseOldDesktopWork:true,dailyDeepSeek:true,desktopConnection:{main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}},async()=>{});
   await app.start();assert.equal(app.store.meta('mainThread'),thread);assert.equal(app.store.meta('binding'),binding);
   const response=JSON.parse(await app.message('synthetic new input'));
-  assert.equal(response.threadMethod,'thread/resume');assert.equal(response.model,'deepseek-flash');assert.equal(response.effort,'max');assert.equal(response.turnServiceTier,null);
+  assert.equal(response.threadMethod,'thread/fork');assert.equal(response.model,'deepseek-flash');assert.equal(response.effort,'max');assert.equal(response.turnServiceTier,null);
   assert.equal(app.store.meta('binding'),binding);
  }finally{await app.close();}
 });

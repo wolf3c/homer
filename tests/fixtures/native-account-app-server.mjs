@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Synthetic account lifecycle, no OAuth network, real credentials or model turn.
 import{createInterface}from'node:readline';import{existsSync,readFileSync,writeFileSync}from'node:fs';import{join}from'node:path';
+const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
 const home=process.env.CODEX_HOME,file=join(home,'synthetic-account-state.json'),send=value=>process.stdout.write(JSON.stringify(value)+'\n');let login;
 const account=()=>existsSync(file)&&JSON.parse(readFileSync(file)).connected?{type:'chatgpt',email:'SYNTHETIC_PRIVATE_EMAIL',planType:'plus'}:null;
 createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id===undefined)return;let result={};
-if(m.method==='initialize')result={userAgent:'homer-fixture/0.163.0 ',codexHome:home};
+if(m.method==='initialize')result={userAgent:'homer-fixture/0.171.0-alpha.7 ',codexHome:home};
 else if(m.method==='config/read')result={config:{mcp_servers:{}},layers:[{name:{type:'user',file:join(home,'config.toml')},version:'synthetic-version',config:{}}]};
+else if(m.method==='thread/read')result={thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}};
 else if(m.method==='skills/list')result={data:[]};
 else if(m.method==='account/read')result={account:account(),requiresOpenaiAuth:true};
 else if(m.method==='account/login/start'){login='synthetic-login';result={type:'chatgpt',loginId:login,authUrl:'http://127.0.0.1:4807/synthetic-account-authorize'};}

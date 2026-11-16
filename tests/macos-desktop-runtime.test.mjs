@@ -210,7 +210,7 @@ test('review refusal preserves an unowned active Worker and releases the desktop
 function adoptGateway(f){
  const db=new DatabaseSync(f.gatewayPath),before=db.prepare('SELECT * FROM transport_requests ORDER BY seq').all(),meta=db.prepare("SELECT * FROM transport_meta WHERE key<>'binding' ORDER BY key").all();
  try{
-  const target=desktopBoundary({...f.paths,requiresOpenaiAuth:true},'0.163.0');
+  const target=desktopBoundary({...f.paths,requiresOpenaiAuth:true},'0.171.0-alpha.7');
   assert.equal(db.prepare("UPDATE transport_meta SET value=? WHERE key='binding' AND value=?").run(target,f.oldBinding).changes,1);
   assert.deepEqual(db.prepare('SELECT * FROM transport_requests ORDER BY seq').all(),before);
   assert.deepEqual(db.prepare("SELECT * FROM transport_meta WHERE key<>'binding' ORDER BY key").all(),meta);

@@ -40,7 +40,7 @@ test('actual website delivers a finite native Token to Homer and preserves histo
  // Keep the test-profile boundary; replace only its native-protocol fake with the pinned engine.
  if(realCodex){
   const binary=join(resolve(bundle),'Contents/Resources/runtime/codex/vendor/aarch64-apple-darwin/bin/codex');
-  assert.equal(manifest.codex,'0.163.0');assert.ok(existsSync(binary));
+  assert.equal(manifest.codex,'0.171.0-alpha.7');assert.ok(existsSync(binary));
   writeFileSync(join(root,'fixture-codex.mjs'),'#!/usr/bin/env node\nprocess.execve('+JSON.stringify(binary)+',['+JSON.stringify(binary)+',...process.argv.slice(2)],process.env);\n',{mode:0o700});
  }
  for(const name of ['host-home','tmp'])mkdirSync(join(root,name));
@@ -135,8 +135,8 @@ test('actual website delivers a finite native Token to Homer and preserves histo
    assert.deepEqual(restored.artifacts.find(file=>file.id===delivered.id),delivered);
    assert.deepEqual(await readAttachment(page,delivered),downloaded);
   }
-  writeFileSync(join(root,'evidence.json'),JSON.stringify({synthetic:true,actualWebsite:true,actualAmh:true,actualElectron:true,automaticDelivery:true,normalRestart:true,sameKey:true,finiteNativeToken:true,sharedWalletAbsent:true,purchasesTested:false,realCodex163:realCodex,workerFileDelivered:Boolean(delivered),historyPreserved:Boolean(history),models:realCodex?'actual desktop real 163 through actual AMH to scripted upstream':'protocol fixture'})+'\n');
-  t.diagnostic(JSON.stringify({synthetic:true,profile:root,realCodex163:realCodex,workerFileDelivered:Boolean(delivered)}));
+  writeFileSync(join(root,'evidence.json'),JSON.stringify({synthetic:true,actualWebsite:true,actualAmh:true,actualElectron:true,automaticDelivery:true,normalRestart:true,sameKey:true,finiteNativeToken:true,sharedWalletAbsent:true,purchasesTested:false,realPinnedCodex:realCodex,workerFileDelivered:Boolean(delivered),historyPreserved:Boolean(history),models:realCodex?'actual desktop pinned Codex through actual AMH to scripted upstream':'protocol fixture'})+'\n');
+  t.diagnostic(JSON.stringify({synthetic:true,profile:root,realPinnedCodex:realCodex,workerFileDelivered:Boolean(delivered)}));
  }finally{if(desktop)await stop();if(browser)await browser.close();}
 });
 
@@ -144,7 +144,7 @@ test('native-disabled synthetic Key fails visibly in the restored desktop and pr
  const {_electron}=await import('playwright-core');
  const root=resolve(process.env.HOMER_TEST_DISABLED_PROFILE);
  assert.ok(root.includes('/.codex/scratch/account-mvp/three-projects/'));
- assert.equal(JSON.parse(readFileSync(join(root,'evidence.json'))).realCodex163,true);
+ assert.equal(JSON.parse(readFileSync(join(root,'evidence.json'))).realPinnedCodex,true);
  const saved=JSON.parse(readFileSync(join(root,'runtime-config.json')));
  assert.equal(saved.config.main.baseUrl,(process.env.HOMER_TEST_GATEWAY_ORIGIN??'http://127.0.0.1:3182')+'/v1');
  const denied=await fetch(saved.config.main.baseUrl+'/responses',{method:'POST',headers:{Authorization:'Bearer '+saved.token,'Content-Type':'application/json'},body:JSON.stringify({model:saved.config.main.model,input:'Synthetic disabled-key canary.',stream:true,reasoning:{effort:saved.config.main.effort}}),redirect:'error',signal:AbortSignal.timeout(5000)});

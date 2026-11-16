@@ -24,7 +24,7 @@ export function membershipModelCatalog(model:string,effort:string|null,contextWi
   support_verbosity:false,default_verbosity:'low',apply_patch_tool_type:'freeform',web_search_tool_type:'text',truncation_policy:{mode:'tokens',limit:10000},
   context_window:contextWindow,max_context_window:contextWindow,effective_context_window_percent:95,
   experimental_supported_tools:[],input_modalities:[...capabilities.inputModalities],supports_image_detail_original:false,
-  supports_search_tool:capabilities.toolSearch,tool_mode:null,multi_agent_version:'v2',default_reasoning_summary:'none',include_skills_usage_instructions:false,use_responses_lite:false,
+  supports_search_tool:capabilities.toolSearch,tool_mode:/^gpt-6\.1(?:-|$)/.test(model)?'code_mode_only':null,multi_agent_version:'v2',default_reasoning_summary:'none',include_skills_usage_instructions:false,use_responses_lite:false,
  }]};
 }
 export function materializeModelCatalog(runtime:string,catalog:unknown){
@@ -32,7 +32,7 @@ export function materializeModelCatalog(runtime:string,catalog:unknown){
  const directory=join(runtime,'model-catalogs');
  mkdirSync(directory,{mode:0o700,recursive:true});
  if(lstatSync(directory).isSymbolicLink()||!lstatSync(directory).isDirectory()||(lstatSync(directory).mode&0o077)!==0)throw Error('invalid_model_catalog_directory');
- const content=JSON.stringify(catalog)+'\n',path=join(directory,'codex-0.163.0-'+createHash('sha256').update(content).digest('hex')+'.json');
+ const content=JSON.stringify(catalog)+'\n',path=join(directory,'codex-0.171.0-alpha.7-'+createHash('sha256').update(content).digest('hex')+'.json');
  const read=()=>{const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW);try{const stat=fstatSync(fd);if(!stat.isFile()||stat.nlink!==1||stat.size>65536||(stat.mode&0o077)!==0)throw Error('invalid_model_catalog_file');return readFileSync(fd,'utf8');}finally{closeSync(fd);}};
  try{if(read()===content)return path;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw Error('invalid_model_catalog_file');}
  const temporary=join(directory,'.catalog-'+randomUUID());

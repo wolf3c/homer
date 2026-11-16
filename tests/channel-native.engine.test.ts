@@ -8,13 +8,20 @@ import test from 'node:test';
 import {createSession} from '../scripts/deepseek-isolated.mjs';
 import {ChannelPlugin, type ChannelPacket} from '../src/channel-plugin.js';
 import {Homer} from '../src/service.js';
+import {CodexEngine} from '../src/engine.js';
+import {NativeThreadBindings,type NativeThreadBinding} from '../src/native-thread-bindings.js';
+import {MainProcessHistory} from '../src/main-process.js';
 
 const A={adapterId:'simulation',accountKey:'a',senderKey:'sender-a',conversationKey:'room-a'};
 const B={adapterId:'simulation',accountKey:'b',senderKey:'sender-b',conversationKey:'room-b'};
 const schema=(app:Homer)=>app.store.db.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index') ORDER BY type,name").all();
 
-test('pinned Codex drives a simulated channel across resume, subscription, catch-up and rebinding', {timeout:100_000}, async()=>{
+for(const acrossSources of [false,true])test('pinned Codex drives a simulated channel across resume, subscription, catch-up and rebinding'+(acrossSources?' across native providers':''), {timeout:100_000}, async()=>{
   const session=createSession();
+  const keyEnv='HOMER_CHANNEL_NATIVE_TEST_KEY',priorKey=process.env[keyEnv],heads:NativeThreadBinding[]=[];
+  process.env[keyEnv]='synthetic-distinct-membership-key';
+  writeFileSync(join(session.config.codexHome,'auth.json'),'{"OPENAI_API_KEY":"synthetic-openai-continuity-key"}',{mode:0o600});
+  let boots=0,selected:'openai'|'homer'='homer';
   const {workspace,runtime,codexBin}=session.config;
   const env={PATH:process.env.PATH,HOME:session.home,CODEX_HOME:session.config.codexHome};
   let app:Homer|undefined,plugin:ChannelPlugin|undefined;
@@ -36,11 +43,13 @@ test('pinned Codex drives a simulated channel across resume, subscription, catch
   let requests=0;
   const server=createServer(async(req,res)=>{
     try{
-      if(req.method!=='POST'||req.url!=='/v1/responses'){res.writeHead(404).end();return;}
+      if(req.method!=='POST'||!['/v1/responses','/openai/responses'].includes(req.url??'')){res.writeHead(404).end();return;}
+      const provider=req.url==='/openai/responses'?'openai':'homer';assert.equal(provider,selected);
+      assert.equal(req.headers.authorization,provider==='openai'?'Bearer synthetic-openai-continuity-key':'Bearer synthetic-distinct-membership-key');
       let data='';for await(const chunk of req)data+=chunk;
       const payload=JSON.parse(data),input=payload.input??[];
       const latest=input.findLast((item:any)=>item.role==='user');
-      const tools=JSON.stringify(payload.tools??[]);
+      const tools=JSON.stringify([...(payload.tools??[]),...input.filter((item:any)=>item.type==='additional_tools').flatMap((item:any)=>item.tools??[])]);
       const worker=!tools.includes('worker_open');
       const internal=JSON.stringify(latest??{}).includes('内部协作输入');
       const last=input.at(-1);
@@ -57,7 +66,11 @@ test('pinned Codex drives a simulated channel across resume, subscription, catch
       }
       if(worker){
         assert.doesNotMatch(tools,/set_notification_destination/);
+        if(phase==='reuse-worker')assert.ok(input.some((item:any)=>item.role==='assistant'&&JSON.stringify(item.content).includes('Worker internal result')));
         output=answer('Worker internal result');
+      }else if(phase==='reuse-worker'){
+        output=internal?answer('Worker continuity observed'):last?.type==='function_call_output'?answer('Existing Worker continued'):
+          call('worker_send',{workerId:app!.store.runs()[0]!.workerId,message:'Continue the same authorized synthetic channel test.'});
       }else if(internal){
         if(phase==='before'&&last?.type!=='function_call_output'){
           output=call('set_notification_destination',{taskId},'mcp__homer_interactions');
@@ -96,15 +109,19 @@ test('pinned Codex drives a simulated channel across resume, subscription, catch
     }catch(error){providerFailure??=error;res.writeHead(500).end();}
   });
   try{
-    assert.equal(execFileSync(codexBin,['--version'],{env,encoding:'utf8',timeout:10_000}).trim(),'codex-cli 0.163.0');
+    assert.equal(execFileSync(codexBin,['--version'],{env,encoding:'utf8',timeout:10_000}).trim(),'codex-cli 0.171.0-alpha.7');
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
     const address=server.address();assert.ok(address&&typeof address!=='string');
-    const config={...session.config,baseUrl:'http://127.0.0.1:'+address.port+'/v1',keyEnv:undefined,
+    const config={...session.config,baseUrl:'http://127.0.0.1:'+address.port+'/v1',keyEnv,
       model:'gpt-6.1-terra',fast:false as const,stopGraceMs:1_000};
+    writeFileSync(join(session.config.codexHome,'config.toml'),'openai_base_url = '+JSON.stringify('http://127.0.0.1:'+address.port+'/openai')+'\n[features]\nplugins=false\n[memories]\ngenerate_memories=false\nuse_memories=false\n');
     const start=async(withPlugin:boolean,managed=false)=>{
-      app=new Homer(config,async()=>{},undefined,managed?[adapter]:[]);
+      selected=acrossSources&&boots++%2===1?'openai':'homer';
+      const engineConfig={...config,baseUrl:selected==='homer'?config.baseUrl:undefined,keyEnv:selected==='homer'?keyEnv:undefined,requiresOpenaiAuth:selected==='openai'};
+      app=new Homer(config,async()=>{},(options,handle)=>new CodexEngine(engineConfig,options,handle),managed?[adapter]:[]);
       if(withPlugin)plugin=app.channels??new ChannelPlugin(app,[adapter]);
       await app.start();
+      const head=new NativeThreadBindings(app.store).current(app.store.meta('mainThread')!);assert.ok(head);assert.equal(head.provider,selected);heads.push(head);
     };
     const stop=async()=>{await plugin?.close();plugin=undefined;await app?.close();app=undefined;};
     const subscriptionRequest='请在此入口订阅该事项后续明确发给我的消息和附件。';
@@ -149,10 +166,21 @@ test('pinned Codex drives a simulated channel across resume, subscription, catch
     assert.equal(attachments[0]!.address.accountKey,'b');
     assert.ok(!texts().some(([,text])=>text==='Before subscription'));
     assert.equal(Buffer.from(attachments[0]!.part.kind==='attachment'?attachments[0]!.part.data:'','base64').toString(),'# Original pinned report');
+    const worker=app!.store.runs()[0]!,workerHead=new NativeThreadBindings(app!.store).current(worker.threadId!);assert.ok(workerHead);
     const n=sent.length;
     await stop();
     await start(true);
     assert.equal(app!.store.meta('mainThread'),thread);
+    if(acrossSources){
+      phase='reuse-worker';step=0;
+      assert.equal(await app!.message('Continue the existing synthetic Worker across the provider switch','cross-provider-worker'),'Existing Worker continued');await app!.idle();if(providerFailure)throw providerFailure;
+      const continued=app!.store.runs().find(run=>run.workerId===worker.workerId&&run.id!==worker.id);assert.ok(continued);
+      assert.equal(continued.taskId,worker.taskId);assert.equal(continued.threadId,worker.threadId);
+      const bindings=new NativeThreadBindings(app!.store),current=bindings.current(continued.threadId!);assert.ok(current);assert.equal(current.provider,selected);
+      assert.notEqual(current.nativeId,workerHead.nativeId);assert.equal(current.parentNativeId,workerHead.nativeId);
+      assert.equal(bindings.turn(worker.threadId!,worker.turnId!)?.nativeId,workerHead.nativeId);
+      assert.equal(bindings.turn(continued.threadId!,continued.turnId!)?.nativeId,current.nativeId);
+    }
     await plugin!.synchronize();
     assert.equal(sent.length,n);
     await run('before',B);
@@ -187,12 +215,21 @@ test('pinned Codex drives a simulated channel across resume, subscription, catch
     assert.equal(await app!.message(expectedInput,'page-forged-source'),'Unbound subscription denied');
     if(providerFailure)throw providerFailure;
     assert.equal(expectedInput,undefined);
+    assert.equal(app!.store.meta('mainThread'),thread);assert.equal(new Set(heads.map(head=>head.nativeId)).size,acrossSources?4:1);
+    const bindings=new NativeThreadBindings(app!.store),mainTurns=new MainProcessHistory(app!.store.db).list(thread!).flatMap(node=>node.turnIds);
+    assert.ok(mainTurns.length>=heads.length);
+    for(const turn of mainTurns){const fact=bindings.turn(thread!,turn);assert.ok(fact);assert.equal(bindings.segment(fact.nativeId)?.logicalId,thread);}
+    assert.deepEqual(new Set(mainTurns.map(turn=>bindings.turn(thread!,turn)!.nativeId)),new Set(heads.map(head=>head.nativeId)));
+    for(let index=1;index<heads.length;index++)if(acrossSources)assert.equal(heads[index]!.parentNativeId,heads[index-1]!.nativeId);
+    const runs=app!.store.runs();assert.equal(runs.length,acrossSources?5:4);
+    for(const run of runs){assert.equal(run.taskId,taskId);assert.ok(run.turnId);const fact=bindings.turn(run.threadId!,run.turnId);assert.ok(fact);assert.equal(bindings.segment(fact.nativeId)?.logicalId,run.threadId);}
     await stop();
   }finally{
     try{await plugin?.close();}finally{
       try{await app?.close();}finally{
         server.closeAllConnections();
         await new Promise<void>(resolve=>server.close(()=>resolve()));
+        if(priorKey===undefined)delete process.env[keyEnv];else process.env[keyEnv]=priorKey;
         rmSync(session.directory,{recursive:true,force:true});
       }
     }

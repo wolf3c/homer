@@ -1,6 +1,6 @@
 # Homer local capability resources
 
-These resources supplement fixed Codex CLI 0.163.0. The native Shell, files,
+These resources supplement fixed Codex CLI 0.171.0-alpha.7. The native Shell, files,
 web search, image generation, Skill Creator/Installer and native Skill/MCP/Plugin
 management remain owned by Codex and Homer. No Anthropic Office skills, Cindy
 runtime, user account, credential, browser profile or private configuration is included.

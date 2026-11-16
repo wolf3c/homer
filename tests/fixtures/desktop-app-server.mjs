@@ -3,7 +3,7 @@
 import {createInterface} from 'node:readline';
 import {existsSync,readFileSync,appendFileSync,writeFileSync,mkdirSync,readdirSync} from 'node:fs';
 import {join,dirname,resolve} from 'node:path';
-if(process.argv.includes('--version')){console.log('codex-cli 0.163.0');process.exit(0);}
+if(process.argv.includes('--version')){console.log('codex-cli 0.171.0-alpha.7');process.exit(0);}
 const home=process.env.CODEX_HOME;
 if(!home||!existsSync(join(dirname(home),'.homer-desktop-test-profile')))process.exit(80);
 mkdirSync(home,{recursive:true});
@@ -15,6 +15,7 @@ const settings=Object.fromEntries(process.argv.flatMap((arg,i)=>{
   try{value=JSON.parse(value.replace(/("(?:[^"\\]|\\.)*")=/g,'$1:'));}catch{}
   return [[arg.slice(0,at),value]];
 }));
+const modelProvider=settings.model_provider??'openai';
 const mcp=settings['mcp_servers.homer_interactions'];
 const worker=mcp?.args?.includes('worker')===true,pending=new Map();let sequence=0;
 const tool=(name,args)=>new Promise((accept,reject)=>{const id='synthetic-tool-'+ ++sequence;pending.set(id,{accept,reject});send({id,method:'item/tool/call',params:{threadId:thread,turnId:turn,callId:id,tool:name,arguments:args}});});
@@ -30,7 +31,7 @@ async function receive(m){
   if(!m.method){const call=pending.get(m.id);if(call){pending.delete(m.id);const text=m.result?.contentItems?.[0]?.text;if(m.error||m.result?.success===false)call.reject(Error(m.error?.message??text??'synthetic_tool_failed'));else call.accept(text?JSON.parse(text):m.result);}return;}
   trace(m.method);if(m.id===undefined)return;
   const reply=result=>send({id:m.id,result});
-  if(m.method==='initialize')return reply({userAgent:'desktop-synthetic/0.163.0',codexHome:home});
+  if(m.method==='initialize')return reply({userAgent:'desktop-synthetic/0.171.0-alpha.7',codexHome:home});
   if(m.method==='config/read')return reply({config:{...Object.fromEntries(['model','model_catalog_json','model_context_window','model_auto_compact_token_limit','model_auto_compact_token_limit_scope','web_search'].map(name=>[name,settings[name]])),features:{memories:true},memories:{dedicated_tools:true,generate_memories:settings['memories.generate_memories'],extract_model:settings['memories.extract_model'],consolidation_model:settings['memories.consolidation_model']},mcp_servers:mcp?{homer_interactions:mcp}:{}},layers:[{name:{type:'sessionFlags'},config:{mcp_servers:mcp?{homer_interactions:mcp}:{}}},{name:{type:'user',file:join(home,'config.toml')},version:'synthetic-config-1',config:{}}]});
   if(m.method==='account/read'){
     if(state().offline)return send({id:m.id,error:{code:-32000,message:'synthetic offline'}});
@@ -44,10 +45,11 @@ async function receive(m){
   }
   if(m.method==='environment/info')return reply({shell:'/bin/zsh'});
   if(m.method==='model/list')return reply({data:settings.model_catalog_json?[{id:settings.model,model:settings.model,defaultReasoningEffort:'high',supportedReasoningEfforts:['low','high','max'].map(reasoningEffort=>({reasoningEffort}))}]:[]});
+  if(m.method==='thread/read')return reply({thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}});
   if(m.method==='thread/start'||m.method==='thread/resume'){
     if(state().failThread)return send({id:m.id,error:{code:-32000,message:'synthetic thread failure'}});
     thread=m.params.threadId??(worker?'synthetic-desktop-worker-'+process.pid:'synthetic-desktop-main');
-    return reply({thread:{id:thread},activePermissionProfile:{id:'homer'},approvalPolicy:'on-request'});
+    return reply({thread:{id:thread,modelProvider},modelProvider,activePermissionProfile:{id:'homer'},approvalPolicy:'on-request'});
   }
   if(m.method==='mcpServerStatus/list')return reply({data:mcp?[{name:'homer_interactions',tools:Object.fromEntries(mcp.enabled_tools.map(name=>[name,{}]))}]:[]});
   if(m.method==='thread/backgroundTerminals/list')return reply({data:[]});

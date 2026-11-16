@@ -23,5 +23,5 @@ try{
  }
  await engine.request('plugin/uninstall',{pluginId:detail.plugin.summary.id});
  assert.equal((await read()).plugin.summary.installed,false);
- console.log(JSON.stringify({fixed:'0.163.0',isolatedHome:true,nativeReadInstallDiscoverToggleUninstall:true}));
+ console.log(JSON.stringify({fixed:'0.171.0-alpha.7',isolatedHome:true,nativeReadInstallDiscoverToggleUninstall:true}));
 }finally{if(await engine.close())rmSync(dir,{recursive:true,force:true});}

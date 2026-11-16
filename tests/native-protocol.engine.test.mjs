@@ -6,7 +6,7 @@ import {promisify} from 'node:util';
 import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 const run=promisify(execFile),binary=process.env.HOMER_TEST_CODEX_BIN;
-assert.ok(binary,'HOMER_TEST_CODEX_BIN must explicitly name the fixed Codex 0.163.0 executable');
+assert.ok(binary,'HOMER_TEST_CODEX_BIN must explicitly name the fixed Codex 0.171.0-alpha.7 executable');
 const fixed=resolve(binary),root=resolve('.codex/scratch/native-protocol-suite');mkdirSync(root,{recursive:true});
 for(const name of ['project-mcp-acceptance','project-mcp-runtime-acceptance','native-rpc-lifecycle-probe','native-system-skills-probe','native-plugin-acceptance','native-tool-acceptance']){
  test(name,{timeout:190000},async()=>{

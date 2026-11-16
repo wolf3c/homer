@@ -18,6 +18,13 @@
 
 网站向公开配置接口和 PKCE 兑换返回同一套经过校验的配置。主 Agent 与 Worker 各自声明运行参数。字段、取值和能力校验见[会员配置契约](../2026-11-04-membership-context-config.md#通用边界与能力)。
 
+## Codex 0.171 升级候选（2026-11-16）
+
+源码固定为 `0.171.0-alpha.7`，会员 GPT-6.1 家族目录启用 `code_mode_only`，DeepSeek 仍为 `tool_mode: null`；未安装或重启日常 Homer。新版原生恢复禁止切换供应商，因此同来源继续 resume，ChatGPT／会员跨来源使用原生 fork，Homer 会话、任务、Worker 和历史关联保持原身份。
+
+按用户确认的方案已接入持久分支映射、当前执行所有者检查和准确原生轮次事实；发布前确认供应商、父分支、记忆及原生目标，不能用 fork 绕过审批或未知操作。Main／Worker 续办均精确保留父记忆模式，只从固定版本 `CODEX_HOME/state_5.sqlite` 只读获取；不改写原生历史或数据库。Worker 关闭只清理预先捕获且身份仍匹配的子进程，并保留最终空组证明。生产适配器的旧 0.163 迁移／双角色记忆／原生目标 7/7、实际 Homer 渠道与双向来源连续性 2/2 已通过，最终共享工作树核心 2737/2737、完整类型检查通过。维护成本、其他证据和未验证项见[跨来源会话兼容方案](../superpowers/specs/2026-11-16-codex-0.171-provider-continuity-design.md)及[测试说明](../testing.md#codex-01710-alpha7-源码升级)。最终源码已用实际会员配置补验 HTTP 闭环：Main Terra／medium、Worker Terra／high，共6个请求全部200，模型生成代码、本地执行与随机结果回传均通过，日常配置／进程不变，见[实网报告](../member-code-mode-live-validation-2026-11-16.md)。历史验收仍对应其记录的旧引擎。
+
+
 ## ChatGPT 模型设置（2026-11-11）
 
 「设置 → 账号 → ChatGPT 套餐」分别配置 Homer（内部 `main`）和 Worker。产品默认值集中在 `src/model-config.ts`：Homer 为 `gpt-6.1-terra / high / priority`，Worker 为 `gpt-6.1-terra / xhigh / null`。CLI 默认值、荷马服务的角色合同及首次登录欢迎页保持原职责。

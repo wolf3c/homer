@@ -12,7 +12,7 @@ const tools = [...MAIN_TOOLS, ...RECURSIVE_TOOLS];
 const requestedBin = process.argv[2] ?? "codex";
 const codexBin = requestedBin.includes("/") ? resolve(requestedBin) : requestedBin;
 const codexVersion = execFileSync(codexBin, ["--version"], { encoding: "utf8", timeout: 5000 }).trim();
-assert.equal(codexVersion, "codex-cli 0.163.0", "fixed Codex 0.163.0 required");
+assert.equal(codexVersion, "codex-cli 0.171.0-alpha.7", "fixed Codex 0.171.0-alpha.7 required");
 const root = resolve(".codex/scratch/worker-interactions");
 mkdirSync(root, { recursive: true });
 const dir = mkdtempSync(join(root, "compat-"));

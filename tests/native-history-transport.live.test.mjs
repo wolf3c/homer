@@ -18,7 +18,7 @@ import WebSocket,{WebSocketServer} from 'ws';
 test('candidate HTTP and WebSocket live transport benchmark',{timeout:900000},async context=>{
 const binary=process.env.HOMER_TEST_CODEX_BIN,authPath=process.env.HOMER_TEST_AUTH_FILE;
 if(!binary||!authPath)throw Error('explicit_HOMER_TEST_CODEX_BIN_and_HOMER_TEST_AUTH_FILE_required');
-assert.equal(execFileSync(binary,['--version'],{encoding:'utf8',timeout:5000}).trim(),'codex-cli 0.163.0');
+assert.equal(execFileSync(binary,['--version'],{encoding:'utf8',timeout:5000}).trim(),'codex-cli 0.171.0-alpha.7');
 const auth=readFileSync(authPath);
 const parent=resolve('.codex/scratch/native-history-transport');mkdirSync(parent,{recursive:true});
 const root=mkdtempSync(join(parent,'run-'));

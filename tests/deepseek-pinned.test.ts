@@ -32,6 +32,8 @@ test('pinned engine discovers and invokes synthetic MCP through loopback Respons
   try{
    let data='';for await(const chunk of req)data+=chunk;
    const body=JSON.parse(data);requests++;
+   const exposed=[...(body.tools??[]),...(body.input??[]).filter((item:any)=>item.type==='additional_tools').flatMap((item:any)=>item.tools??[])].flatMap((tool:any)=>tool.tools??[tool]);
+   assert.equal(exposed.some((tool:any)=>tool.type==='custom'&&tool.name==='exec'),false,'DeepSeek must retain direct tool mode');
    const hasSearch=body.tools?.some((t:any)=>t.type==='tool_search');search ||= hasSearch;if(hasSearch)steps++;
    const inputs=body.input??[];
    const found=inputs.find((i:any)=>i.type==='tool_search_output');

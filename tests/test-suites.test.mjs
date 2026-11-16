@@ -34,7 +34,7 @@ for(const stage of ['initialize','generation','source-refresh','close-failure'])
  f.put('native-history-transport.live.test.mjs',source);
  const shim=join(f.root,'fault.mjs');
  // Route the explicitly supplied executable to Node + our fixture on every OS.
- const executable=`import cp from 'node:child_process';import{syncBuiltinESMExports}from'node:module';const spawn=cp.spawn,exec=cp.execFileSync;cp.spawn=function(bin,args,opts){return bin===process.env.HOMER_TEST_CODEX_BIN?spawn.call(this,bin,[${JSON.stringify(engine)},...args],opts):spawn.call(this,bin,args,opts)};cp.execFileSync=function(bin,args,opts){return bin===process.env.HOMER_TEST_CODEX_BIN&&args[0]==='--version'?'codex-cli 0.163.0\\n':exec.call(this,bin,args,opts)};`;
+ const executable=`import cp from 'node:child_process';import{syncBuiltinESMExports}from'node:module';const spawn=cp.spawn,exec=cp.execFileSync;cp.spawn=function(bin,args,opts){return bin===process.env.HOMER_TEST_CODEX_BIN?spawn.call(this,bin,[${JSON.stringify(engine)},...args],opts):spawn.call(this,bin,args,opts)};cp.execFileSync=function(bin,args,opts){return bin===process.env.HOMER_TEST_CODEX_BIN&&args[0]==='--version'?'codex-cli 0.171.0-alpha.7\\n':exec.call(this,bin,args,opts)};`;
  writeFileSync(shim,executable+(stage==='source-refresh'?`import fs from 'node:fs';const read=fs.readFileSync;let count=0;fs.readFileSync=function(path,...args){return path===process.env.HOMER_TEST_AUTH_FILE&&++count>1?Buffer.from('synthetic-refresh'):read.call(this,path,...args)};`:stage==='close-failure'?`import http from 'node:http';const close=http.Server.prototype.close;http.Server.prototype.close=function(...args){close.apply(this,args);throw Error('synthetic_close_failure');};`:'')+'syncBuiltinESMExports();');
  const result=spawnSync(process.execPath,['--import','tsx','--import',shim,'--test','tests/native-history-transport.live.test.mjs'],{cwd:f.root,encoding:'utf8',timeout:10000,env:{PATH:dirname(process.execPath),HOME:join(f.root,'home'),HOMER_TEST_CODEX_BIN:process.execPath,HOMER_TEST_AUTH_FILE:auth,HTTPS_PROXY:'http://127.0.0.1:9',NO_PROXY:'localhost,127.0.0.1'}});
  assert.equal(result.status,1,result.stdout+result.stderr);
@@ -77,6 +77,9 @@ const explicitSuites={
  "live-transport": ["native-history-transport.live.test.mjs"],
  "desktop-codesign": ["desktop-update-codesign.test.mjs"],
  "engine": [
+  "member-code-mode.live.test.mjs",
+  "native-thread-continuity.engine.test.ts",
+  "native-plugin-shutdown.engine.test.mjs",
   "main-mailbox-recovery.engine.test.ts",
   "channel-native.engine.test.ts",
   "deepseek-continuation.test.ts",

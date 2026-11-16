@@ -46,7 +46,7 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
     }
     if(state.index===5)return answer(role+' schedules verified');
     const name=['schedule_create','schedule_list','schedule_update','schedule_cancel','schedule_list'][state.index]!;
-    const tools=JSON.stringify(payload.tools??[]),discovery=payload.input?.findLast((item:any)=>item.type==='tool_search_output');
+    const tools=JSON.stringify([...(payload.tools??[]),...(payload.input??[]).filter((item:any)=>item.type==='additional_tools').flatMap((item:any)=>item.tools??[])]),discovery=payload.input?.findLast((item:any)=>item.type==='tool_search_output');
     if(!tools.includes(name)&&!JSON.stringify(discovery??{}).includes(name))
       return {type:'tool_search_call',call_id:role+'-search-'+state.index,execution:'client',arguments:{query:name}};
     const args=state.index===0?{text:role+' native reminder',trigger:{at:new Date(Date.now()+86_400_000).toISOString()}}
@@ -62,7 +62,7 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
       const payload=JSON.parse(body);
       if(payload.client_metadata?.['x-openai-subagent']==='memory_consolidation'){res.writeHead(403).end();return;}
       request++;
-      const worker=!JSON.stringify(payload.tools??[]).includes('worker_open');
+      const worker=!JSON.stringify([...(payload.tools??[]),...(payload.input??[]).filter((item:any)=>item.type==='additional_tools').flatMap((item:any)=>item.tools??[])]).includes('worker_open');
       const latest=payload.input?.findLast((item:any)=>item.role==='user');
       const internal=JSON.stringify(latest??{}).includes('内部协作输入');
       const last=payload.input?.at(-1);
@@ -83,8 +83,8 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
     }catch(error){failure??=error;res.writeHead(500).end();}
   });
   try{
-    assert.ok(existsSync(session.config.codexBin),'Project fixed Codex 0.163.0 executable is unavailable: '+session.config.codexBin);
-    assert.equal(execFileSync(session.config.codexBin,['--version'],{env:{PATH:process.env.PATH,HOME:session.home,CODEX_HOME:session.config.codexHome},encoding:'utf8',timeout:10_000}).trim(),'codex-cli 0.163.0');
+    assert.ok(existsSync(session.config.codexBin),'Project fixed Codex 0.171.0-alpha.7 executable is unavailable: '+session.config.codexBin);
+    assert.equal(execFileSync(session.config.codexBin,['--version'],{env:{PATH:process.env.PATH,HOME:session.home,CODEX_HOME:session.config.codexHome},encoding:'utf8',timeout:10_000}).trim(),'codex-cli 0.171.0-alpha.7');
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
     const address=server.address();assert.ok(address&&typeof address!=='string');
     const config={...session.config,baseUrl:'http://127.0.0.1:'+address.port+'/v1',keyEnv:undefined,model:'gpt-6.1-terra',stopGraceMs:1000};
@@ -92,8 +92,8 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
       const factory:EngineFactory=(options,handle)=>{
         const role=options.nativeTools!;
         const selected:EngineOptions=warm?{...options,interactionMcp:{...options.interactionMcp!,catalog:options.interactionMcp!.catalog!.filter(tool=>!names.includes(tool.name))}}:options;
-        const engine=new CodexEngine(config,selected,handle),nativeRequest=engine.request.bind(engine),nativeStart=engine.start.bind(engine);
-        engine.request=(method,params)=>{if(method==='thread/resume')resumes.push({role,threadId:(params as {threadId:string}).threadId});return nativeRequest(method,params);};
+        const engine=new CodexEngine(config,selected,handle),nativeSend=engine['send'].bind(engine),nativeStart=engine.start.bind(engine);
+        engine['send']=(message:any)=>{if(message.method==='thread/resume')resumes.push({role,threadId:message.params.threadId});nativeSend(message);};
         engine.start=async()=>{
           const threadId=await nativeStart(),inventory=await engine.request('mcpServerStatus/list',{threadId,serverName:'homer_interactions',detail:'full',limit:100});
           const catalog=inventory.data.find((entry:any)=>entry.name==='homer_interactions');

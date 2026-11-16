@@ -18,6 +18,17 @@ const options: EngineOptions = {
   instructions: "transport test",
   tools: [],
 };
+test('initialize preserves the exact pinned prerelease version',async()=>{
+ const engine=new CodexEngine(config,options,async()=>({}));
+ try{await engine.start();assert.equal(engine.version,'0.171.0-alpha.7');}
+ finally{await engine.close();}
+});
+for(const version of ['0.163.0','0.171.0','0.171.0-alpha.6','0.171.0-alpha.7+other'])
+ test('initialize refuses unpinned version '+version,async()=>{
+  const engine=new CodexEngine({...config,model:'reported-version:'+version},options,async()=>({}));
+  try{await assert.rejects(()=>engine.start(),/^Error: capability_native_version_or_home_mismatch$/);}
+  finally{await engine.close();}
+ });
 test("T10: late duplicate turn notifications cannot finish or contaminate a newer turn", async () => {
   const engine = new CodexEngine(config, options, async () => ({}));
   try {

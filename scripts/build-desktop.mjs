@@ -4,7 +4,7 @@ import {resolve,join,dirname,relative} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {prepareDependencies} from './prepare-desktop-dependencies.mjs';
+import {prepareDependencies,CODEX_VERSION} from './prepare-desktop-dependencies.mjs';
 import {prepareDesktopSource} from './desktop-source.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 if(process.version!=='v22.22.0'||!(process.platform==='darwin'&&['arm64','x64'].includes(process.arch)||process.platform==='win32'&&process.arch==='x64'))throw Error('desktop_build_runtime_required');
@@ -107,7 +107,7 @@ const product=JSON.parse(readFileSync(join(stage,'package.json'))),electron=prod
 const build=distribution?.build??Number(execFileSync(git,['rev-list','--count',sourceSha],{cwd:root,encoding:'utf8'}));
 const {validateHomerOrigins}=await import(pathToFileURL(join(homer,'dist/homer-account.js')).href);
 const account=validateHomerOrigins({websiteOrigin,gatewayOrigin},provenance.preparation);
-const metadata={account,arch,minimumMacOS,powerWake:1,...(windows?{platform:'win32'}:{}),...(distribution?{appId:'app.homer.desktop',releaseChannel:'stable'}:{}),...(provenance.localWorkingTree?{localWorkingTree:true}:{}),format:2,version:product.version,build,gitSha:sourceSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash,schema:schemaHash(sourceSnapshot(stage)),toolsHash:MAIN_TOOLS_HASH,node:'22.22.0',codex:'0.163.0',electron};
+const metadata={account,arch,minimumMacOS,powerWake:1,...(windows?{platform:'win32'}:{}),...(distribution?{appId:'app.homer.desktop',releaseChannel:'stable'}:{}),...(provenance.localWorkingTree?{localWorkingTree:true}:{}),format:2,version:product.version,build,gitSha:sourceSha,preparation:provenance.preparation,publishable:provenance.publishable,sourceHash,manifest,uiHash,schema:schemaHash(sourceSnapshot(stage)),toolsHash:MAIN_TOOLS_HASH,node:'22.22.0',codex:CODEX_VERSION,electron};
 cpSync(join(stage,'packaging/electron/main.mjs'),join(shell,'main.mjs'));
 cpSync(join(stage,'packaging/electron/preload.cjs'),join(shell,'preload.cjs'));
 cpSync(join(stage,'packaging/electron/capture-panel-preload.cjs'),join(shell,'capture-panel-preload.cjs'));

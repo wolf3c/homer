@@ -12,7 +12,7 @@ const binary=process.env.HOMER_TEST_CODEX,file=process.env.HOMER_TEST_CONNECTION
 test('website-delivered synthetic Key runs real Codex main and Worker through AMH',{skip:!binary||!file||disabled,timeout:60000},async t=>{
  assert.ok(resolve(file).includes('/.codex/scratch/account-mvp/three-projects/'));assert.ok(file.endsWith('/runtime-config.json')||file.endsWith('/deepseek.json'));// Historical synthetic profiles retain their original path.
  const connection=readHomerConnection(resolve(file),{gatewayOrigin:gateway,allowSyntheticLoopback:true});
- assert.ok(connection?.subject&&connection.token);assert.equal(codexVersion(binary),'codex-cli 0.163.0');
+ assert.ok(connection?.subject&&connection.token);assert.equal(codexVersion(binary),'codex-cli 0.171.0-alpha.7');
  const bundle=resolve(binary).split('/Contents/')[0];assert.ok(bundle.endsWith('.app'),'use the pinned packaged engine');
  const desktopResources={bundleRoot:bundle,manifestSha256:createHash('sha256').update(readFileSync(join(bundle,'Contents/Resources/desktop-manifest.json'))).digest('hex')};
  const parent=resolve('.codex/scratch/account-mvp/gateway-native');mkdirSync(parent,{recursive:true});

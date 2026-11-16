@@ -7,7 +7,7 @@ import {CodexEngine} from '../src/engine.js';
 const binary=process.argv[2];assert.ok(binary,'fixed_codex_binary_required');
 const root=resolve('.codex/scratch/native-mcp-config-implementation');mkdirSync(root,{recursive:true});
 const dir=mkdtempSync(join(root,'project-runtime-')),home=join(dir,'home');mkdirSync(home,{mode:0o700});
-const receipt:any={fixedVersion:'0.163.0',isolatedHome:true,noAccounts:true,noTurnOrModel:true,checks:[],rpcCounts:{},mcpCounts:{},nonMcpRequests:0,otherRequestKinds:{},cleanup:[]};
+const receipt:any={fixedVersion:'0.171.0-alpha.7',isolatedHome:true,noAccounts:true,noTurnOrModel:true,checks:[],rpcCounts:{},mcpCounts:{},nonMcpRequests:0,otherRequestKinds:{},cleanup:[]};
 let stage='fixture',failure:unknown;const engines:CodexEngine[]=[];const deleted=new Set<string>();
 const listener=createServer(async(req,res)=>{
  const route=req.url??'';
@@ -48,7 +48,7 @@ const denied=async(e:CodexEngine,server:string,tool='echo')=>{let blocked=false;
 const tagged=async(e:CodexEngine,server:string,tag:string)=>{const r=await call(e,server);assert.notEqual(r.isError,true);assert.equal(r.content[0].text,tag+':echo');};
 const removeThread=async(e:CodexEngine)=>{if(!e.threadId||deleted.has(e.threadId))return;try{await e.request('thread/delete',{threadId:e.threadId});deleted.add(e.threadId);receipt.cleanup.push({thread:'synthetic',method:'thread/delete',succeeded:true});}catch{try{await e.request('thread/unsubscribe',{threadId:e.threadId});receipt.cleanup.push({thread:'synthetic',method:'thread/unsubscribe',succeeded:true});}catch{receipt.cleanup.push({thread:'synthetic',method:'supported-close-unavailable',succeeded:false});}}};
 try{
- stage='trusted-a';const a=engine('a');await a.start();assert.equal(a.version,'0.163.0');
+ stage='trusted-a';const a=engine('a');await a.start();assert.equal(a.version,'0.171.0-alpha.7');
  let inventory=await a.request('mcpServerStatus/list',{threadId:a.threadId,detail:'full',limit:100});assert.ok(inventory.data.find((s:any)=>s.name==='only_a')?.tools.echo);
  await tagged(a,'only_a','a');await tagged(a,'shared','shared_a');await denied(a,'shared','other');await denied(a,'user_disabled');await denied(a,'project_disabled');receipt.checks.push('trusted project actual connection/call; native project precedence, tool scope and disabled enforced');
  stage='same-thread-cwd';await a.request('thread/settings/update',{threadId:a.threadId,cwd:projects.b});

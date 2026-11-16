@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // A transport-only test peer. This is never selected by the product CLI or real acceptance.
 import { createInterface } from "node:readline";
+const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
 let count = 0;
 let model;
 let toolResponses = 0;
+const reportedVersion=process.argv.find(value=>value.startsWith('model="reported-version:'))?.slice('model="reported-version:'.length,-1)??'0.171.0-alpha.7';
 const send = (x) => process.stdout.write(JSON.stringify(x) + "\n");
 const event = (method, params) => send({ method, params });
 const item = (id, text) =>
@@ -24,9 +26,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     return;
   }
   if (m.method === "initialize")
-    send({ id: m.id, result: { userAgent: "mock/0.163.0", codexHome: process.env.CODEX_HOME } });
+    send({ id: m.id, result: { userAgent: 'mock/'+reportedVersion, codexHome: process.env.CODEX_HOME } });
   if (m.method === "config/read")
     send({ id: m.id, result: { config: { features: { memories: true }, memories: { dedicated_tools: true }, mcp_servers: {} }, layers: [] } });
+  if(m.method==='thread/read')send({id:m.id,result:{thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}}});
   if (m.method === "thread/start" || m.method === "thread/resume") {
     model = m.params.model;
     if (model === "missing-rollout" && m.method === "thread/resume") {
@@ -36,7 +39,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     send({
       id: m.id,
       result: {
-        thread: { id: "mock-thread" },
+        thread: { id: "mock-thread", modelProvider },
+        modelProvider,
         activePermissionProfile: { id: "homer" },
         approvalPolicy: "never",
       },

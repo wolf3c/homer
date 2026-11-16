@@ -4,6 +4,7 @@ import { createInterface } from "node:readline";
 import { createConnection } from "node:net";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
 if (process.argv.includes("--version")) { console.log("codex-cli synthetic-web"); process.exit(0); }
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const trustedArg = process.argv.find(value => value.startsWith("mcp_servers.homer_interactions="));
@@ -50,7 +51,7 @@ async function receive(m) {
     else accept(text?JSON.parse(text):m.result);return;
   }
   if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});
-  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.163.0", codexHome:home } });
+  if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.171.0-alpha.7", codexHome:home } });
   if (m.method === "config/mcpServer/reload") send({id:m.id,result:{}});
   if (m.method === "environment/info") send({id:m.id,result:{shell:"/bin/zsh"}});
   if (["thread/backgroundTerminals/list","skills/list"].includes(m.method)) send({id:m.id,result:{data:[]}});
@@ -61,10 +62,11 @@ async function receive(m) {
       ...(home?[{name:{type:"user",file:resolve(home,"config.toml")},version:"synthetic-1",config:{}}]:[])],
   }});
   if (m.method === "mcpServerStatus/list") send({ id: m.id, result: { data: [{ name: "homer_interactions", tools: Object.fromEntries((trusted?.enabled_tools??[]).map(name => [name, {}])) }] } });
+  if(m.method==='thread/read')send({id:m.id,result:{thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}}});
   if (m.method === "thread/start" || m.method === "thread/resume") {
     cwd = m.params.cwd ?? m.params.environments?.[0]?.cwd;
     thread = m.params.threadId ?? (worker ? "web-synthetic-worker-" + process.pid : "web-synthetic-main");
-    send({ id: m.id, result: { thread: { id: thread }, activePermissionProfile: { id: "homer" }, approvalPolicy: m.params.approvalPolicy } });
+    send({ id: m.id, result: { thread: { id: thread, modelProvider }, modelProvider, activePermissionProfile: { id: "homer" }, approvalPolicy: m.params.approvalPolicy } });
   }
   if (m.method === "turn/start") {
     cwd = m.params.cwd ?? cwd;

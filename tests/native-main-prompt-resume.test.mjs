@@ -2,9 +2,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {readFileSync,truncateSync} from 'node:fs';
-import {sep} from 'node:path';
+import {join,sep} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {fixture,metadata,peer,tools} from './fixtures/native-main-resume.mjs';
+const {Homer}=await import(process.env.HOMER_TEST_SERVICE_MODULE);
+const {Store}=await import(new URL('./store.js',process.env.HOMER_TEST_SERVICE_MODULE));
 
 const histories=[
  ['full','with full history'],
@@ -14,6 +16,7 @@ const histories=[
 ];
 for(const [mode,description] of histories)test(`Main cold resume adopts the new developer instructions ${description}`,{timeout:60000},async t=>{
  const f=fixture(t);
+ const store=new Store(join(f.root,'homer.sqlite'));
  const hostFooter=`\n默认工作目录：${f.cwd}。Worker 可选择获准的项目目录。`;
  const originalMarker='SYNTHETIC_HOMER_MAIN_A',currentMarker='SYNTHETIC_HOMER_MAIN_B';
  const original=originalMarker+hostFooter,current=currentMarker+hostFooter;
@@ -57,6 +60,8 @@ for(const [mode,description] of histories)test(`Main cold resume adopts the new 
   });
   if(threadId)assert.equal(thread.id,threadId);
   assert.equal(requests.length,count,'opening a thread must not make a model request');
+  // Native resume can retain old context; exercise Homer's existing append without rewriting history.
+  if(threadId)await Homer.prototype.adoptMainPrompt.call({prompts:{main:current},store},engine,threadId,true);
   return thread.id;
  }
 
@@ -91,7 +96,11 @@ for(const [mode,description] of histories)test(`Main cold resume adopts the new 
   const parts=input.filter(item=>item.role==='developer').flatMap(item=>item.content??[]);
   const developer=parts.map(part=>part.text??'').join('\n');
   const counts=[originalMarker,currentMarker].map(marker=>developer.split(marker).length-1);
-  assert.deepEqual(counts,wanted===current?[0,1]:[1,0],'number of old and current developer instruction blocks');
+  if(wanted===original)assert.deepEqual(counts,[1,0],'the seed must use only the original instructions');
+  else{
+   assert.ok(counts[1]>=1&&counts[1]<=(interrupted?2:1),'current instructions must survive native resume and compaction');
+   assert.ok(developer.lastIndexOf(currentMarker)>developer.lastIndexOf(originalMarker),'current Homer instructions must follow historical instructions');
+  }
  }
 
  try{
@@ -127,9 +136,9 @@ for(const [mode,description] of histories)test(`Main cold resume adopts the new 
   checkPrompt(resumed,current);
   if(full){
    const beforeBundle=seed.find(item=>item.role==='developer'&&item.content?.some(part=>part.text===original));
-   const afterBundle=resumed.find(item=>item.role==='developer'&&item.content?.some(part=>part.text===current));
+   const afterBundle=resumed.find(item=>item.role==='developer'&&item.content?.some(part=>part.text===original));
    assert.ok(beforeBundle.content.length>1,'seed should bundle adjacent developer context');
-   assert.deepEqual(afterBundle.content,beforeBundle.content.map(part=>part.text===original?{...part,text:current}:part));
+   assert.deepEqual(afterBundle.content,beforeBundle.content,'adoption must preserve the original bundled history');
    assert.ok(resumed.some(item=>item.role==='developer'&&item.content?.some(part=>part.text===namespaceHint)));
    assert.ok(resumed.some(item=>item.role==='user'&&JSON.stringify(item.content).includes(oldMessage)));
    assert.ok(resumed.some(item=>item.role==='assistant'&&JSON.stringify(item.content).includes('Synthetic assistant message 1')));
@@ -153,6 +162,7 @@ for(const [mode,description] of histories)test(`Main cold resume adopts the new 
   finally{
    server.closeAllConnections();
    await new Promise(resolve=>server.close(resolve));
+   store.close();
   }
  }
 });

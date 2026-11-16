@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const [binaryArg,resourceArg]=process.argv.slice(2);
 if(!binaryArg||!resourceArg)throw Error('builtin_native_acceptance_requires_fixed_binary_and_resource_root');
 const binary=resolve(binaryArg),resources=resolve(resourceArg);
-assert.match(execFileSync(binary,['--version'],{encoding:'utf8'}),/0\.163\.0/);
+assert.equal(execFileSync(binary,['--version'],{encoding:'utf8'}).trim(),'codex-cli 0.171.0-alpha.7');
 const base=resolve('.codex/scratch/builtin-capabilities-implementation/native');mkdirSync(base,{recursive:true});
 const directory=mkdtempSync(join(base,'cold-')),home=join(directory,'Homer/codex'),workspace=join(directory,'Homer/workspace');mkdirSync(workspace,{recursive:true});
 seedBuiltinSkills(resources,home);
@@ -38,6 +38,6 @@ try{
  execFileSync(python,['-B',installer,'--help'],{env,cwd:workspace,stdio:'pipe'});
  execFileSync(python,['-B',fileURLToPath(new URL('./builtin-installer-acceptance.py',import.meta.url)),installer],{env:{...env,TMPDIR:join(directory,'tmp')},cwd:workspace,stdio:'pipe'});
  const refresh=await rpc('skills/list',{cwds:[workspace],forceReload:true});for(const name of ['homer-created-probe','homer-installed-probe'])assert.ok(refresh.data.flatMap(row=>row.skills??[]).some(s=>s.name===name));
- const receipt={passed:true,fixedCodex:'0.163.0',freshHome:true,nativeBuiltinAndSystemDiscovery:true,nativeCreatorRanAndValidated:true,createdSkillBehaviorVerified:true,createdSkillActuallyDiscovered:true,installerCliDependencyCheck:true,nativeInstallerSyntheticZipInstallAndScript:true,installerDuplicateRefusal:true,installedSkillActuallyDiscovered:true,installerRemoteDownload:false,model:false,account:false,thread:false};
+ const receipt={passed:true,fixedCodex:'0.171.0-alpha.7',freshHome:true,nativeBuiltinAndSystemDiscovery:true,nativeCreatorRanAndValidated:true,createdSkillBehaviorVerified:true,createdSkillActuallyDiscovered:true,installerCliDependencyCheck:true,nativeInstallerSyntheticZipInstallAndScript:true,installerDuplicateRefusal:true,installedSkillActuallyDiscovered:true,installerRemoteDownload:false,model:false,account:false,thread:false};
  writeFileSync(join(directory,'native-verification.json'),JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt));
 }finally{child.stdin.end();child.kill('SIGTERM');await new Promise(done=>{if(child.exitCode!==null)done();else child.once('exit',done);});}

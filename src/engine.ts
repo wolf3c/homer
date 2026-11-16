@@ -1,4 +1,4 @@
-import {leaseOwnerGone,processIdentity,terminateLease} from './processes.js';
+import {leaseOwnerGone,processIdentity,terminateLease,captureUnixChildren,terminateUnixChildren} from './processes.js';
 import {nativeHistoryBridge} from './native-history-bridge.js';
 import {TurnExecution,executionCounters} from './execution-limits.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
@@ -19,6 +19,8 @@ import {usesHomerNativeHome,effectiveModelConfig,configuredWebSearchMode} from "
 import {deepseekProfile,materializeDeepSeekCatalog} from './deepseek-model.js';
 import {validateContextTuning} from './model-context.js';
 import {validateModelCapabilities,membershipModelCatalog,materializeModelCatalog} from './model-catalog.js';
+import type {NativeThreadBindings} from './native-thread-bindings.js';
+import {readNativeMemoryMode,confirmNativeMemoryMode} from './native-thread-memory.js';
 import { WorkerNativeRequests, type NativeRequest } from "./worker-native-requests.js";
 import type { InteractionResolution } from "./worker-interactions.js";
 import { HOST_MCP_TOOLS } from "./worker-interaction-mcp.js";
@@ -34,6 +36,7 @@ export type Tool = {
 };
 export type ToolCall = {
   threadId: string;
+  nativeThreadId?: string;
   turnId: string;
   callId: string;
   tool: string;
@@ -91,6 +94,9 @@ export type EngineOptions = {
   nativeTools?: "main" | "worker";
   controlOnly?: boolean;
   prepareProjectContext?: (cwd:string,signal:AbortSignal)=>Promise<string[]>;
+  nativeThreads?: NativeThreadBindings;
+  isCurrent?:()=>boolean;
+  canFork?:()=>boolean;
 };
 export type EngineLike = {
   request?(method:string,params:any):Promise<any>;
@@ -107,6 +113,7 @@ export type EngineLike = {
   resumable?: boolean;
   pid?: number;
   threadId?: string;
+  readonly nativeThreadId?: string;
   turnId?: string;
   on(event: string, listener: (...args: any[]) => void): any;
   start(): Promise<string>;
@@ -297,7 +304,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       try{
         if(this.child!==child||this.closing||this.exited)return;
         const event=JSON.parse(line),fields=event.fields;
-        if(event.target!=='codex_otel.trace_safe'||!fields||fields['app.version']!=='0.163.0'||!this.threadId||fields['conversation.id']!==this.threadId)return;
+        if(event.target!=='codex_otel.trace_safe'||!fields||fields['app.version']!=='0.171.0-alpha.7'||!this.threadId||fields['conversation.id']!==(this.nativeThreadId??this.threadId))return;
         let transport:'http'|'websocket'|undefined;
         if(fields['event.name']==='codex.websocket_request'&&fields.success==='true'&&!fields['error.message'])transport='websocket';
         if(fields['event.name']==='codex.api_request'&&fields.endpoint==='/responses')transport='http';
@@ -334,7 +341,10 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   }
   pid?: number;
   private windowsLease?:{pid:number;identity:string};
+  private unixLease?:{pid:number;identity:string};
+  private startupOperation?:object;
   threadId?: string;
+  nativeThreadId?: string;
   turnId?: string;
   // Codex does not persist a fresh empty thread until its first turn.
   resumable = false;
@@ -369,9 +379,9 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private requestBridge() {
     return new WorkerNativeRequests({
       worker: this.options.role === 'worker',
-      current: () => ({ active: !!this.active && !this.active.settling && !this.closing && !this.exited, threadId: this.threadId, turnId: this.turnId }),
+      current: () => ({ active: !!this.active && !this.active.settling && !this.closing && !this.exited, threadId: this.nativeThreadId??this.threadId, turnId: this.turnId }),
       forward: request => {
-        if (this.options.onInteraction) return this.options.onInteraction(request);
+        if (this.options.onInteraction) return this.options.onInteraction({...request,...this.projectRoot(request)});
         if (request.method === "mcpServer/elicitation/request") throw Error("interaction_handler_unavailable");
         return Promise.resolve({status: "denied", decision: {action: "deny", reason: "interaction_capability_denied"}});
       },
@@ -403,15 +413,24 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     }
   }
   async start(): Promise<string> {
-    try{return await this.startConfigured();}catch(error){await this.close();throw error;}
+    if(this.startupOperation)throw Error('engine_start_busy');
+    const operation={};this.startupOperation=operation;
+    try{return await this.startConfigured(operation);}catch(error){await this.close();throw error;}
+    finally{if(this.startupOperation===operation)this.startupOperation=undefined;}
   }
   // Native 0.163.0: priority is Fast; explicit null clears an inherited tier.
   private get serviceTier(){return this.config.serviceTier!==undefined?this.config.serviceTier:effectiveFast(this.config.fast,this.options.role)?"priority":null;}
-  private async startConfigured(): Promise<string> {
+  private async startConfigured(operation:object): Promise<string> {
     this.websocketSupported=false;
     if(this.failureChecks.signal.aborted)this.failureChecks=new AbortController();
     if (!usesHomerNativeHome(this.config)) throw Error("engine_native_tools_home_required");
     const preparationSignal=this.failureChecks.signal;
+    const sourceSnapshot=this.sourceSnapshot(this.config);
+    let forking=false;
+    const isCurrent=()=>{
+      if(this.startupOperation!==operation||this.closing||this.exited||preparationSignal.aborted||this.options.isCurrent?.()===false||forking&&this.options.canFork?.()===false)return false;
+      try{return this.sourceSnapshot(effectiveModelConfig(this.sourceConfig,this.options.role))===sourceSnapshot;}catch{return false;}
+    };
     const projectMarkers=this.options.prepareProjectContext?await this.options.prepareProjectContext(this.options.cwd,preparationSignal):undefined;
     if(this.closing||preparationSignal.aborted)throw Error('engine_configuration_cancelled');
     const proxy=codexProxyEnvironment();
@@ -513,6 +532,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     });
     this.pid = this.child.pid;
     if(process.platform==='win32'&&this.pid){const identity=processIdentity(this.pid);if(identity)this.windowsLease={pid:this.pid,identity};}
+    if(process.platform!=='win32'&&this.pid){const identity=processIdentity(this.pid);this.unixLease=identity?{pid:this.pid,identity}:undefined;}
     this.emit("spawn");
     this.child.stdin.on("error", () =>
       this.fail(new Error("engine_stdin_closed")),
@@ -554,9 +574,9 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     } finally {
       if (initializeTimer) clearTimeout(initializeTimer);
     }
-    this.version = initialized.userAgent?.match(/\/([\d.]+)/)?.[1];
+    this.version = initialized.userAgent?.match(/\/([^\s]+)/)?.[1];
     this.notify("initialized", {});
-    if(this.version!=="0.163.0"||resolve(initialized.codexHome??"/")!==resolve(this.config.codexHome))throw Error("capability_native_version_or_home_mismatch");
+    if(this.version!=="0.171.0-alpha.7"||resolve(initialized.codexHome??"/")!==resolve(this.config.codexHome))throw Error("capability_native_version_or_home_mismatch");
     const effective = await this.request("config/read", {
       includeLayers: true,
       cwd: this.options.cwd,
@@ -599,6 +619,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     }:{};
     const params = {
       model: this.config.model,
+      modelProvider:this.config.baseUrl?'homer':'openai',
       serviceTier: this.serviceTier,
       ...resumePermissions,
       // Omit fresh cwd: fixed native start otherwise implicitly trusts writable unknown projects.
@@ -616,14 +637,38 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       // Do not let that known downgrade look like a successful Fast request.
       if(Array.isArray(model?.serviceTiers)&&!model.serviceTiers.some((tier:any)=>tier.id===this.serviceTier))throw Error("engine_fast_unavailable");
     }
-    const response = await this.request(
-      this.options.threadId ? "thread/resume" : "thread/start",
-      this.options.threadId
-        ? { ...params, threadId: this.options.threadId, excludeTurns: true }
-        : { ...params, dynamicTools: this.options.tools },
-    );
-    if(this.options.threadId&&response.thread.id!==this.options.threadId)throw Error('engine_resume_thread_mismatch');
-    this.threadId = response.thread.id;
+    const logical=this.options.threadId,bindings=this.options.nativeThreads;
+    const saved=logical?bindings?.current(logical):undefined;
+    const parentId=saved?.nativeId??logical;
+    let parentProvider=saved?.provider,forked=false;
+    if(logical&&bindings){
+      const previous=(await this.nativeRequest('thread/read',{threadId:parentId,includeTurns:false})).thread;
+      if(previous?.id!==parentId||!['openai','homer'].includes(previous.modelProvider)||saved&&saved.provider!==previous.modelProvider)throw Error('engine_native_provider_mismatch');
+      parentProvider=previous.modelProvider;
+      if(!saved)bindings.publish(logical,logical,{nativeId:logical,provider:previous.modelProvider,parentNativeId:null},isCurrent);
+      forked=parentProvider!==params.modelProvider;
+      forking=forked;
+    }
+    if(!isCurrent())throw Error('native_thread_owner_changed');
+    if(forked&&effective.config?.sqlite_home&&resolve(effective.config.sqlite_home)!==resolve(this.config.codexHome))throw Error('native_memory_home_mismatch');
+    const memory=forked?readNativeMemoryMode(this.config.codexHome,parentId!):undefined;
+    const sourceGoal=forked&&effective.config?.features?.goals===true?(await this.nativeRequest('thread/goal/get',{threadId:parentId})).goal:undefined;
+    if(!isCurrent())throw Error('native_thread_owner_changed');
+    const response=await this.nativeRequest(forked?'thread/fork':logical?'thread/resume':'thread/start',
+      logical?{...params,threadId:parentId,...(forked?{deferGoalContinuation:true}:{}),excludeTurns:true}:{...params,dynamicTools:this.options.tools});
+    const actual=response.thread?.id;
+    if(typeof actual!=='string'||logical&&!forked&&actual!==parentId)throw Error('engine_resume_thread_mismatch');
+    if(bindings&&(response.thread.modelProvider!==params.modelProvider||response.modelProvider!==params.modelProvider||forked&&(actual===parentId||response.thread.forkedFromId!==parentId)))throw Error('engine_native_provider_mismatch');
+    if(!isCurrent())throw Error('native_thread_owner_changed');
+    this.threadId=logical??actual;this.nativeThreadId=actual;
+    if(memory!==undefined){
+      await this.nativeRequest('thread/memoryMode/set',{threadId:actual,mode:memory});
+      await confirmNativeMemoryMode(this.config.codexHome,actual,memory,isCurrent);
+    }
+    if(sourceGoal!==undefined){
+      const childGoal=(await this.nativeRequest('thread/goal/get',{threadId:actual})).goal;
+      if(childGoal&&childGoal.threadId!==actual||JSON.stringify(childGoal?{...childGoal,threadId:parentId}:childGoal)!==JSON.stringify(sourceGoal))throw Error('engine_native_goal_mismatch');
+    }
     if(this.config.desktopModelSource==='codex')
       await this.request('thread/settings/update',{threadId:this.threadId,model:this.config.model,effort:effectiveEffort(this.config.effort,this.options.role),serviceTier:this.serviceTier});
     // Turn effort:null inherits ambient settings; replace only the membership thread's reasoning state.
@@ -637,6 +682,9 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         throw new Error("engine_interaction_tools_unavailable");
     }
     if(this.options.nativeTools){this.appliedVersion=effective.layers?.find((l:any)=>l.name?.type==="user"&&resolve(l.name.file)===resolve(this.config.codexHome,"config.toml"))?.version;await this.refreshBackground();}
+    if(bindings){
+      bindings.publish(this.threadId!,parentId??actual,{nativeId:actual,provider:params.modelProvider as 'openai'|'homer',parentNativeId:forked?parentId!:saved?.parentNativeId??null},isCurrent);
+    }
     this.emit("thread", this.threadId);
     return this.threadId!;
   }
@@ -648,6 +696,11 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     this.send({ method, params });
   }
   request(method: string, params: unknown): Promise<any> {
+    const native=this.nativeThreadId,logical=this.threadId;
+    const mapped=native&&logical&&native!==logical&&params&&typeof params==='object'&&(params as any).threadId===logical?{...params,threadId:native}:params;
+    return this.nativeRequest(method,mapped).then(result=>native&&logical&&native!==logical&&result?.thread?.id===native?{...result,thread:{...result.thread,id:logical}}:result);
+  }
+  private nativeRequest(method: string, params: unknown): Promise<any> {
     if (this.closing) return Promise.reject(new Error("engine_closed"));
     if (this.failure) return Promise.reject(this.failure);
     const id = ++this.sequence;
@@ -662,6 +715,13 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         reject(e);
       }
     });
+  }
+  private projectRoot<T extends {threadId?:string}>(value:T):T&{nativeThreadId?:string}{
+    return this.nativeThreadId&&this.threadId&&this.nativeThreadId!==this.threadId&&value?.threadId===this.nativeThreadId
+      ?{...value,threadId:this.threadId,nativeThreadId:this.nativeThreadId}:value;
+  }
+  private sourceSnapshot(config:Config){
+    return JSON.stringify([config.desktopModelSource,config.baseUrl,config.keyEnv,config.requiresOpenaiAuth,config.dailyDeepSeek,config.supportsWebSocket]);
   }
   private fail(error: Error) {
     this.failureChecks.abort();
@@ -691,7 +751,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     // Fixed native plugin catalogs currently exceed 15 MB. Only a response to
     // one of our native catalog requests receives the larger bounded quota.
     const catalog=!m.method&&["plugin/list","plugin/search","plugin/read","skills/list","app/list"].includes(this.pending.get(m.id)?.method??"");
-    const nativeImage=this.options.nativeTools&&this.active&&m.method==='item/completed'&&m.params?.item?.type==='imageGeneration'&&m.params.threadId===this.threadId&&(!this.turnId||m.params.turnId===this.turnId);
+    const nativeImage=this.options.nativeTools&&this.active&&m.method==='item/completed'&&m.params?.item?.type==='imageGeneration'&&m.params.threadId===(this.nativeThreadId??this.threadId)&&(!this.turnId||m.params.turnId===this.turnId);
     if(bytes>2*1024*1024&&!catalog&&!nativeImage)throw Error("engine_message_too_large");
     if (m.id !== undefined && !m.method) {
       const p = this.pending.get(m.id);
@@ -709,18 +769,22 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       }
       return;
     }
-    const p = m.params;
+    const raw=m.params,p=this.projectRoot(raw);
     // The RPC acknowledgement is authoritative. Notifications can precede it;
     // hold them until the accepted turn ID and onStarted callback are bound.
-    if (this.active && !this.turnId && p?.threadId === this.threadId && (p.turnId || p.turn?.id)) {
+    if (this.active && !this.turnId && (p?.threadId === this.threadId||this.options.role==='worker') && (p?.turnId || p?.turn?.id)) {
       this.active.earlyEvents.push(line);
       return;
     }
     if (m.id !== undefined) {
       this.serverRequests++;
       try{
-      const item = this.nativeItems.get(JSON.stringify([p?.threadId,p?.turnId,p?.itemId]));
-      const details = item ? { ...p, operation: item, ...(p.command == null && item.command ? { command: item.command } : {}) } : p;
+      if(raw?.threadId&&(this.nativeThreadId??this.threadId)!==raw.threadId&&
+        (raw.threadId===this.threadId||this.options.nativeThreads?.segment(raw.threadId))){
+        this.send({id:m.id,error:{code:-32001,message:'interaction_scope_denied'}});return;
+      }
+      const item = this.nativeItems.get(JSON.stringify([raw?.threadId,raw?.turnId,raw?.itemId]));
+      const details = item ? { ...raw, operation: item, ...(raw.command == null && item.command ? { command: item.command } : {}) } : raw;
       if (await this.nativeRequests.receive(m.id, m.method, details)) return;
       let result: unknown;
       if (m.method === "item/tool/call") {
@@ -780,13 +844,23 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if(m.method==='mcpServer/oauthLogin/completed'){this.emit('oauthCompleted',{success:p?.success===true});return;}
     // Callback ownership is the connection/parent segment. Child completion
     // never completes the parent turn or enters its public output projection.
-    if (m.method === 'serverRequest/resolved') this.nativeRequests.resolved(p?.threadId, p?.requestId);
-    if (m.method === 'turn/completed') this.nativeRequests.endTurn(p?.turn?.id, p?.threadId);
+    if (m.method === 'serverRequest/resolved') this.nativeRequests.resolved(raw?.threadId, raw?.requestId);
+    if (m.method === 'turn/completed') this.nativeRequests.endTurn(raw?.turn?.id, raw?.threadId);
+    if(this.options.role==='worker'&&this.turnId&&(!this.closing&&!this.exited||m.method==='item/completed')&&['item/started','item/completed'].includes(m.method)&&
+      typeof raw?.threadId==='string'&&typeof raw.turnId==='string'&&typeof raw.item?.id==='string'&&
+      ['commandExecution','fileChange','mcpToolCall','dynamicToolCall','imageGeneration'].includes(raw.item.type)){
+      const root=this.nativeThreadId??this.threadId,completed=m.method==='item/completed';
+      const owned=raw.threadId===root?raw.turnId===this.turnId:raw.threadId!==this.threadId&&!this.options.nativeThreads?.segment(raw.threadId);
+      if(owned&&(this.active||completed)){
+        const effect=safeNativeProcess(raw.threadId,raw.turnId,raw.item,completed);
+        if(effect)this.emit('nativeWorkerEffect',{nativeId:raw.threadId,turnId:raw.turnId,itemId:effect.itemId,status:effect.status,completed,ownerNativeId:root,ownerTurnId:this.turnId});
+      }
+    }
     if (m.method === 'item/started' && this.active && !this.active.settling && !this.closing &&
         (this.options.role === 'worker' || p?.threadId === this.threadId && p?.turnId === this.turnId) &&
         ['fileChange','commandExecution'].includes(p?.item?.type))
-      this.nativeItems.set(JSON.stringify([p.threadId,p.turnId,p.item.id]),p.item);
-    if (p?.threadId !== this.threadId) return;
+      this.nativeItems.set(JSON.stringify([raw.threadId,raw.turnId,raw.item.id]),raw.item);
+    if (raw?.threadId !== (this.nativeThreadId??this.threadId)) return;
     if(this.active?.settling&&(p.turnId===this.turnId||p.turn?.id===this.turnId)){
       if(this.options.nativeTools==='worker'&&m.method==='item/completed')this.publishNativeProcess(m.method,p);
       return;
@@ -1132,8 +1206,9 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       if(this.exited){await this.historyBridge?.close();this.historyBridge=undefined;}
       return this.exited&&stopped;
     }
+    const ownedChildren=!this.exited&&this.options.role==='worker'&&this.unixLease?captureUnixChildren(this.unixLease):undefined;
     if (!this.exited && this.options.role === 'worker') {
-      // Fixed Codex 0.163.0 drains stdio EOF and shuts down native threads.
+      // Native EOF drains threads; captured startup children may outlive its leader.
       // Its Unix watchdog is 45s; allow that bounded drain before signals.
       this.child.stdin?.end();
       await waitForExit(46000);
@@ -1147,6 +1222,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if(this.exited){await this.historyBridge?.close();this.historyBridge=undefined;}
     if(!this.exited||this.options.role!=='worker')return this.exited;
     const pid=this.pid;if(pid===undefined||!Number.isSafeInteger(pid)||pid<=1)return false;
+    if(ownedChildren&&!leaseOwnerGone(pid))await terminateUnixChildren(ownedChildren,this.config.stopGraceMs);
     // A reaped leader may precede its draining children; probe without signalling a reused PID.
     const until=Date.now()+this.config.stopGraceMs;
     while(!leaseOwnerGone(pid)){

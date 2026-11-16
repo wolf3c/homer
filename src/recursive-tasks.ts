@@ -384,11 +384,12 @@ export class RecursiveTasks{
   });
  }
  bind(runId:string,epoch:number,threadId:string,turnId:string){
-  this.store.transaction(()=>{const run=this.run(runId);if(run.epoch!==epoch||run.phase!=='starting'||run.stopRequestedAt||!this.canStart(run))throw Error('run_epoch_or_phase_conflict');text(threadId,200);text(turnId,200);
+  const bind=()=>{const run=this.run(runId);if(run.epoch!==epoch||run.phase!=='starting'||run.stopRequestedAt||!this.canStart(run))throw Error('run_epoch_or_phase_conflict');text(threadId,200);text(turnId,200);
    if(run.threadId&&run.threadId!==threadId||this.one('SELECT 1 FROM runs WHERE threadId=? AND workerId<>? LIMIT 1',threadId,run.workerId))throw Error('worker_thread_conflict');
    this.sql("UPDATE runs SET threadId=?,turnId=?,phase='executing',stateRevision=stateRevision+1,checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.executionAcknowledged',1) WHERE id=?",threadId,turnId,run.id);
    this.sql("UPDATE agent_receipts SET state='received',offeredTurnId=?,revision=revision+1 WHERE offeredRunId=? AND offeredEpoch=? AND state='offered'",turnId,run.id,epoch);
-  });
+  };
+  if(this.store.db.isTransaction)bind();else this.store.transaction(bind);
  }
  private canStart(run:TaskRun){const task=this.task(run.taskId);return task.state==='open'&&task.controlState==='normal'&&task.historyState==='visible'&&task.headVersion===run.version;}
  rpc(runId:string,epoch:number,waiting:boolean){const run=this.run(runId);if(run.epoch!==epoch||run.status!=='running'||run.stopRequestedAt)throw Error('run_epoch_stale');if(!['executing','rpc_wait'].includes(run.phase))throw Error('run_phase_denied');this.sql('UPDATE runs SET phase=?,stateRevision=stateRevision+1 WHERE id=?',waiting?'rpc_wait':'executing',run.id);}
