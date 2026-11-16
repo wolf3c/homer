@@ -2,6 +2,40 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## 用量优化与原生权限（2026-11-16）
+
+本次独立提交候选从 main `22a21bcee59b5b472be0042d66e12725319d00c8` 提取，仅包含本轮权限恢复、目录指引和模型审批投影；不混入共享工作区并行的 Codex 0.171、provider／HOME、渠道或 UI 改动。使用 Node **22.22.0**、主线固定 Codex **0.163.0**；子进程 PATH 固定到相同 Node。没有注入 200K 压缩值、scope 或模型窗口，未设置时沿原生默认，显式原生配置继续生效。
+
+最小离线入口：
+
+```sh
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test \
+  tests/engine-runtime-policy.test.ts tests/engine-main-context.test.ts \
+  tests/interaction-inspection.test.ts tests/project-mcp-service-directory.test.ts
+```
+
+本次扩展定向 **159/159** 与完整 `tsc -p tsconfig.check.json`、`git diff --check` 通过；扩展范围还包括 service-interactions、worker-native-owner、worker-interactions、main-native-approvals、engine-rpc-lifecycle、main-mailbox-delivery 和 main-mailbox-projection。命令、文件、权限和 MCP 的批准／拒绝都经真实 Homer 宿主、独立 SQLite 及合成引擎运行，检查完整改动与移位、网络目标、deny 路径、许可范围和不可批准标记。升级后的非空问题／用户决定／回执仍提供，完整宿主记录保持不变。自批、跨请求、过期／撤权和原回调防重放沿既有门禁验证。
+
+固定原生专项登记在 `scripts/test.mjs` 的 engine 清单，不进入默认核心：
+
+```sh
+HOMER_TEST_CODEX_BIN=/absolute/path/to/project-pinned/codex \
+node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test tests/usage-optimization.engine.test.ts
+```
+
+原生专项 **5/5** 通过，仅使用新建 HOME／CODEX_HOME、本地合成 Responses 和测试目录，不读取日常账号或调用外部模型。代理也只允许夹具回环目标；合成 ChatGPT 分支显式选择该原生内置 API 目录支持的 GPT-6.1 Sol，不改变产品模型默认。Main／Worker 启动策略快照及独立 `command/exec` 验证工作区内写入、回环 HTTP 成功、目录外写入失败；恢复原只读／离线线程后采用明确的新设置且不新增模型轮；可信项目的只读或禁网限制仍能收窄低层全权限配置。配置与 trust 原字节不变。
+
+同线程压缩两例：合成上游报告 210K 输入，原生默认不触发压缩，显式原生 150K 阈值触发一次；各保持两个正常请求、原线程、已有 rollout 字节前缀和配置原字节，额外压缩请求独立计数。隔离线程通过原生 `thread/memoryMode/set` 禁用记忆生成，避免后台合并污染计数，产品记忆配置不变。专项观察原生标准输出协议，不依赖其他未提交任务增加的私有 RPC 方法。
+
+独立完整核心回归为 **2550/2552**，无取消或跳过；两项失败均为干净 main 基线已复现的 message-image-preview 断言，未发现本次新增回归。干净 main 基线为 **2530/2534**，另外两项 test-suites 的 development／vendor 入口超时；这两项单独复跑 **2/2** 通过，候选完整回归也通过，没有放宽断言或超时。两项图片失败名称为：
+
+- `decoded image removes its duplicate card and restores fallback across lazy reloads and revision changes`
+- `HTTP preview failure retains the named download card and reports a failed download`
+
+独立只读审查未发现新增源码问题，并核对了 0.163.0 原生权限层级。新增成本仅是启动时配置层线性扫描和审批浅投影，没有额外数据库查询、深拷贝或网络请求。对原 102 条检查结果按本投影重算，紧凑 JSON UTF-8 长度为 **826,940 → 213,870 字节（减少 74.14%）**；78 条审批中位数 **1,884**、最大 **4,649** 字节。保留准确操作、原授权和完整既有数据；这些数字不代表 token、延迟或套餐节省比例。
+
+日常实例的工作区可写／按需审批／网络开启只保存在获授权的专属原生配置，不进入 Git，也不是对所有实例注入的默认值。未迁移业务库或历史，未安装、重启或发布。服务器 `command/exec` 和策略快照不替代真实模型工具执行；实模决策、目录指引遵循情况、Windows 和实际套餐降耗仍未验证。
+
 ## 主信箱与审批恢复
 
 2026-11-15 本地提交候选复核：仅叠加本任务主信箱修复及错配审批回归，排除并行的图片、渠道与 UI 改动。独立候选的相关八文件 **127/127**、完整 `tsc -p tsconfig.check.json` 与 UI 类型检查通过。默认核心为 **2532/2534**，零取消／跳过；以下两项既有图片预览测试失败：

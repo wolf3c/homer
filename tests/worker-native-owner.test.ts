@@ -67,7 +67,7 @@ test('Main directly reviews successive Worker native operations without user rec
    const args={interactionId:item.id,...request.decision};
    await assert.rejects(f.host.interactionTool('respond_interaction',args),/interaction_inspection_required/);
    const inspected=await f.host.interactionTool('inspect_interaction',{interactionId:item.id});
-   assert.equal(inspected.state,'pending_main');assert.ok(inspected.details.review);
+   assert.equal(inspected.state,'pending_main');assert.ok(f.interactions.inspect(item.id).details.review);
    if(request.method==='item/permissions/requestApproval'){
     await assert.rejects(f.host.interactionTool('respond_interaction',{...args,permissions:{fileSystem:{write:[f.dir+'/unrequested']}}}),/interaction_permission_scope/);
     assert.equal(f.interactions.inspect(item.id).state,'pending_main');

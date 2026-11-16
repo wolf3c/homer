@@ -1860,7 +1860,26 @@ export class Homer {
     if(this.mainApprovals.owns(id))throw Error("main_native_user_decision_required");
     if (tool === "inspect_interaction") {
       (context.inspectedInteractions ??= new Set()).add(id);
-      return { ...item, run: this.store.run(item.runId), hostCapabilities: "执行权限取决于本实例的 Codex 配置。主 Agent 核对真实用户委托和原生请求后，可直接批准或拒绝范围内的 Worker 操作及必要临时权限；已升级的请求须遵循真实用户决定。主 Agent 不能批准本人请求。" };
+      const {review:_review,historyThreadId:_history,params,approval,...details}=item.details;
+      if(params){
+        const {threadId:_thread,turnId:_turn,itemId:_item,startedAtMs:_started,...operation}=params as Record<string,unknown>;
+        details.params=operation;
+      }
+      if(approval){
+        const {title:_title,detailLabel:_label,...content}=approval as Record<string,unknown>;
+        const original=params as Record<string,unknown>|undefined;
+        // Commands and MCP reviews carry targets/permissions absent from params.
+        if((details.method==='item/fileChange/requestApproval'&&original?.operation!=null)||
+           (details.method==='item/permissions/requestApproval'&&original?.permissions!=null)){
+          delete content.details;delete content.context;
+        }
+        details.approval=content;
+      }
+      const {taskId,workerId,workingDirectory,status,phase}=this.tasks.run(item.runId);
+      return {id,runId:item.runId,kind:item.kind,state:item.state,waitingFor:item.waitingFor,
+        authority:item.authority,details,run:{taskId,workerId,workingDirectory,status,phase},
+        ...Object.fromEntries((['userQuestion','escalationReason','decision','responseUserMessageId','responseUserText','code'] as const)
+          .filter(key=>item[key]!=null).map(key=>[key,item[key]]))};
     }
     if (!context.inspectedInteractions?.has(id)) throw new Error("interaction_inspection_required");
     if(item.state==='pending_main'&&context.interactionId!==id){

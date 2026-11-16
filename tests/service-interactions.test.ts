@@ -101,11 +101,13 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
           await assert.rejects(callHostMcp(this.options, "respond_interaction", { interactionId: id, action: "approve", reason: "No user decision" }), /interaction_user_decision_required/);
           return {status:"completed",text:"需要用户确认。"};
         }
-        await callHostMcp(this.options, "respond_interaction", { interactionId: id, action: mode === "direct" ? "approve" : mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.threadId : null, answers: null, permissions: mode === "direct" ? item.details.params.permissions : null });
+        await callHostMcp(this.options, "respond_interaction", { interactionId: id, action: mode === "direct" ? "approve" : mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.details.question : null, answers: null, permissions: mode === "direct" ? item.details.params.permissions : null });
         return scenario.reply ?? { status: "completed", text: "已处理" };
       } else if (mode === "approve" && text.includes("[用户答复原待答]")) {
         const id = /interactionId=([^。]+)/.exec(text)![1]!;
         const item = await callHostMcp(this.options, "inspect_interaction", { interactionId: id });
+        assert.equal(item.state,'pending_user');assert.equal(item.responseUserText,'允许本次操作');
+        assert.ok(item.responseUserMessageId);assert.ok(item.userQuestion);assert.ok(item.escalationReason);
         for (const permissions of [{network:{enabled:true}}, {fileSystem:{read:[resolve(item.details.params.cwd,"..")]}}]) {
           await assert.rejects(callHostMcp(this.options, "respond_interaction", {interactionId:id,action:"approve",reason:"Overbroad",permissions}),/interaction_permission_scope/);
           assert.equal(app.interactions.inspect(id).state,"pending_user");

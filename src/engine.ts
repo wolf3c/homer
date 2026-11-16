@@ -586,9 +586,21 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     this.assertInteractionMcpBoundary(effective);
     if(this.options.controlOnly)return "";
     if(this.options.nativeTools){const local=await this.request("environment/info",{environmentId:"local"});if(!local?.shell)throw Error("engine_local_environment_unavailable");}
+    const layers=(effective.layers??[]).filter((layer:any)=>!layer.disabledReason);
+    const configured=(key:string)=>layers.some((layer:any)=>layer.config?.[key]!=null);
+    const permissionLayer=layers.find((layer:any)=>layer.name?.type==='sessionFlags'&&layer.config?.default_permissions!=null)
+      ??layers.find((layer:any)=>layer.config?.default_permissions!=null||layer.config?.sandbox_mode!=null);
+    const resumePermissions=this.options.threadId?{
+      ...(configured('approval_policy')?{approvalPolicy:effective.config.approval_policy}:{}),
+      ...(configured('approvals_reviewer')?{approvalsReviewer:effective.config.approvals_reviewer}:{}),
+      ...(permissionLayer?.config.default_permissions!=null
+        ?{permissions:effective.config.default_permissions}
+        :permissionLayer?.config.sandbox_mode!=null?{sandbox:effective.config.sandbox_mode}:{}),
+    }:{};
     const params = {
       model: this.config.model,
       serviceTier: this.serviceTier,
+      ...resumePermissions,
       // Omit fresh cwd: fixed native start otherwise implicitly trusts writable unknown projects.
       ...(this.options.threadId?{cwd:this.options.cwd}:{}),
       runtimeWorkspaceRoots: [this.options.cwd],
