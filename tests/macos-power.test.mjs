@@ -7,7 +7,7 @@ import {buildMacPower} from '../scripts/build-macos-power.mjs';
 
 const instanceId='a'.repeat(64),id='b'.repeat(32),otherId='c'.repeat(32);
 const options={bundle:'/Applications/Homer.app',resources:'/Applications/Homer.app/Contents/Resources',profile:'/synthetic/profile',instanceId};
-function fixture({reply,platform='darwin'}={}){
+function fixture({reply,platform='darwin',onWake}={}){
  const requests=[],children=[];
  const spawn=(file,args,settings)=>{
   assert.equal(file,'/Applications/Homer.app/Contents/MacOS/homer-power-client');
@@ -24,9 +24,18 @@ function fixture({reply,platform='darwin'}={}){
   child.kill=()=>{queueMicrotask(()=>child.emit('exit',null,'SIGTERM'));return true;};
   return child;
  };
- const adapter=createMacWakeAdapter(options,{platform,spawn,checkBundle:()=>true,timeoutMs:80});
+ const adapter=createMacWakeAdapter({...options,onWake},{platform,spawn,checkBundle:()=>true,timeoutMs:80});
  return {adapter,requests,children};
 }
+test('native wake notifications invoke recovery without consuming the pending request receipt',async()=>{
+ let wakes=0,settled=false;
+ const f=fixture({onWake:()=>{wakes++;},reply:request=>request.op==='close'?null:false});
+ const waiting=f.adapter.status().then(value=>{settled=true;return value;});
+ f.children[0].stdout.write('{"kind":"wake"}\n');await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(wakes,1);assert.equal(settled,false);
+ f.children[0].stdout.write(JSON.stringify({requestId:f.requests[0].requestId,ok:true,result:{supported:true,authorization:'required'}})+'\n');
+ assert.equal((await waiting).authorization,'required');await f.adapter.close();
+});
 test('macOS capability is unavailable off-platform without spawning a client',async()=>{
  let calls=0;
  const adapter=createMacWakeAdapter(options,{platform:'linux',spawn(){calls++;throw Error('must not spawn');}});
@@ -45,6 +54,14 @@ test('status does not authorize; explicit authorization preserves system result'
  assert.deepEqual(f.requests.map(x=>x.op),['status']);
  assert.equal((await f.adapter.authorize()).authorization,'denied');
  await f.adapter.close();
+});
+test('a complete unregistered service exposes authorization without registering during status reads',async()=>{
+ const required={supported:true,authorization:'required',reason:'macos_power_registration_required'};
+ const f=fixture({reply:request=>request.op==='close'?null:request.op==='authorize'?{supported:true,authorization:'denied'}:required});
+ assert.deepEqual(await f.adapter.status(),required);assert.deepEqual(await f.adapter.status(),required);
+ assert.deepEqual(f.requests.map(request=>request.op),['status','status']);
+ assert.equal((await f.adapter.authorize()).authorization,'denied');
+ assert.equal(f.requests.filter(request=>request.op==='authorize').length,1);await f.adapter.close();
 });
 test('adapter rejects malformed instance ids and time/event payloads before native calls',async()=>{
  assert.throws(()=>createMacWakeAdapter({...options,instanceId:'../other'}),/macos_power_instance_invalid/);

@@ -158,12 +158,23 @@ test('disabling wake after native access is lost reports unresolved cleanup and 
  assert.equal(f.power.state().wake.error,undefined);assert.equal(f.control.authorizeCalls,0);await f.power.close();
 });
 
-test('awake polling preserves healthy transports while a real resume upgrades an in-flight passive check',async()=>{
+for(const finish of ['complete','timeout','close'] as const)test('a real resume waits for recovery queued behind passive polling until '+finish,async()=>{
  const f=fixture();await f.update({channels:['telegram']});
- let release!:()=>void;f.control.blockCheck=new Promise<void>(resolve=>{release=resolve;});
+ let release!:()=>void,releaseRecovery!:()=>void,settled=false;
+ f.control.blockCheck=new Promise<void>(resolve=>{release=resolve;});
  await f.advance(900_000);assert.deepEqual(f.control.recoveryKinds,[false]);
- const resuming=f.power.resume();release();await resuming;await new Promise(resolve=>setImmediate(resolve));
- assert.deepEqual(f.control.recoveryKinds,[false,true]);assert.equal(f.events.length,1);await f.power.close();
+ f.control.blockCheck=new Promise<void>(resolve=>{releaseRecovery=resolve;});
+ const resuming=f.power.resume().then(()=>{settled=true;});
+ try{
+  release();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(f.control.recoveryKinds,[false,true]);assert.equal(settled,false);
+  assert.equal(f.power.state().protection,'system');assert.equal(f.events.length,1);
+  if(finish==='complete')releaseRecovery();
+  else if(finish==='timeout')await f.advance(20_000);
+  else await f.power.close();
+  await resuming;assert.equal(settled,true);assert.equal(f.locks.size,0);
+ }finally{releaseRecovery();await f.power.close();}
+ assert.equal(f.timers.size,0);
 });
 
 test('failed cleanup retries after thirty seconds when the last wake demand is disabled',async()=>{

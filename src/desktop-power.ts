@@ -222,7 +222,7 @@ export class DesktopPowerCoordinator{
    await this.sync();
    this.checking=undefined;
    const repeat=this.pendingAfterSleep;this.pendingAfterSleep=false;
-   if(repeat&&!this.closed)void this.check(true);
+   if(repeat&&!this.closed)await this.check(true);
    this.protect();
   });
   this.protect();return this.checking;

@@ -26,6 +26,37 @@ private final class MemoryStore: WakeStore {
         catch { precondition((error as? PowerError)?.code == code, "unexpected error") }
     }
     static func main() throws {
+        let bundle = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("Registration.app")
+        let manager = FileManager.default
+        let plist = bundle.appendingPathComponent("Contents/Library/LaunchDaemons/app.homer.desktop.power.plist")
+        let helper = bundle.appendingPathComponent("Contents/MacOS/homer-power-helper")
+        func unavailable() {
+            precondition(powerRegistrationStatus(in: bundle)["supported"] as? Bool == false)
+        }
+        unavailable()
+        try manager.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try manager.createDirectory(at: helper.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let configuration: [String: Any] = ["Label": powerServiceName, "BundleProgram": "Contents/MacOS/homer-power-helper", "MachServices": [powerServiceName: true]]
+        try PropertyListSerialization.data(fromPropertyList: configuration, format: .xml, options: 0).write(to: plist)
+        unavailable() // A plist alone cannot make a missing executable authorizable.
+        try Data("synthetic helper".utf8).write(to: helper)
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+        let registration = powerRegistrationStatus(in: bundle)
+        precondition(registration["supported"] as? Bool == true)
+        precondition(registration["authorization"] as? String == "required")
+        precondition(registration["reason"] as? String == "macos_power_registration_required")
+        try manager.setAttributes([.posixPermissions: 0o777], ofItemAtPath: helper.path)
+        unavailable()
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+        try PropertyListSerialization.data(fromPropertyList: configuration.merging(["BundleProgram": "/usr/bin/true"]) { _, new in new }, format: .xml, options: 0).write(to: plist)
+        unavailable()
+        try Data("invalid plist".utf8).write(to: plist)
+        unavailable()
+        try PropertyListSerialization.data(fromPropertyList: configuration, format: .xml, options: 0).write(to: plist)
+        try manager.removeItem(at: helper)
+        try manager.createSymbolicLink(at: helper, withDestinationURL: URL(fileURLWithPath: "/usr/bin/true"))
+        unavailable()
+        try manager.removeItem(at: bundle)
         let owner = WakeOwner(uid: 501, instance: String(repeating: "a", count: 64))
         let another = WakeOwner(uid: 502, instance: owner.instance)
         let profile = WakeOwner(uid: 501, instance: String(repeating: "d", count: 64))

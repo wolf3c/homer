@@ -43,6 +43,28 @@ if(!vm.SourceTextModule){
   assert.match(output,/# tests [1-9]\d*/);
  });
 }else{
+ test('host wake recovery commits a due message and finishes channel recovery before replying',async t=>{
+  let now=Date.now();t.mock.method(Date,'now',()=>now);
+  const {fixture:hostFixture}=await import('./fixtures/worker-chat-host.js');const host=hostFixture();let f,release;
+  const pending=new Promise(resolve=>{release=resolve;});
+  try{
+   host.app.store.setMeta('mainThread','restored-main');
+   const record=host.app.schedules.create({text:'Wake recovery reminder',trigger:{at:new Date(now+1000).toISOString()},sourceRef:'original-source'});
+   f=await fixture(host.app.schedules);
+   const count=()=>host.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='scheduled_message'").get().n;
+   assert.equal(count(),0);now+=1000;
+   f.instance.recheckScheduledMessages=()=>{f.calls.push('schedule');host.app.recheckScheduledMessages();};
+   f.instance.channels.resumeAfterSleep=async force=>{assert.equal(force,true);f.calls.push('channel-enter');await pending;f.calls.push('channel-finished');};
+   f.proc.emit('message',{kind:'desktop_power',id:'checked-recovery',method:'resume',input:{afterSleep:true}});await tick();
+   assert.deepEqual(f.calls,['schedule','channel-enter']);
+   assert.equal(count(),1);assert.equal(host.app.schedules.get(record.id).enabled,false);assert.equal(host.engines.length,0);
+   assert.equal(f.sent.some(x=>x.kind==='web_result'&&x.id==='checked-recovery'),false);
+   release();await tick();assert.deepEqual(f.calls,['schedule','channel-enter','channel-finished']);
+   assert.ok(f.sent.some(x=>x.kind==='web_result'&&x.id==='checked-recovery'&&x.value===true));
+   f.proc.emit('message',{kind:'desktop_power',id:'duplicate-recovery',method:'resume',input:{afterSleep:true}});await tick();
+   assert.equal(count(),1);assert.equal(host.engines.length,0);
+  }finally{release();await f?.cleanup();await host.close();}
+ });
  test('unchanged streaming state avoids calendar work while execution, display and channel changes refresh it',async()=>{
   const f=await fixture();try{
    const initialReads=f.scheduledReads;

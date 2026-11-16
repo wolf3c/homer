@@ -84,7 +84,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  electron.powerSaveBlocker={start:type=>{nativeCalls.push(['power-start',type]);const id=++powerLockId;powerLocks.set(id,type);return id;},stop:id=>{nativeCalls.push(['power-stop',id]);powerLocks.delete(id);}};
  const wakeAdapter={status:async()=>({supported:true,authorization:native.powerAuthorization??'authorized'}),authorize:async()=>{nativeCalls.push(['power-authorize']);return {supported:true,authorization:native.powerAuthorization??'authorized'};},list:async()=>wakeEvents.map(event=>({...event})),schedule:async event=>{nativeCalls.push(['power-schedule',event.at]);wakeEvents.push(event);return event;},cancel:async event=>{nativeCalls.push(['power-cancel',event.at]);const index=wakeEvents.findIndex(item=>item.id===event.id);if(index>=0)wakeEvents.splice(index,1);},close:async()=>{nativeCalls.push(['power-close']);}};
  wakeAdapter.prepareUpdate=async()=>{nativeCalls.push(['power-update-cleanup']);await native.powerUpdatePending;if(native.powerUpdateError)throw Error('private_power_failure');};
- const createWakeAdapter=()=>{if(native.powerConstructorError)throw Error('private_wake_context');return wakeAdapter;};
+ const createWakeAdapter=options=>{if(native.powerConstructorError)throw Error('private_wake_context');native.onPowerWake=options.onWake;return wakeAdapter;};
  modules['../homer/scripts/macos-power.mjs']={createMacWakeAdapter:createWakeAdapter};
  modules['../homer/scripts/windows-power.mjs']={createWindowsWakeAdapter:createWakeAdapter};
  const powerSource=transpileModule(readFileSync('src/desktop-power.ts','utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
@@ -817,6 +817,23 @@ test('retired manual Token launch flags never prompt or spawn a backend',async()
 });
 const permissionEvent=f=>({sender:f.windows[0].webContents,senderFrame:f.windows[0].webContents.mainFrame});
 const powerFacts=patch=>({runtimeAvailable:true,executing:false,displayRequired:false,nextScheduledAt:null,channels:[],...patch});
+test('Windows task wake keeps the passive channel check while the computer is already awake',async()=>{
+ const f=await fixture(undefined,undefined,'win32');
+ f.event({kind:'power_state',facts:powerFacts({})});await f.tick();f.options.onPowerWake();await f.tick();
+ const call=f.sent.map(line=>JSON.parse(line)).find(x=>x.kind==='power_resume');assert.ok(call);assert.equal(call.afterSleep,false);
+ f.event({kind:'power_result',id:call.id});await f.tick();f.child.emit('close',1,null);await f.tick();
+});
+for(const source of ['native','electron'])test('actual '+source+' Mac wake reaches the runtime once and retains preparation protection until its matching reply',async()=>{
+ const f=await permissionFixture();
+ f.event({kind:'power_state',facts:powerFacts({})});await f.tick();
+ if(source==='native')f.options.onPowerWake();else f.powerMonitor.emit('resume');
+ f.powerMonitor.emit('resume');await f.tick();
+ const calls=f.sent.map(line=>JSON.parse(line)).filter(x=>x.kind==='power_resume');assert.equal(calls.length,1);
+ assert.equal(calls[0].afterSleep,true);assert.ok(f.powerLocks.size>0);
+ f.event({kind:'power_result',id:calls[0].id+100});await f.tick();assert.ok(f.powerLocks.size>0);
+ f.event({kind:'power_result',id:calls[0].id});await f.tick();await f.tick();assert.equal(f.powerLocks.size,0);
+ f.child.emit('close',1,null);await f.tick();
+});
 for(const platform of ['darwin','win32'])test('optional wake adapter construction cannot prevent startup or execution protection: '+platform,async()=>{
  const f=await fixture(undefined,undefined,platform,{powerConstructorError:true});
  assert.equal(f.spawnCount(),1);

@@ -57,9 +57,9 @@ private final class PowerClient {
     }
     func status() -> [String: Any] {
         switch service.status {
-        case .notRegistered: return ["supported": true, "authorization": "required", "reason": "macos_power_registration_required"]
+        // An intact service can report notFound before its first registration.
+        case .notRegistered, .notFound: return powerRegistrationStatus(in: Bundle.main.bundleURL)
         case .requiresApproval: return ["supported": true, "authorization": "required", "reason": "macos_power_approval_required"]
-        case .notFound: return ["supported": false, "authorization": "unavailable", "reason": "macos_power_helper_missing"]
         case .enabled:
             do { _ = try request(["op": "list"]); return ["supported": true, "authorization": "authorized"] }
             catch { return ["supported": false, "authorization": "unavailable", "reason": powerError(error)] }
@@ -156,6 +156,7 @@ private final class PowerClient {
             }
             exit(0)
         }
-        withExtendedLifetime(wakeObserver) { dispatchMain() }
+        // AppKit workspace notifications require the main thread's run loop.
+        withExtendedLifetime(wakeObserver) { CFRunLoopRun() }
     }
 }

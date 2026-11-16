@@ -6,6 +6,27 @@ let powerPlistName = powerServiceName + ".plist"
 let powerClientIdentifier = powerServiceName + ".client"
 let powerHelperIdentifier = powerServiceName + ".helper"
 
+func powerRegistrationStatus(in bundle: URL) -> [String: Any] {
+    let manager = FileManager.default
+    let plist = bundle.appendingPathComponent("Contents/Library/LaunchDaemons/" + powerPlistName)
+    let helper = bundle.appendingPathComponent("Contents/MacOS/homer-power-helper")
+    func safeFile(_ url: URL) -> Bool {
+        guard let attributes = try? manager.attributesOfItem(atPath: url.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let permissions = attributes[.posixPermissions] as? NSNumber else { return false }
+        return permissions.intValue & 0o022 == 0
+    }
+    guard safeFile(plist), safeFile(helper), manager.isExecutableFile(atPath: helper.path),
+          let data = try? Data(contentsOf: plist),
+          let fields = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
+          fields["Label"] as? String == powerServiceName,
+          fields["BundleProgram"] as? String == "Contents/MacOS/homer-power-helper",
+          fields["MachServices"] as? [String: Bool] == [powerServiceName: true] else {
+        return ["supported": false, "authorization": "unavailable", "reason": "macos_power_bundle_unavailable"]
+    }
+    return ["supported": true, "authorization": "required", "reason": "macos_power_registration_required"]
+}
+
 struct PowerError: Error { let code: String; init(_ code: String) { self.code = code } }
 func powerError(_ error: Error) -> String { (error as? PowerError)?.code ?? "macos_power_native_failed" }
 func hex(_ value: String, count: Int) -> Bool { value.utf8.count == count && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } }

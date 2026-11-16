@@ -16,7 +16,7 @@ async function link(source,modules,context,url){
  async function synthetic(exports){const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [k,v]of Object.entries(exports))this.setExport(k,v);},{context});await m.link(()=>{});await m.evaluate();return m;}
  await entry.link(name=>synthetic(modules[name]??require(name)));return entry;
 }
-async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestArch=arch,manifestCodex='0.171.0-alpha.7',platform='darwin'}={}){
+async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestArch=arch,manifestCodex='0.171.0-alpha.7',platform='darwin',powerHandler=async()=>true}={}){
  const events=[],powerCalls=[],stdin=new PassThrough(),profile='/fixture/profile',bundle='/fixture/Homer.app',resources=bundle+(platform==='win32'?'/resources':'/Contents/Resources'),homer=resources+'/homer';let complete,stopCalls=0;
  const digest=createHash('sha256').update('').digest('hex');
  const manifest={format:2,node:'22.22.0',codex:manifestCodex,arch:manifestArch,files:[],codeFiles:(platform==='win32'?['Homer.exe']:['Contents/MacOS/homer-image-decoder','Contents/MacOS/homer-window-capture','Contents/MacOS/node']).map(path=>({path,sha256:digest})),sourceHash:'synthetic-hash'};
@@ -29,7 +29,7 @@ async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestAr
   [new URL('dist/model-config.js','file://'+homer+'/').href]:{...await import('../src/model-config.ts'),PRODUCT_MODEL_DEFAULTS:{model:'fixture'}},
   [new URL('dist/mobile-gateway.js','file://'+homer+'/').href]:{readMobileConfig:()=>({})},
   './trusted-build.mjs':{verifyBuild(){}},
-  './dev.mjs':{runDev:async options=>{options.desktop.onHostSpawn();options.desktop.bindUpdateStop(()=>stopCalls++);options.desktop.bindPower?.(async(...args)=>{powerCalls.push(args);return true;});return new Promise(resolve=>{complete=()=>resolve(result);});}},
+  './dev.mjs':{runDev:async options=>{options.desktop.onHostSpawn();options.desktop.bindUpdateStop(()=>stopCalls++);options.desktop.bindPower?.(async(...args)=>{powerCalls.push(args);return powerHandler(...args);});return new Promise(resolve=>{complete=()=>resolve(result);});}},
  };
  const context=vm.createContext({process:proc,Buffer,console});const entry=await link(readFileSync('scripts/desktop-runtime.mjs','utf8'),modules,context,'file://'+homer+'/scripts/desktop-runtime.mjs');const done=entry.evaluate();await tick();
  return {events,powerCalls,proc,get stopCalls(){return stopCalls;},complete:async()=>{complete?.();await done;stdin.destroy();}};
@@ -75,6 +75,18 @@ if(!vm.SourceTextModule){
   assert.match(output,/# tests [1-9]\d*/);
  });
 }else{
+ test('runtime acknowledges wake recovery only after the host completes, and reports failure',async()=>{
+  let release;const pending=new Promise(resolve=>{release=resolve;});let fail=false;
+  const f=await runtimeFixture({stoppedConfirmed:true},{powerHandler:async()=>{if(fail)throw Error('synthetic_failure');await pending;}});
+  try{
+   f.proc.stdin.write(JSON.stringify({kind:'power_resume',id:21,afterSleep:true})+'\n');await tick();
+   assert.deepEqual(JSON.parse(JSON.stringify(f.powerCalls)),[['resume',{afterSleep:true}]]);
+   assert.equal(f.events.some(x=>x.kind==='power_result'&&x.id===21),false);
+   release();await tick();assert.ok(f.events.some(x=>x.kind==='power_result'&&x.id===21&&!x.error));
+   fail=true;f.proc.stdin.write(JSON.stringify({kind:'power_resume',id:22,afterSleep:true})+'\n');await tick();
+   assert.ok(f.events.some(x=>x.kind==='power_result'&&x.id===22&&x.error==='power_recheck_unconfirmed'));
+  }finally{release();await f.complete();}
+ });
  test('desktop runtime limits power controls to resume and numeric acknowledgement',async()=>{
   const f=await runtimeFixture({stoppedConfirmed:true});
   try{
