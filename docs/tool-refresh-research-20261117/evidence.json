@@ -1,0 +1,751 @@
+{
+  "version": "codex-cli 0.171.0-alpha.7",
+  "source_commit": "73c4af9125a8d5e9aabe5aa900eecf70214ba856",
+  "real_model_calls": 0,
+  "daily_sessions_accessed": false,
+  "strict_thread_and_server_inventory": {
+    "initial": {
+      "probe": {
+        "echo": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        },
+        "removed": {
+          "type": "object"
+        }
+      }
+    },
+    "after_notification": {
+      "probe": {
+        "echo": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        },
+        "removed": {
+          "type": "object"
+        }
+      }
+    },
+    "reload_ack": {},
+    "after_unchanged_reload": {
+      "probe": {
+        "echo": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        },
+        "removed": {
+          "type": "object"
+        }
+      }
+    },
+    "after_changed_config": {
+      "probe": {
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "added": {
+          "type": "object"
+        }
+      }
+    },
+    "after_remove_server": {
+      "probe": {
+        "added": {
+          "type": "object"
+        },
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      }
+    },
+    "direct_call": {
+      "content": [
+        {
+          "type": "text",
+          "text": "synthetic-2"
+        }
+      ]
+    },
+    "same_thread_cold_resume": {
+      "probe": {
+        "added": {
+          "type": "object"
+        },
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      }
+    },
+    "same_thread": true,
+    "model_calls": 0,
+    "mcp_events": [
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "initialize"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "notify",
+        "version": "2"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81703,
+        "tag": "A",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81707,
+        "tag": "B",
+        "event": "initialize"
+      },
+      {
+        "pid": 81708,
+        "tag": "C",
+        "event": "initialize"
+      },
+      {
+        "pid": 81707,
+        "tag": "B",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81708,
+        "tag": "C",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81707,
+        "tag": "B",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81708,
+        "tag": "C",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81707,
+        "tag": "B",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81707,
+        "tag": "B",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81707,
+        "tag": "B",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81707,
+        "tag": "B",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81707,
+        "tag": "B",
+        "event": "tools/call"
+      },
+      {
+        "pid": 81714,
+        "tag": "B",
+        "event": "initialize"
+      },
+      {
+        "pid": 81714,
+        "tag": "B",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81714,
+        "tag": "B",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81714,
+        "tag": "B",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81714,
+        "tag": "B",
+        "event": "resources/templates/list"
+      }
+    ]
+  },
+  "exploratory_thread_only_inventory": {
+    "initial": {
+      "probe": {
+        "echo": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        },
+        "removed": {
+          "type": "object"
+        }
+      }
+    },
+    "after_notification": {
+      "probe": {
+        "added": {
+          "type": "object"
+        },
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      }
+    },
+    "reload_ack": {},
+    "after_unchanged_reload": {
+      "probe": {
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "added": {
+          "type": "object"
+        }
+      }
+    },
+    "after_changed_config": {
+      "extra": {
+        "added": {
+          "type": "object"
+        },
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      },
+      "probe": {
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "added": {
+          "type": "object"
+        }
+      }
+    },
+    "after_remove_server": {
+      "probe": {
+        "added": {
+          "type": "object"
+        },
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      }
+    },
+    "direct_call": {
+      "content": [
+        {
+          "type": "text",
+          "text": "synthetic-2"
+        }
+      ]
+    },
+    "same_thread_cold_resume": {
+      "probe": {
+        "echo": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "added": {
+          "type": "object"
+        }
+      }
+    },
+    "same_thread": true,
+    "model_calls": 0,
+    "mcp_events": [
+      {
+        "pid": 81576,
+        "tag": "A",
+        "event": "initialize"
+      },
+      {
+        "pid": 81576,
+        "tag": "A",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81576,
+        "tag": "A",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81581,
+        "tag": "A",
+        "event": "initialize"
+      },
+      {
+        "pid": 81581,
+        "tag": "A",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81581,
+        "tag": "A",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81581,
+        "tag": "A",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81581,
+        "tag": "A",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81576,
+        "tag": "A",
+        "event": "notify",
+        "version": "2"
+      },
+      {
+        "pid": 81583,
+        "tag": "A",
+        "event": "initialize"
+      },
+      {
+        "pid": 81583,
+        "tag": "A",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81583,
+        "tag": "A",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81583,
+        "tag": "A",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81583,
+        "tag": "A",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81585,
+        "tag": "A",
+        "event": "initialize"
+      },
+      {
+        "pid": 81585,
+        "tag": "A",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81585,
+        "tag": "A",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81585,
+        "tag": "A",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81585,
+        "tag": "A",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81588,
+        "tag": "B",
+        "event": "initialize"
+      },
+      {
+        "pid": 81588,
+        "tag": "B",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81588,
+        "tag": "B",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81590,
+        "tag": "C",
+        "event": "initialize"
+      },
+      {
+        "pid": 81590,
+        "tag": "C",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81589,
+        "tag": "B",
+        "event": "initialize"
+      },
+      {
+        "pid": 81590,
+        "tag": "C",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81587,
+        "tag": "C",
+        "event": "initialize"
+      },
+      {
+        "pid": 81589,
+        "tag": "B",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81589,
+        "tag": "B",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81587,
+        "tag": "C",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81587,
+        "tag": "C",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81589,
+        "tag": "B",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81590,
+        "tag": "C",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81589,
+        "tag": "B",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81590,
+        "tag": "C",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81595,
+        "tag": "B",
+        "event": "initialize"
+      },
+      {
+        "pid": 81595,
+        "tag": "B",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81595,
+        "tag": "B",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81595,
+        "tag": "B",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81595,
+        "tag": "B",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 81588,
+        "tag": "B",
+        "event": "tools/call"
+      },
+      {
+        "pid": 81602,
+        "tag": "B",
+        "event": "initialize"
+      },
+      {
+        "pid": 81602,
+        "tag": "B",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81602,
+        "tag": "B",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81616,
+        "tag": "B",
+        "event": "initialize"
+      },
+      {
+        "pid": 81616,
+        "tag": "B",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 81616,
+        "tag": "B",
+        "event": "tools/list"
+      },
+      {
+        "pid": 81616,
+        "tag": "B",
+        "event": "resources/list"
+      },
+      {
+        "pid": 81616,
+        "tag": "B",
+        "event": "resources/templates/list"
+      }
+    ]
+  },
+  "same_turn": {
+    "turn_start_count": 1,
+    "loopback_requests": 3,
+    "reload_while_request_1_awaiting_response": true,
+    "request_2_observes_step_1_old_catalog": [
+      {
+        "type": "custom_tool_call_output",
+        "id": "ctco_01a1e861-8c58-77d0-a570-04ac57157d3b",
+        "call_id": "gate1",
+        "output": [
+          {
+            "type": "input_text",
+            "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"
+          },
+          {
+            "type": "input_text",
+            "text": "[{\"name\":\"mcp__probe__echo\",\"description\":\"synthetic version 1\\n\\nexec tool declaration:\\n```ts\\ndeclare const tools: { mcp__probe__echo(args: { text: string; }): Promise<CallToolResult>; };\\n```\"},{\"name\":\"mcp__probe__removed\",\"description\":\"\\n\\nexec tool declaration:\\n```ts\\ndeclare const tools: { mcp__probe__removed(args: { [key: string]: unknown; }): Promise<CallToolResult>; };\\n```\"}]"
+          }
+        ]
+      }
+    ],
+    "request_3_observes_step_2_new_catalog_and_approval_denial": [
+      {
+        "type": "custom_tool_call_output",
+        "id": "ctco_01a1e861-8c58-77d0-a570-04ac57157d3b",
+        "call_id": "gate1",
+        "output": [
+          {
+            "type": "input_text",
+            "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"
+          },
+          {
+            "type": "input_text",
+            "text": "[{\"name\":\"mcp__probe__echo\",\"description\":\"synthetic version 1\\n\\nexec tool declaration:\\n```ts\\ndeclare const tools: { mcp__probe__echo(args: { text: string; }): Promise<CallToolResult>; };\\n```\"},{\"name\":\"mcp__probe__removed\",\"description\":\"\\n\\nexec tool declaration:\\n```ts\\ndeclare const tools: { mcp__probe__removed(args: { [key: string]: unknown; }): Promise<CallToolResult>; };\\n```\"}]"
+          }
+        ]
+      },
+      {
+        "type": "custom_tool_call_output",
+        "id": "ctco_01a1e861-8c82-7b60-98a5-acf711dab6f2",
+        "call_id": "gate2",
+        "output": [
+          {
+            "type": "input_text",
+            "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"
+          },
+          {
+            "type": "input_text",
+            "text": "[{\"name\":\"mcp__probe__added\",\"description\":\"\\n\\nexec tool declaration:\\n```ts\\ndeclare const tools: { mcp__probe__added(args: { [key: string]: unknown; }): Promise<CallToolResult>; };\\n```\"},{\"name\":\"mcp__probe__echo\",\"description\":\"synthetic version 2\\n\\nexec tool declaration:\\n```ts\\ndeclare const tools: { mcp__probe__echo(args: { value: string; }): Promise<CallToolResult>; };\\n```\"}]"
+          },
+          {
+            "type": "input_text",
+            "text": "{\"content\":[{\"type\":\"text\",\"text\":\"MCP tool call requires approval, but approval policy is never\"}],\"isError\":true}"
+          }
+        ]
+      }
+    ],
+    "mcp_events": [
+      {
+        "pid": 82190,
+        "tag": "A",
+        "event": "initialize"
+      },
+      {
+        "pid": 82190,
+        "tag": "A",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 82190,
+        "tag": "A",
+        "event": "tools/list"
+      },
+      {
+        "pid": 82190,
+        "tag": "A",
+        "event": "resources/templates/list"
+      },
+      {
+        "pid": 82190,
+        "tag": "A",
+        "event": "resources/list"
+      },
+      {
+        "pid": 82190,
+        "tag": "A",
+        "event": "notify",
+        "version": "2"
+      },
+      {
+        "pid": 82192,
+        "tag": "B",
+        "event": "initialize"
+      },
+      {
+        "pid": 82192,
+        "tag": "B",
+        "event": "notifications/initialized"
+      },
+      {
+        "pid": 82192,
+        "tag": "B",
+        "event": "tools/list"
+      }
+    ]
+  }
+}
