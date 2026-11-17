@@ -59,7 +59,7 @@ function fixture({text='draft',draft,queueEditor,request,queueRead,collections=2
   const annotationDraft=createAnnotationDraft();annotationDraft.subscribe(()=>{dirty=true;});
   const ArtifactsContext={};const ComposerInputFocusContext={},inputRef={current:()=>{focuses++;}},useContext=context=>{if(context===ArtifactsContext)return {open(){}};assert.equal(context,ComposerInputFocusContext);return inputRef;};
   const useComposerInputFocus=productionFunction(new URL('../ui/homer-composer-input.tsx',import.meta.url),'useComposerInputFocus',{useContext,ComposerInputFocusContext,useCallback:(callback,deps)=>useMemo(()=>callback,deps)});
-  const MainComposer=productionFunction(appPath,'MainComposer',{...client,...references,CONVERSATION_VIEW,ScreenshotDialog:'screenshot-dialog',mobileView:false,ContextOrder,contextKey,previewIntentTooLong,annotationValidationReferences,Popover:{Root:'popover',Portal:'portal',Positioner:'positioner',Popup:'popup'},AnnotationCommentForm:'quote-form',QuoteBlock:{Root:'quote-block',Text:'quote-text'},completeSourceQuote:completeQuote,locateSourceQuote:async()=>undefined,AnnotationChips:'annotation-chips',MessageCirclePlus:'quote-icon',ExecutionUsage:'usage',QueueDraftRecovery:'legacy-panel',useAnnotationDraft:owner=>owner.read(),ArtifactsContext,useState,useRef,useEffect,useLayoutEffect:useEffect,useMemo,useCallback:(callback,deps)=>useMemo(()=>callback,deps),useContext,interactionDraft:key=>({text:storage.read(key+':draft')??'',answers:{}}),ComposerInputFocusContext,useComposerInputFocus,useAui:()=>({composer:()=>composer}),useAuiState:selector=>selector({composer:runtime}),attachmentAsset,HomerAttachmentByIndex:'attachment',ComposerPrimitive:{Root:'form'},ComposerQuotePreview:{Root:'quote-root',Icon:'quote-icon',Text:'quote-text',Dismiss:'quote-dismiss'},requestAnimationFrame:fn=>fn(),Node:class {static [Symbol.hasInstance](node){return !!node&&typeof node==='object';}},document:{querySelector:()=>null},CSS:{escape:value=>value},HomerComposerInput:'editor',ComposerIcon:()=>null,storage,fetch,post,window:{homerDesktopCapture,addEventListener(){},removeEventListener(){}},URL:{createObjectURL:()=> 'blob:synthetic',revokeObjectURL:url=>revoked.push(url)}});
+  const MainComposer=productionFunction(appPath,'MainComposer',{...client,...references,CONVERSATION_VIEW,ScheduleChip:'schedule-chip',ScreenshotDialog:'screenshot-dialog',mobileView:false,ContextOrder,contextKey,previewIntentTooLong,annotationValidationReferences,Popover:{Root:'popover',Portal:'portal',Positioner:'positioner',Popup:'popup'},AnnotationCommentForm:'quote-form',QuoteBlock:{Root:'quote-block',Text:'quote-text'},completeSourceQuote:completeQuote,locateSourceQuote:async()=>undefined,AnnotationChips:'annotation-chips',MessageCirclePlus:'quote-icon',ExecutionUsage:'usage',QueueDraftRecovery:'legacy-panel',useAnnotationDraft:owner=>owner.read(),ArtifactsContext,useState,useRef,useEffect,useLayoutEffect:useEffect,useMemo,useCallback:(callback,deps)=>useMemo(()=>callback,deps),useContext,interactionDraft:key=>({text:storage.read(key+':draft')??'',answers:{}}),ComposerInputFocusContext,useComposerInputFocus,useAui:()=>({composer:()=>composer}),useAuiState:selector=>selector({composer:runtime}),attachmentAsset,HomerAttachmentByIndex:'attachment',ComposerPrimitive:{Root:'form'},ComposerQuotePreview:{Root:'quote-root',Icon:'quote-icon',Text:'quote-text',Dismiss:'quote-dismiss'},requestAnimationFrame:fn=>fn(),Node:class {static [Symbol.hasInstance](node){return !!node&&typeof node==='object';}},document:{querySelector:()=>null},CSS:{escape:value=>value},HomerComposerInput:'editor',ComposerIcon:()=>null,storage,fetch,post,window:{homerDesktopCapture,addEventListener(){},removeEventListener(){}},URL:{createObjectURL:()=> 'blob:synthetic',revokeObjectURL:url=>revoked.push(url)}});
   const composerRuntime={...composer,getState:()=>runtime,getAttachmentByIndex:index=>composer.attachment({id:runtime.attachments[index].id})};
   const props={state,connected,annotationDraft,bindPreview(value){preview=value;},interactionsVerified:true,onAnswerTarget:item=>{props.answerTarget=item;dirty=true;},attachmentOwner,composerRuntime,bindAttachments:read=>{attachmentRead=read;},stopping:null,onSend:async(...args)=>{sends.push(args);},onStop:()=>{stops++;}};
   const queueEvents=new EventTarget();
@@ -773,4 +773,26 @@ test('local size overflow preserves uploaded attachments and the entire quote be
  f.editor().props.onFiles([new File(['note'],'note.txt')]);await tick();f.render();
  const attachments=[...f.runtime.attachments],text='中'.repeat(40000);f.preview().appendQuote({messageId:'oversize',text});f.render();submit(f);
  assert.equal(f.sends.length,0);assert.equal(f.runtime.text,'keep body');assert.deepEqual(f.runtime.attachments,attachments);assert.equal(draftQuotesOf(f)[0].text,text);f.close();
+});
+
+test('schedule chip preserves the ordinary draft and restores after reload; exact ID sends once as ordinary text',async()=>{
+ const value={scheduleId:'schedule-12345678-1234-4234-8234-123456789012',label:'同名任务'};
+ const f=fixture({text:'请改到明天'});assert.equal(f.preview().selectSchedule(value),true);f.render();
+ assert.equal(f.runtime.text,'请改到明天');assert.equal(f.sends.length,0);
+ const draft=f.cache.get('homer-draft:'+f.state.threadId);assert.deepEqual(draft.scheduleContext,value);f.close();
+ const recovered=fixture({draft});await tick();recovered.render();submit(recovered);await tick();recovered.render();
+ assert.equal(recovered.sends.length,1);assert.equal(recovered.sends[0][0].text,client.scheduleMessageText('请改到明天',value));
+ assert.equal(recovered.cache.get('homer-draft:'+recovered.state.threadId)?.scheduleContext,undefined);
+ const input=recovered.sends[0][0];assert.equal(client.restoreComposerDraft({...draft,requestId:input.requestId},input,true),undefined);
+ assert.equal(client.restoreComposerDraft(undefined,input,false).text,input.text);
+ assert.equal(client.restoreRejectedSourceDraft({text:'',quotes:[],requestId:'new',scheduleContext:value},input,'new'),undefined);
+ recovered.close();
+});
+test('chip alone cannot send and a composed overflow preserves text and chip; answer editing refuses selection',()=>{
+ const value={scheduleId:'schedule-12345678-1234-4234-8234-123456789012',label:'任务'};
+ const f=fixture({text:''});f.preview().selectSchedule(value);f.render();submit(f);assert.equal(f.sends.length,0);
+ f.runtime.text='a'.repeat(15980);f.render();submit(f);assert.equal(f.sends.length,0);assert.equal(f.runtime.text.length,15980);assert.deepEqual(f.cache.get('homer-draft:'+f.state.threadId).scheduleContext,value);
+ const item={id:'answer-schedule',kind:'question',state:'pending',question:'确认吗？'};f.state.interactions=[item];f.props.answerTarget=item;f.render();
+ assert.equal(f.preview().selectSchedule({...value,label:'不应写入'}),false);
+ f.button('退出答复').props.onClick();f.render();assert.deepEqual(f.cache.get('homer-draft:'+f.state.threadId).scheduleContext,value);f.close();
 });

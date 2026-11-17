@@ -9,7 +9,7 @@ import {createAnnotationDraft,useAnnotationDraft,annotationValidationReferences,
 import {useMediaQuery} from '@mantine/hooks';
 import {previewIntentTooLong} from '../src/user-intent';
 import {Group,Panel,Separator} from 'react-resizable-panels';
-import {MessageCirclePlus,PanelRightIcon} from 'lucide-react';
+import {Clock3,MessageCirclePlus,PanelRightIcon} from 'lucide-react';
 import {isDraftImageReference,parseResourceReference,parseResourceReferences,referenceKey,referencesOf,type DraftImageReference,type PreviewImageAnnotation,type ResourceReference,type WindowAXNode} from '../src/preview-reference';
 import {PreviewActionsContext,ResourceReferenceBlock,AnnotationChips,type PreviewComposer,type PreviewRequest} from './preview-reference';
 import {TaskStatusPopover} from './task-status';
@@ -27,7 +27,7 @@ import {ApprovalCard} from './vendor/assistant-ui/approval-card';
 import {serviceActivityNotice} from './waiting-status';
 import {connectionFetch as fetch,ConnectionEvents,mobileView} from "./web-connection-client";
 import {FileList} from './file-list';
-import {CanvasPanel, type CanvasArtifact} from "./canvas-panel";
+import {CanvasPanel, type CanvasArtifact,type PreviewTab} from "./canvas-panel";
 import { createRoot } from "react-dom/client";
 import { Fragment,createContext,useContext,useCallback,useLayoutEffect, useEffect, useRef, useState,useMemo, type FormEvent, type ReactNode } from "react";
 import {
@@ -44,6 +44,7 @@ import { ComposerInputFocusContext, HomerComposerInput, useComposerInputFocus } 
 import { ComposerIcon } from './composer-icons';
 import {HomerAttachmentByIndex} from './homer-attachments';
 import ScreenshotDialog from './screenshot-dialog';
+import {ScheduledMessages,ScheduleChip} from './scheduled-messages';
 import {ContextOrder,contextKey} from './composer-context-order';
 import {HomerMessageQueue} from './homer-message-queue';
 import type {LegacyQueueEditSession} from './queue-draft-recovery';
@@ -63,7 +64,7 @@ import { QuestionFlow } from './vendor/assistant-ui/question-flow';
 import { ElicitationForm } from './vendor/assistant-ui/elicitation-form';
 import {questionReply} from '../src/question-schema';
 import type { ConversationInput, MessageQuote, AnnotatedQuote } from "../src/web-history";
-import { canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, restoreComposerDraft,restoreRejectedSourceDraft,singleComposerDraft,unconfirmedInputs,quoteDrafts,protocolQuotes,type QuoteDraft,type UnconfirmedInput } from "./conversation-client";
+import {scheduleMessageText,type ScheduleContext, canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, restoreComposerDraft,restoreRejectedSourceDraft,singleComposerDraft,unconfirmedInputs,quoteDrafts,protocolQuotes,type QuoteDraft,type UnconfirmedInput } from "./conversation-client";
 import type {AttachmentRef,MediaView} from '../src/media-store';
 import {DesktopSettings,DesktopAccount,ModelFailureNotice,type CaptureShortcutBridge} from './desktop-permissions';
 import {DesktopFeatureTour} from './desktop-feature-tour';
@@ -267,6 +268,9 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   const composerMounted=useRef(true);
   useLayoutEffect(()=>{composerMounted.current=true;return()=>{composerMounted.current=false;};},[]);
   const [pending,setPending]=useState<UnconfirmedInput[]>([]),[draftNotice,setDraftNotice]=useState('');
+  const [scheduleContext,setScheduleState]=useState<ScheduleContext>();
+  const scheduleRef=useRef<ScheduleContext|undefined>(undefined);
+  function setScheduleContext(value:ScheduleContext|undefined){scheduleRef.current=value;setScheduleState(value);}
   const draftAttachments=useAuiState(s=>s.composer.attachments) as readonly HomerAttachment[];
   const attachments=draftAttachments.flatMap(value=>{const asset=attachmentAsset(value);return asset?[asset]:[];});
   const retryAttachments=draftAttachments.filter(value=>!attachmentAsset(value)&&value.status.type!=='running');
@@ -279,7 +283,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   const screenshotCurrent=(scope:CaptureScope)=>composerMounted.current&&scope.threadId===state.threadId&&scope.requestId===draftRequest.current&&scope.epoch===annotationDraft.read().epoch&&!answerRef.current;
   function pickerBusy(busy:boolean){if(mobileView)window.ReactNativeWebView?.postMessage(JSON.stringify({type:'update-busy',busy,nonce:window.__homerMobileNonce}));}
   const focusInput=useComposerInputFocus();
-  const [answerEditing,setAnswerEditing]=useState<{item:WebInteraction;original:{text:string;quotes:AnnotatedQuote[];requestId:string}}|null>(null);
+  const [answerEditing,setAnswerEditing]=useState<{item:WebInteraction;original:{text:string;quotes:AnnotatedQuote[];requestId:string;scheduleContext?:ScheduleContext}}|null>(null);
   const answerRef=useRef(answerEditing);answerRef.current=answerEditing;
   useLayoutEffect(()=>{annotationDraft.freeze(!!answerEditing);},[annotationDraft,!!answerEditing]);
   useEffect(()=>()=>{answerRef.current=null;},[]);
@@ -352,10 +356,10 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     const legacyKey='homer-pending:'+state.threadId,legacy=storage.read<ConversationInput>(legacyKey);
     const cached=storage.read<UnconfirmedInput[]>(pendingKey)??(legacy?[{input:legacy}]:[]);
     savePending(unconfirmedInputs(cached,state.acceptedRequestIds??[]));storage.write(legacyKey,undefined);
-    const draft=storage.read<{text:string;quote?:MessageQuote;quotes?:AnnotatedQuote[];resourceReference?:ResourceReference;resourceReferences?:ResourceReference[];htmlMetadata?:import('./annotation-draft').AnnotationDraftState['htmlMetadata'];imageAssets?:import('./annotation-draft').AnnotationDraftState['imageAssets'];preparingImages?:import('./annotation-draft').AnnotationDraftState['preparingImages'];requestId?:string;attachments?:MediaView[];unconfirmedUploads?:boolean;answerItem?:WebInteraction;contextOrder?:string[]}>(key);
+    const draft=storage.read<{text:string;scheduleContext?:ScheduleContext;quote?:MessageQuote;quotes?:AnnotatedQuote[];resourceReference?:ResourceReference;resourceReferences?:ResourceReference[];htmlMetadata?:import('./annotation-draft').AnnotationDraftState['htmlMetadata'];imageAssets?:import('./annotation-draft').AnnotationDraftState['imageAssets'];preparingImages?:import('./annotation-draft').AnnotationDraftState['preparingImages'];requestId?:string;attachments?:MediaView[];unconfirmedUploads?:boolean;answerItem?:WebInteraction;contextOrder?:string[]}>(key);
     const editing=storage.read<LegacyQueueEditSession>(editorKey);
     const restore=restoreComposerDraft(draft??editing?.original,legacy,!!legacy&&!!state.acceptedRequestIds?.includes(legacy.requestId));
-    if(restore){contextOrder.current=new ContextOrder(draft?.contextOrder);const single=singleComposerDraft(restore);annotationDraft.restore({...single,htmlMetadata:draft?.htmlMetadata,imageAssets:draft?.imageAssets,preparingImages:draft?.preparingImages});aui.composer().setText(single.text);replaceQuotes(single.quotes);aui.composer().setQuote(undefined);if(single.requestId)draftRequest.current=single.requestId;setDraftNotice(single.notice??'');void (async()=>{for(const asset of single.attachments??[])await aui.composer().addAttachment(attachmentOwner.restore(asset));setRestoring(false);})();}else{setRestoring(false);}
+    if(restore){contextOrder.current=new ContextOrder(draft?.contextOrder);const single=singleComposerDraft(restore);setScheduleContext(single.scheduleContext);annotationDraft.restore({...single,htmlMetadata:draft?.htmlMetadata,imageAssets:draft?.imageAssets,preparingImages:draft?.preparingImages});aui.composer().setText(single.text);replaceQuotes(single.quotes);aui.composer().setQuote(undefined);if(single.requestId)draftRequest.current=single.requestId;setDraftNotice(single.notice??'');void (async()=>{for(const asset of single.attachments??[])await aui.composer().addAttachment(attachmentOwner.restore(asset));setRestoring(false);})();}else{setRestoring(false);}
     if(draft?.answerItem)onAnswerTarget(draft.answerItem);
     if(draft?.unconfirmedUploads)setDraftNotice('上次未确认的附件需重新选择；已确认附件仍保留。');
     restored.current=true;
@@ -372,10 +376,10 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     if(!composerMounted.current||!pendingRef.current.includes(item))return;
     const composer=aui.composer().getState(),resources=annotationDraft.read();
     const restore=!answerRef.current&&!quoteEditorRef.current&&!screenshotRef.current&&!Object.keys(resources.preparingImages??{}).length&&
-      restoreRejectedSourceDraft({text:composer.text,quotes:quotesRef.current,requestId:draftRequest.current,attachments:composer.attachments,uploading:uploadingRef.current,...resources},input,draft.clearedRequestId);
+      restoreRejectedSourceDraft({scheduleContext:scheduleRef.current,text:composer.text,quotes:quotesRef.current,requestId:draftRequest.current,attachments:composer.attachments,uploading:uploadingRef.current,...resources},input,draft.clearedRequestId);
     if(!restore){setDraftNotice(error==='request_too_large'?'原请求超出96KiB，原请求内容及当前草稿已保留。':'原请求未获接收，已保留原请求内容及当前草稿。');return;}
     setRestoring(true);try{
-      draftRequest.current=restore.requestId;contextOrder.current=new ContextOrder(draft.contextOrder);
+      setScheduleContext(undefined);draftRequest.current=restore.requestId;contextOrder.current=new ContextOrder(draft.contextOrder);
       annotationDraft.restore({...draft.resources,...restore});aui.composer().setText(restore.text);replaceQuotes(draft.quotes);
       const restoredResources=annotationDraft.read();
       for(const [index,asset] of draft.attachments.entries()){
@@ -420,23 +424,23 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     for(const attachment of draftAttachments){const asset=attachmentAsset(attachment);if(asset)contextOrder.current.rename(contextKey('attachment',attachment.id),contextKey('attachment',asset.assetId));}
     for(const attachment of draftAttachments)contextOrder.current.record(contextKey('attachment',attachmentAsset(attachment)?.assetId??attachment.id));
   },[draftAttachments,restoring,uploading]);
-  useEffect(()=>{if(state.threadId&&restored.current&&!restoring&&!screenshotRef.current?.committing){if(answerEditing)storage.write('homer-interaction:'+state.threadId+':'+answerEditing.item.id+':draft',text);else if(!storage.write(key,{text,quotes,resourceReference,resourceReferences,htmlMetadata:resourceState.htmlMetadata,imageAssets:resourceState.imageAssets,preparingImages:resourceState.preparingImages,requestId:draftRequest.current,attachments,contextOrder:contextOrder.current.snapshot(),unconfirmedUploads:uploading||retryAttachments.length>0}))setDraftNotice('草稿保存失败，已保存批注仅本次页面保留。');}},[state.threadId,key,text,quotes,resourceState,draftAttachments,uploading,restoring,answerEditing]);
+  useEffect(()=>{if(state.threadId&&restored.current&&!restoring&&!screenshotRef.current?.committing){if(answerEditing)storage.write('homer-interaction:'+state.threadId+':'+answerEditing.item.id+':draft',text);else if(!storage.write(key,{text,quotes,scheduleContext,resourceReference,resourceReferences,htmlMetadata:resourceState.htmlMetadata,imageAssets:resourceState.imageAssets,preparingImages:resourceState.preparingImages,requestId:draftRequest.current,attachments,contextOrder:contextOrder.current.snapshot(),unconfirmedUploads:uploading||retryAttachments.length>0}))setDraftNotice('草稿保存失败，已保存批注仅本次页面保留。');}},[state.threadId,key,text,quotes,scheduleContext,resourceState,draftAttachments,uploading,restoring,answerEditing]);
   useEffect(()=>{
     if(!answerTarget||restoring||uploading)return;
     if(screenshotRef.current){setDraftNotice('请先完成或取消截图。');onAnswerTarget(undefined);return;}
     if(quoteEditorRef.current){setDraftNotice('请先保存或取消引用批注。');onAnswerTarget(undefined);return;}
     if(answerRef.current){if(answerRef.current.item.id!==answerTarget.id){setDraftNotice('请先退出当前答复，再回答另一问题。');onAnswerTarget(answerRef.current.item);}return;}
-    const original={text:aui.composer().getState().text,quotes,resourceReference,resourceReferences,htmlMetadata:resourceState.htmlMetadata,imageAssets:resourceState.imageAssets,preparingImages:resourceState.preparingImages,requestId:draftRequest.current,contextOrder:contextOrder.current.snapshot()};
+    const original={text:aui.composer().getState().text,quotes,scheduleContext:scheduleRef.current,resourceReference,resourceReferences,htmlMetadata:resourceState.htmlMetadata,imageAssets:resourceState.imageAssets,preparingImages:resourceState.preparingImages,requestId:draftRequest.current,contextOrder:contextOrder.current.snapshot()};
     storage.write(key,{...original,attachments,unconfirmedUploads:retryAttachments.length>0,answerItem:answerTarget});
     const draft=interactionDraft('homer-interaction:'+state.threadId+':'+answerTarget.id);
     const saved=draft.text||Object.entries(draft.answers).map(([id,value])=>{const q=answerTarget.questions?.find(q=>q.id===id);return answerTarget.questions?.length===1?value:(q?.question??'旧版答复')+'：'+value;}).join('\n\n');
-    setAnswerEditing({item:answerTarget,original});aui.composer().setText(saved);aui.composer().setQuote(undefined);setDraftNotice('');focusInput();
+    setScheduleContext(undefined);setAnswerEditing({item:answerTarget,original});aui.composer().setText(saved);aui.composer().setQuote(undefined);setDraftNotice('');focusInput();
   },[answerTarget?.id,restoring,uploading]);
   function closeAnswer(){
     const session=answerRef.current;if(!session)return;
     storage.write('homer-interaction:'+state.threadId+':'+session.item.id+':draft',aui.composer().getState().text);
     storage.write(key,{...session.original,attachments,unconfirmedUploads:retryAttachments.length>0});
-    aui.composer().setText(session.original.text);replaceQuotes(session.original.quotes);aui.composer().setQuote(undefined);draftRequest.current=session.original.requestId;
+    setScheduleContext(session.original.scheduleContext);aui.composer().setText(session.original.text);replaceQuotes(session.original.quotes);aui.composer().setQuote(undefined);draftRequest.current=session.original.requestId;
     setAnswerEditing(null);onAnswerTarget(undefined);setDraftNotice('');focusInput();
   }
   const answerItem=answerEditing?state.interactions.find(item=>item.id===answerEditing.item.id):undefined;
@@ -653,7 +657,9 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
       return;
     }
     if(quotes.length&&referencesOf(resourceState).length&&state.features?.previewReferenceCollections!==2){setDraftNotice('当前连接不支持批注与消息引用共存，请刷新后重试。');return;}
-    const input=prepareMessage(text,protocolQuotes(quotes),undefined,()=>draftRequest.current,attachments,resourceReference,resourceReferences);
+    const submissionText=scheduleMessageText(text,scheduleRef.current);
+    if(!canSubmitMessage(submissionText,quotes,attachments,resourceReference,resourceReferences)){setDraftNotice('加入定时任务引用后内容过长，请缩短后发送。');return;}
+    const input=prepareMessage(submissionText,protocolQuotes(quotes),undefined,()=>draftRequest.current,attachments,resourceReference,resourceReferences);
     if(new TextEncoder().encode(JSON.stringify(input)).length>96*1024){setDraftNotice('整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。');return;}
     try{checkQuotes(quotes);}catch(error){setDraftNotice((error as Error).message);return;}
     submitting.current=true;
@@ -663,7 +669,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     const pendingSaved=savePending([...pendingRef.current.filter(entry=>entry.input.requestId!==input.requestId),item]);
     attachmentOwner.markSubmitted(draftAttachments);
     clearing.current={requestId:input.requestId,wait:aui.composer().clearAttachments()};
-    aui.composer().setText('');aui.composer().setQuote(undefined);replaceQuotes([]);annotationDraft.clear();contextOrder.current=new ContextOrder();draftRequest.current=clearedRequestId;setDraftNotice(pendingSaved?'':'未确认请求仅本次页面保留，请在当前页面核对或重试。');storage.write(key,undefined);
+    setScheduleContext(undefined);aui.composer().setText('');aui.composer().setQuote(undefined);replaceQuotes([]);annotationDraft.clear();contextOrder.current=new ContextOrder();draftRequest.current=clearedRequestId;setDraftNotice(pendingSaved?'':'未确认请求仅本次页面保留，请在当前页面核对或重试。');storage.write(key,undefined);
     void onSend(input).catch(error=>recoverRejectedSource(item,error instanceof Error?error.message:''))
       .finally(()=>{sending.current.delete(item);checkReceipts();})
       .catch(()=>{});focusInput();queueMicrotask(()=>{submitting.current=false;});
@@ -714,7 +720,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     const metadata={...annotationDraft.read().htmlMetadata};if(htmlNotes)metadata[key]=Object.fromEntries(htmlNotes.map(({id,isFixed,selectedText,isMultiSelect,elementBoundingBoxes})=>[id,{isFixed,selectedText,isMultiSelect,elementBoundingBoxes}]));
     annotationDraft.replace(refs,metadata);setDraftNotice('');
   }
-  useLayoutEffect(()=>{bindPreview({add:addReference,canQuote:canQuoteMessage,appendQuote,openQuote});return()=>bindPreview(null);});
+  useLayoutEffect(()=>{bindPreview({selectSchedule:value=>{if(restoring||blocked||editDraft||answerRef.current||quoteEditorRef.current||screenshotRef.current){setDraftNotice('请先返回普通输入，再引用定时任务。');return false;}setScheduleContext(value);setDraftNotice('');focusInput();return true;},add:addReference,canQuote:canQuoteMessage,appendQuote,openQuote});return()=>bindPreview(null);});
   const intentReference=answerEditing?undefined:resourceReference;
   const accountRequired=!mobileView&&!!window.homerDesktopAccount&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
   const notice=blocked?(accountRequired?'请先连接账号，重启并应用后即可开始。':connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):previewIntentTooLong({text,quotes,resourceReference:intentReference,resourceReferences:answerEditing?undefined:resourceReferences})?'整体要求与批注合计过长，请缩短后再发送。':draftNotice;
@@ -745,8 +751,9 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     <ComposerPrimitive.Root className={'composer'+(blocked?' is-blocked':'')} onSubmit={event=>{event.preventDefault();submit();}}
       onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=blocked||uploading||!state.features?.draftUpload||state.upgrade.phase!=='running'?'none':'copy';}}}
       onDrop={event=>{if(event.defaultPrevented)return;const files=Array.from(event.dataTransfer.files);if(files.length){event.preventDefault();void uploadFiles(files);}}}>
-    {!answerEditing&&(quotes[0]||chipReferences.length>0||attachments.length>0||retryAttachments.length>0||uploading)&&<div className="composer-context">
+    {!answerEditing&&(scheduleContext||quotes[0]||chipReferences.length>0||attachments.length>0||retryAttachments.length>0||uploading)&&<div className="composer-context">
     <div className="composer-reference-strip" role="region" aria-label="引用、批注与附件，横向滚动查看更多" tabIndex={0}>
+    {scheduleContext&&<ScheduleChip value={scheduleContext} onRemove={()=>{setScheduleContext(undefined);focusInput();}}/>}
     {(()=>{
       const items=new Map<string,ReactNode>();
       for(const reference of chipReferences)for(const note of reference.annotations??[{id:'legacy'}]){
@@ -915,11 +922,12 @@ function HomerApp() {
   const previewComposer=useRef<PreviewComposer|null>(null);
   const narrowPreview=useMediaQuery('(max-width:800px)',matchMedia('(max-width:800px)').matches,{getInitialValueInEffect:false});
   const [state, setState] = useState<WebState>(empty);
-  const [previewTabs,setPreviewTabs]=useState<{threadId:string;tabs:Array<CanvasArtifact&{trigger?:HTMLElement}>;activeId:string|null}>({threadId:state.threadId,tabs:[],activeId:null});
+  const [previewTabs,setPreviewTabs]=useState<{threadId:string;tabs:Array<PreviewTab&{trigger?:HTMLElement}>;activeId:string|null}>({threadId:state.threadId,tabs:[],activeId:null});
   if(previewTabs.threadId!==state.threadId){
     setPreviewTabs({threadId:state.threadId,tabs:[],activeId:null});setCanvasOpen(false);canvasTrigger.current=null;
   }
-  const canvasArtifact=previewTabs.threadId===state.threadId?previewTabs.tabs.find(tab=>tab.id===previewTabs.activeId)??null:null;
+  const activePreviewTab=previewTabs.threadId===state.threadId?previewTabs.tabs.find(tab=>tab.id===previewTabs.activeId)??null:null;
+  const canvasArtifact=activePreviewTab&&!('kind' in activePreviewTab)?activePreviewTab:null;
   const annotationDraft=useMemo(()=>createAnnotationDraft(),[state.threadId]);
   const [annotationFocus,setAnnotationFocus]=useState<{key:string;id:string;nonce:string}>();
   const focusEditor=useMemo<{current:(()=>void)|null}>(()=>({current:null}),[state.threadId]);
@@ -928,7 +936,7 @@ function HomerApp() {
     const key=JSON.stringify([state.threadId,open,id]);
     if(previewScope.current.key!==key)previewScope.current={key,generation:previewScope.current.generation+1};
   }
-  updatePreviewScope(canvasOpen,canvasArtifact?.id??null);
+  updatePreviewScope(canvasOpen,activePreviewTab?.id??null);
   const previewGeneration=previewScope.current.generation;
   const isCurrentPreview=()=>previewGeneration===previewScope.current.generation;
   const addPreviewReference=useCallback(async(reference:PreviewRequest,file?:File,isCurrent:()=>boolean=()=>true,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[])=>{
@@ -1275,10 +1283,10 @@ function HomerApp() {
   });
   const artifacts=state.artifacts??[];
   const closeCanvas=()=>{
-    updatePreviewScope(false,canvasArtifact?.id??null);setAnnotationFocus(undefined);captureAnchor();setCanvasOpen(false);
+    updatePreviewScope(false,activePreviewTab?.id??null);setAnnotationFocus(undefined);captureAnchor();setCanvasOpen(false);
   };
   const selectArtifact=(id:string)=>{
-    const tab=previewTabs.tabs.find(tab=>tab.id===id);if(!tab||id===canvasArtifact?.id)return;
+    const tab=previewTabs.tabs.find(tab=>tab.id===id);if(!tab||id===previewTabs.activeId)return;
     updatePreviewScope(true,id);canvasTrigger.current=tab.trigger??null;setAnnotationFocus(undefined);
     setPreviewTabs(old=>({...old,activeId:id}));
   };
@@ -1295,6 +1303,10 @@ function HomerApp() {
       else{captureAnchor();setCanvasOpen(false);}
     }
     setPreviewTabs(remove);
+  };
+  const openSchedules=(trigger:HTMLElement)=>{
+    canvasTrigger.current=trigger;updatePreviewScope(true,'schedules');setAnnotationFocus(undefined);if(!canvasOpen)captureAnchor();
+    setPreviewTabs(old=>({...old,tabs:old.tabs.some(tab=>tab.id==='schedules')?old.tabs:[...old.tabs,{id:'schedules',kind:'schedules',title:'定时任务',trigger}],activeId:'schedules'}));setCanvasOpen(true);
   };
   const openArtifact=(file:CanvasArtifact,trigger?:HTMLElement,annotation?:{key:string;id:string})=>{
     const active=trigger??document.activeElement;
@@ -1341,7 +1353,7 @@ function HomerApp() {
       <Group className="preview-layout" orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={nativeTitlebar?'240px':'25%'}><div className="conversation-panel">
         <header className="conversation-header">
           <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
-          <div className="header-actions">{mobileView?<MobileSettings/>:<DesktopSettings key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} connected={connected} onInteraction={locateTaskInteraction} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-expanded={canvasOpen} aria-controls="canvas-panel" onClick={event=>{if(canvasOpen){closeCanvas();return;}canvasTrigger.current=event.currentTarget;updatePreviewScope(true,canvasArtifact?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <div className="header-actions">{mobileView?<MobileSettings/>:<DesktopSettings key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} connected={connected} onInteraction={locateTaskInteraction} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" aria-expanded={canvasOpen} aria-controls="canvas-panel" onClick={event=>{if(canvasOpen){closeCanvas();return;}canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
       {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
       {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}
@@ -1380,7 +1392,7 @@ function HomerApp() {
           <MainComposer captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
-      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
+      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={state.history&&<ScheduledMessages threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={state} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
     </div>
   </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></QuoteNavigationContext.Provider>;
 }

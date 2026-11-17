@@ -1,0 +1,20 @@
+{
+  "src/schedule-display.ts": "e7ad6cd3bf16cc8ba29425c55ffceb1f5a5fffc9056566c7f21908c3ac56f7be",
+  "src/service.ts": "7f57cabbda74f82482a9aa044590f46519dc89f5fcff7dc05a21cfc10d136730",
+  "src/web-homer.ts": "fbd57bf5e4b3403b5243d245dceac586f3904ac1b261320b5c919bb932b86b42",
+  "src/web-contract.ts": "f9a3e9a7b39648c84cb5a05180429e38b90b0d195c49b71d07f1bbb342775dee",
+  "src/web-chat.ts": "47e964b902ed5468f068ef9102652dd51cbf6500501454a4a149e0a5edf14ff3",
+  "ui/scheduled-messages.tsx": "e99a560505025de9fd1b7bdf436a1ab1f3a67c030a8c6fed57d8c5e24bd77c7a",
+  "ui/scheduled-messages.css": "a5773af244b571393c20f4a31c3432557ac9038e291fb01466578adaffaf1e8b",
+  "ui/homer-app.tsx": "abc1a12fb839a641ffc8585088e13543c50f1a52c6dc569343ea74b568cdd531",
+  "ui/conversation-client.ts": "aceafc75c08bfa3bcea42954c24f9d95738e4e2c8ba865de86a7de72eed37c87",
+  "ui/canvas-panel.tsx": "0dbe41e9ea9614ebd4c595d81377e5ee6227f81549eee40d01dc8ae4721af168",
+  "ui/preview-reference.tsx": "ab73f9e3a4b306eef04711122d29f44eb3d0ae4f395abbf3c7de3d34fe7b3c61",
+  "ui/vendor/assistant-ui/schedule-card.tsx": "0a0a41f0ba02ac2255e2e7298c1363e1a05a81d87b26d5a6229f130030c845b4",
+  "ui/vendor/assistant-ui/spec-sheet.tsx": "69e654a798196cb0339e25fa6b34c715519df7dec8e61c7ec33b40fb9e81e214",
+  "ui/vendor/assistant-ui/schedules.css": "c2f97c56e631b5b8b459b3109aa5bcffb132de4b49e9acd5edf56421fc8ce4ed",
+  "ui/vendor/assistant-ui/range.ts": "321a1ba2f60babe8da27baf20cec31c531b53eebb45f5a6e4f1fb3efdd96092b",
+  "ui/package.json": "3c61670cf62a4eba7e328d0efc5541461de9b6a0bf824aeddd50df8b92e5fad4",
+  "scripts/build-run-activity-css.mjs": "a70d18e39571f41ddbd226f1ae06a81a50349737e829750f901563b18e3703a2",
+  "scripts/dev-build.mjs": "d8b5c6fc406b5c6ca135a710a54c4e79fd58c2749097cd119532c6f1aba332ab"
+}

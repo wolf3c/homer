@@ -24,6 +24,7 @@ import {detectMedia,MEDIA_POLICY} from './media-policy.js';
 import { RecursiveTasks, recursiveHash, type Actor, type TaskRun, type Authority } from "./recursive-tasks.js";
 import { RecursiveTools, RECURSIVE_TOOLS, MAIN_DYNAMIC_TOOLS, MAIN_TOOLS_HASH, validateToolArguments, toolOperationId } from "./recursive-tools.js";
 import { MainInputs,MainInputClaimError, type QueuedInput,type MainInput,type InternalInput } from "./recursive-main-inputs.js";
+import {readScheduleDisplay,type ScheduleReadRequest} from './schedule-display.js';
 import {Schedules,SCHEDULE_TOOLS} from './schedules.js';
 import {ScheduleTools,type ScheduleSource} from './schedule-tools.js';
 import {HostToolCalls} from './host-tool-calls.js';
@@ -1839,6 +1840,9 @@ export class Homer {
     if(!authority)throw Error('schedule_scope_denied');
     const source:ScheduleSource={instanceId:this.store.meta('mainAgentId')!,threadId:this.store.meta('mainThread')!,creatorAgentId:actor.agentId,authority};
     return this.scheduleTools.handle({actor,source,allSources:!slot&&!context?.event},name,object(args),identity.callId);
+  }
+  readSchedules(input:ScheduleReadRequest){
+    return readScheduleDisplay(this.store.db,this.schedules,input,{threadId:this.store.meta('mainThread')!,readEpoch:this.webReadEpoch,validateSource:ref=>{this.validateScheduleSource(JSON.parse(ref),true);}});
   }
   nextScheduledMessageAt():number|null{return this.closing?null:this.schedules.nearestFutureFireAt();}
   onScheduleChanged(listener:()=>void){this.scheduleListeners.add(listener);return ()=>{this.scheduleListeners.delete(listener);};}

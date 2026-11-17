@@ -39,6 +39,7 @@ function copySnapshot(root, snapshot, directory, toolRoot=root) {
 async function compileUi(root, snapshot, directory, signal) {
   if (!snapshot.files.has("ui/package.json")) return;
   await command(process.execPath, [join(directory, "scripts/build-preview-annotation.mjs")], directory, signal);
+  await command(process.execPath, [join(directory, "scripts/build-run-activity-css.mjs"), "--schedules", "--check"], directory, signal);
   await command(process.execPath, [join(directory, "scripts/build-run-activity-css.mjs"), "--check"], directory, signal);
   await command(process.execPath, [join(directory, "scripts/build-run-activity-css.mjs"), "--tool-fallback", "--check"], directory, signal);
   await command(process.execPath, [join(root, "node_modules/typescript/bin/tsc"), "--noEmit", "-p", join(directory, "ui/tsconfig.json")], root, signal);

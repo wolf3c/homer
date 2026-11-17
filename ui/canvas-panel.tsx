@@ -81,6 +81,7 @@ class PatchPreviewBoundary extends Component<{children:ReactNode;fallback:ReactN
 }
 
 export type CanvasArtifact = {id:string;title:string;messageId:string;assetId:string;revision:number;sha256:string};
+export type PreviewTab=CanvasArtifact|{kind:'schedules';id:'schedules';title:string};
 export function canvasWebUrl(value:string):string {
   const url=new URL(value);
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('请输入不含账号密码的 http(s) 网页地址。');
@@ -95,10 +96,11 @@ const markdownComponents:Components={
  img:LazyMarkdownImage,
  a:({href,children})=><a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
 };
-type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly CanvasArtifact[];onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;isCurrent?:PreviewImportGuard};
+type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly PreviewTab[];activeId?:string|null;scheduleContent?:ReactNode;onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;isCurrent?:PreviewImportGuard};
 
-export function CanvasPanel({tabs,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,...readerProps}:CanvasPanelProps) {
+export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,...readerProps}:CanvasPanelProps) {
   const {artifact,webSource,onClose}=readerProps;
+  const selected=activeId??artifact?.id??null;
   const host=useRef<HTMLDivElement>(null),panel=useRef<HTMLDivElement>(null),collapseButton=useRef<HTMLButtonElement>(null),rail=useRef<HTMLDivElement>(null);
   const [actions,setActions]=useState<HTMLDivElement|null>(null);
   const imageControl=useRef<ImageAnnotationControl|null>(null),focusAfterClose=useRef(false),visibleTab=useRef<Element|null>(null);
@@ -116,11 +118,11 @@ export function CanvasPanel({tabs,threadId='',onSelectArtifact,onCloseArtifact,r
     ensureVisible(active);
     const observer=new ResizeObserver(()=>ensureVisible(visibleTab.current?.isConnected?visibleTab.current:list.querySelector('[role=tab][aria-selected=true]')));
     observer.observe(list);return()=>observer.disconnect();
-  },[artifact?.id,tabs]);
+  },[selected,tabs]);
   const hasTabs=!!tabs?.length&&!webSource;
-  const title='预览：'+(webSource?.title??artifact?.title??'从对话中选择成果');
+  const title='预览：'+(webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'从对话中选择成果');
   const tools=<><div ref={setActions} className="canvas-tab-actions"/>{(narrow||!hasTabs)&&<TooltipIconButton ref={collapseButton} className="canvas-collapse" tooltipContainer={actions} aria-label="收起预览" tooltip="收起预览" onClick={onClose}><PanelRight size={14} aria-hidden/></TooltipIconButton>}</>;
-  const reader=<CanvasReader {...readerProps} key={JSON.stringify([threadId,artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
+  const reader=selected==='schedules'?scheduleContent:<CanvasReader {...readerProps} key={JSON.stringify([threadId,artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
   return <div ref={host} className="canvas-host"><Dialog.Root open modal={narrow} disablePointerDismissal onOpenChange={(open,details)=>{
     if(details.reason==='escape-key'&&imageControl.current?.escape()){details.cancel();return;}
     if(details.reason==='escape-key'&&panel.current?.querySelector('.preview-selection-positioner')){details.cancel();details.allowPropagation();return;}
@@ -132,24 +134,27 @@ export function CanvasPanel({tabs,threadId='',onSelectArtifact,onCloseArtifact,r
       return target===false?false:target?.isConnected?target:document.querySelector<HTMLElement>('.conversation-header [aria-controls="canvas-panel"]');
     }}>
     <Dialog.Title className="sr-only">{title}</Dialog.Title>
-    {hasTabs?<Tabs.Root className="canvas-tabs" value={artifact?.id??null} onValueChange={id=>{if(typeof id==='string')onSelectArtifact?.(id);}}>
+    {hasTabs?<Tabs.Root className="canvas-tabs" value={selected} onValueChange={id=>{if(typeof id==='string')onSelectArtifact?.(id);}}>
       <div className="canvas-tab-bar">
       <Tabs.List className="canvas-tab-rail" ref={rail} aria-label="已打开的成果" activateOnFocus={false} loopFocus onFocusCapture={event=>{visibleTab.current=event.target;if(event.target.matches(':focus-visible'))ensureVisible(event.target);}}>
         {tabs.map(tab=>{
-          const sameName=tabs.filter(item=>item.title===tab.title);
-          const repeatedAsset=new Set(sameName.map(item=>item.assetId)).size!==sameName.length;
-          const sourceKey=(item:typeof tab)=>repeatedAsset?item.messageId.replace(/^message-/,'')+':'+item.revision+':'+item.assetId.slice(6):item.assetId.slice(6);
-          const key=sourceKey(tab);
-          let length=8;while(length<key.length&&sameName.some(item=>item.id!==tab.id&&sourceKey(item).slice(0,length)===key.slice(0,length)))length++;
-          const label=tab.title+(sameName.length>1?' · '+key.slice(0,length):'');
+          let label=tab.title;
+          if(!('kind' in tab)){
+            const sameName=tabs.filter((item):item is CanvasArtifact=>!('kind' in item)&&item.title===tab.title);
+            const repeatedAsset=new Set(sameName.map(item=>item.assetId)).size!==sameName.length;
+            const sourceKey=(item:CanvasArtifact)=>repeatedAsset?item.messageId.replace(/^message-/,'')+':'+item.revision+':'+item.assetId.slice(6):item.assetId.slice(6);
+            const key=sourceKey(tab);
+            let length=8;while(length<key.length&&sameName.some(item=>item.id!==tab.id&&sourceKey(item).slice(0,length)===key.slice(0,length)))length++;
+            label=tab.title+(sameName.length>1?' · '+key.slice(0,length):'');
+          }
           return <div key={tab.id} className="canvas-tab-item" role="presentation">
             <Tabs.Tab value={tab.id} className="canvas-tab" title={tab.title+' · '+tab.id} aria-label={label}><span>{label}</span></Tabs.Tab>
-            <button type="button" className="canvas-tab-close" aria-label={'关闭文件：'+label} title={'关闭文件：'+label} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))event.stopPropagation();}} onClick={event=>{focusAfterClose.current=tab.id===artifact?.id||event.currentTarget===document.activeElement;onCloseArtifact?.(tab.id);}}><XIcon size={14} aria-hidden/></button>
+            <button type="button" className="canvas-tab-close" aria-label={('kind' in tab?'关闭':'关闭文件：')+label} title={('kind' in tab?'关闭':'关闭文件：')+label} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))event.stopPropagation();}} onClick={event=>{focusAfterClose.current=tab.id===selected||event.currentTarget===document.activeElement;onCloseArtifact?.(tab.id);}}><XIcon size={14} aria-hidden/></button>
           </div>;
         })}
       </Tabs.List>
       {tools}</div>
-      {tabs.map(tab=><Tabs.Panel className="canvas-tab-panel" key={tab.id} value={tab.id} keepMounted hidden={tab.id!==artifact?.id}>{tab.id===artifact?.id?reader:null}</Tabs.Panel>)}
+      {tabs.map(tab=><Tabs.Panel className="canvas-tab-panel" key={tab.id} value={tab.id} keepMounted hidden={tab.id!==selected}>{tab.id===selected?reader:null}</Tabs.Panel>)}
     </Tabs.Root>:<><div className="canvas-tab-bar"><span className="canvas-preview-label" title={webSource?.title??artifact?.title??'预览'}>{webSource?.title??artifact?.title??'预览'}</span>{tools}</div>{reader}</>}
     </Dialog.Popup>
   </Dialog.Portal></Dialog.Root></div>;

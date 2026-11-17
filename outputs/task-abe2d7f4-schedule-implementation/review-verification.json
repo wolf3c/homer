@@ -1,0 +1,23 @@
+{
+  "base": "90dfb0b26712eafc1886789f4c91ee1bebfc055d",
+  "candidate": "HEAD archive plus exact schedule-only blobs",
+  "offline": {
+    "candidateRegression": 161,
+    "hostHttp": 1,
+    "composerIncludedInRegression": 63,
+    "previousSixHistoryRecovery": "6/6 passed"
+  },
+  "typechecks": [
+    "ui/tsconfig.json",
+    "tsconfig.check.json"
+  ],
+  "build": "passed after existing preview annotation build step",
+  "browser": "review-browser-result.json",
+  "notRun": [
+    "real model",
+    "installed app",
+    "real schedules",
+    "physical device"
+  ],
+  "worktree": "No worktree created for this task; unrelated power worktree preserved"
+}

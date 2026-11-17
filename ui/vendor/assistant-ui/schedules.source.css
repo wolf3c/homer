@@ -1,0 +1,11 @@
+@import "tailwindcss" source(none);
+@source "./schedule-card.tsx";
+@source "./spec-sheet.tsx";
+@source "./surfaces.ts";
+@theme inline {
+  --color-foreground: var(--ink);
+  --color-muted-foreground: var(--muted);
+  --color-background: var(--surface);
+  --color-popover: var(--surface);
+  --color-border: var(--line);
+}

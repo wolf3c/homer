@@ -341,3 +341,12 @@ Validation: `tests/diff-viewer-preview.test.mjs` exercises the actual CanvasRead
 正文、可见过程和Markdown预览恢复图片及组件默认链接处理；KaTeX恢复插件默认；Mermaid取消Homer额外规模限制并允许图片／链接，失败保留源码。图内非片段链接接入与正文相同的新窗口／桌面确认路径，包含Pele默认tel协议。Sources取消宿主重复筛选、提取30条及标题200字符截断；引用正文取消两行显示裁切。
 
 成功过程隐藏、分页／按需详情、媒体懒加载与附件状态保持。长引用16000／96KiB放宽尚有移动端队列回传容量问题，本提交不纳入该组改动；保留原前后端合同，不截改现有草稿。附件相邻图片映射和工具采集策略不纳入本提交。复审与定向验证见docs/message-display-simplification-2026-11-17.md；未安装或部署。
+
+## Schedule center (2026-11-17)
+
+The Preview center directly renders locally vendored registry components at the existing fixed MIT commit `1f41f91643fdb56e5d8dbd14db65f742740738a1`, under `packages/ui/src/components/react/assistant-ui/elements/`:
+
+- [ScheduleCard](https://github.com/assistant-ui/assistant-ui/blob/1f41f91643fdb56e5d8dbd14db65f742740738a1/packages/ui/src/components/react/assistant-ui/elements/schedule-card.tsx): original SHA-256 `c2f61a13868feb4da8dde772a6c312ef9399b796d61644ef62fa502c6b0e6aff`. This is an adaptation, not an unchanged component: local cn import, removed toggle/history and unused ScheduleRun type, title-line status, caller-supplied time label, independent native detail button and conversation action slot. Official clock, heading, field and surface composition retained.
+- [SpecSheet](https://github.com/assistant-ui/assistant-ui/blob/1f41f91643fdb56e5d8dbd14db65f742740738a1/packages/ui/src/components/react/assistant-ui/elements/spec-sheet.tsx): original SHA-256 `0ab461c178f93d65f2fe858867381a7fe0cc7b167f7c4b8e7fe2fa2e917d9c31`. Only cn and take import paths changed. The renderer and exports are intact; the caller supplies an empty title, hides that empty header with scoped CSS, and puts the complete task content in the last row. The source hash is checked in `tests/schedule-display.test.ts` after reversing these two imports. `take` shares existing range.ts; existing surfaces.ts and MIT LICENSE reused.
+
+The popup uses the existing attachment-dialog.tsx Base UI wrapper unchanged. Homer owns read-only data, a single selected ID, theme, scroll region and narrow Preview stacking (101 backdrop / 102 detail above Preview 100). This is not a supplied schedule management dialog or npm ScheduleCard export. No new package or schedule entity. `schedules.source.css` is compiled by the existing scoped CSS builder with `--schedules`; npm UI build/dev and snapshot dev-build verify it. Source implementation and synthetic rendered evidence are recorded in `docs/superpowers/plans/2026-11-17-scheduled-task-display.md`, separate from installed-app acceptance.

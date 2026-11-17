@@ -1,0 +1,54 @@
+{
+  "checks": [
+    {
+      "width": 1440,
+      "reads": 8,
+      "detailReads": 2,
+      "fileTabsPreserved": true,
+      "detailKeyboardFocus": true,
+      "longText": true,
+      "chipDraftRestored": true,
+      "exactIdSentOnce": true,
+      "stateRefresh": true,
+      "failureNotEmpty": true
+    },
+    {
+      "width": 390,
+      "reads": 9,
+      "detailReads": 2,
+      "fileTabsPreserved": true,
+      "detailKeyboardFocus": true,
+      "longText": true,
+      "chipDraftRestored": true,
+      "exactIdSentOnce": true,
+      "stateRefresh": true,
+      "failureNotEmpty": true
+    },
+    {
+      "width": 320,
+      "reads": 9,
+      "detailReads": 2,
+      "fileTabsPreserved": true,
+      "detailKeyboardFocus": true,
+      "longText": true,
+      "chipDraftRestored": true,
+      "exactIdSentOnce": true,
+      "stateRefresh": true,
+      "failureNotEmpty": true
+    }
+  ],
+  "errors": [],
+  "exit": {
+    "pid": 19033,
+    "profile": "/private/tmp/schedule-review-browser/profile-Pjzspf",
+    "mockKeychain": true,
+    "confirmed": true,
+    "code": 0,
+    "signal": null,
+    "forced": false,
+    "watchdog": false,
+    "spawnError": "",
+    "closeError": ""
+  },
+  "failure": null
+}

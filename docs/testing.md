@@ -1190,3 +1190,31 @@ HOMER_TEST_CODEX_BIN='/Applications/Homer.app/Contents/Resources/runtime/codex/v
 提交前已在最新 HEAD `787afc68` 上隔离本事项构造精确候选，307 项定向检查无失败／跳过，两端类型检查、独立构建及 1080／390px 合成实际界面通过，Chrome exit 0、forced=false、watchdog=false。复审发现全局历史版本会引起已展开 Worker 详情重复读取，已改为按 Task／Run 生命周期字段触发；请求次数回归先复现 11 次，再验证无关更新保持 1 次、Run 变化后为 2 次，不新增缓存或版本实体。新回归已纳入上述命令。沙箱内进程身份查询导致的候选测试失败在获准沙箱外原样重跑后通过，未改断言或锁实现。未进行真实模型、原生审批、安装版或真机验收，提交状态以 Git 记录为准。
 
 提交前复核（2026-11-17）：仅含本事项改动的独立候选基于 `b11e2c64`，使用项目 Node 22.22.0 验证相关回归 30/30、打包 Codex 回环 18/18、完整类型检查通过；零真实模型调用。此候选不包含共享工作树的其他未提交片段。
+
+## 定时任务 Preview 展示（2026-11-17）
+
+数据读取及chip沿默认离线测试收集；正式渲染登记在显式browser清单，不默认启动浏览器或访问日常实例。
+
+```sh
+node --import tsx --test tests/schedule-display.test.ts tests/mobile-request.test.mjs \
+  tests/web-chat.test.ts tests/reader-scroll.test.mjs
+node --import tsx --test tests/schedules.test.ts tests/schedule-inbox.test.ts
+node --import tsx --test --test-name-pattern='schedule chip|chip alone' tests/main-composer.test.mjs
+HOMER_SYNTHETIC_ROOT=/absolute/isolated-temp node --import tsx --test \
+  --test-name-pattern='schedule read uses host' tests/web-service.test.ts
+node node_modules/typescript/bin/tsc --noEmit -p ui/tsconfig.json
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.check.json
+node scripts/build-run-activity-css.mjs --schedules --check
+```
+
+以上依次80／23／2／1项通过（106项），类型及CSS一致性通过。HTTP用例只使用独立合成runtime，核验无活动引擎时仍可通过宿主原授权来源读取、外实例过滤、epoch／伪owner拒绝、正文按需和零写入。SpecSheet保留官方字段renderer的hash校验。通用Composer额外57项通过，6项旧历史恢复fixture需写沙箱只读目录而未完成，提权重跑未获批准，不宣称该文件全绿；没有为了测试改产品权限或夹具。
+
+显式产品UI检查（先将当前ui通过Vite构建到独立目录，勿覆盖在用dist）：
+
+```sh
+HOMER_COMPONENT_BUILD=/absolute/isolated-web-build \
+HOMER_BROWSER_EVIDENCE=/absolute/isolated-evidence \
+node tests/schedule-display.browser.mjs
+```
+
+当前1440／390／320px均通过：原文件与schedule标签共存和切换；普通对话无卡片；SpecSheet长内容完整且位于末行；详情关闭实际命中、键盘／回焦、引用不冒泡不发送、chip移除与刷新恢复、完整ID在真实POST普通文本只拼一次、state刷新及失败未确认提示。启动隔离Chrome、只连接本地HTTP／SSE合成fixture，使用mock keychain，不连接真实计划／模型。必须同时核对退出码0、forced=false和watchdog=false，不能只看PNG。源码及证据见[实施方案](superpowers/plans/2026-11-17-scheduled-task-display.md#8-实施与验证2026-11-17)；未覆盖安装版、真机、真实LLM调用或渠道实网专项。

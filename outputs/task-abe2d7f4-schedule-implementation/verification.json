@@ -1,0 +1,30 @@
+{
+  "scope": "production source with isolated synthetic data; no real schedules, commit, install or deployment",
+  "offline": {
+    "readDataVendorTransportAndReader": 80,
+    "existingSchedulerAndInbox": 23,
+    "newComposerChipCases": 2,
+    "hostReadHttpWithoutModel": 1,
+    "total": 106,
+    "status": "passed"
+  },
+  "partialComposerRegression": {
+    "passed": 57,
+    "notVerified": 6,
+    "reason": "Existing history-recovery fixtures require writes in sandbox-read-only .codex/scratch; escalated rerun was rejected."
+  },
+  "typechecks": [
+    "ui/tsconfig.json",
+    "tsconfig.json",
+    "tsconfig.check.json"
+  ],
+  "build": "Vite production UI in separate temporary directory; schedules CSS --check passed",
+  "browser": "browser-result.json",
+  "notRun": [
+    "installed application",
+    "physical phone",
+    "real LLM schedule_list/update/cancel",
+    "live channel revocation/preparing integration",
+    "full default suite"
+  ]
+}

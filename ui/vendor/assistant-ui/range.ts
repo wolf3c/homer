@@ -18,3 +18,6 @@ export function clamp(value: number, min: number, max: number) {
   if (Number.isNaN(value)) return min;
   return Math.min(max, Math.max(min, value));
 }
+
+/** First count items, matching the pinned official SpecSheet dependency. */
+export function take<T>(items:readonly T[],count:number){return items.slice(0,Math.floor(clamp(count,0,items.length)));}

@@ -56,3 +56,9 @@ test('mobile conversation and execution selectors retain exact Task and Worker i
  assert.deepEqual(f.calls,[{op:'tasks.execution',input:{taskId:'t',runId:'r',before:undefined}},{op:'tasks.detail',input:{id:'t',workerId:'w'}},{op:'tasks.detail',input:{id:'t',workerId:'w',after:20}},{op:'tasks.detail',input:{id:'t',workerId:'w',messageId:'m',offset:24000}}]);
  assert.equal((await f.fetch(new Request('https://localhost/api/tasks/t/workers/w?after=20'))).status,409);assert.equal(f.calls.length,4);
 });
+
+test('schedule center uses the same authenticated read operation over device transport',async()=>{
+ const f=fixture({items:[],nextOffset:null}),input={readEpoch:'epoch',view:'list',offset:20};
+ const response=await f.fetch(new Request('https://localhost/api/schedules/read',{method:'POST',body:JSON.stringify(input)}));
+ assert.equal(response.status,200);assert.deepEqual(f.calls,[{op:'schedules.read',input}]);
+});

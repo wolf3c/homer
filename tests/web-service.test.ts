@@ -351,9 +351,36 @@ test('long quotes remain complete from persisted input to synthetic engine turn 
    const quote={messageId:source,text},input={requestId:legacy?'long-legacy':'long-many',text:'explain',...(legacy?{quote}:{quotes:[{...quote,annotation:'comment'}]})};
    assert.ok(Buffer.byteLength(JSON.stringify(input))<96*1024);
    f.app.submitMessage(input);await f.app.idle();
-   assert.ok(f.inputs.some(value=>value.includes(legacy?JSON.stringify(text):JSON.stringify(input.quotes))));
+   assert.ok(f.inputs.some(value=>value.includes(legacy?JSON.stringify(text):JSON.stringify('quotes' in input?input.quotes:undefined))));
    const saved=f.app.history.list('synthetic-main').find(value=>value.requestId===input.requestId&&value.role==='user');
    assert.equal(legacy?saved?.quote?.text:saved?.quotes?.[0]?.text,text);
   }
  }finally{await f.app.close();rmSync(f.base,{recursive:true,force:true});}
+});
+
+
+test('schedule read uses host authority and current epoch without a live model; HTTP returns only permitted current data',async()=>{
+ const f=fixture();let web:Awaited<ReturnType<typeof createWebServer>>|undefined;
+ try{
+  // Register the existing native thread and a trusted user source without starting an engine.
+  f.app.store.setMeta('mainThread','synthetic-main');
+  f.app.inputs.accept({requestId:'schedule-ui-source',text:'Synthetic reminder authority'});
+  assert.ok(f.app.inputs.claim());
+  const source={instanceId:f.app.store.meta('mainAgentId'),threadId:'synthetic-main',authority:{sourceRequestId:'schedule-ui-source',description:'Synthetic reminder'}};
+  const row=f.app.schedules.create({text:'Read-only synthetic reminder',trigger:{at:new Date(Date.now()+86400000).toISOString()},sourceRef:JSON.stringify(source)});
+  f.app.schedules.create({text:'Foreign reminder',trigger:{at:new Date(Date.now()+86400000).toISOString()},sourceRef:JSON.stringify({...source,instanceId:'another-instance'})});
+  const bridge=homerWebBridge(f.app),before=(await bridge.history!.state()).history!,epoch=before.readEpoch;
+  let publications=0;const unsubscribe=bridge.onStateChange!(()=>publications++);
+  const updated=f.app.schedules.update({scheduleId:row.id,expectedRevision:row.revision,text:row.text+' — current'});
+  await new Promise<void>(resolve=>queueMicrotask(resolve));unsubscribe();
+  assert.ok(publications>0);assert.equal((await bridge.history!.state()).history!.page.revision,before.page.revision,'schedule changes publish even with unchanged history revision');
+  web=await createWebServer({bridge,port:0});
+  const query=async(input:unknown)=>{const response=await fetch(web!.url+'/api/schedules/read',{method:'POST',headers:{'content-type':'application/json',Origin:new URL(web!.url).origin},body:JSON.stringify(input)});return {status:response.status,body:await response.json() as any};};
+  const changes=f.app.store.db.prepare('SELECT total_changes() n').get()!.n;
+  const list=await query({readEpoch:epoch,view:'list'});assert.equal(list.status,200);assert.deepEqual(list.body.items.map((x:any)=>x.scheduleId),[row.id]);assert.equal(list.body.items[0].text,undefined);
+  const detail=await query({readEpoch:epoch,view:'detail',scheduleId:row.id});assert.equal(detail.body.item.text,updated.text);
+  assert.equal(f.app.store.db.prepare('SELECT total_changes() n').get()!.n,changes);assert.equal(f.engines.length,0);
+  assert.equal((await query({readEpoch:'stale',view:'list'})).body.error,'history_epoch_changed');
+  assert.equal((await query({readEpoch:epoch,view:'list',owner:'other'})).body.error,'schedule_query_invalid');
+ }finally{await web?.close();await f.app.close();}
 });
