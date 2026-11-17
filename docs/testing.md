@@ -1170,3 +1170,23 @@ HOMER_COMPONENT_BUILD=/private/tmp/homer-process-slim-web HOMER_BROWSER_EVIDENCE
 当前评审证据在 `/private/tmp/homer-process-slim-20261117-run8c5/`：最终日志、browser/result.json、四张 PNG 与本事项相对共享树基线的 patch；只保留供本轮核阅／精确集成，完成后可回收。构建、测试副本和已退出 Chrome profiles 在交付前按 work-cleanup 回收。未运行全量、真实模型、安装版／真机，不表示日常 Homer 已采用。
 
 提交前已在最新 HEAD `787afc68` 上隔离本事项构造精确候选，307 项定向检查无失败／跳过，两端类型检查、独立构建及 1080／390px 合成实际界面通过，Chrome exit 0、forced=false、watchdog=false。复审发现全局历史版本会引起已展开 Worker 详情重复读取，已改为按 Task／Run 生命周期字段触发；请求次数回归先复现 11 次，再验证无关更新保持 1 次、Run 变化后为 2 次，不新增缓存或版本实体。新回归已纳入上述命令。沙箱内进程身份查询导致的候选测试失败在获准沙箱外原样重跑后通过，未改断言或锁实现。未进行真实模型、原生审批、安装版或真机验收，提交状态以 Git 记录为准。
+
+## 会员原生 Auto Review（2026-11-17）
+
+普通离线回归：`node --import tsx --test tests/membership-auto-review.test.ts tests/deepseek-model.test.ts tests/desktop-deepseek-engine.test.mjs`，30/30 通过。新单测覆盖隐藏 Luna、父模型保全及同名去重；现有协议夹具补充原生审批响应字段。当前公共配置接口的 main／worker 均有 context 与 capabilities；没有读取凭据或调用真实模型，也未为旧配置补兼容。
+
+显式引擎专项（登记在 `scripts/test.mjs` 的 engine 清单，但本次没有运行整个 engine 清单）：
+
+```sh
+HOMER_TEST_CODEX_BIN='/Applications/Homer.app/Contents/Resources/runtime/codex/vendor/aarch64-apple-darwin/bin/codex' node --import tsx --test tests/native-membership-auto-review.engine.test.mjs
+```
+
+必须明确提供固定版本二进制；测试不使用缺项 skip，版本不符则失败。每例在 `/private/tmp` 建立独立 HOME/CODEX_HOME、合成会员 Token 与回环 Responses，并在 finally 关闭引擎、服务器和数据库后删除。各角色分别覆盖 allow、deny、401、显式 user、never、同名 Luna、无效 JSON、停止、Terra Code Mode Only。捕获实际 model／URL／鉴权，审批后的本地合成文件证明执行与否；停止案例在 interrupt 后释放迟到 allow 并验证不执行。每例冷恢复，allow 案例另验证会员→ChatGPT→会员 fork，未在 ChatGPT 来源运行模型轮。
+
+此前来源往返用例复现切回 ChatGPT 仍继承 auto_review，已通过显式目标来源配置修复；停止测试曾误将 interrupt 返回 false 当作失败，现改为等待真实原生终态，不以 ACK 判断完成。失败历史不追认。最终完整专项 **18/18 通过，零失败／跳过／取消**；相关普通离线回归 **30/30**、完整类型检查通过。
+
+类型检查：`node node_modules/typescript/bin/tsc -p tsconfig.check.json`。不涉及真实付费模型、会员审核效果、线上网关路由或账单验收；未安装或重启日常应用。源码自带 Luna 窗口是模型元数据，不是本次添加的费用防线。
+
+提交前已在最新 HEAD `787afc68` 上隔离本事项构造精确候选，307 项定向检查无失败／跳过，两端类型检查、独立构建及 1080／390px 合成实际界面通过，Chrome exit 0、forced=false、watchdog=false。复审发现全局历史版本会引起已展开 Worker 详情重复读取，已改为按 Task／Run 生命周期字段触发；请求次数回归先复现 11 次，再验证无关更新保持 1 次、Run 变化后为 2 次，不新增缓存或版本实体。新回归已纳入上述命令。沙箱内进程身份查询导致的候选测试失败在获准沙箱外原样重跑后通过，未改断言或锁实现。未进行真实模型、原生审批、安装版或真机验收，提交状态以 Git 记录为准。
+
+提交前复核（2026-11-17）：仅含本事项改动的独立候选基于 `b11e2c64`，使用项目 Node 22.22.0 验证相关回归 30/30、打包 Codex 回环 18/18、完整类型检查通过；零真实模型调用。此候选不包含共享工作树的其他未提交片段。

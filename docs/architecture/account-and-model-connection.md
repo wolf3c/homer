@@ -168,3 +168,11 @@ HTTP／HTTPS 代理使用直接依赖 `https-proxy-agent@7.0.6`，SOCKS 使用 `
 | 3 | ws / 约3.5万 | — | — | 181,637 | 上游过载；专项立即停止 |
 
 真实验收的临时凭据和运行目录已清除，源授权文件未被本测试写回。服务容量恢复后使用现有显式专项复验；不通过增加生产重试实体或改写 426 掩盖过载。没有安装、重启日常实例或发布。
+
+## 会员原生 Auto Review（2026-11-17）
+
+当前完整会员角色配置的 Main 与 Worker 默认使用 Codex 原生 `auto_review`，模型目录将 reviewer 固定为 `gpt-6-luna`，沿各角色现有 `homer` provider、URL 和环境 Token。显式 `user`、审批策略及托管约束优先；控制连接、ChatGPT 与 BYOK 不加会员覆盖。正常创建／恢复／fork 都使用当前设置，切回非会员来源时显式采用目标来源设置，防止继承会员默认。目录在新引擎启动时采用，不热改正在执行的审批。
+
+生产改动限 `src/model-catalog.ts` 和 `src/engine.ts`：目录元数据与线程审批参数接线，读取原生线程响应确认模式。原生审核允许／拒绝在引擎内处理，仍需人工的提示沿原回调；Worker 业务提问、TaskVersion、停止及操作回执保留。无 272K 费用防御或 Homer 计费逻辑，Agent Model Hub 负责消费结算；也不补旧配置兼容。
+
+源码已实现，相关离线回归 30/30；打包 Codex `0.171.0-alpha.7` 的隔离回环已验证 Main／Worker 的允许、拒绝、401、无效 JSON、显式人工、never、同名 Luna、停止后晚到 allow、正常恢复及来源往返；补充当前 Terra Code Mode Only 路径。完整案例数与命令见[测试说明](../testing.md#会员原生-auto-review2026-11-17)。目录／请求正确不等于真实会员线上审核或账单已验证：本次零真实模型调用，未安装、重启日常服务、提交或部署。[实施方案与结果](../superpowers/plans/2026-11-17-membership-auto-review.md)。

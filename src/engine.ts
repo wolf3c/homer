@@ -465,7 +465,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     };
     const deepseekCatalogPath=deepseek?materializeDeepSeekCatalog(this.config.runtime):undefined;
     const capabilities=this.config.capabilities??(this.config.context&&this.config.effort===null?{inputModalities:['text'] as ('text'|'image')[],reasoningEfforts:[],webSearch:false,toolSearch:false}:undefined);
-    const membershipCatalog=capabilities&&context?membershipModelCatalog(this.config.model,this.config.effort??null,context.contextWindow,validateModelCapabilities(capabilities,this.config.effort??null)):undefined;
+    const membershipAutoReview=this.config.desktopModelSource==='website'&&this.config.dailyDeepSeek===true&&!this.options.controlOnly;
+    const membershipCatalog=capabilities&&context?membershipModelCatalog(this.config.model,this.config.effort??null,context.contextWindow,validateModelCapabilities(capabilities,this.config.effort??null),membershipAutoReview):undefined;
     const membershipCatalogPath=membershipCatalog?materializeModelCatalog(this.config.runtime,membershipCatalog):undefined;
     const webSearchMode=configuredWebSearchMode(this.config);
     if(webSearchMode)settings.web_search=webSearchMode;
@@ -614,6 +615,10 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if(this.options.nativeTools){const local=await this.request("environment/info",{environmentId:"local"});if(!local?.shell)throw Error("engine_local_environment_unavailable");}
     const layers=(effective.layers??[]).filter((layer:any)=>!layer.disabledReason);
     const configured=(key:string)=>layers.some((layer:any)=>layer.config?.[key]!=null);
+    const approvalSettings=membershipAutoReview?{
+      approvalsReviewer:configured('approvals_reviewer')?effective.config.approvals_reviewer:'auto_review',
+      approvalPolicy:configured('approval_policy')?effective.config.approval_policy:'on-request',
+    }:{};
     const permissionLayer=layers.find((layer:any)=>layer.name?.type==='sessionFlags'&&layer.config?.default_permissions!=null)
       ??layers.find((layer:any)=>layer.config?.default_permissions!=null||layer.config?.sandbox_mode!=null);
     const resumePermissions=this.options.threadId?{
@@ -628,6 +633,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       modelProvider:this.config.baseUrl?'homer':'openai',
       serviceTier: this.serviceTier,
       ...resumePermissions,
+      ...approvalSettings,
       // Omit fresh cwd: fixed native start otherwise implicitly trusts writable unknown projects.
       ...(this.options.threadId?{cwd:this.options.cwd}:{}),
       runtimeWorkspaceRoots: [this.options.cwd],
@@ -660,8 +666,11 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     const memory=forked?readNativeMemoryMode(this.config.codexHome,parentId!):undefined;
     const sourceGoal=forked&&effective.config?.features?.goals===true?(await this.nativeRequest('thread/goal/get',{threadId:parentId})).goal:undefined;
     if(!isCurrent())throw Error('native_thread_owner_changed');
+    // A provider fork inherits the parent's permissions unless explicitly replaced.
+    if(forked&&!membershipAutoReview)Object.assign(params,{approvalsReviewer:effective.config.approvals_reviewer??'user',approvalPolicy:effective.config.approval_policy??'on-request'});
     const response=await this.nativeRequest(forked?'thread/fork':logical?'thread/resume':'thread/start',
       logical?{...params,threadId:parentId,...(forked?{deferGoalContinuation:true}:{}),excludeTurns:true}:{...params,dynamicTools:this.options.tools});
+    if(membershipAutoReview&&(response.approvalsReviewer!==approvalSettings.approvalsReviewer||JSON.stringify(response.approvalPolicy)!==JSON.stringify(approvalSettings.approvalPolicy)))throw Error('engine_approval_config_mismatch');
     const actual=response.thread?.id;
     if(typeof actual!=='string'||logical&&!forked&&actual!==parentId)throw Error('engine_resume_thread_mismatch');
     if(bindings&&(response.thread.modelProvider!==params.modelProvider||response.modelProvider!==params.modelProvider||forked&&(actual===parentId||response.thread.forkedFromId!==parentId)))throw Error('engine_native_provider_mismatch');

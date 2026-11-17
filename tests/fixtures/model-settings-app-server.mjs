@@ -36,7 +36,7 @@ createInterface({input:process.stdin}).on('line',line=>{
     const existing=saved(threadId),provider=existing?.model_provider??modelProvider;
     if(m.method==='thread/resume'&&provider!==modelProvider){send({id:m.id,error:{code:-32600,message:'Cannot change provider on resume'}});return;}
     if(!existing)database.prepare('INSERT INTO threads VALUES(?,?,?)').run(threadId,provider,generateMemories===true?'enabled':'disabled');
-    result={thread:{id:threadId,modelProvider:provider,forkedFromId:m.method==='thread/fork'?m.params.threadId:null},modelProvider:provider,activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy};
+    result={thread:{id:threadId,modelProvider:provider,forkedFromId:m.method==='thread/fork'?m.params.threadId:null},modelProvider:provider,activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy,approvalsReviewer:m.params.approvalsReviewer??'user'};
   }
   if(m.method==='thread/memoryMode/set')database.prepare('UPDATE threads SET memory_mode=? WHERE id=?').run(m.params.mode,m.params.threadId);
   if(m.method==='thread/settings/update'){threadSettings={...threadSettings,...m.params};settingsUpdates++;}

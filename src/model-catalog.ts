@@ -15,8 +15,9 @@ export function validateModelCapabilities(value:unknown,effort:string|null):Mode
   (effort===null?v.reasoningEfforts.length!==0:!v.reasoningEfforts.includes(effort))||typeof v.webSearch!=='boolean'||typeof v.toolSearch!=='boolean')return invalid();
  return {inputModalities:[...v.inputModalities],reasoningEfforts:[...v.reasoningEfforts],webSearch:v.webSearch,toolSearch:v.toolSearch} as ModelCapabilities;
 }
-export function membershipModelCatalog(model:string,effort:string|null,contextWindow:number,capabilities:ModelCapabilities){
- return {models:[{
+const MEMBERSHIP_AUTO_REVIEW_MODEL='gpt-6-luna';
+export function membershipModelCatalog(model:string,effort:string|null,contextWindow:number,capabilities:ModelCapabilities,autoReview=false){
+ const models=[{
   slug:model,display_name:model,description:model,
   model_messages:{instructions_template:'You are Codex, a coding agent working with the user in a shared workspace. Follow the developer instructions and complete the user\'s authorized task. Use the available tools when needed and report observed results clearly.'},
   default_reasoning_level:effort,supported_reasoning_levels:capabilities.reasoningEfforts.map(effort=>({effort,description:effort})),supports_reasoning_summary_parameter:effort!==null,supports_reasoning_effort_updates:effort!==null,
@@ -25,7 +26,15 @@ export function membershipModelCatalog(model:string,effort:string|null,contextWi
   context_window:contextWindow,max_context_window:contextWindow,effective_context_window_percent:95,
   experimental_supported_tools:[],input_modalities:[...capabilities.inputModalities],supports_image_detail_original:false,
   supports_search_tool:capabilities.toolSearch,tool_mode:/^gpt-6\.1(?:-|$)/.test(model)?'code_mode_only':null,multi_agent_version:'v2',default_reasoning_summary:'none',include_skills_usage_instructions:false,use_responses_lite:false,
- }]};
+  ...(autoReview?{auto_review_model_override:MEMBERSHIP_AUTO_REVIEW_MODEL}:{}),
+ }];
+ if(autoReview&&model!==MEMBERSHIP_AUTO_REVIEW_MODEL){
+  // Codex 0.171.0-alpha.7 models-manager/models.json: model capabilities,
+  // not a separate provider or a billing limit. Keep the membership Responses path.
+  const reviewer=membershipModelCatalog(MEMBERSHIP_AUTO_REVIEW_MODEL,'medium',272000,{inputModalities:['text','image'],reasoningEfforts:['low','medium','high','xhigh','max'],webSearch:false,toolSearch:false}).models[0]!;
+  models.push({...reviewer,visibility:'hide',max_context_window:872000,tool_mode:'code_mode_only',support_verbosity:true,supports_image_detail_original:true,web_search_tool_type:'text_and_image'});
+ }
+ return {models};
 }
 export function materializeModelCatalog(runtime:string,catalog:unknown){
  canonicalDir(runtime);
