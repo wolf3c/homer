@@ -23,16 +23,18 @@ async function reader(mode='real'){
 }
 const component=await reader(),digest='a'.repeat(64);
 async function fixture(run,{module=component,fetcher}={}){
- const old={};for(const key of ['fetch','location','addEventListener','removeEventListener','__patchParser'])old[key]=globalThis[key];
+ const old={};for(const key of ['fetch','location','addEventListener','removeEventListener','ResizeObserver','__patchParser'])old[key]=globalThis[key];
  const create=URL.createObjectURL,revoke=URL.revokeObjectURL,urls=new Map(),revoked=[],requests=[],parses=[];
  URL.createObjectURL=blob=>{const url='blob:synthetic-'+urls.size;urls.set(url,blob);return url;};URL.revokeObjectURL=url=>revoked.push(url);
  globalThis.location=new URL('http://127.0.0.1:48731/');globalThis.addEventListener=()=>{};globalThis.removeEventListener=()=>{};
+ // Layout is synthetic here; actual image geometry belongs to the browser suite.
+ globalThis.ResizeObserver=class{observe(){}disconnect(){}};
  globalThis.__patchParser=value=>{parses.push(value);return require('parse-diff')(value);};
  let current={bytes:patch,mime:'application/octet-stream',name:'review.PATCH',status:200};
  globalThis.fetch=async(input,init)=>{requests.push({input,init});if(fetcher)return fetcher(input,init);return new Response(current.bytes,{status:current.status,headers:{'Content-Type':current.mime,'Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(current.name),'X-Homer-Artifact-Hash':digest}});};
  try{await withDom(async d=>{
   const draft=module.createAnnotationDraft(),control=React.createRef(),create=d.doc.createElement;
-  d.doc.createElement=name=>{const n=create(name);if(name==='template')n.content={querySelectorAll:()=>[]};return n;};
+  d.doc.createElement=name=>{const n=create(name);n.clientWidth=0;n.clientHeight=0;if(name==='template')n.content={querySelectorAll:()=>[]};return n;};
   const ids=new Map();
   const render=async(value={},extra={})=>{current={bytes:patch,mime:'application/octet-stream',name:'review.PATCH',status:200,...value};
    if(!ids.has(current.name))ids.set(current.name,'asset-00000000-0000-4000-8000-'+String(ids.size+1).padStart(12,'0'));

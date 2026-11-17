@@ -3,7 +3,7 @@ import {useAnnotationDraft,type AnnotationDraft} from './annotation-draft';
 import {referenceKey,referencesOf} from '../src/preview-reference';
 import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
-import {MessageCirclePlus,PanelRight,XIcon} from 'lucide-react';
+import {MessageCirclePlus,Minus,PanelRight,Plus,XIcon} from 'lucide-react';
 import {createPortal} from 'react-dom';
 import {TooltipIconButton} from './vendor/assistant-ui/attachment-icon-button';
 import type {Annotation} from './vendor/agentation-3.1.2/index.mjs';
@@ -27,6 +27,45 @@ import {remarkPreviewMath} from './preview-selection';
 import {PreviewSelectionToolbar} from './preview-selection-toolbar';
 import type {ImageAnnotationControl} from './image-annotation';
 import type {PreviewImportGuard} from './preview-reference';
+function CanvasImagePreview({url,title}:{url:string;title:string}) {
+  const viewport=useRef<HTMLDivElement>(null);
+  const [box,setBox]=useState({width:0,height:0}),[size,setSize]=useState({width:0,height:0});
+  const [manualScale,setManualScale]=useState<number|null>(null);
+  useLayoutEffect(()=>{
+    const node=viewport.current as HTMLDivElement;
+    const measure=()=>setBox({width:node.clientWidth,height:node.clientHeight});
+    measure();const observer=new ResizeObserver(measure);observer.observe(node);
+    return()=>observer.disconnect();
+  },[]);
+  const ready=size.width>0&&size.height>0;
+  // Include stage padding and the image border when fitting both axes.
+  const fit=ready?Math.min(Math.max(1,box.width-34)/size.width,Math.max(1,box.height-34)/size.height):1;
+  const scale=manualScale??fit,minimum=Math.min(.1,fit),maximum=Math.max(4,fit);
+  const width=ready?size.width*scale:128,height=ready?size.height*scale:128;
+  function zoom(value:number|null){
+    setManualScale(value===null?null:Math.max(minimum,Math.min(maximum,value)));
+    viewport.current?.scrollTo(0,0);
+  }
+  return <>
+    <div className='canvas-image-controls' role='group' aria-label='图片缩放'>
+      <div className='canvas-image-stepper'>
+        <button type='button' aria-label='缩小图片' title='缩小' disabled={ready===false||scale<=minimum+.00001} onClick={()=>zoom(scale/1.25)}><Minus size={14} aria-hidden/></button>
+        <output aria-label='当前缩放比例' aria-live='polite'>{ready?Math.round(scale*100)+'%':'—'}</output>
+        <button type='button' aria-label='放大图片' title='放大' disabled={ready===false||scale>=maximum-.00001} onClick={()=>zoom(scale*1.25)}><Plus size={14} aria-hidden/></button>
+      </div>
+      <button type='button' disabled={ready===false} aria-pressed={manualScale===null} onClick={()=>zoom(null)}>适应窗口</button>
+      <button type='button' disabled={ready===false} title='按原图像素显示' aria-pressed={manualScale===null?false:Math.abs(scale-1)<.00001} onClick={()=>zoom(1)}>100%</button>
+    </div>
+    <div ref={viewport} className='canvas-image-scroll' tabIndex={0} role='region' aria-label='图片内容，可滚动查看'>
+      <div className='canvas-image-stage' style={{width:Math.max(box.width,width+34),height:Math.max(box.height,height+34)}}>
+        <ImageRoot className='canvas-image-root' style={{width,maxWidth:'none',boxSizing:'content-box'}}>
+          <ImagePreview src={url} alt={title} containerClassName='canvas-image-content' onLoad={({currentTarget:image})=>setSize({width:image.naturalWidth,height:image.naturalHeight})}/>
+        </ImageRoot>
+      </div>
+    </div>
+  </>;
+}
+
 const ImageAnnotation=lazy(()=>import('./image-annotation'));
 const MAX_PATCH_BYTES=256*1024,MAX_PATCH_LINES=2000,PATCH_PREFIX_BYTES=128*1024;
 function isPatchFile(name:string,mime:string){
@@ -94,7 +133,7 @@ export function CanvasPanel({tabs,threadId='',onSelectArtifact,onCloseArtifact,r
     <Dialog.Title className="sr-only">{title}</Dialog.Title>
     {hasTabs?<Tabs.Root className="canvas-tabs" value={artifact?.id??null} onValueChange={id=>{if(typeof id==='string')onSelectArtifact?.(id);}}>
       <div className="canvas-tab-bar">
-      <Tabs.List className="canvas-tab-rail" ref={rail} aria-label="已打开的成果" activateOnFocus={false} loopFocus onFocusCapture={event=>{visibleTab.current=event.target;ensureVisible(event.target);}}>
+      <Tabs.List className="canvas-tab-rail" ref={rail} aria-label="已打开的成果" activateOnFocus={false} loopFocus onFocusCapture={event=>{visibleTab.current=event.target;if(event.target.matches(':focus-visible'))ensureVisible(event.target);}}>
         {tabs.map(tab=>{
           const sameName=tabs.filter(item=>item.title===tab.title);
           const repeatedAsset=new Set(sameName.map(item=>item.assetId)).size!==sameName.length;
@@ -305,7 +344,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
       file.mime.startsWith('image/')?isImage&&imageAnnotation&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation key={noteKey} url={file.url} title={source.title} actions={imageActions} control={imageControl}
         notes={imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[]}
         onSave={(annotations,size,isCurrent)=>onReference({kind:'image',source,...size,annotations},imageFile,isCurrent)}
-        onRemove={id=>annotationDraft.remove(referenceKey({kind:'image',source}),id)} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<ImageRoot><ImagePreview src={file.url} alt={artifact?.title??'成果图片'}/></ImageRoot>:
+        onRemove={id=>annotationDraft.remove(referenceKey({kind:'image',source}),id)} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<CanvasImagePreview key={file.url} url={file.url} title={artifact?.title??'成果图片'}/>:
       file.mime==='application/pdf'?<iframe title="PDF 成果" src={file.url}/>:unknownMedia?<div className="canvas-media"><p className="canvas-note">{file.name}</p><p>未识别为可播放的媒体类型，可下载后打开。</p><a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a></div>:<p>此格式暂不支持在线预览。</p>}
     </>:<p className="canvas-note">从对话中选择网页或成果进行预览。</p>}
     {hasFrame&&<div className="canvas-frame-exit"><p className="canvas-note">预览内部的快捷键由网页处理，可用 Tab 移到“收起预览”按钮。</p><button type="button" onClick={onClose}>收起预览</button></div>}

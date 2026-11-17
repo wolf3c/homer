@@ -745,7 +745,7 @@ macOS 启动 Chrome 的执行会话需要具备 LaunchServices 和 WindowServer 
 
 2026-11-09 在 Homer 0.1.6 build 291 的实际 Worker 中，默认 `:read-only` 同时拒绝了 profile 写入和上述系统服务访问，Chrome 在加载页面前 SIGABRT。经单次审批后，Chrome 157.0.8103.38 的 `--screenshot` 能写出 PNG，但退出时线程池仍有 Chrome Safe Storage 的 Keychain 查询，watchdog 以退出码 2 终止进程。若需用 Chrome 命令行截图验证本地合成页面，可在全新、一次性且无账号数据的 profile 上加 `--use-mock-keychain`。同一 Worker 仅增加此参数后，`--dump-dom` 和 `--screenshot` 均以 0 退出，PNG 字节与对照一致。该参数只用于合成测试，实际浏览器资料或登录流程应使用正常的 Keychain。项目浏览器专项继续使用下文的 CDP 流程。
 
-`scripts/test.mjs --browser` 显式运行 12 个已维护入口（另有一份共享 fixture），不自动收集其他历史浏览器脚本，也不进入默认测试。本专项沿现有 macOS Chrome 路径运行，需要 Node 22、项目现有依赖和当前源码的 UI 构建；在独立源码副本生成 annotation runtime、CSS 和 Vite 产物，不使用日常账号、runtime 或 CODEX_HOME。
+`scripts/test.mjs --browser` 显式运行 13 个已维护入口（另有一份共享 fixture），不自动收集其他历史浏览器脚本，也不进入默认测试。本专项沿现有 macOS Chrome 路径运行，需要 Node 22、项目现有依赖和当前源码的 UI 构建；在独立源码副本生成 annotation runtime、CSS 和 Vite 产物，不使用日常账号、runtime 或 CODEX_HOME。
 
 ```sh
 HISTORY_FOLLOWUP_BUILD="$PWD/.codex/scratch/browser-regression/web" \
@@ -1091,3 +1091,24 @@ node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test --test-con
 本轮未提交、推送、重建或发布安装包，未停止、安装或改动日常 Homer。正式包专项和原生安装/安全重启/数据保留仍未验收；源码编译不是安装包构建。
 
 收尾：确认隔离目录无打开文件后，按 work-cleanup 回收源码/基线副本和原始日志约 171,044,864 分配字节，不将该数值等同于 APFS 可用空间变化。仅保留 `.codex/scratch/upgrade-blockers-20261116/` 内约 474,532 字节的初始快照、本轮补丁及验证摘要，用于区分并行未提交片段；完成精确审阅/暂存后删除。共享测试目录、原安装材料和日常数据未作跨任务清理。
+
+## 2026-11-13 普通图片预览缩放专项
+
+新增 tests/canvas-image-zoom.browser.mjs，登记到显式 browser 清单，不进入默认 npm test。使用现有Node22、React/Vite、playwright-core和已安装的macOS Chrome；完整HomerApp与CanvasPanel读取合成HTTP/图片，不接账号、模型、日常runtime或CODEX_HOME。独立helper只服务本图片专项，不修改历史分页共享夹具。
+
+在仓库根目录先构建独立UI，再执行定向验收；以下为本次路径，可替换为新任务的独立目录：
+
+    node node_modules/vite/bin/vite.js build ui --config ui/vite.config.ts --configLoader runner --outDir ../outputs/task-e5c80f76-image-zoom-implementation/web --emptyOutDir
+    HOMER_COMPONENT_BUILD=outputs/task-e5c80f76-image-zoom-implementation/web HOMER_BROWSER_EVIDENCE=outputs/task-e5c80f76-image-zoom-implementation/evidence-standard-final node tests/canvas-image-zoom.browser.mjs
+
+仅对合成测试的mock-keychain对照，另指定HOMER_IMAGE_ZOOM_MOCK_KEYCHAIN=1和不同证据目录；默认不启用该开关，不改变真实App或日常Chrome。结果分别记录uiPassed、整体passed、模式、退出码／信号／强制终止／watchdog，不能只凭PNG或功能断言判定整体通过。
+
+本次1440／390／320px的25组交互记录全部完成：三图适应、加减、100%原像素、原生滚轮、重置、准确换图与修订、加载失败禁用、Blob复用、消息缩略图与浮层、原批注分支隔离。原生指针标签切换保留，同时核对程序聚焦、键盘整项可见、关闭后焦点及resize。窄屏指针原失败事件与诊断保留，未删弱断言。
+
+UI类型检查、官方Canvas两项离线检查、脚本语法和独立Vite构建通过。标准模式最终uiPassed为true，但Chrome退出码2且watchdog为true，整体专项仍失败；mock-keychain对照25组通过，Chrome退出0、无信号、未强制终止、watchdog为false。两模式分开保存于本任务outputs，mock正常退出不证明真实Keychain正常。已查看实际三屏截图；移动真机、真实屏幕阅读器及已安装Homer未验收，也未安装或部署。
+
+2026-11-15在HEAD 7771599及当前并行图片组件改动的组合上重新复审，未发现新增问题。UI类型检查、官方Canvas2/2、脚本语法与独立构建通过；标准与mock-keychain模式各完成1440／390／320px的25组交互，均整体通过，Chrome退出0、无信号、未强制终止且watchdog=false。新结果分别保留于本事项outputs的review-20261115-standard与review-20261115-mock，不覆盖此前watchdog失败，也不据此推断历史失败原因；仍属源码合成验收。
+
+交付前回收无占用profile与重复构建；保留结果、对照、指针诊断和必要PNG供本轮效果确认，确认后可按任务归属清理。
+
+2026-11-17 在 HEAD 994fc5f4 与当前工作区组合上复审，标准模式1440／390／320px共25组全部通过，Chrome退出0、无信号、未强制终止、watchdog=false。沙箱内首次启动SIGABRT，未执行功能检查；获准在沙箱外运行独立profile后完成。UI类型检查、Vite构建和官方Canvas／Diff定向离线15/15通过；实际宽窄屏截图已核对。既有watchdog失败仍保留，不推断历史原因；未运行安装版、移动真机、真实屏幕阅读器或全量专项。Diff离线夹具补ResizeObserver桩仅支持合成布局，几何验收由浏览器专项承担。
