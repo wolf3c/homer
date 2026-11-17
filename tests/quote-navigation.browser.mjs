@@ -113,7 +113,7 @@ try{
   await check('deleting a quote returns to the editor without clearing the draft',()=>document.activeElement.matches('.aui-lexical-input')&&document.activeElement.innerText==='保留主草稿继续输入');
   await press(page,'#message-quoted .message-quote-source:nth-of-type(5)');
   await wait(()=>document.activeElement.id==='message-current-source');
-  await check('keyboard navigation marks the source without a native outline',()=>{const style=getComputedStyle(document.activeElement);return style.outlineStyle==='none'&&style.boxShadow!=='none';});
+  await check('keyboard navigation focuses the source without a decorative line or native outline',()=>{const style=getComputedStyle(document.activeElement);return style.outlineStyle==='none'&&style.boxShadow==='none';});
   await page.screenshot('legacy-quote-source-focus.png');
   assert.equal(fixture.received.messages.length,0);
   assert.deepEqual(page.errors,[]);assert.deepEqual(page.blocked,[]);
