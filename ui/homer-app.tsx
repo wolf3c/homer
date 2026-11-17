@@ -104,9 +104,8 @@ async function post(path: string, value: unknown) {
   return data;
 }
 function Markdown() {
-  return <MarkdownTextPrimitive className="markdown" remarkPlugins={[remarkGfm, remarkMath,remarkPreviewMath]} rehypePlugins={[[rehypeKatex, {throwOnError:false,trust:false,strict:'ignore',maxSize:20,maxExpand:1000}]]} components={{ img:LazyMarkdownImage,CodeHeader,SyntaxHighlighter: Highlight, a: ({ children, href }) => {
-    const safe = href?.startsWith("https://") || href?.startsWith("http://") || href?.startsWith("#");
-    return safe ? <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> : <span>{children}</span>;
+  return <MarkdownTextPrimitive className="markdown" remarkPlugins={[remarkGfm, remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} components={{ img:LazyMarkdownImage,CodeHeader,SyntaxHighlighter: Highlight, a: ({ children, href }) => {
+    return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
   } }} />;
 }
 function ResourceDownload({path,filename,mimeType}:{path:string;filename:string;mimeType:string}){
@@ -144,7 +143,7 @@ function QuoteSource({quote,index}:{quote:MessageQuote;index:number}){
   event.preventDefault();event.stopPropagation();
   const selection=window.getSelection();if(selection&&!selection.isCollapsed&&selection.containsNode(event.currentTarget,true))return;
   locate(quote);
- }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text>{quote.text}</QuoteBlock.Text></QuoteBlock.Root></a>;
+ }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text className="line-clamp-none whitespace-pre-wrap">{quote.text}</QuoteBlock.Text></QuoteBlock.Root></a>;
 }
 function CompletedInteractionCard({item}:{item:NonNullable<WebState['messages'][number]['interaction']>}){
  if(item.kind==='authorization'){
@@ -186,7 +185,7 @@ function UserMessage() {
   </MessagePrimitive.Root></>;
 }
 const ProcessMessagesContext=createContext<ReadonlyMap<string,WebState['messages'][number]>>(new Map());
-function renderProcessText(text:string){return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{img:({alt})=><span>{alt?'[图片：'+alt+']':'[图片]'}</span>,a:({href,children})=>href&&(href.startsWith('https://')||href.startsWith('http://')||href.startsWith('#'))?<a href={href} target="_blank" rel="noopener noreferrer">{children}</a>:<span>{children}</span>}}>{text}</ReactMarkdown></div>;}
+function renderProcessText(text:string){return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{img:LazyMarkdownImage,a:({href,children})=><a href={href} target="_blank" rel="noopener noreferrer">{children}</a>}}>{text}</ReactMarkdown></div>;}
 function AssistantMessage() {
   const status = useAuiState(s => s.message.status);
   const content = useAuiState(s => s.message.content);

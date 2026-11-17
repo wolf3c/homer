@@ -8,15 +8,14 @@ export function messageLinks(markdown: string): MessageSource[] {
   walk(root, n => { if (n.type === 'definition' && n.identifier && n.url) definitions.set(n.identifier, n.url); });
   const text = (node: Node): string => node.value ?? node.children?.map(text).join('') ?? '';
   walk(root, n => {
-    if (links.length >= 30 || !['link', 'linkReference'].includes(n.type)) return;
+    if (!['link', 'linkReference'].includes(n.type)) return;
     const raw = n.url ?? definitions.get(n.identifier ?? '');
     if (!raw) return;
-    try {
-      const url = new URL(raw);
-      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || seen.has(url.href)) return;
-      seen.add(url.href);
-      links.push({ id: `link-${links.length + 1}`, url: url.href, title: text(n).trim().slice(0, 200) || url.hostname, kind: 'reply-link' });
-    } catch { /* Relative links are not external sources. */ }
+    let url = raw, fallback = raw;
+    try { const target = new URL(raw); url = target.href; fallback = target.hostname || raw; } catch { /* Preserve page-relative destinations. */ }
+    if (seen.has(url)) return;
+    seen.add(url);
+    links.push({ id: `link-${links.length + 1}`, url, title: text(n).trim() || fallback, kind: 'reply-link' });
   });
   return links;
 }

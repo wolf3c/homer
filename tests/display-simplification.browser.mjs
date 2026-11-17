@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {composerFixture} from './fixtures/composer-browser-server.mjs';
+import {openBrowser} from './helpers/image-zoom-browser.mjs';
+const dest=resolve(process.env.HOMER_BROWSER_EVIDENCE);mkdirSync(dest,{recursive:true});
+const webDir=resolve(process.env.HOMER_COMPONENT_BUILD);
+const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
+const chrome=await openBrowser(dest,{mockKeychain:true});let failure,exit;const checks=[];
+const long=('完整引用行\n').repeat(3000)+'引用尾部';
+try{
+ for(const width of [1080,390]){
+ const context=await chrome.browser.newContext({viewport:{width,height:1000}}),page=await context.newPage();
+ await page.route('**/synthetic.png',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="90"><rect width="240" height="90" fill="#798266"/><text x="20" y="50" fill="white">Synthetic image</text></svg>'}));
+ const text='合成显示核对\n\n![remote](https://display.example/synthetic.png)\n\n![relative](./synthetic.png)\n\n[邮件](mailto:test@example.com) [相对](./relative)\n\n| 表格 | 内容 |\n| --- | --- |\n| A | B |\n\n公式 $x^2$\n\n```mermaid\nflowchart LR\nA[开始] --> B[完成]\nclick A "https://example.com"\n```\n\n```mermaid\nnot a diagram\n```';
+ const msg=(id,role,text)=>({id,threadId:'composer-review',requestId:id,role,text,status:'completed',createdAt:1700000000000});
+ fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('display','assistant',text),{...msg('quoted','user','合成引用'),quotes:[{messageId:'display',text:long,annotation:'完整摘录'}]}]});
+ await page.goto(fixture.url);await page.waitForSelector('.mermaid-output svg');
+ await page.locator('img[alt="remote"]').scrollIntoViewIfNeeded();await page.waitForFunction(()=>document.querySelector('img[alt="remote"]')?.naturalWidth===240);
+ await page.locator('img[alt="relative"]').scrollIntoViewIfNeeded();await page.waitForFunction(()=>document.querySelector('img[alt="relative"]')?.naturalWidth===240);
+ assert.equal(await page.locator('a[href="mailto:test@example.com"]').count(),1);assert.equal(await page.locator('.markdown table').count(),1);assert.equal(await page.locator('.katex').count(),1);
+ assert.ok(await page.locator('.mermaid-output a').count());
+ const diagramLink=page.locator('.mermaid-output a').first();assert.equal(await diagramLink.getAttribute('target'),'_blank');
+ await context.route('https://example.com/**',route=>route.fulfill({contentType:'text/plain',body:'synthetic linked page'}));
+ const popup=page.waitForEvent('popup');await diagramLink.click();const linked=await popup;await linked.waitForLoadState();assert.equal(new URL(linked.url()).origin,'https://example.com');await linked.close();assert.ok((await page.locator('.mermaid-status').allTextContents()).join('').includes('无法渲染'));
+ const quote=page.locator('[data-slot="quote-block-text"]').first();assert.equal(await quote.textContent(),long);assert.equal(await quote.evaluate(e=>getComputedStyle(e).webkitLineClamp),'none');
+ fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('display','assistant',text)]});await page.reload();await page.waitForSelector('.mermaid-output svg');await page.locator('.mermaid-output').scrollIntoViewIfNeeded();await page.screenshot({path:join(dest,'display-'+width+'.png')});
+ checks.push({width,remoteImage:true,pageRelativeImage:true,mailto:true,table:true,math:true,mermaidLink:true,failedSource:true,fullQuote:long.length});
+ await context.close();
+ }
+}catch(e){failure=e;}finally{exit=await chrome.finish();await fixture.close();writeFileSync(join(dest,'browser-result.json'),JSON.stringify({checks,exit,failure:failure?String(failure):null},null,2));}
+if(failure)throw failure;assert.equal(exit.code,0);assert.equal(exit.watchdog,false);assert.equal(exit.forced,false);console.log(JSON.stringify({checks,exit}));

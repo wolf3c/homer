@@ -10,7 +10,7 @@ const suites={
  'power-windows':['windows-power.windows.test.mjs'],
  'power-browser':['desktop-power-ui.browser.mjs'],
  'power-electron':['desktop-power.electron.test.mjs'],
- browser:["interaction-completion.browser.mjs", "artifact-file-list.browser.mjs", "canvas-image-zoom.browser.mjs", "run-activity-focus.browser.mjs", "run-activity-style.browser.mjs", "web-history-active-pages.browser.mjs", "web-history-artifact-origin.browser.mjs", "web-history-kerning-content.browser.mjs", "web-history-kerning.browser.mjs", "web-history-loading.browser.mjs", "web-history-media-anchor.browser.mjs", "web-history-native-zoom.browser.mjs", "web-working-publication-large.browser.mjs"],
+ browser:["display-production-images.browser.mjs","display-simplification-extra.browser.mjs","display-simplification.browser.mjs","interaction-completion.browser.mjs", "artifact-file-list.browser.mjs", "canvas-image-zoom.browser.mjs", "run-activity-focus.browser.mjs", "run-activity-style.browser.mjs", "web-history-active-pages.browser.mjs", "web-history-artifact-origin.browser.mjs", "web-history-kerning-content.browser.mjs", "web-history-kerning.browser.mjs", "web-history-loading.browser.mjs", "web-history-media-anchor.browser.mjs", "web-history-native-zoom.browser.mjs", "web-working-publication-large.browser.mjs"],
  desktop:['desktop-service-startup.test.mjs','main-tools-resume-compatibility.test.mjs','macos-desktop-runtime.test.mjs','electron-desktop.test.mjs','native-main-tools-resume.test.mjs'],
  'cua-windows':['windows-cua-package.test.mjs'],
  'desktop-codesign':['desktop-update-codesign.test.mjs'],

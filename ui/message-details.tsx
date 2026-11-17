@@ -47,13 +47,7 @@ function LegacyToolActivities({tools}:{tools:NonNullable<ConversationMessage['to
 }
 function MessageSources({sources}:{sources:NonNullable<ConversationMessage['sources']>}){
   const [open,setOpen]=useState(false);
-  // Sources' official helper also permits relative/mailto links and credentials.
-  // Keep Homer's stricter reply-link boundary, without reordering or deduping.
-  const safe=sources.filter(source=>{
-    try{const url=new URL(source.url);return ['http:','https:'].includes(url.protocol)&&!url.username&&!url.password;}catch{return false;}
-  });
-  if(!safe.length)return null;
-  return <div className="message-link-sources"><Sources sources={safe} open={open} onOpenChange={setOpen} layout="list" locale="zh-CN"/>{open&&<p className="message-source-note">来自本条回复中的链接，未经独立核验。</p>}</div>;
+  return <div className="message-link-sources"><Sources sources={sources} open={open} onOpenChange={setOpen} layout="list" locale="zh-CN"/>{open&&<p className="message-source-note">来自本条回复中的链接，未经独立核验。</p>}</div>;
 }
 function RuntimeMessageActions({message,write,busy,notice,onNotice}:{message:import('../src/conversation-projection').DisplayMessage;write:(text:string)=>Promise<void>;busy:boolean;notice:string;onNotice:(text:string)=>void}){
   const {canQuote,appendQuote}=useContext(PreviewActionsContext);

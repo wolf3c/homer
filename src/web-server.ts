@@ -58,7 +58,7 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Referrer-Policy", "no-referrer");
     response.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-    response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self' blob: https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: data: https: http:; media-src 'self' blob:; connect-src 'self'; frame-src 'self' blob: https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     const requestOrigin=url;
     const expected = new URL(requestOrigin);
     if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.socket.remoteAddress ?? "") || request.headers.host !== expected.host ||

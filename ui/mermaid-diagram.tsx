@@ -1,8 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useId, useRef, useState } from "react";
 import { render } from "pele";
-
-// Application-owned options: diagram authors never supply options or icon SVG.
-export const diagramLimits = { limit: 20_000, outputLimit: 1_000_000, maxEdges: 300 } as const;
 
 export function MermaidDiagram({ code }: { code: string }) {
   const container = useRef<HTMLDivElement>(null);
@@ -17,7 +14,7 @@ export function MermaidDiagram({ code }: { code: string }) {
       lastWidth = Math.floor(element.getBoundingClientRect().width);
       try {
         const { svg } = render(code, {
-          ...diagramLimits, images: false, links: false,
+          images: true, links: true,
           idPrefix: `homer-mermaid-${id.replace(/[^a-zA-Z0-9_-]/g, "")}`,
           maxWidth: Math.max(1, lastWidth), responsive: true,
           fontFamily: getComputedStyle(element).fontFamily,
@@ -39,6 +36,12 @@ export function MermaidDiagram({ code }: { code: string }) {
     return () => { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); };
   }, [code, id]);
   const current = result?.source === code ? result : undefined;
+  useLayoutEffect(() => {
+    // Use the same new-window/desktop confirmation path as Markdown links.
+    for (const link of container.current?.querySelectorAll('a[href]') ?? []) {
+      if (!link.getAttribute('href')?.startsWith('#')) link.setAttribute('target', '_blank');
+    }
+  }, [current?.svg]);
   return <div className="mermaid-diagram" ref={container}>
     {current?.svg ? <div className="mermaid-output" dangerouslySetInnerHTML={{ __html: current.svg }} /> : <>
       <p className="mermaid-status" role="status">{current?.error ? `图表未完成或无法渲染：${current.error}` : "图表生成中…"}</p>

@@ -928,7 +928,7 @@ app.on('window-all-closed',()=>{});
 
 async function external(raw){
  let url;try{url=new URL(raw);}catch{return;}
- if(!['https:','http:'].includes(url.protocol)||url.username||url.password)return;
+ if(!['https:','http:','mailto:','irc:','ircs:','xmpp:','tel:'].includes(url.protocol))return;
  const {response}=await dialog.showMessageBox(window,{type:'question',title:'荷马',message:'在系统浏览器打开链接？',detail:url.href,buttons:['取消','打开浏览器'],defaultId:0,cancelId:0});
  if(response===1)await shell.openExternal(url.href);
 }

@@ -1112,3 +1112,16 @@ UI类型检查、官方Canvas两项离线检查、脚本语法和独立Vite构�
 交付前回收无占用profile与重复构建；保留结果、对照、指针诊断和必要PNG供本轮效果确认，确认后可按任务归属清理。
 
 2026-11-17 在 HEAD 994fc5f4 与当前工作区组合上复审，标准模式1440／390／320px共25组全部通过，Chrome退出0、无信号、未强制终止、watchdog=false。沙箱内首次启动SIGABRT，未执行功能检查；获准在沙箱外运行独立profile后完成。UI类型检查、Vite构建和官方Canvas／Diff定向离线15/15通过；实际宽窄屏截图已核对。既有watchdog失败仍保留，不推断历史原因；未运行安装版、移动真机、真实屏幕阅读器或全量专项。Diff离线夹具补ResizeObserver桩仅支持合成布局，几何验收由浏览器专项承担。
+
+
+## 消息显示简化复审（2026-11-17）
+
+新增display-simplification.test.ts覆盖来源数量／完整标题和桌面打开stub；两项browser脚本登记到显式browser清单，不进入默认npm test。它们使用独立Chrome/profile、mock-keychain和合成HTTP，不接账号、真实模型或日常runtime。
+
+    node --import tsx --test tests/display-simplification.test.ts tests/official-sources-history.test.ts tests/official-sources-upstream.test.mjs tests/official-sources-legacy-activity-ui.test.mjs tests/quote-navigation-ui.test.mjs tests/message-source-consistency.test.ts tests/message-source-selection.test.mjs tests/web-server.test.ts
+    HOMER_COMPONENT_BUILD=/private/tmp/message-display-review/dist/web HOMER_BROWSER_EVIDENCE=/private/tmp/message-display-review/evidence node tests/display-simplification.browser.mjs
+    HOMER_COMPONENT_BUILD=/private/tmp/message-display-review/dist/web HOMER_BROWSER_EVIDENCE=/private/tmp/message-display-review/evidence node tests/display-simplification-extra.browser.mjs
+
+浏览器命令中的独立构建和证据目录须替换为实际路径。专项检查1080／390px正文、过程、Canvas图片／链接／公式、Mermaid图内图片及旧规模之外的渲染，点击图内链接实际打开新窗口；成功过程仍隐藏，失败保留源码。核对Chrome退出0、forced=false、watchdog=false，不能只看PNG。长引用16000／96KiB放宽未纳入本提交，超长引用发送实验不计入本次通过项。手机真机、任意外站及系统真实打开未验。结论见docs/message-display-simplification-2026-11-17.md。
+
+生产CSP回归：node --import tsx tests/display-production-images.browser.mjs，沿用上述HOMER_COMPONENT_BUILD／HOMER_BROWSER_EVIDENCE。该显式browser项直接使用真实createWebServer承载静态页面、SSE和媒体，覆盖普通网页及desktop-token模式的HTTP／HTTPS正文、过程、Canvas和Mermaid图片，断言无img-src违规且远程请求不带桌面token。旧策略阻挡已有反例；主页面仅放开img-src的http:／https:，其他指令、HTML预览及截图面板不变。移动App从内联HTML加载，不继承该HTTP CSP；原生网络策略及真机仍未验。

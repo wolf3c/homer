@@ -334,3 +334,10 @@ The conservative render gates are 256 KiB and 2,000 newline-delimited lines (a f
 Validation: `tests/diff-viewer-preview.test.mjs` exercises the actual CanvasReader and official parser through the existing React DOM harness; `HOMER_PATCH_PREVIEW=1` enables the dedicated synthetic patch cases in the existing `tests/preview-tabs.browser.mjs` workflow. Browser results and limitations belong to the run report, not this source note. Homer maintains the two copied sources locally; no upstream version tracking or automatic updates are introduced.
 
 2026-11-03 integration: the current CanvasReader retains audio/video and mobile HTML handling. Patch downloads use the existing `saveBlob` platform adapter. The native raw disclosure precedes the diff so long files do not hide the download entry; local `canvas-panel.css` prevents flex shrinking, bounds the raw text region and provides 44px narrow-screen controls. The official viewer/hook remain unchanged from this pinned candidate. Current verification and browser limits: `docs/2026-11-03-patch-preview-integration.md`.
+
+
+## 2026-11-17 消息显示简化复审
+
+正文、可见过程和Markdown预览恢复图片及组件默认链接处理；KaTeX恢复插件默认；Mermaid取消Homer额外规模限制并允许图片／链接，失败保留源码。图内非片段链接接入与正文相同的新窗口／桌面确认路径，包含Pele默认tel协议。Sources取消宿主重复筛选、提取30条及标题200字符截断；引用正文取消两行显示裁切。
+
+成功过程隐藏、分页／按需详情、媒体懒加载与附件状态保持。长引用16000／96KiB放宽尚有移动端队列回传容量问题，本提交不纳入该组改动；保留原前后端合同，不截改现有草稿。附件相邻图片映射和工具采集策略不纳入本提交。复审与定向验证见docs/message-display-simplification-2026-11-17.md；未安装或部署。

@@ -167,3 +167,12 @@ test('shutdown ends the paged event stream whose initial snapshot is still pendi
   finally{clearTimeout(timer);}
  }finally{request.destroy();release({});await(closing??web.close());}
 });
+
+
+test('chat CSP admits authorized remote images while other fetch directives stay unchanged',async()=>{
+ const web=await createWebServer({bridge:{submit:async()=>{},stop:async()=>{},respond:async()=>{}},port:0});
+ try{const response=await fetch(web.url+'/'),policy=response.headers.get('content-security-policy')??'';await response.text();
+  assert.match(policy,/img-src 'self' blob: data: https: http:;/);
+  assert.match(policy,/script-src 'self';/);assert.match(policy,/connect-src 'self';/);
+ }finally{await web.close();}
+});

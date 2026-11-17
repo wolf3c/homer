@@ -18,6 +18,6 @@ export function LazyMedia({path,children,kind='image'}:{path:string;kind?:'image
  return <span ref={element} className={"lazy-media lazy-media-"+kind}>{url?children(url):<span className="media-preview-placeholder" aria-label="附件预览按需加载"/>}</span>;
 }
 export function LazyMarkdownImage({src,alt}:{src?:string;alt?:string}){
- let safe=false;try{const target=new URL(src??'',location.href);safe=target.origin===location.origin&&/^\/api\/(media|files)\//.test(target.pathname)&&!target.search;}catch{}
- return safe?<LazyMedia path={src!}>{url=><img src={url} alt={alt??''}/>}</LazyMedia>:<span>{alt?'[图片：'+alt+']':'[图片]'}</span>;
+ let local=false;try{const target=new URL(src??'',location.href);local=target.origin===location.origin&&/^\/api\/(media|files)\//.test(target.pathname);}catch{}
+ return local?<LazyMedia path={src!}>{url=><img src={url} alt={alt??''}/>}</LazyMedia>:<img src={src} alt={alt??''} loading="lazy"/>;
 }

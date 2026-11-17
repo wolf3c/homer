@@ -13,17 +13,18 @@ const message={id:'legacy',threadId:'synthetic',role:'assistant',text:'',status:
 const slot=(d,name)=>d.find(n=>n.attrs['data-slot']===name);
 test('empty historical metadata creates no disclosure',async()=>withDom(async d=>{
  await d.render(h(MessageDetails,{message}));assert.equal(slot(d,'sources'),undefined);assert.equal(slot(d,'run-activity'),undefined);
- await d.render(h(MessageDetails,{message:{...message,sources:[{id:'invalid',title:'禁止',url:'javascript:alert(1)'}]}}));assert.equal(slot(d,'sources'),undefined);
+ await d.render(h(MessageDetails,{message:{...message,sources:[{id:'invalid',title:'合成不可导航来源',url:'javascript:alert(1)'}]}}));assert.ok(slot(d,'sources'));await d.click(slot(d,'collapsible-trigger'));assert.equal(slot(d,'source-card').attrs.href,undefined);
 }));
-test('official Sources preserves safe row identity/order without fetching icons or interpreting titles',async()=>withDom(async d=>{
- const sources=[{id:'b',title:'<img onerror=alert(1)>长中文',url:'https://www.example.com/a'},{id:'a',title:'同一URL另一条身份',url:'https://www.example.com/a'},...['javascript:alert(1)','data:text/html,x','https://name:secret@example.com/','/api/files/private','file:///private/test','broken'].map((url,i)=>({id:'bad-'+i,title:'不应显示',url}))];
+test('official Sources preserves all row identity/order and applies its own href behavior without interpreting titles',async()=>withDom(async d=>{
+ const sources=[{id:'b',title:'<img onerror=alert(1)>长中文',url:'https://www.example.com/a'},{id:'a',title:'同一URL另一条身份',url:'https://www.example.com/a'},...['javascript:alert(1)','data:text/html,x','https://name:secret@example.com/','/api/files/private','file:///private/test','broken'].map((url,i)=>({id:'bad-'+i,title:'保留来源',url}))];
  await d.render(h(MessageDetails,{message:{...message,sources}}));
  const root=slot(d,'sources');assert.ok(root,'official Sources root');
  assert.equal(root.attrs['data-layout'],'list');const trigger=slot(d,'collapsible-trigger');assert.equal(trigger.attrs['aria-expanded'],'false');await d.click(trigger);
- const links=d.all().filter(n=>n.attrs['data-slot']==='source-card');assert.deepEqual(links.map(n=>n.attrs['data-source-id']),['b','a']);
- assert.deepEqual(links.map(n=>n.attrs.href),sources.slice(0,2).map(s=>s.url));
+ const cards=d.all().filter(n=>n.attrs['data-slot']==='source-card');assert.deepEqual(cards.map(n=>n.attrs['data-source-id']),sources.map(s=>s.id));
+ const links=cards.filter(n=>n.tagName==='A');assert.deepEqual(links.map(n=>n.attrs.href),[sources[0].url,sources[1].url,sources[4].url,sources[5].url]);
+ for(const id of ['bad-0','bad-1','bad-4','bad-5'])assert.equal(cards.find(n=>n.attrs['data-source-id']===id).attrs.href,undefined);
  for(const link of links){assert.equal(link.attrs.target,'_blank');assert.equal(link.attrs.rel,'noopener noreferrer');}
- assert.match(d.container.textContent,/<img onerror=alert\(1\)>长中文/);assert.match(d.container.textContent,/未经独立核验/);assert.doesNotMatch(d.container.textContent,/不应显示|secret/);
+ assert.match(d.container.textContent,/<img onerror=alert\(1\)>长中文/);assert.match(d.container.textContent,/未经独立核验/);assert.match(d.container.textContent,/保留来源/);assert.doesNotMatch(d.container.textContent,/secret/);
  assert.equal(d.all().some(n=>n.tagName==='IMG'),false);
 }));
 test('legacy calls use one neutral RunActivity, preserve same-name IDs and user disclosure across updates',async()=>withDom(async d=>{

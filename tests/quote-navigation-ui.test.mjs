@@ -39,11 +39,11 @@ test('the grey excerpt is the source link and exposes no internal identifiers',(
  link.props.onClick({currentTarget:{},preventDefault(){},stopPropagation(){}});assert.deepEqual(navigations,[quote]);
 });
 
-test('quote text uses the vendor default without losing the source payload',()=>{
+test('quote text removes the two-line clamp without losing the source payload',()=>{
  const quote={messageId:'long-source',text:'长引用。'.repeat(1000),annotation:'保留批注'},navigations=[],Text='quote-text';
  const Component=component('ui/homer-app.tsx','QuoteSource',{useContext:()=>q=>navigations.push(q),QuoteNavigationContext:{},QuoteBlock:{Root:'quote-block',Text},MessageCirclePlus:'svg',window:{getSelection:()=>null}});
  const tree=Component({quote,index:1}),text=nodes(tree).find(n=>n.type===Text);
- assert.equal(text.props.children,quote.text);assert.equal(text.props.className,undefined);assert.equal(tree.props.href,'#message-long-source');
+ assert.equal(text.props.children,quote.text);assert.equal(text.props.className,'line-clamp-none whitespace-pre-wrap');assert.equal(tree.props.href,'#message-long-source');
  tree.props.onClick({currentTarget:{},preventDefault(){},stopPropagation(){}});assert.deepEqual(navigations,[quote]);
 });
 test('user quotes keep each annotation directly after its source as ordinary body text',()=>{
