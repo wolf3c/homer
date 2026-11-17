@@ -180,6 +180,9 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
   const annotationLabel=annotationLoading?'取消批注加载，返回预览':interactive?'退出批注，返回预览':'启用批注';
   const token=useMemo(()=>crypto.randomUUID(),[artifact?.id,webSource?.url,retry,interactive,runtime,frameRevision]);
   const attachmentPath=artifact?'/api/media/'+[artifact.messageId,artifact.assetId,artifact.revision].map(encodeURIComponent).join('/') : '';
+  const previewMarkdownComponents=useMemo<Components>(()=>({...markdownComponents,
+    img:({src,alt})=><LazyMarkdownImage src={src&&!/^(?:[a-z][a-z\d+.-]*:|[\\/]|[?#])/i.test(src)?attachmentPath+'/resource/'+encodeURIComponent(src):src} alt={alt}/>,
+  }),[attachmentPath]);
   const source=useMemo<PreviewSource|undefined>(()=>webSource??(artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file]);
   const imageFile=useMemo(()=>file&&source?annotationDraft.imageFile(referenceKey({kind:'image',source}),new File([file.blob],file.name,{type:file.mime})):undefined,[file,source,annotationDraft]);
   useLayoutEffect(()=>{
@@ -340,7 +343,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
         {mediaError&&<p role="alert">{mediaError}</p>}
         <a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a>
       </div>:
-      (file.mime==='text/markdown'||/\.md$/i.test(file.name))?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} components={markdownComponents}>{file.text}</ReactMarkdown></div>:
+      (file.mime==='text/markdown'||/\.md$/i.test(file.name))?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} components={previewMarkdownComponents}>{file.text}</ReactMarkdown></div>:
       isText?<pre data-preview-text>{file.text}</pre>:
       file.mime.startsWith('image/')?isImage&&imageAnnotation&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation key={noteKey} url={file.url} title={source.title} actions={imageActions} control={imageControl}
         notes={imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[]}

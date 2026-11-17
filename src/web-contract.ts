@@ -18,9 +18,10 @@ export function webChatPost(path:string):{op:string;status:number;id?:string}|un
   return match?{op:'interactions.respond',status:202,id:match[1]}:undefined;
 }
 export function webMediaRoute(method:string|undefined,target:URL){
-  const match=target.pathname.match(/^\/api\/media\/([\w:-]{1,100})\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})(?:\/(origin|reveal))?$/);
-  if(!match||target.search&&(method!=='GET'||target.search!=='?preview=voice'||match[4]))return;
-  return {attachment:{messageId:match[1]!,assetId:match[2]!,revision:Number(match[3])},action:match[4],preview:target.search?'voice' as const:undefined};
+  const match=target.pathname.match(/^\/api\/media\/([\w:-]{1,100})\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})(?:\/(origin|reveal)|\/resource\/([^/]+))?$/);
+  if(!match||match[5]&&method!=='GET'||target.search&&(method!=='GET'||target.search!=='?preview=voice'||match[4]||match[5]))return;
+  let resource:string|undefined;try{if(match[5])resource=decodeURIComponent(match[5]);}catch{return;}
+  return {attachment:{messageId:match[1]!,assetId:match[2]!,revision:Number(match[3])},action:match[4],resource,preview:target.search?'voice' as const:undefined};
 }
 // Live observation only; never persisted or used as an execution/stop target.
 export type MainActivity={processId:string;source:'user'|'internal';turnId?:string;stage:'preparing'|'native'|'compacting'|'finishing'|'unknown';summary?:string;retryObserved?:true;connectionIssue?:true};
@@ -74,7 +75,7 @@ export type WebBridge = {
   };
   onStateChange?(listener:()=>void):()=>void;
   taskOverview?: {execution?(selector:import('./worker-execution.js').ExecutionSelector,before?:string):Promise<import('./worker-execution.js').WorkerExecutionPage>;call?(selector:import('./worker-execution.js').ExecutionSelector,callKey:string):Promise<import('./worker-execution.js').WorkerCallDetail>;progress?(id:string):Promise<import('./task-status.js').TaskProgress>;list():Promise<import('./task-overview.js').TaskOverview>;detail(id:string,query?:import('./task-overview.js').WorkerConversationQuery):Promise<import('./task-overview.js').TaskDetail>;summary?(id:string):Promise<import('./task-overview.js').TaskDetail>;origin?(id:string,messageId:string):Promise<ArtifactOrigin>};
-  media?:{read(input:MessageAttachment&{preview?:'voice'}):Promise<{filename:string;mime:string;data:string;sha256?:string}>;origin?(input:MessageAttachment):Promise<ArtifactOrigin>;reveal?(input:MessageAttachment):Promise<{target:'source'|'snapshot';device:'homer-host'}>;upload?(input:import('./web-upload.js').WebUpload):Promise<import('./media-store.js').MediaView>;discard?(input:unknown):Promise<unknown>;previewDraft?(input:unknown):Promise<{mime:string;data:string}>};
+  media?:{read(input:MessageAttachment&{preview?:'voice';resource?:string}):Promise<{filename:string;mime:string;data:string;sha256?:string}>;origin?(input:MessageAttachment):Promise<ArtifactOrigin>;reveal?(input:MessageAttachment):Promise<{target:'source'|'snapshot';device:'homer-host'}>;upload?(input:import('./web-upload.js').WebUpload):Promise<import('./media-store.js').MediaView>;discard?(input:unknown):Promise<unknown>;previewDraft?(input:unknown):Promise<{mime:string;data:string}>};
   submit(input: ConversationInput): Promise<unknown>;
   queue?:{
     edit(input:QueueChange&{input:ConversationInput}):Promise<unknown>;

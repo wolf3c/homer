@@ -505,6 +505,7 @@ test('desktop access injects only into current main UI requests and strips crede
   return Object.fromEntries(Object.entries(result).map(([k,v])=>[k.toLowerCase(),v]));
  };
  assert.equal(headers({})['x-homer-desktop-access'],token);
+ assert.equal(headers({url:origin+'/api/media/message-one/asset-00000000-0000-0000-0000-000000000000/1/resource/'+encodeURIComponent('../图%20表.png'),method:'GET'})['x-homer-desktop-access'],token);
  for(const overrides of [
   {url:'https://foreign.invalid/api/history/state'},{url:'http://127.0.0.1:56790/api/history/state'},
   {url:origin+'/preview/interactive'},{url:origin+'/api/history/state?q=1'},{url:'http://user:pass@127.0.0.1:56789/api/history/state'},

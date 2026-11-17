@@ -160,11 +160,11 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       request.on('close',()=>historyClients.delete(response));response.write(`event: state\ndata: ${JSON.stringify(initial)}\n\n`);historyPublication.afterInitialDelivery();return;
     }
     if(request.method==='GET'&&media){
-      const {attachment,action,preview}=media;
+      const {attachment,action,preview,resource}=media;
       if(!bridge.media)throw Error('media_unavailable');
       if(action==='origin'&&bridge.media.origin)return json(response,200,await bridge.media.origin(attachment));
       if(action)return json(response,404,{error:'not_found'});
-      const file=await bridge.media.read({...attachment,...(preview?{preview}:{})});
+      const file=await bridge.media.read({...attachment,...(preview?{preview}:{}),...(resource!==undefined?{resource}:{})});
       const inline=['image/png','image/jpeg','image/webp','image/gif','audio/wav','audio/mpeg','audio/ogg','video/mp4'].includes(file.mime);
       if(file.sha256)response.setHeader('X-Homer-Artifact-Hash',file.sha256);
       response.writeHead(200,{'Content-Type':file.mime,'X-Content-Type-Options':'nosniff','Content-Disposition':`${inline?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(file.filename)}`});

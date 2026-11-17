@@ -2,6 +2,12 @@ import {test} from 'node:test';import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 const source=await build({entryPoints:['ui/mobile-request.ts'],bundle:true,write:false,format:'cjs',platform:'browser',plugins:[{name:'synthetic-channel',setup(build){build.onResolve({filter:/^\.\/mobile-connection\.js$/},()=>({path:'channel',namespace:'synthetic'}));build.onLoad({filter:/.*/,namespace:'synthetic'},()=>({contents:'export const mobileCall=(op,input)=>globalThis.__call(op,input);'}));}}]});
 function fixture(answer={}){const calls=[],module={exports:{}};Function('globalThis','module','exports',source.outputFiles[0].text)({__call:async(op,input)=>{calls.push({op,input});return typeof answer==='function'?answer():answer;}},module,module.exports);return {fetch:module.exports.mobileFetch,calls};}
+test('Markdown resources keep the relative URL through the device media transport',async()=>{
+ const f=fixture({mime:'image/png',data:'AAH/'}),resource='../图%20表.png?size=1#part';
+ const response=await f.fetch(new Request('https://localhost/api/media/message-one/asset-00000000-0000-0000-0000-000000000000/3/resource/'+encodeURIComponent(resource)));
+ assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'image/png');assert.deepEqual(new Uint8Array(await response.arrayBuffer()),new Uint8Array([0,1,255]));
+ assert.deepEqual(f.calls,[{op:'media.read',input:{messageId:'message-one',assetId:'asset-00000000-0000-0000-0000-000000000000',revision:3,resource}}]);
+});
 test('mobile chat adapter preserves request identity and denies management paths before RTC',async()=>{
  const f=fixture({requestId:'same-request'}),response=await f.fetch(new Request('https://localhost/api/messages',{method:'POST',body:JSON.stringify({requestId:'same-request',text:'synthetic'})}));
  assert.equal(response.status,202);assert.deepEqual(f.calls,[{op:'messages.submit',input:{requestId:'same-request',text:'synthetic'}}]);

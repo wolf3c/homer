@@ -1,7 +1,7 @@
-import {webChatPost} from '../src/web-contract.js';
+import {webChatPost,webMediaRoute} from '../src/web-contract.js';
 import {mobileCall} from './mobile-connection.js';
 export async function mobileFetch(request:Request):Promise<Response>{
- const {pathname:path,search,searchParams}=new URL(request.url),post=request.method==='POST'?webChatPost(path):undefined;
+ const target=new URL(request.url),{pathname:path,search,searchParams}=target,post=request.method==='POST'?webChatPost(path):undefined,media=webMediaRoute(request.method,target);
  try{
   request.signal.throwIfAborted();
   let op:string,input:unknown={},status=200,binary=false;
@@ -18,6 +18,7 @@ export async function mobileFetch(request:Request):Promise<Response>{
    else if((match=path.match(/^\/api\/tasks\/([\w:-]+)\/workers\/([\w:-]+)(?:\/(?:after\/(\d+)|messages\/([\w:-]+)\/(\d+)))?$/))){op='tasks.detail';input={id:match[1],workerId:match[2],...(match[3]!==undefined?{after:Number(match[3])}:{}),...(match[4]!==undefined?{messageId:match[4],offset:Number(match[5])}:{})};}
    else if((match=path.match(/^\/api\/tasks\/([\w:-]+)(?:\/(summary|progress|origin)(?:\/([\w:-]+))?)?$/))){op='tasks.'+(match[2]??'detail');input={id:match[1],messageId:match[3]};}
    else if((match=path.match(/^\/api\/media\/([\w:-]+)\/(asset-[a-f0-9-]{36})\/([1-9]\d{0,7})(\/origin)?$/))){op=match[4]?'media.origin':'media.read';input={messageId:match[1],assetId:match[2],revision:Number(match[3])};binary=!match[4];}
+   else if(media?.resource!==undefined){op='media.read';input={...media.attachment,resource:media.resource};binary=true;}
    else throw Error('route_not_found');
   }else throw Error('route_not_found');
   if(search){

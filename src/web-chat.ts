@@ -21,7 +21,7 @@ export function createWebChat(bridge:WebBridge){
   }
   if(op==='media.read'||op==='media.origin'){
    const read=op==='media.read';
-   if(!id(input?.messageId)||typeof input.assetId!=='string'||!/^asset-[a-f0-9-]{36}$/.test(input.assetId)||!Number.isSafeInteger(input.revision)||input.revision<1||input.revision>99999999||Object.keys(input).some(key=>!['messageId','assetId','revision'].includes(key)&&!(read&&key==='preview'&&input.preview==='voice')))throw Error('media_request_invalid');
+   if(!id(input?.messageId)||typeof input.assetId!=='string'||!/^asset-[a-f0-9-]{36}$/.test(input.assetId)||!Number.isSafeInteger(input.revision)||input.revision<1||input.revision>99999999||Object.keys(input).some(key=>!['messageId','assetId','revision'].includes(key)&&!(read&&(key==='preview'&&input.preview==='voice'||key==='resource'&&typeof input.resource==='string'&&!!input.resource&&!input.preview))))throw Error('media_request_invalid');
    if(!bridge.media)throw Error('media_unavailable');
    if(read)return bridge.media.read(input);
    if(!bridge.media.origin)throw Error('media_unavailable');

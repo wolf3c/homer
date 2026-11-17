@@ -1125,3 +1125,26 @@ UI类型检查、官方Canvas两项离线检查、脚本语法和独立Vite构�
 浏览器命令中的独立构建和证据目录须替换为实际路径。专项检查1080／390px正文、过程、Canvas图片／链接／公式、Mermaid图内图片及旧规模之外的渲染，点击图内链接实际打开新窗口；成功过程仍隐藏，失败保留源码。核对Chrome退出0、forced=false、watchdog=false，不能只看PNG。长引用16000／96KiB放宽未纳入本提交，超长引用发送实验不计入本次通过项。手机真机、任意外站及系统真实打开未验。结论见docs/message-display-simplification-2026-11-17.md。
 
 生产CSP回归：node --import tsx tests/display-production-images.browser.mjs，沿用上述HOMER_COMPONENT_BUILD／HOMER_BROWSER_EVIDENCE。该显式browser项直接使用真实createWebServer承载静态页面、SSE和媒体，覆盖普通网页及desktop-token模式的HTTP／HTTPS正文、过程、Canvas和Mermaid图片，断言无img-src违规且远程请求不带桌面token。旧策略阻挡已有反例；主页面仅放开img-src的http:／https:，其他指令、HTML预览及截图面板不变。移动App从内联HTML加载，不继承该HTTP CSP；原生网络策略及真机仍未验。
+
+## Markdown 附件相对图片专项（2026-11-17）
+
+默认离线回归 `tests/markdown-resources.test.ts` 使用已有独立SQLite／附件夹具，覆盖保存的原路径、子目录与../、编码路径、正文快照、原.md删除／修改、图片变化／缺失、无原路径、原有消息授权及文件检查。`mobile-request.test.mjs`验证手机资源URL到`media.read`的参数与二进制回传；桌面鉴权断言沿用`electron-shell.test.mjs`。不读取日常账号／runtime／CODEX_HOME，不调用模型。
+
+```sh
+node --import tsx --test tests/markdown-resources.test.ts tests/artifact-reveal.test.ts tests/web-chat.test.ts tests/mobile-request.test.mjs
+node --import tsx --experimental-vm-modules --test tests/web-server.test.ts tests/electron-shell.test.mjs tests/reader-scroll.test.mjs
+```
+
+显式browser清单登记`markdown-resources.browser.mjs`，不进入默认npm test。使用Node22、已安装Chrome、playwright-core与现有UI依赖；真实Canvas Preview通过合成HTTP连接真实媒体读取宿主，在1440／390px验证同目录、子目录、../、中文空格图片解码、缺图提示、气泡相对路径不变及原.md删除后更新图片重开。构建直接使用现有CSS，避免重写并行生成文件。
+
+```sh
+node scripts/build-preview-annotation.mjs
+node node_modules/vite/bin/vite.js build ui --configLoader runner --outDir /private/tmp/homer-markdown-preview-images-build --emptyOutDir
+HOMER_COMPONENT_BUILD=/private/tmp/homer-markdown-preview-images-build HOMER_BROWSER_EVIDENCE=outputs/markdown-preview-images-20261117 node --import tsx tests/markdown-resources.browser.mjs
+```
+
+本轮19+479项定向回归、两端类型检查及独立构建通过；两种宽度各四张图片解码，缺图有失败提示，快照正文保留，重新打开图片更新。Chrome正常退出0，forced=false、watchdog=false。截图与JSON保留于上述outputs目录供评审；构建和已退出profile按任务收尾清理。首轮四图已解码，但缺图未滚入懒加载区域导致断言超时；补测试滚动后通过，未为此修改产品。手机仅完成适配与宿主操作的合成验证，未运行真机／真实RTC、安装版或全量专项。
+
+本轮提交前复审：图片读取仅查询已授权附件元数据及原路径，不逐图重读／hash整份Markdown；正文读取保留原完整性校验。约1 MB合成报告连续10次图片读取仅触发1次正文读取的回归通过，不新增缓存或持久状态。精确提交候选488项定向离线回归、两端类型检查、独立构建及1440／390px实际Preview通过，Chrome退出0、forced=false、watchdog=false；独立复核无阻断。候选验证发现错误提示原依赖并行未提交代码，本事项仅纳入必要failed状态／文案，onError回调继续留其他事项。沙箱内4项桌面锁恢复失败在获准沙箱外重跑后通过；未运行安装版、真机或真实RTC。
+
+精确提交候选（仅含本事项改动）复审：488项定向回归零失败／零跳过、后端与UI类型检查及独立构建通过。沙箱内四项桌面锁恢复断言失败，获准沙箱外完整定向重跑488/488通过；未修改锁恢复实现。资源读取开销回归与独立只读复核通过。

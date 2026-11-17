@@ -15,7 +15,7 @@ import {EXECUTION_TOOLS} from './execution-tools.js';
 import {LIST_WORK_DIRECTORIES,listWorkDirectories,systemWorkDirectoryFacts,type WorkDirectoryFacts} from './work-directories.js';
 import {prepareWorkerProjectRoot} from './worker-project-root.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
-import {attachmentRevealTarget} from './artifact-reveal.js';
+import {attachmentRevealTarget,attachmentSourcePath} from './artifact-reveal.js';
 import {seedFirstLaunchSkills,shouldSeedFirstLaunchSkills} from './first-launch.js';
 import {NativeAccount,type NativeAccountState} from './native-account.js';
 import {validateChatGPTSelection,type ChatGPTModelOverrides,type NativeModel} from './model-config.js';
@@ -30,7 +30,7 @@ import {Schedules,SCHEDULE_TOOLS} from './schedules.js';
 import {ScheduleTools,type ScheduleSource} from './schedule-tools.js';
 import {HostToolCalls} from './host-tool-calls.js';
 import { join,isAbsolute,dirname,basename } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath,pathToFileURL } from "node:url";
 import { accessSync,constants,realpathSync,existsSync,statSync,lstatSync,openSync,fstatSync,closeSync,readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { Store,prepareMainReceiptMigration, type Run } from "./store.js";
@@ -1750,8 +1750,19 @@ export class Homer {
     this.validateAttachmentGrant(input,message.id);
     return message;
   }
-  readAttachment(input:AttachmentRef&{messageId:string;preview?:'voice'}){
+  readAttachment(input:AttachmentRef&{messageId:string;preview?:'voice';resource?:string}){
     this.attachmentMessage(input);
+    if(input.resource!==undefined){
+      if(typeof input.resource!=='string'||!input.resource||/^(?:[a-z][a-z\d+.-]*:|[\\/]|[?#])/i.test(input.resource)||input.preview)throw Error('media_request_invalid');
+      const asset=this.media.asset(input);
+      if(asset.mime!=='text/markdown'&&!/\.md$/i.test(asset.filename))throw Error('media_request_invalid');
+      const original=attachmentSourcePath(this.store.db,asset);
+      if(!original||!isAbsolute(original))throw Error('artifact_source_unavailable');
+      // The Markdown is a snapshot; adjacent images are live files at its recorded source directory.
+      const file=this.readLocalAttachment(fileURLToPath(new URL(input.resource,pathToFileURL(original))));
+      if(file.kind!=='image')throw Error('media_preview_unavailable');
+      return {filename:file.filename,mime:file.mime,data:file.bytes.toString('base64')};
+    }
     const {asset,bytes}=this.media.readAttachment(input);
     const preview=input.preview==='voice'&&asset.kind==='voice'?this.media.previewsAttachment(input,'audio/wav')[0]:undefined;
     if(preview)return {filename:asset.filename+'.wav',mime:preview.mime,data:preview.bytes.toString('base64')};

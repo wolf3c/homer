@@ -8,22 +8,28 @@ const execute=promisify(execFile);
 const finder=async(command:string,args:string[])=>{await execute(command,args,{timeout:10000,maxBuffer:4096});};
 type RevealTarget = {path:string;target:'source'|'snapshot'};
 
+export function attachmentSourcePath(db:DatabaseSync,asset:MediaAsset):string|undefined{
+ if(!asset.originOperationKey)return;
+ const operation=db.prepare(`SELECT detailsJson,responseJson FROM operations
+  WHERE id=? AND kind='attachment_stage' AND state='confirmed'`).get(asset.originOperationKey);
+ if(!operation)return;
+ try{
+  const refs=JSON.parse(String(operation.responseJson));
+  const {inputs}=JSON.parse(String(operation.detailsJson));
+  if(!Array.isArray(refs)||!Array.isArray(inputs)||refs.length!==inputs.length)return;
+  const index=refs.findIndex(ref=>ref?.assetId===asset.id&&ref?.revision===asset.revision);
+  const original=inputs[index]?.path;
+  return typeof original==='string'?original:undefined;
+ }catch{return;}
+}
+
 export function attachmentRevealTarget(
  db:DatabaseSync, snapshot:{asset:MediaAsset;path:string}, readSource:(path:string)=>{bytes:Buffer},
 ):RevealTarget{
  const {asset,path}=snapshot;
- const fallback:RevealTarget={path,target:'snapshot'};
- if(!asset.originOperationKey)return fallback;
- const operation=db.prepare(`SELECT detailsJson,responseJson FROM operations
-  WHERE id=? AND kind='attachment_stage' AND state='confirmed'`).get(asset.originOperationKey);
- if(!operation)return fallback;
+ const fallback:RevealTarget={path,target:'snapshot'},original=attachmentSourcePath(db,asset);
+ if(!original||original===path)return fallback;
  try{
-  const refs=JSON.parse(String(operation.responseJson));
-  const {inputs}=JSON.parse(String(operation.detailsJson));
-  if(!Array.isArray(refs)||!Array.isArray(inputs)||refs.length!==inputs.length)return fallback;
-  const index=refs.findIndex(ref=>ref?.assetId===asset.id&&ref?.revision===asset.revision);
-  const original=inputs[index]?.path;
-  if(typeof original!=='string'||original===path)return fallback;
   const {bytes}=readSource(original);
   if(bytes.length===asset.size&&createHash('sha256').update(bytes).digest('hex')===asset.hash)
    return {path:original,target:'source'};
