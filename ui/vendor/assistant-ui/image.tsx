@@ -13,6 +13,7 @@ type ImagePreviewProps = Omit<React.ComponentProps<"img">, "children"> & {
   containerClassName?: string | undefined;
   ratio?: "auto" | "1:1" | "4:3" | "16:9" | "9:16" | undefined;
   fit?: "cover" | "contain" | undefined;
+  onStatusChange?: (status: "loaded" | "error") => void;
 };
 
 function ImagePreview({
@@ -22,6 +23,7 @@ function ImagePreview({
   fit = "contain",
   onLoad,
   onError,
+  onStatusChange,
   alt = "图片内容",
   src,
   ...props
@@ -50,6 +52,12 @@ function ImagePreview({
     if (image.naturalWidth > 0) setLoadedSrc(src);
     else setErrorSrc(src);
   }, [src]);
+
+  // Cached completion can be observed before the DOM load/error handler runs.
+  useEffect(() => {
+    if (error) onStatusChange?.("error");
+    else if (loaded) onStatusChange?.("loaded");
+  }, [error, loaded, onStatusChange]);
 
   return (
     <div

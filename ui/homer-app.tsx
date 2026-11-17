@@ -121,11 +121,15 @@ function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:stri
  const previewPath=asset.kind==='voice'?path+'?preview=voice':path;
  const previewable=asset.state==='ready'&&(asset.kind==='image'||asset.kind==='video'||(asset.kind==='voice'&&(!!asset.previewMime||asset.mime!=='audio/silk')));
  const image=previewable&&asset.kind==='image';
- const preview=previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'}>{url=>image?<ImageZoom src={url} alt={asset.filename}><ImagePreview src={url} alt={asset.filename} ratio="4:3"/></ImageZoom>:asset.kind==='voice'?<audio controls preload="none" src={url} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={url} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>;
+ const [failedPath,setFailedPath]=useState(''),imageFailed=failedPath===previewPath;
+ const previewError=useCallback(()=>setFailedPath(previewPath),[previewPath]);
+ const previewStatus=useCallback((status:'loaded'|'error')=>setFailedPath(previous=>status==='error'?previewPath:previous===previewPath?'':previous),[previewPath]);
+ const preview=previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'} onError={image?previewError:undefined}>{url=>image?<ImageZoom src={url} alt={asset.filename}><ImagePreview src={url} alt={asset.filename} ratio="4:3" onStatusChange={previewStatus}/></ImageZoom>:asset.kind==='voice'?<audio controls preload="none" src={url} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={url} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>;
  return <figure className="message-attachment">
-  {image?<ImageRoot className="homer-image-attachment">{preview}</ImageRoot>:<>{preview}<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
+  {image?<ImageRoot className="homer-image-attachment">{preview}</ImageRoot>:preview}
+  {(!image||imageFailed)&&<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
    {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
-   {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption></>}
+   {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
  </figure>;
 }
 function MediaAttachments({media,messageId}:{media:MediaView[];messageId:string}){

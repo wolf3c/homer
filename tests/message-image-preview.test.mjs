@@ -30,14 +30,14 @@ function snapshot(dom,phase){
  evidence.push({phase,syntheticOnly:true,dom:serialize(dom.container)});
  if(process.env.HOMER_IMAGE_DOM_EVIDENCE)writeFileSync(process.env.HOMER_IMAGE_DOM_EVIDENCE,JSON.stringify(evidence,null,2));
 }
-async function fixture(run,{failFetch=false}={}){
+async function fixture(run,{failFetch=false,fetcher,cachedDecodeError=false}={}){
  const old={fetch:globalThis.fetch,location:globalThis.location,observer:globalThis.IntersectionObserver};
  const observers=[];let requests=0;
  globalThis.location=new URL('http://127.0.0.1:4780/');
- globalThis.fetch=async()=>{requests++;return failFetch?new Response('',{status:503}):new Response(new Blob(['synthetic image bytes'],{type:'image/png'}));};
+ globalThis.fetch=async(path,init)=>{requests++;return fetcher?fetcher(path,init):{ok:!failFetch,blob:async()=>new Blob(['synthetic image bytes'],{type:'image/png'})};};
  globalThis.IntersectionObserver=class{constructor(callback){this.callback=callback;observers.push(this);}observe(node){this.node=node;}disconnect(){this.node=null;}};
  try{await withDom(async dom=>{
-  const create=dom.doc.createElement;dom.doc.createElement=name=>{const node=create(name);node.closest=()=>null;return node;};dom.doc.body=dom.doc.createElement('body');
+  const create=dom.doc.createElement;dom.doc.createElement=name=>{const node=create(name);node.closest=()=>null;if(name==='img'&&cachedDecodeError){node.complete=true;node.naturalWidth=0;}return node;};dom.doc.body=dom.doc.createElement('body');
   const render=asset=>dom.render(React.createElement(MediaAttachment,{asset,messageId:'synthetic-message',index:0}));
   const near=async value=>act(async()=>{for(const o of observers)if(o.node)o.callback([{isIntersecting:value}]);});
   const event=async(type,node=dom.find(n=>n.tagName==='IMG'))=>act(async()=>{assert.ok(node,'expected image node');if(type==='load')node.naturalWidth=4;for(const listener of node.listeners[type]??[])listener.handler({type,target:node,bubbles:false,preventDefault(){},stopPropagation(){}});});
@@ -45,31 +45,71 @@ async function fixture(run,{failFetch=false}={}){
  });}finally{globalThis.fetch=old.fetch;globalThis.location=old.location;globalThis.IntersectionObserver=old.observer;}
 }
 
-test('decoded image removes its duplicate card and restores fallback across lazy reloads and revision changes',async()=>{
+test('ready images use only the original preview through loading, lazy reloads and revision changes; failures restore a named fallback',async()=>{
  await fixture(async dom=>{
-  await dom.render(image);assert.ok(slot(dom,'file-root'),'pending lazy preview keeps identifiable fallback');
-  await dom.near(true);assert.ok(slot(dom,'image-preview'));assert.ok(slot(dom,'file-root'),'Blob fetch alone must not hide the file');
+  await dom.render(image);assert.equal(slot(dom,'file-root'),undefined,'ready loading images do not add a duplicate file row');
+  await dom.near(true);assert.ok(slot(dom,'image-preview'));assert.equal(slot(dom,'file-root'),undefined);
   await dom.event('load');assert.ok(!slot(dom,'file-root'),'decoded image must not retain the duplicate file card');assert.ok(!dom.find(n=>n.tagName==='FIGCAPTION'));assert.ok(!dom.find(n=>n.getAttribute?.('class')==='media-preview-placeholder'));
   snapshot(dom,'decoded-image');
   await dom.click(dom.find(n=>n.getAttribute?.('aria-label')==='放大图片'));
   assert.ok(descendants(dom.doc.body).find(n=>n.getAttribute?.('data-slot')==='image-zoom-content'));
   await act(async()=>{const target=descendants(dom.doc.body).find(n=>n.getAttribute?.('data-slot')==='image-zoom-close');for(const listener of dom.doc.body.listeners.click??[])if(!listener.capture)listener.handler({type:'click',target,button:0,bubbles:true,preventDefault(){},stopPropagation(){}});});
   assert.ok(!descendants(dom.doc.body).find(n=>n.getAttribute?.('data-slot')==='image-zoom-content'));
-  await dom.near(false);assert.ok(slot(dom,'file-root'),'lazy cleanup must restore fallback before another request');
-  await dom.near(true);assert.ok(slot(dom,'file-root'));await dom.event('load');assert.equal(slot(dom,'file-root'),undefined);
-  await dom.render({...image,revision:2});assert.ok(slot(dom,'file-root'),'old decode success must not hide the new revision');
+  await dom.near(false);assert.equal(slot(dom,'file-root'),undefined);assert.ok(dom.find(n=>n.getAttribute?.('class')==='media-preview-placeholder'));
+  await dom.near(true);assert.equal(slot(dom,'file-root'),undefined);await dom.event('load');
+  await dom.render({...image,revision:2});assert.equal(slot(dom,'file-root'),undefined);assert.equal(slot(dom,'image-preview'),undefined,'the old revision must unmount immediately');
   await dom.near(true);
   await dom.event('error');assert.ok(slot(dom,'file-root'));assert.ok(slot(dom,'image-preview-error'));assert.ok(slot(dom,'file-download'));
   snapshot(dom,'decode-error');
+  await dom.near(false);await dom.near(true);await dom.event('load');assert.equal(slot(dom,'file-root'),undefined,'a successful reload clears the failure');
  });
 });
 
 test('HTTP preview failure retains the named download card and reports a failed download',async()=>{
  await fixture(async dom=>{
   await dom.render(image);await dom.near(true);assert.equal(dom.requests(),1);assert.ok(dom.container.textContent.includes('image.png'));assert.ok(slot(dom,'file-size'));assert.ok(slot(dom,'file-download'));
+  assert.ok(dom.container.textContent.includes('附件预览暂不可用'));assert.equal(dom.find(n=>n.getAttribute?.('class')==='media-preview-placeholder'),undefined);
   await dom.click(slot(dom,'file-download'));assert.ok(dom.container.textContent.includes('下载未完成'));assert.equal(dom.requests(),2);
   snapshot(dom,'http-and-download-error');
  },{failFetch:true});
+});
+
+test('an already-complete decode failure restores the named fallback without another DOM error event',async()=>{
+ await fixture(async dom=>{
+  await dom.render(image);await dom.near(true);
+  assert.ok(slot(dom,'image-preview-error'));assert.ok(slot(dom,'file-download'));
+  assert.ok(dom.container.textContent.includes('image.png'));
+ },{cachedDecodeError:true});
+});
+
+test('aborted or late fetch failures cannot label another revision unavailable',async()=>{
+ const pending=[];
+ await fixture(async dom=>{
+  await dom.render(image);await dom.near(true);assert.equal(pending.length,1);
+  await dom.render({...image,revision:2});assert.equal(pending[0].signal.aborted,true);
+  await dom.near(true);assert.equal(pending.length,2);
+  await act(async()=>pending[0].reject(Error('late synthetic failure')));
+  assert.equal(slot(dom,'file-root'),undefined);assert.ok(!dom.container.textContent.includes('暂不可用'));
+  await act(async()=>pending[1].resolve({ok:true,blob:async()=>new Blob(['synthetic image bytes'],{type:'image/png'})}));
+  await dom.event('error');assert.ok(slot(dom,'file-root'));
+  await dom.render({...image,revision:3});assert.equal(slot(dom,'file-root'),undefined,'decode failure is scoped to its revision');
+ },{fetcher:(_path,{signal})=>new Promise((resolve,reject)=>pending.push({signal,resolve,reject}))});
+});
+
+test('late successful bytes from an aborted revision cannot replace its new preview',async()=>{
+ const pending=[],blob=()=>new Blob(['synthetic image bytes'],{type:'image/png'});
+ await fixture(async dom=>{
+  await dom.render(image);await dom.near(true);
+  await act(async()=>pending[0].resolve({ok:true,blob:()=>new Promise(resolve=>pending[0].bytes=resolve)}));
+  await dom.render({...image,revision:2});assert.equal(pending[0].signal.aborted,true);
+  await dom.near(true);
+  await act(async()=>pending[1].resolve({ok:true,blob:async()=>blob()}));
+  await dom.event('load');
+  const current=dom.find(n=>n.tagName==='IMG').getAttribute('src');
+  await act(async()=>pending[0].bytes(blob()));
+  assert.equal(dom.find(n=>n.tagName==='IMG').getAttribute('src'),current);
+  assert.equal(slot(dom,'file-root'),undefined);assert.ok(!dom.container.textContent.includes('暂不可用'));
+ },{fetcher:(_path,{signal})=>new Promise(resolve=>pending.push({signal,resolve}))});
 });
 
 test('ordinary files and unavailable images retain names, sizes and state feedback',async()=>{

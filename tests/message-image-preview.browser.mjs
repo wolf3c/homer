@@ -19,13 +19,13 @@ const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('a
  res.writeHead(200,{'Content-Type':id==='document'?'text/plain':'image/png'});
  res.end(id==='decode-error'?Buffer.from('synthetic invalid image bytes'):id==='document'?Buffer.from('synthetic file'):png);
 }});
-const chrome=await isolatedChrome(destination),checks=[];
+const chrome=await isolatedChrome(destination,{mockKeychain:true}),checks=[];
 let passed=false;
 try{
  for(const width of [1440,390,320]){
   fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[message(assets)]});
   const page=await chrome.page(fixture.url,width);
-  const check=async(label,fn)=>{assert.ok(await page.evaluate(fn),label);checks.push({width,label});};
+  const check=async(label,fn)=>{assert.ok(await page.evaluate("!!("+fn.toString()+")()"),label);checks.push({width,label});};
   try{
    await page.navigate();await page.until(()=>document.querySelectorAll('.message-attachment').length===7,10000);
    await page.evaluate(()=>document.querySelector('.message-attachment').scrollIntoView());
@@ -42,16 +42,16 @@ try{
    await page.evaluate(()=>document.querySelectorAll('.message-attachment')[6].scrollIntoView());
    await page.until(()=>!!document.querySelector('[data-slot="image-preview-error"]'),10000);
    await check('image decode error retains vendor error presentation and downloadable file card',()=>{const f=document.querySelectorAll('.message-attachment')[6];return f.querySelector('[data-slot="image-preview-error"]')&&f.textContent.includes('decode-error.png')&&f.querySelector('[data-slot="file-download"]');});
-   await check('preview HTTP error retains identifiable download fallback',()=>{const f=document.querySelectorAll('.message-attachment')[5];return f.textContent.includes('fetch-error.png')&&f.querySelector('[data-slot="file-download"]');});
+   await check('preview HTTP error retains identifiable download fallback',()=>{const f=document.querySelectorAll('.message-attachment')[5];return f.textContent.includes('fetch-error.png')&&f.textContent.includes('附件预览暂不可用')&&!f.querySelector('.media-preview-placeholder')&&f.querySelector('[data-slot="file-download"]');});
    await page.evaluate(()=>document.querySelectorAll('.message-attachment')[5].querySelector('[data-slot="file-download"]').click());
    await page.until(()=>document.querySelectorAll('.message-attachment')[5].textContent.includes('下载未完成'),10000);
    checks.push({width,label:'failed fallback download reports failure instead of silently dropping the attachment'});
    // Move the successful preview out of LazyMedia's observed area, then return.
-   await page.evaluate(()=>{const f=document.querySelectorAll('.message-attachment')[6];f.style.marginTop='1800px';f.scrollIntoView();});
+   await page.evaluate(()=>{document.querySelector('.message-attachment').style.transform='translateY(-4000px)';});
    await page.until(()=>!document.querySelector('.message-attachment img'),10000);
-   await check('unmounted lazy image restores the file fallback',()=>!!document.querySelector('.message-attachment [data-slot="file-root"]'));
-   await page.evaluate(()=>document.querySelector('.message-attachment').scrollIntoView());
-   await page.until(()=>document.querySelector('.message-attachment img')?.naturalWidth===4&&!document.querySelector('.message-attachment figcaption'),10000);
+   await check('unmounted ready image keeps only its loading preview',()=>!document.querySelector('.message-attachment').querySelector('[data-slot="file-root"]'));
+   await page.evaluate(()=>{document.querySelector('.message-attachment').style.transform='';document.querySelector('.message-attachment').scrollIntoView();});
+   await page.until(()=>document.querySelector('.message-attachment img')?.naturalWidth===4&&!document.querySelector('.message-attachment').querySelector('figcaption'),10000);
    checks.push({width,label:'returning to a lazily unloaded image removes the fallback after decoding again'});
    fixture.update({messages:[message([{...assets[0],revision:2}])]});
    await page.until(()=>document.querySelectorAll('.message-attachment').length===1&&!!document.querySelector('.message-attachment [data-slot="file-download"]'),10000);
@@ -65,5 +65,5 @@ try{
   finally{await page.close();}
  }
  passed=true;
-}finally{await fixture.close();await chrome.close();writeFileSync(join(destination,'message-image-preview.json'),JSON.stringify({passed,syntheticOnly:true,browser:chrome.version,checks},null,2));}
+}finally{await fixture.close();const exit=await chrome.close();assert.equal(exit.code,0);assert.equal(exit.forced,false);assert.equal(exit.watchdog,false);writeFileSync(join(destination,'message-image-preview.json'),JSON.stringify({passed,syntheticOnly:true,browser:chrome.version,checks},null,2));}
 console.log(JSON.stringify({passed,syntheticOnly:true,widths:[1440,390,320],checks:checks.length}));

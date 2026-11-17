@@ -1261,3 +1261,11 @@ HTML 相对资源仅原附件目录及子目录；资源越界/符号链接/非�
 
 
 最新 main `08d10164` 之上重新整合候选：保留已提交 Preview 改动，617/617 关联检查、两端类型、独立构建通过；最终固定 Node22 原生专项8组通过。未重跑全量，前述12项基线失败仍保留。
+
+## 消息图片失败回退（2026-11-17 复审）
+
+可用图片加载时继续仅显示原预览；HTTP 或解码失败才恢复文件名、大小及下载行，成功重载撤去回退。状态按消息／附件／revision 路径隔离，取消及迟到结果不得影响新图。普通文件及不可用状态保持原行为。
+
+离线入口：`node --test tests/message-image-preview.test.mjs`，六项通过，含可控 Blob、已完成解码失败、旧修订迟到成功及失败。实际组件合成 DOM 检查不替代浏览器解码。显式 browser 入口 `tests/message-image-preview.browser.mjs` 在当前独立候选 Node 22.22.0／Chrome 157.0.8103.79、1440／390／320px 共33项通过，包含 HTTP／解码／下载失败、放大与 Escape、真实 IntersectionObserver 卸载重载、修订替换及撤回。Chrome exit 0、forced=false、watchdog=false；UI类型及独立构建通过。夹具只使用本地合成媒体与新 profile、mock keychain，不连接账号、日常 runtime 或真实模型；未验收安装版。
+
+复验前生成独立 UI 构建；设置 `HOMER_IMAGE_BUILD` 为其绝对目录，`HOMER_IMAGE_EVIDENCE` 为本任务独立输出目录后运行 `node tests/message-image-preview.browser.mjs`。该专项不含图片批注配对或区域编号的验收。

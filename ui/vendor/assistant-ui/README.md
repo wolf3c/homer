@@ -108,6 +108,8 @@ These are adapted extracts of the official public compound parts, not complete m
 
 Homer passes authorized object URLs to Image; LazyMedia retains its transport, visibility/request budget, abort and URL lifecycle. A revision-keyed mount closes/revokes old previews. File.Download receives an absolute same-origin link, while its click still uses the existing connectionFetch download/error owner; no direct link navigation bypasses that owner. Nullable MIME is generic presentation only, never inferred executable content. Existing audio/video playback and silk limitations stay with their owner.
 
+2026-11-14: ImagePreview adds an optional `onStatusChange` notification from its existing loaded/error state, including completion observed before a DOM event. The message consumer uses it for a named fallback on decode failure and clears that fallback after successful reload. Native load/error handlers, preview state and zoom behavior stay with ImagePreview; HTTP/abort handling stays with LazyMedia.
+
 FileList retains only its necessary collection order, exact ID, selection/focus and Canvas callback. Its custom SVG and stylesheet are removed; filename-derived MIME selects a presentation icon only. Canvas renders already authorized image bytes through ImagePreview, keeping its existing reader, HTML isolation, old-reply authorization and origin navigation. Inline Markdown image safety remains unchanged. Rendering results/document rows never reads bodies; unavailable media does not gain a download.
 
 ## Official Attachment appearance (2026-10-23)
