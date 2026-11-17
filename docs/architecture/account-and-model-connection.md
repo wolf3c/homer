@@ -45,7 +45,9 @@ HOME 是工具环境，cwd 与项目根仍沿原有规则；本次不更改文�
 
 ## ChatGPT 模型设置（2026-11-11）
 
-「设置 → 账号 → ChatGPT 套餐」分别配置 Homer（内部 `main`）和 Worker。产品默认值集中在 `src/model-config.ts`：Homer 为 `gpt-6.1-terra / high / priority`，Worker 为 `gpt-6.1-terra / xhigh / null`。CLI 默认值、荷马服务的角色合同及首次登录欢迎页保持原职责。
+「设置 → 账号 → ChatGPT 套餐」分别配置 Homer（内部 `main`）和 Worker。产品默认值集中在 `src/model-config.ts`：2026-11-15 起 Homer 为 `gpt-6.1-terra / medium / null`，Worker 为 `gpt-6.1-sol / high / null`（`null` 为默认服务档位，界面显示标准）。仅无角色覆盖时采用新默认，已保存的显式选择保持原值；恢复默认时采用上述新值。CLI 默认值、荷马服务的角色合同及首次登录欢迎页保持原职责。
+
+2026-11-17 提交复审：仅含本项六个代码／测试文件的独立 HEAD 候选使用 Node 22.22.0，通过模型配置、桌面 profile、会员／ChatGPT 来源兼容、设置组件、Electron 壳与账号服务六文件定向离线检查 672/672，零失败／取消／跳过；源码／测试及 UI 类型检查通过。验证包含标准服务档位、旧 Terra 显式覆盖保留及恢复默认。沙箱内进程身份与锁恢复检查曾失败，获准在沙箱外原样复跑通过，未修改断言或锁实现。使用独立合成 HOME／CODEX_HOME、协议引擎与回环服务；未调用真实模型，未安装、重启或部署。
 
 现有私有 `desktop-profile.json` 增加可选 `chatgpt`，按 `main / worker` 保存完整的 `{model, effort, serviceTier}` 覆盖。等同产品默认的角色不保存，全部默认时移除该字段。切换来源保留另一来源的配置，不迁移资料、不新增文件或表。运行配置中的 `serviceTier: undefined` 沿用原 `fast` 语义，`null` 明确清除加速档，字符串采用原生档位 ID。
 

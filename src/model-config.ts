@@ -8,8 +8,8 @@ export type ModelRole = "main" | "worker";
 export type ChatGPTModelConfig={model:string;effort:ReasoningEffort;serviceTier:string|null};
 export type ChatGPTModelOverrides=Partial<Record<ModelRole,ChatGPTModelConfig>>;
 export const CHATGPT_MODEL_DEFAULTS:Readonly<Record<ModelRole,Readonly<ChatGPTModelConfig>>>=Object.freeze({
-  main:Object.freeze({model:'gpt-6.1-terra',effort:'high',serviceTier:'priority'}),
-  worker:Object.freeze({model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}),
+  main:Object.freeze({model:'gpt-6.1-terra',effort:'medium',serviceTier:null}),
+  worker:Object.freeze({model:'gpt-6.1-sol',effort:'high',serviceTier:null}),
 });
 export type NativeModel={model:string;displayName:string;defaultReasoningEffort:string;supportedReasoningEfforts:{reasoningEffort:string}[];serviceTiers:{id:string;name:string}[]};
 export type NativeModelSettings={current:Record<ModelRole,ChatGPTModelConfig>;defaults:Record<ModelRole,Readonly<ChatGPTModelConfig>>;models?:NativeModel[];error?:string};

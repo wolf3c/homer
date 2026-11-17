@@ -193,9 +193,9 @@ test('ChatGPT roles and source save atomically and source-only changes preserve 
   const marker=join(root,'desktop-profile.json'),auth=join(root,'codex/auth.json');
   writeFileSync(auth,'synthetic-kept-auth',{mode:0o600});
   desktopProfile.saveDesktopCaptureShortcut(root,'Control+Shift+A');
-  const roles={main:{model:'custom-main',effort:'medium',serviceTier:'ultrafast'}};
+  const roles={main:{model:'gpt-6.1-terra',effort:'high',serviceTier:'priority'},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}};
   saveDesktopModelSource(root,'codex',roles);
-  assert.deepEqual(JSON.parse(readFileSync(marker)).chatgpt,roles);
+  assert.deepEqual(JSON.parse(readFileSync(marker)).chatgpt,roles);assert.deepEqual(desktopProfile.readDesktopChatGPTConfig(root),roles);
   saveDesktopModelSource(root,'website');assert.deepEqual(JSON.parse(readFileSync(marker)).chatgpt,roles);
   const before=readFileSync(marker,'utf8');writeFileSync(marker+'.pending','held',{mode:0o600});
   assert.throws(()=>saveDesktopModelSource(root,'codex',{}));assert.equal(readFileSync(marker,'utf8'),before);

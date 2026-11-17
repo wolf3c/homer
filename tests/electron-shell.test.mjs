@@ -1880,7 +1880,7 @@ for(const [error,want]of [['chatgpt_model_save_failed','chatgpt_model_save_faile
 test('native model settings project saved roles and defaults while failed reads preserve selections',async()=>{
  const f=await accountFixture({nativeAction:nativeModelAction,chatgpt:{main:selectedNativeRoles.main}});
  assert.equal(typeof f.handlers.get('homer:account:nativeModels'),'function');
- const result=await accountCall(f,'nativeModels');assert.equal(result.current.main.model,'custom-model');assert.equal(result.current.worker.serviceTier,null);assert.equal(result.defaults.main.effort,'high');assert.equal(result.models.length,2);
+ const result=await accountCall(f,'nativeModels');assert.equal(result.current.main.model,'custom-model');assert.equal(result.current.worker.serviceTier,null);assert.deepEqual(result.defaults,{main:{model:'gpt-6.1-terra',effort:'medium',serviceTier:null},worker:{model:'gpt-6.1-sol',effort:'high',serviceTier:null}});assert.equal(result.models.length,2);
  const failed=await accountFixture({chatgpt:{main:selectedNativeRoles.main},nativeAction:action=>{if(action==='models')throw Error('PRIVATE_READ');return nativeModelAction(action);}});
  const retained=await accountCall(failed,'nativeModels');assert.equal(retained.current.main.model,'custom-model');assert.equal(retained.models,undefined);assert.equal(retained.error,'native_models_unconfirmed');assert.equal(JSON.stringify(retained).includes('PRIVATE'),false);
 });
@@ -1889,7 +1889,7 @@ test('ChatGPT model application saves source and normalized roles only after con
  await accountCall(f,'applyCodex',selectedNativeRoles);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
  f.event({kind:'stopped'});await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='source'),false);
  f.child.emit('close',0,null);await f.tick();
- assert.deepEqual(f.nativeCalls.filter(c=>['source','relaunch'].includes(c[0])),[['source','codex',{main:selectedNativeRoles.main}],['relaunch']]);
+ assert.deepEqual(f.nativeCalls.filter(c=>['source','relaunch'].includes(c[0])),[['source','codex',selectedNativeRoles],['relaunch']]);
 });
 for(const failure of ['cancel','stop','save'])test(`ChatGPT role transaction ${failure} never writes a partial selection`,async()=>{
  const f=await accountFixture({modelSource:'website',nativeAction:nativeModelAction,response:failure==='cancel'?0:1,sourceWriteError:failure==='save'});

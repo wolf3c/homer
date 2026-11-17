@@ -224,7 +224,7 @@ test('membership projections use independently delivered context settings over l
   assert.equal(deepseekProfile(effective),undefined);
  }
  const native=effectiveModelConfig({...config,desktopModelSource:'codex'});
- assert.equal(native.model,'gpt-6.1-terra');assert.equal(native.effort,'high');assert.equal(native.fast,true);
+ assert.equal(native.model,'gpt-6.1-terra');assert.equal(native.effort,'medium');assert.equal(native.fast,false);
 });
 
 test('ChatGPT role overrides reach execution while the other role keeps its desktop defaults',()=>{
@@ -232,10 +232,12 @@ test('ChatGPT role overrides reach execution while the other role keeps its desk
  const config={...base,chatgpt:{main:{model:'custom-model',effort:'medium',serviceTier:'ultrafast'}}};
  const main=effectiveModelConfig(config),worker=effectiveModelConfig(config,'worker');
  assert.deepEqual([main.model,main.effort,main.serviceTier],['custom-model','medium','ultrafast']);
- assert.deepEqual([worker.model,worker.effort,worker.serviceTier],['gpt-6.1-terra','xhigh',null]);
+ assert.deepEqual([worker.model,worker.effort,worker.serviceTier],['gpt-6.1-sol','high',null]);
  const standard=effectiveModelConfig({...base,chatgpt:{main:{model:'custom-model',effort:'low',serviceTier:null}}});
  assert.equal(standard.serviceTier,null);assert.equal(standard.fast,false);
- assert.deepEqual([effectiveModelConfig(base).model,effectiveModelConfig(base).effort,effectiveModelConfig(base).serviceTier],['gpt-6.1-terra','high','priority']);
+ assert.deepEqual([effectiveModelConfig(base).model,effectiveModelConfig(base).effort,effectiveModelConfig(base).serviceTier],['gpt-6.1-terra','medium',null]);
+ const saved={main:{model:'gpt-6.1-terra',effort:'high',serviceTier:'priority'},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}};
+ for(const role of ['main','worker'] as const){const actual=effectiveModelConfig({...base,chatgpt:saved},role);assert.deepEqual({model:actual.model,effort:actual.effort,serviceTier:actual.serviceTier},saved[role]);}
 });
 test('ChatGPT overrides reject malformed roles and fields instead of silently using defaults',()=>{
  const base={workspace:'/synthetic/work',runtime:'/synthetic/runtime',codexHome:'/synthetic/home',codexBin:'/synthetic/bin',model:'original',requiresOpenaiAuth:true,stopGraceMs:100,desktopModelSource:'codex',desktopResources:{bundleRoot:'synthetic',manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true} as Config;

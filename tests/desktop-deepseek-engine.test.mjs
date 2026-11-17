@@ -41,7 +41,7 @@ for(const role of ['main','worker'])test('Terra membership '+role+' applies 272k
   assert.equal(result.contextWindow,272000);assert.equal(result.autoCompactTokenLimit,244800);assert.equal(result.autoCompactTokenLimitScope,'total');
   assert.equal((await engine.request('config/read',{})).config.model_catalog_json,undefined);
   const native=effectiveModelConfig({...effectiveModelConfig(config,role),desktopModelSource:'codex'},role);
-  assert.equal(native.context,undefined);assert.equal(native.baseUrl,undefined);assert.equal(native.requiresOpenaiAuth,true);assert.equal(native.effort,role==='main'?'high':'xhigh');assert.equal(native.fast,role==='main');
+  assert.equal(native.context,undefined);assert.equal(native.baseUrl,undefined);assert.equal(native.requiresOpenaiAuth,true);assert.equal(native.effort,role==='main'?'medium':'high');assert.equal(native.fast,false);
  }finally{await engine.close();rmSync(root,{recursive:true,force:true});}
 });
 test('Terra membership refuses a context override ignored by the engine',async()=>{
@@ -64,7 +64,7 @@ for(const role of ['main','worker'])for(const effort of ['medium',null])test('ge
   const model=JSON.parse(readFileSync(actual.model_catalog_json,'utf8')).models[0];
   assert.equal(model.slug,'Qwen/Qwen-next:custom');assert.deepEqual(model.input_modalities,['text']);assert.equal(model.supports_search_tool,false);assert.equal(model.supports_reasoning_summary_parameter,effort!==null);assert.equal(actual.web_search,role==='worker'?'live':'disabled');
   const {effectiveModelConfig}=await import('../src/config.ts');const native=effectiveModelConfig({...engine.config,desktopModelSource:'codex'},role);
-  assert.equal(native.capabilities,undefined);assert.equal(native.context,undefined);assert.equal(native.effort,role==='main'?'high':'xhigh');
+  assert.equal(native.capabilities,undefined);assert.equal(native.context,undefined);assert.equal(native.effort,role==='main'?'medium':'high');
  }finally{await engine.close();rmSync(root,{recursive:true,force:true});}
 });
 test('website search stays disabled when the declared capability has no model catalog',async()=>{
@@ -89,7 +89,7 @@ test('Codex and website role projections fork native segments while preserving t
  let app,thread,binding,history;
  try{for(const source of ['website','codex','website']){
   const config={...base,desktopModelSource:source};
-  for(const role of ['main','worker']){const c=effectiveModelConfig(config,role);assert.equal(c.model,source==='codex'?'gpt-6.1-terra':'deepseek-flash');assert.equal(c.requiresOpenaiAuth,source==='codex');assert.equal(c.fast,source==='codex'&&role==='main');if(source==='codex'){assert.equal(c.dailyDeepSeek,false);assert.equal(c.desktopConnection,undefined);assert.equal(c.keyEnv,undefined);assert.equal(c.baseUrl,undefined);assert.equal(c.effort,role==='main'?'high':'xhigh');}}
+  for(const role of ['main','worker']){const c=effectiveModelConfig(config,role);assert.equal(c.model,source==='codex'?(role==='main'?'gpt-6.1-terra':'gpt-6.1-sol'):'deepseek-flash');assert.equal(c.requiresOpenaiAuth,source==='codex');assert.equal(c.fast,false);if(source==='codex'){assert.equal(c.dailyDeepSeek,false);assert.equal(c.desktopConnection,undefined);assert.equal(c.keyEnv,undefined);assert.equal(c.baseUrl,undefined);assert.equal(c.effort,role==='main'?'medium':'high');}}
   if(source==='codex'){
    for(const threadId of [undefined,thread]){
     const early=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'Offline startup cancellation',tools:[],threadId},async()=>({}));
@@ -111,10 +111,10 @@ test('Codex and website role projections fork native segments while preserving t
   if(thread){assert.equal(app.store.meta('mainThread'),thread);assert.equal(app.store.meta('binding'),binding);assert.deepEqual(app.store.db.prepare('SELECT * FROM conversation_messages ORDER BY rowid LIMIT ?').all(history.length),history);}
   thread=app.store.meta('mainThread');binding=app.store.meta('binding');
   const main=JSON.parse(await app.message('synthetic '+source));
-  assert.equal(main.model,source==='codex'?'gpt-6.1-terra':'deepseek-flash');assert.equal(main.effort,source==='codex'?'high':'max');assert.equal(main.threadServiceTier,source==='codex'?'priority':null);assert.equal(main.turnServiceTier,source==='codex'?'priority':null);
+  assert.equal(main.model,source==='codex'?'gpt-6.1-terra':'deepseek-flash');assert.equal(main.effort,source==='codex'?'medium':'max');assert.equal(main.threadServiceTier,null);assert.equal(main.turnServiceTier,null);
   if(source==='codex'){assert.equal(main.threadMethod,'thread/fork');assert.match(main.openaiBaseUrl,/^http:\/\/127\.0\.0\.1:\d+$/);assert.equal(main.requestCompression,false);assert.equal((await fetch(main.openaiBaseUrl+'/unknown')).status,404);}else assert.equal(main.openaiBaseUrl,undefined);
   const workerConfig=effectiveModelConfig(config,'worker'),worker=new CodexEngine(workerConfig,{role:'worker',cwd:config.workspace,readRoots:[],instructions:'Offline source test',tools:[]},async()=>({}));
-  try{await worker.start();const result=JSON.parse((await worker.turn('synthetic worker')).text);assert.equal(result.threadMethod,'thread/start');assert.equal(result.openaiBaseUrl,undefined);assert.equal(result.requestCompression,undefined);assert.equal(result.model,source==='codex'?'gpt-6.1-terra':'deepseek-flash');assert.equal(result.effort,source==='codex'?'xhigh':'max');assert.equal(result.threadServiceTier,null);assert.equal(result.turnServiceTier,null);}finally{assert.equal(await worker.close(),true);}
+  try{await worker.start();const result=JSON.parse((await worker.turn('synthetic worker')).text);assert.equal(result.threadMethod,'thread/start');assert.equal(result.openaiBaseUrl,undefined);assert.equal(result.requestCompression,undefined);assert.equal(result.model,source==='codex'?'gpt-6.1-sol':'deepseek-flash');assert.equal(result.effort,source==='codex'?'high':'max');assert.equal(result.threadServiceTier,null);assert.equal(result.turnServiceTier,null);}finally{assert.equal(await worker.close(),true);}
   assert.equal(readFileSync(artifact,'utf8'),'synthetic artifact');assert.equal(readFileSync(auth,'utf8'),'synthetic credential sentinel');
   history=app.store.db.prepare('SELECT * FROM conversation_messages ORDER BY rowid').all();await app.close();app=undefined;if(main.openaiBaseUrl)await assert.rejects(fetch(main.openaiBaseUrl+'/unknown'));
  }}finally{await app?.close();}

@@ -9,6 +9,7 @@ import {createRequire} from 'node:module';
 import {buildSync} from 'esbuild';
 import React,{act} from 'react';
 import {withDom} from './helpers/process-dom.mjs';
+import {CHATGPT_MODEL_DEFAULTS,chatgptModelConfig} from '../src/model-config.ts';
 
 // Reuse the existing React DOM harness. Base UI's portal/focus engine needs a
 // browser: these adapters exercise our controlled props and actions, not that engine.
@@ -684,6 +685,13 @@ test('quota balance preserves the native currency rather than labeling it as poi
 }));
 
 const nativeSettings=()=>({current:{main:{model:'gpt-6.1-terra',effort:'high',serviceTier:'priority'},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}},defaults:{main:{model:'gpt-6.1-terra',effort:'high',serviceTier:'priority'},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}},models:[{model:'gpt-6.1-terra',displayName:'GPT-6.1 Terra',defaultReasoningEffort:'high',supportedReasoningEfforts:['low','medium','high','xhigh'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:[{id:'priority',name:'Fast'}]}]});
+test('ChatGPT settings show product defaults without writing configuration',async()=>withDom(async d=>{
+ const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}},calls=[];
+ window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},nativeModels:async()=>({current:chatgptModelConfig(),defaults:CHATGPT_MODEL_DEFAULTS,models:[...nativeSettings().models,{model:'gpt-6.1-sol',displayName:'GPT-6.1 Sol',defaultReasoningEffort:'medium',supportedReasoningEfforts:['low','medium','high','xhigh'].map(reasoningEffort=>({reasoningEffort})),serviceTiers:[{id:'priority',name:'Fast'}]}]}),applyCodex:async roles=>{calls.push(roles);return current;}};
+ await d.render(React.createElement(get().DesktopAccount));
+ assert.equal(button(d,'Homer 模型').textContent,'GPT-6.1 Terra中');assert.equal(button(d,'Worker 模型').textContent,'GPT-6.1 Sol高');
+ assert.ok(button(d,'Homer 速度：标准'));assert.ok(button(d,'Worker 速度：标准'));assert.deepEqual(calls,[]);
+}));
 test('same-source ChatGPT selection saves immediately without a restart action',async()=>withDom(async d=>{
  const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}},calls=[];
  window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},nativeModels:async()=>nativeSettings(),applyCodex:async roles=>{calls.push(roles);return current;}};
