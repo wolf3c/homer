@@ -8,7 +8,7 @@
 .preview-separator{width:1px;background:var(--line);position:relative}
 /* Keep pointer movement in the resizing document while crossing an opaque iframe. */
 .preview-layout:has(>.preview-separator[data-separator=active]) iframe{pointer-events:none}
-.preview-separator:focus-visible{outline:3px solid var(--focus)}
+.preview-separator:focus-visible{outline:1px solid var(--focus)}
 .canvas-panel{box-sizing:border-box;position:relative;inset:auto;display:flex;flex-direction:column;flex:1;min-width:0;width:100%;max-width:none;height:100%;max-height:none;margin:0;padding:0;border:0;border-left:1px solid var(--line);background:var(--surface);overflow:hidden;color:var(--ink);font:inherit}
 .canvas-tabs,.canvas-tab-panel{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .canvas-tab-panel[hidden]{display:none}
@@ -35,12 +35,12 @@
 .canvas-panel .canvas-tab-close{display:flex;flex:none;align-items:center;justify-content:center;width:26px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer}
 .canvas-tab-close>svg{flex:none;width:14px;height:14px}
 .canvas-panel :is(.canvas-tab,.canvas-tab-close):hover{background:var(--soft);color:var(--ink)}
-.canvas-panel :is(.canvas-tab,.canvas-tab-close):focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.canvas-panel :is(.canvas-tab,.canvas-tab-close):focus-visible{outline:1px solid var(--focus);outline-offset:-1px}
 .canvas-web-narrow-note{display:none}
 .canvas-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .canvas-panel button,.canvas-panel a{font:inherit;overflow-wrap:anywhere}
 .canvas-panel :is(.canvas-tools,.canvas-frame-exit,.canvas-read-error) button{cursor:pointer;min-height:44px;padding:8px 12px;background:var(--soft);color:var(--ink)}
-.canvas-panel :is(button,a,input):focus-visible{outline:3px solid var(--focus);outline-offset:3px}
+.canvas-panel :is(button,a,input):focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 .canvas-panel iframe{flex:1;flex-shrink:0;min-height:360px;width:100%;border:1px solid var(--line);background:var(--surface)}
 .canvas-panel pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.6}
 .canvas-frame-exit{flex-shrink:0}
@@ -55,7 +55,7 @@
 .canvas-panel :is(.html-preview-actions,.image-preview-actions) :is(.html-annotation-toggle,.image-annotation-toggle){display:flex;flex:none;width:auto;align-items:center;gap:5px;height:28px;border:1px solid var(--line);border-radius:7px;background:transparent;color:var(--ink);padding:0 8px;font-size:12px;line-height:1;white-space:nowrap;transition:background .16s,color .16s}
 .canvas-panel :is(.html-annotation-toggle,.image-annotation-toggle)>svg{flex:none;width:14px;height:14px}
 .canvas-panel :is(.html-preview-actions,.image-preview-actions) :is(.html-annotation-toggle,.image-annotation-toggle):is(:hover,[aria-pressed=true]){background:var(--soft)}
-.canvas-panel :is(.html-preview-actions,.image-preview-actions) :is(.html-annotation-toggle,.image-annotation-toggle):focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.canvas-panel :is(.html-preview-actions,.image-preview-actions) :is(.html-annotation-toggle,.image-annotation-toggle):focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 .canvas-panel .html-annotation-toggle[aria-busy=true]{opacity:.65}
 .canvas-panel [data-slot=canvas-split-body]:has(>.canvas-image-scroll){padding:0;gap:0;overflow:hidden;min-height:0}
 .canvas-image-controls{display:flex;flex:none;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:5px;padding:8px 12px;border-bottom:1px solid var(--line)}
@@ -66,7 +66,7 @@
 .canvas-image-stepper output{width:45px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums}
 .canvas-image-controls svg{flex:none}
 .canvas-image-scroll{flex:1;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;background:var(--canvas)}
-.canvas-image-scroll:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.canvas-image-scroll:focus-visible{outline:1px solid var(--focus);outline-offset:-1px}
 .canvas-image-stage{display:grid;place-items:center;padding:16px}
 .canvas-image-root .canvas-image-content{min-height:0}
 @media(max-width:800px),(pointer:coarse){
@@ -107,12 +107,12 @@
 .annotation-chip-open>span:nth-child(2){overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:28ch}
 .annotation-chip-open>span:first-child,.annotation-chip-state{flex-shrink:0;font-variant-numeric:tabular-nums}
 .annotation-chip-remove{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;border:0;padding:0;background:transparent;color:inherit;cursor:pointer}
-.annotation-chip :is(button):focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.annotation-chip :is(button):focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 .canvas-panel [data-slot=canvas-split-body]{position:relative}
-@media(forced-colors:none){.canvas-panel [data-slot=canvas-split-body]:has(>[data-preview-text]):focus-visible{outline:none;box-shadow:inset 2px 0 var(--focus)}}
+@media(forced-colors:none){.canvas-panel [data-slot=canvas-split-body]:has(>[data-preview-text]):focus-visible{outline:none}}
 .text-annotation-markers{position:absolute;inset:0;pointer-events:none;z-index:1}
 .text-annotation-marker{position:absolute;display:flex;align-items:center;justify-content:center;pointer-events:auto;min-width:22px;height:22px;padding:0 3px;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--ink);font-size:11px!important;cursor:pointer}
-.text-annotation-marker:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.text-annotation-marker:focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 
 .canvas-panel [data-preview-text]{padding-left:28px}
 
@@ -121,7 +121,7 @@
 .composer .composer-context{gap:6px;max-height:min(180px,30dvh);margin-inline:-12px;padding:2px 0 6px}
 .composer .composer-context .composer-upload-status{padding-inline:12px}
 .composer-reference-strip{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin;padding:3px 12px 5px;scroll-padding-inline:12px}
-.composer-reference-strip:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;border-radius:7px}
+.composer-reference-strip:focus-visible{outline:1px solid var(--focus);outline-offset:-1px;border-radius:7px}
 .composer-reference-strip>.annotation-chips{display:contents}
 .composer-context .annotation-chip{flex:0 0 auto;width:240px;max-width:calc(100vw - 72px);min-height:56px;border:1px solid #e6e3df;border-radius:7px;background:#f8f7f5;color:var(--ink);font-size:13px}
 .composer-context .annotation-chip:hover,.composer-context .context-attachment-item:hover{background:#f1efec}

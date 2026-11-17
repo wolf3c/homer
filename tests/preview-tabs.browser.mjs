@@ -172,7 +172,7 @@ try{
     assert.ok(await ev(readerFocused),'saving a new text annotation keeps focus in the reader');
     await key('ArrowDown','ArrowDown',40);
     await until(()=>document.querySelector('[data-slot=canvas-split-body]').scrollTop>0);
-    assert.ok(await ev(()=>{const style=getComputedStyle(document.activeElement);return style.outlineStyle==='none'&&style.boxShadow!=='none';}),'keyboard scrolling uses the reader edge instead of a native outline');
+    assert.ok(await ev(()=>{const style=getComputedStyle(document.activeElement);return style.outlineStyle==='none'&&style.boxShadow==='none';}),'keyboard scrolling focuses the reader without a decorative line or native outline');
     await p.screenshot('text-annotation-keyboard-focus.png');
     await ev(()=>{document.activeElement.scrollTop=0;});
     await textNote('第二处中文。',null);

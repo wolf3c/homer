@@ -60,7 +60,7 @@ try{
    if(width===390){
     await page.evaluate(()=>document.querySelector('[data-slot="selection-toolbar-quote"]').focus());
     for(const modifiers of [8,0]){await page.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers});}
-    await check('toolbar is reachable by Tab with a visible native focus ring',()=>{const b=document.querySelector('[data-slot="selection-toolbar-quote"]');return document.activeElement===b&&b.matches(':focus-visible')&&getComputedStyle(b).outlineStyle==='auto';});
+    await check('toolbar is reachable by Tab with a subtle visible focus ring',()=>{const b=document.querySelector('[data-slot="selection-toolbar-quote"]');return document.activeElement===b&&b.matches(':focus-visible')&&getComputedStyle(b).outlineStyle==='solid'&&getComputedStyle(b).outlineWidth==='1px';});
     await page.screenshot('selection-toolbar-keyboard-'+width+'.png');await key(page,'Enter');
    }
    else {const r=await page.evaluate(()=>document.querySelector('[data-slot="selection-toolbar-quote"]').getBoundingClientRect().toJSON());for(const type of ['mousePressed','mouseReleased'])await page.command('Input.dispatchMouseEvent',{type,x:r.left+r.width/2,y:r.top+r.height/2,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});}

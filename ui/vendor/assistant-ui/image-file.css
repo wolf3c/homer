@@ -539,8 +539,8 @@
   width: 100%;
 }
 :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .file-list-open:focus-visible,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.file-list-open:focus-visible),:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [data-slot="file-download"]:focus-visible,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([data-slot="file-download"]:focus-visible),:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .aui-image-zoom-trigger:focus-visible,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.aui-image-zoom-trigger:focus-visible),:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) [data-slot="image-zoom-close"]:focus-visible,:is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is([data-slot="image-zoom-close"]:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
 }
 :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]) .file-list-open[aria-current="true"] [data-slot="file-root"], :is([data-slot="image-root"],[data-slot="image-zoom-overlay"],[data-slot="file-root"],[data-slot="file-list"]):is(.file-list-open[aria-current="true"] [data-slot="file-root"]) {
   background: var(--soft);

@@ -12,7 +12,7 @@
 }
 
 /* Keep the preview's existing host accessibility adaptation. */
-[data-slot="composer-quote-dismiss"]:focus-visible { outline:2px solid var(--focus);outline-offset:2px; }
+[data-slot="composer-quote-dismiss"]:focus-visible { outline:1px solid var(--focus);outline-offset:1px; }
 /* Pinned registry theme: radius .625rem, md radius - 2px, border-border.
    Limit this mapping to the toolbar; other Quote surfaces keep their theme. */
 [data-slot="selection-toolbar"] {
@@ -20,6 +20,5 @@
   --radius-md: calc(.625rem - 2px);
   border-color: var(--line);
 }
-/* Upstream Quote has no custom focus utility. Restore the native focus ring
-   instead of inheriting Homer's global button focus decoration. */
-[data-slot="selection-toolbar-quote"]:focus-visible { outline:revert;outline-offset:revert; }
+/* Keep the toolbar keyboard focus consistent with other host controls. */
+[data-slot="selection-toolbar-quote"]:focus-visible { outline:1px solid var(--focus);outline-offset:1px; }

@@ -22,9 +22,9 @@
 .aui-composer-attachments { min-width:0;padding:0;flex-shrink:0; }
 .aui-attachment-root { flex-shrink:0; }
 .aui-attachment-tile-remove:focus-visible,
-.aui-attachment-tile:focus-visible { outline:2px solid var(--focus);outline-offset:2px; }
+.aui-attachment-tile:focus-visible { outline:1px solid var(--focus);outline-offset:1px; }
 .aui-attachment-preview-dialog-content [data-slot="dialog-close"] svg { width:16px;height:16px; }
 /* Contain the official 28px close button even for a 4px source image. */
 .aui-attachment-preview { min-height:28px; }
 [data-slot="tooltip-content"] { max-width:min(20rem,calc(100vw - 16px));overflow-wrap:anywhere; }
-[data-slot="dialog-close"]:focus-visible { outline:2px solid var(--focus);outline-offset:2px; }
+[data-slot="dialog-close"]:focus-visible { outline:1px solid var(--focus);outline-offset:1px; }

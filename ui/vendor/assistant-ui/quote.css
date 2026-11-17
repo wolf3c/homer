@@ -317,8 +317,8 @@
     }
   }
 :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) [data-slot="composer-quote-dismiss"]:focus-visible, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is([data-slot="composer-quote-dismiss"]:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
 }
 :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) [data-slot="selection-toolbar"], :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is([data-slot="selection-toolbar"]) {
   --radius-lg: .625rem;
@@ -326,8 +326,8 @@
   border-color: var(--line);
 }
 :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]) [data-slot="selection-toolbar-quote"]:focus-visible, :is([data-slot="quote-block"],[data-slot="composer-quote"],[data-slot="selection-toolbar"]):is([data-slot="selection-toolbar-quote"]:focus-visible) {
-  outline: revert;
-  outline-offset: revert;
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
 }
 @property --tw-border-style {
   syntax: "*";

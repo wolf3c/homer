@@ -1202,8 +1202,8 @@
   flex-shrink: 0;
 }
 :is(.aui-attachment-root,.aui-composer-attachments,.aui-attachment-surface) .aui-attachment-tile-remove:focus-visible, :is(.aui-attachment-root,.aui-composer-attachments,.aui-attachment-surface):is(.aui-attachment-tile-remove:focus-visible), :is(.aui-attachment-root,.aui-composer-attachments,.aui-attachment-surface) .aui-attachment-tile:focus-visible, :is(.aui-attachment-root,.aui-composer-attachments,.aui-attachment-surface):is(.aui-attachment-tile:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
 }
 :is(.aui-attachment-root,.aui-composer-attachments,.aui-attachment-surface) .aui-attachment-preview-dialog-content [data-slot="dialog-close"] svg, :is(.aui-attachment-root,.aui-composer-attachments,.aui-attachment-surface):is(.aui-attachment-preview-dialog-content [data-slot="dialog-close"] svg) {
   width: 16px;
@@ -1217,8 +1217,8 @@
   overflow-wrap: anywhere;
 }
 :is(.aui-attachment-root,.aui-composer-attachments,.aui-attachment-surface) [data-slot="dialog-close"]:focus-visible, :is(.aui-attachment-root,.aui-composer-attachments,.aui-attachment-surface):is([data-slot="dialog-close"]:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
 }
 @property --tw-translate-x {
   syntax: "*";
