@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 // Explicit ownership keeps optional environments out of the default core regression.
 const candidates=readdirSync('tests').filter(file=>/\.test\.(ts|mjs)$/.test(file)).sort();
 const suites={
+ 'history-performance':['web-history-performance.browser.mjs'],
  'preview-electron':['browser-preview.electron.test.mjs'],
  'power-macos':['macos-power-native.test.mjs'],
  'power-windows':['windows-power.windows.test.mjs'],
@@ -33,7 +34,7 @@ const desktop=suite==='desktop';
 if(suite==='power-macos'&&process.platform!=='darwin')throw Error('power_macos_acceptance_requires_macos');
 if(suite==='power-windows'&&process.platform!=='win32')throw Error('power_windows_acceptance_requires_windows');
 if(suite==='power-electron'&&!['darwin','win32'].includes(process.platform))throw Error('power_electron_acceptance_requires_desktop');
-if(suite==='browser')for(const name of ['HISTORY_FOLLOWUP_BUILD','HOMER_SYNTHETIC_ROOT','HOMER_BROWSER_EVIDENCE'])if(!process.env[name])throw Error('browser_acceptance_requires_explicit_path: '+name);
+if(['browser','history-performance'].includes(suite))for(const name of ['HISTORY_FOLLOWUP_BUILD','HOMER_SYNTHETIC_ROOT','HOMER_BROWSER_EVIDENCE'])if(!process.env[name])throw Error('browser_acceptance_requires_explicit_path: '+name);
 if(suite==='cua-windows'&&(process.platform!=='win32'||process.arch!=='x64'||!process.env.HOMER_TEST_WINDOWS_APP))throw Error('windows_cua_acceptance_requires_signed_app_on_windows_x64: HOMER_TEST_WINDOWS_APP');
 if(desktop){
  for(const name of ['HOMER_TEST_ENGINE_MODULE','HOMER_TEST_SERVICE_MODULE']){
@@ -48,11 +49,11 @@ if(desktop){
 if(suite==='windows-capture'&&(process.platform!=='win32'||process.arch!=='x64'||!process.env.HOMER_WINDOWS_TEST_APP))
  throw Error('windows_capture_acceptance_requires_windows_x64_and_candidate: HOMER_WINDOWS_TEST_APP');
 const explicitFiles=new Set(Object.values(suites).flat());
-const files=(['browser','power-browser'].includes(suite)?suites[suite]:candidates.filter(file=>suite==='core'?!explicitFiles.has(file):suites[suite].includes(file))).map(file=>join('tests',file));
+const files=(['browser','power-browser','history-performance'].includes(suite)?suites[suite]:candidates.filter(file=>suite==='core'?!explicitFiles.has(file):suites[suite].includes(file))).map(file=>join('tests',file));
 if(!files.length)throw Error('test_suite_empty: '+suite);
 if(suite==='core'){
  console.error('[homer-tests] Local media integration: not run / unverified. Run npm run test:local-media with the documented local tools.');
- console.error('[homer-tests] Other explicit suites not run / unverified: '+Object.keys(suites).filter(name=>name!=='local-media').map(name=>name.startsWith('power-')||['browser','cua-windows','desktop-codesign','directory-native','home-native'].includes(name)?'node scripts/test.mjs --'+name:'npm run test:'+(name==='desktop'?'desktop:acceptance':name)).join(', '));
+ console.error('[homer-tests] Other explicit suites not run / unverified: '+Object.keys(suites).filter(name=>name!=='local-media').map(name=>name.startsWith('power-')||['browser','history-performance','cua-windows','desktop-codesign','directory-native','home-native'].includes(name)?'node scripts/test.mjs --'+name:'npm run test:'+(name==='desktop'?'desktop:acceptance':name)).join(', '));
 }else console.error('[homer-tests] Explicit '+suite+' suite: skipped or not-run checks remain unverified; exit 0 alone is not acceptance.');
 const preload=['--import',new URL('../tests/fixtures/synthetic-home.mjs',import.meta.url).href,...(suite==='core'?['--import',new URL('../tests/fixtures/core-system-proxy.mjs',import.meta.url).href]:[])];
 const env={...process.env};

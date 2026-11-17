@@ -1301,3 +1301,34 @@ HTML 相对资源仅原附件目录及子目录；资源越界/符号链接/非�
 离线入口：`node --test tests/message-image-preview.test.mjs`，六项通过，含可控 Blob、已完成解码失败、旧修订迟到成功及失败。实际组件合成 DOM 检查不替代浏览器解码。显式 browser 入口 `tests/message-image-preview.browser.mjs` 在当前独立候选 Node 22.22.0／Chrome 157.0.8103.79、1440／390／320px 共33项通过，包含 HTTP／解码／下载失败、放大与 Escape、真实 IntersectionObserver 卸载重载、修订替换及撤回。Chrome exit 0、forced=false、watchdog=false；UI类型及独立构建通过。夹具只使用本地合成媒体与新 profile、mock keychain，不连接账号、日常 runtime 或真实模型；未验收安装版。
 
 复验前生成独立 UI 构建；设置 `HOMER_IMAGE_BUILD` 为其绝对目录，`HOMER_IMAGE_EVIDENCE` 为本任务独立输出目录后运行 `node tests/message-image-preview.browser.mjs`。该专项不含图片批注配对或区域编号的验收。
+
+## 历史超长会话性能（2026-11-18）
+
+性能验收结论：**连续加载完整性通过；超长会话性能未达到本轮探索目标。** 测量源码为`8d469d5c`，对照`c7db2de3`。独立快照／UI构建、内存合成宿主与HTTP/SSE、mock-keychain Chrome，不读取日常会话、账号或模型，不操作用户窗口；未测安装版和移动设备。没有为追目标删除连续阅读或修改生产渲染。
+
+本机macOS27.2／Apple M2八核／24GiB、Node22.22.0、Chrome157.0.8103.79、1440×900，串行运行对照，未独占CPU。每历史单元两条可见消息，合成答复203–206 UTF-8字节，无图片和复杂过程卡片。下表heap为强制GC后JS heap，不是浏览器全部内存；跳转8次、输入12次，墙钟包含驱动动作等待和两帧，nearest-rank p95样本较少时接近最大值。
+
+|历史单元|保留DOM行|补齐秒|JS heap MiB|最新跳转p95 ms|输入墙钟p95 ms|补齐页请求|
+|---:|---:|---:|---:|---:|---:|---:|
+|400|678|1.16|86.6|382|34|5|
+|2000|3878|14.01|465.8|2720|85|25|
+|5000|9878|155.73|1159.4|5885|246|63|
+
+最终入口另在2000单元复验旧消息实际进入视口约281ms（DOM准备约279ms），避免把DOM存在等同可见定位。全部缺失／重复为0、每页<=80单元，5000场景63次包含一次定位、一次注入错误、61次成功after，再与近期快照衔接；注入bridge异常由现有HTTP层转成409，主动重试完成，不冒充503或实网。5000基础上持续50批×20条新增全部存在，DOM增至10878、heap约1388MiB；每20条显现p95约7.69s，之后跳转p95约6.99s、输入约266ms。新增阶段另有50次可见范围around读取。总成功页JSON约8.36MiB，不含SSE／静态资源／HTTP头。较长新增测量实际约661秒，包含GC、交互探针和等待，不是固定速率吞吐或全天浸泡测试。
+
+旧版定位及回最新均约80行DOM，约22MiB；原样持续新增在第二批等待180秒超时，保留失败回执。另一组每批主动点最新（共50次）后，仅保留最后40条新增，heap约21MiB、跳转p95约97ms，每批显现p95约363ms；它不保留同等连续范围，不能把较低资源当同功能优胜。CPU单独采样最高单点落在assistant-ui列表协调（约10.4%），身份匹配some回调约0.4%，不支持无证据的Map替换。源码无改动；后续需区分逻辑连续性和DOM窗口，并同时设计定位、选区、引用、焦点及现有DOM提交校验，不能直接套虚拟列表。
+
+开测前约定的**探索性目标**为：heap<=256MiB、最新跳转p95<=500ms、输入墙钟p95<=200ms、5000补齐<=30s及零漏重／越权／引擎调用；此前无既定SLA。当前仅证明本机约678行纯文本场景达到这些局部目标，不能据此设硬支持上限；大规模明显未达。
+
+显式专项`tests/web-history-performance.browser.mjs`单独登记为`history-performance`，不进入默认核心，也不扩大原browser整组。使用已有Node22与依赖，先生成对应快照的独立UI构建，再设置三个绝对路径：
+
+```sh
+HISTORY_FOLLOWUP_BUILD=/absolute/candidate/dist/web \
+HOMER_SYNTHETIC_ROOT=/absolute/task/synthetic \
+HOMER_BROWSER_EVIDENCE=/absolute/task/evidence \
+node scripts/test.mjs --history-performance
+```
+
+默认`HOMER_PERF_SCALES=400,2000,5000`、`HOMER_PERF_WAVES=50`（每批20条）、`HOMER_PERF_INTERVAL=2000`、`HOMER_PERF_JUMP_SAMPLES=8`。缩小规模用于诊断不能替代完整测量。`HOMER_PERF_PROFILE=1`仅用于单独CPU采样；不要与无Profiler的时间直接混比。基线需干净父提交快照并仅叠加本专项入口／登记，设置`HOMER_PERF_VARIANT=baseline`，另加`HOMER_PERF_BASELINE_LATEST=1`才是每批主动回最新的成本对照。结果区分functionalPassed和探索目标assessment；专项exit0不能冒充性能达标。
+
+最终入口冒烟和测试分组检查通过；旧版超时、Profiler首次未enable的失败均不计通过。所有Chrome confirmed exit0、forced=false、watchdog=false。原始数据、CPU profile、截图、设备／测量边界及复现命令在本轮`outputs/task-dba13d4d-history-performance/REPORT.md`供核阅；核阅结束且无后续依赖可回收，复验入口已维护在源码。
