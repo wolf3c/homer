@@ -252,13 +252,13 @@ function HomerSelectionToolbar() {
     openQuote(snapshot,source);window.getSelection()?.removeAllRanges();
   }}><SelectionToolbar.Quote><MessageCirclePlus className="size-3.5" aria-hidden/>引用</SelectionToolbar.Quote></SelectionToolbar.Root>;
 }
-function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,settingsOpen }: {
+function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,captureShortcutRecording }: {
   annotationDraft:AnnotationDraft;bindPreview:(value:PreviewComposer|null)=>void;state: WebState; connected: boolean; stopping: string | null;
   editDraft?: {text:string;id:string;source?:'welcome'};
   answerTarget?:WebInteraction;onAnswerTarget:(item:WebInteraction|undefined)=>void;interactionsVerified:boolean;
   attachmentOwner:HomerAttachmentAdapter;composerRuntime:ThreadComposerRuntime;bindAttachments:(read:()=>DraftContext)=>void;
   onSend: (input: ConversationInput,target?:UnconfirmedInput['target']) => Promise<void>;onStop:()=>void;
-  queueContent?:ReactNode;onQueueBusy?:(busy:boolean)=>void;onAccount?:()=>void;settingsOpen?:boolean;
+  queueContent?:ReactNode;onQueueBusy?:(busy:boolean)=>void;onAccount?:()=>void;captureShortcutRecording?:boolean;
 }) {
   const aui = useAui();
   const text = useAuiState(s => s.composer.text), selected = useAuiState(s => s.composer.quote);
@@ -452,7 +452,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   const blocked=restoring||!canAcceptInput(connected,state.upgrade);
   const latestSubmitDraft=useRef(submitDraft);
   latestSubmitDraft.current=submitDraft;
-  const captureReady=!!window.homerDesktopCapture&&!!state.threadId&&state.conversationView===CONVERSATION_VIEW&&!!state.features?.draftUpload&&state.upgrade.phase==='running'&&!blocked&&!uploading&&!answerEditing&&!quoteEditor&&!screenshot&&!settingsOpen;
+  const captureReady=!!window.homerDesktopCapture&&!!state.threadId&&state.conversationView===CONVERSATION_VIEW&&!!state.features?.draftUpload&&state.upgrade.phase==='running'&&!blocked&&!uploading&&!answerEditing&&!quoteEditor&&!screenshot&&!captureShortcutRecording;
   useLayoutEffect(()=>{
     const bridge=window.homerDesktopCapture;
     if(!bridge||!captureReady)return;
@@ -653,7 +653,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     const quotes=quotesRef.current,resourceState=annotationDraft.read();
     const {resourceReference,resourceReferences}=resourceState;
     if(submitting.current||blocked||answerRef.current||quoteEditorRef.current
-      ||(capture?screenshotRef.current!==capture||!screenshotCurrent(capture.scope)||settingsOpen||state.upgrade.phase!=='running'
+      ||(capture?screenshotRef.current!==capture||!screenshotCurrent(capture.scope)||captureShortcutRecording||state.upgrade.phase!=='running'
         :screenshotRef.current||uploading||uploadingRef.current)
       ||Object.keys(resourceState.preparingImages??{}).length||draftAttachments.length!==attachments.length
       ||!canSubmitMessage(text,quotes,attachments,resourceReference,resourceReferences)){
@@ -915,6 +915,7 @@ function HomerApp() {
   const [answerTarget,setAnswerTarget]=useState<WebInteraction&{historyThreadId:string}>();
   const [composerBusy,setComposerBusy]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  const [captureShortcutRecording,setCaptureShortcutRecording]=useState(false);
   const accountSettings=useRef<{openAccount:()=>void}>(null);
   const [canvasOpen,setCanvasOpen]=useState(false);
   const [statusContainer,setStatusContainer]=useState<HTMLDivElement|null>(null);
@@ -1354,7 +1355,7 @@ function HomerApp() {
       <Group className="preview-layout" orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={nativeTitlebar?'240px':'25%'}><div className="conversation-panel">
         <header className="conversation-header">
           <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
-          <div className="header-actions">{mobileView?<MobileSettings/>:<DesktopSettings key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} connected={connected} onInteraction={locateTaskInteraction} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-expanded={canvasOpen} aria-controls="canvas-panel" onClick={event=>{if(canvasOpen){closeCanvas();return;}canvasTrigger.current=event.currentTarget;updatePreviewScope(true,canvasArtifact?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <div className="header-actions">{mobileView?<MobileSettings/>:<DesktopSettings key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} connected={connected} onInteraction={locateTaskInteraction} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-expanded={canvasOpen} aria-controls="canvas-panel" onClick={event=>{if(canvasOpen){closeCanvas();return;}canvasTrigger.current=event.currentTarget;updatePreviewScope(true,canvasArtifact?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
       {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
       {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}
@@ -1390,7 +1391,7 @@ function HomerApp() {
             <div className="interaction-list">{state.interactions.map(item => <InteractionCard key={state.threadId+':'+item.id} verified={connected&&!activePages.current.interactions.checking} item={item} threadId={state.threadId} messages={state.messages} acceptedRequestIds={state.acceptedRequestIds??[]} onError={setError} onNotLive={interactionNotLive} onAnswer={item=>setAnswerTarget({...item,historyThreadId:state.threadId})} onReveal={card=>claimPosition()(()=>card.scrollIntoView({block:'nearest',behavior:'instant'}))} structuredAnswers={!!state.features?.nativeQuestionAnswers} />)}</div>
             {!accountRequired&&<button type="button" className="scroll-latest" disabled={!history.current.archived&&isAtBottom&&!hasNewContent} onClick={returnLatest}>↓ {hasNewContent?'有新内容 · 最新消息':'最新消息'}</button>}
           </ThreadPrimitive.Viewport>
-          <MainComposer settingsOpen={settingsOpen} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
+          <MainComposer captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
       </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>

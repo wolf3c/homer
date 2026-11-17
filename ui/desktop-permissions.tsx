@@ -27,7 +27,7 @@ declare global{interface Window{homerDesktopPermissions?:PermissionsBridge;homer
 
 type SettingsView='closed'|'settings'|'opening-tour'|'tour'|'returning-to-about';
 
-export function DesktopSettings({ref,onVisibilityChange}:{ref?:Ref<{openAccount:()=>void}>;onVisibilityChange?:(open:boolean)=>void}={}){
+export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange}:{ref?:Ref<{openAccount:()=>void}>;onVisibilityChange?:(open:boolean)=>void;onCaptureRecordingChange?:(recording:boolean)=>void}={}){
  const [view,setView]=useState<SettingsView>('closed');
  const open=view==='settings',active=view!=='closed';
  const entry=useRef<HTMLButtonElement>(null),tab=useRef<HTMLButtonElement>(null),tourEntry=useRef<HTMLButtonElement>(null);
@@ -72,7 +72,7 @@ export function DesktopSettings({ref,onVisibilityChange}:{ref?:Ref<{openAccount:
      <div className="desktop-settings-content">
       {window.homerDesktopAccount&&<Tabs.Panel value="account" className="desktop-account-panel">{open&&panel==='account'&&<DesktopAccount/>}</Tabs.Panel>}
       <Tabs.Panel value="permissions">{open&&panel==='permissions'&&<DesktopPermissions/>}</Tabs.Panel>
-      {captureAvailable&&<Tabs.Panel value="capture">{open&&panel==='capture'&&<DesktopCaptureSettings/>}</Tabs.Panel>}
+      {captureAvailable&&<Tabs.Panel value="capture">{open&&panel==='capture'&&<DesktopCaptureSettings onRecordingChange={onCaptureRecordingChange}/>}</Tabs.Panel>}
       {window.homerDesktopPower&&<Tabs.Panel value="power">{open&&panel==='power'&&<DesktopPowerSettings/>}</Tabs.Panel>}
       <Tabs.Panel value="mobile">{open&&panel==='mobile'&&<MobileDeviceSettings/>}</Tabs.Panel>
       {window.homerDesktopChatApps&&<Tabs.Panel value="chat-apps">{open&&panel==='chat-apps'&&<DesktopChatApps/>}</Tabs.Panel>}
@@ -119,11 +119,12 @@ const shortcutErrors={
  unavailable:'此组合键已被占用或系统不允许，请换一组。',
  save_failed:'快捷键未能保存，请重试。',
 };
-function DesktopCaptureSettings(){
+function DesktopCaptureSettings({onRecordingChange}:{onRecordingChange?:(recording:boolean)=>void}){
  const {getShortcut,setShortcut,platform}=window.homerDesktopCapture??{},windows=platform==='win32';
  const shortcutInstruction=windows?'按 Ctrl+Shift 加字母、数字或 F1–F11。'
   :'按 Control 加数字，或用至少两枚修饰键（含 Control 或 Command）加字母或数字。';
  const [state,setState]=useState<CaptureShortcutState>(),[recording,setRecording]=useState(false);
+ useLayoutEffect(()=>{if(recording){onRecordingChange?.(true);return()=>onRecordingChange?.(false);}},[recording,onRecordingChange]);
  const [busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const motion=useMediaQuery('(prefers-reduced-motion: no-preference)');
  const [paused,setPaused]=useState(false);
@@ -184,7 +185,7 @@ function DesktopCaptureSettings(){
        disabled={busy||!state} focusableWhenDisabled={busy} onClick={()=>void save(null)}><RotateCcw size={16} aria-hidden/></Button>
      </div>
     </div>
-    <p>点击键帽更改。关闭设置后，可在其他 App 中使用。</p>
+    <p>点击键帽更改。录制快捷键时暂停截图，退出录制后恢复。</p>
     {hint&&<p role="status">{hint}</p>}
    </section>
    <figure className="desktop-capture-demo">

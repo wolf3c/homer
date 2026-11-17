@@ -75,7 +75,7 @@ function fixture({text='draft',draft,queueEditor,request,queueRead,collections=2
   const button=label=>find(node=>node.type==='button'&&(node.props['aria-label']===label||node.props.children===label));
   const editor=()=>find(node=>node.type==='editor');
   const form=()=>find(node=>node.type==='form');
-  render();return {state,props,runtime,cache,calls,sends,revoked,annotationDraft,capture(result){assert.ok(captureScope);captureResult(captureScope,result);render();},refreshQueue:()=>queueEvents.dispatchEvent(new Event('homer-queue-updated')),preview:()=>preview,remove:name=>composer.attachment({id:runtime.attachments.find(a=>a.name===name).id}).remove(),render,find,button,editor,form,get stops(){return stops;},get focuses(){return focuses;},close(){for(const hook of hooks)hook?.cleanup?.();}};
+  render();return {state,props,runtime,cache,calls,sends,revoked,annotationDraft,capture(result){assert.ok(captureScope);captureResult(captureScope,result);render();},refreshQueue:()=>queueEvents.dispatchEvent(new Event('homer-queue-updated')),preview:()=>preview,remove:name=>composer.attachment({id:runtime.attachments.find(a=>a.name===name).id}).remove(),render,find,button,editor,form,get captureReady(){return !!captureScope;},get stops(){return stops;},get focuses(){return focuses;},close(){for(const hook of hooks)hook?.cleanup?.();}};
 }
 function submit(f){f.form().props.onSubmit({preventDefault(){}});f.render();}
 const asset={assetId:'asset-synthetic',revision:1,filename:'image.png',size:24,state:'ready',kind:'image'};
@@ -85,6 +85,32 @@ const screenshotResult={kind:'image',width:10,height:10,png:new Uint8Array([1,2,
 const screenshotNote={id:'area',region:{x:1,y:1,width:5,height:5},comment:'解释错误'};
 const ok=value=>({ok:true,json:async()=>value});
 const captureHandoff=(action='send')=>({...screenshotResult,draft:{id:'floating-capture',action,annotations:[screenshotNote]}});
+
+
+test('capture recording alone pauses readiness and respects existing blockers on resume',()=>{
+ const ui=fixture({capture:true});
+ try{
+  ui.props.settingsOpen=true;ui.render();assert.equal(ui.captureReady,true,'settings browsing stays ready');
+  ui.props.captureShortcutRecording=true;ui.render();assert.equal(ui.captureReady,false);
+  ui.props.captureShortcutRecording=false;ui.render();assert.equal(ui.captureReady,true);
+  ui.props.connected=false;ui.props.captureShortcutRecording=true;ui.render();
+  ui.props.captureShortcutRecording=false;ui.render();assert.equal(ui.captureReady,false,'recording exit cannot override disconnected draft');
+  ui.props.connected=true;ui.render();assert.equal(ui.captureReady,true);
+ }finally{ui.close();}
+});
+test('settings browsing keeps direct screenshot send and recording blocks a pending send',async()=>{
+ for(const recording of [false,true]){
+  const upload=deferred(),ui=fixture({capture:true,text:'原草稿',request:()=>upload.promise});
+  try{
+   ui.props.settingsOpen=true;ui.render();ui.capture(captureHandoff());await tick();
+   ui.props.captureShortcutRecording=recording;ui.render();
+   upload.resolve(ok(screenshotAsset));await tick();ui.render();
+   assert.equal(ui.sends.length,recording?0:1);
+   if(recording){assert.equal(ui.runtime.text,'原草稿');assert.equal(ui.runtime.attachments.length,1);}
+   else{assert.equal(ui.sends[0][0].text,'原草稿');assert.deepEqual(ui.sends[0][0].resourceReferences[0].annotations,[screenshotNote]);}
+  }finally{ui.close();}
+ }
+});
 
 for(const action of ['add','send'])test('screenshot handoff '+action+' prepares exactly one attachment in the current draft',async()=>{
  const ui=fixture({capture:true,text:'原草稿',staleAttachmentSnapshot:true,request:async path=>{assert.equal(path,'/api/uploads');return ok(screenshotAsset);}});

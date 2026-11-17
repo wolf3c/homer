@@ -99,6 +99,36 @@ test('the screenshot annotation settings introduce capture and let users edit an
  await d.click(button(d,'关闭设置'));assert.deepEqual(visibility,[true,false]);
 }));
 
+
+test('capture recording reports only its lifetime and clears on exit or unmount',async()=>withDom(async d=>{
+ const changes=[],saving=pending(),state={shortcut:'Control+1',defaultShortcut:'Control+1',active:true};
+ window.homerDesktopCapture={getShortcut:async()=>state,setShortcut:()=>saving.promise};
+ const render=key=>d.render(React.createElement(get().DesktopSettings,{key,onCaptureRecordingChange:value=>changes.push(value)}));
+ const tab=name=>d.find(n=>n.getAttribute('role')==='tab'&&n.textContent===name);
+ const edit=()=>d.find(n=>n.tagName==='BUTTON'&&n.getAttribute('aria-label')?.startsWith('更改截图批注快捷键'));
+ const press=key=>act(async()=>{
+  const event={type:'keydown',target:edit(),key,code:key==='Escape'?'Escape':'Digit2',ctrlKey:key!=='Escape',preventDefault(){},stopPropagation(){}};
+  for(const listener of d.container.listeners.keydown??[])if(!listener.capture)listener.handler(event);
+ });
+ await render('first');await d.click(button(d,'设置'));await d.click(tab('截图批注'));
+ assert.deepEqual(changes,[]);assert.match(d.container.textContent,/录制快捷键时暂停截图/);
+ await d.click(edit());await press('Escape');assert.deepEqual(changes,[true,false]);assert.ok(button(d,'关闭设置'));
+ await d.click(edit());await d.click(edit());assert.deepEqual(changes.slice(-2),[true,false]);
+ await d.click(edit());await act(async()=>{
+  const event={type:'focusout',target:edit(),relatedTarget:tab('本机权限'),stopPropagation(){}};
+  for(const listener of d.container.listeners.focusout??[])if(!listener.capture)listener.handler(event);
+ });assert.deepEqual(changes.slice(-2),[true,false],'blur releases recording');
+
+ await d.click(edit());await d.click(tab('本机权限'));assert.deepEqual(changes.slice(-2),[true,false]);
+ await d.click(tab('截图批注'));await d.click(edit());await d.click(button(d,'关闭设置'));assert.deepEqual(changes.slice(-2),[true,false]);
+ await d.click(button(d,'设置'));await d.click(tab('截图批注'));await d.click(edit());
+ await press('2');assert.deepEqual(changes.slice(-2),[true,false]);
+ await d.click(tab('本机权限'));saving.resolve({...state,shortcut:'Control+2'});await act(async()=>{});
+ assert.equal(changes.at(-1),false,'late save cannot re-enter recording');
+ await d.click(tab('截图批注'));await d.click(edit());await render('second');assert.deepEqual(changes.slice(-2),[true,false]);
+ await d.click(button(d,'设置'));await d.click(tab('截图批注'));await d.click(edit());await d.render(null);assert.deepEqual(changes.slice(-2),[true,false]);
+}));
+
 test('Windows screenshot settings show the window or region flow and record function keys',async()=>withDom(async d=>{
  const changes=[];
  let state={shortcut:'Control+Shift+F2',defaultShortcut:'Control+Shift+F2',active:true};
