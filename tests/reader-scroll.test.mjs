@@ -19,15 +19,15 @@ function load(path,bindings,name){
  return Function('require','exports',...Object.keys(bindings),js+(name?`;return ${name};`:';return exports;'))(require,{},...Object.values(bindings));
 }
 function hooks(passive=false){
- const cells=[],pending=[];let cursor=0;
+ const cells=[],pending=[];let cursor=0,stateUpdates=0;
  const useRef=value=>cells[cursor++]??(cells[cursor-1]={current:value});
- const useState=value=>{const i=cursor++;cells[i]??={value:typeof value==='function'?value():value};return [cells[i].value,next=>{cells[i].value=typeof next==='function'?next(cells[i].value):next;}];};
+ const useState=value=>{const i=cursor++;cells[i]??={value:typeof value==='function'?value():value};return [cells[i].value,next=>{cells[i].value=typeof next==='function'?next(cells[i].value):next;if(cells[i].value?.messages)stateUpdates++;}];};
  const useMemo=(fn,deps)=>{const i=cursor++,old=cells[i];if(!old||deps.some((v,n)=>!Object.is(v,old.deps[n])))cells[i]={deps,value:fn()};return cells[i].value;};
- const useLayoutEffect=(fn,deps)=>{const i=cursor++,old=cells[i];if(!old||!deps||deps.some((v,n)=>!Object.is(v,old.deps?.[n]))){cells[i]={deps,cleanup:old?.cleanup};pending.push(()=>{cells[i].cleanup?.();cells[i].cleanup=fn();});}};
- return {useRef,useState,useMemo,useCallback:(fn,deps)=>useMemo(()=>fn,deps),useLayoutEffect,useIsomorphicLayoutEffect:useLayoutEffect,useEffect:passive?useLayoutEffect:()=>{},begin(){cursor=0;},commit(){while(pending.length)pending.shift()();},close(){for(const cell of cells)cell?.cleanup?.();}};
+ const useLayoutEffect=(fn,deps)=>{const i=cursor++,old=cells[i];if(!old||!deps||deps.some((v,n)=>!Object.is(v,old.deps?.[n]))){cells[i]={deps,cleanup:old?.cleanup,setup:fn};pending.push(()=>{cells[i].cleanup?.();cells[i].cleanup=fn();});}};
+ return {updates:()=>stateUpdates,useRef,useState,useMemo,useCallback:(fn,deps)=>useMemo(()=>fn,deps),useLayoutEffect,useIsomorphicLayoutEffect:useLayoutEffect,useEffect:passive?useLayoutEffect:()=>{},begin(){cursor=0;},commit(){while(pending.length)pending.shift()();},replayEffects(){for(const cell of cells)cell?.cleanup?.();for(const cell of cells)if(cell?.setup)cell.cleanup=cell.setup();},close(){for(const cell of cells)cell?.cleanup?.();}};
 }
 const nodes=tree=>!tree||typeof tree!=='object'?[]:Array.isArray(tree)?tree.flatMap(nodes):[tree,...nodes(tree.props?.children)];
-function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureBeforeSnapshot=false,quoteRange=async()=>undefined,quoteSelection=null}={}){
+function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureBeforeSnapshot=false,quoteRange=async()=>undefined,quoteSelection=null,tailFetch}={}){
  let releasePage,pendingLayout=0;const mutations=new Set();const pageReady=new Promise(resolve=>{releasePage=resolve;});
  const appHooks=hooks(true),scrollHooks=hooks(),frames=new Map(),events=new Map(),listeners=new Map(),observers=new Set();const writes=[];let seq=0,resizeContent,viewportProps,scrollRef;
  const frame=fn=>{frames.set(++seq,fn);return seq;},cancel=id=>frames.delete(id);
@@ -60,6 +60,7 @@ function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureB
   homerLogo64:'',homerLogo256:'',Group:'group',Panel:'panel',PanelRightIcon:'preview-icon',Clock3:'schedule-icon',ScheduledMessages:'scheduled-messages',AssistantRuntimeProvider:'runtime',TaskStatusPopover:'tasks',WechatConnection:'wechat',DesktopSettings:'settings',ThreadPrimitive:{Root:'thread',Viewport:'viewport',Empty:'empty',Messages:'messages',ScrollToBottom:'bottom'},MessageTimestamps:'timestamps',UserMessage:'user',AssistantMessage:'assistant',MainComposer:'composer',HomerMessageQueue:'queue',HomerSelectionToolbar:'selection',CanvasPanel:'canvas',InteractionCard:'interaction',
   ConnectionEvents:class{constructor(){stateEvents=this;}listeners=new Map();addEventListener(name,fn){this.listeners.set(name,fn);}close(){}},sessionStorage:{},localStorage:{length:0},storage:{read(){}},ResizeObserver,requestAnimationFrame:frame,cancelAnimationFrame:cancel,document:Object.assign(new EventTarget(),{getElementById:id=>rows.find(r=>r.id===id)}),Element:class Element{},window:{getSelection:()=>quoteSelection},
   locateSourceQuote:quoteRange,
+  fetch:tailFetch,
   post:async(path,body)=>{requests.push({path,body});if(deferPage)await pageReady;if(!deferPage)pendingLayout+=200;return {...page,units:['earlier'],messages:[{...messages[0],id:'earlier'}],before:null};},
  },'HomerApp');
  function render(commit=true){appHooks.begin();const tree=app();viewportProps=nodes(tree).find(n=>n.type==='viewport').props;viewportProps.ref.current=view;if(pendingLayout){for(const row of rows)row.y+=pendingLayout;view.scrollHeight+=pendingLayout;pendingLayout=0;}scrollHooks.begin();const ref=useScroll(viewportProps);if(!scrollRef){scrollRef=ref;scrollRef(view);}scrollHooks.commit();if(commit)appHooks.commit();return tree;}
@@ -68,7 +69,8 @@ function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureB
  function resize(){const restore=()=>{for(const observer of [...observers])observer.fn([]);};if(upstreamFirst){resizeContent?.();restore();}else{restore();resizeContent?.();}emitScroll();render();flush();}
  function gesture(top,kind='onWheel',settle=true){viewportProps[kind]?.({type:kind==='onKeyDown'?'keydown':kind==='onTouchMove'?'touchmove':kind==='onTouchStart'?'touchstart':kind==='onPointerDown'?'pointerdown':'wheel',key:'PageDown',target:view,deltaY:top-view.scrollTop,currentTarget:view});view.scrollTop=top;emitScroll();if(settle){render();flush();}}
  render();if(gestureBeforeSnapshot)gesture(500);stateEvents.listeners.get('state')({data:JSON.stringify(state)});render();flush();resize();
- return {view,rows,state,writes,frameCount:()=>frames.size, deferRuntime(){deferRuntime=true;},commitRuntime(commit=true){deferRuntime=false;runtimeState=nextRuntimeState;for(const fn of subscribers)fn();if(commit){render();flush();}},claim(){return runtimeState.messages[0].metadata.custom.claimPosition();},cancelFromComposer(){nodes(render()).find(n=>n.type==='thread').props.onKeyDownCapture({type:'keydown',key:'a',target:{closest:()=>({})}});},peekCue(){return nodes(render(false)).find(n=>n.props?.className==='scroll-latest').props;},contentMutation(){for(const observer of mutations)observer.fn([{type:'characterData'}]);},cueHidden(){return nodes(render()).find(n=>n.props?.className==='scroll-latest').props.disabled;},cue(){return nodes(render()).find(n=>n.props?.className==='scroll-latest').props.children.flat(Infinity).join('');}, snapshot(next={},commit=true){state={...state,...next};stateEvents.listeners.get('state')({data:JSON.stringify(state)});if(commit){render();flush();}},disconnect(){stateEvents.listeners.get('unavailable')();render();},render,resize,flush,gesture,emitScroll,requests,history,startGesture(kind='onPointerDown'){viewportProps[kind]?.({type:'pointerdown',target:view,currentTarget:view});},startEarlier(){nodes(render()).find(n=>n.type==='button'&&n.props.children==='加载更早消息').props.onClick();},async releaseEarlier(beforeCommit=()=>{}){releasePage();await new Promise(resolve=>setImmediate(resolve));beforeCommit();render();resize();},locateQuote(quote){nodes(render()).find(n=>n.type==='QuoteNavigationContext').props.value(quote);render();},locate(id){viewportProps.onClick?.({target:{closest:()=>({hash:'#message-'+id})},preventDefault(){}});render();},offset:row=>row.getBoundingClientRect().top-view.getBoundingClientRect().top,run(){state={...state,isRunning:true};stateEvents.listeners.get('state')({data:JSON.stringify(state)});render();events.get('thread.runStart')();flush();},addRow(message){const y=rows.at(-1)?.y+100||0;rows.push({id:'message-'+message.id,dataset:{conversationMessage:message.id},y,height:100,scrollIntoView(){view.scrollTop=this.y;},focus(){},getBoundingClientRect(){return {top:view.screenTop+this.y-view.scrollTop,bottom:view.screenTop+this.y+this.height-view.scrollTop};}});},growBelow(amount){view.scrollHeight+=amount;resize();},growAbove(row,amount){const cutoff=row.y;for(const r of rows)if(r.y>=cutoff)r.y+=amount;view.scrollHeight+=amount;resize();},expand(){const summary={tagName:'SUMMARY',parentElement:{hasAttribute:()=>false}};const target={closest:s=>s==='[data-message-id]'||s==='[data-conversation-message]'?rows[29]:s==='[aria-expanded], summary'?summary:null};const event={target};viewportProps.onClickCapture?.(event);for(const fn of listeners.get('click')??[])fn(event);viewportProps.onClick?.(event);render();},latest(){const button=nodes(render()).find(n=>n.props?.className==='scroll-latest');button.props.onClick?.({});if(button.type==='bottom')events.get('bottom')({behavior:'instant'});emitScroll();render();flush();},async earlier(){nodes(render()).find(n=>n.type==='button'&&n.props.children==='加载更早消息').props.onClick();await new Promise(resolve=>setImmediate(resolve));render();resize();},close(){appHooks.close();scrollHooks.close();}};
+ render.replayEffects=()=>{appHooks.replayEffects();render();flush();};
+ return {renderRequests:appHooks.updates,view,rows,state,writes,frameCount:()=>frames.size, deferRuntime(){deferRuntime=true;},commitRuntime(commit=true){deferRuntime=false;runtimeState=nextRuntimeState;for(const fn of subscribers)fn();if(commit){render();flush();}},claim(){return runtimeState.messages[0].metadata.custom.claimPosition();},cancelFromComposer(){nodes(render()).find(n=>n.type==='thread').props.onKeyDownCapture({type:'keydown',key:'a',target:{closest:()=>({})}});},peekCue(){return nodes(render(false)).find(n=>n.props?.className==='scroll-latest').props;},contentMutation(){for(const observer of mutations)observer.fn([{type:'characterData'}]);},cueHidden(){return nodes(render()).find(n=>n.props?.className==='scroll-latest').props.disabled;},cue(){return nodes(render()).find(n=>n.props?.className==='scroll-latest').props.children.flat(Infinity).join('');}, snapshot(next={},commit=true){state={...state,...next};stateEvents.listeners.get('state')({data:JSON.stringify(state)});if(commit){render();flush();}},disconnect(){stateEvents.listeners.get('unavailable')();render();},render,resize,flush,gesture,emitScroll,requests,history,startGesture(kind='onPointerDown'){viewportProps[kind]?.({type:'pointerdown',target:view,currentTarget:view});},startEarlier(){nodes(render()).find(n=>n.type==='button'&&n.props.children==='加载更早消息').props.onClick();},async releaseEarlier(beforeCommit=()=>{}){releasePage();await new Promise(resolve=>setImmediate(resolve));beforeCommit();render();resize();},locateQuote(quote){nodes(render()).find(n=>n.type==='QuoteNavigationContext').props.value(quote);render();},locate(id){viewportProps.onClick?.({target:{closest:()=>({hash:'#message-'+id})},preventDefault(){}});render();},offset:row=>row.getBoundingClientRect().top-view.getBoundingClientRect().top,run(){state={...state,isRunning:true};stateEvents.listeners.get('state')({data:JSON.stringify(state)});render();events.get('thread.runStart')();flush();},addRow(message){const y=rows.at(-1)?.y+100||0;rows.push({id:'message-'+message.id,dataset:{conversationMessage:message.id},y,height:100,scrollIntoView(){view.scrollTop=this.y;},focus(){},getBoundingClientRect(){return {top:view.screenTop+this.y-view.scrollTop,bottom:view.screenTop+this.y+this.height-view.scrollTop};}});},growBelow(amount){view.scrollHeight+=amount;resize();},growAbove(row,amount){const cutoff=row.y;for(const r of rows)if(r.y>=cutoff)r.y+=amount;view.scrollHeight+=amount;resize();},expand(){const summary={tagName:'SUMMARY',parentElement:{hasAttribute:()=>false}};const target={closest:s=>s==='[data-message-id]'||s==='[data-conversation-message]'?rows[29]:s==='[aria-expanded], summary'?summary:null};const event={target};viewportProps.onClickCapture?.(event);for(const fn of listeners.get('click')??[])fn(event);viewportProps.onClick?.(event);render();},latest(){const button=nodes(render()).find(n=>n.props?.className==='scroll-latest');button.props.onClick?.({});if(button.type==='bottom')events.get('bottom')({behavior:'instant'});emitScroll();render();flush();},async earlier(){nodes(render()).find(n=>n.type==='button'&&n.props.children==='加载更早消息').props.onClick();await new Promise(resolve=>setImmediate(resolve));render();resize();},close(){appHooks.close();scrollHooks.close();}};
 }
 
 // Missing runStart opt-out causes the real upstream hook to jump to 2700.
@@ -149,7 +151,10 @@ test('typing in the composer cancels a delayed latest without authorizing follow
  const f=fixture();f.gesture(1000);f.deferRuntime();f.snapshot({messages:f.state.messages.map(m=>({...m,text:'changed'}))});f.latest();f.cancelFromComposer();f.commitRuntime();assert.equal(f.view.scrollTop,1000);f.growBelow(300);assert.equal(f.view.scrollTop,1000);f.close();
 });
 test('disconnected latest keeps the old page then completes on the valid snapshot once',async()=>{
- const f=fixture();f.gesture(1000);await f.earlier();f.disconnect();f.latest();assert.ok(f.history.pages.length);const before=f.view.scrollTop;assert.equal(f.view.scrollTop,before);f.snapshot();assert.equal(f.history.pages.length,0);assert.equal(f.view.scrollTop,2600);f.growBelow(100);assert.equal(f.view.scrollTop,2600);f.close();
+ const f=fixture();f.gesture(1000);await f.earlier();
+ // Latest now retains the prepended row, so its simulated DOM must commit too.
+ f.rows.unshift({...f.rows[0],id:'message-earlier',dataset:{conversationMessage:'earlier'},y:0,height:200});
+ f.disconnect();f.latest();assert.ok(f.history.pages.length);const before=f.view.scrollTop;assert.equal(f.view.scrollTop,before);f.snapshot();assert.ok(f.history.messages.some(m=>m.id==='earlier'));assert.equal(f.view.scrollTop,2600);f.growBelow(100);assert.equal(f.view.scrollTop,2600);f.close();
 });
 test('incoming same-ID public body changes light the cue and latest confirms only its boundary',()=>{
  const f=fixture();f.gesture(1000);assert.ok(!f.cue().includes('有新内容'));const next=f.state.messages.map(m=>m.id==='row-29'?{...m,text:'historY'}:m);f.snapshot({messages:next});assert.ok(f.cue().includes('有新内容'));f.latest();assert.ok(!f.cue().includes('有新内容'));f.gesture(1000);f.snapshot({messages:next.map(m=>m.id==='row-29'?{...m,text:'historY more'}:m)});assert.ok(f.cue().includes('有新内容'));f.close();
@@ -273,10 +278,10 @@ test('late attachment height and one-pixel rounding use the actual viewport bott
  f.gesture(2578);assert.equal(f.cueHidden(),false);assert.ok(f.cue().includes('有新内容'));
  f.gesture(2579.25);assert.equal(f.cueHidden(),true);assert.ok(!f.cue().includes('有新内容'));f.close();
 });
-test('the bottom of an archived page cannot clear a cue for newer messages outside that page',()=>{
- const f=fixture();f.gesture(1000);f.history.add({...f.state.history.page,units:['row-10'],messages:[f.state.messages[10]]},'reader-epoch','around');assert.equal(f.history.archived,true);
+test('locating a row inside the latest snapshot keeps its continuous suffix and one latest cue',()=>{
+ const f=fixture();f.gesture(1000);f.history.add({...f.state.history.page,units:['row-10'],messages:[f.state.messages[10]]},'reader-epoch','around');assert.equal(f.history.archived,false);assert.equal(f.history.messages.length,30);
  f.snapshot({messages:f.state.messages.map(m=>({...m,text:'new latest content'}))});f.gesture(f.view.scrollHeight-f.view.clientHeight);
- assert.equal(f.cueHidden(),false);assert.ok(f.cue().includes('有新内容'));f.latest();assert.equal(f.history.archived,false);assert.equal(f.cueHidden(),true);f.close();
+ assert.equal(f.cueHidden(),true);assert.ok(!f.cue().includes('有新内容'));f.latest();assert.equal(f.history.archived,false);assert.equal(f.history.messages.length,30);assert.equal(f.cueHidden(),true);f.close();
 });
 
 test('incoming content cannot be acknowledged against the previous runtime body at bottom',()=>{
@@ -288,4 +293,72 @@ test('incoming content cannot be acknowledged against the previous runtime body 
 test('a same-height runtime DOM commit clears the visible cue via content observation',()=>{
  const f=fixture();f.deferRuntime();f.snapshot({messages:f.state.messages.map(m=>({...m,text:'same-height update'}))});
  assert.equal(f.peekCue().disabled,false);f.commitRuntime(false);f.contentMutation();assert.equal(f.peekCue().disabled,true);f.close();
+});
+test('StrictMode cleanup aborts a suffix read and a remount can retry the same revision',async()=>{
+ const pending=[];
+ const f=fixture({tailFetch:(_url,options)=>new Promise(done=>pending.push({done,signal:options.signal}))});
+ try{
+  f.history.add({...f.state.history.page,units:['detached'],messages:[{...f.state.messages[0],id:'detached'}],after:'detached-tail'},'reader-epoch','around');f.render();assert.equal(pending.length,1);
+  f.render.replayEffects();assert.equal(pending[0].signal.aborted,true);assert.equal(pending.length,2);
+  pending[0].done({ok:true,json:async()=>({...f.state.history.page,units:['late'],messages:[{...f.state.messages[0],id:'late'}]})});
+  pending[1].done({ok:true,json:async()=>f.state.history.page});
+  await new Promise(done=>setImmediate(done));f.render();assert.equal(f.history.archived,false);assert.ok(!f.history.messages.some(m=>m.id==='late'));assert.equal(pending.length,2);
+ }finally{f.close();}
+});
+test('suffix failures wait for a new snapshot and permanent refusals keep the range blocked',async()=>{
+ for(const permanent of [false,true]){
+  let calls=0,f;
+  f=fixture({tailFetch:async()=>{calls++;if(calls===1)return {ok:false,status:permanent?403:503,json:async()=>({error:permanent?'history_scope_denied':'service_not_ready'})};return {ok:true,json:async()=>({...f.state.history.page,revision:f.history.revision})};}});
+  try{
+   f.history.add({...f.state.history.page,units:['detached'],messages:[{...f.state.messages[0],id:'detached'}],after:'detached-tail'},'reader-epoch','around');f.render();await new Promise(done=>setImmediate(done));f.render();f.render();assert.equal(calls,1);assert.equal(f.history.archived,true);
+   f.snapshot({history:{...f.state.history,page:{...f.state.history.page,revision:2}}});await new Promise(done=>setImmediate(done));f.render();
+   assert.equal(calls,permanent?1:2);assert.equal(f.history.archived,permanent);
+   assert.ok(!nodes(f.render()).some(n=>n.type==='span'&&n.props.children==='正在补齐后续消息…'));
+   if(permanent){f.latest();assert.equal(f.history.archived,false);assert.ok(!f.history.messages.some(m=>m.id==='detached'));}
+  }finally{f.close();}
+ }
+});
+test('successful newer pages cannot authorize retries after a later transient failure',async()=>{
+ let calls=0,f;
+ f=fixture({tailFetch:async()=>{calls++;return calls===1?{ok:true,json:async()=>({...f.state.history.page,revision:2,units:['bridge'],messages:[{...f.state.messages[0],id:'bridge'}],after:'bridge-tail'})}:{ok:false,status:503,json:async()=>({error:'service_not_ready'})};}});
+ try{
+  f.history.add({...f.state.history.page,units:['detached'],messages:[{...f.state.messages[0],id:'detached'}],after:'detached-tail'},'reader-epoch','around');f.render();await new Promise(done=>setImmediate(done));assert.equal(calls,2);assert.equal(f.history.revision,2);
+  f.render();await new Promise(done=>setImmediate(done));f.render();assert.equal(calls,2,'cache-only revision changes cannot retry');
+  f.snapshot({history:{...f.state.history,page:{...f.state.history.page,revision:3}}});await new Promise(done=>setImmediate(done));assert.equal(calls,3,'a new SSE snapshot may retry');
+ }finally{f.close();}
+});
+test('latest retries a failed suffix without a new snapshot and shares an in-flight read',async()=>{
+ let calls=0,release;
+ const f=fixture({tailFetch:async()=>{calls++;if(calls===1)return {ok:false,status:503,json:async()=>({error:'service_not_ready'})};return new Promise(done=>{release=done;});}});
+ try{
+  const detached={...f.state.messages[0],id:'detached'};f.addRow(detached);f.view.scrollHeight+=100;f.gesture(1000);
+  f.history.add({...f.state.history.page,units:['detached'],messages:[detached],after:'detached-tail'},'reader-epoch','around');f.render();
+  await new Promise(done=>setImmediate(done));f.render();assert.equal(calls,1);assert.equal(f.history.archived,true);assert.equal(f.view.scrollTop,1000);
+  f.latest();await new Promise(done=>setImmediate(done));f.render();assert.equal(calls,2,'explicit latest may retry the same revision');
+  f.latest();f.latest();await new Promise(done=>setImmediate(done));f.render();assert.equal(calls,2,'rapid clicks share the pending read');assert.equal(f.view.scrollTop,1000);
+  release({ok:true,json:async()=>f.state.history.page});await new Promise(done=>setImmediate(done));f.render();f.flush();
+  assert.equal(f.history.archived,false);assert.ok(f.history.messages.some(m=>m.id==='detached'));assert.equal(f.view.scrollTop,2500);
+  f.growBelow(100);assert.equal(f.view.scrollTop,2500);assert.equal(calls,2);
+ }finally{f.close();}
+});
+test('clicks during a suffix retry cannot authorize another read when that retry fails',async()=>{
+ let calls=0,release;
+ const f=fixture({tailFetch:async()=>{calls++;if(calls===1)return {ok:false,status:503,json:async()=>({error:'service_not_ready'})};return new Promise(done=>{release=done;});}});
+ try{
+  f.gesture(1000);f.history.add({...f.state.history.page,units:['detached'],messages:[{...f.state.messages[0],id:'detached'}],after:'detached-tail'},'reader-epoch','around');f.render();
+  await new Promise(done=>setImmediate(done));f.render();assert.equal(calls,1);
+  f.latest();await new Promise(done=>setImmediate(done));assert.equal(calls,2);f.latest();f.latest();
+  release({ok:false,status:503,json:async()=>({error:'service_not_ready'})});await new Promise(done=>setImmediate(done));f.render();
+  await new Promise(done=>setImmediate(done));f.render();assert.equal(calls,2);assert.equal(f.history.archived,true);assert.equal(f.view.scrollTop,1000);
+ }finally{f.close();}
+});
+
+test('a pending latest rechecks after child message DOM commits without a runtime change',()=>{
+ const f=fixture();try{
+  f.gesture(1000);const tail=f.rows.splice(20);f.latest();assert.equal(f.view.scrollTop,1000);
+  const before=f.renderRequests();f.rows.push(...tail);f.contentMutation();
+  assert.ok(f.renderRequests()>before,'child DOM commit must wake the pending parent position check');
+  f.render();f.flush();assert.equal(f.view.scrollTop,2400);
+  const settled=f.renderRequests();f.contentMutation();assert.equal(f.renderRequests(),settled,'no parent update after the latest request is consumed');
+ }finally{f.close();}
 });

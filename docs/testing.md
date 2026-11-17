@@ -1058,6 +1058,38 @@ HTTP三轮、一次工具与冷恢复通过；WS首轮生成完成并收到原�
 
 脱敏逐请求样本、汇总和独立Decimal价目复算保留于本次scratch供当前审阅，正文提供可持续保存的版本、方法、数值与范围。已停止隔离网关及全部所属引擎，停用并删除隔离Token、Key副本、数据库、rollout和原始日志，回收临时Go SDK、源码副本、编译缓存及依赖符号链接；共享依赖保留。正式入口／正式Azure渠道、37万token、附件场景及供应商最终账单未在本轮验收，正式启用仍须独立处理。
 
+## 消息历史连续后缀
+
+离线检查：`node --import tsx --test tests/web-history-window.test.ts tests/reader-scroll.test.mjs`。覆盖超过四页的保留、同ID更新、逐批拼接、空页不能冒充连续、重复游标、失效权限、取消/epoch与StrictMode重挂；临时错误须等新快照再继续，永久错误停止自动读取。
+
+显式浏览器入口 `tests/web-history-tail.browser.mjs` 已登记于 `browser` 专项。需Node22、项目现有依赖、已安装Chrome，以及由当前源码生成的独立UI构建：
+
+```sh
+HISTORY_FOLLOWUP_BUILD="$PWD/.codex/scratch/history-tail-20261113/web" \
+HOMER_SYNTHETIC_ROOT="$PWD/.codex/scratch/history-tail-20261113/synthetic" \
+HOMER_BROWSER_EVIDENCE="$PWD/.codex/scratch/history-tail-20261113/tail-browser" \
+node --import tsx tests/web-history-tail.browser.mjs
+```
+
+用例复用合成宿主、内存数据库及隔离Chrome，在1440/390/320px定位第100条历史消息并自动接到第399条，核对全部后续ID和去重、上翻锚点、实时新消息、断线171条补齐及单一最新入口，输出截图和 `tail-results.json`。不连接日常账号、数据库或真实模型；普通历史加载、媒体与草稿继续由已有 `web-history-loading.browser.mjs` 验证。
+
+效果验收阶段Node22.22.0定向离线回归70/70、UI类型检查及独立Vite构建通过。连续后缀专项三种宽度均通过：678条已加载消息无缺失或重复，171条断线消息全部自动补齐；上翻、实时更新和重连的锚点偏差桌面0.25px，窄屏0px，无浏览器错误及业务提交。截图和结果保留于上述 `tail-browser` 目录供界面验收；构建、合成目录及浏览器profile按任务收尾回收，可由源码入口重建。上述为源码合成验收，不代表安装版本或真实业务资料验收。
+
+提交前复审复现 `process-nodes-ui.test.mjs` 的同ID重复消息回归（预期1、实际2）：连续范围直接返回数组时遗漏了原Map去重。恢复按消息ID去重，保留原断言并补快照/定位范围用例；三文件联合89/89通过，零失败／取消／跳过，核心源码与测试类型检查通过。历史夹具显式标注 `HistoryPage`，修正游标设为null时的类型推断错误。共享UI当时另有并行Canvas未使用变量错误，不归入本事项通过证据。
+
+2026-11-15复审另复现临时补页失败后“最新消息”无法主动恢复：服务恢复且没有新快照时，重试门槛仍保留。显式点击现在允许一次补页重试并保留已加载后缀；进行中的点击共用同一读取，即使该读取再次失败也不会授权自动循环。新增用例覆盖成功恢复后只跳转一次、后续增长保持手动阅读，以及快速连点后再次503仍停在原处；新用例先记录预期2次读取、实际1次的失败，再通过修复验证。
+
+
+### 2026-11-17 复审
+
+定位旧消息后自动每批最多80个历史单元补齐至最新快照；只向上按需分页，保留已加载后缀、消息身份和阅读锚点，取消或过期范围的迟到响应不覆盖新位置。临时失败等待新快照／重连或用户点击最新重试，进行中的连点共用同一次读取；永久错误停止自动补页，保留消息及草稿。已加载范围保留在当前页面会话，内存随阅读范围增长。
+
+离线入口：`node --import tsx --test tests/web-history-window.test.ts tests/reader-scroll.test.mjs tests/process-nodes-ui.test.mjs`。与图片回退联合85项通过，零失败／跳过；UI类型和独立构建通过。新增回归先复现子组件DOM提交后没有唤醒待处理最新定位，再验证复用内容观察器唤醒，保留完整DOM提交校验，完成后不新增父层更新。
+
+显式browser入口 `tests/web-history-tail.browser.mjs` 使用 Node22.22.0、现有macOS Chrome、内存合成宿主／HTTP／SSE与独立profile、mock keychain。在1440／390／320px分别验证678条后缀无缺失重复、断线171条全部接回、上翻／实时／重连锚点，以及临时失败后同修订主动重试、连点合并、读取中保留位置、补齐后实际跳到底。Chrome exit0、forced=false、watchdog=false；不连接日常runtime、账号或模型，未验收安装版。
+
+先从当前候选生成独立UI构建，再设置 `HISTORY_FOLLOWUP_BUILD` 为其绝对目录、`HOMER_SYNTHETIC_ROOT` 为独立合成目录、`HOMER_BROWSER_EVIDENCE` 为独立证据目录，运行 `node --import tsx tests/web-history-tail.browser.mjs`。专项登记在scripts/test.mjs browser清单，不进入默认核心。
+
 ## 桌面升级门禁最小修复（2026-11-16）
 
 生产仅调整 `prepareDesktopProfile` 的建档 Codex 相等检查及 `unconfirmedNativeEffectsSql` 的严格 webSearch 例外；不改资料或停止协议。新增回归先在旧代码下失败，再验证通过。

@@ -1041,7 +1041,10 @@ function HomerApp() {
   }
   useLayoutEffect(()=>{
     const view=viewport.current;if(!view)return;
-    const restore=()=>{restoreAnchor();
+    const restore=()=>{
+      // Child message DOM can commit after the external runtime notification.
+      if(reader.current.pending)setState(old=>({...old}));
+      restoreAnchor();
       // The library's prepend observer may run after ours. Recheck once, using
       // the same saved message offset, after both observers have measured.
       if(reader.current.frame!==undefined)return;
@@ -1055,7 +1058,7 @@ function HomerApp() {
   function publishHistory(){const cache=history.current;setState(old=>({...old,messages:cache.messages,artifacts:cache.artifacts,inactiveInteractions:cache.inactiveInteractions}));}
   function prepareLatest(){const pending=reader.current.pending;
     if(!pending||pending.kind==='around'||!reader.current.connected||!history.current.recent)return;
-    pending.recent=history.current.recent;history.current.latest();publishHistory();
+    pending.recent=history.current.recent;publishHistory();
   }
   function observeContent(next:WebState,baseline:boolean){
     const previous=reader.current.summary,summary=new Map<string,{source:object;signature:string}>();let changed=false;
@@ -1066,8 +1069,8 @@ function HomerApp() {
     for(const file of next.artifacts??[]){const key='artifact:'+file.id,signature=file.sha256;summary.set(key,{source:file,signature});if(!previous.has(key)||previous.get(key)!.signature!==signature)changed=true;}
     reader.current.summary=summary;if(baseline)setHasNewContent(false);else if(changed)setHasNewContent(true);
   }
-  async function loadPage(direction:'before'|'after'|'around',id?:string,quote?:MessageQuote,positionCommit?:ReturnType<PositionClaim>){
-    if(pageBusy&&direction!=='around')return;const cache=history.current,epoch=cache.epoch,position=direction==='around'?id:direction==='before'?cache.before:cache.after;if(!position)return;
+  async function loadPage(direction:'before'|'around',id?:string,quote?:MessageQuote,positionCommit?:ReturnType<PositionClaim>){
+    if(pageBusy&&direction!=='around')return;const cache=history.current,epoch=cache.epoch,position=direction==='around'?id:cache.before;if(!position)return;
     const commit=positionCommit??claimPosition(),viewNavigation=navigation.current,read=++pageRead.current;setPageBusy(true);setPageNotice('');
     try{
       const page=await post('/api/history/page',{readEpoch:epoch,request:{[direction]:position}});
@@ -1079,7 +1082,9 @@ function HomerApp() {
     }catch(e){if(viewNavigation!==navigation.current)return;const code=e instanceof Error?e.message:'';setPageNotice(code==='history_cache_pinned'?'当前选择或焦点需要保留，请取消选择后继续加载。':code==='history_message_not_found'?'原消息不存在于当前对话，成果原答复可从授权入口只读打开。':code==='history_epoch_changed'||code==='history_cursor_expired'?'读取位置已过期，草稿已保留，请回到最新后重试。':'这一页未能读取，已有消息和草稿已保留。');}
     finally{if(read===pageRead.current)setPageBusy(false);}
   }
-  function returnLatest(){claimPosition();reader.current.pending={kind:'latest',scope:positionScope(),navigation:navigation.current,user:userScroll.current};
+  function returnLatest(){const owner=tailRead.current;
+    if(owner.blocked)history.current.latest();else if(history.current.archived&&!owner.controller)owner.attempt=undefined;
+    claimPosition();reader.current.pending={kind:'latest',scope:positionScope(),navigation:navigation.current,user:userScroll.current};
     if(!reader.current.connected)setPageNotice('正在等待有效的最新消息；当前阅读位置已保留。');else setPageNotice('');prepareLatest();}
 
   async function readActivePage(kind:'queue'|'interactions',after?:number){
@@ -1120,6 +1125,34 @@ function HomerApp() {
   }
 
   const [connected, setConnected] = useState(false);
+  const tailRead=useRef<{controller?:AbortController;scope?:string;attempt?:number;observed?:number;blocked?:boolean}>({});
+  useEffect(()=>()=>{const owner=tailRead.current;owner.controller?.abort();owner.controller=undefined;owner.attempt=undefined;},[]);
+  // Retry on a new observed revision or reconnection, never by polling.
+  useEffect(()=>{
+    const owner=tailRead.current,cache=history.current,scope=JSON.stringify([cache.epoch,cache.range]);
+    owner.observed=state.history?.page.revision;
+    if(owner.scope!==scope){owner.controller?.abort();owner.controller=undefined;owner.attempt=undefined;owner.blocked=false;owner.scope=scope;}
+    if(!connected){owner.controller?.abort();owner.controller=undefined;owner.attempt=undefined;return;}
+    if(!cache.archived||owner.controller||owner.attempt===owner.observed||owner.blocked)return;
+    const controller=new AbortController(),epoch=cache.epoch,range=cache.range;
+    owner.controller=controller;owner.attempt=owner.observed;
+    const current=()=>!controller.signal.aborted&&reader.current.connected&&cache.epoch===epoch&&cache.range===range;
+    void cache.fillTail(async request=>{
+      const response=await fetch('/api/history/page',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({readEpoch:epoch,request}),signal:controller.signal});
+      const page=await response.json();if(!current())throw Error('history_read_cancelled');
+      if(!response.ok){if([400,401,403,404,410].includes(response.status))owner.blocked=true;throw Error(page.error??'history_read_failed');}
+      return page;
+    },current,()=>{captureAnchor();publishHistory();}).then(complete=>{
+      if(current()&&complete)setPageNotice(value=>value.startsWith('后续消息')?'':value);
+    }).catch(error=>{
+      if(!current())return;
+      if(/cursor|epoch|forbidden|denied|not_found/.test(String(error)))owner.blocked=true;
+      setPageNotice(owner.blocked?'后续消息读取位置已失效，已有消息和草稿已保留；可重新定位或回到最新。':'后续消息暂未读全，连接恢复或记录更新后会自动继续；当前阅读位置已保留。');
+    }).finally(()=>{
+      if(owner.controller===controller)owner.controller=undefined;
+      if(current()&&cache.archived&&owner.attempt!==owner.observed)publishHistory();
+    });
+  });
   const queueOperations=useQueueOperations(state,connected);
   const [stateRefresh,setStateRefresh]=useState(0);
   const [connectionError, setConnectionError] = useState("");
@@ -1290,7 +1323,7 @@ function HomerApp() {
     if(!view||view.clientHeight<=0)return;
     if(pending){
       if(pending.scope!==positionScope()||pending.navigation!==navigation.current||pending.user!==userScroll.current){reader.current.pending=undefined;return;}
-      const target=pending.kind==='around'?history.current.messages:pending.recent?.messages;
+      const target=history.current.messages;
       const actual=runtime.thread.getState().messages;
       // The external runtime updates in a passive effect. IDs alone do not
       // prove a same-ID streamed body has reached the runtime and DOM.
@@ -1417,7 +1450,13 @@ function HomerApp() {
           <ThreadPrimitive.Viewport ref={viewport} className="thread-viewport" tabIndex={-1} style={{overflowAnchor:'none'}} autoScroll={false} scrollToBottomOnRunStart={false} scrollToBottomOnInitialize={false} scrollToBottomOnThreadSwitch={false} onScroll={recordReaderScroll} onWheel={noteReaderGesture} onTouchStart={noteReaderGesture} onTouchMove={noteReaderGesture} onPointerDown={noteReaderGesture} onKeyDown={noteReaderGesture}
             onClickCapture={event=>{const target=event.target as Element,control=target.closest('[aria-expanded], summary');if(target.closest('[data-conversation-message]')&&control&&(control.tagName==='SUMMARY'?!control.parentElement?.hasAttribute('open'):control.getAttribute('aria-expanded')==='false'&&(control.getAttribute('aria-haspopup')??'false')==='false'&&control.getAttribute('role')!=='combobox'))captureAnchor();}}
             onClick={event=>{const link=(event.target as Element).closest<HTMLAnchorElement>('a[href^="#message-"]');if(link){event.preventDefault();locateMessage(decodeURIComponent(link.hash.slice(9)));}}}>
-            {state.history&&<nav className="history-navigation" aria-label="对话记录分页">{history.current.before&&<button type="button" disabled={pageBusy} onClick={()=>void loadPage('before')}>{pageBusy?'正在读取…':'加载更早消息'}</button>}{history.current.archived&&<button type="button" onClick={returnLatest}>回到最新消息</button>}{history.current.stale&&<span role="status">较早记录可能已有更新，展开过程时会重新核对。</span>}{history.current.inactiveMore&&<span role="status">本页还有失效交互记录未加载；旧提问和授权回调均不可继续提交，请从原事项核对。</span>}{pageNotice&&<p role="status">{pageNotice}</p>}</nav>}
+            {state.history&&<nav className="history-navigation" aria-label="对话记录分页">
+              {history.current.before&&<button type="button" disabled={pageBusy} onClick={()=>void loadPage('before')}>{pageBusy?'正在读取…':'加载更早消息'}</button>}
+              {history.current.archived&&connected&&!pageNotice&&!tailRead.current.blocked&&<span role="status">正在补齐后续消息…</span>}
+              {history.current.stale&&<span role="status">较早记录可能已有更新，展开过程时会重新核对。</span>}
+              {history.current.inactiveMore&&<span role="status">本页还有失效交互记录未加载；旧提问和授权回调均不可继续提交，请从原事项核对。</span>}
+              {pageNotice&&<p role="status">{pageNotice}</p>}
+            </nav>}
 
             {accountRequired&&<DesktopAccount onboarding/>}
             {connected && state.threadId && <ThreadPrimitive.Empty><div className="welcome"><img src={homerLogo256} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="(max-width: 480px) 58px, 70px" alt="" width={70} height={70} style={{borderRadius:0,objectFit:"contain"}} />
@@ -1428,7 +1467,6 @@ function HomerApp() {
               </div>
             </div></ThreadPrimitive.Empty>}
             <div className="messages"><MessageTimestamps messages={state.messages}><ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} /></MessageTimestamps></div>
-            {history.current.after&&<nav className="history-navigation"><button type="button" disabled={pageBusy} onClick={()=>void loadPage('after')}>加载后续消息</button><button type="button" onClick={returnLatest}>有新消息 · 回到最新</button></nav>}
             {(['queue','interactions'] as const).map(kind=>(kind!=='queue'||!state.features?.queueDispatch)&&activePages.current[kind].checking&&<p key={kind} role="status">{kind==='queue'?'待发送页':'待答页'}正在核对；编辑草稿保留，提交暂不可用。<button type="button" disabled={!activePages.current[kind].needsRead} onClick={()=>void readActivePage(kind)}>重新核对</button></p>)}
             {!state.features?.queueDispatch&&activePages.current.queue.cursor>0&&<button type="button" disabled={activePages.current.queue.checking} onClick={()=>void readActivePage('queue',0)}>返回待发送首页</button>}
             {activePages.current.interactions.cursor>0&&<button type="button" disabled={activePages.current.interactions.checking} onClick={()=>void readActivePage('interactions',0)}>返回待答首页</button>}
