@@ -59,3 +59,53 @@ test('creation provenance authenticates the actual returned Task and never a nei
   const other=f.create('Another task','another');activity.target={...activity.target!,taskId:other.taskId};assert.equal(withTaskSources(f.store.db,[message(n)],'thread:main')[0]!.taskSources,undefined);
  }finally{f.close();}
 });
+
+test('formal text and attachment replies keep their stored task version without a process',()=>{
+ const f=chatFixture();try{
+  const task=f.create();f.store.db.prepare('UPDATE tasks SET title=? WHERE id=?').run('正式事项',task.taskId);
+  const originals=['Public reply',''].map((text,index)=>{
+   const id=f.store.transaction(()=>f.history.commitAssistant({threadId:f.actor.threadId!,text,taskId:task.taskId,taskVersion:1,operationKey:'send:formal-'+index,attachments:text?[]:[{assetId:'asset-demo',revision:1} as any]}));
+   return f.history.message(id)!;
+  });
+  f.tasks.updateTask(f.actor,{operationId:'next',taskId:task.taskId,expectedRevision:1,patch:{goal:'Next version'},authority:f.authority});
+  const before=JSON.stringify(originals),projected=withTaskSources(f.store.db,originals,f.actor.threadId!);
+  for(const [index,result] of projected.entries()){
+   assert.equal(result.taskSources?.length,1);assert.equal(result.taskSources![0]!.title,'正式事项');
+   assert.deepEqual(result.taskSources![0]!.target,{taskId:task.taskId,version:1});
+   assert.deepEqual(result.taskSources![0]!.origin,{kind:'message',messageId:originals[index]!.id});
+   assert.equal(result.text,originals[index]!.text);assert.deepEqual(result.attachments,originals[index]!.attachments);
+   assert.equal(result.process,undefined);assert.equal(result.taskSourceUnresolved,undefined);
+  }
+  assert.equal(JSON.stringify(originals),before);
+ }finally{f.close();}
+});
+test('formal titles require complete same-thread task bindings and never infer an unbound reply',()=>{
+ const f=chatFixture();try{
+  const task=f.create(),id=f.store.transaction(()=>f.history.commitAssistant({threadId:f.actor.threadId!,text:'Public reply',taskId:task.taskId,taskVersion:1,operationKey:'send:bound'}));
+  const raw=f.history.message(id)!;
+  const project=(patch:object={})=>withTaskSources(f.store.db,[{...raw,...patch}],f.actor.threadId!)[0]!;
+  for(const patch of [{taskId:null,taskVersion:null},{taskVersion:null},{taskId:null},{taskVersion:0},{taskVersion:-1},{taskVersion:1.5},{taskVersion:99},{taskId:'missing'},{operationKey:null},{threadId:'other'}]){
+   assert.equal(project(patch).taskSources,undefined,JSON.stringify(patch));
+  }
+  assert.ok(project().taskSources);
+  f.store.db.prepare("DELETE FROM conversation_messages WHERE role='user'").run();
+  assert.ok(project().taskSources);assert.equal(project().taskSources![0]!.originalRequestMessageId,undefined);
+  f.store.db.prepare("UPDATE conversation_inputs SET threadId='other' WHERE requestId=?").run(f.authority.sourceRequestId);
+  assert.equal(project().taskSources,undefined);
+ }finally{f.close();}
+});
+
+test('formal replies batch distinct task versions and deduplicate repeated lookup keys',()=>{
+ const f=chatFixture();try{
+  const tasks=Array.from({length:201},(_,i)=>f.create('Synthetic task '+i,'batch-'+i));
+  const messages=tasks.flatMap(task=>[0,1].map(index=>{
+   const id=f.store.transaction(()=>f.history.commitAssistant({threadId:f.actor.threadId!,text:'Public reply',taskId:task.taskId,taskVersion:1,operationKey:'send:'+task.taskId+':'+index}));
+   return f.history.message(id)!;
+  }));
+  const prepare=f.store.db.prepare.bind(f.store.db);let versionQueries=0;
+  f.store.db.prepare=((sql:string)=>{if(sql.includes('JOIN task_versions'))versionQueries++;return prepare(sql);}) as typeof prepare;
+  const result=withTaskSources(f.store.db,messages,f.actor.threadId!);
+  assert.equal(result.length,402);assert.equal(versionQueries,2);
+  for(let i=0;i<result.length;i++)assert.deepEqual(result[i]!.taskSources?.map(s=>[s.target.taskId,s.target.version]),[[tasks[Math.floor(i/2)]!.taskId,1]]);
+ }finally{f.close();}
+});

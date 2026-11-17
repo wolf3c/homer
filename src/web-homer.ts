@@ -10,14 +10,15 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
   for(let at=0;at<keys.length;at+=200){const part=keys.slice(at,at+200);out.push(...db.prepare(sql.replace('$keys',part.map(()=>'?').join(','))).all(...part));}
   return out;
  };
- const eligible=messages.filter(m=>m.role==='assistant'&&m.threadId===threadId&&(m.text.trim()||m.finalAnswers?.some(a=>a.text.trim())||m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length>0));
+ const eligible=messages.filter(m=>m.role==='assistant'&&m.threadId===threadId&&(m.text.trim()||m.attachments?.length||m.finalAnswers?.some(a=>a.text.trim())||m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length>0));
+ const formal=eligible.filter(m=>m.operationKey&&typeof m.taskId==='string'&&m.taskId&&typeof m.taskVersion==='number'&&Number.isSafeInteger(m.taskVersion)&&m.taskVersion>0);
  const sourceIds=[...new Set(eligible.flatMap(m=>m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length?m.process.sourceMessageIds:[]))];
  const notices=new Map(batch(`SELECT m.id,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,m.senderEpoch,m.kind,o.actorAgentId,o.kind AS operationKind,o.state AS operationState,o.scopeId FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId JOIN operations o ON o.id=m.operationKey WHERE m.id IN ($keys) AND m.targetRunId IS NULL AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')`,sourceIds).map(row=>[row.id,row]));
  const actions=eligible.flatMap(m=>m.process?.threadId===threadId?m.process.items.flatMap(i=>i.kind==='tool'&&i.activity?.target&&!i.activity.action.startsWith('inspect_')?[{node:m.process,item:i,activity:i.activity}]:[]):[]);
  const operations=new Map(batch(`SELECT id,actorAgentId,scopeId,kind,state,json_extract(responseJson,'$.taskId') AS createdTaskId FROM operations WHERE id IN ($keys)`,[...new Set(actions.flatMap(a=>a.activity.target?.operationKey?[a.activity.target.operationKey]:[]))]).map(o=>[o.id,o]));
  const runIds=[...new Set([...notices.values()].flatMap(n=>typeof n.senderRunId==='string'?[n.senderRunId]:[]).concat(actions.flatMap(a=>a.activity.target?.runId?[a.activity.target.runId]:[])))];
  const runs=new Map(batch('SELECT id,taskId,version,epoch FROM runs WHERE id IN ($keys)',runIds).map(r=>[r.id,r]));
- const targets=[...notices.values()].map(n=>[n.taskId,n.taskVersion]).concat(actions.map(a=>[a.activity.target!.taskId,a.activity.target!.version]));
+ const targets=[...notices.values()].map(n=>[n.taskId,n.taskVersion]).concat(actions.map(a=>[a.activity.target!.taskId,a.activity.target!.version]),formal.map(m=>[m.taskId,m.taskVersion]));
  const keys=[...new Set(targets.filter(([id,version])=>typeof id==='string'&&Number.isSafeInteger(version)).map(pair=>JSON.stringify(pair)))];
  const versions=new Map<string,Record<string,any>>();
  for(let at=0;at<keys.length;at+=200){
@@ -33,6 +34,10 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
   if(seen.has(source.key))return;seen.add(source.key);
   const list=out.get(id)??[];list.push({...source,title:publicActivityName(v.title)??'',...(v.sourceMessageId?{originalRequestMessageId:v.sourceMessageId}:{})});out.set(id,list);
  };
+ for(const message of formal){
+  const node=message.process?.threadId===threadId?message.process:undefined;
+  push(message.id,{key:JSON.stringify([threadId,message.id,'message']),target:{taskId:message.taskId!,version:message.taskVersion!},title:'',icon:'Inbox',origin:{kind:'message',messageId:message.id,...(node?{processId:node.id}:{})},phaseLabel:'事项相关回复',owner:'main'});
+ }
  for(const message of eligible){
   const node=message.process?.threadId===threadId?message.process:undefined;
   const events=node?.items.flatMap(i=>i.kind==='workerEvent'&&i.event?[i.event]:[])??[];
