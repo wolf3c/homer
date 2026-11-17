@@ -16,7 +16,7 @@
 | 集成与知识协作 | 飞书／Lark CLI、腾讯会议 CLI、企业微信 CLI、钉钉 MCP、腾讯文档 MCP、Obsidian CLI、语雀 MCP、Slack MCP、Atlassian Rovo MCP、GitLab CLI、Notion MCP、GitHub CLI／MCP、Context7、Google Workspace CLI、TapTap CLI |
 | 运维与安全 | Wrangler、security-audit、Semgrep 规则、Sentry |
 | 搜索与工具创建 | Brave／Tavily MCP（已有搜索不足时）；Anthropic skill-creator（原生 Creator 不足时） |
-| 办公与文件 | PPT Master、大师 PPT（Dashi）、BrandDocs、Hermes 办公 Skill，Anthropic 四项技术参考；另列 OCRmyPDF、MarkItDown 等生成、转换和渲染工具 |
+| 办公与文件 | PPT Master、大师 PPT（Dashi）、BrandDocs、Hermes 办公 Skill，Anthropic 四项按需候选；另列 OCRmyPDF、MarkItDown 等生成、转换和渲染工具 |
 | 文件归档与交付 | rclone CLI、restic CLI |
 
 从所需类别选一个合用方案；同类不整套安装。下面的 `REF`、`VERSION`、`PY` 等由 Agent 按 [执行方法](execution.md) 解析真实路径和精确版本。来源核对没有执行这些安装命令，也没有证明中国大陆各运营商可访问。
@@ -341,20 +341,20 @@ Cindy Web Search 的代码可读，但其 Cindy AI 服务不随 Apache 源码提
 
 ### 办公 Skill：按任务选择
 
-以下只收录名称、功能、官方地址与安装办法，不随 Homer 分发第三方 Skill 源码。用户按需选择；目录条目不代表已安装、已验收或已取得使用许可。Anthropic 四项为技术参考，**需先确认覆盖 Homer 独立宿主的使用授权，不进入默认自动安装路径**；让用户自行下载不改变原许可。
+以下收录名称、功能、官方地址与安装办法，不随 Homer 分发第三方 Skill 源码，按任务获取。Anthropic 四项已采用 Apache-2.0，作为按需候选；2026-11-17 在 macOS ARM64 的合成样稿验证范围见[办公配方](office-tools.md#anthropic-四项按需候选)。限定范围通过不代表已在用户机器安装或全功能、全平台验收。
 
 | Skill／来源 | 功能与选用场景 | 官方入口／安装方法 | 条件与验收 |
 | --- | --- | --- | --- |
 | **PPT Master**／hugohe3，MIT | 从材料制作可编辑 PPTX。已有公司 PPTX 时，走 Edit Native PPTX，沿用原母版和版式填充、复用或重排页面 | 用原生 Installer 从 `hugohe3/ppt-master` 安装完整 `skills/ppt-master`。已有模板时提供一份带典型示例页的公司 PPTX 和新材料，按 [公司模板编辑配方](office-tools.md#ppt-master-原生公司模板编辑) 操作。[完整 Skill](https://github.com/hugohe3/ppt-master/tree/main/skills/ppt-master) | Python 3.10+，按路线安装依赖。用模板副本改一个中文标题并复用一页，在 WPS 或 PowerPoint 核对页数、母版与版式，确认标题可编辑、中文无溢出。交付前用实际使用的演示软件和版本保存、重开一份代表性样稿，按本次需求确认编辑效果 |
 | **大师 PPT（Dashi）**／chuspeeism，按需候选 | 用内置主题和版式制作中文经营汇报、调研、方案和路演，可在浏览器修改图文并导出 PPTX | 需要 Node.js 20+、npm，导出需要 Chrome／Chromium／Edge。核对固定版本的发行包与许可后，按 [Dashi 配方](office-tools.md#大师-pptdashi) 接入完整 Skill | 项目主体为 AGPL-3.0。PPTX 导出引擎为专有组件，许可限于作为完整 Dashi Skill 的组成部分使用。作为 Homer 自有组件或独立再分发需权利人书面许可。用非敏感中文样稿导出 PPTX，在目标客户端核对版式和对象可编辑性 |
-| **docx**／Anthropic，source-available | 新建、读取、编辑 Word；修订、批注、目录和格式校验 | [官方目录](https://github.com/anthropics/skills/tree/main/skills/docx)；[官方 Claude Code 安装入口](https://github.com/anthropics/skills#try-in-claude-code-claudeai-and-the-api)；Homer 使用须先确认授权 | 非普通开源安装项；授权覆盖后才采用完整目录；依赖和校验见办公配方 |
-| **xlsx**／Anthropic，source-available | 创建、修改和分析 Excel；公式、格式、财务模型、重算与错误检查 | [官方目录](https://github.com/anthropics/skills/tree/main/skills/xlsx)；官方安装入口同上；Homer 使用须先确认授权 | 重算依赖 LibreOffice，不能保证 Excel 全部函数、宏、外部链接；公式能计算不等于业务结果正确 |
-| **pptx**／Anthropic，source-available | 制作 PPT，重点补充已有模板的分析、编辑、增删页和结构检查 | [官方目录](https://github.com/anthropics/skills/tree/main/skills/pptx)；官方安装入口同上；Homer 使用须先确认授权 | 模板复制可能共享图表／嵌入对象；结构及逐页渲染均需检查 |
-| **pdf**／Anthropic，source-available | PDF 提取、合并、拆分、生成、OCR 和表单填写 | [官方目录](https://github.com/anthropics/skills/tree/main/skills/pdf)；官方安装入口同上；Homer 使用须先确认授权 | 读取实际小写 `forms.md`／`reference.md`；不是任意 PDF 正文的无损排版编辑器 |
+| **docx**／Anthropic，Apache-2.0 | 新建、读取、编辑 Word；修订、批注、目录和格式校验 | [官方目录](https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/docx)；原生 Installer：repo=`anthropics/skills`、path=`skills/docx`，固定版本和命令见[办公配方](office-tools.md#anthropic-四项按需候选) | Homer 合成样稿已验证：中文生成／修订／批注结构及两页渲染；复杂原件和原生客户端未验；依赖和边界见办公配方 |
+| **xlsx**／Anthropic，Apache-2.0 | 创建、修改和分析 Excel；公式、格式、财务模型、重算与错误检查 | [官方目录](https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/xlsx)；原生 Installer：repo=`anthropics/skills`、path=`skills/xlsx`，固定版本和命令见[办公配方](office-tools.md#anthropic-四项按需候选) | Homer 合成样稿已验证：中文读写、公式保留、两次重算及渲染；宏、外链、动态数组未验；依赖和边界见办公配方 |
+| **pptx**／Anthropic，Apache-2.0 | 创建／读取演示文稿，编辑已有模板、增删页和结构检查 | [官方目录](https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/pptx)；原生 Installer：repo=`anthropics/skills`、path=`skills/pptx`，固定版本和命令见[办公配方](office-tools.md#anthropic-四项按需候选) | Homer 合成样稿已验证：生成、复制页／编辑、图表读回、结构与四页渲染；复杂模板及原生客户端未验；依赖和边界见办公配方 |
+| **pdf**／Anthropic，Apache-2.0 | PDF 提取、合并、拆分、生成、OCR 和表单填写 | [官方目录](https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/pdf)；原生 Installer：repo=`anthropics/skills`、path=`skills/pdf`，固定版本和命令见[办公配方](office-tools.md#anthropic-四项按需候选) | Homer 合成样稿已验证：中文生成／提取、表格、拆分／重排／合并及渲染；OCR、加解密、表单未验；依赖和边界见办公配方 |
 | **BrandDocs**／ferdinandobons，MIT，**固定模板反复出报表时按需使用** | `brand-docx`／`brand-pptx`／`brand-xlsx` 复用同一公司模板，适合按期制作 Word 报告、PPT 汇报或保留公式的 Excel 报表 | 安装完整仓库和共享引擎，提取并验证可复用的模板配置。见 [BrandDocs 配方](office-tools.md#branddocs) 和 [上游安装说明](https://github.com/ferdinandobons/brand-docs#installation) | Alpha，Python 3.10–3.13。用同一模板生成两期样稿，核对内容随输入更新，品牌和结构符合模板。Excel 另查公式与重算结果 |
 | **Hermes docx／xlsx／pdf**／Nous Research，Skill 声明 MIT | 配套 CLI 脚本完成生成、读取、编辑、模板、公式及 PDF 常见操作，作为工程化备选 | [Word](https://github.com/NousResearch/hermes-agent/tree/main/skills/productivity/docx)、[Excel](https://github.com/NousResearch/hermes-agent/tree/main/skills/productivity/xlsx)、[PDF](https://github.com/NousResearch/hermes-agent/tree/main/skills/productivity/pdf)；按所需目录用原生 Installer，命令见办公配方 | Python 3.10+；保留 scripts／references；将上游 terminal、read_file 等称呼映射到 Homer 当前工具，不安装 Hermes 引擎 |
 
-新做 PPT 可评估 PPT Master 和 Dashi。沿用已有公司 PPTX 时，先选 PPT Master 的原生编辑流程。固定模板反复出报表时再评估 BrandDocs。常规读写可评估 Hermes，Anthropic 四项按各自授权采用。
+新做 PPT 可评估 PPT Master 和 Dashi。沿用已有公司 PPTX 时，先选 PPT Master 的原生编辑流程。固定模板反复出报表时再评估 BrandDocs。常规读写可评估 Hermes，Anthropic 四项按具体办公任务选择，已验范围见办公配方。
 
 ### 底层生成、转换和渲染程序
 
@@ -389,7 +389,7 @@ Cindy Web Search 的代码可读，但其 Cindy AI 服务不随 Apache 源码提
 | --- | --- | --- |
 | **skill-creator**／Anthropic，Apache2.0 | 创建、评估和迭代 Skill；原生 Creator 不足时再选 | [具体目录](https://github.com/anthropics/skills/tree/main/skills/skill-creator)；`python3 "$SKILL_INSTALLER" --repo anthropics/skills --ref "$REF" --path skills/skill-creator --name anthropic-skill-creator --dest "$HOMER_CODEX_HOME/skills"` |
 
-skill-creator 目标目录改名仅避免覆盖原生 `.system/skill-creator`，不伪造其 frontmatter 名称；安装后检查原生发现的同名项和实际路径，按路径使用，不能猜已覆盖系统版。Anthropic 仓库逐目录许可不同，**不安装其受限文档 Skill 作为上述 Apache 条目的一部分**。
+skill-creator 目标目录改名仅避免覆盖原生 `.system/skill-creator`，不伪造其 frontmatter 名称；安装后检查原生发现的同名项和实际路径，按路径使用，不能猜已覆盖系统版。Anthropic 仓库逐目录许可不同，办公四项按各自条目选择，不随 Creator 一并安装。
 
 优先使用已有原生 Creator／Installer；创建、校验和采用见 [创建工具](create-tools.md)。
 

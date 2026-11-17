@@ -47,18 +47,30 @@ python3 "$SKILL_INSTALLER" --repo NousResearch/hermes-agent --ref "$REF" --path 
 
 在同一私有 Python 3.10+ 环境按该 Skill 安装依赖：Word 为 `python-docx`，Excel 为 `openpyxl`，PDF 为 `pypdf`／`reportlab`／`pdfplumber`，渲染、重算和 OCR 按需补齐。先读所用 `scripts/*.py --help`，使用 Homer 已有文件／Shell 工具执行；不需要安装或切换 Hermes 引擎。验收须读取脚本 JSON 的真实状态：例如缺 LibreOffice 时 `recalculated=false` 可能仍退出 0，不能当成重算成功。
 
-### Anthropic 四项：仅列官方来源，授权确认后再采用
+### Anthropic 四项：按需候选
 
-[官方安装说明](https://github.com/anthropics/skills#try-in-claude-code-claudeai-and-the-api) 支持在 Claude Code 中安装 `document-skills@anthropic-agent-skills`；这不是 Homer／Codex 安装命令，也不证明独立宿主使用已获授权。[四项目录的 source-available 许可](https://github.com/anthropics/skills/blob/main/skills/docx/LICENSE.txt) 对复制、保留和分发另有限制。用户自行下载、保持原样或同意安装，均不自动取得权利人授权；在明确覆盖 Homer 的授权前不代下载、安装或打包源码。
+2026-11-17 核对：四项目录已于 2026-11-06 改为 Apache-2.0，见[官方许可变更](https://github.com/anthropics/skills/commit/2c5958ecac7cee2b583967a2c4981d0f4a75c579)。使用、修改和分发遵守各目录 `LICENSE.txt`：附许可、保留相关声明、修改文件注明变更，第三方依赖另核许可。不再要求 Claude 专属宿主授权；Claude Code 的插件命令仍不是 Homer 安装命令。
 
-授权覆盖后，按实际协议和固定版本读取完整安装说明，保留 `scripts`、参考文件等配套内容。依赖按当前任务检测，不能把上游“preinstalled”当作 Homer 已安装：
+按[共同执行方法](execution.md#skill)，只安装当前任务需要的一项，保留其完整目录。以下为本轮已核对版本；升级须复核，不能把 `main` 当锁定版本。已有同名 Skill（如 Hermes）先检查来源及用户修改，不覆盖或重复安装：
 
-| Skill | 主要依赖／操作 | 最小验收与局限 |
+```sh
+REF=e4bb5d960d87126ff3b3a8af1a104b7db67560ba
+# 只选所需项；将 skills/docx 换成 skills/xlsx、skills/pdf 或 skills/pptx
+python3 "$SKILL_INSTALLER" --repo anthropics/skills --ref "$REF" --path skills/docx --dest "$HOMER_CODEX_HOME/skills"
+```
+
+依赖按任务检测、缺项隔离安装；不把上游“preinstalled”当作 Homer 已安装。渲染／重算使用独立 LibreOffice profile，不连接日常文档进程；外来文件视为不可信输入，不自动启用其宏或外部链接。转换包装含 Linux `LD_PRELOAD` 兼容逻辑，不据此承诺其他平台可用。
+
+**Homer Worker 合成样稿已验证（2026-11-17，macOS ARM64，范围如下）**：完整目录共 184 个文件与上述 commit 归档逐字节一致；Node 22.22.0、Python 3.11.5、LibreOffice 26.8.3.1。使用临时依赖和上游脚本，PDF 页面由 pypdfium2 栅格化后逐页查看中文。本轮不永久安装四项，不证明原生自动发现／真实模型选用、Windows/Linux、Word/Excel/PowerPoint/WPS 客户端或所有功能已验收。
+
+| Skill | 按需依赖 | 本轮通过范围与未验边界 |
 | --- | --- | --- |
-| docx | Node `docx`；读取／转换按需 Pandoc、LibreOffice、Poppler；完整 OOXML 辅助脚本 | 读回文字／表格，检查修订／批注及结构，渲染查中文字体和分页；复杂修订不保证无损 |
-| xlsx | Python `openpyxl`／`pandas`，按需 `markitdown`；LibreOffice 重算脚本 | 公式与缓存分别读回，检查 JSON 错误及手算样例；动态数组与外部链接有兼容限制，先保留原件 |
-| pptx | Node `pptxgenjs`；配套页操作／校验脚本，LibreOffice、Poppler 等渲染依赖 | 核模板对象、图表、页数并逐页查看；复制页可能共享部件，预览不等于 PowerPoint 排版完全一致 |
-| pdf | Python `pypdf`／`pdfplumber`／`reportlab`，按需 Poppler、OCR 和表单脚本 | 真实页数、文本、表单值和页面渲染；参考文件实际为小写 `forms.md`／`reference.md`，核文件后读取 |
+| docx | Node `docx`；上游脚本的 `defusedxml`／`lxml`，读取可用 Pandoc；渲染需 LibreOffice 和 PDF 渲染器 | 两页中文文字／表格生成、OOXML 修订与批注锚点编辑、上游结构及指定作者修订校验、PDF 读回和逐页查看通过。复杂原件无损、目录更新和原生客户端批注交互未验 |
+| xlsx | `openpyxl`／`pandas`，速览按需 `markitdown`；LibreOffice 重算 | 中文表格生成／修改、3 个公式保留，两次重算均 `success`、零错误、无 `not_computed`；读回合计 66→78，渲染查看通过。必须读 JSON，`errors_found` 也可能退出 0；宏、外部链接及现代动态数组未验，不承诺 Excel 全函数兼容 |
+| pptx | Node `pptxgenjs`；读取脚本还需 `python-pptx`，校验／渲染按需 `defusedxml`／`lxml`／Pillow、LibreOffice 和 PDF 渲染器 | 三页中文稿生成、上游复制页及副本标题编辑后四页、原生图表数据读回、结构校验和逐页渲染通过。复制页共享图表等部件；复杂公司模板、动画、SmartArt 及原生客户端编辑未验 |
+| pdf | `pypdf`／`pdfplumber`／`reportlab`；PDF 渲染器，OCR 另备依赖 | 两页中文 PDF 生成、文本／表格提取、拆分／重排／合并、逐页渲染通过。OCR、加解密和表单填写未验；表单须读实际大写 `FORMS.md`，高级操作读 `REFERENCE.md`；不承诺任意正文无损重排 |
+
+本轮固定依赖及原始证据在项目 `outputs/anthropic-office-20261117/`；这里只记录候选与限定验证范围，不作为用户机器的安装状态。正式成果仍需按任务检查实际内容、中文字体、分页、图表及目标客户端兼容性。
 
 ## Python 本地制作
 
