@@ -218,6 +218,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
         return app.receptionTimings?app.receptionTimings.measure('state_history',build):build();
       },
     },
+    openPreview:input=>app.openBrowserPreview(input),
     schedules:async input=>app.readSchedules(input),
     onStateChange: listener=>app.onStateChange(listener),
     taskOverview:{

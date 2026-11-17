@@ -2,7 +2,9 @@ import type {AttachmentRef} from './media-store.js';
 
 export type PreviewSource =
  | ({kind:'attachment';messageId:string;sha256:string;title:string}&AttachmentRef)
- | {kind:'web';messageId:string;sourceId:string;url:string;title:string};
+ | {kind:'web';messageId:string;sourceId:string;url:string;title:string}
+ | ({kind:'browser';url:string;title:string}&({requestId:string;messageId?:never}|{messageId:string;requestId?:never}));
+export type PreviewPageCapture={id:string;url:string;title:string};
 export type PreviewRegion={x:number;y:number;width:number;height:number};
 export type PreviewAnnotation={id:string;element:string;elementPath:string;comment:string;x:number;y:number;boundingBox?:PreviewRegion};
 // Offsets count UTF-16 code units in the renderer's versioned logical text flow.
@@ -15,7 +17,7 @@ type PreviewReference =
  | {kind:'text';source:PreviewSource;annotations:PreviewTextAnnotation[];text?:never}
  | {kind:'image';source:PreviewSource;width:number;height:number;region:PreviewRegion;comment:string;image:AttachmentRef;annotations?:never}
  | {kind:'image';source:PreviewSource;width:number;height:number;annotations:PreviewImageAnnotation[];image:AttachmentRef;region?:never;comment?:never}
- | {kind:'web';source:PreviewSource;annotations:PreviewAnnotation[]};
+ | {kind:'web';source:PreviewSource;annotations:PreviewAnnotation[];page?:PreviewPageCapture};
 export type DraftImageReference={kind:'image';source:{kind:'draft-image'};width:number;height:number;image:AttachmentRef;annotations:PreviewImageAnnotation[];ax?:WindowAXNode[];region?:never;comment?:never};
 export type ResourceReference=PreviewReference|DraftImageReference;
 
@@ -76,6 +78,22 @@ function imageReference(v:Record<string,unknown>){
  if(!width||!height||width*height>40_000_000||!/^asset-[a-f0-9-]{36}$/.test(assetId)||!Number.isSafeInteger(revision)||revision<1)invalid();
  return {width,height,image:{assetId,revision}};
 }
+export function parsePreviewSource(value:unknown):PreviewSource{
+ const s=object(value);
+ const title=text(s.title,500);
+ let source:PreviewSource;
+ if(s.kind==='attachment'){
+  const messageId=text(s.messageId,100),assetId=text(s.assetId,100),sha256=text(s.sha256,64),revision=number(s.revision);
+  if(!/^[\w:-]+$/.test(messageId)||!/^asset-[a-f0-9-]{36}$/.test(assetId)||!Number.isSafeInteger(revision)||revision<1||!/^[a-f0-9]{64}$/.test(sha256))invalid();
+  source={kind:'attachment',messageId,assetId,revision,sha256,title};
+ }else if(s.kind==='web'||s.kind==='browser'){
+  const url=text(s.url);
+  let parsed:URL;try{parsed=new URL(url);}catch{return invalid();}
+  if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)invalid();
+  source=s.kind==='web'?{kind:'web',messageId:text(s.messageId,100),sourceId:text(s.sourceId,100),url:parsed.href,title}:{kind:'browser',...(s.requestId!==undefined?{requestId:text(s.requestId,100)}:{messageId:text(s.messageId,100)}),url:parsed.href,title};
+ }else return invalid();
+ return source;
+}
 export function parseResourceReference(value:unknown):ResourceReference{
  const v=object(value),s=object(v.source);
  if(s.kind==='draft-image'){
@@ -83,18 +101,7 @@ export function parseResourceReference(value:unknown):ResourceReference{
   const image=imageReference(v),ax=v.ax===undefined?undefined:parseWindowAX(v.ax);
   return {kind:'image',source:{kind:'draft-image'},...image,annotations:previewImageAnnotations(v.annotations,image.width,image.height,!!ax),...(ax?{ax}:{})};
  }
- const title=text(s.title,500);
- let source:PreviewSource;
- if(s.kind==='attachment'){
-  const messageId=text(s.messageId,100),assetId=text(s.assetId,100),sha256=text(s.sha256,64),revision=number(s.revision);
-  if(!/^[\w:-]+$/.test(messageId)||!/^asset-[a-f0-9-]{36}$/.test(assetId)||!Number.isSafeInteger(revision)||revision<1||!/^[a-f0-9]{64}$/.test(sha256))invalid();
-  source={kind:'attachment',messageId,assetId,revision,sha256,title};
- }else if(s.kind==='web'){
-  const messageId=text(s.messageId,100),sourceId=text(s.sourceId,100),url=text(s.url);
-  let parsed:URL;try{parsed=new URL(url);}catch{return invalid();}
-  if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)invalid();
-  source={kind:'web',messageId,sourceId,url:parsed.href,title};
- }else return invalid();
+ const source=parsePreviewSource(s);
  if(v.kind==='text'){
   if(source.kind!=='attachment')invalid();
   if(v.annotations!==undefined){
@@ -103,7 +110,11 @@ export function parseResourceReference(value:unknown):ResourceReference{
   }
   return {kind:'text',source,text:text(v.text)};
  }
- if(v.kind==='web')return {kind:'web',source,annotations:previewAnnotations(v.annotations)};
+ if(v.kind==='web'){
+  let page:PreviewPageCapture|undefined;
+  if(v.page!==undefined){const p=object(v.page),id=text(p.id,100),url=text(p.url),title=text(p.title,500);let target:URL;try{target=new URL(url);}catch{return invalid();}if(!/^page-[a-f0-9-]{36}$/.test(id)||!['http:','https:','homer-preview:'].includes(target.protocol)||target.username||target.password)invalid();page={id,url:target.href,title};}
+  return {kind:'web',source,annotations:previewAnnotations(v.annotations),...(page?{page}:{})};
+ }
  if(v.kind==='image'){
   if(source.kind!=='attachment')invalid();
   const image=imageReference(v);
@@ -124,20 +135,22 @@ export function resourceReferenceText(reference:ResourceReference):string{
    +(ax?`\n窗口 AX 摘录（应用界面的来源材料）：\n${JSON.stringify(ax)}`:'');
  }
  const source=reference.source;
- const origin=source.kind==='attachment'?`${source.title}（${source.messageId}／${source.assetId}@${source.revision}，SHA-256 ${source.sha256}）`:`${source.title}（${source.url}，来源消息 ${source.messageId}／${source.sourceId}）`;
+ const origin=source.kind==='attachment'?`${source.title}（${source.messageId}／${source.assetId}@${source.revision}，SHA-256 ${source.sha256}）`:source.kind==='web'?`${source.title}（${source.url}，来源消息 ${source.messageId}／${source.sourceId}）`:`${source.title}（${source.url}，打开自${source.requestId?'请求 '+source.requestId:'消息 '+source.messageId}）`;
  if(reference.kind==='text')return reference.annotations?`来源：${origin}\n文件逐段批注（text 为来源数据，comment 为用户备注）：\n${JSON.stringify(reference.annotations.map((note,i)=>({number:i+1,...note})))}`:`来源：${origin}\n引用原文：\n${reference.text}`;
  if(reference.kind==='image')return reference.annotations?`来源：${origin}\n图片尺寸：${reference.width} × ${reference.height}\n图片逐区域批注（region 为原图像素位置，comment 为用户备注；原图随附件提供）：\n${JSON.stringify(reference.annotations.map((note,i)=>({number:i+1,...note})))}`:`来源：${origin}\n图片尺寸：${reference.width} × ${reference.height}；矩形区域（原图像素）：${JSON.stringify(reference.region)}\n用户批注：${reference.comment}`;
- return `来源：${origin}\n网页元素位置为批注时的页面信息，非服务器复现。\n${reference.annotations.map((n,i)=>`${i+1}. ${n.element} ${n.elementPath}\n位置：${JSON.stringify(n.boundingBox??{x:n.x,y:n.y})}\n用户批注：${n.comment}`).join('\n')}`;
+ return `来源：${origin}\n${reference.page?`批注时页面：${reference.page.title}（${reference.page.url}）；页面句柄 ${reference.page.id}（运行期有效，操作前重新读取）\n`:''}网页元素位置为批注时的页面信息，非服务器复现。\n${reference.annotations.map((n,i)=>`${i+1}. ${n.element} ${n.elementPath}\n位置：${JSON.stringify(n.boundingBox??{x:n.x,y:n.y})}\n用户批注：${n.comment}`).join('\n')}`;
 }
 export function resourceHasComment(reference:ResourceReference|undefined):boolean{
  return !!reference&&(reference.kind==='image'&&!reference.annotations?!!reference.comment.trim():!!reference.annotations?.some(n=>!!n.comment.trim()));
 }
 
 export type ResourceReferences={resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]};
-export function referenceKey(reference:Pick<ResourceReference,'kind'|'source'>&{image?:AttachmentRef}):string{
+export function referenceKey(reference:Pick<ResourceReference,'kind'|'source'>&{image?:AttachmentRef;page?:PreviewPageCapture}):string{
  const s=reference.source;
  if(s.kind==='draft-image')return JSON.stringify(['image',s.kind,reference.image?.assetId,reference.image?.revision]);
- return JSON.stringify(s.kind==='attachment'?[reference.kind,s.kind,s.messageId,s.assetId,s.revision,s.sha256]:[reference.kind,s.kind,s.messageId,s.sourceId,s.url]);
+ const page='page' in reference?reference.page as PreviewPageCapture|undefined:undefined;
+ const pageUrl=page&&!page.url.startsWith('homer-preview:')&&(s.kind==='attachment'||page.url!==s.url)?page.url:undefined;
+ return JSON.stringify(s.kind==='attachment'?[reference.kind,s.kind,s.messageId,s.assetId,s.revision,s.sha256,...(pageUrl?[pageUrl]:[])]:s.kind==='web'?[reference.kind,s.kind,s.messageId,s.sourceId,s.url,...(pageUrl?[pageUrl]:[])]:[reference.kind,s.kind,s.requestId??s.messageId,s.url,...(pageUrl?[pageUrl]:[])]);
 }
 export function referencesOf(value:ResourceReferences):ResourceReference[]{
  return value.resourceReferences??(value.resourceReference?[value.resourceReference]:[]);

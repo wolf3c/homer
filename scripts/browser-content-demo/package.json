@@ -1,0 +1,6 @@
+{
+  "name": "homer-browser-content-demo",
+  "private": true,
+  "type": "module",
+  "dependencies": { "react-grab": "0.2.0" }
+}

@@ -8,6 +8,7 @@ export function createWebChat(bridge:WebBridge){
  const boundedRead=async<T,>(read:()=>Promise<T>)=>{if(reading>=4)throw Error('history_read_busy');reading++;try{return await read();}finally{reading--;}};
  const id=(value:unknown)=>typeof value==='string'&&/^[\w:-]{1,100}$/.test(value);
  return async(op:string,input:any={}):Promise<unknown>=>{
+  if(op==='preview.open'){if(!bridge.openPreview)throw Error('preview_unavailable');return bridge.openPreview(input);}
   if(['messages.submit','messages.edit','messages.interrupt'].includes(op)&&Buffer.byteLength(JSON.stringify(input))>96*1024)throw Error('request_too_large');
   if(op==='schedules.read'){if(!bridge.schedules)throw Error('schedule_unavailable');return boundedRead(()=>bridge.schedules!(input));}
   if(op==='history.state'){if(!bridge.history)throw Error('history_protocol_required');return boundedRead(()=>bridge.history!.state());}

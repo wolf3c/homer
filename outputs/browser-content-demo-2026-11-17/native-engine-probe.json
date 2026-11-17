@@ -1,0 +1,63 @@
+{
+  "kind": "ready",
+  "commands": {
+    "Browser.getVersion": {
+      "result": {
+        "jsVersion": "15.6.75.19",
+        "product": "Chrome/156.0.8078.48",
+        "protocolVersion": "1.3",
+        "revision": "@f713973925105d699de465fdcd14324183f29cdc",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.8078.48 Electron/45.0.0 Safari/537.36"
+      }
+    },
+    "Target.getTargets": {
+      "result": {
+        "targetInfos": [
+          {
+            "attached": false,
+            "browserContextId": "593A583D6934F38309B554F8D172ADDE",
+            "canAccessOpener": false,
+            "targetId": "58C59D5B8F22A6668A54D05D50C13235",
+            "title": "content-b",
+            "type": "page",
+            "url": "data:text/html,<title>content-b</title><input aria-label=\"task\">"
+          },
+          {
+            "attached": false,
+            "browserContextId": "593A583D6934F38309B554F8D172ADDE",
+            "canAccessOpener": false,
+            "targetId": "30E49BAD86D974906A5501CDBC690C43",
+            "title": "management-sentinel",
+            "type": "page",
+            "url": "data:text/html,<title>management-sentinel</title><p>management-only</p>"
+          },
+          {
+            "attached": true,
+            "browserContextId": "593A583D6934F38309B554F8D172ADDE",
+            "canAccessOpener": false,
+            "targetId": "A0438B2BD9819F1C2BF6B1761174AC73",
+            "title": "content-a",
+            "type": "page",
+            "url": "data:text/html,<title>content-a</title><input aria-label=\"task\">"
+          }
+        ]
+      }
+    },
+    "Target.attachToBrowserTarget": {
+      "error": "Not allowed"
+    }
+  },
+  "nativeValues": [
+    {
+      "prepared": "needsinput",
+      "value": "native-task-0",
+      "snapshot": "- textbox \"task\": native-task-0"
+    },
+    {
+      "prepared": "needsinput",
+      "value": "native-task-1",
+      "snapshot": "- textbox \"task\": native-task-1"
+    }
+  ],
+  "conclusion": "Reused Playwright injected selector/fill/ARIA engine over private webContents debugger, no public CDP port."
+}

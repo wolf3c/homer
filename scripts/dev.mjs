@@ -25,6 +25,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
   let journal, unlockGateway, uiCurrent, observedHash, rejectedUiHash;
   const uiBuilds = new Map(), ingressSending = new Set(), ingressWaiters = new Map(), ownedBuilds = new Set();
   const webRequests = new Map();
+  desktop?.bindBrowserReply?.(value=>{if(child?.connected&&!stopped)send(value);});
   const queue = [], inFlight = new Set();
   let doneResolve;
   const done = new Promise(r => { doneResolve = r; });
@@ -261,6 +262,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
         const request = webRequests.get(m.id);
         if (request) { clearTimeout(request.timeout); webRequests.delete(m.id); m.error ? request.reject(new Error(m.error)) : request.accept(m.value);prepareWhenDrained(); }
       }
+      else if (m.kind === 'browser_request') { desktop?.onEvent?.(m); }
       else if (m.kind === "settled") { inFlight.delete(m.id); flush(); }
       else if (m.kind === "fatal") { if(desktop&&initial)desktopStartupError=m.code;await notice(`开发服务启动／运行失败：${m.code}；未自动重放请求。`); }
       else if (m.kind === "ready") {

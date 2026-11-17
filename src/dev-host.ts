@@ -24,6 +24,7 @@ let starting: Promise<void> | undefined;
 let constructorRefused = false;
 let powerRuntimeAvailable=false,powerSequence=0,lastPowerState='',lastPowerActivity='';
 let powerTimer:ReturnType<typeof setInterval>|undefined;
+const browserRequests=new Map<string,{resolve:(value:unknown)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
 const powerAcks=new Map<number,()=>void>();
 function powerActivity(execution?:{executing:boolean;displayRequired:boolean}):Omit<PowerFacts,'nextScheduledAt'>{
  return {runtimeAvailable:powerRuntimeAvailable,...(execution??app!.desktopPowerFacts()),channels:app!.channels?.wakePollingChannels()??[]};
@@ -121,6 +122,7 @@ async function output(message: Message) {
 async function stop() {
   if (stopping) return;
   stopping = true;
+  for(const call of browserRequests.values()){clearTimeout(call.timer);call.reject(Error('preview_result_unconfirmed'));}browserRequests.clear();
   clearInterval(powerTimer);powerTimer=undefined;
   for(const finish of powerAcks.values())finish();
   if(stateInvalidationRetry)clearTimeout(stateInvalidationRetry);
@@ -174,6 +176,12 @@ async function receive(raw: unknown) {
     } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;await app?.close();throw error; }
     app.onStateChange(reason=>{invalidateState();publishPower();if(desktop&&(reason==='model-turn'||reason==='user-input'))void send({kind:reason==='model-turn'?'account_usage_dirty':'account_config_check'}).catch(()=>{});});
     if(desktop){
+      app.bindBrowserPreview((owner,action,input)=>new Promise((resolve,reject)=>{
+        if(stopping||!process.connected){reject(Error('preview_unavailable'));return;}
+        if(Buffer.byteLength(JSON.stringify({owner,action,input}))>60000){reject(Error('preview_request_too_large'));return;}
+        const id=randomUUID(),timer=setTimeout(()=>{browserRequests.delete(id);reject(Error('preview_result_unconfirmed'));},20000);
+        browserRequests.set(id,{resolve,reject,timer});void send({kind:'browser_request',id,owner,action,input}).catch(()=>{clearTimeout(timer);browserRequests.delete(id);reject(Error('preview_result_unconfirmed'));});
+      }));
       powerRuntimeAvailable=true;app.bindDesktopPowerProtection(protectPower);app.onScheduleChanged(()=>publishPower(true));publishPower(true);
       powerTimer=setInterval(()=>publishPower(true),5000);powerTimer.unref();
     }
@@ -196,6 +204,9 @@ async function receive(raw: unknown) {
     frozen = false;
     await send({ kind: "ready", thread: app.store.meta("mainThread"), restoring, stateInvalidationProtocol:1,webHistoryProtocol:3, model: m.config.model,
       effort: effectiveEffort(m.config.effort), engine: codexVersion(m.config.codexBin) });
+  } else if(m.kind==='browser_result'){
+    const value=raw as {id:string;value:unknown;error?:string},call=browserRequests.get(value.id);
+    if(call){clearTimeout(call.timer);browserRequests.delete(value.id);value.error?call.reject(Error(value.error)):call.resolve(value.value);}
   } else if(m.kind==='desktop_power_ack'){
     const id=(raw as {id:unknown}).id;
     if(desktop&&typeof id==='number'&&Number.isSafeInteger(id))powerAcks.get(id)?.();

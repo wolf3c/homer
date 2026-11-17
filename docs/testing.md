@@ -1234,3 +1234,32 @@ node_modules/.bin/tsc --noEmit -p ui/tsconfig.json
 1440／390／320px 正式组件合成验证通过：单行标题／标签及重要操作、长标题可见性、图片／纯文／Markdown／HTML回退／音视频／未知格式顶栏，200ms边框、引导淡出／拖选即隐藏、备注保存、退出、Esc回焦、定时器清理与减少动画，以及两种截图弹窗的既有完成／取消规则。此处不验证媒体解码、真实浏览器接管或真实截图权限；图片缩放与网页地址等专用工具功能仍保留。截图和结果见 [本轮证据](../outputs/task-42f3ced3-annotation-entry/implementation/README.md)。
 
 2026-11-17复审：基于 `dfee7228` 的独立候选在项目Node 22.22.0通过70/70定向离线（含完整main-composer、共享表单、草稿）、UI类型、构建及三宽度正式组件专项。并行浏览器事项补齐 `BrowserPreviewContext` 夹具绑定后，共享完整Composer／批注表单／草稿70/70回归通过；共享UI类型、构建及1440／390／320px正式组件专项通过。此前失败记录保留为历史诊断，最终结果见 `implementation/review/integrated-offline-final.log` 与 `integrated-final-browser/verification.json`。本事项精确提交不包含浏览器专属夹具或生产代码。安装版／真实采集／原生触摸未验收。
+
+
+## 内置浏览器正式源码（2026-11-17）
+
+`preview-electron` 已登记为显式专项，不进入默认 npm test。使用项目 Node 22、已安装 Electron/Playwright 与项目依赖，真实 UI/service/MCP/原生页面，EngineLike 为合成替身；不使用日常 profile、账号或模型。先构建，再从仓库根运行：
+
+```sh
+node scripts/build-preview-annotation.mjs
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.check.json
+node node_modules/typescript/bin/tsc --noEmit -p ui/tsconfig.json
+cd ui
+node ../node_modules/vite/bin/vite.js build --configLoader runner --outDir /private/tmp/homer-browser-product-ui --emptyOutDir
+cd ..
+HOMER_PREVIEW_UI=/private/tmp/homer-browser-product-ui HOMER_PREVIEW_RUNTIME="$PWD/dist/browser-preview" HOMER_PREVIEW_EVIDENCE="$PWD/outputs/browser-product-2026-11-17" node scripts/test.mjs --preview-electron
+```
+
+`HOMER_PREVIEW_UI/RUNTIME/EVIDENCE` 均必须显式提供，目录可换为本轮独立路径。macOS 专项以原生窗口 ID 调用 screencapture 保存真正的完整窗口；内容 renderer 截图不能替代这一证据。
+
+本次专项退出 0、8 组闭环检查通过，页面错误为空：消息链接、React Grab 多标记编辑删除/chip 定位、Composer 来源发送、双 Worker MCP 后台页、ARIA refs/select、接手/继续、导航关闭、新请求同页移交、HTML CSS/JS 与批注。见[报告及截图](../outputs/browser-product-2026-11-17/product-report.json)。生产 stdio 各段另用既有 shell/runtime/host 测试合约验证：418/418；本次引入上下文后补齐 MainComposer、reader、management、Main/native observer 夹具，合并139/139；runtime命名管道等48/48，草稿/调度等105/105，媒体/引用34/34。计数有重叠，不相加为独立总数。两端类型与独立 Vite 构建通过。
+
+默认全量实跑 **2727 项，2651 通过、76 失败**，保留 本地原始 default-regression.log（不随产品提交）。其中64项是本次新增绑定的旧提取夹具缺项，已补接口/真实导入、原样重跑通过；未删断言。余下12项在固定 Node22 的隔离 HEAD `dfee72287374f3d70bf67f186143bfe3c8b50bc9` 同样失败：时间戳异步断言、链接来源、旧过程/不确定状态呈现与次序。逐项标题对照见 [baseline.json](../outputs/browser-product-2026-11-17/baseline.json)、本地 HEAD 原始日志与本地共享源码原始日志。HEAD 50项38过12失败，共享51项39过同12失败；不将默认全量追认通过。修正后未重复全量。
+
+HTML 相对资源仅原附件目录及子目录；资源越界/符号链接/非资源文本拒绝与既有 Markdown ../ 图片规则均有离线回归。真实 LLM、生产安装版全链路、Windows/手机、IME、真实登录及 popup 认证仍未验收；生产 IPC 分段通过不等于这些能力通过。正式运行需重新构建包含新增 Electron 模块与 dist/browser-preview 的桌面包，本轮未打包、安装、提交或部署。确定契约见[现行架构](architecture/main-worker-chat-architecture.md#内置浏览器-preview2026-11-17)。
+
+
+内置浏览器提交前复审：独立精确候选已验证重复open不解除用户接手及SPA旧文档失效，保留按需注入/合并定位更新；类型、构建及原生8组通过，实际截图见[复审记录](browser-content-research-2026-11-17.md#正式源码提交前复审2026-11-17)。安装版和实模未验。
+
+
+最新 main `08d10164` 之上重新整合候选：保留已提交 Preview 改动，617/617 关联检查、两端类型、独立构建通过；最终固定 Node22 原生专项8组通过。未重跑全量，前述12项基线失败仍保留。

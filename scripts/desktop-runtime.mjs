@@ -130,25 +130,27 @@ try{
  const {readMobileConfig}=await import(pathToFileURL(join(homer,'dist/mobile-gateway.js')).href);
  const mobileConfig=readMobileConfig(join(profile,'mobile.json'));
  const input=new PassThrough(),output=new Writable({write(_chunk,_encoding,done){done();}});
- let quitting=false,nativeAccount,updateStop,power;
+ let quitting=false,nativeAccount,updateStop,power,browserReply;
  const quit=()=>{if(quitting)return;quitting=true;input.write('/quit\n');};
  const reader=createInterface({input:process.stdin});
  reader.on('line',line=>{
-  if(line.length>4096)return;
+  if(line.length>16*1024*1024)return;
   try{const value=JSON.parse(line);
+   if(value.kind==='browser_result'){browserReply?.(value);return;}
+   if(line.length>4096)return;
    if(value.kind==='quit')quit();
    else if(value.kind==='power_ack'&&Number.isSafeInteger(value.id)&&value.id>0){void power?.('ack',{id:value.id});}
    else if(value.kind==='power_resume'&&Number.isSafeInteger(value.id)&&value.id>0&&(value.afterSleep===undefined||typeof value.afterSleep==='boolean')){
     void (async()=>{try{if(quitting||!power)throw Error('power_recheck_unconfirmed');if(value.afterSleep===undefined)await power('resume');else await power('resume',{afterSleep:value.afterSleep});await send({kind:'power_result',id:value.id});}catch{await send({kind:'power_result',id:value.id,error:'power_recheck_unconfirmed'});}})();
    }
    else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
-   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','apply-models','channel-state'].includes(value.action)){
+   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','apply-models','channel-state','channel-manage'].includes(value.action)){
     void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action,value.input)});}catch(error){await send({kind:'native_account_result',id:value.id,error:value.action==='apply-models'?chatgptModelError(error?.message):'native_account_unconfirmed'});}})();
    }
   }catch{}
  });
  reader.on('close',quit);
- const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
+ const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindBrowserReply:callback=>{browserReply=callback;},bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
  reader.close();input.destroy();process.stdin.pause();
  if(!result?.stoppedConfirmed&&!result?.noHostStarted)throw Error('desktop_stop_unconfirmed');
  // A successful host close includes all main/control/Worker/MCP owner evidence.

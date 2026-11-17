@@ -111,6 +111,7 @@ const metadata={account,arch,minimumMacOS,powerWake:1,...(windows?{platform:'win
 cpSync(join(stage,'packaging/electron/main.mjs'),join(shell,'main.mjs'));
 cpSync(join(stage,'packaging/electron/preload.cjs'),join(shell,'preload.cjs'));
 cpSync(join(stage,'packaging/electron/capture-panel-preload.cjs'),join(shell,'capture-panel-preload.cjs'));
+for(const name of ['preview-pages.mjs','preview-automation.mjs','preview-content-preload.cjs'])cpSync(join(stage,'packaging/electron',name),join(shell,name));
 writeFileSync(join(shell,'package.json'),JSON.stringify({...(windows?{dependencies:{'electron-updater':product.devDependencies['electron-updater'],'js-yaml':product.devDependencies['js-yaml']}}:{}),name:'homer-desktop',author:'Homer',version:product.version,private:true,type:'module',main:'main.mjs',devDependencies:{electron}})+'\n');
 const {createDesktopIcon}=await import(pathToFileURL(join(stage,'scripts/desktop-icon.mjs')).href);
 const icon=windows?undefined:createDesktopIcon({source:join(stage,'assets/branding/odysseus-20261030/homer-odysseus-1024.png'),directory:join(scratch,'icons'),run});

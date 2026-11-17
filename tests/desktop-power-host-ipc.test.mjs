@@ -12,9 +12,10 @@ async function fixture(schedules={start(){}}){
  const sent=[],calls=[],intervals=new Map();let instance,protect,scheduledReads=0;
  const proc=new EventEmitter();Object.assign(proc,{connected:true,env:{},send(value,done){sent.push(value);done?.();},disconnect(){this.connected=false;}});
  class App{
-  constructor(config){this.config=config;this.modelConfig=config;this.schedules=schedules;instance=this;this.store={meta:()=>undefined};this.channels={wakePollingChannels:()=>['telegram'],resumeAfterSleep:async force=>{calls.push(force===false?'channels-passive':'channels');}};}
+  constructor(config){this.config=config;this.modelConfig=config;this.schedules=schedules;instance=this;this.store={meta:()=>undefined};this.channels={close:async()=>{},wakePollingChannels:()=>['telegram'],resumeAfterSleep:async force=>{calls.push(force===false?'channels-passive':'channels');}};}
   onStateChange(callback){this.changed=callback;return ()=>{};}onScheduleChanged(callback){this.scheduleChanged=callback;return ()=>{};}
   bindDesktopPowerProtection(callback){protect=callback;return ()=>{};}
+  bindBrowserPreview(callback){this.browser=callback;return()=>{};}
   desktopPowerFacts(){return {executing:false,displayRequired:false};}
   scheduledAt=1_800_000_000_000;
   nextScheduledMessageAt(){scheduledReads++;return this.scheduledAt;}recheckScheduledMessages(){calls.push('schedule');}
@@ -24,9 +25,10 @@ async function fixture(schedules={start(){}}){
   'node:crypto':{randomUUID:()=> 'synthetic-id'},
   './service.js':{Homer:App,DesktopReviewRequired:class extends Error{}},'./model-config.js':{effectiveEffort:value=>value},'./engine.js':{engineError:()=> 'synthetic_failure',codexVersion:()=> 'synthetic'},
   './web-homer.js':{homerWebBridge:()=>({})},'./desktop-management.js':{desktopManagementAllowed:()=>false},'./media-decode.js':{configureDesktopImageDecoder:()=>{}},'../scripts/desktop-profile.mjs':{saveDesktopModelSource:()=>{}},
+  './desktop-channels.js':{DesktopChannels:class{async close(){}}},
   ...Object.fromEntries(['telegram','wechat','dingtalk'].map(id=>['./'+id+'-channel.js',{[id+'Channel']:()=>undefined}])),
  };
- const context=vm.createContext({process:proc,console,queueMicrotask,setTimeout,clearTimeout,
+ const context=vm.createContext({process:proc,Buffer,console,queueMicrotask,setTimeout,clearTimeout,
   setInterval(callback,delay){const timer={unref(){}};intervals.set(timer,{callback,delay});return timer;},clearInterval:timer=>intervals.delete(timer)});
  const source=transpileModule(readFileSync('src/dev-host.ts','utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
  const entry=new vm.SourceTextModule(source,{context});
@@ -43,6 +45,15 @@ if(!vm.SourceTextModule){
   assert.match(output,/# tests [1-9]\d*/);
  });
 }else{
+ test('browser host IPC preserves owner, large content and errors without replaying a request',async()=>{
+  const f=await fixture();try{
+   const owner={threadId:'thread-a',owner:'worker:a:1'},waiting=f.instance.browser(owner,'read',{pageId:'page-a'});await tick();
+   const request=f.sent.find(x=>x.kind==='browser_request');assert.ok(request);assert.deepEqual(JSON.parse(JSON.stringify(request.owner)),owner);
+   const content='x'.repeat(5000);f.proc.emit('message',{kind:'browser_result',id:request.id,value:{content}});assert.equal((await waiting).content,content);
+   const failed=f.instance.browser(owner,'act',{pageId:'page-a'});await tick();f.proc.emit('message',{kind:'browser_result',id:request.id,error:'preview_user_control'});await assert.rejects(failed,/preview_user_control/);
+   const count=f.sent.filter(x=>x.kind==='browser_request').length;await assert.rejects(f.instance.browser(owner,'read',{large:'x'.repeat(60001)}),/preview_request_too_large/);assert.equal(f.sent.filter(x=>x.kind==='browser_request').length,count);
+  }finally{await f.cleanup();}
+ });
  test('host wake recovery commits a due message and finishes channel recovery before replying',async t=>{
   let now=Date.now();t.mock.method(Date,'now',()=>now);
   const {fixture:hostFixture}=await import('./fixtures/worker-chat-host.js');const host=hostFixture();let f,release;

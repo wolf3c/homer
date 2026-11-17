@@ -3,6 +3,7 @@ export const WEB_PROTOCOL = 2;
 export const CONVERSATION_VIEW = 4;
 // One mapping for the existing chat callers and the two transports.
 export const WEB_CHAT_POST:Readonly<Record<string,{op:string;status:number}>>={
+  '/api/preview/open':{op:'preview.open',status:200},
   '/api/schedules/read':{op:'schedules.read',status:200},
   '/api/history/page':{op:'history.page',status:200},'/api/history/process':{op:'history.process',status:200},
   '/api/history/resolve':{op:'history.resolve',status:200},'/api/history/receipts':{op:'history.receipts',status:200},
@@ -64,6 +65,7 @@ export type WebState = {
   upgrade: { reviewRequired?: boolean; phase: string; version?: string; uiVersion?: string; accepting?: boolean; code?: string };
 };
 export type WebBridge = {
+  openPreview?(input:unknown):Promise<unknown>;
   schedules?(input:import('./schedule-display.js').ScheduleReadRequest):Promise<import('./schedule-display.js').ScheduleReadResult>;
   history?:{
     state():Promise<WebState>;

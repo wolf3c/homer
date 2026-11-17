@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 // Explicit ownership keeps optional environments out of the default core regression.
 const candidates=readdirSync('tests').filter(file=>/\.test\.(ts|mjs)$/.test(file)).sort();
 const suites={
+ 'preview-electron':['browser-preview.electron.test.mjs'],
  'power-macos':['macos-power-native.test.mjs'],
  'power-windows':['windows-power.windows.test.mjs'],
  'power-browser':['desktop-power-ui.browser.mjs'],

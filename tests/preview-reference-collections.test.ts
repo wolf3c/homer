@@ -186,7 +186,7 @@ test('mixed intake rejects any forged source atomically while keeping independen
  const html:ResourceReference={kind:'web',source:{...source('html'),title:'Page.html'},annotations:[{id:'h',element:'h1',elementPath:'h1',comment:'HTML note',x:1,y:1}]};
  const image:ResourceReference={kind:'image',source:source('image'),image:asset,width:20,height:10,annotations:[{id:'i',region:{x:1,y:1,width:2,height:2},comment:'Image note'}]};
  let published=true,imageHash='a'.repeat(64),dimensions={width:20,height:10},fileReads=0;
- const owner={history:f.history,readAttachment:({messageId:id}:{messageId:string})=>{
+ const owner={validateBrowserSource:(Homer.prototype as any).validateBrowserSource,history:f.history,readAttachment:({messageId:id}:{messageId:string})=>{
   fileReads++;if(!published)throw Error('media_scope_denied');
   return {sha256:'a'.repeat(64),filename:id==='html'?'Page.html':'同名.txt',mime:id==='html'?'text/html':'text/plain',data:Buffer.from('Trusted excerpt').toString('base64')};
  },media:{asset:()=>({kind:'image',hash:imageHash,bindingId:'web:'+thread}),imageSize:()=>dimensions}};

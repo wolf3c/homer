@@ -1,0 +1,66 @@
+{
+  "head": "dfee72287374f3d70bf67f186143bfe3c8b50bc9",
+  "node": "22.22.0",
+  "method": "Isolated git archive HEAD; symlink only shared dependencies; same nine test files. Current also tests corrected tool-service-observer fixture.",
+  "headResult": {
+    "tests": 50,
+    "pass": 38,
+    "fail": 12
+  },
+  "sharedResult": {
+    "tests": 51,
+    "pass": 39,
+    "fail": 12
+  },
+  "sameFailingTests": [
+    {
+      "test": "tests/chat-timestamps.test.ts",
+      "file": "chat-timestamps.test.ts"
+    },
+    {
+      "test": "links are actual markdown links, deduplicated and never extracted from code or unsafe URLs",
+      "file": "chat-ui-enrichment.test.ts"
+    },
+    {
+      "test": "unknown process exposes returned safe status only on expansion without claiming Task completion",
+      "file": "interruption-recovery-projection.test.ts"
+    },
+    {
+      "test": "exact process ownership wins over source proximity and foreign history identity denies interaction links",
+      "file": "interruption-recovery-projection.test.ts"
+    },
+    {
+      "test": "unknown node stays inactive and its unfinished call reports historical uncertainty only when expanded",
+      "file": "message-history-recovery-ui.test.mjs"
+    },
+    {
+      "test": "adapter keeps interleaved source order and final classification without summary-created parts",
+      "file": "message-source-consistency.test.ts"
+    },
+    {
+      "test": "Sources has one official link per safe source and no duplicate preview action",
+      "file": "restore-official-components.test.mjs"
+    },
+    {
+      "test": "run status is announced without repeating the active duration or public progress",
+      "file": "run-activity-accessibility.test.mjs"
+    },
+    {
+      "test": "the original disclosure explains a silent Worker turn, displays its live stage, and keeps the source when complete",
+      "file": "run-activity-complete-ui.test.mjs"
+    },
+    {
+      "test": "tool facts use plain paragraphs with one result, retaining each call and non-success states",
+      "file": "run-activity-complete-ui.test.mjs"
+    },
+    {
+      "test": "execution record defaults collapsed, loads only on open, and preserves explicit collapse across revisions",
+      "file": "task-execution-record-ui.test.mjs"
+    },
+    {
+      "test": "a retained failed call reads safe body only when explicitly expanded",
+      "file": "task-execution-record-ui.test.mjs"
+    }
+  ],
+  "scope": "No product assertions removed. Browser-introduced missing fixture bindings separately fixed and passed; default full run was not repeated."
+}

@@ -7,6 +7,8 @@ import {execFileSync,execFile,spawn} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {randomUUID,createHash} from 'node:crypto';
 import {types} from 'node:util';
+import{registerPreviewScheme,createBrowserPreview}from'./preview-pages.mjs';
+registerPreviewScheme();
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
 import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopChatGPTConfig,readDesktopCaptureShortcut,saveDesktopCaptureShortcut,readDesktopPowerConfig,saveDesktopPowerConfig} from '../homer/scripts/desktop-profile.mjs';
 import {DesktopPowerCoordinator,POWER_DEFAULTS,validatePowerPreferences} from '../homer/dist/desktop-power.js';
@@ -23,7 +25,8 @@ import {parseWindowAX,previewImageAnnotations} from '../homer/dist/preview-refer
 import {validateHomerOrigins,readHomerConnection,authorizeHomerConnection,disconnectHomerConnection,queryHomerWallet,queryHomerRuntimeConfig,saveHomerRuntimeConfig} from '../homer/dist/homer-account.js';
 
 const resources=process.resourcesPath,bundle=process.platform==='win32'?resolve(resources,'..'):resolve(resources,'../..');
-let window,child,origin,acknowledged=false,startupRefused=false,closed=false,exitCode,exitSignal,quitPending=false,quitSent=false,allowQuit=false,stopTimer,permissionNavigation=0;
+let window,child,origin,acknowledged=false,startupRefused=false,closed=false,exitCode,exitSignal,quitPending=false,quitSent=false,allowQuit=false,stopTimer,permissionNavigation=0,browserPreview;
+app.on('will-quit',()=>browserPreview?.close());
 let deepseek=false;
 let desktopAccessToken;
 let power,powerWakeAdapter,powerProfile,powerConfiguration,powerPreferenceError,powerAuthorizationOffering=false,powerClosing,powerExitReady=false,powerExitChecking=false,powerUpdateReady=false,powerUpdatePending;
@@ -943,6 +946,10 @@ function createWindow(){
  });
  window.on('close',event=>{if(!allowQuit){event.preventDefault();if(process.platform==='win32'){if(windowsRecovery())void recoverWindowsExit();else app.quit();}else window.hide();}});
  const contents=window.webContents;
+ if(!browserPreview)browserPreview=createBrowserPreview({window:()=>window,runtimeDirectory:join(resources,'homer/dist/browser-preview'),preload:join(fileURLToPath(new URL('.',import.meta.url)),'preview-content-preload.cjs'),ipcMain,uiCaller:event=>permissionCaller(event,event.senderFrame),fetchAttachment:(source,resource)=>{
+  const path='/api/media/'+[source.messageId,source.assetId,source.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):'');
+  return fetch(origin+path,{headers:{'X-Homer-Desktop-Access':desktopAccessToken,Origin:origin}});
+ }});
  // Main-process-only credential: never available to page JS, previews or other origins.
  contents.session.webRequest.onBeforeSendHeaders((details,callback)=>{
   const requestHeaders={...details.requestHeaders};
@@ -1044,7 +1051,10 @@ try{
    if(Buffer.byteLength(buffer)>65536){void showError('启动通道无效。请保留数据并核对应用完整性。');buffer='';return;}
    let at;while((at=buffer.indexOf('\n'))>=0){
     const line=buffer.slice(0,at);buffer=buffer.slice(at+1);let value;try{value=JSON.parse(line);}catch{continue;}
-    if(value.kind==='native_account_result'){
+    if(value.kind==='browser_request'){
+     void (async()=>{try{if(!browserPreview||closed||quitPending)throw Error('preview_unavailable');const result=await browserPreview.execute(value.owner,value.action,value.input);runtime.stdin.write(JSON.stringify({kind:'browser_result',id:value.id,value:result})+'\n');}catch(error){runtime.stdin.write(JSON.stringify({kind:'browser_result',id:value.id,error:/^preview_[a-z_]+$/.test(error?.message??'')?error.message:'preview_result_unconfirmed'})+'\n');}})();
+    }
+    else if(value.kind==='native_account_result'){
      const pending=nativeRequests.get(value.id);if(pending){clearTimeout(pending.timer);nativeRequests.delete(value.id);value.error?pending.reject(Error(pending.action==='apply-models'?chatgptModelError(value.error):'native_account_unconfirmed')):pending.resolve(value.value);}
     }
     else if(value.kind==='power_result'){

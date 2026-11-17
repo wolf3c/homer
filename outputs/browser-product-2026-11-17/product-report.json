@@ -1,0 +1,54 @@
+{
+  "status": "passed",
+  "checks": [
+    {
+      "name": "message link opens real WCV; React Grab and existing composer produce a saved chip",
+      "detail": "Multiple markers created, edited and deleted; composer chip repositions the current marker after scroll."
+    },
+    {
+      "name": "native window screenshot includes real WebContentsView, without compositing renderers"
+    },
+    {
+      "name": "actual composer submission passes real service provenance and reaches synthetic Main prompt"
+    },
+    {
+      "name": "two actual Worker MCP endpoints control distinct hidden WCVs using pinned injected engine"
+    },
+    {
+      "name": "user takeover/resume gates real MCP writes; trusted CDP click and ARIA targets work"
+    },
+    {
+      "name": "navigation invalidates stale document; closed page cannot be read"
+    },
+    {
+      "name": "a real submitted annotation lets the new Main request claim the same DOM; former Worker loses access"
+    },
+    {
+      "name": "real HTML attachment, relative CSS/JS and annotation submission pass existing attachment/source authorization"
+    }
+  ],
+  "versions": {
+    "electron": "45.0.0",
+    "chromium": "156.0.8078.48"
+  },
+  "errors": [],
+  "boundary": "Actual source UI/service/MCP/native page modules with synthetic engines; test harness forwards browser transport through Electron inspector. Production stdio transport, installed app, real Codex/LLM, Windows, IME and real login remain separately verified or unverified.",
+  "testExitCode": 0,
+  "node": "22.22.0",
+  "playwright": "1.59.1",
+  "reactGrab": "0.2.0",
+  "nativeWindowCapture": "macOS screencapture -l for this isolated Electron window; not a renderer composite",
+  "evidenceSha256": {
+    "product-native-window.png": "cfab7273c8e5cd62d954d1b86f2db8c52a8bc1d9bc94f722e6a6305604a13b4b",
+    "product-page-editor.png": "f1c2efed3d7b15f308fff75bce771d406dc8b01e8686195a90fe82e1c16260b8",
+    "product-html-attachment.png": "e76355eddaa7b02e3cda0a1862ac40a3ec9c88e1d1b74a6fe3d931f1241b5163",
+    "product-worker-page.png": "e4f008d514d402a7fa86ed2222eaa0cb574fbb18d45c413ddfaf9138df11fc2b"
+  },
+  "sourceSha256": {
+    "packaging/electron/preview-pages.mjs": "7f65031b4fea282e30e7c142ef2d2bc754e811ff8a902c743ae42364e8653a22",
+    "packaging/electron/preview-automation.mjs": "836b1270aa875f0060563d5d2c1c301206fed26da135ba66d1f2ba210bdca31d",
+    "ui/browser-preview.tsx": "298284b5a263fe18d4884cab41b22f2b46c51286342812123e2f80e952c1f91b",
+    "ui/browser-annotation.tsx": "121ee2749154dd6cb896db6c3e209bfcb6fcc2f793ba5ccf7cbeb3a157e1be30",
+    "tests/browser-preview.electron.test.mjs": "3191a21791874b58799b126eac995903edae05abaf3301a79c3b7dff251c3c0c"
+  }
+}

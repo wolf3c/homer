@@ -20,6 +20,7 @@ test('desktop private IPC reuses native state/login/cancel and exposes no web ac
   constructor(config){this.config=config;this.modelConfig={keyEnv:'SYNTHETIC_MISSING',baseUrl:'http://127.0.0.1'};this.schedules={start(){}};}
   onStateChange(){}
   bindDesktopPowerProtection(){return ()=>{};}
+  bindBrowserPreview(){return ()=>{};}
   onScheduleChanged(){return ()=>{};}
   desktopPowerFacts(){return {executing:false,displayRequired:false};}
   nextScheduledMessageAt(){return null;}

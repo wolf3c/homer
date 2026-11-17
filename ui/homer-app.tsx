@@ -28,6 +28,8 @@ import {serviceActivityNotice} from './waiting-status';
 import {connectionFetch as fetch,ConnectionEvents,mobileView} from "./web-connection-client";
 import {FileList} from './file-list';
 import {CanvasPanel, type CanvasArtifact,type PreviewTab} from "./canvas-panel";
+import{BrowserPreviewContext,openBrowserPreview,useBrowserPages}from'./browser-preview';
+import type{BrowserPage}from'../src/browser-preview';
 import { createRoot } from "react-dom/client";
 import { Fragment,createContext,useContext,useCallback,useLayoutEffect, useEffect, useRef, useState,useMemo, type FormEvent, type ReactNode } from "react";
 import {
@@ -102,8 +104,9 @@ async function post(path: string, value: unknown) {
   return data;
 }
 function Markdown() {
+  const browser=useContext(BrowserPreviewContext);
   return <MarkdownTextPrimitive className="markdown" remarkPlugins={[remarkGfm, remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} components={{ img:LazyMarkdownImage,CodeHeader,SyntaxHighlighter: Highlight, a: ({ children, href }) => {
-    return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
+    return <a href={href} target="_blank" rel="noreferrer noopener" onClick={event=>{if(href&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&browser.openLink(href,event.currentTarget))event.preventDefault();}}>{children}</a>;
   } }} />;
 }
 function ResourceDownload({path,filename,mimeType}:{path:string;filename:string;mimeType:string}){
@@ -264,6 +267,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   const savedReferences=referencesOf(resourceState).filter(r=>!preparingKeys.includes(referenceKey(r)));
   const chipReferences=[...savedReferences,...Object.values(resourceState.preparingImages??{})];
   const {open:openReferenceArtifact}=useContext(ArtifactsContext);
+  const browserPreview=useContext(BrowserPreviewContext);
   const contextOrder=useRef(new ContextOrder());
   const composerMounted=useRef(true);
   useLayoutEffect(()=>{composerMounted.current=true;return()=>{composerMounted.current=false;};},[]);
@@ -758,7 +762,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
       const items=new Map<string,ReactNode>();
       for(const reference of chipReferences)for(const note of reference.annotations??[{id:'legacy'}]){
         const key=contextKey('ref',referenceKey(reference),note.id);
-        items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{if(isDraftImageReference(ref)){openScreenshot(ref,id);return;}const source=ref.source;if(source.kind==='attachment')openReferenceArtifact({...source,id:JSON.stringify([source.messageId,source.assetId,source.revision])},undefined,{key:referenceKey(ref),id});}} onRemove={(refKey,id)=>{annotationDraft.remove(refKey,id);focusInput();}}/>);
+        items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{if(isDraftImageReference(ref)){openScreenshot(ref,id);return;}const source=ref.source;if(ref.kind==='web'&&window.homerBrowserPreview){browserPreview.openReference(ref,id);return;}if(source.kind==='attachment')openReferenceArtifact({...source,id:JSON.stringify([source.messageId,source.assetId,source.revision])},undefined,{key:referenceKey(ref),id});else browserPreview.openReference(ref,id);}} onRemove={(refKey,id)=>{annotationDraft.remove(refKey,id);focusInput();}}/>);
       }
       quotes.forEach((quote,i)=>{const key=contextKey('quote',quote.draftId);items.set(key,<div className="annotation-chip" key={key}>
         <button type="button" className="annotation-chip-open" aria-label={'编辑引用 '+(i+1)} onClick={event=>editQuote(quote,event.currentTarget)} title={quote.text+'\n'+quote.annotation}><MessageCirclePlus size={15} aria-hidden="true"/><span className="compact-context-copy"><span className="compact-context-label">{quote.annotation?.trim()||quote.text}</span><span className="compact-context-source">{quote.annotation?.trim()?'消息批注':'消息引用'}</span></span></button>
@@ -922,12 +926,27 @@ function HomerApp() {
   const previewComposer=useRef<PreviewComposer|null>(null);
   const narrowPreview=useMediaQuery('(max-width:800px)',matchMedia('(max-width:800px)').matches,{getInitialValueInEffect:false});
   const [state, setState] = useState<WebState>(empty);
+  const browser=useBrowserPages(state.threadId);
   const [previewTabs,setPreviewTabs]=useState<{threadId:string;tabs:Array<PreviewTab&{trigger?:HTMLElement}>;activeId:string|null}>({threadId:state.threadId,tabs:[],activeId:null});
   if(previewTabs.threadId!==state.threadId){
     setPreviewTabs({threadId:state.threadId,tabs:[],activeId:null});setCanvasOpen(false);canvasTrigger.current=null;
   }
   const activePreviewTab=previewTabs.threadId===state.threadId?previewTabs.tabs.find(tab=>tab.id===previewTabs.activeId)??null:null;
-  const canvasArtifact=activePreviewTab&&!('kind' in activePreviewTab)?activePreviewTab:null;
+  useEffect(()=>{
+    if(!window.homerBrowserPreview)return;
+    setPreviewTabs(old=>{
+      if(old.threadId!==state.threadId)return old;
+      const files=old.tabs.filter(tab=>!('kind'in tab)||tab.kind!=='browser');
+      const pages=browser.pages.filter(p=>!files.some(tab=>!('kind'in tab)&&p.source.kind==='attachment'&&tab.assetId===p.source.assetId&&tab.revision===p.source.revision));
+      const tabs:typeof old.tabs=[...files,...pages.map(page=>({kind:'browser' as const,id:page.id,title:page.title,page}))];
+      const activeId=tabs.some(tab=>tab.id===old.activeId)?old.activeId:tabs[0]?.id??null;
+      const signature=(items:typeof tabs,selected:string|null)=>JSON.stringify([items.map(tab=>({...tab,trigger:undefined})),selected]);
+      return signature(tabs,activeId)===signature(old.tabs,old.activeId)?old:{...old,tabs,activeId};
+    });
+  },[browser.pages,state.threadId]);
+  useEffect(()=>window.homerBrowserPreview?.onShow(page=>{if(page.threadId===state.threadId)showBrowser(page);}),[state.threadId,previewTabs,canvasOpen]);
+  const activeBrowser=activePreviewTab&&'kind'in activePreviewTab&&activePreviewTab.kind==='browser'?activePreviewTab.page:undefined;
+  const canvasArtifact=activePreviewTab&&!('kind' in activePreviewTab)?activePreviewTab:activeBrowser?.source.kind==='attachment'?{...activeBrowser.source,id:JSON.stringify([activeBrowser.source.messageId,activeBrowser.source.assetId,activeBrowser.source.revision])}:null;
   const annotationDraft=useMemo(()=>createAnnotationDraft(),[state.threadId]);
   const [annotationFocus,setAnnotationFocus]=useState<{key:string;id:string;nonce:string}>();
   const focusEditor=useMemo<{current:(()=>void)|null}>(()=>({current:null}),[state.threadId]);
@@ -1290,7 +1309,10 @@ function HomerApp() {
     updatePreviewScope(true,id);canvasTrigger.current=tab.trigger??null;setAnnotationFocus(undefined);
     setPreviewTabs(old=>({...old,activeId:id}));
   };
-  const closeArtifact=(id:string)=>{
+  const closeArtifact=async(id:string)=>{
+    const tab=previewTabs.tabs.find(tab=>tab.id===id);
+    const page=tab&&'kind'in tab&&tab.kind==='browser'?tab.page:tab&&!('kind'in tab)?browser.pages.find(p=>p.source.kind==='attachment'&&p.source.assetId===tab.assetId&&p.source.revision===tab.revision):undefined;
+    if(page){try{await window.homerBrowserPreview?.control({pageId:page.id,threadId:state.threadId,action:'close'});}catch{setPageNotice('网页关闭未确认，已保留预览。');return;}}
     const remove=(old:typeof previewTabs)=>{
       const at=old.tabs.findIndex(tab=>tab.id===id);if(at<0)return old;
       const tabs=old.tabs.filter(tab=>tab.id!==id);
@@ -1312,6 +1334,11 @@ function HomerApp() {
     const active=trigger??document.activeElement;
     const origin=active instanceof HTMLElement&&!active.closest('#canvas-panel')?active:undefined;
     if(origin)canvasTrigger.current=origin;
+    const native=browser.pages.find(p=>p.source.kind==='attachment'&&p.source.messageId===file.messageId&&p.source.assetId===file.assetId&&p.source.revision===file.revision);
+    if(window.homerBrowserPreview&&(native||/\.html?$/i.test(file.title))){
+      if(native)showBrowser(native,annotation);
+      else void openBrowserPreview(state.threadId,{kind:'attachment',messageId:file.messageId,assetId:file.assetId,revision:file.revision,sha256:file.sha256,title:file.title}).then(page=>showBrowser(page,annotation)).catch(error=>setPageNotice(error.message));return;
+    }
     if(annotation)setAnnotationFocus({...annotation,nonce:crypto.randomUUID()});
     if(canvasOpen&&canvasArtifact?.id===file.id)return;
     if(!annotation)setAnnotationFocus(undefined);
@@ -1322,6 +1349,25 @@ function HomerApp() {
       return {...old,tabs:existing?old.tabs.map(tab=>tab.id===file.id&&origin?{...tab,trigger:origin}:tab):[...old.tabs,{...file,trigger:origin}],activeId:file.id};
     });setCanvasOpen(true);
   };
+  function showBrowser(page:BrowserPage,focus?:{key:string;id:string}){
+    if(page.threadId!==state.threadId)return;
+    const id=page.id;updatePreviewScope(true,id);if(!canvasOpen)captureAnchor();
+    setAnnotationFocus(focus?{...focus,nonce:crypto.randomUUID()}:undefined);
+    setPreviewTabs(old=>{const tabs=old.tabs.filter(tab=>!(!('kind'in tab)&&page.source.kind==='attachment'&&tab.assetId===page.source.assetId&&tab.revision===page.source.revision));return{...old,tabs:tabs.some(tab=>tab.id===id)?tabs:[...tabs,{kind:'browser',id,title:page.title,page}],activeId:id};});setCanvasOpen(true);
+  }
+  function openBrowserLink(_url:string,trigger:HTMLAnchorElement){
+    const messageId=trigger.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage;
+    if(!window.homerBrowserPreview||!messageId||!/^https?:/.test(trigger.href))return false;
+    canvasTrigger.current=trigger;
+    void openBrowserPreview(state.threadId,{kind:'browser',messageId,url:trigger.href,title:trigger.textContent?.trim().slice(0,500)||new URL(trigger.href).hostname}).then(page=>showBrowser(page)).catch(error=>setPageNotice(error.message));return true;
+  }
+  function openBrowserReference(reference:PreviewRequest,id:string){
+    if(!window.homerBrowserPreview||reference.kind!=='web')return;
+    const show=(page:BrowserPage)=>showBrowser(page,{key:referenceKey(reference),id});
+    const existing=browser.pages.find(page=>page.id===reference.page?.id&&page.url===reference.page.url);
+    if(existing){show(existing);return;}
+    void openBrowserPreview(state.threadId,reference.source,reference.page?.url.startsWith('http')?reference.page.url:undefined).then(show).catch(error=>setPageNotice(error.message));
+  }
   const queueDrafts=(()=>{try{return Object.keys(sessionStorage).filter(key=>key.startsWith('homer-queue-edit:')).flatMap(key=>{const draft=storage.read<Pick<ConversationInput,'text'|'quote'|'quotes'|'resourceReference'|'resourceReferences'|'attachments'>>(key);return draft?[{key,...draft}]:[];});}catch{return [];}})();
   const questionDrafts=(state.inactiveInteractions??[]).filter(item=>item.kind==='question').flatMap(item=>{
     const key='homer-interaction:'+state.threadId+':'+item.id,draft=interactionDraft(key),pending=storage.read<ConversationInput>(key+':pending');
@@ -1342,7 +1388,7 @@ function HomerApp() {
   const accountRequired=!mobileView&&!!window.homerDesktopAccount&&!connected&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
   const featureTour = mobileView ? undefined : window.homerDesktopFeatureTour;
   const feedback = error || (!accountRequired&&!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
-  return <QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
+  return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
     <div className={canvasOpen?"app-shell canvas-open":"app-shell"} data-native-titlebar={nativeTitlebar||undefined}>
       {featureTour && <DesktopFeatureTour bridge={featureTour}
         ready={accountRequired || (connected && !!state.threadId && state.upgrade.phase === 'running')}
@@ -1394,6 +1440,6 @@ function HomerApp() {
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
       </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={state.history&&<ScheduledMessages threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={state} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
     </div>
-  </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></QuoteNavigationContext.Provider>;
+  </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></QuoteNavigationContext.Provider></BrowserPreviewContext.Provider>;
 }
 createRoot(document.getElementById("homer-root")!).render(<HomerApp />);

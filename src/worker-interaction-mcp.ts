@@ -12,13 +12,15 @@ import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {MEMBERSHIP_TOOLS} from './membership-web-tools.js';
 import {CUA_TOOLS} from './desktop-cua.js';
+import {BROWSER_PREVIEW_TOOLS}from'./browser-preview-tools.js';
 import {SCHEDULE_TOOLS} from './schedules.js';
 
 export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,LIST_WORK_DIRECTORIES,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS,...SCHEDULE_TOOLS];
 export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS,...SCHEDULE_TOOLS];
-export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false){
+export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false,browser=false){
   const tools=role==='worker'?(cua?[...WORKER_HOST_MCP_TOOLS,...CUA_TOOLS]:WORKER_HOST_MCP_TOOLS):HOST_MCP_TOOLS;
-  return membership?[...tools,...MEMBERSHIP_TOOLS.filter(tool=>!nativeWebSearch||tool.name!=='web_search')]:tools;
+  const catalog=browser?[...tools,...BROWSER_PREVIEW_TOOLS]:tools;
+  return membership?[...catalog,...MEMBERSHIP_TOOLS.filter(tool=>!nativeWebSearch||tool.name!=='web_search')]:catalog;
 }
 const allowed = (name: unknown, catalog:readonly Tool[]): name is string => typeof name === "string" && catalog.some(tool => tool.name === name);
 function code(error: unknown) {
@@ -126,9 +128,9 @@ function hostCall(path: string, tool: string, args: unknown, meta?: unknown): Pr
   });
 }
 
-export function runWorkerInteractionMcp(path: string,role:string='main',membership=false,nativeWebSearch=false,plugins:Tool[]=[],cua=false) {
+export function runWorkerInteractionMcp(path: string,role:string='main',membership=false,nativeWebSearch=false,plugins:Tool[]=[],cua=false,browser=false) {
   if(role!=='main'&&role!=='worker')throw Error('interaction_role_denied');
-  const catalog=[...hostMcpTools(role,membership,nativeWebSearch,cua),...(role==='main'?plugins:[])];
+  const catalog=[...hostMcpTools(role,membership,nativeWebSearch,cua,browser),...(role==='main'?plugins:[])];
   const send = (message: unknown) => process.stdout.write(JSON.stringify(message) + "\n");
   createInterface({ input: process.stdin }).on("line", line => {
     void (async () => {
@@ -147,7 +149,7 @@ export function runWorkerInteractionMcp(path: string,role:string='main',membersh
         else if (message.method === "tools/call") {
           try {
             if (!allowed(message.params?.name,catalog)) throw new Error("interaction_tool_denied");
-            const meta = plugins.some(tool=>tool.name===message.params.name)||SCHEDULE_TOOLS.some(tool=>tool.name===message.params.name) ? message.params._meta : undefined;
+            const meta = plugins.some(tool=>tool.name===message.params.name)||SCHEDULE_TOOLS.some(tool=>tool.name===message.params.name)||BROWSER_PREVIEW_TOOLS.some(tool=>tool.name===message.params.name) ? message.params._meta : undefined;
             const value = await hostCall(path, message.params.name, message.params.arguments, meta);
             const media=value as {mediaContent?:unknown[]};
             result = { isError: false, content: media?.mediaContent??[{ type: "text", text: JSON.stringify(value) }] };

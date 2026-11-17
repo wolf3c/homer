@@ -1,0 +1,90 @@
+{
+  "status": "passed",
+  "versions": {
+    "electron": "45.0.0",
+    "chrome": "156.0.8078.48",
+    "node": "24.22.0"
+  },
+  "results": [
+    {
+      "name": "Playwright discovers two WebContentsView targets",
+      "detail": [
+        {
+          "id": "a",
+          "task": "task-a",
+          "version": 1,
+          "url": "http://127.0.0.1:62897/page/a",
+          "title": "合成工作页 A",
+          "owner": "agent",
+          "source": {
+            "kind": "web",
+            "messageId": "demo-message-1",
+            "sourceId": "demo-link-1",
+            "url": "http://127.0.0.1:62897/page/a",
+            "title": "合成工作页 A"
+          }
+        },
+        {
+          "id": "b",
+          "task": "task-b",
+          "version": 1,
+          "url": "http://127.0.0.1:62897/page/b",
+          "title": "合成工作页 B",
+          "owner": "agent",
+          "source": {
+            "kind": "web",
+            "messageId": "demo-message-1",
+            "sourceId": "demo-link-1",
+            "url": "http://127.0.0.1:62897/page/b",
+            "title": "合成工作页 B"
+          }
+        }
+      ]
+    },
+    {
+      "name": "two simulated tasks fill distinct hidden pages without selecting them"
+    },
+    {
+      "name": "wrong task cannot acquire another page"
+    },
+    {
+      "name": "strict CSP page renders isolated existing form CSS; site cannot see preload bridge or require"
+    },
+    {
+      "name": "React Grab selects three real DOM elements; existing form commits to existing draft"
+    },
+    {
+      "name": "multiple markers support edit and delete"
+    },
+    {
+      "name": "stale draft confirmation fails without losing editor text"
+    },
+    {
+      "name": "4500-character note crosses real isolated renderer/main/host IPC and draft round trip"
+    },
+    {
+      "name": "annotation mode suppresses business click; browse mode restores it; timer runs"
+    },
+    {
+      "name": "handoff rejects subsequent task writes; explicit resume works"
+    },
+    {
+      "name": "marker follows replaced DOM node and zoomed/scrolled layout"
+    },
+    {
+      "name": "draft produces existing resourceReferenceText",
+      "detail": "来源：合成工作页 A（http://127.0.0.1:62897/page/a，来源消息 demo-message-1／demo-link-1）\n网页元素位置为批注时的页面信息，非服务器复现。\n1. 待完善的结论 #heading-two\n位置：{\"x\":77,\"y\":455.3671875,\"width\":736,\"height\":38.3984375}\n用户批注：补充这条结论的数据依据。\n2. 页面下方的建议 #heading-three\n位置：{\"x\":77,\"y\":615.234375"
+    },
+    {
+      "name": "navigation reinstalls isolated runtime and rejects old document"
+    },
+    {
+      "name": "closed target is unavailable"
+    },
+    {
+      "name": "no renderer pageerrors"
+    }
+  ],
+  "errors": [],
+  "scope": "Synthetic tasks/pages only; no real Worker/LLM, Homer service, installed app, login, IME OS composition or Windows verification."
+}

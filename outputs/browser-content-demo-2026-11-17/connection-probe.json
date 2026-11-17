@@ -1,0 +1,70 @@
+{
+  "kind": "ready",
+  "commands": {
+    "Browser.getVersion": {
+      "result": {
+        "jsVersion": "15.6.75.19",
+        "product": "Chrome/156.0.8078.48",
+        "protocolVersion": "1.3",
+        "revision": "@f713973925105d699de465fdcd14324183f29cdc",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.8078.48 Electron/45.0.0 Safari/537.36"
+      }
+    },
+    "Target.getTargets": {
+      "result": {
+        "targetInfos": [
+          {
+            "attached": false,
+            "browserContextId": "D5AEA8D339F0F5665F646ED12EF3F1E3",
+            "canAccessOpener": false,
+            "targetId": "62744CDEFBC006EA0943BF97671D9C76",
+            "title": "content-b",
+            "type": "page",
+            "url": "data:text/html,<title>content-b</title><input aria-label=\"task\">"
+          },
+          {
+            "attached": false,
+            "browserContextId": "D5AEA8D339F0F5665F646ED12EF3F1E3",
+            "canAccessOpener": false,
+            "targetId": "EC8DDBD86CC06B22381DE53B4F93A874",
+            "title": "management-sentinel",
+            "type": "page",
+            "url": "data:text/html,<title>management-sentinel</title><p>management-only</p>"
+          },
+          {
+            "attached": true,
+            "browserContextId": "D5AEA8D339F0F5665F646ED12EF3F1E3",
+            "canAccessOpener": false,
+            "targetId": "6FEC209E5AD0DD3A27D150A88BB9B95E",
+            "title": "content-a",
+            "type": "page",
+            "url": "data:text/html,<title>content-a</title><input aria-label=\"task\">"
+          }
+        ]
+      }
+    },
+    "Target.attachToBrowserTarget": {
+      "error": "Not allowed"
+    }
+  },
+  "visibleTargets": [
+    {
+      "url": "data:text/html,<title>content-b</title><input aria-label=\"task\">",
+      "title": "content-b"
+    },
+    {
+      "url": "data:text/html,<title>content-a</title><input aria-label=\"task\">",
+      "title": "content-a"
+    },
+    {
+      "url": "data:text/html,<title>management-sentinel</title><p>management-only</p>",
+      "title": "management-sentinel"
+    }
+  ],
+  "managementReadable": "management-only",
+  "backgroundValues": [
+    "task-a",
+    "task-b"
+  ],
+  "conclusion": "Public CDP controls both content pages AND the management renderer. Not enabled in product."
+}

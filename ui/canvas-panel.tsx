@@ -26,6 +26,8 @@ import {CanvasSplitDocument,CanvasSplitBody} from './vendor/assistant-ui/canvas-
 import {WebPreview} from './vendor/assistant-ui/web-preview';
 import {remarkPreviewMath} from './preview-selection';
 import {PreviewSelectionToolbar} from './preview-selection-toolbar';
+import{BrowserPreview,AttachmentBrowserPreview}from'./browser-preview';
+import type{BrowserPage}from'../src/browser-preview';
 import type {ImageAnnotationControl} from './image-annotation';
 import type {PreviewImportGuard} from './preview-reference';
 function CanvasImagePreview({url,title}:{url:string;title:string}) {
@@ -81,7 +83,7 @@ class PatchPreviewBoundary extends Component<{children:ReactNode;fallback:ReactN
 }
 
 export type CanvasArtifact = {id:string;title:string;messageId:string;assetId:string;revision:number;sha256:string};
-export type PreviewTab=CanvasArtifact|{kind:'schedules';id:'schedules';title:string};
+export type PreviewTab=CanvasArtifact|{kind:'schedules';id:'schedules';title:string}|{kind:'browser';id:string;title:string;page:BrowserPage};
 export function canvasWebUrl(value:string):string {
   const url=new URL(value);
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('请输入不含账号密码的 http(s) 网页地址。');
@@ -122,7 +124,8 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
   const hasTabs=!!tabs?.length&&!webSource;
   const title='预览：'+(webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'从对话中选择成果');
   const tools=<><div ref={setActions} className="canvas-tab-actions"/>{(narrow||!hasTabs)&&<TooltipIconButton ref={collapseButton} className="canvas-collapse" tooltipContainer={actions} aria-label="收起预览" tooltip="收起预览" onClick={onClose}><PanelRight size={14} aria-hidden/></TooltipIconButton>}</>;
-  const reader=selected==='schedules'?scheduleContent:<CanvasReader {...readerProps} key={JSON.stringify([threadId,artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
+  const browser=tabs?.find(tab=>tab.id===selected&&'kind'in tab&&tab.kind==='browser');
+  const reader=selected==='schedules'?scheduleContent:browser&&'kind'in browser&&browser.kind==='browser'?<BrowserPreview page={browser.page} annotationDraft={readerProps.annotationDraft} onReference={readerProps.onReference} enabled={!!readerProps.referencesEnabled} isCurrent={readerProps.isCurrent} focusId={readerProps.annotationFocus?.id} focusKey={readerProps.annotationFocus?.key} focusRequest={readerProps.annotationFocus?.nonce}/>:<CanvasReader {...readerProps} threadId={threadId} key={JSON.stringify([threadId,artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
   return <div ref={host} className="canvas-host"><Dialog.Root open modal={narrow} disablePointerDismissal onOpenChange={(open,details)=>{
     if(details.reason==='escape-key'&&imageControl.current?.escape()){details.cancel();return;}
     if(details.reason==='escape-key'&&panel.current?.querySelector('.preview-selection-positioner')){details.cancel();details.allowPropagation();return;}
@@ -160,7 +163,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
   </Dialog.Portal></Dialog.Root></div>;
 }
 
-function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClose,onReference:saveReference,referencesEnabled:referenceCapability=false,isCurrent=()=>true,actions,imageControl}:CanvasPanelProps&{actions:HTMLElement|null;imageControl:RefObject<ImageAnnotationControl|null>}) {
+function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,threadId='',onClose,onReference:saveReference,referencesEnabled:referenceCapability=false,isCurrent=()=>true,actions,imageControl}:CanvasPanelProps&{actions:HTMLElement|null;imageControl:RefObject<ImageAnnotationControl|null>}) {
   const draft=useAnnotationDraft(annotationDraft);
   const referencesEnabled=referenceCapability&&!draft.frozen;
   const generation=useRef(0),alive=useRef(true),owner=useRef(isCurrent);owner.current=isCurrent;
@@ -224,7 +227,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
   const imageReference=Object.values(draft.preparingImages??{}).find(r=>source&&referenceKey(r)===referenceKey({kind:'image',source}))??referencesOf(draft).find(r=>r.kind==='image'&&source&&referenceKey(r)===referenceKey({kind:'image',source}));
   const savedCount=referencesOf(draft).find(r=>r.kind==='web'&&referenceKey(r)===htmlKey)?.annotations?.length??0;
   const focusId=annotationFocus&&source&&annotationFocus.key===referenceKey({kind:isImageSource()?'image':file?.mime==='text/html'?'web':'text',source})?annotationFocus.id:undefined;
-  useEffect(()=>{if(annotationFocus&&source&&!focusId)setNotice('当前预览无法准确定位这条批注，原摘录与备注已保留。');},[annotationFocus?.nonce,source]);
+  useEffect(()=>{if(annotationFocus&&source&&!focusId&&!(file?.mime==='text/html'&&window.homerBrowserPreview))setNotice('当前预览无法准确定位这条批注，原摘录与备注已保留。');},[annotationFocus?.nonce,source]);
   function isImageSource(){return !!file&&file.mime.startsWith('image/');}
   useEffect(()=>{if(focusId&&isImageSource())setImageAnnotation(true);else if(focusId&&file?.mime==='text/html'&&!runtime)setNotice('已打开来源；点击“批注”后定位这条网页批注。');},[focusId,annotationFocus?.nonce,runtime]);
   function stopHtmlAnnotation(error=false){
@@ -323,7 +326,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
           ?'图片超过移动端下载上限，请在电脑上下载原图。':'下载未完成，请重新连接后重试。');
       });
     }}/>,actions)}
-    {actions&&createPortal(isHtml&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
+    {actions&&createPortal(isHtml&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
       <TooltipIconButton className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>
     </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface">{!imageAnnotation&&<TooltipIconButton className="image-annotation-toggle" tooltipContainer={imageActions} aria-label="批注" aria-pressed={false} tooltip="开始图片批注" onClick={()=>setImageAnnotation(true)}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>}</span>:null,actions)}
     <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml?'html-preview-body':isPatch?'patch-preview-body':undefined}>
@@ -336,7 +339,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,onClos
       <PatchPreviewBoundary key={JSON.stringify([artifact?.id,file.sha256,retry])} fallback={<><p role="status" className="canvas-note">差异预览失败，显示原文。</p>{patchRaw}</>}>
         <details><summary>原始补丁文本</summary>{patchRaw}</details>
         <Suspense fallback={<p role="status">加载差异预览…</p>}><LazyDiffViewer patch={file.text} maxCollapsedLines={200}/></Suspense>
-      </PatchPreviewBoundary>:isHtml?<><iframe ref={webFrame} key={token} title="隔离 HTML 成果" sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer" {...(mobileView?{srcDoc:htmlPreviewShell}:{src:'/preview/interactive'})} onLoad={event=>event.currentTarget.contentWindow?.postMessage({type:'homer-html-preview',html:file.text,runtime},'*')}/>
+      </PatchPreviewBoundary>:isHtml?window.homerBrowserPreview&&source?<AttachmentBrowserPreview threadId={threadId} source={source} annotationDraft={annotationDraft} onReference={onReference} enabled={referencesEnabled} isCurrent={readerCurrent} focusId={annotationFocus?.id} focusKey={annotationFocus?.key} focusRequest={annotationFocus?.nonce}/>:<><iframe ref={webFrame} key={token} title="隔离 HTML 成果" sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer" {...(mobileView?{srcDoc:htmlPreviewShell}:{src:'/preview/interactive'})} onLoad={event=>event.currentTarget.contentWindow?.postMessage({type:'homer-html-preview',html:file.text,runtime},'*')}/>
       {savedCount>0&&!interactive&&<p className="canvas-note html-notes-status">已保存 {savedCount} 条网页批注到输入草稿</p>}</>:
       mediaKind?<div className="canvas-media">
         <p className="canvas-note">{file.name}</p>

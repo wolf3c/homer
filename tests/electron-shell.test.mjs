@@ -73,6 +73,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
   return {isFile:()=>!native.fileDirectory&&!native.fileSymlink,isSymbolicLink:()=>!!native.fileSymlink,size:(native.fileData??installerBytes).length,dev:1,ino:native.fileRevision??0,mtimeMs:1,ctimeMs:1};
  }};
  modules['../homer/dist/preview-reference.js']=await import('../src/preview-reference.ts');
+ modules['./preview-pages.mjs']={registerPreviewScheme(){},createBrowserPreview(){return{close(){},async execute(...args){if(native.previewExecute)return native.previewExecute(...args);throw Error('preview_unavailable');}};}};
  Object.assign(modules['../homer/scripts/desktop-profile.mjs'],{
   readDesktopCaptureShortcut:()=>native.captureShortcut,
   saveDesktopCaptureShortcut:(_root,shortcut)=>{if(native.shortcutWriteError)throw Error('private_write_failure');native.captureShortcut=shortcut;},
@@ -183,6 +184,10 @@ for(const mode of ['dead','runtime-live','gateway-live','runtime-unknown','lease
    if(mode==='dead'){
     const roles={main:{model:'synthetic-model-main',effort:'high',serviceTier:'priority'},worker:{model:'synthetic-model-worker',effort:'low',serviceTier:null}};
     options.desktop.bindAccount(async(action,input)=>{nativeModelCalls.push({action,input});return true;});
+    let browserResult;options.desktop.bindBrowserReply(value=>{browserResult=value;});
+    stdin.write(JSON.stringify({kind:'browser_result',id:'browser-5000',value:{content:'x'.repeat(5000)}})+'\n');await new Promise(resolve=>setImmediate(resolve));assert.equal(browserResult.value.content.length,5000);
+    stdin.write(JSON.stringify({kind:'native_account',id:78,action:'apply-models',input:{text:'x'.repeat(5000)}})+'\n');await new Promise(resolve=>setImmediate(resolve));assert.equal(nativeModelCalls.length,0);
+
     stdin.write(JSON.stringify({kind:'native_account',id:77,action:'apply-models',input:roles})+'\n');await new Promise(resolve=>setImmediate(resolve));
    }
    const releases=[];try{for(const path of [join(runtime,'gateway'),runtime]){lockAttempts++;releases.push(acquireLock(path));}return {noHostStarted:true};}catch(error){return {noHostStarted:true,startupError:error.message};}finally{for(const release of releases.reverse())release();}
@@ -1546,7 +1551,10 @@ test('preload exposes fixed Promise methods and only the screen settings token i
  for(const isMainFrame of [true,false,undefined]){
   const exposed=[],calls=[];vm.runInNewContext(source,{process:{isMainFrame},require:name=>{assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(...args)=>exposed.push(args)},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {synthetic:true};}}};}});
   if(isMainFrame!==true){assert.equal(exposed.length,0);continue;}
-  assert.equal(exposed.length,7);
+  assert.equal(exposed.length,8);
+  const browser=exposed.find(([name])=>name==='homerBrowserPreview')[1];
+  assert.deepEqual(Object.keys(browser),['list','present','control','annotations','reply','onChanged','onAnnotation','onShow']);
+  for(const method of ['list','present','control','annotations','reply']){await browser[method]({pageId:'fixture'});assert.equal(calls.at(-1)[0],'homer:preview:'+method);}
   const tour=exposed.find(([name])=>name==='homerDesktopFeatureTour')[1];
   assert.deepEqual(Object.keys(tour),['pending','dismiss']);
   for(const name of Object.keys(tour)){
@@ -1634,6 +1642,14 @@ test('primary window title stays 荷马 across desktop startup modes and model s
   assert.equal(f.windows[0].title,'荷马',args.join(' ')+' / '+modelSource);
  }
 });
+test('production shell routes browser owner requests and bounded error results through runtime stdin',async()=>{
+ const calls=[],f=await accountFixture({previewExecute:async(...args)=>{calls.push(args);if(args[1]==='bad')throw Error('private_browser_detail');return {content:'x'.repeat(5000)};}});
+ f.event({kind:'browser_request',id:'browser-read',owner:{threadId:'t',owner:'worker:a:1'},action:'read',input:{pageId:'p'}});await f.tick();
+ assert.equal(calls.length,1);assert.equal(calls[0][0].owner,'worker:a:1');assert.equal(calls[0][2].pageId,'p');
+ const reply=f.sent.map(s=>JSON.parse(s)).find(m=>m.kind==='browser_result'&&m.id==='browser-read');assert.equal(reply.value.content.length,5000);
+ f.event({kind:'browser_request',id:'browser-error',owner:{threadId:'t',owner:'worker:a:1'},action:'bad',input:{}});await f.tick();assert.equal(f.sent.map(s=>JSON.parse(s)).find(m=>m.id==='browser-error').error,'preview_result_unconfirmed');
+});
+
 test('shell starts one isolated bundled backend with sandbox and only the narrow preload',async()=>{
  const f=await fixture();assert.equal(f.spawnCount(),1);assert.equal(f.windows.length,1);
  const prefs=f.windows[0].options.webPreferences;assert.equal(prefs.nodeIntegration,false);assert.equal(prefs.contextIsolation,true);assert.equal(prefs.sandbox,true);assert.equal(prefs.preload,resolve('packaging/electron/preload.cjs'));
