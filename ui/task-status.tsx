@@ -5,21 +5,17 @@ import {Toggle} from '@base-ui/react/toggle';
 import type {WebState} from '../src/web-contract';
 import type {OverviewTask,OverviewWorker} from '../src/task-overview';
 import {taskName,validPendingUsers,pendingUserCount} from '../src/task-presentation';
-import {taskCardPresentation,taskOwnerLabels,statusTree,statusCountSnapshot,rankedStatusMatters,statusVisibleLimit,matterStatus,progressMatches,linearPlanIndex,type StatusFilter,type StatusMatter,type StatusWorker,type WorkerProgress,type TaskProgress} from '../src/task-status';
+import {taskCardPresentation,taskOwnerLabels,statusTree,statusCountSnapshot,rankedStatusMatters,statusVisibleLimit,matterStatus,type StatusFilter,type StatusMatter,type StatusWorker} from '../src/task-status';
 import {useTaskStatusData} from './task-status-data';
 import {connectionFetch} from './web-connection-client';
 import {TaskExecutionRecord,ExecutionObservationContext} from './task-execution-record';
 import {SemanticTaskIcon} from './process-nodes';
 import {cn} from './vendor/task-status/utils';
-import {AgentPlan} from './vendor/task-status/agent-plan';
-import {TodoList} from './vendor/task-status/todo-list';
 import {Popover,PopoverTrigger,PopoverContent} from './vendor/task-status/popover';
 import {ghostButton,mono} from './vendor/task-status/surfaces';
 import {createPortal} from 'react-dom';
 import './vendor/task-status/components.css';
 import './task-status.css';
-type ProgressRead={signature:string;workers?:Map<string,WorkerProgress>;error?:string;loading?:boolean;unavailable?:boolean};
-type ReadMap=Record<string,ProgressRead>;
 const PendingDisabled=createContext(false);
 // One disclosure owner survives presentation changes; keys retain execution identity.
 const Disclosures=createContext(new Map<string,string>());
@@ -44,23 +40,15 @@ function TaskStatusRow({task,worker,label,status,onOpenChange,children,...props}
 function MatterFacts({task}:{task:OverviewTask}){
  return <>{task.goal&&<p className="status-output">目标：{task.goal}</p>}{task.notes&&<p className="status-output">工作笔记：{task.notes}</p>}</>;
 }
-function WorkerView({node,title,reads,state,onExpand,onVisit}:{node:StatusWorker;title?:string;reads:ReadMap;state:WebState;onExpand:(task:OverviewTask,open:boolean,worker?:OverviewWorker)=>void;onVisit:(worker:OverviewWorker,id:string,after:number)=>void}){
- const {task,worker}=node,read=reads[task.id],candidate=read?.workers?.get(worker.run.id),progress=candidate&&progressMatches(worker,candidate)?candidate:undefined;
- const linear=progress?.plan?linearPlanIndex(progress.plan):null;
+function WorkerView({node,title,state,onExpand,onVisit}:{node:StatusWorker;title?:string;state:WebState;onExpand:(task:OverviewTask,open:boolean,worker?:OverviewWorker)=>void;onVisit:(worker:OverviewWorker,id:string,after:number)=>void}){
+ const {task,worker}=node;
  const ownStatus=taskCardPresentation(task,worker),status=title?taskCardPresentation(task):ownStatus;
- const ended=worker.run.phase==='ended';
- const output=ended&&progress?.output?.type==='tool'?undefined:progress?.output;
  const label=title??(worker.title?.trim()||'Worker');
  return <div data-worker-id={worker.id} data-merged={title?'true':undefined} className="flex flex-col gap-3">
   <TaskStatusRow task={task} worker={worker} {...(title?{role:'group','aria-label':title,'data-item-row':'true'}:{})} label={label} status={status} onOpenChange={open=>onExpand(task,open,worker)}>
    {title&&<MatterFacts task={task}/>}<p>下一步处理：{taskOwnerLabels[status.owner]}</p>
    {title&&<p>Worker 本轮：{ownStatus.label}</p>}
    <Pending worker={worker} state={state} onVisit={onVisit}/>
-   {read?.loading&&!progress?<p role="status">正在读取公开进展…</p>:read?.error?<p role="status">{read.error}</p>:null}
-   {!!progress?.plan?.length&&(linear!==null?<AgentPlan title="计划" steps={progress.plan.map((s,i)=>({id:String(i),label:s.step}))} activeIndex={linear}/>:<TodoList title="计划" items={progress.plan.map((s,i)=>({id:String(i),text:s.step,status:s.status==='completed'?'done':s.status==='inProgress'?'active':'pending'}))}/>)}
-   {output&&<p className="status-output">{output.type==='tool'?'工具调用：':''}{output.text}</p>}
-   {!progress?.plan?.length&&!output&&!ended&&!read?.loading&&!read?.error&&<p>尚无可确认的公开进展。</p>}
-   {!!progress?.next?.length&&<TodoList title="后续待办" items={progress.next.map(item=>({...item,status:'pending'}))}/>}
   </TaskStatusRow>
  </div>;
 }
@@ -100,20 +88,18 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
   const focus=document.activeElement instanceof HTMLElement&&node.contains(document.activeElement)?document.activeElement:null;
   Object.assign(saved,{scrollTop:node.scrollTop,anchorId:anchor?.dataset.todoId??'',offset:anchor?anchor.getBoundingClientRect().top-top:0,focus,focusRootId:focus?.closest<HTMLElement>('[data-todo-id]')?.dataset.todoId??'',capturedGeneration:saved.generation,pending:true});
  },[]);
- const [reads,setReads]=useState<ReadMap>({}),[navigationError,setNavigationError]=useState(''),[navigating,setNavigating]=useState(false),[visibleCount,setVisibleCount]=useState(20),[filter,setFilter]=useState<StatusFilter|null>(null);
+ const [navigationError,setNavigationError]=useState(''),[navigating,setNavigating]=useState(false),[visibleCount,setVisibleCount]=useState(20),[filter,setFilter]=useState<StatusFilter|null>(null);
  const {data,error,busy,stale,refresh}=useTaskStatusData(state,connected,captureListAnchor);
  // Build once per snapshot. Chat streaming and individual card toggles do not
  // repeatedly rebuild the hierarchy or rescan every task during sorting.
  const snapshot=useMemo(()=>{
   const tasks=data?.tasks??[],matters=statusTree(tasks);
-  const members=new Map<string,string[]>(),children=new Map<string,string[]>();
+  const children=new Map<string,string[]>();
   for(const t of tasks){
-   members.set(t.id,t.workers.map(workerKey));
    children.set(t.id,t.workers.map(w=>rowId(t,w)));
   }
   const ranked=rankedStatusMatters(matters),contributions=statusCountSnapshot(tasks,matters);
-  return {ranked,workingKnown:contributions.workingKnown,counts:data?contributions.counts:null,matches:contributions.matches,children,
-   signatures:new Map([...members].map(([id,keys])=>[id,(data?.progressRevision??0)+':'+keys.join('|')]))};
+  return {ranked,workingKnown:contributions.workingKnown,counts:data?contributions.counts:null,matches:contributions.matches,children};
  },[data]);
  const counts=snapshot.counts;
  const ranked=useMemo(()=>filter?snapshot.ranked.filter(r=>snapshot.matches[filter].has(r.key.id)):snapshot.ranked,[snapshot,filter]);
@@ -139,38 +125,13 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
   Object.assign(saved,{scrollTop:0,anchorId:'',offset:0,focus:null,focusRootId:'',pending:false,generation:saved.generation+1});
   if(saved.node)saved.node.scrollTop=0;
  };
- const readRef=useRef(reads),controllers=useRef(new Map<string,AbortController>()),openRef=useRef(open),navigation=useRef<AbortController|null>(null),returnTarget=useRef<string|null>(null),connectedRef=useRef(connected),snapshotRef=useRef(snapshot);
- readRef.current=reads;openRef.current=open;connectedRef.current=connected;snapshotRef.current=snapshot;
- const signature=useCallback((id:string)=>snapshotRef.current.signatures.get(id)??'',[]);
- const load=useCallback(async(id:string,force=false)=>{
-  if(!openRef.current||!connectedRef.current)return;const sig=signature(id),prior=readRef.current[id];
-  if(!force&&prior?.signature===sig&&(prior.workers||prior.loading||prior.error||prior.unavailable))return;
-  controllers.current.get(id)?.abort();const controller=new AbortController();controllers.current.set(id,controller);
-  const timeout=setTimeout(()=>controller.abort('task_status_timeout'),15000);
-  // Keep confirmed facts while refreshing; progressMatches still excludes every
-  // old execution identity before any cached plan/output can be displayed.
-  setReads(old=>({...old,[id]:{workers:old[id]?.workers,signature:sig,loading:true}}));
-  try{const response=await connectionFetch('/api/tasks/'+encodeURIComponent(id)+'/progress',{signal:controller.signal});
-   if([404,501].includes(response.status)){if(!controller.signal.aborted)setReads(old=>({...old,[id]:{signature:sig,unavailable:true}}));return;}
-   if(!response.ok)throw Error();const value:TaskProgress=await response.json();if(controller.signal.aborted||!openRef.current||signature(id)!==sig)return;
-   if(value.taskId!==id)throw Error();setReads(old=>({...old,[id]:{signature:sig,workers:new Map(value.workers.map(p=>[p.runId,p]))}}));
-  }catch{if((!controller.signal.aborted||controller.signal.reason==='task_status_timeout')&&openRef.current&&controllers.current.get(id)===controller&&signature(id)===sig)setReads(old=>({...old,[id]:{...(old[id]?.signature===sig?old[id]:{}),signature:sig,loading:false,error:'公开进展读取失败，可收起后重新展开重试。'}}));}
-  finally{clearTimeout(timeout);if(controllers.current.get(id)===controller)controllers.current.delete(id);}
- },[signature]);
- useEffect(()=>{
-  if(!connected){
-   for(const c of controllers.current.values())c.abort();controllers.current.clear();
-   navigation.current?.abort();setNavigating(false);
-   // An aborted request cannot retain a loading/cache hit across reconnect.
-   setReads(old=>Object.fromEntries(Object.entries(old).map(([id,read])=>[id,{...read,signature:'',loading:false,error:undefined}])));
-  }
- },[connected]);
- useEffect(()=>{if(!open)return;const visible=new Set(ranked.slice(0,effectiveLimit).map(r=>r.key.id));for(const task of data?.tasks??[])if(visible.has(task.id)&&task.workers.some(w=>expanded.get(rowId(task,w))===workerKey(w)))void load(task.id);},[data,ranked,effectiveLimit,open,connected,load,expanded]);
- useEffect(()=>{if(!open){for(const c of controllers.current.values())c.abort();controllers.current.clear();setReads(old=>Object.fromEntries(Object.entries(old).map(([id,read])=>[id,read.loading?{...read,signature:'',loading:false}:read])));navigation.current?.abort();setNavigating(false);setNavigationError('');}else refresh(true);},[open,refresh]);
- useEffect(()=>()=>{for(const c of controllers.current.values())c.abort();navigation.current?.abort();},[]);
+ const openRef=useRef(open),connectedRef=useRef(connected);openRef.current=open;connectedRef.current=connected;
+ const navigation=useRef<AbortController|null>(null),returnTarget=useRef<string|null>(null),snapshotRef=useRef(snapshot);snapshotRef.current=snapshot;
+ useEffect(()=>{if(!connected){navigation.current?.abort();setNavigating(false);}},[connected]);
+ useEffect(()=>{if(!open){navigation.current?.abort();setNavigating(false);setNavigationError('');}else refresh(true);},[open,refresh]);
+ useEffect(()=>()=>navigation.current?.abort(),[]);
  useLayoutEffect(()=>{
-  for(const c of controllers.current.values())c.abort();controllers.current.clear();navigation.current?.abort();
-  setPopupOpen(false);setReads({});setNavigating(false);setNavigationError('');setVisibleCount(20);setFilter(null);setExpanded(new Map());Object.assign(listPosition.current,{scrollTop:0,anchorId:'',focus:null,focusRootId:'',pending:false,generation:0});
+  navigation.current?.abort();setPopupOpen(false);setNavigating(false);setNavigationError('');setVisibleCount(20);setFilter(null);setExpanded(new Map());Object.assign(listPosition.current,{scrollTop:0,anchorId:'',focus:null,focusRootId:'',pending:false,generation:0});
  },[state.threadId,state.history?.readEpoch]);
  const onExpand=useCallback((task:OverviewTask,value:boolean,worker?:OverviewWorker)=>{
   const id=rowId(task,worker),key=rowKey(task,worker);
@@ -183,8 +144,7 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
    if(value)next.set(id,key);
    return next;
   });
-  if(value&&worker)void load(task.id,true);
- },[load]);
+ },[]);
  async function visit(worker:OverviewWorker,id:string,after:number){
   if(navigating||stale)return;const controller=new AbortController();navigation.current=controller;setNavigating(true);setNavigationError('');
   const timeout=setTimeout(()=>controller.abort('task_status_timeout'),15000);
@@ -198,12 +158,12 @@ export function TaskStatusPopover({state,connected,onInteraction,asideContainer,
  const currentWorking=counts&&snapshot.workingKnown&&!stale&&connected&&!error?counts.working:null;
  const title=currentWorking!==null?(currentWorking===0?'工作状态，无工作中任务':`工作状态，${currentWorking} 个任务工作中`):'工作状态，'+(!connected?'连接未确认':error?'读取失败':data?'数量待核实'+(stale?'，显示上次记录':''):'正在读取');
  const content=(
-   <ExecutionObservationContext.Provider value={{connected:connected&&!stale,enabled:state.features?.workerExecution===1,revision:data?.progressRevision??0,scope:state.threadId+':'+(state.history?.readEpoch??'legacy'),read:connectionFetch}}><Disclosures.Provider value={expanded}><PendingDisabled.Provider value={stale||navigating}><div className="status-content-body flex flex-col gap-3">
+   <ExecutionObservationContext.Provider value={{connected:connected&&!stale,scope:state.threadId+':'+(state.history?.readEpoch??'legacy'),read:connectionFetch}}><Disclosures.Provider value={expanded}><PendingDisabled.Provider value={stale||navigating}><div className="status-content-body flex flex-col gap-3">
     <div id="task-status-summary" role="group" aria-label="按工作状态筛选" className="status-counts">{counts?(['working','done','needsUser'] as const).map(key=><Toggle key={key} pressed={filter===key} onPressedChange={pressed=>changeFilter(pressed?key:null)} aria-controls="task-status-filtered-list" aria-label={key==='working'&&!snapshot.workingKnown?'工作中数量待核实':(key==='working'?'工作中，':key==='done'?'执行完成，':'待你处理，')+counts[key]+(key==='needsUser'?' 项请求':key==='done'?' 个 Worker':' 个任务')} className="status-count-filter">{key==='working'?'工作中':key==='done'?'执行完成':'待你处理'} <span data-count={key==='needsUser'?'needs-user':key}>{key==='working'&&!snapshot.workingKnown?'待核实':counts[key]}</span></Toggle>):<p className={cn(mono,'text-muted-foreground')}>正在核对任务记录</p>}</div>
     {!!counts?.queued&&<p className="text-xs text-muted-foreground">排队 <span data-count="queued">{counts.queued}</span> 个任务</p>}
     {(stale&&data||error||navigationError)&&<div className="flex items-center gap-2"><p role="status" className="text-xs text-muted-foreground">{navigationError||error||'连接尚未确认。'}{data?' 显示上次记录。':''}</p>{error&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs shrink-0'} disabled={busy||!connected} onClick={()=>refresh(true)}>重试</button>}</div>}
     <div id="task-status-filtered-list" role="region" aria-label="已安排的待办事项" tabIndex={0} className="status-list" ref={restoreList} onScroll={event=>{listPosition.current.scrollTop=event.currentTarget.scrollTop;listPosition.current.generation++;}}>
-     {!data?<p role="status">{error?'任务记录读取失败，请重试。':'正在读取任务记录…'}</p>:!matters.length?(filter?<p role="status">暂无匹配的事项。<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changeFilter(null)}>查看全部</button></p>:<p>暂无已安排的事项。</p>):<div className="flex flex-col gap-1">{matters.slice(0,effectiveLimit).map(m=><section key={m.task.id} data-todo-id={m.task.id} aria-label={taskName(m.task).text}><MatterView matter={m} reads={reads} state={state} onExpand={onExpand} onVisit={(...args)=>void visit(...args)}/></section>)}{matters.length>effectiveLimit&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>setVisibleCount(effectiveLimit+20)}>显示更多事项（还有 {matters.length-effectiveLimit} 项）</button>}</div>}
+     {!data?<p role="status">{error?'任务记录读取失败，请重试。':'正在读取任务记录…'}</p>:!matters.length?(filter?<p role="status">暂无匹配的事项。<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changeFilter(null)}>查看全部</button></p>:<p>暂无已安排的事项。</p>):<div className="flex flex-col gap-1">{matters.slice(0,effectiveLimit).map(m=><section key={m.task.id} data-todo-id={m.task.id} aria-label={taskName(m.task).text}><MatterView matter={m} state={state} onExpand={onExpand} onVisit={(...args)=>void visit(...args)}/></section>)}{matters.length>effectiveLimit&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>setVisibleCount(effectiveLimit+20)}>显示更多事项（还有 {matters.length-effectiveLimit} 项）</button>}</div>}
     </div>
    </div></PendingDisabled.Provider></Disclosures.Provider></ExecutionObservationContext.Provider>
  );

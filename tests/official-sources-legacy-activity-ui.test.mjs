@@ -27,16 +27,10 @@ test('official Sources preserves all row identity/order and applies its own href
  assert.match(d.container.textContent,/<img onerror=alert\(1\)>长中文/);assert.match(d.container.textContent,/未经独立核验/);assert.match(d.container.textContent,/保留来源/);assert.doesNotMatch(d.container.textContent,/secret/);
  assert.equal(d.all().some(n=>n.tagName==='IMG'),false);
 }));
-test('legacy calls use one neutral RunActivity, preserve same-name IDs and user disclosure across updates',async()=>withDom(async d=>{
- const tools=['completed','failed','blocked','running','unexpected'].map((status,i)=>({id:'call-'+i,label:i===4?'':'同名检查',status}));
- const render=(status='completed')=>d.render(h(MessageDetails,{message:{...message,status,toolActivities:tools}}));
- await render('running');const root=slot(d,'run-activity');assert.ok(root);assert.equal(root.attrs['data-status'],'incomplete');assert.equal(slot(d,'collapsible-trigger').attrs['aria-expanded'],'false');
- await d.click(slot(d,'collapsible-trigger'));assert.deepEqual(d.all().filter(n=>n.attrs['data-tool-id']).map(n=>n.attrs['data-tool-id']),tools.map(t=>t.id));
- for(const text of ['调用已返回','调用失败','已中断，待核对','调用中','结束状态待核实','工具名称未保留'])assert.ok(d.container.textContent.includes(text),text);
- assert.doesNotMatch(d.container.textContent,/成功|验收|交付|查看活动|查看关联任务|\d+s/);
- await render();assert.equal(slot(d,'collapsible-trigger').attrs['aria-expanded'],'true');
- assert.equal(d.all().filter(n=>n.attrs['data-slot']==='run-activity').length,1);
- await d.render(h(MessageDetails,{message:{...message,id:'another',toolActivities:tools}}));assert.equal(slot(d,'collapsible-trigger').attrs['aria-expanded'],'false');
+test('legacy tool metadata no longer adds a disclosure or hides message actions',async()=>withDom(async d=>{
+ const tools=['completed','failed','blocked','running','unexpected'].map((status,i)=>({id:'call-'+i,label:'同名检查',status}));
+ await d.render(h(MessageDetails,{message:{...message,toolActivities:tools}}));
+ assert.equal(slot(d,'run-activity'),undefined);assert.equal(d.all().filter(n=>n.attrs['data-tool-id']).length,0);assert.doesNotMatch(d.container.textContent,/同名检查|调用中|调用失败/);
 }));
 
 // Real message runtime and MessageDetails; synthetic DOM, no native clipboard/layout.

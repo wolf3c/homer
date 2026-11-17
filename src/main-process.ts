@@ -27,7 +27,6 @@ export type ProcessNode = ProcessTiming & {
   replyPolicy?: 'explicitFinal';
   state: 'working' | 'worked'; status: 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown';
   turnIds: string[]; endEventId?: string; items: ProcessItem[];
-  toolStatusCounts?: Partial<Record<Extract<ProcessItem,{kind:'tool'}>['status'],number>>;
   final?: { id: string; text: string };
   details?:'unloaded';
 };
@@ -85,7 +84,7 @@ export class MainProcessHistory {
     const keys=nodes.flatMap(node=>node.items.flatMap(item=>item.kind==='workerEvent'?[item.eventKey]:[]));
     // Retain exact source phases in storage; only known public text phases
     // belong in list, header and detail projections (including legacy rows).
-    const events=this.events.read([...new Set(keys)]);return nodes.map(node=>({...node,items:node.items.filter(item=>item.kind!=='commentary'||item.phase==='commentary'||item.phase==='final_answer').map(item=>item.kind==='workerEvent'?{...item,event:events.get(item.eventKey)}:item)}));
+    const events=this.events.read([...new Set(keys)]);return nodes.map(node=>({...node,items:node.items.filter(item=>item.kind!=='commentary'||item.phase==='commentary'||item.phase==='final_answer').map(item=>item.kind==='workerEvent'?{...item,event:events.get(item.eventKey)}:item.kind==='tool'?(({content:_content,...fact})=>fact)(item):item)}));
   }
   workerEvent(id:string,input:WorkerCardInput){
     const node=this.load(id);if(!node)throw Error('worker_event_anchor_missing');
@@ -103,15 +102,7 @@ export class MainProcessHistory {
   }
   headers(ids:readonly string[],details=false):ProcessNode[]{
     if(!ids.length)return [];if(ids.length>80)throw Error('process_ids_limit');
-    // A bounded read-only summary keeps risks visible without fetching full tool rows.
-    const counts=`(SELECT json_group_object(status,total) FROM (
-      SELECT status,COUNT(*) total FROM (
-        SELECT json_extract(item.value,'$.status') status,
-          ROW_NUMBER() OVER (PARTITION BY json_extract(item.value,'$.id') ORDER BY coalesce(json_extract(item.value,'$.revision'),0) DESC,CAST(item.key AS INTEGER)) latest
-        FROM json_each(meta.value,'$.items') item WHERE json_extract(item.value,'$.kind')='tool'
-      ) WHERE latest=1 AND status IN ('running','completed','failed','declined','interrupted','unknown','blocked') GROUP BY status
-    ))`;
-    const selection=details?'value':`CASE WHEN json_extract(value,'$.state')='working' THEN value ELSE json_set(json_remove(value,'$.completedItemIds','$.itemPhases','$.finalCandidate','$.turnClocks','$.itemClocks','$.uncertainTurnIds'),'$.items',json(coalesce((SELECT json_group_array(json(CASE WHEN json_extract(item.value,'$.kind')='tool' THEN json_object('id',json_extract(item.value,'$.id'),'seq',json_extract(item.value,'$.seq'),'revision',json_extract(item.value,'$.revision'),'kind','tool','label',json_extract(item.value,'$.label'),'status',json_extract(item.value,'$.status'),'activity',json_extract(item.value,'$.activity')) ELSE item.value END)) FROM json_each(meta.value,'$.items') item WHERE json_extract(item.value,'$.kind') IN ('worker','workerEvent') OR (json_extract(item.value,'$.kind')='tool' AND json_extract(item.value,'$.activity.action') IN ('update_task','stop_task','continue_task','create_task')) OR (json_extract(meta.value,'$.sourceKind')='user' AND json_extract(item.value,'$.kind')='commentary' AND json_extract(item.value,'$.phase')='final_answer')),'[]')),'$.toolStatusCounts',json(${counts}),'$.details','unloaded') END`;
+    const selection=details?'value':`CASE WHEN json_extract(value,'$.state')='working' THEN value ELSE json_set(json_remove(value,'$.completedItemIds','$.itemPhases','$.finalCandidate','$.turnClocks','$.itemClocks','$.uncertainTurnIds'),'$.items',json(coalesce((SELECT json_group_array(json(CASE WHEN json_extract(item.value,'$.kind')='tool' THEN json_object('id',json_extract(item.value,'$.id'),'seq',json_extract(item.value,'$.seq'),'revision',json_extract(item.value,'$.revision'),'kind','tool','label',json_extract(item.value,'$.label'),'status',json_extract(item.value,'$.status'),'activity',json_extract(item.value,'$.activity')) ELSE item.value END)) FROM json_each(meta.value,'$.items') item WHERE json_extract(item.value,'$.kind') IN ('worker','workerEvent') OR (json_extract(item.value,'$.kind')='tool' AND json_extract(item.value,'$.activity.action') IN ('update_task','stop_task','continue_task','create_task')) OR (json_extract(meta.value,'$.sourceKind')='user' AND json_extract(item.value,'$.kind')='commentary' AND json_extract(item.value,'$.phase')='final_answer')),'[]')),'$.details','unloaded') END`;
     return this.hydrate(this.db.prepare(`SELECT ${selection} value FROM meta WHERE key IN (${ids.map(()=>'?').join(',')})`).all(...ids.map(id=>prefix+id)).map(row=>{
       const {finalCandidate:_candidate,completedItemIds:_ids,itemPhases:_phases,uncertainTurnIds:_uncertain,turnClocks:_clocks,itemClocks:_itemClocks,...node}=JSON.parse(String(row.value)) as Stored;return node;
     }));
@@ -176,7 +167,6 @@ export class MainProcessHistory {
     item.category=event.category;item.label=publicActivityName(event.label)??nativeLabels[event.category];item.threadId=event.threadId;item.turnId=event.turnId;item.itemId=event.itemId;
     item.status=event.status;item.invocationCount=1;
     if(event.toolName)item.toolName=event.toolName;
-    if(event.content)item.content={input:event.content.input.state==='not-recorded'&&item.content?item.content.input:event.content.input,output:event.content.output};
     if(event.category==='fileChange'&&Number.isSafeInteger(event.fileCount)&&event.fileCount!>=0)item.fileCount=event.fileCount;
     const clocks=node.itemClocks??={},observed=validMs(event.observedAtMs)?event.observedAtMs:Date.now();
     if(!event.completed&&!clocks[key])clocks[key]={hostStartedAtMs:observed,...(validMs(event.startedAtMs)?{nativeStartedAtMs:event.startedAtMs}:{})};
@@ -227,9 +217,8 @@ export class MainProcessHistory {
     if (prior?.kind === 'tool') {
       if (prior.status !== 'running' || prior.status === status) return;
       prior.label = activity.label; prior.status = status; if(activity.activity)prior.activity=activity.activity; prior.revision++;
-      if(activity.content)prior.content=activity.content;
       if(activity.toolName)prior.toolName=activity.toolName;
-    } else node.items.push({ id: activity.id, kind: 'tool', seq: node.items.length + 1, revision: 1, label: activity.label, status,...(activity.activity?{activity:activity.activity}:{}),...(activity.content?{content:activity.content}:{}),...(activity.toolName?{toolName:activity.toolName}:{}),category:'host',turnId:activity.turnId,invocationCount:1 });
+    } else node.items.push({ id: activity.id, kind: 'tool', seq: node.items.length + 1, revision: 1, label: activity.label, status,...(activity.activity?{activity:activity.activity}:{}),...(activity.toolName?{toolName:activity.toolName}:{}),category:'host',turnId:activity.turnId,invocationCount:1 });
     node.revision++; this.save(node);
   }
   worker(id: string, fact: Omit<Extract<ProcessItem, {kind:'worker'}>, 'id' | 'seq' | 'revision' | 'kind'>) {

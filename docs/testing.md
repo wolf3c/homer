@@ -1148,3 +1148,25 @@ HOMER_COMPONENT_BUILD=/private/tmp/homer-markdown-preview-images-build HOMER_BRO
 本轮提交前复审：图片读取仅查询已授权附件元数据及原路径，不逐图重读／hash整份Markdown；正文读取保留原完整性校验。约1 MB合成报告连续10次图片读取仅触发1次正文读取的回归通过，不新增缓存或持久状态。精确提交候选488项定向离线回归、两端类型检查、独立构建及1440／390px实际Preview通过，Chrome退出0、forced=false、watchdog=false；独立复核无阻断。候选验证发现错误提示原依赖并行未提交代码，本事项仅纳入必要failed状态／文案，onError回调继续留其他事项。沙箱内4项桌面锁恢复失败在获准沙箱外重跑后通过；未运行安装版、真机或真实RTC。
 
 精确提交候选（仅含本事项改动）复审：488项定向回归零失败／零跳过、后端与UI类型检查及独立构建通过。沙箱内四项桌面锁恢复断言失败，获准沙箱外完整定向重跑488/488通过；未修改锁恢复实现。资源读取开销回归与独立只读复核通过。
+
+
+## 过程展示与副本精简（2026-11-17）
+
+只选离线协议与合成界面，不使用日常 runtime、账号或真实模型。`tests/process-display-slim.browser.mjs` 已登记 browser 专项；Browser 插件技能不可用，本次沿项目 Playwright／独立 mock-keychain Chrome 入口验证。
+
+```sh
+npm run typecheck
+npx tsc --noEmit -p ui/tsconfig.json
+node --import ./tests/fixtures/synthetic-home.mjs --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test --test-concurrency=1 tests/main-process-summary.test.ts tests/main-process.test.ts tests/internal-coordination-ui.test.mjs tests/taskcard-sources.test.ts tests/internal-coordination-output.test.ts tests/worker-progress-host.test.ts tests/worker-execution-read.test.ts tests/task-status-progress.test.ts tests/native-thread-fork-gate.test.ts tests/native-thread-bindings.test.ts tests/service-main-native-approvals.test.ts tests/service-mcp-tool-approval.test.ts tests/process-nodes-ui.test.mjs tests/tool-message-projection.test.mjs tests/main-chat-display-ui.test.mjs tests/legacy-activity-reading-ui.test.mjs tests/run-activity-facts-ui.test.mjs tests/process-reading.test.mjs tests/process-presentation.test.mjs tests/web-history-window.test.ts tests/task-status.test.ts tests/reader-scroll.test.mjs tests/quote-navigation-ui.test.mjs tests/chrome-cua.test.ts tests/task-overview-native.test.ts tests/mobile-request.test.mjs tests/schedule-host.test.ts tests/official-sources-history.test.ts tests/official-sources-legacy-activity-ui.test.mjs tests/reception-reads.test.ts tests/task-creation-labels.test.ts tests/tool-service-observer.test.ts tests/worker-card-host.test.ts tests/user-message-bubble-ui.test.mjs tests/tool-call-history.test.ts tests/run-activity-complete.test.ts tests/worker-card-events.test.ts
+node scripts/build-preview-annotation.mjs
+(cd ui && ../node_modules/.bin/vite build --configLoader runner --outDir /private/tmp/homer-process-slim-web)
+HOMER_COMPONENT_BUILD=/private/tmp/homer-process-slim-web HOMER_BROWSER_EVIDENCE=/private/tmp/homer-process-slim-browser node tests/process-display-slim.browser.mjs
+```
+
+实际结果：318/318，无跳过；两端类型检查及独立构建通过。浏览器 1080／390px 都验证了事项名、正式正文、隐藏所有工具状态／正文、无 progress/execution/process 读取、静态 Worker 事件、完成后焦点回消息、任务列表原文入口与审批拒绝／已答显示；无页面或控制台错误。Chrome 正常退出 0，forced=false、watchdog=false。审批按钮与 HTTP 回执为合成 fixture，业务审批／授权语义由上述离线测试覆盖，不能替代真实原生审批验收。
+
+退役的 captureToolValue／WorkerProgressStore／详情缓存纯单元与旧布局断言随实现移除，业务身份、scope、晚到终态、错误、回执、原文、引用和分页断言在现有整合测试保留并改为无正文／缓存路径，不以跳过换全绿。补跑的 `chat-ui-enrichment` 一组 52 项中 51 通过、旧“排除 unsafe URL”断言失败；该断言及任务前 message-links 源码在隔离对照中同样失败，保留未修复，未混入链接策略调整。
+
+当前评审证据在 `/private/tmp/homer-process-slim-20261117-run8c5/`：最终日志、browser/result.json、四张 PNG 与本事项相对共享树基线的 patch；只保留供本轮核阅／精确集成，完成后可回收。构建、测试副本和已退出 Chrome profiles 在交付前按 work-cleanup 回收。未运行全量、真实模型、安装版／真机，不表示日常 Homer 已采用。
+
+提交前已在最新 HEAD `787afc68` 上隔离本事项构造精确候选，307 项定向检查无失败／跳过，两端类型检查、独立构建及 1080／390px 合成实际界面通过，Chrome exit 0、forced=false、watchdog=false。复审发现全局历史版本会引起已展开 Worker 详情重复读取，已改为按 Task／Run 生命周期字段触发；请求次数回归先复现 11 次，再验证无关更新保持 1 次、Run 变化后为 2 次，不新增缓存或版本实体。新回归已纳入上述命令。沙箱内进程身份查询导致的候选测试失败在获准沙箱外原样重跑后通过，未改断言或锁实现。未进行真实模型、原生审批、安装版或真机验收，提交状态以 Git 记录为准。

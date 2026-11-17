@@ -9,8 +9,6 @@ import {previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText} from 
 import {MessageActions} from './vendor/assistant-ui/message-actions';
 import {MessageTimestamp} from './message-timestamps';
 import {Sources} from './vendor/assistant-ui/sources';
-import {RunActivity} from './vendor/assistant-ui/run-activity';
-import {toolActivityText} from './process-presentation';
 import './vendor/assistant-ui/run-activity.css';
 
 export function MessageDetails({ message, runtime = false }: { message: import('../src/conversation-projection').DisplayMessage; runtime?: boolean }) {
@@ -33,17 +31,9 @@ export function MessageDetails({ message, runtime = false }: { message: import('
     }
   }
   return <>
-    {!!message.toolActivities?.length && <LegacyToolActivities key={JSON.stringify([message.threadId,message.id])} tools={message.toolActivities}/>}
     {!!message.sources?.length && <MessageSources key={JSON.stringify([message.threadId,message.id])} sources={message.sources}/>}
     {!!message.text && (runtime?<RuntimeMessageActions message={message} write={copy} busy={busy} notice={notice} onNotice={setNotice}/>:<><MessageActions className="message-actions" aria-label="消息操作" copied={notice==='已复制'} copying={busy} onCopy={()=>void copy(message.text).catch(()=>{})}><MessageTimestamp messageId={message.id}/></MessageActions>{notice&&<p className={'message-action-notice'+(notice==='已复制'?' sr-only':'')} role="status">{notice}</p>}</>)}
   </>;
-}
-function LegacyToolActivities({tools}:{tools:NonNullable<ConversationMessage['toolActivities']>}){
-  const [open,setOpen]=useState(false);
-  // These records have no reliable run lifecycle or clock. A returned tool is
-  // not evidence that the main turn succeeded or that its result was accepted.
-  return <RunActivity className="message-legacy-activity" status="incomplete" statusLabel={'处理过程 · '+tools.length+' 项'} open={open} onOpenChange={setOpen}
-    entries={tools.map(tool=>{const text=tool.status==='blocked'?(tool.label||'工具名称未保留')+' · 已中断，待核对':toolActivityText(tool);return {id:tool.id,kind:'tool',label:text,content:<p data-tool-id={tool.id}>{text}</p>};})}/>;
 }
 function MessageSources({sources}:{sources:NonNullable<ConversationMessage['sources']>}){
   const [open,setOpen]=useState(false);

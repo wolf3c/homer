@@ -241,7 +241,7 @@ async function receive(raw: unknown) {
       else if(m.method==='history.queue')value=await bridge.history!.queue(m.input.after,m.input.readEpoch);
       else if(m.method==='history.dispatchQueue')value=await bridge.history!.dispatchQueue!(m.input);
       else if(m.method==='history.interactions')value=await bridge.history!.interactions(m.input.after,m.input.readEpoch);
-      else if(m.method==='taskOverview.progress')value=await bridge.taskOverview!.progress!(m.input.id);
+      else if(m.method==='taskOverview.progress'){if(!bridge.taskOverview?.progress)throw Error('task_overview_unavailable');value=await bridge.taskOverview.progress(m.input.id);}
       else if(m.method==='taskOverview.list')value=await bridge.taskOverview!.list();
       else if(m.method==='taskOverview.summary')value=await bridge.taskOverview!.summary!(m.input.id);
       else if(m.method==='taskOverview.origin')value=await bridge.taskOverview!.origin!(m.input.id,m.input.messageId);

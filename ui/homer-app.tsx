@@ -24,7 +24,7 @@ import {ImageRoot,ImagePreview,ImageZoom} from './vendor/assistant-ui/image';
 import {FileRoot,FileIconDisplay,FileName,FileSize,FileDownload} from './vendor/assistant-ui/file';
 import './media-attachments.css';
 import {ApprovalCard} from './vendor/assistant-ui/approval-card';
-import {processActivityText,serviceActivityNotice,liveMainActivity} from './waiting-status';
+import {serviceActivityNotice} from './waiting-status';
 import {connectionFetch as fetch,ConnectionEvents,mobileView} from "./web-connection-client";
 import {FileList} from './file-list';
 import {CanvasPanel, type CanvasArtifact} from "./canvas-panel";
@@ -50,14 +50,11 @@ import type {LegacyQueueEditSession} from './queue-draft-recovery';
 import {useQueueOperations} from './queue-operations';
 import {createHomerAttachmentAdapter,attachmentAsset,type HomerAttachment,type HomerAttachmentAdapter,type DraftContext} from './homer-attachment-adapter';
 import { MessageDetails } from './message-details';
-import { ProcessMessageContent,ProcessObservationContext,ProcessDetailsContext,InactiveInteractionNotes } from './process-nodes';
-import type { ProcessNode } from '../src/main-process';
+import { ProcessMessageContent,InactiveInteractionNotes } from './process-nodes';
 import {projectProcessMessage,useProcessParts} from './process-message';
-import {useProcessDetails} from './process-details';
 import {confirmedTerminal} from './process-presentation';
 import {isVisibleConversationMessage} from './chat-date';
 import {MessageTimestamps,MessageDaySeparator,MessageTimestamp} from './message-timestamps';
-import ReactMarkdown from 'react-markdown';
 import { Highlight } from "./markdown-code";
 import {CodeHeader} from './vendor/assistant-ui/code-header';
 import {QuoteBlock,SelectionToolbar} from './vendor/assistant-ui/quote';
@@ -185,7 +182,6 @@ function UserMessage() {
   </MessagePrimitive.Root></>;
 }
 const ProcessMessagesContext=createContext<ReadonlyMap<string,WebState['messages'][number]>>(new Map());
-function renderProcessText(text:string){return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{img:LazyMarkdownImage,a:({href,children})=><a href={href} target="_blank" rel="noopener noreferrer">{children}</a>}}>{text}</ReactMarkdown></div>;}
 function AssistantMessage() {
   const status = useAuiState(s => s.message.status);
   const content = useAuiState(s => s.message.content);
@@ -194,7 +190,7 @@ function AssistantMessage() {
   // The external runtime may synthesize an empty reply after the last queued
   // user bubble. Only persisted messages own a display position.
   const original=useContext(ProcessMessagesContext).get(String(metadata.messageId));
-  const parts=useProcessParts(renderProcessText);
+  const parts=useProcessParts();
   if(!isVisibleConversationMessage(original))return null;
   const process=original?.process;
   const internal=process?.sourceKind==='worker';
@@ -224,7 +220,7 @@ function AssistantMessage() {
   return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-process-completed={completed||undefined} data-message-source={process?.sourceKind==='user'&&(!original||messageSourceParts(original)!==undefined)?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className={'message assistant-message'+(compact?' is-process-record':'')} aria-label="荷马的回复">
     {!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
     {internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
-    <ProcessMessageContent taskSources={original?.taskSources} taskSourceUnresolved={original?.taskSourceUnresolved} titledEvents={titledEvents} node={process} activityText={metadata.activityText as string} renderText={renderProcessText} parts={parts}>
+    <ProcessMessageContent taskSourceUnresolved={original?.taskSourceUnresolved} titledEvents={titledEvents} node={process}>
     {hasBubble&&<>
     {!internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
     <div className="assistant-message-bubble">
@@ -1042,9 +1038,6 @@ function HomerApp() {
     for(const file of next.artifacts??[]){const key='artifact:'+file.id,signature=file.sha256;summary.set(key,{source:file,signature});if(!previous.has(key)||previous.get(key)!.signature!==signature)changed=true;}
     reader.current.summary=summary;if(baseline)setHasNewContent(false);else if(changed)setHasNewContent(true);
   }
-  const loadProcess=useCallback(async(id:string,signal:AbortSignal)=>{
-    const epoch=history.current.epoch,response=await fetch('/api/history/process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({readEpoch:epoch,id}),signal});const value=await response.json();if(!response.ok)throw Error(value.error??'history_process_unavailable');if(epoch!==history.current.epoch)throw Error('history_epoch_changed');return value as ProcessNode;
-  },[state.history?.readEpoch]);
   async function loadPage(direction:'before'|'after'|'around',id?:string,quote?:MessageQuote,positionCommit?:ReturnType<PositionClaim>){
     if(pageBusy&&direction!=='around')return;const cache=history.current,epoch=cache.epoch,position=direction==='around'?id:direction==='before'?cache.before:cache.after;if(!position)return;
     const commit=positionCommit??claimPosition(),viewNavigation=navigation.current,read=++pageRead.current;setPageBusy(true);setPageNotice('');
@@ -1237,19 +1230,16 @@ function HomerApp() {
     const input = prepareMessage(text, custom?.quotes ?? custom?.quote, undefined, () => crypto.randomUUID());
     await sendInput(input);
   }, [sendInput]);
-  const processDetails=useProcessDetails(state.messages,state.threadId,state.history?.readEpoch,loadProcess);
-  const processMessages=useMemo(()=>new Map(processDetails.messages.map(message=>[message.id,message])),[processDetails.messages]);
-  const nativeActivity=liveMainActivity(state,connected);
+  const processMessages=useMemo(()=>new Map(state.messages.map(message=>[message.id,message])),[state.messages]);
   const messageCache=useRef(new Map<string,{source:WebState['messages'][number];key:string;value:ThreadMessageLike}>());
   const alive=new Set(state.messages.map(message=>message.id));for(const id of messageCache.current.keys())if(!alive.has(id))messageCache.current.delete(id);
-  const messages:ThreadMessageLike[]=processDetails.messages.map(message=>{
-    const stale=!nativeActivity||nativeActivity.processId!==message.process?.id||message.process?.threadId!==state.threadId||nativeActivity.source!==(message.process?.sourceKind==='user'?'user':'internal')||!['native','compacting'].includes(nativeActivity.stage);
-    const activity=message.process?processActivityText(state,connected,message.process):'',notes=state.inactiveInteractions?.filter(i=>i.processId?i.processId===message.process?.id:i.messageId===message.id),key=activity+JSON.stringify(notes)+String(stale)+nativeActivity?.turnId;
+  const messages:ThreadMessageLike[]=state.messages.map(message=>{
+    const notes=state.inactiveInteractions?.filter(i=>i.processId?i.processId===message.process?.id:i.messageId===message.id),key=JSON.stringify(notes);
     const cached=messageCache.current.get(message.id);if(cached?.source===message&&cached.key===key)return cached.value;
-    const projected=projectProcessMessage(message,stale,nativeActivity?.turnId);
+    const projected=projectProcessMessage(message);
     const value:ThreadMessageLike=({
     id: message.id, role: message.role, content: projected.content, createdAt: new Date(message.createdAt),
-    metadata: { custom: { ...(message.role==='user'?{original:message}:{}),claimPosition,activityPresentation:projected.presentation,inactiveInteractions:notes,activityText:activity,sourceLabel:message.sourceLabel,sourceMessageId:message.sourceMessageId,quote: message.quote, quotes: message.quotes,resourceReference:message.resourceReference,resourceReferences:message.resourceReferences,media:message.media,messageId:message.id,inputState:message.inputState,queued:!isVisibleConversationMessage(message) } },
+    metadata: { custom: { ...(message.role==='user'?{original:message}:{}),claimPosition,activityPresentation:projected.presentation,inactiveInteractions:notes,sourceLabel:message.sourceLabel,sourceMessageId:message.sourceMessageId,quote: message.quote, quotes: message.quotes,resourceReference:message.resourceReference,resourceReferences:message.resourceReferences,media:message.media,messageId:message.id,inputState:message.inputState,queued:!isVisibleConversationMessage(message) } },
     ...(message.role === "assistant" ? { status: message.status === "running" ? { type: "running" as const } : message.status === "completed" ? { type: "complete" as const, reason: "stop" as const } : { type: "incomplete" as const, reason: message.process?.status === "unknown" ? "other" as const : message.status === "interrupted" ? "cancelled" as const : "error" as const } } : {}),
   });messageCache.current.set(message.id,{source:message,key,value});return value;});
   const stopCurrent=async()=>{if(!state.activeMessageId)return;setStopping(state.activeMessageId);try{await post("/api/stop",{messageId:state.activeMessageId});}catch(e){setStopping(null);setError("停止未确认："+(e instanceof Error?e.message:"web_request_failed"));}};
@@ -1343,7 +1333,7 @@ function HomerApp() {
   const accountRequired=!mobileView&&!!window.homerDesktopAccount&&!connected&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
   const featureTour = mobileView ? undefined : window.homerDesktopFeatureTour;
   const feedback = error || (!accountRequired&&!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
-  return <QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><ProcessDetailsContext.Provider value={processDetails.load}><ProcessMessagesContext.Provider value={processMessages}><ProcessObservationContext.Provider value={{connected,threadId:state.threadId,readEpoch:state.history?.readEpoch,serviceRunning:state.upgrade.phase==='running',observedAtMs:state.observedAtMs,mainActivity:state.mainActivity,generationTurnId:state.generation?.turnId}}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
+  return <QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
     <div className={canvasOpen?"app-shell canvas-open":"app-shell"} data-native-titlebar={nativeTitlebar||undefined}>
       {featureTour && <DesktopFeatureTour bridge={featureTour}
         ready={accountRequired || (connected && !!state.threadId && state.upgrade.phase === 'running')}
@@ -1395,6 +1385,6 @@ function HomerApp() {
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
       </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
     </div>
-  </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessObservationContext.Provider></ProcessMessagesContext.Provider></ProcessDetailsContext.Provider></QuoteNavigationContext.Provider>;
+  </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></QuoteNavigationContext.Provider>;
 }
 createRoot(document.getElementById("homer-root")!).render(<HomerApp />);

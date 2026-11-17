@@ -25,7 +25,6 @@ import { WorkerNativeRequests, type NativeRequest } from "./worker-native-reques
 import type { InteractionResolution } from "./worker-interactions.js";
 import { HOST_MCP_TOOLS } from "./worker-interaction-mcp.js";
 import {publicActivityName} from './activity-facts.js';
-import {nativeToolContent} from './tool-content.js';
 import {activitySummaryText} from './message-quote.js';
 import {queryHomerTokenFailure} from './homer-account.js';
 export type Tool = {
@@ -79,7 +78,7 @@ function safeNativeProcess(threadId:string,turnId:string,item:any,completed:bool
   // Public labels stay separate from the authorized, bounded call snapshot.
   const fileCount=category==='fileChange'&&Array.isArray(item.changes)&&item.changes.every((change:any)=>typeof change?.path==='string')?new Set(item.changes.map((change:any)=>change.path)).size:undefined;
   const tool=category==='externalTool'?publicActivityName(item.tool):undefined;
-  return {threadId,turnId,itemId:item.id,category,status,completed,content:nativeToolContent(item,completed),...(tool?{toolName:tool,label:'调用外部工具：'+tool}:{}),observedAtMs:Date.now(),...(fileCount!==undefined?{fileCount}:{}),...(finiteTime(item.startedAtMs)?{startedAtMs:item.startedAtMs}:{}),...(finiteTime(item.completedAtMs)?{endedAtMs:item.completedAtMs}:{}),...(finiteTime(item.durationMs)?{durationMs:item.durationMs}:{})};
+  return {threadId,turnId,itemId:item.id,category,status,completed,...(tool?{toolName:tool,label:'调用外部工具：'+tool}:{}),observedAtMs:Date.now(),...(fileCount!==undefined?{fileCount}:{}),...(finiteTime(item.startedAtMs)?{startedAtMs:item.startedAtMs}:{}),...(finiteTime(item.completedAtMs)?{endedAtMs:item.completedAtMs}:{}),...(finiteTime(item.durationMs)?{durationMs:item.durationMs}:{})};
 }
 export type EngineOptions = {
   cwd: string;

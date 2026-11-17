@@ -212,7 +212,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
         const pending=interactionPage(),interactions=pending.items;
         const current=app.conversationControlState();
         return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:CONVERSATION_VIEW,acceptedRequestIds:[],processNodes:[],
-        queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,taskOverview:true,workerExecution:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
+        queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,taskOverview:true,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
         history:{protocol:3,readEpoch:app.webReadEpoch,page:pageInfo,moreQueue:queue.after,moreInteractions:pending.after}};
         };
         return app.receptionTimings?app.receptionTimings.measure('state_history',build):build();
@@ -220,15 +220,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
     },
     onStateChange: listener=>app.onStateChange(listener),
     taskOverview:{
-      execution:async(selector,before)=>app.readWorkerExecution(selector,before),
-      call:async(selector,key)=>app.readWorkerCall(selector,key),
-      list:async()=>({...readTaskOverview(app.store.db),progressRevision:app.workerProgress.revision}),
-      progress:async id=>{
-        const db=app.store.db;
-        if(!db.prepare("SELECT id FROM tasks WHERE id=? AND historyState='visible'").get(id))throw Error('task_not_found');
-        const scopes=db.prepare(`SELECT r.taskId,r.version,r.id AS runId,r.epoch,r.threadId,r.turnId FROM runs r WHERE r.taskId=? AND r.threadId IS NOT NULL AND r.turnId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid)`).all(id) as import('./worker-progress.js').WorkerScope[];
-        return {taskId:id,workers:scopes.flatMap(scope=>{const progress=app.workerProgress.get(scope);return progress?[progress]:[];})};
-      },
+      list:async()=>readTaskOverview(app.store.db),
       summary:async id=>{
         const detail=readTaskSummary(app.store.db,id);
         const sources=app.store.db.prepare(`SELECT v.taskId,c.id,c.threadId FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion JOIN conversation_inputs input ON input.requestId=v.sourceRequestId JOIN conversation_messages c ON c.threadId=input.threadId AND c.requestId=input.requestId AND c.role='user' WHERE t.id=?`).all(id);

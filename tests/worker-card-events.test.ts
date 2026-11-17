@@ -21,7 +21,7 @@ test('worker event snapshots remain fixed, same-task reply gets a new card, repl
  f.history.workerEvent('result',{...event,observedAtMs:3});
  assert.deepEqual(f.history.exact('create'),before);assert.equal(f.history.exact('result')!.items.length,1);
  assert.equal(f.history.exact('create')!.items[0]!.kind,'workerEvent');
- const restored=new MainProcessHistory(f.db);assert.deepEqual(restored.headers(['create'])[0],{...before,toolStatusCounts:{},details:'unloaded'});
+ const restored=new MainProcessHistory(f.db);assert.deepEqual(restored.headers(['create'])[0],{...before,details:'unloaded'});
  assert.equal((restored.exact('result')!.items[0] as any).event.body,'已核对3项，保留1个待确认日期。');
  assert.throws(()=>f.history.workerEvent('result',{...event,body:'替换历史内容'}),/worker_event_conflict/);
 }finally{f.db.close();}});

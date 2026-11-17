@@ -133,13 +133,7 @@ export class ConversationHistory {
       LEFT JOIN conversation_attachments a ON a.messageId=m.id
       LEFT JOIN conversation_feedback f ON f.messageId=m.id
       WHERE m.threadId=? ORDER BY m.rowid`).all(threadId) as unknown as (Row & {refsJson:string|null;feedbackValue:'up'|'down'|null})[];
-    const tools = new Map<string, MessageToolActivity[]>(), ids=rows.filter(row=>row.role==='assistant').map(row=>row.id);
-    for(let offset=0;offset<ids.length;offset+=500){
-      const batch=ids.slice(offset,offset+500);
-      const activities=this.db.prepare(`SELECT messageId,id,label,status FROM conversation_tools WHERE messageId IN (${batch.map(()=>'?').join(',')}) ORDER BY rowid`).all(...batch) as (MessageToolActivity & {messageId:string})[];
-      for(const {messageId,...activity} of activities){const group=tools.get(messageId)??[];group.push(activity);tools.set(messageId,group);}
-    }
-    return rows.map(({refsJson,feedbackValue,...row})=>({...parse(row),...(refsJson?{attachments:JSON.parse(refsJson)}:{}),...(row.role==='assistant'?{sources:messageLinks(row.text),toolActivities:tools.get(row.id)??[],feedback:feedbackValue??null}:{})}));
+    return rows.map(({refsJson,feedbackValue,...row})=>({...parse(row),...(refsJson?{attachments:JSON.parse(refsJson)}:{}),...(row.role==='assistant'?{sources:messageLinks(row.text),feedback:feedbackValue??null}:{})}));
   }
   acceptedRequestIds(threadId: string): string[] {
     return this.db.prepare('SELECT requestId FROM conversation_inputs WHERE threadId=? ORDER BY rowid').all(threadId).map(row=>String(row.requestId));
@@ -152,9 +146,7 @@ export class ConversationHistory {
       LEFT JOIN conversation_attachments a ON a.messageId=m.id
       LEFT JOIN conversation_feedback f ON f.messageId=m.id
       WHERE m.threadId=? ORDER BY m.rowid`).all(JSON.stringify([...new Set(ids)]),threadId) as unknown as (Row&{refsJson:string|null;feedbackValue:'up'|'down'|null})[];
-    const tools=new Map<string,MessageToolActivity[]>();
-    for(const {messageId,...tool} of this.db.prepare(`SELECT messageId,id,label,status FROM conversation_tools WHERE messageId IN (${ids.map(()=>'?').join(',')}) ORDER BY rowid`).all(...ids) as (MessageToolActivity&{messageId:string})[]){const list=tools.get(messageId)??[];list.push(tool);tools.set(messageId,list);}
-    return rows.map(({refsJson,feedbackValue,...row})=>({...parse(row),...(refsJson?{attachments:JSON.parse(refsJson)}:{}),...(row.role==='assistant'?{sources:messageLinks(row.text),toolActivities:tools.get(row.id)??[],feedback:feedbackValue??null}:{})}));
+    return rows.map(({refsJson,feedbackValue,...row})=>({...parse(row),...(refsJson?{attachments:JSON.parse(refsJson)}:{}),...(row.role==='assistant'?{sources:messageLinks(row.text),feedback:feedbackValue??null}:{})}));
   }
   // Internal exact identity lookup. Public callers must scope the message first.
   message(id: string): ConversationMessage | undefined {

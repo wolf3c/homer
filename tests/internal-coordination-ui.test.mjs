@@ -45,3 +45,10 @@ test('a delegation already named above its reply moves into process details whil
  assert.ok(d.find(n=>n.attrs['data-worker-event']==='failed'));
  assert.match(visibleText(d.container),/合成正式回复/);
 }));
+
+test('tool progress and commentary never create a disclosure without business events',async()=>withDom(async d=>{
+ await d.render(h(ProcessMessageContent,{node:{...node,state:'working',status:'running',items:[{id:'call',kind:'tool',seq:1,revision:1,label:'SYNTHETIC_TOOL',status:'running'},{id:'progress',kind:'commentary',seq:2,revision:1,phase:'commentary',text:'SYNTHETIC_PROGRESS'}]},renderText:t=>t},h('p',null,'正式正文')));
+ assert.match(visibleText(d.container),/正式正文/);
+ assert.doesNotMatch(visibleText(d.container),/当前事项|处理过程|SYNTHETIC/);
+ assert.equal(d.all().filter(n=>n.attrs['data-slot']==='collapsible-trigger').length,0);
+}));

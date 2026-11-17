@@ -7,7 +7,6 @@ import { resolve, join } from 'node:path';
 import { historyFixture, syntheticRoot } from './web-history-loading-fixture.js';
 import { WebHistoryPages } from '../src/web-history-pages.js';
 import {Files} from '../src/files.js';
-import {WorkerProgressStore} from '../src/worker-progress.js';
 import {MediaStore} from '../src/media-store.js';
 import { homerWebBridge } from '../src/web-homer.js';
 import { createWebServer } from '../src/web-server.js';
@@ -30,10 +29,8 @@ export async function fixture(total, mode, media = false, stableRecent = false) 
     if(media)for(let n=Math.max(0,total-40);n<total;n++)addUserMedia(n);
     const attach=(text,files,task)=>commitSyntheticMessage({...f,media:mediaOwner},task?.threadId??'synthetic-history',text,files,undefined,task);
     const fakeEngine={invocations:0,turn(){this.invocations++;throw Error('synthetic_engine_forbidden');}};
-    const files=new Files(resolve(syntheticRoot+'/unused-workspace')),workerProgress=new WorkerProgressStore();
-    const host = { ...f, files, workerProgress, engine:fakeEngine, webReadEpoch: 'synthetic-browser-epoch', webHistoryPages: () => reader, registerWebSurface() { }, onStateChange(listener) { listeners.add(listener); return () => listeners.delete(listener); }, media: mediaOwner, conversationControlState: () => ({ isRunning: false, activeMessageId: null }), submitMessage(input) { submitted.push(input.requestId); const receipt = f.inputs.accept(input); server?.publish(); return receipt; }, snapshot() { throw Error('full_snapshot_forbidden'); }, conversationState() { throw Error('full_conversation_forbidden'); }, stopMain(id) { stopped.push(id); return {}; } };
-    host.readWorkerExecution=(selector,before)=>{const scope=f.tasks.executionReadScope({agentId:f.store.meta('mainAgentId')},selector,f.store.meta('mainThread')??'');return workerProgress.execution(selector,scope.version,before);};
-    host.readWorkerCall=(selector,callKey)=>{const scope=f.tasks.executionReadScope({agentId:f.store.meta('mainAgentId')},selector,f.store.meta('mainThread')??'');if(!/^[a-f0-9]{64}$/.test(callKey))throw Error('execution_call_unavailable');return workerProgress.call(selector,scope.version,callKey);};
+    const files=new Files(resolve(syntheticRoot+'/unused-workspace'));
+    const host = { ...f, files,  engine:fakeEngine, webReadEpoch: 'synthetic-browser-epoch', webHistoryPages: () => reader, registerWebSurface() { }, onStateChange(listener) { listeners.add(listener); return () => listeners.delete(listener); }, media: mediaOwner, conversationControlState: () => ({ isRunning: false, activeMessageId: null }), submitMessage(input) { submitted.push(input.requestId); const receipt = f.inputs.accept(input); server?.publish(); return receipt; }, snapshot() { throw Error('full_snapshot_forbidden'); }, conversationState() { throw Error('full_conversation_forbidden'); }, stopMain(id) { stopped.push(id); return {}; } };
     const bridge = homerWebBridge(host, { draftUpload: false });
     host.attachmentMessage=input=>{
         const message=f.history.message(input.messageId);
@@ -50,5 +47,5 @@ export async function fixture(total, mode, media = false, stableRecent = false) 
     assert.notEqual(new URL(server.url).port, '4780');
     const remove = f.store.db.onChange(() => { for (const listener of listeners)
         listener(); });
-    return { ...f, files, workerProgress, fakeEngine, reader, bridge, server, attach, addUserMedia, submitted, stopped, mediaRequests, close: async () => { assert.equal(fakeEngine.invocations,0);remove(); try{await server.close();}finally{f.close();rmSync(connectionDirectory,{recursive:true,force:true});} } };
+    return { ...f, files,  fakeEngine, reader, bridge, server, attach, addUserMedia, submitted, stopped, mediaRequests, close: async () => { assert.equal(fakeEngine.invocations,0);remove(); try{await server.close();}finally{f.close();rmSync(connectionDirectory,{recursive:true,force:true});} } };
 }

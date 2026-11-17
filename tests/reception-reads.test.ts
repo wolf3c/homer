@@ -50,7 +50,7 @@ test('reception: history association loading is batched and does not duplicate m
  const f=fixture();try{
   for(let i=0;i<1100;i++){const r=f.history.accept('synthetic-thread',{requestId:'input-'+i,text:'Synthetic '+i});f.history.feedback('synthetic-thread',r.replyId,'up');for(let t=0;t<2;t++)f.history.tool(r.replyId,{id:'t'+t,label:'Synthetic tool',phase:'start'});}
   let count=0;const prepare=f.store.db.prepare.bind(f.store.db);f.store.db.prepare=sql=>{count++;return prepare(sql);};
-  const messages=f.history.list('synthetic-thread');assert.equal(messages.length,2200);assert.equal(new Set(messages.map(m=>m.id)).size,2200);assert.equal(messages[1]!.toolActivities!.length,2);assert.equal(messages[1]!.feedback,'up');assert.ok(count<=12,`history prepares=${count}`);
+  const messages=f.history.list('synthetic-thread');assert.equal(messages.length,2200);assert.equal(new Set(messages.map(m=>m.id)).size,2200);assert.equal(messages[1]!.toolActivities,undefined);assert.equal(messages[1]!.feedback,'up');assert.ok(count<=12,`history prepares=${count}`);
  }finally{f.store.close();}
 });
 test('reception: durable FIFO ignores legacy priorities and only a preparing head blocks later inputs',()=>{

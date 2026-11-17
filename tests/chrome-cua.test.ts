@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {viewportPixels,windowElements,CUA_TOOLS} from '../src/desktop-cua.js';
 import {ownedCuaProcesses} from '../src/cua-processes.js';
 import {hostMcpTools} from '../src/worker-interaction-mcp.js';
-import {nativeToolContent} from '../src/tool-content.js';
 
 test('Chrome viewport follows Chrome geometry at native and preview scales',()=>{
  const window={x:-20,y:55,width:1000,height:760};
@@ -31,17 +30,13 @@ test('Windows accepts only the pinned driver’s native DWM frame and clips its 
  assert.throws(()=>viewportPixels(invalid,invalid,shot,1398,898,true),/chrome_viewport_unavailable/);
 });
 
-test('CUA tools require the desktop Worker catalog and keep inputs and images out of activity details',()=>{
+test('CUA tools require the desktop Worker catalog',()=>{
  const names=CUA_TOOLS.map(tool=>tool.name);
  assert.deepEqual(names,['browser_open','browser_read','browser_click','desktop_read','desktop_click','desktop_type']);
  for(const catalog of [hostMcpTools('main',true,false,true),hostMcpTools('worker')])
   assert.ok(!catalog.some(tool=>names.includes(tool.name)));
  assert.deepEqual(hostMcpTools('worker',false,false,true).filter(tool=>names.includes(tool.name)),CUA_TOOLS);
- for(const tool of names){
-  const content=nativeToolContent({type:'mcpToolCall',server:'homer_interactions',tool,arguments:{url:'https://example.test/?id=fixture'},result:{data:'fixture-pixels'}},true);
-  assert.equal(content?.input.state,'not-recorded');
-  assert.equal(content?.output.state,'not-recorded');
- }
+
 });
 
 test('CUA cleanup only selects its own driver and browser profile even after the Chrome leader exits',()=>{

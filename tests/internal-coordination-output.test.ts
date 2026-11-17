@@ -45,7 +45,7 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
   worker.emit('agentMessage',{threadId:worker.threadId,turnId:worker.turnId,itemId:'worker-progress',phase:'commentary',text:'普通中间处理',completed:true});
   await new Promise(resolve=>setTimeout(resolve,20));assert.equal(f.inputs.length,rounds,'ordinary Worker progress adds zero Main rounds');
   assert.deepEqual(readTestConversation(f.app).messages.filter(message=>message.text.trim()).map(message=>({id:message.id,text:message.text})),before,'progress adds no user message');
-  assert.equal(f.app.workerProgress.get({taskId,version:run.version,runId:run.id,epoch:run.epoch,threadId:worker.threadId,turnId:worker.turnId!})?.output?.text,'普通中间处理');
+  assert.equal('workerProgress' in f.app,false);
   const path=join(f.app.config.workspace,'checked.md');writeFileSync(path,'# 已核对的材料');
   const raw=finalText+'\n[报告]('+path+')';
   worker.finish!({status:scenario==='failed'?'failed':'completed',text:raw,messages:[{itemId:'worker-final',phase:'final_answer',text:raw}],...(scenario==='failed'?{errorCode:'synthetic_failure'}:{})});

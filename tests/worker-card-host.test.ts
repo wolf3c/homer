@@ -46,7 +46,7 @@ for(const scenario of ['result','forged-notice','missing','startup-failure','sta
   const publicNodes=nodes.map(node=>({...node,items:node.items.map(item=>{if(item.kind!=='tool')return item;const {content:_content,...publicItem}=item;return publicItem;})}));assert.doesNotMatch(JSON.stringify(publicNodes),/PRIVATE_/);
   const bridge=homerWebBridge(app);assert.doesNotMatch(JSON.stringify(await bridge.history!.state()),/PRIVATE_/);
   const detail=await bridge.history!.process({id:cards[0]!.node.id,readEpoch:app.webReadEpoch}),call=detail.items.find(item=>item.kind==='tool'&&item.toolName==='worker_open')!;
-  assert.equal(call.kind,'tool');if(call.kind!=='tool')throw Error('worker_open_call_missing');assert.equal(call.content?.input.state,'recorded');assert.ok(call.content&&'value' in call.content.input);assert.equal((call.content.input.value as Record<string,unknown>).workingDirectory,join(dir,'PRIVATE_SELECTED_PROJECT'));
+  assert.equal(call.kind,'tool');if(call.kind!=='tool')throw Error('worker_open_call_missing');assert.equal(call.content,undefined);assert.equal(app.tasks.run(cards[0]!.event!.runId!).workingDirectory,join(dir,'PRIVATE_SELECTED_PROJECT'));
   const first=JSON.stringify(cards[0]!.event);app.store.db.prepare('UPDATE tasks SET outcome=?,revision=revision+1 WHERE id=?').run('partial',cards[0]!.event.taskId);assert.equal(JSON.stringify(app.processes.exact(cards[0]!.node.id)!.items.find(i=>i.kind==='workerEvent')!.event),first);
  }finally{await app.close();rmSync(dir,{recursive:true,force:true});}
 });

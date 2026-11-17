@@ -53,8 +53,8 @@ test('the host activity owner records authorized call content with credentials r
   assert.equal(calls,2);
   assert.deepEqual(processes.exact('node')!.items.filter(i=>i.kind==='tool').map(i=>[i.label,i.status]),[['检查协作请求','completed'],['答复协作请求','failed']]);
   const content=processes.exact('node')!.items.filter(i=>i.kind==='tool');
-  assert.deepEqual(content[0]!.content?.output,{state:'recorded',value:{state:'pending_main'}});
-  assert.match(JSON.stringify(content),/SYNTHETIC_BODY/);assert.doesNotMatch(JSON.stringify(content),/FICTIONAL_CREDENTIAL/);
+  assert.equal(content[0]!.content,undefined);
+  assert.doesNotMatch(JSON.stringify(content),/SYNTHETIC_BODY/);assert.doesNotMatch(JSON.stringify(content),/FICTIONAL_CREDENTIAL/);
  }finally{db.close();}
 });
 
@@ -85,7 +85,7 @@ test('native tools retain authorized content but exclude reasoning, credentials 
  await receive('item/started',{id:'malformed',type:{toString:'PRIVATE_BODY'}});
  assert.equal(events.length,10);assert.equal(events.filter(e=>e.status==='completed').length,5);
  assert.doesNotMatch(JSON.stringify(events),/FICTIONAL_CREDENTIAL|PRIVATE_REASONING|reasoning/);
- assert.deepEqual(events.find(e=>e.itemId==='webSearch')?.content?.input,{state:'recorded',value:{query:'SYNTHETIC_BODY'}});
+ assert.equal(events.find(e=>e.itemId==='webSearch')?.content,undefined);
  assert.deepEqual(events.filter(e=>!e.completed).map(e=>e.category),['webSearch','imageView','imageGeneration','externalTool','externalTool']);
  await receive('item/completed',{id:'failed',type:'dynamicToolCall',tool:'public_tool',status:'completed',success:false});
  assert.equal(events.at(-1).status,'failed');

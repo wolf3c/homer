@@ -27,7 +27,8 @@ test('legacy tool identity/order and returned/interrupted facts survive history 
   const next=new ConversationHistory(db);next.reconcile();
   const reply=next.list('thread-a')[1]!;
   assert.equal(reply.sources?.[0]?.url,'https://example.com/');
-  assert.deepEqual(reply.toolActivities?.map(x=>[x.id,x.label,x.status]),[['a','同名检查','completed'],['b','同名检查','blocked']]);
+  assert.equal(reply.toolActivities,undefined);
+  assert.deepEqual(db.prepare('SELECT id,label,status FROM conversation_tools ORDER BY rowid').all().map(x=>[x.id,x.label,x.status]),[['a','同名检查','completed'],['b','同名检查','blocked']]);
   assert.deepEqual(next.list('thread-b'),[]);
  }finally{db.close();}
 });

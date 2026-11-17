@@ -140,7 +140,7 @@ test('real host callbacks bind user and private worker nodes to native terminal 
  }finally{await f.close();}
 });
 
-test('native RPC call content flows through real service observers with credentials removed before persistence',async()=>{
+test('native RPC metadata flows through service observers without copying inputs or outputs',async()=>{
  const f=fixture();try{
   const engine:any=new CodexEngine({workspace:process.cwd(),runtime:'/synthetic/runtime',codexHome:'/synthetic/home',model:'synthetic'} as any,{cwd:process.cwd(),readRoots:[],instructions:'',tools:[]},async()=>({}));
   engine.threadId='synthetic';engine.turnId='turn:node';engine.active={execution:new TurnExecution({}),messages:[],earlyEvents:[],resolve:()=>{}};
@@ -185,8 +185,8 @@ test('native RPC call content flows through real service observers with credenti
   assert.deepEqual(tools.map(item=>item.seq),[1,2,3,4]);assert.equal(tools[0]!.durationMs,400);assert.equal(tools[3]!.startedAtMs,undefined);
   assert.equal(node.startedAtMs,100000);assert.equal(node.endedAtMs,101000);assert.equal(node.durationMs,950);assert.equal(node.timingSource,'native');
   assert.ok(!JSON.stringify(events).includes(secret));assert.ok(!JSON.stringify(node).includes(secret));assert.ok(!JSON.stringify(f.db.prepare('SELECT value FROM meta').all()).includes(secret));
-  assert.deepEqual(tools[0]!.content?.output,{state:'recorded',value:{output:body,exitCode:2}});
-  assert.match(JSON.stringify(node),/SYNTHETIC_TOOL_BODY/);
+  assert.equal(tools[0]!.content,undefined);
+  assert.doesNotMatch(JSON.stringify(node),/SYNTHETIC_TOOL_BODY/);
   assert.deepEqual(new MainProcessHistory(f.db).list('synthetic'),f.history.list('synthetic'));
  }finally{f.db.close();}
 });
@@ -230,7 +230,7 @@ test('early protocol notifications wait for actual ACK; native terminal freezes 
  };
  const work=engine.turn('synthetic',{onStarted:(_id:string,timing:any)=>{order.push('ack');starts.push(timing);}});
  try{
-  await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(order,['ack','item','terminal']);assert.equal(starts[0].startedAtMs,123000);assert.equal(ends[0].endedAtMs,125000);assert.equal(ends[0].durationMs,1800);assert.equal(safe[0].category,'search');assert.equal(safe[0].content.input.value.command,'PRIVATE_EARLY');assert.equal(safe[0].content.input.value.commandActions,undefined);
+  await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(order,['ack','item','terminal']);assert.equal(starts[0].startedAtMs,123000);assert.equal(ends[0].endedAtMs,125000);assert.equal(ends[0].durationMs,1800);assert.equal(safe[0].category,'search');assert.equal(safe[0].content,undefined);
  }finally{release?.();}
  assert.equal((await work).status,'completed');
 });

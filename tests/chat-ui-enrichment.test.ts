@@ -26,7 +26,7 @@ test('tool results and feedback survive ownership changes, isolate threads, and 
     const next=new ConversationHistory(db);next.reconcile();
     const reply=next.list('thread-a')[1]!;
     assert.equal(reply.feedback,'up');assert.equal(reply.sources?.[0]?.url,'https://example.com/');
-    assert.deepEqual(reply.toolActivities?.map(x=>x.status),['completed','blocked']);
+    assert.equal(reply.toolActivities,undefined);assert.deepEqual(db.prepare('SELECT status FROM conversation_tools ORDER BY rowid').all().map(x=>x.status),['completed','blocked']);
     next.feedback('thread-a',receipt.replyId,null);assert.equal(next.list('thread-a')[1]?.feedback,null);
   } finally { db.close(); }
 });

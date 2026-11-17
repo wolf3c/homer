@@ -1,6 +1,4 @@
 import {isExecutionGuardStop} from './execution-limits.js';
-import type {ExecutionSelector} from './worker-execution.js';
-import {WorkerProgressStore,type WorkerScope} from './worker-progress.js';
 import {conversationUserText,userAuthorityDescription} from './user-intent.js';
 import {isUtf8} from 'node:buffer';
 import {isDraftImageReference,resourceReferenceText,referencesOf,type ResourceReference} from './preview-reference.js';
@@ -69,7 +67,6 @@ import {audioPcm,transcribeAudio,whisperPath,whisperModel} from './media-audio.j
 import {progressLabel,type MainProgress} from './main-progress.js';
 import {MainProcessHistory,unconfirmedNativeEffectsSql} from './main-process.js';
 import {NativeThreadBindings} from './native-thread-bindings.js';
-import {captureToolValue,captureToolError,type ToolContent} from './tool-content.js';
 import {webUpload} from './web-upload.js';
 import {MediaWorkQueue} from './media-work.js';
 import {analyzeVideo} from './media-video.js';
@@ -567,7 +564,6 @@ export class Homer {
     this.desktopPowerResuming?.delete(engine);this.invalidateState();
   }
   private prompts!: Prompts;
-  readonly workerProgress=new WorkerProgressStore();
   private workers = new Map<string, WorkerSlot>();
   private executions = new Set<Promise<void>>();
   private videoCalls = new Set<Promise<unknown>>();
@@ -1285,9 +1281,8 @@ export class Homer {
     }catch(error){this.store.db.exec('ROLLBACK');throw error;}
   }
   // Chain a user's start/deltas/terminal even if a local sink is asynchronous.
-  private emitMain(context: MainContext, message: Message, activity?:PublicActivity,call?:{toolName:string;content:ToolContent}) {
+  private emitMain(context: MainContext, message: Message, activity?:PublicActivity,call?:{toolName:string}) {
     if (message.type === 'tool_progress') {
-      this.history.tool(message.messageId, message.progress);
       if(context.processId)this.processes.tool(context.processId,{...message.progress,turnId:context.nativeActivity?.turnId,...(activity?{activity}:{}),...call});
     }
     context.output = (context.output ?? Promise.resolve()).then(() => this.emit(message));
@@ -1297,12 +1292,8 @@ export class Homer {
     if(!context||this.closing)return work();
     const endLabel:MainProgress['label']=label;
     let publicFact:PublicActivity|undefined;
-    const privateMedia=tool==='generate_image'||tool==='generate_video';
-    const content:ToolContent={input:captureToolValue(privateMedia?undefined:args),output:{state:'pending'}};
     const invoke=async()=>{
-      try{
         const result=await work();
-        content.output=captureToolValue(privateMedia?undefined:result);
         try{
           if(tool==='inspect_attachment'){
             const a=args as {assetId?:string;revision?:number},r=result as {extraction?:{state?:string}};
@@ -1311,23 +1302,22 @@ export class Homer {
           }else publicFact=this.tasks.captureActivity(this.mainActor(),tool,args,result);
         }catch{/* Public fact collection must never change the business receipt. */}
         return result;
-      }catch(error){content.output=captureToolError(error);throw error;}
     };
     if(context.event&&context.processId){
       const activity={id:'activity-'+randomUUID(),label};
-      this.processes.tool(context.processId,{...activity,phase:'start',toolName:tool,content,turnId:context.nativeActivity?.turnId});
+      this.processes.tool(context.processId,{...activity,phase:'start',toolName:tool,turnId:context.nativeActivity?.turnId});
       let status:'completed'|'failed'='failed';
       try{const result=await invoke();status='completed';return result;}
-      finally{this.processes.tool(context.processId,{...activity,label:endLabel,phase:'end',status,toolName:tool,content,...(publicFact?{activity:publicFact}:{})});}
+      finally{this.processes.tool(context.processId,{...activity,label:endLabel,phase:'end',status,toolName:tool,...(publicFact?{activity:publicFact}:{})});}
     }
     if(!generation)return work();
     this.validateMainContext(context);
     const activity={id:'activity-'+randomUUID(),label};
     (context.toolActivities??=new Map()).set(activity.id,activity);
-    this.emitMain(context,{type:'tool_progress',...generation,text:'',progress:{...activity,phase:'start'}},undefined,{toolName:tool,content});
+    this.emitMain(context,{type:'tool_progress',...generation,text:'',progress:{...activity,phase:'start'}},undefined,{toolName:tool});
     let status:'completed'|'failed'='failed';
     try{const result=await invoke();status='completed';return result;}
-    finally{if(this.mainContext===context&&!this.closing&&context.toolActivities?.delete(activity.id))this.emitMain(context,{type:'tool_progress',...generation,text:'',progress:{...activity,label:endLabel,phase:'end',status}},publicFact,{toolName:tool,content});}
+    finally{if(this.mainContext===context&&!this.closing&&context.toolActivities?.delete(activity.id))this.emitMain(context,{type:'tool_progress',...generation,text:'',progress:{...activity,label:endLabel,phase:'end',status}},publicFact,{toolName:tool});}
   }
   private runReceipt(run: Run) {
     return `当前执行记录：${run.status}${run.errorCode ? `；原因 ${run.errorCode}` : ""}。`;
@@ -2199,14 +2189,7 @@ export class Homer {
   private async workerTool(slot:WorkerSlot,call:ToolCall):Promise<unknown>{
     const actor=this.workerActor(slot);this.tasks.guard(actor);
     if(this.closing||call.threadId!==actor.threadId||call.turnId!==actor.turnId)throw Error('tool_scope_denied');
-    const run=this.tasks.run(slot.id),scope:WorkerScope={taskId:run.taskId,version:run.version,runId:run.id,epoch:run.epoch,threadId:call.threadId,turnId:call.turnId};
-    const input=captureToolValue(call.arguments);
-    const emit=(completed:boolean,status:import('./main-process.js').NativeProcessEvent['status'],output:import('./tool-content.js').ToolValue)=>{
-      if(this.workerProgress.recordCall(scope,{threadId:call.threadId,turnId:call.turnId,itemId:call.callId,toolName:call.tool,category:'externalTool',status,completed,observedAtMs:Date.now(),content:{input,output}},completed,'host'))this.invalidateState();
-    };
-    emit(false,'running',{state:'pending'});
-    try{const result=await this.workerToolWork(slot,call);emit(true,'completed',captureToolValue(result));return result;}
-    catch(error){emit(true,'failed',captureToolError(error));throw error;}
+    return this.workerToolWork(slot,call);
   }
   private async workerToolWork(slot:WorkerSlot,call:ToolCall):Promise<unknown>{
     this.accountClocks();const actor=this.workerActor(slot);
@@ -2313,28 +2296,8 @@ export class Homer {
           if(this.workers.get(run.id)===created&&!created.stopping&&created.epoch===this.tasks.run(run.id).epoch&&!this.tasks.run(run.id).stopRequestedAt&&engine.supportsWebSocket===true)this.scheduleMainTransportRecovery(true);
         });
         const delivered=(source:string,id:string|number)=>{const key=created.requests.get(JSON.stringify([source,id]));if(key)try{this.interactions.markDelivered(key);}catch{}};
-        const publicScope=(event:{threadId?:string;turnId?:string}):WorkerScope|undefined=>{
-          if(this.closing||this.closed)return;
-          const current=this.tasks.run(run.id),task=this.tasks.task(current.taskId);
-          if(current.epoch!==created.epoch||current.phase!=='executing'||current.stopRequestedAt||!current.threadId||!current.turnId||event.threadId!==current.threadId||event.turnId!==current.turnId)return;
-          return {taskId:task.id,version:current.version,runId:current.id,epoch:current.epoch,threadId:current.threadId,turnId:current.turnId};
-        };
-        engine.on('publicPlan',event=>{const scope=publicScope(event);if(scope&&this.workerProgress.plan(scope,event.plan))this.invalidateState();});
-        engine.on('agentMessage',event=>{if(event.completed!==true)return;this.tasks.recordWorkerOutput(run.id,created.epoch,event);const scope=publicScope(event);if(scope&&this.workerProgress.message(scope,event))this.invalidateState();});
+        engine.on('agentMessage',event=>{if(event.completed===true)this.tasks.recordWorkerOutput(run.id,created.epoch,event);});
         engine.on('nativeCompleted',event=>{if(event.result&&event.threadId===created.engine.threadId&&event.turnId===created.engine.turnId)this.tasks.recordWorkerTerminal(run.id,created.epoch,event.result);});
-        engine.on('nativeProcess',(event:import('./main-process.js').NativeProcessEvent)=>{
-          const scope=publicScope(event);let changed=false;
-          if(scope){changed=this.workerProgress.tool(scope,event);changed=this.workerProgress.recordCall(scope,event)||changed;}
-          else if(event.completed&&!this.closing&&!this.closed){
-            const current=this.tasks.run(run.id);
-            if(current.epoch===created.epoch){
-              // Prior bindings are proven by a retained call itself. No new
-              // call or executable authority can be minted on this late path.
-              changed=this.workerProgress.completeCall(run.id,created.epoch,event);
-            }
-          }
-          if(changed)this.invalidateState();
-        });
         engine.on('usage',usage=>this.store.usage(run.id,usage));
         engine.on('interactionWaiting',()=>this.syncInteractionWaiting(created));
         engine.on('toolResponse',id=>delivered('ask_main',id));engine.on('interactionDelivered',id=>delivered('native',id));
@@ -2425,15 +2388,7 @@ export class Homer {
   }
   private pauseClock(slot:WorkerSlot){this.accountClocks();slot.activeSince=undefined;this.invalidateState();}
   private resumeClock(slot:WorkerSlot){const run=this.tasks.run(slot.id);if(slot.stopping||run.epoch!==slot.epoch||!['starting','executing'].includes(run.phase))return;this.accountClocks();slot.activeSince??=Date.now();this.invalidateState();}
-  readWorkerExecution(selector:ExecutionSelector,before?:string){
-    const scope=this.tasks.executionReadScope(this.mainActor(true),selector,this.store.meta('mainThread')??'');
-    return this.workerProgress.execution(selector,scope.version,before);
-  }
-  readWorkerCall(selector:ExecutionSelector,callKey:string){
-    const scope=this.tasks.executionReadScope(this.mainActor(true),selector,this.store.meta('mainThread')??'');
-    if(!/^[a-f0-9]{64}$/.test(callKey))throw Error('execution_call_unavailable');
-    return this.workerProgress.call(selector,scope.version,callKey);
-  }
+
   private mainActor(host=false):Actor {
     if(!host&&(!this.mainContext||this.closing))throw Error('tool_scope_denied');
     const context=this.mainContext,sourceRequestId=!host&&!context?.event?context?.requestId:undefined;

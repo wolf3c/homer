@@ -58,8 +58,8 @@ test('native RPC call content flows through real service observers with credenti
   assert.deepEqual(tools.map(item=>item.seq),[1,2,3,4]);assert.equal(tools[0]!.durationMs,400);assert.equal(tools[3]!.startedAtMs,undefined);
   assert.equal(node.startedAtMs,100000);assert.equal(node.endedAtMs,101000);assert.equal(node.durationMs,950);assert.equal(node.timingSource,'native');
   assert.ok(!JSON.stringify(events).includes(secret));assert.ok(!JSON.stringify(node).includes(secret));assert.ok(!JSON.stringify(f.db.prepare('SELECT value FROM meta').all()).includes(secret));
-  assert.deepEqual(tools[0]!.content?.output,{state:'recorded',value:{output:body,exitCode:2}});
-  assert.match(JSON.stringify(node),/SYNTHETIC_TOOL_BODY/);
+  assert.equal(tools[0]!.content,undefined);
+  assert.doesNotMatch(JSON.stringify(node),/SYNTHETIC_TOOL_BODY/);
   assert.deepEqual(new MainProcessHistory(f.db).list('synthetic'),f.history.list('synthetic'));
  }finally{f.db.close();}
 });

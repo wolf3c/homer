@@ -157,18 +157,17 @@ test('incoming same-ID public body changes light the cue and latest confirms onl
 test('ACK and tool/worker-only changes do not light the content cue',()=>{
  const f=fixture(),base=f.state.messages;f.snapshot({observedAtMs:123,acceptedRequestIds:['ack'],messages:[...base,{...base[1],id:'input-outcome:ack',text:'received'},{...base[1],id:'internal',text:'worker progress',process:{sourceKind:'worker',items:[]}},{...base[1],id:'process',text:'host status',process:{sourceKind:'user',items:[{id:'tool',kind:'tool',status:'running'}]}}]});assert.ok(!f.cue().includes('有新内容'));f.close();
 });
-test('scheduled tools keep live status only for the exact current internal process and turn',()=>{
+test('scheduled tool updates never add tool parts or a live progress label',()=>{
  const f=fixture();try{
   const process={id:'scheduled-process',threadId:'reader',sourceKind:'scheduled',state:'working',status:'running',turnIds:['scheduled-turn'],items:[{id:'scheduled-tool',kind:'tool',seq:1,revision:1,category:'host',threadId:'reader',turnId:'scheduled-turn',toolName:'schedule_list',label:'查看安排',status:'running',startedAtMs:1000}]};
   const activity={processId:process.id,source:'internal',turnId:'scheduled-turn',stage:'native'},message={...f.state.messages[1],id:process.id,text:'',status:'running',process};
   const current=()=>nodes(f.render()).find(node=>node.type==='runtime').props.runtime.thread.getState().messages.find(row=>row.id===message.id);
   f.snapshot({messages:[...f.state.messages,message],processNodes:[process],mainActivity:activity});
-  let entry=current().metadata.custom.activityPresentation.entries['tool-call:scheduled-tool'];
-  assert.equal(entry.live,true);assert.equal(entry.statusLabel,'调用中');assert.equal(current().content.find(part=>part.toolCallId==='scheduled-tool').timing.startedAt,1000);
+  assert.equal(current().content.some(part=>part.type==='tool-call'),false);
   for(const changed of [{...activity,source:'user'},{...activity,turnId:'other-turn'},{...activity,processId:'other-process'}]){
-   f.snapshot({mainActivity:changed});entry=current().metadata.custom.activityPresentation.entries['tool-call:scheduled-tool'];
-   assert.equal(entry.live,false);assert.equal(entry.statusLabel,'上次调用中，结束未确认');
+   f.snapshot({mainActivity:changed});assert.equal(current().content.some(part=>part.type==='tool-call'),false);
   }
+
  }finally{f.close();}
 });
 test('scheduled coordination does not light the reader cue, while its separate public delivery does',()=>{

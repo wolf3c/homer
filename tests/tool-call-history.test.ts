@@ -27,9 +27,9 @@ test('real native receive -> process persistence captures three kinds, ignores d
    await receive('item/started',item);await receive('item/completed',item);assert.equal(f.tools().at(-1)!.revision,revision);
   }
   const rows=f.tools();assert.equal(rows.length,3);
-  assert.equal(rows[0]!.status,'failed');assert.deepEqual(rows[0]!.content?.output,{state:'recorded',value:{output:'synthetic stdout',exitCode:2}});
-  assert.equal(rows[1]!.content?.input.state,'recorded');assert.doesNotMatch(JSON.stringify(rows),/FICTIONAL_SECRET/);
-  assert.deepEqual(rows[2]!.content?.input,{state:'recorded',value:false});assert.deepEqual(rows[2]!.content?.output,{state:'recorded',value:0});
+  assert.equal(rows[0]!.status,'failed');assert.equal(rows[0]!.content,undefined);
+  assert.equal(rows[1]!.content,undefined);assert.doesNotMatch(JSON.stringify(rows),/FICTIONAL_SECRET/);
+  assert.equal(rows[2]!.content,undefined);
   const revision=f.history.exact('node')!.revision;
   for(let i=0;i<100;i++)await engine.receive(JSON.stringify({method:'item/commandExecution/outputDelta',params:{threadId:'synthetic',turnId:'turn',itemId:'cmd',delta:'x'.repeat(10000)}}));
   assert.equal(f.history.exact('node')!.revision,revision,'no full snapshot write on output deltas');
@@ -43,9 +43,9 @@ test('real native receive -> process persistence captures three kinds, ignores d
 test('host execution boundary keeps actual args/false result/errors on the existing activity and adds no work',async()=>{
  const f=fixture();try{
   const app:any=Object.create(Homer.prototype);Object.assign(app,{processes:f.history,mainContext:{event:true,processId:'node',nativeActivity:{turnId:'turn'}},mainActor:()=>({}),tasks:{captureActivity:()=>undefined}});
-  let calls=0;await app.mainActivity('inspect_interaction',async()=>{calls++;return false;},{key:'record',password:'FICTIONAL_SECRET'});
+  let calls=0;assert.equal(await app.mainActivity('inspect_interaction',async()=>{calls++;return false;},{key:'record',password:'FICTIONAL_SECRET'}),false);
   await assert.rejects(app.mainActivity('respond_interaction',async()=>{calls++;throw Error('synthetic_failure');},{answer:'synthetic response'}),/synthetic_failure/);
-  assert.equal(calls,2);assert.deepEqual(f.tools()[0]!.content?.output,{state:'recorded',value:false});assert.equal(f.tools()[0]!.toolName,'inspect_interaction');
-  assert.equal(f.tools()[1]!.status,'failed');assert.match(JSON.stringify(f.tools()[1]!.content?.output),/synthetic_failure/);assert.doesNotMatch(JSON.stringify(f.tools()),/FICTIONAL_SECRET/);
+  assert.equal(calls,2);assert.equal(f.tools()[0]!.content,undefined);assert.equal(f.tools()[0]!.toolName,'inspect_interaction');
+  assert.equal(f.tools()[1]!.status,'failed');assert.equal(f.tools()[1]!.content,undefined);assert.doesNotMatch(JSON.stringify(f.tools()),/FICTIONAL_SECRET/);
  }finally{f.db.close();}
 });
