@@ -1,5 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {DesktopChannels} from '../src/desktop-channels.ts';
 import {desktopManagementAllowed} from '../src/desktop-management.ts';
 import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,existsSync} from 'node:fs';
 import {resolve,join} from 'node:path';
@@ -35,6 +36,7 @@ test('desktop private IPC reuses native state/login/cancel and exposes no web ac
   if(name==='./telegram-channel.js')return {telegramChannel:()=>undefined};
   if(name==='./wechat-channel.js')return {wechatChannel:()=>undefined};
   if(name==='./dingtalk-channel.js')return {dingtalkChannel:()=>undefined};
+  if(name==='./desktop-channels.js')return {DesktopChannels};
   if(name==='./media-decode.js')return {configureDesktopImageDecoder(){}};
   if(name.startsWith('./'))return {};
   return require(name);
@@ -66,6 +68,7 @@ test('live model private IPC writes the real desktop profile separately from ado
   if(name==='./service.js')return{Homer,DesktopReviewRequired};if(name==='./engine.js')return engine;if(name==='./model-config.js')return models;
   if(name==='./desktop-management.js')return{desktopManagementAllowed};
   if(name==='./telegram-channel.js')return{telegramChannel:()=>undefined};if(name==='./wechat-channel.js')return{wechatChannel:()=>undefined};if(name==='./dingtalk-channel.js')return{dingtalkChannel:()=>undefined};
+  if(name==='./desktop-channels.js')return {DesktopChannels};
   if(name==='./media-decode.js')return{configureDesktopImageDecoder(){}};
   if(name.startsWith('./'))return{};return require(name);
  },process,{});

@@ -509,3 +509,183 @@ test('pending input waits for its original adapter and recovers after a lost acc
     assert.equal(new Set(sent.map(packet=>packet.messageId)).size,2);
   }finally{await plugin?.close();await f.close();}
 });
+
+test('live adapter replacement waits for old connections and preserves the main and binding',async()=>{
+ let stopped!:()=>void,oldConnected=false,newConnected=0,saved=false;
+ const gate=new Promise<void>(resolve=>{stopped=resolve;});
+ const old:ChannelAdapter={id:'simulation',send:async()=>({state:'sent'}),connect:async(_a,_r,signal)=>{
+  oldConnected=true;await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));await gate;
+ }};
+ const f=fixture([old]);
+ try{
+  const binding=f.app.channels!.bind(A);await f.app.start();await until(()=>oldConnected);
+  const main=f.engines[0];
+  const next={id:'simulation',send:async()=>({state:'sent' as const}),applyBindings(plugin:ChannelPlugin){plugin.configureBindings('simulation',[A,B]);},
+   async connect(_a:unknown,_r:unknown,signal:AbortSignal){newConnected++;await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));}};
+  const applying=f.app.channels!.reconfigure('simulation',()=>{saved=true;},()=>next);
+  await yieldTurn();assert.equal(saved,false);assert.equal(newConnected,0);
+  stopped();await applying;await until(()=>newConnected===2);
+  assert.equal(saved,true);assert.equal(f.engines[0],main);
+  const db=new DatabaseSync(join(f.app.config.runtime,'channels.sqlite'),{readOnly:true});
+  try{assert.equal(db.prepare('SELECT id FROM channel_bindings WHERE accountKey=? AND revokedAt IS NULL').get('a')!.id,binding);}finally{db.close();}
+ }finally{stopped();await f.close();}
+});
+
+test('saved adapter failure pauses private request authority until an explicit reload',async()=>{
+ const old:ChannelAdapter={id:'simulation',send:async()=>({state:'sent'})},f=fixture([old]);
+ try{
+  f.app.channels!.bind(A);await f.app.start();
+  const request=f.app.channels!.receiveText(input(A,'before','before'));await f.app.idle();
+  await assert.rejects(f.app.channels!.reconfigure('simulation',()=>{},()=>({...old,applyBindings(){throw Error('synthetic_bind_failure');}})),/synthetic_bind_failure/);
+  assert.equal(f.app.channels!.channelInputState(request),'preparing');
+  assert.equal(f.app.channels!.connectionStatus()[0]!.state,'offline');
+  await f.app.channels!.reconfigure('simulation',()=>{},()=>({...old,applyBindings(plugin:ChannelPlugin){plugin.configureBindings('simulation',[]);}}));
+  assert.equal(f.app.channels!.channelInputState(request),'denied');
+ }finally{await f.close();}
+});
+
+test('live replacement stops the old multipart sender between parts',async()=>{
+ let finish!:()=>void,started=false;const sent:string[]=[],gate=new Promise<void>(resolve=>{finish=resolve;});
+ const old:ChannelAdapter={id:'simulation',async send(packet){started=true;sent.push('old:'+packet.part.kind);await gate;return {state:'sent'};}},f=fixture([old]);
+ try{
+  const file=join(f.app.config.workspace,'proof.txt');writeFileSync(file,'synthetic');
+  f.setScript(async main=>{await main.call('send_user_message',{text:'report',attachments:[{path:file}]});return {status:'completed',text:'done'};});
+  f.app.channels!.bind(A);await f.app.start();f.app.channels!.receiveText(input(A,'multipart','multipart'));
+  await until(()=>started);
+  const applying=f.app.channels!.reconfigure('simulation',()=>{},()=>({id:'simulation',async send(packet){sent.push('new:'+packet.part.kind);return {state:'sent' as const};},applyBindings(plugin:ChannelPlugin){plugin.configureBindings('simulation',[A]);}}));
+  await yieldTurn();finish();await applying;await f.app.idle();await f.app.channels!.synchronize();
+  assert.equal(sent.filter(v=>v.startsWith('old:')).length,1);assert.ok(sent.includes('new:attachment'));
+ }finally{finish();await f.close();}
+});
+
+test('live replacement preserves an unrecorded transport receipt as unknown without replay',async()=>{
+ let db:DatabaseSync|undefined,sends=0;
+ const old:ChannelAdapter={id:'simulation',async send(){
+  sends++;db!.exec("CREATE TRIGGER reject_live_receipt BEFORE UPDATE OF nextPart ON channel_outbox BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END");
+  return {state:'sent'};
+ }};
+ const f=fixture([old]);
+ try{
+  f.app.channels!.bind(A);db=new DatabaseSync(join(f.app.config.runtime,'channels.sqlite'));
+  await f.app.start();f.app.channels!.receiveText(input(A,'receipt','receipt'));await f.app.idle();
+  await assert.rejects(f.app.channels!.synchronize(),/synthetic receipt failure/);
+  assert.equal(db.prepare('SELECT state FROM channel_outbox').get()!.state,'sending');
+  db.exec('DROP TRIGGER reject_live_receipt');
+  await f.app.channels!.reconfigure('simulation',()=>{},()=>({...old,applyBindings(plugin:ChannelPlugin){plugin.configureBindings('simulation',[A]);}}));
+  await f.app.channels!.synchronize();
+  assert.equal(db.prepare('SELECT state FROM channel_outbox').get()!.state,'unknown');assert.equal(sends,1);
+ }finally{db?.close();await f.close();}
+});
+
+test('live channel changes leave an executing Worker and main engine intact',async()=>{
+ const old:ChannelAdapter={id:'simulation',send:async()=>({state:'sent'})},f=fixture([old]);
+ try{
+  f.setScript(async main=>{await main.call('worker_open',{message:'Keep working'});return {status:'completed',text:'delegated'};});
+  f.app.channels!.bind(A);await f.app.start();f.app.channels!.receiveText(input(A,'delegate-live','delegate'));
+  await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+  const main=f.engines[0],worker=f.engines.find(engine=>engine.options.role==='worker')!,finish=worker.finish,thread=worker.threadId;
+  await f.app.channels!.reconfigure('simulation',()=>{},()=>({...old,applyBindings(plugin:ChannelPlugin){plugin.configureBindings('simulation',[A,B]);}}));
+  assert.equal(f.engines[0],main);assert.equal(worker.threadId,thread);assert.equal(worker.finish,finish);assert.equal(f.engines.filter(engine=>engine.options.role==='worker').length,1);
+ }finally{await f.close();}
+});
+
+
+test('saved apply failure holds newly committed text and attachments until explicit reload',async()=>{
+ let release!:()=>void,entered=false;const gate=new Promise<void>(resolve=>release=resolve),sent:ChannelPacket[]=[];
+ const old:ChannelAdapter={id:'simulation',async send(packet){sent.push(packet);return {state:'sent'};}},f=fixture([old]);
+ try{
+  const file=join(f.app.config.workspace,'paused.txt');writeFileSync(file,'synthetic');
+  f.setScript(async main=>{entered=true;await gate;await main.call('send_user_message',{text:'held reply',attachments:[{path:file}]});return {status:'completed',text:'done'};});
+  f.app.channels!.bind(A);await f.app.start();f.app.channels!.receiveText(input(A,'paused-send','report'));await until(()=>entered);
+  await assert.rejects(f.app.channels!.reconfigure('simulation',()=>{},()=>({...old,applyBindings(){throw Error('synthetic_apply_failed');}})),/synthetic_apply_failed/);
+  release();await f.app.idle();await f.app.channels!.synchronize();
+  assert.equal(sent.length,0);
+  const db=new DatabaseSync(join(f.app.config.runtime,'channels.sqlite'),{readOnly:true});
+  try{assert.equal(db.prepare('SELECT state FROM channel_outbox').get()!.state,'queued');}finally{db.close();}
+  await f.app.channels!.reconfigure('simulation',()=>{},()=>({...old,applyBindings(plugin:ChannelPlugin){plugin.configureBindings('simulation',[A]);}}));
+  await f.app.channels!.synchronize();assert.deepEqual(sent.map(packet=>packet.part.kind),['text','attachment']);
+ }finally{release();await f.close();}
+});
+
+test('saved apply failure holds subscribed Worker output until explicit reload',async()=>{
+ const sent:ChannelPacket[]=[],old:ChannelAdapter={id:'simulation',async send(packet){sent.push(packet);return {state:'sent'};}},f=fixture([old]);let taskId='';
+ try{
+  const file=join(f.app.config.workspace,'subscription.txt');writeFileSync(file,'synthetic');
+  f.setScript(async(main,text)=>{
+   if(text.endsWith('delegate')){({taskId}=await main.call('worker_open',{message:'synthetic work'}));return {status:'completed',text:'accepted'};}
+   if(text.endsWith('subscribe')){await subscribe(main,taskId);return {status:'completed',text:'subscribed'};}
+   await main.call('send_user_message',{text:'held subscription',attachments:[{path:file}]});return {status:'completed',text:''};
+  });
+  const plugin=f.app.channels;assert.ok(plugin);plugin.bind(A);await f.app.start();plugin.receiveText(input(A,'subscription-delegate','delegate'));
+  await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));const registered=plugin.receiveText(input(A,'subscription-register','subscribe'));
+  await until(()=>f.app.store.request(registered)?.state==='completed');await plugin.synchronize();
+  const baseline=sent.length;await assert.rejects(plugin.reconfigure('simulation',()=>{},()=>({...old,applyBindings(){throw Error('synthetic_apply_failed');}})),/synthetic_apply_failed/);
+  const worker=f.engines.find(engine=>engine.options.role==='worker');assert.ok(worker?.finish);worker.finish({status:'completed',text:'done'});worker.finish=undefined;
+  await f.app.idle();await plugin.synchronize();assert.equal(sent.length,baseline);
+  const db=new DatabaseSync(join(f.app.config.runtime,'channels.sqlite'),{readOnly:true});
+  try{assert.equal(db.prepare("SELECT count(*) n FROM channel_outbox WHERE subscriptionId IS NOT NULL AND state='queued'").get()?.n,1);}finally{db.close();}
+  await plugin.reconfigure('simulation',()=>{},()=>({...old,applyBindings(next:ChannelPlugin){next.configureBindings('simulation',[A]);}}));await plugin.synchronize();
+  assert.deepEqual(sent.slice(baseline).map(packet=>packet.part.kind),['text','attachment']);
+ }finally{await f.close();}
+});
+
+
+for(const revoke of [false,true])test(`claimed input waits through live reconfiguration before ${revoke?'rejecting revocation':'the same-identity turn'}`,async()=>{
+ let ready=false,release!:()=>void,stop!:()=>void,connected=false,closes=0;
+ const capabilities=new Promise<void>(resolve=>release=resolve),stopping=new Promise<void>(resolve=>stop=resolve);
+ const old:ChannelAdapter={id:'simulation',send:async()=>({state:'sent'}),async connect(_a,_r,signal){connected=true;if(!signal.aborted)await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));await stopping;}},f=fixture([old]);
+ try{
+  f.app.channels!.bind(A);await f.app.start();await until(()=>connected);
+  const main=f.engines[0]!,close=main.close.bind(main);
+  Object.assign(main,{refreshCapabilities:async()=>{ready=true;await capabilities;}});main.close=async()=>{closes++;return close();};
+  f.app.channels!.receiveText(input(A,'prepare-live','accepted input'));await until(()=>ready);
+  const applying=f.app.channels!.reconfigure('simulation',()=>{},()=>({...old,applyBindings(plugin:ChannelPlugin){plugin.configureBindings('simulation',revoke?[]:[A]);}}));
+  release();await new Promise(resolve=>setTimeout(resolve,60));
+  assert.equal(closes,0);assert.deepEqual(f.inputs,[]);
+  stop();await applying;await f.app.idle();
+  assert.deepEqual(f.inputs,revoke?[]:['::message-source{source=simulation}\n\naccepted input']);assert.equal(closes,0);assert.equal(f.engines[0],main);
+ }finally{release();stop();await f.close();}
+});
+
+
+for(const action of ['retry','cancel','restart'])test('deferred channel input survives saved failure and '+action,async()=>{
+ let release:()=>void=()=>{},stop:()=>void=()=>{},ready=false;
+ const capabilities=new Promise<void>(resolve=>release=resolve),stopping=new Promise<void>(resolve=>stop=resolve);
+ const old:ChannelAdapter={id:'simulation',send:async()=>({state:'sent'}),async connect(_a,_r,signal){if(signal.aborted===false)await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));await stopping;}},f=fixture([old]);
+ try{
+  const plugin=f.app.channels;assert.ok(plugin);plugin.bind(A);await f.app.start();const main=f.engines[0];assert.ok(main);
+  Object.assign(main,{refreshCapabilities:async()=>{ready=true;await capabilities;}});
+  const requestId=plugin.receiveText(input(A,'defer-failure','accepted input')),original=f.app.inputs.byRequestIds([requestId])[0];assert.ok(original);await until(()=>ready);
+  const applying=plugin.reconfigure('simulation',()=>{},()=>({...old,applyBindings(){throw Error('synthetic_apply_failed');}}));
+  const failed=assert.rejects(applying,/synthetic_apply_failed/);void failed.catch(()=>{});release();
+  await until(()=>f.app.inputs.byRequestIds([requestId])[0]?.state==='queued');stop();await failed;await f.app.idle();
+  const queued=f.app.inputs.byRequestIds([requestId])[0];assert.ok(queued);assert.equal(queued.messageId,original.messageId);assert.equal(queued.replyId,original.replyId);assert.equal(f.app.store.request(requestId),undefined);assert.deepEqual(f.inputs,[]);
+  if(action==='cancel')f.app.cancelQueued({requestId,operationId:'cancel-deferred',expectedRevision:queued.revision});
+  if(action==='restart')await f.restart();
+  else await plugin.reconfigure('simulation',()=>{},()=>({...old,applyBindings(next:ChannelPlugin){next.configureBindings('simulation',[A]);}}));
+  await f.app.idle();await f.app.channels?.synchronize();assert.deepEqual(f.inputs,action==='cancel'?[]:['::message-source{source=simulation}\n\naccepted input']);
+  assert.equal(f.app.inputs.byRequestIds([requestId])[0]?.state,action==='cancel'?'cancelled':'completed');
+  if(action==='retry')assert.equal(f.engines[0],main);
+ }finally{release();stop();await f.close();}
+});
+
+
+for(const action of ['retry','cancel','revoke'])test('deferred Telegram background remains scoped through '+action,async()=>{
+ let release:()=>void=()=>{},loading=false,loads=0;const gate=new Promise<void>(resolve=>release=resolve);
+ const address={...A,adapterId:'telegram'},old:ChannelAdapter={id:'telegram',send:async()=>({state:'sent'})},f=fixture([old]);
+ try{
+  const plugin=f.app.channels;assert.ok(plugin);const binding=plugin.bind(address),groups=plugin.telegramGroups();await f.app.start();
+  const date=Math.floor(Date.now()/1000);groups.membership(binding,-1001,true,date,1);groups.caughtUp(binding);
+  groups.submit(binding,-1001,date,2,2,null,'group question',async()=>{loads++;loading=true;await gate;return [{id:1,text:'scoped background'}];});
+  await until(()=>loading);const queued=f.app.inputs.list()[0];assert.ok(queued);const requestId=queued.input.requestId;
+  await assert.rejects(plugin.reconfigure('telegram',()=>{},()=>({...old,applyBindings(){throw Error('synthetic_apply_failed');}})),/synthetic_apply_failed/);
+  release();await f.app.idle();assert.equal(f.app.inputs.byRequestIds([requestId])[0]?.state,'queued');
+  if(action==='cancel'){const pending=f.app.inputs.byRequestIds([requestId])[0];assert.ok(pending);f.app.cancelQueued({requestId,operationId:'cancel-background',expectedRevision:pending.revision});}
+  if(action==='revoke')groups.membership(binding,-1001,false,date,3);
+  await plugin.reconfigure('telegram',()=>{},()=>({...old,applyBindings(next:ChannelPlugin){next.configureBindings('telegram',[address]);}}));groups.caughtUp(binding);await f.app.idle();
+  assert.equal(f.inputs.length,action==='retry'?1:0);
+  if(action==='retry'){assert.match(f.inputs[0]??'',/scoped background/);assert.equal((f.inputs[0]??'').match(/scoped background/g)?.length,1);assert.equal(loads,1);}
+  else assert.equal(loads,1);
+  assert.equal(plugin.takeTelegramBackground(requestId),undefined);
+ }finally{release();await f.close();}
+});

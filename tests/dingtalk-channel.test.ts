@@ -49,9 +49,9 @@ async function frame(client:WebSocket,message:string){
   assert.equal(JSON.parse(String((await ack)[0])).code,200);
 }
 
-test('desktop pairs only the current same-organization DM, stages it, and rotates credentials without another Stream', {timeout:10000},async t=>{
+test('desktop pairs only the current same-organization DM, applies after confirmation, and rotates credentials without another Stream', {timeout:10000},async t=>{
   const {runtime,server,socket}=await fixture(t);
-  const channels=new DesktopChannels(runtime,async url=>String(url).endsWith('/accessToken')?token():gateway(),socket);
+  const channels=new DesktopChannels(runtime,async(_channel,save)=>{save();},async url=>String(url).endsWith('/accessToken')?token():gateway(),socket);
   t.after(()=>channels.cancel());
   const connection=once(server,'connection');
   const id=channels.start('dingtalk',undefined,undefined,credentials);
@@ -72,7 +72,8 @@ test('desktop pairs only the current same-organization DM, stages it, and rotate
   assert.equal(existsSync(join(runtime,'dingtalk.json')),false);
   channels.confirm(id);
   assert.equal(existsSync(join(runtime,'dingtalk.json')),false);
-  assert.equal(channels.apply().failed.length,0);
+  await until(()=>!channels.snapshot().busy);
+  assert.equal(channels.snapshot().result?.applied,true);
   const [saved]=readDingtalkAccounts(runtime);
   assert.match(saved!.accountKey,/^dt-/);
   assert.equal(saved!.userId,'1234');
@@ -82,26 +83,26 @@ test('desktop pairs only the current same-organization DM, stages it, and rotate
   await until(()=>channels.snapshot().flow?.phase==='confirm');
   assert.equal(server.clients.size,0);
   channels.confirm(renewed);
-  channels.apply();
+  await until(()=>!channels.snapshot().busy);
   assert.deepEqual(readDingtalkAccounts(runtime),[{...saved,appSecret:newSecret}]);
 });
 
 test('explicitly rejected credentials do not open a pairing Stream',async t=>{
   const {runtime}=await fixture(t);
   let sockets=0;
-  const channels=new DesktopChannels(runtime,async()=>Response.json({code:'invalidClientIdOrSecret'},{status:400}),
+  const channels=new DesktopChannels(runtime,async(_channel,save)=>{save();},async()=>Response.json({code:'invalidClientIdOrSecret'},{status:400}),
     ()=>{sockets++;throw Error('unexpected stream');});
   t.after(()=>channels.cancel());
   channels.start('dingtalk',undefined,undefined,credentials);
   await until(()=>channels.snapshot().flow?.phase==='error');
   assert.equal(channels.snapshot().flow?.error,'dingtalk_credentials_invalid');
   assert.equal(sockets,0);
-  assert.deepEqual(channels.snapshot().pending,[]);
+  assert.equal(channels.snapshot().result,undefined);
 });
 
 test('cancelled and expired pairing close the connection and leave no staged binding', {timeout:10000},async t=>{
   const {runtime,server,socket}=await fixture(t);
-  const channels=new DesktopChannels(runtime,async url=>String(url).endsWith('/accessToken')?token():gateway(),socket);
+  const channels=new DesktopChannels(runtime,async(_channel,save)=>{save();},async url=>String(url).endsWith('/accessToken')?token():gateway(),socket);
   t.after(()=>channels.cancel());
   const connection=once(server,'connection');
   const id=channels.start('dingtalk',undefined,undefined,credentials);
@@ -111,7 +112,7 @@ test('cancelled and expired pairing close the connection and leave no staged bin
   channels.cancel(id);
   await closed;
   assert.equal(channels.snapshot().flow,undefined);
-  assert.equal(channels.snapshot().pending.length,0);
+  assert.equal(channels.snapshot().result,undefined);
   assert.deepEqual(readDingtalkAccounts(runtime),[]);
   const connected=once(server,'connection');
   const pairing=pairDingtalkBot(credentials,'expires',AbortSignal.timeout(250),()=>{},async()=>gateway(),socket);

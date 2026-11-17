@@ -14,9 +14,7 @@ type Bridge={
   code:(input:{id:string;code:string})=>Promise<void>;
   confirm:(input:{id:string})=>Promise<void>;
   cancel:(input:{id:string})=>Promise<void>;
-  remove:(input:BindingInput)=>Promise<void>;
-  undo:(input:BindingInput)=>Promise<void>;
-  discard:()=>Promise<void>;
+  remove:(input:BindingInput&{id:string})=>Promise<void>;
   apply:()=>Promise<void>;
 };
 declare global{interface Window{homerDesktopChatApps?:Bridge;}}
@@ -26,7 +24,7 @@ const logos={wechat:wechatLogo,telegram:telegramLogo,dingtalk:dingtalkLogo};
 const status={ready:'已连接',setup:'待发送首条消息',reauthorize:'需重新授权',offline:'暂时无法连接',checking:'等待连接'};
 const phase={
   starting:'正在核验',scan:'等待扫码',scanned:'等待手机确认',code:'输入手机验证码',pair:'在 Bot 私聊里发起配对',
-  confirm:'确认是你的私聊',error:'授权未完成',
+  confirm:'确认是你的私聊',applying:'正在应用连接变更',error:'操作未完成',
 };
 const authErrors:Record<string,string>={
   wechat_qr_expired:'二维码已过期。请生成新的二维码。',
@@ -37,7 +35,9 @@ const authErrors:Record<string,string>={
   dingtalk_credentials_invalid:'请在钉钉开发者后台核对 AppKey 和 AppSecret。',
   dingtalk_secret_unchanged:'请输入同一个机器人的新 AppSecret。',
   dingtalk_stream_conflict:'机器人正在由其他程序接收消息。请停止旧连接后重试。',
-  channel_binding_conflict:'这个账号已有绑定或待生效变更。请返回列表核对。',
+  channel_binding_conflict:'这个账号已有绑定或绑定已变化，请返回列表核对。',
+  channel_save_failed:'连接变更未保存，原配置已保留。可以重试。',
+  channel_apply_failed:'已保存，连接尚未应用。请重试应用。',
   channel_wrong_account:'该凭据对应另一个 Bot。请核对当前绑定。',
   wechat_unbind_before_replacing_account:'扫码账号与原绑定不一致，请用原微信账号重新扫码。',
 };
@@ -61,7 +61,16 @@ export function DesktopChatApps(){
       const next=await bridge.state(refresh);
       if(!mounted()||id!==request.current)return;
       setState(next);
-      if(flowId.current&&!next.flow){flowId.current=undefined;setForm(undefined);setSelected(undefined);}
+      if(!next.readError&&!next.busy)setApplying(false);
+      if(next.busy&&next.flow&&!flowId.current)flowId.current=next.flow.id;
+      if(!next.readError&&next.flow&&next.flow.id===flowId.current&&!next.result){
+        const flow=next.flow;
+        setForm(current=>current?.channel===flow.channel&&current.target===flow.target?current:{channel:flow.channel,target:flow.target});
+        setNotice('');
+      }
+      if(next.result&&!next.busy&&next.result.id===flowId.current){
+        setApplying(false);if(next.result.applied){flowId.current=undefined;setForm(undefined);setSelected(undefined);setNotice('连接变更已应用。');}
+      }
       return next;
     }catch{
       if(mounted()&&id===request.current)setNotice('连接状态未能读取，请重新检查。');
@@ -79,14 +88,14 @@ export function DesktopChatApps(){
   },[bridge]);
 
   const flow=state?.flow;
-  const watching=!!form&&!!flow&&['starting','scan','scanned','pair'].includes(flow.phase);
+  const watching=!!state?.busy||!!form&&!!flow&&['starting','scan','scanned','pair','applying'].includes(flow.phase);
   useEffect(()=>{
     if(!watching&&!applying)return;
     let disposed=false,timer:ReturnType<typeof setTimeout>;
     const tick=async()=>{
       const next=await read(false);
       if(disposed)return;
-      if(applying&&!next?.busy){setApplying(false);return;}
+      if(!next?.busy&&next?.result?.id===flowId.current&&next?.result?.error){setApplying(false);return;}
       timer=setTimeout(tick,500);
     };
     timer=setTimeout(tick,500);
@@ -108,7 +117,8 @@ export function DesktopChatApps(){
   function begin(channel:DesktopChannel,target?:string,token?:string,credentials?:DesktopChannelStart['credentials']){
     return act(async()=>{
       if(flowId.current){await bridge.cancel({id:flowId.current});flowId.current=undefined;}
-      const id=await bridge.start({channel,target,token,...(credentials?{credentials}:{})});
+      const id=crypto.randomUUID();flowId.current=id;
+      await bridge.start({id,channel,target,token,...(credentials?{credentials}:{})});
       if(!mounted()){await bridge.cancel({id});return;}
       flowId.current=id;
       setForm({channel,target});
@@ -133,21 +143,11 @@ export function DesktopChatApps(){
     return value;
   }
 
-  const changes=state?.pending??[];
   const busy=pending||applying||!!state?.busy;
-  const changeFor=(row:BindingInput)=>changes.find(change=>change.channel===row.channel&&change.key===row.key);
-  const rows=(channel:DesktopChannel)=>{
-    const active=(state?.bindings??[]).filter(row=>row.adapterId===channel);
-    const additions=changes.filter(change=>change.channel===channel&&change.kind==='add'&&!active.some(row=>row.accountKey===change.key))
-      .map(change=>({adapterId:channel,accountKey:change.key,label:change.label,state:'checking',failed:0,unknown:0}) satisfies ChannelStatus);
-    return [...active,...additions];
-  };
+  const rows=(channel:DesktopChannel)=>(state?.bindings??[]).filter(row=>row.adapterId===channel);
   const row=selected&&rows(selected.channel).find(binding=>binding.accountKey===selected.key);
-  const change=selected&&changeFor(selected);
   const label=(channel:DesktopChannel,binding:ChannelStatus)=>channel==='telegram'&&binding.label!==binding.accountKey?'@'+binding.label:binding.label;
-  const pill=(binding:ChannelStatus,staged?:typeof change)=><span className="chat-apps-status" data-state={staged?'checking':state?.readError?'offline':binding.state}>
-    {staged?staged.kind==='remove'?'待解绑':'待重启生效':state?.readError?'状态未确认':status[binding.state]}
-  </span>;
+  const pill=(binding:ChannelStatus)=><span className="chat-apps-status" data-state={state?.readError?'offline':binding.state}>{state?.readError?'状态未确认':status[binding.state]}</span>;
 
   return <div className="chat-apps" aria-busy={busy}>
     {(row||form)&&<button className="chat-apps-quiet" type="button" onClick={back} disabled={busy}><ArrowLeft size={16}/>返回聊天应用</button>}
@@ -156,6 +156,17 @@ export function DesktopChatApps(){
       {!form&&!row&&<button className="chat-apps-quiet" type="button" disabled={busy} onClick={()=>void act(async()=>{await read(true);})}>重新检查</button>}
     </header>
     {notice&&<p role="alert">{notice}</p>}
+      {state?.stopped&&<p role="status">运行服务未连接，请重新检查。</p>}
+      {(state?.busy||applying)&&<div className="chat-apps-banner" role="status"><span>正在应用连接变更，等待旧连接和发送结束…</span></div>}
+      {state?.result?.error&&!state.busy&&<div className="chat-apps-banner" role="alert">
+        <span>{state.result.saved?'已保存，连接尚未应用。该渠道暂时停止收发。':'连接变更未保存，原配置已保留。'}</span>
+        <div className="chat-apps-actions">
+          {!state.result.saved&&<button type="button" disabled={busy} onClick={()=>void act(()=>bridge.cancel({id:state.result!.id}))}>取消此次变更</button>}
+          <button className="primary-button" type="button" disabled={busy} onClick={()=>void act(async()=>{
+            flowId.current=state.result!.id;setApplying(true);await bridge.apply();
+          })}>重试应用</button>
+        </div>
+      </div>}
     {form?<section className="chat-apps-card" aria-live="polite">
       {flow&&<h3>{phase[flow.phase]}</h3>}
       {!flow&&form.channel==='telegram'&&<form onSubmit={event=>void begin(form.channel,form.target,secret(event,'token'))}>
@@ -189,10 +200,10 @@ export function DesktopChatApps(){
         <p>{flow.target?'确认继续使用这个机器人的原私聊。':'请核对你刚刚发起配对的私聊。'}</p>
         <dl><dt>{form.channel==='dingtalk'?'机器人':'Bot'}</dt><dd>{flow.label}</dd><dt>私聊</dt><dd>{flow.peer}</dd></dl>
         <button className="primary-button" type="button" disabled={busy} onClick={()=>void act(async()=>{
-          await bridge.confirm({id:flow.id});flowId.current=undefined;setForm(undefined);setSelected(undefined);
+          setApplying(true);await bridge.confirm({id:flow.id});setForm(undefined);setSelected(undefined);
         })}>确认并绑定</button>
       </>}
-      {flow?.phase==='error'&&<>
+      {flow?.phase==='error'&&!state?.result?.error&&<>
         <p role="alert">{authErrors[flow.error??'']??'未能完成授权，请核对凭据和网络后重试。'}</p>
         <button type="button" disabled={busy} onClick={()=>form.channel==='wechat'?void begin(form.channel,form.target):
           void act(async()=>{await bridge.cancel({id:flow.id});flowId.current=undefined;})}>
@@ -203,15 +214,15 @@ export function DesktopChatApps(){
     </section>:row&&selected?<div>
       <section className="chat-apps-card">
         <h3>{names[selected.channel]}@{row.label}</h3>
-        <p>{pill(row,change)} 私聊入口</p>
-        {row.state==='setup'&&!change&&<p>请先在该微信的 ClawBot 私聊里发一条消息。</p>}
+        <p>{pill(row)} 私聊入口</p>
+        {row.state==='setup'&&<p>请先在该微信的 ClawBot 私聊里发一条消息。</p>}
         <div className="chat-apps-actions">
-          {change?<button type="button" disabled={busy} onClick={()=>void act(async()=>{await bridge.undo(selected);setSelected(undefined);})}>撤销此变更</button>:<>
+
             {(row.state==='reauthorize'||selected.channel==='dingtalk')&&<button className="primary-button" type="button" disabled={busy||state?.stopped} onClick={()=>
               selected.channel==='wechat'?void begin('wechat',selected.key):setForm({channel:selected.channel,target:selected.key})
             }>重新授权</button>}
             <button className="chat-apps-danger" type="button" disabled={busy||state?.stopped} onClick={()=>setRemove(true)}>解除绑定</button>
-          </>}
+
         </div>
       </section>
       <section className="chat-apps-card">
@@ -221,36 +232,26 @@ export function DesktopChatApps(){
           <p>{row.unknown} 条结果待确认。请先到原私聊核对。</p>
         </>:<p>目前没有发送失败或结果待确认的消息。</p>}
       </section>
-      {remove&&!change&&<section className="chat-apps-card">
+      {remove&&<section className="chat-apps-card">
         <h3>解除这个绑定？</h3>
-        <p>重启后，这个入口停止收发。其他绑定和荷马会话记录会保留。</p>
+        <p>应用后，这个入口停止收发。其他绑定和荷马会话记录会保留。</p>
         <div className="chat-apps-actions">
           <button type="button" onClick={()=>setRemove(false)} disabled={busy}>取消</button>
           <button className="chat-apps-danger" type="button" disabled={busy} onClick={()=>void act(async()=>{
-            await bridge.remove(selected);setRemove(false);setSelected(undefined);
+            const id=crypto.randomUUID();flowId.current=id;setApplying(true);await bridge.remove({...selected,id});setRemove(false);setSelected(undefined);
           })}>确认解绑</button>
         </div>
       </section>}
     </div>:<>
       <p>连接聊天应用，就能在微信、Telegram 或钉钉里和荷马对话。</p>
       {state?.readError&&<p role="status">连接状态未确认，请重新检查。</p>}
-      {state?.result?.failed.length? <p role="alert">已保存 {state.result.saved.join('、')||'0 项'}。{state.result.failed.map(channel=>names[channel]).join('、')}的剩余变更待重试。</p>:null}
-      {state?.stopped&&!changes.length&&<button className="primary-button" type="button" disabled={busy} onClick={()=>void act(async()=>{
-        await bridge.apply();setApplying(true);
-      })}>重新启动荷马</button>}
-      {!!changes.length&&<div className="chat-apps-banner" role="status">
-        <span>{applying||state?.busy?'正在等待当前工作安全停止并重启…':changes.length+' 项变更待重启生效。'}</span>
-        <div className="chat-apps-actions">
-          <button type="button" disabled={busy} onClick={()=>void act(()=>bridge.discard())}>撤销变更</button>
-          <button className="primary-button" type="button" disabled={busy} onClick={()=>void act(async()=>{await bridge.apply();setApplying(true);})}>应用并重启</button>
-        </div>
-      </div>}
+
       {(['wechat','telegram','dingtalk'] as const).map(channel=>{
         const bindings=rows(channel);
         return <section className="chat-apps-group" key={channel}>
           <header className="chat-apps-heading">
             <h3><img className="chat-apps-logo" src={logos[channel]} alt="" width={20} height={20}/>{names[channel]} {bindings.length>0&&<span>{bindings.length}<span className="sr-only"> 个绑定</span></span>}</h3>
-            <button type="button" disabled={busy||!state||state.stopped} onClick={()=>channel==='wechat'?void begin(channel):setForm({channel})}><Plus size={16}/>{channel==='wechat'?'扫码添加':channel==='dingtalk'?'添加机器人':'添加 Bot'}</button>
+            <button type="button" disabled={busy||!state||state.stopped||!!state.result?.error} onClick={()=>channel==='wechat'?void begin(channel):setForm({channel})}><Plus size={16}/>{channel==='wechat'?'扫码添加':channel==='dingtalk'?'添加机器人':'添加 Bot'}</button>
           </header>
           {channel==='telegram'&&<p>
             Telegram Bot 可加入群聊，成员可随时 @ 它（需关闭群隐私模式）{' '}
@@ -276,7 +277,7 @@ export function DesktopChatApps(){
               const target={channel,key:binding.accountKey};
               return <div className="chat-apps-row" key={binding.accountKey}>
                 <div><strong>{label(channel,binding)}</strong><p>{binding.failed||binding.unknown?binding.failed+' 条发送失败 · '+binding.unknown+' 条结果待确认':'私聊入口'}</p></div>
-                {pill(binding,changeFor(target))}
+                {pill(binding)}
                 <button className="chat-apps-quiet" type="button" onClick={()=>setSelected(target)} disabled={busy}>查看</button>
               </div>;
             })}

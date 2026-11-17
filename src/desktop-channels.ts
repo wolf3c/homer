@@ -1,24 +1,23 @@
 import {randomBytes,randomUUID} from 'node:crypto';
 import QRCode from 'qrcode';
 import type {ChannelHealth,ChannelStatus} from './channel-plugin.js';
-import {acquireLock} from './processes.js';
 import {pairTelegramBot,readTelegramAccounts,telegramBotId,verifyTelegramBot,writeTelegramAccounts,type TelegramAccount} from './telegram-channel.js';
 import {authorizeWechat,prepareWechatAccount,readWechatAccounts,writeWechatAccounts,type WechatAccount} from './wechat-channel.js';
 import {dingtalkCredentials,pairDingtalkBot,readDingtalkAccounts,verifyDingtalkCredentials,writeDingtalkAccounts,type DingtalkAccount,type DingtalkCredentials} from './dingtalk-channel.js';
 
 export type DesktopChannel='wechat'|'telegram'|'dingtalk';
-export type DesktopChannelStart={channel:DesktopChannel;target?:string;token?:string;credentials?:DingtalkCredentials};
+export type DesktopChannelStart={id?:string;channel:DesktopChannel;target?:string;token?:string;credentials?:DingtalkCredentials};
 type ChangeKind='add'|'renew'|'remove';
 type Change<T>={kind:ChangeKind;key:string;label:string;before?:T;after?:T};
 type FlowView={
-  id:string; channel:DesktopChannel; phase:'starting'|'scan'|'scanned'|'code'|'pair'|'confirm'|'error';
+  id:string; channel:DesktopChannel; phase:'starting'|'scan'|'scanned'|'code'|'pair'|'confirm'|'applying'|'error';
   target?:string;qr?:string;command?:string;label?:string;peer?:string;error?:string;
 };
-type Flow={view:FlowView;abort:AbortController;code?:(value:string)=>void;stage?:()=>void;deadline?:number};
+type Flow={view:FlowView;abort:AbortController;code?:(value:string)=>void;stage?:()=>void;deadline?:number;commit?:Promise<void>;saved?:boolean};
 export type DesktopChannelState={
-  bindings:ChannelStatus[]; pending:{channel:DesktopChannel;kind:ChangeKind;key:string;label:string}[];
+  bindings:ChannelStatus[];
   flow?:FlowView; busy:boolean; stopped:boolean; readError:boolean;
-  result?:{saved:string[];failed:DesktopChannel[]};
+  result?:{id:string;channel:DesktopChannel;saved:boolean;applied:boolean;error?:string};
 };
 
 const telegramKey=(account:TelegramAccount)=>telegramBotId(account.token);
@@ -29,7 +28,6 @@ const dingtalkKey=(account:DingtalkAccount)=>account.accountKey;
 const errorCodes=new Set(['wechat_qr_expired','wechat_verify_code_invalid','wechat_unbind_before_replacing_account',
   'telegram_pair_conflict','telegram_token_unchanged','telegram_token_invalid','telegram_bot_identity_invalid','channel_binding_conflict','channel_wrong_account',
   'dingtalk_credentials_invalid','dingtalk_stream_conflict','dingtalk_secret_unchanged']);
-const labels={wechat:'微信',telegram:'Telegram',dingtalk:'钉钉'};
 
 function applyChanges<T>(accounts:T[],changes:Map<string,Change<T>>,keyOf:(account:T)=>string,
   identity:(account:T)=>unknown,merge:(next:T,prior:T|undefined)=>T,validate?:(accounts:T[])=>void){
@@ -46,11 +44,11 @@ function applyChanges<T>(accounts:T[],changes:Map<string,Change<T>>,keyOf:(accou
 }
 
 export class DesktopChannels {
-  private wechat=new Map<string,Change<WechatAccount>>();
-  private telegram=new Map<string,Change<TelegramAccount>>();
-  private dingtalk=new Map<string,Change<DingtalkAccount>>();
   private flow?:Flow;
-  constructor(private runtime:string,private http?:typeof fetch,private dingtalkSocket?:Parameters<typeof pairDingtalkBot>[5]){}
+  private readonly authorizing=new Set<Promise<void>>();
+  private closing=false;
+  private result?:DesktopChannelState['result'];
+  constructor(private runtime:string,private reconfigure:(channel:DesktopChannel,save:()=>void)=>Promise<void>,private http?:typeof fetch,private dingtalkSocket?:Parameters<typeof pairDingtalkBot>[5]){}
 
   configured():ChannelStatus[]{
     const row=(adapterId:DesktopChannel,accountKey:string):ChannelStatus=>({
@@ -61,22 +59,53 @@ export class DesktopChannels {
       ...readDingtalkAccounts(this.runtime).map(account=>row('dingtalk',account.accountKey))];
   }
 
+
   snapshot(){
-    const pending=<T>(channel:DesktopChannel,changes:Map<string,Change<T>>)=>[...changes.values()]
-      .map(({kind,key,label})=>({channel,kind,key,label}));
-    return {pending:[...pending('wechat',this.wechat),...pending('telegram',this.telegram),...pending('dingtalk',this.dingtalk)],
-      flow:this.flow&&{...this.flow.view}};
+    return {flow:this.flow&&{...this.flow.view},busy:!!this.flow?.commit,result:this.result};
   }
 
-  start(channel:DesktopChannel,target?:string,token?:string,credentials?:DingtalkCredentials){
-    if(this.flow)throw Error('channel_flow_busy');
+  state(bindings:ChannelStatus[]):DesktopChannelState{
+    let configured:ChannelStatus[];
+    try{configured=this.configured();}catch{return {...this.snapshot(),bindings,stopped:this.closing,readError:true};}
+    return {...this.snapshot(),bindings:configured.map(row=>{
+      const active=bindings.find(active=>active.adapterId===row.adapterId&&active.accountKey===row.accountKey)??row;
+      return this.result?.saved&&this.result.error&&this.result.channel===row.adapterId?{...active,state:'offline'}:active;
+    }),
+      stopped:this.closing,readError:false};
+  }
+
+  manage(action:string,input:unknown,bindings:ChannelStatus[]=[]){
+    if(action==='state'){if(typeof input!=='boolean')throw Error('desktop_channels_arguments');return this.state(bindings);}
+    if(action==='apply'){if(input!==undefined)throw Error('desktop_channels_arguments');return this.apply();}
+    if(!input||typeof input!=='object')throw Error('desktop_channels_arguments');
+    const value=input as {id:string;channel:DesktopChannel;key:string;target?:string;token?:string;credentials?:DingtalkCredentials;code:string};
+    if(action==='cancel'){this.cancel(value.id);return;}
+    if(this.closing)throw Error('desktop_channels_unavailable');
+    if(action==='start')return this.start(value.channel,value.target,value.token,value.credentials,value.id);
+    if(action==='code'){this.code(value.id,value.code);return;}
+    if(action==='confirm')return this.confirm(value.id);
+    if(action==='remove')return this.remove(value.channel,value.key,value.key,value.id);
+    throw Error('desktop_channels_arguments');
+  }
+
+  async close(){
+    this.closing=true;
+    const flow=this.flow;
+    this.cancel();
+    await Promise.allSettled([...this.authorizing,flow?.commit]);
+  }
+  start(channel:DesktopChannel,target?:string,token?:string,credentials?:DingtalkCredentials,id:string=randomUUID()){
+    if(this.flow||this.result?.saved&&!this.result.applied)throw Error('channel_flow_busy');
+    if(this.closing)throw Error('desktop_channels_unavailable');
+    if(typeof id!=='string'||!/^[-\w]{1,100}$/.test(id))throw Error('channel_input_invalid');
     if(channel!=='wechat'&&channel!=='telegram'&&channel!=='dingtalk')throw Error('channel_input_invalid');
     if(target!==undefined&&(typeof target!=='string'||!target))throw Error('channel_input_invalid');
-    const flow:Flow={view:{id:randomUUID(),channel,target,phase:'starting'},abort:new AbortController()};
+    this.result=undefined;
+    const flow:Flow={view:{id,channel,target,phase:'starting'},abort:new AbortController()};
     this.flow=flow;
     const run=channel==='wechat'?this.authorizeWechat(flow):channel==='telegram'?this.authorizeTelegram(flow,token):
       this.authorizeDingtalk(flow,credentials);
-    void run.catch(error=>{
+    const pending:Promise<void>=run.catch(error=>{
       if(this.flow!==flow||flow.abort.signal.aborted)return;
       const message=error instanceof Error?error.message:'';
       const code=error instanceof Error&&error.name==='TimeoutError'?'channel_auth_timeout':
@@ -84,13 +113,16 @@ export class DesktopChannels {
       flow.view={id:flow.view.id,channel,target,phase:'error',error:code};
       flow.code=undefined;
       flow.stage=undefined;
-    });
+    }).finally(()=>{this.authorizing.delete(pending);});
+    this.authorizing.add(pending);
     return flow.view.id;
   }
 
   cancel(id?:string){
     if(!this.flow||(id!==undefined&&this.flow.view.id!==id))return;
+    if(this.flow.commit||this.flow.saved&&!this.closing)return;
     this.flow.abort.abort();
+    if(!this.flow.saved)this.result=undefined;
     this.flow=undefined;
   }
 
@@ -106,72 +138,65 @@ export class DesktopChannels {
   confirm(id:string){
     const flow=this.flow;
     if(!flow||flow.view.id!==id||!flow.stage)throw Error('channel_confirmation_invalid');
+    if(flow.commit)return flow.view.id;
     if(!flow.deadline||Date.now()>=flow.deadline){
       flow.view.phase='error';
       flow.view.error='channel_auth_timeout';
       flow.stage=undefined;
       throw Error('channel_auth_timeout');
     }
-    flow.stage();
-    this.cancel(id);
+    flow.deadline=undefined;
+    return this.commit(flow);
   }
 
-  remove(channel:DesktopChannel,key:string,label:string){
+
+  remove(channel:DesktopChannel,key:string,_label:string,id:string=randomUUID()){
+    if(this.flow||this.result?.saved&&!this.result.applied)throw Error('channel_flow_busy');
+    if(typeof id!=='string'||!/^[-\w]{1,100}$/.test(id)||typeof key!=='string'||!key)throw Error('channel_input_invalid');
+    const flow:Flow={view:{id,channel,phase:'applying'},abort:new AbortController()};
     if(channel==='wechat'){
       const before=readWechatAccounts(this.runtime).find(account=>account.accountKey===key);
-      if(!before||this.wechat.has(key))throw Error('channel_binding_conflict');
-      this.wechat.set(key,{key,label:key,before,kind:'remove'});
+      if(!before)throw Error('channel_binding_conflict');
+      flow.stage=()=>writeWechatAccounts(this.runtime,applyChanges(readWechatAccounts(this.runtime),new Map([[key,{key,label:key,before,kind:'remove'}]]),wechatKey,wechatIdentity,next=>next));
     }else if(channel==='telegram'){
       const before=readTelegramAccounts(this.runtime).find(account=>telegramKey(account)===key);
-      if(!before||this.telegram.has(key))throw Error('channel_binding_conflict');
-      this.telegram.set(key,{key,label,before,kind:'remove'});
+      if(!before)throw Error('channel_binding_conflict');
+      flow.stage=()=>writeTelegramAccounts(this.runtime,applyChanges(readTelegramAccounts(this.runtime),new Map([[key,{key,label:key,before,kind:'remove'}]]),telegramKey,telegramIdentity,next=>next));
     }else if(channel==='dingtalk'){
       const before=readDingtalkAccounts(this.runtime).find(account=>account.accountKey===key);
-      if(!before||this.dingtalk.has(key))throw Error('channel_binding_conflict');
-      this.dingtalk.set(key,{key,label:key,before,kind:'remove'});
+      if(!before)throw Error('channel_binding_conflict');
+      flow.stage=()=>writeDingtalkAccounts(this.runtime,applyChanges(readDingtalkAccounts(this.runtime),new Map([[key,{key,label:key,before,kind:'remove'}]]),dingtalkKey,account=>account,next=>next));
     }else throw Error('channel_input_invalid');
+    this.flow=flow;
+    return this.commit(flow);
   }
-
-  undo(channel:DesktopChannel,key:string){
-    if(channel==='wechat')this.wechat.delete(key);
-    else if(channel==='telegram')this.telegram.delete(key);
-    else if(channel==='dingtalk')this.dingtalk.delete(key);
-    else throw Error('channel_input_invalid');
-  }
-
-  discard(){this.wechat.clear();this.telegram.clear();this.dingtalk.clear();}
 
   apply(){
-    const saved:string[]=[];
-    const failed:DesktopChannel[]=[];
-    if(!this.wechat.size&&!this.telegram.size&&!this.dingtalk.size)return {saved,failed};
-    const unlock=acquireLock(this.runtime);
-    try{
-      const write=<T>(channel:DesktopChannel,changes:Map<string,Change<T>>,run:()=>void)=>{
-        if(!changes.size)return;
-        try{run();}catch{failed.push(channel);return;}
-        for(const {label} of changes.values())saved.push(labels[channel]+'@'+label);
-        changes.clear();
-      };
-      write('wechat',this.wechat,()=>writeWechatAccounts(this.runtime,
-        applyChanges(readWechatAccounts(this.runtime),this.wechat,wechatKey,wechatIdentity,(next,prior)=>
-          prior&&prior.baseUrl===next.baseUrl?{...next,cursor:prior.cursor}:next,accounts=>{
-            for(const id of ['botId','ownerId'] as const)
-              if(new Set(accounts.map(account=>account[id])).size!==accounts.length)throw Error('channel_binding_conflict');
-          })));
-      write('telegram',this.telegram,()=>writeTelegramAccounts(this.runtime,
-        applyChanges(readTelegramAccounts(this.runtime),this.telegram,telegramKey,telegramIdentity,next=>next)));
-      write('dingtalk',this.dingtalk,()=>writeDingtalkAccounts(this.runtime,
-        applyChanges(readDingtalkAccounts(this.runtime),this.dingtalk,dingtalkKey,account=>account,next=>next)));
-      return {saved,failed};
-    }finally{unlock();}
+    if(!this.flow?.stage||this.flow.commit||this.flow.view.phase!=='error')throw Error('desktop_channels_unavailable');
+    return this.commit(this.flow);
+  }
+
+  private commit(flow:Flow){
+    flow.view.phase='applying';flow.view.error=undefined;
+    const result={id:flow.view.id,channel:flow.view.channel,saved:!!flow.saved,applied:false,error:undefined as string|undefined};
+    this.result=result;
+    flow.commit=Promise.resolve().then(()=>this.reconfigure(flow.view.channel,()=>{
+      if(!flow.saved){flow.stage!();flow.saved=true;result.saved=true;}
+    })).then(()=>{
+      result.applied=true;flow.stage=undefined;
+      if(this.flow===flow)this.flow=undefined;
+    },()=>{
+      result.error=flow.saved?'channel_apply_failed':'channel_save_failed';
+      flow.view.phase='error';flow.view.error=result.error;
+    }).finally(()=>{flow.commit=undefined;});
+    return flow.view.id;
   }
 
   private async authorizeWechat(flow:Flow){
     const {target}=flow.view;
     const accounts=readWechatAccounts(this.runtime);
     const prior=accounts.find(account=>account.accountKey===target);
-    if(target&&(!prior||this.wechat.has(target)))throw Error('channel_binding_conflict');
+    if(target&&!prior)throw Error('channel_binding_conflict');
     const signal=flow.abort.signal;
     const credential=await authorizeWechat({
       showQr:async url=>{
@@ -190,11 +215,16 @@ export class DesktopChannels {
     },this.http,signal);
     signal.throwIfAborted();
     const matches=(account:WechatAccount)=>account.botId===credential.botId||account.ownerId===credential.ownerId;
-    if(!prior&&(accounts.some(matches)||[...this.wechat.values()].some(change=>change.after&&matches(change.after))))
+    if(!prior&&accounts.some(matches))
       throw Error('channel_binding_conflict');
     const after=prepareWechatAccount(credential,prior);
-    this.wechat.set(after.accountKey,{key:after.accountKey,label:after.accountKey,before:prior,after,kind:prior?'renew':'add'});
-    this.cancel(flow.view.id);
+    const key=after.accountKey;
+    flow.stage=()=>writeWechatAccounts(this.runtime,applyChanges(readWechatAccounts(this.runtime),
+      new Map([[key,{key,label:key,before:prior,after,kind:prior?'renew':'add'}]]),wechatKey,wechatIdentity,
+      (next,latest)=>latest&&latest.baseUrl===next.baseUrl?{...next,cursor:latest.cursor}:next,accounts=>{
+        for(const field of ['botId','ownerId'] as const)if(new Set(accounts.map(account=>account[field])).size!==accounts.length)throw Error('channel_binding_conflict');
+      }));
+    this.commit(flow);
   }
 
   private async authorizeTelegram(flow:Flow,token:unknown){
@@ -203,7 +233,7 @@ export class DesktopChannels {
     const {target}=flow.view;
     const before=readTelegramAccounts(this.runtime).find(account=>telegramKey(account)===key);
     if(target&&target!==key)throw Error('channel_wrong_account');
-    if(!!target!==!!before||this.telegram.has(key))throw Error('channel_binding_conflict');
+    if(!!target!==!!before)throw Error('channel_binding_conflict');
     if(before?.token===token)throw Error('telegram_token_unchanged');
     flow.deadline=Date.now()+300_000;
     const signal=AbortSignal.any([flow.abort.signal,AbortSignal.timeout(300_000)]);
@@ -219,7 +249,8 @@ export class DesktopChannels {
       ({account:after,peer}=await pairTelegramBot(token,command,signal,this.http));
     }
     signal.throwIfAborted();
-    flow.stage=()=>{this.telegram.set(key,{key,label:bot.label,before,after,kind:before?'renew':'add'});};
+    flow.stage=()=>writeTelegramAccounts(this.runtime,applyChanges(readTelegramAccounts(this.runtime),
+      new Map([[key,{key,label:bot.label,before,after,kind:before?'renew':'add'}]]),telegramKey,telegramIdentity,next=>next));
     Object.assign(flow.view,{phase:'confirm',label:bot.label,peer,command:undefined});
   }
 
@@ -229,7 +260,7 @@ export class DesktopChannels {
     const before=readDingtalkAccounts(this.runtime).find(account=>account.appKey===credentials.appKey);
     if(target&&before?.accountKey!==target)throw Error('channel_wrong_account');
     if(before?.appSecret===credentials.appSecret)throw Error('dingtalk_secret_unchanged');
-    if((!target&&before)||[...this.dingtalk.values()].some(change=>change.after?.appKey===credentials.appKey||change.key===target))
+    if(!target&&before)
       throw Error('channel_binding_conflict');
     flow.deadline=Date.now()+300_000;
     const signal=AbortSignal.any([flow.abort.signal,AbortSignal.timeout(300_000)]);
@@ -244,7 +275,8 @@ export class DesktopChannels {
     }
     signal.throwIfAborted();
     const key=after.accountKey;
-    flow.stage=()=>{this.dingtalk.set(key,{key,label:key,before,after,kind:before?'renew':'add'});};
+    flow.stage=()=>writeDingtalkAccounts(this.runtime,applyChanges(readDingtalkAccounts(this.runtime),
+      new Map([[key,{key,label:key,before,after,kind:before?'renew':'add'}]]),dingtalkKey,account=>account,next=>next));
     const peer=after.userId.length>4?'••••'+after.userId.slice(-4):'••••';
     Object.assign(flow.view,{phase:'confirm',command:undefined,label:key,peer});
   }

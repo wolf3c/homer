@@ -11,6 +11,7 @@ import {saveDesktopModelSource} from '../scripts/desktop-profile.mjs';
 import {dingtalkChannel} from './dingtalk-channel.js';
 import {telegramChannel} from './telegram-channel.js';
 import {wechatChannel} from './wechat-channel.js';
+import {DesktopChannels} from './desktop-channels.js';
 import type {PowerFacts} from './desktop-power.js';
 
 const send = (value: unknown) => new Promise<void>((resolve, reject) => {
@@ -18,6 +19,7 @@ const send = (value: unknown) => new Promise<void>((resolve, reject) => {
   process.send(value, error => error ? reject(error) : resolve());
 });
 let app: Homer | undefined;
+let desktopChannels:DesktopChannels|undefined;
 let frozen = true;
 let stopping = false;
 let starting: Promise<void> | undefined;
@@ -127,8 +129,9 @@ async function stop() {
   for(const finish of powerAcks.values())finish();
   if(stateInvalidationRetry)clearTimeout(stateInvalidationRetry);
   frozen = true;
+  const channelsClosing=Promise.allSettled([desktopChannels?.close(),app?.channels?.close()]);
   let confirmed=false;
-  try { await desktopChatStarting?.catch(() => {}); await starting?.catch(() => {}); await app?.close({requireAllOwnersConfirmed:desktop});confirmed=!!app||constructorRefused; }
+  try { await channelsClosing; await desktopChatStarting?.catch(() => {}); await starting?.catch(() => {}); await app?.close({requireAllOwnersConfirmed:desktop});confirmed=!!app||constructorRefused; }
   catch { process.exitCode = 1; }
   if(confirmed){powerRuntimeAvailable=false;publishPower();}
   if(desktop){try{await send({kind:'desktop_stopped',confirmed});}catch{process.exitCode=1;}}
@@ -162,9 +165,9 @@ async function receive(raw: unknown) {
     // Only an explicit plain-terminal opt-out skips IPC. Legacy/private host
     // callers keep their existing stream until they declare otherwise.
     const terminalDeltas=m.terminalDeltas!==false;
-    const telegram=telegramChannel(m.config.runtime);
-    const wechat=wechatChannel(m.config.runtime);
-    const dingtalk=dingtalkChannel(m.config.runtime);
+    const telegram=telegramChannel(m.config.runtime,undefined,desktop);
+    const wechat=wechatChannel(m.config.runtime,desktop);
+    const dingtalk=dingtalkChannel(m.config.runtime,desktop);
     const adapters=[...(telegram?[telegram]:[]),...(wechat?[wechat]:[]),...(dingtalk?[dingtalk]:[])];
     try {
     app = new Homer(m.config, async (message: Message) => {
@@ -173,6 +176,8 @@ async function receive(raw: unknown) {
       await output(message);
     },undefined,adapters);
     for(const adapter of adapters)adapter.applyBindings(app.channels!);
+    if(desktop)desktopChannels=new DesktopChannels(m.config.runtime,(channel,save)=>app!.channels!.reconfigure(channel,save,()=>
+      channel==='wechat'?wechatChannel(m.config.runtime,true)!:channel==='telegram'?telegramChannel(m.config.runtime,undefined,true)!:dingtalkChannel(m.config.runtime,true)!));
     } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;await app?.close();throw error; }
     app.onStateChange(reason=>{invalidateState();publishPower();if(desktop&&(reason==='model-turn'||reason==='user-input'))void send({kind:reason==='model-turn'?'account_usage_dirty':'account_config_check'}).catch(()=>{});});
     if(desktop){
@@ -219,6 +224,12 @@ async function receive(raw: unknown) {
   } else if(m.kind==='desktop_account'){
     try{
       if(!desktop||!app||frozen||stopping)throw Error('desktop_account_forbidden');
+      if(m.method==='channel-manage'){
+        if(!desktopChannels||!m.input||typeof m.input.action!=='string')throw Error('desktop_channels_arguments');
+        const value=desktopChannels.manage(m.input.action,m.input.input,app.channels!.connectionStatus());
+        publishPower(true);
+        await send({kind:'web_result',id:m.id,value});return;
+      }
       if(m.method==='channel-state'){
         await send({kind:'web_result',id:m.id,value:app.channels?.connectionStatus()??[]});
         return;

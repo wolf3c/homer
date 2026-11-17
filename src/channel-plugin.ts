@@ -73,6 +73,8 @@ export class ChannelPlugin {
   private dirty=true;
   private running?:Promise<void>;
   private shutdown?:Promise<void>;
+  private changing?:Promise<void>;
+  private readonly paused=new Set<string>();
   lastSyncError: 'channel_sync_failed' | null = null;
   lastConnectionError: 'channel_connect_failed' | null = null;
 
@@ -102,11 +104,7 @@ export class ChannelPlugin {
           requestId TEXT REFERENCES channel_requests(id), subscriptionId TEXT REFERENCES channel_subscriptions(id),
           taskVersion INTEGER, state TEXT NOT NULL, attemptId TEXT, nextPart INTEGER NOT NULL DEFAULT 0,
           receipts TEXT NOT NULL DEFAULT '[]', CHECK((requestId IS NULL) <> (subscriptionId IS NULL)));`);
-      this.db.exec(`UPDATE channel_outbox SET state='unknown',
-        receipts=CASE WHEN json_extract(receipts,'$[#-1].attemptId')=attemptId
-          AND json_extract(receipts,'$[#-1].state')='sending'
-          THEN json_set(receipts,'$[#-1].state','unknown') ELSE receipts END
-        WHERE state='sending'`);
+      this.recoverSending();
       app.registerMainPluginTool({...subscriptionTool},(args,context)=>{
         const {taskId}=args as {taskId:string};
         this.requireOpen();
@@ -120,6 +118,48 @@ export class ChannelPlugin {
     return typeof value==='string'&&value.length>0&&value.length<=256;
   }
   private requireOpen() { if(this.shutdown)throw Error('channel_plugin_closed'); }
+
+
+  private recoverSending(adapterId:string|null=null){
+    this.db.prepare(`UPDATE channel_outbox SET state='unknown',
+      receipts=CASE WHEN json_extract(receipts,'$[#-1].attemptId')=attemptId
+        AND json_extract(receipts,'$[#-1].state')='sending'
+        THEN json_set(receipts,'$[#-1].state','unknown') ELSE receipts END
+      WHERE state='sending' AND (? IS NULL OR bindingId IN (SELECT id FROM channel_bindings WHERE adapterId=?))`).run(adapterId,adapterId);
+  }
+
+  reconfigure(adapterId:string,save:()=>void,create:()=>ChannelAdapter&{applyBindings:(plugin:ChannelPlugin)=>void}):Promise<void>{
+    this.requireOpen();
+    if(this.changing)return Promise.reject(Error('channel_flow_busy'));
+    if(!this.adapters.has(adapterId))return Promise.reject(Error('channel_adapter_invalid'));
+    this.paused.add(adapterId);
+    const connections=[...this.connections].filter(([key])=>JSON.parse(key)[0]===adapterId).map(([,value])=>value);
+    for(const connection of connections)connection.abort.abort();
+    const running=this.running;
+    let saved=false,recovered=false;
+    this.changing=Promise.resolve().then(async()=>{
+      await Promise.allSettled([running,...connections.map(connection=>connection.done)]);
+      this.requireOpen();
+      this.recoverSending(adapterId);recovered=true;
+      save();saved=true;
+      const next=create();
+      if(next.id!==adapterId)throw Error('channel_adapter_invalid');
+      next.applyBindings(this);
+      this.adapters.set(adapterId,next);
+      this.paused.delete(adapterId);
+    }).catch(error=>{
+      if(!saved&&recovered&&!this.shutdown)this.paused.delete(adapterId);
+      throw error;
+    }).finally(()=>{
+      this.changing=undefined;this.dirty=true;
+      if(this.shutdown)return;
+      if(adapterId==='telegram')for(const row of this.db.prepare('SELECT id FROM channel_bindings WHERE adapterId=?').all(adapterId))this.telegramSync.delete(String(row.id));
+      if(this.unsubscribe)for(const binding of this.db.prepare('SELECT * FROM channel_bindings WHERE adapterId=? AND revokedAt IS NULL').all(adapterId) as Binding[])this.connect(binding);
+      this.wakeInputs();
+    });
+    return this.changing;
+  }
+
   private accountKey({adapterId,accountKey}:Pick<ChannelAddress,'adapterId'|'accountKey'>) {
     return JSON.stringify([adapterId,accountKey]);
   }
@@ -140,7 +180,7 @@ export class ChannelPlugin {
       const {adapterId,accountKey,failed,unknown}=row as Pick<ChannelStatus,'adapterId'|'accountKey'|'failed'|'unknown'>;
       const adapter=this.adapters.get(adapterId);
       return {adapterId,accountKey,label:adapter?.accountLabel?.(accountKey)??accountKey,
-        state:adapter?.connectionState?.(accountKey)??'checking',failed,unknown};
+        state:this.paused.has(adapterId)?this.changing?'checking':'offline':adapter?.connectionState?.(accountKey)??'checking',failed,unknown};
     });
   }
 
@@ -149,7 +189,7 @@ export class ChannelPlugin {
     const rows=this.db.prepare('SELECT * FROM channel_bindings WHERE revokedAt IS NULL').all() as Binding[];
     return rows.filter(({adapterId,accountKey})=>{
       const adapter=this.adapters.get(adapterId),health=adapter?.connectionState?.(accountKey);
-      return typeof adapter?.connect==='function'&&Number.isFinite(adapter.offlineReplayMs)&&adapter.offlineReplayMs!>=60*60_000+20_000&&health!=='setup'&&health!=='reauthorize';
+      return !this.paused.has(adapterId)&&typeof adapter?.connect==='function'&&Number.isFinite(adapter.offlineReplayMs)&&adapter.offlineReplayMs!>=60*60_000+20_000&&health!=='setup'&&health!=='reauthorize';
     });
   }
 
@@ -159,6 +199,7 @@ export class ChannelPlugin {
   }
 
   async resumeAfterSleep(force=true){
+    await this.changing?.catch(()=>{});
     if(this.shutdown||!this.unsubscribe)return;
     const bindings=this.wakePollingBindings(),accounts=new Set(bindings.map(binding=>this.accountKey(binding)));
     const connections=[...this.connections].filter(([key])=>{const [adapterId,accountKey]=JSON.parse(key);return accounts.has(key)&&(force||this.adapters.get(adapterId)?.connectionState?.(accountKey)!=='ready');}).map(([,connection])=>connection);
@@ -213,7 +254,7 @@ export class ChannelPlugin {
   // Trusted declarative configuration is applied before any connections start.
   configureBindings(adapterId:string, addresses:readonly ChannelAddress[]) {
     this.requireOpen();
-    if(this.unsubscribe||!this.adapters.has(adapterId))throw Error('channel_configuration_unavailable');
+    if(this.unsubscribe&&!this.paused.has(adapterId)||!this.adapters.has(adapterId))throw Error('channel_configuration_unavailable');
     const next=new Map(addresses.map(address=>[address.accountKey,address]));
     if(next.size!==addresses.length||addresses.some(address=>address.adapterId!==adapterId))throw Error('channel_binding_invalid');
     const active=this.db.prepare('SELECT * FROM channel_bindings WHERE adapterId=? AND revokedAt IS NULL').all(adapterId) as Binding[];
@@ -243,7 +284,7 @@ export class ChannelPlugin {
   private connect(binding:Binding) {
     const {adapterId,accountKey,senderKey,conversationKey}=binding;
     const adapter=this.adapters.get(adapterId),key=this.accountKey(binding);
-    if(!adapter?.connect||this.connections.has(key))return;
+    if(this.paused.has(adapterId)||!adapter?.connect||this.connections.has(key))return;
     const abort=new AbortController();
     const signal=AbortSignal.any([this.abort.signal,abort.signal]);
     const address=Object.freeze({adapterId,accountKey,senderKey,conversationKey});
@@ -333,14 +374,18 @@ export class ChannelPlugin {
     };
   }
 
-  telegramInputState(requestId:string){
+
+  channelInputState(requestId:string){
     if(this.shutdown)return 'denied';
-    const route=this.db.prepare(`SELECT r.bindingId,b.revokedAt,g.chatId,g.changeId FROM telegram_group_routes g
-      JOIN channel_requests r ON r.id=g.requestId JOIN channel_bindings b ON b.id=r.bindingId WHERE g.requestId=?`)
-      .get(requestId) as Pick<TelegramGroupRoute,'chatId'|'changeId'> & {bindingId:string;revokedAt:number|null} | undefined;
-    if(!route)return;
-    if(route.revokedAt!==null||!this.adapters.has('telegram')||!this.groupAllowed(route.bindingId,route))return 'denied';
-    const sync=this.telegramSync.get(route.bindingId);
+    const row=this.db.prepare(`SELECT r.bindingId,b.adapterId,b.revokedAt,g.chatId,g.changeId FROM channel_requests r
+      JOIN channel_bindings b ON b.id=r.bindingId LEFT JOIN telegram_group_routes g ON g.requestId=r.id WHERE r.id=?`).get(requestId) as
+      (Pick<TelegramGroupRoute,'chatId'|'changeId'> & {bindingId:string;adapterId:string;revokedAt:number|null})|undefined;
+    if(!row)return;
+    if(row.revokedAt!==null||!this.adapters.has(row.adapterId))return 'denied';
+    if(this.paused.has(row.adapterId))return 'preparing';
+    if(row.chatId===null)return 'ready';
+    if(!this.groupAllowed(row.bindingId,row))return 'denied';
+    const sync=this.telegramSync.get(row.bindingId);
     return sync==='offline'?'denied':sync??'preparing';
   }
 
@@ -349,8 +394,9 @@ export class ChannelPlugin {
   takeTelegramBackground(requestId:string){
     const entry=this.telegramBackground.get(requestId);
     if(!entry)return;
-    this.discardTelegramBackground(requestId);
-    const allowed=()=>this.telegramInputState(requestId)==='ready';
+    // The queued input can still defer before its native turn starts.
+    // Completion, cancellation and membership changes discard this entry.
+    const allowed=()=>this.channelInputState(requestId)==='ready';
     if(!allowed())return;
     return entry.load().then(messages=>allowed()?messages:undefined,()=>undefined);
   }
@@ -362,7 +408,7 @@ export class ChannelPlugin {
     const binding=this.db.prepare(`SELECT id FROM channel_bindings WHERE adapterId=? AND accountKey=?
       AND senderKey=? AND conversationKey=? AND revokedAt IS NULL`)
       .get(input.adapterId,input.accountKey,input.senderKey,input.conversationKey);
-    if(!binding||!this.adapters.has(input.adapterId))throw Error('channel_binding_denied');
+    if(!binding||!this.adapters.has(input.adapterId)||this.paused.has(input.adapterId))throw Error('channel_binding_denied');
     return this.receiveBound({...input,id:String(binding.id)},input.eventId,input.text);
   }
 
@@ -399,7 +445,10 @@ export class ChannelPlugin {
         this.db.exec('COMMIT');
       }catch(error){this.db.exec('ROLLBACK');throw error;}
     }else insert();
-    if(group&&background)this.telegramBackground.set(requestId,{bindingId:binding.id,route:group,load:background});
+    if(group&&background){
+      let loaded:ReturnType<TelegramBackground>|undefined;
+      this.telegramBackground.set(requestId,{bindingId:binding.id,route:group,load:()=>loaded??=background()});
+    }
     this.dirty=true;
     this.accept(request);
     return requestId;
@@ -408,7 +457,7 @@ export class ChannelPlugin {
   private accept(request:Request) {
     if(request.pendingText===null)return;
     const binding=this.binding(request.bindingId);
-    if(binding&&!this.adapters.has(binding.adapterId))return;
+    if(binding&&(!this.adapters.has(binding.adapterId)||this.paused.has(binding.adapterId)))return;
     const group=this.groupRoute(request.id);
     if(binding&&group&&this.telegramSync.get(binding.id)!=='ready')return;
     if(binding&&this.groupAllowed(binding.id,group))
@@ -458,7 +507,7 @@ export class ChannelPlugin {
     if(this.unsubscribe)return;
     const bindings=this.db.prepare('SELECT * FROM channel_bindings WHERE revokedAt IS NULL ORDER BY rowid').all() as Binding[];
     const wake=()=>{
-      if(!this.shutdown&&this.dirty&&!this.running)void this.synchronize().catch(()=>{this.lastSyncError='channel_sync_failed';});
+      if(!this.shutdown&&!this.changing&&this.dirty&&!this.running)void this.synchronize().catch(()=>{this.lastSyncError='channel_sync_failed';});
     };
     const unwatch=this.app.onStateChange(()=>{this.dirty=true;});
     const unhook=this.app.hooks.on('message.committed',()=>{this.dirty=true;wake();});
@@ -471,6 +520,7 @@ export class ChannelPlugin {
   }
   synchronize() {
     this.requireOpen();
+    if(this.changing){this.dirty=true;return Promise.resolve();}
     if(this.running)return this.running;
     this.dirty=false;
     return this.running=Promise.resolve().then(()=>this.catchUp()).catch(error=>{
@@ -486,27 +536,28 @@ export class ChannelPlugin {
     clearInterval(this.timer);
     this.abort.abort();
     this.telegramBackground.clear();
+    await this.changing?.catch(()=>{});
     await Promise.allSettled([this.running,...Array.from(this.connections.values(),connection=>connection.done)]);
     this.db.close();
   }
 
   private async catchUp() {
-    if(this.shutdown)return;
+    if(this.shutdown||this.changing)return;
     let acceptFailed=false;
     for(const request of this.db.prepare('SELECT * FROM channel_requests ORDER BY rowid').all() as Request[]){
-      if(this.shutdown)return;
+      if(this.shutdown||this.changing)return;
       try { this.accept(request); } catch { acceptFailed=true; }
       if(this.binding(request.bindingId))
         await this.scan({requestId:request.id},{requestId:request.id,bindingId:request.bindingId});
     }
     for(const subscription of this.db.prepare('SELECT * FROM channel_subscriptions WHERE revokedAt IS NULL').all() as Subscription[]){
-      if(this.shutdown)return;
+      if(this.shutdown||this.changing)return;
       await this.scan({taskId:subscription.taskId},{subscriptionId:subscription.id,bindingId:subscription.bindingId},
         new Set<string>(JSON.parse(subscription.baseline)));
     }
-    if(this.shutdown)return;
+    if(this.shutdown||this.changing)return;
     for(const row of this.db.prepare("SELECT messageId FROM channel_outbox WHERE state='queued' ORDER BY rowid").all()){
-      if(this.shutdown)return;
+      if(this.shutdown||this.changing)return;
       await this.send(String(row.messageId));
     }
     if(acceptFailed)this.dirty=true;
@@ -518,7 +569,7 @@ export class ChannelPlugin {
       VALUES(?,?,?,?,?,'queued') ON CONFLICT(messageId) DO NOTHING`);
     let after:number|null=0;
     do {
-      if(this.shutdown||!this.binding(route.bindingId)||'subscriptionId' in route&&!this.subscription(route.subscriptionId))return;
+      if(this.shutdown||this.changing||!this.binding(route.bindingId)||'subscriptionId' in route&&!this.subscription(route.subscriptionId))return;
       const page=this.app.listCommittedMessages(scope,after);
       for(const message of page.items)if(!baseline?.has(message.messageId))
         add.run(message.messageId,route.bindingId,'requestId' in route?route.requestId:null,
@@ -536,7 +587,7 @@ export class ChannelPlugin {
   }
   private async send(messageId:string) {
     const next=this.db.prepare("SELECT * FROM channel_outbox WHERE messageId=? AND state='queued'");
-    while(!this.shutdown){
+    while(!this.shutdown&&!this.changing){
       const row=next.get(messageId) as Outbox|undefined;
       if(!row)return;
       const binding=this.binding(row.bindingId),message=binding&&this.message(row);
@@ -546,7 +597,7 @@ export class ChannelPlugin {
       const group=origin?this.groupRoute(origin):undefined;
       if(binding&&group&&this.telegramSync.get(binding.id)!=='ready')return;
       if(!binding||!message||!this.groupAllowed(binding.id,group)){this.db.prepare("UPDATE channel_outbox SET state='revoked' WHERE messageId=?").run(messageId);return;}
-      if(!adapter)return;
+      if(!adapter||this.paused.has(binding.adapterId))return;
       const text='text' in message?message.text:message.status==='failed'?'Homer 未能完成本次请求。':'Homer 已中断本次回复。';
       const attachments='attachments' in message?message.attachments??[]:[];
       const offset=text?1:0,count=offset+attachments.length,ref=attachments[row.nextPart-offset];

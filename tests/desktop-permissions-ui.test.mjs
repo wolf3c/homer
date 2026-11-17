@@ -41,6 +41,21 @@ const granted={supported:true,subject:'Homer',accessibility:'granted',screen:'gr
 const button=(d,label)=>d.find(n=>n.tagName==='BUTTON'&&(n.getAttribute('aria-label')===label||n.textContent===label));
 const row=(d,label)=>d.find(n=>n.tagName==='SECTION'&&n.getAttribute('aria-label')===label);
 const pending=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
+async function withAppliedChannel(run){
+ const {mkdtempSync,rmSync}=await import('node:fs'),{tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const {DesktopChannels}=await import('../src/desktop-channels.ts'),{bindWechat}=await import('../src/wechat-channel.ts');
+ const runtime=mkdtempSync(join(tmpdir(),'homer-channel-ui-'));
+ if(process.platform==='win32'){const {secureWindowsDirectory}=await import('../scripts/windows-security.mjs');secureWindowsDirectory(runtime);}
+ const http=async(url,init)=>String(url).includes('get_bot_qrcode')?Response.json({ret:0,qrcode:'fixture',qrcode_img_content:'https://ilinkai.weixin.qq.com/fixture'}):
+  new Promise((_resolve,reject)=>{const signal=init?.signal;if(signal?.aborted)reject(signal.reason);else signal?.addEventListener('abort',()=>reject(signal.reason),{once:true});});
+ const channels=new DesktopChannels(runtime,async(_channel,save)=>save(),http);
+ try{
+  const key=bindWechat(runtime,{botId:'prior-bot',ownerId:'prior-owner',botToken:'synthetic',baseUrl:'https://ilinkai.weixin.qq.com'});
+  channels.manage('remove',{channel:'wechat',key,id:'prior-remove'});
+  for(let i=0;i<100&&channels.snapshot().busy;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(channels.snapshot().result?.applied,true);await run(channels);
+ }finally{await channels.close();rmSync(runtime,{recursive:true,force:true});}
+}
 function bridge(checkValue={...granted,accessibility:'not-granted',screen:'not-determined'}){
  const calls=[];return {calls,check:async(...args)=>{calls.push(['check',...args]);return checkValue;},promptAccessibility:async(...args)=>{calls.push(['prompt',...args]);return {ok:true};},openSystemSettings:async(...args)=>{calls.push(['open',...args]);return {ok:true};}};
 }
@@ -745,3 +760,43 @@ test('ChatGPT transient account uncertainty disables controls and retains drafts
  current=connected;await d.click(button(d,'重新检查 Codex 登录'));
  assert.ok(button(d,'Homer 速度：标准'));assert.equal(button(d,'重试保存').getAttribute('disabled'),null);
 }));
+
+test('chat apps expose live apply progress and saved failure retry without a restart action',async()=>withDom(async d=>{
+ let state={bindings:[],busy:true,stopped:false,readError:false,flow:{id:'apply-1',channel:'wechat',phase:'applying'}};
+ window.homerDesktopChatApps={state:async()=>state,cancel:async()=>{},apply:async()=>{state={bindings:[],busy:false,stopped:false,readError:false,result:{id:'apply-1',channel:'wechat',saved:true,applied:true}};}};
+ await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'连接聊天应用'));
+ assert.match(d.container.textContent,/正在应用连接变更/);
+ assert.ok(!button(d,'应用并重启'));
+ await d.click(button(d,'关闭设置'));
+ state={bindings:[],busy:false,stopped:false,readError:false,flow:{id:'apply-1',channel:'wechat',phase:'error',error:'channel_apply_failed'},result:{id:'apply-1',channel:'wechat',saved:true,applied:false,error:'channel_apply_failed'}};
+ await d.click(button(d,'设置'));await d.click(button(d,'连接聊天应用'));
+ assert.match(d.container.textContent,/已保存，连接尚未应用/);
+ await d.click(button(d,'重试应用'));
+ assert.ok(!button(d,'重试应用'));
+}));
+
+
+test('chat apps recover an accepted WeChat scan after a lost start acknowledgement without restarting authorization',async()=>withDom(async d=>{
+ let state={bindings:[],busy:false,stopped:false,readError:false},starts=0,reads=0;
+ window.homerDesktopChatApps={state:async()=>{reads++;return state;},cancel:async()=>{},start:async input=>{
+  starts++;state={...state,flow:{id:input.id,channel:'wechat',phase:'scan',qr:'data:image/png;base64,c3ludGhldGlj'}};throw Error('synthetic_ack_lost');
+ }};
+ await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'连接聊天应用'));await d.click(button(d,'扫码添加'));
+ assert.ok(d.find(n=>n.tagName==='IMG'&&n.getAttribute('alt')==='微信扫码授权二维码'));
+ const before=reads;await act(async()=>{await new Promise(resolve=>setTimeout(resolve,550));});
+ assert.ok(reads>before);assert.equal(starts,1);
+}));
+
+test('chat apps recover a lost WeChat start ACK after a prior applied result with the real controller',async()=>withAppliedChannel(async channels=>withDom(async d=>{
+ let starts=0,reads=0,submitted;
+ assert.throws(()=>channels.start('wechat',undefined,undefined,undefined,'invalid id'),/channel_input_invalid/);
+ assert.equal(channels.snapshot().result?.id,'prior-remove');
+ window.homerDesktopChatApps={state:async()=>{reads++;return channels.state([]);},cancel:async input=>channels.manage('cancel',input),start:async input=>{
+  starts++;submitted=input.id;channels.manage('start',input);throw Error('synthetic_ack_lost');
+ }};
+ await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'连接聊天应用'));await d.click(button(d,'扫码添加'));
+ const qr=()=>d.find(n=>n.tagName==='IMG'&&n.getAttribute('alt')==='微信扫码授权二维码');
+ for(let i=0;i<15&&!qr();i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,100));});
+ assert.ok(qr());assert.equal(channels.snapshot().flow?.id,submitted);assert.equal(channels.snapshot().result,undefined);
+ const before=reads;await act(async()=>{await new Promise(resolve=>setTimeout(resolve,550));});assert.ok(reads>before);assert.equal(starts,1);
+})));

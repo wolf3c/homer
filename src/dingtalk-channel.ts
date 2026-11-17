@@ -315,7 +315,7 @@ export class DingtalkChannel implements ChannelAdapter{
   }
 }
 
-export function dingtalkChannel(runtime:string){
-  return lstatSync(join(runtime,configName),{throwIfNoEntry:false})||existsSync(join(runtime,'channels.sqlite'))
+export function dingtalkChannel(runtime:string,always=false){
+  return always||lstatSync(join(runtime,configName),{throwIfNoEntry:false})||existsSync(join(runtime,'channels.sqlite'))
     ?new DingtalkChannel(runtime):undefined;
 }

@@ -355,13 +355,13 @@ export function writeTelegramAccounts(runtime:string,accounts:readonly TelegramA
   writeChannelConfig(runtime,'telegram.json',parseTelegramAccounts(accounts),maxConfigBytes);
 }
 
-export function telegramChannel(runtime:string,http?:typeof fetch){
+export function telegramChannel(runtime:string,http?:typeof fetch,always=false){
   const accounts=readTelegramAccounts(runtime);
   let credentials:TelegramApiCredentials|undefined;
   if(accounts.length)try{credentials=readTelegramCredentials(runtime);}
   catch{console.warn('telegram_mtproto_config_unavailable');}
   const mtproto=credentials;
-  return accounts.length||existsSync(join(runtime,'telegram.json'))||existsSync(join(runtime,'channels.sqlite'))
+  return always||accounts.length||existsSync(join(runtime,'telegram.json'))||existsSync(join(runtime,'channels.sqlite'))
     ?new TelegramChannel(accounts,http??(accounts.length?network():fetch),mtproto?async(token,signal)=>{
       const {connectTelegramUpstream}=await import('./telegram-mtproto.js');
       if(!signal.aborted)return connectTelegramUpstream(mtproto,token,signal);

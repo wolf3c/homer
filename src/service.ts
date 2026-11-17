@@ -745,10 +745,10 @@ export class Homer {
         accepted:(input,thread)=>{
           if(this.store.db.prepare('SELECT 1 FROM media_assets WHERE requestId=? AND bindingId=? LIMIT 1').get(input.requestId,'web:'+thread))this.media.retainRefs(input.requestId,input.attachments);
         },
-        readiness:(input,source)=>source==='channel_plugin'&&this.channels?.telegramInputState(input.requestId)==='preparing'
+        readiness:(input,source)=>source==='channel_plugin'&&this.channels?.channelInputState(input.requestId)==='preparing'
           ?'preparing':this.media.state(input.requestId,input.attachments),
         claim:(input,_thread,source)=>{
-          if(source==='channel_plugin'&&this.channels?.telegramInputState(input.requestId)==='denied')throw Error('channel_binding_denied');
+          if(source==='channel_plugin'&&this.channels?.channelInputState(input.requestId)==='denied')throw Error('channel_binding_denied');
           this.media.validate(input.requestId,input.attachments);
         },
         edited:input=>{this.media.retainRefs(input.requestId,input.attachments);},
@@ -1210,6 +1210,7 @@ export class Homer {
         this.receptionTimings?.mark('claimed',{requestId:current.input.requestId,messageId:current.messageId,kind:'user'});
         this.scheduleInputs();
         const reply=await this.processMessage(current);
+        if(reply===undefined)return;
         this.inputWaiters.get(current.input.requestId)?.resolve(reply);this.inputWaiters.delete(current.input.requestId);
       }catch(error){
         if(error instanceof MainInputClaimError){
@@ -1229,7 +1230,7 @@ export class Homer {
       }finally{if(current)this.scheduleInputs();}
     }).catch(error=>{try{this.store.event(null,'input_processing_failed',engineError(error));}catch{/* A failed diagnostic write cannot release a broken owner. */}});
   }
-  private async processMessage(queued:QueuedInput):Promise<string> {
+  private async processMessage(queued:QueuedInput):Promise<string|undefined> {
     const {input,replyId}=queued,{text,requestId,quote,quotes,interactionId}=input;
     const hash=createHash('sha256').update(text).digest('hex');
     const previous=this.store.request(requestId);
@@ -1246,6 +1247,9 @@ export class Homer {
       reply=await this.mainTurn(interactionId?`[用户答复原待答] interactionId=${interactionId}。先核实原请求及用户当前意图；需要答复时通过 respond_interaction 回原 Worker，不以重建任务冒充续接。信息仍不足、用户改意图或请求失效时，按实际情况协调并说明。\n${contextText}`:contextText,context);
     }catch(error){
       const code=engineError(error),interrupted=code==='main_user_interrupted';replyStatus=interrupted?'interrupted':'failed';
+      if(code==='channel_input_preparing'&&context.nativeStartAttempted===undefined){
+        this.inputs.deferClaim(queued);return;
+      }
       if(!interrupted&&code!=='main_recovery_unconfirmed'&&code!=='channel_binding_denied')this.modelFailure={messageId:replyId,code:code==='engine_quota_insufficient'||code==='engine_rate_limited'||code==='engine_authentication_failed'||code==='engine_account_status_unconfirmed'?code:'main_turn_failed',source:this.config.desktopModelSource};
       const partial=this.history.message(replyId)?.text??'';
       const reasons:Record<string,string>={
@@ -1254,7 +1258,7 @@ export class Homer {
         engine_rate_limited:'当前模型来源请求受到限流，请稍后手动重试',
         engine_authentication_failed:'当前模型服务未通过认证，请检查账号连接后重新发送消息',
         engine_account_status_unconfirmed:'未能核实账号状态，请检查连接与额度后重新发送消息',
-        channel_binding_denied:'Telegram 群授权已失效或尚未核实，本次请求未执行',
+        channel_binding_denied:'聊天应用绑定已失效或尚未核实，本次请求未执行',
       };
       const reason=reasons[code]??code;
       if(reason!==code)failureNotice=`主 Agent 未完成：${reason}。未自动重试。`;
@@ -1492,7 +1496,8 @@ export class Homer {
       const channelSource=channelRequest&&this.channels?.readMessageSources([channelRequest],true).get(channelRequest);
       if(channelSource)text=`::message-source{source=${channelSource.source}}\n\n${text}`;
       this.checkMainStop(context);
-      const groupState=channelRequest?this.channels?.telegramInputState(channelRequest):undefined;
+      const groupState=channelRequest?this.channels?.channelInputState(channelRequest):undefined;
+      if(groupState==='preparing')throw Error('channel_input_preparing');
       if(groupState&&groupState!=='ready')throw Error('channel_binding_denied');
       context.terminalConfirmed=false;
       context.processEndEventId=undefined;
@@ -1555,6 +1560,7 @@ export class Homer {
       const shutdown=this.closing&&engineError(e)==='engine_closed';
       context.processStatus=shutdown||engineError(e)==='main_user_interrupted'?'interrupted':engineError(e)==='interaction_delivery_unconfirmed'?'unknown':'failed';
       if(context.workerInput)context.publicText=context.processStatus==='interrupted'?'主 Agent 本次协调已停止，原回传和已记录操作已保留，未自动重跑。':'主 Agent 本次协调未完成，原回传和已记录操作已保留，未自动重跑。';
+      if(context.nativeStartAttempted===undefined&&['channel_input_preparing','channel_binding_denied'].includes(engineError(e)))throw e;
       if (engineError(e) === "main_user_interrupted") throw e;
       if(!shutdown)this.store.event(null, "main_turn_failed", engineError(e));
       // A terminal failure is still a confirmed turn boundary. Preserve its
@@ -1850,7 +1856,7 @@ export class Homer {
   private validateScheduleRequestSource(requestId:string,allowPreparing=false){
     const row=this.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE kind='user_input' AND recipientAgentId=? AND json_extract(payloadJson,'$.requestId')=?").get(this.store.meta('mainAgentId')!,requestId);
     if(row&&JSON.parse(String(row.payloadJson)).source==='channel_plugin'){
-      const state=this.channels?.telegramInputState(requestId);
+      const state=this.channels?.channelInputState(requestId);
       if(!channelSourceAuthorized(this.config.runtime,requestId)||state==='denied'||state==='preparing'&&!allowPreparing)throw Error('channel_binding_denied');
       return state==='preparing';
     }

@@ -485,6 +485,25 @@ export class MainInputs {
       delete claimed.preparation;return claimed;
     });}catch(error){if(selected)throw new MainInputClaimError(selected.id,this.payload(selected).requestId,selected.revision,error);throw error;}
   }
+  // Only the caller that has not attempted a native turn may release its claim.
+  deferClaim(input:QueuedInput){
+    this.store.transaction(()=>{
+      const row=this.row(input.input.requestId),request=this.store.request(input.input.requestId),reply=this.history.message(input.replyId);
+      const details=JSON.parse(row?.detailsJson??'{}');
+      if(row&&row.id===input.messageId&&row.replyId===input.replyId&&row.revision===input.revision&&row.receiptState==='offered'&&row.offeredTurnId===null&&
+        this.payload(row).source==='channel_plugin'&&details.turnId===undefined&&details.interactionId===undefined&&
+        request?.state==='started'&&request.response===null&&request.hash===createHash('sha256').update(input.input.text).digest('hex')&&
+        reply?.status==='running'&&reply.text===''&&(reply.attachments?.length??0)===0){
+        this.db.prepare("UPDATE agent_receipts SET state='pending',revision=revision+1 WHERE messageId=?").run(row.id);
+        // Acceptance and deduplication remain in conversation_inputs and operations.
+        this.db.prepare('DELETE FROM requests WHERE id=?').run(input.input.requestId);
+        this.db.prepare("UPDATE conversation_messages SET status='queued' WHERE requestId=? AND role='user'").run(input.input.requestId);
+        this.db.prepare("UPDATE conversation_messages SET status='queued' WHERE id=?").run(input.replyId);
+        return;
+      }
+      throw Error('queue_defer_denied');
+    });
+  }
   failClaim(error:MainInputClaimError){
     return this.store.transaction(()=>{
       const row=this.row(error.requestId);if(!row||row.id!==error.messageId||row.revision!==error.revision||row.receiptState!=='pending')throw Error('queue_revision_conflict');

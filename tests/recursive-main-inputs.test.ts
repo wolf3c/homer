@@ -250,3 +250,29 @@ test('previously accepted long preview inputs remain readable and retry by origi
   assert.equal(retried.fresh,false);assert.equal(retried.replyId,accepted.replyId);
  }finally{f.close();}
 });
+
+
+test('a pre-native channel claim returns to the same durable input without weakening replay fences',()=>{
+ const f=fixture();try{
+  const input={requestId:'channel-deferred',text:'synthetic channel input'};
+  f.inputs.accept(input,{source:'channel_plugin',persist:()=>{}});const claimed=f.inputs.claim();assert.ok(claimed);
+  const operations=f.store.db.prepare('SELECT * FROM operations').all();
+  f.inputs.deferClaim(claimed);
+  const pending=f.inputs.list()[0];assert.ok(pending);assert.equal(pending.state,'queued');assert.equal(pending.messageId,claimed.messageId);assert.equal(pending.replyId,claimed.replyId);assert.deepEqual(pending.input,input);
+  assert.equal(f.store.request(input.requestId),undefined);assert.deepEqual(f.store.db.prepare('SELECT * FROM operations').all(),operations);
+  assert.equal(f.inputs.accept(input,{source:'channel_plugin',persist:()=>{}}).fresh,false);assert.throws(()=>f.inputs.deferClaim(claimed),/queue_defer_denied/);
+  const next=f.inputs.claim();assert.ok(next);assert.ok(next.revision>claimed.revision);f.inputs.started(next.messageId,next.revision,'generation','turn');
+  assert.throws(()=>f.inputs.deferClaim(next),/queue_defer_denied/);assert.equal(f.inputs.list()[0]?.state,'processing');
+  f.inputs.uncertain(next.messageId,next.revision);assert.throws(()=>f.inputs.deferClaim(next),/queue_defer_denied/);
+ }finally{f.close();}
+});
+
+
+test('channel claim deferral rolls back atomically if removal of its empty request fails',()=>{
+ const f=fixture();try{
+  f.inputs.accept({requestId:'defer-rollback',text:'synthetic'},{source:'channel_plugin',persist:()=>{}});const claimed=f.inputs.claim();assert.ok(claimed);const request=f.store.request('defer-rollback');
+  f.store.db.exec("CREATE TRIGGER reject_defer BEFORE DELETE ON requests BEGIN SELECT RAISE(ABORT,'synthetic_defer_failure'); END");
+  assert.throws(()=>f.inputs.deferClaim(claimed),/synthetic_defer_failure/);
+  assert.equal(f.inputs.list()[0]?.state,'processing');assert.equal(f.inputs.list()[0]?.revision,claimed.revision);assert.deepEqual(f.store.request('defer-rollback'),request);
+ }finally{f.close();}
+});

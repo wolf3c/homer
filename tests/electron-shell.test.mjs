@@ -17,6 +17,9 @@ const installerBytes=Buffer.from('synthetic Windows installer');
 function windowsUpdate(info){return {files:[{url:'https://github.com/wolf3c/homer/releases/download/v'+info.version+'/Homer-windows-x64.exe',sha512:createHash('sha512').update(installerBytes).digest('base64'),size:installerBytes.length}],...info};}
 
 // Link the real entry to OS fixtures. No test switches or probes in the app.
+const channelLifecycleCall=call=>call.length===3&&call[0]==='native-account'&&call[1]==='channel-manage'&&
+ call[2]?.action==='cancel'&&Object.keys(call[2]).sort().join(',')==='action,input'&&
+ call[2].input&&typeof call[2].input==='object'&&!Array.isArray(call[2].input)&&Object.keys(call[2].input).length===0;
 async function fixture(args=['Homer','--test-profile','/synthetic/profile'],openExternal=async()=>{},platform='darwin',native={}){
  let monotonic=0;
  const handlers=new Map(),windows=[],messages=[],sent=[],nativeCalls=[],ownershipCalls=[],launches=[],credentials=[],tokenFiles=[];let spawnCount=0;
@@ -100,7 +103,10 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  const entry=new vm.SourceTextModule(readFileSync(path,'utf8')+'\nexport {createWindow,windowsUpdater}; export const forgetWindowForTest=()=>{window=undefined;};',{context,identifier:path,importModuleDynamically:synthetic,initializeImportMeta:meta=>{meta.url='file://'+path;}});
  await entry.link(async name=>{const exports=modules[name]??createRequire(import.meta.url)(name);const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);},{context});return m;});
  await entry.evaluate();await new Promise(r=>setImmediate(r));
- return {options:native,paths,wakeEvents,powerMonitor,powerLocks,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,ownershipCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
+ // Preserve every call; only trusted ID-less channel lifecycle cancellation has its own category.
+ return {options:native,paths,wakeEvents,powerMonitor,powerLocks,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,allNativeCalls:nativeCalls,
+  get nonLifecycleCalls(){return nativeCalls.filter(call=>!channelLifecycleCall(call));},get channelLifecycleCalls(){return nativeCalls.filter(channelLifecycleCall);},
+  ownershipCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
 }
 if(!vm.SourceTextModule){
  test('Electron shell contracts run with Node VM module support',()=>{
@@ -540,7 +546,7 @@ test('native login uses the private account channel and never exposes its URL or
  const result=await accountCall(f,'nativeConnect');assert.equal(result.native.pending,true);assert.equal(result.native.canReopen,true);
  assert.equal(JSON.stringify(result).includes('synthetic'),false);assert.ok(f.nativeCalls.some(c=>c[0]==='external'&&c[1]==='https://auth.openai.com/synthetic-login'));
  await accountCall(f,'nativeReopen');await accountCall(f,'nativeCancel');assert.equal((await accountCall(f,'state')).native.connected,false);
- assert.deepEqual(f.nativeCalls.filter(c=>c[0]==='native-account').map(c=>c[1]),['connect','cancel','state']);
+ assert.deepEqual(f.nonLifecycleCalls.filter(c=>c[0]==='native-account').map(c=>c[1]),['connect','cancel','state']);
  assert.equal(f.nativeCalls.some(c=>c[0]==='source'||c[0]==='disconnect'),false);
 });
 test('Codex source is saved only after acknowledged owner stop and successful exit',async()=>{
@@ -940,6 +946,18 @@ test('desktop power preload forwards fixed actions without exposing Electron eve
  let count=0;const off=api.onChanged((...args)=>{assert.deepEqual(args,[]);count++;});listeners.get('homer:power:changed')({secret:true});assert.equal(count,1);off();assert.equal(listeners.size,0);
 });
 async function permissionFixture(native){const f=await fixture(undefined,undefined,undefined,native);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;}
+test('startup and replacement navigation cancellation remain in the full audit without OS actions',async()=>{
+ const f=await fixture();assert.deepEqual(f.allNativeCalls,[]);
+ const cancel=['native-account','channel-manage',{action:'cancel',input:{}}];
+ f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();
+ assert.deepEqual(f.allNativeCalls,[cancel]);assert.deepEqual(f.channelLifecycleCalls,[cancel]);assert.deepEqual(f.nonLifecycleCalls,[]);
+ const sender=f.windows[0].webContents,before=f.allNativeCalls.slice();
+ await assert.rejects(f.handlers.get('homer:chat-apps')({sender,senderFrame:sender.mainFrame},'cancel',{}),/desktop_channels_arguments/);
+ await assert.rejects(f.handlers.get('homer:chat-apps')({sender,senderFrame:{...sender.mainFrame}},'cancel',{id:'untrusted'}),/desktop_channels_forbidden/);
+ assert.deepEqual(f.allNativeCalls,before);
+ f.createWindow();await f.windows[1].loadURL('about:blank');await f.tick();
+ assert.deepEqual(f.allNativeCalls,[cancel,cancel]);assert.deepEqual(f.channelLifecycleCalls,[cancel,cancel]);assert.deepEqual(f.nonLifecycleCalls,[]);
+});
 const settingsItem=f=>f.handlers.get('menu')[0].submenu.find(item=>item.label==='设置…');
 const settingsReady=(f,w=f.windows.at(-1),...args)=>f.handlers.get('homer:settings:ready')({sender:w.webContents,senderFrame:w.webContents.mainFrame},...args);
 test('desktop about reads the running app version only from the trusted main page',async()=>{
@@ -1464,7 +1482,7 @@ test('permissions read AX boolean and every raw screen status without prompting'
  for(const ax of [true,false])for(const screen of ['not-determined','denied','granted','restricted','unknown','unexpected']){
   const f=await permissionFixture({ax:()=>ax,screen:()=>screen});
   assert.deepEqual(plain(await f.handlers.get(permissionChannels[0])(permissionEvent(f))),{supported:true,subject:'Homer',accessibility:ax?'granted':'not-granted',screen:screen==='unexpected'?'unknown':screen});
-  assert.deepEqual(f.nativeCalls,[['ax',false],['screen','screen']]);
+  assert.deepEqual(f.nonLifecycleCalls,[['ax',false],['screen','screen']]);
  }
  for(const failing of ['ax','screen']){
   const f=await permissionFixture({ax:()=>{if(failing==='ax')throw Error('private');return true;},screen:()=>{if(failing==='screen')throw Error('private');return 'granted';}});
@@ -1473,38 +1491,44 @@ test('permissions read AX boolean and every raw screen status without prompting'
  const f=await permissionFixture({ax:()=>undefined});assert.equal((await f.handlers.get(permissionChannels[0])(permissionEvent(f))).accessibility,'unknown');
 });
 test('prompt ignores its boolean and accessibility settings uses a fixed URL with a manual fallback',async()=>{
- for(const value of [true,false]){const f=await permissionFixture({ax:()=>value});assert.deepEqual(plain(await f.handlers.get(permissionChannels[1])(permissionEvent(f))),{ok:true});assert.deepEqual(f.nativeCalls,[['ax',true]]);}
+ for(const value of [true,false]){const f=await permissionFixture({ax:()=>value});assert.deepEqual(plain(await f.handlers.get(permissionChannels[1])(permissionEvent(f))),{ok:true});assert.deepEqual(f.nonLifecycleCalls,[['ax',true]]);}
  const bad=await permissionFixture({ax:()=>{throw Error('private');}});assert.deepEqual(plain(await bad.handlers.get(permissionChannels[1])(permissionEvent(bad))),{ok:false,code:'prompt_failed'});
  const url='x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility';
- const direct=await permissionFixture();assert.deepEqual(plain(await direct.handlers.get(permissionChannels[2])(permissionEvent(direct))),{ok:true});assert.deepEqual(direct.nativeCalls,[['external',url]]);
+ const direct=await permissionFixture();assert.deepEqual(plain(await direct.handlers.get(permissionChannels[2])(permissionEvent(direct))),{ok:true});assert.deepEqual(direct.nonLifecycleCalls,[['external',url]]);
  for(const result of ['', 'private error',undefined,new Error('private')]){
   const f=await permissionFixture({external:async()=>{throw Error('private');},open:async()=>{if(result instanceof Error)throw result;return result;}});
   assert.deepEqual(plain(await f.handlers.get(permissionChannels[2])(permissionEvent(f))),result===''?{ok:true,code:'manual_navigation'}:{ok:false,code:'open_failed'});
-  assert.deepEqual(f.nativeCalls,[['external',url],['open','/System/Applications/System Settings.app']]);
+  assert.deepEqual(f.nonLifecycleCalls,[['external',url],['open','/System/Applications/System Settings.app']]);
  }
 });
 test('screen settings uses the fixed capture URL and falls back only when dispatch rejects',async()=>{
  const url='x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture';
  const f=await permissionFixture();
  assert.deepEqual(plain(await f.handlers.get(permissionChannels[2])(permissionEvent(f),'screen')),{ok:true});
- assert.deepEqual(f.nativeCalls,[['external',url]]);
+ assert.deepEqual(f.nonLifecycleCalls,[['external',url]]);
  for(const result of ['', 'private error',undefined,new Error('private')]){
   const fallback=await permissionFixture({external:async()=>{throw Error('private');},open:async()=>{if(result instanceof Error)throw result;return result;}});
   assert.deepEqual(plain(await fallback.handlers.get(permissionChannels[2])(permissionEvent(fallback),'screen')),result===''?{ok:true,code:'manual_navigation'}:{ok:false,code:'open_failed'});
-  assert.deepEqual(fallback.nativeCalls,[['external',url],['open','/System/Applications/System Settings.app']]);
+  assert.deepEqual(fallback.nonLifecycleCalls,[['external',url],['open','/System/Applications/System Settings.app']]);
  }
 });
 test('only the settings channel accepts the single screen token; URLs, paths and extra values never reach the OS',async()=>{
  const f=await permissionFixture();
+ const before=f.allNativeCalls.slice();
  for(const channel of permissionChannels)for(const args of [['screen',true],['accessibility'],['Screen'],['x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture'],['https://example.invalid/'],[{target:'screen'}],['screen',undefined]])await assert.rejects(async()=>f.handlers.get(channel)(permissionEvent(f),...args),/desktop_permissions_forbidden/);
  for(const channel of permissionChannels.slice(0,2))await assert.rejects(async()=>f.handlers.get(channel)(permissionEvent(f),'screen'),/desktop_permissions_forbidden/);
- for(const [,invalidate] of invalidPermissionInputs){const bad=await permissionFixture(),event=permissionEvent(bad);invalidate(bad,event);await assert.rejects(async()=>bad.handlers.get(permissionChannels[2])(event,'screen'),/desktop_permissions_forbidden/);assert.equal(bad.nativeCalls.length,0);}
+ for(const [,invalidate] of invalidPermissionInputs){
+  const bad=await permissionFixture(),event=permissionEvent(bad);invalidate(bad,event);const before=bad.allNativeCalls.slice();
+  await assert.rejects(async()=>bad.handlers.get(permissionChannels[2])(event,'screen'),/desktop_permissions_forbidden/);
+  assert.deepEqual(bad.allNativeCalls,before);assert.equal(bad.nonLifecycleCalls.length,0);
+ }
  for(const platform of ['linux','win32']){f.setPlatform(platform);assert.deepEqual(plain(await f.handlers.get(permissionChannels[2])(permissionEvent(f),'screen')),{supported:false});}
- assert.equal(f.nativeCalls.length,0);
+ assert.deepEqual(f.allNativeCalls,before);
+ assert.equal(f.nonLifecycleCalls.length,0);
 });
 for(const state of ['detached','destroyed','window replaced','frame replaced','navigation away and back'])test('pending screen link response rejects after '+state,async()=>{
  let finish;const f=await permissionFixture({external:()=>new Promise(r=>{finish=r;})}),event=permissionEvent(f);
- const pending=f.handlers.get(permissionChannels[2])(event,'screen');assert.equal(f.nativeCalls.length,1);
+ const pending=f.handlers.get(permissionChannels[2])(event,'screen');assert.equal(f.nonLifecycleCalls.length,1);
  if(state==='detached')event.senderFrame.detached=true;
  if(state==='destroyed')f.windows[0].destroyed=true;
  if(state==='window replaced')f.createWindow();
@@ -1526,19 +1550,28 @@ const invalidPermissionInputs=[
  ]),
 ];
 for(const [name,invalidate] of invalidPermissionInputs)test('permissions reject '+name+' with zero native calls',async()=>{
- for(const channel of permissionChannels){const f=await permissionFixture(),event=permissionEvent(f);invalidate(f,event);await assert.rejects(async()=>f.handlers.get(channel)(event),/desktop_permissions_forbidden/);assert.equal(f.nativeCalls.length,0);}
+ for(const channel of permissionChannels){
+  const f=await permissionFixture(),event=permissionEvent(f);invalidate(f,event);const before=f.allNativeCalls.slice();
+  await assert.rejects(async()=>f.handlers.get(channel)(event),/desktop_permissions_forbidden/);
+  assert.deepEqual(f.allNativeCalls,before);assert.equal(f.nonLifecycleCalls.length,0);
+ }
 });
 test('permissions reject all extra arguments before native calls',async()=>{
- const f=await permissionFixture();for(const channel of permissionChannels)for(const args of [[undefined],[null],['/tmp'],[{},false]])await assert.rejects(async()=>f.handlers.get(channel)(permissionEvent(f),...args),/desktop_permissions_forbidden/);assert.equal(f.nativeCalls.length,0);
+ const f=await permissionFixture(),before=f.allNativeCalls.slice();
+ for(const channel of permissionChannels)for(const args of [[undefined],[null],['/tmp'],[{},false]])await assert.rejects(async()=>f.handlers.get(channel)(permissionEvent(f),...args),/desktop_permissions_forbidden/);
+ assert.deepEqual(f.allNativeCalls,before);assert.equal(f.nonLifecycleCalls.length,0);
 });
 test('permissions allow root hashes, deny old windows and decline non-Mac without native calls',async()=>{
  const f=await permissionFixture();await f.windows[0].loadURL('http://127.0.0.1:56789/#message');await f.handlers.get(permissionChannels[0])(permissionEvent(f));
- const old=permissionEvent(f);f.createWindow();await f.windows[1].loadURL('http://127.0.0.1:56789/');for(const c of permissionChannels)await assert.rejects(async()=>f.handlers.get(c)(old),/desktop_permissions_forbidden/);
- const other=await permissionFixture();for(const p of ['linux','win32']){other.setPlatform(p);for(const c of permissionChannels)assert.deepEqual(plain(await other.handlers.get(c)(permissionEvent(other))),{supported:false});}assert.equal(other.nativeCalls.length,0);
+ const old=permissionEvent(f);f.createWindow();await f.windows[1].loadURL('http://127.0.0.1:56789/');const before=f.allNativeCalls.slice();
+ for(const c of permissionChannels)await assert.rejects(async()=>f.handlers.get(c)(old),/desktop_permissions_forbidden/);
+ assert.deepEqual(f.allNativeCalls,before);
+ const other=await permissionFixture(),initial=other.allNativeCalls.slice();for(const p of ['linux','win32']){other.setPlatform(p);for(const c of permissionChannels)assert.deepEqual(plain(await other.handlers.get(c)(permissionEvent(other))),{supported:false});}
+ assert.deepEqual(other.allNativeCalls,initial);assert.equal(other.nonLifecycleCalls.length,0);
 });
 for(const state of ['detached','destroyed','window replaced','frame replaced','navigation away and back'])test('pending native response rejects after '+state,async()=>{
  let finish;const f=await permissionFixture({external:()=>new Promise(r=>{finish=r;})}),event=permissionEvent(f);
- const pending=f.handlers.get(permissionChannels[2])(event);assert.equal(f.nativeCalls.length,1);
+ const pending=f.handlers.get(permissionChannels[2])(event);assert.equal(f.nonLifecycleCalls.length,1);
  if(state==='detached')event.senderFrame.detached=true;
  if(state==='destroyed')f.windows[0].destroyed=true;
  if(state==='window replaced')f.createWindow();
@@ -1562,7 +1595,7 @@ test('preload exposes fixed Promise methods and only the screen settings token i
    const n=calls.length;await assert.rejects(()=>tour[name]('other'),/desktop_permissions_arguments/);assert.equal(calls.length,n);
   }
   const chatApps=exposed.find(([name])=>name==='homerDesktopChatApps')[1];
-  assert.deepEqual(Object.keys(chatApps),['state','start','code','confirm','cancel','remove','undo','discard','apply']);
+  assert.deepEqual(Object.keys(chatApps),['state','start','code','confirm','cancel','remove','apply']);
   await chatApps.state(true);assert.deepEqual(calls.at(-1),['homer:chat-apps','state',true]);
   const [name,api]=exposed.find(([name])=>name==='homerDesktopPermissions');assert.equal(name,'homerDesktopPermissions');assert.deepEqual(Object.keys(api),['check','promptAccessibility','openSystemSettings']);
   await api.openSystemSettings('screen');assert.deepEqual(calls.at(-1),[permissionChannels[2],'screen']);
@@ -1570,47 +1603,55 @@ test('preload exposes fixed Promise methods and only the screen settings token i
   for(const [i,method] of Object.keys(api).entries()){assert.equal(typeof api[method],'function');assert.equal((await api[method]()).synthetic,true);assert.deepEqual(calls.at(-1),[permissionChannels[i]]);const n=calls.length;await assert.rejects(async()=>api[method]('/tmp'),/desktop_permissions_arguments/);assert.equal(calls.length,n);}
  }
 });
-test('only the trusted desktop frame can start a DingTalk pairing',async()=>{
- const f=await permissionFixture({});
- const handle=f.handlers.get('homer:chat-apps');
- const sender=f.windows[0].webContents;
- const credentials={appKey:'dingFixtureApp',appSecret:'synthetic-secret'};
- const input={channel:'dingtalk',credentials};
- await assert.rejects(handle({sender,senderFrame:{...sender.mainFrame}},'start',input),/desktop_channels_forbidden/);
- assert.equal(f.nativeCalls.some(call=>call[0]==='channel-start'),false);
- assert.equal(await handle({sender,senderFrame:sender.mainFrame},'start',input),'fixture-flow');
- assert.deepEqual(f.nativeCalls.find(call=>call[0]==='channel-start'),['channel-start','dingtalk',undefined,undefined,credentials]);
+
+for(const action of ['start','confirm','remove','apply'])test('trusted chat app '+action+' forwards once without stopping the owner',async()=>{
+ const calls=[];
+ const f=await permissionFixture({nativeAction:async(method,input)=>{calls.push([method,input]);return 'fixture-flow';}});
+ assert.deepEqual(calls,[['channel-manage',{action:'cancel',input:{}}]]);calls.length=0;
+ const handle=f.handlers.get('homer:chat-apps'),sender=f.windows[0].webContents;
+ const value=action==='start'?{channel:'dingtalk',credentials:{appKey:'fixture',appSecret:'synthetic'}}:
+   action==='remove'?{channel:'wechat',key:'fixture'}:action==='confirm'?{id:'fixture-flow'}:undefined;
+ await assert.rejects(handle({sender,senderFrame:{...sender.mainFrame}},action,value),/desktop_channels_forbidden/);
+ assert.equal(calls.length,0);
+ assert.equal(await handle({sender,senderFrame:sender.mainFrame},action,value),'fixture-flow');
+ assert.equal(calls.length,1);assert.equal(calls[0][0],'channel-manage');
+ assert.equal(calls[0][1].action,action);
+ assert.equal(JSON.stringify(calls[0][1].input),JSON.stringify(value));
+ assert.equal(f.sent.length,0);assert.equal(f.nativeCalls.some(call=>call[0]==='relaunch'),false);
+});
+test('chat app state read after an unconfirmed action never replays the action',async()=>{
+ const calls=[],state={bindings:[],busy:true,stopped:false,readError:false,flow:{id:'original',channel:'wechat',phase:'applying'}};
+ const f=await permissionFixture({nativeAction:async(method,input)=>{calls.push([method,input.action]);if(input.action==='state')return state;throw Error('unconfirmed');}});
+ assert.deepEqual(calls,[['channel-manage','cancel']]);calls.length=0;
+ const handle=f.handlers.get('homer:chat-apps'),sender=f.windows[0].webContents,event={sender,senderFrame:sender.mainFrame};
+ await assert.rejects(handle(event,'remove',{channel:'wechat',key:'fixture'}));
+ const result=await handle(event,'state',true);
+ assert.equal(result.flow.id,'original');assert.deepEqual(calls,[['channel-manage','remove'],['channel-manage','state']]);
+ assert.equal(f.sent.length,0);
 });
 
-for(const mode of ['cancelled','no ack','exit failure','late confirmed','confirmed'])test('chat apps apply requires desktop trust and confirmed stop: '+mode,async()=>{
- const pending=[{channel:'telegram',key:'101',kind:'add'}];
- const f=await permissionFixture({channelPending:pending,response:mode==='cancelled'?0:1});
- const handle=f.handlers.get('homer:chat-apps');
- const sender=f.windows[0].webContents;
- await assert.rejects(handle({sender,senderFrame:{...sender.mainFrame}},'apply'),/desktop_channels_forbidden/);
- await handle({sender,senderFrame:sender.mainFrame},'apply');
- await f.tick();
- assert.equal(f.sent.length,mode==='cancelled'?0:1);
- assert.equal(f.nativeCalls.some(call=>call[0]==='channel-apply'),false);
- if(mode==='cancelled')return;
- let quitCount=0;f.app.on('quit',()=>quitCount++);
- if(mode==='late confirmed')f.timeout();
- if(mode!=='no ack'){
-  f.event({kind:'stopped'});await f.tick();
-  assert.equal(f.nativeCalls.some(call=>call[0]==='channel-apply'),false);
- }
- f.child.emit('close',mode==='exit failure'?1:0,null);await f.tick();
- assert.equal(f.nativeCalls.some(call=>call[0]==='channel-apply'),mode==='confirmed');
- assert.equal(f.nativeCalls.some(call=>call[0]==='relaunch'),mode==='confirmed');
- assert.equal(quitCount,mode==='confirmed'?1:0);
- if(mode==='late confirmed'){
-  const state=await handle({sender,senderFrame:sender.mainFrame},'state',false);
-  assert.equal(state.stopped,true);
-  assert.equal(state.pending.length,1);
-  await handle({sender,senderFrame:sender.mainFrame},'apply');
-  await f.tick();
-  assert.equal(f.nativeCalls.some(call=>call[0]==='channel-apply'),true);
- }
+for(const snapshot of ['none','empty','old'])for(const delayed of [false,true])test('navigation cancels pending channel authorization with '+snapshot+' snapshot and delayed ACK '+delayed,async()=>{
+ const calls=[];let release;const gate=new Promise(resolve=>{release=resolve;});
+ const state={bindings:[],busy:false,stopped:false,readError:false,...(snapshot==='old'?{flow:{id:'old-flow',channel:'wechat',phase:'scan'}}:{})};
+ const f=await permissionFixture({nativeAction:async(_method,input)=>{
+  calls.push(input);if(input.action==='state')return state;
+  if(input.action==='start'){if(delayed)await gate;return 'new-flow';}
+ }});
+ const handle=f.handlers.get('homer:chat-apps'),sender=f.windows[0].webContents,event={sender,senderFrame:sender.mainFrame};
+ try{
+  if(snapshot!=='none')await handle(event,'state',false);
+  await assert.rejects(handle(event,'cancel',{}),/desktop_channels_arguments/);
+  const started=handle(event,'start',{id:'new-flow',channel:'wechat'}).then(value=>({value}),error=>({error:error.message}));
+  if(!delayed)assert.equal((await started).value,'new-flow');
+  const before=calls.filter(input=>input.action==='cancel').length;
+  sender.emit('did-start-navigation',{isMainFrame:true,isSameDocument:true});await f.tick();
+  assert.equal(calls.filter(input=>input.action==='cancel').length,before);
+  sender.emit('did-start-navigation',{isMainFrame:true,isSameDocument:false});await f.tick();
+  const cancelled=calls.filter(input=>input.action==='cancel');assert.equal(cancelled.length,before+1);
+  assert.equal(cancelled.at(-1).input.id,undefined);
+  assert.equal(calls.filter(input=>input.action==='start').length,1);
+  release();if(delayed)assert.match((await started).error,/desktop_channels_forbidden/);
+ }finally{release();f.child.emit('close',1,null);await f.tick();}
 });
 
 test('desktop build copies the actual preload alongside main without packaging or installing',()=>{

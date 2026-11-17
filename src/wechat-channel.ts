@@ -208,7 +208,7 @@ export class WechatChannel implements ChannelAdapter{
   }
 }
 
-export function wechatChannel(runtime:string){
-  return lstatSync(configFile(runtime),{throwIfNoEntry:false})||existsSync(join(runtime,'channels.sqlite'))
+export function wechatChannel(runtime:string,always=false){
+  return always||lstatSync(configFile(runtime),{throwIfNoEntry:false})||existsSync(join(runtime,'channels.sqlite'))
     ?new WechatChannel(runtime):undefined;
 }

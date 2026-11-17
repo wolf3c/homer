@@ -198,7 +198,7 @@ for(const revoked of [false,true])test('a scheduled Telegram group message waits
     groups.membership(binding,-100001,true,date-10,1);groups.caughtUp(binding);
     groups.submit(binding,-100001,date,2,10,null,'Schedule this group reminder');await f.app.idle();
     requestId=String(f.app.store.db.prepare("SELECT json_extract(payloadJson,'$.requestId') id FROM agent_messages WHERE kind='user_input'").get()!.id);
-    groups.polled(binding,true);assert.equal(plugin.telegramInputState(requestId),'preparing');
+    groups.polled(binding,true);assert.equal(plugin.channelInputState(requestId),'preparing');
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
     const receipt=()=>f.app.store.db.prepare("SELECT r.state FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='scheduled_message'").get()!.state;
     assert.equal(receipt(),'pending');assert.equal(consumed,0);
