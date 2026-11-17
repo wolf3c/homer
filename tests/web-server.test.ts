@@ -176,3 +176,17 @@ test('chat CSP admits authorized remote images while other fetch directives stay
   assert.match(policy,/script-src 'self';/);assert.match(policy,/connect-src 'self';/);
  }finally{await web.close();}
 });
+
+test('HTTP message budget counts complete UTF8 bodies and raw whitespace before any business call',async()=>{
+ let calls=0;const web=await createWebServer({bridge:{submit:async()=>{calls++;},stop:async()=>{},respond:async()=>{}},port:0});
+ try{
+  const base={requestId:'boundary',text:'explain',quotes:[{messageId:'source',text:'',annotation:''}]};
+  const input={...base,quotes:[{...base.quotes[0]!,text:'a'.repeat(96*1024-Buffer.byteLength(JSON.stringify(base)))}]};
+  const body=JSON.stringify(input);assert.equal(Buffer.byteLength(body),96*1024);
+  const post=(body:string)=>fetch(web.url+'/api/messages',{method:'POST',headers:{Origin:web.url,'Content-Type':'application/json'},body});
+  assert.equal((await post(body)).status,202);assert.equal(calls,1);
+  for(const value of [body+' ',JSON.stringify({...base,quotes:[{...base.quotes[0]!,text:'中'.repeat(40000)}]})]){
+   const response=await post(value);assert.equal((await response.json()).error,'request_too_large');assert.equal(calls,1);
+  }
+ }finally{await web.close();}
+});

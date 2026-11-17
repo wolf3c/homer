@@ -368,3 +368,11 @@ test('actual gateway and business IPC forward dispatch cursor, mutation scope an
   assert.deepEqual(sharedReceipt.operations[0].result,sharedResult,'sources and message identity survive actual gateway/IPC forwarding');
  }finally{app.close();}
 });
+
+test('definitive size rejection releases the queue operation while unknown transport failure keeps it',async t=>{
+ for(const error of ['request_too_large','web_request_failed']){
+  const f=ownerUnit(t,async()=>new Response(JSON.stringify({error}),{status:400,headers:{'Content-Type':'application/json'}}));
+  await f.render().run('edit',{requestId:'input',operationId:'edit',expectedRevision:0,input:{requestId:'input',text:'body'}});
+  assert.equal(f.render().locked,error!=='request_too_large');
+ }
+});

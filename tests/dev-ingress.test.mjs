@@ -80,3 +80,13 @@ test('pending input fences connection, thread, unknown transport schema and unre
  const db=new DatabaseSync(join(dir,'gateway/transport.sqlite'));db.exec('PRAGMA user_version=99');db.close();
  assert.throws(()=>new IngressJournal(dir,'binding-one'),/gateway_schema_unsupported/);
 });
+
+test('journal counts complete quote JSON up to96KiB and refuses overflow without a row',()=>{
+ const journal=new IngressJournal(runtime(),'synthetic-budget');try{
+  const base={requestId:'boundary',text:'explain',quote:{messageId:'source',text:''}};
+  const input={...base,quote:{...base.quote,text:'a'.repeat(96*1024-Buffer.byteLength(JSON.stringify(base)))}};
+  journal.store(input);const before=journal.db.prepare('SELECT * FROM transport_requests').all();
+  assert.throws(()=>journal.store({...input,requestId:'overflow',quote:{...input.quote,text:input.quote.text+'x'}}),/request_too_large/);
+  assert.deepEqual(journal.db.prepare('SELECT * FROM transport_requests').all(),before);
+ }finally{journal.close();}
+});

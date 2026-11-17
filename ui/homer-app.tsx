@@ -366,14 +366,14 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     const {input,draft}=item;
     const screenshotInput=referencesOf(input).some(isDraftImageReference);
     if(restoring||!draft||reconciled.current.has(item)||!pendingRef.current.includes(item)
-      ||error!=='quote_source_mismatch'&&(!screenshotInput||!['preview_source_mismatch','preview_image_missing','invalid_resource_reference','invalid_attachments','media_scope_denied','media_asset_not_found','media_not_ready','media_derivative_missing'].includes(error)))return;
+      ||error!=='request_too_large'&&error!=='quote_source_mismatch'&&(!screenshotInput||!['preview_source_mismatch','preview_image_missing','invalid_resource_reference','invalid_attachments','media_scope_denied','media_asset_not_found','media_not_ready','media_derivative_missing'].includes(error)))return;
     reconciled.current.add(item);
     if(clearing.current?.requestId===input.requestId)await clearing.current.wait;
     if(!composerMounted.current||!pendingRef.current.includes(item))return;
     const composer=aui.composer().getState(),resources=annotationDraft.read();
     const restore=!answerRef.current&&!quoteEditorRef.current&&!screenshotRef.current&&!Object.keys(resources.preparingImages??{}).length&&
       restoreRejectedSourceDraft({text:composer.text,quotes:quotesRef.current,requestId:draftRequest.current,attachments:composer.attachments,uploading:uploadingRef.current,...resources},input,draft.clearedRequestId);
-    if(!restore){setDraftNotice('原请求未获接收，已保留原请求内容及当前草稿。');return;}
+    if(!restore){setDraftNotice(error==='request_too_large'?'原请求超出96KiB，原请求内容及当前草稿已保留。':'原请求未获接收，已保留原请求内容及当前草稿。');return;}
     setRestoring(true);try{
       draftRequest.current=restore.requestId;contextOrder.current=new ContextOrder(draft.contextOrder);
       annotationDraft.restore({...draft.resources,...restore});aui.composer().setText(restore.text);replaceQuotes(draft.quotes);
@@ -383,7 +383,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
         if(!composerMounted.current||uploadingRef.current||draftRequest.current!==input.requestId||current.text!==input.text||annotationDraft.read()!==restoredResources||current.attachments.length!==index||JSON.stringify(protocolQuotes(quotesRef.current))!==JSON.stringify(protocolQuotes(restore.quotes)))break;
         await aui.composer().addAttachment(attachmentOwner.restore(asset));
       }
-      setDraftNotice('引用来源未通过校验，原草稿和请求标识已保留，请重新核对引用。');
+      setDraftNotice(error==='request_too_large'?'整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。':'引用来源未通过校验，原草稿和请求标识已保留，请重新核对引用。');
     }finally{if(composerMounted.current)setRestoring(false);}
   }
   function checkReceipts(){
@@ -491,13 +491,10 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     if(files.some(f=>!f.size||f.size>8*1024*1024||f.name.length>120||/[\x00-\x1f/\\]/.test(f.name)))return '文件须为1字节至8MiB，名称不超过120字符。';
   }
   function checkQuotes(value:readonly AnnotatedQuote[]){
-    if(value.length>20||value.some(q=>!q.text.trim()||q.text.length>16000||q.annotation.length>16000)||value.reduce((n,q)=>n+q.text.length+q.annotation.length,0)>48000)throw Error('引用最多20条；单条摘录与评论各16000字符，合计48000字符。');
-    const composer=aui.composer().getState(),assets=composer.attachments.flatMap(v=>{const asset=attachmentAsset(v as HomerAttachment);return asset?[asset]:[];});
+    if(value.length>20||value.some(q=>!q.text.trim()||q.annotation.length>16000)||value.reduce((n,q)=>n+q.annotation.length,0)>48000)throw Error('引用最多20条；单条评论16000字符，评论合计48000字符。');
+    const composer=aui.composer().getState();
     const resources=annotationValidationReferences(annotationDraft.read());
-    const originals=resources.flatMap(r=>r.kind==='image'&&!assets.some(a=>a.assetId===r.image.assetId&&a.revision===r.image.revision)?[r.image]:[]);
     if(previewIntentTooLong({text:composer.text,quotes:protocolQuotes(value),resourceReferences:resources}))throw Error('整体要求与批注合计过长，请缩短后保存。');
-    const input=prepareMessage(composer.text,protocolQuotes(value),undefined,()=>draftRequest.current,[...assets,...originals],undefined,resources);
-    if(new TextEncoder().encode(JSON.stringify(input)).length>96*1024)throw Error('整条消息超过96KiB，请缩短摘录或批注后保存。');
   }
   function checkCandidate(refs:ResourceReference[],additional:AttachmentRef[]=[]){
     try{if(refs.length)parseResourceReferences(refs);}catch{throw Error('整条消息最多20条批注，摘录、窗口文字和备注合计最多48000字符。');}
@@ -509,7 +506,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     for(const image of [...additional,...refs.flatMap(r=>r.kind==='image'?[r.image]:[])])
       if(![...assets,...originals].some(a=>a.assetId===image.assetId&&a.revision===image.revision))originals.push(image);
     const input=prepareMessage(text,protocolQuotes(quotesRef.current),undefined,()=>draftRequest.current,[...assets,...originals],undefined,refs);
-    if(new TextEncoder().encode(JSON.stringify(input)).length>96*1024)throw Error('整条消息超过96KiB，请缩短摘录或批注后保存。');
+    if(new TextEncoder().encode(JSON.stringify(input)).length>96*1024)throw Error('整条消息超过96KiB，请缩短引用或减少内容后保存；原输入已保留。');
   }
   function openScreenshot(reference:DraftImageReference,focusAnnotation?:string){
     if(blocked||uploadingRef.current||answerRef.current||screenshotRef.current||quoteEditorRef.current)return;
@@ -657,7 +654,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     }
     if(quotes.length&&referencesOf(resourceState).length&&state.features?.previewReferenceCollections!==2){setDraftNotice('当前连接不支持批注与消息引用共存，请刷新后重试。');return;}
     const input=prepareMessage(text,protocolQuotes(quotes),undefined,()=>draftRequest.current,attachments,resourceReference,resourceReferences);
-    if(new TextEncoder().encode(JSON.stringify(input)).length>96*1024){setDraftNotice('整条消息超过96KiB，请缩短摘录或批注后发送。');return;}
+    if(new TextEncoder().encode(JSON.stringify(input)).length>96*1024){setDraftNotice('整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。');return;}
     try{checkQuotes(quotes);}catch(error){setDraftNotice((error as Error).message);return;}
     submitting.current=true;
     const clearedRequestId=crypto.randomUUID();
@@ -1221,7 +1218,7 @@ function HomerApp() {
     setError('');
     const send=async()=>{
       try{await post(input.interactionId?'/api/interactions/'+input.interactionId:target?'/api/messages/interrupt':'/api/messages',target?{input,target}:input);if(input.interactionId&&verifiedThread.current===ownerThread)setState(old=>old.threadId===ownerThread?({...old,acceptedRequestIds:[...new Set([...(old.acceptedRequestIds??[]),input.requestId])]}):old);}
-      catch(error){if(verifiedThread.current===ownerThread)setError('发送未确认，消息和引用已逐条保留；可核对并重试：'+(error instanceof Error?error.message:'web_request_failed'));throw error;}
+      catch(error){if(verifiedThread.current===ownerThread)setError(error instanceof Error&&error.message==='request_too_large'?'整条消息超过96KiB，未获接收；原请求内容已保留，请减少内容后发送。':'发送未确认，消息和引用已逐条保留；可核对并重试：'+(error instanceof Error?error.message:'web_request_failed'));throw error;}
     };const task=input.interactionId?send():sendChain.current.catch(()=>{}).then(send);if(!input.interactionId)sendChain.current=task;return task;
   },[connected]);
   const onNew = useCallback(async (message: AppendMessage) => {

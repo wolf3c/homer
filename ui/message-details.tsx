@@ -45,11 +45,11 @@ function RuntimeMessageActions({message,write,busy,notice,onNotice}:{message:imp
   const {copy,isCopied}=useActionBarCopy({copyToClipboard:()=>write(sourceMessageText(message))});
   function quote(){
     if(disabled)return;
-    const parts=messageSourceParts(message),selected=parts?sourceQuote(parts):{text:previewQuoteText(message.text).slice(0,16000)},text=selected.text.trim();
+    const parts=messageSourceParts(message),selected=parts?sourceQuote(parts):{text:previewQuoteText(message.text)},text=selected.text.trim();
     if(!text){onNotice('本条消息没有可引用的正文。');return;}
     if(!canQuote())return;
     appendQuote({messageId:message.id,text,...('itemIds' in selected&&selected.itemIds.length?{itemIds:selected.itemIds}:{})});
-    onNotice(text.length>=16000||!!parts&&'itemIds' in selected&&parts.length>selected.itemIds.length?'正文较长，已引用可核验的前段。':'');
+    onNotice(!!parts&&'itemIds' in selected&&parts.length>selected.itemIds.length?'正文较长，已引用可核验的前段。':'');
     window.getSelection()?.removeAllRanges();focusInput();
   }
   const feedback=notice||(!busy&&isCopied?'已复制':'');

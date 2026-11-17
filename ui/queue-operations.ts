@@ -17,7 +17,7 @@ export function saveQueueStorage(key:string,value:unknown){try{if(value===undefi
 class QueueRequestError extends Error{constructor(message:string,readonly definitive:boolean){super(message);}}
 export async function queuePost<T>(path:string,input:unknown,signal?:AbortSignal):Promise<T>{
  const response=await connectionFetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal});
- const value=await response.json();if(!response.ok)throw new QueueRequestError(value.error??'queue_request_failed',/^queue_(sources_required|revision_conflict|order_conflict|input_processing|input_locked|input_not_found|input_not_movable|anchor_invalid|thread_conflict|operation_conflict)$|^history_epoch_changed$|^media_scope_denied$|^invalid_(message|quote|attachments)$/.test(value.error));return value;
+ const value=await response.json();if(!response.ok)throw new QueueRequestError(value.error??'queue_request_failed',/^queue_(sources_required|revision_conflict|order_conflict|input_processing|input_locked|input_not_found|input_not_movable|anchor_invalid|thread_conflict|operation_conflict)$|^history_epoch_changed$|^media_scope_denied$|^invalid_(message|quote|attachments)$|^request_too_large$/.test(value.error));return value;
 }
 export function useQueueOperations(state:WebState,connected:boolean){
  const key='homer-queue-operation:'+state.threadId;

@@ -62,12 +62,12 @@ export function conversationInput(value: unknown): ConversationInput {
   const input = value as ConversationInput;
   const validQuote = (quote: unknown): quote is MessageQuote => !!quote && typeof quote === "object" &&
     typeof (quote as MessageQuote).messageId === "string" && /^[\w:-]{1,100}$/.test((quote as MessageQuote).messageId) &&
-    typeof (quote as MessageQuote).text === "string" && !!(quote as MessageQuote).text.trim() && (quote as MessageQuote).text.length <= 16000 &&
+    typeof (quote as MessageQuote).text === "string" && !!(quote as MessageQuote).text.trim() &&
     ((quote as MessageQuote).itemIds===undefined||(Array.isArray((quote as MessageQuote).itemIds)&&!!(quote as MessageQuote).itemIds!.length&&(quote as MessageQuote).itemIds!.length<=200&&new Set((quote as MessageQuote).itemIds).size===(quote as MessageQuote).itemIds!.length&&(quote as MessageQuote).itemIds!.every(id=>typeof id==='string'&&id.length>0&&id.length<=512)));
   if (input.quote !== undefined && (input.quotes !== undefined || !validQuote(input.quote))) throw new Error("invalid_quote");
   if (input.quotes !== undefined && (!Array.isArray(input.quotes) || input.quotes.length > 20 ||
     input.quotes.some(quote => !validQuote(quote) || typeof quote.annotation !== "string" || quote.annotation.length > 16000) ||
-    input.quotes.reduce((size, quote) => size + quote.text.length + quote.annotation.length, 0) > 48000)) throw new Error("invalid_quote");
+    input.quotes.reduce((size, quote) => size + quote.annotation.length, 0) > 48000)) throw new Error("invalid_quote");
   if(input.resourceReference!==undefined&&input.resourceReferences!==undefined)throw Error('invalid_resource_reference');
   if((input.resourceReference!==undefined||input.resourceReferences!==undefined)&&input.interactionId!==undefined)throw Error('invalid_resource_reference');
   const resourceReference=input.resourceReference===undefined?undefined:parseResourceReference(input.resourceReference);

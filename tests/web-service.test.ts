@@ -343,3 +343,17 @@ test("a failed main generation terminates only when failure or process shutdown 
     } finally { f.engines[0]!.closeConfirmed = true; await f.app.close(); }
   }
 });
+
+test('long quotes remain complete from persisted input to synthetic engine turn for both quote contracts',async()=>{
+ const f=fixture();try{
+  await f.app.start();const text='a'.repeat(60000)+'LONG_QUOTE_END',source=f.app.history.add('synthetic-main',text);
+  for(const legacy of [false,true]){
+   const quote={messageId:source,text},input={requestId:legacy?'long-legacy':'long-many',text:'explain',...(legacy?{quote}:{quotes:[{...quote,annotation:'comment'}]})};
+   assert.ok(Buffer.byteLength(JSON.stringify(input))<96*1024);
+   f.app.submitMessage(input);await f.app.idle();
+   assert.ok(f.inputs.some(value=>value.includes(legacy?JSON.stringify(text):JSON.stringify(input.quotes))));
+   const saved=f.app.history.list('synthetic-main').find(value=>value.requestId===input.requestId&&value.role==='user');
+   assert.equal(legacy?saved?.quote?.text:saved?.quotes?.[0]?.text,text);
+  }
+ }finally{await f.app.close();rmSync(f.base,{recursive:true,force:true});}
+});

@@ -21,6 +21,12 @@ test('source capture records ordered item IDs before clearing selection, rejects
  assert.deepEqual(captureSourceQuote(selection({ids:[],model:false})),{messageId:'node',text:'A B'});
 });
 
+
+test('source selection preserves text beyond the retired16000 character cutoff',()=>{
+ const text='合成选区'.repeat(12000)+'完整尾部';
+ assert.equal(captureSourceQuote(selection({text})).text,text);
+});
+
 // Tiny logical-flow nodes exercise exact identity/hash/offset rules. They make no
 // claim about native selection layout or scrolling.
 test('logical positions distinguish repeated occurrences and refuse missing sources, context/hash drift and unloaded items',async()=>{

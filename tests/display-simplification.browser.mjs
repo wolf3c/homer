@@ -26,7 +26,21 @@ try{
  const quote=page.locator('[data-slot="quote-block-text"]').first();assert.equal(await quote.textContent(),long);assert.equal(await quote.evaluate(e=>getComputedStyle(e).webkitLineClamp),'none');
  fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('display','assistant',text)]});await page.reload();await page.waitForSelector('.mermaid-output svg');await page.locator('.mermaid-output').scrollIntoViewIfNeeded();await page.screenshot({path:join(dest,'display-'+width+'.png')});
  checks.push({width,remoteImage:true,pageRelativeImage:true,mailto:true,table:true,math:true,mermaidLink:true,failedSource:true,fullQuote:long.length});
- await context.close();
+ const quoted='合成引用'.repeat(5000)+'完整尾部';fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('long-source','assistant',quoted)]});await page.reload();
+ await page.getByRole('button',{name:'引用',exact:true}).click();await page.locator('[contenteditable=true]').fill('核对完整原文');
+ const sent=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/messages'&&response.request().method()==='POST');await page.getByRole('button',{name:'发送消息',exact:true}).click();await sent;
+ assert.equal(fixture.received.messages.length,1);assert.equal(fixture.received.messages[0].quotes[0].text,quoted);assert.ok(Buffer.byteLength(JSON.stringify(fixture.received.messages[0]))<=96*1024);checks.push({width,actualComposerLongQuoteSend:true,quoteCharacters:quoted.length});
+ const oversized='合成引用'.repeat(10000)+'超限尾部';fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('oversize-source','assistant',oversized)]});await page.reload();
+ await page.getByRole('button',{name:'引用',exact:true}).click();await page.locator('[contenteditable=true]').fill('保留这个草稿');
+ await page.locator('input[type=file]').setInputFiles({name:'budget-note.txt',mimeType:'text/plain',buffer:Buffer.from('synthetic note')});
+ await page.waitForFunction(()=>document.body.textContent.includes('budget-note.txt'));await page.getByRole('button',{name:'发送消息',exact:true}).click();
+ await page.getByText('整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。',{exact:true}).waitFor();
+ assert.equal(fixture.received.messages.length,0);assert.equal(await page.locator('[contenteditable=true]').innerText(),'保留这个草稿');
+ assert.ok((await page.getByRole('button',{name:'编辑引用 1',exact:true}).getAttribute('title')).includes(oversized));assert.equal(fixture.received.uploads.length,1);
+ await page.screenshot({path:join(dest,'quote-overflow-'+width+'.png')});
+ await page.getByRole('button',{name:'删除引用 1',exact:true}).click();const reduced=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/messages'&&response.request().method()==='POST');
+ await page.getByRole('button',{name:'发送消息',exact:true}).click();await reduced;assert.equal(fixture.received.messages.length,1);assert.equal(fixture.received.messages[0].attachments.length,1);
+ checks.push({width,oversizedQuotePreserved:true,attachmentPreserved:true,reducedDraftSent:true});await context.close();
  }
 }catch(e){failure=e;}finally{exit=await chrome.finish();await fixture.close();writeFileSync(join(dest,'browser-result.json'),JSON.stringify({checks,exit,failure:failure?String(failure):null},null,2));}
 if(failure)throw failure;assert.equal(exit.code,0);assert.equal(exit.watchdog,false);assert.equal(exit.forced,false);console.log(JSON.stringify({checks,exit}));

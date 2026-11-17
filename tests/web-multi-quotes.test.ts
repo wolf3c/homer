@@ -114,3 +114,16 @@ test('structured drafts retain duplicate quotes and comments across reload witho
  const draft={text:'保留正文',quotes:[{messageId:'a',text:'相同',annotation:'一',draftId:'one'},{messageId:'a',text:'相同',annotation:'二',draftId:'two'}]};
  assert.deepEqual(singleComposerDraft(draft),draft);
 });
+
+test('excerpt totals no longer use48000 while individual and combined comment limits remain',()=>{
+ const f=fixture();try{
+  const texts=['a'.repeat(30000),'b'.repeat(30000)],ids=texts.map(text=>f.history.add('thread-a',text));
+  const input={requestId:'long-multiple',text:'explain',quotes:texts.map((text,index)=>({messageId:ids[index]!,text,annotation:''}))};
+  assert.ok(Buffer.byteLength(JSON.stringify(input))<96*1024);f.history.accept('thread-a',input);
+  assert.deepEqual(f.history.list('thread-a').find(value=>value.requestId===input.requestId&&value.role==='user')?.quotes,input.quotes);
+  const quote={messageId:ids[0]!,text:'a',annotation:'x'.repeat(16000)},comments={requestId:'comment-limit',text:'explain',quotes:[quote,quote,quote]};
+  assert.equal(conversationInput(comments).quotes!.reduce((size,value)=>size+value.annotation.length,0),48000);
+  assert.throws(()=>conversationInput({...comments,quotes:[...comments.quotes,{...quote,annotation:'x'}]}),/invalid_quote/);
+  assert.throws(()=>conversationInput({...comments,quotes:[{...quote,annotation:'x'.repeat(16001)}]}),/invalid_quote/);
+ }finally{f.db.close();}
+});

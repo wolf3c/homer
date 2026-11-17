@@ -593,13 +593,13 @@ test('mixed pending keeps both contexts and metadata through refresh, failure, a
  const input=pending[0].input;assert.equal(client.prepareMessage(input.text,input.quotes,input,()=>assert.fail('same ID'),input.attachments,undefined,input.resourceReferences),input);
  f.state.acceptedRequestIds=['mixed-owner'];f.render();assert.equal(f.runtime.text,'newer');assert.equal(f.cache.has('homer-unconfirmed:'+f.state.threadId),false);f.close();refreshed.close();
 });
-test('reference save counts current quote in the full byte budget and submit checks the resulting snapshot again',async()=>{
+test('reference preparation counts the complete quote in the existing JSON budget',async()=>{
  const f=fixture({text:'body'});await tick();f.render();
  // Under 48000 resource characters and 24000 authority; UTF-8 snapshot exceeds 96KiB only with quote.
  const large={...textReference,annotations:[{id:'big',text:'中'.repeat(16000),comment:'中'.repeat(10000)}]};
  await f.preview().add(large);f.render();f.annotationDraft.clear();f.preview().appendQuote({messageId:'q',text:'中'.repeat(8000)});f.render();
- await assert.rejects(f.preview().add(large),/96KiB/);assert.equal(references.referencesOf(f.annotationDraft.read()).length,0);
- f.annotationDraft.replace([large]);f.render();submit(f);assert.equal(f.sends.length,0);assert.ok(nodes(f.render()).some(n=>String(n.props?.children).includes('96KiB')));f.close();
+ await assert.rejects(f.preview().add(large),/96KiB/);f.render();assert.equal(references.referencesOf(f.annotationDraft.read()).length,0);
+ assert.equal(draftQuotesOf(f)[0].text,'中'.repeat(8000));assert.equal(f.runtime.text,'body');f.close();
 });
 
 test('image preparation reserves its original attachment in the full snapshot budget before upload',async()=>{
@@ -611,7 +611,7 @@ test('image preparation reserves its original attachment in the full snapshot bu
  const requestId=f.cache.get('homer-draft:'+f.state.threadId).requestId;
  const empty=client.prepareMessage(f.runtime.text,{messageId:'q',text:''},undefined,()=>requestId,[],undefined,[large,sentinel]);
  const space=96*1024-Buffer.byteLength(JSON.stringify(empty))-1;
- assert.ok(space>0&&space<16000);f.runtime.quote={messageId:'q',text:'q'.repeat(space)};f.render();
+ assert.ok(space>0&&space<16000);f.runtime.text='中'.repeat(Math.ceil((10000+space+64)/3));f.render();
  await assert.rejects(f.preview().add(picture,new File(['image'],'Image.png',{type:'image/png'})),/96KiB/);
  assert.equal(f.calls.length,0,'oversized image candidate rejected before upload');f.close();
 });
@@ -693,11 +693,11 @@ test('quote source rejection restores all saved entries only into its own empty 
   assert.equal(f.runtime.text,newer?'new body':'original');assert.deepEqual(draftQuotesOf(f).map(q=>q.annotation),newer?['']:['first','second']);f.close();
  }
 });
-test('quote count and UTF8 budget errors retain saved entries and the unsaved editor',async()=>{
+test('quote count rejects the extra editor but byte overflow is retained until submit',async()=>{
  const quotes=Array.from({length:20},(_,i)=>({...ordinaryQuote,annotation:'comment '+i,draftId:'id-'+i}));
  const f=fixture({draft:{text:'body',quotes}});await tick();f.render();f.preview().openQuote({quote:ordinaryQuote});await tick();f.render();f.find(n=>n.type==='quote-form').props.onChange('twenty-first');f.render();f.find(n=>n.type==='quote-form').props.onSave();f.render();
  assert.match(f.find(n=>n.type==='quote-form').props.error,/20条/);assert.equal(draftQuotesOf(f).length,20);assert.equal(f.sends.length,0);f.close();
- const g=fixture({draft:{text:'中'.repeat(16000),quotes:[{...ordinaryQuote,text:'中'.repeat(16000),annotation:'one',draftId:'one'}]}});await tick();g.render();g.preview().openQuote({quote:ordinaryQuote});await tick();g.render();g.find(n=>n.type==='quote-form').props.onChange('中'.repeat(1000));g.render();g.find(n=>n.type==='quote-form').props.onSave();g.render();assert.match(g.find(n=>n.type==='quote-form').props.error,/96KiB/);assert.equal(draftQuotesOf(g).length,1);g.close();
+ const g=fixture({draft:{text:'中'.repeat(16000),quotes:[{...ordinaryQuote,text:'摘录',annotation:'中'.repeat(16000),draftId:'one'}]}});await tick();g.render();g.preview().openQuote({quote:ordinaryQuote});await tick();g.render();g.find(n=>n.type==='quote-form').props.onChange('中'.repeat(1000));g.render();g.find(n=>n.type==='quote-form').props.onSave();g.render();assert.equal(draftQuotesOf(g).length,2);submit(g);g.render();assert.equal(g.sends.length,0);assert.equal(g.runtime.text.length,16000);assert.ok(nodes(g.render()).some(n=>String(n.props?.children).includes('96KiB')));g.close();
 });
 
 test('quote comments share the existing combined intent budget with file annotations',async()=>{
@@ -748,4 +748,29 @@ test('composer records cross-type insertion order and restores it after refresh'
  assert.deepEqual(after.map(node=>node.type),['annotation-chips','attachment','button']);
  assert.deepEqual(recovered.cache.get('homer-draft:'+recovered.state.threadId).contextOrder,draft.contextOrder);
  recovered.close();
+});
+test('long excerpts send intact within96KiB; oversized excerpts stay in the draft without sending',async()=>{
+ const long='合成原文'.repeat(5000)+'完整尾部';
+ const f=fixture({text:'解释'});await tick();f.render();f.preview().appendQuote({messageId:'long-source',text:long});f.render();
+ assert.equal(draftQuotesOf(f)[0].text,long);submit(f);await tick();assert.equal(f.sends.length,1);assert.equal(f.sends[0][0].quotes[0].text,long);f.close();
+ const huge='中'.repeat(40000),g=fixture({draft:{text:'保留正文',quotes:[{messageId:'huge-source',text:huge,annotation:'',draftId:'huge'}]}});await tick();g.render();submit(g);g.render();
+ assert.equal(g.sends.length,0);assert.equal(g.runtime.text,'保留正文');assert.equal(draftQuotesOf(g)[0].text,huge);assert.ok(nodes(g.render()).some(n=>String(n.props?.children).includes('96KiB')));g.close();
+});
+
+test('server size rejection restores only its own empty draft and preserves attachment ownership',async()=>{
+ for(const newer of [false,true]){
+  const gate=deferred(),f=fixture({draft:{text:'original',quotes:[{...ordinaryQuote,annotation:'comment'}]},request:async()=>ok({...asset,filename:'note.txt',kind:'file'})});await tick();f.render();
+  f.editor().props.onFiles([new File(['note'],'note.txt')]);await tick();f.render();const attached=f.runtime.attachments.map(attachmentAsset);assert.equal(attached.length,1);
+  f.props.onSend=()=>gate.promise;submit(f);
+  if(newer){f.runtime.text='new body';f.preview().appendQuote({messageId:'new',text:'new quote'});f.render();}
+  gate.reject(Error('request_too_large'));await tick();f.render();
+  assert.equal(f.runtime.text,newer?'new body':'original');assert.equal(draftQuotesOf(f)[0].text,newer?'new quote':ordinaryQuote.text);assert.deepEqual(f.runtime.attachments.map(attachmentAsset),newer?[]:attached);assert.equal(f.sends.length,0);f.close();
+ }
+});
+
+test('local size overflow preserves uploaded attachments and the entire quote before submission',async()=>{
+ const f=fixture({text:'keep body',request:async()=>ok({...asset,filename:'note.txt',kind:'file'})});
+ f.editor().props.onFiles([new File(['note'],'note.txt')]);await tick();f.render();
+ const attachments=[...f.runtime.attachments],text='中'.repeat(40000);f.preview().appendQuote({messageId:'oversize',text});f.render();submit(f);
+ assert.equal(f.sends.length,0);assert.equal(f.runtime.text,'keep body');assert.deepEqual(f.runtime.attachments,attachments);assert.equal(draftQuotesOf(f)[0].text,text);f.close();
 });

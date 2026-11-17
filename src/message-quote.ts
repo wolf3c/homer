@@ -52,7 +52,7 @@ export function sourceMessageText(message:Parameters<typeof messageSourceParts>[
 
 // Bound the identity list to exactly the prefix offered by the whole-message
 // action. Empty fragments retain their position between nonempty fragments.
-export function sourceQuote(parts:readonly MessageSourcePart[],limit=16000,maxItems=200){
+export function sourceQuote(parts:readonly MessageSourcePart[],limit=Infinity,maxItems=200){
  let text='';const itemIds:string[]=[];
  for(const part of parts){
    if(text.length>=limit||itemIds.length>=maxItems)break;

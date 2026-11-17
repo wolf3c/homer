@@ -11,7 +11,7 @@ export function captureSourceQuote(selection:Selection|null):MessageQuote|undefi
  const marker=element(range.startContainer)?.closest('[data-aui-quote-selectable]');
  if(!marker||marker.getAttribute('data-aui-quote-selectable')==='false'||marker!==element(range.endContainer)?.closest('[data-aui-quote-selectable]')||!marker.contains(range.commonAncestorContainer))return;
  if([...marker.querySelectorAll('[data-aui-quote-selectable="false"]')].some(item=>range.intersectsNode(item)))return;
- const text=previewSelectionText({range,text:selection.toString()},marker);if(!text||text.length>16000)return;
+ const text=previewSelectionText({range,text:selection.toString()},marker);if(!text)return;
  const itemIds=sourceItemIds(root,range);
  if(itemIds.length>200||root.dataset.messageSource==='model'&&!itemIds.length)return;
  return {messageId:root.dataset.conversationMessage!,text,...(itemIds.length?{itemIds:[...new Set(itemIds)]}:{})};

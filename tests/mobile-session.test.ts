@@ -1,3 +1,5 @@
+import {createWebChat} from '../src/web-chat.js';
+import type {WebBridge} from '../src/web-contract.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {MobileDevices} from '../src/mobile-devices.js';
@@ -6,11 +8,11 @@ import {openMobileSession} from '../src/mobile-session.js';
 import {WEB_PROTOCOL} from '../src/web-contract.js';
 import {build} from 'esbuild';
 
-function connection(devices:MobileDevices,calls:string[]){
+function connection(devices:MobileDevices,calls:string[],handler?:(op:string,input:unknown)=>Promise<unknown>){
  let left!:(value:Uint8Array)=>void,right!:(value:Uint8Array)=>void,closed=false;
  const port:MobileChannelPort={send:value=>queueMicrotask(()=>right(value)),receive:fn=>{left=fn;},closed:()=>closed,buffered:()=>0,close:()=>{closed=true;}};
  const other:MobileChannelPort={...port,send:value=>queueMicrotask(()=>left(value)),receive:fn=>{right=fn;}};
- const host=openMobileSession({devices,port,call:async(op,input)=>{calls.push(op);return input;}});
+ const host=openMobileSession({devices,port,call:async(op,input)=>{calls.push(op);return handler?handler(op,input):input;}});
  const replies=new Map<string,(value:any)=>void>();let sequence=0;
  const client=mobileChannel(other,(value:any)=>{const reply=replies.get(value.id);replies.delete(value.id);reply?.(value);});
  return {host,client,closed:()=>closed,call:(op:string,input:unknown={})=>new Promise<any>(resolve=>{const id=String(++sequence);replies.set(id,resolve);void client.send({id,op,input});})};
@@ -185,4 +187,18 @@ test('missing and unsafe device names fall back, while replacement and timeout c
   assert.equal(devices.state().pending,null);
   assert.equal((await c.call('status',{credential:second.result.credential})).result.status,'expired');
  }finally{c.host.close();c.client.close();devices.close();}
+});
+
+test('paired mobile message operations reject oversized business JSON without closing the channel',async()=>{
+ const devices=new MobileDevices(':memory:');let writes=0;const write=async()=>{writes++;return {};};
+ const chat=createWebChat({submit:write,queue:{edit:write,interrupt:write}} as unknown as WebBridge),c=connection(devices,[],chat);
+ try{
+  await bind(devices,c);
+  const input={requestId:'mobile-budget',text:'explain',quotes:[{messageId:'source',text:'中'.repeat(40000),annotation:''}]};
+  for(const op of ['messages.submit','messages.edit','messages.interrupt']){
+   const value=op==='messages.submit'?input:op==='messages.edit'?{requestId:input.requestId,operationId:'edit',expectedRevision:0,input}:{input,target:{messageId:'source',generationId:'generation'}};
+   assert.equal((await c.call(op,value)).error,'request_too_large');assert.equal(writes,0);assert.equal(c.closed(),false);
+  }
+  const response=await c.call('messages.submit',{requestId:'next',text:'normal'});assert.equal(response.error,undefined);assert.equal(writes,1);
+ }finally{c.host.close();devices.close();}
 });

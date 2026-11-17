@@ -26,9 +26,9 @@ test('message quote action preserves trusted item identity and offers visible te
  assert.equal(typeof f.bar.props.onQuote,'function');f.bar.props.onQuote();
  assert.deepEqual(f.quotes,[{messageId:'native-source',text:'实际正文 资料',itemIds:['native-item']}]);assert.equal(f.focused,1);assert.equal(f.cleared,1);
 });
-test('message quote action respects composer exclusion and existing prefix limit',()=>{
+test('message quote action respects composer exclusion and preserves complete long text',()=>{
  const blocked=actions({allowed:false});assert.equal(typeof blocked.bar.props.onQuote,'function');blocked.bar.props.onQuote();assert.equal(blocked.quotes.length,0);
- const long=actions({message:{id:'long',text:'x'.repeat(16001)}});long.bar.props.onQuote();assert.equal(long.quotes[0].text.length,16000);assert.ok(long.notices.some(Boolean));
+ const long=actions({message:{id:'long',text:'x'.repeat(16001)}});long.bar.props.onQuote();assert.equal(long.quotes[0].text,'x'.repeat(16001));assert.ok(!long.notices.some(Boolean));
  assert.equal(actions({disabled:true}).bar.props.quoteDisabled,true);
 });
 test('the grey excerpt is the source link and exposes no internal identifiers',()=>{

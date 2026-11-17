@@ -62,3 +62,24 @@ test('device media reads forward the exact selector and only allow voice preview
  await assert.rejects(chat('media.read',{...ref,preview:'voice',path:'/etc/hosts'}),/media_request_invalid/);
  assert.deepEqual(calls,[ref,{...ref,preview:'voice'}]);
 });
+
+test('message operations count the full UTF8 JSON including nested fields and reject before bridge calls',async()=>{
+ let calls=0;
+ const record=async()=>{calls++;return {};};
+ const chat=createWebChat({submit:record,queue:{edit:record,interrupt:record}} as unknown as WebBridge);
+ const base={requestId:'budget',text:'explain',quotes:[{messageId:'source',text:'',annotation:''}]};
+ const wrap=(op:string,input:unknown)=>op==='messages.submit'?input:op==='messages.edit'?{requestId:'budget',operationId:'edit-budget',expectedRevision:0,input}:{input,target:{messageId:'message',generationId:'generation'}};
+ for(const op of ['messages.submit','messages.edit','messages.interrupt']){
+  const empty=wrap(op,base),padding=96*1024-Buffer.byteLength(JSON.stringify(empty));
+  const input={...base,quotes:[{...base.quotes[0]!,text:'a'.repeat(padding)}]};
+  assert.equal(Buffer.byteLength(JSON.stringify(wrap(op,input))),96*1024);
+  await chat(op,wrap(op,input));const before=calls;
+  await assert.rejects(chat(op,wrap(op,{...input,quotes:[{...input.quotes[0]!,text:input.quotes[0]!.text+'a'}]})),/request_too_large/);assert.equal(calls,before);
+ }
+ const text='中'.repeat(20000),position={format:'preview-text-v1',representation:'markdown',start:0,end:text.length,exact:text,prefix:'',suffix:'',sourceHash:'a'.repeat(64)};
+ await chat('messages.submit',{...base,quotes:[{messageId:'source',text,annotation:''}]});const before=calls;
+ await assert.rejects(chat('messages.submit',{...base,quotes:[{messageId:'source',text,annotation:'',position}]}),/request_too_large/);assert.equal(calls,before);
+ for(const text of ['😀'.repeat(25000),'\"\n'.repeat(25000)]){
+  await assert.rejects(chat('messages.submit',{...base,quotes:[{messageId:'source',text,annotation:''}]}),/request_too_large/);assert.equal(calls,before);
+ }
+});

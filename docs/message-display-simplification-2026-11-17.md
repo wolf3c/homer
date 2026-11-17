@@ -15,3 +15,7 @@ Markdown相邻图片缺少到媒体身份的映射；绝对远程和已登记媒
 精确拟提交树（HEAD加本次23文件片段）的106项定向离线测试、两端类型检查及Vite构建均通过；两项1080／390px合成浏览器专项通过，Chrome退出0、forced=false、watchdog=false。Mermaid默认图内链接经真实点击打开合成新窗口，桌面确认与tel协议通过stub验证；成功过程仍隐藏，图内图片及旧规模之外的三项渲染仍通过。独立只读复审无剩余阻断项。两项浏览器专项为独立mock-keychain模式，不替代日常Chrome、安装版、真实外站、系统真实打开或手机真机验收。复现入口见[测试说明](testing.md#消息显示简化复审2026-11-17)。
 
 复审补充生产CSP：原合成静态夹具没有生产响应头，不能据此确认远程图片可用。真实createWebServer回归复现旧img-src阻挡；本提交仅给img-src增加https:／http:，保留其他指令、HTML预览与截图面板策略。普通网页及desktop-token两种生产承载模式的正文HTTP／HTTPS、过程、Canvas及Mermaid远程图片均通过真实请求和解码检查，10个合成远程请求均不携带桌面token，无CSP违规；Chrome退出0、forced=false、watchdog=false。新增CSP离线断言及Web服务器10项回归通过（与此前106项合计107项独立断言）；全项目类型检查仍通过。移动App使用内联chatHtml，没有该主页面HTTP CSP；未安装或做手机真机验收。
+
+## 后续方案
+
+以上是 `bf5261ac` 显示简化提交的范围记录。后续 `787afc68` 已提交Markdown相邻图片解析；长引用另按[长消息引用最简实施方案](superpowers/plans/2026-11-17-long-message-quotes.md)复审，取消16,000引用限制但保留完整JSON96KiB预算。长引用现已在源码实施，验证及共享UI类型检查边界见方案第10节；未提交或安装，不能用此前16MiB实验验收代替。
