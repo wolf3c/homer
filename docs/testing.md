@@ -1218,3 +1218,19 @@ node tests/schedule-display.browser.mjs
 ```
 
 当前1440／390／320px均通过：原文件与schedule标签共存和切换；普通对话无卡片；SpecSheet长内容完整且位于末行；详情关闭实际命中、键盘／回焦、引用不冒泡不发送、chip移除与刷新恢复、完整ID在真实POST普通文本只拼一次、state刷新及失败未确认提示。启动隔离Chrome、只连接本地HTTP／SSE合成fixture，使用mock keychain，不连接真实计划／模型。必须同时核对退出码0、forced=false和watchdog=false，不能只看PNG。源码及证据见[实施方案](superpowers/plans/2026-11-17-scheduled-task-display.md#8-实施与验证2026-11-17)；未覆盖安装版、真机、真实LLM调用或渠道实网专项。
+
+## Preview 顶栏与图片批注进入反馈（2026-11-17）
+
+显式专项 `tests/preview-annotation-entry.browser.mjs` 使用真实 HomerApp / CanvasPanel / Annotorious，以及普通与 floating ScreenshotDialog；仅合成 HTTP、图片和上传回执，独立 Electron profile，不连接日常账号、runtime、真实截图采集或模型。已登记 browser 清单。现有 Node 22.22.0、Electron / Playwright / esbuild 依赖即可运行，不安装工具。
+
+```sh
+# 从仓库根目录运行；先用当前源码构建到独立临时目录。
+(cd ui && ../node_modules/.bin/vite build --configLoader runner --outDir /private/tmp/homer-preview-entry-web)
+HISTORY_FOLLOWUP_BUILD=/private/tmp/homer-preview-entry-web HOMER_BROWSER_EVIDENCE=outputs/preview-entry-review node tests/preview-annotation-entry.browser.mjs
+node --import tsx --test tests/annotation-comment-form.test.mjs tests/annotation-draft.test.ts
+node_modules/.bin/tsc --noEmit -p ui/tsconfig.json
+```
+
+1440／390／320px 正式组件合成验证通过：单行标题／标签及重要操作、长标题可见性、图片／纯文／Markdown／HTML回退／音视频／未知格式顶栏，200ms边框、引导淡出／拖选即隐藏、备注保存、退出、Esc回焦、定时器清理与减少动画，以及两种截图弹窗的既有完成／取消规则。此处不验证媒体解码、真实浏览器接管或真实截图权限；图片缩放与网页地址等专用工具功能仍保留。截图和结果见 [本轮证据](../outputs/task-42f3ced3-annotation-entry/implementation/README.md)。
+
+2026-11-17复审：基于 `dfee7228` 的独立候选在项目Node 22.22.0通过70/70定向离线（含完整main-composer、共享表单、草稿）、UI类型、构建及三宽度正式组件专项。并行浏览器事项补齐 `BrowserPreviewContext` 夹具绑定后，共享完整Composer／批注表单／草稿70/70回归通过；共享UI类型、构建及1440／390／320px正式组件专项通过。此前失败记录保留为历史诊断，最终结果见 `implementation/review/integrated-offline-final.log` 与 `integrated-final-browser/verification.json`。本事项精确提交不包含浏览器专属夹具或生产代码。安装版／真实采集／原生触摸未验收。

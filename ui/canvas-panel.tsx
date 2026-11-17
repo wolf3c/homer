@@ -118,7 +118,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
     ensureVisible(active);
     const observer=new ResizeObserver(()=>ensureVisible(visibleTab.current?.isConnected?visibleTab.current:list.querySelector('[role=tab][aria-selected=true]')));
     observer.observe(list);return()=>observer.disconnect();
-  },[selected,tabs]);
+  },[selected,tabs,actions]);
   const hasTabs=!!tabs?.length&&!webSource;
   const title='预览：'+(webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'从对话中选择成果');
   const tools=<><div ref={setActions} className="canvas-tab-actions"/>{(narrow||!hasTabs)&&<TooltipIconButton ref={collapseButton} className="canvas-collapse" tooltipContainer={actions} aria-label="收起预览" tooltip="收起预览" onClick={onClose}><PanelRight size={14} aria-hidden/></TooltipIconButton>}</>;

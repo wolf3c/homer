@@ -66,6 +66,13 @@ function Regions({url,title,actions,control,notes,onSave,onRemove,focusAnnotatio
  const image=useRef<HTMLImageElement>(null),stage=useRef<HTMLDivElement>(null),toggle=useRef<HTMLButtonElement>(null),pending=useRef<Pending|null>(null),mounted=useRef(true);
  const [drawingEnabled,setEnabled]=useState(true),[dimensions,setDimensions]=useState({width:0,height:0});
  const enabled=!actions||drawingEnabled;
+ const [hint,setHint]=useState(true);
+ useLayoutEffect(()=>{
+  setHint(enabled);
+  if(!enabled)return;
+  const timer=setTimeout(()=>setHint(false),1630);
+  return()=>clearTimeout(timer);
+ },[enabled]);
  const previous=useRef<NativeAnnotation[]>([]),notesRef=useRef(notes);notesRef.current=notes;
  const canonical=useCallback((id:string)=>fromNotes(notesRef.current).find(note=>note.id===id),[]);
  const cancelPending=useCallback(()=>{pending.current?.cancel();anno?.cancelDrawing();anno?.cancelSelected();},[anno]);
@@ -98,10 +105,12 @@ function Regions({url,title,actions,control,notes,onSave,onRemove,focusAnnotatio
   await onSave(annotations,{width:image.current.naturalWidth,height:image.current.naturalHeight},()=>mounted.current);
  },[onSave]);
  const popup=useCallback((props:PopupProps)=><RegionComment key={props.annotation.id} popup={props} anno={anno} pending={pending} onDone={done} title={title} image={image.current} onSave={save} onRemove={onRemove} canonical={canonical}/>,[anno,done,title,save,onRemove,canonical]);
- return <>{actions&&createPortal(<TooltipIconButton ref={toggle} className="image-annotation-toggle" tooltipContainer={actions} aria-label="批注" aria-pressed={enabled} tooltip={enabled?'退出图片批注':'开始图片批注'} onClick={()=>{cancelPending();setEnabled(value=>!value);}}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>,actions)}
- <div ref={stage} className={'image-annotation'+(enabled?' is-annotating':'')}>
+ return <>{actions&&createPortal(<>{enabled&&!hint&&<span className="image-annotation-status" role="status">批注中</span>}<TooltipIconButton ref={toggle} className="image-annotation-toggle" tooltipContainer={actions} aria-label="批注" aria-pressed={enabled} tooltip={enabled?'退出图片批注':'开始图片批注'} onClick={()=>{cancelPending();setEnabled(value=>!value);}}><MessageCirclePlus size={14} aria-hidden/><span>{enabled?'退出':'批注'}</span></TooltipIconButton></>,actions)}
+ <div ref={stage} className={'image-annotation'+(enabled?' is-annotating':'')} onPointerDownCapture={()=>{if(enabled)setHint(false);}}>
   <ImageAnnotator containerClassName="annotation-image" tool="rectangle" drawingEnabled={enabled} drawingMode="drag" userSelectAction={enabled?UserSelectAction.EDIT:UserSelectAction.NONE} theme="auto" disableUndoRedoKeys><img ref={image} onLoad={()=>setDimensions({width:image.current!.naturalWidth,height:image.current!.naturalHeight})} src={url} alt={title} draggable={false}/></ImageAnnotator>
   <div className="image-region-labels" aria-label={`${regions.length} 个已保存区域`}>{dimensions.width>0&&regions.map((a,i)=>{const r=coordinates(a);return <span key={a.id} data-annotation-id={a.id} className="image-region-number" style={{left:`clamp(0px, ${r.x/dimensions.width*100}%, calc(100% - 23px))`,top:`clamp(0px, ${r.y/dimensions.height*100}%, calc(100% - 23px))`}} title={`区域 ${i+1} · ${note(a)}`}>{i+1}</span>;})}</div>
+  {enabled&&hint&&<div className="image-annotation-hint" role="status">拖动选择区域进行批注</div>}
+  {enabled&&!hint&&!actions&&<span className="image-annotation-status image-annotation-floating-status" role="status">批注中</span>}
   {enabled&&<ImageAnnotationPopup popup={popup}/>}
  </div></>;
 }

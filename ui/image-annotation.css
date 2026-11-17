@@ -1,2 +1,9 @@
 .image-annotation{position:relative;width:100%;min-width:0;max-width:1200px;margin:0 auto}.image-annotation img{width:100%;height:auto;display:block;user-select:none}.image-annotation .annotation-image{display:block!important;width:100%}.image-annotation .a9s-annotationlayer{pointer-events:none}.image-annotation.is-annotating .a9s-annotationlayer{pointer-events:auto}.image-annotation.is-annotating .a9s-annotationlayer:not(.hover){cursor:crosshair}.image-annotation.is-annotating{touch-action:none}.image-annotation .a9s-popup{z-index:2;width:280px;max-width:min(100%,calc(100vw - 24px))}
 .image-region-labels{position:absolute;inset:0;pointer-events:none}.image-region-number{position:absolute;display:grid;place-items:center;min-width:20px;height:20px;padding:0 4px;transform:translate(3px,3px);border-radius:5px;background:#292825;color:#fff;font:600 11px/1 system-ui;box-shadow:0 0 0 1px #fff}
+.image-annotation.is-annotating{outline:1px solid #b8c9d5;outline-offset:-1px;animation:image-annotation-enter .2s ease-out}
+@keyframes image-annotation-enter{0%{outline-color:#b8c9d5}45%{outline-color:#3982b8}100%{outline-color:#b8c9d5}}
+.image-annotation-hint,.image-annotation-floating-status{position:absolute;z-index:1;top:12px;left:50%;transform:translateX(-50%);max-width:calc(100% - 16px);padding:7px 12px;border:1px solid #dfdcd5;border-radius:8px;background:#fffffff2;color:#514e47;font:12px/1.5 system-ui;white-space:nowrap;pointer-events:none}
+.image-annotation-hint{animation:image-annotation-hint 1.63s linear forwards}
+@keyframes image-annotation-hint{0%,89%{opacity:1}100%{opacity:0}}
+.image-annotation-status{flex:none;align-self:center;color:#5e6f7b;font:12px/1.5 system-ui;white-space:nowrap}
+@media(prefers-reduced-motion:reduce){.image-annotation.is-annotating,.image-annotation-hint{animation:none}}
