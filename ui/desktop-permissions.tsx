@@ -356,7 +356,7 @@ function DesktopChatGPTModels({connected,unconfirmed,busy,different,apply}:{conn
     <h3 id={'chatgpt-'+role}>{nativeRoleNames[role]}{sameNativeModels(selected,settings.defaults[role])&&<span>默认</span>}</h3>
     <div className="desktop-model-controls"><ModelSelectorRoot models={models} value={selected.model} effort={selected.effort} onValueChange={id=>chooseModel(role,id)} onEffortChange={effort=>change(role,{effort})}>
      <ModelSelectorTrigger aria-label={nativeRoleNames[role]+' 模型'} disabled={disabled}><ModelSelectorValue placeholder={selected.model}/></ModelSelectorTrigger>
-     <ModelSelectorContent searchable={false}><ModelSelectorList/><ModelSelectorEffort label="思考深度"/></ModelSelectorContent>
+     <ModelSelectorContent searchable={false} className="desktop-model-menu"><ModelSelectorList/><ModelSelectorEffort label="思考深度"/></ModelSelectorContent>
     </ModelSelectorRoot><NativeSpeedControl name={nativeRoleNames[role]} value={selected.serviceTier} tiers={model?.serviceTiers??[]} disabled={disabled||!model} onChange={serviceTier=>change(role,{serviceTier})}/></div>
     {settings.models&&!settings.error&&!reading&&(!model||!(model.supportedReasoningEfforts.length?model.supportedReasoningEfforts.some(option=>option.reasoningEffort===selected.effort):selected.effort===model.defaultReasoningEffort)||selected.serviceTier!==null&&!model.serviceTiers.some(tier=>tier.id===selected.serviceTier))&&<p role="status">{nativeRoleNames[role]} 的当前配置不可用，请重新选择。</p>}
    </section>;
