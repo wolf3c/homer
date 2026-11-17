@@ -745,7 +745,7 @@ macOS 启动 Chrome 的执行会话需要具备 LaunchServices 和 WindowServer 
 
 2026-11-09 在 Homer 0.1.6 build 291 的实际 Worker 中，默认 `:read-only` 同时拒绝了 profile 写入和上述系统服务访问，Chrome 在加载页面前 SIGABRT。经单次审批后，Chrome 157.0.8103.38 的 `--screenshot` 能写出 PNG，但退出时线程池仍有 Chrome Safe Storage 的 Keychain 查询，watchdog 以退出码 2 终止进程。若需用 Chrome 命令行截图验证本地合成页面，可在全新、一次性且无账号数据的 profile 上加 `--use-mock-keychain`。同一 Worker 仅增加此参数后，`--dump-dom` 和 `--screenshot` 均以 0 退出，PNG 字节与对照一致。该参数只用于合成测试，实际浏览器资料或登录流程应使用正常的 Keychain。项目浏览器专项继续使用下文的 CDP 流程。
 
-`scripts/test.mjs --browser` 显式运行 13 个已维护入口（另有一份共享 fixture），不自动收集其他历史浏览器脚本，也不进入默认测试。本专项沿现有 macOS Chrome 路径运行，需要 Node 22、项目现有依赖和当前源码的 UI 构建；在独立源码副本生成 annotation runtime、CSS 和 Vite 产物，不使用日常账号、runtime 或 CODEX_HOME。
+`scripts/test.mjs --browser` 按 `scripts/test.mjs` 的 `browser` 显式清单运行已登记入口（另有一份共享 fixture），不自动收集其他历史浏览器脚本，也不进入默认测试。本专项沿现有 macOS Chrome 路径运行，需要 Node 22、项目现有依赖和当前源码的 UI 构建；在独立源码副本生成 annotation runtime、CSS 和 Vite 产物，不使用日常账号、runtime 或 CODEX_HOME。
 
 ```sh
 HISTORY_FOLLOWUP_BUILD="$PWD/.codex/scratch/browser-regression/web" \
@@ -1186,8 +1186,6 @@ HOMER_TEST_CODEX_BIN='/Applications/Homer.app/Contents/Resources/runtime/codex/v
 此前来源往返用例复现切回 ChatGPT 仍继承 auto_review，已通过显式目标来源配置修复；停止测试曾误将 interrupt 返回 false 当作失败，现改为等待真实原生终态，不以 ACK 判断完成。失败历史不追认。最终完整专项 **18/18 通过，零失败／跳过／取消**；相关普通离线回归 **30/30**、完整类型检查通过。
 
 类型检查：`node node_modules/typescript/bin/tsc -p tsconfig.check.json`。不涉及真实付费模型、会员审核效果、线上网关路由或账单验收；未安装或重启日常应用。源码自带 Luna 窗口是模型元数据，不是本次添加的费用防线。
-
-提交前已在最新 HEAD `787afc68` 上隔离本事项构造精确候选，307 项定向检查无失败／跳过，两端类型检查、独立构建及 1080／390px 合成实际界面通过，Chrome exit 0、forced=false、watchdog=false。复审发现全局历史版本会引起已展开 Worker 详情重复读取，已改为按 Task／Run 生命周期字段触发；请求次数回归先复现 11 次，再验证无关更新保持 1 次、Run 变化后为 2 次，不新增缓存或版本实体。新回归已纳入上述命令。沙箱内进程身份查询导致的候选测试失败在获准沙箱外原样重跑后通过，未改断言或锁实现。未进行真实模型、原生审批、安装版或真机验收，提交状态以 Git 记录为准。
 
 提交前复核（2026-11-17）：仅含本事项改动的独立候选基于 `b11e2c64`，使用项目 Node 22.22.0 验证相关回归 30/30、打包 Codex 回环 18/18、完整类型检查通过；零真实模型调用。此候选不包含共享工作树的其他未提交片段。
 
