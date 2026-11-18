@@ -1,5 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {withTaskSources} from '../src/web-homer.js';import {MainProcessHistory,type ProcessNode} from '../src/main-process.js';import {chatFixture} from './task-chat-fixture.js';import type {DisplayMessage} from '../src/conversation-projection.js';
+import {WorkerInteractions} from '../src/worker-interactions.js';
 const node=(ids:string[],items:ProcessNode['items']=[]):ProcessNode=>({id:'process',threadId:'thread:main',seq:1,revision:1,sourceKind:'worker',sourceMessageIds:ids,messageId:'public',state:'worked',status:'completed',turnIds:['turn'],items});
 const message=(process:ProcessNode,text='Public conclusion'):DisplayMessage=>({id:'public',threadId:'thread:main',requestId:null,role:'assistant',text,status:'completed',createdAt:2,process});
 function setup(){const f=chatFixture(),task=f.create('Inspect synthetic evidence');const worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'PRIVATE_INSTRUCTION'}),run=f.start(worker.workerId),reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'PRIVATE_REPLY'},true)!;return {...f,task,worker,run,reply,project:(m:DisplayMessage,thread='thread:main')=>withTaskSources(f.store.db,[m],thread)[0]!};}
@@ -107,5 +108,157 @@ test('formal replies batch distinct task versions and deduplicate repeated looku
   const result=withTaskSources(f.store.db,messages,f.actor.threadId!);
   assert.equal(result.length,402);assert.equal(versionQueries,2);
   for(let i=0;i<result.length;i++)assert.deepEqual(result[i]!.taskSources?.map(s=>[s.target.taskId,s.target.version]),[[tasks[Math.floor(i/2)]!.taskId,1]]);
+ }finally{f.close();}
+});
+
+test('interaction notices require the persisted interaction, execution and receiving round',()=>{
+ const f=chatFixture();try{
+  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Synthetic input'}),run=f.start(worker.workerId);
+  const db=f.store.db,interactions=new WorkerInteractions(db,{persisted:id=>f.tasks.queueInteraction(id)});
+  const {id}=interactions.open({runId:run.id,threadId:run.threadId!,turnId:run.turnId!,requestId:'question',source:'ask_main',kind:'question',
+   runEpoch:run.epoch,taskVersion:run.version,details:{question:'PRIVATE_QUESTION'},authority:{...f.authority,nativeApprovals:false}},()=>true);
+  const key='interaction:'+id,notice=String(db.prepare('SELECT id FROM agent_messages WHERE operationKey=?').get(key)!.id);
+  f.consumeMain(notice);
+  const process=new MainProcessHistory(db).headers(['consumer:'+notice])[0]!;
+  const project=(n=process)=>withTaskSources(db,[message(n,'')],f.actor.threadId!)[0]!;
+  assert.deepEqual(project().taskSources?.[0]?.target,{taskId:task.taskId,version:run.version,runId:run.id});
+  assert.equal(project().taskSourceUnresolved,undefined);
+  assert.doesNotMatch(JSON.stringify(project()),/PRIVATE_QUESTION/);
+  const rejected=()=>{assert.equal(project().taskSources,undefined);assert.equal(project().taskSourceUnresolved,true);};
+  for(const sql of [
+   "UPDATE operations SET operationId='other' WHERE id=?",
+   "UPDATE operations SET kind='notify' WHERE id=?",
+   "UPDATE operations SET kind='worker_return' WHERE id=?",
+   "UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.workerId','other') WHERE operationKey=?",
+   "UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.turnId','other') WHERE operationKey=?",
+   "UPDATE agent_messages SET senderEpoch=senderEpoch-1 WHERE operationKey=?",
+   "UPDATE agent_messages SET senderRunId=NULL WHERE operationKey=?",
+   "UPDATE worker_interactions SET taskVersion=taskVersion+1 WHERE 'interaction:'||id=?",
+   "UPDATE worker_interactions SET authority=json_set(authority,'$.sourceRequestId','elsewhere') WHERE 'interaction:'||id=?",
+   "UPDATE conversation_inputs SET threadId='other' WHERE requestId=(SELECT json_extract(authority,'$.sourceRequestId') FROM worker_interactions WHERE 'interaction:'||id=?)",
+   "DELETE FROM worker_interactions WHERE 'interaction:'||id=?",
+   "UPDATE agent_receipts SET offeredTurnId='other' WHERE messageId=(SELECT id FROM agent_messages WHERE operationKey=?)",
+   "DELETE FROM agent_receipts WHERE messageId=(SELECT id FROM agent_messages WHERE operationKey=?)",
+  ]){
+   db.exec('SAVEPOINT bad_source');db.prepare(sql).run(key);rejected();db.exec('ROLLBACK TO bad_source; RELEASE bad_source');
+  }
+  db.prepare("UPDATE agent_receipts SET processedBy=offeredTurnId,offeredTurnId=NULL,state='processed' WHERE messageId=?").run(notice);
+  assert.equal(project().taskSourceUnresolved,undefined);
+  assert.equal(project({...process,sourceMessageIds:['missing']}).taskSourceUnresolved,true);
+ }finally{f.close();}
+});
+
+test('archive notices bind the committed revision and the original user trigger, including after restore',()=>{
+ const f=chatFixture();try{
+  const task=f.create(),initial=f.tasks.settleTask(f.actor,{operationId:'settle',taskId:task.taskId,expectedRevision:1,outcome:'failed'});
+  const trigger=f.source('archive-request'),actor={...f.actor,sourceRequestId:'archive-request',inputMessageId:trigger.messageId,turnId:'turn:archive-request'};
+  const archived=f.tasks.archiveHistory(actor,{operationId:'archive',taskId:task.taskId,expectedRevision:initial.revision},true);
+  const db=f.store.db,key=archived.operationKey,notice=String(db.prepare('SELECT id FROM agent_messages WHERE operationKey=?').get(key)!.id);
+  f.consumeMain(notice);
+  const process=new MainProcessHistory(db).headers(['consumer:'+notice])[0]!;
+  const project=()=>withTaskSources(db,[message(process,'')],f.actor.threadId!)[0]!;
+  const source=project().taskSources?.[0];
+  assert.equal(source?.phaseLabel,'事项已归档');
+  assert.equal(project().taskSourceUnresolved,undefined);
+  f.tasks.archiveHistory(actor,{operationId:'restore',taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision},false);
+  assert.deepEqual(project().taskSources?.[0],source);
+  for(const sql of [
+   "UPDATE operations SET actorAgentId='host' WHERE id=?",
+   "UPDATE operations SET responseJson=json_set(responseJson,'$.revision',999) WHERE id=?",
+   "UPDATE agent_messages SET taskVersion=999 WHERE operationKey=?",
+   "UPDATE operations SET detailsJson=json_set(detailsJson,'$.inputMessageId','other') WHERE id=?",
+   "UPDATE operations SET detailsJson=json_set(detailsJson,'$.turnId','other') WHERE id=?",
+   "UPDATE conversation_inputs SET threadId='other' WHERE requestId=json_extract((SELECT detailsJson FROM operations WHERE id=?),'$.sourceRequestId')",
+   "UPDATE agent_receipts SET offeredTurnId='other' WHERE messageId=(SELECT id FROM agent_messages WHERE operationKey=?)",
+  ]){
+   db.exec('SAVEPOINT bad_source');db.prepare(sql).run(key);
+   assert.equal(project().taskSources,undefined,sql);assert.equal(project().taskSourceUnresolved,true,sql);
+   db.exec('ROLLBACK TO bad_source; RELEASE bad_source');
+  }
+  db.prepare("UPDATE operations SET actorAgentId='host',kind='notify',detailsJson='{}',responseJson=NULL WHERE id=?").run(key);
+  db.prepare("UPDATE agent_receipts SET offeredTurnId=NULL WHERE messageId=?").run(notice);
+  assert.deepEqual(project().taskSources?.[0],source);
+  assert.equal(project().taskSourceUnresolved,undefined);
+ }finally{f.close();}
+});
+
+test('task settlement and controls use exact confirmed operation and input identities from terminal headers',()=>{
+ const f=chatFixture();try{
+  const db=f.store.db,task=f.create(),actor={...f.actor,turnId:'turn:'+f.authority.sourceRequestId};
+  const receipt=(operationId:string)=>({operationId,taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision});
+  const worker=f.tasks.workerOpen(actor,{operationId:'open',taskId:task.taskId,text:'Synthetic input'});
+  const stop=f.tasks.controlTask(actor,{...receipt('pause'),action:'pause'});
+  assert.deepEqual(stop.targets,[worker.runId]);
+  const paused=f.tasks.confirmStop(stop.operationKey,true);
+  f.consumeMain(String(db.prepare("SELECT id FROM agent_messages WHERE senderRunId=? AND kind='worker_reply'").get(worker.runId)!.id));
+  const resumed=f.tasks.controlTask(actor,{...receipt('resume'),action:'resume'});
+  const settled=f.tasks.settleTask(actor,{...receipt('settle'),outcome:'failed',notes:'PRIVATE_NOTES'});
+  const restart=f.source('restart-source'),restartActor={...actor,sourceRequestId:'restart-source',turnId:'turn:restart-source',inputMessageId:restart.messageId};
+  const next=f.tasks.controlTask(restartActor,{...receipt('restart'),action:'resume',authority:{...f.authority,sourceRequestId:restartActor.sourceRequestId}});
+  const cancelled=f.tasks.controlTask(actor,{...receipt('cancel'),action:'cancel'});
+  const processes=new MainProcessHistory(db);
+  for(const result of [paused,resumed,settled,next,cancelled]){
+   const source=result===next?restartActor:actor,process={...node([source.inputMessageId!]),sourceKind:'user' as const,turnIds:[source.turnId]};
+   const activity=f.tasks.captureActivity(actor,'task_update',{taskId:task.taskId},result)!;
+   const item={id:'activity',kind:'tool' as const,seq:1,revision:1,status:'completed' as const,label:'调整任务',turnId:source.turnId,activity};
+   f.store.setMeta('publicMainNode:v1:process',JSON.stringify({...process,items:[item]}));
+   const header=processes.headers(['process'])[0]!;
+   const project=(n=header)=>withTaskSources(db,[message(n)],actor.threadId!)[0]!;
+   assert.deepEqual(project().taskSources?.[0]?.target,activity.target);
+   assert.equal(project().taskSourceUnresolved,undefined);
+   assert.doesNotMatch(JSON.stringify(project()),/PRIVATE_NOTES/);
+   assert.equal(project({...header,turnIds:['other']}).taskSourceUnresolved,true);
+   assert.equal(project({...header,sourceMessageIds:['other']}).taskSourceUnresolved,true);
+   const target={...activity.target!,version:activity.target!.version===1?2:1};
+   assert.equal(project({...header,items:[{...item,activity:{...activity,target}}]}).taskSourceUnresolved,true);
+   for(const sql of [
+    "UPDATE operations SET state='uncertain' WHERE id=?",
+    "UPDATE operations SET actorAgentId='host' WHERE id=?",
+    "UPDATE operations SET detailsJson=json_set(detailsJson,'$.threadId','other') WHERE id=?",
+    "UPDATE operations SET responseJson=json_set(responseJson,'$.state','uncertain') WHERE id=?",
+    "UPDATE conversation_inputs SET threadId='other' WHERE requestId=json_extract((SELECT detailsJson FROM operations WHERE id=?),'$.sourceRequestId')",
+   ]){
+    db.exec('SAVEPOINT bad_source');db.prepare(sql).run(activity.target!.operationKey!);
+    assert.equal(project().taskSources,undefined,sql);assert.equal(project().taskSourceUnresolved,true,sql);
+    db.exec('ROLLBACK TO bad_source; RELEASE bad_source');
+   }
+  }
+ }finally{f.close();}
+});
+
+test('a coordination round can settle a task using its received Worker message',()=>{
+ const f=setup();try{
+  const db=f.store.db,notice=f.reply.messageId;
+  f.consumeMain(notice);
+  const process=new MainProcessHistory(db).headers(['consumer:'+notice])[0]!;
+  const actor={...f.actor,sourceRequestId:undefined,inputMessageId:notice,turnId:process.turnIds[0]!};
+  const result=f.tasks.settleTask(actor,{operationId:'settle',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,outcome:'failed'});
+  const activity=f.tasks.captureActivity(actor,'task_update',{taskId:f.task.taskId},result)!;
+  process.items.push({id:'settle',kind:'tool',seq:1,revision:1,status:'completed',label:'调整任务',activity});
+  assert.equal(f.project(message(process)).taskSources?.length,2);
+  assert.equal(f.project(message(process)).taskSourceUnresolved,undefined);
+  db.prepare("UPDATE agent_receipts SET offeredTurnId='other' WHERE messageId=?").run(notice);
+  assert.equal(f.project(message(process)).taskSources?.length,1);
+  assert.equal(f.project(message(process)).taskSourceUnresolved,true);
+ }finally{f.close();}
+});
+
+test('a scheduled round binds task control to its delivery receipt',()=>{
+ const f=chatFixture();try{
+  const db=f.store.db,task=f.create();
+  const notice=f.store.transaction(()=>f.inputs.enqueueScheduled({deliveryId:'delivery',scheduleId:'schedule',scheduledAt:1,text:'Synthetic schedule',sourceRef:'synthetic'}));
+  f.consumeMain(notice);
+  const process=new MainProcessHistory(db).headers(['consumer:'+notice])[0]!;
+  process.sourceKind='scheduled';
+  const actor={...f.actor,sourceRequestId:undefined,inputMessageId:notice,turnId:process.turnIds[0]!};
+  const result=f.tasks.controlTask(actor,{operationId:'pause',taskId:task.taskId,expectedRevision:1,action:'pause'});
+  const activity=f.tasks.captureActivity(actor,'task_update',{taskId:task.taskId},result)!;
+  process.items.push({id:'pause',kind:'tool',seq:1,revision:1,status:'completed',label:'调整任务',activity});
+  const project=()=>withTaskSources(db,[message(process)],actor.threadId!)[0]!;
+  assert.deepEqual(project().taskSources?.[0]?.target,activity.target);
+  assert.equal(project().taskSourceUnresolved,undefined);
+  db.prepare("UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.threadId','other') WHERE id=?").run(notice);
+  assert.equal(project().taskSources,undefined);
+  assert.equal(project().taskSourceUnresolved,true);
  }finally{f.close();}
 });
