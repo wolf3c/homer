@@ -1,5 +1,6 @@
+import {Virtualizer,defaultRangeExtractor} from '@tanstack/virtual-core';
 import {CONVERSATION_VIEW} from '../src/web-contract.ts';
-// Component policy and real assistant-ui scroll hook with controlled geometry.
+// Component policy and real TanStack core with controlled geometry.
 // No browser layout, Lexical DOM, SSE transport or production host is simulated.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +15,8 @@ import {activityOutcomes} from '../src/activity-facts.ts';
 const require=createRequire(resolve('package.json'));
 function load(path,bindings,name){
  const ast=ts.createSourceFile(path,readFileSync(path,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
- const source=name?ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name).getText(ast):ast.statements.filter(n=>!ts.isImportDeclaration(n)).map(n=>n.getText(ast)).join('\n');
+ let source=name?ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name).getText(ast):ast.statements.filter(n=>!ts.isImportDeclaration(n)).map(n=>n.getText(ast)).join('\n');
+ if(name==='HomerApp')source=source.replace('  const accountRequired=', '  captureCommands({loadPage});\n  const accountRequired=');
  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  return Function('require','exports',...Object.keys(bindings),js+(name?`;return ${name};`:';return exports;'))(require,{},...Object.values(bindings));
 }
@@ -27,53 +29,58 @@ function hooks(passive=false){
  return {updates:()=>stateUpdates,useRef,useState,useMemo,useCallback:(fn,deps)=>useMemo(()=>fn,deps),useLayoutEffect,useIsomorphicLayoutEffect:useLayoutEffect,useEffect:passive?useLayoutEffect:()=>{},begin(){cursor=0;},commit(){while(pending.length)pending.shift()();},replayEffects(){for(const cell of cells)cell?.cleanup?.();for(const cell of cells)if(cell?.setup)cell.cleanup=cell.setup();},close(){for(const cell of cells)cell?.cleanup?.();}};
 }
 const nodes=tree=>!tree||typeof tree!=='object'?[]:Array.isArray(tree)?tree.flatMap(nodes):[tree,...nodes(tree.props?.children)];
-function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureBeforeSnapshot=false,quoteRange=async()=>undefined,quoteSelection=null,tailFetch}={}){
+function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureBeforeSnapshot=false,quoteRange=async()=>undefined,quoteSelection=null,tailFetch,mountedRange,beforeFailures=0}={}){
  let releasePage,pendingLayout=0;const mutations=new Set();const pageReady=new Promise(resolve=>{releasePage=resolve;});
- const appHooks=hooks(true),scrollHooks=hooks(),frames=new Map(),events=new Map(),listeners=new Map(),observers=new Set();const writes=[];let seq=0,resizeContent,viewportProps,scrollRef;
+ const appHooks=hooks(true),frames=new Map(),listeners=new Map(),observers=new Set();const writes=[];let seq=0,viewportProps,virtual,rectCallback,offsetCallback,commands;
  const frame=fn=>{frames.set(++seq,fn);return seq;},cancel=id=>frames.delete(id);
  const messages=Array.from({length:30},(_,i)=>({id:'row-'+i,role:i%2?'assistant':'user',text:'history',createdAt:1700000000000,status:'completed'}));
  let state={conversationView:CONVERSATION_VIEW,threadId:'reader',messages,isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running'},queue:[],acceptedRequestIds:[]};
  const page={protocol:3,threadId:'reader',revision:1,messages,units:messages.map(m=>m.id),before:'older-page',after:null};
  state.history={protocol:3,readEpoch:'reader-epoch',page,moreQueue:null,moreInteractions:null};
  const {HistoryWindow}=load(resolve('ui/history-window.ts'),{}),history=new HistoryWindow();history.snapshot(state);
- const requests=[];let runtimeState,nextRuntimeState,deferRuntime=false;const subscribers=new Set();const runtime={thread:{getState:()=>({messages:runtimeState?.messages??[]}),subscribe:fn=>{subscribers.add(fn);return()=>subscribers.delete(fn);}}};let stateEvents;
- const view={screenTop:76,clientHeight:600,scrollHeight:3000,_top:0,get scrollTop(){return this._top;},set scrollTop(value){writes.push(value);this._top=Math.max(0,Math.min(value,this.scrollHeight-this.clientHeight));},scrollTo({top}){this.scrollTop=top;},contains:element=>rows.includes(element),getBoundingClientRect(){return {top:this.screenTop,bottom:this.screenTop+this.clientHeight};},querySelectorAll(){return rows;},querySelector(){return content;},addEventListener(name,fn){const set=listeners.get(name)??new Set();set.add(fn);listeners.set(name,set);},removeEventListener(name,fn){listeners.get(name)?.delete(fn);}};
- const rows=messages.map((message,i)=>({id:'message-'+message.id,dataset:{conversationMessage:message.id,messageId:message.id},y:i*100,height:100,scrollIntoView(){view.scrollTop=this.y-(view.clientHeight-100)/2;},focus(){},getBoundingClientRect(){return {top:view.screenTop+this.y-view.scrollTop,bottom:view.screenTop+this.height+this.y-view.scrollTop};}}));
+ const media=[];const requests=[];let runtimeState,nextRuntimeState,deferRuntime=false;const subscribers=new Set();const runtime={thread:{getState:()=>({messages:runtimeState?.messages??[]}),subscribe:fn=>{subscribers.add(fn);return()=>subscribers.delete(fn);}}};let stateEvents;
+ const view={ownerDocument:{defaultView:{requestAnimationFrame:frame,cancelAnimationFrame:cancel,addEventListener(){},removeEventListener(){},performance:{now:()=>0}}},clientWidth:760,screenTop:76,clientHeight:600,scrollHeight:3000,_top:0,get scrollTop(){return this._top;},set scrollTop(value){writes.push(value);this._top=Math.max(0,Math.min(value,this.scrollHeight-this.clientHeight));},scrollTo({top}){this.scrollTop=top;},contains:element=>rows.includes(element),getBoundingClientRect(){return {top:this.screenTop,bottom:this.screenTop+this.clientHeight};},querySelectorAll(selector){return selector==='audio,video'?media:selector.startsWith('[aria-haspopup]')?[]:rows;},querySelector(){return content;},addEventListener(name,fn){const set=listeners.get(name)??new Set();set.add(fn);listeners.set(name,set);},removeEventListener(name,fn){listeners.get(name)?.delete(fn);}};
+ const rows=messages.map((message,i)=>({id:'message-'+message.id,dataset:{conversationMessage:message.id,messageId:message.id},y:i*100,height:100,scrollIntoView(){view.scrollTop=this.y-(view.clientHeight-100)/2;},focus(){},getBoundingClientRect(){return {height:this.height,top:view.screenTop+this.y-view.scrollTop,bottom:view.screenTop+this.height+this.y-view.scrollTop};}}));
  const content={};view.children=[content];view.querySelector=selector=>selector==='[data-message-id]'?rows[0]:content;
  class ResizeObserver{constructor(fn){this.fn=fn;this.observed=new Set();observers.add(this);}observe(el){this.observed.add(el);}disconnect(){observers.delete(this);}}
- const store={isAtBottom:false,turnAnchor:'bottom',element:{viewport:view,anchor:null}};
- const viewportStore={getState:()=>store,setState:value=>Object.assign(store,value)};
  class MutationObserver{constructor(fn){this.fn=fn;}observe(){mutations.add(this);}disconnect(){mutations.delete(this);}}
  const metrics=load(resolve('node_modules/@assistant-ui/store/dist/utils/viewport-scroll.js'),{ResizeObserver,MutationObserver});
- const useScroll=load(resolve('node_modules/@assistant-ui/react/dist/primitives/thread/useThreadViewportAutoScroll.js'),{
-  ...scrollHooks,...metrics,useAui:()=>({thread:{getState:()=>({messages:runtimeState?.messages??messages})}}),useAuiState:fn=>fn({thread:runtimeState??state,threadListItem:{id:'reader'}}),useThreadViewportStore:()=>viewportStore,writableStore:s=>s,
-  useOnResizeContent:fn=>{resizeContent=fn;return ()=>{};},useOnScrollToBottom:fn=>events.set('bottom',fn),useAuiEvent:(name,fn)=>events.set(name,fn),useManagedRef:fn=>fn,
-  useComposedRefs:(...refs)=>el=>refs.forEach(ref=>typeof ref==='function'?ref(el):ref.current=el),requestAnimationFrame:frame,cancelAnimationFrame:cancel,KeyboardEvent:class KeyboardEvent{},
- }).useThreadViewportAutoScroll;
  const stubNames=['ProcessDetailsContext','ProcessMessagesContext','ProcessObservationContext','ArtifactsContext','BrowserPreviewContext','PreviewActionsContext','ComposerInputFocusContext','QuoteNavigationContext'];
  const contexts=Object.fromEntries(stubNames.map(name=>[name,{Provider:name}]));
  if(emptyInitial){state={...state,messages:[]};history.reset('reader-epoch','reader');history.snapshot(state);view.scrollHeight=400;rows.length=0;}
  const empty=state;
  const projectProcessMessage=load(resolve('ui/process-message.tsx'),{projectProcessItems,toolActivityText,toolStatusText,activityOutcomes,messageSourceParts,recorded:value=>value?.state==='recorded'||value?.state==='truncated',valueNote:()=>''},'projectProcessMessage');
  const app=load(process.env.HOMER_READER_SOURCE??resolve('ui/homer-app.tsx'),{
-  ...appHooks,...metrics,...contexts,useBrowserPages:()=>({pages:[],error:''}),empty,mobileView:false,CONVERSATION_VIEW,liveMainActivity,processActivityText:()=>'',readerContentSignature:load(resolve('ui/homer-app.tsx'),{messageSourceParts,isVisibleConversationMessage:()=>true},'readerContentSignature'),projectProcessMessage,createHomerAttachmentAdapter:()=>({}),createAnnotationDraft:()=>({}),useMediaQuery:()=>false,matchMedia:()=>({matches:false}),useProcessDetails:messages=>({messages,load(){}}),ActiveReadPage:class{items=[];version={};snapshot(version,items,more){this.version=version;this.items=items;this.more=more;}invalidate(){}},HistoryWindow:class{constructor(){return history;}},useQueueOperations:()=>({}),useExternalStoreRuntime:value=>{nextRuntimeState=value;if(!deferRuntime)runtimeState=value;return runtime;},canAcceptInput:()=>true,isVisibleConversationMessage:()=>true,
-  homerLogo64:'',homerLogo256:'',Group:'group',Panel:'panel',PanelRightIcon:'preview-icon',Clock3:'schedule-icon',ScheduledMessages:'scheduled-messages',AssistantRuntimeProvider:'runtime',TaskStatusPopover:'tasks',WechatConnection:'wechat',DesktopSettings:'settings',ThreadPrimitive:{Root:'thread',Viewport:'viewport',Empty:'empty',Messages:'messages',ScrollToBottom:'bottom'},MessageTimestamps:'timestamps',UserMessage:'user',AssistantMessage:'assistant',MainComposer:'composer',HomerMessageQueue:'queue',HomerSelectionToolbar:'selection',CanvasPanel:'canvas',InteractionCard:'interaction',
+  ...appHooks,...metrics,...contexts,captureCommands:value=>{commands=value;},
+  defaultRangeExtractor,
+  useVirtualizer:options=>{
+   const config={...options,estimateSize:()=>100,initialRect:{width:760,height:view.clientHeight},observeElementRect:(_instance,callback)=>{rectCallback=callback;callback({width:760,height:view.clientHeight});return ()=>{};},observeElementOffset:(_instance,callback)=>{offsetCallback=callback;callback(view.scrollTop,false);return ()=>{};},scrollToFn:(offset,{adjustments=0})=>{view.scrollTop=offset+adjustments;},onChange(){}};
+   const instance=appHooks.useMemo(()=>new Virtualizer(config),[]);instance.setOptions(config);virtual=instance;
+   appHooks.useLayoutEffect(()=>instance._didMount(),[]);appHooks.useLayoutEffect(()=>instance._willUpdate());
+   return mountedRange?{...instance,getVirtualItems:()=>Array.from({length:options.count},(_,index)=>({index,key:options.getItemKey(index),start:index*100,end:(index+1)*100,size:100})).filter(row=>row.index>=mountedRange[0]&&row.index<=mountedRange[1])}:instance;
+  },
+  useBrowserPages:()=>({pages:[],error:''}),empty,mobileView:false,CONVERSATION_VIEW,liveMainActivity,processActivityText:()=>'',readerContentSignature:load(resolve('ui/homer-app.tsx'),{messageSourceParts,isVisibleConversationMessage:()=>true},'readerContentSignature'),projectProcessMessage,createHomerAttachmentAdapter:()=>({}),createAnnotationDraft:()=>({}),useMediaQuery:()=>false,matchMedia:()=>({matches:false}),useProcessDetails:messages=>({messages,load(){}}),ActiveReadPage:class{items=[];version={};snapshot(version,items,more){this.version=version;this.items=items;this.more=more;}invalidate(){}},HistoryWindow:class{constructor(){return history;}},useQueueOperations:()=>({}),useExternalStoreRuntime:value=>{nextRuntimeState=value;if(!deferRuntime)runtimeState=value;return runtime;},canAcceptInput:()=>true,isVisibleConversationMessage:()=>true,
+  VirtualMessage:'virtual-message',Fragment:'fragment',homerLogo64:'',homerLogo256:'',Group:'group',Panel:'panel',PanelRightIcon:'preview-icon',Clock3:'schedule-icon',ScheduledMessages:'scheduled-messages',AssistantRuntimeProvider:'runtime',TaskStatusPopover:'tasks',WechatConnection:'wechat',DesktopSettings:'settings',ThreadPrimitive:{Root:'thread',Viewport:'viewport',Empty:'empty',Messages:'messages',MessageByIndex:'message-by-index',ScrollToBottom:'bottom'},MessageTimestamps:'timestamps',UserMessage:'user',AssistantMessage:'assistant',MainComposer:'composer',HomerMessageQueue:'queue',HomerSelectionToolbar:'selection',CanvasPanel:'canvas',InteractionCard:'interaction',
   ConnectionEvents:class{constructor(){stateEvents=this;}listeners=new Map();addEventListener(name,fn){this.listeners.set(name,fn);}close(){}},sessionStorage:{},localStorage:{length:0},storage:{read(){}},ResizeObserver,requestAnimationFrame:frame,cancelAnimationFrame:cancel,document:Object.assign(new EventTarget(),{getElementById:id=>rows.find(r=>r.id===id)}),Element:class Element{},window:{getSelection:()=>quoteSelection},
   locateSourceQuote:quoteRange,
   fetch:tailFetch,
-  post:async(path,body)=>{requests.push({path,body});if(deferPage)await pageReady;if(!deferPage)pendingLayout+=200;return {...page,units:['earlier'],messages:[{...messages[0],id:'earlier'}],before:null};},
+  post:async(path,body)=>{requests.push({path,body});if(body.request?.before&&beforeFailures-->0)throw Error('synthetic_before_failure');if(deferPage)await pageReady;if(!deferPage)pendingLayout+=200;return {...page,units:['earlier'],messages:[{...messages[0],id:'earlier'}],before:null};},
  },'HomerApp');
- function render(commit=true){appHooks.begin();const tree=app();viewportProps=nodes(tree).find(n=>n.type==='viewport').props;viewportProps.ref.current=view;if(pendingLayout){for(const row of rows)row.y+=pendingLayout;view.scrollHeight+=pendingLayout;pendingLayout=0;}scrollHooks.begin();const ref=useScroll(viewportProps);if(!scrollRef){scrollRef=ref;scrollRef(view);}scrollHooks.commit();if(commit)appHooks.commit();return tree;}
- function emitScroll(){for(const fn of listeners.get('scroll')??[])fn();viewportProps.onScroll?.({currentTarget:view});}
- function flush(){for(let n=0;n<6&&frames.size;n++){const fs=[...frames.values()];frames.clear();for(const fn of fs)fn();}emitScroll();render();}
- function resize(){const restore=()=>{for(const observer of [...observers])observer.fn([]);};if(upstreamFirst){resizeContent?.();restore();}else{restore();resizeContent?.();}emitScroll();render();flush();}
- function gesture(top,kind='onWheel',settle=true){viewportProps[kind]?.({type:kind==='onKeyDown'?'keydown':kind==='onTouchMove'?'touchmove':kind==='onTouchStart'?'touchstart':kind==='onPointerDown'?'pointerdown':'wheel',key:'PageDown',target:view,deltaY:top-view.scrollTop,currentTarget:view});view.scrollTop=top;emitScroll();if(settle){render();flush();}}
+ function render(commit=true,beforeCommit=()=>{}){appHooks.begin();const tree=app();viewportProps=nodes(tree).find(n=>n.props?.className==='thread-viewport').props;viewportProps.ref.current=view;if(pendingLayout){for(const row of rows)row.y+=pendingLayout;view.scrollHeight+=pendingLayout;pendingLayout=0;}for(let i=0;i<(runtimeState?.messages.length??0);i++){if(virtual.itemSizeCache.has(runtimeState.messages[i].id))continue;const at=rows.findIndex(r=>r.dataset.conversationMessage===runtimeState.messages[i].id);if(at>=0){const row=rows[at];virtual.resizeItem(i,Math.max(row.height??0,rows[at+1]?rows[at+1].y-row.y:view.scrollHeight-row.y));}}beforeCommit();if(commit)appHooks.commit();return tree;}
+ function emitScroll(){offsetCallback?.(view.scrollTop,false);for(const fn of listeners.get('scroll')??[])fn();viewportProps.onScroll?.({currentTarget:view});}
+ function flush(){for(let n=0;n<12;n++){const count=appHooks.updates();render();const fs=[...frames.values()];frames.clear();for(const fn of fs)fn();emitScroll();if(!frames.size&&appHooks.updates()===count)break;}}
+ function resize(){
+  const measure=()=>{rectCallback?.({width:760,height:view.clientHeight});for(let i=0;i<(runtimeState?.messages.length??0);i++){const row=rows.find(r=>r.dataset.conversationMessage===runtimeState.messages[i].id);if(row){const at=rows.indexOf(row),size=rows[at+1]?rows[at+1].y-row.y:view.scrollHeight-row.y,rect=row.getBoundingClientRect();virtual.resizeItem(i,rect.bottom===rect.top?0:Math.max(row.height??0,size));}}};
+  const restore=()=>{for(const observer of [...observers])observer.fn([]);};
+  if(upstreamFirst){measure();restore();}else{restore();measure();}emitScroll();render();flush();
+ }
+ function gesture(top,kind='onWheel',settle=true,heightDelta=0,key='PageDown'){viewportProps[kind]?.({type:kind==='onKeyDown'?'keydown':kind==='onTouchMove'?'touchmove':kind==='onTouchStart'?'touchstart':kind==='onPointerDown'?'pointerdown':'wheel',key,target:view,deltaY:top-view.scrollTop,currentTarget:view});view.scrollTop=top;view.scrollHeight+=heightDelta;emitScroll();if(settle){render();flush();}}
  render();if(gestureBeforeSnapshot)gesture(500);stateEvents.listeners.get('state')({data:JSON.stringify(state)});render();flush();resize();
  render.replayEffects=()=>{appHooks.replayEffects();render();flush();};
- return {renderRequests:appHooks.updates,view,rows,state,writes,frameCount:()=>frames.size, deferRuntime(){deferRuntime=true;},commitRuntime(commit=true){deferRuntime=false;runtimeState=nextRuntimeState;for(const fn of subscribers)fn();if(commit){render();flush();}},claim(){return runtimeState.messages[0].metadata.custom.claimPosition();},cancelFromComposer(){nodes(render()).find(n=>n.type==='thread').props.onKeyDownCapture({type:'keydown',key:'a',target:{closest:()=>({})}});},peekCue(){return nodes(render(false)).find(n=>n.props?.className==='scroll-latest').props;},contentMutation(){for(const observer of mutations)observer.fn([{type:'characterData'}]);},cueHidden(){return nodes(render()).find(n=>n.props?.className==='scroll-latest').props.disabled;},cue(){return nodes(render()).find(n=>n.props?.className==='scroll-latest').props.children.flat(Infinity).join('');}, snapshot(next={},commit=true){state={...state,...next};stateEvents.listeners.get('state')({data:JSON.stringify(state)});if(commit){render();flush();}},disconnect(){stateEvents.listeners.get('unavailable')();render();},render,resize,flush,gesture,emitScroll,requests,history,startGesture(kind='onPointerDown'){viewportProps[kind]?.({type:'pointerdown',target:view,currentTarget:view});},startEarlier(){nodes(render()).find(n=>n.type==='button'&&n.props.children==='加载更早消息').props.onClick();},async releaseEarlier(beforeCommit=()=>{}){releasePage();await new Promise(resolve=>setImmediate(resolve));beforeCommit();render();resize();},locateQuote(quote){nodes(render()).find(n=>n.type==='QuoteNavigationContext').props.value(quote);render();},locate(id){viewportProps.onClick?.({target:{closest:()=>({hash:'#message-'+id})},preventDefault(){}});render();},offset:row=>row.getBoundingClientRect().top-view.getBoundingClientRect().top,run(){state={...state,isRunning:true};stateEvents.listeners.get('state')({data:JSON.stringify(state)});render();events.get('thread.runStart')();flush();},addRow(message){const y=rows.at(-1)?.y+100||0;rows.push({id:'message-'+message.id,dataset:{conversationMessage:message.id},y,height:100,scrollIntoView(){view.scrollTop=this.y;},focus(){},getBoundingClientRect(){return {top:view.screenTop+this.y-view.scrollTop,bottom:view.screenTop+this.y+this.height-view.scrollTop};}});},growBelow(amount){view.scrollHeight+=amount;resize();},growAbove(row,amount){const cutoff=row.y;for(const r of rows)if(r.y>=cutoff)r.y+=amount;view.scrollHeight+=amount;resize();},expand(){const summary={tagName:'SUMMARY',parentElement:{hasAttribute:()=>false}};const target={closest:s=>s==='[data-message-id]'||s==='[data-conversation-message]'?rows[29]:s==='[aria-expanded], summary'?summary:null};const event={target};viewportProps.onClickCapture?.(event);for(const fn of listeners.get('click')??[])fn(event);viewportProps.onClick?.(event);render();},latest(){const button=nodes(render()).find(n=>n.props?.className==='scroll-latest');button.props.onClick?.({});if(button.type==='bottom')events.get('bottom')({behavior:'instant'});emitScroll();render();flush();},async earlier(){nodes(render()).find(n=>n.type==='button'&&n.props.children==='加载更早消息').props.onClick();await new Promise(resolve=>setImmediate(resolve));render();resize();},close(){appHooks.close();scrollHooks.close();}};
+ return {notice:()=>nodes(render()).filter(n=>n.props?.role==='status').map(n=>n.props.children).flat(Infinity).join(''),media,mediaEvent(name){for(const fn of listeners.get(name)??[])fn({type:name});},protectedIndexes:()=>virtual.options.rangeExtractor({startIndex:10,endIndex:18,overscan:0,count:runtimeState.messages.length}),startLatestBeforeReadBack(){nodes(render()).find(n=>n.props?.className==='scroll-latest').props.onClick();render();},measureRow:(index,size)=>virtual.resizeItem(index,size),renderWithRuntimeCommit(){return render(true,()=>{deferRuntime=false;runtimeState=nextRuntimeState;for(const fn of subscribers)fn();});},runtimeInput:()=>nextRuntimeState,renderRequests:appHooks.updates,view,rows,state,writes,frameCount:()=>frames.size, deferRuntime(){deferRuntime=true;},commitRuntime(commit=true){deferRuntime=false;runtimeState=nextRuntimeState;for(const fn of subscribers)fn();if(commit){render();flush();}},claim(){return runtimeState.messages[0].metadata.custom.claimPosition();},cancelFromComposer(){nodes(render()).find(n=>n.type==='thread').props.onKeyDownCapture({type:'keydown',key:'a',target:{closest:()=>({})}});},peekCue(){return nodes(render(false)).find(n=>n.props?.className==='scroll-latest').props;},contentMutation(){for(const observer of mutations)observer.fn([{type:'characterData'}]);},cueHidden(){return nodes(render()).find(n=>n.props?.className==='scroll-latest').props.disabled;},cue(){return nodes(render()).find(n=>n.props?.className==='scroll-latest').props.children.flat(Infinity).join('');}, snapshot(next={},commit=true){state={...state,...next};stateEvents.listeners.get('state')({data:JSON.stringify(state)});if(commit){render();flush();}},disconnect(){stateEvents.listeners.get('unavailable')();render();},render,resize,flush,gesture,emitScroll,requests,history,startGesture(kind='onPointerDown'){viewportProps[kind]?.({type:'pointerdown',target:view,currentTarget:view});},startEarlier(){commands.loadPage('before');},async releaseEarlier(beforeCommit=()=>{}){releasePage();await new Promise(resolve=>setImmediate(resolve));beforeCommit();render();resize();},locateQuote(quote){nodes(render()).find(n=>n.type==='QuoteNavigationContext').props.value(quote);render();flush();},locate(id){viewportProps.onClick?.({target:{closest:()=>({hash:'#message-'+id})},preventDefault(){}});render();},offset:row=>row.getBoundingClientRect().top-view.getBoundingClientRect().top,run(){state={...state,isRunning:true};stateEvents.listeners.get('state')({data:JSON.stringify(state)});render();flush();},addRow(message){const y=rows.at(-1)?.y+100||0;rows.push({id:'message-'+message.id,dataset:{conversationMessage:message.id},y,height:100,scrollIntoView(){view.scrollTop=this.y;},focus(){},getBoundingClientRect(){return {height:this.height,top:view.screenTop+this.y-view.scrollTop,bottom:view.screenTop+this.y+this.height-view.scrollTop};}});},growBelow(amount){view.scrollHeight+=amount;resize();},growAbove(row,amount){const cutoff=row.y;for(const r of rows)if(r.y>=cutoff)r.y+=amount;view.scrollHeight+=amount;resize();},expand(){const summary={tagName:'SUMMARY',parentElement:{hasAttribute:()=>false}};const target={closest:s=>s==='[data-message-id]'||s==='[data-conversation-message]'?rows[29]:s==='[aria-expanded], summary'?summary:null};const event={target};viewportProps.onClickCapture?.(event);for(const fn of listeners.get('click')??[])fn(event);viewportProps.onClick?.(event);render();},latest(){const button=nodes(render()).find(n=>n.props?.className==='scroll-latest');button.props.onClick?.({});emitScroll();render();flush();},async earlier(){commands.loadPage('before');await new Promise(resolve=>setImmediate(resolve));render();resize();},close(){appHooks.close();}};
 }
 
-// Missing runStart opt-out causes the real upstream hook to jump to 2700.
+// A new run never grants permission to follow the tail.
 test('a new run after reading history preserves the visible row through later streamed content',()=>{
  const f=fixture();f.gesture(1000);const row=f.rows[10],before=f.offset(row);f.run();assert.equal(f.offset(row),before);f.growBelow(300);assert.equal(f.offset(row),before);f.close();
 });
@@ -126,7 +133,7 @@ test('a pending earlier page preserves the newer user position instead of its re
 test('a gesture after message navigation rebuilds a cleared paused anchor before media resize',()=>{
  const f=fixture();f.gesture(950);const row=f.rows[12],before=f.offset(row);f.locate(row.dataset.conversationMessage);f.startGesture();f.growAbove(f.rows[9],180);assert.equal(f.offset(row),before);f.close();
 });
-// Both real-library/app resize orders must settle to the saved offset.
+// Both library/app resize orders must settle to the saved offset.
 for(const upstreamFirst of [false,true])test('one prepend commit with stream and media growth preserves its row, upstream first='+upstreamFirst,async()=>{
  const f=fixture({deferPage:true,upstreamFirst});f.gesture(1000);const row=f.rows[10],before=f.offset(row);f.startEarlier();
  await f.releaseEarlier(()=>{const cutoff=row.y;for(const r of f.rows){r.y+=200;if(r.y>=cutoff+200)r.y+=180;}f.view.scrollHeight+=530;});
@@ -139,7 +146,7 @@ test('the next gesture after latest keeps a manual reading anchor',()=>{
 
 test('late around response cannot move or focus after a user gesture',async()=>{const f=fixture({deferPage:true});f.locate('missing');f.gesture(1200);await f.releaseEarlier();assert.equal(f.view.scrollTop,1200);f.close();});
 
-// These tests run the actual app functions and installed scroll hook, with
+// These tests run the actual app functions and installed virtualizer, with
 // controlled runtime commit timing and geometry (not a browser acceptance).
 test('latest waits for the runtime body commit, and a gesture cancels that pending write',()=>{
  const f=fixture();f.gesture(1000);f.deferRuntime();f.snapshot({messages:f.state.messages.map(m=>({...m,text:'changed'}))});f.latest();assert.equal(f.view.scrollTop,1000);f.gesture(1200);f.commitRuntime();assert.equal(f.view.scrollTop,1200);f.close();
@@ -231,7 +238,7 @@ test('around navigation survives a same-ID incoming update before its runtime co
  f.addRow({id:'earlier'});const row=f.rows.at(-1);row.y=100;let focused=0;row.scrollIntoView=()=>{f.view.scrollTop=100;};row.focus=()=>{focused++;};
  f.render();assert.equal(focused,0);
  f.snapshot({messages:[...f.state.messages,{...f.state.messages[0],id:'earlier',text:'same ID updated'}],history:{...f.state.history,page:{...f.state.history.page,revision:2}}});
- f.commitRuntime();assert.equal(focused,1);assert.equal(f.view.scrollTop,100);f.growBelow(200);assert.equal(f.view.scrollTop,100);f.close();
+ f.commitRuntime();assert.equal(focused,1);assert.ok(f.offset(row)>=0&&f.offset(row)<f.view.clientHeight);const top=f.view.scrollTop;f.growBelow(200);assert.equal(f.view.scrollTop,top);f.close();
 });
 
 test('layout compensation settles in both observer orders with bounded position writes',async()=>{
@@ -331,7 +338,7 @@ test('latest retries a failed suffix without a new snapshot and shares an in-fli
  let calls=0,release;
  const f=fixture({tailFetch:async()=>{calls++;if(calls===1)return {ok:false,status:503,json:async()=>({error:'service_not_ready'})};return new Promise(done=>{release=done;});}});
  try{
-  const detached={...f.state.messages[0],id:'detached'};f.addRow(detached);f.view.scrollHeight+=100;f.gesture(1000);
+  const detached={...f.state.messages[0],id:'detached'};f.addRow(detached);f.rows.unshift(f.rows.pop());f.rows.forEach((row,i)=>{row.y=i*100;});f.view.scrollHeight+=100;f.gesture(1000);
   f.history.add({...f.state.history.page,units:['detached'],messages:[detached],after:'detached-tail'},'reader-epoch','around');f.render();
   await new Promise(done=>setImmediate(done));f.render();assert.equal(calls,1);assert.equal(f.history.archived,true);assert.equal(f.view.scrollTop,1000);
   f.latest();await new Promise(done=>setImmediate(done));f.render();assert.equal(calls,2,'explicit latest may retry the same revision');
@@ -361,4 +368,50 @@ test('a pending latest rechecks after child message DOM commits without a runtim
   f.render();f.flush();assert.equal(f.view.scrollTop,2400);
   const settled=f.renderRequests();f.contentMutation();assert.equal(f.renderRequests(),settled,'no parent update after the latest request is consumed');
  }finally{f.close();}
+});
+
+test('a mounted message window preserves original runtime indexes while unmounting distant rows',()=>{
+ const f=fixture({mountedRange:[10,18]});try{
+  const mounted=nodes(f.render()).filter(n=>n.props?.['data-index']!==undefined);
+  assert.equal(mounted.length,9);assert.deepEqual(mounted.map(n=>n.props['data-index']),[10,11,12,13,14,15,16,17,18]);
+  assert.deepEqual(mounted.map(n=>nodes(n).find(child=>child.type==='virtual-message')?.props.index),[10,11,12,13,14,15,16,17,18]);
+ }finally{f.close();}
+});
+
+test('scroll-only renders retain the external runtime messages and converter',()=>{
+ const f=fixture();try{const previous=f.runtimeInput();f.gesture(1000);const current=f.runtimeInput();assert.equal(current.messages,previous.messages);assert.equal(current.convertMessage,previous.convertMessage);}finally{f.close();}
+});
+
+test('a runtime commit between render and layout cannot consume latest against the previous row indexes',()=>{
+ const f=fixture();try{f.gesture(1000);f.deferRuntime();const next={...f.state.messages.at(-1),id:'new-unmounted-tail'};f.snapshot({messages:[...f.state.messages,next]});f.latest();f.renderWithRuntimeCommit();assert.equal(f.view.scrollTop,1000);f.addRow(next);f.view.scrollHeight+=100;f.render();f.flush();assert.equal(f.view.scrollTop,2500);}finally{f.close();}
+});
+
+test('a first row measurement before native scroll readback cannot overwrite the newer latest command',()=>{
+ const f=fixture();try{f.gesture(1000);f.startLatestBeforeReadBack();assert.equal(f.view.scrollTop,2400);f.measureRow(0,200);assert.equal(f.view.scrollTop,2400);f.flush();}finally{f.close();}
+});
+
+test('a failed automatic before page retries on the same revision after reconnecting',async()=>{
+ const f=fixture({beforeFailures:1});try{f.gesture(0);await new Promise(done=>setImmediate(done));f.render();f.flush();assert.equal(f.requests.length,1);f.render();f.flush();assert.equal(f.requests.length,1);f.disconnect();f.snapshot();await new Promise(done=>setImmediate(done));f.render();f.flush();assert.equal(f.requests.length,2);}finally{f.close();}
+});
+test('a fresh upward gesture at the top wakes a failed automatic before read',async()=>{
+ const f=fixture({beforeFailures:1});try{f.gesture(0);await new Promise(done=>setImmediate(done));f.render();f.flush();const before=f.renderRequests();f.startGesture('onWheel');assert.ok(f.renderRequests()>before);f.render();await new Promise(done=>setImmediate(done));f.render();f.flush();assert.equal(f.requests.length,2);}finally{f.close();}
+});
+test('actively playing media is retained outside the mounted range and released on pause',()=>{
+ const f=fixture();try{const root=f.rows[3],media={paused:false,ended:false,closest:()=>root,parentElement:{closest:()=>root}};f.media.push(media);f.mediaEvent('play');assert.ok(f.protectedIndexes().includes(3));const before=f.renderRequests();media.paused=true;f.mediaEvent('pause');assert.ok(f.renderRequests()>before);assert.ok(!f.protectedIndexes().includes(3));}finally{f.close();}
+});
+
+test('a wheel landing during virtual range reflow replaces the old reading anchor',()=>{
+ const f=fixture();try{f.gesture(1000);f.gesture(1200,'onWheel',true,100);const row=f.rows[12],top=f.offset(row);f.growAbove(row,180);assert.equal(f.offset(row),top);}finally{f.close();}
+});
+
+test('a quote to the final short cached message settles at the physical bottom',async()=>{
+ let selected=0;const f=fixture({quoteRange:async()=>{selected++;return undefined;}});try{f.gesture(1000);f.locateQuote({messageId:'row-29',text:'history'});await new Promise(done=>setImmediate(done));assert.equal(f.view.scrollTop,2400);assert.equal(selected,1);assert.equal(f.frameCount(),0);}finally{f.close();}
+});
+
+test('cached quote fallback cannot hide a failed automatic tail fill',async()=>{
+ const f=fixture({tailFetch:async()=>({ok:false,status:503,json:async()=>({error:'service_not_ready'})})});try{f.gesture(1000);f.history.add({...f.state.history.page,units:['detached'],messages:[f.state.messages[10]],after:'detached-tail'},'reader-epoch','around');f.snapshot();await new Promise(done=>setImmediate(done));f.render();f.flush();assert.match(f.notice(),/后续消息暂未读全/);f.locateQuote({messageId:'row-10',text:'legacy excerpt'});await new Promise(done=>setImmediate(done));f.render();f.flush();assert.match(f.notice(),/后续消息暂未读全/);}finally{f.close();}
+});
+
+test('Tab focus navigation adopts its new reader row during a virtual reflow',()=>{
+ const f=fixture();try{f.gesture(1000);f.gesture(1200,'onKeyDown',true,100,'Tab');const row=f.rows[12],top=f.offset(row);f.growAbove(row,180);assert.equal(f.offset(row),top);}finally{f.close();}
 });

@@ -37,7 +37,7 @@ async function fixture(run,{failFetch=false,fetcher,cachedDecodeError=false}={})
  globalThis.fetch=async(path,init)=>{requests++;return fetcher?fetcher(path,init):{ok:!failFetch,blob:async()=>new Blob(['synthetic image bytes'],{type:'image/png'})};};
  globalThis.IntersectionObserver=class{constructor(callback){this.callback=callback;observers.push(this);}observe(node){this.node=node;}disconnect(){this.node=null;}};
  try{await withDom(async dom=>{
-  const create=dom.doc.createElement;dom.doc.createElement=name=>{const node=create(name);node.closest=()=>null;if(name==='img'&&cachedDecodeError){node.complete=true;node.naturalWidth=0;}return node;};dom.doc.body=dom.doc.createElement('body');
+  const create=dom.doc.createElement;dom.doc.createElement=name=>{const node=create(name);node.closest=()=>null;node.querySelectorAll=selector=>descendants(node).filter(child=>selector==='audio,video'?['AUDIO','VIDEO'].includes(child.tagName):child.getAttribute?.('aria-expanded')==='true');node.querySelector=selector=>node.querySelectorAll(selector)[0]??null;if(name==='img'&&cachedDecodeError){node.complete=true;node.naturalWidth=0;}return node;};dom.doc.body=dom.doc.createElement('body');
   const render=asset=>dom.render(React.createElement(MediaAttachment,{asset,messageId:'synthetic-message',index:0}));
   const near=async value=>act(async()=>{for(const o of observers)if(o.node)o.callback([{isIntersecting:value}]);});
   const event=async(type,node=dom.find(n=>n.tagName==='IMG'))=>act(async()=>{assert.ok(node,'expected image node');if(type==='load')node.naturalWidth=4;for(const listener of node.listeners[type]??[])listener.handler({type,target:node,bubbles:false,preventDefault(){},stopPropagation(){}});});
@@ -55,6 +55,7 @@ test('ready images use only the original preview through loading, lazy reloads a
   assert.ok(descendants(dom.doc.body).find(n=>n.getAttribute?.('data-slot')==='image-zoom-content'));
   await act(async()=>{const target=descendants(dom.doc.body).find(n=>n.getAttribute?.('data-slot')==='image-zoom-close');for(const listener of dom.doc.body.listeners.click??[])if(!listener.capture)listener.handler({type:'click',target,button:0,bubbles:true,preventDefault(){},stopPropagation(){}});});
   assert.ok(!descendants(dom.doc.body).find(n=>n.getAttribute?.('data-slot')==='image-zoom-content'));
+  await dom.near(false);assert.ok(slot(dom,'image-preview'),'focused media retains its preview');dom.doc.activeElement=null;
   await dom.near(false);assert.equal(slot(dom,'file-root'),undefined);assert.ok(dom.find(n=>n.getAttribute?.('class')==='media-preview-placeholder'));
   await dom.near(true);assert.equal(slot(dom,'file-root'),undefined);await dom.event('load');
   await dom.render({...image,revision:2});assert.equal(slot(dom,'file-root'),undefined);assert.equal(slot(dom,'image-preview'),undefined,'the old revision must unmount immediately');
@@ -121,4 +122,11 @@ test('ordinary files and unavailable images retain names, sizes and state feedba
    snapshot(dom,state);
   }
  });
+});
+
+test('playing voice retains its preview outside the viewport and paused voice can unload',async()=>{
+ await fixture(async dom=>{await dom.render({...image,kind:'voice',mime:'audio/wav'});await dom.near(true);const audio=dom.find(n=>n.tagName==='AUDIO');assert.ok(audio);audio.paused=false;audio.ended=false;await dom.near(false);assert.ok(dom.find(n=>n.tagName==='AUDIO')===audio);audio.paused=true;await dom.near(false);assert.equal(dom.find(n=>n.tagName==='AUDIO'),undefined);});
+});
+test('an open image zoom retains its source outside the viewport',async()=>{
+ await fixture(async dom=>{await dom.render(image);await dom.near(true);await dom.event('load');await dom.click(dom.find(n=>n.getAttribute?.('aria-label')==='放大图片'));const zoom=descendants(dom.doc.body).find(n=>n.getAttribute?.('data-slot')==='image-zoom-content');assert.ok(zoom);await dom.near(false);assert.ok(descendants(dom.doc.body).find(n=>n.getAttribute?.('data-slot')==='image-zoom-content')===zoom);});
 });

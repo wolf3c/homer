@@ -191,7 +191,7 @@ export class WebHistoryPages{
   });
   const first=selected[0],last=selected.at(-1);
   return {protocol:3 as const,threadId,revision:this.revision,...display,units:selectedIds,
-   before:first&&(request.after||inclusive||more)?this.cursor(threadId,first.id):null,
+   before:first&&(request.after||more)?this.cursor(threadId,first.id):null,
    after:last&&(request.before||inclusive||request.after&&more)?this.cursor(threadId,last.id):null};
  }
  workerTargets(){

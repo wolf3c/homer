@@ -20,9 +20,9 @@ export async function fixture(total, mode, media = false, stableRecent = false) 
     const connectionDirectory=mkdtempSync(join(destination,'synthetic-connection-'));
     const mediaOwner=new MediaStore(f.store.db,join(connectionDirectory,'media'));
     const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=','base64');
-    function addUserMedia(n,bytes=png){
+    function addUserMedia(n,bytes=png,kind='image'){
         const key='fixture-user-'+n;
-        const ref=mediaOwner.snapshot(key,{filename:'synthetic-image.png',kind:'image',mime:'image/png',bytes});
+        const ref=mediaOwner.snapshot(key,{filename:kind==='voice'?'synthetic-voice.wav':'synthetic-image.png',kind,mime:kind==='voice'?'audio/wav':'image/png',bytes});
         f.store.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run('user-'+n,JSON.stringify([ref]));
         mediaOwner.pinAttachment(ref,'user-'+n);mediaOwner.abandonOperation(key);
     }

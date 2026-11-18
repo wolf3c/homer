@@ -92,3 +92,11 @@ test('a fully pinned suffix accepts snapshots without dropping loaded messages',
  const previous=cache.recent,next=state(11,2);next.messages.push(...page(10).messages);next.history.page.units.push('u10');cache.snapshot(next);const current=cache.recent;
  const pins=new Set([...cache.pages.flatMap(p=>p.messages.map(m=>m.id)),'u11']);assert.equal(cache.snapshot(state(12,3),pins),true);assert.notEqual(cache.recent,current);assert.notEqual(cache.recent,previous);assert.ok(cache.messages.some(m=>m.id==='u7'));assert.ok(cache.messages.some(m=>m.id==='u11'));assert.equal(cache.archived,true);
 });
+
+test('an empty before page retires its cursor but later valid visibility can restore it',()=>{
+ const cache=new HistoryWindow();cache.snapshot(state(10));cache.add(rangePage(0,9),'epoch','before');const ids=cache.messages.map(message=>message.id);
+ cache.add({...page(0),units:[],messages:[],before:null,after:null},'epoch','before');assert.equal(cache.before,null);assert.deepEqual(cache.messages.map(message=>message.id),ids);
+ cache.updateExisting({...page(0),before:null},'epoch');assert.equal(cache.before,null);
+ cache.snapshot(state(10,2));assert.equal(cache.before,null);assert.deepEqual(cache.messages.map(message=>message.id),ids);
+ cache.updateExisting({...page(0,2),before:'new-visible-before'},'epoch');assert.equal(cache.before,'new-visible-before');
+});

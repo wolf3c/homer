@@ -192,6 +192,7 @@ function ImageZoom({ src, alt = "图片预览", children }: ImageZoomProps) {
         tabIndex={0}
         className="aui-image-zoom-trigger cursor-zoom-in"
         aria-label="放大图片"
+        aria-expanded={isOpen}
       >
         {children}
       </div>

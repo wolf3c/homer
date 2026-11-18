@@ -6,8 +6,17 @@ function drain(){for(const run of waiting){if(active>=2)return;waiting.delete(ru
 // A shared two-request budget covers both attachment and Markdown previews.
 export function LazyMedia({path,children,kind='image',onError}:{path:string;kind?:'image'|'video'|'voice';onError?:()=>void;children:(url:string)=>ReactNode}){
  const element=useRef<HTMLSpanElement>(null),[near,setNear]=useState(false),[url,setUrl]=useState(''),[failed,setFailed]=useState(false);
- useEffect(()=>{const node=element.current;if(!node)return;
-  const observer=new IntersectionObserver(entries=>setNear(entries.some(entry=>entry.isIntersecting)),{root:node.closest('.thread-viewport'),rootMargin:'400px 0px'});observer.observe(node);return()=>observer.disconnect();
+ useEffect(()=>{const node=element.current;if(!node)return;let visible=false,disposed=false;
+  const refresh=()=>{if(disposed)return;
+   const playing=Array.from(node.querySelectorAll<HTMLMediaElement>('audio,video')).some(media=>!media.paused&&!media.ended);
+   setNear(visible||playing||!!node.querySelector('[aria-expanded="true"]')||node.contains(document.activeElement));
+  };
+  const changed=()=>queueMicrotask(refresh);
+  const observer=new IntersectionObserver(entries=>{visible=entries.some(entry=>entry.isIntersecting);refresh();},{root:node.closest('.thread-viewport'),rootMargin:'400px 0px'});
+  const expanded=typeof MutationObserver==='undefined'?undefined:new MutationObserver(refresh);
+  expanded?.observe(node,{subtree:true,attributes:true,attributeFilter:['aria-expanded']});
+  for(const event of ['play','pause','ended','focusin','focusout'])node.addEventListener(event,changed,true);
+  observer.observe(node);return()=>{disposed=true;observer.disconnect();expanded?.disconnect();for(const event of ['play','pause','ended','focusin','focusout'])node.removeEventListener(event,changed,true);};
  },[path]);
  useEffect(()=>{if(!near)return;const controller=new AbortController();let objectUrl='';setFailed(false);
   const run=()=>{if(controller.signal.aborted)return;active++;

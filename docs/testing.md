@@ -1365,3 +1365,55 @@ node scripts/test.mjs --history-performance
 本节更新此前悬停、系统截图和窄屏程序focus的未通过状态，不覆盖原始记录。main精确候选在Node22通过186/186定向离线、410/410壳契约、UI／后端类型、独立构建；完整canvas-image-zoom专项（不带--layout-only）三宽度30组通过、Chrome退出0／forced=false／watchdog=false。preview-annotation-entry三宽度真实Electron通过；preview-electron原生11组通过，含双后台Worker、来源草稿闭环、网页／HTML悬停、真实系统窗口截图、操作错误传播及认领后popup当前owner、opener、会话、隔离／预加载验证。所有数据、引擎、资料目录及账号均为独立合成环境。
 
 native测试使用局部await异步条件的等待助手，且对子Electron设置超时回收；原生工具仍不开放任意脚本或浏览器端点。popup最小探针复现不复用传入WebContents时卡死，转交完整options后成功；旧错误已修复并有真实原生回归。20次双页有界ARIA读取约42.1ms为单机小样本，不作通用性能承诺。未跑全量npm test、实模、安装版或真机。复现入口和准确数据见[复审记录](preview-final-review-2026-11-18.md)及其结构化报告。
+
+## 会话虚拟化阶段一验收（2026-11-18）
+
+本节对应[实施方案](architecture/conversation-history-virtualization.md)的实际候选。当前共享目录另有后续并行上传策略修改，下面是冻结候选的验收，不代表全部当前未提交修改都已验证。固定 @tanstack/react-virtual 3.14.26／virtual-core 3.19.11；不升级 React 或 assistant-ui。仅减少DOM，不裁剪已加载数据。实现及复审证据如下，提交状态以Git记录为准；未部署。
+
+隔离冻结源码（复用项目依赖，排除日常数据／账号）运行14文件167项定向离线、UI及服务类型检查、Vite生产构建，均通过。真实HTTP/SSE和mock-keychain Chrome中1440／390／320px六场景通过，含自动before、真实缓存完整性、引用重新挂载与精确Range、跨5行选区、Tab、实际LazyMedia静音voice附件播放、动态图片、20013字符长消息及宽度往返、171条重连补齐和一次注入409重试；无漏重、业务提交或引擎调用，Chrome退出0、forced=false、watchdog=false。锚点最大偏差0.782px、宽度重测0px。物理快速滚轮在估高后继续一tick完成测量，合计2tick到真实底部gap0，没有恢复自动跟随。
+
+设备／测量方式沿用上一节：macOS27.2、M2八核24GiB、Node22.22.0、Chrome157.0.8103.79、1440×900；未独占CPU。400／2000／5000单元，每单元两条初始消息，答复203–206UTF-8字节；性能主体无图片／复杂过程卡片。GC heap、CDP DOM计数及两帧墙钟探针均与前次定义相同。逻辑完整性读取实际HistoryWindow实例；mounted DOM只用于窗口、实际可见和交互检查，不能再要求全部消息同时存在于DOM。
+
+|历史单元|补齐后缓存消息|采样挂载消息|补齐秒|GC后heap MiB|最新跳转p95 ms|输入墙钟p95 ms|
+|---:|---:|---:|---:|---:|---:|---:|
+|400|678|22|0.30|32.3|249|34|
+|2000|3878|22|1.25|129.1|401|34|
+|5000|9878|14|5.82|346.7|988|50|
+
+5000 单元继续 50 批×20 条新增，1000 条全部进入实际缓存；最终共 6000 单元／11000 条缓存消息，挂载 12 条、DOM 节点 489 个、GC 后 heap 495.1 MiB，最终最新跳转 p95 342ms、输入墙钟 p95 128ms。每批缓存显现 p95 389ms，新增阶段实际 126.17s（含间隔、GC及交互探针），不是恒定速率吞吐或全天浸泡。中间内存样本从新增200条约386MiB持续增至1000条约497MiB，不能称总内存有界。
+
+5000全过程115次页请求：定位around1、after62（含一次预设失败）、较早before2、持续新增可见范围刷新around50；每页最多80单元、成功页JSON合计8.45MiB，不含SSE、静态资源和HTTP头。修复前有49次空before读取，最终为0。四类游标／可见性组合有离线维护回归，特别保留同epoch下旧reply重新变为formal并恢复before的能力。
+
+探索目标结果：补齐30s和采样输入p95 200ms达到；heap256MiB和最大规模初次最新p95 500ms未达到。5000初次最新p95约988ms，最终新增后约342ms；不能挑最终较快样本宣称所有阶段通过。中间内存有分段记录，交互保留加载及最终样本和最后一个中途探针，不据此保证整个运行每一时刻均低于阈值。GC heap不是Chrome RSS，未测RSS／堆retainer归因。较原同机历史基线的改善只作趋势对照，当前还有其他版本变化；旧末尾10878条与新版11000条缓存不同（新版上滑补入最早122条），未用数据裁剪换低内存。
+
+默认核心测试范围不变，性能仍是显式 history-performance 专项；未运行全量npm test、真实会话／模型、安装版、移动真机或系统剪贴板。DOM仅在选区跨度、焦点／打开交互和播放需要时保留额外行；超大主动选区会临时增大DOM。全历史浏览器Ctrl+F及完整屏幕阅读器遍历不在本阶段保证。
+
+复现时在专用副本使用Node22.22.0，先运行 node scripts/build-preview-annotation.mjs。正常生产源码不含调试全局；需要下面仅用于合成构建的只读探针，把实际HistoryWindow引用提供给浏览器测试，不另写一份合并算法。将以下配置保存为专用临时 mjs（将 /absolute/candidate 替换为副本绝对路径），不纳入产品：
+
+```js
+import original from '/absolute/candidate/ui/vite.config.ts';
+export default {...original,root:'/absolute/candidate/ui',plugins:[...original.plugins,{
+ name:'synthetic-history-probe',enforce:'pre',
+ transform(source,id){
+  if(!id.endsWith('/ui/homer-app.tsx'))return;
+  const marker='  const artifacts=state.artifacts??[];';
+  if(source.split(marker).length!==2)throw Error('history probe source marker drifted');
+  return source.replace(marker,'  window.__historyWindow=history.current;\n'+marker);
+ }
+}]};
+```
+
+```sh
+node node_modules/vite/bin/vite.js build --config /absolute/task/history-probe.config.mjs --configLoader runner --outDir /absolute/task/web
+HISTORY_FOLLOWUP_BUILD=/absolute/task/web HOMER_SYNTHETIC_ROOT=/absolute/task/synthetic HOMER_BROWSER_EVIDENCE=/absolute/task/functional node --import tsx tests/web-history-tail.browser.mjs
+HISTORY_FOLLOWUP_BUILD=/absolute/task/web HOMER_SYNTHETIC_ROOT=/absolute/task/synthetic HOMER_BROWSER_EVIDENCE=/absolute/task/performance HOMER_PERF_VARIANT=virtualized node scripts/test.mjs --history-performance
+```
+
+默认规模／批次／间隔沿用上一节；诊断缩小规模不能替代完整验收。原始本地材料为 outputs/task-dba13d4d-history-virtualization/REPORT.md、manifest.json、performance-final/results.json及acceptance-final-checked；供本次实现审核及数据窗口评估，审核完成且无后续依赖后回收。临时源码、构建、合成数据库、Chrome profile和重复依赖下载应在停用后清理，保留正常项目依赖。
+
+
+### 附件预算与错误原因定向验证（2026-11-18）
+
+Node22.22.0，沿 `tests/fixtures/synthetic-home.mjs` 与 `core-system-proxy.mjs` 使用隔离 HOME／CODEX_HOME、合成数据库、回环 HTTP 和注入引擎。`web-upload`、`web-upload-host`、`files`、`engine-rpc-lifecycle`、`engine`、`homer-attachment-adapter`、`mobile-channel`、`web-chat`、`media-lifecycle`、`media-retention`、`media-documents`、`attachment-tool-outlets`、`delegation-attachment-input`、`user-message-attachment`、`recursive-tools`及`mobile/connection.test.mjs`合计160项离线核心回归通过。显式追加已有 `web-upload-host.local-media.test.ts` 单项本地合成解码专项，合计161/161；没有真实模型调用。服务与UI `tsc --noEmit`、修改MJS语法及`git diff --check`通过。全 `tsconfig.check.json` 检查发现并行 `web-history-maintenance-contract.test.ts:28` 的WebState强转TS2352，归属历史虚拟列表事项，本事项未修改。
+
+手机双20MiB大包（每包Base64约26.7MiB）沿已有16KiB分帧及背压往返后仍可聊天；同进程两端合成测试最大RSS434880512字节（约415MiB），不代表手机WebView峰值或真机安全验收。20MiB上传／32MiB整包是Homer资源取舍，模型容量由实际请求决定。真实手机网络、低内存设备、安装版、Windows／Linux和浏览器批量渲染仍未验证；浏览器用例已按32附件及20MiB边界更新但只做语法检查。无新专项测试文件或默认测试分类变化。

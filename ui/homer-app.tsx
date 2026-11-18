@@ -1,3 +1,4 @@
+import {useVirtualizer,defaultRangeExtractor} from '@tanstack/react-virtual';
 import {saveBlob} from './file-download';
 import {isViewportAtBottom,observeContentResize} from '@assistant-ui/store/client';
 import {messageSourceParts} from '../src/message-quote';
@@ -910,6 +911,14 @@ function readerContentSignature(message:WebState['messages'][number]){
   for(const asset of message.media??[])add(asset.assetId+':'+asset.revision);
   return length?length+':'+(hash>>>0):'';
 }
+// The runtime and the provider store commit separately. A prepend can expose
+// a new runtime index before the provider has that index; wait for its ID.
+function VirtualMessage({id,index,measure}:{id:string;index:number;measure:(element:HTMLDivElement|null)=>void}){
+  const ready=useAuiState(state=>state.thread.messages[index]?.id===id);
+  useLayoutEffect(()=>{if(ready){const row=document.getElementById('message-'+id)?.parentElement;if(row)measure(row as HTMLDivElement);}},[ready,id,index,measure]);
+  return ready?<ThreadPrimitive.MessageByIndex index={index} components={{UserMessage,AssistantMessage}}/>:null;
+}
+
 function HomerApp() {
   const overlay=(navigator as Navigator&{windowControlsOverlay?:EventTarget&{visible:boolean}}).windowControlsOverlay;
   const [nativeTitlebar,setNativeTitlebar]=useState(()=>overlay?.visible===true);
@@ -981,14 +990,17 @@ function HomerApp() {
   const anchor=useRef<{id:string;top:number;version:number;next?:{id:string;top:number}}|null>(null);
   const [isAtBottom,setIsAtBottom]=useState(false),[hasNewContent,setHasNewContent]=useState(false);
   const reader=useRef<{gesture:boolean;top:number;height:number;viewHeight:number;frame?:number;initializedThread?:string;connected:boolean;
-    pending?:{kind:'latest'|'initialize'|'around';scope:string;navigation:number;user:number;recent?:HistoryWindow['recent'];id?:string;quote?:MessageQuote};
+    pending?:{kind:'latest'|'initialize'|'around'|'preserve';positioned?:boolean;scope:string;navigation:number;user:number;recent?:HistoryWindow['recent'];id?:string;quote?:MessageQuote};
     summary:Map<string,{source:object;signature:string}>;
   }>({gesture:false,top:0,height:0,viewHeight:0,connected:false,summary:new Map()});
-  const navigation=useRef(0);
+  const navigation=useRef(0),beforeAttempt=useRef(''),protection=useRef(''),messageList=useRef<HTMLDivElement>(null);
+  const [listTop,setListTop]=useState(0);
   const positionScope=()=>JSON.stringify([history.current.thread,history.current.epoch]);
   const visibleIds=()=>new Set(Array.from(viewport.current?.querySelectorAll<HTMLElement>('[data-conversation-message]')??[]).filter(element=>{const box=element.getBoundingClientRect(),view=viewport.current!.getBoundingClientRect();return box.bottom>view.top&&box.top<view.bottom;}).map(element=>element.dataset.conversationMessage!));
   function readingPins(){
     const pins=visibleIds(),saved=anchor.current;if(saved){pins.add(saved.id);if(saved.next)pins.add(saved.next.id);}
+    for(const control of viewport.current?.querySelectorAll<HTMLElement>('[aria-haspopup][aria-expanded="true"],.aui-image-zoom-trigger[aria-expanded="true"]')??[]){const message=control.closest<HTMLElement>('[data-conversation-message]');if(message)pins.add(message.dataset.conversationMessage!);}
+    for(const media of viewport.current?.querySelectorAll<HTMLMediaElement>('audio,video')??[]){if(!media.paused&&!media.ended){const message=media.closest<HTMLElement>('[data-conversation-message]');if(message)pins.add(message.dataset.conversationMessage!);}}
     const selected=window.getSelection();for(const node of [selected?.anchorNode,selected?.focusNode,document.activeElement]){const e=node instanceof Element?node:node?.parentElement;const message=e?.closest<HTMLElement>('[data-conversation-message]');if(message)pins.add(message.dataset.conversationMessage!);}return pins;
   }
   function measureReader(){const view=viewport.current;if(!view||view.clientHeight<=0)return;
@@ -1012,7 +1024,7 @@ function HomerApp() {
     const [first,next]=positions;
     anchor.current=first?{...first,next,version:userScroll.current}:null;measureReader();
   }
-  function invalidatePosition(){navigation.current++;reader.current.pending=undefined;if(reader.current.frame!==undefined)cancelAnimationFrame(reader.current.frame);reader.current.frame=undefined;}
+  function invalidatePosition(){virtualizer?.cancelScroll();navigation.current++;reader.current.pending=undefined;if(reader.current.frame!==undefined)cancelAnimationFrame(reader.current.frame);reader.current.frame=undefined;}
   // Stable metadata callback: all asynchronous quote/page/latest writes share this owner.
   const claimPosition=useCallback(()=>{
     invalidatePosition();captureAnchor();const scope=positionScope(),nav=navigation.current,user=userScroll.current;
@@ -1021,47 +1033,53 @@ function HomerApp() {
   function noteReaderGesture(event:{type?:string;key?:string;target?:EventTarget|null;currentTarget?:EventTarget|null}){
     invalidatePosition();userScroll.current++;captureAnchor();
     const input=(event.target as Element|null)?.closest?.('input,textarea,[contenteditable="true"],[role="textbox"]');
-    reader.current.gesture=event.type==='wheel'||event.type==='touchmove'||event.type==='pointerdown'&&event.target===event.currentTarget||event.type==='keydown'&&!input&&['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key??'');
+    reader.current.gesture=event.type==='wheel'||event.type==='touchmove'||event.type==='pointerdown'&&event.target===event.currentTarget||event.type==='keydown'&&!input&&['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' ','Tab'].includes(event.key??'');
+    if(reader.current.gesture&&(viewport.current?.scrollTop??Infinity)<=300&&history.current.before)setState(old=>({...old}));
   }
   function noteOutsideReaderGesture(event:{target:EventTarget|null;type:string;key?:string}){if(!viewport.current?.contains(event.target as Node))noteReaderGesture(event);}
   function recordReaderScroll(){
     const view=viewport.current;if(!view||view.clientHeight<=0)return;const previous=reader.current;
-    if(Math.abs(view.scrollTop-previous.top)>=1&&previous.gesture&&previous.frame===undefined&&view.scrollHeight===previous.height&&view.clientHeight===previous.viewHeight){captureAnchor();}
+    if(Math.abs(view.scrollTop-previous.top)>=1&&previous.gesture&&previous.frame===undefined){captureAnchor();}
     measureReader();
   }
   function restoreAnchor(){
-    const view=viewport.current;if(!view||view.clientHeight<=0)return;const saved=anchor.current;
-    if(saved&&saved.version===userScroll.current){
-      const readRow=(id:string)=>{const element=document.getElementById('message-'+id);return element&&view.contains(element)?element.getBoundingClientRect():null;};
-      let row=readRow(saved.id),top=saved.top;
-      if(row&&row.bottom===row.top&&saved.next){
-        const next=readRow(saved.next.id);
-        if(next&&next.bottom>next.top){row=next;top=saved.next.top;anchor.current={...saved.next,version:saved.version};}
-      }
-      if(row&&row.bottom>row.top){const delta=row.top-view.getBoundingClientRect().top-top;if(Math.abs(delta)>=1)view.scrollTop+=delta;}
-      else{view.scrollTop=reader.current.top;anchor.current=null;captureAnchor();if(!row)setPageNotice('原阅读位置已变化，可查看最新消息');}
-    }else if(!saved){view.scrollTop=reader.current.top;captureAnchor();}
-    measureReader();
+    const view=viewport.current,saved=anchor.current,element=saved&&document.getElementById('message-'+saved.id);
+    if(!view||!saved||!element||saved.version!==userScroll.current)return;
+    const delta=element.getBoundingClientRect().top-view.getBoundingClientRect().top-saved.top;
+    if(Math.abs(delta)>=1){virtualizer.scrollToOffset(view.scrollTop+delta);}measureReader();
   }
   useLayoutEffect(()=>{
     const view=viewport.current;if(!view)return;
-    const restore=()=>{
-      // Child message DOM can commit after the external runtime notification.
+    let width=view.clientWidth,height=view.clientHeight;
+    const observe=()=>{
+      const nextTop=messageList.current?messageList.current.getBoundingClientRect().top-view.getBoundingClientRect().top+view.scrollTop:0;
+      if(Math.abs(virtualizer.options.scrollMargin-nextTop)>=1&&anchor.current&&!reader.current.pending)reader.current.pending={kind:'preserve',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id:anchor.current.id};
+      setListTop(old=>Math.abs(old-nextTop)>=1?nextTop:old);
       if(reader.current.pending)setState(old=>({...old}));
-      restoreAnchor();
-      // The library's prepend observer may run after ours. Recheck once, using
-      // the same saved message offset, after both observers have measured.
-      if(reader.current.frame!==undefined)return;
-      const scope=positionScope(),nav=navigation.current,user=userScroll.current;
-      reader.current.frame=requestAnimationFrame(()=>{reader.current.frame=undefined;if(scope===positionScope()&&nav===navigation.current&&user===userScroll.current)restoreAnchor();});
+      // Row ResizeObserver compensation belongs to the virtualizer. Only a
+      // viewport reflow or explicit prepend needs Homer's saved pixel anchor.
+      if(width!==view.clientWidth||height!==view.clientHeight){
+        const remeasure=width!==view.clientWidth;width=view.clientWidth;height=view.clientHeight;
+        if(anchor.current&&!reader.current.pending)reader.current.pending={kind:'preserve',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id:anchor.current.id};
+        if(remeasure)virtualizer.measure();setState(old=>({...old}));
+      }
+      const saved=anchor.current,root=saved&&document.getElementById('message-'+saved.id);
+      if(saved?.next&&root&&root.getBoundingClientRect().bottom===root.getBoundingClientRect().top){anchor.current={...saved.next,version:saved.version};if(!reader.current.pending)reader.current.pending={kind:'preserve',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id:saved.next.id};setState(old=>({...old}));}
+      measureReader();
     };
-    // Reuse the viewport's content observer, including same-height DOM commits.
-    const disconnect=observeContentResize(view,restore);
-    return()=>{disconnect();invalidatePosition();};
+    const disconnect=observeContentResize(view,observe);
+    const protect=()=>{
+      const selection=window.getSelection(),id=(node:Node|null|undefined)=>{const element=node instanceof Element?node:node?.parentElement;return element?.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage??'';};
+      const signature=JSON.stringify([id(selection?.anchorNode),id(selection?.focusNode),selection?.isCollapsed??true,id(document.activeElement),...Array.from(view.querySelectorAll<HTMLMediaElement>('audio,video')).filter(media=>!media.paused&&!media.ended).map(media=>id(media))]);
+      if(protection.current===signature)return;protection.current=signature;setState(old=>({...old}));
+    };
+    document.addEventListener('selectionchange',protect);for(const event of ['focusin','focusout','play','pause','ended'])view.addEventListener(event,protect,true);
+    observe();
+    return()=>{disconnect();document.removeEventListener('selectionchange',protect);for(const event of ['focusin','focusout','play','pause','ended'])view.removeEventListener(event,protect,true);invalidatePosition();};
   },[]);
   function publishHistory(){const cache=history.current;setState(old=>({...old,messages:cache.messages,artifacts:cache.artifacts,inactiveInteractions:cache.inactiveInteractions}));}
   function prepareLatest(){const pending=reader.current.pending;
-    if(!pending||pending.kind==='around'||!reader.current.connected||!history.current.recent)return;
+    if(!pending||(pending.kind==='around'||pending.kind==='preserve')||!reader.current.connected||!history.current.recent)return;
     pending.recent=history.current.recent;publishHistory();
   }
   function observeContent(next:WebState,baseline:boolean){
@@ -1082,7 +1100,7 @@ function HomerApp() {
       const pins=readingPins();
       if(direction==='around'&&!page.messages.some((message:WebState['messages'][number])=>message.id===id))throw Error('history_message_not_found');
       if(!cache.add(page,epoch,direction,pins)){setPageNotice('读取期间记录已更新，请重新加载这一页。');return;}
-      commit(()=>{if(direction==='around')reader.current.pending={kind:'around',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id,quote};publishHistory();});
+      commit(()=>{reader.current.pending={kind:direction==='around'?'around':'preserve',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id:direction==='around'?id:anchor.current?.id,quote};publishHistory();});
     }catch(e){if(viewNavigation!==navigation.current)return;const code=e instanceof Error?e.message:'';setPageNotice(code==='history_cache_pinned'?'当前选择或焦点需要保留，请取消选择后继续加载。':code==='history_message_not_found'?'原消息不存在于当前对话，成果原答复可从授权入口只读打开。':code==='history_epoch_changed'||code==='history_cursor_expired'?'读取位置已过期，草稿已保留，请回到最新后重试。':'这一页未能读取，已有消息和草稿已保留。');}
     finally{if(read===pageRead.current)setPageBusy(false);}
   }
@@ -1115,16 +1133,16 @@ function HomerApp() {
     try{
       const range=await locateSourceQuote(quote);
       commit(()=>{
-        if(!range){setPageNotice('原消息已定位；原文暂无法准确定位，摘录与批注已保留。');return;}
+        if(!range){setPageNotice(value=>value.startsWith('后续消息')?value:'原消息已定位；原文暂无法准确定位，摘录与批注已保留。');return;}
         const selection=window.getSelection();selection?.removeAllRanges();selection?.addRange(range);
-        const view=viewport.current;if(view){const box=view.getBoundingClientRect(),rect=range.getBoundingClientRect();if(rect.top<box.top||rect.bottom>box.bottom)view.scrollTop+=rect.top-box.top-view.clientHeight/3;}
-        setPageNotice('');
+        const view=viewport.current;if(view){const box=view.getBoundingClientRect(),rect=range.getBoundingClientRect();if(rect.top<box.top||rect.bottom>box.bottom)virtualizer.scrollToOffset(view.scrollTop+rect.top-box.top-view.clientHeight/3);}
+        setPageNotice(value=>value.startsWith('后续消息')?value:'');
       });
-    }catch{commit(()=>setPageNotice('原消息已定位；原文暂无法准确定位，摘录与批注已保留。'));}
+    }catch{commit(()=>setPageNotice(value=>value.startsWith('后续消息')?value:'原消息已定位；原文暂无法准确定位，摘录与批注已保留。'));}
   }
   function locateMessage(id:string,quote?:MessageQuote){
-    const commit=claimPosition(),element=document.getElementById('message-'+id);
-    if(element){commit(()=>{element.scrollIntoView({block:'center'});element.focus({preventScroll:true});setPageNotice('');});if(quote)void selectQuote(quote,commit);}
+    const commit=claimPosition();
+    if(history.current.messages.some(message=>message.id===id)){reader.current.pending={kind:'around',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id,quote};setState(old=>({...old}));}
     else void loadPage('around',id,quote,commit);
   }
 
@@ -1298,7 +1316,7 @@ function HomerApp() {
   const processMessages=useMemo(()=>new Map(state.messages.map(message=>[message.id,message])),[state.messages]);
   const messageCache=useRef(new Map<string,{source:WebState['messages'][number];key:string;value:ThreadMessageLike}>());
   const alive=new Set(state.messages.map(message=>message.id));for(const id of messageCache.current.keys())if(!alive.has(id))messageCache.current.delete(id);
-  const messages:ThreadMessageLike[]=state.messages.map(message=>{
+  const messages:ThreadMessageLike[]=useMemo(()=>state.messages.map(message=>{
     const notes=state.inactiveInteractions?.filter(i=>i.processId?i.processId===message.process?.id:i.messageId===message.id),key=JSON.stringify(notes);
     const cached=messageCache.current.get(message.id);if(cached?.source===message&&cached.key===key)return cached.value;
     const projected=projectProcessMessage(message);
@@ -1306,9 +1324,9 @@ function HomerApp() {
     id: message.id, role: message.role, content: projected.content, createdAt: new Date(message.createdAt),
     metadata: { custom: { ...(message.role==='user'?{original:message}:{}),claimPosition,activityPresentation:projected.presentation,inactiveInteractions:notes,sourceLabel:message.sourceLabel,sourceMessageId:message.sourceMessageId,quote: message.quote, quotes: message.quotes,resourceReference:message.resourceReference,resourceReferences:message.resourceReferences,media:message.media,messageId:message.id,inputState:message.inputState,queued:!isVisibleConversationMessage(message) } },
     ...(message.role === "assistant" ? { status: message.status === "running" ? { type: "running" as const } : message.status === "completed" ? { type: "complete" as const, reason: "stop" as const } : { type: "incomplete" as const, reason: message.process?.status === "unknown" ? "other" as const : message.status === "interrupted" ? "cancelled" as const : "error" as const } } : {}),
-  });messageCache.current.set(message.id,{source:message,key,value});return value;});
+  });messageCache.current.set(message.id,{source:message,key,value});return value;}),[state.messages,state.inactiveInteractions,claimPosition]);
   const stopCurrent=async()=>{if(!state.activeMessageId)return;setStopping(state.activeMessageId);try{await post("/api/stop",{messageId:state.activeMessageId});}catch(e){setStopping(null);setError("停止未确认："+(e instanceof Error?e.message:"web_request_failed"));}};
-  const runtime = useExternalStoreRuntime({ messages, convertMessage: (message: ThreadMessageLike) => message, isRunning: state.isRunning, isSendDisabled: !canAcceptInput(connected,state.upgrade),
+  const runtime = useExternalStoreRuntime({ messages, convertMessage: useCallback((message: ThreadMessageLike) => message,[]), isRunning: state.isRunning, isSendDisabled: !canAcceptInput(connected,state.upgrade),
     adapters:{attachments:attachmentOwner},
     onNew, onCancel: async () => {
       setStopping(state.activeMessageId);
@@ -1318,28 +1336,76 @@ function HomerApp() {
   });
   useLayoutEffect(()=>{let previous=runtime.thread.getState().messages;
     return runtime.thread.subscribe(()=>{const actual=runtime.thread.getState().messages;
-      const changed=actual.length!==previous.length||actual.some((m,i)=>m.metadata.custom!==previous[i]?.metadata.custom);previous=actual;
-      if(changed&&reader.current.pending)setState(old=>({...old}));
+      const idsChanged=actual.length!==previous.length||actual.some((m,i)=>m.id!==previous[i]?.id);
+      const changed=idsChanged||actual.some((m,i)=>m.metadata.custom!==previous[i]?.metadata.custom);previous=actual;
+      if(idsChanged||changed&&reader.current.pending)setState(old=>({...old}));
     });
   },[runtime]);
+  const runtimeMessages=runtime.thread.getState().messages;
+  const rows=runtimeMessages.flatMap((message,index)=>isVisibleConversationMessage(processMessages.get(message.id))?[{id:message.id,index}]:[]);
+  const virtualizer=useVirtualizer({count:rows.length,getScrollElement:()=>viewport.current,
+    getItemKey:index=>rows[index].id,estimateSize:()=>180,overscan:8,scrollMargin:listTop,
+    anchorTo:'start',followOnAppend:false,
+    rangeExtractor:range=>{
+      const indexes=new Set(defaultRangeExtractor(range));
+      const pins=readingPins(),pending=reader.current.pending;
+      if(pending?.id)pins.add(pending.id);
+      if(pending&&(pending.kind==='latest'||pending.kind==='initialize')&&rows.length)indexes.add(rows.length-1);
+      rows.forEach((row,index)=>{if(pins.has(row.id))indexes.add(index);});
+      // Keep the entire native selection span mounted, including its interior.
+      const selection=window.getSelection(),selected=[selection?.anchorNode,selection?.focusNode].map(node=>{
+        const element=node instanceof Element?node:node?.parentElement;
+        return rows.findIndex(row=>row.id===element?.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage);
+      });
+      if(selection&&!selection.isCollapsed&&selected.every(index=>index>=0))for(let i=Math.min(...selected);i<=Math.max(...selected);i++)indexes.add(i);
+      return [...indexes].sort((a,b)=>a-b);
+    },
+  });
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange=(item,_delta,instance)=>{const index=rows.findIndex(row=>row.id===anchor.current?.id);return index>=0?item.index<index:item.end<=(instance.scrollOffset??0);};
+  const virtualRows=virtualizer.getVirtualItems();
   useLayoutEffect(()=>{
     const pending=reader.current.pending,view=viewport.current;
-    if(!view||view.clientHeight<=0)return;
-    if(pending){
-      if(pending.scope!==positionScope()||pending.navigation!==navigation.current||pending.user!==userScroll.current){reader.current.pending=undefined;return;}
-      const target=history.current.messages;
-      const actual=runtime.thread.getState().messages;
-      // The external runtime updates in a passive effect. IDs alone do not
-      // prove a same-ID streamed body has reached the runtime and DOM.
-      const roots=new Set(Array.from(view.querySelectorAll<HTMLElement>('[data-conversation-message]')).map(element=>element.dataset.conversationMessage));
-      const committed=target&&state.messages.length===target.length&&state.messages.every((m,i)=>m===target[i])&&messages.every(m=>actual.some(a=>a.id===m.id&&a.metadata.custom===m.metadata?.custom))&&state.messages.filter(isVisibleConversationMessage).every(m=>roots.has(m.id));
-      if(!committed||pending.kind!=='around'&&(!reader.current.connected||history.current.archived||pending.recent!==history.current.recent))return;
-      reader.current.pending=undefined; // Consume before any DOM write.
-      reader.current.gesture=false;anchor.current=null;
-      if(pending.kind==='around'){const element=document.getElementById('message-'+pending.id);element?.scrollIntoView({block:'center'});element?.focus({preventScroll:true});if(pending.quote)void selectQuote(pending.quote,claimPosition());}
-      else{view.scrollTop=view.scrollHeight;setHasNewContent(false);setPageNotice('');}
-      captureAnchor();
-    }else restoreAnchor();
+    if(!view||view.clientHeight<=0||!pending)return;
+    if(pending.scope!==positionScope()||pending.navigation!==navigation.current||pending.user!==userScroll.current){reader.current.pending=undefined;return;}
+    const target=history.current.messages,actual=runtime.thread.getState().messages;
+    const committed=runtimeMessages===actual&&state.messages.length===target.length&&state.messages.every((m,i)=>m===target[i])&&messages.length===actual.length&&messages.every((m,i)=>actual[i]?.id===m.id&&actual[i].metadata.custom===m.metadata?.custom);
+    const latest=pending.kind==='latest'||pending.kind==='initialize';
+    if(!committed||latest&&(!reader.current.connected||history.current.archived||pending.recent!==history.current.recent))return;
+    const index=latest?rows.length-1:rows.findIndex(row=>row.id===pending.id);
+    const element=index>=0?document.getElementById('message-'+rows[index].id):null;
+    if(index>=0&&!element)return;
+    if(!latest&&pending.id&&index<0){reader.current.pending=undefined;setPageNotice('原阅读位置已变化，可查看最新消息');return;}
+    const wake=()=>{if(reader.current.frame!==undefined)return;
+      reader.current.frame=requestAnimationFrame(()=>{reader.current.frame=undefined;
+        if(reader.current.pending===pending&&pending.scope===positionScope()&&pending.navigation===navigation.current&&pending.user===userScroll.current)setState(old=>({...old}));
+      });
+    };
+    if(reader.current.frame!==undefined)return;
+    const offset=pending.kind==='preserve'?anchor.current?.top??0:(view.clientHeight-(element?.getBoundingClientRect().height??0))/2;
+    const raw=latest?view.scrollHeight-view.clientHeight:element?view.scrollTop+element.getBoundingClientRect().top-view.getBoundingClientRect().top-offset:view.scrollTop;
+    const desired=pending.kind==='preserve'?raw:Math.min(Math.max(0,raw),Math.max(0,view.scrollHeight-view.clientHeight));
+    if(!pending.positioned){
+      pending.positioned=true;reader.current.gesture=false;
+      if(element&&!latest)anchor.current={id:rows[index].id,top:offset,version:userScroll.current};
+      if(latest&&index>=0)virtualizer.scrollToIndex(index,{align:'end'});
+      else virtualizer.scrollToOffset(Math.max(0,desired));
+      wake();return;
+    }
+    // The command's native readback and newly mounted rows can arrive after
+    // this commit. Keep the same transaction through measurement/calibration.
+    if(Math.abs(view.scrollTop-Math.max(0,desired))>=1){virtualizer.scrollToOffset(Math.max(0,desired));if(pending.kind!=='preserve'||desired<=view.scrollHeight-view.clientHeight+1)wake();return;}
+    if(Math.abs((virtualizer.scrollOffset??view.scrollTop)-view.scrollTop)>=1){wake();return;}
+    virtualizer.cancelScroll();reader.current.pending=undefined;
+    if(latest){setHasNewContent(false);setPageNotice('');anchor.current=null;captureAnchor();}
+    else if(pending.kind==='around'&&element){element.focus({preventScroll:true});setPageNotice(value=>value.startsWith('后续消息')?value:'');captureAnchor();if(pending.quote)void selectQuote(pending.quote,claimPosition());}
+    else measureReader();
+  });
+  useEffect(()=>{beforeAttempt.current='';},[connected]);
+  useEffect(()=>{
+    const view=viewport.current,cache=history.current;
+    if(!connected||!view||view.scrollTop>300||!reader.current.initializedThread||reader.current.pending||pageBusy||!cache.before)return;
+    const attempt=JSON.stringify([positionScope(),cache.range,cache.before,state.history?.page.revision,userScroll.current]);
+    if(beforeAttempt.current===attempt)return;beforeAttempt.current=attempt;void loadPage('before');
   });
   const artifacts=state.artifacts??[];
   const closeCanvas=()=>{
@@ -1451,11 +1517,11 @@ function HomerApp() {
         {feedback && <div className="error-banner" role="alert"><span>{feedback}</span>{error && <button onClick={() => setError("")} aria-label="关闭错误提示">×</button>}</div>}
         {state.threadId && state.upgrade.phase !== "running" && <div className="upgrade-banner" role="status">{serviceActivityNotice(state.upgrade)}</div>}
         <ComposerInputFocusContext.Provider value={focusEditor}><ThreadPrimitive.Root className="thread" onPointerDownCapture={noteOutsideReaderGesture} onKeyDownCapture={noteOutsideReaderGesture}>
-          <ThreadPrimitive.Viewport ref={viewport} className="thread-viewport" tabIndex={-1} style={{overflowAnchor:'none'}} autoScroll={false} scrollToBottomOnRunStart={false} scrollToBottomOnInitialize={false} scrollToBottomOnThreadSwitch={false} onScroll={recordReaderScroll} onWheel={noteReaderGesture} onTouchStart={noteReaderGesture} onTouchMove={noteReaderGesture} onPointerDown={noteReaderGesture} onKeyDown={noteReaderGesture}
+          <div ref={viewport} className="thread-viewport" tabIndex={-1} style={{overflowAnchor:'none'}} onScroll={recordReaderScroll} onWheel={noteReaderGesture} onTouchStart={noteReaderGesture} onTouchMove={noteReaderGesture} onPointerDown={noteReaderGesture} onKeyDown={noteReaderGesture}
             onClickCapture={event=>{const target=event.target as Element,control=target.closest('[aria-expanded], summary');if(target.closest('[data-conversation-message]')&&control&&(control.tagName==='SUMMARY'?!control.parentElement?.hasAttribute('open'):control.getAttribute('aria-expanded')==='false'&&(control.getAttribute('aria-haspopup')??'false')==='false'&&control.getAttribute('role')!=='combobox'))captureAnchor();}}
             onClick={event=>{const link=(event.target as Element).closest<HTMLAnchorElement>('a[href^="#message-"]');if(link){event.preventDefault();locateMessage(decodeURIComponent(link.hash.slice(9)));}}}>
             {state.history&&<nav className="history-navigation" aria-label="对话记录分页">
-              {history.current.before&&<button type="button" disabled={pageBusy} onClick={()=>void loadPage('before')}>{pageBusy?'正在读取…':'加载更早消息'}</button>}
+              {history.current.before&&pageBusy&&<span role="status">正在读取更早消息…</span>}
               {history.current.archived&&connected&&!pageNotice&&!tailRead.current.blocked&&<span role="status">正在补齐后续消息…</span>}
               {history.current.stale&&<span role="status">较早记录可能已有更新，展开过程时会重新核对。</span>}
               {history.current.inactiveMore&&<span role="status">本页还有失效交互记录未加载；旧提问和授权回调均不可继续提交，请从原事项核对。</span>}
@@ -1470,7 +1536,13 @@ function HomerApp() {
                 {['帮我整理一份资料','和我一起规划一件事','帮我核对一份结果'].map(example => <button key={example} type="button" onClick={() => {setEditDraft({text:example,id:crypto.randomUUID(),source:'welcome'});focusEditor.current?.();}}>{example}</button>)}
               </div>
             </div></ThreadPrimitive.Empty>}
-            <div className="messages"><MessageTimestamps messages={state.messages}><ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} /></MessageTimestamps></div>
+            <div className="messages" ref={messageList}><MessageTimestamps messages={state.messages}>
+              {virtualRows.map((row,i)=><Fragment key={row.key}>
+                <div aria-hidden="true" style={{height:Math.max(0,row.start-(virtualRows[i-1]?.end??listTop))}}/>
+                <div data-index={row.index} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
+              </Fragment>)}
+              <div aria-hidden="true" style={{height:Math.max(0,virtualizer.getTotalSize()-((virtualRows.at(-1)?.end??listTop)-listTop))}}/>
+            </MessageTimestamps></div>
             {(['queue','interactions'] as const).map(kind=>(kind!=='queue'||!state.features?.queueDispatch)&&activePages.current[kind].checking&&<p key={kind} role="status">{kind==='queue'?'待发送页':'待答页'}正在核对；编辑草稿保留，提交暂不可用。<button type="button" disabled={!activePages.current[kind].needsRead} onClick={()=>void readActivePage(kind)}>重新核对</button></p>)}
             {!state.features?.queueDispatch&&activePages.current.queue.cursor>0&&<button type="button" disabled={activePages.current.queue.checking} onClick={()=>void readActivePage('queue',0)}>返回待发送首页</button>}
             {activePages.current.interactions.cursor>0&&<button type="button" disabled={activePages.current.interactions.checking} onClick={()=>void readActivePage('interactions',0)}>返回待答首页</button>}
@@ -1480,7 +1552,7 @@ function HomerApp() {
             {questionDrafts.map(draft=><details className="queue-draft-recovery" key={draft.id}><summary>已保留的答复内容</summary><p>{draft.expired?'原问题已失效':'旧版问题状态需要核对'}；内容不会自动发送，接收情况以原请求回执为准。</p><p style={{whiteSpace:'pre-wrap'}}>{draft.text}</p><button type="button" onClick={()=>setEditDraft({text:draft.text,id:crypto.randomUUID()})}>复制到普通消息草稿</button></details>)}
             <div className="interaction-list">{state.interactions.map(item => <InteractionCard key={state.threadId+':'+item.id} verified={connected&&!activePages.current.interactions.checking} item={item} threadId={state.threadId} messages={state.messages} acceptedRequestIds={state.acceptedRequestIds??[]} onError={setError} onNotLive={interactionNotLive} onAnswer={item=>setAnswerTarget({...item,historyThreadId:state.threadId})} onReveal={card=>claimPosition()(()=>card.scrollIntoView({block:'nearest',behavior:'instant'}))} structuredAnswers={!!state.features?.nativeQuestionAnswers} />)}</div>
             {!accountRequired&&<button type="button" className="scroll-latest" disabled={!history.current.archived&&isAtBottom&&!hasNewContent} onClick={returnLatest}>↓ {hasNewContent?'有新内容 · 最新消息':'最新消息'}</button>}
-          </ThreadPrimitive.Viewport>
+          </div>
           <MainComposer captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>

@@ -50,6 +50,7 @@ export class HistoryWindow{
   const next:CachedPage={...page,key:'loaded',messages:this.reuse(page.messages)};
   this.revision=page.revision;
   if(!page.units.length){
+   if(direction==='before'&&!page.before){const current=this.pages[0]??this.recent;if(current)current.before=null;}
    if(direction==='after'&&!page.after){if(this.pages[0])this.pages[0].after=null;this.connectRecent(true);}
    return true;
   }
