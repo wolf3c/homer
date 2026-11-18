@@ -15,6 +15,25 @@ const settle=page=>page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=
 const anchor=page=>page.evaluate(()=>{const view=document.querySelector('.thread-viewport'),box=view.getBoundingClientRect(),row=[...view.querySelectorAll('[data-conversation-message]')].find(e=>e.getBoundingClientRect().bottom>box.top);return {id:row.dataset.conversationMessage,offset:row.getBoundingClientRect().top-box.top,gap:view.scrollHeight-view.clientHeight-view.scrollTop};});
 async function anchorError(page,saved){return page.evaluate(`Math.abs(document.getElementById('message-'+${JSON.stringify(saved.id)}).getBoundingClientRect().top-document.querySelector('.thread-viewport').getBoundingClientRect().top-(${saved.offset}))`);}
 try{
+ {
+  const f=await fixture(80,'after');let page,timeout;
+  try{
+   updateSyntheticPublicText(f,'node-79','合成答复，[测试链接](https://example.invalid/history)');
+   page=await chrome.page(f.server.url,1440);await page.navigate();
+   const ready=page.until(()=>!!document.querySelector('#message-node-79 .markdown a')
+    &&!!document.querySelector('#task-status-summary [data-count]')
+    &&document.querySelector('.scroll-latest')?.disabled);
+   await Promise.race([ready,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Markdown link kept history initialization from settling')),10000);})]);
+   await page.evaluate(()=>document.querySelector('#message-node-79 button[aria-label="引用"]').click());
+   await page.until(()=>!!document.querySelector('.composer-reference-strip button[aria-label="编辑引用 1"]'));
+   await page.command('Input.insertText',{text:'合成草稿'});
+   await page.until(()=>document.querySelector('.composer-input [contenteditable="true"]')?.textContent.includes('合成草稿'));
+   await page.evaluate(()=>document.querySelector('button[aria-label="设置"]').click());
+   await page.until(()=>!!document.querySelector('.desktop-settings-popup'));
+   assert.equal(f.submitted.length,0);
+   assert.deepEqual(page.errors,[]);
+  }finally{clearTimeout(timeout);await page?.close();await f.close();}
+ }
  for(const width of [1440,390,320]){
   const f=await fixture(400,'after'),reads=[];let page,beforeRelease;
   try{

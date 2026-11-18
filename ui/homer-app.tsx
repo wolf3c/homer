@@ -1050,12 +1050,19 @@ function HomerApp() {
   }
   useLayoutEffect(()=>{
     const view=viewport.current;if(!view)return;
-    let width=view.clientWidth,height=view.clientHeight;
+    let width=view.clientWidth,height=view.clientHeight,observedFrame:number|undefined;
     const observe=()=>{
       const nextTop=messageList.current?messageList.current.getBoundingClientRect().top-view.getBoundingClientRect().top+view.scrollTop:0;
       if(Math.abs(virtualizer.options.scrollMargin-nextTop)>=1&&anchor.current&&!reader.current.pending)reader.current.pending={kind:'preserve',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id:anchor.current.id};
       setListTop(old=>Math.abs(old-nextTop)>=1?nextTop:old);
-      if(reader.current.pending)setState(old=>({...old}));
+      const pending=reader.current.pending;
+      // Renderer mutations can feed back into this observer. Yield before another render.
+      if(pending&&reader.current.frame===undefined&&observedFrame===undefined){
+        observedFrame=requestAnimationFrame(()=>{
+          observedFrame=undefined;
+          if(reader.current.pending===pending&&reader.current.frame===undefined)setState(old=>({...old}));
+        });
+      }
       // Row ResizeObserver compensation belongs to the virtualizer. Only a
       // viewport reflow or explicit prepend needs Homer's saved pixel anchor.
       if(width!==view.clientWidth||height!==view.clientHeight){
@@ -1075,7 +1082,7 @@ function HomerApp() {
     };
     document.addEventListener('selectionchange',protect);for(const event of ['focusin','focusout','play','pause','ended'])view.addEventListener(event,protect,true);
     observe();
-    return()=>{disconnect();document.removeEventListener('selectionchange',protect);for(const event of ['focusin','focusout','play','pause','ended'])view.removeEventListener(event,protect,true);invalidatePosition();};
+    return()=>{disconnect();if(observedFrame!==undefined)cancelAnimationFrame(observedFrame);document.removeEventListener('selectionchange',protect);for(const event of ['focusin','focusout','play','pause','ended'])view.removeEventListener(event,protect,true);invalidatePosition();};
   },[]);
   function publishHistory(){const cache=history.current;setState(old=>({...old,messages:cache.messages,artifacts:cache.artifacts,inactiveInteractions:cache.inactiveInteractions}));}
   function prepareLatest(){const pending=reader.current.pending;
