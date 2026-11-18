@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {effectiveModelConfig,type Config} from './config.js';
 import type {Tool} from './engine.js';
 import {queryHomerTokenFailure,readHomerJsonResponse,readHomerResponseBytes} from './homer-account.js';
-import {MEDIA_POLICY} from './media-policy.js';
+import {detectMedia,MEDIA_POLICY} from './media-policy.js';
 import type {AttachmentRef} from './media-store.js';
 import {validateToolArguments} from './recursive-tools.js';
 import {object,string} from './tools.js';
@@ -23,6 +23,19 @@ const imageTool:Tool={
     }},
   }},
 };
+export const audioModel='homer-tts';
+const audioVoices=['gentle','narrator','bright','character'] as const;
+const maxAudioBytes=8*1024*1024;
+export const audioTool:Tool={
+  type:'function',name:'generate_audio',
+  description:'Read the supplied text aloud and save one MP3 using Homer membership credits after user confirmation. Only call for an explicit request for spoken audio. Keep the original wording. Optional preset voices are gentle (default, soft female), narrator (male narrator), bright (bright female), and character (expressive female); use narrator for a male voice. Optional instructions control how this one recording is read. Main delivers the saved path using send_user_message; Workers report it to Main. To resend a completed MP3, provide only its receipt; this does not generate again or use credits. If the result is unknown, report its receipt without submitting again.',
+  inputSchema:{type:'object',additionalProperties:false,properties:{
+    receipt:{type:'string',pattern:'^audio-[a-f0-9-]{36}$',description:'Receipt of the saved MP3 to resend. Do not send input, voice, or instructions with it.'},
+    input:{type:'string',description:'Exact text to read, at most 1,000 Unicode characters.'},
+    voice:{type:'string',enum:audioVoices},
+    instructions:{type:'string',description:'Optional direction for the delivery, at most 300 Unicode characters.'},
+  }},
+};
 export const videoModel='wan3.0-video';
 export const videoTool:Tool={
   type:'function',name:'generate_video',
@@ -36,7 +49,7 @@ export const MEMBERSHIP_TOOLS:Tool[]=[
     inputSchema:{type:'object',properties:{url:{type:'string',minLength:1,maxLength:8192}},required:['url'],additionalProperties:false}},
   imageTool,videoTool,
 ];
-export const isMembershipTool=(name:string)=>MEMBERSHIP_TOOLS.some(tool=>tool.name===name);
+export const isMembershipTool=(name:string)=>name===audioTool.name||MEMBERSHIP_TOOLS.some(tool=>tool.name===name);
 
 const localIpv4=new BlockList(),globalIpv6=new BlockList();
 for(const [address,prefix] of [['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.168.0.0',16],['224.0.0.0',3]] as const)localIpv4.addSubnet(address,prefix);
@@ -60,22 +73,24 @@ export function createMembershipTools(config:Config){
   const requestGateway=(path:string,options:RequestInit&{duplex?:'half'})=>fetch(baseUrl+path,{
     ...options,headers:{Authorization:'Bearer '+token,...options.headers},redirect:'error',
   });
-  async function post(path:string,body:Record<string,unknown>|FormData){
-    const image=path.startsWith('/images/'),video=path==='/videos';
-    const kind=image?'image':video?'video':'web';
+  async function post(path:string,body:Record<string,unknown>|FormData,signal?:AbortSignal){
+    const image=path.startsWith('/images/'),video=path==='/videos',audio=path==='/audio/speech';
+    const kind=image?'image':video?'video':audio?'audio':'web';
     const unconfirmed='membership_'+kind+'_result_unconfirmed';
     const headers:Record<string,string>={};
     const multipart=body instanceof FormData;
     if(!multipart)headers['Content-Type']='application/json';
+    if(audio)headers['Accept-Encoding']='identity';
     const payload=multipart?body:JSON.stringify(body);
     let response:Response;
     try{
       // Node fetch can replay a buffered POST after HTTP 421.
-      const request=image||video?new Request(baseUrl+path,{method:'POST',headers,body:payload}):undefined;
+      const request=image||video||audio?new Request(baseUrl+path,{method:'POST',headers,body:payload}):undefined;
+      const timeout=AbortSignal.timeout(image?180_000:video?20_000:audio?100_000:60_000);
       const options={
         method:'POST',headers:request?Object.fromEntries(request.headers):headers,body:request?request.body:payload,
         ...(request?{duplex:'half' as const}:{}),
-        signal:AbortSignal.timeout(image?180_000:video?20_000:60_000),
+        signal:signal?AbortSignal.any([timeout,signal]):timeout,
       } as const;
       response=await requestGateway(path,options);
     }catch{throw Error(unconfirmed);}
@@ -90,7 +105,18 @@ export function createMembershipTools(config:Config){
       if(status===401)throw Error(await queryHomerTokenFailure(token!,{gatewayOrigin:gateway.origin,allowSyntheticLoopback:gateway.hostname==='127.0.0.1'}));
       if(status===402||code==='insufficient_user_quota'||code==='pre_consume_token_quota_failed')throw Error('engine_quota_insufficient');
       if(status===429)throw Error('engine_rate_limited');
+      if(audio&&![400,404,422].includes(status))throw Error(unconfirmed);
       throw Error(status===408||status>=500||response.ok?unconfirmed:'membership_'+kind+'_request_rejected');
+    }
+    if(audio){
+      const length=response.headers.get('content-length'),mime=response.headers.get('content-type')?.split(';')[0];
+      if(mime!=='audio/mpeg'||length!==null&&(!/^\d+$/.test(length)||Number(length)>maxAudioBytes)){
+        void response.body?.cancel().catch(()=>{});
+        throw Error(unconfirmed);
+      }
+      const bytes=await readHomerResponseBytes(response,maxAudioBytes).catch(()=>{throw Error(unconfirmed);});
+      if(bytes.length<4||detectMedia(bytes)!=='audio/mpeg'||length!==null&&bytes.length!==Number(length))throw Error(unconfirmed);
+      return bytes;
     }
     const limit=image?Math.ceil(MEDIA_POLICY.imageBytes/3)*4+64*1024:maxResponseBytes;
     return readHomerJsonResponse(response,limit).catch(()=>{throw Error(unconfirmed);});
@@ -156,7 +182,32 @@ export function createMembershipTools(config:Config){
     }
     return response;
   };
-  return {web,image,video:{
+  return {web,image,audio:{
+    async available(){
+      try{
+        const response=await requestGateway('/models',{cache:'no-store',signal:AbortSignal.timeout(3000)});
+        if(response.status!==200){void response.body?.cancel().catch(()=>{});return false;}
+        const catalog=await readHomerJsonResponse(response,maxResponseBytes) as {data?:unknown}|null;
+        return Array.isArray(catalog?.data)&&catalog.data.some(model=>model?.id===audioModel);
+      }catch{return false;}
+    },
+    prepare(args:unknown){
+      validateToolArguments(args,audioTool.inputSchema);
+      const {receipt,input,voice='gentle',instructions}=args as {receipt?:string;input?:string;voice?:typeof audioVoices[number];instructions?:string};
+      if(receipt!==undefined){
+        if(Object.keys(args as object).length!==1)throw Error('invalid_tool_arguments');
+        return {receipt};
+      }
+      if(input===undefined)throw Error('invalid_tool_arguments');
+      const characters=[...input].length;
+      if(!input.trim()||characters>1000||input.includes(token)||instructions!==undefined&&([...instructions].length>300||instructions.includes(token)))
+        throw Error('invalid_tool_arguments');
+      return {input,voice,instructions,characters};
+    },
+    async speak({input,voice,instructions}:{input:string;voice:string;instructions?:string},signal:AbortSignal){
+      return await post('/audio/speech',{model:audioModel,input,voice,instructions,response_format:'mp3'},signal) as Buffer;
+    },
+  },video:{
     credential:createHash('sha256').update(baseUrl+'\0'+token).digest('hex'),
     validatePrompt(prompt:string){if(prompt.includes(token))throw Error('invalid_tool_arguments');},
     async submit(prompt:string){

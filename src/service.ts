@@ -19,6 +19,7 @@ import {seedFirstLaunchSkills,shouldSeedFirstLaunchSkills} from './first-launch.
 import {NativeAccount,type NativeAccountState} from './native-account.js';
 import {validateChatGPTSelection,type ChatGPTModelOverrides,type NativeModel} from './model-config.js';
 import {createMembershipTools,isMembershipTool} from './membership-web-tools.js';
+import {readMembershipAudio,runMembershipAudio,verifyMembershipAudioAttachment} from './membership-audio.js';
 import {runMembershipVideo} from './membership-video.js';
 import {materializePng} from './native-generated-files.js';
 import {detectMedia,MEDIA_POLICY} from './media-policy.js';
@@ -49,7 +50,7 @@ import {
 import type { Config } from "./config.js";
 import {capabilityHome,usesHomerNativeHome,effectiveModelConfig,configuredWebSearchMode} from "./config.js";
 import {ChannelPlugin,channelSourceAuthorized,type ChannelAdapter} from './channel-plugin.js';
-import {approvalDecision, MainNativeApprovals, VIDEO_APPROVAL_METHOD} from "./main-native-approvals.js";
+import {approvalDecision, MainNativeApprovals, AUDIO_APPROVAL_METHOD, VIDEO_APPROVAL_METHOD} from "./main-native-approvals.js";
 import { loadPrompts, type Prompts } from "./prompts.js";
 import { MAIN_TOOLS, object, string } from "./tools.js";
 import { acquireLock, leaseOwnerGone, processIdentity, terminateLease } from "./processes.js";
@@ -214,7 +215,7 @@ export class Homer {
   registerMainPluginTool(tool: Tool, handle: (args: unknown, context: PluginUserContext) => unknown) {
     if(this.main || this.interactionMcp || this.closing || this.closed)throw Error('plugin_tool_catalog_started');
     if(!/^[a-z][a-z0-9_]{0,63}$/.test(tool.name) || this.mainPluginTools.has(tool.name) ||
-      [...MAIN_DYNAMIC_TOOLS,...BROWSER_PREVIEW_TOOLS,...hostMcpTools('main',true),...hostMcpTools('worker',true,false,true)].some(entry=>entry.name===tool.name))
+      [...MAIN_DYNAMIC_TOOLS,...BROWSER_PREVIEW_TOOLS,...hostMcpTools('main',true,false,false,false,true),...hostMcpTools('worker',true,false,true)].some(entry=>entry.name===tool.name))
       throw Error('plugin_tool_name_denied');
     const registered=structuredClone(tool);
     if(Buffer.byteLength(JSON.stringify([...this.mainPluginTools.values()].map(entry=>entry.tool).concat(registered)))>32_768)
@@ -372,7 +373,9 @@ export class Homer {
         const a=object(input);
         if(Object.keys(a).length===1&&typeof a.path==='string'){
           sources.push(null);
-          return this.media.snapshot(key,this.readLocalAttachment(a.path));
+          const original=this.readLocalAttachment(a.path);
+          verifyMembershipAudioAttachment(this.store.db,actor.threadId!,a.path,original);
+          return this.media.snapshot(key,original);
         }
         if(Object.keys(a).length!==2||typeof a.assetId!=='string'||!Number.isSafeInteger(a.revision)||Number(a.revision)<1)
           throw Error('invalid_attachment');
@@ -624,7 +627,7 @@ export class Homer {
   private prompts!: Prompts;
   private workers = new Map<string, WorkerSlot>();
   private executions = new Set<Promise<void>>();
-  private videoCalls = new Set<Promise<unknown>>();
+  private paidMediaCalls = new Set<Promise<unknown>>();
   private mainQueue: Promise<unknown> = Promise.resolve();
   private mainPending:{run:()=>Promise<void>}[]=[];
   private mainDraining=false;
@@ -644,6 +647,7 @@ export class Homer {
   private mainRecovery = false;
   private mainRecoveryError?:string;
   private mainStopRequested = false;
+  private membershipAudioEnabled=false;
   private readonly membershipTools:ReturnType<typeof createMembershipTools>;
   readonly channels?:ChannelPlugin;
   private startup?:Promise<void>;
@@ -1056,7 +1060,9 @@ export class Homer {
       const savedThread = this.store.meta("mainThread");
       if(!savedThread&&shouldSeedFirstLaunchSkills(this.config)){try{seedFirstLaunchSkills(capabilityHome(this.config));}catch(error){this.store.event(null,'first_launch_seed_failed',engineError(error));}}
       if (savedThread) mainToolsForHash(this.store.meta("mainToolsHash"));
-      const catalog=hostMcpTools('main',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'main'))==='live',false,!!this.browserTransport)
+      this.membershipAudioEnabled=await this.membershipTools?.audio.available()===true;
+      if(this.closing)throw Error('application_closing');
+      const catalog=hostMcpTools('main',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'main'))==='live',false,!!this.browserTransport,this.membershipAudioEnabled)
         .concat([...this.mainPluginTools.values()].map(entry=>entry.tool));
       this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args, meta) =>
         isBrowserPreviewTool(tool)?this.browserTool(tool,args,meta):
@@ -1594,7 +1600,7 @@ export class Homer {
     if(acceptance?.source==='first_launch')throw Error('first_launch_retired');
     const input=conversationInput(value);
     if(input.interactionId&&this.mainApprovals.owns(input.interactionId)){
-      if(interrupt||acceptance&&this.interactions.inspect(input.interactionId).details.method===VIDEO_APPROVAL_METHOD)throw Error('interaction_scope_denied');
+      if(interrupt||acceptance&&[VIDEO_APPROVAL_METHOD,AUDIO_APPROVAL_METHOD].includes(String(this.interactions.inspect(input.interactionId).details.method)))throw Error('interaction_scope_denied');
       const accepted=this.mainApprovals.respond(input.interactionId,input,acceptance);if(accepted.fresh)this.invalidateState('user-input');return accepted;
     }
     if(input.attachments?.length){
@@ -2194,6 +2200,7 @@ export class Homer {
     const roleArgs=worker?['worker']:['main'];
     if(this.membershipTools){
       roleArgs.push('membership-web');
+      if(endpoint.catalog.some(tool=>tool.name==='generate_audio'))roleArgs.push('membership-audio');
       if(!endpoint.catalog.some(tool=>tool.name==='web_search'))roleArgs.push('native-web-search');
     }
     if(!worker&&this.mainPluginTools.size)
@@ -2207,10 +2214,11 @@ export class Homer {
     const context=this.mainContext,engine=slot?.engine??this.main;
     const threadId=engine?.threadId,turnId=engine?.turnId;
     const actor=slot?this.workerActor(slot):undefined;
-    const video=name==='generate_video';
+    const video=name==='generate_video',audio=name==='generate_audio';
+    if(audio&&!this.membershipAudioEnabled)throw Error('tool_scope_denied');
     const guard=()=>{
       if(this.closing||!turnId||engine?.turnId!==turnId||engine.threadId!==threadId)throw Error('tool_scope_denied');
-      if((video||name==='generate_image')&&(engine.turnActive===false||engine.available===false))throw Error('tool_scope_denied');
+      if((video||audio||name==='generate_image')&&(engine.turnActive===false||engine.available===false))throw Error('tool_scope_denied');
       if(slot&&actor){
         if(this.workers.get(slot.id)!==slot||slot.stopping)throw Error('tool_scope_denied');
         this.tasks.guard(actor);
@@ -2219,7 +2227,7 @@ export class Homer {
       }
     };
     guard();
-    if(!video&&name!=='generate_image')return this.membershipTools.web(name,args);
+    if(!video&&!audio&&name!=='generate_image')return this.membershipTools.web(name,args);
 
     const run=slot?this.tasks.run(slot.id):undefined;
     const cwd=run?this.files.prepareRun(run.taskId,run.id):context?.turnCwd;
@@ -2227,25 +2235,33 @@ export class Homer {
     const checkOutput=run?undefined:(path:string)=>this.validateTaskFile(path,true);
     checkOutput?.(cwd);
     try{accessSync(cwd,constants.W_OK);}catch{throw Error('artifact_path_denied');}
-    if(video){
+    if(video||audio){
+      const audioRequest=audio?this.membershipTools.audio.prepare(args):undefined;
       const sourceRequestId=run?.sourceRequestId??context?.requestId;
       const original=run&&sourceRequestId?this.inputs.byRequestIds([sourceRequestId])[0]:context?.queuedInput;
       const historyThreadId=this.store.meta('mainThread');
       if(!sourceRequestId||!historyThreadId||original?.source!=='local'||!threadId||!turnId)throw Error('tool_scope_denied');
+      if(audioRequest?.receipt!==undefined)
+        return readMembershipAudio(this.store.db,historyThreadId,audioRequest.receipt,path=>{
+          if(run&&dirname(path)!==cwd)throw Error('artifact_path_denied');
+          return this.readLocalAttachment(path);
+        },run?sourceRequestId:undefined);
+      const speech=audioRequest;
       const scope={conversation:historyThreadId,worker:run?JSON.stringify([run.taskId,run.version,run.workerId,sourceRequestId]):undefined};
       const outputGuard=()=>{
         guard();
         if(realpathSync(cwd)!==cwd)throw Error('artifact_path_denied');
         checkOutput?.(cwd);
       };
-      const call=runMembershipVideo(this.store.db,this.membershipTools.video,scope,cwd,args,outputGuard,async(receipt,signal)=>{
+      const approve=async(receipt:string,signal:AbortSignal)=>{
         signal.throwIfAborted();
-        const opened=this.mainApprovals.openOperation({requestId:receipt,method:VIDEO_APPROVAL_METHOD,
-          question:'使用荷马会员积分生成 1 条万相 3.0 视频（5 秒、720P、16:9、有声）？',
-          reason:'仅批准本次生成。停止等待后，已提交的任务仍可能完成并扣费。',details:{receipt}},
+        const opened=this.mainApprovals.openOperation({requestId:receipt,method:speech?AUDIO_APPROVAL_METHOD:VIDEO_APPROVAL_METHOD,
+          question:speech?`使用荷马会员积分生成 1 段语音（${speech.characters} 字符，音色 ${speech.voice}）？`:'使用荷马会员积分生成 1 条万相 3.0 视频（5 秒、720P、16:9、有声）？',
+          reason:(speech?'朗读文本和语气指令将发送给云端语音服务。':'')+'仅批准本次生成。停止等待后，已提交的任务仍可能完成并扣费。',
+          preview:speech?`朗读文本：\n${speech.input}\n\n语气指令：\n${speech.instructions||'未指定'}`:undefined,details:{receipt}},
         {threadId,turnId,historyThreadId,sourceRequestId,generationId:run?'worker-native:'+run.id:context?.generation?.generationId??receipt,
           userText:original.input.text,isCurrent:()=>{try{guard();return !signal.aborted;}catch{return false;}}});
-        const expire=()=>this.mainApprovals.invalidated(receipt,'membership_video_approval_expired');
+        const expire=()=>this.mainApprovals.invalidated(receipt,speech?'membership_audio_approval_expired':'membership_video_approval_expired');
         signal.addEventListener('abort',expire,{once:true});
         const timer=setTimeout(expire,180_000);timer.unref();
         power?.pause();if(slot)this.pauseClock(slot);
@@ -2255,9 +2271,12 @@ export class Homer {
           if(result.status==='approved'||result.status==='denied')this.mainApprovals.delivered(receipt);
           return result.status==='approved';
         }finally{clearTimeout(timer);signal.removeEventListener('abort',expire);expire();if(slot)this.resumeClock(slot);if(power)await power.resume();this.invalidateState();}
-      });
-      this.videoCalls.add(call);
-      try{return await call;}finally{this.videoCalls.delete(call);}
+      };
+      const call=speech
+        ?runMembershipAudio(this.store.db,this.membershipTools.audio,historyThreadId,sourceRequestId,cwd,speech,guard,outputGuard,approve)
+        :runMembershipVideo(this.store.db,this.membershipTools.video,scope,cwd,args,outputGuard,approve);
+      this.paidMediaCalls.add(call);
+      try{return await call;}finally{this.paidMediaCalls.delete(call);}
     }
     const {model,encoded}=await this.membershipTools.image(args,ref=>{
       this.authorizeAttachment(ref,run??context);
@@ -2375,7 +2394,7 @@ export class Homer {
           if(cua&&isCuaTool(tool))return this.workerCuaTool(created,tool,args);
           if(isBrowserPreviewTool(tool))return this.browserTool(tool,args,meta,created);
           return this.withDesktopPower(power=>isMembershipTool(tool)?this.membershipTool(tool,args,created,power):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.workerActor(created),tool,args):WORKER_MEDIA_TOOLS.some(t=>t.name===tool)?this.workerMediaTool(created,tool,args):Promise.reject(Error('worker_tool_denied')));
-        },hostMcpTools('worker',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'worker'))==='live',cua,!!this.browserTransport));await endpoint.start();
+        },hostMcpTools('worker',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'worker'))==='live',cua,!!this.browserTransport,this.membershipAudioEnabled));await endpoint.start();
         if(!this.workerStarting(run)){await endpoint.close();if(this.closing){this.tasks.confirmWorkerExit(run.id,undefined);this.tasks.interruptWorker(run.id);}return;}
         const project=this.tasks.workingDirectory(run.id);
         const cuaInstructions=cua?'\n操作 Chrome 时用 browser_open、browser_read、browser_click，默认复用已有标签页。用户要求全新隔离环境才设 isolated:true。操作指定 App 窗口时用 desktop_read、desktop_click、desktop_type。每次动作后重新读取核对。截图附件用读取工具的 save_as 保存原尺寸 PNG，把回执路径交给主 Agent。动作结果未知时先观察。\n':'';
@@ -2690,7 +2709,7 @@ export class Homer {
   // not account for an output receipt that failed before markDelivered.
   upgradeStatus() {
     const safe = !this.closing && !this.closed && !this.mainBroken && !this.mainRecovery && this.main?.available !== false && this.main?.resumable !== false &&
-      this.nativeOperations === 0 && !this.accountManager?.pending && !this.main?.nativeBusy && this.mainJobs === 0 && this.workers.size === 0 && this.executions.size === 0 && this.uploads.size===0 && this.videoCalls.size===0 &&
+      this.nativeOperations === 0 && !this.accountManager?.pending && !this.main?.nativeBusy && this.mainJobs === 0 && this.workers.size === 0 && this.executions.size === 0 && this.uploads.size===0 && this.paidMediaCalls.size===0 &&
       !this.interactions.list().some(i => i.state === "pending_main" || i.state === "pending_user") && this.tasks.safeToUpgrade();
     return { safe };
   }
@@ -2730,7 +2749,7 @@ export class Homer {
     while (this.executions.size) await new Promise((r) => setTimeout(r, 10));
     for(const slot of owned)if(this.store.run(slot.id))this.tasks.interruptWorker(slot.id);
     await this.interactionMcp?.close();
-    await Promise.allSettled(this.videoCalls);
+    await Promise.allSettled(this.paidMediaCalls);
     await this.accountManager?.close();
     const releaseOwnLease=(key:string,engine:EngineLike|undefined,confirmed:boolean)=>{
       if(!confirmed)return;

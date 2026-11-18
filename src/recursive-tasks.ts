@@ -632,11 +632,11 @@ export class RecursiveTasks{
   if(target.runId){const run=this.store.run(target.runId);if(!run||run.taskId!==task.id||run.version!==target.version)return;}
   return {task:{...target}};
  }
- // Video receipts survive upgrade and never resume a POST. The service fences live calls.
+ // Membership media receipts survive upgrade and never replay a POST. The service fences live calls.
  safeToUpgrade(){
   return !this.one("SELECT 1 FROM runs WHERE status IN ('queued','running') OR phase='uncertain'")
     && !this.one("SELECT 1 FROM tasks WHERE controlState='stopping'")
-    && !this.one("SELECT 1 FROM operations WHERE state IN ('accepted','dispatching','uncertain') AND kind<>'membership_video'")
+    && !this.one("SELECT 1 FROM operations WHERE state IN ('accepted','dispatching','uncertain') AND kind NOT IN ('membership_video','membership_audio')")
     && !this.one(`SELECT 1 FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND ${unconfirmedNativeEffectsSql()} LIMIT 1`)
     && !(this.table('worker_interactions')&&this.one("SELECT 1 FROM worker_interactions WHERE state IN ('pending_main','pending_user') OR state IN ('approved','denied','answered') AND deliveredAt IS NULL LIMIT 1"))
     && !this.one(`SELECT 1 FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId

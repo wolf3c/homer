@@ -10,17 +10,17 @@ import type { Tool } from "./engine.js";
 import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
 
 import {INTERACTION_LIMITS} from './interaction-limits.js';
-import {MEMBERSHIP_TOOLS} from './membership-web-tools.js';
+import {audioTool,MEMBERSHIP_TOOLS} from './membership-web-tools.js';
 import {CUA_TOOLS} from './desktop-cua.js';
 import {BROWSER_PREVIEW_TOOLS}from'./browser-preview-tools.js';
 import {SCHEDULE_TOOLS} from './schedules.js';
 
 export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,LIST_WORK_DIRECTORIES,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS,...SCHEDULE_TOOLS];
 export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS,...SCHEDULE_TOOLS];
-export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false,browser=false){
+export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false,browser=false,audio=false){
   const tools=role==='worker'?(cua?[...WORKER_HOST_MCP_TOOLS,...CUA_TOOLS]:WORKER_HOST_MCP_TOOLS):HOST_MCP_TOOLS;
   const catalog=browser?[...tools,...BROWSER_PREVIEW_TOOLS]:tools;
-  return membership?[...catalog,...MEMBERSHIP_TOOLS.filter(tool=>!nativeWebSearch||tool.name!=='web_search')]:catalog;
+  return membership?[...catalog,...MEMBERSHIP_TOOLS.filter(tool=>!nativeWebSearch||tool.name!=='web_search'),...(audio?[audioTool]:[])]:catalog;
 }
 const allowed = (name: unknown, catalog:readonly Tool[]): name is string => typeof name === "string" && catalog.some(tool => tool.name === name);
 function code(error: unknown) {
@@ -128,9 +128,9 @@ function hostCall(path: string, tool: string, args: unknown, meta?: unknown): Pr
   });
 }
 
-export function runWorkerInteractionMcp(path: string,role:string='main',membership=false,nativeWebSearch=false,plugins:Tool[]=[],cua=false,browser=false) {
+export function runWorkerInteractionMcp(path: string,role:string='main',membership=false,nativeWebSearch=false,plugins:Tool[]=[],cua=false,browser=false,audio=false) {
   if(role!=='main'&&role!=='worker')throw Error('interaction_role_denied');
-  const catalog=[...hostMcpTools(role,membership,nativeWebSearch,cua,browser),...(role==='main'?plugins:[])];
+  const catalog=[...hostMcpTools(role,membership,nativeWebSearch,cua,browser,audio),...(role==='main'?plugins:[])];
   const send = (message: unknown) => process.stdout.write(JSON.stringify(message) + "\n");
   createInterface({ input: process.stdin }).on("line", line => {
     void (async () => {
@@ -159,7 +159,13 @@ export function runWorkerInteractionMcp(path: string,role:string='main',membersh
               ? '未能取得网页正文。可使用已有搜索摘要，或改用其他来源。'
               : failure==='membership_image_result_unconfirmed'||(failure==='interaction_result_unconfirmed'&&message.params?.name==='generate_image')
               ? '未能确认结果，可能已扣费。不要自动重试。'
-              : failure==='interaction_result_unconfirmed'&&message.params?.name==='generate_video'
+              : failure==='membership_audio_already_requested'
+                ? '此条请求已有生成记录。若需补发，请传原核对编号，勿重新合成。'
+                : failure==='membership_audio_receipt_unavailable'
+                ? '这个编号没有可补发的已确认原文件。勿为补发重新提交合成。'
+                : failure==='interaction_result_unconfirmed'&&message.params?.name==='generate_audio'
+                ? '音频生成结果未确认，可能已扣费。请查看本次核对编号，勿重新提交。'
+                : failure==='interaction_result_unconfirmed'&&message.params?.name==='generate_video'
                 ? '未能确认结果，可能已扣费。请用原回执继续取回，勿重新提交。'
               : failure==='interaction_result_unconfirmed'
                 ? 'The request may still complete. Do not replay it. Inspect current state and any original host receipt. This error does not confirm cancellation.'

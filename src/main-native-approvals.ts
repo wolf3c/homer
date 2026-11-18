@@ -14,6 +14,7 @@ export type MainApprovalScope = {
     worker?: Pick<InteractionInput, 'runId' | 'runEpoch' | 'taskVersion'>;
 };
 const ownerPrefix = 'main-native:';
+export const AUDIO_APPROVAL_METHOD='homer_audio_generation';
 export const VIDEO_APPROVAL_METHOD='homer_video_generation';
 export function approvalDecision(item: Pick<InteractionInput, 'details'>, input: ConversationInput): InteractionDecision {
     if (input.questionAnswers) throw Error('interaction_response_kind');
@@ -197,11 +198,11 @@ export class MainNativeApprovals {
     }
     // A Homer capability operation is a host review, not a fabricated Codex RPC.
     // Codex still owns the actual installer/configuration after the user receipt.
-    openOperation(review:{requestId:string;question:string;details:Record<string,unknown>;method?:string;reason?:string},scope:MainApprovalScope){
+    openOperation(review:{requestId:string;question:string;details:Record<string,unknown>;method?:string;reason?:string;preview?:string},scope:MainApprovalScope){
         if(!scope.isCurrent())throw Error('interaction_not_live');
-        if(!review.question.trim()||review.question.length>4000||JSON.stringify(review.details).length>64000)throw Error('capability_review_too_large');
+        if(!review.question.trim()||review.question.length>4000||(review.preview?.length??0)>4000||JSON.stringify(review.details).length>64000)throw Error('capability_review_too_large');
         const reason = review.reason ?? '仅批准所示安装或配置；不批准额外登录、费用、外发、系统权限或自动重试。取消或本轮结束后失效。';
-        const approval: WebApproval = { title: review.question, scope: reason };
+        const approval: WebApproval = { title: review.question, scope: reason, ...(review.preview!==undefined?{details:review.preview}:{}) };
         return this.openReview(review.requestId,'authorization',{method:review.method??'homer_capability_operation',operation:review.details,approval},review.question,reason,scope);
     }
     open(request: NativeRequest, scope: MainApprovalScope): {
@@ -267,7 +268,8 @@ export class MainNativeApprovals {
             if (item.responseUserMessageId !== input.requestId) {
                 this.interactions.respond(id, decision, context);
                 const videoReceipt=item.details.method===VIDEO_APPROVAL_METHOD&&decision.action==='approve'?(item.details.operation as {receipt:string}).receipt:undefined;
-                this.history.finish(receipt.replyId, videoReceipt?`已批准本次视频生成。取回编号 ${videoReceipt}`:item.kind === 'authorization' ? (decision.action === 'approve' ? '已批准本次操作，等待执行结果。' : decision.action === 'cancel' ? '已记录取消，等待原生处理。' : '已拒绝本次操作。') : '已提交本轮补充。', 'completed');
+                const audioReceipt=item.details.method===AUDIO_APPROVAL_METHOD&&decision.action==='approve'?(item.details.operation as {receipt:string}).receipt:undefined;
+                this.history.finish(receipt.replyId, audioReceipt?`已批准本次音频生成。核对编号 ${audioReceipt}`:videoReceipt?`已批准本次视频生成。取回编号 ${videoReceipt}`:item.kind === 'authorization' ? (decision.action === 'approve' ? '已批准本次操作，等待执行结果。' : decision.action === 'cancel' ? '已记录取消，等待原生处理。' : '已拒绝本次操作。') : '已提交本轮补充。', 'completed');
             }
             return receipt;
         }

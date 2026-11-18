@@ -63,6 +63,7 @@ test(`an existing main thread and its Worker share the membership Token with nat
   const privateResult={title:'Private result',url:'http://127.0.0.1/private'};
   const requests:{path:string|undefined;method:string|undefined;auth:string|undefined;body:unknown}[]=[];
   const gateway=createServer(async(req,res)=>{
+    if(req.method==='GET'&&req.url==='/v1/models'){res.end(JSON.stringify({data:[]}));return;}
     const chunks=[];for await(const chunk of req)chunks.push(chunk);
     const body=JSON.parse(Buffer.concat(chunks).toString());
     requests.push({path:req.url,method:req.method,auth:req.headers.authorization,body});
@@ -217,6 +218,7 @@ test('membership video submits only after user approval and retrieves the origin
   const getCalls:string[]=[];
   let app!:Homer,mainMessageId:string,mode='complete',videoMessageId:string,pollClosed=false;
   const gateway=createServer(async(req,res)=>{
+    if(req.method==='GET'&&req.url==='/v1/models'){res.end(JSON.stringify({data:[]}));return;}
     try{
       assert.equal(req.headers.authorization,'Bearer '+token);
       if(req.method==='POST'){
@@ -384,6 +386,7 @@ test('membership images generate and edit through MCP and publish the exact PNG'
   const errors:unknown[]=[];
   let app:Homer,mainMessageId:string|undefined,attachment:AttachmentRef,foreign:AttachmentRef,unselected:AttachmentRef,imageMessageId:string|undefined,finishNativeTurn:()=>void;
   const gateway=createServer(async(req,res)=>{
+    if(req.method==='GET'&&req.url==='/v1/models'){res.end(JSON.stringify({data:[]}));return;}
     try{
       const chunks=[];for await(const chunk of req)chunks.push(chunk);
       if(req.url==='/v1/tools/search'||req.url==='/v1/tools/fetch'){
@@ -531,4 +534,149 @@ test('membership images generate and edit through MCP and publish the exact PNG'
     assert.ok(requests.filter(r=>r.prompt.endsWith(' edit')||r.prompt.endsWith(' generate')).every(r=>r.path==='/v1/images/'+(r.prompt.endsWith(' edit')?'edits':'generations')));
     assert.deepEqual(webAuth,['Bearer '+token,'Bearer '+token]);
   }finally{await app.close();}
+});
+
+test('membership audio is gated by the Token catalog and approval, then delivers the original MP3',async t=>{
+  const token='sk-synthetic-audio-membership-only',mp3=Buffer.alloc(417);
+  Buffer.from([0xff,0xfb,0x90,0x64]).copy(mp3);
+  const posts:unknown[]=[],errors:unknown[]=[],results:Record<string,any>={};
+  let visible=false,app:Homer|undefined,published:string|undefined,mainMessageId:string|undefined;
+  const gateway=createServer(async(req,res)=>{
+    try{
+      assert.equal(req.headers.authorization,'Bearer '+token);
+      if(req.method==='GET'){
+        assert.equal(req.url,'/v1/models');
+        res.end(JSON.stringify({data:visible?[{id:'homer-tts'}]:[{id:'homer-tts-other'}]}));return;
+      }
+      assert.equal(req.url,'/v1/audio/speech');assert.equal(req.method,'POST');
+      const chunks=[];for await(const chunk of req)chunks.push(chunk);
+      const body=JSON.parse(Buffer.concat(chunks).toString());
+      posts.push(body);
+      if(body.input==='421'){res.writeHead(421).end();return;}
+      if(body.input==='lost'){req.socket.destroy();return;}
+      if(body.input==='stop')await app!.stopMain(mainMessageId!);
+      if(body.input==='wrong format'){res.writeHead(200,{'Content-Type':'audio/mpeg'}).end('not audio');return;}
+      res.writeHead(200,{'Content-Type':'audio/mpeg','Content-Length':mp3.length}).end(mp3);
+    }catch(error){errors.push(error);res.writeHead(500).end();}
+  });
+  await new Promise<void>(resolve=>gateway.listen(0,'127.0.0.1',resolve));
+  t.after(()=>{gateway.closeAllConnections();return new Promise<void>(resolve=>gateway.close(()=>resolve()));});
+  const parent=resolve('.codex/scratch');mkdirSync(parent,{recursive:true});
+  const root=mkdtempSync(join(parent,'membership-audio-'));
+  const role={baseUrl:'http://127.0.0.1:'+(gateway.address() as AddressInfo).port+'/v1',model:'synthetic',effort:null,fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
+  const config:Config={appData:root,workspace:join(root,'work'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:resolve('tests/fixtures/native-feature-app-server.mjs'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,
+    desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:syntheticDesktop(t,root),desktopConnection:{main:role,worker:role}};
+  mkdirSync(config.runtime);
+  const prior=process.env.HOMER_DEEPSEEK_TOKEN;
+  process.env.HOMER_DEEPSEEK_TOKEN=token;
+  t.after(()=>{if(prior===undefined)delete process.env.HOMER_DEEPSEEK_TOKEN;else process.env.HOMER_DEEPSEEK_TOKEN=prior;rmSync(root,{recursive:true,force:true});});
+  class Engine extends EventEmitter{
+    threadId:string;turnId?:string;turnActive=false;private turns=0;
+    constructor(readonly options:EngineOptions,readonly tool:(call:ToolCall)=>Promise<unknown>){super();this.threadId=options.threadId??'synthetic-audio-'+options.role;}
+    async start(){return this.threadId;}
+    async close(){return true;}
+    async interrupt(){return true;}
+    async turn(text:string,opts?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
+      this.turnActive=true;this.turnId=this.threadId+'-'+ ++this.turns;opts?.onStarted?.(this.turnId);
+      const worker=this.options.role==='worker';
+      const data=worker?{key:'worker',args:{input:'worker'},publish:false,repeat:false}:JSON.parse(text.match(/^AUDIO_FIXTURE (\{[^\n]*\})/m)?.[1]??'null');
+      const dynamic=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args}) as Promise<Record<string,string>>;
+      try{
+        if(data?.delegate){await dynamic('worker_open',{title:'Generate speech',message:'Generate the requested speech'});}
+        else if(data)await withMcp(this.options,async rpc=>{
+          const tools=(await rpc('tools/list')).tools as {name:string;description:string}[];
+          assert.equal(tools.some(tool=>tool.name==='generate_audio'),visible);
+          if(visible)assert.match(tools.find(tool=>tool.name==='generate_audio')!.description,/character \(expressive female\)/);
+          assert.equal(this.options.interactionMcp!.catalog!.some(tool=>tool.name==='generate_audio'),visible);
+          const speak=()=>rpc('tools/call',{name:'generate_audio',arguments:data.args});
+          const reply=await speak();
+          results[data.key]=reply.isError?{code:reply.content[0].text}:JSON.parse(reply.content[0].text);
+          if(data.repeat){const repeat=await speak();assert.equal(repeat.isError,true);}
+          const path=results[data.key].path;
+          if(data.publish&&path){
+            const send=()=>dynamic('send_user_message',{text:'Speech is ready.',attachments:[{path}]});
+            if(data.replaceBeforePublish){
+              const changed=Buffer.from(mp3);changed[changed.length-1]=1;
+              writeFileSync(path,changed);
+              try{await assert.rejects(send,/membership_audio_receipt_unavailable/);}
+              finally{writeFileSync(path,mp3);}
+            }else published=(await send()).messageId;
+          }
+        });
+      }catch(error){errors.push(error);}
+      finally{this.turnActive=false;}
+      return {status:'completed',text:'Audio turn finished.'};
+    }
+  }
+  const start=async()=>{app=new Homer(config,async message=>{if(message.type==='main_start')mainMessageId=message.messageId;},(options,tool)=>new Engine(options,tool));await app.start();};
+  let turnCount=0;
+  const turn=async(input:object,decision?:boolean)=>{
+    const host=app!,sourceRequestId='audio-fixture-'+ ++turnCount;
+    host.submitMessage({requestId:sourceRequestId,text:'AUDIO_FIXTURE '+JSON.stringify(input)});
+    const completed=host.idle();
+    if(decision!==undefined){
+      let unwatch=()=>{};
+      try{
+        const approval=new Promise<string>(resolve=>{
+          const probe=()=>{const id=host.store.db.prepare("SELECT id FROM worker_interactions WHERE state='pending_user' AND json_extract(authority,'$.sourceRequestId')=?").get(sourceRequestId)?.id;if(typeof id==='string')resolve(id);};
+          unwatch=host.onStateChange(probe);probe();
+        });
+        const id=await Promise.race([approval,completed.then(()=>undefined),delay(8000,undefined,{ref:false})]);
+        if(typeof id!=='string')assert.fail('audio approval did not reach the user');
+        if('key' in input&&input.key==='complete'){
+          const approval=host.interactions.inspect(id).details.approval as {details?:string};
+          assert.equal(approval.details,'朗读文本：\n 原文 😀 \n\n语气指令：\n慢一点');
+        }
+        const before=posts.length;
+        assert.throws(()=>host.interactions.respond(id,{action:'approve',reason:'Model replay'},{userMessageId:'forged'}),/main_native_user_decision_required/);
+        assert.equal(posts.length,before);
+        host.submitMessage({requestId:sourceRequestId+'-decision',interactionId:id,text:decision?'允许本次操作':'拒绝本次操作'});
+      }finally{unwatch();}
+    }
+    await completed;assert.deepEqual(errors,[]);
+  };
+  try{
+    await start();
+    await turn({key:'hidden',args:{input:'hidden'}});
+    assert.ok(results.hidden.code);assert.deepEqual(posts,[]);
+    await app!.close();visible=true;await start();
+    await turn({key:'overlimit',args:{input:'😀'.repeat(1001)}});
+    assert.equal(results.overlimit.code,'invalid_tool_arguments');
+    await turn({key:'invalid',args:{input:'hello',voice:'custom-voice'}});
+    assert.equal(results.invalid.code,'invalid_tool_arguments');
+    await turn({key:'denied',args:{input:'denied'}},false);assert.deepEqual(posts,[]);
+    await turn({key:'complete',args:{input:' 原文 😀 ',voice:'narrator',instructions:'慢一点'},repeat:true,publish:true},true);
+    assert.deepEqual(posts,[{model:'homer-tts',input:' 原文 😀 ',voice:'narrator',instructions:'慢一点',response_format:'mp3'}]);
+    assert.equal(results.complete.mime,'audio/mpeg');assert.deepEqual(readFileSync(results.complete.path),mp3);
+    const firstMessage=app!.history.message(published!)!;
+    assert.deepEqual(Buffer.from(app!.readAttachment({messageId:firstMessage.id,...firstMessage.attachments![0]!,preview:'voice'}).data,'base64'),mp3);
+    await app!.close();await start();
+    await turn({key:'resend',args:{receipt:results.complete.receipt},publish:true});
+    assert.deepEqual(results.resend,results.complete);
+    assert.equal(posts.length,1);
+    const message=app!.history.message(published!)!;
+    assert.notEqual(message.id,firstMessage.id);
+    const attachment=app!.readAttachment({messageId:message.id,...message.attachments![0]!,preview:'voice'});
+    assert.equal(attachment.mime,'audio/mpeg');assert.deepEqual(Buffer.from(attachment.data,'base64'),mp3);
+    await turn({key:'replaced-before-publish',args:{receipt:results.complete.receipt},publish:true,replaceBeforePublish:true});
+    await turn({key:'mixed',args:{receipt:results.complete.receipt,input:'new'}});
+    assert.equal(results.mixed.code,'invalid_tool_arguments');
+    writeFileSync(results.complete.path,'changed');
+    await turn({key:'changed',args:{receipt:results.complete.receipt}});
+    assert.equal(results.changed.code,'membership_audio_receipt_unavailable');
+    for(const input of ['421','lost','wrong format']){
+      await turn({key:input,args:{input},repeat:true},true);
+      assert.equal(results[input].state,'submission_unconfirmed');
+      assert.match(results[input].receipt,/^audio-/);assert.equal(results[input].path,undefined);
+    }
+    await turn({key:'unknown-receipt',args:{receipt:results.lost.receipt}});
+    assert.equal(results['unknown-receipt'].code,'membership_audio_receipt_unavailable');
+    await turn({key:'stop',args:{input:'stop'}},true);
+    assert.equal(results.stop?.path,undefined);
+    assert.equal(app!.upgradeStatus().safe,true);
+    await turn({delegate:true},true);
+    assert.deepEqual(readFileSync(results.worker.path),mp3);
+    assert.deepEqual(posts.map(body=>(body as {input:string}).input),[' 原文 😀 ','421','lost','wrong format','stop','worker']);
+    assert.ok(app!.history.list(app!.store.meta('mainThread')!).some(message=>message.text.includes('核对编号 '+results.lost.receipt)));
+  }finally{await app?.close();}
 });

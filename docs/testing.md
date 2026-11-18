@@ -1419,3 +1419,25 @@ HISTORY_FOLLOWUP_BUILD=/absolute/task/web HOMER_SYNTHETIC_ROOT=/absolute/task/sy
 Node22.22.0，沿 `tests/fixtures/synthetic-home.mjs` 与 `core-system-proxy.mjs` 使用隔离 HOME／CODEX_HOME、合成数据库、回环 HTTP 和注入引擎。`web-upload`、`web-upload-host`、`files`、`engine-rpc-lifecycle`、`engine`、`homer-attachment-adapter`、`mobile-channel`、`web-chat`、`media-lifecycle`、`media-retention`、`media-documents`、`attachment-tool-outlets`、`delegation-attachment-input`、`user-message-attachment`、`recursive-tools`及`mobile/connection.test.mjs`合计160项离线核心回归通过。显式追加已有 `web-upload-host.local-media.test.ts` 单项本地合成解码专项，合计161/161；没有真实模型调用。服务与UI `tsc --noEmit`、修改MJS语法及`git diff --check`通过。全 `tsconfig.check.json` 检查发现并行 `web-history-maintenance-contract.test.ts:28` 的WebState强转TS2352，归属历史虚拟列表事项，本事项未修改。
 
 手机双20MiB大包（每包Base64约26.7MiB）沿已有16KiB分帧及背压往返后仍可聊天；同进程两端合成测试最大RSS434880512字节（约415MiB），不代表手机WebView峰值或真机安全验收。20MiB上传／32MiB整包是Homer资源取舍，模型容量由实际请求决定。真实手机网络、低内存设备、安装版、Windows／Linux和浏览器批量渲染仍未验证；浏览器用例已按32附件及20MiB边界更新但只做语法检查。无新专项测试文件或默认测试分类变化。
+
+## 2026-11-18 会员语音合成
+
+```sh
+node --import tsx --test tests/membership-web-tools.test.ts tests/web-server.test.ts \
+  tests/web-chat.test.ts tests/worker-interaction-mcp.test.ts tests/mcp-approval-routing.test.ts
+node --import tsx --test tests/user-message-attachment.test.ts tests/delegation-attachment-input.test.ts \
+  tests/media-retention.test.ts tests/attachment-tool-outlets.test.ts
+node --import tsx --test --test-name-pattern='playing voice' tests/message-image-preview.test.mjs
+node_modules/.bin/tsc -p tsconfig.json --noEmit
+node_modules/.bin/tsc -p ui/tsconfig.json --noEmit
+```
+
+会员工具用例使用回环 HTTP、合成 Token、隔离数据目录与合成引擎。覆盖别名缺失及可用、Main／Worker 目录一致性、音色和文本边界、首次确认前的实际文本和语气指令、精确请求参数及 MP3 原件交付、重启补发且不再调用网关、拒绝补发损坏原件和未确认结果、断线／HTTP 421／无效音频／停止后不自动重发。网页与手机共用的附件读取、语音播放器另有离线回归。未使用生产 Token、真实模型或安装版。工作区全量类型检查仍报告 `web-history-maintenance-contract.test.ts` 的既有 `WebState` 强转错误，生产源码类型检查单独执行。
+
+复审修订共 45 项定向测试通过，生产源码类型检查通过。固定 Codex 0.171.0-alpha.7 的隔离宿主先通过只连回环的工具目录预检。随后用同一个 AMH 限额 Token 和官网当时下发的 Main 模型 `gpt-6.1-terra` 验证：
+
+- 写稿轮只交付文字，没有发起合成。男声轮选择 `narrator`，审批显示逐字相同的原文和实传的语气指令，确认前没有语音 POST。唯一的语音 POST 返回可解码的 MP3，并已通过会话附件交付。
+- 首次合跑在补发阶段验收脚本未给出通过结果。保留本轮一次语音 POST 的上限，未重新合成。随后在新隔离宿主内用已确认的本地 MP3 样本验证真模型补发，收到的附件与样本字节一致，零语音 POST、零新审批。
+- AMH 消费日志确认本轮语音仅成功扣费一次，实扣 240 quota（0.3504 积分）。测试 Token 总用量为 24,498 quota（35.76708 积分，含对话模型请求），余额 5,502 quota。联调后已读回确认测试 Token 与专用语音渠道禁用。未安装、重启日常 Homer 或发布。
+
+提交复审补验首发、跨重启补发的两条附件均与原件字节一致。文件在查回后、附件提交前被替换时拒绝写入附件。仅在合成提交和写文件前校验输出路径，等待期间检查执行权限。8 MiB 内存文件的回执查询和 SHA-256 校验在本机 100 次微基准中 P95 为 3.78 ms，未包含磁盘和网络。
