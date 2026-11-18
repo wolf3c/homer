@@ -82,7 +82,7 @@ try{
  if(!baseline){
   await resize(801);await page.locator('.preview-separator').focus();await page.keyboard.press('Home');
   const min=await measure('native-left-min-801');assert.ok(min.header.width>=239.5&&min.header.width<=241);assert.equal(await page.locator('.header-name').evaluate(e=>getComputedStyle(e).display),'none');
-  assert.equal(await page.locator('.header-actions button').evaluateAll(a=>a.every(e=>{const r=e.getBoundingClientRect();return r.width===44&&r.height===44&&r.x>=88&&r.right<=240;})),true);
+  assert.equal(await page.locator('.header-actions button:visible').evaluateAll(a=>a.every(e=>{const r=e.getBoundingClientRect();return r.width===44&&r.height===44&&r.x>=88&&r.right<=240;})),true);
   await resize(1440);await page.locator('.preview-separator').focus();await page.keyboard.press('Home');assert.ok((await measure('native-left-min-1440')).header.width>=359);
   await page.keyboard.press('End');assert.ok((await measure('native-right-min-1440')).panel.width>=359);
   record('native left 240px plus 25%, preview 25–75%, original separator keyboard interaction');
@@ -103,7 +103,7 @@ try{
   for(let n=2;n<files.length;n++)await open(n);
   assert.equal(await html.evaluate(()=>document.body.dataset.executions).catch(()=>null),null,'switching file destroys old HTML context');
   assert.equal(await page.locator('.canvas-tab-rail').evaluate(e=>e.scrollWidth>e.clientWidth),true);
-  const drag=await page.evaluate(()=>Object.fromEntries(['.conversation-header','.canvas-tab-bar','.header-actions','.canvas-tab-rail','.canvas-tab','.canvas-tab-close','.canvas-tab-actions','.preview-separator'].map(s=>[s,getComputedStyle(document.querySelector(s)).getPropertyValue('-webkit-app-region')])));
+  const drag=await page.evaluate(()=>Object.fromEntries(['.conversation-header','.canvas-tab-bar','.header-actions','.canvas-tab-rail','.canvas-tab','.canvas-tab-close','.canvas-collapse','.canvas-tab-actions','.preview-separator'].map(s=>[s,getComputedStyle(document.querySelector(s)).getPropertyValue('-webkit-app-region')])));
   assert.equal(drag['.conversation-header'],'drag');assert.equal(drag['.canvas-tab-bar'],'drag');
   for(const [selector,v]of Object.entries(drag))if(!['.conversation-header','.canvas-tab-bar','.canvas-tab','.canvas-tab-close'].includes(selector))assert.equal(v,'no-drag',selector);
   // The visible rail owns no-drag; offscreen children must not subtract native
@@ -119,7 +119,7 @@ try{
   await page.keyboard.press('Escape');await page.locator('#task-status-panel').waitFor({state:'hidden'});
   const tabsBefore=await page.getByRole('tab').count(),activeBefore=await page.locator('[role=tab][aria-selected=true]').getAttribute('aria-label');
   const preview=page.getByRole('button',{name:'预览',exact:true});
-  await preview.click();await page.locator('#canvas-panel').waitFor({state:'hidden'});
+  await page.getByRole('button',{name:'收起预览',exact:true}).click();await page.locator('#canvas-panel').waitFor({state:'hidden'});
   await preview.click();await page.locator('#canvas-panel').waitFor();
   assert.equal(await page.getByRole('tab').count(),tabsBefore);assert.equal(await page.locator('[role=tab][aria-selected=true]').getAttribute('aria-label'),activeBefore);
   assert.deepEqual((await measure('native-controls-after')).bounds,beforeControls.bounds);
@@ -129,7 +129,7 @@ try{
   assert.equal(await lastTab.evaluate(e=>e.matches(':hover')&&getComputedStyle(e).getPropertyValue('-webkit-app-region')==='none'),true);
   await lastTab.focus();await page.keyboard.press('Home');await page.keyboard.press('End');await page.keyboard.press('Enter');
   assert.equal(await lastTab.getAttribute('aria-selected'),'true');
-  record('browser input reaches all three global controls at native 240px minimum; preview restores tabs, long-rail title/hover and keyboard activation remain available (not HID)');
+  record('browser input reaches the conversation and preview controls at native 240px minimum; preview restores tabs, long-rail title/hover and keyboard activation remain available (not HID)');
   await resize(1080);await open(2);await page.locator('.image-annotation-toggle').click();await page.locator('.a9s-annotationlayer').waitFor();
   const image=page.locator('.image-annotation img');await image.evaluate(e=>e.decode());const r=await image.boundingBox();
   await page.mouse.move(r.x+r.width*.1,r.y+r.height*.15);await page.mouse.down();await page.mouse.move(r.x+r.width*.4,r.y+r.height*.65,{steps:6});await page.mouse.up();

@@ -784,6 +784,8 @@ node scripts/test.mjs --browser
 构建目录必须指向事先生成的当前 UI。覆盖文件列表、过程折叠和焦点、后续待答及队列页、精确授权/撤销、分页/重连/延迟图片锚点、完整正文复制及文件字节、长文排版和真实 100%/200% Chrome 缩放。旧原生选择框、源码默认、活动阅读器和应用内成果下载入口不恢复；旧线程原答复授权仍从真实 HTTP owner 检查。历史 V2 构建对比已退役，长文样本保留在 kerning 入口；测量值不代表性能达标。退出码之外仍需审阅截图；窄屏模拟不代替移动真机验收。
 
 
+可单独执行 `HISTORY_FOLLOWUP_BUILD=/absolute/isolated-web-build HOMER_BROWSER_EVIDENCE=/absolute/evidence node tests/preview-toggle.browser.mjs`。用 1440／801／800／390／320 CSS px 的独立 Chrome 页面检查 Preview 右上角收起、关闭后主顶栏打开入口、键盘焦点返回及标签恢复。截图与退出回执位于证据目录下的 `preview-toggle/`。
+
 ## 固定原生协议与合成验收入口
 
 这些检查需要已有的 Codex **0.163.0** 二进制和项目 Node 22 依赖；不自动下载、升级或使用日常 HOME。原生进程是真实的，但模型响应及 MCP 服务均由本地合成 fixture 提供，不使用真实账号或付费模型。

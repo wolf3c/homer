@@ -26,8 +26,7 @@ try{
   const click=async selector=>actualClick(p,await ev(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().toJSON()`));
   const tab=index=>`[...document.querySelectorAll('[role=tab]')].find(t=>t.title.endsWith(${JSON.stringify(' · '+files[index].id)}))`;
   const open=async index=>{await ev(`document.querySelector('.file-list-open[aria-label='+CSS.escape(${JSON.stringify('预览 '+files[index].title)})+']').click()`);await until(()=>!!document.querySelector('#canvas-panel'));await until(index===0?()=>!!document.querySelector('[data-preview-text]'):index===1?()=>!!document.querySelector('.html-annotation-toggle'):()=>document.querySelector('#canvas-panel')?.textContent.includes('此格式暂不支持'));};
-  const toggle=()=>width<=800?'.canvas-collapse':'.conversation-header [aria-controls="canvas-panel"]';
-  const collapse=async()=>{await click(toggle());await until(()=>!document.querySelector('#canvas-panel'));};
+  const collapse=async()=>{await click('.canvas-collapse');await until(()=>!document.querySelector('#canvas-panel'));};
   const reopen=async()=>{await click('.conversation-header [aria-controls="canvas-panel"]');await until(()=>!!document.querySelector('#canvas-panel'));};
   const key=async(key,code,n,modifiers=0)=>{for(const type of ['keyDown','keyUp'])await p.command('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:n,modifiers});};
   const geometry=()=>ev(()=>{const q=s=>document.querySelector(s)?.getBoundingClientRect().toJSON();return {panel:q('#canvas-panel'),rail:q('.canvas-tab-rail'),body:q('[data-slot=canvas-split-body]'),oldHeader:q('[data-slot=canvas-split-header]'),bar:q('.canvas-tab-bar'),overflow:document.documentElement.scrollWidth-innerWidth,scroll:document.querySelector('.thread-viewport').scrollTop,composer:q('.composer-area')};});
@@ -45,7 +44,7 @@ try{
    // captured, also verify the measured before/after CSS-pixel gain.
    if(existsSync(join(destination,'baseline.json'))){const old=JSON.parse(readFileSync(join(destination,'baseline.json'),'utf8')).metrics.find(x=>x.width===width&&x.kind==='text');const gain=(old.body.top-old.panel.top)-(m.body.top-m.panel.top);assert.equal(gain,old.oldHeader.height);metrics.push({width,kind:'gain',cssPixels:gain});}
    assert.equal(m.overflow,0);assert.equal(await ev(`document.activeElement===(${tab(0)})`),true);
-   assert.equal(await ev(()=>document.querySelectorAll('.canvas-collapse').length),width<=800?1:0);
+   assert.equal(await ev(()=>document.querySelectorAll('.canvas-collapse').length),1);
    assert.equal(await ev(()=>document.querySelector('.canvas-tab-actions').childElementCount),0);
    record('duplicate header removed, exact body gain measured, text has no annotation mode row');
    if(width<=800){

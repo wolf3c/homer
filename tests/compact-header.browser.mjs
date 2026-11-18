@@ -26,7 +26,7 @@ try{
   const geometry=()=>ev(()=>{const r=s=>document.querySelector(s)?.getBoundingClientRect().toJSON();return {viewport:innerWidth,header:r('.conversation-header'),panel:r('#canvas-panel'),bar:r('.canvas-tab-bar'),body:r('[data-slot=canvas-split-body]'),workspace:r('.conversation-workspace'),aside:r('.status-aside-slot'),composer:r('.composer-area'),oldHeader:r('[data-slot=canvas-split-header]'),overflow:document.documentElement.scrollWidth-innerWidth,outerRange:document.documentElement.scrollHeight-innerHeight,scroll:document.querySelector('.thread-viewport').scrollTop};});
   const measure=async label=>{const m=await geometry();metrics.push({width,label,...m});return m;};
   const open=async index=>{await ev(`document.querySelector('.file-list-open[aria-label='+CSS.escape(${JSON.stringify('预览 '+files[index].title)})+']').click()`);await until(()=>!!document.querySelector('#canvas-panel'));await until(index===1?()=>!!document.querySelector('.html-annotation-toggle'):()=>!!document.querySelector('[data-preview-text]'));};
-  const collapse=async()=>{await click(width<=800?'.canvas-collapse':'.conversation-header [aria-controls="canvas-panel"]');await until(()=>!document.querySelector('#canvas-panel'));};
+  const collapse=async()=>{await click('.canvas-collapse');await until(()=>!document.querySelector('#canvas-panel'));};
   const assertLayout=m=>{const h=m.viewport<=800?52:44;assert.equal(m.header.height,h);assert.equal(m.overflow,0);assert.equal(m.outerRange,0);if(m.panel){assert.equal(m.bar.height,h);assert.equal(m.panel.top,m.viewport<=800?0:m.header.top);assert.equal(m.body.top-m.panel.top,h);assert.equal(m.oldHeader,undefined);}};
   try{
    await p.navigate();await until(()=>!!document.querySelector('[contenteditable=true]')&&!!document.querySelector('#task-status-trigger'));
@@ -45,7 +45,7 @@ try{
    }
    await open(0);const preview=await measure('one-text-preview');
    if(baseline){await p.screenshot('before-'+width+'.png');continue;}
-   assertLayout(preview);assert.equal(await ev(()=>document.querySelectorAll('.canvas-collapse').length),width<=800?1:0);
+   assertLayout(preview);assert.equal(await ev(()=>document.querySelectorAll('.canvas-collapse').length),1);
    assert.equal(await ev(()=>[...document.querySelectorAll('.header-actions button')].filter(b=>b.getBoundingClientRect().height>0).every(b=>b.getBoundingClientRect().width===44&&b.getBoundingClientRect().height===44)),true);
    record('actual headers are 44/52px, desktop shares top boundary, one toolbar, no page overflow');
    await p.screenshot('preview-'+width+'.png');
@@ -68,7 +68,7 @@ try{
    await click('.conversation-header [aria-controls="canvas-panel"]');await until(()=>!!document.querySelector('[data-preview-text]'));
    await delay(200);const reopened=await measure('after-reopen');assert.ok(Math.abs(reopened.composer.bottom-before.composer.bottom)<=1);assert.ok(Math.abs(reopened.scroll-before.scroll)<=2,JSON.stringify({before:before.scroll,after:reopened.scroll}));
    assert.equal(await ev(()=>document.querySelectorAll('[role=tab]').length),1);
-   record('global/mobile collapse keeps tabs, reading position and composer bottom');
+   record('Preview collapse keeps tabs, reading position and composer bottom');
    await open(1);await click('.html-annotation-toggle');await until(()=>document.querySelector('.html-annotation-toggle')?.getAttribute('aria-pressed')==='true');
    frame=await inspectHtmlFrame(chrome,p,'!!document.querySelector("agentation-toolbar")?.shadowRoot');
    assert.equal(await frame.evaluate('Number(document.body.dataset.executions)'),1);
@@ -86,7 +86,7 @@ try{
     await p.command('Input.dispatchMouseEvent',{type:'mousePressed',x:r.x,y:450,button:'left',clickCount:1});for(let n=1;n<=8;n++)await p.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x+(750-r.x)*n/8,y:450,buttons:1,button:'left'});await p.command('Input.dispatchMouseEvent',{type:'mouseReleased',x:750,y:450,button:'left',clickCount:1});await delay(120);
     const small=await measure('250-panel');assertLayout(small);assert.ok(small.panel.width<=251);assert.equal(await ev(()=>{const b=document.querySelector('.html-annotation-toggle'),s=b.querySelector('svg');return b.getBoundingClientRect().height===28&&s.getBoundingClientRect().width===14&&__compactFrame===document.querySelector('iframe[title="隔离 HTML 成果"]');}),true);await p.screenshot('panel-250.png');
     await resize(801);const sep=await ev(()=>document.querySelector('.preview-separator').getBoundingClientRect().toJSON());await p.command('Input.dispatchMouseEvent',{type:'mousePressed',x:sep.x,y:450,button:'left',clickCount:1});await p.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:201,y:450,buttons:1,button:'left'});await p.command('Input.dispatchMouseEvent',{type:'mouseReleased',x:201,y:450,button:'left',clickCount:1});await delay(150);
-    const left=await measure('200-left-panel');assertLayout(left);assert.ok(left.header.width<240);assert.equal(await ev(()=>getComputedStyle(document.querySelector('.header-brand-label')).display),'none');assert.equal(await ev(()=>[...document.querySelectorAll('.header-actions button')].filter(b=>b.getBoundingClientRect().width===44&&b.getBoundingClientRect().left>=0&&b.getBoundingClientRect().right<=document.querySelector('.conversation-header').getBoundingClientRect().right).length),3);await p.screenshot('left-200.png');
+    const left=await measure('200-left-panel');assertLayout(left);assert.ok(left.header.width<240);assert.equal(await ev(()=>getComputedStyle(document.querySelector('.header-brand-label')).display),'none');assert.equal(await ev(()=>[...document.querySelectorAll('.header-actions button')].filter(b=>b.getBoundingClientRect().width===44&&b.getBoundingClientRect().left>=0&&b.getBoundingClientRect().right<=document.querySelector('.conversation-header').getBoundingClientRect().right).length),2);await p.screenshot('left-200.png');
     await resize(1440);record('real divider supports 250px preview and 200px left header without losing controls or shrinking SVG');
    }
    await frame.close();frame=undefined;await resize(width);

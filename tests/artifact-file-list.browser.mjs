@@ -4,6 +4,7 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {fixture} from './web-history-followup-fixture.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
+import {actualClick} from './helpers/html-preview-browser.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/artifact-file-list');
 mkdirSync(destination,{recursive:true});
 const browser=await isolatedChrome(destination),results=[];
@@ -32,7 +33,7 @@ try{for(const width of [1440,704,390,320]){
   assert.equal(await page.evaluate(()=>!!document.querySelector('#canvas-panel [data-preview-text]')),false,'HTML opens in the isolated preview');
   assert.equal(await page.evaluate(()=>document.querySelectorAll('#canvas-panel a[download]').length),0);
   if(width<=800){await page.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await page.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});}
-  else await page.evaluate(()=>document.querySelector('.conversation-header [aria-controls=canvas-panel]').click());
+  else await actualClick(page,await page.evaluate(()=>document.querySelector('.canvas-collapse').getBoundingClientRect().toJSON()));
   await page.until(()=>!document.querySelector('#canvas-panel'));
   assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'预览 '+names[0]);
   await open(names[1]);await page.until(()=>document.querySelector('.canvas-markdown')?.textContent.includes('Main implementation'));

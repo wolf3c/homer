@@ -143,7 +143,7 @@ export default async function pinnedStatus(page,{destination}={}){
  const divider=await page.locator('.preview-separator').boundingBox();
  await page.mouse.move(divider.x+divider.width/2,divider.y+100);await page.mouse.down();await page.mouse.move(divider.x-220,divider.y+100,{steps:5});await page.mouse.up();await panel.waitFor({state:'hidden'});
  ok(await page.locator('#canvas-panel').isVisible()&&await trigger.getAttribute('aria-expanded')==='false','更宽屏拖窄实际聊天栏也退回弹层入口，不关闭预览');
- await page.getByRole('button',{name:'预览',exact:true}).click();
+ await page.getByRole('button',{name:'收起预览',exact:true}).click();
  await page.setViewportSize({width:1440,height:1000});
  await page.emulateMedia({colorScheme:'dark',reducedMotion:'reduce'});await shot('desktop-1440-dark');
  await page.emulateMedia({colorScheme:'light'});

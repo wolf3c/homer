@@ -34,7 +34,7 @@ try{
    if(!baseline){assert.ok(m,selector+' icon exists');assert.ok(m.class.includes('lucide-message-circle-plus'),selector+' unified icon');assert.equal(m.width,size,selector+' width');assert.equal(m.height,size,selector+' height');assert.notEqual(m.display,'none');assert.notEqual(m.visibility,'hidden');}
   };
   const open=async index=>{await ev(`document.querySelector('.file-list-open[aria-label='+CSS.escape(${JSON.stringify('预览 '+files[index].title)})+']').click()`);await until(()=>!!document.querySelector('#canvas-panel'));};
-  const close=async()=>{await click(width<=800?'.canvas-collapse,#canvas-close':'.conversation-header [aria-controls=canvas-panel]');await until(()=>!document.querySelector('#canvas-panel'));};
+  const close=async()=>{await click('.canvas-collapse,#canvas-close');await until(()=>!document.querySelector('#canvas-panel'));};
   const select=async(selector,text,message=false)=>{
    await ev(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
    await ev(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));

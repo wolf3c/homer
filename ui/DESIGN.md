@@ -314,7 +314,7 @@ Homer 自有消息选文引用、消息动作引用、文件选文批注、HTML�
 
 文件名只在 Base UI Tab 显示，完整名称保留于 title／aria-label；不再渲染消费者的 CanvasSplitHeader 及其整预览关闭 X。HTML／图片的原 28px 笔形图标加“批注”（14px SVG）通过 Portal 放到同一标签栏右端稳定容器，位于 Tab/List 外；文本没有批注模式按钮，不另造操作行。标签单文件 ×、原横滚、手动键盘激活和邻项关闭策略保持。
 
-桌面有标签时沿全局顶部预览开关收起；手机原模态会隔离全局开关，因此标签栏末端保留 PanelRight 形“收起预览”，仅调用原 onClose，保留 tabs。无标签空态／受控网页保留单栏名称和最小收起 fallback。初始焦点为活动 Tab，fallback 收起按钮；关闭沿原来源入口及顶部开关回焦。背景不可达与 iframe 安全退出保持，原生 tooltip 的 Escape 先关闭提示再由图片／Dialog 逐层退出。
+2026-11-18 起，Preview 收起时由主对话顶栏的「预览」打开。打开后，PanelRight 形「收起预览」位于 Preview 顶栏右端，独立于横滚标签，桌面和手机统一。收起调用原 onClose 并保留标签，无标签空态及受控网页沿用单栏标题。初始焦点为活动标签，空态聚焦收起按钮。关闭回到原来源入口，来源失效时回到主顶栏「预览」。窄屏背景隔离与 iframe 安全退出保持，原生 tooltip 的 Escape 先关闭提示再由图片／Dialog 逐层退出。
 
 批注仍由原 CanvasReader、Annotorious／Agentation 及 annotationDraft 负责，布局和尺寸变化不重挂阅读器或原生实例，切换文件仍销毁。固定 vendor 源码和生成 CSS 未改；不改全局顶栏高度、共享备注表单键盘或 HTML 原生英文。三屏实际正文上沿各净增 49 CSSpx；验证与限制见 `docs/2026-10-25-preview-header-row-removal.md`。此为维护源码，未安装或发布。
 
