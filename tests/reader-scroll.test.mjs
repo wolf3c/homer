@@ -363,9 +363,10 @@ test('clicks during a suffix retry cannot authorize another read when that retry
 test('a pending latest rechecks after child message DOM commits without a runtime change',()=>{
  const f=fixture();try{
   f.gesture(1000);const tail=f.rows.splice(20);f.latest();assert.equal(f.view.scrollTop,1000);
-  const before=f.renderRequests();f.rows.push(...tail);f.contentMutation();
-  assert.ok(f.renderRequests()>before,'child DOM commit must wake the pending parent position check');
-  f.render();f.flush();assert.equal(f.view.scrollTop,2400);
+  const before=f.renderRequests();f.rows.push(...tail);f.contentMutation();f.contentMutation();
+  assert.equal(f.renderRequests(),before,'DOM mutations must yield before waking the parent');
+  assert.equal(f.frameCount(),1,'DOM mutations share one pending position check');
+  f.flush();assert.equal(f.view.scrollTop,2400);assert.equal(f.frameCount(),0);
   const settled=f.renderRequests();f.contentMutation();assert.equal(f.renderRequests(),settled,'no parent update after the latest request is consumed');
  }finally{f.close();}
 });
