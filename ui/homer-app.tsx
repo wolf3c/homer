@@ -133,12 +133,12 @@ function MediaAttachment({asset,messageId,index,ratio='4:3'}:{asset:MediaView;me
    {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
  </figure>;
 }
-function MediaAttachments({media,messageId,references=[]}:{media:MediaView[];messageId:string;references?:ResourceReference[]}){
+function MediaAttachments({media,messageId,references=[],hideScreenshotDetails}:{media:MediaView[];messageId:string;references?:ResourceReference[];hideScreenshotDetails?:boolean}){
  const paired=new Set<number>();
  return <>{references.map(reference=>{
   const index=reference.kind==='image'&&(reference.annotations?.length??1)>0?media.findIndex((asset,index)=>!paired.has(index)&&asset.kind==='image'&&asset.state==='ready'&&asset.assetId===reference.image.assetId&&asset.revision===reference.image.revision):-1;
   if(index>=0)paired.add(index);
-  return <ResourceReferenceBlock key={referenceKey(reference)} reference={reference}>{index>=0&&<MediaAttachment asset={media[index]} index={index} messageId={messageId} ratio="auto"/>}</ResourceReferenceBlock>;
+  return <ResourceReferenceBlock key={referenceKey(reference)} reference={reference} hideScreenshotDetails={hideScreenshotDetails}>{index>=0&&<MediaAttachment asset={media[index]} index={index} messageId={messageId} ratio="auto"/>}</ResourceReferenceBlock>;
  })}<div className="message-attachments">{media.map((asset,index)=>!paired.has(index)&&<MediaAttachment key={asset.assetId} asset={asset} index={index} messageId={messageId}/>)}</div></>;
 }
 const ArtifactsContext=createContext<{files:WebArtifact[];selectedId?:string;open:(file:CanvasArtifact,trigger?:HTMLElement,annotation?:{key:string;id:string})=>void}>({files:[],open:()=>{}});
@@ -185,7 +185,7 @@ function UserMessage() {
       <QuoteSource quote={quote} index={index}/>
       {quote.annotation && <div className="markdown"><p style={{whiteSpace:'pre-wrap'}}>{quote.annotation}</p></div>}
     </Fragment>)}
-    <MediaAttachments media={(metadata.media as MediaView[])??[]} messageId={String(metadata.messageId)} references={referencesOf(metadata as {resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]})}/>
+    <MediaAttachments media={(metadata.media as MediaView[])??[]} messageId={String(metadata.messageId)} references={referencesOf(metadata as {resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]})} hideScreenshotDetails/>
     {original?.interaction?<CompletedInteractionCard item={original.interaction}/>:hasText&&<div data-aui-quote-selectable><MessagePrimitive.Parts components={{ Text: Markdown }} /></div>}
     {metadata.inputState==='uncertain'&&<p className="message-state">接收或结束结果待核实，未自动重跑</p>}
     </div>

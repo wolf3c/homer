@@ -42,21 +42,22 @@ function imageNotes(reference:Extract<ResourceReference,{kind:'image'}>):Preview
 export function ImageReferenceRegions({reference}:{reference:Extract<ResourceReference,{kind:'image'}>}){
  return <div className="image-reference-regions" aria-hidden="true">{imageNotes(reference).map((note,i)=><div key={note.id} className="image-reference-region" style={{left:note.region.x/reference.width*100+'%',top:note.region.y/reference.height*100+'%',width:note.region.width/reference.width*100+'%',height:note.region.height/reference.height*100+'%'}}><span>{i+1}</span></div>)}</div>;
 }
-export function ResourceReferenceBlock({reference,children}:{reference:ResourceReference;children?:ReactNode}){
+export function ResourceReferenceBlock({reference,children,hideScreenshotDetails}:{reference:ResourceReference;children?:ReactNode;hideScreenshotDetails?:boolean}){
  const coordinates=(r:{x:number;y:number;width:number;height:number})=>`${Math.round(r.x)}, ${Math.round(r.y)} · ${Math.round(r.width)} × ${Math.round(r.height)}`;
  const source=reference.source,title=source.kind==='draft-image'?'截图':source.title;
  if(reference.kind==='image'&&imageNotes(reference).length){
   const notes=imageNotes(reference);
+  const screenshot=isDraftImageReference(reference);
   return <div className="preview-reference image-reference" aria-label="图片批注">
    <div className={'image-reference-layout'+(children?' has-image':'')}>
     {children&&<div className="image-reference-image" style={{maxWidth:Math.min(reference.height>reference.width?220:320,360*reference.width/reference.height)}}>{children}<ImageReferenceRegions reference={reference}/></div>}
     <ol className="image-reference-notes" aria-label="图片区域批注">{notes.map(note=><li key={note.id}>{note.comment.length>240||note.comment.split('\n').length>4?<details className="image-reference-long-comment"><summary>{note.comment.slice(0,60).trimEnd()}… <span>全文</span></summary><p className="image-reference-comment">{note.comment}</p></details>:<p className="image-reference-comment">{note.comment}</p>}</li>)}</ol>
    </div>
-   <details className="image-reference-details"><summary>截图来源与区域</summary>
+   {!(hideScreenshotDetails&&screenshot)&&<><details className="image-reference-details"><summary>截图来源与区域</summary>
     <QuoteBlock.Root><QuoteBlock.Icon/><QuoteBlock.Text className="image-reference-source">{'来源：'+title+'\n图片尺寸：'+reference.width+' × '+reference.height}</QuoteBlock.Text></QuoteBlock.Root>
     <ol>{notes.map((note,i)=><li key={note.id}>区域 {i+1}：{coordinates(note.region)}</li>)}</ol>
    </details>
-   {isDraftImageReference(reference)&&reference.ax&&<WindowAXExcerpt ax={reference.ax}/>}
+   {screenshot&&reference.ax&&<WindowAXExcerpt ax={reference.ax}/>}</>}
   </div>;
  }
  const excerpt=reference.kind==='text'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. ${note.text}\n批注：${note.comment}`).join('\n\n'):reference.text:reference.kind==='image'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. 区域：${coordinates(note.region)}\n批注：${note.comment}`).join('\n\n'):`区域：${coordinates(reference.region)}\n${reference.comment}`:reference.annotations.map(note=>`${note.element}：${note.comment}`).join('\n');

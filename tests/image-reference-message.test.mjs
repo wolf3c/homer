@@ -21,7 +21,7 @@ Function('require','module','exports',built.outputFiles[0].text)(createRequire(i
 const {ResourceReferenceBlock,MediaAttachments}=mod.exports;
 const image={assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1};
 const notes=[{id:'one',region:{x:10,y:20,width:30,height:40},comment:'第一条\n保留换行'},{id:'two',region:{x:60,y:80,width:90,height:100},comment:'第二条原文'}];
-const reference={kind:'image',source:{kind:'draft-image'},width:960,height:540,image,annotations:notes};
+const reference={kind:'image',source:{kind:'draft-image'},width:960,height:540,image,annotations:notes,ax:[{role:'AXStaticText',name:'截图的窗口摘录'}]};
 const html=element=>renderToStaticMarkup(element);
 test('image comments are full primary text and coordinates are disclosed on demand',()=>{
  const output=html(React.createElement(ResourceReferenceBlock,{reference},React.createElement('figure',null,'合成图片')));
@@ -38,6 +38,18 @@ test('the exact attachment identity is shown once beside its reference',()=>{
  assert.equal((output.match(/class="message-attachment"/g)??[]).length,1);
  assert.match(output,/class="image-reference-image"/);
  for(const note of notes)assert.ok(output.includes(note.comment));
+});
+test('the conversation bubble shows screenshot regions and comments without screenshot details or window text',()=>{
+ const before=structuredClone(reference);
+ const output=html(React.createElement(MediaAttachments,{messageId:'synthetic-user',media:[media()],references:[reference],hideScreenshotDetails:true}));
+ assert.match(output,/class="image-reference-image"/);
+ assert.match(output,/class="image-reference-region"/);
+ for(const note of notes)assert.ok(output.includes(note.comment));
+ assert.doesNotMatch(output,/截图来源与区域|窗口文字|截图的窗口摘录|10, 20/);
+ assert.deepEqual(reference,before);
+ const otherSurface=html(React.createElement(MediaAttachments,{messageId:'synthetic-user',media:[media()],references:[reference]}));
+ assert.match(otherSurface,/截图来源与区域/);
+ assert.match(otherSurface,/窗口文字/);
 });
 test('long images keep their ratio within a bounded preview and long notes retain their full text in a native disclosure',()=>{
  const comment='完整长批注\n'.repeat(80),long={...reference,width:600,height:4000,annotations:[{...notes[0],comment}]};

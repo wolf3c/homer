@@ -69,7 +69,7 @@ try{
    await check('revoked images keep names without live downloads',()=>document.querySelector('.message-attachment').textContent.includes('normal.png')&&!document.querySelector('.message-attachment [data-slot="file-download"]'));
    const note='第一条完整批注\n保留原始换行。'+('长批注应完整展示且不撑破气泡。'.repeat(8));
    const ref=(index,w,h)=>({kind:'image',source:{kind:'draft-image'},width:w,height:h,image:{assetId:ids[index],revision:1},annotations:[{id:'one',region:{x:w*.1,y:h*.2,width:w*.25,height:h*.25},comment:note},{id:'two',region:{x:w*.5,y:h*.4,width:w*.2,height:h*.15},comment:'第二条批注保留原序'}]});
-   const wide=ref(0,960,540),portrait={...ref(1,540,960),annotations:undefined,region:{x:54,y:192,width:135,height:240},comment:'旧单区域竖图批注'};
+   const wide={...ref(0,960,540),ax:[{role:'AXStaticText',name:'批注截图中的 AX 摘录'}]},portrait={...ref(1,540,960),annotations:undefined,region:{x:54,y:192,width:135,height:240},comment:'旧单区域竖图批注'};
    const different={...ref(2,960,540),annotations:[{id:'different',region:wide.annotations[0].region,comment:'修订不符仍保留批注'}]},missing={...ref(4,960,540),annotations:[{id:'missing',region:wide.annotations[0].region,comment:'缺图仍保留批注'}]};
    const ax={...ref(3,4,4),annotations:[],ax:[{role:'AXStaticText',name:'原窗口文字摘录'}]};
    fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[message(ids.slice(0,4).map((id,i)=>({...media(id),revision:i===2?2:1})),[wide,portrait,different,missing,ax])]});
@@ -81,8 +81,8 @@ try{
    assert.ok(width===1440?layout.left>=layout.right:layout.top>=layout.bottom,'wide layout is side by side; narrow layout puts notes below');
    assert.equal(await page.locator('.image-reference-comment').first().textContent(),note);checks.push({width,label:'full ordered notes use side-by-side or stacked layout'});
    await check('paired images keep their natural ratio and numbered regions',()=>{const e=document.querySelector('.image-reference-image'),img=e.querySelector('img'),r=img.getBoundingClientRect();return Math.abs(r.width/r.height-960/540)<.01&&e.querySelectorAll('.image-reference-region').length===2&&getComputedStyle(e.querySelector('.image-reference-regions')).display!=='none';});
+   await check('annotated screenshot has no source or AX disclosure in the bubble',()=>[...document.querySelectorAll('.image-reference')].every(e=>!e.textContent.match(/截图来源与区域|窗口文字|批注截图中的 AX 摘录/)));
    await page.screenshot({path:join(destination,'image-annotations-'+width+'.png')});
-   const summary=page.locator('.image-reference-details summary').first();await summary.focus();await page.keyboard.press('Enter');assert.ok(await summary.evaluate(e=>e.parentElement.open));checks.push({width,label:'coordinates stay in a keyboard-accessible disclosure'});
    const portraitFrame=page.locator('.image-reference-image').nth(1);await portraitFrame.scrollIntoViewIfNeeded();await page.waitForFunction(()=>document.querySelectorAll('.image-reference-image')[1]?.querySelector('img')?.naturalWidth===540);
    const portraitImage=portraitFrame.locator('img');
    assert.ok(await portraitImage.evaluate(e=>{const r=e.getBoundingClientRect();return Math.abs(r.width/r.height-540/960)<.01;}));
