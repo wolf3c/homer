@@ -1,9 +1,8 @@
+import{AnnotationButton}from'./annotation-button';
 import {useCallback,useLayoutEffect,useRef,useState,type MutableRefObject} from 'react';
 import {createPortal} from 'react-dom';
 import {Annotorious,ImageAnnotator,ImageAnnotationPopup,useAnnotator,useAnnotations,type PopupProps} from '@annotorious/react';
 import {ShapeType,UserSelectAction,type Rectangle,type ImageAnnotator as Annotator,type ImageAnnotation as NativeAnnotation} from '@annotorious/annotorious';
-import {MessageCirclePlus} from 'lucide-react';
-import {TooltipIconButton} from './vendor/assistant-ui/attachment-icon-button';
 import {AnnotationCommentForm} from './annotation-comment-form';
 import {previewImageAnnotations,type PreviewImageAnnotation} from '../src/preview-reference';
 import '@annotorious/react/annotorious-react.css';
@@ -60,13 +59,13 @@ function RegionComment({popup,anno,pending,onDone,title,image,onSave,onRemove,ca
   onChange={value=>{setComment(value);setError('');}} onSave={()=>void save()} onCancel={()=>{cancel();finish();}}
   onDelete={existing?()=>{if(ended.current)return;ended.current=true;onRemove(popup.annotation.id);anno.removeAnnotation(popup.annotation.id);finish();}:undefined}/>;
 }
-type Props={url:string;title:string;actions?:HTMLElement;control:MutableRefObject<ImageAnnotationControl|null>;notes:readonly PreviewImageAnnotation[];onSave:(notes:PreviewImageAnnotation[],size:{width:number;height:number},isCurrent:()=>boolean)=>Promise<void>;onRemove:(id:string)=>void;focusAnnotation?:string;focusRequest?:string};
-function Regions({url,title,actions,control,notes,onSave,onRemove,focusAnnotation,focusRequest}:Props){
+type Props={initialEnabled?:boolean;url:string;title:string;actions?:HTMLElement;control:MutableRefObject<ImageAnnotationControl|null>;notes:readonly PreviewImageAnnotation[];onSave:(notes:PreviewImageAnnotation[],size:{width:number;height:number},isCurrent:()=>boolean)=>Promise<void>;onRemove:(id:string)=>void;focusAnnotation?:string;focusRequest?:string};
+function Regions({initialEnabled=true,url,title,actions,control,notes,onSave,onRemove,focusAnnotation,focusRequest}:Props){
  const anno=useAnnotator<Annotator>(),annotations=useAnnotations<NativeAnnotation>(),regions=saved(annotations);
  const image=useRef<HTMLImageElement>(null),stage=useRef<HTMLDivElement>(null),toggle=useRef<HTMLButtonElement>(null),pending=useRef<Pending|null>(null),mounted=useRef(true);
- const [drawingEnabled,setEnabled]=useState(true),[dimensions,setDimensions]=useState({width:0,height:0});
+ const [drawingEnabled,setEnabled]=useState(initialEnabled),[dimensions,setDimensions]=useState({width:0,height:0});
  const enabled=!actions||drawingEnabled;
- const [hint,setHint]=useState(true);
+ const [hint,setHint]=useState(initialEnabled),[loadError,setLoadError]=useState(false);
  useLayoutEffect(()=>{
   setHint(enabled);
   if(!enabled)return;
@@ -105,10 +104,11 @@ function Regions({url,title,actions,control,notes,onSave,onRemove,focusAnnotatio
   await onSave(annotations,{width:image.current.naturalWidth,height:image.current.naturalHeight},()=>mounted.current);
  },[onSave]);
  const popup=useCallback((props:PopupProps)=><RegionComment key={props.annotation.id} popup={props} anno={anno} pending={pending} onDone={done} title={title} image={image.current} onSave={save} onRemove={onRemove} canonical={canonical}/>,[anno,done,title,save,onRemove,canonical]);
- return <>{actions&&createPortal(<>{enabled&&!hint&&<span className="image-annotation-status" role="status">批注中</span>}<TooltipIconButton ref={toggle} className="image-annotation-toggle" tooltipContainer={actions} aria-label="批注" aria-pressed={enabled} tooltip={enabled?'退出图片批注':'开始图片批注'} onClick={()=>{cancelPending();setEnabled(value=>!value);}}><MessageCirclePlus size={14} aria-hidden/><span>{enabled?'退出':'批注'}</span></TooltipIconButton></>,actions)}
+ return <>{actions&&createPortal(<><AnnotationButton disabled={loadError} active={enabled} ref={toggle} className="image-annotation-toggle" tooltipContainer={actions} aria-label="批注" aria-pressed={enabled} tooltip={enabled?'退出图片批注':'开始图片批注'} onClick={()=>{cancelPending();setEnabled(value=>!value);}}/></>,actions)}
  <div ref={stage} className={'image-annotation'+(enabled?' is-annotating':'')} onPointerDownCapture={()=>{if(enabled)setHint(false);}}>
-  <ImageAnnotator containerClassName="annotation-image" tool="rectangle" drawingEnabled={enabled} drawingMode="drag" userSelectAction={enabled?UserSelectAction.EDIT:UserSelectAction.NONE} theme="auto" disableUndoRedoKeys><img ref={image} onLoad={()=>setDimensions({width:image.current!.naturalWidth,height:image.current!.naturalHeight})} src={url} alt={title} draggable={false}/></ImageAnnotator>
-  <div className="image-region-labels" aria-label={`${regions.length} 个已保存区域`}>{dimensions.width>0&&regions.map((a,i)=>{const r=coordinates(a);return <span key={a.id} data-annotation-id={a.id} className="image-region-number" style={{left:`clamp(0px, ${r.x/dimensions.width*100}%, calc(100% - 23px))`,top:`clamp(0px, ${r.y/dimensions.height*100}%, calc(100% - 23px))`}} title={`区域 ${i+1} · ${note(a)}`}>{i+1}</span>;})}</div>
+  <ImageAnnotator style={{stroke:'#006cff',strokeWidth:2,fillOpacity:0}} containerClassName="annotation-image" tool="rectangle" drawingEnabled={enabled} drawingMode="drag" userSelectAction={enabled?UserSelectAction.EDIT:UserSelectAction.NONE} theme="auto" disableUndoRedoKeys><img ref={image} onLoad={()=>setDimensions({width:image.current!.naturalWidth,height:image.current!.naturalHeight})} src={url} alt={title} draggable={false} onError={()=>setLoadError(true)}/></ImageAnnotator>
+  {loadError&&<p role="alert">图片加载失败，可下载原图。</p>}
+  <div className="image-region-labels" aria-label={`${regions.length} 个已保存区域`}>{dimensions.width>0&&regions.map((a,i)=>{const r=coordinates(a);return <span key={a.id} data-annotation-id={a.id} className="image-region-number annotation-marker" style={{left:`${r.x/dimensions.width*100}%`,top:`${r.y/dimensions.height*100}%`}} title={`区域 ${i+1} · ${note(a)}`}>{i+1}</span>;})}</div>
   {enabled&&hint&&<div className="image-annotation-hint" role="status">拖动选择区域进行批注</div>}
   {enabled&&!hint&&!actions&&<span className="image-annotation-status image-annotation-floating-status" role="status">批注中</span>}
   {enabled&&<ImageAnnotationPopup popup={popup}/>}

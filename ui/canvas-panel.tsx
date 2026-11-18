@@ -4,7 +4,7 @@ import {useAnnotationDraft,type AnnotationDraft} from './annotation-draft';
 import {referenceKey,referencesOf} from '../src/preview-reference';
 import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
-import {MessageCirclePlus,Minus,PanelRight,Plus,XIcon} from 'lucide-react';
+import {PanelRight,XIcon} from 'lucide-react';
 import {createPortal} from 'react-dom';
 import {TooltipIconButton} from './vendor/assistant-ui/attachment-icon-button';
 import type {Annotation} from './vendor/agentation-3.1.2/index.mjs';
@@ -27,48 +27,11 @@ import {WebPreview} from './vendor/assistant-ui/web-preview';
 import {remarkPreviewMath} from './preview-selection';
 import {PreviewSelectionToolbar} from './preview-selection-toolbar';
 import{BrowserPreview,AttachmentBrowserPreview}from'./browser-preview';
+import{PreviewToolbar}from'./preview-toolbar';
+import{AnnotationButton}from'./annotation-button';
 import type{BrowserPage}from'../src/browser-preview';
 import type {ImageAnnotationControl} from './image-annotation';
 import type {PreviewImportGuard} from './preview-reference';
-function CanvasImagePreview({url,title}:{url:string;title:string}) {
-  const viewport=useRef<HTMLDivElement>(null);
-  const [box,setBox]=useState({width:0,height:0}),[size,setSize]=useState({width:0,height:0});
-  const [manualScale,setManualScale]=useState<number|null>(null);
-  useLayoutEffect(()=>{
-    const node=viewport.current as HTMLDivElement;
-    const measure=()=>setBox({width:node.clientWidth,height:node.clientHeight});
-    measure();const observer=new ResizeObserver(measure);observer.observe(node);
-    return()=>observer.disconnect();
-  },[]);
-  const ready=size.width>0&&size.height>0;
-  // Include stage padding and the image border when fitting both axes.
-  const fit=ready?Math.min(Math.max(1,box.width-34)/size.width,Math.max(1,box.height-34)/size.height):1;
-  const scale=manualScale??fit,minimum=Math.min(.1,fit),maximum=Math.max(4,fit);
-  const width=ready?size.width*scale:128,height=ready?size.height*scale:128;
-  function zoom(value:number|null){
-    setManualScale(value===null?null:Math.max(minimum,Math.min(maximum,value)));
-    viewport.current?.scrollTo(0,0);
-  }
-  return <>
-    <div className='canvas-image-controls' role='group' aria-label='图片缩放'>
-      <div className='canvas-image-stepper'>
-        <button type='button' aria-label='缩小图片' title='缩小' disabled={ready===false||scale<=minimum+.00001} onClick={()=>zoom(scale/1.25)}><Minus size={14} aria-hidden/></button>
-        <output aria-label='当前缩放比例' aria-live='polite'>{ready?Math.round(scale*100)+'%':'—'}</output>
-        <button type='button' aria-label='放大图片' title='放大' disabled={ready===false||scale>=maximum-.00001} onClick={()=>zoom(scale*1.25)}><Plus size={14} aria-hidden/></button>
-      </div>
-      <button type='button' disabled={ready===false} aria-pressed={manualScale===null} onClick={()=>zoom(null)}>适应窗口</button>
-      <button type='button' disabled={ready===false} title='按原图像素显示' aria-pressed={manualScale===null?false:Math.abs(scale-1)<.00001} onClick={()=>zoom(1)}>100%</button>
-    </div>
-    <div ref={viewport} className='canvas-image-scroll' tabIndex={0} role='region' aria-label='图片内容，可滚动查看'>
-      <div className='canvas-image-stage' style={{width:Math.max(box.width,width+34),height:Math.max(box.height,height+34)}}>
-        <ImageRoot className='canvas-image-root' style={{width,maxWidth:'none',boxSizing:'content-box'}}>
-          <ImagePreview src={url} alt={title} containerClassName='canvas-image-content' onLoad={({currentTarget:image})=>setSize({width:image.naturalWidth,height:image.naturalHeight})}/>
-        </ImageRoot>
-      </div>
-    </div>
-  </>;
-}
-
 const ImageAnnotation=lazy(()=>import('./image-annotation'));
 const MAX_PATCH_BYTES=256*1024,MAX_PATCH_LINES=2000,PATCH_PREFIX_BYTES=128*1024;
 function isPatchFile(name:string,mime:string){
@@ -105,7 +68,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
   const selected=activeId??artifact?.id??null;
   const host=useRef<HTMLDivElement>(null),panel=useRef<HTMLDivElement>(null),collapseButton=useRef<HTMLButtonElement>(null),rail=useRef<HTMLDivElement>(null);
   const [actions,setActions]=useState<HTMLDivElement|null>(null);
-  const imageControl=useRef<ImageAnnotationControl|null>(null),focusAfterClose=useRef(false),visibleTab=useRef<Element|null>(null);
+  const imageControl=useRef<ImageAnnotationControl|null>(null),focusAfterClose=useRef(false),visibleTab=useRef<Element|null>(null),pointerFocus=useRef(false);
   const narrow=useMediaQuery('(max-width:800px)',matchMedia('(max-width:800px)').matches,{getInitialValueInEffect:false});
   function ensureVisible(target:Element|null){
     const list=rail.current,item=target?.closest('.canvas-tab-item');if(!list||!item||!list.contains(item))return;
@@ -123,9 +86,12 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
   },[selected,tabs,actions]);
   const hasTabs=!!tabs?.length&&!webSource;
   const title='预览：'+(webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'从对话中选择成果');
-  const tools=<><div ref={setActions} className="canvas-tab-actions"/>{(narrow||!hasTabs)&&<TooltipIconButton ref={collapseButton} className="canvas-collapse" tooltipContainer={actions} aria-label="收起预览" tooltip="收起预览" onClick={onClose}><PanelRight size={14} aria-hidden/></TooltipIconButton>}</>;
+  const tools=<>{(narrow||!hasTabs)&&<TooltipIconButton ref={collapseButton} className="canvas-collapse" tooltipContainer={actions} aria-label="收起预览" tooltip="收起预览" onClick={onClose}><PanelRight size={14} aria-hidden/></TooltipIconButton>}</>;
   const browser=tabs?.find(tab=>tab.id===selected&&'kind'in tab&&tab.kind==='browser');
   const reader=selected==='schedules'?scheduleContent:browser&&'kind'in browser&&browser.kind==='browser'?<BrowserPreview page={browser.page} annotationDraft={readerProps.annotationDraft} onReference={readerProps.onReference} enabled={!!readerProps.referencesEnabled} isCurrent={readerProps.isCurrent} focusId={readerProps.annotationFocus?.id} focusKey={readerProps.annotationFocus?.key} focusRequest={readerProps.annotationFocus?.nonce}/>:<CanvasReader {...readerProps} threadId={threadId} key={JSON.stringify([threadId,artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
+  const activeTitle=webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'预览';
+  const nativeBrowser=!!browser;
+  const statusBar=!nativeBrowser&&<PreviewToolbar title={activeTitle} detail={webSource?new URL(webSource.url).host:selected==='schedules'?'定时安排':undefined}><div ref={setActions} className="canvas-tab-actions"/></PreviewToolbar>;
   return <div ref={host} className="canvas-host"><Dialog.Root open modal={narrow} disablePointerDismissal onOpenChange={(open,details)=>{
     if(details.reason==='escape-key'&&imageControl.current?.escape()){details.cancel();return;}
     if(details.reason==='escape-key'&&panel.current?.querySelector('.preview-selection-positioner')){details.cancel();details.allowPropagation();return;}
@@ -139,7 +105,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
     <Dialog.Title className="sr-only">{title}</Dialog.Title>
     {hasTabs?<Tabs.Root className="canvas-tabs" value={selected} onValueChange={id=>{if(typeof id==='string')onSelectArtifact?.(id);}}>
       <div className="canvas-tab-bar">
-      <Tabs.List className="canvas-tab-rail" ref={rail} aria-label="已打开的成果" activateOnFocus={false} loopFocus onFocusCapture={event=>{visibleTab.current=event.target;if(event.target.matches(':focus-visible'))ensureVisible(event.target);}}>
+      <Tabs.List className="canvas-tab-rail" ref={rail} aria-label="已打开的成果" activateOnFocus={false} loopFocus onPointerDownCapture={()=>{pointerFocus.current=true;}} onPointerUpCapture={()=>{pointerFocus.current=false;}} onPointerCancelCapture={()=>{pointerFocus.current=false;}} onFocusCapture={event=>{visibleTab.current=event.target;if(!pointerFocus.current)ensureVisible(event.target);}}>
         {tabs.map(tab=>{
           let label=tab.title;
           if(!('kind' in tab)){
@@ -157,8 +123,8 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
         })}
       </Tabs.List>
       {tools}</div>
-      {tabs.map(tab=><Tabs.Panel className="canvas-tab-panel" key={tab.id} value={tab.id} keepMounted hidden={tab.id!==selected}>{tab.id===selected?reader:null}</Tabs.Panel>)}
-    </Tabs.Root>:<><div className="canvas-tab-bar"><span className="canvas-preview-label" title={webSource?.title??artifact?.title??'预览'}>{webSource?.title??artifact?.title??'预览'}</span>{tools}</div>{reader}</>}
+      {tabs.map(tab=><Tabs.Panel className="canvas-tab-panel" key={tab.id} value={tab.id} keepMounted hidden={tab.id!==selected}>{tab.id===selected?<>{statusBar}{reader}</>:null}</Tabs.Panel>)}
+    </Tabs.Root>:<><div className="canvas-tab-bar"><span className="canvas-preview-label" title={webSource?.title??artifact?.title??'预览'}>{webSource?.title??artifact?.title??'预览'}</span>{tools}</div>{statusBar}{reader}</>}
     </Dialog.Popup>
   </Dialog.Portal></Dialog.Root></div>;
 }
@@ -183,7 +149,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,thread
   const [file,setFile]=useState<{url:string;mime:string;text:string;name:string;blob:Blob;sha256:string}|null>(null),[loading,setLoading]=useState(false);
   const [mediaError,setMediaError]=useState('');
   const mediaElement=useRef<HTMLMediaElement|null>(null);
-  const [imageAnnotation,setImageAnnotation]=useState(false),[runtime,setRuntime]=useState(''),[ready,setReady]=useState(false),[frameRevision,setFrameRevision]=useState(0),[selection,setSelection]=useState<'idle'|'connecting'|'active'|'error'>('idle');
+  const [runtime,setRuntime]=useState(''),[ready,setReady]=useState(false),[frameRevision,setFrameRevision]=useState(0),[selection,setSelection]=useState<'idle'|'connecting'|'active'|'error'>('idle');
   const interactive=!!runtime,annotationLoading=selection==='connecting';
   const annotationLabel=annotationLoading?'取消批注加载，返回预览':interactive?'退出批注，返回预览':'启用批注';
   const token=useMemo(()=>crypto.randomUUID(),[artifact?.id,webSource?.url,retry,interactive,runtime,frameRevision]);
@@ -194,7 +160,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,thread
   const source=useMemo<PreviewSource|undefined>(()=>webSource??(artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file]);
   const imageFile=useMemo(()=>file&&source?annotationDraft.imageFile(referenceKey({kind:'image',source}),new File([file.blob],file.name,{type:file.mime})):undefined,[file,source,annotationDraft]);
   useLayoutEffect(()=>{
-    generation.current++;setFile(null);setReadError('');setMediaError('');setNotice('');setImageAnnotation(false);setRuntime('');setReady(false);setSelection('idle');
+    generation.current++;setFile(null);setReadError('');setMediaError('');setNotice('');setRuntime('');setReady(false);setSelection('idle');
     if(!artifact||webSource){setLoading(false);return;}
     const controller=new AbortController();let objectUrl='';setLoading(true);
     void (async()=>{try{
@@ -229,7 +195,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,thread
   const focusId=annotationFocus&&source&&annotationFocus.key===referenceKey({kind:isImageSource()?'image':file?.mime==='text/html'?'web':'text',source})?annotationFocus.id:undefined;
   useEffect(()=>{if(annotationFocus&&source&&!focusId&&!(file?.mime==='text/html'&&window.homerBrowserPreview))setNotice('当前预览无法准确定位这条批注，原摘录与备注已保留。');},[annotationFocus?.nonce,source]);
   function isImageSource(){return !!file&&file.mime.startsWith('image/');}
-  useEffect(()=>{if(focusId&&isImageSource())setImageAnnotation(true);else if(focusId&&file?.mime==='text/html'&&!runtime)setNotice('已打开来源；点击“批注”后定位这条网页批注。');},[focusId,annotationFocus?.nonce,runtime]);
+  useEffect(()=>{if(focusId&&file?.mime==='text/html'&&!runtime)setNotice('已打开来源；点击“批注”后定位这条网页批注。');},[focusId,annotationFocus?.nonce,runtime]);
   function stopHtmlAnnotation(error=false){
     generation.current++;setRuntime('');setReady(false);setSelection(error?'error':'idle');
     if(error)setNotice('批注加载失败，已返回预览；请点击批注重试。');
@@ -319,7 +285,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,thread
   const hasFrame=!!webSource||file?.mime==='application/pdf';
   const isImage=!!file&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mime);
   return <CanvasSplitDocument>
-    {actions&&isImage&&file&&createPortal(<FileDownload data={file.url} mimeType={file.mime} filename={file.name} onClick={event=>{
+    {actions&&file&&createPortal(<FileDownload data={file.url} mimeType={file.mime} filename={file.name} onClick={event=>{
       event.preventDefault();
       void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},error=>{
         if(readerCurrent())setNotice(error instanceof Error&&error.message==='mobile_file_size_limit'
@@ -327,8 +293,8 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,thread
       });
     }}/>,actions)}
     {actions&&createPortal(isHtml&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
-      <TooltipIconButton className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>
-    </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface">{!imageAnnotation&&<TooltipIconButton className="image-annotation-toggle" tooltipContainer={imageActions} aria-label="批注" aria-pressed={false} tooltip="开始图片批注" onClick={()=>setImageAnnotation(true)}><MessageCirclePlus size={14} aria-hidden/><span>批注</span></TooltipIconButton>}</span>:null,actions)}
+      <AnnotationButton active={selection==='active'} className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}/>
+    </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface"/>:null,actions)}
     <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml?'html-preview-body':isPatch?'patch-preview-body':undefined}>
     {notice&&<p role="status" className="canvas-note">{notice}</p>}
     {webSource&&<p className="canvas-note canvas-web-narrow-note">网页元素批注暂限桌面使用。</p>}
@@ -353,10 +319,10 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,webSource,thread
       </div>:
       (file.mime==='text/markdown'||/\.md$/i.test(file.name))?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} components={previewMarkdownComponents}>{file.text}</ReactMarkdown></div>:
       isText?<pre data-preview-text>{file.text}</pre>:
-      file.mime.startsWith('image/')?isImage&&imageAnnotation&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation key={noteKey} url={file.url} title={source.title} actions={imageActions} control={imageControl}
+      file.mime.startsWith('image/')?isImage&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation initialEnabled={false} key={noteKey} url={file.url} title={source.title} actions={imageActions} control={imageControl}
         notes={imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[]}
         onSave={(annotations,size,isCurrent)=>onReference({kind:'image',source,...size,annotations},imageFile,isCurrent)}
-        onRemove={id=>annotationDraft.remove(referenceKey({kind:'image',source}),id)} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<CanvasImagePreview key={file.url} url={file.url} title={artifact?.title??'成果图片'}/>:
+        onRemove={id=>annotationDraft.remove(referenceKey({kind:'image',source}),id)} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<ImageRoot className="canvas-image-root"><ImagePreview src={file.url} alt={artifact?.title??'成果图片'}/></ImageRoot>:
       file.mime==='application/pdf'?<iframe title="PDF 成果" src={file.url}/>:unknownMedia?<div className="canvas-media"><p className="canvas-note">{file.name}</p><p>未识别为可播放的媒体类型，可下载后打开。</p><a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a></div>:<p>此格式暂不支持在线预览。</p>}
     </>:<p className="canvas-note">从对话中选择网页或成果进行预览。</p>}
     {hasFrame&&<div className="canvas-frame-exit"><p className="canvas-note">预览内部的快捷键由网页处理，可用 Tab 移到“收起预览”按钮。</p><button type="button" onClick={onClose}>收起预览</button></div>}

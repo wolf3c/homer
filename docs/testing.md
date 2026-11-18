@@ -1332,3 +1332,9 @@ node scripts/test.mjs --history-performance
 默认`HOMER_PERF_SCALES=400,2000,5000`、`HOMER_PERF_WAVES=50`（每批20条）、`HOMER_PERF_INTERVAL=2000`、`HOMER_PERF_JUMP_SAMPLES=8`。缩小规模用于诊断不能替代完整测量。`HOMER_PERF_PROFILE=1`仅用于单独CPU采样；不要与无Profiler的时间直接混比。基线需干净父提交快照并仅叠加本专项入口／登记，设置`HOMER_PERF_VARIANT=baseline`，另加`HOMER_PERF_BASELINE_LATEST=1`才是每批主动回最新的成本对照。结果区分functionalPassed和探索目标assessment；专项exit0不能冒充性能达标。
 
 最终入口冒烟和测试分组检查通过；旧版超时、Profiler首次未enable的失败均不计通过。所有Chrome confirmed exit0、forced=false、watchdog=false。原始数据、CPU profile、截图、设备／测量边界及复现命令在本轮`outputs/task-dba13d4d-history-performance/REPORT.md`供核阅；核阅结束且无后续依赖可回收，复验入口已维护在源码。
+
+## Preview 系列优化最终复审（2026-11-18）
+
+本节更新此前悬停、系统截图和窄屏程序focus的未通过状态，不覆盖原始记录。main精确候选在Node22通过186/186定向离线、410/410壳契约、UI／后端类型、独立构建；完整canvas-image-zoom专项（不带--layout-only）三宽度30组通过、Chrome退出0／forced=false／watchdog=false。preview-annotation-entry三宽度真实Electron通过；preview-electron原生11组通过，含双后台Worker、来源草稿闭环、网页／HTML悬停、真实系统窗口截图、操作错误传播及认领后popup当前owner、opener、会话、隔离／预加载验证。所有数据、引擎、资料目录及账号均为独立合成环境。
+
+native测试使用局部await异步条件的等待助手，且对子Electron设置超时回收；原生工具仍不开放任意脚本或浏览器端点。popup最小探针复现不复用传入WebContents时卡死，转交完整options后成功；旧错误已修复并有真实原生回归。20次双页有界ARIA读取约42.1ms为单机小样本，不作通用性能承诺。未跑全量npm test、实模、安装版或真机。复现入口和准确数据见[复审记录](preview-final-review-2026-11-18.md)及其结构化报告。

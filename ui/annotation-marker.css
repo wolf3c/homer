@@ -1,0 +1,2 @@
+.annotation-marker{box-sizing:border-box;display:grid;place-items:center;width:var(--annotation-marker-size,28px);height:var(--annotation-marker-size,28px);padding:0;border:2px solid #fff;border-radius:50%;background:#006cff;color:#fff;font:600 12px/1 system-ui;box-shadow:0 2px 6px #0003}
+.annotation-outline{box-sizing:border-box;border:2px solid #006cff;background:transparent;pointer-events:none}

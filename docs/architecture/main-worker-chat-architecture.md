@@ -568,3 +568,11 @@ React Grab 仅提供选择原语，备注、标记候选确认、草稿、chip �
 
 
 内置浏览器提交前复审：独立精确候选已验证重复open不解除用户接手及SPA旧文档失效，保留按需注入/合并定位更新；类型、构建及原生8组通过，实际截图见[复审记录](../browser-content-research-2026-11-17.md#正式源码提交前复审2026-11-17)。安装版和实模未验。
+
+### Preview 状态栏与批注呈现（2026-11-18）
+
+PreviewToolbar/AnnotationButton复用身份、场景操作及批注状态；Tabs仍只负责选择／关闭。批注文案固定，活动仅前景色改变。图片初始及退出复用同一Annotorious关闭态，删除手动缩放工具；文件读取、区域坐标、草稿和系统截图开启默认值保持。HTML使用原生浏览器时仅显示一个操作栏；网页恢复按帧合并的悬停边框。
+
+agentAssigned来自Electron工具创建或引用认领事实，popup继承当前owner与assignment；只影响接手／交还入口显示，不新增授权、任务或持久化语义。popup复用createWindow传入WebContents并在创建前保持固定预加载、隔离及会话；原owner/document/control校验和逐页互斥保持，原操作异常不吞掉。
+
+精确候选已通过186项定向离线、410项壳契约、三宽度完整图片30组、Preview进入反馈及原生11组，含旧Worker访问popup被拒绝。未验安装版、真实模型及真实登录；实现、性能样本和实际截图见[最终复审](../preview-final-review-2026-11-18.md)。提交身份以Git记录为准，未安装或部署。

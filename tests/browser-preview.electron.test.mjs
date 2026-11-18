@@ -7,7 +7,8 @@ import{createRequire}from'node:module';
 import{createServer}from'node:http';
 import{execFileSync}from'node:child_process';
 import{_electron}from'playwright-core';
-import{fixture,until}from'./fixtures/worker-chat-host.ts';
+import{fixture}from'./fixtures/worker-chat-host.ts';
+const until=async(check)=>{const end=performance.now()+4000;while(!await check()){if(performance.now()>end)throw Error('preview_test_wait_timeout');await new Promise(resolve=>setTimeout(resolve,5));}};
 import{mcpCall}from'./fixtures/host-mcp-call.ts';
 import{homerWebBridge}from'../src/web-homer.ts';
 import{createWebServer}from'../src/web-server.ts';
@@ -16,7 +17,7 @@ const ui=process.env.HOMER_PREVIEW_UI,runtime=process.env.HOMER_PREVIEW_RUNTIME,
 if(!ui||!runtime||!evidence)throw Error('preview_electron_requires_explicit_ui_runtime_evidence');
 test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},async()=>{
  const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence);await mkdir(out,{recursive:true});
- const f=fixture();let electron,web,site;const checks=[],errors=[];let claimed,claimRelease;
+ const f=fixture();let electron,web,site;const checks=[],errors=[];let claimed,claimRelease,watchdog;
  const record=(name,detail)=>{checks.push({name,detail});console.log('PASS',name);};
  async function call(peer,name,args,id){const role=peer.options.role==='worker'?'worker':'main',argv=peer.options.interactionMcp.args;peer.emit('hostMcpToolStarted',{threadId:peer.threadId,turnId:peer.turnId,itemId:id,tool:name,arguments:args});const response=await mcpCall(argv[argv.indexOf(role)-1],name,args,{callId:id,'x-codex-turn-metadata':{turn_id:peer.turnId}});if(response.error)throw Error(response.error);return response.result;}
  try{
@@ -41,12 +42,18 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   web=await createWebServer({bridge:homerWebBridge(f.app),port:0,uiDirectory:resolve(ui)});
   const env={...process.env,TEST_ORIGIN:web.url};delete env.ELECTRON_RUN_AS_NODE;
   electron=await _electron.launch({executablePath:require('electron'),args:[join(scratch,'main.cjs')],env,timeout:30000});
+  watchdog=setTimeout(()=>electron.process()?.kill('SIGKILL'),110000);
   const host=await electron.firstWindow();host.on('pageerror',e=>errors.push(e.message));
   await host.getByRole('link',{name:'打开业务网页',exact:true}).click();
   await host.getByRole('complementary').waitFor();
   const waitPage=async target=>{let p;await until(()=>!!(p=electron.context().pages().find(p=>p.url()===target)));return p;};
   const page=await waitPage(url+'/start');page.on('pageerror',e=>errors.push(e.message));
-  await host.getByRole('button',{name:'批注',exact:true}).click();await page.locator('#target').click();
+  async function annotationMode(active){const button=host.getByRole('button',{name:'批注',exact:true});await button.click();await host.waitForFunction(active=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-pressed')===String(active),active);await host.waitForFunction(()=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-busy')==='false');}
+  async function hoverMatch(target,selector){await target.locator(selector).hover();await target.waitForFunction(selector=>{const h=document.querySelector('[data-homer-annotation]')?.shadowRoot?.querySelector('.annotation-hover-outline'),e=document.querySelector(selector);if(!h||!e)return false;const a=h.getBoundingClientRect(),b=e.getBoundingClientRect();return Math.abs(a.x-b.x)<1&&Math.abs(a.y-b.y)<1&&Math.abs(a.width-b.width)<1&&Math.abs(a.height-b.height)<1;},selector);}
+
+  await host.locator('.preview-toolbar-navigation').waitFor();assert.equal(await host.getByRole('button',{name:'交还 AI',exact:true}).count(),0);assert.equal(await host.locator('.preview-toolbar-navigation button').count(),3);assert.equal(await host.locator('.preview-toolbar-navigation button svg').count(),3);
+  await annotationMode(true);await hoverMatch(page,'#heading');await hoverMatch(page,'#target');await page.screenshot({path:join(out,'web-hover.png')});await annotationMode(false);await page.locator('.annotation-hover-outline').waitFor({state:'detached'});await page.locator('#business').click();assert.equal(await page.locator('#business').innerText(),'已完成点击');await annotationMode(true);await page.locator('#target').click();
+  assert.equal(await page.locator('.mode').count(),0);assert.equal(await host.getByRole('button',{name:'批注',exact:true}).getAttribute('aria-pressed'),'true');
   await page.getByRole('textbox',{name:'网页元素批注'}).fill('补充可核对的数据和下一步行动。');await page.getByRole('button',{name:'保存',exact:true}).click();
   await host.locator('.annotation-chip').filter({hasText:'补充可核对的数据'}).waitFor();
   await page.locator('#heading').click();await page.getByRole('textbox',{name:'网页元素批注'}).fill('第二条备注');await page.getByRole('button',{name:'保存',exact:true}).click();
@@ -55,7 +62,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await page.evaluate(()=>scrollTo(0,500));await host.locator('.composer-area .annotation-chip-open').click();await until(async()=>await page.locator('#target').evaluate(e=>e.getBoundingClientRect().top)>=0&&await page.locator('#target').evaluate(e=>e.getBoundingClientRect().bottom)<await page.evaluate(()=>innerHeight));
   record('message link opens real WCV; React Grab and existing composer produce a saved chip');
   await page.getByRole('button',{name:'批注 1',exact:true}).click();await page.screenshot({path:join(out,'product-page-editor.png')});await page.getByRole('button',{name:'取消',exact:true}).click();
-  if(process.platform==='darwin'){const id=await electron.evaluate(()=>globalThis.testWindow.getMediaSourceId().split(':')[1]);execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,'product-native-window.png')],{timeout:10000});record('native window screenshot includes real WebContentsView, without compositing renderers');}
+  if(process.platform==='darwin'){await electron.evaluate(()=>{globalThis.testWindow.show();globalThis.testWindow.focus();});await host.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));const id=await electron.evaluate(()=>globalThis.testWindow.getMediaSourceId().split(':')[1]);execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,'product-native-window.png')],{timeout:10000});record('native window screenshot includes real WebContentsView, without compositing renderers');}
   await host.screenshot({path:join(out,'product-preview-host.png')});
   const input=host.locator('.composer-area [contenteditable=true]');await input.fill('请按网页批注处理');
   // Use the actual composer's submit button, then validate persisted source and prompt.
@@ -67,6 +74,8 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   const workers=f.engines.filter(p=>p.options.role==='worker');
   const opened=await Promise.all(workers.map((w,i)=>call(w,'preview_open',{url:url+'/worker-'+i},'open-'+i)));
   const snapshots=await Promise.all(workers.map((w,i)=>call(w,'preview_read',{pageId:opened[i].id},'read-'+i)));
+  await assert.rejects(electron.evaluate((_,input)=>globalThis.preview.execute(input.actor,'act',input.input),{actor:{owner:opened[0].owner,threadId:opened[0].threadId},input:{pageId:opened[0].id,document:snapshots[0].document,selector:'#does-not-exist',action:'click'}}),/preview_target_missing/);
+  const perfStart=performance.now();for(let i=0;i<10;i++)await Promise.all(workers.map((w,j)=>call(w,'preview_read',{pageId:opened[j].id},'perf-'+i+'-'+j)));record('20 scoped reads across two hidden Worker pages', {elapsedMs:performance.now()-perfStart});
   await Promise.all(workers.map((w,i)=>call(w,'preview_act',{pageId:opened[i].id,document:snapshots[i].document,selector:'role=textbox[name="任务输入"]',action:'fill',value:'任务 '+i},'fill-'+i)));
   for(let i=0;i<2;i++){const p=await waitPage(url+'/worker-'+i);assert.equal(await p.getByLabel('任务输入').inputValue(),'任务 '+i);}
   await call(workers[0],'preview_act',{pageId:opened[0].id,document:snapshots[0].document,selector:'#business',action:'click'},'hidden-click');
@@ -76,7 +85,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await call(workers[0],'preview_show',{pageId:opened[0].id},'show-task-page');
   await host.getByRole('button',{name:'用户接手',exact:true}).click();
   await assert.rejects(call(workers[0],'preview_act',{pageId:opened[0].id,document:snapshots[0].document,selector:'#business',action:'click'},'blocked-user-control'),/preview_user_control/);
-  await host.getByRole('button',{name:'允许继续操作',exact:true}).click();
+  await host.getByRole('button',{name:'交还 AI',exact:true}).click();
   await call(workers[0],'preview_act',{pageId:opened[0].id,document:snapshots[0].document,selector:'#business',action:'click'},'click-business');
   const taskPage=await waitPage(url+'/worker-0');assert.equal(await taskPage.locator('#business').textContent(),'已完成点击');
   const aria=await call(workers[0],'preview_read',{pageId:opened[0].id},'snapshot-refs');assert.match(aria.content,/ref=/);
@@ -91,8 +100,10 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await host.getByRole('button',{name:'批注',exact:true}).click();await taskPage.locator('#target').click();
   await taskPage.getByRole('textbox',{name:'网页元素批注'}).fill('接续这一个任务页面');await taskPage.getByRole('button',{name:'保存',exact:true}).click();await host.locator('.annotation-chip').filter({hasText:'接续这一个任务页面'}).waitFor();
   await input.fill('接续任务页');await host.locator('.composer-area button[type="submit"]').click();await until(()=>!!claimed);
-  assert.equal(claimed.id,opened[0].id);assert.match(claimed.owner,/^main:/);await assert.rejects(call(workers[0],'preview_read',{pageId:opened[0].id},'old-owner-after-claim'),/preview_scope_denied/);await host.getByRole('button',{name:'用户接手',exact:true}).click();const main=f.engines.find(p=>p.options.role!=='worker');await call(main,'preview_open',{pageId:claimed.id},'reopen-same-request');await assert.rejects(call(main,'preview_act',{pageId:claimed.id,document:claimed.document,selector:'#business',action:'click'},'still-user-control'),/preview_user_control/);claimRelease();
+  assert.equal(claimed.id,opened[0].id);assert.match(claimed.owner,/^main:/);await assert.rejects(call(workers[0],'preview_read',{pageId:opened[0].id},'old-owner-after-claim'),/preview_scope_denied/);await host.getByRole('button',{name:'用户接手',exact:true}).click();const main=f.engines.find(p=>p.options.role!=='worker');await call(main,'preview_open',{pageId:claimed.id},'reopen-same-request');await assert.rejects(call(main,'preview_act',{pageId:claimed.id,document:claimed.document,selector:'#business',action:'click'},'still-user-control'),/preview_user_control/);
   record('a real submitted annotation lets the new Main request claim the same DOM; former Worker loses access');
+  await taskPage.evaluate(()=>{window.open(location.origin+'/popup');});let popup;await until(async()=>{const view=await call(main,'preview_read',{pageId:claimed.id},'find-popup-'+Date.now());popup=view.relatedPages.find(p=>p.url.endsWith('/popup'));return !!popup;});
+  const popupPage=await call(main,'preview_read',{pageId:popup.pageId},'read-popup');assert.equal(popupPage.owner,claimed.owner);assert.equal(popupPage.agentAssigned,true);const popupContent=await waitPage(popupPage.url);assert.equal(await popupContent.evaluate(()=>window.opener.location.href),taskPage.url());const popupSecurity=await electron.evaluate(async({webContents},{url,parentUrl})=>{const child=webContents.getAllWebContents().find(c=>c.getURL()===url),parent=webContents.getAllWebContents().find(c=>c.getURL()===parentUrl),prefs=child.getLastWebPreferences();return{sandbox:prefs.sandbox,contextIsolation:prefs.contextIsolation,nodeIntegration:prefs.nodeIntegration,sameSession:child.session===parent.session,bridge:await child.executeJavaScriptInIsolatedWorld(999,[{code:"typeof globalThis.homerAnnotationBridge?.read==='function'"}])}},{url:popupPage.url,parentUrl:taskPage.url()});assert.deepEqual(popupSecurity,{sandbox:true,contextIsolation:true,nodeIntegration:false,sameSession:true,bridge:true});await assert.rejects(call(workers[0],'preview_read',{pageId:popup.pageId},'old-owner-popup'),/preview_scope_denied/);record('popup after claim inherits current owner and assignment, excluding former Worker');claimRelease();
 
   await writeFile(join(f.app.config.workspace,'preview.html'),'<html><head><meta charset="utf-8"><title>HTML 附件</title><link rel="stylesheet" href="./preview.css"></head><body><h1 id="html-title">HTML 附件内容</h1><p id="ready">等待资源</p><script src="./preview.js"></script></body></html>');
   await writeFile(join(f.app.config.workspace,'preview.css'),'body{background:rgb(13,21,34);color:white;padding:36px;font:20px system-ui}');
@@ -101,15 +112,16 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await host.getByRole('button',{name:'预览 preview.html',exact:true}).click();
   let html;await until(()=>!!(html=electron.context().pages().find(p=>p.url().startsWith('homer-preview:'))));
   await html.getByText('资源脚本已加载',{exact:true}).waitFor();assert.equal(await html.locator('body').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(13, 21, 34)');
-  await host.getByRole('button',{name:'批注',exact:true}).click();await html.locator('#html-title').click();
+  await annotationMode(true);assert.equal(await host.locator('.preview-toolbar:visible').count(),1);await hoverMatch(html,'#ready');await hoverMatch(html,'#html-title');await html.screenshot({path:join(out,'html-hover.png')});await annotationMode(false);await html.locator('.annotation-hover-outline').waitFor({state:'detached'});await annotationMode(true);await html.locator('#html-title').click();
   await html.getByRole('textbox',{name:'网页元素批注'}).fill('HTML 备注同时引用原始附件');await html.getByRole('button',{name:'保存',exact:true}).click();
   await host.locator('.annotation-chip').filter({hasText:'HTML 备注同时引用原始附件'}).waitFor();await html.screenshot({path:join(out,'product-html-attachment.png')});
   await input.fill('按 HTML 标记处理');await host.locator('.composer-area button[type="submit"]').click();
   await until(()=>f.inputs.some(text=>text.includes('用户批注：HTML 备注同时引用原始附件')));
   record('real HTML attachment, relative CSS/JS and annotation submission pass existing attachment/source authorization');
+  record('web and HTML hover, exit and single native toolbar');
   assert.deepEqual(errors,[]);
   const versions=await electron.evaluate(()=>({electron:process.versions.electron,chromium:process.versions.chrome}));
   await writeFile(join(out,'product-report.json'),JSON.stringify({status:'passed',checks,versions,errors,boundary:'Actual source UI/service/MCP/native page modules with synthetic engines; test harness forwards browser transport through Electron inspector. Production stdio transport, installed app, real Codex/LLM, Windows, IME and real login remain separately verified or unverified.'},null,2));
  }catch(error){const pages=[];if(electron)for(const [i,page]of electron.context().pages().entries()){pages.push({url:page.url(),text:await page.locator('body').innerText().catch(()=>'' )});await page.screenshot({path:join(out,'failure-'+i+'.png')}).catch(()=>{});}await writeFile(join(out,'product-failure.json'),JSON.stringify({message:error.stack,checks,errors,pages},null,2));throw error;}
- finally{claimRelease?.();if(electron)await electron.close();if(web)await web.close();await f.close();if(site)await new Promise(r=>site.close(r));await rm(scratch,{recursive:true,force:true});}
+ finally{clearTimeout(watchdog);claimRelease?.();if(electron)await electron.close();if(web)await web.close();await f.close();if(site)await new Promise(r=>site.close(r));await rm(scratch,{recursive:true,force:true});}
 });

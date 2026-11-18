@@ -10,7 +10,8 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  const automation=previewAutomation(join(runtimeDirectory,'automation.js'));
  const runtime=readFileSync(join(runtimeDirectory,'runtime.js'),'utf8'),css=readFileSync(join(runtimeDirectory,'runtime.css'),'utf8');
  const browserSession=session.fromPartition('persist:homer-preview');
- const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,source:p.source,loading:!!p.loading,...(p.error?{error:p.error}:{})});
+ const preferences={session:browserSession,preload,sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:false,backgroundThrottling:false};
+ const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,agentAssigned:!!p.agentAssigned,source:p.source,loading:!!p.loading,...(p.error?{error:p.error}:{})});
  const changed=()=>{const w=window();if(w&&!w.isDestroyed())w.webContents.send('homer:preview:changed');};
  const page=id=>{const p=pages.get(id);if(!p||p.closed||p.view.webContents.isDestroyed())throw Error('preview_page_unavailable');return p;};
  const sendState=p=>p.view.webContents.send('homer:preview:annotation-state',{document:p.document,active:false,revision:0,epoch:0,notes:[],...p.annotations});
@@ -33,9 +34,9 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   for(const other of pages.values())other.view.setVisible(other===p);
   p.view.setBounds({x,y,width,height});selected=id;
  }
- function make({threadId,owner,source,url},webPreferences={}){
+ function make({threadId,owner,source,url},options={}){
   const id='page-'+randomUUID();
-  const view=new WebContentsView({webPreferences:{...webPreferences,session:browserSession,preload,sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:false,backgroundThrottling:false}});
+  const view=new WebContentsView({...options,webPreferences:{...options.webPreferences,...preferences}});
   const p={id,threadId,owner,source,view,document:0,operation:0,control:'user',closed:false,busy:false};pages.set(id,p);window().contentView.addChildView(view);
   const area=window().getContentBounds();view.setBounds({x:0,y:0,width:Math.max(320,area.width),height:Math.max(240,area.height)});view.setVisible(false);
   view.webContents.on('did-start-navigation',details=>{if(details.isMainFrame&&!details.isSameDocument){p.document++;p.loading=true;p.runtime=undefined;p.annotations=undefined;settle(p,'preview_document_changed');changed();}});
@@ -49,7 +50,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   view.webContents.once('destroyed',()=>close(id));
   view.webContents.setWindowOpenHandler(({url})=>{
    if(!/^https?:/.test(url)&&url!=='about:blank')return{action:'deny'};
-   return{action:'allow',createWindow:options=>make({threadId,owner,source,url},options.webPreferences).view.webContents};
+   return{action:'allow',overrideBrowserWindowOptions:{webPreferences:preferences},createWindow:options=>{const child=make({threadId:p.threadId,owner:p.owner,source:p.source,url},options);child.agentAssigned=p.agentAssigned;return child.view.webContents;}};
   });
   view.webContents.on('will-navigate',(event,url)=>{if(!/^https?:/.test(url)&&!url.startsWith('homer-preview://'+id+'/')&&url!=='about:blank')event.preventDefault();});
   changed();return p;
@@ -106,11 +107,11 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  return {async execute(actor,action,input){
   if(action==='open'){
    if(input.pageId){const p=page(input.pageId);if(p.threadId!==actor.threadId)throw Error('preview_scope_denied');
-    if(input.claim?.url===p.view.webContents.getURL()&&actor.requestId&&p.claimRequest!==actor.requestId){if(p.busy)throw Error('preview_page_busy');p.claimRequest=actor.requestId;p.owner=actor.owner;p.control='agent';p.annotations={...p.annotations,active:false};sendState(p);changed();}
+    if(input.claim?.url===p.view.webContents.getURL()&&actor.requestId&&p.claimRequest!==actor.requestId){if(p.busy)throw Error('preview_page_busy');p.agentAssigned=true;p.claimRequest=actor.requestId;p.owner=actor.owner;p.control='agent';p.annotations={...p.annotations,active:false};sendState(p);changed();}
     if(p.owner!==actor.owner)throw Error('preview_scope_denied');return publicPage(p);}
    const existing=[...pages.values()].find(p=>p.threadId===actor.threadId&&p.owner===actor.owner&&Object.keys(p.source).length===Object.keys(input.source).length&&Object.keys(p.source).every(key=>p.source[key]===input.source[key])&&(!input.url||input.url===p.view.webContents.getURL()));
    if(existing)return publicPage(existing);
-   const p=make({...actor,source:input.source,url:input.url});p.control=input.user?'user':'agent';
+   const p=make({...actor,source:input.source,url:input.url});p.control=input.user?'user':'agent';p.agentAssigned=!input.user;
    const target=input.url??(input.source.kind==='attachment'?'homer-preview://'+p.id+'/attachment/index.html':input.source.url);
    try{await p.view.webContents.loadURL(target);}catch(error){p.loading=false;p.error=error.message;changed();}if(input.user)window().webContents.send('homer:preview:show',publicPage(p));return publicPage(p);
   }
@@ -130,6 +131,6 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
    throw Error('preview_action_denied');
   })();
   let timer;p.inFlight=Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>{p.operation++;p.control='user';p.error='网页操作结果未确认，请先核对当前页面。';changed();reject(Error('preview_result_unconfirmed'));},15000);})]);
-  try{return await p.inFlight?.catch(()=>{});}finally{clearTimeout(timer);p.busy=false;p.inFlight=undefined;}
+  try{return await p.inFlight;}finally{clearTimeout(timer);p.busy=false;p.inFlight=undefined;}
  },close(){for(const id of [...pages.keys()])close(id);browserSession.protocol.unhandle('homer-preview');}};
 }

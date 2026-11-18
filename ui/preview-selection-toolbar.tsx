@@ -1,8 +1,8 @@
+import './annotation-marker.css';
+import{AnnotationButton}from'./annotation-button';
 import {useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type RefObject} from 'react';
 import {useTextSelection} from '@mantine/hooks';
 import {Popover} from '@base-ui/react/popover';
-import {Button} from '@base-ui/react/button';
-import {MessageCirclePlus} from 'lucide-react';
 import {previewTextAnnotations,type PreviewSource,type PreviewTextAnnotation} from '../src/preview-reference';
 import type {PreviewRequest} from './preview-reference';
 import {captureTextAnchor,restoreTextRange} from './preview-text-anchor';
@@ -88,11 +88,11 @@ export function PreviewSelectionToolbar({body,source,annotations,representation,
  return <>
   <span className="sr-only" role="status">{savedNotice}</span>
   <style>{`::highlight(${highlightName}){background-color:color-mix(in srgb,var(--focus) 25%,transparent);color:inherit}`}</style>
-  <div className="text-annotation-markers" aria-label="原文批注">{positions.map(p=>{const i=annotations.findIndex(n=>n.id===p.id),note=annotations[i];if(!note)return null;return <button type="button" key={p.id} className="text-annotation-marker" data-annotation-id={p.id} style={{left:p.left,top:p.top}} aria-label={`批注 ${i+1}：${note.text}；${note.comment}`} onClick={event=>edit(note,event.currentTarget)}>{i+1}</button>;})}</div>
+  <div className="text-annotation-markers" aria-label="原文批注">{positions.map(p=>{const i=annotations.findIndex(n=>n.id===p.id),note=annotations[i];if(!note)return null;return <button type="button" key={p.id} className="text-annotation-marker annotation-marker" data-annotation-id={p.id} style={{left:p.left,top:p.top}} aria-label={`批注 ${i+1}：${note.text}；${note.comment}`} onClick={event=>edit(note,event.currentTarget)}>{i+1}</button>;})}</div>
   <Popover.Root open={!!editor||bubble} onOpenChange={next=>{if(!next&&!busy.current)dismiss();}}>
    <Popover.Portal container={body}><Popover.Positioner anchor={anchor} positionMethod="fixed" side={editor?'bottom':'top'} sideOffset={8} collisionBoundary={body.current??undefined} collisionPadding={8} sticky collisionAvoidance={{side:'flip',align:'shift'}} className="preview-selection-positioner">
     <Popover.Popup ref={popup} initialFocus={false} finalFocus={false} aria-label={editor?'编辑文件批注':'选区批注'} data-slot={editor?undefined:'selection-toolbar'} className={editor?'text-annotation-editor':'bg-popover flex items-center gap-1 rounded-lg border px-1 py-1'} onMouseDown={event=>{if(!editor)event.preventDefault();}}>
-     {editor?<AnnotationCommentForm key={editor.id} ref={textarea} title={'文件批注 · '+source.title} excerpt={editor.text} value={editor.comment} onChange={comment=>{setEditor({...editor,comment});setError('');}} onSave={()=>void save()} onCancel={dismiss} onDelete={existing.current?()=>{onRemove(editor.id);dismiss();}:undefined} error={error} busy={pending}/>:<Button data-slot="selection-toolbar-quote" className="text-popover-foreground hover:bg-accent flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors" onClick={begin}><MessageCirclePlus className="size-3.5 shrink-0" aria-hidden/>批注</Button>}
+     {editor?<AnnotationCommentForm key={editor.id} ref={textarea} title={'文件批注 · '+source.title} excerpt={editor.text} value={editor.comment} onChange={comment=>{setEditor({...editor,comment});setError('');}} onSave={()=>void save()} onCancel={dismiss} onDelete={existing.current?()=>{onRemove(editor.id);dismiss();}:undefined} error={error} busy={pending}/>:<AnnotationButton tooltip="批注所选文字" data-slot="selection-toolbar-quote" className="text-popover-foreground hover:bg-accent flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors" onClick={begin}/>}
     </Popover.Popup>
    </Popover.Positioner></Popover.Portal>
   </Popover.Root>
