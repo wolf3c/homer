@@ -42,7 +42,7 @@ try {
   const thread = mainThread(), marker = "HomerSynthetic" + randomUUID().slice(0, 8);
   child.stdin.write(`请记住仅用于测试的合成暗号 ${marker}。直接回答已记住，不要派任务。\n`);
   await until(() => replies.length === 1);
-  if (/主 Agent 未完成/.test(replies[0])) throw new Error("real_seed_failed");
+  if (/(?:Homer|主 Agent) 未完成/.test(replies[0])) throw new Error("real_seed_failed");
   const promptPath = join(base, "prompts/main.md");
   if (existsSync(promptPath)) appendFileSync(promptPath, "\n<!-- Synthetic build upgrade check. -->\n");
   else appendFileSync(join(base, "src/prompts.ts"), "\n// Synthetic build upgrade: no prompt behavior change.\n");

@@ -1261,8 +1261,8 @@ export class Homer {
         channel_binding_denied:'聊天应用绑定已失效或尚未核实，本次请求未执行',
       };
       const reason=reasons[code]??code;
-      if(reason!==code)failureNotice=`主 Agent 未完成：${reason}。未自动重试。`;
-      reply=interrupted?partial||(this.closing?'已停止当前回复，原记录已保留。':'已停止当前回复。已派发的工作继续运行。'):`${partial?partial+'\n\n':''}主 Agent 未完成：${reason}。已保存的派发不会自动重试；请查询状态。`;
+      if(reason!==code)failureNotice=`Homer 未完成：${reason}。未自动重试。`;
+      reply=interrupted?partial||(this.closing?'已停止当前回复，原记录已保留。':'已停止当前回复。已派发的工作继续运行。'):`${partial?partial+'\n\n':''}Homer 未完成：${reason}。已保存的派发不会自动重试；请查询状态。`;
       if(this.mainRecoveryError)reply+='\n恢复接待未确认：'+this.mainRecoveryError+'。未启动替代执行，请先核对原执行状态。';
     }
     if(queued.source==='channel_plugin')this.channels?.discardTelegramBackground(requestId);
@@ -1559,7 +1559,7 @@ export class Homer {
       // Owned transport closure cancels an active turn during normal exit.
       const shutdown=this.closing&&engineError(e)==='engine_closed';
       context.processStatus=shutdown||engineError(e)==='main_user_interrupted'?'interrupted':engineError(e)==='interaction_delivery_unconfirmed'?'unknown':'failed';
-      if(context.workerInput)context.publicText=context.processStatus==='interrupted'?'主 Agent 本次协调已停止，原回传和已记录操作已保留，未自动重跑。':'主 Agent 本次协调未完成，原回传和已记录操作已保留，未自动重跑。';
+      if(context.workerInput)context.publicText=context.processStatus==='interrupted'?'Homer 本次协调已停止，原回传和已记录操作已保留，未自动重跑。':'Homer 本次协调未完成，原回传和已记录操作已保留，未自动重跑。';
       if(context.nativeStartAttempted===undefined&&['channel_input_preparing','channel_binding_denied'].includes(engineError(e)))throw e;
       if (engineError(e) === "main_user_interrupted") throw e;
       if(!shutdown)this.store.event(null, "main_turn_failed", engineError(e));
@@ -2695,7 +2695,7 @@ export class Homer {
     else
       await this.emit({
         type: "error",
-        text: "主 Agent 停止未获确认：main_stop_unconfirmed；重启时将继续对账。",
+        text: "Homer 停止未获确认：main_stop_unconfirmed；重启时将继续对账。",
       });
     const desktopOwnersRemain=options.requireAllOwnersConfirmed&&(!workersStopped||this.desktopStartOwnerUnconfirmed||this.workerMcpStopUnconfirmed||!!this.store.db.prepare("SELECT 1 FROM meta WHERE key LIKE 'lease:%' LIMIT 1").get());
     this.receptionTimings?.close();

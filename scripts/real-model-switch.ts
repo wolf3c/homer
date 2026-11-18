@@ -40,7 +40,7 @@ try {
     {operationId:'model-switch-fixture',title,goal:'记录公开合成事项以验证原工作表可读'});
   stage = 'remember';
   const reply = await app.message('这是公开合成测试。记住暗号 ' + token + '，只回复收到，不派发任务。');
-  assert.ok(reply && !reply.includes('主 Agent 未完成'));
+  assert.ok(reply && !/(?:Homer|主 Agent) 未完成/.test(reply));
   await app.close();
   stage = 'target-resume';
   const next = { ...target, ...directories };

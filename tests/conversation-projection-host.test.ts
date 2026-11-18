@@ -79,7 +79,7 @@ test('new user input runs independently after Worker host closure while its rece
   if(input.origin!=='worker')assert.fail('worker input required');
   await f.app['processWorkerInput'](input);await f.app.idle();
   assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(input.messageId,f.app.store.meta('mainAgentId')!)!.state,'received');
-  const node=f.app.processes.list(peer.threadId)[0]!;assert.equal(node.state,'worked');assert.equal(node.status,'unknown');assert.equal(node.final?.text.includes('主 Agent 本次协调未完成'),true);
+  const node=f.app.processes.list(peer.threadId)[0]!;assert.equal(node.state,'worked');assert.equal(node.status,'unknown');assert.equal(node.final?.text.includes('Homer 本次协调未完成'),true);
   assert.equal(await f.app.message('Synthetic next input','synthetic-next-user'),'Synthetic reply: Synthetic next input');
   assert.ok(f.seen.includes('Synthetic next input'),'the new user input reaches the recovered engine');
   assert.equal(f.seen.filter(text=>text.includes(input.messageId)).length,0,'unrelated historical uncertainty adds no model round to the new request');

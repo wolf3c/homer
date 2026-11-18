@@ -16,7 +16,7 @@ export function workerStatus(worker:OverviewWorker):{state:StatusIcon;label:stri
   if(run.status==='interrupted')return {state:'waiting',label:'执行已中断'};
   return run.status==='succeeded'?{state:'done',label:'已回复'}:{state:'waiting',label:'结束状态待核实'};
  }
- if(worker.pendingMain>0)return {state:'waiting',label:worker.pendingMainApprovals?`等待 Homer 审批 ${worker.pendingMainApprovals}`:worker.pendingMainQuestions?`等待 Homer 答复 ${worker.pendingMainQuestions}`:'主 Agent 处理中'};
+ if(worker.pendingMain>0)return {state:'waiting',label:worker.pendingMainApprovals?`等待 Homer 审批 ${worker.pendingMainApprovals}`:worker.pendingMainQuestions?`等待 Homer 答复 ${worker.pendingMainQuestions}`:'Homer处理中'};
  if(run.status==='running'&&run.phase==='executing')return {state:'working',label:'运行中'};
  const labels:Record<string,string>={ready:'等待调度',starting:'正在启动',parked:'等待协作事件',rpc_wait:'等待工具或交互',yielding:'正在交接',sealing:'正在收束'};
  return {state:'waiting',label:labels[run.phase]??'状态待核实'};
@@ -42,10 +42,10 @@ export function taskCardPresentation(task:OverviewTask,worker?:OverviewWorker):{
  const classification=classifyTask(task);
  if(classification.key==='running')return make('working','运行中','worker','LoaderCircle');
  if(classification.key==='unknown')return make('waiting',classification.label,'main','Pause');
- if(classification.key==='main')return make('waiting','主 Agent 处理中','main','MessagesSquare');
+ if(classification.key==='main')return make('waiting','Homer处理中','main','MessagesSquare');
  return make('waiting',classification.label,'main','Clock3');
 }
-export const taskOwnerLabels={main:'主 Agent',worker:'Worker',user:'你',ended:'已结束',unknown:'待核实'};
+export const taskOwnerLabels={main:'Homer',worker:'Worker',user:'你',ended:'已结束',unknown:'待核实'};
 export type StatusWorker={task:OverviewTask;worker:OverviewWorker};
 export type StatusMatter={task:OverviewTask;workers:StatusWorker[]};
 export function statusTree(tasks:OverviewTask[]):StatusMatter[]{

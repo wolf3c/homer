@@ -44,22 +44,22 @@ test('worker queue presents type, task title and receipt state without exposing 
   const texts=()=>reader.dispatchQueue(undefined,'epoch','all').items.map(item=>item.origin==='worker'?item.text:'');
   assert.equal(JSON.stringify(reader.dispatchQueue(undefined,'epoch','all').items).includes('DO NOT DISPLAY'),false,'the browser queue projection excludes internal message bodies');
   assert.deepEqual(texts(),[
-   '提问 · 等待主 Agent 处理 · 事项：Same title',
-   '操作或授权请求 · 等待主 Agent 处理 · 事项：Same title',
-   '执行信息已返回 · 等待主 Agent 处理 · 事项：Same title',
+   '提问 · 等待 Homer 处理 · 事项：Same title',
+   '操作或授权请求 · 等待 Homer 处理 · 事项：Same title',
+   '执行信息已返回 · 等待 Homer 处理 · 事项：Same title',
   ]);
   const first=f.inputs.claim([],'all')!;
-  assert.equal(texts()[0],'提问 · 主 Agent 正在接收或处理 · 事项：Same title');
+  assert.equal(texts()[0],'提问 · Homer处理中 · 事项：Same title');
   assert.equal(f.inputs.runnableHead('all')!.origin,'worker');
   const prepare=f.store.db.prepare.bind(f.store.db);
   f.store.db.prepare=((sql:string)=>{if(sql.startsWith('SELECT id,title FROM tasks')||sql.startsWith('SELECT id,kind,runId FROM worker_interactions'))throw Error('synthetic_lookup_failure');return prepare(sql);}) as typeof f.store.db.prepare;
-  try{assert.equal(texts()[0],'交互请求 · 主 Agent 正在接收或处理 · 事项标题暂不可用');}finally{f.store.db.prepare=prepare;}
+  try{assert.equal(texts()[0],'交互请求 · Homer处理中 · 事项标题暂不可用');}finally{f.store.db.prepare=prepare;}
   assert.equal(first.origin,'worker');
   f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(reply.messageId);
   f.store.db.prepare('UPDATE tasks SET title=? WHERE id=?').run('',f.task.taskId);
   assert.equal(texts()[2],'执行信息已返回 · 接收状态待核对 · 事项标题暂不可用');
   f.store.db.prepare('DELETE FROM worker_interactions').run();
-  assert.equal(texts()[0],'交互请求 · 主 Agent 正在接收或处理 · 事项标题暂不可用');
+  assert.equal(texts()[0],'交互请求 · Homer处理中 · 事项标题暂不可用');
  }finally{f.close();}
 });
 test('resume boundary preserves old worker events while accepting new user work',()=>{

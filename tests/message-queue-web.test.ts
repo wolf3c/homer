@@ -52,7 +52,7 @@ const settle=()=>new Promise<void>(done=>setImmediate(done));
 test('all-source queue keeps scheduled receipts without exposing payload or inventing Worker task metadata',()=>{
  const f=historyFixture(0),reader=new WebHistoryPages(f.history,f.processes,f.inputs);
  try{
-  for(const [state,statusText] of [['queued','等待主 Agent 处理'],['processing','主 Agent 正在接收或处理'],['uncertain','接收状态待核对']] as const){
+  for(const [state,statusText] of [['queued','等待 Homer 处理'],['processing','Homer处理中'],['uncertain','接收状态待核对']] as const){
    const item={origin:'scheduled' as const,source:'scheduled' as const,kind:'scheduled_message',messageId:'scheduled-delivery',seq:1,revision:2,state,editable:false as const,movable:false,taskId:null,taskVersion:null,runId:null,senderAgentId:'host',payload:{text:'PRIVATE_SCHEDULE_BODY',sourceRequestId:'PRIVATE_SOURCE'},text:'PRIVATE_SCHEDULE_BODY'};
    const original=JSON.stringify(item);
    f.inputs.dispatchPage=((_cursor?:string,_readEpoch?:string,sources?:'all')=>{assert.equal(sources,'all');return {items:[item],totalWaiting:state==='queued'?1:0,nextCursor:null,orderVersion:'scheduled-order'};}) as unknown as typeof f.inputs.dispatchPage;

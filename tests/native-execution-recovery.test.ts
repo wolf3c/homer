@@ -51,7 +51,7 @@ test('native execution: a slow host tool and long main turn complete without a h
 for(const status of ['failed','empty','rejected'] as const)test('main recovery: '+status+' preserves failure and receives the next message without replay',async()=>{
   const f=host();try{await f.app.start();const old=f.peers[0]!;
     old.behavior=async text=>{if(text!=='first')return{status:'completed',text:'next accepted'};if(status==='rejected')throw Error('engine_disconnected');return{status:status==='failed'?'failed':'completed',text:'',errorCode:'engine_rate_limited'};};
-    const failure=await f.app.message('first','first');assert.match(failure,/主 Agent 未完成/);
+    const failure=await f.app.message('first','first');assert.match(failure,/Homer 未完成/);
     assert.equal(f.app.inputs.list()[0]?.state,status==='rejected'?'uncertain':'failed');
     const node=f.app.processes.list(old.threadId)[0]!;
     assert.equal(node.state,'worked');assert.equal(node.status,status==='rejected'?'unknown':'failed');
@@ -78,7 +78,7 @@ test('main recovery: idle process exit rebuilds on original thread and latest se
 
 for(const reason of ['stop-unconfirmed','background-unresolved'] as const)test('main recovery: '+reason+' refuses a replacement writer',async()=>{
   const f=host();try{await f.app.start();const p=f.peers[0]!;p.stopConfirmed=reason!=='stop-unconfirmed';p.nativeBusy=reason==='background-unresolved';p.behavior=async()=>{throw Error('engine_disconnected');};
-    assert.match(await f.app.message('first','first'),/主 Agent 未完成/);
+    assert.match(await f.app.message('first','first'),/Homer 未完成/);
     const node=f.app.processes.list(p.threadId)[0]!;
     assert.equal(node.status,'unknown');assert.equal(node.state,'working');assert.equal(node.endEventId,undefined);
     await assert.rejects(()=>f.app.message('do not overlap','second'),/main_engine_unavailable/);

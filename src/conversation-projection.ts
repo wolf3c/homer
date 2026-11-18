@@ -29,7 +29,7 @@ export function projectConversation(history:readonly ConversationMessage[],nodes
  const queue:DisplayQueueInput[]=inbox.flatMap(item=>{
   const user=users.get(item.input.requestId);
   if(!user||requestsWithNodes.has(item.input.requestId)||legacyReplies.has(item.input.requestId)||!['queued','processing','uncertain'].includes(item.state))return [];
-  return [{...item,user,editable:item.editable===true,statusText:item.state==='queued'?(item.editable===false?'发送状态待核对，无法编辑或取消':item.preparation==='preparing'?'附件准备中，等待送交主 Agent':'等待送交主 Agent'):item.state==='processing'?'已领取，正在送交；接收未确认':'接收结果未确认，未自动重跑'}];
+  return [{...item,user,editable:item.editable===true,statusText:item.state==='queued'?(item.editable===false?'发送状态待核对，无法编辑或取消':item.preparation==='preparing'?'附件准备中，等待送交 Homer':'等待送交 Homer'):item.state==='processing'?'已领取，正在送交；接收未确认':'接收结果未确认，未自动重跑'}];
  });
  const queuedRequests=new Set(queue.map(item=>item.input.requestId)),shownUsers=new Set<string>();
  const messages:DisplayMessage[]=[];let lastProcessSeq=0,orderWarning:string|undefined;

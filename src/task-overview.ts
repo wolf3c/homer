@@ -19,7 +19,7 @@ export function classifyTask(task:OverviewTask):Classification{
  if(task.workers.some(w=>w.pendingUser>0&&w.run.status==='running'&&!['ended','uncertain','held'].includes(w.run.phase)))return {key:'user',label:'待我处理'};
  if(task.workers.some(w=>w.run.status==='running'&&w.run.phase==='executing'&&w.run.stopRequestedAt==null))return {key:'running',label:'进行中'};
  if(task.workers.some(w=>w.run.phase==='uncertain'))return {key:'unknown',label:'执行状态待核实'};
- if(task.workers.some(w=>w.pendingMain>0))return {key:'main',label:'待主 Agent 处理'};
+ if(task.workers.some(w=>w.pendingMain>0))return {key:'main',label:'待 Homer 处理'};
  if(task.workers.some(w=>w.run.status==='queued'&&w.run.phase==='ready'))return {key:'queued',label:'排队中'};
  return {key:'open',label:'未结案'};
 }

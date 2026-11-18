@@ -25,6 +25,8 @@ test('valid user questions and authorizations alone draw user attention',()=>{
  assert.equal(taskCardPresentation(task({workers:[w]})).label,'需你审批');assert.equal(taskCardPresentation(task({workers:[w]})).attention,'user');
  w.run.phase='uncertain';assert.equal(taskCardPresentation(task({workers:[w]})).attention,'none');
  w.pendingUser=0;w.pendingMain=1;w.run.phase='executing';assert.equal(taskCardPresentation(task({workers:[w]}),w).attention,'none');
+ assert.equal(workerStatus(w).label,'Homer处理中');
+ w.run.phase='parked';assert.equal(taskCardPresentation(task({workers:[w]})).label,'Homer处理中');
 });
 
 test('tree deduplicates real matters and rejects unrelated or malformed session ownership',()=>{

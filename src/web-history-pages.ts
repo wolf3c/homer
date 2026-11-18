@@ -214,7 +214,7 @@ export class WebHistoryPages{
    try{if(interactionIds.length)interactions=new Map((this.db.prepare(`SELECT id,kind,runId FROM worker_interactions WHERE id IN (${marks(interactionIds)})`).all(...interactionIds) as {id:string;kind:string;runId:string}[]).map(row=>[row.id,row]));}catch{/* Fall back to a generic interaction. */}
    return {...page,items:page.items.flatMap<import('./recursive-main-inputs.js').MainDispatchInput&{user?:import('./web-history.js').ConversationMessage;statusText:string}>(item=>{
     if(item.origin!=='user'){
-     const statusText=item.state==='queued'?'等待主 Agent 处理':item.state==='processing'?'主 Agent 正在接收或处理':'接收状态待核对';
+     const statusText=item.state==='queued'?'等待 Homer 处理':item.state==='processing'?'Homer处理中':'接收状态待核对';
      if(item.origin==='scheduled')return [{...item,payload:null,text:'定时消息 · '+statusText,statusText}];
      const payload=item.payload&&typeof item.payload==='object'?item.payload as {interactionId?:unknown}:{};
      const interaction=typeof payload.interactionId==='string'?interactions.get(payload.interactionId):undefined;
