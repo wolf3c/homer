@@ -21,7 +21,7 @@ async function fixture(confirmed=true,closeError='engine_closed'){
   async turn(text:string,hooks?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
    this.turnId='shutdown-turn-'+ ++this.sequence;hooks?.onStarted?.(this.turnId);
    if(this.worker){writeFileSync(join(this.options.cwd,'saved.md'),'Synthetic preserved file');return {status:'completed',text:'Synthetic file written'};}
-   if(text==='dispatch'){await this.call('worker_open',{message:'Preserve the file'});return {status:'completed',text:'Dispatched'};}
+   if(text==='dispatch'){await this.call('worker_open',{title:"Preserve the file",message:'Preserve the file'});return {status:'completed',text:'Dispatched'};}
    return new Promise((_resolve,reject)=>{this.pending=reject;});
   }
   async interrupt(){return false;}

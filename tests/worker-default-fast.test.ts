@@ -71,7 +71,7 @@ for(const effortOverride of ['default','local-low','env-high'] as const)for(cons
         return new Promise(resolve=>{this.release=resolve;});
       }
       if(text==='synthetic:start'){
-        const {taskId}=await this.call('worker_open',{message:'A'});
+        const {taskId}=await this.call('worker_open',{title:"A",message:'A'});
         for(const message of ['B','C'])await this.call('worker_open',{taskId,message});
       }
       return {status:'completed',text:'Synthetic accepted'};

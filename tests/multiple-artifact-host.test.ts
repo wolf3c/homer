@@ -27,7 +27,7 @@ test('Homer opens one Worker and commits the two selected files in one backgroun
     return {status:'completed',text:JSON.stringify({marker:'INTERNAL_FILES_ONLY',paths})};
    }
    if(text==='synthetic multiple files'){
-    const task=await this.call('worker_open',{message:'Read sample.md and write the two requested files'});taskId=task.taskId;
+    const task=await this.call('worker_open',{title:"Read sample.md and write the two requested files",message:'Read sample.md and write the two requested files'});taskId=task.taskId;
     return {status:'completed',text:'已安排合成工作。'};
    }
    if(text.startsWith('[内部协作输入')){

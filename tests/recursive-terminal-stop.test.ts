@@ -31,7 +31,7 @@ function fixture(confirm=true){
       }
       if(text.startsWith('synthetic:dispatch')){
         this.turnId='synthetic-dispatch-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
-        const worker=await this.call('worker_open',{message:'Ask for the missing format'});return {status:'completed',text:worker.runId};
+        const worker=await this.call('worker_open',{title:"Ask for the missing format",message:'Ask for the missing format'});return {status:'completed',text:worker.runId};
       }
       if(text.startsWith('[内部协作输入')&&text.includes('interactionId=')){
         this.turnId='synthetic-question-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);

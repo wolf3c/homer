@@ -49,7 +49,7 @@ test('two Worker MCP endpoints retain distinct page owners on one conversation',
  const f=fixture(),requests:any[]=[];
  f.app.bindBrowserPreview(async(owner,action,input)=>{requests.push({owner,action,input});return{id:'page-'+requests.length,document:1};});
  try{
-  f.setScript(async(main,text)=>{if(text==='Delegate browser work'){await main.call('worker_open',{message:'Read one page'});await main.call('worker_open',{message:'Read another page'});}return{status:'completed',text:'Delegated'};});
+  f.setScript(async(main,text)=>{if(text==='Delegate browser work'){await main.call('worker_open',{title:"Read one page",message:'Read one page'});await main.call('worker_open',{title:"Read another page",message:'Read another page'});}return{status:'completed',text:'Delegated'};});
   await f.app.start();await f.app.message('Delegate browser work','worker-browser-source');
   await until(()=>f.engines.filter(e=>e.options.role==='worker'&&e.finish).length===2);
   const workers=f.engines.filter(e=>e.options.role==='worker');

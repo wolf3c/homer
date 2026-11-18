@@ -36,7 +36,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
    if(text==='Emit HTML'){await main.call('send_user_message',{attachments:[{path:join(f.app.config.workspace,'preview.html')}]});return{status:'completed',text:'HTML 已交付'};}
-   if(text==='Delegate both pages'){await main.call('worker_open',{message:'Operate page A'});await main.call('worker_open',{message:'Operate page B'});return{status:'completed',text:'两个合成任务已创建'};}
+   if(text==='Delegate both pages'){await main.call('worker_open',{title:"Operate page A",message:'Operate page A'});await main.call('worker_open',{title:"Operate page B",message:'Operate page B'});return{status:'completed',text:'两个合成任务已创建'};}
    await main.call('send_user_message',{text:'[打开业务网页]('+url+'/start)'});return{status:'completed',text:'已交付链接'};
   });await f.app.start();await f.app.message('打开合成网页并批注','preview-fixture-source');
   web=await createWebServer({bridge:homerWebBridge(f.app),port:0,uiDirectory:resolve(ui)});

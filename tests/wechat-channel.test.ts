@@ -91,7 +91,7 @@ test('WeChat resumes separate private routes, ignores replay and cannot send on 
       return {status:'completed',text:''};
     }
     const text=input.replace(/^::message-source\{source=wechat\}\n\n/,'');
-    if(text==='only A')({taskId}=await main.call('worker_open',{message:'Prepare the WeChat fixture'}));
+    if(text==='only A')({taskId}=await main.call('worker_open',{title:"Prepare the WeChat fixture",message:'Prepare the WeChat fixture'}));
     if(text==='only B'){
       const name='set_notification_destination',itemId='wechat-test-subscribe',args={taskId};
       main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId,tool:name,arguments:args});

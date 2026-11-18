@@ -241,7 +241,7 @@ test('real explicit send preserves the Worker reply and commits one attachment-b
  try{
   f.setScript(async(main,text)=>{
    if(text==='send test'){
-    const run=await main.call('worker_open',{message:'Write public.md.'});
+    const run=await main.call('worker_open',{title:"Write public.md.",message:'Write public.md.'});
     taskId=run.taskId;runId=run.runId;
     return {status:'completed',text:'Started.'};
    }

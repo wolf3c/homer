@@ -69,7 +69,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
       }
       mainInputs.push(text);
       if (text === "dispatch") {
-        for (let i = 0; i < workers; i++) await this.call("worker_open", { message: "按用户要求生成 Markdown " + i, ...(scenario.namedTask ? {title:"整理 Markdown " + i} : {}) });
+        for (let i = 0; i < workers; i++) await this.call("worker_open", { message: "按用户要求生成 Markdown " + i, title: (scenario.namedTask ? "整理 Markdown " : "按用户要求生成 Markdown ") + i });
       } else if (app["mainContext"]?.interactionId) {
         const id = app["mainContext"]!.interactionId!;
         interactionTurns.push(id);

@@ -32,7 +32,7 @@ export function fixture(sink: (message: Message) => Promise<void> = async () => 
       if(selected)await this.call('send_user_message',{text:'已附上合成文件',attachments:selected});
       if (text === "fail") throw new Error("synthetic_engine_failure");
       if (text === "dispatch") {
-        await this.call("worker_open", {message:"合成后台任务"});
+        await this.call("worker_open", {title:"合成后台任务",message:"合成后台任务"});
       }
       if (text === "stream") return new Promise(accept => {
         this.pending = accept;

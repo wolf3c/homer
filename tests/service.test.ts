@@ -97,7 +97,7 @@ function fixture(
           return this.call("worker_send",{workerId:existing.workers[0].workerId,message:"按新要求整理行动清单"});
         }
         const material=p.material??"meeting.md";
-        return this.call("worker_open",{message:title+"：整理 "+material+" 的行动清单",attachments:[{path:resolve(config.workspace,material)}]});
+        return this.call("worker_open",{title:"Synthetic task",message:title+"：整理 "+material+" 的行动清单",attachments:[{path:resolve(config.workspace,material)}]});
       };
       if(p.action==="dispatch_many"){
         const results=[];for(const title of ["第一件","第二件","第三件"])results.push(await dispatch(title));

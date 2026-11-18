@@ -26,7 +26,7 @@ for(const scenario of ['result','forged-notice','missing','startup-failure','sta
    if(text==='请核对日期'){
     if(scenario==='dispatch-rejected'){await assert.rejects(this.call('task_create',{bad:'invalid'}),/invalid_tool_arguments/);return {status:'completed',text:'交办未成功。'};}
     const workingDirectory=join(dir,'PRIVATE_SELECTED_PROJECT');mkdirSync(workingDirectory);
-    await this.call('worker_open',{message:'检查会议记录中的日期。',workingDirectory});return {status:'completed',text:'已交办这项工作。'};
+    await this.call('worker_open',{title:"检查会议记录中的日期",message:'检查会议记录中的日期。',workingDirectory});return {status:'completed',text:'已交办这项工作。'};
    }
    return {status:'completed',text:''};
   }

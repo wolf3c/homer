@@ -43,7 +43,7 @@ test('the real host retains late old drafts, confirms both paused exits and resu
  f.setScript(async(main,text)=>{
   try{
    if(text===original){
-    const first=await main.call('worker_open',{message:'A 核对旧版事实'});
+    const first=await main.call('worker_open',{title:"A 核对旧版事实",message:'A 核对旧版事实'});
     taskId=first.taskId;workerIds.push(first.workerId);
     workerIds.push((await main.call('worker_open',{taskId,message:'B 核对旧版事实'})).workerId);
    }else if(text===changedText){

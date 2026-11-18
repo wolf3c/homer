@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {RecursiveTools} from '../src/recursive-tools.js';
+import {RecursiveTools,mainToolsForHash} from '../src/recursive-tools.js';
 import {chatFixture} from './task-chat-fixture.js';
 
-test('goal-only creation starts no Worker and rejects retired contract/dependency arguments atomically',async()=>{
+test('recording a titled goal starts no Worker and rejects retired contract/dependency arguments atomically',async()=>{
  const f=chatFixture();try{
   let wakes=0;const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake:()=>{wakes++;},stop:async()=>{},steer:async()=>{}});
-  const args={goal:'Inspect one source'};
+  const args={goal:'Inspect one source',title:'Source inspection'};
   for(const extra of [{contract:{goal:'Old contract'}},{dependencies:[]},{parentTaskId:null},{title:null},{pendingIds:[]},{resultIds:[]}])await assert.rejects(tools.call(f.actor,'task_create',{...args,...extra},'invalid'),/invalid_tool_arguments/);
   assert.equal(f.tasks.tasks().length,0);assert.equal(f.store.runs().length,0);assert.equal(wakes,0);
   const created=await tools.call(f.actor,'task_create',args,'create') as {taskId:string};assert.ok(created.taskId);assert.equal(f.store.runs().length,0);assert.equal(wakes,1);
@@ -43,7 +43,8 @@ test('worker_open names new work without altering its goal or input',async()=>{
   const a=await tools.call(f.actor,'worker_open',{message,title:'优化事项标题'},'named') as {taskId:string;workerId:string};
   assert.equal(f.tasks.task(a.taskId).title,'优化事项标题');assert.equal(f.tasks.version(a.taskId,1).goal,message);
   assert.equal(f.tasks.run(a.workerId).prompt,message);
-  const b=await tools.call(f.actor,'worker_open',{message:'🙂'.repeat(60)+'。详情'},'fallback') as {taskId:string};
+  const legacy=mainToolsForHash('d8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150');
+  const b=await tools.call(f.actor,'worker_open',{message:'🙂'.repeat(60)+'。详情'},'fallback',legacy) as {taskId:string};
   const title=f.tasks.task(b.taskId).title;assert.ok([...title].length<=49);assert.ok(!title.includes('�'));assert.equal(f.tasks.version(b.taskId,1).goal,'🙂'.repeat(60)+'。详情');
   await assert.rejects(tools.call(f.actor,'worker_open',{taskId:a.taskId,message:'继续',title:'误导性的名称'},'existing'),/invalid_tool_arguments/);
  }finally{f.close();}

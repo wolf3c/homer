@@ -29,11 +29,11 @@ test('Main and peer Workers select independent accessible directories without ex
    this.turnId='turn-'+ ++seq;hooks?.onStarted?.(this.turnId);
    if(this.options.role!=='worker'){
     if(text==='Synthetic directory work'){
-     await assert.rejects(()=>this.call('worker_open',{message:'Managed runtime',workingDirectory:config.runtime}),/workspace_invalid/);
+     await assert.rejects(()=>this.call('worker_open',{title:"Managed runtime",message:'Managed runtime',workingDirectory:config.runtime}),/workspace_invalid/);
      assert.equal(app.tasks.tasks().length,0);
      let taskId:string|undefined;
      for(const [assignment,cwd] of [['parent',a],['child',b],['independent',c]] as const){
-      const worker=await this.call('worker_open',{...(taskId?{taskId}:{}),message:assignment,workingDirectory:cwd});
+      const worker=await this.call('worker_open',{...(taskId?{taskId}:{title:'Inspect runner directory'}),message:assignment,workingDirectory:cwd});
       taskId=worker.taskId;
       if(assignment==='parent')parentWorker=worker.workerId;
      }

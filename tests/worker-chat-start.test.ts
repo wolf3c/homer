@@ -9,7 +9,7 @@ test('a text-only Worker completes without creating a run output directory',asyn
   const f=fixture();let taskId='',runId='';
   try{
     f.setScript(async(main,text)=>{
-      if(text==='start')({taskId,runId}=await main.call('worker_open',{message:'Write a plain text reply.'}));
+      if(text==='start')({taskId,runId}=await main.call('worker_open',{title:"Write a plain text reply.",message:'Write a plain text reply.'}));
       return {status:'completed',text:''};
     });
     await f.app.start();await f.app.message('start','text-only-source');
@@ -32,7 +32,7 @@ test('cancelling while the Worker endpoint starts cannot subsequently start its 
     let runId='';
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        runId=(await main.call('worker_open',{message:'Synthetic cancelled startup'})).runId;
+        runId=(await main.call('worker_open',{title:"Synthetic cancelled startup",message:'Synthetic cancelled startup'})).runId;
       }
       return {status:'completed',text:'Synthetic response'};
     });
@@ -57,7 +57,7 @@ test('a cancelled start cannot publish a late thread binding',async()=>{
     let runId='';
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        runId=(await main.call('worker_open',{message:'Synthetic cancelled startup'})).runId;
+        runId=(await main.call('worker_open',{title:"Synthetic cancelled startup",message:'Synthetic cancelled startup'})).runId;
       }
       return {status:'completed',text:'Synthetic response'};
     });
@@ -76,7 +76,7 @@ test('a goal change during endpoint startup fences the old version before any en
     t.mock.method(WorkerInteractionMcp.prototype,'start',async function(this:WorkerInteractionMcp){entered();await gate;return start.call(this);});
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        const opened=await main.call('worker_open',{message:'Original synthetic scope'});
+        const opened=await main.call('worker_open',{title:"Original synthetic scope",message:'Original synthetic scope'});
         ({taskId,runId}=opened);
       }else if(text==='change')assert.equal((await main.call('task_update',{taskId,goal:'Revised synthetic scope'})).state,'confirmed');
       return {status:'completed',text:'Recorded'};

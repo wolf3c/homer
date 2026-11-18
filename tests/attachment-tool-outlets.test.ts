@@ -25,12 +25,12 @@ test('native attachment scope errors are safe and an exact call recovers the com
       peer.send=(message:unknown)=>{if(!loseReply)sent.push(message);};
       const call=(id:number,callId:string,tool:string,args:unknown)=>peer.receive(JSON.stringify({id,method:'item/tool/call',
         params:{threadId:main.threadId,turnId:main.turnId,callId,tool,arguments:args}}));
-      await call(1,'foreign','worker_open',{message:'Private input',attachments:[{...ref,revision:2}]});
+      await call(1,'foreign','worker_open',{title:'Private input',message:'Private input',attachments:[{...ref,revision:2}]});
       assert.deepEqual(sent.at(-1).result,{success:false,contentItems:[{type:'inputText',text:'media_scope_denied'}]});
       assert.equal(f.app.tasks.tasks().length,0);
-      await call(2,'forged','task_create',{goal:'Synthetic',attachments:[ref]});
+      await call(2,'forged','task_create',{title:'Synthetic task',goal:'Synthetic',attachments:[ref]});
       assert.deepEqual(sent.at(-1).result,{success:false,contentItems:[{type:'inputText',text:'invalid_tool_arguments'}]});
-      const args={message:'Inspect the selected file',attachments:[ref]};
+      const args={title:'Selected file inspection',message:'Inspect the selected file',attachments:[ref]};
       loseReply=true;await call(3,'committed','worker_open',args);loseReply=false;
       const operation=f.app.store.db.prepare("SELECT responseJson FROM operations WHERE kind='worker_open'").get();
       assert.ok(operation);

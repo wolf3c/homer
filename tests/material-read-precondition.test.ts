@@ -18,7 +18,7 @@ async function setup(){
   });
   f.setScript(async(main,text)=>{
    if(text==='Inspect files'){
-    const result=await main.call('worker_open',{message:'Inspect only the selected files',attachments:files});
+    const result=await main.call('worker_open',{title:"Inspect only the selected files",message:'Inspect only the selected files',attachments:files});
     opened=result;
     const input=f.app.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(result.messageId);
     refs=JSON.parse(String(input?.payloadJson)).attachments;

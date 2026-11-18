@@ -40,7 +40,7 @@ test('v1 to v2 archival inspection separates readable source history from curren
   try {
     f.setScript(async (main, text) => {
       try {
-        if (text === initial) taskId = (await main.call('task_create', {goal: initial})).taskId;
+        if (text === initial) taskId = (await main.call('task_create', {title:"Synthetic task",goal: initial})).taskId;
         else if (text === revised) {
           await assert.rejects(main.call('task_update', {taskId, goal: revised, sourceRequestIds: ['source:initial', 'source:revised']}), /invalid_tool_arguments/);
           await main.call('task_update', {taskId, goal: revised});
@@ -70,10 +70,10 @@ test('v1 to v2 archival inspection separates readable source history from curren
           const counts = () => ['tasks', 'runs', 'operations'].map(table => Number(f.app.store.db.prepare('SELECT count(*) n FROM ' + table).get()!.n));
           for (const sourceRequestIds of [['source:initial'], ['source:initial', 'source:revised'], ['source:revised'], ['source:unrelated'], ['source:archive']]) {
             const before = counts();
-            await assert.rejects(main.call('task_create', {goal: 'Inspect remaining synthetic facts', sourceRequestIds}), /invalid_tool_arguments/);
+            await assert.rejects(main.call('task_create', {title: "Inspect remaining synthetic facts", goal: 'Inspect remaining synthetic facts', sourceRequestIds}), /invalid_tool_arguments/);
             assert.deepEqual(counts(), before, 'rejected source selection cannot create work');
           }
-          const followup = await main.call('worker_open', {message: 'Read remaining facts within the revised source only'});
+          const followup = await main.call('worker_open', {title:"Read remaining facts within the revised source o…",message: 'Read remaining facts within the revised source only'});
           followups.push(followup.taskId);
           checked = true;
         }
@@ -104,13 +104,13 @@ test('v1 to v2 archival inspection separates readable source history from curren
 
 test('record-only and first-dispatch tools have separate effects', async () => {
   const f = fixture(); try {
-    const root = await f.tools.call(f.actor,'task_create',{goal:'Possible later work'},'create') as {taskId:string};
+    const root = await f.tools.call(f.actor,'task_create',{title:"Possible later work",goal:'Possible later work'},'create') as {taskId:string};
     assert.equal(f.tasks.task(root.taskId).notes,'');
     assert.equal(f.tasks.runs().length,0);
     assert.equal(f.tasks.version(root.taskId,1).authorityJson,null);
     assert.deepEqual(f.reads(),{authorityReads:0,wakes:1});
     await assert.rejects(f.tools.call(f.actor,'worker_open',{taskId:root.taskId,message:'Run uncommissioned work'},'blocked'),/source_denied/);
-    const args={message:'Read the build files'};
+    const args={title:'Build file review',message:'Read the build files'};
     const opened=await f.tools.call(f.actor,'worker_open',args,'open') as {taskId:string;workerId:string;runId:string};
     assert.notEqual(opened.taskId,root.taskId);
     assert.equal(opened.workerId,opened.runId);
@@ -132,7 +132,7 @@ test('worker tool receives only exact attachment selectors and does not re-prepa
    assert.ok(scope.messageId.startsWith('message-'));
    return [ref];
   }});
-  const args={message:'Read selected source',attachments:[ref]};
+  const args={title:'Selected source',message:'Read selected source',attachments:[ref]};
   const opened=await tools.call(f.actor,'worker_open',args,'open');
   assert.deepEqual(await tools.call(f.actor,'worker_open',args,'open'),opened);
   const before=f.counts();
@@ -148,11 +148,11 @@ test('forged host fields, malformed collections and missing native identity fail
   const f = fixture(); try {
     const before = f.counts();
     for (const extra of [{operationId: 'forged'}, {version: 9}, {epoch: 9}, {expectedTaskRevision: 9}, {agentId: 'host'}, {contract: {goal: 'forged'}}]) {
-      await assert.rejects(f.tools.call(f.actor, 'task_create', {goal: 'Synthetic', ...extra}, 'forged'), /invalid_tool_arguments/);
+      await assert.rejects(f.tools.call(f.actor, 'task_create', {title:'Synthetic task', goal: 'Synthetic', ...extra}, 'forged'), /invalid_tool_arguments/);
     }
     await assert.rejects(f.tools.call(f.actor, 'worker_open', {taskId: 'any', message: 'Synthetic', resultIds: {}}, 'bad-array'), /invalid_tool_arguments/);
-    await assert.rejects(f.tools.call(f.actor, 'task_create', {goal: 'Synthetic'}), /tool_call_identity_required/);
-    await assert.rejects(f.tools.call({...f.actor, turnId: undefined}, 'task_create', {goal: 'Synthetic'}, 'missing-turn'), /tool_call_identity_required/);
+    await assert.rejects(f.tools.call(f.actor, 'task_create', {title:"Synthetic",goal: 'Synthetic'}), /tool_call_identity_required/);
+    await assert.rejects(f.tools.call({...f.actor, turnId: undefined}, 'task_create', {title:"Synthetic",goal: 'Synthetic'}, 'missing-turn'), /tool_call_identity_required/);
     assert.deepEqual(f.counts(), before); assert.deepEqual(f.reads(), {authorityReads: 0, wakes: 0});
   } finally {f.close();}
 });
@@ -254,7 +254,7 @@ test('raw replies remain readable and legacy publication entry points reject cal
 test('worker_read selects and pages one original native public item through the model interface', async () => {
   const f = fixture(); try {
     await f.create();
-    const opened = await f.tools.call(f.actor, 'worker_open', {message: 'Inspect exact public items'}, 'open') as any;
+    const opened = await f.tools.call(f.actor, 'worker_open', {title:"Inspect exact public items",message: 'Inspect exact public items'}, 'open') as any;
     const run = f.tasks.claim(opened.runId)!; f.tasks.bind(run.id, run.epoch, 'thread:worker', 'turn:worker');
     const body = '原始公开证据'.repeat(6000);
     f.tasks.endSegment(run.id, run.epoch, {status: 'completed', text: 'Aggregate reply', messages: [

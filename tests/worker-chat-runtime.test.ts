@@ -11,7 +11,7 @@ test('two Worker conversations return complete original text automatically witho
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        taskId=(await main.call('worker_open',{message:'Read A.'})).taskId;
+        taskId=(await main.call('worker_open',{title:"Read A.",message:'Read A.'})).taskId;
         await main.call('worker_open',{taskId,message:'Read B.'});
       }
       return {status:'completed',text:text==='start'?'Started.':'',messages:[]};
@@ -50,7 +50,7 @@ test('an idle conversation follow-up resumes its exact native thread in a new Ru
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        workerId=(await main.call('worker_open',{message:'Read A.'})).workerId;
+        workerId=(await main.call('worker_open',{title:"Read A.",message:'Read A.'})).workerId;
       }else if(!followed){followed=true;await main.call('worker_send',{workerId,message:'Explain the observation.'});}
       return {status:'completed',text:text==='start'?'Started.':'',messages:[]};
     });
@@ -76,7 +76,7 @@ test('busy ordinary messages wait for confirmed exit and preserve their order in
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        workerId=(await main.call('worker_open',{message:'First'})).workerId;
+        workerId=(await main.call('worker_open',{title:"First",message:'First'})).workerId;
       }else if(text==='queue'){
         for(const message of ['Second','Third'])assert.equal((await main.call('worker_send',{workerId,message})).runId,null);
       }
@@ -103,7 +103,7 @@ test('a changed goal stops every old executor and rejects queued old-version mes
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        const first=await main.call('worker_open',{message:'Original synthetic scope: A'});
+        const first=await main.call('worker_open',{title:"Original synthetic scope: A",message:'Original synthetic scope: A'});
         taskId=first.taskId;workers.push(first.workerId);
         workers.push((await main.call('worker_open',{taskId,message:'B'})).workerId);
       }else if(text==='change'){
@@ -130,7 +130,7 @@ test('goal edits keep prior user sources until a settled resume supplies replace
  const revised='While paused, inspect C instead of B and keep the writing restriction.';
  try{
   f.setScript(async(main,text)=>{
-   if(text===original)taskId=(await main.call('worker_open',{message:original})).taskId;
+   if(text===original)taskId=(await main.call('worker_open',{title:"Synthetic task",message:original})).taskId;
    else if(text===expanded||text===revised)await main.call('task_update',{taskId,goal:text});
    else if(text==='Pause')await main.call('task_update',{taskId,action:'pause'});
    else if(text==='Try resuming, otherwise cancel'){
@@ -170,7 +170,7 @@ for(const kind of ['worker_reply','interaction_required'] as const)for(const con
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        taskId=(await main.call('worker_open',{message:'Investigate original scope'})).taskId;
+        taskId=(await main.call('worker_open',{title:"Investigate original scope",message:'Investigate original scope'})).taskId;
       }else if(text==='revoke'){
         const worker=f.engines.find(engine=>engine.options.role==='worker')!;
         worker.emit('agentMessage',{threadId:worker.threadId,turnId:worker.turnId,itemId:'old-observation',phase:'final_answer',text:raw,completed:true});
@@ -181,7 +181,7 @@ for(const kind of ['worker_reply','interaction_required'] as const)for(const con
         const worker=f.app.tasks.workers(taskId)[0]!,view=await main.call('worker_read',{workerId:worker.workerId});
         readText=view.messages.find((message:any)=>message.kind==='worker_reply')?.text;
         for(const explicit of [false,true]){
-          const before=counts(),[attempt]=await Promise.allSettled([main.call('worker_open',{message:'Resume the withdrawn original synthetic scope',...(explicit?{sourceRequestIds:['withdrawn-source']}:{})})]);
+          const before=counts(),[attempt]=await Promise.allSettled([main.call('worker_open',{title:'Withdrawn scope',message:'Resume the withdrawn original synthetic scope',...(explicit?{sourceRequestIds:['withdrawn-source']}:{})})]);
           const after=counts();attempts.push({status:attempt!.status,...(attempt!.status==='rejected'?{error:attempt!.reason.message}:{}),before,after});
         }
         checked=true;
@@ -199,16 +199,26 @@ for(const kind of ['worker_reply','interaction_required'] as const)for(const con
   }finally{await f.close();}
 });
 
-for(const kind of ['worker_reply','interaction_required'] as const)test(`a current live ${kind} can create follow-up sessions within the original scope`,async()=>{
+for(const kind of ['worker_reply','interaction_required'] as const)for(const hash of [
+  undefined,
+  'f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe',
+  'd8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150',
+])test(`a current live ${kind} can create follow-up sessions within the original scope (${hash?.slice(0,8)??'new Main'})`,async()=>{
   const f=fixture();let handled=false,checked=false;
   try{
+    if(hash){
+      f.app.store.setMeta('mainThread','synthetic-legacy-main');
+      f.app.store.setMeta('mainToolsHash',hash);
+    }
+    const dispatch=(message:string)=>({message,...(!hash?{title:'Authorized inspection'}:{})});
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        await main.call('worker_open',{message:'Investigate original authorized scope'});
+        await main.call('worker_open',dispatch('Investigate original authorized scope'));
       }else if(!handled&&text.includes('"kind":"'+kind+'"')){
         handled=true;
+        if(!hash)await assert.rejects(main.call('worker_open',{message:'Missing required title'}),/invalid_tool_arguments/);
         for(const message of ['Inspect remaining authorized fact A','Inspect remaining authorized fact B'])
-          await main.call('worker_open',{message});
+          await main.call('worker_open',dispatch(message));
         if(kind==='interaction_required'){
           assert.doesNotMatch(text,/"(?:runId|threadId|turnId)"|\[Worker 原文\]/);
           const interactionId=text.match(/\[待答入口\] interactionId=([^；]+)/)?.[1];
@@ -239,10 +249,10 @@ test('a later real user can reopen failed work and delegate only selected attach
     let originalRef:{assetId:string;revision:number},laterRef:{assetId:string;revision:number};
     f.setScript(async(main,text)=>{
       if(text.startsWith('start')){
-        taskId=(await main.call('worker_open',{message:'Inspect original source',attachments:[originalRef]})).taskId;
+        taskId=(await main.call('worker_open',{title:"Inspect original source",message:'Inspect original source',attachments:[originalRef]})).taskId;
       }else if(!settled&&text.includes('"kind":"worker_reply"')){
         await main.call('task_update',{taskId,action:'settle',outcome:'failed'});
-        await assert.rejects(main.call('worker_open',{message:'Continue the failed task'}),/task_authority_source_denied/);
+        await assert.rejects(main.call('worker_open',{title:"Continue the failed task",message:'Continue the failed task'}),/task_authority_source_denied/);
         settled=true;
       }else if(text.startsWith('continue')){
         const revised=await main.call('task_update',{taskId,action:'resume',goal:'Use the later assigned source'});
@@ -276,10 +286,10 @@ test('background Worker replies cannot delegate another user source’s attachme
  const f=fixture();let assigned:{assetId:string;revision:number},foreign:{assetId:string;revision:number},checked=false;
  try{
   f.setScript(async(main,text)=>{
-   if(text.startsWith('start'))await main.call('worker_open',{message:'Use the assigned file',attachments:[assigned]});
+   if(text.startsWith('start'))await main.call('worker_open',{title:"Use the assigned file",message:'Use the assigned file',attachments:[assigned]});
    else if(text.includes('"kind":"worker_reply"')){
     const before=f.app.tasks.tasks().length;
-    await assert.rejects(main.call('worker_open',{message:'Borrow unrelated evidence',attachments:[foreign]}),/media_scope_denied/);
+    await assert.rejects(main.call('worker_open',{title:"Borrow unrelated evidence",message:'Borrow unrelated evidence',attachments:[foreign]}),/media_scope_denied/);
     assert.equal(f.app.tasks.tasks().length,before);checked=true;
    }
    return {status:'completed',text:'Recorded'};
@@ -307,7 +317,7 @@ test('a failed received input retains its committed open and restart never repla
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        taskId=(await main.call('worker_open',{message:'Recover an original action'})).taskId;
+        taskId=(await main.call('worker_open',{title:"Recover an original action",message:'Recover an original action'})).taskId;
       }else if(!lost){
         lost=true;originalWorker=(await main.call('worker_open',{taskId,message:'Inspect the returned fact'},'committed-open')).workerId;
         assert.equal((await main.call('worker_open',{taskId,message:'Inspect the returned fact'},'committed-open')).workerId,originalWorker);
@@ -338,7 +348,7 @@ test('a failed received Worker input cannot repeat its committed immediate messa
  try{
   f.setScript(async(main,text)=>{
    if(text==='start'){
-    const first=await main.call('worker_open',{message:'Collect the finding'});
+    const first=await main.call('worker_open',{title:"Collect the finding",message:'Collect the finding'});
     workerId=(await main.call('worker_open',{taskId:first.taskId,message:'Wait for the finding'})).workerId;
    }else if(text.includes('Exact synthetic finding')){
     const args={workerId,message:'Incorporate this exact finding',immediate:true};
@@ -370,17 +380,17 @@ test('archival follow-up binds only the current notification original user sourc
   try{
     f.setScript(async(main,text)=>{
       if(text==='prepare'){
-        original=(await main.call('task_create',{goal:'Original completed goal'})).taskId;
+        original=(await main.call('task_create',{title:"Original completed goal",goal:'Original completed goal'})).taskId;
         await main.call('task_update',{taskId:original,goal:'Original completed goal'});
         await main.call('task_update',{taskId:original,action:'settle',outcome:'succeeded'});
       }else if(text==='archive'){
         const receipt=await main.call('archive_work',{taskId:original});assert.equal(receipt.state,'archived');
       }else if(text.includes('task_archived')){
-        await assert.rejects(main.call('task_create',{goal:'Forged source',sourceRequestIds:['unrelated-source']}),/invalid_tool_arguments/);
+        await assert.rejects(main.call('task_create',{title:"Forged source",goal:'Forged source',sourceRequestIds:['unrelated-source']}),/invalid_tool_arguments/);
         const before=f.app.tasks.tasks().length;
-        await assert.rejects(main.call('worker_open',{message:'Borrow unrelated source',sourceRequestIds:['unrelated-source']}),/invalid_tool_arguments/);
+        await assert.rejects(main.call('worker_open',{title:"Borrow unrelated source",message:'Borrow unrelated source',sourceRequestIds:['unrelated-source']}),/invalid_tool_arguments/);
         assert.equal(f.app.tasks.tasks().length,before);
-        followup=(await main.call('worker_open',{message:'Inspect authorized temporary resources'})).taskId;
+        followup=(await main.call('worker_open',{title:"Inspect authorized temporary resources",message:'Inspect authorized temporary resources'})).taskId;
         await assert.rejects(main.call('worker_open',{taskId:original,message:'Reopen original'}),/task_history_not_visible/);
       }
       return {status:'completed',text:text==='archive'?'Archived':text==='prepare'?'Prepared':'',messages:[]};
@@ -399,7 +409,7 @@ for(const action of ['allow','deny','stop'] as const)test('archive command appro
   try{
     f.setScript(async(main,text)=>{
       if(text==='prepare'){
-        taskId=(await main.call('task_create',{goal:'Synthetic archived task'})).taskId;
+        taskId=(await main.call('task_create',{title:"Synthetic archived task",goal:'Synthetic archived task'})).taskId;
         await main.call('task_update',{taskId,goal:'Synthetic archived task'});
         await main.call('task_update',{taskId,action:'settle',outcome:'succeeded'});
       }else if(text==='archive')await main.call('archive_work',{taskId});
@@ -429,7 +439,7 @@ for(const action of ['approve','deny'] as const)test('a desktop Worker command w
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        await main.call('worker_open',{message:'Prepare a synthetic operation'});
+        await main.call('worker_open',{title:"Prepare a synthetic operation",message:'Prepare a synthetic operation'});
       }else if(text.includes('"kind":"interaction_required"')){
         const id=JSON.parse(text.split('\n')[1]!).messageId;
         const notice=f.app.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(id)!;
@@ -471,15 +481,15 @@ test('a received archive input cannot create another Task on restart after a los
   try{
     f.setScript(async(main,text)=>{
       if(text==='prepare'){
-        original=(await main.call('task_create',{goal:'Original completed goal'})).taskId;
+        original=(await main.call('task_create',{title:"Original completed goal",goal:'Original completed goal'})).taskId;
         await main.call('task_update',{taskId:original,goal:'Original completed goal'});
         await main.call('task_update',{taskId:original,action:'settle',outcome:'succeeded'});
       }else if(text==='archive')await main.call('archive_work',{taskId:original});
       else if(text.includes('"kind":"task_archived"')){
         if(!lost){
-          const opened=await main.call('worker_open',{message:'Inspect authorized temporary resources'},'committed-open');
+          const opened=await main.call('worker_open',{title:"Inspect authorized temporary resources",message:'Inspect authorized temporary resources'},'committed-open');
           followup=opened.taskId;workerId=opened.workerId;
-          assert.equal((await main.call('worker_open',{message:'Inspect authorized temporary resources'},'committed-open')).workerId,workerId);
+          assert.equal((await main.call('worker_open',{title:"Inspect authorized temporary resources",message:'Inspect authorized temporary resources'},'committed-open')).workerId,workerId);
           lost=true;throw Error('synthetic_response_lost');
         }
       }else if(text==='review archive originals'){
@@ -501,7 +511,7 @@ test('a mismatched resumed native thread cannot replace the durable Worker bindi
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        workerId=(await main.call('worker_open',{message:'First'})).workerId;
+        workerId=(await main.call('worker_open',{title:"First",message:'First'})).workerId;
       }else if(!followed){followed=true;await main.call('worker_send',{workerId,message:'Follow up'});}
       return {status:'completed',text:text==='start'?'Started':'',messages:[]};
     });
@@ -520,7 +530,7 @@ test('a Worker question wakes Main and returns the persisted answer to that exac
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        await main.call('worker_open',{message:'Ask one question'});
+        await main.call('worker_open',{title:"Ask one question",message:'Ask one question'});
       }else if(text.includes('interaction_required')){
         const request=f.app.interactions.list().find(item=>item.source==='ask_main')!;
         await callHostMcp(main.options, 'inspect_interaction',{interactionId:request.id});
@@ -542,7 +552,7 @@ test('a committed staged attachment replays its native receipt after the source 
   const f=fixture();let ref:{assetId:string;revision:number},taskId='',runId='';
   try{
     f.setScript(async(main,text)=>{
-      if(text.startsWith('start'))({taskId,runId}=await main.call('worker_open',{message:'Stage the assigned source',attachments:[ref]}));
+      if(text.startsWith('start'))({taskId,runId}=await main.call('worker_open',{title:"Stage the assigned source",message:'Stage the assigned source',attachments:[ref]}));
       return {status:'completed',text:'Started'};
     });
     await f.app.start();
@@ -581,7 +591,7 @@ test('selecting a broad working directory never authorizes host private files fo
     writeFileSync(privatePath,'Synthetic private control');writeFileSync(publicPath,'Synthetic public report');
     f.setScript(async(main,text)=>{
       if(text==='read'){
-        await main.call('task_create',{goal:'Read synthetic work',workingDirectory:'/'});
+        await main.call('task_create',{title:"Read synthetic work",goal:'Read synthetic work',workingDirectory:'/'});
         await assert.rejects(main.call('send_user_message',{attachments:[{path:privatePath}]}),/artifact_path_denied/);
         const sent=await main.call('send_user_message',{attachments:[{path:publicPath}]}),view=await main.call('work_inspect',{messageId:sent.messageId});
         assert.equal(f.app.media.readAttachment(view.attachments[0]).bytes.toString(),'Synthetic public report');checked=true;
@@ -600,7 +610,7 @@ test('a dispatched Worker can read its exact attachment before the user turn end
  try{
   f.setScript(async(main,text)=>{
    if(text.startsWith('delegate')){
-    await main.call('worker_open',{message:'Read the current input',attachments:[ref]});
+    await main.call('worker_open',{title:"Read the current input",message:'Read the current input',attachments:[ref]});
     await mainEnd;
    }
    return {status:'completed',text:'Recorded'};

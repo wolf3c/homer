@@ -21,14 +21,14 @@ export function fixture(t) {
  return {bin,root,home:join(root,'codex'),cwd:join(root,'workspace'),calls:[]};
 }
 
-export function peer({root,home,cwd,calls,provider='synthetic_boundary'},bin,baseUrl='http://127.0.0.1:9/v1') {
+export function peer({root,home,cwd,calls,alternateProvider},bin,baseUrl='http://127.0.0.1:9/v1') {
  assert.ok(isAbsolute(bin),'explicit engine path required');
+ const localProvider={name:'Synthetic local boundary',base_url:baseUrl,wire_api:'responses',supports_websockets:false,requires_openai_auth:false};
  const settings={approval_policy:'on-request',web_search:'disabled','features.shell_tool':false,
   'features.plugins':false,'features.apps':false,'features.memories':false,'memories.generate_memories':false,
   'memories.use_memories':false,'features.skip_host_skill_discovery':true,'analytics.enabled':false,'feedback.enabled':false,
-  model_provider:provider,['model_providers.'+provider]:{
-   name:'Synthetic local boundary',base_url:baseUrl,wire_api:'responses',supports_websockets:false,requires_openai_auth:false,
-  },
+  model_provider:'synthetic_boundary','model_providers.synthetic_boundary':localProvider,
+  ...(alternateProvider?{['model_providers.'+alternateProvider]:localProvider}:{}),
  };
  const toml=value=>value&&typeof value==='object'&&!Array.isArray(value)
   ?'{'+Object.entries(value).map(([k,v])=>JSON.stringify(k)+'='+toml(v)).join(',')+'}'
@@ -59,7 +59,7 @@ export function peer({root,home,cwd,calls,provider='synthetic_boundary'},bin,bas
   if(p&&!m.method){
    pending.delete(m.id);
    clearTimeout(p.timer);
-   m.error?p.reject(Error('synthetic_native_rpc_failed:'+m.error.code)):p.resolve(m.result);
+   m.error?p.reject(Error('synthetic_native_rpc_failed:'+p.method+':'+m.error.code+':'+m.error.message)):p.resolve(m.result);
   }else if(m.method)events.push(m);
  });
  return {
@@ -70,7 +70,7 @@ export function peer({root,home,cwd,calls,provider='synthetic_boundary'},bin,bas
    return new Promise((resolve,reject)=>{
     const id=++seq;
     const timer=setTimeout(()=>{pending.delete(id);reject(Error('synthetic_native_timeout:'+method));},12000);
-    pending.set(id,{resolve,reject,timer});
+    pending.set(id,{method,resolve,reject,timer});
     child.stdin.write(JSON.stringify({id,method,params})+'\n');
    });
   },

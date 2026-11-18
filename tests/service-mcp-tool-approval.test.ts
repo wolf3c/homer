@@ -37,7 +37,7 @@ for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main and Wor
      const request={...nativeInteraction('mcpServer/elicitation/request',p)!,requestId:id,isCurrent:()=>true};
      const result=await this.options.onInteraction!(request);outcomes.push(result.status);wire.push({role:this.options.nativeTools,id,result:nativeResponse(request,result.decision!)});this.emit('interactionDelivered',id);
     }
-    if(this.options.nativeTools==='main')await this.call('worker_open',{message:'Actual Worker title\nValidate the synthetic MCP interactions.'});
+    if(this.options.nativeTools==='main')await this.call('worker_open',{title:"Actual Worker title",message:'Actual Worker title\nValidate the synthetic MCP interactions.'});
    }
    return{status:'completed',text:'Synthetic result'};
   }

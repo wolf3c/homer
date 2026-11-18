@@ -77,7 +77,7 @@ test('a concurrent Worker and its native background activity survive a main user
  const f=fixture();try{
   await f.app.start();f.app.bindDesktopPowerProtection(async()=>{});
   const running=gate();f.scripts.worker=async engine=>{await running.promise;await engine.question();return {status:'completed',text:'Done'};};
-  f.scripts.main=async engine=>{await engine.call('worker_open',{message:'Synthetic parallel work'});await engine.question();return {status:'completed',text:'Done'};};
+  f.scripts.main=async engine=>{await engine.call('worker_open',{title:"Synthetic parallel work",message:'Synthetic parallel work'});await engine.question();return {status:'completed',text:'Done'};};
   const job=f.app.message('Synthetic parallel question','power-concurrent');
   await until(()=>!!f.worker()?.turns&&f.app.interactions.list().some(item=>item.state==='pending_user'));
   assert.equal(f.app.desktopPowerFacts().executing,true);running.resolve();
@@ -95,7 +95,7 @@ test('Worker preparation obtains protection before starting its synthetic engine
   await f.app.start();const ack=gate(),work=gate<TurnResult>();let requested=false;
   f.app.bindDesktopPowerProtection(async()=>{if(f.app.store.runs().some(run=>run.phase==='starting')){requested=true;await ack.promise;}});
   f.scripts.worker=async()=>work.promise;
-  f.scripts.main=async engine=>{await engine.call('worker_open',{message:'Synthetic Worker gate'});return {status:'completed',text:'Delegated'};};
+  f.scripts.main=async engine=>{await engine.call('worker_open',{title:"Synthetic Worker gate",message:'Synthetic Worker gate'});return {status:'completed',text:'Delegated'};};
   const job=f.app.message('Synthetic Worker gate','power-worker-gate');await until(()=>requested);
   assert.equal(f.worker(),undefined);assert.equal(f.app.desktopPowerFacts().executing,true);
   ack.resolve();await job;await until(()=>!!f.worker()?.turns);assert.equal(f.worker().starts,1);
@@ -124,7 +124,7 @@ test('CUA display protection pauses for window approval and is acknowledged befo
  const f=fixture();try{
   await f.app.start();f.app.bindDesktopPowerProtection(async()=>{});
   const worker=gate<TurnResult>();f.scripts.worker=async()=>worker.promise;
-  f.scripts.main=async engine=>{await engine.call('worker_open',{message:'Synthetic desktop work'});return {status:'completed',text:'Delegated'};};
+  f.scripts.main=async engine=>{await engine.call('worker_open',{title:"Synthetic desktop work",message:'Synthetic desktop work'});return {status:'completed',text:'Delegated'};};
   await f.app.message('Synthetic desktop work','power-cua');await until(()=>!!f.worker()?.turns);
   let invoked=false,resumed=false;
   (f.app as any).cua={async invoke(_owner:string,_name:string,_args:unknown,_guard:()=>void,_write:unknown,review:(app:string,title:string)=>Promise<void>){invoked=true;assert.deepEqual(f.app.desktopPowerFacts(),{executing:true,displayRequired:true});await review('Synthetic','Window');resumed=true;assert.equal(f.app.desktopPowerFacts().displayRequired,true);return {state:'observed'};},async close(){return true;}};
@@ -155,7 +155,7 @@ test('unconfirmed Worker cleanup retains protection after its business slot ends
  const f=fixture();try{
   await f.app.start();f.app.bindDesktopPowerProtection(async()=>{});
   f.scripts.worker=async engine=>{engine.closeConfirmed=false;return {status:'completed',text:'Done'};};
-  f.scripts.main=async engine=>{await engine.call('worker_open',{message:'Synthetic close uncertainty'});return {status:'completed',text:'Delegated'};};
+  f.scripts.main=async engine=>{await engine.call('worker_open',{title:"Synthetic close uncertainty",message:'Synthetic close uncertainty'});return {status:'completed',text:'Delegated'};};
   await f.app.message('Synthetic close uncertainty','power-unconfirmed');await f.app.idle();
   assert.equal(f.app.desktopPowerFacts().executing,true);
   f.worker().closeConfirmed=true;await f.worker().close();assert.deepEqual(f.app.desktopPowerFacts(),stopped);
@@ -165,7 +165,7 @@ test('unconfirmed Worker cleanup retains protection after its business slot ends
 test('stopping a Worker holds protection until cleanup is confirmed',async()=>{
  const f=fixture();try{
   await f.app.start();f.app.bindDesktopPowerProtection(async()=>{});f.scripts.worker=async()=>new Promise(()=>{});
-  f.scripts.main=async engine=>{await engine.call('worker_open',{message:'Synthetic stop confirmation'});return {status:'completed',text:'Delegated'};};
+  f.scripts.main=async engine=>{await engine.call('worker_open',{title:"Synthetic stop confirmation",message:'Synthetic stop confirmation'});return {status:'completed',text:'Delegated'};};
   await f.app.message('Synthetic stop confirmation','power-stopping');await until(()=>!!f.worker()?.turns);
   const closed=gate(),engine=f.worker(),original=engine.close.bind(engine);let closing=false;
   engine.close=async()=>{closing=true;await closed.promise;return original();};
@@ -181,7 +181,7 @@ test('unconfirmed CUA cleanup remains protected after confirmed engine exit',asy
   await f.app.start();f.app.bindDesktopPowerProtection(async()=>{});let cuaClosed=false,owner:any;
   (f.app as any).cua={async invoke(){return {state:'observed'};},async close(){return cuaClosed;}};
   f.scripts.worker=async()=>{owner=f.slot();await (f.app as any).workerCuaTool(owner,'desktop_read',{app:'Synthetic'});return {status:'completed',text:'Done'};};
-  f.scripts.main=async engine=>{await engine.call('worker_open',{message:'Synthetic CUA cleanup'});return {status:'completed',text:'Delegated'};};
+  f.scripts.main=async engine=>{await engine.call('worker_open',{title:"Synthetic CUA cleanup",message:'Synthetic CUA cleanup'});return {status:'completed',text:'Delegated'};};
   await f.app.message('Synthetic CUA cleanup','power-cua-cleanup');await f.app.idle();
   assert.deepEqual(f.app.desktopPowerFacts(),{executing:true,displayRequired:false});
   cuaClosed=true;await (f.app as any).closeWorkerResources(owner);assert.deepEqual(f.app.desktopPowerFacts(),stopped);

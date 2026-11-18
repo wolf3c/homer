@@ -9,9 +9,9 @@ function fixture(choice:'repair'|'defer'|'close',emptyEventReply=false,emptyUser
   const internal=text.startsWith('[内部协作输入');
   try{
    if(text.startsWith('开始原工作')){
-    taskId=(await main.call('worker_open',{message:'核对并如实报告原工作执行结果'})).taskId;
+    taskId=(await main.call('worker_open',{title:"核对并如实报告原工作执行结果",message:'核对并如实报告原工作执行结果'})).taskId;
    }else if(text.startsWith('先记下')){
-    itemId=(await main.call('task_create',{goal:'稍后支持导出',notes:'等待决定，不执行'})).taskId;
+    itemId=(await main.call('task_create',{title:"稍后支持导出",goal:'稍后支持导出',notes:'等待决定，不执行'})).taskId;
    }else if(internal&&text.includes('原工作执行失败')){
     const notice=JSON.parse(text.split('\n')[1]!);assert.equal(notice.kind,'worker_reply');assert.equal(notice.taskId,taskId);
     const read=await main.call('worker_read',{workerId:notice.workerId,messageId:notice.messageId});

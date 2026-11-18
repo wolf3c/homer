@@ -20,7 +20,7 @@ test('native change leaves a live Worker running and permits its authorized resu
    this.turnId='synthetic-turn-'+ ++serial;o?.onStarted?.(this.turnId);
    if(this.options.role==='worker')return new Promise<any>(r=>this.release=r);
    if(text==='dispatch'){
-    await this.call('worker_open',{message:'Read materials/sample.md and write the synthetic result.'});
+    await this.call('worker_open',{title:"Read materials/sample.md and write the synthetic…",message:'Read materials/sample.md and write the synthetic result.'});
    }
    if(text.startsWith('[内部协作输入')){
     const input=JSON.parse(text.split('\n')[1]!);

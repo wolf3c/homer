@@ -10,8 +10,8 @@ function notifications(overlap=false){
  f.setScript(async(main,text)=>{
   try{
    if(text==='synthetic:start'){
-    rootId=(await main.call('worker_open',{message:'Inspect the original synthetic input'})).taskId;
-    if(overlap)publishedId=(await main.call('worker_open',{message:'Inspect separate input'})).taskId;
+    rootId=(await main.call('worker_open',{title:"Inspect the original synthetic input",message:'Inspect the original synthetic input'})).taskId;
+    if(overlap)publishedId=(await main.call('worker_open',{title:"Inspect separate input",message:'Inspect separate input'})).taskId;
     const reply={itemId:'initial-final',phase:'final_answer' as const,text:'Synthetic host reply'};
     main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...reply,completed:true});
     return {status:'completed',text:reply.text,messages:[reply]};

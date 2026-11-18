@@ -45,7 +45,7 @@ test('an authorized Telegram group uses the main Agent and replies to the origin
     assert.equal(engine.options.nativeTools,'main');
     const input=text.replace(/^::message-source\{source=telegram\}\n\n/,'');
     if(input.startsWith('[内部协作输入'))return {status:'completed',text:''};
-    if(input.startsWith('😀'))await engine.call('worker_open',{message:'Prepare a team report'});
+    if(input.startsWith('😀'))await engine.call('worker_open',{title:"Prepare a team report",message:'Prepare a team report'});
     inputs.push(input);
     return {status:'completed',text:'Only the group question'};
   });
@@ -295,7 +295,7 @@ test('configured Telegram bots route replies and subscriptions through the Homer
     assert.equal(telegramChannel(runtime,http),undefined);
     f.setScript(async(main,input)=>{
       const text=input.replace(/^::message-source\{source=telegram\}\n\n/,'');
-      if(text==='delegate')({taskId,workerId}=await main.call('worker_open',{message:'Prepare a test report'}));
+      if(text==='delegate')({taskId,workerId}=await main.call('worker_open',{title:"Prepare a test report",message:'Prepare a test report'}));
       else if(text==='subscribe'){
         const name='set_notification_destination',itemId='telegram-subscribe',args={taskId};
         main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId,tool:name,arguments:args});

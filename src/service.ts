@@ -23,7 +23,7 @@ import {runMembershipVideo} from './membership-video.js';
 import {materializePng} from './native-generated-files.js';
 import {detectMedia,MEDIA_POLICY} from './media-policy.js';
 import { RecursiveTasks, recursiveHash, type Actor, type TaskRun, type Authority } from "./recursive-tasks.js";
-import { RecursiveTools, RECURSIVE_TOOLS, MAIN_DYNAMIC_TOOLS, MAIN_TOOLS_HASH, validateToolArguments, toolOperationId } from "./recursive-tools.js";
+import { RecursiveTools, RECURSIVE_TOOLS, MAIN_DYNAMIC_TOOLS, MAIN_TOOLS_HASH, mainToolsForHash, validateRecursiveToolArguments, validateToolArguments, toolOperationId } from "./recursive-tools.js";
 import { MainInputs,MainInputClaimError, type QueuedInput,type MainInput,type InternalInput } from "./recursive-main-inputs.js";
 import {readScheduleDisplay,type ScheduleReadRequest} from './schedule-display.js';
 import {Schedules,SCHEDULE_TOOLS} from './schedules.js';
@@ -905,7 +905,7 @@ export class Homer {
         cwd,
         readRoots: [cwd],
         instructions: this.prompts.main + this.nativeToolInstructions() + "\n默认工作目录："+cwd+"。Worker 可选择获准的项目目录。",
-        tools: MAIN_DYNAMIC_TOOLS,
+        tools: savedThread ? mainToolsForHash(this.store.meta("mainToolsHash")) : MAIN_DYNAMIC_TOOLS,
         nativeTools:"main",onInteraction:(request:NativeRequest)=>{if(this.main!==engine)throw Error('interaction_not_live');return this.nativeInteractionPower(engine,request,()=>this.openMainNativeInteraction(request));},
         threadId: savedThread,
         nativeThreads:this.nativeThreads,
@@ -1055,14 +1055,7 @@ export class Homer {
       const cwd = canonicalDir(this.store.meta("mainWorkingDirectory")??this.config.workspace);
       const savedThread = this.store.meta("mainThread");
       if(!savedThread&&shouldSeedFirstLaunchSkills(this.config)){try{seedFirstLaunchSkills(capabilityHome(this.config));}catch(error){this.store.event(null,'first_launch_seed_failed',engineError(error));}}
-      const savedTools = this.store.meta("mainToolsHash");
-      // v0.1.4 only lacks the optional worker_open title. Native resume keeps the old declarations and fingerprint.
-      const compatibleTools = savedTools === MAIN_TOOLS_HASH || (
-        savedTools === 'f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe' &&
-        MAIN_TOOLS_HASH === 'd8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150'
-      );
-      if (savedThread && !compatibleTools)
-        throw new Error("main_tools_migration_required");
+      if (savedThread) mainToolsForHash(this.store.meta("mainToolsHash"));
       const catalog=hostMcpTools('main',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'main'))==='live',false,!!this.browserTransport)
         .concat([...this.mainPluginTools.values()].map(entry=>entry.tool));
       this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args, meta) =>
@@ -1882,7 +1875,7 @@ export class Homer {
   }
   private async mainTool(call: ToolCall): Promise<unknown> {
     const context=this.mainContext;
-    if(!context||this.closing||call.threadId!==this.main?.threadId||call.turnId!==this.main?.turnId)throw Error('tool_scope_denied');
+    if(!context||this.closing||call.threadId!==this.store.meta('mainThread')||call.threadId!==this.main?.threadId||call.turnId!==this.main?.turnId)throw Error('tool_scope_denied');
     this.validateMainContext(context);
     if(call.tool==='list_work'){validateToolArguments(call.arguments,MAIN_TOOLS.find(tool=>tool.name==='list_work')!.inputSchema);return this.tasks.listTasks(this.mainActor(),object(call.arguments));}
     if(RECURSIVE_TOOLS.some(tool=>tool.name===call.tool))return this.recursiveTool(this.mainActor(),call.tool,call.arguments,call.callId);
@@ -2563,6 +2556,8 @@ export class Homer {
   }
   private async recursiveTool(actor:Actor,name:string,args:unknown,callId?:string){
     const context=this.mainContext;if(!context||actor.runId)throw Error('tool_scope_denied');this.validateMainContext(context);
+    const catalog=mainToolsForHash(this.store.meta('mainToolsHash'));
+    validateRecursiveToolArguments(name,args,catalog);
     if(actor.inputMessageId&&['task_create','worker_open','worker_send','send_user_message'].includes(name)){
       const a=object(args),kind=name==='worker_send'&&a.immediate===true?'worker_steer':name;
       const liveTurns=context.processId?this.processes.exact(context.processId)?.turnIds:undefined;
@@ -2571,13 +2566,12 @@ export class Homer {
       if(prior)throw Error('coordination_action_already_committed');
     }
     this.accountClocks();
-    validateToolArguments(args,RECURSIVE_TOOLS.find(tool=>tool.name===name)!.inputSchema);
     const {attachments,workingDirectory}=object(args);
     if(typeof workingDirectory==='string')this.validateWorkDirectory(workingDirectory);
     const staged=(name==='worker_open'||name==='worker_send')&&Array.isArray(attachments)&&attachments.length
       ?this.stageAttachments(actor,toolOperationId(actor,callId),attachments,context):undefined;
     let result:unknown;
-    try{result=await this.recursiveTools.call(actor,name,args,callId);}
+    try{result=await this.recursiveTools.call(actor,name,args,callId,catalog);}
     catch(error){
       if(staged)this.abandonMessageOperation(staged.key);
       throw error;

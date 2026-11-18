@@ -163,7 +163,7 @@ test(`an existing main thread and its Worker share the membership Token with nat
         if(worker)workerChecked=true;
         if(!worker){
           const call=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args});
-          await call('worker_open',{message:'Fetch the example page'});
+          await call('worker_open',{title:"Fetch the example page",message:'Fetch the example page'});
         }
       }catch(error){engineErrors.push(error);}
       return {status:'completed',text:'Synthetic turn completed.'};
@@ -279,7 +279,7 @@ test('membership video submits only after user approval and retrieves the origin
           await video('worker-foreign',{receipt:results.resume.receipt});
           await video('worker',{prompt:'worker'});
         }
-        else if(input?.worker)await dynamic('worker_open',{message:'Generate a synthetic video'});
+        else if(input?.worker)await dynamic('worker_open',{title:"Generate a synthetic video",message:'Generate a synthetic video'});
         else if(input){
           await video(input.key,input.args);
           const path=results[input.key]?.path;
@@ -495,7 +495,7 @@ test('membership images generate and edit through MCP and publish the exact PNG'
           }else{
             const dynamic=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args}) as Promise<Record<string,string>>;
             imageMessageId=(await dynamic('send_user_message',{text:'Synthetic image is ready.',attachments:[{path:generatedPath}]})).messageId;
-            await dynamic('worker_open',{message:'Generate and edit a synthetic image',attachments:[attachment]});
+            await dynamic('worker_open',{title:"Generate and edit a synthetic image",message:'Generate and edit a synthetic image',attachments:[attachment]});
           }
         });
       }catch(error){errors.push(error);}

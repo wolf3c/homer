@@ -17,7 +17,7 @@ test('host retains public Worker feedback without a progress cache and ignores s
     return new Promise<TurnResult>(resolve=>{finishWorker=resolve;(engine as unknown as {pending:(value:TurnResult)=>void}).pending=resolve;});
    };
   }return engine;};
-  await f.app.start();const main=f.engines[0]!;main.turn=async(text,options)=>{if(text!=='synthetic:public-progress')return {status:'completed',text:''};main.turnId='progress-main-turn';options?.onStarted?.(main.turnId);rootId=(await main.call('worker_open',{message:'合成公开进展'})).taskId;return {status:'completed',text:'合成工作已交办'};};
+  await f.app.start();const main=f.engines[0]!;main.turn=async(text,options)=>{if(text!=='synthetic:public-progress')return {status:'completed',text:''};main.turnId='progress-main-turn';options?.onStarted?.(main.turnId);rootId=(await main.call('worker_open',{title:"合成公开进展",message:'合成公开进展'})).taskId;return {status:'completed',text:'合成工作已交办'};};
   await f.app.message('synthetic:public-progress','progress-source');await until(()=>!!finishWorker);
   assert.equal('workerProgress' in f.app,false);
   const bridge=homerWebBridge(f.app);assert.equal(bridge.taskOverview!.progress,undefined);assert.equal(bridge.taskOverview!.execution,undefined);

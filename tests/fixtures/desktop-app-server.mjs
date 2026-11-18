@@ -68,7 +68,7 @@ async function receive(m){
         complete('离线合成 Worker 已写入文件。\n'+path);return;
       }
       if(text==='dispatch-synthetic'){
-        await tool('worker_open',{message:'读取工作目录中的 synthetic.md，制作离线合成文件。'});
+        await tool('worker_open',{title:'制作离线合成文件',message:'读取工作目录中的 synthetic.md，制作离线合成文件。'});
         complete('已派发离线合成 Worker。');return;
       }
       if(input?.kind==='worker_reply'){

@@ -42,7 +42,7 @@ test('service main and Worker skill requests relay real user decisions on native
     await this.approvals();
    }else if(text==='synthetic skill request'){
     await this.approvals();
-    await this.call('worker_open',{message:'Check the synthetic skill package.'});
+    await this.call('worker_open',{title:"Check the synthetic skill package.",message:'Check the synthetic skill package.'});
    }
    return {status:'completed',text:'Synthetic receipt.'};
   }

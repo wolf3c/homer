@@ -128,7 +128,7 @@ for(const scenario of ['result','empty-report','model-failure','response-lost','
     return result;
    }
    if(text==='seed'){
-    await this.call('worker_open',{message:'Synthetic work'});
+    await this.call('worker_open',{title:"Synthetic work",message:'Synthetic work'});
     return new Promise(done=>{releaseSeed=this.release=done;});
    }
    if(text.startsWith('[内部协作输入')){

@@ -17,7 +17,7 @@ for(const status of ['completed','failed','interrupted'] as const)test(`internal
  const f=fixture();let taskId='';try{
   f.setScript(async(main,text)=>{
    if(text==='start'){
-    taskId=(await main.call('worker_open',{message:'Inspect a synthetic source; retain any unresolved gaps'})).taskId;
+    taskId=(await main.call('worker_open',{title:"Inspect a synthetic source; retain any unresolve…",message:'Inspect a synthetic source; retain any unresolved gaps'})).taskId;
     return {status:'completed',text:'Started'};
    }
    return {status:'completed',text:'',messages:[]};

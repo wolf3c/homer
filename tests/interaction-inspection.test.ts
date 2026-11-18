@@ -43,7 +43,7 @@ for(const kind of ['command','file','permissions','mcp'] as const)for(const acti
     return {status:'completed',text:'Synthetic Worker finished after '+delivered.status};
    }
    if(text==='Inspect a bounded local operation; do not publish or use paid services.'){
-    await this.handle({threadId:this.threadId,turnId:this.turnId,callId:'dispatch',tool:'worker_open',arguments:{message:workerPrompt,workingDirectory:cwd}});
+    await this.handle({threadId:this.threadId,turnId:this.turnId,callId:'dispatch',tool:'worker_open',arguments:{title:"Synthetic task",message:workerPrompt,workingDirectory:cwd}});
    }else if(text.includes('[待答入口]')){
     const interactionId=text.match(/interactionId=([\w-]+)/)![1]!;
     const args={interactionId,action,reason:'Exact authorized local operation only.'};

@@ -84,7 +84,7 @@ for(const acrossSources of [false,true])test('pinned Codex drives a simulated ch
             ...(phase==='report'?{attachments:[{path:file}]}:{})});
         }
       }else if(phase==='create'){
-        if(step===1)output=call('worker_open',{message:'Native channel scope test'});
+        if(step===1)output=call('worker_open',{title:"Native channel scope test",message:'Native channel scope test'});
         else {assert.match(result,/taskId/);output=answer('Task ready');}
       }else if(['subscribe','switch','unbound'].includes(phase)){
         if(step===1){

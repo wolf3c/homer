@@ -15,14 +15,19 @@ function tool(name: string, description: string, properties: Record<string, unkn
   return {type: 'function', name, description, inputSchema: obj(properties, required)};
 }
 
-export const RECURSIVE_TOOLS: Tool[] = [
-  tool('task_create', 'Record one goal without commissioning or starting execution. Use worker_open for the first authorized dispatch. Notes and source history never grant authority.', {goal: text, notes: {type: 'string', maxLength: 24000}, title: {type: 'string', minLength: 1, maxLength: 80}, workingDirectory: str}, ['goal']),
+const title = {type: 'string', minLength: 1, maxLength: 80};
+const workerOpen = 'Open a Worker conversation. With taskId use that authorized task, otherwise atomically create a task for the current assignment.';
+const workerOpenTitle = ' When creating, provide a concise title describing the task; omit title when taskId is given.';
+const workerOpenDetails = ' Optional attachments each select either an absolute path or an exact assetId and revision. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.';
+const workerOpenFields = {message: text, workingDirectory: str, attachments};
+const optionalTitleTools: Tool[] = [
+  tool('task_create', 'Record one goal without commissioning or starting execution. Use worker_open for the first authorized dispatch. Notes and source history never grant authority.', {goal: text, notes: {type: 'string', maxLength: 24000}, title, workingDirectory: str}, ['goal']),
   tool('work_inspect', 'Select exactly one taskId, messageId or host-returned operationKey. Read a task and its Worker sessions, an authorized user-conversation message, or an operation receipt. With taskId, sourceRequestId selects an original user instruction for review. A receipt or history reference does not authorize replay.', {taskId: str, sourceRequestId: str, messageId: str, operationKey: str}, []),
   tool('task_update', 'Update goal or notes, or explicitly pause, resume, cancel or settle the whole task. '
     + 'To settle, send only taskId, action "settle", outcome ("succeeded", "partial" or "failed"), and optional notes. Choose outcome from the recorded work when the user asks to settle. '
     + 'A goal change requires actual user authority. A paused goal change stays paused. Resume can include a new goal, and reopening settled work requires a new user request. Neither starts a Worker.',
     {taskId: str, goal: text, notes: {type: 'string', maxLength: 24000}, action: enumeration('pause', 'resume', 'cancel', 'settle'), outcome: enumeration('succeeded', 'partial', 'failed'), reason: text}, ['taskId']),
-  tool('worker_open', 'Open a Worker conversation. With taskId use that authorized task, otherwise atomically create a task for the current assignment. When creating, provide a concise title describing the task; omit title when taskId is given. Optional attachments each select either an absolute path or an exact assetId and revision. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.', {taskId: str, message: text, title: {type:'string',minLength:1,maxLength:80}, workingDirectory: str, attachments}, ['message']),
+  tool('worker_open', workerOpen + workerOpenTitle + workerOpenDetails, {taskId: str, message: text, title, workingDirectory: str, attachments}, ['message']),
   tool('worker_send', 'Send a message to the existing Worker conversation. An idle session resumes its native thread and a busy one queues the message. immediate=true supplements the exact current turn. Optional attachments each select either an absolute path or an exact assetId and revision. Inspect the original receipt for unknown effects.', {workerId: str, message: text, immediate: {type: 'boolean'}, attachments}, ['workerId', 'message']),
   tool('worker_read', 'Read original public messages and execution facts for one Worker conversation. Follow nextCursor using after. Select messageId and optionally itemId from nativeMessages to read one original public item. Follow nextOffset using offset for long text.', {workerId: str, after: integer, limit: {type: 'integer', minimum: 1, maximum: 50}, messageId: str, itemId: str, offset: integer}, ['workerId']),
   tool('worker_interrupt', 'Interrupt the selected Worker conversation current execution, retaining history and other sessions. Requested is distinct from confirmed exit. Do not replace or resume an execution whose exit or side effects remain unknown.', {workerId: str, reason: text}, ['workerId']),
@@ -31,8 +36,35 @@ export const RECURSIVE_TOOLS: Tool[] = [
   tool('restore_work', 'Restore one exact archived task to visible history under actual user authorization. Does not start execution.', {taskId: str}),
 ];
 
+const requiredTitle = {...title, pattern: '\\S'};
+export const RECURSIVE_TOOLS = optionalTitleTools.map(definition => {
+  if (definition.name === 'task_create') return {...definition, inputSchema: {...definition.inputSchema,
+    properties: {...object(definition.inputSchema.properties), title: requiredTitle}, required: ['goal', 'title']}};
+  if (definition.name === 'worker_open') return {...definition, inputSchema: {oneOf: [
+    obj({...workerOpenFields, title: requiredTitle}, ['message', 'title']),
+    obj({...workerOpenFields, taskId: str}, ['message', 'taskId']),
+  ]}};
+  return definition;
+});
 export const MAIN_DYNAMIC_TOOLS = [...MAIN_TOOLS, ...RECURSIVE_TOOLS];
-export const MAIN_TOOLS_HASH = createHash('sha256').update(JSON.stringify(MAIN_DYNAMIC_TOOLS)).digest('hex');
+const toolsHash = (tools: Tool[]) => createHash('sha256').update(JSON.stringify(tools)).digest('hex');
+export const MAIN_TOOLS_HASH = toolsHash(MAIN_DYNAMIC_TOOLS);
+
+// These fingerprints were shipped. Native resume and fork retain the parent declarations.
+const mainToolCatalogs = new Map(([
+  [MAIN_TOOLS_HASH, MAIN_DYNAMIC_TOOLS],
+  ['d8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150', [...MAIN_TOOLS, ...optionalTitleTools]],
+  ['f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe', [...MAIN_TOOLS, ...optionalTitleTools.map(definition =>
+    definition.name === 'worker_open'
+      ? tool('worker_open', workerOpen + workerOpenDetails, {taskId: str, ...workerOpenFields}, ['message'])
+      : definition)]],
+] satisfies [string, Tool[]][]).filter(([hash, tools]) => toolsHash(tools) === hash));
+
+export function mainToolsForHash(hash: string | undefined): Tool[] {
+  const tools = hash && mainToolCatalogs.get(hash);
+  if (!tools) throw Error('main_tools_migration_required');
+  return tools;
+}
 
 export type RecursiveToolEffects = {
   rootWorkingDirectory?: () => string;
@@ -59,12 +91,25 @@ export function validateToolArguments(value: unknown, schema: Record<string, unk
   const issues: ArgumentIssue[] = [];
   const issue = (value: ArgumentIssue) => { if (issues.length < 16) issues.push(value); };
   const validate = (value: unknown, schema: Record<string, unknown>, path: string): void => {
+    if (issues.length >= 16) return;
+    if (Array.isArray(schema.oneOf)) {
+      const start = issues.length;
+      let matches = 0;
+      for (const branch of schema.oneOf) {
+        validate(value, object(branch), path);
+        if (issues.length === start) matches++;
+        issues.length = start;
+      }
+      if (matches !== 1) issue({path, rule: 'oneOf'});
+      return;
+    }
     const types = Array.isArray(schema.type) ? schema.type : [schema.type];
     const matches = types.some(type => type === 'null' ? value === null : type === 'array' ? Array.isArray(value) : type === 'object' ? !!value && typeof value === 'object' && !Array.isArray(value) : type === 'integer' ? Number.isSafeInteger(value) : typeof value === type);
     if (!matches) { issue({path, rule: 'type'}); return; }
     if (Array.isArray(schema.enum) && !schema.enum.includes(value)) issue({path, rule: 'enum'});
     if (value === null) return;
     if (typeof value === 'string' && (typeof schema.minLength === 'number' && value.length < schema.minLength || typeof schema.maxLength === 'number' && value.length > schema.maxLength)) issue({path, rule: 'length'});
+    if (typeof value === 'string' && typeof schema.pattern === 'string' && !new RegExp(schema.pattern).test(value)) issue({path, rule: 'pattern'});
     if (typeof value === 'number' && (typeof schema.minimum === 'number' && value < schema.minimum || typeof schema.maximum === 'number' && value > schema.maximum)) issue({path, rule: 'range'});
     if (Array.isArray(value)) {
       for (const [index, item] of value.entries()) validate(item, object(schema.items), path + '[' + index + ']');
@@ -83,6 +128,21 @@ export function validateToolArguments(value: unknown, schema: Record<string, unk
   if (issues.length) throw new InvalidToolArguments(issues);
 }
 
+export function validateRecursiveToolArguments(name: string, args: unknown, catalog: readonly Tool[]): void {
+  const definition = catalog.find(tool => tool.name === name);
+  if (!definition || MAIN_TOOLS.some(tool => tool.name === name)) throw Error('tool_denied');
+  validateToolArguments(args, definition.inputSchema);
+  const a = object(args);
+  if (name === 'task_create' && a.title !== undefined) string(a.title, 80);
+  if (name === 'worker_open') {
+    if (a.taskId !== undefined && a.title !== undefined) throw Error('invalid_tool_arguments');
+    if (a.taskId !== undefined) string(a.taskId, 200);
+    if (a.title !== undefined) string(a.title, 80);
+    string(a.message, 24000);
+    messageAttachments(a.attachments);
+  }
+}
+
 function messageAttachments(value:unknown):MessageAttachmentInput[]|undefined {
   if(value===undefined)return;
   const list=value as Record<string,unknown>[];
@@ -97,11 +157,9 @@ function messageAttachments(value:unknown):MessageAttachmentInput[]|undefined {
 
 export class RecursiveTools {
   constructor(readonly tasks: RecursiveTasks, private effects: RecursiveToolEffects) {}
-  async call(actor: Actor, name: string, args: unknown, callId?: string): Promise<unknown> {
-    const definition = RECURSIVE_TOOLS.find(tool => tool.name === name);
-    if (!definition) throw Error('tool_denied');
+  async call(actor: Actor, name: string, args: unknown, callId?: string, catalog: readonly Tool[] = RECURSIVE_TOOLS): Promise<unknown> {
     if (actor.runId) throw Error('task_main_required');
-    validateToolArguments(args, definition.inputSchema);
+    validateRecursiveToolArguments(name, args, catalog);
     const a = object(args);
     if (name === 'work_inspect') {
       if (['taskId', 'messageId', 'operationKey'].filter(key => a[key] !== undefined).length !== 1 || a.sourceRequestId !== undefined && a.taskId === undefined) throw Error('invalid_tool_arguments');
@@ -135,7 +193,6 @@ export class RecursiveTools {
         title:a.title as string|undefined, workingDirectory:a.workingDirectory===undefined?this.effects.rootWorkingDirectory?.():string(a.workingDirectory,4096)});
     } else if (name === 'worker_open') {
       const taskId=a.taskId===undefined?undefined:string(a.taskId,200);
-      if(taskId!==undefined&&a.title!==undefined)throw Error('invalid_tool_arguments');
       result=this.tasks.workerOpen(actor,{operationId,taskId,text:string(a.message,24000),title:a.title as string|undefined,
         authority:taskId===undefined?this.effects.rootAuthority(actor):undefined,
         workingDirectory:a.workingDirectory!==undefined?string(a.workingDirectory,4096):taskId===undefined?this.effects.rootWorkingDirectory?.():undefined},prepare);

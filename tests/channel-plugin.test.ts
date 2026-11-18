@@ -159,7 +159,7 @@ test('two simulated bots on one adapter isolate bindings, replies and subscribed
     writeFileSync(notes,'# Original notes');
     f.setScript(async(main,text)=>{
       if(text==='delegate'){
-        ({taskId,workerId}=await main.call('worker_open',{message:'Inspect the report'}));
+        ({taskId,workerId}=await main.call('worker_open',{title:"Inspect the report",message:'Inspect the report'}));
         return {status:'completed',text:'Accepted'};
       }
       if(text==='subscribe'){await subscribe(main,taskId);return {status:'completed',text:'Subscribed'};}
@@ -271,7 +271,7 @@ test('subscription survives a lost tool receipt and old retries cannot undo a la
   const original=input(A,'subscribe-a','subscribe before receipt loss');
   try{
     f.setScript(async(main,text)=>{
-      if(text==='delegate')({taskId,workerId}=await main.call('worker_open',{message:'Create synthetic work'}));
+      if(text==='delegate')({taskId,workerId}=await main.call('worker_open',{title:"Create synthetic work",message:'Create synthetic work'}));
       else if(text===original.text){
         await subscribe(main,taskId,kill=>{cut=kill;});
         receiptLost=true;
@@ -580,7 +580,7 @@ test('live replacement preserves an unrecorded transport receipt as unknown with
 test('live channel changes leave an executing Worker and main engine intact',async()=>{
  const old:ChannelAdapter={id:'simulation',send:async()=>({state:'sent'})},f=fixture([old]);
  try{
-  f.setScript(async main=>{await main.call('worker_open',{message:'Keep working'});return {status:'completed',text:'delegated'};});
+  f.setScript(async main=>{await main.call('worker_open',{title:"Keep working",message:'Keep working'});return {status:'completed',text:'delegated'};});
   f.app.channels!.bind(A);await f.app.start();f.app.channels!.receiveText(input(A,'delegate-live','delegate'));
   await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
   const main=f.engines[0],worker=f.engines.find(engine=>engine.options.role==='worker')!,finish=worker.finish,thread=worker.threadId;
@@ -612,7 +612,7 @@ test('saved apply failure holds subscribed Worker output until explicit reload',
  try{
   const file=join(f.app.config.workspace,'subscription.txt');writeFileSync(file,'synthetic');
   f.setScript(async(main,text)=>{
-   if(text.endsWith('delegate')){({taskId}=await main.call('worker_open',{message:'synthetic work'}));return {status:'completed',text:'accepted'};}
+   if(text.endsWith('delegate')){({taskId}=await main.call('worker_open',{title:"synthetic work",message:'synthetic work'}));return {status:'completed',text:'accepted'};}
    if(text.endsWith('subscribe')){await subscribe(main,taskId);return {status:'completed',text:'subscribed'};}
    await main.call('send_user_message',{text:'held subscription',attachments:[{path:file}]});return {status:'completed',text:''};
   });

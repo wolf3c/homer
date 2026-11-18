@@ -15,7 +15,7 @@ export function syntheticHost(failChild=false,retainRuntime=false){
   get worker(){return this.options.role==='worker';}
   async start(){return this.threadId;}
   async call(tool:string,args:unknown):Promise<any>{return this.handler({threadId:this.threadId,turnId:this.turnId!,callId:'synthetic-call-'+ ++sequence,tool,arguments:args});}
-  createTask(goal:string,notes?:string){return this.call('task_create',{goal,...(notes===undefined?{}:{notes})});}
+  createTask(goal:string,notes?:string){return this.call('task_create',{goal,title:goal.slice(0,48),...(notes===undefined?{}:{notes})});}
   openWorker(taskId:string,message:string){return this.call('worker_open',{taskId,message});}
   send(workerId:string,message:string,immediate=false){return this.call('worker_send',{workerId,message,...(immediate?{immediate}: {})});}
   inspect(taskId:string){return this.call('work_inspect',{taskId});}
@@ -32,7 +32,7 @@ export function syntheticHost(failChild=false,retainRuntime=false){
     return {status:'completed',text:'Synthetic '+assignment+' checked; date unknown.'};
    }
    if(text==='synthetic:tree'||text==='运行递归合成案例'){
-    const task=await this.call('worker_open',{message:'A'});
+    const task=await this.call('worker_open',{title:'A',message:'A'});
     for(const label of ['B','C'])await this.openWorker(task.taskId,label);
     return {status:'completed',text:'Synthetic work accepted'};
    }
