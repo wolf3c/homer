@@ -16,6 +16,8 @@ import {PreviewActionsContext,ResourceReferenceBlock,AnnotationChips,type Previe
 import {TaskStatusPopover} from './task-status';
 import {MobileSettings} from './mobile-settings';
 import {ExecutionUsage} from './execution-usage';
+import homerProcessing from './assets/homer-processing.gif';
+import {useMainProcessingIndicator} from './main-processing-indicator';
 import homerLogo64 from "../assets/branding/odysseus-20261030/homer-odysseus-64.png";
 import homerLogo256 from "../assets/branding/odysseus-20261030/homer-odysseus-256.png";
 import {ActiveReadPage} from './active-read-page';
@@ -25,7 +27,7 @@ import {ImageRoot,ImagePreview,ImageZoom} from './vendor/assistant-ui/image';
 import {FileRoot,FileIconDisplay,FileName,FileSize,FileDownload} from './vendor/assistant-ui/file';
 import './media-attachments.css';
 import {ApprovalCard} from './vendor/assistant-ui/approval-card';
-import {serviceActivityNotice} from './waiting-status';
+import {showMainProcessing,serviceActivityNotice} from './waiting-status';
 import {connectionFetch as fetch,ConnectionEvents,mobileView} from "./web-connection-client";
 import {FileList} from './file-list';
 import {CanvasPanel, type CanvasArtifact,type PreviewTab} from "./canvas-panel";
@@ -1531,6 +1533,9 @@ function HomerApp() {
   }catch{/* Old local drafts remain optional and never cause submission. */}
 
   const accountRequired=!mobileView&&!!window.homerDesktopAccount&&!connected&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
+  const processing=showMainProcessing(state,connected);
+  const processingInline=processing&&!history.current.archived;
+  const indicator=useMainProcessingIndicator(processing,processingInline,viewport,messageList);
   const featureTour = mobileView ? undefined : window.homerDesktopFeatureTour;
   const feedback = error || (!accountRequired&&!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
   return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
@@ -1580,7 +1585,9 @@ function HomerApp() {
                 <div data-index={row.index} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
               </Fragment>)}
               <div aria-hidden="true" style={{height:Math.max(0,virtualizer.getTotalSize()-((virtualRows.at(-1)?.end??listTop)-listTop))}}/>
-            </MessageTimestamps></div>
+            </MessageTimestamps>
+              {processingInline&&<div className="processing-inline" ref={indicator.marker} aria-hidden="true"><span>AI 正在处理</span></div>}
+            </div>
             {(['queue','interactions'] as const).map(kind=>(kind!=='queue'||!state.features?.queueDispatch)&&activePages.current[kind].checking&&<p key={kind} role="status">{kind==='queue'?'待发送页':'待答页'}正在核对；编辑草稿保留，提交暂不可用。<button type="button" disabled={!activePages.current[kind].needsRead} onClick={()=>void readActivePage(kind)}>重新核对</button></p>)}
             {!state.features?.queueDispatch&&activePages.current.queue.cursor>0&&<button type="button" disabled={activePages.current.queue.checking} onClick={()=>void readActivePage('queue',0)}>返回待发送首页</button>}
             {activePages.current.interactions.cursor>0&&<button type="button" disabled={activePages.current.interactions.checking} onClick={()=>void readActivePage('interactions',0)}>返回待答首页</button>}
@@ -1591,7 +1598,11 @@ function HomerApp() {
             <div className="interaction-list">{state.interactions.map(item => <InteractionCard key={state.threadId+':'+item.id} verified={connected&&!activePages.current.interactions.checking} item={item} threadId={state.threadId} messages={state.messages} acceptedRequestIds={state.acceptedRequestIds??[]} onError={setError} onNotLive={interactionNotLive} onAnswer={item=>setAnswerTarget({...item,historyThreadId:state.threadId})} onReveal={card=>claimPosition()(()=>card.scrollIntoView({block:'nearest',behavior:'instant'}))} structuredAnswers={!!state.features?.nativeQuestionAnswers} />)}</div>
             {!accountRequired&&<button type="button" className="scroll-latest" disabled={!history.current.archived&&isAtBottom&&!hasNewContent} onClick={returnLatest}>↓ {hasNewContent?'有新内容 · 最新消息':'最新消息'}</button>}
           </div>
-          <MainComposer captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
+          {processing&&<>
+            <span className="sr-only" role="status">AI 正在处理</span>
+            <img ref={indicator.sprite} className="processing-sprite" data-docked={indicator.docked} src={homerProcessing} width={40} height={40} alt=""/>
+          </>}
+          <MainComposer captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
       </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={state.history&&<ScheduledMessages threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={state} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>

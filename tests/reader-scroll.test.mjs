@@ -8,7 +8,7 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createRequire} from 'node:module';
 import ts from 'typescript';
-import {liveMainActivity} from '../ui/waiting-status.ts';
+import {liveMainActivity,showMainProcessing} from '../ui/waiting-status.ts';
 import {projectProcessItems,toolActivityText,toolStatusText} from '../ui/process-presentation.ts';
 import {messageSourceParts} from '../src/message-quote.ts';
 import {activityOutcomes} from '../src/activity-facts.ts';
@@ -50,8 +50,10 @@ function fixture({deferPage=false,upstreamFirst=true,emptyInitial=false,gestureB
  if(emptyInitial){state={...state,messages:[]};history.reset('reader-epoch','reader');history.snapshot(state);view.scrollHeight=400;rows.length=0;}
  const empty=state;
  const projectProcessMessage=load(resolve('ui/process-message.tsx'),{projectProcessItems,toolActivityText,toolStatusText,activityOutcomes,messageSourceParts,recorded:value=>value?.state==='recorded'||value?.state==='truncated',valueNote:()=>''},'projectProcessMessage');
+ const useMainProcessingIndicator=load(resolve('ui/main-processing-indicator.ts'),appHooks,'useMainProcessingIndicator');
  const app=load(process.env.HOMER_READER_SOURCE??resolve('ui/homer-app.tsx'),{
   ...appHooks,...metrics,...contexts,captureCommands:value=>{commands=value;},
+  showMainProcessing,useMainProcessingIndicator,homerProcessing:'synthetic-processing.gif',
   defaultRangeExtractor,
   useVirtualizer:options=>{
    const config={...options,estimateSize:()=>100,initialRect:{width:760,height:view.clientHeight},observeElementRect:(_instance,callback)=>{rectCallback=callback;callback({width:760,height:view.clientHeight});return ()=>{};},observeElementOffset:(_instance,callback)=>{offsetCallback=callback;callback(view.scrollTop,false);return ()=>{};},scrollToFn:(offset,{adjustments=0})=>{view.scrollTop=offset+adjustments;},onChange(){}};

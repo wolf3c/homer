@@ -24,6 +24,13 @@
 .homer-message-queue .queue-toggle:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
 .homer-message-queue .queue-toggle-label{display:inline-flex;align-items:center;gap:6px;min-width:0}
 .homer-message-queue .queue-toggle[aria-expanded=true] .queue-toggle-label svg{transform:rotate(90deg)}
+.processing-queue-glyph{position:relative;display:grid;place-items:center;width:26px;height:26px;flex:none}
+.processing-queue-anchor{position:absolute;inset:0;pointer-events:none}
+.processing-queue-glyph svg{transition:opacity 100ms ease-out}
+.processing-queue-glyph[data-docked=true] svg{opacity:0}
+.queue-toggle:focus-visible .processing-queue-glyph[data-docked=true] svg{opacity:1}
+@media(hover:hover){.queue-toggle:hover .processing-queue-glyph[data-docked=true] svg{opacity:1}}
+@media(prefers-reduced-motion:reduce){.processing-queue-glyph[data-docked=true] svg{opacity:1;transition:none}}
 .homer-message-queue .aui-message-queue{max-width:none;gap:0}
 .homer-message-queue .aui-queue-list{gap:0;max-height:min(272px,30dvh)}
 .homer-message-queue .aui-queue-field{min-height:39px;gap:10px;padding:4px;border-radius:0;background:transparent}

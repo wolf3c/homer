@@ -38,3 +38,10 @@ export function serviceActivityNotice(upgrade:WebState['upgrade']):string{
   if(upgrade.phase==='stopping')return '执行服务正在停止，结束尚未确认。'+transport;
   return '服务正在准备或切换，以下执行记录为上次状态。'+transport;
 }
+
+export function showMainProcessing(state:WebState,connected:boolean):boolean{
+  const activity=state.mainActivity;
+  if(!connected||state.upgrade.phase!=='running'||!state.isRunning||activity?.source==='internal'||activity?.stage==='unknown')return false;
+  const approvalOwner=state.generation?.generationId??activity?.processId;
+  return !approvalOwner||!state.interactions.some(item=>item.runId==='main-native:'+approvalOwner);
+}

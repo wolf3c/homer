@@ -15,7 +15,7 @@ const summaryOf=(item:QueueItem)=>[item.origin==='user'&&(!item.editable||item.s
 function queueFocus(element:HTMLElement|null){
  return ()=>{if(element?.contains(document.activeElement))document.querySelector<HTMLElement>('[contenteditable="true"]')?.focus({preventScroll:true});};
 }
-export function HomerMessageQueue({state,connected,operations,editorBusy=false}:{state:WebState;connected:boolean;operations:QueueOperations;editorBusy?:boolean}){
+export function HomerMessageQueue({state,connected,operations,editorBusy=false,processing}:{state:WebState;connected:boolean;operations:QueueOperations;editorBusy?:boolean;processing?:{docked:boolean;anchor:(element:HTMLSpanElement|null)=>void}}){
  const [page,setPage]=useState<DispatchQueuePage<'all'>>(),[checking,setChecking]=useState(true),[cursor,setCursor]=useState<string>(),[refresh,setRefresh]=useState(0);
  const [loadedFor,setLoadedFor]=useState('');
  const [expanded,setExpanded]=useState(false),contentId=useId();
@@ -83,9 +83,16 @@ export function HomerMessageQueue({state,connected,operations,editorBusy=false}:
  const messages=items.map(item=>({id:item.messageId,origin:item.origin,state:item.state,position:item.position,text:summaryOf(item),movable:supported&&item.state==='queued'&&item.movable,cancellable:item.origin==='user'&&item.state==='queued'&&item.editable,hidden:verified&&item.origin==='worker'&&item.state==='processing'&&displayedWorkers.has(item.messageId)}));
  const visibleCount=messages.filter(message=>!message.hidden).length;
  if(!visibleCount&&!state.queueDispatch?.totalWaiting&&!cursor&&!page?.nextCursor)return null;
+ const waitingCount=processing?.docked?state.queueDispatch?.totalWaiting:undefined;
  return <section ref={queueFocus} className="homer-message-queue" aria-label="消息队列">
   <button className="queue-toggle" type="button" aria-expanded={expanded} aria-controls={contentId} disabled={dragging} onClick={()=>setExpanded(!expanded)}>
-   <span className="queue-toggle-label"><ChevronRightIcon size={16} aria-hidden="true"/><span>消息队列 · 已加载 {visibleCount} 条</span></span>
+   <span className="queue-toggle-label">
+    {processing?<span className="processing-queue-glyph" data-docked={processing.docked} aria-hidden="true">
+     <ChevronRightIcon size={16}/>
+     <span className="processing-queue-anchor" ref={processing.anchor}/>
+    </span>:<ChevronRightIcon size={16} aria-hidden="true"/>}
+    <span>{waitingCount!==undefined?'消息队列 · '+waitingCount+' 条待发送':'消息队列 · 已加载 '+visibleCount+' 条'}</span>
+   </span>
   </button>
   <div id={contentId} hidden={!expanded}>
   <DragDropProvider key={JSON.stringify([dragScope,dragReset])} modifiers={[RestrictToVerticalAxis]} onDragStart={dragStart} onDragEnd={dragEnd}>

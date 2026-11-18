@@ -68,6 +68,16 @@
 
 /* Main composer: compact surface; runtime, upload and receipt ownership stay in MainComposer. */
 .composer-area{min-width:0;container-type:inline-size;max-height:calc(100dvh - 80px);overflow-y:auto;scrollbar-width:thin}
+.processing-inline{width:40px;height:40px;margin:-12px 0 12px}
+.processing-inline span{display:none}
+.processing-sprite{position:fixed;left:0;top:0;z-index:3;pointer-events:none;visibility:hidden;transform-origin:top left;transition:transform 120ms ease-out,opacity 100ms ease-out}
+.thread:has(.queue-toggle:focus-visible .processing-queue-glyph[data-docked=true]) .processing-sprite[data-docked=true]{opacity:0}
+@media(hover:hover){.thread:has(.queue-toggle:hover .processing-queue-glyph[data-docked=true]) .processing-sprite[data-docked=true]{opacity:0}}
+@media(prefers-reduced-motion:reduce){
+ .processing-sprite{display:none}
+ .processing-inline{display:flex;align-items:center;color:var(--muted);font-size:13px}
+ .processing-inline span{display:inline;white-space:nowrap}
+}
 .composer{position:relative;width:100%;max-width:760px;min-width:0;margin:0 auto;background:var(--surface);border:1px solid var(--strong-line);border-radius:14px;padding:12px 12px 8px;box-shadow:0 2px 3px #29282503}
 .composer:focus-within{border-color:var(--strong-line);box-shadow:0 2px 3px #29282503}
 .composer:has(.aui-lexical-input:focus){border-color:var(--focus)}

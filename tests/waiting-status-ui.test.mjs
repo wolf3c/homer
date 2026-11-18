@@ -53,7 +53,20 @@ test('one current title follows terminal, uncertainty, waiting, stage, tool and 
  assert.match(text({...native,mainActivity:{...native.mainActivity,retryObserved:true,connectionIssue:true}}),/准备只读诊断.*发生连接异常并报告过重试/);
 });
 
-test('upper composer mapping is removed and service recovery notice stays independent',()=>{
+test('the processing animation tracks the current user reply and pauses for its own interaction',()=>{
+ const show=(overrides={},connected=true)=>waiting.showMainProcessing({...state,...overrides},connected);
+ assert.equal(show(),true);
+ assert.equal(show({interactions:[{runId:'worker'}]}),true);
+ assert.equal(show({interactions:[{runId:'main-native:generation'}]}),false);
+ assert.equal(show({generation:null,interactions:[{runId:'main-native:process'}]}),false);
+ assert.equal(show({mainActivity:{...state.mainActivity,source:'internal'}}),false);
+ assert.equal(show({mainActivity:{...state.mainActivity,stage:'unknown'}}),false);
+ assert.equal(show({isRunning:false}),false);
+ assert.equal(show({upgrade:{phase:'stopping'}}),false);
+ assert.equal(show({},false),false);
+});
+
+test('service recovery notice stays independent of the processing animation',()=>{
  assert.equal(waiting.composerActivityText,undefined);
  assert.match(waiting.serviceActivityNotice({...state.upgrade,phase:'recovery_required'}),/待恢复/);
  assert.doesNotMatch(waiting.serviceActivityNotice({...state.upgrade,phase:'recovery_required'}),/已退出|已停止/);
