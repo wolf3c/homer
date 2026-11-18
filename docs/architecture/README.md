@@ -43,6 +43,8 @@ Main／Worker 已在现有原则中补充“投入相称，达标即交付”，
 
 2026-11-18 主提示词细化目标判断及重大改动的下游影响评估。定向离线 5/5 通过，真实模型行为待验证。[原则与验证](main-worker-chat-architecture.md)
 
+2026-11-18 主提示词补充交付表达与授权内推进，Main／Worker 同步明确最小改动原则。提示词资源与旧线程恢复测试合计 6/6 通过，真实模型行为待验证。[原则与验证](main-worker-chat-architecture.md)
+
 归档触发与职责见主架构。历次生命周期方案、资源保全及隔离试验见[事项归档与工作环境收尾方案](../task-archive-housekeeping.md)。旧协作设计与阶段记录可从[需求与方案索引](../README.md)查阅。
 
 引擎调用、上下文压缩和关闭的契约见 [Native RPC 生命周期](../38-native-rpc-lifecycle.md)。
