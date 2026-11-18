@@ -107,7 +107,7 @@ gh run rerun RUN_ID --repo OWNER/REPO
 
 ## GitHub Releases 分发
 
-准备分发、管理版本或获准发布时，读取 [Releases 分发流程](references/releases.md)。每次桌面正式发布前按该文档准备并核对固定标签 Release 的中英文用户更新说明，发布后回读验证；Release 正文是完整日志的唯一维护处。流程为“云端构建 → 草稿直传及云端完整校验 → 指定平台验收 → 公开同一 Release 并核验固定标签 → 满足升级验收且获准后切换并核验 Latest”。不把工作流绿色当作产品或原生升级验收通过。
+准备分发、管理版本或获准发布时，读取 [Releases 分发流程](references/releases.md)。每次公开正式桌面 Release 前，完成[更新说明检查](references/releases.md#每次桌面正式发行的更新说明)，发布后回读验证。Release 正文是完整日志的唯一维护处。流程为“云端构建 → 草稿直传及云端完整校验 → 指定平台验收 → 公开同一 Release 并核验固定标签 → 满足升级验收且获准后切换并核验 Latest”。不把工作流绿色当作产品或原生升级验收通过。
 
 桌面下载统一使用现有 `wolf3c/homer` Releases；官网与中英文 README 使用参考文档中的 [Latest 地址约定](references/releases.md#固定下载链接)，详情链接 Latest 页面，不复制版本/build、不查询 GitHub API。固定标签链接用于验收、复现和回退；草稿不能作为公开入口。不得让移动版、预发布版或缺平台／任一原生清单的版本占用 Latest。
 
