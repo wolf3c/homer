@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {setTimeout as wait} from 'node:timers/promises';
 import test from 'node:test';
+import {pathToFileURL} from 'node:url';
 import {ChannelPlugin,type ChannelAdapter} from '../src/channel-plugin.js';
 import {telegramChannel,TelegramChannel} from '../src/telegram-channel.js';
 import {fixture,until} from './fixtures/worker-chat-host.js';
@@ -238,6 +239,7 @@ test('configured Telegram bots route replies and subscriptions through the Homer
   const f=fixture(adapters);
   const runtime=f.app.config.runtime;
   const file=join(f.app.config.workspace,'report.md');
+  const report=`[Background report](${pathToFileURL(file).href})`;
   writeFileSync(file,'# Telegram fixture');
   const sent:{bot:number;chatId:string;method:string;text?:string;filename?:string}[]=[];
   const polled=new Set<number>();
@@ -311,8 +313,8 @@ test('configured Telegram bots route replies and subscriptions through the Homer
         subscribed=JSON.parse(receipt).result?.state==='active';
       }else if(text==='continue')await main.call('worker_send',{workerId,message:'Report back'});
       else if(text.startsWith('[内部协作输入')){
-        if(++background>1)await main.call('send_user_message',{text:'Background report',attachments:[{path:file}]});
-        return {status:'completed',text:''};
+        const final=++background>1?report:'Before subscription';
+        return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
       }
       return {status:'completed',text:'Reply to '+text};
     });
@@ -320,7 +322,7 @@ test('configured Telegram bots route replies and subscriptions through the Homer
       await until(()=>f.engines.some(engine=>engine.finish));
       const worker=f.engines.findLast(engine=>engine.finish)!;
       const finish=worker.finish!;worker.finish=undefined;
-      finish({status:'completed',text:'Worker test output'});
+      finish({status:'completed',text:report});
       await f.app.idle();
     };
     await configure([A]);

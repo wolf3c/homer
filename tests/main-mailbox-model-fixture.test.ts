@@ -28,8 +28,8 @@ test('unknown original effects keep the worked coordination unknown without repl
    this.turnId='synthetic-replay-turn';this.resumable=true;hooks?.onStarted?.(this.turnId);
    await this.handler({threadId:this.threadId,turnId:this.turnId,callId:'inspect',tool:'work_inspect',arguments:{operationKey:fixture!.worker.operationKey}});
    await this.handler({threadId:this.threadId,turnId:this.turnId,callId:'notes',tool:'task_update',arguments:{taskId:fixture!.task.taskId,notes:'原操作结果未知，已核对回执；等待核实，不重新执行。'}});
-   await this.handler({threadId:this.threadId,turnId:this.turnId,callId:'report',tool:'send_user_message',arguments:{text:'原操作结果尚未确认，未重新执行。'}});
-   return {status:'completed' as const,text:''};
+   const text='原操作结果尚未确认，未重新执行。';
+   return {status:'completed' as const,text,messages:[{itemId:'report',phase:'final_answer',text}]};
   }
   async interrupt(){return false;}async close(){return true;}
  }
@@ -41,6 +41,7 @@ test('unknown original effects keep the worked coordination unknown without repl
   app['scheduleInputs']();await app.idle();
   const node=app.processes.list(fixture.threadId)[0]!;assert.equal(node.state,'worked');
   assert.equal(node.status,mailboxExpectedStatus('unknown-operation'));
+  assert.match(node.final?.text??'',/操作结果尚未确认/);
   assert.deepEqual(app.tasks.operation(fixture.worker.operationKey),fixture.originalOperation);assert.equal(app.tasks.runs(fixture.task.taskId).length,1);
   assert.equal(fixture.notices()[0]!.state,'received');assert.equal(app.upgradeStatus().safe,false);
   trace.assertSafe();assert.equal(trace.originalReceiptRead,true);

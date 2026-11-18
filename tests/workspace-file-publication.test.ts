@@ -31,7 +31,7 @@ test('attachment selection rejects missing, protected, relative, linked and empt
   const symbolic=join(workspace,'symbolic.md'),hard=join(workspace,'hard.md'),linked=join(workspace,'linked.md'),empty=join(workspace,'empty.md');
   writeFileSync(linked,'Synthetic linked file');symlinkSync(linked,symbolic);linkSync(linked,hard);writeFileSync(empty,'');
   for(const [index,path] of [join(workspace,'missing.md'),f.protectedFile,'relative.md',symbolic,hard,empty].entries()){
-   assert.throws(()=>f.send([{path}], 'denied-'+index),/artifact_missing|artifact_path_denied|file_type_or_size_denied/);
+   assert.throws(()=>f.send([{path}], 'denied-'+index),path===empty?/media_size_limit/:/artifact_missing|artifact_path_denied|file_type_or_size_denied/);
    assert.equal(f.history.message(f.replyId)?.status,'running');
    assert.equal(f.history.message(f.replyId)?.attachments,undefined);
   }

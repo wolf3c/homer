@@ -2,7 +2,7 @@
 import {EventEmitter} from 'node:events';
 import {appendFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {Homer} from '../../src/service.js';
 import type {EngineOptions,ToolCall,TurnResult} from '../../src/engine.js';
 
@@ -23,8 +23,9 @@ export function restartHost(root:string,scenario:string,seed=false,desktop=false
      started();await new Promise<void>(resolve=>{this.release=resolve;});return {status:'interrupted',text:''};
     }
     const run=app.store.runs().find(run=>run.threadId===this.threadId&&run.turnId===this.turnId)!;
-    writeFileSync(join(app.files.prepareRun(run.taskId,run.id),'report.md'),'# Synthetic preserved bytes');
-    const result:TurnResult={status:'completed',text:'Synthetic report; date unknown.'};
+    const report=join(app.files.prepareRun(run.taskId,run.id),'report.md');
+    writeFileSync(report,'# Synthetic preserved bytes');
+    const result:TurnResult={status:'completed',text:'Synthetic report; date unknown.\n\n[Report]('+pathToFileURL(report).href+')'};
     if(seed&&['written-before-terminal','checkpoint','goal-change'].includes(scenario)){
      this.emit('agentMessage',{threadId:this.threadId,turnId:this.turnId,itemId:'original-output',phase:'final_answer',text:result.text,completed:true});
      if(scenario==='checkpoint')this.emit('nativeCompleted',{threadId:this.threadId,turnId:this.turnId,result});
@@ -52,13 +53,10 @@ export function restartHost(root:string,scenario:string,seed=false,desktop=false
     await this.call('work_inspect',{taskId:task.id});
     if(text==='read')attempts.push(...await Promise.allSettled([this.call('worker_read',{workerId:run.workerId})]));
     else{
-     const report=join(app.files.prepareRun(task.id,run.id),'report.md');
-     try{
-      const sent=await this.call('send_user_message',{taskId:task.id,attachments:[{path:report}],text:'Synthetic report'});
-      if(seed&&scenario==='message-after-commit')process.exit(74);
-      await this.call('task_update',{taskId:task.id,action:'settle',outcome:'succeeded'});
-      attempts.push({status:'fulfilled',value:sent});
-     }catch(reason){attempts.push({status:'rejected',reason});throw reason;}
+     const reply=await this.call('worker_read',{workerId:run.workerId});
+     const output=reply.messages.find((message:{kind:string})=>message.kind==='worker_reply').text;
+     await this.call('task_update',{taskId:task.id,action:'settle',outcome:'succeeded'});
+     return {status:'completed',text:output,messages:[{itemId:'main-final:'+this.turnId,phase:'final_answer',text:output}]};
     }
    }
    return {status:'completed',text:text.startsWith('[内部协作输入')?'':'Synthetic reply'};
@@ -70,8 +68,19 @@ export function restartHost(root:string,scenario:string,seed=false,desktop=false
  const home=join(root,'empty-home');
  const app=new Homer({runtime,workspace:join(root,'workspace'),codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,...(desktop?{pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)}}:{})},async()=>{},(options,handle)=>new Peer(options,handle));
  if(seed&&scenario==='message-before-commit'){
-  const commit=app.history.commitAssistant.bind(app.history);
-  app.history.commitAssistant=input=>{commit(input);process.exit(74);};
+  const finish=app.history.finish.bind(app.history);
+  app.history.finish=(...args)=>{
+   const changed=finish(...args);
+   if(args[4]?.operationKey.startsWith('request-final:'))process.exit(74);
+   return changed;
+  };
+ }
+ if(seed&&scenario==='message-after-commit'){
+  const notify=app['notifyCommittedMessage'].bind(app);
+  app['notifyCommittedMessage']=id=>{
+   if(app.history.message(id)?.operationKey?.startsWith('request-final:'))process.exit(74);
+   notify(id);
+  };
  }
  if(seed&&scenario==='closed-before-return')app.tasks.endSegment=()=>{process.exit(74);};
  if(seed&&scenario==='queued-before-start'){const claim=app.tasks.claim.bind(app.tasks);app.tasks.claim=(id?:string)=>{if(app.store.runs().length)process.exit(74);return claim(id);};}

@@ -2,9 +2,10 @@
 import assert from 'node:assert/strict';
 import {fork,spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {test,type TestContext} from 'node:test';
+import {pathToFileURL} from 'node:url';
 import {restartHost} from './fixtures/task-restart-host.js';
 import {processIdentity,terminateLease} from '../src/processes.js';
 
@@ -25,13 +26,14 @@ async function restart(t:TestContext,scenario:string,crash:boolean,desktop=false
 for(const crash of [false,true])for(const desktop of [false,true])test(`original raw reply and bytes survive ${crash?'crash':'shutdown'}, desktop pause=${desktop}`,{timeout:15000},async t=>{
  const {app,workerStarts,attempts}=await restart(t,'reply',crash,desktop),task=app.tasks.tasks()[0]!,run=app.store.runs()[0]!;
  assert.equal(app.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);assert.equal(task.state,'open');assert.equal(task.outcome,null);
- assert.equal(readFileSync(join(app.files.prepareRun(task.id,run.id),'report.md'),'utf8'),'# Synthetic preserved bytes');
- await app.message('read','find-existing-reply');assert.equal(attempts[0]!.status,'fulfilled');const reply=attempts[0]!.value.messages.find((message:any)=>message.kind==='worker_reply');assert.equal(reply.text,'Synthetic report; date unknown.');
+ const report=join(app.files.prepareRun(task.id,run.id),'report.md');
+ assert.equal(readFileSync(report,'utf8'),'# Synthetic preserved bytes');
+ await app.message('read','find-existing-reply');assert.equal(attempts[0]!.status,'fulfilled');const reply=attempts[0]!.value.messages.find((message:any)=>message.kind==='worker_reply');assert.equal(reply.text,'Synthetic report; date unknown.\n\n[Report]('+pathToFileURL(report).href+')');
  await app.message(desktop?'settle':'send','send-original');
- if(attempts[1]?.status==='rejected')throw attempts[1].reason;
  assert.equal(app.tasks.task(task.id).outcome,'succeeded');
  if(!desktop){
-  const committed=attempts[1]!.value,message=app.history.message(committed.messageId)!;
+  const committed=app.store.db.prepare("SELECT responseJson FROM operations WHERE kind='request_final' AND state='confirmed'").get()!;
+  const message=app.history.message(JSON.parse(String(committed.responseJson)).messageId)!;
   assert.equal(app.media.readAttachment(message.attachments![0]!).bytes.toString(),'# Synthetic preserved bytes');
  }
  assert.equal(workerStarts().length,1);
@@ -55,16 +57,17 @@ for(const crash of [false,true])for(const desktop of [false,true])test(`changed 
 
 for(const scenario of ['written-before-terminal','checkpoint','closed-before-return'])for(const desktop of [false,true])test(`crash preserves the exact output at ${scenario}, desktop pause=${desktop}`,{timeout:15000},async t=>{
  if(process.platform==='win32'&&scenario!=='closed-before-return'){await assert.rejects(restart(t,scenario,true,desktop),/orphan_stop_unconfirmed|desktop_adoption_owner_unknown/);return;}
- const {app,workerStarts,attempts}=await restart(t,scenario,true,desktop),run=app.store.runs()[0]!;
+ const {app,workerStarts}=await restart(t,scenario,true,desktop),run=app.store.runs()[0]!;
  await app.message(desktop?'settle':'send','send-crash-file');
- if(attempts[0]?.status==='rejected')throw attempts[0].reason;
  assert.equal(app.tasks.tasks()[0]!.outcome,'succeeded');assert.equal(workerStarts().length,1);
- if(desktop)assert.equal(readFileSync(join(app.files.prepareRun(run.taskId,run.id),'report.md'),'utf8'),'# Synthetic preserved bytes');
+ const report=join(app.files.prepareRun(run.taskId,run.id),'report.md');
+ if(desktop)assert.equal(readFileSync(report,'utf8'),'# Synthetic preserved bytes');
  else{
-  const message=app.history.message(attempts[0]!.value.messageId)!;
+  const committed=app.store.db.prepare("SELECT responseJson FROM operations WHERE kind='request_final' AND state='confirmed'").get()!;
+  const message=app.history.message(JSON.parse(String(committed.responseJson)).messageId)!;
   assert.equal(app.media.readAttachment(message.attachments![0]!).bytes.toString(),'# Synthetic preserved bytes');
  }
- const replies=app.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?").all(run.id);assert.equal(replies.length,1);assert.equal(JSON.parse(String(replies[0]!.payloadJson)).text,'Synthetic report; date unknown.');
+ const replies=app.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?").all(run.id);assert.equal(replies.length,1);assert.equal(JSON.parse(String(replies[0]!.payloadJson)).text,'Synthetic report; date unknown.\n\n[Report]('+pathToFileURL(report).href+')');
 });
 
 test('missing physical exit evidence preserves the original fence and prevents a new writer',{timeout:15000},async t=>{
@@ -109,25 +112,26 @@ for(const scenario of ['message-before-commit','message-after-commit'] as const)
  const {app,workerStarts}=await restart(t,scenario,true,desktop),before=scenario==='message-before-commit';
  const stages=app.store.db.prepare("SELECT * FROM operations WHERE kind='attachment_stage'").all();
  assert.equal(stages.length,1);assert.equal(stages[0]!.state,before?'failed':'confirmed');
- const row=app.store.db.prepare("SELECT state,detailsJson,responseJson FROM operations WHERE kind='send_user_message'").get()!;
+ const row=app.store.db.prepare("SELECT state,responseJson FROM operations WHERE kind='request_final'").get();
+ const run=app.store.runs()[0]!,report=join(app.files.prepareRun(run.taskId,run.id),'report.md');
+ assert.equal(readFileSync(report,'utf8'),'# Synthetic preserved bytes');
  if(before){
-  assert.equal(row.state,'failed');
-  assert.equal(row.responseJson,null);
-  assert.equal(JSON.parse(String(row.detailsJson)).failureCode,'message_not_committed');
+  assert.equal(row,undefined);
+  assert.equal(JSON.parse(String(stages[0]!.detailsJson)).failureCode,'message_not_committed');
   assert.equal(app.store.db.prepare('SELECT count(*) n FROM media_pins').get()!.n,0);
   const [{assetId}]=JSON.parse(String(stages[0]!.responseJson));
   assert.equal(existsSync(join(app.config.runtime,'media',assetId)),false);
   assert.equal(app.history.list(app.store.meta('mainThread')!).filter(m=>m.attachments?.length).length,0);
  }else{
-  assert.equal(row.state,'confirmed');
-  const receipt=JSON.parse(String(row.responseJson)),message=app.history.message(receipt.messageId)!;
-  assert.equal(message.text,'Synthetic report');
+  assert.equal(row?.state,'confirmed');
+  const receipt=JSON.parse(String(row!.responseJson)),message=app.history.message(receipt.messageId)!;
+  assert.equal(message.text,'Synthetic report; date unknown.\n\n[Report]('+pathToFileURL(report).href+')');
+  writeFileSync(report,'Changed after original response');
+  assert.equal(await app.message('send','send-request'),'重复请求的历史回执：\n'+message.text);
   assert.equal(app.media.readAttachment(message.attachments![0]!).bytes.toString(),'# Synthetic preserved bytes');
   assert.equal(app.store.db.prepare("SELECT count(*) n FROM media_pins WHERE scope=?").get('message:'+message.id)!.n,1);
   assert.equal(app.history.list(app.store.meta('mainThread')!).filter(m=>m.attachments?.length).length,1);
  }
- const run=app.store.runs()[0]!;
- assert.equal(readFileSync(join(app.files.prepareRun(run.taskId,run.id),'report.md'),'utf8'),'# Synthetic preserved bytes');
  assert.equal(workerStarts().length,1);
 });
 

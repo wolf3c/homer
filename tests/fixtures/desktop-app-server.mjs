@@ -3,6 +3,7 @@
 import {createInterface} from 'node:readline';
 import {existsSync,readFileSync,appendFileSync,writeFileSync,mkdirSync,readdirSync} from 'node:fs';
 import {join,dirname,resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 if(process.argv.includes('--version')){console.log('codex-cli 0.171.0-alpha.7');process.exit(0);}
 const home=process.env.CODEX_HOME;
 if(!home||!existsSync(join(dirname(home),'.homer-desktop-test-profile')))process.exit(80);
@@ -74,8 +75,8 @@ async function receive(m){
       if(input?.kind==='worker_reply'){
         const reply=await tool('worker_read',{workerId:input.workerId,messageId:input.messageId}),path=reply.messages[0].text.trim().split('\n').at(-1);
         if(readFileSync(path,'utf8')!=='DeepSeek Worker 已运行（离线合成）')throw Error('synthetic_attachment_mismatch');
-        await tool('send_user_message',{taskId:input.taskId,text:'离线合成文件已发送。',attachments:[{path}]});
-        await tool('task_update',{taskId:input.taskId,action:'settle',outcome:'succeeded'});complete('');return;
+        await tool('task_update',{taskId:input.taskId,action:'settle',outcome:'succeeded'});
+        complete(`离线合成文件已发送。 [hello.md](${pathToFileURL(path).href})`);return;
       }
     }
     complete('这是隔离测试答复；没有调用真实模型。');return;

@@ -6,6 +6,7 @@ import {createServer} from 'node:http';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import test from 'node:test';
+import {pathToFileURL} from 'node:url';
 import {createSession} from '../scripts/deepseek-isolated.mjs';
 import {ChannelPlugin, type ChannelPacket} from '../src/channel-plugin.js';
 import {Homer} from '../src/service.js';
@@ -37,10 +38,12 @@ for(const acrossSources of [false,true])test('pinned Codex drives a simulated ch
     return {state:'sent' as const,receipt:'sim-'+sent.length};
   }};
   const file=join(workspace,'native-channel-report.md');
+  const report=`[Original report](${pathToFileURL(file).href})`;
   writeFileSync(file,'# Original pinned report');
   const call=(name:string,args:unknown,namespace?:string)=>({type:'function_call',call_id:'call-'+phase+'-'+step,name,
     ...(namespace?{namespace}:{}),arguments:JSON.stringify(args)});
-  const answer=(text:string)=>({type:'message',id:'message-'+phase+'-'+step,role:'assistant',content:[{type:'output_text',text}]});
+  const answer=(text:string,messagePhase:'final_answer'|'commentary'='final_answer')=>({type:'message',id:'message-'+phase+'-'+step,
+    role:'assistant',phase:messagePhase,content:[{type:'output_text',text}]});
   let requests=0;
   const server=createServer(async(req,res)=>{
     try{
@@ -68,20 +71,17 @@ for(const acrossSources of [false,true])test('pinned Codex drives a simulated ch
       if(worker){
         assert.doesNotMatch(tools,/set_notification_destination/);
         if(phase==='reuse-worker')assert.ok(input.some((item:any)=>item.role==='assistant'&&JSON.stringify(item.content).includes('Worker internal result')));
-        output=answer('Worker internal result');
+        output=answer(phase==='report'?report:'Worker internal result');
       }else if(phase==='reuse-worker'){
-        output=internal?answer('Worker continuity observed'):last?.type==='function_call_output'?answer('Existing Worker continued'):
+        output=internal?answer('Worker continuity observed','commentary'):last?.type==='function_call_output'?answer('Existing Worker continued'):
           call('worker_send',{workerId:app!.store.runs()[0]!.workerId,message:'Continue the same authorized synthetic channel test.'});
       }else if(internal){
         if(phase==='before'&&last?.type!=='function_call_output'){
           output=call('set_notification_destination',{taskId},'mcp__homer_interactions');
-        }else if(last?.type==='function_call_output'&&!result.includes('plugin_tool_scope_denied')){
-          assert.match(result,/confirmed/);
-          output=answer('Background turn finished');
         }else{
+          if(phase==='before')assert.match(result,/plugin_tool_scope_denied/);
           background++;
-          output=call('send_user_message',{text:phase==='create'?'Before subscription':phase==='before'?'Before switch':phase==='after'?'After switch':'Original report',
-            ...(phase==='report'?{attachments:[{path:file}]}:{})});
+          output=answer(phase==='create'?'Before subscription':phase==='before'?'Before switch':phase==='after'?'After switch':report);
         }
       }else if(phase==='create'){
         if(step===1)output=call('worker_open',{title:"Native channel scope test",message:'Native channel scope test'});

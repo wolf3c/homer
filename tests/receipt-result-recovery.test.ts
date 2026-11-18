@@ -3,11 +3,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {RecursiveTools,toolOperationId} from '../src/recursive-tools.js';
-import {Store} from '../src/store.js';
-import {ConversationHistory} from '../src/web-history.js';
-import {MediaStore} from '../src/media-store.js';
-import {htmlAttachmentFixture} from './canvas-html-publication-fixture.js';
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
+import {fixture as hostFixture} from './fixtures/worker-chat-host.js';
 import {fixture,main,authority,openWorker,running,complete,mutation} from './recursive-fixture.js';
 
 test('committed Worker open survives lost tool response; same native call replays, different payload conflicts',async()=>{
@@ -99,51 +98,62 @@ test('a cached pre-change final remains readable under its original version afte
  }finally{f.close();}
 });
 
-test('a committed message and exact attachment survive restart and a lost tool response',()=>{
- const f=htmlAttachmentFixture('report.md',Buffer.from('# Preserved bytes'));
+test('an unknown native terminal and restart preserve the historical message, receipt and attachment',async()=>{
+ const f=hostFixture(),requestId='historical-send';
  try{
-  const sent=f.send();
-  const operations=f.store.db.prepare("SELECT responseJson,state FROM operations WHERE kind='send_user_message'").all();
-  assert.equal(operations.length,1);assert.equal(operations[0]!.state,'confirmed');
-  assert.equal(JSON.parse(String(operations[0]!.responseJson)).messageId,sent.messageId);
-  const store=new Store(join(f.dir,'homer.sqlite'));
-  try{
-   const history=new ConversationHistory(store.db),media=new MediaStore(store.db,join(f.dir,'runtime/media'));
-   history.reconcile();media.reconcile();
-   assert.deepEqual(history.message(sent.messageId)?.attachments,[{assetId:sent.assetId,revision:sent.revision}]);
-   assert.equal(history.message(sent.messageId)?.status,'completed');
-   assert.equal(media.readAttachment(sent).bytes.toString(),'# Preserved bytes');
-   assert.equal(media.gc(Date.now()+31*86400000),0);
-  }finally{store.close();}
-  writeFileSync(f.original,'Changed after original response');
-  assert.deepEqual(f.send(),sent);
-  assert.equal(f.history.list(f.threadId).filter(message=>message.attachments?.length).length,1);
- }finally{f.close();}
+  await f.app.start();
+  const threadId=f.app.store.meta('mainThread')!,actor={agentId:f.app.store.meta('mainAgentId')!,threadId};
+  f.app.inputs.accept({requestId,text:'Publish the historical report'});
+  const input=f.app.inputs.claim()!;
+  f.app.inputs.started(input.messageId,input.revision,'historical-generation','historical-turn');
+  const sent=commitSyntheticMessage(f.app,threadId,'Historical report',[{filename:'report.md',content:'# Preserved bytes'}],requestId);
+  const operationKey=f.app.history.message(sent.messageId)!.operationKey!;
+  f.app.inputs.uncertain(input.messageId,input.revision);
+  assert.equal(f.app.inputs.list().find(row=>row.messageId===input.messageId)?.state,'uncertain');
+  await f.restart();
+  const operation=f.app.tasks.inspectOperation(actor,operationKey).operations[0]!;
+  assert.equal(operation.state,'confirmed');
+  assert.equal(operation.response.messageId,sent.messageId);
+  const committed=f.app.readCommittedMessage(sent.messageId,{requestId});
+  assert.equal(committed?.status,'completed');
+  assert.deepEqual(committed?.attachments,sent.attachments);
+  const data=f.app.readAttachment({messageId:sent.messageId,...sent.attachments[0]!}).data;
+  assert.equal(Buffer.from(data,'base64').toString(),'# Preserved bytes');
+  assert.equal(f.app.media.gc(Date.now()+31*86400000),0);
+
+  f.app.store.db.prepare("UPDATE operations SET responseJson=NULL WHERE id=?").run(operationKey);
+  assert.equal(f.app.tasks.inspectOperation(actor,operationKey).operations[0]!.response,null);
+  f.setScript(async engine=>{
+   await assert.rejects(engine.call('send_user_message',{text:'Duplicate historical report'},operation.operationId),/send_user_message_retired_use_final_answer/);
+   const text='Independent final reply';
+   return {status:'completed',text,messages:[{itemId:'final',phase:'final_answer',text}]};
+  });
+  assert.equal(await f.app.message('Continue independently','new-request'),'Independent final reply');
+  assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='send_user_message'").get()?.n,1);
+  assert.deepEqual(f.app.history.message(sent.messageId)?.attachments,sent.attachments);
+ }finally{await f.close();}
 });
 
-test('an unknown native terminal cannot interrupt an already committed user-visible reply',()=>{
- const f=htmlAttachmentFixture();
+test('restart clears accepted historical send and attachment intents without publishing a reply',async()=>{
+ const f=hostFixture();
  try{
-  const sent=f.send(),input=f.queuedInput;
-  f.inputs.uncertain(input.messageId,input.revision);
-  assert.equal(f.inputs.list().find(row=>row.messageId===input.messageId)?.state,'uncertain');
-  assert.equal(f.history.message(sent.messageId)?.status,'completed');
-  assert.deepEqual(f.app.readAttachment(sent).data,f.bytes.toString('base64'));
-  assert.deepEqual(f.send(),sent);
- }finally{f.close();}
-});
-
-test('a missing user-send receipt is uncertain and cannot commit or suppress another reply',()=>{
- const f=htmlAttachmentFixture();
- try{
-  const sent=f.send(),context=f.app['mainContext']!;
-  f.store.db.prepare("UPDATE operations SET responseJson=NULL WHERE kind='send_user_message'").run();
-  context.explicitSent=false;
-  assert.throws(()=>f.send(),/operation_uncertain/);
-  assert.equal(context.explicitSent,false);
-  assert.deepEqual(f.history.message(sent.messageId)?.attachments,[{assetId:sent.assetId,revision:sent.revision}]);
-  assert.equal(f.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='send_user_message'").get()?.n,1);
- }finally{f.close();}
+  await f.app.start();
+  const actor=f.app.store.meta('mainAgentId')!,send='send:interrupted',stage='stage:interrupted';
+  const insert=f.app.store.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson) VALUES(?,?,?,?,?,'synthetic','accepted','{}',?)");
+  const ref=f.app.media.snapshot(stage,{filename:'interrupted.md',mime:'text/markdown',kind:'file',bytes:Buffer.from('# Uncommitted')});
+  insert.run(send,actor,'user-messages','interrupted','send_user_message',null);
+  insert.run(stage,actor,'message-attachments',stage,'attachment_stage',JSON.stringify([ref]));
+  await f.restart();
+  for(const key of [send,stage]){
+   const operation=f.app.tasks.operation(key);
+   assert.equal(operation.state,'failed');
+   assert.equal(JSON.parse(operation.detailsJson).failureCode,'message_not_committed');
+  }
+  assert.equal(f.app.tasks.operation(send).responseJson,null);
+  assert.equal(f.app.store.db.prepare('SELECT count(*) n FROM media_pins').get()?.n,0);
+  assert.throws(()=>f.app.media.readAttachment(ref),/media/);
+  assert.equal(f.app.history.list(f.app.store.meta('mainThread')!).filter(message=>message.attachments?.length).length,0);
+ }finally{await f.close();}
 });
 
 test('equal raw bodies from different Workers retain distinct messages and both original native identities',()=>{
@@ -154,21 +164,35 @@ test('equal raw bodies from different Workers retain distinct messages and both 
  }finally{f.close();}
 });
 
-test('message transaction failure leaves the original reply mutable and collects only failed staging',()=>{
- const f=htmlAttachmentFixture();
+test('final transaction failure rolls back the reply and collects only failed staging',async()=>{
+ const f=hostFixture();
  try{
-  f.store.db.exec("CREATE TEMP TRIGGER reject_send BEFORE UPDATE ON conversation_messages WHEN NEW.operationKey IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic_commit_failure'); END");
-  assert.throws(()=>f.send(),/synthetic_commit_failure/);
-  assert.equal(f.history.message(f.replyId)?.status,'running');
-  assert.equal(f.history.message(f.replyId)?.attachments,undefined);
-  const operation=f.store.db.prepare("SELECT state,detailsJson,responseJson FROM operations WHERE kind='send_user_message'").get()!;
-  assert.equal(operation.state,'failed');
-  assert.equal(JSON.parse(String(operation.detailsJson)).failureCode,'message_not_committed');
-  assert.equal(operation.responseJson,null);
-  assert.equal(f.store.db.prepare("SELECT count(*) n FROM media_assets WHERE originOperationKey IS NOT NULL AND state='deleted'").get()!.n,1);
-  assert.equal(f.media.gc(),0);
-  f.store.db.exec('DROP TRIGGER reject_send');
-  assert.throws(()=>f.send(),/message_not_committed/);
-  assert.equal(f.send([{path:f.original}],'new-authorized-action').messageId,f.replyId);
- }finally{f.close();}
+  await f.app.start();
+  const report=join(f.app.config.workspace,'report.md'),text='[Report]('+pathToFileURL(report).href+')';
+  f.setScript(async ()=>({status:'completed',text,messages:[{itemId:'report',phase:'final_answer',text}]}));
+  writeFileSync(report,'# Original report');
+  await f.app.message('Publish original report','original-request');
+  const thread=f.app.store.meta('mainThread')!,deliveries=()=>f.app.history.list(thread).filter(message=>message.attachments?.length);
+  const original=deliveries()[0]!;
+
+  writeFileSync(report,'# Updated report');
+  f.app.store.db.exec("CREATE TEMP TRIGGER reject_final BEFORE INSERT ON operations WHEN NEW.kind='request_final' BEGIN SELECT RAISE(ABORT,'synthetic_commit_failure'); END");
+  await assert.rejects(f.app.message('Publish updated report','fault-request'),/synthetic_commit_failure/);
+  const input=f.app.inputs.byRequestIds(['fault-request'])[0]!,reply=f.app.history.message(input.replyId)!;
+  assert.equal(input.state,'uncertain');
+  assert.equal(reply.status,'interrupted');
+  assert.equal(reply.operationKey,null);
+  assert.equal(reply.attachments,undefined);
+  const stage=f.app.store.db.prepare("SELECT state,detailsJson FROM operations WHERE kind='attachment_stage' AND state='failed'").get()!;
+  assert.equal(JSON.parse(String(stage.detailsJson)).failureCode,'message_not_committed');
+  assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM media_assets WHERE originOperationKey IS NOT NULL AND state='deleted'").get()!.n,1);
+  assert.equal(f.app.media.gc(),0);
+  assert.equal(f.app.media.readAttachment(original.attachments![0]!).bytes.toString(),'# Original report');
+  assert.deepEqual(deliveries().map(message=>message.requestId),['original-request']);
+
+  await f.restart();
+  await f.app.message('Authorize a new delivery','new-authorized-action');
+  assert.deepEqual(deliveries().map(message=>message.requestId),['original-request','new-authorized-action']);
+  assert.equal(f.app.media.readAttachment(deliveries()[1]!.attachments![0]!).bytes.toString(),'# Updated report');
+ }finally{await f.close();}
 });

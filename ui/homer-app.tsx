@@ -40,7 +40,7 @@ import {
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import {defaultUrlTransform,type Components,type UrlTransform} from 'react-markdown';
-import {decodeMessageLink,isMessageFileLink} from '../src/message-links';
+import {decodeMessageLink,isMessageFileLink,messageAttachmentDestination} from '../src/message-links';
 import remarkGfm from "remark-gfm";
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -107,7 +107,7 @@ async function post(path: string, value: unknown) {
   return data;
 }
 const messageUrlTransform:UrlTransform=(url,key,node)=>{
-  if(key==='href'&&node.tagName==='a'&&!mobileView&&window.homerBrowserPreview&&isMessageFileLink(url)){
+  if(key==='href'&&node.tagName==='a'&&(mobileView||window.homerBrowserPreview)&&(isMessageFileLink(url)||messageAttachmentDestination(url))){
     node.properties.homerFileDestination=url;
     return '#';
   }
@@ -254,7 +254,7 @@ function AssistantMessage() {
     <div className="assistant-message-bubble">
     {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
     {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]} references={referencesOf(original.source)}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
-    <ArtifactFiles files={messageFiles}/>
+    <ArtifactFiles files={messageFiles.filter(file=>!file.destination)}/>
     </div></>}
     {!!original&&!process&&status?.type === "running" && !content.some(part => part.type === "text" && part.text) && <p className="thinking" role="status">处理阶段待确认</p>}
     {status?.type === "incomplete" && <span className="message-state">{process?.status==='unknown'?"这条回复结束状态待核实，未自动重跑":status.reason === "cancelled" ? "这条回复已停止" : "这条回复未完成"}</span>}
@@ -1486,6 +1486,11 @@ function HomerApp() {
   }
   function openBrowserLink(destination:string,trigger:HTMLAnchorElement){
     const messageId=trigger.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage;
+    if(messageId&&(isMessageFileLink(destination)||messageAttachmentDestination(destination))){
+      const file=artifacts.find(item=>item.messageId===messageId&&item.destination&&decodeMessageLink(item.destination)===decodeMessageLink(destination));
+      if(file){openArtifact(file,trigger);return true;}
+      if(messageAttachmentDestination(destination)||mobileView){setPageNotice('这个文件的交付版本不可用。');return true;}
+    }
     const local=!mobileView&&isMessageFileLink(destination);
     if(!window.homerBrowserPreview||!messageId||!local&&!/^https?:/.test(trigger.href))return false;
     canvasTrigger.current=trigger;

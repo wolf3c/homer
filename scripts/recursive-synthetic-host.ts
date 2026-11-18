@@ -2,6 +2,7 @@
 import {EventEmitter} from 'node:events';
 import {mkdtempSync,mkdirSync,rmSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {Homer,type Message} from '../src/service.js';
 import type {EngineLike,EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
 
@@ -9,6 +10,7 @@ export function syntheticHost(failChild=false,retainRuntime=false){
  const base=resolve('.codex/scratch/chat-architecture-implementation-20261105/e-host');mkdirSync(base,{recursive:true});
  const root=mkdtempSync(join(base,'test-'));mkdirSync(join(root,'runtime'));mkdirSync(join(root,'workspace'),{recursive:true});
  const events:Message[]=[],engines:Peer[]=[],seen:string[]=[];let sequence=0,app:Homer,followed=false;
+ const report=join(root,'workspace','synthetic-report.md'),reportLink='[Synthetic report]('+pathToFileURL(report).href+')';
  class Peer extends EventEmitter implements EngineLike{
   threadId:string;turnId?:string;turns=0;pending?:(value:TurnResult)=>void;interrupts=0;resumable=true;
   constructor(readonly options:EngineOptions,readonly handler:(call:ToolCall)=>Promise<unknown>){super();this.threadId=options.threadId??'synthetic-thread-'+ ++sequence;engines.push(this);}
@@ -26,8 +28,8 @@ export function syntheticHost(failChild=false,retainRuntime=false){
     const assignment=text.slice(at+marker.length);
     if(assignment==='C'&&failChild)return {status:'failed',text:'Synthetic input unavailable; date remains unknown.',errorCode:'synthetic_input_missing'};
     if(assignment==='A followup'){
-     writeFileSync(join(root,'workspace','synthetic-report.md'),'# Synthetic report\nDate unknown.\n');
-     return {status:'completed',text:'Synthetic report checked; date unknown.'};
+     writeFileSync(report,'# Synthetic report\nDate unknown.\n');
+     return {status:'completed',text:'Synthetic report checked; date unknown.\n\n'+reportLink};
     }
     return {status:'completed',text:'Synthetic '+assignment+' checked; date unknown.'};
    }
@@ -41,9 +43,9 @@ export function syntheticHost(failChild=false,retainRuntime=false){
     const workers=app.tasks.workers(task.id),a=workers.find(worker=>app.tasks.runs(task.id,worker.workerId)[0]?.prompt==='A');
     if(a&&a.run.status==='succeeded'&&!followed){followed=true;await this.send(a.workerId,'A followup');return {status:'completed',text:''};}
     if(a&&followed&&app.tasks.runs(task.id,a.workerId).length===2&&workers.length===3&&workers.every(worker=>['succeeded','failed'].includes(worker.run.status))&&task.state==='open'){
-     const path=join(root,'workspace','synthetic-report.md');
-     await this.call('send_user_message',{taskId:task.id,attachments:[{path}],text:failChild?'Synthetic partially completed; missing C':'Synthetic completed; date unknown'});
      await this.call('task_update',{taskId:task.id,action:'settle',outcome:failChild?'partial':'succeeded'});
+     const output=(failChild?'Synthetic partially completed; missing C':'Synthetic completed; date unknown')+'\n\n'+reportLink;
+     return {status:'completed',text:output,messages:[{itemId:'reply:'+this.turnId,phase:'final_answer',text:output}]};
     }
     return {status:'completed',text:''};
    }

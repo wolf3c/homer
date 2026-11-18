@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,copyFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {homerWebBridge} from '../src/web-homer.js';
@@ -31,9 +31,10 @@ try{
     }
     copyFileSync(source,join(f.app.config.workspace,filename));
   }
-  f.setScript(async engine=>{
-    await engine.call('send_user_message',{text:'已核对合成文件',attachments:files.map(({filename})=>({path:join(f.app.config.workspace,filename)}))});
-    return {status:'completed',text:''};
+  f.setScript(async()=>{
+    const links=files.map(({filename})=>`[${filename}](<${pathToFileURL(join(f.app.config.workspace,filename)).href}>)`);
+    const text=['已核对合成文件',...links].join('\n\n');
+    return {status:'completed',text,messages:[{itemId:'answer',phase:'final_answer',text}]};
   });
   await f.app.start();
   await f.app.message('Attach the exact verified files.','synthetic-files');
@@ -47,6 +48,7 @@ try{
   for(const {ext,filename} of files){
     const file=attached.find(item=>item.title===filename)!;
     assert.ok(file);
+    assert.equal(file.destination,pathToFileURL(join(f.app.config.workspace,filename)).href);
     const response=await fetch(url(file));
     assert.equal(response.status,200);
     const bytes=Buffer.from(await response.arrayBuffer());

@@ -111,18 +111,18 @@ test('CLI retry joins the current turn through its accepted queue state',async t
   }finally{await f.close();}
 });
 
-for(const outcome of ['explicit','failed','uncertain'] as const)test('CLI retry preserves the original '+outcome+' outcome without rerunning',async()=>{
+for(const outcome of ['completed','failed','uncertain'] as const)test('CLI retry preserves the original '+outcome+' outcome without rerunning',async()=>{
   const f=fixture();try{
-    f.setScript(async main=>{
+    f.setScript(async ()=>{
       if(outcome==='uncertain')throw Error('synthetic_response_lost');
       if(outcome==='failed')return {status:'failed',text:'',errorCode:'synthetic_confirmed_failure'};
-      await main.call('send_user_message',{text:'Synthetic explicit answer'});
-      return {status:'completed',text:'Synthetic draft that was not sent'};
+      const text='Synthetic final answer';
+      return {status:'completed',text,messages:[{itemId:'synthetic-final',phase:'final_answer',text}]};
     });
     await f.app.start();const reply=await f.app.message(input.text,input.requestId);
-    assert.equal(f.app.inputs.byRequestIds([input.requestId])[0]!.state,outcome==='explicit'?'completed':outcome);
+    assert.equal(f.app.inputs.byRequestIds([input.requestId])[0]!.state,outcome);
     assert.equal(f.app.store.request(input.requestId)?.state,'completed');
-    if(outcome==='explicit')assert.equal(reply,'Synthetic explicit answer');
+    if(outcome==='completed')assert.equal(reply,'Synthetic final answer');
     if(outcome==='uncertain')assert.match(reply,/结果未确认/);
     assert.equal(await f.app.message(input.text,input.requestId),'重复请求的历史回执：\n'+reply);
     assert.deepEqual(f.inputs,[input.text]);

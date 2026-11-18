@@ -113,19 +113,24 @@ test('the current Main turn can inspect and forward its exact uploaded attachmen
   const requestId='active-upload',bytes=Buffer.from('Synthetic original bytes');
   const uploaded=await f.app.uploadAttachment({threadId:'synthetic-main',requestId,uploadId:'current-file',filename:'source.txt',data:bytes.toString('base64')});
   const ref={assetId:uploaded.assetId,revision:uploaded.revision};
+  let destination='';
   const engine=f.engines.find(candidate=>!candidate.worker)!;
-  engine.turn=async(_text,options)=>{
+  engine.turn=async(input,options)=>{
    engine.turnId='active-upload-turn';options?.onStarted?.(engine.turnId);
    const owner=f.app as unknown as {mediaTool(name:string,args:unknown):Promise<{extraction:{text:string}}>};
    const inspected=await owner.mediaTool('inspect_attachment',ref);
    assert.equal(inspected.extraction.text,bytes.toString());
-   await engine.call('send_user_message',{text:'已附上原文',attachments:[ref]});
-   return {status:'completed',text:'迟到的原生最终回答'};
+   const source=f.app.history.inputs('synthetic-main',[requestId]).get(requestId)!;
+   const facts=JSON.parse(input.match(/\[本轮附件事实[^\n]*\]\n([^\n]+)/)?.[1]??'[]');
+   destination=facts[0]?.markdownUrl;
+   assert.equal(destination,`/api/media/${source.id}/${ref.assetId}/${ref.revision}`);
+   const text=`已附上原文。[打开原文](${destination})`;
+   return {status:'completed',text,messages:[{itemId:'answer',phase:'final_answer',text}]};
   };
   const accepted=f.app.submitMessage({requestId,text:'请附上原文',attachments:[ref]});
   await f.app.idle();
   const output=f.app.history.message(accepted.replyId)!;
-  assert.equal(output.text,'已附上原文');
+  assert.equal(output.text,`已附上原文。[打开原文](${destination})`);
   assert.deepEqual(output.attachments,[ref]);
   const bridge=homerWebBridge(f.app),attachment={messageId:output.id,...ref};
   assert.equal((await bridge.media!.read(attachment)).data,bytes.toString('base64'));
@@ -133,7 +138,11 @@ test('the current Main turn can inspect and forward its exact uploaded attachmen
   f.app.media.reconcile();
   assert.equal(f.app.media.asset(ref).error,'media_derivative_missing');
   assert.equal((await bridge.media!.read(attachment)).data,bytes.toString('base64'));
-  assert.ok((await bridge.history!.state()).artifacts?.some(file=>file.messageId===output.id&&file.assetId===ref.assetId));
+  assert.ok((await bridge.history!.state()).artifacts?.some(file=>file.messageId===output.id&&file.assetId===ref.assetId&&file.destination===destination));
+  assert.equal(f.app.readCommittedMessage(output.id,{requestId})?.text,'已附上原文。打开原文');
+  const source=f.app.history.inputs('synthetic-main',[requestId]).get(requestId)!;
+  f.app.history.revokeMessage('synthetic-main',source.id);
+  await assert.rejects(bridge.media!.read(attachment),/media_scope_denied/);
  }finally{await f.app.close();}
 });
 

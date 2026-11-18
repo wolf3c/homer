@@ -231,13 +231,6 @@ export class MainProcessHistory {
     node.items.push({ ...fact,id:'worker:'+fact.taskId,kind:'worker',seq:node.items.length+1,revision:1 });
     node.revision++; this.save(node);
   }
-  discardNativeFinal(id:string){
-    const node=this.load(id);if(!node||node.state!=='working')return;
-    const items=node.items.filter(item=>item.kind!=='commentary'||item.phase!=='final_answer');
-    if(items.length===node.items.length&&!node.final&&!node.finalCandidate)return;
-    node.items=items;delete node.final;delete node.finalCandidate;
-    node.revision++;this.save(node);
-  }
   finish(id: string, status: ProcessNode['status'], endEventId?: string,publicText?:string) {
     const node = this.load(id); if (!node || node.state === 'worked') return;
     if (!endEventId) {

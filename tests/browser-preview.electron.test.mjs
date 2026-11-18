@@ -35,9 +35,10 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   f.app.bindBrowserPreview((actor,action,input)=>electron.evaluate((_,a)=>globalThis.preview.execute(a.actor,a.action,a.input),{actor,action,input}).catch(error=>{throw Error(error.message.match(/preview_[a-z_]+/)?.[0]??'preview_result_unconfirmed');}));
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
-   if(text==='Emit HTML'){await main.call('send_user_message',{attachments:[{path:join(f.app.config.workspace,'preview.html')}]});return{status:'completed',text:'HTML 已交付'};}
    if(text==='Delegate both pages'){await main.call('worker_open',{title:"Operate page A",message:'Operate page A'});await main.call('worker_open',{title:"Operate page B",message:'Operate page B'});return{status:'completed',text:'两个合成任务已创建'};}
-   await main.call('send_user_message',{text:'[打开业务网页]('+url+'/start)'});return{status:'completed',text:'已交付链接'};
+   const final={itemId:'preview-final',phase:'final_answer',text:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
+   main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
+   return{status:'completed',text:final.text,messages:[final]};
   });await f.app.start();await f.app.message('打开合成网页并批注','preview-fixture-source');
   web=await createWebServer({bridge:homerWebBridge(f.app),port:0,uiDirectory:resolve(ui)});
   const env={...process.env,TEST_ORIGIN:web.url};delete env.ELECTRON_RUN_AS_NODE;
@@ -109,7 +110,9 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await writeFile(join(f.app.config.workspace,'preview.css'),'body{background:rgb(13,21,34);color:white;padding:36px;font:20px system-ui}');
   await writeFile(join(f.app.config.workspace,'preview.js'),'document.getElementById("ready").textContent="资源脚本已加载";');
   await f.app.message('Emit HTML','html-fixture');
-  await host.getByRole('button',{name:'预览 preview.html',exact:true}).click();
+  const htmlReplyId=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='html-fixture'").get().replyId;
+  await host.locator(`[data-conversation-message="${htmlReplyId}"]`).getByRole('link',{name:'preview.html',exact:true}).click();
+  await host.waitForFunction(()=>Array.from(document.querySelectorAll('a')).filter(link=>link.textContent==='preview.html').length===1);
   let html;await until(()=>!!(html=electron.context().pages().find(p=>p.url().startsWith('homer-preview:'))));
   await html.getByText('资源脚本已加载',{exact:true}).waitFor();assert.equal(await html.locator('body').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(13, 21, 34)');
   await annotationMode(true);assert.equal(await host.locator('.preview-toolbar:visible').count(),1);await hoverMatch(html,'#ready');await hoverMatch(html,'#html-title');await html.screenshot({path:join(out,'html-hover.png')});await annotationMode(false);await html.locator('.annotation-hover-outline').waitFor({state:'detached'});await annotationMode(true);await html.locator('#html-title').click();

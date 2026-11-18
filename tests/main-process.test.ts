@@ -4,6 +4,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
 import {MainProcessHistory} from '../src/main-process.js';
 import {CodexEngine} from '../src/engine.js';
@@ -34,20 +35,6 @@ test('final source item remains stored; terminal confirms native final and never
     assert.equal(unknown.state,'working');assert.equal(unknown.status,'unknown');assert.equal(unknown.final,undefined);assert.equal((unknown.items[0] as any).text,'unfinished');
     f.start('failed');f.history.finish('failed','failed','failed-terminal');const failed=f.history.list('synthetic')[2]!;
     assert.equal(failed.state,'worked');assert.equal(failed.status,'failed');assert.equal(failed.final,undefined);
-  }finally{f.db.close();}
-});
-
-test('an explicit reply suppresses the native final for that process only',()=>{
-  const f=fixture();try{
-    f.start();f.message('progress','commentary','Public progress');f.message('answer','final_answer','Duplicate native answer');
-    f.history.discardNativeFinal('node');
-    new MainProcessHistory(f.db).reconcileUnknown('synthetic',true);
-    assert.equal(f.node().status,'unknown');
-    assert.equal(f.node().final,undefined);
-    assert.deepEqual(f.node().items.map(item=>item.id),['turn:node:progress']);
-    f.start('next');f.message('answer','final_answer','Independent native answer','next');
-    f.history.finish('next','completed','terminal-next');
-    assert.equal(f.history.list('synthetic')[1]?.final?.text,'Independent native answer');
   }finally{f.db.close();}
 });
 
@@ -235,34 +222,32 @@ test('early protocol notifications wait for actual ACK; native terminal freezes 
  assert.equal((await work).status,'completed');
 });
 
-test('real explicit send preserves the Worker reply and commits one attachment-backed user message',async()=>{
- const f=chatFixture();let taskId='',runId='',filePath='',messageId='';
- const raw='Synthetic final result',published='Explicit authorized reply';
+test('the final answer preserves the Worker reply and commits one attachment-backed user message',async()=>{
+ const f=chatFixture();let runId='',filePath='',raw='',published='';
  try{
   f.setScript(async(main,text)=>{
    if(text==='send test'){
     const run=await main.call('worker_open',{title:"Write public.md.",message:'Write public.md.'});
-    taskId=run.taskId;runId=run.runId;
+    runId=run.runId;
     return {status:'completed',text:'Started.'};
    }
-   const args={taskId,attachments:[{path:filePath}],text:published};
-   const first=await main.call('send_user_message',args,'send-once');
-   const retry=await main.call('send_user_message',args,'send-once');
-   assert.equal(retry.messageId,first.messageId);messageId=first.messageId;
    return {status:'completed',text:published,messages:[{itemId:'final',phase:'final_answer',text:published}]};
   });
   await f.app.start();await f.app.message('send test','send-source');
   await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
   const worker=f.engines.find(engine=>engine.options.role==='worker')!;
   filePath=join(f.app.config.workspace,'public.md');writeFileSync(filePath,'# Public');
+  const link=`[Report](${pathToFileURL(filePath).href})`;
+  raw='Synthetic final result '+link;published='Authorized reply '+link;
   const bridge=homerWebBridge(f.app);
   assert.equal((await bridge.history!.state()).artifacts?.length,0);
   worker.finish!({status:'completed',text:raw,messages:[{itemId:'worker-final',phase:'final_answer',text:raw}]});
   await f.app.idle();
-  const state=await bridge.history!.state(),sent=state.messages.filter(message=>message.id===messageId);
+  const state=await bridge.history!.state(),sent=state.messages.filter(message=>message.text===published);
   assert.equal(sent.length,1);assert.equal(sent[0]?.text,published);assert.equal(sent[0]?.requestId,null);
-  const replies=f.events.filter(item=>item.type==='reply'&&item.text===published);
-  assert.equal(replies.length,1);assert.equal(replies[0]?.messageId,messageId);assert.equal(replies[0]?.requestId,undefined);
+  assert.equal(state.messages.filter(message=>message.text===published).length,1);
+  const messageId=sent[0]!.id,replies=f.events.filter(item=>item.type==='coordination'&&item.text===published);
+  assert.equal(replies.length,1);assert.equal(replies[0]?.messageId,messageId);assert.equal(replies[0]?.requestId,'send-source');
   const artifact=state.artifacts?.find(item=>item.messageId===messageId)!;
   const actual=await bridge.media!.read({messageId,assetId:artifact.assetId,revision:artifact.revision});
   assert.equal(Buffer.from(actual.data!,'base64').toString(),'# Public');
@@ -273,3 +258,122 @@ test('real explicit send preserves the Worker reply and commits one attachment-b
   assert.ok(!JSON.stringify(processes).includes('# Public'));
  }finally{await f.close();}
 });
+
+test('a direct native answer delivers its linked file, excluding the commentary link',async()=>{
+ const f=chatFixture();
+ const path=join(f.app.config.workspace,'direct.md'),scratch=join(f.app.config.workspace,'scratch.md');
+ const destination=pathToFileURL(path).href;
+ const missing=pathToFileURL(join(f.app.config.workspace,'missing.md')).href;
+ const final=`Done. [Download](${destination}) and [Supplement](${missing})`,commentary=`[Draft](${pathToFileURL(scratch).href})`;
+ const notice='部分文件未能保存为可跨端打开的版本。';
+ try{
+  writeFileSync(path,'# Final bytes');writeFileSync(scratch,'private draft');
+  f.setScript(async(main)=>{
+   for(const item of [{itemId:'p',phase:'commentary',text:commentary},{itemId:'f',phase:'final_answer',text:final}])
+    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...item,completed:true});
+   return {status:'completed',text:commentary+'\n'+final,messages:[
+    {itemId:'p',phase:'commentary',text:commentary},{itemId:'f',phase:'final_answer',text:final},
+   ]};
+  });
+  await f.app.start();await f.app.message('Prepare a file','direct-file');
+  const snapshot=await homerWebBridge(f.app).history!.state();
+  const replies=snapshot.messages.filter(message=>message.role==='assistant'&&message.text);
+  assert.deepEqual(replies.map(message=>message.text),[final+'\n\n'+notice]);
+  const [message]=replies,[artifact]=snapshot.artifacts??[];
+  assert.equal(artifact?.destination,destination);assert.equal(message!.attachments?.length,1);
+  assert.equal(f.app.readCommittedMessage(message!.id,{requestId:'direct-file'})?.text,'Done. Download and Supplement\n\n'+notice);
+  writeFileSync(path,'Replaced bytes');
+  assert.equal(f.app.readMessageFile({threadId:message!.threadId,messageId:message!.id,destination}).bytes.toString(),'# Final bytes');
+ }finally{await f.close();}
+});
+
+test('a Worker return publishes one Main final with a desktop Markdown link',async()=>{
+ const f=chatFixture();
+ const path=join(f.app.config.workspace,'report.md'),destination=pathToFileURL(path).href;
+ const privateLink=pathToFileURL(join(f.app.config.workspace,'scratch.md')).href;
+ const final=`方案已整理。[打开方案](${destination})`;
+ let taskId='',backgroundTurns=0;
+ try{
+  f.setScript(async(main,text)=>{
+   if(text==='请整理方案'){
+    const opened=await main.call('worker_open',{title:'整理方案',message:'请整理方案'});
+    taskId=opened.taskId;
+    return {status:'completed',text:'已安排。'};
+   }
+   backgroundTurns++;
+   const commentary=`[内部过程](${privateLink})`;
+   return {status:'completed',text:commentary+'\n'+final,messages:[
+    {itemId:'progress',phase:'commentary',text:commentary},
+    {itemId:'answer',phase:'final_answer',text:final},
+   ]};
+  });
+  await f.app.start();await f.app.message('请整理方案','ordinary-final-source');
+  await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+  writeFileSync(path,'# 方案');writeFileSync(join(f.app.config.workspace,'scratch.md'),'内部草稿');
+  f.engines.find(engine=>engine.options.role==='worker')!.finish!({status:'completed',text:'已整理，供 Main 核对。'});
+  await f.app.idle();
+  const state=readTestConversation(f.app),matches=state.messages.filter(message=>message.text===final);
+  assert.equal(matches.length,1);
+  const [message]=matches;
+  assert.equal(f.app.history.message(message!.id)?.text,final);
+  assert.equal(message!.status,'completed');
+  assert.equal(f.app.readMessageFile({threadId:message!.threadId,messageId:message!.id,destination}).bytes.toString(),'# 方案');
+  assert.throws(()=>f.app.readMessageFile({threadId:message!.threadId,messageId:message!.id,destination:privateLink}),/message_file_scope_denied/);
+  assert.equal(f.app.readCommittedMessage(message!.id,{taskId,taskVersion:1}),undefined);
+  await f.restart();await f.app.idle();
+  assert.deepEqual(readTestConversation(f.app).messages.filter(message=>message.text===final).map(message=>message.id),[message!.id]);
+  assert.equal(backgroundTurns,1);
+ }finally{await f.close();}
+});
+
+test('a final with a missing authorized file keeps the conclusion and shows the missing attachment',async()=>{
+ const f=chatFixture(),link=`[报告](${pathToFileURL(join(f.app.config.workspace,'missing.pdf')).href})`,final='结论已核对。'+link;
+ try{
+  f.setScript(async(main,text)=>{
+   if(text==='请准备附件'){
+    await main.call('worker_open',{title:'准备附件',message:text});
+    return {status:'completed',text:'已安排。'};
+   }
+   await assert.rejects(main.call('send_user_message',{text:'旧路径不写入'}),/send_user_message_retired/);
+   return {status:'completed',text:final,messages:[{itemId:'answer',phase:'final_answer',text:final}]};
+  });
+  await f.app.start();await f.app.message('请准备附件','failed-send-source');
+  await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+  f.engines.find(engine=>engine.options.role==='worker')!.finish!({status:'completed',text:'供交付检查。'+link});
+  await f.app.idle();
+  const state=readTestConversation(f.app);
+  const reply=state.messages.find(message=>message.process?.sourceKind==='worker');
+  assert.equal(reply?.status,'completed');
+  assert.ok(reply.text.includes(final));
+  assert.match(reply.text,/部分文件未能保存/);
+  assert.equal(reply.attachments,undefined);
+ }finally{await f.close();}
+});
+
+for(const mode of ['legacy text without phase evidence','final with revoked user source'] as const){
+ test(`a Worker return keeps ${mode} out of the chat`,async()=>{
+  const f=chatFixture(),text='这段文字不能作为正式答复。';
+  try{
+   f.setScript(async(main,input)=>{
+    if(input==='请整理材料'){
+     await main.call('worker_open',{title:'整理材料',message:input});
+     return {status:'completed',text:'已安排。'};
+    }
+    if(mode==='legacy text without phase evidence')return {status:'completed',text};
+    const source=f.app.history.inputs(main.threadId,['unpublishable-source']).get('unpublishable-source')!;
+    assert.equal(f.app.history.revokeMessage(main.threadId,source.id),true);
+    return {status:'completed',text,messages:[{itemId:'answer',phase:'final_answer',text}]};
+   });
+   await f.app.start();await f.app.message('请整理材料','unpublishable-source');
+   await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+   f.engines.find(engine=>engine.options.role==='worker')!.finish!({status:'completed',text:'供 Main 核对。'});
+   await f.app.idle();
+   const reply=readTestConversation(f.app).messages.find(message=>message.process?.sourceKind==='worker');
+   if(mode==='legacy text without phase evidence'){
+    assert.equal(reply?.status,'completed');assert.equal(reply?.text,'');
+   }else{
+    assert.equal(reply?.status,'failed');assert.match(reply?.text??'',/授权已变化/);
+   }
+  }finally{await f.close();}
+ });
+}

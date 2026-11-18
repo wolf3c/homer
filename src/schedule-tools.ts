@@ -4,7 +4,7 @@ import {Schedules,type Schedule,type ScheduleTrigger} from './schedules.js';
 import {recursiveHash,type Actor,type Authority} from './recursive-tasks.js';
 import {toolOperationId} from './recursive-tools.js';
 
-export type ScheduleSource={instanceId:string;threadId:string;creatorAgentId:string;authority:Authority};
+export type ScheduleSource={instanceId:string;threadId:string;creatorAgentId:string;authority:Authority;deliveryTask?:{taskId:string;taskVersion:number}};
 type Caller={actor:Actor;source:ScheduleSource;allSources:boolean};
 const sources=(source:ScheduleSource)=>[source.authority.sourceRequestId,...(source.authority.sourceRequestIds??[])];
 const publicSchedule=({id,text,trigger,timeZone,enabled,nextFireAt,errorCode,revision,createdAt,updatedAt}:Schedule)=>({scheduleId:id,text,trigger,timeZone,enabled,nextFireAt,errorCode,revision,createdAt,updatedAt});
@@ -58,7 +58,7 @@ export class ScheduleTools{
         if(!this.allowed(caller,previous.sourceRef))throw Error('schedule_scope_denied');
         const change={scheduleId:previous.id,expectedRevision:Number(args.expectedRevision)};
         if(name==='schedule_cancel')schedule=this.schedules.cancel(change);
-        else if(name==='schedule_update')schedule=this.schedules.update({...change,...(args.text!==undefined?{text:String(args.text)}:{}),...(args.trigger!==undefined?{trigger:args.trigger as ScheduleTrigger}:{}),...(args.enabled!==undefined?{enabled:args.enabled as boolean}:{}),...(args.text!==undefined&&caller.allSources?{sourceRef:JSON.stringify(caller.source)}:{})});
+        else if(name==='schedule_update')schedule=this.schedules.update({...change,...(args.text!==undefined?{text:String(args.text)}:{}),...(args.trigger!==undefined?{trigger:args.trigger as ScheduleTrigger}:{}),...(args.enabled!==undefined?{enabled:args.enabled as boolean}:{}),...(args.taskId!==undefined||args.text!==undefined&&caller.allSources?{sourceRef:JSON.stringify(caller.source)}:{})});
         else throw Error('schedule_tool_denied');
       }
       const operationKey='op-'+randomUUID(),response={...publicSchedule(schedule),operationKey};

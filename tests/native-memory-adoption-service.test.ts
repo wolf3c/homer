@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {resolve,join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {Homer} from '../src/service.js';
 import type {EngineOptions} from '../src/engine.js';
 test('native change leaves a live Worker running and permits its authorized result',async()=>{
@@ -26,8 +27,9 @@ test('native change leaves a live Worker running and permits its authorized resu
     const input=JSON.parse(text.split('\n')[1]!);
     if(input.kind==='worker_reply'){
      const reply=await this.call('worker_read',{workerId:input.workerId,messageId:input.messageId}) as {messages:{text:string}[]};
-     const filePath=reply.messages[0]!.text.trim().split('\n').at(-1);
-     await this.call('send_user_message',{taskId:input.taskId,text:'Synthetic result',attachments:[{path:filePath}]});
+     const fileLink=reply.messages[0]!.text.trim().split('\n').at(-1);
+     const output='Synthetic result\n\n'+fileLink;
+     return {status:'completed',text:output,messages:[{itemId:'main-final',phase:'final_answer',text:output}]};
     }
    }
    return {status:'completed',text:'Synthetic'};
@@ -44,11 +46,12 @@ test('native change leaves a live Worker running and permits its authorized resu
   const run=app.store.runs()[0]!;await new Promise(r=>setTimeout(r,40));
   assert.equal(app.store.run(run.id)!.stopReason,null);
   const path=join(workspace,'answer.md');writeFileSync(path,'# Synthetic result');
-  worker.release?.({status:'completed',text:'Synthetic finished\n'+path});
+  worker.release?.({status:'completed',text:'Synthetic finished\n\n[Result]('+pathToFileURL(path).href+')'});
   await app.idle();assert.equal(app.store.runs().length,1);assert.equal(app.store.run(run.id)!.status,'succeeded');
   const record=app.store.db.prepare("SELECT id FROM conversation_messages WHERE taskId=? AND taskVersion=? AND role='assistant'").get(run.taskId,run.version);
   assert.ok(record);
   const message=app.history.message(String(record.id))!;
+  assert.equal(app.tasks.operation(message.operationKey!).kind,'worker_final');
   assert.equal(message.attachments?.length,1);
   assert.equal(Buffer.from(app.readAttachment({messageId:message.id,...message.attachments![0]!}).data,'base64').toString(),'# Synthetic result');
 

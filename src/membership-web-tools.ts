@@ -14,7 +14,7 @@ const imageModels=['gpt-image-2.5-sunburst','gpt-image-2.5-flare'] as const;
 const maxPromptLength=32_000;
 const imageTool:Tool={
   type:'function',name:'generate_image',
-  description:'Generate one PNG from text, or use one authorized image as a reference or to edit it. Use only when the original user requests image generation or editing. Uses Homer membership credits. An image must be present in the current input or shared in this conversation, never guessed from history. Returns a saved file path. Main sends it with send_user_message using its path. Workers report the saved path to Main. Do not repeat an unconfirmed request; it may already have used credits.',
+  description:'Generate one PNG from text, or use one authorized image as a reference or to edit it. Use only when the original user requests image generation or editing. Uses Homer membership credits. An image must be present in the current input or shared in this conversation, never guessed from history. Link the saved path in the final Markdown answer. Workers report the saved path to Main. Do not repeat an unconfirmed request; it may already have used credits.',
   inputSchema:{type:'object',required:['prompt'],additionalProperties:false,properties:{
     prompt:{type:'string',minLength:1,maxLength:maxPromptLength},
     model:{type:'string',enum:imageModels},
@@ -28,7 +28,7 @@ const audioVoices=['gentle','narrator','bright','character'] as const;
 const maxAudioBytes=8*1024*1024;
 export const audioTool:Tool={
   type:'function',name:'generate_audio',
-  description:'Read the supplied text aloud and save one MP3 using Homer membership credits after user confirmation. Only call for an explicit request for spoken audio. Keep the original wording. Optional preset voices are gentle (default, soft female), narrator (male narrator), bright (bright female), and character (expressive female); use narrator for a male voice. Optional instructions control how this one recording is read. Main delivers the saved path using send_user_message; Workers report it to Main. To resend a completed MP3, provide only its receipt; this does not generate again or use credits. If the result is unknown, report its receipt without submitting again.',
+  description:'Read the supplied text aloud and save one MP3 using Homer membership credits after user confirmation. Only call for an explicit request for spoken audio. Keep the original wording. Optional preset voices are gentle (default, soft female), narrator (male narrator), bright (bright female), and character (expressive female); use narrator for a male voice. Optional instructions control how this one recording is read. Link the saved path in the final Markdown answer. Workers report the saved path to Main. To resend a completed MP3, provide only its receipt; this does not generate again or use credits. If the result is unknown, report its receipt without submitting again.',
   inputSchema:{type:'object',additionalProperties:false,properties:{
     receipt:{type:'string',pattern:'^audio-[a-f0-9-]{36}$',description:'Receipt of the saved MP3 to resend. Do not send input, voice, or instructions with it.'},
     input:{type:'string',description:'Exact text to read, at most 1,000 Unicode characters.'},
@@ -39,7 +39,7 @@ export const audioTool:Tool={
 export const videoModel='wan3.0-video';
 export const videoTool:Tool={
   type:'function',name:'generate_video',
-  description:'In Homer chat, generate one 5-second 720p 16:9 MP4 with sound from text using membership credits after user confirmation. Only submit when the user requests a video. Supply either prompt for a new video or receipt (the local receipt or "latest") to check and retrieve the original video without a new charge. For pending, interrupted, or unknown submissions, use the receipt and never automatically submit again. Main handles simple videos directly and sends the saved file with send_user_message using its path. Workers report the saved path to Main.',
+  description:'In Homer chat, generate one 5-second 720p 16:9 MP4 with sound from text using membership credits after user confirmation. Only submit when the user requests a video. Supply either prompt for a new video or receipt (the local receipt or "latest") to check and retrieve the original video without a new charge. For pending, interrupted, or unknown submissions, use the receipt and never automatically submit again. Main handles simple videos directly and links the saved file in the final Markdown answer. Workers report the saved path to Main.',
   inputSchema:{type:'object',additionalProperties:false,properties:{prompt:{type:'string',minLength:1,maxLength:20_000},receipt:{type:'string',minLength:1,maxLength:42}}},
 };
 export const MEMBERSHIP_TOOLS:Tool[]=[

@@ -6,6 +6,7 @@ import { join, dirname } from "node:path";
 import {spawnSync} from "node:child_process";
 import {pathToFileURL} from "node:url";
 const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
+const projectRootMarkers=JSON.parse(process.argv.find(value=>value.startsWith('project_root_markers='))?.slice('project_root_markers='.length)??'null');
 if (process.argv.includes("--version")) { console.log("codex-cli 0.171.0-alpha.7"); process.exit(0); }
 const home = process.env.CODEX_HOME;
 const log = record => appendFileSync(join(home, "process-events.jsonl"), JSON.stringify(record) + "\n");
@@ -39,8 +40,9 @@ async function receive(m) {
   if (m.method === "environment/info") send({id:m.id,result:{shell:"/bin/zsh"}});
   if (m.method === "thread/backgroundTerminals/list") send({id:m.id,result:{data:[]}});
   if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});
+  if (m.method === "thread/inject_items") send({id:m.id,result:{}});
   if (m.method === 'model/list') send({id:m.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
-  if (m.method === "config/read") send({ id: m.id, result: { config: { features:{memories:true},memories:{dedicated_tools:true},mcp_servers: trusted ? { homer_interactions: trusted } : {} },layers:[{name:{type:"user",file:join(home,"config.toml")},version:"synthetic-config-1",config:{}}] } });
+  if (m.method === "config/read") send({ id: m.id, result: { config: { project_root_markers:projectRootMarkers,features:{memories:true},memories:{dedicated_tools:true},mcp_servers: trusted ? { homer_interactions: trusted } : {} },layers:[{name:{type:"user",file:join(home,"config.toml")},version:"synthetic-config-1",config:{}}] } });
   if (m.method === "config/mcpServer/reload") send({id:m.id,result:{}});
   if (m.method === "skills/list") send({id:m.id,result:{data:[]}});
   if (m.method === "mcpServerStatus/list") send({ id: m.id, result: { data: [{ name: "homer_interactions", tools: Object.fromEntries((trusted?.enabled_tools??[]).map(n => [n, {}])) }] } });
@@ -82,8 +84,8 @@ async function receive(m) {
     } else if (input?.kind === 'worker_reply') {
       const reply = await tool('worker_read', {workerId:input.workerId,messageId:input.messageId}), filePath = reply.messages[0].text.trim().split('\n').at(-1);
       if(readFileSync(filePath,'utf8')!=="# Synthetic result\n林青：2026-10-20；待确认。")throw Error('synthetic_result_mismatch');
-      await tool('send_user_message', {taskId:input.taskId,attachments:[{path:filePath}],text:'synthetic-delivered'});
-      await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});complete('');
+      await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});
+      complete(`synthetic-delivered [result.md](${pathToFileURL(filePath).href})`);
     } else complete("synthetic-reply");
   }
   if (m.method === "turn/interrupt") send({ id: m.id, result: {} });

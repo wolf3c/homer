@@ -231,11 +231,12 @@ test('a revoked original channel binding cannot authorize a delayed message',asy
   }finally{await plugin.close();await f.close();}
 });
 
-test('revoking a channel during delayed consumption blocks subsequent delegation and public delivery',async t=>{
+test('revoking a channel during delayed consumption blocks later delegation and final delivery',async t=>{
   let now=Date.now();t.mock.method(Date,'now',()=>now);
   const f=fixture(),plugin=new ChannelPlugin(f.app,[{id:'simulation',send:async()=>({state:'sent'})}]);
   const address={adapterId:'simulation',accountKey:'account',senderKey:'sender',conversationKey:'chat'};
   let checked=false,failure:unknown;
+  const final='Final text for the now revoked reminder';
   try{
     const binding=plugin.bind(address);
     f.setScript(async(main,text)=>{
@@ -243,8 +244,8 @@ test('revoking a channel during delayed consumption blocks subsequent delegation
         try{
           plugin.revokeBinding(binding);
           await assert.rejects(main.call('worker_open',{title:"Must remain unauthorized",message:'Must remain unauthorized'}),/channel_binding_denied/);
-          await assert.rejects(main.call('send_user_message',{text:'Must not be delivered'}),/channel_binding_denied/);
           checked=true;
+          return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
         }catch(error){failure=error;throw error;}
       }else await call(main,'schedule_create',{text:'Recheck delayed source',trigger:{at:new Date(now+60000).toISOString()}},'recheck-live-channel');
       return {status:'completed',text:'Set'};
@@ -252,8 +253,46 @@ test('revoking a channel during delayed consumption blocks subsequent delegation
     await f.app.start();plugin.receiveText({...address,eventId:'original-channel-event',text:'Schedule in this chat'});await f.app.idle();
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
     assert.ifError(failure);assert.equal(checked,true);assert.equal(f.app.store.runs().length,0);
-    assert.equal(f.app.store.db.prepare("SELECT 1 FROM conversation_messages WHERE text='Must not be delivered'").get(),undefined);
+    assert.equal(f.app.history.list(f.app.store.meta('mainThread')!).some(message=>message.text===final),false);
+    const reply=f.app.webHistoryPages().read(f.app.store.meta('mainThread')!).messages.find(message=>message.process?.sourceKind==='scheduled');
+    assert.equal(reply?.status,'failed');
+    assert.match(reply?.text??'',/授权已变化/);
   }finally{await plugin.close();await f.close();}
+});
+
+test('a scheduled final is saved in the main chat once without a send call',async t=>{
+  let now=Date.now(),runs=0;
+  t.mock.method(Date,'now',()=>now);
+  const f=fixture(),final='Scheduled report is ready.',commentary='Private schedule commentary';
+  try{
+    f.setScript(async(main,text)=>{
+      if(!text.startsWith('[定时消息；')){
+        const created=await call(main,'schedule_create',{text:'Prepare the timed report',trigger:{at:new Date(now+60000).toISOString()}},'schedule-final');
+        assert.equal(created.error,undefined);
+        return {status:'completed',text:'Scheduled'};
+      }
+      runs++;
+      return {status:'completed',text:commentary+'\n'+final,messages:[
+        {itemId:'progress',phase:'commentary',text:commentary},{itemId:'final',phase:'final_answer',text:final},
+      ]};
+    });
+    await f.app.start();
+    await f.app.message('Schedule a plain report','scheduled-final-source');
+    now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
+    const thread=f.app.store.meta('mainThread')!;
+    const visible=()=>f.app.webHistoryPages().read(thread).messages.filter(message=>message.text===final);
+    const [message]=visible();
+    assert.equal(visible().length,1);
+    assert.equal(message?.process?.sourceKind,'scheduled');
+    assert.equal(message?.requestId,null);
+    assert.equal(f.app.history.message(message!.id)?.audience,'user');
+    assert.ok(!f.app.webHistoryPages().read(thread).messages.some(message=>message.text.includes(commentary)));
+    assert.equal(f.app.listCommittedMessages({requestId:'scheduled-final-source'}).items.some(item=>item.messageId===message!.id),false);
+    assert.equal(f.app.store.db.prepare("SELECT count(*) AS n FROM operations WHERE kind='send_user_message'").get()!.n,0);
+    await f.restart();await f.app.idle();
+    assert.deepEqual(visible().map(item=>item.id),[message!.id]);
+    assert.equal(runs,1);
+  }finally{await f.close();}
 });
 
 test('due delivery is a scheduled source, preserves durable user authority, and stops at inbox',async t=>{
@@ -272,7 +311,7 @@ test('due delivery is a scheduled source, preserves durable user authority, and 
           assert.equal(f.app.tasks.version(task.taskId,1).sourceRequestId,'reminder-source');
           await until(()=>f.engines.some(peer=>peer.options.role==='worker'&&peer.finish));
           f.engines.find(peer=>peer.options.role==='worker'&&peer.finish)!.finish!({status:'completed',text:'Delegated reminder handled',messages:[]});
-          await main.call('send_user_message',{text:'Delayed result'});
+          return {status:'completed',text:'Delayed result',messages:[{itemId:'final',phase:'final_answer',text:'Delayed result'}]};
         }catch(error){consumptionError=error;throw error;}
       }
       return {status:'completed',text:''};
@@ -287,6 +326,7 @@ test('due delivery is a scheduled source, preserves durable user authority, and 
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='scheduled_message'").get()!.n,1);
     const delivered=f.app.store.db.prepare("SELECT requestId,taskId FROM conversation_messages WHERE text='Delayed result' AND role='assistant'").get()!;
     assert.equal(delivered.requestId,null);assert.equal(delivered.taskId,null);
+    assert.equal(f.app.webHistoryPages().read(f.app.store.meta('mainThread')!).messages.filter(message=>message.text==='Delayed result').length,1);
   }finally{await f.close();}
 });
 

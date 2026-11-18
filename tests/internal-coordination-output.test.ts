@@ -1,5 +1,5 @@
 import {readTestConversation} from './fixtures/read-test-conversation.js';
-// Real host, original replies, process projection and explicit user messages; synthetic transport only.
+// Real host, original replies and final answer projection; synthetic transport only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
@@ -9,7 +9,7 @@ import {homerWebBridge} from '../src/web-homer.js';
 import type {TurnResult} from '../src/engine.js';
 
 for(const scenario of ['final','partial','failed','unknown','blocked','published','published-final','published-extra','unlinked-same-text','no-phase-adapter','image-error'] as const)test('internal phase boundary preserves original useful output and history: '+scenario,async()=>{
- const f=fixture();let taskId='',sentId='',mainCloses=0,mainInterrupts=0;
+ const f=fixture();let taskId='',mainCloses=0,mainInterrupts=0;
  const errors:string[]=[],finalText=scenario==='partial'?'已核对两项，一项日期缺失。':scenario==='failed'?'执行失败，已保留报告。':scenario==='unknown'?'外部结果未知，需核对。':scenario==='blocked'?'新阻塞：缺少授权材料。':'有效业务结论';
  const result=(engine:typeof f.engines[number],messages:NonNullable<TurnResult['messages']>,extra:Partial<TurnResult>={}):TurnResult=>{
   for(const message of messages)engine.emit('agentMessage',{threadId:engine.threadId,turnId:engine.turnId,...message,completed:true});
@@ -25,15 +25,12 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
    const notice=JSON.parse(text.split('\n')[1]!);assert.equal(notice.kind,'worker_reply');
    const read=await main.call('worker_read',{workerId:notice.workerId,messageId:notice.messageId}),original=read.messages[0];
    assert.ok(original.text.includes(finalText));assert.ok(original.nativeMessages.some((item:any)=>item.itemId==='worker-final'));
-   if(['published','published-final','published-extra'].includes(scenario)){
-    const filePath=original.text.match(/\[报告\]\(([^)]+)\)/)![1]!;
-    const sent=await main.call('send_user_message',{taskId,attachments:[{path:filePath}],text:finalText});
-    assert.equal(sent.state,'confirmed');sentId=sent.messageId;
-   }
+   const publishFile=['published','published-final','published-extra'].includes(scenario);
    if(['unknown','blocked'].includes(scenario))await main.call('task_update',{taskId,notes:finalText});
    else await main.call('task_update',{taskId,action:'settle',outcome:scenario==='partial'?'partial':scenario==='failed'?'failed':'succeeded'});
    if(scenario==='no-phase-adapter')return {status:'completed',text:finalText};
-   return result(main,[{itemId:'review-comment',phase:'commentary',text:'收到成果并验收，交付已准备。'},{itemId:'business-final',phase:'final_answer',text:scenario==='published'?'':scenario==='published-extra'?finalText+'\n新增缺口：仍需补充材料。':finalText}],scenario==='image-error'?{nativeOutputError:'synthetic_image_error'}:{});
+   const answer=publishFile?original.text+(scenario==='published-extra'?'\n新增缺口：仍需补充材料。':''):finalText;
+   return result(main,[{itemId:'review-comment',phase:'commentary',text:'收到成果并验收，交付已准备。'},{itemId:'business-final',phase:'final_answer',text:answer}],scenario==='image-error'?{nativeOutputError:'synthetic_image_error'}:{});
   }catch(error){errors.push(String(error));throw error;}
  });
  try{
@@ -55,16 +52,17 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
   assert.equal(reply.text,raw);assert.ok(reply.nativeMessages.some(item=>item.itemId==='worker-progress'&&item.phase==='commentary'));
   const nodes=f.app.processes.list(f.app.store.meta('mainThread')!),process=nodes.find(node=>node.sourceMessageIds.includes(reply.id))!;
   assert.ok(process);assert.ok(process.items.some(item=>item.kind==='tool'),'original inspection remains in process details');
-  assert.equal(f.inputs.filter(text=>text.startsWith('[内部协作输入')).length,1,'settlement and explicit sends add no self-confirmation round');
+  assert.equal(f.inputs.filter(text=>text.startsWith('[内部协作输入')).length,1,'settlement and publishing add no self-confirmation round');
   const projected=readTestConversation(f.app),user=projected.messages.find(message=>message.process?.sourceKind==='user')!;
   assert.equal(user.text,'已安排核对。');assert.ok(user.process?.items.some(item=>item.kind==='commentary'&&item.text==='正常起始反馈'));
   const copies=projected.messages.filter(message=>message.text.includes(finalText));
-  assert.equal(copies.length,sentId||scenario==='unlinked-same-text'?1:0,'only explicit sends or an independent user reply make this internal text public');
+  assert.equal(copies.length,scenario==='no-phase-adapter'?0:scenario==='unlinked-same-text'?2:1);
   assert.ok(copies.every(message=>!message.text.includes('收到成果并验收')));
   if(['unknown','blocked'].includes(scenario))assert.equal(f.app.tasks.task(taskId).outcome,null);
   if(['published','published-final','published-extra'].includes(scenario)){
    assert.equal(mainCloses,0);assert.equal(mainInterrupts,0);
-   assert.equal(copies[0]?.id,sentId);assert.equal(copies[0]?.text,finalText);
+   const sentId=copies[0]!.id;
+   assert.equal(sentId,process.messageId);assert.ok(copies[0]!.text.includes(raw));
    const bridge=homerWebBridge(f.app),state=await bridge.history!.state(),attachment=state.artifacts?.find(artifact=>artifact.messageId===sentId)!;
    assert.ok(attachment);
    const file=await bridge.media!.read({messageId:sentId,assetId:attachment.assetId,revision:attachment.revision});

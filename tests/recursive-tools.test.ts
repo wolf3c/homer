@@ -275,13 +275,10 @@ test('worker_read selects and pages one original native public item through the 
   } finally {f.close();}
 });
 
-test('explicit user message requires text or attachments and binds its native operation ID',async()=>{
+test('the current collaboration tool dispatcher has no message writer',async()=>{
  const f=fixture();try{
   const ref={assetId:'asset-00000000-0000-0000-0000-000000000001',revision:1};
-  const tools=new RecursiveTools(f.tasks,{...f.effects,sendUserMessage:(actor,input)=>({actor:actor.agentId,...input})});
-  for(const args of [{},{text:'  '},{text:'',attachments:[]}])await assert.rejects(tools.call(f.actor,'send_user_message',args,'empty'),/invalid_message/);
-  const committed=await tools.call(f.actor,'send_user_message',{attachments:[ref]},'send');
-  assert.deepEqual(committed,{actor:f.actor.agentId,operationId:toolOperationId(f.actor,'send'),attachments:[ref],text:undefined,taskId:undefined});
+  await assert.rejects(f.tools.call(f.actor,'send_user_message',{attachments:[ref]},'send'),/tool_denied/);
  }finally{f.close();}
 });
 

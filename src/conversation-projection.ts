@@ -21,7 +21,8 @@ export function projectConversation(history:readonly ConversationMessage[],nodes
  const requestFor=(node:ProcessNode)=>boundary?.nodeRequests.get(node.id)??node.sourceMessageIds.map(id=>byInbox.get(id)?.input.requestId).find(Boolean)??(node.replyMessageId?byId.get(node.replyMessageId)?.requestId??byReply.get(node.replyMessageId)?.input.requestId:undefined);
  const requestsWithNodes=new Set([...boundary?.requestsWithNodes??[],...nodes.filter(node=>byId.has(node.messageId)&&node.sourceKind==='user').map(requestFor)]);
  const managedReplies=new Set(nodes.filter(node=>byId.has(node.messageId)).flatMap(node=>node.replyMessageId?[node.replyMessageId]:[]));
- const publicFinals=(node:ProcessNode)=>node.sourceKind==='user'?node.items.filter(item=>item.kind==='commentary'&&item.phase==='final_answer'):[];
+ const fileReply=(node:ProcessNode)=>byId.get(node.replyMessageId??'')?.operationKey?.startsWith('request-final:')===true;
+ const publicFinals=(node:ProcessNode)=>node.sourceKind==='user'&&!fileReply(node)?node.items.filter(item=>item.kind==='commentary'&&item.phase==='final_answer'):[];
  const finalReplies=new Set(nodes.filter(node=>node.replyPolicy==='explicitFinal'||node.final||publicFinals(node).length).map(node=>node.replyMessageId));
  const outcomes=new Set([...boundary?.outcomes??[],...history.filter(message=>message.id.startsWith('input-outcome:')).map(message=>message.requestId)]);
  const legacyReplies=new Set([...boundary?.legacyReplies??[],...history.filter(message=>message.role==='assistant'&&message.text&&!outcomes.has(message.requestId)&&!nodeByMessage.has(message.id)&&!managedReplies.has(message.id)&&!message.id.startsWith('input-outcome:')).map(message=>message.requestId)]);
@@ -46,10 +47,12 @@ export function projectConversation(history:readonly ConversationMessage[],nodes
    lastProcessSeq=Math.max(lastProcessSeq,node.seq);
    const requestId=requestFor(node)??null,source=users.get(requestId??''),continuation=!!source&&(boundary?boundary.continuedNodes.has(node.id):shownUsers.has(source.id));
    if(node.sourceKind==='user'&&source&&!continuation){messages.push({...source,createdAt:message.createdAt,inputState:byRequest.get(requestId!)?.state});shownUsers.add(source.id);}
-   const nativeFinal=node.sourceKind==='user'&&node.final&&node.final.id!==node.messageId?node.final:undefined;
+   const nativeFinal=node.sourceKind==='user'&&!fileReply(node)&&node.final&&node.final.id!==node.messageId?node.final:undefined;
    const finals=publicFinals(node).flatMap(item=>item.kind==='commentary'?[{id:item.id,text:item.text,completed:item.completed??(node.state==='worked'&&item.id===nativeFinal?.id)}]:[]);
    const hostFinal=node.final?.id===node.messageId?node.final:undefined;
-   const displayNode={...node,final:nativeFinal??hostFinal};
+   const displayNode={...node,final:nativeFinal??hostFinal,...(fileReply(node)?{
+    items:node.items.filter(item=>item.kind!=='commentary'||item.phase!=='final_answer'),
+   }:{})};
    messages.push({...message,requestId,text:finals.length?finals.map(item=>item.text).join('\n\n'):(hostFinal||node.sourceKind!=='user'&&!node.final?message.text:''),status:node.status==='unknown'?'interrupted':node.status==='failed'?'failed':node.status==='interrupted'?'interrupted':node.state==='working'?'running':'completed',process:displayNode,...(finals.length?{finalAnswers:finals}:{}),
     ...(continuation&&source?{sourceMessageId:source.id}:{}),
     sourceLabel:node.sourceKind==='worker'?'处理协作结果':node.sourceKind==='scheduled'?'定时消息':!source?'处理来源未关联':continuation?'继续处理：'+(source!.text.slice(0,80)||'附件请求'):undefined,toolActivities:[]});continue;

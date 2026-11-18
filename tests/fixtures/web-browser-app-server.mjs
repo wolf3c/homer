@@ -4,7 +4,9 @@ import { createInterface } from "node:readline";
 import { createConnection } from "node:net";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
+const projectRootMarkers=JSON.parse(process.argv.find(value=>value.startsWith('project_root_markers='))?.slice('project_root_markers='.length)??'null');
 if (process.argv.includes("--version")) { console.log("codex-cli synthetic-web"); process.exit(0); }
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const trustedArg = process.argv.find(value => value.startsWith("mcp_servers.homer_interactions="));
@@ -51,13 +53,14 @@ async function receive(m) {
     else accept(text?JSON.parse(text):m.result);return;
   }
   if (m.method === "thread/memoryMode/set") send({id:m.id,result:{}});
+  if (m.method === "thread/inject_items") send({id:m.id,result:{}});
   if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.171.0-alpha.7", codexHome:home } });
   if (m.method === "config/mcpServer/reload") send({id:m.id,result:{}});
   if (m.method === "environment/info") send({id:m.id,result:{shell:"/bin/zsh"}});
   if (["thread/backgroundTerminals/list","skills/list"].includes(m.method)) send({id:m.id,result:{data:[]}});
   if (m.method === 'model/list') send({id:m.id,result:{data:[]}}); // Synthetic peer reports no tier catalog; dedicated Fast tests cover advertised priority.
   if (m.method === "config/read") send({id:m.id,result:{
-    config:{mcp_servers:mcpServers,features:{memories:true},memories:{dedicated_tools:true}},
+    config:{project_root_markers:projectRootMarkers,mcp_servers:mcpServers,features:{memories:true},memories:{dedicated_tools:true}},
     layers:[{name:{type:"sessionFlags"},config:{mcp_servers:mcpServers}},
       ...(home?[{name:{type:"user",file:resolve(home,"config.toml")},version:"synthetic-1",config:{}}]:[])],
   }});
@@ -97,8 +100,8 @@ async function receive(m) {
     } else if (input?.kind === 'worker_reply') {
       const reply = await tool('worker_read', {workerId:input.workerId,messageId:input.messageId}), filePath = reply.messages[0].text.trim().split('\n').at(-1);
       if(readFileSync(filePath,'utf8')!==checklist)throw Error('synthetic_attachment_mismatch');
-      await tool('send_user_message', {taskId:input.taskId,attachments:[{path:filePath}],text:'合成行动清单已完成，可下载附件。'});
-      await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});complete('');
+      await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});
+      complete(`合成行动清单已完成，可下载附件。 [合成行动清单.md](${pathToFileURL(filePath).href})`);
     } else if (/生成成果|派发任务/.test(text)) {
       await tool('worker_open', {title:'合成行动清单',message:'制作合成行动清单，并向 Main 询问用户所需格式。'});
       await stream("我已开始整理材料。需要补充的信息会在这里询问你，后台任务会继续。", false);

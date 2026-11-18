@@ -22,9 +22,9 @@ test('one user-visible attachment message records the exact task version without
   const actor=f.app.mainActor(),created=f.app.tasks.createTask(actor,{
    operationId:'create-authorized',goal:'Review files',authority:authority(actor.sourceRequestId),
   });
-  const args={operationId:'send-once',taskId:created.taskId,attachments:[{path:f.original}],text:'Checked the source'};
-  const receipt=f.app.sendUserMessage(actor,args);
-  assert.deepEqual(f.app.sendUserMessage(actor,args),receipt);
+  const scope={taskId:created.taskId,taskVersion:1};
+  const receipt=f.send([{path:f.original}],'send-once',scope);
+  assert.deepEqual(f.send([{path:f.original}],'send-once',scope),receipt);
   assert.equal(receipt.messageId,f.replyId);
   const message=f.history.message(receipt.messageId)!;
   assert.equal(message.taskId,created.taskId);
@@ -32,7 +32,7 @@ test('one user-visible attachment message records the exact task version without
   assert.equal(message.requestId,actor.sourceRequestId);
   assert.deepEqual(f.media.readAttachment(message.attachments![0]!).bytes,f.bytes);
   assert.equal(f.app.tasks.task(created.taskId).outcome,null);
-  assert.throws(()=>f.app.sendUserMessage({...actor,sourceRequestId:'foreign'}, {...args,operationId:'foreign-send'}),/source_denied|tool_scope_denied/);
+  assert.throws(()=>f.app.readAttachment({...receipt,messageId:'foreign'}),/media_scope_denied/);
  }finally{f.close();}
 });
 
@@ -40,7 +40,7 @@ test('public tool validation exposes schema paths without echoing private proper
  const f=fixture();
  try{
   const api=new RecursiveTools(f.tasks,{rootAuthority:()=>authority(),wake(){},stop:async r=>r,steer:async r=>r});
-  await assert.rejects(()=>api.call(main,'send_user_message',{private_argument_name:'PRIVATE_VALUE'},'invalid'),error=>{
+  await assert.rejects(()=>api.call(main,'worker_open',{message:'Check scope',title:'Check scope',private_argument_name:'PRIVATE_VALUE'},'invalid'),error=>{
    assert.equal((error as Error).message,'invalid_tool_arguments');assert.doesNotMatch(JSON.stringify(error),/private_argument_name|PRIVATE_VALUE/);return true;
   });
   assert.equal(f.store.db.prepare("SELECT 1 FROM operations WHERE kind='send_user_message'").get(),undefined);

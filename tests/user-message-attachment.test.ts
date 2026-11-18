@@ -1,88 +1,102 @@
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync,unlinkSync,writeFileSync} from 'node:fs';
+import {unlinkSync,writeFileSync} from 'node:fs';
 import {basename,dirname,join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 import {fixture} from './fixtures/worker-chat-host.js';
 
-test('explicit messages reuse the current reply, survive restart and preserve selected attachment bytes',async()=>{
+test('a native final reuses the current reply and preserves selected attachment bytes across restart',async()=>{
   const f=fixture();
   const path=join(f.app.config.workspace,'note.txt');
+  const final=`Original reply. [Selected file](<${pathToFileURL(path).href}>)`;
   writeFileSync(path,'selected bytes');
-  let first='',second='',beforeTerminal:string[]=[];
+  let replyId='',turns=0;
   try{
     f.setScript(async main=>{
-      const agent=(itemId:string,phase:'commentary'|'final_answer',text:string)=>main.emit('agentMessage',{
-        threadId:main.threadId,turnId:main.turnId,itemId,phase,text,completed:true,
-      });
-      agent('early-draft','final_answer','Draft before explicit commit');
-      const args={text:'Original reply',attachments:[{path}]};
-      first=(await main.call('send_user_message',args,'same-send')).messageId;
-      assert.equal((await main.call('send_user_message',{attachments:args.attachments,text:args.text},'same-send')).messageId,first);
-      await assert.rejects(main.call('send_user_message',{text:'different'},'same-send'),/operation_payload_conflict/);
-      second=(await main.call('send_user_message',{text:'Additional reply'})).messageId;
-      agent('late-final','final_answer','Duplicate from native final');
-      agent('valid-progress','commentary','Progress after explicit reply');
-      main.emit('textDelta',{threadId:main.threadId,turnId:main.turnId,delta:'Late native delta'});
-      beforeTerminal=readTestConversation(f.app).messages.map(message=>message.text);
-      return {status:'completed',text:'Duplicate from native final'};
+      turns++;
+      const commentary='Progress before the reply';
+      const messages=[{itemId:'progress',phase:'commentary',text:commentary},{itemId:'final',phase:'final_answer',text:final}];
+      for(const item of messages)main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...item,completed:true});
+      assert.equal(f.app.history.message(replyId)?.status,'running');
+      assert.equal(f.app.readCommittedMessage(replyId,{requestId:'original-input'}),undefined);
+      assert.equal(f.app.history.message(replyId)?.attachments,undefined);
+      return {status:'completed',text:commentary+'\n\n'+final,messages};
     });
     await f.app.start();
     const threadId=f.app.store.meta('mainThread')!;
-    const reader=f.app.webHistoryPages();
-    const accepted=f.app.submitMessage({requestId:'original-input',text:'Reply with the selected file'});
+    const input={requestId:'original-input',text:'Reply with the selected file'};
+    replyId=f.app.submitMessage(input).replyId;
     await f.app.idle();
-    assert.equal(first,accepted.replyId);
-    assert.notEqual(second,first);
-    const message=f.app.history.message(first)!;
-    assert.equal(message.text,'Original reply');
-    assert.ok(beforeTerminal.includes('Original reply')&&beforeTerminal.includes('Additional reply'));
-    assert.doesNotMatch(beforeTerminal.join('\n'),/Draft before explicit commit|Duplicate from native final|Late native delta/);
-    assert.equal(f.events.some(event=>event.type==='delta'&&event.text==='Late native delta'),false);
-    const visible=JSON.stringify(readTestConversation(f.app));
-    assert.match(visible,/Progress after explicit reply/);
-    assert.doesNotMatch(visible,/Draft before explicit commit|Duplicate from native final|Late native delta/);
-    assert.equal(f.app.history.message(second)!.requestId,'original-input');
+    const message=f.app.history.message(replyId)!;
+    assert.equal(message.text,final);
+    assert.equal(message.requestId,input.requestId);
+    assert.equal(message.attachments?.length,1);
+    assert.match(JSON.stringify(readTestConversation(f.app)),/Progress before the reply/);
     const replyOrder=(messages:readonly {requestId?:string|null;id:string;role:string;process?:unknown}[])=>messages
       .filter(message=>message.requestId==='original-input')
       .map(message=>message.role==='user'?'user':message.process?'process':message.id);
-    assert.deepEqual(replyOrder(reader.read(threadId,{}).messages),['user','process',first,second]);
-    const attachment={messageId:first,...message.attachments![0]!};
-    assert.throws(()=>f.app.readAttachment({...attachment,messageId:second}),/media_scope_denied/);
+    const visible=f.app.webHistoryPages().read(threadId,{}).messages;
+    assert.deepEqual(replyOrder(visible),['user','process',replyId]);
+    assert.equal(visible.some(row=>row.process?.items.some(item=>item.kind==='commentary'&&item.phase==='final_answer')),false);
+    const unrelated=f.app.history.add(threadId,'Unrelated reply');
+    const attachment={messageId:replyId,...message.attachments![0]!};
+    assert.throws(()=>f.app.readAttachment({...attachment,messageId:unrelated}),/media_scope_denied/);
     unlinkSync(path);
     await f.restart();
-    assert.deepEqual(replyOrder(f.app.webHistoryPages().read(threadId,{}).messages),['user','process',first,second]);
-    assert.equal(f.app.history.message(first)!.text,'Original reply');
-    assert.equal(f.app.history.message(second)!.text,'Additional reply');
+    const restarted=f.app.webHistoryPages().read(threadId,{}).messages;
+    assert.deepEqual(replyOrder(restarted),['user','process',replyId]);
+    assert.equal(restarted.some(row=>row.process?.items.some(item=>item.kind==='commentary'&&item.phase==='final_answer')),false);
+    assert.equal(f.app.history.message(replyId)!.text,final);
+    assert.match(await f.app.message(input.text,input.requestId),/^重复请求的历史回执/);
+    assert.equal(turns,1);
     assert.equal(Buffer.from(f.app.readAttachment(attachment).data,'base64').toString(),'selected bytes');
-    assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM conversation_messages WHERE text='Duplicate from native final'").get()!.n,0);
-    assert.doesNotMatch(JSON.stringify(readTestConversation(f.app)),/Draft before explicit commit|Duplicate from native final|Late native delta/);
-    f.app.history.revokeMessage(f.app.store.meta('mainThread')!,first);
+    f.app.history.revokeMessage(threadId,replyId);
     assert.throws(()=>f.app.readAttachment(attachment),/media_scope_denied/);
   }finally{await f.close();}
 });
 
-test('explicit message rollback keeps the original failed receipt',async()=>{
+test('confirmed historical replies retain their exact attachment grants across restart',async()=>{
   const f=fixture();
-  let checked=false;
   try{
-    f.setScript(async main=>{
-      const db=f.app.store.db;
-      db.exec("CREATE TEMP TRIGGER block_explicit_reply BEFORE UPDATE ON conversation_messages WHEN new.operationKey GLOB 'send:*' BEGIN SELECT RAISE(ABORT,'synthetic_commit_failure'); END");
-      const args={text:'Only one reply'};
-      await assert.rejects(main.call('send_user_message',args,'rolled-back-send'),/synthetic_commit_failure/);
-      db.exec('DROP TRIGGER block_explicit_reply');
-      await assert.rejects(main.call('send_user_message',args,'rolled-back-send'),/message_not_committed/);
-      assert.equal(db.prepare("SELECT state FROM operations WHERE kind='send_user_message'").get()?.state,'failed');
-      assert.equal(f.app.history.list(main.threadId).some(message=>message.text===args.text),false);
-      await main.call('send_user_message',args,'deliberate-new-send');
-      checked=true;
-      return {status:'completed',text:''};
-    });
     await f.app.start();
-    await f.app.message('Reply once','explicit-rollback');
-    assert.equal(checked,true);
-    assert.equal(readTestConversation(f.app).messages.filter(message=>message.text==='Only one reply').length,1);
+    const threadId=f.app.store.meta('mainThread')!;
+    const requestId='historical-request';
+    const {replyId}=f.app.history.accept(threadId,{requestId,text:'Historical request'});
+    const {messageId,attachments}=commitSyntheticMessage(f.app,threadId,'Historical reply',[{filename:'historical.txt',content:'Historical bytes'}],requestId);
+    const additional=commitSyntheticMessage(f.app,threadId,'Additional historical reply',[],requestId).messageId;
+    assert.equal(messageId,replyId);
+    await f.restart();
+    assert.deepEqual(f.app.webHistoryPages().read(threadId,{}).messages.filter(message=>message.requestId===requestId).map(message=>message.text),
+      ['Historical request','Historical reply','Additional historical reply']);
+    assert.equal(f.app.readCommittedMessage(messageId,{requestId})?.text,'Historical reply');
+    assert.equal(f.app.readCommittedMessage(additional,{requestId})?.text,'Additional historical reply');
+    assert.equal(Buffer.from(f.app.readAttachment({messageId,...attachments[0]!}).data,'base64').toString(),'Historical bytes');
+    assert.throws(()=>f.app.readAttachment({messageId:additional,...attachments[0]!}),/media_scope_denied/);
+  }finally{await f.close();}
+});
+
+test('a native final commit rollback abandons the file stage and leaves no publishable reply',async()=>{
+  const f=fixture();
+  try{
+    const path=join(f.app.config.workspace,'note.txt');writeFileSync(path,'Only one copy');
+    const text=`Only one reply. [File](<${pathToFileURL(path).href}>)`;
+    f.setScript(async()=>({status:'completed',text,messages:[{itemId:'answer',phase:'final_answer',text}]}));
+    await f.app.start();
+    const db=f.app.store.db;
+    db.exec("CREATE TEMP TRIGGER block_final_attachment BEFORE INSERT ON conversation_attachments BEGIN SELECT RAISE(ABORT,'synthetic_commit_failure'); END");
+    await assert.rejects(f.app.message('Reply once','final-rollback'),/synthetic_commit_failure/);
+    assert.equal(db.prepare("SELECT state FROM operations WHERE kind='attachment_stage'").get()?.state,'failed');
+    assert.equal(db.prepare("SELECT count(*) n FROM operations WHERE kind='request_final'").get()?.n,0);
+    assert.equal(db.prepare('SELECT count(*) n FROM media_pins').get()?.n,0);
+    assert.equal(db.prepare('SELECT count(*) n FROM conversation_attachments').get()?.n,0);
+    assert.equal(readTestConversation(f.app).messages.some(message=>message.text===text),false);
+    await f.restart();
+    await assert.rejects(f.app.message('Reply once','final-rollback'),/request_interrupted_use_new_id/);
+    assert.equal(await f.app.message('Reply once','new-final'),text);
+    const saved=f.app.history.list(f.app.store.meta('mainThread')!).filter(message=>message.text===text);
+    assert.equal(saved.length,1);assert.equal(saved[0]?.attachments?.length,1);
   }finally{await f.close();}
 });
 
@@ -92,16 +106,10 @@ test('a path alias cannot attach a protected runtime file',async()=>{
     const runtime=f.app.config.runtime,filename='synthetic-protected.txt';
     const path=join(runtime,filename),alias=join(dirname(runtime),basename(runtime).toUpperCase(),filename);
     writeFileSync(path,'Synthetic private host data');
-    let checked=false;
-    f.setScript(async main=>{
-      await assert.rejects(main.call('send_user_message',{attachments:[{path}]}),/artifact_path_denied/);
-      await assert.rejects(main.call('send_user_message',{attachments:[{path:alias}]}),existsSync(alias)?/artifact_path_denied/:/artifact_missing/);
-      checked=true;
-      return {status:'completed',text:'Protected'};
-    });
+    const text=`Protected. [Original](<${pathToFileURL(path).href}>) [Alias](<${pathToFileURL(alias).href}>)`;
+    f.setScript(async()=>({status:'completed',text,messages:[{itemId:'answer',phase:'final_answer',text}]}));
     await f.app.start();
-    await f.app.message('Try the test alias','check-runtime-alias');
-    assert.equal(checked,true);
+    assert.equal(await f.app.message('Try the test alias','check-runtime-alias'),text+'\n\n部分文件未能保存为可跨端打开的版本。');
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM conversation_attachments").get()!.n,0);
   }finally{await f.close();}
 });

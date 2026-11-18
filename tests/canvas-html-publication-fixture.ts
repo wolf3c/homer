@@ -11,6 +11,7 @@ import {detectMedia} from '../src/media-policy.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {Homer} from '../src/service.js';
 import {createHooks} from '../src/hooks.js';
+import type {AttachmentRef} from '../src/media-store.js';
 
 export function htmlAttachmentFixture(filename='正式预览.html',bytes=Buffer.from('<!doctype html><meta charset="utf-8"><h1>正式 HTML 成果</h1>')){
  const root=resolve('.codex/scratch/message-attachments');
@@ -40,12 +41,24 @@ export function htmlAttachmentFixture(filename='正式预览.html',bytes=Buffer.
   });
   const hidden=media.snapshot('staged-only',{filename:'uncommitted.txt',bytes:Buffer.from('uncommitted bytes'),kind:'file',mime:'text/plain'});
   const bridge=homerWebBridge(app,{draftUpload:false});
-  const send=(attachments:unknown[]=[{path:original}],operationId='synthetic-send')=>{
-   const sent=app.sendUserMessage(app.mainActor(),{operationId,text:'文件见附件',attachments});
-   const ref=history.message(sent.messageId)?.attachments?.[0];
+  const send=(attachments:unknown[]=[{path:original}],operationId='synthetic-send',task?:{taskId:string;taskVersion:number})=>{
+   // Seed an old-format published attachment with the existing media owners.
+   const actor=app.mainActor(),context=app.mainContext;
+   app.validateMainContext(context);
+   const staged=app.stageAttachments(actor,operationId,attachments,context) as {key:string;refs:AttachmentRef[]};
+   const operationKey='send:'+operationId;
+   const messageId=store.transaction(()=>{
+    const id=history.commitAssistant({threadId,requestId,text:'文件见附件',operationKey,attachments:staged.refs,...task});
+    store.db.prepare(`INSERT OR IGNORE INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson)
+      VALUES(?,?,'user-messages',?,'send_user_message','synthetic','confirmed','{}',?)`)
+      .run(operationKey,actor.agentId,operationId,JSON.stringify({messageId:id}));
+    app.commitAttachments(staged.key,staged.refs,id);
+    return id;
+   });
+   const ref=history.message(messageId)?.attachments?.[0];
    if(!ref)throw Error('synthetic_attachment_missing');
    const snapshot=media.readAttachment(ref);
-   return {messageId:String(sent.messageId),...ref,path:snapshot.path,sha256:snapshot.asset.hash};
+   return {messageId,...ref,path:snapshot.path,sha256:snapshot.asset.hash};
   };
   return {dir,store,history,media,app,bridge,inputs,queuedInput,threadId,replyId,original,protectedFile,hidden,bytes,classifiedMime:detectMedia(bytes),send,close};
  }catch(error){close();throw error;}

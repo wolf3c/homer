@@ -28,9 +28,9 @@ const str={type:'string',minLength:1},text={...str,maxLength:16000};
 const trigger={type:'object',properties:{at:str,cron:str,timeZone:str},additionalProperties:false};
 const tool=(name:string,description:string,properties:Record<string,unknown>,required:string[]):Tool=>({type:'function',name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}});
 export const SCHEDULE_TOOLS:Tool[]=[
-  tool('schedule_create','Schedule a message to Homer once at an offset ISO time, or with five-field cron and an explicit IANA timeZone. Recurring messages require ongoing authorization. Accepted means scheduled, not completed.',{text,trigger},['text','trigger']),
+  tool('schedule_create','Schedule a message to Homer once at an offset ISO time, or with five-field cron and an explicit IANA timeZone. Recurring messages require ongoing authorization. Set taskId only when the original user wants the result delivered to the existing subscription for this task. Accepted means scheduled, not completed.',{text,trigger,taskId:str},['text','trigger']),
   tool('schedule_list','List authorized schedules. Set receipts=true to recover original create/update/cancel receipts after a lost response; do not combine receipts with scheduleId or enabled. A missing receipt does not prove the earlier call failed.',{scheduleId:str,enabled:{type:'boolean'},receipts:{type:'boolean'},offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:100}},[]),
-  tool('schedule_update','Change an authorized schedule with its current revision and at least one of text, trigger or enabled. Re-enabling or updating starts future delivery from now. Changing text requires authority for the new message.',{scheduleId:str,expectedRevision:{type:'integer',minimum:1},text,trigger,enabled:{type:'boolean'}},['scheduleId','expectedRevision']),
+  tool('schedule_update','Change an authorized schedule with its current revision. Set text, trigger, enabled, or taskId. Use taskId only when the user authorizes sending future results to that task’s existing subscription. Re-enabling or updating starts future delivery from now.',{scheduleId:str,expectedRevision:{type:'integer',minimum:1},text,trigger,enabled:{type:'boolean'},taskId:str},['scheduleId','expectedRevision']),
   tool('schedule_cancel','Disable future delivery at the expected revision. Messages already accepted by Homer remain in its inbox.',{scheduleId:str,expectedRevision:{type:'integer',minimum:1}},['scheduleId','expectedRevision']),
 ];
 
@@ -92,7 +92,7 @@ export class Schedules {
   }
   update(input:{scheduleId:string;expectedRevision:number;text?:string;trigger?:ScheduleTrigger;enabled?:boolean;sourceRef?:string}):Schedule {
     if(this.closed)throw Error('schedules_closed');
-    if(input.text===undefined&&input.trigger===undefined&&input.enabled===undefined)throw Error('schedule_empty_update');
+    if(input.text===undefined&&input.trigger===undefined&&input.enabled===undefined&&input.sourceRef===undefined)throw Error('schedule_empty_update');
     const row=this.row(input.scheduleId);if(row.revision!==input.expectedRevision)throw Error('schedule_revision_conflict');
     const now=this.now(),rule=normalizeTrigger(input.trigger??view(row).trigger),enabled=input.enabled??(row.enabled===1);
     const calculated=nextTime(rule,now),nextFireAt=enabled?calculated:null;if(nextFireAt!==null&&nextFireAt<=now)invalid('schedule_time_past');

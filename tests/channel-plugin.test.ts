@@ -2,18 +2,23 @@ import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {existsSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {createInterface} from 'node:readline';
 import {DatabaseSync} from 'node:sqlite';
 import {setImmediate as yieldTurn} from 'node:timers/promises';
 import test from 'node:test';
 import {ChannelPlugin, type ChannelAdapter, type ChannelPacket} from '../src/channel-plugin.js';
+import type {TurnResult} from '../src/engine.js';
 import {fixture, until} from './fixtures/worker-chat-host.js';
+import {mcpCall} from './fixtures/host-mcp-call.js';
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 
 const address = (suffix: string) => ({adapterId:'simulation',accountKey:suffix,senderKey:'sender-'+suffix,conversationKey:'room-'+suffix});
 const A = address('a'), B = address('b');
 const input = (entry: typeof A, eventId:string, text:string) => ({...entry,eventId,text});
 const tables = (app: ReturnType<typeof fixture>['app']) => app.store.db.prepare(
   "SELECT name,sql FROM sqlite_master WHERE type IN ('table','index') ORDER BY name").all();
+const nativeFinal=(text:string):TurnResult=>({status:'completed',text,messages:[{itemId:'final',phase:'final_answer',text}]});
 
 test('Homer manages configured channels and connects only explicitly bound accounts', async()=>{
   const connections:Parameters<NonNullable<ChannelAdapter['connect']>>[]=[];
@@ -145,6 +150,137 @@ async function subscribe(main: ReturnType<typeof fixture>['engines'][number], ta
   } finally {lines.close();child.stdin.end();child.kill();await stopped;}
 }
 
+test('a subscribed Worker final is caught up once with the exact linked file',async()=>{
+  const f=fixture();
+  const sent:ChannelPacket[]=[];
+  const adapter={id:'simulation',async send(packet:ChannelPacket){sent.push(packet);return {state:'sent' as const};}};
+  let plugin=new ChannelPlugin(f.app,[adapter]);
+  let taskId='',workerId='',returned=0;
+  const report=join(f.app.config.workspace,'report.md'),destination=pathToFileURL(report).href;
+  const finals=['Before subscription',`Subscribed final. [Report](${destination})`,
+    '[Desktop file](/private/synthetic/report.md)','![Desktop image][picture]\n\n[picture]: file:///private/synthetic/screenshot.png'];
+  try{
+    plugin.bind(B);
+    plugin.bind(A);
+    f.setScript(async(main,text)=>{
+      if(text==='delegate')({taskId,workerId}=await main.call('worker_open',{title:'Prepare report',message:'Prepare report'}));
+      else if(text==='subscribe')await subscribe(main,taskId);
+      else if(text==='continue')await main.call('worker_send',{workerId,message:'Continue'});
+      else if(text.startsWith('[内部协作输入')){
+        const final=finals[returned++]!;
+        return {status:'completed',text:'INTERNAL COMMENTARY\n'+final,messages:[
+          {itemId:'commentary',phase:'commentary',text:'INTERNAL COMMENTARY'},
+          {itemId:'final',phase:'final_answer',text:final},
+        ]};
+      }
+      return {status:'completed',text:'Acknowledged'};
+    });
+    const endWorker=async()=>{
+      await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+      const worker=f.engines.findLast(engine=>engine.options.role==='worker'&&engine.finish)!;
+      const finish=worker.finish!;worker.finish=undefined;
+      finish({status:'completed',text:`INTERNAL WORKER REPLY [Report](${destination})`});
+      await f.app.idle();
+    };
+    await f.app.start();
+    writeFileSync(report,'# Published report');
+    plugin.receiveText(input(A,'delegate','delegate'));
+    await endWorker();
+    plugin.receiveText(input(B,'subscribe','subscribe'));
+    await f.app.idle();
+    for(let i=1;i<finals.length;i++){
+      plugin.receiveText(input(A,'continue-'+i,'continue'));
+      await endWorker();
+    }
+    assert.equal(sent.length,0);
+    const expected=f.app.history.list(f.app.store.meta('mainThread')!).find(message=>message.text===finals[1])!;
+    assert.ok(expected);
+    const [ref]=expected.attachments??[];
+    assert.ok(ref);
+    writeFileSync(report,'# Changed after publication');
+    const projected=(await import('../src/web-homer.js')).homerWebBridge(f.app);
+    const state=await projected.history!.state();
+    assert.ok(state.artifacts?.some(file=>file.messageId===expected.id&&file.assetId===ref.assetId&&file.destination===destination));
+    assert.equal(Buffer.from((await projected.media!.read({messageId:expected.id,...ref})).data,'base64').toString(),'# Published report');
+    assert.equal(f.app.readMessageFile({threadId:expected.threadId,messageId:expected.id,destination}).bytes.toString(),'# Published report');
+    assert.equal(f.app.readCommittedMessage(expected.id,{taskId,taskVersion:expected.taskVersion!+1}),undefined);
+    assert.equal(f.app.readCommittedMessage(expected.id,{requestId:'other-input'}),undefined);
+    const visible=f.app.webHistoryPages().read(f.app.store.meta('mainThread')!).messages.map(message=>message.text);
+    for(const final of finals)assert.equal(visible.filter(text=>text===final).length,1);
+    await plugin.close();
+    await f.restart(app=>{plugin=new ChannelPlugin(app,[adapter]);});
+    await plugin.synchronize();
+    const results=()=>sent.filter(packet=>packet.part.kind!=='text'||packet.part.text!=='Acknowledged');
+    assert.deepEqual(results().map(packet=>[packet.address,packet.messageId,packet.part.kind==='text'?packet.part.text:Buffer.from(packet.part.data,'base64').toString()]),
+      [[B,expected.id,'Subscribed final. Report'],[B,expected.id,'# Published report']]);
+    await plugin.synchronize();
+    assert.equal(results().length,2);
+    await plugin.close();
+    await f.restart(app=>{plugin=new ChannelPlugin(app,[adapter]);});
+    await plugin.synchronize();
+    assert.equal(results().length,2);
+  }finally{await plugin.close();await f.close();}
+});
+
+for(const revoke of [false,true])test(`a scheduled result ${revoke?'respects original authority revoked before sending':'follows the explicitly selected task subscription after restart'}`,async t=>{
+  let now=Date.now(),taskId='',runs=0;
+  let scheduleError:unknown;
+  t.mock.method(Date,'now',()=>now);
+  const f=fixture(),final='The timed report is ready.';
+  const sent:ChannelPacket[]=[];
+  const adapter={id:'simulation',async send(packet:ChannelPacket){sent.push(packet);return {state:'sent' as const};}};
+  let plugin=new ChannelPlugin(f.app,[adapter]);
+  try{
+    const originBinding=plugin.bind(A);plugin.bind(B);
+    f.setScript(async(main,text)=>{
+      if(text==='prepare')({taskId}=await main.call('worker_open',{title:'Prepare report',message:'Upcoming report'}));
+      else if(text==='subscribe')await subscribe(main,taskId);
+      else if(text==='plan'){
+        const mcp=main.options.interactionMcp!;
+        const call=async(name:string,args:object)=>{
+          const itemId='timed-report-'+name;
+          main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId,tool:name,arguments:args});
+          return mcpCall(mcp.args[mcp.args.indexOf('main')-1]!,name,args,{callId:itemId,'x-codex-turn-metadata':{turn_id:main.turnId}});
+        };
+        const created=await call('schedule_create',{text:'Prepare the timed report',...(!revoke?{taskId}:{}),trigger:{at:new Date(now+60000).toISOString()}});
+        scheduleError=created.error;
+        if(revoke&&created.result){
+          const {scheduleId,revision}=created.result as {scheduleId:string;revision:number};
+          scheduleError=(await call('schedule_update',{scheduleId,expectedRevision:revision,taskId})).error;
+        }
+      }else if(text.startsWith('[定时消息；')){
+        runs++;
+        return {status:'completed',text:final,messages:[{itemId:'f',phase:'final_answer',text:final}]};
+      }
+      return {status:'completed',text:'Acknowledged'};
+    });
+    await f.app.start();
+    plugin.receiveText(input(A,'prepare','prepare'));
+    await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+    f.engines.find(engine=>engine.options.role==='worker')!.finish!({status:'completed',text:'Ready'});
+    await f.app.idle();
+    assert.ok(taskId);
+    plugin.receiveText(input(B,'subscribe','subscribe'));await f.app.idle();
+    plugin.receiveText(input(A,'plan','plan'));await f.app.idle();
+    assert.equal(scheduleError,undefined);
+    assert.equal(f.app.store.db.prepare('SELECT count(*) AS n FROM schedules').get()!.n,1);
+    now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
+    assert.equal(runs,1);
+    const entry=f.app.history.list(f.app.store.meta('mainThread')!).find(message=>message.text===final)!;
+    assert.equal(entry?.taskId,taskId);
+    assert.equal(entry?.requestId,null);
+    assert.equal(sent.length,0);
+    if(revoke)plugin.revokeBinding(originBinding);
+    const deliveries=()=>sent.filter(item=>item.part.kind==='text'&&item.part.text===final);
+    for(let i=0;i<2;i++){
+      await plugin.close();await f.restart(app=>{plugin=new ChannelPlugin(app,[adapter]);});
+      await plugin.synchronize();
+      assert.deepEqual(deliveries().map(item=>[item.address,item.messageId]),revoke?[]:[[B,entry.id]]);
+    }
+    assert.equal(runs,1);
+  }finally{await plugin.close();await f.close();}
+});
+
 test('two simulated bots on one adapter isolate bindings, replies and subscribed attachments', async () => {
   const f=fixture();
   const sent:ChannelPacket[]=[];
@@ -155,6 +291,7 @@ test('two simulated bots on one adapter isolate bindings, replies and subscribed
   let background=0;
   try {
     const report=join(f.app.config.workspace,'report.md'),notes=join(f.app.config.workspace,'notes.md');
+    const reportFinal=`[Report ready](${pathToFileURL(report).href}) · [Notes](${pathToFileURL(notes).href})`;
     writeFileSync(report,'# Original report');
     writeFileSync(notes,'# Original notes');
     f.setScript(async(main,text)=>{
@@ -164,16 +301,15 @@ test('two simulated bots on one adapter isolate bindings, replies and subscribed
       }
       if(text==='subscribe'){await subscribe(main,taskId);return {status:'completed',text:'Subscribed'};}
       if(text==='continue'){await main.call('worker_send',{workerId,message:'Continue'});return {status:'completed',text:'Continuing'};}
-      if(text==='ask')await main.call('send_user_message',{taskId,text:'Progress answer'});
       if(text.startsWith('[内部协作输入')){
-        if(++background===1)await main.call('send_user_message',{text:'Before subscription'});
-        else if(background===2){
-          await main.call('send_user_message',{text:'Progress after subscription'});
-          await main.call('send_user_message',{text:'Report ready',attachments:[{path:report},{path:notes}]});
-        }else await main.call('send_user_message',{text:background===3?'Before switch':'After switch'});
-        return {status:'completed',text:''};
+        if(++background===1)return nativeFinal('Before subscription');
+        if(background===2)return {status:'completed',text:'Progress after subscription\n'+reportFinal,messages:[
+          {itemId:'progress',phase:'commentary',text:'Progress after subscription'},
+          {itemId:'final',phase:'final_answer',text:reportFinal},
+        ]};
+        return nativeFinal(background===3?'Before switch':'After switch');
       }
-      return {status:'completed',text:'Progress answer'};
+      return nativeFinal('Progress answer');
     });
     plugin=new ChannelPlugin(f.app,[adapter]);
     assert.notEqual(plugin.bind(A),plugin.bind(B));
@@ -191,7 +327,7 @@ test('two simulated bots on one adapter isolate bindings, replies and subscribed
       const worker=f.engines.findLast(engine=>engine.options.role==='worker'&&engine.finish)!;
       assert.ok(!worker.options.interactionMcp!.catalog!.some(tool=>tool.name==='set_notification_destination'));
       const finish=worker.finish!;worker.finish=undefined;
-      finish({status:'completed',text:'Internal work only'});
+      finish({status:'completed',text:reportFinal});
       await f.app.idle();
     };
     await endWorker();
@@ -213,11 +349,11 @@ test('two simulated bots on one adapter isolate bindings, replies and subscribed
     await f.restart(app=>{plugin=new ChannelPlugin(app,[adapter]);});
     // No listener ran for these messages. Startup catch-up must recover all of them.
     plugin.start();
-    await until(()=>sent.length===8);
+    await until(()=>sent.length===7);
     await plugin.synchronize();
     const texts=sent.flatMap(p=>p.part.kind==='text'?[[p.address.accountKey,p.part.text]]:[]);
     assert.deepEqual(texts.filter(([key])=>key==='a').map(([,text])=>text),['Accepted','Progress answer','Continuing']);
-    assert.deepEqual(texts.filter(([key])=>key==='b').map(([,text])=>text),['Subscribed','Progress after subscription','Report ready']);
+    assert.deepEqual(texts.filter(([key])=>key==='b').map(([,text])=>text),['Subscribed','Report ready · Notes']);
     const files=sent.flatMap(p=>p.part.kind==='attachment'?[[p.address.accountKey,p.part.filename,Buffer.from(p.part.data,'base64').toString()]]:[]);
     assert.deepEqual(files,[['b','report.md','# Original report'],['b','notes.md','# Original notes']]);
     for(const packet of sent)assert.deepEqual(packet.address,packet.address.accountKey===A.accountKey?A:B);
@@ -279,8 +415,7 @@ test('subscription survives a lost tool receipt and old retries cannot undo a la
       else if(text==='switch')secondSubscription=(await subscribe(main,taskId))!.subscriptionId;
       else if(text==='continue')await main.call('worker_send',{workerId,message:'Continue'});
       else if(text.startsWith('[内部协作输入')){
-        await main.call('send_user_message',{text:`Background ${++background}`});
-        return {status:'completed',text:''};
+        return nativeFinal(`Background ${++background}`);
       }
       return {status:'completed',text:'Acknowledged'};
     });
@@ -348,10 +483,7 @@ test('unknown send and revoked binding stay pinned to their original outbox item
   }};
   try {
     const report=join(f.app.config.workspace,'report.md');writeFileSync(report,'# Synthetic report');
-    f.setScript(async(main,text)=>{
-      if(text==='file')await main.call('send_user_message',{text:'Report',attachments:[{path:report}]});
-      return {status:'completed',text:'Normal'};
-    });
+    f.setScript(async(_main,text)=>nativeFinal(text==='file'?`[Report](${pathToFileURL(report).href})`:'Normal'));
     plugin=new ChannelPlugin(f.app,[adapter]);
     old=plugin.bind(A);
     plugin.bind(B);
@@ -395,10 +527,7 @@ test('recovery retains the exact in-flight attachment when a successful transpor
   try{
     const file=join(f.app.config.workspace,'report.md');
     writeFileSync(file,'# Durable attempted attachment');
-    f.setScript(async main=>{
-      await main.call('send_user_message',{text:'Report',attachments:[{path:file}]});
-      return {status:'completed',text:''};
-    });
+    f.setScript(async()=>nativeFinal(`[Report](${pathToFileURL(file).href})`));
     plugin=new ChannelPlugin(f.app,[adapter]);plugin.bind(A);
     db=new DatabaseSync(join(f.app.config.runtime,'channels.sqlite'));
     await f.app.start();
@@ -430,20 +559,23 @@ test('idle polling avoids rescans and only backfills the missed second reply of 
   const sent:ChannelPacket[]=[];
   const plugin=new ChannelPlugin(f.app,[{id:'simulation',async send(packet){sent.push(packet);return {state:'sent'};}}]);
   let release!:()=>void;
+  let requestId:string;
   const blocked=new Promise<void>(resolve=>{release=resolve;});
   try{
-    f.setScript(async main=>{
-      await main.call('send_user_message',{text:'First reply'});
+    f.setScript(async()=>{
+      const thread=f.app.store.meta('mainThread')!;
+      const {messageId}=commitSyntheticMessage(f.app,thread,'First reply',[],requestId);
+      (f.app as unknown as {notifyCommittedMessage(id:string):void}).notifyCommittedMessage(messageId);
       await blocked;
-      await main.call('send_user_message',{text:'Second reply'});
-      return {status:'completed',text:''};
+      commitSyntheticMessage(f.app,thread,'Second reply',[],requestId);
+      return nativeFinal('First reply');
     });
     plugin.bind(A);plugin.bind(B);
     await f.app.start();
     const reads=t.mock.method(f.app,'listCommittedMessages');
     t.mock.timers.enable({apis:['setInterval']});
     plugin.start();
-    const requestId=plugin.receiveText(input(A,'two-replies','Two replies'));
+    requestId=plugin.receiveText(input(A,'two-replies','Two replies'));
     await until(()=>sent.length===1);
     await plugin.synchronize();
     const settled=reads.mock.callCount();
@@ -453,7 +585,6 @@ test('idle polling avoids rescans and only backfills the missed second reply of 
     await yieldTurn();
     assert.equal(reads.mock.callCount(),settled);
 
-    t.mock.method(f.app as unknown as {notifyCommittedMessage(id:string):void},'notifyCommittedMessage',()=>{});
     release();
     await f.app.idle();
     assert.equal(sent.length,1);
@@ -549,7 +680,7 @@ test('live replacement stops the old multipart sender between parts',async()=>{
  const old:ChannelAdapter={id:'simulation',async send(packet){started=true;sent.push('old:'+packet.part.kind);await gate;return {state:'sent'};}},f=fixture([old]);
  try{
   const file=join(f.app.config.workspace,'proof.txt');writeFileSync(file,'synthetic');
-  f.setScript(async main=>{await main.call('send_user_message',{text:'report',attachments:[{path:file}]});return {status:'completed',text:'done'};});
+  f.setScript(async()=>nativeFinal(`[report](${pathToFileURL(file).href})`));
   f.app.channels!.bind(A);await f.app.start();f.app.channels!.receiveText(input(A,'multipart','multipart'));
   await until(()=>started);
   const applying=f.app.channels!.reconfigure('simulation',()=>{},()=>({id:'simulation',async send(packet){sent.push('new:'+packet.part.kind);return {state:'sent' as const};},applyBindings(plugin:ChannelPlugin){plugin.configureBindings('simulation',[A]);}}));
@@ -595,7 +726,7 @@ test('saved apply failure holds newly committed text and attachments until expli
  const old:ChannelAdapter={id:'simulation',async send(packet){sent.push(packet);return {state:'sent'};}},f=fixture([old]);
  try{
   const file=join(f.app.config.workspace,'paused.txt');writeFileSync(file,'synthetic');
-  f.setScript(async main=>{entered=true;await gate;await main.call('send_user_message',{text:'held reply',attachments:[{path:file}]});return {status:'completed',text:'done'};});
+  f.setScript(async()=>{entered=true;await gate;return nativeFinal(`[held reply](${pathToFileURL(file).href})`);});
   f.app.channels!.bind(A);await f.app.start();f.app.channels!.receiveText(input(A,'paused-send','report'));await until(()=>entered);
   await assert.rejects(f.app.channels!.reconfigure('simulation',()=>{},()=>({...old,applyBindings(){throw Error('synthetic_apply_failed');}})),/synthetic_apply_failed/);
   release();await f.app.idle();await f.app.channels!.synchronize();
@@ -611,16 +742,17 @@ test('saved apply failure holds subscribed Worker output until explicit reload',
  const sent:ChannelPacket[]=[],old:ChannelAdapter={id:'simulation',async send(packet){sent.push(packet);return {state:'sent'};}},f=fixture([old]);let taskId='';
  try{
   const file=join(f.app.config.workspace,'subscription.txt');writeFileSync(file,'synthetic');
+  const report=`[held subscription](${pathToFileURL(file).href})`;
   f.setScript(async(main,text)=>{
    if(text.endsWith('delegate')){({taskId}=await main.call('worker_open',{title:"synthetic work",message:'synthetic work'}));return {status:'completed',text:'accepted'};}
    if(text.endsWith('subscribe')){await subscribe(main,taskId);return {status:'completed',text:'subscribed'};}
-   await main.call('send_user_message',{text:'held subscription',attachments:[{path:file}]});return {status:'completed',text:''};
+   return nativeFinal(report);
   });
   const plugin=f.app.channels;assert.ok(plugin);plugin.bind(A);await f.app.start();plugin.receiveText(input(A,'subscription-delegate','delegate'));
   await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));const registered=plugin.receiveText(input(A,'subscription-register','subscribe'));
   await until(()=>f.app.store.request(registered)?.state==='completed');await plugin.synchronize();
   const baseline=sent.length;await assert.rejects(plugin.reconfigure('simulation',()=>{},()=>({...old,applyBindings(){throw Error('synthetic_apply_failed');}})),/synthetic_apply_failed/);
-  const worker=f.engines.find(engine=>engine.options.role==='worker');assert.ok(worker?.finish);worker.finish({status:'completed',text:'done'});worker.finish=undefined;
+  const worker=f.engines.find(engine=>engine.options.role==='worker');assert.ok(worker?.finish);worker.finish({status:'completed',text:report});worker.finish=undefined;
   await f.app.idle();await plugin.synchronize();assert.equal(sent.length,baseline);
   const db=new DatabaseSync(join(f.app.config.runtime,'channels.sqlite'),{readOnly:true});
   try{assert.equal(db.prepare("SELECT count(*) n FROM channel_outbox WHERE subscriptionId IS NOT NULL AND state='queued'").get()?.n,1);}finally{db.close();}

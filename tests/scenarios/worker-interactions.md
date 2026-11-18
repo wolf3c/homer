@@ -7,8 +7,8 @@
 显式入口 `scripts/real-worker-interactions.ts <已获准连接配置>` 自动创建 `.codex/scratch/worker-interactions/real-<时间>/workspace`、`.codex/private/wi-<时间>`，配置须指向已获准的独立 CODEX_HOME。脚本不复制凭据，不操作日常 runtime 或主线程。CLI 标准输入保持打开，以便用户答复；每次重跑使用新目录。
 
 1. 用当前版本创建独立主会话并告知主 Agent 随机合成标题；关闭该引擎，再以 Homer CLI 恢复原 ID，核验标题回忆与历史保留。
-2. 要求派独立 Worker，按文件地址读取材料，再调用 `ask_main` 确认标题。主 Agent 直接回答，Worker 写入实际答复并回报文件地址。核对内容后，主 Agent 用 `send_user_message` 发送选定的 Markdown 附件。
-3. 再派 Worker，ask_main 询问尚未给出的用户指定合成版式。主 Agent 用 `escalate_interaction` 保留待答，再通过 `send_user_message` 将问题呈现给 CLI 用户。
+2. 要求派独立 Worker，按文件地址读取材料，再调用 `ask_main` 确认标题。主 Agent 直接回答，Worker 写入实际答复并回报文件地址。核对内容后，主 Agent 在最终答复中用 Markdown 链接交付选定文件。
+3. 再派 Worker，ask_main 询问尚未给出的用户指定合成版式。主 Agent 用 `escalate_interaction` 保留待答，在最终答复中把问题呈现给 CLI 用户。
 4. 发送一条明确不回答待答的普通聊天，验证主 Agent 能回复且原问题保持未答。
 5. 发送准确 interactionId 与随机版式，主 Agent 查看并答复；断言原 Worker pid/thread 未变，实际成果包含版式且成功交付，未重新派发。
 6. 可选 `--native`：用户明确要求本次本人确认，第三 Worker 使用原生 request_permissions 申请仅自己 cwd 的 read，CLI 退出后复用同一线程与隔离 runtime，沿现有结构化审批入口提交用户决定。观察 Homer 先呈现待答，再依据用户决定回复原 Worker。验证原生请求范围、`approved`、`deliveredAt`、实际用户回执与准确文件字节；该场景不证明任务内代审。

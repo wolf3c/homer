@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import {mcpCall} from './fixtures/host-mcp-call.js';
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 import test from 'node:test';
 import {fixture} from './fixtures/worker-chat-host.js';
 
 test('scoped catch-up returns all confirmed replies, filters revoked and unrelated rows', async () => {
   const f = fixture();
   try {
-    f.setScript(async (main, text) => {
+    f.setScript(async (_main, text) => {
       if (text === 'multi') {
-        await main.call('send_user_message', {text: 'First'});
-        await main.call('send_user_message', {text: 'Second'});
+        const thread=f.app.store.meta('mainThread')!;
+        for(const reply of ['First','Second'])commitSyntheticMessage(f.app,thread,reply,[],'channel-multi');
+        return {status:'completed',text:'First'};
       }
       return {status:'completed', text:'Normal'};
     });
@@ -31,9 +33,10 @@ test('scoped catch-up returns all confirmed replies, filters revoked and unrelat
 test('scoped enumeration continues after a full page without duplicating message IDs', async () => {
   const f=fixture();
   try {
-    f.setScript(async main=>{
-      for(let index=0;index<66;index++)await main.call('send_user_message',{text:'Part '+index});
-      return {status:'completed',text:''};
+    f.setScript(async ()=>{
+      const thread=f.app.store.meta('mainThread')!;
+      for(let index=0;index<66;index++)commitSyntheticMessage(f.app,thread,'Part '+index,[],'channel-paged');
+      return {status:'completed',text:'Part 0'};
     });
     await f.app.start();
     await f.app.message('multi','channel-paged');

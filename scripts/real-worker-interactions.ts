@@ -78,7 +78,7 @@ try {
   const originalMain = rows("meta").find(item => item.key === "mainThread").value;
   assert.equal(originalMain, preparedThread!);
   stage = "ask_main_direct";
-  send(`请现在派发一个独立文件任务，材料 ${samplePath}。验收目标明确要求 Worker 先按地址读取材料，再必须调用 ask_main 一次询问主Agent刚才记住的合成标题；即使goal带了标题也必须确认，然后把实际返回的合成标题和材料中的负责人/日期待确认写入 Markdown。主Agent知道答案，应直接 respond_interaction 回答，不用问用户。Worker 回报后核对正文和文件，用 send_user_message 发送选定的 Markdown 附件。`);
+  send(`请现在派发一个独立文件任务，材料 ${samplePath}。验收目标明确要求 Worker 先按地址读取材料，再必须调用 ask_main 一次询问主Agent刚才记住的合成标题；即使goal带了标题也必须确认，然后把实际返回的合成标题和材料中的负责人/日期待确认写入 Markdown。主Agent知道答案，应直接 respond_interaction 回答，不用问用户。Worker 回报后核对正文和文件，在最终答复中用绝对路径 Markdown 链接交付。`);
   await until(() => rows("runs").some(run=>filesForRun(run.id).length>0));
   const direct = rows("worker_interactions").find(item => item.source === "ask_main");
   assert.ok(direct && direct.state === "answered" && direct.deliveredAt);
@@ -86,8 +86,8 @@ try {
   const run = rows("runs").find(item => item.id === direct.runId);
   assert.equal(run.status, "succeeded"); assert.ok(artifactText(run.id).includes(marker));
   stage = "escalate_user";
-  send(`请现在先派发第二个独立任务，材料 ${samplePath}，不要在派发前问用户。Worker 必须先按地址读取材料，再调用 ask_main 询问‘用户专门指定的合成展示版式是什么？’。该版式尚未告知主Agent，用户要求禁止推测或替选；主Agent须使用 escalate_interaction 询问用户，并通过 send_user_message 将问题呈现给 CLI 用户。Worker 得到真实答复后，写入包含版式标签及材料事实的 Markdown，回报路径后由主Agent 发送选定附件。这是验收所必需的用户选择。`);
-  await until(() => rows("worker_interactions").some(item=>item.source==="ask_main"&&item.state==="pending_user") && messages.some(message=>message.type==="reply"&&/版式/.test(message.text)));
+  send(`请现在先派发第二个独立任务，材料 ${samplePath}，不要在派发前问用户。Worker 必须先按地址读取材料，再调用 ask_main 询问‘用户专门指定的合成展示版式是什么？’。该版式尚未告知主Agent，用户要求禁止推测或替选；主Agent须使用 escalate_interaction 并在最终答复中提出问题。Worker 得到真实答复后，写入包含版式标签及材料事实的 Markdown，回报路径后由主Agent 在最终答复中链接文件。这是验收所必需的用户选择。`);
+  await until(() => rows("worker_interactions").some(item=>item.source==="ask_main"&&item.state==="pending_user") && messages.some(message=>message.type==="coordination"&&/版式/.test(message.text)));
   const waiting = rows("worker_interactions").find(item=>item.source==="ask_main"&&item.state==="pending_user");
   assert.ok(waiting.userQuestion);
   const originalWorker = rows("runs").find(item => item.id === waiting.runId);

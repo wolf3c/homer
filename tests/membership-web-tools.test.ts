@@ -6,9 +6,10 @@ import {EventEmitter,once} from 'node:events';
 import {constants,copyFileSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,writeFileSync} from 'node:fs';
 import {createServer} from 'node:http';
 import {createConnection,type AddressInfo} from 'node:net';
-import {dirname,join,resolve} from 'node:path';
+import {basename,dirname,join,resolve} from 'node:path';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
+import {pathToFileURL} from 'node:url';
 import type {Config} from '../src/config.js';
 import type {EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
 import {Homer} from '../src/service.js';
@@ -216,7 +217,7 @@ test('membership video submits only after user approval and retrieves the origin
   const posts:string[]=[],errors:unknown[]=[],results:Record<string,any>={};
   const gatewayId='task_'+'A'.repeat(32),workerId='task_'+'B'.repeat(32);
   const getCalls:string[]=[];
-  let app!:Homer,mainMessageId:string,mode='complete',videoMessageId:string,pollClosed=false;
+  let app!:Homer,mainMessageId:string,mode='complete',pollClosed=false;
   const gateway=createServer(async(req,res)=>{
     if(req.method==='GET'&&req.url==='/v1/models'){res.end(JSON.stringify({data:[]}));return;}
     try{
@@ -276,6 +277,7 @@ test('membership video submits only after user approval and retrieves the origin
         const reply=await rpc('tools/call',{name:'generate_video',arguments:args});
         results[key]=reply.isError?{code:reply.content[0].text}:JSON.parse(reply.content[0].text);
       });
+      let answer='Synthetic video turn completed.';
       try{
         if(worker){
           await video('worker-foreign',{receipt:results.resume.receipt});
@@ -285,15 +287,11 @@ test('membership video submits only after user approval and retrieves the origin
         else if(input){
           await video(input.key,input.args);
           const path=results[input.key]?.path;
-          if(input.publish&&path){
-            const sent=await dynamic('send_user_message',{text:'Synthetic video is ready.',attachments:[{path}]});
-            assert.ok(sent.messageId);
-            videoMessageId=sent.messageId;
-          }
+          if(input.publish&&path)answer=`Synthetic video is ready. [${basename(path)}](<${pathToFileURL(path).href}>)`;
         }
       }catch(error){errors.push(error);}
       finally{this.turnActive=false;}
-      return {status:'completed',text:'Synthetic video turn completed.'};
+      return {status:'completed',text:answer,messages:[{itemId:'answer',phase:'final_answer',text:answer}]};
     }
   }
   const start=async()=>{
@@ -307,7 +305,7 @@ test('membership video submits only after user approval and retrieves the origin
   let sequence=0;
   const turn=async(input:object,decision?:boolean)=>{
     const sourceRequestId='video-fixture-'+ ++sequence;
-    app.submitMessage({requestId:sourceRequestId,text:'VIDEO_FIXTURE '+JSON.stringify(input)});
+    const {replyId}=app.submitMessage({requestId:sourceRequestId,text:'VIDEO_FIXTURE '+JSON.stringify(input)});
     const completed=app.idle();
     if(decision!==undefined){
       let unwatch=()=>{};
@@ -325,6 +323,7 @@ test('membership video submits only after user approval and retrieves the origin
       }finally{unwatch();}
     }
     await completed;assert.deepEqual(errors,[]);
+    return app.history.message(replyId)!;
   };
   try{
     await start();
@@ -332,8 +331,7 @@ test('membership video submits only after user approval and retrieves the origin
     await turn({key:'denied',args:{prompt:'denied'}},false);assert.deepEqual(posts,[]);
     await turn({key:'stop',args:{prompt:'stop'}},true);assert.deepEqual(posts,['stop']);assert.deepEqual(getCalls,[]);
     await app.close();await start();
-    await turn({key:'resume',args:{receipt:'latest'},publish:true});
-    const message=app.history.message(videoMessageId!)!;
+    const message=await turn({key:'resume',args:{receipt:'latest'},publish:true});
     assert.deepEqual(readFileSync(results.resume.path),mp4);
     assert.deepEqual(Buffer.from(app.readAttachment({messageId:message.id,...message.attachments![0]!}).data,'base64'),mp4);
     assert.doesNotMatch(JSON.stringify(results),/task_[AB]+|example.invalid|sk-synthetic/);
@@ -384,7 +382,7 @@ test('membership images generate and edit through MCP and publish the exact PNG'
   const requests:{path:string|undefined;prompt:string;model:string;auth:string|undefined}[]=[];
   const webAuth:(string|undefined)[]=[];
   const errors:unknown[]=[];
-  let app:Homer,mainMessageId:string|undefined,attachment:AttachmentRef,foreign:AttachmentRef,unselected:AttachmentRef,imageMessageId:string|undefined,finishNativeTurn:()=>void;
+  let app:Homer,mainMessageId:string|undefined,attachment:AttachmentRef,foreign:AttachmentRef,unselected:AttachmentRef,finishNativeTurn:()=>void;
   const gateway=createServer(async(req,res)=>{
     if(req.method==='GET'&&req.url==='/v1/models'){res.end(JSON.stringify({data:[]}));return;}
     try{
@@ -445,6 +443,7 @@ test('membership images generate and edit through MCP and publish the exact PNG'
       if(text.startsWith('[内部协作输入'))return {status:'completed',text:''};
       const worker=this.options.role==='worker',terminal=text.startsWith('Finish a synthetic');
       const interrupted=terminal?'terminal':text.startsWith('Stop a synthetic')?'stop':undefined;
+      let answer='Synthetic image turn completed.';
       try{
         await withMcp(this.options,async rpc=>{
           const call=(args:unknown)=>rpc('tools/call',{name:'generate_image',arguments:args});
@@ -497,12 +496,12 @@ test('membership images generate and edit through MCP and publish the exact PNG'
             assert.deepEqual(readdirSync(dir),before);
           }else{
             const dynamic=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args}) as Promise<Record<string,string>>;
-            imageMessageId=(await dynamic('send_user_message',{text:'Synthetic image is ready.',attachments:[{path:generatedPath}]})).messageId;
+            answer=`Synthetic image is ready. [${basename(generatedPath!)}](<${pathToFileURL(generatedPath!).href}>)`;
             await dynamic('worker_open',{title:"Generate and edit a synthetic image",message:'Generate and edit a synthetic image',attachments:[attachment]});
           }
         });
       }catch(error){errors.push(error);}
-      return {status:'completed',text:'Synthetic image turn completed.'};
+      return {status:'completed',text:answer,messages:[{itemId:'answer',phase:'final_answer',text:answer}]};
     }
   }
   app=new Homer(config,async message=>{if(message.type==='main_start')mainMessageId=message.messageId;},(options,tool)=>new Engine(options,tool));
@@ -515,11 +514,11 @@ test('membership images generate and edit through MCP and publish the exact PNG'
       return ref;
     };
     attachment=attach('synthetic-image-user');foreign=attach('unrelated-user');
-    app.submitMessage({requestId:'synthetic-image-user',text:'Generate and edit a synthetic image.',attachments:[attachment]});
+    const {replyId}=app.submitMessage({requestId:'synthetic-image-user',text:'Generate and edit a synthetic image.',attachments:[attachment]});
     unselected=attach('synthetic-image-user');
     await app.idle();
     assert.deepEqual(errors,[]);
-    const imageMessage=app.history.message(imageMessageId!)!;
+    const imageMessage=app.history.message(replyId)!;
     assert.deepEqual(Buffer.from(app.readAttachment({messageId:imageMessage.id,...imageMessage.attachments![0]!}).data,'base64'),png);
     const files=readdirSync(config.workspace);
     app.submitMessage({requestId:'synthetic-image-stop',text:'Stop a synthetic generation.'});
@@ -540,7 +539,7 @@ test('membership audio is gated by the Token catalog and approval, then delivers
   const token='sk-synthetic-audio-membership-only',mp3=Buffer.alloc(417);
   Buffer.from([0xff,0xfb,0x90,0x64]).copy(mp3);
   const posts:unknown[]=[],errors:unknown[]=[],results:Record<string,any>={};
-  let visible=false,app:Homer|undefined,published:string|undefined,mainMessageId:string|undefined;
+  let visible=false,app:Homer|undefined,mainMessageId:string|undefined;
   const gateway=createServer(async(req,res)=>{
     try{
       assert.equal(req.headers.authorization,'Bearer '+token);
@@ -581,6 +580,7 @@ test('membership audio is gated by the Token catalog and approval, then delivers
       const worker=this.options.role==='worker';
       const data=worker?{key:'worker',args:{input:'worker'},publish:false,repeat:false}:JSON.parse(text.match(/^AUDIO_FIXTURE (\{[^\n]*\})/m)?.[1]??'null');
       const dynamic=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args}) as Promise<Record<string,string>>;
+      let answer='Audio turn finished.';
       try{
         if(data?.delegate){await dynamic('worker_open',{title:'Generate speech',message:'Generate the requested speech'});}
         else if(data)await withMcp(this.options,async rpc=>{
@@ -594,25 +594,23 @@ test('membership audio is gated by the Token catalog and approval, then delivers
           if(data.repeat){const repeat=await speak();assert.equal(repeat.isError,true);}
           const path=results[data.key].path;
           if(data.publish&&path){
-            const send=()=>dynamic('send_user_message',{text:'Speech is ready.',attachments:[{path}]});
             if(data.replaceBeforePublish){
               const changed=Buffer.from(mp3);changed[changed.length-1]=1;
               writeFileSync(path,changed);
-              try{await assert.rejects(send,/membership_audio_receipt_unavailable/);}
-              finally{writeFileSync(path,mp3);}
-            }else published=(await send()).messageId;
+            }
+            answer=`Speech is ready. [${basename(path)}](<${pathToFileURL(path).href}>)`;
           }
         });
       }catch(error){errors.push(error);}
       finally{this.turnActive=false;}
-      return {status:'completed',text:'Audio turn finished.'};
+      return {status:'completed',text:answer,messages:[{itemId:'answer',phase:'final_answer',text:answer}]};
     }
   }
   const start=async()=>{app=new Homer(config,async message=>{if(message.type==='main_start')mainMessageId=message.messageId;},(options,tool)=>new Engine(options,tool));await app.start();};
   let turnCount=0;
   const turn=async(input:object,decision?:boolean)=>{
     const host=app!,sourceRequestId='audio-fixture-'+ ++turnCount;
-    host.submitMessage({requestId:sourceRequestId,text:'AUDIO_FIXTURE '+JSON.stringify(input)});
+    const {replyId}=host.submitMessage({requestId:sourceRequestId,text:'AUDIO_FIXTURE '+JSON.stringify(input)});
     const completed=host.idle();
     if(decision!==undefined){
       let unwatch=()=>{};
@@ -634,6 +632,7 @@ test('membership audio is gated by the Token catalog and approval, then delivers
       }finally{unwatch();}
     }
     await completed;assert.deepEqual(errors,[]);
+    return host.history.message(replyId)!;
   };
   try{
     await start();
@@ -645,20 +644,23 @@ test('membership audio is gated by the Token catalog and approval, then delivers
     await turn({key:'invalid',args:{input:'hello',voice:'custom-voice'}});
     assert.equal(results.invalid.code,'invalid_tool_arguments');
     await turn({key:'denied',args:{input:'denied'}},false);assert.deepEqual(posts,[]);
-    await turn({key:'complete',args:{input:' 原文 😀 ',voice:'narrator',instructions:'慢一点'},repeat:true,publish:true},true);
+    const firstMessage=await turn({key:'complete',args:{input:' 原文 😀 ',voice:'narrator',instructions:'慢一点'},repeat:true,publish:true},true);
     assert.deepEqual(posts,[{model:'homer-tts',input:' 原文 😀 ',voice:'narrator',instructions:'慢一点',response_format:'mp3'}]);
     assert.equal(results.complete.mime,'audio/mpeg');assert.deepEqual(readFileSync(results.complete.path),mp3);
-    const firstMessage=app!.history.message(published!)!;
     assert.deepEqual(Buffer.from(app!.readAttachment({messageId:firstMessage.id,...firstMessage.attachments![0]!,preview:'voice'}).data,'base64'),mp3);
     await app!.close();await start();
-    await turn({key:'resend',args:{receipt:results.complete.receipt},publish:true});
+    const message=await turn({key:'resend',args:{receipt:results.complete.receipt},publish:true});
     assert.deepEqual(results.resend,results.complete);
     assert.equal(posts.length,1);
-    const message=app!.history.message(published!)!;
     assert.notEqual(message.id,firstMessage.id);
     const attachment=app!.readAttachment({messageId:message.id,...message.attachments![0]!,preview:'voice'});
     assert.equal(attachment.mime,'audio/mpeg');assert.deepEqual(Buffer.from(attachment.data,'base64'),mp3);
-    await turn({key:'replaced-before-publish',args:{receipt:results.complete.receipt},publish:true,replaceBeforePublish:true});
+    try{
+      const changed=await turn({key:'replaced-before-publish',args:{receipt:results.complete.receipt},publish:true,replaceBeforePublish:true});
+      assert.equal(changed.attachments,undefined);
+      assert.match(changed.text,/部分文件未能保存为可跨端打开的版本/);
+      assert.ok(app!.store.db.prepare("SELECT 1 FROM events WHERE type='final_attachment_unavailable' AND code='membership_audio_receipt_unavailable'").get());
+    }finally{writeFileSync(results.complete.path,mp3);}
     await turn({key:'mixed',args:{receipt:results.complete.receipt,input:'new'}});
     assert.equal(results.mixed.code,'invalid_tool_arguments');
     writeFileSync(results.complete.path,'changed');

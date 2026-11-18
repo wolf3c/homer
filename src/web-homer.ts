@@ -201,11 +201,12 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
   app.registerWebSurface(draftUpload);
   const files=(messages:readonly import('./web-history.js').ConversationMessage[]):WebArtifact[]=>messages.flatMap(message=>{
     if(message.role!=='assistant'||message.audience!=='user'||message.revokedAt!=null||message.status!=='completed')return [];
-    return (message.attachments??[]).flatMap(ref=>{
+    const destinations=message.attachments?.length?app.finalAttachmentDestinations(message.id):[];
+    return (message.attachments??[]).flatMap((ref,index)=>{
       const asset=app.media.asset(ref);
       if(!app.media.originalAvailable(asset)||!asset.hash)return [];
       return [{...ref,id:JSON.stringify([message.id,ref.assetId,ref.revision]),messageId:message.id,
-        title:asset.filename,sha256:asset.hash}];
+        title:asset.filename,sha256:asset.hash,...(destinations[index]?{destination:destinations[index]}:{})}];
     });
   });
   const taskFiles=(id:string)=>{

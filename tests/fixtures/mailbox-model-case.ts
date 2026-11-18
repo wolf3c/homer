@@ -19,7 +19,7 @@ type TaskUpdatePurpose='notes'|'goal'|'pause'|'resume'|'cancel'|'settle'|'invali
 type TaskUpdateTrace={purpose:TaskUpdatePurpose;targetMatches:boolean;allowed:boolean;outcome:'pending'|'completed'|'error';notesEffectValid:boolean|null};
 
 export function mailboxModelTrace(host:Pick<Homer,'tasks'>,taskId:string,operationKey:string){
- const allowed=new Set(['work_inspect','worker_read','inspect_interaction','respond_interaction','escalate_interaction','send_user_message']);
+ const allowed=new Set(['work_inspect','worker_read','inspect_interaction','respond_interaction','escalate_interaction']);
  const stableTask=({notes:_notes,revision:_revision,updatedAt:_updatedAt,...facts}:Task)=>facts;
  const snapshot=()=>{const task=host.tasks.task(taskId);return {task,version:host.tasks.version(taskId,task.headVersion),runs:host.tasks.runs(taskId),operation:host.tasks.operation(operationKey)};};
  const trace={tools:[] as string[],forbidden:[] as string[],toolErrors:[] as string[],taskUpdates:[] as TaskUpdateTrace[],originalReceiptRead:false,

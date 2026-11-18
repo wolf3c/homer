@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {setTimeout as wait} from 'node:timers/promises';
 import test from 'node:test';
+import {pathToFileURL} from 'node:url';
 import {WechatChannel, authorizeWechat, bindWechat, unbindWechat, readWechatAccounts, wechatStatus} from '../src/wechat-channel.js';
 import {secureWindowsDirectory} from '../scripts/windows-security.mjs';
 import {fixture,until} from './fixtures/worker-chat-host.js';
@@ -58,6 +59,7 @@ test('WeChat resumes separate private routes, ignores replay and cannot send on 
   const f=fixture(adapters);
   const runtime=f.app.config.runtime;
   const file=join(f.app.config.workspace,'wechat-report.txt');
+  const report=`[Delayed report](${pathToFileURL(file).href})`;
   writeFileSync(file,'WeChat fixture report');
   const pushes=new Map([[A.botToken,[] as object[]],[B.botToken,[] as object[]]]);
   const sent:{token:string|null;to:string;context:string;text?:string;file?:string}[]=[];
@@ -87,8 +89,8 @@ test('WeChat resumes separate private routes, ignores replay and cannot send on 
   let taskId='',subscribed=false,deliver=false;
   f.setScript(async(main,input)=>{
     if(input.startsWith('[内部协作输入')){
-      if(deliver)await main.call('send_user_message',{text:'Delayed report',attachments:[{path:file}]});
-      return {status:'completed',text:''};
+      const final=deliver?report:'Before subscription';
+      return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
     }
     const text=input.replace(/^::message-source\{source=wechat\}\n\n/,'');
     if(text==='only A')({taskId}=await main.call('worker_open',{title:"Prepare the WeChat fixture",message:'Prepare the WeChat fixture'}));
@@ -112,7 +114,7 @@ test('WeChat resumes separate private routes, ignores replay and cannot send on 
     await until(()=>f.engines.some(engine=>engine.finish));
     const worker=f.engines.findLast(engine=>engine.finish)!;
     const finish=worker.finish!;worker.finish=undefined;
-    finish({status:'completed',text:'Synthetic worker output'});
+    finish({status:'completed',text:report});
     await f.app.idle();
   };
   try{

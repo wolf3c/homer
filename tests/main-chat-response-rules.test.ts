@@ -2,6 +2,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {fixture,until} from './fixtures/worker-chat-host.js';
+import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
+
+test('the retired send tool cannot write, while an older catalog and its published attachment survive restart',async()=>{
+ const f=fixture(),previousHash='2741b9169535017c5b55d191ee7a246333f0074ee0162a951be11f370cd84b19';
+ const scope={taskId:'task-previous-send',taskVersion:1};
+ try{
+  await f.app.start();
+  const thread=f.app.store.meta('mainThread')!;
+  assert.ok(!f.engines[0]!.options.tools.some(tool=>tool.name==='send_user_message'));
+  const old=commitSyntheticMessage(f.app,thread,'Previously sent',[{filename:'old.patch',content:'exact previous bytes'}],undefined,scope);
+  f.app.store.setMeta('mainToolsHash',previousHash);
+  await f.restart();
+  assert.equal(f.app.store.meta('mainThread'),thread);
+  assert.ok(f.engines.at(-1)!.options.tools.some(tool=>tool.name==='send_user_message'));
+  let refused=false;
+  f.setScript(async main=>{
+   await assert.rejects(main.call('send_user_message',{text:'Forbidden duplicate'}),/send_user_message_retired/);
+   refused=true;
+   const text='Final answer uses the common delivery path.';
+   return {status:'completed',text,messages:[{itemId:'f',phase:'final_answer',text}]};
+  });
+  assert.equal(await f.app.message('Use an old conversation','retired-send'),'Final answer uses the common delivery path.');
+  assert.ok(refused);
+  assert.equal(f.app.store.db.prepare("SELECT count(*) AS n FROM operations WHERE kind='send_user_message'").get()!.n,1);
+  assert.equal(f.app.readCommittedMessage(old.messageId,scope)?.text,'Previously sent');
+  assert.equal(Buffer.from(f.app.readAttachment({messageId:old.messageId,...old.attachments[0]!}).data,'base64').toString(),'exact previous bytes');
+ }finally{await f.close();}
+});
 
 test('a silent user turn fails explicitly without retrying the input',async()=>{
  const f=fixture();try{

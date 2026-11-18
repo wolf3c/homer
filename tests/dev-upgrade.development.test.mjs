@@ -72,8 +72,8 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     const sent=query(`SELECT m.id,m.requestId,m.text,m.status,o.state,attachments.refsJson
       FROM conversation_messages m JOIN operations o ON o.id=m.operationKey
       JOIN conversation_attachments attachments ON attachments.messageId=m.id
-      WHERE m.taskId=? AND m.taskVersion=? AND o.kind='send_user_message'`,savedRuns[0].taskId,savedRuns[0].version);
-    assert.equal(sent.length,1);assert.equal(sent[0].requestId,null);assert.equal(sent[0].text,"synthetic-delivered");
+      WHERE m.taskId=? AND m.taskVersion=? AND o.kind='worker_final'`,savedRuns[0].taskId,savedRuns[0].version);
+    assert.equal(sent.length,1);assert.equal(sent[0].requestId,null);assert.match(sent[0].text,/^synthetic-delivered \[result\.md\]\(file:\/\//);
     assert.equal(sent[0].status,"completed");assert.equal(sent[0].state,"confirmed");
     const refs=JSON.parse(sent[0].refsJson);assert.equal(refs.length,1);
     const [{assetId,revision}]=refs;assert.match(assetId,/^asset-[a-f0-9-]{36}$/);

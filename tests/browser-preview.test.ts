@@ -75,6 +75,25 @@ test('UI opens and sent references validate real message/request provenance with
  }finally{await f.close();}
 });
 
+test('a native final can open its visible web link, while process-only and forged links stay out',async()=>{
+ const f=fixture();f.app.bindBrowserPreview(async()=>({opened:true}));
+ try{
+  const url='https://example.com/final',internal='https://example.com/internal';
+  f.setScript(async main=>{
+   const final={itemId:'web-final',phase:'final_answer' as const,text:`[Report](${url})`};
+   for(const message of [{itemId:'hidden',phase:'commentary',text:`[Internal](${internal})`},final])
+    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...message,completed:true});
+   return {status:'completed',text:final.text,messages:[final]};
+  });
+  await f.app.start();await f.app.message('Link to the report','native-link');
+  const threadId=f.app.store.meta('mainThread')!,node=f.app.processes.list(threadId).find(item=>item.sourceKind==='user')!;
+  const source={kind:'browser',messageId:node.messageId,url,title:'Report'};
+  assert.deepEqual(await f.app.openBrowserPreview({threadId,source}),{opened:true});
+  for(const unlisted of [internal,'https://example.com/forged'])
+   await assert.rejects(f.app.openBrowserPreview({threadId,source:{...source,url:unlisted}}),/preview_source_mismatch/);
+ }finally{await f.close();}
+});
+
 test('executable HTML reads only its own asset directory and preserves canonical-path checks',()=>{
  const f=htmlAttachmentFixture();try{
   const ref=f.send(),folder=dirname(f.original);mkdirSync(join(folder,'assets'));writeFileSync(join(folder,'assets/style.css'),'body{color:red}');writeFileSync(join(folder,'app.js'),'document.title="Loaded"');writeFileSync(join(folder,'data.txt'),'private text');writeFileSync(join(f.dir,'outside.js'),'outside');

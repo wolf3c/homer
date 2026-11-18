@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,readFileSync,unlinkSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 
 test('two Worker conversations return complete original text automatically without settling the task',async()=>{
@@ -447,6 +448,8 @@ for(const action of ['approve','deny'] as const)test('a desktop Worker command w
         await callHostMcp(main.options, 'inspect_interaction',{interactionId:seen});
         await callHostMcp(main.options, 'escalate_interaction',{interactionId:seen,question:'Confirm the operation',reason:'Needs user authorization'});
         await assert.rejects(callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action:'approve',reason:'No user approval'}),/user.*required/);
+        const final={itemId:'approval-notice',phase:'final_answer' as const,text:'Please confirm the proposed operation.'};
+        return {status:'completed',text:final.text,messages:[final]};
       }else if(text.includes('[用户答复原待答]')){
         assert.equal(resolved,false);mediated=true;
         await callHostMcp(main.options, 'inspect_interaction',{interactionId:seen});
@@ -464,6 +467,7 @@ for(const action of ['approve','deny'] as const)test('a desktop Worker command w
     const result=worker.options.onInteraction!({requestId:1,method:'item/commandExecution/requestApproval',kind:'authorization',threadId:worker.threadId,turnId:worker.turnId!,itemId:'command',details:{command:'synthetic operation',availableDecisions:['accept','decline']}}).then(value=>{resolved=true;return value;});
     await until(()=>f.app.interactions.list().some(item=>item.state==='pending_user'));
     const [card]=f.app.interactions.list();assert.equal(card?.id,seen,'Homer must inspect before a card is shown');
+    await until(()=>f.events.some(message=>message.type==='coordination'&&message.text==='Please confirm the proposed operation.'));
     assert.equal(await f.app.message('unrelated','other-user-message'),'Recorded');assert.equal(resolved,false);
     const input={requestId:'user-decision',interactionId:seen,text:action==='approve'?'允许本次操作':'拒绝本次操作'};
     assert.equal(f.app.submitMessage(input).fresh,true);
@@ -585,21 +589,24 @@ test('a committed staged attachment replays its native receipt after the source 
 });
 
 test('selecting a broad working directory never authorizes host private files for user messages',async()=>{
-  const f=fixture();let checked=false;
+  const f=fixture();
   try{
     const privatePath=join(f.app.config.runtime,'private-control.txt'),publicPath=join(f.app.config.workspace,'public-report.txt');
     writeFileSync(privatePath,'Synthetic private control');writeFileSync(publicPath,'Synthetic public report');
     f.setScript(async(main,text)=>{
       if(text==='read'){
         await main.call('task_create',{title:"Read synthetic work",goal:'Read synthetic work',workingDirectory:'/'});
-        await assert.rejects(main.call('send_user_message',{attachments:[{path:privatePath}]}),/artifact_path_denied/);
-        const sent=await main.call('send_user_message',{attachments:[{path:publicPath}]}),view=await main.call('work_inspect',{messageId:sent.messageId});
-        assert.equal(f.app.media.readAttachment(view.attachments[0]).bytes.toString(),'Synthetic public report');checked=true;
+        const final=`[Private](${pathToFileURL(privatePath).href}) [Report](${pathToFileURL(publicPath).href})`;
+        return {status:'completed',text:final,messages:[{itemId:'linked-final',phase:'final_answer',text:final}]};
       }
       return {status:'completed',text:'Checked'};
     });
-    await f.app.start();await f.app.message('read','file-boundary-source');assert.equal(checked,true);
-    assert.deepEqual(f.app.store.db.prepare("SELECT state FROM operations WHERE kind='send_user_message' ORDER BY rowid").all().map(row=>row.state),['failed','confirmed']);
+    await f.app.start();const text=await f.app.message('read','file-boundary-source');
+    assert.match(text,/部分文件未能保存/);
+    const reply=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='file-boundary-source'").get()!;
+    const committed=f.app.readCommittedMessage(String(reply.replyId),{requestId:'file-boundary-source'});
+    assert.equal(committed?.attachments?.length,1);
+    assert.equal(f.app.media.readAttachment(committed!.attachments![0]!).bytes.toString(),'Synthetic public report');
   }finally{await f.close();}
 });
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, copyFileSync } from "node:fs";
 import { resolve, join } from "node:path";
+import {pathToFileURL} from 'node:url';
 import { Homer, type Message } from "../src/service.js";
 import { Store } from "../src/store.js";
 import type { Config } from "../src/config.js";
@@ -86,8 +87,8 @@ function fixture(
         if(mainDeliveryFails)throw Error("mock_main_disconnected");
         if(mainDeliveryEmpty)return {status:"completed",text:""};
         if(deliveryGate&&!deliveryWaiting){deliveryWaiting=true;await deliveryGate;}
-        await this.call("send_user_message",{taskId:notice.taskId,attachments:[{path:filePath}],text:"已核对并发送行动清单。"});
-        return {status:"completed",text:"This text must not overwrite the committed user message."};
+        const final=`已核对并发送行动清单。[打开清单](${pathToFileURL(filePath).href})`;
+        return {status:"completed",text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
       }
       const p=scriptedMessages.get(text)??JSON.parse(text);
       const dispatch=async(title=p.title??"会议")=>{
@@ -124,7 +125,7 @@ function fixture(
   }
   const app=new Homer(config,async message=>{
     if(progressFails&&message.type==="progress")throw Error("sink_closed");
-    if(message.type==='reply'&&message.messageId&&!message.requestId){
+    if(message.type==='coordination'&&message.attachments?.length){
       outputAttempts++;
       if(outputFails)throw Error('sink_closed');
     }
@@ -349,7 +350,7 @@ test("T10: unconfirmed output does not replay a committed user message after res
   assert.equal(original.requestId,null);
   assert.equal(f.outputAttempts,1);
   assert.ok(a.store.db.prepare("SELECT 1 FROM events WHERE type='message_output_unconfirmed'").get());
-  assert.equal(original.text,"已核对并发送行动清单。");
+  assert.match(original.text,/已核对并发送行动清单。/);
   assert.equal(a.store.db.prepare("SELECT state FROM operations WHERE id=?").get(original.operationKey!)?.state,"confirmed");
   rmSync(join(a.config.workspace,run.id+'-actions.md'));
   await a.close();

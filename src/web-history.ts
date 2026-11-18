@@ -284,8 +284,13 @@ export class ConversationHistory {
   append(id: string, delta: string) {
     this.db.prepare("UPDATE conversation_messages SET text=text || ? WHERE id=? AND status='running'").run(delta, id);
   }
-  finish(id: string, text: string, status: ConversationMessage["status"]) {
-    return !!this.db.prepare("UPDATE conversation_messages SET text=?,status=? WHERE id=? AND status='running'").run(text, status, id).changes;
+  finish(id: string, text: string, status: ConversationMessage["status"], audience?: 'user',
+    publication?: {taskId:string|null;taskVersion:number|null;operationKey:string}) {
+    return !!this.db.prepare(`UPDATE conversation_messages SET text=?,status=?,audience=coalesce(?,audience),
+      taskId=coalesce(?,taskId),taskVersion=coalesce(?,taskVersion),operationKey=coalesce(?,operationKey),
+      rowid=CASE WHEN ? IS NOT NULL AND requestId IS NOT NULL THEN (SELECT max(rowid)+1 FROM conversation_messages) ELSE rowid END
+      WHERE id=? AND status='running'`).run(text,status,audience??null,
+      publication?.taskId??null,publication?.taskVersion??null,publication?.operationKey??null,publication?.operationKey??null,id).changes;
   }
   add(threadId: string, text: string, status: ConversationMessage["status"] = "completed") {
     const id = "message-" + randomUUID();

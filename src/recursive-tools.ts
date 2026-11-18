@@ -37,7 +37,7 @@ const optionalTitleTools: Tool[] = [
 ];
 
 const requiredTitle = {...title, pattern: '\\S'};
-export const RECURSIVE_TOOLS = optionalTitleTools.map(definition => {
+const previousRecursiveTools = optionalTitleTools.map(definition => {
   if (definition.name === 'task_create') return {...definition, inputSchema: {...definition.inputSchema,
     properties: {...object(definition.inputSchema.properties), title: requiredTitle}, required: ['goal', 'title']}};
   if (definition.name === 'worker_open') return {...definition, inputSchema: {oneOf: [
@@ -46,6 +46,7 @@ export const RECURSIVE_TOOLS = optionalTitleTools.map(definition => {
   ]}};
   return definition;
 });
+export const RECURSIVE_TOOLS = previousRecursiveTools.filter(tool=>tool.name!=='send_user_message');
 export const MAIN_DYNAMIC_TOOLS = [...MAIN_TOOLS, ...RECURSIVE_TOOLS];
 const toolsHash = (tools: Tool[]) => createHash('sha256').update(JSON.stringify(tools)).digest('hex');
 export const MAIN_TOOLS_HASH = toolsHash(MAIN_DYNAMIC_TOOLS);
@@ -53,6 +54,7 @@ export const MAIN_TOOLS_HASH = toolsHash(MAIN_DYNAMIC_TOOLS);
 // These fingerprints were shipped. Native resume and fork retain the parent declarations.
 const mainToolCatalogs = new Map(([
   [MAIN_TOOLS_HASH, MAIN_DYNAMIC_TOOLS],
+  ['2741b9169535017c5b55d191ee7a246333f0074ee0162a951be11f370cd84b19', [...MAIN_TOOLS, ...previousRecursiveTools]],
   ['d8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150', [...MAIN_TOOLS, ...optionalTitleTools]],
   ['f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe', [...MAIN_TOOLS, ...optionalTitleTools.map(definition =>
     definition.name === 'worker_open'
@@ -71,7 +73,6 @@ export type RecursiveToolEffects = {
   rootAuthority: (actor: Actor) => Authority | undefined;
   prepareAttachments?: (actor:Actor, operationKey:string, inputs:MessageAttachmentInput[], scope:WorkerMessageScope) => AttachmentRef[];
   readMessage?: (actor:Actor,messageId:string) => unknown;
-  sendUserMessage?: (actor:Actor,input:{operationId:string;text?:string;attachments?:MessageAttachmentInput[];taskId?:string}) => unknown;
   wake: () => void;
   stop: (receipt: Record<string, unknown>) => Promise<unknown>;
   steer: (receipt: Record<string, unknown>) => Promise<unknown>;
@@ -201,11 +202,6 @@ export class RecursiveTools {
       result = a.immediate ? await this.effects.steer(receipt) : receipt;
     } else if (name === 'worker_interrupt') {
       result = await this.effects.stop(this.tasks.workerStop(actor, {operationId, workerId: string(a.workerId, 200), ...(a.reason === undefined ? {} : {reason: string(a.reason, 24000)})}));
-    } else if (name === 'send_user_message') {
-      const body=a.text as string|undefined;
-      if(!body?.trim()&&!refs?.length)throw Error('invalid_message');
-      if(!this.effects.sendUserMessage)throw Error('message_unavailable');
-      result=await this.effects.sendUserMessage(actor,{operationId,text:body,attachments:refs,taskId:a.taskId===undefined?undefined:string(a.taskId,200)});
     } else {
       const taskId = string(a.taskId, 200), task = this.tasks.task(taskId);
       const mutation = {operationId, taskId, expectedRevision: task.revision};

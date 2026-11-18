@@ -2,14 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 
-test('message hook observes committed natural, explicit, and background messages only once',async()=>{
+test('message hook observes committed natural, file, and background messages only once',async()=>{
  const f=fixture(),other=fixture();
  try{
-  const seen:{messageId:string;inTransaction:boolean;status?:string}[]=[], sent:string[]=[];
+  const seen:{messageId:string;inTransaction:boolean;status?:string}[]=[];
   const seenElsewhere:string[]=[];
   other.app.hooks.on('message.committed',({messageId})=>{seenElsewhere.push(messageId);});
   f.app.hooks.on('message.committed',({messageId})=>{
@@ -24,44 +25,36 @@ test('message hook observes committed natural, explicit, and background messages
     return {status:'completed',text:'Natural reply'};
    }
    if(text==='send'){
-    const args={text:'First message',attachments:[{path}]};
-    const first=await main.call('send_user_message',args,'first');
-    const replay=await main.call('send_user_message',args,'first');
-    assert.equal(replay.messageId,first.messageId);
-    await until(()=>seen.some(e=>e.messageId===first.messageId));
-    const second=await main.call('send_user_message',{text:'Second message'},'second');
-    sent.push(first.messageId,second.messageId);
-    await until(()=>seen.some(e=>e.messageId===second.messageId));
-    return {status:'completed',text:'Ignored second final'};
+    const final=`First message [Report](${pathToFileURL(path).href})`;
+    await tick();assert.equal(seen.length,1);
+    return {status:'completed',text:final,messages:[{itemId:'file-final',phase:'final_answer',text:final}]};
    }
    if(text==='delegate'){
     await main.call('worker_open',{title:"Inspect the synthetic report.",message:'Inspect the synthetic report.'});
     return {status:'completed',text:'Started'};
    }
-   const notice=JSON.parse(text.split('\n')[1]!);
-   const sentBackground=await main.call('send_user_message',{taskId:notice.taskId,text:'Background message'});
-   sent.push(sentBackground.messageId);
-   return {status:'completed',text:''};
+   const final='Background message';
+   return {status:'completed',text:final,messages:[{itemId:'worker-final',phase:'final_answer',text:final}]};
   });
   await f.app.start();
   await f.app.message('plain','plain');await until(()=>seen.length===1);
   const natural=seen[0]!.messageId;
   assert.equal(f.app.readCommittedMessage(natural,{requestId:'plain'})?.status,'completed');
-  await f.app.message('send','send');
-  await f.app.message('delegate','delegate');await until(()=>seen.length===4);
+  await f.app.message('send','send');await until(()=>seen.length===2);
+  await f.app.message('delegate','delegate');await until(()=>seen.length===3);
   const worker=f.engines.find(e=>e.options.role==='worker')!;
   worker.finish!({status:'completed',text:'Internal Worker result'});
-  await f.app.idle();await until(()=>seen.length===5);await tick();
-  assert.deepEqual(seen.map(e=>e.messageId),[natural,sent[0],sent[1],seen[3]!.messageId,sent[2]]);
-  assert.equal(new Set(seen.map(e=>e.messageId)).size,5);
+  await f.app.idle();await until(()=>seen.length===4);await tick();
+  assert.equal(new Set(seen.map(e=>e.messageId)).size,4);
   assert.ok(seen.every(e=>!e.inTransaction&&e.status==='completed'));
-  const message=f.app.readCommittedMessage(sent[0]!,{requestId:'send'});
+  const fileId=seen[1]!.messageId;
+  const message=f.app.readCommittedMessage(fileId,{requestId:'send'});
   assert.equal(message?.status,'completed');
   assert.equal(message?.status==='completed'&&message.attachments?.length,1);
-  assert.equal(f.app.readCommittedMessage(sent[0]!,{requestId:'wrong'}),undefined);
-  f.app.history.revokeMessage(f.app.store.meta('mainThread')!,sent[0]!);
-  assert.equal(f.app.readCommittedMessage(sent[0]!,{requestId:'send'}),undefined);
-  const background=f.app.history.message(sent[2]!)!;
+  assert.equal(f.app.readCommittedMessage(fileId,{requestId:'wrong'}),undefined);
+  f.app.history.revokeMessage(f.app.store.meta('mainThread')!,fileId);
+  assert.equal(f.app.readCommittedMessage(fileId,{requestId:'send'}),undefined);
+  const background=f.app.history.message(seen[3]!.messageId)!;
   assert.equal(f.app.readCommittedMessage(background.id,{taskId:background.taskId!,taskVersion:background.taskVersion!})?.status,'completed');
   assert.equal(f.app.readCommittedMessage(background.id,{taskId:background.taskId!,taskVersion:background.taskVersion!+1}),undefined);
   assert.deepEqual(seenElsewhere,[]);
@@ -114,20 +107,22 @@ test('a rejected input notifies only its canonical failure status after the fail
  }finally{await f.close();}
 });
 
-test('rolled back explicit sends do not notify; a subsequent natural reply still does',async()=>{
+test('a rolled back file final does not notify; a subsequent natural reply still does',async()=>{
  const f=fixture();try{
   const seen:string[]=[];
   f.app.hooks.on('message.committed',({messageId})=>{seen.push(messageId);});
-  f.setScript(async main=>{
-   const db=f.app.store.db;
-   db.exec("CREATE TEMP TRIGGER abort_hook_send BEFORE UPDATE ON operations WHEN OLD.kind='send_user_message' AND NEW.state='confirmed' BEGIN SELECT RAISE(ABORT,'synthetic_send_rollback'); END");
-   try{await assert.rejects(main.call('send_user_message',{text:'Must roll back'}),/synthetic_send_rollback/);}
-   finally{db.exec('DROP TRIGGER abort_hook_send');}
-   await tick();assert.deepEqual(seen,[]);
-   return {status:'completed',text:'Natural fallback'};
+  const path=join(f.app.config.workspace,'report.md');writeFileSync(path,'# Report');
+  f.setScript(async(_main,text)=>{
+   if(text==='fallback')return {status:'completed',text:'Natural fallback'};
+   const final=`Must roll back [Report](${pathToFileURL(path).href})`;
+   return {status:'completed',text:final,messages:[{itemId:'f',phase:'final_answer',text:final}]};
   });
   await f.app.start();
-  assert.equal(await f.app.message('rollback','rollback'),'Natural fallback');
+  f.app.store.db.exec("CREATE TEMP TRIGGER abort_hook_send BEFORE INSERT ON operations WHEN NEW.kind='request_final' BEGIN SELECT RAISE(ABORT,'synthetic_send_rollback'); END");
+  await assert.rejects(f.app.message('rollback','rollback'),/synthetic_send_rollback/);
+  await tick();assert.equal(seen.length,0);
+  await f.restart(app=>app.hooks.on('message.committed',({messageId})=>{seen.push(messageId);}));
+  assert.equal(await f.app.message('fallback','fallback'),'Natural fallback');
   await until(()=>seen.length===1);
   assert.equal(f.app.history.message(seen[0]!)?.text,'Natural fallback');
  }finally{await f.close();}
@@ -184,11 +179,12 @@ test('committed reads do not expose later uncommitted edits or revocation change
  }finally{await f.close();}
 });
 
-for(const explicit of [false,true])test('a real COMMIT failure never emits for '+(explicit?'an explicit message':'a natural reply'),async()=>{
+for(const file of [false,true])test('a real COMMIT failure never emits for '+(file?'a file final':'a natural reply'),async()=>{
  const f=fixture();try{
   const seen:string[]=[];
   f.app.hooks.on('message.committed',({messageId})=>{seen.push(messageId);});
-  f.setScript(async main=>{
+  const path=join(f.app.config.workspace,'commit.md');writeFileSync(path,'# File');
+  f.setScript(async()=>{
    f.app.store.db.exec(`
     CREATE TEMP TABLE hook_parent(id INTEGER PRIMARY KEY);
     CREATE TEMP TABLE hook_child(id INTEGER REFERENCES hook_parent(id) DEFERRABLE INITIALLY DEFERRED);
@@ -196,23 +192,16 @@ for(const explicit of [false,true])test('a real COMMIT failure never emits for '
     WHEN NEW.role='assistant' AND NEW.status='completed'
     BEGIN INSERT INTO hook_child VALUES(1); END;
    `);
-   if(explicit){
-    try{await assert.rejects(main.call('send_user_message',{text:'Uncommitted explicit reply'}),/FOREIGN KEY constraint failed/);}
-    finally{f.app.store.db.exec('DROP TRIGGER reject_hook_commit');}
-    await tick();assert.equal(seen.length,0);
+   if(file){
+    const final=`Uncommitted [File](${pathToFileURL(path).href})`;
+    return {status:'completed',text:final,messages:[{itemId:'f',phase:'final_answer',text:final}]};
    }
    return {status:'completed',text:'Natural reply'};
   });
   await f.app.start();
-  if(explicit){
-   assert.equal(await f.app.message('commit test','commit-test'),'Natural reply');
-   await until(()=>seen.length===1);
-   assert.equal(f.app.history.message(seen[0]!)?.operationKey,null);
-  }else{
-   await assert.rejects(f.app.message('commit test','commit-test'),/FOREIGN KEY constraint failed/);
-   await tick();assert.deepEqual(seen,[]);
-   const row=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='commit-test'").get()!;
-   assert.equal(f.app.readCommittedMessage(String(row.replyId),{requestId:'commit-test'}),undefined);
-  }
+  await assert.rejects(f.app.message('commit test','commit-test'),/FOREIGN KEY constraint failed/);
+  await tick();assert.deepEqual(seen,[]);
+  const row=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='commit-test'").get()!;
+  assert.equal(f.app.readCommittedMessage(String(row.replyId),{requestId:'commit-test'}),undefined);
  }finally{await f.close();}
 });

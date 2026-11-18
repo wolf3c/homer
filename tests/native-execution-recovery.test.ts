@@ -162,14 +162,17 @@ test('missing authorization cannot be hidden by execution accounting at open, se
   }finally{f.close();}
 });
 
-test('native execution: peer Workers exceed the old shared budget and send once',async()=>{
+test('native execution: peer Workers exceed the old shared budget and publish one final',async()=>{
   const f=syntheticHost();
   const original=f.app['factory']!;
   f.app['factory']=(options,handler)=>{const engine=original(options,handler),turn=engine.turn.bind(engine);
     engine.turn=async(text,hooks)=>{if(options.role==='worker')await wait(30);return turn(text,hooks);};return engine;};
-  try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await until(()=>f.events.some(e=>e.type==='reply'&&e.messageId!==undefined));await f.app.idle();
+  const deliveries=()=>f.events.filter(e=>e.type==='coordination'&&e.messageId!==undefined);
+  try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await until(()=>deliveries().length>0);await f.app.idle();
     assert.equal(f.app.tasks.tasks()[0]?.outcome,'succeeded');
-    assert.equal(f.events.filter(e=>e.type==='reply'&&e.messageId!==undefined).length,1);assert.equal(f.app.store.runs().length,4);
+    assert.equal(deliveries().length,1);assert.equal(f.app.store.runs().length,4);
+    const final=f.app.history.message(deliveries()[0]!.messageId!)!;
+    assert.equal(f.app.tasks.operation(final.operationKey!).kind,'worker_final');
     assert.ok(f.app.store.runs().every(r=>r.status==='succeeded'));assert.ok(f.app.tasks.tasks().every(t=>!Object.hasOwn(JSON.parse(f.app.tasks.version(t.id,1).authorityJson!),'maxActiveMs')));
     assert.equal(new Set(f.app.store.runs().map(run=>run.workerId)).size,3);assert.equal(f.engines.filter(e=>e.worker).length,4);
   }finally{await f.close();}

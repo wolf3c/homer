@@ -39,7 +39,7 @@ export type DispatchQueuePage<S extends 'all'|undefined=undefined>=ActiveReadVer
 export type QueueReceiptsRequest={requestIds:string[];threadId?:string;readEpoch?:string;operations?:({requestId:string;messageId?:never;operationId:string}|{messageId:string;requestId?:never;operationId:string})[]};
 export type QueueReceipts={acceptedRequestIds:string[];statuses:{requestId:string;state:string;error?:string;revision?:number;inputRevision?:number;editable?:boolean}[];operations?:{requestId?:string;messageId?:string;operationId:string;committed:boolean;result?:QueueOperationResult}[]};
 export type MessageAttachment={messageId:string;assetId:string;revision:number};
-export type WebArtifact=MessageAttachment&{id:string;title:string;sha256:string};
+export type WebArtifact=MessageAttachment&{id:string;title:string;sha256:string;destination?:string};
 export type ArtifactOrigin={message:import('./web-history.js').ConversationMessage;files:WebArtifact[]};
 export type WebWork={id:string;title:string;status:string;summary:string|null};
 export type WebApproval = { title: string; scope: string; canApprove?: false; context?: string; explanation?: string; detailLabel?: string; details?: string };
