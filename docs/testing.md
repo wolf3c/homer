@@ -228,6 +228,33 @@ node --import tsx --test --test-concurrency=1 \
 
 本次相关纯数据库／分类／旧格式回归 **39/39**，零失败／取消／跳过；在线备份另用合成 WAL 并发写入验证读事务快照与源只读边界。实际资料备份、逐行身份与指纹是私密运营材料，只在 Git 忽略且访问受限的 `.codex/private/` 保留，公开文档不保存真实行、内容或凭据。副本指纹不得用于正式 live apply；正式操作前必须重新取得受控备份／预览并确认原所有者退出。备份副本不启动第二个实例，预演拦截也不等于 schema 迁移已通过。
 
+
+## 消息图片回退与批注配对
+
+2026-11-18 提交前精确候选复审：从 `d7262abc` 导出独立目录，仅加入消息图片配对、引用展示、长图限高、长文折叠及相关测试/说明，不含共享预测、虚拟列表、服务或模型输入改动。固定Node22.22.0的54项定向检查、UI类型和独立构建通过；精确候选在1440／390／320px的66项浏览器检查通过，Chrome退出0、forced=false、watchdog=false，手机与桌面效果已查看。10图、20条共20000字符的交替SSR微基准，40次预热后每组200次：HEAD中位0.422ms／p95 0.867ms，候选中位0.807ms／p95 0.874ms；说明本地有少量渲染开销，不证明长历史滚动、布局/解码、安装版或移动真机性能。微基准方法为同依赖交替渲染、每组40次预热后200次采样；脚本仅作本地审阅材料，不是仓库默认测试入口。性能方法与结果（本地审阅文件 `outputs/image-reference-review-20261118/render-performance.json`，不随本次提交）、候选浏览器回执（本地审阅文件 `outputs/image-reference-review-20261118/browser/message-image-preview.json`，不随本次提交）、手机效果（本地审阅文件 `outputs/image-reference-review-20261118/browser/image-long-collapsed-390.png`，不随本次提交）。未运行真实模型、安装或全量专项。
+
+2026-11-18 阅读收敛专项：在 `d7262abc` 加共享树上只补引用组件的长图尺寸限制与原生长备注折叠；未修改并行 `homer-app.tsx`、ImageZoom 或模型输入。相关离线39/39、UI类型检查及独立Vite构建通过。最终60字符摘要版本使用 Node22.22.0／Chrome157.0.8103.79 在1440／390／320px完成66项合成浏览器检查：600×4000图片在100%时可见高度约346.66px，100%／125%缩放区域最大误差约0.20px；全文与换行保留，Enter／Space展开关闭，短文直接显示，同图另一组引用不丢文字且不重复图片，放大仍用同一Blob原图、无框并恢复焦点。Chrome退出0、forced=false、watchdog=false。已查看宽窄屏截图；最终回执（本地审阅文件 `outputs/image-reference-bounded-final-20261118/message-image-preview.json`，不随本次提交）、手机折叠态（本地审阅文件 `outputs/image-reference-bounded-final-20261118/image-long-collapsed-390.png`，不随本次提交）、手机展开态（本地审阅文件 `outputs/image-reference-bounded-final-20261118/image-long-expanded-390.png`，不随本次提交）供效果复核。初版摘要120字符的截图不是最终效果。未运行默认全量、安装验收、真实模型或移动真机；不据此宣称阅读效率或模型准确率提升。
+
+2026-11-18 结案补记：用户决定保持放大图现状，不再实施框和编号；下文该项“未完成”保留为历史记录，不再是开放待办。此决定不把历史专项升级为放大编号验收，也不改变旧证据的清理归属；本轮未删除任何旧材料。
+
+2026-11-15 审查补测：`message-image-preview.browser.mjs` 新增独立 1500×300 合成图的实际区域几何断言和正文 16px 断言，保留原多引用、失败回退、AX 与交互检查。三种宽度共 **51 项**通过；另有六组几何对照，修正前最大偏差约 19.8px，局部修正后约 0.013px。Chrome 正常退出、未强制关闭、无 watchdog。相关离线回归 **25/25** 与 UI 类型检查通过；本轮未重跑默认全量或原生专项。放大图无编号仍是未完成项，专项通过不代表 B 方案全部完成。前后 PNG、失败记录和回执保留在 `outputs/task-23e32bd8-annotation-demo/review-20261115/` 供本轮审核；编号放大问题处理完且不再依赖时可回收。
+
+离线用例位于 `tests/message-image-preview.test.mjs`、`tests/image-reference-message.test.mjs`、`tests/user-message-bubble-ui.test.mjs` 与 `tests/diff-viewer-preview.test.mjs`，覆盖准确版本、完整原序批注、旧单区域／纯 AX、缺图、HTTP／解码失败、已完成解码的缓存分支、取消和迟到结果、惰性重载及原请求详情边界。ResizeObserver 的合成夹具只支持分支验证，不冒充真实几何检查。可用图片的加载过程保持原 Image 预览，不常驻重复文件行；失败仍须保留具名回退，未删减该断言。
+
+`tests/message-image-preview.browser.mjs` 已登记显式 browser 清单，不进入默认核心。使用现有 Node 22.22.0、UI 依赖和 macOS Chrome，内存 HTTP／合成媒体、全新 profile 与模拟钥匙串；阻断非夹具来源，不连接账号、日常 runtime、CODEX_HOME 或模型。只运行该专项：
+
+```sh
+node node_modules/vite/bin/vite.js build ui --config ui/vite.config.ts --configLoader runner \
+  --outDir ../.codex/scratch/message-image-review/web --emptyOutDir
+HOMER_IMAGE_BUILD="$PWD/.codex/scratch/message-image-review/web" \
+HOMER_IMAGE_EVIDENCE="$PWD/.codex/scratch/message-image-review/browser" \
+  node tests/message-image-preview.browser.mjs
+```
+
+2026-11-14：Chrome **157.0.8103.52** 在 **1440／390／320px** 完成 **45 项**检查，包含失败下载反馈、正常图／文件／撤回、键盘放大和焦点返回、真实 IntersectionObserver 卸载重载、准确修订替换、图片原比例／编号区域、全文／长批注／换行、宽屏并列与窄屏堆叠、坐标 disclosure、旧单区域和 AX。宽窄屏截图已查看；退出码 0，`forced:false`、`watchdog:false`，无页面异常或外部请求。UI 类型、Vite 构建及 `node scripts/build-run-activity-css.mjs --image-file --check` 通过。期间发现的缓存解码失败遗漏外层通知已用失败用例复现并修复，不以重复挑选样本替代修复。
+
+结果只覆盖源码和隔离浏览器；未验收原生取景、手机菜单保存、真实 LLM、日常资料迁移或软件自带更新。既有其他 browser 专项未在本轮全部重跑。
+
 ## Worker 目录上下文 v0.8
 
 离线测试覆盖只读发现、五类标记、一级压缩、排除区、链接、路径转义、空与部分失败、截止时间／轮次失效、Main／Worker MCP 隔离和既有传输保护，以及根准备、独占创建、冲突、冷加载和关闭竞态。`work_directory` 和动态工具声明保持原样；测试使用合成目录事实，不扫描真实主目录。

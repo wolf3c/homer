@@ -48,6 +48,9 @@
 @container conversation-panel (max-width:319.98px){.app-shell[data-native-titlebar] .header-name{display:none}}
 
 .message-attachments{display:flex;flex-wrap:wrap;gap:12px;max-width:100%}.message-attachment{margin:0;max-width:100%;min-width:0}.message-attachment video{display:block;max-width:min(100%,320px);max-height:300px;object-fit:contain;border-radius:10px}.message-attachment audio{max-width:100%;width:300px}.message-attachment figcaption{font-size:14px;overflow-wrap:anywhere}.message-attachment a{color:var(--ink,#272523)}
+.image-reference{min-width:0;max-width:100%}.image-reference-layout{display:flex;flex-wrap:wrap;align-items:flex-start;gap:16px}.image-reference-image{position:relative;flex:1 1 240px;max-width:320px;min-width:0}.image-reference-notes{flex:1 1 240px;min-width:0;margin:0;padding-left:24px;list-style:decimal}.image-reference-comment{margin:0 0 12px;white-space:pre-wrap;overflow-wrap:anywhere}.image-reference-details{margin-top:8px;font-size:13px;color:var(--muted)}.image-reference-source{white-space:pre-wrap}
+.image-reference-regions{display:none;position:absolute;inset:0;pointer-events:none}.image-reference-image:has([data-slot="image-preview"] img:not(.invisible))>.image-reference-regions{display:block}.image-reference-region{position:absolute;border:1px solid var(--focus);border-radius:3px}.image-reference-region>span{position:absolute;top:0;left:0;padding:0 4px;border-radius:0 0 3px 0;background:var(--focus);color:var(--surface);font-size:12px;line-height:18px}
+.image-reference-image .lazy-media{width:100%;aspect-ratio:auto;max-height:none}.image-reference-image .lazy-media img{height:auto;max-height:none}
 
 .interaction-card p{white-space:pre-wrap;overflow-wrap:anywhere}
 

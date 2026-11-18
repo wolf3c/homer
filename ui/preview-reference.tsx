@@ -2,7 +2,8 @@ import {createContext,type ReactNode} from 'react';
 import {MessageCirclePlus,XIcon,FileTextIcon,ImageIcon,GlobeIcon} from 'lucide-react';
 import {Button} from '@base-ui/react/button';
 import {QuoteBlock} from './vendor/assistant-ui/quote';
-import type {DraftImageReference,PreviewSource,ResourceReference,PreviewRequest,WindowAXNode} from '../src/preview-reference';
+import './image-reference.css';
+import type {DraftImageReference,PreviewSource,ResourceReference,PreviewRequest,WindowAXNode,PreviewImageAnnotation} from '../src/preview-reference';
 import {isDraftImageReference,referenceKey} from '../src/preview-reference';
 
 export type WebPreviewSource=Extract<PreviewSource,{kind:'web'}>;
@@ -34,10 +35,31 @@ export function WindowAXExcerpt({ax,children}:{ax:WindowAXNode[];children?:React
   <p className="max-h-32 overflow-auto whitespace-pre-wrap break-words">{ax.map(({name,value})=>[name,value].filter(Boolean).join(' · ')).join('\n')}</p>
  </details>;
 }
-export function ResourceReferenceBlock({reference}:{reference:ResourceReference}){
+function imageNotes(reference:Extract<ResourceReference,{kind:'image'}>):PreviewImageAnnotation[]{
+ if(reference.annotations)return reference.annotations;
+ return [{id:'legacy',region:reference.region,comment:reference.comment}];
+}
+export function ImageReferenceRegions({reference}:{reference:Extract<ResourceReference,{kind:'image'}>}){
+ return <div className="image-reference-regions" aria-hidden="true">{imageNotes(reference).map((note,i)=><div key={note.id} className="image-reference-region" style={{left:note.region.x/reference.width*100+'%',top:note.region.y/reference.height*100+'%',width:note.region.width/reference.width*100+'%',height:note.region.height/reference.height*100+'%'}}><span>{i+1}</span></div>)}</div>;
+}
+export function ResourceReferenceBlock({reference,children}:{reference:ResourceReference;children?:ReactNode}){
  const coordinates=(r:{x:number;y:number;width:number;height:number})=>`${Math.round(r.x)}, ${Math.round(r.y)} · ${Math.round(r.width)} × ${Math.round(r.height)}`;
- const excerpt=reference.kind==='text'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. ${note.text}\n批注：${note.comment}`).join('\n\n'):reference.text:reference.kind==='image'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. 区域：${coordinates(note.region)}\n批注：${note.comment}`).join('\n\n'):`区域：${coordinates(reference.region)}\n${reference.comment}`:reference.annotations.map(note=>`${note.element}：${note.comment}`).join('\n');
  const source=reference.source,title=source.kind==='draft-image'?'截图':source.title;
+ if(reference.kind==='image'&&imageNotes(reference).length){
+  const notes=imageNotes(reference);
+  return <div className="preview-reference image-reference" aria-label="图片批注">
+   <div className={'image-reference-layout'+(children?' has-image':'')}>
+    {children&&<div className="image-reference-image" style={{maxWidth:Math.min(reference.height>reference.width?220:320,360*reference.width/reference.height)}}>{children}<ImageReferenceRegions reference={reference}/></div>}
+    <ol className="image-reference-notes" aria-label="图片区域批注">{notes.map(note=><li key={note.id}>{note.comment.length>240||note.comment.split('\n').length>4?<details className="image-reference-long-comment"><summary>{note.comment.slice(0,60).trimEnd()}… <span>全文</span></summary><p className="image-reference-comment">{note.comment}</p></details>:<p className="image-reference-comment">{note.comment}</p>}</li>)}</ol>
+   </div>
+   <details className="image-reference-details"><summary>截图来源与区域</summary>
+    <QuoteBlock.Root><QuoteBlock.Icon/><QuoteBlock.Text className="image-reference-source">{'来源：'+title+'\n图片尺寸：'+reference.width+' × '+reference.height}</QuoteBlock.Text></QuoteBlock.Root>
+    <ol>{notes.map((note,i)=><li key={note.id}>区域 {i+1}：{coordinates(note.region)}</li>)}</ol>
+   </details>
+   {isDraftImageReference(reference)&&reference.ax&&<WindowAXExcerpt ax={reference.ax}/>}
+  </div>;
+ }
+ const excerpt=reference.kind==='text'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. ${note.text}\n批注：${note.comment}`).join('\n\n'):reference.text:reference.kind==='image'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. 区域：${coordinates(note.region)}\n批注：${note.comment}`).join('\n\n'):`区域：${coordinates(reference.region)}\n${reference.comment}`:reference.annotations.map(note=>`${note.element}：${note.comment}`).join('\n');
  return <div className="preview-reference" aria-label="预览引用">
   <span className="preview-reference-source" title={source.kind==='web'?source.url:title}>来源：{title}</span>
   {excerpt&&<QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text className={reference.kind!=='web'&&reference.annotations?'resource-annotations-text':undefined}>{excerpt}</QuoteBlock.Text></QuoteBlock.Root>}

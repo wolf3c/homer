@@ -1,0 +1,8 @@
+/* Annotation coordinates follow the decoded image, without the loading floor. */
+.image-reference .image-reference-image [data-slot="image-preview"]{min-height:0}
+/* ImageRoot's existing one-pixel border is outside the image coordinate space. */
+.image-reference-image>.image-reference-regions{inset:1px}
+.image-reference .image-reference-notes{font-size:16px;line-height:1.8;color:var(--ink)}
+.image-reference-long-comment{margin-bottom:12px}
+.image-reference-long-comment>summary{cursor:pointer;overflow-wrap:anywhere}
+.image-reference-long-comment>summary>span{font-size:13px;color:var(--muted)}

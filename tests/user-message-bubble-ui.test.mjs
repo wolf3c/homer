@@ -24,15 +24,16 @@ const js='const Fragment = require("react").Fragment;\n'+ts.transpileModule((com
 
 function render(metadata){
  const calls={};
+ const reference=props=>{(calls.references??=[]).push(props.reference);return React.createElement('aside',null,props.reference.source.title);};
  const exports={};
  Function('require','exports','useAuiState','draftQuotes','MessagePrimitive','Markdown','MediaAttachments','MessageDetails','MessageDaySeparator','MessageTimestamp','InactiveInteractionNotes','QuoteSource','referencesOf','referenceKey','ResourceReferenceBlock','QuestionFlow','ApprovalCard',js)(
   require,exports,selector=>selector({message:{metadata:{custom:metadata},content:[{type:'text',text:metadata.original?.text??''}]}}),value=>value.quotes??(value.quote?[value.quote]:[]),
   {Root:props=>React.createElement('article',props),Parts:()=>React.createElement('p',null,metadata.original?.text)},()=>null,
-  props=>{calls.media=props;return props.media.length?React.createElement('figure',null,props.media.map(m=>m.filename).join(', ')):null;},
+  props=>{calls.media=props;return React.createElement(React.Fragment,null,...(props.references??[]).map((r,i)=>React.createElement(reference,{key:i,reference:r})),props.media.length?React.createElement('figure',null,props.media.map(m=>m.filename).join(', ')):null);},
   props=>{calls.details=props;return props.message.text?React.createElement('button',{'aria-label':'复制'},'复制'):null;},
   props=>{calls.day=props;return null;},props=>{calls.timestamp=props;return null;},
   props=>{calls.inactive=props;return null;},props=>{(calls.quotes??=[]).push(props);return React.createElement('blockquote',null,props.quote.text);},
-  referencesOf,referenceKey,props=>{(calls.references??=[]).push(props.reference);return React.createElement('aside',null,props.reference.source.title);},QuestionFlow,ApprovalCard
+  referencesOf,referenceKey,reference,QuestionFlow,ApprovalCard
  );
  return{html:renderToStaticMarkup(React.createElement(exports.UserMessage)),calls};
 }

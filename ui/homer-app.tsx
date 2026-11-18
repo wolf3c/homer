@@ -115,7 +115,7 @@ function ResourceDownload({path,filename,mimeType}:{path:string;filename:string;
  }catch{setError('下载未完成，请重新连接后重试。');}}
  return <><FileDownload data={new URL(path,location.href).href} sourceType="url" filename={filename} mimeType={mimeType} onClick={event=>{event.preventDefault();void download();}}/>{error&&<span role="status">{error}</span>}</>;
 }
-function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:string;index:number}){
+function MediaAttachment({asset,messageId,index,ratio='4:3'}:{asset:MediaView;messageId:string;index:number;ratio?:'auto'|'4:3'}){
  const labels:Record<string,string>={received:'等待下载',downloading:'准备中',retryable_failed:'等待重试',failed:'准备失败',expired:'已过期',deleted:'已清理',revoked:'已撤回'};
  const path='/api/media/'+messageId+'/'+asset.assetId+'/'+asset.revision;
  const previewPath=asset.kind==='voice'?path+'?preview=voice':path;
@@ -124,7 +124,7 @@ function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:stri
  const [failedPath,setFailedPath]=useState(''),imageFailed=failedPath===previewPath;
  const previewError=useCallback(()=>setFailedPath(previewPath),[previewPath]);
  const previewStatus=useCallback((status:'loaded'|'error')=>setFailedPath(previous=>status==='error'?previewPath:previous===previewPath?'':previous),[previewPath]);
- const preview=previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'} onError={image?previewError:undefined}>{url=>image?<ImageZoom src={url} alt={asset.filename}><ImagePreview src={url} alt={asset.filename} ratio="4:3" onStatusChange={previewStatus}/></ImageZoom>:asset.kind==='voice'?<audio controls preload="none" src={url} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={url} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>;
+ const preview=previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'} onError={image?previewError:undefined}>{url=>image?<ImageZoom src={url} alt={asset.filename}><ImagePreview src={url} alt={asset.filename} ratio={ratio} onStatusChange={previewStatus}/></ImageZoom>:asset.kind==='voice'?<audio controls preload="none" src={url} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={url} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>;
  return <figure className="message-attachment">
   {image?<ImageRoot className="homer-image-attachment">{preview}</ImageRoot>:preview}
   {(!image||imageFailed)&&<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
@@ -132,8 +132,13 @@ function MediaAttachment({asset,messageId,index}:{asset:MediaView;messageId:stri
    {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
  </figure>;
 }
-function MediaAttachments({media,messageId}:{media:MediaView[];messageId:string}){
- return <div className="message-attachments">{media.map((asset,index)=><MediaAttachment key={asset.assetId} asset={asset} index={index} messageId={messageId}/>)}</div>;
+function MediaAttachments({media,messageId,references=[]}:{media:MediaView[];messageId:string;references?:ResourceReference[]}){
+ const paired=new Set<number>();
+ return <>{references.map(reference=>{
+  const index=reference.kind==='image'&&(reference.annotations?.length??1)>0?media.findIndex((asset,index)=>!paired.has(index)&&asset.kind==='image'&&asset.state==='ready'&&asset.assetId===reference.image.assetId&&asset.revision===reference.image.revision):-1;
+  if(index>=0)paired.add(index);
+  return <ResourceReferenceBlock key={referenceKey(reference)} reference={reference}>{index>=0&&<MediaAttachment asset={media[index]} index={index} messageId={messageId} ratio="auto"/>}</ResourceReferenceBlock>;
+ })}<div className="message-attachments">{media.map((asset,index)=>!paired.has(index)&&<MediaAttachment key={asset.assetId} asset={asset} index={index} messageId={messageId}/>)}</div></>;
 }
 const ArtifactsContext=createContext<{files:WebArtifact[];selectedId?:string;open:(file:CanvasArtifact,trigger?:HTMLElement,annotation?:{key:string;id:string})=>void}>({files:[],open:()=>{}});
 function ArtifactFiles({files}:{files:WebArtifact[]}){
@@ -179,8 +184,7 @@ function UserMessage() {
       <QuoteSource quote={quote} index={index}/>
       {quote.annotation && <div className="markdown"><p style={{whiteSpace:'pre-wrap'}}>{quote.annotation}</p></div>}
     </Fragment>)}
-    {referencesOf(metadata as {resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]}).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)}
-    <MediaAttachments media={(metadata.media as MediaView[])??[]} messageId={String(metadata.messageId)}/>
+    <MediaAttachments media={(metadata.media as MediaView[])??[]} messageId={String(metadata.messageId)} references={referencesOf(metadata as {resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]})}/>
     {original?.interaction?<CompletedInteractionCard item={original.interaction}/>:hasText&&<div data-aui-quote-selectable><MessagePrimitive.Parts components={{ Text: Markdown }} /></div>}
     {metadata.inputState==='uncertain'&&<p className="message-state">接收或结束结果待核实，未自动重跑</p>}
     </div>
@@ -233,7 +237,7 @@ function AssistantMessage() {
     {!internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
     <div className="assistant-message-bubble">
     {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
-    {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}{referencesOf(original.source).map(reference=><ResourceReferenceBlock key={referenceKey(reference)} reference={reference}/>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
+    {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]} references={referencesOf(original.source)}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
     <ArtifactFiles files={messageFiles}/>
     </div></>}
     {!!original&&!process&&status?.type === "running" && !content.some(part => part.type === "text" && part.text) && <p className="thinking" role="status">处理阶段待确认</p>}
