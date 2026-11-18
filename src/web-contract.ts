@@ -66,6 +66,7 @@ export type WebState = {
 };
 export type WebBridge = {
   openPreview?(input:unknown):Promise<unknown>;
+  readMessageFile?(input:unknown):{filename:string;mime:string;bytes:Buffer};
   schedules?(input:import('./schedule-display.js').ScheduleReadRequest):Promise<import('./schedule-display.js').ScheduleReadResult>;
   history?:{
     state():Promise<WebState>;

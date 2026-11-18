@@ -39,6 +39,8 @@ import {
   type ThreadComposerRuntime, type ThreadMessageLike,
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
+import {defaultUrlTransform,type Components,type UrlTransform} from 'react-markdown';
+import {decodeMessageLink,isMessageFileLink} from '../src/message-links';
 import remarkGfm from "remark-gfm";
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -104,11 +106,24 @@ async function post(path: string, value: unknown) {
   if (!response.ok) throw new Error(data.error ?? "web_request_failed");
   return data;
 }
-function Markdown() {
+const messageUrlTransform:UrlTransform=(url,key,node)=>{
+  if(key==='href'&&node.tagName==='a'&&!mobileView&&window.homerBrowserPreview&&isMessageFileLink(url)){
+    node.properties.homerFileDestination=url;
+    return '#';
+  }
+  return defaultUrlTransform(url);
+};
+const MessageMarkdownLink:NonNullable<Components['a']>=({children,href,node})=>{
   const browser=useContext(BrowserPreviewContext);
-  return <MarkdownTextPrimitive className="markdown" remarkPlugins={[remarkGfm, remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} components={{ img:LazyMarkdownImage,CodeHeader,SyntaxHighlighter: Highlight, a: ({ children, href }) => {
-    return <a href={href} target="_blank" rel="noreferrer noopener" onClick={event=>{if(href&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&browser.openLink(href,event.currentTarget))event.preventDefault();}}>{children}</a>;
-  } }} />;
+  const destination=node?.properties.homerFileDestination;
+  if(typeof destination==='string')return <a href="#" onClick={event=>{
+    event.preventDefault();
+    if(event.isTrusted&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey)browser.openLink(destination,event.currentTarget);
+  }}>{children}</a>;
+  return <a href={href} target="_blank" rel="noreferrer noopener" onClick={event=>{if(href&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&browser.openLink(href,event.currentTarget))event.preventDefault();}}>{children}</a>;
+};
+function Markdown() {
+  return <MarkdownTextPrimitive className="markdown" remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} urlTransform={messageUrlTransform} components={{img:LazyMarkdownImage,CodeHeader,SyntaxHighlighter:Highlight,a:MessageMarkdownLink}} />;
 }
 function ResourceDownload({path,filename,mimeType}:{path:string;filename:string;mimeType:string}){
  const [error,setError]=useState('');
@@ -1469,10 +1484,21 @@ function HomerApp() {
     setAnnotationFocus(focus?{...focus,nonce:crypto.randomUUID()}:undefined);
     setPreviewTabs(old=>{const tabs=old.tabs.filter(tab=>!(!('kind'in tab)&&page.source.kind==='attachment'&&tab.assetId===page.source.assetId&&tab.revision===page.source.revision));return{...old,tabs:tabs.some(tab=>tab.id===id)?tabs:[...tabs,{kind:'browser',id,title:page.title,page}],activeId:id};});setCanvasOpen(true);
   }
-  function openBrowserLink(_url:string,trigger:HTMLAnchorElement){
+  function openBrowserLink(destination:string,trigger:HTMLAnchorElement){
     const messageId=trigger.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage;
-    if(!window.homerBrowserPreview||!messageId||!/^https?:/.test(trigger.href))return false;
+    const local=!mobileView&&isMessageFileLink(destination);
+    if(!window.homerBrowserPreview||!messageId||!local&&!/^https?:/.test(trigger.href))return false;
     canvasTrigger.current=trigger;
+    if(local){
+      const id=JSON.stringify(['message-file',messageId,destination]);
+      const title=(decodeMessageLink(destination)??destination).split(/[\\/]/).pop()||destination;
+      updatePreviewScope(true,id);setAnnotationFocus(undefined);if(!canvasOpen)captureAnchor();
+      setPreviewTabs(old=>{
+        const existing=old.tabs.find(tab=>tab.id===id);
+        const tab={kind:'message-file' as const,id,title,trigger,messageId,destination,reload:existing&&'kind'in existing&&existing.kind==='message-file'?existing.reload+1:0};
+        return {...old,tabs:existing?old.tabs.map(item=>item.id===id?tab:item):[...old.tabs,tab],activeId:id};
+      });setCanvasOpen(true);return true;
+    }
     void openBrowserPreview(state.threadId,{kind:'browser',messageId,url:trigger.href,title:trigger.textContent?.trim().slice(0,500)||new URL(trigger.href).hostname}).then(page=>showBrowser(page)).catch(error=>setPageNotice(error.message));return true;
   }
   function openBrowserReference(reference:PreviewRequest,id:string){

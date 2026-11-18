@@ -2,8 +2,9 @@ import {isExecutionGuardStop} from './execution-limits.js';
 import {conversationUserText,userAuthorityDescription} from './user-intent.js';
 import {isUtf8} from 'node:buffer';
 import {isDraftImageReference,resourceReferenceText,referencesOf,type ResourceReference} from './preview-reference.js';
-import {previewQuoteText} from './message-quote.js';
-import {messageLinks} from './message-links.js';
+import {messageSourceParts,previewQuoteText} from './message-quote.js';
+import {decodeMessageLink,isMessageFileLink,messageFileDestination,messageLinks} from './message-links.js';
+import {withInteractionResponses} from './web-homer.js';
 import {publicActivityName,type PublicActivity} from './activity-facts.js';
 import {WebHistoryPages} from './web-history-pages.js';
 import {ReceptionTimings} from './reception-timings.js';
@@ -28,9 +29,9 @@ import {readScheduleDisplay,type ScheduleReadRequest} from './schedule-display.j
 import {Schedules,SCHEDULE_TOOLS} from './schedules.js';
 import {ScheduleTools,type ScheduleSource} from './schedule-tools.js';
 import {HostToolCalls} from './host-tool-calls.js';
-import { join,isAbsolute,dirname,basename } from "node:path";
+import { join,isAbsolute,dirname,basename,normalize } from "node:path";
 import { fileURLToPath,pathToFileURL } from "node:url";
-import { accessSync,constants,realpathSync,existsSync,statSync,lstatSync,openSync,fstatSync,closeSync,readFileSync } from "node:fs";
+import { accessSync,constants,realpathSync,existsSync,statSync,lstatSync,openSync,fstatSync,closeSync,readSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { Store,prepareMainReceiptMigration, type Run } from "./store.js";
 import { Files, canonicalDir } from "./files.js";
@@ -320,24 +321,33 @@ export class Homer {
       }catch{throw Error('media_scope_denied');}
     }
   }
-  private readLocalAttachment(path:string){
+  private readLocalAttachment(path:string,messageLink=false){
     if(!isAbsolute(path))throw Error('artifact_path_denied');
     let canonical:string;
     try{canonical=realpathSync.native(path);}
-    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')throw Error('artifact_missing');throw Error('artifact_path_denied');}
-    if(canonical!==path)throw Error('artifact_path_denied');
-    this.validateTaskFile(path);
+    catch(error){if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))throw Error('artifact_missing');throw Error('artifact_path_denied');}
+    if(canonical!==path&&!(messageLink&&process.platform==='darwin'&&/^\/(?:tmp|var|etc)\//.test(path)&&canonical==='/private'+path))throw Error('artifact_path_denied');
+    path=canonical;
+    this.validateTaskFile(path,false,messageLink);
     const expected=lstatSync(path);
+    if(!expected.isFile()||expected.nlink!==1||expected.size>MEDIA_POLICY.fileBytes)throw Error('file_type_or_size_denied');
     const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
     try{
       const before=fstatSync(fd);
       if(before.dev!==expected.dev||before.ino!==expected.ino||realpathSync.native(path)!==path)throw Error('artifact_path_denied');
-      if(!before.isFile()||before.nlink!==1||before.size<1||before.size>MEDIA_POLICY.fileBytes)throw Error('file_type_or_size_denied');
-      const bytes=readFileSync(fd),after=fstatSync(fd);
-      if(bytes.length!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs)throw Error('artifact_changed');
+      if(!before.isFile()||before.nlink!==1||before.size>MEDIA_POLICY.fileBytes)throw Error('file_type_or_size_denied');
+      const bytes=Buffer.allocUnsafe(before.size);
+      for(let offset=0;offset<bytes.length;){
+        const size=readSync(fd,bytes,offset,bytes.length-offset,null);
+        if(!size)throw Error('artifact_changed');
+        offset+=size;
+      }
+      if(readSync(fd,Buffer.allocUnsafe(1),0,1,null))throw Error('artifact_changed');
+      const after=fstatSync(fd),current=lstatSync(path,{throwIfNoEntry:false});
+      if(current?.dev!==before.dev||current.ino!==before.ino||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs)throw Error('artifact_changed');
       const detected=detectMedia(bytes),filename=basename(path);
-      const mime=detected==='application/octet-stream'&&isUtf8(bytes)
-        ? /\.html?$/i.test(filename)?'text/html; charset=utf-8':/\.css$/i.test(filename)?'text/css':/\.[cm]?js$/i.test(filename)?'application/javascript':/\.md$/i.test(filename)?'text/markdown':/\.(txt|csv|json)$/i.test(filename)?'text/plain':detected
+      const mime=detected==='application/octet-stream'&&isUtf8(bytes)&&(!messageLink||!bytes.includes(0))
+        ? /\.html?$/i.test(filename)?'text/html; charset=utf-8':/\.css$/i.test(filename)?'text/css':/\.[cm]?js$/i.test(filename)?'application/javascript':/\.md$/i.test(filename)||messageLink&&/\.markdown$/i.test(filename)?'text/markdown':/\.(txt|csv|json)$/i.test(filename)||messageLink?'text/plain':detected
         :detected;
       const kind=mime.startsWith('image/')?'image':mime.startsWith('audio/')?'voice':mime.startsWith('video/')?'video':'file';
       return {filename,mime,kind,bytes} as const;
@@ -1809,6 +1819,49 @@ export class Homer {
     if(preview)return {filename:asset.filename+'.wav',mime:preview.mime,data:preview.bytes.toString('base64')};
     return {filename:asset.filename,mime:asset.mime!,data:bytes.toString('base64'),sha256:asset.hash!};
   }
+  readMessageFile(value:unknown){
+    const input=object(value),threadId=string(input.threadId,100),messageId=string(input.messageId,100),destination=string(input.destination,16000);
+    if(this.closing||threadId!==this.store.meta('mainThread')||!isMessageFileLink(destination))throw Error('message_file_scope_denied');
+    const original=this.history.message(messageId);
+    if(!original||original.threadId!==threadId||original.revokedAt!=null)throw Error('message_file_scope_denied');
+    const {messages}=this.webHistoryPages().read(threadId,{around:messageId,limit:1});
+    const message=withInteractionResponses(this.store.db,messages,threadId).find(row=>row.id===messageId);
+    if(!message||message.interaction||message.status==='cancelled')throw Error('message_file_scope_denied');
+    // Native final answers live in the public projection of an internal
+    // process row. Match each visible Markdown part on its own.
+    const parts=messageSourceParts(message);
+    const bodies=parts?.map(part=>part.text)??(message.audience==='user'?[message.text]:[]);
+    let raw:string|undefined;
+    for(const body of bodies){
+      raw=messageFileDestination(body,destination);
+      if(raw)break;
+    }
+    if(!raw)throw Error('message_file_scope_denied');
+    const explicit=/^file:/i.test(raw);
+    if(explicit&&(!/^file:\/\/\/(?![\\/])/i.test(raw)||/[?#]/.test(raw)))throw Error('message_file_path_unsupported');
+    let path=decodeMessageLink(explicit?raw.slice(7):raw);
+    if(!path||/[\x00-\x1f\x7f]/.test(path))throw Error('message_file_path_unsupported');
+    if(process.platform==='win32'){
+      path=path.replace(/^\/(?=[a-z]:[\\/])/i,'').replace(/:(\d+)(?::\d+)?$/,'');
+      if(!/^[a-z]:[\\/]/i.test(path)||path.slice(2).includes(':'))throw Error('message_file_path_unsupported');
+      path=normalize(path);
+    }else if(!/^\/(?![\\/])/.test(path))throw Error('message_file_path_unsupported');
+    const read=(target:string)=>{
+      try{return this.readLocalAttachment(target,true);}
+      catch(error){
+        const code=(error as NodeJS.ErrnoException).code;
+        if(code==='ENOENT'||code==='ENOTDIR')throw Error('artifact_missing');
+        if(code==='EACCES'||code==='EPERM'||code==='ELOOP')throw Error('artifact_path_denied');
+        throw error;
+      }
+    };
+    try{return read(path);}
+    catch(error){
+      const withoutLine=process.platform==='win32'?path:path.replace(/:\d+(?::\d+)?$/,'');
+      if(!(error instanceof Error)||error.message!=='artifact_missing'||withoutLine===path)throw error;
+      return read(withoutLine);
+    }
+  }
   revealAttachment(input:AttachmentRef&{messageId:string}){
     this.attachmentMessage(input);
     return attachmentRevealTarget(this.store.db,this.media.readAttachment(input),path=>this.readLocalAttachment(path));
@@ -2462,9 +2515,9 @@ export class Homer {
     if(!actor.sourceRequestId||context?.event||context?.requestId!==actor.sourceRequestId)return;
     return {sourceRequestId:actor.sourceRequestId,description:userAuthorityDescription(context.userText??'')};
   }
-  private managedFilePaths(){
+  private managedFilePaths(messageLink=false){
     const appData=this.config.appData??join(this.config.runtime,'application-data');
-    return [this.config.runtime,this.config.codexHome,...['runtime-config.json','.runtime-config.json.pending','deepseek.json','.deepseek.json.pending'].map(name=>join(appData,name))]
+    return [this.config.runtime,this.config.codexHome,...(messageLink&&this.config.nativeCodexHome?[this.config.nativeCodexHome]:[]),...['runtime-config.json','.runtime-config.json.pending','deepseek.json','.deepseek.json.pending'].map(name=>join(appData,name))]
       .map(path=>existsSync(path)?realpathSync.native(path):path);
   }
   private validateWorkDirectory(cwd:string){
@@ -2485,8 +2538,8 @@ export class Homer {
     this.validateMainContext(context);
     return result;
   }
-  private validateTaskFile(path:string,write=false){
-    const roots=this.managedFilePaths();
+  private validateTaskFile(path:string,write=false,messageLink=false){
+    const roots=this.managedFilePaths(messageLink);
     if(write)roots.push(...nativeExecutableRoots(this.config));
     if(roots.some(root=>path===root||inside(root,path)))throw Error('artifact_path_denied');
   }

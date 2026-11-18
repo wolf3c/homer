@@ -303,6 +303,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
       },
     },
     openPreview:input=>app.openBrowserPreview(input),
+    readMessageFile:input=>app.readMessageFile(input),
     schedules:async input=>app.readSchedules(input),
     onStateChange: listener=>app.onStateChange(listener),
     taskOverview:{

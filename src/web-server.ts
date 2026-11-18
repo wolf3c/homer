@@ -172,6 +172,12 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
     }
     if (request.method === "POST") {
       if (request.headers.origin !== requestOrigin) return json(response, 403, { error: "local_origin_required" });
+      if(path==='/api/preview/message-file'){
+        if(!desktopAccess||!bridge.readMessageFile)return json(response,403,{error:'message_file_scope_denied'});
+        const file=bridge.readMessageFile(await body(request));
+        response.writeHead(200,{'Content-Type':file.mime,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`});
+        response.end(file.bytes);return;
+      }
       const input = await body(request);
       if(media?.action==='reveal'){
         if(!input||Array.isArray(input)||typeof input!=='object'||Object.keys(input).length)throw Error('artifact_reveal_invalid');

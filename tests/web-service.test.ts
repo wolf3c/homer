@@ -1,10 +1,12 @@
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rmSync } from 'node:fs';
+import {realpathSync,rmSync,symlinkSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
 import type {Message} from "../src/service.js";
 import { homerWebBridge } from "../src/web-homer.js";
 import { createWebServer } from "../src/web-server.js";
+import {isMessageFileLink} from "../src/message-links.js";
 
 import {fixture} from './web-service-fixture.js';
 import {previewCollection} from './web-preview-collection-fixture.js';
@@ -13,6 +15,63 @@ const until = async (check: () => boolean) => {
   const end = Date.now() + 3000;
   while (!check()) { if (Date.now() > end) throw new Error("synthetic_wait_timeout"); await new Promise(r => setTimeout(r, 5)); }
 };
+
+test('desktop message-file reads require a visible Markdown link and read its current bytes',async()=>{
+ for(const href of ['/connect','/assets/app.js','https://example.invalid/a','//example.invalid/a','#part','relative.md'])assert.equal(isMessageFileLink(href),false,href);
+ for(const href of ['/tmp/README','file:///connect','C:/work/report.md'])assert.equal(isMessageFileLink(href),true,href);
+ const f=fixture(),threadId='synthetic-main',token='a'.repeat(64);
+ const folder=realpathSync.native(f.base),file=join(folder,'原文 100%.md'),privateFile=join(folder,'runtime','private.txt');
+ const destination=file.split('\\').join('/'),link=`[原文]: <${destination}:7>`;
+ const linked=`[打开][原文]\n\n${link}`;
+ writeFileSync(file,'# 第一版');writeFileSync(privateFile,'private');
+ const bridge=homerWebBridge(f.app),desktop=await createWebServer({bridge,port:0,desktopAccessToken:token}),web=await createWebServer({bridge,port:0});
+ const post=(input:unknown,host=desktop,access:string|null=token,origin=host.url)=>fetch(host.url+'/api/preview/message-file',{
+  method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...(access?{'X-Homer-Desktop-Access':access}:{})},body:JSON.stringify(input),
+ });
+ const read=(messageId:string,url=destination+':7')=>post({threadId,messageId,destination:url});
+ const expectError=async(response:Response,status:number,error:string)=>{
+  assert.equal(response.status,status);assert.deepEqual(await response.json(),{error});
+ };
+ try{
+  await f.app.start();
+  f.app.history.record('existing',threadId,linked);
+  f.app.history.record('internal',threadId,linked,'completed',null,'internal');
+  f.app.history.record('foreign','other-thread',linked);
+  f.app.history.record('protected',threadId,`[私有](<${privateFile.split('\\').join('/')}>)`);
+  const engine=f.engines.find(candidate=>!candidate.worker)!;
+  engine.turn=async(_text,options)=>{
+   engine.turnId='message-file-turn';options?.onStarted?.(engine.turnId);
+   engine.emit('agentMessage',{threadId,turnId:engine.turnId,itemId:'commentary',phase:'commentary',text:`[后台](<${destination}>)`,completed:true});
+   engine.emit('agentMessage',{threadId,turnId:engine.turnId,itemId:'answer',phase:'final_answer',text:linked,completed:true});
+   return {status:'completed',text:linked};
+  };
+  await f.app.message('发送新回复','message-file-turn');
+  const fresh=(await bridge.history!.state()).messages.find(row=>row.finalAnswers?.some(item=>item.text===linked))!;
+  assert.ok(fresh&&fresh.id!=='existing'&&!fresh.attachments?.length);
+  for(const id of ['existing',fresh.id]){
+   const response=await read(id,encodeURI(destination)+':7');
+   assert.equal(response.status,200);assert.equal(response.headers.get('x-homer-artifact-hash'),null);
+   assert.equal(await response.text(),'# 第一版');
+  }
+  writeFileSync(file,'# 第二版');assert.equal(await (await read('existing')).text(),'# 第二版');
+  for(const id of ['internal','foreign'])await expectError(await read(id),409,'message_file_scope_denied');
+  await expectError(await read(fresh.id,destination),409,'message_file_scope_denied');
+  await expectError(await read('protected',privateFile.split('\\').join('/')),409,'artifact_path_denied');
+  if(process.platform!=='win32'){
+   const alias=join(folder,'alias.md');symlinkSync(file,alias);
+   f.app.history.record('symlink',threadId,`[别名](<${alias}>)`);
+   await expectError(await read('symlink',alias),409,'artifact_path_denied');
+  }
+  const input={threadId,messageId:'existing',destination:destination+':7'};
+  await expectError(await post(input,desktop,null),401,'web_desktop_auth_required');
+  await expectError(await post(input,desktop,token,'https://foreign.invalid'),403,'local_origin_required');
+  await expectError(await post(input,web),403,'message_file_scope_denied');
+  await expectError(await post({...input,threadId:'other-thread'}),409,'message_file_scope_denied');
+  rmSync(file);await expectError(await read('existing'),409,'artifact_missing');
+  writeFileSync(file,'# 已恢复');assert.equal(await (await read('existing')).text(),'# 已恢复');
+  f.app.history.revokeMessage(threadId,'existing');await expectError(await read('existing'),409,'message_file_scope_denied');
+ }finally{await Promise.all([web.close(),desktop.close()]);await f.app.close();}
+});
 
 test("accepted input streams into persisted history; stop keeps main reusable and dispatched worker alive", async () => {
   const f = fixture();
