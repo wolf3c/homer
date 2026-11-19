@@ -702,20 +702,32 @@ test('real account HTTP and private file preserve A until restart, adopt B, and 
  const api=await realAccountApi();
  const parent=resolve('.codex/scratch/config-ab-offline-20261030/shell');mkdirSync(parent,{recursive:true});
  const root=realpathSync(mkdtempSync(join(parent,'synthetic-'))),file=join(root,'runtime-config.json'),history=join(root,'history.txt');
- const boundary={gatewayOrigin:'https://models.super-tree.com'},a=websiteConnection(),b={...a.config,worker:{...a.config.worker,effort:'high',context:{contextWindow:600000,autoCompactTokenLimit:450000,autoCompactTokenLimitScope:'total'}}};
- assert.deepEqual(api.validateHomerRuntimeConfig(b,boundary),b);
- api.saveHomerConnection(file,{subject:a.subject,modelToken:a.token,config:a.config},boundary);
  writeFileSync(history,'synthetic existing history\n');const historyBefore=readFileSync(history);
- let config=a.config,mode='good',release,received;const pending=join(root,'.runtime-config.json.pending');
+ let config,mode='good',release,received;const pending=join(root,'.runtime-config.json.pending');
  const server=createServer((req,res)=>{
+  if(req.url==='/v1/models'){
+   assert.equal(req.headers.authorization,'Bearer '+a.token);
+   res.end(JSON.stringify({object:'list',data:mode==='missing-model'?[]:[{id:'deepseek-flash'}]}));return;
+  }
+  if(req.url==='/v1/models/deepseek-flash'){
+   assert.equal(req.headers.authorization,'Bearer '+a.token);
+   const detail={object:'model',id:'deepseek-flash'};
+   if(mode==='late'){received?.();release=()=>res.end(JSON.stringify({...detail,capabilities:{responses:{image_input:true}}}));return;}
+   res.end(JSON.stringify(detail));return;
+  }
   assert.equal(req.url,'/api/homer/v1/config');assert.equal(req.method,'GET');
   assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
   if(mode==='unavailable'){res.writeHead(503).end('{}');return;}
-  if(mode==='late'){received?.();release=()=>res.end(JSON.stringify(config));return;}
   res.end(JSON.stringify(mode==='invalid'?{...config,worker:{...config.worker,effort:''}}:config));
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const accountApi={...api,queryHomerWallet:async()=>{throw Error('USAGE_UNAVAILABLE');},readHomerConnection:()=>api.readHomerConnection(file,boundary),saveHomerRuntimeConfig:(_file,value)=>api.saveHomerRuntimeConfig(file,value,boundary),queryHomerRuntimeConfig:(_options,signal)=>api.queryHomerRuntimeConfig({...boundary,websiteOrigin:'http://127.0.0.1:'+server.address().port,allowSyntheticLoopback:true},signal)};
+ const boundary={gatewayOrigin:'http://127.0.0.1:'+server.address().port,allowSyntheticLoopback:true},a=websiteConnection();
+ for(const role of Object.values(a.config))role.baseUrl=boundary.gatewayOrigin+'/v1';
+ const b={...a.config,worker:{...a.config.worker,effort:'high',context:{contextWindow:600000,autoCompactTokenLimit:450000,autoCompactTokenLimitScope:'total'}}};
+ config=a.config;
+ assert.deepEqual(api.validateHomerRuntimeConfig(b,boundary),b);
+ api.saveHomerConnection(file,{subject:a.subject,modelToken:a.token,config:a.config},boundary);
+ const accountApi={...api,queryHomerWallet:async()=>{throw Error('USAGE_UNAVAILABLE');},readHomerConnection:()=>api.readHomerConnection(file,boundary),saveHomerRuntimeConfig:(_file,value)=>api.saveHomerRuntimeConfig(file,value,boundary),queryHomerRuntimeConfig:(options,signal)=>api.queryHomerRuntimeConfig({...options,...boundary,websiteOrigin:boundary.gatewayOrigin},signal)};
  const boot=async()=>{const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,accountApi});for(let i=0;i<300&&!f.credentials.length;i++)await new Promise(r=>setTimeout(r,5));assert.equal(f.credentials.length,1);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;};
  const waitFor=async(f,expected)=>{for(let i=0;i<300;i++){const state=await accountCall(f,'state');if(expected(state))return state;await new Promise(r=>setTimeout(r,5));}assert.fail('account state did not settle');};
  const check=async(f,expected)=>{f.advance(3600001);f.event({kind:'account_config_check'});return waitFor(f,expected);};
@@ -724,7 +736,7 @@ test('real account HTTP and private file preserve A until restart, adopt B, and 
  try{
   f=await boot();assert.deepEqual(JSON.parse(f.credentials[0]),a);
   const bytesA=readFileSync(file);
-  for(const [failure,error]of [['invalid','INVALID_REQUEST'],['unavailable','CONFIG_UNAVAILABLE']]){
+  for(const [failure,error]of [['invalid','INVALID_REQUEST'],['unavailable','CONFIG_UNAVAILABLE'],['missing-model','MODEL_CONFIG_UNAVAILABLE']]){
    mode=failure;await check(f,s=>s.error===error);assert.deepEqual(readFileSync(file),bytesA);
    assert.equal((await accountCall(f,'state')).needsRestart,false);assert.deepEqual(JSON.parse(f.credentials[0]),a);
   }
@@ -737,7 +749,7 @@ test('real account HTTP and private file preserve A until restart, adopt B, and 
   assert.deepEqual(JSON.parse(f.credentials[0]),{...a,config:b});assert.equal((await accountCall(f,'state')).needsRestart,false);
   config=a.config;await check(f,s=>s.needsRestart);assert.deepEqual(JSON.parse(f.credentials[0]),{...a,config:b});
   await stop(f);f=await boot();assert.deepEqual(JSON.parse(f.credentials[0]),a);assert.equal((await accountCall(f,'state')).needsRestart,false);
-  // A valid delayed response must not save after the shell begins shutting down.
+  // A valid delayed model detail must not save after the shell begins shutting down.
   config=b;mode='late';const arrived=new Promise(r=>received=r);f.advance(3600001);f.event({kind:'account_config_check'});await arrived;
   f.app.quit();release();await new Promise(r=>setTimeout(r,20));assert.deepEqual(api.readHomerConnection(file,boundary),a);
   assert.deepEqual(readFileSync(history),historyBefore);

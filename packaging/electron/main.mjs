@@ -124,7 +124,7 @@ let accountRevision=0,walletRevision=0,walletDirty=true,walletRead,quitAction,pe
 const accountBoundary=()=>({gatewayOrigin:accountOrigins?.gatewayOrigin??'',allowSyntheticLoopback:accountSynthetic});
 const connectionKind=value=>value?.subject&&value.token?'website':'disconnected';
 const connectionReady=value=>!!value?.subject&&!!value.token&&!!value.config;
-const accountCode=error=>['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED','CONNECTION_CANCELLED','TOKEN_UNAVAILABLE','USAGE_UNAVAILABLE','NOT_CONNECTED'].includes(error?.message)?error.message:'UNAVAILABLE';
+const accountCode=error=>['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED','CONNECTION_CANCELLED','MODEL_CONFIG_UNAVAILABLE','TOKEN_UNAVAILABLE','USAGE_UNAVAILABLE','NOT_CONNECTED'].includes(error?.message)?error.message:'UNAVAILABLE';
 const accountState=()=>({supported:!!dailyTokenFile,configured:!!accountOrigins,source:modelSource,websiteReady:connectionReady(connection),native:nativeStatus?{account:nativeStatus.account,connected:nativeStatus.connected,phase:nativeStatus.phase,pending:!!nativeStatus.loginId,canReopen:!!nativeStatus.authUrl}:undefined,nativeError,connection:connectionKind(connection),active:connectionKind(modelSource==='website'?activeConnection:null),pending:!!pendingConnection,canReopen:!!pendingConnection&&!!pendingLoginUrl,needsRestart:connectionReady(connection)&&JSON.stringify(connection)!==JSON.stringify(activeConnection),error:connectionError,...(wallet?{wallet,updatedAt:walletUpdatedAt}:{}),walletError,stale:walletDirty||!!wallet?.expiresAt&&wallet.expiresAt<=Date.now()/1000});
 function accountChanged(){
  if(!window||window.isDestroyed()||!origin)return;
@@ -143,7 +143,7 @@ async function syncHomerConfig(reason){
  const revision=accountRevision,operation=new AbortController();configAbort=operation;
  configRead=(async()=>{
   try{
-   const config=await queryHomerRuntimeConfig({...accountOrigins,allowSyntheticLoopback:accountSynthetic},operation.signal);
+   const config=await queryHomerRuntimeConfig({...accountOrigins,allowSyntheticLoopback:accountSynthetic,modelToken:connection.token},operation.signal);
    if(operation.signal.aborted||revision!==accountRevision||quitPending)return;
    if(JSON.stringify(config)!==JSON.stringify(connection.config))connection=saveHomerRuntimeConfig(dailyTokenFile,config,accountBoundary());
    connectionError=undefined;

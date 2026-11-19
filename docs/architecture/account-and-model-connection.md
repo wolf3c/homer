@@ -20,13 +20,19 @@
 
 ## 会员模型配置简化
 
-2026-11-19 方案，Homer 待实施。AgentModelHub 的 rc.49 本地候选 `c3e0c84` 已验证受限 Token、旧响应兼容和带斜杠的模型 ID。`GET /v1/models` 仍列出当前 Token 可用的模型，能力通过同一个 Token 请求 `GET /v1/models/{model}` 获取。详情已能声明图片输入、推理档和原生搜索等能力，Codex 工具发现和 Responses WebSocket 仍缺少对应字段。候选尚未部署，能力声明须按实际网关路由验收。
+2026-11-19，Homer 第一阶段已接入源码并通过本地联调。AgentModelHub 的 rc.49 本地候选 `c3e0c84` 已验证受限 Token、旧响应兼容和带斜杠的模型 ID。`GET /v1/models` 仍列出当前 Token 可用的模型，能力通过同一个 Token 请求 `GET /v1/models/{model}` 获取。详情已能声明图片输入、推理档和原生搜索等能力，Codex 工具发现和 Responses WebSocket 仍缺少对应字段。候选尚未部署，生产能力仍须按实际网关路由验收。
 
 ### 第一步：接入模型详情
 
 1. 网站的配置 GET 和 PKCE 兑换继续返回[现有完整格式](../2026-11-04-membership-context-config.md#通用边界与能力)。Homer 在登录或现有配置刷新时，用会员 Token 查询受信网关的模型列表，确认所选 ID 可用，再按精确 ID 查详情。相同模型查一次，带斜杠的 ID 按单个路径段编码。详情 HTTP 200 仍须检查响应体错误和返回的 `id`，因为不可见的内置模型可能仍返回基础详情。
 2. 将 `image_input`、`reasoning.supported_efforts` 和 `tools.web_search` 投影到现有目录与搜索选择。显式 `false` 生效，例如关闭原生搜索后恢复会员 `web_search`。详情临时不可用或字段缺省时沿用完整网站配置。若有效列表明确缺少所选模型，或已声明的档位列表不含所选档位，拒绝采用该选择并提示配置问题。`default_effort` 表示网关默认档，角色的显式档位仍由网站决定。`toolSearch` 和 `supportsWebSocket` 继续取完整网站配置。
 3. 结果只应用于发起查询时的连接、Token 和选型。两角色一起通过校验后，沿用现有私有连接文件原子保存和安全重启。每个 Codex 进程继续生成本角色的目录，保留 Luna 审核条目和既有工具、附件及审批边界。首步沿用会员窗口 `272000`、压缩阈值 `244800` 和 `total` 口径。后续采用 `max_input_tokens` 时只用于收紧输入预算，总上下文窗口仍按 Homer 策略设置。PDF 输入、结构化输出和引用另行处理。见[现有保存路径](../../src/homer-account.ts#L268)与[目录生成](../../src/model-catalog.ts#L18)。
+
+一次模型发现最多等待 3 秒，Token 只发往受信网关。网关明确拒绝 Token 时保留原连接文件并提示凭据失效。网站没有能力对象时，只有网关给出至少一项有效声明才生成能力对象，其余字段采用纯文本、显式角色档位和关闭未声明工具的默认值。网站指定 `effort: null` 时保持无显式档位。
+
+本地联调用 `c3e0c84` 的候选二进制、独立 SQLite 和合成 Token。合成网站保持完整 GET 与 PKCE 兑换格式。用 `vendor/model` 和 `gpt-6.1-terra` 验证编码 ID、角色能力差异、受限 Token 拒绝选型、无效档位和本地缓存读回。固定 Codex `0.171.0-alpha.7` 的两个独立进程回读了目录、图片、推理档、搜索、工具发现与上下文设置，均保留 Luna 审核条目。未执行模型轮或验证线上能力。离线回归入口见[账号测试](../../tests/homer-account.test.ts)和[桌面刷新测试](../../tests/electron-shell.test.mjs)。
+
+账号、桌面壳、角色配置和会员工具定向回归 497 项通过，桌面设置渲染回归 103 项通过。生产源码和 UI 类型检查通过。整仓类型检查在本次未修改的 [历史窗口测试](../../tests/web-history-maintenance-contract.test.ts#L28)报 `WebState` 类型转换错误。
 
 ### 第二步：按版本交付精简配置
 

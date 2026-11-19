@@ -25,10 +25,11 @@ export type HomerCredentialBoundary = {
 
 function invalid(): never { throw new Error('INVALID_REQUEST'); }
 
-function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid();
-  return value as Record<string, unknown>;
+function object(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
+
+function record(value: unknown): Record<string, unknown> { return object(value) ?? invalid(); }
 
 function fields(value: Record<string, unknown>, names: string[]) {
   if (Object.keys(value).length !== names.length || names.some(name => !Object.hasOwn(value, name))) invalid();
@@ -330,11 +331,52 @@ async function jsonRequest(url:string,options:RequestInit,authenticationStatus=f
   }
   return {status:response.status,body:await readHomerJsonResponse(response,64*1024)};
 }
-export async function queryHomerRuntimeConfig(options:HomerCredentialBoundary&{websiteOrigin:string},signal?:AbortSignal):Promise<HomerRuntimeConfig> {
+function applyHomerModelDetail(role:HomerRoleConfig,detail:Record<string,unknown>|undefined):HomerRoleConfig {
+  if(detail?.object!=='model'||detail.id!==role.model||Object.hasOwn(detail,'error'))return role;
+  const responses=object(object(detail.capabilities)?.responses);
+  const image=responses?.image_input,search=object(responses?.tools)?.web_search;
+  const advertised=object(responses?.reasoning)?.supported_efforts;
+  const efforts=Array.isArray(advertised)&&advertised.length<=32&&advertised.every(validReasoningEffort)&&new Set(advertised).size===advertised.length?advertised:undefined;
+  if(role.effort!==null&&efforts&&!efforts.includes(role.effort))throw Error('MODEL_CONFIG_UNAVAILABLE');
+  if(typeof image!=='boolean'&&typeof search!=='boolean'&&efforts===undefined)return role;
+  const previous=role.capabilities;
+  const capabilities:ModelCapabilities={
+    inputModalities:typeof image==='boolean'?(image?['text','image']:['text']):previous?.inputModalities??['text'],
+    reasoningEfforts:role.effort===null?[]:efforts??previous?.reasoningEfforts??[role.effort],
+    webSearch:typeof search==='boolean'?search:previous?.webSearch??false,
+    toolSearch:previous?.toolSearch??false,
+  };
+  return {...role,capabilities};
+}
+
+async function discoverHomerModelCapabilities(config:HomerRuntimeConfig,modelToken:string,signal?:AbortSignal):Promise<HomerRuntimeConfig> {
+  const deadline=AbortSignal.timeout(3000);
+  const options={headers:{Authorization:'Bearer '+modelToken},cache:'no-store' as const,signal:signal?AbortSignal.any([signal,deadline]):deadline};
+  const request=async(path:string)=>{
+    const result=await jsonRequest(config.main.baseUrl+path,options,true).catch(()=>undefined);
+    signal?.throwIfAborted();
+    if(result?.status===401||result?.status===403)throw Error('TOKEN_UNAVAILABLE');
+    return result?.status===200?object(result.body):undefined;
+  };
+  const listing=await request('/models');
+  const models=listing?.data;
+  if(listing?.object!=='list'||Object.hasOwn(listing,'error')||!Array.isArray(models)||!models.every(model=>typeof object(model)?.id==='string'))return config;
+  if(![config.main,config.worker].every(role=>models.some(model=>model.id===role.model)))throw Error('MODEL_CONFIG_UNAVAILABLE');
+  // URL parsing normalizes dot segments even when they are percent-encoded.
+  const detail=(model:string)=>model==='.'||model==='..'?Promise.resolve(undefined):request('/models/'+encodeURIComponent(model));
+  const main=detail(config.main.model);
+  const [mainDetail,workerDetail]=await Promise.all([main,config.worker.model===config.main.model?main:detail(config.worker.model)]);
+  return {main:applyHomerModelDetail(config.main,mainDetail),worker:applyHomerModelDetail(config.worker,workerDetail)};
+}
+
+export async function queryHomerRuntimeConfig(options:HomerCredentialBoundary&{websiteOrigin:string;modelToken?:string},signal?:AbortSignal):Promise<HomerRuntimeConfig> {
   allowedOrigin(options.websiteOrigin,options.allowSyntheticLoopback);
   const response=await jsonRequest(options.websiteOrigin+'/api/homer/v1/config',{signal,cache:'no-store',headers:{'X-Homer-Config-Features':'responses-websocket'}});
   if(response.status!==200)throw Error('UNAVAILABLE');
-  return validateHomerRuntimeConfig(response.body,options);
+  const config=validateHomerRuntimeConfig(response.body,options);
+  if(options.modelToken===undefined)return config;
+  if(!/^[\x21-\x7e]{1,4096}$/.test(options.modelToken))invalid();
+  return discoverHomerModelCapabilities(config,options.modelToken,signal);
 }
 export async function queryHomerWallet(connection:HomerConnection,boundary:HomerCredentialBoundary,signal?:AbortSignal):Promise<HomerWallet&{expiresAt:number}> {
   allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
@@ -407,10 +449,13 @@ export async function authorizeHomerConnection(options:HomerCredentialBoundary&{
       let code='UNAVAILABLE';try{const error=record(record(result.body).error);if(['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE'].includes(String(error.code)))code=String(error.code);}catch{}
       throw Error(code);
     }
-    return saveHomerConnection(options.file,result.body,options);
+    const credentials=validateHomerCredentials(result.body,{...options,subject:readHomerConnection(options.file,options)?.subject??options.subject});
+    const config=await discoverHomerModelCapabilities(credentials.config,credentials.modelToken,signal);
+    attempt.assertActive();signal.throwIfAborted();
+    return saveHomerConnection(options.file,{...credentials,config},options);
   }catch(error){
     const code=error instanceof Error?error.message:'';
-    throw Error(signal.aborted?'CONNECTION_CANCELLED':['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED'].includes(code)?code:'UNAVAILABLE');
+    throw Error(signal.aborted?'CONNECTION_CANCELLED':['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED','MODEL_CONFIG_UNAVAILABLE','TOKEN_UNAVAILABLE'].includes(code)?code:'UNAVAILABLE');
   }finally{
     signal.removeEventListener('abort',abort);attempt?.cancel();server.closeAllConnections();server.close();
   }

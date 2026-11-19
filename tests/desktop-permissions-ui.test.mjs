@@ -383,6 +383,8 @@ test('configuration sync errors do not demand login, while an invalid model cred
  let current={supported:true,configured:true,connection:'website',active:'website',pending:false,needsRestart:false,stale:false,error:'CONFIG_UNAVAILABLE',wallet:{available:8,used:2,unit:'积分'},updatedAt:'2026-10-30T00:00:00Z'};let changed;const calls=[];
  window.homerDesktopAccount={state:async()=>current,onChange:cb=>{changed=cb;return()=>{};},connect:async()=>{calls.push('connect');return {...current,pending:true};}};
  await d.render(React.createElement(get().DesktopAccount));assert.ok(!button(d,'重新登录'));assert.ok(button(d,'退出登录'));assert.ok(row(d,'可用积分'));
+ current={...current,error:'MODEL_CONFIG_UNAVAILABLE'};await act(async()=>changed());
+ assert.match(d.container.textContent,/当前会员模型或推理档不可用/);assert.ok(!button(d,'重新登录'));
  current={...current,error:undefined,walletError:'TOKEN_UNAVAILABLE'};await act(async()=>changed());
  assert.match(d.container.textContent,/登录已失效/);assert.match(d.container.textContent,/上次记录/);await d.click(button(d,'重新登录'));assert.deepEqual(calls,['connect']);
 }));

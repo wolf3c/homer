@@ -221,14 +221,18 @@ test('real loopback performs exact exchange once; invalid callback cannot write,
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-flow-'))),file=join(dir,'runtime-config.json');let posts=0,release:()=>void=()=>{};
  let hold=false;
  const website=await localServer(async(req,res)=>{
+  if(req.url==='/v1/models'){res.writeHead(404).end('{}');return;}
   assert.equal(req.url,'/api/homer/v1/token');assert.equal(req.method,'POST');assert.equal(req.headers['x-homer-config-features'],'responses-websocket');posts++;
   let text='';for await(const chunk of req)text+=chunk;
   const body=JSON.parse(text);assert.deepEqual(Object.keys(body).sort(),['clientId','code','codeVerifier','grantType','redirectUri'].sort());
   assert.equal(body.codeVerifier.length,43);
   if(hold)await new Promise<void>(r=>release=r);
-  res.setHeader('Content-Type','application/json');res.end(JSON.stringify(credentials()));
+  const baseUrl='http://'+req.headers.host+'/v1';
+  const config=runtimeConfig();config.main.baseUrl=baseUrl;config.worker.baseUrl=baseUrl;
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({...credentials(),config}));
  });
  try{
+  const boundary={gatewayOrigin:website.origin,allowSyntheticLoopback:true};
   const controller=new AbortController();let callbackUrl='',accepted=0,browser:Promise<void>|undefined;
   const connected=api.authorizeHomerConnection({...boundary,websiteOrigin:website.origin,allowSyntheticLoopback:true,file,signal:controller.signal,onCallback:()=>{accepted++;},openBrowser:(raw:string)=>browser=(async()=>{
    const url=new URL(raw);callbackUrl=url.searchParams.get('redirect_uri')!;const state=url.searchParams.get('state');
@@ -376,6 +380,97 @@ test('public configuration GET sends no secret, bypasses cache, rejects redirect
   for(mode of ['redirect','missing','invalid'])await assert.rejects(api.queryHomerRuntimeConfig(options));
   assert.equal(seen.includes('/leak'),false);assert.ok(seen.every(p=>p==='/api/homer/v1/config'));
  }finally{await website.close();}
+});
+
+test('member refresh resolves encoded model details once per selected model',async()=>{
+ const calls:string[]=[];
+ const gateway=await localServer((req,res)=>{
+  assert.equal(req.headers.authorization,'Bearer synthetic-key');calls.push(req.url!);
+  const responses=req.url==='/v1/models/vendor%2Fmodel'?{
+   image_input:false,reasoning:{supported_efforts:['medium','high']},tools:{web_search:false},
+  }:{image_input:true,tools:{web_search:true}};
+  res.end(JSON.stringify(req.url==='/v1/models'?{object:'list',data:[{id:'vendor/model'},{id:'other'}]}:{
+   id:req.url==='/v1/models/vendor%2Fmodel'?'vendor/model':'other',object:'model',capabilities:{responses},
+  }));
+ });
+ const caps={inputModalities:['text','image'],reasoningEfforts:['low','medium','high'],webSearch:true,toolSearch:true};
+ const role={...runtimeConfig().main,baseUrl:gateway.origin+'/v1',model:'vendor/model',effort:'medium',capabilities:caps,supportsWebSocket:true};
+ const config={main:role,worker:{...role,effort:'high'}};
+ const website=await localServer((req,res)=>{assert.equal(req.headers.authorization,undefined);res.end(JSON.stringify(config));});
+ try{
+  const options={websiteOrigin:website.origin,gatewayOrigin:gateway.origin,allowSyntheticLoopback:true,modelToken:'synthetic-key'};
+  const projected={inputModalities:['text'],reasoningEfforts:['medium','high'],webSearch:false,toolSearch:true};
+  assert.deepEqual(await account.queryHomerRuntimeConfig(options),{main:{...role,capabilities:projected},worker:{...config.worker,capabilities:projected}});
+  assert.deepEqual(calls.splice(0),['/v1/models','/v1/models/vendor%2Fmodel']);
+  config.worker={...config.worker,model:'other'};
+  assert.deepEqual(await account.queryHomerRuntimeConfig(options),{main:{...role,capabilities:projected},worker:config.worker});
+  assert.equal(calls[0],'/v1/models');
+  assert.deepEqual(calls.slice(1).sort(),['/v1/models/other','/v1/models/vendor%2Fmodel']);
+ }finally{await website.close();await gateway.close();}
+});
+
+test('member refresh preserves website metadata on unknown details but rejects a confirmed invalid selection',async()=>{
+ let mode='invalid-detail';const calls:string[]=[];
+ const gateway=await localServer((req,res)=>{
+  calls.push(req.url!);
+  if(req.url==='/v1/models'){
+   if(mode==='list-unavailable'){res.writeHead(503).end('{}');return;}
+   if(mode==='token-denied'){res.writeHead(401).end('Unauthorized');return;}
+   res.end(JSON.stringify({object:'list',data:mode==='missing-model'?[]:[{id:'deepseek-flash'}]}));return;
+  }
+  if(mode==='redirect'){res.writeHead(302,{Location:'/leak'}).end();return;}
+  if(mode==='http-error'){res.writeHead(503).end('{}');return;}
+  res.end(JSON.stringify(mode==='detail-error'?{error:{code:'model_not_found'}}:{
+   object:'model',id:mode==='wrong-id'?'unselected':'deepseek-flash',capabilities:{responses:{
+    image_input:false,reasoning:{supported_efforts:mode==='missing-effort'?[]:['bad effort']},
+   }},
+  }));
+ });
+ const role={...runtimeConfig().main,baseUrl:gateway.origin+'/v1'};
+ const config={main:role,worker:role};
+ const website=await localServer((_req,res)=>res.end(JSON.stringify(config)));
+ try{
+  const query=()=>account.queryHomerRuntimeConfig({websiteOrigin:website.origin,gatewayOrigin:gateway.origin,allowSyntheticLoopback:true,modelToken:'synthetic-key'});
+  for(mode of ['list-unavailable','wrong-id','detail-error','redirect','http-error'])assert.deepEqual(await query(),config);
+  mode='invalid-detail';
+  const fallback={...role,capabilities:{inputModalities:['text'],reasoningEfforts:['max'],webSearch:false,toolSearch:false}};
+  assert.deepEqual(await query(),{main:fallback,worker:fallback});
+  assert.equal(calls.includes('/leak'),false);
+  for(mode of ['missing-effort','missing-model'])await assert.rejects(query(),/MODEL_CONFIG_UNAVAILABLE/);
+  mode='token-denied';await assert.rejects(query(),/TOKEN_UNAVAILABLE/);
+  assert.equal(calls.at(-1),'/v1/models');
+ }finally{await website.close();await gateway.close();}
+});
+
+test('member exchange saves resolved capabilities and cancellation during discovery preserves the connection',async()=>{
+ const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-discovery-'))),file=join(dir,'runtime-config.json');
+ let announceDetail:()=>void=()=>{};const detailStarted=new Promise<void>(done=>announceDetail=done);
+ const gateway=await localServer((req,res)=>{
+  if(req.url==='/v1/models'){res.end(JSON.stringify({object:'list',data:[{id:'deepseek-flash'}]}));return;}
+  assert.equal(req.url,'/v1/models/deepseek-flash');
+  if(req.headers.authorization==='Bearer synthetic-replacement'){announceDetail();return;}
+  assert.equal(req.headers.authorization,'Bearer synthetic-key');
+  res.end(JSON.stringify({id:'deepseek-flash',object:'model',capabilities:{responses:{image_input:true}}}));
+ });
+ const role={...runtimeConfig().main,baseUrl:gateway.origin+'/v1'};
+ let modelToken='synthetic-key';
+ const website=await localServer((_req,res)=>res.end(JSON.stringify({...credentials(),modelToken,config:{main:role,worker:role}})));
+ const options={websiteOrigin:website.origin,gatewayOrigin:gateway.origin,allowSyntheticLoopback:true,file};
+ const connect=(signal:AbortSignal)=>account.authorizeHomerConnection({...options,signal,openBrowser:async raw=>{
+  const url=new URL(raw);const callback=new URL(url.searchParams.get('redirect_uri')!);
+  callback.searchParams.set('code',Buffer.alloc(32,1).toString('base64url'));
+  callback.searchParams.set('state',url.searchParams.get('state')!);
+  assert.equal((await fetch(callback)).status,200);
+ }});
+ try{
+  const result=await connect(new AbortController().signal);
+  assert.deepEqual(result.config?.main.capabilities?.inputModalities,['text','image']);
+  const stored=readFileSync(file,'utf8');assert.deepEqual(account.readHomerConnection(file,options),result);
+  modelToken='synthetic-replacement';const cancel=new AbortController();
+  const rejected=assert.rejects(connect(cancel.signal),/CONNECTION_CANCELLED/);
+  await Promise.race([detailStarted,rejected]);cancel.abort();await rejected;
+  assert.equal(readFileSync(file,'utf8'),stored);
+ }finally{await website.close();await gateway.close();rmSync(dir,{recursive:true,force:true});}
 });
 test('old website file keeps its only credential until a validated configuration is saved',()=>{
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-migrate-'))),file=join(dir,'runtime-config.json');

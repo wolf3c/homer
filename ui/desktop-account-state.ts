@@ -8,6 +8,7 @@ declare global{interface Window{homerDesktopAccount?:AccountBridge;}}
 
 export const accountErrors:Record<string,string>={
  CONFIG_UNAVAILABLE:'配置同步未完成，已有有效配置会继续使用；尚未连接时请检查网络后重新打开荷马。',
+ MODEL_CONFIG_UNAVAILABLE:'当前会员模型或推理档不可用，请联系维护方核对网站配置。',
  CONFIGURATION_REQUIRED:'网站连接地址尚未配置，请联系维护方。',
  INVALID_REQUEST:'连接参数不匹配，请联系维护方。',UNAUTHORIZED:'登录请求已取消、失效或被使用，请重新登录。',
  FORBIDDEN:'网站服务权限未配置，请联系维护方。',ACCOUNT_UNAVAILABLE:'账户不可用，请联系维护方核对。',
