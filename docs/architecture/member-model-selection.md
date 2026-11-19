@@ -59,4 +59,21 @@ AMH 生产 `/api/pricing` 的 `default` 组及交付账号的 `/api/user/models`
 
 V1 对照包（`8d8a70dc`）先登录并创建线程。升级后保留账号、Token 和原线程，降级后旧包重新取得完整 V1，并在同一线程成功发言。联调使用 yezi2 的真实 GET、PKCE 处理代码和合成网关响应。候选 ZIP SHA-256 为 `955b78b9eed574058e4916b9f45ba0578c50613f02e580f96ab824dc3c255811`。[安装包专项](../../tests/member-selection-package.test.mjs) · [运行说明](../testing.md#会员选型安装包联调)
 
-线上精简下发保持关闭，异步压缩单独验收。
+### 八款模型轮换验收
+
+2026-11-19，Homer `fdb5ca1b` 的 macOS arm64 候选包（0.1.18，Codex `0.171.0-alpha.7`）与 yezi2 `1af7595e` 的 PKCE 和配置处理器在本机联调。候选 ZIP 的 SHA-256 为 `36ff2b273582da9a3f98278e62e23d0e8704eee2bb3ee49d44b9fa56ae801033`。表中每行是一次重启后，回环网关实际收到的 `model` 和 `reasoning.effort`。
+
+| 轮次 | Main | 推理档 | Worker | 推理档 |
+| --- | --- | --- | --- | --- |
+| 1 | `gpt-6-luna` | `none` | `gpt-6-sol` | `high` |
+| 2 | `gpt-6-sol` | `xhigh` | `gpt-6-astra` | `xhigh` |
+| 3 | `gpt-6-astra` | `max` | `gpt-6.1-terra` | `high` |
+| 4 | `gpt-6.1-terra` | `medium` | `gpt-6.1-sol` | `medium` |
+| 5 | `gpt-6.1-sol` | `high` | `gpt-6.2-sol` | `max` |
+| 6 | `gpt-6.2-sol` | `low` | `gpt-6.2-astra` | `low` |
+| 7 | `gpt-6.2-astra` | `medium` | `deepseek-flash` | `none` |
+| 8 | `deepseek-flash` | `high` | `gpt-6-luna` | `high` |
+
+八轮均通过。首次验收共记录 32 个 Main 请求、16 个 Worker 请求，选型全部与网站一致。另有 16 个带 `x-openai-subagent=guardian` 的原生审核请求，每轮 Main 和 Worker 各一次，全部使用 `gpt-6-luna / low`。放行后两角色分别写入当轮标记。8 个 Worker 均成功结束，回复的消息 ID 均关联到同一 Main 会话中已完成的处理记录。[专项复验命令](../testing.md#八款模型轮换)
+
+验证到候选包向本机回环网关发出请求为止。网关返回合成响应，未调用 AMH 线上模型。线上精简下发保持关闭，异步压缩单独验收。

@@ -10,8 +10,20 @@ macOS 上使用两个带回环网站及网关地址的 preparation 包。候选�
 HOMER_TEST_APP=/absolute/candidate/Homer.app \
 HOMER_TEST_V1_APP=/absolute/v1/Homer.app \
 HOMER_TEST_CONFIG_SITE_MODULE=file:///absolute/yezi2/tests/fixtures/homer_config_site.mjs \
-node --test tests/member-selection-package.test.mjs
+node --test --test-name-pattern='preserves V1 threads' tests/member-selection-package.test.mjs
 ```
+
+### 八款模型轮换
+
+在 macOS arm64 使用项目 Node 22.22.0 和现有依赖。从八款模型的候选 ZIP 解出 `Homer.app`，与 Homer 测试目录放在同一卷。候选包须内置回环网站和网关地址，两端口均须空闲。提供有项目依赖的 yezi2 检出目录，从 Homer 根目录运行账号专项中的轮换用例。
+
+```sh
+HOMER_TEST_APP=/absolute/candidate/Homer.app \
+HOMER_TEST_CONFIG_SITE_MODULE=file:///absolute/yezi2/tests/fixtures/homer_config_site.mjs \
+node scripts/test.mjs --account --test-name-pattern='eight packaged member models'
+```
+
+一次隔离 PKCE 登录后，每轮重启读取网站选型。八轮均须完成两角色出站核对、两次原生 Luna 审核、两个标记写入及一次 Worker 回传。网关只返回本地合成响应。[实测版本、推理档与结果](architecture/member-model-selection.md#八款模型轮换验收)
 
 ## 真实 HOME 与独立 CODEX_HOME（2026-11-16）
 

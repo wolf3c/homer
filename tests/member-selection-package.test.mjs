@@ -1,4 +1,4 @@
-// Explicit macOS acceptance with two loopback preparation builds and yezi2's real PKCE/config handlers.
+// Explicit macOS acceptance with loopback preparation builds and yezi2's real PKCE/config handlers.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -25,9 +25,10 @@ const listen=(server,origin)=>new Promise((resolve,reject)=>server.once('error',
 async function body(req){const chunks=[];for await(const chunk of req)chunks.push(chunk);return Buffer.concat(chunks);}
 
 // Classify the actor from its own user input. Using the observed model or effort would hide swapped roles.
-function gatewayScenario(label,selection,review,profile,catalog){
+function gatewayScenario(label,selection,{dispatch,reviewers,search},profile,catalog){
  const workspace=join(profile,'workspace');
- const seen=new Set();let requests=0,workerOpened=false,reviewRequested=false,searches=0;
+ const seen=new Set(),reviewed=[];
+ let requests=0,workerOpened=false,pendingReview,searches=0;
  const reply=data=>{
   assert.ok(++requests<=25,'unexpected request loop');
   const user=JSON.stringify(data.input?.findLast(item=>item.role==='user')?.content??[]);
@@ -47,47 +48,60 @@ function gatewayScenario(label,selection,review,profile,catalog){
   seen.add(role);
   const id='resp_'+requests;
   const answer=text=>({type:'message',id:'msg_'+id,role:'assistant',content:[{type:'output_text',text,annotations:[]}]});
-  const exec=input=>({type:'custom_tool_call',id:'tool_'+id,call_id:'call_'+id,name:'exec',input});
+  const call=(name,args)=>{
+   const offered=[...(data.tools??[]),...(data.input??[]).filter(i=>i.type==='additional_tools').flatMap(i=>i.tools??[])];
+   const tools=offered.flatMap(t=>t.tools??[t]);
+   if(data.model==='deepseek-flash'){
+    assert.ok(tools.some(t=>t.type==='function'&&t.name===name),'missing direct tool '+name);
+    const namespace=offered.find(t=>t.type==='namespace'&&t.tools.some(tool=>tool.name===name));
+    return {type:'function_call',id:'fc_'+id,call_id:'call_'+id,name,...(namespace?{namespace:namespace.name}:{}),arguments:JSON.stringify(args)};
+   }
+   assert.ok(tools.some(t=>t.type==='custom'&&t.name==='exec'&&t.format?.syntax==='lark'),'actor has Code Mode');
+   const prefix=search&&name==='worker_open'?'text(await tools.mcp__homer_interactions__web_search({query:"synthetic membership lookup"})); ':'';
+   return {type:'custom_tool_call',id:'tool_'+id,call_id:'call_'+id,name:'exec',input:prefix+'text(await tools.'+name+'('+JSON.stringify(args)+'));'};
+  };
   let item;
-  if(reviewer){assert.ok(reviewRequested);item=answer(JSON.stringify({outcome:'allow',rationale:'Authorized synthetic marker in the isolated workspace'}));}
-  else if(role==='worker'&&review&&!reviewRequested){
-   reviewRequested=true;
-   item=exec('text(await tools.exec_command('+JSON.stringify({cmd:'printf approved > approved.txt',workdir:workspace,sandbox_permissions:'require_escalated',justification:'Write an authorized synthetic approval marker in the isolated workspace.'})+'));');
+  if(reviewer){
+   assert.equal(data.client_metadata?.['x-openai-subagent'],'guardian');
+   assert.ok(pendingReview,'review belongs to a pending actor command');
+   reviewed.push(pendingReview);pendingReview=undefined;
+   item=answer(JSON.stringify({outcome:'allow',rationale:'Authorized synthetic marker in the isolated workspace'}));
+  }else if(reviewers.includes(role)&&!reviewed.includes(role)){
+   assert.equal(pendingReview,undefined);pendingReview=role;
+   item=call('exec_command',{cmd:'printf approved > '+role+'-'+label+'.txt',workdir:workspace,sandbox_permissions:'require_escalated',justification:'Write the authorized synthetic approval marker in the isolated workspace.'});
   }else if(role==='worker')item=answer('worker-return-'+label);
-  else if(review!==null&&!workerOpened&&user.includes('main-case-'+label)){
-   const tools=[...(data.tools??[]),...(data.input??[]).filter(i=>i.type==='additional_tools').flatMap(i=>i.tools??[])].flatMap(t=>t.tools??[t]);
-   assert.ok(tools.some(t=>t.type==='custom'&&t.name==='exec'&&t.format?.syntax==='lark'),'Main has Code Mode');
+  else if(dispatch&&!workerOpened&&user.includes('main-case-'+label)){
    workerOpened=true;
-   item=exec((review?'text(await tools.mcp__homer_interactions__web_search({query:"synthetic membership lookup"})); ':'')+'text(await tools.worker_open('+JSON.stringify({message:'worker-case-'+label+' Write the approved.txt synthetic marker only when requested, then report your result.',title:'Membership acceptance',workingDirectory:workspace})+'));');
+   item=call('worker_open',{message:'worker-case-'+label+' Write the requested synthetic marker only when asked, then report your result.',title:'Membership acceptance',workingDirectory:workspace});
   }else item=answer('main-return-'+label);
   const response={id,object:'response',model:data.model,status:'completed',output:[item],usage:{input_tokens:3,output_tokens:1,total_tokens:4}};
   return [{type:'response.created',response:{...response,status:'in_progress',output:[]}},{type:'response.output_item.done',output_index:0,item},{type:'response.completed',response}];
  };
- return {reply,seen,get searches(){return searches;},recordSearch(){searches++;},};
+ return {reply,seen,reviewed,get searches(){return searches;},recordSearch(){searches++;},};
 }
 
-test('packaged membership selects both actors, dispatches Code Mode, obtains native approval and preserves V1 threads',{
- skip:!candidate||!legacy||!siteModule,timeout:720000,
-},async t=>{
+async function withMemberPackages(t,bundles,exercise){
+ assert.ok(candidate&&siteModule,'provide HOMER_TEST_APP and HOMER_TEST_CONFIG_SITE_MODULE for loopback package acceptance');
  const {startHomerConfigSite}=await import(siteModule);
  const origins=manifest(candidate).account;
- for(const bundle of [candidate,legacy]){assert.equal(manifest(bundle).preparation,true);assert.deepEqual(manifest(bundle).account,origins);}
+ for(const bundle of bundles){assert.equal(manifest(bundle).preparation,true);assert.deepEqual(manifest(bundle).account,origins);}
  for(const origin of Object.values(origins)){const url=new URL(origin);assert.equal(url.origin,origin);assert.equal(url.protocol,'http:');assert.equal(url.hostname,'127.0.0.1');}
  const root=mkdtempSync(resolve('.codex/scratch/member-v2-'));
  const fresh=name=>{const p=join(root,name);mkdirSync(p,{mode:0o700});for(const name of ['host-home','tmp'])mkdirSync(join(p,name),{mode:0o700});writeFileSync(join(p,'.homer-desktop-test-profile'),'{"format":1}');return p;};
- const profile=fresh('upgrade'),loginProfile=fresh('login');let active,scenario,providerError,delayConfig=false,failAuth=false;
+ const profile=fresh('member'),controls={};let active,scenario,providerError;
  const http=[];
  const full=selection=>Object.fromEntries(Object.entries(selection).map(([role,value])=>[role,{...value,fast:false,baseUrl:origins.gatewayOrigin+'/v1',context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'},capabilities:{inputModalities:['text','image'],reasoningEfforts:['medium','high'],webSearch:false,toolSearch:true}}]));
  const settings={clientConfigVersion:2,clientConfig:full(alternate)};
- const site=await startHomerConfigSite({settings,deliverToken:async subject=>{if(failAuth)throw Object.assign(Error('UNAUTHORIZED'),{error:'UNAUTHORIZED'});return {subject,modelToken:'sk-synthetic-member'};}});
+ const site=await startHomerConfigSite({settings,deliverToken:async subject=>{if(controls.failAuth)throw Object.assign(Error('UNAUTHORIZED'),{error:'UNAUTHORIZED'});return {subject,modelToken:'sk-synthetic-member'};}});
  const website=createServer(async(req,res)=>{
   try{
    assert.ok(['/api/homer/v1/config','/api/homer/v1/token'].includes(req.url));
    const record={method:req.method,version:req.headers['x-homer-config-version']??'1'};http.push(record);
-   if(delayConfig&&req.method==='GET')return; // Leave the GET pending so the actual client's deadline expires.
+   if(controls.delayConfig&&req.method==='GET')return; // Leave the GET pending so the actual client's deadline expires.
    const headers={'content-type':'application/json'};for(const key of ['x-homer-config-version','x-homer-config-features'])if(req.headers[key])headers[key]=req.headers[key];
    const upstream=await fetch(site.origin+req.url,{method:req.method,headers,...(req.method==='POST'?{body:await body(req)}:{})});
    const payload=await upstream.json(),config=req.method==='POST'?payload.config:payload;
+   if(controls.expectedSelection)assert.deepEqual(config,controls.expectedSelection);
    Object.assign(record,{status:upstream.status,shape:config===null?'null':config?.main?.baseUrl?'v1':config?.main?.model?'v2':'error'});
    res.writeHead(upstream.status,{'content-type':'application/json'}).end(JSON.stringify(payload));
   }catch(error){providerError??=error;res.writeHead(500).end();}
@@ -140,43 +154,84 @@ test('packaged membership selects both actors, dispatches Code Mode, obtains nat
   await stop();
  }
  let thread;
- async function run(bundle,p,label,selection,review){
-  t.diagnostic('Starting '+label);scenario=gatewayScenario(label,selection,review,p,bundle===candidate?join(bundle,'Contents/Resources/homer/assets/membership/models.json'):undefined);const before=http.length;
+ async function run(bundle,p,label,selection,{dispatch=true,reviewers=[],search=false}={}){
+  t.diagnostic('Starting '+label);scenario=gatewayScenario(label,selection,{dispatch,reviewers,search},p,bundle===candidate?join(bundle,'Contents/Resources/homer/assets/membership/models.json'):undefined);const before=http.length;
   const page=await start(bundle,p);const current=await until(async()=>{if(providerError)throw providerError;const s=await state(page);if(s.upgrade.code)throw Error(label+' desktop startup '+s.upgrade.phase+' '+s.upgrade.code);return s.upgrade.phase==='running'&&s.threadId&&s;},'ready '+label);
   const status=await account(page);assert.equal(status.websiteReady,true);assert.equal(status.active,'website');
   if(p===profile){if(thread)assert.equal(current.threadId,thread);else thread=current.threadId;}
-  const sent=await page.evaluate(async label=>(await fetch('/api/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:'request-'+label,text:'main-case-'+label})})).status,label);assert.ok(sent>=200&&sent<300,'submit status '+sent);
+  const sent=await page.evaluate(async label=>(await fetch('/api/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:'request-'+label,text:'main-case-'+label+' Write each requested synthetic marker in the isolated workspace and acknowledge any Worker reply.'})})).status,label);assert.ok(sent>=200&&sent<300,'submit status '+sent);
   const db=new DatabaseSync(join(p,'runtime/homer.sqlite'),{readOnly:true});
   try{
    await until(()=>{
     if(providerError)throw providerError;
     const replied=db.prepare("select 1 from conversation_messages where role='assistant' and status='completed' and text=?").get('main-return-'+label);
-    const worker=review===null||db.prepare("select 1 from agent_messages a join runs r on a.senderRunId=r.id where a.kind='worker_reply' and r.status='succeeded' and json_extract(a.payloadJson,'$.text')=?").get('worker-return-'+label);
+    const worker=!dispatch||db.prepare("select 1 from agent_messages a join runs r on a.senderRunId=r.id where a.kind='worker_reply' and r.status='succeeded' and json_extract(a.payloadJson,'$.text')=?").get('worker-return-'+label);
     return replied&&worker;
    },'turns '+label);
-   if(review!==null)await until(()=>db.prepare("select 1 from agent_messages a join agent_receipts r on a.id=r.messageId join meta m on m.key glob 'publicMainNode:v1:*' join json_each(m.value,'$.sourceMessageIds') src on src.value=a.id where a.kind='worker_reply' and r.state in ('received','processed') and json_extract(a.payloadJson,'$.text')=? and json_extract(m.value,'$.state')='worked' and json_extract(m.value,'$.status')='completed'").get('worker-return-'+label),'Main received the Worker result');
+   if(dispatch)await until(()=>db.prepare("select 1 from agent_messages a join agent_receipts r on a.id=r.messageId join meta m on m.key glob 'publicMainNode:v1:*' join json_each(m.value,'$.sourceMessageIds') src on src.value=a.id where a.kind='worker_reply' and r.state in ('received','processed') and json_extract(a.payloadJson,'$.text')=? and json_extract(m.value,'$.state')='worked' and json_extract(m.value,'$.status')='completed'").get('worker-return-'+label),'Main received the Worker result');
   }finally{db.close();}
-  assert.deepEqual([...scenario.seen].sort(),review===null?['main']:review?['main','review','worker']:['main','worker']);
-  if(review){assert.equal(readFileSync(join(p,'workspace/approved.txt'),'utf8'),'approved');assert.equal(scenario.searches,1);}
+  assert.deepEqual(scenario.seen,new Set(['main',...(dispatch?['worker']:[]),...(reviewers.length?['review']:[])]));
+  assert.deepEqual(scenario.reviewed,reviewers,'one native Luna approval per requested actor');
+  for(const role of reviewers)assert.equal(readFileSync(join(p,'workspace',role+'-'+label+'.txt'),'utf8'),'approved');
+  if(search)assert.equal(scenario.searches,1);
   if(bundle===candidate)assert.equal(http.length-before,1,'one startup GET and no message refresh');assert.equal(http.at(-1).method,'GET');
-  await stop();t.diagnostic(label+' passed '+[...scenario.seen].join(','));
+  await stop();
+  if(providerError)throw providerError;
+  t.diagnostic(label+' passed '+[...scenario.seen].join(','));
  }
  try{
   await listen(gateway,origins.gatewayOrigin);await listen(website,origins.websiteOrigin);
+  await exercise({profile,fresh,settings,full,controls,login,run,http});
+ }finally{try{await stop();}finally{await Promise.all([close(website),close(gateway),site.close()]);rmSync(root,{recursive:true,force:true});}}
+}
+
+test('packaged membership selects both actors, dispatches Code Mode, obtains native approval and preserves V1 threads',{
+ skip:!candidate||!legacy||!siteModule,timeout:720000,
+},t=>withMemberPackages(t,[candidate,legacy],async({profile,fresh,settings,full,controls,login,run,http})=>{
+  const loginProfile=fresh('login');
   await login(legacy,profile,true);assert.deepEqual(http.at(-1),{method:'POST',version:'1',status:200,shape:'v1'});
-  await run(legacy,profile,'v1-original',alternate,null);const original=read(join(profile,'runtime-config.json'));assert.ok(original.config);
-  settings.clientConfig=full(defaults);await run(candidate,profile,'defaults',defaults,true);
+  await run(legacy,profile,'v1-original',alternate,{dispatch:false});const original=read(join(profile,'runtime-config.json'));assert.ok(original.config);
+  settings.clientConfig=full(defaults);await run(candidate,profile,'defaults',defaults,{reviewers:['worker'],search:true});
   assert.deepEqual(read(join(profile,'runtime-config.json')),{subject:original.subject,token:original.token});
-  settings.clientConfig=full(alternate);await run(candidate,profile,'alternate',alternate,false);
-  settings.clientConfigVersion=1;await run(candidate,profile,'complete-v1',defaults,false);assert.equal(http.at(-1).shape,'v1');
-  settings.clientConfigVersion=2;settings.clientConfig.worker.model='invalid-member';await run(candidate,profile,'invalid-worker',defaults,false);
-  delayConfig=true;await run(candidate,profile,'get-timeout',defaults,false);delayConfig=false;
-  settings.clientConfig=full(alternate);await run(legacy,profile,'v1-downgrade',alternate,null);
+  settings.clientConfig=full(alternate);await run(candidate,profile,'alternate',alternate);
+  settings.clientConfigVersion=1;await run(candidate,profile,'complete-v1',defaults);assert.equal(http.at(-1).shape,'v1');
+  settings.clientConfigVersion=2;settings.clientConfig.worker.model='invalid-member';await run(candidate,profile,'invalid-worker',defaults);
+  controls.delayConfig=true;await run(candidate,profile,'get-timeout',defaults);controls.delayConfig=false;
+  settings.clientConfig=full(alternate);await run(legacy,profile,'v1-downgrade',alternate,{dispatch:false});
   assert.deepEqual(http.at(-1),{method:'GET',version:'1',status:200,shape:'v1'});
   assert.deepEqual(read(join(profile,'runtime-config.json')).config,original.config);
-  failAuth=true;await login(candidate,loginProfile,false);assert.equal(http.at(-1).status,401);failAuth=false;
+  controls.failAuth=true;await login(candidate,loginProfile,false);assert.equal(http.at(-1).status,401);controls.failAuth=false;
   const loginOK=fresh('valid');await login(candidate,loginOK,true);assert.deepEqual(http.at(-1),{method:'POST',version:'2',status:200,shape:'v2'});
   settings.clientConfig=undefined;await login(candidate,loginProfile,true);assert.deepEqual(http.at(-1),{method:'POST',version:'2',status:200,shape:'null'});
-  await run(candidate,loginProfile,'null-selection',defaults,false);
- }finally{try{await stop();}finally{await Promise.all([close(website),close(gateway),site.close()]);rmSync(root,{recursive:true,force:true});}}
-});
+  await run(candidate,loginProfile,'null-selection',defaults);
+}));
+
+test('eight packaged member models rotate through Main and Worker with Luna review',{
+ timeout:720000,
+},t=>withMemberPackages(t,[candidate],async({profile,settings,controls,login,run,http})=>{
+ // Each row names one model and the efforts to check when it serves each role.
+ const models=[
+  ['gpt-6-luna','none','high'],
+  ['gpt-6-sol','xhigh','high'],
+  ['gpt-6-astra','max','xhigh'],
+  ['gpt-6.1-terra','medium','high'],
+  ['gpt-6.1-sol','high','medium'],
+  ['gpt-6.2-sol','low','max'],
+  ['gpt-6.2-astra','medium','low'],
+  ['deepseek-flash','high','none'],
+ ];
+ assert.equal(new Set(models.map(([model])=>model)).size,8);
+ const {baseUrl,context,fast}=settings.clientConfig.main;
+ for(const [i,[model,effort]] of models.entries()){
+  const [worker,,workerEffort]=models[(i+1)%models.length];
+  const selection={main:{model,effort},worker:{model:worker,effort:workerEffort}};
+  settings.clientConfig={main:{baseUrl,context,fast,...selection.main},worker:{baseUrl,context,fast,...selection.worker}};
+  controls.expectedSelection=selection;
+  if(i===0){
+   await login(candidate,profile,true);
+   assert.deepEqual(http.at(-1),{method:'POST',version:'2',status:200,shape:'v2'});
+  }
+  await run(candidate,profile,'row'+(i+1),selection,{reviewers:['main','worker']});
+  assert.deepEqual(http.at(-1),{method:'GET',version:'2',status:200,shape:'v2'});
+ }
+}));
