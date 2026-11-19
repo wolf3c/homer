@@ -34,7 +34,7 @@ flowchart LR
 
 ## 外部渠道为什么还要补读
 
-外部渠道沿现有补读与发件箱办理，使用原恢复规则及重启门禁。重复扫描历史的简化属于后续事项。 [渠道补读简化评估](channel-outbox-simplification-design.md)
+外部渠道沿现有补读与发件箱办理，使用原恢复规则及重启门禁。补读在复核正文之前跳过已有发件项的消息。用持久待发项替代历史分页属于后续事项。 [渠道补读简化评估](channel-outbox-simplification-design.md)
 
 **后台补读是渠道插件从 Homer 的持久消息记录里补查应该发送的消息。** 插件启动时会核对请求和有效订阅。消息提交后的 `message.committed` 会唤醒核对，状态变化与失败后的同步也可以触发检查。插件按请求或已获准事项分页读取已提交的消息，按 `messageId` 写入现有发件箱，再交给渠道适配器。 [现行补读与外送](multi-channel-architecture.md#补读与外送) · [渠道实现](../../src/channel-plugin.ts)
 

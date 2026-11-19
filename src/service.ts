@@ -1892,7 +1892,7 @@ export class Homer {
     if (status === 'failed' || status === 'interrupted') return {messageId, requestId, status};
   }
 
-  listCommittedMessages(scope: {requestId: string} | {taskId: string}, after = 0) {
+  listCommittedMessages(scope: {requestId: string} | {taskId: string}, after = 0, skipMessageIds?:ReadonlySet<string>) {
     const threadId=this.store.meta('mainThread');
     if(!threadId||this.closing||this.closed||this.store.db.isTransaction)throw Error('committed_read_unavailable');
     const request='requestId' in scope;
@@ -1904,6 +1904,7 @@ export class Homer {
       ORDER BY rowid LIMIT 65`).all(threadId,after,id) as {position:number;id:string;taskVersion:number}[];
     const items:NonNullable<ReturnType<Homer['readCommittedMessage']>>[]=[];
     for(const row of rows.slice(0,64)){
+      if(skipMessageIds?.has(row.id))continue;
       const message=this.readCommittedMessage(row.id,request?{requestId:id}:{taskId:id,taskVersion:row.taskVersion});
       if(message)items.push(message);
     }

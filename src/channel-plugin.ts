@@ -543,16 +543,18 @@ export class ChannelPlugin {
 
   private async catchUp() {
     if(this.shutdown||this.changing)return;
+    // Existing outbox entries already own these message IDs in every send state.
+    const outboxIds=new Set(this.db.prepare('SELECT messageId FROM channel_outbox').all().map(row=>String(row.messageId)));
     let acceptFailed=false;
     for(const request of this.db.prepare('SELECT * FROM channel_requests ORDER BY rowid').all() as Request[]){
       if(this.shutdown||this.changing)return;
       try { this.accept(request); } catch { acceptFailed=true; }
       if(this.binding(request.bindingId))
-        await this.scan({requestId:request.id},{requestId:request.id,bindingId:request.bindingId});
+        await this.scan({requestId:request.id},{requestId:request.id,bindingId:request.bindingId},outboxIds);
     }
     for(const subscription of this.db.prepare('SELECT * FROM channel_subscriptions WHERE revokedAt IS NULL').all() as Subscription[]){
       if(this.shutdown||this.changing)return;
-      await this.scan({taskId:subscription.taskId},{subscriptionId:subscription.id,bindingId:subscription.bindingId},
+      await this.scan({taskId:subscription.taskId},{subscriptionId:subscription.id,bindingId:subscription.bindingId},outboxIds,
         new Set<string>(JSON.parse(subscription.baseline)));
     }
     if(this.shutdown||this.changing)return;
@@ -564,13 +566,13 @@ export class ChannelPlugin {
     this.lastSyncError=acceptFailed?'channel_sync_failed':null;
   }
 
-  private async scan(scope:{requestId:string}|{taskId:string},route:Route,baseline?:Set<string>) {
+  private async scan(scope:{requestId:string}|{taskId:string},route:Route,outboxIds:ReadonlySet<string>,baseline?:Set<string>) {
     const add=this.db.prepare(`INSERT INTO channel_outbox(messageId,bindingId,requestId,subscriptionId,taskVersion,state)
       VALUES(?,?,?,?,?,'queued') ON CONFLICT(messageId) DO NOTHING`);
     let after:number|null=0;
     do {
       if(this.shutdown||this.changing||!this.binding(route.bindingId)||'subscriptionId' in route&&!this.subscription(route.subscriptionId))return;
-      const page=this.app.listCommittedMessages(scope,after);
+      const page=this.app.listCommittedMessages(scope,after,outboxIds);
       for(const message of page.items)if(!baseline?.has(message.messageId))
         add.run(message.messageId,route.bindingId,'requestId' in route?route.requestId:null,
           'subscriptionId' in route?route.subscriptionId:null,'taskVersion' in message?message.taskVersion??null:null);

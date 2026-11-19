@@ -596,6 +596,45 @@ test('idle polling avoids rescans and only backfills the missed second reply of 
   }finally{release();await plugin.close();t.mock.timers.reset();await f.close();}
 });
 
+test('restart backfill skips a full page of outbox entries and sends the next reply once', async t=>{
+  const f=fixture();
+  const sent:ChannelPacket[]=[];
+  const adapter={id:'simulation',async send(packet:ChannelPacket){sent.push(packet);return {state:'sent' as const};}};
+  let plugin=new ChannelPlugin(f.app,[adapter]);
+  let requestId:string;
+  try{
+    plugin.bind(A);
+    f.setScript(async()=>{
+      const thread=f.app.store.meta('mainThread')!;
+      for(let i=0;i<64;i++)commitSyntheticMessage(f.app,thread,'Earlier reply '+i,[],requestId);
+      return nativeFinal('Earlier replies');
+    });
+    await f.app.start();
+    requestId=plugin.receiveText(input(A,'full-page','Populate one page'));
+    await f.app.idle();
+    await plugin.synchronize();
+    const delivered=sent.map(packet=>packet.messageId);
+    assert.equal(delivered.length,64);
+    assert.equal(new Set(delivered).size,64);
+
+    const {messageId}=commitSyntheticMessage(f.app,f.app.store.meta('mainThread')!,'Reply pending backfill',[],requestId);
+    await plugin.close();
+    await f.restart(app=>{plugin=new ChannelPlugin(app,[adapter]);});
+    const reads=t.mock.method(f.app,'readCommittedMessage');
+    await plugin.synchronize();
+    assert.deepEqual(sent.map(packet=>packet.messageId),[...delivered,messageId]);
+    assert.equal(reads.mock.callCount(),2);
+    assert.ok(reads.mock.calls.every(call=>call.arguments[0]===messageId));
+
+    await plugin.synchronize();
+    assert.equal(reads.mock.callCount(),2);
+    await plugin.close();
+    await f.restart(app=>{plugin=new ChannelPlugin(app,[adapter]);});
+    await plugin.synchronize();
+    assert.deepEqual(sent.map(packet=>packet.messageId),[...delivered,messageId]);
+  }finally{await plugin.close();await f.close();}
+});
+
 test('pending input waits for its original adapter and recovers after a lost acceptance receipt', async()=>{
   const f=fixture();
   let plugin:ChannelPlugin|undefined;
