@@ -1,5 +1,7 @@
 # Homer 核心架构
 
+2026-11-19 会员模型配置简化方案分两步。先接入网关模型详情，再为兼容客户端下发支持名单和角色默认值。旧客户端保留完整配置，异步压缩独立验收。Homer 侧仅完成设计。见[会员模型配置简化](account-and-model-connection.md#会员模型配置简化)。
+
 2026-11-19 Homer 会员与 ChatGPT 登录在源码中共用默认自动审批。会员审核使用 `gpt-6-luna / low` 和会员 Token，ChatGPT 审核模型由 Codex 原生选取。尚未安装或发布。见[桌面原生自动审批](account-and-model-connection.md#桌面原生自动审批2026-11-19)。
 
 2026-11-19 会员记忆提取和整理已在源码恢复 Codex 原生默认，分别为 `gpt-6-luna / low` 和 `gpt-6.1-terra / medium`。定向离线回归与固定引擎回环通过，尚未安装或发布。见[会员记忆模型](account-and-model-connection.md#会员记忆模型2026-11-19)。
