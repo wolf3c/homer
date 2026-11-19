@@ -175,11 +175,13 @@ test('daily desktop automatically receives website credentials, applies by norma
  assert.ok(origins,'this acceptance requires an account-configured preparation candidate');
  for(const value of Object.values(origins))assert.equal(new URL(value).hostname,'127.0.0.1');
  const root=profile(false);writeFileSync(join(root,'fixture-control.json'),JSON.stringify({loggedIn:false,deepseekSmoke:true}));
- const config={main:{baseUrl:origins.gatewayOrigin+'/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:origins.gatewayOrigin+'/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}};
+ writeFileSync(join(root,'desktop-feature-tour-v1.seen'),'');
+ const config={main:{model:'gpt-6.1-terra',effort:'high'},worker:{model:'gpt-6.1-terra',effort:'medium'}};
  let balance=200,code,challenge,redirect,consumed=false,exchanges=0,configReads=0,turnCredentialRequests=0;
  const gateway=createServer((req,res)=>{
   res.setHeader('Content-Type','application/json');
   if(req.url==='/api/status'){assert.equal(req.headers.authorization,undefined);res.end(JSON.stringify({success:true,data:{quota_per_unit:100,quota_display_type:'CUSTOM',custom_currency_symbol:'积分',custom_currency_exchange_rate:1}}));return;}
+  if(req.url==='/v1/models'){assert.equal(req.headers.authorization,'Bearer synthetic-website-model-token');res.end(JSON.stringify({data:[]}));return;} // Voice availability has its own lookup.
   if(req.url==='/api/homer/turn/credentials'){
    assert.equal(req.method,'POST');assert.equal(req.headers.authorization,'Bearer synthetic-website-model-token');turnCredentialRequests++;
    const expiresAt=Math.floor(Date.now()/1000)+3600;
@@ -190,7 +192,7 @@ test('daily desktop automatically receives website credentials, applies by norma
  });
  const website=createServer((req,res)=>{void(async()=>{
   res.setHeader('Content-Type','application/json');
-  if(req.url==='/api/homer/v1/config'){configReads++;assert.equal(req.headers.authorization,undefined);res.end(JSON.stringify(config));return;}
+  if(req.url==='/api/homer/v1/config'){configReads++;assert.equal(req.headers.authorization,undefined);assert.equal(req.headers['x-homer-config-version'],'2');res.end(JSON.stringify(config));return;}
   if(req.url.startsWith('/homer?')){
    const u=new URL(req.url,origins.websiteOrigin);assert.equal([...u.searchParams].length,6);assert.equal(u.searchParams.get('client_id'),'homer-desktop');
    redirect=u.searchParams.get('redirect_uri');challenge=u.searchParams.get('code_challenge');code=randomBytes(32).toString('base64url');
@@ -231,23 +233,22 @@ test('daily desktop automatically receives website credentials, applies by norma
   const downloaded=await readAttachment(app.page,file);
   assert.deepEqual(downloaded,{status:200,text:'DeepSeek Worker 已运行（离线合成）',sha256:file.sha256});
   const observed=readFileSync(join(root,'fixture-models.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
-  for(const worker of [false,true])assert.ok(observed.some(v=>v.worker===worker&&v.model==='deepseek-flash'&&v.effort==='max'&&v.serviceTier===null&&v.provider.base_url===origins.gatewayOrigin+'/v1'&&v.keyPresent));
+  for(const worker of [false,true])assert.ok(observed.some(v=>v.worker===worker&&v.model==='gpt-6.1-terra'&&v.effort===(worker?'medium':'high')&&v.serviceTier===null&&v.provider.base_url===origins.gatewayOrigin+'/v1'&&v.keyPresent));
   assert.equal(configReads,1,'startup checks once; Worker work and notices do not fetch config');
   assert.ok(turnCredentialRequests>0,'mobile keeps its isolated credential startup path');
   const savedBefore=readFileSync(join(root,'runtime-config.json'),'utf8');
+  assert.deepEqual(Object.keys(JSON.parse(savedBefore)).sort(),['subject','token']);
   await stateWhen(app.page,s=>!s.isRunning);
   // Advance only this isolated Electron owner's clock, without product test flags.
   await app.instance.evaluate(()=>{const later=performance.now()+3600001;Object.defineProperty(performance,'now',{configurable:true,value:()=>later});});
   await app.page.locator('[contenteditable=true]').fill('synthetic-config-cadence');await app.page.locator('.send-button').click();
-  const checkedUntil=Date.now()+5000;while(configReads<2&&Date.now()<checkedUntil)await app.page.waitForTimeout(25);
-  assert.equal(configReads,2,'accepted user message reaches main-process config gate');
   await stateWhen(app.page,s=>!s.isRunning&&s.messages.some(m=>m.text==='synthetic-config-cadence'));
   await app.page.locator('[contenteditable=true]').fill('synthetic-config-no-repeat');await app.page.locator('.send-button').click();
   await stateWhen(app.page,s=>!s.isRunning&&s.messages.some(m=>m.text==='synthetic-config-no-repeat'));
-  assert.equal(configReads,2);assert.equal(readFileSync(join(root,'runtime-config.json'),'utf8'),savedBefore,'unchanged config never rewrites credentials');
+  assert.equal(configReads,1,'messages never refresh the startup selection');assert.equal(readFileSync(join(root,'runtime-config.json'),'utf8'),savedBefore,'unchanged config never rewrites credentials');
   assert.equal((await app.page.evaluate(()=>window.homerDesktopAccount.state())).needsRestart,false);
   await app.page.getByRole('button',{name:'设置',exact:true}).click();
-  assert.deepEqual((await app.page.locator('.desktop-settings-nav [role=tab]').allTextContents()).map(text=>text.trim()),['账号','本机权限','移动设备','连接聊天应用']);
+  assert.deepEqual((await app.page.locator('.desktop-settings-nav [role=tab]').allTextContents()).map(text=>text.trim()),['账号','本机权限','截图批注','电源与唤醒','移动设备','连接聊天应用','关于']);
   const credits=app.page.getByRole('region',{name:'可用积分'});
   await credits.getByText('2 积分',{exact:true}).waitFor();
   await app.page.getByRole('button',{name:'关闭设置',exact:true}).click();balance=700;

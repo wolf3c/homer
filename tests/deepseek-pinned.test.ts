@@ -7,6 +7,7 @@ import {mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {resolve,join,dirname} from 'node:path';
 import {CodexEngine} from '../src/engine.js';
 import {effectiveModelConfig} from '../src/config.js';
+import {deepseekCatalog} from '../src/deepseek-model.js';
 import {createSession} from '../scripts/deepseek-isolated.mjs';
 for(const role of ['main','worker'] as const)for(const status of [403,429])test('pinned '+role+' does not retry a '+status+' website model failure', {timeout:30000},async()=>{
  const session=createSession();let requests=0;
@@ -78,7 +79,11 @@ for(const role of ['main','worker'] as const)test('pinned generic '+role+' chang
  const session=createSession(),seen:any[]=[];
  // Native trust can name both the worktree and the common repository root.
  const roots=new Set([resolve('.'),dirname(execFileSync('/usr/bin/git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim())]);
- const nativeConfig='model_reasoning_effort = "high"\nmodel_reasoning_summary = "detailed"\n[memories]\ngenerate_memories = false\nuse_memories = false\n'+[...roots].map(root=>'[projects.'+JSON.stringify(root)+']\ntrust_level = "trusted"\n').join('');
+ const pairs=[['Qwen/future-model','high'],['vendor/nonreasoning',null],['deepseek-flash','vendor_adaptive']] as const;
+ const catalog=join(session.directory,'models.json');
+ writeFileSync(catalog,JSON.stringify({models:pairs.map(([model,effort])=>({...deepseekCatalog.models[0],slug:model,default_reasoning_level:effort,
+  supported_reasoning_levels:effort?[{effort,description:effort}]:[],support_verbosity:false,supports_reasoning_summary_parameter:effort!==null,supports_reasoning_effort_updates:effort!==null}))}));
+ const nativeConfig='model_catalog_json = '+JSON.stringify(catalog)+'\nmodel_reasoning_effort = "high"\nmodel_reasoning_summary = "detailed"\n[memories]\ngenerate_memories = false\nuse_memories = false\n'+[...roots].map(root=>'[projects.'+JSON.stringify(root)+']\ntrust_level = "trusted"\n').join('');
  writeFileSync(join(session.config.codexHome,'config.toml'),nativeConfig);
  const server=createServer(async(req,res)=>{
   if(req.url!=='/v1/responses'){res.writeHead(404).end();return;}
@@ -92,11 +97,10 @@ for(const role of ['main','worker'] as const)test('pinned generic '+role+' chang
  await new Promise<void>(accept=>server.listen(0,'127.0.0.1',accept));
  let engine:CodexEngine|undefined,threadId:string|undefined;
  try{
-  for(const [model,effort] of [['Qwen/future-model','high'],['vendor/nonreasoning',null],['deepseek-flash','vendor_adaptive']] as const){
-   const selected={baseUrl:'http://127.0.0.1:'+(server.address() as {port:number}).port+'/v1',model,effort,fast:false as const,context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total' as const},
-    ...(effort!=='vendor_adaptive'?{}:{capabilities:{inputModalities:['text'] as ('text'|'image')[],reasoningEfforts:[effort],webSearch:false,toolSearch:false}})};
-   const config=effectiveModelConfig({...session.config,keyEnv:undefined,stopGraceMs:1000,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:session.directory,manifestSha256:'a'.repeat(64)},desktopConnection:{main:selected,worker:selected}},role);
-   engine=new CodexEngine({...config,keyEnv:undefined,dailyDeepSeek:false,desktopResources:undefined,desktopConnection:undefined},
+  for(const [model,effort] of pairs){
+   const config={...session.config,keyEnv:undefined,stopGraceMs:1000,
+    baseUrl:'http://127.0.0.1:'+(server.address() as {port:number}).port+'/v1',model,effort,context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total' as const}};
+   engine=new CodexEngine(config,
     {role,threadId,cwd:config.workspace,readRoots:[],instructions:'Offline synthetic gateway only.',tools:[],nativeTools:role},async()=>{throw Error('unexpected_tool');});
    const started=await engine.start();if(threadId)assert.equal(started,threadId);threadId=started;
    const result=await engine.turn('synthetic');assert.equal(result.status,'completed',model+': '+result.errorCode+'; requests='+seen.length);

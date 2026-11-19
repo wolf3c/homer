@@ -16,6 +16,7 @@ export const DESKTOP_CANDIDATE_PATHS=[
  'scripts/prepare-desktop-dependencies.mjs','packaging/macos/WindowCapture.swift','packaging/macos/dependencies-lock.json','packaging/macos/codex-license/LICENSE','packaging/macos/codex-license/NOTICE',
  'package.json','package-lock.json','scripts/build-desktop.mjs','scripts/desktop-source.mjs','scripts/desktop-profile.mjs','src/web-server.ts',
  'scripts/desktop-runtime.mjs','scripts/dev-build.mjs','scripts/dev.mjs','scripts/dev-ingress.mjs','src/dev-host.ts',
+ 'src/member-models.ts','src/model-catalog.ts','assets/membership/models.json','assets/membership/member-model-defaults.json',
  'src/service.ts','src/config.ts','src/engine.ts','src/native-history-bridge.ts','src/recursive-main-inputs.ts',
  'src/schedules.ts','src/host-tool-calls.ts','src/schedule-tools.ts','src/store.ts','src/worker-interaction-mcp.ts','src/recursive-tasks.ts','src/channel-plugin.ts','src/main-process.ts','src/conversation-projection.ts','src/web-history-pages.ts','src/telegram-channel.ts',
  'ui/homer-app.tsx','ui/homer-message-queue.tsx','ui/vendor/assistant-ui/message-queue.tsx','ui/process-nodes.tsx','ui/chat-date.ts','prompts/main.md','prompts/worker.md',

@@ -19,7 +19,8 @@ assert.equal(realpathSync(dirname(output)),dirname(output),'canonical_report_dir
 assert.throws(()=>lstatSync(output),{code:'ENOENT'},'new_report_required');
 execFileSync('git',['check-ignore','-q','--',output],{stdio:'ignore'});
 const {Homer}=await import(moduleUrl),{CodexEngine}=await import(new URL('./engine.js',moduleUrl));
-const {queryHomerRuntimeConfig}=await import(new URL('./homer-account.js',moduleUrl));
+const {queryHomerMemberSelection}=await import(new URL('./homer-account.js',moduleUrl));
+const {memberCatalogPath,memberRuntimeConfig,resolveMemberSelection}=await import(new URL('./member-models.js',moduleUrl));
 const secret=process.env.HOMER_MEMBER_TEST_TOKEN;delete process.env.HOMER_MEMBER_TEST_TOKEN;
 assert.ok(synthetic||typeof secret==='string'&&secret.length>=10,'explicit_member_token_required');
 const sha=text=>createHash('sha256').update(text).digest('hex');
@@ -35,7 +36,7 @@ test('final Homer Main and Worker complete member Code Mode Only loops',{timeout
  const root=realpathSync(mkdtempSync(join(parent,synthetic?'synthetic-':'real-'))),workspace=join(root,'workspace'),runtime=join(root,'runtime'),home=join(root,'codex'),hostHome=join(root,'host');
  for(const path of [workspace,runtime,home,hostHome,join(root,'tmp')])mkdirSync(path,{mode:0o700});
  mkdirSync(join(workspace,'.git'));writeFileSync(join(workspace,'.homer-project-root'),'');
- writeFileSync(join(home,'config.toml'),`approval_policy="never"\ndefault_permissions="member_probe"\n[permissions.member_probe.filesystem]\n":root"="deny"\n${JSON.stringify(workspace)}="read"\n[permissions.member_probe.network]\nenabled=false\n[features]\nplugins=false\napps=false\nhooks=false\nskip_host_skill_discovery=true\n[memories]\ngenerate_memories=false\nuse_memories=false\n`,{mode:0o600});
+ writeFileSync(join(home,'config.toml'),`model_catalog_json=${JSON.stringify(memberCatalogPath)}\napproval_policy="never"\ndefault_permissions="member_probe"\n[permissions.member_probe.filesystem]\n":root"="deny"\n${JSON.stringify(workspace)}="read"\n[permissions.member_probe.network]\nenabled=false\n[features]\nplugins=false\napps=false\nhooks=false\nskip_host_skill_discovery=true\n[memories]\ngenerate_memories=false\nuse_memories=false\n`,{mode:0o600});
  const roleReport=()=>({toolCalls:0,codeHashes:[],codeCallsReceipt:false,codeModeHostObserved:false,resultReturned:false,finalMatches:false,turns:0,completedTurns:0});
  const report={schema:1,synthetic,version:'0.171.0-alpha.7',roles:{main:roleReport(),worker:roleReport()},requests:[],maxRequests:8,maxOutputTokens:2048,blockedRequests:0,blockedBackground:0,forbiddenNativeEffects:0,observerRawBodiesSaved:false,credentialsSaved:false,startedAt:new Date().toISOString()};
  const markers={},seenCalls=new Set(),engines=[],loopbackKey=randomUUID();let app,observerFailure,server,passed=false;
@@ -69,8 +70,8 @@ test('final Homer Main and Worker complete member Code Mode Only loops',{timeout
  };
  try{
   assert.equal(process.version,'v22.22.0');assert.equal(execFileSync(binary,['--version'],{encoding:'utf8',timeout:10000}).trim(),'codex-cli 0.171.0-alpha.7');
-  const fixtureRole=model=>({model,effort:'low',fast:false,context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'},capabilities:{inputModalities:['text','image'],reasoningEfforts:['low','medium','high'],webSearch:false,toolSearch:true},baseUrl:'https://models.super-tree.com/v1'});
-  const delivered=synthetic?{main:fixtureRole('gpt-6.1-terra'),worker:fixtureRole('gpt-6.1-sol')}:await queryHomerRuntimeConfig({websiteOrigin:'https://super-tree.com',gatewayOrigin:'https://models.super-tree.com'});
+  const selection=synthetic?resolveMemberSelection(null):await queryHomerMemberSelection({websiteOrigin:'https://super-tree.com'});
+  const delivered=memberRuntimeConfig(selection,'https://models.super-tree.com');
   for(const role of ['main','worker'])assert.match(delivered[role].model,/^gpt-6\.1(?:-|$)/,'member_gpt_6_1_required');
   report.models=Object.fromEntries(['main','worker'].map(role=>[role,{model:delivered[role].model,effort:delivered[role].effort}]));
   server=createServer(async(req,res)=>{
@@ -82,7 +83,7 @@ test('final Homer Main and Worker complete member Code Mode Only loops',{timeout
     let body='';for await(const part of req){body+=part;assert.ok(Buffer.byteLength(body)<2*1024*1024,'bounded_request');}
     const data=JSON.parse(body),r=report.roles[role];
     if(data.client_metadata?.['x-openai-subagent']==='memory_consolidation'){report.blockedBackground++;res.writeHead(403).end();return;}
-    assert.notEqual(data.generate,false,'no_paid_prewarm');assert.equal(data.model,delivered[role].model,'actual_role_model');
+    assert.notEqual(data.generate,false,'no_paid_prewarm');assert.equal(data.model,delivered[role].model,'actual_role_model');assert.equal(data.reasoning?.effort,delivered[role].effort,'actual_role_effort');
     const input=data.input??[],tools=[...(data.tools??[]),...input.filter(item=>item.type==='additional_tools').flatMap(item=>item.tools??[])].flatMap(item=>item.tools??[item]);
     assert.ok(tools.some(item=>item.type==='custom'&&item.name==='exec'&&item.format?.syntax==='lark'),'automatic_code_mode_only');
     assert.ok(!tools.some(item=>item.type==='function'&&item.name===tool.name),'receipt_not_exposed_directly');

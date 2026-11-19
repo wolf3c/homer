@@ -1,0 +1,4 @@
+{
+  "main": { "model": "gpt-6.1-terra", "effort": "medium" },
+  "worker": { "model": "gpt-6.1-terra", "effort": "high" }
+}

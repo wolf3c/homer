@@ -5,11 +5,12 @@ import {createServer} from 'node:http';
 import {mkdirSync,mkdtempSync,writeFileSync,rmSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {CodexEngine,codexVersion} from '../src/engine.ts';
+import {memberRuntimeConfig,resolveMemberSelection} from '../src/member-models.ts';
 import {Store} from '../src/store.ts';
 import {NativeThreadBindings} from '../src/native-thread-bindings.ts';
 
 const binary=process.env.HOMER_TEST_CODEX_BIN;
-for(const role of ['main','worker'])for(const mode of ['allow','deny','error','manual','managed','never','high-only','parse-error','stop','code-mode'])test(`native desktop auto review ${role} ${mode}`,{timeout:60000},async t=>{
+for(const role of ['main','worker'])for(const mode of ['allow','deny','error','manual','managed','never','parse-error','stop'])test(`native desktop auto review ${role} ${mode}`,{timeout:60000},async t=>{
  assert.ok(binary,'HOMER_TEST_CODEX_BIN must select the fixed binary');
  assert.equal(codexVersion(binary),'codex-cli 0.171.0-alpha.7');
  const root=mkdtempSync('/private/tmp/homer-auto-review-');
@@ -25,14 +26,17 @@ for(const role of ['main','worker'])for(const mode of ['allow','deny','error','m
   try{
    assert.equal(req.url,'/v1/responses');assert.equal(req.headers.authorization,'Bearer synthetic-membership-key');
    let body='';for await(const part of req)body+=part;
-   const data=JSON.parse(body);requests.push(data);
+   const data=JSON.parse(body);
+   if(data.client_metadata?.['x-openai-subagent']==='memory_consolidation'){res.writeHead(403).end();return;}
+   requests.push(data);
    const reviewer=data.text?.format?.type==='json_schema';
-   if(reviewer){assert.equal(data.model,'gpt-6-luna');assert.equal(data.reasoning.effort,'low');}
+   assert.equal(data.model,reviewer?'gpt-6-luna':'gpt-6.1-terra');
+   assert.equal(data.reasoning.effort,reviewer?'low':role==='main'?'medium':'high');
    if(reviewer&&mode==='stop'){reviewStarted();await release;}
    if(reviewer&&mode==='error'){res.writeHead(401,{'Content-Type':'application/json'}).end(JSON.stringify({error:{message:'synthetic rejection',code:'invalid_api_key'}}));return;}
    const id='synthetic-'+ ++sequence;
    const command={cmd:'printf synthetic-review-executed > '+join(root,'workspace/executed.txt'),sandbox_permissions:'require_escalated',justification:'Synthetic authorized approval test',max_output_tokens:100};
-   const toolItem=mode==='code-mode'?{id:'fc-'+id,type:'custom_tool_call',call_id:'synthetic-exec',name:'exec',input:'const result=await tools.exec_command('+JSON.stringify(command)+'); text(result);'}:{id:'fc-'+id,type:'function_call',call_id:'synthetic-exec',name:'exec_command',arguments:JSON.stringify(command)};
+   const toolItem={id:'fc-'+id,type:'custom_tool_call',call_id:'synthetic-exec',name:'exec',input:'const result=await tools.exec_command('+JSON.stringify(command)+'); text(result);'};
    const item=reviewer?{id:'msg-'+id,type:'message',role:'assistant',content:[{type:'output_text',text:mode==='parse-error'?'not valid JSON':JSON.stringify({outcome:mode==='deny'?'deny':'allow',rationale:'Synthetic policy result'}),annotations:[]}]}:
     actorCalls++===0?toolItem:
     {id:'msg-'+id,type:'message',role:'assistant',content:[{type:'output_text',text:'synthetic done',annotations:[]}]};
@@ -42,9 +46,8 @@ for(const role of ['main','worker'])for(const mode of ['allow','deny','error','m
   }catch(error){serverError=error;res.writeHead(500).end();}
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const capabilities={inputModalities:['text'],reasoningEfforts:mode==='high-only'?['high']:['low','high'],webSearch:false,toolSearch:false};
- const selected={baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:mode==='code-mode'?'gpt-6.1-terra':'synthetic-member',effort:'high',fast:false,context:{contextWindow:128000,autoCompactTokenLimit:100000,autoCompactTokenLimitScope:'total'},capabilities};
- const config={workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:binary,model:'unused',requiresOpenaiAuth:false,stopGraceMs:1000,desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)},desktopConnection:{main:selected,worker:selected}};
+ const desktopConnection=memberRuntimeConfig(resolveMemberSelection(null),`http://127.0.0.1:${server.address().port}`);
+ const config={workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:binary,model:'unused',requiresOpenaiAuth:false,stopGraceMs:1000,desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)},desktopConnection};
  const store=new Store(join(root,'bindings.sqlite')),bindings=new NativeThreadBindings(store);
  let engine,thread,source='website';
  const manual=mode==='manual'||mode==='managed';
@@ -69,7 +72,7 @@ for(const role of ['main','worker'])for(const mode of ['allow','deny','error','m
   assert.ifError(serverError);assert.ok(['completed','failed','interrupted'].includes(result.status));
   const reviews=requests.filter(r=>r.text?.format?.type==='json_schema');
   assert.equal(reviews.length>0,!manual&&mode!=='never','native reviewer routing');
-  assert.equal(existsSync(join(root,'workspace/executed.txt')),['allow','high-only','code-mode'].includes(mode),'only approved actions execute');
+  assert.equal(existsSync(join(root,'workspace/executed.txt')),mode==='allow','only approved actions execute');
   assert.equal(hostApprovals,manual?1:0);
   await engine.close();engine=make();assert.equal(await engine.start(),thread);
   assert.equal((await engine.turn('Synthetic resumed message.')).status,'completed');

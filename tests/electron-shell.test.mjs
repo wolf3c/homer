@@ -4,7 +4,7 @@ import {EventEmitter} from 'node:events';
 import {PassThrough,Writable} from 'node:stream';
 import * as filesystem from 'node:fs';
 import {createHash} from 'node:crypto';
-import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,realpathSync,rmSync,symlinkSync,statSync,existsSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,realpathSync,rmSync,statSync,existsSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {createServer} from 'node:http';
 import {transpileModule,ModuleKind,ScriptTarget} from 'typescript';
@@ -17,6 +17,7 @@ const installerBytes=Buffer.from('synthetic Windows installer');
 function windowsUpdate(info){return {files:[{url:'https://github.com/wolf3c/homer/releases/download/v'+info.version+'/Homer-windows-x64.exe',sha512:createHash('sha512').update(installerBytes).digest('base64'),size:installerBytes.length}],...info};}
 
 // Link the real entry to OS fixtures. No test switches or probes in the app.
+const defaultSelection={main:{model:'gpt-6.1-terra',effort:'medium'},worker:{model:'gpt-6.1-terra',effort:'high'}};
 const channelLifecycleCall=call=>call.length===3&&call[0]==='native-account'&&call[1]==='channel-manage'&&
  call[2]?.action==='cancel'&&Object.keys(call[2]).sort().join(',')==='action,input'&&
  call[2].input&&typeof call[2].input==='object'&&!Array.isArray(call[2].input)&&Object.keys(call[2].input).length===0;
@@ -65,9 +66,8 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
   if(native.holdHash)native.releaseHash=finish;else queueMicrotask(finish);return stream;
  };
  const cp={execFile:(bin,args,options,done)=>{if(bin.endsWith('/homer-window-capture')){const process=new EventEmitter();native.capture?.(bin,args,options,(...result)=>{done(...result);process.emit('close');});return process;}nativeCalls.push(['verify',bin,args]);const finish=()=>done(native.verifyError&&!options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?Error('private_verify'):null,native.verifyOutput&&!options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?native.verifyOutput:JSON.stringify({valid:options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')||!native.invalidSignature,subject:options.env.HOMER_UPDATE_FILE.endsWith('Homer.exe')?'CN=Homer, O=Homer, C=CN':native.signer??'CN=Homer, O=Homer, C=CN',path:options.env.HOMER_UPDATE_FILE,embedded:true}));if(native.holdVerify)native.releaseVerify=finish;else queueMicrotask(finish);},execFileSync:(_bin,args)=>{if(args.includes('-R')&&native.untrustedSigner)throw Error('signer');return Buffer.alloc(0);},spawn(bin,args,options){spawnCount++;launches.push({bin,args,options});return child;}};
- const config=()=>({main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}});
- let stored=native.connection??{token:'synthetic-file-token',subject:'fixture_user',config:config()};
- const account={queryHomerRuntimeConfig:async options=>{nativeCalls.push(['config']);return native.config?native.config(options):config();},saveHomerRuntimeConfig:(_path,value)=>{if(native.writeError)throw Error('CONNECTION_WRITE_FAILED');stored={token:stored.token,subject:stored.subject,config:value};nativeCalls.push(['save-config']);return stored;},readHomerConnection:path=>{tokenFiles.push(path);if(native.invalidTokenFile)throw Error('CONNECTION_FILE_INVALID');return stored;},validateHomerOrigins:v=>v,authorizeHomerConnection:async options=>{const value=native.authorize?await native.authorize(options):{token:'synthetic-website-token',subject:'fixture_user',config:config()};if(!options.signal.aborted)stored=value;return value;},disconnectHomerConnection:()=>{nativeCalls.push(['disconnect']);if(native.disconnectError)throw Error('CONNECTION_WRITE_FAILED');stored=stored?.subject?{...stored,token:undefined}:null;},queryHomerWallet:async()=>{nativeCalls.push(['wallet']);return native.wallet?native.wallet():{available:5,used:2,unit:'原生额度'};}};
+ let stored=Object.hasOwn(native,'connection')?native.connection:{token:'synthetic-file-token',subject:'fixture_user'};
+ const account={queryHomerMemberSelection:async options=>{nativeCalls.push(['config']);return native.config?native.config(options):defaultSelection;},readHomerConnection:path=>{tokenFiles.push(path);if(native.invalidTokenFile)throw Error('CONNECTION_FILE_INVALID');return stored;},validateHomerOrigins:v=>v,authorizeHomerConnection:async options=>{const value=native.authorize?await native.authorize(options):{token:'synthetic-website-token',subject:'fixture_user',selection:defaultSelection};if(!options.signal.aborted)stored={token:value.token,subject:value.subject};return value;},disconnectHomerConnection:()=>{nativeCalls.push(['disconnect']);if(native.disconnectError)throw Error('CONNECTION_WRITE_FAILED');stored=stored?.subject?{subject:stored.subject}:null;},queryHomerWallet:async()=>{nativeCalls.push(['wallet']);return native.wallet?native.wallet():{available:5,used:2,unit:'原生额度'};}};
  class NsisUpdater extends EventEmitter{constructor(options){super();nativeCalls.push(['nsis',options]);this.on('error',()=>{if(this.logger!==null)console.error('private_library_log');});}checkForUpdates(){nativeCalls.push(['check-update',this.logger]);if(native.checkReject){this.emit('error',Error('private_check'));return Promise.reject(Error('private_check'));}return Promise.resolve(native.nullCheck?null:{downloadPromise:native.downloadReject?Promise.resolve().then(()=>{this.emit('error',Error('private_download'));throw Error('private_download');}):Promise.resolve([])});}quitAndInstall(...args){if(this.quitAndInstallCalled)return;this.quitAndInstallCalled=true;nativeCalls.push(['install-update',...args]);if(native.closeBeforeInstallError)for(const w of windows){w.destroyed=true;w.contentsDestroyed=true;}if(native.installError)throw Error('private_install');if(native.installAsyncError)this.emit('error',Error('EACCES UNKNOWN private_install'));queueMicrotask(()=>app.quit());}}
  const modules={'../homer/dist/model-config.js':await import('../src/model-config.ts'),'../homer/dist/web-contract.js':await import('../src/web-contract.ts'),'../homer/dist/desktop-channels.js':{DesktopChannels:class {start(...args){nativeCalls.push(['channel-start',...args]);return 'fixture-flow';} snapshot(){return {pending:native.channelPending??[]};} configured(){return [];} cancel(){} apply(){nativeCalls.push(['channel-apply']);return {saved:['Telegram@example_bot'],failed:[]};}}},'electron-updater':{default:{NsisUpdater}},'js-yaml':{default:{load:JSON.parse}},'../homer/dist/homer-account.js':account,'../homer/dist/processes.js':{processIdentity:()=> 'synthetic-process',leaseOwnerGone:()=>true},'electron':electron,'../homer/dist/web-upload.js':{WEB_UPLOAD_BYTES:8*1024*1024},'../homer/dist/media-policy.js':await import('../src/media-policy.ts'),'node:fs':fs,'node:child_process':cp,'../homer/scripts/desktop-profile.mjs':{prepareDesktopProfile:root=>({root,runtime:native.runtime??join(root,'runtime'),workspace:join(root,'workspace'),codexHome:native.codexHome??join(root,'codex'),...(native.adopted?{adoption:{appData:'/synthetic/original-app'}}:{})}),recoverDesktopOwner:home=>{assert.equal(ownsLock,true);ownershipCalls.push(['recover-owner',home]);if(native.recoveryError)throw Error('desktop_owner_unknown');},assertDesktopControlPaths(){},readDesktopModelSource:(_root,fallback)=>native.modelSource??fallback,readDesktopChatGPTConfig:()=>native.chatgpt,saveDesktopModelSource:(_root,source,chatgpt)=>{if(native.sourceWriteError)throw Error('desktop_source_write_failed');nativeCalls.push(chatgpt===undefined?['source',source]:['source',source,chatgpt]);if(chatgpt!==undefined)native.chatgpt=chatgpt;}}};
  modules['node:fs/promises']={...filesystem.promises,lstat:async path=>{
@@ -669,7 +669,7 @@ test('a balance read started during website authorization cannot publish the pre
  const f=await accountFixture({modelSource:'codex',authorize:()=>new Promise(r=>authorize=r),wallet:()=>++reads===1?new Promise(r=>finishWallet=r):Promise.resolve({available:999,used:0,unit:'old'})});
  await accountCall(f,'connect');await f.tick();
  const pending=accountCall(f,'refresh');await f.tick();
- authorize({token:'synthetic-new-token',subject:'fixture_user',config:{main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}});await f.tick();
+ authorize({...websiteConnection(),token:'synthetic-new-token'});await f.tick();
  finishWallet({available:999,used:0,unit:'old'});await pending;
  const state=await accountCall(f,'state');assert.equal(state.wallet,undefined);assert.equal(state.stale,true);assert.equal(state.source,'codex');
 });
@@ -690,155 +690,62 @@ test('wallet refresh notifies existing account views on success and failure with
  assert.ok(f.windows[0].settingsMessages.some(([name,value])=>name==='homer:account:changed'&&value===undefined));
 });
 
-const websiteConnection=()=>({token:'synthetic-account-token',subject:'fixture_user',config:{main:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:'https://models.super-tree.com/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}});
-async function realAccountApi(){
- const source=transpileModule(readFileSync(resolve('src/homer-account.ts'),'utf8'),{compilerOptions:{module:ModuleKind.ESNext,target:ScriptTarget.ES2023}}).outputText;
- const module=new vm.SourceTextModule(source,{identifier:'homer-account-offline'});
- await module.link(async name=>{assert.ok(name.startsWith('node:')||name==='../scripts/windows-security.mjs'||['./deepseek-model.js','./model-context.js','./model-catalog.js','./model-config.js'].includes(name));const exports=name.startsWith('node:')?createRequire(import.meta.url)(name):name.startsWith('./')?await (await import('tsx/esm/api')).tsImport('../src/'+name.slice(2).replace(/\.js$/,'.ts'),import.meta.url):await import('../scripts/windows-security.mjs');return new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);});});
- await module.evaluate();return module.namespace;
-}
-test('real account HTTP and private file preserve A until restart, adopt B, and roll back without replacing identity or history',async()=>{
- // Keep validation, HTTP and atomic persistence real; replace only Electron/OS and the local website response.
- const api=await realAccountApi();
- const parent=resolve('.codex/scratch/config-ab-offline-20261030/shell');mkdirSync(parent,{recursive:true});
+const websiteConnection=()=>({token:'synthetic-account-token',subject:'fixture_user',selection:defaultSelection});
+for(const modelSource of ['website','codex'])test('startup migrates the cached identity and sends one selected pair through FD3 in '+modelSource+' mode',async()=>{
+ const api=await import('../src/homer-account.ts');
+ const parent=resolve('.codex/scratch/member-model-selection/shell');mkdirSync(parent,{recursive:true});
  const root=realpathSync(mkdtempSync(join(parent,'synthetic-'))),file=join(root,'runtime-config.json'),history=join(root,'history.txt');
- writeFileSync(history,'synthetic existing history\n');const historyBefore=readFileSync(history);
- let config,mode='good',release,received;const pending=join(root,'.runtime-config.json.pending');
+ const identity={subject:'fixture_user',token:'synthetic-retained-key'},boundary={gatewayOrigin:'https://models.super-tree.com'};
+ const legacy={baseUrl:boundary.gatewayOrigin+'/v1',model:'deepseek-flash',effort:'max',fast:false};
+ writeFileSync(file,JSON.stringify({...identity,config:{main:legacy,worker:legacy}}),{mode:0o600});
+ writeFileSync(history,'synthetic existing history');
+ const alternate={main:defaultSelection.worker,worker:defaultSelection.main};
+ let wire=alternate,status=200,reads=0;
  const server=createServer((req,res)=>{
-  if(req.url==='/v1/models'){
-   assert.equal(req.headers.authorization,'Bearer '+a.token);
-   res.end(JSON.stringify({object:'list',data:mode==='missing-model'||mode==='v2-revoked'?[]:[{id:'deepseek-flash'}]}));return;
-  }
-  if(req.url==='/v1/models/deepseek-flash'){
-   assert.equal(req.headers.authorization,'Bearer '+a.token);
-   const detail={object:'model',id:'deepseek-flash'};
-   if(mode==='late'){received?.();release=()=>res.end(JSON.stringify({...detail,capabilities:{responses:{image_input:true}}}));return;}
-   res.end(JSON.stringify(detail));return;
-  }
-  assert.equal(req.url,'/api/homer/v1/config');assert.equal(req.method,'GET');
-  assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
-  if(mode==='unavailable'){res.writeHead(503).end('{}');return;}
-  if(mode==='v2-revoked'){
-   const role={model:'deepseek-flash',effort:'max'};
-   res.end(JSON.stringify({models:[role.model],main:role,worker:role}));return;
-  }
-  res.end(JSON.stringify(mode==='invalid'?{...config,worker:{...config.worker,effort:''}}:config));
+  reads++;assert.equal(req.url,'/api/homer/v1/config');assert.equal(req.headers['x-homer-config-version'],'2');
+  assert.equal(req.headers.authorization,undefined);res.writeHead(status).end(JSON.stringify(wire));
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const boundary={gatewayOrigin:'http://127.0.0.1:'+server.address().port,allowSyntheticLoopback:true},a=websiteConnection();
- for(const role of Object.values(a.config))role.baseUrl=boundary.gatewayOrigin+'/v1';
- const b={...a.config,worker:{...a.config.worker,effort:'high',context:{contextWindow:600000,autoCompactTokenLimit:450000,autoCompactTokenLimitScope:'total'}}};
- config=a.config;
- assert.deepEqual(api.validateHomerRuntimeConfig(b,boundary),b);
- api.saveHomerConnection(file,{subject:a.subject,modelToken:a.token,config:a.config},boundary);
- const accountApi={...api,queryHomerWallet:async()=>{throw Error('USAGE_UNAVAILABLE');},readHomerConnection:()=>api.readHomerConnection(file,boundary),saveHomerRuntimeConfig:(_file,value)=>api.saveHomerRuntimeConfig(file,value,boundary),queryHomerRuntimeConfig:(options,signal)=>api.queryHomerRuntimeConfig({...options,...boundary,websiteOrigin:boundary.gatewayOrigin},signal)};
- const boot=async()=>{const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,accountApi});for(let i=0;i<300&&!f.credentials.length;i++)await new Promise(r=>setTimeout(r,5));assert.equal(f.credentials.length,1);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;};
- const waitFor=async(f,expected)=>{for(let i=0;i<300;i++){const state=await accountCall(f,'state');if(expected(state))return state;await new Promise(r=>setTimeout(r,5));}assert.fail('account state did not settle');};
- const check=async(f,expected)=>{f.advance(3600001);f.event({kind:'account_config_check'});return waitFor(f,expected);};
- const stop=async f=>{f.app.quit();await f.tick();f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();};
- let f;
+ const accountApi={...api,queryHomerWallet:async()=>{throw Error('USAGE_UNAVAILABLE');},readHomerConnection:()=>api.readHomerConnection(file,boundary),
+  queryHomerMemberSelection:(_options,signal)=>api.queryHomerMemberSelection({websiteOrigin:'http://127.0.0.1:'+server.address().port,allowSyntheticLoopback:true},signal)};
  try{
-  f=await boot();assert.deepEqual(JSON.parse(f.credentials[0]),a);
-  const bytesA=readFileSync(file);
-  for(const [failure,error]of [['invalid','INVALID_REQUEST'],['unavailable','CONFIG_UNAVAILABLE'],['missing-model','MODEL_CONFIG_UNAVAILABLE']]){
-   mode=failure;await check(f,s=>s.error===error);assert.deepEqual(readFileSync(file),bytesA);
-   assert.equal((await accountCall(f,'state')).needsRestart,false);assert.deepEqual(JSON.parse(f.credentials[0]),a);
+  for(const [body,responseStatus,expected]of [[alternate,200,alternate],[null,503,defaultSelection],[{main:legacy,worker:legacy},200,defaultSelection],[{...alternate,worker:{model:'gpt-6-luna',effort:'low'}},200,defaultSelection],[alternate,200,alternate]]){
+   wire=body;status=responseStatus;const before=reads;
+   const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,modelSource,accountApi});
+   for(let i=0;i<300&&!f.credentials.length;i++)await new Promise(r=>setTimeout(r,5));
+   assert.deepEqual(f.credentials.map(JSON.parse),[{...identity,selection:expected}]);assert.equal(reads,before+1);
+   f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();
+   const state=await accountCall(f,'state');assert.equal(state.websiteReady,true);assert.equal(state.needsRestart,false);assert.equal(state.active,modelSource==='website'?'website':'disconnected');
+   const info=f.handlers.get('menu')[0].submenu.find(item=>item.label==='模型连接信息…');
+   info.click();const detail=f.messages.at(-1).detail;
+   for(const role of ['main','worker'])assert.ok(detail.includes((role==='main'?'Homer':'Worker')+'：'+expected[role].model+' · '+expected[role].effort));
+   assert.ok(detail.includes(boundary.gatewayOrigin+'/v1'));assert.ok(!detail.includes(identity.token));
+   assert.deepEqual(JSON.parse(readFileSync(file)),identity);assert.equal(statSync(file).mode&0o777,0o600);
+   f.advance(3600001);f.event({kind:'account_config_check'});await f.tick();assert.equal(reads,before+1);
+   assert.deepEqual(f.credentials.map(JSON.parse),[{...identity,selection:expected}]);
+   f.app.quit();await f.tick();f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();
   }
-  config=b;mode='good';symlinkSync(file,pending);
-  await check(f,s=>s.error==='CONNECTION_WRITE_FAILED');assert.deepEqual(readFileSync(file),bytesA);rmSync(pending);
-  await check(f,s=>s.needsRestart&&!s.error);
-  assert.deepEqual(api.readHomerConnection(file,boundary),{...a,config:b});
-  assert.equal(statSync(file).mode&0o777,0o600);assert.deepEqual(JSON.parse(f.credentials[0]),a);assert.equal(f.credentials.length,1);assert.equal(f.spawnCount(),1);
-  const bytesB=readFileSync(file);await stop(f);f=await boot();assert.deepEqual(readFileSync(file),bytesB);
-  assert.deepEqual(JSON.parse(f.credentials[0]),{...a,config:b});assert.equal((await accountCall(f,'state')).needsRestart,false);
-  config=a.config;await check(f,s=>s.needsRestart);assert.deepEqual(JSON.parse(f.credentials[0]),{...a,config:b});
-  await stop(f);f=await boot();assert.deepEqual(JSON.parse(f.credentials[0]),a);assert.equal((await accountCall(f,'state')).needsRestart,false);
-  // A valid delayed model detail must not save after the shell begins shutting down.
-  config=b;mode='late';const arrived=new Promise(r=>received=r);f.advance(3600001);f.event({kind:'account_config_check'});await arrived;
-  f.app.quit();release();await new Promise(r=>setTimeout(r,20));assert.deepEqual(api.readHomerConnection(file,boundary),a);
-  await stop(f);mode='v2-revoked';f=await boot();
-  assert.deepEqual(f.credentials,['null'],'a confirmed unavailable model must not start from cache');
-  assert.equal((await accountCall(f,'state')).error,'MODEL_CONFIG_UNAVAILABLE');
-  assert.deepEqual(api.readHomerConnection(file,boundary),a);
-  assert.deepEqual(readFileSync(history),historyBefore);
- }finally{if(f)await stop(f);server.closeAllConnections();await new Promise(r=>server.close(r));rmSync(root,{recursive:true,force:true});}
-});
-for(const cacheFormat of ['four','five'])for(const modelSource of ['website','codex'])test('old membership cache refreshes at startup without authorization in '+modelSource+' mode from '+cacheFormat+' fields',async()=>{
- const api=await realAccountApi(),parent=resolve('.codex/scratch/membership-context-cache/shell');mkdirSync(parent,{recursive:true});
- const root=realpathSync(mkdtempSync(join(parent,'startup-'))),file=join(root,'runtime-config.json'),pending=join(root,'.runtime-config.json.pending');
- const boundary={gatewayOrigin:'https://models.super-tree.com'},role={baseUrl:boundary.gatewayOrigin+'/v1',model:'deepseek-flash',effort:'max',fast:false};
- if(cacheFormat==='five')role.deepseek={contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'};
- const targetRole={baseUrl:boundary.gatewayOrigin+'/v1',model:'Qwen/future-model',effort:null,fast:false,capabilities:{inputModalities:['text'],reasoningEfforts:[],webSearch:false,toolSearch:false},context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'}},target={main:targetRole,worker:targetRole};
- const old={subject:'fixture_user',token:'synthetic-retained-key',config:{main:role,worker:role}},bytes=JSON.stringify(old);
- let mode,requests=0,authorizations=0;
- const server=createServer((req,res)=>{
-  requests++;assert.equal(req.url,'/api/homer/v1/config');assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
-  if(mode==='unavailable'){res.writeHead(503).end('{}');return;}
-  res.end(JSON.stringify(mode==='invalid'?old.config:target));
- });
- await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const accountApi={...api,authorizeHomerConnection:async()=>{authorizations++;throw Error('unexpected_authorization');},queryHomerWallet:async()=>{throw Error('USAGE_UNAVAILABLE');},readHomerConnection:()=>api.readHomerConnection(file,boundary),saveHomerRuntimeConfig:(_file,value)=>api.saveHomerRuntimeConfig(file,value,boundary),queryHomerRuntimeConfig:(_options,signal)=>api.queryHomerRuntimeConfig({...boundary,websiteOrigin:'http://127.0.0.1:'+server.address().port,allowSyntheticLoopback:true},signal)};
- const boot=async()=>{
-  const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,modelSource,accountApi});
-  for(let i=0;i<300&&!f.credentials.length;i++)await new Promise(r=>setTimeout(r,5));
-  assert.equal(f.credentials.length,1);f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;
- };
- const stop=async f=>{f.app.quit();await f.tick();f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();};
- try{
-  for(const failure of ['unavailable','invalid','write','good']){
-   writeFileSync(file,bytes,{mode:0o600});mode=failure;if(mode==='write')symlinkSync(file,pending);
-   let f=await boot();
-   try{
-    const state=await accountCall(f,'state');assert.equal(state.connection,'website');assert.equal(state.source,modelSource);
-    if(failure!=='good'){
-     assert.equal(state.error,{unavailable:'CONFIG_UNAVAILABLE',invalid:'INVALID_REQUEST',write:'CONNECTION_WRITE_FAILED'}[failure]);
-     assert.equal(state.websiteReady,false);assert.equal(state.needsRestart,false);assert.deepEqual(f.credentials,['null']);assert.equal(readFileSync(file,'utf8'),bytes);
-     if(mode==='write')rmSync(pending);mode='good';await stop(f);f=await boot();
-    }
-    const expected={subject:old.subject,token:old.token,config:target};
-    assert.deepEqual(JSON.parse(f.credentials[0]),expected);assert.deepEqual(api.readHomerConnection(file,boundary),expected);
-    assert.equal(statSync(file).mode&0o777,0o600);assert.equal((await accountCall(f,'state')).needsRestart,false);
-    assert.equal((await accountCall(f,'state')).active,modelSource==='website'?'website':'disconnected');
-   }finally{await stop(f);}
-  }
-  assert.equal(requests,7);assert.equal(authorizations,0);
+  assert.equal(readFileSync(history,'utf8'),'synthetic existing history');
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));rmSync(root,{recursive:true,force:true});}
 });
-test('startup sync adopts website config; legacy startup failure keeps credential on disk but sends none to runtime',async()=>{
- const f=await accountFixture({connection:websiteConnection()});assert.equal(f.nativeCalls.filter(c=>c[0]==='config').length,1);
- assert.equal(JSON.parse(f.credentials[0]).config.main.model,'deepseek-flash');assert.equal((await accountCall(f,'state')).needsRestart,false);
- const cached=await accountFixture({connection:websiteConnection(),config:async()=>{throw Error('UNAVAILABLE');}});
- assert.equal(JSON.parse(cached.credentials[0]).token,'synthetic-account-token');assert.equal((await accountCall(cached,'state')).error,'CONFIG_UNAVAILABLE');
- const old={token:'synthetic-old',subject:'fixture_user',accountRef:'fixture_account',modelBaseUrl:'https://models.super-tree.com/v1',aliases:{main:'homer-main',worker:'homer-worker'}};
- const offline=await accountFixture({connection:old,config:async()=>{throw Error('UNAVAILABLE');}});assert.deepEqual(offline.credentials,['null']);assert.equal(offline.nativeCalls.some(c=>c[0]==='save-config'),false);assert.equal((await accountCall(offline,'state')).needsRestart,false);
+test('login takes its exchange pair once, then a new desktop uses its own startup GET pair',async()=>{
+ const alternate={main:defaultSelection.worker,worker:defaultSelection.main};
+ let stored=null;
+ const accountApi={readHomerConnection:()=>stored,authorizeHomerConnection:async()=>{
+  const {subject,token}=websiteConnection();stored={subject,token};
+  return {...stored,selection:alternate};
+ }};
+ const f=await accountFixture({accountApi});
+ await accountCall(f,'connect');await f.tick();
+ const state=await accountCall(f,'state');assert.equal(state.websiteReady,true);assert.equal(state.needsRestart,true);
+ assert.deepEqual(f.credentials,['null']);assert.equal(f.nativeCalls.filter(c=>c[0]==='config').length,0);
+ await accountCall(f,'restart');await f.tick();f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.ok(f.nativeCalls.some(call=>call[0]==='relaunch'));
+ const next=await accountFixture({accountApi,config:()=>defaultSelection});
+ assert.equal(next.nativeCalls.filter(c=>c[0]==='config').length,1);
+ assert.deepEqual(next.credentials.map(JSON.parse),[{...stored,selection:defaultSelection}]);
+ const active=await accountCall(next,'state');assert.equal(active.websiteReady,true);assert.equal(active.needsRestart,false);
 });
-test('user message checks only strictly after one hour, merges concurrent requests, and failed attempts consume the interval',async()=>{
- let reads=0,release;
- const f=await accountFixture({connection:websiteConnection(),config:()=>{reads++;if(reads===1)return websiteConnection().config;return new Promise(r=>release=r);}});
- assert.equal(reads,1);f.advance(3600000);f.event({kind:'account_config_check'});await f.tick();assert.equal(reads,1);
- f.advance(1);f.event({kind:'account_config_check'});f.event({kind:'account_config_check'});await f.tick();assert.equal(reads,2);
- assert.equal(f.spawnCount(),1);release(websiteConnection().config);await f.tick();assert.equal((await accountCall(f,'state')).needsRestart,false);
- let failReads=0;const g=await accountFixture({connection:websiteConnection(),config:async()=>{failReads++;throw Error('UNAVAILABLE');}});
- g.advance(3600001);g.event({kind:'account_config_check'});await g.tick();g.event({kind:'account_config_check'});await g.tick();assert.equal(failReads,2);assert.equal((await accountCall(g,'state')).active,'website');
-});
-test('in-flight config cannot save after disconnect begins, and a write failure preserves the active snapshot',async()=>{
- let release,reads=0;const f=await accountFixture({connection:websiteConnection(),config:()=>++reads===1?websiteConnection().config:new Promise(r=>release=r)});
- f.advance(3600001);f.event({kind:'account_config_check'});await f.tick();const saves=f.nativeCalls.filter(c=>c[0]==='save-config').length;
- await accountCall(f,'disconnect');await f.tick();release(websiteConnection().config);await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='save-config').length,saves);
- const old={token:'synthetic-old',subject:'fixture_user',accountRef:'fixture_account',modelBaseUrl:'https://models.super-tree.com/v1',aliases:{main:'homer-main',worker:'homer-worker'}};
- const g=await accountFixture({connection:old,writeError:true});assert.deepEqual(g.credentials,['null']);assert.equal((await accountCall(g,'state')).error,'CONNECTION_WRITE_FAILED');
-});
-test('config recovered during a running management session is pending until restart, without replacing the FD snapshot',async()=>{
- let reads=0;const old={token:'synthetic-old',subject:'fixture_user',accountRef:'fixture_account',modelBaseUrl:'https://models.super-tree.com/v1',aliases:{main:'homer-main',worker:'homer-worker'}};
- const f=await accountFixture({connection:old,config:async()=>{if(++reads===1)throw Error('UNAVAILABLE');return websiteConnection().config;}});
- assert.deepEqual(f.credentials,['null']);f.advance(3600001);f.event({kind:'account_config_check'});await f.tick();
- const state=await accountCall(f,'state');assert.equal(state.needsRestart,true);assert.equal(state.connection,'website');assert.equal(state.active,'disconnected');assert.equal(f.spawnCount(),1);assert.deepEqual(f.credentials,['null']);
-});
-test('login counts as a config check; retired development input never fetches website config',async()=>{
- const f=await accountFixture();await accountCall(f,'connect');await f.tick();f.event({kind:'account_config_check'});await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='config').length,1);
- const g=await accountFixture({connection:{token:'synthetic-development-key'}});g.advance(7200000);g.event({kind:'account_config_check'});await g.tick();assert.equal(g.nativeCalls.some(c=>c[0]==='config'),false);
-});
-
 const permissionChannels=['check','prompt-accessibility','open-system-settings'].map(name=>'homer:desktop-permissions:'+name);
 const plain=value=>JSON.parse(JSON.stringify(value));
 test('retired manual Token launch flags never prompt or spawn a backend',async()=>{

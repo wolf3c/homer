@@ -10,6 +10,7 @@ import {basename,dirname,join,resolve} from 'node:path';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
 import {pathToFileURL} from 'node:url';
+import {memberRuntimeConfig,resolveMemberSelection} from '../src/member-models.js';
 import type {Config} from '../src/config.js';
 import type {EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
 import {Homer} from '../src/service.js';
@@ -86,10 +87,10 @@ test(`an existing main thread and its Worker share the membership Token with nat
   await new Promise<void>(resolve=>gateway.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise<void>(resolve=>gateway.close(()=>resolve())));
   const baseUrl=`http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`;
-  const role={baseUrl,model:'synthetic',effort:null,fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
+  const role=memberRuntimeConfig(resolveMemberSelection(null),new URL(baseUrl).origin).main;
   const parent=resolve('.codex/scratch');mkdirSync(parent,{recursive:true});
   const root=mkdtempSync(join(parent,'membership-web-'));
-  const nativeRoleConfig={...role,effort:'high',capabilities:{inputModalities:['text' as const],reasoningEfforts:['high'],webSearch:true,toolSearch:false}};
+  const nativeRoleConfig={...role,effort:'high',webSearch:true};
   // Inject an incomplete snapshot below the website validator to exercise the unavailable catalog path.
   const unavailableNativeRole={...nativeRoleConfig,context:undefined} as unknown as typeof nativeRoleConfig;
   const config:Config={appData:root,workspace:join(root,'work'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,
@@ -255,7 +256,7 @@ test('membership video submits only after user approval and retrieves the origin
   const parent=resolve('.codex/scratch');mkdirSync(parent,{recursive:true});
   const root=mkdtempSync(join(parent,'membership-video-'));
   const baseUrl=`http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`;
-  const role={baseUrl,model:'synthetic',effort:null,fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
+  const role={baseUrl,model:'gpt-6.1-terra',effort:'medium',fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
   const config:Config={appData:root,workspace:join(root,'work'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:resolve('tests/fixtures/native-feature-app-server.mjs'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,
     desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:syntheticDesktop(t,root),desktopConnection:{main:role,worker:role}};
   mkdirSync(config.runtime);
@@ -419,7 +420,7 @@ test('membership images generate and edit through MCP and publish the exact PNG'
   await new Promise<void>(resolve=>gateway.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise<void>(resolve=>gateway.close(()=>resolve())));
   const baseUrl='http://127.0.0.1:'+(gateway.address() as AddressInfo).port+'/v1';
-  const role={baseUrl,model:'synthetic',effort:null,fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
+  const role={baseUrl,model:'gpt-6.1-terra',effort:'medium',fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
   const parent=resolve('.codex/scratch');mkdirSync(parent,{recursive:true});
   const root=mkdtempSync(join(parent,'membership-image-'));
   const config:Config={appData:root,workspace:join(root,'work'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:resolve('tests/fixtures/native-feature-app-server.mjs'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,
@@ -562,7 +563,7 @@ test('membership audio is gated by the Token catalog and approval, then delivers
   t.after(()=>{gateway.closeAllConnections();return new Promise<void>(resolve=>gateway.close(()=>resolve()));});
   const parent=resolve('.codex/scratch');mkdirSync(parent,{recursive:true});
   const root=mkdtempSync(join(parent,'membership-audio-'));
-  const role={baseUrl:'http://127.0.0.1:'+(gateway.address() as AddressInfo).port+'/v1',model:'synthetic',effort:null,fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
+  const role={baseUrl:'http://127.0.0.1:'+(gateway.address() as AddressInfo).port+'/v1',model:'gpt-6.1-terra',effort:'medium',fast:false as const,context:{contextWindow:32768,autoCompactTokenLimit:29000,autoCompactTokenLimitScope:'total' as const}};
   const config:Config={appData:root,workspace:join(root,'work'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:resolve('tests/fixtures/native-feature-app-server.mjs'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100,
     desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:syntheticDesktop(t,root),desktopConnection:{main:role,worker:role}};
   mkdirSync(config.runtime);

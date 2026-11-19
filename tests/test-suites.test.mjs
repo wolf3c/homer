@@ -92,7 +92,8 @@ const explicitSuites={
  ],
  "account": [
   "homer-account-gateway.test.mjs",
-  "homer-account-integration.test.mjs"
+  "homer-account-integration.test.mjs",
+  "member-selection-package.test.mjs"
  ],
  "rtc": [
   "mobile-webrtc-runtime.test.mjs"

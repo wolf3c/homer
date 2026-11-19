@@ -11,7 +11,7 @@ import {resolve,join} from 'node:path';
 import {MockAgent} from 'undici';
 import {nativeHistoryBridge} from '../src/native-history-bridge.ts';
 import {CodexEngine} from '../src/engine.ts';
-import {membershipModelCatalog} from '../src/model-catalog.ts';
+import {memberCatalogPath} from '../src/member-models.ts';
 import {WebSocketServer} from 'ws';
 import {HttpsProxyAgent} from 'https-proxy-agent';
 const bin=process.env.HOMER_TEST_CODEX_BIN;
@@ -68,7 +68,9 @@ for(const transport of ['http','websocket','websocket-native','websocket-member'
  t.mock.method(HttpsProxyAgent.prototype,'connect',async()=>connectSocket(server.address().port,'127.0.0.1'));
  const dispatcher=new MockAgent();Object.assign(dispatcher,{destroy:()=>dispatcher.close()});dispatcher.disableNetConnect();
  const pool=dispatcher.get('https://chatgpt.com');
- const modelCatalog=membershipModelCatalog('gpt-6.1-sol','high',128000,{inputModalities:['text','image'],reasoningEfforts:['low','high'],webSearch:false,toolSearch:false});
+ const actor=JSON.parse(readFileSync(memberCatalogPath,'utf8')).models[0];
+ const modelCatalog={models:[{...actor,slug:'gpt-6.1-sol',default_reasoning_level:'high',supported_reasoning_levels:['low','high'].map(effort=>({effort,description:effort})),
+  context_window:128000,max_context_window:128000,auto_compact_token_limit:null,auto_review_model_override:null}]};
  modelCatalog.models[0].service_tiers=[{id:'priority',name:'Fast',description:'Synthetic Fast'},{id:'ultrafast',name:'Ultrafast',description:'Synthetic Ultrafast'}];
  modelCatalog.models.push({...structuredClone(modelCatalog.models[0]),slug:'synthetic-live-model',display_name:'Synthetic live model'});
  writeFileSync(join(root,'models.json'),JSON.stringify(modelCatalog),{mode:0o600});

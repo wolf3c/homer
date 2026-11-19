@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync,readFileSync,writeFileSync,rmSync,realpathSync,copyFileSync,constants} from 'node:fs';
 import {resolve,join,dirname} from 'node:path';
+import {memberCatalogPath,memberRuntimeConfig,resolveMemberSelection} from '../src/member-models.ts';
 import {CodexEngine} from '../src/engine.ts';
 import {Homer} from '../src/service.ts';
 import {createHash} from 'node:crypto';
@@ -52,33 +53,22 @@ test('Terra membership refuses a context override ignored by the engine',async()
  const engine=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'Offline context rejection.',tools:[]},async()=>({}));
  try{await assert.rejects(engine.start(),/engine_model_context_mismatch/);}finally{await engine.close();rmSync(root,{recursive:true,force:true});}
 });
-for(const role of ['main','worker'])for(const effort of ['medium',null])test('generic gateway '+role+' adopts declared capabilities and '+effort+' reasoning',async()=>{
- const root=mkdtempSync(join(parent,'generic-')),selected={baseUrl:'http://127.0.0.1:1/v1',model:'Qwen/Qwen-next:custom',effort,fast:false,context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'},capabilities:{inputModalities:['text'],reasoningEfforts:effort?[effort]:[],webSearch:role==='worker',toolSearch:false}};
- const config={runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'home'),nativeCodexHome:join(root,'home'),codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'original',requiresOpenaiAuth:true,stopGraceMs:100,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true,dailyDeepSeek:true,desktopConnection:{main:selected,worker:selected}};
- for(const path of [config.runtime,config.workspace,config.codexHome])mkdirSync(path);
- const engine=new CodexEngine(config,{role,cwd:config.workspace,readRoots:[],instructions:'Offline generic gateway.',tools:[]},async()=>({}));
- try{
-  await engine.start();const result=JSON.parse((await engine.turn('synthetic')).text);
-  assert.equal(result.model,'Qwen/Qwen-next:custom');assert.equal(result.effort,effort);assert.equal(result.contextWindow,272000);assert.equal(result.autoCompactTokenLimit,244800);assert.equal(result.turnServiceTier,null);
-  const actual=(await engine.request('config/read',{})).config;
-  const model=JSON.parse(readFileSync(actual.model_catalog_json,'utf8')).models[0];
-  assert.equal(model.slug,'Qwen/Qwen-next:custom');assert.deepEqual(model.input_modalities,['text']);assert.equal(model.supports_search_tool,false);assert.equal(model.supports_reasoning_summary_parameter,effort!==null);assert.equal(actual.web_search,role==='worker'?'live':'disabled');
-  const {effectiveModelConfig}=await import('../src/config.ts');const native=effectiveModelConfig({...engine.config,desktopModelSource:'codex'},role);
-  assert.equal(native.capabilities,undefined);assert.equal(native.context,undefined);assert.equal(native.effort,role==='main'?'medium':'high');
- }finally{await engine.close();rmSync(root,{recursive:true,force:true});}
-});
-test('website search stays disabled when the declared capability has no model catalog',async()=>{
- const root=mkdtempSync(join(parent,'no-web-catalog-'));
- const selected={baseUrl:'http://127.0.0.1:1/v1',model:'synthetic',effort:'high',fast:false,capabilities:{inputModalities:['text'],reasoningEfforts:['high'],webSearch:true,toolSearch:false}};
- const config={runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'home'),nativeCodexHome:join(root,'home'),codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'original',requiresOpenaiAuth:true,stopGraceMs:100,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true,dailyDeepSeek:true,desktopModelSource:'website',desktopConnection:{main:selected,worker:selected}};
- for(const path of [config.runtime,config.workspace,config.codexHome])mkdirSync(path);
- const engine=new CodexEngine(config,{cwd:config.workspace,readRoots:[],instructions:'Offline generic gateway.',tools:[]},async()=>({}));
- try{
+for (const role of ['main','worker']) test('membership '+role+' uses the same bundled native catalog',async()=>{
+ const root=mkdtempSync(join(parent,'bundled-'));
+ const desktopConnection=memberRuntimeConfig(resolveMemberSelection(null),'http://127.0.0.1:1');
+ const config={runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'home'),nativeCodexHome:join(root,'home'),codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'original',requiresOpenaiAuth:true,stopGraceMs:100,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true,dailyDeepSeek:true,desktopModelSource:'website',desktopConnection};
+ for (const path of [config.runtime,config.workspace,config.codexHome]) mkdirSync(path);
+ const engine=new CodexEngine(config,{role,cwd:config.workspace,readRoots:[],instructions:'Offline membership gateway.',tools:[]},async()=>({}));
+ try {
   await engine.start();
+  const result=JSON.parse((await engine.turn('synthetic')).text);
+  assert.equal(result.model,desktopConnection[role].model);
+  assert.equal(result.effort,desktopConnection[role].effort);
   const actual=(await engine.request('config/read',{})).config;
-  assert.equal(actual.model_catalog_json,undefined);
+  assert.equal(actual.model_catalog_json,memberCatalogPath);
   assert.equal(actual.web_search,'disabled');
- }finally{await engine.close();rmSync(root,{recursive:true,force:true});}
+  assert.equal(actual.model_providers.homer.supports_websockets,false);
+ } finally {await engine.close();rmSync(root,{recursive:true,force:true});}
 });
 test('Codex and website role projections fork native segments while preserving the logical thread, binding and history',async t=>{
  const {effectiveModelConfig}=await import('../src/config.ts');
@@ -135,12 +125,12 @@ test('website desktop keeps the account binding and resumed thread while sending
 });
 test('website A/B snapshots govern new Workers, resumed main and rollback while retaining private identity and history',async t=>{
  const {effectiveModelConfig}=await import('../src/config.ts');
- const {saveHomerConnection,saveHomerRuntimeConfig,readHomerConnection}=await import('../src/homer-account.ts');
+ const {saveHomerConnection,readHomerConnection}=await import('../src/homer-account.ts');
  const root=realpathSync(mkdtempSync(join(parent,'config-ab-'))),desktopResources=desktopIdentity(t,root),file=join(root,'runtime-config.json');
  const boundary={gatewayOrigin:'https://models.super-tree.com'};
- const role={baseUrl:boundary.gatewayOrigin+'/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false};
- const terra={...role,model:'gpt-6.1-terra',effort:'high',context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'}};
- const a={main:{...terra},worker:{...terra}},b={main:{...role,context:{...role.context,contextWindow:600000,autoCompactTokenLimit:450000}},worker:{...role,effort:'high',context:{...role.context,contextWindow:700000,autoCompactTokenLimit:500000}}};
+ const defaults=resolveMemberSelection(null);
+ const a=memberRuntimeConfig(defaults,boundary.gatewayOrigin);
+ const b=memberRuntimeConfig({main:defaults.worker,worker:defaults.main},boundary.gatewayOrigin);
  const original={runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:resolve('tests/fixtures/model-settings-app-server.mjs'),model:'synthetic-original',requiresOpenaiAuth:true,stopGraceMs:100};
  for(const path of [original.runtime,original.workspace,original.codexHome])mkdirSync(path);
  const bound=config=>({...original,desktopResources,pauseOldDesktopWork:true,dailyDeepSeek:true,desktopConnection:config});
@@ -152,28 +142,28 @@ test('website A/B snapshots govern new Workers, resumed main and rollback while 
  let app=new Homer(original,async()=>{});
  try{
   await app.start();const thread=app.store.meta('mainThread'),binding=app.store.meta('binding');await app.close();
-  saveHomerConnection(file,{subject:'fixture_user',modelToken:'synthetic-ab-token',config:a},boundary);
-  const active=readHomerConnection(file,boundary).config;
+  saveHomerConnection(file,{subject:'fixture_user',modelToken:'synthetic-ab-token'},boundary);
+  const active=a;
   app=new Homer(bound(active),async()=>{});await app.start();
-  const initial=JSON.parse(await app.message('synthetic A'));assert.equal(initial.model,'gpt-6.1-terra');assert.equal(initial.effort,'high');assert.equal(initial.contextWindow,272000);assert.equal(initial.autoCompactTokenLimit,244800);assert.equal(initial.autoCompactTokenLimitScope,'total');
+  const initial=JSON.parse(await app.message('synthetic A'));assert.equal(initial.model,'gpt-6.1-terra');assert.equal(initial.effort,'medium');assert.equal(initial.contextWindow,272000);assert.equal(initial.autoCompactTokenLimit,244800);assert.equal(initial.autoCompactTokenLimitScope,'total');
   const prior=app.store.db.prepare('SELECT * FROM conversation_messages ORDER BY rowid').all();assert.ok(prior.length>0);
   const historicalFile=join(original.workspace,'historical.txt');writeFileSync(historicalFile,'synthetic historical artifact\n');
-  const saved=saveHomerRuntimeConfig(file,b,boundary);
+  const saved=readHomerConnection(file,boundary);assert.equal(saved.config,undefined);
   assert.equal(saved.token,'synthetic-ab-token');assert.equal(saved.subject,'fixture_user');
-  const still=JSON.parse(await app.message('synthetic still A'));assert.equal(still.model,'gpt-6.1-terra');assert.equal(still.effort,'high');assert.equal(still.contextWindow,272000);assert.equal(still.autoCompactTokenLimit,244800);
-  assert.equal((await worker(active)).effort,'high'); // Worker created after B was saved still uses A's running snapshot.
+  const still=JSON.parse(await app.message('synthetic still A'));assert.equal(still.model,'gpt-6.1-terra');assert.equal(still.effort,'medium');assert.equal(still.contextWindow,272000);assert.equal(still.autoCompactTokenLimit,244800);
+  assert.equal((await worker(active)).effort,'high'); // An already-running host and a newly opened Worker share the same snapshot.
   await app.close();
-  app=new Homer(bound(readHomerConnection(file,boundary).config),async()=>{});await app.start();
+  app=new Homer(bound(b),async()=>{});await app.start();
   assert.equal(app.store.meta('mainThread'),thread);assert.equal(app.store.meta('binding'),binding);
   assert.deepEqual(app.store.db.prepare('SELECT * FROM conversation_messages ORDER BY rowid LIMIT ?').all(prior.length),prior);
   const main=JSON.parse(await app.message('synthetic B'));
-  assert.equal(main.contextWindow,600000);assert.equal(main.autoCompactTokenLimit,450000);assert.equal(main.threadMethod,'thread/resume');assert.equal(main.model,'deepseek-flash');assert.equal(main.effort,'max');assert.equal(main.turnServiceTier,null);
-  const next=await worker(readHomerConnection(file,boundary).config);
-  assert.equal(next.contextWindow,700000);assert.equal(next.autoCompactTokenLimit,500000);assert.equal(next.model,'deepseek-flash');assert.equal(next.effort,'high');assert.equal(next.turnServiceTier,null);
-  saveHomerRuntimeConfig(file,a,boundary);await app.close();
-  app=new Homer(bound(readHomerConnection(file,boundary).config),async()=>{});await app.start();
-  const rollback=JSON.parse(await app.message('synthetic rollback A'));assert.equal(rollback.model,'gpt-6.1-terra');assert.equal(rollback.effort,'high');assert.equal(rollback.contextWindow,272000);assert.equal(rollback.autoCompactTokenLimit,244800);
-  const rolledWorker=await worker(readHomerConnection(file,boundary).config);assert.equal(rolledWorker.model,'gpt-6.1-terra');assert.equal(rolledWorker.effort,'high');assert.equal(rolledWorker.contextWindow,272000);assert.equal(rolledWorker.autoCompactTokenLimit,244800);
+  assert.equal(main.contextWindow,272000);assert.equal(main.autoCompactTokenLimit,244800);assert.equal(main.threadMethod,'thread/resume');assert.equal(main.model,b.main.model);assert.equal(main.effort,'high');assert.equal(main.turnServiceTier,null);
+  const next=await worker(b);
+  assert.equal(next.contextWindow,272000);assert.equal(next.autoCompactTokenLimit,244800);assert.equal(next.model,b.worker.model);assert.equal(next.effort,'medium');assert.equal(next.turnServiceTier,null);
+  await app.close();
+  app=new Homer(bound(a),async()=>{});await app.start();
+  const rollback=JSON.parse(await app.message('synthetic rollback A'));assert.equal(rollback.model,'gpt-6.1-terra');assert.equal(rollback.effort,'medium');assert.equal(rollback.contextWindow,272000);assert.equal(rollback.autoCompactTokenLimit,244800);
+  const rolledWorker=await worker(a);assert.equal(rolledWorker.model,'gpt-6.1-terra');assert.equal(rolledWorker.effort,'high');assert.equal(rolledWorker.contextWindow,272000);assert.equal(rolledWorker.autoCompactTokenLimit,244800);
   assert.equal(app.store.meta('mainThread'),thread);assert.equal(app.store.meta('binding'),binding);
   assert.deepEqual(app.store.db.prepare('SELECT * FROM conversation_messages ORDER BY rowid LIMIT ?').all(prior.length),prior);
   assert.equal(readFileSync(historicalFile,'utf8'),'synthetic historical artifact\n');

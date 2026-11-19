@@ -18,7 +18,7 @@ import { effectiveEffort, effectiveFast, type ModelRole } from "./model-config.j
 import {usesHomerNativeHome,effectiveModelConfig,configuredWebSearchMode} from "./config.js";
 import {deepseekProfile,materializeDeepSeekCatalog} from './deepseek-model.js';
 import {validateContextTuning} from './model-context.js';
-import {validateModelCapabilities,membershipModelCatalog,materializeModelCatalog} from './model-catalog.js';
+import {memberCatalogPath} from './member-models.js';
 import type {NativeThreadBindings} from './native-thread-bindings.js';
 import {readNativeMemoryMode,confirmNativeMemoryMode} from './native-thread-memory.js';
 import { WorkerNativeRequests, type NativeRequest } from "./worker-native-requests.js";
@@ -464,10 +464,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       model_provider: "openai",
     };
     const deepseekCatalogPath=deepseek?materializeDeepSeekCatalog(this.config.runtime):undefined;
-    const capabilities=this.config.capabilities??(this.config.context&&this.config.effort===null?{inputModalities:['text'] as ('text'|'image')[],reasoningEfforts:[],webSearch:false,toolSearch:false}:undefined);
     const membershipAutoReview=this.config.desktopModelSource==='website'&&this.config.dailyDeepSeek===true&&!this.options.controlOnly;
-    const membershipCatalog=capabilities&&context?membershipModelCatalog(this.config.model,this.config.effort??null,context.contextWindow,validateModelCapabilities(capabilities,this.config.effort??null),membershipAutoReview):undefined;
-    const membershipCatalogPath=membershipCatalog?materializeModelCatalog(this.config.runtime,membershipCatalog):undefined;
+    const membershipCatalogPath=membershipAutoReview&&this.config.desktopConnection?memberCatalogPath:undefined;
     const webSearchMode=configuredWebSearchMode(this.config);
     if(webSearchMode)settings.web_search=webSearchMode;
     if(membershipCatalogPath)settings.model_catalog_json=membershipCatalogPath;

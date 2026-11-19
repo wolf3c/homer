@@ -5,17 +5,13 @@ import {resolve,dirname,join,basename} from 'node:path';
 
 import {assertWindowsPrivate} from '../scripts/windows-security.mjs';
 import {validateContextTuning} from './model-context.js';
-import {validateModelCapabilities,type ModelCapabilities} from './model-catalog.js';
+import {validateModelCapabilities} from './model-catalog.js';
 import {validReasoningEffort} from './model-config.js';
+import {isMemberSelection,memberRuntimeConfig,resolveMemberSelection,type MemberSelection} from './member-models.js';
 
-export type HomerRoleConfig = {baseUrl:string;model:string;effort:string|null;fast:false;supportsWebSocket?:boolean;capabilities?:ModelCapabilities;context:{contextWindow:number;autoCompactTokenLimit:number;autoCompactTokenLimitScope:'total'}};
-export type HomerRuntimeConfig = {main:HomerRoleConfig;worker:HomerRoleConfig};
-
-export type HomerCredentials = {
-  subject: string;
-  modelToken: string;
-  config: HomerRuntimeConfig;
-};
+export type HomerRuntimeConfig = ReturnType<typeof memberRuntimeConfig>;
+type HomerConnection = {subject:string;token?:string};
+type MemberConnection = {subject:string;token:string;selection:MemberSelection};
 
 export type HomerCredentialBoundary = {
   gatewayOrigin: string;
@@ -50,22 +46,16 @@ function allowedOrigin(origin: string, synthetic = false) {
 
 const validModelId=(value:unknown):value is string=>typeof value==='string'&&/^[\x21-\x7e]{1,256}$/.test(value);
 
-function validateHomerRoleConfig(input:unknown,boundary:HomerCredentialBoundary):HomerRoleConfig {
+function validateLegacyRole(input:unknown,boundary:HomerCredentialBoundary) {
     const value=record(input);fields(value,['baseUrl','model','effort','fast','context',...(Object.hasOwn(value,'capabilities')?['capabilities']:[]),...(Object.hasOwn(value,'supportsWebSocket')?['supportsWebSocket']:[])]);
     if(Object.hasOwn(value,'supportsWebSocket')&&typeof value.supportsWebSocket!=='boolean')invalid();
     if(value.baseUrl!==boundary.gatewayOrigin+'/v1'||!validModelId(value.model)||(value.effort!==null&&!validReasoningEffort(value.effort))||value.fast!==false)invalid();
     const tuning=record(value.context);fields(tuning,['contextWindow','autoCompactTokenLimit','autoCompactTokenLimitScope']);
     if(tuning.autoCompactTokenLimitScope!=='total'||!Number.isInteger(tuning.contextWindow)||!Number.isInteger(tuning.autoCompactTokenLimit))invalid();
-    let context;
-    try{context=validateContextTuning(tuning);}catch{invalid();}
-    let capabilities;
-    try{if(Object.hasOwn(value,'capabilities'))capabilities=validateModelCapabilities(value.capabilities,value.effort as string|null);}catch{invalid();}
-    return {baseUrl:value.baseUrl,model:value.model,effort:value.effort as string|null,fast:value.fast,...(value.supportsWebSocket===true?{supportsWebSocket:true}:{}),...(capabilities?{capabilities}:{}),context:{...context,autoCompactTokenLimitScope:'total'}};
-}
-export function validateHomerRuntimeConfig(input:unknown,boundary:HomerCredentialBoundary):HomerRuntimeConfig {
-  allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
-  const value=record(input);fields(value,['main','worker']);
-  return {main:validateHomerRoleConfig(value.main,boundary),worker:validateHomerRoleConfig(value.worker,boundary)};
+    try{
+      validateContextTuning(tuning);
+      if(Object.hasOwn(value,'capabilities'))validateModelCapabilities(value.capabilities,value.effort as string|null);
+    }catch{invalid();}
 }
 function validateIdentity(value:Record<string,unknown>,boundary:HomerCredentialBoundary) {
   if(typeof value.subject!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(value.subject)||
@@ -73,10 +63,13 @@ function validateIdentity(value:Record<string,unknown>,boundary:HomerCredentialB
   if(boundary.subject!==undefined&&boundary.subject!==value.subject)throw Error('ACCOUNT_MISMATCH');
   return {subject:value.subject,modelToken:value.modelToken};
 }
-// Trusted host only: never return this object through the UI bridge or log it.
-export function validateHomerCredentials(input: unknown, boundary: HomerCredentialBoundary): HomerCredentials {
-  const value=record(input);fields(value,['subject','modelToken','config']);
-  return {...validateIdentity(value,boundary),config:validateHomerRuntimeConfig(value.config,boundary)};
+// Only the private one-shot pipe carries this snapshot into the runtime.
+export function readMemberRuntimeConnection(input:unknown,boundary:HomerCredentialBoundary) {
+  allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
+  const value=record(input);fields(value,['subject','token','selection']);
+  const {modelToken,subject}=validateIdentity({...value,modelToken:value.token},boundary);
+  if(!isMemberSelection(value.selection))invalid();
+  return {subject,token:modelToken,config:memberRuntimeConfig(value.selection,boundary.gatewayOrigin)};
 }
 
 export type HomerAuthorizationOptions = {
@@ -166,15 +159,13 @@ export class HomerAuthorizationAttempt {
   }
 }
 
-// Missing config retains credentials for startup refresh; legacy fields are read-only.
-export type HomerConnection = {token?:string;subject:string;config?:HomerRuntimeConfig;modelBaseUrl?:string;aliases?:{main:'homer-main';worker:'homer-worker'}};
 export type HomerWallet = {available:number;used:number;unit:string};
 
 function migrateConnectionFilename(file:string,boundary:HomerCredentialBoundary):void {
   if(basename(file)!=='runtime-config.json')return;
   const legacy=join(dirname(resolve(file)),'deepseek.json'),old=lstatSync(legacy,{throwIfNoEntry:false});
   if(!old)return;
-  if(!readHomerConnection(legacy,boundary))return;
+  if(!readConnectionFile(legacy,boundary,false))return;
   const current=lstatSync(file,{throwIfNoEntry:false});
   // Two independent files are ambiguous; only finish our interrupted hard-link move.
   if(current&&(current.dev!==old.dev||current.ino!==old.ino||!current.isFile()))throw Error('CONNECTION_FILE_INVALID');
@@ -193,9 +184,15 @@ function migrateConnectionFilename(file:string,boundary:HomerCredentialBoundary)
 }
 // The sole credential file is also the attribution after a local disconnect.
 export function readHomerConnection(file:string,boundary:HomerCredentialBoundary):HomerConnection|null {
+  try{migrateConnectionFilename(file,boundary);}catch(error){
+    if(error instanceof Error&&error.message==='CONNECTION_WRITE_FAILED')throw error;
+    throw Error('CONNECTION_FILE_INVALID');
+  }
+  return readConnectionFile(file,boundary,true);
+}
+function readConnectionFile(file:string,boundary:HomerCredentialBoundary,upgrade:boolean):HomerConnection|null {
   let fd:number|undefined;
   try {
-    migrateConnectionFilename(file,boundary);
     const stat=lstatSync(file,{throwIfNoEntry:false});
     if(!stat)return null;
     if(realpathSync(file)!==resolve(file))throw Error();
@@ -212,30 +209,28 @@ export function readHomerConnection(file:string,boundary:HomerCredentialBoundary
     fields(value,Object.hasOwn(value,'token')?['token',...metadataFields]:metadataFields);
     const {token,accountRef:_,...metadata}=value;
     if(Object.hasOwn(value,'token')&&(typeof token!=='string'||!/^[\x21-\x7e]{1,4096}$/.test(token)))throw Error();
-    if(!Object.hasOwn(value,'config')){
-      allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
-      validateIdentity({...metadata,modelToken:token??'disconnected'},boundary);
-      if(Object.hasOwn(metadata,'aliases')){
-        const aliases=record(metadata.aliases);fields(aliases,['main','worker']);
-        if(metadata.modelBaseUrl!==boundary.gatewayOrigin+'/v1'||aliases.main!=='homer-main'||aliases.worker!=='homer-worker')invalid();
-      }
-      return {...metadata,...(token===undefined?{}:{token})} as HomerConnection;
+    allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
+    const {subject}=validateIdentity({...metadata,modelToken:token??'disconnected'},boundary);
+    if(Object.hasOwn(metadata,'aliases')){
+      const aliases=record(metadata.aliases);fields(aliases,['main','worker']);
+      if(metadata.modelBaseUrl!==boundary.gatewayOrigin+'/v1'||aliases.main!=='homer-main'||aliases.worker!=='homer-worker')invalid();
     }
-    const config=record(metadata.config);fields(config,['main','worker']);
-    if(['main','worker'].every(name=>!Object.hasOwn(record(config[name]),'context'))){
-      // Recover only the old local contract; never pass its model settings to an engine.
-      allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
-      const {subject,modelToken}=validateIdentity({...metadata,modelToken:token??'disconnected'},boundary);
-      for(const name of ['main','worker']){
-        const role=record(config[name]),hasTuning=Object.hasOwn(role,'deepseek');fields(role,['baseUrl','model','effort','fast',...(hasTuning?['deepseek']:[])]);
-        if(role.baseUrl!==boundary.gatewayOrigin+'/v1'||role.model!=='deepseek-flash'||!['low','high','max'].includes(role.effort as string)||role.fast!==false)invalid();
-        if(hasTuning){const {deepseek,...legacy}=role;validateHomerRoleConfig({...legacy,context:deepseek},boundary);}
-      }
-      return {subject,...(token===undefined?{}:{token:modelToken})};
+    if(Object.hasOwn(metadata,'config')){
+      const config=record(metadata.config);fields(config,['main','worker']);
+      if(['main','worker'].every(name=>!Object.hasOwn(record(config[name]),'context'))){
+        for(const name of ['main','worker']){
+          const role=record(config[name]),hasTuning=Object.hasOwn(role,'deepseek');fields(role,['baseUrl','model','effort','fast',...(hasTuning?['deepseek']:[])]);
+          if(role.baseUrl!==boundary.gatewayOrigin+'/v1'||role.model!=='deepseek-flash'||!['low','high','max'].includes(role.effort as string)||role.fast!==false)invalid();
+          if(hasTuning){const {deepseek,...legacy}=role;validateLegacyRole({...legacy,context:deepseek},boundary);}
+        }
+      }else{validateLegacyRole(config.main,boundary);validateLegacyRole(config.worker,boundary);}
     }
-    const checked=validateHomerCredentials({...metadata,modelToken:token??'disconnected'},boundary);
-    const {modelToken,...connection}=checked;
-    return {...connection,...(token===undefined?{}:{token:modelToken})};
+    const connection={subject,...(typeof token==='string'?{token}:{})};
+    if(upgrade&&metadataFields.length>1){
+      closeSync(fd);fd=undefined;
+      writeConnection(file,connection);
+    }
+    return connection;
   }catch(error){
     if(error instanceof Error&&error.message==='CONNECTION_WRITE_FAILED')throw error;
     throw Error('CONNECTION_FILE_INVALID');
@@ -269,14 +264,12 @@ function writeConnection(file:string,value:HomerConnection) {
   finally{if(fd!==undefined)closeSync(fd);if(temporary&&created)try{unlinkSync(temporary);}catch{}}
 }
 export function saveHomerConnection(file:string,input:unknown,boundary:HomerCredentialBoundary):HomerConnection {
+  allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
+  const value=record(input);fields(value,['subject','modelToken']);
+  const {subject,modelToken}=validateIdentity(value,boundary);
   const previous=readHomerConnection(file,boundary);
-  const {modelToken,...metadata}=validateHomerCredentials(input,{...boundary,subject:previous?.subject??boundary.subject});
-  const value={...metadata,token:modelToken};writeConnection(file,value);return value;
-}
-export function saveHomerRuntimeConfig(file:string,input:unknown,boundary:HomerCredentialBoundary):HomerConnection {
-  const config=validateHomerRuntimeConfig(input,boundary),previous=readHomerConnection(file,boundary);
-  if(!previous?.subject||!previous.token)throw Error('NOT_CONNECTED');
-  return saveHomerConnection(file,{subject:previous.subject,modelToken:previous.token,config},boundary);
+  if(previous&&previous.subject!==subject)throw Error('ACCOUNT_MISMATCH');
+  const connection={subject,token:modelToken};writeConnection(file,connection);return connection;
 }
 export function disconnectHomerConnection(file:string,boundary:HomerCredentialBoundary):void {
   const previous=readHomerConnection(file,boundary);
@@ -333,84 +326,15 @@ async function jsonRequest(url:string,options:RequestInit,authenticationStatus=f
   }
   return {status:response.status,body:await readHomerJsonResponse(response,64*1024)};
 }
-function applyHomerModelDetail(role:HomerRoleConfig,detail:Record<string,unknown>|undefined,compact:boolean):HomerRoleConfig {
-  if(detail?.object!=='model'||detail.id!==role.model||Object.hasOwn(detail,'error')){
-    if(compact)throw Error('MODEL_CONFIG_UNAVAILABLE');
-    return role;
-  }
-  const responses=object(object(detail.capabilities)?.responses);
-  const tools=object(responses?.tools);
-  const image=responses?.image_input,search=tools?.web_search;
-  const advertised=object(responses?.reasoning)?.supported_efforts;
-  const efforts=Array.isArray(advertised)&&advertised.length<=32&&advertised.every(validReasoningEffort)&&new Set(advertised).size===advertised.length?advertised:undefined;
-  if(role.effort!==null&&efforts&&!efforts.includes(role.effort)){
-    throw Error('MODEL_CONFIG_UNAVAILABLE',compact?{cause:[{model:role.model,effort:role.effort}]}:undefined);
-  }
-  if(compact&&(typeof image!=='boolean'||typeof search!=='boolean'||typeof tools?.tool_search!=='boolean'||typeof responses?.websocket!=='boolean'||efforts===undefined))throw Error('MODEL_CONFIG_UNAVAILABLE');
-  if(typeof image!=='boolean'&&typeof search!=='boolean'&&efforts===undefined)return role;
-  const previous=role.capabilities;
-  const capabilities:ModelCapabilities={
-    inputModalities:typeof image==='boolean'?(image?['text','image']:['text']):previous?.inputModalities??['text'],
-    reasoningEfforts:role.effort===null?[]:efforts??previous?.reasoningEfforts??[role.effort],
-    webSearch:typeof search==='boolean'?search:previous?.webSearch??false,
-    toolSearch:compact?tools?.tool_search===true:previous?.toolSearch??false,
-  };
-  return {...role,capabilities,...(compact&&responses?.websocket===true?{supportsWebSocket:true}:{})};
-}
-
-async function discoverHomerModelCapabilities(config:HomerRuntimeConfig,modelToken:string,compact:boolean,signal?:AbortSignal):Promise<HomerRuntimeConfig> {
-  const deadline=AbortSignal.timeout(3000);
-  const options={headers:{Authorization:'Bearer '+modelToken},cache:'no-store' as const,signal:signal?AbortSignal.any([signal,deadline]):deadline};
-  const request=async(path:string)=>{
-    const result=await jsonRequest(config.main.baseUrl+path,options,true).catch(()=>undefined);
-    signal?.throwIfAborted();
-    if(result?.status===401||result?.status===403)throw Error('TOKEN_UNAVAILABLE');
-    if(result?.status===200)return object(result.body);
-    if(compact&&(!result||result.status>=500||result.status===429))throw Error('UNAVAILABLE');
-    return undefined;
-  };
-  const listing=await request('/models');
-  const models=listing?.data;
-  if(listing?.object!=='list'||Object.hasOwn(listing,'error')||!Array.isArray(models)||!models.every(model=>typeof object(model)?.id==='string')){
-    if(compact)throw Error('MODEL_CONFIG_UNAVAILABLE');
-    return config;
-  }
-  const selected=[...new Set([config.main.model,config.worker.model])];
-  const missing=selected.filter(id=>!models.some(model=>model.id===id));
-  if(missing.length)throw Error('MODEL_CONFIG_UNAVAILABLE',compact?{cause:missing.map(model=>({model}))}:undefined);
-  // URL parsing normalizes dot segments even when they are percent-encoded.
-  const detail=(model:string)=>model==='.'||model==='..'?Promise.resolve(undefined):request('/models/'+encodeURIComponent(model));
-  const main=detail(config.main.model);
-  const [mainDetail,workerDetail]=await Promise.all([main,config.worker.model===config.main.model?main:detail(config.worker.model)]);
-  return {main:applyHomerModelDetail(config.main,mainDetail,compact),worker:applyHomerModelDetail(config.worker,workerDetail,compact)};
-}
-
-async function resolveHomerWireConfig(input:unknown,boundary:HomerCredentialBoundary,modelToken?:string,signal?:AbortSignal):Promise<HomerRuntimeConfig> {
-  const wire=record(input),compact=Object.hasOwn(wire,'models');
-  let config:HomerRuntimeConfig;
-  if(compact){
-    fields(wire,['models','main','worker']);
-    const models=wire.models;
-    if(!Array.isArray(models)||!models.every(validModelId)||new Set(models).size!==models.length)invalid();
-    const expand=(input:unknown)=>{
-      const role=record(input);fields(role,['model','effort']);
-      if(!validModelId(role.model)||!models.includes(role.model))invalid();
-      return {...role,baseUrl:boundary.gatewayOrigin+'/v1',fast:false,context:validateContextTuning(undefined)};
-    };
-    config=validateHomerRuntimeConfig({main:expand(wire.main),worker:expand(wire.worker)},boundary);
-  }else config=validateHomerRuntimeConfig(wire,boundary);
-  if(modelToken===undefined)return compact?invalid():config;
-  if(!/^[\x21-\x7e]{1,4096}$/.test(modelToken))invalid();
-  return discoverHomerModelCapabilities(config,modelToken,compact,signal);
-}
-
-const homerConfigFeatures={'X-Homer-Config-Features':'responses-websocket'};
-const homerConfigVersion={'X-Homer-Config-Version':'2'};
-export async function queryHomerRuntimeConfig(options:HomerCredentialBoundary&{websiteOrigin:string;modelToken?:string},signal?:AbortSignal):Promise<HomerRuntimeConfig> {
+const homerConfigHeaders={'X-Homer-Config-Features':'responses-websocket','X-Homer-Config-Version':'2'};
+export async function queryHomerMemberSelection(options:{websiteOrigin:string;allowSyntheticLoopback?:boolean},signal?:AbortSignal):Promise<MemberSelection> {
   allowedOrigin(options.websiteOrigin,options.allowSyntheticLoopback);
-  const response=await jsonRequest(options.websiteOrigin+'/api/homer/v1/config',{signal,cache:'no-store',headers:{...homerConfigFeatures,...(options.modelToken===undefined?{}:homerConfigVersion)}});
-  if(response.status!==200)throw Error('UNAVAILABLE');
-  return resolveHomerWireConfig(response.body,options,options.modelToken,signal);
+  let config:unknown;
+  try{
+    const response=await jsonRequest(options.websiteOrigin+'/api/homer/v1/config',{signal,cache:'no-store',headers:homerConfigHeaders});
+    if(response.status===200)config=response.body;
+  }catch{signal?.throwIfAborted();}
+  return resolveMemberSelection(config);
 }
 export async function queryHomerWallet(connection:HomerConnection,boundary:HomerCredentialBoundary,signal?:AbortSignal):Promise<HomerWallet&{expiresAt:number}> {
   allowedOrigin(boundary.gatewayOrigin,boundary.allowSyntheticLoopback);
@@ -444,7 +368,7 @@ export async function queryHomerTokenFailure(token:string,boundary:HomerCredenti
 }
 
 // One ephemeral listener and one exchange; the Electron owner controls single flight.
-export async function authorizeHomerConnection(options:HomerCredentialBoundary&{websiteOrigin:string;file:string;signal:AbortSignal;openBrowser:(url:string)=>Promise<unknown>;onCallback?:()=>void}):Promise<HomerConnection> {
+export async function authorizeHomerConnection(options:HomerCredentialBoundary&{websiteOrigin:string;file:string;signal:AbortSignal;openBrowser:(url:string)=>Promise<unknown>;onCallback?:()=>void}):Promise<MemberConnection> {
   allowedOrigin(options.websiteOrigin,options.allowSyntheticLoopback);
   allowedOrigin(options.gatewayOrigin,options.allowSyntheticLoopback);
   const signal=AbortSignal.any([options.signal,AbortSignal.timeout(30*60000)]);
@@ -477,20 +401,20 @@ export async function authorizeHomerConnection(options:HomerCredentialBoundary&{
     await Promise.race([options.openBrowser(attempt.authorizationUrl),callback.then(()=>{})]);
     const exchange=await callback;
     attempt.assertActive();signal.throwIfAborted();
-    const result=await jsonRequest(options.websiteOrigin+'/api/homer/v1/token',{method:'POST',headers:{'Content-Type':'application/json',...homerConfigFeatures,...homerConfigVersion},body:JSON.stringify(exchange),signal});
+    const result=await jsonRequest(options.websiteOrigin+'/api/homer/v1/token',{method:'POST',headers:{'Content-Type':'application/json',...homerConfigHeaders},body:JSON.stringify(exchange),signal});
     attempt.assertActive();signal.throwIfAborted();
     if(result.status!==200){
       let code='UNAVAILABLE';try{const error=record(record(result.body).error);if(['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE'].includes(String(error.code)))code=String(error.code);}catch{}
       throw Error(code);
     }
-    const payload=record(result.body);fields(payload,['subject','modelToken','config']);
-    const credentials=validateIdentity(payload,{...options,subject:readHomerConnection(options.file,options)?.subject??options.subject});
-    const config=await resolveHomerWireConfig(payload.config,options,credentials.modelToken,signal);
-    attempt.assertActive();signal.throwIfAborted();
-    return saveHomerConnection(options.file,{...credentials,config},options);
+    const payload=record(result.body);fields(payload,['subject','modelToken',...(Object.hasOwn(payload,'config')?['config']:[])]);
+    const credentials=validateIdentity(payload,options);
+    const selection=resolveMemberSelection(payload.config);
+    saveHomerConnection(options.file,credentials,options);
+    return {subject:credentials.subject,token:credentials.modelToken,selection};
   }catch(error){
     const code=error instanceof Error?error.message:'';
-    throw Error(signal.aborted?'CONNECTION_CANCELLED':['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED','MODEL_CONFIG_UNAVAILABLE','TOKEN_UNAVAILABLE'].includes(code)?code:'UNAVAILABLE');
+    throw Error(signal.aborted?'CONNECTION_CANCELLED':['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED'].includes(code)?code:'UNAVAILABLE');
   }finally{
     signal.removeEventListener('abort',abort);attempt?.cancel();server.closeAllConnections();server.close();
   }

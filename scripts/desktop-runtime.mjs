@@ -53,9 +53,8 @@ try{
    const payload=readFileSync(3,'utf8');
    connection=JSON.parse(payload);
    if(connection!==null){
-    const {validateHomerCredentials}=await import(pathToFileURL(join(homer,'dist/homer-account.js')).href);
-    const {token,...metadata}=connection;
-    validateHomerCredentials({...metadata,modelToken:token??'disconnected'},{gatewayOrigin:manifest.account?.gatewayOrigin??'',allowSyntheticLoopback:test});
+    const {readMemberRuntimeConnection}=await import(pathToFileURL(join(homer,'dist/homer-account.js')).href);
+    connection=readMemberRuntimeConnection(connection,{gatewayOrigin:manifest.account?.gatewayOrigin??'',allowSyntheticLoopback:test});
    }
   }
   finally{closeSync(3);}

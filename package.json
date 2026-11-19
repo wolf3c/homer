@@ -15,6 +15,7 @@
   },
   "files": [
     "dist",
+    "assets/membership",
     "prompts",
     ".codex/skills/homer-tool-management",
     ".codex/skills/homer-feedback",

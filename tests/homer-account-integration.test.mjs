@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,copyFileSync,chmodSync,existsSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
+import {resolveMemberSelection} from '../src/member-models.ts';
 
 const bundle=process.env.HOMER_TEST_APP,loginFile=process.env.HOMER_TEST_SYNTHETIC_LOGIN;
 const realCodex=process.env.HOMER_TEST_REAL_CODEX==='1';
@@ -73,8 +74,7 @@ test('actual website delivers a finite native Token to Homer and preserves histo
   await site.goto(authorization);await site.getByRole('button',{name:'Allow connection',exact:true}).click();
   await accountWhen(page,s=>s.connection==='website'&&s.needsRestart&&!s.pending);
   t.diagnostic('actual browser delivery state accepted');
-  const saved=JSON.parse(readFileSync(join(root,'runtime-config.json')));assert.equal(saved.config.main.baseUrl,gateway+'/v1');
-  assert.deepEqual(saved.config.worker,{baseUrl:gateway+'/v1',model:'gpt-6.1-terra',context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'},effort:'high',fast:false});
+  const saved=JSON.parse(readFileSync(join(root,'runtime-config.json')));assert.deepEqual(Object.keys(saved).sort(),['subject','token']);
   assert.equal((await page.evaluate(async()=>JSON.stringify(await window.homerDesktopAccount.state()))).includes(saved.token),false);
   // Exercise the same restart action as a user, including stopped ACK and clean exit.
   await desktop.evaluate(({dialog,app})=>{dialog.showMessageBox=async()=>({response:1});app.relaunch=()=>{};});
@@ -146,8 +146,10 @@ test('native-disabled synthetic Key fails visibly in the restored desktop and pr
  assert.ok(root.includes('/.codex/scratch/account-mvp/three-projects/'));
  assert.equal(JSON.parse(readFileSync(join(root,'evidence.json'))).realPinnedCodex,true);
  const saved=JSON.parse(readFileSync(join(root,'runtime-config.json')));
- assert.equal(saved.config.main.baseUrl,(process.env.HOMER_TEST_GATEWAY_ORIGIN??'http://127.0.0.1:3182')+'/v1');
- const denied=await fetch(saved.config.main.baseUrl+'/responses',{method:'POST',headers:{Authorization:'Bearer '+saved.token,'Content-Type':'application/json'},body:JSON.stringify({model:saved.config.main.model,input:'Synthetic disabled-key canary.',stream:true,reasoning:{effort:saved.config.main.effort}}),redirect:'error',signal:AbortSignal.timeout(5000)});
+ const {account}=JSON.parse(readFileSync(join(bundle,'Contents/Resources/desktop-manifest.json')));
+ assert.equal(new URL(account.gatewayOrigin).hostname,'127.0.0.1');assert.equal(new URL(account.gatewayOrigin).protocol,'http:');
+ const {model,effort}=resolveMemberSelection(null).main;
+ const denied=await fetch(account.gatewayOrigin+'/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+saved.token,'Content-Type':'application/json'},body:JSON.stringify({model,input:'Synthetic disabled-key canary.',stream:true,reasoning:{effort}}),redirect:'error',signal:AbortSignal.timeout(5000)});
  try{assert.ok([401,403].includes(denied.status),'native authentication must reject before model execution');}finally{await denied.body?.cancel();}
  const desktop=await _electron.launch({executablePath:join(bundle,'Contents/MacOS/Homer'),args:['--test-profile',root,'--deepseek-daily'],timeout:30000});
  try{

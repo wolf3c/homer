@@ -549,7 +549,7 @@ export class Homer {
       if(this.closing||this.closed)throw Error('service_upgrading');
       if(!this.nativeControl){
         const home=capabilityHome(this.config),cwd=canonicalDir(join(home,'homer-control'));
-        this.nativeControl=new CodexEngine({...this.config,codexHome:home,dailyDeepSeek:false,desktopModelSource:undefined,desktopConnection:undefined,context:undefined,capabilities:undefined,supportsWebSocket:undefined,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true},{cwd,readRoots:[cwd],instructions:'Homer native configuration service. No model turns.',tools:[],controlOnly:true},async()=>{throw Error('capability_control_tool_denied');});
+        this.nativeControl=new CodexEngine({...this.config,codexHome:home,dailyDeepSeek:false,desktopModelSource:undefined,desktopConnection:undefined,context:undefined,webSearch:undefined,supportsWebSocket:undefined,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true},{cwd,readRoots:[cwd],instructions:'Homer native configuration service. No model turns.',tools:[],controlOnly:true},async()=>{throw Error('capability_control_tool_denied');});
         const control=this.nativeControl;let initialized=false,lease:string|undefined;
         const release=()=>{
           if(this.nativeControl!==control||this.closed)return;

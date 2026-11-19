@@ -2,6 +2,17 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## 会员选型安装包联调
+
+macOS 上使用两个带回环网站及网关地址的 preparation 包。候选包和 V1 对照包使用同一个隔离资料目录，以验证升级和降级。网站夹具加载 yezi2 的配置及 PKCE 处理代码，模型网关只在本机返回合成响应。运行以下专项需预先提供两份包和 yezi2 夹具：
+
+```sh
+HOMER_TEST_APP=/absolute/candidate/Homer.app \
+HOMER_TEST_V1_APP=/absolute/v1/Homer.app \
+HOMER_TEST_CONFIG_SITE_MODULE=file:///absolute/yezi2/tests/fixtures/homer_config_site.mjs \
+node --test tests/member-selection-package.test.mjs
+```
+
 ## 真实 HOME 与独立 CODEX_HOME（2026-11-16）
 
 默认 runner 为每个测试进程预载 `tests/fixtures/synthetic-home.mjs`，新建合成 HOME 和独立 CODEX_HOME，子进程随之继承；直接使用 `core-system-proxy.mjs` 的离线入口也预载同一夹具。显式原生测试及诊断入口各自保留合成 HOME。测试 profile 的桌面入口和 runtime 继续使用 `profile/host-home`；正式入口的系统目录来自受信任 `userInfo()`，VM 测试用合成系统用户信息，不访问日常 profile。缺失、相对、不存在或非目录 HOME 均在引擎启动前拒绝，不自动创建任意用户目录。

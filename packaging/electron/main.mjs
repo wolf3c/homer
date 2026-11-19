@@ -21,7 +21,7 @@ import {WEB_UPLOAD_BYTES} from '../homer/dist/web-upload.js';
 import {MEDIA_POLICY,detectMedia,imageDimensions} from '../homer/dist/media-policy.js';
 import {parseWindowAX,previewImageAnnotations} from '../homer/dist/preview-reference.js';
 
-import {validateHomerOrigins,readHomerConnection,authorizeHomerConnection,disconnectHomerConnection,queryHomerWallet,queryHomerRuntimeConfig,saveHomerRuntimeConfig} from '../homer/dist/homer-account.js';
+import {validateHomerOrigins,readHomerConnection,authorizeHomerConnection,disconnectHomerConnection,queryHomerWallet,queryHomerMemberSelection} from '../homer/dist/homer-account.js';
 
 const resources=process.resourcesPath,bundle=process.platform==='win32'?resolve(resources,'..'):resolve(resources,'../..');
 let window,child,origin,acknowledged=false,startupRefused=false,closed=false,exitCode,exitSignal,quitPending=false,quitSent=false,allowQuit=false,stopTimer,permissionNavigation=0,browserPreview;
@@ -119,11 +119,11 @@ async function readNativeAccount(action='state'){
  return accountState();
 }
 let dailyTokenFile,accountOrigins,accountSynthetic=false,connection,activeConnection,connectionError,pendingConnection,wallet,walletError,walletUpdatedAt;
-let configRead,configAbort,lastConfigCheck;
+let configAbort;
 let accountRevision=0,walletRevision=0,walletDirty=true,walletRead,quitAction,pendingLoginUrl;
 const accountBoundary=()=>({gatewayOrigin:accountOrigins?.gatewayOrigin??'',allowSyntheticLoopback:accountSynthetic});
 const connectionKind=value=>value?.subject&&value.token?'website':'disconnected';
-const connectionReady=value=>!!value?.subject&&!!value.token&&!!value.config;
+const connectionReady=value=>!!value?.subject&&!!value.token&&!!value.selection;
 const accountCode=error=>['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED','CONNECTION_CANCELLED','MODEL_CONFIG_UNAVAILABLE','TOKEN_UNAVAILABLE','USAGE_UNAVAILABLE','NOT_CONNECTED'].includes(error?.message)?error.message:'UNAVAILABLE';
 const accountState=()=>({supported:!!dailyTokenFile,configured:!!accountOrigins,source:modelSource,websiteReady:connectionReady(connection),native:nativeStatus?{account:nativeStatus.account,connected:nativeStatus.connected,phase:nativeStatus.phase,pending:!!nativeStatus.loginId,canReopen:!!nativeStatus.authUrl}:undefined,nativeError,connection:connectionKind(connection),active:connectionKind(modelSource==='website'?activeConnection:null),pending:!!pendingConnection,canReopen:!!pendingConnection&&!!pendingLoginUrl,needsRestart:connectionReady(connection)&&JSON.stringify(connection)!==JSON.stringify(activeConnection),error:connectionError,...(wallet?{wallet,updatedAt:walletUpdatedAt}:{}),walletError,stale:walletDirty||!!wallet?.expiresAt&&wallet.expiresAt<=Date.now()/1000});
 function accountChanged(){
@@ -134,28 +134,15 @@ function accountChanged(){
 function cancelConnection(){
  pendingConnection?.abort();pendingConnection=undefined;pendingLoginUrl=undefined;configAbort?.abort();accountRevision++;
 }
-async function syncHomerConfig(reason){
- if(!accountOrigins||!connection?.subject||!connection.token||pendingConnection||quitPending)return;
- if(configRead)return configRead;
- const now=performance.now();
- if(reason==='message'&&lastConfigCheck!==undefined&&now-lastConfigCheck<=3600000)return;
- lastConfigCheck=now;
- const revision=accountRevision,operation=new AbortController();configAbort=operation;
- configRead=(async()=>{
-  try{
-   const config=await queryHomerRuntimeConfig({...accountOrigins,allowSyntheticLoopback:accountSynthetic,modelToken:connection.token},operation.signal);
-   if(operation.signal.aborted||revision!==accountRevision||quitPending)return;
-   if(JSON.stringify(config)!==JSON.stringify(connection.config))connection=saveHomerRuntimeConfig(dailyTokenFile,config,accountBoundary());
-   connectionError=undefined;
-  }catch(error){
-   if(operation.signal.aborted||revision!==accountRevision)return;
-   const code=accountCode(error);connectionError=code==='UNAVAILABLE'?'CONFIG_UNAVAILABLE':code;
-   if(reason==='startup'&&code==='MODEL_CONFIG_UNAVAILABLE'&&Array.isArray(error.cause)&&connection.config&&
-      Object.values(connection.config).some(role=>error.cause.some(entry=>entry.model===role.model&&(entry.effort===undefined||entry.effort===role.effort))))return false;
-  }
-  finally{if(configAbort===operation)configAbort=undefined;configRead=undefined;accountChanged();}
- })();
- return configRead;
+async function loadWebsiteConnection(){
+ const credentials=readHomerConnection(dailyTokenFile,accountBoundary());
+ connection=credentials;
+ if(!credentials?.subject||!credentials.token||!accountOrigins)return;
+ const operation=new AbortController();configAbort=operation;
+ try{
+  const selection=await queryHomerMemberSelection({...accountOrigins,allowSyntheticLoopback:accountSynthetic},operation.signal);
+  if(!operation.signal.aborted&&!quitPending)connection={...credentials,selection};
+ }finally{if(configAbort===operation)configAbort=undefined;}
 }
 function registerDesktopAccount(){
  const actions={
@@ -188,7 +175,7 @@ function registerDesktopAccount(){
    const operation=new AbortController();pendingConnection=operation;
    void authorizeHomerConnection({...accountOrigins,allowSyntheticLoopback:accountSynthetic,file:dailyTokenFile,signal:operation.signal,openBrowser:url=>{if(pendingConnection!==operation||operation.signal.aborted)return Promise.resolve();pendingLoginUrl=url;accountChanged();return shell.openExternal(url);},onCallback:()=>{if(pendingConnection===operation){pendingLoginUrl=undefined;accountChanged();}}}).then(value=>{
     if(pendingConnection!==operation||operation.signal.aborted||quitPending)return;
-    connection=value;lastConfigCheck=performance.now();accountRevision++;
+    connection=value;accountRevision++;
     wallet=undefined;walletUpdatedAt=undefined;walletError=undefined;walletDirty=true;walletRevision++;
    }).catch(error=>{if(pendingConnection===operation&&!operation.signal.aborted&&!quitPending)connectionError=accountCode(error);})
    .finally(()=>{if(pendingConnection===operation){pendingConnection=undefined;pendingLoginUrl=undefined;if(!operation.signal.aborted&&!quitPending){accountChanged();showWindow();}}});
@@ -946,7 +933,7 @@ function createWindow(){
 }
 function refreshMenu(){
  Menu.setApplicationMenu(Menu.buildFromTemplate([
-  {label:'荷马',submenu:[{role:'about'},...(updateState?[{id:'update',label:windowsRecovery()?'退出后重新打开以重试更新…':updateState.status==='ready'?'重启并更新…':updateState.status==='downloading'?'正在后台下载…':updateState.status==='checking'?'正在检查更新…':'检查更新…',enabled:!['checking','downloading'].includes(updateState.status)&&!quitPending&&!(updateState.status==='ready'&&!updateState.version),click:()=>windowsRecovery()?void recoverWindowsExit():updateState.status==='ready'?app.quit():checkUpdate(true)}]:[]),...(deepseek?[{label:'模型连接信息…',click:()=>dialog.showMessageBox(window,{type:'info',title:'荷马',message:activeConnection?'已连接网站账号':'未连接网站账号',detail:(activeConnection?['main','worker'].map(role=>(role==='main'?'Homer':'Worker')+'：'+activeConnection.config[role].model+' · '+activeConnection.config[role].effort+' · Fast 关闭\n入口：'+activeConnection.config[role].baseUrl).join('\n'):'请在设置 → 账号中通过网站登录并连接。')+'\nCodex：0.171.0-alpha.7\n连接更新后正常重启生效。实际可用性以模型回复为准。',buttons:['返回会话']})}]:[]), {type:'separator'},{label:'设置…',accelerator:'CmdOrCtrl+,',click:openSettings},{type:'separator'},{label:'关闭窗口',accelerator:'Command+W',click:()=>window.hide()},{role:'hide'},{type:'separator'},{id:'quit',label:'退出荷马',accelerator:'Command+Q',click:()=>windowsRecovery()?void recoverWindowsExit():app.quit()}]},
+  {label:'荷马',submenu:[{role:'about'},...(updateState?[{id:'update',label:windowsRecovery()?'退出后重新打开以重试更新…':updateState.status==='ready'?'重启并更新…':updateState.status==='downloading'?'正在后台下载…':updateState.status==='checking'?'正在检查更新…':'检查更新…',enabled:!['checking','downloading'].includes(updateState.status)&&!quitPending&&!(updateState.status==='ready'&&!updateState.version),click:()=>windowsRecovery()?void recoverWindowsExit():updateState.status==='ready'?app.quit():checkUpdate(true)}]:[]),...(deepseek?[{label:'模型连接信息…',click:()=>dialog.showMessageBox(window,{type:'info',title:'荷马',message:activeConnection?'已连接网站账号':'未连接网站账号',detail:(activeConnection?['main','worker'].map(role=>(role==='main'?'Homer':'Worker')+'：'+activeConnection.selection[role].model+' · '+activeConnection.selection[role].effort+' · Fast 关闭\n入口：'+accountOrigins.gatewayOrigin+'/v1').join('\n'):'请在设置 → 账号中通过网站登录并连接。')+'\nCodex：0.171.0-alpha.7\n连接更新后正常重启生效。实际可用性以模型回复为准。',buttons:['返回会话']})}]:[]), {type:'separator'},{label:'设置…',accelerator:'CmdOrCtrl+,',click:openSettings},{type:'separator'},{label:'关闭窗口',accelerator:'Command+W',click:()=>window.hide()},{role:'hide'},{type:'separator'},{id:'quit',label:'退出荷马',accelerator:'Command+Q',click:()=>windowsRecovery()?void recoverWindowsExit():app.quit()}]},
   {label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},
   {label:'显示',submenu:[{role:'zoomIn'},{role:'zoomOut'},{role:'resetZoom'},{label:'显示主窗口',accelerator:'Command+1',click:showWindow},
    ...(['darwin','win32'].includes(process.platform)?[{type:'separator'},{id:'capture-selection',label:'选取窗口或区域…',click:()=>captureDesktop(true)}]:[])]},
@@ -993,7 +980,7 @@ try{
   const accountActions=registerDesktopAccount();
   app.setAboutPanelOptions({applicationName:'荷马',applicationVersion:app.getVersion(),version:String(manifest.build),copyright:'本机候选 · Electron / Node 22.22.0 / Codex 0.171.0-alpha.7'});
   createWindow();
-  if(dailyTokenFile){try{connection=readHomerConnection(dailyTokenFile,accountBoundary());}catch(error){connection=null;connectionError=accountCode(error);}const usable=await syncHomerConfig('startup');activeConnection=usable!==false&&connectionReady(connection)?connection:null;}
+  if(dailyTokenFile){try{await loadWebsiteConnection();}catch(error){connectionError=accountCode(error);}activeConnection=connectionReady(connection)?connection:null;}
   if(daily&&modelSource==='website'&&activeConnection&&accountOrigins)void accountActions.refresh();
   const runtime=spawn(process.platform==='win32'?join(resources,'node.exe'):join(bundle,'Contents/MacOS/node'),['--disable-warning=ExperimentalWarning',join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',profile,...(test?['--test-profile']:[]),...(deepseek?['--deepseek-daily']:[])],{cwd:profile,env:{...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,LOCALAPPDATA:process.env.LOCALAPPDATA,APPDATA:app.getPath('appData'),USERPROFILE:userHome,TEMP:join(profile,'tmp'),TMP:join(profile,'tmp')}:{ }),PATH:process.platform==='win32'?resources+';'+join(process.env.SystemRoot,'System32'):join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:userHome,TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','ignore',...(deepseek?['pipe']:[])]});
   if(deepseek){runtime.stdio[3].on('error',()=>{});runtime.stdio[3].end(JSON.stringify(activeConnection));}
@@ -1021,7 +1008,6 @@ try{
       if(value.kind==='power_acquire'&&Number.isSafeInteger(value.id)&&value.id>0)runtime.stdin.write(JSON.stringify({kind:'power_ack',id:value.id})+'\n');
      }catch{void showError('电源状态未能确认，当前任务会沿原流程继续。');}
     }
-    else if(value.kind==='account_config_check'){if(modelSource==='website')void syncHomerConfig('message');}
     else if(value.kind==='account_usage_dirty'){walletRevision++;walletDirty=true;accountChanged();}
     else if(value.kind==='update-busy'&&updateStopping)updateFailed('update_busy');
     else if(value.kind==='update-stopped'&&updateStopping){updateAcknowledged=true;finishQuit();}

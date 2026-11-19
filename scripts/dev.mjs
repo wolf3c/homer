@@ -243,7 +243,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
         clearTimeout(readyTimer);current=build;phase='management';cachedHistoryState=undefined;
         await startWeb(build);publish();return;
       }
-      if(desktop&&(m.kind==='account_usage_dirty'||m.kind==='account_config_check')){desktop.onEvent?.({kind:m.kind});return;}
+      if(desktop&&m.kind==='account_usage_dirty'){desktop.onEvent?.({kind:m.kind});return;}
       if(desktop&&m.kind==='chat_unavailable'){desktopChatError=m.code;desktop.onEvent?.({kind:'chat_unavailable',code:m.code});publish();return;}
       if(m.kind==="state_invalidated"&&m.protocol===1){publish();return;}
       if (m.kind === "ingress_result") {

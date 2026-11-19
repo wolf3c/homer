@@ -7,43 +7,25 @@ import {join} from 'node:path';
 import * as account from '../src/homer-account.js';
 const boundary={gatewayOrigin:'https://gateway.example.invalid'};
 const runtimeConfig=()=>({main:{baseUrl:boundary.gatewayOrigin+'/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl:boundary.gatewayOrigin+'/v1',model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}});
-const credentials=()=>({subject:'user_a',modelToken:'synthetic-key',config:runtimeConfig()});
+const credentials=()=>({subject:'user_a',modelToken:'synthetic-key'});
 const api=account as any;
-test('membership accepts gateway model IDs, protocol efforts and explicit capabilities without brand rules',()=>{
- const capabilities={inputModalities:['text'],reasoningEfforts:['low','high'],webSearch:false,toolSearch:true};
- for(const model of ['Qwen/Qwen3-custom','vendor/future-model:latest','deepseek-flash','gpt-next'])for(const effort of ['low','medium','high','xhigh','max','ultra','vendor_adaptive',null]){
-  const role={...runtimeConfig().main,model,effort};
-  assert.deepEqual(api.validateHomerRuntimeConfig({main:role,worker:role},boundary),{main:role,worker:role});
- }
- const role={...runtimeConfig().main,model:'Qwen/Qwen3-custom',effort:'high',capabilities};
- const checked=api.validateHomerRuntimeConfig({main:role,worker:role},boundary);
- checked.main.capabilities.inputModalities.push('image');assert.deepEqual(capabilities.inputModalities,['text']);assert.deepEqual(checked.worker.capabilities.inputModalities,['text']);
- for(const change of [{model:''},{model:'a\nb'},{model:'x'.repeat(257)},{effort:''},{effort:'bad effort'},{effort:undefined},{fast:'false'},
-  {capabilities:{...capabilities,extra:true}},{capabilities:{...capabilities,inputModalities:[]}},{capabilities:{...capabilities,inputModalities:['text','text']}},
-  {capabilities:{...capabilities,reasoningEfforts:['']}},{capabilities:{...capabilities,reasoningEfforts:['low']}},{capabilities:{...capabilities,webSearch:'false'}},
-  {capabilities:{...capabilities,toolSearch:undefined}},{capabilities:null}])assert.throws(()=>api.validateHomerRuntimeConfig({main:role,worker:{...role,...change}},boundary));
- const plain={...role,effort:null,capabilities:{...capabilities,reasoningEfforts:[]}};
- assert.deepEqual(api.validateHomerRuntimeConfig({main:plain,worker:plain},boundary),{main:plain,worker:plain});
+const defaults={main:{model:'gpt-6.1-terra',effort:'medium'},worker:{model:'gpt-6.1-terra',effort:'high'}};
+const alternate={main:defaults.worker,worker:defaults.main};
+test('private runtime pipe requires a valid identity and exact bundled selection',()=>{
+ const connection={subject:'user_a',token:'synthetic-key',selection:alternate};
+ const ready=api.readMemberRuntimeConnection(connection,boundary);
+ assert.equal(ready.config.main.baseUrl,boundary.gatewayOrigin+'/v1');assert.equal(ready.config.worker.effort,'medium');
+ for(const invalid of [{token:null},{subject:''},{selection:null},{selection:runtimeConfig()},{selection:{...alternate,worker:{model:'gpt-6-luna',effort:'low'}}},{config:runtimeConfig()}])
+  assert.throws(()=>api.readMemberRuntimeConnection({...connection,...invalid},boundary),/INVALID_REQUEST/);
+ assert.throws(()=>api.readMemberRuntimeConnection(connection,{gatewayOrigin:'http://untrusted.invalid'}),/INVALID_REQUEST/);
+ assert.throws(()=>api.readMemberRuntimeConnection(connection,{...boundary,subject:'other'}),/ACCOUNT_MISMATCH/);
 });
-test('membership rejects Fast independently for each role with or without capabilities',()=>{
- for(const name of ['main','worker'])for(const capabilities of [undefined,{inputModalities:['text'],reasoningEfforts:['max'],webSearch:false,toolSearch:false}]){
-  const config=runtimeConfig();
-  assert.throws(()=>api.validateHomerRuntimeConfig({...config,[name]:{...config[name as 'main'|'worker'],fast:true,...(capabilities?{capabilities}:{})}},boundary),/INVALID_REQUEST/);
- }
-});
-test('Terra membership accepts provider-neutral context and high effort without DeepSeek fields',()=>{
- const role={baseUrl:boundary.gatewayOrigin+'/v1',model:'gpt-6.1-terra',effort:'high',fast:false,context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'}};
- const config={main:structuredClone(role),worker:structuredClone(role)};
- const checked=api.validateHomerRuntimeConfig(config,boundary);assert.deepEqual(checked,config);
- checked.worker.context.contextWindow=100000;assert.equal(config.worker.context.contextWindow,272000);
- for(const change of [{effort:''},{model:''},{context:undefined},{deepseek:role.context}])assert.throws(()=>api.validateHomerRuntimeConfig({...config,worker:{...role,...change}},boundary));
-});
-test('maximum-sized advertised model metadata saves without losing a long existing Token',()=>{
+test('migrating maximum-sized historical metadata preserves a long Token and refuses oversized files',()=>{
  const parent=join(process.cwd(),'.codex/scratch/generic-membership-20261104');mkdirSync(parent,{recursive:true});
  const dir=realpathSync(mkdtempSync(join(parent,'large-'))),file=join(dir,'runtime-config.json');
  const efforts=Array.from({length:32},(_,i)=>String(i).padStart(2,'0')+'x'.repeat(62));
  const role={...runtimeConfig().main,model:'x'.repeat(256),effort:efforts[0],capabilities:{inputModalities:['text'],reasoningEfforts:efforts,webSearch:false,toolSearch:false}};
- try{api.saveHomerConnection(file,{...credentials(),modelToken:'x'.repeat(4096),config:{main:role,worker:role}},boundary);assert.equal(api.readHomerConnection(file,boundary).token.length,4096);
+ try{writeFileSync(file,JSON.stringify({subject:'user_a',token:'x'.repeat(4096),config:{main:role,worker:role}}),{mode:0o600});assert.equal(api.readHomerConnection(file,boundary).token.length,4096);
   const tooLarge=readFileSync(file,'utf8')+' '.repeat(32768);writeFileSync(file,tooLarge,{mode:0o600});assert.throws(()=>api.readHomerConnection(file,boundary),/CONNECTION_FILE_INVALID/);assert.equal(readFileSync(file,'utf8'),tooLarge);}
  finally{rmSync(dir,{recursive:true,force:true});}
 });
@@ -54,10 +36,7 @@ test('old five-field DeepSeek cache preserves credentials for Terra configuratio
  const bytes=JSON.stringify({subject:'user_a',token:'synthetic-retained',config:{main:role,worker:role}});
  try{
   writeFileSync(file,bytes,{mode:0o600});
-  assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',token:'synthetic-retained'});assert.equal(readFileSync(file,'utf8'),bytes);
-  const next={baseUrl:role.baseUrl,model:'gpt-6.1-terra',effort:'high',fast:false,context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'}};
-  const saved=api.saveHomerRuntimeConfig(file,{main:next,worker:next},boundary);
-  assert.equal(saved.token,'synthetic-retained');assert.deepEqual(saved.config,{main:next,worker:next});
+  assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',token:'synthetic-retained'});assert.deepEqual(JSON.parse(readFileSync(file,'utf8')),{subject:'user_a',token:'synthetic-retained'});
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 for(const [label,data,expected] of [
@@ -102,9 +81,10 @@ for(const value of [{subject:'user_a',token:'synthetic-key',config:runtimeConfig
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-rename-'))),old=join(dir,'deepseek.json'),file=join(dir,'runtime-config.json');
  try{
   const bytes=JSON.stringify(value)+'\n';writeFileSync(old,bytes,{mode:0o600});
-  assert.deepEqual(api.readHomerConnection(file,boundary),value);
-  assert.equal(readFileSync(file,'utf8'),bytes);assert.equal(existsSync(old),false);assert.equal(statSync(file).mode&0o777,0o600);
-  assert.deepEqual(api.readHomerConnection(file,boundary),value);
+  const {config:_,...expected}=value;
+  assert.deepEqual(api.readHomerConnection(file,boundary),expected);
+  assert.deepEqual(JSON.parse(readFileSync(file,'utf8')),expected);assert.equal(existsSync(old),false);assert.equal(statSync(file).mode&0o777,0o600);
+  assert.deepEqual(api.readHomerConnection(file,boundary),expected);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 test('filename migration refuses unsafe source, conflict and write failure without losing credentials',()=>{
@@ -123,7 +103,7 @@ test('interrupted filename migration finishes the same private file and clears l
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-rename-retry-'))),old=join(dir,'deepseek.json'),file=join(dir,'runtime-config.json');
  try{
   writeFileSync(old,JSON.stringify({token:'synthetic-old',subject:'user_a',config:runtimeConfig()}),{mode:0o600});linkSync(old,file);writeFileSync(join(dir,'.deepseek.json.pending'),'synthetic-staging',{mode:0o600});
-  assert.deepEqual(api.readHomerConnection(file,boundary),{token:'synthetic-old',subject:'user_a',config:runtimeConfig()});assert.equal(existsSync(old),false);assert.equal(existsSync(join(dir,'.deepseek.json.pending')),false);
+  assert.deepEqual(api.readHomerConnection(file,boundary),{token:'synthetic-old',subject:'user_a'});assert.equal(existsSync(old),false);assert.equal(existsSync(join(dir,'.deepseek.json.pending')),false);
   api.saveHomerConnection(file,credentials(),boundary);assert.equal(existsSync(join(dir,'.runtime-config.json.pending')),false);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
@@ -164,11 +144,6 @@ test('manual Token files cannot connect or migrate; website authorization replac
   }finally{rmSync(dir,{recursive:true,force:true});}
  }
 });
-test('runtime-config connection validates exact fields, origins, roles and pinned subject',()=>{
- assert.deepEqual(api.validateHomerCredentials(credentials(),boundary),credentials());
- for(const changed of [{grantRef:'old'},{modelBaseUrl:'https://other.invalid/v1'},{modelToken:'bad\nkey'},{accountRef:'old-account'},{aliases:{main:'other',worker:'homer-worker'}}])assert.throws(()=>api.validateHomerCredentials({...credentials(),...changed},boundary));
- assert.throws(()=>api.validateHomerCredentials(credentials(),{...boundary,subject:'other'}),/ACCOUNT_MISMATCH/);
-});
 test('private atomic website file replaces a legacy Token; disconnect retains website attribution',()=>{
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-account-'))),file=join(dir,'runtime-config.json');
  try{
@@ -176,7 +151,7 @@ test('private atomic website file replaces a legacy Token; disconnect retains we
   writeFileSync(file,JSON.stringify({token:'synthetic-old'}),{mode:0o600});
   assert.equal(api.readHomerConnection(file,boundary),null);
   api.saveHomerConnection(file,credentials(),boundary);
-  assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',config:runtimeConfig(),token:'synthetic-key'});
+  assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',token:'synthetic-key'});
   assert.equal(statSync(file).mode&0o777,0o600);
   const old=readFileSync(file,'utf8');
   assert.throws(()=>api.saveHomerConnection(file,{...credentials(),subject:'other'},boundary),/ACCOUNT_MISMATCH/);
@@ -221,7 +196,6 @@ test('real loopback performs exact exchange once; invalid callback cannot write,
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-flow-'))),file=join(dir,'runtime-config.json');let posts=0,release:()=>void=()=>{};
  let hold=false;
  const website=await localServer(async(req,res)=>{
-  if(req.url==='/v1/models'){res.writeHead(404).end('{}');return;}
   assert.equal(req.url,'/api/homer/v1/token');assert.equal(req.method,'POST');assert.equal(req.headers['x-homer-config-features'],'responses-websocket');assert.equal(req.headers['x-homer-config-version'],'2');posts++;
   let text='';for await(const chunk of req)text+=chunk;
   const body=JSON.parse(text);assert.deepEqual(Object.keys(body).sort(),['clientId','code','codeVerifier','grantType','redirectUri'].sort());
@@ -243,7 +217,7 @@ test('real loopback performs exact exchange once; invalid callback cannot write,
    assert.equal(response.status,200);
    assert.equal(await response.text(),'授权请求已收到，请返回 Homer 查看连接结果。此页面可以关闭。');
   })()});
-  await connected;await browser;assert.equal(accepted,1);assert.equal(posts,1);assert.equal(api.readHomerConnection(file,boundary).token,'synthetic-key');
+  assert.deepEqual((await connected).selection,defaults);await browser;assert.equal(accepted,1);assert.equal(posts,1);assert.equal(api.readHomerConnection(file,boundary).token,'synthetic-key');
   await assert.rejects(fetch(callbackUrl));
   hold=true;const cancel=new AbortController();let sent:()=>void=()=>{};const requested=new Promise<void>(r=>sent=r);
   const late=api.authorizeHomerConnection({...boundary,websiteOrigin:website.origin,allowSyntheticLoopback:true,file,signal:cancel.signal,openBrowser:async(raw:string)=>{
@@ -297,35 +271,6 @@ test('disconnect preserves retired Token files and clears private staging even w
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
-test('runtime configuration validates every role independently without defaults or arbitrary destinations',()=>{
- assert.deepEqual(api.validateHomerRuntimeConfig(runtimeConfig(),boundary),runtimeConfig());
- for(const name of ['main','worker'] as const)for(const effort of ['low','high','max']){
-  const config={...runtimeConfig(),[name]:{...runtimeConfig()[name],effort}};
-  assert.deepEqual(api.validateHomerRuntimeConfig(config,boundary),config);
- }
- for(const role of ['main','worker'] as const)for(const change of [
-  {baseUrl:'https://evil.invalid/v1'},{baseUrl:boundary.gatewayOrigin+'/v1?key=x'},
-  {baseUrl:boundary.gatewayOrigin+'/v1#fragment'},{model:''},{effort:12},
-  {effort:'bad effort'},{effort:''},{effort:undefined},{effort:['high']},
-  {fast:null},{extra:'not-supported'},{model:undefined},
- ])assert.throws(()=>api.validateHomerRuntimeConfig({...runtimeConfig(),[role]:{...runtimeConfig()[role],...change}},boundary));
- assert.throws(()=>api.validateHomerRuntimeConfig({main:runtimeConfig().main},boundary));
-});
-test('membership context delivery is required, bounded and copied independently per role',()=>{
- const config=runtimeConfig() as any;
- for(const role of ['main','worker'])config[role].context={contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'};
- const checked=api.validateHomerRuntimeConfig(config,boundary);
- assert.deepEqual(checked,config);
- checked.main.context.contextWindow=600000;
- assert.equal(config.main.context.contextWindow,512000);
- for(const role of ['main','worker'])for(const context of [undefined,null,{},
-  {contextWindow:512000,autoCompactTokenLimit:460801,autoCompactTokenLimitScope:'total'},
-  {contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'body_after_prefix'},
-  {contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total',extra:true},
-  {contextWindow:1048577,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},
-  {contextWindow:512000,autoCompactTokenLimit:0,autoCompactTokenLimitScope:'total'}
- ])assert.throws(()=>api.validateHomerRuntimeConfig({...config,[role]:{...config[role],context}},boundary));
-});
 for(const filename of ['runtime-config.json','deepseek.json'])for(const connected of [true,false])test('old four-field membership cache retains identity for refresh: '+filename+' '+connected,()=>{
  const parent=join(process.cwd(),'.codex/scratch/membership-context-cache');
  mkdirSync(parent,{recursive:true});
@@ -335,15 +280,8 @@ for(const filename of ['runtime-config.json','deepseek.json'])for(const connecte
  try{
   const bytes=JSON.stringify(old);writeFileSync(join(dir,filename),bytes,{mode:0o600});
   assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',...(connected?{token:'synthetic-key'}:{})});
-  assert.equal(readFileSync(file,'utf8'),bytes);
-  assert.throws(()=>api.validateHomerRuntimeConfig(old.config,boundary));
+  assert.deepEqual(JSON.parse(readFileSync(file,'utf8')),{subject:'user_a',...(connected?{token:'synthetic-key'}:{})});
   assert.throws(()=>api.saveHomerConnection(file,{...credentials(),subject:'other'},boundary),/ACCOUNT_MISMATCH/);
-  if(connected){
-   assert.throws(()=>api.saveHomerRuntimeConfig(file,{...runtimeConfig(),worker:role},boundary));
-   assert.equal(readFileSync(file,'utf8'),bytes);
-   api.saveHomerRuntimeConfig(file,runtimeConfig(),boundary);
-   assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',token:'synthetic-key',config:runtimeConfig()});
-  }else assert.throws(()=>api.saveHomerRuntimeConfig(file,runtimeConfig(),boundary),/NOT_CONNECTED/);
   // Explicit disconnect must remain readable and keep account attribution.
   api.disconnectHomerConnection(file,boundary);
   assert.equal(api.readHomerConnection(file,boundary).subject,'user_a');
@@ -360,185 +298,58 @@ test('old membership cache recovery rejects malformed roles and unsafe credentia
    {...old,token:'bad\nkey'},{...old,subject:''},
    ...[{baseUrl:'https://other.invalid/v1'},{fast:true},{extra:true},{deepseek:null},{model:'other'},{effort:'xhigh'}].map(change=>({...old,config:{main:role,worker:{...role,...change}}})),
    {...old,config:{main:role,worker:runtimeConfig().worker}},
+   ...[{baseUrl:'https://other.invalid/v1'},{effort:'bad effort'},{fast:true},{supportsWebSocket:'yes'},
+    {capabilities:{inputModalities:['image'],reasoningEfforts:['max'],webSearch:true,toolSearch:true}},
+    {context:{...runtimeConfig().main.context,autoCompactTokenLimitScope:'body_after_prefix'}}].map(change=>({...old,config:{...runtimeConfig(),worker:{...runtimeConfig().worker,...change}}})),
   ]){const bytes=JSON.stringify(value);writeFileSync(file,bytes,{mode:0o600});assert.throws(()=>api.readHomerConnection(file,boundary),/CONNECTION_FILE_INVALID/);assert.equal(readFileSync(file,'utf8'),bytes);}
   writeFileSync(file,JSON.stringify(old),{mode:0o600});
   assert.throws(()=>api.readHomerConnection(file,{...boundary,subject:'other'}),/CONNECTION_FILE_INVALID/);
   chmodSync(file,0o644);assert.throws(()=>api.readHomerConnection(file,boundary),/CONNECTION_FILE_INVALID/);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
-test('public configuration GET sends no secret, bypasses cache, rejects redirects and invalid payloads',async()=>{
- let mode='good';const seen:(string|undefined)[]=[];
+test('public GET negotiates V2 once and falls back as a pair without credentials or gateway discovery',async t=>{
+ let status=200,body:unknown=alternate,redirect=false;const seen:string[]=[];
  const website=await localServer((req,res)=>{
-  seen.push(req.url);assert.equal(req.method,'GET');assert.equal(req.headers['x-homer-config-features'],'responses-websocket');assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
-  if(mode==='redirect'){res.writeHead(302,{Location:'/leak'});res.end();return;}
-  if(mode==='missing'){res.writeHead(503);res.end('{}');return;}
-  res.end(JSON.stringify(mode==='invalid'?{main:runtimeConfig().main}:runtimeConfig()));
+  seen.push(req.url!);assert.equal(req.method,'GET');assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
+  assert.equal(req.headers['x-homer-config-version'],'2');assert.match(String(req.headers['cache-control']),/no-cache/);
+  if(redirect){res.writeHead(302,{Location:'/leak'}).end();return;}
+  res.writeHead(status).end(JSON.stringify(body));
  });
+ const options={websiteOrigin:website.origin,allowSyntheticLoopback:true};
  try{
-  const options={...boundary,websiteOrigin:website.origin,allowSyntheticLoopback:true};
-  assert.deepEqual(await api.queryHomerRuntimeConfig(options),runtimeConfig());
-  for(mode of ['redirect','missing','invalid'])await assert.rejects(api.queryHomerRuntimeConfig(options));
-  assert.equal(seen.includes('/leak'),false);assert.ok(seen.every(p=>p==='/api/homer/v1/config'));
- }finally{await website.close();}
-});
-
-test('member refresh resolves encoded model details once per selected model',async()=>{
- const calls:string[]=[];
- const gateway=await localServer((req,res)=>{
-  assert.equal(req.headers.authorization,'Bearer synthetic-key');calls.push(req.url!);
-  const responses=req.url==='/v1/models/vendor%2Fmodel'?{
-   image_input:false,reasoning:{supported_efforts:['medium','high']},tools:{web_search:false},
-  }:{image_input:true,tools:{web_search:true}};
-  res.end(JSON.stringify(req.url==='/v1/models'?{object:'list',data:[{id:'vendor/model'},{id:'other'}]}:{
-   id:req.url==='/v1/models/vendor%2Fmodel'?'vendor/model':'other',object:'model',capabilities:{responses},
-  }));
- });
- const caps={inputModalities:['text','image'],reasoningEfforts:['low','medium','high'],webSearch:true,toolSearch:true};
- const role={...runtimeConfig().main,baseUrl:gateway.origin+'/v1',model:'vendor/model',effort:'medium',capabilities:caps,supportsWebSocket:true};
- const config={main:role,worker:{...role,effort:'high'}};
- const website=await localServer((req,res)=>{assert.equal(req.headers.authorization,undefined);res.end(JSON.stringify(config));});
- try{
-  const options={websiteOrigin:website.origin,gatewayOrigin:gateway.origin,allowSyntheticLoopback:true,modelToken:'synthetic-key'};
-  const projected={inputModalities:['text'],reasoningEfforts:['medium','high'],webSearch:false,toolSearch:true};
-  assert.deepEqual(await account.queryHomerRuntimeConfig(options),{main:{...role,capabilities:projected},worker:{...config.worker,capabilities:projected}});
-  assert.deepEqual(calls.splice(0),['/v1/models','/v1/models/vendor%2Fmodel']);
-  config.worker={...config.worker,model:'other'};
-  assert.deepEqual(await account.queryHomerRuntimeConfig(options),{main:{...role,capabilities:projected},worker:config.worker});
-  assert.equal(calls[0],'/v1/models');
-  assert.deepEqual(calls.slice(1).sort(),['/v1/models/other','/v1/models/vendor%2Fmodel']);
- }finally{await website.close();await gateway.close();}
-});
-
-test('member refresh preserves website metadata on unknown details but rejects a confirmed invalid selection',async()=>{
- let mode='invalid-detail';const calls:string[]=[];
- const gateway=await localServer((req,res)=>{
-  calls.push(req.url!);
-  if(req.url==='/v1/models'){
-   if(mode==='list-unavailable'){res.writeHead(503).end('{}');return;}
-   if(mode==='token-denied'){res.writeHead(401).end('Unauthorized');return;}
-   res.end(JSON.stringify({object:'list',data:mode==='missing-model'?[]:[{id:'deepseek-flash'}]}));return;
+  for(const [wire,expected]of [[alternate,alternate],[null,defaults],[runtimeConfig(),defaults],[{...alternate,models:['gpt-6.1-terra']},defaults],[{...alternate,worker:{model:'gpt-6-luna',effort:'low'}},defaults]]){
+   body=wire;assert.deepEqual(await api.queryHomerMemberSelection(options),expected);
   }
-  if(mode==='redirect'){res.writeHead(302,{Location:'/leak'}).end();return;}
-  if(mode==='http-error'){res.writeHead(503).end('{}');return;}
-  res.end(JSON.stringify(mode==='detail-error'?{error:{code:'model_not_found'}}:{
-   object:'model',id:mode==='wrong-id'?'unselected':'deepseek-flash',capabilities:{responses:{
-    image_input:false,reasoning:{supported_efforts:mode==='missing-effort'?[]:['bad effort']},
-   }},
-  }));
- });
- const role={...runtimeConfig().main,baseUrl:gateway.origin+'/v1'};
- const config={main:role,worker:role};
- const website=await localServer((_req,res)=>res.end(JSON.stringify(config)));
- try{
-  const query=()=>account.queryHomerRuntimeConfig({websiteOrigin:website.origin,gatewayOrigin:gateway.origin,allowSyntheticLoopback:true,modelToken:'synthetic-key'});
-  for(mode of ['list-unavailable','wrong-id','detail-error','redirect','http-error'])assert.deepEqual(await query(),config);
-  mode='invalid-detail';
-  const fallback={...role,capabilities:{inputModalities:['text'],reasoningEfforts:['max'],webSearch:false,toolSearch:false}};
-  assert.deepEqual(await query(),{main:fallback,worker:fallback});
-  assert.equal(calls.includes('/leak'),false);
-  for(mode of ['missing-effort','missing-model'])await assert.rejects(query(),/MODEL_CONFIG_UNAVAILABLE/);
-  mode='token-denied';await assert.rejects(query(),/TOKEN_UNAVAILABLE/);
-  assert.equal(calls.at(-1),'/v1/models');
- }finally{await website.close();await gateway.close();}
+  status=503;assert.deepEqual(await api.queryHomerMemberSelection(options),defaults);
+  redirect=true;assert.deepEqual(await api.queryHomerMemberSelection(options),defaults);
+  assert.deepEqual(seen,Array(7).fill('/api/homer/v1/config'));
+ }finally{await website.close();}
+ // Expire the fetch deadline without a 20s wall clock wait.
+ t.mock.method(AbortSignal,'timeout',()=>AbortSignal.abort(new DOMException('timed out','TimeoutError')));
+ assert.deepEqual(await api.queryHomerMemberSelection(options),defaults);
 });
-
-test('member exchange saves version 2 as a legacy cache and cancellation during discovery preserves it',async()=>{
- const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-discovery-'))),file=join(dir,'runtime-config.json');
- let announceDetail:()=>void=()=>{};const detailStarted=new Promise<void>(done=>announceDetail=done);
- const gateway=await localServer((req,res)=>{
-  if(req.url==='/v1/models'){res.end(JSON.stringify({object:'list',data:[{id:'deepseek-flash'}]}));return;}
-  assert.equal(req.url,'/v1/models/deepseek-flash');
-  if(req.headers.authorization==='Bearer synthetic-replacement'){announceDetail();return;}
-  assert.equal(req.headers.authorization,'Bearer synthetic-key');
-  res.end(JSON.stringify({id:'deepseek-flash',object:'model',capabilities:{responses:{image_input:true,
-   reasoning:{supported_efforts:['max']},tools:{web_search:false,tool_search:true},websocket:true}}}));
- });
- const role={model:'deepseek-flash',effort:'max'};
- let modelToken='synthetic-key';
- const website=await localServer((_req,res)=>res.end(JSON.stringify({...credentials(),modelToken,config:{models:[role.model],main:role,worker:role}})));
- const options={websiteOrigin:website.origin,gatewayOrigin:gateway.origin,allowSyntheticLoopback:true,file};
- const connect=(signal:AbortSignal)=>account.authorizeHomerConnection({...options,signal,openBrowser:async raw=>{
-  const url=new URL(raw);const callback=new URL(url.searchParams.get('redirect_uri')!);
-  callback.searchParams.set('code',Buffer.alloc(32,1).toString('base64url'));
-  callback.searchParams.set('state',url.searchParams.get('state')!);
-  assert.equal((await fetch(callback)).status,200);
- }});
- try{
-  const result=await connect(new AbortController().signal);
-  assert.deepEqual(result.config?.main.capabilities?.inputModalities,['text','image']);
-  assert.equal(result.config?.main.supportsWebSocket,true);
-  const stored=readFileSync(file,'utf8');assert.deepEqual(account.readHomerConnection(file,options),result);
-  assert.deepEqual(Object.keys(JSON.parse(stored).config),['main','worker']);
-  modelToken='synthetic-replacement';const cancel=new AbortController();
-  const rejected=assert.rejects(connect(cancel.signal),/CONNECTION_CANCELLED/);
-  await Promise.race([detailStarted,rejected]);cancel.abort();await rejected;
-  assert.equal(readFileSync(file,'utf8'),stored);
- }finally{await website.close();await gateway.close();rmSync(dir,{recursive:true,force:true});}
-});
-
-test('version 2 resolves only selected models, requires complete gateway metadata and rolls back to legacy',async()=>{
- const compact={models:['vendor/model','unused'],main:{model:'vendor/model',effort:'medium'},worker:{model:'vendor/model',effort:'high'}};
- const calls:string[]=[];
- let mode='complete';
- const gateway=await localServer((req,res)=>{
-  assert.equal(req.headers.authorization,'Bearer synthetic-key');calls.push(req.url!);
-  if(req.url==='/v1/models')return res.end(JSON.stringify({object:'list',data:mode==='invisible'?[]:[{id:'vendor/model'}]}));
-  const tools={web_search:false,...(mode==='missing-tool-search'?{}:{tool_search:mode==='complete'})};
-  return res.end(JSON.stringify({object:'model',id:'vendor/model',capabilities:{responses:{image_input:false,tools,websocket:mode==='complete',reasoning:{supported_efforts:['medium','high']}}}}));
- });
- const role={...runtimeConfig().main,baseUrl:gateway.origin+'/v1',model:'vendor/model',effort:'medium',supportsWebSocket:true};
- const legacy={main:role,worker:{...role,effort:'high'}};
- let wire:unknown=compact,version:string|string[]|undefined;
+test('PKCE delivers the chosen pair or defaults only after valid account and Token issuance',async()=>{
+ const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-exchange-'))),file=join(dir,'runtime-config.json');
+ let status=200,payload:Record<string,unknown>={};let requests=0;
  const website=await localServer((req,res)=>{
-  assert.equal(req.headers.authorization,undefined);assert.equal(req.headers['x-homer-config-features'],'responses-websocket');
-  version=req.headers['x-homer-config-version'];res.end(JSON.stringify(wire));
+  requests++;assert.equal(req.url,'/api/homer/v1/token');assert.equal(req.headers['x-homer-config-version'],'2');
+  res.writeHead(status).end(JSON.stringify(payload));
  });
- const options={websiteOrigin:website.origin,gatewayOrigin:gateway.origin,allowSyntheticLoopback:true,modelToken:'synthetic-key'};
+ const options={websiteOrigin:website.origin,gatewayOrigin:website.origin,allowSyntheticLoopback:true,file,signal:new AbortController().signal,
+  openBrowser:async(raw:string)=>{const url=new URL(raw);await fetch(url.searchParams.get('redirect_uri')+'?code='+Buffer.alloc(32,1).toString('base64url')+'&state='+url.searchParams.get('state'));}};
  try{
-  const resolved=await account.queryHomerRuntimeConfig(options);
-  assert.equal(version,'2');
-  assert.deepEqual(resolved.main,{...role,context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'},
-   capabilities:{inputModalities:['text'],reasoningEfforts:['medium','high'],webSearch:false,toolSearch:true}});
-  assert.deepEqual(resolved.worker,{...resolved.main,effort:'high'});
-  assert.deepEqual(calls.splice(0),['/v1/models','/v1/models/vendor%2Fmodel']);
-  mode='no-websocket';const disabled=(await account.queryHomerRuntimeConfig(options)).main;
-  assert.equal(disabled.supportsWebSocket,undefined);assert.equal(disabled.capabilities?.toolSearch,false);
-  for(mode of ['missing-tool-search','invisible'])await assert.rejects(account.queryHomerRuntimeConfig(options),/MODEL_CONFIG_UNAVAILABLE/);
-  calls.length=0;
-  for(wire of [{...compact,models:['unused']},{...compact,models:['vendor/model','vendor/model']},{...compact,main:{...compact.main,baseUrl:role.baseUrl}}])
-   await assert.rejects(account.queryHomerRuntimeConfig(options),/INVALID_REQUEST/);
-  assert.deepEqual(calls,[]);
-  mode='complete';wire=legacy;
-  const rolledBack=await account.queryHomerRuntimeConfig(options);
-  assert.deepEqual(rolledBack.main,{...role,capabilities:{inputModalities:['text'],reasoningEfforts:['medium','high'],webSearch:false,toolSearch:false}});
- }finally{await website.close();await gateway.close();}
+  for(const [wire,expected]of [[alternate,alternate],[null,defaults],[undefined,defaults],[runtimeConfig(),defaults],[{...alternate,main:{model:'absent',effort:'medium'}},defaults]]){
+   payload={...credentials(),config:wire};assert.deepEqual((await api.authorizeHomerConnection(options)).selection,expected);
+   assert.deepEqual(JSON.parse(readFileSync(file,'utf8')),{subject:'user_a',token:'synthetic-key'});
+  }
+  const before=readFileSync(file);
+  for(const [response,error]of [[{subject:'another',modelToken:'other-key',config:null},'ACCOUNT_MISMATCH'],[{subject:'user_a',config:null},'INVALID_REQUEST'],[{...credentials(),modelToken:''},'INVALID_REQUEST']] as const){
+   payload=response;await assert.rejects(api.authorizeHomerConnection(options),new RegExp(error));assert.deepEqual(readFileSync(file),before);
+  }
+  status=403;payload={error:{code:'FORBIDDEN'}};await assert.rejects(api.authorizeHomerConnection(options),/FORBIDDEN/);
+  assert.equal(requests,9);assert.deepEqual(readFileSync(file),before);
+ }finally{await website.close();rmSync(dir,{recursive:true,force:true});}
 });
-test('old website file keeps its only credential until a validated configuration is saved',()=>{
- const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-migrate-'))),file=join(dir,'runtime-config.json');
- const old={token:'synthetic-old',subject:'user_a',accountRef:'account_a',modelBaseUrl:boundary.gatewayOrigin+'/v1',aliases:{main:'homer-main',worker:'homer-worker'}};
- try{
-  writeFileSync(file,JSON.stringify(old),{mode:0o600});assert.deepEqual(api.readHomerConnection(file,boundary),{token:old.token,subject:old.subject,modelBaseUrl:old.modelBaseUrl,aliases:old.aliases});
-  const bytes=readFileSync(file,'utf8');
-  assert.throws(()=>api.saveHomerRuntimeConfig(file,{main:{}},boundary));assert.equal(readFileSync(file,'utf8'),bytes);
-  const saved=api.saveHomerRuntimeConfig(file,runtimeConfig(),boundary);
-  assert.deepEqual(saved,{token:old.token,subject:old.subject,config:runtimeConfig()});
-  assert.deepEqual(api.readHomerConnection(file,boundary),saved);
- }finally{rmSync(dir,{recursive:true,force:true});}
-});
-
-test('old website accountRef is read only compatibility; rewrites retain subject and remove obsolete reference',()=>{
- const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-old-identity-'))),file=join(dir,'runtime-config.json');
- try{
-  writeFileSync(file,JSON.stringify({token:'synthetic-key',subject:'user_a',accountRef:'old-gateway-account',config:runtimeConfig()}),{mode:0o600});
-  assert.deepEqual(api.readHomerConnection(file,boundary),{token:'synthetic-key',subject:'user_a',config:runtimeConfig()});
-  assert.throws(()=>api.saveHomerConnection(file,{...credentials(),subject:'other'},boundary),/ACCOUNT_MISMATCH/);
-  api.saveHomerRuntimeConfig(file,runtimeConfig(),boundary);
-  assert.equal(Object.hasOwn(JSON.parse(readFileSync(file,'utf8')),'accountRef'),false);
-  api.disconnectHomerConnection(file,boundary);
-  assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',config:runtimeConfig()});
- }finally{rmSync(dir,{recursive:true,force:true});}
-});
-
 test('disconnecting an old alias connection removes Token and accountRef while retaining readable subject',()=>{
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'homer-old-alias-disconnect-'))),file=join(dir,'runtime-config.json');
  try{
@@ -556,22 +367,4 @@ test('disconnecting an old alias connection removes Token and accountRef while r
 for(const [name,expires,expected] of [['no expiry',0,null],['future',4102444800,null],['expired',1,'TOKEN_UNAVAILABLE'],['missing',undefined,'USAGE_UNAVAILABLE'],['invalid',-1,'USAGE_UNAVAILABLE']] as const)test('wallet query verifies credential expiry before offering purchase: '+name,async()=>{
  const gateway=await localServer((req,res)=>res.end(JSON.stringify(req.url==='/api/status'?{success:false}:{code:true,data:{total_available:0,total_used:0,unlimited_quota:false,expires_at:expires}})));
  try{const result=api.queryHomerWallet({subject:'synthetic-user',token:'synthetic-key'},{gatewayOrigin:gateway.origin,allowSyntheticLoopback:true});if(expected)await assert.rejects(result,new RegExp(expected));else{const wallet=await result;assert.equal(wallet.available,0);assert.equal(wallet.expiresAt,expires);}}finally{await gateway.close();}
-});
-
-
-test('membership WS is explicit per role and disabled snapshots retain the legacy shape',()=>{
- const legacy=runtimeConfig(),enabled={...legacy,main:{...legacy.main,supportsWebSocket:true}};
- assert.deepEqual(api.validateHomerRuntimeConfig(enabled,boundary),enabled);
- assert.deepEqual(api.validateHomerRuntimeConfig({...legacy,worker:{...legacy.worker,supportsWebSocket:false}},boundary),legacy);
- for(const name of ['main','worker'])for(const supportsWebSocket of [null,undefined,'true',1,[],{}])assert.throws(()=>api.validateHomerRuntimeConfig({...legacy,[name]:{...legacy[name as 'main'|'worker'],supportsWebSocket}},boundary),/INVALID_REQUEST/);
-});
-
-test('membership WS enable and rollback preserve Token and atomically replace only valid config',()=>{
- const parent=join(process.cwd(),'.codex/scratch/membership-ws-20261114/caches');mkdirSync(parent,{recursive:true});const dir=realpathSync(mkdtempSync(join(parent,'case-'))),file=join(dir,'runtime-config.json');
- try{
-  api.saveHomerConnection(file,credentials(),boundary);const config=runtimeConfig();const enabled={...config,worker:{...config.worker,supportsWebSocket:true}};
-  api.saveHomerRuntimeConfig(file,enabled,boundary);assert.deepEqual(api.readHomerConnection(file,boundary),{subject:'user_a',token:'synthetic-key',config:enabled});
-  const bytes=readFileSync(file,'utf8');assert.throws(()=>api.saveHomerRuntimeConfig(file,{...enabled,main:{...enabled.main,supportsWebSocket:'true'}},boundary),/INVALID_REQUEST/);assert.equal(readFileSync(file,'utf8'),bytes);
-  api.saveHomerRuntimeConfig(file,{...config,worker:{...config.worker,supportsWebSocket:false}},boundary);assert.deepEqual(JSON.parse(readFileSync(file,'utf8')),{subject:'user_a',token:'synthetic-key',config});
- }finally{rmSync(dir,{recursive:true,force:true});}
 });

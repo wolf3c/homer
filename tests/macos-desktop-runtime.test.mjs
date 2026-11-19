@@ -24,8 +24,8 @@ function profile(state={}){
 function launch(root,daily=false){
  const child=spawn(node,[join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',root,'--test-profile',...(daily?['--deepseek-daily']:[])],{cwd:root,env:{PATH:dirname(node)+':/usr/bin:/bin',HOME:join(root,'host-home'),TMPDIR:join(root,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','pipe',...(daily?['pipe']:[])]});
  if(daily){
-  const baseUrl=JSON.parse(readFileSync(join(resources,'desktop-manifest.json'))).account.gatewayOrigin+'/v1';
-  child.stdio[3].end(JSON.stringify(daily==='manual-token'?{token:'synthetic-deepseek-token'}:{token:'synthetic-deepseek-token',subject:'fixture_user',config:{main:{baseUrl,model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false},worker:{baseUrl,model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false}}}));
+  const selection={main:{model:'gpt-6.1-terra',effort:'medium'},worker:{model:'gpt-6.1-terra',effort:'high'}};
+  child.stdio[3].end(JSON.stringify(daily==='manual-token'?{token:'synthetic-deepseek-token'}:{token:'synthetic-deepseek-token',subject:'fixture_user',selection}));
  }
  const events=[];let buffer='',stderr='';child.stdout.on('data',bytes=>{buffer+=bytes;let at;while((at=buffer.indexOf('\n'))>=0){const event=JSON.parse(buffer.slice(0,at));if(event.kind==='url'){assert.equal(typeof event.desktopAccessToken==='string'&&/^[a-f0-9]{64}$/.test(event.desktopAccessToken),true,'private desktop credential format');runtimeAccess.set(new URL(event.url).origin,event.desktopAccessToken);delete event.desktopAccessToken;}events.push(event);buffer=buffer.slice(at+1);}});child.stderr.on('data',b=>{stderr+=b;});
  const exited=new Promise(r=>child.once('exit',(code,signal)=>r({code,signal})));
@@ -246,8 +246,7 @@ test('manual Token pipe is refused before any adopted history or account is modi
  assert.deepEqual(readFileSync(f.dbPath),before);assert.deepEqual(readFileSync(f.source),config);
  assert.equal(methods(f.original).includes('thread/start'),false);
 });
-for(const effort of ['high','max'])test(`daily website uses max and preserves original ${effort} config, thread and unknown work on native rollback`,{timeout:60000},async()=>{
- // Website roles use max; retain the original source effort for native rollback.
+for(const effort of ['high','max'])test(`daily website uses selected role efforts and preserves original ${effort} config, thread and unknown work on native rollback`,{timeout:60000},async()=>{
  const f=await adoptedFixture({effort}),originalConfig=readFileSync(f.source);adoptGateway(f);
  writeFileSync(join(f.original,'fixture-control.json'),JSON.stringify({loggedIn:true,deepseekSmoke:true}));
  const before=new DatabaseSync(f.dbPath,{readOnly:true}),old=before.prepare("SELECT value FROM meta WHERE key='publicMainNode:v1:adoption-unknown'").get().value;before.close();
@@ -267,7 +266,7 @@ for(const effort of ['high','max'])test(`daily website uses max and preserves or
   assert.equal(downloaded.headers.get('x-homer-artifact-hash'),file.sha256);
   await run.stop();
   const models=readFileSync(join(f.original,'fixture-models.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
-  for(const worker of [false,true])assert.ok(models.some(model=>model.worker===worker&&model.model==='deepseek-flash'&&model.effort==='max'&&model.serviceTier===null&&model.keyPresent));
+  for(const worker of [false,true])assert.ok(models.some(model=>model.worker===worker&&model.model==='gpt-6.1-terra'&&model.effort===(worker?'high':'medium')&&model.serviceTier===null&&model.keyPresent));
   const turnCount=methods(f.original).filter(x=>x==='turn/start').length;
   run=launch(f.shell);const resumedUrl=await run.url();
   assert.equal((await stateWhen(resumedUrl,s=>s.upgrade.phase==='running')).threadId,state.threadId);

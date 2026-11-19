@@ -32,7 +32,7 @@ export type Config = {
   deepseek?: DeepSeekTuning;
   // Provider-neutral context delivered by the trusted desktop connection.
   context?: import('./model-context.js').ContextTuning;
-  capabilities?: import('./model-catalog.js').ModelCapabilities;
+  webSearch?: boolean;
   supportsWebSocket?: boolean;
   baseUrl?: string;
   keyEnv?: string;
@@ -108,21 +108,19 @@ export function loadConfig(path?: string): Config {
 export function capabilityHome(config:Config){return config.nativeCodexHome??join(config.appData??join(config.runtime,'application-data'),'codex');}
 export function usesHomerNativeHome(config:Config){return resolve(config.codexHome)===resolve(capabilityHome(config));}
 export function configuredWebSearchMode(config:Config):'live'|'disabled'|undefined{
-  if(config.context && (config.capabilities || config.effort===null))
-    return config.capabilities?.webSearch===true?'live':'disabled';
-  if(config.desktopModelSource==='website' && config.dailyDeepSeek)return 'disabled';
+  if(config.desktopModelSource==='website' && config.dailyDeepSeek)return config.context&&config.webSearch===true?'live':'disabled';
 }
 export function effectiveModelConfig(config:Config,role:"main"|"worker"="main"):Config{
   validateExecutionLimits(config.executionLimits);
   if(config.desktopModelSource==='codex'){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('desktop_model_source_scope_invalid');
     const selected=chatgptModelConfig(config.chatgpt)[role];
-    return {...config,dailyDeepSeek:false,desktopConnection:undefined,context:undefined,capabilities:undefined,supportsWebSocket:undefined,...selected,fast:selected.serviceTier!==null,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true};
+    return {...config,dailyDeepSeek:false,desktopConnection:undefined,context:undefined,webSearch:undefined,supportsWebSocket:undefined,...selected,fast:selected.serviceTier!==null,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true};
   }
   if(config.dailyDeepSeek){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('daily_deepseek_desktop_required');
     const selected=config.desktopConnection?.[role];
-    config={...config,...selected,baseUrl:selected?.baseUrl,context:selected?.context,capabilities:selected?.capabilities,supportsWebSocket:selected?.supportsWebSocket===true,keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
+    config={...config,...selected,baseUrl:selected?.baseUrl,context:selected?.context,webSearch:selected?.webSearch,supportsWebSocket:selected?.supportsWebSocket===true,keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
   }
   const profile=deepseekProfile(config);
   return profile?{...config,effort:profile.effort,fast:profile.fast}:config;
