@@ -7,10 +7,11 @@ import {mkdirSync,mkdtempSync,copyFileSync,writeFileSync,readFileSync,rmSync,con
 import {createHash} from 'node:crypto';
 import {join,resolve} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
+import {setTimeout as delay} from 'node:timers/promises';
 import {CodexEngine} from '../src/engine.ts';
 
 const binary=process.env.HOMER_OFFLINE_CODEX_BIN;
-test('fixed native engine initializes only fresh main memory and preserves resumed modes and withdrawal notes',{
+test('fixed native engine uses its default membership extraction model and preserves memory modes and notes',{
  skip:binary?false:'Set HOMER_OFFLINE_CODEX_BIN to the pinned 0.171.0-alpha.7 binary; never uses a real account or model.',
  timeout:120000,
 },async(t)=>{
@@ -30,25 +31,28 @@ test('fixed native engine initializes only fresh main memory and preserves resum
  const withdrawal=join(notes,'2026-10-30T00-00-00-synthetic-withdrawal.md');
  writeFileSync(withdrawal,'Synthetic preference withdrawn. Do not use or reconstruct it.\n');
  const preserved=[configPath,withdrawal].map(path=>[path,hash(path)]);
+ const syntheticToken='synthetic-offline-no-real-account';
  const requests=[];
  const server=createServer(async(req,res)=>{
   let body='';for await(const chunk of req)body+=chunk;
   if(req.url!=='/v1/responses'){res.writeHead(404);res.end();return;}
-  const data=JSON.parse(body);requests.push({model:data.model,effort:data.reasoning?.effort});
-  const response={id:'synthetic-'+requests.length,object:'response',model:data.model,status:'completed',output:[{id:'synthetic-message-'+requests.length,type:'message',role:'assistant',content:[{type:'output_text',text:'Synthetic offline response; no real model.',annotations:[]}]}],usage:{input_tokens:1,output_tokens:1,total_tokens:2}};
+  const data=JSON.parse(body),extraction=!!data.text?.format?.schema?.properties?.raw_memory;
+  requests.push({model:data.model,effort:data.reasoning?.effort,extraction,authenticated:req.headers.authorization===`Bearer ${syntheticToken}`});
+  const reply=extraction?JSON.stringify({raw_memory:null,rollout_summary:'Synthetic extraction completed.',rollout_slug:'synthetic-memory'}):'Synthetic offline response; no real model.';
+  const response={id:'synthetic-'+requests.length,object:'response',model:data.model,status:'completed',output:[{id:'synthetic-message-'+requests.length,type:'message',role:'assistant',content:[{type:'output_text',text:reply,annotations:[]}]}],usage:{input_tokens:1,output_tokens:1,total_tokens:2}};
   res.setHeader('Content-Type','text/event-stream');
   for(const event of [{type:'response.created',response:{...response,status:'in_progress',output:[]}},{type:'response.output_item.done',output_index:0,item:response.output[0]},{type:'response.completed',response}])res.write('event: '+event.type+'\ndata: '+JSON.stringify(event)+'\n\n');
   res.end();
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- const connection={baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:'deepseek-flash',context:{contextWindow:512000,autoCompactTokenLimit:400000,autoCompactTokenLimitScope:'total'},effort:'max',fast:false};
- const config={appData:root,workspace,runtime,codexHome:home,nativeCodexHome:home,codexBin:resolve(binary),...connection,desktopConnection:{main:connection,worker:connection},requiresOpenaiAuth:false,keyEnv:'HOMER_DEEPSEEK_TOKEN',stopGraceMs:1000,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot,manifestSha256:createHash('sha256').update(manifest).digest('hex')}};
+ const connection={baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:'gpt-6.1-terra',context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'},capabilities:{inputModalities:['text'],reasoningEfforts:['low','medium','high'],webSearch:false,toolSearch:false},effort:'medium',fast:false};
+ const config={appData:root,workspace,runtime,codexHome:home,nativeCodexHome:home,codexBin:resolve(binary),...connection,desktopModelSource:'website',desktopConnection:{main:connection,worker:connection},requiresOpenaiAuth:false,keyEnv:'HOMER_DEEPSEEK_TOKEN',stopGraceMs:1000,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot,manifestSha256:createHash('sha256').update(manifest).digest('hex')}};
  const mode=thread=>{
   const db=new DatabaseSync(join(home,'state_5.sqlite'),{readOnly:true});
   try{return db.prepare('SELECT memory_mode FROM threads WHERE id = ?').get(thread)?.memory_mode;}
   finally{db.close();}
  };
- async function start(role,threadId,controlOnly=false){
+ async function start(role,threadId,controlOnly=false,expectExtraction=false){
   const engine=new CodexEngine(config,{role,threadId,controlOnly,cwd:workspace,readRoots:[],instructions:'Synthetic offline metadata check.',tools:[],nativeTools:role??'main'},async()=>{throw Error('no_tools_allowed');});
   const abort=()=>{void engine.close();};t.signal.addEventListener('abort',abort,{once:true});
   try{
@@ -62,15 +66,20 @@ test('fixed native engine initializes only fresh main memory and preserves resum
     assert.equal(id,'');assert.equal(engine.threadId,undefined);
     await engine.request('account/read',{refreshToken:false});
    }else{
-    assert.equal(effective.extract_model,'deepseek-flash');assert.equal(effective.consolidation_model,'deepseek-flash');
+    assert.equal(effective.extract_model??null,null);assert.equal(effective.consolidation_model,connection.model);
    }
    if(!threadId&&!controlOnly)assert.equal((await engine.turn('Synthetic metadata persistence only.')).status,'completed');
+   if(expectExtraction){
+    const deadline=Date.now()+10000;
+    while(!requests.some(request=>request.extraction)&&Date.now()<deadline)await delay(20);
+    assert.deepEqual(requests.find(request=>request.extraction),{model:'gpt-6-luna',effort:'low',extraction:true,authenticated:true});
+   }
    for(const [path,before] of preserved)assert.equal(hash(path),before);
    return id;
   }finally{t.signal.removeEventListener('abort',abort);assert.equal(await engine.close(),true);}
  }
  try{
-  process.execPath=join(mac,'node');process.env.HOMER_DEEPSEEK_TOKEN='synthetic-offline-no-real-account';
+  process.execPath=join(mac,'node');process.env.HOMER_DEEPSEEK_TOKEN=syntheticToken;
   const main=await start('main');assert.equal(mode(main),'enabled');
   assert.equal(await start('main',main),main);assert.equal(mode(main),'enabled');
   const worker=await start('worker');assert.equal(mode(worker),'disabled');
@@ -79,10 +88,12 @@ test('fixed native engine initializes only fresh main memory and preserves resum
   const beforeControl=requests.length;
   assert.equal(await start(undefined,undefined,true),'');
   assert.equal(requests.length,beforeControl);
-  assert.ok(requests.length>=2);
-  assert.ok(requests.every(request=>request.model==='deepseek-flash'),'all scripted requests must use the explicitly bound model');
-  const efforts=Object.fromEntries([...new Set(requests.map(request=>request.effort))].map(effort=>[effort,requests.filter(request=>request.effort===effort).length]));
-  console.log('Native metadata verified: new main enabled; new Worker disabled; resumed modes and withdrawal preserved; scripted loopback requests='+requests.length+'; efforts='+JSON.stringify(efforts)+'; real model requests=0.');
+  // Age only the synthetic Main rollout past Codex's native idle threshold.
+  const db=new DatabaseSync(join(home,'state_5.sqlite')),older=Date.now()-48*3600000;
+  try{assert.equal(db.prepare('UPDATE threads SET updated_at_ms=?,recency_at_ms=?,tokens_used=4096 WHERE id=?').run(older,older,main).changes,1);}
+  finally{db.close();}
+  await start('main',undefined,false,true);
+  assert.ok(requests.some(request=>!request.extraction&&request.model===connection.model&&request.authenticated));
  }finally{
   process.execPath=originalExecPath;
   if(tokenBefore===undefined)delete process.env.HOMER_DEEPSEEK_TOKEN;else process.env.HOMER_DEEPSEEK_TOKEN=tokenBefore;

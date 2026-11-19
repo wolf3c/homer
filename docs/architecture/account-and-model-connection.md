@@ -18,6 +18,12 @@
 
 网站向公开配置接口和 PKCE 兑换返回同一套经过校验的配置。主 Agent 与 Worker 各自声明运行参数。字段、取值和能力校验见[会员配置契约](../2026-11-04-membership-context-config.md#通用边界与能力)。
 
+## 会员记忆模型（2026-11-19）
+
+会员连接沿用 Codex 原生的自动记忆提取选型。固定引擎 `0.171.0-alpha.7` 在默认配置下使用 `gpt-6-luna / low`。后台整理仍使用对应角色的模型。两个阶段继续沿会员 Responses 连接鉴权，由网关按模型用量结算。
+
+源码已更新。53 项定向离线回归通过，固定引擎回环验证捕获到带合成会员 Token 的 Luna / low 提取请求，并核对整理模型配置、新会话默认记忆模式、续办模式和已有笔记。真实会员调用、账单及安装版均未验收。[回环验证入口](../../tests/native-memory-defaults-offline.test.mjs)
+
 ## 真实 HOME 与独立 CODEX_HOME（2026-11-16）
 
 源码候选将正式桌面的 `HOME` 改为系统 `userInfo().homedir`；Windows 的 `USERPROFILE` 与之保持一致。Electron 启动 runtime，runtime 校验并重建环境，Main／Worker／账号控制连接继续传递这个 HOME。测试 profile 仍使用 `profile/host-home`，独立测试及诊断入口使用新建的合成 HOME，不读取真实用户的工具配置。

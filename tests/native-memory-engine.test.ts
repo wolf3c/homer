@@ -57,10 +57,10 @@ test('daily DeepSeek permits extraction only for fresh main threads and preserve
   }
   else{
    assert.ok(r.argv.includes('memories.generate_memories='+generate));
-   for(const key of ['extract_model','consolidation_model']){
-    assert.ok(r.argv.includes('memories.'+key+'="deepseek-flash"'));
-    assert.equal(r.threadParams.config['memories.'+key],'deepseek-flash');
-   }
+   assert.ok(!r.argv.some((arg:string)=>arg.startsWith('memories.extract_model=')));
+   assert.ok(!Object.hasOwn(r.threadParams.config,'memories.extract_model'));
+   assert.ok(r.argv.includes('memories.consolidation_model="deepseek-flash"'));
+   assert.equal(r.threadParams.config['memories.consolidation_model'],'deepseek-flash');
    assert.equal(r.threadParams.config['features.memories'],true);
    assert.equal(r.threadParams.config['memories.dedicated_tools'],true);
    assert.equal(r.threadParams.config['memories.generate_memories'],generate);
@@ -78,13 +78,11 @@ test('daily DeepSeek permits extraction only for fresh main threads and preserve
   try{
    await engine.start();const actual=(await engine.request('config/read',{})).config.memories;
    assert.equal(actual.generate_memories,role==='main');
-   assert.equal(actual.extract_model,'deepseek-flash');assert.equal(actual.consolidation_model,'deepseek-flash');
+   assert.equal(actual.extract_model,undefined);assert.equal(actual.consolidation_model,'deepseek-flash');
   }finally{await engine.close();}
  });
  for(const memories of [
-  {extract_model:'gpt-5.6-luna'},
   {consolidation_model:'gpt-5.6-terra'},
-  {extract_model:null},
   {consolidation_model:null},
   {generate_memories:false},
  ]){await t.test('reject effective '+JSON.stringify(memories),async()=>{
