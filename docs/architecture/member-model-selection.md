@@ -25,9 +25,23 @@
 
 ## 原生目录与会员网关
 
-- **随包目录**采用 Codex 原生的 `{ "models": [...] }` 结构。以现有会员目录输出为起点，保留 Terra 的 Code Mode 和隐藏的 Luna 审核条目。使用 `supported_reasoning_levels`、`input_modalities`、`supports_search_tool`、`context_window` 和 `auto_compact_token_limit` 等原生字段，取值以会员路由的发版验收为准。[固定版本目录格式](https://github.com/openai/codex/blob/rust-v0.171.0-alpha.7/codex-rs/protocol/src/openai_models.rs#L982) · [随包目录](../../assets/membership/models.json)
+- **随包目录**采用 Codex 原生的 `{ "models": [...] }` 结构。Luna 可用于 Main／Worker，也供 Codex 原生审核使用。使用 `supported_reasoning_levels`、`input_modalities`、`supports_search_tool`、`context_window` 和 `auto_compact_token_limit` 等原生字段，网关声明和客户端运行参数的来源见下文。[固定版本目录格式](https://github.com/openai/codex/blob/rust-v0.171.0-alpha.7/codex-rs/protocol/src/openai_models.rs#L982) · [随包目录](../../assets/membership/models.json)
 - **打包时**将 `models.json` 放入现有的 `extraResource` 资源目录。Main 和 Worker 通过 `model_catalog_json` 直接加载这份文件，各自采用内存选型指定的模型和推理档。Homer 直接信任包内声明，移除逐字段转换，能力随发版验收。[打包资源](../../packaging/electron/forge.config.mjs#L44) · [Codex 目录读取](https://github.com/openai/codex/blob/rust-v0.171.0-alpha.7/codex-rs/core/src/config/mod.rs#L2367)
 - **会员网关配置**沿用受信安装包清单中的网关地址、现有 Token 凭据路径及启动参数，包括网页搜索模式、Responses WebSocket 开关和会员压缩口径 `total`。首版走 HTTP，关闭原生网页搜索、工具发现和 Responses WebSocket，网页查询由 Homer 的会员 `web_search` 提供。窗口和压缩阈值直接取自模型目录。[现有引擎接线](../../src/engine.ts#L489)
+
+### 模型能力依据（2026-11-19）
+
+AMH 生产 `/api/pricing` 的 `default` 组及交付账号的 `/api/user/models` 均列出这八个精确 ID。随包目录按每条记录的 `ReasoningEffort`、`ReasoningDefault`、`Vision`、`ContextWindow`、`Tools` 和 `openai-response` 填写。单个会员 Token 的模型权限仍由网关决定。[AMH 生产目录](https://models.super-tree.com/api/pricing) · [Homer 随包目录](../../assets/membership/models.json)
+
+| 模型 | AMH 声明的推理档 | 默认档 |
+|---|---|---|
+| `gpt-6-luna`、`gpt-6-sol`、`gpt-6.1-terra` | none、low、medium、high、xhigh、max | medium |
+| `gpt-6-astra`、`gpt-6.1-sol`、`gpt-6.2-sol`、`gpt-6.2-astra` | low、medium、high、xhigh、max | medium |
+| `deepseek-flash` | none、low、high、max | high |
+
+八款均声明图片输入和 Responses 工具调用。AMH 标注的总上下文（输入加输出）写入 `max_context_window`：GPT 为 1,050,000，DeepSeek 为 1,048,576。Homer 的运行窗口继续使用 272,000，自动压缩阈值为 244,800。通用工具声明只用于启用工具调用；原生搜索、工具发现、Responses WebSocket 仍按现有会员配置关闭。
+
+固定 Codex `0.171.0-alpha.7` 对本机合成网关发起了八款模型的请求，核对了选定的模型 ID、推理档、GPT 的 Code Mode、DeepSeek 的函数工具及 Luna/low 审核。此轮复核的是 AMH 上架声明和客户端实际出站，未对八款逐一进行付费生成、图片识别或长上下文压力测试。[原生回环专项](../../tests/native-membership-auto-review.engine.test.mjs) · [Terra 既有实网记录](../member-code-mode-live-validation-2026-11-16.md)
 
 ## 两步收尾和回滚
 

@@ -15,7 +15,7 @@ test('private runtime pipe requires a valid identity and exact bundled selection
  const connection={subject:'user_a',token:'synthetic-key',selection:alternate};
  const ready=api.readMemberRuntimeConnection(connection,boundary);
  assert.equal(ready.config.main.baseUrl,boundary.gatewayOrigin+'/v1');assert.equal(ready.config.worker.effort,'medium');
- for(const invalid of [{token:null},{subject:''},{selection:null},{selection:runtimeConfig()},{selection:{...alternate,worker:{model:'gpt-6-luna',effort:'low'}}},{config:runtimeConfig()}])
+ for(const invalid of [{token:null},{subject:''},{selection:null},{selection:runtimeConfig()},{selection:{...alternate,worker:{model:'deepseek-flash',effort:'medium'}}},{config:runtimeConfig()}])
   assert.throws(()=>api.readMemberRuntimeConnection({...connection,...invalid},boundary),/INVALID_REQUEST/);
  assert.throws(()=>api.readMemberRuntimeConnection(connection,{gatewayOrigin:'http://untrusted.invalid'}),/INVALID_REQUEST/);
  assert.throws(()=>api.readMemberRuntimeConnection(connection,{...boundary,subject:'other'}),/ACCOUNT_MISMATCH/);
@@ -317,7 +317,7 @@ test('public GET negotiates V2 once and falls back as a pair without credentials
  });
  const options={websiteOrigin:website.origin,allowSyntheticLoopback:true};
  try{
-  for(const [wire,expected]of [[alternate,alternate],[null,defaults],[runtimeConfig(),defaults],[{...alternate,models:['gpt-6.1-terra']},defaults],[{...alternate,worker:{model:'gpt-6-luna',effort:'low'}},defaults]]){
+  for(const [wire,expected]of [[alternate,alternate],[null,defaults],[runtimeConfig(),defaults],[{...alternate,models:['gpt-6.1-terra']},defaults],[{...alternate,worker:{model:'deepseek-flash',effort:'medium'}},defaults]]){
    body=wire;assert.deepEqual(await api.queryHomerMemberSelection(options),expected);
   }
   status=503;assert.deepEqual(await api.queryHomerMemberSelection(options),defaults);

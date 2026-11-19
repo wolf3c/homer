@@ -10,7 +10,17 @@ import {Store} from '../src/store.ts';
 import {NativeThreadBindings} from '../src/native-thread-bindings.ts';
 
 const binary=process.env.HOMER_TEST_CODEX_BIN;
-for(const role of ['main','worker'])for(const mode of ['allow','deny','error','manual','managed','never','parse-error','stop'])test(`native desktop auto review ${role} ${mode}`,{timeout:60000},async t=>{
+const defaults=resolveMemberSelection(null);
+const cases=[];
+for(const role of ['main','worker'])for(const mode of ['allow','deny','error','manual','managed','never','parse-error','stop']){
+ cases.push({role,mode,actor:defaults[role]});
+}
+for(const [model,effort] of [
+ ['gpt-6-luna','none'],['gpt-6-sol','xhigh'],['gpt-6-astra','max'],['gpt-6.1-sol','high'],
+ ['gpt-6.2-sol','low'],['gpt-6.2-astra','medium'],['deepseek-flash','none'],
+])cases.push({role:'worker',mode:'allow',actor:{model,effort}});
+
+for(const {role,mode,actor} of cases)test(`native desktop auto review ${role} ${mode} ${actor.model}`,{timeout:60000},async t=>{
  assert.ok(binary,'HOMER_TEST_CODEX_BIN must select the fixed binary');
  assert.equal(codexVersion(binary),'codex-cli 0.171.0-alpha.7');
  const root=mkdtempSync('/private/tmp/homer-auto-review-');
@@ -30,13 +40,18 @@ for(const role of ['main','worker'])for(const mode of ['allow','deny','error','m
    if(data.client_metadata?.['x-openai-subagent']==='memory_consolidation'){res.writeHead(403).end();return;}
    requests.push(data);
    const reviewer=data.text?.format?.type==='json_schema';
-   assert.equal(data.model,reviewer?'gpt-6-luna':'gpt-6.1-terra');
-   assert.equal(data.reasoning.effort,reviewer?'low':role==='main'?'medium':'high');
+   assert.equal(data.model,reviewer?'gpt-6-luna':actor.model);
+   assert.equal(data.reasoning.effort,reviewer?'low':actor.effort);
    if(reviewer&&mode==='stop'){reviewStarted();await release;}
    if(reviewer&&mode==='error'){res.writeHead(401,{'Content-Type':'application/json'}).end(JSON.stringify({error:{message:'synthetic rejection',code:'invalid_api_key'}}));return;}
    const id='synthetic-'+ ++sequence;
    const command={cmd:'printf synthetic-review-executed > '+join(root,'workspace/executed.txt'),sandbox_permissions:'require_escalated',justification:'Synthetic authorized approval test',max_output_tokens:100};
-   const toolItem={id:'fc-'+id,type:'custom_tool_call',call_id:'synthetic-exec',name:'exec',input:'const result=await tools.exec_command('+JSON.stringify(command)+'); text(result);'};
+   const directTool=actor.model==='deepseek-flash';
+   if(!reviewer&&actorCalls===0){
+    const tools=[...(data.tools??[]),...(data.input??[]).filter(i=>i.type==='additional_tools').flatMap(i=>i.tools)].flatMap(t=>t.tools??[t]);
+    assert.ok(tools.some(t=>directTool?t.type==='function'&&t.name==='exec_command':t.type==='custom'&&t.name==='exec'));
+   }
+   const toolItem=directTool?{id:'fc-'+id,type:'function_call',call_id:'synthetic-exec',name:'exec_command',arguments:JSON.stringify(command)}:{id:'fc-'+id,type:'custom_tool_call',call_id:'synthetic-exec',name:'exec',input:'const result=await tools.exec_command('+JSON.stringify(command)+'); text(result);'};
    const item=reviewer?{id:'msg-'+id,type:'message',role:'assistant',content:[{type:'output_text',text:mode==='parse-error'?'not valid JSON':JSON.stringify({outcome:mode==='deny'?'deny':'allow',rationale:'Synthetic policy result'}),annotations:[]}]}:
     actorCalls++===0?toolItem:
     {id:'msg-'+id,type:'message',role:'assistant',content:[{type:'output_text',text:'synthetic done',annotations:[]}]};
@@ -46,7 +61,7 @@ for(const role of ['main','worker'])for(const mode of ['allow','deny','error','m
   }catch(error){serverError=error;res.writeHead(500).end();}
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const desktopConnection=memberRuntimeConfig(resolveMemberSelection(null),`http://127.0.0.1:${server.address().port}`);
+ const desktopConnection=memberRuntimeConfig(resolveMemberSelection({...defaults,[role]:actor}),`http://127.0.0.1:${server.address().port}`);
  const config={workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:binary,model:'unused',requiresOpenaiAuth:false,stopGraceMs:1000,desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)},desktopConnection};
  const store=new Store(join(root,'bindings.sqlite')),bindings=new NativeThreadBindings(store);
  let engine,thread,source='website';

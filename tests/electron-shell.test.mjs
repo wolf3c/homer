@@ -709,7 +709,7 @@ for(const modelSource of ['website','codex'])test('startup migrates the cached i
  const accountApi={...api,queryHomerWallet:async()=>{throw Error('USAGE_UNAVAILABLE');},readHomerConnection:()=>api.readHomerConnection(file,boundary),
   queryHomerMemberSelection:(_options,signal)=>api.queryHomerMemberSelection({websiteOrigin:'http://127.0.0.1:'+server.address().port,allowSyntheticLoopback:true},signal)};
  try{
-  for(const [body,responseStatus,expected]of [[alternate,200,alternate],[null,503,defaultSelection],[{main:legacy,worker:legacy},200,defaultSelection],[{...alternate,worker:{model:'gpt-6-luna',effort:'low'}},200,defaultSelection],[alternate,200,alternate]]){
+  for(const [body,responseStatus,expected]of [[alternate,200,alternate],[null,503,defaultSelection],[{main:legacy,worker:legacy},200,defaultSelection],[{...alternate,worker:{model:'deepseek-flash',effort:'medium'}},200,defaultSelection],[alternate,200,alternate]]){
    wire=body;status=responseStatus;const before=reads;
    const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,modelSource,accountApi});
    for(let i=0;i<300&&!f.credentials.length;i++)await new Promise(r=>setTimeout(r,5));
