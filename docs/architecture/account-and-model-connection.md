@@ -36,7 +36,7 @@
 
 ### 第二步：按版本交付精简配置
 
-网关详情补齐工具发现和 Responses WebSocket 声明，且名单内拟启用模型的必需元数据和实际路由均验收后，再启用精简响应。两个开关按精确模型及其可达路由确认。通用工具调用和 Responses 端点声明无法推出这两项能力。
+Homer 与 yezi2 的版本协商已在源码接入。线上启用前，由 AgentModelHub 核实名单内拟启用模型的必需元数据和实际路由。客户端按精确模型 ID 读取 `capabilities.responses` 下的 `image_input`、`reasoning.supported_efforts`、`tools.web_search`、`tools.tool_search` 与 `websocket`。三个工具或传输开关及图片输入须为明确布尔值。旧格式下 `toolSearch` 和 `supportsWebSocket` 继续由网站提供。
 
 最终配置示例中，`models` 是 Homer 支持的会员模型 ID 列表，角色的 `model` 必须出现在其中。未来界面可以展示该名单与当前 Token 可用模型的交集。Homer 只解析当前选用的角色模型来生成各自的 Codex 目录，新增候选 ID 不会自动成为原生子 Agent 的选项。
 
@@ -50,7 +50,11 @@
 
 新版从受信任的随包网关地址得到 `baseUrl`，采用现有会员标准档。运行窗口为 `272000`，压缩口径为 `total`，阈值按窗口的 90% 得到 `244800`。网站继续决定模型与档位，网关详情提供其他模型能力。已兼容模型的切换和回退通过网站选型完成，刷新并安全重启后生效。
 
-配置 GET `/api/homer/v1/config` 和兑换 POST `/api/homer/v1/token` 使用同一份角色选择及同一版本投影。建议以独立请求头 `X-Homer-Config-Version: 2` 声明支持精简格式，沿用旧的 `X-Homer-Config-Features: responses-websocket`，并将两个头纳入 `Vary`，维持 `Cache-Control: no-store`。缺省或未知版本返回旧格式，旧版 WS 字段继续按现有请求头投影。兑换正文及 Token 响应外层保持原合同，只有协商后的 `config` 使用精简结构。新版兼容旧响应，精简响应校验并解析后归一为现有本地角色快照。首次连接缺少必需资料时提示配置不可用；临时刷新失败保留同一连接的上一份有效快照，明确撤销的模型或能力不从缓存恢复。
+配置 GET `/api/homer/v1/config` 和兑换 POST `/api/homer/v1/token` 使用同一份角色选择及版本投影。客户端用 `X-Homer-Config-Version: 2` 声明支持精简格式，沿用 `X-Homer-Config-Features: responses-websocket`。网站将两个头纳入 `Vary`，维持 `Cache-Control: no-store`。只有 `private.homer.clientConfigVersion` 和请求版本同时为 2 才使用精简格式，名单取 `private.homer.clientModels`。关闭开关或缺省、未知请求版本返回旧格式，旧版 WS 字段继续按原请求头投影。兑换正文及 Token 响应外层保持原合同，只有协商后的 `config` 使用精简结构。
+
+新版兼容旧响应。精简响应解析后保存为现有本地角色快照。缺少必需资料时拒绝保存新快照，临时刷新失败可沿用同一连接的旧快照。有效网关列表或档位声明明确撤销已缓存的选型时，冷启动保留凭据文件并停用该快照。明确为 `false` 的能力按新值生效。
+
+本地联调用 yezi2 实际配置、HTTP 和兑换处理代码、Homer 实际请求与私有缓存，以及合成的网关详情。已核对旧客户端投影、V2 登录与刷新、同模型详情去重、斜杠编码、缺失与 `false`、切回旧格式以及 Token 和账号保留。固定 Codex `0.171.0-alpha.7` 在两角色回读了工具发现和 WebSocket 的开启与关闭设置，未执行模型轮。Homer 498 项定向回归与生产源码类型检查通过，yezi2 31 项定向回归通过。线上精简下发尚未开启，生产网关声明和链路须独立确认。
 
 ### 回滚与验收
 

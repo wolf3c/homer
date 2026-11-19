@@ -707,7 +707,7 @@ test('real account HTTP and private file preserve A until restart, adopt B, and 
  const server=createServer((req,res)=>{
   if(req.url==='/v1/models'){
    assert.equal(req.headers.authorization,'Bearer '+a.token);
-   res.end(JSON.stringify({object:'list',data:mode==='missing-model'?[]:[{id:'deepseek-flash'}]}));return;
+   res.end(JSON.stringify({object:'list',data:mode==='missing-model'||mode==='v2-revoked'?[]:[{id:'deepseek-flash'}]}));return;
   }
   if(req.url==='/v1/models/deepseek-flash'){
    assert.equal(req.headers.authorization,'Bearer '+a.token);
@@ -718,6 +718,10 @@ test('real account HTTP and private file preserve A until restart, adopt B, and 
   assert.equal(req.url,'/api/homer/v1/config');assert.equal(req.method,'GET');
   assert.equal(req.headers.authorization,undefined);assert.equal(req.headers.cookie,undefined);
   if(mode==='unavailable'){res.writeHead(503).end('{}');return;}
+  if(mode==='v2-revoked'){
+   const role={model:'deepseek-flash',effort:'max'};
+   res.end(JSON.stringify({models:[role.model],main:role,worker:role}));return;
+  }
   res.end(JSON.stringify(mode==='invalid'?{...config,worker:{...config.worker,effort:''}}:config));
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -752,6 +756,10 @@ test('real account HTTP and private file preserve A until restart, adopt B, and 
   // A valid delayed model detail must not save after the shell begins shutting down.
   config=b;mode='late';const arrived=new Promise(r=>received=r);f.advance(3600001);f.event({kind:'account_config_check'});await arrived;
   f.app.quit();release();await new Promise(r=>setTimeout(r,20));assert.deepEqual(api.readHomerConnection(file,boundary),a);
+  await stop(f);mode='v2-revoked';f=await boot();
+  assert.deepEqual(f.credentials,['null'],'a confirmed unavailable model must not start from cache');
+  assert.equal((await accountCall(f,'state')).error,'MODEL_CONFIG_UNAVAILABLE');
+  assert.deepEqual(api.readHomerConnection(file,boundary),a);
   assert.deepEqual(readFileSync(history),historyBefore);
  }finally{if(f)await stop(f);server.closeAllConnections();await new Promise(r=>server.close(r));rmSync(root,{recursive:true,force:true});}
 });

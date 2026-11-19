@@ -1,6 +1,6 @@
 # Homer 核心架构
 
-2026-11-19 会员模型配置简化第一步已在 Homer 源码接入。AgentModelHub 本地候选通过登录兑换、配置刷新和固定 Codex 的双角色配置读回。网站继续下发完整配置。精简格式、生产验收和异步压缩待后续处理。见[会员模型配置简化](account-and-model-connection.md#会员模型配置简化)。
+2026-11-19 会员模型配置简化已在 Homer 与 yezi2 源码接入版本协商。回环联调通过登录、刷新、旧格式兼容和回滚。网站默认下发完整配置，网关线上验收由 AgentModelHub 负责，异步压缩独立验收。见[会员模型配置简化](account-and-model-connection.md#会员模型配置简化)。
 
 2026-11-19 Homer 会员与 ChatGPT 登录在源码中共用默认自动审批。会员审核使用 `gpt-6-luna / low` 和会员 Token，ChatGPT 审核模型由 Codex 原生选取。尚未安装或发布。见[桌面原生自动审批](account-and-model-connection.md#桌面原生自动审批2026-11-19)。
 

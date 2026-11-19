@@ -147,7 +147,12 @@ async function syncHomerConfig(reason){
    if(operation.signal.aborted||revision!==accountRevision||quitPending)return;
    if(JSON.stringify(config)!==JSON.stringify(connection.config))connection=saveHomerRuntimeConfig(dailyTokenFile,config,accountBoundary());
    connectionError=undefined;
-  }catch(error){if(!operation.signal.aborted&&revision===accountRevision)connectionError=accountCode(error)==='UNAVAILABLE'?'CONFIG_UNAVAILABLE':accountCode(error);}
+  }catch(error){
+   if(operation.signal.aborted||revision!==accountRevision)return;
+   const code=accountCode(error);connectionError=code==='UNAVAILABLE'?'CONFIG_UNAVAILABLE':code;
+   if(reason==='startup'&&code==='MODEL_CONFIG_UNAVAILABLE'&&Array.isArray(error.cause)&&connection.config&&
+      Object.values(connection.config).some(role=>error.cause.some(entry=>entry.model===role.model&&(entry.effort===undefined||entry.effort===role.effort))))return false;
+  }
   finally{if(configAbort===operation)configAbort=undefined;configRead=undefined;accountChanged();}
  })();
  return configRead;
@@ -988,7 +993,7 @@ try{
   const accountActions=registerDesktopAccount();
   app.setAboutPanelOptions({applicationName:'荷马',applicationVersion:app.getVersion(),version:String(manifest.build),copyright:'本机候选 · Electron / Node 22.22.0 / Codex 0.171.0-alpha.7'});
   createWindow();
-  if(dailyTokenFile){try{connection=readHomerConnection(dailyTokenFile,accountBoundary());}catch(error){connection=null;connectionError=accountCode(error);}await syncHomerConfig('startup');activeConnection=connectionReady(connection)?connection:null;}
+  if(dailyTokenFile){try{connection=readHomerConnection(dailyTokenFile,accountBoundary());}catch(error){connection=null;connectionError=accountCode(error);}const usable=await syncHomerConfig('startup');activeConnection=usable!==false&&connectionReady(connection)?connection:null;}
   if(daily&&modelSource==='website'&&activeConnection&&accountOrigins)void accountActions.refresh();
   const runtime=spawn(process.platform==='win32'?join(resources,'node.exe'):join(bundle,'Contents/MacOS/node'),['--disable-warning=ExperimentalWarning',join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',profile,...(test?['--test-profile']:[]),...(deepseek?['--deepseek-daily']:[])],{cwd:profile,env:{...(process.platform==='win32'?{SystemRoot:process.env.SystemRoot,LOCALAPPDATA:process.env.LOCALAPPDATA,APPDATA:app.getPath('appData'),USERPROFILE:userHome,TEMP:join(profile,'tmp'),TMP:join(profile,'tmp')}:{ }),PATH:process.platform==='win32'?resources+';'+join(process.env.SystemRoot,'System32'):join(bundle,'Contents/MacOS')+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:userHome,TMPDIR:join(profile,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','ignore',...(deepseek?['pipe']:[])]});
   if(deepseek){runtime.stdio[3].on('error',()=>{});runtime.stdio[3].end(JSON.stringify(activeConnection));}
