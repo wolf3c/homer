@@ -11,7 +11,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {CodexEngine} from '../src/engine.ts';
 
 const binary=process.env.HOMER_OFFLINE_CODEX_BIN;
-test('fixed native engine uses its default membership extraction model and preserves memory modes and notes',{
+test('fixed native engine uses its default membership memory models and preserves memory modes and notes',{
  skip:binary?false:'Set HOMER_OFFLINE_CODEX_BIN to the pinned 0.171.0-alpha.7 binary; never uses a real account or model.',
  timeout:120000,
 },async(t)=>{
@@ -37,7 +37,8 @@ test('fixed native engine uses its default membership extraction model and prese
   let body='';for await(const chunk of req)body+=chunk;
   if(req.url!=='/v1/responses'){res.writeHead(404);res.end();return;}
   const data=JSON.parse(body),extraction=!!data.text?.format?.schema?.properties?.raw_memory;
-  requests.push({model:data.model,effort:data.reasoning?.effort,extraction,authenticated:req.headers.authorization===`Bearer ${syntheticToken}`});
+  const kind=extraction?'extraction':req.headers['x-openai-memgen-request']==='true'?'consolidation':'turn';
+  requests.push({kind,model:data.model,effort:data.reasoning?.effort,authenticated:req.headers.authorization===`Bearer ${syntheticToken}`});
   const reply=extraction?JSON.stringify({raw_memory:null,rollout_summary:'Synthetic extraction completed.',rollout_slug:'synthetic-memory'}):'Synthetic offline response; no real model.';
   const response={id:'synthetic-'+requests.length,object:'response',model:data.model,status:'completed',output:[{id:'synthetic-message-'+requests.length,type:'message',role:'assistant',content:[{type:'output_text',text:reply,annotations:[]}]}],usage:{input_tokens:1,output_tokens:1,total_tokens:2}};
   res.setHeader('Content-Type','text/event-stream');
@@ -45,14 +46,14 @@ test('fixed native engine uses its default membership extraction model and prese
   res.end();
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- const connection={baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:'gpt-6.1-terra',context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'},capabilities:{inputModalities:['text'],reasoningEfforts:['low','medium','high'],webSearch:false,toolSearch:false},effort:'medium',fast:false};
+ const connection={baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:'gpt-6.1-sol',context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total'},capabilities:{inputModalities:['text'],reasoningEfforts:['low','medium','high'],webSearch:false,toolSearch:false},effort:'high',fast:false};
  const config={appData:root,workspace,runtime,codexHome:home,nativeCodexHome:home,codexBin:resolve(binary),...connection,desktopModelSource:'website',desktopConnection:{main:connection,worker:connection},requiresOpenaiAuth:false,keyEnv:'HOMER_DEEPSEEK_TOKEN',stopGraceMs:1000,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot,manifestSha256:createHash('sha256').update(manifest).digest('hex')}};
  const mode=thread=>{
   const db=new DatabaseSync(join(home,'state_5.sqlite'),{readOnly:true});
   try{return db.prepare('SELECT memory_mode FROM threads WHERE id = ?').get(thread)?.memory_mode;}
   finally{db.close();}
  };
- async function start(role,threadId,controlOnly=false,expectExtraction=false){
+ async function start(role,threadId,controlOnly=false,expectedMemoryRequest){
   const engine=new CodexEngine(config,{role,threadId,controlOnly,cwd:workspace,readRoots:[],instructions:'Synthetic offline metadata check.',tools:[],nativeTools:role??'main'},async()=>{throw Error('no_tools_allowed');});
   const abort=()=>{void engine.close();};t.signal.addEventListener('abort',abort,{once:true});
   try{
@@ -66,13 +67,14 @@ test('fixed native engine uses its default membership extraction model and prese
     assert.equal(id,'');assert.equal(engine.threadId,undefined);
     await engine.request('account/read',{refreshToken:false});
    }else{
-    assert.equal(effective.extract_model??null,null);assert.equal(effective.consolidation_model,connection.model);
+    assert.equal(effective.extract_model??null,null);assert.equal(effective.consolidation_model??null,null);
    }
    if(!threadId&&!controlOnly)assert.equal((await engine.turn('Synthetic metadata persistence only.')).status,'completed');
-   if(expectExtraction){
+   if(expectedMemoryRequest){
+    const matches=request=>request.kind===expectedMemoryRequest.kind;
     const deadline=Date.now()+10000;
-    while(!requests.some(request=>request.extraction)&&Date.now()<deadline)await delay(20);
-    assert.deepEqual(requests.find(request=>request.extraction),{model:'gpt-6-luna',effort:'low',extraction:true,authenticated:true});
+    while(!requests.some(matches)&&Date.now()<deadline)await delay(20);
+    assert.deepEqual(requests.find(matches),{...expectedMemoryRequest,authenticated:true});
    }
    for(const [path,before] of preserved)assert.equal(hash(path),before);
    return id;
@@ -80,7 +82,7 @@ test('fixed native engine uses its default membership extraction model and prese
  }
  try{
   process.execPath=join(mac,'node');process.env.HOMER_DEEPSEEK_TOKEN=syntheticToken;
-  const main=await start('main');assert.equal(mode(main),'enabled');
+  const main=await start('main',undefined,false,{kind:'consolidation',model:'gpt-6.1-terra',effort:'medium'});assert.equal(mode(main),'enabled');
   assert.equal(await start('main',main),main);assert.equal(mode(main),'enabled');
   const worker=await start('worker');assert.equal(mode(worker),'disabled');
   assert.equal(await start('main',worker),worker);assert.equal(mode(worker),'disabled');
@@ -92,8 +94,8 @@ test('fixed native engine uses its default membership extraction model and prese
   const db=new DatabaseSync(join(home,'state_5.sqlite')),older=Date.now()-48*3600000;
   try{assert.equal(db.prepare('UPDATE threads SET updated_at_ms=?,recency_at_ms=?,tokens_used=4096 WHERE id=?').run(older,older,main).changes,1);}
   finally{db.close();}
-  await start('main',undefined,false,true);
-  assert.ok(requests.some(request=>!request.extraction&&request.model===connection.model&&request.authenticated));
+  await start('main',undefined,false,{kind:'extraction',model:'gpt-6-luna',effort:'low'});
+  assert.ok(requests.some(request=>request.kind==='turn'&&request.model===connection.model&&request.authenticated));
  }finally{
   process.execPath=originalExecPath;
   if(tokenBefore===undefined)delete process.env.HOMER_DEEPSEEK_TOKEN;else process.env.HOMER_DEEPSEEK_TOKEN=tokenBefore;

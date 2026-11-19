@@ -20,9 +20,9 @@
 
 ## 会员记忆模型（2026-11-19）
 
-会员连接沿用 Codex 原生的自动记忆提取选型。固定引擎 `0.171.0-alpha.7` 在默认配置下使用 `gpt-6-luna / low`。后台整理仍使用对应角色的模型。两个阶段继续沿会员 Responses 连接鉴权，由网关按模型用量结算。
+会员连接沿用 Codex 原生的记忆模型选型。固定引擎 `0.171.0-alpha.7` 在默认配置下使用 `gpt-6-luna / low` 提取记忆，使用 `gpt-6.1-terra / medium` 整理记忆。两个阶段继续沿会员 Responses 连接鉴权，由网关按模型用量结算。
 
-源码已更新。53 项定向离线回归通过，固定引擎回环验证捕获到带合成会员 Token 的 Luna / low 提取请求，并核对整理模型配置、新会话默认记忆模式、续办模式和已有笔记。真实会员调用、账单及安装版均未验收。[回环验证入口](../../tests/native-memory-defaults-offline.test.mjs)
+源码已更新。51 项定向离线回归通过。固定引擎回环使用 Sol 作为会员角色模型，捕获到带合成会员 Token 的 Luna / low 提取和 Terra / medium 整理请求，同时核对新会话默认记忆模式、续办模式和已有笔记。真实会员调用、账单及安装版均未验收。[回环验证入口](../../tests/native-memory-defaults-offline.test.mjs)
 
 ## 真实 HOME 与独立 CODEX_HOME（2026-11-16）
 

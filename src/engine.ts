@@ -441,7 +441,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     // This initializes new threads only. Resumes retain the native stored mode;
     // Workers and configuration-only connections never opt new threads in.
     const generateMemories=!this.options.threadId&&this.options.role!=="worker";
-    const memorySettings={"features.memories":true,"memories.dedicated_tools":true,...(this.config.dailyDeepSeek?{"memories.generate_memories":generateMemories,"memories.consolidation_model":this.config.model}:{})};
+    const memorySettings={"features.memories":true,"memories.dedicated_tools":true,...(this.config.dailyDeepSeek?{"memories.generate_memories":generateMemories}:{})};
     const settings: Record<string, unknown> = {
       ...(projectMarkers?{project_root_markers:projectMarkers}:{}),
       ...(this.options.controlOnly ? {
@@ -605,10 +605,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     }
     if(!this.options.controlOnly){
       if(effective.config?.features?.memories!==true||effective.config?.memories?.dedicated_tools!==true)throw Error("engine_native_memory_tools_unavailable");
-      if(this.config.dailyDeepSeek){
-        if(effective.config?.memories?.generate_memories!==generateMemories)throw Error("engine_memory_generation_mismatch");
-        if(effective.config?.memories?.consolidation_model!==this.config.model)throw Error("engine_memory_model_mismatch");
-      }
+      if(this.config.dailyDeepSeek&&effective.config?.memories?.generate_memories!==generateMemories)throw Error("engine_memory_generation_mismatch");
     }
     this.assertInteractionMcpBoundary(effective);
     if(this.options.controlOnly)return "";

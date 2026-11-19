@@ -57,10 +57,10 @@ test('daily DeepSeek permits extraction only for fresh main threads and preserve
   }
   else{
    assert.ok(r.argv.includes('memories.generate_memories='+generate));
-   assert.ok(!r.argv.some((arg:string)=>arg.startsWith('memories.extract_model=')));
-   assert.ok(!Object.hasOwn(r.threadParams.config,'memories.extract_model'));
-   assert.ok(r.argv.includes('memories.consolidation_model="deepseek-flash"'));
-   assert.equal(r.threadParams.config['memories.consolidation_model'],'deepseek-flash');
+   for(const key of ['memories.extract_model','memories.consolidation_model']){
+    assert.ok(!r.argv.some((arg:string)=>arg.startsWith(key+'=')),key);
+    assert.ok(!Object.hasOwn(r.threadParams.config,key),key);
+   }
    assert.equal(r.threadParams.config['features.memories'],true);
    assert.equal(r.threadParams.config['memories.dedicated_tools'],true);
    assert.equal(r.threadParams.config['memories.generate_memories'],generate);
@@ -78,21 +78,17 @@ test('daily DeepSeek permits extraction only for fresh main threads and preserve
   try{
    await engine.start();const actual=(await engine.request('config/read',{})).config.memories;
    assert.equal(actual.generate_memories,role==='main');
-   assert.equal(actual.extract_model,undefined);assert.equal(actual.consolidation_model,'deepseek-flash');
+   assert.equal(actual.extract_model,undefined);assert.equal(actual.consolidation_model,undefined);
   }finally{await engine.close();}
  });
- for(const memories of [
-  {consolidation_model:'gpt-5.6-terra'},
-  {consolidation_model:null},
-  {generate_memories:false},
- ]){await t.test('reject effective '+JSON.stringify(memories),async()=>{
-  writeFileSync(join(home,'synthetic-memories.json'),JSON.stringify(memories));
+ await t.test('reject incorrect effective memory generation mode',async()=>{
+  writeFileSync(join(home,'synthetic-memories.json'),JSON.stringify({generate_memories:false}));
   const engine=new CodexEngine(config,{role:'main',cwd:config.workspace,readRoots:[],instructions:'Synthetic.',tools:[]},async()=>({}));
   try{
-   await assert.rejects(engine.start(),/engine_memory_(model|generation)_mismatch/);
+   await assert.rejects(engine.start(),/engine_memory_generation_mismatch/);
    assert.equal(engine.threadId,undefined,'invalid effective config must fail before thread creation');
    assert.equal(engine.available,false);
   }finally{await engine.close();}
- });}
+ });
  }finally{process.execPath=originalExecPath;rmSync(dir,{recursive:true,force:true});}
 });
