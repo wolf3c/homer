@@ -77,3 +77,9 @@ V1 对照包（`8d8a70dc`）先登录并创建线程。升级后保留账号、T
 八轮均通过。首次验收共记录 32 个 Main 请求、16 个 Worker 请求，选型全部与网站一致。另有 16 个带 `x-openai-subagent=guardian` 的原生审核请求，每轮 Main 和 Worker 各一次，全部使用 `gpt-6-luna / low`。放行后两角色分别写入当轮标记。8 个 Worker 均成功结束，回复的消息 ID 均关联到同一 Main 会话中已完成的处理记录。[专项复验命令](../testing.md#八款模型轮换)
 
 验证到候选包向本机回环网关发出请求为止。网关返回合成响应，未调用 AMH 线上模型。线上精简下发保持关闭，异步压缩单独验收。
+
+### AMH 真实会员路由验收
+
+2026-11-19，使用一个测试会员 Token 直接请求生产 AMH 的 `/v1/responses`。对 `gpt-6-luna`、`gpt-6-sol`、`gpt-6-astra`、`gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6.2-sol`、`gpt-6.2-astra` 和 `deepseek-flash` 各发一次最小文本请求，只测 `low` 档，客户端未重试。
+
+8 次均返回 HTTP 200，流式响应均以 `response.completed` 完成，返回文本逐字匹配各自的随机短标记。每次 AMH 响应的 `model` 都与请求的模型 ID 一致，`reasoning.effort` 都回显为 `low`。这确认了该测试会员在本次请求中可以通过八个模型别名取得结果。仅凭 AMH 回显，仍无法独立确认上游实际使用的供应商、部署版本或执行的推理策略。
