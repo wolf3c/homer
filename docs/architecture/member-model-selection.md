@@ -99,3 +99,21 @@ Main 和 Worker 各触发一次 Luna 审核，两次均返回 `allow`，放行�
 测试会员的期初余额为 3,082 个原始单位，按预算补入 72,555 后为 75,637。8 条账单逐笔核对，合计实扣 **21,858**，与已用额度增量及余额差额一致，期末余额为 **53,779**。
 
 本轮验证覆盖候选包经本地网站选型后访问真实 AMH 的完整流程。AMH 回显无法独立确认上游部署及内部推理策略。线上精简下发保持关闭，异步压缩单独验收。
+
+### 异步压缩专项验收
+
+2026-11-19，同一 macOS arm64 隔离候选包（Homer `fdb5ca1b`，Codex `0.171.0-alpha.7`）经本地 yezi2 `1af7595e` 完成 V2 兑换和配置读取。仅 Main 使用 `gpt-6-luna / low`，真实 AMH 会员目录声明该模型支持 `capabilities.responses.compaction_trigger`。仅在隔离测试配置中设置以下三项。
+
+```toml
+features.async_compaction.enabled = true
+features.async_compaction.model_async_compact_threshold_percent = 2
+model_providers.homer.capabilities.remote_compaction = "v2"
+```
+
+2% 是按上下文窗口计算的后台压缩准备阈值。随包窗口为 272,000 token，常规自动压缩阈值仍为 244,800 token。三轮对话使用同一线程，连同一次后台压缩，共四次真实 AMH 请求，均返回 HTTP 200 和 `response.completed`。
+
+1. **触发。** 首轮回复生成随机参考码。随后 Codex 发出的后台请求含 `compaction_trigger`，AMH 返回带 `encrypted_content` 的 `compaction` 项。
+2. **压缩期间继续对话。** 客户端观察到后台请求后 80 毫秒，桌面提交第二条消息。完整答复已在对话中可见时，距 AMH 压缩响应收齐还有 753 毫秒。客户端观测的压缩总时长为 2,882 毫秒，响应收齐与转交客户端发生在同一毫秒。
+3. **压缩后续接。** 第三轮出站请求中，`encrypted_content` 的内存摘要与 AMH 刚返回的密文一致。完整请求中没有首轮参考码明文，桌面显示的答复仍逐字找回了该码。
+
+测试会员期初余额 53,779 个 AMH 原始单位，预算 25,756，无需补额。首轮、后台压缩、第二轮和第三轮分别实扣 914、92、80 和 919，四笔合计 **2,005**，与累计已用额度增量及余额差额一致，期末余额 **51,774**。本次验收覆盖上述隔离配置的一轮实测。默认异步压缩和线上精简下发均保持关闭。
