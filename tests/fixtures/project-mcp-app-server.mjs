@@ -24,7 +24,7 @@ createInterface({input:process.stdin}).on('line',line=>{
  if(m.method==='environment/info')result={shell:{}};
  if(m.method==='thread/backgroundTerminals/list')result={data:[]};
  if(m.method==='thread/read')result={thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}};
- if(['thread/start','thread/resume'].includes(m.method))result={thread:{id:m.params.threadId??'synthetic-project-thread',modelProvider},modelProvider,activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy};
+ if(['thread/start','thread/resume'].includes(m.method))result={thread:{id:m.params.threadId??'synthetic-project-thread',modelProvider},modelProvider,activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy,approvalsReviewer:m.params.approvalsReviewer??'user'};
  if(m.method==='turn/start')result={turn:{id:'synthetic-turn'}};
  if(m.method==='mcpServerStatus/list')result={data:[{name:'homer_interactions',tools:Object.fromEntries((state.catalog??[]).map(name=>[name,{name}]))}]};
  if(m.method==='fixture/inspect')result={calls,argv:process.argv.slice(2),home:process.env.HOME,codexHome:process.env.CODEX_HOME,userProfile:process.env.USERPROFILE,processCwd:process.cwd(),diagnostics:{format:process.env.LOG_FORMAT,filter:process.env.RUST_LOG}};

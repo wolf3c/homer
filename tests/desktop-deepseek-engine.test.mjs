@@ -189,8 +189,8 @@ for(const role of ['main','worker'])test(`website desktop ${role} sends its conf
  try{
   await engine.start();const result=JSON.parse((await engine.turn('synthetic')).text);
   assert.equal(result.contextWindow,512000);assert.equal(result.autoCompactTokenLimit,400000);assert.equal(result.autoCompactTokenLimitScope,'total');assert.equal(result.model,'deepseek-flash');assert.equal(result.effort,'max');assert.equal(result.turnServiceTier,null);
-  assert.equal(result.consolidationModel,'deepseek-flash');
-  assert.equal(result.extractionModel,'deepseek-flash');
+  assert.equal(result.consolidationModel,undefined);
+  assert.equal(result.extractionModel,undefined);
   assert.equal(result.generateMemories,role==='main');
   assert.equal(original.model,'original');assert.equal(original.baseUrl,undefined);
  }finally{assert.equal(await engine.close(),true);}

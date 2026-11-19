@@ -9,8 +9,7 @@ import {Store} from '../src/store.ts';
 import {NativeThreadBindings} from '../src/native-thread-bindings.ts';
 
 const binary=process.env.HOMER_TEST_CODEX_BIN;
-const capabilities={inputModalities:['text'],reasoningEfforts:['high'],webSearch:false,toolSearch:false};
-for(const role of ['main','worker'])for(const mode of ['allow','deny','error','manual','never','same-model','parse-error','stop','code-mode'])test(`native membership ${role} ${mode}`,{timeout:60000},async t=>{
+for(const role of ['main','worker'])for(const mode of ['allow','deny','error','manual','managed','never','high-only','parse-error','stop','code-mode'])test(`native desktop auto review ${role} ${mode}`,{timeout:60000},async t=>{
  assert.ok(binary,'HOMER_TEST_CODEX_BIN must select the fixed binary');
  assert.equal(codexVersion(binary),'codex-cli 0.171.0-alpha.7');
  const root=mkdtempSync('/private/tmp/homer-auto-review-');
@@ -28,7 +27,7 @@ for(const role of ['main','worker'])for(const mode of ['allow','deny','error','m
    let body='';for await(const part of req)body+=part;
    const data=JSON.parse(body);requests.push(data);
    const reviewer=data.text?.format?.type==='json_schema';
-   if(reviewer){assert.equal(data.model,'gpt-6-luna');assert.equal(data.reasoning.effort,mode==='same-model'?'high':'low');}
+   if(reviewer){assert.equal(data.model,'gpt-6-luna');assert.equal(data.reasoning.effort,'low');}
    if(reviewer&&mode==='stop'){reviewStarted();await release;}
    if(reviewer&&mode==='error'){res.writeHead(401,{'Content-Type':'application/json'}).end(JSON.stringify({error:{message:'synthetic rejection',code:'invalid_api_key'}}));return;}
    const id='synthetic-'+ ++sequence;
@@ -43,31 +42,46 @@ for(const role of ['main','worker'])for(const mode of ['allow','deny','error','m
   }catch(error){serverError=error;res.writeHead(500).end();}
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const selected={baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:mode==='same-model'?'gpt-6-luna':mode==='code-mode'?'gpt-6.1-terra':'synthetic-member',effort:'high',fast:false,context:{contextWindow:128000,autoCompactTokenLimit:100000,autoCompactTokenLimitScope:'total'},capabilities};
+ const capabilities={inputModalities:['text'],reasoningEfforts:mode==='high-only'?['high']:['low','high'],webSearch:false,toolSearch:false};
+ const selected={baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:mode==='code-mode'?'gpt-6.1-terra':'synthetic-member',effort:'high',fast:false,context:{contextWindow:128000,autoCompactTokenLimit:100000,autoCompactTokenLimitScope:'total'},capabilities};
  const config={workspace:join(root,'workspace'),runtime:join(root,'runtime'),codexHome:join(root,'codex'),nativeCodexHome:join(root,'codex'),codexBin:binary,model:'unused',requiresOpenaiAuth:false,stopGraceMs:1000,desktopModelSource:'website',dailyDeepSeek:true,pauseOldDesktopWork:true,desktopResources:{bundleRoot:root,manifestSha256:'a'.repeat(64)},desktopConnection:{main:selected,worker:selected}};
  const store=new Store(join(root,'bindings.sqlite')),bindings=new NativeThreadBindings(store);
  let engine,thread,source='website';
+ const manual=mode==='manual'||mode==='managed';
  const make=()=>{
   const e=new CodexEngine({...config,desktopModelSource:source},{role,nativeTools:role,nativeThreads:bindings,threadId:thread,cwd:config.workspace,readRoots:[],instructions:'Synthetic offline approval test. User authorizes printf synthetic-review-executed.',tools:[],onInteraction:async()=>{hostApprovals++;return {status:'denied',decision:{action:'deny',reason:'unexpected host approval'}};}},async()=>{throw Error('no host tools');});
-  const send=e.nativeRequest.bind(e);e.nativeRequest=async(method,params)=>{const result=await send(method,params);if(['thread/start','thread/resume','thread/fork'].includes(method)){assert.equal(result.approvalsReviewer,source==='codex'||mode==='manual'?'user':'auto_review');assert.equal(result.approvalPolicy,mode==='never'?'never':'on-request');}return result;};return e;
+  if(mode==='managed'){
+   const request=e.request.bind(e);
+   e.request=(method,params)=>method==='configRequirements/read'?Promise.resolve({requirements:{allowedApprovalsReviewers:['user']}}):request(method,params);
+  }
+  const send=e.nativeRequest.bind(e);e.nativeRequest=async(method,params)=>{const result=await send(method,params);if(['thread/start','thread/resume','thread/fork'].includes(method)){assert.equal(result.approvalsReviewer,manual?'user':'auto_review');assert.equal(result.approvalPolicy,mode==='never'?'never':'on-request');}return result;};return e;
  };
  try{
+  if(mode==='allow'||mode==='never'||manual){
+   source='codex';engine=make();await engine.start();
+   assert.equal((await engine.request('config/read',{})).config.model_catalog_json??null,null);
+   await engine.close();source='website';
+  }
   engine=make();thread=await engine.start();
   const turning=engine.turn('Run printf synthetic-review-executed, with escalation for this synthetic approval test.');
   if(mode==='stop'){await started;await engine.interrupt();releaseReview();}
   const result=await turning;
   assert.ifError(serverError);assert.ok(['completed','failed','interrupted'].includes(result.status));
   const reviews=requests.filter(r=>r.text?.format?.type==='json_schema');
-  assert.equal(reviews.length>0,!['manual','never'].includes(mode),'native reviewer routing');
-  assert.equal(existsSync(join(root,'workspace/executed.txt')),['allow','same-model','code-mode'].includes(mode),'only approved actions execute');
-  assert.equal(hostApprovals,mode==='manual'?1:0);
+  assert.equal(reviews.length>0,!manual&&mode!=='never','native reviewer routing');
+  assert.equal(existsSync(join(root,'workspace/executed.txt')),['allow','high-only','code-mode'].includes(mode),'only approved actions execute');
+  assert.equal(hostApprovals,manual?1:0);
   await engine.close();engine=make();assert.equal(await engine.start(),thread);
   assert.equal((await engine.turn('Synthetic resumed message.')).status,'completed');
   if(mode==='allow'){
    await engine.close();source='codex';engine=make();assert.equal(await engine.start(),thread);
+   await engine.close();engine=make();assert.equal(await engine.start(),thread);
    await engine.close();source='website';engine=make();assert.equal(await engine.start(),thread);
   }
   t.diagnostic(JSON.stringify({role,models:[...new Set(requests.map(r=>r.model))],hostApprovals,resumed:true}));
+ }catch(error){
+  if(error.displayMessage)t.diagnostic(error.displayMessage);
+  throw error;
  }finally{
   releaseReview();await engine?.close();store.close();server.closeAllConnections();await new Promise(r=>server.close(r));
   for(const [k,v]of Object.entries(saved))if(v===undefined)delete process.env[k];else process.env[k]=v;

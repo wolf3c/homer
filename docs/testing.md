@@ -1236,6 +1236,8 @@ HOMER_COMPONENT_BUILD=/private/tmp/homer-process-slim-web HOMER_BROWSER_EVIDENCE
 
 ## 会员原生 Auto Review（2026-11-17）
 
+2026-11-19 同一引擎专项验证会员与 ChatGPT 的共同默认审批人、模拟托管限制，以及会员使用 `gpt-6-luna / low` 和会员 Token。下方为 11 月 17 日的历史验收。[当前模型和验证边界](architecture/account-and-model-connection.md#桌面原生自动审批2026-11-19)
+
 普通离线回归：`node --import tsx --test tests/membership-auto-review.test.ts tests/deepseek-model.test.ts tests/desktop-deepseek-engine.test.mjs`，30/30 通过。新单测覆盖隐藏 Luna、父模型保全及同名去重；现有协议夹具补充原生审批响应字段。当前公共配置接口的 main／worker 均有 context 与 capabilities；没有读取凭据或调用真实模型，也未为旧配置补兼容。
 
 显式引擎专项（登记在 `scripts/test.mjs` 的 engine 清单，但本次没有运行整个 engine 清单）：

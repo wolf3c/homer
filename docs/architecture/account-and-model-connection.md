@@ -177,9 +177,17 @@ HTTP／HTTPS 代理使用直接依赖 `https-proxy-agent@7.0.6`，SOCKS 使用 `
 
 真实验收的临时凭据和运行目录已清除，源授权文件未被本测试写回。服务容量恢复后使用现有显式专项复验；不通过增加生产重试实体或改写 426 掩盖过载。没有安装、重启日常实例或发布。
 
+## 桌面原生自动审批（2026-11-19）
+
+Homer 会员和 ChatGPT 登录的 Main 与 Worker 共用同一个默认审批人 `auto_review`。显式审批人和原生权限策略继续生效。托管配置仅允许人工审核时采用 `user`。新建、续办和切换来源均按当前配置决定审批人；账号控制连接和自定义 API 连接保持各自的配置。
+
+ChatGPT 登录沿用 Codex 原生审核模型选型，其模型目录中的 `codex-auto-review` 支持 `low`。Homer 会员目录指定审核模型 `gpt-6-luna`，走所属角色的会员 Responses 地址及 Token。Codex 在 Luna 支持 `low` 时优先使用该推理档。
+
+固定 Codex `0.171.0-alpha.7` 的隔离专项 20/20 通过，覆盖双角色会员审核请求、ChatGPT 新建和续办、来源往返、显式人工、模拟托管限制及 `never`。会员回环验证 Terra 会话使用带合成会员 Token 的 Luna / low 审核请求。ChatGPT 核对了原生线程的审批配置及本机模型目录，真实审核和计费待验。[引擎专项](../../tests/native-membership-auto-review.engine.test.mjs)
+
 ## 会员原生 Auto Review（2026-11-17）
 
-当前完整会员角色配置的 Main 与 Worker 默认使用 Codex 原生 `auto_review`，模型目录将 reviewer 固定为 `gpt-6-luna`，沿各角色现有 `homer` provider、URL 和环境 Token。显式 `user`、审批策略及托管约束优先；控制连接、ChatGPT 与 BYOK 不加会员覆盖。正常创建／恢复／fork 都使用当前设置，切回非会员来源时显式采用目标来源设置，防止继承会员默认。目录在新引擎启动时采用，不热改正在执行的审批。
+11 月 17 日的实现仅对会员 Main 与 Worker 默认启用 `auto_review`，并由会员目录指定 `gpt-6-luna`。当前源码采用上文的[桌面原生自动审批](#桌面原生自动审批2026-11-19)。
 
 生产改动限 `src/model-catalog.ts` 和 `src/engine.ts`：目录元数据与线程审批参数接线，读取原生线程响应确认模式。原生审核允许／拒绝在引擎内处理，仍需人工的提示沿原回调；Worker 业务提问、TaskVersion、停止及操作回执保留。无 272K 费用防御或 Homer 计费逻辑，Agent Model Hub 负责消费结算；也不补旧配置兼容。
 

@@ -50,7 +50,7 @@ async function receive(m){
   if(m.method==='thread/start'||m.method==='thread/resume'){
     if(state().failThread)return send({id:m.id,error:{code:-32000,message:'synthetic thread failure'}});
     thread=m.params.threadId??(worker?'synthetic-desktop-worker-'+process.pid:'synthetic-desktop-main');
-    return reply({thread:{id:thread,modelProvider},modelProvider,activePermissionProfile:{id:'homer'},approvalPolicy:'on-request'});
+    return reply({thread:{id:thread,modelProvider},modelProvider,activePermissionProfile:{id:'homer'},approvalPolicy:m.params.approvalPolicy??'on-request',approvalsReviewer:m.params.approvalsReviewer??'user'});
   }
   if(m.method==='mcpServerStatus/list')return reply({data:mcp?[{name:'homer_interactions',tools:Object.fromEntries(mcp.enabled_tools.map(name=>[name,{}]))}]:[]});
   if(m.method==='thread/backgroundTerminals/list')return reply({data:[]});

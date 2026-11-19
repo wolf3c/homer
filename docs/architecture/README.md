@@ -1,5 +1,7 @@
 # Homer 核心架构
 
+2026-11-19 Homer 会员与 ChatGPT 登录在源码中共用默认自动审批。会员审核使用 `gpt-6-luna / low` 和会员 Token，ChatGPT 审核模型由 Codex 原生选取。尚未安装或发布。见[桌面原生自动审批](account-and-model-connection.md#桌面原生自动审批2026-11-19)。
+
 2026-11-19 会员记忆提取和整理已在源码恢复 Codex 原生默认，分别为 `gpt-6-luna / low` 和 `gpt-6.1-terra / medium`。定向离线回归与固定引擎回环通过，尚未安装或发布。见[会员记忆模型](account-and-model-connection.md#会员记忆模型2026-11-19)。
 
 2026-11-17 长引用最简方案已实施源码：全文仍计入96KiB消息JSON，超限明确提示并保留草稿，手机传输不变；定向158/158及1080／390px合成浏览器通过，共享树及精确候选前后端类型检查通过，未安装或部署。见[所属合同及验证](main-worker-chat-architecture.md#长消息引用预算2026-11-17)。
