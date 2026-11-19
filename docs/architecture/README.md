@@ -1,6 +1,6 @@
 # Homer 核心架构
 
-2026-11-19 会员模型配置简化已在 Homer 与 yezi2 源码接入版本协商。回环联调通过登录、刷新、旧格式兼容和回滚。网站默认下发完整配置，网关线上验收由 AgentModelHub 负责，异步压缩独立验收。见[会员模型配置简化](account-and-model-connection.md#会员模型配置简化)。
+2026-11-19 [会员模型选型与随包目录](member-model-selection.md)取代[前一版随包方案](account-and-model-connection.md#会员模型随包配置)，待实施。新版桌面和运行进程共用同一份内存选型，仅网站选型失败时整组回退到随包默认值。Codex 直接读取随包原生 `models.json`，旧客户端沿用 V1。候选安装包须核对 Main、Worker 和 Luna 的实际请求，异步压缩单独验收。
 
 2026-11-19 Homer 会员与 ChatGPT 登录在源码中共用默认自动审批。会员审核使用 `gpt-6-luna / low` 和会员 Token，ChatGPT 审核模型由 Codex 原生选取。尚未安装或发布。见[桌面原生自动审批](account-and-model-connection.md#桌面原生自动审批2026-11-19)。
 

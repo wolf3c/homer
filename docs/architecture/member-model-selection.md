@@ -1,0 +1,44 @@
+# 会员模型选型与随包目录
+
+2026-11-19，待实施。本方案取代[前一版会员模型随包配置](account-and-model-connection.md#会员模型随包配置)。网站选定 Main 和 Worker 的模型与推理档，Homer 和 Codex 共用随包的 Codex 原生 `models.json`。修改包内已有的选型只需改网站配置，新增模型或变更能力随 Homer 发版。
+
+## 下发与兼容
+
+配置 GET `/api/homer/v1/config` 和 PKCE 兑换 POST `/api/homer/v1/token` 共用一份选型。网站启用精简下发后，带 `X-Homer-Config-Version: 2` 的新版只收到 Main 和 Worker 的模型 ID 与推理档。兑换响应的账号和 Token 仍在原有外层，模型选型放在 `config`。
+
+```json
+{
+  "main": { "model": "gpt-6.1-terra", "effort": "medium" },
+  "worker": { "model": "gpt-6.1-terra", "effort": "high" }
+}
+```
+
+旧版的 GET 和兑换仍收到完整 V1。新版只接受上面的结构，每个角色恰有 `model` 和 `effort` 两个字段。收到完整 V1 时整组采用随包默认值。
+
+## 随包默认选型
+
+随包 `member-model-defaults.json` 使用上面的格式。首次登录从成功的 PKCE 兑换读取选型，已有凭据的客户端启动时读取一次配置 GET。Homer 按 `slug` 查找目录中 `visibility: "list"` 的条目，并核对 `supported_reasoning_levels[].effort`。两组都有效才一起采用。配置 GET 不可达或超时、选型缺失、格式错误或任一组合无效时，整组使用随包默认值。
+
+登录成功或已登录启动时，桌面只确定一次两角色选型，用它判断连接是否就绪，并经现有私有管道将同一份选型传给运行进程。选型只存于内存。升级时保留账号标识和 Token，移除旧配置缓存。[桌面连接状态](../../packaging/electron/main.mjs#L126) · [运行进程入口](../../scripts/desktop-runtime.mjs#L53)
+
+回退只处理选型失败。新版兑换只有在账号与 Token 可正常交付、选型不可用时才返回 `config: null`。PKCE、账号归属校验或 Token 签发失败时，登录失败。
+
+## 原生目录与会员网关
+
+- **随包目录**采用 Codex 原生的 `{ "models": [...] }` 结构。以现有会员目录输出为起点，保留 Terra 的 Code Mode 和隐藏的 Luna 审核条目。使用 `supported_reasoning_levels`、`input_modalities`、`supports_search_tool`、`context_window` 和 `auto_compact_token_limit` 等原生字段，取值以会员路由的发版验收为准。[固定版本目录格式](https://github.com/openai/codex/blob/rust-v0.171.0-alpha.7/codex-rs/protocol/src/openai_models.rs#L982) · [现有会员目录](../../src/model-catalog.ts#L19)
+- **打包时**将 `models.json` 放入现有的 `extraResource` 资源目录。Main 和 Worker 通过 `model_catalog_json` 直接加载这份文件，各自采用内存选型指定的模型和推理档。Homer 直接信任包内声明，移除逐字段转换，能力随发版验收。[打包资源](../../packaging/electron/forge.config.mjs#L44) · [Codex 目录读取](https://github.com/openai/codex/blob/rust-v0.171.0-alpha.7/codex-rs/core/src/config/mod.rs#L2367)
+- **会员网关配置**沿用受信安装包清单中的网关地址、现有 Token 凭据路径及启动参数，包括网页搜索模式、Responses WebSocket 开关和会员压缩口径 `total`。模型目录里的窗口和压缩阈值只维护一份。[现有引擎接线](../../src/engine.ts#L489)
+
+## 两步收尾和回滚
+
+- **Homer `2e8849d3`、`941ed2d4`**。保留提交历史，移除会员选型中的网关列表与详情查询、能力合并、配置缓存及发送前刷新。复用现有 V2 请求协商、PKCE 和凭据原子保存，将会员目录生成改为加载随包原生文件。账号额度及语音工具独立使用的网关查询继续沿用。
+- **yezi2 `50260423`**。在现有版本协商中替换本地 V2 候选格式，去掉下发的 `models` 名单和对应的网站名单设置。发布前核对没有已发布的旧 V2 调用方，并验证 GET 与兑换的新版选型和旧版 V1 响应。
+- **回滚**。将网站选型改回仍在使用的安装包都支持的上一组值，下次安全重启时生效。如需降级到依赖 V1 缓存的客户端，按旧版流程从网站重取配置，必要时重新登录。沿用原会话资料目录。
+
+## 验收
+
+1. 用隔离资料验证新版登录和启动、旧版 V1 登录、升级复用原账号和线程，以及降级后重取 V1 配置并续办原线程。
+2. 用隔离资料启动候选安装包，确认随包 Codex 实际读取包内的 `models.json`。使用默认选型，让 Main 通过 Code Mode 派工、Worker 返回结果，并触发一次原生审核。从实际出站请求的 `model` 和 `reasoning.effort` 核对 Main 为 `gpt-6.1-terra / medium`、Worker 为 `gpt-6.1-terra / high`、审核为 `gpt-6-luna / low`。会员路由按随包声明验收。[原生审核请求断言](../../tests/native-membership-auto-review.engine.test.mjs#L30)
+3. 再用一组不同于默认值的有效网站选型，核对桌面就绪状态和两角色出站值。配置 GET 超时、收到完整 V1、单个角色无效或成功兑换返回 `config: null` 时，两角色都用默认值。单独模拟授权失败，确认该次登录失败。
+
+异步压缩继续单独验收。本文仅记录方案，线上精简下发保持关闭。

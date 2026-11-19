@@ -18,7 +18,13 @@
 
 网站向公开配置接口和 PKCE 兑换返回同一套经过校验的配置。主 Agent 与 Worker 各自声明运行参数。字段、取值和能力校验见[会员配置契约](../2026-11-04-membership-context-config.md#通用边界与能力)。
 
+## 会员模型随包配置
+
+此节为历史方案，已由[会员模型选型与随包目录](member-model-selection.md)取代。
+
 ## 会员模型配置简化
+
+以下两步记录保留作历史，分别已完成源码提交与本地验证。后续实施以[会员模型选型与随包目录](member-model-selection.md)为准。
 
 2026-11-19，Homer 第一阶段已接入源码并通过本地联调。AgentModelHub 的 rc.49 本地候选 `c3e0c84` 已验证受限 Token、旧响应兼容和带斜杠的模型 ID。`GET /v1/models` 仍列出当前 Token 可用的模型，能力通过同一个 Token 请求 `GET /v1/models/{model}` 获取。详情已能声明图片输入、推理档和原生搜索等能力，Codex 工具发现和 Responses WebSocket 仍缺少对应字段。候选尚未部署，生产能力仍须按实际网关路由验收。
 
