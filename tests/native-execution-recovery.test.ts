@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {Homer} from '../src/service.js';
 import {loadConfig} from '../src/config.js';
 import {loadPrompts} from '../src/prompts.js';
-import {fixture,openWorker,running,main} from './recursive-fixture.js';
+import {fixture,openWorker,running,main,authority as sourceAuthority} from './recursive-fixture.js';
 import {syntheticHost} from '../scripts/recursive-synthetic-host.js';
 
 import {host} from './native-execution-recovery-fixture.js';
@@ -132,7 +132,7 @@ test('execution time remains accounting and does not block an authorized peer or
     const authorityBefore=f.tasks.version(f.task.taskId,1).authorityJson;
     const peer=openWorker(f,'after-accounting');assert.ok(f.tasks.claim(peer.runId));
     f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'interrupted',text:'Partial checked facts'},true);
-    const resumed=f.tasks.workerSend(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checked work'});assert.ok(f.tasks.claim(resumed.runId!));
+    const resumed=f.tasks.workerMessage(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checked work'});assert.ok(f.tasks.claim(resumed.runId!));
     assert.equal(f.tasks.run(resumed.runId!).threadId,actor.threadId);assert.equal(f.tasks.run(actor.runId!).activeMs,120001);
     assert.equal(f.tasks.version(f.task.taskId,1).authorityJson,authorityBefore);assert.equal(Object.hasOwn(JSON.parse(authorityBefore!),'maxActiveMs'),false);
   }finally{f.close();}
@@ -156,10 +156,27 @@ test('missing authorization cannot be hidden by execution accounting at open, se
     f.store.db.prepare('UPDATE runs SET sourceRequestId=? WHERE id=?').run('missing-source',worker.runId);
     const before=f.store.runs();
     assert.throws(()=>openWorker(f,'unauthorized-peer'),/task_authority_source_denied/);
-    assert.throws(()=>f.tasks.workerSend(main,{operationId:'unauthorized-send',workerId:worker.workerId,text:'Continue'}),/task_authority_source_denied/);
+    assert.throws(()=>f.tasks.workerMessage(main,{operationId:'unauthorized-send',workerId:worker.workerId,text:'Continue'}),/task_authority_source_denied/);
+    assert.deepEqual(f.store.runs(),before);
     assert.throws(()=>f.tasks.claim(worker.runId),/task_authority_source_denied/);
-    assert.deepEqual(f.store.runs(),before);assert.equal(f.tasks.run(worker.runId).status,'queued');
+    assert.equal(f.tasks.run(worker.runId).errorCode,'task_authority_source_denied');
+    assert.equal(f.tasks.run(worker.runId).startedAt,null);assert.equal(f.tasks.claim(worker.runId),undefined);
   }finally{f.close();}
+});
+
+test('a revoked queued grant returns one failure and lets the next authorized Worker start',()=>{
+ const f=fixture();try{
+  const revoked=openWorker(f),source=f.source('fresh','Inspect a separate source');
+  const separate=f.tasks.createTask(source,{operationId:'separate',goal:'Inspect separate source',authority:sourceAuthority('fresh')});
+  const allowed=f.tasks.workerOpen(source,{operationId:'allow',taskId:separate.taskId,text:'Inspect only this source'});
+  const original=f.history.inputs(main.threadId!,[main.sourceRequestId!]).get(main.sourceRequestId!)!;
+  assert.equal(f.history.revokeMessage(main.threadId!,original.id),true);
+  assert.equal(f.tasks.claim()?.id,allowed.runId);
+  assert.equal(f.tasks.run(revoked.runId).startedAt,null);assert.equal(f.tasks.run(revoked.runId).threadId,null);
+  const replies=f.tasks.workerRead(source,{workerId:revoked.workerId}).messages.filter(item=>item.kind==='worker_reply');
+  assert.equal(replies.length,1);assert.equal(replies[0]!.payload.execution.errorCode,'task_authority_source_denied');
+  assert.equal(f.tasks.claim(),undefined);
+ }finally{f.close();}
 });
 
 test('native execution: peer Workers exceed the old shared budget and publish one final',async()=>{

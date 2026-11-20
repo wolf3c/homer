@@ -18,7 +18,7 @@ test('historical Worker receipt retains its version and exact identity without p
   const returned=reply(f);
   f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(returned.messageId);
   f.tasks.updateTask(f.actor,{operationId:'new-goal',taskId:f.task.taskId,expectedRevision:1,patch:{goal:'Changed scope'},authority:f.authority});
-  f.tasks.workerSend(f.actor,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'});f.start(f.worker.workerId);f.tasks.reconcile();
+  f.tasks.workerMessage(f.actor,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'});f.start(f.worker.workerId);f.tasks.reconcile();
   f.store.db.exec('PRAGMA query_only=ON');const before=changes(f),detail=readTaskDetail(f.store.db,f.task.taskId);
   const original=detail.recovery!.receipts.find(receipt=>receipt.messageId===returned.messageId)!;
   assert.equal(original.taskVersion,1);assert.equal(original.state,'uncertain');

@@ -78,16 +78,19 @@ test('Main can settle partial and failed tasks while committed attachment bytes 
  }
 });
 
-test('requirements replacement fences the old writer and keeps the successor Run on its actual version',()=>{
+test('explicit interruption after a goal change fences the old writer and keeps the successor Run on its actual version',()=>{
  const f=fixture();
  try{
   const worker=openWorker(f),actor=running(f,worker.runId);
   const source=f.source('changed-requirement','Prepare replacement files');
-  const update=f.tasks.updateTask(source,{...mutation(f,'replace'),patch:{goal:'Prepare replacement files'},authority:authority(source.sourceRequestId)});
+  f.tasks.updateTask(source,{...mutation(f,'replace'),patch:{goal:'Prepare replacement files'},authority:authority(source.sourceRequestId)});
+  const prior=f.tasks.writeFile(actor,{operationId:'original',filename:'original.md',bytes:Buffer.from('original grant')});
+  assert.equal(readFileSync(prior.path,'utf8'),'original grant');
+  const stop=f.tasks.workerStop(source,{operationId:'stop-writer',workerId:worker.workerId});
   assert.throws(()=>f.tasks.writeFile(actor,{operationId:'stale',filename:'stale.md',bytes:Buffer.from('old attempt')}),/run_epoch_stale|run_stop_requested|task_stop_requested|run_version_stale/);
   assert.equal(f.tasks.confirmWorkerExit(worker.runId,undefined),true);
-  f.tasks.confirmStop(update.operationKey,true);
-  const next=f.tasks.workerSend(source,{operationId:'continue',workerId:worker.workerId,text:'Prepare replacement files'}),replacement=running(f,next.runId!);
+  f.tasks.confirmStop(stop.operationKey,true);
+  const next=f.tasks.workerMessage(source,{operationId:'continue',workerId:worker.workerId,text:'Prepare replacement files'}),replacement=running(f,next.runId!);
   const current=f.tasks.writeFile(replacement,{operationId:'current',filename:'current.md',bytes:Buffer.from('new attempt')});
   const reply=complete(f,replacement,'Exact new attempt');
   assert.equal(readFileSync(current.path,'utf8'),'new attempt');

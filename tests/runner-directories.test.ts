@@ -39,7 +39,7 @@ test('Main and peer Workers select independent accessible directories without ex
      return {status:'completed',text:'Synthetic main returned'};
     }
     const notice=JSON.parse(text.split('\n')[1]!);
-    if(notice.kind==='worker_reply'&&notice.workerId===parentWorker&&!followed){followed=true;await this.call('worker_send',{workerId:parentWorker,message:'parent-followup'});}
+    if(notice.kind==='worker_reply'&&notice.workerId===parentWorker&&!followed){followed=true;await this.call('worker_message',{workerId:parentWorker,message:'parent-followup'});}
     return {status:'completed',text:''};
    }
    const payload=JSON.parse(text.split('\n')[1]!),marker='[主 Agent 本次消息原文]\n',assignment=text.slice(text.indexOf(marker)+marker.length),run=app.tasks.run(payload.runId),cwd=hooks?.cwd!;

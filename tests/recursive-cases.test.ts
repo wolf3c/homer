@@ -8,13 +8,14 @@ test('two conversations return raw text, follow up on the same thread, pause/res
  const f=fixture();try{
   const a=openWorker(f,'a'),b=openWorker(f,'b'),aa=running(f,a.runId),bb=running(f,b.runId);
   const first=complete(f,aa,'A found an unknown date.\n\nKeep the original paragraph.');
-  const follow=f.tasks.workerSend(main,{operationId:'ask-again',workerId:a.workerId,text:'Group by owner'}),next=running(f,follow.runId!);
+  const follow=f.tasks.workerMessage(main,{operationId:'ask-again',workerId:a.workerId,text:'Group by owner'}),next=running(f,follow.runId!);
   assert.equal(next.threadId,aa.threadId);assert.equal(f.tasks.run(next.runId!).goal,f.tasks.run(aa.runId!).goal);
   const file=join(f.files.workspace,'report.md'),bytes=Buffer.from('# Synthetic owner report\nDate unknown.\n');writeFileSync(file,bytes);
   const completed=complete(f,next,'Report saved: '+file);
-  const pause=f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});assert.deepEqual(pause.targets,[bb.runId]);
+  const pause=f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});assert.deepEqual(pause.blockers!.map(blocker=>blocker.runId),[bb.runId]);
   assert.throws(()=>f.tasks.controlTask(main,{...mutation(f,'early-resume'),action:'resume'}),/resume_unconfirmed/);
-  f.tasks.confirmWorkerExit(bb.runId!,undefined);f.tasks.confirmStop(pause.operationKey,true);
+  const stop=f.tasks.workerStop(main,{operationId:'stop-b',workerId:b.workerId});f.tasks.confirmWorkerExit(bb.runId!,undefined);f.tasks.confirmStop(stop.operationKey,true);
+  f.tasks.controlTask(main,{...mutation(f,'pause-after-exit'),action:'pause'});
   f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'});
   const raw=f.tasks.workerRead(main,{workerId:a.workerId,messageId:first.messageId}).messages[0]!.text;
   assert.equal(raw,'A found an unknown date.\n\nKeep the original paragraph.');assert.equal(f.tasks.workerRead(main,{workerId:a.workerId,messageId:completed.messageId}).messages[0]!.text,'Report saved: '+file);

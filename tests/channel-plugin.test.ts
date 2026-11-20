@@ -166,7 +166,7 @@ test('a subscribed Worker final is caught up once with the exact linked file',as
     f.setScript(async(main,text)=>{
       if(text==='delegate')({taskId,workerId}=await openTaskWorker(main,'Prepare report','Prepare report'));
       else if(text==='subscribe')await subscribe(main,taskId);
-      else if(text==='continue')await main.call('worker_send',{workerId,message:'Continue'});
+      else if(text==='continue')await main.call('worker_message',{workerId,message:'Continue'});
       else if(text.startsWith('[内部协作输入')){
         const final=finals[returned++]!;
         return {status:'completed',text:'INTERNAL COMMENTARY\n'+final,messages:[
@@ -301,7 +301,7 @@ test('two simulated bots on one adapter isolate bindings, replies and subscribed
         return {status:'completed',text:'Accepted'};
       }
       if(text==='subscribe'){await subscribe(main,taskId);return {status:'completed',text:'Subscribed'};}
-      if(text==='continue'){await main.call('worker_send',{workerId,message:'Continue'});return {status:'completed',text:'Continuing'};}
+      if(text==='continue'){await main.call('worker_message',{workerId,message:'Continue'});return {status:'completed',text:'Continuing'};}
       if(text.startsWith('[内部协作输入')){
         if(++background===1)return nativeFinal('Before subscription');
         if(background===2)return {status:'completed',text:'Progress after subscription\n'+reportFinal,messages:[
@@ -414,7 +414,7 @@ test('subscription survives a lost tool receipt and old retries cannot undo a la
         receiptLost=true;
       }
       else if(text==='switch')secondSubscription=(await subscribe(main,taskId))!.subscriptionId;
-      else if(text==='continue')await main.call('worker_send',{workerId,message:'Continue'});
+      else if(text==='continue')await main.call('worker_message',{workerId,message:'Continue'});
       else if(text.startsWith('[内部协作输入')){
         return nativeFinal(`Background ${++background}`);
       }

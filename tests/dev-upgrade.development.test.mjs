@@ -132,8 +132,8 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     writeFileSync(tools, originalTools);
     const recursiveTools = join(base, "src/recursive-tools.ts"), originalRecursiveTools = readFileSync(recursiveTools, "utf8");
     const changedTools = [
-      originalRecursiveTools.replace('Send a message to the existing Worker conversation.', 'Send a synthetic message to the existing Worker conversation.'),
-      originalRecursiveTools.replace("immediate: {type: 'boolean'}", "immediate: {type: 'string'}"),
+      originalRecursiveTools.replace("tool('worker_message', '", "tool('worker_message', 'Synthetic description change. "),
+      originalRecursiveTools.replace("['workerId', 'message']", "['workerId', 'message', 'attachments']"),
     ];
     const beforeToolChanges = lockPid();
     for (const [index, changed] of changedTools.entries()) {

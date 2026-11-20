@@ -16,7 +16,7 @@ test('execution scope guards still reject a foreign Task, thread or actor',()=>{
  }finally{f.close();}
 });
 test('historical Run errors remain accessible independently of current progress',()=>{
- const f=fixture();try{f.tasks.endSegment(f.run.id,f.run.epoch,{status:'failed',text:'',errorCode:'restart_unconfirmed'},true);f.tasks.workerSend(f.actor,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'});assert.equal(readTaskDetail(f.store.db,f.task.taskId).runs.find(r=>r.id===f.run.id)?.errorCode,'restart_unconfirmed');}finally{f.close();}
+ const f=fixture();try{f.tasks.endSegment(f.run.id,f.run.epoch,{status:'failed',text:'',errorCode:'restart_unconfirmed'},true);f.tasks.workerMessage(f.actor,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'});assert.equal(readTaskDetail(f.store.db,f.task.taskId).runs.find(r=>r.id===f.run.id)?.errorCode,'restart_unconfirmed');}finally{f.close();}
 });
 test('gateway exposes scoped no-store reads, path cursors and rejects query selectors',async()=>{
  const calls:unknown[]=[],web=await createWebServer({port:0,bridge:{taskOverview:{execution:async(selector:unknown,before:unknown)=>{calls.push({selector,before});return {synthetic:true};},call:async(selector:unknown,key:unknown)=>{calls.push({selector,key});return {synthetic:true};}}} as any});

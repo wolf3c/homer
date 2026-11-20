@@ -47,15 +47,16 @@ for(const terminalReceived of [false,true])test('restart preserves exact public 
  }finally{f.close();}
 });
 
-test('unconfirmed return retains raw output but cannot start a queued followup until exact exit',()=>{
+test('unconfirmed return retains raw output but requires a fresh message after exact exit',()=>{
  const f=fixture();try{
   const worker=openWorker(f),actor=running(f,worker.runId),terminal={status:'completed',text:'等待核对日期。'};
   const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,false)!;
   assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,false)!.messageId,returned.messageId);
   assert.equal(f.tasks.run(actor.runId!).phase,'uncertain');assert.equal(f.tasks.task(f.task.taskId).outcome,null);
-  const queued=f.tasks.workerSend(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checking'});assert.equal(queued.runId,null);assert.equal(f.tasks.claim(),undefined);
+  const queued=f.tasks.workerMessage(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checking'});assert.equal(queued.state,'blocked');assert.equal(f.tasks.claim(),undefined);
   assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='worker_reply').length,1);
-  f.tasks.confirmWorkerExit(actor.runId!,undefined);const next=f.tasks.claim()!;assert.ok(next);assert.equal(next.workerId,worker.workerId);assert.equal(next.threadId,actor.threadId);
+  f.tasks.confirmWorkerExit(actor.runId!,undefined);assert.equal(f.tasks.claim(),undefined);
+  f.tasks.workerMessage(main,{operationId:'after-exit',workerId:worker.workerId,text:'Continue checking'});const next=f.tasks.claim()!;assert.ok(next);assert.equal(next.workerId,worker.workerId);assert.equal(next.threadId,actor.threadId);
  }finally{f.close();}
 });
 

@@ -69,7 +69,7 @@ test('a cancelled start cannot publish a late thread binding',async()=>{
   }finally{release?.();await f.close();}
 });
 
-test('a goal change during endpoint startup fences the old version before any engine starts',async t=>{
+test('a goal change during endpoint startup preserves the original assignment and permits startup',async t=>{
   const f=fixture();let release!:()=>void,entered!:()=>void,taskId='',runId='';
   const gate=new Promise<void>(resolve=>{release=resolve;}),waiting=new Promise<void>(resolve=>{entered=resolve;});
   try{
@@ -79,13 +79,15 @@ test('a goal change during endpoint startup fences the old version before any en
       if(text==='start'){
         const opened=await openTaskWorker(main,'Original synthetic scope');
         ({taskId,runId}=opened);
-      }else if(text==='change')assert.equal((await main.call('task_update',{taskId,goal:'Revised synthetic scope'})).state,'confirmed');
+      }else if(text==='change')assert.equal((await main.call('task_update',{taskId,goal:'Revised synthetic scope'})).state,'updated');
       return {status:'completed',text:'Recorded'};
     });
     await f.app.message('start','starting-original-source');await waiting;
-    await f.app.message('change','starting-revision-source');release();await f.app.idle();
-    assert.equal(f.engines.filter(engine=>engine.options.role==='worker').length,0);
-    assert.equal(f.app.tasks.run(runId).status,'cancelled');assert.equal(f.app.tasks.run(runId).version,1);
+    await f.app.message('change','starting-revision-source');release();
+    await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+    const worker=f.engines.find(engine=>engine.options.role==='worker')!;assert.match(worker.input!,/Original synthetic scope/);
+    worker.finish!({status:'completed',text:'Prior findings'});await f.app.idle();
+    assert.equal(f.app.tasks.run(runId).status,'succeeded');assert.equal(f.app.tasks.run(runId).version,1);
     assert.equal(f.app.tasks.task(taskId).headVersion,2);
     assert.equal(f.app.tasks.authority(taskId,2).sourceRequestId,'starting-revision-source');
   }finally{release?.();await f.close();}

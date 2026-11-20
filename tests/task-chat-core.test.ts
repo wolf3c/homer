@@ -45,9 +45,9 @@ test('current Run summaries disclose confirmed exit without rewriting an interru
   for(const summary of await summaries()){assert.equal(summary.exitConfirmed,true);assert.equal(summary.status,'interrupted');assert.equal(summary.phase,'ended');assert.ok(summary.stateRevision>unknown[0].stateRevision);}
   assert.equal(f.tasks.task(task.taskId).state,'open');assert.equal(f.tasks.task(task.taskId).outcome,null);assert.equal(f.tasks.runs(task.taskId).length,1);const original=await tools.call(f.actor,'worker_read',{workerId:worker.workerId,messageId:reply.id}) as any;assert.equal(original.messages[0].payload.execution.exitConfirmed,false);assert.equal(f.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(reply.id)!.payloadJson,historical);
   f.tasks.controlTask(f.actor,{operationId:'pause',taskId:task.taskId,expectedRevision:1,action:'pause'});for(const summary of await summaries())assert.equal(summary.exitConfirmed,true);
-  await assert.rejects(tools.call(f.actor,'worker_send',{workerId:worker.workerId,message:'Reading history alone must not resume paused work'},'paused-send'),/task_not_open/);
+  await assert.rejects(tools.call(f.actor,'worker_message',{workerId:worker.workerId,message:'Reading history alone must not resume paused work'},'paused-send'),/task_not_open/);
   f.tasks.controlTask(f.actor,{operationId:'resume',taskId:task.taskId,expectedRevision:2,action:'resume'});assert.equal(f.tasks.runs(task.taskId).length,1);
-  const sent=await tools.call(f.actor,'worker_send',{workerId:worker.workerId,message:'Continue within the original authorized scope'},'continue') as any,next=f.start(worker.workerId);
+  const sent=await tools.call(f.actor,'worker_message',{workerId:worker.workerId,message:'Continue within the original authorized scope'},'continue') as any,next=f.start(worker.workerId);
   assert.equal(sent.runId,next.id);assert.equal(next.workerId,worker.workerId);assert.equal(next.threadId,run.threadId);assert.equal(next.version,run.version);assert.equal(next.sourceRequestId,run.sourceRequestId);assert.equal(next.replacesRunId,run.id);assert.equal(next.phase,'executing');assert.equal(f.tasks.task(task.taskId).outcome,null);
   const continued=await tools.call(f.actor,'worker_read',{workerId:worker.workerId}) as any;assert.equal(continued.runs.find((row:any)=>row.id===next.id).exitConfirmed,false);assert.equal(continued.runs.find((row:any)=>row.id===run.id).exitConfirmed,true);
   assert.equal(f.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(reply.id)!.payloadJson,historical);
@@ -59,12 +59,30 @@ test('Run summaries retain lease and host-owner fences even when the stored chec
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId);f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original answer'},true);
   const summaries=()=>[f.tasks.readTask(f.actor,task.taskId).workers[0]!.run,f.tasks.workerRead(f.actor,{workerId:worker.workerId}).runs.find(row=>row.id===run.id)!];
   assert.equal(JSON.parse(f.tasks.run(run.id).checkpointJson!).workerExitConfirmed,1);for(const summary of summaries())assert.equal(summary.exitConfirmed,false);
-  assert.throws(()=>f.tasks.workerSend(f.actor,{operationId:'owner-not-closed',workerId:worker.workerId,text:'Do not bypass the host owner'}),/run_stop_unconfirmed/);
+  assert.equal(f.tasks.workerMessage(f.actor,{operationId:'owner-not-closed',workerId:worker.workerId,text:'Do not bypass the host owner'}).reason,'run_stop_unconfirmed');
   ownerClosed=true;const lease='synthetic-existing-owner';f.store.setMeta('lease:'+run.id,lease);for(const summary of summaries())assert.equal(summary.exitConfirmed,false);
   assert.equal(f.tasks.confirmWorkerExit(run.id,'different-owner'),false);assert.equal(f.store.meta('lease:'+run.id),lease);for(const summary of summaries())assert.equal(summary.exitConfirmed,false);
-  assert.throws(()=>f.tasks.workerSend(f.actor,{operationId:'lease-not-closed',workerId:worker.workerId,text:'Do not bypass a different owner'}),/run_stop_unconfirmed/);
+  assert.equal(f.tasks.workerMessage(f.actor,{operationId:'lease-not-closed',workerId:worker.workerId,text:'Do not bypass a different owner'}).reason,'run_stop_unconfirmed');
   assert.equal(f.tasks.confirmWorkerExit(run.id,lease),true);for(const summary of summaries())assert.equal(summary.exitConfirmed,true);
   assert.equal(f.tasks.runs(task.taskId).length,1);assert.equal(f.tasks.task(task.taskId).outcome,null);
+ }finally{f.close();}
+});
+
+test('confirmed process exit with an unresolved native effect blocks messaging and task control',()=>{
+ let unresolvedThread='';
+ const f=chatFixture({validateActor(){},unconfirmedWorkerEffects:threadId=>threadId===unresolvedThread});try{
+  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId);
+  unresolvedThread=run.threadId!;f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'An operation remains unresolved'},true);
+  const counts=()=>f.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='worker_input'").get()!.n;
+  const before=counts(),message=f.tasks.workerMessage(f.actor,{operationId:'msg-blocked',workerId:worker.workerId,text:'Continue'});
+  assert.equal(message.reason,'operation_uncertain');assert.equal(counts(),before);
+  for(const action of ['pause','cancel'] as const){
+   const result=f.tasks.controlTask(f.actor,{operationId:action,taskId:task.taskId,expectedRevision:1,action});
+   assert.equal(result.state,'blocked');assert.ok(result.blockers?.some(item=>item.reason==='worker_effect_unconfirmed'&&item.workerId===worker.workerId));
+  }
+  assert.equal(f.tasks.task(task.taskId).state,'open');assert.equal(f.tasks.runs().length,1);
+  unresolvedThread='';const next=f.tasks.workerMessage(f.actor,{operationId:'after-resolution',workerId:worker.workerId,text:'Continue'});
+  assert.equal(next.route,'followup');assert.equal(next.threadId,run.threadId);
  }finally{f.close();}
 });
 
@@ -73,7 +91,7 @@ test('reading many historical Run summaries keeps lease-query cost constant and 
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),first=f.start(worker.workerId);f.tasks.endSegment(first.id,first.epoch,{status:'completed',text:'Original answer'},true);
   let metaReads=0;const prepare=f.store.db.prepare.bind(f.store.db);f.store.db.prepare=(sql:string)=>{if(/\bFROM\s+meta\b/i.test(sql))metaReads++;return prepare(sql);};
   reviews=0;const single=f.tasks.workerRead(f.actor,{workerId:worker.workerId}),singleReads=metaReads;assert.equal(single.runs.length,1);assert.equal(single.runs[0]!.exitConfirmed,true);assert.equal(reviews,1);
-  for(let turn=0;turn<5;turn++){f.tasks.workerSend(f.actor,{operationId:'followup-'+turn,workerId:worker.workerId,text:'Continue within the same scope'});const run=f.start(worker.workerId);f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Next original answer '+turn},true);}
+  for(let turn=0;turn<5;turn++){f.tasks.workerMessage(f.actor,{operationId:'followup-'+turn,workerId:worker.workerId,text:'Continue within the same scope'});const run=f.start(worker.workerId);f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Next original answer '+turn},true);}
   metaReads=0;reviews=0;const many=f.tasks.workerRead(f.actor,{workerId:worker.workerId});assert.equal(many.runs.length,6);assert.ok(many.runs.every(run=>run.exitConfirmed));assert.equal(metaReads,singleReads);assert.equal(reviews,1);
   f.store.setMeta('lease:'+first.id,'unknown-historical-owner');metaReads=0;reviews=0;const fenced=f.tasks.workerRead(f.actor,{workerId:worker.workerId});assert.equal(fenced.runs.find(run=>run.id===first.id)!.exitConfirmed,false);assert.equal(fenced.runs[0]!.exitConfirmed,true);assert.equal(metaReads,singleReads);assert.equal(reviews,1);assert.equal(f.tasks.runs(task.taskId).length,6);
  }finally{f.close();}
@@ -82,9 +100,9 @@ test('reading many historical Run summaries keeps lease-query cost constant and 
 test('an idle conversation cannot resume while its immediate supplementation is uncertain',()=>{
  const f=chatFixture();try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Investigate'}),run=f.start(worker.workerId);
-  const steer=f.tasks.workerSend(f.actor,{operationId:'steer',workerId:worker.workerId,text:'Extra context',immediate:true});f.tasks.markSteer(steer.operationKey,'dispatching');f.tasks.markSteer(steer.operationKey,'uncertain');
+  const steer=f.tasks.workerMessage(f.actor,{operationId:'steer',workerId:worker.workerId,text:'Extra context'});f.tasks.markSteer(steer.operationKey,'dispatching');f.tasks.markSteer(steer.operationKey,'uncertain');
   f.tasks.confirmWorkerExit(run.id,undefined);f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Prior answer'},true);
-  assert.throws(()=>f.tasks.workerSend(f.actor,{operationId:'new-message',workerId:worker.workerId,text:'Continue'}),/operation_uncertain/);
+  assert.equal(f.tasks.workerMessage(f.actor,{operationId:'new-message',workerId:worker.workerId,text:'Continue'}).reason,'operation_uncertain');
  }finally{f.close();}
 });
 
@@ -149,11 +167,11 @@ test('public activity keeps a bounded real entity link without recording user co
  }finally{f.close();}
 });
 
-test('a queued message cannot automatically resume a session with an unknown steer receipt',()=>{
+test('a blocked message cannot automatically resume a session with an unknown steer receipt',()=>{
  const f=chatFixture();try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Investigate'}),run=f.start(worker.workerId);
-  f.tasks.workerSend(f.actor,{operationId:'queued',workerId:worker.workerId,text:'Follow up'});
-  const steer=f.tasks.workerSend(f.actor,{operationId:'steer',workerId:worker.workerId,text:'Immediate context',immediate:true});f.tasks.markSteer(steer.operationKey,'uncertain');
+  const steer=f.tasks.workerMessage(f.actor,{operationId:'steer',workerId:worker.workerId,text:'Immediate context'});f.tasks.markSteer(steer.operationKey,'uncertain');
+  assert.equal(f.tasks.workerMessage(f.actor,{operationId:'blocked',workerId:worker.workerId,text:'Follow up'}).state,'blocked');
   f.tasks.confirmWorkerExit(run.id,undefined);f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Prior answer'},true);
   assert.equal(f.tasks.claim(),undefined);assert.equal(f.tasks.runs(task.taskId).length,1);
  }finally{f.close();}
@@ -169,19 +187,18 @@ test('an empty terminal list cannot erase the public partial output checkpoint',
  }finally{f.close();}
 });
 
-test('a revoked goal stops every old Run and retains actual source/version for late output',()=>{
+test('a goal edit retains a running and a queued assignment with their original source/version',()=>{
  const f=chatFixture();try{
   const task=f.create(),a=f.tasks.workerOpen(f.actor,{operationId:'a',taskId:task.taskId,text:'A'}),b=f.tasks.workerOpen(f.actor,{operationId:'b',taskId:task.taskId,text:'B'}),run=f.start(a.workerId);
   f.tasks.recordWorkerOutput(run.id,run.epoch,{threadId:run.threadId!,turnId:run.turnId!,itemId:'old',phase:'final_answer',text:'Original version answer'});
   f.source('source:changed','Withdraw previous scope; read only the new topic');const actor={...f.actor,sourceRequestId:'source:changed'};
   const update=f.tasks.updateTask(actor,{operationId:'requirements',taskId:task.taskId,expectedRevision:1,patch:{goal:'New topic; read only'},authority:{...f.authority,sourceRequestId:'source:changed',description:'New topic only'}});
-  assert.deepEqual(new Set(update.targets),new Set([run.id,b.runId]));assert.equal(f.tasks.task(task.taskId).controlState,'stopping');assert.equal(f.tasks.claim(b.runId),undefined);
-  assert.throws(()=>f.tasks.workerOpen(actor,{operationId:'forbidden',taskId:task.taskId,text:'Start new'}),/stop_requested/);assert.throws(()=>f.tasks.confirmStop(update.operationKey,true),/stop_unconfirmed/);
-  assert.equal(f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Late unsafe callback'},true),undefined);
-  f.tasks.confirmWorkerExit(run.id,undefined);f.tasks.confirmStop(update.operationKey,true);assert.equal(f.tasks.task(task.taskId).controlState,'normal');
+  assert.equal(update.state,'updated');assert.equal(f.tasks.task(task.taskId).controlState,'normal');
+  const oldQueued=f.tasks.claim(b.runId)!;assert.equal(oldQueued.version,1);assert.equal(oldQueued.sourceRequestId,run.sourceRequestId);
+  f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original version answer'},true);
   const reply=f.tasks.inbox(f.actor).find(message=>message.senderRunId===run.id)!;assert.equal(reply.taskVersion,1);assert.equal(reply.payload.text,'Original version answer');
   assert.equal(f.tasks.version(task.taskId,2).sourceRequestId,'source:changed');assert.equal(f.tasks.operation(f.tasks.version(task.taskId,2).triggerOpId).operationId,'requirements');
-  const followup=f.tasks.workerSend(actor,{operationId:'new-round',workerId:a.workerId,text:'Use the new topic'});assert.equal(f.tasks.run(followup.runId!).version,2);assert.equal(f.tasks.run(followup.runId!).threadId,run.threadId);
+  const followup=f.tasks.workerMessage(actor,{operationId:'new-round',workerId:a.workerId,text:'Use the new topic'});assert.equal(f.tasks.run(followup.runId!).version,2);assert.equal(f.tasks.run(followup.runId!).threadId,run.threadId);
  }finally{f.close();}
 });
 
@@ -189,8 +206,8 @@ test('same-thread ownership and concurrent followups leave only one active Run',
  const f=chatFixture();try{
   const task=f.create(),a=f.tasks.workerOpen(f.actor,{operationId:'a',taskId:task.taskId,text:'A'}),run=f.start(a.workerId);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Answer'},true);
-  const first=f.tasks.workerSend(f.actor,{operationId:'followup-a',workerId:a.workerId,text:'Follow up one'}),second=f.tasks.workerSend(f.actor,{operationId:'followup-b',workerId:a.workerId,text:'Follow up two'});
-  assert.ok(first.runId);assert.equal(second.runId,null);assert.equal(f.tasks.runs(task.taskId,a.workerId).filter(run=>run.status==='queued').length,1);
+  const first=f.tasks.workerMessage(f.actor,{operationId:'followup-a',workerId:a.workerId,text:'Follow up one'}),second=f.tasks.workerMessage(f.actor,{operationId:'followup-b',workerId:a.workerId,text:'Follow up two'});
+  assert.ok(first.runId);assert.equal(second.state,'blocked');assert.equal(f.tasks.runs(task.taskId,a.workerId).filter(run=>run.status==='queued').length,1);
   const b=f.tasks.workerOpen(f.actor,{operationId:'b',taskId:task.taskId,text:'B'}),br=f.tasks.claim(b.runId)!;
   assert.throws(()=>f.tasks.bind(br.id,br.epoch,run.threadId!,'turn:b'),/thread_conflict/);
   assert.equal(f.tasks.run(first.runId!).threadId,run.threadId);
@@ -242,9 +259,11 @@ test('an empty legacy layout and a relabeled incompatible layout are rejected be
 
 test('notes remain editable while paused or settled and cannot release an outstanding stop',()=>{
  const f=chatFixture();try{
-  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Investigate'}),run=f.start(worker.workerId),stop=f.tasks.controlTask(f.actor,{operationId:'pause',taskId:task.taskId,expectedRevision:1,action:'pause'});
-  f.tasks.updateTask(f.actor,{operationId:'waiting-note',taskId:task.taskId,expectedRevision:2,patch:{notes:'Waiting for confirmed exit'}});assert.equal(f.tasks.task(task.taskId).controlState,'stopping');assert.equal(f.tasks.claim(),undefined);
-  f.tasks.confirmWorkerExit(run.id,undefined);f.tasks.confirmStop(stop.operationKey,true);const paused=f.tasks.task(task.taskId);
+  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Investigate'}),run=f.start(worker.workerId);
+  const stop=f.tasks.workerStop(f.actor,{operationId:'stop-worker',workerId:worker.workerId});
+  f.tasks.updateTask(f.actor,{operationId:'waiting-note',taskId:task.taskId,expectedRevision:1,patch:{notes:'Waiting for confirmed exit'}});assert.ok(f.tasks.run(run.id).stopRequestedAt);assert.equal(f.tasks.claim(),undefined);
+  f.tasks.confirmWorkerExit(run.id,undefined);f.tasks.confirmStop(stop.operationKey,true);
+  f.tasks.controlTask(f.actor,{operationId:'pause',taskId:task.taskId,expectedRevision:2,action:'pause'});const paused=f.tasks.task(task.taskId);
   f.tasks.updateTask(f.actor,{operationId:'paused-note',taskId:task.taskId,expectedRevision:paused.revision,patch:{notes:'Paused deliberately'}});assert.equal(f.tasks.task(task.taskId).state,'paused');
   f.tasks.controlTask(f.actor,{operationId:'resume',taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision,action:'resume'});
   f.tasks.settleTask(f.actor,{operationId:'settle',taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision,outcome:'partial'});
@@ -265,10 +284,11 @@ test('task discovery omits raw bodies and Worker reads page the exact long origi
 test('public output observed while stopping stays attached to the actual old requirements version',()=>{
  const f=chatFixture();try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect v1'}),run=f.start(worker.workerId);
-  const changed=f.tasks.updateTask(f.actor,{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Follow the new user instruction'},authority:f.authority});
+  f.tasks.updateTask(f.actor,{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Follow the new user instruction'},authority:f.authority});
+  const stop=f.tasks.workerStop(f.actor,{operationId:'stop',workerId:worker.workerId});
   const terminal={status:'completed' as const,text:'Final old-version paragraph.',messages:[{itemId:'late-old-final',phase:'final_answer',text:'Final old-version paragraph.'}]};
   f.tasks.recordWorkerOutput(run.id,run.epoch,{threadId:run.threadId!,turnId:run.turnId!,itemId:'late-old-final',phase:'final_answer',text:terminal.text});f.tasks.recordWorkerTerminal(run.id,run.epoch,terminal);
-  assert.equal(f.tasks.confirmWorkerExit(run.id,undefined),true);f.tasks.confirmStop(changed.operationKey,true);
+  assert.equal(f.tasks.confirmWorkerExit(run.id,undefined),true);f.tasks.confirmStop(stop.operationKey,true);
   const reply=f.tasks.inbox(f.actor).find(message=>message.kind==='worker_reply'&&message.senderRunId===run.id)!;
   assert.equal(reply.taskVersion,1);assert.equal(reply.payload.version,1);assert.equal(reply.payload.text,terminal.text);assert.equal(reply.payload.messages[0].itemId,'late-old-final');assert.equal(f.tasks.task(task.taskId).headVersion,2);
  }finally{f.close();}
@@ -313,17 +333,17 @@ test('deterministic file rejection terminates its operation without blocking exp
 
 test('a definitive steer failure rejects its targeted message while an unknown steer still blocks',()=>{
  const f=chatFixture();try{
-  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId),steer=f.tasks.workerSend(f.actor,{operationId:'steer',workerId:worker.workerId,text:'Supplement',immediate:true});
-  f.tasks.markSteer(steer.operationKey,'failed');f.tasks.markSteer(steer.operationKey,'received');assert.equal(f.tasks.operation(steer.operationKey).state,'failed');assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(steer.messageId)!.state,'rejected');
+  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId),steer=f.tasks.workerMessage(f.actor,{operationId:'steer',workerId:worker.workerId,text:'Supplement'});
+  assert.equal(steer.route,'steer');f.tasks.markSteer(steer.operationKey,'failed');f.tasks.markSteer(steer.operationKey,'received');assert.equal(f.tasks.operation(steer.operationKey).state,'failed');assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(steer.messageId)!.state,'rejected');
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Answer'},true);f.tasks.settleTask(f.actor,{operationId:'settle',taskId:task.taskId,expectedRevision:1,outcome:'succeeded'});
   for(const message of f.tasks.inbox(f.actor))f.consumeMain(message.id);
   assert.equal(f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:2},true).state,'archived');
  }finally{f.close();}
 });
 
-test('cancelling without live executions rejects unbound queued conversation inputs atomically',()=>{
+test('cancelling after the Worker exits preserves its failed message and archives the Task',()=>{
  const f=chatFixture();try{
-  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId),queued=f.tasks.workerSend(f.actor,{operationId:'queue',workerId:worker.workerId,text:'Follow up'});assert.equal(queued.runId,null);
+  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId),queued=f.tasks.workerMessage(f.actor,{operationId:'queue',workerId:worker.workerId,text:'Follow up'});assert.equal(queued.route,'steer');f.tasks.markSteer(queued.operationKey,'failed');
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Answer'},true);const cancelled=f.tasks.controlTask(f.actor,{operationId:'cancel',taskId:task.taskId,expectedRevision:1,action:'cancel'});assert.deepEqual(cancelled.targets,[]);assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(queued.messageId)!.state,'rejected');assert.equal(f.tasks.claim(),undefined);
   for(const message of f.tasks.inbox(f.actor))f.consumeMain(message.id);
   assert.equal(f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:2},true).state,'archived');
@@ -340,15 +360,16 @@ test('Worker original-message paging exposes native identity and every public ph
  }finally{f.close();}
 });
 
-for(const state of ['changed-goal','paused','stopping','cancelled'] as const)for(const explicitSources of [false,true])test(`a ${state} Task notification cannot derive fresh work using ${explicitSources?'explicit':'default'} historical sources`,()=>{
+for(const state of ['changed-goal','paused','legacy-stopping','cancelled'] as const)for(const explicitSources of [false,true])test(`a ${state} Task notification cannot derive fresh work using ${explicitSources?'explicit':'default'} historical sources`,()=>{
  const f=chatFixture();try{
   f.source('revised-source','Narrow the permitted work to the current requirement');
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect v1'}),run=f.start(worker.workerId),reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original v1 paragraph.'},true)!;
   f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:notification' WHERE messageId=?").run(reply.messageId);
   const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:notification',inputMessageId:reply.messageId};
   if(state==='changed-goal')f.tasks.updateTask({...f.actor,sourceRequestId:'revised-source'},{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Follow only the narrowed v2 requirement'},authority:{...f.authority,sourceRequestId:'revised-source'}});
-  else{
-   if(state==='stopping'){const active=f.tasks.workerOpen(f.actor,{operationId:'active',taskId:task.taskId,text:'Still active'});f.start(active.workerId);}
+  else if(state==='legacy-stopping'){
+   f.store.db.prepare("UPDATE tasks SET controlState='stopping' WHERE id=?").run(task.taskId);
+  }else{
    f.tasks.controlTask(f.actor,{operationId:'control',taskId:task.taskId,expectedRevision:1,action:state==='cancelled'?'cancel':'pause'});
   }
   const authority={...f.authority,...(explicitSources?{sourceRequestIds:['source:test']}:{})},before={tasks:f.tasks.tasks().length,runs:f.tasks.runs().length};
@@ -365,8 +386,9 @@ test('a cancelled v1 interaction notification cannot derive work after v2 is eff
   const interaction=interactions.open({runId:run.id,threadId:run.threadId!,turnId:run.turnId!,requestId:'question',source:'native',kind:'question',details:{question:'Proceed with the old scope?'},authority:{sourceRequestId:'source:test',description:'Original scope',nativeApprovals:false}},()=>true);
   f.tasks.queueInteraction(interaction.id);const notice=f.tasks.inbox(f.actor).find(message=>message.kind==='interaction_required')!;
   f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:old-interaction' WHERE messageId=?").run(notice.id);
-  const change=f.tasks.updateTask({...f.actor,sourceRequestId:'revised-source'},{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Use only v2'},authority:{...f.authority,sourceRequestId:'revised-source'}});
-  interactions.cancelRun(run.id);assert.equal((await interaction.response).status,'cancelled');f.tasks.confirmWorkerExit(run.id,undefined);f.tasks.confirmStop(change.operationKey,true);
+  f.tasks.updateTask({...f.actor,sourceRequestId:'revised-source'},{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Use only v2'},authority:{...f.authority,sourceRequestId:'revised-source'}});
+  const stop=f.tasks.workerStop(f.actor,{operationId:'stop',workerId:worker.workerId});
+  interactions.cancelRun(run.id);assert.equal((await interaction.response).status,'cancelled');f.tasks.confirmWorkerExit(run.id,undefined);f.tasks.confirmStop(stop.operationKey,true);
   const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:old-interaction',inputMessageId:notice.id};
   assert.throws(()=>f.tasks.createTask(event,{operationId:'derive-from-question',goal:'Proceed with the old scope',authority:f.authority}),/task_authority_source_denied/);
   assert.equal(f.tasks.task(task.taskId).headVersion,2);assert.equal(f.tasks.task(task.taskId).controlState,'normal');assert.equal(f.tasks.tasks().length,1);assert.equal(f.tasks.runs().length,1);

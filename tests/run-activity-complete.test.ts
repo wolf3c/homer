@@ -62,7 +62,7 @@ test('all host calls get factual labels, including coordination and unclassified
  assert.equal(progressLabel('inspect_interaction'),'检查协作请求');
  assert.equal(progressLabel('respond_interaction'),'答复协作请求');
  assert.equal(progressLabel('escalate_interaction'),'转交用户确认');
- assert.equal(progressLabel('worker_send'),'发送协作消息');
+ assert.equal(progressLabel('worker_message'),'发送协作消息');
  for(const tool of ['work_inspect','worker_read','list_work'])assert.equal(progressLabel(tool),'检查资料');
  assert.equal(progressLabel('task_create'),'创建任务');
  assert.equal(progressLabel('future_tool'),'调用工具');

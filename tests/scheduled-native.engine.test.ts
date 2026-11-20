@@ -78,7 +78,7 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
         }
         else{assert.equal(last?.type,'function_call_output');assert.match(JSON.stringify(last.output),/workerId/);output=answer('Warm Main history');}
       }else if(phase==='worker'&&!worker){
-        if(!continuing){continuing=true;output=call('worker_send',{workerId,message:'Create, inspect, update and cancel the authorized synthetic reminder, then recover its original operation receipts.'},'resume-worker');}
+        if(!continuing){continuing=true;output=call('worker_message',{workerId,message:'Create, inspect, update and cancel the authorized synthetic reminder, then recover its original operation receipts.'},'resume-worker');}
         else{assert.equal(last?.type,'function_call_output');assert.match(JSON.stringify(last.output),/workerId/);output=answer('Worker resumed');}
       }else output=program(worker?'worker':'main',payload);
       const id='scheduled-native-'+request;

@@ -18,25 +18,27 @@ async function peer(){
  const turn=engine.turn('synthetic');turn.catch(()=>{});await flush();await receive({id:sent[0]!.id,result:{turn:{id:actor.turnId}}});await flush();
  const app=Object.assign(Object.create(Homer.prototype),{store:f.store,tasks:f.tasks,workers:new Map([[actor.runId,{id:actor.runId,epoch:actor.epoch,engine}]])}) as Homer;
  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.tasks.authority(f.task.taskId,1),wake(){},stop:async r=>r,steer:r=>app['applySteer'](r)});
- const input={workerId:worker.workerId,message:'Synthetic immediate correction',immediate:true};
- const steer=()=>{const work=tools.call(main,'worker_send',input,'steer-receipt') as Promise<Record<string,any>>;work.catch(()=>{});return work;};
+ const input={workerId:worker.workerId,message:'Synthetic immediate correction'};
+ const steer=()=>{const work=tools.call(main,'worker_message',input,'steer-receipt') as Promise<Record<string,any>>;work.catch(()=>{});return work;};
  const operation=()=>f.store.db.prepare("SELECT * FROM operations WHERE kind='worker_steer'").get() as {id:string;state:string;detailsJson:string;responseJson:string};
  const writes=()=>sent.filter(message=>message.method==='turn/steer');
  return {...f,worker,actor,engine,receive,steer,operation,writes,async dispose(){await engine.close();await Promise.allSettled([turn]);f.close();}};
 }
 
-for(const ending of ['disconnect','close'] as const)test('native steer lost ACK stays durably uncertain on '+ending+' without replay',async()=>{
+for(const ending of ['disconnect','close','mismatched-ack'] as const)test('native steer lost ACK stays durably uncertain on '+ending+' without replay',async()=>{
  const p=await peer();try{
   const pending=p.steer();assert.equal(p.writes().length,1);
-  if(ending==='close')await p.engine.close();else p.engine['fail'](Error('engine_disconnected'));
-  const receipt=await pending;assert.equal(receipt.state,'uncertain');assert.equal(receipt.code,ending==='close'?'engine_closed':'engine_disconnected');
+  if(ending==='close')await p.engine.close();
+  else if(ending==='mismatched-ack')await p.receive({id:p.writes()[0]!.id,result:{turnId:'other-turn'}});
+  else p.engine['fail'](Error('engine_disconnected'));
+  const receipt=await pending;assert.equal(receipt.state,'uncertain');assert.equal(receipt.code,ending==='close'?'engine_closed':ending==='mismatched-ack'?'engine_steer_turn_mismatch':'engine_disconnected');
   assert.equal(p.operation().state,'uncertain');assert.equal(JSON.parse(p.operation().detailsJson).rpcState,'uncertain');assert.equal(p.tasks.run(p.actor.runId!).phase,'uncertain');
   assert.equal(p.tasks.run(p.actor.runId!).version,1);assert.equal(p.tasks.task(p.task.taskId).headVersion,1);
   assert.throws(()=>p.tasks.writeFile(p.actor,{operationId:'stale-write',filename:'stale.md',bytes:Buffer.from('must not write')}),/phase/);
   await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});
   assert.equal((await p.steer()).state,'uncertain');assert.equal(p.writes().length,1);assert.equal(p.engine['pending'].size,0);
   p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original partial facts'},true);
-  assert.throws(()=>p.tasks.workerSend(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'}),/operation_uncertain/);
+  assert.equal(p.tasks.workerMessage(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'}).reason,'operation_uncertain');
   assert.equal(p.store.runs().length,1);
  }finally{await p.dispose();}
 });
@@ -56,7 +58,7 @@ test('exact steer ACK confirms one message without changing task version or impl
   assert.equal(request.params.threadId,p.actor.threadId);assert.equal(request.params.expectedTurnId,p.actor.turnId);assert.equal(request.params.input[0].text,'Synthetic immediate correction');
   await p.receive({id:request.id,result:{turnId:p.actor.turnId}});
   assert.equal((await pending).state,'received');assert.equal(p.operation().state,'confirmed');assert.equal(JSON.parse(p.operation().detailsJson).rpcState,'received');
-  assert.equal((await p.steer()).state,'confirmed');assert.equal(p.writes().length,1);
+  assert.equal((await p.steer()).state,'received');assert.equal(p.writes().length,1);
   assert.equal(p.tasks.task(p.task.taskId).headVersion,1);assert.equal(p.tasks.task(p.task.taskId).outcome,null);
   const details=JSON.parse(p.operation().detailsJson);assert.equal(p.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(details.messageId)!.state,'processed');
  }finally{await p.dispose();}
@@ -69,28 +71,27 @@ test('duplicate steer while native ACK is pending reuses dispatch state and send
  }finally{await p.dispose();}
 });
 
-for(const reason of ['before-send','not-applicable','sync-send','mismatched-ack'])test('definite native steer failure: '+reason,async()=>{
+for(const reason of ['before-send','not-applicable','sync-send'])test('definite native steer failure: '+reason,async()=>{
  const p=await peer();try{
   if(reason==='before-send')p.engine['failure']=Error('engine_disconnected');
   if(reason==='not-applicable')p.engine['active']!.settling=true;
   if(reason==='sync-send')p.engine['send']=()=>{throw Error('engine_disconnected');};
-  const pending=p.steer();if(reason==='mismatched-ack')await p.receive({id:p.writes()[0]!.id,result:{turnId:'other-turn'}});
+  const pending=p.steer();
   assert.equal((await pending).state,'failed');assert.equal(p.operation().state,'failed');assert.equal(p.tasks.run(p.actor.runId!).phase,'executing');
-  assert.equal(p.writes().length,reason==='mismatched-ack'?1:0);
+  assert.equal(p.writes().length,0);
  }finally{await p.dispose();}
 });
 
 test('an old-version return survives a goal change and retains its original version',async()=>{
  const p=await peer();try{
   const pending=p.steer();await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});await pending;
-  const change=p.tasks.updateTask(main,{...mutation(p,'goal-change'),patch:{goal:'New explicit user requirement'},authority:authority()});
-  p.tasks.recordWorkerTerminal(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original version draft'});
-  p.tasks.confirmWorkerExit(p.actor.runId!,undefined);p.tasks.confirmStop(change.operationKey,true);
+  p.tasks.updateTask(main,{...mutation(p,'goal-change'),patch:{goal:'New explicit user requirement'},authority:authority()});
+  p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original version draft'},true);
   const reply=p.tasks.workerRead(main,{workerId:p.worker.workerId}).messages.find(message=>message.kind==='worker_reply')!;
   assert.equal(reply.taskVersion,1);assert.equal(reply.text,'Original version draft');assert.equal(p.tasks.task(p.task.taskId).headVersion,2);assert.equal(p.tasks.task(p.task.taskId).outcome,null);
   assert.equal(reply.payload.version,1);
   const input={operationId:'followup',workerId:p.worker.workerId,text:'Continue under the new goal'};
-  const next=p.tasks.workerSend(main,input);assert.deepEqual(p.tasks.workerSend(main,input),next);assert.equal(p.store.runs().length,2);
+  const next=p.tasks.workerMessage(main,input);assert.deepEqual(p.tasks.workerMessage(main,input),next);assert.equal(p.store.runs().length,2);
   assert.equal(p.tasks.run(next.runId!).version,2);assert.equal(p.tasks.run(next.runId!).threadId,p.actor.threadId);
   assert.equal(p.tasks.workerRead(main,{workerId:p.worker.workerId,messageId:reply.id}).messages[0]!.text,'Original version draft');
  }finally{await p.dispose();}
@@ -104,9 +105,8 @@ for(const obstruction of ['exit','lease','owner','rpc'] as const)test('original 
   if(obstruction==='owner')p.tasks['lifecycle']={validateActor(){},reviewExitConfirmed:()=>false};
   if(obstruction==='rpc')p.store.db.prepare("UPDATE operations SET state='uncertain' WHERE id=?").run(p.operation().id);
   const before=p.operation();
-  if(obstruction==='exit'){
-   assert.equal(p.tasks.workerSend(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'}).runId,null);assert.equal(p.tasks.claim(),undefined);
-  }else assert.throws(()=>p.tasks.workerSend(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'}),/operation_uncertain|run_stop_unconfirmed/);
+  const blocked=p.tasks.workerMessage(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'});
+  assert.equal(blocked.state,'blocked');assert.equal(blocked.reason,obstruction==='rpc'?'operation_uncertain':'run_stop_unconfirmed');assert.equal(p.tasks.claim(),undefined);
   assert.deepEqual(p.operation(),before);assert.equal(p.store.runs().length,1);
   assert.equal(p.tasks.workerRead(main,{workerId:p.worker.workerId,messageId:returned.messageId}).messages[0]!.text,'Original draft');
  }finally{await p.dispose();}
@@ -136,7 +136,7 @@ test('confirmed stop retires a pending steer and a late ACK cannot revive its re
 
 for(const state of ['dispatching','uncertain','confirmed'] as const)test('settlement respects scoped steering state='+state,async()=>{
  const p=await peer();try{
-  const sent=p.tasks.workerSend(main,{operationId:'steer',workerId:p.worker.workerId,text:'Supplement',immediate:true});
+  const sent=p.tasks.workerMessage(main,{operationId:'steer',workerId:p.worker.workerId,text:'Supplement'});
   p.tasks.markSteer(sent.operationKey,'dispatching');
   if(state==='confirmed')p.tasks.markSteer(sent.operationKey,'received');
   else if(state==='uncertain')p.tasks.markSteer(sent.operationKey,'uncertain');
@@ -156,19 +156,20 @@ test('persisted native terminal recovers exact original output once and resumes 
   assert.equal(p.tasks.run(p.actor.runId!).epoch,p.actor.epoch!+1);
   const replies=p.tasks.workerRead(main,{workerId:p.worker.workerId}).messages.filter(message=>message.kind==='worker_reply');
   assert.equal(replies.length,1);assert.equal(replies[0]!.text,'Persisted original draft');assert.equal(replies[0]!.taskVersion,1);
-  const next=p.tasks.workerSend(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'});
+  const next=p.tasks.workerMessage(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'});
   assert.equal(p.tasks.run(next.runId!).threadId,p.actor.threadId);assert.equal(p.tasks.run(next.runId!).version,1);
-  assert.equal((await p.steer()).state,'confirmed');assert.equal(p.writes().length,1);
+  assert.equal((await p.steer()).state,'received');assert.equal(p.writes().length,1);
  }finally{await p.dispose();}
 });
 
 test('ACK after a returned draft cannot launch a successor before the exact exit checkpoint',async()=>{
  const p=await peer();try{
   const pending=p.steer(),returned=p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Draft before ACK'},false)!;
-  assert.throws(()=>p.tasks.workerSend(main,{operationId:'before-ack',workerId:p.worker.workerId,text:'Continue'}),/operation_uncertain/);
+  assert.equal(p.tasks.workerMessage(main,{operationId:'before-ack',workerId:p.worker.workerId,text:'Continue'}).reason,'operation_uncertain');
   await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});await pending;
-  assert.equal(p.tasks.workerSend(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'}).runId,null);assert.equal(p.tasks.claim(),undefined);
-  p.tasks.confirmWorkerExit(p.actor.runId!,undefined);const next=p.tasks.claim()!;assert.ok(next);assert.equal(next.threadId,p.actor.threadId);
+  assert.equal(p.tasks.workerMessage(main,{operationId:'followup',workerId:p.worker.workerId,text:'Continue'}).state,'blocked');assert.equal(p.tasks.claim(),undefined);
+  p.tasks.confirmWorkerExit(p.actor.runId!,undefined);assert.equal(p.tasks.claim(),undefined);
+  p.tasks.workerMessage(main,{operationId:'after-exit',workerId:p.worker.workerId,text:'Continue'});const next=p.tasks.claim()!;assert.ok(next);assert.equal(next.threadId,p.actor.threadId);
   assert.equal(p.tasks.workerRead(main,{workerId:p.worker.workerId,messageId:returned.messageId}).messages[0]!.text,'Draft before ACK');assert.equal(p.writes().length,1);
  }finally{await p.dispose();}
 });
@@ -179,6 +180,8 @@ test('lost file-write receipt preserves the raw return and blocks settlement wit
   assert.throws(()=>p.tasks.writeFile(p.actor,{operationId:'unfinished-write',filename:'pending.md',bytes:Buffer.from('Actual preserved bytes')}),/synthetic_write_receipt_lost/);
   p.files.writeBinary=write;
   const returned=p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original draft'},true)!;
+  const blocked=p.tasks.workerMessage(main,{operationId:'followup-after-write',workerId:p.worker.workerId,text:'Continue'});
+  assert.equal(blocked.reason,'operation_uncertain');assert.equal(p.store.runs().length,1);
   const operation=p.store.db.prepare("SELECT * FROM operations WHERE operationId='unfinished-write'").get()!;
   assert.equal(operation.state,'accepted');assert.throws(()=>p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}),/operation_uncertain/);
   assert.deepEqual(p.store.db.prepare("SELECT * FROM operations WHERE operationId='unfinished-write'").get(),operation);
@@ -191,7 +194,7 @@ test('lost file-write receipt preserves the raw return and blocks settlement wit
 test('another Task unknown steer does not block this Task settlement or alter its receipt',async()=>{
  const p=await peer();try{
   const other=p.tasks.createTask(main,{operationId:'other-task',goal:'Separate goal',authority:authority()}),worker=p.tasks.workerOpen(main,{operationId:'other-worker',taskId:other.taskId,text:'Inspect separate input'}),actor=running(p,worker.runId);
-  const sent=p.tasks.workerSend(main,{operationId:'steer-other',workerId:worker.workerId,text:'Separate supplement',immediate:true});
+  const sent=p.tasks.workerMessage(main,{operationId:'steer-other',workerId:worker.workerId,text:'Separate supplement'});
   p.tasks.markSteer(sent.operationKey,'dispatching');p.tasks.markSteer(sent.operationKey,'uncertain');
   p.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'Separate checked facts'},true);
   const original=p.tasks.operation(sent.operationKey);

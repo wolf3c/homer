@@ -27,36 +27,42 @@ test('notes CAS and operation replay preserve goal, version and authority',()=>{
  }finally{f.close();}
 });
 
-test('ordinary followups queue in order and start one successor on the same native thread',()=>{
+test('queued, starting and RPC-waiting Workers return their current run without accepting a message',()=>{
  const f=fixture();try{
-  const worker=openWorker(f),actor=running(f,worker.runId);
-  const a=f.tasks.workerSend(main,{operationId:'send-a',workerId:worker.workerId,text:'First followup'}),b=f.tasks.workerSend(main,{operationId:'send-b',workerId:worker.workerId,text:'Second followup'});
-  assert.equal(a.runId,null);assert.equal(b.runId,null);assert.equal(f.tasks.claim(worker.runId),undefined);
-  complete(f,actor);const next=f.tasks.claim()!;assert.ok(next);
-  assert.equal(next.workerId,worker.workerId);assert.equal(next.threadId,actor.threadId);assert.equal(next.prompt,'First followup\n\nSecond followup');
-  assert.equal(f.tasks.claim(),undefined);f.tasks.bind(next.id,next.epoch,actor.threadId!,'turn:followup');
-  const messages=f.tasks.workerRead(main,{workerId:worker.workerId}).messages;
-  assert.deepEqual(messages.filter(m=>[a.messageId,b.messageId].includes(m.id)).map(m=>m.targetRunId),[next.id,next.id]);
+  const w=openWorker(f);
+  for(const phase of ['queued','starting','rpc_wait']){
+   if(phase==='starting')assert.ok(f.tasks.claim(w.runId));
+   if(phase==='rpc_wait'){
+    const run=f.tasks.run(w.runId);f.tasks.bind(run.id,run.epoch,'thread:a','turn:a');f.tasks.rpc(run.id,run.epoch,true);
+   }
+   const input={operationId:'send-'+phase,workerId:w.workerId,text:'Only for a live turn'};
+   const blocked=f.tasks.workerMessage(main,input);
+   assert.equal(blocked.state,'blocked');assert.equal(blocked.reason,'worker_not_ready');assert.equal(blocked.runId,w.runId);
+   assert.equal(blocked.phase,phase==='queued'?'ready':phase);
+   assert.deepEqual(f.tasks.workerMessage(main,input),blocked);
+   assert.equal(f.tasks.workerRead(main,{workerId:w.workerId}).messages.length,1);
+  }
+  assert.equal(f.tasks.runs().length,1);
  }finally{f.close();}
 });
 
 test('immediate supplementation targets the exact native turn without changing the adopted version',()=>{
  const f=fixture();try{
-  const w=openWorker(f),actor=running(f,w.runId),input={operationId:'steer',workerId:w.workerId,text:'Keep unknown dates',immediate:true};
-  const r=f.tasks.workerSend(main,input);assert.equal(r.threadId,actor.threadId);assert.equal(r.expectedTurnId,actor.turnId);
+  const w=openWorker(f),actor=running(f,w.runId),input={operationId:'steer',workerId:w.workerId,text:'Keep unknown dates'};
+  const r=f.tasks.workerMessage(main,input);assert.equal(r.threadId,actor.threadId);assert.equal(r.expectedTurnId,actor.turnId);
   f.tasks.markSteer(r.operationKey,'dispatching');f.tasks.markSteer(r.operationKey,'received');
   assert.equal(f.tasks.operation(r.operationKey).state,'confirmed');assert.equal(f.tasks.run(w.runId).version,1);
-  assert.deepEqual(f.tasks.workerSend(main,input),r);assert.equal(f.tasks.guard(actor).id,f.task.taskId);
+  assert.deepEqual(f.tasks.workerMessage(main,input),r);assert.equal(f.tasks.guard(actor).id,f.task.taskId);
  }finally{f.close();}
 });
 
 test('uncertain steer fences execution and does not create a fallback Run or a new adopted version',()=>{
  const f=fixture();try{
-  const w=openWorker(f),actor=running(f,w.runId),input={operationId:'unknown-steer',workerId:w.workerId,text:'Supplement',immediate:true};
-  const r=f.tasks.workerSend(main,input);f.tasks.markSteer(r.operationKey,'dispatching');f.tasks.markSteer(r.operationKey,'uncertain');
-  assert.deepEqual(f.tasks.workerSend(main,input),r);assert.equal(f.tasks.run(w.runId).version,1);assert.equal(f.tasks.run(w.runId).phase,'uncertain');
+  const w=openWorker(f),actor=running(f,w.runId),input={operationId:'unknown-steer',workerId:w.workerId,text:'Supplement'};
+  const r=f.tasks.workerMessage(main,input);f.tasks.markSteer(r.operationKey,'dispatching');f.tasks.markSteer(r.operationKey,'uncertain');
+  assert.deepEqual(f.tasks.workerMessage(main,input),r);assert.equal(f.tasks.run(w.runId).version,1);assert.equal(f.tasks.run(w.runId).phase,'uncertain');
   assert.equal(f.tasks.runs().length,1);assert.equal(f.tasks.safeToUpgrade(),false);assert.throws(()=>f.tasks.guard(actor),/phase/);
-  assert.throws(()=>f.tasks.workerSend(main,{...input,operationId:'blind-retry'}),/uncertain|not_applicable/);
+  assert.equal(f.tasks.workerMessage(main,{...input,operationId:'blind-retry'}).state,'blocked');
  }finally{f.close();}
 });
 
@@ -79,8 +85,9 @@ test('restart preserves raw checkpoint, invalidates old epoch and needs confirme
   f.tasks.charge(w.runId,actor.epoch!,400);f.tasks.reconcile();
   assert.throws(()=>f.tasks.guard(actor),/epoch|live/);assert.equal(f.tasks.run(w.runId).activeMs,400);
   assert.equal(f.tasks.workerRead(main,{workerId:w.workerId}).messages.at(-1)!.text,'Preserved raw answer');
-  f.tasks.workerSend(main,{operationId:'followup',workerId:w.workerId,text:'Continue after recovery'});assert.equal(f.tasks.claim(),undefined);
-  assert.ok(f.tasks.confirmWorkerExit(w.runId,undefined));const next=f.tasks.claim()!;
+  assert.equal(f.tasks.workerMessage(main,{operationId:'followup',workerId:w.workerId,text:'Continue after recovery'}).state,'blocked');assert.equal(f.tasks.claim(),undefined);
+  assert.ok(f.tasks.confirmWorkerExit(w.runId,undefined));assert.equal(f.tasks.claim(),undefined);
+  f.tasks.workerMessage(main,{operationId:'after-exit',workerId:w.workerId,text:'Continue after recovery'});const next=f.tasks.claim()!;
   assert.equal(next.workerId,w.workerId);assert.equal(next.replacesRunId,w.runId);assert.equal(next.threadId,actor.threadId);
   assert.equal(f.tasks.claim(),undefined);
  }finally{f.close();}
@@ -113,9 +120,10 @@ test('goal changes bind the actual user source and cannot be authorized by work 
 test('exit confirmation clears only the exact persisted execution lease before a successor starts',()=>{
  const f=fixture();try{
   const w=openWorker(f),actor=running(f,w.runId);f.store.setMeta('lease:'+w.runId,'current-owner');complete(f,actor,'Readable output',false);
-  f.tasks.workerSend(main,{operationId:'followup',workerId:w.workerId,text:'Continue only after exit'});
+  assert.equal(f.tasks.workerMessage(main,{operationId:'followup',workerId:w.workerId,text:'Continue only after exit'}).state,'blocked');
   assert.equal(f.tasks.confirmWorkerExit(w.runId,'wrong-owner'),false);assert.equal(f.store.meta('lease:'+w.runId),'current-owner');assert.equal(f.tasks.claim(),undefined);
   assert.equal(f.tasks.confirmWorkerExit(w.runId,'current-owner'),true);assert.equal(f.store.meta('lease:'+w.runId),undefined);
+  assert.equal(f.tasks.claim(),undefined);f.tasks.workerMessage(main,{operationId:'after-exit',workerId:w.workerId,text:'Continue only after exit'});
   const next=f.tasks.claim()!;assert.equal(next.workerId,w.workerId);assert.equal(f.tasks.claim(),undefined);
  }finally{f.close();}
 });

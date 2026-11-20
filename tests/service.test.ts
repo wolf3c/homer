@@ -96,7 +96,7 @@ function fixture(
         if(p.taskId){
           const existing=await this.call("work_inspect",{taskId:p.taskId});
           await this.call("task_update",{taskId:p.taskId,goal:p.goal??"按新要求整理行动清单"});
-          return this.call("worker_send",{workerId:existing.workers[0].workerId,message:"按新要求整理行动清单"});
+          return this.call("worker_message",{workerId:existing.workers[0].workerId,message:"按新要求整理行动清单"});
         }
         const material=p.material??"meeting.md";
         return openTaskWorker(this,"Synthetic task",title+"：整理 "+material+" 的行动清单",{attachments:[{path:resolve(config.workspace,material)}]});

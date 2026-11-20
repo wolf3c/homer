@@ -21,10 +21,10 @@ export const RECURSIVE_TOOLS: Tool[] = [
   tool('work_inspect', 'Select exactly one taskId, messageId or host-returned operationKey. Read a task and its Worker sessions, an authorized user-conversation message, or an operation receipt. With taskId, sourceRequestId selects an original user instruction for review. A receipt or history reference does not authorize replay.', {taskId: str, sourceRequestId: str, messageId: str, operationKey: str}, []),
   tool('task_update', 'Update goal or notes, or explicitly pause, resume, cancel or settle the whole task. '
     + 'To settle, send only taskId, action "settle", outcome ("succeeded", "partial" or "failed"), and optional notes. When the whole assignment has ended, settle it and choose the outcome from the recorded work. Keep it open while required work or observation remains. '
-    + 'A goal change requires actual user authority. A paused goal change stays paused. Resume can include a new goal, and reopening settled work requires a new user request. Neither starts a Worker.',
+    + 'Goal changes require a user source and leave existing Worker assignments intact. Interrupt Workers separately before pausing or cancelling. Resume keeps Workers idle; reopening settled work requires a new user request.',
     {taskId: str, goal: text, notes: {type: 'string', maxLength: 24000}, action: enumeration('pause', 'resume', 'cancel', 'settle'), outcome: enumeration('succeeded', 'partial', 'failed'), reason: text}, ['taskId']),
   tool('worker_open', 'Open a Worker on an existing task under the user’s delegation. Omit message to assign its current goal, or provide this Worker’s specific instructions. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.', {taskId: str, message: text, workingDirectory: str, attachments}, ['taskId']),
-  tool('worker_send', 'Send a message to the existing Worker conversation. An idle session resumes its native thread and a busy one queues the message. immediate=true supplements the exact current turn. Optional attachments each select either an absolute path or an exact assetId and revision. Inspect the original receipt for unknown effects.', {workerId: str, message: text, immediate: {type: 'boolean'}, attachments}, ['workerId', 'message']),
+  tool('worker_message', 'Message an existing Worker. Steer its executing turn or continue its confirmed idle thread. If unavailable, inspect its state or await its report. No message is queued for a later turn. Inspect the original receipt after an unknown result.', {workerId: str, message: text, attachments}, ['workerId', 'message']),
   tool('worker_read', 'Read original public messages and execution facts for one Worker conversation. Follow nextCursor using after. Select messageId and optionally itemId from nativeMessages to read one original public item. Follow nextOffset using offset for long text.', {workerId: str, after: integer, limit: {type: 'integer', minimum: 1, maximum: 50}, messageId: str, itemId: str, offset: integer}, ['workerId']),
   tool('worker_interrupt', 'Interrupt the selected Worker conversation current execution, retaining history and other sessions. Requested is distinct from confirmed exit. Do not replace or resume an execution whose exit or side effects remain unknown.', {workerId: str, reason: text}, ['workerId']),
   tool('archive_work', 'Archive one exact settled task only under a real user turn and its actual authorization. Inspect completion, stopped executions and unresolved actions first. Does not stop work, delete conversations/files or authorize cleanup.', {taskId: str}),
@@ -165,9 +165,10 @@ export class RecursiveTools {
     } else if (name === 'worker_open') {
       result=this.tasks.workerOpen(actor,{operationId,taskId:string(a.taskId,200),text:a.message as string|undefined,
         workingDirectory:a.workingDirectory as string|undefined},prepare,()=>this.effects.rootAuthority(actor));
-    } else if (name === 'worker_send') {
-      const receipt = this.tasks.workerSend(actor,{operationId,workerId:string(a.workerId,200),text:string(a.message,24000),immediate:a.immediate as boolean|undefined},prepare);
-      result = a.immediate ? await this.effects.steer(receipt) : receipt;
+    } else if (name === 'worker_message') {
+      const receipt = this.tasks.workerMessage(actor,{operationId,workerId:string(a.workerId,200),text:string(a.message,24000)},prepare);
+      if(receipt.route==='blocked')return receipt;
+      result = receipt.route === 'steer' ? await this.effects.steer(receipt) : receipt;
     } else if (name === 'worker_interrupt') {
       result = await this.effects.stop(this.tasks.workerStop(actor, {operationId, workerId: string(a.workerId, 200), ...(a.reason === undefined ? {} : {reason: string(a.reason, 24000)})}));
     } else {
@@ -181,12 +182,10 @@ export class RecursiveTools {
         } else if (a.action !== undefined) {
           const goal=a.goal===undefined?undefined:string(a.goal,24000);
           const authority=a.action==='resume'&&(goal!==undefined||task.state==='settled')?this.effects.rootAuthority(actor):undefined;
-          const receipt = this.tasks.controlTask(actor, {...mutation, action: a.action as 'pause' | 'resume' | 'cancel', goal,authority,...(a.reason === undefined ? {} : {reason: string(a.reason, 24000)})});
-          result = a.action === 'resume' ? receipt : await this.effects.stop(receipt);
+          result = this.tasks.controlTask(actor, {...mutation, action: a.action as 'pause' | 'resume' | 'cancel', goal,authority,...(a.reason === undefined ? {} : {reason: string(a.reason, 24000)})});
         } else {
           if (a.outcome !== undefined || a.reason !== undefined || a.goal === undefined && a.notes === undefined) throw Error('invalid_tool_arguments');
-          const receipt = this.tasks.updateTask(actor, {...mutation, patch: {...(a.goal === undefined ? {} : {goal: string(a.goal, 24000)}), ...(a.notes === undefined ? {} : {notes: a.notes as string})}, ...(a.goal === undefined ? {} : {authority: this.effects.rootAuthority(actor)})});
-          result = a.goal !== undefined && receipt.targets.length ? await this.effects.stop(receipt) : receipt;
+          result = this.tasks.updateTask(actor, {...mutation, patch: {...(a.goal === undefined ? {} : {goal: string(a.goal, 24000)}), ...(a.notes === undefined ? {} : {notes: a.notes as string})}, ...(a.goal === undefined ? {} : {authority: this.effects.rootAuthority(actor)})});
         }
       } else if (name === 'archive_work' || name === 'restore_work') {
         result = this.tasks.archiveHistory(actor, mutation, name === 'archive_work');

@@ -74,7 +74,7 @@ for(const acrossSources of [false,true])test('pinned Codex drives a simulated ch
         output=answer(phase==='report'?report:'Worker internal result');
       }else if(phase==='reuse-worker'){
         output=internal?answer('Worker continuity observed','commentary'):last?.type==='function_call_output'?answer('Existing Worker continued'):
-          call('worker_send',{workerId:app!.store.runs()[0]!.workerId,message:'Continue the same authorized synthetic channel test.'});
+          call('worker_message',{workerId:app!.store.runs()[0]!.workerId,message:'Continue the same authorized synthetic channel test.'});
       }else if(internal){
         if(phase==='before'&&last?.type!=='function_call_output'){
           output=call('set_notification_destination',{taskId},'mcp__homer_interactions');

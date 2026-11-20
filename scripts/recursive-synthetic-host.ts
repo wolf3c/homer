@@ -19,7 +19,7 @@ export function syntheticHost(failChild=false,retainRuntime=false){
   async call(tool:string,args:unknown):Promise<any>{return this.handler({threadId:this.threadId,turnId:this.turnId!,callId:'synthetic-call-'+ ++sequence,tool,arguments:args});}
   createTask(goal:string,notes?:string){return this.call('task_create',{goal,title:goal.slice(0,48),...(notes===undefined?{}:{notes})});}
   openWorker(taskId:string,message:string){return this.call('worker_open',{taskId,message});}
-  send(workerId:string,message:string,immediate=false){return this.call('worker_send',{workerId,message,...(immediate?{immediate}: {})});}
+  send(workerId:string,message:string){return this.call('worker_message',{workerId,message});}
   inspect(taskId:string){return this.call('work_inspect',{taskId});}
   async turn(text:string,hooks?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
    this.turnId='synthetic-turn-'+ ++sequence;this.turns++;hooks?.onStarted?.(this.turnId);

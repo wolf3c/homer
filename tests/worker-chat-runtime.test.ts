@@ -53,7 +53,7 @@ test('an idle conversation follow-up resumes its exact native thread in a new Ru
     f.setScript(async(main,text)=>{
       if(text==='start'){
         workerId=(await openTaskWorker(main,'Read A.')).workerId;
-      }else if(!followed){followed=true;await main.call('worker_send',{workerId,message:'Explain the observation.'});}
+      }else if(!followed){followed=true;await main.call('worker_message',{workerId,message:'Explain the observation.'});}
       return {status:'completed',text:text==='start'?'Started.':'',messages:[]};
     });
     await f.app.start();await f.app.message('start','user-followup');
@@ -73,55 +73,42 @@ test('an idle conversation follow-up resumes its exact native thread in a new Ru
   }finally{await f.close();}
 });
 
-test('busy ordinary messages wait for confirmed exit and preserve their order in one resumed turn',async()=>{
-  const f=fixture();let workerId='';
+test('a goal edit leaves both original Runs live; Homer steers just the report and reviews its original-version reply',async()=>{
+  const f=fixture(),steers:string[]=[];
+  let taskId='',reportId='',reviewed=false;
+  const report=join(f.app.config.workspace,'report.txt');
+  const link='[报告]('+pathToFileURL(report).href+')';
   try{
     f.setScript(async(main,text)=>{
       if(text==='start'){
-        workerId=(await openTaskWorker(main,'First')).workerId;
-      }else if(text==='queue'){
-        for(const message of ['Second','Third'])assert.equal((await main.call('worker_send',{workerId,message})).runId,null);
+        taskId=(await openTaskWorker(main,'Investigate the fault')).taskId;
+        reportId=(await main.call('worker_open',{taskId,message:'Prepare the report'})).workerId;
+      }else if(text==='中文报告'){
+        await main.call('task_update',{taskId,goal:'Investigate the fault and deliver the report in Chinese'});
+        await main.call('worker_message',{workerId:reportId,message:'用中文撰写报告'});
+      }else if(text.includes('"kind":"worker_reply"')&&text.endsWith(link)){
+        reviewed=true;
+        assert.equal(JSON.parse(text.split('\n')[1]!).version,1);
+        return {status:'completed',text:link,messages:[{itemId:'reviewed-report',phase:'final_answer',text:link}]};
       }
-      return {status:'completed',text:'Recorded',messages:[]};
-    });
-    await f.app.start();await f.app.message('start','ordered-start');
-    await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
-    const first=f.engines.find(engine=>engine.options.role==='worker')!;
-    await f.app.message('queue','ordered-queue');
-    assert.equal(f.engines.filter(engine=>engine.options.role==='worker').length,1);
-    first.finish!({status:'completed',text:'First answer',messages:[{itemId:'first',phase:'final_answer',text:'First answer'}]});
-    await until(()=>f.engines.filter(engine=>engine.options.role==='worker').length===2);
-    const second=f.engines.filter(engine=>engine.options.role==='worker')[1]!;
-    await until(()=>!!second.finish);
-    const runs=f.app.tasks.runs(undefined,workerId);assert.equal(runs.length,2);assert.equal(runs[1]!.prompt,'Second\n\nThird');
-    assert.equal(second.options.threadId,first.threadId);
-    second.finish!({status:'completed',text:'Done',messages:[{itemId:'done',phase:'final_answer',text:'Done'}]});
-    await f.app.idle();
-  }finally{await f.close();}
-});
-
-test('a changed goal stops every old executor and rejects queued old-version messages',async()=>{
-  const f=fixture();let taskId='',workers:string[]=[];
-  try{
-    f.setScript(async(main,text)=>{
-      if(text==='start'){
-        const first=await openTaskWorker(main,'Original synthetic scope: A');
-        taskId=first.taskId;workers.push(first.workerId);
-        workers.push((await main.call('worker_open',{taskId,message:'B'})).workerId);
-      }else if(text==='change'){
-        await main.call('worker_send',{workerId:workers[0],message:'Old queued action'});
-        const changed=await main.call('task_update',{taskId,goal:'Revised synthetic scope'});
-        assert.equal(changed.state,'confirmed');
-      }
-      return {status:'completed',text:'Recorded',messages:[]};
+      return {status:'completed',text:'',messages:[]};
     });
     await f.app.start();await f.app.message('start','scope-start');
-    await until(()=>f.engines.filter(engine=>engine.options.role==='worker'&&engine.finish).length===2);
-    await f.app.message('change','scope-change');await f.app.idle();
-    const task=f.app.tasks.task(taskId);assert.equal(task.headVersion,2);assert.equal(task.state,'open');assert.equal(task.controlState,'normal');
-    const runs=f.app.tasks.runs(taskId);assert.equal(runs.length,2);
-    for(const run of runs){assert.equal(run.version,1);assert.equal(run.status,'cancelled');assert.equal(run.phase,'ended');}
-    assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='worker_input' AND r.state IN ('pending','offered','received')").get()!.n,0);
+    await until(()=>f.engines.filter(e=>e.options.role==='worker'&&e.finish).length===2);
+    const workers=f.engines.filter(e=>e.options.role==='worker');
+    const writer=workers.find(e=>e.input?.endsWith('Prepare the report'))!;
+    for(const e of workers)e.steer=async(turnId,message)=>{assert.equal(e,writer);steers.push(message);return {turnId};};
+    await f.app.message('中文报告','scope-change');
+    assert.deepEqual(steers,['用中文撰写报告']);
+    assert.equal(f.app.tasks.task(taskId).headVersion,2);
+    for(const run of f.app.tasks.runs(taskId)){assert.equal(run.version,1);assert.equal(run.status,'running');assert.equal(run.stopRequestedAt,null);}
+    writeFileSync(report,'中文报告');
+    for(const e of workers)e.finish!({status:'completed',text:e===writer?link:'Fact checked'});
+    await f.app.idle();
+    assert.equal(reviewed,true);assert.equal(f.app.tasks.runs(taskId).length,2);
+    const final=f.app.history.list(f.app.store.meta('mainThread')!).find(m=>m.role==='assistant'&&m.audience==='user'&&m.attachments?.length);
+    assert.equal(final?.taskVersion,2);
+    assert.deepEqual(f.app.readCommittedMessage(final!.id,{taskId,taskVersion:2})?.attachments,final!.attachments);
   }finally{await f.close();}
 });
 
@@ -134,7 +121,10 @@ test('goal edits keep prior user sources until a settled resume supplies replace
   f.setScript(async(main,text)=>{
    if(text===original)taskId=(await openTaskWorker(main,"Synthetic task",original)).taskId;
    else if(text===expanded||text===revised)await main.call('task_update',{taskId,goal:text});
-   else if(text==='Pause')await main.call('task_update',{taskId,action:'pause'});
+   else if(text==='Pause'){
+    await main.call('worker_interrupt',{workerId:f.app.tasks.workers(taskId)[0]!.workerId});
+    await main.call('task_update',{taskId,action:'pause'});
+   }
    else if(text==='Try resuming, otherwise cancel'){
     await assert.rejects(main.call('task_update',{taskId,action:'resume'}),/task_authority_source_denied/);
     await main.call('task_update',{taskId,action:'cancel'});
@@ -177,6 +167,7 @@ for(const kind of ['worker_reply','interaction_required'] as const)for(const con
         const worker=f.engines.find(engine=>engine.options.role==='worker')!;
         worker.emit('agentMessage',{threadId:worker.threadId,turnId:worker.turnId,itemId:'old-observation',phase:'final_answer',text:raw,completed:true});
         if(kind==='interaction_required'){question=worker.call('ask_main',{question:'Continue the original scope?'});void question.catch(()=>{});await until(()=>f.app.interactions.list().length===1);}
+        await main.call('worker_interrupt',{workerId:f.app.tasks.workers(taskId)[0]!.workerId});
         await main.call('task_update',control==='change'?{taskId,goal:'Only inspect the newly restricted synthetic scope'}:{taskId,action:control});
       }else if(!handled&&text.includes('"kind":"'+kind+'"')){
         handled=true;
@@ -352,6 +343,35 @@ test('a failed received input retains its committed open and restart never repla
   }finally{await f.close();}
 });
 
+test('retry of a blocked message with a file reuses its receipt after the Worker becomes ready',async()=>{
+ const f=fixture();let workerId='',checked=false;
+ try{
+  f.setScript(async(main,text)=>{
+   if(text==='open')workerId=(await openTaskWorker(main,'Inspect the file')).workerId;
+   if(text==='send file'){
+    const run=f.app.tasks.run(workerId),path=join(f.app.config.workspace,'sample.txt');
+    writeFileSync(path,'Synthetic file');
+    const args={workerId,message:'Read the sample',attachments:[{path}]};
+    f.app.tasks.rpc(run.id,run.epoch,true);
+    const blocked=await main.call('worker_message',args,'send-file');
+    assert.equal(blocked.route,'blocked');
+    f.app.tasks.rpc(run.id,run.epoch,false);
+    unlinkSync(path);
+    assert.deepEqual(await main.call('worker_message',args,'send-file'),blocked);
+    const db=f.app.store.db;
+    assert.equal(db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='worker_input'").get()!.n,1);
+    assert.equal(db.prepare("SELECT state FROM operations WHERE kind='attachment_stage'").get()!.state,'failed');
+    assert.equal(db.prepare("SELECT count(*) n FROM media_pins WHERE scope LIKE 'operation:%'").get()!.n,0);
+    checked=true;
+   }
+   return {status:'completed',text:'Reviewed',messages:[]};
+  });
+  await f.app.start();await f.app.message('open','blocked-open');
+  await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+  await f.app.message('send file','blocked-send');assert.equal(checked,true);
+ }finally{await f.close();}
+});
+
 test('a failed received Worker input cannot repeat its committed immediate message on restart',async()=>{
  const f=fixture();let workerId='',steers=0,attempted=false,recovered=false;
  try{
@@ -360,11 +380,11 @@ test('a failed received Worker input cannot repeat its committed immediate messa
     const first=await openTaskWorker(main,'Collect the finding');
     workerId=(await main.call('worker_open',{taskId:first.taskId,message:'Wait for the finding'})).workerId;
    }else if(text.includes('Exact synthetic finding')){
-    const args={workerId,message:'Incorporate this exact finding',immediate:true};
+    const args={workerId,message:'Incorporate this exact finding'};
     if(!attempted){
      attempted=true;
-     assert.equal((await main.call('worker_send',args,'committed-immediate')).state,'received');
-     assert.equal((await main.call('worker_send',args,'committed-immediate')).state,'received');
+     assert.equal((await main.call('worker_message',args,'committed-immediate')).state,'received');
+     assert.equal((await main.call('worker_message',args,'committed-immediate')).state,'received');
      throw Error('synthetic_response_lost');
     }
    }else if(text==='review original steer'){
@@ -389,8 +409,9 @@ test('archival follow-up binds only the current notification original user sourc
   try{
     f.setScript(async(main,text)=>{
       if(text==='prepare'){
-        original=(await main.call('task_create',{title:"Original completed goal",goal:'Original completed goal'})).taskId;
-        await main.call('task_update',{taskId:original,goal:'Original completed goal'});
+        const assigned=await openTaskWorker(main,'Original completed goal');
+        original=assigned.taskId;
+        await main.call('worker_interrupt',{workerId:assigned.workerId});
         await main.call('task_update',{taskId:original,action:'settle',outcome:'succeeded'});
       }else if(text==='archive'){
         const receipt=await main.call('archive_work',{taskId:original});assert.equal(receipt.state,'archived');
@@ -406,7 +427,7 @@ test('archival follow-up binds only the current notification original user sourc
     });
     await f.app.start();await f.app.message('unrelated','unrelated-source');await f.app.message('prepare','prepare-source');
     await f.app.message('archive','archive-source');await until(()=>!!followup&&f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
-    f.engines.find(engine=>engine.options.role==='worker')!.finish!({status:'completed',text:'Checked archive'});await f.app.idle();
+    f.engines.find(engine=>engine.options.role==='worker'&&engine.finish)!.finish!({status:'completed',text:'Checked archive'});await f.app.idle();
     assert.ok(followup);assert.equal(f.app.tasks.task(original).historyState,'archived');assert.equal(f.app.tasks.task(original).state,'settled');
     assert.equal(f.app.tasks.authority(followup,1).sourceRequestId,'prepare-source');
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='task_archived'").get()!.n,1);
@@ -418,8 +439,9 @@ for(const action of ['allow','deny','stop'] as const)test('archive command appro
   try{
     f.setScript(async(main,text)=>{
       if(text==='prepare'){
-        taskId=(await main.call('task_create',{title:"Synthetic archived task",goal:'Synthetic archived task'})).taskId;
-        await main.call('task_update',{taskId,goal:'Synthetic archived task'});
+        const assigned=await openTaskWorker(main,'Synthetic archived task');
+        taskId=assigned.taskId;
+        await main.call('worker_interrupt',{workerId:assigned.workerId});
         await main.call('task_update',{taskId,action:'settle',outcome:'succeeded'});
       }else if(text==='archive')await main.call('archive_work',{taskId});
       else if(text.includes('"kind":"task_archived"')){
@@ -493,8 +515,9 @@ test('a received archive input cannot create another Task on restart after a los
   try{
     f.setScript(async(main,text)=>{
       if(text==='prepare'){
-        original=(await main.call('task_create',{title:"Original completed goal",goal:'Original completed goal'})).taskId;
-        await main.call('task_update',{taskId:original,goal:'Original completed goal'});
+        const assigned=await openTaskWorker(main,'Original completed goal');
+        original=assigned.taskId;
+        await main.call('worker_interrupt',{workerId:assigned.workerId});
         await main.call('task_update',{taskId:original,action:'settle',outcome:'succeeded'});
       }else if(text==='archive')await main.call('archive_work',{taskId:original});
       else if(text.includes('"kind":"task_archived"')){
@@ -525,7 +548,7 @@ test('a mismatched resumed native thread cannot replace the durable Worker bindi
     f.setScript(async(main,text)=>{
       if(text==='start'){
         workerId=(await openTaskWorker(main,'First')).workerId;
-      }else if(!followed){followed=true;await main.call('worker_send',{workerId,message:'Follow up'});}
+      }else if(!followed){followed=true;await main.call('worker_message',{workerId,message:'Follow up'});}
       return {status:'completed',text:text==='start'?'Started':'',messages:[]};
     });
     await f.app.start();await f.app.message('start','exact-thread-source');

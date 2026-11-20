@@ -11,6 +11,7 @@ const originalHash='e6d674a05ae34945a5e234a2b1f55029f0d319e51371f448911845224062
 const v014Hash='f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe';
 const optionalTitleHash='d8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150';
 const precedingHash='3dcdac3082ccab73356fe9632796de5cb017b960195226edfb123b322cd94a2e';
+const workerSendHash='3874cdfbd5bf237022ca72815f8a5d9ffa01c1a15659320c0d6b2aa4644498ca';
 const currentHash=createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex');
 const parent=resolve('.codex/scratch/macos-desktop-application/tools-resume');mkdirSync(parent,{recursive:true});
 function fixture(savedHash){
@@ -33,7 +34,7 @@ test('resume retains the exact complete current dynamic catalog and original thr
   assert.deepEqual(f.catalog(),[...MAIN_TOOLS,...RECURSIVE_TOOLS]);
  }finally{await f.app.close({requireAllOwnersConfirmed:true});rmSync(f.root,{recursive:true,force:true});}
 });
-for(const hash of [precedingHash,originalHash,v014Hash,optionalTitleHash,'615506d5ebbfc9ade218daa6793de1b0318d10a3016463b99da0395d498aaccf','2741b9169535017c5b55d191ee7a246333f0074ee0162a951be11f370cd84b19','f'.repeat(64)])test('an obsolete or unknown tools fingerprint cannot create or replace an existing thread: '+hash.slice(0,8),async()=>{
+for(const hash of [workerSendHash,precedingHash,originalHash,v014Hash,optionalTitleHash,'615506d5ebbfc9ade218daa6793de1b0318d10a3016463b99da0395d498aaccf','2741b9169535017c5b55d191ee7a246333f0074ee0162a951be11f370cd84b19','f'.repeat(64)])test('an obsolete or unknown tools fingerprint cannot create or replace an existing thread: '+hash.slice(0,8),async()=>{
  const f=fixture(hash);
  try{
   await assert.rejects(f.app.start({keepManagementOnFailure:true}),/main_tools_migration_required/);assert.equal(f.starts(),0);

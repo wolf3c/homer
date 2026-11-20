@@ -43,9 +43,9 @@ export function restartHost(root:string,scenario:string,seed=false,desktop=false
    }else if(text==='interrupt'){
     await this.call('worker_interrupt',{workerId:app.store.runs()[0]!.workerId});
    }else if(text==='steer'){
-    await this.call('worker_send',{workerId:app.store.runs()[0]!.workerId,message:'Immediately supplement the old turn',immediate:true});
+    await this.call('worker_message',{workerId:app.store.runs()[0]!.workerId,message:'Immediately supplement the old turn'});
    }else if(text==='followup'){
-    const run=app.store.runs()[0]!;attempts.push(...await Promise.allSettled([this.call('worker_send',{workerId:run.workerId,message:'Check the remaining date'})]));
+    const run=app.store.runs()[0]!;attempts.push(...await Promise.allSettled([this.call('worker_message',{workerId:run.workerId,message:'Check the remaining date'})]));
    }else if(text==='settle'){
     const taskId=app.tasks.tasks()[0]!.id;
     await this.call('task_update',{taskId,action:'settle',outcome:'succeeded'});
@@ -85,7 +85,22 @@ export function restartHost(root:string,scenario:string,seed=false,desktop=false
  }
  if(seed&&scenario==='closed-before-return')app.tasks.endSegment=()=>{process.exit(74);};
  if(seed&&scenario==='queued-before-start'){const claim=app.tasks.claim.bind(app.tasks);app.tasks.claim=(id?:string)=>{if(app.store.runs().length)process.exit(74);return claim(id);};}
- if(seed&&scenario.startsWith('stop-intent:'))app.tasks.confirmStop=()=>{process.exit(74);};
+ if(seed&&scenario.startsWith('stop-intent:'))app.tasks.confirmStop=(stopKey)=>{
+  const action=scenario.slice('stop-intent:'.length);
+  if(action!=='interrupt'){
+   // Reconstruct a stop already accepted by the pre-worker_message host.
+   const db=app.store.db,run=app.store.runs()[0]!,kind=action==='change-goal'?'task_update':'task_control';
+   const prior=db.prepare('SELECT id,responseJson FROM operations WHERE kind=? AND scopeId=? ORDER BY rowid DESC LIMIT 1').get(kind,run.taskId)!;
+   const receipt={...JSON.parse(String(prior.responseJson)),state:'requested',targets:[run.id]};
+   delete receipt.blockers;
+   app.store.transaction(()=>{
+    db.prepare("UPDATE tasks SET controlState='stopping' WHERE id=?").run(run.taskId);
+    db.prepare("UPDATE operations SET state='accepted',detailsJson=json_set(detailsJson,'$.action',?,'$.runIds',json(?)),responseJson=? WHERE id=?").run(action==='change-goal'?'update':action,JSON.stringify([run.id]),JSON.stringify(receipt),prior.id!);
+    db.prepare('DELETE FROM operations WHERE id=?').run(stopKey);
+   });
+  }
+  process.exit(74);
+ };
  if(seed&&scenario==='steer-intent:accepted')app['applySteer']=async()=>{process.exit(74);};
  return {app,active,attempts,engines};
 }
@@ -93,8 +108,12 @@ export function restartHost(root:string,scenario:string,seed=false,desktop=false
 if(process.argv[1]===fileURLToPath(import.meta.url)){
  const [root,scenario]=process.argv.slice(2) as [string,string],{app,active}=restartHost(root,scenario,true);
  await app.start();await app.message('open','source');await active;
- if(scenario==='goal-change'){await app.message('change-goal','changed-source');await app.idle();}
- if(scenario.startsWith('stop-intent:'))await app.message(scenario.slice('stop-intent:'.length),'stop-request');
+ if(scenario==='goal-change')await app.message('change-goal','changed-source');
+ if(scenario.startsWith('stop-intent:')){
+  const action=scenario.slice('stop-intent:'.length);
+  if(action!=='interrupt')await app.message(action,'legacy-intent-request');
+  await app.message('interrupt','stop-request');
+ }
  if(scenario.startsWith('steer-intent:'))await app.message('steer','steer-request');
  if(scenario==='reply'||scenario.startsWith('message-'))await app.idle();
  if(scenario.startsWith('message-'))await app.message('send','send-request');

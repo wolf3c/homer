@@ -187,9 +187,10 @@ test('task settlement and controls use exact confirmed operation and input ident
   const db=f.store.db,task=f.create(),actor={...f.actor,turnId:'turn:'+f.authority.sourceRequestId};
   const receipt=(operationId:string)=>({operationId,taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision});
   const worker=f.tasks.workerOpen(actor,{operationId:'open',taskId:task.taskId,text:'Synthetic input'});
-  const stop=f.tasks.controlTask(actor,{...receipt('pause'),action:'pause'});
+  const stop=f.tasks.workerStop(actor,{operationId:'stop',workerId:worker.workerId});
   assert.deepEqual(stop.targets,[worker.runId]);
-  const paused=f.tasks.confirmStop(stop.operationKey,true);
+  f.tasks.confirmStop(stop.operationKey,true);
+  const paused=f.tasks.controlTask(actor,{...receipt('pause'),action:'pause'});
   f.consumeMain(String(db.prepare("SELECT id FROM agent_messages WHERE senderRunId=? AND kind='worker_reply'").get(worker.runId)!.id));
   const resumed=f.tasks.controlTask(actor,{...receipt('resume'),action:'resume'});
   const settled=f.tasks.settleTask(actor,{...receipt('settle'),outcome:'failed',notes:'PRIVATE_NOTES'});

@@ -27,18 +27,18 @@ test('an exact attachment follows its delivered Worker message and grants no pro
  }finally{f.close();}
 });
 
-test('queued attachments stay unavailable until offered; steer becomes visible only during exact dispatch',()=>{
+test('a steered attachment is visible only during exact dispatch; an idle message grants its own attachment',()=>{
  const f=fixture();try{
   const worker=f.tasks.workerOpen(main,{operationId:'open',taskId:f.task.taskId,text:'First',attachments:[selected]});
   const actor=running(f,worker.runId);
-  f.tasks.workerSend(main,{operationId:'queue',workerId:worker.workerId,text:'Later',attachments:[additional]});
-  const receipt=f.tasks.workerSend(main,{operationId:'steer',workerId:worker.workerId,text:'Now',immediate:true,attachments:[steered]});
+  const receipt=f.tasks.workerMessage(main,{operationId:'steer',workerId:worker.workerId,text:'Now',attachments:[steered]});
   assert.deepEqual(f.tasks.workerAttachments(actor),[selected]);
   f.tasks.markSteer(receipt.operationKey,'dispatching');
   assert.deepEqual(f.tasks.workerAttachments(actor),[selected,steered]);
   assert.throws(()=>f.tasks.workerAttachments({...actor,turnId:'another-turn'}),/run_not_live/);
   f.tasks.markSteer(receipt.operationKey,'received');
   complete(f,actor);
+  f.tasks.workerMessage(main,{operationId:'queue',workerId:worker.workerId,text:'Later',attachments:[additional]});
   const next=f.tasks.claim()!;
   assert.deepEqual(f.tasks.offeredWorkerAttachments(next.id),[additional]);
   f.tasks.bind(next.id,next.epoch,actor.threadId!,'turn:followup');
@@ -51,15 +51,15 @@ test('queued attachments stay unavailable until offered; steer becomes visible o
 test('a failed steering receipt and a revoked source cannot restore attachment access',()=>{
  const f=fixture();try{
   const worker=openWorker(f),actor=running(f,worker.runId);
-  const receipt=f.tasks.workerSend(main,{operationId:'steer',workerId:worker.workerId,text:'Supplement',immediate:true,attachments:[selected]});
+  const receipt=f.tasks.workerMessage(main,{operationId:'steer',workerId:worker.workerId,text:'Supplement',attachments:[selected]});
   f.tasks.markSteer(receipt.operationKey,'dispatching');f.tasks.markSteer(receipt.operationKey,'failed');
   f.tasks.updateTask(main,{...mutation(f,'notes'),patch:{notes:'Read the ungranted asset anyway'}});
   assert.deepEqual(f.tasks.workerAttachments(actor),[]);
   const source=f.source('withdrawal','Remove the old scope');
-  const changed=f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'Use revised scope'},authority:authority('withdrawal')});
-  assert.throws(()=>f.tasks.workerAttachments(actor),/epoch|stop|version|live/);
-  f.tasks.confirmWorkerExit(actor.runId!,undefined);f.tasks.confirmStop(changed.operationKey,true);
-  const continuation=f.tasks.workerSend(source,{operationId:'continue',workerId:worker.workerId,text:'Continue after confirmed exit'});
+  f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'Use revised scope'},authority:authority('withdrawal')});
+  assert.deepEqual(f.tasks.workerAttachments(actor),[]);
+  complete(f,actor);
+  const continuation=f.tasks.workerMessage(source,{operationId:'continue',workerId:worker.workerId,text:'Continue after confirmed exit'});
   assert.deepEqual(f.tasks.workerAttachments(running(f,continuation.runId!)),[]);
  }finally{f.close();}
 });

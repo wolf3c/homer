@@ -8,6 +8,6 @@ export function progressLabel(tool:string):MainProgress['label']{
  if(tool==='inspect_interaction')return '检查协作请求';
  if(tool==='respond_interaction')return '答复协作请求';
  if(tool==='escalate_interaction')return '转交用户确认';
- if(tool==='worker_send')return '发送协作消息';
+ if(tool==='worker_message'||tool==='worker_send')return '发送协作消息';
  return '调用工具';
 }

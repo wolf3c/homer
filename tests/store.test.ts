@@ -11,20 +11,20 @@ test('durable conversation operations are idempotent and followups retain one ta
   const task=f.create(),input={operationId:'open',taskId:task.taskId,text:'Inspect the first source'};
   const first=f.tasks.workerOpen(f.actor,input);assert.deepEqual(f.tasks.workerOpen(f.actor,input),first);assert.equal(f.store.runs().length,1);
   const run=f.start(first.workerId);assert.equal(f.tasks.claim(run.id),undefined);f.tasks.failRun(run.id,run.epoch,'observed_failure');
-  const next=f.tasks.workerSend(f.actor,{operationId:'followup',workerId:first.workerId,text:'Explain the failure'});
+  const next=f.tasks.workerMessage(f.actor,{operationId:'followup',workerId:first.workerId,text:'Explain the failure'});
   assert.equal(f.tasks.run(next.runId!).workerId,first.workerId);assert.equal(f.tasks.run(next.runId!).threadId,run.threadId);assert.equal(f.tasks.run(next.runId!).taskId,task.taskId);
   assert.equal(f.store.runs().length,2);assert.equal(f.tasks.run(run.id).errorCode,'observed_failure');
  }finally{f.close();}
 });
 
-test('independent conversations claim together and changing one task fences only its old executions',()=>{
+test('independent conversations claim together and editing a task leaves both original assignments intact',()=>{
  const f=chatFixture();try{
   const a=f.create(),b=f.create('Independent task','other');
   const aa=f.tasks.workerOpen(f.actor,{operationId:'a',taskId:a.taskId,text:'A'}),bb=f.tasks.workerOpen(f.actor,{operationId:'b',taskId:b.taskId,text:'B'}),ar=f.start(aa.workerId),br=f.start(bb.workerId);
   assert.equal(f.store.runs().filter(run=>run.status==='running').length,2);
   const change=f.tasks.updateTask(f.actor,{operationId:'change',taskId:a.taskId,expectedRevision:1,patch:{goal:'Revised scope'},authority:f.authority});
-  assert.deepEqual(change.targets,[ar.id]);assert.ok(f.tasks.run(ar.id).stopRequestedAt);assert.deepEqual(f.tasks.run(br.id),br);
-  assert.equal(f.tasks.task(a.taskId).controlState,'stopping');assert.equal(f.tasks.task(b.taskId).controlState,'normal');
+  assert.deepEqual(change.targets,[]);assert.deepEqual(f.tasks.run(ar.id),ar);assert.deepEqual(f.tasks.run(br.id),br);
+  assert.equal(f.tasks.task(a.taskId).controlState,'normal');assert.equal(f.tasks.task(b.taskId).controlState,'normal');
  }finally{f.close();}
 });
 
@@ -44,11 +44,11 @@ test('terminal replies are idempotent and unknown steering survives reconciliati
   assert.deepEqual(f.tasks.endSegment(run.id,run.epoch,terminal,true),reply);
   assert.equal(f.tasks.inbox(f.actor).filter(message=>message.kind==='worker_reply').length,1);
   const worker=f.tasks.workerOpen(f.actor,{operationId:'new',taskId:task.taskId,text:'Inspect next'}),second=f.start(worker.workerId);
-  const sent=f.tasks.workerSend(f.actor,{operationId:'supplement',workerId:second.workerId,text:'Confirm unknown effect',immediate:true});
+  const sent=f.tasks.workerMessage(f.actor,{operationId:'supplement',workerId:second.workerId,text:'Confirm unknown effect'});
   f.tasks.markSteer(sent.operationKey,'dispatching');f.tasks.reconcile();f.tasks.reconcile();
   assert.equal(f.tasks.operation(sent.operationKey).state,'uncertain');
   assert.equal(f.tasks.claim(),undefined);
-  assert.throws(()=>f.tasks.workerSend(f.actor,{operationId:'retry',workerId:second.workerId,text:'Retry unknown',immediate:true}),/operation_uncertain/);
+  assert.equal(f.tasks.workerMessage(f.actor,{operationId:'retry',workerId:second.workerId,text:'Retry unknown'}).reason,'operation_uncertain');
  }finally{f.close();}
 });
 

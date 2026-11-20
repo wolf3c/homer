@@ -21,7 +21,7 @@ test('projection reads two real sessions without inventing Tasks or requiring fo
 test('same-session followup replaces its latest Run projection and preserves historical version and thread',()=>{
  const f=overviewFixture();try{
   const a=f.open('page'),run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:first');const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'First reply'},true)!;
-  f.tasks.workerSend(f.actor,{operationId:'followup',workerId:a.workerId,text:'Check the missing point'});
+  f.tasks.workerMessage(f.actor,{operationId:'followup',workerId:a.workerId,text:'Check the missing point'});
   const next=f.tasks.claim()!;assert.notEqual(next.id,run.id);f.tasks.bind(next.id,next.epoch,'thread:page','turn:next');
   const task=readTaskOverview(f.store.db).tasks[0]!;assert.equal(task.workers.length,1);assert.equal(task.workers[0]!.id,a.workerId);assert.equal(task.workers[0]!.run.id,next.id);
   assert.equal(task.workers[0]!.pendingMain,0,'an earlier reply does not make the active follow-up wait for Main');assert.equal(workerStatus(task.workers[0]!).label,'运行中');
@@ -59,5 +59,19 @@ test('overview stays batched and excludes message bodies and historical executio
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();const data=readTaskOverview(db);
   assert.equal(statements.length,4);assert.ok(statements.every(sql=>/^SELECT/.test(sql)));assert.ok(statements.every(sql=>!/(payloadJson|checkpointJson|filePath)/.test(sql)));assert.equal(data.tasks[0]!.workers.length,1);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
   assert.throws(()=>readTaskDetail(f.store.db,'unknown'),/task_not_found/);assert.throws(()=>readTaskDetail(f.store.db,'../outside'),/task_not_found/);
+ }finally{f.close();}
+});
+
+test('overview counts a pending reply from the latest Worker run under its original goal version',()=>{
+ const f=overviewFixture();try{
+  const w=f.open('page'),run=f.tasks.claim(w.runId)!;
+  f.tasks.bind(run.id,run.epoch,'thread:page','turn:original');
+  f.tasks.updateTask(f.actor,{operationId:'revise',taskId:f.taskId,expectedRevision:f.tasks.task(f.taskId).revision,patch:{goal:'Revise future work'},authority:f.authority});
+  const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original observation'},true)!;
+  const task=readTaskOverview(f.store.db).tasks[0]!;
+  assert.equal(task.headVersion,2);assert.equal(task.workers[0]!.run.version,1);
+  assert.equal(task.workers[0]!.pendingMain,1);assert.equal(classifyTask(task).key,'main');
+  f.store.db.prepare('UPDATE agent_messages SET taskVersion=? WHERE id=?').run(task.headVersion,reply.messageId);
+  assert.equal(readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMain,0,'a message must still match the emitting run');
  }finally{f.close();}
 });

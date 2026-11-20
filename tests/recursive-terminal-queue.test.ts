@@ -9,35 +9,38 @@ for(const outcome of ['succeeded','partial','failed','cancelled'] as const)test(
   if(outcome==='cancelled')f.tasks.controlTask(main,{...mutation(f,'cancel'),action:'cancel'});
   else f.tasks.settleTask(main,{...mutation(f,'settle'),outcome});
   const before=snapshot(f);
-  for(const attempt of [()=>openWorker(f,'new'),()=>f.tasks.workerSend(main,{operationId:'next',workerId:worker.workerId,text:'New execution'}),()=>f.tasks.updateTask(main,{...mutation(f,'rewrite'),patch:{goal:'New execution'},authority:authority()})])assert.throws(attempt,/task_not_open|task_terminal/);
+  for(const attempt of [()=>openWorker(f,'new'),()=>f.tasks.workerMessage(main,{operationId:'next',workerId:worker.workerId,text:'New execution'}),()=>f.tasks.updateTask(main,{...mutation(f,'rewrite'),patch:{goal:'New execution'},authority:authority()})])assert.throws(attempt,/task_not_open|task_terminal/);
   assert.deepEqual(snapshot(f),before);assert.deepEqual(f.tasks.workerOpen(main,input),worker);assert.deepEqual(snapshot(f),before);
  }finally{f.close();}
 });
 
-for(const state of ['paused','stopping'] as const)test(state+' blocks queue insertion and claiming without discarding already accepted ordinary text',()=>{
+for(const action of ['pause','cancel'] as const)test(action+' names the blocking Workers until each individual interruption is confirmed',()=>{
  const f=fixture();try{
-  const worker=openWorker(f),actor=running(f,worker.runId),queued=f.tasks.workerSend(main,{operationId:'accepted',workerId:worker.workerId,text:'Accepted before pause'});
-  const pause=f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});
-  if(state==='paused'){f.tasks.confirmWorkerExit(actor.runId!,undefined);f.tasks.confirmStop(pause.operationKey,true);}
-  const before=snapshot(f);assert.throws(()=>f.tasks.workerSend(main,{operationId:'late',workerId:worker.workerId,text:'Late write'}),/task_stop_requested|task_not_open/);
-  assert.deepEqual(snapshot(f),before);assert.equal(f.tasks.claim(),undefined);
-  assert.equal(f.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(queued.messageId)!.payloadJson,JSON.stringify({workerId:worker.workerId,text:'Accepted before pause'}));
-  if(state==='paused'){
-   assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(queued.messageId)!.state,'rejected');
-   f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'});
-   assert.equal(f.tasks.claim(),undefined);
-   const fresh=f.tasks.workerSend(main,{operationId:'fresh',workerId:worker.workerId,text:'Explicit followup after resume'});
-   assert.equal(f.tasks.claim(fresh.runId!)?.prompt,'Explicit followup after resume');assert.equal(f.tasks.claim(),undefined);
+  const a=openWorker(f,'a'),b=openWorker(f,'b'),aa=running(f,a.runId),bb=running(f,b.runId);
+  const control=(operationId:string)=>f.tasks.controlTask(main,{...mutation(f,operationId),action});
+  const before=f.tasks.runs(),blocked=control('both-live');
+  assert.equal(blocked.state,'blocked');
+  assert.deepEqual(new Set(blocked.blockers!.map(blocker=>blocker.workerId)),new Set([a.workerId,b.workerId]));
+  assert.deepEqual(f.tasks.runs(),before);assert.equal(f.tasks.task(f.task.taskId).state,'open');
+  for(const [worker,actor] of [[a,aa],[b,bb]] as const){
+   const stop=f.tasks.workerStop(main,{operationId:'stop-'+worker.workerId,workerId:worker.workerId});
+   const waiting=control('pending-'+worker.workerId).blockers!.find(item=>item.workerId===worker.workerId);
+   assert.equal(waiting?.reason,'worker_stop_requested');
+   f.tasks.confirmWorkerExit(actor.runId!,undefined);f.tasks.confirmStop(stop.operationKey,true);
+   if(worker===a){
+    assert.equal(f.tasks.guard(bb).id,f.task.taskId);
+    assert.deepEqual(control('one-live').blockers!.map(blocker=>blocker.workerId),[b.workerId]);
+   }
   }
- }finally{f.close();}
-});
-
-test('cancellation rejects all pending input and denies a resume without new user authority',()=>{
- const f=fixture();try{
-  const worker=openWorker(f),actor=running(f,worker.runId),queued=f.tasks.workerSend(main,{operationId:'accepted',workerId:worker.workerId,text:'Pending write'});
-  const stop=f.tasks.controlTask(main,{...mutation(f,'cancel'),action:'cancel'});f.tasks.confirmWorkerExit(actor.runId!,undefined);f.tasks.confirmStop(stop.operationKey,true);
-  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(queued.messageId)!.state,'rejected');
-  const before=snapshot(f);assert.throws(()=>f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'}),/task_authority_source_denied/);
-  assert.deepEqual(snapshot(f),before);assert.equal(f.tasks.claim(),undefined);assert.equal(f.tasks.task(f.task.taskId).outcome,'cancelled');
+  const result=control('all-exited');assert.deepEqual(result.targets,[]);
+  assert.equal(f.tasks.task(f.task.taskId).state,action==='pause'?'paused':'settled');
+  if(action==='pause'){
+   f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'});assert.equal(f.tasks.runs().length,2);assert.equal(f.tasks.claim(),undefined);
+   const fresh=f.tasks.workerMessage(main,{operationId:'fresh',workerId:a.workerId,text:'Explicit followup after resume'});
+   assert.equal(f.tasks.claim(fresh.runId!)?.threadId,aa.threadId);
+  }else{
+   const before=snapshot(f);assert.throws(()=>f.tasks.controlTask(main,{...mutation(f,'resume'),action:'resume'}),/task_authority_source_denied/);
+   assert.deepEqual(snapshot(f),before);assert.equal(f.tasks.task(f.task.taskId).outcome,'cancelled');
+  }
  }finally{f.close();}
 });

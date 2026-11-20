@@ -66,6 +66,10 @@ test('fixed native engine sends the task creation and delegation schemas to a lo
   assert.ok(Array.isArray(requests[0].tools), 'Responses request keys: '+Object.keys(requests[0]).join(', '));
   const posted=Object.fromEntries(requests[0].tools.map(tool=>[tool.name,tool.parameters]));
   assert.deepEqual(posted.task_create.required,['goal','title']);
+  assert.equal(posted.worker_send,undefined);
+  assert.deepEqual(posted.worker_message.required,['workerId','message']);
+  assert.deepEqual(Object.keys(posted.worker_message.properties).sort(),['attachments','message','workerId']);
+  assert.equal(posted.worker_message.additionalProperties,false);
   const schema=posted.worker_open;
   assert.equal(schema.type,'object');
   assert.equal(schema.additionalProperties,false);

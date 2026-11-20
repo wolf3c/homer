@@ -20,7 +20,7 @@ async function restart(t:TestContext,scenario:string,crash:boolean,desktop=false
   if(crash)child.kill('SIGKILL');else child.send('close');const [code,signal]=await exited;if(crash)assert.equal(signal,'SIGKILL');else assert.equal(code,0);
  }
  const f=host=restartHost(root,scenario,false,desktop);await f.app.start();
- return {...f,root,workerStarts:()=>readFileSync(join(root,'starts'),'utf8').trim().split('\n')};
+ return {...f,root,workerStarts:()=>existsSync(join(root,'starts'))?readFileSync(join(root,'starts'),'utf8').trim().split('\n'):[]};
 }
 
 for(const crash of [false,true])for(const desktop of [false,true])test(`original raw reply and bytes survive ${crash?'crash':'shutdown'}, desktop pause=${desktop}`,{timeout:15000},async t=>{
@@ -43,8 +43,12 @@ for(const [scenario,crash] of [['running',false],['uncertain-owner',true],['queu
  if(process.platform==='win32'&&scenario==='uncertain-owner'){await assert.rejects(restart(t,scenario,crash,desktop),/orphan_stop_unconfirmed|desktop_adoption_owner_unknown/);return;}
  const {app,workerStarts,attempts}=await restart(t,scenario,crash,desktop),original=app.store.runs()[0]!;
  await app.message('followup','followup-request');await app.idle();assert.equal(attempts[0]!.status,'fulfilled');
- const runs=app.tasks.runs(original.taskId);assert.equal(runs.length,2);assert.equal(runs[1]!.workerId,original.workerId);assert.equal(runs[1]!.version,1);assert.equal(runs[1]!.status,'succeeded');
- if(original.threadId)assert.equal(runs[1]!.threadId,original.threadId);assert.equal(workerStarts().length,scenario==='queued-before-start'?1:2);
+ const runs=app.tasks.runs(original.taskId);
+ if(scenario==='queued-before-start'){
+  assert.equal(attempts[0]!.value.reason,'worker_thread_unavailable');assert.equal(runs.length,1);assert.equal(workerStarts().length,0);return;
+ }
+ assert.equal(runs.length,2);assert.equal(runs[1]!.workerId,original.workerId);assert.equal(runs[1]!.version,1);assert.equal(runs[1]!.status,'succeeded');
+ if(original.threadId)assert.equal(runs[1]!.threadId,original.threadId);assert.equal(workerStarts().length,2);
 });
 
 for(const crash of [false,true])for(const desktop of [false,true])test(`changed goal stays bound to the new version after ${crash?'crash':'shutdown'}, desktop pause=${desktop}`,{timeout:15000},async t=>{
@@ -72,7 +76,7 @@ for(const scenario of ['written-before-terminal','checkpoint','closed-before-ret
 
 test('missing physical exit evidence preserves the original fence and prevents a new writer',{timeout:15000},async t=>{
  const {app,workerStarts,attempts}=await restart(t,'missing-owner',true),run=app.store.runs()[0]!;assert.equal(app.tasks.run(run.id).phase,'uncertain');
- await app.message('followup','followup-request');await app.idle();assert.equal(attempts[0]!.status,'fulfilled');assert.equal(attempts[0]!.value.runId,null);
+ await app.message('followup','followup-request');await app.idle();assert.equal(attempts[0]!.status,'fulfilled');assert.equal(attempts[0]!.value.state,'blocked');
  assert.equal(workerStarts().length,1);assert.equal(app.store.runs().length,1);assert.equal(app.tasks.task(run.taskId).outcome,null);
 });
 
@@ -99,7 +103,7 @@ for(const state of ['accepted','dispatching'] as const)for(const desktop of [fal
  if(state==='accepted')assert.equal(receipt.state,'rejected');else assert.notEqual(receipt.state,'processed');
  await app.message('followup','after-steer-recovery');await app.idle();
  if(state==='dispatching'){
-  assert.equal(attempts[0]?.status,'rejected');assert.match(String((attempts[0] as PromiseRejectedResult).reason),/operation_uncertain/);
+  assert.equal(attempts[0]?.status,'fulfilled');assert.equal(attempts[0].value.reason,'operation_uncertain');
   assert.equal(app.tasks.runs(original.taskId).length,1);assert.equal(workerStarts().length,1);
  }else{
   assert.equal(attempts[0]?.status,'fulfilled');

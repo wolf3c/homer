@@ -34,7 +34,7 @@ function fixture() {
 }
 
 test('v1 to v2 archival inspection separates readable source history from current dispatch authority', async () => {
-  const f = hostFixture(), errors: string[] = [], followups: string[] = [];
+  const f = hostFixture(), errors: string[] = [];
   const initial = 'Inspect the original synthetic report.', revised = 'Inspect only the revised synthetic report.';
   let taskId = '', checked = false;
   try {
@@ -52,12 +52,11 @@ test('v1 to v2 archival inspection separates readable source history from curren
           assert.equal(details.task.historyState, 'archived');
           assert.equal(details.version.version, 2);
           assert.equal(details.version.sourceRequestId, 'source:revised');
-          assert.deepEqual(details.version.authority, f.app.tasks.authority(taskId, 2));
-          assert.deepEqual([details.version.authority.sourceRequestId, ...(details.version.authority.sourceRequestIds ?? [])], ['source:revised']);
+          assert.equal(details.version.authority,null);
           assert.deepEqual(new Set(details.sourceHistoryIds), new Set(['source:initial', 'source:revised']));
           assert.equal(Object.hasOwn(details, 'sourceRequestIds'), false);
           assert.equal(Object.hasOwn(details.version, 'authorityJson'), false);
-          assert.equal(typeof f.app.tasks.version(taskId, 2).authorityJson, 'string', 'storage contract is unchanged');
+          assert.equal(f.app.tasks.version(taskId, 2).authorityJson, null, 'a recorded goal edit cannot commission work');
           for (const [sourceRequestId, expected] of [['source:initial', initial], ['source:revised', revised]]) {
             const original = await main.call('work_inspect', {taskId, sourceRequestId});
             assert.equal(original.source.text, expected);
@@ -74,8 +73,7 @@ test('v1 to v2 archival inspection separates readable source history from curren
             assert.deepEqual(counts(), before, 'rejected source selection cannot create work');
           }
           const note = await main.call('task_create', {title:'Remaining facts',goal:'Read remaining facts within the revised source only'});
-          const followup = await main.call('worker_open', {taskId:note.taskId});
-          followups.push(followup.taskId);
+          await assert.rejects(main.call('worker_open',{taskId:note.taskId}),/task_authority_source_denied/);
           checked = true;
         }
         return {status: 'completed', text: 'Synthetic review recorded.'};
@@ -88,17 +86,8 @@ test('v1 to v2 archival inspection separates readable source history from curren
     await f.app.message('Archive the completed synthetic review.', 'source:archive');
     await until(() => checked || errors.length > 0);
     assert.deepEqual(errors, []);
-    await until(() => f.engines.filter(engine => engine.options.role === 'worker' && engine.finish).length === 1);
-    assert.equal(f.app.tasks.task(taskId).historyState, 'archived');
-    assert.equal(f.app.tasks.runs(taskId).length, 0);
-    assert.equal(followups.length, 1);
-    for (const id of followups) {
-      assert.equal(f.app.tasks.version(id,1).sourceRequestId,'source:revised');
-      const authority = f.app.tasks.authority(id, 1);
-      assert.deepEqual(new Set([authority.sourceRequestId, ...(authority.sourceRequestIds ?? [])]), new Set(['source:revised']));
-      assert.equal(f.app.tasks.runs(id).length, 1);
-    }
-    for (const worker of f.engines.filter(engine => engine.options.role === 'worker')) worker.finish!({status: 'completed', text: 'Synthetic revised-scope observation.'});
+    assert.equal(f.app.tasks.task(taskId).historyState,'archived');
+    assert.equal(f.app.store.runs().length,0);
     await f.app.idle();
     assert.deepEqual(errors, []);
   } finally {await f.close();}
@@ -197,17 +186,16 @@ test('a retried notes edit uses the original native receipt after the hidden rev
   } finally {f.close();}
 });
 
-test('changing requirements invokes the host stop effect for all affected in-flight sessions', async () => {
+test('editing a running task leaves both Workers and host stop effects untouched', async () => {
   const f = fixture(); try {
     const root = await f.create();
     const a = await f.tools.call(f.actor, 'worker_open', {taskId:root.taskId,message: 'Inspect page'}, 'page') as any;
     const b = await f.tools.call(f.actor, 'worker_open', {taskId:root.taskId,message: 'Inspect build'}, 'build') as any;
     for (const opened of [a, b]) {const run = f.tasks.claim(opened.runId)!; f.tasks.bind(run.id, run.epoch, 'thread:' + run.id, 'turn:' + run.id);}
     await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, goal: 'Stop the old investigation; only explain existing evidence'}, 'changed-goal');
-    assert.equal(f.stopped.length, 1);
-    assert.deepEqual(new Set(f.stopped[0]!.targets as string[]), new Set([a.runId, b.runId]));
-    assert.ok(f.tasks.run(a.runId).stopRequestedAt); assert.ok(f.tasks.run(b.runId).stopRequestedAt);
-    assert.equal(f.tasks.task(root.taskId).controlState, 'stopping');
+    assert.deepEqual(f.stopped,[]);
+    assert.equal(f.tasks.run(a.runId).stopRequestedAt,null);assert.equal(f.tasks.run(b.runId).stopRequestedAt,null);
+    assert.equal(f.tasks.task(root.taskId).controlState,'normal');
   } finally {f.close();}
 });
 
@@ -223,7 +211,7 @@ test('task controls reject mixed edits and accept settlement with an outcome and
     ]) await assert.rejects(f.tools.call(f.actor, 'task_update', {taskId: root.taskId, ...args}, 'invalid'), /invalid_tool_arguments/);
     assert.deepEqual(f.counts(), before);
     const paused = await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'pause'}, 'pause') as any;
-    assert.equal(paused.state, 'paused'); assert.equal(f.stopped.length, 1);
+    assert.equal(paused.state, 'paused'); assert.equal(f.stopped.length, 0);
     await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'resume'}, 'resume');
     assert.equal(f.tasks.task(root.taskId).state, 'open');
     const notes = 'Only the available evidence was reviewed';
@@ -289,7 +277,9 @@ test('the current collaboration tool dispatcher has no message writer',async()=>
 });
 
 test('schema validation reports trusted paths without copying unknown field names or values', () => {
-  const schema = RECURSIVE_TOOLS.find(tool => tool.name === 'worker_send')!.inputSchema;
+  const schema = RECURSIVE_TOOLS.find(tool => tool.name === 'worker_message')!.inputSchema;
+  assert.equal(RECURSIVE_TOOLS.some(tool=>String(tool.name)==='worker_send'),false);
+  assert.throws(()=>validateToolArguments({workerId:'synthetic',message:'ok',immediate:true},schema),/invalid_tool_arguments/);
   let error: unknown;
   try {validateToolArguments({workerId: 'synthetic', message: 'ok', privateSecret: 'do-not-echo'}, schema);} catch (caught) {error = caught;}
   assert.ok(error instanceof Error);

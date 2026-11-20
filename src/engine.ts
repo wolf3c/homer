@@ -1149,7 +1149,8 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   async steer(expectedTurnId:string,text:string):Promise<{turnId:string}> {
     if(!this.active||this.active.settling||!this.threadId||this.turnId!==expectedTurnId||this.closing)throw Error('engine_steer_not_applicable');
     const result=await this.request('turn/steer',{threadId:this.threadId,expectedTurnId,input:[{type:'text',text,text_elements:[]}]});
-    if(result.turnId!==expectedTurnId)throw Error('engine_steer_turn_mismatch');return result;
+    if(result?.turnId!==expectedTurnId)throw new EngineRpcUnconfirmed('engine_steer_turn_mismatch');
+    return result;
   }
   async compact():Promise<void> {
     if(this.active||this.compaction||this.preparation||!this.threadId||this.closing)throw Error('engine_compact_not_applicable');

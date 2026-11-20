@@ -36,7 +36,7 @@ test('ordinary collaboration accepts a titled goal or message without host ident
   for (const [name, args] of [
     ['task_create', {goal: '查清预览为空白的原因，先别改文件。', title:'排查空白预览'}],
     ['worker_open', {taskId: 'task:synthetic', message: '只读核对构建文件名。'}],
-    ['worker_send', {workerId: 'run:synthetic', message: '请说明实际观察到的文件名。'}],
+    ['worker_message', {workerId: 'run:synthetic', message: '请说明实际观察到的文件名。'}],
     ['worker_read', {workerId: 'run:synthetic'}],
     ['worker_interrupt', {workerId: 'run:synthetic'}],
   ] as const) {
@@ -44,6 +44,12 @@ test('ordinary collaboration accepts a titled goal or message without host ident
     assert.ok(tool, name);
     validateToolArguments(args, tool.inputSchema);
   }
+});
+
+test('one Worker message tool covers steer and continuation without a queuing option', () => {
+  assert.ok(!RECURSIVE_TOOLS.some(tool => tool.name === 'worker_send'));
+  const message = RECURSIVE_TOOLS.find(tool => tool.name === 'worker_message')!;
+  assert.throws(() => validateToolArguments({workerId:'example',message:'next',immediate:true},message.inputSchema), /invalid_tool_arguments/);
 });
 
 test('collaboration schemas cannot let a model supply host identity or concurrency tokens', () => {
@@ -142,7 +148,7 @@ test('new collaboration has one dynamic-tool outlet and Workers cannot manage bu
   const dynamic = new Set(RECURSIVE_TOOLS.map(tool => tool.name));
   for (const tool of [...HOST_MCP_TOOLS, ...WORKER_HOST_MCP_TOOLS]) assert.ok(!dynamic.has(tool.name), tool.name);
   const worker = new Set([...WORKER_INTERACTION_TOOLS, ...WORKER_FILE_TOOLS, ...WORKER_HOST_MCP_TOOLS].map(tool => tool.name));
-  for (const name of ['task_create', 'task_update', 'worker_open', 'worker_send', 'worker_interrupt', 'accept_result', 'publish_delivery', 'archive_work', 'restore_work', 'delete_work']) {
+  for (const name of ['task_create', 'task_update', 'worker_open', 'worker_message', 'worker_interrupt', 'accept_result', 'publish_delivery', 'archive_work', 'restore_work', 'delete_work']) {
     assert.ok(!worker.has(name), name);
   }
 });

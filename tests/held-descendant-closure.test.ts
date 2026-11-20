@@ -17,25 +17,25 @@ function setup(mode='confirmed'){
   f.store.setMeta('lease:'+run.id,lease);
  }
  const host:any=Object.create(Homer.prototype);Object.assign(host,{store:f.store,tasks:f.tasks,interactions,workers,scheduleCalls:new HostToolCalls(),mainApprovals:{end(){}},pauseClock(){},pump(){},scheduleInternal(){},scheduleDelivery(){}});
- const pause=()=>f.tasks.controlTask(f.actor,{operationId:'pause',taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision,action:'pause'});
- return {...f,task,aa,bb,peer,host,workers,counts,interactions,pause};
+ const stop=()=>f.tasks.workerStop(f.actor,{operationId:'stop-b',workerId:bb.workerId});
+ return {...f,task,aa,bb,peer,host,workers,counts,interactions,stop};
 }
-for(const mode of ['confirmed','false','throw','interrupt_throw'])test('whole-task Worker closure '+mode+' preserves exit certainty and independent peer',async()=>{
+for(const mode of ['confirmed','false','throw','interrupt_throw'])test('targeted Worker closure '+mode+' preserves exit certainty and independent peer',async()=>{
  const f=setup(mode);try{
   const before={task:f.tasks.task(f.peer.taskId),run:f.tasks.run(f.peer.id)},request=f.interactions.open({runId:f.bb.id,threadId:f.bb.threadId!,turnId:f.bb.turnId!,requestId:'synthetic',source:'native',kind:'question',details:{question:'Synthetic?'},authority:{sourceRequestId:f.actor.sourceRequestId!,description:'Synthetic',nativeApprovals:false}},()=>true);
   let callbacks=0;void request.response.then(()=>callbacks++);
-  const receipt=f.pause(),epoch=f.tasks.run(f.bb.id).epoch;assert.equal(f.tasks.task(f.task.taskId).controlState,'stopping');assert.ok(epoch>f.bb.epoch);
+  const receipt=f.stop(),epoch=f.tasks.run(f.bb.id).epoch;assert.equal(f.tasks.task(f.task.taskId).controlState,'normal');assert.ok(epoch>f.bb.epoch);
   const results=await Promise.all([f.host.applyStop(receipt),f.host.applyStop(receipt)]),confirmed=['confirmed','interrupt_throw'].includes(mode),run=f.tasks.run(f.bb.id);
   assert.equal(results[0].state,confirmed?'confirmed':'uncertain');assert.equal(run.phase,confirmed?'ended':'uncertain');assert.equal(f.workers.has(run.id),!confirmed);assert.equal(!!f.store.meta('lease:'+run.id),!confirmed);assert.deepEqual(f.counts.get(run.id),{interrupt:1,close:1});assert.equal(run.epoch,epoch);
   assert.equal((await request.response).status,'cancelled');assert.equal(callbacks,1);
   assert.throws(()=>f.tasks.writeFile({agentId:'worker:'+f.bb.workerId,runId:f.bb.id,epoch:f.bb.epoch,threadId:f.bb.threadId!,turnId:f.bb.turnId!},{operationId:'late',filename:'late.md',bytes:Buffer.from('Synthetic')}),/epoch|stop|live/);
-  assert.deepEqual({task:f.tasks.task(f.peer.taskId),run:f.tasks.run(f.peer.id)},before);assert.deepEqual(f.counts.get(f.peer.id),{interrupt:0,close:0});
+  assert.deepEqual({task:f.tasks.task(f.peer.taskId),run:f.tasks.run(f.peer.id)},before);assert.deepEqual(f.counts.get(f.peer.id),{interrupt:0,close:0});assert.deepEqual(f.counts.get(f.aa.id),{interrupt:0,close:0});
   if(!confirmed)assert.throws(()=>f.tasks.controlTask(f.actor,{operationId:'resume',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,action:'resume'}),/unconfirmed/);
  }finally{f.close();}
 });
 
 test('a Worker lease without its owning slot stays uncertain',async()=>{
- const f=setup();try{f.workers.delete(f.bb.id);const receipt=f.pause();const result=await f.host.applyStop(receipt);assert.equal(result.state,'uncertain');assert.equal(f.tasks.run(f.bb.id).phase,'uncertain');assert.ok(f.store.meta('lease:'+f.bb.id));}finally{f.close();}
+ const f=setup();try{f.workers.delete(f.bb.id);const receipt=f.stop();const result=await f.host.applyStop(receipt);assert.equal(result.state,'uncertain');assert.equal(f.tasks.run(f.bb.id).phase,'uncertain');assert.ok(f.store.meta('lease:'+f.bb.id));}finally{f.close();}
 });
 
 test('accepted original text survives closing a residual owned engine',async()=>{

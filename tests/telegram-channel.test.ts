@@ -312,7 +312,7 @@ test('configured Telegram bots route replies and subscriptions through the Homer
             meta:{callId:itemId,'x-codex-turn-metadata':{turn_id:main.turnId}}})+'\n'));
         });
         subscribed=JSON.parse(receipt).result?.state==='active';
-      }else if(text==='continue')await main.call('worker_send',{workerId,message:'Report back'});
+      }else if(text==='continue')await main.call('worker_message',{workerId,message:'Report back'});
       else if(text.startsWith('[内部协作输入')){
         const final=++background>1?report:'Before subscription';
         return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};

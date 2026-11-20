@@ -91,8 +91,9 @@ test('original committed actions travel with their received input and unknown ef
 test('a cached pre-change final remains readable under its original version after requirements are withdrawn',()=>{
  const f=fixture();try{
   const w=openWorker(f),actor=running(f,w.runId);f.tasks.recordWorkerTerminal(w.runId,actor.epoch!,{status:'completed',text:'Original-version draft'});
-  const source=f.source('changed','Read only now'),change=f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'New read-only goal'},authority:authority(source.sourceRequestId)});
-  assert.equal(complete(f,actor,'Late output'),undefined);f.tasks.confirmWorkerExit(w.runId,undefined);f.tasks.confirmStop(change.operationKey,true);
+  const source=f.source('changed','Read only now');f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'New read-only goal'},authority:authority(source.sourceRequestId)});
+  const stop=f.tasks.workerStop(source,{operationId:'stop',workerId:w.workerId});
+  assert.equal(complete(f,actor,'Late output'),undefined);f.tasks.confirmWorkerExit(w.runId,undefined);f.tasks.confirmStop(stop.operationKey,true);
   const reply=f.tasks.inbox(main).find(message=>message.kind==='worker_reply')!;assert.equal(reply.taskVersion,1);assert.equal(reply.payload.text,'Original-version draft');
   assert.equal(f.tasks.run(w.runId).version,1);assert.equal(f.tasks.task(f.task.taskId).headVersion,2);
  }finally{f.close();}

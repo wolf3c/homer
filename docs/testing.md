@@ -138,7 +138,7 @@ node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test \
 node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test \
   tests/native-thread-continuity.engine.test.ts \
   tests/native-membership-websocket.engine.test.mjs tests/desktop-source-resume.test.mjs \
-  tests/channel-native.engine.test.ts tests/scheduled-native.engine.test.ts \
+  tests/channel-native.engine.test.ts tests/scheduled-native.engine.test.ts tests/worker-message.engine.test.ts \
   tests/native-memory-defaults-offline.test.mjs tests/native-plugin-shutdown.engine.test.mjs \
   tests/native-protocol.engine.test.mjs tests/deepseek-pinned.test.ts tests/deepseek-continuation.test.ts
 ```

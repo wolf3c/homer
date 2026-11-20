@@ -429,8 +429,7 @@ export class Homer {
     let workerLinks:(string|undefined)[]=[];
     try{
       if(worker&&input?.taskId){
-        const task=this.tasks.authorizeTask(actor,input.taskId,{allowSettled:true}).task;
-        if(task.headVersion!==input.taskVersion)return;
+        authority=this.tasks.authorizeTask(actor,input.taskId,{allowSettled:true}).authority;
         workerLinks=messageFileDestinations(input.text).map(link=>this.messageFilePath(link));
       }else if(input?.origin==='scheduled'){
         authority=this.tasks.scheduledAuthority(actor);
@@ -761,6 +760,7 @@ export class Homer {
         validateActor:actor=>{if(!actor.runId&&!this.hostActors.has(actor)&&this.mainContext)this.validateMainContext(this.mainContext);},
         validateScheduledSource:requestId=>this.validateScheduleRequestSource(requestId),
         validateFileRead:path=>this.validateTaskFile(path),
+        unconfirmedWorkerEffects:threadId=>this.nativeThreads.hasUnconfirmedWorkerEffects(threadId),
         reviewExitConfirmed:run=>!this.workers.has(run.id)&&!this.store.meta('lease:'+run.id),
         validateWorkerAttachment:(ref,messageId)=>this.validateAttachmentGrant(ref,messageId),
       });
@@ -1395,9 +1395,9 @@ export class Homer {
     }
     if(!input.taskId||!['worker_reply','interaction_required'].includes(input.kind))throw Error('task_authority_source_denied');
     const {task}=this.tasks.authorizeTask(actor,input.taskId,{allowSettled:true});
-    if(task.headVersion!==input.taskVersion)throw Error('task_authority_source_denied');
     if(input.kind==='worker_reply'&&!node.items.some(item=>item.kind==='workerEvent'&&
        item.event?.eventKind==='reply_received'&&item.event.sourceMessageId===input.messageId))throw Error('task_authority_source_denied');
+    return {taskId:task.id,taskVersion:task.headVersion};
   }
   liveReceiptText(node:ProcessNode){
     const context=this.mainContext,activity=context?.nativeActivity;
@@ -1435,12 +1435,12 @@ export class Homer {
       }
       let publicText=context.explicitSent?undefined:context.publicText;
       let publishFinal=false;
-      let scheduleTask:{taskId:string;taskVersion:number}|undefined;
+      let deliveryTask:{taskId:string;taskVersion:number}|undefined;
       if(status==='completed'&&eligible){
         const process=this.processes.exact(context.processId);
         if(!context.explicitSent&&original&&(scheduled||input.taskId)){
           try{
-            scheduleTask=this.authorizeReceiptFinal(context,input,process);
+            deliveryTask=this.authorizeReceiptFinal(context,input,process);
             publishFinal=true;
             publicText=original+(files?.omitted?'\n\n部分文件未能保存为可跨端打开的版本。':'');
           }catch(error){
@@ -1454,7 +1454,7 @@ export class Homer {
       const node=this.processes.exact(context.processId);
       if(node?.state==='worked'){
         const prior=this.history.message(node.messageId),text=node.final?.text??prior?.text??'';
-        const scope=scheduled?scheduleTask:input?.taskId&&input.taskVersion!==null?{taskId:input.taskId,taskVersion:input.taskVersion}:undefined;
+        const scope=deliveryTask??(input?.kind==='task_archived'&&input.taskId&&input.taskVersion!==null?{taskId:input.taskId,taskVersion:input.taskVersion}:undefined);
         const external=publishFinal?externalFileMessage(text,!!files):undefined;
         const publication=publishFinal&&input&&(staged||scope&&external!==undefined)
           ?{taskId:external===undefined?null:scope?.taskId??null,taskVersion:external===undefined?null:scope?.taskVersion??null,
@@ -2141,7 +2141,7 @@ export class Homer {
     if(typeof taskId==='string'){
       if(run&&taskId!==run.taskId)throw Error('schedule_scope_denied');
       const task=run?this.tasks.guard(actor):this.tasks.authorizeTask(actor,taskId,{allowSettled:true}).task;
-      source.deliveryTask={taskId:task.id,taskVersion:task.headVersion};
+      source.deliveryTask={taskId:task.id,taskVersion:run?.version??task.headVersion};
     }
     return this.scheduleTools.handle({actor,source,allSources:!slot&&!context?.event},name,object(args),identity.callId);
   }
@@ -2328,9 +2328,11 @@ export class Homer {
        input?.senderAgentId!=='host'||input.kind!=='task_archived'||!input.taskId||!input.taskVersion)return;
     const task=this.tasks.task(input.taskId);
     if(task.headVersion!==input.taskVersion||task.controlState!=='normal'||task.state!=='settled'||task.historyState!=='archived')return;
-    const authority=this.tasks.authority(task.id,task.headVersion);
-    try{this.tasks.validateAuthority(this.mainActor(true),authority);}catch{return;}
-    return {generationId:context.processId,threadId,turnId,sourceRequestId:authority.sourceRequestId,userText:authority.description};
+    try{
+      const authority=this.tasks.authority(task.id,task.headVersion);
+      this.tasks.validateAuthority(this.mainActor(true),authority);
+      return {generationId:context.processId,threadId,turnId,sourceRequestId:authority.sourceRequestId,userText:authority.description};
+    }catch{return;}
   }
   private openMainNativeInteraction(request:NativeRequest){
     if(request.method==="mcpServer/elicitation/request"&&(request.details._meta as any).codex_approval_kind==='tool_suggestion')return this.openNativePluginInteraction(request);
@@ -2628,6 +2630,7 @@ export class Homer {
         engine.on('exit',()=>this.interactions.cancelRun(run.id,'worker_process_exited'));
         engine.on('spawn',()=>{created.lease=this.lease(run.id,engine);if(engine.pid)this.store.engine(run.id,{pid:engine.pid});});
         if(!this.workerStarting(run))return;
+        this.tasks.guardStarting(run.id,run.epoch);
         const started=engine.start();created.lease=this.lease(run.id,engine);const threadId=await started;if(!this.workerStarting(run))return;if(run.threadId&&threadId!==run.threadId)throw Error('engine_resume_thread_mismatch');this.store.engine(run.id,{threadId});this.store.event(run.id,'engine_started');
         if(!this.workerStarting(run))return;
       }
@@ -2673,7 +2676,7 @@ export class Homer {
   }
   private workerStarting(run:TaskRun){
     const current=this.tasks.run(run.id),task=this.tasks.task(current.taskId);
-    return !this.closing&&current.epoch===run.epoch&&current.status==='running'&&current.phase==='starting'&&!current.stopRequestedAt&&task.headVersion===run.version&&task.controlState==='normal'&&task.historyState==='visible';
+    return !this.closing&&current.epoch===run.epoch&&current.status==='running'&&current.phase==='starting'&&!current.stopRequestedAt&&task.state==='open'&&task.controlState==='normal'&&task.historyState==='visible';
   }
   private async closeWorker(slot:WorkerSlot){
     if(slot.closing)return slot.closing;
@@ -2723,8 +2726,17 @@ export class Homer {
   private rootAuthority(actor:Actor):Authority|undefined {
     const context=this.mainContext;
     if(context?.workerInput?.origin==='scheduled')return this.tasks.scheduledAuthority(actor);
-    if(context?.event&&context.workerInput?.senderAgentId==='host'&&['task_archived','worker_reply','interaction_required'].includes(context.workerInput.kind)&&context.workerInput.taskId&&context.workerInput.taskVersion)
-      return this.tasks.authority(context.workerInput.taskId,context.workerInput.taskVersion);
+    const notice=context?.workerInput;
+    if(context?.event&&notice?.senderAgentId==='host'&&notice.taskId&&notice.taskVersion){
+      if(notice.kind==='task_archived')return this.tasks.authority(notice.taskId,notice.taskVersion);
+      if(notice.kind==='worker_reply'||notice.kind==='interaction_required'){
+        try{return this.tasks.authorizeTask(actor,notice.taskId,{allowSettled:true}).authority;}
+        catch(error){
+          if(!['task_authority_source_denied','task_history_not_visible','task_not_open','task_stop_requested'].includes(engineError(error)))throw error;
+          return;
+        }
+      }
+    }
     if(!actor.sourceRequestId||context?.event||context?.requestId!==actor.sourceRequestId)return;
     return {sourceRequestId:actor.sourceRequestId,description:userAuthorityDescription(context.userText??'')};
   }
@@ -2778,17 +2790,21 @@ export class Homer {
     const context=this.mainContext;if(!context||actor.runId)throw Error('tool_scope_denied');this.validateMainContext(context);
     mainToolsForHash(this.store.meta('mainToolsHash'));
     validateRecursiveToolArguments(name,args);
-    if(actor.inputMessageId&&['task_create','worker_open','worker_send'].includes(name)){
-      const a=object(args),kind=name==='worker_send'&&a.immediate===true?'worker_steer':name;
-      const liveTurns=context.processId?this.processes.exact(context.processId)?.turnIds:undefined;
-      const prior=this.tasks.operationsForInput(actor,actor.inputMessageId).some(operation=>operation.kind===kind&&operation.state!=='failed'&&operation.details.turnId!==actor.turnId&&!liveTurns?.includes(operation.details.turnId)&&(name==='task_create'||(name==='worker_send'?operation.response?.workerId===a.workerId:operation.scopeId===a.taskId)));
+    let replayMessage=false;
+    if(actor.inputMessageId&&['task_create','worker_open','worker_message'].includes(name)){
+      const a=object(args),liveTurns=context.processId?this.processes.exact(context.processId)?.turnIds:undefined;
+      const related=this.tasks.operationsForInput(actor,actor.inputMessageId).filter(op=>name==='worker_message'
+        ? (op.kind==='worker_message'||op.kind==='worker_steer')&&op.response?.workerId===a.workerId
+        : op.kind===name&&(name==='task_create'||op.scopeId===a.taskId));
+      if(name==='worker_message')replayMessage=related.some(op=>op.operationId===toolOperationId(actor,callId)&&op.response);
+      const prior=related.some(op=>op.state!=='failed'&&op.response?.route!=='blocked'&&op.details.turnId!==actor.turnId&&!liveTurns?.includes(op.details.turnId));
       // A restored input keeps its original action identity even if the model invents a new call ID.
       if(prior)throw Error('coordination_action_already_committed');
     }
     this.accountClocks();
     const {attachments,workingDirectory}=object(args);
     if(typeof workingDirectory==='string')this.validateWorkDirectory(workingDirectory);
-    const staged=(name==='worker_open'||name==='worker_send')&&Array.isArray(attachments)&&attachments.length
+    const staged=(name==='worker_open'||name==='worker_message'&&!replayMessage)&&Array.isArray(attachments)&&attachments.length
       ?this.stageAttachments(actor,toolOperationId(actor,callId),attachments,context):undefined;
     let result:unknown;
     try{result=await this.recursiveTools.call(actor,name,args,callId);}
@@ -2796,12 +2812,12 @@ export class Homer {
       if(staged)this.abandonMessageOperation(staged.key);
       throw error;
     }
-    if(name==='task_update'&&(result as any)?.state==='requested'&&Array.isArray((result as any)?.targets))result=await this.applyStop(result as Record<string,unknown>);
+    if(staged&&object(result).route==='blocked')this.abandonMessageOperation(staged.key);
     this.validateMainContext(context);return result;
   }
   private async applySteer(receipt:Record<string,unknown>){
     const key=String(receipt.operationKey),operation=this.tasks.operation(key),details=JSON.parse(operation.detailsJson);
-    if(operation.state!=='accepted')return {...receipt,state:operation.state};
+    if(operation.state!=='accepted')return {...receipt,state:operation.state==='confirmed'?'received':operation.state};
     const slot=this.workers.get(String(receipt.runId));
     if(!slot?.engine.steer){this.tasks.markSteer(key,'failed');return {...receipt,state:'failed',code:'engine_steer_not_applicable'};}
     let acknowledged=false;
@@ -2829,7 +2845,9 @@ export class Homer {
   private async applyStop(receipt:Record<string,unknown>){
     const key=String(receipt.operationKey);let confirmed=true;
     for(const id of (receipt.targets??[]) as string[])if(!await this.stopOwnedWorker(id))confirmed=false;
-    const result=this.tasks.confirmStop(key,confirmed);this.pump();this.scheduleInternal();return result;
+    const result=this.tasks.confirmStop(key,confirmed);
+    if(confirmed)this.tasks.recoverWorkerOperations({taskId:String(receipt.taskId),workerId:String(receipt.workerId)});
+    this.pump();this.scheduleInternal();return result;
   }
   private async stopOwnedWorker(id:string){
     // A recursive transaction may have already cancelled the durable RPC.
@@ -2849,7 +2867,7 @@ export class Homer {
         if(await this.closeWorker(slot)){
           this.workers.delete(id);
         }
-      })();
+      })().finally(()=>{slot.stopping=undefined;});
       try{await slot.stopping;}catch(error){this.store.event(id,'stop_unconfirmed',engineError(error));}
       }finally{power.end();}
     }

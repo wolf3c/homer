@@ -1,5 +1,7 @@
 # Homer 核心架构
 
+2026-11-20 事项更新与 Worker 管理分开。Homer 更新目标，独立发消息或中断 Worker；固定 Codex 本地回环验证了运行中调整当前轮、轮末拒收后不重发、确认空闲后沿原线程续谈。[事项版本与 Worker 会话](main-worker-chat-architecture.md#worker-会话工具)
+
 2026-11-20 工作区已实现建项与派工分离。Homer 建项保存目标，Worker 按事项编号承接整项或指定分工。两种派工均通过固定 Codex 引擎的本地回环验收。旧 Main 工具表须使用匹配版本或独立新会话。[建项与派工契约](main-worker-chat-architecture.md#新会话的事项标题契约)
 
 2026-11-20，yezi2 6.1.45 已启用线上 V2。本机 Mac（Homer 0.1.19，build 307）登录时的 PKCE 兑换和重启时的配置 GET 均返回精简选型。两次均为 `gpt-6.1-terra`，Main 用 `medium`，Worker 用 `high`。本机日常推理仍使用 ChatGPT 套餐，其他平台暂未验。[线上精简下发验收状态](member-model-selection.md#线上精简下发验收状态)
