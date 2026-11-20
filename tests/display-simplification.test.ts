@@ -15,9 +15,9 @@ test('full long quote survives conversion, source validation, persistence and re
  assert.throws(()=>history.accept('test',{...input,requestId:'forged',quotes:[{...input.quotes[0]!,text:text+'假'}]}),/quote_source_mismatch/);
  }finally{db.close();}
 });
-test('source extraction keeps over thirty links, complete titles and non-http destinations without duplicate rows',()=>{
+test('source cards keep all web links and complete titles while mail and relative links stay in Markdown',()=>{
  const title='完整标题'.repeat(60),md=Array.from({length:35},(_,i)=>`[${i===0?title:i}](https://example.com/${i})`).join('\n')+'\n[邮件](mailto:test@example.com) [相对](./report) [重复](./report)';
- const links=messageLinks(md);assert.equal(links.length,37);assert.equal(links[0]!.title,title);assert.equal(links.at(-2)!.url,'mailto:test@example.com');assert.equal(links.at(-1)!.url,'./report');
+ const links=messageLinks(md);assert.deepEqual(links.map(link=>link.url),Array.from({length:35},(_,i)=>'https://example.com/'+i));assert.equal(links[0]!.title,title);
 });
 test('desktop external handler keeps confirmation and connects Markdown link schemes without launching an app',async()=>{
  const {readFileSync}=await import('node:fs');

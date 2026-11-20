@@ -7,15 +7,18 @@ test('execution record defaults collapsed, loads only on open, and preserves exp
  let calls=[];const read=async url=>{calls.push(url);return new Response(JSON.stringify(url.endsWith('/task')?{taskId:'task',runs:[{...worker.run,taskId:'task',activeMs:0,errorCode:'restart_unconfirmed'}]}:{selector:{taskId:'task',runId:'run'},version:1,storeGeneration:'generation',revision:1,availability:'available',coverage:'partial',retention:'memory',items:[],active:[],hasMore:false,omitted:false}),{status:200});};
  const render=(revision=0)=>d.render(h(ExecutionObservationContext.Provider,{value:{connected:true,enabled:true,revision,scope:'thread:epoch',read}},h(TaskExecutionRecord,{task,worker})));
  await render();assert.equal(calls.length,0);let toggle=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');assert.equal(toggle.attrs['aria-expanded'],'false');
- await d.click(toggle);assert.equal(calls.length,2);assert.match(d.container.textContent,/restart_unconfirmed/);assert.match(d.container.textContent,/活跃.*0/);assert.match(d.container.textContent,/近期内存/);
- await d.click(toggle);await render(2);assert.equal(toggle.attrs['aria-expanded'],'false');assert.equal(calls.length,2);
+ await d.click(toggle);assert.deepEqual(calls,['/api/tasks/task']);assert.match(d.container.textContent,/restart_unconfirmed/);assert.match(d.container.textContent,/活跃.*0/);assert.doesNotMatch(d.container.textContent,/近期内存/);
+ await d.click(toggle);await render(2);assert.equal(toggle.attrs['aria-expanded'],'false');assert.deepEqual(calls,['/api/tasks/task']);
 }));
-test('a retained failed call reads safe body only when explicitly expanded',async()=>withDom(async d=>{
- const key='a'.repeat(64),summary={callKey:key,seq:1,revision:1,scope:{taskId:'task',runId:'run',version:1,epoch:1,threadId:'worker',turnId:'turn'},category:'command',status:'failed',terminalObserved:true,firstObservedAtMs:1000,lastObservedAtMs:2000,exitCode:1,timingSource:'hostObserved',contentState:'available'};let bodies=0;
- const read=async url=>new Response(JSON.stringify(url.includes('/calls/')?(bodies++,{selector:{taskId:'task',runId:'run'},callKey:key,revision:1,summary,contentState:'available',content:{input:{state:'hidden'},output:{state:'recorded',value:{exitCode:1}}}}):url.endsWith('/task')?{taskId:'task',runs:[]}:{selector:{taskId:'task',runId:'run'},version:1,storeGeneration:'g',revision:1,availability:'available',items:[summary],active:[],hasMore:false,omitted:false}),{status:200});
- await d.render(h(ExecutionObservationContext.Provider,{value:{connected:true,enabled:true,revision:1,scope:'thread:epoch',read}},h(TaskExecutionRecord,{task,worker})));
- await d.click(d.find(n=>n.attrs['data-slot']==='collapsible-trigger'));assert.equal(bodies,0);assert.match(d.container.textContent,/调用失败/);assert.match(d.container.textContent,/退出码 1/);
- await d.click(d.find(n=>n.attrs['data-execution-call']===key));assert.equal(bodies,1);assert.match(d.container.textContent,/exitCode/);
+test('opening a failed run shows its error without fetching a tool summary or body',async()=>withDom(async d=>{
+ const run={...worker.run,phase:'ended',status:'failed',errorCode:'worker_failed'};
+ const calls=[];
+ const read=async url=>{calls.push(url);return new Response(JSON.stringify({taskId:task.id,runs:[run]}));};
+ await d.render(h(ExecutionObservationContext.Provider,{value:{connected:true,enabled:true,scope:'thread:epoch',read}},h(TaskExecutionRecord,{task,worker:{...worker,run}})));
+ await d.click(d.find(n=>n.attrs['data-slot']==='collapsible-trigger'));
+ assert.match(d.container.textContent,/worker_failed/);
+ assert.deepEqual(calls,['/api/tasks/task']);
+ assert.equal(d.find(n=>n.attrs['data-execution-call']),undefined);
 }));
 test('a response from an earlier connection cannot populate the new connection',async()=>withDom(async d=>{
  let release;const delayed=new Promise(resolve=>{release=resolve;});

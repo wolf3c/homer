@@ -3,6 +3,7 @@ import {gfmFromMarkdown} from 'mdast-util-gfm';
 import {mathFromMarkdown} from 'mdast-util-math';
 import {gfm} from 'micromark-extension-gfm';
 import {math} from 'micromark-extension-math';
+import {webSourceUrl} from './preview-reference.js';
 import {webMediaRoute} from './web-contract.js';
 export type MessageSource = { id: string; url: string; title: string; kind: 'reply-link' };
 type Node = { type: string; url?: string; identifier?: string; value?: string; children?: Node[];position?:{start:{offset:number};end:{offset:number}} };
@@ -93,11 +94,12 @@ export function messageLinks(markdown: string): MessageSource[] {
     if (!['link', 'linkReference'].includes(n.type)) return;
     const raw = n.url ?? definitions.get(n.identifier ?? '');
     if (!raw) return;
-    let url = raw, fallback = raw;
-    try { const target = new URL(raw); url = target.href; fallback = target.hostname || raw; } catch { /* Preserve page-relative destinations. */ }
+    const target = webSourceUrl(raw);
+    if (!target) return;
+    const url = target.href;
     if (seen.has(url)) return;
     seen.add(url);
-    links.push({ id: `link-${links.length + 1}`, url, title: text(n).trim() || fallback, kind: 'reply-link' });
+    links.push({ id: `link-${links.length + 1}`, url, title: text(n).trim() || target.hostname, kind: 'reply-link' });
   });
   return links;
 }

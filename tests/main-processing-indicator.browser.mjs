@@ -58,6 +58,8 @@ try{
     await size(40);
     await sprite.waitFor();
     await page.waitForFunction(()=>document.querySelector('.processing-sprite')?.naturalWidth===96);
+    const announcement=page.getByRole('status').filter({hasText:/^AI 正在处理$/});
+    assert.equal(await announcement.count(),1);
     const first=await sprite.screenshot();
     await page.waitForTimeout(850);
     assert.notDeepEqual(first,await sprite.screenshot());

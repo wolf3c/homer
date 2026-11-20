@@ -6,7 +6,6 @@ import {historicalQueueState,queuedPair} from './fixtures/historical-queue-state
 import {projectConversation} from '../src/conversation-projection.js';
 import {HistoryWindow} from '../ui/history-window.js';
 import {ProcessNodeView} from './helpers/process-ui-loader.mjs';
-import {withDom,visibleText} from './helpers/process-dom.mjs';
 
 const project=s=>projectConversation(s.messages,s.processNodes,s.queue);
 function state(){
@@ -55,9 +54,11 @@ test('history cache refuses an older snapshot that would revive an unknown proce
  assert.equal(cache.messages.find(m=>m.id==='node-handoff-original').process.status,'unknown');
 });
 
-test('unknown node stays inactive and its unfinished call reports historical uncertainty only when expanded',async()=>{
- const s=state(),n=s.processNodes[0],shown=project(s).messages.find(m=>m.id===n.messageId);
- assert.notEqual(shown.status,'running');assert.equal(s.isRunning,false);assert.equal(s.activeMessageId,null);
- const html=renderToStaticMarkup(React.createElement(ProcessNodeView,{node:n,renderText:t=>t}));assert.match(html,/状态待确认/);assert.doesNotMatch(html,/本次主 Agent 正在处理/);
- await withDom(async d=>{await d.render(React.createElement(ProcessNodeView,{node:n,renderText:t=>t}));await d.click(d.find(n=>n.attrs['data-slot']==='collapsible-trigger'));assert.match(visibleText(d.container),/结束未确认/);assert.doesNotMatch(visibleText(d.container),/· 调用中/);});
+test('a historical unknown turn stays interrupted and exposes no live controls or tool details',()=>{
+ const s=state(),node=s.processNodes[0],shown=project(s).messages.find(m=>m.id===node.messageId);
+ assert.equal(shown.status,'interrupted');
+ assert.equal(shown.process.status,'unknown');
+ assert.equal(s.isRunning,false);
+ assert.equal(s.activeMessageId,null);
+ assert.equal(renderToStaticMarkup(React.createElement(ProcessNodeView,{node})), '');
 });

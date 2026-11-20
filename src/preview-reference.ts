@@ -1,5 +1,11 @@
 import type {AttachmentRef} from './media-store.js';
 
+export function webSourceUrl(value:string):URL|undefined {
+  let url:URL;
+  try { url=new URL(value); } catch { return; }
+  if ((url.protocol==='https:' || url.protocol==='http:') && !url.username && !url.password) return url;
+}
+
 export type PreviewSource =
  | ({kind:'attachment';messageId:string;sha256:string;title:string}&AttachmentRef)
  | {kind:'web';messageId:string;sourceId:string;url:string;title:string}
@@ -88,8 +94,8 @@ export function parsePreviewSource(value:unknown):PreviewSource{
   source={kind:'attachment',messageId,assetId,revision,sha256,title};
  }else if(s.kind==='web'||s.kind==='browser'){
   const url=text(s.url);
-  let parsed:URL;try{parsed=new URL(url);}catch{return invalid();}
-  if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)invalid();
+  const parsed=webSourceUrl(url);
+  if(!parsed)return invalid();
   source=s.kind==='web'?{kind:'web',messageId:text(s.messageId,100),sourceId:text(s.sourceId,100),url:parsed.href,title}:{kind:'browser',...(s.requestId!==undefined?{requestId:text(s.requestId,100)}:{messageId:text(s.messageId,100)}),url:parsed.href,title};
  }else return invalid();
  return source;

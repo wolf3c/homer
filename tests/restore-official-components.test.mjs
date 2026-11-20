@@ -26,7 +26,9 @@ test('Sources has one official link per safe source and no duplicate preview act
  const sources=[{id:'one',title:'合成来源',url:'https://example.invalid/one'},{id:'bad',title:'禁止',url:'https://user:pass@example.invalid'}];
  await d.render(h(MessageDetails,{message:{id:'reply',role:'assistant',text:'',sources}}));
  await d.click(d.find(n=>n.attrs['data-slot']==='collapsible-trigger'));
- assert.equal(d.all().filter(n=>n.attrs['data-slot']==='source-card').length,1);
+ const cards=d.all().filter(n=>n.attrs['data-slot']==='source-card');
+ assert.deepEqual(cards.map(n=>n.attrs.href),[sources[0].url]);
+ assert.doesNotMatch(d.container.textContent,/禁止|user:pass/);
  assert.equal(d.all().some(n=>n.tagName==='BUTTON'&&n.textContent.includes('预览：')),false);
  assert.match(d.container.textContent,/未经独立核验/);
 }));

@@ -59,7 +59,7 @@ import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
 import {resolve} from 'node:path';
 function bridgeFixture(f:ReturnType<typeof historyFixture>,media?:MediaStore){
  const reader=new WebHistoryPages(f.history,f.processes,f.inputs);
- const host={...f,webReadEpoch:'synthetic-epoch',webHistoryPages:()=>reader,registerWebSurface(){},onStateChange(){return()=>{};},media:media??{view(){throw Error('synthetic_no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');}};
+ const host={...f,webReadEpoch:'synthetic-epoch',webHistoryPages:()=>reader,finalAttachmentDestinations:()=>[],registerWebSurface(){},onStateChange(){return()=>{};},media:media??{view(){throw Error('synthetic_no_media');}},conversationControlState:()=>({isRunning:false,activeMessageId:null}),snapshot(){throw Error('full_snapshot_forbidden');},conversationState(){throw Error('full_conversation_forbidden');}};
  return homerWebBridge(host as unknown as Homer);
 }
 test('new state and off-window receipts do not call full snapshot; received user is formal once',async()=>{

@@ -106,15 +106,15 @@ test('item IDs survive single/collection parsing, pending/draft restoration and 
 
 // Adapter order must come from native items, while disclosure classification
 // continues to put commentary in the existing activity slot.
-test('adapter keeps interleaved source order and final classification without summary-created parts',async()=>{
+test('adapter keeps final answers in source order and excludes interleaved commentary without summary-created parts',async()=>{
  const {buildSync}=await import('esbuild');const {createRequire}=await import('node:module');
  const result=buildSync({entryPoints:['ui/process-message.tsx'],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',external:['react','react/jsx-runtime','@assistant-ui/react'],loader:{'.css':'empty'},logLevel:'silent'});
  const module={exports:{} as any};Function('require','module','exports',result.outputFiles[0]!.text)(createRequire(import.meta.url),module,module.exports);
  const f=fixture();try{f.agent('a','final_answer','A');f.agent('c','commentary','C');f.agent('b','final_answer','B');f.agent('u','future','U');
  const msg=projectConversation(f.history.list('thread'),[f.node()],[]).messages[0]!;
  const projected=module.exports.projectProcessMessage(msg);
- assert.deepEqual(projected.content.map((part:any)=>[part.id,part.text]),[['turn:a','A'],['turn:c','C'],['turn:b','B']]);
- assert.equal(projected.presentation.entries['text:turn:a'].kind,'answer');assert.equal(projected.presentation.entries['text:turn:c'].kind,'commentary');
+ assert.deepEqual(projected.content.map((part:any)=>[part.id,part.text]),[['turn:a','A'],['turn:b','B']]);
+ assert.equal(projected.presentation.entries['text:turn:a'].kind,'answer');assert.equal(projected.presentation.entries['text:turn:c'],undefined);
  const quote={messageId:'node',text:'A\n\nB',itemIds:['turn:a','turn:b']};
  f.history.validateQuotes('thread',{requestId:'cross',text:'ask',quote});
  const empty={...msg,text:'SUMMARY',process:{...f.node(),items:[],final:{id:'invented',text:'SUMMARY'}}};

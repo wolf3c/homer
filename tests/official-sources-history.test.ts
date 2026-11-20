@@ -10,9 +10,7 @@ test('reply links preserve first-seen identity/order and destinations without tr
  const links=messageLinks('[Docs](https://example.com/docs) [same](https://example.com/docs) `https://code.invalid`\n\n```md\n[hidden](https://code.invalid)\n```\n\n[bad](javascript:alert) [secret](https://user:password@example.com) [ref][one]\n\n[one]: https://example.org/reference');
  assert.deepEqual(links.map(x=>[x.id,x.title,x.url,x.kind]),[
   ['link-1','Docs','https://example.com/docs','reply-link'],
-  ['link-2','bad','javascript:alert','reply-link'],
-  ['link-3','secret','https://user:password@example.com/','reply-link'],
-  ['link-4','ref','https://example.org/reference','reply-link'],
+  ['link-2','ref','https://example.org/reference','reply-link'],
  ]);
 });
 

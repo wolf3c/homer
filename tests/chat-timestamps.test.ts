@@ -180,7 +180,7 @@ Function('require', 'exports', 'useContext', 'useLayoutEffect', 'useRef', 'useSt
 const processExports: any = {};
 Function('require', 'exports', 'useMemo', 'useAuiState', 'MessagePrimitive', 'HomerToolFallback', declarations('../ui/process-message.tsx', ['useProcessParts']))(
   require, processExports, React.useMemo, useAuiState, MessagePrimitive, () => null);
-const wrapperJs = 'const Fragment = require("react").Fragment;\n'+declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage', 'renderProcessText','QuoteSource']);
+const wrapperJs = 'const Fragment = require("react").Fragment;\n'+declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage','QuoteSource']);
 // Keep the current production quote renderer in this rich-content boundary.
 // Only its stylesheet is omitted; installed primitives and icons stay real.
 const quotePath = new URL('../ui/vendor/assistant-ui/quote.tsx', import.meta.url);
@@ -211,11 +211,18 @@ Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','
 
 
 function ConversationHarness({ source }: { source: any[] }) {
-  const messages: ThreadMessageLike[] = source.map(m => ({ id: m.id, role: m.role, content: m.text ? [{ type: 'text', id: 'answer:' + m.id, text: m.text }] : [], createdAt: new Date(m.createdAt), metadata: { custom: { activityPresentation: { entries: { ['text:answer:' + m.id]: { kind: 'answer' } } }, original: m, messageId: m.id, media: m.media, quotes: m.quotes, process: m.process, sourceLabel: m.sourceLabel, sourceMessageId: m.sourceMessageId, inactiveInteractions: m.notes } }, ...(m.role === 'assistant' ? { status: { type: 'complete', reason: 'stop' } as const } : {}) }));
+  const messages: ThreadMessageLike[] = source.map(m => ({ id: m.id, role: m.role, content: m.text ? [{ type: 'text', id: 'answer:' + m.id, text: m.text }] : [], createdAt: new Date(m.createdAt), metadata: { custom: { activityPresentation: { entries: { ['text:answer:' + m.id]: { kind: 'answer' } } }, original: m, messageId: m.id, media: m.media, quotes: m.quotes, process: m.process, sourceLabel: m.sourceLabel, sourceMessageId: m.sourceMessageId, inactiveInteractions: m.notes } }, ...(m.role === 'assistant' ? { status: m.status==='interrupted' ? {type:'incomplete',reason:'other'} as const : { type: 'complete', reason: 'stop' } as const } : {}) }));
   const runtime = useExternalStoreRuntime({ messages, convertMessage: m => m, isRunning: false, onNew: async () => {} });
   return h(AssistantRuntimeProvider, { runtime }, h(timestampExports.MessageTimestamps, { messages: source }, h(processes.Provider, { value: new Map(source.map(m => [m.id, m])) }, h(ThreadPrimitive.Root, null, h(ThreadPrimitive.Messages, { components: wrappers })))));
 }
 const renderConversation = (source: any[]) => renderToStaticMarkup(h(ConversationHarness, { source }));
+
+test('an interrupted historical reply shows uncertainty and makes no retry claim',()=>{
+  const process={id:'lost',threadId:'synthetic',sourceKind:'user',sourceMessageIds:[],turnIds:['turn'],state:'worked',status:'unknown',items:[]};
+  const html=renderConversation([m('lost','2025-01-01T10:00:00Z',{role:'assistant',text:'已保留的回复',status:'interrupted',process})]);
+  assert.match(html,/这条回复结束状态待核实，未自动重跑/);
+  assert.doesNotMatch(html,/已经完成任务|本次主 Agent 正在处理/);
+});
 
 test('scheduled processing stays one labeled internal record without user bubbles, task title or date segment', () => {
   const process = { id:'scheduled-process', sourceKind:'scheduled', sourceMessageIds:['scheduled-delivery'], turnIds:['scheduled-turn'], state:'working', status:'running', items:[] };
@@ -377,5 +384,5 @@ test('production CSS exposes time on row hover, keyboard focus and touch while r
   assert.match(css, /@media\(hover:none\),\(pointer:coarse\)\{\.message-timestamp\{opacity:1\}/);
   assert.doesNotMatch(css, /display:none|position:absolute/);
   const source = readFileSync(new URL('../ui/homer-app.tsx', import.meta.url), 'utf8');
-  assert.match(source, /<MessageTimestamps messages=\{state.messages\}><ThreadPrimitive.Messages components=\{\{ UserMessage, AssistantMessage \}\}/);
+  assert.match(source, /<MessageTimestamps messages=\{state.messages\}>(?:(?!<\/MessageTimestamps>)[\s\S])*?<VirtualMessage id=\{rows\[row.index\].id\}/);
 });

@@ -8,6 +8,7 @@ import {useActionBarCopy} from '@assistant-ui/core/react';
 import {previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText} from '../src/message-quote';
 import {MessageActions} from './vendor/assistant-ui/message-actions';
 import {MessageTimestamp} from './message-timestamps';
+import {webSourceUrl} from '../src/preview-reference';
 import {Sources} from './vendor/assistant-ui/sources';
 import './vendor/assistant-ui/run-activity.css';
 
@@ -37,7 +38,9 @@ export function MessageDetails({ message, runtime = false }: { message: import('
 }
 function MessageSources({sources}:{sources:NonNullable<ConversationMessage['sources']>}){
   const [open,setOpen]=useState(false);
-  return <div className="message-link-sources"><Sources sources={sources} open={open} onOpenChange={setOpen} layout="list" locale="zh-CN"/>{open&&<p className="message-source-note">来自本条回复中的链接，未经独立核验。</p>}</div>;
+  const visible=sources.filter(source=>webSourceUrl(source.url));
+  if(!visible.length)return null;
+  return <div className="message-link-sources"><Sources sources={visible} open={open} onOpenChange={setOpen} layout="list" locale="zh-CN"/>{open&&<p className="message-source-note">来自本条回复中的链接，未经独立核验。</p>}</div>;
 }
 function RuntimeMessageActions({message,write,busy,notice,onNotice}:{message:import('../src/conversation-projection').DisplayMessage;write:(text:string)=>Promise<void>;busy:boolean;notice:string;onNotice:(text:string)=>void}){
   const {canQuote,appendQuote}=useContext(PreviewActionsContext);

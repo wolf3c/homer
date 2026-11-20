@@ -25,7 +25,7 @@ test('worker source references match the full owner before and after a user proc
 test('around retires a real older boundary but a same-epoch visibility revision can restore history outside recent',()=>{
  const f=historyFixture(100);try{
   final(f,'node-0',true);const reader=new WebHistoryPages(f.history,f.processes,f.inputs),cache=new HistoryWindow(),epoch='same-service-epoch';
-  const snapshot=(page:ReturnType<WebHistoryPages['read']>)=>cache.snapshot({threadId:'synthetic-history',messages:page.messages,history:{protocol:3,readEpoch:epoch,page,moreQueue:null,moreInteractions:null}} as Parameters<HistoryWindow['snapshot']>[0]);
+  const snapshot=(page:ReturnType<WebHistoryPages['read']>)=>cache.snapshot({threadId:'synthetic-history',isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'idle',version:'test'},messages:page.messages,history:{protocol:3,readEpoch:epoch,page,moreQueue:null,moreInteractions:null}});
   snapshot(reader.read('synthetic-history',{limit:40}));const first=reader.read('synthetic-history',{around:'node-0',limit:1});
   assert.deepEqual(first.units,['node-0']);assert.equal(first.before,null,'inclusive around does not invent older records');cache.add(first,epoch,'around');assert.equal(cache.before,null);
   final(f,'node-0',false);const recent=reader.read('synthetic-history',{limit:40});assert.ok(!recent.messages.some(message=>message.id==='reply-0'),'older restored reply is outside recent');snapshot(recent);
