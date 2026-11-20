@@ -41,7 +41,7 @@ export function serviceActivityNotice(upgrade:WebState['upgrade']):string{
 
 export function showMainProcessing(state:WebState,connected:boolean):boolean{
   const activity=state.mainActivity;
-  if(!connected||state.upgrade.phase!=='running'||!state.isRunning||activity?.source==='internal'||activity?.stage==='unknown')return false;
+  if(!connected||state.upgrade.phase!=='running'||activity?.stage==='unknown'||(!state.isRunning&&activity?.source!=='internal'))return false;
   const approvalOwner=state.generation?.generationId??activity?.processId;
   return !approvalOwner||!state.interactions.some(item=>item.runId==='main-native:'+approvalOwner);
 }

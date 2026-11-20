@@ -135,6 +135,25 @@ try{
     await page.locator('.processing-inline').waitFor();
     fixture.update({isRunning:false,activeMessageId:null,generation:null,mainActivity:null});
     await sprite.waitFor({state:'detached'});
+    const id='archive-receipt',title='聊天回复事项标题缺失调查';
+    const activity={processId:id,source:'internal',stage:'native',turnId:'archive-turn'};
+    const process={id,messageId:id,threadId,sourceKind:'worker',sourceMessageIds:['archive-notice'],turnIds:[activity.turnId],state:'working',status:'running',revision:1,seq:1,items:[]};
+    const receipt={...message(id,'assistant',''),status:'running',process,taskSources:[{title,target:{taskId:'archived-task',version:1}}]};
+    fixture.update({messages:[...messages,receipt],mainActivity:activity});
+    const receiptRow=page.locator('#message-'+id),bubble=receiptRow.locator('.assistant-message-bubble');
+    await down();
+    await receiptRow.getByText(title,{exact:true}).waitFor();
+    await down();
+    await sprite.waitFor({state:'visible'});
+    assert.equal(await bubble.count(),0);
+    for(const text of ['已核对','已核对归档。']){
+      fixture.update({mainActivity:{...activity,finalText:text}});
+      await bubble.getByText(text,{exact:true}).waitFor();
+      assert.equal(await bubble.count(),1);
+    }
+    fixture.update({mainActivity:null,messages:[...messages,{...receipt,text:'已核对归档。',status:'completed',process:{...process,revision:2,state:'worked',status:'completed',endEventId:'end',final:{id,text:'已核对归档。'}}}]});
+    await sprite.waitFor({state:'detached'});
+    assert.equal(await bubble.getByText('已核对归档。',{exact:true}).count(),1);
     assert.deepEqual(errors,[]);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     await context.close();

@@ -53,13 +53,16 @@ test('one current title follows terminal, uncertainty, waiting, stage, tool and 
  assert.match(text({...native,mainActivity:{...native.mainActivity,retryObserved:true,connectionIssue:true}}),/准备只读诊断.*发生连接异常并报告过重试/);
 });
 
-test('the processing animation tracks the current user reply and pauses for its own interaction',()=>{
+test('the processing animation tracks user replies and background receipts and pauses for its own interaction',()=>{
  const show=(overrides={},connected=true)=>waiting.showMainProcessing({...state,...overrides},connected);
  assert.equal(show(),true);
  assert.equal(show({interactions:[{runId:'worker'}]}),true);
  assert.equal(show({interactions:[{runId:'main-native:generation'}]}),false);
  assert.equal(show({generation:null,interactions:[{runId:'main-native:process'}]}),false);
- assert.equal(show({mainActivity:{...state.mainActivity,source:'internal'}}),false);
+ const receipt={isRunning:false,generation:null,activeMessageId:null,mainActivity:{...state.mainActivity,source:'internal'}};
+ assert.equal(show(receipt),true);
+ assert.equal(show({...receipt,interactions:[{runId:'main-native:process'}]}),false);
+ assert.equal(show({...receipt,mainActivity:{...receipt.mainActivity,stage:'unknown'}}),false);
  assert.equal(show({mainActivity:{...state.mainActivity,stage:'unknown'}}),false);
  assert.equal(show({isRunning:false}),false);
  assert.equal(show({upgrade:{phase:'stopping'}}),false);

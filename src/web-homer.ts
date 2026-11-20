@@ -296,6 +296,11 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
         const {messages:_messages,queue:_queue,artifacts,inactiveInteractions,...pageInfo}=recent;
         const pending=interactionPage(),interactions=pending.items;
         const current=app.conversationControlState();
+        const activity=current.mainActivity;
+        if(activity?.source==='internal'){
+          const receipt=recent.messages.find(message=>message.process?.id===activity.processId)?.process;
+          if(receipt)activity.finalText=app.liveReceiptText(receipt);
+        }
         return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:CONVERSATION_VIEW,acceptedRequestIds:[],processNodes:[],
         queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,taskOverview:true,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
         history:{protocol:3,readEpoch:app.webReadEpoch,page:pageInfo,moreQueue:queue.after,moreInteractions:pending.after}};

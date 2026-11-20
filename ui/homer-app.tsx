@@ -1340,15 +1340,18 @@ function HomerApp() {
   const processMessages=useMemo(()=>new Map(state.messages.map(message=>[message.id,message])),[state.messages]);
   const messageCache=useRef(new Map<string,{source:WebState['messages'][number];key:string;value:ThreadMessageLike}>());
   const alive=new Set(state.messages.map(message=>message.id));for(const id of messageCache.current.keys())if(!alive.has(id))messageCache.current.delete(id);
+  const receipt=connected&&state.upgrade.phase==='running'&&state.mainActivity?.source==='internal'&&state.mainActivity.stage!=='unknown'?state.mainActivity:undefined;
   const messages:ThreadMessageLike[]=useMemo(()=>state.messages.map(message=>{
-    const notes=state.inactiveInteractions?.filter(i=>i.processId?i.processId===message.process?.id:i.messageId===message.id),key=JSON.stringify(notes);
+    const notes=state.inactiveInteractions?.filter(i=>i.processId?i.processId===message.process?.id:i.messageId===message.id);
+    const preview=receipt?.finalText&&message.process?.id===receipt.processId&&message.status==='running'&&message.process.turnIds.at(-1)===receipt.turnId?receipt.finalText:undefined;
+    const key=JSON.stringify([notes,preview]);
     const cached=messageCache.current.get(message.id);if(cached?.source===message&&cached.key===key)return cached.value;
-    const projected=projectProcessMessage(message);
+    const projected=projectProcessMessage(preview?{...message,text:preview}:message);
     const value:ThreadMessageLike=({
     id: message.id, role: message.role, content: projected.content, createdAt: new Date(message.createdAt),
     metadata: { custom: { ...(message.role==='user'?{original:message}:{}),claimPosition,activityPresentation:projected.presentation,inactiveInteractions:notes,sourceLabel:message.sourceLabel,sourceMessageId:message.sourceMessageId,quote: message.quote, quotes: message.quotes,resourceReference:message.resourceReference,resourceReferences:message.resourceReferences,media:message.media,messageId:message.id,inputState:message.inputState,queued:!isVisibleConversationMessage(message) } },
     ...(message.role === "assistant" ? { status: message.status === "running" ? { type: "running" as const } : message.status === "completed" ? { type: "complete" as const, reason: "stop" as const } : { type: "incomplete" as const, reason: message.process?.status === "unknown" ? "other" as const : message.status === "interrupted" ? "cancelled" as const : "error" as const } } : {}),
-  });messageCache.current.set(message.id,{source:message,key,value});return value;}),[state.messages,state.inactiveInteractions,claimPosition]);
+  });messageCache.current.set(message.id,{source:message,key,value});return value;}),[state.messages,state.inactiveInteractions,claimPosition,receipt]);
   const stopCurrent=async()=>{if(!state.activeMessageId)return;setStopping(state.activeMessageId);try{await post("/api/stop",{messageId:state.activeMessageId});}catch(e){setStopping(null);setError("停止未确认："+(e instanceof Error?e.message:"web_request_failed"));}};
   const runtime = useExternalStoreRuntime({ messages, convertMessage: useCallback((message: ThreadMessageLike) => message,[]), isRunning: state.isRunning, isSendDisabled: !canAcceptInput(connected,state.upgrade),
     adapters:{attachments:attachmentOwner},

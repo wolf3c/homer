@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 import {mcpCall} from './fixtures/host-mcp-call.js';
+import {homerWebBridge} from '../src/web-homer.js';
 import {ChannelPlugin} from '../src/channel-plugin.js';
 
 async function call(peer:any,name:string,args:unknown,id:string){
@@ -272,6 +273,8 @@ test('a scheduled final is saved in the main chat once without a send call',asyn
         return {status:'completed',text:'Scheduled'};
       }
       runs++;
+      main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,itemId:'final',phase:'final_answer',text:'Scheduled report',completed:false});
+      assert.equal((await homerWebBridge(f.app).history!.state()).mainActivity?.finalText,'Scheduled report');
       return {status:'completed',text:commentary+'\n'+final,messages:[
         {itemId:'progress',phase:'commentary',text:commentary},{itemId:'final',phase:'final_answer',text:final},
       ]};

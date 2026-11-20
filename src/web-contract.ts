@@ -26,7 +26,7 @@ export function webMediaRoute(method:string|undefined,target:URL){
   return {attachment:{messageId:match[1]!,assetId:match[2]!,revision:Number(match[3])},action:match[4],resource,preview:target.search?'voice' as const:undefined};
 }
 // Live observation only; never persisted or used as an execution/stop target.
-export type MainActivity={processId:string;source:'user'|'internal';turnId?:string;stage:'preparing'|'native'|'compacting'|'finishing'|'unknown';summary?:string;retryObserved?:true;connectionIssue?:true};
+export type MainActivity={processId:string;source:'user'|'internal';turnId?:string;stage:'preparing'|'native'|'compacting'|'finishing'|'unknown';finalText?:string;summary?:string;retryObserved?:true;connectionIssue?:true};
 import type { ConversationInput } from "./web-history.js";
 import type {QueuedInput,DispatchInput,MainDispatchInput,QueueChange,QueueMove,QueueOperationResult} from './recursive-main-inputs.js';
 import type {MainGeneration} from './service.js';

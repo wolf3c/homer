@@ -71,7 +71,7 @@ import {modelImage,toolImage,ffmpegPath} from './media-decode.js';
 import {extractDocument,documentPython} from './media-documents.js';
 import {audioPcm,transcribeAudio,whisperPath,whisperModel} from './media-audio.js';
 import {progressLabel,type MainProgress} from './main-progress.js';
-import {MainProcessHistory,unconfirmedNativeEffectsSql} from './main-process.js';
+import {MainProcessHistory,unconfirmedNativeEffectsSql,type ProcessNode} from './main-process.js';
 import {NativeThreadBindings} from './native-thread-bindings.js';
 import {webUpload} from './web-upload.js';
 import {MediaWorkQueue} from './media-work.js';
@@ -100,7 +100,7 @@ export type Message = MessageBase & ({
   (MainGeneration & { type: "main_terminal"; status: "completed" | "failed" | "interrupted" }));
 type MainContext = {
   // Current-turn observations only, never scheduling or authorization inputs.
-  nativeActivity?:{turnId?:string;ended?:true;unavailable?:true;compactions:Map<string,'started'|'completed'>;summary?:string;retryObserved?:true;connectionIssue?:true};
+  nativeActivity?:{receiptFinals?:Map<string,string>;turnId?:string;ended?:true;unavailable?:true;compactions:Map<string,'started'|'completed'>;summary?:string;retryObserved?:true;connectionIssue?:true};
   nativeStartAttempted?:boolean;
   processId?: string;
   processStatus?: 'completed' | 'failed' | 'interrupted' | 'unknown';
@@ -1023,7 +1023,18 @@ export class Homer {
       const context=this.mainContext;
       if(this.main!==engine||!context?.processId||value.threadId!==this.main?.threadId||value.turnId!==this.main?.turnId)return;
       if(context.explicitSent&&value.phase!=='commentary')return;
-      this.processes.agent(context.processId,value);this.invalidateState();
+      if(context.event){
+        const activity=context.nativeActivity;
+        if(!context.workerInput||!activity||activity.turnId!==value.turnId||activity.unavailable||activity.ended)return;
+        const parts=activity.receiptFinals;
+        // Native deltas inherit the phase of their own item/started event.
+        if(value.phase==='final_answer'||(value.phase===undefined&&!value.completed&&parts?.has(value.itemId))){
+          if(activity.retryObserved&&!value.completed&&!value.snapshot)return;
+          const text=value.text??(parts?.get(value.itemId)??'')+(value.delta??'');
+          (activity.receiptFinals??=new Map()).set(value.itemId,text);
+        }else if(!parts?.delete(value.itemId))return;
+      }else this.processes.agent(context.processId,value);
+      this.invalidateState();
     });
     engine.on("textDelta", (value: { threadId: string; turnId: string; delta: string }) => {
       const context = this.mainContext;
@@ -1360,6 +1371,34 @@ export class Homer {
     }
     this.receptionTimings?.mark('round_end',timing,replyStatus);return reply;
   }
+  private authorizeReceiptFinal(context:MainContext,input:InternalInput,node:ProcessNode|undefined){
+    if(input.senderAgentId!=='host'||!node?.sourceMessageIds.includes(input.messageId))throw Error('task_authority_source_denied');
+    const actor=this.mainActor(true);
+    actor.inputMessageId=input.messageId;
+    if(input.kind==='scheduled_message'&&input.origin==='scheduled'){
+      if(!this.tasks.scheduledAuthority(actor))throw Error('schedule_scope_denied');
+      return this.scheduledResultTask(JSON.parse(Object(input.payload).sourceRef));
+    }
+    if(input.kind==='task_archived'){
+      if(!this.archiveApprovalScope(context))throw Error('task_authority_source_denied');
+      return;
+    }
+    if(!input.taskId||!['worker_reply','interaction_required'].includes(input.kind))throw Error('task_authority_source_denied');
+    const {task}=this.tasks.authorizeTask(actor,input.taskId,{allowSettled:true});
+    if(task.headVersion!==input.taskVersion)throw Error('task_authority_source_denied');
+    if(input.kind==='worker_reply'&&!node.items.some(item=>item.kind==='workerEvent'&&
+       item.event?.eventKind==='reply_received'&&item.event.sourceMessageId===input.messageId))throw Error('task_authority_source_denied');
+  }
+  liveReceiptText(node:ProcessNode){
+    const context=this.mainContext,activity=context?.nativeActivity;
+    if(!activity?.receiptFinals?.size||!context?.workerInput||context.stopRequested||context.processStatus||context.explicitSent||this.closing||
+       activity.unavailable||this.main?.available===false||context.processId!==node.id||node.status!=='running'||
+       node.threadId!==this.main?.threadId||node.turnIds.at(-1)!==activity.turnId)return;
+    try{
+      this.authorizeReceiptFinal(context,context.workerInput,node);
+      return [...activity.receiptFinals.values()].filter(Boolean).join('\n\n')||undefined;
+    }catch{return;} // An unverified preview must never interrupt execution or appear in chat.
+  }
   // Sinks persist these local events; adapters perform network delivery later.
   private finishMainProcess(context:MainContext,status:'completed'|'failed'|'interrupted'|'unknown'){
     if(!context.processId)return;
@@ -1390,21 +1429,8 @@ export class Homer {
       if(status==='completed'&&eligible){
         const process=this.processes.exact(context.processId);
         if(!context.explicitSent&&original&&(scheduled||input.taskId)){
-          const actor=this.mainActor(true);
-          actor.inputMessageId=input.messageId;
           try{
-            if(scheduled){
-              if(!process?.sourceMessageIds.includes(input.messageId)||!this.tasks.scheduledAuthority(actor))throw Error('schedule_scope_denied');
-              scheduleTask=this.scheduledResultTask(JSON.parse(Object(input.payload).sourceRef));
-            }else if(input.kind==='task_archived'){
-              if(!process?.sourceMessageIds.includes(input.messageId)||!this.archiveApprovalScope(context))throw Error('task_authority_source_denied');
-            }else{
-              const {task}=this.tasks.authorizeTask(actor,input.taskId!,{allowSettled:true});
-              const verified=input.kind==='worker_reply'
-                ?process?.items.some(item=>item.kind==='workerEvent'&&item.event?.eventKind==='reply_received'&&item.event.sourceMessageId===input.messageId)
-                :process?.sourceMessageIds.includes(input.messageId);
-              if(task.headVersion!==input.taskVersion||!verified)throw Error('task_authority_source_denied');
-            }
+            scheduleTask=this.authorizeReceiptFinal(context,input,process);
             publishFinal=true;
             publicText=original+(files?.omitted?'\n\n部分文件未能保存为可跨端打开的版本。':'');
           }catch(error){
