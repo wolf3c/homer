@@ -101,3 +101,53 @@ UI 类型检查、Canvas CSS一致性及干净候选 Vite构建通过。最终�
 | `diff-viewer-BrZ8UZ_5.js` | `9961c89041a80a01b3f4e0680afaecd81f513529f48af8df40f79fc3827520d6` |
 
 提交只包含本项差异：共享 lock只增加三个包和对应声明；DESIGN、vendor README、testing文档只提交本项段落。旧候选清理前核验全部12个文件仍匹配原交付清单和完整patch；保留原patch、报告及本轮验收证据。其他worktree及未提交修改不属于清理范围。
+
+## 2026-11-18 文件改动摘要卡调研与验证
+
+**首版只展示能归到该条回复、且已确认成功的原生文件操作。** 固定 Codex 的 `fileChange` 可以把已完成的原生补丁操作归到对应线程、轮次和工具项。轮次 diff 在简单编辑中能合并重复操作和撤销，也会漏报命令写入、保留过时内容，并在同文件交错编辑时包含其他线程的改动。共享工作区暂不显示「本轮净改动」或净增删总数。以下是实验和方案，产品尚未实施。
+
+### 产品参照
+
+- Codex 在审查入口区分最近一轮和不同 Git 范围，并提供逐文件差异。产品上的范围选择说明用户需要知道自己正在看哪一批改动，其实现不能作为 Homer 共享工作区的归属证据。[Codex 审查文档](https://learn.chatgpt.com/docs/code-review)
+- Claude Code Desktop 从 Changes 卡的增删行数进入逐文件差异。Cursor 从轮末摘要的文件进入相应范围的 Changes 页。Homer 可复用这种简短入口和就地阅读方式。[Claude Code Desktop](https://code.claude.com/docs/en/desktop#review-changes-with-diff-view) · [Cursor 更新记录](https://prod.cursor.com/docs/release-notes)
+- 前次调研建议在对应 Main／Worker 回复汇总文件数，按文件进入现有 Preview。本次保留入口，按下列反例收窄增删统计和归属语义。App Server 文档定义了带 `threadId/turnId/diff` 的轮次通知和带 `id/changes/status` 的 `fileChange` 工具项。[Codex App Server](https://learn.chatgpt.com/docs/app-server#turn-events)
+
+### 固定引擎证据
+
+使用仓库锁定的 macOS arm64 `codex-cli 0.171.0-alpha.7`，二进制 SHA-256 为 `4e37dbc4dcad2aa285e1d246823e0466ea62171a8dbd6d1684d77e9da3abcb2e`。通过 stdio 启动实际 App Server，版本及独立 `CODEX_HOME` 由 `initialize` 核验，`account/read` 返回空账号。隔离系统 HOME、Codex HOME、Git 工作目录、日志和数据库，Responses 只走 `127.0.0.1` 的脚本 SSE。fixture 发工具调用及最终消息，文件实际由 Codex 写入，JSON-RPC 通知从实际进程读取。直接 `apply_patch` 与 `functions.exec` 内的 `tools.apply_patch` 两次完整对照各 9 轮、24 次回环请求，进程均退出 0，以下结果一致。A、B 是同一个隔离 App Server 内并行的两个原生线程，模拟两个 Worker 的原生执行，未运行 Homer 的双 Worker 调度。
+
+| 场景 | `item/completed` | 同一 `threadId/turnId` 末次 `turn/diff/updated` | 磁盘或终态 |
+| --- | --- | --- | --- |
+| 重复编辑 | 两个成功项 `base → first → second` | 5 条通知含重复，最后只含 `-base/+second` | `second` |
+| 同轮撤销 | 两个成功项 `base → temporary → base` | 3 条，最后一条 `diff: ""` | 恢复 `base` |
+| 仅命令写 | `commandExecution` 退出 0，`fileChange` 0 条 | 0 条 | `written` 已落盘 |
+| 补丁、命令、补丁 | 补丁项分别为 `base → patched`、`shell → final`，中间命令退出 0 | 6 条，最后显示 `-base/+final`。命令之后、第二补丁之前仍发出旧的 `+patched` | `final` |
+| 补丁后由命令覆盖 | 成功补丁 `base → patched`，命令退出 0 | 4 条，最后仍为 `-base/+patched` | 实际是 `shell` |
+| 删除文本 | 成功项 `kind.type: delete`，`changes[].diff` 是原文 `base\n` | 3 条，含 `+++ /dev/null` 和 `@@ -1 +0,0 @@` | 原路径不存在 |
+| 写入后中断 | 成功项 `base → survives` | 2 条，均早于 `turn/completed` | `interrupted`，已写内容保留 |
+| 并行 A、B，A 写后等待直到 B 完成 | A 的左侧操作与 B 的右侧操作有各自原生项 | 两边各报自己片段，A 结束时未刷新成共享文件全貌 | 同一文件同时有 `leftA` 和 `rightB` |
+| 并行 A、B，B 完成后 A 再写 | A 两项只含 `left0 → leftA → leftAA`，B 一项只含 `right0 → rightB` | A 的 5 条通知中，最后一条同时含 `-left0/+leftAA` 和 **`-right0/+rightB`**。B 的 3 条通知始终只含右侧 | A、B 均完成，文件同时保留左右两处改动 |
+
+并行两行分别来自一次单写对照与两次完整交错验证。初次在外层沙箱内尝试时，嵌套 macOS 沙箱拒绝实际写入，仍收到带路径和补丁的 `item/started` 与 `status: failed` 的 `item/completed`，没有轮次 diff。隔离复跑保留 Codex 的 workspace-write 沙箱，成功判定同时检查工具终态与磁盘。带补丁的通知或 `turn/completed: completed` 单独都不足以证明工具成功。
+
+复核时可用临时 Git 目录，每个单文件场景先写入并提交 `base\n`，共享文件用 `left0\nsep0\n…\nsep9\nright0\n`。用 `initialize → initialized → thread/start → turn/start` 启动，Responses SSE 依次发 `response.created`、`response.output_item.added/done` 和 `response.completed`。每次编辑回包发 `apply_patch`，命令用 `tools.exec_command` 执行 `printf 'shell\n' > overwrite.txt` 一类固定操作。中断测试在第一项成功后挂起下一条 SSE，再针对原轮次发 `turn/interrupt`。并行反例在 A 首次写后挂起其下一条 SSE，完整执行 B，再放行 A 第二次补丁。比较配对的工具终态、轮次通知和合成文件字节。两次完整验证的 `thread/read(includeTurns: true)` 都读回了各轮工具项，但未测试重启、压缩或历史截断后的可用性。
+
+原生补丁项可以解释「谁做了这一步」，即使两次操作触及相同路径。同一轮次最晚收到的 diff 仍可能把两个执行的操作合在一起，或者与磁盘不同。文件名、整个共享 Git diff、命令文本、命令退出码、无事件及终态均无法独立补足这个缺口。任何工作区级对照都应使用自己的范围标识。重叠编辑、命令／脚本／MCP 绕过原生补丁、失联后迟到写入及未知执行状态仍需明确覆盖限制。
+
+### 当前 Preview 能力
+
+| 检查 | 当前源码和验证 |
+| --- | --- |
+| 点击打开与定位 | `ui/homer-app.tsx` 的成果按钮打开对应 Canvas Tab，`CanvasReader` 把补丁交给 `DiffViewer`。后者有文件头、行号、每文件复制及折叠展开，当前调用只传 `patch`、`maxCollapsedLines={200}`，没有从外部文件条目跳到文件或行的参数与焦点契约。Main 消息本地链接可打开路径当前内容，`:行[:列]` 后缀用于解析路径，当前阅读器未消费该位置；删除后的原路径无法作为历史读入口。 |
+| 删除 | Unified 文本删除可渲染旧侧和删行。需用仍可访问的补丁快照，避免重新读已删除路径。原生删除项的 `diff` 是旧文本，接入时按 `kind` 转成合法统一补丁，并处理空文件、无末尾换行及不可安全转换的内容。 |
+| 二进制、超限及异常 | 明确的 binary／combined 标记、解码出现 NUL 或替换字符、空补丁或无统一 hunk 均回退原文。解析、渲染异常保留原文与下载。超过 256 KiB 仅解码开头 128 KiB，行数超过 2,000 回退原文。下载保留已获准读取的原始补丁 Blob，仍受服务读取与平台分享上限。二进制回退只阅读补丁文本，折叠的 200 行是渲染门槛。 |
+| 来源权限 | 附件读取绑定可见消息及精确 `assetId/revision`，宿主校验消息附件与授权，客户端核对加载内容的 SHA-256。消息本地路径入口要求桌面授权、同源 POST、当前 Main 线程内可见且未撤销的源消息及其确切 Markdown 链接，并执行本地路径、普通文件、符号链接和读取限制。原生事件路径本身无权打开文件，Worker 原生输出也不能借此自动进入主对话。 |
+
+当前源码定向离线通过 46/46，其中 CanvasReader／DiffViewer 与引用校验 40 项、临时目录的文件和传输 3 项、合成宿主来源权限 3 项。来源权限用例覆盖当前字节、附件身份、未授权桌面、跨线程、隐藏或撤销的消息、受保护路径及删除后缺失。首轮 3 项硬编码 scratch／传输测试受外层沙箱写限制，改用临时目录后通过。2 项合成宿主用例首次因进程身份不可读停止，获准打开测试自有进程身份校验后通过。现有补丁组件的真实浏览器验收见本文前文，本轮核对当前组件、DOM 交互及合成 HTTP／来源校验，未重新打开真实浏览器或安装版检查点击和布局。
+
+### 最简接入方案与验收
+
+1. 宿主在现有 engine 事件入口仅收当前来源的 `item/completed` 中 `type=fileChange, status=completed` 的安全子集。按引擎连接／执行代次、原生线程、原生轮次、item ID 去重，沿已有保留绑定处理可核实的迟到终态。保留安全相对路径、操作种类及有界文本证据。Homer 现有过程投影只保留安全标签和文件数等字段，Worker 操作记录用于状态与恢复，均无可重建补丁；旧历史缺证时隐藏入口。第一版只纳入与该回复精确绑定的原生轮次，子线程归属未打通时不合并。
+2. 在对应用户可见的 Main／Worker 回复展示一张「本轮记录的文件操作」卡，显示有证据的去重文件数。同路径的多个成功操作按发生顺序归在一个文件下。能解析的单个操作可显示该操作的增删数，撤销与中间编辑仍按操作展示，省略跨操作净增删。命令专用轮次无文件证据时保留既有命令记录，不展示“未改文件”。中断轮次若有可绑定的公开记录，可查看已确认项并标明轮次中断与覆盖范围；未知或失败项不计作成功。
+3. 点文件行打开该文件的已授权操作快照，复用 Canvas Tab、DiffViewer 和已有原文回退。按文件选择内容天然定位，避免先加多文件跳转、逐行批注或改造 vendor。优先复用现有快照资产和消息绑定，只给该来源读授权，在读取时复核消息可见性及撤销；避免为每个文件创建正式成果或擅自转发给 Main、其它 Worker、渠道或模型。元数据超预算时明确显示记录不全，正文不可读时保留授权范围内的操作类型和适当提示。实际落地需验证补丁路径和正文的公私边界，尤其是重命名双路径、路径别名、跨任务来源及补丁上下文中的敏感内容。
+4. 实现验收需在隔离宿主回放这里的原生反例，覆盖重复通知、晚到／中断、空 diff、无事件命令、同文件两轮交错、旧历史和跨任务拒绝。验证点击确实打开正确文件与版本、删除可读、二进制／超限可理解、撤销后失效，以及宽窄窗的键盘与焦点行为。真实模型、完整 Homer 双 Worker、安装版和真机均待专项。工作区净差异若成为需求，需要另行证明隔离基线和写入边界；普通轮次事件与共享 Git diff 无法提供该证明。
