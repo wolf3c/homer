@@ -21,6 +21,7 @@ test('task overview routes require loopback Host/Origin, offer GET only and neve
   assert.deepEqual(pages,[undefined,{view:'archived',before:20}]);
   assert.equal((await fetch(server.url+'/api/tasks/list/archived/before/9999999999999999')).status,409);
   assert.equal((await fetch(server.url+'/api/tasks/list/archived',{headers:{Origin:'https://untrusted.example'}})).status,403);
+  assert.equal((await fetch(server.url+'/api/tasks/list/needsUser')).status,404);
   assert.equal(lists,2);assert.equal(details,1);
   assert.deepEqual(await (await fetch(server.url+'/api/tasks/task-synthetic/summary')).json(),{taskId:'task-synthetic',runs:[],artifacts:[]});
   assert.equal((await fetch(server.url+'/api/tasks/task-synthetic/origin/message-synthetic')).status,409);

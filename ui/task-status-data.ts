@@ -2,8 +2,6 @@ import {useCallback,useEffect,useRef,useState} from 'react';
 import type {TaskOverview} from '../src/task-overview';
 import type {WebState} from '../src/web-contract';
 import {connectionFetch} from './web-connection-client';
-// One snapshot owns both collapsed counts and the opened tree. Notifications
-// invalidate it; they do not create a poller per card or per streaming token.
 export function useTaskStatusData(state:WebState,connected:boolean,path:string,onBeforeSnapshot?:()=>void){
  const beforeSnapshot=useRef(onBeforeSnapshot);beforeSnapshot.current=onBeforeSnapshot;
  const scope=state.threadId+':'+(state.history?.readEpoch??'legacy')+':'+path;

@@ -59,6 +59,7 @@ test('mobile conversation and execution selectors retain exact Task and Worker i
 
 test('history list uses scoped pages on the paired device transport',async()=>{
  const f=fixture();assert.equal((await f.fetch(new Request('https://localhost/api/tasks/list/archived/before/20'))).status,200);
+ assert.equal((await f.fetch(new Request('https://localhost/api/tasks/list/needsUser'))).status,409);
  assert.deepEqual(f.calls,[{op:'tasks.list',input:{view:'archived',before:20}}]);
 });
 

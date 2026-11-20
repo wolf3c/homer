@@ -787,7 +787,7 @@ node --import tsx tests/preview-tabs.browser.mjs
 
 可单独执行 `HISTORY_FOLLOWUP_BUILD=/absolute/isolated-web-build HOMER_BROWSER_EVIDENCE=/absolute/evidence node tests/main-processing-indicator.browser.mjs`。用 805／390 CSS px 的隔离 Chrome 检查处理 GIF 实际播放、40／26px 之间的滚动缩放、队列出现和消失、悬停／键盘／触屏、减少动态效果、图片解码失败、断线及恢复。HTTP 和队列内容均为合成，证据写入 `main-processing-indicator/`。
 
-当前事项与历史可用 Node 22 和本机 Chrome 定向验收，截图写到显式指定的 `HOMER_BROWSER_EVIDENCE`。运行 `node tests/task-status-count.browser.mjs` 检查 1440／390／320px 实际组件的普通标题、审批、并发 Worker 中的未知结果、分页、断线保留、键盘回焦及历史入口。运行 `HISTORY_FOLLOWUP_BUILD=/absolute/isolated-web-build node tests/task-status-pinned-runner.mjs flat` 连接完整 UI 构建和独立合成 SQLite，验证待处理筛选、历史 Worker 原文和成果文件预览。运行器在证据目录创建合成资料，使用独立 Chrome profile。旧版工作状态计数与排序的专项记录属于此前界面。
+当前事项与历史可用 Node 22 和本机 Chrome 定向验收，截图写到显式指定的 `HOMER_BROWSER_EVIDENCE`。运行 `node tests/task-status-count.browser.mjs` 检查 1440／390／320px 实际组件的普通标题、并发 Worker 中的未知结果、两区独立分页、归档懒读与失败重试、阅读位置及键盘展开收起。运行 `HISTORY_FOLLOWUP_BUILD=/absolute/isolated-web-build node tests/task-status-pinned-runner.mjs flat` 连接完整 UI 构建和独立合成 SQLite，验证当前事项保留、历史 Worker 原文和成果文件预览。运行器在证据目录创建合成资料，使用独立 Chrome profile。旧版工作状态计数与排序的专项记录属于此前界面。
 
 HTML 预览定向运行 `node --import tsx tests/html-annotation-lifecycle.browser.mjs` 与 `node --import tsx tests/html-render-first.browser.mjs`，分别指定独立 `HOMER_REVIEW_EVIDENCE_ROOT`；后者还需上述 UI 构建与合成目录。覆盖原生 Add 失败保留输入、重试和 ACK、退出与跨断点、1440／390／320px 的实际 Tab 焦点环、脚本预览与主输入发送。保存即写主草稿，测试沿原 Add／update／delete／clear 协议，不等待旧 Send 导入。
 

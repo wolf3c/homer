@@ -34,15 +34,14 @@ test('pending questions retain exact Run epoch version thread and turn ownership
  const f=overviewFixture();try{
   const a=f.open('page'),run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:page');
   f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt,runEpoch,taskVersion) VALUES('question','identity','fingerprint',?,'thread:page','turn:page','request','ask_main','question','{}','{}','pending_user',100,100,?,?)`).run(run.id,run.epoch,run.version);
-  let row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingUser,1);assert.deepEqual(row.workers[0]!.pendingUsers,[{id:'question',after:0,kind:'question'}]);assert.equal(classifyTask(row).key,'user');
-  f.store.db.prepare("UPDATE tasks SET state='paused' WHERE id=?").run(f.taskId);
-  assert.equal(readTaskOverview(f.store.db,{view:'needsUser'}).tasks[0]?.id,f.taskId);
+  let row=readTaskOverview(f.store.db).tasks[0]!;
+  assert.equal(classifyTask(row).key,'ordinary');assert.ok(!('pendingUsers' in row.workers[0]!));
+  assert.throws(()=>readTaskOverview(f.store.db,{view:'needsUser' as 'visible'}),/task_overview_invalid/);
   f.store.db.prepare("UPDATE worker_interactions SET responseUserMessageId='already-replied'").run();
-  assert.equal(readTaskOverview(f.store.db,{view:'needsUser'}).tasks.length,0);
-  f.store.db.prepare("UPDATE worker_interactions SET responseUserMessageId=NULL").run();
+  assert.equal(readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMain,1);
   for(const [column,value] of [['runEpoch',99],['taskVersion',99],['threadId','unrelated'],['turnId','unrelated']] as const){
    const before=f.store.db.prepare(`SELECT ${column} AS value FROM worker_interactions`).get()!.value;
-   f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(value);row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingUser,0,column);
+   f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(value);row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingMain,0,column);
    f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(before??null);
   }
   f.store.db.prepare("UPDATE worker_interactions SET state='expired'").run();

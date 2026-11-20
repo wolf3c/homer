@@ -1,12 +1,11 @@
 import type {DatabaseSync} from 'node:sqlite';
-import {validPendingUsers} from './task-presentation.js';
 import {mainProcessSourceSql} from './main-process.js';
 
 // Read-only Web facts. Task decisions and Worker execution have separate owners.
 export type OverviewRun={id:string;taskId:string;workerId:string;status:string;phase:string;version:number;epoch:number;sourceRequestId:string|null;createdAt?:number;startedAt?:number|null;endedAt?:number|null;stopRequestedAt?:number|null;replacesRunId?:string|null;errorCode?:string|null;threadId?:string|null;turnId?:string|null};
-export type OverviewWorker={id:string;taskId:string;title?:string|null;run:OverviewRun;pendingUser:number;pendingMain:number;pendingMainApprovals?:number;pendingMainQuestions?:number;pendingUsers:{id:string;after:number;kind?:'question'|'authorization'}[];pendingUserCreatedAt?:number|null;pendingMainCreatedAt?:number|null};
+export type OverviewWorker={id:string;taskId:string;title?:string|null;run:OverviewRun;pendingMain:number;pendingMainApprovals?:number;pendingMainQuestions?:number};
 export type OverviewTask={id:string;title?:string|null;goal:string|null;notes:string;headVersion:number;revision:number;state:'open'|'paused';historyState:'visible'|'archived';uncertainOperation?:number;uncertainReceipt?:number;sourceRequestId:string|null;sourceRequestIds?:string[];creationOrder?:number;createdAt?:number;workers:OverviewWorker[]};
-export type OverviewPage={view?:'visible'|'archived'|'needsUser';before?:number};
+export type OverviewPage={view?:'visible'|'archived';before?:number};
 export type TaskOverview={tasks:OverviewTask[];nextCursor?:number;progressRevision?:number};
 export type TaskRequirement={taskId:string;version:number;goal:string|null;sourceRequestId:string|null;sourceMessageId?:string;threadId?:string};
 export type RecoveryFacts={operations:{id:string;taskId:string;kind:string;state:string;revision:number}[];receipts:{messageId:string;taskId:string;taskVersion:number;state:string;revision:number}[];interactions:{id:string;runId:string;taskVersion:number|null;kind:string;state:string}[]};
@@ -15,36 +14,38 @@ export type WorkerConversation={taskId:string;workerId:string;threadId:string|nu
 export type TaskDetail={taskId:string;historyState?:OverviewTask['historyState'];publicMessages?:{id:string;role:'user'|'assistant';excerpt:string}[];moreMessages?:boolean;conversation?:WorkerConversation;requirements?:TaskRequirement[];moreHistory?:boolean;artifacts?:import('./web-contract.js').WebArtifact[];moreArtifacts?:boolean;recovery?:RecoveryFacts;runs:(OverviewRun&{stateRevision:number;activeMs:number;createdAt:number;startedAt:number|null;endedAt:number|null})[]};
 export function classifyTask(task:OverviewTask){
  const workers=task.workers;
- const pending=task.historyState==='visible'?workers.flatMap(validPendingUsers):[];
  const unknown=workers.some(w=>w.run.phase==='uncertain');
  const stopping=workers.some(w=>w.run.stopRequestedAt!=null&&w.run.phase!=='ended');
  const labels=[];
- if(pending.some(q=>q.kind==='authorization'))labels.push('需你审批');
- if(pending.some(q=>q.kind!=='authorization'))labels.push('需你答复');
  if(task.uncertainOperation)labels.push('操作结果待核实');
  if(task.uncertainReceipt)labels.push('接收回执待核实');
  if(unknown)labels.push('执行状态待核实');
  else if(stopping)labels.push('停止待确认');
- return {key:pending.length?'user':unknown||stopping||task.uncertainOperation||task.uncertainReceipt?'unknown':'ordinary',label:labels.join(' · ')};
+ return {key:labels.length?'unknown':'ordinary',label:labels.join(' · ')};
 }
 export function readTaskOverview(db:DatabaseSync,page:OverviewPage={}):TaskOverview{
  const {view='visible',before}=page;
- if(!['visible','archived','needsUser'].includes(view)||before!==undefined&&(!Number.isSafeInteger(before)||before<1))throw Error('task_overview_invalid');
- const liveInteraction=`i.state IN ('pending_user','pending_main') AND r.status='running' AND r.phase NOT IN ('ended','uncertain','held') AND r.stopRequestedAt IS NULL AND i.runEpoch=r.epoch AND i.taskVersion=r.version AND i.threadId=r.threadId AND i.turnId=r.turnId AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid)`;
- const needsUser=view==='needsUser'?` AND EXISTS(SELECT 1 FROM runs r JOIN worker_interactions i ON i.runId=r.id WHERE r.taskId=t.id AND i.state='pending_user' AND i.responseUserMessageId IS NULL AND ${liveInteraction})`:'';
+ if(!['visible','archived'].includes(view)||before!==undefined&&(!Number.isSafeInteger(before)||before<1))throw Error('task_overview_invalid');
+ const liveInteraction=`(i.state='pending_main' OR i.state='pending_user' AND i.responseUserMessageId IS NOT NULL) AND r.status='running' AND r.phase NOT IN ('ended','uncertain','held') AND r.stopRequestedAt IS NULL AND i.runEpoch=r.epoch AND i.taskVersion=r.version AND i.threadId=r.threadId AND i.turnId=r.turnId AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid)`;
  const pageRows=db.prepare(`SELECT t.rowid AS creationOrder,t.id,t.title,t.notes,t.headVersion,t.revision,t.state,t.historyState,t.createdAt,
    EXISTS(SELECT 1 FROM operations op WHERE op.scopeId=t.id AND op.state='uncertain') AS uncertainOperation,
-   EXISTS(SELECT 1 FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId WHERE m.taskId=t.id AND ar.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND m.kind<>'user_input' AND m.targetRunId IS NULL AND ar.state='uncertain') AS uncertainReceipt,v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState=? AND t.rowid<?${needsUser} ORDER BY t.rowid DESC LIMIT 21`).all(view==='archived'?'archived':'visible',before??Number.MAX_SAFE_INTEGER) as (Omit<OverviewTask,'workers'|'sourceRequestIds'>&{sources:string|null})[];
+   EXISTS(SELECT 1 FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId WHERE m.taskId=t.id AND ar.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND m.kind<>'user_input' AND m.targetRunId IS NULL AND ar.state='uncertain') AS uncertainReceipt,v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState=? AND t.rowid<? ORDER BY t.rowid DESC LIMIT 21`).all(view,before??Number.MAX_SAFE_INTEGER) as (Omit<OverviewTask,'workers'|'sourceRequestIds'>&{sources:string|null})[];
+ if(!pageRows.length)return {tasks:[]};
  const tasks=pageRows.slice(0,20),ids=JSON.stringify(tasks.map(t=>t.id));
  const inPage='t.id IN (SELECT value FROM json_each(?))';
  const runs=db.prepare(`SELECT r.id,r.taskId,r.workerId,r.version,r.status,r.phase,r.epoch,r.sourceRequestId,r.createdAt,r.startedAt,r.endedAt,r.stopRequestedAt,r.replacesRunId,r.errorCode,r.threadId,r.turnId,substr(first.prompt,1,80) AS title FROM tasks t JOIN runs r ON r.taskId=t.id JOIN runs first ON first.id=r.workerId WHERE ${inPage} AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid) ORDER BY first.rowid`).all(ids) as (OverviewRun&{title:string})[];
- const pending=db.prepare(`SELECT r.workerId,i.id,i.rowid-1 AS after,i.kind,CASE WHEN i.state='pending_user' AND i.responseUserMessageId IS NOT NULL THEN 'pending_main' ELSE i.state END AS state,i.createdAt FROM worker_interactions i JOIN runs r ON r.id=i.runId JOIN tasks t ON t.id=r.taskId WHERE ${inPage} AND t.historyState='visible' AND ${liveInteraction} ORDER BY i.rowid`).all(ids) as {workerId:string;id:string;after:number;kind:'question'|'authorization';state:string;createdAt:number}[];
- const replies=db.prepare(`SELECT r.workerId,count(*) AS pendingMain,max(r.endedAt) AS pendingMainCreatedAt FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id JOIN runs r ON r.id=m.senderRunId JOIN tasks t ON t.id=r.taskId WHERE ${inPage} AND m.kind='worker_reply' AND m.senderAgentId='host' AND m.taskId=r.taskId AND m.taskVersion=r.version AND m.senderEpoch<=r.epoch AND m.targetRunId IS NULL AND ar.recipientAgentId=m.recipientAgentId AND ar.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (ar.state IN ('pending','offered','uncertain') OR ar.state='received' AND ${mainProcessSourceSql()}) AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid) GROUP BY r.workerId`).all(ids) as {workerId:string;pendingMain:number;pendingMainCreatedAt:number|null}[];
+ const pending=db.prepare(`SELECT r.workerId,i.kind,count(*) AS total FROM worker_interactions i JOIN runs r ON r.id=i.runId JOIN tasks t ON t.id=r.taskId WHERE ${inPage} AND t.historyState='visible' AND ${liveInteraction} GROUP BY r.workerId,i.kind`).all(ids) as {workerId:string;kind:string;total:number}[];
+ const replies=db.prepare(`SELECT r.workerId,count(*) AS pendingMain FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id JOIN runs r ON r.id=m.senderRunId JOIN tasks t ON t.id=r.taskId WHERE ${inPage} AND m.kind='worker_reply' AND m.senderAgentId='host' AND m.taskId=r.taskId AND m.taskVersion=r.version AND m.senderEpoch<=r.epoch AND m.targetRunId IS NULL AND ar.recipientAgentId=m.recipientAgentId AND ar.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (ar.state IN ('pending','offered','uncertain') OR ar.state='received' AND ${mainProcessSourceSql()}) AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid) GROUP BY r.workerId`).all(ids) as {workerId:string;pendingMain:number}[];
  const byTask=new Map<string,OverviewTask>(tasks.map(({sources,...t})=>[t.id,{...t,sourceRequestIds:sources?JSON.parse(sources):t.sourceRequestId?[t.sourceRequestId]:[],workers:[]}]));
  const byWorker=new Map<string,OverviewWorker>();
- for(const {title,...run} of runs){const worker:OverviewWorker={id:run.workerId,taskId:run.taskId,title,run,pendingUser:0,pendingMain:0,pendingUsers:[]};byWorker.set(worker.id,worker);byTask.get(run.taskId)?.workers.push(worker);}
- for(const item of pending){const w=byWorker.get(item.workerId);if(!w)continue;if(item.state==='pending_user'){w.pendingUser++;w.pendingUsers.push({id:item.id,after:item.after,kind:item.kind});w.pendingUserCreatedAt=Math.max(w.pendingUserCreatedAt??0,item.createdAt);}else{w.pendingMain++;if(item.kind==='authorization')w.pendingMainApprovals=(w.pendingMainApprovals??0)+1;else w.pendingMainQuestions=(w.pendingMainQuestions??0)+1;w.pendingMainCreatedAt=Math.max(w.pendingMainCreatedAt??0,item.createdAt);}}
- for(const item of replies){const w=byWorker.get(item.workerId);if(w){w.pendingMain+=item.pendingMain;w.pendingMainCreatedAt=Math.max(w.pendingMainCreatedAt??0,item.pendingMainCreatedAt??0);}}
+ for(const {title,...run} of runs){const worker:OverviewWorker={id:run.workerId,taskId:run.taskId,title,run,pendingMain:0};byWorker.set(worker.id,worker);byTask.get(run.taskId)?.workers.push(worker);}
+ for(const item of pending){
+  const worker=byWorker.get(item.workerId);if(!worker)continue;
+  worker.pendingMain+=item.total;
+  if(item.kind==='authorization')worker.pendingMainApprovals=item.total;
+  else worker.pendingMainQuestions=item.total;
+ }
+ for(const item of replies){const worker=byWorker.get(item.workerId);if(worker)worker.pendingMain+=item.pendingMain;}
  return {tasks:[...byTask.values()],...(pageRows.length>20?{nextCursor:tasks.at(-1)!.creationOrder}:{})};
 }
 function requireTask(db:DatabaseSync,id:string){

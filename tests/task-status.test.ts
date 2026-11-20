@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {OverviewTask,OverviewWorker} from '../src/task-overview.js';
 import {workerStatus,taskCardPresentation,statusTree,matterSortKey,rankedStatusMatters,linearPlanIndex} from '../src/task-status.js';
-const worker=(id:string,status='running',phase='executing'):OverviewWorker=>({id,taskId:'task',run:{id,taskId:'task',workerId:id,version:1,epoch:1,status,phase,sourceRequestId:null,createdAt:100,startedAt:200,endedAt:phase==='ended'?300:null},pendingUser:0,pendingMain:0,pendingUsers:[]});
+const worker=(id:string,status='running',phase='executing'):OverviewWorker=>({id,taskId:'task',run:{id,taskId:'task',workerId:id,version:1,epoch:1,status,phase,sourceRequestId:null,createdAt:100,startedAt:200,endedAt:phase==='ended'?300:null},pendingMain:0});
 const task=(change:Partial<OverviewTask>={}):OverviewTask=>({id:'task',title:'Matter',goal:'Goal',notes:'',headVersion:1,revision:1,state:'open',historyState:'visible',sourceRequestId:null,creationOrder:1,createdAt:10,workers:[],...change});
 
 test('Worker success failure interruption and queue are execution facts only',()=>{
@@ -11,13 +11,10 @@ test('Worker success failure interruption and queue are execution facts only',()
  }
 });
 
-test('valid user questions and authorizations alone draw user attention',()=>{
- const w=worker('w');w.pendingUser=2;w.pendingUsers=[{id:'question',after:0,kind:'question'},{id:'authorization',after:1,kind:'authorization'}];
- assert.equal(taskCardPresentation(task({workers:[w]})).label,'需你审批 · 需你答复');assert.equal(taskCardPresentation(task({workers:[w]})).attention,'user');
- w.run.phase='uncertain';assert.equal(taskCardPresentation(task({workers:[w]})).attention,'none');
- w.pendingUser=0;w.pendingMain=1;w.run.phase='executing';assert.equal(taskCardPresentation(task({workers:[w]}),w).attention,'none');
- assert.equal(workerStatus(w).label,'Homer处理中');
- w.run.phase='parked';assert.equal(taskCardPresentation(task({workers:[w]})).label,'');
+test('only uncertain execution appears on a collapsed matter',()=>{
+ const w=worker('w'),t=task({workers:[w]});w.pendingMain=1;
+ assert.equal(workerStatus(w).label,'Homer处理中');assert.equal(taskCardPresentation(t).label,'');
+ w.run.phase='uncertain';assert.equal(taskCardPresentation(t).label,'执行状态待核实');
 });
 
 test('tree deduplicates real matters and rejects unrelated or malformed session ownership',()=>{

@@ -61,7 +61,7 @@ test('waiting for Main approval is labelled as that wait and never as a user dec
   f.store.db.prepare("UPDATE runs SET phase='rpc_wait' WHERE id=?").run(run.id);
   interactions.open({runId:run.id,threadId:run.threadId!,turnId:run.turnId!,requestId:'synthetic-approval',source:'native',kind:'authorization',details:{},authority:{...f.authority,nativeApprovals:true},runEpoch:run.epoch,taskVersion:run.version},()=>true);
   const overview=readTaskOverview(f.store.db),item=overview.tasks[0]!.workers[0]!;
-  assert.equal(item.pendingUser,0);assert.match(workerStatus(item).label,/等待 Homer 审批 1/);
+  assert.equal(item.pendingMain,1);assert.match(workerStatus(item).label,/等待 Homer 审批 1/);
  }finally{f.close();}
 });
 

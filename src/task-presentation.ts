@@ -1,4 +1,4 @@
-import type {OverviewTask,OverviewWorker} from './task-overview.js';
+import type {OverviewTask} from './task-overview.js';
 
 export function taskName(task:Pick<OverviewTask,'title'|'goal'>,index?:number){
  const title=task.title?.trim();
@@ -7,7 +7,3 @@ export function taskName(task:Pick<OverviewTask,'title'|'goal'>,index?:number){
  if(first)return {text:first,source:'要求首句'};
  return {text:index===undefined?'未命名事项':`Worker ${index}`,source:'名称未记录'};
 }
-export function pendingUserCount(worker:OverviewWorker){
- return worker.pendingUser>0&&worker.run.status==='running'&&worker.run.stopRequestedAt==null&&!['ended','uncertain','held'].includes(worker.run.phase)?worker.pendingUser:0;
-}
-export function validPendingUsers(worker:OverviewWorker){return pendingUserCount(worker)?worker.pendingUsers:[];}

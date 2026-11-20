@@ -13,6 +13,7 @@ test('real WebBridge overview bypasses snapshot/history/files and uses four read
   const denied=()=>{throw Error('unexpected_history_or_file_access');};
   const app={store:{db,meta:f.store.meta.bind(f.store)},history:{byIds:(_thread:string,ids:string[])=>{assert.deepEqual(ids,[]);return [];}},workerProgress:{revision:0},registerWebSurface(){},snapshot:denied,conversationState:denied,tasks:new Proxy({},{get:denied}),files:new Proxy({},{get:denied})} as unknown as import('../src/service.js').Homer;
   f.store.db.exec('PRAGMA query_only=ON');const bridge=homerWebBridge(app),overview=await bridge.taskOverview!.list();assert.equal(overview.tasks.length,1);assert.equal(statements.length,4);assert.ok(statements.every(sql=>/^SELECT\b/.test(sql)));assert.ok(statements.every(sql=>!/(?:payloadJson|checkpointJson|prompt(?!,1,80))/.test(sql)));
+  statements.length=0;assert.deepEqual(readTaskOverview(db,{view:'archived'}),{tasks:[]});assert.equal(statements.length,1,'empty pages skip all per-task queries');
   statements.length=0;assert.equal((await bridge.taskOverview!.detail(f.taskId)).runs.length,0);assert.equal(statements.length,7);
  }finally{f.close();}
 });
