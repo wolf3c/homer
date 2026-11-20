@@ -490,6 +490,7 @@ for(const status of ['completed','failed'] as const)test('newly recorded Task ar
   assert.equal(JSON.parse(f.app.tasks.operation(key).responseJson!).state,status==='completed'?'archived':'skipped');
   assert.equal(f.app.tasks.task(taskId).historyState,status==='completed'?'archived':'visible');
   assert.equal(f.app.tasks.version(taskId,1).authorityJson,null);assert.equal(f.app.tasks.runs().length,0);
+  if(status==='completed')assert.match(f.inputs.find(text=>text.includes('"kind":"task_archived"'))??'',/\n\n\[宿主归档通知\]\n\{/);
   assert.equal(reviews,status==='completed'?1:0);await f.restart();await f.app.idle();assert.equal(reviews,status==='completed'?1:0);
  }finally{await f.close();}
 });
