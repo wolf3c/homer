@@ -15,7 +15,7 @@ export async function extractDocument(bytes:Buffer,filename:string,signal?:Abort
   return {text:text.slice(0,64000),coverage:'全文文本，最多64000字符',limitations:text.length>64000?['超过64000字符，仅覆盖截取部分']:[],transform:'utf8-text-v1',sourceHash};
  }
  if(!existsSync(documentPython))throw Error('document_reader_unavailable');
- const raw=await mediaProcess(documentPython,[fileURLToPath(new URL('./media-documents.py',import.meta.url)),filename.replace(/[\/\\\x00-\x1f]/g,'_').slice(0,120)],bytes,512*1024,signal,20000);
+ const raw=await mediaProcess(documentPython,[fileURLToPath(new URL('./media-documents.py',import.meta.url)),filename.replace(/[\/\\\x00-\x1f]/g,'_')],bytes,512*1024,signal,20000);
  const value=JSON.parse(raw.toString());if(value.error)throw Error(value.error);
  if(typeof value.text!=='string'||typeof value.coverage!=='string'||!Array.isArray(value.limitations))throw Error('document_parse_failed');
  return {...value,sourceHash};

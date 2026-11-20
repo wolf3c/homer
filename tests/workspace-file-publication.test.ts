@@ -25,13 +25,13 @@ test('ordinary workspace files become exact snapshots only when sent and replay 
  }finally{f.close();}
 });
 
-test('attachment selection rejects missing, protected, relative, linked and empty files without committing',()=>{
+test('attachment selection rejects missing, protected, relative and linked files, and preserves an empty regular file',()=>{
  const f=htmlAttachmentFixture(),workspace=dirname(f.original);
  try{
   const symbolic=join(workspace,'symbolic.md'),hard=join(workspace,'hard.md'),linked=join(workspace,'linked.md'),empty=join(workspace,'empty.md');
   writeFileSync(linked,'Synthetic linked file');symlinkSync(linked,symbolic);linkSync(linked,hard);writeFileSync(empty,'');
-  for(const [index,path] of [join(workspace,'missing.md'),f.protectedFile,'relative.md',symbolic,hard,empty].entries()){
-   assert.throws(()=>f.send([{path}], 'denied-'+index),path===empty?/media_size_limit/:/artifact_missing|artifact_path_denied|file_type_or_size_denied/);
+  for(const [index,path] of [join(workspace,'missing.md'),f.protectedFile,'relative.md',symbolic,hard].entries()){
+   assert.throws(()=>f.send([{path}], 'denied-'+index),/artifact_missing|artifact_path_denied|file_type_or_size_denied/);
    assert.equal(f.history.message(f.replyId)?.status,'running');
    assert.equal(f.history.message(f.replyId)?.attachments,undefined);
   }
@@ -42,6 +42,7 @@ test('attachment selection rejects missing, protected, relative, linked and empt
   assert.equal(f.media.gc(),0,'only the partially staged local snapshot was collected');
   assert.deepEqual(readFileSync(f.original),f.bytes);
   assert.equal(f.media.readAttachment(f.hidden).bytes.toString(),'uncommitted bytes');
+  assert.deepEqual(readFileSync(f.send([{path:empty}],'empty-file').path),Buffer.alloc(0));
  }finally{f.close();}
 });
 

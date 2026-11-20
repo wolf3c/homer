@@ -2521,7 +2521,7 @@ export class Homer {
     const actor={...this.workerActor(slot),operationPayload:{tool:call.tool,arguments:call.arguments}},run=this.tasks.run(slot.id),a=object(call.arguments),operationId=toolOperationId(actor,call.callId);
     this.tasks.guard(actor);if(this.closing)throw Error('tool_scope_denied');
     const prior=this.tasks.readFileReceipt(actor,operationId);if(prior)return prior;
-    const filename=string(a.filename,120),ref={assetId:string(a.assetId,100),revision:Number(a.revision)};
+    const filename=string(a.filename,Number.MAX_SAFE_INTEGER),ref={assetId:string(a.assetId,100),revision:Number(a.revision)};
     this.authorizeAttachment(ref,run);
     const {bytes}=this.media.readAttachment(ref);
     this.tasks.guard(actor);const result=this.tasks.writeFile(actor,{operationId,filename,bytes});this.store.event(run.id,'artifact_written');return result;

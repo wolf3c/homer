@@ -30,9 +30,16 @@ export function navigation(value,origin,topFrame=true){
   return !topFrame||url.origin===origin?'internal':'external';
  }catch{return 'blocked';}
 }
+export function shareCacheName(filename,id){
+ const name=id+'-'+filename;
+ if(new Blob([name]).size<=255)return name;
+ const dot=filename.lastIndexOf('.');
+ const fallback=dot>0?id+filename.slice(dot):id;
+ return new Blob([fallback]).size<=255?fallback:id;
+}
 export function downloadMessage(value,origin,url){
  if(navigation(url,origin)!=='internal'||value.length>12*1024*1024)throw Error('invalid_download');
  const item=JSON.parse(value);
- if(item?.type!=='share-file'||typeof item.filename!=='string'||!item.filename||item.filename.length>120||/[\x00-\x1f/\\]/.test(item.filename)||item.filename==='.'||item.filename==='..'||typeof item.base64!=='string'||item.base64.length%4!==0||! /^[A-Za-z0-9+/]*={0,2}$/.test(item.base64)||item.base64.length>Math.ceil(8*1024*1024/3)*4)throw Error('invalid_download');
+ if(item?.type!=='share-file'||typeof item.filename!=='string'||!item.filename||/[\x00-\x1f/\\]/.test(item.filename)||item.filename==='.'||item.filename==='..'||typeof item.base64!=='string'||item.base64.length%4!==0||! /^[A-Za-z0-9+/]*={0,2}$/.test(item.base64)||item.base64.length>Math.ceil(8*1024*1024/3)*4)throw Error('invalid_download');
  return {filename:item.filename,base64:item.base64};
 }

@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {pairingAddress,savedPairing,navigation,downloadMessage,LOCAL_ORIGIN} from './connection.mjs';
+import {pairingAddress,savedPairing,navigation,downloadMessage,shareCacheName,LOCAL_ORIGIN} from './connection.mjs';
 const route='a'.repeat(64),invitation='b'.repeat(43),origin='https://signal.example';
 test('QR provides only signaling route and one-time invitation; saved pairing excludes invitation',()=>{
  const config={signalOrigin:origin,routeId:route};
@@ -39,4 +39,18 @@ test('connection screen distinguishes first launch, approval and reconnect witho
  assert.equal(screen('version',false),'version');
  assert.equal(screen('restore-error',false),'restore-error');
  for(const status of ['connecting','unavailable','denied','version'])assert.equal(screen(status,true),'chat');
+});
+
+test('native share accepts a full display name and an empty ordinary file',()=>{
+ const filename='a'.repeat(160)+'.txt',value=JSON.stringify({type:'share-file',filename,base64:''});
+ assert.deepEqual(downloadMessage(value,LOCAL_ORIGIN,LOCAL_ORIGIN+'/'),{filename,base64:''});
+});
+
+test('share cache names fit the filesystem while the bridge keeps the original title',()=>{
+ const filename='资料'.repeat(100)+'.pdf',id='synthetic-share';
+ const input=downloadMessage(JSON.stringify({type:'share-file',filename,base64:''}),LOCAL_ORIGIN,LOCAL_ORIGIN+'/');
+ assert.equal(input.filename,filename);
+ assert.equal(shareCacheName(input.filename,id),id+'.pdf');
+ assert.equal(shareCacheName('资料.pdf',id),id+'-资料.pdf');
+ assert.equal(shareCacheName('file.'+'a'.repeat(256),id),id);
 });

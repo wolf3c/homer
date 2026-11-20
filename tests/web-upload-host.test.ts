@@ -36,6 +36,9 @@ test('Web binary upload -> scoped history -> original thread, safe retry/remove/
   assert.equal((await upload({Origin:'https://foreign.invalid'})).status,403);
   assert.equal((await upload({'Content-Type':'text/plain'})).status,409);
   assert.equal((await upload({'X-Homer-Thread':'foreign-main'})).status,409);
+  const emptyResponse=await fetch(web.url+'/api/uploads',{method:'POST',headers:{Origin:web.url,'Content-Type':'application/octet-stream',...metadata,'X-Homer-Request':'empty-request','X-Homer-Upload':'empty-upload','X-Homer-Filename':encodeURIComponent('空'.repeat(100)+'.txt')},body:''});
+  assert.equal(emptyResponse.status,201);const empty=await emptyResponse.json() as {assetId:string;revision:number;filename:string};
+  assert.equal(empty.filename,'空'.repeat(100)+'.txt');assert.equal(app.media.read('empty-request',empty).bytes.length,0);
   const response=await upload();assert.equal(response.status,201);const ref=await response.json() as {assetId:string;revision:number};
   assert.equal((await upload()).status,201);assert.deepEqual(await (await upload()).json(),app.media.view(ref));
   assert.equal(turns.length,0);

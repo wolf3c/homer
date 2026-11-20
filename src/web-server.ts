@@ -116,7 +116,7 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       if(uploading>=2)throw Error('web_upload_busy');
       if(request.headers['content-type']!=='application/octet-stream')throw Error('web_upload_binary_required');
       const declared=Number(request.headers['content-length']);
-      if(!Number.isSafeInteger(declared)||declared<1||declared>WEB_UPLOAD_BYTES)throw Error('web_upload_size_limit');
+      if(!Number.isSafeInteger(declared)||declared<0||declared>WEB_UPLOAD_BYTES)throw Error('web_upload_size_limit');
       const header=(name:string)=>{const value=request.headers[name];if(typeof value!=='string')throw Error('web_upload_invalid');return value;};
       let filename:string;try{filename=decodeURIComponent(header('x-homer-filename'));}catch{throw Error('web_upload_invalid');}
       const metadata={threadId:header('x-homer-thread'),requestId:header('x-homer-request'),uploadId:header('x-homer-upload'),filename};

@@ -583,7 +583,7 @@ export class RecursiveTasks{
   const op=this.one<Operation>('SELECT * FROM operations WHERE actorAgentId=? AND scopeId=? AND operationId=?',actor.agentId,task.id,operationId);if(!op)return;
   const details=JSON.parse(op.detailsJson);if(op.kind!=='write_file'||details.runId!==run.id||details.threadId!==actor.threadId||details.turnId!==actor.turnId||details.toolInputHash!==recursiveHash(actor.operationPayload))throw Error('operation_payload_conflict');
   if(op.state==='failed')throw Error(details.failureCode??'operation_failed');if(op.state!=='confirmed'||!op.responseJson)throw Error('operation_uncertain');
-  const saved=JSON.parse(op.responseJson);if(!saved||typeof saved.path!=='string'||typeof saved.sha256!=='string'||!/^[a-f0-9]{64}$/.test(saved.sha256)||!Number.isSafeInteger(saved.bytes)||saved.bytes<1||saved.state!=='written'||saved.operationKey!==op.id)throw Error('operation_receipt_invalid');
+  const saved=JSON.parse(op.responseJson);if(!saved||typeof saved.path!=='string'||typeof saved.sha256!=='string'||!/^[a-f0-9]{64}$/.test(saved.sha256)||!Number.isSafeInteger(saved.bytes)||saved.bytes<0||saved.state!=='written'||saved.operationKey!==op.id)throw Error('operation_receipt_invalid');
   const receipt:FileReceipt={path:saved.path,sha256:saved.sha256,bytes:saved.bytes,state:'written',operationKey:op.id};this.lifecycle?.validateFileRead?.(receipt.path);
   const actual=this.files.verify(this.files.prepareRun(task.id,run.id),receipt.path);if(actual.sha256!==receipt.sha256||actual.bytes!==receipt.bytes)throw Error('result_hash_mismatch');
   if(op.payloadHash!==recursiveHash({filename:basename(receipt.path),sha256:receipt.sha256,bytes:receipt.bytes,toolInput:actor.operationPayload}))throw Error('operation_payload_conflict');return receipt;
@@ -597,7 +597,7 @@ export class RecursiveTasks{
   if('path' in intent){const actual=this.files.verify(dir,intent.path);if(actual.sha256!==hash)throw Error('result_hash_mismatch');return intent;}
   this.guard(actor);let path:string;
   try{path=this.files.writeBinary(dir,input.filename,input.bytes);}catch(error){
-   if(error instanceof Error&&['artifact_path_denied','file_type_or_size_denied'].includes(error.message)){this.sql("UPDATE operations SET state='failed',detailsJson=json_set(detailsJson,'$.failureCode',?),revision=revision+1 WHERE id=?",error.message,intent.operationKey);throw error;}
+   if(error instanceof Error&&['artifact_path_denied','artifact_filename_too_long','file_type_or_size_denied'].includes(error.message)){this.sql("UPDATE operations SET state='failed',detailsJson=json_set(detailsJson,'$.failureCode',?),revision=revision+1 WHERE id=?",error.message,intent.operationKey);throw error;}
    if(!(error instanceof Error)||!('code' in error)||error.code!=='EEXIST')throw error;path=dir+'/'+input.filename;
    if(!intent.resuming){let code='artifact_filename_conflict';try{this.files.verify(dir,path);}catch(error){if(error instanceof Error)code=error.message;}this.sql("UPDATE operations SET state='failed',detailsJson=json_set(detailsJson,'$.failureCode',?),revision=revision+1 WHERE id=?",code,intent.operationKey);throw Error(code);}
    const existing=this.files.verify(dir,path);if(existing.sha256!==hash)throw Error('artifact_filename_conflict');

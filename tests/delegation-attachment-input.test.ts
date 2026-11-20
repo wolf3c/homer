@@ -70,7 +70,7 @@ test('only the addressed Worker can read the offered revision and a revoked sour
   move.run(requestId,ref.assetId);
   await read(receiver);
   const peer=f.engines.find(engine=>engine.threadId===receiver.engine.threadId)!;
-  const exportArgs={...ref,filename:'retained.txt'},exported=await peer.call('stage_file_result',exportArgs,'retained-export');
+  const exportArgs={...ref,filename:'a'.repeat(160)+'.txt'},exported=await peer.call('stage_file_result',exportArgs,'retained-export');
   assert.ok(f.app.history.revokeMessage(source.threadId,source.id));
   await assert.rejects(read(receiver),/media_scope_denied/);
   await assert.rejects(peer.call('stage_file_result',{...ref,filename:'revoked.txt'}),/media_scope_denied/);

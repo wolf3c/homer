@@ -6,7 +6,7 @@ import { MEDIA_POLICY,mediaLimit,type MediaKind } from './media-policy.js';
 export type AttachmentRef={assetId:string;revision:number};
 export type MediaView=AttachmentRef&{kind:MediaKind;state:string;mime:string|null;previewMime?:string;size:number;filename:string;error:string|null};
 export type MediaAsset={id:string;requestId:string|null;bindingId:string|null;kind:MediaKind;revision:number;state:string;mime:string|null;size:number;hash:string|null;filename:string;error:string|null;attempt:number;lease:string|null;createdAt:number;expiresAt:number;originOperationKey:string|null};
-const filenameOf=(name:string)=>name.replace(/[\x00-\x1f/\\]/g,'_').slice(0,120);
+const filenameOf=(name:string)=>name.replace(/[\x00-\x1f/\\]/g,'_');
 const stagingScope=(key:string)=>'operation:'+key;
 export class MediaStore{
  constructor(readonly db:DatabaseSync,readonly directory?:string){
@@ -73,7 +73,7 @@ export class MediaStore{
  originalAvailable(asset:MediaAsset){
   // A derivative repair must not hide the previously verified original.
   return asset.state==='ready'||(asset.error==='media_derivative_missing'&&
-   (asset.state==='retryable_failed'||asset.state==='failed')&&!!asset.hash&&!!asset.mime&&asset.size>0);
+   (asset.state==='retryable_failed'||asset.state==='failed')&&!!asset.hash&&!!asset.mime);
  }
  private validateRefs(refs:readonly AttachmentRef[],allowed:(asset:MediaAsset)=>boolean){
   if(refs.length>MEDIA_POLICY.maxItems||new Set(refs.map(r=>r.assetId)).size!==refs.length)throw Error('media_attachment_limit');
@@ -90,7 +90,7 @@ export class MediaStore{
  snapshot(operationKey:string,{filename,kind,mime,bytes}:{filename:string;kind:MediaKind;mime:string;bytes:Buffer}):AttachmentRef{
   if(this.db.isTransaction)throw Error('media_snapshot_transaction_conflict');
   if(!operationKey||!mime||/[\r\n]/.test(mime))throw Error('media_snapshot_invalid');
-  if(!bytes.length||bytes.length>MEDIA_POLICY.fileBytes)throw Error('media_size_limit');
+  if(bytes.length>MEDIA_POLICY.fileBytes)throw Error('media_size_limit');
   const ref={assetId:'asset-'+randomUUID(),revision:1},lease=randomUUID(),now=Date.now();
   this.path(ref.assetId);
   this.db.exec('BEGIN IMMEDIATE');
@@ -104,7 +104,7 @@ export class MediaStore{
  }
  ready(ref:AttachmentRef,lease:string,bytes:Buffer,mime:string){
   const row=this.asset(ref);if(row.lease!==lease||row.state!=='downloading')throw Error('media_lease_superseded');
-  if(!bytes.length||bytes.length>(row.originOperationKey?MEDIA_POLICY.fileBytes:mediaLimit(row.kind)))throw Error('media_size_limit');
+  if((!bytes.length&&row.kind!=='file')||bytes.length>(row.originOperationKey?MEDIA_POLICY.fileBytes:mediaLimit(row.kind)))throw Error('media_size_limit');
   const hash=createHash('sha256').update(bytes).digest('hex');
   if(row.hash&&row.hash!==hash)throw Error('media_source_changed');
   // The new private temporary file coexists with the old original until rename.

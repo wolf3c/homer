@@ -5,4 +5,5 @@ export function connectionScreen(status:ConnectionStatus,wasConnected:boolean):'
 export function pairingAddress(value:string):Pairing;
 export function savedPairing(value:string):Pairing;
 export function navigation(value:string,origin:string,topFrame?:boolean):'internal'|'external'|'blocked';
+export function shareCacheName(filename:string,id:string):string;
 export function downloadMessage(value:string,origin:string,url:string):{filename:string;base64:string};

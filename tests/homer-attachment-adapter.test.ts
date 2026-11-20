@@ -105,11 +105,16 @@ test('removing a locally deferred file never sends discard for an upload that di
  const s=setup(),file=new File(['abc'],'合成.txt');s.enable(false);s.owner.defer(file);
  const paused=await s.add(file);await s.owner.remove(paused);assert.equal(s.calls.length,0);
 });
-test('deferred uploads still reject empty and over-limit files and accept inclusive size boundaries',async()=>{
- for(const [bytes,valid] of [[0,false],[1,true],[8388608,true],[8388609,false]] as const){
+test('deferred uploads accept empty ordinary files and the shared upload boundary',async()=>{
+ for(const [bytes,valid] of [[0,true],[1,true],[8388608,true],[8388609,false]] as const){
   const s=setup(),file=new File([new Uint8Array(bytes)],'boundary.bin');s.enable(false);s.owner.defer(file);
   if(valid){const paused=await s.add(file);assert.equal(paused.status.type,'incomplete');}
   else await assert.rejects(s.add(file),/upload_invalid_file/);
   assert.equal(s.calls.length,0);
  }
+});
+
+test('empty images are explicitly rejected while empty ordinary files upload',async()=>{
+ const s=setup();await assert.rejects(s.add(new File([],'empty.png',{type:'image/png'})),/media_decode_failed/);assert.equal(s.calls.length,0);
+ await s.add(new File([],'empty.txt',{type:'text/plain'}));assert.equal(s.calls.length,1);
 });

@@ -7,7 +7,7 @@ const input={threadId:'synthetic-main',requestId:'synthetic-request',uploadId:'s
 test('Web upload validates binary bytes and metadata without trusting filename or MIME',()=>{
  assert.equal(webUpload(input).kind,'file');
  assert.equal(webUpload({...input,filename:'pretend.png'}).kind,'file');
- for(const change of [{filename:'../escape'},{data:'Zg='},{data:'Zg==\n'},{requestId:undefined},{url:'http://example.invalid'},{data:''}])assert.throws(()=>webUpload({...input,...change}),/web_upload_/);
+ for(const change of [{filename:'../escape'},{data:'Zg='},{data:'Zg==\n'},{requestId:undefined},{url:'http://example.invalid'}])assert.throws(()=>webUpload({...input,...change}),/web_upload_/);
 });
 test('Web upload retry retains one scoped asset and rejects changed bytes, scope and accepted request',()=>{
  const db=new DatabaseSync(':memory:');
@@ -32,4 +32,11 @@ test('Web draft removal is scoped, idempotent, terminal for that upload and fenc
   db.exec('CREATE TABLE conversation_inputs(requestId TEXT PRIMARY KEY)');db.prepare('INSERT INTO conversation_inputs VALUES(?)').run(input.requestId);
   assert.throws(()=>media.discardWeb({...remove,...next}),/web_upload_request_closed/);
  }finally{db.close();}
+});
+
+test('uploads preserve long display names and accept empty ordinary files',()=>{
+ const filename='资料'.repeat(100)+'.txt';
+ assert.equal(webUpload({...input,filename}).filename,filename);
+ assert.equal(webUpload({...input,filename:'empty.txt',data:''}).bytes.length,0);
+ assert.throws(()=>webUpload({...input,filename:'empty.png',data:''}),/media_decode_failed/);
 });

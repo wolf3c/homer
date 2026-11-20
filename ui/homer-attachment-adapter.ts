@@ -32,7 +32,8 @@ export function createHomerAttachmentAdapter(context:()=>DraftContext,request:ty
    const c=context();let identity=identityFor(file);
    const pending=(status:PendingAttachment['status']):HomerAttachment=>({id:identity.uploadId,type:file.type.startsWith('image/')?'image':'file',name:file.name,contentType:file.type,file,status,homer:identity});
    if(identity.asset){yield pending({type:'requires-action',reason:'composer-send'});return;}
-   if(!file.size||file.size>8*1024*1024||file.name.length>120||/[\x00-\x1f/\\]/.test(file.name)){c.notice('文件须为1字节至8MiB，名称不超过120字符。');throw Error('upload_invalid_file');}
+   if(!file.size&&file.type.startsWith('image/')){c.notice('Homer 无法解码空图片，空普通文件可上传。');throw Error('media_decode_failed');}
+   if(file.size>8*1024*1024||/[\x00-\x1f/\\]/.test(file.name)){c.notice('Homer 每个上传文件最多8MiB，文件名不能包含路径或控制字符。');throw Error('upload_invalid_file');}
    if(c.attachments.filter(a=>a.id!==identity.uploadId).length>=10){c.notice('每条消息最多10个附件。');throw Error('upload_limit');}
    if(deferred.delete(file)){yield pending({type:'incomplete',reason:'upload-paused'});return;}
    if(!c.enabled){c.notice('暂时无法添加附件，请等待连接恢复后重试。');throw Error('upload_unavailable');}

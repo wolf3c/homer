@@ -303,9 +303,9 @@ import {RecursiveTools} from '../src/recursive-tools.js';
 test('deterministic file rejection terminates its operation without blocking explicit task settlement',()=>{
  const f=chatFixture();try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Write'}),run=f.start(worker.workerId),actor={agentId:'worker:'+run.workerId,runId:run.id,epoch:run.epoch,threadId:run.threadId!,turnId:run.turnId!};
-  assert.throws(()=>f.tasks.writeFile(actor,{operationId:'bad-name',filename:'bad name.txt',bytes:Buffer.from('Draft')}),/artifact_path_denied/);
-  assert.throws(()=>f.tasks.writeFile(actor,{operationId:'empty-file',filename:'empty.txt',bytes:Buffer.alloc(0)}),/file_type_or_size_denied/);
-  assert.deepEqual(f.store.db.prepare("SELECT state FROM operations WHERE operationId IN ('bad-name','empty-file')").all().map(row=>row.state),['failed','failed']);
+  assert.throws(()=>f.tasks.writeFile(actor,{operationId:'bad-name',filename:'../escape.txt',bytes:Buffer.from('Draft')}),/artifact_path_denied/);
+  assert.throws(()=>f.tasks.writeFile(actor,{operationId:'long-name',filename:'x'.repeat(256),bytes:Buffer.alloc(0)}),/artifact_filename_too_long/);
+  assert.deepEqual(f.store.db.prepare("SELECT state FROM operations WHERE operationId IN ('bad-name','long-name')").all().map(row=>row.state),['failed','failed']);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'No file was written'},true);assert.equal(f.tasks.settleTask(f.actor,{operationId:'settle',taskId:task.taskId,expectedRevision:1,outcome:'failed'}).state,'settled');
  }finally{f.close();}
 });
@@ -405,7 +405,7 @@ test('file receipt rereading preserves unknown effects and definitive failure',(
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Write'}),run=f.start(worker.workerId),actor={agentId:'worker:'+run.workerId,runId:run.id,epoch:run.epoch,threadId:run.threadId!,turnId:run.turnId!,operationPayload:{tool:'stage_file_result',arguments:{filename:'pending.txt',assetId:'synthetic-media',revision:1}}},input={operationId:'uncertain-write',filename:'pending.txt',bytes:Buffer.from('Synthetic')};
   assert.throws(()=>f.tasks.writeFile(actor,input),/synthetic_response_transaction_lost/);assert.throws(()=>f.tasks.readFileReceipt(actor,input.operationId),/operation_uncertain/);
   rejectCommit=false;const recovered=f.tasks.writeFile(actor,input);assert.deepEqual(f.tasks.readFileReceipt(actor,input.operationId),recovered);
-  const bad={...actor,operationPayload:{tool:'stage_file_result',arguments:{filename:'bad name.txt',assetId:'synthetic-media',revision:1}}};assert.throws(()=>f.tasks.writeFile(bad,{...input,operationId:'bad-name',filename:'bad name.txt'}),/artifact_path_denied/);assert.throws(()=>f.tasks.readFileReceipt(bad,'bad-name'),/artifact_path_denied/);
+  const bad={...actor,operationPayload:{tool:'stage_file_result',arguments:{filename:'../escape.txt',assetId:'synthetic-media',revision:1}}};assert.throws(()=>f.tasks.writeFile(bad,{...input,operationId:'bad-name',filename:'../escape.txt'}),/artifact_path_denied/);assert.throws(()=>f.tasks.readFileReceipt(bad,'bad-name'),/artifact_path_denied/);
  }finally{f.close();}
 });
 

@@ -12,7 +12,7 @@ import chatHtml from './.generated/chat.mjs';
 import {File,Paths} from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import {WebView} from 'react-native-webview';
-import {navigation,pairingAddress,savedPairing,downloadMessage,connectionScreen,LOCAL_ORIGIN,type Pairing,type ConnectionStatus} from './connection.mjs';
+import {navigation,pairingAddress,savedPairing,downloadMessage,shareCacheName,connectionScreen,LOCAL_ORIGIN,type Pairing,type ConnectionStatus} from './connection.mjs';
 import {localNetworkAccess} from './local-network.mjs';
 
 const storageKey='homer.mobile-pairing';
@@ -163,7 +163,7 @@ function Client(){
   try{
    const input=downloadMessage(data,LOCAL_ORIGIN,url);
    if(!await Sharing.isAvailableAsync())throw Error('sharing_unavailable');
-   file=new File(Paths.cache,Date.now()+'-'+input.filename);await file.write(input.base64,{encoding:'base64'});
+   file=new File(Paths.cache,shareCacheName(input.filename,randomUUID()));await file.write(input.base64,{encoding:'base64'});
    await Sharing.shareAsync(file.uri,{dialogTitle:input.filename});
   }catch{Alert.alert('文件未能打开','请重新连接主端后重试。');}
   finally{try{if(file?.exists)await file.delete();}catch{/* Cache cleanup cannot block the next explicit download. */}sharing.current=false;if(active.current)setUpdateBusy(false);}

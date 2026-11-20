@@ -519,7 +519,8 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     const existingIds=new Set(aui.composer().getState().attachments.map(attachment=>attachment.id));
     const newIds=new Set(files.map(file=>attachmentOwner.uploadId(file)).filter(id=>!existingIds.has(id)));
     if(newIds.size+existingIds.size>10)return '每条消息最多10个附件。';
-    if(files.some(f=>!f.size||f.size>8*1024*1024||f.name.length>120||/[\x00-\x1f/\\]/.test(f.name)))return '文件须为1字节至8MiB，名称不超过120字符。';
+    if(files.some(f=>!f.size&&f.type.startsWith('image/')))return 'Homer 无法解码空图片，空普通文件可上传。';
+    if(files.some(f=>f.size>8*1024*1024||/[\x00-\x1f/\\]/.test(f.name)))return 'Homer 每个上传文件最多8MiB，文件名不能包含路径或控制字符。';
   }
   function checkQuotes(value:readonly AnnotatedQuote[]){
     if(value.length>20||value.some(q=>!q.text.trim()||q.annotation.length>16000)||value.reduce((n,q)=>n+q.annotation.length,0)>48000)throw Error('引用最多20条；单条评论16000字符，评论合计48000字符。');
