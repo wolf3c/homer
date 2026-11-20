@@ -1441,7 +1441,9 @@ HISTORY_FOLLOWUP_BUILD=/absolute/task/web HOMER_SYNTHETIC_ROOT=/absolute/task/sy
 默认规模／批次／间隔沿用上一节；诊断缩小规模不能替代完整验收。原始本地材料为 outputs/task-dba13d4d-history-virtualization/REPORT.md、manifest.json、performance-final/results.json及acceptance-final-checked；供本次实现审核及数据窗口评估，审核完成且无后续依赖后回收。临时源码、构建、合成数据库、Chrome profile和重复依赖下载应在停用后清理，保留正常项目依赖。
 
 
-### 附件预算与错误原因定向验证（2026-11-18）
+## 附件预算与错误原因定向验证（2026-11-18）
+
+本节记录20MiB／32个等前序未提交候选的历史验证，不代表最终阈值决策，也不证明门槛必要。最新[两阶段方案](superpowers/plans/2026-11-18-attachment-native-input-and-streaming.md)尚未实施：取消独立数量门槛，验证原图原生输入，再贯通分块上传、读取、导出与手机分享；以下既有回归不替代这些后续验收。
 
 Node22.22.0，沿 `tests/fixtures/synthetic-home.mjs` 与 `core-system-proxy.mjs` 使用隔离 HOME／CODEX_HOME、合成数据库、回环 HTTP 和注入引擎。`web-upload`、`web-upload-host`、`files`、`engine-rpc-lifecycle`、`engine`、`homer-attachment-adapter`、`mobile-channel`、`web-chat`、`media-lifecycle`、`media-retention`、`media-documents`、`attachment-tool-outlets`、`delegation-attachment-input`、`user-message-attachment`、`recursive-tools`及`mobile/connection.test.mjs`合计160项离线核心回归通过。显式追加已有 `web-upload-host.local-media.test.ts` 单项本地合成解码专项，合计161/161；没有真实模型调用。服务与UI `tsc --noEmit`、修改MJS语法及`git diff --check`通过。全 `tsconfig.check.json` 检查发现并行 `web-history-maintenance-contract.test.ts:28` 的WebState强转TS2352，归属历史虚拟列表事项，本事项未修改。
 
