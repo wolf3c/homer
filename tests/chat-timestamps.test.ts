@@ -259,9 +259,8 @@ test('a reply also names its immutable delegation events when taskSources are ab
   ]);
   assert.match(html, /<p class="message-task-title">核对合成版本、核对合成界面<\/p><div class="assistant-message-bubble">/);
   assert.doesNotMatch(html, /重复交办/);
-  const rendered = calls.filter(([name]) => name === 'process').map(([, props]) => props);
-  assert.deepEqual([...rendered[0].titledEvents], ['first', 'repeated', 'second']);
-  assert.equal(rendered[1].titledEvents.size, 0, 'a standalone event retains its own visible entry');
+  assert.match(html, /data-conversation-message="without-answer"/);
+  assert.doesNotMatch(html, /合成交办详情/);
 });
 
 test('a started Worker names its task above the process before an answer and keeps that position afterwards', () => {
@@ -283,14 +282,13 @@ test('a started Worker names its task above the process before an answer and kee
   assert.doesNotMatch(silent,/class="message-task-title"|class="assistant-message-bubble"/);
 });
 
-test('only exact received Worker snapshots name the process without hiding missing event content', () => {
+test('only exact received Worker snapshots name the process when the event has no reply body', () => {
   calls.length=0;
   const event=(key:string,sourceMessageId:string,title:string)=>({id:key,kind:'workerEvent',eventKey:key,event:{eventKind:'reply_received',sourceMessageId,taskId:'task',title,bodySource:'missing',body:'未提供摘要'}});
   const process={sourceKind:'worker',sourceMessageIds:['notice'],turnIds:['turn'],state:'working',status:'running',items:[event('exact','notice','准确事项'),event('other','unrelated','无关事项')]};
   const html=renderConversation([m('worker-snapshot',1000,{role:'assistant',text:'',process})]);
   assert.match(html,/<p class="message-task-title">准确事项<\/p><section data-working="true">/);
-  assert.doesNotMatch(html,/无关事项/);
-  assert.equal(calls.find(([name])=>name==='process')?.[1].titledEvents.size,0,'a missing received body retains its visible event card');
+  assert.doesNotMatch(html,/无关事项|未提供摘要/);
 });
 
 test('production wrappers integrate installed runtime and retain rich slots with semantic keyboard-readable times', () => {

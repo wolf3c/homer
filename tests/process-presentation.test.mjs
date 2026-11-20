@@ -34,26 +34,23 @@ test('formal publications retain original IDs even after internal batch, same te
  assert.equal(d.find(n=>n.attrs['data-final-body']==='body').textContent,'');assert.doesNotMatch(d.container.textContent,/处理完毕|已读/);
 }));
 
-test('ordinary Worker reply stays once inside original process disclosure across live transport',async()=>withDom(async d=>{
+test('the projected Worker receipt retains its original identity without entering the conversation layout',async()=>withDom(async d=>{
  const event={id:'event',seq:1,revision:1,kind:'workerEvent',eventKey:'reply:one',event:{eventKind:'reply_received',bodySource:'reply',title:'后台研究',body:'保留一个待确认事项。'}};
- const live={...node,items:[...node.items,event]};await d.render(body(conversation([historyMessage('body')],[live])));
- assert.equal(button(d).attrs['aria-expanded'],'false');assert.doesNotMatch(visibleText(d.container),/保留一个待确认事项/);
- assert.ok(!d.find(n=>n.attrs['data-worker-event']==='reply:one'),'reply DOM is unmounted while the process is closed');
- await d.click(button(d));
- const messages=conversation([historyMessage('body')],[done(live)]);await d.render(body(messages));
- const card=d.find(n=>n.attrs['data-worker-event']==='reply:one'),cardButton=card.childNodes.find(n=>n.tagName==='BUTTON');
- assert.ok(d.find(n=>n.attrs.class==='process-node').contains(card));
- assert.equal(cardButton.attrs['aria-expanded'],'false');await d.click(cardButton);assert.equal(d.container.textContent.match(/保留一个待确认事项。/g).length,1);
- assert.equal(d.all().filter(n=>n.attrs['data-worker-event']).length,1);await d.render(body(messages,{...observation,connected:false}));
- assert.ok(d.find(n=>n.attrs['data-worker-event']==='reply:one')===card,'reply DOM identity stays stable across transport updates');assert.match(visibleText(d.container),/保留一个待确认事项。/);assert.equal(card.attrs['data-state'],'waiting');assert.match(card.textContent,/当时：收到回复/);assert.doesNotMatch(visibleText(d.container),/部分完成|上次状态/);
- assert.equal(d.all().filter(n=>n.tagName==='DIALOG').length,0);
+ const live={...node,items:[...node.items,event]};
+ for(const process of [live,done(live)]){
+  const messages=conversation([historyMessage('body')],[process]);
+  assert.deepEqual(messages[0].process.items.find(item=>item.id==='event'),event);
+  await d.render(body(messages));
+  assert.doesNotMatch(visibleText(d.container),/保留一个待确认事项|后台研究|协作记录/);
+  assert.equal(button(d),undefined);
+ }
 }));
 
 test('Worker missing-version title remains unknown; failure/interrupt/unknown keep final body and honest process status',async()=>withDom(async d=>{
  for(const status of ['failed','interrupted','unknown']){
   const raw={...done(node),status,state:status==='unknown'?'working':'worked',items:[{...commentary('f','保留真实 final'),phase:'final_answer',completed:true},{...worker,label:undefined}],final:{id:'f',text:'保留真实 final'}};
   const messages=conversation([historyMessage('body')],[raw]);await d.render(body(messages,{...observation,workerTitles:new Map([['run-synthetic','历史后台工作']])}));
-  assert.equal(d.container.textContent.match(/保留真实 final/g).length,1);assert.equal(button(d),undefined,'empty official activity stays a status row');assert.match(visibleText(d.container),/旧后台工作记录（当时的事件内容未保留）/);assert.doesNotMatch(visibleText(d.container),/历史后台工作/);
+  assert.equal(d.container.textContent.match(/保留真实 final/g).length,1);assert.equal(button(d),undefined);assert.doesNotMatch(visibleText(d.container),/旧后台工作记录|历史后台工作/);
   assert.equal(messages[0].status,status==='unknown'?'interrupted':status);
   assert.doesNotMatch(visibleText(d.container),/处理失败|状态待确认/);
  }

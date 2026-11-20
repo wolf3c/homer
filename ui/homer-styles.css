@@ -131,11 +131,6 @@
 .lazy-media-voice { aspect-ratio:auto; height:54px; }
 .lazy-media-voice audio { width:100%; }
 
-/* Completed internal records keep their original position without empty reply spacing. */
-.assistant-message.is-process-record{margin-bottom:12px;padding:0}
-.assistant-message.is-process-record .process-node{margin-bottom:0}
-.assistant-message.is-process-record .process-workers{margin-top:0;margin-bottom:0}
-
 /* Approved settings Demo shell, scoped to avoid changing the conversation. */
 .desktop-settings-backdrop{position:fixed;inset:0;background:#29282566;z-index:100}
 .desktop-settings-popup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(920px,calc(100vw - 48px));height:min(690px,calc(100dvh - 64px));border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink);box-shadow:0 24px 80px #29282526;z-index:101;display:flex;flex-direction:column;outline:none;overflow:hidden}

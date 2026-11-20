@@ -225,12 +225,10 @@ function AssistantMessage() {
   const process=original?.process;
   const internal=process?.sourceKind==='worker';
   const hasBody=parts.hasBody;
-  const messageFiles=files.filter(file=>file.messageId===metadata.messageId);
+  const messageFiles=files.filter(file=>file.messageId===metadata.messageId&&!file.destination);
   const hasBubble=hasBody||!!original?.source||messageFiles.length>0;
   const completed=!!process&&confirmedTerminal(process)&&process.status==='completed';
-  const compact=internal&&completed&&!hasBody&&!messageFiles.length&&!(metadata.inactiveInteractions as unknown[]|undefined)?.length;
   let taskTitle='';
-  const titledEvents=new Set<string>();
   if(hasBubble||internal&&process.turnIds.length>0&&!completed){
     const titles=new Map<string,string>();
     for(const {title,target} of original?.taskSources??[]){
@@ -243,20 +241,19 @@ function AssistantMessage() {
       if(!delegated&&!received)continue;
       const key=item.event.taskId?'task:'+item.event.taskId:'event:'+item.eventKey;
       if(!titles.has(key))titles.set(key,item.event.title);
-      if(delegated)titledEvents.add(item.eventKey);
     }
     taskTitle=[...titles.values()].join('、')||(internal?'事项标题待确认':'');
   }
-  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-process-completed={completed||undefined} data-message-source={process?.sourceKind==='user'&&(!original||messageSourceParts(original)!==undefined)?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className={'message assistant-message'+(compact?' is-process-record':'')} aria-label="荷马的回复">
+  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-message-source={process?.sourceKind==='user'&&(!original||messageSourceParts(original)!==undefined)?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className="message assistant-message" aria-label="荷马的回复">
     {!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
     {internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
-    <ProcessMessageContent taskSourceUnresolved={original?.taskSourceUnresolved} titledEvents={titledEvents} node={process}>
+    <ProcessMessageContent taskSourceUnresolved={original?.taskSourceUnresolved} node={process}>
     {hasBubble&&<>
     {!internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
     <div className="assistant-message-bubble">
     {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
     {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]} references={referencesOf(original.source)}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
-    <ArtifactFiles files={messageFiles.filter(file=>!file.destination)}/>
+    <ArtifactFiles files={messageFiles}/>
     </div></>}
     {!!original&&!process&&status?.type === "running" && !content.some(part => part.type === "text" && part.text) && <p className="thinking" role="status">处理阶段待确认</p>}
     {status?.type === "incomplete" && <span className="message-state">{process?.status==='unknown'?"这条回复结束状态待核实，未自动重跑":status.reason === "cancelled" ? "这条回复已停止" : "这条回复未完成"}</span>}
@@ -1013,7 +1010,7 @@ function HomerApp() {
   const navigation=useRef(0),beforeAttempt=useRef(''),protection=useRef(''),messageList=useRef<HTMLDivElement>(null);
   const [listTop,setListTop]=useState(0);
   const positionScope=()=>JSON.stringify([history.current.thread,history.current.epoch]);
-  const visibleIds=()=>new Set(Array.from(viewport.current?.querySelectorAll<HTMLElement>('[data-conversation-message]')??[]).filter(element=>{const box=element.getBoundingClientRect(),view=viewport.current!.getBoundingClientRect();return box.bottom>view.top&&box.top<view.bottom;}).map(element=>element.dataset.conversationMessage!));
+  const visibleIds=()=>new Set(Array.from(viewport.current?.querySelectorAll<HTMLElement>('[data-conversation-message]')??[]).filter(element=>{const box=element.getBoundingClientRect(),view=viewport.current!.getBoundingClientRect();return box.height>0&&box.bottom>view.top&&box.top<view.bottom;}).map(element=>element.dataset.conversationMessage!));
   function readingPins(){
     const pins=visibleIds(),saved=anchor.current;if(saved){pins.add(saved.id);if(saved.next)pins.add(saved.next.id);}
     for(const control of viewport.current?.querySelectorAll<HTMLElement>('[aria-haspopup][aria-expanded="true"],.aui-image-zoom-trigger[aria-expanded="true"]')??[]){const message=control.closest<HTMLElement>('[data-conversation-message]');if(message)pins.add(message.dataset.conversationMessage!);}
@@ -1408,7 +1405,8 @@ function HomerApp() {
       });
     };
     if(reader.current.frame!==undefined)return;
-    const offset=pending.kind==='preserve'?anchor.current?.top??0:(view.clientHeight-(element?.getBoundingClientRect().height??0))/2;
+    const height=element?.getBoundingClientRect().height??0;
+    const offset=pending.kind==='preserve'?anchor.current?.top??0:(view.clientHeight-height)/2;
     const raw=latest?view.scrollHeight-view.clientHeight:element?view.scrollTop+element.getBoundingClientRect().top-view.getBoundingClientRect().top-offset:view.scrollTop;
     const desired=pending.kind==='preserve'?raw:Math.min(Math.max(0,raw),Math.max(0,view.scrollHeight-view.clientHeight));
     if(!pending.positioned){
@@ -1424,7 +1422,7 @@ function HomerApp() {
     if(Math.abs((virtualizer.scrollOffset??view.scrollTop)-view.scrollTop)>=1){wake();return;}
     virtualizer.cancelScroll();reader.current.pending=undefined;
     if(latest){setHasNewContent(false);setPageNotice('');anchor.current=null;captureAnchor();}
-    else if(pending.kind==='around'&&element){element.focus({preventScroll:true});setPageNotice(value=>value.startsWith('后续消息')?value:'');captureAnchor();if(pending.quote)void selectQuote(pending.quote,claimPosition());}
+    else if(pending.kind==='around'&&element){(height?element:view).focus({preventScroll:true});setPageNotice(value=>value.startsWith('后续消息')?value:'');captureAnchor();if(pending.quote)void selectQuote(pending.quote,claimPosition());}
     else measureReader();
   });
   useEffect(()=>{beforeAttempt.current='';},[connected]);
@@ -1569,7 +1567,7 @@ function HomerApp() {
             {state.history&&<nav className="history-navigation" aria-label="对话记录分页">
               {history.current.before&&pageBusy&&<span role="status">正在读取更早消息…</span>}
               {history.current.archived&&connected&&!pageNotice&&!tailRead.current.blocked&&<span role="status">正在补齐后续消息…</span>}
-              {history.current.stale&&<span role="status">较早记录可能已有更新，展开过程时会重新核对。</span>}
+              {history.current.stale&&<span role="status">较早记录可能已有更新。</span>}
               {history.current.inactiveMore&&<span role="status">本页还有失效交互记录未加载；旧提问和授权回调均不可继续提交，请从原事项核对。</span>}
               {pageNotice&&<p role="status">{pageNotice}</p>}
             </nav>}

@@ -6,19 +6,21 @@ import {withDom,visibleText} from './helpers/process-dom.mjs';
 const h=React.createElement;
 const node={id:'internal',threadId:'t',seq:1,revision:1,sourceKind:'worker',sourceMessageIds:['notice'],messageId:'internal',turnIds:['turn'],state:'worked',status:'completed'};
 const event=(key,kind,bodySource,body)=>({id:key,kind:'workerEvent',seq:1,revision:1,eventKey:key,event:{eventKind:kind,title:key,bodySource,body}});
-test('routine received result belongs to process details; missing and failed facts remain visible',async()=>withDom(async d=>{
- const items=[event('received','reply_received','reply','已收到的完整摘要'),event('failed','start_failed','error','启动失败'),event('missing','reply_received','missing','未提供摘要')];
- const render=value=>d.render(h(ProcessMessageContent,{node:{...value,items},renderText:t=>t},h('p',null,'部分可用结果，仍有缺口。')));
- await render({...node,state:'working',status:'running'});
- assert.doesNotMatch(visibleText(d.container),/received|已收到的完整摘要/);
- assert.match(visibleText(d.container),/启动失败/);assert.match(visibleText(d.container),/当时：收到回复/);
- assert.match(visibleText(d.container),/部分可用结果，仍有缺口/);
- const trigger=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');await d.click(trigger);
- await render(node);
- assert.ok(d.find(n=>n.attrs['data-worker-event']==='received'),'exact immutable receipt is available on expansion');
- await d.click(trigger);
- assert.doesNotMatch(visibleText(d.container),/received|已收到的完整摘要|已结束/);
- assert.match(visibleText(d.container),/启动失败/);assert.match(visibleText(d.container),/当时：收到回复/);
+test('routine coordination stays out of main chat while startup failure keeps its reason',async()=>withDom(async d=>{
+ const items=[
+  event('委派事项','delegated','description','合成交办原文'),
+  event('回传事项','reply_received','reply','已收到的完整摘要'),
+  event('空回传','reply_received','missing','未提供摘要'),
+  {id:'legacy',kind:'worker',seq:2,revision:1},
+  event('核对附件','start_failed','error','认证失败，请检查模型连接。'),
+ ];
+ for(const value of [{...node,state:'working',status:'running'},node]){
+  await d.render(h(ProcessMessageContent,{node:{...value,items}},h('p',null,'部分可用结果，仍有缺口。')));
+  assert.doesNotMatch(visibleText(d.container),/协作记录|委派事项|合成交办原文|回传事项|已收到的完整摘要|空回传|未提供摘要|旧后台工作记录/);
+  assert.match(visibleText(d.container),/核对附件.*认证失败，请检查模型连接。/);
+  assert.match(visibleText(d.container),/部分可用结果，仍有缺口/);
+  assert.equal(d.all().filter(n=>n.tagName==='BUTTON').length,0);
+ }
 }));
 test('an unresolved source warning and answer remain without a separate task source card',async()=>withDom(async d=>{
  const sources=['验收已接受','交付已准备'].map((phaseLabel,i)=>({key:'source-'+i,target:{taskId:'task',version:1},title:'合成任务',icon:'Check',origin:{kind:'activity',processId:'internal',itemId:'tool-'+i},phaseLabel,owner:'main'}));
@@ -26,24 +28,6 @@ test('an unresolved source warning and answer remain without a separate task sou
  assert.doesNotMatch(visibleText(d.container),/验收已接受|交付已准备/);
  assert.match(visibleText(d.container),/部分任务来源尚未核实/);assert.match(visibleText(d.container),/唯一结论正文/);
  assert.equal(d.all().filter(n=>n.tagName==='BUTTON').length,0);
-}));
-
-test('a delegation already named above its reply moves into process details while failures stay visible',async()=>withDom(async d=>{
- const delegated=event('delegated','delegated','description','合成交办原文');
- const failed=event('failed','start_failed','error','合成启动失败');
- const render=n=>d.render(h(ProcessMessageContent,{node:{...n,items:[delegated,failed]},titledEvents:new Set(['delegated']),renderText:t=>t},h('p',null,'合成正式回复')));
- await render({...node,state:'working',status:'running'});
- assert.ok(!d.find(n=>n.attrs['data-worker-event']==='delegated'));
- assert.ok(d.find(n=>n.attrs['data-worker-event']==='failed'));
- const toggle=d.find(n=>n.attrs['data-slot']==='collapsible-trigger');
- await d.click(toggle);
- assert.ok(d.find(n=>n.attrs['data-worker-event']==='delegated'));
- await render(node);
- assert.equal(toggle.attrs['aria-expanded'],'true');
- await d.click(toggle);
- assert.ok(!d.find(n=>n.attrs['data-worker-event']==='delegated'));
- assert.ok(d.find(n=>n.attrs['data-worker-event']==='failed'));
- assert.match(visibleText(d.container),/合成正式回复/);
 }));
 
 test('tool progress and commentary never create a disclosure without business events',async()=>withDom(async d=>{

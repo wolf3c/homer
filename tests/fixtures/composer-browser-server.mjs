@@ -30,7 +30,7 @@ export async function composerFixture({webDir,beforeDir,branding,resource,intera
    }
    const body=JSON.parse(data.toString()||'{}');
    if(/^\/api\/interactions\/[^/]+$/.test(url.pathname)&&interaction)return interaction({url,body,res,json});
-   if(url.pathname==='/api/history/page'&&historyPage)return historyPage({body,res,json});
+   if(url.pathname==='/api/history/page'&&historyPage)return historyPage({body,res,json,revision});
    if(url.pathname==='/api/history/receipts')return json({statuses:body.requestIds.map(requestId=>({requestId,state:state.acceptedRequestIds.includes(requestId)?'accepted':'unconfirmed'})),acceptedRequestIds:state.acceptedRequestIds});
    if(url.pathname==='/api/messages'){
     received.messages.push(body);
