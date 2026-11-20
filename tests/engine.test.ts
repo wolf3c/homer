@@ -102,10 +102,10 @@ test('resuming the exact Worker thread can start its next turn',async()=>{
 });
 
 
-test('ILINK-ENGINE-001: stdio submits real native image items and refuses text-only model before start',async()=>{
+test('ILINK-ENGINE-001: stdio submits native image items without a model catalog prefilter',async()=>{
  const url='data:image/png;base64,aGVsbG8=';
  const engine=new CodexEngine({...config,model:'image-input-check'},options,async()=>({}));
  try{await engine.start();const result=await engine.turn('describe',{images:[{url}]});const items=JSON.parse(result.text);assert.deepEqual(items,[{type:'text',text:'describe',text_elements:[]},{type:'image',url}]);}finally{await engine.close();}
  const text=new CodexEngine({...config,model:'text-only'},options,async()=>({}));
- try{await text.start();await assert.rejects(()=>text.turn('describe',{images:[{url}]}),/engine_image_model_unavailable/);assert.equal((await text.turn('text')).text,'FIRST');}finally{await text.close();}
+ try{await text.start();assert.equal((await text.turn('describe',{images:[{url}]})).status,'completed');}finally{await text.close();}
 });

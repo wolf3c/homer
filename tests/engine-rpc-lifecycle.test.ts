@@ -586,3 +586,19 @@ test('Windows main close drains stdio but refuses a stop proof without an owned 
  child.stdin={end(){eof++;queueMicrotask(()=>{p.engine['exited']=true;child.emit('exit',0);});}};p.engine['child']=child;
  try{Object.defineProperty(process,'platform',{value:'win32'});assert.equal(await p.engine.close(),false);assert.equal(eof,1);}finally{Object.defineProperty(process,'platform',platform);}
 });
+
+test('native image errors expose only a fixed classification on RPC and terminal failures',async()=>{
+ const p=peer('worker');
+ const privateText='Synthetic customer would like a blue notebook';
+ try{
+  const request=p.engine.request('synthetic',{});
+  await p.receive({id:p.sent[0]!.id,error:{code:-32602,message:'Invalid image: '+privateText}});
+  await assert.rejects(request,(error:Error)=>error.message==='engine_image_rejected'&&!('displayMessage' in error));
+  const work=p.engine.turn('synthetic');await flush();await p.reply(1,{turn:{id:'turn'}});await flush();
+  await p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'Image dimensions exceed model limit: '+privateText,codexErrorInfo:'badRequest'}}});
+  const result=await work;assert.equal(result.errorCode,'engine_image_rejected');assert.ok(!JSON.stringify(result).includes(privateText));
+  const unknown=p.engine.request('synthetic',{});
+  await p.receive({id:p.sent.at(-1)!.id,error:{code:-32602,message:privateText}});
+  await assert.rejects(unknown,(error:Error)=>error.message==='engine_rpc_failed'&&!('displayMessage' in error));
+ }finally{await p.engine.close();}
+});

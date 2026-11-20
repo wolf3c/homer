@@ -155,6 +155,8 @@ function rpcError(value: any): Error {
     return new Error("engine_permission_failed");
   if (/read.*rollout|rollout.*not found|no.*rollout/i.test(msg))
     return new Error("engine_thread_history_unavailable");
+  if (/^\s*(?:invalid image\b|unsupported image format\b|image dimensions exceed\b)/i.test(msg))
+    return new Error("engine_image_rejected");
   if (/model.*not|unsupported.*model/i.test(msg))
     return new Error("engine_model_unavailable");
   return new Error("engine_rpc_failed");
@@ -1075,7 +1077,6 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     }
     if(options?.cwd)this.options.cwd=options.cwd;
     if(options?.images?.some(image=>!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(image.url))||Number(options?.images?.length??0)>10)throw Error('engine_image_input_denied');
-    if(options?.images?.length&&!await this.prepared(operation,this.imageCapability()))throw Error('engine_image_model_unavailable');
     let resultResolve!: (r: TurnResult) => void,
       resultReject!: (e: Error) => void;
     const completion = new Promise<TurnResult>((res, rej) => {

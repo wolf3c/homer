@@ -23,9 +23,10 @@ test('natural final output returns exactly once without creating a Result or a b
 test('failed execution preserves existing exact file bytes and raw text without adopting or settling',()=>{
  const f=fixture();try{
   const worker=openWorker(f),actor=running(f,worker.runId),file=f.tasks.writeFile(actor,{operationId:'write',filename:'report.md',bytes:Buffer.from('# Checked synthetic facts')});
-  const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'failed',text:'已生成报告，后续检查失败。',errorCode:'synthetic_error'},true)!;
+  const terminal={status:'failed',text:'已生成报告，后续检查失败。',errorCode:'engine_image_rejected',errorMessage:'Synthetic private detail'};
+  const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,true)!;
   const reply=f.tasks.workerRead(main,{workerId:worker.workerId,messageId:returned.messageId}).messages[0]!;
-  assert.equal(reply.text,'已生成报告，后续检查失败。');assert.equal(reply.payload.execution.errorCode,'synthetic_error');
+  assert.equal(reply.text,'已生成报告，后续检查失败。');assert.equal(reply.payload.execution.errorCode,'engine_image_rejected');assert.ok(!JSON.stringify(reply.payload).includes('Synthetic private detail'));
   assert.equal(f.tasks.task(f.task.taskId).outcome,null);
   assert.equal(readFileSync(file.path,'utf8'),'# Checked synthetic facts');
   assert.equal(f.tasks.task(f.task.taskId).outcome,null);

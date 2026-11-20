@@ -254,20 +254,21 @@ export class Homer {
   private webDraftUpload?:boolean;
   registerWebSurface(draftUpload:boolean){this.webDraftUpload=draftUpload;}
   async capabilities(){
-    const imageInput=this.main?.imageCapability?await this.main.imageCapability().catch(()=>false):false;
+    const catalogImageInput=this.main?.imageCapability?await this.main.imageCapability().catch(()=>null):null;
     const desktop=!!this.config.desktopResources;
     const decoder=desktop||!!ffmpegPath,avDecoder=!desktop&&!!ffmpegPath,asr=avDecoder&&!!whisperPath&&existsSync(whisperModel),documents=!desktop&&existsSync(documentPython);
+    const imageInput=!!this.main&&this.main.available!==false&&decoder;
     const web=this.webDraftUpload!==undefined, draftUpload=this.webDraftUpload===true;
-    return {runtime:{version:this.runtimeBuild?.slice(0,12)??null,buildHash:this.runtimeBuild},model:this.modelConfig.model,imageInput,
+    return {runtime:{version:this.runtimeBuild?.slice(0,12)??null,buildHash:this.runtimeBuild},model:this.modelConfig.model,imageInput,catalogImageInput,
       currentInput:{nativeImagesSubmitted:this.mainContext?.nativeImageCount??0,attachments:(this.mainContext?.queuedInput?.input.attachments??[]).map(ref=>this.media.view(ref))},
       surfaces:{web:{receive:web?(draftUpload?'scoped_draft_upload_and_history':'text_and_history'):'unavailable',draftUpload,uploadLimit:draftUpload?'8MiB_per_file_10_files':null,send:web?'message_attachment_download':'unavailable'},cli:{receive:'text_only'}},
-      media:{image:{receive:'available',understanding:imageInput&&decoder?'native_image_input':'unavailable',send:'message_attachment'},
+      media:{image:{receive:'available',understanding:imageInput?'native_image_input':'unavailable',send:'message_attachment'},
         file:{receive:'available',understanding:documents?'local_txt_pdf_docx_xlsx_pptx':'utf8_text_only',send:'message_attachment'},
         voice:{receive:'available',understanding:asr?'local_asr_first60s_or_protocol_transcription':'protocol_transcription_only',send:'message_attachment'},
         video:{receive:'available',understanding:avDecoder&&imageInput?'six_frames_first60s_and_optional_local_asr':'unavailable',send:'message_attachment'}},
       // null: Homer imposes no generated-image count limit; input attachment limits still apply.
       limits:{attachmentsPerMessage:10,nativeImagesPerTurn:null,audioVideoAnalyzedSeconds:60},
-      warning:'收存、传输和本地解码不等于已理解或手机已播放；只可描述本轮实际传入的图像或抽取内容。未知编码明确受限。不得要求从尚未接通的入口重传。'};
+      warning:'imageInput 表示宿主可提交图片，catalogImageInput 表示模型目录声明。实际处理由 Codex 决定。收存、传输和本地解码不等于已理解或手机已播放；只可描述本轮实际传入的图像或抽取内容。未知编码明确受限。不得要求从尚未接通的入口重传。'};
   }
 
   private authorizeAttachment(ref:AttachmentRef,scope:MainContext|TaskRun|undefined){
@@ -1309,7 +1310,11 @@ export class Homer {
         engine_rate_limited:'当前模型来源请求受到限流，请稍后手动重试',
         engine_authentication_failed:'当前模型服务未通过认证，请检查账号连接后重新发送消息',
         engine_account_status_unconfirmed:'未能核实账号状态，请检查连接与额度后重新发送消息',
+        engine_image_rejected:'Codex 拒绝了图片输入，请检查图片格式和尺寸',
+        engine_rpc_failed:'Codex 未能完成本次请求',
         channel_binding_denied:'聊天应用绑定已失效或尚未核实，本次请求未执行',
+        engine_message_too_large:'Codex 返回数据超过 Homer 传输接收预算，执行结果须核对',
+        engine_image_input_denied:'Homer 图片输入校验未通过，请核对格式及数量',
       };
       const reason=reasons[code]??code;
       if(reason!==code)failureNotice=`Homer 未完成：${reason}。未自动重试。`;
@@ -1586,7 +1591,6 @@ export class Homer {
       this.receptionTimings?.mark('capabilities_start',{processId:context.processId,kind:context.event?'internal':'user'});
       await this.refreshMainCapabilities();
       this.receptionTimings?.mark('capabilities_end',{processId:context.processId,kind:context.event?'internal':'user'});
-      if(context.queuedInput?.input.attachments?.some(ref=>this.media.asset(ref).kind==='image')&&this.main!.imageCapability&&!await this.main!.imageCapability())throw Error('engine_image_model_unavailable');
       this.mainContext = context;
     });
     context.nativeActivity={compactions:new Map()};
@@ -1613,7 +1617,7 @@ export class Homer {
         for(const frame of chosen)images.push({url:'data:'+frame.mime+';base64,'+frame.bytes.toString('base64')});remaining-=chosen.length;
         text+='\n[视频 '+ref.assetId+' 实际传入抽帧：'+chosen.map(f=>f.transform).join('，')+'。仅这些时刻有视觉输入；无帧时不得声称看到视频。]';
       }
-      if(images.length)text+='\n[本轮附件：以下 '+images.length+' 张图片按收到顺序作为原生图片输入。静态图片保留源图尺寸；动画只分析第一帧；视频使用上述实际抽帧尺寸。只有实际传入的图片可称为看见。]';
+      if(images.length)text+='\n[本轮附件：以下 '+images.length+' 张图片按收到顺序作为原生图片输入。静态图片保留源图尺寸；动画只分析第一帧；视频使用上述实际抽帧尺寸。以上为提交给 Codex 的图片；引擎仍可能缩放、拒绝或省略，不能仅凭提交确认已看见。]';
       if(images.length>1){
         const screenshots=new Set(referencesOf(context.queuedInput?.input??{}).filter(isDraftImageReference).map(ref=>attachmentReference(ref.image).id));
         const order=imageRefs.flatMap((ref,index)=>{const id=attachmentReference(ref).id;return screenshots.has(id)?[`第 ${index+1} 张图：${id}`]:[];});

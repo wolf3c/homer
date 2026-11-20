@@ -20,7 +20,7 @@ test('Web image input and message attachment inspection retain source dimensions
  let turnSequence=0;let fixtureError:unknown;let seenText='',seenImage:Buffer|undefined,upload:AttachmentRef,delivered:AttachmentRef;
  const inspectedImages:Buffer[]=[];
  class Engine extends EventEmitter{
-  threadId='synthetic-resolution-main';turnId?:string;async start(){return this.threadId;}async imageCapability(){return true;}
+  threadId='synthetic-resolution-main';turnId?:string;async start(){return this.threadId;}async imageCapability(){return false;}
   async turn(text:string,options?:{images?:EngineImage[];onStarted?:(id:string)=>void}):Promise<TurnResult>{
    this.turnId='synthetic-resolution-turn-'+ ++turnSequence;options?.onStarted?.(this.turnId);
    try{
@@ -42,6 +42,7 @@ test('Web image input and message attachment inspection retain source dimensions
  try{
   await app.start();const capabilities=JSON.parse(JSON.stringify(await app.capabilities()));
   assert.equal(capabilities.limits.nativeImagesPerTurn,null);assert.equal(capabilities.limits.attachmentsPerMessage,10);
+  assert.equal(capabilities.catalogImageInput,false);assert.equal(capabilities.imageInput,true);
   upload=await app.uploadAttachment({threadId:'synthetic-resolution-main',requestId,uploadId:'synthetic-resolution-upload',filename:'synthetic.png',data:bytes.toString('base64')});
   assert.deepEqual(app.media.read(requestId,upload).bytes,bytes);
   const {replyId}=app.submitMessage({requestId,text:'检查合成图片',attachments:[upload]});await app.idle();

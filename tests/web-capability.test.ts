@@ -15,3 +15,12 @@ test('actual Web gateway handshake controls both advertised and callable upload 
  assert.equal((await app.capabilities()).surfaces.web.receive,'scoped_draft_upload_and_history');
  assert.equal((await app.capabilities()).surfaces.web.draftUpload,true);
 });
+
+test('native image submission remains available when the model catalog omits images',async()=>{
+ const app=Object.create(Homer.prototype) as Homer;
+ Object.assign(app,{config:{model:'synthetic',desktopResources:{}},main:{imageCapability:async()=>false}});
+ const capabilities=await app.capabilities();
+ assert.equal(capabilities.imageInput,true);
+ assert.equal(capabilities.catalogImageInput,false);
+ assert.equal(capabilities.media.image.understanding,'native_image_input');
+});

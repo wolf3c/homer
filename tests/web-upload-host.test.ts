@@ -15,13 +15,14 @@ import type {EngineImage} from '../src/engine.js';
 test('Web binary upload -> scoped history -> original thread, safe retry/remove/origin/size guards',async()=>{
  const rootParent=resolve('.codex/scratch/web-upload-host');mkdirSync(rootParent,{recursive:true});const root=mkdtempSync(join(rootParent,'fixture-'));
  const turns:{text:string;images?:EngineImage[]}[]=[];
+ let failed=false;
  let inspect:()=>Promise<void>,inspection:Promise<void>|undefined;
  class Engine extends EventEmitter{
   threadId='synthetic-upload-main';async start(){return this.threadId;}
   async turn(text:string,options?:{images?:EngineImage[];onStarted?:(id:string)=>void}){
    options?.onStarted?.('synthetic-upload-turn');turns.push({text,images:options?.images});
    inspection=inspect();await inspection;
-   return {status:'completed',text:'合成文件已处理'};
+   return failed?{status:'failed',text:'',errorCode:'engine_image_rejected',errorMessage:'Synthetic customer would like a blue notebook'}:{status:'completed',text:'合成文件已处理'};
   }
   async close(){return true;}async interrupt(){return true;}
  }
@@ -66,5 +67,8 @@ test('Web binary upload -> scoped history -> original thread, safe retry/remove/
   assert.equal(Buffer.from(app.readAttachment({messageId:message.id,...ref}).data,'base64').toString('utf8'),fileText);
   assert.throws(()=>app.submitMessage({requestId:'different-request',text:'forged',attachments:input.attachments}),/media_scope_denied/);
   assert.equal((await fetch(web.url+'/api/uploads',{method:'POST',headers:{Origin:web.url,'Content-Type':'application/octet-stream',...metadata,'X-Homer-Request':'size-request','X-Homer-Upload':'size-upload'},body:Buffer.alloc(WEB_UPLOAD_BYTES+1)})).status,409);
+  failed=true;inspect=async()=>{};
+  const failure=await app.message('Synthetic native failure','native-failure');
+  assert.match(failure,/Codex 拒绝了图片输入/);assert.doesNotMatch(failure,/blue notebook/);assert.match(failure,/不会自动重试/);
  }finally{await web?.close();await app.close();rmSync(root,{recursive:true,force:true});}
 });
