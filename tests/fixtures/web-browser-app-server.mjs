@@ -100,7 +100,7 @@ async function receive(m) {
     } else if (input?.kind === 'worker_reply') {
       const reply = await tool('worker_read', {workerId:input.workerId,messageId:input.messageId}), filePath = reply.messages[0].text.trim().split('\n').at(-1);
       if(readFileSync(filePath,'utf8')!==checklist)throw Error('synthetic_attachment_mismatch');
-      await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});
+      await tool('task_update', {taskId:input.taskId,notes:'Checked the Worker report.'});
       complete(`合成行动清单已完成，可下载附件。 [合成行动清单.md](${pathToFileURL(filePath).href})`);
     } else if (/生成成果|派发任务/.test(text)) {
       const {taskId}=await tool('task_create',{title:'合成行动清单',goal:'制作合成行动清单，并向 Main 询问用户所需格式。'});

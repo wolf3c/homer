@@ -30,7 +30,7 @@ export function freshMainReadiness(db: DatabaseSync) {
   const checks: Record<string, [string, string]> = {
     requests: ['requests', "state!='completed'"],
     runs: ['runs', "status IN ('queued','running') OR phase IN ('uncertain','stopping')"],
-    tasks: ['tasks', "state!='settled' OR controlState='stopping'"],
+    ...(current?{}:{tasks: ['tasks', "state!='settled' OR controlState='stopping'"] as [string,string]}),
     receipts: ['agent_receipts', current?`(recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND state NOT IN ('processed','rejected')) OR
       (recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (state NOT IN ('received','rejected') OR state='received' AND EXISTS(SELECT 1 FROM agent_messages m WHERE m.id=agent_receipts.messageId AND ${mainInputProcessingSql()})))`:"state IN ('pending','offered','received','uncertain','blocked')"],
     interactions: ['worker_interactions', "state IN ('pending_main','pending_user') OR (state IN ('approved','denied','answered') AND deliveredAt IS NULL)"],

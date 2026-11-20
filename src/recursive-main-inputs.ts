@@ -39,7 +39,7 @@ type Row = {
 const workerSource = `LEFT JOIN operations o ON o.id=m.operationKey
   LEFT JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
   LEFT JOIN conversation_inputs s ON s.requestId=CASE WHEN m.kind='task_archived' AND o.kind='archive_work'
-    THEN json_extract(o.detailsJson,'$.sourceRequestId') ELSE v.sourceRequestId END`;
+    THEN coalesce(json_extract(o.detailsJson,'$.sourceRequestId'),v.sourceRequestId) ELSE v.sourceRequestId END`;
 const inputRows = `SELECT m.id,m.seq,m.kind,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,
   CASE WHEN m.kind='user_input' THEN m.payloadJson ELSE '{}' END payloadJson,
   r.state AS receiptState,r.revision,r.offeredTurnId,i.replyId,CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END threadId,o.detailsJson,
@@ -210,10 +210,9 @@ export class MainInputs {
     const awaitingUser=this.dispatchPolicy&&!this.dispatchPolicy.resumeWorkers&&rows.some(row=>row.kind!=='user_input'&&row.receiptState==='pending'&&row.seq<=this.dispatchPolicy!.pausedThroughSeq)
       ||rows.some(row=>row.kind!=='user_input'&&row.receiptState==='uncertain')&&!!this.db.prepare(`SELECT 1 ${recoveryRows} AND r.state='uncertain' LIMIT 1`).get(this.agent,this.store.meta('mainThread')!);
     const unscoped=Number(this.db.prepare(`SELECT count(*) total FROM agent_receipts r CROSS JOIN agent_messages m ON m.id=r.messageId
-      LEFT JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
-      LEFT JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
+      ${workerSource}
       WHERE r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND m.recipientAgentId=r.recipientAgentId AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL
-        AND r.state IN ('pending','offered','received','uncertain','blocked') AND i.threadId IS NULL`).get()!.total);
+        AND r.state IN ('pending','offered','received','uncertain','blocked') AND s.threadId IS NULL`).get()!.total);
     return {orderVersion,totalWaiting,...(awaitingUser?{awaitingUser:true as const}:{}),...(unscoped?{unscoped}:{})};
   }
   dispatchPage(cursor?:string,readEpoch?:string):{items:DispatchInput[];orderVersion:string;totalWaiting:number;nextCursor:string|null};

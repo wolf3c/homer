@@ -8,6 +8,19 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 
+test('idle reports a paused queued Worker without starting or stopping it',async()=>{
+ const f=fixture();let taskId='',workerId='',timeout:NodeJS.Timeout|undefined;
+ try{
+  f.setScript(async(main)=>{taskId=(await main.call('task_create',{title:'Queued',goal:'Keep until authorized'})).taskId;return {status:'completed',text:'Recorded'};});
+  await f.app.start();await f.app.message('Record','source');await f.app.idle();
+  const actor={agentId:f.app.store.meta('mainAgentId')!,threadId:f.app.store.meta('mainThread')!,sourceRequestId:'source'};
+  workerId=f.app.tasks.workerOpen(actor,{taskId,operationId:'pre-pump',authority:{sourceRequestId:'source',description:'Run it'}}).workerId;
+  f.app.tasks.controlTask(actor,{taskId,operationId:'pause-before-claim',action:'pause',expectedRevision:f.app.tasks.task(taskId).revision});
+  const result=await Promise.race([f.app.idle(),new Promise(resolve=>{timeout=setTimeout(()=>resolve('timeout'),300);})]);
+  assert.equal(result,'waiting_or_blocked');assert.equal(f.app.tasks.run(workerId).status,'queued');assert.equal(f.app.tasks.run(workerId).stopRequestedAt,null);
+ }finally{clearTimeout(timeout);if(workerId)await f.app.stop(workerId);await f.close();}
+});
+
 test('two Worker conversations return complete original text automatically without settling the task',async()=>{
   const f=fixture();let taskId='';
   try{
@@ -167,7 +180,7 @@ test('a goal edit leaves both original Runs live; Homer steers just the report a
   }finally{await f.close();}
 });
 
-test('goal edits keep prior user sources until a settled resume supplies replacement authority',async()=>{
+test('goal edits keep prior user sources until a fresh user resumes execution',async()=>{
  const f=fixture();let taskId='';
  const original='Inspect A without writing outside the project.';
  const expanded='Also inspect B and keep the writing restriction.';
@@ -177,13 +190,12 @@ test('goal edits keep prior user sources until a settled resume supplies replace
    if(text===original)taskId=(await openTaskWorker(main,"Synthetic task",original)).taskId;
    else if(text===expanded||text===revised)await main.call('task_update',{taskId,goal:text});
    else if(text==='Pause'){
-    await main.call('worker_interrupt',{workerId:f.app.tasks.workers(taskId)[0]!.workerId});
-    await main.call('task_update',{taskId,action:'pause'});
+    const run=f.app.tasks.workers(taskId)[0]!.run;
+    const paused=await main.call('task_update',{taskId,action:'pause'});
+    assert.equal(paused.state,'paused');assert.equal(f.app.tasks.run(run.id).stopRequestedAt,null);
+    await main.call('worker_interrupt',{workerId:run.workerId});
    }
-   else if(text==='Try resuming, otherwise cancel'){
-    await assert.rejects(main.call('task_update',{taskId,action:'resume'}),/task_authority_source_denied/);
-    await main.call('task_update',{taskId,action:'cancel'});
-   }else if(text==='Authorize a new inspection of C')await main.call('task_update',{taskId,action:'resume',goal:text});
+   else if(text==='Authorize a new inspection of C')await main.call('task_update',{taskId,action:'resume',goal:text});
    return {status:'completed',text:'Recorded'};
   });
   await f.app.start();await f.app.message(original,'original-authority');
@@ -199,8 +211,6 @@ test('goal edits keep prior user sources until a settled resume supplies replace
   assert.equal(f.app.tasks.version(taskId,3).goal,revised);
   const thread=f.app.store.meta('mainThread')!,source=f.app.history.inputs(thread,['original-authority']).get('original-authority')!;
   assert.equal(f.app.history.revokeMessage(thread,source.id),true);
-  await f.app.message('Try resuming, otherwise cancel','failed-resume');
-  assert.equal(f.app.tasks.task(taskId).outcome,'cancelled');
   await f.app.message('Authorize a new inspection of C','renewed-authority');
   const task=f.app.tasks.task(taskId),renewed=f.app.tasks.authority(taskId,4);
   assert.equal(task.state,'open');assert.equal(task.headVersion,4);
@@ -210,7 +220,7 @@ test('goal edits keep prior user sources until a settled resume supplies replace
  }finally{await f.close();}
 });
 
-for(const kind of ['worker_reply','interaction_required'] as const)for(const control of ['change','pause','cancel'] as const)test(`stale ${kind} after ${control} cannot recreate withdrawn scope through default or explicit sources`,async()=>{
+for(const kind of ['worker_reply','interaction_required'] as const)for(const control of ['change','pause'] as const)test(`stale ${kind} after ${control} cannot recreate withdrawn scope through default or explicit sources`,async()=>{
   const f=fixture();let taskId='',handled=false,checked=false,readText='',question:Promise<unknown>|undefined;
   const attempts:{status:string;error?:string;before:number[];after:number[]}[]=[],raw='  Original scope observation.\n\nThe date is unknown.  ';
   const counts=()=>['tasks','runs','task_versions','operations'].map(table=>Number(f.app.store.db.prepare('SELECT count(*) n FROM '+table).get()!.n));
@@ -243,7 +253,7 @@ for(const kind of ['worker_reply','interaction_required'] as const)for(const con
     for(const [index,attempt] of attempts.entries()){assert.equal(attempt.error,index===0?'task_authority_source_denied':'invalid_tool_arguments');assert.deepEqual(attempt.after,attempt.before);}
     assert.equal(readText,raw);assert.equal(f.app.tasks.tasks().length,2);assert.equal(f.app.store.runs().length,1);
     if(kind==='interaction_required'){assert.equal(f.app.interactions.list()[0]!.state,'cancelled');await question;}
-    const task=f.app.tasks.task(taskId);assert.equal(task.headVersion,control==='change'?2:1);assert.equal(task.state,control==='pause'?'paused':control==='cancel'?'settled':'open');
+    const task=f.app.tasks.task(taskId);assert.equal(task.headVersion,control==='change'?2:1);assert.equal(task.state,control==='pause'?'paused':'open');
     await f.app.idle();
   }finally{await f.close();}
 });
@@ -298,17 +308,17 @@ for(const kind of ['worker_reply','interaction_required'] as const)test(`a curre
 });
 
 test('a later real user can reopen failed work and delegate only selected attachment bytes',async()=>{
-  const f=fixture();let taskId='',followupId='',settled=false;
+  const f=fixture();let taskId='',followupId='',paused=false;
   try{
     const binding=()=> 'web:'+f.app.store.meta('mainThread');
     let originalRef:{assetId:string;revision:number},laterRef:{assetId:string;revision:number};
     f.setScript(async(main,text)=>{
       if(text.startsWith('start')){
         taskId=(await openTaskWorker(main,"Inspect original source",'Inspect original source',{attachments:[originalRef]})).taskId;
-      }else if(!settled&&text.includes('"kind":"worker_reply"')){
-        await main.call('task_update',{taskId,action:'settle',outcome:'failed'});
+      }else if(!paused&&text.includes('"kind":"worker_reply"')){
+        await main.call('task_update',{taskId,action:'pause'});
         await assert.rejects(openTaskWorker(main,'Continue the failed task'),/task_authority_source_denied/);
-        settled=true;
+        paused=true;
       }else if(text.startsWith('continue')){
         const revised=await main.call('task_update',{taskId,action:'resume',goal:'Use the later assigned source'});
         assert.equal(revised.version,2);assert.equal(f.app.tasks.runs(taskId).length,1);
@@ -323,7 +333,7 @@ test('a later real user can reopen failed work and delegate only selected attach
     await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
     const original=f.engines.find(engine=>engine.options.role==='worker')!;
     original.finish!({status:'failed',text:'Original inspection failed',errorCode:'synthetic_failure'});
-    await until(()=>settled);await f.app.idle();
+    await until(()=>paused);await f.app.idle();
     laterRef=f.app.media.intent('later-primary',binding(),'file');
     f.app.media.ready(laterRef,f.app.media.claim(laterRef)!,Buffer.from('Later bytes'),'text/plain');
     f.app.submitMessage({requestId:'later-primary',text:'continue',attachments:[laterRef]});
@@ -460,6 +470,77 @@ test('a failed received Worker input cannot repeat its committed immediate messa
  }finally{await f.close();}
 });
 
+for(const status of ['completed','failed'] as const)test('newly recorded Task archives with its source turn only on '+status,async()=>{
+ const f=fixture();let taskId='',key='',reviews=0;
+ try{
+  f.setScript(async(main,text)=>{
+   if(text==='Record and archive'){
+    taskId=(await main.call('task_create',{title:'Idea',goal:'Keep this idea'})).taskId;
+    const receipt=await main.call('archive_work',{taskId});
+    assert.equal(receipt.state,'requested');assert.equal(f.app.tasks.task(taskId).historyState,'visible');key=receipt.operationKey;
+    return {status,text:'Recorded'};
+   }
+   if(text.includes('"kind":"task_archived"'))reviews++;
+   return {status:'completed',text:'',messages:[]};
+  });
+  await f.app.start();await f.app.message('Record and archive','source');await f.app.idle();
+  assert.equal(JSON.parse(f.app.tasks.operation(key).responseJson!).state,status==='completed'?'archived':'skipped');
+  assert.equal(f.app.tasks.task(taskId).historyState,status==='completed'?'archived':'visible');
+  assert.equal(f.app.tasks.version(taskId,1).authorityJson,null);assert.equal(f.app.tasks.runs().length,0);
+  assert.equal(reviews,status==='completed'?1:0);await f.restart();await f.app.idle();assert.equal(reviews,status==='completed'?1:0);
+ }finally{await f.close();}
+});
+
+test('two records from one input each complete their archive in its terminal transaction',async()=>{
+ const f=fixture();const keys:string[]=[];
+ try{
+  f.setScript(async(main,text)=>{
+   if(text==='Record two ideas'){
+    for(const title of ['A','B']){
+     const {taskId}=await main.call('task_create',{goal:title,title});
+     const receipt=await main.call('archive_work',{taskId});keys.push(receipt.operationKey);
+     assert.equal(receipt.state,'requested');
+    }
+   }
+   return {status:'completed',text:'Recorded'};
+  });
+  await f.app.start();await f.app.message('Record two ideas','two-ideas');await f.app.idle();
+  assert.equal(keys.length,2);assert.deepEqual(keys.map(key=>JSON.parse(f.app.tasks.operation(key).responseJson!).state),['archived','archived']);
+ }finally{await f.close();}
+});
+
+test('explicit pause withdraws future scoped publications while committed scheduled results remain readable',async()=>{
+ const f=fixture();let taskId='',workerId='';
+ try{
+  f.setScript(async(main,text)=>{
+   if(text==='Start'){
+    const work=await openTaskWorker(main,'Prepare scheduled reports');taskId=work.taskId;workerId=work.workerId;
+   }else if(text==='Pause')await main.call('task_update',{taskId,action:'pause'});
+   else if(text==='Archive')await main.call('archive_work',{taskId});
+   else if(text.startsWith('[定时消息；')){
+    const final=text.split('[定时消息正文]\n').at(-1)!;
+    return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
+   }
+   return {status:'completed',text:'Recorded',messages:[]};
+  });
+  await f.app.start();await f.app.message('Start','original');await until(()=>f.engines.some(e=>e.options.role==='worker'&&e.finish));
+  f.engines.find(e=>e.options.role==='worker')!.finish!({status:'completed',text:'Done'});await f.app.idle();
+  const thread=f.app.store.meta('mainThread')!,agent=f.app.store.meta('mainAgentId')!;
+  const scope={taskId,taskVersion:f.app.tasks.run(workerId).version};
+  const sourceRef=JSON.stringify({instanceId:agent,threadId:thread,creatorAgentId:agent,authority:f.app.tasks.authority(taskId,scope.taskVersion),deliveryTask:scope});
+  const fire=async(text:string)=>{
+   f.app.store.transaction(()=>f.app.inputs.enqueueScheduled({deliveryId:text,scheduleId:'synthetic',scheduledAt:Date.now(),text,sourceRef}));
+   f.app.recheckScheduledMessages();await f.app.idle();
+   return f.app.history.list(thread).find(m=>m.text===text&&m.audience==='user')!;
+  };
+  const before=await fire('before');assert.equal(before.taskId,taskId);
+  await f.app.message('Pause','pause');await f.app.message('Archive','archive');await f.app.idle();
+  assert.equal(f.app.tasks.task(taskId).historyState,'archived');
+  assert.equal((await fire('after')).taskId,null);
+  assert.equal(f.app.readCommittedMessage(before.id,scope)?.text,'before');
+ }finally{await f.close();}
+});
+
 test('archival follow-up binds only the current notification original user source',async()=>{
   const f=fixture();let original='',followup='';
   try{
@@ -468,7 +549,6 @@ test('archival follow-up binds only the current notification original user sourc
         const assigned=await openTaskWorker(main,'Original completed goal');
         original=assigned.taskId;
         await main.call('worker_interrupt',{workerId:assigned.workerId});
-        await main.call('task_update',{taskId:original,action:'settle',outcome:'succeeded'});
       }else if(text==='archive'){
         const receipt=await main.call('archive_work',{taskId:original});assert.equal(receipt.state,'archived');
       }else if(text.includes('task_archived')){
@@ -484,10 +564,42 @@ test('archival follow-up binds only the current notification original user sourc
     await f.app.start();await f.app.message('unrelated','unrelated-source');await f.app.message('prepare','prepare-source');
     await f.app.message('archive','archive-source');await until(()=>!!followup&&f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
     f.engines.find(engine=>engine.options.role==='worker'&&engine.finish)!.finish!({status:'completed',text:'Checked archive'});await f.app.idle();
-    assert.ok(followup);assert.equal(f.app.tasks.task(original).historyState,'archived');assert.equal(f.app.tasks.task(original).state,'settled');
+    assert.ok(followup);assert.equal(f.app.tasks.task(original).historyState,'archived');assert.equal(f.app.tasks.task(original).state,'paused');
     assert.equal(f.app.tasks.authority(followup,1).sourceRequestId,'prepare-source');
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='task_archived'").get()!.n,1);
   }finally{await f.close();}
+});
+
+for(const channelSource of ['delegation','archive'] as const)test('archive review rechecks revoked channel '+channelSource+' while history stays readable',async()=>{
+ const f=fixture([{id:'simulation',send:async()=>({state:'sent'})}]);
+ const address={adapterId:'simulation',accountKey:'account',senderKey:'sender',conversationKey:'chat'};
+ let taskId='',binding='',reviewMessage='',checked=false;
+ try{
+  f.setScript(async(main,text)=>{
+   if(text.endsWith('Prepare')){
+    const work=await openTaskWorker(main,'Review these records');taskId=work.taskId;
+    await main.call('worker_interrupt',{workerId:work.workerId});
+   }else if(text.endsWith('Archive')){
+    assert.equal((await main.call('archive_work',{taskId})).state,'archived');
+    f.app.channels!.revokeBinding(binding);
+   }else if(text.includes('"kind":"task_archived"')){
+    reviewMessage=JSON.parse(text.split('\n')[1]!).messageId;
+    assert.equal((await main.call('work_inspect',{taskId})).task.id,taskId);
+    await assert.rejects(openTaskWorker(main,'Check recorded cleanup scope'),/channel_binding_denied/);
+    checked=true;
+   }
+   return {status:'completed',text:text.includes('"kind":')?'':'Recorded',messages:[]};
+  });
+  await f.app.start();const plugin=f.app.channels!;binding=plugin.bind(address);
+  const submit=async(text:string,channel:boolean)=>{
+   if(channel)plugin.receiveText({...address,eventId:text,text});else await f.app.message(text,text);
+   await f.app.idle();
+  };
+  await submit('Prepare',channelSource==='delegation');await submit('Archive',channelSource==='archive');
+  assert.equal(checked,true);assert.equal(f.app.tasks.runs().length,1);
+  assert.equal(f.app.store.db.prepare("SELECT state FROM agent_receipts WHERE messageId=?").get(reviewMessage)?.state,'received');
+  assert.equal(await f.app.message('Next','next'),'Recorded');
+ }finally{await f.close();}
 });
 
 for(const action of ['allow','deny','stop'] as const)test('archive command approval can '+action+' without blocking the next message',async()=>{
@@ -498,7 +610,6 @@ for(const action of ['allow','deny','stop'] as const)test('archive command appro
         const assigned=await openTaskWorker(main,'Synthetic archived task');
         taskId=assigned.taskId;
         await main.call('worker_interrupt',{workerId:assigned.workerId});
-        await main.call('task_update',{taskId,action:'settle',outcome:'succeeded'});
       }else if(text==='archive')await main.call('archive_work',{taskId});
       else if(text.includes('"kind":"task_archived"')){
         const reply=await Promise.resolve().then(()=>main.options.onInteraction!({requestId:1,method:'item/commandExecution/requestApproval',kind:'authorization',threadId:main.threadId,turnId:main.turnId!,itemId:'command',details:{command:'synthetic cleanup',availableDecisions:['accept','decline']}})).catch(error=>{resolution=error.message;throw error;});
@@ -574,7 +685,6 @@ test('a received archive input cannot create another Task on restart after a los
         const assigned=await openTaskWorker(main,'Original completed goal');
         original=assigned.taskId;
         await main.call('worker_interrupt',{workerId:assigned.workerId});
-        await main.call('task_update',{taskId:original,action:'settle',outcome:'succeeded'});
       }else if(text==='archive')await main.call('archive_work',{taskId:original});
       else if(text.includes('"kind":"task_archived"')){
         if(!lost){

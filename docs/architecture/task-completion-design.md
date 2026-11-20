@@ -1,5 +1,7 @@
 # Homer 如何用一张任务清单管理交办
 
+历史提案。当前实现已采用[当前／归档](main-worker-chat-architecture.md#当前与归档)，其中退役独立归档的建议已撤回。
+
 2026-11-20 · 优化提案，待确认。本文说明现有协作架构怎样落到工具、任务清单和工作列表。产品实现以现行架构正文为准。[主 Agent 与 Worker 会话架构](main-worker-chat-architecture.md)
 
 ## 协作关系

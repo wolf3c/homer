@@ -5,7 +5,7 @@ import path from 'node:path';
 export async function composerFixture({webDir,beforeDir,branding,resource,interaction,historyPage}) {
  const streams=new Set(),received={messages:[],uploads:[],stops:[],discards:[],denied:[]};
  let state,mode={},held=[],revision=0;
- const task={id:"synthetic-task",headVersion:1,revision:1,goal:"核对合成材料",notes:"",state:"open",outcome:null,controlState:"normal",historyState:"visible",workers:[],sourceRequestId:null};
+ const task={id:"synthetic-task",headVersion:1,revision:1,goal:"核对合成材料",notes:"",state:"open",historyState:"visible",workers:[],sourceRequestId:null};
  function snapshot(){return {...state,history:{protocol:3,readEpoch:"composer-synthetic-epoch",moreQueue:null,moreInteractions:null,page:{protocol:3,threadId:state.threadId,revision:++revision,messages:state.messages,units:state.messages.map(m=>m.id),before:null,after:null,artifacts:state.artifacts??[]}}};}
  const history=()=>Array.from({length:18},(_,i)=>({id:'fixture-'+i,threadId:'composer-review',requestId:'fixture-request-'+Math.floor(i/2),role:i%2?'assistant':'user',text:i%2?'已整理这份合成材料。先核对目标，再逐项检查细节。\n\n这是隔离浏览器检查使用的示例内容。'.repeat(2):'请整理这份示例材料，并保留需要核对的事项。',status:'completed',createdAt:1700000000000+i*1000}));
  function reset(overrides={}){state={conversationView:4,acceptedRequestIds:[],queue:[],threadId:'composer-review',messages:history(),isRunning:false,activeMessageId:null,work:[],interactions:[],upgrade:{phase:'running',accepting:true},features:{draftUpload:true,taskOverview:true},...overrides};mode={};for(const r of held)r.end(JSON.stringify({error:'fixture_reset'}));held=[];for(const a of Object.values(received))a.length=0;broadcast();}

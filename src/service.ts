@@ -34,7 +34,7 @@ import { join,isAbsolute,dirname,basename,normalize } from "node:path";
 import { fileURLToPath,pathToFileURL } from "node:url";
 import { accessSync,constants,realpathSync,existsSync,statSync,lstatSync,openSync,fstatSync,closeSync,readSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { Store,prepareMainReceiptMigration, type Run } from "./store.js";
+import { Store, type Run } from "./store.js";
 import { Files, canonicalDir } from "./files.js";
 import {
   CodexEngine,
@@ -428,7 +428,7 @@ export class Homer {
     let workerLinks:(string|undefined)[]=[];
     try{
       if(worker&&input?.taskId){
-        authority=this.tasks.authorizeTask(actor,input.taskId,{allowSettled:true}).authority;
+        authority=this.tasks.authorizeReceiptDelivery(actor,input.taskId).authority;
         workerLinks=messageFileDestinations(input.text).map(link=>this.messageFilePath(link));
       }else if(input?.origin==='scheduled'){
         authority=this.tasks.scheduledAuthority(actor);
@@ -693,7 +693,7 @@ export class Homer {
     this.cua=DesktopCua.create(config.desktopResources,config.runtime);
     this.membershipTools=createMembershipTools(config);
     this.unlock = acquireLock(config.runtime);
-    try { const path=join(config.runtime,"homer.sqlite");this.store = new Store(path,{mainReceiptMigration:prepareMainReceiptMigration(path)}); }
+    try { const path=join(config.runtime,"homer.sqlite");this.store = new Store(path); }
     catch(error) { this.unlock();throw error; }
     this.nativeThreads=new NativeThreadBindings(this.store);
     try{
@@ -1093,6 +1093,7 @@ export class Homer {
         else this.store.db.prepare("DELETE FROM meta WHERE key=?").run(lease.key);
       }
       this.tasks.recoverWorkerOperations();
+      this.tasks.recoverArchives();
       const stages=this.store.db.prepare("SELECT id FROM operations WHERE kind IN ('attachment_stage','send_user_message') AND state='accepted'").all();
       for(const row of stages)this.abandonMessageOperation(String(row.id));
       // No original turn terminal survived: preserve the node and disclose the gap.
@@ -1352,6 +1353,7 @@ export class Homer {
       }
       if(uncertain)this.inputs.uncertainInTransaction(queued.messageId,queued.revision);
       else this.inputs.finishInTransaction(queued.messageId,queued.revision,replyStatus);
+      this.tasks.finishArchives(queued.messageId,context.nativeActivity?.turnId,nativeTerminal&&!uncertain?replyStatus:'unknown');
       if(!context.explicitSent&&(failureNotice||!context.processId||!this.processes.exact(context.processId)))
         this.history.record('input-outcome:'+replyId,this.store.meta('mainThread')!,failureNotice??reply,uncertain?'interrupted':replyStatus,requestId);
       return changed&&!uncertain&&!context.explicitSent;
@@ -1380,23 +1382,23 @@ export class Homer {
     }
     this.receptionTimings?.mark('round_end',timing,replyStatus);return reply;
   }
-  private authorizeReceiptFinal(context:MainContext,input:InternalInput,node:ProcessNode|undefined){
+  private authorizeReceiptFinal(input:InternalInput,node:ProcessNode|undefined){
     if(input.senderAgentId!=='host'||!node?.sourceMessageIds.includes(input.messageId))throw Error('task_authority_source_denied');
     const actor=this.mainActor(true);
     actor.inputMessageId=input.messageId;
     if(input.kind==='scheduled_message'&&input.origin==='scheduled'){
       if(!this.tasks.scheduledAuthority(actor))throw Error('schedule_scope_denied');
-      return this.scheduledResultTask(JSON.parse(Object(input.payload).sourceRef));
+      return this.scheduledResultTask(JSON.parse(Object(input.payload).sourceRef),'publish');
     }
     if(input.kind==='task_archived'){
-      if(!this.archiveApprovalScope(context))throw Error('task_authority_source_denied');
+      if(!this.tasks.archiveReview(actor))throw Error('task_authority_source_denied');
       return;
     }
     if(!input.taskId||!['worker_reply','interaction_required'].includes(input.kind))throw Error('task_authority_source_denied');
-    const {task}=this.tasks.authorizeTask(actor,input.taskId,{allowSettled:true});
+    const {task,version}=this.tasks.authorizeReceiptDelivery(actor,input.taskId);
     if(input.kind==='worker_reply'&&!node.items.some(item=>item.kind==='workerEvent'&&
        item.event?.eventKind==='reply_received'&&item.event.sourceMessageId===input.messageId))throw Error('task_authority_source_denied');
-    return {taskId:task.id,taskVersion:task.headVersion};
+    return {taskId:task.id,taskVersion:version};
   }
   liveReceiptText(node:ProcessNode){
     const context=this.mainContext,activity=context?.nativeActivity;
@@ -1404,7 +1406,7 @@ export class Homer {
        activity.unavailable||this.main?.available===false||context.processId!==node.id||node.status!=='running'||
        node.threadId!==this.main?.threadId||node.turnIds.at(-1)!==activity.turnId)return;
     try{
-      this.authorizeReceiptFinal(context,context.workerInput,node);
+      this.authorizeReceiptFinal(context.workerInput,node);
       return [...activity.receiptFinals.values()].filter(Boolean).join('\n\n')||undefined;
     }catch{return;} // An unverified preview must never interrupt execution or appear in chat.
   }
@@ -1429,7 +1431,7 @@ export class Homer {
     try{
       if(status==='completed'&&context.interactionId&&this.interactions.inspect(context.interactionId).state==='pending_main'){status='failed';context.publicText??='Worker 的待答事项尚未处理，原请求已保留。';}
       if(status==='completed'&&context.workerMessages&&this.main?.turnId){
-        const pending=this.store.db.prepare("SELECT 1 FROM operations WHERE actorAgentId=? AND id<>? AND json_extract(detailsJson,'$.inputMessageId') IN (SELECT value FROM json_each(?)) AND state IN ('accepted','dispatching','uncertain') LIMIT 1").get(this.store.meta('mainAgentId')!,staged?.key??'',JSON.stringify(context.workerMessages.map(message=>message.id)));
+        const pending=this.store.db.prepare("SELECT 1 FROM operations WHERE actorAgentId=? AND id<>? AND NOT (kind='archive_work' AND state='accepted') AND json_extract(detailsJson,'$.inputMessageId') IN (SELECT value FROM json_each(?)) AND state IN ('accepted','dispatching','uncertain') LIMIT 1").get(this.store.meta('mainAgentId')!,staged?.key??'',JSON.stringify(context.workerMessages.map(message=>message.id)));
         if(pending){status='unknown';context.publicText??='本次协调的操作结果尚未确认，原始消息和回执已保留。';}
       }
       let publicText=context.explicitSent?undefined:context.publicText;
@@ -1439,7 +1441,7 @@ export class Homer {
         const process=this.processes.exact(context.processId);
         if(!context.explicitSent&&original&&(scheduled||input.taskId)){
           try{
-            deliveryTask=this.authorizeReceiptFinal(context,input,process);
+            deliveryTask=this.authorizeReceiptFinal(input,process);
             publishFinal=true;
             publicText=original+(files?.omitted?'\n\n部分文件未能保存为可跨端打开的版本。':'');
           }catch(error){
@@ -1469,6 +1471,11 @@ export class Homer {
           }
           if(publication.taskId)committedFinal=node.messageId;
         }
+      }
+      if(input?.kind==='worker_reply'){
+        const turnId=context.nativeActivity?.turnId;
+        const sameTerminal=node?.state==='worked'&&node.status===status&&node.turnIds.at(-1)===turnId;
+        this.tasks.finishArchives(input.messageId,turnId,sameTerminal?status:'unknown');
       }
       this.store.db.exec('COMMIT');
     }catch(error){this.store.db.exec('ROLLBACK');keptStage=false;throw error;}
@@ -1920,7 +1927,7 @@ export class Homer {
           try{
             const ref=JSON.parse(String(source.ref)) as ScheduleSource;
             this.validateScheduleSource(ref);
-            const scope=this.scheduledResultTask(ref);
+            const scope=this.scheduledResultTask(ref,'committed');
             if(scope?.taskId!==taskId||scope.taskVersion!==taskVersion)return;
           }catch{return;}
         }else if(operation.kind!=='worker_final')return;
@@ -2110,12 +2117,21 @@ export class Homer {
     for(const requestId of this.tasks.validateAuthority(this.mainActor(true),source.authority))if(this.validateScheduleRequestSource(requestId,allowPreparing))preparing=true;
     return preparing;
   }
-  private scheduledResultTask(source:ScheduleSource){
+  private scheduledResultTask(source:ScheduleSource,stage:'publish'|'committed'){
     const scope=source.deliveryTask;
     if(!scope)return;
     try{
       const task=this.tasks.task(scope.taskId);
-      if(task.headVersion!==scope.taskVersion||task.historyState!=='visible'||task.controlState!=='normal'||task.state==='paused'||task.outcome==='cancelled')return;
+      if(stage==='publish'){
+        if(task.headVersion!==scope.taskVersion)return;
+        // Archiving also closes the execution gate. Only an explicit pause withdraws this delivery.
+        if(task.state==='paused'){
+          const control=this.store.db.prepare(`SELECT json_extract(responseJson,'$.state') state FROM operations
+            WHERE scopeId=? AND kind='task_control' AND state='confirmed' AND json_extract(responseJson,'$.state') IN ('paused','open')
+            ORDER BY rowid DESC LIMIT 1`).get(task.id);
+          if(control?.state==='paused')return;
+        }
+      }
       for(const source of this.tasks.validateAuthority(this.mainActor(true),this.tasks.authority(task.id,scope.taskVersion)))
         this.validateScheduleRequestSource(source);
       return scope;
@@ -2148,7 +2164,7 @@ export class Homer {
     const taskId=object(args).taskId;
     if(typeof taskId==='string'){
       if(run&&taskId!==run.taskId)throw Error('schedule_scope_denied');
-      const task=run?this.tasks.guard(actor):this.tasks.authorizeTask(actor,taskId,{allowSettled:true}).task;
+      const task=run?this.tasks.guard(actor):this.tasks.authorizeTask(actor,taskId).task;
       source.deliveryTask={taskId:task.id,taskVersion:run?.version??task.headVersion};
     }
     return this.scheduleTools.handle({actor,source,allSources:!slot&&!context?.event},name,object(args),identity.callId);
@@ -2185,7 +2201,7 @@ export class Homer {
     if(this.pluginUserTurn(engine,threadId,turnId)!==context)throw Error('plugin_tool_scope_denied');
     return entry.handle(args,{requestId:context.requestId!,authorizeTask:taskId=>{
       if(this.pluginUserTurn(engine,threadId,turnId)!==context)throw Error('plugin_tool_scope_denied');
-      this.tasks.authorizeTask(this.mainActor(),taskId,{allowSettled:true});
+      this.tasks.authorizeTask(this.mainActor(),taskId);
     }});
     });
   }
@@ -2334,12 +2350,11 @@ export class Homer {
     const input=context?.workerInput,turnId=context?.nativeActivity?.turnId,threadId=this.main?.threadId;
     if(!context?.event||!context.processId||!turnId||!threadId||this.main?.turnId!==turnId||
        input?.senderAgentId!=='host'||input.kind!=='task_archived'||!input.taskId||!input.taskVersion)return;
-    const task=this.tasks.task(input.taskId);
-    if(task.headVersion!==input.taskVersion||task.controlState!=='normal'||task.state!=='settled'||task.historyState!=='archived')return;
     try{
-      const authority=this.tasks.authority(task.id,task.headVersion);
-      this.tasks.validateAuthority(this.mainActor(true),authority);
-      return {generationId:context.processId,threadId,turnId,sourceRequestId:authority.sourceRequestId,userText:authority.description};
+      const actor=this.mainActor(true);actor.inputMessageId=input.messageId;
+      const review=this.tasks.archiveReview(actor);
+      if(!review?.authority)return;
+      return {generationId:context.processId,threadId,turnId,sourceRequestId:review.authority.sourceRequestId,userText:review.authority.description};
     }catch{return;}
   }
   private openMainNativeInteraction(request:NativeRequest){
@@ -2684,7 +2699,7 @@ export class Homer {
   }
   private workerStarting(run:TaskRun){
     const current=this.tasks.run(run.id),task=this.tasks.task(current.taskId);
-    return !this.closing&&current.epoch===run.epoch&&current.status==='running'&&current.phase==='starting'&&!current.stopRequestedAt&&task.state==='open'&&task.controlState==='normal'&&task.historyState==='visible';
+    return !this.closing&&current.epoch===run.epoch&&current.status==='running'&&current.phase==='starting'&&!current.stopRequestedAt&&task.state==='open'&&task.historyState==='visible';
   }
   private async closeWorker(slot:WorkerSlot){
     if(slot.closing)return slot.closing;
@@ -2736,9 +2751,9 @@ export class Homer {
     if(context?.workerInput?.origin==='scheduled')return this.tasks.scheduledAuthority(actor);
     const notice=context?.workerInput;
     if(context?.event&&notice?.senderAgentId==='host'&&notice.taskId&&notice.taskVersion){
-      if(notice.kind==='task_archived')return this.tasks.authority(notice.taskId,notice.taskVersion);
+      if(notice.kind==='task_archived')return this.tasks.archiveReview(actor)?.authority;
       if(notice.kind==='worker_reply'||notice.kind==='interaction_required'){
-        try{return this.tasks.authorizeTask(actor,notice.taskId,{allowSettled:true}).authority;}
+        try{return this.tasks.authorizeTask(actor,notice.taskId).authority;}
         catch(error){
           if(!['task_authority_source_denied','task_history_not_visible','task_not_open','task_stop_requested'].includes(engineError(error)))throw error;
           return;
@@ -2941,9 +2956,9 @@ export class Homer {
       if (
         ![...this.workers.keys()].some(id=>['starting','executing','rpc_wait','yielding'].includes(this.tasks.run(id).phase)) &&
         !this.executions.size &&
-          !this.store.runs().some((r) => r.status === "queued")
+        !this.tasks.nextQueuedRun()
       )
-        return this.workers.size?'waiting_or_blocked':undefined;
+        return this.workers.size||this.store.db.prepare("SELECT 1 FROM runs WHERE status='queued' LIMIT 1").get()?'waiting_or_blocked':undefined;
       await new Promise((r) => setTimeout(r, 20));
     }
   }

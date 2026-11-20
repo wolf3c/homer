@@ -59,15 +59,14 @@ test('the real host retains late old drafts, confirms both paused exits and resu
      await main.call('worker_interrupt',{workerId});
      await main.call('worker_message',{workerId,message:(index?'B':'A')+' 按新版续谈'});
     }
-   }else if(text==='逐个中断后暂停整件事'){
-    const blocked=await main.call('task_update',{taskId,action:'pause'});
-    assert.equal(blocked.state,'blocked');assert.deepEqual(new Set(blocked.blockers.map((item:any)=>item.workerId)),new Set(workerIds));
+   }else if(text==='暂停委托并逐个中断'){
+    pause=await main.call('task_update',{taskId,action:'pause'});
+    assert.equal(pause.state,'paused');assert.deepEqual(new Set(pause.blockers.map((item:any)=>item.workerId)),new Set(workerIds));
     const stopping=workerIds.map(workerId=>main.call('worker_interrupt',{workerId}));
     await until(()=>closing.every(Boolean));
-    const during=await main.call('worker_message',{workerId:workerIds[0],message:'停止中不得新增执行'});
-    assert.equal(during.state,'blocked');assert.equal(during.reason,'worker_stop_requested');
+    await assert.rejects(main.call('worker_message',{workerId:workerIds[0],message:'停止中不得新增执行'}),/task_not_open/);
     await assert.rejects(main.call('task_update',{taskId,action:'resume'}),/task_resume_unconfirmed/);pauseChecked=true;
-    await Promise.all(stopping);pause=await main.call('task_update',{taskId,action:'pause'});
+    await Promise.all(stopping);
     await assert.rejects(main.call('worker_message',{workerId:workerIds[0],message:'暂停中不得新增执行'}),/task_not_open/);
    }else if(text==='暂停时只改目标，不执行'){
     await main.call('task_update',{taskId,goal:'第三版目标，保留缺失日期'});
@@ -76,7 +75,7 @@ test('the real host retains late old drafts, confirms both paused exits and resu
     assert.equal(f.app.tasks.runs(taskId).length,4,'resume alone cannot create Worker runs');
     for(const [index,workerId] of workerIds.entries())await main.call('worker_message',{workerId,message:(index?'B':'A')+' 暂停后继续核对'});
    }
-   else if(text==='核对新版原文后结案')await main.call('task_update',{taskId,action:'settle',outcome:'succeeded'});
+   else if(text==='记录新版核对结论')await main.call('task_update',{taskId,notes:'已核对新版原文'});
    else{
     const notice=JSON.parse(text.split('\n')[1]!);assert.equal(notice.kind,'worker_reply');assert.equal(notice.taskId,taskId);
     const read=await main.call('worker_read',{workerId:notice.workerId,messageId:notice.messageId}),reply=read.messages[0];
@@ -118,19 +117,19 @@ test('the real host retains late old drafts, confirms both paused exits and resu
    let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});releases.push(release);
    const close=peer.close.bind(peer);peer.close=async()=>{closing[index]=true;await gate;return close();};
   }
-  pauseWork=f.app.message('逐个中断后暂停整件事','lifecycle-pause');pauseWork.catch(()=>{});
+  pauseWork=f.app.message('暂停委托并逐个中断','lifecycle-pause');pauseWork.catch(()=>{});
   await until(()=>closing.some(Boolean)&&pauseChecked);assert.deepEqual(errors,[]);
-  assert.equal(f.app.tasks.task(taskId).controlState,'normal');assert.equal(f.app.tasks.task(taskId).state,'open');
+  assert.equal(f.app.tasks.task(taskId).state,'paused');
   assert.equal(peers().length,4);assert.equal(f.app.tasks.runs(taskId).length,4);
   const firstClosing=closing.findIndex(Boolean),secondClosing=1-firstClosing;
   const confirmed=secondRuns.find(run=>run.threadId===second[firstClosing]!.threadId)!,waiting=secondRuns.find(run=>run.threadId===second[secondClosing]!.threadId)!;
   releases[firstClosing]!();await until(()=>JSON.parse(f.app.tasks.run(confirmed.id).checkpointJson??'{}').workerExitConfirmed===1);
   assert.equal(JSON.parse(f.app.tasks.run(confirmed.id).checkpointJson??'{}').workerExitConfirmed,1);
   assert.notEqual(JSON.parse(f.app.tasks.run(waiting.id).checkpointJson??'{}').workerExitConfirmed,1);
-  assert.equal(f.app.tasks.task(taskId).controlState,'normal');assert.notEqual(f.app.tasks.task(taskId).state,'paused');
+  assert.equal(f.app.tasks.task(taskId).state,'paused');
   assert.equal(peers().length,4);
   releases[secondClosing]!();await pauseWork;await f.app.idle();assert.deepEqual(errors,[]);
-  assert.equal(pause.state,'paused');assert.equal(f.app.tasks.task(taskId).state,'paused');assert.equal(f.app.tasks.task(taskId).controlState,'normal');
+  assert.equal(pause.state,'paused');assert.equal(f.app.tasks.task(taskId).state,'paused');
   for(const run of secondRuns){assert.equal(f.app.tasks.run(run.id).phase,'ended');assert.equal(JSON.parse(f.app.tasks.run(run.id).checkpointJson??'{}').workerExitConfirmed,1);}
   for(const run of secondRuns)assert.ok(run.workerId&&f.app.tasks.run(run.id).stopRequestedAt);
   assert.equal(peers().length,4);
@@ -142,15 +141,15 @@ test('the real host retains late old drafts, confirms both paused exits and resu
   assert.equal(resumed.length,2);assert.deepEqual(new Set(resumed.map(run=>run.workerId)),new Set(workerIds));
   const newBodies=new Map<string,string>();
   for(const run of resumed){
-   assert.equal(run.version,3);assert.equal(run.sourceRequestId,'lifecycle-paused-edit');assert.equal(run.threadId,oldRuns.find(old=>old.workerId===run.workerId)!.threadId);
+   assert.equal(run.version,4);assert.equal(run.sourceRequestId,'lifecycle-resume');assert.equal(run.threadId,oldRuns.find(old=>old.workerId===run.workerId)!.threadId);
    const expected=(run.workerId===workerIds[0]?'A':'B')+' 暂停后继续核对';assert.equal(run.prompt,expected);
    const peer=peers().slice(4).find(peer=>peer.threadId===run.threadId)!;assert.equal(peer.options.threadId,run.threadId);
    const body='  新版核对原文：'+expected+'\n\n缺失日期保持未知。  ';newBodies.set(run.id,body);
    peer.finish!({status:'completed',text:body,messages:[{itemId:'new-final',phase:'final_answer',text:body}]});
   }
-  await f.app.idle();assert.deepEqual(errors,[]);assert.equal(f.app.tasks.task(taskId).outcome,null);
-  await f.app.message('核对新版原文后结案','lifecycle-settle');await f.app.idle();assert.deepEqual(errors,[]);
-  assert.equal(f.app.tasks.tasks().length,1);assert.equal(f.app.tasks.task(taskId).outcome,'succeeded');assert.equal(f.app.tasks.runs(taskId).length,6);
+  await f.app.idle();assert.deepEqual(errors,[]);assert.equal(f.app.tasks.task(taskId).historyState,'visible');
+  await f.app.message('记录新版核对结论','lifecycle-note');await f.app.idle();assert.deepEqual(errors,[]);
+  assert.equal(f.app.tasks.tasks().length,1);assert.equal(f.app.tasks.task(taskId).notes,'已核对新版原文');assert.equal(f.app.tasks.runs(taskId).length,6);
   for(const run of oldRuns){
    const notice=notices.find(notice=>notice.runId===run.id)!;assert.equal(notice.version,1);assert.equal(notice.text,oldBodies.get(run.workerId));
    const detail=readTaskDetail(f.app.store.db,taskId,{workerId:run.workerId,messageId:notice.messageId}).conversation!.messages[0]!;
@@ -158,9 +157,9 @@ test('the real host retains late old drafts, confirms both paused exits and resu
   }
   for(const run of resumed){
    const readback=notices.filter(notice=>notice.runId===run.id);assert.equal(readback.length,1);
-   assert.equal(readback[0]!.text,newBodies.get(run.id));assert.equal(readback[0]!.version,3);
+   assert.equal(readback[0]!.text,newBodies.get(run.id));assert.equal(readback[0]!.version,4);
    const detail=readTaskDetail(f.app.store.db,taskId,{workerId:run.workerId,messageId:readback[0]!.messageId}).conversation!.messages[0]!;
-   assert.equal(detail.text,newBodies.get(run.id));assert.equal(detail.version,3);
+   assert.equal(detail.text,newBodies.get(run.id));assert.equal(detail.version,4);
   }
   assert.equal(notices.length,6);for(const notice of notices)assert.equal(receiptState(notice.messageId),'received');
   for(const [receipt,requestId] of [[change,'lifecycle-change'],[pause,'lifecycle-pause'],[resume,'lifecycle-resume']] as const){

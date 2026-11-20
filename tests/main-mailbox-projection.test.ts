@@ -48,9 +48,9 @@ for(const outcome of ['completed','uncertain'] as const)test('media retention re
  }finally{f.close();}
 });
 
-test('an archived failed task uses explicit processing outcome rather than old receipt state',()=>{
+test('a record-only task archives without a completion report',()=>{
  const f=chatFixture();try{
-  const task=f.create();f.tasks.settleTask(f.actor,{operationId:'settle',taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision,outcome:'failed'});
+  const task=f.create();
   assert.equal(f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision},true).state,'archived');
  }finally{f.close();}
 });

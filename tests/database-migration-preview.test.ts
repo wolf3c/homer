@@ -33,14 +33,14 @@ assert.deepEqual(r.allowedMetadataChanges,[]);
  assert.deepEqual(r.rollback,{fileBytesMatch:true,schemaUnchanged:true,factsUnchanged:true});assert.equal(r.automaticActivationAllowed,false);
  assert.deepEqual(r.permissions,{directory:0o700,before:0o600,candidate:0o600,rollback:0o600});
 });
-test('migration failure and future schema remain offline; recovery uses the exact pre-migration backup',async(t)=>{
- const f=fixture();t.after(()=>rmSync(f.directory,{recursive:true,force:true}));f.store.db.exec("CREATE TRIGGER synthetic_recursive_failure BEFORE INSERT ON meta WHEN NEW.key='recursiveSchemaVersion' BEGIN SELECT RAISE(ABORT,'synthetic_migration_failure');END;");f.store.close();
+test('unversioned and future schema remain offline; recovery uses the exact pre-migration backup',async(t)=>{
+ const f=fixture();t.after(()=>rmSync(f.directory,{recursive:true,force:true}));f.store.db.prepare("DELETE FROM meta WHERE key='recursiveSchemaVersion'").run();f.store.close();
  const originalHash=hash(f.snapshot),failed=await previewMigration(f.snapshot,join(f.directory,'failed'));
- assert.equal(failed.passed,false);assert.equal(failed.error,'synthetic_migration_failure');assert.equal(hash(f.snapshot),originalHash);
+ assert.equal(failed.passed,false);assert.equal(failed.error,'recursive_schema_unsupported');assert.equal(hash(f.snapshot),originalHash);
  assert.equal(failed.rollback.factsUnchanged,true);assert.equal(failed.rollback.schemaUnchanged,true);assert.equal(failed.rollback.fileBytesMatch,true);
  const restored=new DatabaseSync(join(f.directory,'failed/rollback-restored.sqlite'),{readOnly:true});
- assert.equal(restored.prepare("SELECT 1 FROM sqlite_master WHERE name='tasks'").get(),undefined);restored.close();
- const future=new DatabaseSync(f.snapshot);future.exec('DROP TRIGGER synthetic_recursive_failure');future.prepare("INSERT INTO meta VALUES('recursiveSchemaVersion','999')").run();future.close();
+ assert.equal(restored.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get(),undefined);restored.close();
+ const future=new DatabaseSync(f.snapshot);future.prepare("INSERT INTO meta VALUES('recursiveSchemaVersion','999')").run();future.close();
  const futureHash=hash(f.snapshot),blocked=await previewMigration(f.snapshot,join(f.directory,'future'));
  assert.equal(blocked.passed,false);assert.equal(blocked.error,'recursive_schema_unsupported');assert.equal(hash(f.snapshot),futureHash);assert.deepEqual(blocked.stages,[]);
  await assert.rejects(previewMigration(f.snapshot,join(f.directory,'preview/../../../../../../outside')),/private_destination_required/);
@@ -48,6 +48,7 @@ test('migration failure and future schema remain offline; recovery uses the exac
 
 test('offline preview includes every existing source table in preservation checks',async(t)=>{
  const f=fixture();t.after(()=>rmSync(f.directory,{recursive:true,force:true}));
+ new RecursiveTasks(f.store,new Files(join(f.directory,'workspace'))).migrate();
  const tables=f.store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row=>String(row.name));f.store.close();
  const r=await previewMigration(f.snapshot,join(f.directory,'source-preview'));
  assert.equal(r.passed,true);assert.ok(tables.filter(table=>table!=='meta').every(table=>table in r.tables),'all existing data owners must be checked');
@@ -70,13 +71,13 @@ test('offline preview refuses unsupported historical schemas without activating 
  }finally{rmSync(f.directory,{recursive:true,force:true});}
 });
 
-for(const version of ['6','7'])test('offline preview validates only the exact allowed receipt, audit and schema changes from '+version,async()=>{
+for(const version of ['6','7','8'])test('offline preview rejects existing schema '+version,async()=>{
  const f=chatFixture();try{
   f.store.setMeta('recursiveSchemaVersion',version);f.store.db.prepare("UPDATE agent_receipts SET state='processed' WHERE messageId=?").run(f.actor.inputMessageId!);
   if(version==='6')f.store.db.exec('DROP TABLE schedules');
   const source=hash(f.path),result=await previewMigration(f.path,join(f.dir,'migration-preview'));
-  assert.equal(result.passed,true);assert.equal(result.schemaVersions.recursiveSchemaVersion,'8');assert.equal(hash(f.path),source);
-  assert.equal(result.tables.agent_receipts!.unchanged,false);assert.equal(result.tables.operations!.unchanged,true);
+  assert.equal(result.passed,false);assert.equal(result.error,'recursive_schema_unsupported');assert.equal(result.schemaVersions.recursiveSchemaVersion,version);assert.equal(hash(f.path),source);
+  assert.equal(result.tables.agent_receipts!.unchanged,true);assert.equal(result.tables.operations!.unchanged,true);
   assert.deepEqual(result.rollback,{fileBytesMatch:true,schemaUnchanged:true,factsUnchanged:true});
  }finally{f.close();}
 });

@@ -1,10 +1,10 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {overviewFixture} from './task-overview-fixture.js';
 import {readTaskOverview,classifyTask,readTaskDetail} from '../src/task-overview.js';import {homerWebBridge} from '../src/web-homer.js';
-test('native schema supports Main text settlement without Result or Delivery and stays read-only',()=>{
+test('native schema supports ordinary matters without Worker activity and stays read-only',()=>{
  const f=overviewFixture();try{
-  f.tasks.settleTask(f.actor,{operationId:'settle',taskId:f.taskId,expectedRevision:1,outcome:'succeeded'});f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();
-  const row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers.length,0);assert.equal(classifyTask(row).key,'complete');assert.equal(row.sourceRequestId,f.actor.sourceRequestId);assert.equal(readTaskDetail(f.store.db,f.taskId).runs.length,0);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
+  f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();
+  const row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers.length,0);assert.equal(classifyTask(row).key,'ordinary');assert.equal(row.sourceRequestId,f.actor.sourceRequestId);assert.equal(readTaskDetail(f.store.db,f.taskId).runs.length,0);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
  }finally{f.close();}
 });
 test('real WebBridge overview bypasses snapshot/history/files and uses four readonly SELECTs',async()=>{
@@ -23,6 +23,6 @@ test('one thousand Tasks still use four read-only SELECTs without fabricated chi
   }
   const statements:string[]=[],db={prepare(sql:string){statements.push(sql);return f.store.db.prepare(sql);}} as typeof f.store.db;
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get(),overview=readTaskOverview(db);
-  assert.equal(overview.tasks.length,1001);assert.equal(statements.length,4);assert.ok(overview.tasks.every(t=>t.workers.length===0));assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
+  assert.equal(overview.tasks.length,20);assert.equal(overview.nextCursor,982);assert.equal(statements.length,4);assert.ok(overview.tasks.every(t=>t.workers.length===0));const next=readTaskOverview(db,{before:overview.nextCursor});assert.equal(next.tasks.length,20);assert.ok(next.tasks.every(t=>t.creationOrder!<overview.nextCursor!));assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
  }finally{f.close();}
 });

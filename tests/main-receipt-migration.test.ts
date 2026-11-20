@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,rmSync} from 'node:fs';
-import * as persistence from '../src/store.js';
+import * as persistence from '../scripts/legacy-main-receipts-v8.js';
+import {Store} from '../src/store.js';
 import {Store as LegacyStore} from './fixtures/store-v7.js';
 import {chatFixture} from './task-chat-fixture.js';
 import {MainProcessHistory} from '../src/main-process.js';
@@ -144,16 +145,12 @@ test('an audit cannot hide a missing schema commit on idempotent migration retry
  }finally{f.close();}
 });
 
-test('opening an old store needs an explicit reviewed migration, and the real version-7 reader refuses the new store',()=>{
- const f=chatFixture();let reopened:persistence.Store|undefined,closed=false;
- try{
-  internal(f);f.store.setMeta('recursiveSchemaVersion','7');const path=f.path;f.store.close();closed=true;
-  const bytes=readFileSync(path);assert.throws(()=>{const opened=new persistence.Store(path);opened.close();},/migration_required/);assert.deepEqual(readFileSync(path),bytes);
-  const preview=persistence.prepareMainReceiptMigration(path);
-  reopened=new persistence.Store(path,{mainReceiptMigration:preview});
-  assert.equal(reopened.meta('recursiveSchemaVersion'),persistence.STORE_SCHEMA_VERSION);reopened.close();reopened=undefined;
-  const migrated=readFileSync(path);assert.throws(()=>new LegacyStore(path),/recursive_schema_unsupported/);assert.deepEqual(readFileSync(path),migrated);
- }finally{reopened?.close();if(closed)rmSync(f.dir,{recursive:true,force:true});else f.close();}
+for(const version of ['6','7','8'])test('older schema '+version+' is refused before writes and cannot read the current store',()=>{
+ const f=chatFixture();try{
+  assert.throws(()=>new LegacyStore(f.path),/recursive_schema_unsupported/);
+  f.store.setMeta('recursiveSchemaVersion',version);f.store.close();
+  const before=readFileSync(f.path);assert.throws(()=>new Store(f.path),/recursive_schema_unsupported/);assert.deepEqual(readFileSync(f.path),before);
+ }finally{rmSync(f.dir,{recursive:true,force:true});}
 });
 
 test('edited and moved pending inputs retain their original order and remain claimable through migration',()=>{
@@ -196,8 +193,8 @@ test('two different user inputs cannot share one native acceptance identity',()=
 for(const kind of ['task_archived','interaction_required','scheduled_message'])test('migration accepts the exact original operation binding for '+kind,()=>{
  const f=chatFixture();try{
   if(kind==='task_archived'){
-   const task=f.create();f.tasks.settleTask(f.actor,{operationId:'settle',taskId:task.taskId,expectedRevision:1,outcome:'failed'});
-   f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:2},true);
+   const task=f.create();
+   f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:1},true);
   }else if(kind==='interaction_required'){
    const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Synthetic request'}),run=f.start(worker.workerId),interactions=new WorkerInteractions(f.store.db);
    const opened=interactions.open({runId:run.id,threadId:run.threadId!,turnId:run.turnId!,requestId:'synthetic',source:'ask_main',kind:'question',details:{question:'Synthetic?'},authority:{...f.authority,nativeApprovals:false},runEpoch:run.epoch,taskVersion:run.version},()=>true);

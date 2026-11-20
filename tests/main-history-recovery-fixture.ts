@@ -25,7 +25,7 @@ export async function recoveryFixture(count=1){
   const claimed=f.inputs.claim([],'all')!;assert.equal(claimed.origin,'worker');
   f.processes.start({id:'old-process-'+n,threadId,sourceKind:'worker',sourceMessageIds:[claimed.messageId],messageId:'old-process-'+n},'old-turn-'+n);
   f.inputs.uncertain(claimed.messageId,claimed.revision);f.processes.finish('old-process-'+n,'unknown','host:restart:engine_closed');
-  f.tasks.controlTask(actor,{operationId:'cancel-'+n,taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision,action:'cancel'});
+  f.tasks.controlTask(actor,{operationId:'pause-'+n,taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision,action:'pause'});
   originals.push({id:claimed.messageId,seq:claimed.seq,taskId:task.taskId,workerId:worker.workerId,runId:run.id});
  }
  f.close();let app:Homer,sequence=0;

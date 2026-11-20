@@ -25,12 +25,12 @@ async function restart(t:TestContext,scenario:string,crash:boolean,desktop=false
 
 for(const crash of [false,true])for(const desktop of [false,true])test(`original raw reply and bytes survive ${crash?'crash':'shutdown'}, desktop pause=${desktop}`,{timeout:15000},async t=>{
  const {app,workerStarts,attempts}=await restart(t,'reply',crash,desktop),task=app.tasks.tasks()[0]!,run=app.store.runs()[0]!;
- assert.equal(app.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);assert.equal(task.state,'open');assert.equal(task.outcome,null);
+ assert.equal(app.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);assert.equal(task.state,'open');assert.equal(task.historyState,'visible');
  const report=join(app.files.prepareRun(task.id,run.id),'report.md');
  assert.equal(readFileSync(report,'utf8'),'# Synthetic preserved bytes');
  await app.message('read','find-existing-reply');assert.equal(attempts[0]!.status,'fulfilled');const reply=attempts[0]!.value.messages.find((message:any)=>message.kind==='worker_reply');assert.equal(reply.text,'Synthetic report; date unknown.\n\n[Report]('+pathToFileURL(report).href+')');
- await app.message(desktop?'settle':'send','send-original');
- assert.equal(app.tasks.task(task.id).outcome,'succeeded');
+ await app.message(desktop?'read':'send','send-original');
+ assert.equal(app.tasks.task(task.id).historyState,'visible');
  if(!desktop){
   const committed=app.store.db.prepare("SELECT responseJson FROM operations WHERE kind='request_final' AND state='confirmed'").get()!;
   const message=app.history.message(JSON.parse(String(committed.responseJson)).messageId)!;
@@ -52,7 +52,7 @@ for(const [scenario,crash] of [['running',false],['uncertain-owner',true],['queu
 });
 
 for(const crash of [false,true])for(const desktop of [false,true])test(`changed goal stays bound to the new version after ${crash?'crash':'shutdown'}, desktop pause=${desktop}`,{timeout:15000},async t=>{
- const {app,workerStarts}=await restart(t,'goal-change',crash,desktop),original=app.store.runs()[0]!,task=app.tasks.tasks()[0]!;assert.equal(task.headVersion,2);assert.equal(task.outcome,null);
+ const {app,workerStarts}=await restart(t,'goal-change',crash,desktop),original=app.store.runs()[0]!,task=app.tasks.tasks()[0]!;assert.equal(task.headVersion,2);assert.equal(task.historyState,'visible');
  const before=app.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE senderRunId=? AND kind='worker_reply'").get(original.id)!;assert.equal(JSON.parse(String(before.payloadJson)).version,1);
  await app.message('followup','followup-new-requirement');await app.idle();const latest=app.tasks.runs(task.id).at(-1)!;
  assert.equal(latest.version,2);assert.equal(latest.sourceRequestId,'changed-source');assert.equal(latest.workerId,original.workerId);assert.equal(latest.threadId,original.threadId);assert.equal(workerStarts().length,2);
@@ -62,8 +62,8 @@ for(const crash of [false,true])for(const desktop of [false,true])test(`changed 
 for(const scenario of ['written-before-terminal','checkpoint','closed-before-return'])for(const desktop of [false,true])test(`crash preserves the exact output at ${scenario}, desktop pause=${desktop}`,{timeout:15000},async t=>{
  if(process.platform==='win32'&&scenario!=='closed-before-return'){await assert.rejects(restart(t,scenario,true,desktop),/orphan_stop_unconfirmed|desktop_adoption_owner_unknown/);return;}
  const {app,workerStarts}=await restart(t,scenario,true,desktop),run=app.store.runs()[0]!;
- await app.message(desktop?'settle':'send','send-crash-file');
- assert.equal(app.tasks.tasks()[0]!.outcome,'succeeded');assert.equal(workerStarts().length,1);
+ await app.message(desktop?'read':'send','send-crash-file');
+ assert.equal(app.tasks.tasks()[0]!.historyState,'visible');assert.equal(workerStarts().length,1);
  const report=join(app.files.prepareRun(run.taskId,run.id),'report.md');
  if(desktop)assert.equal(readFileSync(report,'utf8'),'# Synthetic preserved bytes');
  else{
@@ -77,17 +77,16 @@ for(const scenario of ['written-before-terminal','checkpoint','closed-before-ret
 test('missing physical exit evidence preserves the original fence and prevents a new writer',{timeout:15000},async t=>{
  const {app,workerStarts,attempts}=await restart(t,'missing-owner',true),run=app.store.runs()[0]!;assert.equal(app.tasks.run(run.id).phase,'uncertain');
  await app.message('followup','followup-request');await app.idle();assert.equal(attempts[0]!.status,'fulfilled');assert.equal(attempts[0]!.value.state,'blocked');
- assert.equal(workerStarts().length,1);assert.equal(app.store.runs().length,1);assert.equal(app.tasks.task(run.taskId).outcome,null);
+ assert.equal(workerStarts().length,1);assert.equal(app.store.runs().length,1);assert.equal(app.tasks.task(run.taskId).historyState,'visible');
 });
 
-for(const [action,state,outcome,version] of [['pause','paused',null,1],['cancel','settled','cancelled',1],['change-goal','open',null,2],['interrupt','open',null,1]] as const)
-for(const desktop of [false,true])test(`restart confirms the original ${action} stop intent after proven exit, desktop pause=${desktop}`,{timeout:15000},async t=>{
- const {app,workerStarts}=await restart(t,'stop-intent:'+action,true,desktop);
+for(const desktop of [false,true])test(`restart confirms the individual Worker interruption after proven exit, desktop pause=${desktop}`,{timeout:15000},async t=>{
+ const {app,workerStarts}=await restart(t,'stop-intent:interrupt',true,desktop);
  const task=app.tasks.tasks()[0]!,run=app.store.runs()[0]!;
- const operation=app.store.db.prepare("SELECT id,state,responseJson FROM operations WHERE kind IN ('task_control','task_update','worker_stop')").get()!;
+ const operation=app.store.db.prepare("SELECT id,state,responseJson FROM operations WHERE kind='worker_stop'").get()!;
  assert.equal(operation.state,'confirmed');
  assert.equal(JSON.parse(String(operation.responseJson)).operationKey,operation.id);
- assert.equal(task.controlState,'normal');assert.equal(task.state,state);assert.equal(task.outcome,outcome);assert.equal(task.headVersion,version);
+ assert.equal(task.state,'open');assert.equal(task.historyState,'visible');assert.equal(task.headVersion,1);
  assert.equal(run.status,'cancelled');assert.equal(run.phase,'ended');
  assert.equal(app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE senderRunId=? AND kind='worker_reply'").get(run.id)?.n,1);
  assert.equal(workerStarts().length,1);

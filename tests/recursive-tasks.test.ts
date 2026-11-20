@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {fixture,main,authority,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
 
-test('two Workers share one Task, open replay is exact and failure never settles the Task',()=>{
+test('two Workers share one Task, open replay is exact and failure keeps the Task current',()=>{
  const f=fixture();try{
   const input={operationId:'open-a',taskId:f.task.taskId,text:'Inspect page'},a=f.tasks.workerOpen(main,input),b=openWorker(f,'open-b');
   assert.deepEqual(f.tasks.workerOpen(main,input),a);assert.notEqual(a.workerId,b.workerId);
@@ -11,7 +11,7 @@ test('two Workers share one Task, open replay is exact and failure never settles
   assert.throws(()=>f.tasks.workerOpen(main,{...input,text:'Changed'}),/operation_payload_conflict/);
   const aa=running(f,a.runId),bb=running(f,b.runId);
   f.tasks.failRun(aa.runId!,aa.epoch!,'synthetic_missing');complete(f,bb);
-  assert.equal(f.tasks.task(f.task.taskId).state,'open');assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  assert.equal(f.tasks.task(f.task.taskId).state,'open');assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
   assert.equal(f.tasks.workerRead(main,{workerId:b.workerId}).messages.at(-1)?.text,'Checked synthetic input; date remains unknown.');
   assert.equal(f.tasks.inbox(main).filter(m=>m.kind==='worker_reply').length,2);
  }finally{f.close();}
@@ -73,7 +73,7 @@ test('stopping one Worker fences late callbacks while its peer continues and Tas
   assert.deepEqual(stopped.targets,[a.runId]);assert.throws(()=>f.tasks.guard(aa),/epoch|stop|live/);
   f.tasks.confirmStop(stopped.operationKey,false);assert.equal(f.tasks.claim(),undefined);
   assert.throws(()=>f.tasks.confirmStop(stopped.operationKey,true),/run_stop_unconfirmed/);f.tasks.confirmWorkerExit(a.runId,undefined);f.tasks.confirmStop(stopped.operationKey,true);assert.equal(f.tasks.run(a.runId).status,'cancelled');
-  assert.equal(f.tasks.guard(bb).id,f.task.taskId);assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  assert.equal(f.tasks.guard(bb).id,f.task.taskId);assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
   const count=f.tasks.inbox(main).length;complete(f,aa,'Late old output');assert.equal(f.tasks.inbox(main).length,count);
  }finally{f.close();}
 });
@@ -93,14 +93,14 @@ test('restart preserves raw checkpoint, invalidates old epoch and needs confirme
  }finally{f.close();}
 });
 
-for(const confirmed of [false,true])test('settlement waits for execution and exit confirmation: '+confirmed,()=>{
+for(const confirmed of [false,true])test('archiving waits for execution, exit and Main receipt confirmation: '+confirmed,()=>{
  const f=fixture();try{
   const w=openWorker(f),actor=running(f,w.runId);
-  assert.throws(()=>f.tasks.settleTask(main,{...mutation(f,'too-early'),outcome:'succeeded'}),/run_stop_unconfirmed/);
-  complete(f,actor,'Readable answer',confirmed);
-  if(!confirmed){assert.throws(()=>f.tasks.settleTask(main,{...mutation(f,'unknown'),outcome:'succeeded'}),/unconfirmed|unresolved|live|closed|active|blocked/);f.tasks.confirmWorkerExit(w.runId,undefined);}
-  processReplies(f);const input={...mutation(f,'settle'),outcome:'succeeded' as const};f.tasks.settleTask(main,input);
-  assert.equal(f.tasks.task(f.task.taskId).state,'settled');assert.deepEqual(f.tasks.settleTask(main,input).taskId,f.task.taskId);
+  const archive=(id:string)=>f.tasks.archiveHistory(main,mutation(f,id),true);
+  assert.equal(archive('too-early').state,'skipped');complete(f,actor,'Readable answer',confirmed);
+  if(!confirmed){assert.equal(archive('unknown').state,'skipped');f.tasks.confirmWorkerExit(w.runId,undefined);}
+  processReplies(f);const input=mutation(f,'archive');assert.equal(f.tasks.archiveHistory(main,input,true).state,'archived');
+  assert.equal(f.tasks.task(f.task.taskId).historyState,'archived');assert.equal(f.tasks.archiveHistory(main,input,true).taskId,f.task.taskId);
   assert.equal(f.tasks.workerRead(main,{workerId:w.workerId}).messages.at(-1)?.text,'Readable answer');
  }finally{f.close();}
 });
@@ -125,5 +125,21 @@ test('exit confirmation clears only the exact persisted execution lease before a
   assert.equal(f.tasks.confirmWorkerExit(w.runId,'current-owner'),true);assert.equal(f.store.meta('lease:'+w.runId),undefined);
   assert.equal(f.tasks.claim(),undefined);f.tasks.workerMessage(main,{operationId:'after-exit',workerId:w.workerId,text:'Continue only after exit'});
   const next=f.tasks.claim()!;assert.equal(next.workerId,w.workerId);assert.equal(f.tasks.claim(),undefined);
+ }finally{f.close();}
+});
+
+test('a pause survives restart and only a later authorized request can reopen execution',()=>{
+ const f=fixture();try{
+  const {taskId}=f.task;
+  const registered=f.source('prior-paused-request');
+  f.tasks.controlTask(registered,{...mutation(f,'pause'),action:'pause'});
+  f.tasks.reconcile();
+  assert.equal(f.tasks.task(taskId).historyState,'visible');
+  assert.throws(()=>openWorker(f),/task_not_open/);
+  assert.throws(()=>f.tasks.controlTask(registered,{...mutation(f,'stale'),action:'resume',authority:authority(registered.sourceRequestId)}),/task_authority_source_denied/);
+  const fresh=f.source('fresh-resume-request');
+  const resumed=f.tasks.controlTask(fresh,{...mutation(f,'resume'),action:'resume',authority:authority(fresh.sourceRequestId)});
+  assert.equal(resumed.version,2);assert.equal(f.tasks.claim(),undefined);
+  assert.equal(f.tasks.authority(taskId,2).sourceRequestId,fresh.sourceRequestId);
  }finally{f.close();}
 });

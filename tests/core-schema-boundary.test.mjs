@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdirSync,mkdtempSync,rmSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
-import {Store} from '../src/store.ts';
+import {Store,STORE_SCHEMA_VERSION} from '../src/store.ts';
 import {Files} from '../src/files.ts';
 import {RecursiveTasks} from '../src/recursive-tasks.ts';
 import {schemaHash} from '../scripts/dev-build.mjs';
@@ -18,7 +18,7 @@ test('current schema reopens idempotently and preserves uncertain operations',()
   store.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson) VALUES('unknown','main','synthetic-scope','operation-id','worker_steer','hash','uncertain','{}')").run();
   const capture=()=>Object.fromEntries(store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(({name})=>[name,store.db.prepare('SELECT * FROM '+name+' ORDER BY rowid').all()]));
   const before=capture();store.close();store=new Store(path);const reopened=new RecursiveTasks(store,files);reopened.migrate();reopened.migrate();
-  assert.deepEqual(capture(),before);assert.equal(store.meta('recursiveSchemaVersion'),'8');
+  assert.deepEqual(capture(),before);assert.equal(store.meta('recursiveSchemaVersion'),STORE_SCHEMA_VERSION);
   assert.equal(store.db.prepare("SELECT state FROM operations WHERE id='unknown'").get().state,'uncertain');
   for(const table of ['pending_items','deliveries','results','worker_authorities','wechat_outbox','tg_outbox'])assert.equal(before[table],undefined);
   assert.deepEqual(store.db.prepare('PRAGMA foreign_key_check').all(),[]);assert.equal(store.db.prepare('PRAGMA quick_check').get().quick_check,'ok');
@@ -29,7 +29,7 @@ test('task owner remains part of the source schema fingerprint',()=>{
  const files=new Map(),before=schemaHash({files});files.set('src/recursive-tasks.ts',Buffer.from('changed'));assert.notEqual(schemaHash({files}),before);
 });
 
-for(const version of ['5','999','unmapped'])test('unsupported '+version+' database is refused with identical bytes and no new files',()=>{
+for(const version of ['5','6','7','8','999','unmapped'])test('unsupported '+version+' database is refused with identical bytes and no new files',()=>{
  const dir=mkdtempSync(join(base,'refused-')),path=join(dir,'old.sqlite'),db=new DatabaseSync(path);
  try{
   db.exec("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);CREATE TABLE tasks(id TEXT PRIMARY KEY);INSERT INTO tasks VALUES('keep-original')");
@@ -45,7 +45,7 @@ test('pinned ABI refuses a missing or unsupported current schema owner before cr
  const dir=mkdtempSync(join(base,'pinned-')),path=join(dir,'homer.sqlite'),store=new Store(path);
  try{
   const tasks=new RecursiveTasks(store,new Files(join(dir,'workspace')));tasks.migrate();store.setMeta('mainThread','synthetic-thread');store.close();
-  assert.equal(pinnedDatabaseIdentity(path).metadata.recursiveSchemaVersion,'8');
+  assert.equal(pinnedDatabaseIdentity(path).metadata.recursiveSchemaVersion,STORE_SCHEMA_VERSION);
   mkdirSync(join(dir,'dist'));
   const config=join(dir,'config.json');writeFileSync(config,JSON.stringify({runtime:'runtime',workspace:'workspace'}));
   const args={directory:dir,configPath:config,snapshot:path,thread:'synthetic-thread',manifestPath:join(dir,'manifest.json')};

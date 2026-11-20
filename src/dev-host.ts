@@ -266,7 +266,7 @@ async function receive(raw: unknown) {
       else if(m.method==='history.dispatchQueue')value=await bridge.history!.dispatchQueue!(m.input);
       else if(m.method==='history.interactions')value=await bridge.history!.interactions(m.input.after,m.input.readEpoch);
       else if(m.method==='taskOverview.progress'){if(!bridge.taskOverview?.progress)throw Error('task_overview_unavailable');value=await bridge.taskOverview.progress(m.input.id);}
-      else if(m.method==='taskOverview.list')value=await bridge.taskOverview!.list();
+      else if(m.method==='taskOverview.list')value=await bridge.taskOverview!.list(m.input);
       else if(m.method==='taskOverview.summary')value=await bridge.taskOverview!.summary!(m.input.id);
       else if(m.method==='taskOverview.origin')value=await bridge.taskOverview!.origin!(m.input.id,m.input.messageId);
       else if(m.method==='taskOverview.detail'){const {id,...query}=m.input;value=await bridge.taskOverview!.detail(id,Object.keys(query).length?query:undefined);}

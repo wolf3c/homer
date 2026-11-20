@@ -19,7 +19,7 @@ export type ProcessItem = { id: string; seq: number; revision: number } & (
   { kind: 'commentary'; text: string; phase?: string | null; role?: 'assistant'; turnId?: string; itemId?: string; completed?: boolean } |
   ({ kind: 'tool'; activity?:PublicActivity; label: string; toolName?:string; content?:ToolContent; status: NativeProcessEvent['status'] | 'blocked'; category?: NativeToolCategory | 'host'; threadId?: string; turnId?: string; itemId?: string; invocationCount?: number; fileCount?: number } & ProcessTiming) |
   { kind: 'workerEvent'; eventKey:string; event?:WorkerCardSnapshot } |
-  { kind: 'worker'; label?: string; taskId: string; version: number; taskRevision: number; runId: string | null; runRevision: number | null; runStatus: string | null; resultState: string | null; epoch: number | null; state: string; controlState: string; outcome: string | null; phase: string | null; stopRequested: boolean }
+  { kind: 'worker'; label?: string; taskId: string; version: number; taskRevision: number; runId: string | null; runRevision: number | null; runStatus: string | null; resultState: string | null; epoch: number | null; state: string; phase: string | null; stopRequested: boolean }
 );
 export type ProcessNode = ProcessTiming & {
   id: string; threadId: string; seq: number; revision: number;
@@ -222,7 +222,7 @@ export class MainProcessHistory {
     node.revision++; this.save(node);
   }
   worker(id: string, fact: Omit<Extract<ProcessItem, {kind:'worker'}>, 'id' | 'seq' | 'revision' | 'kind'>) {
-    fact = {taskId:fact.taskId,version:fact.version,taskRevision:fact.taskRevision,runId:fact.runId,runRevision:fact.runRevision,runStatus:fact.runStatus,resultState:fact.resultState,epoch:fact.epoch,state:fact.state,controlState:fact.controlState,outcome:fact.outcome,phase:fact.phase,stopRequested:fact.stopRequested};
+    fact = {taskId:fact.taskId,version:fact.version,taskRevision:fact.taskRevision,runId:fact.runId,runRevision:fact.runRevision,runStatus:fact.runStatus,resultState:fact.resultState,epoch:fact.epoch,state:fact.state,phase:fact.phase,stopRequested:fact.stopRequested};
     const node = this.load(id); if (!node) return;
     const prior = node.items.find(item => item.kind === 'worker' && item.taskId === fact.taskId);
     // Legacy records are frozen. New observations use explicit event identities.

@@ -11,9 +11,8 @@ import {publicActivityName,type PublicActivity,type ActivityTarget,type Activity
 
 // Captured by the host, never accepted from model tool arguments.
 export type Actor={agentId:string;sourceRequestId?:string;runId?:string;epoch?:number;threadId?:string;turnId?:string;inputMessageId?:string;operationPayload?:unknown};
-export type Outcome='succeeded'|'partial'|'failed'|'cancelled';
 export type Authority={sourceRequestId:string;sourceRequestIds?:string[];description:string};
-export type Task={id:string;title:string;headVersion:number;notes:string;state:'open'|'paused'|'settled';outcome:Outcome|null;revision:number;controlState:'normal'|'stopping';historyState:'visible'|'archived';createdAt:number;updatedAt:number;settledAt:number|null};
+export type Task={id:string;title:string;headVersion:number;notes:string;state:'open'|'paused';revision:number;historyState:'visible'|'archived';createdAt:number;updatedAt:number};
 export type TaskVersion={taskId:string;version:number;goal:string;authorityJson:string|null;sourceRequestId:string|null;triggerOpId:string;workingDirectory:string};
 export type TaskRun=Run;
 export type TaskMutation={operationId:string;taskId:string;expectedRevision:number};
@@ -28,6 +27,9 @@ type WorkerMessageReceipt={taskId:string;workerId:string;runId:string;version:nu
  {route:'steer';state:'requested';messageId:string;epoch:number;expectedTurnId:string;status:Run['status'];phase:string}|
  {route:'followup';state:'queued';messageId:string});
 type PrepareAttachments=(operationKey:string,scope:WorkerMessageScope)=>AttachmentRef[];
+export const taskSourceRequestsSql=`SELECT sourceRequestId FROM task_versions WHERE taskId=?
+ UNION SELECT json_extract(authorityJson,'$.sourceRequestId') FROM task_versions WHERE taskId=?
+ UNION SELECT s.value FROM task_versions v,json_each(v.authorityJson,'$.sourceRequestIds') s WHERE v.taskId=?`;
 export const RECURSIVE_SCHEMA_VERSION=STORE_SCHEMA_VERSION;
 const id=(kind:string)=>kind+'-'+randomUUID(),json=(value:unknown)=>JSON.stringify(value);
 function canonical(value:unknown):string{if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';if(value&&typeof value==='object')return '{'+Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).filter(([,v])=>v!==undefined).map(([k,v])=>json(k)+':'+canonical(v)).join(',')+'}';return json(value)??'null';}
@@ -59,18 +61,7 @@ export class RecursiveTasks{
   });
  }
  migrate(){
-  const version=this.store.meta('recursiveSchemaVersion');if(version!==undefined&&version!==RECURSIVE_SCHEMA_VERSION)throw Error('recursive_schema_unsupported');
-  if(version===undefined)this.store.transaction(()=>{
-   this.db.exec(`
-    CREATE TABLE tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,headVersion INTEGER NOT NULL,notes TEXT NOT NULL DEFAULT '',state TEXT NOT NULL CHECK(state IN ('open','paused','settled')),outcome TEXT,revision INTEGER NOT NULL,controlState TEXT NOT NULL DEFAULT 'normal',historyState TEXT NOT NULL DEFAULT 'visible' CHECK(historyState IN ('visible','archived')),createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,settledAt INTEGER);
-    CREATE TABLE operations(id TEXT PRIMARY KEY,actorAgentId TEXT NOT NULL,scopeId TEXT NOT NULL,operationId TEXT NOT NULL,kind TEXT NOT NULL,payloadHash TEXT NOT NULL,state TEXT NOT NULL,detailsJson TEXT NOT NULL,responseJson TEXT,revision INTEGER NOT NULL DEFAULT 0,UNIQUE(actorAgentId,scopeId,operationId));
-    CREATE TABLE task_versions(taskId TEXT NOT NULL REFERENCES tasks(id),version INTEGER NOT NULL,goal TEXT NOT NULL,authorityJson TEXT,sourceRequestId TEXT,triggerOpId TEXT NOT NULL UNIQUE REFERENCES operations(id),workingDirectory TEXT NOT NULL,PRIMARY KEY(taskId,version));
-    CREATE TABLE agent_messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,senderAgentId TEXT NOT NULL,senderRunId TEXT REFERENCES runs(id),senderEpoch INTEGER,recipientAgentId TEXT NOT NULL,taskId TEXT REFERENCES tasks(id),taskVersion INTEGER,targetRunId TEXT REFERENCES runs(id),kind TEXT NOT NULL,replyTo TEXT REFERENCES agent_messages(id),causationId TEXT REFERENCES agent_messages(id),operationKey TEXT NOT NULL UNIQUE REFERENCES operations(id),payloadJson TEXT NOT NULL);
-    CREATE TABLE agent_receipts(messageId TEXT NOT NULL REFERENCES agent_messages(id),recipientAgentId TEXT NOT NULL,state TEXT NOT NULL,offeredRunId TEXT REFERENCES runs(id),offeredEpoch INTEGER,offeredTurnId TEXT,processedBy TEXT,revision INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(messageId,recipientAgentId));
-    CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);CREATE INDEX agent_receipt_state ON agent_receipts(state,messageId);CREATE INDEX messages_task ON agent_messages(taskId,seq);
-    `);
-   this.store.setMeta('mainAgentId',this.store.meta('mainAgentId')??'main:'+randomUUID());this.store.setMeta('recursiveSchemaVersion',RECURSIVE_SCHEMA_VERSION);
-  });
+  if(this.store.meta('recursiveSchemaVersion')!==RECURSIVE_SCHEMA_VERSION)throw Error('recursive_schema_unsupported');
  }
  task(taskId:string):Task{const task=this.one<Task>('SELECT * FROM tasks WHERE id=?',taskId);if(!task)throw Error('task_not_found');return task;}
  tasks():Task[]{return this.all('SELECT * FROM tasks ORDER BY rowid');}
@@ -88,7 +79,7 @@ export class RecursiveTasks{
   if(run.status!=='running'||run.threadId!==actor.threadId||run.turnId!==actor.turnId)throw Error('run_not_live');this.lifecycle?.validateActor(actor);return this.task(run.taskId);
  }
  private readAllowed(actor:Actor,taskId:string){const own=this.actorTask(actor);if(own&&own.id!==taskId)throw Error('agent_scope_denied');}
- private writable(task:Task){if(task.historyState!=='visible')throw Error('task_history_not_visible');if(task.controlState!=='normal')throw Error('task_stop_requested');if(task.state!=='open')throw Error('task_not_open');}
+ private writable(task:Task){if(task.historyState!=='visible')throw Error('task_history_not_visible');if(task.state!=='open')throw Error('task_not_open');}
  private check(actor:Actor,input:TaskMutation){this.requireMain(actor);const task=this.task(input.taskId);if(task.revision!==input.expectedRevision)throw Error('task_revision_conflict');return task;}
  guard(actor:Actor,phases=['executing']){const task=this.actorTask(actor);if(!task||!actor.runId)throw Error('run_required');const run=this.run(actor.runId);this.writable(task);if(run.stopRequestedAt)throw Error('run_stop_requested');this.validateRunAuthority(run);if(!phases.includes(run.phase))throw Error('run_phase_denied');return task;}
  source(actor:Actor,requestId:string){
@@ -172,16 +163,65 @@ export class RecursiveTasks{
   if(scheduled){const allowed=[scheduled.sourceRequestId,...(scheduled.sourceRequestIds??[])];if(sources.some(source=>!allowed.includes(source)))throw Error('task_authority_source_denied');return;}
   if(!message?.taskId||!message.taskVersion)throw Error('task_authority_source_denied');
   const task=this.task(message.taskId);
-  if(message.taskVersion!==task.headVersion||task.controlState!=='normal')throw Error('task_authority_source_denied');
+  if(message.taskVersion!==task.headVersion)throw Error('task_authority_source_denied');
   if(message.kind==='task_archived'){
-   if(task.state!=='settled'||task.historyState!=='archived')throw Error('task_authority_source_denied');
+   if(!this.archiveReview(actor))throw Error('task_authority_source_denied');
   }else if(task.historyState!=='visible'||task.state!=='open'){
    throw Error('task_authority_source_denied');
   }
   const origin=this.authority(task.id,message.taskVersion),allowed=[origin.sourceRequestId,...(origin.sourceRequestIds??[])];
   if(sources.some(source=>!allowed.includes(source)))throw Error('task_authority_source_denied');
  }
- private dispatchAuthority(actor:Actor,task:Task,allowSettled=false){
+ archiveReview(actor:Actor){
+  this.requireMain(actor);const message=this.activeEvent(actor);
+  if(message?.kind!=='task_archived'||!message.taskId)return;
+  const task=this.task(message.taskId),op=this.operation(message.operationKey),receipt=JSON.parse(op.responseJson??'{}');
+  if(task.historyState!=='archived'||message.taskVersion!==task.headVersion||JSON.parse(message.payloadJson).revision!==task.revision||
+     op.kind!=='archive_work'||op.state!=='confirmed'||op.actorAgentId!==actor.agentId||op.scopeId!==task.id||
+     receipt.taskId!==task.id||receipt.state!=='archived'||receipt.revision!==task.revision)return;
+  const details=JSON.parse(op.detailsJson),version=this.version(task.id,task.headVersion);
+  const authority:Authority|undefined=version.authorityJson?JSON.parse(version.authorityJson):undefined;
+  const sources=authority?this.validateAuthority(actor,authority):[];
+  let sourceRequestId=details.sourceRequestId as string|undefined;
+  if(!sourceRequestId){
+   const report=this.one<AgentMessage>('SELECT * FROM agent_messages WHERE id=?',details.inputMessageId??null);
+   const run=report&&this.verifiedWorkerReply(report);
+   if(!authority||!run||run.taskId!==task.id||run.version>task.headVersion)return;
+   if(run.version!==task.headVersion){this.validateRunAuthority(run);this.reportAuthority(task,run,authority);}
+   sourceRequestId=authority.sourceRequestId;
+  }
+  if(!sources.includes(sourceRequestId)){this.trustedSource(actor,sourceRequestId);sources.push(sourceRequestId);}
+  for(const source of sources)this.lifecycle?.validateScheduledSource?.(source);
+  return {task,sourceRequestId,authority};
+ }
+ private verifiedWorkerReply(message:AgentMessage){
+  if(message.kind!=='worker_reply'||message.senderAgentId!=='host'||message.recipientAgentId!==this.store.meta('mainAgentId')||!message.senderRunId)return;
+  const run=this.run(message.senderRunId),op=this.operation(message.operationKey),payload=JSON.parse(message.payloadJson);
+  if(payload.runId!==run.id||payload.epoch!==message.senderEpoch||run.taskId!==message.taskId||run.version!==message.taskVersion||op.scopeId!==run.taskId||op.kind!=='worker_return'||op.actorAgentId!=='host'||op.state!=='confirmed'||JSON.parse(op.responseJson??'{}').messageId!==message.id)return;
+  return run;
+ }
+ private reportAuthority(task:Task,run:TaskRun,authority:Authority){
+  const prior=this.authority(task.id,run.version),allowed=[authority.sourceRequestId,...(authority.sourceRequestIds??[])];
+  if([prior.sourceRequestId,...(prior.sourceRequestIds??[])].some(source=>!allowed.includes(source))||
+     this.one(`SELECT 1 FROM task_versions v JOIN operations o ON o.id=v.triggerOpId WHERE v.taskId=? AND v.version>? AND o.kind='task_control' AND json_extract(o.detailsJson,'$.action')='resume'`,task.id,run.version))throw Error('task_authority_source_denied');
+ }
+ authorizeReceiptDelivery(actor:Actor,taskId:string){
+  this.requireMain(actor);const message=this.activeEvent(actor);
+  if(!message||message.taskId!==taskId||!message.senderRunId||!message.taskVersion)throw Error('task_authority_source_denied');
+  const task=this.task(taskId),run=this.run(message.senderRunId),op=this.operation(message.operationKey);
+  if(task.historyState!=='visible'||run.taskId!==taskId||run.version!==message.taskVersion||op.scopeId!==taskId||op.actorAgentId!=='host'||op.state!=='confirmed')throw Error('task_authority_source_denied');
+  if(message.kind==='worker_reply'){
+   if(!this.verifiedWorkerReply(message))throw Error('task_authority_source_denied');
+  }else if(message.kind!=='interaction_required'||op.kind!=='interaction_notice'||op.operationId!=='interaction:'+JSON.parse(message.payloadJson).interactionId)throw Error('task_authority_source_denied');
+  this.validateRunAuthority(run);
+  const authority=this.authority(taskId,task.headVersion);
+  if(message.taskVersion!==task.headVersion){
+   if(message.kind!=='worker_reply')throw Error('task_authority_source_denied');
+   this.validateAuthority(actor,authority);this.reportAuthority(task,run,authority);
+  }
+  return {task,version:task.headVersion,authority};
+ }
+ private dispatchAuthority(actor:Actor,task:Task){
   const authority=this.authority(task.id,task.headVersion);
   this.validateAuthority(actor,authority);
   if(actor.sourceRequestId){this.trustedSource(actor,actor.sourceRequestId);return authority;}
@@ -189,24 +229,16 @@ export class RecursiveTasks{
   const message=this.activeEvent(actor),created=this.operation(this.version(task.id,1).triggerOpId);
   if(message?.taskId!==task.id&&(!message||JSON.parse(created.detailsJson).inputMessageId!==message.id))throw Error('task_authority_source_denied');
   if(message?.kind==='worker_reply'&&message.taskId===task.id&&message.taskVersion!==task.headVersion){
-   const run=message.senderRunId?this.run(message.senderRunId):undefined,op=this.operation(message.operationKey);
-   if(!run||run.taskId!==task.id||run.version!==message.taskVersion||op.kind!=='worker_return'||op.actorAgentId!=='host'||op.state!=='confirmed'||JSON.parse(op.responseJson??'{}').messageId!==message.id)throw Error('task_authority_source_denied');
-   this.validateRunAuthority(run);
-   const prior=this.authority(task.id,run.version),allowed=[authority.sourceRequestId,...(authority.sourceRequestIds??[])];
-   if([prior.sourceRequestId,...(prior.sourceRequestIds??[])].some(source=>!allowed.includes(source))||
-     this.one(`SELECT 1 FROM task_versions v JOIN operations o ON o.id=v.triggerOpId WHERE v.taskId=? AND v.version>? AND o.kind='task_control' AND json_extract(o.detailsJson,'$.action')='resume' AND json_extract(o.detailsJson,'$.previousOutcome') IS NOT NULL`,task.id,run.version))throw Error('task_authority_source_denied');
+   const run=this.verifiedWorkerReply(message);if(!run)throw Error('task_authority_source_denied');
+   this.validateRunAuthority(run);this.reportAuthority(task,run,authority);
    return authority;
   }
-  if(allowSettled&&task.state==='settled'&&message?.taskId===task.id&&message.taskVersion===task.headVersion)return authority;
   this.creationSource(actor,authority);
   return authority;
  }
- authorizeTask(actor:Actor,taskId:string,{allowSettled=false}:{allowSettled?:boolean}={}){
-  this.requireMain(actor);
-  const task=this.task(taskId);
-  if(!allowSettled||task.state!=='settled'||task.outcome==='cancelled')this.writable(task);
-  else if(task.historyState!=='visible'||task.controlState!=='normal')throw Error('task_history_not_visible');
-  return {task,authority:this.dispatchAuthority(actor,task,allowSettled)};
+ authorizeTask(actor:Actor,taskId:string){
+  this.requireMain(actor);const task=this.task(taskId);this.writable(task);
+  return {task,authority:this.dispatchAuthority(actor,task)};
  }
  createTask(actor:Actor,input:{operationId:string;goal:string;notes?:string;title?:string;workingDirectory?:string;authority?:Authority}){
   this.requireMain(actor);
@@ -217,7 +249,7 @@ export class RecursiveTasks{
    if(typeof (input.notes??'')!=='string'||(input.notes??'').length>24000)throw Error('task_invalid_input');
    const taskId=id('task'),now=Date.now(),title=input.title??defaultTaskTitle(input.goal);
    text(title,200);
-   this.sql("INSERT INTO tasks VALUES(?,?,1,?,'open',NULL,1,'normal','visible',?,?,NULL)",taskId,title,input.notes??'',now,now);
+   this.sql("INSERT INTO tasks VALUES(?,?,1,?,'open',1,'visible',?,?)",taskId,title,input.notes??'',now,now);
    this.sql('INSERT INTO task_versions VALUES(?,1,?,?,?,?,?)',taskId,input.goal,input.authority?json(input.authority):null,
      actor.sourceRequestId??input.authority?.sourceRequestId??null,key,directory(input.workingDirectory??this.files.workspace));
    return {taskId,version:1,revision:1,state:'open'};
@@ -252,7 +284,7 @@ export class RecursiveTasks{
   if(strict){
    const end=this.one<{source:string|null;seq:number|null}>(`SELECT json_extract(o.detailsJson,'$.sourceRequestId') source,m.seq
     FROM operations o LEFT JOIN agent_messages m ON m.id=json_extract(o.detailsJson,'$.inputMessageId')
-    WHERE o.scopeId=? AND o.state='confirmed' AND (o.kind='task_settle' OR o.kind='task_control' AND json_extract(o.detailsJson,'$.action')='cancel')
+    WHERE o.scopeId=? AND o.state='confirmed' AND ((o.kind='archive_work' AND json_extract(o.responseJson,'$.state')='archived') OR (o.kind='task_control' AND json_extract(o.responseJson,'$.state')='paused'))
     ORDER BY o.rowid DESC LIMIT 1`,task.id);
    if(end&&(end.seq!==null&&sequence<=end.seq||end.source&&sequence<=this.sourceSequence(actor,end.source)))throw Error('task_authority_source_denied');
   }
@@ -265,14 +297,14 @@ export class RecursiveTasks{
   this.sql('INSERT INTO task_versions VALUES(?,?,?,?,?,?,?)',task.id,version,goal,bound?json(bound):null,actor.sourceRequestId!,key,this.version(task.id,task.headVersion).workingDirectory);
   return version;
  }
- listTasks(actor:Actor,query:{state?:Task['state'];includeArchived?:boolean;threadId?:string;cursor?:string;limit?:number}={}){
-  this.requireMain(actor);const limit=query.limit??20;if(!Number.isSafeInteger(limit)||limit<1||limit>80||query.state&&!['open','paused','settled'].includes(query.state)||query.cursor!==undefined&&!/^\d+$/.test(query.cursor))throw Error('task_query_invalid');
-  const rows=this.all<Task&{position:number}>(`SELECT t.*,t.rowid position FROM tasks t WHERE t.rowid>?${query.includeArchived?'':" AND t.historyState='visible'"}${query.state?' AND t.state=?':''}${query.threadId?' AND EXISTS(SELECT 1 FROM runs r WHERE r.taskId=t.id AND r.threadId=?)':''} ORDER BY t.rowid LIMIT ?`,Number(query.cursor??0),...(query.state?[query.state]:[]),...(query.threadId?[query.threadId]:[]),limit+1);
+ listTasks(actor:Actor,query:{includeArchived?:boolean;threadId?:string;cursor?:string;limit?:number}={}){
+  this.requireMain(actor);const limit=query.limit??20;if(!Number.isSafeInteger(limit)||limit<1||limit>80||Object.hasOwn(query,'state')||query.cursor!==undefined&&!/^\d+$/.test(query.cursor))throw Error('task_query_invalid');
+  const rows=this.all<Task&{position:number}>(`SELECT t.*,t.rowid position FROM tasks t WHERE t.rowid>?${query.includeArchived?'':" AND t.historyState='visible'"}${query.threadId?' AND EXISTS(SELECT 1 FROM runs r WHERE r.taskId=t.id AND r.threadId=?)':''} ORDER BY t.rowid LIMIT ?`,Number(query.cursor??0),...(query.threadId?[query.threadId]:[]),limit+1);
   return {tasks:rows.slice(0,limit).map(({position:_position,...task})=>task),nextCursor:rows.length>limit?String(rows[limit-1]!.position):null};
  }
  readTask(actor:Actor,taskId:string){
   this.readAllowed(actor,taskId);const task=this.task(taskId),version=this.version(taskId,task.headVersion);
-  const sourceRequestIds=this.all<{sourceRequestId:string}>("SELECT sourceRequestId FROM task_versions WHERE taskId=? UNION SELECT json_extract(authorityJson,'$.sourceRequestId') FROM task_versions WHERE taskId=? UNION SELECT s.value sourceRequestId FROM task_versions v,json_each(v.authorityJson,'$.sourceRequestIds') s WHERE v.taskId=?",taskId,taskId,taskId).map(row=>row.sourceRequestId);
+  const sourceRequestIds=this.all<{sourceRequestId:string}>(taskSourceRequestsSql,taskId,taskId,taskId).map(row=>row.sourceRequestId);
   const current=this.workers(taskId),summaries=this.runSummaries(current.map(worker=>worker.run),current.map(worker=>worker.run.id)),workers=current.map((worker,index)=>({...worker,run:summaries[index]!}));
   return {task,version,goal:version.goal,sourceRequestIds:sourceRequestIds.filter(Boolean),workers};
  }
@@ -281,8 +313,6 @@ export class RecursiveTasks{
    const task=this.check(actor,input);const patch=input.patch;if(!patch||!Object.keys(patch).length||Object.keys(patch).some(key=>!['goal','notes'].includes(key)))throw Error('task_invalid_patch');
    if(patch.notes!==undefined&&(typeof patch.notes!=='string'||patch.notes.length>24000))throw Error('task_invalid_patch');if(task.historyState!=='visible')throw Error('task_history_not_visible');let version=task.headVersion;
    if(patch.goal!==undefined){
-    if(task.state==='settled')throw Error('task_not_open');
-    if(task.controlState!=='normal')throw Error('task_stop_requested');
     version=this.updateRequirements(actor,task,patch.goal,input.authority,key);
    }
    this.sql('UPDATE tasks SET headVersion=?,notes=?,revision=revision+1,updatedAt=? WHERE id=?',version,patch.notes??task.notes,Date.now(),task.id);
@@ -419,13 +449,14 @@ export class RecursiveTasks{
  }
  workingDirectory(runId:string){return this.run(runId).workingDirectory;}
  selectWorkingDirectory(actor:Actor,path:string){this.guard(actor);directory(path);this.sql('UPDATE runs SET workingDirectory=? WHERE id=?',path,actor.runId!);return path;}
+ nextQueuedRun(){return this.one<TaskRun>(`SELECT r.* FROM runs r JOIN tasks t ON t.id=r.taskId
+      WHERE t.state='open' AND t.historyState='visible'
+      AND r.status='queued' AND r.stopRequestedAt IS NULL ORDER BY r.createdAt,r.rowid LIMIT 1`);}
  claim(runId?:string):TaskRun|undefined{
   let denied=false;
   const claimed=this.store.transaction(()=>{
    for(;;){
-    const run=runId?this.run(runId):this.one<TaskRun>(`SELECT r.* FROM runs r JOIN tasks t ON t.id=r.taskId
-      WHERE t.state='open' AND t.controlState='normal' AND t.historyState='visible'
-      AND r.status='queued' AND r.stopRequestedAt IS NULL ORDER BY r.createdAt,r.rowid LIMIT 1`);
+    const run=runId?this.run(runId):this.nextQueuedRun();
     if(!run||runId&&(run.status!=='queued'||run.stopRequestedAt!==null||!this.canStart(run)))return;
     try{this.validateRunAuthority(run);}catch(error){
      if(!(error instanceof Error)||error.message!=='task_authority_source_denied')throw error;
@@ -454,7 +485,7 @@ export class RecursiveTasks{
   };
   if(this.store.db.isTransaction)bind();else this.store.transaction(bind);
  }
- private canStart(run:TaskRun){const task=this.task(run.taskId);return task.state==='open'&&task.controlState==='normal'&&task.historyState==='visible';}
+ private canStart(run:TaskRun){const task=this.task(run.taskId);return task.state==='open'&&task.historyState==='visible';}
  rpc(runId:string,epoch:number,waiting:boolean){const run=this.run(runId);if(run.epoch!==epoch||run.status!=='running'||run.stopRequestedAt)throw Error('run_epoch_stale');if(!['executing','rpc_wait'].includes(run.phase))throw Error('run_phase_denied');this.sql('UPDATE runs SET phase=?,stateRevision=stateRevision+1 WHERE id=?',waiting?'rpc_wait':'executing',run.id);}
  charge(runId:string,epoch:number,ms:number){const run=this.run(runId);if(run.epoch===epoch&&Number.isFinite(ms)&&ms>=0)this.sql('UPDATE runs SET activeMs=activeMs+? WHERE id=?',ms,runId);}
  markSteer(operationKey:string,state:'dispatching'|'received'|'failed'|'uncertain'){
@@ -520,34 +551,28 @@ export class RecursiveTasks{
  private unresolved(taskId:string,except=''){
   return this.one<Operation>("SELECT * FROM operations WHERE scopeId=? AND id<>? AND state IN ('accepted','dispatching','uncertain') LIMIT 1",taskId,except);
  }
- controlTask(actor:Actor,input:TaskMutation&{action:'pause'|'resume'|'cancel';reason?:string;goal?:string;authority?:Authority}){
+ controlTask(actor:Actor,input:TaskMutation&{action:'pause'|'resume';reason?:string;goal?:string;authority?:Authority}){
   this.requireMain(actor);return this.mutation(actor,input.taskId,input.operationId,'task_control',input,key=>{
-   const task=this.check(actor,input);if(task.historyState!=='visible')throw Error('task_history_not_visible');if(!['pause','resume','cancel'].includes(input.action))throw Error('task_action_invalid');
-   if(input.action==='resume'){
-    if(!actor.sourceRequestId)throw Error('task_authority_source_denied');
-    this.trustedSource(actor,actor.sourceRequestId);
-    if(task.state==='open'||task.controlState!=='normal'||this.runs(task.id).some(run=>active(run)||this.exitUnconfirmed(run)||this.store.meta('lease:'+run.id)||this.lifecycle?.reviewExitConfirmed?.(run)===false)||this.unresolved(task.id,key)||this.unresolvedInteractions(task.id)||this.workers(task.id).some(({run})=>this.workerEffectUnconfirmed(run)))throw Error('task_resume_unconfirmed');
-    const version=task.state==='settled'||input.goal!==undefined||input.authority
-      ?this.updateRequirements(actor,task,input.goal??this.version(task.id,task.headVersion).goal,input.authority,key,task.state==='settled')
-      :task.headVersion;
-    if(version===task.headVersion&&this.version(task.id,version).authorityJson)this.validateAuthority(actor,this.authority(task.id,version));
-    this.sql("UPDATE tasks SET state='open',headVersion=?,outcome=NULL,settledAt=NULL,revision=revision+1,updatedAt=? WHERE id=?",version,Date.now(),task.id);
-    this.details(key,{action:'resume',previousVersion:task.headVersion,previousOutcome:task.outcome,previousSettledAt:task.settledAt});
-    return {taskId:task.id,version,state:'open',targets:[]};
-   }
-   if(input.goal!==undefined||input.authority)throw Error('task_action_invalid');
-   if(task.state==='settled')throw Error('task_terminal');if(task.controlState!=='normal')throw Error('task_stop_requested');
+   const task=this.check(actor,input);if(task.historyState!=='visible')throw Error('task_history_not_visible');if(!['pause','resume'].includes(input.action))throw Error('task_action_invalid');
    const blockers:{reason:string;id?:string;workerId?:string;runId?:string;status?:string;phase?:string}[]=this.runs(task.id)
     .filter(run=>active(run)||this.stopExitUnconfirmed(run)).map(run=>({reason:run.stopRequestedAt!==null?'worker_stop_requested':'run_not_closed',workerId:run.workerId,runId:run.id,status:run.status,phase:run.phase}));
    for(const {run} of this.workers(task.id))if(this.workerEffectUnconfirmed(run))blockers.push({reason:'worker_effect_unconfirmed',workerId:run.workerId,runId:run.id});
    const operation=this.unresolved(task.id,key),interaction=this.unresolvedInteractions(task.id);
    if(operation)blockers.push({reason:'operation_unresolved',id:operation.id});
    if(interaction)blockers.push({reason:'interaction_unresolved',id:interaction.id});
-   if(blockers.length)return {taskId:task.id,version:task.headVersion,revision:task.revision,state:'blocked',blockers,targets:[]};
-   const state=input.action==='pause'?'paused':'settled',outcome=input.action==='cancel'?'cancelled':null;
+   if(input.action==='resume'){
+    if(!actor.sourceRequestId)throw Error('task_authority_source_denied');
+    this.trustedSource(actor,actor.sourceRequestId);
+    if(task.state!=='paused'||blockers.length)throw Error('task_resume_unconfirmed');
+    const version=this.updateRequirements(actor,task,input.goal??this.version(task.id,task.headVersion).goal,input.authority,key,true);
+    this.sql("UPDATE tasks SET state='open',headVersion=?,revision=revision+1,updatedAt=? WHERE id=?",version,Date.now(),task.id);
+    this.details(key,{action:'resume',previousVersion:task.headVersion});
+    return {taskId:task.id,version,state:'open',targets:[]};
+   }
+   if(input.goal!==undefined||input.authority)throw Error('task_action_invalid');
    this.details(key,{action:input.action,taskId:task.id});
-   this.sql('UPDATE tasks SET state=?,outcome=?,settledAt=?,revision=revision+1,updatedAt=? WHERE id=?',state,outcome,outcome?Date.now():null,Date.now(),task.id);
-   return {taskId:task.id,version:task.headVersion,revision:task.revision+1,state,outcome,targets:[]};
+   const changed=this.sql("UPDATE tasks SET state='paused',revision=revision+1,updatedAt=? WHERE id=? AND state='open'",Date.now(),task.id);
+   return {taskId:task.id,version:task.headVersion,revision:task.revision+Number(changed.changes),state:'paused',blockers,targets:[]};
   });
  }
  private workerEffectUnconfirmed(run:TaskRun){return !!run.threadId&&this.lifecycle?.unconfirmedWorkerEffects?.(run.threadId)===true;}
@@ -559,7 +584,7 @@ export class RecursiveTasks{
  recoverWorkerOperations(worker?:{taskId:string;workerId:string}){
   const pending=worker
    ? "actorAgentId=? AND scopeId=? AND kind='worker_stop' AND json_extract(detailsJson,'$.workerId')=? AND state IN ('accepted','uncertain')"
-   : "(kind IN ('worker_stop','task_control','task_update') AND state IN ('accepted','uncertain')) OR (kind='worker_steer' AND state IN ('accepted','dispatching'))";
+   : "(kind='worker_stop' AND state IN ('accepted','uncertain')) OR (kind='worker_steer' AND state IN ('accepted','dispatching'))";
   const operations=this.all<Pick<Operation,'id'|'kind'|'state'|'detailsJson'>>(`SELECT id,kind,state,detailsJson FROM operations WHERE ${pending} ORDER BY rowid`,
    ...(worker?[this.store.meta('mainAgentId')!,worker.taskId,worker.workerId]:[]));
   for(const operation of operations){
@@ -574,7 +599,7 @@ export class RecursiveTasks{
   }
  }
  confirmStop(operationKey:string,confirmed:boolean){return this.store.transaction(()=>{
-  const op=this.operation(operationKey),details=JSON.parse(op.detailsJson);if(!['worker_stop','task_control','task_update'].includes(op.kind))throw Error('operation_kind_conflict');if(op.state==='confirmed')return JSON.parse(op.responseJson!);
+  const op=this.operation(operationKey),details=JSON.parse(op.detailsJson);if(op.kind!=='worker_stop')throw Error('operation_kind_conflict');if(op.state==='confirmed')return JSON.parse(op.responseJson!);
   const runs=(details.runIds??[]).map((runId:string)=>this.run(runId)) as TaskRun[];
   if(confirmed&&runs.some(run=>this.stopExitUnconfirmed(run)))throw Error('run_stop_unconfirmed');
   for(const run of runs){
@@ -583,19 +608,8 @@ export class RecursiveTasks{
    this.sql("UPDATE runs SET status=?,phase=?,endedAt=?,checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.workerExitConfirmed',?),stateRevision=stateRevision+1 WHERE id=?",exitConfirmed?'cancelled':'interrupted',exitConfirmed?'ended':'uncertain',Date.now(),exitConfirmed?1:0,run.id);
    if(exitConfirmed){this.sql("UPDATE operations SET state='cancelled',revision=revision+1 WHERE kind='worker_steer' AND state IN ('accepted','dispatching','uncertain') AND json_extract(detailsJson,'$.runId')=?",run.id);this.sql("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE messageId IN (SELECT id FROM agent_messages WHERE targetRunId=? AND kind='worker_input') AND state IN ('pending','offered','received','uncertain')",run.id);}
   }
-  if(confirmed&&op.kind!=='worker_stop'){
-   const state=details.action==='pause'?'paused':details.action==='cancel'?'settled':'open';this.sql("UPDATE tasks SET state=?,outcome=?,controlState='normal',settledAt=?,revision=revision+1,updatedAt=? WHERE id=?",state,details.action==='cancel'?'cancelled':null,details.action==='cancel'?Date.now():null,Date.now(),op.scopeId);
-   if(details.action==='cancel'||details.action==='pause')this.sql("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE state='pending' AND messageId IN (SELECT id FROM agent_messages WHERE taskId=? AND kind='worker_input')",op.scopeId);
-  }
   const response={...JSON.parse(op.responseJson??'{}'),state:confirmed?'confirmed':'uncertain'};this.sql('UPDATE operations SET state=?,responseJson=?,revision=revision+1 WHERE id=?',confirmed?'confirmed':'uncertain',json(response),op.id);return response;
  });}
- settleTask(actor:Actor,input:TaskMutation&{outcome:'succeeded'|'partial'|'failed';notes?:string}){
-  this.requireMain(actor);return this.mutation(actor,input.taskId,input.operationId,'task_settle',input,key=>{
-   const task=this.check(actor,input);this.writable(task);if(!['succeeded','partial','failed'].includes(input.outcome))throw Error('task_outcome_invalid');if(input.notes!==undefined&&(typeof input.notes!=='string'||input.notes.length>24000))throw Error('task_invalid_input');
-   if(this.runs(task.id).some(run=>active(run)||this.exitUnconfirmed(run)||this.store.meta('lease:'+run.id)||this.lifecycle?.reviewExitConfirmed?.(run)===false))throw Error('run_stop_unconfirmed');if(this.unresolved(task.id,key)||this.unresolvedInteractions(task.id)||this.workers(task.id).some(({run})=>this.workerEffectUnconfirmed(run)))throw Error('operation_uncertain');
-   this.sql("UPDATE tasks SET state='settled',outcome=?,notes=?,settledAt=?,updatedAt=?,revision=revision+1 WHERE id=?",input.outcome,input.notes??task.notes,Date.now(),Date.now(),task.id);return {taskId:task.id,version:task.headVersion,revision:task.revision+1,state:'settled',outcome:input.outcome};
-  });
- }
  inbox(actor:Actor,after=0){this.actorTask(actor);return this.all<AgentMessage>(`SELECT m.* FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.recipientAgentId=? AND
    ((m.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected')) OR
     (m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()})))
@@ -613,45 +627,89 @@ export class RecursiveTasks{
   return this.table('worker_interactions')?this.one<{id:string}>(`SELECT i.id FROM worker_interactions i JOIN runs r ON r.id=i.runId
     WHERE r.taskId=?${workerId?' AND r.workerId=?':''} AND (i.state IN ('pending_main','pending_user') OR i.state IN ('approved','denied','answered') AND i.deliveredAt IS NULL) LIMIT 1`,taskId,...(workerId?[workerId]:[])):undefined;
  }
- private historyBlockers(task:Task,except=''){
-  const blocked:{reason:string;id?:string}[]=[],add=(reason:string,row:{id?:string}|undefined)=>{if(row)blocked.push({reason,...(row.id?{id:row.id}:{})});};if(task.state!=='settled'||task.controlState!=='normal')blocked.push({reason:'task_unsettled'});
-  add('run_not_closed',this.runs(task.id).find(run=>active(run)||this.exitUnconfirmed(run)||this.store.meta('lease:'+run.id)||this.lifecycle?.reviewExitConfirmed?.(run)===false));add('operation_unresolved',this.unresolved(task.id,except));
-  add('message_unprocessed',this.one<AgentMessage>(`SELECT m.* FROM agent_messages m LEFT JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND
+ private historyBlockers(task:Task,except:string){
+  const blockers:{reason:string;id:string}[]=[];
+  const add=(reason:string,rows:{id:string}[])=>{for(const {id} of rows)blockers.push({reason,id});};
+  add('run_not_closed',this.runs(task.id).filter(run=>active(run)||this.stopExitUnconfirmed(run)));
+  add('worker_effect_unconfirmed',this.workers(task.id).map(worker=>worker.run).filter(run=>this.workerEffectUnconfirmed(run)));
+  add('message_unprocessed',this.all(`SELECT m.id FROM agent_messages m LEFT JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND
     (r.state IS NULL OR r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected') OR
-      r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()})) LIMIT 1`,task.id));
-  add('interaction_unresolved',this.unresolvedInteractions(task.id));
-  const sources="SELECT sourceRequestId FROM task_versions WHERE taskId=? UNION SELECT json_extract(authorityJson,'$.sourceRequestId') FROM task_versions WHERE taskId=? UNION SELECT s.value FROM task_versions v,json_each(v.authorityJson,'$.sourceRequestIds') s WHERE v.taskId=?";
-  add('source_input_unprocessed',this.one(`SELECT m.id FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${sources}) AND (r.state NOT IN ('received','rejected') OR r.state='received' AND (json_extract(m.payloadJson,'$.terminal') IS NULL OR json_extract(m.payloadJson,'$.terminal')='uncertain')) LIMIT 1`,task.id,task.id,task.id));
-  if(this.table('media_assets'))add('attachment_in_progress',this.one(`SELECT id FROM media_assets WHERE requestId IN (${sources}) AND (lease IS NOT NULL OR state IN ('downloading','pending','preparing')) LIMIT 1`,task.id,task.id,task.id));
-  add('coordination_consumer_unresolved',this.one(`SELECT m.id FROM agent_messages m JOIN meta p ON p.key GLOB 'publicMainNode:v1:*' JOIN json_each(p.value,'$.sourceMessageIds') source ON source.value=m.id WHERE m.taskId=? AND json_extract(p.value,'$.threadId')=? AND (json_extract(p.value,'$.state')<>'worked' OR json_extract(p.value,'$.status')='unknown') LIMIT 1`,task.id,this.store.meta('mainThread')!));
-  if(['succeeded','partial'].includes(task.outcome??'')){
-   const reply=this.one(`SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND m.taskVersion=? AND m.kind='worker_reply' AND length(json_extract(m.payloadJson,'$.text'))>0 AND r.state='received' AND EXISTS(
-    SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') source WHERE p.key GLOB 'publicMainNode:v1:*' AND source.value=m.id AND json_extract(p.value,'$.state')='worked' AND json_extract(p.value,'$.status') IN ('completed','failed','interrupted')) LIMIT 1`,task.id,task.headVersion);
-   const mainReply=this.table('conversation_messages')&&this.one(`SELECT 1 FROM conversation_messages c
-    LEFT JOIN conversation_attachments a ON a.messageId=c.id
-    WHERE c.role='assistant' AND c.audience='user' AND c.status='completed' AND c.revokedAt IS NULL
-      AND c.threadId=(SELECT value FROM meta WHERE key='mainThread')
-      AND (length(c.text)>0 OR json_array_length(a.refsJson)>0)
-      AND ((c.taskId=? AND c.taskVersion=?) OR (c.taskId IS NULL AND c.requestId=(SELECT sourceRequestId FROM task_versions WHERE taskId=? AND version=?))) LIMIT 1`,
-    task.id,task.headVersion,task.id,task.headVersion);
-   if(!reply&&!mainReply)blocked.push({reason:'completion_evidence_missing'});
+      r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()}))`,task.id));
+  const interaction=this.unresolvedInteractions(task.id);
+  if(interaction)add('interaction_unresolved',[interaction]);
+  const relatedInputs=`SELECT m.id FROM agent_messages m WHERE m.taskId=? OR m.taskId IS NULL AND m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${taskSourceRequestsSql})`;
+  add('operation_unresolved',this.all(`SELECT id FROM operations WHERE id<>? AND state IN ('accepted','dispatching','uncertain')
+    AND (scopeId=? OR NOT EXISTS(SELECT 1 FROM tasks WHERE id=operations.scopeId) AND json_extract(detailsJson,'$.inputMessageId') IN (${relatedInputs}))`,except,task.id,task.id,task.id,task.id,task.id));
+  add('source_input_unprocessed',this.all(`SELECT m.id FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${taskSourceRequestsSql}) AND (r.state NOT IN ('received','rejected') OR r.state='received' AND (json_extract(m.payloadJson,'$.terminal') IS NULL OR json_extract(m.payloadJson,'$.terminal')='uncertain'))`,task.id,task.id,task.id));
+  if(this.table('media_assets'))add('attachment_in_progress',this.all(`SELECT id FROM media_assets WHERE requestId IN (${taskSourceRequestsSql}) AND (lease IS NOT NULL OR state IN ('received','downloading','retryable_failed'))`,task.id,task.id,task.id));
+  add('coordination_consumer_unresolved',this.all(`SELECT DISTINCT m.id FROM agent_messages m JOIN meta p ON p.key GLOB 'publicMainNode:v1:*' JOIN json_each(p.value,'$.sourceMessageIds') source ON source.value=m.id WHERE m.taskId=? AND json_extract(p.value,'$.threadId')=? AND (json_extract(p.value,'$.state')<>'worked' OR json_extract(p.value,'$.status')='unknown')`,task.id,this.store.meta('mainThread')!));
+  add('main_effect_unconfirmed',this.all(`SELECT json_extract(p.value,'$.id') AS id FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*'
+    AND json_extract(p.value,'$.threadId')=? AND EXISTS(SELECT 1 FROM json_each(p.value,'$.sourceMessageIds') source WHERE source.value IN (${relatedInputs}))
+    AND ${unconfirmedNativeEffectsSql()}`,this.store.meta('mainThread')!,task.id,task.id,task.id,task.id));
+  return blockers;
+ }
+ private archiveSource(actor:Actor,task:Task,archive:boolean){
+  if(actor.threadId!==this.store.meta('mainThread'))throw Error('history_source_required');
+  if(actor.sourceRequestId){
+   this.trustedSource(actor,actor.sourceRequestId);
+   if(actor.inputMessageId&&!this.one(`SELECT 1 FROM agent_messages m JOIN operations o ON o.id=m.operationKey JOIN agent_receipts r ON r.messageId=m.id
+    WHERE m.id=? AND m.recipientAgentId=? AND m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId')=?
+      AND r.state='received' AND json_extract(o.detailsJson,'$.turnId')=?`,actor.inputMessageId,actor.agentId,actor.sourceRequestId,actor.turnId??''))throw Error('history_source_required');
+   this.lifecycle?.validateScheduledSource?.(actor.sourceRequestId);
+   return;
   }
-  return blocked;
+  const message=this.activeEvent(actor);
+  if(!archive||message?.kind!=='worker_reply'||message.taskId!==task.id||!message.senderRunId||task.state!=='open'||task.historyState!=='visible')throw Error('history_source_required');
+  const {authority}=this.authorizeReceiptDelivery(actor,task.id);
+  if(!this.one("SELECT 1 FROM agent_receipts WHERE messageId=? AND recipientAgentId=? AND state='received' AND offeredTurnId=?",message.id,actor.agentId,actor.turnId??''))throw Error('history_source_required');
+  for(const source of [authority.sourceRequestId,...(authority.sourceRequestIds??[])])this.lifecycle?.validateScheduledSource?.(source);
+ }
+ private commitArchive(task:Task,key:string){
+  this.sql("UPDATE tasks SET historyState='archived',state='paused',revision=revision+1,updatedAt=? WHERE id=?",Date.now(),task.id);
+  this.message({agentId:'host'},key,this.store.meta('mainAgentId')!,task.id,task.headVersion,'task_archived',{historyState:'archived',revision:task.revision+1});
+  return {taskId:task.id,version:task.headVersion,state:'archived',revision:task.revision+1,diskBytesReclaimed:null};
  }
  archiveHistory(actor:Actor,input:TaskMutation,archive:boolean){
-  this.requireMain(actor);if(!actor.sourceRequestId||actor.threadId!==this.store.meta('mainThread'))throw Error('history_source_required');this.trustedSource(actor,actor.sourceRequestId);
+  this.requireMain(actor);
   return this.mutation(actor,input.taskId,input.operationId,archive?'archive_work':'restore_work',input,key=>{
-   const task=this.check(actor,input),state=archive?'archived':'visible';
-   if(task.historyState!==state){
-    if(archive){
-     const blockers=this.historyBlockers(task,key);
-     if(blockers.length)return {taskId:task.id,state:'skipped',blockers};
+   const task=this.check(actor,input);
+   this.archiveSource(actor,task,archive);
+   if(archive&&task.historyState==='visible'){
+    const blockers=this.historyBlockers(task,key);
+    const other=blockers.filter(blocker=>blocker.id!==actor.inputMessageId||!['message_unprocessed','source_input_unprocessed','coordination_consumer_unresolved'].includes(blocker.reason));
+    if(other.length)return {taskId:task.id,state:'skipped',blockers:other};
+    if(blockers.length){
+     this.details(key,{expectedRevision:task.revision,version:task.headVersion});
+     return {taskId:task.id,state:'requested',revision:task.revision,version:task.headVersion};
     }
-    this.sql('UPDATE tasks SET historyState=?,revision=revision+1,updatedAt=? WHERE id=?',state,Date.now(),task.id);
-    if(archive)this.message({agentId:'host'},key,this.store.meta('mainAgentId')!,task.id,task.headVersion,'task_archived',{historyState:state,revision:task.revision+1});
+    return this.commitArchive(task,key);
    }
-   return {taskId:task.id,state:archive?'archived':'restored',revision:this.task(task.id).revision,diskBytesReclaimed:null};
+   if(!archive&&task.historyState==='archived')this.sql("UPDATE tasks SET historyState='visible',revision=revision+1,updatedAt=? WHERE id=?",Date.now(),task.id);
+   return {taskId:task.id,version:task.headVersion,state:archive?'archived':'restored',revision:this.task(task.id).revision,diskBytesReclaimed:null};
   });
+ }
+ finishArchives(messageId:string,turnId:string|undefined,status:'completed'|'failed'|'interrupted'|'unknown'){
+  if(!this.db.isTransaction)throw Error('archive_transaction_required');
+  const pending=this.all<Operation>("SELECT * FROM operations WHERE kind='archive_work' AND state='accepted' AND json_extract(detailsJson,'$.inputMessageId')=?",messageId);
+  for(const op of pending){
+   const details=JSON.parse(op.detailsJson),task=this.task(op.scopeId),actor={agentId:op.actorAgentId,sourceRequestId:details.sourceRequestId,threadId:details.threadId,turnId,inputMessageId:messageId};
+   let blockers:{id:string;reason:string}[]=[];
+   if(status!=='completed'||!turnId||details.turnId!==turnId)blockers=[{id:messageId,reason:'turn_'+(status==='completed'?'unknown':status)}];
+   else if(task.revision!==details.expectedRevision||task.headVersion!==details.version||task.historyState!=='visible')blockers=[{id:task.id,reason:'task_revision_conflict'}];
+   else{
+    try{this.archiveSource(actor,task,true);}catch(error){
+     if(!(error instanceof Error)||!['history_source_required','task_authority_source_denied','channel_binding_denied','channel_input_preparing'].includes(error.message))throw error;
+     blockers=[{id:messageId,reason:error.message}];
+    }
+    if(!blockers.length)blockers=this.historyBlockers(task,op.id);
+   }
+   const result=blockers.length?{taskId:task.id,state:'skipped',blockers}:this.commitArchive(task,op.id);
+   this.sql("UPDATE operations SET state='confirmed',responseJson=?,revision=revision+1 WHERE id=?",json({...result,operationKey:op.id}),op.id);
+  }
+ }
+ recoverArchives(){
+  this.sql(`UPDATE operations SET state='confirmed',revision=revision+1,responseJson=json_object('taskId',scopeId,'operationKey',id,'state','skipped',
+   'blockers',json_array(json_object('reason','turn_unknown','id',json_extract(detailsJson,'$.inputMessageId')))) WHERE kind='archive_work' AND state='accepted'`);
  }
  readFileReceipt(actor:Actor,operationId:string):FileReceipt|undefined{
   const task=this.guard(actor),run=this.run(actor.runId!);text(operationId,500);if(actor.operationPayload===undefined)throw Error('operation_payload_required');
@@ -685,7 +743,7 @@ export class RecursiveTasks{
   if(name==='work_inspect'){const row=r.task as Task|undefined;if(typeof a.taskId!=='string'||row?.id!==a.taskId)return;r={taskId:row.id,version:row.headVersion};}
   else if(name==='worker_read'){if(typeof a.workerId!=='string'||r.workerId!==a.workerId||this.worker(a.workerId).taskId!==r.taskId)return;}
   else{
-   const kinds:Record<string,string[]>={task_create:['task_create'],worker_interrupt:['worker_stop'],task_update:['task_update','task_control','task_settle']};
+   const kinds:Record<string,string[]>={task_create:['task_create'],worker_interrupt:['worker_stop'],task_update:['task_update','task_control']};
    if(!kinds[name]||typeof r.operationKey!=='string')return;const op=this.one<Operation>('SELECT * FROM operations WHERE id=?',r.operationKey);if(!op||op.actorAgentId!==actor.agentId||!kinds[name]!.includes(op.kind)||!op.responseJson)return;
    const committed=JSON.parse(op.responseJson) as Record<string,unknown>,taskId=committed.taskId??op.scopeId;
    if(a.taskId!==undefined&&a.taskId!==taskId||r.taskId!==undefined&&r.taskId!==taskId)return;
@@ -710,7 +768,6 @@ export class RecursiveTasks{
  // Membership media receipts survive upgrade and never replay a POST. The service fences live calls.
  safeToUpgrade(){
   return !this.one("SELECT 1 FROM runs WHERE status IN ('queued','running') OR phase='uncertain'")
-    && !this.one("SELECT 1 FROM tasks WHERE controlState='stopping'")
     && !this.one("SELECT 1 FROM operations WHERE state IN ('accepted','dispatching','uncertain') AND kind NOT IN ('membership_video','membership_audio')")
     && !this.one(`SELECT 1 FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND ${unconfirmedNativeEffectsSql()} LIMIT 1`)
     && !(this.table('worker_interactions')&&this.one("SELECT 1 FROM worker_interactions WHERE state IN ('pending_main','pending_user') OR state IN ('approved','denied','answered') AND deliveredAt IS NULL LIMIT 1"))

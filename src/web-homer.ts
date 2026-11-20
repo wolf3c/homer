@@ -1,3 +1,4 @@
+import {taskSourceRequestsSql} from './recursive-tasks.js';
 import type {DatabaseSync} from 'node:sqlite';
 import {activityOutcomes,publicActivityName} from './activity-facts.js';
 import type {DisplayMessage,TaskMessageSource} from './conversation-projection.js';
@@ -23,6 +24,15 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
    AND json_extract(io.detailsJson,'$.turnId')=json_extract(o.detailsJson,'$.turnId')
    AND EXISTS(SELECT 1 FROM conversation_inputs c WHERE c.requestId=io.scopeId AND c.threadId=json_extract(o.detailsJson,'$.threadId')
      AND c.replyId=json_extract(io.responseJson,'$.replyId'))`;
+ const workerArchiveInput=`json_extract(o.detailsJson,'$.sourceRequestId') IS NULL
+   AND i.kind='worker_reply' AND i.senderAgentId='host' AND i.taskId=m.taskId AND i.taskVersion<=m.taskVersion
+   AND io.kind='worker_return' AND io.actorAgentId='host' AND io.state='confirmed' AND io.scopeId=i.taskId
+   AND json_extract(io.responseJson,'$.messageId')=i.id AND ir.state IN ('received','processed')
+   AND coalesce(ir.offeredTurnId,ir.processedBy)=json_extract(o.detailsJson,'$.turnId')
+   AND EXISTS(SELECT 1 FROM runs r JOIN task_versions v ON v.taskId=r.taskId AND v.version=r.version
+     JOIN conversation_inputs source ON source.requestId=v.sourceRequestId AND source.threadId=json_extract(o.detailsJson,'$.threadId')
+     WHERE r.id=i.senderRunId AND r.id=json_extract(i.payloadJson,'$.runId') AND r.taskId=i.taskId AND r.version=i.taskVersion
+       AND i.senderEpoch=json_extract(i.payloadJson,'$.epoch') AND i.senderEpoch<=r.epoch)`;
  const sourceIds=[...new Set(eligible.flatMap(m=>m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length?m.process.sourceMessageIds:[]))];
  const notices=new Map(batch(`SELECT m.id,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,m.senderEpoch,m.kind,o.actorAgentId,o.kind AS operationKind,o.state AS operationState,o.scopeId,
    coalesce(ar.offeredTurnId,ar.processedBy) AS receivedTurnId,
@@ -30,9 +40,10 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
    CASE WHEN o.kind='archive_work' THEN
      json_extract(o.responseJson,'$.operationKey')=o.id AND json_extract(o.responseJson,'$.taskId')=m.taskId
      AND json_extract(o.responseJson,'$.state')='archived' AND json_extract(m.payloadJson,'$.historyState')='archived'
+     AND json_extract(o.responseJson,'$.version')=m.taskVersion
      AND json_type(m.payloadJson,'$.revision')='integer' AND json_extract(m.payloadJson,'$.revision')>0
      AND json_extract(o.responseJson,'$.revision')=json_extract(m.payloadJson,'$.revision')
-     AND EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=m.recipientAgentId AND ${userInput})
+     AND EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=m.recipientAgentId AND ((${userInput}) OR (${workerArchiveInput})))
    END AS archiveMatches
    FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId
    JOIN operations o ON o.id=m.operationKey WHERE m.id IN ($keys) AND m.targetRunId IS NULL AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')`,sourceIds).map(row=>[row.id,row]));
@@ -53,19 +64,15 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
  }):[];
  const actions=eligible.flatMap(m=>taskActions(m.process));
  const operations=new Map(batch(`SELECT o.id,o.actorAgentId,o.scopeId,o.kind,o.state,json_extract(o.responseJson,'$.taskId') AS responseTaskId,
-   CASE WHEN o.kind IN ('task_settle','task_control') THEN json_extract(o.responseJson,'$.version') END AS responseVersion,
-   CASE WHEN o.kind IN ('task_settle','task_control') THEN json_extract(o.detailsJson,'$.threadId') END AS threadId,
-   CASE WHEN o.kind IN ('task_settle','task_control') THEN json_extract(o.detailsJson,'$.turnId') END AS turnId,
-   CASE WHEN o.kind IN ('task_settle','task_control') THEN json_extract(o.detailsJson,'$.inputMessageId') END AS inputMessageId,
-   CASE WHEN o.kind IN ('task_settle','task_control') THEN
+   CASE WHEN o.kind='task_control' THEN json_extract(o.responseJson,'$.version') END AS responseVersion,
+   CASE WHEN o.kind='task_control' THEN json_extract(o.detailsJson,'$.threadId') END AS threadId,
+   CASE WHEN o.kind='task_control' THEN json_extract(o.detailsJson,'$.turnId') END AS turnId,
+   CASE WHEN o.kind='task_control' THEN json_extract(o.detailsJson,'$.inputMessageId') END AS inputMessageId,
+   CASE WHEN o.kind='task_control' THEN
      json_extract(o.responseJson,'$.operationKey')=o.id
-     AND CASE WHEN o.kind='task_settle' THEN json_extract(o.responseJson,'$.state')='settled'
-       AND json_extract(o.responseJson,'$.outcome') IN ('succeeded','partial','failed')
-       ELSE CASE json_extract(o.detailsJson,'$.action')
-         WHEN 'pause' THEN json_extract(o.responseJson,'$.state') IN ('paused','confirmed')
-         WHEN 'resume' THEN json_extract(o.responseJson,'$.state')='open'
-         WHEN 'cancel' THEN json_extract(o.responseJson,'$.state') IN ('settled','confirmed') AND json_extract(o.responseJson,'$.outcome')='cancelled'
-       END
+     AND CASE json_extract(o.detailsJson,'$.action')
+       WHEN 'pause' THEN json_extract(o.responseJson,'$.state')='paused'
+       WHEN 'resume' THEN json_extract(o.responseJson,'$.state')='open'
      END
      AND EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=o.actorAgentId AND (
        (${userInput}) OR (i.senderAgentId='host' AND json_extract(o.detailsJson,'$.sourceRequestId') IS NULL
@@ -76,7 +83,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
            AND json_extract(io.detailsJson,'$.threadId')=json_extract(i.payloadJson,'$.threadId')
            AND json_extract(io.detailsJson,'$.threadId')=json_extract(o.detailsJson,'$.threadId')
            ELSE EXISTS(SELECT 1 FROM task_versions v JOIN conversation_inputs c
-             ON c.requestId=CASE WHEN i.kind='task_archived' AND io.kind='archive_work' THEN json_extract(io.detailsJson,'$.sourceRequestId') ELSE v.sourceRequestId END
+             ON c.requestId=CASE WHEN i.kind='task_archived' AND io.kind='archive_work' THEN coalesce(json_extract(io.detailsJson,'$.sourceRequestId'),v.sourceRequestId) ELSE v.sourceRequestId END
              WHERE v.taskId=i.taskId AND v.version=i.taskVersion AND c.threadId=json_extract(o.detailsJson,'$.threadId')
                AND i.kind IN ('task_archived','worker_reply','interaction_required'))
          END)
@@ -120,7 +127,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
      ? notice.actorAgentId===main&&notice.kind==='task_archived'&&notice.senderRunId==null&&notice.senderEpoch==null&&received&&notice.archiveThread===threadId&&notice.archiveMatches
      : notice.actorAgentId==='host'&&(notice.kind==='worker_reply'
        ? ['worker_return','notify'].includes(notice.operationKind)&&runMatches
-       : notice.operationKind==='notify'&&(notice.kind!=='interaction_required'||notice.senderRunId==null));
+       : notice.operationKind==='notify'&&notice.kind!=='task_archived'&&(notice.kind!=='interaction_required'||notice.senderRunId==null));
    if(!verified){unresolved.add(message.id);continue;}
    push(message.id,{key:JSON.stringify([threadId,node.id,id]),target:{taskId:notice.taskId,version:notice.taskVersion,...(run?{runId:run.id}:{})},title:'',icon:notice.kind==='worker_reply'?'MessagesSquare':'Inbox',origin:{kind:'message',processId:node.id,messageId:id},phaseLabel:notice.kind==='worker_reply'?'收到 Worker 回复':notice.kind==='task_archived'?'事项已归档':'Homer 协作事项',owner:'main'});
   }
@@ -129,7 +136,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
    const operation=operations.get(target.operationKey);
    if(eventOperations.has(target.operationKey??null))continue;
    if(!operation||operation.actorAgentId!==main||!(operation.scopeId===target.taskId||['task_create','worker_open'].includes(operation.kind)&&operation.responseTaskId===target.taskId)){unresolved.add(message.id);continue;}
-   const verified=operation.kind==='task_settle'||operation.kind==='task_control'
+   const verified=operation.kind==='task_control'
     ? activity.action==='update_task'&&activity.outcome==='update_confirmed'&&item.status==='completed'&&operation.state==='confirmed'
       &&operation.responseTaskId===target.taskId&&operation.responseVersion===target.version&&!target.runId
       &&operation.threadId===threadId&&typeof operation.turnId==='string'&&node.turnIds.includes(operation.turnId)
@@ -211,8 +218,8 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
   });
   const taskFiles=(id:string)=>{
     const thread=app.store.meta('mainThread')!;
-    const rows=app.store.db.prepare(`SELECT m.id FROM conversation_messages m JOIN conversation_attachments a ON a.messageId=m.id
-      WHERE m.threadId=? AND m.taskId=? AND m.role='assistant' AND m.audience='user' AND m.revokedAt IS NULL AND m.status='completed'
+    const rows=app.store.db.prepare(`SELECT m.id FROM conversation_messages m
+      WHERE m.threadId=? AND m.taskId=? AND EXISTS(SELECT 1 FROM conversation_attachments a WHERE a.messageId=m.id) AND m.role='assistant' AND m.audience='user' AND m.revokedAt IS NULL AND m.status='completed'
       ORDER BY m.rowid DESC LIMIT 81`).all(thread,id);
     return {artifacts:files(app.history.byIds(thread,rows.slice(0,80).map(row=>String(row.id)))),moreArtifacts:rows.length>80};
   };
@@ -313,7 +320,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
     schedules:async input=>app.readSchedules(input),
     onStateChange: listener=>app.onStateChange(listener),
     taskOverview:{
-      list:async()=>readTaskOverview(app.store.db),
+      list:async page=>readTaskOverview(app.store.db,page),
       summary:async id=>{
         const detail=readTaskSummary(app.store.db,id);
         const sources=app.store.db.prepare(`SELECT v.taskId,c.id,c.threadId FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion JOIN conversation_inputs input ON input.requestId=v.sourceRequestId JOIN conversation_messages c ON c.threadId=input.threadId AND c.requestId=input.requestId AND c.role='user' WHERE t.id=?`).all(id);
@@ -323,11 +330,22 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
       detail:async(id,query?:import('./task-overview.js').WorkerConversationQuery)=>{
         const detail=readTaskDetail(app.store.db,id,query);
         if(query)return detail;
-        return {...detail,...taskFiles(id)};
+        if(detail.historyState!=='archived')return {...detail,...taskFiles(id)};
+        const thread=app.store.meta('mainThread')!;
+        const rows=app.store.db.prepare(`SELECT id,role,substr(text,1,80) AS excerpt FROM (
+          SELECT m.rowid AS position,m.id,m.role,m.text FROM conversation_messages m
+          WHERE m.threadId=? AND m.taskId=? AND m.role='assistant' AND m.audience='user' AND m.revokedAt IS NULL
+          UNION ALL
+          SELECT m.rowid,m.id,m.role,m.text FROM conversation_messages m
+          JOIN conversation_inputs input ON input.requestId=m.requestId AND input.threadId=m.threadId
+          WHERE m.threadId=? AND m.role='user' AND m.audience='user' AND m.revokedAt IS NULL AND m.requestId IN (${taskSourceRequestsSql})
+          ) ORDER BY position DESC LIMIT 81`).all(thread,id,thread,id,id,id) as NonNullable<typeof detail.publicMessages>;
+        return {...detail,...taskFiles(id),publicMessages:rows.slice(0,80),moreMessages:rows.length>80};
       },
       origin:async(id,messageId)=>{
         if(!/^[\w:-]{1,100}$/.test(id)||!/^[\w:-]{1,100}$/.test(messageId))throw Error('task_origin_not_found');
-        const source=app.store.db.prepare(`SELECT c.id FROM task_versions v JOIN conversation_inputs input ON input.requestId=v.sourceRequestId JOIN conversation_messages c ON c.threadId=input.threadId AND c.requestId=input.requestId AND c.role='user' WHERE v.taskId=? AND c.id=? LIMIT 1`).get(id,messageId);
+        const source=app.store.db.prepare(`SELECT c.id FROM conversation_messages c JOIN conversation_inputs input ON input.requestId=c.requestId AND input.threadId=c.threadId
+          WHERE c.id=? AND c.role='user' AND c.audience='user' AND c.requestId IN (${taskSourceRequestsSql})`).get(messageId,id,id,id);
         const message=app.history.message(messageId);
         if(!message||message.threadId!==app.store.meta('mainThread')||message.revokedAt!=null||
           !(source&&message.role==='user')&&!(message.taskId===id&&message.role==='assistant'&&message.audience==='user'))throw Error('task_origin_not_found');

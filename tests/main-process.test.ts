@@ -21,7 +21,7 @@ function fixture(){
   const message=(itemId:string,phase:string,text:string,id='node')=>history.agent(id,{turnId:'turn:'+id,itemId,phase,text,completed:true});
   return {db,history,start,message,node:()=>history.list('synthetic')[0]!};
 }
-const fact={taskId:'task-synthetic',version:1,taskRevision:2,runId:'run-synthetic',runRevision:3,runStatus:'running',resultState:null,epoch:0,state:'working',controlState:'normal',outcome:null,phase:'executing',stopRequested:false};
+const fact={taskId:'task-synthetic',version:1,taskRevision:2,runId:'run-synthetic',runRevision:3,runStatus:'running',resultState:null,epoch:0,state:'working',phase:'executing',stopRequested:false};
 
 test('final source item remains stored; terminal confirms native final and never synthesizes a failure answer',()=>{
   const f=fixture();try{

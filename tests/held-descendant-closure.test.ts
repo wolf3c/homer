@@ -24,7 +24,7 @@ for(const mode of ['confirmed','false','throw','interrupt_throw'])test('targeted
  const f=setup(mode);try{
   const before={task:f.tasks.task(f.peer.taskId),run:f.tasks.run(f.peer.id)},request=f.interactions.open({runId:f.bb.id,threadId:f.bb.threadId!,turnId:f.bb.turnId!,requestId:'synthetic',source:'native',kind:'question',details:{question:'Synthetic?'},authority:{sourceRequestId:f.actor.sourceRequestId!,description:'Synthetic',nativeApprovals:false}},()=>true);
   let callbacks=0;void request.response.then(()=>callbacks++);
-  const receipt=f.stop(),epoch=f.tasks.run(f.bb.id).epoch;assert.equal(f.tasks.task(f.task.taskId).controlState,'normal');assert.ok(epoch>f.bb.epoch);
+  const receipt=f.stop(),epoch=f.tasks.run(f.bb.id).epoch;assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');assert.ok(epoch>f.bb.epoch);
   const results=await Promise.all([f.host.applyStop(receipt),f.host.applyStop(receipt)]),confirmed=['confirmed','interrupt_throw'].includes(mode),run=f.tasks.run(f.bb.id);
   assert.equal(results[0].state,confirmed?'confirmed':'uncertain');assert.equal(run.phase,confirmed?'ended':'uncertain');assert.equal(f.workers.has(run.id),!confirmed);assert.equal(!!f.store.meta('lease:'+run.id),!confirmed);assert.deepEqual(f.counts.get(run.id),{interrupt:1,close:1});assert.equal(run.epoch,epoch);
   assert.equal((await request.response).status,'cancelled');assert.equal(callbacks,1);

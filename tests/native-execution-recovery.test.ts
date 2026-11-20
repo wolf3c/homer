@@ -186,7 +186,7 @@ test('native execution: peer Workers exceed the old shared budget and publish on
     engine.turn=async(text,hooks)=>{if(options.role==='worker')await wait(30);return turn(text,hooks);};return engine;};
   const deliveries=()=>f.events.filter(e=>e.type==='coordination'&&e.messageId!==undefined);
   try{await f.app.start();await f.app.message('synthetic:tree','slow-tree');await until(()=>deliveries().length>0);await f.app.idle();
-    assert.equal(f.app.tasks.tasks()[0]?.outcome,'succeeded');
+    assert.equal(f.app.tasks.tasks()[0]?.historyState,'visible');
     assert.equal(deliveries().length,1);assert.equal(f.app.store.runs().length,4);
     const final=f.app.history.message(deliveries()[0]!.messageId!)!;
     assert.equal(f.app.tasks.operation(final.operationKey!).kind,'worker_final');

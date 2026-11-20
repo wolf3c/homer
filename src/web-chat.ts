@@ -32,7 +32,10 @@ export function createWebChat(bridge:WebBridge){
   }
   if(op.startsWith('tasks.')){
    const owner=bridge.taskOverview;if(!owner)throw Error('task_overview_unavailable');
-   if(op==='tasks.list')return owner.list();
+   if(op==='tasks.list'){
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['view','before'].includes(k))||input.view!==undefined&&!['visible','archived','needsUser'].includes(input.view)||input.before!==undefined&&(!Number.isSafeInteger(input.before)||input.before<1))throw Error('task_overview_invalid');
+    return boundedRead(()=>owner.list(input));
+   }
    if(op==='tasks.execution'||op==='tasks.call'){
     if(!id(input?.taskId)||!id(input.runId)||Object.keys(input).some(key=>!['taskId','runId',op==='tasks.call'?'callKey':'before'].includes(key))||input.before!==undefined&&(typeof input.before!=='string'||! /^[A-Za-z0-9_-]{1,256}$/.test(input.before)))throw Error('task_execution_invalid');
     if(!owner.execution||!owner.call)throw Error('task_execution_unavailable');

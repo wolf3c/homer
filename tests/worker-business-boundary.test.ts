@@ -17,7 +17,7 @@ import {WORKER_FILE_TOOLS} from '../src/media-tools.js';
       () => f.tasks.createTask(actor, {operationId: 'forged-create', goal: 'New goal', authority: f.authority}),
       () => f.tasks.updateTask(actor, {...mutation, patch: {notes: 'Forged'}}),
       () => f.tasks.controlTask(actor, {...mutation, action: 'pause'}),
-      () => f.tasks.settleTask(actor, {...mutation, outcome: 'succeeded'}),
+      () => f.tasks.archiveHistory(actor, mutation, false),
       () => f.tasks.workerOpen(actor, {operationId: 'forged-open', taskId: root.taskId, text: 'Create another business worker'}),
       () => f.tasks.workerMessage(actor, {operationId: 'forged-send', workerId: opened.workerId, text: 'Pretend to be main'}),
       () => f.tasks.workerStop(actor, {operationId: 'forged-stop', workerId: opened.workerId}),

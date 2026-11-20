@@ -176,7 +176,8 @@ try {
   const failed = rows().find((r) => (r.sourceRequestId ?? r.requestId) === "real-missing-input-once");
   assert.ok(failed);
   assert.ok(!['queued','running'].includes(failed.status));
-  assert.equal(rows('SELECT outcome FROM tasks WHERE id=?',[failed.taskId])[0]?.outcome,'failed');
+  const reports=rows("SELECT text FROM conversation_messages WHERE role='assistant' AND audience='user' AND status='completed' AND revokedAt IS NULL AND (taskId=? OR requestId=?)",[failed.taskId,'real-missing-input-once']);
+  assert.ok(reports.some(report=>/不存在|未找到|缺失|missing|not found/i.test(report.text)), 'Main must report the missing input');
   const missingReply=rows("SELECT payloadJson FROM agent_messages WHERE kind='worker_reply' AND senderRunId=?",[failed.id])[0];
   assert.ok(missingReply);assert.match(JSON.parse(missingReply.payloadJson).text,/不存在|未找到|缺失|missing|not found/i);
   assert.equal(rows(messageFilesForRun,[failed.id]).length,0);
@@ -185,7 +186,7 @@ try {
     passed: true,
     runId: failed.id,
     taskId: failed.taskId,
-    outcome: 'failed',
+    missingInputReported: true,
     fabricatedFiles: false,
   });
   const count = rows().length;

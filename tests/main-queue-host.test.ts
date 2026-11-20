@@ -242,7 +242,7 @@ for(const outcome of ['completed','failed','interrupted'] as const)test('desktop
   const send=(id:string)=>{const opened=app.tasks.workerOpen(actor,{operationId:id,taskId:task.taskId,text:'Synthetic report'}),run=app.tasks.claim(opened.runId)!;app.tasks.bind(run.id,run.epoch,'worker-'+id,'turn-'+id);return app.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic report'},true)!.messageId;};
   const unknown=send('unknown'),pending=[send('pending-1'),send('pending-2')];
   app.store.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=3,offeredTurnId='old-turn' WHERE messageId=?").run(unknown);
-  app.tasks.controlTask(actor,{operationId:'cancel',taskId:task.taskId,expectedRevision:app.tasks.task(task.taskId).revision,action:'cancel'});
+  app.tasks.controlTask(actor,{operationId:'pause',taskId:task.taskId,expectedRevision:app.tasks.task(task.taskId).revision,action:'pause'});
   await app.close();turns.length=0;
   const paused={...config,pauseOldDesktopWork:true,desktopResources:{bundleRoot:dir,manifestSha256:'a'.repeat(64)}};
   app=new Homer(paused,async()=>{},factory);await app.start();await app.idle();assert.deepEqual([...turns],[]);assert.equal(app.inputs.dispatchSummary().awaitingUser,true);
@@ -261,7 +261,7 @@ for(const outcome of ['completed','failed','interrupted'] as const)test('desktop
    (app as any).scheduleInputs();await until(()=>app.processes.list(app.store.meta('mainThread')!).some(node=>node.sourceMessageIds.includes(notice.messageId)&&node.state==='worked'));await app.idle();
    assert.equal(app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(notice.messageId)?.state,'received');
    assert.ok(turns.splice(1).includes(notice.messageId));assert.equal(app.inputs.dispatchSummary().awaitingUser,true);
-   app.tasks.controlTask(actor,{operationId:'fresh-cancel',taskId:task.taskId,expectedRevision:app.tasks.task(task.taskId).revision,action:'cancel'});
+   app.tasks.controlTask(actor,{operationId:'fresh-pause',taskId:task.taskId,expectedRevision:app.tasks.task(task.taskId).revision,action:'pause'});
    await app.close();app=new Homer(paused,async()=>{},factory);await app.start();await app.idle();assert.deepEqual(turns,['fresh requirements']);
    await app.message('recover now','recover');await app.idle();assert.deepEqual(turns,['fresh requirements','recover now',...pending]);
   }

@@ -21,8 +21,8 @@ function tool(
 export const MAIN_TOOLS = [
   tool(
     "list_work",
-    "Read a bounded page of user tasks and lightweight Worker progress. Archived history is excluded unless includeArchived is true. Filter by task state; follow nextCursor. Open one task with work_inspect for notes, sources, conversations and message references. Does not start or clean up work.",
-    {state:{type:'string',enum:['open','paused','settled']},includeArchived:{type:'boolean'},cursor:str,limit:{type:'integer',minimum:1,maximum:80}},
+    "Read a bounded page of user tasks and lightweight Worker progress. Archived history is excluded unless includeArchived is true. Follow nextCursor. Open one task with work_inspect for notes, sources, conversations and message references. Does not start or clean up work.",
+    {includeArchived:{type:'boolean'},cursor:str,limit:{type:'integer',minimum:1,maximum:80}},
     [],
   ),
 ];

@@ -42,8 +42,8 @@ export function syntheticHost(failChild=false,retainRuntime=false){
     const task=app.tasks.tasks()[0];if(!task)return {status:'completed',text:''};
     const workers=app.tasks.workers(task.id),a=workers.find(worker=>app.tasks.runs(task.id,worker.workerId)[0]?.prompt==='A');
     if(a&&a.run.status==='succeeded'&&!followed){followed=true;await this.send(a.workerId,'A followup');return {status:'completed',text:''};}
-    if(a&&followed&&app.tasks.runs(task.id,a.workerId).length===2&&workers.length===3&&workers.every(worker=>['succeeded','failed'].includes(worker.run.status))&&task.state==='open'){
-     await this.call('task_update',{taskId:task.id,action:'settle',outcome:failChild?'partial':'succeeded'});
+    if(a&&followed&&app.tasks.runs(task.id,a.workerId).length===2&&workers.length===3&&workers.every(worker=>['succeeded','failed'].includes(worker.run.status))&&!task.notes){
+     await this.call('task_update',{taskId:task.id,notes:failChild?'C unavailable; report delivered.':'Report delivered.'});
      const output=(failChild?'Synthetic partially completed; missing C':'Synthetic completed; date unknown')+'\n\n'+reportLink;
      return {status:'completed',text:output,messages:[{itemId:'reply:'+this.turnId,phase:'final_answer',text:output}]};
     }

@@ -85,7 +85,7 @@ async function receive(m) {
     } else if (input?.kind === 'worker_reply') {
       const reply = await tool('worker_read', {workerId:input.workerId,messageId:input.messageId}), filePath = reply.messages[0].text.trim().split('\n').at(-1);
       if(readFileSync(filePath,'utf8')!=="# Synthetic result\n林青：2026-10-20；待确认。")throw Error('synthetic_result_mismatch');
-      await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});
+      await tool('task_update', {taskId:input.taskId,notes:'Checked the Worker report.'});
       complete(`synthetic-delivered [result.md](${pathToFileURL(filePath).href})`);
     } else complete("synthetic-reply");
   }

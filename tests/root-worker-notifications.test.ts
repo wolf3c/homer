@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 
 function notifications(overlap=false){
- const f=fixture(),observed:{messageId:string;taskId:string;kind:string;outcome:string|null;text:string}[]=[],errors:string[]=[];
+ const f=fixture(),observed:{messageId:string;taskId:string;kind:string;historyState:string;text:string}[]=[],errors:string[]=[];
  let rootId='',publishedId='';
  f.setScript(async(main,text)=>{
   try{
@@ -20,9 +20,7 @@ function notifications(overlap=false){
    const notice=JSON.parse(text.split('\n')[1]!);
    assert.equal(notice.kind,'worker_reply');
    const facts=await main.call('work_inspect',{taskId:notice.taskId}),read=await main.call('worker_read',{workerId:notice.workerId,messageId:notice.messageId}),original=read.messages[0];
-   observed.push({messageId:notice.messageId,taskId:notice.taskId,kind:notice.kind,outcome:facts.task.outcome,text:original.text});
-   const outcome=original.payload.execution.status==='failed'?'failed':'succeeded';
-   await main.call('task_update',{taskId:notice.taskId,action:'settle',outcome});
+   observed.push({messageId:notice.messageId,taskId:notice.taskId,kind:notice.kind,historyState:facts.task.historyState,text:original.text});
    if(notice.taskId===publishedId)return {status:'completed',text:original.text,messages:[{itemId:'worker-final',phase:'final_answer',text:original.text}]};
    return {status:'completed',text:''};
   }catch(error){errors.push(String(error));throw error;}
@@ -39,8 +37,8 @@ for(const outcome of ['failed','succeeded'] as const)test('ordinary Worker '+out
   assert.equal(publicBefore.length,1);assert.equal(publicBefore[0]!.text,'Synthetic host reply');
   f.worker(f.rootId).finish!({status:outcome==='failed'?'failed':'completed',text:'Synthetic result',...(outcome==='failed'?{errorCode:'synthetic_failure'}:{})});
   await f.app.idle();assert.deepEqual(f.errors,[]);
-  assert.deepEqual(f.observed.map(({taskId,kind,outcome:prior,text})=>({taskId,kind,outcome:prior,text})),[{taskId:f.rootId,kind:'worker_reply',outcome:null,text:'Synthetic result'}]);
-  assert.equal(f.app.tasks.task(f.rootId).outcome,outcome);assert.equal(f.inputs.length,before+1);
+  assert.deepEqual(f.observed.map(({taskId,kind,historyState,text})=>({taskId,kind,historyState,text})),[{taskId:f.rootId,kind:'worker_reply',historyState:'visible',text:'Synthetic result'}]);
+  assert.equal(f.app.tasks.runs(f.rootId)[0]!.status,outcome);assert.equal(f.inputs.length,before+1);
   assert.equal(f.events.filter(message=>message.type==='coordination').length,0);
   assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='worker_final'").get()!.n,0);
   assert.deepEqual(readTestConversation(f.app).messages.filter(message=>message.role==='assistant'&&message.text.trim()).map(message=>({id:message.id,text:message.text})),publicBefore,'ordinary internal completion adds no user-facing confirmation');
@@ -60,7 +58,7 @@ test('a separate user-facing final cannot consume another Worker original or dup
   const operation=f.app.tasks.operation(message.operationKey!);
   const ordinary=f.observed.find(message=>message.taskId===f.rootId)!;
   const reported=f.observed.find(message=>message.taskId===f.publishedId)!;
-  assert.equal(ordinary.outcome,null);assert.equal(ordinary.text,'Synthetic failed result');
+  assert.equal(ordinary.historyState,'visible');assert.equal(ordinary.text,'Synthetic failed result');
   assert.equal(JSON.parse(operation.detailsJson).inputMessageId,reported.messageId);
   assert.equal(readTestConversation(f.app).messages.filter(m=>m.text==='Separate failure report').length,1);
   for(const message of f.observed)assert.equal(f.app.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(message.messageId)!.state,'received');

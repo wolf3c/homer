@@ -19,15 +19,13 @@ const title = {type: 'string', minLength: 1, maxLength: 80, pattern: '\\S'};
 export const RECURSIVE_TOOLS: Tool[] = [
   tool('task_create', 'Record the assignment goal without starting execution. For an authorized dispatch, pass the returned taskId to worker_open.', {goal: text, notes: {type: 'string', maxLength: 24000}, title, workingDirectory: str}, ['goal', 'title']),
   tool('work_inspect', 'Select exactly one taskId, messageId or host-returned operationKey. Read a task and its Worker sessions, an authorized user-conversation message, or an operation receipt. With taskId, sourceRequestId selects an original user instruction for review. A receipt or history reference does not authorize replay.', {taskId: str, sourceRequestId: str, messageId: str, operationKey: str}, []),
-  tool('task_update', 'Update goal or notes, or explicitly pause, resume, cancel or settle the whole task. '
-    + 'To settle, send only taskId, action "settle", outcome ("succeeded", "partial" or "failed"), and optional notes. When the whole assignment has ended, settle it and choose the outcome from the recorded work. Keep it open while required work or observation remains. '
-    + 'Goal changes require a user source and leave existing Worker assignments intact. Interrupt Workers separately before pausing or cancelling. Resume keeps Workers idle; reopening settled work requires a new user request.',
-    {taskId: str, goal: text, notes: {type: 'string', maxLength: 24000}, action: enumeration('pause', 'resume', 'cancel', 'settle'), outcome: enumeration('succeeded', 'partial', 'failed'), reason: text}, ['taskId']),
+  tool('task_update', 'Update goal or notes on a current task, or pause or resume execution. Pause immediately prevents new execution. Its blockers identify live Workers and outstanding effects. Interrupt a Worker separately when needed. A later user request can resume execution, leaving Workers idle until dispatched.',
+    {taskId: str, goal: text, notes: {type: 'string', maxLength: 24000}, action: enumeration('pause', 'resume'), reason: text}, ['taskId']),
   tool('worker_open', 'Open a Worker on an existing task under the user’s delegation. Omit message to assign its current goal, or provide this Worker’s specific instructions. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.', {taskId: str, message: text, workingDirectory: str, attachments}, ['taskId']),
   tool('worker_message', 'Message an existing Worker. Steer its executing turn or continue its confirmed idle thread. If unavailable, inspect its state or await its report. No message is queued for a later turn. Inspect the original receipt after an unknown result.', {workerId: str, message: text, attachments}, ['workerId', 'message']),
   tool('worker_read', 'Read original public messages and execution facts for one Worker conversation. Follow nextCursor using after. Select messageId and optionally itemId from nativeMessages to read one original public item. Follow nextOffset using offset for long text.', {workerId: str, after: integer, limit: {type: 'integer', minimum: 1, maximum: 50}, messageId: str, itemId: str, offset: integer}, ['workerId']),
   tool('worker_interrupt', 'Interrupt the selected Worker conversation current execution, retaining history and other sessions. Requested is distinct from confirmed exit. Do not replace or resume an execution whose exit or side effects remain unknown.', {workerId: str, reason: text}, ['workerId']),
-  tool('archive_work', 'Archive one exact settled task only under a real user turn and its actual authorization. Inspect completion, stopped executions and unresolved actions first. Does not stop work, delete conversations/files or authorize cleanup.', {taskId: str}),
+  tool('archive_work', 'Move a current task to archive history, including a record that was never dispatched. Call from a real user turn or an authorized Worker report for this task. Live Workers and unresolved operations block archival. A requested receipt awaits confirmation of this turn.', {taskId: str}),
   tool('restore_work', 'Restore one exact archived task to visible history under actual user authorization. Does not start execution.', {taskId: str}),
 ];
 
@@ -174,16 +172,13 @@ export class RecursiveTools {
       const taskId = string(a.taskId, 200), task = this.tasks.task(taskId);
       const mutation = {operationId, taskId, expectedRevision: task.revision};
       if (name === 'task_update') {
-        if (a.action !== undefined && (a.action !== 'resume' && a.goal !== undefined || a.action !== 'settle' && (a.notes !== undefined || a.outcome !== undefined))) throw Error('invalid_tool_arguments');
-        if (a.action === 'settle') {
-          if (a.outcome === undefined || a.reason !== undefined) throw Error('invalid_tool_arguments');
-          result = this.tasks.settleTask(actor, {...mutation, outcome: a.outcome as 'succeeded' | 'partial' | 'failed', ...(a.notes === undefined ? {} : {notes: a.notes as string})});
-        } else if (a.action !== undefined) {
+        if (a.action !== undefined) {
+          if(a.notes!==undefined||a.goal!==undefined&&a.action!=='resume')throw Error('invalid_tool_arguments');
           const goal=a.goal===undefined?undefined:string(a.goal,24000);
-          const authority=a.action==='resume'&&(goal!==undefined||task.state==='settled')?this.effects.rootAuthority(actor):undefined;
-          result = this.tasks.controlTask(actor, {...mutation, action: a.action as 'pause' | 'resume' | 'cancel', goal,authority,...(a.reason === undefined ? {} : {reason: string(a.reason, 24000)})});
+          const authority=a.action==='resume'?this.effects.rootAuthority(actor):undefined;
+          result = this.tasks.controlTask(actor, {...mutation, action: a.action as 'pause' | 'resume', goal,authority,...(a.reason === undefined ? {} : {reason: string(a.reason, 24000)})});
         } else {
-          if (a.outcome !== undefined || a.reason !== undefined || a.goal === undefined && a.notes === undefined) throw Error('invalid_tool_arguments');
+          if (a.reason !== undefined || a.goal === undefined && a.notes === undefined) throw Error('invalid_tool_arguments');
           result = this.tasks.updateTask(actor, {...mutation, patch: {...(a.goal === undefined ? {} : {goal: string(a.goal, 24000)}), ...(a.notes === undefined ? {} : {notes: a.notes as string})}, ...(a.goal === undefined ? {} : {authority: this.effects.rootAuthority(actor)})});
         }
       } else if (name === 'archive_work' || name === 'restore_work') {

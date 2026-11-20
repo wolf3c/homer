@@ -7,7 +7,7 @@ import {CodexEngine} from '../src/engine.js';
 import {Homer} from '../src/service.js';
 import {RecursiveTools} from '../src/recursive-tools.js';
 import type {Config} from '../src/config.js';
-import {fixture,openWorker,running,main,mutation,authority} from './recursive-fixture.js';
+import {fixture,openWorker,running,main,mutation,authority,processReplies} from './recursive-fixture.js';
 
 const flush=()=>new Promise<void>(done=>setImmediate(done));
 async function peer(){
@@ -59,7 +59,7 @@ test('exact steer ACK confirms one message without changing task version or impl
   await p.receive({id:request.id,result:{turnId:p.actor.turnId}});
   assert.equal((await pending).state,'received');assert.equal(p.operation().state,'confirmed');assert.equal(JSON.parse(p.operation().detailsJson).rpcState,'received');
   assert.equal((await p.steer()).state,'received');assert.equal(p.writes().length,1);
-  assert.equal(p.tasks.task(p.task.taskId).headVersion,1);assert.equal(p.tasks.task(p.task.taskId).outcome,null);
+  assert.equal(p.tasks.task(p.task.taskId).headVersion,1);assert.equal(p.tasks.task(p.task.taskId).historyState,'visible');
   const details=JSON.parse(p.operation().detailsJson);assert.equal(p.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(details.messageId)!.state,'processed');
  }finally{await p.dispose();}
 });
@@ -88,7 +88,7 @@ test('an old-version return survives a goal change and retains its original vers
   p.tasks.updateTask(main,{...mutation(p,'goal-change'),patch:{goal:'New explicit user requirement'},authority:authority()});
   p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original version draft'},true);
   const reply=p.tasks.workerRead(main,{workerId:p.worker.workerId}).messages.find(message=>message.kind==='worker_reply')!;
-  assert.equal(reply.taskVersion,1);assert.equal(reply.text,'Original version draft');assert.equal(p.tasks.task(p.task.taskId).headVersion,2);assert.equal(p.tasks.task(p.task.taskId).outcome,null);
+  assert.equal(reply.taskVersion,1);assert.equal(reply.text,'Original version draft');assert.equal(p.tasks.task(p.task.taskId).headVersion,2);assert.equal(p.tasks.task(p.task.taskId).historyState,'visible');
   assert.equal(reply.payload.version,1);
   const input={operationId:'followup',workerId:p.worker.workerId,text:'Continue under the new goal'};
   const next=p.tasks.workerMessage(main,input);assert.deepEqual(p.tasks.workerMessage(main,input),next);assert.equal(p.store.runs().length,2);
@@ -134,15 +134,16 @@ test('confirmed stop retires a pending steer and a late ACK cannot revive its re
  }finally{await p.dispose();}
 });
 
-for(const state of ['dispatching','uncertain','confirmed'] as const)test('settlement respects scoped steering state='+state,async()=>{
+for(const state of ['dispatching','uncertain','confirmed'] as const)test('archive respects scoped steering state='+state,async()=>{
  const p=await peer();try{
   const sent=p.tasks.workerMessage(main,{operationId:'steer',workerId:p.worker.workerId,text:'Supplement'});
   p.tasks.markSteer(sent.operationKey,'dispatching');
   if(state==='confirmed')p.tasks.markSteer(sent.operationKey,'received');
   else if(state==='uncertain')p.tasks.markSteer(sent.operationKey,'uncertain');
   const returned=p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original draft'},true)!;
-  if(state==='confirmed')assert.equal(p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}).state,'settled');
-  else assert.throws(()=>p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}),/operation_uncertain/);
+  processReplies(p);
+  const archive=p.tasks.archiveHistory(main,mutation(p,'archive'),true);
+  assert.equal(archive.state,state==='confirmed'?'archived':'skipped');
   assert.equal(p.tasks.workerRead(main,{workerId:p.worker.workerId,messageId:returned.messageId}).messages[0]!.text,'Original draft');
   assert.equal(p.tasks.operation(sent.operationKey).state,state);
  }finally{await p.dispose();}
@@ -174,7 +175,7 @@ test('ACK after a returned draft cannot launch a successor before the exact exit
  }finally{await p.dispose();}
 });
 
-test('lost file-write receipt preserves the raw return and blocks settlement without replaying the write',async()=>{
+test('lost file-write receipt preserves the raw return and blocks archive without replaying the write',async()=>{
  const p=await peer();try{
   const write=p.files.writeBinary.bind(p.files);p.files.writeBinary=(...args)=>{write(...args);throw Error('synthetic_write_receipt_lost');};
   assert.throws(()=>p.tasks.writeFile(p.actor,{operationId:'unfinished-write',filename:'pending.md',bytes:Buffer.from('Actual preserved bytes')}),/synthetic_write_receipt_lost/);
@@ -183,7 +184,7 @@ test('lost file-write receipt preserves the raw return and blocks settlement wit
   const blocked=p.tasks.workerMessage(main,{operationId:'followup-after-write',workerId:p.worker.workerId,text:'Continue'});
   assert.equal(blocked.reason,'operation_uncertain');assert.equal(p.store.runs().length,1);
   const operation=p.store.db.prepare("SELECT * FROM operations WHERE operationId='unfinished-write'").get()!;
-  assert.equal(operation.state,'accepted');assert.throws(()=>p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}),/operation_uncertain/);
+  assert.equal(operation.state,'accepted');processReplies(p);assert.equal(p.tasks.archiveHistory(main,mutation(p,'archive'),true).state,'skipped');
   assert.deepEqual(p.store.db.prepare("SELECT * FROM operations WHERE operationId='unfinished-write'").get(),operation);
   const runDirectory=p.files.prepareRun(p.task.taskId,p.actor.runId!);
   assert.equal(readFileSync(join(runDirectory,'pending.md'),'utf8'),'Actual preserved bytes');
@@ -191,7 +192,7 @@ test('lost file-write receipt preserves the raw return and blocks settlement wit
  }finally{await p.dispose();}
 });
 
-test('another Task unknown steer does not block this Task settlement or alter its receipt',async()=>{
+test('another Task unknown steer does not block this Task archive or alter its receipt',async()=>{
  const p=await peer();try{
   const other=p.tasks.createTask(main,{operationId:'other-task',goal:'Separate goal',authority:authority()}),worker=p.tasks.workerOpen(main,{operationId:'other-worker',taskId:other.taskId,text:'Inspect separate input'}),actor=running(p,worker.runId);
   const sent=p.tasks.workerMessage(main,{operationId:'steer-other',workerId:worker.workerId,text:'Separate supplement'});
@@ -199,7 +200,7 @@ test('another Task unknown steer does not block this Task settlement or alter it
   p.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'Separate checked facts'},true);
   const original=p.tasks.operation(sent.operationKey);
   p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Current checked facts'},true);
-  assert.equal(p.tasks.settleTask(main,{...mutation(p,'settle'),outcome:'succeeded'}).state,'settled');
+  processReplies(p);assert.equal(p.tasks.archiveHistory(main,mutation(p,'archive'),true).state,'archived');
   assert.deepEqual(p.tasks.operation(sent.operationKey),original);
  }finally{await p.dispose();}
 });

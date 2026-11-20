@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import React from 'react';import {renderToStaticMarkup} from 'react-dom/server';
-import {chatFixture} from './task-chat-fixture.js';import {WorkerInteractions} from '../src/worker-interactions.js';import {readTaskOverview,readTaskDetail,classifyTask} from '../src/task-overview.js';import {homerWebBridge} from '../src/web-homer.js';import type {Homer} from '../src/service.js';import {WebHistoryPages} from '../src/web-history-pages.js';import {MainProcessHistory,type ProcessNode} from '../src/main-process.js';import {ProcessNodeView} from './helpers/process-ui-loader.mjs';
+import {chatFixture} from './task-chat-fixture.js';import {WorkerInteractions} from '../src/worker-interactions.js';import {readTaskOverview,readTaskDetail} from '../src/task-overview.js';import {homerWebBridge} from '../src/web-homer.js';import type {Homer} from '../src/service.js';import {WebHistoryPages} from '../src/web-history-pages.js';import {MainProcessHistory,type ProcessNode} from '../src/main-process.js';import {ProcessNodeView} from './helpers/process-ui-loader.mjs';
 function fixture(){const f=chatFixture(),interactions=new WorkerInteractions(f.store.db),task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId);return {...f,interactions,task,worker,run};}
 const changes=(f:ReturnType<typeof fixture>)=>f.store.db.prepare('SELECT total_changes() n').get();
 function paged(f:ReturnType<typeof fixture>,processes=new MainProcessHistory(f.store.db)){
@@ -7,10 +7,10 @@ function paged(f:ReturnType<typeof fixture>,processes=new MainProcessHistory(f.s
  return homerWebBridge({...f,webReadEpoch:'synthetic-history',webHistoryPages:()=>pages,registerWebSurface(){},conversationControlState:()=>({isRunning:false,activeMessageId:null})} as unknown as Homer);
 }
 function reply(f:ReturnType<typeof fixture>){return f.tasks.endSegment(f.run.id,f.run.epoch,{status:'completed',text:'PRIVATE_SENTINEL'},true)!;}
-test('unknown receipt metadata remains read-only and cannot override the explicit Main settlement',()=>{
+test('unknown receipt metadata remains queryable without changing list membership',()=>{
  const f=fixture();try{
-  const returned=reply(f);f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(returned.messageId);f.tasks.settleTask(f.actor,{operationId:'settle',taskId:f.task.taskId,expectedRevision:1,outcome:'succeeded'});f.store.db.exec('PRAGMA query_only=ON');const before=changes(f),task=readTaskOverview(f.store.db).tasks[0]!;
-  assert.equal(classifyTask(task).key,'complete');const receipts=readTaskDetail(f.store.db,task.id).recovery!.receipts;assert.equal(receipts.length,1);assert.equal(receipts[0]!.taskVersion,1);assert.deepEqual(Object.keys(receipts[0]!).sort(),['messageId','revision','state','taskId','taskVersion']);assert.deepEqual(changes(f),before);
+  const returned=reply(f);f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(returned.messageId);f.store.db.exec('PRAGMA query_only=ON');const before=changes(f),task=readTaskOverview(f.store.db).tasks[0]!;
+  assert.equal(task.historyState,'visible');const receipts=readTaskDetail(f.store.db,task.id).recovery!.receipts;assert.equal(receipts.length,1);assert.equal(receipts[0]!.taskVersion,1);assert.deepEqual(Object.keys(receipts[0]!).sort(),['messageId','revision','state','taskId','taskVersion']);assert.deepEqual(changes(f),before);
  }finally{f.close();}
 });
 test('historical Worker receipt retains its version and exact identity without private payload or grants',()=>{

@@ -24,7 +24,7 @@ test('independent conversations claim together and editing a task leaves both or
   assert.equal(f.store.runs().filter(run=>run.status==='running').length,2);
   const change=f.tasks.updateTask(f.actor,{operationId:'change',taskId:a.taskId,expectedRevision:1,patch:{goal:'Revised scope'},authority:f.authority});
   assert.deepEqual(change.targets,[]);assert.deepEqual(f.tasks.run(ar.id),ar);assert.deepEqual(f.tasks.run(br.id),br);
-  assert.equal(f.tasks.task(a.taskId).controlState,'normal');assert.equal(f.tasks.task(b.taskId).controlState,'normal');
+  assert.equal(f.tasks.task(a.taskId).historyState,'visible');assert.equal(f.tasks.task(b.taskId).historyState,'visible');
  }finally{f.close();}
 });
 
@@ -98,5 +98,17 @@ test('input uncertainty leaves committed reply and additions intact',()=>{
   assert.deepEqual(ids.map(id=>f.history.message(id)?.text),['first','second']);
   f.inputs.reconcile();
   assert.deepEqual(ids.map(id=>f.history.message(id)?.status),['completed','completed']);
+ }finally{f.close();}
+});
+
+test('a fresh store can reopen before a task manager has been constructed',()=>{
+ const f=chatFixture();try{
+  const path=f.dir+'/bootstrap.sqlite',first=new Store(path);
+  first.close();
+  const reopened=new Store(path);
+  try{
+   const tasks=new RecursiveTasks(reopened,f.files);tasks.migrate();
+   assert.deepEqual(tasks.tasks(),[]);
+  }finally{reopened.close();}
  }finally{f.close();}
 });

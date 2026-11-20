@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {bui
 const require=createRequire(import.meta.url),built=buildSync({entryPoints:[resolve('ui/task-execution-record.tsx')],bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',external:['react','react/jsx-runtime','react-dom'],loader:{'.css':'empty'}}),mod={exports:{}};Function('require','module','exports',built.outputFiles[0].text)(require,mod,mod.exports);
 const {TaskExecutionRecord,ExecutionObservationContext}=mod.exports,h=React.createElement;
 const worker={id:'worker',taskId:'task',pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run',taskId:'task',workerId:'worker',version:1,epoch:1,status:'running',phase:'executing',createdAt:1000,startedAt:2000,errorCode:null}};
-const task={id:'task',headVersion:1,controlState:'normal',state:'open',workers:[worker],results:[],deliveries:[]};
+const task={id:'task',headVersion:1,state:'open',workers:[worker]};
 test('execution record defaults collapsed, loads only on open, and preserves explicit collapse across revisions',async()=>withDom(async d=>{
  let calls=[];const read=async url=>{calls.push(url);return new Response(JSON.stringify(url.endsWith('/task')?{taskId:'task',runs:[{...worker.run,taskId:'task',activeMs:0,errorCode:'restart_unconfirmed'}]}:{selector:{taskId:'task',runId:'run'},version:1,storeGeneration:'generation',revision:1,availability:'available',coverage:'partial',retention:'memory',items:[],active:[],hasMore:false,omitted:false}),{status:200});};
  const render=(revision=0)=>d.render(h(ExecutionObservationContext.Provider,{value:{connected:true,enabled:true,revision,scope:'thread:epoch',read}},h(TaskExecutionRecord,{task,worker})));

@@ -21,13 +21,14 @@ for(const code of ['restart_unconfirmed','engine_stop_unconfirmed'])test('ended 
  assert.equal(f.tasks.workerMessage(main,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'}).reason,'run_stop_unconfirmed');
  assert.deepEqual(f.tasks.runs(),before);
 });
-for(const state of ['open','paused','settled'])for(const status of ['interrupted','failed','cancelled','succeeded'] as const)test('S14 uncertainty cannot launch a successor for task='+state+', run='+status,t=>{
+for(const state of ['open','paused','archived'])for(const status of ['interrupted','failed','cancelled','succeeded'] as const)test('S14 uncertainty cannot launch a successor for task='+state+', run='+status,t=>{
  const f=fixture(t),a=running(f);f.tasks.failRun(a.runId!,a.epoch!,'synthetic_close_unconfirmed',true);
- f.store.db.prepare('UPDATE tasks SET state=? WHERE id=?').run(state,f.task.taskId);
+ if(state==='archived')f.store.db.prepare("UPDATE tasks SET historyState='archived' WHERE id=?").run(f.task.taskId);
+ else f.store.db.prepare('UPDATE tasks SET state=? WHERE id=?').run(state,f.task.taskId);
  f.store.db.prepare("UPDATE runs SET status=?,phase='uncertain' WHERE id=?").run(status,a.runId!);
  const before=snapshot(f),send=()=>f.tasks.workerMessage(main,{operationId:'followup',workerId:f.worker.workerId,text:'Continue'});
  if(state==='open'){assert.equal(send().state,'blocked');assert.equal(f.tasks.claim(),undefined);assert.equal(f.store.runs().length,1);}
- else{assert.throws(send,/task_not_open/);assert.equal(snapshot(f),before);}
+ else{assert.throws(send,state==='archived'?/task_history_not_visible/:/task_not_open/);assert.equal(snapshot(f),before);}
 });
 test('S14 an accepted goal-change receipt replays before applicability and retains payload conflicts',t=>{
  const f=fixture(t),a=running(f),input=goalChange(f),accepted=f.tasks.updateTask(main,input);
@@ -82,8 +83,9 @@ test('retrying an unconfirmed Worker stop checks the owner again and releases th
  const stop=(operationId:string)=>app['applyStop'](f.tasks.workerStop(main,{operationId,workerId}));
  const pause=(operationId:string)=>f.tasks.controlTask(main,{action:'pause',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,operationId});
  const first=await stop('first-stop');
- assert.equal(first.state,'uncertain');assert.equal(pause('while-stopping').state,'blocked');
+ assert.equal(first.state,'uncertain');
+ const paused=pause('while-stopping');assert.equal(paused.state,'paused');assert.ok(paused.blockers?.some(b=>b.runId===runId));
  assert.equal((await stop('retry-stop')).state,'confirmed');
  assert.equal(closes,2);assert.equal(f.tasks.operation(first.operationKey).state,'confirmed');
- assert.equal(pause('after-exit').state,'paused');
+ assert.deepEqual(pause('after-exit').blockers,[]);
 });

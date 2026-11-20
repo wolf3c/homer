@@ -10,13 +10,13 @@ test('natural final output returns exactly once without creating a Result or a b
   const worker=openWorker(f),actor=running(f,worker.runId),output={status:'completed',text:'日期仍待确认，已核对材料。'};
   const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,output,true)!;
   assert.equal(RECURSIVE_TOOLS.some(tool=>tool.name==='task_complete'),false);
-  assert.equal(f.tasks.task(f.task.taskId).outcome,null);assert.equal(f.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);
+  assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');assert.equal(f.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);
   const original=f.tasks.workerRead(main,{workerId:worker.workerId,messageId:returned.messageId}).messages[0]!;
   assert.equal(original.text,output.text);assert.equal(original.taskVersion,1);assert.equal(original.senderRunId,actor.runId);
   assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,output,true)!.messageId,returned.messageId);
   assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='worker_reply').length,1);
-  f.tasks.settleTask(main,{...mutation(f,'settle'),outcome:'partial',notes:'日期无法确认'});
-  assert.equal(f.tasks.task(f.task.taskId).outcome,'partial');
+  f.tasks.updateTask(main,{...mutation(f,'note'),patch:{notes:'日期无法确认'}});
+  assert.equal(f.tasks.task(f.task.taskId).notes,'日期无法确认');
  }finally{f.close();}
 });
 
@@ -27,9 +27,9 @@ test('failed execution preserves existing exact file bytes and raw text without 
   const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,true)!;
   const reply=f.tasks.workerRead(main,{workerId:worker.workerId,messageId:returned.messageId}).messages[0]!;
   assert.equal(reply.text,'已生成报告，后续检查失败。');assert.equal(reply.payload.execution.errorCode,'engine_image_rejected');assert.ok(!JSON.stringify(reply.payload).includes('Synthetic private detail'));
-  assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
   assert.equal(readFileSync(file.path,'utf8'),'# Checked synthetic facts');
-  assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
  }finally{f.close();}
 });
 
@@ -42,7 +42,7 @@ for(const terminalReceived of [false,true])test('restart preserves exact public 
   const reply=f.tasks.workerRead(main,{workerId:worker.workerId}).messages.find(message=>message.kind==='worker_reply')!;
   assert.equal(reply.text,'已核对，日期缺失。');assert.deepEqual(reply.nativeMessages,[{itemId:'report',phase:'final_answer',characters:reply.text.length}]);
   assert.equal(reply.payload.execution.status,terminalReceived?'completed':'unconfirmed');assert.equal(f.tasks.run(actor.runId!).status,terminalReceived?'succeeded':'interrupted');
-  assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
   f.tasks.reconcile();assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='worker_reply').length,1);
  }finally{f.close();}
 });
@@ -52,7 +52,7 @@ test('unconfirmed return retains raw output but requires a fresh message after e
   const worker=openWorker(f),actor=running(f,worker.runId),terminal={status:'completed',text:'等待核对日期。'};
   const returned=f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,false)!;
   assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,terminal,false)!.messageId,returned.messageId);
-  assert.equal(f.tasks.run(actor.runId!).phase,'uncertain');assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  assert.equal(f.tasks.run(actor.runId!).phase,'uncertain');assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
   const queued=f.tasks.workerMessage(main,{operationId:'followup',workerId:worker.workerId,text:'Continue checking'});assert.equal(queued.state,'blocked');assert.equal(f.tasks.claim(),undefined);
   assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='worker_reply').length,1);
   f.tasks.confirmWorkerExit(actor.runId!,undefined);assert.equal(f.tasks.claim(),undefined);
@@ -79,8 +79,8 @@ test('commentary-only output remains exact raw evidence without automatic adopti
   const worker=openWorker(f),actor=running(f,worker.runId),returned=f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'正在检查',messages:[{itemId:'comment',phase:'commentary',text:'正在检查'}]},true)!;
   const reply=f.tasks.workerRead(main,{workerId:worker.workerId,messageId:returned.messageId}).messages[0]!;
   assert.equal(reply.text,'正在检查');assert.deepEqual(reply.nativeMessages,[{itemId:'comment',phase:'commentary',characters:4}]);
-  assert.equal(f.tasks.task(f.task.taskId).outcome,null);
-  processReplies(f);assert.equal(f.tasks.inbox(main).length,0);assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+  assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
+  processReplies(f);assert.equal(f.tasks.inbox(main).length,0);assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
  }finally{f.close();}
 });
 
@@ -94,6 +94,6 @@ for(const terminalReceived of [false,true])test('explicit stop retains exact rec
   const notices=f.tasks.inbox(main).filter(message=>message.kind==='worker_reply');
   assert.equal(notices.length,1);assert.equal(notices[0]!.payload.text,'停止前已核对两项。');
   const original=notices[0]!.id;assert.equal(f.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'late'},true),undefined);
-  assert.equal(f.tasks.inbox(main)[0]!.id,original);assert.equal(f.tasks.task(f.task.taskId).outcome,null);assert.equal(f.tasks.run(actor.runId!).status,'cancelled');
+  assert.equal(f.tasks.inbox(main)[0]!.id,original);assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');assert.equal(f.tasks.run(actor.runId!).status,'cancelled');
  }finally{f.close();}
 });

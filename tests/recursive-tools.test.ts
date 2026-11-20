@@ -44,7 +44,6 @@ test('v1 to v2 archival inspection separates readable source history from curren
         else if (text === revised) {
           await assert.rejects(main.call('task_update', {taskId, goal: revised, sourceRequestIds: ['source:initial', 'source:revised']}), /invalid_tool_arguments/);
           await main.call('task_update', {taskId, goal: revised});
-          await main.call('task_update', {taskId, action: 'settle', outcome: 'succeeded'});
         } else if (text === 'Archive the completed synthetic review.') {
           assert.equal((await main.call('archive_work', {taskId})).state, 'archived');
         } else if (text.includes('"kind":"task_archived"')) {
@@ -195,16 +194,16 @@ test('editing a running task leaves both Workers and host stop effects untouched
     await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, goal: 'Stop the old investigation; only explain existing evidence'}, 'changed-goal');
     assert.deepEqual(f.stopped,[]);
     assert.equal(f.tasks.run(a.runId).stopRequestedAt,null);assert.equal(f.tasks.run(b.runId).stopRequestedAt,null);
-    assert.equal(f.tasks.task(root.taskId).controlState,'normal');
+    assert.equal(f.tasks.task(root.taskId).state,'open');
   } finally {f.close();}
 });
 
-test('task controls reject mixed edits and accept settlement with an outcome and optional notes', async () => {
+test('task controls reject removed fields and only a fresh request can resume execution', async () => {
   const f = fixture(); try {
     const root = await f.create(), before = f.counts();
     for (const args of [
       {action: 'pause', goal: 'also change'},
-      {action: 'settle'},
+      {action: 'settle'}, {action:'cancel'},
       {action: 'settle', outcome: 'succeeded', reason: 'User asked to settle'},
       {outcome: 'succeeded'},
       {sourceRequestIds: ['source:tools'], notes: 'no goal'},
@@ -212,14 +211,13 @@ test('task controls reject mixed edits and accept settlement with an outcome and
     assert.deepEqual(f.counts(), before);
     const paused = await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'pause'}, 'pause') as any;
     assert.equal(paused.state, 'paused'); assert.equal(f.stopped.length, 0);
-    await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'resume'}, 'resume');
+    await assert.rejects(f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'resume'}, 'old-resume'),/task_authority_source_denied/);
+    f.store.startRequest('resume-request','synthetic');
+    await f.tools.call({...f.actor,sourceRequestId:'resume-request'}, 'task_update', {taskId: root.taskId, action: 'resume'}, 'resume');
     assert.equal(f.tasks.task(root.taskId).state, 'open');
     const notes = 'Only the available evidence was reviewed';
-    await f.tools.call(f.actor, 'task_update', {taskId: root.taskId, action: 'settle', outcome: 'partial', notes}, 'settle');
-    const settled = f.tasks.task(root.taskId);
-    assert.equal(settled.state, 'settled');
-    assert.equal(settled.outcome, 'partial');
-    assert.equal(settled.notes, notes);
+    await f.tools.call(f.actor,'task_update',{taskId:root.taskId,notes},'record-limitations');
+    assert.equal(f.tasks.task(root.taskId).notes,notes);
   } finally {f.close();}
 });
 

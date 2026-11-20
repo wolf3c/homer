@@ -28,7 +28,6 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
    assert.ok(original.text.includes(finalText));assert.ok(original.nativeMessages.some((item:any)=>item.itemId==='worker-final'));
    const publishFile=['published','published-final','published-extra'].includes(scenario);
    if(['unknown','blocked'].includes(scenario))await main.call('task_update',{taskId,notes:finalText});
-   else await main.call('task_update',{taskId,action:'settle',outcome:scenario==='partial'?'partial':scenario==='failed'?'failed':'succeeded'});
    if(scenario==='no-phase-adapter')return {status:'completed',text:finalText};
    if(scenario==='final'){
     main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,itemId:'business-final',phase:'final_answer',text:'有效',completed:false});
@@ -57,13 +56,13 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
   assert.equal(reply.text,raw);assert.ok(reply.nativeMessages.some(item=>item.itemId==='worker-progress'&&item.phase==='commentary'));
   const nodes=f.app.processes.list(f.app.store.meta('mainThread')!),process=nodes.find(node=>node.sourceMessageIds.includes(reply.id))!;
   assert.ok(process);assert.ok(process.items.some(item=>item.kind==='tool'),'original inspection remains in process details');
-  assert.equal(f.inputs.filter(text=>text.startsWith('[内部协作输入')).length,1,'settlement and publishing add no self-confirmation round');
+  assert.equal(f.inputs.filter(text=>text.startsWith('[内部协作输入')).length,1,'notes and publishing add no self-confirmation round');
   const projected=readTestConversation(f.app),user=projected.messages.find(message=>message.process?.sourceKind==='user')!;
   assert.equal(user.text,'已安排核对。');assert.ok(user.process?.items.some(item=>item.kind==='commentary'&&item.text==='正常起始反馈'));
   const copies=projected.messages.filter(message=>message.text.includes(finalText));
   assert.equal(copies.length,scenario==='no-phase-adapter'?0:scenario==='unlinked-same-text'?2:1);
   assert.ok(copies.every(message=>!message.text.includes('收到成果并验收')));
-  if(['unknown','blocked'].includes(scenario))assert.equal(f.app.tasks.task(taskId).outcome,null);
+  assert.equal(f.app.tasks.task(taskId).historyState,'visible');
   if(['published','published-final','published-extra'].includes(scenario)){
    assert.equal(mainCloses,0);assert.equal(mainInterrupts,0);
    const sentId=copies[0]!.id;
@@ -87,7 +86,6 @@ for(const revoked of [false,true])test('archive receipt streams only the current
   if(text==='prepare'){
    taskId=(await main.call('task_create',{title:'归档示例',goal:'核对归档'})).taskId;
    await main.call('task_update',{taskId,goal:'核对归档'});
-   await main.call('task_update',{taskId,action:'settle',outcome:'succeeded'});
   }else if(text==='archive')await main.call('archive_work',{taskId});
   else{
    await hold;
@@ -111,7 +109,7 @@ for(const revoked of [false,true])test('archive receipt streams only the current
   assert.equal((await snapshot()).mainActivity?.finalText,'已核对');
   assert.equal(f.app.history.message(id)?.text,'');
   if(revoked){
-   const source=(await snapshot()).messages.find(message=>message.role==='user'&&message.requestId==='prepare-source')!;
+   const source=(await snapshot()).messages.find(message=>message.role==='user'&&message.requestId==='archive-source')!;
    f.app.history.revokeMessage(main.threadId,source.id);
   }
   emit('answer',{delta:'归档。'});

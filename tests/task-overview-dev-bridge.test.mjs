@@ -18,7 +18,8 @@ function visit(node){
 visit(ast);
 assert.ok(initializer,'development bridge declares task overview');
 for(const [name,args,input] of [
- ['list',[],undefined],
+ ['list',[],null],
+ ['list',[{view:'archived',before:42}],{view:'archived',before:42}],
  ['progress',['synthetic-root'],{id:'synthetic-root'}],
  ['detail',['synthetic-root'],{id:'synthetic-root'}],
  ['detail',['synthetic-task',{workerId:'synthetic-worker',after:20}],{id:'synthetic-task',workerId:'synthetic-worker',after:20}],

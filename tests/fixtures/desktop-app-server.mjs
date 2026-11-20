@@ -76,7 +76,7 @@ async function receive(m){
       if(input?.kind==='worker_reply'){
         const reply=await tool('worker_read',{workerId:input.workerId,messageId:input.messageId}),path=reply.messages[0].text.trim().split('\n').at(-1);
         if(readFileSync(path,'utf8')!=='DeepSeek Worker 已运行（离线合成）')throw Error('synthetic_attachment_mismatch');
-        await tool('task_update',{taskId:input.taskId,action:'settle',outcome:'succeeded'});
+        await tool('task_update',{taskId:input.taskId,notes:'Checked the Worker report.'});
         complete(`离线合成文件已发送。 [hello.md](${pathToFileURL(path).href})`);return;
       }
     }

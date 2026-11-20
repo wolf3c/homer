@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import {createWebServer,fetch} from './web-connected-fixture.js';
 import type {WebBridge} from '../src/web-contract.js';
 test('task overview routes require loopback Host/Origin, offer GET only and never invoke snapshot/state or mutation paths',async()=>{
- let lists=0,details=0,summaries=0,origins=0;
+ let lists=0,details=0,summaries=0,origins=0;const pages:unknown[]=[];
  const denied=async()=>{throw Error('forbidden_call');};
- const bridge:WebBridge={submit:denied,stop:denied,respond:denied,taskOverview:{list:async()=>{lists++;return {tasks:[]};},detail:async id=>{details++;return {taskId:id,runs:[]};},summary:async id=>{summaries++;return {taskId:id,runs:[],artifacts:[]};},origin:async()=>{origins++;throw Error('task_origin_not_found');}}};
+ const bridge:WebBridge={submit:denied,stop:denied,respond:denied,taskOverview:{list:async page=>{pages.push(page);lists++;return {tasks:[]};},detail:async id=>{details++;return {taskId:id,runs:[]};},summary:async id=>{summaries++;return {taskId:id,runs:[],artifacts:[]};},origin:async()=>{origins++;throw Error('task_origin_not_found');}}};
  const server=await createWebServer({bridge,port:0});
  try{
   const local=await globalThis.fetch(server.url+'/api/tasks');assert.equal(local.status,200,'loopback read needs no pairing');
@@ -17,7 +17,11 @@ test('task overview routes require loopback Host/Origin, offer GET only and neve
   assert.deepEqual(await (await fetch(server.url+'/api/tasks/task-synthetic')).json(),{taskId:'task-synthetic',runs:[]});
   assert.equal((await fetch(server.url+'/api/tasks/task-synthetic?path=elsewhere')).status,400);
   assert.equal((await fetch(server.url+'/api/tasks',{method:'POST',headers:{Origin:server.url,'Content-Type':'application/json'},body:'{}'})).status,404);
-  assert.equal(lists,1);assert.equal(details,1);
+  assert.deepEqual(await (await fetch(server.url+'/api/tasks/list/archived/before/20')).json(),{tasks:[]});
+  assert.deepEqual(pages,[undefined,{view:'archived',before:20}]);
+  assert.equal((await fetch(server.url+'/api/tasks/list/archived/before/9999999999999999')).status,409);
+  assert.equal((await fetch(server.url+'/api/tasks/list/archived',{headers:{Origin:'https://untrusted.example'}})).status,403);
+  assert.equal(lists,2);assert.equal(details,1);
   assert.deepEqual(await (await fetch(server.url+'/api/tasks/task-synthetic/summary')).json(),{taskId:'task-synthetic',runs:[],artifacts:[]});
   assert.equal((await fetch(server.url+'/api/tasks/task-synthetic/origin/message-synthetic')).status,409);
   assert.equal((await fetch(server.url+'/api/tasks/task-synthetic/summary',{headers:{Origin:'https://untrusted.example'}})).status,403);

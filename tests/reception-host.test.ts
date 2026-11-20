@@ -58,7 +58,7 @@ test('reception host: continuous user reception with a real background task; com
   assert.deepEqual(await bridge.history!.state(),busy);busyClock.mock.restore();assert.equal(app.store.db.prepare('SELECT total_changes() n').get()!.n,internalChanges);
   await assert.rejects(app.stopMain('invented-internal-message'),/main_reply_not_active/);
   assert.deepEqual(app.processes.exact(node.id),original,'historical delegation stays frozen when the live Run fails');
-  const run=app.tasks.runs(taskId)[0]!;assert.equal(run.errorCode,'synthetic_failure');assert.equal(run.status,'failed');assert.equal(app.tasks.task(taskId).outcome,null,'execution failure is not a reviewed business outcome');
+  const run=app.tasks.runs(taskId)[0]!;assert.equal(run.errorCode,'synthetic_failure');assert.equal(run.status,'failed');assert.equal(app.tasks.task(taskId).historyState,'visible','execution failure keeps the record in the current list');
   const beforeInternalEnd=seen.length;
   releaseInternal!();await app.idle();assert.equal((await bridge.history!.state()).isRunning,false);
   assert.equal(app['mainContext'],undefined);assert.ok(seen.slice(beforeInternalEnd).some(state=>!state.internal&&state.messageId===null),'internal round end invalidates state');

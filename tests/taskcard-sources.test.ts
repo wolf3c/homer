@@ -150,9 +150,9 @@ test('interaction notices require the persisted interaction, execution and recei
 
 test('archive notices bind the committed revision and the original user trigger, including after restore',()=>{
  const f=chatFixture();try{
-  const task=f.create(),initial=f.tasks.settleTask(f.actor,{operationId:'settle',taskId:task.taskId,expectedRevision:1,outcome:'failed'});
+  const task=f.create();
   const trigger=f.source('archive-request'),actor={...f.actor,sourceRequestId:'archive-request',inputMessageId:trigger.messageId,turnId:'turn:archive-request'};
-  const archived=f.tasks.archiveHistory(actor,{operationId:'archive',taskId:task.taskId,expectedRevision:initial.revision},true);
+  const archived=f.tasks.archiveHistory(actor,{operationId:'archive',taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision},true);
   const db=f.store.db,key=archived.operationKey,notice=String(db.prepare('SELECT id FROM agent_messages WHERE operationKey=?').get(key)!.id);
   f.consumeMain(notice);
   const process=new MainProcessHistory(db).headers(['consumer:'+notice])[0]!;
@@ -177,12 +177,12 @@ test('archive notices bind the committed revision and the original user trigger,
   }
   db.prepare("UPDATE operations SET actorAgentId='host',kind='notify',detailsJson='{}',responseJson=NULL WHERE id=?").run(key);
   db.prepare("UPDATE agent_receipts SET offeredTurnId=NULL WHERE messageId=?").run(notice);
-  assert.deepEqual(project().taskSources?.[0],source);
-  assert.equal(project().taskSourceUnresolved,undefined);
+  assert.equal(project().taskSources,undefined);
+  assert.equal(project().taskSourceUnresolved,true);
  }finally{f.close();}
 });
 
-test('task settlement and controls use exact confirmed operation and input identities from terminal headers',()=>{
+test('pause and resume use exact confirmed operation and input identities from terminal headers',()=>{
  const f=chatFixture();try{
   const db=f.store.db,task=f.create(),actor={...f.actor,turnId:'turn:'+f.authority.sourceRequestId};
   const receipt=(operationId:string)=>({operationId,taskId:task.taskId,expectedRevision:f.tasks.task(task.taskId).revision});
@@ -192,14 +192,11 @@ test('task settlement and controls use exact confirmed operation and input ident
   f.tasks.confirmStop(stop.operationKey,true);
   const paused=f.tasks.controlTask(actor,{...receipt('pause'),action:'pause'});
   f.consumeMain(String(db.prepare("SELECT id FROM agent_messages WHERE senderRunId=? AND kind='worker_reply'").get(worker.runId)!.id));
-  const resumed=f.tasks.controlTask(actor,{...receipt('resume'),action:'resume'});
-  const settled=f.tasks.settleTask(actor,{...receipt('settle'),outcome:'failed',notes:'PRIVATE_NOTES'});
-  const restart=f.source('restart-source'),restartActor={...actor,sourceRequestId:'restart-source',turnId:'turn:restart-source',inputMessageId:restart.messageId};
-  const next=f.tasks.controlTask(restartActor,{...receipt('restart'),action:'resume',authority:{...f.authority,sourceRequestId:restartActor.sourceRequestId}});
-  const cancelled=f.tasks.controlTask(actor,{...receipt('cancel'),action:'cancel'});
+  const restart=f.source('resume-source'),resumeActor={...actor,sourceRequestId:'resume-source',inputMessageId:restart.messageId,turnId:'turn:resume-source'};
+  const resumed=f.tasks.controlTask(resumeActor,{...receipt('resume'),action:'resume',authority:{...f.authority,sourceRequestId:'resume-source'}});
   const processes=new MainProcessHistory(db);
-  for(const result of [paused,resumed,settled,next,cancelled]){
-   const source=result===next?restartActor:actor,process={...node([source.inputMessageId!]),sourceKind:'user' as const,turnIds:[source.turnId]};
+  for(const result of [paused,resumed]){
+   const source=result===resumed?resumeActor:actor,process={...node([source.inputMessageId!]),sourceKind:'user' as const,turnIds:[source.turnId]};
    const activity=f.tasks.captureActivity(actor,'task_update',{taskId:task.taskId},result)!;
    const item={id:'activity',kind:'tool' as const,seq:1,revision:1,status:'completed' as const,label:'调整任务',turnId:source.turnId,activity};
    f.store.setMeta('publicMainNode:v1:process',JSON.stringify({...process,items:[item]}));
@@ -227,20 +224,24 @@ test('task settlement and controls use exact confirmed operation and input ident
  }finally{f.close();}
 });
 
-test('a coordination round can settle a task using its received Worker message',()=>{
+test('an archive on a Worker reply keeps its source across restore and rejects unrelated turns and runs',()=>{
  const f=setup();try{
-  const db=f.store.db,notice=f.reply.messageId;
-  f.consumeMain(notice);
+  const db=f.store.db,input=f.reply.messageId;
+  f.tasks.updateTask(f.actor,{operationId:'new-head',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,patch:{goal:'Confirm the same finding'},authority:f.authority});
+  f.consumeMain(input);
+  const turn=new MainProcessHistory(db).headers(['consumer:'+input])[0]!.turnIds[0]!;
+  const actor={...f.actor,sourceRequestId:undefined,inputMessageId:input,turnId:turn};
+  const archive=f.tasks.archiveHistory(actor,{operationId:'archive',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision},true);
+  assert.equal(archive.state,'archived');
+  const notice=String(db.prepare('SELECT id FROM agent_messages WHERE operationKey=?').get(archive.operationKey)!.id);f.consumeMain(notice);
   const process=new MainProcessHistory(db).headers(['consumer:'+notice])[0]!;
-  const actor={...f.actor,sourceRequestId:undefined,inputMessageId:notice,turnId:process.turnIds[0]!};
-  const result=f.tasks.settleTask(actor,{operationId:'settle',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,outcome:'failed'});
-  const activity=f.tasks.captureActivity(actor,'task_update',{taskId:f.task.taskId},result)!;
-  process.items.push({id:'settle',kind:'tool',seq:1,revision:1,status:'completed',label:'调整任务',activity});
-  assert.equal(f.project(message(process)).taskSources?.length,2);
-  assert.equal(f.project(message(process)).taskSourceUnresolved,undefined);
-  db.prepare("UPDATE agent_receipts SET offeredTurnId='other' WHERE messageId=?").run(notice);
-  assert.equal(f.project(message(process)).taskSources?.length,1);
-  assert.equal(f.project(message(process)).taskSourceUnresolved,true);
+  const project=()=>f.project(message(process));assert.equal(project().taskSources?.[0]?.phaseLabel,'事项已归档');assert.equal(project().taskSources?.[0]?.target.version,2);
+  const restore=f.source('restore-source');
+  f.tasks.archiveHistory({...f.actor,sourceRequestId:'restore-source',inputMessageId:restore.messageId,turnId:'turn:restore-source'},{operationId:'restore',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision},false);
+  assert.equal(project().taskSources?.[0]?.phaseLabel,'事项已归档');
+  for(const sql of ["UPDATE agent_receipts SET offeredTurnId='other' WHERE messageId=?","UPDATE agent_messages SET senderRunId=NULL WHERE id=?","UPDATE agent_messages SET taskVersion=999 WHERE id=?"]){
+   db.exec('SAVEPOINT bad');db.prepare(sql).run(input);assert.equal(project().taskSources,undefined);assert.equal(project().taskSourceUnresolved,true);db.exec('ROLLBACK TO bad; RELEASE bad');
+  }
  }finally{f.close();}
 });
 

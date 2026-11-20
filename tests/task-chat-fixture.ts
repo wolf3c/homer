@@ -11,7 +11,7 @@ export function chatFixture(lifecycle?:RecursiveTaskLifecycle){
  const base=resolve('.codex/scratch/chat-architecture-implementation-20261105');mkdirSync(base,{recursive:true});const dir=mkdtempSync(join(base,'core-'));
  const path=join(dir,'test.sqlite'),store=new Store(path),files=new Files(join(dir,'workspace')),tasks=new RecursiveTasks(store,files,lifecycle);tasks.migrate();
  store.setMeta('mainAgentId','main:test');store.setMeta('mainThread','thread:main');const history=new ConversationHistory(store.db),inputs=new MainInputs(tasks,history);
- const actor:Actor={agentId:'main:test',threadId:'thread:main',turnId:'turn:main',sourceRequestId:'source:test'};
+ const actor:Actor={agentId:'main:test',threadId:'thread:main',turnId:'turn:source:test',sourceRequestId:'source:test'};
  function source(requestId:string,body='Investigate without edits'){
   inputs.accept({requestId,text:body});const input=inputs.claim()!;if(input.origin!=='user'||input.input.requestId!==requestId)throw Error('fixture_source_order');inputs.started(input.messageId,input.revision,'generation:'+requestId,'turn:'+requestId);inputs.finish(input.messageId,input.revision,'completed');return input;
  }

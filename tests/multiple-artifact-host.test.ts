@@ -64,7 +64,7 @@ test('Homer opens one Worker and commits the two selected files in one backgroun
   const bridge=homerWebBridge(app),state=await bridge.history!.state();
   assert.deepEqual(state.artifacts?.map(f=>f.title),['事实.md','说明.md']);
   assert.deepEqual(await Promise.all(sent!.attachments!.map(async ref=>Buffer.from((await bridge.media!.read({messageId,...ref})).data,'base64').toString())),['# 事实\n日期未确定。','# 说明\n保留未知日期。']);
-  assert.equal(app.tasks.task(taskId).outcome,null);
+  assert.equal(app.tasks.task(taskId).historyState,'visible');
   assert.equal(app.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='worker_return' AND scopeId=?").get(taskId)?.n,1);
   assert.equal(app.store.db.prepare("SELECT count(*) n FROM operations WHERE kind='worker_final' AND state='confirmed' AND scopeId=?").get(taskId)?.n,1);
  }finally{await app.close();rmSync(dir,{recursive:true,force:true});}

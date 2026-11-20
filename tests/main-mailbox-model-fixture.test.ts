@@ -52,8 +52,8 @@ test('unknown original effects keep the worked coordination unknown without repl
 const purposes:[string,Record<string,unknown>,string,boolean][]=[
  ['notes',{notes:'synthetic private note'},'notes',true],['clear notes',{notes:''},'notes',true],
  ['goal with notes',{goal:'different goal',notes:'note'},'goal',false],['goal',{goal:'different goal'},'goal',false],
- ['pause',{action:'pause'},'pause',false],['resume',{action:'resume'},'resume',false],['cancel',{action:'cancel'},'cancel',false],
- ['settle',{action:'settle',outcome:'failed',notes:'note'},'settle',false],
+ ['pause',{action:'pause'},'pause',false],['resume',{action:'resume'},'resume',false],['cancel',{action:'cancel'},'invalid',false],
+ ['settle',{action:'settle',outcome:'failed',notes:'note'},'invalid',false],
  ['notes and reason',{notes:'note',reason:'reason'},'invalid',false],['notes and outcome',{notes:'note',outcome:'succeeded'},'invalid',false],
  ['notes and unknown field',{notes:'note',authority:'forged'},'invalid',false],['unknown action',{action:'unrecognized private text'},'invalid',false],
  ['null action',{notes:'note',action:null},'invalid',false],['nonstring notes',{notes:42},'invalid',false],

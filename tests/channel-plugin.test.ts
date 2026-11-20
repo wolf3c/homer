@@ -223,7 +223,8 @@ test('a subscribed Worker final is caught up once with the exact linked file',as
   }finally{await plugin.close();await f.close();}
 });
 
-for(const revoke of [false,true])test(`a scheduled result ${revoke?'respects original authority revoked before sending':'follows the explicitly selected task subscription after restart'}`,async t=>{
+for(const variant of ['visible','archive-before-timer','archive-before-send','revoked'] as const)test(`a scheduled result preserves the original subscription across restart: ${variant}`,async t=>{
+  const revoke=variant==='revoked';
   let now=Date.now(),taskId='',runs=0;
   let scheduleError:unknown;
   t.mock.method(Date,'now',()=>now);
@@ -236,7 +237,11 @@ for(const revoke of [false,true])test(`a scheduled result ${revoke?'respects ori
     f.setScript(async(main,text)=>{
       if(text==='prepare')({taskId}=await openTaskWorker(main,'Prepare report','Upcoming report'));
       else if(text==='subscribe')await subscribe(main,taskId);
-      else if(text==='plan'){
+      else if(text==='archive'){
+        await main.call('archive_work',{taskId});
+      }else if(text.includes('"kind":"task_archived"')){
+        return {status:'completed',text:''};
+      }else if(text==='plan'){
         const mcp=main.options.interactionMcp!;
         const call=async(name:string,args:object)=>{
           const itemId='timed-report-'+name;
@@ -265,12 +270,18 @@ for(const revoke of [false,true])test(`a scheduled result ${revoke?'respects ori
     plugin.receiveText(input(A,'plan','plan'));await f.app.idle();
     assert.equal(scheduleError,undefined);
     assert.equal(f.app.store.db.prepare('SELECT count(*) AS n FROM schedules').get()!.n,1);
+    const archive=async()=>{
+      plugin.receiveText(input(A,'archive','archive'));await f.app.idle();
+      assert.equal(f.app.tasks.task(taskId).historyState,'archived');
+    };
+    if(variant==='archive-before-timer')await archive();
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
     assert.equal(runs,1);
     const entry=f.app.history.list(f.app.store.meta('mainThread')!).find(message=>message.text===final)!;
     assert.equal(entry?.taskId,taskId);
     assert.equal(entry?.requestId,null);
     assert.equal(sent.length,0);
+    if(variant==='archive-before-send')await archive();
     if(revoke)plugin.revokeBinding(originBinding);
     const deliveries=()=>sent.filter(item=>item.part.kind==='text'&&item.part.text===final);
     for(let i=0;i<2;i++){

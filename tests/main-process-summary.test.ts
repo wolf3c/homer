@@ -11,7 +11,7 @@ test('ended process summaries retain final and Worker facts without loading ordi
   processes.agent('summary',{turnId:'turn',itemId:'detail',phase:'commentary',text:body,completed:true});
   processes.agent('summary',{turnId:'turn',itemId:'final',phase:'final_answer',text:'Checked final',completed:true});
   processes.agent('summary',{turnId:'turn',itemId:'streamed-final',phase:'final_answer',text:'Second public final',completed:false});
-  processes.worker('summary',{taskId:'worker',version:1,taskRevision:1,runId:'run',runRevision:1,runStatus:'succeeded',resultState:'accepted',epoch:1,state:'settled',controlState:'open',outcome:'succeeded',phase:'ended',stopRequested:false});
+  processes.worker('summary',{taskId:'worker',version:1,taskRevision:1,runId:'run',runRevision:1,runStatus:'succeeded',resultState:'accepted',epoch:1,state:'settled',phase:'ended',stopRequested:false});
   const working=processes.headers(['summary'])[0]!;
   assert.ok(working.items.some(item=>item.kind==='commentary'&&item.text===body));
   processes.finish('summary','completed','turn:turn:completed');

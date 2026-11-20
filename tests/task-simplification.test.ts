@@ -33,7 +33,6 @@ test('archiving a record made without a user source routes its fact without gran
   const idea=f.tasks.createTask({...main,sourceRequestId:undefined},{operationId:'internal-idea',goal:'Note an idea for later'});
   assert.equal(f.tasks.version(idea.taskId,1).sourceRequestId,null);
   const archiver=f.source('archive-idea');
-  f.tasks.settleTask(archiver,{...mutation(f,'close-idea',idea.taskId),outcome:'failed'});
   assert.equal(f.tasks.archiveHistory(archiver,mutation(f,'archive-idea',idea.taskId),true).state,'archived');
   const input=f.inputs.claim([],'all');
   assert.ok(input?.origin==='worker');
@@ -52,7 +51,7 @@ test('archiving a record made without a user source routes its fact without gran
  } finally {f.close();}
 });
 
-test('paused edits do not start work and settled tasks require newer real input',()=>{
+test('paused edits do not start work and resuming requires newer real input',()=>{
  const f=fixture();
  try {
   f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});
@@ -60,9 +59,6 @@ test('paused edits do not start work and settled tasks require newer real input'
   f.tasks.updateTask(revised,{...mutation(f,'edit'),patch:{goal:'Change requirements'},authority:authority('revised')});
   assert.equal(f.tasks.task(f.task.taskId).state,'paused');
   assert.equal(f.tasks.claim(),undefined);
-  f.tasks.controlTask(revised,{...mutation(f,'resume'),action:'resume'});
-  assert.equal(f.tasks.task(f.task.taskId).headVersion,2);
-  f.tasks.settleTask(revised,{...mutation(f,'settle'),outcome:'failed'});
   assert.throws(()=>f.tasks.controlTask(revised,{...mutation(f,'invalid-resume'),action:'resume',authority:authority('revised')}),/task_authority_source_denied/);
   const next=f.source('next');
   const input={...mutation(f,'continue'),action:'resume' as const,authority:authority('next'),goal:'Continue with a new requirement'};
@@ -71,8 +67,6 @@ test('paused edits do not start work and settled tasks require newer real input'
   const current=f.tasks.task(f.task.taskId);
   assert.equal(current.headVersion,3);
   assert.equal(current.state,'open');
-  assert.equal(current.outcome,null);
-  assert.equal(current.settledAt,null);
   assert.equal(f.tasks.version(f.task.taskId,2).goal,'Change requirements');
   assert.equal(f.tasks.claim(),undefined);
  } finally {f.close();}
@@ -96,7 +90,7 @@ test('revocation removes authority while a later real request can supersede it',
  const f=fixture();
  try {
   const requestId=main.sourceRequestId!,threadId=main.threadId!;
-  f.tasks.settleTask(main,{...mutation(f,'settle-revoked'),outcome:'failed'});
+  f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});
   const old=f.history.list(threadId).find(message=>message.requestId===requestId&&message.role==='user')!;
   assert.equal(f.history.revokeMessage(threadId,old.id),true);
   assert.throws(()=>f.tasks.source(main,requestId),/source_denied/);
@@ -122,7 +116,9 @@ test('a partial stop retains each proven exit and stays fenced until every origi
   assert.equal(f.tasks.workerRead(main,{workerId:exited.workerId}).runs[0]!.exitConfirmed,true);
   f.tasks.recoverWorkerOperations();
   assert.equal(f.tasks.operation(stop.operationKey).state,'uncertain');
-  assert.equal(f.tasks.controlTask(main,{...mutation(f,'pause-blocked'),action:'pause'}).state,'blocked');
+  const paused=f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});
+  assert.equal(paused.state,'paused');assert.ok(paused.blockers?.some(blocker=>blocker.runId===unconfirmed.runId));
+  assert.equal(f.tasks.operation(stop.operationKey).state,'uncertain');
   f.tasks.confirmWorkerExit(unconfirmed.runId,'synthetic-unconfirmed-owner');
   f.tasks.recoverWorkerOperations();
   assert.equal(f.tasks.operation(stop.operationKey).state,'confirmed');

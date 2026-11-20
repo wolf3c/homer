@@ -115,7 +115,7 @@ test('pending tail does not replace formal page; forward cursors invert the prev
 test('worker relation selects only affected node and dirty acknowledgement rolls back with owner sync',()=>{
  const f=historyFixture(100);try{
   const reader=new WebHistoryPages(f.history,f.processes,f.inputs),node=f.processes.exact('node-0')!;
-  node.items=[{id:'worker:target',kind:'worker',seq:1,revision:1,taskId:'target',version:1,taskRevision:1,runId:null,runRevision:null,runStatus:null,resultState:null,epoch:null,phase:null,stopRequested:false,state:'working',controlState:'normal',outcome:null}];
+  node.items=[{id:'worker:target',kind:'worker',seq:1,revision:1,taskId:'target',version:1,taskRevision:1,runId:null,runRevision:null,runStatus:null,resultState:null,epoch:null,phase:null,stopRequested:false,state:'working'}];
   f.store.setMeta('publicMainNode:v1:node-0',JSON.stringify({...node,completedItemIds:[],itemPhases:{}}));
   f.store.db.prepare('INSERT INTO web_dirty_tasks VALUES(?)').run('target');f.store.db.prepare('INSERT INTO web_dirty_tasks VALUES(?)').run('unrelated');
   const prepare=f.store.db.prepare.bind(f.store.db);let workerPlan:string[]=[];

@@ -147,6 +147,8 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
       if(overviewOrigin&&bridge.taskOverview?.origin)return json(response,200,await bridge.taskOverview.origin(overviewOrigin[1]!,overviewOrigin[2]!));
       throw Error('task_overview_unavailable');
     }
+    const overviewPage=path.match(/^\/api\/tasks\/list\/(visible|archived|needsUser)(?:\/before\/([1-9]\d{0,15}))?$/);
+    if(request.method==='GET'&&overviewPage)return json(response,200,await chat('tasks.list',{view:overviewPage[1],...(overviewPage[2]?{before:Number(overviewPage[2])}:{})}));
     const overviewDetail=path.match(/^\/api\/tasks\/([\w:-]{1,100})$/);
     if(request.method==='GET'&&(path==='/api/tasks'||overviewDetail)){
       if(!bridge.taskOverview)throw Error('task_overview_unavailable');

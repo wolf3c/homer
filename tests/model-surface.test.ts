@@ -164,13 +164,13 @@ test('one text investigation uses three business calls without a result, publica
         return {status: 'completed', text: 'Synthetic investigation started'};
       }
       assert.ok(text.includes('page.js references missing build.js'), 'host supplies the original Worker reply');
-      await call('task_update', {taskId, action: 'settle', outcome: 'succeeded', notes: 'Checked the exact file names'});
+      await call('task_update', {taskId, notes: 'Checked the exact file names'});
       return {status: 'completed', text: 'Synthetic investigation complete'};
     });
     await f.app.start(); await f.app.message('investigate text only', 'synthetic-text-source');
     await until(() => f.engines.some(engine => engine.options.role === 'worker' && engine.finish));
     f.engines.find(engine => engine.options.role === 'worker')!.finish!({status: 'completed', text: 'page.js references missing build.js'});
-    await until(() => f.app.tasks.task(taskId).state === 'settled');
+    await until(() => f.app.tasks.task(taskId).notes === 'Checked the exact file names');
     await f.app.idle();
     assert.deepEqual(calls, ['task_create', 'worker_open', 'task_update']);
     assert.equal(f.app.store.db.prepare('SELECT count(*) n FROM conversation_attachments').get()!.n,0);

@@ -49,7 +49,7 @@ for(const code of [...codes,undefined])for(const consumer of ['task','service'] 
    await app.execute(run);assert.equal(closed,1);
   }
   const ended=f.tasks.run(run.id);assert.equal(ended.phase,'ended');assert.equal(ended.errorCode,code??null);assert.equal(f.tasks.claim(run.id),undefined);
-  assert.equal(f.tasks.task(task.taskId).state,'open');assert.equal(f.tasks.task(task.taskId).outcome,null);assert.equal(f.store.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='results'").get(),undefined);
+  assert.equal(f.tasks.task(task.taskId).state,'open');assert.equal(f.tasks.task(task.taskId).historyState,'visible');assert.equal(f.store.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='results'").get(),undefined);
   const replies=f.tasks.inbox(f.actor).filter(message=>message.kind==='worker_reply');assert.equal(replies.length,1);
   const payload=replies[0]!.payload;assert.equal(payload.execution.status,'completed');assert.equal(payload.execution.errorCode,code??null);assert.equal(payload.execution.exitConfirmed,true);assert.equal(payload.text,'Synthetic partial evidence.');assert.deepEqual(payload.messages,terminal.messages);
   f.tasks.endSegment(run.id,run.epoch,terminal,true);assert.equal(f.tasks.inbox(f.actor).filter(message=>message.kind==='worker_reply').length,1);

@@ -15,7 +15,7 @@ export function assertMailboxMain(options:Pick<EngineOptions,'role'|'nativeTools
 
 export const mailboxExpectedStatus=(scenario:MailboxModelScenario)=>scenario==='unknown-operation'?'unknown':'completed';
 
-type TaskUpdatePurpose='notes'|'goal'|'pause'|'resume'|'cancel'|'settle'|'invalid';
+type TaskUpdatePurpose='notes'|'goal'|'pause'|'resume'|'invalid';
 type TaskUpdateTrace={purpose:TaskUpdatePurpose;targetMatches:boolean;allowed:boolean;outcome:'pending'|'completed'|'error';notesEffectValid:boolean|null};
 
 export function mailboxModelTrace(host:Pick<Homer,'tasks'>,taskId:string,operationKey:string){
@@ -35,8 +35,8 @@ export function mailboxModelTrace(host:Pick<Homer,'tasks'>,taskId:string,operati
    if(tool==='task_update'){
     const own=(key:string)=>Object.hasOwn(a,key),keys=Reflect.ownKeys(a);
     let purpose:TaskUpdatePurpose='invalid';
-    if(own('taskId')&&typeof a.taskId==='string'&&keys.every(key=>typeof key==='string'&&['taskId','notes','goal','action','outcome','reason'].includes(key))){
-     if(own('action')){if(typeof a.action==='string'&&['pause','resume','cancel','settle'].includes(a.action))purpose=a.action as TaskUpdatePurpose;}
+    if(own('taskId')&&typeof a.taskId==='string'&&keys.every(key=>typeof key==='string'&&['taskId','notes','goal','action','reason'].includes(key))){
+     if(own('action')){if(typeof a.action==='string'&&['pause','resume'].includes(a.action))purpose=a.action as TaskUpdatePurpose;}
      else if(own('goal'))purpose='goal';
      else if(own('notes')&&typeof a.notes==='string'&&a.notes.length<=24000&&keys.every(key=>key==='taskId'||key==='notes'))purpose='notes';
     }

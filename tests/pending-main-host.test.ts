@@ -18,9 +18,9 @@ function fixture(choice:'repair'|'defer'|'close',emptyEventReply=false,emptyUser
     const read=await main.call('worker_read',{workerId:notice.workerId,messageId:notice.messageId});
     assert.equal(read.messages[0].text,'原工作执行失败，需按后续授权决定是否修复。');
     assert.equal(read.messages[0].payload.execution.status,'failed');
-    assert.equal((await main.call('work_inspect',{taskId})).task.outcome,null);
-    await main.call('task_update',{taskId,action:'settle',outcome:'failed',notes:'已核对原始执行失败'});
-    if(choice==='close')await main.call('task_update',{taskId:itemId,action:'cancel',reason:'不再处理导出'});
+    assert.equal((await main.call('work_inspect',{taskId})).task.historyState,'visible');
+    await main.call('task_update',{taskId,notes:'已核对原始执行失败'});
+    if(choice==='close')await assert.rejects(main.call('archive_work',{taskId:itemId}),/denied|required/);
     else await main.call('task_update',{taskId:itemId,notes:'已获原工作回报，等待明确执行决定'});
     await assert.rejects(main.call('worker_open',{taskId:itemId,message:'未经授权就执行'}),/task_not_open|task_authority_source_denied/);
     handled=true;
@@ -53,8 +53,8 @@ async function failedOriginal(f:ReturnType<typeof fixture>){
 for(const choice of ['repair','defer','close'] as const)test('same original Worker failure leaves Main free to '+choice,async()=>{
  const f=fixture(choice);try{
   await failedOriginal(f);
-  assert.equal(f.app.tasks.task(f.taskId).outcome,'failed');
-  assert.equal(f.app.tasks.task(f.itemId).state,choice==='close'?'settled':'open');
+  assert.equal(f.app.tasks.task(f.taskId).notes,'已核对原始执行失败');
+  assert.equal(f.app.tasks.task(f.itemId).historyState,'visible');
   assert.equal(f.app.tasks.version(f.itemId,1).sourceRequestId,'remember');assert.equal(f.app.tasks.version(f.itemId,1).authorityJson,null);
   assert.equal(f.app.tasks.runs(f.itemId).length,0);
   if(choice==='repair'){
@@ -89,7 +89,7 @@ test('an empty normal user reply fails clearly and admits a later independent in
 test('a failed internal engine result preserves failure and receives later user input',async()=>{
  const f=fixture('defer',true,false,true);try{
   await failedOriginal(f);
-  assert.equal(f.app.tasks.task(f.taskId).outcome,'failed');
+  assert.equal(f.app.tasks.task(f.taskId).notes,'已核对原始执行失败');
   assert.ok(f.app.store.db.prepare("SELECT 1 FROM events WHERE type='main_turn_failed' AND code='synthetic_main_engine_failed'").get());
   assert.equal(await f.app.message('恢复后查询','after-failed-internal'),'Synthetic reply');
  }finally{await f.close();}

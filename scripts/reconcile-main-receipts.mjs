@@ -5,7 +5,7 @@ import {existsSync,lstatSync,mkdirSync,readFileSync,realpathSync,writeFileSync} 
 import {dirname,isAbsolute,relative,resolve,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-import {inspectMainReceiptEvidence} from '../src/store.ts';
+import {inspectMainReceiptEvidence} from './legacy-main-receipts-v8.ts';
 import {unconfirmedNativeEffectsSql} from '../src/main-process.ts';
 
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');

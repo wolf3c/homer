@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {OverviewTask,OverviewWorker} from '../src/task-overview.js';
-import {workerStatus,taskCardPresentation,statusCountSnapshot,statusTree,matterSortKey,rankedStatusMatters,statusVisibleLimit,linearPlanIndex} from '../src/task-status.js';
+import {workerStatus,taskCardPresentation,statusTree,matterSortKey,rankedStatusMatters,linearPlanIndex} from '../src/task-status.js';
 const worker=(id:string,status='running',phase='executing'):OverviewWorker=>({id,taskId:'task',run:{id,taskId:'task',workerId:id,version:1,epoch:1,status,phase,sourceRequestId:null,createdAt:100,startedAt:200,endedAt:phase==='ended'?300:null},pendingUser:0,pendingMain:0,pendingUsers:[]});
-const task=(change:Partial<OverviewTask>={}):OverviewTask=>({id:'task',title:'Matter',goal:'Goal',notes:'',headVersion:1,revision:1,state:'open',outcome:null,controlState:'normal',historyState:'visible',sourceRequestId:null,creationOrder:1,createdAt:10,workers:[],...change});
+const task=(change:Partial<OverviewTask>={}):OverviewTask=>({id:'task',title:'Matter',goal:'Goal',notes:'',headVersion:1,revision:1,state:'open',historyState:'visible',sourceRequestId:null,creationOrder:1,createdAt:10,workers:[],...change});
 
 test('Worker success failure interruption and queue are execution facts only',()=>{
  for(const [status,phase,state,label] of [['succeeded','ended','done','已回复'],['failed','ended','failed','执行失败'],['cancelled','ended','cancelled','本轮已停止'],['interrupted','ended','waiting','执行已中断'],['queued','ready','waiting','等待调度']] as const){
@@ -11,68 +11,19 @@ test('Worker success failure interruption and queue are execution facts only',()
  }
 });
 
-test('explicit Main outcomes render without separate delivery states',()=>{
- for(const outcome of ['succeeded','partial','failed','cancelled']){
-  const t=task({state:'settled',outcome});
-  assert.equal(taskCardPresentation(t).state,outcome==='failed'?'failed':outcome==='cancelled'?'cancelled':'done');
- }
- assert.equal(taskCardPresentation(task({controlState:'stopping'})).label,'停止待确认');
- assert.equal(taskCardPresentation(task({state:'paused'})).label,'已暂停');
-});
-
 test('valid user questions and authorizations alone draw user attention',()=>{
  const w=worker('w');w.pendingUser=2;w.pendingUsers=[{id:'question',after:0,kind:'question'},{id:'authorization',after:1,kind:'authorization'}];
- assert.equal(taskCardPresentation(task({workers:[w]})).label,'需你审批');assert.equal(taskCardPresentation(task({workers:[w]})).attention,'user');
+ assert.equal(taskCardPresentation(task({workers:[w]})).label,'需你审批 · 需你答复');assert.equal(taskCardPresentation(task({workers:[w]})).attention,'user');
  w.run.phase='uncertain';assert.equal(taskCardPresentation(task({workers:[w]})).attention,'none');
  w.pendingUser=0;w.pendingMain=1;w.run.phase='executing';assert.equal(taskCardPresentation(task({workers:[w]}),w).attention,'none');
  assert.equal(workerStatus(w).label,'Homer处理中');
- w.run.phase='parked';assert.equal(taskCardPresentation(task({workers:[w]})).label,'Homer处理中');
+ w.run.phase='parked';assert.equal(taskCardPresentation(task({workers:[w]})).label,'');
 });
 
 test('tree deduplicates real matters and rejects unrelated or malformed session ownership',()=>{
  const a=worker('a'),b=worker('b'),wrong=worker('wrong');wrong.taskId='elsewhere';
  const t=task({workers:[a,b,a,wrong]});assert.equal(statusTree([t,t]).length,1);assert.equal(statusTree([t])[0]!.workers.length,2);
  assert.equal(statusTree([task({historyState:'archived'})]).length,0);
-});
-
-test('multiple pending requests and running peers contribute one matter to the user filter',()=>{
- const a=worker('a'),b=worker('b');a.pendingUser=2;a.pendingUsers=[{id:'q',after:0},{id:'approval',after:1,kind:'authorization'}];
- const t=task({workers:[a,b]});const snapshot=statusCountSnapshot([t,t]);
- assert.deepEqual(snapshot.counts,{working:0,queued:0,done:0,needsUser:1});
- assert.deepEqual([...snapshot.matches.needsUser],['task']);
- a.pendingUser=3;assert.equal(statusCountSnapshot([t]).counts.needsUser,1,'unlocated requests still mark the matter once');
-});
-
-test('visible settlement counts once regardless of outcome or Worker execution',()=>{
- for(const outcome of ['succeeded','partial','failed','cancelled']){
-  const t=task({state:'settled',outcome});
-  for(const workers of [[],[worker('a','succeeded','ended'),worker('b','succeeded','ended')],[worker('live')]]){
-   const snapshot=statusCountSnapshot([{...t,workers}]);
-   assert.deepEqual(snapshot.counts,{working:0,queued:0,done:1,needsUser:0});
-   assert.deepEqual([...snapshot.matches.done],['task']);
-  }
-  assert.equal(statusCountSnapshot([{...t,historyState:'archived'}]).counts.done,0);
-  assert.equal(statusCountSnapshot([{...t,controlState:'stopping'}]).counts.done,0);
- }
-});
-
-test('queued work and successful old rounds do not inflate current active sessions',()=>{
- const t=task({workers:[worker('a'),worker('b','queued','ready'),worker('c','succeeded','ended')]});
- assert.deepEqual(statusCountSnapshot([t]).counts,{working:1,queued:1,done:0,needsUser:0});
- for(const change of [{state:'paused'},{controlState:'stopping'}])assert.deepEqual(statusCountSnapshot([{...t,...change}]).counts,{working:0,queued:0,done:0,needsUser:0});
-});
-
-test('unknown current work with no active proof suppresses an exact quantity',()=>{
- assert.equal(statusCountSnapshot([task({workers:[worker('a','running','uncertain')]})]).workingKnown,false);
- assert.equal(statusCountSnapshot([task({workers:[worker('a','running','uncertain'),worker('b')]})]).workingKnown,true);
-});
-
-test('each sorting category uses its own event fact and stable tie ordering',()=>{
- const question=worker('q');question.pendingUser=1;question.pendingUsers=[{id:'q',after:0}];question.pendingUserCreatedAt=500;
- const main=worker('m','succeeded','ended');main.pendingMain=1;main.pendingMainCreatedAt=600;
- const cases=[task({id:'ended',state:'settled',outcome:'succeeded',settledAt:900}),task({id:'waiting'}),task({id:'main',workers:[{...main,taskId:'main',run:{...main.run,taskId:'main'}}]}),task({id:'running',workers:[{...worker('a'),taskId:'running',run:{...worker('a').run,taskId:'running'}}]}),task({workers:[question]})];
- assert.deepEqual(rankedStatusMatters(statusTree(cases)).map(r=>r.key.id),['task','running','main','waiting','ended']);
- assert.equal(matterSortKey(statusTree([cases[4]!])[0]!).enteredAtMs,500);
 });
 
 test('same Run uses its recorded start and ignores task updates for ordering',()=>{
@@ -86,14 +37,14 @@ test('invalid event times have deterministic fallback and ties use creation orde
  assert.equal(matterSortKey(statusTree([a])[0]!).enteredAtMs,-Infinity);
 });
 
-test('filters and visible prefix use the whole snapshot and retain a reader anchor',()=>{
- const tasks=Array.from({length:30},(_,i)=>task({id:String(i),state:'settled',outcome:'succeeded',settledAt:100-i}));
- const ranked=rankedStatusMatters(statusTree(tasks));assert.equal(statusVisibleLimit(ranked,20,['25']),26);
- const open=task({id:'open'});const all=rankedStatusMatters(statusTree([...tasks,open]));assert.equal(all[0]!.key.id,'open');assert.equal(statusVisibleLimit(all,20),20);
-});
-
 test('linear plan conversion preserves parallel and ambiguous plan semantics',()=>{
  assert.equal(linearPlanIndex([{step:'done',status:'completed'},{step:'active',status:'inProgress'},{step:'next',status:'pending'}]),1);
  assert.equal(linearPlanIndex([{step:'a',status:'inProgress'},{step:'b',status:'inProgress'}]),null);
  assert.equal(linearPlanIndex([]),null);assert.equal(linearPlanIndex([{step:'a',status:'completed'}]),1);
+});
+
+test('the archive entry alone lists archived matters and pausing is an execution gate',()=>{
+ const archived=task({historyState:'archived'});assert.deepEqual(statusTree([archived]),[]);
+ assert.equal(statusTree([archived],'archived')[0]?.task.id,archived.id);
+ assert.equal(taskCardPresentation(task({state:'paused'})).label,'');
 });

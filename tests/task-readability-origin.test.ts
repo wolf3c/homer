@@ -52,3 +52,22 @@ test('file origins retain exact message authorization and reject unattached, rev
   await assert.rejects(()=>access.read(selector),/media_scope_denied/);
  }finally{f.close();}
 });
+
+test('archived history includes both registration and later delegation, scoped to their original messages',async()=>{
+ const {f,bridge}=setup();try{
+  const {taskId}=f.tasks.createTask(f.actor,{operationId:'register',goal:'Record this for later'});
+  const requestId='source:start',later=f.source(requestId,'Start work on the registered task');
+  const actor={...f.actor,sourceRequestId:requestId,inputMessageId:later.messageId,turnId:'turn:'+requestId};
+  const worker=f.tasks.workerOpen(actor,{operationId:'dispatch',taskId,authority:{sourceRequestId:requestId,description:'Start work'}});
+  const run=f.start(worker.workerId),reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Done'},true)!;
+  f.consumeMain(reply.messageId);
+  const archived=f.tasks.archiveHistory(actor,{operationId:'archive',taskId,expectedRevision:f.tasks.task(taskId).revision},true);
+  assert.equal(archived.state,'archived');
+  const overview=bridge.taskOverview!,messages=(await overview.detail(taskId)).publicMessages!;
+  assert.deepEqual(messages.map(row=>row.excerpt),['Start work on the registered task','Investigate without edits']);
+  assert.equal((await overview.origin!(taskId,messages[0]!.id)).message.requestId,requestId);
+  f.history.revokeMessage('thread:main',messages[0]!.id);
+  assert.equal((await overview.detail(taskId)).publicMessages!.length,1);
+  await assert.rejects(()=>overview.origin!(taskId,messages[0]!.id),/task_origin_not_found/);
+ }finally{f.close();}
+});

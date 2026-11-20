@@ -16,7 +16,8 @@ for(const failed of [false,true])test('HMR-RECURSIVE host: same-thread followup 
     assert.equal(workers[0]!.threadId,workers[3]!.threadId);
     const [task]=f.app.tasks.tasks();
     assert.equal(f.app.tasks.tasks().length,1);
-    assert.equal(task!.outcome,failed?'partial':'succeeded');
+    assert.equal(task!.historyState,'visible');
+    assert.equal(task!.notes,failed?'C unavailable; report delivered.':'Report delivered.');
     const state=await homerWebBridge(f.app).history!.state();
     assert.equal(state.artifacts?.length,1);
     const [file]=state.artifacts!;

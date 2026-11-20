@@ -80,7 +80,6 @@ function fixture(
         if(execution.status!=="completed"||!filePath){
           const reason=execution.errorCode??"artifact_missing";
           await this.call("task_update",{taskId:notice.taskId,notes:reason});
-          if(!["interrupted","unconfirmed"].includes(execution.status))await this.call("task_update",{taskId:notice.taskId,action:"settle",outcome:"failed",notes:reason});
           if(mainDeliveryFails)throw Error("mock_main_disconnected");
           if(mainDeliveryEmpty)return {status:"completed",text:""};
           return {status:"completed",text:"已核对执行状态："+reason};
@@ -302,7 +301,7 @@ test("T07: missing material, actual engine failure and absent artifact cannot re
       const raw=a.tasks.workerRead({agentId:a.store.meta('mainAgentId')!},{workerId:r.workerId}).messages.find(message=>message.kind==='worker_reply')!;
       assert.equal(raw.payload.execution.status,'completed');
     }else assert.equal(r.errorCode, code);
-    assert.equal(reply(a,r.id),undefined);assert.equal(a.tasks.task(r.taskId).outcome,'failed');
+    assert.equal(reply(a,r.id),undefined);assert.equal(a.tasks.task(r.taskId).historyState,'visible');
     await a.close();
   }
 });
@@ -377,7 +376,7 @@ test("T07/T10: failed main coordination keeps reviewed facts without claiming us
   assert.equal(run.status, "failed");
   assert.equal(reply(f.app,run.id), undefined);
   assert.ok(!f.messages.some(m=>m.type==="coordination"&&m.text.includes("发送行动清单")));
-  assert.equal(f.app.tasks.task(f.app.tasks.run(run.id).taskId).outcome,'failed');
+  assert.equal(f.app.tasks.run(run.id).status,'failed');
   await f.app.close();
 });
 
@@ -432,7 +431,7 @@ test("T08: a throwing Worker close persists an unconfirmed stop without hanging 
   worker.close=async()=>{throw Error('synthetic_close_failure');};
   try{
     await f.app.stop(id);assert.equal(f.app.tasks.run(id).phase,'uncertain');assert.equal(f.app.upgradeStatus().safe,false);
-    assert.equal(f.app.tasks.task(f.app.tasks.run(id).taskId).controlState,'normal');
+    assert.equal(f.app.tasks.task(f.app.tasks.run(id).taskId).historyState,'visible');
   }finally{worker.close=close;await close();await f.app.idle();await f.app.close();}
 });
 

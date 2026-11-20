@@ -2,12 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
-import {Store,STORE_SCHEMA_VERSION,prepareMainReceiptMigration} from '../src/store.js';
+import {Store} from '../src/store.js';
 import {Files} from '../src/files.js';
 import {RecursiveTasks} from '../src/recursive-tasks.js';
 import {ConversationHistory} from '../src/web-history.js';
 import {MainInputs,MAIN_INBOX_CAPACITY} from '../src/recursive-main-inputs.js';
-import {CommittedDatabase} from '../src/committed-database.js';
 import {DatabaseSync} from 'node:sqlite';
 function fixture(){
   const base=resolve('.codex/scratch/schedule-inbox');mkdirSync(base,{recursive:true});
@@ -19,28 +18,10 @@ function fixture(){
   return {root,path,store,tasks,history,inputs,close(){store.close();rmSync(root,{recursive:true,force:true});}};
 }
 const delivery=(id:string)=>({deliveryId:id,scheduleId:'schedule-a',scheduledAt:1,text:'Inspect at the intended time',sourceRef:'opaque-original-source'});
-test('schema 6 upgrades additively and preserves original thread and operations',()=>{
+test('an older schema is refused before schedule DDL or metadata writes',()=>{
   const f=fixture();
-  try{
-    f.store.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson) VALUES('retain-unknown','main','scope','retain','worker_send','hash','uncertain','{}')").run();
-    f.store.setMeta('recursiveSchemaVersion','6');f.store.db.exec('DROP TABLE IF EXISTS schedules');f.store.close();
-    const upgraded=new Store(f.path,{mainReceiptMigration:prepareMainReceiptMigration(f.path)});
-    try{
-      assert.equal(upgraded.meta('recursiveSchemaVersion'),STORE_SCHEMA_VERSION);
-      assert.equal(upgraded.meta('mainThread'),'original-main');
-      assert.equal(upgraded.db.prepare("SELECT state FROM operations WHERE id='retain-unknown'").get()!.state,'uncertain');
-      assert.ok(upgraded.db.prepare("SELECT 1 FROM sqlite_master WHERE name='schedules'").get());
-      assert.deepEqual(upgraded.db.prepare('PRAGMA foreign_key_check').all(),[]);
-    }finally{upgraded.close();}
-  }finally{rmSync(f.root,{recursive:true,force:true});}
-});
-test('failed schedule schema migration rolls back its DDL and version together',()=>{
-  const f=fixture(),exec=CommittedDatabase.prototype.exec;
   f.store.setMeta('recursiveSchemaVersion','6');f.store.db.exec('DROP TABLE schedules');f.store.close();
-  try{
-    CommittedDatabase.prototype.exec=function(sql){exec.call(this,sql);if(sql.includes('CREATE TABLE IF NOT EXISTS schedules'))throw Error('synthetic_schedule_schema_failure');};
-    assert.throws(()=>new Store(f.path,{mainReceiptMigration:prepareMainReceiptMigration(f.path)}),/synthetic_schedule_schema_failure/);
-  }finally{CommittedDatabase.prototype.exec=exec;}
+  assert.throws(()=>new Store(f.path),/recursive_schema_unsupported/);
   const db=new DatabaseSync(f.path,{readOnly:true});
   try{
     assert.equal(db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get()!.value,'6');

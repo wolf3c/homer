@@ -16,7 +16,7 @@ const built=buildSync({stdin:{contents:readFileSync('ui/task-status.tsx','utf8')
 const mod={exports:{}};Function('require','module','exports',built.outputFiles[0].text)(require,mod,mod.exports);
 const {TaskStatusRow,Disclosures,ExecutionObservationContext}=mod.exports;
 const worker={id:'worker',taskId:'task',pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run',taskId:'task',workerId:'worker',version:1,epoch:1,threadId:'worker-thread',turnId:'worker-turn',status:'running',phase:'executing',createdAt:1000,startedAt:2000,endedAt:null}};
-const task={id:'task',headVersion:1,state:'open',controlState:'normal',historyState:'visible',workers:[worker],results:[],deliveries:[]};
+const task={id:'task',headVersion:1,state:'open',historyState:'visible',workers:[worker]};
 test('task row keeps execution record at bottom, collapsed by default, with finite-history boundary',async()=>withDom(async d=>{
  const view=t=>h(Disclosures.Provider,{value:new Map([['task/worker/worker','worker:run:1:1:worker-thread:worker-turn']])},h(TaskStatusRow,{task:t,worker:t.workers[0],label:'任务',status:{state:'working',label:'执行中',icon:'Activity',attention:'none',owner:'worker'},onOpenChange:()=>{}},h('p',null,'原有结果与操作')));
  await d.render(view(task));const record=d.find(n=>n.attrs['data-task-execution-record']==='task');assert.ok(record,'record is in the existing expanded task');

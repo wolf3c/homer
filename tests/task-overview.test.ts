@@ -10,7 +10,7 @@ test('projection reads two real sessions without inventing Tasks or requiring fo
   for(const worker of [a,b]){const run=f.tasks.claim(worker.runId)!;f.tasks.bind(run.id,run.epoch,'thread:'+worker.workerId,'turn:'+run.id);}
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();
   let data=readTaskOverview(f.store.db);assert.equal(data.tasks.length,1);assert.equal(data.tasks[0]!.id,f.taskId);assert.deepEqual(data.tasks[0]!.workers.map(w=>w.id),[a.workerId,b.workerId]);
-  assert.equal(classifyTask(data.tasks[0]!).key,'running');
+  assert.equal(classifyTask(data.tasks[0]!).key,'ordinary');
   assert.equal(readTaskDetail(f.store.db,f.taskId).runs.length,2);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
   f.store.db.exec('PRAGMA query_only=OFF');
   for(const worker of [a,b]){const run=f.tasks.run(worker.runId);f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Answer '+worker.workerId},true);}
@@ -30,18 +30,16 @@ test('same-session followup replaces its latest Run projection and preserves his
  }finally{f.close();}
 });
 
-test('plain text Main settlement is visible with zero Result and Delivery records',()=>{
- const f=overviewFixture();try{
-  f.tasks.settleTask(f.actor,{operationId:'settle',taskId:f.taskId,expectedRevision:f.tasks.task(f.taskId).revision,outcome:'succeeded',notes:'Investigation complete'});
-  const task=readTaskOverview(f.store.db).tasks[0]!;assert.equal(classifyTask(task).key,'complete');assert.equal(task.notes,'Investigation complete');
- }finally{f.close();}
-});
-
 test('pending questions retain exact Run epoch version thread and turn ownership',()=>{
  const f=overviewFixture();try{
   const a=f.open('page'),run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:page');
   f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt,runEpoch,taskVersion) VALUES('question','identity','fingerprint',?,'thread:page','turn:page','request','ask_main','question','{}','{}','pending_user',100,100,?,?)`).run(run.id,run.epoch,run.version);
   let row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingUser,1);assert.deepEqual(row.workers[0]!.pendingUsers,[{id:'question',after:0,kind:'question'}]);assert.equal(classifyTask(row).key,'user');
+  f.store.db.prepare("UPDATE tasks SET state='paused' WHERE id=?").run(f.taskId);
+  assert.equal(readTaskOverview(f.store.db,{view:'needsUser'}).tasks[0]?.id,f.taskId);
+  f.store.db.prepare("UPDATE worker_interactions SET responseUserMessageId='already-replied'").run();
+  assert.equal(readTaskOverview(f.store.db,{view:'needsUser'}).tasks.length,0);
+  f.store.db.prepare("UPDATE worker_interactions SET responseUserMessageId=NULL").run();
   for(const [column,value] of [['runEpoch',99],['taskVersion',99],['threadId','unrelated'],['turnId','unrelated']] as const){
    const before=f.store.db.prepare(`SELECT ${column} AS value FROM worker_interactions`).get()!.value;
    f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(value);row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingUser,0,column);
@@ -70,8 +68,31 @@ test('overview counts a pending reply from the latest Worker run under its origi
   const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original observation'},true)!;
   const task=readTaskOverview(f.store.db).tasks[0]!;
   assert.equal(task.headVersion,2);assert.equal(task.workers[0]!.run.version,1);
-  assert.equal(task.workers[0]!.pendingMain,1);assert.equal(classifyTask(task).key,'main');
+  assert.equal(task.workers[0]!.pendingMain,1);assert.equal(classifyTask(task).key,'ordinary');
   f.store.db.prepare('UPDATE agent_messages SET taskVersion=? WHERE id=?').run(task.headVersion,reply.messageId);
   assert.equal(readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMain,0,'a message must still match the emitting run');
+ }finally{f.close();}
+});
+
+test('archive pages and detail preserve Worker history without restoring the matter',()=>{
+ const f=overviewFixture();try{
+  const w=f.open('archive example'),run=f.tasks.claim(w.runId)!;
+  f.tasks.bind(run.id,run.epoch,'archive-thread','archive-turn');
+  f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original reply'},true);
+  f.store.db.prepare("UPDATE tasks SET historyState='archived' WHERE id=?").run(f.taskId);
+  f.store.db.exec('PRAGMA query_only=ON');
+  assert.deepEqual(readTaskOverview(f.store.db).tasks,[]);
+  assert.equal(readTaskOverview(f.store.db,{view:'archived'}).tasks[0]?.workers[0]?.id,w.workerId);
+  assert.equal(readTaskDetail(f.store.db,f.taskId,{workerId:w.workerId}).conversation!.messages.at(-1)?.text,'Original reply');
+ }finally{f.close();}
+});
+
+test('uncertain actions or receipts remain visible after the Worker replies',()=>{
+ const f=overviewFixture();try{
+  const w=f.open('check'),run=f.tasks.claim(w.runId)!;f.tasks.bind(run.id,run.epoch,'thread:check','turn:check');
+  const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic answer'},true)!;
+  f.store.db.prepare("UPDATE operations SET state='uncertain' WHERE operationId=?").run('open:check');
+  f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(reply.messageId);
+  assert.equal(classifyTask(readTaskOverview(f.store.db).tasks[0]!).label,'操作结果待核实 · 接收回执待核实');
  }finally{f.close();}
 });

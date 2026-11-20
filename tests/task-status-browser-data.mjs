@@ -1,7 +1,7 @@
 // Synthetic public DTOs only; importing this helper starts no server or engine.
 export function overviewTask(id,extra={}){
  const workerId='worker-'+id;
- return {id,title:'合成任务 '+id,goal:'合成任务 '+id,notes:'',headVersion:1,revision:1,state:'open',outcome:null,controlState:'normal',historyState:'visible',sourceRequestId:null,workers:[{id:workerId,taskId:id,title:'合成 Worker',pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run-'+id,workerId,taskId:id,version:1,epoch:0,status:'running',phase:'executing',sourceRequestId:null}}],results:[],deliveries:[],...extra};
+ return {id,title:'合成任务 '+id,goal:'合成任务 '+id,notes:'',headVersion:1,revision:1,state:'open',historyState:'visible',sourceRequestId:null,workers:[{id:workerId,taskId:id,title:'合成 Worker',pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run-'+id,workerId,taskId:id,version:1,epoch:0,status:'running',phase:'executing',sourceRequestId:null}}],...extra};
 }
 export function workerNamed(overview,title){
  for(const task of overview.tasks){const worker=task.workers.find(w=>w.title===title);if(worker)return {task,worker};}

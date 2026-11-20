@@ -51,14 +51,14 @@ test('plain and structured-looking Worker replies keep local work without making
    complete(f,actor,text);
    const read=f.tasks.workerRead(main,{workerId:worker.workerId});
    assert.equal(read.messages.at(-1)?.text,text);
-   assert.equal(f.tasks.task(f.task.taskId).outcome,null);
+   assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
    assert.equal(f.history.list(main.threadId!).some(message=>message.attachments?.length),false);
    assert.deepEqual(files.map(path=>readFileSync(path,'utf8')),['# a.md','# b.md']);
   }finally{f.close();}
  }
 });
 
-test('Main can settle partial and failed tasks while committed attachment bytes remain exact',()=>{
+test('Main can record partial and failed work while committed attachment bytes remain exact',()=>{
  for(const outcome of ['partial','failed'] as const){
   const f=fixture();
   try{
@@ -67,13 +67,13 @@ test('Main can settle partial and failed tasks while committed attachment bytes 
     const id=f.history.commitAssistant({threadId:main.threadId!,taskId:f.task.taskId,taskVersion:1,text:'Progress',attachments:[ref],operationKey:'retained-message'});
     media.pinAttachment(ref,'message:'+id);media.unpin('operation:seed');return id;
    });
-   const input={...mutation(f,'settle'),outcome,notes:'Synthetic optional part missing'},settled=f.tasks.settleTask(main,input);
-   assert.equal(f.tasks.task(f.task.taskId).outcome,outcome);
-   assert.equal(f.tasks.task(f.task.taskId).state,'settled');
+   const input={...mutation(f,'note'),patch:{notes:outcome+' — Synthetic optional part missing'}},saved=f.tasks.updateTask(main,input);
+   assert.equal(f.tasks.task(f.task.taskId).notes,input.patch.notes);
+   assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
    assert.deepEqual(f.history.message(messageId)?.attachments,[ref]);
    assert.equal(media.gc(Date.now()+31*86400000),0);
    assert.equal(media.readAttachment(ref).bytes.toString(),'Retained work');
-   assert.deepEqual(f.tasks.settleTask(main,input),settled);
+   assert.deepEqual(f.tasks.updateTask(main,input),saved);
   }finally{f.close();}
  }
 });

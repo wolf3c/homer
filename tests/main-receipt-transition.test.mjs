@@ -7,7 +7,7 @@ import {chatFixture} from './task-chat-fixture.ts';
 import {MainProcessHistory} from '../src/main-process.ts';
 import {WorkerInteractions} from '../src/worker-interactions.ts';
 import {Store as LegacyStore} from './fixtures/store-v7.ts';
-import {inspectMainReceiptEvidence,migrateMainReceiptsInTransaction} from '../src/store.ts';
+import {inspectMainReceiptEvidence,migrateMainReceiptsInTransaction} from '../scripts/legacy-main-receipts-v8.ts';
 import {previewLegacyMainReceipts,applyLegacyMainReceiptsInTransaction} from '../scripts/reconcile-main-receipts.mjs';
 
 function legacy(){
@@ -120,7 +120,7 @@ test('private preview ancestors are checked before creating directories or apply
  const f=legacy();try{
   const root=join(f.dir,'synthetic-repository'),outside=join(f.dir,'outside');
   mkdirSync(join(root,'scripts'),{recursive:true});mkdirSync(outside,{mode:0o700});
-  copyFileSync('scripts/reconcile-main-receipts.mjs',join(root,'scripts/reconcile-main-receipts.mjs'));
+  for(const name of ['reconcile-main-receipts.mjs','legacy-main-receipts-v8.ts'])copyFileSync(join('scripts',name),join(root,'scripts',name));
   symlinkSync(resolve('src'),join(root,'src'),process.platform==='win32'?'junction':'dir');
   const run=(...args)=>spawnSync(process.execPath,['--import',resolve('node_modules/tsx/dist/loader.mjs'),join(root,'scripts/reconcile-main-receipts.mjs'),'--db',f.path,...args],{encoding:'utf8',timeout:15000});
   const before=f.store.db.prepare('SELECT * FROM agent_receipts ORDER BY messageId').all();

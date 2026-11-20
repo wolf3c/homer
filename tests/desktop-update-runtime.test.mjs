@@ -78,7 +78,7 @@ if(!vm.SourceTextModule){
   assert.match(output,/# tests [1-9]\d*/);
  });
 }else{
- for(const schema of ['8','5'])test('packaged runtime reads an old engine profile and checks its actual database schema '+schema,async t=>{
+ for(const schema of ['9','8','5'])test('packaged runtime reads an old engine profile and checks its actual database schema '+schema,async t=>{
   const parent=resolve('.codex/scratch/desktop-profile-upgrade');mkdirSync(parent,{recursive:true});
   const root=mkdtempSync(join(parent,'synthetic-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
   writeFileSync(join(root,'.homer-desktop-test-profile'),'{"format":1}');
@@ -89,7 +89,7 @@ if(!vm.SourceTextModule){
   db.prepare('INSERT INTO meta VALUES(?,?)').run('mainThread','synthetic-retained-thread');db.prepare('INSERT INTO meta VALUES(?,?)').run('recursiveSchemaVersion',schema);
   db.prepare('INSERT INTO retained VALUES(?)').run('synthetic-retained-history');db.close();const before=readFileSync(database);
   const f=await runtimeFixture({stoppedConfirmed:true},{profileRoot:root});await f.complete();
-  if(schema==='8')assert.deepEqual(f.events.map(v=>v.kind),['owner-release','stopped']);
+  if(schema==='9')assert.deepEqual(f.events.map(v=>v.kind),['owner-release','stopped']);
   else{assert.ok(f.events.some(v=>v.kind==='error'&&v.code==='desktop_schema_incompatible'));assert.equal(f.events.some(v=>v.kind==='owner-release'),false);}
   assert.deepEqual(readFileSync(join(root,'desktop-profile.json')),marker);assert.equal(readFileSync(auth,'utf8'),'synthetic-retained-account');assert.deepEqual(readFileSync(database),before);
  });

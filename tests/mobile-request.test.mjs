@@ -57,6 +57,11 @@ test('mobile conversation and execution selectors retain exact Task and Worker i
  assert.equal((await f.fetch(new Request('https://localhost/api/tasks/t/workers/w?after=20'))).status,409);assert.equal(f.calls.length,4);
 });
 
+test('history list uses scoped pages on the paired device transport',async()=>{
+ const f=fixture();assert.equal((await f.fetch(new Request('https://localhost/api/tasks/list/archived/before/20'))).status,200);
+ assert.deepEqual(f.calls,[{op:'tasks.list',input:{view:'archived',before:20}}]);
+});
+
 test('schedule center uses the same authenticated read operation over device transport',async()=>{
  const f=fixture({items:[],nextOffset:null}),input={readEpoch:'epoch',view:'list',offset:20};
  const response=await f.fetch(new Request('https://localhost/api/schedules/read',{method:'POST',body:JSON.stringify(input)}));
