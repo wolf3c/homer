@@ -255,13 +255,13 @@ Worker 每次原生冷初始化，复用配置控制连接读取生效根标记�
 | `task_create.resultIds`、`worker_open.resultIds`、`Authority.resultIds` 及 Run 中同类选择 | 删除。所选准确资料只记录在实际转交消息的附件中，Run 继续关联原消息及投递回执，不复制附件清单。 |
 | 任务级附件授权及上一稿登记接口 | 删除 `Authority.attachments`，取消拟议的 `task_create.attachments / task_update.attachments`、补充授权汇总及仅为任务清单设置的 pin。不另建会话附件授权表；目标、允许动作和取消约束仍由任务维护。 |
 | 以 resultId／runId 下载或定位文件的接口 | 删除旧路由及 `publishedResult/publishedArtifact` 查询链，改由消息所选附件解析。预览与批注的来源同样改为消息＋附件＋摘要，不保留“按 Run 取第一个文件”的入口。 |
-| Main／Worker 的旧 HOME 执行分支 | 退役；业务执行统一使用专属 HOME 的现有原生路径。`controlOnly` 管理连接及其受限权限保留，不为旧绑定或测试夹具保留另一条业务执行路径。 |
+| Main／Worker 的旧受限执行分支 | 已退役。业务执行使用本实例的 `CODEX_HOME`，`controlOnly` 管理连接保留原有受限权限。 |
 | `read_material / write_markdown / stage_file_result / create_voice_result` | 按[文件工具的独立用途](#文件工具的独立用途)删去重复读写入口；保留的附件导出只产生文件地址，不创建 Result 或消息，不成为交付前置步骤。 |
 | 操作与审批回执 | 保留各自实际动作的身份、范围及未知状态；不增建另一套通用回执或附件授权表。 |
 
 ### 文件工具的独立用途
 
-已静态核对当前入口、宿主调用及测试：正式桌面、默认 CLI 和示例配置使用专属 HOME 的原生路径；HOME 不匹配时的受限业务执行用于旧绑定兼容，并被部分合成夹具沿用。**决定退役该业务分支，不再以它为理由保留重复工具。** `!nativeTools` 同时用于无模型轮次的管理连接，不能整段误删。[配置与默认值](../../src/config.ts) · [执行权限配置](../../src/engine.ts) · [宿主接线](../../src/service.ts)
+Main 和 Worker 启动前会核对 `codexHome` 与实例的原生 Codex 目录。绑定不匹配时，宿主返回 `engine_native_tools_home_required`。原先允许旧绑定继续受限执行业务的分支已退役。`controlOnly` 仍用于管理连接，使用受限权限，不启动模型轮次。[配置与默认值](../../src/config.ts) · [执行权限配置](../../src/engine.ts) · [宿主接线](../../src/service.ts)
 
 | 现有能力 | 收敛判断 |
 | --- | --- |
