@@ -49,6 +49,26 @@ AMH 生产 `/api/pricing` 的 `default` 组及交付账号的 `/api/user/models`
 - **yezi2 `50260423`**。在现有版本协商中替换本地 V2 候选格式，去掉下发的 `models` 名单和对应的网站名单设置。发布前核对没有已发布的旧 V2 调用方，并验证 GET 与兑换的新版选型和旧版 V1 响应。
 - **回滚**。将网站选型改回仍在使用的安装包都支持的上一组值，下次安全重启时生效。如需降级到依赖 V1 缓存的客户端，按旧版流程从网站重取配置，必要时重新登录。沿用原会话资料目录。
 
+## 线上精简下发验收状态
+
+截至 2026-11-20，线上精简下发保持关闭。
+
+### 已通过
+
+- **本地协议与候选包。** yezi2 的 GET 和 PKCE 兑换已通过 32 项定向回归，覆盖 V1／V2 协商、关闭开关、选型回退和授权失败。macOS arm64 隔离候选包已验证 V1 同线程升降级、八款模型回环轮换。随包默认 Terra 选型已通过真实 AMH 的 Main／Worker 出站、两次 Luna 审核及 Worker 回传。[八款模型轮换](#八款模型轮换验收) · [默认选型端到端验收](#默认选型端到端验收)
+- **已发布客户端与公网 GET。** 已核对的 16 个非草稿 Release 均未发送版本头；当日公开最新版 v0.1.19 的发布清单指向 `3eadff05`，源码复核结果一致。公网配置 GET 分别以无协商头、仅 WebSocket 特性头、特性头加 V2 版本头请求，均返回 HTTP 200、完整 V1 和 `Cache-Control: no-store`。`Vary` 含特性头和 `Accept-Encoding`，尚无版本头。此次只读检查未做生产 PKCE 兑换。[v0.1.19 正式发布](https://github.com/wolf3c/homer/releases/tag/v0.1.19)
+
+### 开关前待验
+
+1. **三平台正式包。** 分别核对 macOS arm64、macOS x64、Windows x64 拟发布包的版本、源码提交和生产网站／网关地址。确认每个包均含 `models.json` 和 `member-model-defaults.json`，启动后 Main／Worker 实际读取包内目录，默认选型为 Terra `medium`／`high`。
+2. **yezi2 新版上线、开关仍关闭。** 保留完整的 `private.homer.clientConfig`，省略 `private.homer.clientConfigVersion` 或设为数字 `1`。用隔离会员分别走旧客户端与新版客户端的配置 GET 和真实 PKCE 兑换。即使新版发送版本头，两者也都应收到完整 V1（兑换中位于 `config`），并保留旧版 WebSocket 特性协商。两个接口均应返回 `no-store`，且 `Vary` 包含 `X-Homer-Config-Features` 和 `X-Homer-Config-Version`。确认旧版可登录并使用 V1，新版可登录并整组回退到随包默认值。
+
+### 开关后才能验
+
+正式将 `private.homer.clientConfigVersion` 设为数字 `2` 后，检查公网 GET 响应体和 PKCE 兑换响应的 `config`。带版本头 `2` 时，两处均应只有 `main`、`worker`，每个角色仅含 `model` 和 `effort`，取值一致。旧客户端仍在两处收到完整 V1。只核对响应结构与选型字段。当前网站选型恰与随包默认值相同，单看 Terra 出站值无法判断 V2 是否生效。
+
+**回滚。** 选型有误时，将网站两角色恢复为在用安装包都支持的上一组值，下次安全重启后复核。需要撤回整个精简格式时，将版本开关恢复为 `1` 或移除，再核对 GET 与兑换均返回完整 V1。旧版继续使用网站 V1，新版在下次安全重启后整组采用随包默认值。
+
 ## 验收
 
 1. 用隔离资料验证新版登录和启动、旧版 V1 登录、升级复用原账号和线程，以及降级后重取 V1 配置并续办原线程。
