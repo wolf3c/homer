@@ -82,7 +82,7 @@ flowchart LR
 
 ### 这张表怎么读写
 
-`task_create(title, goal, notes?)` 只登记，`worker_open(taskId, message?)` 选择已有事项。Homer 通过 `task_update` 更新目标或整段笔记，通过 `work_inspect` 查看当前要求、笔记、来源及关联 Worker。收到正式回报时，宿主同时提供本事项的当前完整目标与笔记、执行版本及原文；需要核实中途转向时再沿 `worker_read` 查询。
+`task_create(title, goal, notes?)` 只登记，`worker_open(taskId, message?)` 选择已有事项。Homer 通过 `task_update` 更新目标或整段笔记，通过 `work_inspect` 查看当前要求、笔记、来源及关联 Worker。正式回报以「内部协作输入 · Worker 回报」标识，附本事项的当前完整目标与笔记、Worker 执行版本及原文。只有本条输入已有操作时才附原回执。需要核实中途转向时再沿 `worker_read` 查询。
 
 ### 用户补充、改口或推翻重来
 

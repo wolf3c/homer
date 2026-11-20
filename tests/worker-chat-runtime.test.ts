@@ -48,7 +48,10 @@ test('two Worker conversations return complete original text automatically witho
     const replies=f.inputs.filter(text=>text.endsWith(raw));
     assert.equal(replies.length,2);
     for(const reply of replies){
-      const facts=JSON.parse(reply.split('\n')[1]!);
+      const [header,metadata]=reply.split('\n',2);
+      assert.equal(header,'[内部协作输入 · Worker 回报]');
+      const facts=JSON.parse(metadata!);
+      assert.ok(!Object.hasOwn(facts,'operations'));
       assert.equal(facts.taskId,taskId);assert.equal(facts.version,1);
       assert.deepEqual(facts.currentTask,{title:'Read A.',goal:'Read A.'});
       assert.equal(facts.kind,'worker_reply');assert.ok(facts.workerId&&facts.messageId);

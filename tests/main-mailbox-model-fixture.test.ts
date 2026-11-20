@@ -24,9 +24,11 @@ test('unknown original effects keep the worked coordination unknown without repl
   threadId='synthetic-replay-main';turnId?:string;resumable=false;
   constructor(readonly handler:(call:ToolCall)=>Promise<unknown>){super();}
   async start(){return this.threadId;}
-  async turn(_text:string,hooks?:{onStarted?:(id:string)=>void}){
+  async turn(prompt:string,hooks?:{onStarted?:(id:string)=>void}){
    this.turnId='synthetic-replay-turn';this.resumable=true;hooks?.onStarted?.(this.turnId);
-   await this.handler({threadId:this.threadId,turnId:this.turnId,callId:'inspect',tool:'work_inspect',arguments:{operationKey:fixture!.worker.operationKey}});
+   const [receipt]=JSON.parse(prompt.split('\n')[1]!).operations;
+   assert.equal(receipt.id,fixture!.worker.operationKey);assert.equal(receipt.state,'uncertain');
+   await this.handler({threadId:this.threadId,turnId:this.turnId,callId:'inspect',tool:'work_inspect',arguments:{operationKey:receipt.id}});
    await this.handler({threadId:this.threadId,turnId:this.turnId,callId:'notes',tool:'task_update',arguments:{taskId:fixture!.task.taskId,notes:'原操作结果未知，已核对回执；等待核实，不重新执行。'}});
    const text='原操作结果尚未确认，未重新执行。';
    return {status:'completed' as const,text,messages:[{itemId:'report',phase:'final_answer',text}]};
