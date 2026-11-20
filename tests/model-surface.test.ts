@@ -10,6 +10,23 @@ import {WORKER_INTERACTION_TOOLS} from '../src/worker-interaction-tools.js';
 import {WORKER_MEDIA_TOOLS, WORKER_FILE_TOOLS} from '../src/media-tools.js';
 import {fixture, until} from './fixtures/worker-chat-host.js';
 
+test('Main resumes the catalog from before proactive settlement on its original thread', async () => {
+  const oldHash = '615506d5ebbfc9ade218daa6793de1b0318d10a3016463b99da0395d498aaccf';
+  const f = fixture();
+  try {
+    f.app.store.setMeta('mainThread', 'synthetic-settlement-thread');
+    f.app.store.setMeta('mainToolsHash', oldHash);
+    await f.app.start();
+    const resumed = f.engines[0]!;
+    assert.equal(resumed.threadId, 'synthetic-settlement-thread');
+    assert.equal(f.app.store.meta('mainToolsHash'), oldHash);
+    const previous = resumed.options.tools.find(tool => tool.name === 'task_update')!;
+    const current = RECURSIVE_TOOLS.find(tool => tool.name === 'task_update')!;
+    assert.notEqual(current.description, previous.description);
+    assert.deepEqual(current.inputSchema, previous.inputSchema);
+  } finally {await f.close();}
+});
+
 test('ordinary collaboration accepts a titled goal or message without host identity', () => {
   for (const [name, args] of [
     ['task_create', {goal: '查清预览为空白的原因，先别改文件。', title:'排查空白预览'}],

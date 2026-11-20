@@ -20,12 +20,15 @@ const workerOpen = 'Open a Worker conversation. With taskId use that authorized 
 const workerOpenTitle = ' When creating, provide a concise title describing the task; omit title when taskId is given.';
 const workerOpenDetails = ' Optional attachments each select either an absolute path or an exact assetId and revision. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.';
 const workerOpenFields = {message: text, workingDirectory: str, attachments};
+function taskUpdateDescription(settlement: string): string {
+  return 'Update goal or notes, or explicitly pause, resume, cancel or settle the whole task. '
+    + 'To settle, send only taskId, action "settle", outcome ("succeeded", "partial" or "failed"), and optional notes. '
+    + settlement + ' A goal change requires actual user authority. A paused goal change stays paused. Resume can include a new goal, and reopening settled work requires a new user request. Neither starts a Worker.';
+}
 const optionalTitleTools: Tool[] = [
   tool('task_create', 'Record one goal without commissioning or starting execution. Use worker_open for the first authorized dispatch. Notes and source history never grant authority.', {goal: text, notes: {type: 'string', maxLength: 24000}, title, workingDirectory: str}, ['goal']),
   tool('work_inspect', 'Select exactly one taskId, messageId or host-returned operationKey. Read a task and its Worker sessions, an authorized user-conversation message, or an operation receipt. With taskId, sourceRequestId selects an original user instruction for review. A receipt or history reference does not authorize replay.', {taskId: str, sourceRequestId: str, messageId: str, operationKey: str}, []),
-  tool('task_update', 'Update goal or notes, or explicitly pause, resume, cancel or settle the whole task. '
-    + 'To settle, send only taskId, action "settle", outcome ("succeeded", "partial" or "failed"), and optional notes. Choose outcome from the recorded work when the user asks to settle. '
-    + 'A goal change requires actual user authority. A paused goal change stays paused. Resume can include a new goal, and reopening settled work requires a new user request. Neither starts a Worker.',
+  tool('task_update', taskUpdateDescription('Choose outcome from the recorded work when the user asks to settle.'),
     {taskId: str, goal: text, notes: {type: 'string', maxLength: 24000}, action: enumeration('pause', 'resume', 'cancel', 'settle'), outcome: enumeration('succeeded', 'partial', 'failed'), reason: text}, ['taskId']),
   tool('worker_open', workerOpen + workerOpenTitle + workerOpenDetails, {taskId: str, message: text, title, workingDirectory: str, attachments}, ['message']),
   tool('worker_send', 'Send a message to the existing Worker conversation. An idle session resumes its native thread and a busy one queues the message. immediate=true supplements the exact current turn. Optional attachments each select either an absolute path or an exact assetId and revision. Inspect the original receipt for unknown effects.', {workerId: str, message: text, immediate: {type: 'boolean'}, attachments}, ['workerId', 'message']),
@@ -46,7 +49,10 @@ const previousRecursiveTools = optionalTitleTools.map(definition => {
   ]}};
   return definition;
 });
-export const RECURSIVE_TOOLS = previousRecursiveTools.filter(tool=>tool.name!=='send_user_message');
+const finalAnswerTools = previousRecursiveTools.filter(tool=>tool.name!=='send_user_message');
+export const RECURSIVE_TOOLS = finalAnswerTools.map(definition => definition.name === 'task_update'
+  ? {...definition, description: taskUpdateDescription('When the whole assignment has ended, settle it and choose the outcome from the recorded work. Keep it open while required work or observation remains.')}
+  : definition);
 export const MAIN_DYNAMIC_TOOLS = [...MAIN_TOOLS, ...RECURSIVE_TOOLS];
 const toolsHash = (tools: Tool[]) => createHash('sha256').update(JSON.stringify(tools)).digest('hex');
 export const MAIN_TOOLS_HASH = toolsHash(MAIN_DYNAMIC_TOOLS);
@@ -54,6 +60,7 @@ export const MAIN_TOOLS_HASH = toolsHash(MAIN_DYNAMIC_TOOLS);
 // These fingerprints were shipped. Native resume and fork retain the parent declarations.
 const mainToolCatalogs = new Map(([
   [MAIN_TOOLS_HASH, MAIN_DYNAMIC_TOOLS],
+  ['615506d5ebbfc9ade218daa6793de1b0318d10a3016463b99da0395d498aaccf', [...MAIN_TOOLS, ...finalAnswerTools]],
   ['2741b9169535017c5b55d191ee7a246333f0074ee0162a951be11f370cd84b19', [...MAIN_TOOLS, ...previousRecursiveTools]],
   ['d8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150', [...MAIN_TOOLS, ...optionalTitleTools]],
   ['f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe', [...MAIN_TOOLS, ...optionalTitleTools.map(definition =>
