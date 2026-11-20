@@ -1,6 +1,6 @@
 # 浏览器与 Preview 优化复审（2026-11-18）
 
-基于 main `e3434e27` 加本事项精确候选复审，不混入共享树的消息图片、队列、模型或其他方案改动。本文记录源码与隔离验证；提交身份以 Git 为准，未安装、推送或部署。用户正在使用的测试窗口保留。
+基于 main `e3434e27` 加本事项精确候选复审，源码提交为 `d7262abc28790928f66a5070b3afffd380c786ea`，不混入共享树的消息图片、队列、模型或其他方案改动。本文记录源码与隔离验证；提交身份以 Git 为准，未安装、推送或部署。用户正在使用的测试窗口保留。
 
 ## 当前行为
 
@@ -20,7 +20,7 @@
 
 ## 验证
 
-以下outputs报告及截图保留本机供本轮审阅，不作为运行依赖；新检出可按已提交的专项入口重建。
+下表记录已完成的源码复审。新检出可用下文的专项入口重跑。
 
 | 隔离候选检查 | 结果 |
 | --- | --- |
@@ -31,16 +31,28 @@
 | 原生浏览器、双Worker、真实MCP来源、悬停／保存／导航关闭／交接／弹窗 | 11组通过；Electron45，错误为空，退出0 |
 | UI／后端类型、独立UI及批注runtime构建、样式检测 | 通过 |
 
-[结构化汇总](../outputs/preview-final-review-2026-11-18/summary.json) · [原生报告](../outputs/preview-final-review-2026-11-18/native-complete/product-report.json) · [图片报告](../outputs/preview-final-review-2026-11-18/images/canvas-image-preview-results.json) · [进入反馈报告](../outputs/preview-final-review-2026-11-18/entry/verification.json) · [弹窗探针对照](../outputs/preview-final-review-2026-11-18/popup-probe.json)。
-
-实际截图：[原生整窗](../outputs/preview-final-review-2026-11-18/native-complete/product-native-window.png)、[网页悬停](../outputs/preview-final-review-2026-11-18/native-complete/web-hover.png)、[HTML悬停](../outputs/preview-final-review-2026-11-18/native-complete/html-hover.png)、[图片初始](../outputs/preview-final-review-2026-11-18/images/initial-390.png)、[图片批注](../outputs/preview-final-review-2026-11-18/images/active-390.png)、[图片退出](../outputs/preview-final-review-2026-11-18/images/exit-390.png)。
+原始材料保存在本机 `outputs/preview-final-review-2026-11-18/`。`summary.json` 和 `candidate.json` 记录结果与候选文件哈希，`native-complete/product-report.json`、`images/canvas-image-preview-results.json`、`entry/verification.json` 和 `popup-probe.json` 是分项回执。原生整窗、网页和 HTML 悬停截图在 `native-complete/`，图片初始、批注和退出截图在 `images/`。这些原始材料随本机目录保留，新检出只包含这里的结论和复验入口。
 
 ### 性能与实际边界
 
 本机两张合成后台页面连续20次有界ARIA读取合计 **42.1ms**，只是本轮局部样本，不外推真实网站、整机并发或LLM速度。操作仍逐页互斥；图片模式切换保持同一Blob、不额外读取，删除了手动缩放渲染与测量状态。悬停每帧至多命中一次，同一目标不重复更新；不是通过减少授权或省略错误获得速度。
 
-未跑全量npm test；未验真实模型、安装版、Windows、移动真机、日常账号／登录、OAuth／CAPTCHA。合成MCP和原生内容链通过不等于这些能力通过。源码候选哈希见[candidate.json](../outputs/preview-final-review-2026-11-18/candidate.json)。
+未跑全量npm test；未验真实模型、安装版、Windows、移动真机、日常账号／登录、OAuth／CAPTCHA。合成MCP和原生内容链通过不等于这些能力通过。
 
 早期证据保留为历史：沙箱进程身份失败在同候选获准环境重跑186/186；壳测试首次缺tsx，补正确命令后410/410；弹窗旧实现卡死由最小探针定位并修复；首次显式webContents=undefined导致普通open失败，转交完整options后闭环通过。native测试局部等待现在正确await异步条件，子Electron有独立超时回收。此前悬停、系统截图和程序焦点的未通过状态，以本节最终结果更新，不倒改旧记录。
 
-复验使用项目Node22、既有依赖、独立构建与新profile。现有入口：`tests/browser-preview.electron.test.mjs`（显式preview-electron）、`tests/canvas-image-zoom.browser.mjs`（历史文件名，现验证无缩放统一预览，不带--layout-only）、`tests/preview-annotation-entry.browser.mjs`；对应环境变量沿docs/testing.md。未新增产品配置或数据实体。
+## 复验入口
+
+使用项目 Node 22、既有依赖和独立构建产物。原生窗口按[内置浏览器专项](testing.md#内置浏览器正式源码2026-11-17)设置 `HOMER_PREVIEW_UI`、`HOMER_PREVIEW_RUNTIME` 和 `HOMER_PREVIEW_EVIDENCE` 后运行 `node scripts/test.mjs --preview-electron`。进入反馈按[截图及图片批注专项](testing.md#preview-顶栏与图片批注进入反馈2026-11-17)重跑。
+
+完整图片专项从仓库根运行，使用本轮构建的 UI 和独立报告目录。
+
+```sh
+mkdir -p .codex/scratch
+preview_run=$(mktemp -d "$PWD/.codex/scratch/preview-image-XXXXXX")
+(cd ui && ../node_modules/.bin/vite build --configLoader runner --outDir "$preview_run/web")
+HOMER_COMPONENT_BUILD="$preview_run/web" HOMER_BROWSER_EVIDENCE="$preview_run/evidence" \
+node tests/canvas-image-zoom.browser.mjs
+```
+
+为每次运行指定独立的输出目录，核对报告和退出码，图片专项还要核对报告中的 `forced`、`watchdog` 字段。原生窗口报告另保留环境及页面错误。

@@ -1,16 +1,19 @@
 // Isolated production-connection investigation. Never launches the Homer profile.
 import{spawn}from'node:child_process';
 import{createRequire}from'node:module';
-import{mkdtemp,mkdir,writeFile,readFile,rm}from'node:fs/promises';
-import{resolve,join}from'node:path';
+import{mkdtemp,writeFile,readFile,rm}from'node:fs/promises';
+import{join}from'node:path';
 import{chromium}from'playwright-core';
 import assert from'node:assert/strict';
-const require=createRequire(import.meta.url),root=await mkdtemp('/private/tmp/homer-connection-probe-');
+import {createDemoOutput, scratchRoot} from './output.mjs';
+const require=createRequire(import.meta.url);
 const native=process.argv.includes('--native');
-const out=resolve('outputs/browser-content-demo-2026-11-17/'+(native?'native-engine-probe':'connection-probe')+'.json');
+const output=await createDemoOutput('browser-connection-probe-');
+console.error('OUTPUT',output);
+const out=join(output,native?'native-engine-probe.json':'connection-probe.json');
 const {source}=require('../../node_modules/playwright-core/lib/generated/injectedScriptSource.js');
+const root=await mkdtemp(join(scratchRoot,'browser-probe-work-'));
 await writeFile(join(root,'engine.json'),JSON.stringify(source));
-await mkdir(resolve('outputs/browser-content-demo-2026-11-17'),{recursive:true});
 const main=join(root,'main.cjs');let child,browser;
 await writeFile(main,`const{app,BrowserWindow,WebContentsView}=require('electron');
 app.setPath('userData',${JSON.stringify(join(root,'profile'))});

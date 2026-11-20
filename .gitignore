@@ -1,3 +1,6 @@
+# Historical local evidence. New runs use .codex/scratch/.
+/outputs/
+
 node_modules/
 dist/
 .codex/private/

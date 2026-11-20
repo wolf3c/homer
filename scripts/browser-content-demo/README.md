@@ -38,4 +38,4 @@ node scripts/browser-content-demo/run.mjs --interactive
 
 导航后，Demo 用当前 URL 建立合成来源记录并保留原草稿；**不冒充真实消息 history 中存在新链接**。产品的原来源＋当前页来源表达仍需接入现有 service 校验。恢复只覆盖 fixture 中有稳定 ID 的元素，不能保证动态业务页的语义恢复。
 
-产物默认写入 `outputs/browser-content-demo-2026-11-17`，可用环境变量 `DEMO_OUTPUT` 指定另一个任务目录。每轮临时构建和独立 profile 位于 `.codex/scratch/browser-demo-*`，正常/失败退出均清理；截图、报告和可复现源码保留。依赖目录仅服务后续重跑，项目清理时可按此目录独立回收。
+每次运行都会在 `.codex/scratch/` 下创建新的报告目录。Demo 使用 `browser-content-demo-*`，连接探针使用 `browser-connection-probe-*`，启动时打印具体路径。需要自选报告目录时，可将 `DEMO_OUTPUT` 设为本次运行专用的 scratch 子目录。探针用 `node scripts/browser-content-demo/connection-probe.mjs` 运行，附加 `--native` 可复验原生连接。上面的报告和截图链接指向仍由 Git 跟踪的历史材料。

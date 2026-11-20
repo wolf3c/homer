@@ -1182,10 +1182,12 @@ node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test --test-con
 
 新增 tests/canvas-image-zoom.browser.mjs，登记到显式 browser 清单，不进入默认 npm test。使用现有Node22、React/Vite、playwright-core和已安装的macOS Chrome；完整HomerApp与CanvasPanel读取合成HTTP/图片，不接账号、模型、日常runtime或CODEX_HOME。独立helper只服务本图片专项，不修改历史分页共享夹具。
 
-在仓库根目录先构建独立UI，再执行定向验收；以下为本次路径，可替换为新任务的独立目录：
+在仓库根目录先构建独立UI，再执行定向验收；每次运行创建独立目录：
 
-    node node_modules/vite/bin/vite.js build ui --config ui/vite.config.ts --configLoader runner --outDir ../outputs/task-e5c80f76-image-zoom-implementation/web --emptyOutDir
-    HOMER_COMPONENT_BUILD=outputs/task-e5c80f76-image-zoom-implementation/web HOMER_BROWSER_EVIDENCE=outputs/task-e5c80f76-image-zoom-implementation/evidence-standard-final node tests/canvas-image-zoom.browser.mjs
+    mkdir -p .codex/scratch
+    preview_run=$(mktemp -d "$PWD/.codex/scratch/preview-image-XXXXXX")
+    node node_modules/vite/bin/vite.js build ui --config ui/vite.config.ts --configLoader runner --outDir "$preview_run/web"
+    HOMER_COMPONENT_BUILD="$preview_run/web" HOMER_BROWSER_EVIDENCE="$preview_run/evidence" node tests/canvas-image-zoom.browser.mjs
 
 仅对合成测试的mock-keychain对照，另指定HOMER_IMAGE_ZOOM_MOCK_KEYCHAIN=1和不同证据目录；默认不启用该开关，不改变真实App或日常Chrome。结果分别记录uiPassed、整体passed、模式、退出码／信号／强制终止／watchdog，不能只凭PNG或功能断言判定整体通过。
 
@@ -1225,11 +1227,13 @@ node --import tsx --experimental-vm-modules --test tests/web-server.test.ts test
 
 ```sh
 node scripts/build-preview-annotation.mjs
-node node_modules/vite/bin/vite.js build ui --configLoader runner --outDir /private/tmp/homer-markdown-preview-images-build --emptyOutDir
-HOMER_COMPONENT_BUILD=/private/tmp/homer-markdown-preview-images-build HOMER_BROWSER_EVIDENCE=outputs/markdown-preview-images-20261117 node --import tsx tests/markdown-resources.browser.mjs
+mkdir -p .codex/scratch
+preview_run=$(mktemp -d "$PWD/.codex/scratch/preview-markdown-XXXXXX")
+node node_modules/vite/bin/vite.js build ui --configLoader runner --outDir "$preview_run/web"
+HOMER_COMPONENT_BUILD="$preview_run/web" HOMER_BROWSER_EVIDENCE="$preview_run/evidence" node --import tsx tests/markdown-resources.browser.mjs
 ```
 
-本轮19+479项定向回归、两端类型检查及独立构建通过；两种宽度各四张图片解码，缺图有失败提示，快照正文保留，重新打开图片更新。Chrome正常退出0，forced=false、watchdog=false。截图与JSON保留于上述outputs目录供评审；构建和已退出profile按任务收尾清理。首轮四图已解码，但缺图未滚入懒加载区域导致断言超时；补测试滚动后通过，未为此修改产品。手机仅完成适配与宿主操作的合成验证，未运行真机／真实RTC、安装版或全量专项。
+本轮19+479项定向回归、两端类型检查及独立构建通过；两种宽度各四张图片解码，缺图有失败提示，快照正文保留，重新打开图片更新。Chrome正常退出0，forced=false、watchdog=false。该次截图与 JSON 记录在历史目录 `outputs/markdown-preview-images-20261117/`；构建和已退出profile按任务收尾清理。首轮四图已解码，但缺图未滚入懒加载区域导致断言超时；补测试滚动后通过，未为此修改产品。手机仅完成适配与宿主操作的合成验证，未运行真机／真实RTC、安装版或全量专项。
 
 本轮提交前复审：图片读取仅查询已授权附件元数据及原路径，不逐图重读／hash整份Markdown；正文读取保留原完整性校验。约1 MB合成报告连续10次图片读取仅触发1次正文读取的回归通过，不新增缓存或持久状态。精确提交候选488项定向离线回归、两端类型检查、独立构建及1440／390px实际Preview通过，Chrome退出0、forced=false、watchdog=false；独立复核无阻断。候选验证发现错误提示原依赖并行未提交代码，本事项仅纳入必要failed状态／文案，onError回调继续留其他事项。沙箱内4项桌面锁恢复失败在获准沙箱外重跑后通过；未运行安装版、真机或真实RTC。
 
@@ -1311,15 +1315,17 @@ node tests/schedule-display.browser.mjs
 
 ```sh
 # 从仓库根目录运行；先用当前源码构建到独立临时目录。
-(cd ui && ../node_modules/.bin/vite build --configLoader runner --outDir /private/tmp/homer-preview-entry-web)
-HISTORY_FOLLOWUP_BUILD=/private/tmp/homer-preview-entry-web HOMER_BROWSER_EVIDENCE=outputs/preview-entry-review node tests/preview-annotation-entry.browser.mjs
+mkdir -p .codex/scratch
+preview_run=$(mktemp -d "$PWD/.codex/scratch/preview-entry-XXXXXX")
+(cd ui && ../node_modules/.bin/vite build --configLoader runner --outDir "$preview_run/web")
+HISTORY_FOLLOWUP_BUILD="$preview_run/web" HOMER_BROWSER_EVIDENCE="$preview_run/evidence" node tests/preview-annotation-entry.browser.mjs
 node --import tsx --test tests/annotation-comment-form.test.mjs tests/annotation-draft.test.ts
 node_modules/.bin/tsc --noEmit -p ui/tsconfig.json
 ```
 
-1440／390／320px 正式组件合成验证通过：单行标题／标签及重要操作、长标题可见性、图片／纯文／Markdown／HTML回退／音视频／未知格式顶栏，200ms边框、引导淡出／拖选即隐藏、备注保存、退出、Esc回焦、定时器清理与减少动画，以及两种截图弹窗的既有完成／取消规则。此处不验证媒体解码、真实浏览器接管或真实截图权限；图片缩放与网页地址等专用工具功能仍保留。截图和结果见 [本轮证据](../outputs/task-42f3ced3-annotation-entry/implementation/README.md)。
+1440／390／320px 正式组件合成验证通过：单行标题／标签及重要操作、长标题可见性、图片／纯文／Markdown／HTML回退／音视频／未知格式顶栏，200ms边框、引导淡出／拖选即隐藏、备注保存、退出、Esc回焦、定时器清理与减少动画，以及两种截图弹窗的既有完成／取消规则。此处不验证媒体解码、真实浏览器接管或真实截图权限；图片缩放与网页地址等专用工具功能仍保留。原始报告与截图保存在本机 `outputs/task-42f3ced3-annotation-entry/implementation/`，新检出可用上面的专项入口重建。
 
-2026-11-17复审：基于 `dfee7228` 的独立候选在项目Node 22.22.0通过70/70定向离线（含完整main-composer、共享表单、草稿）、UI类型、构建及三宽度正式组件专项。并行浏览器事项补齐 `BrowserPreviewContext` 夹具绑定后，共享完整Composer／批注表单／草稿70/70回归通过；共享UI类型、构建及1440／390／320px正式组件专项通过。此前失败记录保留为历史诊断，最终结果见 `implementation/review/integrated-offline-final.log` 与 `integrated-final-browser/verification.json`。本事项精确提交不包含浏览器专属夹具或生产代码。安装版／真实采集／原生触摸未验收。
+2026-11-17复审：基于 `dfee7228` 的独立候选在项目Node 22.22.0通过70/70定向离线（含完整main-composer、共享表单、草稿）、UI类型、构建及三宽度正式组件专项。并行浏览器事项补齐 `BrowserPreviewContext` 夹具绑定后，共享完整Composer／批注表单／草稿70/70回归通过；共享UI类型、构建及1440／390／320px正式组件专项通过。此前失败记录保留为历史诊断，最终窗口报告在本机证据目录下的 `review/integrated-final-browser/verification.json`，Electron 退出码为 0、页面错误为空。截图批注实施提交为 `08d10164944b55967b5f97b9a02e8c3825eced0b`，浏览器专属夹具和生产代码由各自事项维护。安装版／真实采集／原生触摸未验收。
 
 
 ## 内置浏览器正式源码（2026-11-17）
@@ -1330,13 +1336,13 @@ node_modules/.bin/tsc --noEmit -p ui/tsconfig.json
 node scripts/build-preview-annotation.mjs
 node node_modules/typescript/bin/tsc --noEmit -p tsconfig.check.json
 node node_modules/typescript/bin/tsc --noEmit -p ui/tsconfig.json
-cd ui
-node ../node_modules/vite/bin/vite.js build --configLoader runner --outDir /private/tmp/homer-browser-product-ui --emptyOutDir
-cd ..
-HOMER_PREVIEW_UI=/private/tmp/homer-browser-product-ui HOMER_PREVIEW_RUNTIME="$PWD/dist/browser-preview" HOMER_PREVIEW_EVIDENCE="$PWD/outputs/browser-product-2026-11-17" node scripts/test.mjs --preview-electron
+mkdir -p .codex/scratch
+preview_run=$(mktemp -d "$PWD/.codex/scratch/preview-electron-XXXXXX")
+(cd ui && node ../node_modules/vite/bin/vite.js build --configLoader runner --outDir "$preview_run/web")
+HOMER_PREVIEW_UI="$preview_run/web" HOMER_PREVIEW_RUNTIME="$PWD/dist/browser-preview" HOMER_PREVIEW_EVIDENCE="$preview_run/evidence" node scripts/test.mjs --preview-electron
 ```
 
-`HOMER_PREVIEW_UI/RUNTIME/EVIDENCE` 均必须显式提供，目录可换为本轮独立路径。macOS 专项以原生窗口 ID 调用 screencapture 保存真正的完整窗口；内容 renderer 截图不能替代这一证据。
+`HOMER_PREVIEW_UI/RUNTIME/EVIDENCE` 均必须显式提供，每次复验使用独立证据目录，保留已跟踪的历史报告。macOS 专项以原生窗口 ID 调用 screencapture 保存真正的完整窗口；内容 renderer 截图不能替代这一证据。
 
 本次专项退出 0、8 组闭环检查通过，页面错误为空：消息链接、React Grab 多标记编辑删除/chip 定位、Composer 来源发送、双 Worker MCP 后台页、ARIA refs/select、接手/继续、导航关闭、新请求同页移交、HTML CSS/JS 与批注。见[报告及截图](../outputs/browser-product-2026-11-17/product-report.json)。生产 stdio 各段另用既有 shell/runtime/host 测试合约验证：418/418；本次引入上下文后补齐 MainComposer、reader、management、Main/native observer 夹具，合并139/139；runtime命名管道等48/48，草稿/调度等105/105，媒体/引用34/34。计数有重叠，不相加为独立总数。两端类型与独立 Vite 构建通过。
 
@@ -1393,7 +1399,7 @@ node scripts/test.mjs --history-performance
 
 本节更新此前悬停、系统截图和窄屏程序focus的未通过状态，不覆盖原始记录。main精确候选在Node22通过186/186定向离线、410/410壳契约、UI／后端类型、独立构建；完整canvas-image-zoom专项（不带--layout-only）三宽度30组通过、Chrome退出0／forced=false／watchdog=false。preview-annotation-entry三宽度真实Electron通过；preview-electron原生11组通过，含双后台Worker、来源草稿闭环、网页／HTML悬停、真实系统窗口截图、操作错误传播及认领后popup当前owner、opener、会话、隔离／预加载验证。所有数据、引擎、资料目录及账号均为独立合成环境。
 
-native测试使用局部await异步条件的等待助手，且对子Electron设置超时回收；原生工具仍不开放任意脚本或浏览器端点。popup最小探针复现不复用传入WebContents时卡死，转交完整options后成功；旧错误已修复并有真实原生回归。20次双页有界ARIA读取约42.1ms为单机小样本，不作通用性能承诺。未跑全量npm test、实模、安装版或真机。复现入口和准确数据见[复审记录](preview-final-review-2026-11-18.md)及其结构化报告。
+native测试使用局部await异步条件的等待助手，且对子Electron设置超时回收；原生工具仍不开放任意脚本或浏览器端点。popup最小探针复现不复用传入WebContents时卡死，转交完整options后成功；旧错误已修复并有真实原生回归。20次双页有界ARIA读取约42.1ms为单机小样本，不作通用性能承诺。未跑全量npm test、实模、安装版或真机。验收结论、复验入口和本机原始报告位置见[复审记录](preview-final-review-2026-11-18.md)。
 
 ## 会话虚拟化阶段一验收（2026-11-18）
 

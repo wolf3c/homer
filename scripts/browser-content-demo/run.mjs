@@ -2,14 +2,15 @@ import {build}from'vite';
 import{_electron}from'playwright-core';
 import{createRequire}from'node:module';
 import{createServer}from'node:http';
-import{mkdtemp,mkdir,readFile,writeFile,rm}from'node:fs/promises';
+import{mkdtemp,readFile,writeFile,rm}from'node:fs/promises';
 import{join,resolve,dirname}from'node:path';
 import{fileURLToPath}from'node:url';
 import assert from'node:assert/strict';
+import {createDemoOutput, scratchRoot} from './output.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),require=createRequire(import.meta.url);
-const output=resolve(process.env.DEMO_OUTPUT??'outputs/browser-content-demo-2026-11-17');
-await mkdir(output,{recursive:true});await mkdir(resolve('.codex/scratch'),{recursive:true});
-const scratch=await mkdtemp(resolve('.codex/scratch/browser-demo-')),profile=join(scratch,'profile'),compiled=join(scratch,'build');
+const output=await createDemoOutput('browser-content-demo-');
+console.log('OUTPUT',output);
+const scratch=await mkdtemp(join(scratchRoot,'browser-demo-')),profile=join(scratch,'profile'),compiled=join(scratch,'build');
 const results=[],errors=[];let application,server;
 const pass=(name,detail)=>{results.push({name,detail});console.log('PASS',name,JSON.stringify(detail??''));};
 async function bundle(entry){await build({configFile:false,root:here,resolve:{dedupe:['react','react-dom'],alias:{react:resolve('node_modules/react'),'react-dom':resolve('node_modules/react-dom')}},logLevel:'warn',define:{'process.env.NODE_ENV':'"production"'},build:{emptyOutDir:false,outDir:compiled,minify:false,lib:{entry:join(here,entry+'.tsx'),name:'Demo'+entry,formats:['iife'],fileName:()=>entry+'.js',cssFileName:entry},rolldownOptions:{onwarn(warning,forward){if(warning.code!=='MODULE_LEVEL_DIRECTIVE')forward(warning);}}}});}
@@ -98,7 +99,7 @@ try{
  assert.deepEqual(errors,[]);pass('no renderer pageerrors');
  const versions=await application.evaluate(()=>({electron:process.versions.electron,chrome:process.versions.chrome,node:process.versions.node}));
  await writeFile(join(output,'report.json'),JSON.stringify({status:'passed',versions,results,errors,scope:'Synthetic tasks/pages only; no real Worker/LLM, Homer service, installed app, login, IME OS composition or Windows verification.'},null,2));
- await rm(join(output,'failure.json'),{force:true});console.log('OUTPUT',output);
+ await rm(join(output,'failure.json'),{force:true});
  if(process.argv.includes('--interactive')){console.log('Interactive Demo open; close its window to finish.');await new Promise(r=>application.once('close',r));application=undefined;}
 }catch(error){await writeFile(join(output,'failure.json'),JSON.stringify({status:'failed',message:error.stack,results,errors},null,2));throw error;}
 finally{if(application)await application.close();if(server)await new Promise(r=>server.close(r));await rm(scratch,{recursive:true,force:true});}
