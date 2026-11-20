@@ -602,3 +602,14 @@ test('native image errors expose only a fixed classification on RPC and terminal
   await assert.rejects(unknown,(error:Error)=>error.message==='engine_rpc_failed'&&!('displayMessage' in error));
  }finally{await p.engine.close();}
 });
+
+test('ordered local images reach native input beyond 32 while relative paths are denied',async()=>{
+ const p=peer('worker');p.engine.imageCapability=async()=>false;
+ const images=Array.from({length:33},(_,i)=>({path:process.cwd()+'/synthetic-'+i}));
+ try{
+  const work=p.engine.turn('synthetic',{images});await flush();
+  assert.equal(p.sent[0]!.method,'turn/start');assert.deepEqual(p.sent[0]!.params.input.slice(1),images.map(image=>({type:'localImage',...image})));
+  await p.reply(0,{turn:{id:'turn'}});await flush();await p.event('turn/completed',{turn:{id:'turn',status:'completed'}});await work;
+  await assert.rejects(p.engine.turn('relative',{images:[{path:'relative/file'}]}),/engine_image_input_denied/);
+ }finally{await p.engine.close();}
+});

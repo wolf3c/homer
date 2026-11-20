@@ -117,7 +117,6 @@ export function validateRecursiveToolArguments(name: string, args: unknown): voi
 function messageAttachments(value:unknown):MessageAttachmentInput[]|undefined {
   if(value===undefined)return;
   const list=value as Record<string,unknown>[];
-  if(list.length>10)throw Error('invalid_attachments');
   return list.map(item=>{
     if(typeof item.path==='string'&&Object.keys(item).length===1)return {path:item.path};
     if(typeof item.assetId==='string'&&/^asset-[a-f0-9-]{36}$/.test(item.assetId)&&typeof item.revision==='number'&&Object.keys(item).length===2)

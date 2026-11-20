@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {mkdirSync,mkdtempSync,rmSync,writeFileSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,rmSync,readFileSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {Homer} from '../src/service.js';
@@ -29,7 +29,7 @@ test('Web image input and message attachment inspection retain source dimensions
     const image=result.mediaContent.find(item=>item.type==='image');assert.ok(image?.data);
     inspectedImages.push(Buffer.from(image.data,'base64'));
     if(!options?.images?.length)return {status:'completed',text:'合成图片已检查'};
-    seenText=text;seenImage=Buffer.from(options.images[0]!.url.split(',')[1]!,'base64');
+    seenText=text;const input=options.images[0]!;assert.ok('path' in input);seenImage=readFileSync(input.path);
     writeFileSync(path,bytes);
     const reply=`合成图片已附上。[查看原图](<${pathToFileURL(path).href}>)`;
     return {status:'completed',text:reply,messages:[{itemId:'answer',phase:'final_answer',text:reply}]};
@@ -41,7 +41,7 @@ test('Web image input and message attachment inspection retain source dimensions
  const app=new Homer({runtime:join(root,'runtime'),workspace:join(root,'workspace'),codexHome:join(root,'empty-home'),nativeCodexHome:join(root,'empty-home'),codexBin:'/usr/bin/false',requiresOpenaiAuth:false,model:'synthetic-only',stopGraceMs:100},async()=>{},()=>new Engine());
  try{
   await app.start();const capabilities=JSON.parse(JSON.stringify(await app.capabilities()));
-  assert.equal(capabilities.limits.nativeImagesPerTurn,null);assert.equal(capabilities.limits.attachmentsPerMessage,10);
+  assert.equal(capabilities.limits.nativeImagesPerTurn,null);assert.equal(capabilities.limits.attachmentsPerMessage,null);
   assert.equal(capabilities.catalogImageInput,false);assert.equal(capabilities.imageInput,true);
   upload=await app.uploadAttachment({threadId:'synthetic-resolution-main',requestId,uploadId:'synthetic-resolution-upload',filename:'synthetic.png',data:bytes.toString('base64')});
   assert.deepEqual(app.media.read(requestId,upload).bytes,bytes);
@@ -53,6 +53,11 @@ test('Web image input and message attachment inspection retain source dimensions
   await app.message('检查已交付图片','synthetic-inspect-delivery');
   assert.ifError(fixtureError);assert.ok(seenImage);assert.equal(inspectedImages.length,2);
   for(const image of [seenImage,...inspectedImages])assert.deepEqual(imageDimensions(image,'image/png'),{width:4096,height:256});
-  assert.doesNotMatch(seenText,/2048/);assert.match(seenText,/保留源图尺寸/);assert.equal(app.store.meta('mainThread'),'synthetic-resolution-main');
+  assert.doesNotMatch(seenText,/2048/);assert.deepEqual(seenImage,bytes);assert.match(seenText,/引擎可能缩放、拒绝或省略/);assert.equal(app.store.meta('mainThread'),'synthetic-resolution-main');
+  const brokenScope={threadId:'synthetic-resolution-main',requestId:'incomplete-preview'};
+  const broken=await app.uploadAttachment({...brokenScope,uploadId:'broken-image',filename:'broken.png',data:bytes.subarray(0,8).toString('base64')});
+  assert.equal(broken.state,'ready');assert.throws(()=>app.readDraftImage({...brokenScope,...broken}),/media_preview_unavailable/);
+  app.media.reconcile();assert.equal(app.media.state(brokenScope.requestId,[broken]),'ready');
+  assert.deepEqual(readFileSync(app.media.nativeImages(brokenScope.requestId,broken)[0]!.path),bytes.subarray(0,8));
  }finally{await app.close();rmSync(root,{recursive:true,force:true});}
 });

@@ -156,14 +156,6 @@ try{
     await ev(()=>{Object.defineProperty(Storage.prototype,'setItem',{configurable:true,value:window.__storageOriginal});});record('session storage failure stays visible while the complete saved notes remain in the page');
     await close();await click('.annotation-chip-open');await until(()=>!!document.querySelector('.annotation-comment-form'));assert.equal(await ev(()=>document.querySelector('.annotation-comment-form blockquote').textContent),'第一处中文。');await click('.annotation-comment-actions button[type=button]:not([aria-label])');await p.screenshot('text-highlights-1440.png');record('chip opens the exact same-name artifact and focuses its verified saved range');
     assert.equal(attempts.length,attemptStart+2);
-    // Full ordinary attachment capacity must reject before saving a preparing
-    // image note, while preserving the native editor for a corrected draft.
-    await ev(()=>sessionStorage.setItem('homer-draft:synthetic-history',JSON.stringify({text:'保留十个附件',quotes:[],requestId:'synthetic-full-attachments',attachments:Array.from({length:10},(_,i)=>({assetId:'asset-00000000-0000-4000-8000-'+String(i+1).padStart(12,'0'),revision:1,filename:'ordinary-'+i+'.txt',kind:'file',state:'ready',mime:'text/plain',size:1,error:null}))})));
-    await p.navigate();await until(()=>document.querySelectorAll('.aui-attachment-root').length===10);await open(4);await until(()=>document.querySelector('#canvas-panel img')?.naturalWidth===240);await click('.image-annotation-toggle');await until(()=>!!document.querySelector('.a9s-annotationlayer'));
-    const fullUploads=uploads.length,fullBox=await ev(()=>document.querySelector('.image-annotation img').getBoundingClientRect().toJSON());
-    await p.command('Input.dispatchMouseEvent',{type:'mousePressed',x:fullBox.x+fullBox.width*.1,y:fullBox.y+fullBox.height*.1,button:'left',clickCount:1});await p.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:fullBox.x+fullBox.width*.3,y:fullBox.y+fullBox.height*.4,button:'left',buttons:1});await p.command('Input.dispatchMouseEvent',{type:'mouseReleased',x:fullBox.x+fullBox.width*.3,y:fullBox.y+fullBox.height*.4,button:'left',clickCount:1});await until(()=>!!document.querySelector('.image-annotation textarea'));
-    await fill('附件已满时保留编辑');await click('.annotation-comment-form button[type=submit]');await until(()=>!!document.querySelector('.annotation-comment-form [role=alert]'));
-    assert.equal(await count(),0);assert.equal(uploads.length,fullUploads);assert.equal(Object.keys((await draft()).preparingImages??{}).length,0);assert.equal(await ev(()=>document.querySelector('.image-annotation textarea').value),'附件已满时保留编辑');assert.equal(await ev(()=>document.querySelectorAll('.aui-attachment-root').length),10);record('full attachment capacity rejects image save before chip or upload and retains all existing data and editor input');
    }
 
    assert.deepEqual(p.errors,[]);assert.deepEqual(p.blocked,[]);

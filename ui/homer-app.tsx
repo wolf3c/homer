@@ -512,13 +512,10 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     void ready.then(registered=>{if(active)setDraftNotice(current=>registered?current===notice?'':current:current||notice);}).catch(()=>{});
     return()=>{active=false;unsubscribe();void bridge.setReady(null).catch(()=>{});};
   },[captureReady,state.threadId,draftRequest.current,resourceState.epoch]);
-  bindAttachments(()=>({threadId:state.threadId,requestId:draftRequest.current,enabled:!blocked&&!answerEditing&&!!state.features?.draftUpload&&state.upgrade.phase==='running',attachments:aui.composer().getState().attachments,notice:setDraftNotice,removed:(identity,file)=>{if(identity.threadId!==state.threadId||identity.requestId!==draftRequest.current)return;annotationDraft.forgetImage(identity.asset,annotationDraft.imageKeys(file));}}));
+  bindAttachments(()=>({threadId:state.threadId,requestId:draftRequest.current,enabled:!blocked&&!answerEditing&&!!state.features?.draftUpload&&state.upgrade.phase==='running',notice:setDraftNotice,removed:(identity,file)=>{if(identity.threadId!==state.threadId||identity.requestId!==draftRequest.current)return;annotationDraft.forgetImage(identity.asset,annotationDraft.imageKeys(file));}}));
   useEffect(()=>{onQueueBusy?.(uploading||restoring||!!answerEditing);},[uploading,restoring,!!answerEditing]);
   useEffect(()=>{if(editDraft){if(answerRef.current){setDraftNotice(editDraft.source==='welcome'?'请先退出当前答复，再选择示例。':'请先退出当前编辑，再把历史文字加入新草稿。');return;}const current=aui.composer().getState().text;aui.composer().setText(current.trim()?current+'\n\n'+editDraft.text:editDraft.text);setDraftNotice(editDraft.source==='welcome'?'示例已加入输入框，确认后发送。':'已复制原消息到草稿，编辑后将作为新消息发送；历史记录保留。');}},[editDraft?.id,aui]);
   function uploadIssue(files:File[]){
-    const existingIds=new Set(aui.composer().getState().attachments.map(attachment=>attachment.id));
-    const newIds=new Set(files.map(file=>attachmentOwner.uploadId(file)).filter(id=>!existingIds.has(id)));
-    if(newIds.size+existingIds.size>10)return '每条消息最多10个附件。';
     if(files.some(f=>!f.size&&f.type.startsWith('image/')))return 'Homer 无法解码空图片，空普通文件可上传。';
     if(files.some(f=>f.size>8*1024*1024||/[\x00-\x1f/\\]/.test(f.name)))return 'Homer 每个上传文件最多8MiB，文件名不能包含路径或控制字符。';
   }
@@ -944,7 +941,7 @@ function HomerApp() {
     overlay.addEventListener('geometrychange',detect);detect();
     return()=>overlay.removeEventListener('geometrychange',detect);
   },[overlay,nativeTitlebar]);
-  const attachmentContext=useRef<()=>DraftContext>(()=>({threadId:'',requestId:'',enabled:false,attachments:[],notice:()=>{}}));
+  const attachmentContext=useRef<()=>DraftContext>(()=>({threadId:'',requestId:'',enabled:false,notice:()=>{}}));
   const attachmentOwner=useMemo(()=>createHomerAttachmentAdapter(()=>attachmentContext.current()),[]);
   const [editDraft,setEditDraft]=useState<{text:string;id:string;source?:'welcome'}>();
   const [answerTarget,setAnswerTarget]=useState<WebInteraction&{historyThreadId:string}>();

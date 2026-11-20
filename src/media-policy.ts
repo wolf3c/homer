@@ -1,5 +1,5 @@
 // Homer limits, not provider protocol limits. Shared by intake, transport and UI.
-export const MEDIA_POLICY=Object.freeze({imageBytes:20*1024*1024,fileBytes:50*1024*1024,audiovisualBytes:100*1024*1024,messageBytes:150*1024*1024,maxItems:10,maxPixels:40_000_000,diskBytes:1024*1024*1024,concurrency:2,attempts:3,retentionMs:30*86400_000,downloadTimeoutMs:30000});
+export const MEDIA_POLICY=Object.freeze({imageBytes:20*1024*1024,fileBytes:50*1024*1024,audiovisualBytes:100*1024*1024,messageBytes:150*1024*1024,maxPixels:40_000_000,diskBytes:1024*1024*1024,concurrency:2,attempts:3,retentionMs:30*86400_000,downloadTimeoutMs:30000});
 export type MediaKind='image'|'file'|'voice'|'video';
 export function mediaLimit(kind:MediaKind){return kind==='image'?MEDIA_POLICY.imageBytes:kind==='file'?MEDIA_POLICY.fileBytes:MEDIA_POLICY.audiovisualBytes;}
 export function detectMedia(bytes:Buffer):string {

@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {basename,join,resolve} from 'node:path';
 import {Homer} from '../src/service.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {createWebServer,fetch} from './web-connected-fixture.js';
@@ -67,6 +67,28 @@ test('Web binary upload -> scoped history -> original thread, safe retry/remove/
   assert.equal(Buffer.from(app.readAttachment({messageId:message.id,...ref}).data,'base64').toString('utf8'),fileText);
   assert.throws(()=>app.submitMessage({requestId:'different-request',text:'forged',attachments:input.attachments}),/media_scope_denied/);
   assert.equal((await fetch(web.url+'/api/uploads',{method:'POST',headers:{Origin:web.url,'Content-Type':'application/octet-stream',...metadata,'X-Homer-Request':'size-request','X-Homer-Upload':'size-upload'},body:Buffer.alloc(WEB_UPLOAD_BYTES+1)})).status,409);
+  // Prepared synthetic derivatives exercise selection, without a decoder or real model.
+  const mixedRequest='mixed-images',png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGOI6tkCRwzEcQCU8hmhmgeEcAAAAABJRU5ErkJggg==','base64'),refs=[];
+  for(let i=0;i<33;i++){
+   const image=app.media.intent(mixedRequest,'web:synthetic-upload-main','image','image-'+i+'.png');app.media.ready(image,app.media.claim(image)!,png,'image/png');
+   refs.push(image);
+  }
+  const video=app.media.intent(mixedRequest,'web:synthetic-upload-main','video','synthetic.mp4');app.media.ready(video,app.media.claim(video)!,Buffer.from('synthetic prepared video'),'video/mp4');
+  const frames=[0,12000,24000,36000,48000,59900].map(ms=>'video-frame-'+ms+'ms-v1');
+  for(const transform of frames)app.media.derivative(mixedRequest,video,{bytes:png,mime:'image/png',transform,width:4,height:4});
+  refs.unshift(video);
+  const note=app.media.intent(mixedRequest,'web:synthetic-upload-main','file','empty.txt');app.media.ready(note,app.media.claim(note)!,Buffer.alloc(0),'text/plain');
+  const noFrames=app.media.intent(mixedRequest,'web:synthetic-upload-main','video','unavailable.mp4');app.media.ready(noFrames,app.media.claim(noFrames)!,Buffer.from('synthetic unavailable video'),'video/mp4');
+  const originals=refs.slice(1);refs.push(note,noFrames);
+  inspect=async()=>{};app.submitMessage({requestId:mixedRequest,text:'Synthetic mixed image input',attachments:refs});await app.idle();
+  const images=turns.at(-1)!.images??[];
+  assert.deepEqual(images.map(image=>'path' in image&&basename(image.path)),[
+   ...frames.map(frame=>video.assetId+'.'+frame),...originals.map(ref=>ref.assetId)
+  ]);
+  assert.ok(turns.at(-1)!.text.includes('第 6 张图：'+video.assetId+'@1，视频抽帧 video-frame-59900ms-v1'));
+  assert.ok(turns.at(-1)!.text.includes(noFrames.assetId+'@1：没有可提交的视频帧'));
+  assert.match(turns.at(-1)!.text,new RegExp('第 7 张图[^\\n]*'+refs[1]!.assetId));
+  assert.deepEqual(readTestConversation(app).messages.find(m=>m.role==='user'&&m.requestId===mixedRequest)?.attachments?.map(({assetId,revision})=>({assetId,revision})),refs);
   failed=true;inspect=async()=>{};
   const failure=await app.message('Synthetic native failure','native-failure');
   assert.match(failure,/Codex 拒绝了图片输入/);assert.doesNotMatch(failure,/blue notebook/);assert.match(failure,/不会自动重试/);

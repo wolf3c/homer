@@ -34,10 +34,10 @@ test('draft image preview is available only to its original unsubmitted upload a
   const input={requestId:sentScope.requestId,text:'synthetic',attachments:[firstImage,sentImage],resourceReferences:[screenshot]};
   assert.throws(()=>app.submitMessage({...input,resourceReferences:[{...screenshot,width:33}]}),/preview_source_mismatch/);
   assert.throws(()=>app.submitMessage({...input,requestId:'foreign-screenshot-request'}),/media_scope_denied/);
-  const originalReads=new Map<string,number>(),readAttachment=app.media.readAttachment.bind(app.media);
-  app.media.readAttachment=ref=>{
+  const originalReads=new Map<string,number>(),nativeImages=app.media.nativeImages.bind(app.media);
+  app.media.nativeImages=(requestId,ref)=>{
    originalReads.set(ref.assetId,(originalReads.get(ref.assetId)??0)+1);
-   return readAttachment(ref);
+   return nativeImages(requestId,ref);
   };
   app.submitMessage(input);
   assert.notEqual((await preview({...sentScope,...sentImage})).status,200);await app.idle();

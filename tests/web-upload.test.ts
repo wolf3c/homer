@@ -40,3 +40,12 @@ test('uploads preserve long display names and accept empty ordinary files',()=>{
  assert.equal(webUpload({...input,filename:'empty.txt',data:''}).bytes.length,0);
  assert.throws(()=>webUpload({...input,filename:'empty.png',data:''}),/media_decode_failed/);
 });
+
+test('store retains full display names and accepts more than 32 distinct uploads while rejecting duplicate message refs',()=>{
+ const db=new DatabaseSync(':memory:');try{
+  const media=new MediaStore(db);
+  for(let i=0;i<33;i++){const v=webUpload({...input,uploadId:'batch-'+i,filename:'a'.repeat(180)+'.txt'}),ref=media.webIntent(v);assert.equal(media.asset(ref).filename,v.filename);}
+  const extra=media.webIntent(webUpload({...input,uploadId:'extra'}));
+  assert.throws(()=>media.validate(input.requestId,[extra,extra]),/media_attachment_duplicate/);
+ }finally{db.close();}
+});

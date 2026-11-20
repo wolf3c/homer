@@ -4,7 +4,7 @@ import {connectionFetch} from './web-connection-client.js';
 
 type Identity={threadId:string;requestId:string;uploadId:string;asset?:MediaView;attempted?:boolean};
 export type HomerAttachment=PendingAttachment & {homer:Identity};
-export type DraftContext={threadId:string;requestId:string;enabled:boolean;attachments:readonly Attachment[];notice:(text:string)=>void;removed?:(identity:Identity,file:File)=>void};
+export type DraftContext={threadId:string;requestId:string;enabled:boolean;notice:(text:string)=>void;removed?:(identity:Identity,file:File)=>void};
 export const attachmentAsset=(value:Attachment)=>(value as HomerAttachment).homer?.asset;
 
 /** The composer owns the only draft collection. This adapter owns upload identity,
@@ -34,7 +34,6 @@ export function createHomerAttachmentAdapter(context:()=>DraftContext,request:ty
    if(identity.asset){yield pending({type:'requires-action',reason:'composer-send'});return;}
    if(!file.size&&file.type.startsWith('image/')){c.notice('Homer 无法解码空图片，空普通文件可上传。');throw Error('media_decode_failed');}
    if(file.size>8*1024*1024||/[\x00-\x1f/\\]/.test(file.name)){c.notice('Homer 每个上传文件最多8MiB，文件名不能包含路径或控制字符。');throw Error('upload_invalid_file');}
-   if(c.attachments.filter(a=>a.id!==identity.uploadId).length>=10){c.notice('每条消息最多10个附件。');throw Error('upload_limit');}
    if(deferred.delete(file)){yield pending({type:'incomplete',reason:'upload-paused'});return;}
    if(!c.enabled){c.notice('暂时无法添加附件，请等待连接恢复后重试。');throw Error('upload_unavailable');}
    yield pending({type:'running',reason:'uploading',progress:0});

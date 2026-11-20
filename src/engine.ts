@@ -49,7 +49,7 @@ export type TurnResult = {
   nativeOutputError?:string;
   messages?:{itemId:string;phase:string|null;text:string}[];
 };
-export type EngineImage={url:string};
+export type EngineImage={url:string}|{path:string};
 import type {NativeProcessEvent, NativeToolCategory, TurnTimingEvidence} from './main-process.js';
 const finiteTime=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>=0;
 const nativeCategories:Record<string,NativeToolCategory>={commandExecution:'command',fileChange:'fileChange',webSearch:'webSearch',imageView:'imageView',imageGeneration:'imageGeneration',mcpToolCall:'externalTool',dynamicToolCall:'externalTool'};
@@ -1076,7 +1076,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         if(await this.prepared(operation,this.start())!==threadId)throw Error('main_resume_thread_mismatch');
     }
     if(options?.cwd)this.options.cwd=options.cwd;
-    if(options?.images?.some(image=>!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(image.url))||Number(options?.images?.length??0)>10)throw Error('engine_image_input_denied');
+    if(options?.images?.some(image=>'path' in image ? !isAbsolute(image.path)||image.path.includes('\0') : !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(image.url)))throw Error('engine_image_input_denied');
     let resultResolve!: (r: TurnResult) => void,
       resultReject!: (e: Error) => void;
     const completion = new Promise<TurnResult>((res, rej) => {
@@ -1099,7 +1099,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         ...(this.options.nativeTools?{environments:[{environmentId:"local",cwd:this.options.cwd,runtimeWorkspaceRoots:[this.options.cwd]}]}:{}),
         threadId: this.threadId,
         ...(this.config.desktopModelSource==='codex'?{model:this.config.model}:{}),
-        input: [{ type: "text", text, text_elements: [] },...(options?.skills??[]).map(skill=>({type:"skill",...skill})),...(options?.images??[]).map(image=>({type:'image',url:image.url}))],
+        input: [{ type: "text", text, text_elements: [] },...(options?.skills??[]).map(skill=>({type:"skill",...skill})),...(options?.images??[]).map(image=>'path' in image?{type:'localImage',path:image.path}:{type:'image',url:image.url})],
         effort: effectiveEffort(this.config.effort, this.options.role),
         serviceTier: this.serviceTier,
       });

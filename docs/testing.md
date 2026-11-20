@@ -1449,11 +1449,27 @@ HISTORY_FOLLOWUP_BUILD=/absolute/task/web HOMER_SYNTHETIC_ROOT=/absolute/task/sy
 
 ## 附件预算与错误原因定向验证（2026-11-18）
 
-本节记录20MiB／32个等前序未提交候选的历史验证，不代表最终阈值决策，也不证明门槛必要。最新[两阶段方案](superpowers/plans/2026-11-18-attachment-native-input-and-streaming.md)尚未实施：取消独立数量门槛，验证原图原生输入，再贯通分块上传、读取、导出与手机分享；以下既有回归不替代这些后续验收。
+以下为前序 20 MiB／32 个候选的历史验证。当前工作区的原图、数量与恢复验证见[第一阶段记录](#附件原生输入第一阶段2026-11-20)。
 
 Node22.22.0，沿 `tests/fixtures/synthetic-home.mjs` 与 `core-system-proxy.mjs` 使用隔离 HOME／CODEX_HOME、合成数据库、回环 HTTP 和注入引擎。`web-upload`、`web-upload-host`、`files`、`engine-rpc-lifecycle`、`engine`、`homer-attachment-adapter`、`mobile-channel`、`web-chat`、`media-lifecycle`、`media-retention`、`media-documents`、`attachment-tool-outlets`、`delegation-attachment-input`、`user-message-attachment`、`recursive-tools`及`mobile/connection.test.mjs`合计160项离线核心回归通过。显式追加已有 `web-upload-host.local-media.test.ts` 单项本地合成解码专项，合计161/161；没有真实模型调用。服务与UI `tsc --noEmit`、修改MJS语法及`git diff --check`通过。全 `tsconfig.check.json` 检查发现并行 `web-history-maintenance-contract.test.ts:28` 的WebState强转TS2352，归属历史虚拟列表事项，本事项未修改。
 
 手机双20MiB大包（每包Base64约26.7MiB）沿已有16KiB分帧及背压往返后仍可聊天；同进程两端合成测试最大RSS434880512字节（约415MiB），不代表手机WebView峰值或真机安全验收。20MiB上传／32MiB整包是Homer资源取舍，模型容量由实际请求决定。真实手机网络、低内存设备、安装版、Windows／Linux和浏览器批量渲染仍未验证；浏览器用例已按32附件及20MiB边界更新但只做语法检查。无新专项测试文件或默认测试分类变化。
+
+## 附件原生输入第一阶段（2026-11-20）
+
+macOS arm64、Node 22.22.0、固定 Codex 0.171.0-alpha.7。本机回环服务核对了私有目录里的无扩展名 JPEG／PNG 的顺序和字节，双帧 GIF 产生一个图片输入。截断 PNG、TIFF、不可读文件和缺失路径被省略，轮次仍成功。原件移走后冷恢复仍能重放原图片。同轮 11 个约 3 MiB 的 PNG 输入、读取历史及冷恢复通过，既有 RPC 接收保护保持启用。此结果测量了实际提供给本地模型服务的输入，未测真实模型的理解、容量或其他引擎配置。
+
+原生用例在 engine 专项，`HOMER_TEST_CODEX_BIN` 须显式指向上述版本的可执行文件。测试使用合成 HOME、独立线程和回环假服务。
+
+```sh
+env -i PATH="$PATH" HOMER_TEST_CODEX_BIN="$HOMER_TEST_CODEX_BIN" node --import tsx --test tests/attachment-native-input.engine.test.ts
+```
+
+宿主回归 `web-upload-host.test.ts` 核对 33 张原图、6 张视频帧、普通文件及无帧视频，检查输入顺序、来源版本和消息历史。`media-lifecycle` 与 `main-mailbox-projection` 覆盖软链、硬链、内容替换、旧预览缺失及未知回执下的 GC。本地媒体专项覆盖预览失败、批注及检查工具。390px 隔离 Chrome 逐项核对 33 个附件的选择、上传和发送；1440px 浏览器恢复 33 个普通附件后再添加一张带批注的图片，仅上传一次。完整显示名、空普通文件和消息字节预算仍按原合同处理。
+
+基于 `145d9b72` 的第一阶段提交副本（单文件 8 MiB、手机整包 16 MiB）通过 212/212 项定向回归。共享工作区另含暂缓的手机整包候选，同组 213/213 通过。Worker 回归分别覆盖仅撤销附件和撤销任务来源，两种情况下都核对已导出文件和已确认操作记录。提交副本另通过事项与授权 47/47、输入框 63/63、本地媒体 5/5、固定引擎回环 1/1，以及服务、UI、测试三项类型检查。旧 `annotation-composer-sync` 浏览器脚本使用缺少资产 ID 的历史夹具，打开首个文件时超时；本次附件数量和批注验收使用上述两个实际浏览器入口。
+
+当前安装版、Windows／Linux、手机真机及第二阶段分块传输待验。
 
 ## 2026-11-18 会员语音合成
 

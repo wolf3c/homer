@@ -1,6 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {mkdirSync,mkdtempSync,rmSync,existsSync} from 'node:fs';import {resolve,join} from 'node:path';
 import {MediaStore} from '../src/media-store.js';
-import {writeFileSync,utimesSync,readFileSync,rmdirSync} from 'node:fs';
+import {writeFileSync,utimesSync,readFileSync,rmdirSync,symlinkSync,linkSync} from 'node:fs';
 test('ILINK-LIFE-002 missing derivatives are recoverable, orphan bytes count and only aged unowned files are collected',()=>{
  const parent=resolve('.codex/scratch/media-lifecycle');mkdirSync(parent,{recursive:true});const dir=mkdtempSync(join(parent,'recovery-')),db=new DatabaseSync(':memory:');
  try{
@@ -113,5 +113,30 @@ test('an interrupted local write keeps its operation pin until owner-confirmed a
   recovered.abandonOperation('interrupted');
   assert.equal(recovered.gc(),1);
   assert.equal(recovered.asset(ref).state,'deleted');
+ }finally{db.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('native images recover without a preview and require an intact scoped original and frame',()=>{
+ const parent=resolve('.codex/scratch/media-lifecycle');mkdirSync(parent,{recursive:true});
+ const dir=mkdtempSync(join(parent,'native-')),db=new DatabaseSync(join(dir,'db.sqlite'));
+ try{
+  const media=new MediaStore(db,dir),ref=media.intent('request','binding','image');
+  const original=join(dir,ref.assetId),bytes=Buffer.from('original');
+  media.ready(ref,media.claim(ref)!,bytes,'image/png');
+  db.prepare("UPDATE media_assets SET state='failed',error='media_derivative_missing' WHERE id=?").run(ref.assetId);
+  media.reconcile();assert.equal(media.state('request',[ref]),'ready');
+  assert.deepEqual(media.nativeImages('request',ref),[{path:original,transform:''}]);
+  assert.deepEqual(media.imageAttachment(ref,true).bytes,bytes);
+  assert.throws(()=>media.nativeImages('other',ref),/media_scope_denied/);
+  assert.throws(()=>media.nativeImages('request',{...ref,revision:2}),/media_asset_not_found/);
+  linkSync(original,original+'.link');
+  assert.throws(()=>media.nativeImages('request',ref),/media_file_denied/);rmSync(original+'.link');
+  writeFileSync(original,'altered!');assert.throws(()=>media.nativeImages('request',ref),/media_integrity_failed/);
+  rmSync(original);media.reconcile();assert.equal(media.asset(ref).error,'media_file_missing');
+  const video=media.intent('video','binding','video');media.ready(video,media.claim(video)!,bytes,'video/mp4');
+  media.derivative('video',video,{bytes,mime:'image/png',transform:'frame-0',width:1,height:1});
+  const frame=join(dir,video.assetId+'.frame-0');rmSync(frame);symlinkSync(join(dir,video.assetId),frame);
+  assert.throws(()=>media.nativeImages('video',video),/media_file_denied/);
+  media.revoke('video');assert.throws(()=>media.nativeImages('video',video),/media_scope_denied/);
  }finally{db.close();rmSync(dir,{recursive:true,force:true});}
 });

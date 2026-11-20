@@ -83,6 +83,10 @@ async function consumers(chrome){
   const invalid=async expected=>{for(const value of [' \n ','长'.repeat(16001)]){await fill(value);await key();assert.equal(await count(),expected);assert.equal(await ev(()=>document.querySelector('.annotation-comment-form textarea').value),value);}};
   try{
    await p.navigate();await until(()=>!!document.querySelector('[contenteditable=true]'));
+   if(width===1440){
+    await ev(()=>sessionStorage.setItem('homer-draft:synthetic-history',JSON.stringify({text:'保留已有附件',quotes:[],requestId:'large-annotated-draft',attachments:Array.from({length:33},(_,i)=>({assetId:'asset-00000000-0000-4000-8000-'+String(i+1).padStart(12,'0'),revision:1,filename:'ordinary-'+i+'.txt',kind:'file',state:'ready',mime:'text/plain',size:1,error:null}))})));
+    await p.navigate();await until(()=>document.querySelectorAll('.aui-attachment-root').length===33);
+   }
    if(process.env.HOMER_ENTER_TEST_SURFACE!=='image'){
    await open(0);await select(0,6);await fill('文本第一注');await key();
    // Assert the observable outcome without waiting for a timeout on the old behavior.
@@ -105,6 +109,12 @@ async function consumers(chrome){
    const draw=async(a,b)=>{const r=await ev(()=>document.querySelector('.image-annotation img').getBoundingClientRect().toJSON()),start={x:r.x+r.width*a,y:r.y+r.height*.15},end={x:r.x+r.width*b,y:r.y+r.height*.6};await p.command('Input.dispatchMouseEvent',{type:'mousePressed',...start,button:'left',clickCount:1});for(let i=1;i<=5;i++)await p.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:start.x+(end.x-start.x)*i/5,y:start.y+(end.y-start.y)*i/5,button:'left',buttons:1});await p.command('Input.dispatchMouseEvent',{type:'mouseReleased',...end,button:'left',clickCount:1});await until(()=>!!document.querySelector('.annotation-comment-form'));};
    await draw(.1,.35);await fill('图片第一注');await key();assert.equal(await ev(()=>document.querySelector('.annotation-comment-form textarea')?.value.includes('\n')??false),false,'image consumer Enter must save without inserting a newline');await saved(beforeImage+1);
    let notes=(await draft()).resourceReferences.find(r=>r.kind==='image').annotations;const original=structuredClone(notes[0]);
+   if(width===1440){
+    const confirmed=(await draft()).attachments;
+    assert.deepEqual(confirmed.slice(0,33).map(a=>a.filename),Array.from({length:33},(_,i)=>'ordinary-'+i+'.txt'));
+    assert.equal(confirmed.length,34);assert.equal(confirmed[33].assetId,(await draft()).resourceReferences.find(r=>r.kind==='image').image.assetId);
+    record('image',width,'33 restored attachments keep order when an annotated original is added');
+   }
    const edit=async()=>{await click('.a9s-annotation[data-id="'+original.id+'"] .a9s-inner');await until(()=>!!document.querySelector('.annotation-comment-form'));};
    await edit();await fill('图片两行');await key('Enter',8);assert.equal(await ev(()=>document.querySelector('.annotation-comment-form textarea').value),'图片两行\n');await ime();await invalid(beforeImage+1);await fill('图片已修改');await key();await saved(beforeImage+1);
    notes=(await draft()).resourceReferences.find(r=>r.kind==='image').annotations;assert.equal(notes[0].id,original.id);assert.deepEqual(notes[0].region,original.region);assert.equal(notes[0].comment,'图片已修改');

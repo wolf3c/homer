@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {ffmpegPath,mediaProcess} from '../src/media-decode.js';
@@ -37,8 +38,8 @@ test('image multi-region batches verify original pixels and attachment scope and
    {id:'third',region:{x:160,y:50,width:40,height:30},comment:'第三处要求'},
   ]};
   const input={requestId,text:'整体要求',attachments:[reference.image],resourceReference:reference};
-  let imageReads=0;const image=f.app.media.image.bind(f.app.media);
-  f.app.media.image=(requestId,ref)=>{imageReads++;return image(requestId,ref);};
+  let imageReads=0;const image=f.app.media.nativeImages.bind(f.app.media);
+  f.app.media.nativeImages=(requestId,ref)=>{imageReads++;return image(requestId,ref);};
   for(let badIndex=0;badIndex<3;badIndex++)assert.throws(()=>f.app.submitMessage({...input,resourceReference:{...reference,annotations:reference.annotations.map((n,i)=>i===badIndex?{...n,region:{...n.region,x:239}}:n)}}),/invalid_resource_reference/);
   assert.throws(()=>f.app.submitMessage({...input,resourceReference:{...reference,width:241}}),/preview_source_mismatch/);
   assert.throws(()=>f.app.submitMessage({...input,resourceReference:{...reference,source:{...reference.source,sha256:'b'.repeat(64)}}}),/preview_source_mismatch/);
@@ -52,7 +53,7 @@ test('image multi-region batches verify original pixels and attachment scope and
   const accepted=f.app.submitMessage(input);assert.equal(accepted.fresh,true);await f.app.idle();
   assert.equal(imageReads,1,'original image bytes are read once for the native model input');
   const context=f.inputs.at(-1)!;for(const n of reference.annotations){assert.ok(context.includes(n.id));assert.ok(context.includes(n.comment.replace('\n','\\n')));assert.ok(context.includes(JSON.stringify(n.region)));}
-  assert.equal(f.nativeImages.at(-1)!.length,1);assert.ok(f.nativeImages.at(-1)![0]!.url.startsWith('data:image/png;base64,'));
+  assert.equal(f.nativeImages.at(-1)!.length,1);const original=f.nativeImages.at(-1)![0]!;assert.ok('path' in original);assert.deepEqual(readFileSync(original.path),bytes);
   assert.deepEqual(f.app.history.list('synthetic-main').find(m=>m.role==='user'&&m.requestId===requestId)?.resourceReference,reference);
   const before=f.inputs.length;f.app.readAttachment=()=>{throw Error('synthetic_source_unavailable');};
   assert.equal(f.app.submitMessage(input).fresh,false);await f.app.idle();assert.equal(f.inputs.length,before);

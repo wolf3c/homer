@@ -1,7 +1,7 @@
 // Real Homer attachment routing and transactions with local synthetic engines.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {join} from 'node:path';
+import {dirname,join} from 'node:path';
 import {existsSync,readFileSync,writeFileSync} from 'node:fs';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 import type {AttachmentRef} from '../src/media-store.js';
@@ -43,7 +43,7 @@ test('Worker attachment input rejects malformed selectors and foreign sources be
  }finally{await f.close();}
 });
 
-test('only the addressed Worker can read the offered revision and a revoked source denies a later read',async()=>{
+for(const scope of ['attachment','task'] as const)test('Worker attachment reads and export receipts after revoking the '+scope,async()=>{
  const f=fixture();let selected:Opened|undefined,other:Opened|undefined;
  try{
   await f.app.start();
@@ -73,10 +73,18 @@ test('only the addressed Worker can read the offered revision and a revoked sour
   await read(receiver);
   const peer=f.engines.find(engine=>engine.threadId===receiver.engine.threadId)!;
   const exportArgs={...ref,filename:'a'.repeat(160)+'.txt'},exported=await peer.call('stage_file_result',exportArgs,'retained-export');
-  assert.ok(f.app.history.revokeMessage(source.threadId,source.id));
-  await assert.rejects(read(receiver),/media_scope_denied/);
-  await assert.rejects(peer.call('stage_file_result',{...ref,filename:'revoked.txt'}),/media_scope_denied/);
-  assert.deepEqual(await peer.call('stage_file_result',exportArgs,'retained-export'),exported);
+  const operation=f.app.tasks.operation(exported.operationKey);
+  assert.equal(operation.state,'confirmed');
+  if(scope==='attachment')f.app.media.revoke(requestId);
+  else assert.ok(f.app.history.revokeMessage(source.threadId,source.id));
+  const denied=scope==='attachment'?/^Error: media_scope_denied$/:/^Error: task_authority_source_denied$/;
+  await assert.rejects(read(receiver),denied);
+  await assert.rejects(peer.call('stage_file_result',{...ref,filename:'revoked.txt'}),denied);
+  const replay=peer.call('stage_file_result',exportArgs,'retained-export');
+  if(scope==='attachment')assert.deepEqual(await replay,exported);
+  else await assert.rejects(replay,denied);
+  assert.equal(existsSync(join(dirname(exported.path),'revoked.txt')),false);
+  assert.deepEqual(f.app.tasks.operation(exported.operationKey),operation);
   assert.equal(readFileSync(exported.path,'utf8'),'Synthetic source');
   assert.deepEqual(f.app.tasks.task(task.id),task);
   assert.equal(f.app.tasks.run(selected!.runId).status,'running');

@@ -469,7 +469,7 @@ test('production uncertain-upload discard keeps failed files until acknowledged 
   f.editor().props.onFiles([new File(['x'],'note.txt')]);await tick();f.render();f.button('不添加这些附件').props.onClick();f.render();assert.equal(removing,true);assert.ok(f.button('重试上传'));
   gate.resolve({ok:true,json:async()=>({})});await tick();f.render();assert.equal(nodes(f.render()).some(n=>n.props?.children==='重试上传'),false);
   const count=f.calls.length;
-  for(const files of [[new File([],'empty')],[new File(['x'],'../bad')],Array.from({length:11},()=>new File(['x'],'note')), [new File([new Uint8Array(8*1024*1024+1)],'large')]]){f.editor().props.onFiles(files);await tick();f.render();}
+  for(const files of [[new File([],'empty.png',{type:'image/png'})],[new File(['x'],'../bad')],[new File([new Uint8Array(8*1024*1024+1)],'large')]]){f.editor().props.onFiles(files);await tick();f.render();}
   assert.equal(f.calls.length,count);f.close();
 });
 

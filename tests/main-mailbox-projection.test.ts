@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {chatFixture} from './task-chat-fixture.js';
 import {WebHistoryPages} from '../src/web-history-pages.js';
 import {MainProcessHistory} from '../src/main-process.js';
@@ -38,9 +39,12 @@ for(const outcome of ['completed','uncertain'] as const)test('media retention re
   f.inputs.started(input.messageId,input.revision,'generation:media','native:media');
   media.gc(1);assert.equal(media.asset(original).state,'ready');
   if(outcome==='uncertain')f.inputs.uncertain(input.messageId,input.revision);else f.inputs.finish(input.messageId,input.revision,'completed');
-  media.gc(1);
-  assert.equal(media.asset(original).state,outcome==='completed'?'deleted':'ready');
-  assert.equal(media.asset(pinned).state,'ready');assert.equal(media.readAttachment(pinned).bytes.toString(),'Synthetic bytes');
+  const reopened=new DatabaseSync(f.path);
+  try{
+   const recovered=new MediaStore(reopened,join(f.dir,'media'));recovered.reconcile();recovered.gc(1);
+   assert.equal(recovered.asset(original).state,outcome==='completed'?'deleted':'ready');
+   assert.equal(recovered.asset(pinned).state,'ready');assert.equal(recovered.readAttachment(pinned).bytes.toString(),'Synthetic bytes');
+  }finally{reopened.close();}
  }finally{f.close();}
 });
 

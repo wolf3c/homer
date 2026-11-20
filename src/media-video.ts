@@ -4,7 +4,7 @@ import {mediaProcess,ffmpegPath} from './media-decode.js';
 import {MEDIA_POLICY,detectMedia,imageDimensions} from './media-policy.js';
 import {transcribeAudio} from './media-audio.js';
 import {MediaWorkQueue} from './media-work.js';
-const videoWork=new MediaWorkQueue(1,MEDIA_POLICY.maxItems);
+const videoWork=new MediaWorkQueue(1,10);
 const videoInput=['-protocol_whitelist','file','-format_whitelist','mov','-f','mov'];
 async function probeVideo(path:string,signal?:AbortSignal){
  const ffprobe=['/opt/homebrew/bin/ffprobe','/usr/local/bin/ffprobe'].find(existsSync);if(!ffprobe)throw Error('media_decoder_unavailable');

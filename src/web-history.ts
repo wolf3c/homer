@@ -75,7 +75,7 @@ export function conversationInput(value: unknown): ConversationInput {
   const resourceReferences=input.resourceReferences===undefined?undefined:parseResourceReferences(input.resourceReferences);
   const references=referencesOf({resourceReference,resourceReferences});
   const quotes = input.quotes?.map(({ messageId, text, annotation,itemIds,position }) => ({ messageId, text, annotation,...(itemIds?{itemIds:[...itemIds]}:{}),...(position!==undefined?{position:quotePosition(position,text)}:{}) }));
-  if(input.attachments!==undefined&&(!Array.isArray(input.attachments)||input.attachments.length>10||input.attachments.some(ref=>!ref||!/^asset-[a-f0-9-]{36}$/.test(ref.assetId)||!Number.isSafeInteger(ref.revision)||ref.revision<1)))throw Error('invalid_attachments');
+  if(input.attachments!==undefined&&(!Array.isArray(input.attachments)||input.attachments.some(ref=>!ref||!/^asset-[a-f0-9-]{36}$/.test(ref.assetId)||!Number.isSafeInteger(ref.revision)||ref.revision<1)))throw Error('invalid_attachments');
   const attachments=input.attachments?.map(({assetId,revision})=>({assetId,revision}));
   if(resourceReferences&&attachments&&new Set(attachments.map(ref=>JSON.stringify([ref.assetId,ref.revision]))).size!==attachments.length)throw Error('invalid_attachments');
   if(references.some(r=>r.kind==='image'&&!attachments?.some(ref=>ref.assetId===r.image.assetId&&ref.revision===r.image.revision)))throw Error('preview_image_missing');

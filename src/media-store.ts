@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { createHash,randomUUID } from 'node:crypto';
-import { mkdirSync,writeFileSync,renameSync,readFileSync,unlinkSync,existsSync,lstatSync,realpathSync,readdirSync,openSync,closeSync,fstatSync,constants } from 'node:fs';
+import { mkdirSync,writeFileSync,renameSync,readFileSync,readSync,unlinkSync,existsSync,lstatSync,realpathSync,readdirSync,openSync,closeSync,fstatSync,constants } from 'node:fs';
 import { join,resolve } from 'node:path';
 import { MEDIA_POLICY,mediaLimit,type MediaKind } from './media-policy.js';
 export type AttachmentRef={assetId:string;revision:number};
@@ -46,7 +46,6 @@ export class MediaStore{
   }
   if(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_inputs'").get()&&this.db.prepare('SELECT 1 FROM conversation_inputs WHERE requestId=?').get(input.requestId))throw Error('web_upload_request_closed');
   if(this.db.prepare('SELECT 1 FROM media_assets WHERE requestId=? AND bindingId!=? LIMIT 1').get(input.requestId,'web:'+input.threadId))throw Error('media_scope_denied');
-  if(Number(this.db.prepare("SELECT COUNT(*) n FROM media_assets WHERE requestId=? AND state NOT IN ('deleted','revoked','expired')").get(input.requestId)!.n)>=MEDIA_POLICY.maxItems)throw Error('media_attachment_limit');
   const ref=this.intent(input.requestId,'web:'+input.threadId,input.kind,input.filename);
   this.db.prepare('INSERT INTO media_web_uploads VALUES(?,?,?,?,?,?)').run(input.uploadId,input.threadId,input.requestId,input.filename,input.hash,ref.assetId);
   return ref;
@@ -76,14 +75,14 @@ export class MediaStore{
    (asset.state==='retryable_failed'||asset.state==='failed')&&!!asset.hash&&!!asset.mime);
  }
  private validateRefs(refs:readonly AttachmentRef[],allowed:(asset:MediaAsset)=>boolean){
-  if(refs.length>MEDIA_POLICY.maxItems||new Set(refs.map(r=>r.assetId)).size!==refs.length)throw Error('media_attachment_limit');
+  if(new Set(refs.map(r=>r.assetId)).size!==refs.length)throw Error('media_attachment_duplicate');
   let size=0;for(const ref of refs){const a=this.asset(ref);if(!allowed(a))throw Error('media_scope_denied');size+=a.size;}
   if(size>MEDIA_POLICY.messageBytes)throw Error('media_message_size_limit');
  }
  state(requestId:string,refs:AttachmentRef[]=[]):'ready'|'preparing'|'failed'{
   this.validate(requestId,refs);const rows=refs.map(ref=>this.asset(ref)).filter(a=>!this.db.prepare('SELECT 1 FROM media_optional WHERE assetId=?').get(a.id));
   if(rows.some(a=>['failed','expired','deleted','revoked'].includes(a.state)))return 'failed';
-  return rows.every(a=>a.state==='ready'&&(a.kind!=='image'||!!this.db.prepare('SELECT 1 FROM media_derivatives WHERE assetId=? AND revision=?').get(a.id,a.revision)))?'ready':'preparing';
+  return rows.every(a=>a.state==='ready')?'ready':'preparing';
  }
  claim(ref:AttachmentRef){const lease=randomUUID();return this.db.prepare("UPDATE media_assets SET state='downloading',attempt=attempt+1,lease=?,error=NULL WHERE id=? AND revision=? AND originOperationKey IS NULL AND state IN ('received','retryable_failed') AND attempt<?").run(lease,ref.assetId,ref.revision,MEDIA_POLICY.attempts).changes?lease:undefined;}
  private path(id:string){if(!this.directory||!/^asset-[a-f0-9-]{36}$/.test(id))throw Error('media_storage_unavailable');return join(this.directory,id);}
@@ -124,6 +123,10 @@ export class MediaStore{
   const asset=this.asset(ref);
   if(!this.originalAvailable(asset))throw Error(['deleted','expired','revoked'].includes(asset.state)?'media_scope_denied':'media_not_ready');
   const path=this.path(asset.id);
+  const bytes=this.verifyFile(path,asset.size,asset.hash,true)!;
+  return {asset,bytes,path};
+ }
+ private verifyFile(path:string,size:number,hash:string|null,read=false){
   let fd:number;
   try{fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);}
   catch(error){
@@ -135,11 +138,40 @@ export class MediaStore{
   try{
    const stat=fstatSync(fd);
    if(!stat.isFile()||stat.nlink!==1)throw Error('media_file_denied');
-   if(stat.size!==asset.size)throw Error('media_integrity_failed');
-   const bytes=readFileSync(fd);
-   if(bytes.length!==asset.size||createHash('sha256').update(bytes).digest('hex')!==asset.hash)throw Error('media_integrity_failed');
-   return {asset,bytes,path};
+   if(stat.size!==size)throw Error('media_integrity_failed');
+   const digest=createHash('sha256');
+   const bytes=read?readFileSync(fd):undefined;
+   if(bytes)digest.update(bytes);
+   else{
+    const chunk=Buffer.allocUnsafe(64*1024);
+    let remaining=size;
+    while(remaining>0){
+     const count=readSync(fd,chunk,0,Math.min(remaining,chunk.length),null);
+     if(!count)throw Error('media_integrity_failed');
+     digest.update(chunk.subarray(0,count));remaining-=count;
+    }
+   }
+   const current=lstatSync(path);
+   if(!current.isFile()||current.dev!==stat.dev||current.ino!==stat.ino||current.ctimeMs!==stat.ctimeMs||current.nlink!==1||current.size!==size||digest.digest('hex')!==hash)throw Error('media_integrity_failed');
+   return bytes;
   }finally{closeSync(fd);}
+ }
+ nativeImages(requestId:string,ref:AttachmentRef){
+  this.validate(requestId,[ref]);
+  const asset=this.asset(ref);
+  if(asset.kind!=='image'&&asset.kind!=='video')return [];
+  if(!this.originalAvailable(asset))throw Error('media_not_ready');
+  const path=this.path(asset.id);
+  this.verifyFile(path,asset.size,asset.hash);
+  if(asset.kind==='image')return [{path,transform:''}];
+  const frames=this.db.prepare("SELECT transform,size,hash FROM media_derivatives WHERE assetId=? AND revision=? AND sourceHash=? AND mime LIKE 'image/%' ORDER BY rowid").all(asset.id,asset.revision,asset.hash!);
+  return frames.map(row=>{
+   const transform=String(row.transform);
+   if(!/^[\w-]{1,80}$/.test(transform))throw Error('media_transform_denied');
+   const frame=path+'.'+transform;
+   this.verifyFile(frame,Number(row.size),String(row.hash));
+   return {path:frame,transform};
+  });
  }
  derivative(requestId:string,ref:AttachmentRef,value:{bytes:Buffer;mime:string;transform:string;width:number;height:number}){
   const {asset}=this.read(requestId,ref);if(!/^[\w-]{1,80}$/.test(value.transform))throw Error('media_transform_denied');
@@ -163,15 +195,15 @@ export class MediaStore{
   const row=this.db.prepare('SELECT width,height FROM media_derivatives WHERE assetId=? AND revision=? AND sourceHash=? ORDER BY rowid LIMIT 1').get(asset.id,asset.revision,asset.hash!);
   if(!row)throw Error('media_derivative_missing');return {width:Number(row.width),height:Number(row.height)};
  }
- image(requestId:string,ref:AttachmentRef){this.validate(requestId,[ref]);return this.imageAttachment(ref);}
- imageAttachment(ref:AttachmentRef){
+ imageAttachment(ref:AttachmentRef,allowOriginal=false){
   const {asset,bytes}=this.readAttachment(ref);
   const row=this.db.prepare('SELECT * FROM media_derivatives WHERE assetId=? AND revision=? AND sourceHash=? ORDER BY rowid LIMIT 1').get(asset.id,asset.revision,asset.hash!);
-  if(!row){
-   if(asset.originOperationKey&&asset.kind==='image'&&asset.mime)return {bytes,mime:asset.mime};
-   throw Error('media_derivative_missing');
+  if(row){
+   try{return {bytes:this.readDerivative(asset,row),mime:String(row.mime)};}
+   catch(error){if(!allowOriginal||(error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
   }
-  return {bytes:this.readDerivative(asset,row),mime:String(row.mime)};
+  if((allowOriginal||asset.originOperationKey)&&asset.kind==='image'&&asset.mime)return {bytes,mime:asset.mime};
+  throw Error('media_derivative_missing');
  }
  extractedAttachment(ref:AttachmentRef){
   const {asset}=this.readAttachment(ref),row=this.db.prepare("SELECT * FROM media_derivatives WHERE assetId=? AND revision=? AND sourceHash=? AND mime='application/json' ORDER BY rowid DESC LIMIT 1").get(asset.id,asset.revision,asset.hash!);
@@ -222,12 +254,13 @@ export class MediaStore{
  reconcile(){
   // Called only by the unique service owner after old leases have drained.
   this.db.prepare("UPDATE media_assets SET state=CASE WHEN attempt<? THEN 'retryable_failed' ELSE 'failed' END,lease=NULL,error='media_prepare_interrupted' WHERE state='downloading'").run(MEDIA_POLICY.attempts);
-  this.db.prepare("UPDATE media_assets SET state=CASE WHEN attempt<? THEN 'retryable_failed' ELSE 'failed' END,error='media_derivative_missing' WHERE state='ready' AND kind='image' AND originOperationKey IS NULL AND NOT EXISTS(SELECT 1 FROM media_derivatives d WHERE d.assetId=media_assets.id AND d.revision=media_assets.revision)").run(MEDIA_POLICY.attempts);
-  if(this.directory)for(const a of this.db.prepare("SELECT id,revision,hash,originOperationKey FROM media_assets WHERE state='ready'").all()){
+  this.db.prepare("UPDATE media_assets SET state='ready',error=NULL WHERE kind='image' AND state IN ('retryable_failed','failed') AND error='media_derivative_missing' AND hash IS NOT NULL AND mime IS NOT NULL").run();
+  if(this.directory)for(const a of this.db.prepare("SELECT id,revision,hash,originOperationKey,kind FROM media_assets WHERE state='ready'").all()){
    const path=this.path(String(a.id));
-   if(!existsSync(path)){this.db.prepare("UPDATE media_assets SET state='failed',error='media_file_missing' WHERE id=?").run(String(a.id));continue;}
-   if(lstatSync(path).isSymbolicLink()||!lstatSync(path).isFile()){this.db.prepare("UPDATE media_assets SET state='failed',error='media_file_denied' WHERE id=?").run(String(a.id));continue;}
-   if(a.originOperationKey)continue;
+   const stat=lstatSync(path,{throwIfNoEntry:false});
+   if(!stat){this.db.prepare("UPDATE media_assets SET state='failed',error='media_file_missing' WHERE id=?").run(String(a.id));continue;}
+   if(!stat.isFile()||stat.nlink!==1){this.db.prepare("UPDATE media_assets SET state='failed',error='media_file_denied' WHERE id=?").run(String(a.id));continue;}
+   if(a.originOperationKey||a.kind==='image')continue;
    for(const d of this.db.prepare('SELECT transform FROM media_derivatives WHERE assetId=? AND revision=? AND sourceHash=?').all(String(a.id),Number(a.revision),String(a.hash))){
     const derived=path+'.'+d.transform;
     if(!existsSync(derived)||lstatSync(derived).isSymbolicLink()||!lstatSync(derived).isFile()){

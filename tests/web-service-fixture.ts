@@ -5,7 +5,7 @@ import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {Homer,type Message} from '../src/service.js';
-import type {EngineLike,EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
+import type {EngineLike,EngineImage,EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
 import type {PreviewSource} from '../src/preview-reference.js';
 
 export function fixture(sink: (message: Message) => Promise<void> = async () => {}) {
@@ -13,7 +13,7 @@ export function fixture(sink: (message: Message) => Promise<void> = async () => 
   const base = mkdtempSync(join(parent, process.env.HOMER_SYNTHETIC_ROOT?"s-":"service-"));
   mkdirSync(join(base, "workspace/materials"), { recursive: true }); mkdirSync(join(base, "runtime"));
   writeFileSync(join(base, "workspace/materials/synthetic.md"), "合成材料");
-  const inputs: string[] = [], engines: Fake[] = [], nativeImages:{url:string}[][]=[];
+  const inputs: string[] = [], engines: Fake[] = [], nativeImages:EngineImage[][]=[];
   const attachments = new Map<string, string>();
   let app: Homer;
   class Fake extends EventEmitter implements EngineLike {
@@ -25,7 +25,7 @@ export function fixture(sink: (message: Message) => Promise<void> = async () => 
     get worker() { return this.options.role === "worker"; }
     async start() { return this.threadId; }
     call(tool: string, args: unknown) { return this.tool({ threadId: this.threadId, turnId: this.turnId!, callId: "synthetic-call-" + Math.random(), tool, arguments: args }); }
-    async turn(text: string, options?: { onStarted?: (id: string) => void;images?:{url:string}[] }): Promise<TurnResult> {
+    async turn(text: string, options?: { onStarted?: (id: string) => void;images?:EngineImage[] }): Promise<TurnResult> {
       this.turnId = "synthetic-turn-" + Math.random(); options?.onStarted?.(this.turnId);
       if (this.worker) return new Promise(accept => { this.pending = accept; });
       inputs.push(text);
