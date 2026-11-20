@@ -2866,8 +2866,11 @@ export class Homer {
     }
   }
   private async applyStop(receipt:Record<string,unknown>){
+    if(receipt.state==='uncertain')return receipt;
     const key=String(receipt.operationKey);let confirmed=true;
-    for(const id of (receipt.targets??[]) as string[])if(!await this.stopOwnedWorker(id))confirmed=false;
+    if(receipt.state==='requested'){
+      for(const id of (receipt.targets??[]) as string[])if(!await this.stopOwnedWorker(id))confirmed=false;
+    }
     const result=this.tasks.confirmStop(key,confirmed);
     if(confirmed)this.tasks.recoverWorkerOperations({taskId:String(receipt.taskId),workerId:String(receipt.workerId)});
     this.pump();this.scheduleInternal();return result;

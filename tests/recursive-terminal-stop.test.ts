@@ -81,7 +81,9 @@ for(const status of ['failed','cancelled'] as const)for(const confirmed of [true
     if(!confirmed)assert.equal(f.app.upgradeStatus().safe,false);
     await assert.rejects(()=>worker.call('stage_file_result',{filename:'late.md',assetId:'synthetic-media',revision:1}),/stale|not_live|stop/);
     assert.throws(()=>f.app.interactions.respond(item.id,{action:'answer',answer:'Synthetic late answer',reason:'Synthetic race'}),/not_live|resolved/);
-    await f.app.stop(run.id);assert.equal(worker.resolutions,1);assert.equal(worker.closes,1);
+    await f.app.stop(run.id);
+    assert.equal(worker.closes,confirmed?1:2);assert.equal(worker.resolutions,1);
+    assert.equal(f.app.tasks.run(run.id).status,status);
   }finally{await f.close();}
 });
 

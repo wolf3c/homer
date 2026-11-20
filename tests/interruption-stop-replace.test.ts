@@ -84,8 +84,12 @@ test('retrying an unconfirmed Worker stop checks the owner again and releases th
  const pause=(operationId:string)=>f.tasks.controlTask(main,{action:'pause',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,operationId});
  const first=await stop('first-stop');
  assert.equal(first.state,'uncertain');
+ assert.deepEqual(await stop('first-stop'),first);
+ assert.equal(closes,1);
  const paused=pause('while-stopping');assert.equal(paused.state,'paused');assert.ok(paused.blockers?.some(b=>b.runId===runId));
- assert.equal((await stop('retry-stop')).state,'confirmed');
- assert.equal(closes,2);assert.equal(f.tasks.operation(first.operationKey).state,'confirmed');
+ const retry=await stop('retry-stop');
+ assert.equal(retry.state,'confirmed');assert.notEqual(retry.operationKey,first.operationKey);
+ assert.deepEqual(await stop('first-stop'),{...first,state:'confirmed'});
+ assert.deepEqual(await stop('retry-stop'),retry);assert.equal(closes,2);
  assert.deepEqual(pause('after-exit').blockers,[]);
 });
