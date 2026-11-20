@@ -118,6 +118,50 @@
 - [ ] 复用 adapter 唯一附件集合与上传身份，按 offset 显示进度／重试；只在 finish ready 后允许发送。换线程、移除、刷新与连接断开不得让旧块确认当前草稿。
 - [ ] 不强行嗅探单块格式：完成后由原件头部与内容识别类型；图片走第一阶段，文件提取／音视频分析按需且可以不可用。检测、校验和取消不得重新构造完整 Base64。普通文件可在finish完成后立即确认收存；在既有inspect工具中按需调用extractDocument并记录sourceHash／coverage／limitations，本地提取的字符／页数／解压预算只限制分析覆盖，不能再阻塞原件ready或流式导出。
 
+#### 2026-11-20 tus 上传选型结论
+
+本轮结束 tus 产品接入尝试。正式上传继续使用已提交的单文件 8 MiB、手机整包 16 MiB 入口。上文的三步分块实现是未提交的候选。原型使用 Node 22.22.0、`tus-js-client@4.3.1`、`@tus/server@2.4.7` 和 `@tus/file-store@2.1.2`。网关运行一个处理器，独立子进程持有合成 SQLite 和 Homer 的 `MediaStore`。手机复用现有配对、DataChannel 分帧和背压，桌面使用同源 HTTP。
+
+每次上传同一内容的 8 MiB 普通文件，读回原件逐字节核对，并断言该草稿只有一个资产。下表为各一次实测。请求数包含建立草稿归属和取得回执，内存为上传期间采样峰值。
+
+| 客户端 | 上传方式 | 请求数 | 耗时 | 网关 / 宿主 RSS（MiB） |
+| --- | --- | ---: | ---: | ---: |
+| macOS Chrome | tus，256 KiB | 36 | 0.111 秒 | 104.8 / 94.6 |
+| macOS Chrome | 当前候选，16 KiB | 514 | 0.856 秒 | 105.9 / 94.7 |
+| Pixel 8 Pro Chrome | tus，256 KiB | 36 | 4.69 秒 | 116.6 / 75.3 |
+| Pixel 8 Pro Chrome | 当前候选，16 KiB | 514 | 42.36 秒 | 115.3 / 93.8 |
+| Pixel 8 Pro Chrome | tus，16 KiB 对照 | 516 | 40.98 秒 | 104.5 / 71.9 |
+
+手机使用 Android 17。局域网直连未建立，实际选中的 ICE 候选为宿主直连候选和手机中继候选。中继仅在测试机运行，手机经 USB 端口映射连接中继。相同链路下改回 16 KiB 后，两种实现耗时接近。前两项手机测量中，测试页 JS 堆分别采到 2.5 / 8.1 MiB，Chrome 主进程 PSS 分别为 329.7 / 327.9 MiB。该 PSS 含浏览器共享开销。当前数据覆盖 Chrome 测试页，安装版 WebView、低内存机和公网中继性能仍待独立测量。
+
+- **恢复与授权**。创建回执丢失、收齐后宿主重启、改名后事务中断、登记后未取得回执，均能按原身份获得同一份 `ready`。手机传完 512 KiB 后关闭 RTC，重新认证并重启宿主，下一次写入从 524288 开始。切换请求身份会被拒绝。撤权使原会话失去续传和登记能力，重新批准后仍能核实原附件尚未登记。
+- **兼容与配额**。长显示名、空普通文件、旧入口、未完成文件预留空间和正常取消均已验证。另将手机、网关两端固定到已提交的 16 MiB 报文实现，真机用 tus 和旧整包入口各传一次 8 MiB，原件均一致；8 MiB 加一个字节在创建时被拒绝。现有适配器、移动会话、上传宿主和迁移定向回归 35/35 通过，包含历史原件读取及迟到回执保护。
+- **未通过的采用条件**。让 tus 收齐 512 KiB，跳过 Homer 登记，再让草稿和上传记录过期。Homer GC 将资产标为 `deleted` 并释放配额，FileStore 的 `deleteExpired()` 返回 0，磁盘仍有全部 524288 字节。相同流程下，部分上传会被清除。显式 `remove(id)` 可以删除原件和元数据，但取消后若进程在调用它之前退出，仍需在重启后补做。把两个存储直接改到同一目录又会触发已有的孤儿文件清理：超过一天的 tus 元数据会被清掉，仍有效的部分文件无法再由 tus 查询进度。
+- **维护成本**。tus 确实接管了传输偏移和按偏移写盘。为了维持 Homer 的草稿语义，还需维护限定方法和路径的手机适配、原身份重复创建保护、跨进程的完成回执，以及两个存储在过期和崩溃后的清理。保留现行入口即可避免引入这套协调。原型和私有测试库均未进入产品依赖或消息协议。
+
+在独立临时包中可用下面的最小断言复验影响选型的 FileStore 行为。使用上列固定版本，在空的私有临时目录下执行，脚本会删除自己创建的数据。
+
+```js
+import assert from 'node:assert/strict';
+import {mkdtemp, rm, stat} from 'node:fs/promises';
+import {Readable} from 'node:stream';
+import {FileStore} from '@tus/file-store';
+
+const directory = await mkdtemp('./fixture-');
+try {
+  const store = new FileStore({directory, expirationPeriodInMilliseconds: 1});
+  for (const [id, size] of [['partial', 2], ['complete', 1]]) {
+    await store.create({id, size, offset: 0, creation_date: new Date(0).toISOString()});
+    await store.write(Readable.from([Buffer.from('x')]), id, 0);
+  }
+  assert.equal(await store.deleteExpired(), 1);
+  assert.equal((await stat(directory + '/complete')).size, 1);
+  await assert.rejects(stat(directory + '/partial'), {code: 'ENOENT'});
+} finally {
+  await rm(directory, {recursive: true, force: true});
+}
+```
+
 ### 任务 5：读取、导出、下载和手机分享
 
 **接口：** 保留 `media.read` 和原附件 selector，增加受核验 offset／length 的读取模式；最终 hash 与总长来自资产。HTTP、手机与导出共用同一来源授权，不创建任意路径或永久公开下载 URL。
