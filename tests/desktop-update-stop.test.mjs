@@ -45,6 +45,19 @@ if(!vm.SourceTextModule){
   assert.match(output,/# tests [1-9]\d*/);
  });
 }else{
+ test('desktop forwards channel management to the host and returns its receipt',async()=>{
+  const f=await fixture();
+  try{
+   const input={action:'state',input:false},receipt={bindings:[]};
+   const pending=f.account('channel-manage',input);
+   const request=f.sent.at(-1);
+   f.child.emit('message',{kind:'web_result',id:request.id,value:receipt});
+   assert.deepEqual(await pending,receipt);
+   assert.equal(request.kind,'desktop_account');
+   assert.equal(request.method,'channel-manage');
+   assert.deepEqual(request.input,input);
+  }finally{await f.cleanup();}
+ });
  test('desktop power forwards only owner facts and bounded resume/ack controls to the existing host',async()=>{
   const f=await fixture();try{
    assert.equal(typeof f.power,'function');
