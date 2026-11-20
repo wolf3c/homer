@@ -35,7 +35,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   f.app.bindBrowserPreview((actor,action,input)=>electron.evaluate((_,a)=>globalThis.preview.execute(a.actor,a.action,a.input),{actor,action,input}).catch(error=>{throw Error(error.message.match(/preview_[a-z_]+/)?.[0]??'preview_result_unconfirmed');}));
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
-   if(text==='Delegate both pages'){await main.call('worker_open',{title:"Operate page A",message:'Operate page A'});await main.call('worker_open',{title:"Operate page B",message:'Operate page B'});return{status:'completed',text:'两个合成任务已创建'};}
+   if(text==='Delegate both pages'){for(const goal of ['Operate page A','Operate page B']){const {taskId}=await main.call('task_create',{title:goal,goal});await main.call('worker_open',{taskId});}return{status:'completed',text:'两个合成任务已创建'};}
    const final={itemId:'preview-final',phase:'final_answer',text:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
    return{status:'completed',text:final.text,messages:[final]};

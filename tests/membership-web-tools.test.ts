@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
@@ -166,7 +167,7 @@ test(`an existing main thread and its Worker share the membership Token with nat
         if(worker)workerChecked=true;
         if(!worker){
           const call=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args});
-          await call('worker_open',{title:"Fetch the example page",message:'Fetch the example page'});
+          await openTaskWorker({call},'Fetch the example page');
         }
       }catch(error){engineErrors.push(error);}
       return {status:'completed',text:'Synthetic turn completed.'};
@@ -284,7 +285,7 @@ test('membership video submits only after user approval and retrieves the origin
           await video('worker-foreign',{receipt:results.resume.receipt});
           await video('worker',{prompt:'worker'});
         }
-        else if(input?.worker)await dynamic('worker_open',{title:"Generate a synthetic video",message:'Generate a synthetic video'});
+        else if(input?.worker)await openTaskWorker({call:dynamic},'Generate a synthetic video');
         else if(input){
           await video(input.key,input.args);
           const path=results[input.key]?.path;
@@ -498,7 +499,7 @@ test('membership images generate and edit through MCP and publish the exact PNG'
           }else{
             const dynamic=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args}) as Promise<Record<string,string>>;
             answer=`Synthetic image is ready. [${basename(generatedPath!)}](<${pathToFileURL(generatedPath!).href}>)`;
-            await dynamic('worker_open',{title:"Generate and edit a synthetic image",message:'Generate and edit a synthetic image',attachments:[attachment]});
+            await openTaskWorker({call:dynamic},"Generate and edit a synthetic image",'Generate and edit a synthetic image',{attachments:[attachment]});
           }
         });
       }catch(error){errors.push(error);}
@@ -583,7 +584,7 @@ test('membership audio is gated by the Token catalog and approval, then delivers
       const dynamic=(tool:string,args:unknown)=>this.tool({threadId:this.threadId,turnId:this.turnId!,callId:tool,tool,arguments:args}) as Promise<Record<string,string>>;
       let answer='Audio turn finished.';
       try{
-        if(data?.delegate){await dynamic('worker_open',{title:'Generate speech',message:'Generate the requested speech'});}
+        if(data?.delegate){await openTaskWorker({call:dynamic},'Generate speech','Generate the requested speech');}
         else if(data)await withMcp(this.options,async rpc=>{
           const tools=(await rpc('tools/list')).tools as {name:string;description:string}[];
           assert.equal(tools.some(tool=>tool.name==='generate_audio'),visible);

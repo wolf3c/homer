@@ -103,7 +103,8 @@ async function receive(m) {
       await tool('task_update', {taskId:input.taskId,action:'settle',outcome:'succeeded'});
       complete(`合成行动清单已完成，可下载附件。 [合成行动清单.md](${pathToFileURL(filePath).href})`);
     } else if (/生成成果|派发任务/.test(text)) {
-      await tool('worker_open', {title:'合成行动清单',message:'制作合成行动清单，并向 Main 询问用户所需格式。'});
+      const {taskId}=await tool('task_create',{title:'合成行动清单',goal:'制作合成行动清单，并向 Main 询问用户所需格式。'});
+      await tool('worker_open',{taskId});
       await stream("我已开始整理材料。需要补充的信息会在这里询问你，后台任务会继续。", false);
     } else await stream("先核对材料，再交付成果。\n\n我会保留明确的负责人和时间，将不确定的内容留作待确认。\n\n| 事项 | 当前状态 |\n| --- | --- |\n| 阅读材料 | 已完成 |\n| 整理成果 | 待交办 |\n\n```ts\nconst task = { status: 'ready' };\n```\n\n这是离线合成验收的回答。", /持续|慢速/.test(text));
   }

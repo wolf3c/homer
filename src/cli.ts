@@ -143,7 +143,7 @@ main().catch(async (e) => {
     const text = code.startsWith("prompt_file_")
       ? "默认提示词加载失败，请检查安装目录的 prompts 文件；修复后重新启动：" + code
       : code === "main_tools_migration_required"
-      ? "主对话已保留；工具定义发生变化，需完成会话兼容迁移后再启动。未创建新对话：" + code
+      ? "原主会话使用旧版工具。请用原版本继续，或使用独立资料目录开始新会话。原记录已保留：" + code
       : code === "main_resume_thread_mismatch"
         ? "主对话恢复结果不匹配，已停止启动并保留原会话记录：" + code
         : code === "engine_thread_history_unavailable"

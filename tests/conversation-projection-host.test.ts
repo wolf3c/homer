@@ -71,7 +71,8 @@ test('new user input runs independently after Worker host closure while its rece
   f.app.inputs.accept({requestId:'synthetic-worker-source',text:'Synthetic authorized file'});
   const source=f.app.inputs.claim()!;f.app.inputs.started(source.messageId,source.revision,'generation:worker-source','native:worker-source');f.app.inputs.finish(source.messageId,source.revision,'completed');f.app.store.finishRequest(source.input.requestId,'Synthetic source handled');
   const main={agentId:f.app.store.meta('mainAgentId')!,sourceRequestId:source.input.requestId,threadId:f.app.store.meta('mainThread')!};
-  const opened=f.app.tasks.workerOpen(main,{operationId:'synthetic-open',text:'Read the synthetic file',authority:{sourceRequestId:source.input.requestId,description:'Synthetic authorized request'}});
+  const {taskId}=f.app.tasks.createTask(main,{operationId:'synthetic-record',goal:'Read the synthetic file'});
+  const opened=f.app.tasks.workerOpen(main,{operationId:'synthetic-open',taskId,authority:{sourceRequestId:source.input.requestId,description:'Synthetic authorized request'}});
   const run=f.app.tasks.claim(opened.runId)!;
   f.app.tasks.bind(run.id,run.epoch,'synthetic-worker-thread','synthetic-worker-turn');
   f.app.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original Worker answer'},true);

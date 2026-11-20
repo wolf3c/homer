@@ -6,8 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {fixture,metadata,peer,tools} from './fixtures/native-main-resume.mjs';
 const {mainToolsForHash}=await import(new URL('./recursive-tools.js',process.env.HOMER_TEST_SERVICE_MODULE));
 
-const toolsHash=createHash('sha256').update(JSON.stringify(tools)).digest('hex');
-for(const hash of [toolsHash,'f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe','d8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150'])
+const hash=createHash('sha256').update(JSON.stringify(tools)).digest('hex');
 test('fixed native engine retains the exact catalog on cold resume and provider fork '+hash.slice(0,8),{timeout:45000},async t=>{
  const f=fixture(t),{bin,cwd,calls}=f;
  const catalog=mainToolsForHash(hash);
@@ -36,7 +35,7 @@ test('fixed native engine retains the exact catalog on cold resume and provider 
  }finally{await first?.close();await second?.close();}
 });
 
-test('fixed native engine sends the candidate title schemas to a loopback Responses endpoint',{timeout:30000},async t=>{
+test('fixed native engine sends the task creation and delegation schemas to a loopback Responses endpoint',{timeout:30000},async t=>{
  const f=fixture(t),requests=[];
  const server=createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/v1/responses')return res.writeHead(404).end();
@@ -67,18 +66,14 @@ test('fixed native engine sends the candidate title schemas to a loopback Respon
   assert.ok(Array.isArray(requests[0].tools), 'Responses request keys: '+Object.keys(requests[0]).join(', '));
   const posted=Object.fromEntries(requests[0].tools.map(tool=>[tool.name,tool.parameters]));
   assert.deepEqual(posted.task_create.required,['goal','title']);
-  const branches=posted.worker_open.oneOf;
-  assert.equal(branches.length,2);
-  for(const [index,field] of ['title','taskId'].entries()){
-   const branch=branches[index];
-   assert.equal(branch.type,'object');
-   assert.equal(branch.additionalProperties,false);
-   assert.deepEqual(branch.required,['message',field]);
-   assert.deepEqual(Object.keys(branch.properties).sort(),['attachments','message','workingDirectory',field].sort());
-  }
-  const candidate=tools.find(tool=>tool.name==='worker_open').inputSchema.oneOf;
-  // Codex keeps the closed object structure but strips these leaf constraints on the wire.
-  assert.deepEqual(branches,JSON.parse(JSON.stringify(candidate,(key,value)=>
+  const schema=posted.worker_open;
+  assert.equal(schema.type,'object');
+  assert.equal(schema.additionalProperties,false);
+  assert.deepEqual(schema.required,['taskId']);
+  assert.deepEqual(Object.keys(schema.properties).sort(),['attachments','message','taskId','workingDirectory']);
+  const candidate=tools.find(tool=>tool.name==='worker_open').inputSchema;
+  // Codex strips these leaf constraints on the wire.
+  assert.deepEqual(schema,JSON.parse(JSON.stringify(candidate,(key,value)=>
    ['minLength','maxLength','pattern','minimum'].includes(key)?undefined:value)));
  }finally{
   try{await engine.close();}finally{await new Promise(resolve=>server.close(resolve));}

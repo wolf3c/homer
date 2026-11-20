@@ -122,7 +122,8 @@ test('first dispatch freezes an attachment and grants the selected Worker only',
   try{
     f.setScript(async(main,text)=>{
       if(text==='Delegate to two Workers'){
-        const args={title:'Selected attachment',message:'Read the selected attachment.',attachments:[{path}]};
+        const task=await main.call('task_create',{title:'Selected attachment',goal:'Read the selected attachment.'});
+        const args={taskId:task.taskId,attachments:[{path}]};
         const first=await main.call('worker_open',args,'one-dispatch');
         assert.deepEqual(await main.call('worker_open',args,'one-dispatch'),first);
         taskId=first.taskId;

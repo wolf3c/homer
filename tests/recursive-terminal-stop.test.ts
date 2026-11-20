@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {callHostMcp} from './fixtures/host-mcp-call.js';
 // Requirements-derived synthetic stop races. Actual Homer and SQLite only.
 import test from 'node:test';
@@ -31,7 +32,7 @@ function fixture(confirm=true){
       }
       if(text.startsWith('synthetic:dispatch')){
         this.turnId='synthetic-dispatch-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
-        const worker=await this.call('worker_open',{title:"Ask for the missing format",message:'Ask for the missing format'});return {status:'completed',text:worker.runId};
+        const worker=await openTaskWorker(this,'Ask for the missing format');return {status:'completed',text:worker.runId};
       }
       if(text.startsWith('[内部协作输入')&&text.includes('interactionId=')){
         this.turnId='synthetic-question-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);

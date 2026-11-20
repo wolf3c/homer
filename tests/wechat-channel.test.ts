@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import assert from 'node:assert/strict';
 import {createDecipheriv} from 'node:crypto';
 import {mkdtempSync,rmSync,writeFileSync,statSync} from 'node:fs';
@@ -93,7 +94,7 @@ test('WeChat resumes separate private routes, ignores replay and cannot send on 
       return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
     }
     const text=input.replace(/^::message-source\{source=wechat\}\n\n/,'');
-    if(text==='only A')({taskId}=await main.call('worker_open',{title:"Prepare the WeChat fixture",message:'Prepare the WeChat fixture'}));
+    if(text==='only A')({taskId}=await openTaskWorker(main,'Prepare the WeChat fixture'));
     if(text==='only B'){
       const name='set_notification_destination',itemId='wechat-test-subscribe',args={taskId};
       main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId,tool:name,arguments:args});

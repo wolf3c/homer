@@ -1,3 +1,4 @@
+import {openTaskWorker} from './open-task-worker.js';
 // Independent host process and scripted Worker; no model, login or network.
 import {EventEmitter} from 'node:events';
 import {appendFileSync,mkdirSync,writeFileSync} from 'node:fs';
@@ -34,7 +35,7 @@ export function restartHost(root:string,scenario:string,seed=false,desktop=false
     started();return result;
    }
    if(text==='open'){
-    await this.call('worker_open',{title:'Synthetic investigation',message:'Investigate synthetic input'});
+    await openTaskWorker(this,'Synthetic investigation','Investigate synthetic input');
    }else if(text==='change-goal'){
     await this.call('task_update',{taskId:app.tasks.tasks()[0]!.id,goal:'Investigate the changed synthetic requirement'});
    }else if(text==='pause'||text==='cancel'){

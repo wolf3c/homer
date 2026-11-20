@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 // Requirements-derived real service test, fake engines and isolated runtime only.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -128,7 +129,7 @@ for(const scenario of ['result','empty-report','model-failure','response-lost','
     return result;
    }
    if(text==='seed'){
-    await this.call('worker_open',{title:"Synthetic work",message:'Synthetic work'});
+    await openTaskWorker(this,'Synthetic work');
     return new Promise(done=>{releaseSeed=this.release=done;});
    }
    if(text.startsWith('[内部协作输入')){

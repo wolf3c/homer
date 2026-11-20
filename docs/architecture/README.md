@@ -1,5 +1,7 @@
 # Homer 核心架构
 
+2026-11-20 工作区已实现建项与派工分离。Homer 建项保存目标，Worker 按事项编号承接整项或指定分工。两种派工均通过固定 Codex 引擎的本地回环验收。旧 Main 工具表须使用匹配版本或独立新会话。[建项与派工契约](main-worker-chat-architecture.md#新会话的事项标题契约)
+
 2026-11-20，yezi2 6.1.45 已启用线上 V2。本机 Mac（Homer 0.1.19，build 307）登录时的 PKCE 兑换和重启时的配置 GET 均返回精简选型。两次均为 `gpt-6.1-terra`，Main 用 `medium`，Worker 用 `high`。本机日常推理仍使用 ChatGPT 套餐，其他平台暂未验。[线上精简下发验收状态](member-model-selection.md#线上精简下发验收状态)
 
 2026-11-19 [会员模型选型与随包目录](member-model-selection.md)取代[前一版随包方案](account-and-model-connection.md#会员模型随包配置)，Homer 和 yezi2 已在本地实现。新版桌面和运行进程共用同一份内存选型，仅网站选型失败时整组回退到随包默认值。Codex 直接读取随包原生 `models.json`，旧客户端沿用 V1。macOS arm64 候选包已通过 Main、Worker、Luna 实际出站及 V1 同线程升降级联调。随包八款模型已核对 AMH 生产目录，并通过[真实会员路由验收](member-model-selection.md#amh-真实会员路由验收)（每款仅测一次 `low`，AMH 均回显对应模型 ID 和推理档）。候选包在回环网关完成[八轮角色轮换](member-model-selection.md#八款模型轮换验收)，16 次 Luna 审核及 8 次 Worker 回传均通过。[默认选型端到端验收](member-model-selection.md#默认选型端到端验收)已用隔离候选包、本地 yezi2 和真实 AMH 跑通，两次 Luna 审核、Worker 回传及 8 条账单均已核对。[异步压缩专项验收](member-model-selection.md#异步压缩专项验收)已在隔离的 Luna 配置和 2% 后台触发阈值下验证压缩期间继续对话、密文回放及上下文续接。[Terra 会员显式压缩路由验收](member-model-selection.md#terra-会员显式压缩路由验收)覆盖 `default` 组渠道 6 的 `medium` 和 `high` 两档。会员继续沿用常规压缩，暂缓开启异步压缩。候选包 65% 阈值的后台压缩验收留待有明确需求时再做。
@@ -18,13 +20,15 @@
 
 2026-11-17 正式消息事项标题最小实现：复用已存事项 ID／版本与原来源、标题组件，支持纯附件和完整历史绑定；未绑定普通回复不猜测。复审提交候选定向 75/75、两端类型及 1100／320px 合成界面通过，未安装或发布。见[所属边界](main-worker-chat-architecture.md#正式消息事项标题2026-11-17)。
 
-2026-11-18 新会话事项标题契约已在源码实施。新建 Main 采用两个封闭派工分支，宿主按会话契约在附件暂存前校验。固定 Codex 的出站、冷恢复和 fork，以及宿主的正负用例、后台授权与原回执通过隔离验证。实际 Main 模型入口仍待验。见[标题契约与验收](main-worker-chat-architecture.md#新会话的事项标题契约)。
+2026-11-18 历史标题契约（已由 11 月 20 日建项与派工分离取代）。新建 Main 采用两个封闭派工分支，宿主按会话契约在附件暂存前校验。固定 Codex 的出站、冷恢复和 fork，以及宿主的正负用例、后台授权与原回执通过隔离验证。实际 Main 模型入口仍待验。见[标题契约与验收](main-worker-chat-architecture.md#新会话的事项标题契约)。
 
 从主 Agent 与 Worker 的职责读起，再看插件怎样接收消息事实、怎样获得可信工具调用，再看渠道如何使用这些接口。定时任务、账号与模型连接、移动设备配对可独立查阅。各篇正文维护所属契约，验收证据以正文所列版本和环境为准。
 
 2026-11-20 Main 提示词已纳入反思性探究。工作区加载核对及提示词专项 5/5 通过，真实模型行为待验证。见[Main 工作原则](../../prompts/main.md#原则)。
 
 2026-11-20 工作区候选明确 Main 主动结案并据实交付，后台回传也可收尾。结案后事项默认保留可见，归档须在获准的真实用户轮办理。见[结案后的归档判断](main-worker-chat-architecture.md#结案后的归档判断)。
+
+2026-11-20 [Homer 的任务清单与协作简化提案](task-completion-design.md)沿用现行主协作架构：用户只和 Homer 沟通，Worker 向 Homer 回报，由 Homer 自主协调、交付并维护清单。提案建议退役独立归档，保留路由、授权与执行恢复；待确认，尚未实施。
 
 2026-11-17 两处桌面升级门禁修复已随 v0.1.17 / build 302 公开并设为 Latest：旧 profile 按实际数据格式复用，保留 Codex 建档版本；有同轮原生 completed 凭据的历史 webSearch unknown 不再阻塞，其余副作用及停止校验保留。定向、固定引擎、ARM 正式包及本机手动升级后的原账号、历史/工具回执、记忆和文件保留通过；Intel / Windows 实机及完整原生自动升级未验收，系统唤醒清理确认提示仍待专项排查。见[发行与本机资料核验](../desktop-release-0.1.17-preparation.md)。见[升级兼容检查](../desktop-app-update.md#2026-11-16-两处升级门禁的最小修复)。
 

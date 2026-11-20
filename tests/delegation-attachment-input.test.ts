@@ -21,18 +21,19 @@ function running(f:ReturnType<typeof fixture>,workerId:string){
 }
 type Opened={taskId:string;workerId:string;runId:string;operationKey:string};
 
-test('Worker attachment input rejects malformed selectors and foreign sources before accepting a task',async()=>{
+test('Worker attachment input rejects malformed selectors and foreign sources before opening a Worker',async()=>{
  const f=fixture();let checked=false;
  try{
   await f.app.start();
   const requestId='selected-input',ref=upload(f,requestId),other=upload(f,'foreign-unsubmitted-input');
   f.setScript(async(main,text)=>{
    if(text.includes('Inspect the source')){
+    const {taskId}=await main.call('task_create',{title:"Inspect",goal:"Inspect"});
     const before=state(f);
     for(const invalid of [{assetId:ref.assetId},{...ref,revision:'1'},{...ref,revision:0},{...ref,path:'/tmp/synthetic'}])
-     await assert.rejects(main.call('worker_open',{title:"Inspect",message:'Inspect',attachments:[invalid]}),/invalid_tool_arguments|invalid_attachment/);
+     await assert.rejects(main.call('worker_open',{taskId,attachments:[invalid]}),/invalid_tool_arguments|invalid_attachment/);
     for(const unavailable of [{...ref,revision:2},other])
-     await assert.rejects(main.call('worker_open',{title:"Inspect",message:'Inspect',attachments:[unavailable]}),/media_scope_denied/);
+     await assert.rejects(main.call('worker_open',{taskId,attachments:[unavailable]}),/media_scope_denied/);
     assert.deepEqual(state(f),before);checked=true;
    }
    return {status:'completed',text:'Synthetic reply'};
@@ -49,7 +50,8 @@ test('only the addressed Worker can read the offered revision and a revoked sour
   const requestId='selected-worker-source',ref=upload(f,requestId);
   f.setScript(async(main,text)=>{
    if(text.includes('Inspect the source')){
-    selected=await main.call('worker_open',{title:"Inspect selected source",message:'Inspect selected source',attachments:[ref]});
+    const {taskId}=await main.call('task_create',{title:"Inspect selected source",goal:"Inspect selected source"});
+    selected=await main.call('worker_open',{taskId,attachments:[ref]});
     other=await main.call('worker_open',{taskId:selected!.taskId,message:'Check a separate issue'});
    }
    return {status:'completed',text:'Synthetic reply'};
@@ -88,7 +90,8 @@ test('an exact accepted Worker receipt survives revocation, but a missing receip
   const requestId='selected-receipt-source',ref=upload(f,requestId);
   f.setScript(async(main,text)=>{
    if(text.includes('Inspect the source')){
-    const args={title:'Selected source',message:'Inspect selected source',attachments:[ref]};
+    const {taskId}=await main.call('task_create',{title:'Selected source',goal:'Inspect selected source'});
+    const args={taskId,attachments:[ref]};
     const accepted=await main.call('worker_open',args,'selected-receipt'),before=state(f);
     f.app.media.revoke(requestId);
     assert.deepEqual(await main.call('worker_open',args,'selected-receipt'),accepted);
@@ -106,16 +109,17 @@ test('an exact accepted Worker receipt survives revocation, but a missing receip
  }finally{await f.close();}
 });
 
-test('a Worker message commit failure rolls back the task and releases only its staged snapshot',async()=>{
+test('a Worker message commit failure rolls back the Worker and releases only its staged snapshot',async()=>{
  const f=fixture();let checked=false;
  try{
   await f.app.start();
   const path=join(f.app.config.workspace,'selected.txt');writeFileSync(path,'Synthetic local file');
   f.setScript(async(main,text)=>{
    if(text.includes('Inspect the source')){
+    const {taskId}=await main.call('task_create',{title:"Inspect",goal:"Inspect"});
     const db=f.app.store.db,before=state(f);
     db.exec("CREATE TEMP TRIGGER reject_worker_input BEFORE INSERT ON agent_messages WHEN NEW.kind='worker_input' BEGIN SELECT RAISE(ABORT,'synthetic_worker_commit_abort'); END");
-    try{await assert.rejects(main.call('worker_open',{title:"Inspect",message:'Inspect',attachments:[{path}]}),/synthetic_worker_commit_abort/);}
+    try{await assert.rejects(main.call('worker_open',{taskId,attachments:[{path}]}),/synthetic_worker_commit_abort/);}
     finally{db.exec('DROP TRIGGER reject_worker_input');}
     assert.deepEqual(state(f),before);
     const stage=db.prepare("SELECT state,responseJson FROM operations WHERE kind='attachment_stage'").get()!;
@@ -124,7 +128,7 @@ test('a Worker message commit failure rolls back the task and releases only its 
     assert.ok(snapshot);
     assert.equal(f.app.media.asset(snapshot).state,'deleted');
     assert.equal(existsSync(join(f.app.config.runtime,'media',snapshot.assetId)),false);
-    const corrected=await main.call('worker_open',{title:"Inspect",message:'Inspect',attachments:[{path}]});
+    const corrected=await main.call('worker_open',{taskId,attachments:[{path}]});
     assert.ok(corrected.taskId);
     assert.equal(db.prepare("SELECT count(*) n FROM operations WHERE kind='worker_open'").get()?.n,1);
     checked=true;

@@ -142,7 +142,8 @@ test('a processed receipt alone cannot archive while its Main consumer is still 
 test('public activity keeps a bounded real entity link without recording user content',()=>{
  const f=chatFixture();try{
   const task=f.create(),receipt=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'private worker instructions'});
-  const activity=f.tasks.captureActivity(f.actor,'worker_open',{taskId:task.taskId,message:'private worker instructions'},receipt)!;
+  assert.equal(f.tasks.captureActivity(f.actor,'worker_open',{taskId:task.taskId},receipt),undefined);
+  const activity=f.tasks.captureActivity(f.actor,'task_create',{},task)!;
   assert.ok(activity);assert.equal(activity.target?.taskId,task.taskId);assert.equal(JSON.stringify(activity).includes('private worker instructions'),false);
   assert.equal(f.tasks.activityLink(activity.target!,'thread:main')!.task.taskId,task.taskId);assert.equal(f.tasks.activityLink(activity.target!,'another-thread'),undefined);
  }finally{f.close();}
@@ -471,9 +472,11 @@ test('a new Task cannot graft an older or reordered request into its execution a
   const restricted=f.inputs.claim()!;assert.equal(restricted.input.requestId,'latest-restriction');f.inputs.started(restricted.messageId,restricted.revision,'generation:restriction','turn:restriction');f.inputs.finish(restricted.messageId,restricted.revision,'completed');
   const current=f.inputs.claim()!;assert.equal(current.input.requestId,'creating-source');f.inputs.started(current.messageId,current.revision,'generation:create','turn:create');
   const actor={...f.actor,sourceRequestId:'creating-source',inputMessageId:current.messageId,turnId:'turn:create'};
-  const args={operationId:'create-current',text:'Inspect the current requirement',authority:{...f.authority,sourceRequestId:'creating-source'}};
+  const {taskId}=f.tasks.createTask(actor,{operationId:'create-current',goal:'Inspect the current requirement'});
+  const args={operationId:'dispatch-current',taskId,authority:{...f.authority,sourceRequestId:'creating-source'}};
   assert.throws(()=>f.tasks.workerOpen(actor,{...args,authority:{...args.authority,sourceRequestIds:['source:test','latest-restriction']}}),/task_authority_source_denied/);
-  assert.equal(f.tasks.tasks().length,0);
+  assert.equal(f.tasks.runs(taskId).length,0);
+  assert.equal(f.tasks.version(taskId,1).authorityJson,null);
   const accepted=f.tasks.workerOpen(actor,args);
   assert.equal(f.tasks.version(accepted.taskId,1).sourceRequestId,'creating-source');assert.equal(f.tasks.run(accepted.runId).sourceRequestId,'creating-source');
  }finally{f.close();}

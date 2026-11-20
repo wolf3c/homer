@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {fixture,until} from './fixtures/worker-chat-host.js';
@@ -43,7 +44,7 @@ test('Worker shares all four tools and its completed turn does not revoke a remi
   const f=fixture();let firstId='';
   try{
     f.setScript(async(main,text)=>{
-      if(text==='Delegate reminder')await main.call('worker_open',{title:"Arrange the authorized reminder",message:'Arrange the authorized reminder'});
+      if(text==='Delegate reminder')await openTaskWorker(main,'Arrange the authorized reminder');
       return {status:'completed',text:'Delegated'};
     });
     await f.app.start();await f.app.message('Delegate reminder','worker-reminder-source');
@@ -67,7 +68,7 @@ test('Worker shares all four tools and its completed turn does not revoke a remi
 test('Worker cannot read receipts or change schedules owned by another delegation',async()=>{
   const f=fixture();
   try{
-    f.setScript(async main=>{await main.call('worker_open',{title:"First delegation",message:'First delegation'});await main.call('worker_open',{title:"Second delegation",message:'Second delegation'});return {status:'completed',text:'Delegated'};});
+    f.setScript(async main=>{await openTaskWorker(main,'First delegation');await openTaskWorker(main,'Second delegation');return {status:'completed',text:'Delegated'};});
     await f.app.start();await f.app.message('Delegate two independent scopes','scope-source');
     await until(()=>f.engines.filter(peer=>peer.options.role==='worker'&&peer.finish).length===2);
     const [first,second]=f.engines.filter(peer=>peer.options.role==='worker');
@@ -244,7 +245,7 @@ test('revoking a channel during delayed consumption blocks later delegation and 
       if(text.includes('[定时消息正文]')){
         try{
           plugin.revokeBinding(binding);
-          await assert.rejects(main.call('worker_open',{title:"Must remain unauthorized",message:'Must remain unauthorized'}),/channel_binding_denied/);
+          await assert.rejects(openTaskWorker(main,'Must remain unauthorized'),/channel_binding_denied/);
           checked=true;
           return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
         }catch(error){failure=error;throw error;}
@@ -309,7 +310,7 @@ test('due delivery is a scheduled source, preserves durable user authority, and 
       }else if(text.includes('Future report')){
         try{
           assert.match(text,/定时/);
-          const task=await main.call('worker_open',{title:"Handle the reminder",message:'Handle the reminder'});
+          const task=await openTaskWorker(main,'Handle the reminder');
           assert.ok(task.taskId);
           assert.equal(f.app.tasks.version(task.taskId,1).sourceRequestId,'reminder-source');
           await until(()=>f.engines.some(peer=>peer.options.role==='worker'&&peer.finish));

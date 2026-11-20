@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
@@ -30,7 +31,7 @@ test('message hook observes committed natural, file, and background messages onl
     return {status:'completed',text:final,messages:[{itemId:'file-final',phase:'final_answer',text:final}]};
    }
    if(text==='delegate'){
-    await main.call('worker_open',{title:"Inspect the synthetic report.",message:'Inspect the synthetic report.'});
+    await openTaskWorker(main,'Inspect the synthetic report.');
     return {status:'completed',text:'Started'};
    }
    const final='Background message';

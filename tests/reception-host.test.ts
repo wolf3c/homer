@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -21,7 +22,7 @@ test('reception host: continuous user reception with a real background task; com
    this.turnId='synthetic-turn-'+ ++sequence;options?.onStarted?.(this.turnId);
    if(this.options.role==='worker')return new Promise(r=>releaseWorker=r);
    if(text==='synthetic:delegate'){
-    taskId=(await this.call('worker_open',{title:"Inspect synthetic background",message:'Inspect synthetic background'})).taskId;
+    taskId=(await openTaskWorker(this,'Inspect synthetic background')).taskId;
    }else if(text.startsWith('[内部协作输入')){
     await new Promise<void>(r=>releaseInternal=r);
    }else turns.push(text);

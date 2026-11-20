@@ -52,10 +52,11 @@ test('a live Worker reply cannot use another task’s source or manufacture one 
   assert.equal(f.tasks.workerRead(event,{workerId:worker.workerId,messageId:input.messageId}).messages[0]!.text,'Original checked');
   f.tasks.updateTask(event,{...mutation(f,'note'),patch:{notes:'Another task’s source cannot grant execution'}});
   assert.throws(()=>f.tasks.workerOpen(event,{operationId:'foreign',taskId:foreign.taskId,text:'Borrow an unrelated source'}),/source_denied/);
-  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'forged',text:'Borrow an unrelated source',authority:authority('other-source')}),/source_denied/);
-  assert.equal(f.tasks.tasks().length,2);
+  const {taskId}=f.tasks.createTask(event,{operationId:'record-followup',goal:'Inspect remaining original facts'});
+  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'forged',taskId,text:'Borrow an unrelated source',authority:authority('other-source')}),/source_denied/);
+  assert.equal(f.tasks.tasks().length,3);
   assert.equal(f.tasks.runs().length,1);
-  const opened=f.tasks.workerOpen(event,{operationId:'valid',text:'Inspect remaining original facts',authority:authority()});
+  const opened=f.tasks.workerOpen(event,{operationId:'valid',taskId,authority:authority()});
   assert.equal(f.tasks.authority(opened.taskId,1).sourceRequestId,main.sourceRequestId);
  }finally{f.close();}
 });

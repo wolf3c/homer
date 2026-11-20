@@ -15,7 +15,7 @@ type Start=Omit<ToolCall,'callId'>&{itemId:string};
 test('pinned Main and Worker discover scheduled tools on old threads and authenticate real MCP calls',{timeout:150_000},async()=>{
   const session=createSession();
   let app:Homer|undefined,phase:'warm'|'main'|'worker'='warm',failure:unknown,request=0;
-  let opening=false,continuing=false,workerId='';
+  let opening=0,continuing=false,workerId='';
   const programs:Record<Role,{index:number;callId?:string;scheduleId?:string}>={main:{index:0},worker:{index:0}};
   const starts:{engine:CodexEngine;call:Start}[]=[],authenticated:{engine:CodexEngine;tool:string;args:unknown;meta:any;identity:Pick<ToolCall,'threadId'|'turnId'|'callId'>}[]=[];
   const inventories:{role:Role;warm:boolean;threadId:string;names:string[]}[]=[],resumes:{role:Role;threadId:string}[]=[];
@@ -71,7 +71,11 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
       if(internal&&!worker)output=answer('Internal result observed');
       else if(phase==='warm'){
         if(worker)output=answer('Warm Worker history');
-        else if(!opening){opening=true;output=call('worker_open',{message:'Synthetic authorization: prepare a reminder now and later create, inspect, update and cancel it.',title:'Native scheduled tools'},'warm-worker');}
+        else if(opening===0){opening++;output=call('task_create',{goal:'Synthetic authorization: prepare a reminder now and later create, inspect, update and cancel it.',title:'Native scheduled tools'},'warm-task');}
+        else if(opening===1){
+          const created=app!.tasks.tasks()[0]!;assert.ok(JSON.stringify(last?.output).includes(created.id));
+          opening++;output=call('worker_open',{taskId:created.id},'warm-worker');
+        }
         else{assert.equal(last?.type,'function_call_output');assert.match(JSON.stringify(last.output),/workerId/);output=answer('Warm Main history');}
       }else if(phase==='worker'&&!worker){
         if(!continuing){continuing=true;output=call('worker_send',{workerId,message:'Create, inspect, update and cancel the authorized synthetic reminder, then recover its original operation receipts.'},'resume-worker');}

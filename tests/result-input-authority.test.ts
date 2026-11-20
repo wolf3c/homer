@@ -11,7 +11,8 @@ test('an exact attachment follows its delivered Worker message and grants no pro
  const f=fixture();try{
   const producer=openWorker(f);complete(f,running(f,producer.runId),'Original source');
   const other=f.source('consumer','Use the selected attachment');
-  const input={operationId:'consumer',text:'Read selected file',authority:authority('consumer'),attachments:[selected]};
+  const {taskId}=f.tasks.createTask(other,{operationId:'record-consumer',goal:'Read selected file'});
+  const input={operationId:'consumer',taskId,authority:authority('consumer'),attachments:[selected]};
   const worker=f.tasks.workerOpen(other,input);
   assert.deepEqual(f.tasks.workerOpen(other,input),worker);
   assert.throws(()=>f.tasks.workerOpen(other,{...input,attachments:[additional]}),/operation_payload_conflict/);

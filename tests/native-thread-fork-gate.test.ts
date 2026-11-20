@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Homer} from '../src/service.js';
@@ -65,7 +66,7 @@ for(const drain of [false,true])test(drain?'orderly Worker shutdown records exac
   await f.app.start();const main=f.engines[0]!;
   main.turn=async(text,hooks)=>{
    main.turnId='synthetic-effect-main-turn';hooks?.onStarted?.(main.turnId);
-   if(text==='synthetic:pending-effect')await main.call('worker_open',{title:"Synthetic pending effect",message:'Synthetic pending effect'});
+   if(text==='synthetic:pending-effect')await openTaskWorker(main,'Synthetic pending effect');
    return {status:'completed',text:''};
   };
   await f.app.message('synthetic:pending-effect','synthetic-effect-source');await until(()=>!!worker?.pending);
@@ -110,7 +111,7 @@ test('an accepted Worker turn with a failed local receipt stays unconfirmed afte
   await f.app.start();const main=f.engines[0]!;
   main.turn=async(text,hooks)=>{
    main.turnId='synthetic-receipt-main-turn';hooks?.onStarted?.(main.turnId);
-   if(text==='synthetic:receipt-failure')await main.call('worker_open',{title:"Synthetic accepted operation",message:'Synthetic accepted operation'});
+   if(text==='synthetic:receipt-failure')await openTaskWorker(main,'Synthetic accepted operation');
    return {status:'completed',text:''};
   };
   await f.app.message('synthetic:receipt-failure','synthetic-receipt-source');await f.app.idle();
@@ -139,7 +140,7 @@ test('stopping a Worker before its turn ACK preserves uncertainty without restor
   await f.app.start();const main=f.engines[0]!;
   main.turn=async(text,hooks)=>{
    main.turnId='synthetic-cancel-main-turn';hooks?.onStarted?.(main.turnId);
-   if(text==='synthetic:cancel-before-ack')await main.call('worker_open',{title:"Synthetic unacknowledged turn",message:'Synthetic unacknowledged turn'});
+   if(text==='synthetic:cancel-before-ack')await openTaskWorker(main,'Synthetic unacknowledged turn');
    return {status:'completed',text:''};
   };
   await f.app.message('synthetic:cancel-before-ack','synthetic-cancel-source');

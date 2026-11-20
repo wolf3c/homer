@@ -77,7 +77,8 @@ async function receive(m) {
       writeFileSync(filePath,inputText.replace("# Synthetic","# Synthetic result"));
       complete("written\n" + filePath);
     } else if (text === "dispatch-synthetic") {
-      await tool("worker_open", { title: "Synthetic meeting result", message: "Read meeting.md and write the synthetic result." });
+      const {taskId}=await tool('task_create',{title:'Synthetic meeting result',goal:'Read meeting.md and write the synthetic result.'});
+      await tool('worker_open',{taskId});
       complete("dispatched");
     } else if (text === "hold-main") {
       writeFileSync(join(home, "main-running"), "1"); await gate("release-main"); complete("main-finished");

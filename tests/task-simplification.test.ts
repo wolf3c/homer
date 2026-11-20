@@ -5,11 +5,12 @@ import {authority, fixture, main, mutation, openWorker, running} from './recursi
 test('first dispatch is atomic and reuses its original task and run',()=>{
  const f=fixture();
  try {
-  const input={operationId:'first-dispatch',text:'Investigate locally',authority:authority()};
+  const task=f.tasks.createTask(main,{operationId:'record',goal:'Investigate locally'});
+  const input={operationId:'first-dispatch',taskId:task.taskId,authority:authority()};
   const opened=f.tasks.workerOpen(main,input);
   assert.deepEqual(f.tasks.workerOpen(main,input),opened);
   assert.equal(f.tasks.runs(opened.taskId).length,1);
-  assert.equal(f.tasks.version(opened.taskId,1).goal,input.text);
+  assert.equal(f.tasks.version(opened.taskId,1).goal,'Investigate locally');
   const taskCount=f.tasks.tasks().length;
   assert.throws(()=>f.tasks.workerOpen(main,{...input,operationId:'failed-first-dispatch'},()=>{throw Error('attachment_failed');}),/attachment_failed/);
   assert.equal(f.tasks.tasks().length,taskCount);
@@ -41,7 +42,8 @@ test('archiving a record made without a user source routes its fact without gran
   assert.deepEqual(input.payload,{historyState:'archived',revision:f.tasks.task(idea.taskId).revision});
   f.store.transaction(()=>{f.processes.start({id:'archive-generation',threadId:main.threadId!,sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:'archive-generation'},'archive-turn');f.tasks.receiveMainMessagesInTransaction([input.messageId],'archive-turn');});
   const event={...main,sourceRequestId:undefined,inputMessageId:input.messageId};
-  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'dispatch-from-record',text:'Start work',authority:authority('archive-idea')}),/task_authority_source_denied/);
+  const {taskId}=f.tasks.createTask(event,{operationId:'record-followup',goal:'Start work'});
+  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'dispatch-from-record',taskId,authority:authority('archive-idea')}),/task_authority_source_denied/);
   f.processes.reconcileUnknown(main.threadId!,true);f.inputs.reconcile();
   assert.equal(f.inputs.claim([],'all'),undefined,'confirmed receipt is never reoffered after owner closure');
   assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(input.messageId)!.state,'received');

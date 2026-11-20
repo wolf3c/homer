@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 // Actual host queue and dynamic tools; no model, credentials or external channel.
 import test from 'node:test';
@@ -10,8 +11,8 @@ function notifications(overlap=false){
  f.setScript(async(main,text)=>{
   try{
    if(text==='synthetic:start'){
-    rootId=(await main.call('worker_open',{title:"Inspect the original synthetic input",message:'Inspect the original synthetic input'})).taskId;
-    if(overlap)publishedId=(await main.call('worker_open',{title:"Inspect separate input",message:'Inspect separate input'})).taskId;
+    rootId=(await openTaskWorker(main,'Inspect the original synthetic input')).taskId;
+    if(overlap)publishedId=(await openTaskWorker(main,'Inspect separate input')).taskId;
     const reply={itemId:'initial-final',phase:'final_answer' as const,text:'Synthetic host reply'};
     main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...reply,completed:true});
     return {status:'completed',text:reply.text,messages:[reply]};

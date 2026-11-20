@@ -28,7 +28,7 @@ async function body(req){const chunks=[];for await(const chunk of req)chunks.pus
 function gatewayScenario(label,selection,{dispatch,reviewers,search},profile,catalog){
  const workspace=join(profile,'workspace');
  const seen=new Set(),reviewed=[];
- let requests=0,workerOpened=false,pendingReview,searches=0;
+ let requests=0,taskCreated=false,workerOpened=false,pendingReview,searches=0;
  const reply=data=>{
   assert.ok(++requests<=25,'unexpected request loop');
   const user=JSON.stringify(data.input?.findLast(item=>item.role==='user')?.content??[]);
@@ -71,8 +71,15 @@ function gatewayScenario(label,selection,{dispatch,reviewers,search},profile,cat
    item=call('exec_command',{cmd:'printf approved > '+role+'-'+label+'.txt',workdir:workspace,sandbox_permissions:'require_escalated',justification:'Write the authorized synthetic approval marker in the isolated workspace.'});
   }else if(role==='worker')item=answer('worker-return-'+label);
   else if(dispatch&&!workerOpened&&user.includes('main-case-'+label)){
-   workerOpened=true;
-   item=call('worker_open',{message:'worker-case-'+label+' Write the requested synthetic marker only when asked, then report your result.',title:'Membership acceptance',workingDirectory:workspace});
+   if(!taskCreated){
+    taskCreated=true;
+    item=call('task_create',{goal:'worker-case-'+label+' Write the requested synthetic marker only when asked, then report your result.',title:'Membership acceptance'});
+   }else{
+    const receipt=data.input.findLast(entry=>['function_call_output','custom_tool_call_output'].includes(entry.type));
+    const taskId=JSON.stringify(receipt?.output??'').match(/task-[0-9a-f-]{36}/)?.[0];
+    assert.ok(taskId,'Main received the new task ID');
+    workerOpened=true;item=call('worker_open',{taskId,workingDirectory:workspace});
+   }
   }else item=answer('main-return-'+label);
   const response={id,object:'response',model:data.model,status:'completed',output:[item],usage:{input_tokens:3,output_tokens:1,total_tokens:4}};
   return [{type:'response.created',response:{...response,status:'in_progress',output:[]}},{type:'response.output_item.done',output_index:0,item},{type:'response.completed',response}];
@@ -185,21 +192,23 @@ async function withMemberPackages(t,bundles,exercise){
  }finally{try{await stop();}finally{await Promise.all([close(website),close(gateway),site.close()]);rmSync(root,{recursive:true,force:true});}}
 }
 
-test('packaged membership selects both actors, dispatches Code Mode, obtains native approval and preserves V1 threads',{
+test('packaged membership selects both actors, dispatches Code Mode, obtains native approval and reads V1 account configuration in a fresh session',{
  skip:!candidate||!legacy||!siteModule,timeout:720000,
 },t=>withMemberPackages(t,[candidate,legacy],async({profile,fresh,settings,full,controls,login,run,http})=>{
-  const loginProfile=fresh('login');
-  await login(legacy,profile,true);assert.deepEqual(http.at(-1),{method:'POST',version:'1',status:200,shape:'v1'});
-  await run(legacy,profile,'v1-original',alternate,{dispatch:false});const original=read(join(profile,'runtime-config.json'));assert.ok(original.config);
+  const loginProfile=fresh('login'),v1Profile=fresh('v1');
+  await login(legacy,v1Profile,true);assert.deepEqual(http.at(-1),{method:'POST',version:'1',status:200,shape:'v1'});
+  await run(legacy,v1Profile,'v1-original',alternate,{dispatch:false});const original=read(join(v1Profile,'runtime-config.json'));assert.ok(original.config);
+  writeFileSync(join(profile,'runtime-config.json'),JSON.stringify(original),{mode:0o600});
   settings.clientConfig=full(defaults);await run(candidate,profile,'defaults',defaults,{reviewers:['worker'],search:true});
   assert.deepEqual(read(join(profile,'runtime-config.json')),{subject:original.subject,token:original.token});
   settings.clientConfig=full(alternate);await run(candidate,profile,'alternate',alternate);
   settings.clientConfigVersion=1;await run(candidate,profile,'complete-v1',defaults);assert.equal(http.at(-1).shape,'v1');
   settings.clientConfigVersion=2;settings.clientConfig.worker.model='invalid-member';await run(candidate,profile,'invalid-worker',defaults);
   controls.delayConfig=true;await run(candidate,profile,'get-timeout',defaults);controls.delayConfig=false;
-  settings.clientConfig=full(alternate);await run(legacy,profile,'v1-downgrade',alternate,{dispatch:false});
+  settings.clientConfig=full(alternate);writeFileSync(join(v1Profile,'runtime-config.json'),readFileSync(join(profile,'runtime-config.json')));
+  await run(legacy,v1Profile,'v1-downgrade',alternate,{dispatch:false});
   assert.deepEqual(http.at(-1),{method:'GET',version:'1',status:200,shape:'v1'});
-  assert.deepEqual(read(join(profile,'runtime-config.json')).config,original.config);
+  assert.deepEqual(read(join(v1Profile,'runtime-config.json')).config,original.config);
   controls.failAuth=true;await login(candidate,loginProfile,false);assert.equal(http.at(-1).status,401);controls.failAuth=false;
   const loginOK=fresh('valid');await login(candidate,loginOK,true);assert.deepEqual(http.at(-1),{method:'POST',version:'2',status:200,shape:'v2'});
   settings.clientConfig=undefined;await login(candidate,loginProfile,true);assert.deepEqual(http.at(-1),{method:'POST',version:'2',status:200,shape:'null'});

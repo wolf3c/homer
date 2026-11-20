@@ -93,7 +93,7 @@ async function startDesktopChat(){
       chatReady=true;
       await announceReady(restoring);
     }catch(error){
-      const blocked=error instanceof Error&&['main_stop_unconfirmed','orphan_stop_unconfirmed','desktop_start_owner_unconfirmed'].includes(error.message);
+      const blocked=error instanceof Error&&['main_stop_unconfirmed','orphan_stop_unconfirmed','desktop_start_owner_unconfirmed','main_tools_migration_required'].includes(error.message);
       const code=blocked?(error as Error).message:'desktop_chat_unavailable';
       if(blocked)desktopRetryBlocked=true;
       await send({kind:'chat_unavailable',code});
@@ -195,9 +195,11 @@ async function receive(raw: unknown) {
     if (m.thread && app.store.meta("mainThread") !== m.thread)
       throw new Error("main_resume_thread_mismatch");
     if(desktop){
-      app.schedules.start();
+      desktopRetryBlocked=app.mainToolsMigrationRequired;
+      if(!desktopRetryBlocked)app.schedules.start();
       frozen=false;
       await send({kind:'management_ready',stateInvalidationProtocol:1,webHistoryProtocol:3});
+      if(desktopRetryBlocked){await send({kind:'chat_unavailable',code:'main_tools_migration_required'});return;}
       void startDesktopChat().catch(async()=>{try{await send({kind:'chat_unavailable',code:'desktop_chat_unavailable'});}catch{}});
       return;
     }

@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 import {TurnExecution} from '../src/execution-limits.js';
 import {test} from 'node:test';
@@ -227,7 +228,7 @@ test('the final answer preserves the Worker reply and commits one attachment-bac
  try{
   f.setScript(async(main,text)=>{
    if(text==='send test'){
-    const run=await main.call('worker_open',{title:"Write public.md.",message:'Write public.md.'});
+    const run=await openTaskWorker(main,'Write public.md.');
     runId=run.runId;
     return {status:'completed',text:'Started.'};
    }
@@ -296,7 +297,7 @@ test('a Worker return publishes one Main final with a desktop Markdown link',asy
  try{
   f.setScript(async(main,text)=>{
    if(text==='请整理方案'){
-    const opened=await main.call('worker_open',{title:'整理方案',message:'请整理方案'});
+    const opened=await openTaskWorker(main,'整理方案','请整理方案');
     taskId=opened.taskId;
     return {status:'completed',text:'已安排。'};
    }
@@ -331,7 +332,7 @@ test('a final with a missing authorized file keeps the conclusion and shows the 
  try{
   f.setScript(async(main,text)=>{
    if(text==='请准备附件'){
-    await main.call('worker_open',{title:'准备附件',message:text});
+    await openTaskWorker(main,'准备附件',text);
     return {status:'completed',text:'已安排。'};
    }
    await assert.rejects(main.call('send_user_message',{text:'旧路径不写入'}),/send_user_message_retired/);
@@ -356,7 +357,7 @@ for(const mode of ['legacy text without phase evidence','final with revoked user
   try{
    f.setScript(async(main,input)=>{
     if(input==='请整理材料'){
-     await main.call('worker_open',{title:'整理材料',message:input});
+     await openTaskWorker(main,'整理材料',input);
      return {status:'completed',text:'已安排。'};
     }
     if(mode==='legacy text without phase evidence')return {status:'completed',text};

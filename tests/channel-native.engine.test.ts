@@ -84,7 +84,8 @@ for(const acrossSources of [false,true])test('pinned Codex drives a simulated ch
           output=answer(phase==='create'?'Before subscription':phase==='before'?'Before switch':phase==='after'?'After switch':report);
         }
       }else if(phase==='create'){
-        if(step===1)output=call('worker_open',{title:"Native channel scope test",message:'Native channel scope test'});
+        if(step===1)output=call('task_create',{title:'Native channel scope test',goal:'Native channel scope test'});
+        else if(step===2){const created=app!.tasks.tasks()[0]!;assert.ok(result.includes(created.id));output=call('worker_open',{taskId:created.id});}
         else {assert.match(result,/taskId/);output=answer('Task ready');}
       }else if(['subscribe','switch','unbound'].includes(phase)){
         if(step===1){

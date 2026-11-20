@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 // Synthetic configuration + actual app-server protocol; no model/account access.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -71,7 +72,7 @@ for(const effortOverride of ['default','local-low','env-high'] as const)for(cons
         return new Promise(resolve=>{this.release=resolve;});
       }
       if(text==='synthetic:start'){
-        const {taskId}=await this.call('worker_open',{title:"A",message:'A'});
+        const {taskId}=await openTaskWorker(this,'A');
         for(const message of ['B','C'])await this.call('worker_open',{taskId,message});
       }
       return {status:'completed',text:'Synthetic accepted'};

@@ -9,21 +9,26 @@ import {HOST_MCP_TOOLS, WORKER_HOST_MCP_TOOLS} from '../src/worker-interaction-m
 import {WORKER_INTERACTION_TOOLS} from '../src/worker-interaction-tools.js';
 import {WORKER_MEDIA_TOOLS, WORKER_FILE_TOOLS} from '../src/media-tools.js';
 import {fixture, until} from './fixtures/worker-chat-host.js';
+import {Homer} from '../src/service.js';
 
-test('Main resumes the catalog from before proactive settlement on its original thread', async () => {
-  const oldHash = '615506d5ebbfc9ade218daa6793de1b0318d10a3016463b99da0395d498aaccf';
-  const f = fixture();
+test('incompatible native tool catalog preserves the original thread and refuses to start', async () => {
+  const f = fixture(), hash = '615506d5ebbfc9ade218daa6793de1b0318d10a3016463b99da0395d498aaccf';
   try {
-    f.app.store.setMeta('mainThread', 'synthetic-settlement-thread');
-    f.app.store.setMeta('mainToolsHash', oldHash);
-    await f.app.start();
-    const resumed = f.engines[0]!;
-    assert.equal(resumed.threadId, 'synthetic-settlement-thread');
-    assert.equal(f.app.store.meta('mainToolsHash'), oldHash);
-    const previous = resumed.options.tools.find(tool => tool.name === 'task_update')!;
-    const current = RECURSIVE_TOOLS.find(tool => tool.name === 'task_update')!;
-    assert.notEqual(current.description, previous.description);
-    assert.deepEqual(current.inputSchema, previous.inputSchema);
+    f.app.store.setMeta('mainThread', 'previous-native-thread');
+    f.app.store.setMeta('mainToolsHash', hash);
+    const schedules = test.mock.method(f.app.schedules, 'start', () => {});
+    await assert.rejects(f.app.start({keepManagementOnFailure:true}), /main_tools_migration_required/);
+    assert.equal(schedules.mock.callCount(), 0);
+    assert.equal(f.app.store.meta('mainThread'), 'previous-native-thread');
+    assert.equal(f.app.store.meta('mainToolsHash'), hash);
+    assert.equal(f.engines.length, 0);
+    const config = f.app.config;
+    await f.app.close();
+    const desktop = new Homer({...config, pauseOldDesktopWork:true, desktopModelSource:'codex',
+      desktopResources:{bundleRoot:config.runtime, manifestSha256:'a'.repeat(64)}}, async () => {});
+    try {
+      assert.equal(desktop.store.meta('desktopUserQueueBoundary'), undefined);
+    } finally {await desktop.close();}
   } finally {await f.close();}
 });
 
@@ -77,57 +82,22 @@ test('new Main validates titles before staging and commits one original dispatch
       assert.equal(version.sourceRequestId, source);
       assert.equal(version.authorityJson, null);
       assert.equal(f.app.tasks.task(recorded.taskId).title, title);
-      await main.call('task_update', {taskId: recorded.taskId, goal: message});
-      const existing = await main.call('worker_open', {taskId: recorded.taskId, message});
-      assert.equal(existing.taskId, recorded.taskId);
-      assert.equal(f.app.tasks.task(existing.taskId).title, title);
-      const input = {message, title: '核对补充条款'};
+      const input = {taskId:recorded.taskId};
       const opened = await main.call('worker_open', input, 'first-dispatch');
       const committed = counts();
       assert.deepEqual(await main.call('worker_open', input, 'first-dispatch'), opened);
       assert.deepEqual(counts(), committed);
-      assert.equal(f.app.tasks.task(opened.taskId).title, input.title);
-      assert.equal(f.app.tasks.version(opened.taskId, 1).sourceRequestId, source);
+      assert.equal(f.app.tasks.task(opened.taskId).title, title);
       assert.equal(f.app.tasks.version(opened.taskId, 1).goal, message);
       assert.equal(f.app.tasks.run(opened.runId).prompt, message);
-      assert.equal(f.app.store.db.prepare('SELECT count(*) n FROM operations WHERE id=? AND state=?').get(opened.operationKey, 'confirmed')!.n, 1);
+      const part = await main.call('worker_open', {...input, message:'只核对附件。'});
+      assert.equal(part.taskId, recorded.taskId);
+      assert.equal(f.app.tasks.run(part.runId).goal, message);
+      assert.equal(f.app.tasks.run(part.runId).prompt, '只核对附件。');
+      assert.equal(f.app.tasks.tasks().length, 1);
       return {status:'completed', text:'title-contract-verified'};
     });
     assert.equal(await f.app.message('核对合同附件和补充条款', source), 'title-contract-verified');
-    assert.equal(f.engines.length, 1);
-  } finally {await f.close();}
-});
-
-for (const [hash, optionalTitle] of [
-  ['f579ad37daedcef8a429e13a0511668b2ef954abbc180e47b408475c5395cffe', false],
-  ['d8a4bd52a287759bcbcd4eb754a8e41e344ac6e1ab287576f4c8b2172202f150', true],
-] as const) test('cold-restored Main applies its persisted title rules ' + hash.slice(0,8), async () => {
-  const f = fixture();
-  try {
-    f.app.store.setMeta('mainThread', 'synthetic-legacy-thread');
-    f.app.store.setMeta('mainToolsHash', hash);
-    await f.app.start();
-    f.app['pump'] = () => {};
-    const goal = 'Check an old proposal\nKeep the full scope in the task version.';
-    f.setScript(async main => {
-      const recorded = await main.call('task_create', {goal});
-      assert.equal(f.app.tasks.task(recorded.taskId).title, 'Check an old proposal');
-      const opened = await main.call('worker_open', {message: goal}, 'legacy-open');
-      assert.equal(f.app.tasks.task(opened.taskId).title, 'Check an old proposal');
-      assert.deepEqual(await main.call('worker_open', {message: goal}, 'legacy-open'), opened);
-      const named = {message: goal, title: 'Proposal review'};
-      if (optionalTitle) {
-        const result = await main.call('worker_open', named);
-        assert.equal(f.app.tasks.task(result.taskId).title, named.title);
-      } else {
-        await assert.rejects(main.call('worker_open', named), /invalid_tool_arguments/);
-      }
-      await assert.rejects(main.call('worker_open', {...named, taskId: opened.taskId}), /invalid_tool_arguments/);
-      return {status:'completed', text:'legacy-contract-verified'};
-    });
-    assert.equal(await f.app.message('Review the legacy proposal', 'legacy-title-source'), 'legacy-contract-verified');
-    assert.equal(f.app.store.meta('mainToolsHash'), hash);
-    assert.equal(f.engines[0]!.threadId, 'synthetic-legacy-thread');
     assert.equal(f.engines.length, 1);
   } finally {await f.close();}
 });
@@ -148,7 +118,8 @@ test('the real host registers the complete role catalog as native dynamic tools'
   try {
     f.setScript(async (main, text) => {
       if (text === 'inspect catalog') {
-        await main.call('worker_open', {title:"Synthetic read only",message: 'Synthetic read only'});
+        const {taskId} = await main.call('task_create', {title:'Synthetic read only', goal:'Synthetic read only'});
+        await main.call('worker_open', {taskId});
       }
       return {status: 'completed', text: 'Synthetic response'};
     });
@@ -176,13 +147,14 @@ test('new collaboration has one dynamic-tool outlet and Workers cannot manage bu
   }
 });
 
-test('one text investigation uses two business calls without a result, publication or manual acknowledgment', async () => {
+test('one text investigation uses three business calls without a result, publication or manual acknowledgment', async () => {
   const f = fixture(), calls: string[] = []; let taskId = '';
   try {
     f.setScript(async (main, text) => {
       const call = async (tool: string, args: unknown) => {calls.push(tool); return main.call(tool, args);};
       if (text === 'investigate text only') {
-        taskId = (await call('worker_open', {title:"Report the exact observed file names",message: 'Report the exact observed file names'})).taskId;
+        taskId = (await call('task_create', {title:'Report the exact observed file names',goal: 'Report the exact observed file names'})).taskId;
+        await call('worker_open', {taskId});
         return {status: 'completed', text: 'Synthetic investigation started'};
       }
       assert.ok(text.includes('page.js references missing build.js'), 'host supplies the original Worker reply');
@@ -194,7 +166,7 @@ test('one text investigation uses two business calls without a result, publicati
     f.engines.find(engine => engine.options.role === 'worker')!.finish!({status: 'completed', text: 'page.js references missing build.js'});
     await until(() => f.app.tasks.task(taskId).state === 'settled');
     await f.app.idle();
-    assert.deepEqual(calls, ['worker_open', 'task_update']);
+    assert.deepEqual(calls, ['task_create', 'worker_open', 'task_update']);
     assert.equal(f.app.store.db.prepare('SELECT count(*) n FROM conversation_attachments').get()!.n,0);
     assert.equal(f.inputs.length, 2);
   } finally {await f.close();}

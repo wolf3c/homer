@@ -73,7 +73,8 @@ test('v1 to v2 archival inspection separates readable source history from curren
             await assert.rejects(main.call('task_create', {title: "Inspect remaining synthetic facts", goal: 'Inspect remaining synthetic facts', sourceRequestIds}), /invalid_tool_arguments/);
             assert.deepEqual(counts(), before, 'rejected source selection cannot create work');
           }
-          const followup = await main.call('worker_open', {title:"Read remaining facts within the revised source o…",message: 'Read remaining facts within the revised source only'});
+          const note = await main.call('task_create', {title:'Remaining facts',goal:'Read remaining facts within the revised source only'});
+          const followup = await main.call('worker_open', {taskId:note.taskId});
           followups.push(followup.taskId);
           checked = true;
         }
@@ -92,6 +93,7 @@ test('v1 to v2 archival inspection separates readable source history from curren
     assert.equal(f.app.tasks.runs(taskId).length, 0);
     assert.equal(followups.length, 1);
     for (const id of followups) {
+      assert.equal(f.app.tasks.version(id,1).sourceRequestId,'source:revised');
       const authority = f.app.tasks.authority(id, 1);
       assert.deepEqual(new Set([authority.sourceRequestId, ...(authority.sourceRequestIds ?? [])]), new Set(['source:revised']));
       assert.equal(f.app.tasks.runs(id).length, 1);
@@ -109,14 +111,18 @@ test('record-only and first-dispatch tools have separate effects', async () => {
     assert.equal(f.tasks.runs().length,0);
     assert.equal(f.tasks.version(root.taskId,1).authorityJson,null);
     assert.deepEqual(f.reads(),{authorityReads:0,wakes:1});
-    await assert.rejects(f.tools.call(f.actor,'worker_open',{taskId:root.taskId,message:'Run uncommissioned work'},'blocked'),/source_denied/);
-    const args={title:'Build file review',message:'Read the build files'};
-    const opened=await f.tools.call(f.actor,'worker_open',args,'open') as {taskId:string;workerId:string;runId:string};
-    assert.notEqual(opened.taskId,root.taskId);
+    await assert.rejects(f.tools.call(f.actor,'worker_open',{message:'No task'},'blocked'),/invalid_tool_arguments/);
+    const args={taskId:root.taskId,message:'Read the build files'};
+    const [opened,replay]=await Promise.all([f.tools.call(f.actor,'worker_open',args,'open'),f.tools.call(f.actor,'worker_open',args,'open')]) as {taskId:string;workerId:string;runId:string}[];
+    assert.ok(opened);
+    assert.deepEqual(replay,opened);
+    assert.equal(f.reads().authorityReads,1);
+    assert.equal(opened.taskId,root.taskId);
     assert.equal(opened.workerId,opened.runId);
     assert.equal(f.tasks.run(opened.runId).workingDirectory,f.tasks.files.workspace);
     assert.deepEqual(await f.tools.call(f.actor,'worker_open',args,'open'),opened);
     assert.equal(f.tasks.runs().length,1);
+    assert.equal(f.reads().authorityReads,1);
   } finally {f.close();}
 });
 
@@ -132,7 +138,7 @@ test('worker tool receives only exact attachment selectors and does not re-prepa
    assert.ok(scope.messageId.startsWith('message-'));
    return [ref];
   }});
-  const args={title:'Selected source',message:'Read selected source',attachments:[ref]};
+  const args={taskId:(await f.create()).taskId,message:'Read selected source',attachments:[ref]};
   const opened=await tools.call(f.actor,'worker_open',args,'open');
   assert.deepEqual(await tools.call(f.actor,'worker_open',args,'open'),opened);
   const before=f.counts();
@@ -253,8 +259,8 @@ test('raw replies remain readable and legacy publication entry points reject cal
 
 test('worker_read selects and pages one original native public item through the model interface', async () => {
   const f = fixture(); try {
-    await f.create();
-    const opened = await f.tools.call(f.actor, 'worker_open', {title:"Inspect exact public items",message: 'Inspect exact public items'}, 'open') as any;
+    const root=await f.create();
+    const opened = await f.tools.call(f.actor, 'worker_open', {taskId:root.taskId,message: 'Inspect exact public items'}, 'open') as any;
     const run = f.tasks.claim(opened.runId)!; f.tasks.bind(run.id, run.epoch, 'thread:worker', 'turn:worker');
     const body = '原始公开证据'.repeat(6000);
     f.tasks.endSegment(run.id, run.epoch, {status: 'completed', text: 'Aggregate reply', messages: [
@@ -289,4 +295,54 @@ test('schema validation reports trusted paths without copying unknown field name
   assert.ok(error instanceof Error);
   assert.doesNotMatch(JSON.stringify(error), /privateSecret|do-not-echo/);
   assert.notEqual(toolOperationId({agentId: 'main', threadId: 'a', turnId: 'b'}, 'c'), toolOperationId({agentId: 'main', threadId: 'a', turnId: 'other'}, 'c'));
+});
+
+test('a later user dispatches whole and split assignments with exact Worker inputs and original reply routing',async()=>{
+ const f=hostFixture(),goal='Inspect the synthetic report and its build log.',part='Check only the build log.',start='Start the two requested reviews now.';
+ let taskId='';
+ const errors:string[]=[],notices:string[]=[];
+ f.setScript(async(main,text)=>{
+  try{
+   if(text==='Record the review for later.'){
+    taskId=(await main.call('task_create',{title:'Report review',goal})).taskId;
+   }else if(text===start){
+    await main.call('worker_open',{taskId});
+    await main.call('worker_open',{taskId,message:part});
+   }else{
+    const notice=JSON.parse(text.split('\n')[1]!);
+    assert.equal(notice.kind,'worker_reply');
+    assert.equal(notice.taskId,taskId);
+    notices.push(notice.workerId);
+    const answer='Finished '+notice.workerId;
+    return {status:'completed',text:answer,messages:[{itemId:'final',phase:'final_answer',text:answer}]};
+   }
+   return {status:'completed',text:'Recorded.'};
+  }catch(error){errors.push(String(error));throw error;}
+ });
+ try{
+  await f.app.start();
+  await f.app.message('Record the review for later.','source:record');
+  assert.equal(f.app.tasks.runs(taskId).length,0);
+  await f.app.message(start,'source:dispatch');
+  await until(()=>f.engines.filter(peer=>peer.options.role==='worker'&&peer.input).length===2||errors.length>0);
+  assert.deepEqual(errors,[]);
+  const workers=f.engines.filter(peer=>peer.options.role==='worker');
+  const assignments=workers.map(peer=>{
+   const [facts,assignment]=peer.input!.split('\n\n[主 Agent 本次消息原文]\n');
+   const body=JSON.parse(facts!.split('\n')[1]!);
+   assert.equal(body.authority.sourceRequestId,'source:dispatch');
+   assert.ok(body.authority.description.endsWith(start));
+   assert.equal(peer.input!.split(goal).length,2);
+   return {assignment,goal:body.goal};
+  });
+  assert.deepEqual(assignments.find(item=>item.assignment===goal),{assignment:goal,goal:undefined});
+  assert.deepEqual(assignments.find(item=>item.assignment===part),{assignment:part,goal});
+  assert.equal(f.app.tasks.version(taskId,1).sourceRequestId,'source:record');
+  for(const worker of workers)worker.finish!({status:'completed',text:'Synthetic findings'});
+  await f.app.idle();
+  assert.deepEqual(errors,[]);
+  assert.equal(new Set(notices).size,2);
+  const replies=f.events.filter(message=>message.type==='coordination'&&message.text?.startsWith('Finished '));
+  assert.deepEqual(replies.map(message=>message.requestId),['source:record','source:record']);
+ }finally{await f.close();}
 });

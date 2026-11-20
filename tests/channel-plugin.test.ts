@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {existsSync,writeFileSync} from 'node:fs';
@@ -163,7 +164,7 @@ test('a subscribed Worker final is caught up once with the exact linked file',as
     plugin.bind(B);
     plugin.bind(A);
     f.setScript(async(main,text)=>{
-      if(text==='delegate')({taskId,workerId}=await main.call('worker_open',{title:'Prepare report',message:'Prepare report'}));
+      if(text==='delegate')({taskId,workerId}=await openTaskWorker(main,'Prepare report','Prepare report'));
       else if(text==='subscribe')await subscribe(main,taskId);
       else if(text==='continue')await main.call('worker_send',{workerId,message:'Continue'});
       else if(text.startsWith('[内部协作输入')){
@@ -233,7 +234,7 @@ for(const revoke of [false,true])test(`a scheduled result ${revoke?'respects ori
   try{
     const originBinding=plugin.bind(A);plugin.bind(B);
     f.setScript(async(main,text)=>{
-      if(text==='prepare')({taskId}=await main.call('worker_open',{title:'Prepare report',message:'Upcoming report'}));
+      if(text==='prepare')({taskId}=await openTaskWorker(main,'Prepare report','Upcoming report'));
       else if(text==='subscribe')await subscribe(main,taskId);
       else if(text==='plan'){
         const mcp=main.options.interactionMcp!;
@@ -296,7 +297,7 @@ test('two simulated bots on one adapter isolate bindings, replies and subscribed
     writeFileSync(notes,'# Original notes');
     f.setScript(async(main,text)=>{
       if(text==='delegate'){
-        ({taskId,workerId}=await main.call('worker_open',{title:"Inspect the report",message:'Inspect the report'}));
+        ({taskId,workerId}=await openTaskWorker(main,'Inspect the report'));
         return {status:'completed',text:'Accepted'};
       }
       if(text==='subscribe'){await subscribe(main,taskId);return {status:'completed',text:'Subscribed'};}
@@ -407,7 +408,7 @@ test('subscription survives a lost tool receipt and old retries cannot undo a la
   const original=input(A,'subscribe-a','subscribe before receipt loss');
   try{
     f.setScript(async(main,text)=>{
-      if(text==='delegate')({taskId,workerId}=await main.call('worker_open',{title:"Create synthetic work",message:'Create synthetic work'}));
+      if(text==='delegate')({taskId,workerId}=await openTaskWorker(main,'Create synthetic work'));
       else if(text===original.text){
         await subscribe(main,taskId,kill=>{cut=kill;});
         receiptLost=true;
@@ -750,7 +751,7 @@ test('live replacement preserves an unrecorded transport receipt as unknown with
 test('live channel changes leave an executing Worker and main engine intact',async()=>{
  const old:ChannelAdapter={id:'simulation',send:async()=>({state:'sent'})},f=fixture([old]);
  try{
-  f.setScript(async main=>{await main.call('worker_open',{title:"Keep working",message:'Keep working'});return {status:'completed',text:'delegated'};});
+  f.setScript(async main=>{await openTaskWorker(main,'Keep working');return {status:'completed',text:'delegated'};});
   f.app.channels!.bind(A);await f.app.start();f.app.channels!.receiveText(input(A,'delegate-live','delegate'));
   await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
   const main=f.engines[0],worker=f.engines.find(engine=>engine.options.role==='worker')!,finish=worker.finish,thread=worker.threadId;
@@ -783,7 +784,7 @@ test('saved apply failure holds subscribed Worker output until explicit reload',
   const file=join(f.app.config.workspace,'subscription.txt');writeFileSync(file,'synthetic');
   const report=`[held subscription](${pathToFileURL(file).href})`;
   f.setScript(async(main,text)=>{
-   if(text.endsWith('delegate')){({taskId}=await main.call('worker_open',{title:"synthetic work",message:'synthetic work'}));return {status:'completed',text:'accepted'};}
+   if(text.endsWith('delegate')){({taskId}=await openTaskWorker(main,'synthetic work'));return {status:'completed',text:'accepted'};}
    if(text.endsWith('subscribe')){await subscribe(main,taskId);return {status:'completed',text:'subscribed'};}
    return nativeFinal(report);
   });

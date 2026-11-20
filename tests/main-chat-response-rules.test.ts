@@ -1,21 +1,21 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 // Real host and original replies; no native engine, account or channel calls.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 
-test('the retired send tool cannot write, while an older catalog and its published attachment survive restart',async()=>{
- const f=fixture(),previousHash='2741b9169535017c5b55d191ee7a246333f0074ee0162a951be11f370cd84b19';
+test('the retired send tool cannot write, while its published attachment survives restart',async()=>{
+ const f=fixture();
  const scope={taskId:'task-previous-send',taskVersion:1};
  try{
   await f.app.start();
   const thread=f.app.store.meta('mainThread')!;
   assert.ok(!f.engines[0]!.options.tools.some(tool=>tool.name==='send_user_message'));
   const old=commitSyntheticMessage(f.app,thread,'Previously sent',[{filename:'old.patch',content:'exact previous bytes'}],undefined,scope);
-  f.app.store.setMeta('mainToolsHash',previousHash);
   await f.restart();
   assert.equal(f.app.store.meta('mainThread'),thread);
-  assert.ok(f.engines.at(-1)!.options.tools.some(tool=>tool.name==='send_user_message'));
+  assert.ok(!f.engines.at(-1)!.options.tools.some(tool=>tool.name==='send_user_message'));
   let refused=false;
   f.setScript(async main=>{
    await assert.rejects(main.call('send_user_message',{text:'Forbidden duplicate'}),/send_user_message_retired/);
@@ -45,7 +45,7 @@ for(const status of ['completed','failed','interrupted'] as const)test(`internal
  const f=fixture();let taskId='';try{
   f.setScript(async(main,text)=>{
    if(text==='start'){
-    taskId=(await main.call('worker_open',{title:"Inspect a synthetic source; retain any unresolve…",message:'Inspect a synthetic source; retain any unresolved gaps'})).taskId;
+    taskId=(await openTaskWorker(main,"Inspect a synthetic source; retain any unresolve…",'Inspect a synthetic source; retain any unresolved gaps')).taskId;
     return {status:'completed',text:'Started'};
    }
    return {status:'completed',text:'',messages:[]};

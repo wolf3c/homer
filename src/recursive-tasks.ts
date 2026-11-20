@@ -182,21 +182,20 @@ export class RecursiveTasks{
   else if(task.historyState!=='visible'||task.controlState!=='normal')throw Error('task_history_not_visible');
   return {task,authority:this.dispatchAuthority(actor,task,allowSettled)};
  }
- private createTaskRecord(actor:Actor,input:{goal:string;notes?:string;title?:string;workingDirectory?:string;authority?:Authority},key:string){
-  if(input.authority)this.creationSource(actor,input.authority);
-  else if(actor.sourceRequestId)this.trustedSource(actor,actor.sourceRequestId);
-  text(input.goal);
-  if(typeof (input.notes??'')!=='string'||(input.notes??'').length>24000)throw Error('task_invalid_input');
-  const taskId=id('task'),now=Date.now(),title=input.title??defaultTaskTitle(input.goal);
-  text(title,200);
-  this.sql("INSERT INTO tasks VALUES(?,?,1,?,'open',NULL,1,'normal','visible',?,?,NULL)",taskId,title,input.notes??'',now,now);
-  this.sql('INSERT INTO task_versions VALUES(?,1,?,?,?,?,?)',taskId,input.goal,input.authority?json(input.authority):null,
-    actor.sourceRequestId??input.authority?.sourceRequestId??null,key,directory(input.workingDirectory??this.files.workspace));
-  return {taskId,version:1,revision:1,state:'open'};
- }
  createTask(actor:Actor,input:{operationId:string;goal:string;notes?:string;title?:string;workingDirectory?:string;authority?:Authority}){
   this.requireMain(actor);
-  return this.mutation(actor,'tasks',input.operationId,'task_create',input,key=>this.createTaskRecord(actor,input,key));
+  return this.mutation(actor,'tasks',input.operationId,'task_create',input,key=>{
+   if(input.authority)this.creationSource(actor,input.authority);
+   else if(actor.sourceRequestId)this.trustedSource(actor,actor.sourceRequestId);
+   text(input.goal);
+   if(typeof (input.notes??'')!=='string'||(input.notes??'').length>24000)throw Error('task_invalid_input');
+   const taskId=id('task'),now=Date.now(),title=input.title??defaultTaskTitle(input.goal);
+   text(title,200);
+   this.sql("INSERT INTO tasks VALUES(?,?,1,?,'open',NULL,1,'normal','visible',?,?,NULL)",taskId,title,input.notes??'',now,now);
+   this.sql('INSERT INTO task_versions VALUES(?,1,?,?,?,?,?)',taskId,input.goal,input.authority?json(input.authority):null,
+     actor.sourceRequestId??input.authority?.sourceRequestId??null,key,directory(input.workingDirectory??this.files.workspace));
+   return {taskId,version:1,revision:1,state:'open'};
+  });
  }
  private sourceSequence(actor:Actor,source:string){
   // Revoked history still establishes chronology, never execution authority.
@@ -283,17 +282,31 @@ export class RecursiveTasks{
   return this.message(actor,key,recipient(workerId),task.id,task.headVersion,'worker_input',
     {workerId,text:input.text,...(attachments?.length?{attachments}:{})},target,messageId);
  }
- workerOpen(actor:Actor,input:{operationId:string;taskId?:string;text:string;title?:string;workingDirectory?:string;authority?:Authority;attachments?:AttachmentRef[]},prepare?:PrepareAttachments){
+ workerOpen(actor:Actor,input:{operationId:string;taskId:string;text?:string;workingDirectory?:string;authority?:Authority;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,resolveAuthority?:()=>Authority|undefined){
   this.requireMain(actor);
-  if(input.taskId&&input.title!==undefined)throw Error('invalid_tool_arguments');
-  return this.mutation(actor,input.taskId??'tasks',input.operationId,'worker_open',input,key=>{
-   text(input.text);
-   if(!input.taskId&&!input.authority)throw Error('task_authority_source_denied');
-   const taskId=input.taskId??this.createTaskRecord(actor,{goal:input.text,title:input.title,authority:input.authority,workingDirectory:input.workingDirectory},key).taskId;
+  if(Object.hasOwn(input,'title'))throw Error('invalid_tool_arguments');
+  const taskId=text(input.taskId,200);
+  return this.mutation(actor,taskId,input.operationId,'worker_open',input,key=>{
    const task=this.task(taskId);
    this.writable(task);
-   this.dispatchAuthority(actor,task);
-   const workerId=id('run'),messageId=this.workerInput(actor,key,task,workerId,input,prepare);
+   const version=this.version(taskId,task.headVersion),message=text(input.text===undefined?version.goal:input.text);
+   if(version.authorityJson===null){
+    // creationSource below validates the shared source when registration and dispatch use one user request.
+    if(!actor.sourceRequestId||actor.sourceRequestId!==version.sourceRequestId){
+     const creationInput=JSON.parse(this.operation(version.triggerOpId).detailsJson).inputMessageId;
+     if(version.sourceRequestId)this.trustedSource(actor,version.sourceRequestId);
+     if(actor.sourceRequestId){
+      const creationSequence=version.sourceRequestId?this.sourceSequence(actor,version.sourceRequestId):
+        this.one<{seq:number}>('SELECT seq FROM agent_messages WHERE id=?',creationInput)?.seq;
+      if(creationSequence!==undefined&&this.sourceSequence(actor,actor.sourceRequestId)<creationSequence)throw Error('task_authority_source_denied');
+     }else if(!creationInput||creationInput!==actor.inputMessageId)throw Error('task_authority_source_denied');
+    }
+    const authority=input.authority??resolveAuthority?.();
+    if(!authority)throw Error('task_authority_source_denied');
+    this.creationSource(actor,authority);
+    this.sql('UPDATE task_versions SET authorityJson=?,sourceRequestId=coalesce(sourceRequestId,?) WHERE taskId=? AND version=?',json(authority),authority.sourceRequestId,taskId,task.headVersion);
+   }else this.dispatchAuthority(actor,task);
+   const workerId=id('run'),messageId=this.workerInput(actor,key,task,workerId,{...input,text:message},prepare);
    const runId=this.newRun(task,workerId,[messageId],null,input.workingDirectory);
    return {taskId,workerId,runId,messageId,version:task.headVersion,state:'queued'};
   });
@@ -610,7 +623,7 @@ export class RecursiveTasks{
   if(name==='work_inspect'){const row=r.task as Task|undefined;if(typeof a.taskId!=='string'||row?.id!==a.taskId)return;r={taskId:row.id,version:row.headVersion};}
   else if(name==='worker_read'){if(typeof a.workerId!=='string'||r.workerId!==a.workerId||this.worker(a.workerId).taskId!==r.taskId)return;}
   else{
-   const kinds:Record<string,string[]>={task_create:['task_create'],worker_open:['worker_open'],worker_interrupt:['worker_stop'],task_update:['task_update','task_control','task_settle']};
+   const kinds:Record<string,string[]>={task_create:['task_create'],worker_interrupt:['worker_stop'],task_update:['task_update','task_control','task_settle']};
    if(!kinds[name]||typeof r.operationKey!=='string')return;const op=this.one<Operation>('SELECT * FROM operations WHERE id=?',r.operationKey);if(!op||op.actorAgentId!==actor.agentId||!kinds[name]!.includes(op.kind)||!op.responseJson)return;
    const committed=JSON.parse(op.responseJson) as Record<string,unknown>,taskId=committed.taskId??op.scopeId;
    if(a.taskId!==undefined&&a.taskId!==taskId||r.taskId!==undefined&&r.taskId!==taskId)return;
@@ -621,7 +634,7 @@ export class RecursiveTasks{
   const target:ActivityTarget={taskId,version:typeof r.version==='number'?r.version:task.headVersion};
   for(const key of ['runId','operationKey'] as const)if(typeof r[key]==='string')target[key]=r[key] as string;
   const objectName=publicActivityName(task.title),base={schemaVersion:1 as const,target,...(objectName?{objectName}:{})};
-  if(name==='task_create'||name==='worker_open')return {...base,action:'create_task',outcome:'created'};
+  if(name==='task_create')return {...base,action:'create_task',outcome:'created'};
   if(name==='work_inspect'||name==='worker_read')return {...base,action:name==='worker_read'?'inspect_run':'inspect_task',outcome:'record_read'};
   if(name==='worker_interrupt')return {...base,action:'stop_task',outcome:r.state==='confirmed'?'stop_confirmed':'stop_requested'};
   if(name==='task_update')return {...base,action:'update_task',outcome:r.state==='requested'?'update_accepted':'update_confirmed'};

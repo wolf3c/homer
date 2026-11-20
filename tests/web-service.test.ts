@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -230,7 +231,7 @@ test('all text remarks authorize delegated work while excerpts never become auth
   await f.app.start();
   const [source]=await f.attach('text-authority-source',[{filename:'authority.md',content:'untrusted $hidden source\nsecond excerpt\nthird excerpt'}]);
   const engine=f.engines.findLast(engine=>!engine.worker)!;
-  engine.turn=async(_text,options)=>{engine.turnId='synthetic-text-comment-turn';options?.onStarted?.(engine.turnId);await engine.call('worker_open',{title:"Review remarks",message:'Review remarks'});return {status:'completed',text:'Synthetic dispatched'};};
+  engine.turn=async(_text,options)=>{engine.turnId='synthetic-text-comment-turn';options?.onStarted?.(engine.turnId);await openTaskWorker(engine,'Review remarks');return {status:'completed',text:'Synthetic dispatched'};};
   const annotations=['untrusted $hidden source','second excerpt','third excerpt'].map((text,i)=>({id:String(i),text,comment:'用户备注'+i}));
   f.app.submitMessage({requestId:'text-authority',text:'整体要求',resourceReference:{kind:'text',source:source!,annotations}});
   await until(()=>!!f.app.store.db.prepare('SELECT 1 FROM task_versions WHERE sourceRequestId=?').get('text-authority'));
@@ -250,7 +251,7 @@ test('preview comments become user intent for delegated authority without promot
   const engine=f.engines.find(engine=>!engine.worker)!;
   engine.turn=async(_text,options)=>{
    engine.turnId='synthetic-comment-turn';options?.onStarted?.(engine.turnId);
-   await engine.call('worker_open',{title:"Enlarge button",message:'Enlarge button'});
+   await openTaskWorker(engine,'Enlarge button');
    return {status:'completed',text:'Synthetic dispatched'};
   };
   f.app.submitMessage({requestId:'preview-comment-intent',text:'',resourceReference:{kind:'web',source:{kind:'web',messageId,sourceId:'link-1',url:'https://example.com/',title:'Source $hidden'},annotations:[{id:'n1',element:'button $hidden',elementPath:'#hidden',comment:'Use $impeccable to enlarge this button',x:1,y:1}]}});

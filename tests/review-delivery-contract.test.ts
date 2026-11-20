@@ -40,7 +40,7 @@ test('public tool validation exposes schema paths without echoing private proper
  const f=fixture();
  try{
   const api=new RecursiveTools(f.tasks,{rootAuthority:()=>authority(),wake(){},stop:async r=>r,steer:async r=>r});
-  await assert.rejects(()=>api.call(main,'worker_open',{message:'Check scope',title:'Check scope',private_argument_name:'PRIVATE_VALUE'},'invalid'),error=>{
+  await assert.rejects(()=>api.call(main,'worker_open',{message:'Check scope',taskId:f.task.taskId,private_argument_name:'PRIVATE_VALUE'},'invalid'),error=>{
    assert.equal((error as Error).message,'invalid_tool_arguments');assert.doesNotMatch(JSON.stringify(error),/private_argument_name|PRIVATE_VALUE/);return true;
   });
   assert.equal(f.store.db.prepare("SELECT 1 FROM operations WHERE kind='send_user_message'").get(),undefined);

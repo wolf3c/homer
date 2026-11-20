@@ -29,7 +29,8 @@ async function fixture(settings:Partial<{supports:boolean;source:'codex'|'websit
     if(this.options.role==='worker'){this.workerGate=hold();await this.workerGate.promise;return {status:'completed',text:'Synthetic Worker result'};}
     turns.push({thread:this.threadId,request:app['mainContext']?.requestId});this.setTransport('http');
     if(app['mainContext']?.userText==='delegate'){
-     calls.push('worker_open');await this.tool({threadId:this.threadId,turnId:this.turnId,callId:'call-'+ ++sequence,tool:'worker_open',arguments:{message:'Synthetic work',title:'Synthetic work'}});
+     const {taskId}=await this.tool({threadId:this.threadId,turnId:this.turnId,callId:'call-'+ ++sequence,tool:'task_create',arguments:{goal:'Synthetic work',title:'Synthetic work'}}) as {taskId:string};
+     calls.push('worker_open');await this.tool({threadId:this.threadId,turnId:this.turnId,callId:'call-'+ ++sequence,tool:'worker_open',arguments:{taskId}});
     }
     await state.duringMain?.();await state.turnGate?.promise;return {status:'completed',text:'Synthetic reply'};
    }finally{this.canRestart=true;this.emit('idle');}

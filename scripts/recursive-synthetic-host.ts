@@ -34,8 +34,8 @@ export function syntheticHost(failChild=false,retainRuntime=false){
     return {status:'completed',text:'Synthetic '+assignment+' checked; date unknown.'};
    }
    if(text==='synthetic:tree'||text==='运行递归合成案例'){
-    const task=await this.call('worker_open',{title:'A',message:'A'});
-    for(const label of ['B','C'])await this.openWorker(task.taskId,label);
+    const {taskId}=await this.createTask('Investigate A, B and C and deliver the checked report');
+    for(const label of ['A','B','C'])await this.openWorker(taskId,label);
     return {status:'completed',text:'Synthetic work accepted'};
    }
    if(text.startsWith('[内部协作输入')){

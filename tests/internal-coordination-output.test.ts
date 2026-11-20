@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 // Real host, original replies and final answer projection; synthetic transport only.
 import test from 'node:test';
@@ -18,7 +19,7 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
  f.setScript(async(main,text)=>{
   if(text==='synthetic:independent')return result(main,[{itemId:'independent-final',phase:'final_answer',text:finalText}]);
   if(text==='synthetic:user'){
-   taskId=(await main.call('worker_open',{title:"核对合成材料并报告缺口",message:'核对合成材料并报告缺口'})).taskId;
+   taskId=(await openTaskWorker(main,'核对合成材料并报告缺口')).taskId;
    return result(main,[{itemId:'initial',phase:'commentary',text:'正常起始反馈'},{itemId:'arranged',phase:'final_answer',text:'已安排核对。'}]);
   }
   try{

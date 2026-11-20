@@ -79,7 +79,7 @@ test('native new and legacy Main expose and call the new MCP tool on the same th
  for(const legacy of [false,true]){
   const f=await fixture(t);let seed,oldThread;
   if(legacy){
-   seed=peer({...f,calls:[],provider:'homer'},bin,f.baseUrl);await seed.init();
+   seed=peer({...f,calls:[],alternateProvider:'homer'},bin,f.baseUrl);await seed.init();
    const {thread}=await seed.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'homer',cwd:f.cwd,approvalPolicy:'on-request',sandbox:'read-only',environments:[],config:{mcp_servers:{}},developerInstructions:'LEGACY_DIRECTORY_MAIN',dynamicTools:MAIN_DYNAMIC_TOOLS});oldThread=thread;
    const cursor=seed.events.length;await seed.request('turn/start',{threadId:thread.id,input:[{type:'text',text:'Synthetic saved Main history.'}]});
    await until(()=>seed.events.slice(cursor).some(e=>e.method==='turn/completed'));await seed.close();seed=undefined;
@@ -107,7 +107,8 @@ test('native new and legacy Main expose and call the new MCP tool on the same th
    if(!legacy){
     listingAvailable=false; // Candidate folder lookup must not become a Worker prerequisite.
     const work=join(f.user,'Documents/worker/current');mkdirSync(work,{recursive:true});writeFileSync(join(f.user,'Documents/worker/AGENTS.md'),'SERVICE_WORKER_PARENT_GUIDANCE');
-    receipt=await mainHandle({threadId:main.threadId,turnId:main.turnId,callId:'synthetic-worker-directory',tool:'worker_open',arguments:{message:'Synthetic native directory verification only.',title:'Directory verification',workingDirectory:work}});
+    const {taskId}=await mainHandle({threadId:main.threadId,turnId:main.turnId,callId:'synthetic-directory-task',tool:'task_create',arguments:{goal:'Synthetic native directory verification only.',title:'Directory verification'}});
+    receipt=await mainHandle({threadId:main.threadId,turnId:main.turnId,callId:'synthetic-worker-directory',tool:'worker_open',arguments:{taskId,workingDirectory:work}});
    }
    f.release();f.hold(false);await app.idle();
    assert.equal(app.store.meta('mainToolsHash'),MAIN_TOOLS_HASH);assert.equal(app.store.meta('mainWorkingDirectory'),undefined);
@@ -153,7 +154,7 @@ for(const [history,checkpoint] of [['full',null],['compacted',null],['interrupte
   checkRequest(f.requests.slice(count).find(request=>JSON.stringify(request.input).includes(text)),phase);
  }
  try{
-  seed=peer({...f,calls:[],provider:'homer'},bin,f.baseUrl);await seed.init();
+  seed=peer({...f,calls:[],alternateProvider:'homer'},bin,f.baseUrl);await seed.init();
   const {thread}=await seed.request('thread/start',{model:'gpt-6.1-sol',modelProvider:'homer',cwd:f.cwd,approvalPolicy:'on-request',sandbox:'read-only',environments:[],config:{mcp_servers:{}},developerInstructions:legacy,dynamicTools:MAIN_DYNAMIC_TOOLS});threadId=thread.id;
   // Native injection persists its own checkpoint before these history items.
   await seed.request('thread/inject_items',{threadId,items:[{type:'message',role:'user',content:[{type:'input_text',text:savedUser}]},{type:'message',role:'assistant',content:[{type:'output_text',text:savedAssistant}]}]});

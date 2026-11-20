@@ -765,10 +765,11 @@ export class Homer {
         validateWorkerAttachment:(ref,messageId)=>this.validateAttachmentGrant(ref,messageId),
       });
       this.tasks.migrate();
-      if(config.pauseOldDesktopWork)this.tasks.reconcile(true);
-      const pausedThroughSeq=config.pauseOldDesktopWork?Number(this.store.db.prepare('SELECT coalesce(max(seq),0) n FROM agent_messages').get()!.n):0;
+      const pauseOldWork=config.pauseOldDesktopWork&&!this.mainToolsMigrationRequired;
+      if(pauseOldWork)this.tasks.reconcile(true);
+      const pausedThroughSeq=pauseOldWork?Number(this.store.db.prepare('SELECT coalesce(max(seq),0) n FROM agent_messages').get()!.n):0;
       let userPausedThroughSeq=pausedThroughSeq,resumeScheduled=!config.desktopAdopted;
-      if(config.pauseOldDesktopWork&&config.desktopModelSource){
+      if(pauseOldWork&&config.desktopModelSource){
         const key='desktopUserQueueBoundary';
         const stored=this.store.meta(key);
         const previous=stored?JSON.parse(stored) as {source:string;adopted:boolean;seq:number}:undefined;
@@ -802,7 +803,7 @@ export class Homer {
           if(this.history.inputs(this.store.meta('mainThread')!,[requestId]).get(requestId)?.status==='cancelled')this.media.revoke(requestId);
         },
         mutation:scope=>{if(scope.readEpoch!==undefined&&scope.readEpoch!==this.webReadEpoch)throw Error('history_epoch_changed');},
-      },config.pauseOldDesktopWork?{pausedThroughSeq,userPausedThroughSeq,resumeScheduled,pausedThroughProcessSeq:Number(this.store.meta('publicMainNodeSeq:v1')??0)}:undefined);
+      },pauseOldWork?{pausedThroughSeq,userPausedThroughSeq,resumeScheduled,pausedThroughProcessSeq:Number(this.store.meta('publicMainNodeSeq:v1')??0)}:undefined);
       this.recursiveTools=new RecursiveTools(this.tasks,{
         rootWorkingDirectory:()=>this.store.meta('mainWorkingDirectory')??this.config.workspace,
         rootAuthority:actor=>this.rootAuthority(actor),
@@ -1062,9 +1063,12 @@ export class Homer {
   private desktopShutdownStrict=false;
   private desktopCloseConfirmed=false;
   private workerMcpStopUnconfirmed=false;
+  get mainToolsMigrationRequired(){
+    return !!this.store.meta('mainThread')&&this.store.meta('mainToolsHash')!==MAIN_TOOLS_HASH;
+  }
   async start(options:{keepManagementOnFailure?:boolean}={}) {
     if(this.closing||this.closed)throw Error('application_closing');
-    return this.startup??=Promise.resolve().then(()=>{this.schedules.start();return this.withDesktopPower(()=>this.startMain(options));})
+    return this.startup??=this.withDesktopPower(()=>this.startMain(options))
       .finally(()=>{this.startup=undefined;if(this.main&&!this.closing&&!this.closed){this.scheduleInputs();this.scheduleMainTransportRecovery();}});
   }
   private async startMain(options:{keepManagementOnFailure?:boolean}) {
@@ -1072,6 +1076,9 @@ export class Homer {
     if(options.keepManagementOnFailure&&this.desktopStartOwnerUnconfirmed)throw Error('desktop_start_owner_unconfirmed');
     let attemptMain:EngineLike|undefined;
     try {
+      const savedThread = this.store.meta("mainThread");
+      if(this.mainToolsMigrationRequired)throw Error('main_tools_migration_required');
+      this.schedules.start();
       this.prompts = loadPrompts();
       if(!this.config.pauseOldDesktopWork)this.history.reconcile();
       const leases = this.store.db
@@ -1099,9 +1106,7 @@ export class Homer {
         this.store.db.prepare("UPDATE requests SET state='interrupted' WHERE state='started'").run();
       }
       const cwd = canonicalDir(this.store.meta("mainWorkingDirectory")??this.config.workspace);
-      const savedThread = this.store.meta("mainThread");
       if(!savedThread&&shouldSeedFirstLaunchSkills(this.config)){try{seedFirstLaunchSkills(capabilityHome(this.config));}catch(error){this.store.event(null,'first_launch_seed_failed',engineError(error));}}
-      if (savedThread) mainToolsForHash(this.store.meta("mainToolsHash"));
       this.membershipAudioEnabled=await this.membershipTools?.audio.available()===true;
       if(this.closing)throw Error('application_closing');
       const catalog=hostMcpTools('main',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'main'))==='live',false,!!this.browserTransport,this.membershipAudioEnabled)
@@ -2771,12 +2776,12 @@ export class Homer {
   }
   private async recursiveTool(actor:Actor,name:string,args:unknown,callId?:string){
     const context=this.mainContext;if(!context||actor.runId)throw Error('tool_scope_denied');this.validateMainContext(context);
-    const catalog=mainToolsForHash(this.store.meta('mainToolsHash'));
-    validateRecursiveToolArguments(name,args,catalog);
+    mainToolsForHash(this.store.meta('mainToolsHash'));
+    validateRecursiveToolArguments(name,args);
     if(actor.inputMessageId&&['task_create','worker_open','worker_send'].includes(name)){
       const a=object(args),kind=name==='worker_send'&&a.immediate===true?'worker_steer':name;
       const liveTurns=context.processId?this.processes.exact(context.processId)?.turnIds:undefined;
-      const prior=this.tasks.operationsForInput(actor,actor.inputMessageId).some(operation=>operation.kind===kind&&operation.state!=='failed'&&operation.details.turnId!==actor.turnId&&!liveTurns?.includes(operation.details.turnId)&&(name==='task_create'||(name==='worker_send'?operation.response?.workerId===a.workerId:a.taskId===undefined||operation.scopeId===a.taskId)));
+      const prior=this.tasks.operationsForInput(actor,actor.inputMessageId).some(operation=>operation.kind===kind&&operation.state!=='failed'&&operation.details.turnId!==actor.turnId&&!liveTurns?.includes(operation.details.turnId)&&(name==='task_create'||(name==='worker_send'?operation.response?.workerId===a.workerId:operation.scopeId===a.taskId)));
       // A restored input keeps its original action identity even if the model invents a new call ID.
       if(prior)throw Error('coordination_action_already_committed');
     }
@@ -2786,7 +2791,7 @@ export class Homer {
     const staged=(name==='worker_open'||name==='worker_send')&&Array.isArray(attachments)&&attachments.length
       ?this.stageAttachments(actor,toolOperationId(actor,callId),attachments,context):undefined;
     let result:unknown;
-    try{result=await this.recursiveTools.call(actor,name,args,callId,catalog);}
+    try{result=await this.recursiveTools.call(actor,name,args,callId);}
     catch(error){
       if(staged)this.abandonMessageOperation(staged.key);
       throw error;

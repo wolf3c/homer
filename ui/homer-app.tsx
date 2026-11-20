@@ -1261,7 +1261,7 @@ function HomerApp() {
       const next = JSON.parse((event as MessageEvent<string>).data) as WebState;
       if (!next.threadId || next.upgrade.phase==='management') {
         if(next.upgrade.phase==='management')setState(next);
-        reader.current.connected=false;setConnected(false);setConnectionError(next.upgrade.code==='desktop_account_required'?'荷马尚未连接账号，请完成账号连接后重新打开。':next.upgrade.code?'荷马启动未完成，请核对后重新打开。':'服务尚未就绪，正在等待主对话。');return;
+        reader.current.connected=false;setConnected(false);setConnectionError(next.upgrade.code==='desktop_account_required'?'荷马尚未连接账号，请完成账号连接后重新打开。':next.upgrade.code==='main_tools_migration_required'?'原主会话使用旧版工具。请用原版本继续，或使用独立资料目录开始新会话。原记录已保留。':next.upgrade.code?'荷马启动未完成，请核对后重新打开。':'服务尚未就绪，正在等待主对话。');return;
       }
       if (verifiedThread.current && next.threadId !== verifiedThread.current) {
         for(const controller of activeReads.current.controllers)controller.abort();for(const timer of activeReads.current.timers)clearTimeout(timer);activeReads.current.timers.clear();

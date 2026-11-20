@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {callHostMcp} from './fixtures/host-mcp-call.js';
 import {EventEmitter} from 'node:events';
 import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
@@ -31,7 +32,7 @@ export function fixture(sink: (message: Message) => Promise<void> = async () => 
       nativeImages.push(options?.images??[]);
       if (text === "fail") throw new Error("synthetic_engine_failure");
       if (text === "dispatch") {
-        await this.call("worker_open", {title:"合成后台任务",message:"合成后台任务"});
+        await openTaskWorker(this,"合成后台任务","合成后台任务");
       }
       if (text === "stream") return new Promise(accept => {
         this.pending = accept;

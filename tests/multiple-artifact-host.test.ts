@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 // Real Homer scheduling and tools with a deterministic peer; no model/account/network.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +31,7 @@ test('Homer opens one Worker and commits the two selected files in one backgroun
     return {status:'completed',text:reply,messages:[{itemId:'worker-answer',phase:'final_answer',text:reply}]};
    }
    if(text==='synthetic multiple files'){
-    const task=await this.call('worker_open',{title:"Read sample.md and write the two requested files",message:'Read sample.md and write the two requested files'});taskId=task.taskId;
+    const task=await openTaskWorker(this,'Read sample.md and write the two requested files');taskId=task.taskId;
     return {status:'completed',text:'已安排合成工作。'};
    }
    if(text.startsWith('[内部协作输入')){

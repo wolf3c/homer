@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {callHostMcp} from './fixtures/host-mcp-call.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,7 +43,7 @@ test('service main and Worker skill requests relay real user decisions on native
     await this.approvals();
    }else if(text==='synthetic skill request'){
     await this.approvals();
-    await this.call('worker_open',{title:"Check the synthetic skill package.",message:'Check the synthetic skill package.'});
+    await openTaskWorker(this,'Check the synthetic skill package.');
    }
    return {status:'completed',text:'Synthetic receipt.'};
   }

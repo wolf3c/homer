@@ -1,3 +1,4 @@
+import {openTaskWorker} from './fixtures/open-task-worker.js';
 // Real Main inputs, task rows and Worker originals with a synthetic engine.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ function fixture(choice:'repair'|'defer'|'close',emptyEventReply=false,emptyUser
   const internal=text.startsWith('[内部协作输入');
   try{
    if(text.startsWith('开始原工作')){
-    taskId=(await main.call('worker_open',{title:"核对并如实报告原工作执行结果",message:'核对并如实报告原工作执行结果'})).taskId;
+    taskId=(await openTaskWorker(main,'核对并如实报告原工作执行结果')).taskId;
    }else if(text.startsWith('先记下')){
     itemId=(await main.call('task_create',{title:"稍后支持导出",goal:'稍后支持导出',notes:'等待决定，不执行'})).taskId;
    }else if(internal&&text.includes('原工作执行失败')){
