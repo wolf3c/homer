@@ -33,18 +33,18 @@ test('message quote action respects composer exclusion and preserves complete lo
 });
 test('the grey excerpt is the source link and exposes no internal identifiers',()=>{
  const quote={messageId:'internal-message-id',itemIds:['internal-item-id'],text:'保留的灰色原文',annotation:'备注'},navigations=[];
- const Component=component('ui/homer-app.tsx','QuoteSource',{useContext:()=>q=>navigations.push(q),QuoteNavigationContext:{},useState:()=>['',()=>{}],useRef:v=>({current:v}),useEffect(){},QuoteBlock:{Root:p=>React.createElement('div',p),Text:p=>React.createElement('p',p)},MessageCirclePlus:'svg',window:{getSelection:()=>null}});
+ const Component=component('ui/homer-app.tsx','QuoteSource',{useContext:()=>q=>navigations.push(q),QuoteNavigationContext:{},QuoteBlock:{Root:p=>React.createElement('div',p),Text:p=>React.createElement('p',p)},MessageCirclePlus:'svg',window:{getSelection:()=>null}});
  const tree=Component({quote,index:0}),html=renderToStaticMarkup(tree),link=nodes(tree).find(n=>n.type==='a');
  assert.ok(link,'excerpt itself is keyboard reachable');assert.match(html,/保留的灰色原文/);assert.doesNotMatch(html.replace(/href="[^"]*"/g,''),/internal-message-id|internal-item-id/);
  link.props.onClick({currentTarget:{},preventDefault(){},stopPropagation(){}});assert.deepEqual(navigations,[quote]);
 });
 
-test('quote text removes the two-line clamp without losing the source payload',()=>{
+test('the default QuoteBlock clamp preserves the full source payload',()=>{
  const quote={messageId:'long-source',text:'长引用。'.repeat(1000),annotation:'保留批注'},navigations=[],Text='quote-text';
  const Component=component('ui/homer-app.tsx','QuoteSource',{useContext:()=>q=>navigations.push(q),QuoteNavigationContext:{},QuoteBlock:{Root:'quote-block',Text},MessageCirclePlus:'svg',window:{getSelection:()=>null}});
- const tree=Component({quote,index:1}),text=nodes(tree).find(n=>n.type===Text);
- assert.equal(text.props.children,quote.text);assert.equal(text.props.className,'line-clamp-none whitespace-pre-wrap');assert.equal(tree.props.href,'#message-long-source');
- tree.props.onClick({currentTarget:{},preventDefault(){},stopPropagation(){}});assert.deepEqual(navigations,[quote]);
+ const tree=nodes(Component({quote,index:1})),text=tree.find(n=>n.type===Text),link=tree.find(n=>n.type==='a');
+ assert.equal(text.props.children,quote.text);assert.equal(text.props.className,undefined);assert.equal(link.props.href,'#message-long-source');
+ link.props.onClick({currentTarget:{},preventDefault(){},stopPropagation(){}});assert.deepEqual(navigations,[quote]);
 });
 test('user quotes keep each annotation directly after its source as ordinary body text',()=>{
  const QuoteSource='quote-source',Parts='message-parts';

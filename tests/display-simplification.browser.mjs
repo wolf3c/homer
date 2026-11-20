@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {composerFixture} from './fixtures/composer-browser-server.mjs';
@@ -7,14 +8,16 @@ const dest=resolve(process.env.HOMER_BROWSER_EVIDENCE);mkdirSync(dest,{recursive
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD);
 const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
 const chrome=await openBrowser(dest,{mockKeychain:true});let failure,exit;const checks=[];
-const long=('完整引用行\n').repeat(3000)+'引用尾部';
+const long='本轮需要核对已有事项的进度。已完成的事项可以进入归档检查，仍在执行的事项保留当前状态，等待验证的事项附上相应记录。\n'+('完整引用行\n').repeat(3000)+'引用尾部';
+const short='简短摘录',prefix='原文。',suffix='。\n';
+const position={format:'preview-text-v1',representation:'markdown',start:prefix.length,end:prefix.length+short.length,exact:short,prefix,suffix,sourceHash:createHash('sha256').update(prefix+short+suffix).digest('hex')};
 try{
  for(const width of [1080,390]){
  const context=await chrome.browser.newContext({viewport:{width,height:1000}}),page=await context.newPage();
  await page.route('**/synthetic.png',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="90"><rect width="240" height="90" fill="#798266"/><text x="20" y="50" fill="white">Synthetic image</text></svg>'}));
  const text='合成显示核对\n\n![remote](https://display.example/synthetic.png)\n\n![relative](./synthetic.png)\n\n[邮件](mailto:test@example.com) [相对](./relative)\n\n| 表格 | 内容 |\n| --- | --- |\n| A | B |\n\n公式 $x^2$\n\n```mermaid\nflowchart LR\nA[开始] --> B[完成]\nclick A "https://example.com"\n```\n\n```mermaid\nnot a diagram\n```';
  const msg=(id,role,text)=>({id,threadId:'composer-review',requestId:id,role,text,status:'completed',createdAt:1700000000000});
- fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('display','assistant',text),{...msg('quoted','user','合成引用'),quotes:[{messageId:'display',text:long,annotation:'完整摘录'}]}]});
+ fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('display','assistant',text),msg('short-source','assistant',(prefix+short+suffix).trimEnd()),{...msg('quoted','user','请核对这两段引用。'),quotes:[{messageId:'display',text:long,annotation:'长引用的批注'},{messageId:'short-source',text:short,annotation:'短引用的批注',position}]}]});
  await page.goto(fixture.url);await page.waitForSelector('.mermaid-output svg');
  await page.locator('img[alt="remote"]').scrollIntoViewIfNeeded();await page.waitForFunction(()=>document.querySelector('img[alt="remote"]')?.naturalWidth===240);
  await page.locator('img[alt="relative"]').scrollIntoViewIfNeeded();await page.waitForFunction(()=>document.querySelector('img[alt="relative"]')?.naturalWidth===240);
@@ -23,9 +26,25 @@ try{
  const diagramLink=page.locator('.mermaid-output a').first();assert.equal(await diagramLink.getAttribute('target'),'_blank');
  await context.route('https://example.com/**',route=>route.fulfill({contentType:'text/plain',body:'synthetic linked page'}));
  const popup=page.waitForEvent('popup');await diagramLink.click();const linked=await popup;await linked.waitForLoadState();assert.equal(new URL(linked.url()).origin,'https://example.com');await linked.close();assert.ok((await page.locator('.mermaid-status').allTextContents()).join('').includes('无法渲染'));
- const quote=page.locator('[data-slot="quote-block-text"]').first();assert.equal(await quote.textContent(),long);assert.equal(await quote.evaluate(e=>getComputedStyle(e).webkitLineClamp),'none');
+ const message=page.locator('#message-quoted');
+ const quote=message.locator('[data-slot="quote-block-text"]').first();
+ assert.equal(await quote.textContent(),long);
+ assert.ok(await quote.evaluate(e=>getComputedStyle(e).webkitLineClamp==='2'&&e.clientHeight<e.scrollHeight));
+ assert.ok(await message.getByText('长引用的批注',{exact:true}).isVisible());
+ assert.ok(await message.getByText('短引用的批注',{exact:true}).isVisible());
+ assert.ok(await message.locator('[data-slot="quote-block-text"]').nth(1).evaluate(e=>e.clientHeight===e.scrollHeight));
+ assert.equal(await message.getByRole('button',{name:/展开引用|收起引用/}).count(),0);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await message.scrollIntoViewIfNeeded();
+ await page.screenshot({path:join(dest,'quote-preview-'+width+'.png')});
+ await message.getByRole('link',{name:'查看引用 2 的原消息',exact:true}).press('Enter');
+ await page.waitForFunction(text=>document.activeElement?.id==='message-short-source'&&document.getSelection()?.toString()===text,short);
+ await page.screenshot({path:join(dest,'quote-source-'+width+'.png')});
+ await message.getByRole('link',{name:'查看引用 1 的原消息',exact:true}).press('Enter');
+ await page.waitForFunction(()=>document.activeElement?.id==='message-display'&&document.querySelector('.history-navigation')?.textContent.includes('暂无法准确定位'));
+ assert.equal(fixture.received.messages.length,0);
  fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('display','assistant',text)]});await page.reload();await page.waitForSelector('.mermaid-output svg');await page.locator('.mermaid-output').scrollIntoViewIfNeeded();await page.screenshot({path:join(dest,'display-'+width+'.png')});
- checks.push({width,remoteImage:true,pageRelativeImage:true,mailto:true,table:true,math:true,mermaidLink:true,failedSource:true,fullQuote:long.length});
+ checks.push({width,remoteImage:true,pageRelativeImage:true,mailto:true,table:true,math:true,mermaidLink:true,failedSource:true,quotePreview:true,exactQuoteSource:true,quoteSourceFallback:true,fullQuote:long.length});
  const quoted='合成引用'.repeat(5000)+'完整尾部';fixture.reset({features:{draftUpload:true,taskOverview:false},messages:[msg('long-source','assistant',quoted)]});await page.reload();
  await page.getByRole('button',{name:'引用',exact:true}).click();await page.locator('[contenteditable=true]').fill('核对完整原文');
  const sent=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/messages'&&response.request().method()==='POST');await page.getByRole('button',{name:'发送消息',exact:true}).click();await sent;

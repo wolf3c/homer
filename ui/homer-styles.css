@@ -181,6 +181,7 @@
 .message-quote-source:focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 @media(forced-colors:none){.message[data-conversation-message]:focus-visible{outline:none}}
 .message-quote-source [data-slot="quote-block"]{margin-bottom:0}
+.message-quote-source [data-slot="quote-block-text"]{white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* One settings owner: permissions and IM panels share navigation and focus. */
 .desktop-settings-popup button:disabled{opacity:.5;cursor:not-allowed}.desktop-settings-popup button:focus-visible,.desktop-settings-popup input:focus-visible{outline:1px solid var(--focus);outline-offset:1px}

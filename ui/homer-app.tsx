@@ -171,7 +171,7 @@ function QuoteSource({quote,index}:{quote:MessageQuote;index:number}){
   event.preventDefault();event.stopPropagation();
   const selection=window.getSelection();if(selection&&!selection.isCollapsed&&selection.containsNode(event.currentTarget,true))return;
   locate(quote);
- }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text className="line-clamp-none whitespace-pre-wrap">{quote.text}</QuoteBlock.Text></QuoteBlock.Root></a>;
+ }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text>{quote.text}</QuoteBlock.Text></QuoteBlock.Root></a>;
 }
 function CompletedInteractionCard({item}:{item:NonNullable<WebState['messages'][number]['interaction']>}){
  if(item.kind==='authorization'){
