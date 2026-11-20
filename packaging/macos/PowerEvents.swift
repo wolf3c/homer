@@ -4,10 +4,22 @@ import IOKit.pwr_mgt
 final class IOKitWakeStore: WakeStore {
     private let copyEvents: () -> CFArray?
     init(copyEvents: @escaping () -> CFArray? = { IOPMCopyScheduledPowerEvents()?.takeRetainedValue() }) { self.copyEvents = copyEvents }
-    func ownedEvents() throws -> [(WakeOwner, WakeEvent)] {
+    private func systemEvents() throws -> [[String: Any]] {
         guard let events = copyEvents() else { return [] }
         guard let values = events as? [[String: Any]] else { throw PowerError("macos_power_query_failed") }
-        return Self.decodeOwnedEvents(values)
+        return values
+    }
+    func ownedEvents() throws -> [(WakeOwner, WakeEvent)] {
+        try Self.decodeOwnedEvents(systemEvents())
+    }
+    func confirmEmpty(_ owner: WakeOwner) throws -> String {
+        // A matching event with a damaged timestamp still belongs to this instance.
+        for item in try systemEvents() where item[kIOPMPowerEventTypeKey] as? String == kIOPMAutoWake {
+            if let name = item[kIOPMPowerEventAppNameKey] as? String, WakeOwner.parseEventName(name)?.owner == owner {
+                throw PowerError("macos_power_cleanup_unconfirmed")
+            }
+        }
+        return "owner-empty"
     }
     static func decodeOwnedEvents(_ values: [[String: Any]]) -> [(WakeOwner, WakeEvent)] {
         return values.compactMap { item in

@@ -69,7 +69,7 @@ struct PowerCommand {
             guard event.valid else { throw PowerError("macos_power_request_invalid") }
             self.event = event; instance = nil; keys.formUnion(["id", "at"])
         } else {
-            guard ["status", "authorize", "list", "close", "prepare-uninstall", "abort-uninstall"].contains(op) else { throw PowerError("macos_power_request_invalid") }
+            guard ["status", "authorize", "list", "close", "close-for-update", "prepare-uninstall", "abort-uninstall"].contains(op) else { throw PowerError("macos_power_request_invalid") }
             instance = nil; event = nil
         }
         guard Set(fields.keys) == keys else { throw PowerError("macos_power_request_invalid") }

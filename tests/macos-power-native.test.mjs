@@ -32,7 +32,7 @@ test('native client services main run-loop notifications while its protocol rema
   assert.deepEqual(messages.find(x=>x.requestId===1).result,{supported:false,authorization:'unavailable',reason:'macos_power_developer_signature_required'});
   assert.deepEqual(messages.filter(x=>x.kind==='wake'),[{kind:'wake'}]);
   child.stdin.end('{"requestId":2,"op":"close"}\n');assert.deepEqual(await exited,[0,null]);reader.close();
-  assert.ok(messages.some(x=>x.requestId===2&&x.ok&&x.result===null));
+  assert.ok(messages.some(x=>x.requestId===2&&x.ok&&x.result==='owner-empty'));
  }finally{if(child&&child.exitCode===null)child.kill();rmSync(scratch,{recursive:true,force:true});}
 });
 
@@ -63,6 +63,6 @@ test('native helper/client compile and ad-hoc builds cannot register or claim au
   }
   const stdout=execFileSync(join(scratch,'homer-power-client'),['--instance','a'.repeat(64)],{encoding:'utf8',timeout:10000,input:'{"requestId":1,"op":"status"}\n{"requestId":2,"op":"close"}\n'});
   const results=stdout.trim().split('\n').map(line=>JSON.parse(line));
-  assert.deepEqual(results,[{ok:true,requestId:1,result:{supported:false,authorization:'unavailable',reason:'macos_power_developer_signature_required'}},{ok:true,requestId:2,result:null}]);
+  assert.deepEqual(results,[{ok:true,requestId:1,result:{supported:false,authorization:'unavailable',reason:'macos_power_developer_signature_required'}},{ok:true,requestId:2,result:'owner-empty'}]);
  }finally{rmSync(scratch,{recursive:true,force:true});}
 });

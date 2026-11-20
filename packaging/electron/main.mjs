@@ -73,7 +73,7 @@ function registerDesktopPower(profile){
   powerConfiguration={instanceId:createHash('sha256').update('homer-power-recovery:'+profile).digest('hex'),preferences:{...POWER_DEFAULTS,pollMessages:false,wakeScheduled:false}};
  }
  const options={bundle,resources,profile,instanceId:powerConfiguration.instanceId,onWake:()=>{void power?.resume(process.platform==='darwin');}};
- try{powerWakeAdapter=process.platform==='darwin'?createMacWakeAdapter(options):createWindowsWakeAdapter(options);}
+ try{powerWakeAdapter=process.platform==='darwin'?createMacWakeAdapter({...options,isUpdating:()=>updateStopping}):createWindowsWakeAdapter(options);}
  catch{
   const unavailable=async()=>({supported:false,authorization:'unavailable'}),reject=async()=>{throw Error('wake_adapter_unavailable');};
   powerWakeAdapter={status:unavailable,authorize:unavailable,list:reject,schedule:reject,cancel:reject,close:async()=>{},prepareUpdate:reject};

@@ -83,11 +83,15 @@ private final class PowerClient {
         case "authorize": return authorize()
         case "list": return try request(["op": "list"])
         case "schedule", "cancel": return try request(command.event!.value.merging(["op": command.op]) { _, new in new })
-        case "close":
+        case "close", "close-for-update":
             // Reconnect to reconcile after a lost connection; never unregister a shared helper here.
-            if service.status == .enabled { _ = try request(["op": "close"]) }
-            else if try !IOKitWakeStore().list(WakeOwner(uid: geteuid(), instance: instance)).isEmpty { throw PowerError("macos_power_cleanup_not_authorized") }
-            connection?.invalidate(); connection = nil; return NSNull()
+            defer { connection?.invalidate(); connection = nil }
+            let current: NSXPCConnection
+            do { current = try connect() }
+            catch where powerError(error) == "macos_power_not_authorized" || (command.op == "close" && powerError(error) == "macos_power_connection_failed") {
+                return try IOKitWakeStore().confirmEmpty(WakeOwner(uid: geteuid(), instance: instance))
+            }
+            return try call(["op": "close"], on: current)
         default: throw PowerError("macos_power_request_invalid")
         }
     }
@@ -142,11 +146,13 @@ private final class PowerClient {
                         case .success(let active): result = try active.handle(command)
                         case .failure(let error):
                             if command.op == "status" { result = ["supported": false, "authorization": "unavailable", "reason": powerError(error)] }
-                            else if command.op == "close" { result = NSNull() }
+                            else if command.op == "close" || command.op == "close-for-update" {
+                                result = try IOKitWakeStore().confirmEmpty(WakeOwner(uid: geteuid(), instance: expected[1]))
+                            }
                             else { throw error }
                         }
                         emit(["requestId": requestId, "ok": true, "result": result])
-                        if command.op == "close" { exit(0) }
+                        if command.op == "close" || command.op == "close-for-update" { exit(0) }
                     } catch { emit(["requestId": requestId, "ok": false, "error": powerError(error)]) }
                 }
             }

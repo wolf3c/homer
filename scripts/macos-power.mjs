@@ -15,10 +15,12 @@ function packaged(bundle,resources){
 }
 
 // Native dependencies are injected only by offline tests. No renderer chooses a binary or command.
-export function createMacWakeAdapter({bundle,resources,instanceId,onWake}, {platform=process.platform,spawn=spawnProcess,checkBundle=packaged,timeoutMs=10000}={}){
+export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdating=()=>false}, {platform=process.platform,spawn=spawnProcess,checkBundle=packaged,timeoutMs=10000}={}){
  if(typeof instanceId!=='string'||!/^[a-f0-9]{64}$/.test(instanceId))throw Error('macos_power_instance_invalid');
  const unavailable=platform!=='darwin'?'macos_power_platform_unsupported':!checkBundle(bundle,resources)?'macos_power_bundle_unavailable':undefined;
  let client,sequence=0,closed=false,closing,started=false,capability,helperMayExist=false;
+ // Keep uncertain writes across native client loss. Only a helper close can settle them.
+ let unconfirmedWrites=0;
  const pending=new Map();
  function launch(){
   if(client)return client;
@@ -53,12 +55,13 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake}, {plat
   if(closed&&!allowClosing)return Promise.reject(Error('macos_power_closed'));
   if(unavailable)return Promise.reject(Error(unavailable));
   // An unavailable capability cannot erase a possibly completed registration or event request.
-  if(!['status','close'].includes(op))helperMayExist=true;
+  if(!allowClosing&&op!=='status')helperMayExist=true;
   return new Promise((resolve,reject)=>{
    let child;
    try{child=launch();}catch{return reject(Error('macos_power_client_failed'));}
    const requestId=++sequence,timer=setTimeout(()=>{pending.delete(requestId);reject(Error('macos_power_request_timeout'));},timeoutMs);
    pending.set(requestId,{child,timer,resolve,reject});
+   if(op==='schedule'||op==='cancel')unconfirmedWrites++;
    child.stdin.write(JSON.stringify({requestId,op,...fields})+'\n',error=>{
     if(error&&pending.has(requestId)){clearTimeout(timer);pending.delete(requestId);reject(Error('macos_power_client_failed'));}
    });
@@ -85,17 +88,26 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake}, {plat
    if(!validEvent(event)||event.at<=Date.now())throw Error('macos_power_event_invalid');
    const actual=await request('schedule',event);
    if(!validEvent(actual)||actual.id!==event.id||actual.at!==event.at)throw Error('macos_power_response_invalid');
+   unconfirmedWrites--;
    return actual;
   },
   async cancel(event){
    if(!validEvent(event))throw Error('macos_power_event_invalid');
    const result=await request('cancel',event);if(result!==null)throw Error('macos_power_response_invalid');
+   unconfirmedWrites--;
   },
   close(){
    if(closing)return closing;
    closed=true;
    closing=(async()=>{
-    try{if(!unavailable&&started){const result=await request('close',{},true);if(result!==null)throw Error('macos_power_response_invalid');}}
+    try{
+     if(!unavailable&&started){
+      const result=await request(isUpdating()?'close-for-update':'close',{},true);
+      if(result==='owner-empty'){
+       if(unconfirmedWrites)throw Error('macos_power_cleanup_unconfirmed');
+      }else if(result!==null)throw Error('macos_power_response_invalid');
+     }
+    }
     finally{const child=client;client=undefined;child?.stdin.end();child?.kill();}
    })();
    return closing;

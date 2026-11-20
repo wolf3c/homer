@@ -7,7 +7,7 @@ import {buildMacPower} from '../scripts/build-macos-power.mjs';
 
 const instanceId='a'.repeat(64),id='b'.repeat(32),otherId='c'.repeat(32);
 const options={bundle:'/Applications/Homer.app',resources:'/Applications/Homer.app/Contents/Resources',profile:'/synthetic/profile',instanceId};
-function fixture({reply,platform='darwin',onWake}={}){
+function fixture({reply,platform='darwin',onWake,isUpdating}={}){
  const requests=[],children=[];
  const spawn=(file,args,settings)=>{
   assert.equal(file,'/Applications/Homer.app/Contents/MacOS/homer-power-client');
@@ -24,7 +24,7 @@ function fixture({reply,platform='darwin',onWake}={}){
   child.kill=()=>{queueMicrotask(()=>child.emit('exit',null,'SIGTERM'));return true;};
   return child;
  };
- const adapter=createMacWakeAdapter({...options,onWake},{platform,spawn,checkBundle:()=>true,timeoutMs:80});
+ const adapter=createMacWakeAdapter({...options,onWake,isUpdating},{platform,spawn,checkBundle:()=>true,timeoutMs:80});
  return {adapter,requests,children};
 }
 test('native wake notifications invoke recovery without consuming the pending request receipt',async()=>{
@@ -123,6 +123,34 @@ test('close confirms cleanup, terminates the client and prevents late requests',
  await assert.rejects(f.adapter.schedule({id,at:Math.ceil((Date.now()+10000)/1000)*1000}),/macos_power_closed/);
  await f.adapter.close();
 });
+test('an owner-empty receipt confirms idle exit but cannot settle an uncertain schedule or cancel',async()=>{
+ const event={id,at:Math.ceil((Date.now()+10000)/1000)*1000};
+ for(const operation of ['status','schedule','cancel']){
+  const f=fixture({reply:request=>request.op==='close'?'owner-empty':request.op==='status'?{supported:false,authorization:'unavailable'}:false});
+  if(operation==='status'){await f.adapter.status();await f.adapter.close();continue;}
+  await assert.rejects(f.adapter[operation](event),/macos_power_request_timeout/);
+  await assert.rejects(f.adapter.close(),/macos_power_cleanup_unconfirmed/);
+ }
+});
+
+test('a write refused after close begins does not invalidate an owner-empty receipt',async()=>{
+ const f=fixture({reply:request=>request.op==='close'?false:{supported:false,authorization:'unavailable'}});
+ await f.adapter.status();
+ const closing=f.adapter.close();
+ await assert.rejects(f.adapter.cancel({id,at:1000}),/macos_power_closed/);
+ f.children[0].stdout.write(JSON.stringify({requestId:f.requests.at(-1).requestId,ok:true,result:'owner-empty'})+'\n');
+ await closing;
+});
+
+test('confirmed writes permit an owner-empty exit, while update shutdown uses its strict command',async()=>{
+ const event={id,at:Math.ceil((Date.now()+10000)/1000)*1000};
+ const f=fixture({reply:request=>request.op==='schedule'?event:request.op==='cancel'?null:'owner-empty'});
+ await f.adapter.schedule(event);await f.adapter.cancel(event);await f.adapter.close();
+ const update=fixture({isUpdating:()=>true,reply:request=>request.op==='status'?{supported:true,authorization:'authorized'}:null});
+ await update.adapter.status();await update.adapter.close();
+ assert.deepEqual(update.requests.map(request=>request.op),['status','close-for-update']);
+});
+
 test('connection loss rejects pending work and reconnects for reconciliation, never replays a mutation',async()=>{
  const f=fixture({reply:(request,child)=>{
   if(request.op==='schedule'){queueMicrotask(()=>child.emit('exit',1,null));return false;}

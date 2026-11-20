@@ -120,6 +120,13 @@ test('a failed native registration uses bounded retry rather than spinning on th
  await f.advance(30_000);assert.equal(creates(),2);await f.power.close();
 });
 
+test('a blocker release failure alone keeps shutdown unconfirmed',async()=>{
+ const f=fixture();await f.update({executing:true});f.control.failStop=true;
+ assert.equal(await f.power.close(),false);
+ assert.equal(f.power.state().protectionError,'power_release_unconfirmed');
+ assert.equal(f.power.state().wake.error,undefined);
+});
+
 test('unconfirmed cancellation and blocker release are reported rather than claimed as clean shutdown',async()=>{
  const f=fixture();await f.update({executing:true,nextScheduledAt:f.now()+300_000});
  f.control.failCancel=true;f.control.failStop=true;

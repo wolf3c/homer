@@ -127,6 +127,14 @@ private final class MemoryStore: WakeStore {
             ["eventtype": "wake", "scheduledby": name, "time": Date(timeIntervalSince1970: 2_000_000_001.5)],
             ["eventtype": "wake", "scheduledby": name, "time": "invalid"]
         ]
+        let empty = try IOKitWakeStore(copyEvents: { nil }).confirmEmpty(owner)
+        precondition(empty == "owner-empty")
+        let foreignOnly = try IOKitWakeStore(copyEvents: { entries as CFArray }).confirmEmpty(another)
+        precondition(foreignOnly == "owner-empty")
+        for entry in [entries[0], entries[4]] {
+            rejects("macos_power_cleanup_unconfirmed") { _ = try IOKitWakeStore(copyEvents: { [entry] as CFArray }).confirmEmpty(owner) }
+        }
+        rejects("macos_power_query_failed") { _ = try IOKitWakeStore(copyEvents: { ["invalid"] as CFArray }).confirmEmpty(owner) }
         let decoded = IOKitWakeStore.decodeOwnedEvents(entries)
         precondition(decoded.count == 1 && decoded[0].0 == owner && decoded[0].1 == first, "system parsing excludes foreign/non-wake/invalid events")
         print("macos_power_native_contract_passed")
