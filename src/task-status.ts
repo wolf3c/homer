@@ -53,23 +53,25 @@ export function statusTree(tasks:OverviewTask[]):StatusMatter[]{
 }
 export type StatusFilter='working'|'done'|'needsUser';
 export function statusCountSnapshot(_tasks:OverviewTask[],matters=statusTree(_tasks)){
- let done=0,unlocatedPending=0,workingKnown=true;const interactions=new Set<string>();
+ let workingKnown=true;
  const matches={working:new Set<string>(),queued:new Set<string>(),done:new Set<string>(),needsUser:new Set<string>()};
  for(const {task,workers} of matters){
-  let active=false,unknown=false;
+  if(task.controlState!=='normal')continue;
+  if(task.state==='settled'){matches.done.add(task.id);continue;}
+  if(task.state!=='open')continue;
+  let pending=false,active=false,unknown=false;
   for(const {worker} of workers){
-   const run=worker.run,pending=validPendingUsers(worker),count=task.state==='open'&&task.controlState==='normal'?pendingUserCount(worker):0;
-   if(count){pending.forEach(q=>interactions.add(q.id));unlocatedPending+=Math.max(0,count-pending.length);matches.needsUser.add(task.id);}
-   if(run.status==='succeeded'&&run.phase==='ended'){done++;matches.done.add(task.id);}
-   if(task.state!=='open'||task.controlState!=='normal')continue;
+   const run=worker.run;
+   if(pendingUserCount(worker)>0)pending=true;
    if(run.status==='running'&&run.phase==='executing'&&run.stopRequestedAt==null)active=true;
    if(run.phase==='uncertain')unknown=true;
    if(run.status==='queued'&&run.phase==='ready')matches.queued.add(task.id);
   }
-  if(active)matches.working.add(task.id);
+  if(pending)matches.needsUser.add(task.id);
+  else if(active)matches.working.add(task.id);
   else if(unknown)workingKnown=false;
  }
- return {workingKnown,counts:{working:matches.working.size,queued:matches.queued.size,done,needsUser:interactions.size+unlocatedPending},matches};
+ return {workingKnown,counts:{working:matches.working.size,queued:matches.queued.size,done:matches.done.size,needsUser:matches.needsUser.size},matches};
 }
 export function matterStatus(matter:StatusMatter){return taskCardPresentation(matter.task);}
 export type StatusSortKey={priority:0|1|2|3|4;enteredAtMs:number;creationOrder:number;id:string};

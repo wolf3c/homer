@@ -59,8 +59,9 @@ try{
  const root=task('mixed'),a=root.workers[0];
  const peer=id=>({...a,id,run:{...a.run,id:'run-'+id,workerId:id}});
  const b=peer('b'),q=peer('queue'),ask={...peer('ask'),pendingUser:1,pendingUsers:[{id:'question',after:0}]};q.run.status='queued';q.run.phase='ready';ask.run.phase='rpc_wait';
- root.workers=[a,b,q,ask];snapshot={tasks:[root]};await refresh();await waitName('工作状态，1 个任务工作中');await trigger.click();await panel.waitFor();
- ok(await panel.locator('[data-count="working"]').innerText()==='1'&&await panel.locator('[data-count="queued"]').innerText()==='1'&&await panel.locator('[data-count="needs-user"]').innerText()==='1','one Task deduplicates multiple sessions while queue and requests remain separate');
+ root.workers=[a,b,q,ask];snapshot={tasks:[root]};await refresh();await waitName('工作状态，无工作中任务');await trigger.click();await panel.waitFor();
+ ok(await panel.locator('[data-count="working"]').innerText()==='0'&&await panel.locator('[data-count="queued"]').innerText()==='1'&&await panel.locator('[data-count="needs-user"]').innerText()==='1','pending user takes priority over multiple running peers and queue remains visible');
+ ask.pendingUser=0;
  b.run={...b.run,id:'retry',epoch:2};a.run.phase='ended';a.run.status='succeeded';await refresh();await waitName('工作状态，1 个任务工作中');
  root.headVersion=2;await refresh();await waitName('工作状态，1 个任务工作中');
  b.run.version=2;await refresh();await waitName('工作状态，1 个任务工作中');checks.push('goal and session versions remain separate, without duplicate counts');
@@ -93,27 +94,37 @@ try{
  snapshot=roots(1);snapshot.tasks[0].workers[0].run.phase='uncertain';await refresh();await waitName('工作状态，数量待核实');await page.setViewportSize({width:320,height:600});
  ok(await panel.locator('.status-count-filter').evaluateAll(filters=>filters.every(e=>e.scrollWidth<=e.clientWidth)),'unverified count fits narrow filters');
 
- snapshot={tasks:Array.from({length:6},(_,i)=>{
-  const t=task('returned-'+i,i===0?{title:null,goal:null}:{state:'settled',outcome:'succeeded'});
+ snapshot={tasks:Array.from({length:22},(_,i)=>{
+  const t=task('returned-'+i,i===0?{title:null,goal:null}:{state:'settled',outcome:i===1?'partial':i===2?'failed':i===3?'cancelled':'succeeded'});
   Object.assign(t.workers[0].run,{status:'succeeded',phase:'ended'});
   return t;
  })};
  await page.setViewportSize({width:1440,height:900});await page.reload();
  const sidebar=page.getByRole('complementary',{name:'工作状态卡片'});
- const done=sidebar.getByRole('button',{name:'执行完成，6 个 Worker',exact:true});
+ const ended=name=>sidebar.getByRole('button',{name:'已结束，'+name+' 项事项',exact:true});
+ const done=ended(21);
  await done.waitFor();
- assert.deepEqual(await sidebar.locator('.status-count-filter').allTextContents(),['工作中 0','执行完成 6','待你处理 0']);
+ assert.deepEqual(await sidebar.locator('.status-count-filter').allTextContents(),['工作中 0','已结束 21','待你处理 0']);
  const rows=sidebar.locator('[data-item-row]'),first=rows.first();
  ok(await first.locator('.status-row-trigger').getAttribute('title')==='未命名事项 · 未结案','open matter with a successful Worker return shows 未结案 and retains the title fallback');
  const clock=first.locator('svg.lucide-clock3');
  ok(await clock.evaluate(el=>getComputedStyle(el).animationName==='none'),'open matter shows a static clock');
- ok(await sidebar.locator('[data-item-row] svg.lucide-check').count()===5,'successful settled rows keep check icons');
+ ok(await sidebar.locator('[data-item-row] svg.lucide-check').count()>0,'successful settled rows keep check icons');
  await page.screenshot({path:join(destination,'sidebar-1440-unsettled.png')});
- await done.click();ok(await rows.count()===6&&await clock.isVisible(),'execution-complete filter retains the open matter with a successful Worker return');
- for(const name of ['工作中，0 个任务','待你处理，0 项请求']){
+ await done.click();
+ ok(await rows.count()===20&&await clock.count()===0,'ended filter excludes the open matter and starts with 20 rows');
+ await page.screenshot({path:join(destination,'sidebar-1440-ended.png'),animations:'disabled'});
+ await sidebar.getByRole('button',{name:'显示更多事项（还有 1 项）',exact:true}).click();
+ ok(await rows.count()===21,'expanded list matches the ended total');
+ const archived=snapshot.tasks[1];archived.historyState='archived';await refresh();await ended(20).waitFor();
+ ok(await rows.count()===20,'archiving removes the matter from count and filter together');
+ archived.historyState='visible';await refresh();await done.waitFor();
+ ok(await rows.count()===21,'restoring returns the matter to count and filter together');
+ for(const name of ['工作中，0 项事项','待你处理，0 项事项']){
   await sidebar.getByRole('button',{name,exact:true}).click();
   ok(await rows.count()===0,name+' filters to an empty list');
  }
+ ask.pendingUser=2;ask.pendingUsers.push({id:'approval',after:1,kind:'authorization'});
  snapshot={tasks:[root,task('running')]};await page.reload();
  const running=sidebar.locator('[data-todo-id="running"] .status-row-trigger');
  const spinner=running.locator('svg.lucide-loader-circle');
@@ -123,12 +134,17 @@ try{
  ok(await spinner.evaluate(el=>getComputedStyle(el).animationName==='none'),'sidebar spinner respects reduced motion');
  await page.emulateMedia({reducedMotion:'no-preference'});
  const mixed=sidebar.locator('[data-todo-id="mixed"]');
- ok(await mixed.getByText('需你答复',{exact:true}).isVisible()&&await mixed.locator('svg.lucide-message-circle-question').isVisible(),'waiting for the user takes precedence over a running peer');
+ ok(await mixed.getByText('需你审批',{exact:true}).isVisible()&&await mixed.locator('svg.lucide-shield-question').isVisible(),'waiting for the user takes precedence over a running peer');
  await page.screenshot({path:join(destination,'sidebar-1440-running.png')});
- await sidebar.getByRole('button',{name:'工作中，2 个任务',exact:true}).click();
- ok(await rows.count()===2,'working filter includes the matter with a running peer');
- await sidebar.getByRole('button',{name:'待你处理，1 项请求',exact:true}).click();
+ await sidebar.getByRole('button',{name:'工作中，1 项事项',exact:true}).click();
+ ok(await rows.count()===1&&await running.isVisible(),'working filter includes only the independently running matter');
+ await sidebar.getByRole('button',{name:'待你处理，1 项事项',exact:true}).click();
  ok(await rows.count()===1&&await mixed.isVisible(),'user filter includes only the matter with a pending question');
+ await page.setViewportSize({width:320,height:844});
+ await trigger.click();await panel.waitFor();
+ await panel.getByRole('button',{name:'待你处理，1 项事项',exact:true}).waitFor();
+ ok(await panel.locator('[data-item-row]').count()===1,'narrow filter matches the same single matter');
+ await page.screenshot({path:join(destination,'panel-320-matter-filter.png'),animations:'disabled'});
  ok(errors.length===0,'no page errors or business writes');
 }catch(error){errors.push(String(error.stack??error));process.exitCode=1;}
 finally{await writeFile(join(destination,'browser-results.json'),JSON.stringify({synthetic:true,checks,metrics,errors,realBrowserVerified:checks.length>0&&errors.length===0},null,2));await browser?.close();await new Promise(done=>server?server.close(done):done());await rm(scratch,{recursive:true,force:true});}

@@ -35,17 +35,31 @@ test('tree deduplicates real matters and rejects unrelated or malformed session 
  assert.equal(statusTree([task({historyState:'archived'})]).length,0);
 });
 
-test('one root contributes once while session and interaction units remain distinct',()=>{
- const a=worker('a'),b=worker('b');a.pendingUser=2;a.pendingUsers=[{id:'q',after:0},{id:'q2',after:1}];b.pendingUser=1;b.pendingUsers=[{id:'q',after:0}];
- const t=task({workers:[a,b]});assert.deepEqual(statusCountSnapshot([t,t]).counts,{working:1,queued:0,done:0,needsUser:2});
- a.pendingUser=3;assert.equal(statusCountSnapshot([t]).counts.needsUser,3,'unlocated requests retain their count');
- b.run.phase='ended';b.run.status='succeeded';assert.equal(statusCountSnapshot([t]).counts.done,1);assert.equal(statusCountSnapshot([t]).matches.done.has('task'),true);
+test('multiple pending requests and running peers contribute one matter to the user filter',()=>{
+ const a=worker('a'),b=worker('b');a.pendingUser=2;a.pendingUsers=[{id:'q',after:0},{id:'approval',after:1,kind:'authorization'}];
+ const t=task({workers:[a,b]});const snapshot=statusCountSnapshot([t,t]);
+ assert.deepEqual(snapshot.counts,{working:0,queued:0,done:0,needsUser:1});
+ assert.deepEqual([...snapshot.matches.needsUser],['task']);
+ a.pendingUser=3;assert.equal(statusCountSnapshot([t]).counts.needsUser,1,'unlocated requests still mark the matter once');
+});
+
+test('visible settlement counts once regardless of outcome or Worker execution',()=>{
+ for(const outcome of ['succeeded','partial','failed','cancelled']){
+  const t=task({state:'settled',outcome});
+  for(const workers of [[],[worker('a','succeeded','ended'),worker('b','succeeded','ended')],[worker('live')]]){
+   const snapshot=statusCountSnapshot([{...t,workers}]);
+   assert.deepEqual(snapshot.counts,{working:0,queued:0,done:1,needsUser:0});
+   assert.deepEqual([...snapshot.matches.done],['task']);
+  }
+  assert.equal(statusCountSnapshot([{...t,historyState:'archived'}]).counts.done,0);
+  assert.equal(statusCountSnapshot([{...t,controlState:'stopping'}]).counts.done,0);
+ }
 });
 
 test('queued work and successful old rounds do not inflate current active sessions',()=>{
  const t=task({workers:[worker('a'),worker('b','queued','ready'),worker('c','succeeded','ended')]});
- assert.deepEqual(statusCountSnapshot([t]).counts,{working:1,queued:1,done:1,needsUser:0});
- t.state='paused';assert.equal(statusCountSnapshot([t]).counts.working,0);assert.equal(statusCountSnapshot([t]).counts.queued,0);
+ assert.deepEqual(statusCountSnapshot([t]).counts,{working:1,queued:1,done:0,needsUser:0});
+ for(const change of [{state:'paused'},{controlState:'stopping'}])assert.deepEqual(statusCountSnapshot([{...t,...change}]).counts,{working:0,queued:0,done:0,needsUser:0});
 });
 
 test('unknown current work with no active proof suppresses an exact quantity',()=>{

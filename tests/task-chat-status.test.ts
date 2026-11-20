@@ -16,7 +16,7 @@ test('one matter owns two concurrent sessions and remains open when either sessi
  b.run={...b.run,status:'succeeded',phase:'ended',endedAt:400};
  assert.notEqual(classifyTask(t).key,'complete');
  assert.equal(matterStatus(statusTree([t])[0]!).state,'waiting');
- assert.deepEqual(statusCountSnapshot([t]).counts,{working:0,queued:0,done:1,needsUser:0});
+ assert.deepEqual(statusCountSnapshot([t]).counts,{working:0,queued:0,done:0,needsUser:0});
 });
 
 test('plain text settlement uses the Main decision with no formal result or delivery',()=>{
@@ -36,11 +36,11 @@ test('a resumed session counts once and progress follows its adopted version and
  for(const change of [{taskId:'other'},{version:2},{runId:'a'},{epoch:2},{threadId:'other'},{turnId:'turn-a'}])assert.equal(progressMatches(a,{...progress,...change}),false);
 });
 
-test('user requests from each live session outrank ordinary progress and deduplicate by interaction',()=>{
+test('user requests from each live session outrank ordinary progress and deduplicate by matter',()=>{
  const waiting=worker('waiting',{pendingUser:2,pendingUsers:[{id:'question',after:4,kind:'question'},{id:'approval',after:5,kind:'authorization'}],pendingUserCreatedAt:300});
  const attention=task({workers:[waiting,worker('peer')]}),running=task({id:'running',creationOrder:3,workers:[worker('other',{taskId:'running',run:{...worker('other').run,taskId:'running'}})]});
  assert.equal(rankedStatusMatters(statusTree([running,attention]))[0]!.matter.task.id,'task');
- assert.equal(statusCountSnapshot([attention,attention]).counts.needsUser,2);
+ assert.equal(statusCountSnapshot([attention,attention]).counts.needsUser,1);
  waiting.run={...waiting.run,phase:'ended',status:'succeeded'};
  assert.equal(statusCountSnapshot([attention]).counts.needsUser,0);
 });

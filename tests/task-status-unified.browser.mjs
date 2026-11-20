@@ -151,7 +151,7 @@ export default async function inlineTaskRows(page,{destination}={}){
  ok(await dialog.locator('[data-slot="task-status-row"]>button[aria-expanded="false"]').count()===4,'根事项初次全部收起');
  ok(await card('停止旧版市场调研').getAttribute('data-state')==='waiting'&&await card('活动资料整理').getAttribute('data-state')==='waiting','停止未确认和已暂停都是 waiting');
  ok((await toggle('停止旧版市场调研').innerText()).includes('停止待确认')&&(await toggle('活动资料整理').innerText()).includes('已暂停'),'暂停与停止中文事实保持');
- ok(await trigger.getAttribute('aria-label')==='工作状态，1 个任务工作中'&&await dialog.locator('[data-count="done"]').innerText()==='1'&&await dialog.locator('[data-count="needs-user"]').innerText()==='1','未知、停止和根汇总不新增计数');
+ ok(await trigger.getAttribute('aria-label')==='工作状态，无工作中任务'&&await dialog.locator('[data-count="done"]').innerText()==='1'&&await dialog.locator('[data-count="needs-user"]').innerText()==='1','未知、停止和根汇总不新增计数');
  ok(await dialog.locator('[data-slot="card"]').count()===0,'没有旧 Card 或 UnknownWorker 分支');
  ok(await dialog.locator('[data-slot="task-card"]').count()===0,'总览不再嵌套独立 TaskCard');
  // Shared TaskCard accessibility remains valid for other consumers of the scoped CSS.
@@ -234,7 +234,7 @@ export default async function inlineTaskRows(page,{destination}={}){
  // A replied session does not settle its Task or stop its active peer.
  await replace(change('税费资料 Worker',w=>({...w,run:{...w.run,status:'succeeded',phase:'ended'}})));
  await open();await toggle('采购选型方案').click();await toggle('成本分析 Worker').click();
- ok(await trigger.getAttribute('aria-label')==='工作状态，1 个任务工作中'&&await dialog.locator('[data-count="done"]').innerText()==='2'&&await dialog.locator('[data-count="needs-user"]').innerText()==='1','同一事项继续工作，已回复会话和有效请求各自计数');
+ ok(await trigger.getAttribute('aria-label')==='工作状态，无工作中任务'&&await dialog.locator('[data-count="done"]').innerText()==='1'&&await dialog.locator('[data-count="needs-user"]').innerText()==='1','待答事项优先，已回复会话不增加已结束事项');
  ok(await card('税费资料 Worker').getAttribute('data-state')==='done'&&(await toggle('税费资料 Worker').innerText()).includes('已回复'),'成功会话只表示已回复');
  ok(await card('采购选型方案').getAttribute('data-state')!=='done','同伴会话成功不将事项结案');
  await replace(change('成本分析 Worker',w=>({...w,run:{...w.run,id:w.run.id+'-followup',epoch:w.run.epoch+1}})));
@@ -245,7 +245,7 @@ export default async function inlineTaskRows(page,{destination}={}){
   ok(await dialog.locator('[data-count="needs-user"]').innerText()==='1','结案不改变其他事项待答计数');
  }
  for(const [status,label]of [['failed','执行失败'],['cancelled','本轮已停止'],['interrupted','执行已中断']]){
-  await replace(change('资料整理 Worker',w=>({...w,run:{...w.run,status,phase:'ended'}})));await open();await toggle('采购选型方案').click();ok((await toggle('资料整理 Worker').innerText()).includes(label),status+' 非成功会话保留准确状态');ok(await dialog.locator('[data-count="done"]').innerText()==='1','非成功会话不增加执行成功计数');
+  await replace(change('资料整理 Worker',w=>({...w,run:{...w.run,status,phase:'ended'}})));await open();await toggle('采购选型方案').click();ok((await toggle('资料整理 Worker').innerText()).includes(label),status+' 非成功会话保留准确状态');ok(await dialog.locator('[data-count="done"]').innerText()==='1','非成功会话不改变已结束事项计数');
  }
  await replace({...original,tasks:original.tasks.map(t=>t.title==='采购选型方案'?{...t,state:'settled',outcome:'partial'}:t)});await open();ok((await toggle('采购选型方案').innerText()).includes('部分完成'),'部分完成由Main显式结案呈现');
 
