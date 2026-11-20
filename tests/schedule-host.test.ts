@@ -60,7 +60,9 @@ test('Worker shares all four tools and its completed turn does not revoke a remi
     assert.equal(((await call(worker,'schedule_cancel',{scheduleId:other.scheduleId,expectedRevision:other.revision},'worker-cancel')).result as any).enabled,false);
     worker.finish!({status:'completed',text:'Reminder set',messages:[]});await f.app.idle();
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
-    assert.ok(f.inputs.some(text=>text.includes('[定时消息正文]\nWorker updated reminder')));
+    const reminder=f.inputs.find(text=>text.includes('[定时消息正文]\nWorker updated reminder'));
+    assert.ok(reminder);
+    assert.equal(Object.hasOwn(JSON.parse(reminder.split('\n')[1]!),'currentTask'),false);
     assert.equal(f.app.schedules.get(firstId).enabled,false);
   }finally{await f.close();}
 });

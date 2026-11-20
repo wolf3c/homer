@@ -1,5 +1,7 @@
 # Homer 核心架构
 
+2026-11-20 Homer 审核 Worker 正式回报时会读到当前事项的完整目标和工作笔记。隔离宿主测试已核对排队后更新的长笔记、跨版本回报和多事项交错回报。[工作表与回报](main-worker-chat-architecture.md#字段与存放位置)
+
 2026-11-20 事项更新与 Worker 管理分开。Homer 更新目标，独立发消息或中断 Worker；固定 Codex 本地回环验证了运行中调整当前轮、轮末拒收后不重发、确认空闲后沿原线程续谈。[事项版本与 Worker 会话](main-worker-chat-architecture.md#worker-会话工具)
 
 2026-11-20 工作区已实现建项与派工分离。Homer 建项保存目标，Worker 按事项编号承接整项或指定分工。两种派工均通过固定 Codex 引擎的本地回环验收。旧 Main 工具表须使用匹配版本或独立新会话。[建项与派工契约](main-worker-chat-architecture.md#新会话的事项标题契约)

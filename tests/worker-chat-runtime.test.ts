@@ -37,6 +37,7 @@ test('two Worker conversations return complete original text automatically witho
     for(const reply of replies){
       const facts=JSON.parse(reply.split('\n')[1]!);
       assert.equal(facts.taskId,taskId);assert.equal(facts.version,1);
+      assert.deepEqual(facts.currentTask,{title:'Read A.',goal:'Read A.'});
       assert.equal(facts.kind,'worker_reply');assert.ok(facts.workerId&&facts.messageId);
       assert.equal(facts.execution.status,'completed');assert.equal(facts.execution.exitConfirmed,true);
       for(const key of ['runId','threadId','turnId'])assert.ok(!Object.hasOwn(facts,key),key);
@@ -44,6 +45,58 @@ test('two Worker conversations return complete original text automatically witho
     assert.equal(f.app.tasks.task(taskId).state,'open');
     assert.equal(f.app.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='results'").get(),undefined);
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='worker_reply' AND r.state='received'").get()!.n,2);
+  }finally{await f.close();}
+});
+
+test('queued replies get their own current task and the full notes saved before review',async()=>{
+  const f=fixture(),goal='修复导出\n并核对结果。',notes='保留观察记录。\n'.repeat(1500)+'明早核对夜间结果。';
+  let exportId='',exportWorker='',docsId='',docsWorker='';
+  try{
+    f.setScript(async(main,text)=>{
+      if(text==='delegate'){
+        ({taskId:exportId,workerId:exportWorker}=await openTaskWorker(main,'导出',goal));
+        ({taskId:docsId,workerId:docsWorker}=await openTaskWorker(main,'文档','校对目录'));
+      }else if(text==='record observation'){
+        for(const worker of f.engines.filter(e=>e.options.role==='worker'))
+          worker.finish!({status:'completed',text:worker.threadId===f.app.tasks.run(exportWorker).threadId?'导出已修复':'目录已校对'});
+        await until(()=>f.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='worker_reply'").get()!.n===2);
+        await main.call('task_update',{taskId:exportId,notes});
+      }
+      return {status:'completed',text:'',messages:[]};
+    });
+    await f.app.start();await f.app.message('delegate','delegate-both');
+    await until(()=>f.engines.filter(e=>e.options.role==='worker'&&e.finish).length===2);
+    await f.app.message('record observation','observe-export');await f.app.idle();
+    const reports=f.inputs.filter(text=>text.includes('[Worker 原文]'));
+    assert.equal(reports.length,2);
+    for(const [raw,id,workerId,currentTask] of [
+      ['导出已修复',exportId,exportWorker,{title:'导出',goal,notes}],
+      ['目录已校对',docsId,docsWorker,{title:'文档',goal:'校对目录'}],
+    ] as const){
+      const prompt=reports.find(text=>text.endsWith('[Worker 原文]\n'+raw))!;
+      const facts=JSON.parse(prompt.split('\n')[1]!);
+      assert.equal(facts.taskId,id);assert.equal(facts.workerId,workerId);
+      assert.equal(facts.version,1);assert.deepEqual(facts.currentTask,currentTask);
+      assert.equal(f.app.tasks.task(id).state,'open');
+    }
+    assert.equal(f.app.store.runs().length,2);
+  }finally{await f.close();}
+});
+
+test('a missing current goal preserves the original Worker reply',async()=>{
+  const f=fixture();let taskId='';
+  try{
+    f.setScript(async(main,text)=>{
+      if(text==='start')taskId=(await openTaskWorker(main,'Check the original goal')).taskId;
+      return {status:'completed',text:'',messages:[]};
+    });
+    await f.app.start();await f.app.message('start','missing-head');
+    await until(()=>f.engines.some(e=>e.options.role==='worker'&&e.finish));
+    f.app.store.db.prepare('UPDATE tasks SET headVersion=headVersion+1 WHERE id=?').run(taskId);
+    f.engines.find(e=>e.options.role==='worker')!.finish!({status:'completed',text:'Original finding'});
+    await f.app.idle();
+    const prompt=f.inputs.find(text=>text.endsWith('[Worker 原文]\nOriginal finding'))!;
+    assert.equal(JSON.parse(prompt.split('\n')[1]!).currentTask,'当前事项详情不可用');
   }finally{await f.close();}
 });
 
@@ -88,7 +141,9 @@ test('a goal edit leaves both original Runs live; Homer steers just the report a
         await main.call('worker_message',{workerId:reportId,message:'用中文撰写报告'});
       }else if(text.includes('"kind":"worker_reply"')&&text.endsWith(link)){
         reviewed=true;
-        assert.equal(JSON.parse(text.split('\n')[1]!).version,1);
+        const facts=JSON.parse(text.split('\n')[1]!);
+        assert.equal(facts.version,1);
+        assert.deepEqual(facts.currentTask,{title:'Investigate the fault',goal:'Investigate the fault and deliver the report in Chinese',version:2});
         return {status:'completed',text:link,messages:[{itemId:'reviewed-report',phase:'final_answer',text:link}]};
       }
       return {status:'completed',text:'',messages:[]};
@@ -219,6 +274,7 @@ for(const kind of ['worker_reply','interaction_required'] as const)test(`a curre
         for(const message of ['Inspect remaining authorized fact A','Inspect remaining authorized fact B'])
           await openTaskWorker(main,'Authorized inspection',message);
         if(kind==='interaction_required'){
+          assert.equal(Object.hasOwn(JSON.parse(text.split('\n')[1]!),'currentTask'),false);
           assert.doesNotMatch(text,/"(?:runId|threadId|turnId)"|\[Worker 原文\]/);
           const interactionId=text.match(/\[待答入口\] interactionId=([^；]+)/)?.[1];
           assert.equal(interactionId,f.app.interactions.list()[0]!.id);
