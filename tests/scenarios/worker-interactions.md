@@ -10,10 +10,10 @@
 2. 要求派独立 Worker，按文件地址读取材料，再调用 `ask_main` 确认标题。主 Agent 直接回答，Worker 写入实际答复并回报文件地址。核对内容后，主 Agent 在最终答复中用 Markdown 链接交付选定文件。
 3. 再派 Worker，ask_main 询问尚未给出的用户指定合成版式。主 Agent 用 `escalate_interaction` 保留待答，在最终答复中把问题呈现给 CLI 用户。
 4. 发送一条明确不回答待答的普通聊天，验证主 Agent 能回复且原问题保持未答。
-5. 发送准确 interactionId 与随机版式，主 Agent 查看并答复；断言原 Worker pid/thread 未变，实际成果包含版式且成功交付，未重新派发。
+5. 发送准确 interactionId 与随机版式，主 Agent 查看并答复；核对原 Worker 身份、线程及答复送达回执，实际成果包含版式且成功交付，未重新派发。
 6. 可选 `--native`：用户明确要求本次本人确认，第三 Worker 使用原生 request_permissions 申请仅自己 cwd 的 read，CLI 退出后复用同一线程与隔离 runtime，沿现有结构化审批入口提交用户决定。观察 Homer 先呈现待答，再依据用户决定回复原 Worker。验证原生请求范围、`approved`、`deliveredAt`、实际用户回执与准确文件字节；该场景不证明任务内代审。
 
-基础脚本核对两 Run（`--native` 要求三 Run）、独立线程、产物内容、交互状态和同一 mainThread；报告只保存元数据与用量，不保存对话／原始参数／模型回执。真实模型使用可能计费，金额未知。Native 无法安全触发时应报未实测，不替换成功条件。基础脚本实际通过后可证明本轮业务问答和当前会话恢复，报告 `nativeVerification=not_run`。原生请求缺失时记录失败阶段及错误。
+基础脚本核对两个 Worker（`--native` 要求三个）、独立线程、产物内容、交互状态和同一 mainThread；报告只保存元数据与用量，不保存对话／原始参数／模型回执。真实模型使用可能计费，金额未知。Native 无法安全触发时应报未实测，不替换成功条件。基础脚本实际通过后可证明本轮业务问答和当前会话恢复，报告 `nativeVerification=not_run`。原生请求缺失时记录失败阶段及错误。
 
 ## Worker 原生操作代审复验（2026-11-11）
 

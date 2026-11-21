@@ -1,10 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
-import {mkdirSync,mkdtempSync,copyFileSync,chmodSync,writeFileSync,readFileSync,existsSync,renameSync,symlinkSync,readdirSync,lstatSync,appendFileSync} from 'node:fs';
+import {spawn,execFileSync} from 'node:child_process';
+import {mkdirSync,mkdtempSync,rmSync,copyFileSync,chmodSync,writeFileSync,readFileSync,existsSync,renameSync,symlinkSync,readdirSync,lstatSync,appendFileSync} from 'node:fs';
 import {resolve,join,dirname} from 'node:path';
 import {createServer} from 'node:net';
 import {createHash} from 'node:crypto';
+import {pinnedInventory} from '../scripts/pinned-build.mjs';
+import {writeDesktopManifest} from '../packaging/electron/forge.config.mjs';
 import {desktopBoundary,prepareDesktopProfile} from '../scripts/desktop-profile.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {PassThrough,Writable} from 'node:stream';
@@ -21,8 +23,9 @@ function profile(state={}){
  writeFileSync(join(root,'fixture-control.json'),JSON.stringify(state));
  for(const part of ['host-home','tmp'])mkdirSync(join(root,part));return root;
 }
-function launch(root,daily=false){
- const child=spawn(node,[join(resources,'homer/scripts/desktop-runtime.mjs'),'--profile',root,'--test-profile',...(daily?['--deepseek-daily']:[])],{cwd:root,env:{PATH:dirname(node)+':/usr/bin:/bin',HOME:join(root,'host-home'),TMPDIR:join(root,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','pipe',...(daily?['pipe']:[])]});
+function launch(root,daily=false,bundle=app){
+ const node=join(bundle,'Contents/MacOS/node');
+ const child=spawn(node,[join(bundle,'Contents/Resources/homer/scripts/desktop-runtime.mjs'),'--profile',root,'--test-profile',...(daily?['--deepseek-daily']:[])],{cwd:root,env:{PATH:dirname(node)+':/usr/bin:/bin',HOME:join(root,'host-home'),TMPDIR:join(root,'tmp'),LANG:'zh_CN.UTF-8'},stdio:['pipe','pipe','pipe',...(daily?['pipe']:[])]});
  if(daily){
   const selection={main:{model:'gpt-6.1-terra',effort:'medium'},worker:{model:'gpt-6.1-terra',effort:'high'}};
   child.stdio[3].end(JSON.stringify(daily==='manual-token'?{token:'synthetic-deepseek-token'}:{token:'synthetic-deepseek-token',subject:'fixture_user',selection}));
@@ -125,6 +128,59 @@ test('packaged desktop retains current history, uploads and the same thread acro
 });
 
 const digest=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
+test('desktop opens the same Main, Worker and task with a changed role catalog',{timeout:65000},async()=>{
+ const root=profile({loggedIn:true,toolUpgrade:true}),candidate=mkdtempSync(join(parent,'upgrade-')),nextApp=join(candidate,'desktop-B');
+ let running;
+ try{
+  const res=join(nextApp,'Contents/Resources'),homer=join(res,'homer');
+  const metadata=JSON.parse(readFileSync(join(resources,'desktop-manifest.json')));
+  mkdirSync(dirname(res),{recursive:true});
+  execFileSync('/bin/cp',['-cR',resources,res]);
+  for(const {path} of metadata.codeFiles){
+   mkdirSync(dirname(join(nextApp,path)),{recursive:true});
+   execFileSync('/bin/cp',['-c',join(app,path),join(nextApp,path)]);
+  }
+  appendFileSync(join(homer,'dist/recursive-tools.js'),"\nRECURSIVE_TOOLS.find(tool=>tool.name==='worker_message').inputSchema.required.push('attachments');\n");
+  appendFileSync(join(homer,'dist/worker-interaction-mcp.js'),`
+for(const tools of [HOST_MCP_TOOLS,WORKER_HOST_MCP_TOOLS]){
+ const read=tools.find(tool=>tool.name==='work_directory');
+ read.inputSchema.required=['path'];delete read.inputSchema.properties.taskId;
+ tools.splice(tools.findIndex(tool=>tool.name==='schedule_cancel'),1,{...read,name:'upgrade_probe'});
+}`);
+  const files=pinnedInventory(homer),manifest=digest(files),sourceHash=digest(['synthetic-catalog',manifest]);
+  writeFileSync(join(homer,'build-manifest.json'),JSON.stringify({files,manifest,sourceHash}));
+  writeDesktopManifest(nextApp,{...metadata,preparation:true,publishable:false,localWorkingTree:true,sourceHash,manifest});
+  const rows=()=>readFileSync(join(root,'upgrade.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  let first;
+  for(const [index,bundle] of [app,nextApp].entries()){
+   running=launch(root,false,bundle);
+   const url=await running.url();await stateWhen(url,s=>s.upgrade.phase==='running');
+
+   const db=new DatabaseSync(join(root,'runtime/homer.sqlite'),{readOnly:true});
+   let runs;
+   try{
+    for(const [ordinal,text] of (index?[[3,'让刚才那个 Worker 继续原事项']]:[[1,'dispatch-synthetic'],[2,'Continue the current assignment']])) {
+     assert.equal((await request(url,'/api/messages',{requestId:'upgrade-'+ordinal,text})).status,202);
+     await stateWhen(url,()=>db.prepare("SELECT count(*) n FROM runs WHERE status='succeeded'").get().n===ordinal);
+    }
+    runs=db.prepare('SELECT taskId,workerId,threadId FROM runs ORDER BY rowid').all();
+   }finally{db.close();}
+   await running.stop();running=undefined;
+   if(!index)first=runs[0];else assert.deepEqual(runs,[first,first,first]);
+  }
+  const records=rows();assert.equal(records.length,6);
+  for(const worker of [false,true]){
+   const [before,oldFollowup,after]=records.filter(row=>row.worker===worker);
+   assert.deepEqual(oldFollowup,before);
+   assert.equal(before.thread,after.thread);
+   assert.deepEqual([before.required,before.added,before.removed],[['path','taskId'],false,false]);
+   assert.deepEqual([after.required,after.added,after.removed],[['path'],true,true]);
+  }
+ }finally{
+  if(running?.child.exitCode===null&&running.child.signalCode===null)await running.stop();
+  rmSync(candidate,{recursive:true,force:true});rmSync(root,{recursive:true,force:true});
+ }
+});
 function externalInventory(path){
  const stat=lstatSync(path);
  return {mode:stat.mode,entries:stat.isDirectory()?readdirSync(path).sort().map(name=>[name,externalInventory(join(path,name))]):digest(readFileSync(path,'utf8'))};

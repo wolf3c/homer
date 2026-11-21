@@ -1,5 +1,5 @@
 import {openTaskWorker} from './fixtures/open-task-worker.js';
-import {callHostMcp} from './fixtures/host-mcp-call.js';
+import {callEngineMcp,callHostMcp} from './fixtures/host-mcp-call.js';
 // Real Homer and SQLite, scripted engine boundary, isolated runtime only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -291,8 +291,8 @@ for(const kind of ['worker_reply','interaction_required'] as const)test(`a curre
           assert.doesNotMatch(text,/"(?:runId|threadId|turnId)"|\[Worker 原文\]/);
           const interactionId=text.match(/\[待答入口\] interactionId=([^；]+)/)?.[1];
           assert.equal(interactionId,f.app.interactions.list()[0]!.id);
-          await callHostMcp(main.options, 'inspect_interaction',{interactionId});
-          await callHostMcp(main.options, 'respond_interaction',{interactionId,action:'answer',answer:'Continue within the original scope',reason:'Original source remains current'});
+          await callEngineMcp(main, 'inspect_interaction',{interactionId});
+          await callEngineMcp(main, 'respond_interaction',{interactionId,action:'answer',answer:'Continue within the original scope',reason:'Original source remains current'});
         }
         checked=true;
       }
@@ -300,6 +300,7 @@ for(const kind of ['worker_reply','interaction_required'] as const)test(`a curre
     });
     await f.app.start();await f.app.message('start','live-source');await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
     const original=f.engines.find(engine=>engine.options.role==='worker')!;
+    original.steer=async(turnId,text)=>{assert.equal(turnId,original.turnId);assert.match(text,/Continue within the original scope/);return {turnId};};
     const question=kind==='interaction_required'?original.call('ask_main',{question:'Continue the current authorized scope?'}):undefined;
     if(kind==='worker_reply')original.finish!({status:'completed',text:'Original current observation'});
     await until(()=>checked&&f.engines.filter(engine=>engine.options.role==='worker'&&engine.finish).length===(kind==='worker_reply'?2:3));
@@ -646,19 +647,19 @@ for(const action of ['approve','deny'] as const)test('a desktop Worker command w
         const id=JSON.parse(text.split('\n')[1]!).messageId;
         const notice=f.app.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(id)!;
         seen=JSON.parse(String(notice.payloadJson)).interactionId;
-        await callHostMcp(main.options, 'inspect_interaction',{interactionId:seen});
-        await callHostMcp(main.options, 'escalate_interaction',{interactionId:seen,question:'Confirm the operation',reason:'Needs user authorization'});
-        await assert.rejects(callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action:'approve',reason:'No user approval'}),/user.*required/);
+        await callEngineMcp(main, 'inspect_interaction',{interactionId:seen});
+        await callEngineMcp(main, 'escalate_interaction',{interactionId:seen,question:'Confirm the operation',reason:'Needs user authorization'});
+        await assert.rejects(callEngineMcp(main, 'respond_interaction',{interactionId:seen,action:'approve',reason:'No user approval'}),/user.*required/);
         const final={itemId:'approval-notice',phase:'final_answer' as const,text:'Please confirm the proposed operation.'};
         return {status:'completed',text:final.text,messages:[final]};
       }else if(text.includes('[用户答复原待答]')){
         assert.equal(resolved,false);mediated=true;
-        await callHostMcp(main.options, 'inspect_interaction',{interactionId:seen});
+        await callEngineMcp(main, 'inspect_interaction',{interactionId:seen});
         if(action==='deny'){
-          await assert.rejects(callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action:'approve',reason:'Cannot turn a refusal into permission'}),/user.*required/);
+          await assert.rejects(callEngineMcp(main, 'respond_interaction',{interactionId:seen,action:'approve',reason:'Cannot turn a refusal into permission'}),/user.*required/);
           wrongDecisionRejected=true;
         }
-        await callHostMcp(main.options, 'respond_interaction',{interactionId:seen,action,reason:'Use the actual user decision'});
+        await callEngineMcp(main, 'respond_interaction',{interactionId:seen,action,reason:'Use the actual user decision'});
       }
       return {status:'completed',text:'Recorded'};
     });
@@ -739,15 +740,18 @@ test('a Worker question wakes Main and returns the persisted answer to that exac
         await openTaskWorker(main,'Ask one question');
       }else if(text.includes('interaction_required')){
         const request=f.app.interactions.list().find(item=>item.source==='ask_main')!;
-        await callHostMcp(main.options, 'inspect_interaction',{interactionId:request.id});
-        await callHostMcp(main.options, 'respond_interaction',{interactionId:request.id,action:'answer',answer:'Use A',reason:'Within the original synthetic goal'});
+        await callEngineMcp(main, 'inspect_interaction',{interactionId:request.id});
+        await callEngineMcp(main, 'respond_interaction',{interactionId:request.id,action:'answer',answer:'Use A',reason:'Within the original synthetic goal'});
       }
       return {status:'completed',text:text==='start'?'Started':'',messages:[]};
     });
     await f.app.start();await f.app.message('start','question-source');
     await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
     const worker=f.engines.find(engine=>engine.options.role==='worker')!;
-    const answer=await worker.call('ask_main',{question:'A or B?'});assert.equal(answer.answer,'Use A');
+    let answer='';
+    worker.steer=async(turnId,text)=>{assert.equal(turnId,worker.turnId);answer=text.slice(text.indexOf('\n')+1);return {turnId};};
+    const pending=await worker.call('ask_main',{question:'A or B?'});assert.equal(pending.status,'pending');
+    await until(()=>!!f.app.interactions.inspect(pending.interactionId).deliveredAt);assert.equal(answer,'Use A');
     assert.ok(f.app.interactions.list().find(item=>item.source==='ask_main')!.deliveredAt);
     worker.finish!({status:'completed',text:'Used A',messages:[{itemId:'answer',phase:'final_answer',text:'Used A'}]});await f.app.idle();
     assert.equal(f.app.store.db.prepare("SELECT r.state FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE m.kind='interaction_required'").get()!.state,'received');
@@ -837,4 +841,40 @@ test('a dispatched Worker can read its exact attachment before the user turn end
   worker.finish!({status:'completed',text:'Checked input'});
   release();await f.app.idle();
  }finally{release();await f.close();}
+});
+
+test('Main can finish coordination while a durable answer awaits Worker startup',async()=>{
+ const f=fixture();let questionId='',attempted=false;
+ try{
+  f.setScript(async(main,text)=>{
+   if(text==='start'){
+    const w=await openTaskWorker(main,'Ask about format');
+    await until(()=>f.engines.some(e=>e.options.role==='worker'&&e.finish));
+    const worker=f.engines.find(e=>e.options.role==='worker')!;
+    questionId=(await worker.call('ask_main',{question:'Which format?'})).interactionId;
+    worker.finish!({status:'completed',text:'Awaiting format'});
+    await until(()=>f.app.tasks.run(w.runId).status==='succeeded');
+   }else if(text.includes('interaction_required')){
+    await callEngineMcp(main,'inspect_interaction',{interactionId:questionId});
+    const answer={interactionId:questionId,action:'answer',answer:'Markdown',reason:'Original request'};
+    await assert.rejects(callHostMcp(main.options,'respond_interaction',answer),/schedule_call_scope_denied/);
+    assert.equal(f.app.interactions.inspect(questionId).state,'pending_main');
+    const result=await callEngineMcp(main,'respond_interaction',answer);
+    assert.equal(result.delivery,'queued');attempted=true;
+   }
+   return {status:'completed',text:text==='start'?'Started':''};
+  });
+  await f.app.start();
+  const claim=f.app.tasks.claim.bind(f.app.tasks);
+  f.app.tasks.claim=(id?:string)=>questionId?undefined:claim(id);
+  await f.app.message('start','queued-answer-source');
+  await until(()=>attempted);
+  await f.app['mainQueue'];
+  assert.equal(f.app.interactions.inspect(questionId).deliveredAt,null);
+  assert.equal(f.app.store.db.prepare("SELECT code FROM events WHERE type='internal_processing_failed'").get(),undefined);
+  f.app.tasks.claim=claim;f.app['pump']();
+  await until(()=>!!f.app.interactions.inspect(questionId).deliveredAt);
+  const receiver=f.engines.at(-1)!;assert.match(receiver.input!,/Markdown/);
+  receiver.finish!({status:'completed',text:'Used Markdown'});await f.app.idle();
+ }finally{await f.close();}
 });

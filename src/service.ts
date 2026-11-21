@@ -55,12 +55,12 @@ import { loadPrompts, type Prompts } from "./prompts.js";
 import { MAIN_TOOLS, object, string } from "./tools.js";
 import { acquireLock, leaseOwnerGone, processIdentity, terminateLease } from "./processes.js";
 import { WorkerInteractions, type InteractionInput } from "./worker-interactions.js";
+import {MAIN_INTERACTION_TOOLS} from "./worker-interaction-tools.js";
 import { WorkerInteractionMcp, hostMcpTools } from "./worker-interaction-mcp.js";
 import {DesktopCua,CUA_TOOLS,isCuaTool} from './desktop-cua.js';
 import{BROWSER_PREVIEW_TOOLS,isBrowserPreviewTool}from'./browser-preview-tools.js';
 import type{BrowserTransport}from'./browser-preview.js';
 import{parsePreviewSource}from'./preview-reference.js';
-import { WORKER_INTERACTION_TOOLS } from "./worker-interaction-tools.js";
 import { nativeResponse, type InteractionDecision } from "./worker-interaction-protocol.js";
 import type { NativeRequest } from "./worker-native-requests.js";
 import { inside } from "./files.js";
@@ -225,7 +225,7 @@ export class Homer {
   registerMainPluginTool(tool: Tool, handle: (args: unknown, context: PluginUserContext) => unknown) {
     if(this.main || this.interactionMcp || this.closing || this.closed)throw Error('plugin_tool_catalog_started');
     if(!/^[a-z][a-z0-9_]{0,63}$/.test(tool.name) || this.mainPluginTools.has(tool.name) ||
-      [...MAIN_DYNAMIC_TOOLS,...BROWSER_PREVIEW_TOOLS,...hostMcpTools('main',true,false,false,false,true),...hostMcpTools('worker',true,false,true)].some(entry=>entry.name===tool.name))
+      [...BROWSER_PREVIEW_TOOLS,...hostMcpTools('main',true,false,false,false,true),...hostMcpTools('worker',true,false,true)].some(entry=>entry.name===tool.name))
       throw Error('plugin_tool_name_denied');
     const registered=structuredClone(tool);
     if(Buffer.byteLength(JSON.stringify([...this.mainPluginTools.values()].map(entry=>entry.tool).concat(registered)))>32_768)
@@ -745,6 +745,7 @@ export class Homer {
       throw error;
     }
     this.interactions = new WorkerInteractions(this.store.db, {
+      questionCurrent:item=>this.tasks.questionCurrent(item),
       persisted:id=>{if(!this.mainApprovals?.owns(id))this.tasks?.queueInteraction(id);},
       ready: id => {if(!this.mainApprovals?.owns(id))this.scheduleInputs();},
       waiting: id => {const slot=this.workers.get(id);if(slot)this.syncInteractionWaiting(slot);},
@@ -841,8 +842,13 @@ export class Homer {
       const facts=await this.directoryFacts(false);
       return prepareWorkerProjectRoot(cwd,facts.home,native.config.project_root_markers,current);
     };
-    const handle=(call:ToolCall)=>call.tool==='ask_main'?handler(call):this.withDesktopPower(()=>handler(call));
+    const handle=(call:ToolCall)=>this.withDesktopPower(()=>handler(call));
     const engine=this.factory?this.factory(options,handle):new CodexEngine(this.config,options,handle);
+    const catalog=options.interactionMcp?.catalog;
+    if(catalog){
+      engine.on('hostMcpToolStarted',call=>this.scheduleCalls.observe(engine,catalog,call));
+      engine.on('hostMcpToolCompleted',(thread,turn,id)=>this.scheduleCalls.complete(engine,thread,turn,id));
+    }
     engine.on('powerActivity',()=>this.invalidateState());
     engine.on('interactionWaiting',()=>{if(!engine.nativeInteractionPending)this.desktopPowerResuming?.delete(engine);this.invalidateState();});
     engine.on('exit',()=>{
@@ -952,7 +958,6 @@ export class Homer {
     );
     for(const event of ['modelTransport','idle'])engine.on(event,()=>{if(this.main===engine)this.scheduleMainTransportRecovery();});
     engine.on('hostMcpToolStarted',(call:Omit<ToolCall,'callId'>&{itemId:string})=>{
-      this.scheduleCalls.observe(engine,call);
       if(!this.mainPluginTools.has(call.tool)||!this.validPluginCallId(call.itemId))return;
       const context=this.pluginUserTurn(engine,call.threadId,call.turnId);
       if(!context)return;
@@ -1111,11 +1116,31 @@ export class Homer {
       if(this.closing)throw Error('application_closing');
       const catalog=hostMcpTools('main',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'main'))==='live',false,!!this.browserTransport,this.membershipAudioEnabled)
         .concat([...this.mainPluginTools.values()].map(entry=>entry.tool));
-      this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, (tool, args, meta) =>
-        isBrowserPreviewTool(tool)?this.browserTool(tool,args,meta):
-        SCHEDULE_TOOLS.some(entry=>entry.name===tool)?this.scheduleTool(tool,args,meta):
-        this.mainPluginTools.has(tool)?this.mainPluginTool(tool,args,meta):
-          this.mainActivity(tool,()=>tool===LIST_WORK_DIRECTORIES.name?this.workDirectoryReference(args):this.withDesktopPower(power=>isMembershipTool(tool)?this.membershipTool(tool,args,undefined,power):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.mainActor(),tool,args):MEDIA_TOOLS.some(t=>t.name===tool)?this.mediaTool(tool,args):this.interactionTool(tool, args)),args),catalog,()=>this.scheduleMainTransportRecovery());
+      this.interactionMcp = new WorkerInteractionMcp(this.config.runtime, async (tool, args, meta) => {
+        const interaction=MAIN_INTERACTION_TOOLS.some(t=>t.name===tool);
+        if(interaction||MAIN_TOOLS.some(t=>t.name===tool)||RECURSIVE_TOOLS.some(t=>t.name===tool)){
+          const engine=this.main,context=this.mainContext;
+          if(!engine||!context)throw Error('tool_scope_denied');
+          const current=()=>!this.closing&&this.main===engine&&this.mainContext===context&&!context.stopRequested&&!context.terminalConfirmed;
+          const identity=await this.scheduleCalls.authenticate(engine,tool,args,meta,current);
+          return this.withDesktopPower(()=>this.mainActivity(tool,()=>{
+            if(!current()||engine.turnId!==identity.turnId)throw Error('tool_scope_denied');
+            return interaction?this.interactionTool(tool,args):this.mainTool({...identity,tool,arguments:args});
+          },args));
+        }
+        if(isBrowserPreviewTool(tool))return this.browserTool(tool,args,meta);
+        if(SCHEDULE_TOOLS.some(t=>t.name===tool))return this.scheduleTool(tool,args,meta);
+        if(this.mainPluginTools.has(tool))return this.mainPluginTool(tool,args,meta);
+        return this.mainActivity(tool,()=>{
+          if(tool===LIST_WORK_DIRECTORIES.name)return this.workDirectoryReference(args);
+          return this.withDesktopPower<unknown>(power=>{
+            if(isMembershipTool(tool))return this.membershipTool(tool,args,undefined,power);
+            if(EXECUTION_TOOLS.some(t=>t.name===tool))return this.executionTool(this.mainActor(),tool,args);
+            if(MEDIA_TOOLS.some(t=>t.name===tool))return this.mediaTool(tool,args);
+            throw Error('main_tool_denied');
+          });
+        },args);
+      },catalog,()=>this.scheduleMainTransportRecovery());
       await this.interactionMcp.start();
       if(this.closing)throw Error('application_closing');
       this.main = this.createMain(cwd,savedThread);
@@ -1711,11 +1736,14 @@ export class Homer {
       }
       const interaction=context.interactionId?this.interactions.inspect(context.interactionId):undefined;
       const inactive=interaction&&['cancelled','expired'].includes(interaction.state)&&(!interaction.decision||interaction.deliveredAt!==null);
+      const delivery=interaction?.source==='ask_main'&&['answered','denied'].includes(interaction.state)&&interaction.deliveredAt===null
+        ?this.tasks.questionDelivery(interaction.id,this.tasks.run(interaction.runId).taskId):undefined;
+      const queued=delivery?.kind==='worker_message'&&delivery.state==='confirmed'&&['pending','offered'].includes(delivery.receipt??'');
       if (!result.text.trim() && !context.allowEmptyReply && !context.explicitSent) {
-        if(!context.event||!context.interactionId||!this.interactions.hasDeliveredDecision(context.interactionId)&&!inactive)throw new Error("main_empty_reply");
+        if(!context.event||!context.interactionId||!this.interactions.hasDeliveredDecision(context.interactionId)&&!inactive&&!queued)throw new Error("main_empty_reply");
       }
       if(interaction?.state==='pending_main')throw Error('main_interaction_unhandled');
-      if(interaction?.decision&&interaction.deliveredAt===null)throw Error('interaction_delivery_unconfirmed');
+      if(interaction?.decision&&interaction.deliveredAt===null&&!queued)throw Error('interaction_delivery_unconfirmed');
       if(context.explicitSent)return this.history.message(context.messageId??'')?.text??'';
       return result.text;
     } catch (e) {
@@ -2229,7 +2257,7 @@ export class Homer {
         details.approval=content;
       }
       const {taskId,workerId,workingDirectory,status,phase}=this.tasks.run(item.runId);
-      return {id,runId:item.runId,kind:item.kind,state:item.state,waitingFor:item.waitingFor,
+      return {id,runId:item.runId,kind:item.kind,state:item.state,waitingFor:item.waitingFor,...(item.source==='ask_main'?{deliveredAt:item.deliveredAt}:{}),
         authority:item.authority,details,run:{taskId,workerId,workingDirectory,status,phase},
         ...Object.fromEntries((['userQuestion','escalationReason','decision','responseUserMessageId','responseUserText','code'] as const)
           .filter(key=>item[key]!=null).map(key=>[key,item[key]]))};
@@ -2275,9 +2303,12 @@ export class Homer {
     }
     const receipt=item.details.review?(associated?{userMessageId:reply.requestId,userText:reply.text}:{})
       :context.event?{}:{userMessageId:context.requestId,userText:context.userText};
+    if(item.source==='ask_main' && reply?.interactionId && reply.interactionId!==id)throw Error('interaction_user_reply_required');
     const result=this.interactions.respond(id,decision,receipt);
     this.store.event(item.runId, "interaction_decided", decision.action);
-    return { interactionId: id, ...result, state: this.interactions.inspect(id).state };
+    const delivery=item.source==='ask_main'?await this.deliverQuestion(id):undefined;
+    if(delivery)this.pump();
+    return { interactionId: id, ...result, ...(delivery?{delivery}:{}), state: this.interactions.inspect(id).state };
   }
   private async openNativePluginInteraction(request:NativeRequest,worker?:WorkerSlot,workerCwd?:string){
     const context=this.mainContext;
@@ -2381,19 +2412,19 @@ export class Homer {
       (request.isCurrent ? request.isCurrent() : request.threadId===slot.engine.threadId&&request.turnId===slot.engine.turnId);
   }
   private syncInteractionWaiting(slot:WorkerSlot) {
-    const waiting=!!slot.engine.nativeInteractionPending||this.interactions.hasPending(slot.id);
+    const waiting=!!slot.engine.nativeInteractionPending||this.interactions.hasPending(slot.id,true);
     try{this.tasks.rpc(slot.id,slot.epoch,waiting);}catch{return;}
     waiting?this.pauseClock(slot):this.resumeClock(slot);
     this.invalidateState();
   }
-  private openInteraction(input: Omit<InteractionInput, "authority">, native?: NativeRequest) {
+  private openInteraction(input: Omit<InteractionInput, "authority">, native: NativeRequest) {
     const slot=this.workers.get(input.runId);if(!slot)throw Error('agent_identity_denied');
-    this.tasks.guard(this.workerActor(slot),native?['executing','rpc_wait']:['executing']);
-    if(native&&!this.liveNativeInteraction(slot,native))throw Error('interaction_not_live');
+    this.tasks.guard(this.workerActor(slot),['executing','rpc_wait']);
+    if(!this.liveNativeInteraction(slot,native))throw Error('interaction_not_live');
     const run=this.tasks.run(input.runId);
     const authority=this.tasks.authority(run.taskId,run.version);
     this.tasks.validateAuthority(this.mainActor(true),authority);
-    if(native&&native.kind==='authorization'){
+    if(native.kind==='authorization'){
       const request=this.mainApprovals.open(native,{
         threadId:native.threadId,turnId:native.turnId,generationId:run.id,
         worker:{runId:run.id,runEpoch:run.epoch,taskVersion:run.version},
@@ -2404,14 +2435,50 @@ export class Homer {
       return request;
     }
     const request = this.interactions.open({ ...input,runEpoch:run.epoch,taskVersion:run.version, authority: { ...authority, nativeApprovals: false } },
-      () => native?this.liveNativeInteraction(slot,native):this.liveInteraction(input.runId, input.threadId, input.turnId),
-      native ? decision => { if(decision.action!=='deny')nativeResponse(native, decision); } : undefined);
+      () => this.liveNativeInteraction(slot,native),
+      decision => { if(decision.action!=='deny')nativeResponse(native, decision); });
     this.workers.get(input.runId)!.requests.set(JSON.stringify([input.source, input.requestId]), request.id);
     this.store.event(input.runId, "interaction_pending", input.kind);
     return request;
   }
+  private async deliverQuestion(id:string){
+    const item=this.interactions.inspect(id);
+    if(item.deliveredAt!==null)return 'received';
+    if(!item.decision||!['answered','denied'].includes(item.state))return;
+    const origin=this.tasks.run(item.runId),run=this.tasks.worker(origin.workerId).run,actor=this.mainActor(true);
+    actor.sourceRequestId=item.authority.sourceRequestId;
+    actor.inputMessageId=undefined;
+    const key='question:'+id;
+    const prior=this.tasks.questionDelivery(id,run.taskId);
+    if(prior?.kind==='worker_message'){
+      if(prior.state!=='confirmed')return prior.state;
+      if(prior.receipt==='rejected')this.interactions.expire(id,'worker_input_rejected');
+      return prior.receipt==='pending'?'queued':prior.receipt??'uncertain';
+    }
+    if(prior&&prior.state!=='failed')return prior.state;
+    if(!this.tasks.questionCurrent(item)){
+      this.interactions.expire(id,'worker_not_live');
+      return 'stale';
+    }
+    this.tasks.validateAuthority(actor,item.authority);
+    if(run.phase!=='ended' && (run.phase!=='executing'||prior))return 'pending';
+    const operationId=prior?key+':followup':key;
+    try{
+      const body=item.state==='answered'?item.decision.answer:item.decision.reason;
+      const text='[主 Agent '+(item.state==='denied'?'拒绝回答':'答复')+' '+id+']\n'+body;
+      const receipt=this.tasks.workerMessage(actor,{operationId,workerId:run.workerId,text},undefined,id);
+      return receipt.route==='steer'?(await this.applySteer(receipt)).state:receipt.state;
+    }catch(error){
+      const code=engineError(error);
+      if(['worker_not_ready','operation_uncertain','run_stop_unconfirmed','worker_stop_requested'].includes(code))return 'pending';
+      throw error;
+    }
+  }
   private pump() {
     if(this.closing)return;
+    for(const {id} of this.store.db.prepare("SELECT id FROM worker_interactions WHERE source='ask_main' AND state IN ('answered','denied') AND deliveredAt IS NULL").all()){
+      void this.deliverQuestion(String(id)).catch(error=>{if(!this.closed)this.store.event(null,'question_delivery_failed',engineError(error));});
+    }
     let run:TaskRun|undefined;
     while((run=this.tasks.claim())){
       const execution=this.execute(run);this.executions.add(execution);
@@ -2545,8 +2612,11 @@ export class Homer {
     this.tasks.guard(actor);const a=object(call.arguments);
     if(call.tool==='ask_main'){
       if(Object.keys(a).some(key=>key!=='question'))throw Error('invalid_tool_arguments');
-      const request=this.openInteraction({runId:slot.id,threadId:call.threadId,turnId:call.turnId,requestId:call.callId,source:'ask_main',kind:'question',details:{question:string(a.question,16000)}});
-      const response=await request.response;await this.requestDesktopPowerProtection();return {interactionId:request.id,status:response.status,answer:response.decision?.answer??null,reason:response.decision?.reason??response.code};
+      const run=this.tasks.run(slot.id),authority=this.tasks.authority(run.taskId,run.version);
+      const scope={runId:run.id,threadId:call.threadId,turnId:call.turnId,runEpoch:run.epoch,taskVersion:run.version};
+      return this.interactions.openQuestion({...scope,requestId:call.callId,source:'ask_main',kind:'question',
+        details:{question:string(a.question,16000)},authority:{...authority,nativeApprovals:false}},
+        ()=>this.liveInteraction(run.id,call.threadId,call.turnId)&&this.tasks.questionCurrent(scope));
     }
     throw Error('worker_tool_denied');
   }
@@ -2614,12 +2684,17 @@ export class Homer {
       if(!slot){
         const cua=this.cuaAllowed(run);
         let created!:WorkerSlot;
-        const endpoint=pendingEndpoint=new WorkerInteractionMcp(this.config.runtime,(tool,args,meta)=>{
+        const handle=(call:ToolCall)=>this.workerTool(created,call).catch(error=>{this.store.event(run.id,'tool_rejected',engineError(error));throw error;});
+        const endpoint=pendingEndpoint=new WorkerInteractionMcp(this.config.runtime,async(tool,args,meta)=>{
           if(!created)throw Error('agent_identity_denied');
+          if(tool==='ask_main'||WORKER_FILE_TOOLS.some(t=>t.name===tool)){
+            const identity=await this.scheduleCalls.authenticate(created.engine,tool,args,meta,()=>!this.closing&&this.workers.get(run.id)===created&&!created.stopping);
+            return this.withDesktopPower(()=>handle({...identity,tool,arguments:args}));
+          }
           if(SCHEDULE_TOOLS.some(entry=>entry.name===tool))return this.scheduleTool(tool,args,meta,created);
           if(cua&&isCuaTool(tool))return this.workerCuaTool(created,tool,args);
           if(isBrowserPreviewTool(tool))return this.browserTool(tool,args,meta,created);
-          return this.withDesktopPower(power=>isMembershipTool(tool)?this.membershipTool(tool,args,created,power):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.workerActor(created),tool,args):WORKER_MEDIA_TOOLS.some(t=>t.name===tool)?this.workerMediaTool(created,tool,args):Promise.reject(Error('worker_tool_denied')));
+          return this.withDesktopPower<unknown>(power=>isMembershipTool(tool)?this.membershipTool(tool,args,created,power):EXECUTION_TOOLS.some(t=>t.name===tool)?this.executionTool(this.workerActor(created),tool,args):WORKER_MEDIA_TOOLS.some(t=>t.name===tool)?this.workerMediaTool(created,tool,args):Promise.reject(Error('worker_tool_denied')));
         },hostMcpTools('worker',!!this.membershipTools,configuredWebSearchMode(effectiveModelConfig(this.config,'worker'))==='live',cua,!!this.browserTransport,this.membershipAudioEnabled));await endpoint.start();
         if(!this.workerStarting(run)){await endpoint.close();if(this.closing){this.tasks.confirmWorkerExit(run.id,undefined);this.tasks.interruptWorker(run.id);}return;}
         const project=this.tasks.workingDirectory(run.id);
@@ -2627,9 +2702,8 @@ export class Homer {
         const startupRevision=this.nativeRevision;
         const engine=this.engine({role:"worker",threadId:run.threadId??undefined,nativeThreads:this.nativeThreads,
           isCurrent:()=>!this.closing&&!this.closed&&startupRevision===this.nativeRevision&&this.workers.get(run.id)===created&&!created.stopping&&this.tasks.run(run.id).epoch===created.epoch&&!this.tasks.run(run.id).stopRequestedAt&&!!created.lease&&this.store.meta('lease:'+run.id)===created.lease,
-          canFork:()=>!!run.threadId&&this.nativeForkAllowed(run.threadId,run.id),cwd:project,readRoots:[project],instructions:this.prompts.worker+this.nativeToolInstructions()+cuaInstructions,tools:[...WORKER_INTERACTION_TOOLS,...WORKER_FILE_TOOLS],nativeTools:"worker",interactionMcp:this.mcpOptions(endpoint,true),onInteraction:request=>this.nativeInteractionPower(created.engine,request,()=>request.method==='mcpServer/elicitation/request'&&(request.details._meta as any).codex_approval_kind==='tool_suggestion'?this.openNativePluginInteraction(request,created,project):this.openInteraction({runId:run.id,threadId:request.threadId,turnId:request.turnId,requestId:request.requestId,source:'native',kind:request.kind,details:{method:request.method,params:request.details}},request).response)},call=>this.workerTool(created,call).catch(error=>{this.store.event(run.id,'tool_rejected',engineError(error));throw error;}));
+          canFork:()=>!!run.threadId&&this.nativeForkAllowed(run.threadId,run.id),cwd:project,readRoots:[project],instructions:this.prompts.worker+this.nativeToolInstructions()+cuaInstructions,tools:[],nativeTools:"worker",interactionMcp:this.mcpOptions(endpoint,true),onInteraction:request=>this.nativeInteractionPower(created.engine,request,()=>request.method==='mcpServer/elicitation/request'&&(request.details._meta as any).codex_approval_kind==='tool_suggestion'?this.openNativePluginInteraction(request,created,project):this.openInteraction({runId:run.id,threadId:request.threadId,turnId:request.turnId,requestId:request.requestId,source:'native',kind:request.kind,details:{method:request.method,params:request.details}},request).response)},handle);
         created={id:run.id,epoch:run.epoch,engine,requests:new Map(),mcp:endpoint};pendingEndpoint=undefined;slot=created;this.workers.set(run.id,slot);
-        engine.on('hostMcpToolStarted',call=>this.scheduleCalls.observe(engine,call));
         engine.on('nativeWorkerEffect',(effect:{nativeId:string;turnId:string;itemId:string;status:string;completed:boolean;ownerNativeId:string;ownerTurnId:string})=>{
           const current=this.tasks.run(run.id),logical=current.threadId;
           const isCurrent=()=>!this.closed&&(!this.closing||effect.completed)&&this.workers.get(run.id)===created&&this.tasks.run(run.id).epoch===created.epoch&&
@@ -2648,7 +2722,7 @@ export class Homer {
         engine.on('nativeCompleted',event=>{if(event.result&&event.threadId===created.engine.threadId&&event.turnId===created.engine.turnId)this.tasks.recordWorkerTerminal(run.id,created.epoch,event.result);});
         engine.on('usage',usage=>this.store.usage(run.id,usage));
         engine.on('interactionWaiting',()=>this.syncInteractionWaiting(created));
-        engine.on('toolResponse',id=>delivered('ask_main',id));engine.on('interactionDelivered',id=>delivered('native',id));
+        engine.on('interactionDelivered',id=>delivered('native',id));
         engine.on('interactionInvalidated',(id,code)=>{const key=created.requests.get(JSON.stringify(['native',id]));if(key)this.interactions.expire(key,code);this.store.event(created.id,'native_interaction_invalidated',JSON.stringify({role:'worker',epoch:created.epoch,requestId:id,code}));});
         engine.on('exit',()=>this.interactions.cancelRun(run.id,'worker_process_exited'));
         engine.on('spawn',()=>{created.lease=this.lease(run.id,engine);if(engine.pid)this.store.engine(run.id,{pid:engine.pid});});
@@ -2966,8 +3040,10 @@ export class Homer {
         ![...this.workers.keys()].some(id=>['starting','executing','rpc_wait','yielding'].includes(this.tasks.run(id).phase)) &&
         !this.executions.size &&
         !this.tasks.nextQueuedRun()
-      )
+      ) {
+        if(options.returnOnUserWait&&this.store.db.prepare("SELECT 1 FROM worker_interactions WHERE source='ask_main' AND state='pending_user' LIMIT 1").get())return 'waiting_user';
         return this.workers.size||this.store.db.prepare("SELECT 1 FROM runs WHERE status='queued' LIMIT 1").get()?'waiting_or_blocked':undefined;
+      }
       await new Promise((r) => setTimeout(r, 20));
     }
   }
@@ -2977,7 +3053,7 @@ export class Homer {
   upgradeStatus() {
     const safe = !this.closing && !this.closed && !this.mainBroken && !this.mainRecovery && this.main?.available !== false && this.main?.resumable !== false &&
       this.nativeOperations === 0 && !this.accountManager?.pending && !this.main?.nativeBusy && this.mainJobs === 0 && this.workers.size === 0 && this.executions.size === 0 && this.uploads.size===0 && this.paidMediaCalls.size===0 &&
-      !this.interactions.list().some(i => i.state === "pending_main" || i.state === "pending_user") && this.tasks.safeToUpgrade();
+      this.tasks.safeToUpgrade();
     return { safe };
   }
   async close(options:{requireAllOwnersConfirmed?:boolean}={}) {

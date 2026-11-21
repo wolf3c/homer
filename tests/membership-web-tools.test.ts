@@ -15,8 +15,7 @@ import {memberRuntimeConfig,resolveMemberSelection} from '../src/member-models.j
 import type {Config} from '../src/config.js';
 import type {EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
 import {Homer} from '../src/service.js';
-import {MAIN_TOOLS} from '../src/tools.js';
-import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
+import {MAIN_TOOLS_HASH} from '../src/recursive-tools.js';
 import type {AttachmentRef} from '../src/media-store.js';
 import {INTERACTION_LIMITS} from '../src/interaction-limits.js';
 
@@ -101,7 +100,6 @@ test(`an existing main thread and its Worker share the membership Token with nat
   process.env.HOMER_DEEPSEEK_TOKEN=token;
   t.after(()=>{if(oldToken===undefined)delete process.env.HOMER_DEEPSEEK_TOKEN;else process.env.HOMER_DEEPSEEK_TOKEN=oldToken;});
   const oldThread='synthetic-original-thread';
-  const oldHash=createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex');
   const engineErrors:unknown[]=[];let mainOptions!:EngineOptions,workerChecked=false;
   class Engine extends EventEmitter{
     threadId:string;turnId?:string;
@@ -175,7 +173,7 @@ test(`an existing main thread and its Worker share the membership Token with nat
   }
   const app=new Homer(config,async()=>{},(options,tool)=>{if(!options.role)mainOptions=options;return new Engine(options,tool);});
   try{
-    app.store.setMeta('mainThread',oldThread);app.store.setMeta('mainToolsHash',oldHash);
+    app.store.setMeta('mainThread',oldThread);app.store.setMeta('mainToolsHash',MAIN_TOOLS_HASH);
     await app.start();
     assert.equal(mainOptions.threadId,oldThread);
     await withMcp(mainOptions,async rpc=>assert.equal((await rpc('tools/call',{name:'web_search',arguments:{query:'idle'}})).content[0].text,
@@ -184,7 +182,7 @@ test(`an existing main thread and its Worker share the membership Token with nat
     await app.idle();
     assert.deepEqual(engineErrors,[]);
     assert.equal(workerChecked,true);
-    assert.equal(app.store.meta('mainThread'),oldThread);assert.equal(app.store.meta('mainToolsHash'),oldHash);
+    assert.equal(app.store.meta('mainThread'),oldThread);assert.equal(app.store.meta('mainToolsHash'),MAIN_TOOLS_HASH);
     const searchRequests=[query,'empty','filtered','denied','redirect','lost','oversized'].map(query=>({path:'/v1/tools/search',method:'POST',auth:`Bearer ${token}`,body:{query,count:5,need_content:false}}));
     const fetchRequests=[
       {path:'/v1/tools/fetch',method:'POST',auth:`Bearer ${token}`,body:{url:'https://example.invalid/article'}},
@@ -300,7 +298,7 @@ test('membership video submits only after user approval and retrieves the origin
     app=new Homer(config,async message=>{if(message.type==='main_start')mainMessageId=message.messageId;},(options,tool)=>new Engine(options,tool));
     if(!app.store.meta('mainThread')){
       app.store.setMeta('mainThread',oldThread);
-      app.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex'));
+      app.store.setMeta('mainToolsHash',MAIN_TOOLS_HASH);
     }
     await app.start();
   };

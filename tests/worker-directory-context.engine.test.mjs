@@ -112,7 +112,7 @@ test('native new and legacy Main expose and call the new MCP tool on the same th
    }
    f.release();f.hold(false);await app.idle();
    assert.equal(app.store.meta('mainToolsHash'),MAIN_TOOLS_HASH);assert.equal(app.store.meta('mainWorkingDirectory'),undefined);
-   const {thread}=await main.request('thread/read',{threadId:main.threadId,includeTurns:true});assert.deepEqual(metadata(f,thread.path).dynamic_tools,MAIN_DYNAMIC_TOOLS);
+   const {thread}=await main.request('thread/read',{threadId:main.threadId,includeTurns:true});assert.deepEqual(metadata(f,thread.path).dynamic_tools??[],MAIN_DYNAMIC_TOOLS);
    assert.match(JSON.stringify(mainRequest.input),/list_work_directories/);
    if(oldThread){assert.equal(thread.path,oldThread.path);assert.match(JSON.stringify(mainRequest.input),/Synthetic saved Main history/);}
    if(receipt){
@@ -181,7 +181,7 @@ for(const [history,checkpoint] of [['full',null],['compacted',null],['interrupte
    assert.equal(main.threadId,threadId);assert.equal(main.version,'0.171.0-alpha.7');
    const after=(await main.request('thread/read',{threadId,includeTurns:true})).thread;assert.equal(after.path,before.path);
    assert.ok(readFileSync(after.path).subarray(0,prefix.length).equals(prefix),'the durable rollout prefix must remain byte-for-byte intact');
-   assert.deepEqual(metadata(f,after.path).dynamic_tools,MAIN_DYNAMIC_TOOLS);
+   assert.deepEqual(metadata(f,after.path).dynamic_tools??[],MAIN_DYNAMIC_TOOLS);
    assert.deepEqual((await main.request('thread/attachment/list',{threadId})).data,[attachment]);
    assert.equal(app.store.meta('mainThread'),threadId);assert.equal(app.store.meta('mainToolsHash'),MAIN_TOOLS_HASH);assert.equal(app.store.meta('mainPromptHash'),promptHash(current));
   }

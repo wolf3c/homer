@@ -16,7 +16,7 @@ const config: Config = {
 mkdirSync(config.workspace,{recursive:true});
 const options = { cwd: config.workspace, readRoots: [], instructions: 'transport only', tools: [] };
 function peer(role?:'main'|'worker',patch:Partial<Config>={}) {
-  const engine = new CodexEngine({...config,...patch}, { ...options,role }, async () => ({}));
+  const engine = new CodexEngine({...config,...patch}, { ...options,role,tools:['echo','synthetic'].map(name=>({name,type:'function',description:'fixture',inputSchema:{type:'object'}})) }, async () => ({}));
   const sent: {id:number;method:string;params:any}[] = [];
   engine['send'] = (message: any) => {
     if(message.method==='config/read'&&message.params?.includeLayers)void receive({id:message.id,result:{config:{},layers:[]}});
@@ -56,6 +56,8 @@ test('native root events and dynamic calls retain actual identity and project on
  try{
   const work=p.engine.turn('Synthetic logical continuation');work.catch(()=>{});await flush();await p.reply(0,{turn:{id:'turn'}});await flush();
   await p.receive({id:101,method:'item/tool/call',params:{threadId:'native-segment',turnId:'turn',callId:'call',tool:'echo',arguments:{}}});
+  await p.receive({id:102,method:'item/tool/call',params:{threadId:'native-segment',turnId:'turn',callId:'undeclared',tool:'worker_open',arguments:{}}});
+  assert.deepEqual(p.sent.at(-1),{id:102,result:{success:false,contentItems:[{type:'inputText',text:'tool_scope_denied'}]}});
   assert.equal(calls.length,1);assert.equal(calls[0].threadId,'thread');assert.equal(calls[0].nativeThreadId,'native-segment');
   await p.event('item/completed',{threadId:'native-segment',turnId:'turn',item:{id:'reply',type:'agentMessage',text:'continued'}});
   await p.event('turn/completed',{threadId:'native-segment',turn:{id:'turn',status:'completed'}});
@@ -166,7 +168,7 @@ test('restart readiness waits for preparations, requests and late deduplicated t
   const rpc=p.engine.request('fixture/read',{});assert.equal((p.engine as any).canRestart,false);await p.reply(0);await rpc;assert.equal((p.engine as any).canRestart,true);
   p.engine['preparation']={};assert.equal((p.engine as any).canRestart,false);p.engine['preparation']=undefined;
   const work=p.engine.turn('synthetic');await flush();await p.reply(1,{turn:{id:'turn'}});await flush();
-  const call={id:101,method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'same-tool',name:'synthetic',arguments:{}}};
+  const call={id:101,method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'same-tool',tool:'synthetic',arguments:{}}};
   const first=p.receive(call),duplicate=p.receive({...call,id:102});await flush();assert.equal(tools,1);
   await p.event('turn/completed',{turn:{id:'turn',status:'completed'}});await work;
   assert.equal((p.engine as any).canRestart,false,'terminal must not release live host callbacks');
@@ -253,7 +255,7 @@ for(const role of ['main','worker'] as const)test(role+' freezes terminal work w
   const work=observed(p.engine.turn('synthetic')); await flush();await p.reply(0,{turn:{id:'turn'}});await flush();
   terminal=p.event('turn/completed',{turn:{id:'turn',status:'failed',error:{message:'401 unauthorized'},itemsView:'full',items:[{type:'agentMessage',id:'final',phase:'final_answer',text:'Terminal snapshot'}]}});await started;
   await p.event('item/completed',{turnId:'turn',item:{id:'late',type:'agentMessage',phase:'final_answer',text:'After-terminal text'}});
-  await p.receive({id:99,method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'late-tool',name:'synthetic',arguments:{}}});
+  await p.receive({id:99,method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'late-tool',tool:'synthetic',arguments:{}}});
   await p.receive({id:100,method:'item/commandExecution/requestApproval',params:{threadId:'thread',turnId:'turn',itemId:'late-approval',kind:'command',command:'synthetic',cwd:'/synthetic',availableDecisions:['accept','decline']}});
   await p.event('item/completed',{turnId:'turn',item:{id:'retained',type:'fileChange',status:'completed',changes:[]}});
   const steer=observed(p.engine.steer('turn','synthetic'));await flush();

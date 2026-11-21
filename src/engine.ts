@@ -396,8 +396,10 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private publishNativeProcess(method:string,p:any){
     const hostTool=p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions'||p.item?.type==='dynamicToolCall'&&this.options.tools.some(tool=>tool.name===p.item.tool);
     const workerMcp=this.options.nativeTools==='worker'&&p.item?.type==='mcpToolCall'&&p.item.server==='homer_interactions';
-    if(method==='item/started'&&this.options.nativeTools&&hostTool&&p.item.type==='mcpToolCall'&&typeof p.item.id==='string'&&typeof p.item.tool==='string')
-      this.emit('hostMcpToolStarted',{threadId:p.threadId,turnId:p.turnId,itemId:p.item.id,tool:p.item.tool,arguments:p.item.arguments});
+    if(this.options.nativeTools&&hostTool&&p.item.type==='mcpToolCall'&&typeof p.item.id==='string'&&typeof p.item.tool==='string'){
+      if(method==='item/started')this.emit('hostMcpToolStarted',{threadId:p.threadId,turnId:p.turnId,itemId:p.item.id,tool:p.item.tool,arguments:p.item.arguments});
+      if(method==='item/completed')this.emit('hostMcpToolCompleted',p.threadId,p.turnId,p.item.id);
+    }
     const safe=hostTool&&!workerMcp?undefined:safeNativeProcess(p.threadId,p.turnId,p.item,method==='item/completed');
     if(safe)this.emit('nativeProcess',safe);
   }
@@ -503,6 +505,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     const interactionMcp = this.options.interactionMcp ? {
       command:this.options.interactionMcp.command,args:this.options.interactionMcp.args,cwd:this.options.interactionMcp.cwd, enabled: true, startup_timeout_sec: INTERACTION_LIMITS.connectMs/1000, tool_timeout_sec:INTERACTION_LIMITS.nativeToolSeconds,
       enabled_tools: catalog.map(tool => tool.name), disabled_tools: [],
+      omit_tools_from: ["deferred"],
       default_tools_approval_mode: "prompt",
       // These calls are Homer business-state tools. Permission to call them is
       // separate from the reasoned Worker operation decision stored by Homer.
@@ -805,6 +808,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         if (
           p.threadId !== this.threadId ||
           p.turnId !== this.turnId ||
+          !this.options.tools.some(tool=>tool.name===p.tool) ||
           this.closing || !this.active || this.active.settling
         ) {
           result = {
@@ -849,7 +853,6 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       if (!this.exited && !this.closing) {
         const bound = this.active && !this.active.settling && p?.threadId === this.threadId && p?.turnId === this.turnId;
         this.send({ id: m.id, result: bound ? result : { success: false, contentItems: [{ type: "inputText", text: "tool_scope_denied" }] } });
-        if (bound) this.emit("toolResponse", p.callId);
       }
       return;
       }finally{this.serverRequests--;this.emitIdle();}

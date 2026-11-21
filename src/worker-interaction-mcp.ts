@@ -5,9 +5,11 @@ import { createInterface } from "node:readline";
 import { chmodSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
-import { MAIN_INTERACTION_TOOLS } from "./worker-interaction-tools.js";
+import { MAIN_INTERACTION_TOOLS, WORKER_INTERACTION_TOOLS } from "./worker-interaction-tools.js";
 import type { Tool } from "./engine.js";
-import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS } from './media-tools.js';
+import {MAIN_TOOLS} from './tools.js';
+import {RECURSIVE_TOOLS} from './recursive-tools.js';
+import { MEDIA_TOOLS,WORKER_MEDIA_TOOLS,WORKER_FILE_TOOLS } from './media-tools.js';
 
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {audioTool,MEMBERSHIP_TOOLS} from './membership-web-tools.js';
@@ -15,8 +17,8 @@ import {CUA_TOOLS} from './desktop-cua.js';
 import {BROWSER_PREVIEW_TOOLS}from'./browser-preview-tools.js';
 import {SCHEDULE_TOOLS} from './schedules.js';
 
-export const HOST_MCP_TOOLS = [...EXECUTION_TOOLS,LIST_WORK_DIRECTORIES,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS,...SCHEDULE_TOOLS];
-export const WORKER_HOST_MCP_TOOLS = [...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS,...SCHEDULE_TOOLS];
+export const HOST_MCP_TOOLS = [...MAIN_TOOLS,...RECURSIVE_TOOLS,...EXECUTION_TOOLS,LIST_WORK_DIRECTORIES,...MAIN_INTERACTION_TOOLS,...MEDIA_TOOLS,...SCHEDULE_TOOLS];
+export const WORKER_HOST_MCP_TOOLS = [...WORKER_INTERACTION_TOOLS,...WORKER_FILE_TOOLS,...EXECUTION_TOOLS,...WORKER_MEDIA_TOOLS,...SCHEDULE_TOOLS];
 export function hostMcpTools(role:'main'|'worker',membership=false,nativeWebSearch=false,cua=false,browser=false,audio=false){
   const tools=role==='worker'?(cua?[...WORKER_HOST_MCP_TOOLS,...CUA_TOOLS]:WORKER_HOST_MCP_TOOLS):HOST_MCP_TOOLS;
   const catalog=browser?[...tools,...BROWSER_PREVIEW_TOOLS]:tools;
@@ -26,7 +28,6 @@ const allowed = (name: unknown, catalog:readonly Tool[]): name is string => type
 function code(error: unknown) {
   return error instanceof Error && /^[a-z][a-z0-9_]{1,70}$/.test(error.message) ? error.message : "interaction_mcp_failed";
 }
-// File writes and business collaboration use native dynamic call identity.
 export class WorkerInteractionMcp {
   readonly path: string;
   readonly directory = process.cwd();
@@ -149,7 +150,10 @@ export function runWorkerInteractionMcp(path: string,role:string='main',membersh
         else if (message.method === "tools/call") {
           try {
             if (!allowed(message.params?.name,catalog)) throw new Error("interaction_tool_denied");
-            const meta = plugins.some(tool=>tool.name===message.params.name)||SCHEDULE_TOOLS.some(tool=>tool.name===message.params.name)||BROWSER_PREVIEW_TOOLS.some(tool=>tool.name===message.params.name) ? message.params._meta : undefined;
+            const native = message.params._meta;
+            const turnId = native?.['x-codex-turn-metadata']?.turn_id;
+            const meta = typeof native?.callId==='string' && typeof turnId==='string'
+              ? {callId:native.callId,'x-codex-turn-metadata':{turn_id:turnId}} : undefined;
             const value = await hostCall(path, message.params.name, message.params.arguments, meta);
             const media=value as {mediaContent?:unknown[]};
             result = { isError: false, content: media?.mediaContent??[{ type: "text", text: JSON.stringify(value) }] };

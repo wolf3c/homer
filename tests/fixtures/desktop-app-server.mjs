@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Offline native-protocol fixture. All files, prompts and accounts are synthetic.
+import {execFileSync} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {existsSync,readFileSync,appendFileSync,writeFileSync,mkdirSync,readdirSync} from 'node:fs';
 import {join,dirname,resolve} from 'node:path';
@@ -18,8 +19,17 @@ const settings=Object.fromEntries(process.argv.flatMap((arg,i)=>{
 }));
 const modelProvider=settings.model_provider??'openai';
 const mcp=settings['mcp_servers.homer_interactions'];
-const worker=mcp?.args?.includes('worker')===true,pending=new Map();let sequence=0;
-const tool=(name,args)=>new Promise((accept,reject)=>{const id='synthetic-tool-'+ ++sequence;pending.set(id,{accept,reject});send({id,method:'item/tool/call',params:{threadId:thread,turnId:turn,callId:id,tool:name,arguments:args}});});
+const worker=mcp?.args?.includes('worker')===true;let sequence=0;
+function tool(name,args) {
+  const id='tool-'+ ++sequence;
+  const item={id,type:'mcpToolCall',server:'homer_interactions',tool:name,arguments:args};
+  send({method:'item/started',params:{threadId:thread,turnId:turn,item}});
+  const request={jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args,_meta:{callId:id,'x-codex-turn-metadata':{turn_id:turn}}}};
+  const {result}=JSON.parse(execFileSync(mcp.command,mcp.args,{cwd:mcp.cwd,input:JSON.stringify(request)+'\n',encoding:'utf8',timeout:5000}));
+  send({method:'item/completed',params:{threadId:thread,turnId:turn,item:{...item,status:result.isError?'failed':'completed'}}});
+  if(result.isError)throw Error(result.content[0].text);
+  return JSON.parse(result.content[0].text);
+}
 const complete=text=>{
  send({method:'item/completed',params:{threadId:thread,turnId:turn,item:{id:'synthetic-answer-'+turn,type:'agentMessage',phase:'final_answer',text}}});
  send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'completed'}}});
@@ -29,7 +39,7 @@ const trace=method=>appendFileSync(join(dirname(home),'fixture-methods.jsonl'),J
 process.on('SIGTERM',()=>{if(state().refuseStop)return;process.exit(0);});
 createInterface({input:process.stdin}).on('line',line=>{void receive(JSON.parse(line));});
 async function receive(m){
-  if(!m.method){const call=pending.get(m.id);if(call){pending.delete(m.id);const text=m.result?.contentItems?.[0]?.text;if(m.error||m.result?.success===false)call.reject(Error(m.error?.message??text??'synthetic_tool_failed'));else call.accept(text?JSON.parse(text):m.result);}return;}
+  if(!m.method)return;
   trace(m.method);if(m.id===undefined)return;
   const reply=result=>send({id:m.id,result});
   if(m.method==='initialize')return reply({userAgent:'desktop-synthetic/0.171.0-alpha.7',codexHome:home});
@@ -60,6 +70,27 @@ async function receive(m){
     turn='synthetic-turn-'+m.id;reply({turn:{id:turn,status:'inProgress'}});
     send({method:'turn/started',params:{threadId:thread,turn:{id:turn,status:'inProgress'}}});
     if(state().holdTurn)return;
+    if(state().toolUpgrade){
+      const text=m.params.input.map(item=>item.text??'').join('');
+      if(!worker&&text.startsWith('[内部协作输入')){complete('Report received.');return;}
+      const listing={jsonrpc:'2.0',id:1,method:'tools/list'};
+      const {result}=JSON.parse(execFileSync(mcp.command,mcp.args,{cwd:mcp.cwd,input:JSON.stringify(listing)+'\n',encoding:'utf8',timeout:5000}));
+      const names=result.tools.map(tool=>tool.name),required=result.tools.find(tool=>tool.name==='work_directory').inputSchema.required;
+      tool('work_directory',Object.fromEntries(required.map(key=>[key,null])));
+      appendFileSync(join(dirname(home),'upgrade.jsonl'),JSON.stringify({thread,worker,required,added:names.includes('upgrade_probe'),removed:!names.includes('schedule_cancel')})+'\n');
+      if(!worker){
+        if(text==='dispatch-synthetic'){
+          const {taskId}=tool('task_create',{title:'Synthetic upgrade',goal:'Continue the same synthetic assignment.'});
+          const {workerId}=tool('worker_open',{taskId});
+          writeFileSync(join(dirname(home),'fixture-worker-id'),workerId);
+        }else{
+          const needsAttachments=result.tools.find(tool=>tool.name==='worker_message').inputSchema.required.includes('attachments');
+          const receipt=tool('worker_message',{workerId:readFileSync(join(dirname(home),'fixture-worker-id'),'utf8'),message:'Continue the original assignment.',...(needsAttachments?{attachments:[]}: {})});
+          if(receipt.route!=='followup')throw Error('synthetic_worker_followup_failed');
+        }
+      }
+      complete('Upgrade observed.');return;
+    }
     if(state().deepseekSmoke){
       const text=m.params.input.map(i=>i.text??'').join('');
       const input=text.startsWith('[内部协作输入')?JSON.parse(text.split('\n')[1]):undefined;

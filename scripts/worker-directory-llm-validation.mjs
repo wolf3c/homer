@@ -162,7 +162,7 @@ async function verifyLegacyMain(app,e,saved,m){
  assert.equal(e.threadId,saved.threadId);assert.equal(thread.path,saved.path);assert.equal(app.store.meta('mainToolsHash'),MAIN_TOOLS_HASH);
  const bytes=readFileSync(thread.path),rows=bytes.toString('utf8').trim().split('\n').map(line=>JSON.parse(line));
  assert.ok(bytes.subarray(0,saved.prefix.length).equals(saved.prefix));
- const meta=rows.find(row=>row.type==='session_meta')?.payload;assert.deepEqual(meta.dynamic_tools,MAIN_DYNAMIC_TOOLS);
+ const meta=rows.find(row=>row.type==='session_meta')?.payload;assert.deepEqual(meta.dynamic_tools??[],MAIN_DYNAMIC_TOOLS);
  assert.deepEqual((await e.request('thread/attachment/list',{threadId:e.threadId})).data,[saved.attachment]);
  for(const marker of [legacyUser,legacyAssistant])assert.ok(bytes.includes(Buffer.from(marker)));
  assert.ok(rows.some(row=>row.type==='response_item'&&row.payload.role==='developer'&&row.payload.content?.some(part=>part.text?.includes(currentMain))));

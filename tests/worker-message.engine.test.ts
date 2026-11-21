@@ -22,24 +22,27 @@ test('pinned Worker steers once, refuses a terminal race, and resumes its idle t
   const wire:{method:string;params:any}[]=[],receipts=new Map<string,{state:string;route:string;code?:string}>();
   const server=createServer(async(req,res)=>{
     try{
-      if(req.method!=='POST'||req.url!=='/v1/responses'){res.writeHead(404).end();return;}
+      if(req.method!=='POST'||!['/v1/main/responses','/v1/worker/responses'].includes(req.url??'')){res.writeHead(404).end();return;}
       let body='';for await(const chunk of req)body+=chunk;
       const payload=JSON.parse(body),input=payload.input??[],last=input.at(-1);
       if(payload.client_metadata?.['x-openai-subagent']==='memory_consolidation'){res.writeHead(403).end();return;}
-      const catalog=[...(payload.tools??[]),...input.filter((item:any)=>item.type==='additional_tools').flatMap((item:any)=>item.tools??[])];
-      const main=JSON.stringify(catalog).includes('worker_open'),id='synthetic-'+ ++sequence;
+      const main=req.url==='/v1/main/responses',id='synthetic-'+ ++sequence;
       const answer={type:'message',id,role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Observed.'}]};
-      const call=(name:string,args:unknown)=>({type:'function_call',call_id:id,name,arguments:JSON.stringify(args)});
+      const call=(name:string,args:unknown)=>({type:'custom_tool_call',namespace:'functions',name:'exec',call_id:id,input:'const response=await tools.mcp__homer_interactions__'+name+'('+JSON.stringify(args)+');text(response.content?.[0]?.text??response)'});
       let output:unknown=answer;
       if(main){
         const current=JSON.stringify(input.findLast((item:any)=>item.role==='user')?.content);
         if(current.includes('SYNTHETIC_OPEN')){
-          if(last?.type!=='function_call_output')output=call('task_create',{title:'Synthetic dispatch',goal:'Process the synthetic follow-ups.'});
+          if(last?.type!=='custom_tool_call_output')output=call('task_create',{title:'Synthetic dispatch',goal:'Process the synthetic follow-ups.'});
           else if(!app!.store.runs().length)output=call('worker_open',{taskId:app!.tasks.tasks()[0]!.id});
         }else{
           const message=[supplement,stale,followup].find(marker=>current.includes(marker));
           if(message&&!current.includes('内部协作输入')){
-            if(last?.type==='function_call_output')receipts.set(message,JSON.parse(last.output));
+            if(last?.type==='custom_tool_call_output'){
+              const output=Array.isArray(last.output)?last.output.map((part:any)=>part.text).join('\n'):last.output;
+              assert.ok(output.includes('{'),'missing Worker message receipt');
+              receipts.set(message,JSON.parse(output.slice(output.indexOf('{'))));
+            }
             else output=call('worker_message',{workerId:app!.store.runs()[0]!.workerId,message});
           }
         }
@@ -60,7 +63,7 @@ test('pinned Worker steers once, refuses a terminal race, and resumes its idle t
     const config={...session.config,baseUrl:'http://127.0.0.1:'+address.port+'/v1',keyEnv:undefined,model:'gpt-6.1-terra',stopGraceMs:1000};
     assert.equal(execFileSync(config.codexBin,['--version'],{env:{PATH:process.env.PATH,HOME:session.home,CODEX_HOME:config.codexHome},encoding:'utf8'}).trim(),'codex-cli 0.171.0-alpha.7');
     app=new Homer(config,async()=>{},(options,handle)=>{
-      const engine=new CodexEngine(config,options,handle);
+      const engine=new CodexEngine({...config,baseUrl:config.baseUrl+'/'+(options.role??'main')},options,handle);
       if(options.role==='worker'){
         const send=engine['send'].bind(engine),receive=engine['receive'].bind(engine);
         engine['send']=(message:any)=>{if(['turn/start','turn/steer'].includes(message.method))wire.push(message);send(message);};

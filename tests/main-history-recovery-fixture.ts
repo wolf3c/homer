@@ -1,13 +1,11 @@
 // Isolated host and scripted engine; never opens the installed Homer runtime.
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {createHash} from 'node:crypto';
 import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {Homer,type Message} from '../src/service.js';
 import type {EngineLike,EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
-import {MAIN_TOOLS} from '../src/tools.js';
-import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
+import {MAIN_TOOLS_HASH} from '../src/recursive-tools.js';
 import {historyFixture} from './web-history-loading-fixture.js';
 
 export async function recoveryFixture(count=1){
@@ -15,7 +13,7 @@ export async function recoveryFixture(count=1){
  const dir=mkdtempSync(join(scratch,'case-')),runtime=join(dir,'runtime'),workspace=join(dir,'workspace');mkdirSync(runtime);mkdirSync(workspace);
  const config={runtime,workspace,codexHome:join(dir,'codex'),nativeCodexHome:join(dir,'codex'),codexBin:'/usr/bin/false',model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};
  const f=historyFixture(0,160,false,join(runtime,'homer.sqlite')),agentId=f.store.meta('mainAgentId')!,threadId='synthetic-history';
- f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex'));
+ f.store.setMeta('mainToolsHash',MAIN_TOOLS_HASH);
  const originals:{id:string;seq:number;taskId:string;workerId:string;runId:string}[]=[];
  for(let n=0;n<count;n++){
   const requestId='source-'+n;f.inputs.accept({requestId,text:'Synthetic original authority'});const source=f.inputs.claim()!;f.inputs.started(source.messageId,source.revision,'source-generation-'+n,'source-native-'+n);f.inputs.finish(source.messageId,source.revision,'completed');

@@ -1,5 +1,5 @@
 import {openTaskWorker} from './fixtures/open-task-worker.js';
-import {callHostMcp} from './fixtures/host-mcp-call.js';
+import {callEngineMcp} from './fixtures/host-mcp-call.js';
 // Requirements-derived synthetic stop races. Actual Homer and SQLite only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +26,7 @@ function fixture(confirm=true){
     async turn(text:string,hooks?:{onStarted?:(id:string)=>void}):Promise<TurnResult>{
       if(this.worker){
         this.turnId='synthetic-terminal-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
-        const resolution=await this.call('ask_main',{question:'Synthetic format requires the user.'});
+        const resolution=await this.options.onInteraction!({requestId:'native-question',kind:'question',method:'item/tool/requestUserInput',threadId:this.threadId,turnId:this.turnId,itemId:'question',details:{questions:[{id:'format',question:'Synthetic format requires the user.'}]}});
         this.resolutions++;this.status=resolution.status;this.held=true;
         return new Promise(resolve=>{this.releaseTurn=resolve;});
       }
@@ -37,8 +37,8 @@ function fixture(confirm=true){
       if(text.startsWith('[内部协作输入')&&text.includes('interactionId=')){
         this.turnId='synthetic-question-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);
         const interactionId=text.match(/interactionId=([\w-]+)/)![1]!;
-        await callHostMcp(this.options, 'inspect_interaction',{interactionId});
-        await callHostMcp(this.options, 'escalate_interaction',{interactionId,question:'Synthetic format?',reason:'Synthetic ambiguity'});
+        await callEngineMcp(this, 'inspect_interaction',{interactionId});
+        await callEngineMcp(this, 'escalate_interaction',{interactionId,question:'Synthetic format?',reason:'Synthetic ambiguity'});
         return {status:'completed',text:'Synthetic question'};
       }
       this.turnId='synthetic-main-turn-'+ ++sequence;hooks?.onStarted?.(this.turnId);return {status:'completed',text:'Synthetic reply'};
@@ -128,7 +128,7 @@ for(const persisted of ['cancelled','expired'] as const)test('HMR-RECURSIVE-007:
 test('HMR-RECURSIVE-007: an answer delivered just before stop remains one callback result but grants no late output',async()=>{
   const f=fixture();try{
     const {worker,item}=await f.start();
-    f.app.interactions.respond(item.id,{action:'answer',answer:'Synthetic format',reason:'Synthetic new user answer'},{userMessageId:'synthetic-answer',userText:'Synthetic format'});
+    f.app.interactions.respond(item.id,{action:'answer',answers:{format:['Synthetic format']},reason:'Synthetic new user answer'},{userMessageId:'synthetic-answer',userText:'Synthetic format'});
     await until(()=>worker.resolutions===1);
     await f.app.stop(item.runId);
     assert.equal(worker.status,'answered');assert.equal(worker.resolutions,1);

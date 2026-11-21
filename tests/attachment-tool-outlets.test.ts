@@ -1,54 +1,90 @@
-// Actual native dynamic RPC and MCP stdio boundaries with a local synthetic host.
+// Actual MCP transport with a local synthetic host.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
+import {readFileSync} from 'node:fs';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
-import {CodexEngine,type ToolCall} from '../src/engine.js';
+import {createConnection,type Socket} from 'node:net';
+import {mcpCall} from './fixtures/host-mcp-call.js';
+import {MEDIA_TOOLS} from '../src/media-tools.js';
 import {WorkerInteractionMcp} from '../src/worker-interaction-mcp.js';
-import {fixture} from './fixtures/worker-chat-host.js';
+import {fixture,until} from './fixtures/worker-chat-host.js';
 
-test('native attachment scope errors are safe and an exact call recovers the committed receipt',async()=>{
-  const f=fixture();let complete=false;
+for(const outcome of ['confirmed','uncertain','live-retry'] as const)test('a lost Worker dispatch receipt supports '+outcome+' recovery',async()=>{
+  const f=fixture();
+  let dispatched=false,completed=false,activeSocket:Socket|undefined;
   try{
     await f.app.start();
     const requestId='selected-attachment-rpc';
     const ref=f.app.media.intent(requestId,'web:'+f.app.store.meta('mainThread'),'file');
     f.app.media.ready(ref,f.app.media.claim(ref)!,Buffer.from('Synthetic attachment'),'text/plain');
-    f.setScript(async (main,text)=>{
-      if(!text.includes('Process a synthetic file'))return {status:'completed',text:'Barrier'};
-      const engine=new CodexEngine(f.app.config,{cwd:f.app.config.workspace,readRoots:[],instructions:'',tools:[]},
-        (call:ToolCall)=>f.app['mainTool'](call));
-      const peer=engine as any;
-      peer.threadId=main.threadId;peer.turnId=main.turnId;peer.active={text:'',earlyEvents:[]};
-      const sent:any[]=[];let loseReply=false;
-      peer.send=(message:unknown)=>{if(!loseReply)sent.push(message);};
-      const call=(id:number,callId:string,tool:string,args:unknown)=>peer.receive(JSON.stringify({id,method:'item/tool/call',
-        params:{threadId:main.threadId,turnId:main.turnId,callId,tool,arguments:args}}));
-      await call(0,'create','task_create',{title:'Selected file inspection',goal:'Inspect the selected file'});
-      const {taskId}=JSON.parse(sent.at(-1).result.contentItems[0].text);
-      await call(1,'foreign','worker_open',{taskId,attachments:[{...ref,revision:2}]});
-      assert.deepEqual(sent.at(-1).result,{success:false,contentItems:[{type:'inputText',text:'media_scope_denied'}]});
-      assert.equal(f.app.tasks.runs(taskId).length,0);
-      await call(2,'forged','task_create',{title:'Synthetic task',goal:'Synthetic',attachments:[ref]});
-      assert.deepEqual(sent.at(-1).result,{success:false,contentItems:[{type:'inputText',text:'invalid_tool_arguments'}]});
-      const args={taskId,attachments:[ref]};
-      loseReply=true;await call(3,'committed','worker_open',args);loseReply=false;
-      const operation=f.app.store.db.prepare("SELECT responseJson FROM operations WHERE kind='worker_open'").get();
-      assert.ok(operation);
-      assert.equal(f.app.tasks.tasks().length,1);
-      f.app.media.revoke(requestId);peer.toolResponses.clear();
-      await call(4,'committed','worker_open',args);
-      assert.equal(sent.at(-1).result.success,true);
-      assert.deepEqual(JSON.parse(sent.at(-1).result.contentItems[0].text),JSON.parse(String(operation.responseJson)));
-      assert.equal(f.app.tasks.tasks().length,1);
-      complete=true;
+    const handler=f.app['mainTool'].bind(f.app);
+    f.app['mainTool']=async call=>{
+      const result=await handler(call);
+      if(call.callId==='committed')activeSocket?.destroy();
+      return result;
+    };
+    f.setScript(async(main,text)=>{
+      const path=f.app['interactionMcp']!.path;
+      const call=(callId:string,tool:string,args:unknown)=>{
+        main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId:callId,tool,arguments:args});
+        return mcpCall(path,tool,args,{callId,'x-codex-turn-metadata':{turn_id:main.turnId}});
+      };
+      if(text.includes('Read the original receipt')){
+        const tasks=(await call('list','list_work',{})).result.tasks;
+        assert.equal(tasks.length,1);
+        const {workers}=(await call('task','work_inspect',{taskId:tasks[0].id})).result;
+        const {messages}=(await call('read','worker_read',{workerId:workers[0].workerId})).result;
+        const {operationKey}=messages.find((msg:{kind:string})=>msg.kind==='worker_input');
+        const [receipt]=(await call('inspect','work_inspect',{operationKey})).result.operations;
+        assert.equal(receipt.state,outcome==='uncertain'?'uncertain':'confirmed');
+        if(outcome==='uncertain')assert.equal(receipt.response,null);
+        else assert.equal(receipt.response.workerId,workers[0].workerId);
+        completed=true;
+      }else if(text.includes('Process a synthetic file')){
+        const create={title:'Selected file inspection',goal:'Inspect the selected file'};
+        assert.equal((await mcpCall(path,'task_create',create)).error,'schedule_call_scope_denied');
+        assert.equal(f.app.tasks.tasks().length,0);
+        const {taskId}=(await call('create','task_create',create)).result;
+        assert.equal((await call('foreign','worker_open',{taskId,attachments:[{...ref,revision:2}]})).error,'media_scope_denied');
+        assert.equal((await call('forged','task_create',{...create,attachments:[ref]})).error,'invalid_tool_arguments');
+        assert.equal(f.app.tasks.runs(taskId).length,0);
+        const args={taskId,attachments:[ref]},id='committed';
+        main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId:id,tool:'worker_open',arguments:args});
+        await new Promise<void>((done,reject)=>{
+          const socket=activeSocket=createConnection(path);
+          socket.on('connect',()=>socket.write(JSON.stringify({tool:'worker_open',arguments:args,meta:{callId:id,'x-codex-turn-metadata':{turn_id:main.turnId}}})+'\n'));
+          socket.on('data',()=>reject(Error('unexpected_receipt')));socket.on('error',reject);socket.on('close',()=>done());
+        });
+        activeSocket=undefined;
+        dispatched=true;
+        await until(()=>f.engines.some(e=>e.options.role==='worker'&&!!e.input));
+        const worker=f.engines.find(e=>e.options.role==='worker')!;
+        const argv=worker.options.interactionMcp!.args;
+        assert.equal((await mcpCall(argv[argv.indexOf('worker')-1]!,'task_create',create)).error,'interaction_tool_denied');
+        if(outcome==='confirmed'){
+          const fileArgs={...ref,filename:'export.txt'},tool='stage_file_result';
+          worker.emit('hostMcpToolStarted',{threadId:worker.threadId,turnId:worker.turnId,itemId:'export',tool,arguments:fileArgs});
+          const exportReceipt=await mcpCall(argv[argv.indexOf('worker')-1]!,tool,fileArgs,{callId:'export','x-codex-turn-metadata':{turn_id:worker.turnId}});
+          assert.equal(readFileSync(exportReceipt.result.path,'utf8'),'Synthetic attachment');
+        }
+        f.app.media.revoke(requestId);
+        if(outcome==='live-retry')assert.ok((await call(id,'worker_open',args)).result.workerId);
+        assert.equal(f.app.tasks.tasks().length,1);
+        worker.finish!({status:'completed',text:'Read the synthetic file.'});
+      }
       return {status:'completed',text:'Checked'};
     });
     f.app.submitMessage({requestId,text:'Process a synthetic file',attachments:[ref]});
-    await f.app.message('Barrier','followup');
-    assert.equal(complete,true);
-  }finally{await f.close();}
+    await f.app.message('Barrier','followup');await f.app.idle();assert.ok(dispatched);
+    if(outcome==='uncertain')assert.equal(f.app.store.db.prepare("UPDATE operations SET state='uncertain',responseJson=NULL WHERE kind='worker_open'").run().changes,1);
+    await f.restart();
+    await f.app.message('Read the original receipt','receipt-query');
+    assert.ok(completed);
+    assert.equal(f.app.store.runs().length,1);
+    assert.equal(f.engines.filter(e=>e.options.role==='worker'&&e.input).length,1);
+  }finally{activeSocket?.destroy();await f.close();}
 });
 
 test('MCP exposes scoped attachment reads and rejects a duplicate business outlet',async()=>{
@@ -56,7 +92,7 @@ test('MCP exposes scoped attachment reads and rejects a duplicate business outle
   let child:ReturnType<typeof spawn>|undefined,complete=false;
   const server=new WorkerInteractionMcp(f.app.config.runtime,async(name,args)=>{
     calls.push(name);return f.app['mediaTool'](name,args);
-  });
+  },[...MEDIA_TOOLS]);
   try{
     await f.app.start();await server.start();
     const requestId='selected-attachment-mcp';

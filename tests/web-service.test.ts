@@ -284,7 +284,7 @@ test("Web pending card reply returns through main decision to the original inter
     await f.app.start();
     await f.app.message('dispatch','source-synthetic');await until(()=>f.engines.some(engine=>engine.worker&&!!engine.pending));
     const worker=f.engines.find(engine=>engine.worker)!;messages.length=0;
-    const answer=worker.call('ask_main',{question:'选择格式'}),original=f.app.interactions.list()[0]!;
+    const answer=await worker.call('ask_main',{question:'选择格式'}),original=f.app.interactions.list()[0]!;
     await until(() => f.app.interactions.inspect(original.id).state === "pending_user");
     assert.equal(messages.some(message => message.type === "main_start" || message.type === "main_terminal"), false, "internal Worker review is not a user generation");
     const bridge = homerWebBridge(f.app), before = await bridge.history!.state();
@@ -292,7 +292,8 @@ test("Web pending card reply returns through main decision to the original inter
     assert.equal(before.interactions[0]?.sourceRequestId,'source-synthetic');
     assert.equal(before.interactions[0]?.workTitle,'合成后台任务');
     await bridge.respond(original.id, { requestId: "user-answer", text: "请用表格" });
-    assert.equal(((await answer) as {answer:string}).answer, "用户指定表格");
+    assert.equal((answer as {status:string}).status,"pending");
+    await until(()=>!!f.app.interactions.inspect(original.id).deliveredAt);assert.deepEqual(worker.steered.map(s=>s.slice(s.indexOf('\n')+1)),["用户指定表格"]);
     assert.equal(f.app.interactions.inspect(original.id).responseUserMessageId, "user-answer");
     assert.equal(f.app.interactions.inspect(original.id).responseUserText, "请用表格");
     assert.equal((await bridge.history!.state()).interactions.length, 0);

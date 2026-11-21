@@ -26,7 +26,12 @@ export function classifyTask(task:OverviewTask){
 export function readTaskOverview(db:DatabaseSync,page:OverviewPage={}):TaskOverview{
  const {view='visible',before}=page;
  if(!['visible','archived'].includes(view)||before!==undefined&&(!Number.isSafeInteger(before)||before<1))throw Error('task_overview_invalid');
- const liveInteraction=`(i.state='pending_main' OR i.state='pending_user' AND i.responseUserMessageId IS NOT NULL) AND r.status='running' AND r.phase NOT IN ('ended','uncertain','held') AND r.stopRequestedAt IS NULL AND i.runEpoch=r.epoch AND i.taskVersion=r.version AND i.threadId=r.threadId AND i.turnId=r.turnId AND NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid)`;
+ const liveInteraction=`(i.state='pending_main' OR i.state='pending_user' AND i.responseUserMessageId IS NOT NULL)
+   AND r.stopRequestedAt IS NULL AND i.taskVersion=r.version AND i.threadId=r.threadId AND i.turnId=r.turnId
+   AND (r.status='running' AND r.phase NOT IN ('ended','uncertain','held') AND i.runEpoch=r.epoch
+     OR i.source='ask_main' AND r.status='succeeded' AND r.phase='ended' AND t.state='open' AND t.headVersion=r.version
+       AND EXISTS(SELECT 1 FROM agent_messages m WHERE m.senderRunId=r.id AND m.kind='worker_reply' AND m.senderEpoch=i.runEpoch))
+   AND (i.source='ask_main' OR NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid))`;
  const pageRows=db.prepare(`SELECT t.rowid AS creationOrder,t.id,t.title,t.notes,t.headVersion,t.revision,t.state,t.historyState,t.createdAt,
    EXISTS(SELECT 1 FROM operations op WHERE op.scopeId=t.id AND op.state='uncertain') AS uncertainOperation,
    EXISTS(SELECT 1 FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId WHERE m.taskId=t.id AND ar.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND m.kind<>'user_input' AND m.targetRunId IS NULL AND ar.state='uncertain') AS uncertainReceipt,v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState=? AND t.rowid<? ORDER BY t.rowid DESC LIMIT 21`).all(view,before??Number.MAX_SAFE_INTEGER) as (Omit<OverviewTask,'workers'|'sourceRequestIds'>&{sources:string|null})[];

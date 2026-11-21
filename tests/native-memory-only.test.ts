@@ -46,7 +46,10 @@ test('native service receives and resumes user work without host memory tables o
     await app.close();app=new Homer(config,async()=>{},factory);await app.start();
     assert.equal(app.store.meta('mainThread'),thread);assert.equal(app.store.meta('mainToolsHash'),toolsHash);
     assert.equal(starts.at(-1)?.threadId,thread);
-    for(const options of starts)assert.deepEqual(options.tools,[...MAIN_TOOLS,...RECURSIVE_TOOLS]);
+    for(const options of starts){
+      assert.deepEqual(options.tools,[]);
+      for(const tool of [...MAIN_TOOLS,...RECURSIVE_TOOLS])assert.ok(options.interactionMcp?.catalog?.includes(tool));
+    }
     assert.equal(await app.message('继续解释当前工作。','synthetic-native-only-next'),'Synthetic answer');
     assertNoHostMemory();assert.ok(inputs.every(text=>!text.includes('宿主记忆数据')&&!text.includes('memorySnapshot')));
     assert.equal(app.history.inputs(thread!,['synthetic-native-only-first']).get('synthetic-native-only-first')?.text,'请记住：以后使用中文。');

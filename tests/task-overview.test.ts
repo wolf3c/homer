@@ -44,6 +44,12 @@ test('pending questions retain exact Run epoch version thread and turn ownership
    f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(value);row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingMain,0,column);
    f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(before??null);
   }
+  f.tasks.recordWorkerTerminal(run.id,run.epoch,{status:'completed',text:'Waiting for the answer'});
+  f.tasks.confirmWorkerExit(run.id,undefined);
+  f.tasks.reconcile();
+  assert.equal(readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMainQuestions,1);
+  f.store.db.prepare('UPDATE worker_interactions SET runEpoch=?').run(f.tasks.run(run.id).epoch);
+  assert.equal(readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMainQuestions,undefined);
   f.store.db.prepare("UPDATE worker_interactions SET state='expired'").run();
   assert.deepEqual(readTaskDetail(f.store.db,f.taskId).recovery!.interactions.map(row=>({...row})),[{id:'question',runId:run.id,taskVersion:run.version,kind:'question',state:'expired'}]);
  }finally{f.close();}

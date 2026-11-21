@@ -4,12 +4,11 @@ import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
 import {setTimeout as delay} from 'node:timers/promises';
 import {fixture,metadata,peer,tools} from './fixtures/native-main-resume.mjs';
-const {mainToolsForHash}=await import(new URL('./recursive-tools.js',process.env.HOMER_TEST_SERVICE_MODULE));
 
 const hash=createHash('sha256').update(JSON.stringify(tools)).digest('hex');
 test('fixed native engine retains the exact catalog on cold resume and provider fork '+hash.slice(0,8),{timeout:45000},async t=>{
  const f=fixture(t),{bin,cwd,calls}=f;
- const catalog=mainToolsForHash(hash);
+ const catalog=tools; // Explicit synthetic legacy declarations exercise the native persistence contract.
  let first=peer(f,process.env.HOMER_TEST_CODEX_BASELINE_BIN??bin),second;
  try{
   await first.init();

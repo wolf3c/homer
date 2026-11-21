@@ -4,6 +4,8 @@
 
 本注册契约只适用于 Homer 自有的业务工具。Codex 已支持的工具、MCP、Skill 和插件沿原生机制接入，通用权限和审批由用户选择的 Codex 配置及操作系统决定。[主架构核心边界](main-worker-chat-architecture.md#核心边界)
 
+Main 的事项与协作工具、Worker 的文件导出和业务插件共用各自的角色目录。固定 Codex、桌面运行入口及开发升级入口已验证新资料基线的会话恢复。Worker 的开放提问 `ask_main` 也由其角色 MCP 目录提供。[Homer 自有工具随软件升级](host-tool-upgrades.md)
+
 ## 注册与授权
 
 Homer 业务插件启动时向宿主注册自有工具的定义及处理函数。宿主校验工具名、参数、当前主会话和轮次。需要真实用户授权的业务动作，由宿主向处理器注入当前用户轮的可信 `requestId`，插件据此核对请求、用户意图及事项范围。后台轮、Worker 回报、历史正文和模型参数不能伪造真实用户授权。异步执行跨越等待时需在产生副作用前重新核验当前授权与撤销状态。
@@ -14,7 +16,7 @@ Homer 业务插件启动时向宿主注册自有工具的定义及处理函数�
 
 ### 旧主会话如何加载工具
 
-**采用现有主 Agent 专用 `homer_interactions` MCP 入口，在宿主重启时加载 Homer 业务插件目录。** 固定 Codex 0.163.0 生成的实验协议只在 `thread/start` 声明 `dynamicTools`。Homer 恢复时沿用旧线程的动态目录，目录哈希变化会触发 `main_tools_migration_required`。把业务插件工具接入主 Agent 的 `homer_interactions` 可沿用动态目录及其哈希。该服务的注册目录、宿主分发、stdio MCP `tools/list` 和引擎可调用名称须一致，并由恢复后的 `mcpServerStatus/list` 核对。名称冲突在注册时拒绝。Worker 沿其独立的 Homer 业务工具目录启动。源码入口见 [service.ts](../../src/service.ts)、[engine.ts](../../src/engine.ts) 和 [worker-interaction-mcp.ts](../../src/worker-interaction-mcp.ts)。
+**采用现有主 Agent 专用 `homer_interactions` MCP 入口，在宿主重启时加载 Homer 业务插件目录。** 固定 Codex 0.163.0 生成的实验协议只在 `thread/start` 声明 `dynamicTools`。原线程会沿用创建时的动态目录。新基线 Main 的动态表为空，宿主继续用对应指纹拒绝不匹配的旧资料。业务插件和主协作工具通过 MCP 更新。该服务的注册目录、宿主分发、stdio MCP `tools/list` 和引擎可调用名称须一致，并由恢复后的 `mcpServerStatus/list` 核对。名称冲突在注册时拒绝。Worker 沿其独立的 Homer 业务工具目录启动。源码入口见 [service.ts](../../src/service.ts)、[engine.ts](../../src/engine.ts) 和 [worker-interaction-mcp.ts](../../src/worker-interaction-mcp.ts)。
 
 **2026-11-06 本机协议探针。** 使用固定版 app-server、新建隔离 HOME、合成旧线程和回环 Responses 服务。首次启动时只有原 MCP 工具，写入历史标记并退出引擎。带扩展目录重启并恢复同一 `threadId` 后，原历史与动态目录仍在，`mcpServerStatus/list` 列出新增工具。一轮合成 Responses 通过 `functions.exec` 找到并调用新增 MCP 工具，结果回到该轮。原生 `item/started` 的 `mcpToolCall` 携带线程、轮次、工具名和参数。实测该调用的 MCP `tools/call` 带 `_meta.callId`，与原生 `item.id` 相等，`_meta["x-codex-turn-metadata"].turn_id` 与通知的 `turnId` 相等。轮外 `mcpServer/tool/call` 能访问夹具，但缺少这对关联字段和相应的开始通知。此探针验证固定引擎的加载、调用及关联字段。
 

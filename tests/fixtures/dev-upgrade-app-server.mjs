@@ -3,7 +3,7 @@
 import { createInterface } from "node:readline";
 import { existsSync, writeFileSync, appendFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import {spawnSync} from "node:child_process";
+import {spawnSync,execFileSync} from "node:child_process";
 import {pathToFileURL} from "node:url";
 const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
 const projectRootMarkers=JSON.parse(process.argv.find(value=>value.startsWith('project_root_markers='))?.slice('project_root_markers='.length)??'null');
@@ -14,12 +14,16 @@ const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const trustedArg = process.argv.find(a => a.startsWith("mcp_servers.homer_interactions="));
 const trusted = trustedArg ? JSON.parse(trustedArg.slice(trustedArg.indexOf("=") + 1).replace(/("(?:[^"\\]|\\.)*")=/g, "$1:")) : undefined;
 let worker = false, thread, turn, cwd, count = 0;
-const pending = new Map();
-const tool = (name, args) => new Promise((resolve, reject) => {
-  const id = "tool-" + ++count;
-  pending.set(id, {resolve, reject});
-  send({ id, method: "item/tool/call", params: { threadId: thread, turnId: turn, callId: id, tool: name, arguments: args } });
-});
+function tool(name,args) {
+  const id='tool-'+ ++count;
+  const item={id,type:'mcpToolCall',server:'homer_interactions',tool:name,arguments:args};
+  send({method:'item/started',params:{threadId:thread,turnId:turn,item}});
+  const request={jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args,_meta:{callId:id,'x-codex-turn-metadata':{turn_id:turn}}}};
+  const {result}=JSON.parse(execFileSync(trusted.command,trusted.args,{cwd:trusted.cwd,input:JSON.stringify(request)+'\n',encoding:'utf8',timeout:5000}));
+  send({method:'item/completed',params:{threadId:thread,turnId:turn,item:{...item,status:result.isError?'failed':'completed'}}});
+  if(result.isError)throw Error(result.content[0].text);
+  return JSON.parse(result.content[0].text);
+}
 async function gate(name) { while (!existsSync(join(home, name))) await new Promise(r => setTimeout(r, 15)); }
 function complete(text) {
   send({ method: "item/completed", params: { threadId: thread, turnId: turn, item: { id: "reply-" + turn, type: "agentMessage", phase: "final_answer", text } } });
@@ -27,15 +31,7 @@ function complete(text) {
 }
 createInterface({ input: process.stdin }).on("line", line => { void receive(JSON.parse(line)); });
 async function receive(m) {
-  if (!m.method) {
-    if (pending.has(m.id)) {
-      const {resolve, reject} = pending.get(m.id); pending.delete(m.id);
-      const text = m.result?.contentItems?.[0]?.text;
-      if(m.error||m.result?.success===false)reject(Error(m.error?.message??text??'synthetic_tool_failed'));
-      else resolve(text?JSON.parse(text):m.result);
-    }
-    return;
-  }
+  if(!m.method)return;
   if (m.method === "initialize") send({ id: m.id, result: { userAgent: "synthetic/0.171.0-alpha.7", codexHome:home } });
   if (m.method === "environment/info") send({id:m.id,result:{shell:"/bin/zsh"}});
   if (m.method === "thread/backgroundTerminals/list") send({id:m.id,result:{data:[]}});
@@ -78,8 +74,17 @@ async function receive(m) {
       complete("written\n" + filePath);
     } else if (text === "dispatch-synthetic") {
       const {taskId}=await tool('task_create',{title:'Synthetic meeting result',goal:'Read meeting.md and write the synthetic result.'});
-      await tool('worker_open',{taskId});
+      const {workerId}=tool('worker_open',{taskId});
+      writeFileSync(join(home,'fixture-worker-id'),workerId);
       complete("dispatched");
+    } else if(text==='continue-after-tool-upgrade'){
+      const list={jsonrpc:'2.0',id:1,method:'tools/list'};
+      const {result}=JSON.parse(execFileSync(trusted.command,trusted.args,{cwd:trusted.cwd,input:JSON.stringify(list)+'\n',encoding:'utf8',timeout:5000}));
+      const required=result.tools.find(tool=>tool.name==='worker_message').inputSchema.required;
+      if(!required.includes('attachments'))throw Error('synthetic_stale_tool_catalog');
+      const receipt=tool('worker_message',{workerId:readFileSync(join(home,'fixture-worker-id'),'utf8'),message:'Continue the original assignment.',attachments:[]});
+      if(receipt.route!=='followup')throw Error('synthetic_followup_failed');
+      complete('continued-after-upgrade');
     } else if (text === "hold-main") {
       writeFileSync(join(home, "main-running"), "1"); await gate("release-main"); complete("main-finished");
     } else if (input?.kind === 'worker_reply') {

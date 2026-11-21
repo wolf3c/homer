@@ -36,9 +36,9 @@ export const MAIN_INTERACTION_TOOLS: Tool[] = [
       }, required: ["network", "fileSystem"], additionalProperties: false,
     },
   }),
-  tool("escalate_interaction", "Wait for the user only when the request exceeds the captured delegation, its authority or impact is unclear, needed information is missing, or personal confirmation is required. A read-only sandbox, temporary permission request or changed command alone is not a reason to escalate. End this main turn with a brief, nonempty final reply asking for the user's decision and explaining the necessity, scope and impact; the original Worker remains pending.", { interactionId: str, question: str, reason: str }),
+  tool("escalate_interaction", "Wait for the user only when the request exceeds the captured delegation, its authority or impact is unclear, needed information is missing, or personal confirmation is required. A read-only sandbox, temporary permission request or changed command alone is not a reason to escalate. End this main turn with a brief, nonempty final reply asking for the user's decision and explaining the necessity, scope and impact; the question stays open until answered.", { interactionId: str, question: str, reason: str }),
 ];
 
 export const WORKER_INTERACTION_TOOLS: Tool[] = [
-  tool("ask_main", "Ask the main Agent for task information that is necessary to continue. This call waits and returns to this same Worker. The main Agent may answer, explicitly decline, or ask the user. This is a business question, not permission to perform an operation; native action approvals have their own channel. Never request passwords or tokens.", { question: str }),
+  tool("ask_main", "Ask the main Agent for task information that is necessary to continue. Returns a question ID and pending status immediately. Continue independent work or end this turn if blocked. The answer arrives as a message in this Worker conversation. Do not poll or repeat the question. The main Agent may answer, explicitly decline, or ask the user. This is a business question, not permission to perform an operation; native action approvals have their own channel. Never request passwords or tokens.", { question: str }),
 ];

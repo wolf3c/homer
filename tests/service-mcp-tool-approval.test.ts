@@ -1,5 +1,5 @@
 import {openTaskWorker} from './fixtures/open-task-worker.js';
-import {callHostMcp} from './fixtures/host-mcp-call.js';
+import {callEngineMcp} from './fixtures/host-mcp-call.js';
 // Isolated service fixtures: synthetic RPCs and synthetic user receipts, no native execution.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,9 +26,9 @@ for(const serverName of ['arbitrary-alpha','任意服务乙'])test('main and Wor
    this.turnId='turn-'+ ++serial;o?.onStarted?.(this.turnId);
    const context=app['mainContext'],id=context?.interactionId??context?.queuedInput?.input.interactionId;
    if(this.options.nativeTools==='main'&&id){
-    await callHostMcp(this.options, 'inspect_interaction',{interactionId:id});
-    if(context?.event)await callHostMcp(this.options, 'escalate_interaction',{interactionId:id,question:'Confirm the synthetic operation',reason:'Requires user confirmation'});
-    else await callHostMcp(this.options, 'respond_interaction',{interactionId:id,action:context?.queuedInput?.input.text==='允许本次操作'?'approve':'deny',reason:'Use the actual decision'});
+    await callEngineMcp(this, 'inspect_interaction',{interactionId:id});
+    if(context?.event)await callEngineMcp(this, 'escalate_interaction',{interactionId:id,question:'Confirm the synthetic operation',reason:'Requires user confirmation'});
+    else await callEngineMcp(this, 'respond_interaction',{interactionId:id,action:context?.queuedInput?.input.text==='允许本次操作'?'approve':'deny',reason:'Use the actual decision'});
     return {status:'completed',text:'Synthetic decision recorded'};
    }
    if(text==='check MCP'||this.options.nativeTools==='worker'){

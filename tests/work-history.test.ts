@@ -1,9 +1,7 @@
 // Archive is a history fact, never deletion permission or a cleanup policy.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
-import {MAIN_TOOLS} from '../src/tools.js';
-import {RECURSIVE_TOOLS} from '../src/recursive-tools.js';
+import {MAIN_TOOLS_HASH} from '../src/recursive-tools.js';
 import {MediaStore} from '../src/media-store.js';
 import {EventEmitter} from 'node:events';
 import {writeFileSync,readFileSync,rmSync,mkdtempSync} from 'node:fs';
@@ -70,7 +68,7 @@ for(const blocker of ['live','unknown-exit','lease','operation','pending-reply',
   if(blocker==='lease')f.store.setMeta('lease:'+worker.runId,'synthetic-owned');
   if(blocker==='operation')f.store.db.prepare("UPDATE operations SET state='uncertain' WHERE id=?").run(worker.operationKey);
   if(blocker==='upload')new MediaStore(f.store.db,join(f.dir,'media')).intent(main.sourceRequestId!,'synthetic-binding','file');
-  if(blocker==='interaction')f.store.db.prepare("INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt) VALUES('pending','pending','synthetic',?,?,?,'pending','ask_main','question','{}','{}','pending_user',0,0)").run(worker.runId,actor.threadId!,actor.turnId!);
+  if(blocker==='interaction')f.store.db.prepare("INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt) VALUES('pending','pending','synthetic',?,?,?,'pending','native','question','{}','{}','pending_user',0,0)").run(worker.runId,actor.threadId!,actor.turnId!);
   const before=f.tasks.task(f.task.taskId),response=f.tasks.archiveHistory(main,mutation(f,'archive'),true);
   assert.equal(response.state,'skipped');assert.ok('blockers' in response&&response.blockers!.length>0);assert.deepEqual(f.tasks.task(before.id),before);
   assert.equal(f.tasks.workerRead(main,{workerId:worker.workerId,messageId:reply.messageId}).messages[0]!.text,'Useful readable answer');
@@ -136,7 +134,7 @@ for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','mi
  try{
   const w=kind==='task_archived'?closedWorker(f):(()=>{const worker=openWorker(f),actor=running(f,worker.runId),reply=complete(f,actor,'Ordinary raw reply');return {worker,actor,reply};})();
   if(kind==='task_archived')f.tasks.archiveHistory(main,mutation(f,'archive'),true);const notice=f.tasks.inbox(main).find(message=>message.kind===kind)!;
-  const sentinel=join(workspace,'valuable.txt');writeFileSync(sentinel,'keep');seedFirstLaunchSkills(home);f.store.setMeta('mainToolsHash',createHash('sha256').update(JSON.stringify([...MAIN_TOOLS,...RECURSIVE_TOOLS])).digest('hex'));f.store.close();closed=true;
+  const sentinel=join(workspace,'valuable.txt');writeFileSync(sentinel,'keep');seedFirstLaunchSkills(home);f.store.setMeta('mainToolsHash',MAIN_TOOLS_HASH);f.store.close();closed=true;
   app=new Homer({runtime:f.dir,workspace,codexHome:home,nativeCodexHome:home,codexBin:'/usr/bin/false',model:'synthetic-only',requiresOpenaiAuth:false,stopGraceMs:100},async()=>{},options=>new Peer(options));
   await app.start();await app.idle();
   assert.equal(texts.length,kind==='worker_reply'||skillState==='enabled'?1:0);
@@ -168,5 +166,18 @@ for(const sourceKind of ['user','worker'] as const)test('archive waits for the r
   if(sourceKind==='worker')assert.equal(f.tasks.archiveHistory(main,mutation(f,'archive-sibling',sibling.taskId),true).state,'archived');
   f.processes.native(process,{...effect,status:'completed',completed:true});
   assert.equal(f.tasks.archiveHistory(main,mutation(f,'archive-confirmed'),true).state,'archived');
+ }finally{f.close();}
+});
+
+test('only a completed archive cancels an outstanding business question',()=>{
+ const f=fixture();
+ try{
+  const w=openWorker(f),actor=running(f,w.runId);
+  f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt)
+   VALUES('q','q','q',?,?,?,'ask','ask_main','question','{}','{}','pending_user',0,0)`).run(w.runId,actor.threadId!,actor.turnId!);
+  const state=()=>f.store.db.prepare("SELECT state FROM worker_interactions WHERE id='q'").get()!.state;
+  assert.equal(f.tasks.archiveHistory(main,mutation(f,'too-early'),true).state,'skipped');assert.equal(state(),'pending_user');
+  complete(f,actor,'Waiting for an answer');processReplies(f);assert.equal(state(),'pending_user');
+  assert.equal(f.tasks.archiveHistory(main,mutation(f,'archive-now'),true).state,'archived');assert.equal(state(),'cancelled');
  }finally{f.close();}
 });

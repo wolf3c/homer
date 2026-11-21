@@ -170,7 +170,7 @@ test('Homer resumes a saved Main from '+seed.version+' with a new HOME and retai
  app.store.setMeta('mainThread',saved.threadId);app.store.setMeta('mainToolsHash',MAIN_TOOLS_HASH);app.store.setMeta('mainPromptHash',hash(JSON.stringify([saved.threadId,loadPrompts().main])));
  await app.start();assert.equal(main.threadId,saved.threadId);assert.ok(f.policies.has(main));assert.deepEqual(f.policies.get(main),saved.policy);await retainedThread(main,saved);
  currentIdentity(f,await f.inspect(main,marker=>app.message(marker,'synthetic-home-restore')));await retainedThread(main,saved);
- const first=JSON.parse(readFileSync(saved.path,'utf8').split('\n')[0]);assert.deepEqual(first.payload.dynamic_tools,MAIN_DYNAMIC_TOOLS);
+ const first=JSON.parse(readFileSync(saved.path,'utf8').split('\n')[0]);assert.deepEqual(first.payload.dynamic_tools??[],MAIN_DYNAMIC_TOOLS);
  assert.equal(app.store.meta('mainThread'),saved.threadId);assert.equal(app.store.meta('mainToolsHash'),MAIN_TOOLS_HASH);assert.equal(app.store.meta('mainWorkingDirectory'),undefined);
 });
 

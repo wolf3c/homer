@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {INTERACTION_LIMITS} from '../src/interaction-limits.js';
 import {RecursiveTools,toolOperationId} from '../src/recursive-tools.js';
 import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 import {fixture as hostFixture} from './fixtures/worker-chat-host.js';
@@ -196,4 +197,29 @@ test('final transaction failure rolls back the reply and collects only failed st
   assert.deepEqual(deliveries().map(message=>message.requestId),['original-request','new-authorized-action']);
   assert.equal(f.app.media.readAttachment(deliveries()[1]!.attachments![0]!).bytes.toString(),'# Updated report');
  }finally{await f.close();}
+});
+
+test('full-length Chinese messages and task notes remain readable over paged MCP results',()=>{
+ const f=fixture(),body='测'.repeat(24000),seen:string[]=[],titles:string[]=[];
+ try{
+  const w=openWorker(f);running(f,w.runId);
+  for(let index=0;index<32;index++){
+   const next=f.tasks.workerMessage(main,{operationId:'send-'+index,workerId:w.workerId,text:body});
+   f.tasks.markSteer(next.operationKey,'received');
+   f.tasks.createTask(main,{operationId:'create-'+index,title:'Large '+index,goal:'Synthetic history',notes:body});
+  }
+  let after=0,cursor:string|null=null;
+  do{
+   const page=f.tasks.workerRead(main,{workerId:w.workerId,after});
+   assert.ok(Buffer.byteLength(JSON.stringify({result:page}))<=INTERACTION_LIMITS.responseBytes);
+   seen.push(...page.messages.map(message=>message.id));after=page.nextCursor??0;
+  }while(after);
+  do{
+   const page=f.tasks.listTasks(main,{cursor:cursor??undefined,limit:80});
+   assert.ok(Buffer.byteLength(JSON.stringify({result:page}))<=INTERACTION_LIMITS.responseBytes);
+   titles.push(...page.tasks.map(task=>task.id));cursor=page.nextCursor;
+  }while(cursor);
+  assert.equal(seen.length,33);assert.equal(new Set(seen).size,33);
+  assert.equal(titles.length,33);assert.equal(new Set(titles).size,33);
+ }finally{f.close();}
 });

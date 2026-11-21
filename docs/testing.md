@@ -2,6 +2,23 @@
 
 默认回归验证 Homer 自身的对话、调度、审批、成果交付、持久化、权限和适配契约。真实依赖集成与开发发布验收单独选择；测试位置、已有工具或环境变量不能代替明确选择。
 
+## Homer 工具升级
+
+固定 Codex `0.171.0-alpha.7` 配合本地回环 Responses。工具升级专项保留原线程的成功调用，分别在目录增删改、只改必填参数后，检查模型收到的第一份请求，再核对处理器实收参数。Code Mode 用一段脚本串联两个工具。同时覆盖随包 GPT 目录、DeepSeek 原生函数、写入授权及丢回执冷恢复。异步业务提问专项覆盖同轮送达、冷恢复、停止和未知回执。业务与原生问答各有一个实际等待超过十分钟的用例。
+
+```sh
+HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test \
+  --test-name-pattern='pinned Homer role catalog|Homer writes require|pinned Worker steers' \
+  tests/host-tool-upgrade.engine.test.ts tests/worker-message.engine.test.ts
+HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test \
+  --test-name-pattern='business question via|Worker question|interrupted native question' tests/host-tool-upgrade.engine.test.ts
+HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test tests/scheduled-native.engine.test.ts tests/channel-native.engine.test.ts
+node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test tests/dev-upgrade.development.test.mjs
+HOMER_TEST_APP=/absolute/candidate/Homer.app node --test --test-name-pattern='desktop opens the same Main' tests/macos-desktop-runtime.test.mjs
+```
+
+开发升级使用合成引擎进行真实进程交接。macOS 桌面专项从同卷的隔离候选克隆 B 的资源并重新生成清单。身份、回执和角色目录也有默认离线回归。订阅实模用于验证模型自主选参，按次限定场景，复用独立测试登录（本机约定的 `CODEX_HOME` 为 `.codex/private/tool-upgrade-direct/codex`）。开跑前用固定 Codex 的 `login status` 检查登录态，结束后清理本轮会话与数据库，保留专用登录。[机制与实测边界](architecture/host-tool-upgrades.md)
+
 ## 会员选型安装包联调
 
 macOS 上使用两个带回环网站及网关地址的 preparation 包。候选包和 V1 对照包使用同一个隔离资料目录，以验证升级和降级。网站夹具加载 yezi2 的配置及 PKCE 处理代码，模型网关只在本机返回合成响应。运行以下专项需预先提供两份包和 yezi2 夹具：

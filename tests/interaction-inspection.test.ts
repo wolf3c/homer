@@ -5,7 +5,7 @@ import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {Homer} from '../src/service.js';
 import type {EngineOptions,ToolCall,TurnResult} from '../src/engine.js';
-import {callHostMcp} from './fixtures/host-mcp-call.js';
+import {callEngineMcp} from './fixtures/host-mcp-call.js';
 
 for(const kind of ['command','file','permissions','mcp'] as const)for(const action of ['approve','deny'] as const)test('model inspection deduplicates '+kind+' while preserving its exact operation and live '+action,{timeout:10000},async()=>{
  const parent=resolve('.codex/scratch/inspection-tests');mkdirSync(parent,{recursive:true});
@@ -48,11 +48,11 @@ for(const kind of ['command','file','permissions','mcp'] as const)for(const acti
    }else if(text.includes('[待答入口]')){
     const interactionId=text.match(/interactionId=([\w-]+)/)![1]!;
     const args={interactionId,action,reason:'Exact authorized local operation only.'};
-    try{await callHostMcp(this.options,'respond_interaction',args);}catch(error){earlyDecision=(error as Error).message;}
-    inspected=await callHostMcp(this.options,'inspect_interaction',{interactionId});
+    try{await callEngineMcp(this,'respond_interaction',args);}catch(error){earlyDecision=(error as Error).message;}
+    inspected=await callEngineMcp(this,'inspect_interaction',{interactionId});
     original=app.interactions.inspect(interactionId);
     persisted=app.tasks.run(inspected.runId);
-    await callHostMcp(this.options,'respond_interaction',{...args,...(kind==='permissions'&&action==='approve'?{permissions:inspected.details.params.permissions}:{})});
+    await callEngineMcp(this,'respond_interaction',{...args,...(kind==='permissions'&&action==='approve'?{permissions:inspected.details.params.permissions}:{})});
    }
    return {status:'completed',text:'Synthetic Main result.'};
   }

@@ -143,3 +143,17 @@ test('a pause survives restart and only a later authorized request can reopen ex
   assert.equal(f.tasks.authority(taskId,2).sourceRequestId,fresh.sourceRequestId);
  }finally{f.close();}
 });
+
+test('a recovered successful terminal keeps the question bound to its original turn',()=>{
+ const f=fixture();try{
+  const w=openWorker(f),actor=running(f,w.runId),run=f.tasks.run(w.runId);
+  const scope={runId:run.id,threadId:actor.threadId!,turnId:actor.turnId!,runEpoch:run.epoch,taskVersion:run.version};
+  f.tasks.recordWorkerTerminal(run.id,run.epoch,{status:'completed',text:'Waiting for clarification'});
+  assert.ok(f.tasks.confirmWorkerExit(run.id,undefined));
+  f.tasks.reconcile();
+  assert.equal(f.tasks.run(run.id).status,'succeeded');
+  assert.ok(f.tasks.questionCurrent(scope));
+  assert.equal(f.tasks.questionCurrent({...scope,runEpoch:run.epoch+1}),false);
+  assert.throws(()=>f.tasks.guard(actor),/epoch|live/);
+ }finally{f.close();}
+});

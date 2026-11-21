@@ -120,29 +120,27 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     assert.equal(query("SELECT value FROM meta WHERE key='mainThread'")[0].value, thread);
     assert.deepEqual(query("SELECT * FROM runs"), savedRuns);
     writeFileSync(servicePath, goodService);
-    // Dependency/tool/schema guards must never reach the runtime.
+    // Dependencies and storage schema require review. MCP definitions load at handoff.
     const manifest = join(base, "package.json"), originalManifest = readFileSync(manifest, "utf8");
     const p = JSON.parse(originalManifest); p.devDependencies.synthetic = "1.0.0"; writeFileSync(manifest, JSON.stringify(p));
     await buildUntil(() => notices("dev_dependencies_changed_restart_required").length > 0);
     writeFileSync(manifest, originalManifest);
-    const tools = join(base, "src/tools.ts"), originalTools = readFileSync(tools, "utf8");
-    writeFileSync(tools, originalTools+'\nMAIN_TOOLS[0]!.description += " Synthetic tool migration probe.";\n');await approve();
-    const toolRejected="候选未生效：main_tools_migration_required";
-    await buildUntil(() => notices(toolRejected).length === 1);
-    writeFileSync(tools, originalTools);
-    const recursiveTools = join(base, "src/recursive-tools.ts"), originalRecursiveTools = readFileSync(recursiveTools, "utf8");
-    const changedTools = [
-      originalRecursiveTools.replace("tool('worker_message', '", "tool('worker_message', 'Synthetic description change. "),
-      originalRecursiveTools.replace("['workerId', 'message']", "['workerId', 'message', 'attachments']"),
-    ];
-    const beforeToolChanges = lockPid();
-    for (const [index, changed] of changedTools.entries()) {
-      assert.notEqual(changed, originalRecursiveTools);
-      writeFileSync(recursiveTools, changed);await approve();
-      await buildUntil(() => notices(toolRejected).length === index + 2);
-      assert.equal(lockPid(), beforeToolChanges, "tool changes must be rejected before host handoff");
-    }
-    writeFileSync(recursiveTools, originalRecursiveTools);
+    const tools = join(base, "src/recursive-tools.ts"), originalTools = readFileSync(tools, "utf8");
+    const changed = originalTools.replace("['workerId', 'message']", "['workerId', 'message', 'attachments']");
+    assert.notEqual(changed,originalTools);
+    const beforeToolChanges=active(),beforeHash=query("SELECT value FROM meta WHERE key='mainToolsHash'")[0].value;
+    writeFileSync(tools,changed);await approve();
+    await buildUntil(()=>active()>beforeToolChanges);
+    assert.equal(query("SELECT value FROM meta WHERE key='mainThread'")[0].value,thread);
+    assert.equal(query("SELECT value FROM meta WHERE key='mainToolsHash'")[0].value,beforeHash);
+    assert.deepEqual(query("SELECT * FROM runs"),savedRuns);
+    assert.equal(notices('main_tools_migration_required').length,0);
+    send('continue-after-tool-upgrade');
+    await until(()=>query("SELECT count(*) n FROM runs WHERE status='succeeded'")[0].n===2);
+    const resumed=query("SELECT taskId,workerId,threadId FROM runs ORDER BY rowid");
+    assert.deepEqual(resumed[1],resumed[0]);
+    assert.equal(notices('continued-after-upgrade').length,1);
+    writeFileSync(tools,originalTools);
     const storePath = join(base, "src/store.ts"), originalStore = readFileSync(storePath, "utf8");
     appendFileSync(storePath, "\n// schema change guard\n");
     await buildUntil(() => notices("dev_schema_change_requires_review").length > 0);
@@ -152,7 +150,7 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     assert.equal(sourceSnapshot(base, config).hash, hash);
     // Quit while the replacement is still restoring the engine, without orphaning it.
     unlinkSync(join(base, "home/release-resume")); unlinkSync(join(base, "home/resume-waiting"));
-    writeFileSync(storePath, originalStore); edit("quit during startup");
+    writeFileSync(storePath, originalStore); edit("quit during startup");await approve();
     await until(() => existsSync(join(base, "home/resume-waiting")));
     const lastPid = lockPid(); send("/quit");
     await delay(100); writeFileSync(join(base, "home/release-resume"), "1");
@@ -161,7 +159,7 @@ test("HMR-UPGRADE-001: real subprocess handoff preserves thread/data/input, defe
     const engineEvents = readFileSync(join(base, "home/process-events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
     for (const e of engineEvents) assertDead(e.pid);
     assert.equal(query("PRAGMA integrity_check")[0].integrity_check, "ok");
-    writeFileSync(join(base, "verified-checks.json"), JSON.stringify({ verified: true, synthetic: true, realAccount: false, realModel: false, workerSourceModification: true, workerProjectTestExit:0, offline: true, realProcesses: true, handoffs: active() - 1, rollback: true, threadPreserved: true, runsPreserved: true, exactlyOnceInputCount: 8, engineProcessesCleaned: engineEvents.length, checks: ["busy-worker", "busy-main", "message-attachment-before-switch", "immutable-build", "failed-build", "failed-start-rollback", "input-handoff", "same-thread", "same-business-data", "dependencies-guard", "tools-guard", "schema-guard", "watch-exclusions", "exit-cleanup"] }, null, 2));
+    writeFileSync(join(base, "verified-checks.json"), JSON.stringify({ verified: true, synthetic: true, realAccount: false, realModel: false, workerSourceModification: true, workerProjectTestExit:0, offline: true, realProcesses: true, handoffs: active() - 1, rollback: true, threadPreserved: true, runsPreserved: true, exactlyOnceInputCount: 8, engineProcessesCleaned: engineEvents.length, checks: ["busy-worker", "busy-main", "message-attachment-before-switch", "immutable-build", "failed-build", "failed-start-rollback", "input-handoff", "same-thread", "same-business-data", "dependencies-guard", "mcp-tools-upgrade", "schema-guard", "watch-exclusions", "exit-cleanup"] }, null, 2));
   } finally {
     if(!existsSync(join(base,'verified-checks.json')))t.diagnostic(JSON.stringify({fixture:'dev-upgrade',buildStages:fixtureBuildEvidence(base),hostErrors:events.flatMap(event=>String(event.text??'').match(/(?:启动／运行失败：|检查未通过：)[a-z_]+/g)??[])}));
     if (!exited) { send("/quit"); await until(() => exited, 5000).catch(() => child.kill("SIGTERM")); }

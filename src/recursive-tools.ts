@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {Tool} from './engine.js';
-import {MAIN_TOOLS, object, string} from './tools.js';
+import {object, string} from './tools.js';
 import type {Actor, Authority, RecursiveTasks, WorkerMessageScope} from './recursive-tasks.js';
 import type {AttachmentRef} from './media-store.js';
 export type MessageAttachmentInput={path:string}|AttachmentRef;
@@ -29,7 +29,8 @@ export const RECURSIVE_TOOLS: Tool[] = [
   tool('restore_work', 'Restore one exact archived task to visible history under actual user authorization. Does not start execution.', {taskId: str}),
 ];
 
-export const MAIN_DYNAMIC_TOOLS = [...MAIN_TOOLS, ...RECURSIVE_TOOLS];
+// Only declarations persisted by thread/start belong in the resume fingerprint.
+export const MAIN_DYNAMIC_TOOLS: Tool[] = [];
 export const MAIN_TOOLS_HASH = createHash('sha256').update(JSON.stringify(MAIN_DYNAMIC_TOOLS)).digest('hex');
 
 export function mainToolsForHash(hash: string | undefined): Tool[] {

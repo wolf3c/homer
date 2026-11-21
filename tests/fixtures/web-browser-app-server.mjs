@@ -21,11 +21,12 @@ const pending = new Map();
 const call = (method, params) => new Promise((accept, reject) => {
   const id = "synthetic-call-" + ++sequence; pending.set(id, {accept, reject, method}); send({ id, method, params: { threadId: thread, turnId: turn, callId: id, ...params } });
 });
-const tool = (name, args) => call("item/tool/call", { tool: name, arguments: args });
+let answerQuestion;
 const mcp = (tool, args) => new Promise((accept, reject) => {
-  const path=['main','worker'].includes(trusted.args.at(-1))?trusted.args.at(-2):trusted.args.at(-1);
+  const path=trusted.args[trusted.args.indexOf(worker?'worker':'main')-1],id='mcp-'+ ++sequence;
+  send({method:'item/started',params:{threadId:thread,turnId:turn,item:{id,type:'mcpToolCall',server:'homer_interactions',tool,arguments:args}}});
   const socket = createConnection(path); let bytes = "";
-  socket.on("connect", () => socket.write(JSON.stringify({ tool, arguments: args }) + "\n"));
+  socket.on("connect", () => socket.write(JSON.stringify({tool,arguments:args,meta:{callId:id,'x-codex-turn-metadata':{turn_id:turn}}}) + "\n"));
   socket.on("data", chunk => { bytes += chunk; if (bytes.includes("\n")) { const value = JSON.parse(bytes); socket.end(); value.error ? reject(new Error(value.error)) : accept(value.result); } });
   socket.on("error", reject);
 });
@@ -71,6 +72,7 @@ async function receive(m) {
     thread = m.params.threadId ?? (worker ? "web-synthetic-worker-" + process.pid : "web-synthetic-main");
     send({ id: m.id, result: { thread: { id: thread, modelProvider }, modelProvider, activePermissionProfile: { id: "homer" }, approvalPolicy: m.params.approvalPolicy } });
   }
+  if(m.method==='turn/steer'&&m.params.expectedTurnId===turn){send({id:m.id,result:{turnId:turn}});answerQuestion?.();}
   if (m.method === "turn/start") {
     cwd = m.params.cwd ?? cwd;
     turn = "web-turn-" + ++sequence;
@@ -82,7 +84,9 @@ async function receive(m) {
     const [userText, pendingQuestions] = (explicitReply ? text.slice(text.indexOf('\n')+1) : text).split('\n\n[当前用户范围的 Worker 待答事实；');
     const pendingQuestion = pendingQuestions ? JSON.parse(pendingQuestions.split('\n')[1]).items[0]?.interactionId : undefined;
     if (worker) {
-      await tool("ask_main", { question: "合成验收：成果使用列表还是表格？" });
+      const answer=new Promise(done=>{answerQuestion=done;});
+      await mcp("ask_main", { question: "合成验收：成果使用列表还是表格？" });
+      await answer;
       await call("item/permissions/requestApproval", { itemId: "synthetic-permission", permissions: { fileSystem: { read: [cwd] } } });
       const path = resolve(cwd, "合成行动清单.md");
       writeFileSync(path, checklist);
@@ -98,13 +102,13 @@ async function receive(m) {
         complete("已将你的答复送回原任务。");
       }
     } else if (input?.kind === 'worker_reply') {
-      const reply = await tool('worker_read', {workerId:input.workerId,messageId:input.messageId}), filePath = reply.messages[0].text.trim().split('\n').at(-1);
+      const reply = await mcp('worker_read', {workerId:input.workerId,messageId:input.messageId}), filePath = reply.messages[0].text.trim().split('\n').at(-1);
       if(readFileSync(filePath,'utf8')!==checklist)throw Error('synthetic_attachment_mismatch');
-      await tool('task_update', {taskId:input.taskId,notes:'Checked the Worker report.'});
+      await mcp('task_update', {taskId:input.taskId,notes:'Checked the Worker report.'});
       complete(`合成行动清单已完成，可下载附件。 [合成行动清单.md](${pathToFileURL(filePath).href})`);
     } else if (/生成成果|派发任务/.test(text)) {
-      const {taskId}=await tool('task_create',{title:'合成行动清单',goal:'制作合成行动清单，并向 Main 询问用户所需格式。'});
-      await tool('worker_open',{taskId});
+      const {taskId}=await mcp('task_create',{title:'合成行动清单',goal:'制作合成行动清单，并向 Main 询问用户所需格式。'});
+      await mcp('worker_open',{taskId});
       await stream("我已开始整理材料。需要补充的信息会在这里询问你，后台任务会继续。", false);
     } else await stream("先核对材料，再交付成果。\n\n我会保留明确的负责人和时间，将不确定的内容留作待确认。\n\n| 事项 | 当前状态 |\n| --- | --- |\n| 阅读材料 | 已完成 |\n| 整理成果 | 待交办 |\n\n```ts\nconst task = { status: 'ready' };\n```\n\n这是离线合成验收的回答。", /持续|慢速/.test(text));
   }

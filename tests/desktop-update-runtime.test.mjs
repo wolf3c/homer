@@ -167,9 +167,9 @@ if(!vm.SourceTextModule){
  });
  test('Windows Worker uses a named pipe without filesystem permissions or cleanup',async()=>{
   let listening,unlinked=false,chmod=false;
-  const modules={'./browser-preview-tools.js':await import('../src/browser-preview-tools.js'),'./execution-tools.js':{EXECUTION_TOOLS:[]},'./worker-interaction-tools.js':{MAIN_INTERACTION_TOOLS:[]},
+  const modules={'./tools.js':{MAIN_TOOLS:[]},'./recursive-tools.js':{RECURSIVE_TOOLS:[]},'./browser-preview-tools.js':await import('../src/browser-preview-tools.js'),'./execution-tools.js':{EXECUTION_TOOLS:[]},'./worker-interaction-tools.js':{MAIN_INTERACTION_TOOLS:[],WORKER_INTERACTION_TOOLS:[]},
    './work-directories.js':{LIST_WORK_DIRECTORIES:(await import('../src/work-directories.js')).LIST_WORK_DIRECTORIES},
-   './media-tools.js':{MEDIA_TOOLS:[],WORKER_MEDIA_TOOLS:[]},'./interaction-limits.js':{INTERACTION_LIMITS:{}},
+   './media-tools.js':{MEDIA_TOOLS:[],WORKER_MEDIA_TOOLS:[],WORKER_FILE_TOOLS:[]},'./interaction-limits.js':{INTERACTION_LIMITS:{}},
    './membership-web-tools.js':{MEMBERSHIP_TOOLS:[],audioTool:{name:'generate_audio'}},'./desktop-cua.js':{CUA_TOOLS:[]},'./schedules.js':{SCHEDULE_TOOLS:[]},
    'node:fs':{chmodSync:()=>{chmod=true;},unlinkSync:()=>{unlinked=true;}},
    'node:net':{createConnection(){},createServer:()=>({listening:true,once(){},listen(path,done){

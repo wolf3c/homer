@@ -1,5 +1,5 @@
 import {openTaskWorker} from './fixtures/open-task-worker.js';
-import {callHostMcp} from './fixtures/host-mcp-call.js';
+import {callEngineMcp} from './fixtures/host-mcp-call.js';
 import {EventEmitter} from 'node:events';
 import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
@@ -22,6 +22,8 @@ export function fixture(sink: (message: Message) => Promise<void> = async () => 
     constructor(readonly options: EngineOptions, readonly tool: (call: ToolCall) => Promise<unknown>) {
       super(); this.threadId = options.threadId ?? (this.worker ? "synthetic-worker" : "synthetic-main"); engines.push(this);
     }
+    steered:string[]=[];
+    async steer(turnId:string,text:string){if(this.turnId!==turnId)throw Error('message_target_stale');this.steered.push(text);return {turnId};}
     get worker() { return this.options.role === "worker"; }
     async start() { return this.threadId; }
     call(tool: string, args: unknown) { return this.tool({ threadId: this.threadId, turnId: this.turnId!, callId: "synthetic-call-" + Math.random(), tool, arguments: args }); }
@@ -40,9 +42,9 @@ export function fixture(sink: (message: Message) => Promise<void> = async () => 
       });
       const interactionId = text.match(/interactionId=([\w-]+)/)?.[1];
       if (interactionId) {
-        await callHostMcp(this.options, "inspect_interaction", { interactionId });
-        if (text.includes("[待答入口]")) await callHostMcp(this.options, "escalate_interaction", { interactionId, question: "合成问题：采用哪种格式？", reason: "该偏好不在任务范围内" });
-        else await callHostMcp(this.options, "respond_interaction", { interactionId, action: "answer", answer: "用户指定表格", reason: "依据本条用户答复" });
+        await callEngineMcp(this, "inspect_interaction", { interactionId });
+        if (text.includes("[待答入口]")) await callEngineMcp(this, "escalate_interaction", { interactionId, question: "合成问题：采用哪种格式？", reason: "该偏好不在任务范围内" });
+        else await callEngineMcp(this, "respond_interaction", { interactionId, action: "answer", answer: "用户指定表格", reason: "依据本条用户答复" });
       }
       const reply=attachments.get(text)??'准确的合成来源句子';
       const final={itemId:'synthetic-final',phase:'final_answer',text:reply};

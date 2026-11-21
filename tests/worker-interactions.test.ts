@@ -248,3 +248,21 @@ test("HMR-INTERACTION-001: invalid native decisions do not settle or persist an 
     assert.equal((await request.response).status, "denied");
   } finally { db.close(); }
 });
+
+test('a retried business question shares its durable receipt and cannot approve an action',()=>{
+  const db=new DatabaseSync(':memory:'),ready:string[]=[];
+  const interactions=new WorkerInteractions(db,{ready:id=>ready.push(id),questionCurrent:()=>true});
+  try{
+    const original=input('ask'),open=()=>interactions.openQuestion(original,()=>true);
+    const receipt=open();
+    assert.deepEqual(open(),receipt);assert.deepEqual(ready,[receipt.interactionId]);
+    assert.throws(()=>interactions.openQuestion({...original,details:{question:'Different question'}},()=>true),/interaction_request_conflict/);
+    interactions.cancelRun(original.runId,'worker_turn_ended');interactions.reconcile();
+    assert.equal(interactions.inspect(receipt.interactionId).state,'pending_main');
+    assert.throws(()=>interactions.respond(receipt.interactionId,{action:'approve',reason:'Out of scope'}),/interaction_response_kind/);
+    const decision={action:'answer' as const,answer:'Use the table',reason:'Requested format'};
+    assert.equal(interactions.respond(receipt.interactionId,decision).duplicate,false);
+    assert.equal(interactions.respond(receipt.interactionId,decision).duplicate,true);
+    assert.equal(interactions.inspect(receipt.interactionId).deliveredAt,null);
+  }finally{db.close();}
+});

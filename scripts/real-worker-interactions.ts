@@ -83,7 +83,10 @@ try {
   const direct = rows("worker_interactions").find(item => item.source === "ask_main");
   assert.ok(direct && direct.state === "answered" && direct.deliveredAt);
   assert.ok(JSON.parse(direct.decision).answer.includes(marker));
-  const run = rows("runs").find(item => item.id === direct.runId);
+  const resultRun=(originId:string)=>{const runs=rows("runs"),origin=runs.find(row=>row.id===originId);
+    return runs.find(row=>row.workerId===origin.workerId&&row.threadId===origin.threadId&&row.status==='succeeded'&&filesForRun(row.id).length>0);};
+  await until(()=>!!resultRun(direct.runId));
+  const run=resultRun(direct.runId);
   assert.equal(run.status, "succeeded"); assert.ok(artifactText(run.id).includes(marker));
   stage = "escalate_user";
   send(`请现在先派发第二个独立任务，材料 ${samplePath}，不要在派发前问用户。Worker 必须先按地址读取材料，再调用 ask_main 询问‘用户专门指定的合成展示版式是什么？’。该版式尚未告知主Agent，用户要求禁止推测或替选；主Agent须使用 escalate_interaction 并在最终答复中提出问题。Worker 得到真实答复后，写入包含版式标签及材料事实的 Markdown，回报路径后由主Agent 在最终答复中链接文件。这是验收所必需的用户选择。`);
@@ -99,11 +102,11 @@ try {
   assert.equal(rows("worker_interactions").find(item => item.id === waiting.id).state, "pending_user");
   stage = "original_worker_continue";
   send(`回答待答ID ${waiting.id}：用户指定合成展示版式为「${label}」。请查看该待答并 respond_interaction 返回原Worker继续，不能重新派任务。`);
-  await until(() => filesForRun(waiting.runId).length>0);
+  await until(() => !!resultRun(waiting.runId));
   const answered = rows("worker_interactions").find(item => item.id === waiting.id);
-  const continued = rows("runs").find(item => item.id === waiting.runId);
+  const continued = resultRun(waiting.runId);
   assert.equal(answered.state, "answered"); assert.ok(answered.responseUserMessageId);
-  assert.equal(continued.status, "succeeded"); assert.equal(continued.threadId, originalWorker.threadId); assert.equal(continued.pid, originalWorker.pid);
+  assert.equal(continued.status, "succeeded"); assert.equal(continued.threadId, originalWorker.threadId); assert.equal(continued.workerId, originalWorker.workerId);assert.ok(answered.deliveredAt);
   assert.ok(artifactText(continued.id).includes(label));
   const checkNative = process.argv.includes("--native");
   if (checkNative) {
@@ -140,7 +143,7 @@ try {
   }
   const nativeApproved = rows("worker_interactions").some(item => item.source === "native" && item.kind === "authorization" && item.state === "approved" && item.deliveredAt);
   assert.ok(rows("runs").every(item => item.status === "succeeded"));
-  assert.equal(rows("runs").length, checkNative ? 3 : 2);
+  assert.equal(new Set(rows("runs").map(item=>item.workerId)).size, checkNative ? 3 : 2);
   assert.equal(rows("meta").find(item => item.key === "mainThread").value, originalMain);
   const report = { scenarioId: "HMR-INTERACTION-001", sourceType: "requirements-derived", fixtureSourceType: "synthetic", at: new Date().toISOString(), passed: true, codex: codexVersion(config.codexBin), model: config.model, effort: config.effort, cli: true, directMainAnswer: true, userEscalation: true, unrelatedMessageWhileWaiting: true, originalWorkerContinued: true, mainThreadRestartRecall: true, nativeVerification: checkNative ? "observed" : "not_run", nativeApprovalObserved: nativeApproved, mainThreadPreserved: true, mainThread: originalMain, mainUsage: JSON.parse(rows("meta").find(item => item.key === "mainUsage")?.value ?? "null"), runs: rows("runs").map(({ id, taskId, workerId, threadId, status, usage }) => ({ id, taskId, workerId, threadId, status, usage: usage ? JSON.parse(usage) : null })), interactions: rows("worker_interactions").map(({ id, runId, source, kind, state, deliveredAt }) => ({ id, runId, source, kind, state, deliveredAt })), transcriptSaved: false, costAmount: null };
   writeFileSync(reportPath, JSON.stringify(report, null, 2));

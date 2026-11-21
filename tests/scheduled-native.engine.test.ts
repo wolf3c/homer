@@ -19,7 +19,7 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
   const programs:Record<Role,{index:number;callId?:string;scheduleId?:string}>={main:{index:0},worker:{index:0}};
   const starts:{engine:CodexEngine;call:Start}[]=[],authenticated:{engine:CodexEngine;tool:string;args:unknown;meta:any;identity:Pick<ToolCall,'threadId'|'turnId'|'callId'>}[]=[];
   const inventories:{role:Role;warm:boolean;threadId:string;names:string[]}[]=[],resumes:{role:Role;threadId:string}[]=[];
-  const call=(name:string,args:unknown,callId:string,scheduled=false)=>({type:'function_call',call_id:callId,name,...(scheduled?{namespace:'mcp__homer_interactions'}:{}),arguments:JSON.stringify(args)});
+  const call=(name:string,args:unknown,callId:string)=>({type:'function_call',call_id:callId,name,namespace:'mcp__homer_interactions',arguments:JSON.stringify(args)});
   const answer=(text:string)=>({type:'message',id:'message-'+request,role:'assistant',content:[{type:'output_text',text}]});
   const program=(role:Role,payload:any)=>{
     const state=programs[role],last=payload.input?.at(-1);
@@ -54,7 +54,7 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
       :state.index===1||state.index===4?{receipts:true}
       :{scheduleId:state.scheduleId,expectedRevision:state.index===2?1:2,...(state.index===2?{text:role+' updated reminder'}:{})};
     state.callId=role+'-schedule-'+state.index;
-    return call(name,args,state.callId,true);
+    return call(name,args,state.callId);
   };
   const server=createServer(async(req,res)=>{
     try{
@@ -63,7 +63,7 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
       const payload=JSON.parse(body);
       if(payload.client_metadata?.['x-openai-subagent']==='memory_consolidation'){res.writeHead(403).end();return;}
       request++;
-      const worker=!JSON.stringify([...(payload.tools??[]),...(payload.input??[]).filter((item:any)=>item.type==='additional_tools').flatMap((item:any)=>item.tools??[])]).includes('worker_open');
+      const worker=JSON.stringify(payload.input?.findLast((item:any)=>item.role==='user')??{}).includes('宿主任务事实');
       const latest=payload.input?.findLast((item:any)=>item.role==='user');
       const internal=JSON.stringify(latest??{}).includes('内部协作输入');
       const last=payload.input?.at(-1);
@@ -131,7 +131,7 @@ test('pinned Main and Worker discover scheduled tools on old threads and authent
       assert.equal(inventory.threadId,role==='main'?mainThread:worker.threadId);
       for(const name of names)assert.ok(inventory.names.includes(name),role+' discovers '+name+' after resume');
       assert.ok(resumes.some(item=>item.role===role&&item.threadId===inventory.threadId));
-      const calls=authenticated.filter(item=>item.engine.options.nativeTools===role);
+      const calls=authenticated.filter(item=>item.engine.options.nativeTools===role&&names.includes(item.tool));
       assert.deepEqual(calls.map(item=>item.tool),['schedule_create','schedule_list','schedule_update','schedule_cancel','schedule_list']);
       for(const item of calls){
         const native=starts.find(start=>start.engine===item.engine&&start.call.itemId===item.meta.callId);

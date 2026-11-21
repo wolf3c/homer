@@ -6,7 +6,6 @@ import {loadPrompts} from '../src/prompts.js';
 import {MAIN_TOOLS} from '../src/tools.js';
 import {MAIN_TOOLS_HASH, RECURSIVE_TOOLS, validateToolArguments} from '../src/recursive-tools.js';
 import {HOST_MCP_TOOLS, WORKER_HOST_MCP_TOOLS} from '../src/worker-interaction-mcp.js';
-import {WORKER_INTERACTION_TOOLS} from '../src/worker-interaction-tools.js';
 import {WORKER_MEDIA_TOOLS, WORKER_FILE_TOOLS} from '../src/media-tools.js';
 import {fixture, until} from './fixtures/worker-chat-host.js';
 import {Homer} from '../src/service.js';
@@ -110,8 +109,8 @@ test('new Main validates titles before staging and commits one original dispatch
 
 test('role instructions and archive Skill refer only to tools actually available to that role', () => {
   const prompts = loadPrompts();
-  const main = [...MAIN_TOOLS, ...RECURSIVE_TOOLS, ...HOST_MCP_TOOLS];
-  const worker = [...WORKER_INTERACTION_TOOLS, ...WORKER_FILE_TOOLS, ...WORKER_HOST_MCP_TOOLS];
+  const main = HOST_MCP_TOOLS;
+  const worker = WORKER_HOST_MCP_TOOLS;
   const archive = readFileSync(new URL('../.codex/skills/homer-archive-review/SKILL.md', import.meta.url), 'utf8');
   for (const [source, tools] of [[prompts.main, main], [archive, main], [prompts.worker, worker]] as const) {
     const names = new Set(tools.map(tool => tool.name));
@@ -119,7 +118,7 @@ test('role instructions and archive Skill refer only to tools actually available
   }
 });
 
-test('the real host registers the complete role catalog as native dynamic tools', async () => {
+test('the real host exposes business tools once in its role MCP catalog', async () => {
   const f = fixture();
   try {
     f.setScript(async (main, text) => {
@@ -132,22 +131,22 @@ test('the real host registers the complete role catalog as native dynamic tools'
     await f.app.start();
     await f.app.message('inspect catalog', 'synthetic-catalog-source');
     await until(() => f.engines.some(engine => engine.options.role === 'worker'));
-    for (const [role, expected, mcp] of [
-      ['main', [...MAIN_TOOLS, ...RECURSIVE_TOOLS], HOST_MCP_TOOLS],
-      ['worker', [...WORKER_INTERACTION_TOOLS, ...WORKER_FILE_TOOLS], WORKER_HOST_MCP_TOOLS],
-    ] as const) {
-      const actual = f.engines.find(engine => role === 'main' ? engine.options.role !== 'worker' : engine.options.role === 'worker')!.options.tools;
-      assert.deepEqual(actual, expected, role);
-      const names = [...actual, ...mcp].map(tool => tool.name);
-      assert.equal(new Set(names).size, names.length, role + ' has one outlet per tool');
+    for (const [role, migrated] of [['main', [...MAIN_TOOLS, ...RECURSIVE_TOOLS]], ['worker', WORKER_FILE_TOOLS]] as const) {
+      const options = f.engines.find(engine => (engine.options.role ?? 'main') === role)!.options;
+      const catalog = options.interactionMcp!.catalog!.map(tool => tool.name);
+      assert.equal(new Set(catalog).size, catalog.length);
+      for (const tool of migrated) {
+        assert.ok(catalog.includes(tool.name), tool.name);
+        assert.ok(!options.tools.some(entry => entry.name === tool.name), tool.name);
+      }
     }
   } finally {await f.close();}
 });
 
-test('new collaboration has one dynamic-tool outlet and Workers cannot manage business work', () => {
+test('new collaboration has one MCP outlet and Workers cannot manage business work', () => {
   const dynamic = new Set(RECURSIVE_TOOLS.map(tool => tool.name));
-  for (const tool of [...HOST_MCP_TOOLS, ...WORKER_HOST_MCP_TOOLS]) assert.ok(!dynamic.has(tool.name), tool.name);
-  const worker = new Set([...WORKER_INTERACTION_TOOLS, ...WORKER_FILE_TOOLS, ...WORKER_HOST_MCP_TOOLS].map(tool => tool.name));
+  for (const name of dynamic) assert.ok(HOST_MCP_TOOLS.some(tool => tool.name === name), name);
+  const worker = new Set(WORKER_HOST_MCP_TOOLS.map(tool => tool.name));
   for (const name of ['task_create', 'task_update', 'worker_open', 'worker_message', 'worker_interrupt', 'accept_result', 'publish_delivery', 'archive_work', 'restore_work', 'delete_work']) {
     assert.ok(!worker.has(name), name);
   }

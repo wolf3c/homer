@@ -1,3 +1,4 @@
+import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {createHash,randomUUID} from 'node:crypto';
 import {basename,isAbsolute} from 'node:path';
 import {realpathSync,statSync} from 'node:fs';
@@ -43,6 +44,14 @@ function defaultTaskTitle(goal:string){
  const chars=Array.from(first);return chars.length>48?chars.slice(0,48).join('')+'…':first;
 }
 
+function boundedPage<T>(length:number,build:(count:number)=>T):T{
+ let page=build(length);
+ while(length>1&&Buffer.byteLength(JSON.stringify({result:page}))>INTERACTION_LIMITS.responseBytes){
+  length=Math.ceil(length/2);page=build(length);
+ }
+ return page;
+}
+
 export class RecursiveTasks{
  constructor(readonly store:Store,readonly files:Files,private lifecycle?:RecursiveTaskLifecycle){}
  private get db(){return this.store.db;}
@@ -70,7 +79,7 @@ export class RecursiveTasks{
  run(runId:string):TaskRun{const r=this.store.run(runId);if(!r)throw Error('run_not_found');return r;}
  runs(taskId?:string,workerId?:string):TaskRun[]{return this.all('SELECT * FROM runs'+(taskId?' WHERE taskId=?'+(workerId?' AND workerId=?':''):workerId?' WHERE workerId=?':'')+' ORDER BY createdAt,rowid',...(taskId?[taskId]:[]),...(workerId?[workerId]:[]));}
  workers(taskId:string):Worker[]{return this.all<TaskRun>('SELECT r.* FROM runs r WHERE taskId=? AND rowid=(SELECT max(rowid) FROM runs WHERE workerId=r.workerId) ORDER BY createdAt,rowid',taskId).map(run=>({workerId:run.workerId,taskId,threadId:run.threadId,run}));}
- private worker(workerId:string):Worker{const run=this.one<TaskRun>('SELECT * FROM runs WHERE workerId=? ORDER BY rowid DESC LIMIT 1',workerId);if(!run||this.run(workerId).workerId!==workerId)throw Error('worker_not_found');return {workerId,taskId:run.taskId,threadId:run.threadId,run};}
+ worker(workerId:string):Worker{const run=this.one<TaskRun>('SELECT * FROM runs WHERE workerId=? ORDER BY rowid DESC LIMIT 1',workerId);if(!run||this.run(workerId).workerId!==workerId)throw Error('worker_not_found');return {workerId,taskId:run.taskId,threadId:run.threadId,run};}
  private main(actor:Actor){return actor.agentId===this.store.meta('mainAgentId')&&!actor.runId;}
  private requireMain(actor:Actor){if(!this.main(actor))throw Error('task_main_required');this.lifecycle?.validateActor(actor);if(actor.threadId&&actor.threadId!==this.store.meta('mainThread'))throw Error('agent_identity_denied');}
  private actorTask(actor:Actor){if(this.main(actor)){this.requireMain(actor);return;}
@@ -124,6 +133,9 @@ export class RecursiveTasks{
   const authority=this.authority(run.taskId,run.version);
   if(run.sourceRequestId!==authority.sourceRequestId)throw Error('task_authority_source_denied');
   this.authoritySources({agentId:this.store.meta('mainAgentId')!},authority);
+  if((run.status==='queued'||run.phase==='starting')&&this.table('worker_interactions')&&this.one(
+   `SELECT 1 FROM agent_messages m JOIN operations o ON o.id=m.operationKey JOIN worker_interactions i ON i.id=json_extract(o.detailsJson,'$.questionId')
+    WHERE m.targetRunId=? AND i.state NOT IN ('answered','denied') LIMIT 1`,run.id))throw Error('task_authority_source_denied');
  }
  private insertOperation(key:string,actor:string,scope:string,operationId:string,kind:string,payload:unknown,state='accepted',details:unknown={}){this.sql('INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,NULL,0)',key,actor,scope,operationId,kind,recursiveHash(payload),state,json(details));}
  private mutation<T extends Record<string,unknown>>(actor:Actor,scope:string,operationId:string,kind:string,payload:unknown,write:(key:string)=>T):T&{operationKey:string}{
@@ -293,6 +305,7 @@ export class RecursiveTasks{
  private updateRequirements(actor:Actor,task:Task,goal:string,authority:Authority|undefined,key:string,strict=false){
   text(goal);
   const bound=this.bindRequirements(actor,task,authority,strict);
+  this.cancelQuestions(task.id);
   const version=task.headVersion+1;
   this.sql('INSERT INTO task_versions VALUES(?,?,?,?,?,?,?)',task.id,version,goal,bound?json(bound):null,actor.sourceRequestId!,key,this.version(task.id,task.headVersion).workingDirectory);
   return version;
@@ -300,7 +313,7 @@ export class RecursiveTasks{
  listTasks(actor:Actor,query:{includeArchived?:boolean;threadId?:string;cursor?:string;limit?:number}={}){
   this.requireMain(actor);const limit=query.limit??20;if(!Number.isSafeInteger(limit)||limit<1||limit>80||Object.hasOwn(query,'state')||query.cursor!==undefined&&!/^\d+$/.test(query.cursor))throw Error('task_query_invalid');
   const rows=this.all<Task&{position:number}>(`SELECT t.*,t.rowid position FROM tasks t WHERE t.rowid>?${query.includeArchived?'':" AND t.historyState='visible'"}${query.threadId?' AND EXISTS(SELECT 1 FROM runs r WHERE r.taskId=t.id AND r.threadId=?)':''} ORDER BY t.rowid LIMIT ?`,Number(query.cursor??0),...(query.threadId?[query.threadId]:[]),limit+1);
-  return {tasks:rows.slice(0,limit).map(({position:_position,...task})=>task),nextCursor:rows.length>limit?String(rows[limit-1]!.position):null};
+  return boundedPage(Math.min(limit,rows.length),count=>({tasks:rows.slice(0,count).map(({position:_position,...task})=>task),nextCursor:rows.length>count?String(rows[count-1]!.position):null}));
  }
  readTask(actor:Actor,taskId:string){
   this.readAllowed(actor,taskId);const task=this.task(taskId),version=this.version(taskId,task.headVersion);
@@ -318,6 +331,30 @@ export class RecursiveTasks{
    this.sql('UPDATE tasks SET headVersion=?,notes=?,revision=revision+1,updatedAt=? WHERE id=?',version,patch.notes??task.notes,Date.now(),task.id);
    this.details(key,{action:'update',taskId:task.id,version});return {taskId:task.id,version,revision:task.revision+1,state:'updated',targets:[]};
   });
+ }
+ questionCurrent(item:{runId:string;threadId:string;turnId:string;runEpoch?:number;taskVersion?:number}){
+  const run=this.run(item.runId),task=this.task(run.taskId);
+  const current=this.worker(run.workerId).run;
+  // Recovery fences the old process by advancing its epoch after saving the terminal output.
+  const turnEpoch=run.status==='succeeded'?(JSON.parse(run.checkpointJson??'{}').outputEpoch??run.epoch):run.epoch;
+  return current.threadId===run.threadId && current.version===run.version && !current.stopRequestedAt
+   && ['queued','running','succeeded'].includes(current.status) && task.state==='open' && task.historyState==='visible'
+   && task.headVersion===item.taskVersion && run.version===item.taskVersion && turnEpoch===item.runEpoch
+   && run.threadId===item.threadId && run.turnId===item.turnId && !run.stopRequestedAt
+   && (run.status==='running'||run.status==='succeeded');
+ }
+ questionDelivery(id:string,taskId:string){
+  const key='question:'+id;
+  return this.one<{kind:string;state:string;receipt:string|null}>(`SELECT o.kind,o.state,r.state receipt FROM operations o
+   LEFT JOIN agent_messages m ON m.operationKey=o.id AND m.kind='worker_input'
+   LEFT JOIN agent_receipts r ON r.messageId=m.id AND r.recipientAgentId=m.recipientAgentId
+   WHERE o.actorAgentId=? AND o.scopeId=? AND o.operationId IN (?,?) AND json_extract(o.detailsJson,'$.questionId')=?
+   ORDER BY o.rowid DESC LIMIT 1`,this.store.meta('mainAgentId')!,taskId,key,key+':followup',id);
+ }
+ private cancelQuestions(taskId:string,workerId?:string){
+  if(this.table('worker_interactions'))this.sql(`UPDATE worker_interactions SET state='cancelled',code='task_scope_changed',updatedAt=?
+   WHERE source='ask_main' AND state IN ('pending_main','pending_user','answered','denied') AND deliveredAt IS NULL
+   AND runId IN (SELECT id FROM runs WHERE taskId=?${workerId?' AND workerId=?':''})`,Date.now(),taskId,...(workerId?[workerId]:[]));
  }
  private activeRun(workerId:string){return this.one<TaskRun>("SELECT * FROM runs WHERE workerId=? AND (status IN ('queued','running') OR phase='uncertain') ORDER BY rowid DESC LIMIT 1",workerId);}
  private message(actor:Actor,key:string,to:string,taskId:string,version:number,kind:string,payload:unknown,target:string|null=null,messageId=id('message')){
@@ -372,13 +409,17 @@ export class RecursiveTasks{
    return {taskId,workerId,runId,messageId,version:task.headVersion,state:'queued'};
   });
  }
- workerMessage(actor:Actor,input:{operationId:string;workerId:string;text:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments){
+ workerMessage(actor:Actor,input:{operationId:string;workerId:string;text:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,questionId?:string){
   this.requireMain(actor);const worker=this.worker(input.workerId);
   return this.mutation<WorkerMessageReceipt>(actor,worker.taskId,input.operationId,'worker_message',input,key=>{
    const task=this.task(worker.taskId),run=this.worker(worker.workerId).run;
    this.writable(task);text(input.text);this.dispatchAuthority(actor,task);
+   if(questionId)this.details(key,{questionId});
    const facts={taskId:task.id,workerId:run.workerId,runId:run.id,version:run.version,status:run.status,phase:run.phase,threadId:run.threadId};
-   const blocked=(reason:string):WorkerMessageReceipt=>({...facts,state:'blocked',route:'blocked',reason});
+   const blocked=(reason:string):WorkerMessageReceipt=>{
+    if(questionId)throw Error(reason); // Leave the durable answer pending until this boundary clears.
+    return {...facts,state:'blocked',route:'blocked',reason};
+   };
    if(this.one("SELECT 1 FROM operations WHERE scopeId=? AND kind='worker_steer' AND json_extract(detailsJson,'$.workerId')=? AND state IN ('accepted','dispatching','uncertain')",task.id,run.workerId))return blocked('operation_uncertain');
    if(run.phase==='uncertain')return blocked('run_stop_unconfirmed');
    if(active(run)){
@@ -391,9 +432,10 @@ export class RecursiveTasks{
     return {...facts,route:'steer',state:'requested',messageId,epoch:run.epoch,expectedTurnId:run.turnId};
    }
    if(run.phase!=='ended'||this.stopExitUnconfirmed(run))return blocked('run_stop_unconfirmed');
-   if(this.workerEffectUnconfirmed(run)||this.unresolvedInteractions(task.id,run.workerId)||this.one(
+   if(this.workerEffectUnconfirmed(run)||this.unresolvedInteractions(task.id,run.workerId,true)||this.one(
     "SELECT 1 FROM operations WHERE scopeId=? AND (actorAgentId=? OR json_extract(detailsJson,'$.workerId')=?) AND state IN ('accepted','dispatching','uncertain')",task.id,recipient(run.workerId),run.workerId))return blocked('operation_uncertain');
    if(!run.threadId)return blocked('worker_thread_unavailable');
+   if(!questionId)this.cancelQuestions(task.id,run.workerId);
    const messageId=this.workerInput(actor,key,task,run.workerId,input,prepare);
    const runId=this.newRun(task,run.workerId,messageId,run.status==='interrupted'?run.id:null);
    return {taskId:task.id,workerId:run.workerId,runId,version:task.headVersion,threadId:run.threadId,route:'followup',state:'queued',messageId};
@@ -444,8 +486,11 @@ export class RecursiveTasks{
   if(input.messageId){const row=this.one<PageRow>(`SELECT ${fields} FROM agent_messages WHERE id=? AND taskId=? AND json_extract(payloadJson,'$.workerId')=?${input.itemId?" AND EXISTS(SELECT 1 FROM json_each(payloadJson,'$.messages') WHERE json_extract(value,'$.itemId')=?)":''}`,...(input.itemId?[input.itemId]:[]),offset+1,...(input.itemId?[input.itemId]:[]),input.messageId,worker.taskId,worker.workerId,...(input.itemId?[input.itemId]:[]));if(!row)throw Error('message_not_found');return {workerId:worker.workerId,taskId:worker.taskId,threadId:worker.threadId,runs:[],messages:[page(row)],nextCursor:null};}
   const after=input.after??0,limit=input.limit??20;if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>50)throw Error('worker_query_invalid');
   const rows=this.all<PageRow>(`SELECT ${fields} FROM agent_messages WHERE taskId=? AND seq>? AND (recipientAgentId=? OR senderRunId IN (SELECT id FROM runs WHERE workerId=?)) ORDER BY seq LIMIT ?`,offset+1,worker.taskId,after,recipient(worker.workerId),worker.workerId,limit+1);
-  const runIds=[...new Set([worker.run.id,...rows.slice(0,limit).flatMap(row=>[row.senderRunId,row.targetRunId].filter((value):value is string=>!!value))])];
-  return {workerId:worker.workerId,taskId:worker.taskId,threadId:worker.threadId,runs:this.runSummaries(runIds.map(runId=>this.run(runId)),[worker.run.id]),messages:rows.slice(0,limit).map(page),nextCursor:rows.length>limit?rows[limit-1]!.seq:null};
+  return boundedPage(Math.min(limit,rows.length),count=>{
+   const messages=rows.slice(0,count).map(page);
+   const runIds=[...new Set([worker.run.id,...messages.flatMap(row=>[row.senderRunId,row.targetRunId].filter((value):value is string=>!!value))])];
+   return {workerId:worker.workerId,taskId:worker.taskId,threadId:worker.threadId,runs:this.runSummaries(runIds.map(runId=>this.run(runId)),[worker.run.id]),messages,nextCursor:rows.length>count?rows[count-1]!.seq:null};
+  });
  }
  workingDirectory(runId:string){return this.run(runId).workingDirectory;}
  selectWorkingDirectory(actor:Actor,path:string){this.guard(actor);directory(path);this.sql('UPDATE runs SET workingDirectory=? WHERE id=?',path,actor.runId!);return path;}
@@ -482,6 +527,8 @@ export class RecursiveTasks{
    if(run.threadId&&run.threadId!==threadId||this.one('SELECT 1 FROM runs WHERE threadId=? AND workerId<>? LIMIT 1',threadId,run.workerId))throw Error('worker_thread_conflict');
    this.sql("UPDATE runs SET threadId=?,turnId=?,phase='executing',stateRevision=stateRevision+1,checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.executionAcknowledged',1) WHERE id=?",threadId,turnId,run.id);
    this.sql("UPDATE agent_receipts SET state='received',offeredTurnId=?,revision=revision+1 WHERE offeredRunId=? AND offeredEpoch=? AND state='offered'",turnId,run.id,epoch);
+   if(this.table('worker_interactions'))this.sql(`UPDATE worker_interactions SET deliveredAt=? WHERE deliveredAt IS NULL AND id IN
+    (SELECT json_extract(o.detailsJson,'$.questionId') FROM agent_messages m JOIN operations o ON o.id=m.operationKey JOIN agent_receipts a ON a.messageId=m.id WHERE m.targetRunId=? AND a.state='received')`,Date.now(),run.id);
   };
   if(this.store.db.isTransaction)bind();else this.store.transaction(bind);
  }
@@ -499,6 +546,7 @@ export class RecursiveTasks{
    }
    this.details(operationKey,{rpcState:state});this.sql('UPDATE operations SET state=?,revision=revision+1 WHERE id=?',state==='received'?'confirmed':state,operationKey);
    if(state==='received')this.sql("UPDATE agent_receipts SET state='processed',processedBy=?,revision=revision+1 WHERE messageId=?",run.id,details.messageId);
+   if(state==='received'&&details.questionId)this.sql("UPDATE worker_interactions SET deliveredAt=? WHERE id=? AND state IN ('answered','denied') AND deliveredAt IS NULL",Date.now(),details.questionId);
    if(state==='failed')this.sql("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE messageId=? AND state NOT IN ('processed','rejected')",details.messageId);
    if(state==='uncertain'&&current&&run.status==='running')this.sql("UPDATE runs SET phase='uncertain',stateRevision=stateRevision+1 WHERE id=?",run.id);
   });
@@ -529,14 +577,23 @@ export class RecursiveTasks{
  private finishSegment(run:TaskRun,epoch:number,terminal:TurnResult,engineClosed:boolean){
   if(run.epoch!==epoch||run.stopRequestedAt)return;if(!active(run))return this.one<Operation>("SELECT * FROM operations WHERE scopeId=? AND kind='worker_return' AND json_extract(responseJson,'$.messageId') IN (SELECT id FROM agent_messages WHERE senderRunId=?) ORDER BY rowid DESC LIMIT 1",run.taskId,run.id)?.responseJson?JSON.parse(this.one<Operation>("SELECT * FROM operations WHERE scopeId=? AND kind='worker_return' AND json_extract(responseJson,'$.messageId') IN (SELECT id FROM agent_messages WHERE senderRunId=?) ORDER BY rowid DESC LIMIT 1",run.taskId,run.id)!.responseJson!):undefined;
   const response=this.saveReturn(run,terminal,engineClosed),status=engineClosed?(terminal.status==='completed'?'succeeded':terminal.status==='failed'?'failed':'interrupted'):'interrupted';
-  this.sql('UPDATE runs SET status=?,phase=?,endedAt=?,errorCode=?,stateRevision=stateRevision+1 WHERE id=?',status,engineClosed?'ended':'uncertain',Date.now(),terminal.errorCode??(engineClosed?null:'engine_stop_unconfirmed'),run.id);if(engineClosed)this.sql("UPDATE runs SET checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.workerExitConfirmed',1) WHERE id=?",run.id);this.cancelInteractions(run.id,'worker_turn_ended');return response;
+  this.sql('UPDATE runs SET status=?,phase=?,endedAt=?,errorCode=?,stateRevision=stateRevision+1 WHERE id=?',status,engineClosed?'ended':'uncertain',Date.now(),terminal.errorCode??(engineClosed?null:'engine_stop_unconfirmed'),run.id);if(engineClosed)this.sql("UPDATE runs SET checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.workerExitConfirmed',1) WHERE id=?",run.id);this.cancelInteractions(run.id,'worker_turn_ended',status==='succeeded');return response;
  }
  failRun(runId:string,epoch:number,code:string,uncertain=false){return this.endSegment(runId,epoch,{status:'failed',text:'',errorCode:code},!uncertain);}
- private cancelInteractions(runId:string,code:string){if(this.table('worker_interactions'))this.sql("UPDATE worker_interactions SET state='cancelled',code=?,updatedAt=? WHERE runId=? AND state IN ('pending_main','pending_user')",code,Date.now(),runId);}
+ private cancelInteractions(runId:string,code:string,preserveQuestions=false){if(this.table('worker_interactions'))this.sql("UPDATE worker_interactions SET state='cancelled',code=?,updatedAt=? WHERE runId=? AND state IN ('pending_main','pending_user') AND (?=0 OR source<>'ask_main')",code,Date.now(),runId,Number(preserveQuestions));}
  private exitUnconfirmed(run:TaskRun){return run.phase==='uncertain'||run.startedAt!==null&&JSON.parse(run.checkpointJson??'{}').workerExitConfirmed!==1;}
  confirmWorkerExit(runId:string,expectedLease:string|undefined){return this.store.transaction(()=>{const key='lease:'+runId,actual=this.store.meta(key);if(actual!==expectedLease)return actual===undefined&&JSON.parse(this.run(runId).checkpointJson??'{}').workerExitConfirmed===1;this.sql("UPDATE runs SET checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.workerExitConfirmed',1),phase=CASE WHEN status NOT IN ('queued','running') THEN 'ended' ELSE phase END,stateRevision=stateRevision+1 WHERE id=?",runId);if(actual!==undefined)this.sql('DELETE FROM meta WHERE key=?',key);return true;});}
  interruptWorker(runId:string){const run=this.run(runId);if(!['queued','running'].includes(run.status)||run.stopRequestedAt)return;const checkpoint=JSON.parse(run.checkpointJson??'{}'),closed=checkpoint.workerExitConfirmed===1||run.status==='queued'&&run.startedAt===null&&!this.store.meta('lease:'+run.id);const result=this.endSegment(run.id,run.epoch,checkpoint.workerTerminal??{status:'unconfirmed',text:'',errorCode:'restart_unconfirmed'},closed);this.sql('UPDATE runs SET epoch=epoch+1,stateRevision=stateRevision+1 WHERE id=?',run.id);return result;}
- reconcile(pauseOldWork=false){for(const run of this.runs())if(['queued','running'].includes(run.status))this.interruptWorker(run.id);this.store.transaction(()=>{if(!pauseOldWork){this.sql("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE state='offered' OR state='received' AND recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId')");this.sql("UPDATE operations SET state='uncertain',revision=revision+1 WHERE state='dispatching'");}});}
+ reconcile(pauseOldWork=false){
+  for(const run of this.runs()){
+   if(!['queued','running'].includes(run.status))continue;
+   // A pending reply with no engine owner has never left the queue.
+   if(!pauseOldWork&&run.status==='queued'&&run.phase==='ready'&&run.startedAt===null&&!this.store.meta('lease:'+run.id)&&this.one(
+    `SELECT 1 FROM agent_messages m JOIN operations o ON o.id=m.operationKey JOIN agent_receipts r ON r.messageId=m.id
+     WHERE m.targetRunId=? AND o.kind='worker_message' AND json_extract(o.detailsJson,'$.questionId') IS NOT NULL AND r.state='pending'`,run.id))continue;
+   this.interruptWorker(run.id);
+  }
+  this.store.transaction(()=>{if(!pauseOldWork){this.sql("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE state='offered' OR state='received' AND recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId')");this.sql("UPDATE operations SET state='uncertain',revision=revision+1 WHERE state='dispatching'");}});}
  private requestStops(taskId:string,reason:string,workerId:string){
   const runs=this.runs(taskId,workerId).filter(active);for(const run of runs){
    if(run.stopRequestedAt!==null)continue;
@@ -545,6 +602,7 @@ export class RecursiveTasks{
  }
  workerStop(actor:Actor,input:{operationId:string;workerId:string;reason?:string}){
   this.requireMain(actor);const worker=this.worker(input.workerId);return this.mutation(actor,worker.taskId,input.operationId,'worker_stop',input,key=>{
+   this.cancelQuestions(worker.taskId,worker.workerId);
    const targets=this.requestStops(worker.taskId,input.reason??'worker_interrupted',worker.workerId);this.details(key,{action:'worker_stop',taskId:worker.taskId,workerId:worker.workerId,runIds:targets});return {taskId:worker.taskId,workerId:worker.workerId,state:targets.length?'requested':'confirmed',targets};
   });
  }
@@ -557,6 +615,7 @@ export class RecursiveTasks{
    const blockers:{reason:string;id?:string;workerId?:string;runId?:string;status?:string;phase?:string}[]=this.runs(task.id)
     .filter(run=>active(run)||this.stopExitUnconfirmed(run)).map(run=>({reason:run.stopRequestedAt!==null?'worker_stop_requested':'run_not_closed',workerId:run.workerId,runId:run.id,status:run.status,phase:run.phase}));
    for(const {run} of this.workers(task.id))if(this.workerEffectUnconfirmed(run))blockers.push({reason:'worker_effect_unconfirmed',workerId:run.workerId,runId:run.id});
+   if(input.action==='pause')this.cancelQuestions(task.id);
    const operation=this.unresolved(task.id,key),interaction=this.unresolvedInteractions(task.id);
    if(operation)blockers.push({reason:'operation_unresolved',id:operation.id});
    if(interaction)blockers.push({reason:'interaction_unresolved',id:interaction.id});
@@ -623,9 +682,9 @@ export class RecursiveTasks{
   }
  }
  queueInteraction(interactionId:string){if(!this.table('worker_interactions'))throw Error('interaction_not_found');const interaction=this.one<{runId:string;threadId:string;turnId:string;kind:string}>('SELECT runId,threadId,turnId,kind FROM worker_interactions WHERE id=?',interactionId);if(!interaction)throw Error('interaction_not_found');const run=this.run(interaction.runId),key='interaction:'+interactionId;if(this.one('SELECT 1 FROM operations WHERE id=?',key))return;this.insertOperation(key,'host',run.taskId,key,'interaction_notice',{},'confirmed');this.message({agentId:'host',runId:run.id,epoch:run.epoch},key,this.store.meta('mainAgentId')!,run.taskId,run.version,'interaction_required',{interactionId,runId:run.id,workerId:run.workerId,threadId:interaction.threadId,turnId:interaction.turnId});}
- private unresolvedInteractions(taskId:string,workerId?:string){
+ private unresolvedInteractions(taskId:string,workerId?:string,allowQuestions=false){
   return this.table('worker_interactions')?this.one<{id:string}>(`SELECT i.id FROM worker_interactions i JOIN runs r ON r.id=i.runId
-    WHERE r.taskId=?${workerId?' AND r.workerId=?':''} AND (i.state IN ('pending_main','pending_user') OR i.state IN ('approved','denied','answered') AND i.deliveredAt IS NULL) LIMIT 1`,taskId,...(workerId?[workerId]:[])):undefined;
+    WHERE (?=0 OR i.source<>'ask_main') AND r.taskId=?${workerId?' AND r.workerId=?':''} AND (i.state IN ('pending_main','pending_user') OR i.state IN ('approved','denied','answered') AND i.deliveredAt IS NULL) LIMIT 1`,Number(allowQuestions),taskId,...(workerId?[workerId]:[])):undefined;
  }
  private historyBlockers(task:Task,except:string){
   const blockers:{reason:string;id:string}[]=[];
@@ -635,7 +694,7 @@ export class RecursiveTasks{
   add('message_unprocessed',this.all(`SELECT m.id FROM agent_messages m LEFT JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND
     (r.state IS NULL OR r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected') OR
       r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()}))`,task.id));
-  const interaction=this.unresolvedInteractions(task.id);
+  const interaction=this.unresolvedInteractions(task.id,undefined,true);
   if(interaction)add('interaction_unresolved',[interaction]);
   const relatedInputs=`SELECT m.id FROM agent_messages m WHERE m.taskId=? OR m.taskId IS NULL AND m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${taskSourceRequestsSql})`;
   add('operation_unresolved',this.all(`SELECT id FROM operations WHERE id<>? AND state IN ('accepted','dispatching','uncertain')
@@ -665,6 +724,7 @@ export class RecursiveTasks{
   for(const source of [authority.sourceRequestId,...(authority.sourceRequestIds??[])])this.lifecycle?.validateScheduledSource?.(source);
  }
  private commitArchive(task:Task,key:string){
+  this.cancelQuestions(task.id);
   this.sql("UPDATE tasks SET historyState='archived',state='paused',revision=revision+1,updatedAt=? WHERE id=?",Date.now(),task.id);
   this.message({agentId:'host'},key,this.store.meta('mainAgentId')!,task.id,task.headVersion,'task_archived',{historyState:'archived',revision:task.revision+1});
   return {taskId:task.id,version:task.headVersion,state:'archived',revision:task.revision+1,diskBytesReclaimed:null};
@@ -770,7 +830,7 @@ export class RecursiveTasks{
   return !this.one("SELECT 1 FROM runs WHERE status IN ('queued','running') OR phase='uncertain'")
     && !this.one("SELECT 1 FROM operations WHERE state IN ('accepted','dispatching','uncertain') AND kind NOT IN ('membership_video','membership_audio')")
     && !this.one(`SELECT 1 FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND ${unconfirmedNativeEffectsSql()} LIMIT 1`)
-    && !(this.table('worker_interactions')&&this.one("SELECT 1 FROM worker_interactions WHERE state IN ('pending_main','pending_user') OR state IN ('approved','denied','answered') AND deliveredAt IS NULL LIMIT 1"))
+    && !(this.table('worker_interactions')&&this.one("SELECT 1 FROM worker_interactions WHERE state='pending_main' OR state='pending_user' AND source<>'ask_main' OR state IN ('approved','denied','answered') AND deliveredAt IS NULL LIMIT 1"))
     && !this.one(`SELECT 1 FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId
       WHERE (r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected'))
         OR (r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND

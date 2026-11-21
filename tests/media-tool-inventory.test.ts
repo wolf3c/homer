@@ -4,11 +4,12 @@ import {MAIN_TOOLS} from '../src/tools.js';
 import * as media from '../src/media-tools.js';
 import {HOST_MCP_TOOLS,WORKER_HOST_MCP_TOOLS} from '../src/worker-interaction-mcp.js';
 import {validateToolArguments} from '../src/recursive-tools.js';
-test('MCP retains media reads, while file writes require native dynamic calls',()=>{
+test('MCP exposes scoped media reads and the Worker file export',()=>{
  assert.deepEqual(media.MEDIA_TOOLS.map(t=>t.name),['runtime_capabilities','inspect_attachment']);
  for(const tool of media.MEDIA_TOOLS)assert.ok(HOST_MCP_TOOLS.some(t=>t.name===tool.name));
  assert.deepEqual(media.WORKER_MEDIA_TOOLS.map(t=>t.name),['inspect_attachment']);
- for(const name of ['runtime_capabilities','inspect_result_file','quote_current_message','prepare_combined_delivery','create_voice_result','stage_file_result','stage_workspace_file'])assert.equal(WORKER_HOST_MCP_TOOLS.some(t=>t.name===name),false,name);
+ for(const name of ['runtime_capabilities','inspect_result_file','quote_current_message','prepare_combined_delivery','create_voice_result','stage_workspace_file'])assert.equal(WORKER_HOST_MCP_TOOLS.some(t=>t.name===name),false,name);
+ assert.ok(WORKER_HOST_MCP_TOOLS.includes(media.WORKER_FILE_TOOLS[0]!));
  for(const name of ['inspect_result_file','quote_current_message','prepare_combined_delivery'])assert.equal(HOST_MCP_TOOLS.some(t=>t.name===name),false,name);
  assert.equal(MAIN_TOOLS.some(t=>t.name==='stage_workspace_file'),false);
 });

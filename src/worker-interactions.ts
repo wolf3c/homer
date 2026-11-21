@@ -46,6 +46,7 @@ type Live = {
 type Hooks = {
   // Queue a main turn; this callback MUST NOT await the Worker's response.
   ready?: (id: string) => void;
+  questionCurrent?: (item: InteractionRecord) => boolean;
   persisted?: (id:string)=>void;
   // Pause/resume the run's active execution clock on first/last pending interaction.
   waiting?: (runId: string, waiting: boolean) => void;
@@ -94,8 +95,8 @@ export class WorkerInteractions {
       return summary;
     });
   }
-  hasPending(runId: string) {
-    return !!this.db.prepare("SELECT 1 FROM worker_interactions WHERE runId=? AND state IN ('pending_main','pending_user') LIMIT 1").get(runId);
+  hasPending(runId: string,nativeOnly=false) {
+    return !!this.db.prepare("SELECT 1 FROM worker_interactions WHERE runId=? AND (?=0 OR source='native') AND state IN ('pending_main','pending_user') LIMIT 1").get(runId,Number(nativeOnly));
   }
   pendingForMain(historyThreadId:string){
     // Worker threadId is not the main conversation. Follow captured user source.
@@ -105,6 +106,27 @@ export class WorkerInteractions {
     return {total,items};
   }
   open(input: InteractionInput, isCurrent: () => boolean, validate?: (decision: InteractionDecision) => void): { id: string; response: Promise<InteractionResolution> } {
+    const wasWaiting=this.hasPending(input.runId,input.source==='native');
+    const {id,created}=this.register(input,isCurrent);
+    if(!created){
+      const live=this.live.get(id);
+      if(!live||!pending(this.row(id).state)||!live.isCurrent())throw Error('interaction_not_live');
+      return {id,response:live.response};
+    }
+    let resolve!: Live["resolve"];
+    const response = new Promise<InteractionResolution>(done => { resolve = done; });
+    this.live.set(id, { response, resolve, isCurrent, validate });
+    if (!wasWaiting) this.hooks.waiting?.(input.runId, true);
+    this.hooks.ready?.(id);
+    return { id, response };
+  }
+  openQuestion(input:InteractionInput,isCurrent:()=>boolean){
+    const {id,created}=this.register(input,isCurrent);
+    if(created)this.hooks.ready?.(id);
+    const {state}=this.row(id);
+    return {interactionId:id,status:pending(state)?'pending':state};
+  }
+  private register(input:InteractionInput,isCurrent:()=>boolean){
     if((input.runEpoch!==undefined||input.taskVersion!==undefined)&&(!Number.isSafeInteger(input.runEpoch)||!Number.isSafeInteger(input.taskVersion)))throw Error('interaction_invalid_request');
     for (const value of [input.runId, input.threadId, input.turnId])
       if (!text(value, 200)) throw new Error("interaction_invalid_request");
@@ -120,11 +142,9 @@ export class WorkerInteractions {
     const prior = this.db.prepare("SELECT id,fingerprint FROM worker_interactions WHERE identity=?").get(identity) as { id: string; fingerprint: string } | undefined;
     if (prior) {
       if (prior.fingerprint !== fingerprint) throw new Error("interaction_request_conflict");
-      const live = this.live.get(prior.id);
-      if (!live || !pending(this.row(prior.id).state) || !live.isCurrent()) throw new Error("interaction_not_live");
-      return { id: prior.id, response: live.response };
+      return {id:prior.id,created:false};
     }
-    const id = randomUUID(), now = Date.now(), wasWaiting = this.hasPending(input.runId);
+    const id = randomUUID(), now = Date.now();
     this.db.exec('SAVEPOINT worker_interaction_open');
     try{
     this.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,runEpoch,taskVersion,state,createdAt,updatedAt)
@@ -135,15 +155,13 @@ export class WorkerInteractions {
       this.hooks.persisted?.(id);
       this.db.exec('RELEASE worker_interaction_open');
     }catch(error){this.db.exec('ROLLBACK TO worker_interaction_open; RELEASE worker_interaction_open');throw error;}
-    let resolve!: Live["resolve"];
-    const response = new Promise<InteractionResolution>(done => { resolve = done; });
-    this.live.set(id, { response, resolve, isCurrent, validate });
-    if (!wasWaiting) this.hooks.waiting?.(input.runId, true);
-    this.hooks.ready?.(id);
-    return { id, response };
+    return {id,created:true};
   }
-  private current(id: string): Live {
+  private current(id: string): Live | undefined {
     const row = this.row(id), live = this.live.get(id);
+    if(!live && row.source==='ask_main' && this.hooks.questionCurrent && !['cancelled','expired'].includes(row.state)){
+      if(!pending(row.state)||this.hooks.questionCurrent(this.inspect(id)))return undefined;
+    }
     if (!live || !live.isCurrent() || (row.state === "cancelled" && row.code !== "interaction_user_cancelled") || row.state === "expired") {
       if (pending(row.state) || (row.deliveredAt === null && ["approved", "answered", "denied", "cancelled"].includes(row.state)))
         this.invalidate(id, "expired", "worker_not_live");
@@ -187,7 +205,7 @@ export class WorkerInteractions {
     }
     // Only the host's actual user-message context supplies this association.
     if (row.state === "pending_user" && decision.action !== "deny" && !text(context.userMessageId, 200)) throw new Error("interaction_user_reply_required");
-    live.validate?.(decision);
+    live?.validate?.(decision);
     return { duplicate: false, live, row, serialized };
   }
   validateResponse(id: string, decision: InteractionDecision, context: { userMessageId?: string; userText?: string } = {}) {
@@ -208,8 +226,8 @@ export class WorkerInteractions {
     const state = decision.action === "approve" ? "approved" : decision.action === "deny" ? "denied" : decision.action === "cancel" ? "cancelled" : "answered";
     this.db.prepare("UPDATE worker_interactions SET state=?,decision=?,responseUserMessageId=?,responseUserText=?,code=?,updatedAt=? WHERE id=?")
       .run(state, serialized, row.responseUserMessageId ?? context.userMessageId ?? null, row.responseUserText ?? context.userText ?? null, decision.action === "cancel" ? "interaction_user_cancelled" : null, Date.now(), id);
-    live.resolve({ status: state, decision: JSON.parse(serialized) });
-    if (!this.hasPending(row.runId)) this.hooks.waiting?.(row.runId, false);
+    live?.resolve({ status: state, decision: JSON.parse(serialized) });
+    if (live && !this.hasPending(row.runId,row.source==='native')) this.hooks.waiting?.(row.runId, false);
     return { duplicate: false };
   }
   markDelivered(id: string) {
@@ -234,12 +252,15 @@ export class WorkerInteractions {
     const live = this.live.get(id);
     this.live.delete(id);
     live?.resolve({ status: state, code });
-    if (pending(row.state) && !this.hasPending(row.runId)) this.hooks.waiting?.(row.runId, false);
+    if (pending(row.state) && !this.hasPending(row.runId,row.source==='native')) this.hooks.waiting?.(row.runId, false);
     return true;
   }
   cancelRun(runId: string, code = "worker_stopped") {
     if (!/^[a-z][a-z0-9_]{1,70}$/.test(code)) throw new Error("interaction_invalid_code");
-    for (const item of this.list(runId)) this.invalidate(item.id, "cancelled", code);
+    for (const item of this.list(runId)) {
+      if(item.source==='ask_main' && (code==='worker_turn_ended'||code==='worker_process_exited'))continue;
+      this.invalidate(item.id, "cancelled", code);
+    }
     // Delivered decisions remain history, but never remain live callback authority.
     for (const item of this.list(runId)) this.live.delete(item.id);
   }
@@ -250,7 +271,7 @@ export class WorkerInteractions {
   reconcile() {
     let count = 0;
     for (const item of this.list())
-      if (!this.live.has(item.id) && this.invalidate(item.id, "expired", "process_callback_lost")) count++;
+      if (!(item.source==='ask_main' && this.hooks.questionCurrent) && !this.live.has(item.id) && this.invalidate(item.id, "expired", "process_callback_lost")) count++;
     return count;
   }
 }

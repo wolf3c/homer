@@ -1,3 +1,5 @@
+import {randomUUID} from 'node:crypto';
+import type {EventEmitter} from 'node:events';
 import {createConnection} from 'node:net';
 import type {EngineOptions} from '../../src/engine.js';
 
@@ -13,13 +15,23 @@ export function mcpCall(path: string, tool: string, args: unknown, meta?: unknow
   });
 }
 
-export async function callHostMcp(options: EngineOptions, tool: string, args: unknown): Promise<any> {
+export async function callHostMcp(options: EngineOptions, tool: string, args: unknown, meta?: unknown): Promise<any> {
   const mcp = options.interactionMcp;
   if (!mcp) throw Error('test_mcp_missing');
   const roleIndex = mcp.args.indexOf(options.role === 'worker' ? 'worker' : 'main');
   const path = mcp.args[roleIndex - 1];
   if (roleIndex < 1 || !path) throw Error('test_mcp_socket_missing');
-  const response = await mcpCall(path, tool, args);
+  const response = await mcpCall(path, tool, args, meta);
   if (response.error) throw Error(response.error);
   return response.result;
+}
+
+export async function callEngineMcp(peer: EventEmitter & {options:EngineOptions; threadId?:string; turnId?:string}, tool:string, args:unknown) {
+  const itemId=randomUUID(), {threadId,turnId}=peer;
+  peer.emit('hostMcpToolStarted',{threadId,turnId,itemId,tool,arguments:args});
+  try {
+    return await callHostMcp(peer.options,tool,args,{callId:itemId,'x-codex-turn-metadata':{turn_id:turnId}});
+  } finally {
+    peer.emit('hostMcpToolCompleted',threadId,turnId,itemId);
+  }
 }

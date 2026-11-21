@@ -40,7 +40,7 @@ for(const acrossSources of [false,true])test('pinned Codex drives a simulated ch
   const file=join(workspace,'native-channel-report.md');
   const report=`[Original report](${pathToFileURL(file).href})`;
   writeFileSync(file,'# Original pinned report');
-  const call=(name:string,args:unknown,namespace?:string)=>({type:'function_call',call_id:'call-'+phase+'-'+step,name,
+  const call=(name:string,args:unknown,namespace='mcp__homer_interactions')=>({type:'function_call',call_id:'call-'+phase+'-'+step,name,
     ...(namespace?{namespace}:{}),arguments:JSON.stringify(args)});
   const answer=(text:string,messagePhase:'final_answer'|'commentary'='final_answer')=>({type:'message',id:'message-'+phase+'-'+step,
     role:'assistant',phase:messagePhase,content:[{type:'output_text',text}]});
@@ -54,7 +54,7 @@ for(const acrossSources of [false,true])test('pinned Codex drives a simulated ch
       const payload=JSON.parse(data),input=payload.input??[];
       const latest=input.findLast((item:any)=>item.role==='user');
       const tools=JSON.stringify([...(payload.tools??[]),...input.filter((item:any)=>item.type==='additional_tools').flatMap((item:any)=>item.tools??[])]);
-      const worker=!tools.includes('worker_open');
+      const worker=JSON.stringify(latest??{}).includes('宿主任务事实');
       const internal=JSON.stringify(latest??{}).includes('内部协作输入');
       const last=input.at(-1);
       const result=last?.type==='function_call_output'?JSON.stringify(last.output):'';
