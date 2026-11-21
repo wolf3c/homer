@@ -5,11 +5,12 @@ import wechatLogo from '../assets/branding/chat-apps/wechat.png';
 import telegramLogo from '../assets/branding/chat-apps/telegram.svg';
 import dingtalkLogo from '../assets/branding/chat-apps/dingtalk.png';
 import type {DesktopChannel,DesktopChannelStart,DesktopChannelState} from '../src/desktop-channels';
-import type {ChannelStatus} from '../src/channel-plugin';
+import type {ChannelConnection,ChannelStatus} from '../src/channel-plugin';
 
 type BindingInput={channel:DesktopChannel;key:string};
 type Bridge={
   state:(refresh:boolean)=>Promise<DesktopChannelState>;
+  health?:()=>Promise<ChannelConnection[]>;
   start:(input:DesktopChannelStart)=>Promise<string>;
   code:(input:{id:string;code:string})=>Promise<void>;
   confirm:(input:{id:string})=>Promise<void>;
@@ -21,6 +22,10 @@ declare global{interface Window{homerDesktopChatApps?:Bridge;}}
 
 const names={wechat:'微信',telegram:'Telegram',dingtalk:'钉钉'};
 const logos={wechat:wechatLogo,telegram:telegramLogo,dingtalk:dingtalkLogo};
+const tracksHealth=({adapterId}:ChannelConnection)=>adapterId==='wechat'||adapterId==='telegram';
+const connectionKey=({adapterId,accountKey}:ChannelConnection)=>adapterId+':'+accountKey;
+// The Electron request can still be in flight when the panel unmounts.
+let reading:Promise<unknown>|undefined;
 const status={ready:'已连接',setup:'待发送首条消息',reauthorize:'需重新授权',offline:'暂时无法连接',checking:'等待连接'};
 const phase={
   starting:'正在核验',scan:'等待扫码',scanned:'等待手机确认',code:'输入手机验证码',pair:'在 Bot 私聊里发起配对',
@@ -51,16 +56,22 @@ export function DesktopChatApps(){
   const [pending,setPending]=useState(false);
   const [notice,setNotice]=useState('');
   const [applying,setApplying]=useState(false);
+  const [healthError,setHealthError]=useState(false);
   const alive=useRef(false),flowId=useRef<string|undefined>(undefined),request=useRef(0),mutating=useRef(false);
   const heading=useRef<HTMLHeadingElement>(null);
   const mounted=()=>alive.current;
 
   async function read(refresh:boolean){
     const id=++request.current;
+    if(reading)await reading.catch(()=>{});
+    if(!mounted()||id!==request.current)return;
+    const response=Promise.resolve().then(()=>bridge.state(refresh));
+    reading=response;
     try{
-      const next=await bridge.state(refresh);
+      const next=await response;
       if(!mounted()||id!==request.current)return;
       setState(next);
+      setHealthError(false);
       if(!next.readError&&!next.busy)setApplying(false);
       if(next.busy&&next.flow&&!flowId.current)flowId.current=next.flow.id;
       if(!next.readError&&next.flow&&next.flow.id===flowId.current&&!next.result){
@@ -74,7 +85,7 @@ export function DesktopChatApps(){
       return next;
     }catch{
       if(mounted()&&id===request.current)setNotice('连接状态未能读取，请重新检查。');
-    }
+    }finally{reading=undefined;}
   }
 
   useEffect(()=>{
@@ -89,27 +100,93 @@ export function DesktopChatApps(){
 
   const flow=state?.flow;
   const watching=!!state?.busy||!!form&&!!flow&&['starting','scan','scanned','pair','applying'].includes(flow.phase);
+  const watchingOperation=watching||applying;
   useEffect(()=>{
-    if(!watching&&!applying)return;
+    if(!watchingOperation||pending)return;
     let disposed=false,timer:ReturnType<typeof setTimeout>;
+    const schedule=(delay:number)=>{
+      clearTimeout(timer);
+      if(!disposed&&!document.hidden)timer=setTimeout(tick,delay);
+    };
     const tick=async()=>{
+      if(document.hidden||mutating.current)return;
       const next=await read(false);
       if(disposed)return;
       if(!next?.busy&&next?.result?.id===flowId.current&&next?.result?.error){setApplying(false);return;}
-      timer=setTimeout(tick,500);
+      schedule(500);
     };
-    timer=setTimeout(tick,500);
-    return ()=>{disposed=true;clearTimeout(timer);};
-  },[watching,applying,bridge]);
+    const visibility=()=>schedule(0);
+    schedule(500);
+    document.addEventListener('visibilitychange',visibility);
+    return ()=>{disposed=true;clearTimeout(timer);document.removeEventListener('visibilitychange',visibility);};
+  },[watchingOperation,pending,bridge]);
+
+  const hasHealth=!!state&&!state.readError&&!state.stopped&&state.bindings.some(tracksHealth);
+  const checking=!!state?.bindings.some(row=>tracksHealth(row)&&row.state==='checking');
+  useEffect(()=>{
+    const health=bridge.health;
+    if(!health||!hasHealth||watchingOperation||pending||form)return;
+    let disposed=false,timer:ReturnType<typeof setTimeout>,visibilityEpoch=0,failures=0;
+    const fastUntil=Date.now()+60_000;
+    const schedule=(delay:number)=>{
+      clearTimeout(timer);
+      if(!disposed&&!document.hidden)timer=setTimeout(tick,delay);
+    };
+    const tick=async()=>{
+      if(disposed||document.hidden||mutating.current)return;
+      if(reading){schedule(2_000);return;}
+      const id=request.current,epoch=visibilityEpoch;
+      const current=()=>!disposed&&!document.hidden&&id===request.current&&epoch===visibilityEpoch;
+      const response=Promise.resolve().then(health);
+      reading=response;
+      let delay=10_000;
+      try{
+        const connections=await response;
+        if(!current())return;
+        failures=0;
+        setHealthError(false);
+        const byKey=new Map(connections.map(connection=>[connectionKey(connection),connection]));
+        setState(previous=>{
+          if(!previous||!current())return previous;
+          const bindings=previous.bindings.map(row=>{
+            if(!tracksHealth(row)||previous.result?.saved&&previous.result.error&&previous.result.channel===row.adapterId)return row;
+            const latest=byKey.get(connectionKey(row));
+            const label=latest?.label??row.label,state=latest?.state??'checking';
+            return row.label===label&&row.state===state?row:{...row,label,state};
+          });
+          return bindings.some((row,index)=>row!==previous.bindings[index])?{...previous,bindings}:previous;
+        });
+        if(Date.now()<fastUntil&&connections.some(row=>tracksHealth(row)&&row.state==='checking'))delay=2_000;
+      }catch{
+        if(!current())return;
+        setHealthError(true);
+        delay=Math.min(++failures*10_000,30_000);
+      }finally{
+        reading=undefined;
+        if(current())schedule(delay);
+        else if(!disposed&&!document.hidden&&epoch===visibilityEpoch)schedule(2_000);
+      }
+    };
+    const visibility=()=>{visibilityEpoch++;schedule(0);};
+    schedule(checking?2_000:10_000);
+    document.addEventListener('visibilitychange',visibility);
+    return ()=>{disposed=true;clearTimeout(timer);document.removeEventListener('visibilitychange',visibility);};
+  },[hasHealth,watchingOperation,pending,form,bridge]);
 
   useEffect(()=>{heading.current?.focus();},[selected,form]);
 
   async function act(run:()=>Promise<unknown>,failure='操作未能完成，请重新检查后重试。'){
     if(mutating.current)return;
     mutating.current=true;
+    request.current++;
     setPending(true);
     setNotice('');
-    try{await run();if(mounted())await read(false);}
+    try{
+      if(reading)await reading.catch(()=>{});
+      if(!mounted())return;
+      await run();
+      if(mounted())await read(false);
+    }
     catch{if(mounted()){setNotice(failure);await read(false);}}
     finally{mutating.current=false;if(mounted())setPending(false);}
   }
@@ -147,13 +224,16 @@ export function DesktopChatApps(){
   const rows=(channel:DesktopChannel)=>(state?.bindings??[]).filter(row=>row.adapterId===channel);
   const row=selected&&rows(selected.channel).find(binding=>binding.accountKey===selected.key);
   const label=(channel:DesktopChannel,binding:ChannelStatus)=>channel==='telegram'&&binding.label!==binding.accountKey?'@'+binding.label:binding.label;
-  const pill=(binding:ChannelStatus)=><span className="chat-apps-status" data-state={state?.readError?'offline':binding.state}>{state?.readError?'状态未确认':status[binding.state]}</span>;
+  const pill=(binding:ChannelStatus)=>{
+    const unconfirmed=state?.readError||healthError&&tracksHealth(binding);
+    return <span className="chat-apps-status" data-state={unconfirmed?'offline':binding.state}>{unconfirmed?'状态未确认':status[binding.state]}</span>;
+  };
 
   return <div className="chat-apps" aria-busy={busy}>
     {(row||form)&&<button className="chat-apps-quiet" type="button" onClick={back} disabled={busy}><ArrowLeft size={16}/>返回聊天应用</button>}
     <header className="chat-apps-heading">
       <h2 ref={heading} tabIndex={-1}>{form?form.target?'重新授权 '+names[form.channel]:form.channel==='wechat'?'绑定微信':form.channel==='dingtalk'?'添加钉钉机器人':'添加 Telegram Bot':row?'绑定详情':'连接聊天应用'}</h2>
-      {!form&&!row&&<button className="chat-apps-quiet" type="button" disabled={busy} onClick={()=>void act(async()=>{await read(true);})}>重新检查</button>}
+      {!form&&!row&&<button className="chat-apps-quiet" type="button" disabled={busy} onClick={()=>{setNotice('');void read(true);}}>重新检查</button>}
     </header>
     {notice&&<p role="alert">{notice}</p>}
       {state?.stopped&&<p role="status">运行服务未连接，请重新检查。</p>}

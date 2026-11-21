@@ -711,12 +711,12 @@ function registerDesktopChannels(){
  ipcMain.handle('homer:chat-apps',async(event,action,input)=>{
   const frame=event.senderFrame,navigation=permissionNavigation;
   if(!permissionCaller(event,frame))throw Error('desktop_channels_forbidden');
-  if(!['state','start','code','confirm','cancel','remove','apply'].includes(action))throw Error('desktop_channels_arguments');
-  if(action==='state'?typeof input!=='boolean':action==='apply'?input!==undefined:!input||typeof input!=='object')throw Error('desktop_channels_arguments');
+  if(!['state','health','start','code','confirm','cancel','remove','apply'].includes(action))throw Error('desktop_channels_arguments');
+  if(action==='state'?typeof input!=='boolean':action==='apply'||action==='health'?input!==undefined:!input||typeof input!=='object')throw Error('desktop_channels_arguments');
   if(['code','confirm','cancel'].includes(action)&&typeof input.id!=='string'||action==='remove'&&typeof input.key!=='string')throw Error('desktop_channels_arguments');
   if(quitPending||updateStopping||(updateState?.status==='ready'&&!closed))throw Error('desktop_channels_busy');
   try{
-   const value=await nativeAccount('channel-manage',{action,input});
+   const value=await (action==='health'?nativeAccount('channel-state'):nativeAccount('channel-manage',{action,input}));
    if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_channels_forbidden');
    if(action==='state')channelSnapshot=value;
    return value;

@@ -62,7 +62,7 @@ if(process.isMainFrame===true){
   dismiss:(...args)=>invoke('homer:feature-tour:dismiss',args),
  });
  contextBridge.exposeInMainWorld('homerDesktopChatApps',Object.fromEntries(
-  ['state','start','code','confirm','cancel','remove','apply']
+  ['state','health','start','code','confirm','cancel','remove','apply']
    .map(action=>[action,input=>ipcRenderer.invoke('homer:chat-apps',action,input)]),
  ));
  contextBridge.exposeInMainWorld('homerDesktopSettings',{

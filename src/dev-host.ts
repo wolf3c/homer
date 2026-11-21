@@ -233,7 +233,7 @@ async function receive(raw: unknown) {
         await send({kind:'web_result',id:m.id,value});return;
       }
       if(m.method==='channel-state'){
-        await send({kind:'web_result',id:m.id,value:app.channels?.connectionStatus()??[]});
+        await send({kind:'web_result',id:m.id,value:app.channels?.connectionHealth()??[]});
         return;
       }
       if(m.method==='models'){await send({kind:'web_result',id:m.id,value:await app.manageNativeAccount({action:'model_list'})});return;}

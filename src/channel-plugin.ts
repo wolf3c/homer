@@ -29,6 +29,7 @@ export type ChannelPacket = {address:ChannelAddress; messageId:string; attemptId
 type TransportResult = {state:'sent'|'failed'|'unknown'; receipt?:string};
 export type ChannelHealth='checking'|'ready'|'setup'|'offline'|'reauthorize';
 export type ChannelStatus={adapterId:string;accountKey:string;label:string;state:ChannelHealth;failed:number;unknown:number};
+export type ChannelConnection=Omit<ChannelStatus,'failed'|'unknown'>;
 
 export type ChannelAdapter = {
   id:string;
@@ -167,6 +168,18 @@ export class ChannelPlugin {
     return this.db.prepare('SELECT * FROM channel_bindings WHERE id=? AND revokedAt IS NULL').get(id) as Binding|undefined;
   }
 
+  private describeConnection({adapterId,accountKey}:Pick<ChannelAddress,'adapterId'|'accountKey'>):ChannelConnection{
+    const adapter=this.adapters.get(adapterId);
+    return {adapterId,accountKey,label:adapter?.accountLabel?.(accountKey)??accountKey,
+      state:this.paused.has(adapterId)?this.changing?'checking':'offline':adapter?.connectionState?.(accountKey)??'checking'};
+  }
+
+  connectionHealth():ChannelConnection[]{
+    this.requireOpen();
+    const rows=this.db.prepare('SELECT adapterId,accountKey FROM channel_bindings WHERE revokedAt IS NULL').all();
+    return rows.map(row=>this.describeConnection(row as Pick<ChannelAddress,'adapterId'|'accountKey'>));
+  }
+
   connectionStatus():ChannelStatus[]{
     this.requireOpen();
     const rows=this.db.prepare(`SELECT b.adapterId,b.accountKey,
@@ -177,10 +190,8 @@ export class ChannelPlugin {
         FROM channel_outbox WHERE state IN ('failed','unknown') GROUP BY bindingId
       ) o ON o.bindingId=b.id WHERE b.revokedAt IS NULL ORDER BY b.rowid`).all();
     return rows.map(row=>{
-      const {adapterId,accountKey,failed,unknown}=row as Pick<ChannelStatus,'adapterId'|'accountKey'|'failed'|'unknown'>;
-      const adapter=this.adapters.get(adapterId);
-      return {adapterId,accountKey,label:adapter?.accountLabel?.(accountKey)??accountKey,
-        state:this.paused.has(adapterId)?this.changing?'checking':'offline':adapter?.connectionState?.(accountKey)??'checking',failed,unknown};
+      const binding=row as Pick<ChannelStatus,'adapterId'|'accountKey'|'failed'|'unknown'>;
+      return {...this.describeConnection(binding),failed:binding.failed,unknown:binding.unknown};
     });
   }
 

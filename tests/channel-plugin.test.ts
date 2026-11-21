@@ -1,14 +1,15 @@
 import {openTaskWorker} from './fixtures/open-task-worker.js';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {existsSync,writeFileSync} from 'node:fs';
+import {existsSync,mkdtempSync,rmSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createInterface} from 'node:readline';
 import {DatabaseSync} from 'node:sqlite';
 import {setImmediate as yieldTurn} from 'node:timers/promises';
 import test from 'node:test';
-import {ChannelPlugin, type ChannelAdapter, type ChannelPacket} from '../src/channel-plugin.js';
+import {ChannelPlugin, type ChannelAdapter, type ChannelHealth, type ChannelPacket} from '../src/channel-plugin.js';
 import type {TurnResult} from '../src/engine.js';
 import {fixture, until} from './fixtures/worker-chat-host.js';
 import {mcpCall} from './fixtures/host-mcp-call.js';
@@ -20,6 +21,29 @@ const input = (entry: typeof A, eventId:string, text:string) => ({...entry,event
 const tables = (app: ReturnType<typeof fixture>['app']) => app.store.db.prepare(
   "SELECT name,sql FROM sqlite_master WHERE type IN ('table','index') ORDER BY name").all();
 const nativeFinal=(text:string):TurnResult=>({status:'completed',text,messages:[{itemId:'final',phase:'final_answer',text}]});
+
+test('connection health reads active bindings and live adapter state without the outbox',async()=>{
+  const runtime=mkdtempSync(join(tmpdir(),'homer-connection-health-'));
+  let state:ChannelHealth='checking';
+  const app={config:{runtime},registerMainPluginTool(){}} as unknown as ConstructorParameters<typeof ChannelPlugin>[0];
+  const adapters=['wechat','telegram'].map(id=>({
+    id,accountLabel:()=>id+' fixture',connectionState:()=>state,
+    async send(){throw Error('unexpected send');},
+  }));
+  const channels=new ChannelPlugin(app,adapters),db=new DatabaseSync(join(runtime,'channels.sqlite'));
+  try{
+    for(const adapter of adapters)channels.bind({...A,adapterId:adapter.id});
+    assert.equal(channels.connectionStatus().length,2);
+    db.exec('DROP TABLE channel_outbox');
+    for(state of ['checking','ready','offline','ready'] as const){
+      const rows=channels.connectionHealth();
+      assert.deepEqual(rows.map(row=>row.state),[state,state]);
+      assert.ok(rows.every(row=>row.label===row.adapterId+' fixture'&&!('failed' in row)&&!('senderKey' in row)));
+    }
+    db.exec("UPDATE channel_bindings SET revokedAt=1 WHERE adapterId='telegram'");
+    assert.deepEqual(channels.connectionHealth().map(row=>row.adapterId),['wechat']);
+  }finally{db.close();await channels.close();rmSync(runtime,{recursive:true,force:true});}
+});
 
 test('Homer manages configured channels and connects only explicitly bound accounts', async()=>{
   const connections:Parameters<NonNullable<ChannelAdapter['connect']>>[]=[];

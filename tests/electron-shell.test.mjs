@@ -1522,8 +1522,9 @@ test('preload exposes fixed Promise methods and only the screen settings token i
    const n=calls.length;await assert.rejects(()=>tour[name]('other'),/desktop_permissions_arguments/);assert.equal(calls.length,n);
   }
   const chatApps=exposed.find(([name])=>name==='homerDesktopChatApps')[1];
-  assert.deepEqual(Object.keys(chatApps),['state','start','code','confirm','cancel','remove','apply']);
+  assert.deepEqual(Object.keys(chatApps),['state','health','start','code','confirm','cancel','remove','apply']);
   await chatApps.state(true);assert.deepEqual(calls.at(-1),['homer:chat-apps','state',true]);
+  await chatApps.health();assert.deepEqual(calls.at(-1),['homer:chat-apps','health',undefined]);
   const [name,api]=exposed.find(([name])=>name==='homerDesktopPermissions');assert.equal(name,'homerDesktopPermissions');assert.deepEqual(Object.keys(api),['check','promptAccessibility','openSystemSettings']);
   await api.openSystemSettings('screen');assert.deepEqual(calls.at(-1),[permissionChannels[2],'screen']);
   for(const args of [[undefined],[null],['Screen'],['screen',true],['https://example.invalid/'],[{target:'screen'}]]){const n=calls.length;await assert.rejects(async()=>api.openSystemSettings(...args),/desktop_permissions_arguments/);assert.equal(calls.length,n);}
@@ -1555,6 +1556,19 @@ test('chat app state read after an unconfirmed action never replays the action',
  const result=await handle(event,'state',true);
  assert.equal(result.flow.id,'original');assert.deepEqual(calls,[['channel-manage','remove'],['channel-manage','state']]);
  assert.equal(f.sent.length,0);
+});
+
+test('chat app health uses the trusted read-only channel route',async()=>{
+ const calls=[],rows=[{adapterId:'telegram',accountKey:'fixture',label:'fixture',state:'ready'}];
+ const f=await permissionFixture({nativeAction:async(method,input)=>{calls.push([method,input]);return rows;}});
+ calls.length=0;
+ const handle=f.handlers.get('homer:chat-apps'),sender=f.windows[0].webContents;
+ await assert.rejects(handle({sender,senderFrame:{...sender.mainFrame}},'health'),/desktop_channels_forbidden/);
+ const event={sender,senderFrame:sender.mainFrame};
+ await assert.rejects(handle(event,'health',{}),/desktop_channels_arguments/);
+ assert.deepEqual(calls,[]);
+ assert.equal(JSON.stringify(await handle(event,'health')),JSON.stringify(rows));
+ assert.deepEqual(calls,[['channel-state',undefined]]);
 });
 
 for(const snapshot of ['none','empty','old'])for(const delayed of [false,true])test('navigation cancels pending channel authorization with '+snapshot+' snapshot and delayed ACK '+delayed,async()=>{

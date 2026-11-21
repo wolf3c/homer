@@ -771,9 +771,13 @@ test('ChatGPT transient account uncertainty disables controls and retains drafts
  assert.ok(button(d,'Homer 速度：标准'));assert.equal(button(d,'重试保存').getAttribute('disabled'),null);
 }));
 
-test('chat apps expose live apply progress and saved failure retry without a restart action',async()=>withDom(async d=>{
+test('chat apps expose live apply progress and refresh connection health after an apply retry',async t=>withDom(async d=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});
+ const binding={adapterId:'wechat',accountKey:'fixture',label:'fixture',state:'checking',failed:0,unknown:0};
  let state={bindings:[],busy:true,stopped:false,readError:false,flow:{id:'apply-1',channel:'wechat',phase:'applying'}};
- window.homerDesktopChatApps={state:async()=>state,cancel:async()=>{},apply:async()=>{state={bindings:[],busy:false,stopped:false,readError:false,result:{id:'apply-1',channel:'wechat',saved:true,applied:true}};}};
+ let healthReads=0;
+ window.homerDesktopChatApps={state:async()=>state,cancel:async()=>{},health:async()=>{healthReads++;return [{...binding,state:'ready'}];},
+  apply:async()=>{state={bindings:[binding],busy:false,stopped:false,readError:false,result:{id:'apply-1',channel:'wechat',saved:true,applied:true}};}};
  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));await d.click(button(d,'连接聊天应用'));
  assert.match(d.container.textContent,/正在应用连接变更/);
  assert.ok(!button(d,'应用并重启'));
@@ -783,6 +787,49 @@ test('chat apps expose live apply progress and saved failure retry without a res
  assert.match(d.container.textContent,/已保存，连接尚未应用/);
  await d.click(button(d,'重试应用'));
  assert.ok(!button(d,'重试应用'));
+ assert.match(d.container.textContent,/等待连接/);assert.equal(healthReads,0);
+ await act(async()=>t.mock.timers.tick(2_000));
+ assert.match(d.container.textContent,/已连接/);assert.equal(healthReads,1);
+}));
+
+test('chat app connection reads update list and details, serialize with manual checks and pause while hidden',async t=>withDom(async d=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});
+ const healthRows=(state,label='fixture')=>['wechat','telegram'].map(adapterId=>({adapterId,accountKey:adapterId,label,state}));
+ const full=state=>({bindings:healthRows(state).map(row=>({...row,failed:1,unknown:0})),busy:false,stopped:false,readError:false});
+ let snapshot=full('checking'),connections=healthRows('ready'),gate,fail=false,checks=0,healthReads=0;
+ window.homerDesktopChatApps={
+  state:async()=>{checks++;return snapshot;},
+  health:async()=>{healthReads++;if(fail)throw Error('unavailable');return gate?gate.promise:connections;},
+  cancel:async()=>{},
+ };
+ const tick=ms=>act(async()=>t.mock.timers.tick(ms));
+ const hide=hidden=>act(async()=>{
+  if(hidden)d.doc.setAttribute('hidden','');else d.doc.removeAttribute('hidden');
+  for(const {handler} of d.doc.listeners.visibilitychange??[])handler();
+ });
+ await d.render(React.createElement(get().DesktopSettings));
+ await d.click(button(d,'设置'));await d.click(button(d,'连接聊天应用'));
+ assert.equal(checks,1);assert.equal(d.all().filter(n=>n.getAttribute('data-state')==='checking').length,2);
+ await tick(1_999);assert.equal(healthReads,0);
+ await tick(1);assert.equal(healthReads,1);assert.equal(d.all().filter(n=>n.getAttribute('data-state')==='ready').length,2);
+ await d.click(button(d,'查看'));
+ connections=healthRows('offline');await tick(10_000);
+ assert.match(d.container.textContent,/暂时无法连接/);assert.match(d.container.textContent,/1 条发送失败/);
+ fail=true;await tick(10_000);assert.match(d.container.textContent,/状态未确认/);
+ await hide(true);await tick(30_000);assert.equal(healthReads,3);
+ fail=false;connections=healthRows('ready');await hide(false);await tick(0);
+ assert.equal(healthReads,4);assert.match(d.container.textContent,/已连接/);
+ await d.click(button(d,'返回聊天应用'));
+ gate=pending();await tick(10_000);assert.equal(healthReads,5);
+ snapshot=full('reauthorize');
+ await d.click(button(d,'重新检查'));await tick(20_000);assert.equal(checks,1);assert.equal(healthReads,5);
+ await act(async()=>gate.resolve(healthRows('offline')));
+ assert.equal(checks,2);assert.match(d.container.textContent,/需重新授权/);
+ gate=pending();await tick(2_000);assert.equal(healthReads,6);
+ await d.click(button(d,'关闭设置'));await tick(60_000);assert.equal(healthReads,6);
+ await d.click(button(d,'设置'));await d.click(button(d,'连接聊天应用'));assert.equal(checks,2);
+ snapshot=full('ready');await act(async()=>gate.resolve(healthRows('offline')));
+ assert.equal(checks,3);assert.match(d.container.textContent,/已连接/);
 }));
 
 
