@@ -513,7 +513,8 @@ test('production Lexical commands preserve IME, modified Enter, mixed clipboard 
   const commands=new Map();let submissions=0,files=0,inserted='',composing=false;
   const editor={setEditable(){},isComposing:()=>composing,getRootElement:()=>({closest:()=>({requestSubmit(){submissions++;}})}),registerCommand:(name,callback)=>{commands.set(name,callback);return ()=>{};}};
   const bindings={useLexicalComposerContext:()=>[editor],useAuiState:()=>false,useEffect:fn=>fn(),mergeRegister:()=>()=>{},KEY_DOWN_COMMAND:'key',PASTE_COMMAND:'paste',DROP_COMMAND:'drop',COMMAND_PRIORITY_CRITICAL:4,$getSelection:()=>({insertRawText:text=>{inserted=text;}}),ClipboardEvent:class ClipboardEvent{}};
-  const plugin=productionFunction(new URL('../ui/homer-composer-input.tsx',import.meta.url),'HomerInputPlugin',bindings);
+  const inputPath=new URL('../ui/homer-composer-input.tsx',import.meta.url);
+  const plugin=productionFunction(inputPath,'HomerInputPlugin',{...bindings,mobileView:false});
   plugin({onFiles(){files++;}});
   const key=extra=>({key:'Enter',shiftKey:false,ctrlKey:false,altKey:false,metaKey:false,keyCode:13,isComposing:false,preventDefault(){this.defaultPrevented=true;},...extra});
   for(const flags of [{isComposing:true},{keyCode:229},{shiftKey:true},{ctrlKey:true},{metaKey:true},{altKey:true}])commands.get('key')(key(flags));
@@ -523,6 +524,12 @@ test('production Lexical commands preserve IME, modified Enter, mixed clipboard 
   commands.get('paste')(event);assert.equal(inserted,'clipboard text');assert.equal(files,1);
   commands.get('drop')({defaultPrevented:true});assert.equal(files,1);
   plugin({disabled:true,onFiles(){files++;}});commands.get('paste')(event);commands.get('key')(key());assert.equal(files,1);assert.equal(submissions,1);
+  const mobilePlugin=productionFunction(inputPath,'HomerInputPlugin',{...bindings,mobileView:true});
+  mobilePlugin({});
+  const mobileEnter=key();
+  assert.equal(commands.get('key')(mobileEnter),false,'Lexical handles Enter in the mobile App');
+  assert.equal(mobileEnter.defaultPrevented,undefined);
+  assert.equal(submissions,1,'mobile Enter does not submit the form');
 });
 
 test('answer pending and invalid question remain blocked; exit restores ordinary draft with no upper status',async()=>{

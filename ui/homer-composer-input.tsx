@@ -4,6 +4,7 @@ import { LexicalComposerInput, type LexicalComposerInputProps } from '@assistant
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { mergeRegister } from '@lexical/utils';
 import { $addUpdateTag, $getSelection, COMMAND_PRIORITY_CRITICAL, DROP_COMMAND, KEY_DOWN_COMMAND, PASTE_COMMAND, SKIP_SCROLL_INTO_VIEW_TAG } from 'lexical';
+import { mobileView } from './web-connection-client';
 import './homer-composer-input.css';
 
 // The thread owns this callback; the mounted Lexical editor supplies focus.
@@ -53,7 +54,7 @@ function HomerInputPlugin({ disabled = false, onKeyDown, onPaste, onDrop, onFile
       if (editor.isComposing() || event.isComposing || event.keyCode === 229) return false;
       onKeyDown?.(event);
       if (event.defaultPrevented) return true;
-      if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (!mobileView && event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
         const form = editor.getRootElement()?.closest('form');
         if (form) { event.preventDefault(); form.requestSubmit(); return true; }
       }
@@ -85,7 +86,7 @@ function HomerInputPlugin({ disabled = false, onKeyDown, onPaste, onDrop, onFile
  * draft restoration and clearing after send. PlainTextExtension accepts text,
  * not rich HTML/embedded attachments; files travel through onFiles separately.
  * Events above are native Lexical events; refs point to the outer div, not a textarea.
- * Enter requests the containing form; Shift+Enter inserts a line break.
+ * Desktop Enter requests the containing form. Mobile Enter and Shift+Enter insert a line break.
  */
 export const HomerComposerInput = forwardRef<HTMLDivElement, HomerComposerInputProps>(
   function HomerComposerInput({ disabled = false, onKeyDown, onPaste, onDrop, onFiles, className, onDragOver, ...props }, ref) {
