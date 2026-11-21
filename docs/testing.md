@@ -15,6 +15,7 @@ HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test \
 HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test tests/scheduled-native.engine.test.ts tests/channel-native.engine.test.ts
 node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test tests/dev-upgrade.development.test.mjs
 HOMER_TEST_APP=/absolute/candidate/Homer.app node --test --test-name-pattern='desktop opens the same Main' tests/macos-desktop-runtime.test.mjs
+node --experimental-vm-modules --import tsx --test tests/desktop-baseline-migration.test.ts tests/desktop-update-runtime.test.mjs
 ```
 
 开发升级使用合成引擎进行真实进程交接。macOS 桌面专项从同卷的隔离候选克隆 B 的资源并重新生成清单。身份、回执和角色目录也有默认离线回归。订阅实模用于验证模型自主选参，按次限定场景，复用独立测试登录（本机约定的 `CODEX_HOME` 为 `.codex/private/tool-upgrade-direct/codex`）。开跑前用固定 Codex 的 `login status` 检查登录态，结束后清理本轮会话与数据库，保留专用登录。[机制与实测边界](architecture/host-tool-upgrades.md)

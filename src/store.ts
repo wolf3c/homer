@@ -3,6 +3,10 @@ import {CommittedDatabase} from './committed-database.js';
 import {SCHEDULE_SCHEMA} from './schedules.js';
 export const STORE_SCHEMA_VERSION='9';
 export const READABLE_STORE_SCHEMA_VERSIONS:readonly string[]=[STORE_SCHEMA_VERSION];
+export const TASK_COLUMNS=`(id TEXT PRIMARY KEY,title TEXT NOT NULL,headVersion INTEGER NOT NULL,notes TEXT NOT NULL DEFAULT '',state TEXT NOT NULL CHECK(state IN ('open','paused')),revision INTEGER NOT NULL,historyState TEXT NOT NULL DEFAULT 'visible' CHECK(historyState IN ('visible','archived')),createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL)`;
+export const TASK_INDEXES=`CREATE INDEX IF NOT EXISTS tasks_history ON tasks(historyState);
+    CREATE INDEX IF NOT EXISTS uncertain_operations_scope ON operations(scopeId) WHERE state='uncertain';
+    CREATE INDEX IF NOT EXISTS pending_archive_inputs ON operations(json_extract(detailsJson,'$.inputMessageId')) WHERE kind='archive_work' AND state='accepted';`;
 export type Status='queued'|'running'|'succeeded'|'failed'|'cancelled'|'interrupted';
 export type Run={
  id:string;taskId:string;workerId:string;version:number;sourceRequestId:string;
@@ -58,15 +62,13 @@ export class Store {
     CREATE INDEX IF NOT EXISTS runs_worker ON runs(workerId);
     CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,runId TEXT REFERENCES runs(id),type TEXT NOT NULL,code TEXT,at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,hash TEXT NOT NULL,state TEXT NOT NULL,response TEXT,createdAt INTEGER NOT NULL);
-    CREATE TABLE tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,headVersion INTEGER NOT NULL,notes TEXT NOT NULL DEFAULT '',state TEXT NOT NULL CHECK(state IN ('open','paused')),revision INTEGER NOT NULL,historyState TEXT NOT NULL DEFAULT 'visible' CHECK(historyState IN ('visible','archived')),createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL);
+    CREATE TABLE tasks${TASK_COLUMNS};
     CREATE TABLE operations(id TEXT PRIMARY KEY,actorAgentId TEXT NOT NULL,scopeId TEXT NOT NULL,operationId TEXT NOT NULL,kind TEXT NOT NULL,payloadHash TEXT NOT NULL,state TEXT NOT NULL,detailsJson TEXT NOT NULL,responseJson TEXT,revision INTEGER NOT NULL DEFAULT 0,UNIQUE(actorAgentId,scopeId,operationId));
     CREATE TABLE task_versions(taskId TEXT NOT NULL REFERENCES tasks(id),version INTEGER NOT NULL,goal TEXT NOT NULL,authorityJson TEXT,sourceRequestId TEXT,triggerOpId TEXT NOT NULL UNIQUE REFERENCES operations(id),workingDirectory TEXT NOT NULL,PRIMARY KEY(taskId,version));
     CREATE TABLE agent_messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,senderAgentId TEXT NOT NULL,senderRunId TEXT REFERENCES runs(id),senderEpoch INTEGER,recipientAgentId TEXT NOT NULL,taskId TEXT REFERENCES tasks(id),taskVersion INTEGER,targetRunId TEXT REFERENCES runs(id),kind TEXT NOT NULL,replyTo TEXT REFERENCES agent_messages(id),causationId TEXT REFERENCES agent_messages(id),operationKey TEXT NOT NULL UNIQUE REFERENCES operations(id),payloadJson TEXT NOT NULL);
     CREATE TABLE agent_receipts(messageId TEXT NOT NULL REFERENCES agent_messages(id),recipientAgentId TEXT NOT NULL,state TEXT NOT NULL,offeredRunId TEXT REFERENCES runs(id),offeredEpoch INTEGER,offeredTurnId TEXT,processedBy TEXT,revision INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(messageId,recipientAgentId));
     CREATE INDEX agent_inbox ON agent_receipts(recipientAgentId,state);CREATE INDEX agent_receipt_state ON agent_receipts(state,messageId);CREATE INDEX messages_task ON agent_messages(taskId,seq);
-    CREATE INDEX tasks_history ON tasks(historyState);
-    CREATE INDEX uncertain_operations_scope ON operations(scopeId) WHERE state='uncertain';
-    CREATE INDEX pending_archive_inputs ON operations(json_extract(detailsJson,'$.inputMessageId')) WHERE kind='archive_work' AND state='accepted';
+    ${TASK_INDEXES}
     ${SCHEDULE_SCHEMA}`);
     this.setMeta('mainAgentId','main:'+randomUUID());
     this.setMeta('recursiveSchemaVersion',STORE_SCHEMA_VERSION);

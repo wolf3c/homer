@@ -1,5 +1,6 @@
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {createHash,randomUUID} from 'node:crypto';
+import type {DatabaseSync} from 'node:sqlite';
 import {basename,isAbsolute} from 'node:path';
 import {realpathSync,statSync} from 'node:fs';
 import {STORE_SCHEMA_VERSION,type Store,type Run} from './store.js';
@@ -827,13 +828,18 @@ export class RecursiveTasks{
  }
  // Membership media receipts survive upgrade and never replay a POST. The service fences live calls.
  safeToUpgrade(){
-  return !this.one("SELECT 1 FROM runs WHERE status IN ('queued','running') OR phase='uncertain'")
-    && !this.one("SELECT 1 FROM operations WHERE state IN ('accepted','dispatching','uncertain') AND kind NOT IN ('membership_video','membership_audio')")
-    && !this.one(`SELECT 1 FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND ${unconfirmedNativeEffectsSql()} LIMIT 1`)
-    && !(this.table('worker_interactions')&&this.one("SELECT 1 FROM worker_interactions WHERE state='pending_main' OR state='pending_user' AND source<>'ask_main' OR state IN ('approved','denied','answered') AND deliveredAt IS NULL LIMIT 1"))
-    && !this.one(`SELECT 1 FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId
-      WHERE (r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected'))
-        OR (r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND
-          (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()}))`);
+  return storedWorkSafeToUpgrade(this.store.db);
  }
+}
+
+export function storedWorkSafeToUpgrade(db:DatabaseSync,legacy=false){
+ const has=(sql:string)=>!!db.prepare(sql).get();
+ return !has("SELECT 1 FROM runs WHERE status IN ('queued','running') OR phase='uncertain'")
+   && !has("SELECT 1 FROM operations WHERE state IN ('accepted','dispatching','uncertain') AND kind NOT IN ('membership_video','membership_audio')")
+   && !has(`SELECT 1 FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND ${unconfirmedNativeEffectsSql()} LIMIT 1`)
+   && !(has("SELECT 1 FROM sqlite_master WHERE type='table' AND name='worker_interactions'")&&has(`SELECT 1 FROM worker_interactions WHERE state='pending_main' OR state='pending_user'${legacy?'':" AND source<>'ask_main'"} OR state IN ('approved','denied','answered') AND deliveredAt IS NULL LIMIT 1`))
+   && !has(`SELECT 1 FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId
+     WHERE (r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected'))
+       OR (r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND
+         (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()}))`);
 }

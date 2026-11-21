@@ -89,7 +89,7 @@ try{
  }
  if(modelSource)config={...config,desktopModelSource:modelSource,desktopProfile:profile,pauseOldDesktopWork:true};
  if(modelSource==='codex')config={...config,chatgpt:chatgptModelConfig(readDesktopChatGPTConfig(profile))};
- const database=join(paths.runtime,'homer.sqlite');let thread;
+ const database=join(paths.runtime,'homer.sqlite');let thread,legacyBaseline=false;
  if(existsSync(database)){
    const db=new DatabaseSync(database,{readOnly:true});
    try{
@@ -102,7 +102,8 @@ try{
        catch{throw Error(paths.adoption?'desktop_adoption_owner_unknown':'desktop_lease_review_required');}
        const {READABLE_STORE_SCHEMA_VERSIONS}=await import(pathToFileURL(join(homer,'dist/store.js')).href);
        const schema=db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get();
-       if(!READABLE_STORE_SCHEMA_VERSIONS.includes(schema?.value))throw Error('desktop_schema_incompatible');
+       legacyBaseline=schema?.value==='8'&&(!thread||!!db.prepare("SELECT 1 FROM meta WHERE key='mainToolsHash'").get());
+       if(!legacyBaseline&&!READABLE_STORE_SCHEMA_VERSIONS.includes(schema?.value))throw Error('desktop_schema_incompatible');
      }
    }finally{db.close();}
  }
@@ -120,6 +121,10 @@ try{
  // Retain exact original account/memory defaults; no loadConfig fallback to HOME.
  const build={directory:homer,hash:manifest.sourceHash,manifest:manifest.manifest,version:manifest.sourceHash.slice(0,12),uiHash:manifest.uiHash,schema:manifest.schema,toolsHash:manifest.toolsHash,boundary:desktopBoundary(config,manifest.codex),config,thread};
  const {verifyBuild}=await import('./trusted-build.mjs');verifyBuild(build);
+ if(legacyBaseline){
+   const {migrateDesktopBaseline}=await import(pathToFileURL(join(homer,'dist/desktop-baseline-migration.js')).href);
+   await migrateDesktopBaseline(paths.runtime,paths.codexHome);
+ }
  if((windows||process.arch==='arm64')&&observed.some(file=>file.path.replaceAll('\\','/').startsWith('runtime/cua/'))){
    const {recoverCuaSessions,WINDOWS_CUA_HELPER}=await import(pathToFileURL(join(homer,'dist/cua-processes.js')).href);
    if(observed.some(file=>file.path.replaceAll('\\','/')===(windows?WINDOWS_CUA_HELPER:'runtime/cua/cua-driver')))

@@ -103,7 +103,14 @@ for(const disconnected of [false,true])test('late Main MCP work waits through th
   const held=f.hold();let entered=false,received='',closedAfterReceipt=false;const endpoint=f.app['interactionMcp']!;
   t.mock.method(f.app as any,'mainActivity',async()=>{entered=true;await held.promise;return {value:'synthetic-result'};});
   const close=f.mains[0]!.close.bind(f.mains[0]);t.mock.method(f.mains[0]!,'close',async()=>{closedAfterReceipt=received.includes('synthetic-result');return close();});
-  f.state.duringMain=async()=>{f.state.duringMain=undefined;client=createConnection(endpoint.path);client.setEncoding('utf8');client.on('error',()=>{});client.on('data',chunk=>{received+=chunk;client!.end();});client.write(JSON.stringify({tool:'inspect_interaction',arguments:{}})+'\n');await until(()=>entered);};
+  f.state.duringMain=async()=>{
+   f.state.duringMain=undefined;
+   const {threadId,turnId}=f.mains[0]!,itemId='native-inspection',tool='inspect_interaction',args={interactionId:'synthetic-question'};
+   f.mains[0]!.emit('hostMcpToolStarted',{threadId,turnId,itemId,tool,arguments:args});
+   client=createConnection(endpoint.path);client.setEncoding('utf8');client.on('error',()=>{});client.on('data',chunk=>{received+=chunk;client!.end();});
+   client.write(JSON.stringify({tool,arguments:args,meta:{callId:itemId,'x-codex-turn-metadata':{turn_id:turnId}}})+'\n');
+   await until(()=>entered);
+  };
   await f.app.message('Synthetic host call','host');if(disconnected){client!.destroy();await flush();}
   t.mock.timers.tick(900000);await f.settle();assert.equal(f.mains.length,1);
   held.release();await until(()=>f.mains.length===2);await f.settle();assert.equal(f.turns.length,1);if(!disconnected)assert.equal(closedAfterReceipt,true,'the client must receive its result before Main closes');

@@ -161,8 +161,12 @@ test('paused Tasks reject new Worker execution until explicitly resumed; old coo
   assert.deepEqual(snapshot(),before);
   const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>{throw Error('unexpected_authority');},wake(){},async stop(){},async steer(){}});
   for(const name of ['task_delegate','task_continue','inbox_read','inbox_ack','dispatch_work'])await assert.rejects(tools.call(f.actor,name,{},'legacy-'+name),/tool_denied/);
-  f.tasks.controlTask(f.actor,{operationId:'resume',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,action:'resume'});
-  assert.equal(f.tasks.workerOpen(f.actor,{operationId:'open-resumed',taskId:f.task.taskId,text:'Do work'}).state,'queued');
+  const text='Resume synthetic work explicitly';
+  f.inputs.accept({requestId:'resume-request',text});
+  const resumed=f.inputs.claim()!;f.inputs.started(resumed.messageId,resumed.revision,'generation:resume','native:resume');
+  const actor={...f.actor,sourceRequestId:'resume-request',inputMessageId:resumed.messageId,turnId:'native:resume'};
+  f.tasks.controlTask(actor,{operationId:'resume',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,action:'resume',authority:{sourceRequestId:'resume-request',description:text}});
+  assert.equal(f.tasks.workerOpen(actor,{operationId:'open-resumed',taskId:f.task.taskId,text:'Do work'}).state,'queued');
  }finally{f.close();}
 });
 test('historical source text cannot gain authority in another Main thread',()=>{

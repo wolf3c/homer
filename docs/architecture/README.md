@@ -56,7 +56,7 @@
 | [用 Codex 最终答复统一交付](final-answer-delivery-design.md) | 2026-11-20 后台回执处理动画与正式正文流式预览已接入，隔离宿主及桌面和窄屏浏览器验证通过，待安装包验收。2026-11-18 隔离 Homer 验证真实 Codex 的 Worker 最终答复、桌面和手机 WebRTC 文件预览，以及真实 Telegram 定时文字、补丁和重启去重。已移除旧发送工具，保留旧消息和会话读取兼容。 |
 | [减少渠道补读重复扫描](channel-outbox-simplification-design.md) | 2026-11-19：源码在补读时跳过已入队的消息。隔离复测 1,000 个历史渠道请求时，单轮同步中位数从 520 ms 降至 89 ms。重启补漏与去重通过模拟验收。同事务待发记录留待后续评估。 |
 | [主 Agent 插件工具注册](main-agent-tool-registration.md) | 注册契约仅适用于 Homer 自有业务工具。渠道订阅的工具发现、调用和用户轮绑定已通过合成测试及固定 Codex 0.163.0 的旧会话恢复专项，专项使用回环模型替身。隔离候选已删除通用能力管理工具。固定引擎已验原生 MCP、Skill 和插件。 |
-| [Homer 自有工具随软件升级](host-tool-upgrades.md) | Main、Worker 恢复原线程时，第一个模型请求即带当前角色的 Homer MCP 工具签名，可在 Code Mode 中串联调用。固定引擎回环、写入授权、丢回执恢复、macOS 桌面及开发升级专项通过。同配置订阅实模 1 例，首次派工使用新参数，原 Worker 处理 1 条消息。Worker 的 `ask_main` 同样通过 MCP 升级。订阅实模两次独立验证同一异步提问场景，原 Worker 均在同一线程收到并使用了用户的答复。 |
+| [Homer 自有工具随软件升级](host-tool-upgrades.md) | Main、Worker 恢复原线程时，第一个模型请求即带当前角色的 Homer MCP 工具签名，可在 Code Mode 中串联调用。固定引擎回环、写入授权、丢回执恢复和开发升级专项通过。macOS 隔离候选经原生安装更新后，订阅实模首次派工和首次 `ask_main` 都采用新参数。0.1.20 的已识别旧资料支持一次性迁移，实际资料副本和合成资料订阅实模均已验证原线程延续。 |
 | [桌面版内嵌 Cua Driver](desktop-computer-use.md) | macOS ARM64 签名候选已用真实 Worker 验证已有和临时 Chrome、指定桌面窗口、附件及资源回收。本地启动／AX／错误与绑定回收修复通过 90 项离线回归及隔离源码模块的真实 SDK、桌面审批读取、Chrome 点击截图和失败回收验收，尚未重打包或安装。Windows x64 已接入，签名包与交互桌面待验收。 |
 | [桌面 App 更新](../desktop-app-update.md) | Mac／Windows 原生清单及官网下载入口源码直接使用 GitHub Latest。未签名 Windows 已接入下载后确认安装，ready 前及安装前复核大小／SHA-512；签名模式与安全重启保持。定向离线及隔离官网组件检查通过，尚未构建、部署或验收真实 GitHub 原生升级；旧客户端过渡单独处理。 |
 | [手机 App 更新提示](../mobile-app-update-notice.md) | 安卓 App 与官网下载入口源码共用 GitHub 安卓清单，更新按钮直达校验后的固定标签 APK；复用原校验和关闭规则。iOS 查询与入口保持。相关离线与隔离组件验证见正文；Android 0.1.1 / build 6 已公开，匿名完整下载、清单响应及同签名覆盖安装／启动通过。官网读取代码未部署，原生更新查询与绑定／数据保留待验。 |

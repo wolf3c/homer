@@ -82,8 +82,9 @@ for(const next of [
  {nativeId:'',provider:'openai',parentNativeId:null},
  {nativeId:logical,provider:'openai',parentNativeId:null,extra:true},
 ])test('publication refuses invalid root '+JSON.stringify(next),t=>{
- const {store,bindings}=fixture(t);assert.throws(()=>bindings.publish(logical,logical,next as any,()=>true),/native_thread_binding_invalid/);
- assert.equal(snapshot(store),'[]');
+ const {store,bindings}=fixture(t);const before=snapshot(store);
+ assert.throws(()=>bindings.publish(logical,logical,next as any,()=>true),/native_thread_binding_invalid/);
+ assert.equal(snapshot(store),before);
 });
 
 test('native IDs have one logical owner and prior ancestry cannot be promoted backwards',t=>{
@@ -121,10 +122,10 @@ test('turn bindings retain actual native identity after a fork and reject confli
 });
 
 test('turn binding checks current ownership before writing and before commit',t=>{
- const {store,bindings}=fixture(t);let checks=0;
+ const {store,bindings}=fixture(t);let checks=0;const before=snapshot(store);
  assert.throws(()=>bindings.bindTurn(logical,logical,'turn:revoked',()=>false),/native_thread_owner_changed/);
  assert.throws(()=>bindings.bindTurn(logical,logical,'turn:revoked',()=>++checks===1),/native_thread_owner_changed/);
- assert.equal(snapshot(store),'[]');
+ assert.equal(snapshot(store),before);
  store.setMeta(turnKey(logical,'turn:bad'),JSON.stringify({logicalId:'thread:other',nativeId:logical,turnId:'turn:bad'}));
  assert.throws(()=>bindings.turn(logical,'turn:bad'),/native_thread_turn_invalid/);
 });

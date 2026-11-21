@@ -1,6 +1,6 @@
 # Homer 自有工具随软件升级
 
-2026-11-21 · 在新基线上，软件升级后可继续原 Main 和 Worker 对话。Codex Code Mode 在恢复后的第一个模型请求中提供当前角色的 Homer MCP 工具签名，模型可以立即在 `functions.exec` 中调用或串联它们。首个支持基线使用独立新资料目录，开发期旧资料仍由对应旧版打开。
+2026-11-21 · 软件升级后可继续原 Main 和 Worker 对话。Codex Code Mode 在恢复后的第一个模型请求中提供当前角色的 Homer MCP 工具签名，模型可以立即在 `functions.exec` 中调用或串联它们。桌面启动支持从 0.1.20 的已识别 schema 8 资料一次性迁到 schema 9。
 
 ## 工具怎样更新
 
@@ -55,3 +55,25 @@ Worker 用同一个 MCP 目录中的 `ask_main(question)` 提问。宿主核验�
 固定 Codex 回环分别验证了运行中答复、明确拒收后续接、回执丢失后冷启动不重发、停止后拒绝晚答，以及答复排队后重启继续送达。另一次冷启动后实际等待超过十分钟，原 Worker 在新轮次收到一次答复。本轮类型检查、246 项定向离线测试和开发升级进程交接通过。[固定引擎用例](../../tests/host-tool-upgrade.engine.test.ts)
 
 提交前复审核验了 385 项定向离线用例、11 项固定引擎回环和 TypeScript 类型检查，全部通过。宿主补充回归覆盖两个恢复边界。Worker 正常结束后宿主意外退出，原问题按已保存的终态执行轮次继续有效。答复持久入队后 Main 可以结束协调轮，宿主在 Worker 确认接收后才记录送达。[冷恢复](../../tests/recursive-tasks.test.ts) · [答复入队与送达](../../tests/worker-chat-runtime.test.ts)
+
+### macOS 原生升级与订阅实模联合验收
+
+2026-11-21，基于 `1991cb804c78c957cbe134abd2087984e36df289` 构造两个带独立包标识的本地签名候选，A `0.1.20`、B `0.1.21`。Apple 芯片 macOS 27.2，Electron 45、Codex `0.171.0-alpha.7`，Main 和 Worker 都使用 ChatGPT 订阅模型 `gpt-6.1-terra`。A 先建立原事项和 Worker，再由实模完成旧版 `worker_message` 和 `ask_main`，两次调用都省略了 B 新增的必填项。
+
+Electron 从回环更新源下载签名 ZIP。通过桌面「重启并更新」按钮所用的 IPC 入口触发安装，测试夹具确认重启对话框。A 发出宿主停止确认，原生更新器替换安装位置并自动启动 B。重新验签通过，原 Main 线程、Worker 线程、事项和工作区标记全部保留。
+
+在 B 只说「让刚才那个 Worker 继续原事项」。Main 首次 `worker_message` 传入 `attachments: []`，Worker 首次 `ask_main` 传入 `replyStyle: "brief"`。两次调用都走 `functions.exec`，各执行一次。原 Worker 分别收到一条续做消息和一条业务答复，操作均为 `confirmed`，回执均为 `processed`。原 Worker 使用第二次答复中的标签完成任务。参数变化只存在于本次夹具。
+
+这是一个联合场景。更新源和安装位置均为隔离夹具，原生安装、验签和重启实际执行。候选的 UI 资产未正确挂载，因此通过实际 preload 调用按钮对应的 IPC，按钮的可见性和点击在本次未验收。线上 GitHub 分发、公证和系统唤醒组件另有各自的验收范围。
+
+### 0.1.20 现有资料的一次性迁移
+
+2026-11-21，在 0.1.20 / build 308 的停机备份副本上，固定 Codex 的原生恢复保留了 Main 和 Worker 的旧动态声明。已生成的压缩检查点也携带旧工具。公开 RPC 没有替换已有线程动态工具的参数，普通分叉也会继承已有定义。[固定版本协议与源码](../2026-11-17-tool-refresh-research.md#固定源码证据)
+
+试验仅更新副本中本宿主线程的工具声明，保留记录长度以维持 Codex 分页索引偏移。逐条比对确认其余日志内容和 Homer 业务库记录一致。固定 Codex 还在同一 Main 和原 Worker 的实测样本中恢复原生线程 ID，迁移后首包只暴露当前 Homer MCP 工具，并经 Code Mode 成功调用。本次使用本机回环对端。
+
+桌面运行时取得原资料所有权并核验包资源后执行迁移。它先核对旧指纹、忙碌状态、未确认回执和所涉原生线程，再在 `CODEX_HOME/homer-baseline-v8-backup` 保留原业务库及改动前的原生日志。每份原生日志单独落盘替换，最后在同一 SQLite 事务内提交新事项表与工具指纹。中断后重启候选会继续迁移，已保存的原始备份会保留。降回旧版前需要核对新写入，再从停机备份恢复整份资料。[启动接入](../../scripts/desktop-runtime.mjs) · [迁移实现](../../src/desktop-baseline-migration.ts)
+
+事项 ID、排序、归档归属和历史均保留。旧「已结案」映射为「暂停」，旧结案结果仍在备份，只有明确恢复后事项才可继续执行。新版宿主已在实际资料副本上，用回环模型恢复原 Main 和 Worker、续做原事项，投递回执为 `processed`。
+
+另在纯合成资料中用 ChatGPT 订阅 `gpt-6.1-terra` 跑通 1 次。正式 0.1.20 宿主先留下成功的 `worker_send` 和旧 `ask_main`，冷关闭后执行同一迁移。原线程恢复后只发「让刚才那个 Worker 继续原事项」，Main 和 Worker 分别在 Code Mode 用 `worker_message` 和新的 `ask_main`，原 Worker 处理一次续做消息和一次答复并完成。此实模验收复用固定 Codex，由宿主代码驱动。[隔离验收命令](../testing.md#homer-工具升级)

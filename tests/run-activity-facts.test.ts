@@ -30,7 +30,8 @@ test('Web process detail rechecks epoch/thread and resolves only the selected ac
 test('later requirements preserve the original delegation evidence and Run version',()=>{
  const f=fixture();try{
   const task=f.make('changes'),args={operationId:'open',taskId:task.taskId,text:'Inspect'};
-  const opened=f.tasks.workerOpen(f.actor,args),fact=f.tasks.captureActivity(f.actor,'worker_open',args,opened)!;
+  const opened=f.tasks.workerOpen(f.actor,args);
+  const before=f.tasks.inspectOperation(f.actor,'open',task.taskId);
   const run=f.start(opened.workerId);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'First reply'},true);
   const notice=f.inputs.claim([],'all')!;assert.equal(notice.origin,'worker');
@@ -40,9 +41,10 @@ test('later requirements preserve the original delegation evidence and Run versi
   const actor={...f.actor,sourceRequestId:'source:new',inputMessageId:input.messageId};
   f.tasks.updateTask(actor,{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Changed scope'},
     authority:{sourceRequestId:'source:new',description:'Use changed scope'}});
-  assert.equal(fact.target?.version,1);
-  assert.equal(fact.target?.runId,run.id);
-  assert.equal(f.tasks.activityLink(fact.target!,'thread:main')?.task.version,1);
+  assert.equal(before.operations[0]?.response.runId,run.id);
+  assert.equal(run.version,1);
+  assert.deepEqual(f.tasks.inspectOperation(actor,'open',task.taskId),before);
+  assert.equal(f.tasks.activityLink({taskId:task.taskId,runId:run.id,version:run.version},'thread:main')?.task.version,1);
  }finally{f.close();}
 });
 test('HTTP validates the selected item identity and forwards only the existing process read',async()=>{
