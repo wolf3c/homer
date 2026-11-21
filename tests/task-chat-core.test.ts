@@ -501,3 +501,78 @@ test('a new Task cannot graft an older or reordered request into its execution a
   assert.equal(f.tasks.version(accepted.taskId,1).sourceRequestId,'creating-source');assert.equal(f.tasks.run(accepted.runId).sourceRequestId,'creating-source');
  }finally{f.close();}
 });
+
+import {NativeThreadBindings,readWorkerTerminals} from '../src/native-thread-bindings.js';
+
+test('late terminal recovery is equivalent to online completion and cannot steer a competing new Run',async()=>{
+ let reads=0;
+ const f=chatFixture({validateActor(){},unconfirmedWorkerEffects:id=>bindings.hasUnconfirmedWorkerEffects(id)});
+ const bindings=new NativeThreadBindings(f.store);
+ try{
+  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'});
+  const run=f.start(worker.workerId);
+  const threadId=run.threadId!,turnId=run.turnId!;
+  bindings.publish(threadId,threadId,{nativeId:threadId,provider:'openai',parentNativeId:null},()=>true);
+  bindings.bindTurn(threadId,threadId,turnId,()=>true);
+  bindings.recordWorkerEffect(threadId,threadId,turnId,'exec-late','running',false,()=>true);
+  const sessions=join(f.dir,'sessions'),path=join(sessions,'test.jsonl');mkdirSync(sessions);
+  const rows=[
+   {ordinal:0,type:'session_meta',payload:{id:threadId,history_mode:'paginated'}},
+   {ordinal:1,type:'event_msg',payload:{type:'task_complete',turn_id:turnId}},
+   {ordinal:2,type:'event_msg',payload:{type:'item_completed',thread_id:threadId,turn_id:turnId,
+    item:{type:'CommandExecution',id:'exec-late',status:'failed',exit_code:-1}}},
+  ];
+  writeFileSync(path,rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
+  f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Prior answer'},true);
+  const blocked=f.tasks.workerMessage(f.actor,{operationId:'blocked',workerId:worker.workerId,text:'Continue'});
+  assert.equal(blocked.reason,'operation_uncertain');
+  const releases:Array<()=>void>=[];
+  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake(){},stop:async()=>{},steer:async()=>assert.fail('stale continuation must not steer'),
+   recoverWorkerMessage:async()=>{
+    reads++;await new Promise<void>(resolve=>releases.push(resolve));
+    const terminals=await readWorkerTerminals(f.dir,path,threadId,bindings.pendingWorkerEffects(threadId));
+    return ()=>{for(const item of terminals)
+      bindings.recordWorkerEffect(threadId,threadId,turnId,item.itemId,item.status,true,()=>true,false);};
+   }});
+  const args={workerId:worker.workerId,message:'Continue'};
+  const calls=[tools.call(f.actor,'worker_message',args,'continue-a'),tools.call(f.actor,'worker_message',args,'continue-b')];
+  assert.equal(reads,2);
+  releases[0]!();
+  const first=await calls[0] as {route:string;runId:string;threadId:string};
+  assert.equal(first.route,'followup');
+  assert.equal(first.threadId,run.threadId);
+  const next=f.start(worker.workerId);
+  assert.equal(next.id,first.runId);
+  releases[1]!();
+  const second=await calls[1] as {route:string;reason:string};
+  assert.equal(second.route,'blocked');assert.equal(second.reason,'worker_not_ready');
+  assert.equal(bindings.hasUnconfirmedWorkerEffects(threadId),false);
+  assert.equal(f.tasks.runs(task.taskId).length,2);
+  assert.deepEqual(await tools.call(f.actor,'worker_message',args,'continue-a'),first);
+  assert.equal(reads,2);
+  const reopened=new Store(f.path);
+  try{
+   const restored=new RecursiveTasks(reopened,f.files);
+   assert.equal(restored.runs(task.taskId).length,2);
+   assert.equal(new NativeThreadBindings(reopened).hasUnconfirmedWorkerEffects(threadId),false);
+   assert.equal(restored.run(first.runId).threadId,run.threadId);
+   assert.equal(restored.nextQueuedRun(),undefined);
+  }finally{reopened.close();}
+ }finally{f.close();}
+});
+
+test('late terminal recovery cannot commit after authority is revoked',async()=>{
+ let permitted=true,applied=false;
+ const f=chatFixture({validateActor(){if(!permitted)throw Error('agent_scope_denied');},unconfirmedWorkerEffects:()=>true});
+ try{
+  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'});
+  const run=f.start(worker.workerId);
+  f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Prior answer'},true);
+  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake(){},stop:async()=>{},steer:async()=>assert.fail(),
+   recoverWorkerMessage:async()=>{permitted=false;return ()=>{applied=true;};}});
+  await assert.rejects(tools.call(f.actor,'worker_message',{workerId:worker.workerId,message:'Continue'},'revoked'),/agent_scope_denied/);
+  assert.equal(applied,false);
+  permitted=true;
+  assert.equal(f.tasks.runs(task.taskId).length,1);
+ }finally{f.close();}
+});

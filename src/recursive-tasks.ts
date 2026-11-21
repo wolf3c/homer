@@ -410,7 +410,19 @@ export class RecursiveTasks{
    return {taskId,workerId,runId,messageId,version:task.headVersion,state:'queued'};
   });
  }
- workerMessage(actor:Actor,input:{operationId:string;workerId:string;text:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,questionId?:string){
+ private workerMessageUnresolved(taskId:string,workerId:string){
+  return this.unresolvedInteractions(taskId,workerId,true)||this.one(
+   "SELECT 1 FROM operations WHERE scopeId=? AND (actorAgentId=? OR json_extract(detailsJson,'$.workerId')=?) AND state IN ('accepted','dispatching','uncertain')",taskId,recipient(workerId),workerId);
+ }
+ workerMessageRecovery(actor:Actor,workerId:string,operationId:string){
+  this.requireMain(actor);
+  const {run,taskId}=this.worker(workerId);
+  if(this.one('SELECT 1 FROM operations WHERE actorAgentId=? AND scopeId=? AND operationId=?',actor.agentId,taskId,operationId))return;
+  if(run.phase!=='ended'||run.stopRequestedAt!==null||this.stopExitUnconfirmed(run)||!this.workerEffectUnconfirmed(run)||this.workerMessageUnresolved(taskId,workerId))return;
+  const {task}=this.authorizeTask(actor,taskId);
+  return {run,version:task.headVersion};
+ }
+ workerMessage(actor:Actor,input:{operationId:string;workerId:string;text:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,questionId?:string,recovery?:{run:TaskRun;version:number;apply?:()=>void}){
   this.requireMain(actor);const worker=this.worker(input.workerId);
   return this.mutation<WorkerMessageReceipt>(actor,worker.taskId,input.operationId,'worker_message',input,key=>{
    const task=this.task(worker.taskId),run=this.worker(worker.workerId).run;
@@ -421,6 +433,9 @@ export class RecursiveTasks{
     if(questionId)throw Error(reason); // Leave the durable answer pending until this boundary clears.
     return {...facts,state:'blocked',route:'blocked',reason};
    };
+   if(recovery&&(run.id!==recovery.run.id||run.epoch!==recovery.run.epoch||run.threadId!==recovery.run.threadId||
+     run.turnId!==recovery.run.turnId||task.headVersion!==recovery.version||run.phase!=='ended'||run.stopRequestedAt!==null))
+    return blocked('worker_not_ready');
    if(this.one("SELECT 1 FROM operations WHERE scopeId=? AND kind='worker_steer' AND json_extract(detailsJson,'$.workerId')=? AND state IN ('accepted','dispatching','uncertain')",task.id,run.workerId))return blocked('operation_uncertain');
    if(run.phase==='uncertain')return blocked('run_stop_unconfirmed');
    if(active(run)){
@@ -433,8 +448,9 @@ export class RecursiveTasks{
     return {...facts,route:'steer',state:'requested',messageId,epoch:run.epoch,expectedTurnId:run.turnId};
    }
    if(run.phase!=='ended'||this.stopExitUnconfirmed(run))return blocked('run_stop_unconfirmed');
-   if(this.workerEffectUnconfirmed(run)||this.unresolvedInteractions(task.id,run.workerId,true)||this.one(
-    "SELECT 1 FROM operations WHERE scopeId=? AND (actorAgentId=? OR json_extract(detailsJson,'$.workerId')=?) AND state IN ('accepted','dispatching','uncertain')",task.id,recipient(run.workerId),run.workerId))return blocked('operation_uncertain');
+   if(this.workerMessageUnresolved(task.id,run.workerId))return blocked('operation_uncertain');
+   recovery?.apply?.();
+   if(this.workerEffectUnconfirmed(run))return blocked('operation_uncertain');
    if(!run.threadId)return blocked('worker_thread_unavailable');
    if(!questionId)this.cancelQuestions(task.id,run.workerId);
    const messageId=this.workerInput(actor,key,task,run.workerId,input,prepare);

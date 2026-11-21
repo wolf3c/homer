@@ -1,6 +1,6 @@
 import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdirSync,mkdtempSync,rmSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {Store} from '../src/store.js';
 import * as module from '../src/native-thread-bindings.js';
@@ -283,4 +283,25 @@ test('failed effect guard rolls back its own write even when the outer receipt c
  const {store,bindings}=effectFixture(t);bindings.recordWorkerEffect(logical,nativeChild,nativeChildTurn,effectItem,'running',false,()=>true,true,effectOwner);const before=effectRows(store);let checks=0;
  store.transaction(()=>{assert.throws(()=>bindings.recordWorkerEffect(logical,nativeChild,nativeChildTurn,effectItem,'completed',true,()=>++checks===1,false,effectOwner),/native_thread_owner_changed/);store.setMeta('outer-effect-receipt','committed');});
  assert.equal(store.meta('outer-effect-receipt'),'committed');assert.deepEqual(effectRows(store),before);assert.equal(bindings.hasUnconfirmedWorkerEffects(logical),true);
+});
+
+test('the fixed rollout format recovers only exact terminal evidence',async t=>{
+ const parent=resolve('.codex/scratch/native-thread-bindings-unit');
+ mkdirSync(parent,{recursive:true});
+ const home=realpathSync(mkdtempSync(join(parent,'rollout-')));
+ t.after(()=>rmSync(home,{recursive:true,force:true}));
+ const sessions=join(home,'sessions'),path=join(sessions,'isolated.jsonl');
+ mkdirSync(sessions);
+ const pending={logicalId:logical,nativeId:logical,turnId:'turn:a',itemId:'exec-probe',status:'pending'};
+ const header={ordinal:0,type:'session_meta',payload:{id:logical,history_mode:'paginated'}};
+ const completed={ordinal:2,type:'event_msg',payload:{type:'item_completed',thread_id:logical,turn_id:pending.turnId,
+  item:{type:'CommandExecution',id:pending.itemId,status:'failed',exit_code:-1}}};
+ const turn={ordinal:1,type:'event_msg',payload:{type:'task_complete',turn_id:pending.turnId}};
+ const write=(rows:unknown[],newline='\n')=>writeFileSync(path,rows.map(row=>JSON.stringify(row)).join('\n')+newline);
+ write([header,turn,completed]);
+ assert.deepEqual(await module.readWorkerTerminals(home,path,logical,[pending]),[{...pending,status:'failed'}]);
+ write([header,turn,{...completed,payload:{...completed.payload,turn_id:'wrong'}}]);
+ assert.deepEqual(await module.readWorkerTerminals(home,path,logical,[pending]),[]);
+ write([header,turn]);assert.deepEqual(await module.readWorkerTerminals(home,path,logical,[pending]),[]);
+ write([header,turn,completed],'');assert.deepEqual(await module.readWorkerTerminals(home,path,logical,[pending]),[]);
 });

@@ -72,7 +72,7 @@ import {extractDocument,documentPython} from './media-documents.js';
 import {audioPcm,transcribeAudio,whisperPath,whisperModel} from './media-audio.js';
 import {progressLabel,type MainProgress} from './main-progress.js';
 import {MainProcessHistory,unconfirmedNativeEffectsSql,type ProcessNode} from './main-process.js';
-import {NativeThreadBindings} from './native-thread-bindings.js';
+import {NativeThreadBindings,readWorkerTerminals} from './native-thread-bindings.js';
 import {webUpload} from './web-upload.js';
 import {MediaWorkQueue} from './media-work.js';
 import {analyzeVideo} from './media-video.js';
@@ -820,6 +820,7 @@ export class Homer {
         wake:()=>{this.pump();this.scheduleInternal();},
         stop:receipt=>this.applyStop(receipt),
         steer:receipt=>this.applySteer(receipt),
+        recoverWorkerMessage:run=>this.recoverWorkerMessage(run),
       });
       if(channelAdapters.length)this.channels=new ChannelPlugin(this,channelAdapters,()=>this.scheduleInputs());
       this.schedules=new Schedules(this.store.db,{transaction:fn=>this.store.transaction(fn),enqueue:delivery=>this.inputs.enqueueScheduled(delivery),changed:()=>{
@@ -2972,6 +2973,34 @@ export class Homer {
     }
     if(staged&&object(result).route==='blocked')this.abandonMessageOperation(staged.key);
     this.validateMainContext(context);return result;
+  }
+  private async recoverWorkerMessage(run:TaskRun){
+    const context=this.mainContext,logical=run.threadId;
+    if(!context||!logical)return;
+    this.validateMainContext(context);
+    const binding=this.nativeThreads.current(logical);
+    if(!binding)return;
+    const pending=this.nativeThreads.pendingWorkerEffects(logical).filter(item=>item.nativeId===binding.nativeId&&!item.ownerNativeId);
+    if(!pending.length)return;
+    let timer:ReturnType<typeof setTimeout>|undefined,expired=false;
+    try{
+      const terminals=await Promise.race([
+        (async()=>{
+          const {thread}=await this.nativeRpc('thread/read',{threadId:binding.nativeId,includeTurns:false});
+          if(expired||this.nativeControl?.version!=='0.171.0-alpha.7'||thread?.id!==binding.nativeId||
+            thread.modelProvider!==binding.provider||typeof thread.path!=='string'||thread.status?.type!=='notLoaded')return [];
+          return readWorkerTerminals(capabilityHome(this.config),thread.path,binding.nativeId,pending);
+        })(),
+        new Promise<[]>(resolve=>{timer=setTimeout(()=>{expired=true;resolve([]);},3000);}),
+      ]).catch(()=>[]);
+      // The main turn may have been cancelled while reading native history.
+      this.validateMainContext(context);
+      return ()=>{
+        if(this.nativeThreads.current(logical)?.nativeId!==binding.nativeId)throw Error('native_thread_owner_changed');
+        for(const item of terminals)
+          this.nativeThreads.recordWorkerEffect(logical,item.nativeId,item.turnId,item.itemId,item.status,true,()=>true,false);
+      };
+    }finally{if(timer)clearTimeout(timer);}
   }
   private async applySteer(receipt:Record<string,unknown>){
     const key=String(receipt.operationKey),operation=this.tasks.operation(key),details=JSON.parse(operation.detailsJson);

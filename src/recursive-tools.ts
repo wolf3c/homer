@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import type {Tool} from './engine.js';
 import {object, string} from './tools.js';
-import type {Actor, Authority, RecursiveTasks, WorkerMessageScope} from './recursive-tasks.js';
+import type {Actor, Authority, RecursiveTasks, TaskRun, WorkerMessageScope} from './recursive-tasks.js';
 import type {AttachmentRef} from './media-store.js';
 export type MessageAttachmentInput={path:string}|AttachmentRef;
 
@@ -43,6 +43,7 @@ export type RecursiveToolEffects = {
   rootAuthority: (actor: Actor) => Authority | undefined;
   prepareAttachments?: (actor:Actor, operationKey:string, inputs:MessageAttachmentInput[], scope:WorkerMessageScope) => AttachmentRef[];
   readMessage?: (actor:Actor,messageId:string) => unknown;
+  recoverWorkerMessage?: (run:TaskRun) => Promise<(()=>void)|undefined>;
   wake: () => void;
   stop: (receipt: Record<string, unknown>) => Promise<unknown>;
   steer: (receipt: Record<string, unknown>) => Promise<unknown>;
@@ -164,7 +165,12 @@ export class RecursiveTools {
       result=this.tasks.workerOpen(actor,{operationId,taskId:string(a.taskId,200),text:a.message as string|undefined,
         workingDirectory:a.workingDirectory as string|undefined},prepare,()=>this.effects.rootAuthority(actor));
     } else if (name === 'worker_message') {
-      const receipt = this.tasks.workerMessage(actor,{operationId,workerId:string(a.workerId,200),text:string(a.message,24000)},prepare);
+      const workerId=string(a.workerId,200);
+      const recover=this.effects.recoverWorkerMessage;
+      const recovery=recover&&this.tasks.workerMessageRecovery(actor,workerId,operationId);
+      const apply=recovery&&await recover?.(recovery.run);
+      const receipt=this.tasks.workerMessage(actor,{operationId,workerId,text:string(a.message,24000)},prepare,undefined,
+        recovery?{...recovery,apply}:undefined);
       if(receipt.route==='blocked')return receipt;
       result = receipt.route === 'steer' ? await this.effects.steer(receipt) : receipt;
     } else if (name === 'worker_interrupt') {

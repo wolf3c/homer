@@ -1,9 +1,13 @@
+import {isUtf8} from 'node:buffer';
+import {constants} from 'node:fs';
+import {lstat,open,realpath} from 'node:fs/promises';
+import {relative,sep} from 'node:path';
 import type {Store} from './store.js';
 
 export type NativeThreadBinding={logicalId:string;nativeId:string;provider:'openai'|'homer';parentNativeId:string|null};
 export type NativeThreadTurn={logicalId:string;nativeId:string;turnId:string};
 type WorkerEffectOwner=Pick<NativeThreadTurn,'nativeId'|'turnId'>;
-type WorkerEffect=NativeThreadTurn&{itemId:string;status:string;ownerNativeId?:string;ownerTurnId?:string};
+export type WorkerEffect=NativeThreadTurn&{itemId:string;status:string;ownerNativeId?:string;ownerTurnId?:string};
 const headKey=(id:string)=>'nativeThreadHead:v1:'+id;
 const recordKey=(id:string)=>'nativeThreadBinding:v1:'+id;
 const turnKey=(id:string,turn:string)=>'nativeThreadTurn:v1:'+JSON.stringify([id,turn]);
@@ -120,10 +124,52 @@ export class NativeThreadBindings{
    catch(error){this.store.db.exec('ROLLBACK TO native_worker_effect; RELEASE native_worker_effect');throw error;}
   }else this.store.transaction(record);
  }
- hasUnconfirmedWorkerEffects(logicalId:string):boolean{
+ pendingWorkerEffects(logicalId:string):WorkerEffect[]{
   if(!validId(logicalId))return invalidEffect();
   this.current(logicalId);
   const rows=this.store.db.prepare('SELECT key,value FROM meta WHERE instr(key,?)=1 ORDER BY key').all(effectPrefix(logicalId)) as {key:string;value:string}[];
-  return rows.map(row=>this.workerEffect(logicalId,row.key,row.value)).some(value=>value.status==='pending');
+  return rows.map(row=>this.workerEffect(logicalId,row.key,row.value)).filter(value=>value.status==='pending');
  }
+ hasUnconfirmedWorkerEffects(logicalId:string):boolean{return this.pendingWorkerEffects(logicalId).length>0;}
+}
+
+// Codex 0.171.0-alpha.7 paginated rollouts may contain terminal items not yet in its index.
+export async function readWorkerTerminals(home:string,path:string,nativeId:string,pending:WorkerEffect[]){
+ const root=await realpath(home);
+ const relativePath=relative(root,path);
+ if(!['sessions','archived_sessions'].includes(relativePath.split(sep)[0]!)||await realpath(path)!==path)return [];
+ const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+ try{
+  const before=await file.stat();
+  if(!before.isFile()||before.nlink!==1||before.size>8*1024*1024)return [];
+  const data=Buffer.alloc(before.size+1);
+  let offset=0;
+  while(offset<data.length){
+   const {bytesRead}=await file.read(data,offset,data.length-offset,offset);
+   if(!bytesRead)break;
+   offset+=bytesRead;
+  }
+  const after=await lstat(path);
+  if(offset!==before.size||data[offset-1]!==10||after.dev!==before.dev||after.ino!==before.ino||
+     after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs||await realpath(path)!==path)return [];
+  const content=data.subarray(0,offset-1);
+  if(!isUtf8(content))return [];
+  const lines=content.toString('utf8').split('\n');
+  const header=JSON.parse(lines[0]!);
+  if(header.ordinal!==0||header.type!=='session_meta'||header.payload?.id!==nativeId||header.payload.history_mode!=='paginated')return [];
+  const candidates=new Map(pending.map(item=>[JSON.stringify([item.turnId,item.itemId]),item]));
+  const found=new Map<string,WorkerEffect>();
+  for(let ordinal=1;ordinal<lines.length;ordinal++){
+   const row=JSON.parse(lines[ordinal]!);
+   if(row.ordinal!==ordinal)return [];
+   const event=row.payload,item=event?.item;
+   if(row.type!=='event_msg'||event?.type!=='item_completed'||event.thread_id!==nativeId||item?.type!=='CommandExecution')continue;
+   const key=JSON.stringify([event.turn_id,item.id]),candidate=candidates.get(key);
+   if(!candidate||!effectTerminals.has(item.status))continue;
+   if(found.has(key))return [];
+   const status=item.status==='completed'&&typeof item.exit_code==='number'&&item.exit_code!==0?'failed':item.status;
+   found.set(key,{...candidate,status});
+  }
+  return [...found.values()];
+ }finally{await file.close();}
 }
