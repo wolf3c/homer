@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {setImmediate as yieldTurn} from 'node:timers/promises';
 import type {Homer} from './service.js';
 import type {TelegramContextMessage} from './telegram-context.js';
+import type {AttachmentRef} from './media-store.js';
 import {conversationInput} from './web-history.js';
 
 export type ChannelAddress = {
@@ -21,7 +22,10 @@ type Request = {id:string; bindingId:string; inputHash:string; pendingText:strin
 type Subscription = {id:string; bindingId:string; taskId:string; requests:string; baseline:string; revokedAt:number|null};
 type Route = {bindingId:string; requestId:string} | {bindingId:string; subscriptionId:string};
 type Outbox = {messageId:string; bindingId:string; requestId:string|null; subscriptionId:string|null;
-  taskVersion:number|null; nextPart:number; receipts:string};
+  taskVersion:number|null; nextPart:number; receipts:string;notice:string|null};
+export type TelegramImage = {fileId:string;filename:string;size?:number};
+export type TelegramImageMember = {messageId:number;caption:string;image?:TelegramImage;ref:AttachmentRef};
+type TelegramMediaRow = {requestId:string;firstAt:number;lastAt:number;sealed:number;state:string;members:string};
 type Committed = NonNullable<ReturnType<Homer['readCommittedMessage']>>;
 type Attachment = ReturnType<Homer['readAttachment']>;
 type Part = {kind:'text'; text:string} | ({kind:'attachment'} & Attachment);
@@ -93,9 +97,14 @@ export class ChannelPlugin {
         CREATE TABLE IF NOT EXISTS channel_requests (
           id TEXT PRIMARY KEY, bindingId TEXT NOT NULL REFERENCES channel_bindings(id),
           eventKey TEXT UNIQUE NOT NULL, inputHash TEXT NOT NULL, pendingText TEXT);
+        CREATE INDEX IF NOT EXISTS channel_pending_text ON channel_requests(bindingId) WHERE pendingText IS NOT NULL;
         CREATE TABLE IF NOT EXISTS telegram_group_routes (
           requestId TEXT PRIMARY KEY REFERENCES channel_requests(id), chatId INTEGER NOT NULL,
           changeId INTEGER NOT NULL, messageId INTEGER NOT NULL, topicId INTEGER);
+        CREATE TABLE IF NOT EXISTS telegram_media (
+          requestId TEXT PRIMARY KEY REFERENCES channel_requests(id), firstAt INTEGER NOT NULL, lastAt INTEGER NOT NULL,
+          sealed INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'pending', members TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS telegram_unfinished_media ON telegram_media(state) WHERE state='pending' OR state='failed';
         CREATE TABLE IF NOT EXISTS channel_subscriptions (
           id TEXT PRIMARY KEY, bindingId TEXT NOT NULL REFERENCES channel_bindings(id),
           taskId TEXT NOT NULL, requests TEXT NOT NULL, baseline TEXT NOT NULL, revokedAt INTEGER);
@@ -105,6 +114,8 @@ export class ChannelPlugin {
           requestId TEXT REFERENCES channel_requests(id), subscriptionId TEXT REFERENCES channel_subscriptions(id),
           taskVersion INTEGER, state TEXT NOT NULL, attemptId TEXT, nextPart INTEGER NOT NULL DEFAULT 0,
           receipts TEXT NOT NULL DEFAULT '[]', CHECK((requestId IS NULL) <> (subscriptionId IS NULL)));`);
+      if(!this.db.prepare('PRAGMA table_info(channel_outbox)').all().some(column=>column.name==='notice'))
+        this.db.exec('ALTER TABLE channel_outbox ADD COLUMN notice TEXT');
       this.recoverSending();
       app.registerMainPluginTool({...subscriptionTool},(args,context)=>{
         const {taskId}=args as {taskId:string};
@@ -423,6 +434,95 @@ export class ChannelPlugin {
     return this.receiveBound({...input,id:String(binding.id)},input.eventId,input.text);
   }
 
+  allowsTelegramImage(requestId:string,bindingId:string,ref?:AttachmentRef){
+    return !this.shutdown&&!this.paused.has('telegram')&&!!this.db.prepare(`SELECT 1 FROM telegram_media m
+      JOIN channel_requests r ON r.id=m.requestId JOIN channel_bindings b ON b.id=r.bindingId
+      WHERE r.id=? AND b.id=? AND b.adapterId='telegram' AND b.revokedAt IS NULL AND m.state='pending'
+      AND (? IS NULL OR EXISTS(SELECT 1 FROM json_each(m.members) WHERE m.sealed=1
+        AND json_extract(value,'$.ref.assetId')=? AND json_extract(value,'$.ref.revision')=?))`)
+      .get(requestId,bindingId,ref?.assetId??null,ref?.assetId??null,ref?.revision??null);
+  }
+
+  private telegramNotice(requestId:string,bindingId:string,kind:string,notice:string){
+    this.db.prepare(`INSERT INTO channel_outbox(messageId,bindingId,requestId,state,notice)
+      VALUES(?,?,?,'queued',?) ON CONFLICT(messageId) DO NOTHING`).run(requestId+':'+kind,bindingId,requestId,notice);
+    this.dirty=true;
+  }
+
+  receiveTelegramImage(bindingId:string,groupId:string|undefined,member:Omit<TelegramImageMember,'ref'>){
+    this.requireOpen();
+    const binding=this.binding(bindingId);
+    if(binding?.adapterId!=='telegram'||this.paused.has('telegram'))throw Error('channel_binding_denied');
+    const eventKey=JSON.stringify(['telegram',binding.accountKey,bindingId,groupId===undefined?['message',member.messageId]:['album',groupId]]);
+    const row=this.db.prepare(`SELECT m.* FROM telegram_media m JOIN channel_requests r ON r.id=m.requestId
+      WHERE r.eventKey=?`).get(eventKey) as TelegramMediaRow|undefined;
+    const now=Date.now();
+    const item={...member,ref:{assetId:'asset-'+randomUUID(),revision:1}};
+    if(row){
+      const members=JSON.parse(row.members) as TelegramImageMember[];
+      if(members.some(item=>item.messageId===member.messageId)||row.state==='failed'||row.state==='cleaned')return;
+      if(row.sealed){
+        this.telegramNotice(row.requestId,bindingId,'late','相册可能不完整，后到的图片未加入原请求。如需处理，请重发整组。');
+        return;
+      }
+      if(members.length>=10){
+        this.finishTelegramImages(row.requestId,bindingId,'相册超过 10 个文件，请分组重发。');
+        return;
+      }
+      members.push(item);
+      this.db.prepare('UPDATE telegram_media SET members=?,lastAt=? WHERE requestId=?')
+        .run(JSON.stringify(members),now,row.requestId);
+      return;
+    }
+    const id='channel-'+randomUUID();
+    const full=Number(this.db.prepare(`SELECT COUNT(*) AS n FROM telegram_media m JOIN channel_requests r ON r.id=m.requestId
+      WHERE r.bindingId=? AND m.state='pending'`).get(bindingId)?.n)>=32;
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      this.db.prepare('INSERT INTO channel_requests VALUES(?,?,?,?,NULL)').run(id,bindingId,eventKey,'');
+      this.db.prepare('INSERT INTO telegram_media VALUES(?,?,?,?,?,?)').run(id,now,now,Number(full||groupId===undefined),
+        full?'cleaned':'pending',JSON.stringify(full?[{messageId:member.messageId}]:[item]));
+      if(full)this.telegramNotice(id,bindingId,'failure','图片处理队列已满，请稍后重发。');
+      this.db.exec('COMMIT');
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+
+  nextTelegramImages(bindingId:string){
+    const row=this.db.prepare(`SELECT m.*,r.rowid AS position FROM telegram_media m CROSS JOIN channel_requests r
+      ON r.id=m.requestId WHERE r.bindingId=? AND m.state='pending' ORDER BY r.rowid LIMIT 1`).get(bindingId) as
+      (TelegramMediaRow&{position:number})|undefined;
+    if(!row)return;
+    const deadline=row.firstAt+60_000;
+    const now=Date.now();
+    if(!row.sealed&&now<Math.min(row.firstAt+5000,row.lastAt+1000))return {wait:true as const};
+    if(now<deadline&&this.hasEarlierTelegramText(bindingId,row.position))return {wait:true as const};
+    if(!row.sealed)this.db.prepare('UPDATE telegram_media SET sealed=1 WHERE requestId=?').run(row.requestId);
+    return {requestId:row.requestId,deadline,members:(JSON.parse(row.members) as TelegramImageMember[]).sort((a,b)=>a.messageId-b.messageId)};
+  }
+
+  acceptedTelegramImages(requestId:string){return this.app.hasAcceptedTelegramImages(requestId);}
+  telegramImageReady(requestId:string,bindingId:string,ref:AttachmentRef){return this.app.telegramImageReady(requestId,bindingId,ref);}
+  storeTelegramImage(requestId:string,bindingId:string,ref:AttachmentRef,filename:string,bytes:Buffer,mime:string){
+    this.app.storeTelegramImage(requestId,bindingId,ref,filename,bytes,mime);
+  }
+  submitTelegramImages(requestId:string,bindingId:string,text:string,refs:AttachmentRef[]){
+    this.app.submitTelegramImages(requestId,bindingId,text,refs);
+  }
+
+  finishTelegramImages(requestId:string,bindingId:string,notice?:string){
+    if(!this.allowsTelegramImage(requestId,bindingId))return;
+    const row=this.db.prepare('SELECT members FROM telegram_media WHERE requestId=?').get(requestId)!;
+    const members=(JSON.parse(String(row.members)) as TelegramImageMember[]).map(({messageId})=>({messageId}));
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      this.db.prepare('UPDATE telegram_media SET state=?,sealed=1,members=? WHERE requestId=?')
+        .run(notice?'failed':'accepted',JSON.stringify(members),requestId);
+      if(notice)this.telegramNotice(requestId,bindingId,'failure',notice);
+      this.db.exec('COMMIT');
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+    this.dirty=true;
+  }
+
   private groupRoute(requestId:string) {
     return this.db.prepare('SELECT chatId,changeId,messageId,topicId FROM telegram_group_routes WHERE requestId=?')
       .get(requestId) as TelegramGroupRoute|undefined;
@@ -470,11 +570,23 @@ export class ChannelPlugin {
     const binding=this.binding(request.bindingId);
     if(binding&&(!this.adapters.has(binding.adapterId)||this.paused.has(binding.adapterId)))return;
     const group=this.groupRoute(request.id);
+    if(binding?.adapterId==='telegram'&&!group){
+      const position=Number(this.db.prepare('SELECT rowid FROM channel_requests WHERE id=?').get(request.id)!.rowid);
+      if(this.hasEarlierTelegramText(binding.id,position)||this.db.prepare(`SELECT 1 FROM telegram_media m
+        CROSS JOIN channel_requests earlier ON earlier.id=m.requestId
+        WHERE m.state='pending' AND earlier.bindingId=? AND earlier.rowid<? LIMIT 1`).get(binding.id,position))return;
+    }
     if(binding&&group&&this.telegramSync.get(binding.id)!=='ready')return;
     if(binding&&this.groupAllowed(binding.id,group))
       this.app.submitMessage({requestId:request.id,text:request.pendingText},{source:'channel_plugin',persist:()=>{}});
     else this.discardTelegramBackground(request.id);
     this.db.prepare('UPDATE channel_requests SET pendingText=NULL WHERE id=?').run(request.id);
+  }
+
+  private hasEarlierTelegramText(bindingId:string,position:number){
+    return !!this.db.prepare(`SELECT 1 FROM channel_requests prior
+      WHERE prior.bindingId=? AND prior.rowid<? AND prior.pendingText IS NOT NULL
+      AND NOT EXISTS(SELECT 1 FROM telegram_group_routes g WHERE g.requestId=prior.id) LIMIT 1`).get(bindingId,position);
   }
 
   private subscribe(taskId:string,requestId:string) {
@@ -554,6 +666,11 @@ export class ChannelPlugin {
 
   private async catchUp() {
     if(this.shutdown||this.changing)return;
+    for(const row of this.db.prepare(`SELECT r.id,r.bindingId FROM telegram_media m JOIN channel_requests r ON r.id=m.requestId
+      JOIN channel_bindings b ON b.id=r.bindingId WHERE m.state='failed' OR (m.state='pending' AND b.revokedAt IS NOT NULL)`).all()){
+      this.app.discardTelegramImages(String(row.id),String(row.bindingId));
+      this.db.prepare("UPDATE telegram_media SET state='cleaned',members='[]' WHERE requestId=?").run(row.id!);
+    }
     // Existing outbox entries already own these message IDs in every send state.
     const outboxIds=new Set(this.db.prepare('SELECT messageId FROM channel_outbox').all().map(row=>String(row.messageId)));
     let acceptFailed=false;
@@ -603,7 +720,7 @@ export class ChannelPlugin {
     while(!this.shutdown&&!this.changing){
       const row=next.get(messageId) as Outbox|undefined;
       if(!row)return;
-      const binding=this.binding(row.bindingId),message=binding&&this.message(row);
+      const binding=this.binding(row.bindingId),message=binding&&(row.notice===null?this.message(row):{text:row.notice});
       const adapter=binding&&this.adapters.get(binding.adapterId);
       const subscription=row.subscriptionId?this.subscription(row.subscriptionId):undefined;
       const origin=row.requestId??(subscription&&JSON.parse(subscription.requests)[0]);

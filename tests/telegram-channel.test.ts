@@ -455,3 +455,128 @@ test('Telegram config protects secrets and delivery distinguishes rejection from
     assert.deepEqual(methods,['getMe']);
   }finally{await f.close();}
 });
+
+test('private Telegram album preserves image bytes, captions, order and one turn across restart',async()=>{
+  const image=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/e/0AAAAASUVORK5CYII=','base64');
+  const batches:unknown[][]=[];
+  const chat={id:A.chatId,type:'private'},from={id:A.userId,is_bot:false};
+  const downloads:string[]=[],notices:string[]=[];
+  let interruptSecond=true;
+  const http:typeof fetch=async(url,init)=>{
+    const path=String(url);
+    if(path.endsWith('/getMe'))return ok({id:101,is_bot:true});
+    if(path.endsWith('/getUpdates')){
+      if(!batches.length)await wait(10,undefined,{signal:init?.signal??undefined});
+      return ok(batches.shift()??[]);
+    }
+    if(path.endsWith('/getFile'))return ok({file_path:JSON.parse(String(init?.body)).file_id+'.png'});
+    if(path.includes('/file/')){
+      downloads.push(path.split('/').at(-1)!);
+      if(path.endsWith('/second.png')&&interruptSecond)await wait(5000,undefined,{signal:init?.signal??undefined});
+      return new Response(image);
+    }
+    assert.ok(path.endsWith('/sendMessage'));
+    const text=JSON.parse(String(init?.body)).text;
+    if(text.startsWith('相册可能不完整'))notices.push(text);
+    return ok({message_id:999,chat,from:{id:101,is_bot:true}});
+  };
+  const adapter=new TelegramChannel([A],http,undefined,async()=>{});
+  const f=fixture([adapter]);
+  try{
+    adapter.applyBindings(f.app.channels!);
+    await f.app.start();
+    const date=Math.ceil(Date.now()/1000);
+    const message=(id:number,fields:object)=>({update_id:id,message:{chat,from,date,message_id:id,...fields}});
+    const first=message(20,{media_group_id:'album',caption:'first',photo:[{file_id:'first',width:1,height:1}]});
+    const second=message(22,{media_group_id:'album',document:{file_id:'second',file_name:'original.png',mime_type:'image/png'}});
+    batches.push([first],[second,first,message(23,{text:'follow-up'})]);
+    await until(()=>downloads.length===2);
+    interruptSecond=false;
+    await f.restart(app=>adapter.applyBindings(app.channels!));
+    const users=()=>f.app.store.db.prepare("SELECT id,text FROM conversation_messages WHERE role='user' ORDER BY rowid").all();
+    await until(()=>users().length===2);
+    assert.deepEqual(users().map(row=>row.text),['first','follow-up']);
+    const row=f.app.store.db.prepare('SELECT refsJson FROM conversation_attachments WHERE messageId=?').get(users()[0]!.id!);
+    const refs=JSON.parse(String(row?.refsJson));
+    assert.equal(refs.length,2);
+    const original=f.app.readAttachment({messageId:String(users()[0]!.id),...refs[1]});
+    assert.equal(original.filename,'original.png');
+    assert.deepEqual(Buffer.from(original.data,'base64'),image);
+    await f.restart(app=>adapter.applyBindings(app.channels!));
+    batches.push([first,second,message(23,{text:'follow-up'})]);
+    await until(()=>batches.length===0);
+    await wait(30);
+    assert.equal(users().length,2);
+    assert.deepEqual(downloads,['first.png','second.png','second.png']);
+    batches.push([message(24,{photo:[{file_id:'pure',width:1,height:1}]})]);
+    await until(()=>users().length===3);
+    assert.equal(users()[2]!.text,'');
+    assert.equal(downloads.at(-1),'pure.png');
+    const late=message(25,{media_group_id:'album',photo:[{file_id:'late',width:1,height:1}]});
+    batches.push([late,late]);
+    await until(()=>notices.length===1);
+    await f.app.channels!.synchronize();
+    assert.equal(notices.length,1);
+    assert.equal(users().length,3);
+    assert.ok(!downloads.includes('late.png'));
+  }finally{await f.close();}
+});
+
+test('Telegram rejects a mixed album before downloading and keeps an uncertain notice across restart',async()=>{
+  const batches:unknown[][]=[];
+  const chat={id:A.chatId,type:'private'},from={id:A.userId,is_bot:false};
+  const notices:string[]=[];
+  let fileRequests=0;
+  const http:typeof fetch=async(url,init)=>{
+    const path=String(url);
+    if(path.endsWith('/getMe'))return ok({id:101,is_bot:true});
+    if(path.endsWith('/getUpdates')){
+      if(!batches.length)await wait(10,undefined,{signal:init?.signal??undefined});
+      return ok(batches.shift()??[]);
+    }
+    if(path.endsWith('/getFile')){
+      fileRequests++;
+      return ok({file_path:JSON.parse(String(init?.body)).file_id+'.png'});
+    }
+    if(path.endsWith('/good.png'))return new Response(Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/e/0AAAAASUVORK5CYII=','base64'));
+    if(path.endsWith('/bad.png'))return new Response('invalid image');
+    assert.ok(path.endsWith('/sendMessage'));
+    const text=JSON.parse(String(init?.body)).text;
+    if(text==='Synthetic reply')return ok({message_id:998,chat,from:{id:101,is_bot:true}});
+    notices.push(text);
+    throw Error('lost response');
+  };
+  const adapter=new TelegramChannel([A],http,undefined,async()=>{});
+  const f=fixture([adapter]);
+  try{
+    adapter.applyBindings(f.app.channels!);
+    await f.app.start();
+    const date=Math.ceil(Date.now()/1000);
+    const message=(id:number,fields:object)=>({update_id:id,message:{chat,from,date,message_id:id,...fields}});
+    const album=[message(30,{media_group_id:'album',caption:'do not queue this',photo:[{file_id:'picture',width:1,height:1}]}),
+      message(31,{media_group_id:'album',video:{file_id:'unsupported'}})];
+    const stranger=message(29,{photo:[{file_id:'foreign',width:1,height:1}],from:{id:7,is_bot:false}});
+    batches.push([stranger,...album,message(32,{text:'still works'})]);
+    await until(()=>f.app.channels!.connectionStatus().some(binding=>binding.unknown===1));
+    assert.equal(notices.length,1);
+    assert.equal(fileRequests,0);
+    assert.match(notices[0]!,/JPEG 或 PNG/);
+    const users=()=>f.app.store.db.prepare("SELECT text FROM conversation_messages WHERE role='user'").all().map(row=>row.text);
+    assert.deepEqual(users(),['still works']);
+    await f.restart(app=>adapter.applyBindings(app.channels!));
+    batches.push(album);
+    await until(()=>batches.length===0);
+    await f.app.channels!.synchronize();
+    assert.equal(notices.length,1);
+    assert.deepEqual(users(),['still works']);
+
+    batches.push([message(33,{media_group_id:'corrupt-album',photo:[{file_id:'good',width:1,height:1}]}),
+      message(34,{media_group_id:'corrupt-album',photo:[{file_id:'bad',width:1,height:1}]})]);
+    await until(()=>f.app.channels!.connectionStatus().some(binding=>binding.unknown===2));
+    assert.equal(fileRequests,2);
+    assert.deepEqual(users(),['still works']);
+    const asset=f.app.store.db.prepare('SELECT state FROM media_assets').all();
+    assert.deepEqual(asset.map(row=>row.state),['deleted']);
+  }finally{await f.close();}
+});

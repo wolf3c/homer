@@ -1800,6 +1800,10 @@ export class Homer {
         prior?.persist(receipt);
       }};
     }
+    return this.acceptMessage(input,acceptance,interrupt);
+  }
+
+  private acceptMessage(input:ConversationInput,acceptance?:ConversationAcceptance,interrupt?:{generationId:string;messageId:string}){
     const accepted=this.inputs.accept(input,acceptance,interrupt);
     if(accepted.fresh)this.invalidateState('user-input');
     if(accepted.fresh)this.receptionTimings?.mark('accepted',{requestId:input.requestId,messageId:accepted.queueMessageId,kind:'user'});
@@ -1810,6 +1814,42 @@ export class Homer {
     }
     this.scheduleInputs();return accepted;
   }
+
+  telegramImageReady(requestId:string,bindingId:string,ref:AttachmentRef){
+    if(!this.channels?.allowsTelegramImage(requestId,bindingId,ref))throw Error('channel_binding_denied');
+    const row=this.store.db.prepare('SELECT requestId,bindingId,state FROM media_assets WHERE id=? AND revision=?').get(ref.assetId,ref.revision);
+    if(!row)return false;
+    if(row.requestId!==requestId||row.bindingId!==bindingId)throw Error('media_scope_denied');
+    return row.state==='ready';
+  }
+
+  hasAcceptedTelegramImages(requestId:string){
+    return !!this.store.db.prepare('SELECT 1 FROM conversation_inputs WHERE requestId=?').get(requestId);
+  }
+
+  storeTelegramImage(requestId:string,bindingId:string,ref:AttachmentRef,filename:string,bytes:Buffer,mime:string){
+    if(this.telegramImageReady(requestId,bindingId,ref))return;
+    if(!this.store.db.prepare('SELECT 1 FROM media_assets WHERE id=?').get(ref.assetId))
+      this.media.intent(requestId,bindingId,'image',filename,true,ref.assetId);
+    const lease=this.media.claim(ref);
+    if(!lease)throw Error('media_not_ready');
+    try{this.media.ready(ref,lease,bytes,mime);}
+    catch(error){this.media.failed(ref,lease,engineError(error),true);throw error;}
+  }
+
+  submitTelegramImages(requestId:string,bindingId:string,text:string,attachments:AttachmentRef[]){
+    if(this.closing||this.closed||this.mainBroken)throw Error('main_engine_unavailable');
+    if(!attachments.length||!attachments.every(ref=>this.telegramImageReady(requestId,bindingId,ref)))throw Error('media_not_ready');
+    this.media.validate(requestId,attachments);
+    const input=conversationInput({requestId,text,attachments});
+    return this.acceptMessage(input,{source:'channel_plugin',persist:()=>{}});
+  }
+
+  discardTelegramImages(requestId:string,bindingId:string){
+    if(!this.store.db.prepare('SELECT 1 FROM conversation_inputs WHERE requestId=?').get(requestId))
+      this.media.discardChannelRequest(requestId,bindingId);
+  }
+
   uploadAttachment(value:unknown){
     if(this.closing||this.closed)throw Error('application_closing');
     const input=webUpload(value);

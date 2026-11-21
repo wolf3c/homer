@@ -5,7 +5,10 @@ import {EnvHttpProxyAgent} from 'undici';
 import {assertWindowsPrivate} from '../scripts/windows-security.mjs';
 import {codexProxyEnvironment} from './engine.js';
 import {writeChannelConfig} from './channel-config.js';
-import type {ChannelAdapter, ChannelAddress, ChannelHealth, ChannelPacket, ChannelPlugin} from './channel-plugin.js';
+import type {ChannelAdapter, ChannelAddress, ChannelHealth, ChannelPacket, ChannelPlugin, TelegramImage} from './channel-plugin.js';
+import {imageThumbnail} from './media-decode.js';
+import {detectMedia,imageDimensions,MEDIA_POLICY} from './media-policy.js';
+import {MediaWorkQueue} from './media-work.js';
 import {telegramReplyContext,type TelegramContextMessage} from './telegram-context.js';
 import type {TelegramApiCredentials,TelegramUpstream} from './telegram-mtproto.js';
 
@@ -16,8 +19,10 @@ type Bot=TelegramAccount & {username?:string};
 const maxConfigBytes=32*1024;
 type Chat={id:number;type:string;title?:string};
 type User={id:number;is_bot:boolean;username?:string;first_name?:string;last_name?:string};
+type TelegramFile={file_id?:string;file_size?:number;file_name?:string;mime_type?:string;width?:number;height?:number};
 type Message={message_id?:number;date?:number;text?:string;caption?:string;message_thread_id?:number;is_topic_message?:boolean;
   chat?:Chat;from?:User;sender_chat?:Chat;forward_origin?:unknown;
+  media_group_id?:string;photo?:TelegramFile[];document?:TelegramFile;
   entities?:{type:string;offset:number;length:number}[];reply_to_message?:Omit<Message,'reply_to_message'>};
 type Member={user:User;status:string;is_member?:boolean};
 type Update={update_id:number;message?:Message;my_chat_member?:{
@@ -58,6 +63,20 @@ function contextMessage(message:Message|undefined):TelegramContextMessage|undefi
 
 class TelegramRejected extends Error {
   constructor(readonly status:number,readonly retryAfter:number){super('telegram_api_rejected');}
+}
+
+const imageBytes=Math.min(20_000_000,MEDIA_POLICY.imageBytes);
+const stillImage=(mime:string)=>mime==='image/jpeg'||mime==='image/png';
+function telegramImage(message:Message):TelegramImage|undefined{
+  const document=message.document;
+  const photos=Array.isArray(message.photo)?message.photo.filter(item=>item&&positiveId(item.width)&&positiveId(item.height))
+    .sort((a,b)=>b.width!*b.height!-a.width!*a.height!):undefined;
+  const file=photos?(photos.find(item=>item.width!*item.height!<=MEDIA_POLICY.maxPixels&&
+    (!positiveId(item.file_size)||item.file_size<=imageBytes))??photos[0]):document;
+  if(typeof file?.file_id!=='string'||!/^[\w-]{1,1024}$/.test(file.file_id))return;
+  const name=typeof file.file_name==='string'?file.file_name.trim().slice(0,200):'';
+  if(document&&!stillImage(document.mime_type??'')&&!/\.(jpe?g|png)$/i.test(name))return;
+  return {fileId:file.file_id,filename:name,...(positiveId(file.file_size)?{size:file.file_size}:{})};
 }
 
 function network():typeof fetch {
@@ -146,9 +165,12 @@ export class TelegramChannel implements ChannelAdapter {
   readonly offlineReplayMs=24*60*60_000;
   private readonly bots=new Map<string,Bot>();
   private groups?:ReturnType<ChannelPlugin['telegramGroups']>;
+  private plugin?:ChannelPlugin;
+  private readonly imageWork=new MediaWorkQueue(MEDIA_POLICY.concurrency,32);
 
   constructor(bots:unknown,private readonly http:typeof fetch,
-    private readonly openUpstream?:(token:string,signal:AbortSignal)=>TelegramUpstream|Promise<TelegramUpstream|undefined>){
+    private readonly openUpstream?:(token:string,signal:AbortSignal)=>TelegramUpstream|Promise<TelegramUpstream|undefined>,
+    private readonly verifyImage:(bytes:Buffer,mime:string,signal:AbortSignal)=>Promise<unknown>=async(bytes,mime,signal)=>imageThumbnail(bytes,mime,signal)){
     for(const bot of parseTelegramAccounts(bots))this.bots.set(telegramBotId(bot.token),bot);
   }
 
@@ -159,7 +181,7 @@ export class TelegramChannel implements ChannelAdapter {
     plugin.configureBindings(this.id,Array.from(this.bots,([accountKey,{userId,chatId}])=>({
       adapterId:this.id,accountKey,senderKey:String(userId),conversationKey:String(chatId),
     })));
-    if(this.bots.size)this.groups=plugin.telegramGroups();
+    if(this.bots.size){this.plugin=plugin;this.groups=plugin.telegramGroups();}
   }
 
   accountLabel(accountKey:string):string|undefined {
@@ -177,11 +199,107 @@ export class TelegramChannel implements ChannelAdapter {
     if(address.adapterId===this.id&&bot&&address.senderKey===String(bot.userId)&&address.conversationKey===String(bot.chatId))return bot;
   }
 
+  private async downloadImage(token:string,image:TelegramImage,signal:AbortSignal){
+    if(image.size!==undefined&&image.size>imageBytes)throw Error('media_size_limit');
+    const file=await request<{file_path?:string;file_size?:number}>(this.http,token,'getFile',{file_id:image.fileId},signal);
+    if(positiveId(file?.file_size)&&file.file_size>imageBytes)throw Error('media_size_limit');
+    const path=file?.file_path;
+    if(typeof path!=='string'||path.length>1024||!path.split('/').every(segment=>/^(?!\.{1,2}$)[\w.-]+$/.test(segment)))
+      throw Error('telegram_image_unavailable');
+    let response:Response;
+    try{response=await this.http('https://api.telegram.org/file/bot'+token+'/'+path,{signal,redirect:'error'});}
+    catch{throw Error('telegram_api_unavailable');}
+    if(!response.ok||!response.body){
+      await response.body?.cancel().catch(()=>{});
+      if(response.status>=500)throw Error('telegram_api_unavailable');
+      if(response.status===429){
+        const seconds=Number(response.headers.get('retry-after'));
+        throw new TelegramRejected(429,positiveId(seconds)?seconds:5);
+      }
+      throw Error('telegram_image_unavailable');
+    }
+    const reader=response.body.getReader(),chunks:Buffer[]=[];
+    let size=0;
+    try{
+      if(Number(response.headers.get('content-length'))>imageBytes)throw Error('media_size_limit');
+      while(true){
+        signal.throwIfAborted();
+        const chunk=await reader.read().catch(()=>{throw Error('telegram_api_unavailable');});
+        if(chunk.done)break;
+        size+=chunk.value.byteLength;
+        if(size>imageBytes)throw Error('media_size_limit');
+        chunks.push(Buffer.from(chunk.value));
+      }
+    }finally{await reader.cancel().catch(()=>{});}
+    const bytes=Buffer.concat(chunks,size),mime=detectMedia(bytes);
+    if(!stillImage(mime))throw Error('telegram_image_invalid');
+    const dims=imageDimensions(bytes,mime);
+    if(!dims?.width||!dims.height||dims.width*dims.height>MEDIA_POLICY.maxPixels)throw Error('media_pixel_limit');
+    await this.verifyImage(bytes,mime,signal);
+    signal.throwIfAborted();
+    return {bytes,mime,filename:image.filename||(mime==='image/png'?'图片.png':'图片.jpg')};
+  }
+
+  private async prepareImages(token:string,bindingId:string,plugin:ChannelPlugin,signal:AbortSignal){
+    while(!signal.aborted){
+      const job=plugin.nextTelegramImages(bindingId);
+      if(!job)return;
+      if('wait' in job){await wait(150,undefined,{signal});continue;}
+      const {requestId,deadline,members}=job;
+      if(plugin.acceptedTelegramImages(requestId)){plugin.finishTelegramImages(requestId,bindingId);continue;}
+      const remaining=deadline-Date.now();
+      if(remaining<=0){plugin.finishTelegramImages(requestId,bindingId,'图片准备超时，请重发。');continue;}
+      const budget=AbortSignal.any([signal,AbortSignal.timeout(remaining)]);
+      let notice:string|undefined;
+      try{
+        if(members.some(member=>!member.image))throw Error('telegram_image_type');
+        for(const {image,ref} of members){
+          if(plugin.telegramImageReady(requestId,bindingId,ref))continue;
+          const file=await this.imageWork.run(async()=>{
+            for(let attempt=1;;attempt++){
+              try{return await this.downloadImage(token,image!,AbortSignal.any([budget,AbortSignal.timeout(MEDIA_POLICY.downloadTimeoutMs)]));}
+              catch(error){
+                if(budget.aborted||attempt>=MEDIA_POLICY.attempts||!(error instanceof Error)||
+                  (error.message!=='telegram_api_unavailable'&&!(error instanceof TelegramRejected&&error.status===429)))throw error;
+                const delay=error instanceof TelegramRejected?error.retryAfter*1000:250;
+                await wait(Math.min(delay,Math.max(0,deadline-Date.now())),undefined,{signal:budget});
+              }
+            }
+          },budget);
+          budget.throwIfAborted();
+          plugin.storeTelegramImage(requestId,bindingId,ref,file.filename,file.bytes,file.mime);
+        }
+        const captions=members.filter(member=>member.caption.trim());
+        const text=captions.map(member=>captions.length===1&&member===members[0]?member.caption:
+          `图片 ${members.indexOf(member)+1}：${member.caption}`).join('\n\n');
+        budget.throwIfAborted();
+        plugin.submitTelegramImages(requestId,bindingId,text,members.map(member=>member.ref));
+      }catch(error){
+        if(signal.aborted)return;
+        const code=error instanceof Error?error.message:'';
+        if(plugin.acceptedTelegramImages(requestId)){plugin.finishTelegramImages(requestId,bindingId);continue;}
+        if(code==='main_inbox_capacity'||code==='main_engine_unavailable'){
+          await wait(Math.min(250,remaining),undefined,{signal});
+          continue;
+        }
+        notice=budget.aborted?'图片准备超时，请重发。'
+          :code==='media_size_limit'||code==='media_message_size_limit'?'图片超过下载或附件容量上限，请缩小后重发。'
+          :code==='telegram_image_type'?'本次含无法读取的图片或其他媒体，请仅发送 JPEG 或 PNG 图片。'
+          :members.length>1?'相册有图片未能读取，本次未交给荷马，请整组重发。':'图片未能读取，本次未交给荷马，请重发。';
+      }
+      plugin.finishTelegramImages(requestId,bindingId,notice);
+    }
+  }
+
   async connect(...[address,receive,signal,boundAt,bindingId]:Parameters<NonNullable<ChannelAdapter['connect']>>){
     const bot=this.bot(address);
     if(!bot)throw Error('telegram_binding_invalid');
     this.health.set(address.accountKey,'checking');
     const groups=bindingId&&this.groups||undefined;
+    const plugin=bindingId&&this.plugin||undefined;
+    const preparationAbort=new AbortController();
+    const preparationSignal=AbortSignal.any([signal,preparationAbort.signal]);
+    let preparation:Promise<void>|undefined;
     const recent=new Map<number,Map<number|null,TelegramContextMessage[]>>();
     let upstream:TelegramUpstream|undefined;
     if(groups&&this.openUpstream)try{upstream=await this.openUpstream(bot.token,signal);}
@@ -215,9 +333,16 @@ export class TelegramChannel implements ChannelAdapter {
             if(signal.aborted)return;
             if(message&&positiveId(message.message_id)&&positiveId(message.date)&&message.date*1000>=boundAt&&
               message.chat?.type==='private'&&message.chat.id===bot.chatId&&message.from?.is_bot===false&&message.from.id===bot.userId&&
-              message.message_thread_id===undefined&&!message.is_topic_message&&typeof message.text==='string'&&message.text.trim()){
-              try{receive({senderKey:address.senderKey,conversationKey:address.conversationKey,eventId:`${id}:${message.message_id}`,text:message.text});}
-              catch(error){if(!(error instanceof Error)||error.message!=='channel_event_conflict')throw error;}
+              message.message_thread_id===undefined&&!message.is_topic_message){
+              const mediaGroup=typeof message.media_group_id==='string'&&message.media_group_id.length<=128?message.media_group_id:undefined;
+              if(plugin&&bindingId&&(mediaGroup||message.photo||message.document||
+                ['video','voice','audio','sticker','animation','video_note','location','venue','contact','poll','live_photo'].some(key=>key in message))){
+                plugin.receiveTelegramImage(bindingId,mediaGroup,{messageId:message.message_id,
+                  caption:typeof message.caption==='string'?message.caption.slice(0,1024):'',image:telegramImage(message)});
+              }else if(typeof message.text==='string'&&message.text.trim()){
+                try{receive({senderKey:address.senderKey,conversationKey:address.conversationKey,eventId:`${id}:${message.message_id}`,text:message.text});}
+                catch(error){if(!(error instanceof Error)||error.message!=='channel_event_conflict')throw error;}
+              }
             }
             if(groups&&bindingId){
               if(change&&groupChat(change.chat)&&positiveId(change.date)&&change.date*1000>=boundAt&&
@@ -263,6 +388,10 @@ export class TelegramChannel implements ChannelAdapter {
             groups.caughtUp(bindingId,polledAt);
             caughtUp=true;
           }
+          if(plugin&&bindingId&&caughtUp&&!preparation)
+            preparation=this.prepareImages(bot.token,bindingId,plugin,preparationSignal)
+              .catch(()=>{if(!preparationSignal.aborted)console.warn('telegram_image_prepare_failed');})
+              .finally(()=>{preparation=undefined;});
         }catch(error){
           if(signal.aborted)return;
           if(groups&&bindingId){
@@ -277,7 +406,11 @@ export class TelegramChannel implements ChannelAdapter {
           await wait(Math.min(seconds,3600)*1000,undefined,{signal}).catch(()=>{});
         }
       }
-    }finally{await upstream?.close();}
+    }finally{
+      preparationAbort.abort();
+      await preparation;
+      await upstream?.close();
+    }
   }
 
   async send({address,part,telegramGroup,telegramReply}:ChannelPacket,signal:AbortSignal):ReturnType<ChannelAdapter['send']>{

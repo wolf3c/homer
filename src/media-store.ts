@@ -32,8 +32,8 @@ export class MediaStore{
   }
   if(directory){mkdirSync(directory,{recursive:true,mode:0o700});if(lstatSync(directory).isSymbolicLink()||realpathSync(directory)!==resolve(directory))throw Error('media_directory_denied');}
  }
- intent(requestId:string,bindingId:string,kind:MediaKind,filename='附件',required=true):AttachmentRef{
-  const id='asset-'+randomUUID(),now=Date.now();
+ intent(requestId:string,bindingId:string,kind:MediaKind,filename='附件',required=true,id='asset-'+randomUUID()):AttachmentRef{
+  const now=Date.now();
   this.db.prepare("INSERT INTO media_assets(id,requestId,bindingId,kind,revision,state,size,filename,attempt,createdAt,expiresAt) VALUES(?,?,?,?,1,'received',0,?,0,?,?)").run(id,requestId,bindingId,kind,filenameOf(filename),now,now+MEDIA_POLICY.retentionMs);
   if(!required)this.db.prepare('INSERT INTO media_optional VALUES(?)').run(id);
   return {assetId:id,revision:1};
@@ -223,6 +223,13 @@ export class MediaStore{
   return bytes;
  }
  revoke(requestId:string){this.db.prepare("UPDATE media_assets SET state='revoked',lease=NULL WHERE requestId=? AND state NOT IN ('deleted','expired')").run(requestId);}
+ discardChannelRequest(requestId:string,bindingId:string){
+  const assets=this.db.prepare(`UPDATE media_assets SET state='revoked',lease=NULL,expiresAt=0
+    WHERE requestId=? AND bindingId=? AND state!='deleted' AND NOT EXISTS(
+      SELECT 1 FROM media_pins WHERE assetId=media_assets.id AND revision=media_assets.revision)
+    RETURNING *`).all(requestId,bindingId) as MediaAsset[];
+  for(const asset of assets)this.collect(asset);
+ }
  retainRefs(requestId:string,refs:readonly AttachmentRef[]=[]){
   this.validate(requestId,refs);
   const keep=new Set(refs.map(ref=>ref.assetId+'@'+ref.revision));
@@ -275,12 +282,7 @@ export class MediaStore{
   const scope=operationKey===undefined?'':' AND originOperationKey=?';
   const candidates=this.db.prepare("SELECT * FROM media_assets WHERE expiresAt<? AND state NOT IN ('deleted','downloading') AND NOT EXISTS(SELECT 1 FROM media_pins p WHERE p.assetId=media_assets.id AND p.revision=media_assets.revision)"+queue+scope)
    .all(now,...(operationKey===undefined?[]:[operationKey])) as MediaAsset[];
-  for(const a of candidates){
-   this.db.prepare("UPDATE media_assets SET state='expired',lease=NULL WHERE id=?").run(a.id);let clean=true;
-   const transforms=this.db.prepare('SELECT transform FROM media_derivatives WHERE assetId=?').all(a.id).map(r=>String(r.transform));
-   for(const path of [this.path(a.id),...transforms.map(t=>this.path(a.id)+'.'+t)])try{unlinkSync(path);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')clean=false;}
-   if(clean){this.db.prepare('DELETE FROM media_derivatives WHERE assetId=?').run(a.id);this.db.prepare("UPDATE media_assets SET state='deleted' WHERE id=?").run(a.id);}
-  }
+  for(const asset of candidates)this.collect(asset);
   if(this.directory&&operationKey===undefined)for(const name of readdirSync(this.directory)){
    const match=name.match(/^(asset-[a-f0-9-]{36})(?:\.([\w-]{1,80}))?(?:\.[a-f0-9-]{36})?(\.part)?$/);if(!match)continue;
    const path=join(this.directory,name),stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink()||stat.mtimeMs>=now-86400000)continue;
@@ -289,5 +291,18 @@ export class MediaStore{
    if(!known)try{unlinkSync(path);}catch{}
   }
   return candidates.length;
+ }
+ private collect(asset:MediaAsset){
+  this.db.prepare("UPDATE media_assets SET state='expired',lease=NULL WHERE id=?").run(asset.id);
+  let clean=true;
+  const original=this.path(asset.id);
+  const transforms=this.db.prepare('SELECT transform FROM media_derivatives WHERE assetId=?').all(asset.id);
+  for(const path of [original,...transforms.map(row=>original+'.'+row.transform)]){
+   try{unlinkSync(path);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')clean=false;}
+  }
+  if(clean){
+   this.db.prepare('DELETE FROM media_derivatives WHERE assetId=?').run(asset.id);
+   this.db.prepare("UPDATE media_assets SET state='deleted' WHERE id=?").run(asset.id);
+  }
  }
 }
