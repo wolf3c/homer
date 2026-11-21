@@ -29,6 +29,7 @@ import './media-attachments.css';
 import {ApprovalCard} from './vendor/assistant-ui/approval-card';
 import {showMainProcessing,serviceActivityNotice} from './waiting-status';
 import {connectionFetch as fetch,ConnectionEvents,mobileView} from "./web-connection-client";
+import {markMobileRecovery} from "./mobile-connection";
 import {FileList} from './file-list';
 import {CanvasPanel, type CanvasArtifact,type PreviewTab} from "./canvas-panel";
 import{BrowserPreviewContext,openBrowserPreview,useBrowserPages}from'./browser-preview';
@@ -1241,6 +1242,9 @@ function HomerApp() {
   const verifiedThread = useRef("");
   const loadedVersion = useRef("");
   const sendChain=useRef<Promise<void>>(Promise.resolve());
+  useLayoutEffect(()=>{
+    if(mobileView&&canAcceptInput(connected,state.upgrade))markMobileRecovery('send-ready');
+  },[connected,state]);
   useEffect(() => {
     let disposed = false, retryMs = 500;
     let activeEvents: ConnectionEvents | undefined, retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1283,6 +1287,7 @@ function HomerApp() {
       setState({...next,queue:activePages.current.queue.items,interactions:activePages.current.interactions.items,messages:history.current.messages,artifacts:history.current.artifacts,inactiveInteractions:history.current.inactiveInteractions,history:{...next.history,moreQueue:activePages.current.queue.more,moreInteractions:activePages.current.interactions.more}});
       for(const kind of ['queue','interactions'] as const)if((kind!=='queue'||!next.features?.queueDispatch)&&activePages.current[kind].needsRead)void readActivePage(kind);
       setConnected(true); setConnectionError("");
+      if(mobileView)events.stateApplied();
       // Neither an inactive callback nor absence from a bounded page erases
       // user drafts or immutable unconfirmed requests. Recovery is explicit.
 
@@ -1291,15 +1296,15 @@ function HomerApp() {
     events.onerror = code => {
       if (disposed || activeEvents !== events) return;
       if(code==='history_protocol_required'||code==='route_not_found'){setUiUpdate(true);setConnectionError('网页读取版本不匹配，请保存草稿后刷新界面。');reader.current.connected=false;setConnected(false);events.close();return;}
-      if(code==='mobile_device_denied'){reader.current.connected=false;setConnected(false);setConnectionError('此设备未获授权或已停用。请在主端核对，或在 App 中重新扫码。草稿已保留。');events.close();activeEvents=undefined;retryTimer=setTimeout(connect,10000);return;}
-      reader.current.connected=false;setConnected(false); setConnectionError(code==="service_not_ready"?"服务尚未就绪，正在等待主对话。":"暂未连接到荷马，正在自动重连。已有消息和草稿会保留。"); events.close(); activeEvents = undefined;
+      if(code==='mobile_device_denied'){reader.current.connected=false;setConnected(false);setConnectionError('此设备未获授权或已停用。请在主端核对，或在 App 中重新扫码。草稿已保留。');if(!mobileView){events.close();activeEvents=undefined;retryTimer=setTimeout(connect,10000);}return;}
+      reader.current.connected=false;setConnected(false); setConnectionError(code==="service_not_ready"?"服务尚未就绪，正在等待主对话。":"暂未连接到荷马，正在自动重连。已有消息和草稿会保留。");
+      if(mobileView)return;
+      events.close(); activeEvents = undefined;
       retryTimer = setTimeout(connect, retryMs); retryMs = Math.min(retryMs * 2, 10000);
     };
     };
-    const foreground=()=>{if(!mobileView||document.visibilityState!=='visible'||disposed)return;clearTimeout(retryTimer);activeEvents?.close();activeEvents=undefined;connect();};
-    document.addEventListener('visibilitychange',foreground);
     connect();
-    return () => { disposed = true;document.removeEventListener('visibilitychange',foreground);clearTimeout(retryTimer); activeEvents?.close(); };
+    return () => { disposed = true;clearTimeout(retryTimer); activeEvents?.close(); };
   }, [stateRefresh]);
   function interactionNotLive(item:WebInteraction){
     // This exact server refusal invalidates only this callback. An unknown

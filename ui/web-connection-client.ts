@@ -1,5 +1,5 @@
 import {mobileFetch} from './mobile-request.js';
-import {mobileEvents,mobileCall,mobileConnected} from './mobile-connection.js';
+import {markMobileRecovery,mobileEvents,mobileCall,mobileConnected} from './mobile-connection.js';
 export const mobileView=typeof document!=='undefined'&&document.querySelector?.('meta[name="homer-mobile"]')?.getAttribute('content')==='true';
 // Desktop uses its local HTTP owner; the bundled App uses the same chat contract over RTC.
 export const connectionFetch:typeof globalThis.fetch=(input,init)=>{
@@ -9,16 +9,66 @@ export const connectionFetch:typeof globalThis.fetch=(input,init)=>{
 };
 export class ConnectionEvents extends EventTarget {
  private controller=new AbortController();
+ private onStateApplied?:()=>void;
  onerror?:(code:string)=>void;
  constructor(path:string){super();if(mobileView)this.mobile(path);else void this.read(path);}
  close(){this.controller.abort();}
+ stateApplied(){this.onStateApplied?.();}
  private mobile(path:string){
   if(path!=='/api/history/events'){queueMicrotask(()=>this.onerror?.('route_not_found'));return;}
-  const forward=(event:Event)=>this.dispatchEvent(new MessageEvent(event.type,{data:(event as MessageEvent).data}));
-  const refresh=()=>{if(!mobileConnected()){this.onerror?.('mobile_not_connected');return;}void mobileCall('history.state').then(value=>{if(!this.controller.signal.aborted)this.dispatchEvent(new MessageEvent('state',{data:JSON.stringify(value)}));}).catch(()=>this.onerror?.('web_state_unavailable'));};
-  mobileEvents.addEventListener('state',forward);mobileEvents.addEventListener('unavailable',forward);mobileEvents.addEventListener('connection',refresh);
-  this.controller.signal.addEventListener('abort',()=>{mobileEvents.removeEventListener('state',forward);mobileEvents.removeEventListener('unavailable',forward);mobileEvents.removeEventListener('connection',refresh);},{once:true});
-  queueMicrotask(refresh);
+  let pending:{superseded:boolean}|undefined,retry:ReturnType<typeof setTimeout>|undefined,retryMs=500;
+  const clearRetry=()=>{clearTimeout(retry);retry=undefined;};
+  const visible=()=>document.visibilityState!=='hidden';
+  this.onStateApplied=()=>{
+   if(pending)pending.superseded=true;
+   clearRetry();retryMs=500;
+   markMobileRecovery('state-applied');
+  };
+  const forward=(event:Event)=>{
+   if(event.type==='unavailable'&&pending)pending.superseded=true;
+   this.dispatchEvent(new MessageEvent(event.type,{data:(event as MessageEvent).data}));
+  };
+  const refresh=async()=>{
+   clearRetry();
+   if(this.controller.signal.aborted||!mobileConnected()||!visible())return;
+   markMobileRecovery('authorized');
+   if(pending)return;
+   const read={superseded:false};
+   pending=read;
+   try{
+    const value=await mobileCall('history.state');
+    if(pending===read&&!read.superseded)this.dispatchEvent(new MessageEvent('state',{data:JSON.stringify(value)}));
+   }catch(error){
+    if(pending!==read||read.superseded)return;
+    const code=error instanceof Error?error.message:'';
+    if(['history_protocol_required','mobile_device_denied','route_not_found'].includes(code)){
+     this.onerror?.(code);return;
+    }
+    this.onerror?.(code==='service_not_ready'?code:'web_state_unavailable');
+    if(visible()){
+     retry=setTimeout(refresh,retryMs);
+     retryMs=Math.min(retryMs*2,10000);
+    }
+   }finally{if(pending===read)pending=undefined;}
+  };
+  const connection=()=>{
+   if(this.controller.signal.aborted)return;
+   if(mobileConnected()){void refresh();return;}
+   pending=undefined;clearRetry();retryMs=500;
+   this.onerror?.('mobile_not_connected');
+  };
+  mobileEvents.addEventListener('state',forward);
+  mobileEvents.addEventListener('unavailable',forward);
+  mobileEvents.addEventListener('connection',connection);
+  mobileEvents.addEventListener('foreground',refresh);
+  this.controller.signal.addEventListener('abort',()=>{
+   pending=undefined;clearRetry();
+   mobileEvents.removeEventListener('state',forward);
+   mobileEvents.removeEventListener('unavailable',forward);
+   mobileEvents.removeEventListener('connection',connection);
+   mobileEvents.removeEventListener('foreground',refresh);
+  },{once:true});
+  queueMicrotask(connection);
  }
  private async read(path:string){
   try{

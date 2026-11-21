@@ -223,3 +223,63 @@ test('mobile cancellation uses the candidate credential and reports the desktop 
   window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:null}));
  }finally{delete globalThis.__cancelPackets;}
 });
+
+test('mobile foreground recovery keeps one peer and ignores a state read superseded by a push',async t=>{
+ const source=(await buildAsync({entryPoints:['ui/web-connection-client.ts'],bundle:true,write:false,format:'cjs',platform:'browser',logLevel:'silent',plugins:[{name:'recovery-transport',setup(build){
+  build.onResolve({filter:/mobile-channel\.js$/},()=>({path:'channel',namespace:'fake'}));
+  build.onResolve({filter:/mobile-signaling\.js$/},()=>({path:'signal',namespace:'fake'}));
+  build.onLoad({filter:/channel/,namespace:'fake'},()=>({contents:'export const mobileChannel=(_port,receive)=>{transport.receive=receive;return {send:async packet=>transport.packets.push(packet),close(){}}};'}));
+  build.onLoad({filter:/signal/,namespace:'fake'},()=>({contents:'export async function openMobileSignal(){return {call:async()=>{},close(){}}}'}));
+ }}]})).outputFiles[0].text;
+ const transport={packets:[]},window=new EventTarget(),document=new EventTarget(),module={exports:{}},peers=[];
+ t.mock.timers.enable({apis:['setTimeout']});
+ document.querySelector=()=>({getAttribute:()=>'true'});
+ document.visibilityState='hidden';
+ class Peer{constructor(){peers.push(this);}close(){}}
+ Function('window','document','RTCPeerConnection','transport','module','exports',source)(window,document,Peer,transport,module,module.exports);
+ const events=new module.exports.ConnectionEvents('/api/history/events'),errors=[],states=[];
+ events.onerror=code=>errors.push(code);
+ events.addEventListener('state',event=>{states.push(JSON.parse(event.data));events.stateApplied?.();});
+ const foreground=()=>window.dispatchEvent(new CustomEvent('homer-mobile-app-state',{detail:'active'}));
+ const visibility=state=>{document.visibilityState=state;document.dispatchEvent(new Event('visibilitychange'));};
+ const flush=()=>new Promise(resolve=>setImmediate(resolve));
+ const bind=detail=>window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail}));
+ try{
+  bind({signalOrigin:'https://signal.example',routeId:'a'.repeat(64),credential:'c'.repeat(43)});
+  foreground();visibility('visible');foreground();
+  assert.equal(peers.length,1,'foreground notifications must preserve a negotiation in progress');
+  const channel={close(){},send(){},bufferedAmount:0,readyState:'open'};
+  peers[0].ondatachannel({channel});channel.onopen();
+  transport.receive({id:transport.packets.at(-1).id,result:{protocol:WEB_PROTOCOL,status:'active'}});
+  await flush();
+  assert.deepEqual(transport.packets.map(packet=>packet.op),['status','history.state']);
+  const firstRead=transport.packets.at(-1);
+  transport.receive({event:'state',value:{revision:2}});
+  transport.receive({id:firstRead.id,error:'web_receipt_unconfirmed'});
+  await flush();
+  assert.deepEqual(states,[{revision:2}]);
+  assert.equal(errors.includes('web_state_unavailable'),false,'an older failed read must not undo the applied push');
+  visibility('hidden');visibility('visible');foreground();
+  assert.equal(transport.packets.length,3,'one read on a later foreground with the healthy channel');
+  const secondRead=transport.packets.at(-1);
+  transport.receive({event:'state',value:{revision:4}});
+  transport.receive({id:secondRead.id,result:{revision:3}});
+  await flush();
+  assert.deepEqual(states,[{revision:2},{revision:4}]);
+  visibility('hidden');
+  channel.onclose();
+  foreground();assert.equal(peers.length,1);
+  visibility('visible');foreground();
+  assert.equal(peers.length,2,'foreground skips the transport timer for a disconnected binding');
+  t.mock.timers.tick(3000);
+  assert.equal(peers.length,2,'the old retry cannot restart the new negotiation');
+  const oldReceive=transport.receive;
+  const replacement={...channel};
+  peers[1].ondatachannel({channel:replacement});replacement.onopen();
+  transport.receive({id:transport.packets.at(-1).id,result:{protocol:WEB_PROTOCOL,status:'active'}});
+  await flush();
+  assert.equal(transport.packets.at(-1).op,'history.state');
+  oldReceive({event:'state',value:{revision:5}});
+  assert.deepEqual(states,[{revision:2},{revision:4}],'the disconnected peer cannot publish state');
+ }finally{events.close();bind(null);await flush();}
+});

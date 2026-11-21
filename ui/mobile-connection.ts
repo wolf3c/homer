@@ -1,17 +1,30 @@
 import {mobileChannel} from '../src/mobile-channel.js';
 import {openMobileSignal} from '../src/mobile-signaling.js';
 import {WEB_PROTOCOL} from '../src/web-contract.js';
-declare global{interface Window{__homerMobileNonce?:string;__homerMobileUpdate?:{version:string;openError:boolean}|null;ReactNativeWebView?:{postMessage:(message:string)=>void};}}
+declare global{interface Window{__homerMobileNonce?:string;__homerMobileUpdate?:{version:string;openError:boolean}|null;__homerMobileTiming?:boolean;ReactNativeWebView?:{postMessage:(message:string)=>void};}}
 
 type Binding={signalOrigin:string;routeId:string;invitation?:string;credential?:string;deviceName?:string};
 type Packet={id?:string;result?:any;error?:string;event?:string;value?:unknown};
 export const mobileEvents=new EventTarget();
 let binding:Binding|undefined,dispose:(()=>void)|undefined,retry:ReturnType<typeof setTimeout>|undefined;
-let request:((op:string,input:unknown)=>Promise<any>)|undefined,connected=false,manualRescanRequired=false;
+let request:((op:string,input:unknown)=>Promise<any>)|undefined,connected=false,foregroundHandled=false,manualRescanRequired=false;
 let cancelPairing:(()=>Promise<'cancelled'|'absent'|'approved'>)|undefined;
 function notice(code:string,nonce=window.__homerMobileNonce){window.ReactNativeWebView?.postMessage(JSON.stringify({type:'connection-status',code,nonce}));}
 function changed(){mobileEvents.dispatchEvent(new Event('connection'));}
 export function mobileConnected(){return connected;}
+const recoveryStages=['foreground','authorized','state-applied','send-ready'] as const;
+// Opt in from an isolated WebView. Keep only the four marks for the latest resume.
+export function markMobileRecovery(stage:typeof recoveryStages[number]){
+ if(!window.__homerMobileTiming)return;
+ const name='homer-mobile:'+stage;
+ if(stage==='foreground'){
+  for(const point of recoveryStages)performance.clearMarks('homer-mobile:'+point);
+  performance.mark(name,{detail:connected?'reuse':'connect'});
+  return;
+ }
+ if(!performance.getEntriesByName('homer-mobile:foreground').length||performance.getEntriesByName(name).length)return;
+ if(stage!=='send-ready'||performance.getEntriesByName('homer-mobile:state-applied').length)performance.mark(name);
+}
 export async function mobileCall(op:string,input:unknown={}){if(!connected||!request)throw Error('mobile_not_connected');return request(op,input);}
 function start(){
  dispose?.();if(retry)clearTimeout(retry);retry=undefined;connected=false;request=undefined;cancelPairing=undefined;changed();
@@ -20,7 +33,7 @@ function start(){
  const abort=new AbortController(),pc=new RTCPeerConnection({iceServers:[{urls:['stun:120.27.120.125:3478','stun:stun.l.google.com:19302']}]});
  let ended=false,sessionId:string|undefined,sequence=0,link:Awaited<ReturnType<typeof openMobileSignal>>|undefined,channel:ReturnType<typeof mobileChannel>|undefined,poll:ReturnType<typeof setTimeout>|undefined;
  const pending=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
- const finish=(reconnect=true)=>{if(ended)return;ended=true;abort.abort();if(poll)clearTimeout(poll);clearTimeout(deadline);link?.close();channel?.close();pc.close();connected=false;request=undefined;for(const value of pending.values()){clearTimeout(value.timer);value.reject(Error('web_receipt_unconfirmed'));}pending.clear();changed();if(reconnect&&binding===current){update('unavailable');retry=setTimeout(start,3000);}};
+ const finish=(reconnect=true)=>{if(ended)return;ended=true;dispose=undefined;abort.abort();if(poll)clearTimeout(poll);clearTimeout(deadline);link?.close();channel?.close();pc.close();connected=false;request=undefined;for(const value of pending.values()){clearTimeout(value.timer);value.reject(Error('web_receipt_unconfirmed'));}pending.clear();changed();if(reconnect&&binding===current){update('unavailable');retry=setTimeout(start,3000);}};
  dispose=()=>finish(false);
  const deadline=setTimeout(()=>finish(),30000);
  const call=(op:string,input:unknown):Promise<any>=>{
@@ -58,6 +71,7 @@ function start(){
  pc.ondatachannel=({channel:dc})=>{
   dc.binaryType='arraybuffer';dc.onclose=()=>finish();dc.onerror=()=>finish();
   dc.onopen=()=>{clearTimeout(deadline);channel=mobileChannel({send:bytes=>dc.send(bytes as Uint8Array<ArrayBuffer>),buffered:()=>dc.bufferedAmount,closed:()=>dc.readyState!=='open',close:()=>dc.close(),receive:fn=>{dc.onmessage=event=>{if(!(event.data instanceof ArrayBuffer)){finish();return;}fn(new Uint8Array(event.data));};}},value=>{
+   if(ended)return;
    const packet=value as Packet;
    if(packet?.id){const item=pending.get(packet.id);if(!item)return;clearTimeout(item.timer);pending.delete(packet.id);if(packet.error)item.reject(Error(packet.error));else item.resolve(packet.result);}
    else if(connected&&packet?.event)mobileEvents.dispatchEvent(new MessageEvent(packet.event,{data:JSON.stringify(packet.value)}));
@@ -90,6 +104,21 @@ if(typeof window!=='undefined')window.addEventListener?.('homer-mobile-cancel',(
   window.ReactNativeWebView?.postMessage(JSON.stringify({type:'cancel-result',result,nonce}));
  })();
 });
-if(typeof document!=='undefined')document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState!=='hidden'&&binding&&!connected&&!manualRescanRequired)start();});
+function resume(){
+ if(document.visibilityState==='hidden'||foregroundHandled)return;
+ foregroundHandled=true;
+ markMobileRecovery('foreground');
+ if(connected)mobileEvents.dispatchEvent(new Event('foreground'));
+ else if(binding&&!dispose&&!manualRescanRequired)start();
+}
+if(typeof document!=='undefined')document.addEventListener?.('visibilitychange',()=>{
+ if(document.visibilityState==='hidden')foregroundHandled=false;
+ else resume();
+});
+if(typeof window!=='undefined')window.addEventListener?.('homer-mobile-app-state',event=>{
+ const state=(event as CustomEvent).detail;
+ if(state==='background')foregroundHandled=false;
+ else if(state==='active')resume();
+});
 // Native load-end can precede this module's listener registration on iOS.
 if(typeof window!=='undefined')window.ReactNativeWebView?.postMessage(JSON.stringify({type:'ready'}));

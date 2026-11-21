@@ -148,7 +148,12 @@ function Client(){
    if(!await localNetworkAccess(Platform,PermissionsAndroid)&&active.current)Alert.alert('需要本地网络权限','连接同一 Wi-Fi 下的电脑需要此权限。你可以在系统设置中允许 Homer 访问本地网络。',[{text:'稍后'},{text:'打开设置',onPress:()=>void Linking.openSettings()}]);
    await restore();
   })().catch(()=>{if(active.current)setStatus('restore-error');}).finally(()=>{if(active.current)setLoading(false);});
-  const subscription=AppState.addEventListener('change',state=>{if(state==='active'){void getPermission().catch(()=>{});web.current?.injectJavaScript("document.dispatchEvent(new Event('visibilitychange'));true;");}});
+  const subscription=AppState.addEventListener('change',state=>{
+   if(state==='active')void getPermission().catch(()=>{});
+   if(state==='active'||state==='background')web.current?.injectJavaScript(
+    `window.dispatchEvent(new CustomEvent('homer-mobile-app-state',{detail:${JSON.stringify(state)}}));true;`
+   );
+  });
   return()=>{active.current=false;if(cancelTimer.current)clearTimeout(cancelTimer.current);subscription.remove();};
  },[]);
  async function scanned(data:string){

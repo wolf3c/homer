@@ -135,7 +135,7 @@ async function phoneFixture(t){
   hosts.push(host);peer.ondatachannel({channel:dc});dc.onopen();return dc;
  }
  t.after(()=>{events.close();window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:null}));release?.({});for(const host of hosts)host.close();devices.close();});
- return {api,devices,peers,links,calls,states,messages,connect,open};
+ return {api,devices,peers,links,calls,states,messages,connect,open,resume:()=>window.dispatchEvent(new CustomEvent('homer-mobile-app-state',{detail:'active'}))};
 }
 test('phone reconnect reauthenticates, reloads history and never replays an unconfirmed operation; revoke stays enforced',async t=>{
  const f=await phoneFixture(t);t.mock.timers.enable({apis:['setTimeout']});
@@ -147,6 +147,8 @@ test('phone reconnect reauthenticates, reloads history and never replays an unco
  f.open();await flush();assert.equal(f.api.mobileConnected(),true);assert.equal(f.states.length,2);assert.equal(f.calls.filter(op=>op==='messages.submit').length,1);
  assert.ok(f.links.every(link=>link.connects===1));const id=f.devices.state().devices[0].id;f.devices.update(id,{enabled:false});await flush();assert.equal(f.api.mobileConnected(),false);
  t.mock.timers.tick(3000);await flush();f.open();await flush();assert.equal(f.api.mobileConnected(),false);assert.equal(f.messages.at(-1).code,'denied');assert.equal(f.states.length,2);
+ f.devices.update(id,{enabled:true});f.resume();await flush();f.open();await flush();
+ assert.equal(f.api.mobileConnected(),true);assert.equal(f.states.length,3,'a re-enabled device resumes using its original credential');
  f.devices.remove(id);assert.equal(f.devices.state().devices.length,0);
 });
 test('phone handshake loss and session expiry both reuse the existing reconnect timer',async t=>{
