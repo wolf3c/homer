@@ -270,6 +270,11 @@ async function receive(raw: unknown) {
       else if(m.method==='taskOverview.summary')value=await bridge.taskOverview!.summary!(m.input.id);
       else if(m.method==='taskOverview.origin')value=await bridge.taskOverview!.origin!(m.input.id,m.input.messageId);
       else if(m.method==='taskOverview.detail'){const {id,...query}=m.input;value=await bridge.taskOverview!.detail(id,Object.keys(query).length?query:undefined);}
+      else if(m.method==='preview.open'&&desktop)value=await bridge.openPreview!(m.input);
+      else if(m.method==='preview.messageFile'&&desktop){
+        const {filename,mime,bytes}=await bridge.readMessageFile!(m.input);
+        value={filename,mime,data:bytes.toString('base64')};
+      }
       else if(m.method === 'media.read')value=await bridge.media!.read(m.input);
       else if(m.method === 'media.origin'&&bridge.media?.origin)value=await bridge.media.origin(m.input);
       else if(m.method === 'media.reveal'&&bridge.media?.reveal)value=await bridge.media.reveal(m.input);

@@ -55,6 +55,8 @@ const messageFileErrors:Record<string,string>={
   artifact_changed:'文件在读取时发生变化，请重试。',
   message_file_path_unsupported:'当前系统不支持此本地文件路径。',
   message_file_scope_denied:'此消息或链接已不可读。',
+  media_scope_denied:'此文件的交付版本不可用。',
+  preview_unavailable:'桌面预览暂不可用。',
   web_desktop_auth_required:'此本地文件只能在荷马桌面中读取。',
 };
 export function canvasWebUrl(value:string):string {

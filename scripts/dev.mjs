@@ -90,7 +90,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
   });
   // UI adoption keeps the same executor and transport. Read-only refreshes
   // cannot starve it; mutations must settle before adopting trusted assets.
-  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["channel-state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read","media.preview"].includes(item.method));
+  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["channel-state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read","media.preview","preview.messageFile"].includes(item.method));
   const canStopForUpdate=()=>!stopped&&phase==='running'&&!!journal&&!inFlight.size&&!hasWebMutation()&&!queue.length&&!journal.pending().length;
   const updateBusy=()=>{updateStopId=undefined;upgradeProbe=false;desktop?.onEvent?.({kind:'update-busy'});};
   desktop?.bindUpdateStop?.(()=>{
@@ -143,7 +143,13 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
         approvedSourceHash=hash;review=undefined;publish();return {approved:true};
       }}}:{}),
       getAssets: version => ({ uiDirectory: version ? uiBuilds.has(version) ? join(uiBuilds.get(version).directory, "dist/web") : undefined : join(uiCurrent.directory, "dist/web"), logoPath: join(current.directory, "assets/branding/odysseus-20261030/homer-odysseus-256.png") }),
-      bridge: { history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
+      bridge: {...(desktop?{
+        openPreview:input=>invokeWeb('preview.open',input),
+        readMessageFile:async input=>{
+          const {filename,mime,data}=await invokeWeb('preview.messageFile',input);
+          return {filename,mime,bytes:Buffer.from(data,'base64')};
+        },
+      }:{}),history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
         const value=await invokeWeb('history.receipts',input),transport=journal?.receipts(input.requestIds)??[];
         return {...value,statuses:value.statuses.map(item=>value.acceptedRequestIds.includes(item.requestId)?item:transport.find(row=>row.requestId===item.requestId)??item)};
       }},taskOverview:{progress:id=>invokeWeb("taskOverview.progress",{id}),summary:id=>invokeWeb("taskOverview.summary",{id}),origin:(id,messageId)=>invokeWeb("taskOverview.origin",{id,messageId}),list:page=>invokeWeb("taskOverview.list",page),detail:(id,query)=>invokeWeb("taskOverview.detail",{id,...query})},media:{read:input=>invokeWeb('media.read',input),origin:input=>invokeWeb('media.origin',input),reveal:input=>invokeWeb('media.reveal',input),upload:input=>invokeWeb('media.upload',input),previewDraft:input=>invokeWeb('media.preview',input),discard:input=>invokeWeb('media.discard',input)}, submit: async input => acceptInput(input), stop: messageId => invokeWeb("stop", { messageId }),

@@ -109,11 +109,17 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
    if(input.pageId){const p=page(input.pageId);if(p.threadId!==actor.threadId)throw Error('preview_scope_denied');
     if(input.claim?.url===p.view.webContents.getURL()&&actor.requestId&&p.claimRequest!==actor.requestId){if(p.busy)throw Error('preview_page_busy');p.agentAssigned=true;p.claimRequest=actor.requestId;p.owner=actor.owner;p.control='agent';p.annotations={...p.annotations,active:false};sendState(p);changed();}
     if(p.owner!==actor.owner)throw Error('preview_scope_denied');return publicPage(p);}
-   const existing=[...pages.values()].find(p=>p.threadId===actor.threadId&&p.owner===actor.owner&&Object.keys(p.source).length===Object.keys(input.source).length&&Object.keys(p.source).every(key=>p.source[key]===input.source[key])&&(!input.url||input.url===p.view.webContents.getURL()));
+   const existing=[...pages.values()].find(p=>p.threadId===actor.threadId&&p.owner===actor.owner&&Object.keys(p.source).length===Object.keys(input.source).length&&Object.keys(p.source).every(key=>p.source[key]===input.source[key])&&(!input.url||input.url===p.openingUrl||input.url===p.view.webContents.getURL()));
    if(existing)return publicPage(existing);
-   const p=make({...actor,source:input.source,url:input.url});p.control=input.user?'user':'agent';p.agentAssigned=!input.user;
+   const p=make({...actor,source:input.source,url:input.url});p.control=input.user?'user':'agent';p.agentAssigned=!input.user;p.loading=true;
    const target=input.url??(input.source.kind==='attachment'?'homer-preview://'+p.id+'/attachment/index.html':input.source.url);
-   try{await p.view.webContents.loadURL(target);}catch(error){p.loading=false;p.error=error.message;changed();}if(input.user)window().webContents.send('homer:preview:show',publicPage(p));return publicPage(p);
+   p.openingUrl=target;
+   const loaded=p.view.webContents.loadURL(target).catch(error=>{
+    if(!p.closed){p.loading=false;p.error=error.message;changed();}
+   }).finally(()=>{p.openingUrl=undefined;});
+   if(input.user)window().webContents.send('homer:preview:show',publicPage(p));
+   else await loaded;
+   return publicPage(p);
   }
   if(action==='pause'){for(const p of pages.values())if(p.owner===actor.owner&&p.threadId===actor.threadId){p.control='user';changed();}return;}
   const p=page(input.pageId);if(p.threadId!==actor.threadId||p.owner!==actor.owner)throw Error('preview_scope_denied');

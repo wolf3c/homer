@@ -172,7 +172,7 @@ export class Homer {
   private browserUrl(value:unknown){const valueString=string(value,16000);let url:URL;try{url=new URL(valueString);}catch{throw Error('preview_url_invalid');}if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('preview_url_invalid');return url.href;}
   private validateBrowserSource(threadId:string,source:import('./preview-reference.js').PreviewSource){
     if(source.kind==='web'){
-      const message=this.history.message(source.messageId),link=message?.threadId===threadId?messageLinks(message.text).find(link=>link.id===source.sourceId):undefined;
+      const message=this.history.message(source.messageId),link=message?.threadId===threadId&&message.revokedAt==null?messageLinks(message.text).find(link=>link.id===source.sourceId):undefined;
       if(!link||link.url!==source.url||link.title!==source.title)throw Error('preview_source_mismatch');return;
     }
     if(source.kind==='browser'){
@@ -2032,13 +2032,33 @@ export class Homer {
     return {filename:asset.filename,mime:asset.mime!,data:bytes.toString('base64'),sha256:asset.hash!};
   }
   readMessageFile(value:unknown){
-    const input=object(value),threadId=string(input.threadId,100),messageId=string(input.messageId,100),destination=string(input.destination,16000);
+    const input=object(value),threadId=string(input.threadId,100),destination=string(input.destination,16000);
+    let messageId=string(input.messageId,100);
     if(this.closing||threadId!==this.store.meta('mainThread')||!isMessageFileLink(destination))throw Error('message_file_scope_denied');
-    const original=this.history.message(messageId);
+    let original=this.history.message(messageId);
     if(!original||original.threadId!==threadId||original.revokedAt!=null)throw Error('message_file_scope_denied');
-    const {messages}=this.webHistoryPages().read(threadId,{around:messageId,limit:1});
-    const message=withInteractionResponses(this.store.db,messages,threadId).find(row=>row.id===messageId);
-    if(!message||message.interaction||message.status==='cancelled')throw Error('message_file_scope_denied');
+    const visible=(id:string)=>{
+      const {messages}=this.webHistoryPages().read(threadId,{around:id,limit:1});
+      const message=withInteractionResponses(this.store.db,messages,threadId).find(row=>row.id===id);
+      if(!message||message.interaction||message.status==='cancelled')throw Error('message_file_scope_denied');
+      return message;
+    };
+    let message=visible(messageId);
+    const node=message.process;
+    if(node?.sourceKind==='user'&&node.messageId===messageId&&node.replyMessageId){
+      const reply=this.history.message(node.replyMessageId);
+      const publication=reply?.operationKey&&this.store.db.prepare(`SELECT 1 FROM operations
+        WHERE id=? AND operationId=? AND actorAgentId='host' AND kind='request_final' AND state='confirmed'
+        AND json_extract(responseJson,'$.messageId')=?`).get(reply.operationKey,node.id,reply.id);
+      if(reply&&publication){
+        const originalFinal=this.processes.exact(node.id)?.items.some(item=>
+          item.kind==='commentary'&&item.phase==='final_answer'&&messageFileDestination(item.text,destination));
+        if(!originalFinal||reply.threadId!==threadId||reply.revokedAt!=null||reply.audience!=='user'||reply.status!=='completed')throw Error('message_file_scope_denied');
+        messageId=reply.id;
+        original=reply;
+        message=visible(messageId);
+      }
+    }
     // Native final answers live in the public projection of an internal
     // process row. Match each visible Markdown part on its own.
     const parts=messageSourceParts(message);
@@ -2050,8 +2070,9 @@ export class Homer {
     }
     if(!raw)throw Error('message_file_scope_denied');
     const snapshot=this.finalAttachmentDestinations(messageId).findIndex(link=>decodeMessageLink(link)===decodeMessageLink(raw));
-    const ref=snapshot>=0?original.attachments?.[snapshot]:undefined;
-    if(ref){
+    if(snapshot>=0){
+      const ref=original.attachments?.[snapshot];
+      if(!ref)throw Error('media_scope_denied');
       const file=this.readAttachment({messageId,...ref});
       return {filename:file.filename,mime:file.mime,bytes:Buffer.from(file.data,'base64')};
     }

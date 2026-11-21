@@ -17,11 +17,13 @@ const ui=process.env.HOMER_PREVIEW_UI,runtime=process.env.HOMER_PREVIEW_RUNTIME,
 if(!ui||!runtime||!evidence)throw Error('preview_electron_requires_explicit_ui_runtime_evidence');
 test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},async()=>{
  const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence);await mkdir(out,{recursive:true});
- const f=fixture();let electron,web,site;const checks=[],errors=[];let claimed,claimRelease,watchdog;
+ const f=fixture();let electron,web,site;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError;
+ const slowPage=new Promise(resolve=>{releaseSlowPage=resolve;});
  const record=(name,detail)=>{checks.push({name,detail});console.log('PASS',name);};
  async function call(peer,name,args,id){const role=peer.options.role==='worker'?'worker':'main',argv=peer.options.interactionMcp.args;peer.emit('hostMcpToolStarted',{threadId:peer.threadId,turnId:peer.turnId,itemId:id,tool:name,arguments:args});const response=await mcpCall(argv[argv.indexOf(role)-1],name,args,{callId:id,'x-codex-turn-metadata':{turn_id:peer.turnId}});if(response.error)throw Error(response.error);return response.result;}
  try{
-  site=createServer((req,res)=>{
+  site=createServer(async(req,res)=>{
+   if(req.url==='/start'||req.url==='/explicit-start')await slowPage;
    res.setHeader('Content-Type','text/html; charset=utf-8');res.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'");
    res.end('<!doctype html><meta charset="utf-8"><title>合成业务页面</title><style>body{font:18px/1.7 system-ui;padding:40px;background:#faf9f6;color:#233044}article{margin:24px 0;padding:24px;border:1px solid #ddd;background:white}input,button{font:inherit}h1{font-size:32px}</style><h1 id="heading">网页内容操作</h1><p>隔离产品源码验收 · 无真实账号</p><label>任务输入 <input aria-label="任务输入"></label><article><h2 id="target">需要完善的结论</h2><p>请在这里标记、备注并回到原对话草稿。</p></article><select aria-label="任务选项"><option value="a">甲</option><option value="b">乙</option></select><button id="business" onclick="this.textContent=\'已完成点击\'">业务操作</button><p><a href="/next">下一页</a></p><div style="height:500px"></div><h2 id="lower">页面下方的建议</h2>');
   });await new Promise(r=>site.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+site.address().port;
@@ -30,7 +32,9 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await writeFile(join(scratch,'main.cjs'),`const{app,BrowserWindow,ipcMain}=require('electron');app.setPath('userData',${JSON.stringify(join(scratch,'profile'))});
   (async()=>{const{registerPreviewScheme,createBrowserPreview}=await import(${JSON.stringify(pathToFileURL(resolve('packaging/electron/preview-pages.mjs')).href)});registerPreviewScheme();await app.whenReady();
   const window=new BrowserWindow({width:1280,height:900,useContentSize:true,webPreferences:{preload:${JSON.stringify(join(scratch,'preload.cjs'))},contextIsolation:true,nodeIntegration:false,sandbox:true}});
-  globalThis.testWindow=window;globalThis.preview=createBrowserPreview({window:()=>window,runtimeDirectory:${JSON.stringify(resolve(runtime))},preload:${JSON.stringify(resolve('packaging/electron/preview-content-preload.cjs'))},ipcMain,uiCaller:event=>event.sender===window.webContents&&event.senderFrame===window.webContents.mainFrame,fetchAttachment:(s,resource)=>fetch(process.env.TEST_ORIGIN+'/api/media/'+[s.messageId,s.assetId,s.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):''))});
+  const access={'X-Homer-Desktop-Access':process.env.TEST_ACCESS};
+  window.webContents.session.webRequest.onBeforeSendHeaders({urls:[process.env.TEST_ORIGIN+'/api/*']},(details,callback)=>callback({requestHeaders:{...details.requestHeaders,...access}}));
+  globalThis.testWindow=window;globalThis.preview=createBrowserPreview({window:()=>window,runtimeDirectory:${JSON.stringify(resolve(runtime))},preload:${JSON.stringify(resolve('packaging/electron/preview-content-preload.cjs'))},ipcMain,uiCaller:event=>event.sender===window.webContents&&event.senderFrame===window.webContents.mainFrame,fetchAttachment:(s,resource)=>fetch(process.env.TEST_ORIGIN+'/api/media/'+[s.messageId,s.assetId,s.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):''),{headers:access})});
   await window.loadURL(process.env.TEST_ORIGIN);window.on('closed',()=>{globalThis.preview.close();app.quit();});})().catch(e=>{console.error(e.stack);app.exit(1)});`);
   f.app.bindBrowserPreview((actor,action,input)=>electron.evaluate((_,a)=>globalThis.preview.execute(a.actor,a.action,a.input),{actor,action,input}).catch(error=>{throw Error(error.message.match(/preview_[a-z_]+/)?.[0]??'preview_result_unconfirmed');}));
   f.setScript(async(main,text)=>{
@@ -40,13 +44,33 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
    return{status:'completed',text:final.text,messages:[final]};
   });await f.app.start();await f.app.message('打开合成网页并批注','preview-fixture-source');
-  web=await createWebServer({bridge:homerWebBridge(f.app),port:0,uiDirectory:resolve(ui)});
-  const env={...process.env,TEST_ORIGIN:web.url};delete env.ELECTRON_RUN_AS_NODE;
+  const localPath=join(scratch,'current.md');
+  await writeFile(localPath,'# 合成本地原文');
+  f.app.history.record('desktop-local-fixture',f.app.store.meta('mainThread'),`[打开本地文档](${pathToFileURL(localPath).href})`);
+  const desktopAccessToken='a'.repeat(64);
+  web=await createWebServer({bridge:homerWebBridge(f.app),port:0,uiDirectory:resolve(ui),desktopAccessToken});
+  const env={...process.env,TEST_ORIGIN:web.url,TEST_ACCESS:desktopAccessToken};delete env.ELECTRON_RUN_AS_NODE;
   electron=await _electron.launch({executablePath:require('electron'),args:[join(scratch,'main.cjs')],env,timeout:30000});
   watchdog=setTimeout(()=>electron.process()?.kill('SIGKILL'),110000);
   const host=await electron.firstWindow();host.on('pageerror',e=>errors.push(e.message));
+  await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
+  await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
+  await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
+  record('desktop local file link renders current bytes');
   await host.getByRole('link',{name:'打开业务网页',exact:true}).click();
-  await host.getByRole('complementary').waitFor();
+  try{
+   await host.getByLabel('内置网页内容').waitFor({timeout:4000});
+   await host.getByRole('link',{name:'打开业务网页',exact:true}).click();
+   const pages=await host.evaluate(threadId=>window.homerBrowserPreview.list(threadId),f.app.store.meta('mainThread'));
+   assert.equal(pages.length,1);assert.equal(pages[0].loading,true);
+   const started=performance.now();
+   const open={threadId:pages[0].threadId,source:pages[0].source,url:url+'/explicit-start'};
+   const first=await f.app.openBrowserPreview(open),second=await f.app.openBrowserPreview(open);
+   assert.equal(first.id,second.id);
+   assert.equal(first.loading,true);
+   await host.evaluate(({id,threadId})=>window.homerBrowserPreview.control({pageId:id,threadId,action:'close'}),first);
+   record('slow-page-receipt', {explicitOpenAndReuseMs:performance.now()-started});
+  }finally{releaseSlowPage();}
   const waitPage=async target=>{let p;await until(()=>!!(p=electron.context().pages().find(p=>p.url()===target)));return p;};
   const page=await waitPage(url+'/start');page.on('pageerror',e=>errors.push(e.message));
   async function annotationMode(active){const button=host.getByRole('button',{name:'批注',exact:true});await button.click();await host.waitForFunction(active=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-pressed')===String(active),active);await host.waitForFunction(()=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-busy')==='false');}
@@ -63,7 +87,18 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await page.evaluate(()=>scrollTo(0,500));await host.locator('.composer-area .annotation-chip-open').click();await until(async()=>await page.locator('#target').evaluate(e=>e.getBoundingClientRect().top)>=0&&await page.locator('#target').evaluate(e=>e.getBoundingClientRect().bottom)<await page.evaluate(()=>innerHeight));
   record('message link opens real WCV; React Grab and existing composer produce a saved chip');
   await page.getByRole('button',{name:'批注 1',exact:true}).click();await page.screenshot({path:join(out,'product-page-editor.png')});await page.getByRole('button',{name:'取消',exact:true}).click();
-  if(process.platform==='darwin'){await electron.evaluate(()=>{globalThis.testWindow.show();globalThis.testWindow.focus();});await host.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));const id=await electron.evaluate(()=>globalThis.testWindow.getMediaSourceId().split(':')[1]);execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,'product-native-window.png')],{timeout:10000});record('native window screenshot includes real WebContentsView, without compositing renderers');}
+  if(process.platform==='darwin'){
+   await electron.evaluate(()=>{globalThis.testWindow.show();globalThis.testWindow.focus();});
+   await host.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+   const id=await electron.evaluate(()=>globalThis.testWindow.getMediaSourceId().split(':')[1]);
+   try{
+    execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,'product-native-window.png')],{timeout:10000});
+    record('native window screenshot includes real WebContentsView, without compositing renderers');
+   }catch(error){
+    const access=await electron.evaluate(({systemPreferences})=>systemPreferences.getMediaAccessStatus('screen'));
+    captureError=Error('Native window capture failed (Electron screen access: '+access+')',{cause:error});
+   }
+  }
   await host.screenshot({path:join(out,'product-preview-host.png')});
   const input=host.locator('.composer-area [contenteditable=true]');await input.fill('请按网页批注处理');
   // Use the actual composer's submit button, then validate persisted source and prompt.
@@ -123,6 +158,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   record('real HTML attachment, relative CSS/JS and annotation submission pass existing attachment/source authorization');
   record('web and HTML hover, exit and single native toolbar');
   assert.deepEqual(errors,[]);
+  if(captureError)throw captureError;
   const versions=await electron.evaluate(()=>({electron:process.versions.electron,chromium:process.versions.chrome}));
   await writeFile(join(out,'product-report.json'),JSON.stringify({status:'passed',checks,versions,errors,boundary:'Actual source UI/service/MCP/native page modules with synthetic engines; test harness forwards browser transport through Electron inspector. Production stdio transport, installed app, real Codex/LLM, Windows, IME and real login remain separately verified or unverified.'},null,2));
  }catch(error){const pages=[];if(electron)for(const [i,page]of electron.context().pages().entries()){pages.push({url:page.url(),text:await page.locator('body').innerText().catch(()=>'' )});await page.screenshot({path:join(out,'failure-'+i+'.png')}).catch(()=>{});}await writeFile(join(out,'product-failure.json'),JSON.stringify({message:error.stack,checks,errors,pages},null,2));throw error;}

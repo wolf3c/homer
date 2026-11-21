@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {realpathSync,rmSync,symlinkSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import type {Message} from "../src/service.js";
 import { homerWebBridge } from "../src/web-homer.js";
 import { createWebServer } from "../src/web-server.js";
@@ -72,6 +73,62 @@ test('desktop message-file reads require a visible Markdown link and read its cu
   writeFileSync(file,'# 已恢复');assert.equal(await (await read('existing')).text(),'# 已恢复');
   f.app.history.revokeMessage(threadId,'existing');await expectError(await read('existing'),409,'message_file_scope_denied');
  }finally{await Promise.all([web.close(),desktop.close()]);await f.app.close();}
+});
+
+test('a finalized file link keeps the delivered bytes through its process identity and fails if the mapping loses its revision',async()=>{
+ const f=fixture(),threadId='synthetic-main';
+ try{
+  await f.app.start();
+  const [snapshot]=await f.attach('preview-file-final',[{filename:'result.md',content:'# Delivered'}]);
+  const path=join(f.base,'workspace','result.md'),destination=pathToFileURL(path).href;
+  const operation=f.app.history.message(snapshot!.messageId)!.operationKey!;
+  const receipt=f.app.store.db.prepare('SELECT operationId FROM operations WHERE id=?').get(operation)!;
+  const input={threadId,messageId:String(receipt.operationId),destination};
+  writeFileSync(path,'# Changed');
+  assert.equal(f.app.readMessageFile(input).bytes.toString(),'# Delivered');
+  const bridge=homerWebBridge(f.app);
+  const received=await bridge.media!.read(snapshot!);
+  assert.equal(Buffer.from(received.data,'base64').toString(),'# Delivered');
+  assert.equal(received.sha256,snapshot!.sha256);
+  assert.throws(()=>f.app.readMessageFile({...input,destination:pathToFileURL(join(f.base,'workspace','other.md')).href}),/message_file_scope_denied/);
+  f.app.store.db.prepare('DELETE FROM conversation_attachments WHERE messageId=?').run(snapshot!.messageId);
+  assert.throws(()=>f.app.readMessageFile({...input,messageId:snapshot!.messageId}),/media_scope_denied/);
+  f.app.history.revokeMessage(threadId,snapshot!.messageId);
+  assert.throws(()=>f.app.readMessageFile(input),/message_file_scope_denied/);
+ }finally{await f.app.close();}
+});
+
+test('an undelivered file remains readable from the same process link after the host finalizes its reply',async()=>{
+ const f=fixture(),threadId='synthetic-main',path=join(f.base,'current.md'),destination=pathToFileURL(path).href;
+ writeFileSync(path,'# Original');
+ let finish!:()=>void;
+ const wait=new Promise<void>(resolve=>{finish=resolve;});
+ try{
+  await f.app.start();
+  const engine=f.engines.find(candidate=>!candidate.worker)!;
+  const final={itemId:'file-link',phase:'final_answer',text:`[Current](${destination})`};
+  engine.turn=async(_text,options)=>{
+   engine.turnId='undelivered-file-turn';options?.onStarted?.(engine.turnId);
+   engine.emit('agentMessage',{threadId,turnId:engine.turnId,...final,completed:true});
+   await wait;
+   return {status:'completed',text:final.text,messages:[final]};
+  };
+  const turn=f.app.message('Show current file','undelivered-file');
+  try{
+   let messageId:string|undefined;
+   await until(()=>!!(messageId=f.app.webHistoryPages().read(threadId).messages.find(row=>row.finalAnswers?.some(item=>item.text===final.text))?.id));
+   assert.ok(messageId);
+   const input={threadId,messageId,destination};
+   assert.equal(f.app.readMessageFile(input).bytes.toString(),'# Original');
+   finish();await turn;
+   const publication=f.app.history.list(threadId).find(row=>row.operationKey?.startsWith('request-final:'));
+   assert.ok(publication&&!publication.attachments?.length);
+   writeFileSync(path,'# Current');
+   assert.equal(f.app.readMessageFile(input).bytes.toString(),'# Current');
+   f.app.history.revokeMessage(threadId,publication.id);
+   assert.throws(()=>f.app.readMessageFile(input),/message_file_scope_denied/);
+  }finally{finish();await turn;}
+ }finally{await f.app.close();}
 });
 
 test("accepted input streams into persisted history; stop keeps main reusable and dispatched worker alive", async () => {

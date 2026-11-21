@@ -64,9 +64,10 @@ export type WebState = {
   work: WebWork[]; interactions: WebInteraction[];
   upgrade: { reviewRequired?: boolean; phase: string; version?: string; uiVersion?: string; accepting?: boolean; code?: string };
 };
+type MessageFileBytes={filename:string;mime:string;bytes:Buffer};
 export type WebBridge = {
   openPreview?(input:unknown):Promise<unknown>;
-  readMessageFile?(input:unknown):{filename:string;mime:string;bytes:Buffer};
+  readMessageFile?(input:unknown):MessageFileBytes|Promise<MessageFileBytes>;
   schedules?(input:import('./schedule-display.js').ScheduleReadRequest):Promise<import('./schedule-display.js').ScheduleReadResult>;
   history?:{
     state():Promise<WebState>;

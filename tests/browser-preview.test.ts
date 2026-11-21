@@ -92,6 +92,11 @@ test('a native final can open its visible web link, while process-only and forge
   assert.deepEqual(await f.app.openBrowserPreview({threadId,source}),{opened:true});
   for(const unlisted of [internal,'https://example.com/forged'])
    await assert.rejects(f.app.openBrowserPreview({threadId,source:{...source,url:unlisted}}),/preview_source_mismatch/);
+  f.app.history.record('legacy-web-source',threadId,`[Report](${url})`);
+  const legacy={kind:'web',messageId:'legacy-web-source',sourceId:'link-1',url,title:'Report'};
+  assert.deepEqual(await f.app.openBrowserPreview({threadId,source:legacy}),{opened:true});
+  f.app.history.revokeMessage(threadId,legacy.messageId);
+  await assert.rejects(f.app.openBrowserPreview({threadId,source:legacy}),/preview_source_mismatch/);
  }finally{await f.close();}
 });
 
