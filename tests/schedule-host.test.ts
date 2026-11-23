@@ -67,6 +67,79 @@ test('Worker shares all four tools and its completed turn does not revoke a remi
   }finally{await f.close();}
 });
 
+for(const route of ['open','steer'] as const)test(`scheduled Worker ${route} cannot supply a new delivery grant`,async t=>{
+  let now=Date.now(),taskId='',dispatched=false;
+  t.mock.method(Date,'now',()=>now);
+  const f=fixture(),trigger={cron:'0 9 * * *',timeZone:'Asia/Shanghai'};
+  try{
+    f.setScript(async(main,text)=>{
+      if(text==='Authorize a task and a reminder'){
+        const work=await openTaskWorker(main,'Prepare report') as {taskId:string};
+        taskId=work.taskId;
+        await call(main,'schedule_create',{text:'Continue the report',trigger:{at:new Date(now+60000).toISOString()}},'timed-dispatch');
+      }else if(text.includes('[定时消息正文]\nContinue the report')){
+        if(route==='open')await main.call('worker_open',{taskId,message:'Continue the report'});
+        else await main.call('worker_message',{workerId:f.app.store.runs()[0]!.workerId,message:'Continue the report'});
+        dispatched=true;
+      }
+      return {status:'completed',text:'Ready'};
+    });
+    await f.app.start();
+    assert.equal(await f.app.message('Authorize a task and a reminder','worker-binding-source'),'Ready');
+    const workers=()=>f.engines.filter(peer=>peer.options.role==='worker'&&peer.finish);
+    await until(()=>workers().length===1);
+    const direct=workers()[0]!;
+    assert.equal((await call(direct,'schedule_create',{text:'Authorized delivery',trigger,taskId},'direct-binding')).error,undefined);
+    if(route==='open'){
+      direct.finish!({status:'completed',text:'Complete',messages:[]});
+      await f.app.idle();
+    }else direct.steer=async turnId=>({turnId});
+    now+=60000;f.app.recheckScheduledMessages();
+    await until(()=>dispatched&&workers().length===1);
+    const worker=workers()[0]!;
+    assert.equal(worker===direct,route==='steer');
+    assert.equal((await call(worker,'schedule_create',{text:'Binding from timer',trigger,taskId},'timed-binding')).error,'schedule_scope_denied');
+    const unbound=await call(worker,'schedule_create',{text:'Unbound timer',trigger},'timed-unbound');
+    assert.equal(unbound.error,undefined);
+    const {scheduleId,revision}=unbound.result as {scheduleId:string;revision:number};
+    assert.equal((await call(worker,'schedule_update',{scheduleId,expectedRevision:revision,taskId},'timed-rebinding')).error,'schedule_scope_denied');
+  }finally{await f.close();}
+});
+
+test('only a Worker report from a scheduled dispatch is denied a new delivery grant',async t=>{
+  let now=Date.now(),taskId='';
+  t.mock.method(Date,'now',()=>now);
+  const f=fixture(),bindingErrors:unknown[]=[];
+  try{
+    f.setScript(async(main,text)=>{
+      if(text==='Authorize the report'){
+        ({taskId}=await openTaskWorker(main,'Prepare report') as {taskId:string});
+        await call(main,'schedule_create',{text:'Dispatch report',trigger:{at:new Date(now+60000).toISOString()}},'timed-report');
+      }else if(text.includes('[定时消息正文]\nDispatch report')){
+        await main.call('worker_open',{taskId,message:'Prepare report'});
+      }else if(text.includes('Worker report is ready')){
+        const result=await call(main,'schedule_create',{text:'Follow up',trigger:{cron:'0 9 * * *',timeZone:'Asia/Shanghai'},taskId},'bound-follow-up');
+        bindingErrors.push(result.error);
+      }
+      return {status:'completed',text:'Ready'};
+    });
+    const active=()=>f.engines.find(peer=>peer.options.role==='worker'&&peer.finish);
+    const finish=async()=>{
+      await until(()=>!!active());
+      const text='Worker report is ready';
+      active()!.finish!({status:'completed',text,messages:[{itemId:'final',phase:'final_answer',text}]});
+      await f.app.idle();
+    };
+    await f.app.start();
+    assert.equal(await f.app.message('Authorize the report','report-source'),'Ready');
+    await finish();
+    assert.deepEqual(bindingErrors,[undefined]);
+    now+=60000;f.app.recheckScheduledMessages();
+    await finish();
+    assert.deepEqual(bindingErrors,[undefined,'schedule_scope_denied']);
+  }finally{await f.close();}
+});
+
 test('Worker cannot read receipts or change schedules owned by another delegation',async()=>{
   const f=fixture();
   try{

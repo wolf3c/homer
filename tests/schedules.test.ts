@@ -218,15 +218,18 @@ test('shared storage failure retains all rules and recovers through a bounded ti
 test('reentrant checks and a concurrent revision update cannot append a stale delivery',()=>{
   const f=fixture();try{
     const originalEnqueue=f.options.enqueue,originalTransaction=f.options.transaction;
-    const first=f.transaction(()=>f.schedules.create({text:'Old text',trigger:{at:'2026-11-12T00:01:00Z'},sourceRef:'source'}));
+    const first=f.transaction(()=>f.schedules.create({text:'Old text',trigger:{at:'2026-11-12T00:01:00Z'},sourceRef:'old source'}));
     f.advance('2026-11-12T00:01:00Z');let race=true;
     f.options.transaction=fn=>{
-      if(race){race=false;originalTransaction(()=>f.schedules.update({scheduleId:first.id,expectedRevision:1,text:'New text',trigger:{at:'2026-11-12T00:02:00Z'}}));}
+      if(race){race=false;originalTransaction(()=>f.schedules.update({scheduleId:first.id,expectedRevision:1,text:'New text',trigger:{at:'2026-11-12T00:02:00Z'},sourceRef:'new source'}));}
       return originalTransaction(fn);
     };
     f.schedules.check();assert.equal(f.inbox().length,0);assert.equal(f.schedules.get(first.id).revision,2);
     f.options.transaction=originalTransaction;f.options.enqueue=input=>{f.schedules.check();return originalEnqueue(input);};
     f.advance('2026-11-12T00:02:00Z');f.schedules.check();assert.equal(f.inbox().length,1);assert.equal(f.inbox()[0]!.text,'New text');
+    assert.equal(f.inbox()[0]!.sourceRef,'new source');
+    assert.throws(()=>f.transaction(()=>f.schedules.update({scheduleId:first.id,expectedRevision:2,text:'Too late',sourceRef:'later source'})),/schedule_revision_conflict/);
+    assert.equal(f.inbox()[0]!.text,'New text');assert.equal(f.inbox()[0]!.sourceRef,'new source');
   }finally{f.close();}
 });
 

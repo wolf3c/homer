@@ -2360,6 +2360,8 @@ export class Homer {
     const scope=source.deliveryTask;
     if(!scope)return;
     try{
+      // Both callers have already validated the execution authority, which also covers legacy bindings.
+      if(scope.authority&&this.validateScheduleSource({...source,authority:scope.authority},true))return;
       const task=this.tasks.task(scope.taskId);
       if(stage==='publish'){
         if(task.headVersion!==scope.taskVersion)return;
@@ -2373,7 +2375,7 @@ export class Homer {
       }
       for(const source of this.tasks.validateAuthority(this.mainActor(true),this.tasks.authority(task.id,scope.taskVersion)))
         this.validateScheduleRequestSource(source);
-      return scope;
+      return {taskId:scope.taskId,taskVersion:scope.taskVersion};
     }catch(error){
       if(!['task_not_found','task_authority_source_denied','channel_binding_denied','channel_input_preparing'].includes(engineError(error)))throw error;
     }
@@ -2403,8 +2405,17 @@ export class Homer {
     const taskId=object(args).taskId;
     if(typeof taskId==='string'){
       if(run&&taskId!==run.taskId)throw Error('schedule_scope_denied');
+      const input=context?.workerInput;
+      const notice=!run&&input?.senderAgentId==='host'&&(input.kind==='worker_reply'||input.kind==='interaction_required')?input:undefined;
+      const sourceRunId=run?.id??notice?.runId,sourceTaskId=run?.taskId??notice?.taskId;
+      const scheduled=!run&&input?.origin==='scheduled'||sourceRunId&&sourceTaskId&&this.store.db.prepare(`SELECT 1 FROM agent_messages m
+        JOIN operations o ON o.id=m.operationKey AND o.state IN ('confirmed','dispatching','uncertain')
+        JOIN agent_messages source ON source.id=json_extract(o.detailsJson,'$.inputMessageId')
+        WHERE m.taskId=? AND m.targetRunId=? AND m.kind='worker_input'
+        AND source.kind='scheduled_message' AND source.senderAgentId='host' LIMIT 1`).get(sourceTaskId,sourceRunId);
+      if(scheduled)throw Error('schedule_scope_denied');
       const task=run?this.tasks.guard(actor):this.tasks.authorizeTask(actor,taskId).task;
-      source.deliveryTask={taskId:task.id,taskVersion:run?.version??task.headVersion};
+      source.deliveryTask={taskId:task.id,taskVersion:run?.version??task.headVersion,authority};
     }
     return this.scheduleTools.handle({actor,source,allSources:!slot&&!context?.event},name,object(args),identity.callId);
   }

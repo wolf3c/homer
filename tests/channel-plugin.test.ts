@@ -247,18 +247,31 @@ test('a subscribed Worker final is caught up once with the exact linked file',as
   }finally{await plugin.close();await f.close();}
 });
 
-for(const variant of ['visible','archive-before-timer','archive-before-send','revoked'] as const)test(`a scheduled result preserves the original subscription across restart: ${variant}`,async t=>{
+for(const variant of ['visible','archive-before-timer','archive-before-send','revoked','edited','edited-rebound','edited-grant-revoked','edited-grant-revoked-before-send','edited-body-revoked','edited-grant-preparing','edited-stale-version'] as const)test(`a scheduled result preserves the original subscription across restart: ${variant}`,async t=>{
   const revoke=variant==='revoked';
-  let now=Date.now(),taskId='',runs=0;
+  const edited=variant.startsWith('edited');
+  const preparing=variant==='edited-grant-preparing';
+  const localOnly=preparing||variant==='edited-grant-revoked'||variant==='edited-stale-version';
+  const sends=!revoke&&!localOnly&&variant!=='edited-grant-revoked-before-send';
+  let now=Date.now(),taskId='',runs=0,scheduleId='',revision=0,planRequestId='';
+  const timedErrors:unknown[]=[];
   let scheduleError:unknown;
   t.mock.method(Date,'now',()=>now);
-  const f=fixture(),final='The timed report is ready.';
+  const final='The timed report is ready.';
   const sent:ChannelPacket[]=[];
   const adapter={id:'simulation',async send(packet:ChannelPacket){sent.push(packet);return {state:'sent' as const};}};
+  const f=fixture();
   let plugin=new ChannelPlugin(f.app,[adapter]);
   try{
     const originBinding=plugin.bind(A);plugin.bind(B);
     f.setScript(async(main,text)=>{
+      const mcp=main.options.interactionMcp!;
+      const call=async(name:string,args:object)=>{
+        const itemId='timed-report-'+name;
+        main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId,tool:name,arguments:args});
+        return mcpCall(mcp.args[mcp.args.indexOf('main')-1]!,name,args,{callId:itemId,'x-codex-turn-metadata':{turn_id:main.turnId}});
+      };
+
       if(text==='prepare')({taskId}=await openTaskWorker(main,'Prepare report','Upcoming report'));
       else if(text==='subscribe')await subscribe(main,taskId);
       else if(text==='archive'){
@@ -266,20 +279,27 @@ for(const variant of ['visible','archive-before-timer','archive-before-send','re
       }else if(text.includes('"kind":"task_archived"')){
         return {status:'completed',text:''};
       }else if(text==='plan'){
-        const mcp=main.options.interactionMcp!;
-        const call=async(name:string,args:object)=>{
-          const itemId='timed-report-'+name;
-          main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId,tool:name,arguments:args});
-          return mcpCall(mcp.args[mcp.args.indexOf('main')-1]!,name,args,{callId:itemId,'x-codex-turn-metadata':{turn_id:main.turnId}});
-        };
         const created=await call('schedule_create',{text:'Prepare the timed report',...(!revoke?{taskId}:{}),trigger:{at:new Date(now+60000).toISOString()}});
         scheduleError=created.error;
-        if(revoke&&created.result){
-          const {scheduleId,revision}=created.result as {scheduleId:string;revision:number};
-          scheduleError=(await call('schedule_update',{scheduleId,expectedRevision:revision,taskId})).error;
+        if(created.result){
+          ({scheduleId,revision}=created.result as {scheduleId:string;revision:number});
+          if(revoke) scheduleError=(await call('schedule_update',{scheduleId,expectedRevision:revision,taskId})).error;
         }
+      }else if(text==='Edit only the report body'){
+        const args={scheduleId,expectedRevision:revision,text:'Prepare the updated timed report'};
+        const updated=await call('schedule_update',args);
+        scheduleError=updated.error;
+        assert.deepEqual(await call('schedule_update',args),updated);
+      }else if(text==='Reauthorize the destination'){
+        const row=f.app.schedules.get(scheduleId);
+        scheduleError=(await call('schedule_update',{scheduleId,expectedRevision:row.revision,taskId})).error;
       }else if(text.startsWith('[定时消息；')){
         runs++;
+        if(variant==='edited'){
+          const row=f.app.schedules.get(scheduleId);
+          timedErrors.push((await call('schedule_create',{text:'Another report',trigger:{at:new Date(now+60000).toISOString()},taskId})).error);
+          timedErrors.push((await call('schedule_update',{scheduleId,expectedRevision:row.revision,taskId})).error);
+        }
         return {status:'completed',text:final,messages:[{itemId:'f',phase:'final_answer',text:final}]};
       }
       return {status:'completed',text:'Acknowledged'};
@@ -294,24 +314,69 @@ for(const variant of ['visible','archive-before-timer','archive-before-send','re
     plugin.receiveText(input(A,'plan','plan'));await f.app.idle();
     assert.equal(scheduleError,undefined);
     assert.equal(f.app.store.db.prepare('SELECT count(*) AS n FROM schedules').get()!.n,1);
+    const thread=f.app.store.meta('mainThread')!;
+    const revokeRequest=(requestId:string)=>{
+      const row=f.app.store.db.prepare("SELECT id FROM conversation_messages WHERE requestId=? AND role='user'").get(requestId)!;
+      f.app.history.revokeMessage(thread,String(row.id));
+    };
+    if(edited){
+      const before=JSON.parse(f.app.schedules.get(scheduleId).sourceRef);
+      if(variant==='edited'){
+        delete before.deliveryTask.authority;
+        f.app.store.db.prepare('UPDATE schedules SET sourceRef=? WHERE id=?').run(JSON.stringify(before),scheduleId);
+      }
+      planRequestId=before.authority.sourceRequestId;
+      assert.equal(await f.app.message('Edit only the report body','edited-report-body'),'Acknowledged');
+      assert.equal(scheduleError,undefined);
+      const after=f.app.schedules.get(scheduleId);
+      assert.equal(after.revision,revision+1);
+      const ref=JSON.parse(after.sourceRef);
+      assert.equal(ref.authority.sourceRequestId,'edited-report-body');
+      assert.deepEqual(ref.deliveryTask,{taskId,taskVersion:before.deliveryTask.taskVersion,authority:before.authority});
+      if(variant==='edited-rebound'){
+        await f.app.message('Reauthorize the destination','edited-report-destination');
+        assert.equal(scheduleError,undefined);
+        const rebound=JSON.parse(f.app.schedules.get(scheduleId).sourceRef);
+        assert.deepEqual(rebound.authority,ref.authority);
+        assert.equal(rebound.deliveryTask.authority.sourceRequestId,'edited-report-destination');
+        revokeRequest(planRequestId);
+      }
+      if(variant==='edited-grant-revoked')revokeRequest(planRequestId);
+      if(variant==='edited-body-revoked')revokeRequest('edited-report-body');
+      if(variant==='edited-stale-version')f.app.store.db.prepare('UPDATE tasks SET headVersion=headVersion+1 WHERE id=?').run(taskId);
+      if(preparing){
+        const channelInputState=plugin.channelInputState.bind(plugin);
+        t.mock.method(plugin,'channelInputState',(requestId:string)=>requestId===planRequestId?'preparing':channelInputState(requestId));
+        Object.assign(f.app,{channels:plugin});
+      }
+    }
     const archive=async()=>{
       plugin.receiveText(input(A,'archive','archive'));await f.app.idle();
       assert.equal(f.app.tasks.task(taskId).historyState,'archived');
     };
     if(variant==='archive-before-timer')await archive();
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
+    const entry=f.app.history.list(thread).find(message=>message.text===final);
+    if(variant==='edited-body-revoked'){
+      assert.equal(runs,0);
+      assert.equal(entry,undefined);
+      assert.equal(sent.some(item=>item.part.kind==='text'&&item.part.text===final),false);
+      return;
+    }
     assert.equal(runs,1);
-    const entry=f.app.history.list(f.app.store.meta('mainThread')!).find(message=>message.text===final)!;
-    assert.equal(entry?.taskId,taskId);
-    assert.equal(entry?.requestId,null);
+    if(variant==='edited')assert.deepEqual(timedErrors,['schedule_scope_denied','schedule_scope_denied']);
+    assert.ok(entry);
+    assert.equal(entry.taskId,localOnly?null:taskId);
+    assert.equal(entry.requestId,null);
     assert.equal(sent.length,0);
     if(variant==='archive-before-send')await archive();
+    if(variant==='edited-grant-revoked-before-send')revokeRequest(planRequestId);
     if(revoke)plugin.revokeBinding(originBinding);
     const deliveries=()=>sent.filter(item=>item.part.kind==='text'&&item.part.text===final);
     for(let i=0;i<2;i++){
       await plugin.close();await f.restart(app=>{plugin=new ChannelPlugin(app,[adapter]);});
       await plugin.synchronize();
-      assert.deepEqual(deliveries().map(item=>[item.address,item.messageId]),revoke?[]:[[B,entry.id]]);
+      assert.deepEqual(deliveries().map(item=>[item.address,item.messageId]),sends?[[B,entry.id]]:[]);
     }
     assert.equal(runs,1);
   }finally{await plugin.close();await f.close();}
