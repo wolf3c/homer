@@ -90,7 +90,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
   });
   // UI adoption keeps the same executor and transport. Read-only refreshes
   // cannot starve it; mutations must settle before adopting trusted assets.
-  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["channel-state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read","media.preview","preview.messageFile","preview.messageFileInfo"].includes(item.method));
+  const hasWebMutation=()=>[...webRequests.values()].some(item=>!item.method.startsWith("history.")&&!["schedules.read","channel-state","taskOverview.progress", "taskOverview.list","taskOverview.detail", "taskOverview.summary", "taskOverview.origin","media.origin","media.read","media.preview","preview.messageFile","preview.messageFileInfo"].includes(item.method));
   const canStopForUpdate=()=>!stopped&&phase==='running'&&!!journal&&!inFlight.size&&!hasWebMutation()&&!queue.length&&!journal.pending().length;
   const updateBusy=()=>{updateStopId=undefined;upgradeProbe=false;desktop?.onEvent?.({kind:'update-busy'});};
   desktop?.bindUpdateStop?.(()=>{
@@ -144,7 +144,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
         approvedSourceHash=hash;review=undefined;publish();return {approved:true};
       }}}:{}),
       getAssets: version => ({ uiDirectory: version ? uiBuilds.has(version) ? join(uiBuilds.get(version).directory, "dist/web") : undefined : join(uiCurrent.directory, "dist/web"), logoPath: join(current.directory, "assets/branding/odysseus-20261030/homer-odysseus-256.png") }),
-      bridge: {...(desktop?{
+      bridge: {schedules:input=>invokeWeb('schedules.read',input),...(desktop?{
         openPreview:input=>invokeWeb('preview.open',input),
         messageFileInfo:(source,reveal)=>invokeWeb(reveal?'preview.revealMessageFile':'preview.messageFileInfo',source),
         readMessageFile:async input=>{

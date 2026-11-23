@@ -1327,6 +1327,8 @@ node tests/schedule-display.browser.mjs
 
 当前1440／390／320px均通过：原文件与schedule标签共存和切换；普通对话无卡片；SpecSheet长内容完整且位于末行；详情关闭实际命中、键盘／回焦、引用不冒泡不发送、chip移除与刷新恢复、完整ID在真实POST普通文本只拼一次、state刷新及失败未确认提示。启动隔离Chrome、只连接本地HTTP／SSE合成fixture，使用mock keychain，不连接真实计划／模型。必须同时核对退出码0、forced=false和watchdog=false，不能只看PNG。源码及证据见[实施方案](superpowers/plans/2026-11-17-scheduled-task-display.md#8-实施与验证2026-11-17)；未覆盖安装版、真机、真实LLM调用或渠道实网专项。
 
+读取接线回归另用隔离目录运行 `node --import tsx --test tests/desktop-gateway-access.test.mjs tests/web-dev-host.test.mjs`，覆盖桌面凭据和真实网关至子宿主的列表、详情、过期 epoch、无权 ID 与零业务写入。`tests/mobile-request.test.mjs` 和 `tests/mobile-session.test.ts` 核对移动请求映射、配对批准与撤销。上述浏览器入口同时覆盖打开详情时的刷新合并、分页外详情和断线丢弃旧响应。
+
 ## Preview 顶栏与图片批注进入反馈（2026-11-17）
 
 显式专项 `tests/preview-annotation-entry.browser.mjs` 使用真实 HomerApp / CanvasPanel / Annotorious，以及普通与 floating ScreenshotDialog；仅合成 HTTP、图片和上传回执，独立 Electron profile，不连接日常账号、runtime、真实截图采集或模型。已登记 browser 清单。现有 Node 22.22.0、Electron / Playwright / esbuild 依赖即可运行，不安装工具。

@@ -16,7 +16,7 @@ async function until(check, timeout = 45000) {
 }
 // Requirement-derived, synthetic protocol peer. No model or production runtime.
 test('Web stable host hands off immutable UI, retains accepted input/history/thread and never owns a second Homer', { timeout: 120000 }, async t => {
-  const root = resolve('.'), parent = join(root, '.codex/scratch/assistant-ui'); mkdirSync(parent, { recursive: true });
+  const root = resolve('.'), parent = resolve(process.env.HOMER_SYNTHETIC_ROOT??'.codex/scratch/assistant-ui'); mkdirSync(parent, { recursive: true });
   const base = mkdtempSync(join(parent, 'web-dev-'));const fetch=syntheticUserFetch();
   for (const name of ['src', 'scripts', 'prompts', 'assets', 'ui', 'package.json', 'package-lock.json', 'tsconfig.json']) cpSync(join(root, name), join(base, name), { recursive: true, filter: path => !/(?:^|\/)(?:node_modules|dist)(?:\/|$)/.test(path) });
   symlinkSync(join(root, 'node_modules'), join(base, 'node_modules'), 'dir');
@@ -52,6 +52,28 @@ test('Web stable host hands off immutable UI, retains accepted input/history/thr
     assert.ok(oldAssetPaths.length>=2);const oldAssets=await Promise.all(oldAssetPaths.map(async path=>Buffer.from(await(await fetch(url+path)).arrayBuffer())));
     const primeResponse=await post('/api/messages',{requestId:'synthetic-prime',text:'合成首次完成'});assert.equal(primeResponse.status,202);const primeReceipt=await primeResponse.json();
     await until(async()=>(await state())?.messages.at(-1)?.status==='completed');
+    const scheduleId='schedule-00000000-0000-4000-8000-000000000001',scheduleText='合成安排。只读正文';
+    const db=new DatabaseSync(join(base,'runtime/homer.sqlite'));
+    try{
+      const instanceId=db.prepare("SELECT value FROM meta WHERE key='mainAgentId'").get().value;
+      const sourceRef=JSON.stringify({instanceId,threadId:first.threadId,authority:{sourceRequestId:'synthetic-prime',description:'Synthetic schedule fixture'}});
+      const now=Date.now(),trigger=JSON.stringify({at:new Date(now+86400000).toISOString()});
+      const seed=db.prepare('INSERT INTO schedules(id,text,trigger,enabled,revision,sourceRef,createdAt,updatedAt) VALUES (?,?,?,0,1,?,?,?)');
+      seed.run(scheduleId,scheduleText,trigger,sourceRef,now,now);
+      const hiddenId='schedule-00000000-0000-4000-8000-000000000002';
+      seed.run(hiddenId,'Foreign fixture',trigger,JSON.stringify({...JSON.parse(sourceRef),instanceId:'elsewhere'}),now,now);
+      const snapshot=()=>['schedules','operations','agent_messages'].map(table=>db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+      const beforeRead=snapshot(),readEpoch=(await state()).history.readEpoch;
+      const readSchedules=async input=>{const response=await post('/api/schedules/read',{readEpoch,...input});return [response.status,await response.json()];};
+      const [status,list]=await readSchedules({view:'list'});
+      assert.equal(status,200);assert.deepEqual(list.items.map(item=>item.scheduleId),[scheduleId]);
+      assert.equal(list.items[0].status,'已停用');assert.equal(list.items[0].text,undefined);
+      const [detailStatus,detail]=await readSchedules({view:'detail',scheduleId});
+      assert.equal(detailStatus,200);assert.equal(detail.item.text,scheduleText);
+      assert.deepEqual(await readSchedules({view:'list',readEpoch:'stale'}),[409,{error:'history_epoch_changed'}]);
+      assert.deepEqual(await readSchedules({view:'detail',scheduleId:hiddenId}),[409,{error:'schedule_unavailable'}]);
+      assert.deepEqual(snapshot(),beforeRead);
+    }finally{db.close();}
     appendFileSync(join(base, 'ui/homer-styles.css'), '\n/* synthetic UI immutable snapshot check */\n');
     await until(async()=>(await state())?.upgrade.reviewRequired===true);
     assert.equal((await state()).upgrade.uiVersion,first.upgrade.uiVersion);

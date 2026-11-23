@@ -17,43 +17,69 @@ async function read(input:ScheduleReadRequest,threadId:string,signal:AbortSignal
  if(!response.ok)throw Error('schedule_read_failed');const result=await response.json() as ScheduleReadResult;
  if(result.threadId!==threadId||result.readEpoch!==input.readEpoch)throw Error('history_epoch_changed');return result;
 }
+function coalesceReads(run:(signal:AbortSignal,offset:number)=>Promise<void>){
+ const controller=new AbortController();
+ let busy=false,again=false;
+ const load=async(offset=0)=>{
+  if(controller.signal.aborted)return;
+  if(busy){again=true;return;}
+  busy=true;
+  try{await run(controller.signal,offset);}
+  finally{busy=false;if(again){again=false;void load();}}
+ };
+ return {load,close:()=>controller.abort()};
+}
 export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference}:{threadId:string;readEpoch:string;refreshKey:unknown;onReference:(value:ScheduleContext)=>void}){
  const [items,setItems]=useState<ScheduleSummary[]>([]),[next,setNext]=useState<number|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
- const [selected,setSelected]=useState<string|null>(null),[detail,setDetail]=useState<(ScheduleSummary&{text:string})|null>(null),[zone,setZone]=useState(''),[detailError,setDetailError]=useState('');
- const origin=useRef<HTMLElement|null>(null),reload=useRef<(offset?:number)=>void>(()=>{});
+ const [selected,setSelected]=useState<string|null>(null);
+ const [detailState,setDetail]=useState<{id:string;result?:Extract<ScheduleReadResult,{item:unknown}>}|null>(null);
+ const origin=useRef<HTMLElement|null>(null),listRead=useRef<(offset?:number)=>void>(()=>{}),detailRead=useRef<()=>void>(()=>{});
+ const refresh=()=>{listRead.current();detailRead.current();};
  useEffect(()=>{
-  const owner={alive:true,busy:false,again:false,controller:new AbortController()};
-  const load=async(offset=0)=>{
-   if(owner.busy){owner.again=true;return;}owner.busy=true;setBusy(true);setError('');
-   try{const result=await read({readEpoch,view:'list',offset},threadId,owner.controller.signal);if(!owner.alive)return;if(!('items' in result))throw Error('schedule_read_failed');setItems(old=>offset?[...new Map([...old,...result.items].map(item=>[item.scheduleId,item])).values()]:result.items);setNext(result.nextOffset);}
-   catch{if(owner.alive)setError('定时任务未能读取，当前内容尚未确认。');}
-   finally{owner.busy=false;if(owner.alive){setBusy(false);if(owner.again){owner.again=false;void load();}}}
-  };
-  reload.current=offset=>{void load(offset);};
-  setItems([]);setNext(null);setSelected(null);
-  const foreground=()=>{if(document.visibilityState==='visible')void load();};
+  const loader=coalesceReads(async(signal,offset)=>{
+   setBusy(true);setError('');
+   try{
+    const result=await read({readEpoch,view:'list',offset},threadId,signal);
+    if(signal.aborted)return;
+    if(!('items' in result))throw Error('schedule_read_failed');
+    setItems(old=>offset?[...new Map([...old,...result.items].map(item=>[item.scheduleId,item])).values()]:result.items);
+    setNext(result.nextOffset);
+   }catch{if(!signal.aborted)setError('定时任务未能读取，当前内容尚未确认。');}
+   finally{if(!signal.aborted)setBusy(false);}
+  });
+  listRead.current=loader.load;
+  const foreground=()=>{if(document.visibilityState==='visible')refresh();};
   document.addEventListener('visibilitychange',foreground);window.addEventListener('pageshow',foreground);
-  return()=>{owner.alive=false;owner.controller.abort();document.removeEventListener('visibilitychange',foreground);window.removeEventListener('pageshow',foreground);};
+  return()=>{loader.close();document.removeEventListener('visibilitychange',foreground);window.removeEventListener('pageshow',foreground);};
  },[threadId,readEpoch]);
- useEffect(()=>{reload.current();},[refreshKey,threadId,readEpoch]);
  useEffect(()=>{
-  setDetail(null);setDetailError('');if(!selected)return;
-  const controller=new AbortController();
-  void read({readEpoch,view:'detail',scheduleId:selected},threadId,controller.signal).then(result=>{if(!controller.signal.aborted&&'item' in result){setDetail(result.item);setZone(result.displayTimeZone);}}).catch(()=>{if(!controller.signal.aborted)setDetailError('该定时任务暂不可用或未能读取。');});
-  return()=>controller.abort();
+  setDetail(null);if(!selected)return;
+  const loader=coalesceReads(async signal=>{
+   try{
+    const result=await read({readEpoch,view:'detail',scheduleId:selected},threadId,signal);
+    if(signal.aborted)return;
+    if(!('item' in result)||result.item.scheduleId!==selected)throw Error('schedule_read_failed');
+    setDetail({id:selected,result});
+   }catch{if(!signal.aborted)setDetail({id:selected});}
+  });
+  detailRead.current=loader.load;void loader.load();
+  return loader.close;
  },[selected,threadId,readEpoch]);
+ useEffect(()=>{refresh();},[refreshKey,threadId,readEpoch]);
+ const current=detailState?.id===selected?detailState:null;
+ const detail=current?.result?.item;
  const card=(row:ScheduleSummary)=><div className="schedule-record" key={row.scheduleId}><ScheduleCard name={row.title} cadence={row.cadence} statusLabel={row.status} nextRun={row.timeText} timeLabel={row.timeLabel} className="homer-schedule-card" detailLabel={'查看定时任务详情：'+row.title} onDetails={()=>{origin.current=document.activeElement as HTMLElement;setSelected(row.scheduleId);}} endAction={<button type="button" className="schedule-talk" aria-label={'在对话中说：'+row.title} title={'在对话中说：'+row.title} onClick={event=>{event.stopPropagation();onReference({scheduleId:row.scheduleId,label:row.title});}}><MessageCircle size={16} aria-hidden/></button>}/>{row.note&&<p className="schedule-note">{row.note}</p>}</div>;
  const enabled=items.filter(row=>row.enabled),disabled=items.filter(row=>!row.enabled);
  return <div className="homer-schedules">
-  <div className="schedule-list-body"><p className="schedule-note">当前定时安排</p>{error&&<p role="status" className="schedule-note">{error} <button type="button" disabled={busy} onClick={()=>reload.current()}>重试</button></p>}
+  <div className="schedule-list-body"><p className="schedule-note">当前定时安排</p>{error&&<p role="status" className="schedule-note">{error} <button type="button" disabled={busy} onClick={refresh}>重试</button></p>}
   {!items.length&&!error&&<p role="status" className="schedule-note">{busy?'正在读取…':'暂无定时任务'}</p>}
   {!!enabled.length&&<><h2 className="schedule-section">定时安排 · 已加载 {enabled.length}</h2>{enabled.map(card)}</>}
   {!!disabled.length&&<details className="schedule-stopped"><summary>已停用 · 已加载 {disabled.length}</summary>{disabled.map(card)}</details>}
-  {next!==null&&<button type="button" className="schedule-more" disabled={busy} onClick={()=>reload.current(next)}>加载更多</button>}</div>
+  {next!==null&&<button type="button" className="schedule-more" disabled={busy} onClick={()=>listRead.current(next)}>加载更多</button>}</div>
   <p className="schedule-footer">创建、修改与取消，继续在对话中告诉荷马。</p>
   <Dialog open={selected!==null} onOpenChange={open=>{if(!open)setSelected(null);}}><DialogContent className="homer-schedule-detail" finalFocus={()=>origin.current?.isConnected?origin.current:document.querySelector<HTMLElement>('.canvas-tab[aria-selected=true]')}><DialogTitle><Clock3 size={20} aria-hidden/><span>{detail?.title??'定时任务'}</span></DialogTitle>
-   {detailError?<p role="status">{detailError}</p>:!detail?<p role="status">正在读取…</p>:<SpecSheet title="" className="schedule-detail-sheet" visibleCount={99} rows={[
-    {label:'时间规则',value:detail.cadence},{label:'显示时区',value:'cron' in detail.trigger?detail.trigger.timeZone:zone},{label:'当前状态',value:detail.status},{label:detail.timeLabel,value:detail.timeText},...(detail.note?[{label:'说明',value:detail.note}]:[]),{label:'任务内容',value:detail.text}
+   {!detail?<p role="status">{current?'该定时任务暂不可用或未能读取。':'正在读取…'}</p>:<SpecSheet title="" className="schedule-detail-sheet" visibleCount={99} rows={[
+    {label:'时间规则',value:detail.cadence},{label:'显示时区',value:'cron' in detail.trigger?detail.trigger.timeZone:current?.result?.displayTimeZone??''},{label:'当前状态',value:detail.status},{label:detail.timeLabel,value:detail.timeText},...(detail.note?[{label:'说明',value:detail.note}]:[]),{label:'任务内容',value:detail.text}
    ]}/>}
   </DialogContent></Dialog>
  </div>;

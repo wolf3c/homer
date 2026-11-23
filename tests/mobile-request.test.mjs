@@ -72,7 +72,10 @@ test('history list uses scoped pages on the paired device transport',async()=>{
 });
 
 test('schedule center uses the same authenticated read operation over device transport',async()=>{
- const f=fixture({items:[],nextOffset:null}),input={readEpoch:'epoch',view:'list',offset:20};
- const response=await f.fetch(new Request('https://localhost/api/schedules/read',{method:'POST',body:JSON.stringify(input)}));
- assert.equal(response.status,200);assert.deepEqual(f.calls,[{op:'schedules.read',input}]);
+ const f=fixture({}),list={readEpoch:'epoch',view:'list',offset:20},detail={readEpoch:'epoch',view:'detail',scheduleId:'schedule-00000000-0000-4000-8000-000000000001'};
+ for(const input of [list,detail]){
+  const response=await f.fetch(new Request('https://localhost/api/schedules/read',{method:'POST',body:JSON.stringify(input)}));
+  assert.equal(response.status,200);
+ }
+ assert.deepEqual(f.calls,[{op:'schedules.read',input:list},{op:'schedules.read',input:detail}]);
 });

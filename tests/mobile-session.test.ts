@@ -59,6 +59,23 @@ test('channel uses the existing pending approval and credential before allowing 
   assert.deepEqual(calls,['history.state','media.read']);
  }finally{c.host.close();c.client.close();devices.close();}
 });
+test('schedule detail respects approval and revocation on the paired channel',async()=>{
+ const devices=new MobileDevices(':memory:'),calls:string[]=[];
+ const input={readEpoch:'epoch',view:'detail',scheduleId:'schedule-00000000-0000-4000-8000-000000000001'} as const;
+ const item={scheduleId:input.scheduleId,text:'Synthetic detail'};
+ const chat=createWebChat({schedules:async query=>{assert.deepEqual(query,input);return {item,threadId:'synthetic',readEpoch:input.readEpoch,displayTimeZone:'UTC'};}} as WebBridge);
+ const c=connection(devices,calls,chat),after=connection(devices,calls,chat);
+ try{
+  assert.equal((await c.call('schedules.read',input)).error,'mobile_device_denied');
+  const credential=await bind(devices,c);
+  assert.deepEqual((await c.call('schedules.read',input)).result.item,item);
+  devices.update(devices.state().devices[0]!.id,{enabled:false});
+  assert.equal(c.closed(),true);
+  await after.call('status',{credential});
+  assert.equal((await after.call('schedules.read',input)).error,'mobile_device_denied');
+  assert.deepEqual(calls,['schedules.read']);
+ }finally{c.host.close();c.client.close();after.host.close();after.client.close();devices.close();}
+});
 test('oversized attachment responses return an error and the same session can download normally',{timeout:3000},async()=>{
  const devices=new MobileDevices(':memory:'),calls:string[]=[];
  const normalBytes=Buffer.from([0,1,2,255]);

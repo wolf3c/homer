@@ -266,6 +266,7 @@ async function receive(raw: unknown) {
       const bridge = homerWebBridge(app,{draftUpload:webUploadProtocol});
       let value: unknown;
       if(m.method==='history.state')value=await bridge.history!.state();
+      else if(m.method==='schedules.read')value=await bridge.schedules!(m.input);
       else if(m.method==='history.page')value=await bridge.history!.page(m.input);
       else if(m.method==='history.process')value=await bridge.history!.process(m.input);
       else if(m.method==='history.resolve')value=await bridge.history!.resolve(m.input);

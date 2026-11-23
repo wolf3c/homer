@@ -29,6 +29,7 @@ test('desktop gateway authenticates Preview and privately supplies a fresh key o
    if(m.method==='preview.messageFile')value={filename:'预览.md',mime:'text/markdown',data:Buffer.from('# Preview').toString('base64')};
    if(m.method==='preview.messageFileInfo'||m.method==='preview.revealMessageFile')value={method:m.method,source:m.input};
    if(m.method==='preview.open')value={id:'synthetic-page',loading:true};
+   if(m.method==='schedules.read')value={input:m.input,credentialPassedToHost};
    process.send({kind:'web_result',id:m.id,value});
   }
   if(m.kind==='desktop_account')process.send({kind:'web_result',id:m.id,value:{account:'none',connected:false,phase:m.method}});
@@ -63,6 +64,11 @@ test('desktop gateway authenticates Preview and privately supplies a fresh key o
    }
    const page=await post('/api/preview/open');
    assert.equal(page.status,200);assert.deepEqual(await page.json(),{id:'synthetic-page',loading:true});
+   const schedule={view:'list',readEpoch:'fixture'};
+   const readSchedules=key=>fetch(event.url+'/api/schedules/read',{method:'POST',headers:{Origin:event.url,'Content-Type':'application/json',...(key?{'X-Homer-Desktop-Access':key}:{})},body:JSON.stringify(schedule)});
+   assert.equal((await readSchedules()).status,401);
+   const schedules=await readSchedules(event.desktopAccessToken);
+   assert.equal(schedules.status,200);assert.deepEqual(await schedules.json(),{input:schedule,credentialPassedToHost:false});
    for(const action of ['state','connect','cancel'])assert.deepEqual(await account(action),{account:'none',connected:false,phase:action});
    await assert.rejects(()=>account('logout'),/desktop_account_unavailable/);
    assert.equal(text.includes(event.desktopAccessToken),false);previous=event.desktopAccessToken;

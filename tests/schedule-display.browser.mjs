@@ -15,8 +15,20 @@ try{
  chrome=await openBrowser(dest,{mockKeychain:true});
  for(const width of [1440,390,320]){
   const context=await chrome.browser.newContext({viewport:{width,height:960}}),page=await context.newPage();page.on('pageerror',error=>errors.push(String(error)));
-  let reads=0,detailReads=0,deny=false,currentRows=structuredClone(rows);
-  await page.route('**/api/schedules/read',async route=>{const input=route.request().postDataJSON();reads++;if(input.view==='detail')detailReads++;if(deny)return route.fulfill({status:409,json:{error:'schedule_unavailable'}});const common={threadId:'composer-review',readEpoch:input.readEpoch,displayTimeZone:'Asia/Shanghai'};await route.fulfill({json:input.view==='detail'?{...common,item:{...currentRows.find(x=>x.scheduleId===input.scheduleId),text}}:{...common,items:currentRows,nextOffset:null}});});
+  let reads=0,detailReads=0,deny=false,paged=false,currentRows=structuredClone(rows),detailText=text,holdDetail,onHeldDetail;
+  await page.route('**/api/schedules/read',async route=>{
+   const input=route.request().postDataJSON();reads++;
+   if(input.view==='detail')detailReads++;
+   if(deny)return route.fulfill({status:409,json:{error:'schedule_unavailable'}});
+   const common={threadId:'composer-review',readEpoch:input.readEpoch,displayTimeZone:'Asia/Shanghai'};
+   if(input.view==='detail'){
+    const item={...currentRows.find(x=>x.scheduleId===input.scheduleId),text:detailText};
+    if(holdDetail){onHeldDetail();await holdDetail;}
+    return route.fulfill({json:{...common,item}});
+   }
+   const items=paged?(input.offset?[currentRows[1]]:[currentRows[0],currentRows[2]]):currentRows;
+   await route.fulfill({json:{...common,items,nextOffset:paged&&!input.offset?2:null}});
+  });
   fixture.reset({features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2},artifacts:[artifact],messages:[{id:artifact.messageId,threadId:'composer-review',requestId:'synthetic-request',role:'assistant',text:'已按要求登记安排。后续如需调整，直接告诉我。',status:'completed',createdAt:1700000000000,media:[{...artifact,filename:artifact.title,kind:'file',state:'ready',mime:'text/markdown',size:45}]}]});
   await page.goto(fixture.url);const editor=page.locator('[contenteditable=true]');await editor.waitFor();await editor.fill('把这个改到每天上午十点。');
   await page.getByRole('button',{name:'预览 原文件.md',exact:true}).click();await page.locator('.canvas-markdown').waitFor();
@@ -44,12 +56,35 @@ try{
   await page.getByRole('button',{name:'发送消息',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.schedule-chip'));assert.equal(fixture.received.messages.length,1);assert.equal(fixture.received.messages[0].text,'用户选择的定时任务：'+JSON.stringify({scheduleId:rows[0].scheduleId,label:rows[0].title})+'\n\n把这个改到每天上午十点。');
   await page.getByRole('button',{name:'定时任务',exact:true}).click();await detailButton.waitFor();
   const readBefore=reads;currentRows[0].title='已刷新：整理 AI 行业简报';fixture.update({isRunning:false});await page.getByRole('button',{name:'查看定时任务详情：已刷新：整理 AI 行业简报',exact:true}).waitFor();assert.ok(reads>readBefore);
+  paged=true;fixture.update({});await page.getByRole('button',{name:'加载更多',exact:true}).click();
+  await page.getByRole('button',{name:'查看定时任务详情：核对项目进展',exact:true}).click();
+  await dialog.locator('[data-slot=spec-sheet]').waitFor();
+  let releaseRefresh;holdDetail=new Promise(resolve=>{releaseRefresh=resolve;});
+  const beforeRefresh=detailReads;
+  const nextRead=view=>page.waitForRequest(request=>request.url().endsWith('/api/schedules/read')&&request.postDataJSON().view===view);
+  const started=Promise.all([nextRead('detail'),new Promise(resolve=>{onHeldDetail=resolve;})]);fixture.update({});await started;
+  detailText='更新后的第二页任务正文';currentRows[1].title='已更新的第二页任务';
+  const listRefreshed=nextRead('list');
+  await page.evaluate(()=>{for(let i=0;i<3;i++)window.dispatchEvent(new Event('pageshow'));});await listRefreshed;
+  assert.equal(detailReads,beforeRefresh+1,'refresh events share the pending detail read');
+  holdDetail=undefined;releaseRefresh();await dialog.getByText(detailText,{exact:true}).waitFor();
+  assert.equal(detailReads,beforeRefresh+2,'pending refresh runs once after the old detail settles');
+  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
+  assert.equal(await page.getByRole('button',{name:'查看定时任务详情：已更新的第二页任务',exact:true}).count(),0);
+  const refreshedButton=page.getByRole('button',{name:'查看定时任务详情：已刷新：整理 AI 行业简报',exact:true});
+  await refreshedButton.click();await dialog.locator('[data-slot=spec-sheet]').waitFor();
+  let releaseDetail;holdDetail=new Promise(resolve=>{releaseDetail=resolve;});
+  const detailRequested=Promise.all([nextRead('detail'),new Promise(resolve=>{onHeldDetail=resolve;})]);
+  fixture.update({});await detailRequested;
+  fixture.unavailable();await dialog.waitFor({state:'hidden'});await refreshedButton.waitFor({state:'hidden'});
+  releaseDetail();holdDetail=undefined;fixture.update({});await refreshedButton.waitFor();
+  assert.equal(await dialog.count(),0,'a late detail cannot restore the dialog after reconnect');
   await page.locator('.schedule-stopped summary').click();await page.getByRole('button',{name:'查看定时任务详情：已取消的合成安排',exact:true}).waitFor();
   deny=true;fixture.update({isRunning:false});await page.getByText('定时任务未能读取，当前内容尚未确认。',{exact:false}).waitFor();assert.equal(await page.getByText('暂无定时任务',{exact:true}).count(),0);
   await page.getByRole('button',{name:'查看定时任务详情：已刷新：整理 AI 行业简报',exact:true}).click();await page.getByText('该定时任务暂不可用或未能读取。',{exact:true}).waitFor();assert.equal(await page.locator('.homer-schedule-detail [data-slot=spec-sheet]').count(),0);await page.keyboard.press('Escape');
   deny=false;await page.getByRole('button',{name:'重试',exact:true}).click();await page.getByText('定时任务未能读取，当前内容尚未确认。',{exact:false}).waitFor({state:'hidden'});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  checks.push({width,reads,detailReads,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,failureNotEmpty:true});await context.close();
+  checks.push({width,reads,detailReads,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,pagedDetailRefresh:true,disconnectClears:true,failureNotEmpty:true});await context.close();
  }
  assert.deepEqual(errors,[]);
 }catch(error){failure=error;}finally{if(chrome)exit=await chrome.finish();await fixture.close();writeFileSync(join(dest,'browser-result.json'),JSON.stringify({checks,errors,exit,failure:failure?String(failure):null},null,2));}
