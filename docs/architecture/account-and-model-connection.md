@@ -119,6 +119,33 @@ HOME 是工具环境，cwd 与项目根仍沿原有规则；本次不更改文�
 
 2026-11-12 修复已补充真实 preload 源码与已注册主进程处理器的组合回归，以及 runtime 完整参数、实际 profile 写入失败和活跃轮次隔离回归。固定 Codex 0.163.0 的隔离模型替身验证同一原生线程内模型、深度及三档速度切换和标准清除；实际设置组件复验自动保存及窄屏。复验命令与结果见[测试说明](../testing.md#chatgpt-模型设置)。本次未安装或发布，真实 Pro $500 资格与调用、打包后的平台验收仍待单独安排。
 
+## ChatGPT 套餐额度（2026-11-23）
+
+**状态：已接入源码。** 与仓库锁定版本一致的 Codex `0.171.0-alpha.7` 协议已核对。合成原生控制进程、可信 Electron 账号桥及实际设置组件的定向验收通过。设置组件在 1100、390 与 320 像素宽度验证双周期、单周、无数据、失败、迟到回包与断线。真实账号及安装版待验。
+
+### 额度来源与展示
+
+- 在桌面「设置 → 账号 → ChatGPT 套餐」的登录说明下方用一行文字展示每个额度周期，供已经通过原生 ChatGPT 登录的用户查看。即使尚未将 ChatGPT 应用为当前模型来源，也可查看已登录账号的额度。未登录、仅使用 API Key 和登录尚未确认时沿用已有账号提示。
+- 通过 Homer 专属 Codex 目录中的原生控制连接调用 `account/rateLimits/read`。请求传 `excludeResetCreditDetails: true` 省去额外的重置券详情查询，保持 `supportsLunaReserve` 默认值。优先读取 `rateLimitsByLimitId.codex`，兼容旧的 `rateLimits`，只有其 `limitId` 为 `codex` 或缺失时才作为通用额度使用。其他分桶可能属于特定模型或功能，首版不汇总到套餐用量。
+- 从 `primary`、`secondary` 取实际返回的有效窗口。每个窗口显示其 `windowDurationMins`、剩余百分比（`100 - usedPercent`，显示范围为 0–100%）和 `resetsAt`（Unix 秒，按本机时区显示）。周期时长确定标签，`300` 分钟显示「5 小时额度」，`10080` 分钟显示「周额度」。其他时长按实际值显示，时长缺失用「额度周期」；重置时间缺失时显示「重置时间未知」。已用比例缺失或无效的窗口不显示百分比。套餐窗口没有可换算的绝对总量或剩余消息数，任务消耗随模型和任务变化。
+- **有些账号没有五小时限制。** 如果只返回周额度，只显示周额度。按周期时长判断，`primary` 也可以是周额度。查询成功但未返回有效窗口时显示「暂无额度数据」。当前协议没有表示套餐窗口「无限制」的字段，窗口缺失或为 `null` 时省略对应行。即使服务返回 `credits.unlimited: true`，它也只描述额外积分。额外积分、个人支出上限和重置券均独立于首版套餐窗口展示。
+
+依据见[官方 App Server 协议](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)、[固定版本字段](https://github.com/openai/codex/blob/rust-v0.171.0-alpha.7/codex-rs/app-server-protocol/src/protocol/v2/account.rs#L345)、[固定版本读取实现](https://github.com/openai/codex/blob/rust-v0.171.0-alpha.7/codex-rs/app-server/src/request_processors/account_processor.rs#L1191)与[官方套餐用量说明](https://learn.chatgpt.com/docs/pricing#included-usage)。
+
+### 账号边界与刷新
+
+沿用可信桌面账号桥、runtime 白名单与服务的 `NativeAccount` 控制连接，增加限定的只读额度操作。原生 Codex 管理登录与凭据。宿主用 `account/read` 确认已登录 ChatGPT，仅向设置页投影额度窗口及读取成功或失败的结果。账号及工作区标识仅在宿主内用于核对。额度快照留在当前设置页的内存中。此路径无需创建模型会话、发起模型请求或访问荷马会员钱包。见[原生账号管理](../../src/native-account.ts)、[控制连接](../../src/service.ts)与[桌面账号桥](../../packaging/electron/preload.cjs)。
+
+首次进入 ChatGPT 套餐页、确认登录完成或在页面内收到原生账号更新时自动读取。原生账号更新及断线使在途结果失效，页面卸载后丢弃迟到结果。同一账号的并发额度请求合并，协议同时提供工作区标识时在宿主对照。断线后清除已有额度，额度读取在下次进入该页或原生账号更新时恢复。界面没有进度条、刷新按钮或常驻轮询。
+
+读取中显示「正在读取额度」，网络、权限、超时或协议错误显示「暂时无法读取额度」。空窗口显示「暂无额度数据」。固定协议的 `usedPercent` 是取整值，剩余比例和重置时刻只表述该窗口的用量。
+
+### 最小验收
+
+1. 用合成 app-server 核对单周额度（分别置于 `primary`、`secondary`）、双周期、其他周期、空窗口、缺时长／重置时间、明确耗尽、多分桶及兼容返回。确认窗口缺失和额外积分的 `unlimited` 均不产生「五小时无限制」。
+2. 沿实际 preload、Electron、runtime 和服务验证可信入口、仅登录 ChatGPT 时读取、登录完成补读、页面重进、同账号合并、超时和协议错误、账号或工作区切换后拒收旧结果。验证设置页窄窗和本地时区，确认原生请求中无模型轮，界面与诊断日志无凭据或原始账号载荷。复用[原生账号测试](../../tests/native-account.test.ts)、[桌面账号桥测试](../../tests/electron-shell.test.mjs)和[设置页测试](../../tests/desktop-permissions-ui.test.mjs)。
+3. 获准后，在固定引擎的隔离桌面环境用已登录 ChatGPT 的账号只读对照官方 Codex 用量页。分别验证有五小时窗口和只返回周窗口的账号形态；缺少对应测试账号时保留该项未验证。验收记录只保留匹配结论与脱敏状态。
+
 ## 2026-11-05 授权结束与配置对齐
 
 以 build 266 为支持基线，网站须交付 main、worker 的完整 `context`。本次只读检查发现线上网站 `6.1.36 / 6136` 的运行代码及 settings 仍为旧四字段配置，安装版真实校验器返回 `INVALID_REQUEST`；只补入本地现有 context 即接受。yezi2 当前源码已共用配置生成函数供公开配置与 Token 兑换使用，本次不增加服务端协议或客户端默认值。线上修复需要另行授权发布对应代码及 settings，之后重新发起授权，不能重放旧授权码。

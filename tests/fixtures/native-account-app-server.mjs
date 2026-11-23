@@ -2,7 +2,7 @@
 // Synthetic account lifecycle, no OAuth network, real credentials or model turn.
 import{createInterface}from'node:readline';import{existsSync,readFileSync,writeFileSync}from'node:fs';import{join}from'node:path';
 const modelProvider=JSON.parse(process.argv.find(value=>value.startsWith('model_provider='))?.slice('model_provider='.length)??'"openai"');
-const home=process.env.CODEX_HOME,file=join(home,'synthetic-account-state.json'),send=value=>process.stdout.write(JSON.stringify(value)+'\n');let login;
+const home=process.env.CODEX_HOME,file=join(home,'synthetic-account-state.json'),send=value=>process.stdout.write(JSON.stringify(value)+'\n');let login,holdUsage=false;
 const account=()=>existsSync(file)&&JSON.parse(readFileSync(file)).connected?{type:'chatgpt',email:'SYNTHETIC_PRIVATE_EMAIL',planType:'plus'}:null;
 createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id===undefined)return;let result={};
 if(m.method==='initialize')result={userAgent:'homer-fixture/0.171.0-alpha.7 ',codexHome:home};
@@ -10,6 +10,11 @@ else if(m.method==='config/read')result={config:{mcp_servers:{}},layers:[{name:{
 else if(m.method==='thread/read')result={thread:{id:m.params.threadId,modelProvider,...(m.params.includeTurns?{turns:[]}: {})}};
 else if(m.method==='skills/list')result={data:[]};
 else if(m.method==='account/read')result={account:account(),requiresOpenaiAuth:true};
+else if(m.method==='account/rateLimits/read'&&account()){
+ if(holdUsage){send({method:'account/updated',params:{authMode:'chatgpt',planType:'plus'}});return;}
+ result={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt:null}}};
+}
+else if(m.method==='synthetic/hold-usage')holdUsage=true;
 else if(m.method==='account/login/start'){login='synthetic-login';result={type:'chatgpt',loginId:login,authUrl:'http://127.0.0.1:4807/synthetic-account-authorize'};}
 else if(m.method==='account/login/cancel'){result={status:login===m.params.loginId?'canceled':'notFound'};login=undefined;}
 else if(m.method==='account/logout'){writeFileSync(file,JSON.stringify({connected:false}));}

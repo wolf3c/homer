@@ -1,5 +1,6 @@
 import {useCallback,useEffect,useImperativeHandle,useLayoutEffect,useRef,useState,type KeyboardEvent,type Ref} from 'react';
 import homerLogo from '../assets/branding/odysseus-20261030/homer-odysseus-64.png';
+import type {NativeUsageWindow} from '../src/native-account';
 import type {WebState} from '../src/web-contract';
 import {DesktopChatApps} from './desktop-chat-apps';
 import {FeatureTourDialog} from './desktop-feature-tour';
@@ -400,6 +401,35 @@ function DesktopChatGPTModels({connected,unconfirmed,busy,different,apply}:{conn
  </div>;
 }
 
+function DesktopCodexUsage(){
+ const bridge=window.homerDesktopAccount;
+ const [windows,setWindows]=useState<NativeUsageWindow[]|null>();
+ useEffect(()=>{
+  if(!bridge?.nativeUsage)return;
+  let request=0;
+  const read=async()=>{
+   const id=++request;
+   setWindows(undefined);
+   try{const result=await bridge.nativeUsage();if(id===request)setWindows(result);}
+   catch{if(id===request)setWindows(null);}
+  };
+  const dispose=bridge.onChange(reason=>{
+   if(reason==='native-account-changed')void read();
+   if(reason==='native-account-disconnected'){request++;setWindows(null);}
+  });
+  void read();
+  return()=>{request++;dispose();};
+ },[bridge]);
+ if(!bridge?.nativeUsage)return null;
+ return <div className="desktop-codex-usage" role="status" aria-label="Codex 套餐用量">
+  {windows?.length?windows.map(({windowDurationMins,remainingPercent,resetsAt},index)=><p key={index}>
+   {windowDurationMins===300?'5 小时额度':windowDurationMins===10080?'周额度':windowDurationMins?`${windowDurationMins} 分钟额度`:'额度周期'}
+   {' · 剩余 '}<strong>{remainingPercent}%</strong>{' · '}
+   {resetsAt?new Date(resetsAt*1000).toLocaleString(undefined,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 重置':'重置时间未知'}
+  </p>):<p>{windows===undefined?'正在读取额度…':windows===null?'暂时无法读取额度':'暂无额度数据'}</p>}
+ </div>;
+}
+
 export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
  const bridge=window.homerDesktopAccount;
  const {state,busy,notice,run}=useDesktopAccount();
@@ -425,6 +455,7 @@ export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
     {onboarding&&!viewingCodex&&<p>登录荷马账号，使用积分调用模型。</p>}
     {viewingCodex?<>
      <p role="status">{nativeLabel}</p><p>通过 Codex 使用 ChatGPT 登录，荷马不收取模型费用。</p>
+     {!onboarding&&native?.connected&&!state?.nativeError&&<DesktopCodexUsage/>}
      {native?.account==='other'&&<p>当前使用 API Key，不能作为 ChatGPT 套餐登录；请在原 Codex 环境中处理。</p>}
      {native?.pending&&<p>请在系统浏览器完成 Codex 登录，然后返回荷马。</p>}
      {state?.nativeError&&<p role="status">{state.nativeError}</p>}

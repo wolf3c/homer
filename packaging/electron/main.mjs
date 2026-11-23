@@ -126,10 +126,13 @@ const connectionKind=value=>value?.subject&&value.token?'website':'disconnected'
 const connectionReady=value=>!!value?.subject&&!!value.token&&!!value.selection;
 const accountCode=error=>['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED','CONNECTION_CANCELLED','MODEL_CONFIG_UNAVAILABLE','TOKEN_UNAVAILABLE','USAGE_UNAVAILABLE','NOT_CONNECTED'].includes(error?.message)?error.message:'UNAVAILABLE';
 const accountState=()=>({supported:!!dailyTokenFile,configured:!!accountOrigins,source:modelSource,websiteReady:connectionReady(connection),native:nativeStatus?{account:nativeStatus.account,connected:nativeStatus.connected,phase:nativeStatus.phase,pending:!!nativeStatus.loginId,canReopen:!!nativeStatus.authUrl}:undefined,nativeError,connection:connectionKind(connection),active:connectionKind(modelSource==='website'?activeConnection:null),pending:!!pendingConnection,canReopen:!!pendingConnection&&!!pendingLoginUrl,needsRestart:connectionReady(connection)&&JSON.stringify(connection)!==JSON.stringify(activeConnection),error:connectionError,...(wallet?{wallet,updatedAt:walletUpdatedAt}:{}),walletError,stale:walletDirty||!!wallet?.expiresAt&&wallet.expiresAt<=Date.now()/1000});
-function accountChanged(){
+function accountChanged(reason){
  if(!window||window.isDestroyed()||!origin)return;
  const frame=window.webContents.mainFrame,event={sender:window.webContents,senderFrame:frame};
- if(permissionCaller(event,frame))frame.send('homer:account:changed');
+ if(permissionCaller(event,frame)){
+  if(reason)frame.send('homer:account:changed',reason);
+  else frame.send('homer:account:changed');
+ }
 }
 function cancelConnection(){
  pendingConnection?.abort();pendingConnection=undefined;pendingLoginUrl=undefined;configAbort?.abort();accountRevision++;
@@ -150,6 +153,7 @@ function registerDesktopAccount(){
   nativeConnect:async()=>{await readNativeAccount('connect');if(nativeStatus?.authUrl){try{await shell.openExternal(nativeStatus.authUrl);}catch{nativeError='登录页面未能打开，请重试。';}}return accountState();},
   nativeCancel:()=>readNativeAccount('cancel'),
   nativeReopen:async()=>{if(nativeStatus?.authUrl){try{await shell.openExternal(nativeStatus.authUrl);}catch{nativeError='登录页面未能打开，请重试。';}}return accountState();},
+  nativeUsage:()=>nativeAccount('usage'),
   nativeModels:async()=>{
    const current=chatgptModelConfig(readDesktopChatGPTConfig(desktopProfile));
    try{return {current,defaults:CHATGPT_MODEL_DEFAULTS,models:await nativeAccount('models')};}
@@ -1163,6 +1167,7 @@ try{
       if(value.kind==='power_acquire'&&Number.isSafeInteger(value.id)&&value.id>0)runtime.stdin.write(JSON.stringify({kind:'power_ack',id:value.id})+'\n');
      }catch{void showError('电源状态未能确认，当前任务会沿原流程继续。');}
     }
+    else if(value.kind==='native-account-changed'||value.kind==='native-account-disconnected')accountChanged(value.kind);
     else if(value.kind==='account_usage_dirty'){walletRevision++;walletDirty=true;accountChanged();}
     else if(value.kind==='update-busy'&&updateStopping)updateFailed('update_busy');
     else if(value.kind==='update-stopped'&&updateStopping){updateAcknowledged=true;finishQuit();}
@@ -1187,6 +1192,7 @@ try{
   });
   runtime.on('error',error=>{if(!runtime.pid)child=undefined;void showError('无法启动随包服务（'+code(error)+'）。');});
   runtime.on('close',(status,signal)=>{
+   accountChanged('native-account-disconnected');
    for(const pending of nativeRequests.values()){clearTimeout(pending.timer);pending.reject(Error('native_account_unconfirmed'));}nativeRequests.clear();
    desktopAccessToken=undefined;
    closed=true;exitCode=status;exitSignal=signal;clearUpdateCheck();

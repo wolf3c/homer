@@ -712,19 +712,25 @@ export class CodexEngine extends EventEmitter implements EngineLike {
   private notify(method: string, params: unknown) {
     this.send({ method, params });
   }
-  request(method: string, params: unknown): Promise<any> {
+  request(method: string, params: unknown, signal?: AbortSignal): Promise<any> {
     const native=this.nativeThreadId,logical=this.threadId;
     const mapped=native&&logical&&native!==logical&&params&&typeof params==='object'&&(params as any).threadId===logical?{...params,threadId:native}:params;
-    return this.nativeRequest(method,mapped).then(result=>native&&logical&&native!==logical&&result?.thread?.id===native?{...result,thread:{...result.thread,id:logical}}:result);
+    return this.nativeRequest(method,mapped,signal).then(result=>native&&logical&&native!==logical&&result?.thread?.id===native?{...result,thread:{...result.thread,id:logical}}:result);
   }
-  private nativeRequest(method: string, params: unknown): Promise<any> {
+  private nativeRequest(method: string, params: unknown, signal?: AbortSignal): Promise<any> {
     if (this.closing) return Promise.reject(new Error("engine_closed"));
     if (this.failure) return Promise.reject(this.failure);
+    if (signal?.aborted) return Promise.reject(signal.reason);
     const id = ++this.sequence;
-    return new Promise((resolve, reject) => {
+    const abort = () => {
+      const waiter = this.pending.get(id);
+      if (this.pending.delete(id)) waiter?.reject(signal?.reason);
+    };
+    const reply = new Promise((resolve, reject) => {
       // A lost receipt does not prove an operation failed. Keep its id until
       // native response/error or transport shutdown; never replay mutations.
       this.pending.set(id, { method, resolve, reject });
+      signal?.addEventListener('abort', abort, {once:true});
       try {
         this.send({ id, method, params });
       } catch (e) {
@@ -732,6 +738,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         reject(e);
       }
     });
+    return signal ? reply.finally(()=>signal.removeEventListener('abort',abort)) : reply;
   }
   private projectRoot<T extends {threadId?:string}>(value:T):T&{nativeThreadId?:string}{
     return this.nativeThreadId&&this.threadId&&this.nativeThreadId!==this.threadId&&value?.threadId===this.nativeThreadId
@@ -857,6 +864,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       return;
       }finally{this.serverRequests--;this.emitIdle();}
     }
+    if(m.method==='account/updated'){this.emit('accountUpdated');return;}
     if(m.method==='account/login/completed'){this.emit('accountLoginCompleted',{loginId:typeof p?.loginId==='string'?p.loginId:null,success:p?.success===true});return;}
     if(m.method==='mcpServer/oauthLogin/completed'){this.emit('oauthCompleted',{success:p?.success===true});return;}
     // Callback ownership is the connection/parent segment. Child completion

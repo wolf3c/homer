@@ -46,3 +46,53 @@ test('model discovery rejects repeated pagination and unknown account instead of
  const manager=new NativeAccount(async method=>method==='account/read'?{account}:method==='configRequirements/read'?{requirements:null}:{data:[],nextCursor:'again'});
  try{assert.equal(typeof manager.models,'function');await assert.rejects(manager.models(),/native_models_unconfirmed/);account=null;await assert.rejects(manager.models(),/native_account_not_connected/);}finally{await manager.close();}
 });
+
+test('usage reads general Codex windows and exposes only display fields',async()=>{
+ const calls:string[]=[];
+ const manager=new NativeAccount(async(method,params)=>{
+  calls.push(method);
+  if(method==='account/read')return {account:{type:'chatgpt'},workspaceRouting:{chatgptAccountId:'workspace-private'}};
+  assert.deepEqual(params,{excludeResetCreditDetails:true});
+  return {accountId:'workspace-private',rateLimitsByLimitId:{codex:{primary:null,secondary:{usedPercent:37,windowDurationMins:10080,resetsAt:1800000000},credits:{unlimited:true}}},rateLimits:{primary:{usedPercent:25,windowDurationMins:300}}};
+ });
+ try{
+  assert.deepEqual(await Promise.all([manager.usage(),manager.usage()]),Array(2).fill([{remainingPercent:63,windowDurationMins:10080,resetsAt:1800000000}]));
+  assert.deepEqual(calls,['account/read','account/rateLimits/read']);
+ }finally{await manager.close();}
+});
+
+test('usage discards an in-flight snapshot after the native account changes',async()=>{
+ let respond!:(value:unknown)=>void,started!:()=>void;
+ const requested=new Promise<void>(resolve=>{started=resolve;});
+ const reply=new Promise(resolve=>{respond=resolve;});
+ const manager=new NativeAccount(async method=>{
+  if(method==='account/read')return {account:{type:'chatgpt',planType:'plus'}};
+  started();return reply;
+ });
+ try{
+  const pending=manager.usage();
+  const rejected=assert.rejects(pending,/native_account_usage_unavailable/);
+  await requested;
+  manager.invalidateUsage();
+  respond({rateLimits:{primary:{usedPercent:25}}});
+  await rejected;
+ }finally{await manager.close();}
+});
+
+test('usage separates a valid empty snapshot from API-key auth and a mismatched workspace',async()=>{
+ let account={type:'chatgpt'},response:unknown={rateLimits:{primary:null,secondary:null}},reads=0;
+ const manager=new NativeAccount(async method=>{
+  if(method==='account/read')return {account,workspaceRouting:{chatgptAccountId:'expected'}};
+  reads++;return response;
+ });
+ try{
+  assert.deepEqual(await manager.usage(),[]);
+  response={rateLimits:{limitId:'model-only',primary:{usedPercent:80}}};
+  assert.deepEqual(await manager.usage(),[]);
+  response={accountId:'different',rateLimits:{primary:{usedPercent:25}}};
+  await assert.rejects(manager.usage(),/native_account_usage_unavailable/);
+  account={type:'apiKey'};
+  await assert.rejects(manager.usage(),/native_account_usage_unavailable/);
+  assert.equal(reads,3);
+ }finally{await manager.close();}
+});

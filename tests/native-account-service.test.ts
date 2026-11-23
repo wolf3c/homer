@@ -1,6 +1,6 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {EventEmitter}from'node:events';import{mkdtempSync,mkdirSync,rmSync}from'node:fs';import{join,resolve}from'node:path';import{Homer}from'../src/service.js';import{CodexEngine,type EngineOptions}from'../src/engine.js';import{NativeAccount}from'../src/native-account.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {EventEmitter}from'node:events';import{mkdtempSync,mkdirSync,rmSync}from'node:fs';import{join,resolve}from'node:path';import{tmpdir}from'node:os';import{Homer}from'../src/service.js';import{CodexEngine,type EngineOptions}from'../src/engine.js';import{NativeAccount}from'../src/native-account.js';
 const scratch=resolve('.codex/scratch/native-account-browser-login');mkdirSync(scratch,{recursive:true});
-function config(){const dir=mkdtempSync(join(scratch,'service-'));mkdirSync(join(dir,'runtime'));mkdirSync(join(dir,'workspace'));return{appData:dir,codexHome:join(dir,'legacy-native'),nativeCodexHome:join(dir,'legacy-native'),codexBin:resolve('tests/fixtures/native-account-app-server.mjs'),runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};}
+function config(parent=scratch){const dir=mkdtempSync(join(parent,'service-'));mkdirSync(join(dir,'runtime'));mkdirSync(join(dir,'workspace'));return{appData:dir,codexHome:join(dir,'legacy-native'),nativeCodexHome:join(dir,'legacy-native'),codexBin:resolve('tests/fixtures/native-account-app-server.mjs'),runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};}
 test('control child without memory relays account notification before thread filtering, restart reads native storage, logout confirms empty state',async()=>{const c=config();c.codexHome=c.nativeCodexHome=join(c.appData,'codex');mkdirSync(c.codexHome,{recursive:true});const start=async()=>{const e=new CodexEngine(c,{cwd:c.appData,readRoots:[],instructions:'Synthetic only',tools:[],controlOnly:true},async()=>({}));const m=new NativeAccount((method,params)=>e.request(method,params));e.on('accountLoginCompleted',v=>m.completed(v));assert.equal(await e.start(),"");assert.equal(e.threadId,undefined);await assert.rejects(e.turn("Synthetic forbidden turn"),/engine_not_started/);return{e,m};};let p=await start();try{assert.equal((await p.m.start()).phase,'waiting');await p.e.request('synthetic/complete',{success:true});assert.equal((await p.m.state()).connected,true);await p.m.close();assert.equal(await p.e.close(),true);p=await start();const restored=await p.m.state();assert.equal(restored.connected,true);assert.equal(JSON.stringify(restored).includes('PRIVATE'),false);assert.equal((await p.m.logout()).connected,false);}finally{await p.m.close();await p.e.close();}});
 test('Homer owns one control child, user-only account mutations and login handoff fence retain original main thread',async()=>{const c=Object.assign(config(),{supportsWebSocket:true,context:{contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total' as const},webSearch:true,effort:'high'});class Main extends EventEmitter{threadId='synthetic-original-main';resumable=true;async start(){return this.threadId;}async turn(){return{status:'completed',text:'Synthetic'};}async close(){return true;}async interrupt(){return true;}}
  const app=new Homer(c,async()=>{},(_options:EngineOptions)=>new Main());try{await app.start();const thread=app.store.meta('mainThread'),tools=app.store.meta('mainToolsHash');await assert.rejects(()=>app.manageNativeAccount({action:'account_login'}),/native_account_user_action_required/);assert.equal(app.upgradeStatus().safe,true);const started=await app.manageNativeAccount({action:'account_login',approve:true});assert.equal(started.phase,'waiting');assert.equal(app.upgradeStatus().safe,false);const state=await app.manageNativeAccount({action:'account_state'});assert.equal(state.phase,'waiting');const manager=(app as any).nativeControl;assert.equal(manager.config.supportsWebSocket,undefined);assert.equal(manager.config.webSearch,undefined);assert.equal(manager.supportsWebSocket,false);await manager.request('synthetic/complete',{success:true});assert.equal((await app.manageNativeAccount({action:'account_state'})).connected,true);assert.equal(app.upgradeStatus().safe,true);assert.equal(app.store.meta('mainThread'),thread);assert.equal(app.store.meta('mainToolsHash'),tools);assert.equal(app.store.db.prepare("SELECT count(*) n FROM meta WHERE key='lease:native-control'").get()!.n,1);}finally{await app.close();}});
@@ -50,4 +50,24 @@ test('live ChatGPT save validates both roles and commits memory only after the p
   await assert.rejects(()=>app.applyChatGPTModels({...roles,extra:{}},()=>{throw Error('unexpected_write');}),/chatgpt_model_config_invalid/);
   await app.applyChatGPTModels(roles,value=>{assert.equal(c.chatgpt,before);saved=value;});assert.deepEqual(saved,roles);assert.deepEqual(c.chatgpt,roles);assert.equal(app.store.meta('mainThread'),undefined);
  }finally{await app.close();rmSync(c.appData,{recursive:true,force:true});}
+});
+
+test('quota shares the native control child and reports native account invalidation',async()=>{
+ const c=config(tmpdir()),changes:string[]=[];
+ let app:Homer|undefined;
+ try{
+  app=new Homer(c,async()=>{});
+  app.onStateChange(reason=>{if(reason)changes.push(reason);});
+  await app.manageNativeAccount({action:'account_login',approve:true});
+  const control=(app as any).nativeControl as CodexEngine;
+  await control.request('synthetic/complete',{success:true});
+  assert.deepEqual(await app.manageNativeAccount({action:'account_usage'}),[{remainingPercent:63,windowDurationMins:10080,resetsAt:null}]);
+  await control.request('synthetic/hold-usage',{});
+  await assert.rejects(app.manageNativeAccount({action:'account_usage'}),/native_account_usage_unavailable/);
+  assert.equal(control['pending'].size,0);
+  assert.deepEqual(changes,['native-account-changed']);
+  assert.equal(await control.close(),true);
+  assert.deepEqual(changes,['native-account-changed','native-account-disconnected']);
+  assert.equal(control.threadId,undefined);
+ }finally{await app?.close();rmSync(c.appData,{recursive:true,force:true});}
 });

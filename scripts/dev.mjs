@@ -73,7 +73,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     });
   };
   desktop?.bindAccount?.((action,input)=>new Promise((accept,reject)=>{
-    if(!['state','connect','cancel','models','apply-models','channel-state','channel-manage'].includes(action)||!['running','management'].includes(phase)||!child?.connected||stopped)return reject(Error('desktop_account_unavailable'));
+    if(!['state','connect','cancel','models','usage','apply-models','channel-state','channel-manage'].includes(action)||!['running','management'].includes(phase)||!child?.connected||stopped)return reject(Error('desktop_account_unavailable'));
     const id=randomUUID(),timeout=setTimeout(()=>{webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));},15000);
     webRequests.set(id,{accept,reject,timeout,method:action==='channel-state'?'channel-state':'desktop_account'});
     if(!send({kind:'desktop_account',id,method:action,...(input===undefined?{}:{input})})){clearTimeout(timeout);webRequests.delete(id);reject(Error('desktop_account_unconfirmed'));}
@@ -238,6 +238,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     own.on("exit", (code, exitSignal) => {
       if(own!==child)return;
       clearTimeout(readyTimer); child = undefined;
+      desktop?.onEvent?.({kind:'native-account-disconnected'});
       void exited(code, exitSignal);
     });
     own.send({ kind: "init", desktop:!!desktop, config: build.config, buildHash:build.hash,terminalDeltas:json,webUploadProtocol:webPort===undefined?0:1, thread: expectedThread });
@@ -252,7 +253,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
         clearTimeout(readyTimer);current=build;phase='management';cachedHistoryState=undefined;
         await startWeb(build);publish();return;
       }
-      if(desktop&&m.kind==='account_usage_dirty'){desktop.onEvent?.({kind:m.kind});return;}
+      if(desktop&&['account_usage_dirty','native-account-changed','native-account-disconnected'].includes(m.kind)){desktop.onEvent?.({kind:m.kind});return;}
       if(desktop&&m.kind==='chat_unavailable'){desktopChatError=m.code;desktop.onEvent?.({kind:'chat_unavailable',code:m.code});publish();return;}
       if(m.kind==="state_invalidated"&&m.protocol===1){publish();return;}
       if (m.kind === "ingress_result") {

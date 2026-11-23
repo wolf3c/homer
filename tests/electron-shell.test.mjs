@@ -2027,4 +2027,24 @@ test('ChatGPT source transaction invalidated during stop cannot save or relaunch
  assert.equal(f.nativeCalls.some(call=>call[0]==='source'||call[0]==='relaunch'),false);
 });
 
+test('native usage is a zero-argument read through the trusted desktop account bridge',async()=>{
+ const windows=[{remainingPercent:63,windowDurationMins:10080,resetsAt:null}],actions=[];
+ const f=await accountFixture({nativeAction:(action,input)=>{actions.push([action,input]);return windows;}});
+ const exposed={},listeners=new Map(),changes=[];
+ vm.runInNewContext(readFileSync('packaging/electron/preload.cjs','utf8'),{process:{isMainFrame:true},require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>exposed[name]=value},ipcRenderer:{invoke:(channel,...args)=>f.handlers.get(channel)(accountEvent(f),...args),on:(channel,listener)=>listeners.set(channel,listener),removeListener:channel=>listeners.delete(channel)}})});
+ const api=exposed.homerDesktopAccount,dispose=api.onChange(reason=>changes.push(reason));
+ actions.length=0;
+ assert.deepEqual(JSON.parse(JSON.stringify(await api.nativeUsage())),windows);
+ await assert.rejects(api.nativeUsage({}),/arguments/);
+ const handler=f.handlers.get('homer:account:nativeUsage');
+ await assert.rejects(handler({...accountEvent(f),senderFrame:{} }),/desktop_account_forbidden/);
+ assert.deepEqual(actions,[['usage',undefined]]);
+ f.event({kind:'native-account-changed'});await f.tick();
+ const [channel,reason]=f.windows[0].settingsMessages.at(-1);
+ assert.equal(channel,'homer:account:changed');
+ listeners.get(channel)({},reason);
+ assert.deepEqual(changes,['native-account-changed']);
+ dispose();assert.equal(listeners.size,0);
+});
+
 }

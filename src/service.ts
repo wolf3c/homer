@@ -17,7 +17,7 @@ import {prepareWorkerProjectRoot} from './worker-project-root.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {attachmentRevealTarget,attachmentSourcePath} from './artifact-reveal.js';
 import {seedFirstLaunchSkills,shouldSeedFirstLaunchSkills} from './first-launch.js';
-import {NativeAccount,type NativeAccountState} from './native-account.js';
+import {NativeAccount,type NativeAccountState,type NativeUsageWindow} from './native-account.js';
 import {validateChatGPTSelection,type ChatGPTModelOverrides,type NativeModel} from './model-config.js';
 import {createMembershipTools,isMembershipTool} from './membership-web-tools.js';
 import {readMembershipAudio,runMembershipAudio,verifyMembershipAudioAttachment} from './membership-audio.js';
@@ -158,6 +158,8 @@ type WorkerSlot = {
 };
 // Emitted only after constructor preflight has closed the database and lock.
 export class DesktopReviewRequired extends Error {}
+
+type StateChangeReason='model-turn'|'user-input'|'native-account-changed'|'native-account-disconnected';
 
 export class Homer {
   private browserTransport?:BrowserTransport;
@@ -561,7 +563,7 @@ export class Homer {
   private nativeRevision=0;
   private nativeOperations=0;
   private accountManager?:NativeAccount;
-  private nativeAccount(){return this.accountManager??=new NativeAccount((method,params)=>this.nativeRpc(method,params),{onIdle:()=>this.scheduleMainTransportRecovery()});}
+  private nativeAccount(){return this.accountManager??=new NativeAccount((method,params,signal)=>this.nativeRpc(method,params,signal),{onIdle:()=>this.scheduleMainTransportRecovery()});}
   async applyChatGPTModels(value:unknown,persist:(overrides:ChatGPTModelOverrides)=>void){
     if(this.config.desktopModelSource!=='codex'||!this.config.appData)throw Error('chatgpt_model_source_changed');
     const overrides=validateChatGPTSelection(value,await this.manageNativeAccount({action:'model_list'}));
@@ -570,8 +572,9 @@ export class Homer {
     this.config.chatgpt=overrides;
     this.invalidateState();
   }
-  private async nativeRpc(method:string,params:any){
+  private async nativeRpc(method:string,params:any,signal?:AbortSignal){
       if(this.closing||this.closed)throw Error('service_upgrading');
+      signal?.throwIfAborted();
       if(!this.nativeControl){
         const home=capabilityHome(this.config),cwd=canonicalDir(join(home,'homer-control'));
         this.nativeControl=new CodexEngine({...this.config,codexHome:home,dailyDeepSeek:false,desktopModelSource:undefined,desktopConnection:undefined,context:undefined,webSearch:undefined,supportsWebSocket:undefined,baseUrl:undefined,keyEnv:undefined,requiresOpenaiAuth:true},{cwd,readRoots:[cwd],instructions:'Homer native configuration service. No model turns.',tools:[],controlOnly:true},async()=>{throw Error('capability_control_tool_denied');});
@@ -585,10 +588,16 @@ export class Homer {
         };
         control.on('spawn',()=>{lease=this.lease('native-control',control);});
         control.on('accountLoginCompleted',value=>{this.accountManager?.completed(value);if(value.success){this.nativeReconnect=true;this.nativeRevision++;}});
+        control.on('accountUpdated',()=>{
+          if(this.nativeControl!==control)return;
+          this.accountManager?.invalidateUsage();
+          this.invalidateState('native-account-changed');
+        });
         control.on('exit',()=>{
-          if(!initialized)return;
+          if(!initialized||this.nativeControl!==control)return;
           this.accountManager?.disconnected();
           release();
+          this.invalidateState('native-account-disconnected');
         });
         control.on('oauthCompleted',({success})=>{if(success){this.nativeReconnect=true;this.nativeRevision++;}});
         this.nativeStarting=control.start().then(id=>{initialized=true;return id;}).catch(async error=>{
@@ -596,20 +605,24 @@ export class Homer {
           throw error;
         });
       }
+      const control=this.nativeControl;
       await this.nativeStarting;
       if(this.closing||this.closed)throw Error('service_upgrading');
-      return this.nativeControl.request(method,params);
+      if(this.nativeControl!==control)throw Error('engine_disconnected');
+      return control.request(method,params,signal);
   }
+  async manageNativeAccount(input:{action:'account_usage'}):Promise<NativeUsageWindow[]>;
   async manageNativeAccount(input:{action:'model_list'}):Promise<NativeModel[]>;
   async manageNativeAccount(input:unknown):Promise<NativeAccountState>;
   async manageNativeAccount(input:unknown){
     if(this.closing||this.closed)throw Error('service_upgrading');
     if(!input||typeof input!=='object')throw Error('native_account_action_denied');
-    const a=input as any;if(!['account_state','model_list'].includes(a.action)&&a.approve!==true)throw Error('native_account_user_action_required');
+    const a=input as any;if(!['account_state','account_usage','model_list'].includes(a.action)&&a.approve!==true)throw Error('native_account_user_action_required');
     this.nativeOperations++;
     try{
       const account=this.nativeAccount();
       if(a.action==='account_state')return await account.state(a.refresh===true);
+      if(a.action==='account_usage')return await account.usage();
       if(a.action==='model_list')return await account.models();
       if(a.action==='account_login'){
         try{return await account.start();}catch(error){
@@ -628,12 +641,12 @@ export class Homer {
     }finally{this.nativeOperations--;this.scheduleMainTransportRecovery();}
   }
 
-  private stateObservers = new Set<(reason?:'model-turn'|'user-input')=>void>();
+  private stateObservers = new Set<(reason?:StateChangeReason)=>void>();
   private pageReader?:WebHistoryPages;
   readonly webReadEpoch=randomUUID();
   webHistoryPages(){return this.pageReader??=new WebHistoryPages(this.history,this.processes,this.inputs,this.channels);}
-  onStateChange(observer:(reason?:'model-turn'|'user-input')=>void){this.stateObservers.add(observer);return ()=>{this.stateObservers.delete(observer);};}
-  private invalidateState(reason?:'model-turn'|'user-input'){for(const observer of this.stateObservers??[])try{observer(reason);}catch{/* Notification is never business execution. */}}
+  onStateChange(observer:(reason?:StateChangeReason)=>void){this.stateObservers.add(observer);return ()=>{this.stateObservers.delete(observer);};}
+  private invalidateState(reason?:StateChangeReason){for(const observer of this.stateObservers??[])try{observer(reason);}catch{/* Notification is never business execution. */}}
   isWorkerExecuting(run:OverviewRun):boolean {
     if(this.closing||run.status!=='running'||run.phase!=='executing'||run.stopRequestedAt!=null||!run.threadId||!run.turnId)return false;
     const slot=this.workers.get(run.id);

@@ -179,7 +179,13 @@ async function receive(raw: unknown) {
     if(desktop)desktopChannels=new DesktopChannels(m.config.runtime,(channel,save)=>app!.channels!.reconfigure(channel,save,()=>
       channel==='wechat'?wechatChannel(m.config.runtime,true)!:channel==='telegram'?telegramChannel(m.config.runtime,undefined,true)!:dingtalkChannel(m.config.runtime,true)!));
     } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;await app?.close();throw error; }
-    app.onStateChange(reason=>{invalidateState();publishPower();if(desktop&&reason==='model-turn')void send({kind:'account_usage_dirty'}).catch(()=>{});});
+    app.onStateChange(reason=>{
+      if(reason==='native-account-changed'||reason==='native-account-disconnected'){
+        if(desktop)void send({kind:reason}).catch(()=>{});
+        return;
+      }
+      invalidateState();publishPower();if(desktop&&reason==='model-turn')void send({kind:'account_usage_dirty'}).catch(()=>{});
+    });
     if(desktop){
       app.onDesktopNotification(notice=>{void send({kind:'desktop_notification',notice}).catch(()=>{});});
       app.bindBrowserPreview((owner,action,input)=>new Promise((resolve,reject)=>{
@@ -237,6 +243,7 @@ async function receive(raw: unknown) {
         await send({kind:'web_result',id:m.id,value:app.channels?.connectionHealth()??[]});
         return;
       }
+      if(m.method==='usage'){await send({kind:'web_result',id:m.id,value:await app.manageNativeAccount({action:'account_usage'})});return;}
       if(m.method==='models'){await send({kind:'web_result',id:m.id,value:await app.manageNativeAccount({action:'model_list'})});return;}
       if(m.method==='apply-models'){
         const profile=app.config.desktopProfile;if(!profile)throw Error('chatgpt_model_source_changed');

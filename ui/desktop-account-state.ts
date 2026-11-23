@@ -1,9 +1,11 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {CHATGPT_MODEL_ERRORS,chatgptModelError,type ChatGPTModelConfig,type ModelRole,type NativeModelSettings} from '../src/model-config';
+import type {NativeUsageWindow} from '../src/native-account';
 
+type NativeAccountChange='native-account-changed'|'native-account-disconnected';
 export type AccountState={supported:boolean;configured:boolean;source?:'codex'|'website';native?:{account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:string;pending:boolean;canReopen:boolean};nativeError?:string;websiteReady?:boolean;connection:'website'|'disconnected';active:'website'|'disconnected';pending:boolean;canReopen:boolean;needsRestart:boolean;error?:string;wallet?:{available:number;used:number;unit:string;expiresAt?:number};updatedAt?:string;walletError?:string;stale:boolean};
 type AccountAction='state'|'connect'|'cancel'|'reopen'|'refresh'|'openWebsite'|'disconnect'|'restart'|'nativeConnect'|'nativeCancel'|'nativeReopen'|'applyCodex'|'applyWebsite';
-type AccountBridge=Omit<Record<AccountAction,()=>Promise<AccountState>>,'applyCodex'>&{applyCodex:(roles?:Record<ModelRole,ChatGPTModelConfig>)=>Promise<AccountState>;nativeModels:()=>Promise<NativeModelSettings>;onChange:(callback:()=>void)=>()=>void};
+type AccountBridge=Omit<Record<AccountAction,()=>Promise<AccountState>>,'applyCodex'>&{applyCodex:(roles?:Record<ModelRole,ChatGPTModelConfig>)=>Promise<AccountState>;nativeModels:()=>Promise<NativeModelSettings>;nativeUsage:()=>Promise<NativeUsageWindow[]>;onChange:(callback:(reason?:NativeAccountChange)=>void)=>()=>void};
 declare global{interface Window{homerDesktopAccount?:AccountBridge;}}
 
 export const accountErrors:Record<string,string>={
@@ -42,7 +44,7 @@ export function useDesktopAccount({currentSourceOnly=false,withWallet=true}:{cur
    }else setNotice(previous=>background&&CHATGPT_MODEL_ERRORS[previous]?previous:action==='openWebsite'?'购买积分页面未能打开，请稍后重试。':'状态未能确认，请重试。');
   }}
  },[bridge,currentSourceOnly,withWallet]);
- useEffect(()=>{live.current=true;void apply();const dispose=bridge?.onChange(()=>{void apply('state',undefined,true);});return()=>{live.current=false;request.current++;dispose?.();};},[bridge,apply]);
+ useEffect(()=>{live.current=true;void apply();const dispose=bridge?.onChange(reason=>{if(reason!=='native-account-disconnected')void apply('state',undefined,true);});return()=>{live.current=false;request.current++;dispose?.();};},[bridge,apply]);
  useEffect(()=>{
   const expiresAt=state?.wallet?.expiresAt;
   if(!withWallet||currentSourceOnly&&state?.source!=='website'||!expiresAt||expiresAt<=Date.now()/1000||state.stale||state.walletError)return;

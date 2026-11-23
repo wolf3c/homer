@@ -1,12 +1,15 @@
-type NativeRpc = (method: string, params: any) => Promise<any>;
+type NativeRpc = (method: string, params: any, signal?:AbortSignal) => Promise<any>;
 type Phase='idle'|'waiting'|'unconfirmed'|'cancelled'|'failed'|'timed_out'|'cancel_unconfirmed'|'logout_unconfirmed';
 type Completion={loginId?:unknown;success?:unknown;error?:unknown};
 export type NativeAccountState={account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:Phase;loginId?:string;authUrl?:string;expiresAt?:number;planType?:string};
+export type NativeUsageWindow={remainingPercent:number;windowDurationMins:number|null;resetsAt:number|null};
 type Attempt={id?:string;authUrl?:string;expiresAt:number;completed?:boolean;early?:Completion};
 // Native Codex owns OAuth, callback, credential files and refresh. This is only
 // the bounded UI operation lifecycle. Nothing is persisted or sent to a model.
 export class NativeAccount{
  private attempt?:Attempt;private phase:Phase='idle';private timer?:NodeJS.Timeout;
+ private usageRead?:Promise<NativeUsageWindow[]>;
+ private usageAbort?:AbortController;
  private queue:Promise<unknown>=Promise.resolve();private closed=false;private lastId?:string;
  constructor(private rpc:NativeRpc,private options:{timeoutMs?:number;onIdle?:()=>void}={}){}
  get pending(){return !!this.attempt;}
@@ -14,7 +17,8 @@ export class NativeAccount{
  private serial<T>(work:()=>Promise<T>):Promise<T>{const p=this.queue.then(work).finally(()=>this.notifyIdle());this.queue=p.catch(()=>{});return p;}
  private clear(){if(this.timer)clearTimeout(this.timer);this.timer=undefined;this.attempt=undefined;}
  completed(value:Completion){const a=this.attempt;if(!a||typeof value.loginId!=='string'||typeof value.success!=='boolean')return;if(!a.id){a.early={loginId:value.loginId,success:value.success};return;}if(value.loginId===a.id){a.completed=value.success;void this.state();}}
- disconnected(){const pending=this.pending;this.clear();if(pending)this.phase='failed';this.notifyIdle();}
+ invalidateUsage(){this.usageAbort?.abort();this.usageAbort=undefined;this.usageRead=undefined;}
+ disconnected(){this.invalidateUsage();const pending=this.pending;this.clear();if(pending)this.phase='failed';this.notifyIdle();}
  private async read(refreshToken=false):Promise<NativeAccountState>{
   let account:NativeAccountState['account']='unknown',planType:string|undefined;
   try{const r=await this.rpc('account/read',{refreshToken});account=r?.account===null?'none':r?.account?.type==='chatgpt'?'chatgpt':typeof r?.account?.type==='string'?'other':'unknown';if(account==='chatgpt'&&typeof r.account.planType==='string')planType=r.account.planType;}catch{}
@@ -25,6 +29,40 @@ export class NativeAccount{
   return {account,connected:account==='chatgpt',phase:this.phase,...(planType?{planType}:{}),...(a?.id?{loginId:a.id,expiresAt:a.expiresAt,...(this.phase==='waiting'&&a.authUrl?{authUrl:a.authUrl}:{})}:{} )};
  }
  state(refreshToken=false){return this.serial(()=>this.read(refreshToken));}
+ usage(){
+  if(this.usageRead)return this.usageRead;
+  const unavailable=()=>Error('native_account_usage_unavailable');
+  const controller=this.usageAbort=new AbortController();
+  // Finish before the desktop bridge's 15-second receipt deadline.
+  const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(12000)]);
+  const read=(async()=>{
+   if(this.closed)throw unavailable();
+   const account=await this.rpc('account/read',{refreshToken:false},signal);
+   if(signal.aborted||account?.account?.type!=='chatgpt')throw unavailable();
+   const response=await this.rpc('account/rateLimits/read',{excludeResetCreditDetails:true},signal);
+   const workspace=account.workspaceRouting?.chatgptAccountId;
+   if(signal.aborted||workspace&&response?.accountId&&workspace!==response.accountId)throw unavailable();
+   const legacy=response?.rateLimits;
+   const codex=response?.rateLimitsByLimitId?.codex??(legacy?.limitId==null||legacy.limitId==='codex'?legacy:undefined);
+   if(!codex){
+    if(!legacy||typeof legacy!=='object'||Array.isArray(legacy))throw unavailable();
+    return [];
+   }
+   if(typeof codex!=='object'||Array.isArray(codex))throw unavailable();
+   return [codex.primary,codex.secondary].flatMap((window):NativeUsageWindow[]=>{
+    if(!Number.isInteger(window?.usedPercent))return [];
+    return [{
+     remainingPercent:Math.max(0,Math.min(100,100-window.usedPercent)),
+     windowDurationMins:Number.isSafeInteger(window.windowDurationMins)&&window.windowDurationMins>0?window.windowDurationMins:null,
+     resetsAt:Number.isSafeInteger(window.resetsAt)&&window.resetsAt>0&&window.resetsAt<=8.64e12?window.resetsAt:null,
+    }];
+   });
+  })().catch(()=>{throw unavailable();}).finally(()=>{
+   if(this.usageAbort===controller){this.usageAbort=undefined;this.usageRead=undefined;}
+  });
+  this.usageRead=read;
+  return read;
+ }
  models(){return this.serial(async()=>{
   const account=await this.read();if(!account.connected)throw Error('native_account_not_connected');
   try{
@@ -78,6 +116,6 @@ export class NativeAccount{
   try{await this.rpc('account/logout',{});}catch{this.phase='logout_unconfirmed';return this.read();}
   const s=await this.read();this.phase=s.account==='none'?'idle':'logout_unconfirmed';return {...s,phase:this.phase};
  });}
- async close(){await this.serial(async()=>{if(this.attempt)await this.cancelCurrent('cancelled');this.closed=true;this.clear();});}
+ async close(){await this.serial(async()=>{if(this.attempt)await this.cancelCurrent('cancelled');this.closed=true;this.invalidateUsage();this.clear();});}
 }
 import {validReasoningEffort,type NativeModel} from './model-config.js';

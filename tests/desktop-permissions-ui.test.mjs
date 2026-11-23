@@ -857,3 +857,21 @@ test('chat apps recover a lost WeChat start ACK after a prior applied result wit
  assert.ok(qr());assert.equal(channels.snapshot().flow?.id,submitted);assert.equal(channels.snapshot().result,undefined);
  const before=reads;await act(async()=>{await new Promise(resolve=>setTimeout(resolve,550));});assert.ok(reads>before);assert.equal(starts,1);
 })));
+
+test('Codex usage stays scoped to the active account and renders only returned periods',async()=>withDom(async d=>{
+ const listeners=new Set(),old=pending();
+ const weekly={remainingPercent:63,windowDurationMins:10080,resetsAt:null};
+ const current={supported:true,source:'codex',native:{account:'chatgpt',connected:true}};
+ let reads=0;
+ window.homerDesktopAccount={state:async()=>current,onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeModels:async()=>nativeSettings(),nativeUsage:async()=>++reads===1?old.promise:[weekly]};
+ await d.render(React.createElement(get().DesktopAccount));
+ const usage=()=>d.find(n=>n.getAttribute('aria-label')==='Codex 套餐用量').textContent;
+ assert.match(usage(),/正在读取额度/);
+ await act(async()=>{for(const fn of listeners)fn('native-account-changed');});
+ assert.match(usage(),/周额度 · 剩余 63% · 重置时间未知/);
+ await act(async()=>old.resolve([{remainingPercent:75,windowDurationMins:300,resetsAt:null}]));
+ assert.doesNotMatch(usage(),/5 小时/);
+ await act(async()=>{for(const fn of listeners)fn('native-account-disconnected');});
+ assert.equal(usage(),'暂时无法读取额度');
+ assert.equal(reads,2);
+}));

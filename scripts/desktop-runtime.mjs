@@ -148,13 +148,13 @@ try{
     void (async()=>{try{if(quitting||!power)throw Error('power_recheck_unconfirmed');if(value.afterSleep===undefined)await power('resume');else await power('resume',{afterSleep:value.afterSleep});await send({kind:'power_result',id:value.id});}catch{await send({kind:'power_result',id:value.id,error:'power_recheck_unconfirmed'});}})();
    }
    else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
-   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','apply-models','channel-state','channel-manage'].includes(value.action)){
+   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','usage','apply-models','channel-state','channel-manage'].includes(value.action)){
     void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action,value.input)});}catch(error){await send({kind:'native_account_result',id:value.id,error:value.action==='apply-models'?chatgptModelError(error?.message):'native_account_unconfirmed'});}})();
    }
   }catch{}
  });
  reader.on('close',quit);
- const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindBrowserReply:callback=>{browserReply=callback;},bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{const sent=send(value);if(value.kind==='desktop_notification')void sent.catch(()=>{});}}});
+ const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindBrowserReply:callback=>{browserReply=callback;},bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{const sent=send(value);if(['desktop_notification','native-account-changed','native-account-disconnected'].includes(value.kind))void sent.catch(()=>{});}}});
  reader.close();input.destroy();process.stdin.pause();
  if(!result?.stoppedConfirmed&&!result?.noHostStarted)throw Error('desktop_stop_unconfirmed');
  // A successful host close includes all main/control/Worker/MCP owner evidence.
