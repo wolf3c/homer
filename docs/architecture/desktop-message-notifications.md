@@ -51,6 +51,7 @@ OpenAI 官方文档说明，桌面版的轮次完成通知可设为关闭、仅�
 
 - 原生通知可显示最终答复的短摘录、失败状态或待办动作。锁屏与通知中心是否显示预览由系统设置决定。通知本身不拼接事项标题、附件名、路径和审批详情。前台检查和点击只传原定位引用。
 - 通知设置提供系统设置入口。系统授权与应用开关独立，授权提示、静音、专注模式和勿扰由操作系统决定。Homer 设置页展示用户保存的两个开关。
+- macOS 上，两个开关下方提供专注模式说明、手动设置路径和文字入口。点击后尝试打开专注模式总页，系统拒绝跳转时尝试打开系统设置。页面不查询专注状态或例外名单。各版本的真实跳转落点待验。
 - **macOS**：当前普通关闭窗口会隐藏，Homer 继续运行时仍适用通知规则。使用签名安装包验证通知授权、横幅、通知中心、隐藏窗口恢复和点击跳转。Electron 45 的权限能力以实际依赖和安装包为准，Codex 包中的自有接线单独看待。 [窗口生命周期](../../packaging/electron/main.mjs#L954) · [Electron 通知 API](https://www.electronjs.org/docs/latest/api/notification)
 - **Windows**：当前最小化仍运行，普通关闭沿现有退出流程，退出后停止生成新通知。使用实际 NSIS 安装包核对开始菜单快捷方式、`AppUserModelID`、通知激活身份及最小化恢复。首版点击定位以进程仍在运行为范围，退出后的冷启动定位留待单独验收。 [Windows 打包](../../packaging/electron/forge.config.mjs#L97) · [Electron 平台要求](https://www.electronjs.org/docs/latest/tutorial/notifications#platform-considerations)
 

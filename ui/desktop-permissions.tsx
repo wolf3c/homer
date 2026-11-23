@@ -32,11 +32,13 @@ declare global{interface Window{homerDesktopNotifications?:{
  preferences:()=>Promise<NotificationPreferences>;
  set:(key:keyof NotificationPreferences,value:boolean)=>Promise<NotificationPreferences>;
  openSystemSettings:()=>Promise<void>;
+ openFocusSettings?:()=>Promise<void>;
  subscribe:(check:(id:string,notice:DesktopNotice)=>void,open:(notice:DesktopNotice)=>void)=>()=>void;
  visibility:(id:string,visible:boolean)=>Promise<void>;
 };}}
 function DesktopNotificationSettings(){
  const bridge=window.homerDesktopNotifications!;
+ const {openFocusSettings}=bridge;
  const [value,setValue]=useState<NotificationPreferences>(),[busy,setBusy]=useState(false),[error,setError]=useState('');
  useEffect(()=>{let active=true;void bridge.preferences().then(next=>{if(active)setValue(next);},()=>{if(active)setError('暂时无法读取提醒设置。');});return()=>{active=false;};},[bridge]);
  async function update(key:keyof NotificationPreferences,checked:boolean){
@@ -51,6 +53,14 @@ function DesktopNotificationSettings(){
     className="desktop-power-switch" disabled={!value||busy} focusableWhenDisabled onClick={()=>void update(key,!value?.[key])}><span aria-hidden="true"/></Button></div>
   </section>)}
   {error&&<p role="status">{error}</p>}
+  {openFocusSettings&&<aside className="desktop-notification-focus-note" role="note" aria-label="专注模式说明">
+   <p>如果想在专注模式下收到 Homer 通知，可以在常用的专注模式里允许 Homer。</p>
+   <p className="desktop-permission-path">系统设置 → 专注模式 → 选择模式 → 允许的 App。<br/>使用允许列表时添加 Homer，使用静音列表时移除 Homer。</p>
+   <Button type="button" onClick={()=>{
+    setError('');
+    void openFocusSettings().catch(()=>setError('未能打开专注模式设置，可按下方路径手动打开。'));
+   }}>打开专注模式设置</Button>
+  </aside>}
  </div>;
 }
 

@@ -80,8 +80,25 @@ test('notification settings explain previews and open the system controls',async
  assert.match(d.find(n=>n.getAttribute('role')==='tabpanel').textContent,/通知可能显示回复正文。可在系统通知设置中隐藏预览/);
  assert.equal(button(d,'Homer 有新消息').getAttribute('aria-checked'),'true');
  assert.equal(button(d,'需要我关注').getAttribute('aria-checked'),'true');
+ assert.equal(d.find(n=>n.getAttribute('role')==='note'),undefined);
  await d.click(button(d,'打开系统通知设置'));
  assert.equal(opened,1);
+}));
+test('macOS focus guidance follows the reminder switches and keeps the manual path when opening fails',async()=>withDom(async d=>{
+ let opened=0;
+ window.homerDesktopNotifications={
+  preferences:async()=>({message:true,attention:true}),
+  openFocusSettings:async()=>{opened++;throw Error('unavailable');},
+ };
+ await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
+ await d.click(d.find(n=>n.getAttribute('role')==='tab'&&n.textContent==='通知'));
+ const note=d.find(n=>n.getAttribute('role')==='note');
+ assert.equal(note.parentNode.lastChild,note);
+ assert.equal(button(d,'需要我关注').parentNode.parentNode.nextSibling,note);
+ assert.match(note.textContent,/系统设置 → 专注模式 → 选择模式 → 允许的 App/);
+ await d.click(button(d,'打开专注模式设置'));
+ assert.equal(opened,1);
+ assert.match(d.find(n=>n.getAttribute('role')==='status').textContent,/按下方路径手动打开/);
 }));
 test('about displays the version supplied by the desktop app',async()=>withDom(async d=>{
  let reads=0;

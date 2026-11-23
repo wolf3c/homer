@@ -809,8 +809,9 @@ function registerDesktopNotifications(profile,appId){
  const saved=readDesktopNotificationPreferences(profile);
  notificationPreferences={message:saved?.message!==false,attention:saved?.attention!==false};
  if(process.platform==='win32')app.setAppUserModelId(appId);
- ipcMain.handle('homer:notification',async(event,action,value,visible)=>{
+ ipcMain.handle('homer:notification',async(event,action,...args)=>{
   if(!permissionCaller(event,event.senderFrame))throw Error('desktop_notification_forbidden');
+  const [value,visible]=args;
   if(action==='preferences')return notificationPreferences;
   if(action==='set'&&['message','attention'].includes(value)&&typeof visible==='boolean'){
    const next={...notificationPreferences,[value]:visible};
@@ -819,6 +820,16 @@ function registerDesktopNotifications(profile,appId){
   }
   if(action==='system-settings'){
    await shell.openExternal(process.platform==='win32'?'ms-settings:notifications':'x-apple.systempreferences:com.apple.Notifications-Settings.extension');
+   return;
+  }
+  if(action==='focus-settings'&&process.platform==='darwin'&&args.length===0){
+   const frame=event.senderFrame,navigation=permissionNavigation;
+   try{
+    await shell.openExternal('x-apple.systempreferences:com.apple.Focus-Settings.extension');
+   }catch{
+    if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_notification_forbidden');
+    if(await shell.openPath('/System/Applications/System Settings.app'))throw Error('desktop_focus_settings_open_failed');
+   }
    return;
   }
   if(action==='ready'&&typeof value==='boolean'){

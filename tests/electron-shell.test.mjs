@@ -138,6 +138,38 @@ if(!vm.SourceTextModule){
  });
 }else{
 
+test('macOS focus settings use a fixed target and fall back for the trusted page only',async()=>{
+ let fail=false,fallbackError='',hold=false,rejectOpen;
+ const f=await fixture(undefined,async()=>{
+  if(hold)await new Promise((_resolve,reject)=>{rejectOpen=reject;});
+  if(fail)throw Error('unavailable');
+ },'darwin',{open:async()=>fallbackError});
+ f.event({kind:'url',url:'http://127.0.0.1:4777/',desktopAccessToken:'a'.repeat(64)});
+ await f.tick();
+ const sender=f.windows[0].webContents,event={sender,senderFrame:sender.mainFrame};
+ const command=f.handlers.get('homer:notification'),start=f.nativeCalls.length;
+ const external=['external','x-apple.systempreferences:com.apple.Focus-Settings.extension'];
+ const fallback=['open','/System/Applications/System Settings.app'];
+ await assert.rejects(command({...event,senderFrame:{...event.senderFrame}},'focus-settings'),/desktop_notification_forbidden/);
+ await assert.rejects(command(event,'focus-settings','https://example.invalid/'),/desktop_notification_invalid/);
+ f.setPlatform('win32');
+ await assert.rejects(command(event,'focus-settings'),/desktop_notification_invalid/);
+ assert.equal(f.nativeCalls.length,start);
+ f.setPlatform('darwin');
+ await command(event,'focus-settings');
+ fail=true;
+ await command(event,'focus-settings');
+ fallbackError='unavailable';
+ await assert.rejects(command(event,'focus-settings'),/desktop_focus_settings_open_failed/);
+ assert.deepEqual(f.nativeCalls.slice(start),[external,external,fallback,external,fallback]);
+ hold=true;
+ const pending=command(event,'focus-settings');
+ sender.emit('did-start-navigation',{url:'http://127.0.0.1:56789/',isSameDocument:false,isMainFrame:true});
+ rejectOpen(Error('unavailable'));
+ await assert.rejects(pending,/desktop_notification_forbidden/);
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='open').length,2);
+});
+
 test('desktop notifications combine independent switches and open the original candidate once',async()=>{
  const f=await fixture();
  f.windows[0].hide();

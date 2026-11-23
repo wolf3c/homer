@@ -70,6 +70,7 @@ if(process.isMainFrame===true){
   preferences:()=>ipcRenderer.invoke('homer:notification','preferences'),
   set:(key,value)=>ipcRenderer.invoke('homer:notification','set',key,value),
   openSystemSettings:()=>ipcRenderer.invoke('homer:notification','system-settings'),
+  ...(process.platform==='darwin'?{openFocusSettings:()=>ipcRenderer.invoke('homer:notification','focus-settings')}:{}),
   subscribe:(check,open)=>{
    const onCheck=(_event,id,notice)=>check(id,notice);
    const onOpen=(_event,notice)=>open(notice);
