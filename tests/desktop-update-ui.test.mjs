@@ -10,7 +10,7 @@ import {withDom,React} from './helpers/process-dom.mjs';
 function component(options={}){
  const source=readFileSync('ui/homer-app.tsx','utf8'),ast=ts.createSourceFile('homer-app.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
  const app=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name.text==='HomerApp');
- const start=app.body.statements.findIndex(n=>ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>ts.isArrayBindingPattern(d.name)&&d.name.elements[0].name.getText(ast)==='desktopUpdate'));
+ const start=app.body.statements.findIndex(n=>ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>ts.isArrayBindingPattern(d.name)&&d.name.elements[0]&&ts.isBindingElement(d.name.elements[0])&&d.name.elements[0].name.getText(ast)==='desktopUpdate'));
  assert.ok(start>=0,'desktop update state is missing');
  const end=app.body.statements.findIndex((n,i)=>i>start&&ts.isFunctionDeclaration(n)&&n.name.text==='desktopUpdateIntent');
  assert.ok(end>start,'desktop update actions are missing');
