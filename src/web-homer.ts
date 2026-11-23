@@ -32,7 +32,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
    AND json_extract(io.responseJson,'$.messageId')=i.id AND ir.state IN ('received','processed')
    AND coalesce(ir.offeredTurnId,ir.processedBy)=json_extract(o.detailsJson,'$.turnId')
    AND EXISTS(SELECT 1 FROM runs r JOIN task_versions v ON v.taskId=r.taskId AND v.version=r.version
-     LEFT JOIN conversation_inputs source ON source.requestId=v.sourceRequestId AND source.threadId=json_extract(o.detailsJson,'$.threadId')
+     JOIN conversation_inputs source ON source.requestId=v.sourceRequestId AND source.threadId=json_extract(o.detailsJson,'$.threadId')
      WHERE r.id=i.senderRunId AND r.id=json_extract(i.payloadJson,'$.runId') AND r.taskId=i.taskId AND r.version=i.taskVersion
        AND i.senderEpoch=json_extract(i.payloadJson,'$.epoch') AND i.senderEpoch<=r.epoch)`;
  const sourceIds=[...new Set(eligible.flatMap(m=>m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length?m.process.sourceMessageIds:[]))];

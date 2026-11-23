@@ -227,8 +227,11 @@ test('pause and resume use exact confirmed operation and input identities from t
 test('an archive on a Worker reply keeps its source across restore and rejects unrelated turns and runs',()=>{
  const f=setup();try{
   const db=f.store.db,input=f.reply.messageId;
-  f.tasks.updateTask(f.actor,{operationId:'new-head',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,patch:{goal:'Confirm the same finding'},authority:f.authority});
   f.consumeMain(input);
+  const head=f.source('new-head-source');
+  f.tasks.updateTask({...f.actor,sourceRequestId:'new-head-source',inputMessageId:head.messageId,turnId:'turn:new-head-source'},
+   {operationId:'new-head',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,patch:{goal:'Confirm the same finding'},
+    authority:{...f.authority,sourceRequestId:'new-head-source',sourceRequestIds:[f.authority.sourceRequestId]}});
   const turn=new MainProcessHistory(db).headers(['consumer:'+input])[0]!.turnIds[0]!;
   const actor={...f.actor,sourceRequestId:undefined,inputMessageId:input,turnId:turn};
   const archive=f.tasks.archiveHistory(actor,{operationId:'archive',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision},true);
@@ -239,6 +242,12 @@ test('an archive on a Worker reply keeps its source across restore and rejects u
   const restore=f.source('restore-source');
   f.tasks.archiveHistory({...f.actor,sourceRequestId:'restore-source',inputMessageId:restore.messageId,turnId:'turn:restore-source'},{operationId:'restore',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision},false);
   assert.equal(project().taskSources?.[0]?.phaseLabel,'事项已归档');
+  for(const sql of ["UPDATE conversation_inputs SET threadId='other' WHERE requestId=?", "DELETE FROM conversation_inputs WHERE requestId=?"]){
+   db.exec('SAVEPOINT bad_source');db.prepare(sql).run(f.authority.sourceRequestId);
+   assert.equal(project().taskSources,undefined);
+   assert.equal(project().taskSourceUnresolved,true);
+   db.exec('ROLLBACK TO bad_source; RELEASE bad_source');
+  }
   for(const sql of ["UPDATE agent_receipts SET offeredTurnId='other' WHERE messageId=?","UPDATE agent_messages SET senderRunId=NULL WHERE id=?","UPDATE agent_messages SET taskVersion=999 WHERE id=?"]){
    db.exec('SAVEPOINT bad');db.prepare(sql).run(input);assert.equal(project().taskSources,undefined);assert.equal(project().taskSourceUnresolved,true);db.exec('ROLLBACK TO bad; RELEASE bad');
   }
