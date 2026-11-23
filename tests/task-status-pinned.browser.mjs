@@ -1,43 +1,56 @@
 import assert from 'node:assert/strict';
-import {cloneTask,workerNamed,changeWorker,overviewTask} from './task-status-browser-data.mjs';
+import {cloneTask,overviewTask} from './task-status-browser-data.mjs';
 
 export async function pinnedPerformance(page){
- const trigger=page.locator('#task-status-trigger');
- await page.setViewportSize({width:390,height:844});await page.reload();
- await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('工作中'));
- const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- const tasks=[];
- for(let n=0;n<250;n++)for(const task of original.tasks)tasks.push(cloneTask(task,'-'+n));
- assert.equal(tasks.length,1000);
- await page.route('**/api/tasks',route=>route.fulfill({json:{...original,tasks}}));
- let progressReads=0;
- page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/progress'))progressReads++;});
- const samples=[];
- for(let n=0;n<3;n++){
-  await page.reload();await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('250 个任务工作中'));
+ const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel');
+ const current=Array.from({length:20},(_,i)=>overviewTask('current-'+i));
+ const archived=Array.from({length:1000},(_,i)=>overviewTask('archive-'+i,{historyState:'archived'}));
+ const reads=[],archivePath=/\/api\/tasks\/list\/archived(?:\/before\/20)?$/;
+ const capture=request=>{
+  const path=new URL(request.url()).pathname;
+  if(/^\/api\/tasks(?:\/|$)/.test(path))reads.push(path);
+ };
+ await page.route('**/api/tasks',route=>route.fulfill({json:{tasks:current}}));
+ await page.route(archivePath,route=>{
+  const next=new URL(route.request().url()).pathname.endsWith('/before/20');
+  return route.fulfill({json:{tasks:archived.slice(next?20:0,next?40:20),nextCursor:next?40:20}});
+ });
+ await page.setViewportSize({width:390,height:844});
+ await page.reload();
+ await trigger.waitFor();
+ page.on('request',capture);
+ try{
   await page.evaluate(()=>{window.__statusOpenStart=performance.now();});
-  await trigger.click();const panel=page.getByRole('dialog',{name:'工作状态卡片'});await panel.waitFor();
-  const sample=await page.evaluate(async()=>{await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));return {openToFrameMs:performance.now()-window.__statusOpenStart,initialSections:document.querySelectorAll('[data-todo-id]').length,domNodes:document.querySelectorAll('*').length};});
-  assert.equal(sample.initialSections,750);
-  const more=panel.getByRole('button',{name:/显示更多事项/});await more.click();
-  assert.equal(await panel.locator('[data-todo-id]').count(),770);
-  assert.ok(await more.evaluate(element=>element===document.activeElement));
-  samples.push({...sample,nextSections:770,focusKept:true});
-  await page.keyboard.press('Escape');
+  await trigger.click();
+  const rows=panel.locator('[data-todo-id]');
+  await rows.nth(19).waitFor();
+  const firstFrameMs=await page.evaluate(async()=>{
+   await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));
+   return performance.now()-window.__statusOpenStart;
+  });
+  assert.equal(await rows.count(),20);
+  assert.ok(reads.length>0&&reads.every(path=>path==='/api/tasks'),'opening reads only the current list');
+  const archive=panel.getByRole('region',{name:'已归档事项',exact:true});
+  await panel.getByRole('button',{name:'已归档',exact:true}).click();
+  await archive.getByText('合成任务 archive-0',{exact:true}).waitFor();
+  assert.equal(await rows.count(),40);
+  await archive.getByRole('button',{name:'下一页',exact:true}).click();
+  await archive.getByText('合成任务 archive-20',{exact:true}).waitFor();
+  assert.equal(await rows.count(),40,'new archive page replaces the previous page');
+  assert.deepEqual([...new Set(reads)],['/api/tasks','/api/tasks/list/archived','/api/tasks/list/archived/before/20']);
+  return {checksPassed:5,firstFrameMs,archivedTasks:archived.length,maxRenderedRows:40};
+ }finally{
+  page.off('request',capture);
+  await page.unroute('**/api/tasks');
+  await page.unroute(archivePath);
  }
- assert.equal(progressReads,0,'collapsed tasks must not eagerly fetch progress');
- await page.unroute('**/api/tasks');
- return {checksPassed:11,tasks:tasks.length,samples,progressReadsWhileCollapsed:progressReads,localControlledObservation:true};
 }
 
 async function statusScroll(page,{destination,ok}){
  const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- const {task,worker}=workerNamed(original,'核对九月供应商比较报告'),run=worker.run;
- const paragraphs=Array.from({length:24},(_,i)=>`合成核对条目 ${i+1}：长事项与 Worker 执行记录应在工作状态列表中独立滚动。`).join('\n\n');
- const snapshot={...original,tasks:[{...task,title:'长事项滚动检查',goal:paragraphs,notes:'合成工作笔记\n\n'+paragraphs.slice(0,300)}]};
- const output='合成长 Worker 回复\n\n'+paragraphs.slice(0,900);
- await page.route('**/api/tasks',route=>route.fulfill({json:snapshot}));
- await page.route('**/api/tasks/*/progress',route=>route.fulfill({json:{taskId:task.id,workers:[{taskId:task.id,version:run.version,runId:run.id,epoch:run.epoch,threadId:run.threadId,turnId:run.turnId,revision:1,observedAtMs:1,output:{type:'text',text:output}}]}}));
+ const current=original.tasks.find(task=>task.historyState==='visible');
+ const tasks=Array.from({length:60},(_,i)=>cloneTask(current,'-scroll-'+i,{title:'事项滚动检查 '+i}));
+ await page.route('**/api/tasks',route=>route.fulfill({json:{tasks}}));
  const metrics=[],settle=()=>page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));
  const measure=()=>page.evaluate(()=>{
   const doc=document.scrollingElement,panel=document.querySelector('.preview-main-panel'),list=document.querySelector('.status-list'),view=document.querySelector('.thread-viewport');
@@ -56,32 +69,25 @@ async function statusScroll(page,{destination,ok}){
    await page.setViewportSize(viewport);await page.reload();
    const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel'),view=page.locator('.thread-viewport');
    await trigger.waitFor();if(narrow)await trigger.click();await panel.waitFor();
-   const item=panel.getByRole('button',{name:/^长事项滚动检查/});await item.click();
-   await panel.getByText(output,{exact:true}).waitFor();
-   ok(await panel.locator('[data-slot="run-activity"] > .sr-only[role="status"]').count()===1,label+'：保留真实执行记录和隐藏读屏状态，防止空场景误报通过');
+   await panel.getByText('事项滚动检查 0',{exact:true}).waitFor();
    const list=panel.locator('.status-list');
-   ok(await list.evaluate(el=>el.scrollHeight>el.clientHeight),label+'：长详情确实超出列表高度');
+   ok(await list.evaluate(el=>el.scrollHeight>el.clientHeight),label+'：事项列表确实超出可见高度');
    await view.evaluate(el=>{el.scrollTop=el.scrollHeight;});
    if(!narrow)await wheel(view,240);
    if(destination)await page.screenshot({path:destination+'/status-scroll-'+label+'.png',animations:'disabled'});
-   const before=await contained(label+' 展开后消息到底继续滚轮');
+   const before=await contained(label+' 消息到底继续滚轮');
    await wheel(list,200);const scrolled=await contained(label+' 列表滚轮');
    ok(scrolled.listTop>before.listTop&&Math.abs(scrolled.messageTop-before.messageTop)<1,label+'：侧栏滚动不移动消息区');
    await list.focus();await page.keyboard.press('End');await page.waitForFunction(()=>{const el=document.querySelector('.status-list');return Math.abs(el.scrollHeight-el.clientHeight-el.scrollTop)<1;});await contained(label+' 列表键盘 End');
-   const saved=await list.evaluate(el=>el.scrollTop);
-   if(narrow){await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});ok(await trigger.evaluate(el=>document.activeElement===el),label+'：Escape 回焦入口');}
-   else{await trigger.focus();await page.keyboard.press('Enter');await panel.waitFor({state:'hidden'});}
-   await page.keyboard.press('Enter');await panel.waitFor();
-   await page.waitForFunction(saved=>Math.abs(document.querySelector('.status-list').scrollTop-saved)<1,saved);
-   ok(Math.abs(await list.evaluate(el=>el.scrollTop)-saved)<1&&await item.getAttribute('aria-expanded')==='true',label+'：关闭重开保留列表位置与事项展开');
-   await contained(label+' 关闭重开');
-   await item.click();await contained(label+' 收起详情');await item.click();await panel.getByText(output,{exact:true}).waitFor();await contained(label+' 再次展开');
-   if(narrow){await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});}
+   if(narrow){
+    await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+    ok(await trigger.evaluate(el=>document.activeElement===el),label+'：Escape 回焦入口');
+   }
    const messageBefore=await view.evaluate(el=>el.scrollTop);
    await wheel(view,-160);const moved=await contained(label+' 消息向上滚动');
    ok(moved.messageTop<messageBefore,label+'：消息区仍能独立向上滚动');
   }
- }finally{await page.unroute('**/api/tasks/*/progress');await page.unroute('**/api/tasks');}
+ }finally{await page.unroute('**/api/tasks');}
  await page.setViewportSize({width:1440,height:1000});await page.reload();await page.locator('#task-status-panel').waitFor();
  return metrics;
 }
@@ -90,7 +96,7 @@ export default async function pinnedStatus(page,{destination}={}){
  const checks=[],metrics=[],errors=[],ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
  page.on('pageerror',error=>errors.push(error.message));
  const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel');
- const ready=()=>page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('工作中'));
+ const ready=()=>trigger.waitFor();
  const shot=async name=>{if(destination)await page.screenshot({path:destination+'/'+name+'.png',animations:'disabled'});};
  await trigger.waitFor();await page.getByRole('complementary',{name:'工作状态卡片'}).waitFor();await ready();
  metrics.push(...await statusScroll(page,{destination,ok}));await ready();
@@ -99,29 +105,27 @@ export default async function pinnedStatus(page,{destination}={}){
  await trigger.evaluate(el=>Promise.allSettled(el.getAnimations().map(animation=>animation.finished)));
  const icon=trigger.locator('.status-entry-icon');
  const openStyle=await icon.evaluate(el=>getComputedStyle(el).backgroundColor);
- ok(await trigger.getAttribute('aria-label')==='工作状态，无工作中任务'&&await trigger.getAttribute('aria-controls')==='task-status-panel','图标入口名称及面板关系准确');
- ok(await trigger.innerText()===''&&await page.locator('.header-name').innerText()==='荷马','左侧仅保留品牌，入口图标与事项计数');
+ ok(await trigger.getAttribute('aria-label')==='工作状态'&&await trigger.getAttribute('aria-controls')==='task-status-panel','图标入口名称及面板关系准确');
+ ok(await trigger.innerText()===''&&await page.locator('.header-name').innerText()==='荷马','左侧仅保留品牌，保留入口图标');
  ok(await page.locator('.header-actions> :last-child').getAttribute('aria-label')==='预览','预览入口保持应用最右');
- const purchase=()=>panel.getByRole('button',{name:/采购选型方案/});
- await purchase().click();await panel.getByRole('button',{name:/资料整理 Worker/}).click();
- await panel.getByText('核对服务条款',{exact:true}).waitFor();
- ok((await panel.locator('[data-count="working"]').innerText())==='0'&&(await panel.locator('[data-count="done"]').innerText())==='1'&&(await panel.locator('[data-count="needs-user"]').innerText())==='1','原工作/完成/有效待答计数及层级准确');
+ const purchase=()=>panel.getByText('采购选型方案',{exact:true});
+ await purchase().waitFor();
  await page.keyboard.press('Escape');ok(await panel.isVisible(),'宽屏摘要为非模态，Escape 不关闭常驻');
  await shot('desktop-1440-pinned');
  const originalNode=await panel.locator('[data-todo-id]').first().getAttribute('data-todo-id');
  await trigger.click();await panel.waitFor({state:'hidden'});await page.mouse.move(0,0);
  await page.waitForFunction(openStyle=>getComputedStyle(document.querySelector('#task-status-trigger .status-entry-icon')).backgroundColor!==openStyle,openStyle);
- ok(await trigger.getAttribute('aria-expanded')==='false'&&await trigger.innerText()===''&&await icon.evaluate(el=>getComputedStyle(el).backgroundColor)!==openStyle,'入口收起时状态样式改变且保留数量');await shot('desktop-1440-closed');
+ ok(await trigger.getAttribute('aria-expanded')==='false'&&await trigger.innerText()===''&&await icon.evaluate(el=>getComputedStyle(el).backgroundColor)!==openStyle,'入口收起时状态样式改变');await shot('desktop-1440-closed');
  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
  await page.setViewportSize({width:1024,height:900});await page.setViewportSize({width:1440,height:1000});
  ok(await trigger.getAttribute('aria-expanded')==='false','明确关闭后通知与跨断点不重开');
- await trigger.click();await panel.getByText('核对服务条款',{exact:true}).waitFor();
- ok(await panel.locator('[data-todo-id]').first().getAttribute('data-todo-id')===originalNode,'图标关闭重开保留同一来源及展开身份');
+ await trigger.click();await purchase().waitFor();
+ ok(await panel.locator('[data-todo-id]').first().getAttribute('data-todo-id')===originalNode,'图标关闭重开保留同一来源');
  for(const width of [320,390,1024]){
   await page.setViewportSize({width,height:844});await panel.waitFor({state:'hidden'});
   ok(await page.getByRole('dialog',{name:'工作状态卡片'}).count()===0,width+'px 缩小时不自动弹层');
   await trigger.click();await page.getByRole('dialog',{name:'工作状态卡片'}).waitFor();
-  await panel.getByText('核对服务条款',{exact:true}).waitFor();
+  await purchase().waitFor();
   ok(await page.evaluate(()=>document.documentElement.scrollWidth===innerWidth),width+'px 无横向溢出');
   await shot('popover-'+width);
   await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
@@ -180,73 +184,38 @@ export default async function pinnedStatus(page,{destination}={}){
  return {checksPassed:checks.length,checks,metrics,errors};
 }
 
-export async function pinnedData(page,{destination,publish}={}){
+export async function pinnedData(page,{destination}={}){
  const checks=[],ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
  const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel');
  await panel.waitFor();const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- const {task:purchaseTask,worker:research}=workerNamed(original,'资料整理 Worker');
- const root=()=>panel.getByRole('button',{name:/采购选型方案/}),worker=()=>panel.getByRole('button',{name:/资料整理 Worker/});
- await root().click();await worker().click();await panel.locator('[data-slot="agent-plan"]').waitFor();
- await root().click();await root().click();ok(await worker().getAttribute('aria-expanded')==='false','原父层收起重开仍清理子层展开');
- await worker().click();await panel.locator('[data-slot="agent-plan"]').waitFor();
- await panel.getByRole('button',{name:/成本分析 Worker/}).click();publish('progress');
- await panel.getByText('成本表已按统一口径更新。',{exact:true}).waitFor();
- ok(await worker().getAttribute('aria-expanded')==='true'&&(await panel.locator('[data-count="working"]').innerText())==='0','真实合成 SSE 通知更新公开进展并保留层级与计数');
- await panel.getByRole('button',{name:/成本分析 Worker/}).click();
- const refreshed=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- let snapshot={...refreshed,progressRevision:(refreshed.progressRevision??0)+1};
- await page.route('**/api/tasks',route=>route.fulfill({json:snapshot}));
- await page.route('**/api/tasks/*/progress',route=>route.fulfill({status:503,body:'synthetic_progress_failure'}));
- await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
- await panel.getByText('公开进展读取失败，可收起后重新展开重试。',{exact:true}).waitFor();
- ok(await panel.locator('[data-slot="agent-plan"]').count()===1,'宽屏进展刷新失败保留同一执行的已确认计划');
- await page.unroute('**/api/tasks/*/progress');await worker().click();await worker().click();await panel.locator('[data-slot="agent-plan"]').waitFor();
- ok(true,'详情失败仍按原收起重开路径恢复');
- // Hold an old execution response while the source identity changes.
- const oldProgress=await page.evaluate(async id=>await(await fetch('/api/tasks/'+id+'/progress')).json(),purchaseTask.id);
- const held=[];let started;const pending=new Promise(resolve=>started=resolve);
- await page.route('**/api/tasks/*/progress',route=>{held.push(route);started();});
- await worker().click();await worker().click();await pending;
- snapshot=changeWorker({...snapshot,tasks:original.tasks},'资料整理 Worker',w=>({...w,run:{...w.run,id:w.run.id+'-next',version:w.run.version+1,epoch:w.run.epoch+1,threadId:'synthetic-next-thread',turnId:'synthetic-next-turn'}}));
- await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
- await page.waitForFunction(()=>[...document.querySelectorAll('[data-worker-id] > [data-slot="task-status-row"] > button')].some(el=>el.textContent.includes('资料整理 Worker')&&el.getAttribute('aria-expanded')==='false'));
- for(const route of held)await route.fulfill({json:oldProgress}).catch(()=>{});await page.unroute('**/api/tasks/*/progress');
- await worker().click();await panel.getByText('尚无可确认的公开进展。',{exact:true}).waitFor();
- ok(await panel.locator('[data-slot="agent-plan"]').count()===0&&await root().getAttribute('aria-expanded')==='true','旧 Run 迟到结果不进入新身份，其他展开层级保留');
- await page.unroute('**/api/tasks');
+ await panel.getByText('采购选型方案',{exact:true}).waitFor();
  await page.route('**/api/tasks',route=>route.fulfill({status:503,body:'synthetic_overview_failure'}));
  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));await panel.getByRole('button',{name:'重试',exact:true}).waitFor();
- ok(await panel.locator('[data-item-row]').count()===4&&await panel.locator('.status-footer').count()===0,'宽屏总览错误保留已知事项且不恢复常驻刷新栏');
- await page.unroute('**/api/tasks');await panel.getByRole('button',{name:'重试',exact:true}).click();await panel.getByRole('button',{name:'重试',exact:true}).waitFor({state:'hidden'});
- ok(true,'原就地重试恢复总览');
- await page.reload();await panel.waitFor();await root().click();await panel.getByRole('button',{name:/收费数据 Worker/}).click();
- await panel.getByRole('button',{name:'前往原待答卡'}).click();await panel.waitFor({state:'hidden'});
- await page.waitForFunction(()=>document.activeElement?.id==='task-interaction-status-approval');
- ok(true,'宽屏原待答定位保持准确身份及焦点');
- // A large, synthetic snapshot verifies pagination and long names in both hosts.
- const tasks=[];
- for(let n=0;n<20;n++)for(const t of original.tasks)tasks.push(cloneTask(t,'-'+n,{title:((t.title??t.goal)+' 完整中文事项标题用于窄屏省略与展开阅读全文'.repeat(3)).slice(0,60)}));
- await page.route('**/api/tasks',route=>route.fulfill({json:{...original,tasks}}));
- await page.setViewportSize({width:320,height:844});await page.reload();
- await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('20 个任务工作中'));
+ const retry=panel.getByRole('button',{name:'重试',exact:true});
+ ok(await panel.locator('[data-item-row]').count()===original.tasks.length&&await panel.locator('.status-footer').count()===0,'宽屏总览错误保留已知事项且无常驻刷新栏');
+ await page.unroute('**/api/tasks');await retry.click();await retry.waitFor({state:'hidden'});
+ ok(true,'就地重试恢复总览');
+ const tasks=Array.from({length:35},(_,i)=>cloneTask(original.tasks[0],'-'+i,{title:'完整中文事项标题用于窄屏截断检查'.repeat(4)+' '+i,creationOrder:100-i}));
+ await page.route('**/api/tasks',route=>route.fulfill({json:{tasks:tasks.slice(0,20),nextCursor:20}}));
+ await page.route('**/api/tasks/list/visible/before/20',route=>route.fulfill({json:{tasks:tasks.slice(20)}}));
+ await page.setViewportSize({width:320,height:844});await page.reload();await trigger.waitFor();
  ok(await trigger.getAttribute('aria-expanded')==='false','320px 大量任务仍默认关闭');
- await trigger.click();await panel.waitFor();
- ok(await panel.locator('[data-todo-id]').count()===60,'未结案事项全部可达，历史仍按批展示');
- await panel.getByRole('button',{name:/显示更多事项/}).click();
- ok(await panel.locator('[data-todo-id]').count()===80,'原分页继续加载剩余历史事项');
- const first=panel.locator('[data-item-row]>button').first();await first.click();
- ok((await first.getAttribute('title')).length>50&&await panel.locator('.status-row-heading').first().isVisible(),'长标题有完整 title 与展开全文');
- await trigger.click();await panel.waitFor({state:'hidden'});await trigger.click();await panel.waitFor();
- ok(await panel.locator('[data-todo-id]').count()===80&&await first.getAttribute('aria-expanded')==='true','弹层关闭重开保持分页与展开');
- await page.keyboard.press('Escape');await page.setViewportSize({width:1440,height:1000});await panel.waitFor();
- ok(await panel.locator('[data-todo-id]').count()===80,'切回常驻保留同一分页');
+ await trigger.click();
+ const first=panel.locator('[data-item-row]').first(),next=panel.getByRole('button',{name:'下一页',exact:true});
+ await next.waitFor();
+ ok(await panel.locator('[data-todo-id]').count()===20,'第一页最多显示 20 项合成事项');
+ ok((await first.getAttribute('title')).length>50,'长标题保留完整 title');
+ await next.click();
+ await panel.getByText(tasks[20].title,{exact:true}).waitFor();
+ ok(await panel.locator('[data-todo-id]').count()===15,'下一页可访问剩余事项');
+ await page.keyboard.press('Escape');
+ await page.setViewportSize({width:1440,height:520});
+ await next.waitFor();
  const view=page.locator('.thread-viewport'),top=await view.evaluate(el=>el.scrollTop);
  await panel.locator('.status-list').evaluate(el=>el.scrollTop=200);
- ok(await panel.locator('.status-list').evaluate(el=>el.scrollHeight>el.clientHeight&&el.scrollTop===200)&&await view.evaluate(el=>el.scrollTop)===top,'常驻列表独立滚动，不移动聊天');
- await trigger.click();await panel.waitFor({state:'hidden'});await trigger.click();await panel.waitFor();
- ok(await panel.locator('.status-list').evaluate(el=>el.scrollTop===200),'关闭重开保留列表阅读位置');
+ ok(await panel.locator('.status-list').evaluate(el=>el.scrollHeight>el.clientHeight&&el.scrollTop===200)&&await view.evaluate(el=>el.scrollTop)===top,'常驻列表独立滚动');
  if(destination)await page.screenshot({path:destination+'/desktop-1440-long-titles.png',animations:'disabled'});
- await page.unroute('**/api/tasks');
+ await page.unroute('**/api/tasks');await page.unroute('**/api/tasks/list/visible/before/20');
  return {checksPassed:checks.length,checks};
 }
 
@@ -271,84 +240,54 @@ export async function pinnedConnection(page){
   };
  });
  await page.reload();const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel');
- await panel.waitFor();await panel.getByRole('button',{name:/采购选型方案/}).click();
- const worker=()=>panel.getByRole('button',{name:/资料整理 Worker/});
- let attempts=0;const held=[];
- await page.route('**/api/tasks/*/progress',route=>{attempts++;if(attempts===1)held.push(route);else return route.continue();});
- await worker().click();await panel.getByText('正在读取公开进展…',{exact:true}).waitFor();
- await page.evaluate(()=>window.__breakStatusStream());await page.waitForFunction(()=>document.querySelector('#task-status-trigger').title.includes('上次'));
- ok(await panel.isVisible()&&await panel.getByRole('button',{name:'重试',exact:true}).count()===0,'断线常驻保留且准确标记上次记录，不伪造读取错误');
- for(const route of held)await route.abort().catch(()=>{});
- await panel.locator('[data-slot="agent-plan"]').waitFor({timeout:20000});
- ok(attempts>=2&&await worker().getAttribute('aria-expanded')==='true','重连后自动恢复公开进展并保留展开');
- await page.unroute('**/api/tasks/*/progress');
- let started;const pending=new Promise(resolve=>started=resolve),late=[];
- await page.route('**/api/tasks/*/progress',route=>{late.push(route);started();});
- await worker().click();await worker().click();await pending;
+ const purchase=panel.getByText('采购选型方案',{exact:true});
+ await purchase.waitFor();
+ await page.evaluate(()=>window.__breakStatusStream());
+ await panel.getByText(/显示上次记录/).waitFor();
+ ok(await purchase.isVisible()&&await panel.getByRole('button',{name:'重试',exact:true}).count()===0,'断线保留上次事项且不显示错误重试');
+ await panel.getByText(/显示上次记录/).waitFor({state:'hidden',timeout:20000});
+ const previous=await purchase.elementHandle();
  await page.evaluate(()=>window.__nextStatusEpoch());
- await page.waitForFunction(()=>[...document.querySelectorAll('[data-item-row]>button')].length===4&&[...document.querySelectorAll('[data-item-row]>button')].every(el=>el.getAttribute('aria-expanded')==='false'));
- for(const route of late)await route.fulfill({json:{taskId:'old',workers:[]}}).catch(()=>{});await page.unroute('**/api/tasks/*/progress');
- ok(await panel.isVisible()&&await panel.locator('[data-slot="agent-plan"]').count()===0,'读取代际变化时常驻保持可见但重置旧展开与在途结果');
+ await page.waitForFunction(row=>!row.isConnected,previous);
+ await purchase.waitFor();
+ ok(await panel.isVisible(),'读取代际变化时常驻侧栏仍可见');
  await trigger.click();await panel.waitFor({state:'hidden'});await page.evaluate(()=>window.__nextStatusEpoch());
  ok(await trigger.getAttribute('aria-expanded')==='false','关闭选择在读取代际变化后保持');
  return {checksPassed:checks.length,checks};
 }
 
-// Real product UI, synthetic HTTP snapshot. Catches cached append order, clipped
-// follow-ups, and lost reader/focus/expansion when a root moves into history.
+// The same matter identities and reading anchor survive a refreshed list.
 export async function pinnedOrdering(page,{destination}={}){
- await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('工作中'));
- const original=await page.evaluate(async()=>await(await fetch('/api/tasks')).json());
- const template=original.tasks.find(t=>t.workers.some(w=>w.run.phase==='executing'));
- assert.ok(template);
- const make=(id,at,ended=false)=>{const task=overviewTask(id,{title:id,creationOrder:at,settledAt:ended?at:null,state:ended?'settled':'open',outcome:ended?'succeeded':null});task.workers[0].run={...task.workers[0].run,status:ended?'succeeded':'running',phase:ended?'ended':'executing',startedAt:at,endedAt:ended?at:null};return task;};
- const active=Array.from({length:25},(_,i)=>make('ordering-active-'+i,i+1));
- const history=Array.from({length:30},(_,i)=>make('ordering-history-'+i,i+1,true));
- await page.evaluate(()=>{
-  const fetch=window.fetch;window.__orderingReads={overview:0,progress:0};
-  window.fetch=async(input,init)=>{
-   const path=new URL(typeof input==='string'?input:input.url,location.href).pathname;
-   if(path==='/api/tasks'&&window.__orderingSnapshot){window.__orderingReadRevision=window.__orderingSnapshot.progressRevision;window.__orderingReads.overview++;return new Response(JSON.stringify(window.__orderingSnapshot),{headers:{'Content-Type':'application/json'}});}
-   if(path.startsWith('/api/tasks/')&&path.endsWith('/progress')){window.__orderingReads.progress++;return new Response(JSON.stringify({taskId:decodeURIComponent(path.split('/')[3]),workers:[]}),{headers:{'Content-Type':'application/json'}});}
-   return fetch(input,init);
-  };
- });
- const snapshot=async tasks=>{const revision=await page.evaluate(tasks=>{window.__orderingSnapshot={tasks,progressRevision:(window.__orderingSnapshot?.progressRevision??0)+1};document.dispatchEvent(new Event('visibilitychange'));return window.__orderingSnapshot.progressRevision;},tasks);await page.waitForFunction(revision=>window.__orderingReadRevision===revision,revision);await page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));};
- const ids=()=>page.evaluate(()=>[...document.querySelectorAll('[data-todo-id]')].map(el=>el.dataset.todoId));
+ const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel'),rows=panel.locator('[data-todo-id]');
+ const make=(id,createdAt)=>overviewTask(id,{title:id,createdAt,creationOrder:createdAt});
+ const active=Array.from({length:40},(_,i)=>make('ordering-'+i,i+1));
+ let tasks=active;
+ await page.route('**/api/tasks',route=>route.fulfill({json:{tasks}}));
  const results=[];
  for(const width of [1440,390,320]){
-  await page.setViewportSize({width,height:900});
-  await page.evaluate(()=>{const trigger=document.querySelector('#task-status-trigger');if(trigger?.getAttribute('aria-expanded')!=='true')trigger.click();});
-  await snapshot([...history,...active]);
-  await page.waitForFunction(()=>document.querySelectorAll('[data-todo-id]').length===25);
-  assert.deepEqual(await ids(),active.map(t=>t.id).reverse());
-  assert.equal(await page.evaluate(()=>window.__orderingReads.progress),0,'collapsed snapshots do not request progress');
-  await snapshot([...active,make('ordering-new',999),...history]);
-  await page.waitForFunction(()=>document.querySelector('[data-todo-id]')?.dataset.todoId==='ordering-new');
-  assert.equal((await ids()).length,26);
-  const reader='ordering-active-5';
-  await page.evaluate(id=>{const row=[...document.querySelectorAll('[data-todo-id]')].find(e=>e.dataset.todoId===id),button=row.querySelector('.status-row-trigger');button.focus({preventScroll:true});},reader);
-  await page.keyboard.press('Space');
-  await page.waitForFunction(id=>[...document.querySelectorAll('[data-todo-id]')].find(e=>e.dataset.todoId===id)?.querySelector('.status-row-trigger')?.getAttribute('aria-expanded')==='true',reader);
-  const anchor=await page.evaluate(id=>{const list=document.querySelector('.status-list'),row=[...list.querySelectorAll('[data-todo-id]')].find(e=>e.dataset.todoId===id);list.scrollTop+=row.getBoundingClientRect().top-list.getBoundingClientRect().top;return {id,offset:row.getBoundingClientRect().top-list.getBoundingClientRect().top};},reader);
-  await snapshot([...active.map(t=>t.id===reader?make(reader,0,true):t),make('ordering-new',999),...history]);
-  await page.waitForFunction(()=>document.querySelectorAll('[data-todo-id]').length===56);
-  const reading=await page.evaluate(anchor=>{const list=document.querySelector('.status-list'),row=[...list.querySelectorAll('[data-todo-id]')].find(e=>e.dataset.todoId===anchor.id);return {offset:row.getBoundingClientRect().top-list.getBoundingClientRect().top,focus:row.contains(document.activeElement),expanded:row.querySelector('.status-row-trigger').getAttribute('aria-expanded'),overflow:document.documentElement.scrollWidth>innerWidth};},anchor);
-  assert.ok(Math.abs(reading.offset-anchor.offset)<2,JSON.stringify({width,anchor,reading}));assert.equal(reading.focus,true);assert.equal(reading.expanded,'true');assert.equal(reading.overflow,false);
-  const order=await ids();await snapshot([...active.map(t=>t.id===reader?make(reader,0,true):{...t,revision:t.revision+10,notes:'ordinary update'}),make('ordering-new',999),...history]);
-  await page.waitForFunction(()=>window.__orderingReads.overview>0);assert.deepEqual(await ids(),order);
-  // A new scope of roots releases the former reader. More grows from the actual prefix.
-  await page.evaluate(()=>document.querySelector('.status-list').focus());
-  const small=[...active.slice(0,18).map(t=>(cloneTask(t,'-small'))),...history.map(t=>(cloneTask(t,'-small')))];
-  await snapshot(small);await page.waitForFunction(()=>document.querySelectorAll('[data-todo-id]').length===20);
-  await page.evaluate(()=>{const button=[...document.querySelectorAll('.status-list button')].find(e=>e.textContent.includes('显示更多事项'));button.focus();button.click();});
-  await page.waitForFunction(()=>document.querySelectorAll('[data-todo-id]').length===40);
-  assert.equal(await page.evaluate(()=>document.activeElement?.textContent.includes('显示更多事项')),true);
+  tasks=active;
+  await page.setViewportSize({width,height:900});await page.reload();await trigger.waitFor();
+  if(width<1120)await trigger.click();
+  await rows.first().waitFor();
+  assert.deepEqual(await rows.evaluateAll(elements=>elements.map(el=>el.dataset.todoId)),active.map(t=>t.id).reverse());
+  const reading=await panel.locator('.status-list').evaluate(list=>{
+   list.scrollTop=205;
+   const top=list.getBoundingClientRect().top;
+   const row=[...list.querySelectorAll('[data-todo-id]')].find(el=>el.getBoundingClientRect().bottom>top);
+   return {id:row.dataset.todoId,offset:row.getBoundingClientRect().top-top};
+  });
+  tasks=[...active,make('ordering-new',999)];
+  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+  await panel.getByText('ordering-new',{exact:true}).waitFor();
+  assert.equal(await rows.first().getAttribute('data-todo-id'),'ordering-new');
+  const delta=await panel.locator('.status-list').evaluate((list,{id,offset})=>{
+   const row=[...list.querySelectorAll('[data-todo-id]')].find(el=>el.dataset.todoId===id);
+   return row.getBoundingClientRect().top-list.getBoundingClientRect().top-offset;
+  },reading);
+  assert.ok(Math.abs(delta)<2,JSON.stringify({width,reading,delta}));
   if(destination)await page.screenshot({path:destination+'/ordering-'+width+'.png',animations:'disabled'});
-  results.push({width,followUps:26,retainedPrefix:56,anchorOffsetDelta:reading.offset-anchor.offset,focus:true,expanded:true,morePrefix:40});
-  // Reset the product's existing scope owner for the next width via a real reload.
-  if(width!==320){await page.reload();await page.waitForFunction(()=>document.querySelector('#task-status-trigger')?.title.includes('工作中'));
-   await page.evaluate(()=>{const fetch=window.fetch;window.__orderingReads={overview:0,progress:0};window.fetch=async(input,init)=>{const path=new URL(typeof input==='string'?input:input.url,location.href).pathname;if(path==='/api/tasks'&&window.__orderingSnapshot){window.__orderingReadRevision=window.__orderingSnapshot.progressRevision;window.__orderingReads.overview++;return new Response(JSON.stringify(window.__orderingSnapshot),{headers:{'Content-Type':'application/json'}});}if(path.startsWith('/api/tasks/')&&path.endsWith('/progress')){window.__orderingReads.progress++;return new Response(JSON.stringify({taskId:decodeURIComponent(path.split('/')[3]),workers:[]}),{headers:{'Content-Type':'application/json'}});}return fetch(input,init);};});}
+  results.push({width,anchorOffsetDelta:delta});
  }
- return {checksPassed:results.length*10,results,syntheticOnly:true};
+ await page.unroute('**/api/tasks');
+ return {checksPassed:results.length*3,results,syntheticOnly:true};
 }

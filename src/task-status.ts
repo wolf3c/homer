@@ -26,10 +26,9 @@ export function taskCardPresentation(task:OverviewTask,worker?:OverviewWorker):{
  const icon=status.state==='working'?'Activity':status.state==='failed'?'CircleX':status.state==='cancelled'?'CircleStop':status.state==='done'?'MessagesSquare':status.label==='状态待核实'?'Pause':'Clock3';
  return {...status,icon};
 }
-export type StatusWorker={task:OverviewTask;worker:OverviewWorker};
-export type StatusMatter={task:OverviewTask;workers:StatusWorker[]};
+export type StatusMatter={task:OverviewTask};
 export function statusTree(tasks:OverviewTask[],historyState:OverviewTask['historyState']='visible'):StatusMatter[]{
- return [...new Map(tasks.map(t=>[t.id,t])).values()].filter(t=>t.historyState===historyState).map(original=>{const workers=[...new Map(original.workers.filter(w=>w.taskId===original.id&&w.run.taskId===original.id&&w.run.workerId===w.id).map(w=>[w.id,w])).values()],task={...original,workers};return {task,workers:workers.map(worker=>({task,worker}))};});
+ return [...new Map(tasks.map(t=>[t.id,t])).values()].filter(t=>t.historyState===historyState).map(original=>{const workers=[...new Map(original.workers.filter(w=>w.taskId===original.id&&w.run.taskId===original.id&&w.run.workerId===w.id).map(w=>[w.id,w])).values()],task={...original,workers};return {task};});
 }
 export function matterStatus(matter:StatusMatter){return taskCardPresentation(matter.task);}
 export type StatusSortKey={priority:1|2;enteredAtMs:number;creationOrder:number;id:string};

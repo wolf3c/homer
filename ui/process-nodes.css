@@ -5,5 +5,3 @@
 .assistant-message:not(:has(> :not(.message-timestamp))){margin:0;padding:0}
 .assistant-message:not(:has(> :not(.message-timestamp))) > .message-timestamp,
 .messages [data-index]:has(> .assistant-message):not(:has(> .assistant-message > :not(.message-timestamp))) > .message-day-separator{display:none}
-
-.homer-task-status [data-attention="user"] > .status-row-trigger{background:var(--accent)}

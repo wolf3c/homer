@@ -34,7 +34,7 @@ try{
  for(const width of [1080,390]){
   const context=await chrome.browser.newContext({viewport:{width,height:1000}}),page=await context.newPage(),errors=[],requests=[];
   page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(String(e)));page.on('console',e=>{if(e.type()==='error')errors.push(e.text());});page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/'))requests.push(new URL(r.url()).pathname);});
-  await page.route('**/api/tasks**',route=>{const path=new URL(route.request().url()).pathname,value=path==='/api/tasks'?{tasks:[task]}:path.includes('/workers/')?{taskId:'task',conversation:{taskId:'task',workerId:'worker',messages:[{id:'original',seq:1,kind:'worker_reply',version:1,text:'可读取的 Worker 原始反馈',offset:0,nextOffset:null}],nextCursor:null}}:{taskId:'task',runs:[worker.run],requirements:[],artifacts:[]};return route.fulfill({contentType:'application/json',body:JSON.stringify(value)});});
+  await page.route('**/api/tasks',route=>route.fulfill({json:{tasks:[task]}}));
   state={features:{draftUpload:true,taskOverview:true},messages:[silent,message,failed,quoted],artifacts:[artifact],inactiveInteractions:[{id:'expired',kind:'authorization',state:'expired',processId:'failed',sourceRequestId:'old-request'}],interactions:[{id:'approval',kind:'authorization',runId:'run',question:'合成操作审批',reason:'确认原请求',approval:{title:'合成操作审批',scope:'仅隔离测试',details:'node synthetic-check.mjs'}}]};fixture.reset(state);
   await page.goto(fixture.url);await page.getByText('正式正文与事项标题保持。',{exact:true}).waitFor();assert.equal(new URL(page.url()).origin,new URL(fixture.url).origin);assert.ok(await page.title());assert.equal(await page.locator('vite-error-overlay').count(),0);
   assert.ok((await page.locator('.message-task-title').allTextContents()).includes('合成精简事项'));assert.doesNotMatch(await page.locator('body').innerText(),/PRIVATE_|当前对话 ·|过程耗时/);assert.equal(await page.locator('[data-tool-id]').count(),0);
@@ -62,12 +62,13 @@ try{
   assert.equal(pageReads.at(-1),older.id);
   assert.deepEqual(await rowHeight(page.locator('#message-older')),{anchor:0,row:0});
   assert.ok(await page.locator('.thread-viewport').evaluate(node=>document.activeElement===node));
-  await page.getByRole('button',{name:/工作状态/}).click();await page.locator('.status-row-trigger').first().click();
-  await page.getByRole('button',{name:'执行记录',exact:true}).click();await page.getByRole('button',{name:'会话原文',exact:true}).click();await page.getByText('可读取的 Worker 原始反馈',{exact:true}).waitFor();assert.doesNotMatch(await page.locator('body').innerText(),/近期内存记录|参数与结果|工具步骤尚未接入/);
-  assert.ok(!requests.some(path=>/\/progress$|\/execution\/|\/history\/process/.test(path)),requests.join('\n'));await page.screenshot({path:join(destination,'worker-original-'+width+'.png')});
+  await page.getByRole('button',{name:'工作状态',exact:true}).click();
+  const row=page.locator('#task-status-panel [data-slot="task-status-row"]');await row.click();
+  assert.equal(await row.innerText(),'合成精简事项');assert.equal(await row.locator('button, [aria-expanded]').count(),0);
+  assert.ok(!requests.some(path=>/^\/api\/tasks\/task(?:\/|$)|\/execution\/|\/history\/process/.test(path)),requests.join('\n'));await page.screenshot({path:join(destination,'work-status-'+width+'.png')});
   // Resetting the viewport reloads the same persisted synthetic scene with the panel closed.
   await page.reload();await page.getByRole('button',{name:'拒绝本次操作',exact:true}).click();await page.getByText('你已拒绝本次操作',{exact:true}).waitFor();assert.equal(decisions.at(-1)?.text,'拒绝本次操作');
-  await page.screenshot({path:join(destination,'message-approval-'+width+'.png')});assert.deepEqual(errors,[]);checks.push({width,title:true,formalAnswer:true,noToolParts:true,noProgressReads:true,noCoordinationRows:true,silentAnchor:true,approvalFocusPreserved:true,failureNotice:true,inactiveNotice:true,artifact:true,workerOriginal:true,approvalDecision:true,consoleErrors:errors});await context.close();
+  await page.screenshot({path:join(destination,'message-approval-'+width+'.png')});assert.deepEqual(errors,[]);checks.push({width,title:true,formalAnswer:true,noToolParts:true,noProgressReads:true,noCoordinationRows:true,silentAnchor:true,approvalFocusPreserved:true,failureNotice:true,inactiveNotice:true,artifact:true,staticTaskRow:true,approvalDecision:true,consoleErrors:errors});await context.close();
  }
 }catch(error){failure=error;const page=chrome.browser.contexts().flatMap(c=>c.pages()).at(-1);if(page){await page.screenshot({path:join(destination,'failure.png')}).catch(()=>{});writeFileSync(join(destination,'failure.txt'),await page.locator('body').innerText().catch(()=>''));}}finally{exit=await chrome.finish();await fixture.close();writeFileSync(join(destination,'result.json'),JSON.stringify({checks,exit,failure:failure?String(failure):null},null,2));}
 if(failure)throw failure;assert.equal(exit.code,0);assert.equal(exit.watchdog,false);assert.equal(exit.forced,false);console.log(JSON.stringify({checks,exit}));

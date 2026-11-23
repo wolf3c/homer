@@ -19,7 +19,7 @@ test('only uncertain execution appears on a collapsed matter',()=>{
 
 test('tree deduplicates real matters and rejects unrelated or malformed session ownership',()=>{
  const a=worker('a'),b=worker('b'),wrong=worker('wrong');wrong.taskId='elsewhere';
- const t=task({workers:[a,b,a,wrong]});assert.equal(statusTree([t,t]).length,1);assert.equal(statusTree([t])[0]!.workers.length,2);
+ const t=task({workers:[a,b,a,wrong]});assert.equal(statusTree([t,t]).length,1);assert.equal(statusTree([t])[0]!.task.workers.length,2);
  assert.equal(statusTree([task({historyState:'archived'})]).length,0);
 });
 

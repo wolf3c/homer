@@ -9,7 +9,7 @@ const task=(change:Partial<OverviewTask>={}):OverviewTask=>({id:'task',title:'ца
 test('one matter owns two concurrent sessions and remains open when either session ends',()=>{
  const a=worker('a'),b=worker('b'),t=task({workers:[a,b]});
  assert.equal(statusTree([t]).length,1);
- assert.equal(statusTree([t])[0]!.workers.length,2);
+ assert.equal(statusTree([t])[0]!.task.workers.length,2);
  a.run={...a.run,status:'interrupted',phase:'ended',endedAt:300};
  assert.equal(matterStatus(statusTree([t])[0]!).label,'');
  b.run={...b.run,status:'succeeded',phase:'ended',endedAt:400};
@@ -19,7 +19,7 @@ test('one matter owns two concurrent sessions and remains open when either sessi
 
 test('a resumed session counts once and progress follows its adopted version and exact Run',()=>{
  const a=worker('a');a.run={...a.run,id:'followup',version:1,turnId:'followup-turn'};
- const t=task({headVersion:2,workers:[a]});assert.equal(statusTree([t])[0]?.workers.length,1);
+ const t=task({headVersion:2,workers:[a]});assert.equal(statusTree([t])[0]?.task.workers.length,1);
  const progress={taskId:'task',version:1,runId:'followup',epoch:1,threadId:'thread-a',turnId:'followup-turn',revision:1,observedAtMs:10};
  assert.equal(progressMatches(a,progress),true);
  for(const change of [{taskId:'other'},{version:2},{runId:'a'},{epoch:2},{threadId:'other'},{turnId:'turn-a'}])assert.equal(progressMatches(a,{...progress,...change}),false);

@@ -5,18 +5,18 @@ import {createInterface} from 'node:readline';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import unified,{taskStatusLateResponses,taskStatusCachedProgress,taskStatusPresentation,taskStatusRefreshRemoval} from './task-status-unified.browser.mjs';
-import recovery,{taskStatusBatches,taskStatusLargeCounts} from './task-status-recovery.browser.mjs';
+import {taskStatusRefreshRemoval} from './task-status-unified.browser.mjs';
+import recovery from './task-status-recovery.browser.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const destination=resolve(root,process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/taskcard-unified-product-20261023');
-const cases=[['unified',unified],['late-responses',taskStatusLateResponses],['cached-progress',taskStatusCachedProgress],['recovery',recovery],['batches',taskStatusBatches],['large-counts',taskStatusLargeCounts],['presentation',taskStatusPresentation],['refresh-removal',taskStatusRefreshRemoval]];
+const cases=[['recovery',recovery],['refresh-removal',taskStatusRefreshRemoval]];
 const selected=process.argv.slice(2);
 if(selected.some(name=>!cases.some(([key])=>key===name)))throw Error('unknown_task_status_case');
-const {chromium}=await import(process.env.HOMER_PLAYWRIGHT_MODULE??'playwright');
+const {chromium}=await import(process.env.HOMER_PLAYWRIGHT_MODULE??'playwright-core');
 await mkdir(destination,{recursive:true});
 const server=spawn(process.execPath,['--import','tsx','tests/task-status-browser-fixture.mjs'],{
- cwd:root,env:{...process.env,HISTORY_FOLLOWUP_BUILD:resolve(destination,'web-build'),HOMER_SYNTHETIC_ROOT:resolve(destination,'synthetic-runtime')},stdio:['pipe','pipe','inherit'],
+ cwd:root,env:{...process.env,HISTORY_FOLLOWUP_BUILD:process.env.HISTORY_FOLLOWUP_BUILD??resolve(destination,'web-build'),HOMER_SYNTHETIC_ROOT:resolve(destination,'synthetic-runtime')},stdio:['pipe','pipe','inherit'],
 });
 let browser,page;
 const evidence={synthetic:true,results:[],blocked:[],writes:[],errors:[]};

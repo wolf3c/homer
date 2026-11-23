@@ -11,7 +11,7 @@ await mkdir(destination,{recursive:true});
 const scratch=await mkdtemp(join(destination,'fixture-'));
 const checks=[],errors=[];let browser,server,page;
 const roots=n=>({tasks:Array.from({length:n},(_,i)=>task('root-'+i))});
-const ordinary=task('ordinary',{title:'整理采购要求'});
+const ordinary=task('ordinary',{title:'整理采购要求',goal:'不应显示的目标',notes:'不应显示的工作笔记'});
 const mixed=task('mixed',{title:'核对供应商报价'}),active=mixed.workers[0];
 const uncertain={...active,id:'uncertain',run:{...active.run,workerId:'uncertain',id:'uncertain',phase:'uncertain'}};
 mixed.workers.push(uncertain);
@@ -23,13 +23,13 @@ let historyMode='normal',releaseArchive;
 try{
  const {chromium}=await import(process.env.HOMER_PLAYWRIGHT_MODULE??'playwright-core');
  const entry=`import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import {MessageCircle,Settings,PanelRight} from 'lucide-react';import {TaskStatusPopover} from './ui/task-status';import './ui/homer-styles.css';
- function Fixture(){const [connection,setConnection]=useState(true),[state,setState]=useState({threadId:'synthetic',interactions:[]}),[aside,setAside]=useState(null);window.statusFixture={update:(connected=true)=>{setConnection(connected);setState(s=>({...s}));}};return <div className="conversation-workspace"><div className="conversation conversation-panel"><header className="conversation-header"><span>荷马</span><div className="header-actions"><button aria-label="聊天"><MessageCircle/></button><button aria-label="设置"><Settings/></button><TaskStatusPopover state={state} connected={connection} openFile={f=>window.selectedFile=f.id} locateMessage={id=>window.selectedMessage=id} asideContainer={aside} onBeforeLayoutChange={()=>{}}/><button aria-label="侧栏"><PanelRight/></button></div></header><main style={{padding:24,color:'#67645f'}}>合成任务验证 · 实际产品组件与读取逻辑</main></div><div className="status-aside-slot" ref={setAside}/></div>};createRoot(document.getElementById('root')).render(<Fixture/>);`;
+ function Fixture(){const [connection,setConnection]=useState(true),[state,setState]=useState({threadId:'synthetic',interactions:[]}),[aside,setAside]=useState(null);window.statusFixture={update:(connected=true)=>{setConnection(connected);setState(s=>({...s}));}};return <div className="conversation-workspace"><div className="conversation conversation-panel"><header className="conversation-header"><span>荷马</span><div className="header-actions"><button aria-label="聊天"><MessageCircle/></button><button aria-label="设置"><Settings/></button><TaskStatusPopover state={state} connected={connection} asideContainer={aside} onBeforeLayoutChange={()=>{}}/><button aria-label="侧栏"><PanelRight/></button></div></header><main style={{padding:24,color:'#67645f'}}>合成任务验证 · 实际产品组件与读取逻辑</main></div><div className="status-aside-slot" ref={setAside}/></div>};createRoot(document.getElementById('root')).render(<Fixture/>);`;
  await build({stdin:{contents:entry,resolveDir:process.cwd(),sourcefile:'task-count-fixture.tsx',loader:'tsx'},bundle:true,outfile:join(scratch,'app.js'),platform:'browser',format:'esm',jsx:'automatic',logLevel:'silent'});
  const assets=new Map([['/',Buffer.from('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><link rel="stylesheet" href="/app.css"><div id="root"></div><script type="module" src="/app.js"></script>')],['/app.js',await readFile(join(scratch,'app.js'))],['/app.css',await readFile(join(scratch,'app.css'))]]);
  server=createServer((req,res)=>{res.setHeader('Content-Type',req.url==='/'?'text/html; charset=utf-8':req.url==='/app.css'?'text/css':'text/javascript');if(assets.has(req.url))res.end(assets.get(req.url));else{res.statusCode=404;res.end();}});
  await new Promise(done=>server.listen(0,'127.0.0.1',done));const origin='http://127.0.0.1:'+server.address().port;
  // Exactly one launch attempt. An environment failure is recorded and never retried.
- browser=await chromium.launch({channel:'chrome',headless:true});
+ browser=await chromium.launch({channel:'chrome',headless:true,args:['--use-mock-keychain']});
  const context=await browser.newContext({viewport:{width:800,height:600},deviceScaleFactor:2});page=await context.newPage();page.setDefaultTimeout(10000);
  page.on('pageerror',error=>errors.push(error.message));
  await context.route('**/*',async route=>{
@@ -46,8 +46,6 @@ try{
    return route.fulfill({json:historyMode==='empty'?{tasks:[]}:{tasks:[archived],nextCursor:70}});
   }
   if(path===archivePath+'/before/70')return route.fulfill({json:{tasks:[task('older',{historyState:'archived'})]}});
-  if(path==='/api/tasks/archived')return route.fulfill({json:{taskId:'archived',runs:[],requirements:[],publicMessages:[{id:'answer',role:'assistant',excerpt:'已交付报价。'}],artifacts:[{id:'archived-file',title:'报价.md'}]}});
-  if(path==='/api/tasks/archived/workers/worker-archived')return route.fulfill({json:{taskId:'archived',runs:[],conversation:{taskId:'archived',workerId:'worker-archived',messages:[{id:'reply',kind:'worker_reply',seq:1,version:1,text:'已核对报价',receipt:'received',nextOffset:null}],nextCursor:null}}});
   errors.push('unexpected_read '+path);return route.abort();
  });
  await page.goto(origin);
@@ -58,13 +56,15 @@ try{
   await page.waitForFunction(w=>document.querySelector('#task-status-trigger')?.hasAttribute('aria-haspopup')===(w<1120),width);
   if(await trigger.getAttribute('aria-expanded')!=='true'){await trigger.focus();await page.keyboard.press('Enter');}
   const current=panel.getByRole('region',{name:'当前事项',exact:true}),archive=panel.getByRole('region',{name:'已归档事项',exact:true});
-  const toggle=panel.getByRole('button',{name:'已归档',exact:true}),normal=current.getByRole('button',{name:'整理采购要求',exact:true});
+  const toggle=panel.getByRole('button',{name:'已归档',exact:true}),normal=current.locator('[data-todo-id="ordinary"] [data-slot="task-status-row"]');
   await normal.waitFor();ok(await normal.innerText()==='整理采购要求','ordinary matter title only '+width);
+  await normal.click();
+  ok(await normal.locator('button, [aria-expanded], svg').count()===0&&await current.getByText(/不应显示的|执行记录/).count()===0,'ordinary row has no disclosure or detail '+width);
   ok(await toggle.getAttribute('aria-expanded')==='false'&&await archive.count()===0,'archive starts collapsed '+width);
   if(width===1440)ok(paths.every(path=>path==='/api/tasks'),'default loads only current matters');
   ok(await current.getByText('执行状态待核实',{exact:true}).isVisible(),'uncertain execution visible '+width);
   await current.getByRole('button',{name:'下一页'}).click();
-  const expanded=current.locator('[data-todo-id="root-9"] .status-row-trigger');await expanded.click();
+  const paged=current.locator('[data-todo-id="root-9"]');await paged.waitFor();
   await toggle.scrollIntoViewIfNeeded();await toggle.focus();
   const list=panel.getByRole('region',{name:'事项列表'}),scroll=()=>list.evaluate(el=>el.scrollTop),position=await scroll();
   await toggle.press('Enter');const history=archive.locator('[data-todo-id="archived"]');await history.waitFor();
@@ -72,17 +72,12 @@ try{
   await archive.getByRole('button',{name:'下一页'}).click();await archive.locator('[data-todo-id="older"]').waitFor();
   await archive.getByRole('button',{name:'上一页'}).click();await history.waitFor();
   await toggle.press('Space');await archive.waitFor({state:'hidden'});
-  ok(await expanded.getAttribute('aria-expanded')==='true'&&Math.abs(await scroll()-position)<=1,'current page, expanded item and scroll retained '+width);
+  ok(await paged.isVisible()&&Math.abs(await scroll()-position)<=1,'current page and scroll retained '+width);
   await toggle.click();await history.waitFor();ok(await archive.getByRole('button',{name:'上一页'}).count()===0,'archive reopens on first page '+width);
-  ok(await history.locator('.status-row-trigger').innerText()==='去年报价','archive title has no execution badge '+width);
-  await history.locator('.status-row-trigger').click();await history.getByText('Worker 本轮：已回复').waitFor();
-  await history.getByRole('button',{name:'执行记录'}).click();await history.getByText('会话原文',{exact:true}).click();await history.getByText('已核对报价',{exact:true}).waitFor();ok(await history.getByText(/版本 1 · 已接收/).isVisible(),'archived Worker source and receipt visible '+width);
-  await history.getByText('交办与答复原文',{exact:true}).click();await history.getByRole('button',{name:/已交付报价/}).click();
-  ok(await page.evaluate(()=>window.selectedMessage)==='answer','exact original answer opens '+width);
-  if(width<1120){await panel.waitFor({state:'detached'});await trigger.click();await toggle.click();await history.locator('.status-row-trigger').click();}
-  await history.getByText('报价.md',{exact:true}).click();ok(await page.evaluate(()=>window.selectedFile)==='archived-file','exact archived file opens '+width);
-  if(width<1120){await panel.waitFor({state:'detached'});await trigger.click();}
-  else {await toggle.click();await current.getByRole('button',{name:'上一页'}).click();}
+  const historicalRow=history.locator('[data-slot="task-status-row"]');await historicalRow.click();
+  ok(await historicalRow.innerText()==='去年报价'&&await history.locator('button, [aria-expanded], svg').count()===0,'archived row has only its title and no disclosure '+width);
+  await page.screenshot({path:join(destination,'archived-'+width+'.png')});
+  await toggle.click();await current.getByRole('button',{name:'上一页'}).click();
   await normal.waitFor();
   ok(await page.evaluate(()=>document.documentElement.scrollWidth)===width,'no horizontal overflow '+width);
   await page.screenshot({path:join(destination,'current-'+width+'.png')});
@@ -96,18 +91,18 @@ try{
  ok(await toggle.getAttribute('aria-expanded')==='false'&&await archive.count()===0,'late archive response cannot reopen history');
  await Promise.all([page.waitForResponse(r=>new URL(r.url()).pathname==='/api/tasks'),refresh()]);ok(paths.filter(path=>path===archivePath).length===reads,'collapsed history stops reading');
  historyMode='error';await toggle.click();const retry=archive.getByRole('button',{name:'重试'});await retry.waitFor();
- ok(await panel.getByRole('button',{name:'整理采购要求',exact:true}).isVisible(),'archive failure isolated from current matters');
+ ok(await panel.getByText('整理采购要求',{exact:true}).isVisible(),'archive failure isolated from current matters');
  historyMode='empty';await retry.click();await archive.getByText('暂无已归档事项。',{exact:true}).waitFor();await toggle.click();
  snapshot={tasks:[]};await refresh();await panel.getByText('暂无当前事项。',{exact:true}).waitFor();
  historyMode='normal';await toggle.click();await archive.getByText('去年报价',{exact:true}).waitFor();await toggle.click();
  ok(true,'empty current list still opens archive');
- const longTitle='已有事项完整标题'.repeat(15);snapshot={tasks:[task('long',{title:longTitle})]};await refresh();const row=panel.locator('[data-todo-id="long"] .status-row-trigger');await row.waitFor();const clipped=await row.locator('span.truncate').first().evaluate(el=>el.scrollWidth>el.clientWidth&&getComputedStyle(el).textOverflow==='ellipsis');ok(clipped&&(await row.getAttribute('title'))===longTitle,'narrow long title remains readable');
+ const longTitle='已有事项完整标题'.repeat(15);snapshot={tasks:[task('long',{title:longTitle})]};await refresh();const row=panel.locator('[data-todo-id="long"] [data-slot=task-status-row]');await row.waitFor();const clipped=await row.locator('span.truncate').first().evaluate(el=>el.scrollWidth>el.clientWidth&&getComputedStyle(el).textOverflow==='ellipsis');ok(clipped&&(await row.getAttribute('title'))===longTitle,'narrow long title remains readable');
  await page.evaluate(()=>window.statusFixture.update(false));await panel.getByText(/显示上次记录/).waitFor();ok(await row.isVisible(),'offline snapshot remains readable');
  const offlineReads=paths.length;await toggle.click();await archive.getByRole('status').waitFor();
  ok((await archive.getByRole('status').innerText()).includes('等待连接')&&paths.length===offlineReads,'opening history offline waits for connection without reading');
  await page.evaluate(()=>window.statusFixture.update(true));await archive.getByText('去年报价',{exact:true}).waitFor();
  ok(paths.slice(offlineReads).includes(archivePath),'history loads when connection returns');
- ok(paths.includes('/api/tasks/list/visible/before/50')&&paths.includes('/api/tasks/archived/workers/worker-archived'),'paged and scoped requests');
+ ok(paths.includes('/api/tasks/list/visible/before/50')&&paths.includes(archivePath+'/before/70')&&paths.every(path=>path==='/api/tasks'||path.startsWith('/api/tasks/list/')),'pages read only the list endpoints');
  ok(errors.length===0,'no page errors or business writes');
 }catch(error){errors.push(String(error.stack??error));process.exitCode=1;}
 finally{await writeFile(join(destination,'browser-results.json'),JSON.stringify({synthetic:true,checks,errors,realBrowserVerified:checks.length>0&&errors.length===0},null,2));await browser?.close();await new Promise(done=>server?server.close(done):done());await rm(scratch,{recursive:true,force:true});}

@@ -13,13 +13,5 @@
 .homer-task-status .status-list{position:relative;max-height:min(59dvh,34rem);overflow:auto;overscroll-behavior:contain;padding:0 8px 4px 0;min-width:0;overflow-wrap:anywhere}
 .homer-task-status.status-aside .status-list{flex:1;max-height:none}
 .homer-task-status .status-list:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:2px}
-.homer-task-status .status-output{overflow-wrap:anywhere;white-space:pre-wrap}
-/* Compact BackgroundInbox-style disclosure rows; the existing owner supplies facts. */
-.homer-task-status [data-slot="task-status-row"]{min-width:0}
-.homer-task-status .status-row-trigger{cursor:pointer}
-@media(forced-colors:none){.homer-task-status .status-row-trigger:focus-visible{outline:none;box-shadow:inset 2px 0 var(--focus)}}
-.homer-task-status .status-row-body{margin:0 6px 12px 13px;padding:8px 0 4px 17px;border-inline-start:1px solid hsl(var(--border));display:flex;flex-direction:column;gap:16px;min-width:0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
-.homer-task-status .status-row-heading{font-size:12px;line-height:1.6}
-.homer-task-status .status-row-heading>p{margin:0}
 /* Host accessibility boundary; pinned TaskCard markup and utilities stay intact. */
 :is(.homer-task-status[data-slot="task-card"],.homer-task-status [data-slot="task-card"])>button:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:-2px}
