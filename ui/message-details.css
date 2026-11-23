@@ -14,14 +14,23 @@
 
 @media(hover:hover) and (pointer:fine) and (not (any-pointer:coarse)){
   .message-bubble-row:has(>.message-actions){
-    display:grid;grid-template-columns:minmax(0,auto) 24px;align-items:center;column-gap:6px;width:fit-content;max-width:100%
+    --actions-width:36px;
+    display:grid;grid-template-columns:minmax(0,auto) var(--actions-width);column-gap:6px;width:fit-content;max-width:100%
   }
-  .user-message>.message-bubble-row:has(>.message-actions){grid-template-columns:24px minmax(0,auto)}
+  .message-bubble-row[data-single-line]{--actions-width:74px}
+  .user-message>.message-bubble-row:has(>.message-actions){grid-template-columns:var(--actions-width) minmax(0,auto)}
   .user-message>.message-bubble-row>.user-message-bubble{grid-column:2;grid-row:1}
-  .message-bubble-row>.message-actions{flex-direction:column;flex-wrap:nowrap;gap:2px;margin-top:0;opacity:0}
+  .message-bubble-row>.message-actions{
+    /* Align with the visible edge, above the scroll container's content padding. */
+    position:sticky;inset-block-start:calc(-1 * var(--thread-top-padding, 0px));align-self:start;
+    flex-direction:column;flex-wrap:nowrap;gap:2px;margin-top:0;opacity:0
+  }
+  .message-bubble-row[data-single-line]>.message-actions{position:static;align-self:center;flex-direction:row}
   .user-message>.message-bubble-row>.message-actions{grid-column:1;grid-row:1}
   .message-bubble-row:is(:hover,:focus-within)>.message-actions,.message:focus-visible .message-bubble-row>.message-actions{opacity:1}
-  .message-bubble-row>.message-actions>.aui-message-action{width:24px;height:24px}
+  .message-bubble-row>.message-actions>.aui-message-action{width:36px;height:36px}
+  .message-bubble-row>.message-actions>.aui-message-action svg{width:18px;height:18px}
+  .message-bubble-row>.message-actions>.aui-message-action:focus-visible{outline-offset:-2px}
   .message-bubble-row>.message-action-notice{grid-column:1/-1}
 }
 @media(hover:none),(pointer:coarse),(any-pointer:coarse){.message .message-actions>.aui-message-action{width:44px;height:44px}}

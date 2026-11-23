@@ -7,7 +7,7 @@ import {composerFixture} from './fixtures/composer-browser-server.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
 
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/message-actions-20261023/browser');
-const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??'.codex/scratch/message-actions-20261023/candidate-web');
+const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??process.env.HISTORY_FOLLOWUP_BUILD??'.codex/scratch/message-actions-20261023/candidate-web');
 mkdirSync(destination,{recursive:true});
 let earlier,releaseBefore;
 const fixture=await composerFixture({
@@ -57,7 +57,9 @@ try{
      const row=document.querySelector('#message-'+id),bubble=row.querySelector('.user-message-bubble,.assistant-message-bubble').getBoundingClientRect();
      const [copy,quote]=[...row.querySelectorAll('[data-slot="message-actions"] button')].map(b=>b.getBoundingClientRect());
      return touch?copy.width===44&&copy.height===44&&copy.top>=bubble.bottom&&quote.top===copy.top:
-      copy.width===24&&copy.height===24&&quote.top>=copy.bottom&&(id==='quote-user'?copy.right<=bubble.left:copy.left>=bubble.right);
+      copy.width===36&&copy.height===36&&(id==='quote-assistant'?quote.top>=copy.bottom:quote.top===copy.top)&&
+      (id==='quote-user'?quote.right<=bubble.left:copy.left>=bubble.right)&&
+      (id==='quote-assistant'||Math.abs(row.querySelector('.message-bubble-row').getBoundingClientRect().height-bubble.height)<1);
     });
    });
    await check('adjacent same-task titles are visually hidden, and matching names on different tasks stay separate',()=>{
@@ -67,6 +69,15 @@ try{
      !other.parentElement.hasAttribute('data-continues-task')&&getComputedStyle(other.querySelector('.message-task-title')).clipPath==='none'&&
      gap(first,second)===(matchMedia('(pointer:coarse)').matches?54:8)&&gap(second,other)>gap(first,second);
    });
+   if(width===1440){
+    const center=await page.evaluate(()=>{
+     const box=document.querySelector('#message-same-task .assistant-message-bubble').getBoundingClientRect();
+     return {x:box.left+20,y:box.top+18};
+    });
+    await page.command('Input.dispatchMouseEvent',{type:'mouseMoved',...center});
+    await wait(()=>getComputedStyle(document.querySelector('#message-same-task .message-actions')).opacity==='1');
+    await page.screenshot('single-line-horizontal.png');
+   }
    const timeBoxes=await page.evaluate(()=>[...document.querySelectorAll('.message-bubble-row')].map(row=>{
     const bubble=row.firstElementChild,time=bubble.querySelector('time');
     const b=bubble.getBoundingClientRect(),t=time.getBoundingClientRect();
@@ -189,6 +200,72 @@ try{
     }
    }
    if(width===1440){
+    const longText=Array.from({length:24},(_,i)=>'第'+i+'段。这里验证长回复从顶部进入并随所属消息一起离开。').join('\n\n');
+    fixture.reset({messages:[
+      message('start','user','看看停靠边界。'),
+      message('wrap','assistant','同一条消息随着阅读区域变窄会从单行变成多行，按钮应当跟随正文布局调整。'),
+      message('long','assistant',longText),
+      message('long-user','user',longText),
+      message('end','assistant',longText),
+    ]});
+    await page.evaluate(()=>sessionStorage.removeItem('homer-draft:composer-review'));
+    await page.command('Page.reload');
+    await wait(()=>!!document.querySelector('#message-end .message-actions'));
+    await page.command('Input.dispatchMouseEvent',{type:'mouseWheel',x:440,y:260,deltaX:0,deltaY:-20000});
+    await wait(()=>document.querySelector('.thread-viewport').scrollTop<50);
+    const wrapping=()=>document.querySelector('#message-wrap .message-bubble-row')?.hasAttribute('data-single-line');
+    const evaluate=(fn,arg)=>page.evaluate('('+fn+')('+JSON.stringify(arg)+')');
+    const position=(id)=>evaluate(id=>{
+      const viewport=document.querySelector('.thread-viewport');
+      const row=document.querySelector('#message-'+id+' .message-bubble-row');
+      if(!row)return null;
+      return {top:viewport.getBoundingClientRect().top,row:row.getBoundingClientRect().toJSON(),bar:row.querySelector('.message-actions').getBoundingClientRect().toJSON(),scroll:viewport.scrollTop,visible:getComputedStyle(row.querySelector('.message-actions')).opacity};
+    },id);
+    const resize=(width)=>page.command('Emulation.setDeviceMetricsOverride',{width,height:850,deviceScaleFactor:1,mobile:false});
+    const setScroll=(delta)=>evaluate(delta=>{
+      const viewport=document.querySelector('.thread-viewport');
+      viewport.scrollTop+=delta;
+    },delta);
+    await wait(wrapping);
+    await resize(320);
+    await wait(()=>document.querySelector('#message-wrap .message-bubble-row')?.hasAttribute('data-single-line')===false);
+    await resize(1440);
+    await wait(wrapping);
+    checks.push({width,label:'one mounted message switches both ways when reading width changes'});
+    await page.evaluate(()=>{
+      window.actionLayoutChanges=0;
+      new MutationObserver(records=>window.actionLayoutChanges+=records.length).observe(
+        document.querySelector('#message-wrap .message-bubble-row'),{attributeFilter:['data-single-line']},
+      );
+    });
+    for(const id of ['long','long-user']){
+      const current=await position(id);
+      await setScroll(current.row.top-current.top-120);
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      const start=await position(id);
+      assert.ok(start.row.top>start.top,JSON.stringify({id,start}));
+      assert.ok(Math.abs(start.bar.top-start.row.top)<=1,JSON.stringify({id,start}));
+      await page.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:(start.row.left+start.row.right)/2,y:start.row.top+40});
+      await page.command('Input.dispatchMouseEvent',{type:'mouseWheel',x:(start.row.left+start.row.right)/2,y:start.row.top+40,deltaX:0,deltaY:350});
+      await page.until('Math.abs(document.querySelector(".thread-viewport").scrollTop-'+(start.scroll+350)+')<4',10000);
+      const pin=await position(id);
+      assert.ok(Math.abs(pin.bar.top-pin.top)<=1,JSON.stringify({id,pin}));
+      assert.equal(pin.visible,'1');
+      await page.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:pin.bar.left+18,y:pin.bar.top+18});
+      assert.equal((await position(id)).visible,'1');
+      await page.screenshot('pinned-'+id+'.png');
+      await setScroll(pin.row.bottom-pin.top-20);
+      const tail=await position(id);
+      assert.ok(tail.bar.top<tail.top&&Math.abs(tail.bar.bottom-tail.row.bottom)<=1,JSON.stringify({id,tail}));
+      await setScroll(42);
+      const gone=await position(id);
+      assert.ok(!gone||gone.bar.bottom<gone.top);
+      await setScroll(start.scroll-(gone?.scroll??(tail.scroll+42)));
+      const back=await position(id);
+      assert.ok(back&&Math.abs(back.bar.top-back.row.top)<=1);
+      checks.push({width,label:id+' stickiness enters and leaves at its own boundaries in each scroll direction'});
+    }
+    await check('wheel scrolling does not reclassify the already mounted one-line message',()=>window.actionLayoutChanges===0);
     const replies=Array.from({length:100},(_,i)=>taskReply('group-'+i,'连续同事项回复 '+i,'virtual-task'));
     earlier=replies.slice(0,25);
     fixture.reset({messages:replies.slice(25),features:{draftUpload:true,taskOverview:false}});

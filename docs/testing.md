@@ -1512,3 +1512,17 @@ node_modules/.bin/tsc -p ui/tsconfig.json --noEmit
 - AMH 消费日志确认本轮语音仅成功扣费一次，实扣 240 quota（0.3504 积分）。测试 Token 总用量为 24,498 quota（35.76708 积分，含对话模型请求），余额 5,502 quota。联调后已读回确认测试 Token 与专用语音渠道禁用。未安装、重启日常 Homer 或发布。
 
 提交复审补验首发、跨重启补发的两条附件均与原件字节一致。文件在查回后、附件提交前被替换时拒绝写入附件。仅在合成提交和写文件前校验输出路径，等待期间检查执行权限。8 MiB 内存文件的回执查询和 SHA-256 校验在本机 100 次微基准中 P95 为 3.78 ms，未包含磁盘和网络。
+
+## 2026-11-23 消息操作横排与停靠
+
+在隔离源码副本中构建实际产品 UI，再执行消息操作浏览器专项。夹具只使用本机合成 HTTP/SSE 和独立 Chrome。此项也登记在 `--browser` 显式清单。
+
+```sh
+message_run=$(mktemp -d /private/tmp/homer-message-actions-XXXXXX)
+node scripts/build-preview-annotation.mjs
+node node_modules/vite/bin/vite.js build ui --config ui/vite.config.ts --configLoader runner --outDir "$message_run/web"
+HOMER_COMPONENT_BUILD="$message_run/web" HOMER_BROWSER_EVIDENCE="$message_run/evidence" node tests/message-actions.browser.mjs
+node --import tsx --test tests/chat-timestamps.test.ts
+```
+
+覆盖 1440px 桌面、320px 窄屏和 390px 触屏模拟。核对单行气泡行高、按钮尺寸、可用宽度变化时的横竖切换、用户和荷马气泡的滚动停靠、悬停到按钮、键盘操作及时间展示。复制写入由夹具接收。专项须同时通过断言及 Chrome 正常退出检查。

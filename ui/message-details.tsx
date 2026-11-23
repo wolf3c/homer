@@ -12,10 +12,45 @@ import {webSourceUrl} from '../src/preview-reference';
 import {Sources} from './vendor/assistant-ui/sources';
 import './vendor/assistant-ui/run-activity.css';
 
+const desktopActions='(hover:hover) and (pointer:fine) and (not (any-pointer:coarse))';
+
 export function MessageDetails({ message, runtime = false, children }: { message: import('../src/conversation-projection').DisplayMessage; runtime?: boolean; children?: ReactNode }) {
   const [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const copying = useRef(false), current=useRef(message.id);
+  const rowRef=useRef<HTMLDivElement>(null);
   useLayoutEffect(()=>{current.current=message.id;copying.current=false;setBusy(false);setNotice('');},[message.id]);
+  useLayoutEffect(()=>{
+    if(typeof ResizeObserver==='undefined')return;
+    const row=rowRef.current, list=row?.closest('.messages');
+    if(!row||!list)return;
+    const bubble=row.firstElementChild;
+    const body=bubble&&[...bubble.children].filter(child=>!child.matches('time, .message-attachments:empty'));
+    const markdown=body?.length===1&&body[0].matches('[data-aui-quote-selectable]')&&body[0].querySelectorAll('.markdown');
+    const paragraph=markdown&&markdown.length===1&&markdown[0].children.length===1&&markdown[0].firstElementChild;
+    if(!message.text||!paragraph||!paragraph.matches('p')){
+      row.removeAttribute('data-single-line');
+      return;
+    }
+
+    const desktop=window.matchMedia(desktopActions);
+    const measure=()=>{
+      row.toggleAttribute('data-single-line',desktop.matches);
+      // Measure with the horizontal rail in place so it cannot force a new wrap.
+      if(desktop.matches&&paragraph.getBoundingClientRect().height>parseFloat(getComputedStyle(paragraph).lineHeight)+1)
+        row.removeAttribute('data-single-line');
+    };
+    let width=list.getBoundingClientRect().width;
+    const observer=new ResizeObserver(([entry])=>{
+      const next=entry.contentRect.width;
+      if(next===width)return;
+      width=next;
+      measure();
+    });
+    observer.observe(list);
+    desktop.addEventListener('change',measure);
+    measure();
+    return ()=>{observer.disconnect();desktop.removeEventListener('change',measure);};
+  },[children,message.text]);
   async function copy(text:string) {
     if (copying.current) throw Error('copy_pending');
     const id=message.id;
@@ -35,7 +70,7 @@ export function MessageDetails({ message, runtime = false, children }: { message
   const actions = !!message.text && (runtime
     ? <RuntimeMessageActions message={message} write={copy} busy={busy} notice={notice} onNotice={setNotice} showTimestamp={!children}/>
     : <><MessageActions className="message-actions" aria-label="消息操作" copied={notice==='已复制'} copying={busy} onCopy={()=>void copy(message.text).catch(()=>{})}><MessageTimestamp messageId={message.id}/></MessageActions>{notice&&<p className={'message-action-notice'+(notice==='已复制'?' sr-only':'')} role="status">{notice}</p>}</>);
-  return children ? <><div className="message-bubble-row">{children}{actions}</div>{sources}</> : <>{sources}{actions}</>;
+  return children ? <><div ref={rowRef} className="message-bubble-row">{children}{actions}</div>{sources}</> : <>{sources}{actions}</>;
 }
 function MessageSources({sources}:{sources:NonNullable<ConversationMessage['sources']>}){
   const [open,setOpen]=useState(false);
