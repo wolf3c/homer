@@ -16,8 +16,9 @@ export default async function flatStatus(page,{destination}={}){
    const purchase=current.getByRole('region',{name:'采购选型方案',exact:true});
    await purchase.getByText('采购选型方案',{exact:true}).click();
    assert.equal(await purchase.innerText(),'采购选型方案');
-   assert.ok(await current.getByText('活动资料整理',{exact:true}).isVisible());
-   assert.ok(await current.getByText('执行状态待核实',{exact:true}).isVisible());
+   const uncertain=current.getByRole('region',{name:'活动资料整理',exact:true});
+   assert.equal(await uncertain.innerText(),'活动资料整理');
+   assert.equal(await uncertain.locator('svg').count(),0);
    assert.equal(await page.locator('#task-interaction-status-approval').getByRole('button',{name:'允许本次操作'}).count(),1);
    assert.equal(await panel.getByText('九月供应商比较报告',{exact:true}).count(),0);
    const archiveToggle=panel.getByRole('button',{name:'已归档',exact:true});

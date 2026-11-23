@@ -1,10 +1,10 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {overviewFixture} from './task-overview-fixture.js';
-import {readTaskOverview,classifyTask,readTaskDetail} from '../src/task-overview.js';import {homerWebBridge} from '../src/web-homer.js';
+import {readTaskOverview,readTaskDetail} from '../src/task-overview.js';import {homerWebBridge} from '../src/web-homer.js';
 test('native schema supports ordinary matters without Worker activity and stays read-only',()=>{
  const f=overviewFixture();try{
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();
-  const row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers.length,0);assert.equal(classifyTask(row).key,'ordinary');assert.equal(row.sourceRequestId,f.actor.sourceRequestId);assert.equal(readTaskDetail(f.store.db,f.taskId).runs.length,0);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
+  const row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers.length,0);assert.equal(row.sourceRequestId,f.actor.sourceRequestId);assert.equal(readTaskDetail(f.store.db,f.taskId).runs.length,0);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
  }finally{f.close();}
 });
 test('real WebBridge overview bypasses snapshot/history/files and uses four readonly SELECTs',async()=>{

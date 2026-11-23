@@ -1,15 +1,8 @@
-import {Send,CornerDownRight,Clock3,LoaderCircle,RotateCcw,MessagesSquare,MessageCircleQuestion,ShieldQuestion,Activity,Inbox,Check,CircleDashed,CircleX,OctagonAlert,CircleStop,Pause,RefreshCw,CheckCheck} from 'lucide-react';
-import type {TaskSemanticIcon} from '../src/task-status';
 import type {ReactNode} from 'react';
 import type {ProcessNode} from '../src/main-process';
 import type {WebState} from '../src/web-contract';
 import './process-nodes.css';
 
-const semanticIcons={Send,CornerDownRight,Clock3,LoaderCircle,RotateCcw,MessagesSquare,MessageCircleQuestion,ShieldQuestion,Activity,Inbox,Check,CircleDashed,CircleX,OctagonAlert,CircleStop,Pause,RefreshCw,CheckCheck};
-export function SemanticTaskIcon({icon}:{icon:TaskSemanticIcon}){
- const Icon=semanticIcons[icon],spin=icon==='LoaderCircle'?' animate-spin motion-reduce:animate-none':'';
- return <Icon aria-hidden="true" className={'size-3.5 shrink-0'+spin} strokeWidth={2}/>;
-}
 export function InactiveInteractionNotes({items=[]}:{items?:WebState['inactiveInteractions']}) {
   return <>{items.map(item=><p key={item.id} className="message-state" style={{display:'block'}}>{item.code==='interaction_user_cancelled'?'用户已取消本次请求。':item.code==='capability_approval_timeout'?'等待用户确认已超时。':item.kind==='authorization'?'原授权请求已失效，旧决定不能恢复此回调。':'原提问回调已失效，旧卡片不能继续提交。'}可在原事项对话核对当前状态。</p>)}</>;
 }

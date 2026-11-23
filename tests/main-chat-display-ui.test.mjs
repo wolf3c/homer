@@ -12,10 +12,12 @@ const built=buildSync({stdin:{contents:readFileSync('ui/task-status.tsx','utf8')
 const mod={exports:{}};Function('require','module','exports',built.outputFiles[0].text)(require,mod,mod.exports);
 const {TaskStatusRow}=mod.exports;
 
-test('work status rows show the title and status without any disclosure control',async()=>withDom(async d=>{
+test('work status rows show only the title',async()=>withDom(async d=>{
  await d.render(React.createElement(TaskStatusRow,{label:'合成事项',status:{state:'waiting',label:'执行状态待核实',icon:'Pause'}}));
  const row=d.find(n=>n.attrs['data-slot']==='task-status-row');
- assert.match(row.textContent,/合成事项.*执行状态待核实/);
+ assert.equal(row.textContent,'合成事项');
+ assert.equal(row.attrs.title,'合成事项');
+ assert.equal(Boolean(d.find(n=>row.contains(n)&&n.tagName==='SVG')),false);
  assert.equal(Boolean(d.find(n=>row.contains(n)&&n.attrs['aria-expanded']!==undefined)),false);
  assert.equal(Boolean(d.find(n=>row.contains(n)&&n.tagName==='BUTTON')),false);
 }));

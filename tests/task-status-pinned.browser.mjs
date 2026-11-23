@@ -260,7 +260,7 @@ export async function pinnedConnection(page){
 export async function pinnedOrdering(page,{destination}={}){
  const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel'),rows=panel.locator('[data-todo-id]');
  const make=(id,createdAt)=>overviewTask(id,{title:id,createdAt,creationOrder:createdAt});
- const active=Array.from({length:40},(_,i)=>make('ordering-'+i,i+1));
+ const active=Array.from({length:40},(_,i)=>make('ordering-'+(39-i),40-i));
  let tasks=active;
  await page.route('**/api/tasks',route=>route.fulfill({json:{tasks}}));
  const results=[];
@@ -269,14 +269,14 @@ export async function pinnedOrdering(page,{destination}={}){
   await page.setViewportSize({width,height:900});await page.reload();await trigger.waitFor();
   if(width<1120)await trigger.click();
   await rows.first().waitFor();
-  assert.deepEqual(await rows.evaluateAll(elements=>elements.map(el=>el.dataset.todoId)),active.map(t=>t.id).reverse());
+  assert.deepEqual(await rows.evaluateAll(elements=>elements.map(el=>el.dataset.todoId)),active.map(t=>t.id));
   const reading=await panel.locator('.status-list').evaluate(list=>{
    list.scrollTop=205;
    const top=list.getBoundingClientRect().top;
    const row=[...list.querySelectorAll('[data-todo-id]')].find(el=>el.getBoundingClientRect().bottom>top);
    return {id:row.dataset.todoId,offset:row.getBoundingClientRect().top-top};
   });
-  tasks=[...active,make('ordering-new',999)];
+  tasks=[make('ordering-new',999),...active];
   await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
   await panel.getByText('ordering-new',{exact:true}).waitFor();
   assert.equal(await rows.first().getAttribute('data-todo-id'),'ordering-new');

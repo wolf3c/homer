@@ -1,14 +1,12 @@
 # Official task status components
 
-## Current compact status rows (2026-10-23)
+## Work status list
 
-The accepted inline Background Inbox Demo is implemented in `ui/task-status.tsx` as one private `TaskStatusRow`, using installed Base UI Collapsible 1.8.0. It adapts the row layout of [BackgroundInbox](https://github.com/assistant-ui/assistant-ui/blob/208cc81de222d85b8c3877445187828cff09feeb/packages/ui/src/components/react/assistant-ui/elements/background-inbox.tsx) (MIT) rather than claiming an unchanged official component. No full BackgroundInbox copy, new domain model, runtime or dependency is added.
-
-Existing pinned `TaskStateIcon`, AgentPlan and TodoList implementations remain unchanged. Current compact rows use the host's `SemanticTaskIcon` for their business state; the host composes the row trigger, second-line business status, disclosure arrow, full title/status and indented body. Rows remain expandable while running and support all existing product states. The original business tree/counts/identity/read owners and Popover remain authoritative; the Demo three-state model, timestamps and header counts are not imported.
+The host renders static title rows in `ui/task-status.tsx`. Base UI Collapsible controls the archive group. The list follows the server page order.
 
 The pinned `TaskCard` retains its optional local inputs `statusIcon` and `statusLabel`: they supply the factual event icon and accessible status text while preserving the official disclosure, state, layout, or default icon/label. The upstream controlled `open`/`onOpenChange` contract is unchanged. `task-status-css.vendor.test.mjs` reverses precisely these semantic-input edits and local imports before checking the original `SOURCE-SHA256.json`; `task-status-css.test.mjs` renders both custom and default states through the real disclosure. The original hashes are not replacement hashes for adapted source.
 
-The host stylesheet owns compact row geometry, focus outlines and natural-height indented content; current target sizing follows the official-size restoration in `ui/DESIGN.md`. The existing compiler scans the actual host utility strings and keeps the existing scoped Neutral theme. The original MIT notices and upstream source-hash checks remain in place. See `docs/2026-10-23-unified-taskcard-product.md` for the original compact-row adoption and product verification.
+The existing compiler scans the actual host utility strings and keeps the existing scoped Neutral theme. The original MIT notices and upstream source-hash checks remain in place. See `docs/2026-10-23-unified-taskcard-product.md` for the original compact-row adoption and product verification.
 
 ## Earlier full TaskCard adoption (historical)
 

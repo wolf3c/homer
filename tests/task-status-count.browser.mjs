@@ -15,8 +15,9 @@ const ordinary=task('ordinary',{title:'整理采购要求',goal:'不应显示的
 const mixed=task('mixed',{title:'核对供应商报价'}),active=mixed.workers[0];
 const uncertain={...active,id:'uncertain',run:{...active.run,workerId:'uncertain',id:'uncertain',phase:'uncertain'}};
 mixed.workers.push(uncertain);
+const stopping=task('stopping',{title:'修订合同条款'});stopping.workers[0].run.stopRequestedAt=1;
 const archived=task('archived',{title:'去年报价',state:'paused',historyState:'archived'});archived.workers[0].run.status='succeeded';archived.workers[0].run.phase='ended';
-let snapshot={tasks:[ordinary,mixed],nextCursor:50},fail=false;
+let snapshot={tasks:[ordinary,mixed,stopping],nextCursor:50},fail=false;
 const paths=[],archivePath='/api/tasks/list/archived';
 let historyMode='normal',releaseArchive;
 
@@ -62,7 +63,11 @@ try{
   ok(await normal.locator('button, [aria-expanded], svg').count()===0&&await current.getByText(/不应显示的|执行记录/).count()===0,'ordinary row has no disclosure or detail '+width);
   ok(await toggle.getAttribute('aria-expanded')==='false'&&await archive.count()===0,'archive starts collapsed '+width);
   if(width===1440)ok(paths.every(path=>path==='/api/tasks'),'default loads only current matters');
-  ok(await current.getByText('执行状态待核实',{exact:true}).isVisible(),'uncertain execution visible '+width);
+  for(const task of [mixed,stopping]){
+   const row=current.locator('[data-todo-id="'+task.id+'"] [data-slot="task-status-row"]');
+   ok(await row.innerText()===task.title&&await row.locator('svg').count()===0,'exceptional matter title only '+width);
+  }
+  assert.deepEqual(await current.locator('[data-todo-id]').evaluateAll(rows=>rows.map(row=>row.dataset.todoId)),['ordinary','mixed','stopping']);
   await current.getByRole('button',{name:'下一页'}).click();
   const paged=current.locator('[data-todo-id="root-9"]');await paged.waitFor();
   await toggle.scrollIntoViewIfNeeded();await toggle.focus();
@@ -96,7 +101,7 @@ try{
  snapshot={tasks:[]};await refresh();await panel.getByText('暂无当前事项。',{exact:true}).waitFor();
  historyMode='normal';await toggle.click();await archive.getByText('去年报价',{exact:true}).waitFor();await toggle.click();
  ok(true,'empty current list still opens archive');
- const longTitle='已有事项完整标题'.repeat(15);snapshot={tasks:[task('long',{title:longTitle})]};await refresh();const row=panel.locator('[data-todo-id="long"] [data-slot=task-status-row]');await row.waitFor();const clipped=await row.locator('span.truncate').first().evaluate(el=>el.scrollWidth>el.clientWidth&&getComputedStyle(el).textOverflow==='ellipsis');ok(clipped&&(await row.getAttribute('title'))===longTitle,'narrow long title remains readable');
+ const longTitle='已有事项完整标题'.repeat(15);snapshot={tasks:[task('long',{title:longTitle})]};await refresh();const row=panel.locator('[data-todo-id="long"] [data-slot=task-status-row]');await row.waitFor();const clipped=await row.evaluate(el=>el.scrollWidth>el.clientWidth&&getComputedStyle(el).textOverflow==='ellipsis');ok(clipped&&(await row.getAttribute('title'))===longTitle,'narrow long title remains readable');
  await page.evaluate(()=>window.statusFixture.update(false));await panel.getByText(/显示上次记录/).waitFor();ok(await row.isVisible(),'offline snapshot remains readable');
  const offlineReads=paths.length;await toggle.click();await archive.getByRole('status').waitFor();
  ok((await archive.getByRole('status').innerText()).includes('等待连接')&&paths.length===offlineReads,'opening history offline waits for connection without reading');

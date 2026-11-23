@@ -1,23 +1,18 @@
-import {useLayoutEffect,useMemo,useRef,useState} from 'react';
+import {useLayoutEffect,useRef,useState} from 'react';
 import {ListTodoIcon,ChevronRightIcon} from 'lucide-react';
 import {Collapsible} from '@base-ui/react/collapsible';
 import type {WebState} from '../src/web-contract';
 import type {OverviewPage} from '../src/task-overview';
 import {taskName} from '../src/task-presentation';
-import {statusTree,rankedStatusMatters,matterStatus} from '../src/task-status';
-import {useTaskStatusData} from './task-status-data';
-import {SemanticTaskIcon} from './process-nodes';
 import {cn} from './vendor/task-status/utils';
+import {useTaskStatusData} from './task-status-data';
 import {Popover,PopoverTrigger,PopoverContent} from './vendor/task-status/popover';
-import {ghostButton,mono} from './vendor/task-status/surfaces';
+import {ghostButton} from './vendor/task-status/surfaces';
 import {createPortal} from 'react-dom';
 import './vendor/task-status/components.css';
 import './task-status.css';
-function TaskStatusRow({label,status}:{label:string;status:ReturnType<typeof matterStatus>}){
- return <div data-slot="task-status-row" data-state={status.state} data-item-row="true" className="flex min-w-0 items-center gap-2.5 px-1.5 py-2 text-start" title={status.label?label+' · '+status.label:label}>
-  {status.label&&<span className="flex size-3.5 shrink-0 items-center justify-center"><SemanticTaskIcon icon={status.icon}/></span>}
-  <span className="flex min-w-0 flex-1 flex-col gap-0.5"><span className="truncate text-[13px]">{label}</span>{status.label&&<span className={cn(mono,'truncate text-muted-foreground')}>{status.label}</span>}</span>
- </div>;
+function TaskStatusRow({label}:{label:string}){
+ return <div data-slot="task-status-row" data-item-row="true" className="truncate px-1.5 py-2 text-[13px]" title={label}>{label}</div>;
 }
 type ListProps={state:WebState;connected:boolean};
 function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewPage['view']>}){
@@ -32,7 +27,7 @@ function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewP
   const row=Array.from(list.querySelectorAll<HTMLElement>('[data-todo-id]')).find(row=>row.getBoundingClientRect().bottom>top);
   anchor.current=row&&section.current?.contains(row)?{id:row.dataset.todoId!,top:row.getBoundingClientRect().top,scrollTop:list.scrollTop}:null;
  });
- const matters=useMemo(()=>rankedStatusMatters(statusTree(data?.tasks??[],view)),[data,view]);
+ const tasks=data?.tasks??[];
  useLayoutEffect(()=>{
   const saved=anchor.current;anchor.current=null;
   const list=section.current?.closest('.status-list');if(!saved||!list||list.scrollTop!==saved.scrollTop)return;
@@ -47,10 +42,10 @@ function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewP
  return <section ref={section} tabIndex={-1} aria-label={archived?'已归档事项':'当前事项'}>
   {(error||stale&&data)&&<div role="status">{error||'连接尚未确认。'}{data?' 显示上次记录。':''}{error&&<button type="button" className={ghostButton} disabled={busy||!connected} onClick={()=>refresh(true)}>重试</button>}</div>}
   {!data&&!error&&<p role="status">{connected?'正在读取事项记录…':'等待连接后读取事项记录。'}</p>}
-  {data&&!matters.length&&<p>{archived?'暂无已归档事项。':'暂无当前事项。'}</p>}
-  <div className="flex flex-col gap-1">{matters.map(({matter})=>{
-   const title=taskName(matter.task).text;
-   return <section key={matter.task.id+':'+matter.task.headVersion} data-todo-id={matter.task.id} aria-label={title}><TaskStatusRow label={title} status={matterStatus(matter)}/></section>;
+  {data&&!tasks.length&&<p>{archived?'暂无已归档事项。':'暂无当前事项。'}</p>}
+  <div className="flex flex-col gap-1">{tasks.map(task=>{
+   const title=taskName(task).text;
+   return <section key={task.id+':'+task.headVersion} data-todo-id={task.id} aria-label={title}><TaskStatusRow label={title}/></section>;
   })}</div>
   {!!pages.length&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changePage(pages.slice(0,-1))}>上一页</button>}
   {data?.nextCursor&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changePage([...pages,data.nextCursor!])}>下一页</button>}

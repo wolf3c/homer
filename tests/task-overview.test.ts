@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {overviewFixture} from './task-overview-fixture.js';
-import {readTaskOverview,readTaskDetail,classifyTask} from '../src/task-overview.js';
-import {workerStatus} from '../src/task-status.js';
+import {readTaskOverview,readTaskDetail} from '../src/task-overview.js';
 
 test('projection reads two real sessions without inventing Tasks or requiring formal results',()=>{
  const f=overviewFixture();try{
@@ -10,11 +9,10 @@ test('projection reads two real sessions without inventing Tasks or requiring fo
   for(const worker of [a,b]){const run=f.tasks.claim(worker.runId)!;f.tasks.bind(run.id,run.epoch,'thread:'+worker.workerId,'turn:'+run.id);}
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();
   let data=readTaskOverview(f.store.db);assert.equal(data.tasks.length,1);assert.equal(data.tasks[0]!.id,f.taskId);assert.deepEqual(data.tasks[0]!.workers.map(w=>w.id),[a.workerId,b.workerId]);
-  assert.equal(classifyTask(data.tasks[0]!).key,'ordinary');
   assert.equal(readTaskDetail(f.store.db,f.taskId).runs.length,2);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
   f.store.db.exec('PRAGMA query_only=OFF');
   for(const worker of [a,b]){const run=f.tasks.run(worker.runId);f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Answer '+worker.workerId},true);}
-  data=readTaskOverview(f.store.db);assert.equal(data.tasks[0]!.state,'open');assert.notEqual(classifyTask(data.tasks[0]!).key,'complete');assert.equal(data.tasks[0]!.workers.reduce((n,w)=>n+w.pendingMain,0),2);
+  data=readTaskOverview(f.store.db);assert.equal(data.tasks[0]!.state,'open');assert.equal(data.tasks[0]!.workers.reduce((n,w)=>n+w.pendingMain,0),2);
  }finally{f.close();}
 });
 
@@ -24,7 +22,7 @@ test('same-session followup replaces its latest Run projection and preserves his
   f.tasks.workerMessage(f.actor,{operationId:'followup',workerId:a.workerId,text:'Check the missing point'});
   const next=f.tasks.claim()!;assert.notEqual(next.id,run.id);f.tasks.bind(next.id,next.epoch,'thread:page','turn:next');
   const task=readTaskOverview(f.store.db).tasks[0]!;assert.equal(task.workers.length,1);assert.equal(task.workers[0]!.id,a.workerId);assert.equal(task.workers[0]!.run.id,next.id);
-  assert.equal(task.workers[0]!.pendingMain,0,'an earlier reply does not make the active follow-up wait for Main');assert.equal(workerStatus(task.workers[0]!).label,'运行中');
+  assert.equal(task.workers[0]!.pendingMain,0,'an earlier reply does not make the active follow-up wait for Main');assert.equal(task.workers[0]!.run.phase,'executing');
   assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(reply.messageId)!.state,'pending','the earlier receipt is retained');
   const detail=readTaskDetail(f.store.db,f.taskId);assert.deepEqual(detail.runs.map(r=>r.workerId),[a.workerId,a.workerId]);assert.equal(detail.runs[1]!.threadId,'thread:page');assert.equal(detail.runs[1]!.version,1);
  }finally{f.close();}
@@ -35,7 +33,7 @@ test('pending questions retain exact Run epoch version thread and turn ownership
   const a=f.open('page'),run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:page');
   f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt,runEpoch,taskVersion) VALUES('question','identity','fingerprint',?,'thread:page','turn:page','request','ask_main','question','{}','{}','pending_user',100,100,?,?)`).run(run.id,run.epoch,run.version);
   let row=readTaskOverview(f.store.db).tasks[0]!;
-  assert.equal(classifyTask(row).key,'ordinary');assert.ok(!('pendingUsers' in row.workers[0]!));
+  assert.ok(!('pendingUsers' in row.workers[0]!));
   assert.throws(()=>readTaskOverview(f.store.db,{view:'needsUser' as 'visible'}),/task_overview_invalid/);
   f.store.db.prepare("UPDATE worker_interactions SET responseUserMessageId='already-replied'").run();
   assert.equal(readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMain,1);
@@ -73,7 +71,7 @@ test('overview counts a pending reply from the latest Worker run under its origi
   const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original observation'},true)!;
   const task=readTaskOverview(f.store.db).tasks[0]!;
   assert.equal(task.headVersion,2);assert.equal(task.workers[0]!.run.version,1);
-  assert.equal(task.workers[0]!.pendingMain,1);assert.equal(classifyTask(task).key,'ordinary');
+  assert.equal(task.workers[0]!.pendingMain,1);
   f.store.db.prepare('UPDATE agent_messages SET taskVersion=? WHERE id=?').run(task.headVersion,reply.messageId);
   assert.equal(readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMain,0,'a message must still match the emitting run');
  }finally{f.close();}
@@ -92,12 +90,17 @@ test('archive pages and detail preserve Worker history without restoring the mat
  }finally{f.close();}
 });
 
-test('uncertain actions or receipts remain visible after the Worker replies',()=>{
+test('the list omits display-only flags while detail retains uncertain operations and receipts',()=>{
  const f=overviewFixture();try{
   const w=f.open('check'),run=f.tasks.claim(w.runId)!;f.tasks.bind(run.id,run.epoch,'thread:check','turn:check');
   const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic answer'},true)!;
   f.store.db.prepare("UPDATE operations SET state='uncertain' WHERE operationId=?").run('open:check');
   f.store.db.prepare("UPDATE agent_receipts SET state='uncertain' WHERE messageId=?").run(reply.messageId);
-  assert.equal(classifyTask(readTaskOverview(f.store.db).tasks[0]!).label,'操作结果待核实 · 接收回执待核实');
+  const task=readTaskOverview(f.store.db).tasks[0]!;
+  assert.ok(!('uncertainOperation' in task));
+  assert.ok(!('uncertainReceipt' in task));
+  const {recovery}=readTaskDetail(f.store.db,f.taskId);
+  assert.ok(recovery!.operations.some(op=>op.kind==='worker_open'&&op.state==='uncertain'));
+  assert.equal(recovery!.receipts[0]?.messageId,reply.messageId);
  }finally{f.close();}
 });

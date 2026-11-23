@@ -1,6 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {overviewFixture} from './task-overview-fixture.js';
-import {classifyTask,readTaskOverview,readTaskDetail,readTaskSummary} from '../src/task-overview.js';
+import {readTaskOverview,readTaskDetail,readTaskSummary} from '../src/task-overview.js';
 import {taskName} from '../src/task-presentation.js';
 test('Task name remains short while full goal and working notes are preserved',()=>{
  const f=overviewFixture();try{
@@ -10,7 +10,6 @@ test('Task name remains short while full goal and working notes are preserved',(
   assert.equal(taskName(row).text,'Inspect synthetic inputs');assert.equal(taskName({...row,title:undefined}).text,'核对样例');
   const long='这是一个已有的长标题'.repeat(12);assert.equal(taskName({title:long,goal:'其他要求'}).text,long);
   const longGoal='这是没有短首句的很长要求'.repeat(20);assert.equal(taskName({title:null,goal:longGoal},2).text,longGoal);assert.equal(taskName({title:' ',goal:'。可用目标。详情'}).text,'可用目标');assert.equal(taskName({title:null,goal:null}).source,'名称未记录');
-  assert.equal(classifyTask(row).label,'');
  }finally{f.close();}
 });
 test('summary reads current requirements without Run history or payloads',()=>{

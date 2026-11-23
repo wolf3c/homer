@@ -8,7 +8,6 @@ import {MainProcessHistory} from '../src/main-process.js';
 import {MediaStore} from '../src/media-store.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
 import {readTaskOverview} from '../src/task-overview.js';
-import {workerStatus} from '../src/task-status.js';
 import {Homer} from '../src/service.js';
 import {NativeThreadBindings} from '../src/native-thread-bindings.js';
 import {freshMainReadiness} from '../scripts/native-fresh-main-preview.js';
@@ -61,7 +60,7 @@ test('waiting for Main approval is labelled as that wait and never as a user dec
   f.store.db.prepare("UPDATE runs SET phase='rpc_wait' WHERE id=?").run(run.id);
   interactions.open({runId:run.id,threadId:run.threadId!,turnId:run.turnId!,requestId:'synthetic-approval',source:'native',kind:'authorization',details:{},authority:{...f.authority,nativeApprovals:true},runEpoch:run.epoch,taskVersion:run.version},()=>true);
   const overview=readTaskOverview(f.store.db),item=overview.tasks[0]!.workers[0]!;
-  assert.equal(item.pendingMain,1);assert.match(workerStatus(item).label,/等待 Homer 审批 1/);
+  assert.equal(item.pendingMain,1);assert.equal(item.pendingMainApprovals,1);
  }finally{f.close();}
 });
 

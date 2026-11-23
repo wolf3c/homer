@@ -1,14 +1,15 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {taskCardPresentation,workerStatus} from '../src/task-status.js';import {readTaskOverview} from '../src/task-overview.js';import {overviewFixture} from './task-overview-fixture.js';
-test('session success, failure and interruption remain separate from the Main decision',()=>{
+import {readTaskOverview} from '../src/task-overview.js';import {overviewFixture} from './task-overview-fixture.js';
+for(const [terminal,status] of [['completed','succeeded'],['failed','failed'],['interrupted','interrupted']] as const)test('session '+status+' leaves the matter open',()=>{
  const f=overviewFixture();try{
   const w=f.open('inspect'),run=f.tasks.claim(w.runId)!;f.tasks.bind(run.id,run.epoch,'thread:a','turn:a');
   const read=()=>readTaskOverview(f.store.db).tasks[0]!;
-  assert.equal(taskCardPresentation(read()).label,'');
-  f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Found facts'},true);const returned=read();
-  assert.equal(taskCardPresentation(returned,returned.workers[0]!).label,'已回复');assert.notEqual(taskCardPresentation(returned).state,'done');
-  for(const result of [{status:'failed',label:'执行失败'},{status:'interrupted',label:'执行已中断'}]){const worker={...returned.workers[0]!,run:{...returned.workers[0]!.run,status:result.status}};assert.equal(workerStatus(worker).label,result.label);assert.equal(taskCardPresentation({...returned,workers:[worker]}).state,'waiting');}
-  assert.equal(taskCardPresentation(read()).label,'');
+  assert.equal(read().workers[0]!.run.phase,'executing');
+  f.tasks.endSegment(run.id,run.epoch,{status:terminal,text:'Found facts'},true);
+  const returned=read();
+  assert.equal(returned.workers[0]!.run.status,status);
+  assert.equal(returned.workers[0]!.run.phase,'ended');
+  assert.equal(returned.state,'open');
  }finally{f.close();}
 });
 test('goal changes preserve the earlier Run version without a matter status',()=>{
@@ -16,14 +17,14 @@ test('goal changes preserve the earlier Run version without a matter status',()=
   const w=f.open('original'),run=f.tasks.claim(w.runId)!;f.tasks.bind(run.id,run.epoch,'thread:a','turn:a');
   const args={operationId:'update',taskId:f.taskId,expectedRevision:1,patch:{goal:'Changed requirement'},authority:f.authority},receipt=f.tasks.updateTask(f.actor,args);
   assert.equal(f.tasks.captureActivity(f.actor,'task_update',args,receipt)?.outcome,'update_confirmed');
-  const row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.headVersion,2);assert.equal(row.workers[0]!.run.version,1);assert.equal(taskCardPresentation(row).label,'');
+  const row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.headVersion,2);assert.equal(row.workers[0]!.run.version,1);assert.equal(row.state,'open');
  }finally{f.close();}
 });
 test('queued and stopped sessions never imply whole-Task execution or settlement',()=>{
  const f=overviewFixture();try{
   const w=f.open('queued'),read=()=>readTaskOverview(f.store.db).tasks[0]!;
-  assert.equal(taskCardPresentation(read()).label,'');assert.equal(workerStatus(read().workers[0]!).state,'waiting');
+  assert.equal(read().workers[0]!.run.status,'queued');
   const receipt=f.tasks.workerStop(f.actor,{operationId:'stop',workerId:w.workerId});assert.ok(receipt);
-  assert.notEqual(taskCardPresentation(read()).state,'done');assert.equal(read().state,'open');
+  assert.ok(read().workers[0]!.run.stopRequestedAt);assert.equal(read().state,'open');
  }finally{f.close();}
 });
