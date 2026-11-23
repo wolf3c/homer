@@ -8,6 +8,7 @@ import {pathToFileURL} from 'node:url';
 import { Homer, type Message } from "../src/service.js";
 import { Store } from "../src/store.js";
 import type { Config } from "../src/config.js";
+import { CodexEngine } from "../src/engine.js";
 import type { EngineLike, EngineOptions, ToolCall, TurnResult } from "../src/engine.js";
 import { loadPrompts } from "../src/prompts.js";
 import { MEETING_REVISION, assertMeetingArtifact } from "./scenarios/meeting-revision.js";
@@ -32,14 +33,16 @@ function attachmentText(app:Homer,runId:string){
 }
 function fixture(
   name: string,
-  mode: "normal" | "hang" | "unconfirmed" | "failed" | "empty" | "start-fail" = "normal",
+  mode: "normal" | "hang" | "unconfirmed" | "failed" | "empty" | "start-fail" | "worker-spawn-fail" = "normal",
 ) {
   const scratch=resolve(".codex/scratch/e-service");mkdirSync(scratch,{recursive:true});
   const base=mkdtempSync(join(scratch,name.slice(0,20)+"-"));
   mkdirSync(base + "/workspace", { recursive: true });mkdirSync(base + "/runtime", { recursive: true });
   writeFileSync(base + "/workspace/meeting.md","林青：写初稿，2026-10-20。整理反馈：负责人和时间待确认。");
   const config: Config = {
-    workspace: base + "/workspace",runtime: base + "/runtime",codexBin: "/usr/bin/false",codexHome: base + "/engine",nativeCodexHome:base+"/engine",
+    workspace: base + "/workspace",runtime: base + "/runtime",
+    codexBin: mode==="worker-spawn-fail"?resolve("tests/fixtures/mock-app-server.mjs"):"/usr/bin/false",
+    codexHome: base + "/engine",nativeCodexHome:base+"/engine",
     model: "mock-only",requiresOpenaiAuth: false,stopGraceMs: 100,
   };
   const messages: Message[] = [],scriptedMessages = new Map<string, Record<string, any>>(),workerDocuments: string[] = [],workerEngines: Fake[] = [],engineOptions: EngineOptions[] = [];
@@ -130,7 +133,13 @@ function fixture(
       if(outputFails)throw Error('sink_closed');
     }
     messages.push(message);
-  },(options,handle)=>{engineOptions.push(options);return new Fake(options,handle);});
+  },(options,handle)=>{
+    engineOptions.push(options);
+    if(mode==="worker-spawn-fail"&&options.role==="worker"&&
+       engineOptions.filter(option=>option.role==="worker").length===1)
+      return new CodexEngine({...config,codexBin:join(base,"missing-codex")},options,handle);
+    return new Fake(options,handle);
+  });
   cleanup.push(async()=>{mainStopFails=false;await app.close().catch(()=>{});rmSync(base,{recursive:true,force:true});});
   return {app,messages,workerEngines,engineOptions,
     respondTo(message:string,response:Record<string,unknown>){scriptedMessages.set(message,response);},
@@ -304,6 +313,32 @@ test("T07: missing material, actual engine failure and absent artifact cannot re
     assert.equal(reply(a,r.id),undefined);assert.equal(a.tasks.task(r.taskId).historyState,'visible');
     await a.close();
   }
+});
+
+test("the host records a missing Worker executable as ended and can continue the same Worker",async()=>{
+  const f=fixture("worker-spawn","worker-spawn-fail"),app=f.app;
+  await app.start();
+  await app.message(JSON.stringify({action:"dispatch"}),"first");
+  await until(()=>app.store.runs()[0]?.phase==="ended");
+  await app.idle();
+  const failed=app.store.runs()[0]!;
+  assert.equal(failed.errorCode,"engine_spawn_failed");
+  assert.equal(failed.status,"failed");
+  assert.equal(failed.pid,null);
+  assert.equal(failed.turnId,null);
+  const chat=app.tasks.workerRead({agentId:app.store.meta("mainAgentId")!},{workerId:failed.workerId});
+  const result=chat.messages.find(message=>message.kind==="worker_reply")!;
+  assert.equal(result.payload.execution.status,"failed");
+  assert.equal(result.payload.execution.exitConfirmed,true);
+  await app.message(JSON.stringify({action:"dispatch",taskId:failed.taskId}),"continue");
+  await until(()=>!!f.workerEngines[0]?.release);
+  f.workerEngines[0]!.release!();
+  await app.idle();
+  const runs=app.tasks.runs(failed.taskId);
+  assert.equal(runs.length,2);
+  assert.equal(runs[1]!.workerId,failed.workerId);
+  assert.equal(runs[1]!.replacesRunId,failed.id);
+  assert.equal(runs[1]!.status,"succeeded");
 });
 
 test("T08: cancellation is separate from confirmation; unconfirmed stop never succeeds", async () => {

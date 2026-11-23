@@ -451,10 +451,11 @@ export class RecursiveTasks{
    if(this.workerMessageUnresolved(task.id,run.workerId))return blocked('operation_uncertain');
    recovery?.apply?.();
    if(this.workerEffectUnconfirmed(run))return blocked('operation_uncertain');
-   if(!run.threadId)return blocked('worker_thread_unavailable');
+   const neverSpawned=run.status==='failed'&&run.errorCode==='engine_spawn_failed'&&run.pid===null&&run.turnId===null;
+   if(!run.threadId&&!neverSpawned)return blocked('worker_thread_unavailable');
    if(!questionId)this.cancelQuestions(task.id,run.workerId);
    const messageId=this.workerInput(actor,key,task,run.workerId,input,prepare);
-   const runId=this.newRun(task,run.workerId,messageId,run.status==='interrupted'?run.id:null);
+   const runId=this.newRun(task,run.workerId,messageId,run.status==='interrupted'||neverSpawned?run.id:null);
    return {taskId:task.id,workerId:run.workerId,runId,version:task.headVersion,threadId:run.threadId,route:'followup',state:'queued',messageId};
   });
  }

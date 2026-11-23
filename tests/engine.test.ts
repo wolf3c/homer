@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
-import { CodexEngine, type EngineOptions } from "../src/engine.js";
+import { setImmediate as yieldTurn } from "node:timers/promises";
+import { CodexEngine, EngineRpcUnconfirmed, type EngineOptions } from "../src/engine.js";
 import type { Config } from "../src/config.js";
 const config: Config = {
   workspace: resolve(".codex/scratch"),
@@ -18,6 +19,38 @@ const options: EngineOptions = {
   instructions: "transport test",
   tools: [],
 };
+test("a Worker executable that cannot spawn fails without an unconfirmed RPC or process",async t=>{
+  t.mock.timers.enable({apis:["setTimeout"]});
+  const engine=new CodexEngine({...config,codexBin:resolve("tests/fixtures/no-such-codex")},{...options,role:"worker"},async()=>({}));
+  let spawned=false;
+  engine.on("spawn",()=>{spawned=true;});
+  const start=engine.start();
+  void start.catch(()=>{});
+  await yieldTurn();
+  for(let step=0;step<6;step++){
+    t.mock.timers.tick(60000);
+    await yieldTurn();
+  }
+  await assert.rejects(start,error=>error instanceof Error&&error.message==="engine_spawn_failed"&&!(error instanceof EngineRpcUnconfirmed));
+  assert.equal(spawned,false);
+  assert.equal(engine.pid,undefined);
+  assert.equal(await engine.close(),true);
+});
+
+test("an OS spawn exception after a confirmed close cannot retain the previous process",async()=>{
+  const engine=new CodexEngine({...config},{...options},async()=>({}));
+  try{
+    await engine.start();
+    await engine.turn("first");
+    assert.ok(engine.pid);
+    engine.config.codexBin=resolve(options.cwd,"x".repeat(10_000));
+    await assert.rejects(()=>engine.turn("second",{cwd:resolve("tests")}),/^Error: engine_spawn_failed$/);
+    assert.equal(engine.pid,undefined);
+  }finally{
+    await engine.close();
+  }
+});
+
 test('initialize preserves the exact pinned prerelease version',async()=>{
  const engine=new CodexEngine(config,options,async()=>({}));
  try{await engine.start();assert.equal(engine.version,'0.171.0-alpha.7');}

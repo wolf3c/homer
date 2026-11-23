@@ -10,7 +10,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { createInterface } from "node:readline";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { mkdirSync, existsSync, realpathSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import type { Config } from "./config.js";
@@ -534,13 +534,25 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if (this.config.keyEnv)
       env[this.config.keyEnv] = this.config.desktopModelSource==='website'?this.websiteToken:process.env[this.config.keyEnv];
     mkdirSync(this.config.codexHome,{recursive:true,mode:0o700});
-    const child = this.child = spawn(this.config.codexBin, args, {
-      cwd: this.options.cwd,
-      env,
-      detached: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    this.pid = this.child.pid;
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(this.config.codexBin, args, {
+        cwd: this.options.cwd,
+        env,
+        detached: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      // Node reports some spawn failures asynchronously, with no PID or exit event.
+      if (child.pid === undefined) await once(child, "spawn");
+    } catch {
+      this.child = undefined;
+      this.pid = undefined;
+      this.unixLease = undefined;
+      this.windowsLease = undefined;
+      throw new Error("engine_spawn_failed");
+    }
+    this.child = child;
+    this.pid = child.pid;
     if(process.platform==='win32'&&this.pid){const identity=processIdentity(this.pid);if(identity)this.windowsLease={pid:this.pid,identity};}
     if(process.platform!=='win32'&&this.pid){const identity=processIdentity(this.pid);this.unixLease=identity?{pid:this.pid,identity}:undefined;}
     this.emit("spawn");

@@ -3,6 +3,39 @@ import assert from 'node:assert/strict';
 import {fixture,main,authority,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
 function snapshot(f:ReturnType<typeof fixture>){return Object.fromEntries(['tasks','runs','task_versions','operations','agent_messages','agent_receipts'].map(table=>[table,f.store.db.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));}
 
+test('a confirmed first spawn failure allows a new attempt under the same Worker identity',()=>{
+ const f=fixture();try{
+  const worker=openWorker(f),run=f.tasks.claim(worker.runId)!;
+  const failure={status:'failed',text:'',errorCode:'engine_spawn_failed'} as const;
+  f.tasks.endSegment(run.id,run.epoch,failure,true);
+  const input={operationId:'retry',workerId:worker.workerId,text:'Continue the original assignment'};
+  const reply=f.tasks.workerMessage(main,input);
+  assert.equal(reply.state,'queued');
+  assert.deepEqual(f.tasks.workerMessage(main,input),reply);
+  assert.equal(reply.workerId,worker.workerId);
+  assert.notEqual(reply.runId,run.id);
+  const retry=f.tasks.claim(reply.runId)!;
+  assert.equal(retry.replacesRunId,run.id);
+  assert.equal(retry.threadId,null);
+  f.tasks.bind(retry.id,retry.epoch,'first-native-thread','first-native-turn');
+  assert.equal(f.tasks.worker(worker.workerId).threadId,'first-native-thread');
+  assert.equal(f.tasks.run(run.id).errorCode,'engine_spawn_failed');
+ }finally{f.close();}
+});
+
+test('a spawn error with uncertain exit or evidence of a process cannot start a new native thread',()=>{
+ for(const [exitConfirmed,pid,reason] of [[false,null,'run_stop_unconfirmed'],[true,12345,'worker_thread_unavailable']] as const){
+  const f=fixture();try{
+   const worker=openWorker(f),run=f.tasks.claim(worker.runId)!;
+   if(pid!==null)f.store.engine(run.id,{pid});
+   f.tasks.endSegment(run.id,run.epoch,{status:'failed',text:'',errorCode:'engine_spawn_failed'},exitConfirmed);
+   const reply=f.tasks.workerMessage(main,{operationId:'retry',workerId:worker.workerId,text:'Continue the original assignment'});
+   assert.equal(reply.reason,reason);
+   assert.equal(f.tasks.runs().length,1);
+  }finally{f.close();}
+ }
+});
+
 test('a paused task rejects new work atomically but an original committed send remains recoverable',()=>{
  const f=fixture();try{
   const input={operationId:'original',taskId:f.task.taskId,text:'Initial work'},worker=f.tasks.workerOpen(main,input),actor=running(f,worker.runId);complete(f,actor);processReplies(f);

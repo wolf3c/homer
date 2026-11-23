@@ -119,7 +119,7 @@ Worker 每次原生冷初始化，复用配置控制连接读取生效根标记�
 | Homer 想做什么 | 需要提供什么，会发生什么 |
 | --- | --- |
 | `worker_open` 开会话 | 传已有 `taskId`，省略 `message` 时使用当前版本完整目标。可提供本轮具体分工、附件和工作目录。宿主绑定有效委托，返回事项、会话、执行和回执身份。 |
-| `worker_message` 发消息 | 指定 Worker、正文和可选附件。当前轮正在执行时调用 `turn/steer`；确认退出且原线程可用时以 `turn/start` 续谈。启动、待审批、停止或结果不明时返回 Worker 事实。选中当前轮后，即使该轮恰好结束，此次消息也不会开启下一轮。 |
+| `worker_message` 发消息 | 指定 Worker、正文和可选附件。当前轮正在执行时调用 `turn/steer`；确认退出且原线程可用时以 `turn/start` 续谈。首次启动确认未创建进程时，可给同一 Worker 发送新消息。启动、待审批、停止或结果不明时返回 Worker 事实。选中当前轮后，即使该轮恰好结束，此次消息也不会开启下一轮。 |
 | `worker_read` 查会话 | 从任务行找到关联会话，按需查看当前状态、原消息和文件地址。消息按游标分页；指定消息及原生内容项可分段读完整原文，不强塞整段历史。 |
 | `worker_interrupt` 中断本轮 | 指定会话，由宿主核对当前轮次并确认停止结果。历史保留，可以稍后续谈。收起会话、取消整项工作和归档事项分别按各自意图办理。 |
 
@@ -465,6 +465,8 @@ Superagent 的主动接单观察模式暂不引入。
 「排查重启后任务无法重跑」发现两项实际任务停在 `recovery`。旧 Run 记有 `interrupted / uncertain` 和 `restart_unconfirmed`，对应进程租约已不存在。旧版跳过已中断的 Run，隔离复现中续跑、接管和替换均返回 `run_stop_unconfirmed`。当时的记录无法还原这两个进程怎样结束，另开同目标任务可能重复改文件或外发。[排查及复现记录](../work-coordination-architecture.md)
 
 正常关闭 Homer 时，宿主关闭自己持有的执行器，保留原任务及待审成果。执行器确认关闭，或重启核实原租约的执行者已经退出后，宿主在同一事务中把退出事实写进原 Run 的检查点并释放匹配的租约。Unix 还检查受管进程组。历史记录缺少退出证据时，原任务保持待核实。[启动与关机](../../src/service.ts) · [进程归属](../../src/processes.ts)
+
+系统创建 Codex 进程失败且未分配 PID 时，宿主在发送初始化请求前确认本轮未启动，将 Run 记为已结束的 `engine_spawn_failed`。首次启动失败的 Worker 可以接受新的 `worker_message`，沿同一 Worker 创建关联上次失败的 Run，再建立它的首个原生会话。已有会话和已启动进程的恢复仍按原有租约、回执与未决操作核对。[引擎测试](../../tests/engine.test.ts) · [Worker 续办测试](../../tests/recursive-terminal-queue.test.ts)
 
 重开后，Homer 用 `work_inspect` 查看原事项，用 `worker_read` 直接读已保存的答复；前一轮文件通过 `resultId` 查看，本次目标改为消息的准确附件。需要继续工作时，`worker_message` 按最新目标、当前授权及确认退出的原会话续谈并关联前次执行。外发仍凭原发送回执判定。桌面必须先取得实例独占，归属不明的进程仍阻止接管。[续办判定](../../src/recursive-tasks.ts) · [桌面实例归属](../../scripts/desktop-profile.mjs)
 
