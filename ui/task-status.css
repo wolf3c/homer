@@ -1,4 +1,4 @@
-/* Exterior layout only; official component styles are generated separately. */
+/* Host layout and work status rows. */
 /* The summary lives inside the measured conversation panel, beside its main. */
 .conversation-workspace{display:flex;width:100%;height:100%;min-width:0;min-height:0}
 .conversation-workspace>.conversation{flex:1;min-width:0}
@@ -12,9 +12,26 @@
 .homer-task-status .status-entry:focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 .homer-task-status .status-list{position:relative;max-height:min(59dvh,34rem);overflow:auto;overscroll-behavior:contain;padding:0 8px 4px 0;min-width:0;overflow-wrap:anywhere}
 .homer-task-status.status-aside .status-list{flex:1;max-height:none}
-.homer-task-status .status-task-heading{display:flex;align-items:flex-start;gap:6px}
-.homer-task-status .status-task-running{display:inline-flex;flex:none;margin-top:3px}
-.homer-task-status .status-task-workers{display:flex;align-items:center;gap:5px;margin-top:3px;color:hsl(var(--muted-foreground));font-size:12px;font-variant-numeric:tabular-nums}
+.homer-task-status .status-task-row{
+ display:grid;grid-template-columns:minmax(0,1fr) 20px;column-gap:8px;
+ width:100%;min-height:44px;padding:8px 6px;border:0;border-radius:8px;
+ background:transparent;color:var(--ink);font-size:.875rem;line-height:1.5;text-align:start
+}
+.homer-task-status .status-task-row:not(:has(.status-task-workers)){align-content:center}
+.homer-task-status .status-task-title{grid-column:1}
+.homer-task-status button .status-task-title{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.homer-task-status .status-task-running{grid-column:2;grid-row:1;display:grid;place-items:center;color:hsl(var(--muted-foreground))}
+.homer-task-status .status-task-workers{grid-column:1;display:flex;align-items:center;gap:5px;margin-top:3px;color:hsl(var(--muted-foreground));font-size:.75rem;font-variant-numeric:tabular-nums}
+@media (hover:hover){.homer-task-status button.status-task-row:hover{background:var(--soft)}}
+.homer-task-status button.status-task-row[aria-pressed="true"]{background:var(--soft-hover)}
+.homer-task-status button.status-task-row:active{background:var(--strong-line)}
+.homer-task-status button.status-task-row:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+@media (forced-colors:active){
+ .homer-task-status button.status-task-row[aria-pressed="true"]{outline:1px solid Highlight;outline-offset:-1px}
+ .homer-task-status button.status-task-row:focus-visible{outline:2px solid CanvasText;outline-offset:-2px}
+}
+.homer-task-status .status-full-title{margin:6px 6px 0;padding:8px 0;border-top:1px solid var(--line);font-size:.875rem;overflow-wrap:anywhere}
+.homer-task-status .status-full-title span{display:block;color:hsl(var(--muted-foreground));font-size:.75rem}
 .homer-task-status .status-list:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:2px}
 .homer-task-status .status-list .status-archive-toggle{justify-content:flex-start}
 /* Host accessibility boundary; pinned TaskCard markup and utilities stay intact. */

@@ -1,5 +1,5 @@
-import {useLayoutEffect,useRef,useState} from 'react';
-import {ListTodoIcon,ChevronRightIcon,BotIcon,LoaderCircleIcon} from 'lucide-react';
+import {useId,useLayoutEffect,useRef,useState} from 'react';
+import {ListTodoIcon,ChevronRightIcon,BotIcon} from 'lucide-react';
 import {Collapsible} from '@base-ui/react/collapsible';
 import type {WebState} from '../src/web-contract';
 import type {OverviewPage} from '../src/task-overview';
@@ -11,18 +11,28 @@ import {ghostButton} from './vendor/task-status/surfaces';
 import {createPortal} from 'react-dom';
 import './vendor/task-status/components.css';
 import './task-status.css';
-function TaskStatusRow({label,workerCount,running}:{label:string;workerCount:number;running:boolean}){
- return <div data-slot="task-status-row" data-item-row="true" className="px-1.5 py-2 text-[13px]" title={label}>
-  <div className="status-task-heading">
-   <span className="min-w-0">{label}</span>
-   {running&&<span className="status-task-running" role="img" aria-label="运行中" title="运行中"><LoaderCircleIcon size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none"/></span>}
-  </div>
-  {workerCount>0&&<span className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
- </div>;
+function TaskStatusRow({label,workerCount,running,selected,onSelect}:{
+ label:string;workerCount:number;running:boolean;selected:boolean;onSelect?:()=>void;
+}){
+ const id=useId();
+ const Row=onSelect?'button':'div';
+ const description=[running&&id+'-running',workerCount>0&&id+'-workers'].filter(Boolean).join(' ');
+ return <Row data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}
+  {...(onSelect?{type:'button' as const,onClick:onSelect,'aria-labelledby':id,'aria-describedby':description||undefined,'aria-pressed':selected}:{})}>
+  <span id={id} className="status-task-title">{label}</span>
+  {running&&<span id={id+'-running'} className="status-task-running" role="img" aria-label="运行中" title="运行中">
+   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="animate-spin motion-reduce:animate-none">
+    <circle cx="7" cy="7" r="6" stroke="currentColor" strokeOpacity=".25" strokeWidth="1.5"/>
+    <path d="M7 1a6 6 0 0 1 6 6" stroke="currentColor" strokeWidth="1.5"/>
+   </svg>
+  </span>}
+  {workerCount>0&&<span id={id+'-workers'} className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
+ </Row>;
 }
 type ListProps={state:WebState;connected:boolean};
 function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewPage['view']>}){
  const [pages,setPages]=useState<number[]>([]);
+ const [selectedId,setSelectedId]=useState<string>();
  const section=useRef<HTMLElement>(null);
  const anchor=useRef<{id:string;top:number;scrollTop:number}|null>(null);
  const before=pages.at(-1),archived=view==='archived';
@@ -42,6 +52,7 @@ function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewP
  },[data]);
  function changePage(next:number[]){
   setPages(next);
+  setSelectedId(undefined);
   section.current?.focus({preventScroll:true});
   section.current?.scrollIntoView({block:'nearest'});
  }
@@ -51,7 +62,11 @@ function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewP
   {data&&!tasks.length&&<p>{archived?'暂无已归档事项。':'暂无当前事项。'}</p>}
   <div className="flex flex-col gap-1">{tasks.map(task=>{
    const title=taskName(task).text;
-   return <section key={task.id+':'+task.headVersion} data-todo-id={task.id} aria-label={title}><TaskStatusRow label={title} workerCount={task.workers.length} running={!archived&&!stale&&task.hasExecutingWorker===true}/></section>;
+   return <section key={task.id} data-todo-id={task.id} aria-label={title}>
+    <TaskStatusRow label={title} workerCount={task.workers.length} running={!archived&&!stale&&task.hasExecutingWorker===true}
+     selected={task.id===selectedId} onSelect={archived?undefined:()=>setSelectedId(id=>id===task.id?undefined:task.id)}/>
+    {!archived&&<div role="status" aria-atomic="true">{task.id===selectedId&&<p className="status-full-title"><span>完整标题</span>{title}</p>}</div>}
+   </section>;
   })}</div>
   {!!pages.length&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changePage(pages.slice(0,-1))}>上一页</button>}
   {data?.nextCursor&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changePage([...pages,data.nextCursor!])}>下一页</button>}

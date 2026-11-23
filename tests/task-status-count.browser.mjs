@@ -17,6 +17,7 @@ const uncertain={...active,id:'uncertain',run:{...active.run,workerId:'uncertain
 mixed.workers.push(uncertain);
 const stopping=task('stopping',{title:'修订合同条款'});stopping.workers[0].run.stopRequestedAt=1;
 const archived=task('archived',{title:'去年报价',state:'paused',historyState:'archived',hasExecutingWorker:true});archived.workers[0].run.status='succeeded';archived.workers[0].run.phase='ended';
+const olderTitle='需要完整阅读的已归档事项标题'.repeat(4);
 let snapshot={tasks:[ordinary,mixed,stopping],nextCursor:50},fail=false;
 const paths=[],archivePath='/api/tasks/list/archived';
 let historyMode='normal',releaseArchive;
@@ -31,9 +32,7 @@ try{
  await new Promise(done=>server.listen(0,'127.0.0.1',done));const origin='http://127.0.0.1:'+server.address().port;
  // Exactly one launch attempt. An environment failure is recorded and never retried.
  browser=await chromium.launch({channel:'chrome',headless:true,args:['--use-mock-keychain']});
- const context=await browser.newContext({viewport:{width:800,height:600},deviceScaleFactor:2});page=await context.newPage();page.setDefaultTimeout(10000);
- page.on('pageerror',error=>errors.push(error.message));
- await context.route('**/*',async route=>{
+ const routeFixture=async route=>{
   const url=new URL(route.request().url()),path=url.pathname;
   if(url.origin!==origin||route.request().method()!=='GET'){errors.push('unexpected_request');return route.abort();}
   if(!path.startsWith('/api/'))return route.continue();paths.push(path);
@@ -46,21 +45,53 @@ try{
    if(historyMode==='error')return route.fulfill({status:503});
    return route.fulfill({json:historyMode==='empty'?{tasks:[]}:{tasks:[archived],nextCursor:70}});
   }
-  if(path===archivePath+'/before/70')return route.fulfill({json:{tasks:[task('older',{historyState:'archived'})]}});
+  if(path===archivePath+'/before/70')return route.fulfill({json:{tasks:[task('older',{title:olderTitle,historyState:'archived'})]}});
   errors.push('unexpected_read '+path);return route.abort();
- });
- await page.goto(origin);
- const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel'),ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
+ };
+ const createPage=async hasTouch=>{
+  const context=await browser.newContext({viewport:{width:800,height:600},deviceScaleFactor:2,hasTouch});
+  await context.route('**/*',routeFixture);
+  const next=await context.newPage();next.setDefaultTimeout(10000);
+  next.on('pageerror',error=>errors.push(error.message));
+  await next.goto(origin);
+  return next;
+ };
+ page=await createPage(false);
+ let trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel');
+ const ok=(value,name)=>{assert.ok(value,name);checks.push(name);};
  const refresh=()=>page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
  for(const width of [1440,390,320]){
+  if(width===390){
+   await page.context().close();page=await createPage(true);
+   trigger=page.locator('#task-status-trigger');panel=page.locator('#task-status-panel');
+  }
   await page.setViewportSize({width,height:850});await trigger.waitFor();
   await page.waitForFunction(w=>document.querySelector('#task-status-trigger')?.hasAttribute('aria-haspopup')===(w<1120),width);
   if(await trigger.getAttribute('aria-expanded')!=='true'){await trigger.focus();await page.keyboard.press('Enter');}
   const current=panel.getByRole('region',{name:'当前事项',exact:true}),archive=panel.getByRole('region',{name:'已归档事项',exact:true});
   const toggle=panel.getByRole('button',{name:'已归档',exact:true}),normal=current.locator('[data-todo-id="ordinary"] [data-slot="task-status-row"]');
   await normal.waitFor();ok(await normal.innerText()==='整理采购要求','ordinary matter title only '+width);
-  await normal.click();
-  ok(await normal.locator('button, [aria-expanded], svg').count()===0&&await current.getByText(/不应显示的|执行记录/).count()===0,'ordinary row has no disclosure or detail '+width);
+  ok(await normal.evaluate(el=>{
+   const row=el.getBoundingClientRect(),title=el.firstElementChild.getBoundingClientRect();
+   return el.offsetHeight>=44&&Math.abs(row.top+row.bottom-title.top-title.bottom)<1;
+  })&&await normal.locator('svg').count()===0,'zero Worker title is centered without metadata '+width);
+  if(width===1440){
+   await normal.hover();
+   const waitForBackground=color=>page.waitForFunction(expected=>getComputedStyle(document.querySelector('[data-todo-id="ordinary"] button')).backgroundColor===expected,color);
+   await waitForBackground('rgb(238, 236, 232)');
+   ok(true,'row hover shows a background');
+   await page.mouse.down();
+   await waitForBackground('rgb(203, 199, 191)');
+   ok(true,'row press has distinct feedback');
+   await page.mouse.up();
+  }else await normal.tap();
+  const full=current.getByRole('status').filter({hasText:'完整标题'});
+  ok(await normal.getAttribute('aria-pressed')==='true'&&await full.innerText()==='完整标题\n整理采购要求'&&await current.getByText(/不应显示的|执行记录/).count()===0,'selection reveals only the title '+width);
+  if(width!==390)await panel.screenshot({path:join(destination,'selection-'+width+'.png'),animations:'disabled'});
+  await normal.press('Space');
+  ok(await normal.getAttribute('aria-pressed')==='false'&&await full.count()===0,'keyboard clears selection '+width);
+  await normal.press('Enter');
+  ok(await normal.getAttribute('aria-pressed')==='true'&&await normal.evaluate(el=>el.matches(':focus-visible')),'keyboard selects with visible focus '+width);
   ok(await toggle.getAttribute('aria-expanded')==='false'&&await archive.count()===0,'archive starts collapsed '+width);
   const layout=await toggle.evaluate(button=>{
    const row=button.closest('.status-list').querySelector('[data-slot="task-status-row"]');
@@ -97,6 +128,8 @@ try{
   await toggle.press('Enter');const history=archive.locator('[data-todo-id="archived"]');await history.waitFor();
   ok(await toggle.getAttribute('aria-expanded')==='true'&&await toggle.locator('svg').evaluate(icon=>icon.getAttribute('aria-hidden')==='true'&&getComputedStyle(icon).rotate==='90deg'),'keyboard exposes expanded state with a downward decorative arrow '+width);
   await archive.getByRole('button',{name:'下一页'}).click();await archive.locator('[data-todo-id="older"]').waitFor();
+   const older=archive.getByText(olderTitle,{exact:true});
+   ok(await older.evaluate(el=>getComputedStyle(el).whiteSpace==='normal'&&el.offsetHeight>21&&el.scrollHeight===el.offsetHeight),'archived long title remains readable '+width);
   await archive.getByRole('button',{name:'上一页'}).click();await history.waitFor();
   await toggle.press('Space');await archive.waitFor({state:'hidden'});
   ok(await paged.isVisible()&&Math.abs(await scroll()-position)<=1,'current page and scroll retained '+width);
@@ -131,14 +164,19 @@ try{
  const loading=row.getByRole('img',{name:'运行中',exact:true});
  await loading.waitFor();
  ok(await row.evaluate(el=>{
-  const title=el.querySelector('.status-task-heading > span').getBoundingClientRect();
+  const text=el.querySelector('.status-task-title'),title=text.getBoundingClientRect();
   const icon=el.querySelector('.status-task-running').getBoundingClientRect();
   const count=el.querySelector('.status-task-workers').getBoundingClientRect();
-  return title.height>30&&title.right<=icon.left&&icon.top<title.top+10&&title.bottom<count.top&&el.scrollWidth<=el.clientWidth;
- })&&(await row.getAttribute('title'))===longTitle,'long title wraps beside icon and above count');
+  return title.height===21&&text.scrollWidth>text.clientWidth&&getComputedStyle(text).textOverflow==='ellipsis'&&title.right<=icon.left&&icon.top===title.top&&title.bottom<count.top&&el.scrollWidth<=el.clientWidth;
+ })&&(await row.getAttribute('title'))===longTitle,'long title truncates beside icon and above count');
+ await row.tap();
+ ok(await panel.getByRole('status').filter({hasText:longTitle}).isVisible(),'touch reveals the entire long title');
+ await row.focus();
+ snapshot.tasks[0].headVersion++;
  snapshot.tasks[0].hasExecutingWorker=false;
  await page.evaluate(()=>window.statusFixture.update());
  await loading.waitFor({state:'hidden'});
+ ok(await row.evaluate(el=>el===document.activeElement)&&await row.getAttribute('aria-pressed')==='true','matter revision preserves focus and selection');
  snapshot.tasks[0].hasExecutingWorker=true;
  await page.evaluate(()=>window.statusFixture.update());
  await loading.waitFor();
