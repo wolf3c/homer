@@ -95,7 +95,19 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  modules['../homer/dist/desktop-power.js']=await import('data:text/javascript;base64,'+Buffer.from(powerSource).toString('base64'));
  Object.assign(account,native.accountApi);
  modules['node:os']={userInfo:()=>({homedir:native.userHome??(platform==='win32'?'C:\\Synthetic User':'/synthetic/user')})};
- let timer;const context=vm.createContext({process:{argv:['Homer','--test-profile','/synthetic/profile'],resourcesPath:'/synthetic/Homer.app/Contents/Resources',platform:'darwin',execPath:'C:\\Homer\\Homer.exe',arch:native.arch??'arm64',env:{SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'}},Buffer,URL,AbortController,console:native.console??console,performance:{now:()=>monotonic},setTimeout:cb=>{timer=cb;return 1;},clearTimeout(){}});
+ const clockStart=Date.now();
+ let timer,clock=0,timerId=0;
+ const timers=new Map();
+ const runTimers=(ms=0)=>{
+  clock+=ms;
+  for(const [id,{at,callback}] of [...timers]){
+   if(at<=clock&&timers.delete(id))callback();
+  }
+ };
+ const context=vm.createContext({process:{argv:['Homer','--test-profile','/synthetic/profile'],resourcesPath:'/synthetic/Homer.app/Contents/Resources',platform:'darwin',execPath:'C:\\Homer\\Homer.exe',arch:native.arch??'arm64',env:{SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\RedirectedLocal'}},Buffer,URL,AbortController,console:native.console??console,performance:{now:()=>monotonic},
+  Date:class extends Date{static now(){return clockStart+clock;}},
+  Math:Object.assign(Object.create(Math),{random:()=>0.5}),
+  setTimeout:(callback,ms)=>{timer=callback;timers.set(++timerId,{at:clock+ms,callback});return timerId;},clearTimeout:id=>timers.delete(id)});
  context.process.argv=args;context.process.platform=platform;
  const path=resolve('packaging/electron/main.mjs');
  // Lifecycle controls exist only in this VM copy, never in the product entry.
@@ -104,7 +116,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  await entry.link(async name=>{const exports=modules[name]??createRequire(import.meta.url)(name);const m=new vm.SyntheticModule(Object.keys(exports),function(){for(const [key,value]of Object.entries(exports))this.setExport(key,value);},{context});return m;});
  await entry.evaluate();await new Promise(r=>setImmediate(r));
  // Preserve every call; only trusted ID-less channel lifecycle cancellation has its own category.
- return {options:native,paths,wakeEvents,powerMonitor,powerLocks,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},BrowserWindow,nativeCalls,allNativeCalls:nativeCalls,
+ return {options:native,paths,wakeEvents,powerMonitor,powerLocks,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},runTimers,BrowserWindow,nativeCalls,allNativeCalls:nativeCalls,
   get nonLifecycleCalls(){return nativeCalls.filter(call=>!channelLifecycleCall(call));},get channelLifecycleCalls(){return nativeCalls.filter(channelLifecycleCall);},
   ownershipCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
 }
@@ -211,10 +223,10 @@ for(const mode of ['dead','runtime-live','gateway-live','runtime-unknown','lease
 });
 
 const stableManifest={releaseChannel:'stable',appId:'app.homer.desktop',publishable:true,preparation:false};
-async function updateFixture(native={}){return accountFixture({manifest:stableManifest,...native});}
+async function updateFixture(native={}){const f=await accountFixture({manifest:stableManifest,...native});f.runTimers(150_000);return f;}
 const updateCall=async(f,name,...args)=>{const action=f.handlers.get('homer:update:'+name);assert.equal(typeof action,'function','missing trusted update action: '+name);return action(accountEvent(f),...args);};
 const updateMenu=f=>f.handlers.get('menu')[0].submenu.find(item=>item.id==='update');
-async function windowsFixture(native={}){const f=await fixture(['Homer'],undefined,'win32',{arch:'x64',published:true,publishable:true,manifest:stableManifest,...native});f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();return f;}
+async function windowsFixture(native={}){const f=await fixture(['Homer'],undefined,'win32',{arch:'x64',published:true,publishable:true,manifest:stableManifest,...native});f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();f.runTimers(150_000);await f.tick();return f;}
 const unsignedConfig={verifyUpdateCodeSignature:false,publisherName:undefined};
 test('Windows unsigned updates prepare a verified package without calling Authenticode or installing on ordinary quit',async()=>{
  const f=await windowsFixture({updateConfig:unsignedConfig});
@@ -291,6 +303,8 @@ for(const readyFirst of [false,true])test('Windows startup stays usable while si
  assert.equal(f.spawnCount(),1);assert.equal(f.windows.length,1);assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,0);
  const ready=()=>f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});
  if(readyFirst)ready();f.options.holdVerify=false;f.options.releaseVerify();await f.tick();if(!readyFirst)ready();await f.tick();
+ assert.equal(updateMenu(f).enabled,true);
+ f.runTimers(150_000);
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
 });
 for(const options of [{checkReject:true},{downloadReject:true},{nullCheck:true}])test('Windows consumes updater Promise rejection or null '+JSON.stringify(options),async()=>{const f=await windowsFixture(options);await f.tick();assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);assert.equal(f.sent.length,0);});
@@ -343,7 +357,12 @@ test('Windows recovery invalidates an in-flight pre-install verification',async(
 });
 test('Windows rejects malformed signature output and required elevation without leaking raw errors',async()=>{
  const f=await windowsFixture({verifyOutput:'private malformed response https://example.invalid/?secret=sentinel'});f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();assert.equal((await updateCall(f,'state')).status,'error');assert.equal(JSON.stringify(f.messages).includes('sentinel'),false);
- const elevated=await windowsFixture();elevated.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe',files:[{isAdminRightsRequired:true}]}));await elevated.tick();assert.equal((await updateCall(elevated,'state')).status,'error');
+ const elevated=await windowsFixture(),info=windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe',files:[{isAdminRightsRequired:true}]});
+ elevated.updater.emit('update-available',info);
+ assert.equal((await updateCall(elevated,'state')).status,'downloading');
+ updateMenu(elevated).click();elevated.runTimers(3_600_000);
+ assert.equal(elevated.nativeCalls.filter(c=>c[0]==='check-update').length,1);
+ elevated.updater.emit('update-downloaded',info);await elevated.tick();assert.equal((await updateCall(elevated,'state')).status,'error');
 });
 test('Windows installation-time signature failure preserves proof and requires exit/reopen',async()=>{
  let response=0;const f=await windowsFixture({response:options=>options.buttons.includes('重启并更新')?1:response});let exits=0;f.app.on('quit',()=>exits++);f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));await f.tick();await updateCall(f,'restart');await f.tick();f.options.invalidSignature=true;f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);assert.equal(exits,0);response=1;updateMenu(f).click();await f.tick();assert.equal(exits,1);assert.equal(f.sent.length,1);
@@ -362,8 +381,10 @@ for(const changed of ['valid-cache','tampered-cache','withdrawn'])test('Windows 
 test('stable Mac automatically calls the native updater when the runtime URL arrives after signature initialization',async()=>{
  const f=await fixture(['Homer'],undefined,'darwin',{adopted:true,published:true,manifest:stableManifest});
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,0);
+ assert.equal(updateMenu(f),undefined);
  assert.deepEqual(JSON.parse(JSON.stringify(f.nativeCalls.filter(c=>c[0]==='feed'))),[['feed',{url:'https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-arm64.json',serverType:'json'}]]);
  f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();
+ f.runTimers(150_000);
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
  f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});f.app.emit('activate');updateMenu(f).click();await f.tick();
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
@@ -373,6 +394,55 @@ test('stable Mac manual menu calls the native updater after signature initializa
  assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,1);
  f.updater.emit('update-not-available');assert.equal(updateMenu(f).enabled,true);
  updateMenu(f).click();assert.equal(f.nativeCalls.filter(c=>c[0]==='check-update').length,2);
+});
+for(const platform of ['darwin','win32'])test('desktop hourly updates share one check across startup, sleep, manual and ready '+platform,async()=>{
+ const f=await fixture(['Homer'],undefined,platform,{arch:platform==='win32'?'x64':'arm64',published:true,publishable:true,manifest:stableManifest});
+ const checkCount=()=>f.nativeCalls.filter(call=>call[0]==='check-update').length;
+ f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();
+ f.runTimers(149_999);assert.equal(checkCount(),0);
+ f.runTimers(1);assert.equal(checkCount(),1);
+ f.updater.emit('update-not-available');
+ f.powerMonitor.emit('suspend');
+ f.runTimers(600_000);
+ f.powerMonitor.emit('resume');
+ f.runTimers(2_999_999);assert.equal(checkCount(),1);
+ updateMenu(f).click();
+ f.runTimers(1);assert.equal(checkCount(),2);
+ f.updater.emit('error',Error('synthetic update failure'));
+ await f.tick();
+ f.runTimers(3_599_999);assert.equal(checkCount(),2);
+ f.runTimers(1);assert.equal(checkCount(),3);
+ f.updater.emit('update-not-available');
+ f.powerMonitor.emit('suspend');
+ f.runTimers(10_800_000);assert.equal(checkCount(),3);
+ f.powerMonitor.emit('resume');f.powerMonitor.emit('resume');
+ f.runTimers(149_999);assert.equal(checkCount(),3);
+ f.runTimers(1);assert.equal(checkCount(),4);
+ f.updater.emit('update-available');
+ f.runTimers(3_600_000);assert.equal(checkCount(),4);
+ if(platform==='win32'){
+  f.options.holdVerify=true;
+  f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe'}));
+  await f.tick();
+  assert.equal((await updateCall(f,'state')).status,'downloading');
+  updateMenu(f).click();f.runTimers(3_600_000);assert.equal(checkCount(),4);
+  f.options.releaseVerify();
+ }else f.updater.emit('update-downloaded',{},'','0.2.0');
+ await f.tick();assert.equal((await updateCall(f,'state')).status,'ready');
+ f.powerMonitor.emit('resume');
+ f.runTimers(7_200_000);assert.equal(checkCount(),4);
+});
+test('desktop hourly checks pause for quit confirmation and stop when the service closes',async()=>{
+ let cancelQuit;
+ const f=await updateFixture({response:()=>new Promise(resolve=>{cancelQuit=()=>resolve(0);})});
+ const checkCount=()=>f.nativeCalls.filter(call=>call[0]==='check-update').length;
+ f.app.quit();f.updater.emit('update-not-available');
+ assert.equal(updateMenu(f).enabled,false);
+ f.runTimers(3_600_000);assert.equal(checkCount(),1);
+ cancelQuit();await f.tick();assert.equal(updateMenu(f).enabled,true);
+ f.runTimers();assert.equal(checkCount(),2);
+ f.updater.emit('update-not-available');f.child.emit('close',0,null);
+ f.powerMonitor.emit('resume');f.runTimers(7_200_000);assert.equal(checkCount(),2);
 });
 test('Intel Mac reads only its own feed',async()=>{
  const f=await updateFixture({arch:'x64'});assert.equal(f.nativeCalls.find(c=>c[0]==='feed')[1].url,'https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-x64.json');

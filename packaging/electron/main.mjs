@@ -553,6 +553,29 @@ function requestQuit(){if(windowsRecovery())void recoverWindowsExit();else app.q
 const nativeUpdater=()=>windowsUpdater??autoUpdater;
 const windowsRecovery=()=>!!windowsUpdater&&(closed||updateStopping)&&updateState?.status==='error';
 let updateState=null,updateStopping=false,updateAcknowledged=false,updateManual=false;
+let updateCheckTimer,updateCheckDue,updateSuspended=false;
+const UPDATE_CHECK_JITTER=5*60_000;
+const updateJitter=()=>Math.floor(Math.random()*UPDATE_CHECK_JITTER);
+function canCheckUpdate(){
+ return origin&&updateState&&!closed&&!quitPending&&!quitSent&&!allowQuit&&!updateStopping&&!updateSuspended
+  &&(updateState.status==='idle'||updateState.status==='error');
+}
+function armUpdateCheck(){
+ clearTimeout(updateCheckTimer);
+ if(updateCheckDue!==undefined&&canCheckUpdate()){
+  updateCheckTimer=setTimeout(()=>checkUpdate(),Math.max(0,updateCheckDue-Date.now()));
+ }
+}
+function scheduleUpdateCheck(delay=55*60_000+2*updateJitter()){
+ if(!updateState||closed||quitSent||updateState.status==='ready')return;
+ updateCheckDue??=Date.now()+delay;
+ armUpdateCheck();
+}
+function clearUpdateCheck(){
+ clearTimeout(updateCheckTimer);
+ updateCheckDue=undefined;
+}
+app.on('will-quit',clearUpdateCheck);
 const updateConfirmed=()=>updateAcknowledged&&closed&&exitCode===0&&!exitSignal;
 function updateChanged(){
  refreshMenu();
@@ -562,9 +585,16 @@ function updateChanged(){
  }
 }
 function checkUpdate(manual=false){
- if(windowsRecovery()||!updateState||['checking','downloading','ready'].includes(updateState.status))return;
+ if(!canCheckUpdate())return;
+ clearUpdateCheck();
  updateManual=manual;updateState={status:'checking',noticeHidden:false};updateChanged();
- try{const checking=nativeUpdater().checkForUpdates();if(windowsUpdater)void Promise.resolve(checking).then(result=>{if(result===null){updateState={status:'idle',noticeHidden:false};updateChanged();return;}return result?.downloadPromise;}).catch(()=>{});}catch{updateCheckFailed();}
+ try{
+  const checking=nativeUpdater().checkForUpdates();
+  if(windowsUpdater)void Promise.resolve(checking).then(result=>{
+   if(result!==null)return result?.downloadPromise;
+   updateState={status:'idle',noticeHidden:false};updateChanged();scheduleUpdateCheck();
+  }).catch(()=>{});
+ }catch{updateCheckFailed();}
 }
 function updateCheckFailed(){
  if(!updateState)return;
@@ -573,6 +603,7 @@ function updateCheckFailed(){
  if(windowsUpdater)windowsCandidate=undefined;
  updateState={...updateState,status:!windowsUpdater&&updateState.status==='ready'?'ready':'error',error:'update_check_failed'};updateChanged();
  if(updateManual)void showError('检查更新未能完成，请稍后从菜单重试。');updateManual=false;
+ scheduleUpdateCheck();
 }
 async function setupDesktopUpdate(manifest,test){
  if(test||!app.isPackaged||manifest.preparation||manifest.localWorkingTree||manifest.publishable!==true||manifest.releaseChannel!=='stable'||manifest.appId!=='app.homer.desktop'||!(process.platform==='darwin'&&['arm64','x64'].includes(process.arch)||process.platform==='win32'&&process.arch==='x64')||!/^\d+\.\d+\.\d+$/.test(app.getVersion()))return;
@@ -597,17 +628,29 @@ async function setupDesktopUpdate(manifest,test){
   execFileSync('/usr/bin/codesign',['--verify','--strict','-R','=anchor apple generic and identifier "app.homer.desktop" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists',bundle],{stdio:'ignore',timeout:30000});
   autoUpdater.setFeedURL({url:`https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-${process.arch}.json`,serverType:'json'});
   }
-  updateState={status:'idle',noticeHidden:false};
   nativeUpdater().on('checking-for-update',()=>{if(windowsRecovery())return;updateState={status:'checking',noticeHidden:false};updateChanged();});
-  nativeUpdater().on('update-available',info=>{if(windowsRecovery())return;if(windowsUpdater&&info?.files?.some(file=>file.isAdminRightsRequired===true)){updateCheckFailed();return;}updateState={status:'downloading',noticeHidden:false};updateChanged();});
-  nativeUpdater().on('update-not-available',()=>{if(windowsRecovery())return;updateState={status:'idle',noticeHidden:false};updateChanged();if(updateManual)void dialog.showMessageBox(window,{type:'info',title:'荷马',message:'已是最新版本',buttons:['返回会话']});updateManual=false;});
+  nativeUpdater().on('update-available',()=>{if(windowsRecovery())return;updateState={status:'downloading',noticeHidden:false};updateChanged();});
+  nativeUpdater().on('update-not-available',()=>{
+   if(windowsRecovery())return;
+   updateState={status:'idle',noticeHidden:false};updateChanged();
+   if(updateManual)void dialog.showMessageBox(window,{type:'info',title:'荷马',message:'已是最新版本',buttons:['返回会话']});
+   updateManual=false;scheduleUpdateCheck();
+  });
   nativeUpdater().on('update-downloaded',(_event,_notes,version)=>{
    if(windowsUpdater){void windowsDownloaded(_event);return;}
    if(updateState?.status==='ready'&&updateState.version===version)return;
+   clearUpdateCheck();
    updateManual=false;updateState={status:'ready',noticeHidden:false,...(typeof version==='string'&&/^\d+\.\d+\.\d+$/.test(version)?{version}:{error:'update_metadata_unconfirmed'})};updateChanged();if(!updateState.version)void showError('更新版本信息未确认，请核对安装包。暂存更新未被撤销。');
   });
   nativeUpdater().on('error',updateCheckFailed);
- }catch{updateState=null;}
+  powerMonitor.on('suspend',()=>{updateSuspended=true;clearTimeout(updateCheckTimer);});
+  powerMonitor.on('resume',()=>{
+   updateSuspended=false;
+   if(updateCheckDue!==undefined&&updateCheckDue<=Date.now())updateCheckDue=Date.now()+updateJitter();
+   armUpdateCheck();
+  });
+  return true;
+ }catch{return false;}
 }
 async function verifyWindowsUpdate(publishers,path,candidate){
  if(typeof path!=='string'||!win32.isAbsolute(path)||!Array.isArray(publishers))return 'update_check_failed';
@@ -637,6 +680,7 @@ async function windowsDownloaded(info){
  const error=await verifyWindowsUpdate(windowsPublishers,candidate.path,candidate);
  if(windowsCandidate!==candidate||windowsRecovery())return;
  updateManual=false;updateState={...updateState,status:error?'error':'ready',version:candidate.version,error:error??undefined};updateChanged();
+ if(error)scheduleUpdateCheck();else clearUpdateCheck();
 }
 function windowsUpdateFailed(){
  if(windowsRecovery()&&!updateStopping)return;
@@ -822,6 +866,8 @@ app.on('before-quit',event=>{
  if(confirmed()&&updateState?.status!=='ready'){quitPending=true;finishQuit();return;}
  if(quitPending)return;
  quitPending=true;
+ clearTimeout(updateCheckTimer);
+ if(updateState)refreshMenu();
  if(pendingConnection){cancelConnection();accountChanged();}
  showWindow();
  if(updateState?.status==='ready'){
@@ -857,7 +903,12 @@ app.on('before-quit',event=>{
  }
  const disconnecting=quitAction==='disconnect',restarting=quitAction==='restart';
  void dialog.showMessageBox(window,{type:'question',title:'荷马',message:disconnecting?'退出本机登录？':restarting?'重启荷马？':'退出荷马？',detail:(disconnecting?'将先停止当前回复和后台工作，请先保存草稿。退出仅清除本机登录凭据，保留历史对话、任务和文件；不会注销网站账号。':restarting?'将先停止当前回复和后台工作，请先保存草稿。重启后应用已保存的配置，保留历史对话、任务和文件。':'退出会停止当前回复和后台工作。请先核对并保存草稿。'),buttons:['取消，继续使用',disconnecting?'退出登录并重启':restarting?'重启并应用':'退出并停止工作'],defaultId:0,cancelId:0}).then(({response})=>{
-  if(response!==1||switchSource&&!switchSource.validCaller()){quitPending=false;quitAction=undefined;switchSource=undefined;return;}
+  if(response!==1||switchSource&&!switchSource.validCaller()){
+   quitPending=false;quitAction=undefined;switchSource=undefined;
+   if(updateState)refreshMenu();
+   armUpdateCheck();
+   return;
+  }
   if(updateState?.status==='ready'){quitPending=false;app.quit();return;}
   cancelConnection();
   if(confirmed()){finishQuit();return;}
@@ -1020,7 +1071,13 @@ try{
       void showError('桌面服务认证信息无效。请保留数据并核对应用完整性。');continue;
      }
      desktopAccessToken=value.desktopAccessToken;
-     origin=url.origin;if(process.platform==='win32')void updateReady.then(()=>{if(!closed)checkUpdate();});else checkUpdate();void window.loadURL(value.url).then(()=>{window.setTitle('荷马');offerPowerAuthorization();}).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
+     origin=url.origin;
+     void updateReady.then(enabled=>{
+      if(!enabled||closed||quitSent)return;
+      updateState={status:'idle',noticeHidden:false};updateChanged();
+      scheduleUpdateCheck(updateJitter());
+     });
+     void window.loadURL(value.url).then(()=>{window.setTitle('荷马');offerPowerAuthorization();}).catch(()=>showError('页面加载未确认。请保留数据并核对本次服务。'));
     }else if(value.kind==='error')void showError('无法启动荷马（'+code({message:value.code})+'）。请保留原账号和数据，核对后重新打开。');
    }
   });
@@ -1028,7 +1085,7 @@ try{
   runtime.on('close',(status,signal)=>{
    for(const pending of nativeRequests.values()){clearTimeout(pending.timer);pending.reject(Error('native_account_unconfirmed'));}nativeRequests.clear();
    desktopAccessToken=undefined;
-   closed=true;exitCode=status;exitSignal=signal;
+   closed=true;exitCode=status;exitSignal=signal;clearUpdateCheck();
    for(const pending of powerRequests.values()){clearTimeout(pending.timer);pending.reject(Error('power_recheck_unconfirmed'));}powerRequests.clear();
    void closeDesktopPower();
    cancelDesktopCapture();

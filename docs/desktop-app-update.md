@@ -24,7 +24,7 @@ Windows ARM64、32 位、Linux 不纳入本次范围。不能以 Apple Silicon �
 
 不增加更新内容入口、摘要、弹窗、Markdown 渲染或相关状态；原生附带的说明直接忽略。手机合同、手机关闭记录及下载入口不变。
 
-主进程启动最多自动检查一次，提供原生菜单手动检查，不轮询、不定时重试、不在空闲时自动重启。只对正式 stable 身份启用；开发、QA、测试 profile、preparation、localWorkingTree、缺失或未知渠道全部禁用。
+主进程在服务和更新器就绪后错峰发起首次检查，随后约每小时检查一次。原生菜单可手动检查，准备好更新后由用户确认重启。只对正式 stable 身份启用；开发、QA、测试 profile、preparation、localWorkingTree、缺失或未知渠道全部禁用。
 
 首批只发布所有已启用来源版本都已验证兼容的目标；本次 MVP 不新增通用迁移框架。需要数据迁移、新权限或改变最低系统要求的目标不进入此次发行，先满足上位要求；静态清单不承担来源兼容路由。
 
@@ -91,11 +91,11 @@ Windows 图片沿原媒体入口使用 10 行 Sharp helper，覆盖现有 WebP �
 
 仅对应的三项目标正式包、releaseChannel: stable、核定平台身份和有效版本启用。渠道写入已有 desktop-manifest.json 并由原完整性路径保护；publishable 不构成签名证明，未签名路径须由包内配置显式启用。源码仅 --distribution、有效签名输入或显式 --unsigned-windows、显式 --release-tag 和正整数 --build-number 才写入 stable 及正式 appId；构建号由发行时核对现有版本后指定，不能依赖公开仓库的提交数量。候选仍按 Git 提交数量生成构建号，不生成更新清单。原脚本及依赖锁纳入既有 source freeze guard。
 
-先注册原生事件，再在既有服务 ready 后后台检查一次，不阻塞业务启动。Windows 签名模式的当前 exe 验证与业务启动并行，未签名模式不调用该验签；原服务 ready 分支等待局部初始化 Promise 后检查，两个到达顺序都只检查一次。Windows 只在正式 NSIS 安装的普通业务进程启用；不处理旧 Squirrel 首启锁或增加延迟重试定时器。菜单可手动发起；checking／downloading 去重，ready 后不再发起第二次更新。
+注册原生事件后，服务和更新器均就绪即安排首次后台检查，随机延迟 0–5 分钟，不阻塞业务启动。Windows 签名模式的当前 exe 验证与业务启动并行，未签名模式不调用该验签。主进程只使用一个一次性定时器，检查无更新或失败后等 55–65 分钟再查。休眠暂停，恢复后保留未到的期限，已到期则错峰补查一次。手动检查复用同一入口，实际发起时替代已安排的一轮。checking／downloading（含 Windows 下载后校验）期间去重，ready 后停止。退出确认时暂停，取消时恢复，服务关闭和应用退出时清理定时器。
 
 Mac 内置 autoUpdater、Windows NsisUpdater 各负责版本判断、下载及准备；不写手机数字比较器、不使用手机 5 秒／32 KiB 限制、不新增 Homer 安装包缓存。Windows 配置 autoDownload=true、autoInstallOnAppQuit=false、allowPrerelease=false、allowDowngrade=false、disableDifferentialDownload=true、disableWebInstaller=true；只使用完整稳定版安装器。库缓存归库管理，命中缓存也须通过第 7 节验证；Homer 不持久保存发行结果。菜单继续仅显示“正在后台下载…”，不增加进度 UI。
 
-Windows 的检查调用须同时消费 checkForUpdates() 及返回结果中的 downloadPromise；null 结果直接结束。error 事件统一更新状态和安全错误码，Promise 的终结 catch 只消费拒绝，不再更新状态、弹窗或重试；不能照搬 Mac 的同步 try/catch，也不调用 checkForUpdatesAndNotify()。一次启动一次指 Homer 发起一次检查；不另加库外重试调度。
+Windows 的检查调用须同时消费 checkForUpdates() 及返回结果中的 downloadPromise；null 结果结束本轮。error 事件统一更新状态和安全错误码，Promise 的终结 catch 只消费拒绝。普通失败沿用下一轮小时调度，无额外退避。当前更新器错误接口未提供结构化 Retry-After，继续由原更新器处理请求。
 
 ### 状态与事件
 
@@ -224,13 +224,14 @@ before-quit-for-update／before-quit 不能承接全部异步安全准备；显�
 | 问题／案例 | 原测试接点及最小断言 |
 | --- | --- |
 | Windows 安装失败后退出重开 | tests/electron-shell.test.mjs：合成库保留 quitAndInstallCalled 并排入延后退出，分别模拟同步失败、异步失败及先关窗后报错；停止中报错覆盖 ACK／exit0 两种顺序及两者之间报错、窗口存活／销毁。确认只调用一次安装 API；错误后延后退出被拦截，取消后无安装／退出／重复弹窗，迟到的更新事件不恢复 ready，菜单及关窗仍能主动确认退出；缺 ACK、非零退出、信号或超时后的迟到 ACK 仍拒绝。新建第二个 shell fixture 模拟用户重开，检查一次并重验缓存；缓存篡改、清单撤回不得 ready，旧 ACK 不放行新进程安装。tests/desktop-update-stop.test.mjs 原证明断言保留，Mac 重试／退出／取消回归不改语义。 |
-| 检查与下载的异步拒绝 | tests/electron-shell.test.mjs：覆盖 checkForUpdates() 拒绝、检查成功后 downloadPromise 拒绝和 null 结果；原错误事件仅产生一次状态／提示，无 unhandledRejection、不自动重查；服务与输入保持可用。 |
+| 检查与下载的异步拒绝 | tests/electron-shell.test.mjs：覆盖 checkForUpdates() 拒绝、检查成功后 downloadPromise 拒绝和 null 结果；原错误事件仅产生一次状态／提示，无 unhandledRejection，等下一周期再查；服务与输入保持可用。 |
+| 周期检查 | tests/electron-shell.test.mjs 使用假时钟覆盖 Mac／Windows 启动错峰、手动与定时去重、失败后等下一周期、休眠补查、下载／校验／待重启以及退出取消。真实签名包的原生下载和安装待隔离验收。 |
 | 按用户安装及禁用提权 helper | tests/electron-package.test.mjs／tests/desktop-update-runtime.test.mjs 合成配置和归档断言第 3 节三个 NSIS 值、封存前后均无 elevate.exe、NSIS 打包不额外改变已封存 payload；错误配置或夹具注入 helper 时拒绝。shell 拒绝 isAdminRightsRequired=true 目标；对 EACCES／UNKNOWN 模拟库回退到缺失 helper 后失败，走安全退出恢复，不另找提权程序。真实 payload 和无 UAC 仍待 D 节验收。 |
 | 禁用库原始日志 | tests/electron-shell.test.mjs：检查前 logger 已为 null；注入含合成正文、查询 URL 和用户路径哨兵的解析／下载／验签错误，确认 console、业务诊断、IPC 和原生弹窗均无原始哨兵，只保留安全错误码。与 Promise 拒绝用例共用替身，不新建 logger。 |
 
 ### B. 更新状态和安全切换
 
-- [x] 一次启动一次自动检查、原生菜单手动重试／去重、下载完成才 ready、错误脱敏、重复准备事件不重开已关闭提示；不保存响应或关闭记录。
+- [x] 启动及约每小时自动检查、原生菜单手动检查／去重、下载完成才 ready、错误脱敏、重复准备事件不重开已关闭提示；不保存响应或关闭记录。
 - [x] 原 runtime 通道接入 update-stop，复用原 probe／prepare 和最终冻结；原线程交接、host 停止证明及 exit0 后才结束 runDev，外层 owner 释放后才发 update-stopped。
 - [x] 合成断言覆盖忙碌 owner、未知 journal、新输入竞态、在飞请求、账号写入、prepare 冻结、缺失线程／停止证明、ACK／退出码／信号／超时、安装 API 失败；普通退出竞态不绕过安全门，重复回执不重复安装、不 relaunch。
 - [x] Mac 安装失败后复用停止证明的显式重试／正常退出／取消；覆盖同步及异步失败、隐藏提示、取消后菜单重试、重复回执、恢复期间的未保存编辑／页面切换保护及先关窗后报错的无父窗口恢复。未知停止状态即使窗口已销毁也拒绝恢复放行。
