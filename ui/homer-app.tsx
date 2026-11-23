@@ -1045,6 +1045,7 @@ function HomerApp() {
   const [captureShortcutRecording,setCaptureShortcutRecording]=useState(false);
   const accountSettings=useRef<{openAccount:()=>void;openMobile:(id:string)=>void;close:()=>void}>(null);
   const [canvasOpen,setCanvasOpen]=useState(false);
+  const taskStatusFrame=useRef(0);
   const [statusContainer,setStatusContainer]=useState<HTMLDivElement|null>(null);
   const canvasTrigger=useRef<HTMLElement|null>(null);
   const previewComposer=useRef<PreviewComposer|null>(null);
@@ -1057,7 +1058,6 @@ function HomerApp() {
   }
   const activePreviewTab=previewTabs.threadId===state.threadId?previewTabs.tabs.find(tab=>tab.id===previewTabs.activeId)??null:null;
   useEffect(()=>{
-  const taskStatusFrame=useRef(0);
     if(!window.homerBrowserPreview)return;
     setPreviewTabs(old=>{
       if(old.threadId!==state.threadId)return old;
@@ -1473,6 +1473,7 @@ function HomerApp() {
       if(activePages.current.queue.version.readEpoch!==version.readEpoch||activePages.current.queue.version.threadId!==version.threadId){for(const controller of activeReads.current.controllers)controller.abort();for(const timer of activeReads.current.timers)clearTimeout(timer);activeReads.current.timers.clear();}
       activePages.current.queue.snapshot(version,next.queue??[],next.history.moreQueue);
       activePages.current.interactions.snapshot(version,next.interactions,next.history.moreInteractions);
+      taskStatusFrame.current++;
       setState({...next,queue:activePages.current.queue.items,interactions:activePages.current.interactions.items,messages:history.current.messages,artifacts:history.current.artifacts,inactiveInteractions:history.current.inactiveInteractions,history:{...next.history,moreQueue:activePages.current.queue.more,moreInteractions:activePages.current.interactions.more}});
       for(const kind of ['queue','interactions'] as const)if((kind!=='queue'||!next.features?.queueDispatch)&&activePages.current[kind].needsRead)void readActivePage(kind);
       setConnected(true); setConnectionError("");
@@ -1486,8 +1487,6 @@ function HomerApp() {
       if (disposed || activeEvents !== events) return;
       if(code==='history_protocol_required'||code==='route_not_found'){setUiUpdate(true);setConnectionError('网页读取版本不匹配，请保存草稿后刷新界面。');reader.current.connected=false;setConnected(false);events.close();return;}
       if(code==='mobile_device_denied'){reader.current.connected=false;setConnected(false);setConnectionError('此设备未获授权或已停用。请在主端核对，或在 App 中重新扫码。草稿已保留。');if(!mobileView){events.close();activeEvents=undefined;retryTimer=setTimeout(connect,10000);}return;}
-      taskStatusFrame.current++;
-      scheduleRefreshFrame.current++;
       reader.current.connected=false;setConnected(false); setConnectionError(code==="service_not_ready"?"服务尚未就绪，正在等待主对话。":"暂未连接到荷马，正在自动重连。已有消息和草稿会保留。");
       if(mobileView)return;
       events.close(); activeEvents = undefined;
