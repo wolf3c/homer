@@ -1232,6 +1232,8 @@ UI类型检查、官方Canvas两项离线检查、脚本语法和独立Vite构�
 
 消息 Markdown 内嵌图片使用 Node 22 与隔离 Chrome。设置 `HISTORY_FOLLOWUP_BUILD` 指向独立 Vite 构建，`HOMER_SYNTHETIC_ROOT` 和 `HOMER_BROWSER_EVIDENCE` 指向任务专用临时目录，运行 `node --import tsx tests/message-markdown-image.browser.mjs`。该用例已登记显式 browser 清单。配对浏览器复验另设 `HOMER_YEZI2_ROOT` 指向 Yezi2 信令实验环境，`HOMER_MOBILE_CHAT_FIXTURE` 指向任务临时目录，运行 `node --import tsx --test --test-name-pattern='bundled chat pairs' tests/mobile-app-chat.integration.mjs`。两项使用合成会话和独立 profile。
 
+移动端 TLS 443 专项运行 `npm run test:rtc-relay`。在隔离源码副本使用已验证 ICE 修复的 `node-datachannel` 原生模块，设置 `HOMER_YEZI2_ROOT` 指向支持 `relay` 的本地信令，`HOMER_RTC_RELAY_LAB` 指向独立输出目录。coturn 拥有 `relay.qa.test` 的测试证书，在 `HOMER_RTC_RELAY_ADDRESS` 指定的实验地址监听 TLS 443，并把 UDP 3478 映射到主机回环 34879。`HOMER_RTC_RELAY_SECRET_FILE` 指向 coturn 与合成签发器共用的私密文件，`HOMER_RTC_RELAY_CERT_SPKI` 提供证书公钥 SHA-256 的 Base64 值。`HOMER_RTC_NO_UDP_CHROME` 指向已独立确认阻断 Chrome 出站 UDP 的启动器。专项通过的证据包括新配对和已绑定重连均选中 TLS 中继，以及手机网页收到合成回复。
+
 ## Markdown 附件相对图片专项（2026-11-17）
 
 默认离线回归 `tests/markdown-resources.test.ts` 使用已有独立SQLite／附件夹具，覆盖保存的原路径、子目录与../、编码路径、正文快照、原.md删除／修改、图片变化／缺失、无原路径、原有消息授权及文件检查。`mobile-request.test.mjs`验证手机资源URL到`media.read`的参数与二进制回传；桌面鉴权断言沿用`electron-shell.test.mjs`。不读取日常账号／runtime／CODEX_HOME，不调用模型。

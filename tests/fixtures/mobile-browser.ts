@@ -5,7 +5,7 @@ import {EventEmitter} from 'node:events';
 import {Homer} from '../../src/service.js';
 import {homerWebBridge} from '../../src/web-homer.js';
 import {createMobileGateway} from '../../src/mobile-gateway.js';
-export async function mobileBrowserFixture({signalOrigin,uiDirectory,base}:{signalOrigin:string;uiDirectory:string;base:string}){
+export async function mobileBrowserFixture({signalOrigin,uiDirectory,base,turnAccount}:{signalOrigin:string;uiDirectory:string;base:string;turnAccount?:Parameters<typeof createMobileGateway>[0]['turnAccount']}){
  const directory=resolve(mkdtempSync(join(base,'browser-'))),runtime=join(directory,'runtime');mkdirSync(runtime);
  const turns:string[]=[];
  class Engine extends EventEmitter{
@@ -17,7 +17,7 @@ export async function mobileBrowserFixture({signalOrigin,uiDirectory,base}:{sign
  try{
   await app.start();
   const bridge=homerWebBridge(app,{});
-  const gateway=await createMobileGateway({bridge,port:0,signalOrigin,databasePath:join(runtime,'homer.sqlite'),uiDirectory:resolve(uiDirectory),logoPath:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
+  const gateway=await createMobileGateway({bridge,port:0,signalOrigin,turnAccount,databasePath:join(runtime,'homer.sqlite'),uiDirectory:resolve(uiDirectory),logoPath:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png')});
   return {...gateway,app,turns,history:app.history,inputs:app.inputs,async close(){await gateway.close();await app.close();rmSync(directory,{recursive:true,force:true});}};
  }catch(error){await app.close();rmSync(directory,{recursive:true,force:true});throw error;}
 }

@@ -135,3 +135,21 @@ test('closing an old owner aborts its flight and timer without poisoning the rep
  const before=calls.length;old.networkChanged();assert.deepEqual(await old.get(),[]);assert.equal(calls.length,before);
  next.close();t.mock.timers.tick(7200000);assert.equal(calls.length,before);
 });
+
+test('desktop keeps UDP and makes an optional validated TLS 443 relay available to the mobile handshake',async t=>{
+ const {turn}=fakeIssuer(t,()=>Response.json({...payload(),mobileTurnUrl:'turns:relay.example.test:443?transport=tcp'}));
+ assert.equal((await turn.get())[0]?.relayType,'TurnUdp');
+ assert.deepEqual(turn.mobileRelay,{
+  urls:'turns:relay.example.test:443?transport=tcp',username:payload().iceServers[0]!.username,credential:payload().iceServers[0]!.credential,
+ });
+});
+
+test('invalid optional mobile endpoints leave the existing UDP configuration usable',async t=>{
+ for(const mobileTurnUrl of ['turn:relay.example.test:443?transport=tcp','turns:192.0.2.10:443?transport=tcp','turns:relay.example.test:5349?transport=tcp','turns:relay.example.test:443?transport=tcp&x=1']){
+  await t.test(mobileTurnUrl,async t=>{
+   const {turn}=fakeIssuer(t,()=>Response.json({...payload(),mobileTurnUrl}));
+   assert.equal((await turn.get()).length,1);
+   assert.equal(turn.mobileRelay,undefined);
+  });
+ }
+});

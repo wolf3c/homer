@@ -12,7 +12,7 @@ export const DESKTOP_CANDIDATE_PATHS=[
  'scripts/macos-power.mjs','scripts/macos-power.d.mts','scripts/windows-power.mjs','scripts/windows-power.d.mts','scripts/desktop-wake.mjs','scripts/build-macos-power.mjs',
  'packaging/windows/power-task.ps1','packaging/macos/PowerClient.swift','packaging/macos/PowerHelper.swift','packaging/macos/PowerShared.swift','packaging/macos/PowerEvents.swift','packaging/macos/app.homer.desktop.power.plist',
  'src/desktop-power.ts','ui/desktop-power-settings.tsx','ui/homer-styles.css','scripts/desktop-profile.d.mts',
- 'src/mobile-turn.ts','src/mobile-gateway.ts','src/mobile-rtc.ts','ui/mobile-devices.tsx',
+ 'src/mobile-turn.ts','src/mobile-gateway.ts','src/mobile-rtc.ts','src/mobile-devices.ts','src/mobile-relay.ts','src/mobile-signaling.ts','ui/mobile-devices.tsx','ui/mobile-connection.ts',
  'scripts/prepare-desktop-dependencies.mjs','packaging/macos/WindowCapture.swift','packaging/macos/dependencies-lock.json','packaging/macos/codex-license/LICENSE','packaging/macos/codex-license/NOTICE',
  'package.json','package-lock.json','scripts/build-desktop.mjs','scripts/desktop-source.mjs','scripts/desktop-profile.mjs','src/web-server.ts',
  'scripts/desktop-runtime.mjs','scripts/dev-build.mjs','scripts/dev.mjs','scripts/dev-ingress.mjs','src/dev-host.ts',

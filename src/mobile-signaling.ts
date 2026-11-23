@@ -1,4 +1,4 @@
-export type MobileSignalEvent={type:'session'|'signal'|'closed';sessionId:string;description?:{type:'offer'|'answer';sdp:string};candidate?:{candidate:string;sdpMid:string|null;sdpMLineIndex:number|null;usernameFragment:string|null}|null};
+export type MobileSignalEvent={type:'session'|'signal'|'closed';sessionId:string;relay?:string;description?:{type:'offer'|'answer';sdp:string};candidate?:{candidate:string;sdpMid:string|null;sdpMLineIndex:number|null;usernameFragment:string|null}|null};
 // Same narrow WebSocket contract in Yezi2 production and its isolated lab.
 export async function openMobileSignal(base:string,role:'host'|'mobile',onEvent:(event:MobileSignalEvent)=>void|Promise<void>,onClose=()=>{},abort?:AbortSignal){
  if(abort?.aborted)throw Error('mobile_signal_unavailable');

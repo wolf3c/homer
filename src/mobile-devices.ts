@@ -53,6 +53,13 @@ export class MobileDevices {
   if(!credential||! /^[A-Za-z0-9_-]{43}$/.test(credential))return;
   return (this.db.prepare('SELECT id FROM mobile_devices WHERE credentialHash=? AND enabled=1').get(hash(credential)) as {id:string}|undefined)?.id;
  }
+ // Only the host uses these hashes to verify pre-connection relay proofs.
+ relayCredentialHashes():string[]{
+  const invitation=this.pending();
+  const pendingHash=invitation?.candidate?.hash??invitation?.hash;
+  const enabled=this.db.prepare('SELECT credentialHash FROM mobile_devices WHERE enabled=1').all() as {credentialHash:string}[];
+  return [...(pendingHash?[pendingHash]:[]),...enabled.map(row=>row.credentialHash)];
+ }
  status(credential?:string):'active'|'pending'|'expired'|'denied'{
   if(this.authorize(credential))return 'active';
   const pending=this.pending(),value=credential&&hash(credential);

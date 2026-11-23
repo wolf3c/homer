@@ -3,6 +3,7 @@ import {openSync,closeSync,fstatSync,ftruncateSync,writeSync,constants} from 'no
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import type {createMobileTurn} from './mobile-turn.js';
+import {answerMobileRelay} from './mobile-relay.js';
 import type {MobileDevices} from './mobile-devices.js';
 import type {mobileRoute} from './mobile-route.js';
 import {openMobileSignal,type MobileSignalEvent} from './mobile-signaling.js';
@@ -23,10 +24,11 @@ function diagnostic(stage:string,value:string){
 }
 
 // The stable gateway owns all Node RTC peers; signaling never sees device secrets.
-export function startMobileRtc({signalOrigin,route,devices,call,turn,iceServers=['stun:stun.l.google.com:19302']}:{signalOrigin:string;route:ReturnType<typeof mobileRoute>;devices:MobileDevices;call:(op:string,input:unknown)=>Promise<unknown>;iceServers?:string[];turn?:Pick<ReturnType<typeof createMobileTurn>,'get'|'networkChanged'>}){
+export function startMobileRtc({signalOrigin,route,devices,call,turn,iceServers=['stun:stun.l.google.com:19302']}:{signalOrigin:string;route:ReturnType<typeof mobileRoute>;devices:MobileDevices;call:(op:string,input:unknown)=>Promise<unknown>;iceServers?:string[];turn?:Pick<ReturnType<typeof createMobileTurn>,'get'|'networkChanged'|'mobileRelay'>}){
  const origin=new URL(signalOrigin);
  if(origin.origin!==signalOrigin||origin.username||origin.password||!(origin.protocol==='https:'||origin.protocol==='http:'&&origin.hostname==='127.0.0.1'))throw Error('mobile_signal_origin_invalid');
  if(iceServers.some(value=>!/^stun:[a-z0-9.-]+(?::[0-9]{1,5})?$/i.test(value)))throw Error('mobile_stun_invalid');
+ const mobileRelaySupported=rtc.getLibraryVersion?.()==='0.24.6+homer-ice-role';
  const address=signalOrigin.replace(/^http/,'ws')+'/homer/rtc',abort=new AbortController();
  type Peer={peer:PeerConnection;channel:DataChannel;session?:ReturnType<typeof openMobileSession>;timer:ReturnType<typeof setTimeout>};
  const peers=new Map<string,Peer>();let generation=0,closed=false,link:Awaited<ReturnType<typeof openMobileSignal>>|undefined,retry:ReturnType<typeof setTimeout>|undefined;
@@ -43,9 +45,14 @@ export function startMobileRtc({signalOrigin,route,devices,call,turn,iceServers=
    const relay=await turn?.get()??[];
    diagnostic('turn',relay.length?'available':'unavailable');
    if(closed||client.closed||observed!==generation)return;
+   const mobileRelay=mobileRelaySupported?turn?.mobileRelay:undefined;
+   const grant=mobileRelay&&typeof event.relay==='string'
+    ?await answerMobileRelay(route.routeId,event.relay,id,()=>closed||observed!==generation?[]:devices.relayCredentialHashes(),mobileRelay).catch(()=>undefined)
+    :undefined;
+   if(closed||client.closed||observed!==generation)return;
    const peer=new rtc.PeerConnection('homer-mobile',{iceServers:[...iceServers,...relay]});
    const send=(value:unknown)=>void client.call('send',value).catch(()=>{diagnostic('signaling','send-failed');if(!peers.get(id)?.session)remove(id);});
-   peer.onLocalDescription((sdp,type)=>{diagnostic('local-description',['offer','answer','pranswer'].includes(type)?type:'unknown');send({sessionId:id,description:{type,sdp}});});
+   peer.onLocalDescription((sdp,type)=>{diagnostic('local-description',['offer','answer','pranswer'].includes(type)?type:'unknown');send({sessionId:id,description:{type,sdp},...(grant&&type==='offer'?{relay:grant}:{})});});
    peer.onLocalCandidate((candidate,sdpMid)=>{diagnostic('local-candidate',candidateType(/\btyp (host|srflx|prflx|relay)\b/.exec(candidate)?.[1]));send({sessionId:id,candidate:{candidate:candidate.replace(/^a=/,''),sdpMid,sdpMLineIndex:0,usernameFragment:null}});});
    peer.onGatheringStateChange(state=>diagnostic('gathering',['new','gathering','in-progress','complete'].includes(state)?state:'unknown'));
    peer.onIceStateChange(state=>diagnostic('ice',['new','checking','connected','completed','disconnected','failed','closed'].includes(state)?state:'unknown'));

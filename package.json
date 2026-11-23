@@ -39,6 +39,7 @@
     "test:prompt-resume": "node scripts/test.mjs --prompt-resume",
     "test:account": "node scripts/test.mjs --account",
     "test:rtc": "node scripts/test.mjs --rtc",
+    "test:rtc-relay": "node scripts/test.mjs --rtc-relay",
     "test:development": "node scripts/test.mjs --development",
     "test:vendor": "node scripts/test.mjs --vendor",
     "test:desktop:acceptance": "node scripts/test.mjs --desktop",

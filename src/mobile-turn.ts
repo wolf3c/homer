@@ -1,20 +1,21 @@
 import {isIPv4} from 'node:net';
 import type {IceServer} from 'node-datachannel';
 import {validateHomerOrigins} from './homer-account.js';
+import {mobileRelayConfig,type MobileRelay} from './mobile-relay.js';
 
 export type MobileTurnStatus='account_required'|'configuration_required'|'network_restricted'|undefined;
 
-// One instance belongs to one host/account lifetime; credentials never enter UI or disk.
+// One instance belongs to one host/account lifetime. Credentials are only kept in memory.
 export function createMobileTurn({gatewayOrigin,token,allowSyntheticLoopback=false}:{gatewayOrigin:string;token:string;allowSyntheticLoopback?:boolean}) {
  validateHomerOrigins({websiteOrigin:gatewayOrigin,gatewayOrigin},allowSyntheticLoopback);
  if(!/^[\x21-\x7e]{1,4096}$/.test(token))throw Error('mobile_turn_account_invalid');
  const stamp=()=>({wall:Date.now(),mono:performance.now()});
  const age=(at:ReturnType<typeof stamp>)=>Math.max(0,Date.now()-at.wall,performance.now()-at.mono);
- let cache:{servers:IceServer[];at:ReturnType<typeof stamp>;refresh:number}|undefined;
+ let cache:{servers:IceServer[];mobileRelay?:MobileRelay;at:ReturnType<typeof stamp>;refresh:number}|undefined;
  let flight:Promise<void>|undefined,abort:AbortController|undefined,timer:ReturnType<typeof setTimeout>|undefined;
  let status:MobileTurnStatus;
  let stopped=false,paused:''|'auth'|'ip'='',retryAt=stamp(),retryDelay=0,failures=0;
- const valid=()=>cache&&age(cache.at)<3570000?cache.servers:[];
+ const valid=()=>cache&&age(cache.at)<3570000?cache:undefined;
  const schedule=(delay:number)=>{if(timer)clearTimeout(timer);timer=setTimeout(()=>{timer=undefined;void request();},Math.max(1,delay));timer.unref?.();};
  const wait=()=>Math.max(0,retryDelay-age(retryAt));
  function request():Promise<void>{
@@ -44,7 +45,7 @@ export function createMobileTurn({gatewayOrigin,token,allowSyntheticLoopback=fal
     const match=typeof server?.urls?.[0]==='string'?/^turn:([0-9.]+):([0-9]{1,5})\?transport=udp$/.exec(server.urls[0]):null;
     const hostname=match?.[1]??'',port=Number(match?.[2]);
     if(data.ttlSeconds!==3600||!Number.isSafeInteger(data.expiresAt)||data.expiresAt<=0||data.iceServers.length!==1||server.urls.length!==1||!match||!isIPv4(hostname)||port<1||port>65535||typeof server.username!=='string'||!new RegExp('^'+data.expiresAt+':[0-9a-f]{32}$').test(server.username)||typeof server.credential!=='string'||!/^[A-Za-z0-9+/]{27}=$/.test(server.credential))throw Error('mobile_turn_response_invalid');
-    cache={servers:[{hostname,port,username:server.username,password:server.credential,relayType:'TurnUdp'}],at,refresh:2640000+Math.floor(Math.random()*60000)};
+    cache={servers:[{hostname,port,username:server.username,password:server.credential,relayType:'TurnUdp'}],mobileRelay:mobileRelayConfig(data.mobileTurnUrl,server.username,server.credential),at,refresh:2640000+Math.floor(Math.random()*60000)};
     status=undefined;failures=0;retryDelay=0;
    }catch{
     if(stopped)return;
@@ -58,7 +59,8 @@ export function createMobileTurn({gatewayOrigin,token,allowSyntheticLoopback=fal
  }
  return {
   get status(){return status;},
-  async get():Promise<IceServer[]>{if(stopped)return [];const pending=request(),existing=valid();if(existing.length)return existing;await pending;return stopped?[]:valid();},
+  get mobileRelay(){return valid()?.mobileRelay;},
+  async get():Promise<IceServer[]>{if(stopped)return [];const pending=request(),existing=valid();if(existing)return existing.servers;await pending;return stopped?[]:valid()?.servers??[];},
   // Reuse signaling reconnect as the existing network-recovery trigger.
   networkChanged(){if(stopped||paused==='auth')return;if(paused==='ip')paused='';void request();},
   close(){stopped=true;cache=undefined;paused='auth';abort?.abort();if(timer)clearTimeout(timer);timer=undefined;}

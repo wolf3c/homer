@@ -1,5 +1,6 @@
 import {mobileChannel} from '../src/mobile-channel.js';
 import {openMobileSignal} from '../src/mobile-signaling.js';
+import {requestMobileRelay} from '../src/mobile-relay.js';
 import {WEB_PROTOCOL} from '../src/web-contract.js';
 declare global{interface Window{__homerMobileNonce?:string;__homerMobileUpdate?:{version:string;openError:boolean}|null;__homerMobileTiming?:boolean;ReactNativeWebView?:{postMessage:(message:string)=>void};}}
 
@@ -8,6 +9,7 @@ type Packet={id?:string;result?:any;error?:string;event?:string;value?:unknown};
 export const mobileEvents=new EventTarget();
 let binding:Binding|undefined,dispose:(()=>void)|undefined,retry:ReturnType<typeof setTimeout>|undefined;
 let request:((op:string,input:unknown)=>Promise<any>)|undefined,connected=false,foregroundHandled=false,manualRescanRequired=false;
+let preferMobileRelay=false;
 let cancelPairing:(()=>Promise<'cancelled'|'absent'|'approved'>)|undefined;
 function notice(code:string,nonce=window.__homerMobileNonce){window.ReactNativeWebView?.postMessage(JSON.stringify({type:'connection-status',code,nonce}));}
 function changed(){mobileEvents.dispatchEvent(new Event('connection'));}
@@ -31,11 +33,16 @@ function start(){
  const current=binding,nonce=window.__homerMobileNonce;if(!current){notice('scan',nonce);return;}
  const update=(code:string)=>notice(code,nonce);
  const abort=new AbortController(),pc=new RTCPeerConnection({iceServers:[{urls:['stun:120.27.120.125:3478','stun:stun.l.google.com:19302']}]});
+ const started=performance.now();
+ let relayAvailable=false;
  let ended=false,sessionId:string|undefined,sequence=0,link:Awaited<ReturnType<typeof openMobileSignal>>|undefined,channel:ReturnType<typeof mobileChannel>|undefined,poll:ReturnType<typeof setTimeout>|undefined;
  const pending=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
- const finish=(reconnect=true)=>{if(ended)return;ended=true;dispose=undefined;abort.abort();if(poll)clearTimeout(poll);clearTimeout(deadline);link?.close();channel?.close();pc.close();connected=false;request=undefined;for(const value of pending.values()){clearTimeout(value.timer);value.reject(Error('web_receipt_unconfirmed'));}pending.clear();changed();if(reconnect&&binding===current){update('unavailable');retry=setTimeout(start,3000);}};
+ const finish=(reconnect=true)=>{if(ended)return;ended=true;dispose=undefined;abort.abort();if(poll)clearTimeout(poll);clearTimeout(deadline);link?.close();channel?.close();pc.close();connected=false;request=undefined;for(const value of pending.values()){clearTimeout(value.timer);value.reject(Error('web_receipt_unconfirmed'));}pending.clear();changed();if(reconnect&&binding===current){
+  if(!channel&&relayAvailable&&!preferMobileRelay){preferMobileRelay=true;retry=setTimeout(start,0);return;}
+  update('unavailable');retry=setTimeout(start,3000);
+ }};
  dispose=()=>finish(false);
- const deadline=setTimeout(()=>finish(),30000);
+ let deadline=setTimeout(()=>finish(),30000);
  const call=(op:string,input:unknown):Promise<any>=>{
   if(ended||!channel||pending.size>=8)return Promise.reject(Error('mobile_not_connected'));
   const id=String(++sequence);
@@ -81,20 +88,41 @@ function start(){
  pc.onicecandidate=({candidate})=>{if(candidate&&sessionId)void link?.call('send',{sessionId,candidate:{candidate:candidate.candidate,sdpMid:candidate.sdpMid??null,sdpMLineIndex:candidate.sdpMLineIndex??null,usernameFragment:candidate.usernameFragment??null}}).catch(()=>{if(!connected)finish();});};
  update('connecting');
  void (async()=>{
+  const relay=await requestMobileRelay(current.routeId,current.credential??current.invitation);
+  if(ended)return;
   link=await openMobileSignal(current.signalOrigin.replace(/^http/,'ws')+'/homer/rtc','mobile',async event=>{
    if(ended)return;sessionId=event.sessionId;
    if(event.type==='closed'){if(!channel)finish();return;}
-   if(event.description){await pc.setRemoteDescription(event.description);await pc.setLocalDescription(await pc.createAnswer());await link!.call('send',{sessionId,description:pc.localDescription!.toJSON()});}
+   if(event.description){
+    if(event.description.type==='offer'&&typeof event.relay==='string'){
+     const config=await relay?.open(event.sessionId,event.relay);
+     if(ended)return;
+     if(config&&preferMobileRelay){
+      const currentConfig=pc.getConfiguration();
+      try{pc.setConfiguration({...currentConfig,iceServers:[...(currentConfig.iceServers??[]),config]});}catch{/* Keep direct ICE available in WebViews without TURN/TLS. */}
+     }else if(config){
+      relayAvailable=true;
+      clearTimeout(deadline);
+      deadline=setTimeout(()=>finish(),Math.max(1,12000-(performance.now()-started)));
+     }
+    }
+    await pc.setRemoteDescription(event.description);await pc.setLocalDescription(await pc.createAnswer());await link!.call('send',{sessionId,description:pc.localDescription!.toJSON()});
+   }
    else if(event.candidate)await pc.addIceCandidate(event.candidate);
   },()=>{if(!channel)finish();},abort.signal);
   if(ended){link.close();return;}
-  await link.call('connect',{routeId:current.routeId});
+  const target={routeId:current.routeId};
+  if(relay){
+   try{await link.call('connect',{...target,relay:relay.proof});return;}
+   catch(error){if(!(error instanceof Error)||error.message!=='mobile_signal_invalid_request'||ended)throw error;}
+  }
+  await link.call('connect',target);
  })().catch(()=>{if(!channel)finish();});
 }
 if(typeof window!=='undefined')window.addEventListener?.('homer-mobile-connect',event=>{
  const next=(event as CustomEvent).detail as Binding|undefined;
  if(next&&(!/^[a-f0-9]{64}$/.test(next.routeId)||typeof next.signalOrigin!=='string'))return;
- binding=next?{...next}:undefined;manualRescanRequired=false;start();
+ binding=next?{...next}:undefined;manualRescanRequired=false;preferMobileRelay=false;start();
 });
 if(typeof window!=='undefined')window.addEventListener?.('homer-mobile-cancel',()=>{
  const nonce=window.__homerMobileNonce,cancel=cancelPairing;
