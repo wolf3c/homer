@@ -13,7 +13,7 @@ export class MobileDevices {
  private invitation?:{hash:string;expiresAt:number;candidate?:{id:string;hash:string;name:string}};
  private expired=new Map<string,number>();
  private revoked=new Set<(id:string)=>void>();
- constructor(path:string,private now=Date.now){
+ constructor(path:string,private now=Date.now,private onPairing?: (id:string)=>void){
   this.db=new DatabaseSync(path);
   this.db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS mobile_devices(id TEXT PRIMARY KEY,name TEXT NOT NULL,credentialHash TEXT NOT NULL UNIQUE,enabled INTEGER NOT NULL)');
  }
@@ -46,6 +46,7 @@ export class MobileDevices {
    throw Error('mobile_pairing_busy');
   }
   const value=secret();invitation.candidate={id:randomUUID(),hash:hash(value),name:deviceName(name)};
+  this.onPairing?.(invitation.candidate.id);
   return {credential:value,status:'pending' as const};
  }
  authorize(credential?:string){

@@ -455,3 +455,30 @@ test("HMR-INTERACTION-001: restart reconciles lost callbacks and preserves the o
     assert.equal(f.resumes.length, 0);
   } finally { await f.cleanup(); }
 });
+
+test('desktop receives distinct user-pending IDs and locates a live target beyond the first page',async()=>{
+ const f=await fixture('user',2);
+ try{
+  const received:string[]=[];
+  f.app.onDesktopNotification(event=>{if(event.kind==='interaction')received.push(event.id);});
+  await f.app.message('dispatch','notification-source');
+  await until(()=>received.length===2);
+  assert.notEqual(received[0],received[1]);
+  const {db}=f.app.store;
+  const target=received[1]!;
+  db.prepare('UPDATE worker_interactions SET rowid=1000 WHERE id=?').run(target);
+  db.prepare(`WITH RECURSIVE filler(n) AS (VALUES(100) UNION ALL SELECT n+1 FROM filler WHERE n<179)
+   INSERT INTO worker_interactions(rowid,id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt)
+   SELECT n,'synthetic-'||n,'notice-filler-'||n,'filler',w.runId,w.threadId,w.turnId,w.requestId,w.source,w.kind,w.details,w.authority,
+     'pending_user',w.createdAt,w.updatedAt FROM filler CROSS JOIN worker_interactions w WHERE w.id=?`).run(target);
+  const history=homerWebBridge(f.app).history!,epoch=f.app.webReadEpoch;
+  const first=await history.interactions(0,epoch);
+  assert.equal(first.items.length,80);
+  assert.equal(first.items.some(item=>item.id===target),false);
+  const page=await history.interactions(0,epoch,target);
+  assert.equal(page.items[0]?.id,target);
+  assert.equal(page.cursor,999);
+  f.app.interactions.cancelRun(f.app.interactions.inspect(target).runId,'synthetic_cancelled');
+  await assert.rejects(history.interactions(0,epoch,target),/interaction_not_live/);
+ }finally{await f.cleanup();}
+});

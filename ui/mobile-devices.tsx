@@ -8,7 +8,7 @@ import {accountErrors,useDesktopAccount} from './desktop-account-state';
 
 type Device={id:string;name:string;enabled:boolean};
 type State={turnStatus?:'account_required'|'configuration_required'|'network_restricted';configured:boolean;devices:Device[];pending:{id:string;name:string}|null;expiresAt?:number|null};
-export function MobileDeviceSettings(){
+export function MobileDeviceSettings({pairingTarget}:{pairingTarget?:string}={}){
  const account=useDesktopAccount({withWallet:false});
  const auth=account.state;
  const accountUnavailable=!window.homerDesktopAccount||auth?.supported===false;
@@ -56,6 +56,7 @@ export function MobileDeviceSettings(){
  const seconds=qr?Math.max(0,Math.ceil((qr.expiresAt-now)/1000)):0;
  const expired=!!qr&&seconds===0;
  const activePending=state?.pending&&(!state.expiresAt||state.expiresAt>now)?state.pending:null;
+ useEffect(()=>{if(pairingTarget&&activePending?.id===pairingTarget)document.getElementById('pairing-'+pairingTarget)?.focus();},[pairingTarget,activePending?.id]);
  const pendingName=activePending?.name&&activePending.name!=='移动设备'?activePending.name:'未知设备';
  const submitName=(event:React.FormEvent<HTMLFormElement>,id:string)=>{event.preventDefault();if(draft.trim())void action('update',{id,name:draft.trim()});};
  return <div className="mobile-device-settings mobile-settings" aria-busy={busy}>
@@ -76,7 +77,8 @@ export function MobileDeviceSettings(){
   {!state&&!readFailed&&!uncertain&&<p role="status">正在读取…</p>}
   {state&&!locked&&!state.configured&&<section className="mobile-settings-message" role="status"><h3>移动连接尚未配置</h3><p>请联系维护方开通主端连接地址后，再添加移动设备。</p></section>}
   {state&&!locked&&state.configured&&<>
-   {activePending&&<section className="mobile-settings-pending" aria-label="待确认设备"><div className="mobile-settings-pending-title"><span aria-hidden="true"/><h3>有设备请求连接</h3></div><p>确认后，这台设备可以访问主聊天。</p><div className="mobile-settings-candidate"><p>设备名称</p><strong>{pendingName}</strong><p>名称仅供辨认，不能作为身份凭证。确认是你的设备后再绑定。</p></div><form key={activePending.id} onSubmit={event=>{event.preventDefault();void action('approve',{id:activePending.id,name:pendingName});}}><div className="mobile-settings-actions"><Button type="submit" className="mobile-settings-primary" disabled={busy}>确认绑定</Button><Button type="button" disabled={busy} onClick={()=>void action('reject',{id:activePending.id})}>拒绝</Button></div></form></section>}
+   {pairingTarget&&state&&activePending?.id!==pairingTarget&&<p role="status">原设备请求已失效或已处理。</p>}
+   {activePending&&<section id={'pairing-'+activePending.id} tabIndex={-1} className="mobile-settings-pending" aria-label="待确认设备"><div className="mobile-settings-pending-title"><span aria-hidden="true"/><h3>有设备请求连接</h3></div><p>确认后，这台设备可以访问主聊天。</p><div className="mobile-settings-candidate"><p>设备名称</p><strong>{pendingName}</strong><p>名称仅供辨认，不能作为身份凭证。确认是你的设备后再绑定。</p></div><form key={activePending.id} onSubmit={event=>{event.preventDefault();void action('approve',{id:activePending.id,name:pendingName});}}><div className="mobile-settings-actions"><Button type="submit" className="mobile-settings-primary" disabled={busy}>确认绑定</Button><Button type="button" disabled={busy} onClick={()=>void action('reject',{id:activePending.id})}>拒绝</Button></div></form></section>}
    {!activePending&&qr&&<section className="mobile-settings-pairing" aria-label="扫码连接"><h3>{expired?'二维码已过期':'使用 Homer App 扫码'}</h3><p>{expired?'请重新生成二维码，再用手机扫描。':'扫码后，请回到这里确认绑定请求。'}</p><div className="mobile-settings-qr-layout">{!expired&&<div className="mobile-settings-qr"><img src={qr.qr} width={180} height={180} alt="用 Homer App 扫描此二维码连接主端"/></div>}<div className="mobile-settings-qr-details"><p className="mobile-settings-time"><Clock size={15}/>{expired?'当前二维码已失效':<>有效时间 <strong>{Math.floor(seconds/60)}:{String(seconds%60).padStart(2,'0')}</strong></>}</p><p>请仅在信任的设备上扫码。重新生成会取消当前待确认请求。</p><Button disabled={busy} onClick={()=>void action('invite',{})}><RefreshCw size={15}/>重新生成二维码</Button></div></div></section>}
    {!activePending&&!qr&&!!state.expiresAt&&<section className="mobile-settings-message"><h3>请重新生成二维码</h3><p>当前页面无法显示之前生成的二维码。重新生成会取消当前待确认请求。</p><Button disabled={busy} onClick={()=>void action('invite',{})}><RefreshCw size={15}/>重新生成二维码</Button></section>}
    {!activePending&&!qr&&!state.expiresAt&&!state.devices.length&&<section className="mobile-settings-empty"><div className="mobile-settings-icon"><Smartphone size={23}/></div><h3>还没有绑定设备</h3><p>添加设备后，用手机扫码并在此确认。</p><Button className="mobile-settings-primary" disabled={busy} onClick={()=>void action('invite',{})}><Plus size={16}/>添加移动设备</Button></section>}

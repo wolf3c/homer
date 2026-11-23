@@ -137,7 +137,8 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     };
     web = await createServer({ port: webPort,
       ...(desktop?{desktopAccessToken}:{}),
-      ...(mobileSignalOrigin?{signalOrigin:mobileSignalOrigin,turnAccount:mobileTurnAccount,databasePath:join(build.config.runtime,'homer.sqlite')} : {}),
+      ...(mobileSignalOrigin?{signalOrigin:mobileSignalOrigin,turnAccount:mobileTurnAccount,databasePath:join(build.config.runtime,'homer.sqlite'),
+        ...(desktop?{onPairing:id=>desktop.onEvent?.({kind:'desktop_notification',notice:{kind:'pairing',id,threadId:''}})}:{})} : {}),
       ...(development?{updateReview:{read:()=>review?{hash:review.hash,files:review.files}:null,approve:hash=>{
         if(!review||hash!==review.hash||development.sourceSnapshot(root,configPath).hash!==hash)throw Error('dev_update_review_stale');
         approvedSourceHash=hash;review=undefined;publish();return {approved:true};
@@ -150,7 +151,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
           const {filename,mime,data}=await invokeWeb('preview.messageFile',input);
           return {filename,mime,bytes:Buffer.from(data,'base64')};
         },
-      }:{}),history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch)=>invokeWeb('history.interactions',{after,readEpoch}),receipts:async input=>{
+      }:{}),history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch,id)=>invokeWeb('history.interactions',{after,readEpoch,id}),receipts:async input=>{
         const value=await invokeWeb('history.receipts',input),transport=journal?.receipts(input.requestIds)??[];
         return {...value,statuses:value.statuses.map(item=>value.acceptedRequestIds.includes(item.requestId)?item:transport.find(row=>row.requestId===item.requestId)??item)};
       }},taskOverview:{progress:id=>invokeWeb("taskOverview.progress",{id}),summary:id=>invokeWeb("taskOverview.summary",{id}),origin:(id,messageId)=>invokeWeb("taskOverview.origin",{id,messageId}),list:page=>invokeWeb("taskOverview.list",page),detail:(id,query)=>invokeWeb("taskOverview.detail",{id,...query})},media:{read:input=>invokeWeb('media.read',input),origin:input=>invokeWeb('media.origin',input),reveal:input=>invokeWeb('media.reveal',input),upload:input=>invokeWeb('media.upload',input),previewDraft:input=>invokeWeb('media.preview',input),discard:input=>invokeWeb('media.discard',input)}, submit: async input => acceptInput(input), stop: messageId => invokeWeb("stop", { messageId }),
@@ -242,6 +243,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
     own.send({ kind: "init", desktop:!!desktop, config: build.config, buildHash:build.hash,terminalDeltas:json,webUploadProtocol:webPort===undefined?0:1, thread: expectedThread });
     async function receive(m) {
       if(own!==child)return;
+      if(desktop&&m.kind==='desktop_notification'){desktop.onEvent?.(m);return;}
       if(desktop&&(m.kind==='power_state'||m.kind==='power_acquire')){desktop.onEvent?.({kind:m.kind,...(m.kind==='power_acquire'?{id:m.id}:{}),facts:m.facts});return;}
       if(desktop&&m.kind==='desktop_stopped'){desktopStoppedConfirmed=m.confirmed===true;return;}
       if(desktop&&m.kind==='management_ready'){

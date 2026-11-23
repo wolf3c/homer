@@ -771,6 +771,7 @@ export class Homer {
     }
     this.interactions = new WorkerInteractions(this.store.db, {
       questionCurrent:item=>this.tasks.questionCurrent(item),
+      userPending:id=>this.emitDesktopNotification('interaction',id),
       persisted:id=>{if(!this.mainApprovals?.owns(id))this.tasks?.queueInteraction(id);},
       ready: id => {if(!this.mainApprovals?.owns(id))this.scheduleInputs();},
       waiting: id => {const slot=this.workers.get(id);if(slot)this.syncInteractionWaiting(slot);},
@@ -1346,7 +1347,7 @@ export class Homer {
       }catch(error){
         if(error instanceof MainInputClaimError){
           const replyId=this.inputs.failClaim(error);
-          if(replyId)this.notifyCommittedMessage(replyId);
+          if(replyId){this.notifyCommittedMessage(replyId);this.emitDesktopNotification('message',replyId);}
           this.inputWaiters.get(error.requestId)?.reject(error);this.inputWaiters.delete(error.requestId);this.store.event(null,'input_claim_failed',engineError(error));this.scheduleInputs();
         }
         else {
@@ -1414,7 +1415,7 @@ export class Homer {
     if(files)reply=context.nativeFinal!+(files.omitted?'\n\n部分文件未能保存为可跨端打开的版本。':'');
     const publication=files?{taskId:null,taskVersion:null,operationKey:'request-final:'+replyId}:undefined;
     this.finishMainProcess(context,uncertain?'unknown':replyStatus);
-    let committed=false;
+    let committed=false, desktopReplyId:string|undefined;
     try{committed=this.store.transaction(()=>{
       this.store.finishRequest(requestId,reply);
       const changed=this.history.finish(replyId,reply,uncertain?'interrupted':replyStatus,undefined,publication);
@@ -1428,11 +1429,13 @@ export class Homer {
       if(uncertain)this.inputs.uncertainInTransaction(queued.messageId,queued.revision);
       else this.inputs.finishInTransaction(queued.messageId,queued.revision,replyStatus);
       this.tasks.finishArchives(queued.messageId,context.nativeActivity?.turnId,nativeTerminal&&!uncertain?replyStatus:'unknown');
-      if(!context.explicitSent&&(failureNotice||!context.processId||!this.processes.exact(context.processId)))
-        this.history.record('input-outcome:'+replyId,this.store.meta('mainThread')!,failureNotice??reply,uncertain?'interrupted':replyStatus,requestId);
+      const outcome=!context.explicitSent&&(failureNotice||!context.processId||!this.processes.exact(context.processId));
+      if(outcome)this.history.record('input-outcome:'+replyId,this.store.meta('mainThread')!,failureNotice??reply,uncertain?'interrupted':replyStatus,requestId);
+      if(changed&&!uncertain&&!context.explicitSent&&(failureNotice||reply.trim()||staged))desktopReplyId=outcome?'input-outcome:'+replyId:replyId;
       return changed&&!uncertain&&!context.explicitSent;
     });}finally{if(staged&&!committed)this.abandonMessageOperation(staged.key);}
     if(committed)this.notifyCommittedMessage(replyId);
+    if(desktopReplyId)this.emitDesktopNotification('message',desktopReplyId);
     if(context.generation){
       for(const activity of context.toolActivities?.values()??[])this.emitMain(context,{type:'tool_progress',...context.generation,text:'',progress:{...activity,label:activity.label==='创建任务'?'创建结果待核对':activity.label,phase:'end',status:'blocked'}});
       context.toolActivities?.clear();
@@ -1487,7 +1490,7 @@ export class Homer {
   // Sinks persist these local events; adapters perform network delivery later.
   private finishMainProcess(context:MainContext,status:'completed'|'failed'|'interrupted'|'unknown'){
     if(!context.processId)return;
-    let committedFinal:string|undefined;
+    let committedFinal:string|undefined, desktopFinal:string|undefined;
     // Closing the writer ends ownership, not the unknown native outcome.
     // Keep its closure evidence so a later input can claim the single writer.
     if(context.nativeStartAttempted&&!context.processEndEventId?.startsWith('turn:'))status='unknown';
@@ -1535,6 +1538,7 @@ export class Homer {
           ?{taskId:external===undefined?null:scope?.taskId??null,taskVersion:external===undefined?null:scope?.taskVersion??null,
             operationKey:(scheduled?'scheduled-final:':'worker-final:')+input.messageId}:undefined;
         const changed=this.history.finish(node.messageId,text,status==='unknown'?'interrupted':status,publishFinal?'user':undefined,publication);
+        if(changed&&publishFinal)desktopFinal=node.messageId;
         if(changed&&publication){
           const details={inputMessageId:input!.messageId,turnId:node.turnIds.at(-1),taskVersion:publication.taskVersion,...(files?.omitted?{fileDeliveryIncomplete:true}:{})};
           this.store.db.prepare(`INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson)
@@ -1555,6 +1559,7 @@ export class Homer {
     }catch(error){this.store.db.exec('ROLLBACK');keptStage=false;throw error;}
     finally{if(staged&&!keptStage)this.abandonMessageOperation(staged.key);}
     if(committedFinal)this.notifyCommittedMessage(committedFinal);
+    if(desktopFinal)this.emitDesktopNotification('message',desktopFinal);
   }
   // Chain a user's start/deltas/terminal even if a local sink is asynchronous.
   private emitMain(context: MainContext, message: Message, activity?:PublicActivity,call?:{toolName:string}) {
@@ -2013,6 +2018,23 @@ export class Homer {
     if(source.taskId!==run.taskId||source.taskVersion!==run.version||payload.runId!==run.id||payload.epoch!==source.senderEpoch)throw Error('worker_event_source_scope');
     const body=typeof payload.text==='string'?payload.text.trim().slice(0,640):'';
     this.processes.workerEvent(processId,{eventKey:'worker-reply:'+source.id,eventKind:'reply_received',title:this.tasks.task(run.taskId).title.slice(0,80),body:body||'Worker 已结束本轮，未提供正文。',bodySource:body?'reply':'missing',taskId:run.taskId,version:run.version,runId:run.id,sourceMessageId:String(source.id),operationKey:null,observedAtMs:Date.now()});
+  }
+  private desktopNotification?: (event:{kind:'message'|'interaction';id:string;threadId:string})=>void;
+  onDesktopNotification(listener:NonNullable<Homer['desktopNotification']>){this.desktopNotification=listener;}
+  private emitDesktopNotification(kind:'message'|'interaction',id:string){
+    const threadId=this.store.meta('mainThread');
+    if(!threadId||!this.desktopNotification)return;
+    setImmediate(()=>{
+      if(this.closing||this.closed||this.store.meta('mainThread')!==threadId)return;
+      try{
+        if(kind==='interaction'&&!this.interactions.actionable(id))return;
+        if(kind==='message'){
+          const message=this.history.message(id);
+          if(!message||message.threadId!==threadId||message.audience!=='user'||message.status==='running'||message.revokedAt!=null)return;
+        }
+        this.desktopNotification?.({kind,id,threadId});
+      }catch{/* A desktop hint is independent of the committed result. */}
+    });
   }
   private notifyCommittedMessage(messageId:string){
     this.hookEvents.emit('message.committed',Object.freeze({messageId}));

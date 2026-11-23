@@ -1,4 +1,4 @@
-import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences,autoUpdater,globalShortcut,screen,desktopCapturer,powerSaveBlocker,powerMonitor} from 'electron';
+import {app,BrowserWindow,Menu,dialog,shell,ipcMain,systemPreferences,autoUpdater,globalShortcut,screen,desktopCapturer,powerSaveBlocker,powerMonitor,Notification} from 'electron';
 import {readFileSync,existsSync,mkdirSync,createReadStream} from 'node:fs';
 import {lstat,writeFile} from 'node:fs/promises';
 import {join,resolve,win32} from 'node:path';
@@ -10,7 +10,7 @@ import {types} from 'node:util';
 import{registerPreviewScheme,createBrowserPreview}from'./preview-pages.mjs';
 registerPreviewScheme();
 // This entry is copied to Resources/app.asar/main.mjs by Forge.
-import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopChatGPTConfig,readDesktopCaptureShortcut,saveDesktopCaptureShortcut,readDesktopPowerConfig,saveDesktopPowerConfig} from '../homer/scripts/desktop-profile.mjs';
+import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,readDesktopModelSource,saveDesktopModelSource,readDesktopChatGPTConfig,readDesktopCaptureShortcut,saveDesktopCaptureShortcut,readDesktopPowerConfig,saveDesktopPowerConfig,readDesktopNotificationPreferences,saveDesktopNotificationPreferences} from '../homer/scripts/desktop-profile.mjs';
 import {DesktopPowerCoordinator,POWER_DEFAULTS,validatePowerPreferences} from '../homer/dist/desktop-power.js';
 import {createMacWakeAdapter} from '../homer/scripts/macos-power.mjs';
 import {createWindowsWakeAdapter} from '../homer/scripts/windows-power.mjs';
@@ -790,6 +790,82 @@ function flushSettings(){
  settingsPending=undefined;
  settingsSubscriber.senderFrame.send('homer:settings:open',...args);
 }
+let notificationPage, notificationTarget, notificationPreferences;
+const checkedNotifications=new Set(),notificationChecks=new Map(),desktopNotifications=new Set();
+const notificationBackground=()=>!window?.isVisible()||window.isMinimized()||!window.isFocused();
+const currentNotificationPage=()=>notificationPage&&permissionCaller(notificationPage,notificationPage.senderFrame);
+function flushNotificationTarget(){
+ if(!notificationTarget||!currentNotificationPage())return;
+ notificationPage.senderFrame.send('homer:notification:open',notificationTarget);
+ notificationTarget=undefined;
+}
+function registerDesktopNotifications(profile,appId){
+ const saved=readDesktopNotificationPreferences(profile);
+ notificationPreferences={message:saved?.message!==false,attention:saved?.attention!==false};
+ if(process.platform==='win32')app.setAppUserModelId(appId);
+ ipcMain.handle('homer:notification',async(event,action,value,visible)=>{
+  if(!permissionCaller(event,event.senderFrame))throw Error('desktop_notification_forbidden');
+  if(action==='preferences')return notificationPreferences;
+  if(action==='set'&&['message','attention'].includes(value)&&typeof visible==='boolean'){
+   const next={...notificationPreferences,[value]:visible};
+   saveDesktopNotificationPreferences(profile,next);
+   return notificationPreferences=next;
+  }
+  if(action==='system-settings'){
+   await shell.openExternal(process.platform==='win32'?'ms-settings:notifications':'x-apple.systempreferences:com.apple.Notifications-Settings.extension');
+   return;
+  }
+  if(action==='ready'&&typeof value==='boolean'){
+   notificationPage=value?{sender:event.sender,senderFrame:event.senderFrame}:undefined;
+   flushNotificationTarget();
+   return;
+  }
+  if(action==='visibility'&&typeof visible==='boolean'){
+   const check=notificationChecks.get(value);
+   if(check?.frame===event.senderFrame)check.finish(visible);
+   return;
+  }
+  throw Error('desktop_notification_invalid');
+ });
+}
+async function showDesktopNotification(notice){
+ if(!notificationPreferences||!Notification.isSupported()||!notice||
+   !['message','interaction','pairing'].includes(notice.kind)||typeof notice.id!=='string'||typeof notice.threadId!=='string')return;
+ const key=notice.kind+':'+notice.threadId+':'+notice.id;
+ if(checkedNotifications.has(key))return;
+ checkedNotifications.add(key);
+ // Only live events reach this path. Bound the duplicate guard for long-running sessions.
+ if(checkedNotifications.size>1024)checkedNotifications.delete(checkedNotifications.values().next().value);
+ const actionable=notice.kind!=='message';
+ let visible=false;
+ if(actionable&&notificationPreferences.attention&&!notificationBackground()&&currentNotificationPage()){
+  const id=randomUUID(),frame=notificationPage.senderFrame;
+  visible=await new Promise(resolve=>{
+   const finish=value=>{clearTimeout(timer);notificationChecks.delete(id);resolve(value);};
+   const timer=setTimeout(()=>finish(false),350);
+   notificationChecks.set(id,{frame,finish});
+   try{frame.send('homer:notification:check',id,notice);}catch{finish(false);}
+  });
+ }
+ if(closed||quitPending)return;
+ const background=notificationBackground();
+ const attention=actionable&&notificationPreferences.attention&&(background||!visible);
+ if(!attention&&!(notificationPreferences.message&&background))return;
+ const toast=new Notification({title:'Homer',body:attention?'Homer 需要你处理一项请求':'Homer 有新消息'});
+ desktopNotifications.add(toast);
+ const release=()=>desktopNotifications.delete(toast);
+ toast.on('close',event=>{if(process.platform!=='win32'||event?.reason==='userCanceled')release();});
+ toast.on('failed',release);
+ toast.once('click',()=>{
+  release();
+  if(quitPending||closed)return;
+  if(window?.isMinimized())window.restore();
+  showWindow();
+  notificationTarget=notice;
+  flushNotificationTarget();
+ });
+ try{toast.show();}catch{release();}
+}
 function registerDesktopSettings(){
  ipcMain.handle('homer:settings:ready',async(event,...args)=>{
   if(args.length!==1||typeof args[0]!=='boolean'||!permissionCaller(event,event.senderFrame))throw Error('desktop_settings_forbidden');
@@ -980,7 +1056,7 @@ function createWindow(){
   }catch{} // Missing or detached request identity fails closed.
   callback({requestHeaders});
  });
- contents.on('did-start-navigation',details=>{if(details.isMainFrame){permissionNavigation++;if(window?.webContents===contents){cancelDesktopCapture();if(!details.isSameDocument){captureSubscriber=undefined;settingsSubscriber=undefined;void nativeAccount('channel-manage',{action:'cancel',input:{}}).catch(()=>{});}}}});
+ contents.on('did-start-navigation',details=>{if(details.isMainFrame){permissionNavigation++;if(window?.webContents===contents){cancelDesktopCapture();if(!details.isSameDocument){captureSubscriber=undefined;settingsSubscriber=undefined;notificationPage=undefined;void nativeAccount('channel-manage',{action:'cancel',input:{}}).catch(()=>{});}}}});
  contents.setWindowOpenHandler(({url})=>{void external(url).catch(()=>showError('链接未能打开，请核对系统浏览器后重试。'));return {action:'deny'};});
  contents.on('will-navigate',event=>{if(!owned(event.url))event.preventDefault();});
  contents.on('will-redirect',event=>{if(!owned(event.url))event.preventDefault();});
@@ -1045,6 +1121,7 @@ try{
   app.whenReady().then(async()=>{
   registerDesktopPermissions();
   registerDesktopSettings();
+  registerDesktopNotifications(profile,test?'app.homer.desktop.candidate':manifest.appId??'app.homer.desktop');
   registerDesktopFeatureTour(profile);
   registerDesktopCapture(profile);
   registerDesktopPower(profile);
@@ -1068,6 +1145,9 @@ try{
     const line=buffer.slice(0,at);buffer=buffer.slice(at+1);let value;try{value=JSON.parse(line);}catch{continue;}
     if(value.kind==='browser_request'){
      void (async()=>{try{if(!browserPreview||closed||quitPending)throw Error('preview_unavailable');const result=await browserPreview.execute(value.owner,value.action,value.input);runtime.stdin.write(JSON.stringify({kind:'browser_result',id:value.id,value:result})+'\n');}catch(error){runtime.stdin.write(JSON.stringify({kind:'browser_result',id:value.id,error:/^preview_[a-z_]+$/.test(error?.message??'')?error.message:'preview_result_unconfirmed'})+'\n');}})();
+    }
+    else if(value.kind==='desktop_notification'){
+     void showDesktopNotification(value.notice).catch(()=>{});
     }
     else if(value.kind==='native_account_result'){
      const pending=nativeRequests.get(value.id);if(pending){clearTimeout(pending.timer);nativeRequests.delete(value.id);value.error?pending.reject(Error(pending.action==='apply-models'?chatgptModelError(value.error):'native_account_unconfirmed')):pending.resolve(value.value);}

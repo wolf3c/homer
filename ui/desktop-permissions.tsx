@@ -10,7 +10,7 @@ import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
 import {Button} from '@base-ui/react/button';
 import {useMediaQuery} from '@mantine/hooks';
-import {Settings,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2,Scan,RotateCcw,Pause,Play,Info,ExternalLink,ChevronRight,Zap,Check,Power} from 'lucide-react';
+import {Settings,Bell,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2,Scan,RotateCcw,Pause,Play,Info,ExternalLink,ChevronRight,Zap,Check,Power} from 'lucide-react';
 import {Menu} from '@base-ui/react/menu';
 import {ModelSelectorRoot,ModelSelectorTrigger,ModelSelectorValue,ModelSelectorContent,ModelSelectorList,ModelSelectorEffort} from './vendor/assistant-ui/model-selector';
 import {validateChatGPTSelection,type ChatGPTModelConfig,type ModelRole,type NativeModelSettings} from '../src/model-config';
@@ -25,13 +25,42 @@ export type CaptureShortcutBridge={platform?:'win32';getShortcut:()=>Promise<Cap
 type AboutLink='website'|'github';
 declare global{interface Window{homerDesktopPermissions?:PermissionsBridge;homerDesktopSettings?:{onOpen:(callback:(target?:'permissions')=>void)=>()=>void;getVersion?:()=>Promise<string>;openAboutLink?:(link:AboutLink)=>Promise<void>};}}
 
+export type DesktopNotice={kind:'message'|'interaction'|'pairing';id:string;threadId:string};
+type NotificationPreferences={message:boolean;attention:boolean};
+declare global{interface Window{homerDesktopNotifications?:{
+ preferences:()=>Promise<NotificationPreferences>;
+ set:(key:keyof NotificationPreferences,value:boolean)=>Promise<NotificationPreferences>;
+ openSystemSettings:()=>Promise<void>;
+ subscribe:(check:(id:string,notice:DesktopNotice)=>void,open:(notice:DesktopNotice)=>void)=>()=>void;
+ visibility:(id:string,visible:boolean)=>Promise<void>;
+};}}
+function DesktopNotificationSettings(){
+ const bridge=window.homerDesktopNotifications!;
+ const [value,setValue]=useState<NotificationPreferences>(),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ useEffect(()=>{let active=true;void bridge.preferences().then(next=>{if(active)setValue(next);},()=>{if(active)setError('暂时无法读取提醒设置。');});return()=>{active=false;};},[bridge]);
+ async function update(key:keyof NotificationPreferences,checked:boolean){
+  setBusy(true);setError('');
+  try{setValue(await bridge.set(key,checked));}catch{setError('未能保存提醒设置，请重试。');}finally{setBusy(false);}
+ }
+ return <div className="desktop-permissions">
+  <p className="permission-intro">系统通知受通知权限和勿扰设置控制。</p>
+  <div className="desktop-permission-actions"><Button type="button" onClick={()=>void bridge.openSystemSettings().catch(()=>setError('未能打开系统通知设置。'))}>打开系统通知设置</Button></div>
+  {([['message','Homer 有新消息'],['attention','需要我关注']] as const).map(([key,label])=><section key={key}>
+   <div className="desktop-permission-heading"><h3>{label}</h3><Button type="button" role="switch" aria-label={label} aria-checked={value?.[key]??false}
+    className="desktop-power-switch" disabled={!value||busy} focusableWhenDisabled onClick={()=>void update(key,!value?.[key])}><span aria-hidden="true"/></Button></div>
+  </section>)}
+  {error&&<p role="status">{error}</p>}
+ </div>;
+}
+
 type SettingsView='closed'|'settings'|'opening-tour'|'tour'|'returning-to-about';
 
-export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange}:{ref?:Ref<{openAccount:()=>void}>;onVisibilityChange?:(open:boolean)=>void;onCaptureRecordingChange?:(recording:boolean)=>void}={}){
+export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange}:{ref?:Ref<{openAccount:()=>void;openMobile:(id:string)=>void;close:()=>void}>;onVisibilityChange?:(open:boolean)=>void;onCaptureRecordingChange?:(recording:boolean)=>void}={}){
  const [view,setView]=useState<SettingsView>('closed');
  const open=view==='settings',active=view!=='closed';
  const entry=useRef<HTMLButtonElement>(null),tab=useRef<HTMLButtonElement>(null),tourEntry=useRef<HTMLButtonElement>(null);
  const [panel,setPanel]=useState(window.homerDesktopAccount?'account':'permissions'),[narrow,setNarrow]=useState(false);
+ const [pairingTarget,setPairingTarget]=useState<string>();
  const opener=useRef<HTMLElement|null>(null);
  const currentView=useRef(view);currentView.current=view;
  const captureAvailable=!!window.homerDesktopCapture?.getShortcut&&!!window.homerDesktopCapture.setShortcut;
@@ -45,13 +74,13 @@ export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange
  },[]);
  useEffect(()=>window.homerDesktopSettings?.onOpen(openSettings),[openSettings]);
  useEffect(()=>{const q=window.matchMedia?.('(max-width:600px)');if(!q)return;const changed=()=>setNarrow(q.matches);changed();q.addEventListener('change',changed);return()=>q.removeEventListener('change',changed);},[]);
- useImperativeHandle(ref,()=>({openAccount:()=>{
+ useImperativeHandle(ref,()=>({close:()=>setView('closed'),openMobile:id=>{setPairingTarget(id);setPanel('mobile');setView('settings');},openAccount:()=>{
   if(currentView.current!=='closed'&&currentView.current!=='settings')return;
   opener.current=document.activeElement as HTMLElement;setPanel('account');setView('settings');
  }}));
  useLayoutEffect(()=>{if(active){onVisibilityChange?.(true);return()=>onVisibilityChange?.(false);}},[active,onVisibilityChange]);
  return <><Dialog.Root open={open}
-  onOpenChange={next=>{if(next)openSettings();else setView(current=>current==='settings'?'closed':current);}}
+  onOpenChange={next=>{if(next)openSettings();else{setPairingTarget(undefined);setView(current=>current==='settings'?'closed':current);}}}
   onOpenChangeComplete={next=>{if(!next)setView(current=>current==='opening-tour'?'tour':current);}}>
   <Dialog.Trigger ref={entry} aria-label="设置" title="设置"><Settings size={18}/></Dialog.Trigger>
   <Dialog.Portal><Dialog.Backdrop className="desktop-settings-backdrop"/>
@@ -65,6 +94,7 @@ export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange
       <Tabs.Tab value="permissions" ref={panel==='permissions'?tab:undefined}><ShieldCheck size={18}/>本机权限</Tabs.Tab>
       {captureAvailable&&<Tabs.Tab value="capture" ref={panel==='capture'?tab:undefined}><Scan size={18} aria-hidden/>截图批注</Tabs.Tab>}
       {window.homerDesktopPower&&<Tabs.Tab value="power" ref={panel==='power'?tab:undefined}><Power size={18} aria-hidden/>电源与唤醒</Tabs.Tab>}
+      {window.homerDesktopNotifications&&<Tabs.Tab value="notifications" ref={panel==='notifications'?tab:undefined}><Bell size={18} aria-hidden/>通知</Tabs.Tab>}
       <Tabs.Tab value="mobile" ref={panel==='mobile'?tab:undefined}><Smartphone size={18}/>移动设备</Tabs.Tab>
       {window.homerDesktopChatApps&&<Tabs.Tab value="chat-apps" ref={panel==='chat-apps'?tab:undefined}><Link2 size={18}/>连接聊天应用</Tabs.Tab>}
       {aboutLink&&<Tabs.Tab value="about" ref={panel==='about'?tab:undefined}><Info size={18} aria-hidden/>关于</Tabs.Tab>}
@@ -74,7 +104,8 @@ export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange
       <Tabs.Panel value="permissions">{open&&panel==='permissions'&&<DesktopPermissions/>}</Tabs.Panel>
       {captureAvailable&&<Tabs.Panel value="capture">{open&&panel==='capture'&&<DesktopCaptureSettings onRecordingChange={onCaptureRecordingChange}/>}</Tabs.Panel>}
       {window.homerDesktopPower&&<Tabs.Panel value="power">{open&&panel==='power'&&<DesktopPowerSettings/>}</Tabs.Panel>}
-      <Tabs.Panel value="mobile">{open&&panel==='mobile'&&<MobileDeviceSettings/>}</Tabs.Panel>
+      {window.homerDesktopNotifications&&<Tabs.Panel value="notifications">{open&&panel==='notifications'&&<DesktopNotificationSettings/>}</Tabs.Panel>}
+      <Tabs.Panel value="mobile">{open&&panel==='mobile'&&<MobileDeviceSettings pairingTarget={pairingTarget}/>}</Tabs.Panel>
       {window.homerDesktopChatApps&&<Tabs.Panel value="chat-apps">{open&&panel==='chat-apps'&&<DesktopChatApps/>}</Tabs.Panel>}
       {aboutLink&&<Tabs.Panel value="about">{open&&panel==='about'&&<DesktopAbout openLink={aboutLink}
        tourEntry={tourEntry} onTour={()=>setView('opening-tour')}/>}</Tabs.Panel>}

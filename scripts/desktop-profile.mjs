@@ -22,6 +22,8 @@ export function readDesktopCaptureShortcut(root){
 export function saveDesktopCaptureShortcut(root,shortcut){
  writeDesktopProfile(root,{captureShortcut:shortcut});
 }
+export function readDesktopNotificationPreferences(root){return JSON.parse(privateFile(join(root,markerName))).notifications;}
+export function saveDesktopNotificationPreferences(root,notifications){writeDesktopProfile(root,{notifications});}
 export function readDesktopPowerConfig(root){return JSON.parse(privateFile(join(root,markerName))).power;}
 export function saveDesktopPowerConfig(root,power){writeDesktopProfile(root,{power});}
 function writeDesktopProfile(root,fields){

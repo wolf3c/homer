@@ -74,7 +74,7 @@ import {questionReply} from '../src/question-schema';
 import type { ConversationInput, MessageQuote, AnnotatedQuote } from "../src/web-history";
 import {scheduleMessageText,type ScheduleContext, canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, restoreComposerDraft,restoreRejectedSourceDraft,singleComposerDraft,unconfirmedInputs,quoteDrafts,protocolQuotes,type QuoteDraft,type UnconfirmedInput } from "./conversation-client";
 import type {AttachmentRef,MediaView} from '../src/media-store';
-import {DesktopSettings,DesktopAccount,ModelFailureNotice,type CaptureShortcutBridge} from './desktop-permissions';
+import {DesktopSettings,DesktopAccount,ModelFailureNotice,type CaptureShortcutBridge,type DesktopNotice} from './desktop-permissions';
 import {DesktopFeatureTour} from './desktop-feature-tour';
 import "highlight.js/styles/github.css";
 import "./homer-styles.css";
@@ -975,7 +975,7 @@ function HomerApp() {
   const [composerBusy,setComposerBusy]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [captureShortcutRecording,setCaptureShortcutRecording]=useState(false);
-  const accountSettings=useRef<{openAccount:()=>void}>(null);
+  const accountSettings=useRef<{openAccount:()=>void;openMobile:(id:string)=>void;close:()=>void}>(null);
   const [canvasOpen,setCanvasOpen]=useState(false);
   const [statusContainer,setStatusContainer]=useState<HTMLDivElement|null>(null);
   const canvasTrigger=useRef<HTMLElement|null>(null);
@@ -1137,14 +1137,19 @@ function HomerApp() {
     for(const file of next.artifacts??[]){const key='artifact:'+file.id,signature=file.sha256;summary.set(key,{source:file,signature});if(!previous.has(key)||previous.get(key)!.signature!==signature)changed=true;}
     reader.current.summary=summary;if(baseline)setHasNewContent(false);else if(changed)setHasNewContent(true);
   }
-  async function loadPage(direction:'before'|'around',id?:string,quote?:MessageQuote,positionCommit?:ReturnType<PositionClaim>){
+  async function loadPage(direction:'before'|'around',id?:string,quote?:MessageQuote,positionCommit?:ReturnType<PositionClaim>,allowReplyOwner=false){
     if(pageBusy&&direction!=='around')return;const cache=history.current,epoch=cache.epoch,position=direction==='around'?id:cache.before;if(!position)return;
     const commit=positionCommit??claimPosition(),viewNavigation=navigation.current,read=++pageRead.current;setPageBusy(true);setPageNotice('');
     try{
       const page=await post('/api/history/page',{readEpoch:epoch,request:{[direction]:position}});
       if(viewNavigation!==navigation.current)return;
       const pins=readingPins();
-      if(direction==='around'&&!page.messages.some((message:WebState['messages'][number])=>message.id===id))throw Error('history_message_not_found');
+      if(direction==='around'){
+        const messages:WebState['messages']=page.messages;
+        const target=messages.find(message=>message.id===id)?id:allowReplyOwner?messages.findLast(message=>message.process?.replyMessageId===id)?.id:undefined;
+        if(!target)throw Error('history_message_not_found');
+        id=target;
+      }
       if(!cache.add(page,epoch,direction,pins)){setPageNotice('读取期间记录已更新，请重新加载这一页。');return;}
       commit(()=>{reader.current.pending={kind:direction==='around'?'around':'preserve',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id:direction==='around'?id:anchor.current?.id,quote};publishHistory();});
     }catch(e){if(viewNavigation!==navigation.current)return;const code=e instanceof Error?e.message:'';setPageNotice(code==='history_cache_pinned'?'当前选择或焦点需要保留，请取消选择后继续加载。':code==='history_message_not_found'?'原消息不存在于当前对话，成果原答复可从授权入口只读打开。':code==='history_epoch_changed'||code==='history_cursor_expired'?'读取位置已过期，草稿已保留，请回到最新后重试。':'这一页未能读取，已有消息和草稿已保留。');}
@@ -1155,15 +1160,23 @@ function HomerApp() {
     claimPosition();reader.current.pending={kind:'latest',scope:positionScope(),navigation:navigation.current,user:userScroll.current};
     if(!reader.current.connected)setPageNotice('正在等待有效的最新消息；当前阅读位置已保留。');else setPageNotice('');prepareLatest();}
 
-  async function readActivePage(kind:'queue'|'interactions',after?:number){
-    const selected=activePages.current[kind],token=selected.begin(after);if(!token||activeReads.current.disposed)return;
+  async function readActivePage(kind:'queue'|'interactions',after?:number,id?:string){
+    const selected=activePages.current[kind];if(id)selected.invalidate();
+    const token=selected.begin(after);if(!token||activeReads.current.disposed)return;
     const controller=new AbortController();activeReads.current.controllers.add(controller);
     setState(old=>({...old}));let retry=false;
-    try{const response=await fetch('/api/history/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({after:token.after,readEpoch:token.readEpoch}),signal:controller.signal});
+    try{const response=await fetch('/api/history/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({after:token.after,readEpoch:token.readEpoch,...(id?{id}:{})}),signal:controller.signal});
       const page=await response.json();if(controller.signal.aborted||activeReads.current.disposed)return;if(!response.ok)throw Error(page.error??'history_read_failed');
       if(!selected.complete(token,page)){retry=true;return;}
       setState(old=>!old.history||old.threadId!==page.threadId||old.history.readEpoch!==page.readEpoch?old:{...old,[kind]:selected.items,history:{...old.history,[kind==='queue'?'moreQueue':'moreInteractions']:selected.more}});
-    }catch{if(!controller.signal.aborted)setError(kind==='queue'?'待发送记录未能核对，草稿已保留；暂不能提交修改。':'待答事项未能核对，草稿已保留；暂不能提交答复。');}
+      return true;
+    }catch(error){
+      if(id&&!controller.signal.aborted){
+        retry=true;
+        if(error instanceof Error&&error.message==='interaction_not_live')return 'inactive' as const;
+        return;
+      }
+      if(!controller.signal.aborted)setError(kind==='queue'?'待发送记录未能核对，草稿已保留；暂不能提交修改。':'待答事项未能核对，草稿已保留；暂不能提交答复。');}
     finally{selected.finish(token);activeReads.current.controllers.delete(controller);if(!activeReads.current.disposed)setState(old=>({...old}));
       if(retry&&selected.needsRead&&!activeReads.current.disposed){const timer=setTimeout(()=>{activeReads.current.timers.delete(timer);void readActivePage(kind);},150);activeReads.current.timers.add(timer);}
     }
@@ -1187,6 +1200,87 @@ function HomerApp() {
   }
 
   const [connected, setConnected] = useState(false);
+  const [notificationTarget,setNotificationTarget]=useState<DesktopNotice>();
+  const latestNotificationTarget=useRef<DesktopNotice|undefined>(undefined);
+  const [interactionFocus,setInteractionFocus]=useState<string>();
+  const visibilityChecks=useRef(new Map<string,{notice:DesktopNotice;timer:number}>());
+  const [,updateVisibilityChecks]=useState(0);
+  useEffect(()=>{
+    if(mobileView)return;
+    const bridge=window.homerDesktopNotifications;
+    if(!bridge)return;
+    const checks=visibilityChecks.current;
+    const unsubscribe=bridge.subscribe((id,notice)=>{
+      const timer=window.setTimeout(()=>{
+        checks.delete(id);
+        void bridge.visibility(id,false).catch(()=>{});
+      },300);
+      checks.set(id,{notice,timer});
+      updateVisibilityChecks(value=>value+1);
+    },notice=>{
+      latestNotificationTarget.current=notice;
+      invalidatePosition();
+      setInteractionFocus(undefined);
+      setNotificationTarget(notice);
+    });
+    return ()=>{
+      unsubscribe();
+      for(const {timer} of checks.values())clearTimeout(timer);
+      checks.clear();
+    };
+  },[mobileView]);
+  useLayoutEffect(()=>{
+    const bridge=window.homerDesktopNotifications;
+    if(!bridge)return;
+    for(const [id,{notice,timer}] of visibilityChecks.current){
+      const pairing=notice.kind==='pairing';
+      const card=document.getElementById((pairing?'pairing-':'task-interaction-')+notice.id);
+      if(!card)continue;
+      const scrollBounds=viewport.current?.getBoundingClientRect();
+      const top=pairing?0:scrollBounds?.top??0;
+      const bottom=pairing?innerHeight:scrollBounds?.bottom??0;
+      const actionable=Array.from(card.querySelectorAll('button:not(:disabled),textarea:not(:disabled),input:not(:disabled)')).some(control=>{
+        const box=control.getBoundingClientRect();
+        return box.height>0&&box.top>=top&&box.bottom<=bottom;
+      });
+      const visible=document.visibilityState==='visible'&&actionable&&
+        (pairing?settingsOpen:notice.threadId===state.threadId&&connected&&!settingsOpen&&!(canvasOpen&&narrowPreview));
+      clearTimeout(timer);
+      visibilityChecks.current.delete(id);
+      void bridge.visibility(id,visible).catch(()=>{});
+    }
+  });
+  useEffect(()=>{
+    const notice=notificationTarget;
+    if(!notice)return;
+    if(notice.kind==='pairing'){
+      accountSettings.current?.openMobile(notice.id);
+      setNotificationTarget(undefined);
+      return;
+    }
+    if(!connected||!state.history||!state.threadId)return;
+    setNotificationTarget(undefined);
+    if(notice.threadId!==state.threadId){setPageNotice('原通知不适用于当前对话。');return;}
+    accountSettings.current?.close();
+    if(narrowPreview&&canvasOpen)closeCanvas();
+    if(notice.kind==='message'){
+      void loadPage('around',notice.id,undefined,undefined,true);
+      return;
+    }
+    void readActivePage('interactions',activePages.current.interactions.cursor,notice.id).then(found=>{
+      if(latestNotificationTarget.current!==notice)return;
+      if(found===true)setInteractionFocus(notice.id);
+      else setPageNotice(found==='inactive'?'原请求已处理、失效或不可访问。':'暂时无法核对原请求。');
+    });
+  },[notificationTarget,connected,state.threadId,state.history]);
+  useLayoutEffect(()=>{
+    if(!interactionFocus)return;
+    const card=document.getElementById('task-interaction-'+interactionFocus);
+    if(card)claimPosition()(()=>{card.scrollIntoView({block:'nearest',behavior:'instant'});card.focus({preventScroll:true});});
+    else setPageNotice('原请求已处理或失效。');
+    setInteractionFocus(undefined);
+  },[interactionFocus,state.interactions]);
+
   const tailRead=useRef<{controller?:AbortController;scope?:string;attempt?:number;observed?:number;blocked?:boolean}>({});
   useEffect(()=>()=>{const owner=tailRead.current;owner.controller?.abort();owner.controller=undefined;owner.attempt=undefined;},[]);
   // Retry on a new observed revision or reconnection, never by polling.

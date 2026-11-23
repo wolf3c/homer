@@ -206,3 +206,28 @@ for(const file of [false,true])test('a real COMMIT failure never emits for '+(fi
   assert.equal(f.app.readCommittedMessage(String(row.replyId),{requestId:'commit-test'}),undefined);
  }finally{await f.close();}
 });
+
+test('desktop receives the committed reply without streaming text or history replay', async () => {
+ const f=fixture();
+ try {
+  const events:{kind:string;id:string;threadId:string}[]=[];
+  f.app.onDesktopNotification(event=>{
+   assert.equal(f.app.store.db.isTransaction,false);
+   events.push(event);
+  });
+  f.setScript(async()=>({status:'completed',text:'Private reply'}));
+  await f.app.start();
+  assert.equal(events.length,0);
+  await f.app.submitMessage({requestId:'desktop-notice',text:'Private input'});
+  await until(()=>events.length===1);
+  const {replyId}=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='desktop-notice'").get()!;
+  const threadId=f.app.store.meta('mainThread')!;
+  const event=events[0]!;
+  assert.equal(event.kind,'message');assert.equal(event.threadId,threadId);
+  const page=f.app.webHistoryPages().read(threadId,{around:event.id});
+  assert.ok(page.messages.some(message=>message.id===event.id||message.process?.replyMessageId===replyId),'the notification reaches a displayed message');
+  await f.restart(app=>app.onDesktopNotification(value=>events.push(value)));
+  await tick();
+  assert.equal(events.length,1);
+ } finally {await f.close();}
+});

@@ -8,12 +8,12 @@ import {createWebServer} from './web-server.js';
 import {createWebChat} from './web-chat.js';
 import {StatePublication} from './state-publication.js';
 
-export async function createMobileGateway(options:Parameters<typeof createWebServer>[0]&{databasePath:string;signalOrigin:string;routeKeyPath?:string;turnAccount?:Parameters<typeof createMobileTurn>[0]}){
- const {databasePath,signalOrigin,turnAccount,routeKeyPath=join(dirname(databasePath),'mobile-route.pem'),...webOptions}=options;
+export async function createMobileGateway(options:Parameters<typeof createWebServer>[0]&{databasePath:string;signalOrigin:string;routeKeyPath?:string;onPairing?:(id:string)=>void;turnAccount?:Parameters<typeof createMobileTurn>[0]}){
+ const {databasePath,signalOrigin,turnAccount,onPairing,routeKeyPath=join(dirname(databasePath),'mobile-route.pem'),...webOptions}=options;
  const origin=new URL(signalOrigin);
  if(origin.origin!==signalOrigin||origin.username||origin.password||!(origin.protocol==='https:'||origin.protocol==='http:'&&origin.hostname==='127.0.0.1'))throw Error('mobile_signal_origin_invalid');
  const turn=turnAccount?createMobileTurn(turnAccount):undefined;
- const route=mobileRoute(routeKeyPath),devices=new MobileDevices(databasePath);
+ const route=mobileRoute(routeKeyPath),devices=new MobileDevices(databasePath,Date.now,onPairing);
  const chat=createWebChat({...webOptions.bridge,openPreview:undefined,submit:async input=>{
   if(!webOptions.bridge.history)throw Error('history_protocol_required');
   const state=await webOptions.bridge.history.state();

@@ -48,6 +48,7 @@ type Hooks = {
   ready?: (id: string) => void;
   questionCurrent?: (item: InteractionRecord) => boolean;
   persisted?: (id:string)=>void;
+  userPending?: (id:string)=>void;
   // Pause/resume the run's active execution clock on first/last pending interaction.
   waiting?: (runId: string, waiting: boolean) => void;
 };
@@ -157,6 +158,10 @@ export class WorkerInteractions {
     }catch(error){this.db.exec('ROLLBACK TO worker_interaction_open; RELEASE worker_interaction_open');throw error;}
     return {id,created:true};
   }
+  actionable(id:string) {
+    const item=this.inspect(id);
+    return item.waitingFor==='user'&&(this.live.get(id)?.isCurrent()??(item.source==='ask_main'&&this.hooks.questionCurrent?.(item)===true));
+  }
   private current(id: string): Live | undefined {
     const row = this.row(id), live = this.live.get(id);
     if(!live && row.source==='ask_main' && this.hooks.questionCurrent && !['cancelled','expired'].includes(row.state)){
@@ -180,6 +185,7 @@ export class WorkerInteractions {
     if (row.state !== "pending_main") throw new Error("interaction_already_resolved");
     this.db.prepare("UPDATE worker_interactions SET state='pending_user',userQuestion=?,escalationReason=?,updatedAt=? WHERE id=?")
       .run(question, reason, Date.now(), id);
+    this.hooks.userPending?.(id);
     return { duplicate: false };
   }
   private prepareResponse(id: string, decision: InteractionDecision, context: { userMessageId?: string; userText?: string } = {}) {

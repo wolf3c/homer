@@ -18,11 +18,11 @@ export class ActiveReadPage<T>{
   this.desired=after;this.checking=true;
   return this.flight={generation:this.generation,after,threadId:this.version.threadId,readEpoch:this.version.readEpoch};
  }
- complete(token:NonNullable<ActiveReadPage<T>['flight']>,page:ActiveReadResult<T>){
+ complete(token:NonNullable<ActiveReadPage<T>['flight']>,page:ActiveReadResult<T>&{cursor?:number}){
   if(this.flight!==token||token.generation!==this.generation)return false;
   if(page.threadId!==this.version.threadId||page.readEpoch!==this.version.readEpoch||page.revision<this.version.revision)return false;
   this.version={...this.version,revision:page.revision};
-  this.items=page.items;this.more=page.after;this.cursor=token.after;this.checking=false;return true;
+  this.items=page.items;this.more=page.after;this.cursor=this.desired=page.cursor??token.after;this.checking=false;return true;
  }
  finish(token:NonNullable<ActiveReadPage<T>['flight']>){if(this.flight===token)this.flight=undefined;}
  get needsRead(){return this.checking&&!this.flight;}

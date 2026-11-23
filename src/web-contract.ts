@@ -78,7 +78,7 @@ export type WebBridge = {
     receipts(input:QueueReceiptsRequest):Promise<QueueReceipts>;
     queue(after:number,readEpoch?:string):Promise<ActiveReadResult<QueuedInput>>;
     dispatchQueue?<S extends 'all'|undefined=undefined>(input:{readEpoch:string;cursor?:string;sources?:S}):Promise<DispatchQueuePage<S>>;
-    interactions(after:number,readEpoch?:string):Promise<ActiveReadResult<WebInteraction>>;
+    interactions(after:number,readEpoch?:string,id?:string):Promise<ActiveReadResult<WebInteraction>&{cursor?:number}>;
   };
   onStateChange?(listener:()=>void):()=>void;
   taskOverview?: {execution?(selector:import('./worker-execution.js').ExecutionSelector,before?:string):Promise<import('./worker-execution.js').WorkerExecutionPage>;call?(selector:import('./worker-execution.js').ExecutionSelector,callKey:string):Promise<import('./worker-execution.js').WorkerCallDetail>;progress?(id:string):Promise<import('./task-status.js').TaskProgress>;list(page?:import('./task-overview.js').OverviewPage):Promise<import('./task-overview.js').TaskOverview>;detail(id:string,query?:import('./task-overview.js').WorkerConversationQuery):Promise<import('./task-overview.js').TaskDetail>;summary?(id:string):Promise<import('./task-overview.js').TaskDetail>;origin?(id:string,messageId:string):Promise<ArtifactOrigin>};

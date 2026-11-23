@@ -65,6 +65,24 @@ if(process.isMainFrame===true){
   ['state','health','start','code','confirm','cancel','remove','apply']
    .map(action=>[action,input=>ipcRenderer.invoke('homer:chat-apps',action,input)]),
  ));
+ contextBridge.exposeInMainWorld('homerDesktopNotifications',{
+  preferences:()=>ipcRenderer.invoke('homer:notification','preferences'),
+  set:(key,value)=>ipcRenderer.invoke('homer:notification','set',key,value),
+  openSystemSettings:()=>ipcRenderer.invoke('homer:notification','system-settings'),
+  subscribe:(check,open)=>{
+   const onCheck=(_event,id,notice)=>check(id,notice);
+   const onOpen=(_event,notice)=>open(notice);
+   ipcRenderer.on('homer:notification:check',onCheck);
+   ipcRenderer.on('homer:notification:open',onOpen);
+   void ipcRenderer.invoke('homer:notification','ready',true).catch(()=>{});
+   return ()=>{
+    ipcRenderer.removeListener('homer:notification:check',onCheck);
+    ipcRenderer.removeListener('homer:notification:open',onOpen);
+    void ipcRenderer.invoke('homer:notification','ready',false).catch(()=>{});
+   };
+  },
+  visibility:(id,visible)=>ipcRenderer.invoke('homer:notification','visibility',id,visible),
+ });
  contextBridge.exposeInMainWorld('homerDesktopSettings',{
   getVersion:(...args)=>invoke('homer:settings:version',args),
   openAboutLink:(...args)=>ipcRenderer.invoke('homer:settings:open-about-link',...args),

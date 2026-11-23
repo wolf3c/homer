@@ -154,7 +154,7 @@ try{
   }catch{}
  });
  reader.on('close',quit);
- const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindBrowserReply:callback=>{browserReply=callback;},bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{void send(value);}}});
+ const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindBrowserReply:callback=>{browserReply=callback;},bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{const sent=send(value);if(value.kind==='desktop_notification')void sent.catch(()=>{});}}});
  reader.close();input.destroy();process.stdin.pause();
  if(!result?.stoppedConfirmed&&!result?.noHostStarted)throw Error('desktop_stop_unconfirmed');
  // A successful host close includes all main/control/Worker/MCP owner evidence.

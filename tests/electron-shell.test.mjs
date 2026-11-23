@@ -23,9 +23,9 @@ const channelLifecycleCall=call=>call.length===3&&call[0]==='native-account'&&ca
  call[2].input&&typeof call[2].input==='object'&&!Array.isArray(call[2].input)&&Object.keys(call[2].input).length===0;
 async function fixture(args=['Homer','--test-profile','/synthetic/profile'],openExternal=async()=>{},platform='darwin',native={}){
  let monotonic=0;
- const handlers=new Map(),windows=[],messages=[],sent=[],nativeCalls=[],ownershipCalls=[],launches=[],credentials=[],tokenFiles=[];let spawnCount=0;
+ const handlers=new Map(),windows=[],messages=[],sent=[],toasts=[],nativeCalls=[],ownershipCalls=[],launches=[],credentials=[],tokenFiles=[];let spawnCount=0;
  const app=new EventEmitter(),paths=new Map();let ownsLock=false;
- Object.assign(app,{isPackaged:true,whenReady:async()=>{},setPath(name,path){paths.set(name,path);ownershipCalls.push(['set-path',name,path]);},getPath:()=>'/synthetic',requestSingleInstanceLock(){const key=paths.get('userData');ownershipCalls.push(['single-instance',key]);if(native.lockAvailable===false||native.locks?.has(key))return false;native.locks?.add(key);ownsLock=true;return true;},hasSingleInstanceLock:()=>ownsLock,getVersion:()=> '0.1.0',relaunch(){nativeCalls.push(['relaunch']);},quit(){const e={preventDefault(){this.prevented=true;}};app.emit('before-quit',e);if(!e.prevented)app.emit('quit');},setAboutPanelOptions(){}});
+ Object.assign(app,{isPackaged:true,whenReady:async()=>{},setAppUserModelId(){},setPath(name,path){paths.set(name,path);ownershipCalls.push(['set-path',name,path]);},getPath:()=>'/synthetic',requestSingleInstanceLock(){const key=paths.get('userData');ownershipCalls.push(['single-instance',key]);if(native.lockAvailable===false||native.locks?.has(key))return false;native.locks?.add(key);ownsLock=true;return true;},hasSingleInstanceLock:()=>ownsLock,getVersion:()=> '0.1.0',relaunch(){nativeCalls.push(['relaunch']);},quit(){const e={preventDefault(){this.prevented=true;}};app.emit('before-quit',e);if(!e.prevented)app.emit('quit');},setAboutPanelOptions(){}});
  const session={webRequest:{onBeforeSendHeaders:(...args)=>handlers.set('desktop-request',args.at(-1))},setPermissionRequestHandler:cb=>handlers.set('permission-request',cb),setPermissionCheckHandler:cb=>handlers.set('permission-check',cb),setDisplayMediaRequestHandler:cb=>handlers.set('display-media-request',cb),on:(name,cb)=>handlers.set(name,cb)};
  const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();child.stdin.on('data',value=>{
   const message=JSON.parse(String(value));
@@ -41,6 +41,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
   async loadFile(path){await this.loadURL(pathToFileURL(path).href);this.emit('ready-to-show');}
   showInactive(){this.show();}
   isVisible(){return !this.hidden&&!this.isDestroyed();}
+  isFocused(){return this.focused===true;}
   getMediaSourceId(){return 'window:999:1';}
   destroy(){this.close();}
   setBounds(bounds){this.bounds=bounds;}
@@ -51,7 +52,12 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  }
  const updater=new EventEmitter();Object.assign(updater,{setFeedURL:value=>nativeCalls.push(['feed',value]),checkForUpdates:()=>{nativeCalls.push(['check-update']);if(native.checkError)throw Error('private_network_detail');},quitAndInstall:()=>{nativeCalls.push(['install-update']);if(native.installError)throw Error('private_install_detail');app.quit();}});
  const display={id:7,scaleFactor:2,bounds:{x:0,y:0,width:1200,height:800},workArea:{x:0,y:24,width:1200,height:760}};
- const electron={autoUpdater:updater,app,BrowserWindow,screen:{getCursorScreenPoint:()=>({x:640,y:420}),getDisplayMatching:()=>display,getDisplayNearestPoint:()=>display},globalShortcut:{
+ class Notification extends EventEmitter{
+  static isSupported(){return true;}
+  constructor(options){super();this.options=options;}
+  show(){toasts.push(this);}
+ }
+ const electron={Notification,autoUpdater:updater,app,BrowserWindow,screen:{getCursorScreenPoint:()=>({x:640,y:420}),getDisplayMatching:()=>display,getDisplayNearestPoint:()=>display},globalShortcut:{
   register(key,callback){if((typeof native.shortcutConflict==='function'?native.shortcutConflict(key):native.shortcutConflict)||handlers.has('shortcut:'+key))return false;handlers.set('shortcut:'+key,callback);return true;},
   unregister:key=>handlers.delete('shortcut:'+key),
  },ipcMain:{handle:(name,cb)=>{assert.equal(handlers.has(name),false);handlers.set(name,cb);}},systemPreferences:{isTrustedAccessibilityClient:prompt=>{nativeCalls.push(['ax',prompt]);return native.ax?native.ax(prompt):false;},getMediaAccessStatus:kind=>{nativeCalls.push(['screen',kind]);return native.screen?native.screen(kind):'not-determined';}},Menu:{buildFromTemplate:value=>value,setApplicationMenu:value=>handlers.set('menu',value)},dialog:{showMessageBox:async(_window,options)=>{const o=options??_window;messages.push({...o,parent:options?_window:undefined});return {response:typeof native.response==='function'?await native.response(o):native.response??1};}},shell:{openExternal:url=>{nativeCalls.push(['external',url]);return native.external?native.external(url):openExternal(url);},openPath:path=>{nativeCalls.push(['open',path]);return native.open?native.open(path):Promise.resolve('');}}};
@@ -80,6 +86,8 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  Object.assign(modules['../homer/scripts/desktop-profile.mjs'],{
   readDesktopCaptureShortcut:()=>native.captureShortcut,
   saveDesktopCaptureShortcut:(_root,shortcut)=>{if(native.shortcutWriteError)throw Error('private_write_failure');native.captureShortcut=shortcut;},
+  readDesktopNotificationPreferences:()=>native.notifications,
+  saveDesktopNotificationPreferences:(_root,prefs)=>{native.notifications=prefs;},
   readDesktopPowerConfig:()=>native.powerConfig,
   saveDesktopPowerConfig:(_root,power)=>{if(native.powerWriteError)throw Error('private_write_failure');native.powerConfig=power;},
  });
@@ -120,7 +128,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  // Preserve every call; only trusted ID-less channel lifecycle cancellation has its own category.
  return {options:native,paths,wakeEvents,powerMonitor,powerLocks,get updater(){return nativeCalls.some(c=>c[0]==='nsis')?entry.namespace.windowsUpdater:updater;},advance:ms=>{monotonic+=ms;},runTimers,BrowserWindow,nativeCalls,allNativeCalls:nativeCalls,
   get nonLifecycleCalls(){return nativeCalls.filter(call=>!channelLifecycleCall(call));},get channelLifecycleCalls(){return nativeCalls.filter(channelLifecycleCall);},
-  ownershipCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
+  ownershipCalls,launches,credentials,tokenFiles,setPlatform:value=>{context.process.platform=value;},createWindow:entry.namespace.createWindow,forgetWindow:entry.namespace.forgetWindowForTest,app,child,windows,handlers,messages,sent,toasts,spawnCount:()=>spawnCount,timeout:()=>timer?.(),tick:()=>new Promise(r=>setImmediate(r)),event:value=>child.stdout.write(JSON.stringify(value)+'\n')};
 }
 if(!vm.SourceTextModule){
  test('Electron shell contracts run with Node VM module support',()=>{
@@ -130,6 +138,47 @@ if(!vm.SourceTextModule){
  });
 }else{
 
+test('desktop notifications combine independent switches and open the original candidate once',async()=>{
+ const f=await fixture();
+ f.windows[0].hide();
+ f.event({kind:'desktop_notification',notice:{kind:'message',id:'first-live',threadId:'thread'}});
+ assert.equal(f.toasts.pop()?.options.body,'Homer 有新消息');
+ f.event({kind:'url',url:'http://127.0.0.1:4777/',desktopAccessToken:'a'.repeat(64)});
+ await f.tick();
+ const w=f.windows[0],frame=w.webContents.mainFrame,event={sender:w.webContents,senderFrame:frame};
+ const command=f.handlers.get('homer:notification');
+ const notice=(kind,id)=>f.event({kind:'desktop_notification',notice:{kind,id,threadId:'thread'}});
+ assert.equal((await command(event,'preferences')).message,true);
+ assert.equal((await command(event,'preferences')).attention,true);
+ await command(event,'ready',true);
+ w.show();w.focus();
+ notice('message','m1');
+ assert.equal(f.toasts.length,0);
+ notice('interaction','a1');
+ const check=w.settingsMessages.at(-1);
+ assert.equal(check[0],'homer:notification:check');
+ await command(event,'visibility',check[1],true);
+ await f.tick();
+ assert.equal(f.toasts.length,0);
+ w.hide();
+ notice('interaction','a2');notice('interaction','a2');notice('interaction','a3');
+ assert.equal(f.toasts.length,2);
+ assert.equal(f.toasts[0].options.body,'Homer 需要你处理一项请求');
+ f.toasts[0].emit('click');
+ assert.equal(w.settingsMessages.at(-1)[1].id,'a2');
+ await command(event,'set','attention',false);
+ w.hide();
+ notice('interaction','a4');
+ assert.equal(f.toasts.at(-1).options.body,'Homer 有新消息');
+ await command(event,'set','attention',true);
+ await command(event,'set','message',false);
+ notice('message','m2');notice('interaction','a5');
+ assert.equal(f.toasts.length,4);
+ await command(event,'set','attention',false);
+ notice('message','m3');notice('interaction','a6');
+ assert.equal(f.toasts.length,4);
+ await assert.rejects(command({sender:w.webContents,senderFrame:{...frame}},'set','message',true),/desktop_notification_forbidden/);
+});
 for(const platform of ['darwin','win32'])test('formal '+platform+' startup passes the system user home while retaining profile-local cache and temp',async()=>{
  const userHome=platform==='win32'?'C:\\Synthetic User':'/synthetic/Real User';
  const f=await fixture(['Homer'],undefined,platform,{published:true,userHome});
@@ -1625,7 +1674,11 @@ test('preload exposes fixed Promise methods and only the screen settings token i
  for(const isMainFrame of [true,false,undefined]){
   const exposed=[],calls=[];vm.runInNewContext(source,{process:{isMainFrame},require:name=>{assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(...args)=>exposed.push(args)},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {synthetic:true};}}};}});
   if(isMainFrame!==true){assert.equal(exposed.length,0);continue;}
-  assert.equal(exposed.length,8);
+  assert.equal(exposed.length,9);
+  const notifications=exposed.find(([name])=>name==='homerDesktopNotifications')[1];
+  assert.deepEqual(Object.keys(notifications),['preferences','set','openSystemSettings','subscribe','visibility']);
+  await notifications.set('attention',false);
+  assert.deepEqual(calls.at(-1),['homer:notification','set','attention',false]);
   const browser=exposed.find(([name])=>name==='homerBrowserPreview')[1];
   assert.deepEqual(Object.keys(browser),['list','present','control','annotations','reply','onChanged','onAnnotation','onShow']);
   for(const method of ['list','present','control','annotations','reply']){await browser[method]({pageId:'fixture'});assert.equal(calls.at(-1)[0],'homer:preview:'+method);}

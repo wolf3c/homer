@@ -284,7 +284,22 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
         epoch(readEpoch);const result=pageReader().dispatchQueue(cursor,readEpoch,sources);
         return {...result,view:'dispatch-v1',...(sources?{sources}:{}),threadId:app.store.meta('mainThread')!,readEpoch,revision:pageReader().revision,items:result.items.map(item=>('user' in item&&item.user)?{...item,user:{...item.user,...(item.user.attachments?{media:item.user.attachments.map(ref=>app.media.view(ref))}:{})}}:item)} as DispatchQueuePage<S>;
       },
-      interactions:async(after,readEpoch)=>{if(readEpoch!==undefined)epoch(readEpoch);const result=interactionPage(after);return {...result,threadId:app.store.meta('mainThread')!,readEpoch:app.webReadEpoch,revision:pageReader().revision};},
+      interactions:async(after,readEpoch,id)=>{
+        if(readEpoch!==undefined)epoch(readEpoch);
+        const threadId=app.store.meta('mainThread')!;
+        let cursor:number|undefined;
+        if(id!==undefined){
+          const row=app.store.db.prepare(`SELECT w.rowid AS position FROM worker_interactions w
+            WHERE w.id=? AND coalesce(json_extract(w.details,'$.historyThreadId'),?)=?
+              AND EXISTS(SELECT 1 FROM conversation_inputs c WHERE c.threadId=?
+                AND c.requestId=json_extract(w.authority,'$.sourceRequestId'))`).get(id,threadId,threadId,threadId);
+          if(!row||!app.interactions.actionable(id))throw Error('interaction_not_live');
+          const current=interactionPage(after);
+          if(current.items.some(item=>item.id===id))return {...current,threadId,readEpoch:app.webReadEpoch,revision:pageReader().revision};
+          cursor=Number(row.position)-1;
+        }
+        return {...interactionPage(cursor??after),cursor,threadId,readEpoch:app.webReadEpoch,revision:pageReader().revision};
+      },
       receipts:async({requestIds,operations,threadId,readEpoch})=>{
         if(!Array.isArray(requestIds)||requestIds.length>80||requestIds.some(id=>typeof id!=='string'||! /^[\w:-]{1,100}$/.test(id)))throw Error('receipt_ids_invalid');
         if(readEpoch!==undefined)epoch(readEpoch);

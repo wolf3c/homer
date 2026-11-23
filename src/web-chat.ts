@@ -85,7 +85,10 @@ export function createWebChat(bridge:WebBridge){
       }
       return (await boundedRead(()=>bridge.history!.queue(input.after??0,input.readEpoch)));
     }
-    if(path==='/api/history/interactions')return (await boundedRead(()=>bridge.history!.interactions(input.after??0,input.readEpoch)));
+    if(path==='/api/history/interactions'){
+      if(input.id!==undefined&&(!id(input.id)||typeof input.readEpoch!=='string'))throw Error('history_request_invalid');
+      return await boundedRead(()=>bridge.history!.interactions(input.after??0,input.readEpoch,input.id));
+    }
   }
   if(path==='/api/uploads/discard'){
     if(!bridge.media?.discard)throw Error('web_upload_unavailable');

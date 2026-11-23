@@ -181,6 +181,7 @@ async function receive(raw: unknown) {
     } catch(error) { if(desktop&&error instanceof DesktopReviewRequired)constructorRefused=true;await app?.close();throw error; }
     app.onStateChange(reason=>{invalidateState();publishPower();if(desktop&&reason==='model-turn')void send({kind:'account_usage_dirty'}).catch(()=>{});});
     if(desktop){
+      app.onDesktopNotification(notice=>{void send({kind:'desktop_notification',notice}).catch(()=>{});});
       app.bindBrowserPreview((owner,action,input)=>new Promise((resolve,reject)=>{
         if(stopping||!process.connected){reject(Error('preview_unavailable'));return;}
         if(Buffer.byteLength(JSON.stringify({owner,action,input}))>60000){reject(Error('preview_request_too_large'));return;}
@@ -264,7 +265,7 @@ async function receive(raw: unknown) {
       else if(m.method==='history.receipts')value=await bridge.history!.receipts(m.input);
       else if(m.method==='history.queue')value=await bridge.history!.queue(m.input.after,m.input.readEpoch);
       else if(m.method==='history.dispatchQueue')value=await bridge.history!.dispatchQueue!(m.input);
-      else if(m.method==='history.interactions')value=await bridge.history!.interactions(m.input.after,m.input.readEpoch);
+      else if(m.method==='history.interactions')value=await bridge.history!.interactions(m.input.after,m.input.readEpoch,m.input.id);
       else if(m.method==='taskOverview.progress'){if(!bridge.taskOverview?.progress)throw Error('task_overview_unavailable');value=await bridge.taskOverview.progress(m.input.id);}
       else if(m.method==='taskOverview.list')value=await bridge.taskOverview!.list(m.input);
       else if(m.method==='taskOverview.summary')value=await bridge.taskOverview!.summary!(m.input.id);
