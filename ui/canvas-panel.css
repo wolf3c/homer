@@ -13,7 +13,7 @@
 .canvas-tabs,.canvas-tab-panel{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .canvas-tab-panel[hidden]{display:none}
 .canvas-tab-panel>[data-slot=canvas-split-document]{min-height:0}
-.canvas-tab-bar{display:flex;flex:0 0 44px;height:44px;align-items:center;gap:4px;min-width:0;padding-right:6px;border-bottom:1px solid var(--line)}
+.canvas-tab-bar{display:flex;flex:0 0 44px;height:44px;align-items:center;gap:4px;min-width:0;padding-right:8px;border-bottom:1px solid var(--line)}
 .canvas-tab-rail{display:flex;flex:1;align-items:center;gap:3px;min-width:0;height:100%;overflow-x:auto;overscroll-behavior-x:contain;padding:0 6px;scrollbar-width:none}
 .canvas-tab-rail::-webkit-scrollbar{display:none}
 .canvas-tab-actions{display:flex;flex:none;align-items:center;gap:4px;min-width:0}
@@ -25,8 +25,6 @@
 .app-shell[data-native-titlebar] .canvas-tab-bar .canvas-tab-rail *{-webkit-app-region:initial}
 @media(max-width:800px){.app-shell[data-native-titlebar] .canvas-tab-bar{padding-left:max(6px,calc(env(titlebar-area-x,0px) + 4px))}}
 .canvas-preview-label{flex:1;min-width:0;padding:11px 7px;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.canvas-panel .canvas-collapse{display:flex;flex:none;align-items:center;justify-content:center;width:28px;height:28px;padding:0;color:var(--ink);transition:background .16s,color .16s}
-.canvas-collapse>svg{flex:none;width:14px;height:14px}
 .canvas-tab-item{display:flex;flex:none;align-items:center;max-width:min(14rem,100%);min-width:0;border:1px solid transparent;border-radius:7px}
 .canvas-tab-item:has([aria-selected=true]){border-color:var(--line);background:var(--soft)}
 .canvas-panel .canvas-tab{display:flex;min-width:0;flex:1;height:28px;padding:0 7px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:12px;white-space:nowrap;cursor:pointer}
@@ -60,7 +58,7 @@
 @media(max-width:800px),(pointer:coarse){
   .canvas-tab-bar{flex-basis:52px;height:52px}
   .canvas-panel .canvas-tab{height:44px}
-  .canvas-panel :is(.canvas-tab-close,.canvas-collapse){width:44px;height:44px}
+  .canvas-panel .canvas-tab-close{width:44px;height:44px}
   .canvas-panel .canvas-tab-actions :is(.html-annotation-toggle,.image-annotation-toggle){height:44px;min-width:44px}
   .canvas-panel .canvas-tab-actions [data-slot=file-download]{display:grid;place-items:center;height:44px;min-width:44px}
 }

@@ -6,7 +6,6 @@ import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
 import {PanelRight,XIcon} from 'lucide-react';
 import {createPortal} from 'react-dom';
-import {TooltipIconButton} from './vendor/assistant-ui/attachment-icon-button';
 import type {Annotation} from './vendor/agentation-3.1.2/index.mjs';
 import {useMediaQuery} from '@mantine/hooks';
 import {previewAnnotations,type PreviewSource} from '../src/preview-reference';
@@ -98,7 +97,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
   },[selected,tabs,actions]);
   const hasTabs=!!tabs?.length&&!webSource;
   const title='预览：'+(webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'从对话中选择成果');
-  const collapse=<TooltipIconButton ref={collapseButton} className="canvas-collapse" tooltipContainer={actions} aria-controls="canvas-panel" aria-expanded={true} aria-label="收起预览" tooltip="收起预览" onClick={onClose}><PanelRight size={14} aria-hidden/></TooltipIconButton>;
+  const collapse=<button type="button" ref={collapseButton} className="canvas-collapse" aria-controls="canvas-panel" aria-expanded={true} aria-label="收起预览" title="收起预览" onClick={onClose}><PanelRight size={18} aria-hidden/></button>;
   const browser=tabs?.find(tab=>tab.id===selected&&'kind'in tab&&tab.kind==='browser');
   const local=tabs?.find((tab):tab is MessageFileTab=>tab.id===selected&&'kind'in tab&&tab.kind==='message-file');
   const reader=selected==='schedules'?scheduleContent:browser&&'kind'in browser&&browser.kind==='browser'?<BrowserPreview page={browser.page} annotationDraft={readerProps.annotationDraft} onReference={readerProps.onReference} enabled={!!readerProps.referencesEnabled} isCurrent={readerProps.isCurrent} focusId={readerProps.annotationFocus?.id} focusKey={readerProps.annotationFocus?.key} focusRequest={readerProps.annotationFocus?.nonce}/>:<CanvasReader {...readerProps} local={local} threadId={threadId} key={JSON.stringify([threadId,local?.id??artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;

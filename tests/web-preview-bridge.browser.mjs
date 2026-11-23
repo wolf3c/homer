@@ -60,7 +60,7 @@ try{
    await page.evaluate(()=>{window.__loads=0;document.addEventListener('load',event=>{if(event.target instanceof HTMLIFrameElement)window.__loads++;},true);document.querySelector('[aria-label="重新加载预览"]').click();});
    await page.until(`window.__loads>0&&window.__tokens.at(-1)!==${JSON.stringify(oldToken)}`,10000);
    console.log('RELOADED web bridge '+width);
-   assert.equal(await page.evaluate(()=>document.querySelector('.canvas-collapse, .conversation-header [aria-controls=canvas-panel][aria-expanded=true]:not([aria-hidden=true] *)').getBoundingClientRect().height),28);
+   assert.equal(await page.evaluate(()=>document.querySelector('.canvas-collapse').getBoundingClientRect().height),44);
    if(width===1440){
     // A forged parent event, the real frame with a wrong token and a prior
     // document token must all leave the draft callback untouched.

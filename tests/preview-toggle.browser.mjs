@@ -17,9 +17,18 @@ const artifacts=Array.from({length:5},(_,i)=>({
 const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png'),resource(req,res){
  res.writeHead(200,{'Content-Type':'text/markdown','X-Homer-Artifact-Hash':sha256});res.end(bytes);
 }});
-fixture.reset({messages:[{id:'synthetic-result',threadId:'composer-review',requestId:'synthetic-request',role:'assistant',text:'这五份合成文件用于核对 Preview 的打开、收起与标签切换。',status:'completed',createdAt:1700000000000}],artifacts,features:{taskOverview:false}});
+fixture.reset({messages:[{id:'synthetic-result',threadId:'composer-review',requestId:'synthetic-request',role:'assistant',text:'这五份合成文件用于核对 Preview 的打开、收起与标签切换。',status:'completed',createdAt:1700000000000}],artifacts,features:{taskOverview:true}});
 let browser,exit,failure;
 const checks=[];
+const appearance=button=>button.evaluate(async node=>{
+ await Promise.all(node.getAnimations().map(animation=>animation.finished.catch(()=>{})));
+ const {width,height}=node.getBoundingClientRect(),icon=node.querySelector('svg').getBoundingClientRect(),style=getComputedStyle(node);
+ return {width,height,iconWidth:icon.width,iconHeight:icon.height,background:style.backgroundColor,color:style.color,radius:style.borderRadius};
+});
+const focusOutline=button=>button.evaluate(node=>{
+ const {outlineColor,outlineOffset,outlineStyle,outlineWidth}=getComputedStyle(node);
+ return {outlineColor,outlineOffset,outlineStyle,outlineWidth,visible:node.matches(':focus-visible')};
+});
 try{
  browser=await openBrowser(destination,{mockKeychain:true});
  for(const width of [1440,801,800,390,320]){
@@ -32,18 +41,30 @@ try{
    const close=page.getByRole('button',{name:'收起预览',exact:true});
    const panel=page.locator('#canvas-panel');
    const active=panel.locator('[role=tab][aria-selected=true]');
+   const content=panel.getByRole('heading',{name:'合成成果',exact:true});
    const first=page.getByRole('button',{name:'预览 '+artifacts[0].title,exact:true});
    await open.waitFor();
    assert.equal(await open.getAttribute('aria-expanded'),'false');
    if(width===1440)await page.screenshot({path:join(destination,'closed-1440.png')});
-   await open.focus();await page.keyboard.press('Enter');
+   const openAppearance=await appearance(open);
+   const openPosition=await open.evaluate(node=>{
+    const button=node.getBoundingClientRect(),header=node.closest('.conversation-header').getBoundingClientRect();
+    return {top:button.top-header.top,right:header.right-button.right};
+   });
+   await open.hover();
+   const openHover=await appearance(open);
+   await page.mouse.move(5,150);
+   await open.focus();
+   const openFocus=await focusOutline(open);
+   await page.keyboard.press('Enter');
    await page.waitForFunction(()=>document.activeElement?.classList.contains('canvas-collapse'));
+   const closeFocus=await focusOutline(close);
    await page.keyboard.press('Space');await panel.waitFor({state:'hidden'});
    await page.waitForFunction(()=>document.activeElement?.matches('.conversation-header [aria-controls=canvas-panel]'));
    for(const artifact of artifacts){
     if(width<=800&&await panel.isVisible())await close.click();
     await page.getByRole('button',{name:'预览 '+artifact.title,exact:true}).click();
-    await panel.getByRole('heading',{name:'合成成果',exact:true}).waitFor();
+    await content.waitFor();
    }
    assert.equal(await open.count(),0,'the conversation opener is absent from the accessibility tree while preview is open');
    assert.equal(await close.count(),1);
@@ -56,8 +77,8 @@ try{
      railRight:rail.getBoundingClientRect().right,buttonLeft:rect.left,scrolling:rail.scrollWidth>rail.clientWidth,
      modal:panel.getAttribute('aria-modal')==='true',overflow:document.documentElement.scrollWidth>innerWidth};
    });
-   assert.equal(layout.modal,width<=800);assert.equal(layout.overflow,false);assert.equal(layout.height,width<=800?44:28);
-   assert.ok(layout.top>=0&&layout.top<=10&&layout.right>=0&&layout.right<=7&&layout.buttonLeft>=layout.railRight);
+   assert.equal(layout.modal,width<=800);assert.equal(layout.overflow,false);
+   assert.ok(layout.buttonLeft>=layout.railRight);
    assert.equal(layout.scrolling,true);
    const rail=panel.getByRole('tablist');
    const beforeScroll=await close.boundingBox();
@@ -75,6 +96,18 @@ try{
    await panel.locator('.preview-toolbar [data-slot=file-download]').waitFor();
    await page.mouse.move(5,150);
    await page.screenshot({path:join(destination,'open-'+width+'.png')});
+   const closeAppearance=await appearance(close);
+   await close.hover();
+   const closeHover=await appearance(close);
+   if(width===1440)await page.screenshot({path:join(destination,'hover-1440.png')});
+   assert.deepEqual(closeAppearance,openAppearance,'both Preview toggles share the same resting appearance and hit target');
+   assert.equal(closeAppearance.width,44);assert.equal(closeAppearance.height,44);
+   assert.equal(closeAppearance.iconWidth,18);assert.equal(closeAppearance.iconHeight,18);
+   assert.deepEqual(closeHover,openHover);
+   assert.notEqual(closeHover.background,closeAppearance.background);
+   assert.deepEqual(closeFocus,openFocus);
+   assert.equal(closeFocus.visible,true);assert.equal(closeFocus.outlineWidth,'1px');
+   assert.deepEqual({top:layout.top,right:layout.right},openPosition);
    await close.click();await panel.waitFor({state:'hidden'});
    await page.waitForFunction(title=>document.activeElement?.getAttribute('aria-label')==='预览 '+title,last.title);
    assert.equal(await lastSource.evaluate(node=>node===document.activeElement),true);
@@ -82,13 +115,14 @@ try{
    await page.waitForFunction(()=>document.activeElement?.matches('[role=tab][aria-selected=true]'));
    assert.equal(await active.getAttribute('aria-label'),last.title);
    assert.equal(await panel.getByRole('tab').count(),artifacts.length);
+   await content.waitFor();
    await close.focus();await page.keyboard.press('Enter');await panel.waitFor({state:'hidden'});
    await page.waitForFunction(()=>document.activeElement?.matches('.conversation-header [aria-controls=canvas-panel]'));
    await page.keyboard.press('Enter');await active.waitFor();
    await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
    await page.waitForFunction(()=>document.activeElement?.matches('.conversation-header [aria-controls=canvas-panel]'));
    assert.ok(await first.isVisible());assert.deepEqual(errors,[]);
-   checks.push({viewport:width,layout,mouseAndKeyboard:true,focusRestored:true,tabsRetained:true});
+   checks.push({viewport:width,layout,appearance:closeAppearance,hover:closeHover,focus:closeFocus,mouseAndKeyboard:true,focusRestored:true,tabsRetained:true});
   }finally{await context.close();}
  }
  assert.equal(fixture.received.messages.length,0);

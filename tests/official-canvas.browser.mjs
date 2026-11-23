@@ -77,7 +77,7 @@ try{
    await p.until(()=>document.activeElement===document.querySelector('.canvas-collapse'),3000);
    check(await evaluate(()=>document.activeElement===document.querySelector('.canvas-collapse')),'empty preview focuses collapse control '+width);
    const dimensions=await evaluate(()=>{const panel=document.querySelector('#canvas-panel'),button=document.querySelector('.canvas-collapse');return {overflow:document.documentElement.scrollWidth>innerWidth,width:panel.getBoundingClientRect().width,modal:panel.getAttribute('aria-modal')==='true',target:button.getBoundingClientRect().height};});
-   check(!dimensions.overflow&&dimensions.target===(width<=800?44:28)&&dimensions.modal===(width<=800),'preview collapse uses 28px desktop / 44px mobile targets and Base UI modal modes '+width);
+   check(!dimensions.overflow&&dimensions.target===44&&dimensions.modal===(width<=800),'preview collapse uses a 44px target and keeps Base UI modal modes '+width);
    check(await evaluate(()=>!document.querySelector('#canvas-address,.canvas-url')),'no manual URL entry '+width);
    await removedActionsAbsent();
    check(await evaluate(()=>document.querySelector('#canvas-panel').textContent.includes('从对话中选择')),'empty preview directs selection from chat '+width);

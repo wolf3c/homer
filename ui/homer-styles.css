@@ -24,10 +24,12 @@
 .mobile-settings-page-content h2{margin:0 4px 8px;color:var(--muted);font-size:13px;font-weight:600}
 .mobile-settings-page-content button{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:58px;padding:0 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);font-size:16px;text-align:left}
 .mobile-settings-page-content button svg{flex:none;color:var(--muted)}
-.conversation-header .header-actions button{display:flex;flex:none;align-items:center;justify-content:center;width:44px;height:44px;padding:0;background:transparent;color:var(--muted)}
+.conversation-header .header-actions button,.canvas-panel .canvas-collapse{display:flex;flex:none;align-items:center;justify-content:center;width:44px;height:44px;padding:0;background:transparent;color:var(--muted)}
 .conversation-header .header-actions button[hidden]{display:none}
-.conversation-header .header-actions button:hover{background:var(--soft)}
-.conversation-header .header-actions button>svg{flex:none;width:18px;height:18px}
+.conversation-header .header-actions button:hover,.canvas-panel .canvas-collapse:hover{background:var(--soft)}
+.conversation-header .header-actions button>svg,.canvas-panel .canvas-collapse>svg{flex:none;width:18px;height:18px}
+.conversation-header .header-actions button[aria-controls="canvas-panel"]:focus-visible,
+.canvas-panel button.canvas-collapse:focus-visible{outline-offset:-2px}
 @container conversation-panel (max-width:239.98px){.header-brand-label{display:none}}
 @media(max-width:800px),(pointer:coarse){.conversation-header{height:52px}}
 /* WCO supplies current safe geometry, including zero inset in fullscreen. */
