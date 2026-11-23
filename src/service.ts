@@ -28,7 +28,7 @@ import {detectMedia,MEDIA_POLICY} from './media-policy.js';
 import { RecursiveTasks, recursiveHash, type Actor, type TaskRun, type Authority } from "./recursive-tasks.js";
 import type { TaskArchiveRequest } from "./web-contract.js";
 import { RecursiveTools, RECURSIVE_TOOLS, MAIN_DYNAMIC_TOOLS, MAIN_TOOLS_HASH, mainToolsForHash, validateRecursiveToolArguments, validateToolArguments, toolOperationId } from "./recursive-tools.js";
-import { MainInputs,MainInputClaimError, type QueuedInput,type MainInput,type InternalInput } from "./recursive-main-inputs.js";
+import { MainInputs,MainInputClaimError, type QueuedInput,type MainInput,type InternalInput,type ScheduledInput } from "./recursive-main-inputs.js";
 import {readScheduleDisplay,type ScheduleReadRequest} from './schedule-display.js';
 import {Schedules,SCHEDULE_TOOLS} from './schedules.js';
 import {ScheduleTools,type ScheduleSource} from './schedule-tools.js';
@@ -52,7 +52,7 @@ import {
 } from "./engine.js";
 import type { Config } from "./config.js";
 import {capabilityHome,usesHomerNativeHome,effectiveModelConfig,configuredWebSearchMode} from "./config.js";
-import {ChannelPlugin,channelSourceAuthorized,type ChannelAdapter} from './channel-plugin.js';
+import {ChannelPlugin,channelSourceAuthorization,type ChannelAdapter} from './channel-plugin.js';
 import {approvalDecision, MainNativeApprovals, AUDIO_APPROVAL_METHOD, VIDEO_APPROVAL_METHOD, LOCATION_APPROVAL_METHOD} from "./main-native-approvals.js";
 import { loadPrompts, type Prompts } from "./prompts.js";
 import { MAIN_TOOLS, object, string } from "./tools.js";
@@ -164,6 +164,13 @@ type WorkerSlot = {
 export class DesktopReviewRequired extends Error {}
 
 type StateChangeReason='model-turn'|'user-input'|'native-account-changed'|'native-account-disconnected';
+
+class ScheduledSourcePending extends Error {
+  constructor(readonly retryWithoutEvent:boolean){super('channel_input_preparing');}
+}
+class ScheduledSourceDenied extends Error {
+  constructor(cause:unknown){super('scheduled_source_denied',{cause});}
+}
 
 export class Homer {
   private browserTransport?:BrowserTransport;
@@ -823,6 +830,8 @@ export class Homer {
   private mainPending:{run:()=>Promise<void>}[]=[];
   private mainDraining=false;
   private inputScheduled=false;
+  private scheduleSourceRetry?:NodeJS.Timeout;
+  private scheduleSourceRetryNeeded=false;
   private inputWaiters=new Map<string,{resolve:(value:string)=>void;reject:(error:Error)=>void}>();
   private mainJobs = 0;
   private mainTransportAttempts:number[]=[];
@@ -960,6 +969,7 @@ export class Homer {
         },
         readiness:(input,source)=>source==='channel_plugin'&&this.channels?.channelInputState(input.requestId)==='preparing'
           ?'preparing':this.media.state(input.requestId,input.attachments),
+        scheduledWaiting:input=>this.scheduledInputWaiting(input),
         claim:(input,_thread,source)=>{
           if(source==='channel_plugin'&&this.channels?.channelInputState(input.requestId)==='denied')throw Error('channel_binding_denied');
           this.media.validate(input.requestId,input.attachments);
@@ -1475,14 +1485,17 @@ export class Homer {
   }
   private scheduleInputs(){
     if(this.closing||this.mainBroken||this.inputScheduled)return;
-    const head=this.inputs.runnableHead('all');if(!head||this.scheduledInputPreparing(head))return;
+    this.scheduleSourceRetryNeeded=false;
+    const head=this.inputs.runnableHead('all');
+    if(!this.scheduleSourceRetryNeeded)this.clearScheduleSourceRetry();
+    if(!head)return;
     this.receptionTimings?.mark('head',{requestId:head.origin==='user'?head.input.requestId:undefined,messageId:head.messageId,kind:head.origin==='user'?'user':'internal'});
     this.inputScheduled=true;
     void this.enqueue(async()=>{
       this.inputScheduled=false;
       let current:MainInput|undefined;
       try {
-        if(this.closing||this.mainBroken||this.scheduledInputPreparing(this.inputs.runnableHead('all')))return;
+        if(this.closing||this.mainBroken)return;
         current=this.inputs.claim([],'all');if(!current)return;
         if(current.origin!=='user'){await this.processWorkerInput(current);return;}
         this.receptionTimings?.mark('claimed',{requestId:current.input.requestId,messageId:current.messageId,kind:'user'});
@@ -1717,7 +1730,9 @@ export class Homer {
           }catch(error){
             if(!['task_authority_source_denied','task_not_open','task_history_not_visible','task_stop_requested',
               'schedule_scope_denied','channel_binding_denied','channel_input_preparing'].includes(engineError(error)))throw error;
-            status='failed';publicText=scheduled?'原定时安排的授权已变化，本次答复无法交付。':'原事项或授权已变化，本次答复无法交付。';
+            status='failed';
+            publicText=error instanceof ScheduledSourcePending?'定时来源暂不可核验，本次答复无法交付。':
+              scheduled?'原定时安排的授权已变化，本次答复无法交付。':'原事项或授权已变化，本次答复无法交付。';
           }
         }
       }
@@ -1936,6 +1951,7 @@ export class Homer {
       const processId = context.processId ??= 'node-'+randomUUID();
       context.nativeActivity={compactions:new Map()};
       this.invalidateState();
+      if(context.workerInput?.origin==='scheduled')this.validateScheduledInput(context.workerInput);
       context.nativeStartAttempted=true;
       context.turnCwd=this.store.meta("mainWorkingDirectory")??this.config.workspace;
       this.validateWorkDirectory(context.turnCwd);
@@ -2001,7 +2017,9 @@ export class Homer {
       const shutdown=this.closing&&engineError(e)==='engine_closed';
       context.processStatus=shutdown||engineError(e)==='main_user_interrupted'?'interrupted':engineError(e)==='interaction_delivery_unconfirmed'?'unknown':'failed';
       if(context.workerInput)context.publicText=context.processStatus==='interrupted'?'Homer 本次协调已停止，原回传和已记录操作已保留，未自动重跑。':'Homer 本次协调未完成，原回传和已记录操作已保留，未自动重跑。';
-      if(context.nativeStartAttempted===undefined&&['channel_input_preparing','channel_binding_denied'].includes(engineError(e)))throw e;
+      if(context.nativeStartAttempted===undefined&&
+        (e instanceof ScheduledSourcePending||e instanceof ScheduledSourceDenied||
+        ['channel_input_preparing','channel_binding_denied'].includes(engineError(e))))throw e;
       if (engineError(e) === "main_user_interrupted") throw e;
       if(!shutdown)this.store.event(null, "main_turn_failed", engineError(e));
       // A terminal failure is still a confirmed turn boundary. Preserve its
@@ -2546,20 +2564,31 @@ export class Homer {
     if(context.pluginCalls?.turnId!==turnId)context.pluginCalls={turnId,starts:new Map(),waiters:new Map()};
     return context.pluginCalls;
   }
-  private validateScheduleRequestSource(requestId:string,allowPreparing=false){
+  private validateScheduleRequestSource(requestId:string){
     const row=this.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE kind='user_input' AND recipientAgentId=? AND json_extract(payloadJson,'$.requestId')=?").get(this.store.meta('mainAgentId')!,requestId);
     if(row&&JSON.parse(String(row.payloadJson)).source==='channel_plugin'){
-      const state=this.channels?.channelInputState(requestId);
-      if(!channelSourceAuthorized(this.config.runtime,requestId)||state==='denied'||state==='preparing'&&!allowPreparing)throw Error('channel_binding_denied');
-      return state==='preparing';
+      const authorization=channelSourceAuthorization(this.config.runtime,requestId);
+      if(authorization==='unavailable')throw new ScheduledSourcePending(true);
+      if(authorization==='denied')throw Error('channel_binding_denied');
+      let state;
+      try{state=this.channels?.channelInputState(requestId,true);}
+      catch(error){if(object(error).code==='ERR_SQLITE_ERROR')throw new ScheduledSourcePending(true);throw error;}
+      if(state==='denied')throw Error('channel_binding_denied');
+      if(state==='preparing'||authorization==='group'&&state!=='ready')throw new ScheduledSourcePending(false);
     }
-    return false;
   }
   private validateScheduleSource(source:ScheduleSource,allowPreparing=false){
     if(!source||source.instanceId!==this.store.meta('mainAgentId')||source.threadId!==this.store.meta('mainThread'))throw Error('schedule_scope_denied');
-    let preparing=false;
-    for(const requestId of this.tasks.validateAuthority(this.mainActor(true),source.authority))if(this.validateScheduleRequestSource(requestId,allowPreparing))preparing=true;
-    return preparing;
+    let pending:ScheduledSourcePending|undefined;
+    for(const requestId of this.tasks.validateAuthority(this.mainActor(true),source.authority)){
+      try{this.validateScheduleRequestSource(requestId);}
+      catch(error){
+        if(!(error instanceof ScheduledSourcePending))throw error;
+        if(!pending||error.retryWithoutEvent)pending=error;
+      }
+    }
+    if(pending&&(!allowPreparing||pending.retryWithoutEvent))throw pending;
+    return !!pending;
   }
   private scheduledResultTask(source:ScheduleSource,stage:'publish'|'committed'){
     const scope=source.deliveryTask;
@@ -2585,11 +2614,44 @@ export class Homer {
       if(!['task_not_found','task_authority_source_denied','channel_binding_denied','channel_input_preparing'].includes(engineError(error)))throw error;
     }
   }
-  private scheduledInputPreparing(input:MainInput|undefined){
-    if(input?.origin!=='scheduled')return false;
+  private validateScheduledInput(input:ScheduledInput){
+    try{this.validateScheduleSource(JSON.parse(Object(input.payload).sourceRef));}
+    catch(error){
+      if(error instanceof SyntaxError||['schedule_scope_denied','task_authority_source_denied','task_invalid_input','channel_binding_denied'].includes(engineError(error)))throw new ScheduledSourceDenied(error);
+      throw error;
+    }
+  }
+  private scheduledInputWaiting(input:ScheduledInput){
     if(!this.main||this.startup)return true;
-    try{return this.validateScheduleSource(JSON.parse(Object(input.payload).sourceRef),true);}
-    catch{return false;} // Invalid authority follows the existing permanent rejection path.
+    try{this.validateScheduledInput(input);return false;}
+    catch(error){
+      if(error instanceof ScheduledSourcePending){
+        if(error.retryWithoutEvent)this.retryScheduleSource();
+        return true;
+      }
+      if(error instanceof ScheduledSourceDenied)return false;
+      throw error;
+    }
+  }
+  private retryScheduleSource(){
+    if(this.closing)return;
+    this.scheduleSourceRetryNeeded=true;
+    this.scheduleSourceRetry??=setTimeout(()=>{
+      this.scheduleSourceRetry=undefined;
+      this.scheduleInputs();
+    },1000).unref();
+  }
+  private clearScheduleSourceRetry(){
+    clearTimeout(this.scheduleSourceRetry);
+    this.scheduleSourceRetry=undefined;
+  }
+  private settleScheduledSource(input:ScheduledInput,error:unknown){
+    if(!(error instanceof ScheduledSourcePending||error instanceof ScheduledSourceDenied))return false;
+    const state=error instanceof ScheduledSourcePending?'pending':'rejected';
+    this.inputs.settleUnstartedScheduled(input,state);
+    if(error instanceof ScheduledSourcePending&&error.retryWithoutEvent)this.retryScheduleSource();
+    if(state==='rejected')this.store.event(null,'scheduled_source_denied');
+    return true;
   }
   private async scheduleTool(name:string,args:unknown,meta:unknown,slot?:WorkerSlot){
     const engine=slot?.engine??this.main,context=this.mainContext;
@@ -2663,7 +2725,11 @@ export class Homer {
   }
   nextScheduledMessageAt():number|null{return this.closing?null:this.schedules.nearestFutureFireAt();}
   onScheduleChanged(listener:()=>void){this.scheduleListeners.add(listener);return ()=>{this.scheduleListeners.delete(listener);};}
-  recheckScheduledMessages(){if(!this.closing){this.schedules.check();this.scheduleInputs();}}
+  recheckScheduledMessages(afterSleep=false){
+    if(this.closing)return;
+    if(afterSleep)this.channels?.invalidateGroupSyncAfterSleep();
+    this.schedules.check();this.scheduleInputs();
+  }
   private async mainPluginTool(name:string,args:unknown,meta:unknown) {
     const identity=meta as {callId?:unknown;'x-codex-turn-metadata'?:{turn_id?:unknown}}|undefined;
     const callId=identity?.callId,turnId=identity?.['x-codex-turn-metadata']?.turn_id;
@@ -3486,8 +3552,8 @@ export class Homer {
   }
   private scheduleInternal(){this.scheduleInputs();}
   private async processWorkerInput(input:InternalInput){
-    if(input.origin==='scheduled')try{this.validateScheduleSource(JSON.parse(Object(input.payload).sourceRef));}
-    catch{this.store.db.prepare("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE messageId=? AND recipientAgentId=?").run(input.messageId,this.store.meta('mainAgentId')!);this.store.event(null,'scheduled_source_denied');return;}
+    if(input.origin==='scheduled')try{this.validateScheduledInput(input);}
+    catch(error){if(this.settleScheduledSource(input,error))return;throw error;}
     const notice={id:input.messageId,taskId:input.taskId,taskVersion:input.taskVersion,kind:input.kind,payload:input.payload},payload=Object(input.payload) as Record<string,unknown>;
     const interactionId=input.senderAgentId==='host'&&input.kind==='interaction_required'&&typeof payload.interactionId==='string'?payload.interactionId:undefined;
     const context:MainContext={event:true,...(!interactionId?{allowEmptyReply:true as const}:{}),workerInput:input,workerMessages:[notice],sourceMessageIds:[input.messageId],inspected:new Set(),...(interactionId?{interactionId}:{})};
@@ -3514,21 +3580,31 @@ export class Homer {
         kind:input.kind,workerId:payload.workerId,execution:payload.execution,
         operations:workerReply&&operations.length===0?undefined:operations
       })+(interactionId?'\n\n[待答入口] interactionId='+interactionId+'；先 inspect_interaction，按事实回复或升级。':'\n\n'+bodyLabel+'\n'+input.text);
+    let sourceSettled=false;
     try{await this.mainTurn(prompt,context);}
-    catch(error){if(!context.processStatus)context.processStatus='failed';if(engineError(error)!=='main_user_interrupted')this.store.event(null,'internal_processing_failed',engineError(error));}
-    finally{
-      this.receptionTimings?.mark('host_finalize_start',{processId:context.processId,kind:'internal'});
-      this.finishMainProcess(context,context.terminalConfirmed?context.processStatus??'completed':'unknown');
-      this.store.db.prepare("UPDATE agent_receipts SET state=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state='offered'").run(context.nativeStartAttempted?'uncertain':'rejected',input.messageId,this.store.meta('mainAgentId')!);
-      this.receptionTimings?.mark('host_finalize_end',{processId:context.processId,kind:'internal'});
-      await context.output;
-      const output=context.processId?this.processes.coordination(context.processId):undefined;
-      if(output){
-        const attachments=this.history.message(output.messageId)?.attachments;
-        await this.emit({type:'coordination',messageId:output.messageId,text:output.text,requestId:output.sourceRequestId,...(attachments?.length?{attachments}:{})});
+    catch(error){
+      if(input.origin==='scheduled'&&!context.nativeStartAttempted&&!context.nativeActivity?.turnId&&
+        (!context.processId||!this.processes.exact(context.processId)))sourceSettled=this.settleScheduledSource(input,error);
+      if(!sourceSettled){
+        if(!context.processStatus)context.processStatus='failed';
+        if(engineError(error)!=='main_user_interrupted')this.store.event(null,'internal_processing_failed',engineError(error));
       }
-      this.receptionTimings?.mark('round_end',{processId:context.processId,kind:'internal'},context.processStatus??'completed');
-      this.pump();
+    }
+    finally{
+      if(!sourceSettled){
+        this.receptionTimings?.mark('host_finalize_start',{processId:context.processId,kind:'internal'});
+        this.finishMainProcess(context,context.terminalConfirmed?context.processStatus??'completed':'unknown');
+        this.store.db.prepare("UPDATE agent_receipts SET state=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state='offered' AND revision=?").run(context.nativeStartAttempted?'uncertain':'rejected',input.messageId,this.store.meta('mainAgentId')!,input.revision);
+        this.receptionTimings?.mark('host_finalize_end',{processId:context.processId,kind:'internal'});
+        await context.output;
+        const output=context.processId?this.processes.coordination(context.processId):undefined;
+        if(output){
+          const attachments=this.history.message(output.messageId)?.attachments;
+          await this.emit({type:'coordination',messageId:output.messageId,text:output.text,requestId:output.sourceRequestId,...(attachments?.length?{attachments}:{})});
+        }
+        this.receptionTimings?.mark('round_end',{processId:context.processId,kind:'internal'},context.processStatus??'completed');
+        this.pump();
+      }
     }
   }
   async idle(options: { returnOnUserWait?: boolean } = {}) {
@@ -3562,6 +3638,7 @@ export class Homer {
     if (this.closing || this.closed) {if(options.requireAllOwnersConfirmed&&!this.desktopCloseConfirmed)throw Error('desktop_owner_stop_unconfirmed');return;}
     this.desktopShutdownStrict=!!options.requireAllOwnersConfirmed;
     this.closing = true;
+    this.clearScheduleSourceRetry();
     this.scheduleMainTransportRecovery();
     this.schedules.close();this.scheduleListeners.clear();if(this.main)this.scheduleCalls.clear(this.main);
     clearInterval(this.mediaGcTimer);

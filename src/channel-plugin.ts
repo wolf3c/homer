@@ -47,14 +47,16 @@ export type ChannelAdapter = {
 };
 export type ChannelMessageSource = {source:string;entryLabel:string};
 
-export function channelSourceAuthorized(runtime:string,requestId:string):boolean{
+export function channelSourceAuthorization(runtime:string,requestId:string){
   let db:DatabaseSync|undefined;
   try{
     db=new DatabaseSync(join(runtime,'channels.sqlite'),{readOnly:true});
     const row=db.prepare(`SELECT b.id,b.revokedAt,g.chatId,g.changeId FROM channel_requests r JOIN channel_bindings b ON b.id=r.bindingId
       LEFT JOIN telegram_group_routes g ON g.requestId=r.id WHERE r.id=?`).get(requestId);
-    return !!row&&row.revokedAt===null&&(row.chatId===null||!!db.prepare('SELECT 1 FROM telegram_groups WHERE bindingId=? AND chatId=? AND changeId=? AND active=1').get(row.id!,row.chatId!,row.changeId!));
-  }catch{return false;}
+    if(!row||row.revokedAt!==null)return 'denied';
+    if(row.chatId===null)return 'private';
+    return db.prepare('SELECT 1 FROM telegram_groups WHERE bindingId=? AND chatId=? AND changeId=? AND active=1').get(row.id!,row.chatId!,row.changeId!)?'group':'denied';
+  }catch{return 'unavailable';}
   finally{db?.close();}
 }
 
@@ -219,6 +221,8 @@ export class ChannelPlugin {
     if(!this.unsubscribe)return [];
     return [...new Set(this.wakePollingBindings().map(row=>row.adapterId))].sort();
   }
+
+  invalidateGroupSyncAfterSleep(){this.telegramSync.clear();}
 
   async resumeAfterSleep(force=true){
     await this.changing?.catch(()=>{});
@@ -397,18 +401,19 @@ export class ChannelPlugin {
   }
 
 
-  channelInputState(requestId:string){
-    if(this.shutdown)return 'denied';
+  channelInputState(requestId:string,scheduled=false){
+    if(this.shutdown)return scheduled?'preparing':'denied';
     const row=this.db.prepare(`SELECT r.bindingId,b.adapterId,b.revokedAt,g.chatId,g.changeId FROM channel_requests r
       JOIN channel_bindings b ON b.id=r.bindingId LEFT JOIN telegram_group_routes g ON g.requestId=r.id WHERE r.id=?`).get(requestId) as
       (Pick<TelegramGroupRoute,'chatId'|'changeId'> & {bindingId:string;adapterId:string;revokedAt:number|null})|undefined;
     if(!row)return;
-    if(row.revokedAt!==null||!this.adapters.has(row.adapterId))return 'denied';
+    if(row.revokedAt!==null)return 'denied';
+    if(!this.adapters.has(row.adapterId))return scheduled?'preparing':'denied';
     if(this.paused.has(row.adapterId))return 'preparing';
     if(row.chatId===null)return 'ready';
     if(!this.groupAllowed(row.bindingId,row))return 'denied';
     const sync=this.telegramSync.get(row.bindingId);
-    return sync==='offline'?'denied':sync??'preparing';
+    return sync==='offline'?(scheduled?'preparing':'denied'):sync??'preparing';
   }
 
   discardTelegramBackground(requestId:string){this.telegramBackground.delete(requestId);}

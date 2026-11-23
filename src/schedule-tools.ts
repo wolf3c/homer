@@ -14,11 +14,16 @@ export class ScheduleTools{
   constructor(private store:Store,private schedules:Schedules,private validateSource:(source:ScheduleSource)=>void){}
   private allowed(caller:Caller,ref:string){
     try{
-      const source=JSON.parse(ref) as ScheduleSource;this.validateSource(source);
-      if(caller.allSources)return true;
-      if(caller.actor.runId&&source.creatorAgentId!==caller.actor.agentId)return false;
-      return sources(source).every(id=>sources(caller.source).includes(id));
-    }catch{return false;}
+      const source=JSON.parse(ref) as ScheduleSource;
+      if(!caller.allSources){
+        if(caller.actor.runId&&source.creatorAgentId!==caller.actor.agentId)return false;
+        if(!sources(source).every(id=>sources(caller.source).includes(id)))return false;
+      }
+      this.validateSource(source);return true;
+    }catch(error){
+      if(error instanceof Error&&error.message==='channel_input_preparing')throw error;
+      return false;
+    }
   }
   handle(caller:Caller,name:string,args:Record<string,unknown>,callId:string):unknown{
     this.validateSource(caller.source);
@@ -33,9 +38,9 @@ export class ScheduleTools{
       for(const row of rows){
         const details=args.receipts===true?JSON.parse(String(row.detailsJson)):undefined;
         const ref=details?.sourceRef??row.sourceRef;
-        if(typeof ref!=='string'||!this.allowed(caller,ref))continue;
         const schedule=args.receipts===true?undefined:this.schedules.get(String(row.id));
         if(schedule&&args.enabled!==undefined&&schedule.enabled!==args.enabled)continue;
+        if(typeof ref!=='string'||!this.allowed(caller,ref))continue;
         if(seen++<offset)continue;
         if(items.length===limit){more=true;break;}
         items.push(details?{operationKey:row.id,tool:row.kind,threadId:details.threadId,turnId:details.turnId,callId:details.callId,response:JSON.parse(String(row.responseJson))}:publicSchedule(schedule!));

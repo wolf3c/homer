@@ -229,7 +229,8 @@ async function receive(raw: unknown) {
   } else if(m.kind==='desktop_power'){
     try{
       if(!desktop||!app||stopping||m.method!=='resume')throw Error('desktop_power_forbidden');
-      app.recheckScheduledMessages();await app.channels?.resumeAfterSleep(m.input?.afterSleep!==false);publishPower(true);
+      const afterSleep=m.input?.afterSleep!==false;
+      app.recheckScheduledMessages(afterSleep);await app.channels?.resumeAfterSleep(afterSleep);publishPower(true);
       await send({kind:'web_result',id:m.id,value:true});
     }catch{await send({kind:'web_result',id:m.id,error:'power_recheck_unconfirmed'});}
   } else if(m.kind==='desktop_account'){

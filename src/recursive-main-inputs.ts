@@ -81,6 +81,7 @@ export type MainInputLifecycle = {
   // Only claim adopts the actual revision; enqueue merely records its source.
   claim(input: ConversationInput, threadId: string, source?: string): void;
   readiness?(input:ConversationInput,source?:string):'ready'|'preparing'|'failed';
+  scheduledWaiting?(input:ScheduledInput):boolean;
   accepted?(input:ConversationInput,threadId:string):void;
   edited?(input:ConversationInput,threadId:string):void;
   cancelled?(requestId:string):void;
@@ -194,7 +195,17 @@ export class MainInputs {
     const scheduledOwner=paused&&this.dispatchPolicy?.resumeScheduled===false&&!this.dispatchPolicy.resumeWorkers
       ?` AND (m.kind<>'scheduled_message' OR EXISTS(SELECT 1 FROM agent_messages original WHERE original.kind='user_input' AND original.recipientAgentId=m.recipientAgentId AND original.seq>${this.dispatchPolicy.userPausedThroughSeq??cutoff} AND json_extract(original.payloadJson,'$.requestId')=${sourceRequest}))`:'';
     const activeSource=view==='head'?` AND (m.kind<>'user_input' OR ${activeUserSource})`:'';
-    const rows=this.db.prepare(sql+" WHERE r.recipientAgentId=? AND "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END)=?"+eligible+scheduledOwner+activeSource+' ORDER BY '+dispatchOrder+(view==='head'?' LIMIT 1':'')).all(this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,this.dispatchPolicy?.userPausedThroughSeq??cutoff]:[])) as Row[];
+    const query=sql+" WHERE r.recipientAgentId=? AND "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END)=?"+eligible+scheduledOwner+activeSource+' ORDER BY '+dispatchOrder;
+    const args=[this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,this.dispatchPolicy?.userPausedThroughSeq??cutoff]:[])];
+    if(view==='head'){
+      const head=this.db.prepare(query+' LIMIT 1').get(...args) as Row|undefined;
+      if(!head)return [];
+      if(!this.scheduledWaiting(head))return [head];
+      for(const candidate of this.db.prepare(query+' LIMIT -1 OFFSET 1').iterate(...args) as Iterable<Row>)
+        if(!this.scheduledWaiting(candidate))return [candidate];
+      return [];
+    }
+    const rows=this.db.prepare(query).all(...args) as Row[];
     // Ignore only owners inherited at startup. A newly claimed old message still owns dispatch.
     return view==='active'&&this.dispatchPolicy?rows.filter(row=>!this.pausedActiveMessages.has(row.id)):rows;
   }
@@ -300,8 +311,13 @@ export class MainInputs {
       .all(this.agent,generationId).map(row=>String(row.id));
   }
   preparation(input:ConversationInput,source='local'){return this.lifecycle?.readiness?.(input,source)??'ready';}
-  // Readiness observes the same durable head that transactional claim
-  // owns. A preparing head blocks both selectors without skipping later inputs.
+  private scheduledWaiting(row:Row){
+    const check=this.lifecycle?.scheduledWaiting;
+    if(!check||row.kind!=='scheduled_message')return false;
+    const input=this.workerCurrent(row);
+    return input.origin==='scheduled'&&check(input);
+  }
+  // Keep the same candidate for observation and transactional claim.
   private candidate():Row|undefined {
     return this.dispatchRows('head')[0];
   }
@@ -489,6 +505,11 @@ export class MainInputs {
     });}catch(error){if(selected)throw new MainInputClaimError(selected.id,this.payload(selected).requestId,selected.revision,error);throw error;}
   }
   // Only the caller that has not attempted a native turn may release its claim.
+  settleUnstartedScheduled(input:ScheduledInput,state:'pending'|'rejected'){
+    const result=this.db.prepare("UPDATE agent_receipts SET state=?,revision=revision+1 WHERE messageId=? AND recipientAgentId=? AND state='offered' AND revision=? AND offeredTurnId IS NULL")
+      .run(state,input.messageId,this.agent,input.revision);
+    if(!result.changes)throw Error('queue_revision_conflict');
+  }
   deferClaim(input:QueuedInput){
     this.store.transaction(()=>{
       const row=this.row(input.input.requestId),request=this.store.request(input.input.requestId),reply=this.history.message(input.replyId);

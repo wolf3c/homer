@@ -5,6 +5,8 @@ import {fixture,until} from './fixtures/worker-chat-host.js';
 import {mcpCall} from './fixtures/host-mcp-call.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {ChannelPlugin} from '../src/channel-plugin.js';
+import {renameSync} from 'node:fs';
+import {join} from 'node:path';
 
 async function call(peer:any,name:string,args:unknown,id:string){
   const role=peer.options.role==='worker'?'worker':'main';
@@ -258,34 +260,96 @@ test('scheduled inputs remain pending until the restored Main engine finishes in
   }finally{release();await restarting?.catch(()=>{});await f.close();}
 });
 
-for(const revoked of [false,true])test('a scheduled Telegram group message waits for source preparation without losing authorization checks: '+revoked,async t=>{
+for(const state of ['preparing','offline','revoked','storage','before-turn','wake'] as const)test('a scheduled Telegram group message waits without blocking chat: '+state,async t=>{
   let now=Date.now();t.mock.method(Date,'now',()=>now);
-  const f=fixture([{id:'telegram',send:async()=>({state:'sent'})}]);let consumed=0,requestId='';
+  const f=fixture([{id:'telegram',send:async()=>({state:'sent'}),...(state==='wake'?{
+    offlineReplayMs:86_400_000,
+    connect:async(_address,_receive,signal)=>{if(!signal.aborted)await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));}
+  }:{})}]);let consumed=0,storeMoved=false;
+  const channelPath=join(f.app.config.runtime,'channels.sqlite'),unavailablePath=channelPath+'.unavailable';
+  const receipt=()=>f.app.store.db.prepare("SELECT m.id,r.state,r.revision FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='scheduled_message'").get()!;
   try{
     f.setScript(async(main,text)=>{
       if(text.includes('[定时消息正文]'))consumed++;
-      else{
+      else if(text.includes('Schedule this group reminder')){
         const result=await call(main,'schedule_create',{text:'Delayed group reminder',trigger:{at:new Date(now+60000).toISOString()}},'group-reminder');
         assert.equal(result.error,undefined);
       }
+      else if(state==='offline'&&text==='Unrelated local chat')await openTaskWorker(main,'Unrelated background work');
+      else if(state==='storage'&&text==='Unrelated local chat')
+        assert.equal((await call(main,'schedule_list',{receipts:true},'temporary-read')).error,'channel_input_preparing');
       return {status:'completed',text:'Set'};
     });
     await f.app.start();
     const plugin=f.app.channels!,groups=plugin.telegramGroups(),binding=plugin.bind({adapterId:'telegram',accountKey:'account',senderKey:'sender',conversationKey:'chat'}),date=Math.floor(now/1000);
     groups.membership(binding,-100001,true,date-10,1);groups.caughtUp(binding);
     groups.submit(binding,-100001,date,2,10,null,'Schedule this group reminder');await f.app.idle();
-    requestId=String(f.app.store.db.prepare("SELECT json_extract(payloadJson,'$.requestId') id FROM agent_messages WHERE kind='user_input'").get()!.id);
-    groups.polled(binding,true);assert.equal(plugin.channelInputState(requestId),'preparing');
-    now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
-    const receipt=()=>f.app.store.db.prepare("SELECT r.state FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='scheduled_message'").get()!.state;
-    assert.equal(receipt(),'pending');assert.equal(consumed,0);
+    if(state==='offline')groups.disconnected(binding);
+    else if(state==='storage'){
+      renameSync(channelPath,unavailablePath);storeMoved=true;
+    }else if(state==='before-turn'){
+      const app=f.app as unknown as {refreshMainCapabilities():Promise<void>};
+      const refresh=app.refreshMainCapabilities.bind(app);
+      let drop=true;
+      t.mock.method(app,'refreshMainCapabilities',async()=>{
+        await refresh();
+        if(drop){drop=false;groups.disconnected(binding);}
+      });
+    }else if(state!=='wake')groups.polled(binding,true);
+    now+=60000;f.app.recheckScheduledMessages(state==='wake');await f.app.idle();
+    const pending=receipt();
+    assert.equal(pending.state,'pending');assert.equal(consumed,0);
+    if(state==='before-turn')assert.equal(pending.revision,2,'claim was released before any native call');
+    assert.throws(()=>f.app.readSchedules({view:'list',readEpoch:f.app.webReadEpoch}),/channel_input_preparing/);
     assert.equal(f.app.store.db.prepare('SELECT enabled FROM schedules').get()!.enabled,0,'delivery still ends at the original inbox');
-    if(revoked)plugin.revokeBinding(binding);else groups.caughtUp(binding);
+    f.app.submitMessage({requestId:'unrelated-chat',text:'Unrelated local chat'});
+    await until(()=>f.inputs.includes('Unrelated local chat'));
+    if(state==='offline'){
+      const worker=()=>f.engines.find(peer=>peer.options.role==='worker'&&peer.finish);
+      await until(()=>!!worker());
+      worker()!.finish!({status:'completed',text:'Unrelated Worker finished',messages:[]});
+      await until(()=>f.inputs.some(text=>text.includes('Unrelated Worker finished')));
+    }
     await f.app.idle();
-    assert.equal(receipt(),revoked?'rejected':'received');assert.equal(consumed,revoked?0:1);
-    groups.caughtUp(binding);f.app.recheckScheduledMessages();await f.app.idle();
+    assert.deepEqual(receipt(),pending,'waiting does not write another receipt');
+    const revoked=state==='revoked';
+    if(state==='storage'){
+      renameSync(unavailablePath,channelPath);storeMoved=false;
+      await until(()=>consumed===1);
+    }else if(state==='offline'){
+      await f.restart();
+      assert.deepEqual(receipt(),pending);
+      f.app.channels!.telegramGroups().caughtUp(binding);
+    }else if(revoked)plugin.revokeBinding(binding);else groups.caughtUp(binding);
+    await f.app.idle();
+    assert.equal(receipt().state,revoked?'rejected':'received');assert.equal(consumed,revoked?0:1);
+    assert.equal(receipt().id,pending.id);
+    f.app.channels!.telegramGroups().caughtUp(binding);f.app.recheckScheduledMessages();await f.app.idle();
     assert.equal(consumed,revoked?0:1);
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='scheduled_message'").get()!.n,1);
+  }finally{if(storeMoved)renameSync(unavailablePath,channelPath);await f.close();}
+});
+
+test('a scheduled native start with unknown outcome is not offered again after restart',async t=>{
+  let now=Date.now();t.mock.method(Date,'now',()=>now);
+  const f=fixture();let attempts=0;
+  try{
+    f.setScript(async(main,text)=>{
+      if(text.includes('[定时消息正文]'))attempts++;
+      else assert.equal((await call(main,'schedule_create',{text:'Only attempt once',trigger:{at:new Date(now+60000).toISOString()}},'unknown-start')).error,undefined);
+      return {status:'completed',text:'Set'};
+    });
+    await f.app.start();await f.app.message('Schedule a reminder','unknown-start-source');
+    const peer=f.engines[0]!;
+    t.mock.method(peer,'turn',async()=>{attempts++;throw Error('synthetic_native_start_outcome_unknown');});
+    const receipt=()=>f.app.store.db.prepare("SELECT m.id,r.state,r.revision FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='scheduled_message'").get()!;
+    now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
+    const uncertain=receipt();
+    assert.equal(uncertain.state,'uncertain');
+    assert.equal(attempts,1);
+    await f.restart();f.app.recheckScheduledMessages();await f.app.idle();
+    assert.deepEqual(receipt(),uncertain);
+    assert.equal(attempts,1);
   }finally{await f.close();}
 });
 

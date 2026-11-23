@@ -14,6 +14,7 @@ async function fixture(schedules={start(){}}){
  class App{
   constructor(config){this.config=config;this.modelConfig=config;this.schedules=schedules;instance=this;this.store={meta:()=>undefined};this.channels={close:async()=>{},wakePollingChannels:()=>['telegram'],resumeAfterSleep:async force=>{calls.push(force===false?'channels-passive':'channels');}};}
   onStateChange(callback){this.changed=callback;return ()=>{};}onScheduleChanged(callback){this.scheduleChanged=callback;return ()=>{};}
+  onDesktopNotification(){return ()=>{};}
   bindDesktopPowerProtection(callback){protect=callback;return ()=>{};}
   bindBrowserPreview(callback){this.browser=callback;return()=>{};}
   desktopPowerFacts(){return {executing:false,displayRequired:false};}
@@ -64,7 +65,7 @@ if(!vm.SourceTextModule){
    f=await fixture(host.app.schedules);
    const count=()=>host.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='scheduled_message'").get().n;
    assert.equal(count(),0);now+=1000;
-   f.instance.recheckScheduledMessages=()=>{f.calls.push('schedule');host.app.recheckScheduledMessages();};
+   f.instance.recheckScheduledMessages=afterSleep=>{assert.equal(afterSleep,true);f.calls.push('schedule');host.app.recheckScheduledMessages(afterSleep);};
    f.instance.channels.resumeAfterSleep=async force=>{assert.equal(force,true);f.calls.push('channel-enter');await pending;f.calls.push('channel-finished');};
    f.proc.emit('message',{kind:'desktop_power',id:'checked-recovery',method:'resume',input:{afterSleep:true}});await tick();
    assert.deepEqual(f.calls,['schedule','channel-enter']);
