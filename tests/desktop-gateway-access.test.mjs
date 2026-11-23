@@ -25,7 +25,10 @@ test('desktop gateway authenticates Preview and privately supplies a fresh key o
   credentialPassedToHost ||= /desktopAccessToken|x-homer-desktop-access/i.test(JSON.stringify(m));
   if(m.kind==='init')process.send({kind:'ready',thread:state.threadId,stateInvalidationProtocol:1,webHistoryProtocol:3});
   if(m.kind==='web'){
-   const value=m.method==='preview.messageFile'?{filename:'预览.md',mime:'text/markdown',data:Buffer.from('# Preview').toString('base64')}:m.method==='preview.open'?{id:'synthetic-page',loading:true}:{...state,credentialPassedToHost};
+   let value={...state,credentialPassedToHost};
+   if(m.method==='preview.messageFile')value={filename:'预览.md',mime:'text/markdown',data:Buffer.from('# Preview').toString('base64')};
+   if(m.method==='preview.messageFileInfo'||m.method==='preview.revealMessageFile')value={method:m.method,source:m.input};
+   if(m.method==='preview.open')value={id:'synthetic-page',loading:true};
    process.send({kind:'web_result',id:m.id,value});
   }
   if(m.kind==='desktop_account')process.send({kind:'web_result',id:m.id,value:{account:'none',connected:false,phase:m.method}});
@@ -54,6 +57,10 @@ test('desktop gateway authenticates Preview and privately supplies a fresh key o
    const post=path=>fetch(event.url+path,{method:'POST',headers:{Connection:'close',Origin:event.url,'Content-Type':'application/json','X-Homer-Desktop-Access':event.desktopAccessToken},body:'{}'});
    const file=await post('/api/preview/message-file');
    assert.equal(file.status,200);assert.equal(file.headers.get('Content-Type'),'text/markdown');assert.match(file.headers.get('Content-Disposition'),/%E9%A2%84%E8%A7%88\.md/);assert.equal(await file.text(),'# Preview');
+   for(const operation of ['info','reveal']){
+    const result=await post('/api/preview/message-file/'+operation);
+    assert.equal(result.status,200);assert.deepEqual(await result.json(),{source:{},method:operation==='reveal'?'preview.revealMessageFile':'preview.messageFileInfo'});
+   }
    const page=await post('/api/preview/open');
    assert.equal(page.status,200);assert.deepEqual(await page.json(),{id:'synthetic-page',loading:true});
    for(const action of ['state','connect','cancel'])assert.deepEqual(await account(action),{account:'none',connected:false,phase:action});

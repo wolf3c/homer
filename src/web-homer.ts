@@ -213,7 +213,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
       const asset=app.media.asset(ref);
       if(!app.media.originalAvailable(asset)||!asset.hash)return [];
       return [{...ref,id:JSON.stringify([message.id,ref.assetId,ref.revision]),messageId:message.id,
-        title:asset.filename,sha256:asset.hash,...(destinations[index]?{destination:destinations[index]}:{})}];
+        title:asset.filename,sha256:asset.hash,size:asset.size,...(destinations[index]?{destination:destinations[index]}:{})}];
     });
   });
   const taskFiles=(id:string)=>{
@@ -317,6 +317,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
     },
     openPreview:input=>app.openBrowserPreview(input),
     readMessageFile:input=>app.readMessageFile(input),
+    messageFileInfo:(input,reveal)=>app.messageFileInfo(input,reveal),
     schedules:async input=>app.readSchedules(input),
     onStateChange: listener=>app.onStateChange(listener),
     taskOverview:{

@@ -2,7 +2,7 @@ import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {realpathSync,rmSync,symlinkSync,writeFileSync} from 'node:fs';
+import {realpathSync,rmSync,symlinkSync,truncateSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import type {Message} from "../src/service.js";
@@ -86,13 +86,18 @@ test('a finalized file link keeps the delivered bytes through its process identi
   const input={threadId,messageId:String(receipt.operationId),destination};
   writeFileSync(path,'# Changed');
   assert.equal(f.app.readMessageFile(input).bytes.toString(),'# Delivered');
+  assert.deepEqual(await f.app.messageFileInfo(input),{kind:'attachment'});
+  await assert.rejects(f.app.messageFileInfo(input,true),/media_scope_denied/);
   const bridge=homerWebBridge(f.app);
   const received=await bridge.media!.read(snapshot!);
   assert.equal(Buffer.from(received.data,'base64').toString(),'# Delivered');
   assert.equal(received.sha256,snapshot!.sha256);
   assert.throws(()=>f.app.readMessageFile({...input,destination:pathToFileURL(join(f.base,'workspace','other.md')).href}),/message_file_scope_denied/);
+  rmSync(f.app.media.readAttachment(snapshot!).path);
+  assert.throws(()=>f.app.readMessageFile(input),/media_file_missing/);
   f.app.store.db.prepare('DELETE FROM conversation_attachments WHERE messageId=?').run(snapshot!.messageId);
   assert.throws(()=>f.app.readMessageFile({...input,messageId:snapshot!.messageId}),/media_scope_denied/);
+  await assert.rejects(f.app.messageFileInfo({...input,messageId:snapshot!.messageId}),/media_scope_denied/);
   f.app.history.revokeMessage(threadId,snapshot!.messageId);
   assert.throws(()=>f.app.readMessageFile(input),/message_file_scope_denied/);
  }finally{await f.app.close();}
@@ -125,10 +130,54 @@ test('an undelivered file remains readable from the same process link after the 
    assert.ok(publication&&!publication.attachments?.length);
    writeFileSync(path,'# Current');
    assert.equal(f.app.readMessageFile(input).bytes.toString(),'# Current');
+   const info=await f.app.messageFileInfo(input);
+   assert.ok(info.kind==='local');assert.equal(info.size,9);
    f.app.history.revokeMessage(threadId,publication.id);
    assert.throws(()=>f.app.readMessageFile(input),/message_file_scope_denied/);
+   await assert.rejects(f.app.messageFileInfo(input,true),/message_file_scope_denied/);
   }finally{finish();await turn;}
  }finally{await f.app.close();}
+});
+
+test('desktop gets bounded metadata and revalidates local file scope before system reveal',async()=>{
+ const f=fixture(),threadId='synthetic-main',token='a'.repeat(64);
+ const filename='合成测试.zip',path=join(realpathSync.native(f.base),filename),destination=pathToFileURL(path).href;
+ const size=412*1024*1024,platform=process.platform,reveal=platform==='darwin'||platform==='win32',calls:unknown[]=[];
+ writeFileSync(path,Buffer.from([80,75,3,4]));truncateSync(path,size);
+ const web=await createWebServer({bridge:homerWebBridge(f.app),port:0,desktopAccessToken:token});
+ const input={threadId,messageId:'file-fallback',destination};
+ const request=async(suffix:string,value=input,access=true,origin=web.url)=>{
+  const response=await fetch(web.url+'/api/preview/message-file'+suffix,{method:'POST',
+   headers:{Origin:origin,'Content-Type':'application/json',...(access?{'X-Homer-Desktop-Access':token}:{})},body:JSON.stringify(value)});
+  return [response.status,await response.json()];
+ };
+ try{
+  await f.app.start();
+  f.app.history.record(input.messageId,threadId,`[下载](${destination})`);
+  f.app.bindBrowserPreview(async(_actor,action,input)=>{calls.push({action,input});return {requested:true};});
+  assert.deepEqual(await request('/info'),[200,{kind:'local',filename,size,overLimit:true,reveal,platform}]);
+  assert.deepEqual(await request(''),[409,{error:'file_type_or_size_denied'}]);
+  assert.deepEqual(await request('/reveal',input,false),[401,{error:'web_desktop_auth_required'}]);
+  assert.deepEqual(await request('/reveal',input,true,'https://foreign.invalid'),[403,{error:'local_origin_required'}]);
+  assert.deepEqual(await request('/reveal',{...input,destination:pathToFileURL(join(f.base,'unlinked.zip')).href}),[409,{error:'message_file_scope_denied'}]);
+  assert.deepEqual(calls,[]);
+  truncateSync(path,4);
+  assert.deepEqual(await request('/info'),[200,{kind:'local',filename,size:4,overLimit:false,reveal,platform}]);
+  assert.deepEqual(await request(''),[409,{error:'file_preview_unsupported'}]);
+  assert.deepEqual(await request('/reveal'),reveal?[200,{requested:true}]:[409,{error:'preview_reveal_unavailable'}]);
+  assert.deepEqual(calls,reveal?[{action:'reveal-file',input:{path}}]:[]);
+  rmSync(path);
+  assert.deepEqual(await request('/reveal'),[409,{error:'artifact_missing'}]);
+  f.app.history.revokeMessage(threadId,input.messageId);
+  assert.deepEqual(await request('/reveal'),[409,{error:'message_file_scope_denied'}]);
+  assert.equal(calls.length,reveal?1:0);
+  const binary=join(realpathSync.native(f.base),'test.bin'),binaryUrl=pathToFileURL(binary).href;
+  writeFileSync(binary,Buffer.from([0,1,2,3]));truncateSync(binary,32*1024*1024);
+  f.app.history.record('binary-fallback',threadId,`[二进制文件](${binaryUrl})`);
+  const binaryInput={threadId,messageId:'binary-fallback',destination:binaryUrl};
+  assert.deepEqual(await request('',binaryInput),[409,{error:'file_preview_unsupported'}]);
+  assert.deepEqual(await request('/info',binaryInput),[200,{kind:'local',filename:'test.bin',size:32*1024*1024,overLimit:false,reveal,platform}]);
+ }finally{await web.close();await f.app.close();}
 });
 
 test("accepted input streams into persisted history; stop keeps main reusable and dispatched worker alive", async () => {

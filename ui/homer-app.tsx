@@ -1,5 +1,5 @@
 import {useVirtualizer,defaultRangeExtractor} from '@tanstack/react-virtual';
-import {saveBlob} from './file-download';
+import {MOBILE_DOWNLOAD_LIMIT_NOTICE,mobileDownloadNotice,saveBlob} from './file-download';
 import {isViewportAtBottom,observeContentResize} from '@assistant-ui/store/client';
 import {messageSourceParts} from '../src/message-quote';
 import {remarkPreviewMath} from './preview-selection';
@@ -128,10 +128,12 @@ const MessageMarkdownLink:NonNullable<Components['a']>=({children,href,node})=>{
 function Markdown() {
   return <MarkdownTextPrimitive className="markdown" remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} urlTransform={messageUrlTransform} components={{img:LazyMarkdownImage,CodeHeader,SyntaxHighlighter:Highlight,a:MessageMarkdownLink}} />;
 }
-function ResourceDownload({path,filename,mimeType}:{path:string;filename:string;mimeType:string}){
+function ResourceDownload({path,filename,mimeType,size}:{path:string;filename:string;mimeType:string;size?:number}){
  const [error,setError]=useState('');
+ const unavailable=mobileDownloadNotice(size);
+ if(unavailable)return <span role="status">{unavailable}</span>;
  async function download(){try{const response=await fetch(path);if(!response.ok)throw Error();await saveBlob(await response.blob(),filename);setError('');
- }catch{setError('下载未完成，请重新连接后重试。');}}
+ }catch(error){setError(error instanceof Error&&error.message==='mobile_file_size_limit'?MOBILE_DOWNLOAD_LIMIT_NOTICE:'下载未完成，请重新连接后重试。');}}
  return <><FileDownload data={new URL(path,location.href).href} sourceType="url" filename={filename} mimeType={mimeType} onClick={event=>{event.preventDefault();void download();}}/>{error&&<span role="status">{error}</span>}</>;
 }
 function MediaAttachment({asset,messageId,index,ratio='4:3'}:{asset:MediaView;messageId:string;index:number;ratio?:'auto'|'4:3'}){
@@ -147,7 +149,7 @@ function MediaAttachment({asset,messageId,index,ratio='4:3'}:{asset:MediaView;me
  return <figure className="message-attachment">
   {image?<ImageRoot className="homer-image-attachment">{preview}</ImageRoot>:preview}
   {(!image||imageFailed)&&<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
-   {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
+   {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} size={asset.size} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
    {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
  </figure>;
 }
@@ -1490,7 +1492,8 @@ function HomerApp() {
     if(messageId&&(isMessageFileLink(destination)||messageAttachmentDestination(destination))){
       const file=artifacts.find(item=>item.messageId===messageId&&item.destination&&decodeMessageLink(item.destination)===decodeMessageLink(destination));
       if(file){openArtifact(file,trigger);return true;}
-      if(messageAttachmentDestination(destination)||mobileView){setPageNotice('这个文件的交付版本不可用。');return true;}
+      if(messageAttachmentDestination(destination)){setPageNotice('这个文件的交付版本不可用。');return true;}
+      if(mobileView){setPageNotice('手机无法直接读取电脑上的本地路径，请在电脑端打开该消息。');return true;}
     }
     const local=!mobileView&&isMessageFileLink(destination);
     if(!window.homerBrowserPreview||!messageId||!local&&!/^https?:/.test(trigger.href))return false;

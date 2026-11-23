@@ -1,6 +1,6 @@
-import{WebContentsView,session,protocol,dialog}from'electron';
+import{WebContentsView,session,protocol,dialog,shell}from'electron';
 import{readFileSync}from'node:fs';
-import{join,posix}from'node:path';
+import{isAbsolute,join,posix}from'node:path';
 import{randomUUID}from'node:crypto';
 import{previewAutomation}from'./preview-automation.mjs';
 
@@ -105,6 +105,11 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   call.resolve(input.state.document===p.document?{...input.state,changeId:input.changeId}:{changeId:input.changeId,error:'preview_document_changed'});
  });
  return {async execute(actor,action,input){
+  if(action==='reveal-file'){
+   if(typeof input.path!=='string'||!isAbsolute(input.path))throw Error('preview_reveal_unavailable');
+   shell.showItemInFolder(input.path);
+   return {requested:true};
+  }
   if(action==='open'){
    if(input.pageId){const p=page(input.pageId);if(p.threadId!==actor.threadId)throw Error('preview_scope_denied');
     if(input.claim?.url===p.view.webContents.getURL()&&actor.requestId&&p.claimRequest!==actor.requestId){if(p.busy)throw Error('preview_page_busy');p.agentAssigned=true;p.claimRequest=actor.requestId;p.owner=actor.owner;p.control='agent';p.annotations={...p.annotations,active:false};sendState(p);changed();}

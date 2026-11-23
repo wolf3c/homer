@@ -174,6 +174,11 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
     }
     if (request.method === "POST") {
       if (request.headers.origin !== requestOrigin) return json(response, 403, { error: "local_origin_required" });
+      if(path==='/api/preview/message-file/info'||path==='/api/preview/message-file/reveal'){
+        if(!desktopAccess)return json(response,403,{error:'message_file_scope_denied'});
+        if(!bridge.messageFileInfo)return json(response,503,{error:'preview_unavailable'});
+        return json(response,200,await bridge.messageFileInfo(await body(request),path.endsWith('/reveal')));
+      }
       if(path==='/api/preview/message-file'){
         if(!desktopAccess)return json(response,403,{error:'message_file_scope_denied'});
         if(!bridge.readMessageFile)return json(response,503,{error:'preview_unavailable'});

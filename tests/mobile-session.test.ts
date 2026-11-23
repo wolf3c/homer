@@ -3,7 +3,7 @@ import type {WebBridge} from '../src/web-contract.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {MobileDevices} from '../src/mobile-devices.js';
-import {mobileChannel,type MobileChannelPort} from '../src/mobile-channel.js';
+import {MOBILE_PACKET_BYTES,mobileChannel,type MobileChannelPort} from '../src/mobile-channel.js';
 import {openMobileSession} from '../src/mobile-session.js';
 import {WEB_PROTOCOL} from '../src/web-contract.js';
 import {build} from 'esbuild';
@@ -57,6 +57,27 @@ test('channel uses the existing pending approval and credential before allowing 
   const attachment={messageId:'message-one',assetId:'asset-00000000-0000-0000-0000-000000000000',revision:3};
   assert.deepEqual((await c.call('media.read',attachment)).result,attachment);
   assert.deepEqual(calls,['history.state','media.read']);
+ }finally{c.host.close();c.client.close();devices.close();}
+});
+test('oversized attachment responses return an error and the same session can download normally',{timeout:3000},async()=>{
+ const devices=new MobileDevices(':memory:'),calls:string[]=[];
+ const normalBytes=Buffer.from([0,1,2,255]);
+ const normal={filename:'正常.zip',mime:'application/zip',data:normalBytes.toString('base64'),sha256:'a'.repeat(64)};
+ const large={...normal,filename:'boundary.zip',data:Buffer.alloc(12*1024*1024-3).toString('base64')};
+ const unicode={...normal,filename:'文'.repeat(64)+'.zip',data:large.data.slice(0,MOBILE_PACKET_BYTES-256)};
+ const c=connection(devices,calls,async(_op,input)=>input==='large'?large:input==='unicode'?unicode:normal);
+ try{
+  await bind(devices,c);
+  const largePacket=JSON.stringify({id:'3',result:large}),unicodePacket=JSON.stringify({id:'4',result:unicode});
+  assert.ok(large.data.length<MOBILE_PACKET_BYTES&&largePacket.length>MOBILE_PACKET_BYTES);
+  assert.ok(unicodePacket.length<MOBILE_PACKET_BYTES&&Buffer.byteLength(unicodePacket)>MOBILE_PACKET_BYTES);
+  assert.deepEqual(await c.call('media.read','large'),{id:'3',error:'mobile_packet_size_limit'});
+  assert.deepEqual(await c.call('media.read','unicode'),{id:'4',error:'mobile_packet_size_limit'});
+  const download=await c.call('media.read','normal');
+  assert.deepEqual(download.result,normal);
+  assert.deepEqual(Buffer.from(download.result.data,'base64'),normalBytes);
+  assert.equal(c.closed(),false);
+  assert.deepEqual(calls,['media.read','media.read','media.read']);
  }finally{c.host.close();c.client.close();devices.close();}
 });
 test('disable/delete close only that device and enable permits the same credential on a new channel',async()=>{

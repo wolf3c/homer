@@ -1,6 +1,6 @@
 import test from'node:test';
 import assert from'node:assert/strict';
-import{mkdtemp,mkdir,writeFile,readFile,rm}from'node:fs/promises';
+import{mkdtemp,mkdir,writeFile,readFile,rm,truncate,realpath}from'node:fs/promises';
 import{resolve,join}from'node:path';
 import{pathToFileURL}from'node:url';
 import{createRequire}from'node:module';
@@ -29,7 +29,8 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   });await new Promise(r=>site.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+site.address().port;
   const preload=(await readFile('packaging/electron/preload.cjs','utf8')).match(/ contextBridge\.exposeInMainWorld\('homerBrowserPreview',\{[\s\S]*?\n \}\);/)[0];
   await writeFile(join(scratch,'preload.cjs'),"const{contextBridge,ipcRenderer}=require('electron');\n"+preload);
-  await writeFile(join(scratch,'main.cjs'),`const{app,BrowserWindow,ipcMain}=require('electron');app.setPath('userData',${JSON.stringify(join(scratch,'profile'))});
+  await writeFile(join(scratch,'main.cjs'),`const{app,BrowserWindow,ipcMain,shell}=require('electron');app.setPath('userData',${JSON.stringify(join(scratch,'profile'))});
+  globalThis.revealRequests=[];shell.showItemInFolder=path=>globalThis.revealRequests.push(path);
   (async()=>{const{registerPreviewScheme,createBrowserPreview}=await import(${JSON.stringify(pathToFileURL(resolve('packaging/electron/preview-pages.mjs')).href)});registerPreviewScheme();await app.whenReady();
   const window=new BrowserWindow({width:1280,height:900,useContentSize:true,webPreferences:{preload:${JSON.stringify(join(scratch,'preload.cjs'))},contextIsolation:true,nodeIntegration:false,sandbox:true}});
   const access={'X-Homer-Desktop-Access':process.env.TEST_ACCESS};
@@ -48,6 +49,9 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   const localPath=join(scratch,'current.md');
   await writeFile(localPath,'# 合成本地原文');
   f.app.history.record('desktop-local-fixture',f.app.store.meta('mainThread'),`[打开本地文档](${pathToFileURL(localPath).href})`);
+  const archivePath=join(await realpath(scratch),'test-build.zip');
+  await writeFile(archivePath,Buffer.from([80,75,3,4]));await truncate(archivePath,412*1024*1024);
+  f.app.history.record('desktop-archive-fixture',f.app.store.meta('mainThread'),`[打开测试安装包](${pathToFileURL(archivePath).href})`);
   const desktopAccessToken='a'.repeat(64);
   web=await createWebServer({bridge:homerWebBridge(f.app),port:0,uiDirectory:resolve(ui),desktopAccessToken});
   const env={...process.env,TEST_ORIGIN:web.url,TEST_ACCESS:desktopAccessToken};delete env.ELECTRON_RUN_AS_NODE;
@@ -59,6 +63,19 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
   await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
   record('desktop local file link renders current bytes');
+  const archiveRead=host.waitForResponse(response=>new URL(response.url()).pathname==='/api/preview/message-file');
+  await host.getByRole('link',{name:'打开测试安装包',exact:true}).click();
+  assert.deepEqual(await (await archiveRead).json(),{error:'file_type_or_size_denied'});
+  await host.getByText('test-build.zip · 412.0 MiB',{exact:true}).waitFor();
+  assert.deepEqual(await electron.evaluate(()=>globalThis.revealRequests),[]);
+  const revealLabel=process.platform==='win32'?'在文件资源管理器中显示':process.platform==='darwin'?'在 Finder 中显示':undefined;
+  if(revealLabel){
+   await host.getByRole('button',{name:revealLabel,exact:true}).click();
+   await host.getByText('已请求在系统中显示文件。',{exact:true}).waitFor();
+   assert.deepEqual(await electron.evaluate(()=>globalThis.revealRequests),[archivePath]);
+  }
+  await host.getByRole('button',{name:'关闭test-build.zip',exact:true}).click();
+  record('large local ZIP shows metadata and only trusted click dispatches native reveal');
   await host.getByRole('link',{name:'打开业务网页',exact:true}).click();
   try{
    await host.getByLabel('内置网页内容').waitFor({timeout:4000});

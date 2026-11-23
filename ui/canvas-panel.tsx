@@ -1,5 +1,6 @@
 import {LazyMarkdownImage} from './lazy-media';
-import {saveBlob} from './file-download';
+import {MOBILE_DOWNLOAD_LIMIT_NOTICE,mobileDownloadNotice,saveBlob} from './file-download';
+import {MOBILE_PACKET_BYTES} from '../src/mobile-channel';
 import {useAnnotationDraft,type AnnotationDraft} from './annotation-draft';
 import {referenceKey,referencesOf} from '../src/preview-reference';
 import {Dialog} from '@base-ui/react/dialog';
@@ -20,7 +21,7 @@ import rehypeKatex from 'rehype-katex';
 import { Highlight } from './markdown-code';
 import './canvas-panel.css';
 import {ImageRoot,ImagePreview} from './vendor/assistant-ui/image';
-import {FileDownload} from './vendor/assistant-ui/file';
+import {FileDownload,FileSize} from './vendor/assistant-ui/file';
 import {CanvasSplitDocument,CanvasSplitBody} from './vendor/assistant-ui/canvas-split';
 import {WebPreview} from './vendor/assistant-ui/web-preview';
 import {remarkPreviewMath} from './preview-selection';
@@ -44,9 +45,10 @@ class PatchPreviewBoundary extends Component<{children:ReactNode;fallback:ReactN
   render(){return this.state.failed?this.props.fallback:this.props.children;}
 }
 
-export type CanvasArtifact = {id:string;title:string;messageId:string;assetId:string;revision:number;sha256:string};
+export type CanvasArtifact = {id:string;title:string;messageId:string;assetId:string;revision:number;sha256:string;size?:number};
 type MessageFileTab={kind:'message-file';id:string;title:string;messageId:string;destination:string;reload:number};
 export type PreviewTab=CanvasArtifact|MessageFileTab|{kind:'schedules';id:'schedules';title:string}|{kind:'browser';id:string;title:string;page:BrowserPage};
+type LocalFileInfo={kind:'local';filename:string;size:number;overLimit:boolean;reveal:boolean;platform:string};
 const messageFileErrors:Record<string,string>={
   artifact_missing:'找不到本地文件。恢复原路径后可以重试。',
   artifact_path_denied:'本地文件访问受限。',
@@ -55,6 +57,8 @@ const messageFileErrors:Record<string,string>={
   message_file_path_unsupported:'当前系统不支持此本地文件路径。',
   message_file_scope_denied:'此消息或链接已不可读。',
   media_scope_denied:'此文件的交付版本不可用。',
+  media_file_missing:'此文件的交付版本不可用。',
+  preview_reveal_unavailable:'系统定位暂不可用。',
   preview_unavailable:'桌面预览暂不可用。',
   web_desktop_auth_required:'此本地文件只能在荷马桌面中读取。',
 };
@@ -160,6 +164,30 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
   const [readError,setReadError]=useState(''),[retry,setRetry]=useState(0),[notice,setNotice]=useState('');
   const [file,setFile]=useState<{url:string;mime:string;text:string;name:string;blob:Blob;sha256:string|null}|null>(null),[loading,setLoading]=useState(false);
   const [mediaError,setMediaError]=useState('');
+  const [localInfo,setLocalInfo]=useState<LocalFileInfo>();
+  const [locating,setLocating]=useState(false);
+  const downloadNotice=mobileDownloadNotice(file?.blob.size);
+  const mobileTransferLimit='此交付版本超过手机传输上限，请在电脑端下载。';
+  function requestLocal(action:''|'/info'|'/reveal',signal?:AbortSignal){
+    return connectionFetch('/api/preview/message-file'+action,{signal,method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({threadId,messageId:local!.messageId,destination:local!.destination})});
+  }
+  async function locate(){
+    if(!local||locating)return;
+    const epoch=generation.current;
+    setLocating(true);
+    try{
+      const response=await requestLocal('/reveal');
+      if(!response.ok){
+        const error=await response.json().then(result=>result?.error,()=>undefined);
+        throw Error(Object.hasOwn(messageFileErrors,error)?messageFileErrors[error]:'系统定位未确认。');
+      }
+      if(readerCurrent()&&epoch===generation.current)setNotice('已请求在系统中显示文件。');
+    }catch(error){
+      if(readerCurrent()&&epoch===generation.current)setNotice(error instanceof Error?error.message:'系统定位未确认。');
+    }finally{if(readerCurrent())setLocating(false);}
+  }
+
   const mediaElement=useRef<HTMLMediaElement|null>(null);
   const [runtime,setRuntime]=useState(''),[ready,setReady]=useState(false),[frameRevision,setFrameRevision]=useState(0),[selection,setSelection]=useState<'idle'|'connecting'|'active'|'error'>('idle');
   const interactive=!!runtime,annotationLoading=selection==='connecting';
@@ -172,14 +200,28 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
   const source=useMemo<PreviewSource|undefined>(()=>webSource??(artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file]);
   const imageFile=useMemo(()=>file&&source?annotationDraft.imageFile(referenceKey({kind:'image',source}),new File([file.blob],file.name,{type:file.mime})):undefined,[file,source,annotationDraft]);
   useLayoutEffect(()=>{
-    generation.current++;setFile(null);setReadError('');setMediaError('');setNotice('');setRuntime('');setReady(false);setSelection('idle');
+    generation.current++;setFile(null);setLocalInfo(undefined);setReadError('');setMediaError('');setNotice('');setRuntime('');setReady(false);setSelection('idle');
     if(!artifact&&!local||webSource){setLoading(false);return;}
     const controller=new AbortController();let objectUrl='';setLoading(true);
     void (async()=>{try{
-      const response=local?await connectionFetch('/api/preview/message-file',{signal:controller.signal,method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({threadId,messageId:local.messageId,destination:local.destination})}):await connectionFetch(attachmentPath,{signal:controller.signal});
+      const loadInfo=async()=>{
+        const response=await requestLocal('/info',controller.signal);
+        if(!response.ok){
+          const {error}=await response.json().catch(()=>({error:undefined}));
+          throw Error(Object.hasOwn(messageFileErrors,error)?messageFileErrors[error]:'文件信息暂不可用。');
+        }
+        const info=await response.json() as LocalFileInfo|{kind:'attachment'};
+        if(info.kind==='local'&&!controller.signal.aborted&&readerCurrent())setLocalInfo(info);
+        return info.kind==='local';
+      };
+      if(mobileView&&artifact?.size!==undefined&&Math.ceil(artifact.size/3)*4>=MOBILE_PACKET_BYTES)
+        throw Error(mobileTransferLimit);
+      const response=local?await requestLocal('',controller.signal):await connectionFetch(attachmentPath,{signal:controller.signal});
       if(!response.ok){
         const error=await response.json().then(result=>result?.error,()=>undefined);
+        if(local&&(error==='file_type_or_size_denied'||error==='file_preview_unsupported')&&await loadInfo())return;
         if(local)throw Error(Object.hasOwn(messageFileErrors,error)?messageFileErrors[error]:'本地文件读取失败，请重试。');
+        if(mobileView&&error==='mobile_packet_size_limit')throw Error(mobileTransferLimit);
         throw Error('成果读取失败（'+response.status+'），'+(error==='file_type_or_size_denied'?'文件类型或大小不符合当前读取限制（文件上限 50 MiB），请使用原文件。':'请重新连接后重试。'));
       }
       const sha256=response.headers.get('X-Homer-Artifact-Hash');
@@ -291,29 +333,33 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
     if(!/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m.test(file.text))return '未发现支持的 unified hunk，显示原文。';
     return '';
   },[file]);
-  const patchRaw=file&&<><a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},()=>{if(readerCurrent())setNotice('下载未完成，请重新连接后重试。');});}}>下载原文件</a><pre>{file.text}</pre></>;
+  const patchRaw=file&&<>{!downloadNotice&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},()=>{if(readerCurrent())setNotice('下载未完成，请重新连接后重试。');});}}>下载原文件</a>}<pre>{file.text}</pre></>;
   const mediaKind=file?.mime.startsWith('audio/')?'audio':file?.mime.startsWith('video/')?'video':null;
   const unknownMedia=!!file&&(!file.mime||file.mime==='application/octet-stream')&&/\.(mp3|wav|m4a|ogg|flac|mp4|webm|mov|mkv)$/i.test(file.name);
   const isHtml=file?.mime==='text/html',isText=!!file&&!mediaKind&&(file.mime.startsWith('text/')||!!file.text);
   const hasFrame=!!webSource||file?.mime==='application/pdf';
   const isImage=!!file&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mime);
   return <CanvasSplitDocument>
-    {actions&&file&&createPortal(<FileDownload data={file.url} mimeType={file.mime} filename={file.name} onClick={event=>{
+    {actions&&file&&!downloadNotice&&createPortal(<FileDownload data={file.url} mimeType={file.mime} filename={file.name} onClick={event=>{
       event.preventDefault();
       void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},error=>{
         if(readerCurrent())setNotice(error instanceof Error&&error.message==='mobile_file_size_limit'
-          ?'图片超过移动端下载上限，请在电脑上下载原图。':'下载未完成，请重新连接后重试。');
+          ?MOBILE_DOWNLOAD_LIMIT_NOTICE:'下载未完成，请重新连接后重试。');
       });
     }}/>,actions)}
     {actions&&createPortal(isHtml&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
       <AnnotationButton active={selection==='active'} className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}/>
     </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface"/>:null,actions)}
     <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml?'html-preview-body':isPatch?'patch-preview-body':undefined}>
-    {notice&&<p role="status" className="canvas-note">{notice}</p>}
+    {(notice||downloadNotice)&&<p role="status" className="canvas-note">{notice||downloadNotice}</p>}
     {webSource&&<p className="canvas-note canvas-web-narrow-note">网页元素批注暂限桌面使用。</p>}
     {referencesEnabled&&source&&!webSource&&isText&&!isHtml&&!isPatch&&<PreviewSelectionToolbar key={JSON.stringify([artifact?.id,file?.sha256])} body={body} source={source} annotations={textReference?.kind==='text'?textReference.annotations??[]:[]} representation={file?.mime==='text/markdown'||/\.md$/i.test(file?.name??'')?'markdown':'plain'} onReference={onReference} onRemove={id=>annotationDraft.remove(referenceKey({kind:'text',source}),id)} onNotice={setNotice} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/>}
     {webSource?<><p className="canvas-note">{ready?'网页已接入批注器，可使用页面内工具栏选择元素。':'网站可能禁止嵌入；未接入批注器的网页只能预览。'}</p><WebPreview origin={webSource.url} loading={false} onReload={()=>{setReady(false);if(webFrame.current)webFrame.current.src=webSource.url;}} onOpenExternal={()=>window.open(webSource.url,'_blank','noopener,noreferrer')}><iframe ref={webFrame} key={webSource.url} title="网页预览" onLoad={()=>setFrameRevision(value=>value+1)} src={webSource.url} sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer"/></WebPreview></>:
-    loading?<p role="status">{local?'正在读取本地文件…':'正在读取成果…'}</p>:readError?<div className="canvas-read-error"><p role="alert">{readError}</p><button type="button" onClick={event=>{if(local&&!event.isTrusted)return;stopHtmlAnnotation();setFile(null);setRetry(value=>value+1);}}>重试读取</button></div>:file?<>
+    loading?<p role="status">{local?'正在读取本地文件…':'正在读取成果…'}</p>:readError?<div className="canvas-read-error"><p role="alert">{readError}</p><button type="button" onClick={event=>{if(local&&!event.isTrusted)return;stopHtmlAnnotation();setFile(null);setRetry(value=>value+1);}}>重试读取</button></div>:localInfo&&!file?<div className="canvas-read-error">
+      <p>{localInfo.filename} · {localInfo.size<1048576?<FileSize bytes={localInfo.size}/>:((localInfo.size/1048576).toFixed(1)+' MiB')}</p>
+      <p>{localInfo.overLimit?'文件超过预览上限（50 MiB）。':'此格式暂不支持内置预览。'}</p>
+      {localInfo.reveal&&<button type="button" disabled={locating} onClick={event=>{if(event.isTrusted)void locate();}}>{localInfo.platform==='win32'?'在文件资源管理器中显示':'在 Finder 中显示'}</button>}
+    </div>:file?<>
       {isPatch?patchFallback?<><p role="status" className="canvas-note">{patchFallback}</p>{patchRaw}</>:
       <PatchPreviewBoundary key={JSON.stringify([artifact?.id,file.sha256,retry])} fallback={<><p role="status" className="canvas-note">差异预览失败，显示原文。</p>{patchRaw}</>}>
         <details><summary>原始补丁文本</summary>{patchRaw}</details>
@@ -328,7 +374,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
           if(readerCurrent()&&mediaElement.current===event.currentTarget&&event.currentTarget.getAttribute('src')===file.url)setMediaError('此文件无法在当前浏览器播放，可下载后打开。');
         }}/>}
         {mediaError&&<p role="alert">{mediaError}</p>}
-        <a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a>
+        {!downloadNotice&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a>}
       </div>:
       (file.mime==='text/markdown'||(!local||isText)&&/\.md$/i.test(file.name))?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} components={previewMarkdownComponents}>{file.text}</ReactMarkdown></div>:
       isText?<pre data-preview-text>{file.text}</pre>:
@@ -336,7 +382,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
         notes={imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[]}
         onSave={(annotations,size,isCurrent)=>onReference({kind:'image',source,...size,annotations},imageFile,isCurrent)}
         onRemove={id=>annotationDraft.remove(referenceKey({kind:'image',source}),id)} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<ImageRoot className="canvas-image-root"><ImagePreview src={file.url} alt={local?file.name:artifact?.title??'成果图片'}/></ImageRoot>:
-      file.mime==='application/pdf'?<iframe title="PDF 成果" src={file.url}/>:unknownMedia?<div className="canvas-media"><p className="canvas-note">{file.name}</p><p>未识别为可播放的媒体类型，可下载后打开。</p><a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a></div>:<p>此格式暂不支持在线预览。</p>}
+      file.mime==='application/pdf'?<iframe title="PDF 成果" src={file.url}/>:unknownMedia?<div className="canvas-media"><p className="canvas-note">{file.name}</p><p>{downloadNotice?'未识别为可播放的媒体类型。':'未识别为可播放的媒体类型，可下载后打开。'}</p>{!downloadNotice&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a>}</div>:<p>此格式暂不支持在线预览。</p>}
     </>:<p className="canvas-note">从对话中选择网页或成果进行预览。</p>}
     {hasFrame&&<div className="canvas-frame-exit"><p className="canvas-note">预览内部的快捷键由网页处理，可用 Tab 移到“收起预览”按钮。</p><button type="button" onClick={onClose}>收起预览</button></div>}
     </CanvasSplitBody></CanvasSplitDocument>;

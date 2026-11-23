@@ -24,18 +24,23 @@ export function mobileChannel(port:MobileChannelPort,deliver:(value:unknown)=>vo
   // At most the session's eight concurrent replies; encode only the active one.
   if(queued>=8)return Promise.reject(Error('mobile_request_busy'));
   const packet=JSON.stringify(value);
+  if(!packet||packet.length>MOBILE_PACKET_BYTES)return Promise.reject(Error('mobile_packet_size_limit'));
   queued++;
   const work=tail.then(async()=>{
    const bytes=new TextEncoder().encode(packet);
-   if(!bytes.length||bytes.length>MOBILE_PACKET_BYTES)throw Error('mobile_packet_size_limit');
+   if(bytes.length>MOBILE_PACKET_BYTES)throw Error('mobile_packet_size_limit');
    const header=new Uint8Array(4);new DataView(header.buffer).setUint32(0,bytes.length);
    const started=Date.now();
    const write=async(frame:Uint8Array)=>{
     while(port.buffered()>64*1024){if(closed||port.closed()||Date.now()-started>10000)throw Error('mobile_channel_unavailable');await new Promise(resolve=>setTimeout(resolve,5));}
     if(closed||port.closed())throw Error('mobile_channel_unavailable');port.send(frame);
    };
-   await write(header);for(let at=0;at<bytes.length;at+=chunkBytes)await write(bytes.subarray(at,at+chunkBytes));
+   // Only a write failure can leave the peer waiting for the rest of a packet.
+   try{
+    await write(header);
+    for(let at=0;at<bytes.length;at+=chunkBytes)await write(bytes.subarray(at,at+chunkBytes));
+   }catch(error){close();throw error;}
   }).finally(()=>{queued--;});
-  tail=work.catch(()=>{close();});return work;
+  tail=work.catch(()=>{});return work;
  }};
 }

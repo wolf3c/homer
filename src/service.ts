@@ -333,7 +333,7 @@ export class Homer {
       }catch{throw Error('media_scope_denied');}
     }
   }
-  private readLocalAttachment(path:string,messageLink=false){
+  private localAttachmentStat(path:string,messageLink=false){
     if(!isAbsolute(path))throw Error('artifact_path_denied');
     let canonical:string;
     try{canonical=realpathSync.native(path);}
@@ -342,14 +342,30 @@ export class Homer {
     path=canonical;
     this.validateTaskFile(path,false,messageLink);
     const expected=lstatSync(path);
-    if(!expected.isFile()||expected.nlink!==1||expected.size>MEDIA_POLICY.fileBytes)throw Error('file_type_or_size_denied');
+    if(!expected.isFile()||expected.nlink!==1)throw Error('file_type_or_size_denied');
+    return {path,expected};
+  }
+  private readLocalAttachment(target:string,messageLink=false){
+    const {path,expected}=this.localAttachmentStat(target,messageLink);
+    if(expected.size>MEDIA_POLICY.fileBytes)throw Error('file_type_or_size_denied');
+    if(messageLink&&/\.zip$/i.test(path))throw Error('file_preview_unsupported');
     const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
     try{
       const before=fstatSync(fd);
       if(before.dev!==expected.dev||before.ino!==expected.ino||realpathSync.native(path)!==path)throw Error('artifact_path_denied');
       if(!before.isFile()||before.nlink!==1||before.size>MEDIA_POLICY.fileBytes)throw Error('file_type_or_size_denied');
+      // Recognized archives and binaries cannot use a Preview renderer. Keep
+      // normal sniffing and UTF-8 validation for files that may be text.
+      const prefix=Buffer.allocUnsafe(messageLink?Math.min(512,before.size):0);
+      const prefixSize=prefix.length?readSync(fd,prefix,0,prefix.length,null):0;
+      const sample=prefix.subarray(0,prefixSize);
+      if(messageLink&&prefixSize===prefix.length){
+        const mime=detectMedia(sample);
+        if(mime==='application/zip'||mime==='application/octet-stream'&&sample.includes(0))throw Error('file_preview_unsupported');
+      }
       const bytes=Buffer.allocUnsafe(before.size);
-      for(let offset=0;offset<bytes.length;){
+      sample.copy(bytes);
+      for(let offset=prefixSize;offset<bytes.length;){
         const size=readSync(fd,bytes,offset,bytes.length-offset,null);
         if(!size)throw Error('artifact_changed');
         offset+=size;
@@ -361,6 +377,7 @@ export class Homer {
       const mime=detected==='application/octet-stream'&&isUtf8(bytes)&&(!messageLink||!bytes.includes(0))
         ? /\.html?$/i.test(filename)?'text/html; charset=utf-8':/\.css$/i.test(filename)?'text/css':/\.[cm]?js$/i.test(filename)?'application/javascript':/\.md$/i.test(filename)||messageLink&&/\.markdown$/i.test(filename)?'text/markdown':/\.(txt|csv|json)$/i.test(filename)||messageLink?'text/plain':detected
         :detected;
+      if(messageLink&&(mime==='application/octet-stream'||mime==='application/zip'))throw Error('file_preview_unsupported');
       const kind=mime.startsWith('image/')?'image':mime.startsWith('audio/')?'voice':mime.startsWith('video/')?'video':'file';
       return {filename,mime,kind,bytes} as const;
     }finally{closeSync(fd);}
@@ -2072,7 +2089,7 @@ export class Homer {
     if(preview)return {filename:asset.filename+'.wav',mime:preview.mime,data:preview.bytes.toString('base64')};
     return {filename:asset.filename,mime:asset.mime!,data:bytes.toString('base64'),sha256:asset.hash!};
   }
-  readMessageFile(value:unknown){
+  private resolveMessageFile(value:unknown){
     const input=object(value),threadId=string(input.threadId,100),destination=string(input.destination,16000);
     let messageId=string(input.messageId,100);
     if(this.closing||threadId!==this.store.meta('mainThread')||!isMessageFileLink(destination))throw Error('message_file_scope_denied');
@@ -2114,13 +2131,49 @@ export class Homer {
     if(snapshot>=0){
       const ref=original.attachments?.[snapshot];
       if(!ref)throw Error('media_scope_denied');
-      const file=this.readAttachment({messageId,...ref});
-      return {filename:file.filename,mime:file.mime,bytes:Buffer.from(file.data,'base64')};
+      return {attachment:{messageId,...ref},threadId};
     }
     const path=this.messageFilePath(raw);
     if(!path)throw Error('message_file_path_unsupported');
+    return {path,threadId};
+  }
+  readMessageFile(value:unknown){
+    const source=this.resolveMessageFile(value);
+    if(source.attachment){
+      const file=this.readAttachment(source.attachment);
+      return {filename:file.filename,mime:file.mime,bytes:Buffer.from(file.data,'base64')};
+    }
+    return this.withMessageFilePath(source.path!,path=>this.readLocalAttachment(path,true));
+  }
+  async messageFileInfo(value:unknown,reveal=false){
+    const source=this.resolveMessageFile(value);
+    // The existing attachment download is the owner of fixed snapshot bytes.
+    if(source.attachment){
+      if(reveal)throw Error('media_scope_denied');
+      this.attachmentMessage(source.attachment);
+      return {kind:'attachment' as const};
+    }
+    const info=this.withMessageFilePath(source.path!,target=>{
+      const {path,expected}=this.localAttachmentStat(target,true);
+      const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+      try{
+        const actual=fstatSync(fd);
+        if(actual.dev!==expected.dev||actual.ino!==expected.ino||!actual.isFile()||actual.nlink!==1||realpathSync.native(path)!==path)throw Error('artifact_path_denied');
+        return {path,size:actual.size};
+      }finally{closeSync(fd);}
+    });
+    const platform=process.platform;
+    if(reveal){
+      if((platform!=='darwin'&&platform!=='win32')||!this.browserTransport)throw Error('preview_reveal_unavailable');
+      await this.browserTransport({threadId:source.threadId,owner:'main:'+source.threadId},'reveal-file',{path:info.path});
+      return {requested:true as const};
+    }
+    return {kind:'local' as const,filename:basename(info.path),size:info.size,overLimit:info.size>MEDIA_POLICY.fileBytes,
+      reveal:!!this.browserTransport&&(platform==='darwin'||platform==='win32'),platform};
+  }
+  private withMessageFilePath<T>(path:string,operation:(target:string)=>T):T{
     const read=(target:string)=>{
-      try{return this.readLocalAttachment(target,true);}
+      try{return operation(target);}
       catch(error){
         const code=(error as NodeJS.ErrnoException).code;
         if(code==='ENOENT'||code==='ENOTDIR')throw Error('artifact_missing');
