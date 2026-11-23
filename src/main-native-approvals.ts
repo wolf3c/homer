@@ -16,11 +16,14 @@ export type MainApprovalScope = {
 const ownerPrefix = 'main-native:';
 export const AUDIO_APPROVAL_METHOD='homer_audio_generation';
 export const VIDEO_APPROVAL_METHOD='homer_video_generation';
+export const LOCATION_APPROVAL_METHOD='homer_preview_location';
 export function approvalDecision(item: Pick<InteractionInput, 'details'>, input: ConversationInput): InteractionDecision {
     if (input.questionAnswers) throw Error('interaction_response_kind');
     if (input.attachments?.length || input.quote || input.quotes || input.resourceReference || input.resourceReferences)
         throw Error('native_approval_explicit_decision_required');
     const canCancel = item.details.method === 'mcpServer/elicitation/request' && (item.details.params as any)?._meta?.codex_approval_kind === 'mcp_tool_call';
+    if(item.details.method===LOCATION_APPROVAL_METHOD&&input.text==='记住此站点')
+        return {action:'approve',reason:'用户明确授权该站点持续使用此定位权限。',rememberLocation:true};
     if (!['允许本次操作', '拒绝本次操作', ...(canCancel ? ['取消本次请求'] : [])].includes(input.text))
         throw Error('native_approval_explicit_decision_required');
     return { action: input.text === '允许本次操作' ? 'approve' : input.text === '取消本次请求' ? 'cancel' : 'deny', reason: '用户通过待答卡明确决定当前请求。', ...(input.text === '允许本次操作' && item.details.method === 'item/permissions/requestApproval' ? { permissions: (item.details.params as any).permissions } : {}) };
@@ -202,7 +205,7 @@ export class MainNativeApprovals {
         if(!scope.isCurrent())throw Error('interaction_not_live');
         if(!review.question.trim()||review.question.length>4000||(review.preview?.length??0)>4000||JSON.stringify(review.details).length>64000)throw Error('capability_review_too_large');
         const reason = review.reason ?? '仅批准所示安装或配置；不批准额外登录、费用、外发、系统权限或自动重试。取消或本轮结束后失效。';
-        const approval: WebApproval = { title: review.question, scope: reason, ...(review.preview!==undefined?{details:review.preview}:{}) };
+        const approval: WebApproval = { title: review.question, scope: reason, ...(review.preview!==undefined?{details:review.preview}:{}), ...(review.method===LOCATION_APPROVAL_METHOD?{rememberLocation:true,previewPageId:String(review.details.pageId??'') }:{}) };
         return this.openReview(review.requestId,'authorization',{method:review.method??'homer_capability_operation',operation:review.details,approval},review.question,reason,scope);
     }
     open(request: NativeRequest, scope: MainApprovalScope): {

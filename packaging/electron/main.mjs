@@ -1059,7 +1059,10 @@ function createWindow(){
  });
  window.on('close',event=>{if(!allowQuit){event.preventDefault();if(process.platform==='win32'){if(windowsRecovery())void recoverWindowsExit();else app.quit();}else window.hide();}});
  const contents=window.webContents;
- if(!browserPreview)browserPreview=createBrowserPreview({window:()=>window,runtimeDirectory:join(resources,'homer/dist/browser-preview'),preload:join(fileURLToPath(new URL('.',import.meta.url)),'preview-content-preload.cjs'),ipcMain,uiCaller:event=>permissionCaller(event,event.senderFrame),fetchMessageFile:(threadId,{messageId,destination})=>fetch(origin+'/api/preview/message-file',{method:'POST',headers:{'X-Homer-Desktop-Access':desktopAccessToken,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({threadId,messageId,destination})}),fetchAttachment:(source,resource)=>{
+ if(!browserPreview)browserPreview=createBrowserPreview({window:()=>window,runtimeDirectory:join(resources,'homer/dist/browser-preview'),preload:join(fileURLToPath(new URL('.',import.meta.url)),'preview-content-preload.cjs'),ipcMain,uiCaller:event=>permissionCaller(event,event.senderFrame),
+ permissionFile:join(app.getPath('userData'),'preview-location.json'),
+ permissionEvent:input=>{if(!child?.stdin?.writable||closed||quitPending)return false;child.stdin.write(JSON.stringify({kind:'browser_permission',input})+'\n');return true;},
+ fetchMessageFile:(threadId,{messageId,destination})=>fetch(origin+'/api/preview/message-file',{method:'POST',headers:{'X-Homer-Desktop-Access':desktopAccessToken,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({threadId,messageId,destination})}),fetchAttachment:(source,resource)=>{
   const path='/api/media/'+[source.messageId,source.assetId,source.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):'');
   return fetch(origin+path,{headers:{'X-Homer-Desktop-Access':desktopAccessToken,Origin:origin}});
  }});
@@ -1212,7 +1215,7 @@ try{
    accountChanged('native-account-disconnected');
    for(const pending of nativeRequests.values()){clearTimeout(pending.timer);pending.reject(Error('native_account_unconfirmed'));}nativeRequests.clear();
    desktopAccessToken=undefined;
-   closed=true;exitCode=status;exitSignal=signal;clearUpdateCheck();
+   closed=true;browserPreview?.expirePermissions();exitCode=status;exitSignal=signal;clearUpdateCheck();
    for(const pending of powerRequests.values()){clearTimeout(pending.timer);pending.reject(Error('power_recheck_unconfirmed'));}powerRequests.clear();
    void closeDesktopPower();
    cancelDesktopCapture();

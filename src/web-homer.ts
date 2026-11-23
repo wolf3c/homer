@@ -30,7 +30,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
    AND json_extract(io.responseJson,'$.messageId')=i.id AND ir.state IN ('received','processed')
    AND coalesce(ir.offeredTurnId,ir.processedBy)=json_extract(o.detailsJson,'$.turnId')
    AND EXISTS(SELECT 1 FROM runs r JOIN task_versions v ON v.taskId=r.taskId AND v.version=r.version
-     JOIN conversation_inputs source ON source.requestId=v.sourceRequestId AND source.threadId=json_extract(o.detailsJson,'$.threadId')
+     LEFT JOIN conversation_inputs source ON source.requestId=v.sourceRequestId AND source.threadId=json_extract(o.detailsJson,'$.threadId')
      WHERE r.id=i.senderRunId AND r.id=json_extract(i.payloadJson,'$.runId') AND r.taskId=i.taskId AND r.version=i.taskVersion
        AND i.senderEpoch=json_extract(i.payloadJson,'$.epoch') AND i.senderEpoch<=r.epoch)`;
  const sourceIds=[...new Set(eligible.flatMap(m=>m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length?m.process.sourceMessageIds:[]))];
@@ -165,14 +165,15 @@ export function withInteractionResponses(db:DatabaseSync,messages:readonly Displ
  if(!requests.length)return [...messages];
  const rows=db.prepare(`SELECT w.id,w.kind,w.runId,w.userQuestion,w.responseUserText,
   json_extract(w.details,'$.approval') approval,json_extract(w.details,'$.method') method,
-  json_extract(w.details,'$.params.questions') questions,w.decision,c.requestId,c.replyId,u.id userId
+  json_extract(w.details,'$.params.questions') questions,w.decision,w.state,w.deliveredAt,c.requestId,c.replyId,u.id userId
   FROM worker_interactions w
   JOIN conversation_inputs c ON c.requestId=w.responseUserMessageId AND c.threadId=?
   JOIN conversation_messages u ON u.threadId=c.threadId AND u.requestId=c.requestId AND u.role='user' AND u.text=w.responseUserText
-  JOIN conversation_inputs source ON source.requestId=json_extract(w.authority,'$.sourceRequestId') AND source.threadId=c.threadId
+  LEFT JOIN conversation_inputs source ON source.requestId=json_extract(w.authority,'$.sourceRequestId') AND source.threadId=c.threadId
   WHERE w.responseUserMessageId IN (${requests.map(()=>'?').join(',')})
+  AND (source.requestId IS NOT NULL OR (json_extract(w.details,'$.method')='homer_preview_location' AND json_extract(w.details,'$.historyThreadId')=c.threadId))
   AND (json_type(w.details,'$.historyThreadId') IS NULL OR json_extract(w.details,'$.historyThreadId')=c.threadId)`)
-  .all(threadId,...requests) as {id:string;kind:'authorization'|'question';runId:string;userQuestion:string|null;responseUserText:string;approval:string|null;method:string|null;questions:string|null;decision:string|null;requestId:string;replyId:string;userId:string}[];
+  .all(threadId,...requests) as {id:string;kind:'authorization'|'question';runId:string;userQuestion:string|null;responseUserText:string;approval:string|null;method:string|null;questions:string|null;decision:string|null;state:string;deliveredAt:number|null;requestId:string;replyId:string;userId:string}[];
  const byRequest=new Map<string,typeof rows[number]|null>();
  for(const row of rows)byRequest.set(row.requestId,byRequest.has(row.requestId)?null:row);
  const cards=new Map<string,NonNullable<DisplayMessage['interaction']>>(),hidden=new Set<string>();
@@ -184,12 +185,13 @@ export function withInteractionResponses(db:DatabaseSync,messages:readonly Displ
   if(row.kind==='authorization'){
    card.title=text(approval?.title)?approval.title:'';
    const description=[approval?.context,approval?.explanation];
+   if(approval?.rememberLocation)description.push(row.deliveredAt!==null?'决定已交给原网页。':row.state==='expired'?'原请求已失效。':'已收到决定，等待原网页确认。');
    // Commands and permission paths have no separate object field in old records.
    if(['item/commandExecution/requestApproval','item/permissions/requestApproval'].includes(row.method??''))description.push(approval?.details);
    const parts=[...new Set(description.filter(text))].filter(value=>value!==card.title&&value!==approval?.scope);
    if(parts.length)card.description=parts.join('\n');
    if(text(approval?.scope))card.scope=approval.scope;
-   card.answers=[{text:({'允许本次操作':'你已允许本次操作','拒绝本次操作':'你已拒绝本次操作','取消本次请求':'你已取消本次请求'} as Record<string,string>)[row.responseUserText]??row.responseUserText}];
+   card.answers=[{text:({'允许本次操作':'你已允许本次操作','记住此站点':'你已选择记住此站点','拒绝本次操作':'你已拒绝本次操作','取消本次请求':'你已取消本次请求'} as Record<string,string>)[row.responseUserText]??row.responseUserText}];
   }else if(row.runId.startsWith('main-native:')&&row.method==='item/tool/requestUserInput'){
    const questions=projectQuestions('question',{questions:row.questions?JSON.parse(row.questions):undefined});
    const answers=row.decision?JSON.parse(row.decision).answers:undefined;

@@ -142,6 +142,7 @@ try{
   try{const value=JSON.parse(line);
    if(value.kind==='browser_result'){browserReply?.(value);return;}
    if(line.length>4096)return;
+   if(value.kind==='browser_permission'){browserReply?.(value);return;}
    if(value.kind==='quit')quit();
    else if(value.kind==='power_ack'&&Number.isSafeInteger(value.id)&&value.id>0){void power?.('ack',{id:value.id});}
    else if(value.kind==='power_resume'&&Number.isSafeInteger(value.id)&&value.id>0&&(value.afterSleep===undefined||typeof value.afterSleep==='boolean')){

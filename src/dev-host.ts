@@ -218,6 +218,8 @@ async function receive(raw: unknown) {
     frozen = false;
     await send({ kind: "ready", thread: app.store.meta("mainThread"), restoring, stateInvalidationProtocol:1,webHistoryProtocol:3, model: m.config.model,
       effort: effectiveEffort(m.config.effort), engine: codexVersion(m.config.codexBin) });
+  } else if(m.kind==='browser_permission'){
+    if(desktop&&app&&!stopping)void app.browserPermission(m.input).catch(()=>{});
   } else if(m.kind==='browser_result'){
     const value=raw as {id:string;value:unknown;error?:string},call=browserRequests.get(value.id);
     if(call){clearTimeout(call.timer);browserRequests.delete(value.id);value.error?call.reject(Error(value.error)):call.resolve(value.value);}

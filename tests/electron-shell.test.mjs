@@ -1734,7 +1734,7 @@ test('preload exposes fixed Promise methods and allowlisted settings tokens in t
   await notifications.set('attention',false);
   assert.deepEqual(calls.at(-1),['homer:notification','set','attention',false]);
   const browser=exposed.find(([name])=>name==='homerBrowserPreview')[1];
-  assert.deepEqual(Object.keys(browser),['list','present','control','annotations','reply','onChanged','onAnnotation','onShow','onLink']);
+  assert.deepEqual(Object.keys(browser),['list','present','control','annotations','reply','locationGrants','revokeLocation','onChanged','onAnnotation','onShow','onLink']);
   for(const method of ['list','present','control','annotations','reply']){await browser[method]({pageId:'fixture'});assert.equal(calls.at(-1)[0],'homer:preview:'+method);}
   const tour=exposed.find(([name])=>name==='homerDesktopFeatureTour')[1];
   assert.deepEqual(Object.keys(tour),['pending','dismiss']);

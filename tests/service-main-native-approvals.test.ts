@@ -67,3 +67,50 @@ test('main native permission stays on the original turn and accepts user decisio
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('preview location uses the existing approval receipt and expires without applying late choices', async () => {
+    const { fixture, until: wait } = await import('./fixtures/worker-chat-host.js');
+    const f = fixture();
+    const deliveries: { action: string; input: Record<string, unknown> }[] = [];
+    f.app.bindBrowserPreview(async (_actor, action, input) => { deliveries.push({ action, input }); });
+    try {
+        await f.app.start();
+        const threadId = f.app.store.meta('mainThread')!;
+        const bridge = homerWebBridge(f.app);
+        const request = { threadId, owner: 'main:' + threadId, pageId: 'page-synthetic', origin: 'https://synthetic.invalid', permission: 'geolocation', interactive: true };
+        const id = '11111111-1111-4111-a111-111111111111';
+        const first = f.app.browserPermission({ ...request, id });
+        await wait(() => deliveries.some(item => item.action === 'location-card'));
+        const card = (await bridge.history!.state()).interactions[0]!;
+        assert.equal(card.approval?.rememberLocation, true);
+        const [remember, competing] = await Promise.allSettled([
+            bridge.respond(card.id, { requestId: 'synthetic-remember', text: '记住此站点' }),
+            bridge.respond(card.id, { requestId: 'synthetic-competing', text: '拒绝本次操作' }),
+        ]);
+        assert.equal(remember.status, 'fulfilled');
+        assert.equal(competing.status, 'rejected');
+        await first;
+        assert.deepEqual(deliveries.at(-1), { action: 'location-decision', input: { id, allow: true, remember: true } });
+        const saved = (await bridge.history!.state()).messages.find(message => message.interaction?.id === card.id);
+        assert.match(saved?.interaction?.description ?? '', /决定已交给原网页/);
+        assert.equal(f.inputs.length, 0);
+
+        const expiredId = '22222222-2222-4222-a222-222222222222';
+        const second = f.app.browserPermission({ ...request, id: expiredId });
+        const expired = (await bridge.history!.state()).interactions[0]!;
+        await f.app.browserPermission({ id: expiredId, expired: true });
+        await second;
+        await assert.rejects(
+            bridge.respond(expired.id, { requestId: 'synthetic-late', text: '记住此站点' }),
+            /interaction_not_live|interaction_already_resolved/,
+        );
+        assert.equal(deliveries.some(item => item.input.id === expiredId && item.input.allow === true), false);
+
+        const backgroundId = '33333333-3333-4333-a333-333333333333';
+        await f.app.browserPermission({ ...request, id: backgroundId, interactive: false, requestId: 'inactive-task' });
+        assert.deepEqual(deliveries.at(-1), { action: 'location-decision', input: { id: backgroundId, allow: false } });
+        assert.equal((await bridge.history!.state()).interactions.length, 0);
+    } finally {
+        await f.close();
+    }
+});

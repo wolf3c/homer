@@ -52,7 +52,7 @@ import {
 import type { Config } from "./config.js";
 import {capabilityHome,usesHomerNativeHome,effectiveModelConfig,configuredWebSearchMode} from "./config.js";
 import {ChannelPlugin,channelSourceAuthorized,type ChannelAdapter} from './channel-plugin.js';
-import {approvalDecision, MainNativeApprovals, AUDIO_APPROVAL_METHOD, VIDEO_APPROVAL_METHOD} from "./main-native-approvals.js";
+import {approvalDecision, MainNativeApprovals, AUDIO_APPROVAL_METHOD, VIDEO_APPROVAL_METHOD, LOCATION_APPROVAL_METHOD} from "./main-native-approvals.js";
 import { loadPrompts, type Prompts } from "./prompts.js";
 import { MAIN_TOOLS, object, string } from "./tools.js";
 import { acquireLock, leaseOwnerGone, processIdentity, terminateLease } from "./processes.js";
@@ -167,6 +167,52 @@ type StateChangeReason='model-turn'|'user-input'|'native-account-changed'|'nativ
 export class Homer {
   private browserTransport?:BrowserTransport;
   bindBrowserPreview(transport:BrowserTransport){this.browserTransport=transport;return()=>{if(this.browserTransport===transport)this.browserTransport=undefined;};}
+  async browserPermission(value:unknown){
+    const input=object(value),id=string(input.id,100);
+    if(!/^[a-f0-9-]{36}$/.test(id))throw Error('preview_permission_invalid');
+    if(input.expired===true){this.mainApprovals.invalidated(id,'preview_permission_expired');this.invalidateState();return;}
+    const transport=this.browserTransport,threadId=this.store.meta('mainThread'),owner=string(input.owner,160);
+    if(!transport||!threadId||threadId!==input.threadId)throw Error('preview_permission_invalid');
+    const actor={threadId,owner};
+    let deciding=false;
+    try{
+      const origin=new URL(string(input.origin,500)),permission=input.permission;
+      if(origin.protocol!=='https:'||origin.origin!==input.origin||!['geolocation','geolocation-approximate'].includes(String(permission)))throw Error('preview_permission_invalid');
+      const requestId=typeof input.requestId==='string'?input.requestId:undefined;
+      const context=this.mainContext;
+      const worker=owner.startsWith('worker:')?this.workers.get(owner.split(':')[1]!):undefined;
+      const isCurrent=()=>{
+        if(this.closing||this.browserTransport!==transport||this.store.meta('mainThread')!==threadId)return false;
+        if(input.interactive===true)return true;
+        if(!requestId)return false;
+        if(worker)try{
+          const run=this.tasks.run(worker.id);
+          if(this.workers.get(worker.id)!==worker||worker.stopping||owner!=='worker:'+run.workerId+':'+run.version||run.sourceRequestId!==requestId)return false;
+          this.tasks.guard(this.workerActor(worker));return true;
+        }catch{return false;}
+        return owner==='main:'+threadId&&context===this.mainContext&&context?.requestId===requestId&&!context.stopRequested&&!context.terminalConfirmed;
+      };
+      if(!isCurrent())throw Error('preview_permission_expired');
+      const label=permission==='geolocation-approximate'?'近似位置':'位置';
+      const review=this.mainApprovals.openOperation({requestId:id,method:LOCATION_APPROVAL_METHOD,
+        question:'允许 '+origin.origin+' 使用'+label+'？',
+        reason:'记住后，此来源可在荷马前台和后台预览中复用此定位权限，直至撤销。',
+        details:{origin:origin.origin,permission,pageId:string(input.pageId,100)},
+        preview:input.interactive===true?'网页请求定位。':'当前任务操作需要重新请求定位。'},
+        {threadId,turnId:id,generationId:'preview-location:'+id,sourceRequestId:requestId??id,userText:'网页请求'+label,isCurrent});
+      this.invalidateState();
+      await transport(actor,'location-card',{id,cardId:review.id});
+      const result=await review.response;
+      if(!isCurrent()||!['approved','denied'].includes(result.status))throw Error('preview_permission_expired');
+      deciding=true;
+      await transport(actor,'location-decision',{id,allow:result.status==='approved',remember:result.decision?.rememberLocation===true});
+      this.mainApprovals.delivered(id);
+    }catch{
+      if(!deciding)await transport(actor,'location-decision',{id,allow:false}).catch(()=>{});
+    }finally{
+      this.mainApprovals.invalidated(id,'preview_permission_expired');this.invalidateState();
+    }
+  }
   async openBrowserPreview(value:unknown){
     const a=object(value),threadId=string(a.threadId,100);
     if(this.closing||threadId!==this.store.meta('mainThread')||!this.browserTransport)throw Error('preview_unavailable');

@@ -3,6 +3,8 @@ const {contextBridge,ipcRenderer}=require('electron');
 if(process.isMainFrame===true){
  contextBridge.exposeInMainWorld('homerBrowserPreview',{
   ...Object.fromEntries(['list','present','control','annotations','reply'].map(name=>[name,input=>ipcRenderer.invoke('homer:preview:'+name,input)])),
+  locationGrants:()=>ipcRenderer.invoke('homer:preview:location-grants'),
+  revokeLocation:key=>ipcRenderer.invoke('homer:preview:revoke-location',key),
   onChanged:callback=>{const listener=()=>callback();ipcRenderer.on('homer:preview:changed',listener);return()=>ipcRenderer.removeListener('homer:preview:changed',listener);},
   onAnnotation:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('homer:preview:annotation',listener);return()=>ipcRenderer.removeListener('homer:preview:annotation',listener);},
   onShow:callback=>{const listener=(_,page,origin)=>callback(page,origin);ipcRenderer.on('homer:preview:show',listener);return()=>ipcRenderer.removeListener('homer:preview:show',listener);},

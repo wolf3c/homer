@@ -1,6 +1,6 @@
 # Preview 的桌面按需定位授权
 
-**状态（2026-11-23）** 首轮最小改动已接入源码。macOS 打包声明定位用途，Preview 的「网站定位授权」可由用户主动打开 macOS 或 Windows 的系统位置设置。网页定位审批另行集成，其隔离 Electron 虚构坐标验证已完成。支持范围覆盖 Apple 芯片 Mac、Intel Mac 和 Windows x64。各平台的系统授权、真实定位、打包界面和配对闭环仍待验。Linux x64 可编译源码，桌面打包规划当前明确拒绝该目标，因此记录其提供方差异，待支持 Linux 桌面时再纳入实施和验收。 [网页权限审批方案](preview-architecture.md) · [平台构建规划](../../scripts/github-build-plan.mjs#L8)
+**状态（2026-11-23）** 首轮最小改动已接入源码。macOS 打包声明定位用途，Preview 的「网站定位授权」可由用户主动打开 macOS 或 Windows 的系统位置设置。网页定位审批已接入源码，已在隔离 Electron 使用虚构坐标验证回调。支持范围覆盖 Apple 芯片 Mac、Intel Mac 和 Windows x64。各平台的系统授权、真实定位、打包界面和配对闭环仍待验。Linux x64 可编译源码，桌面打包规划当前明确拒绝该目标，因此记录其提供方差异，待支持 Linux 桌面时再纳入实施和验收。 [网页权限审批方案](preview-architecture.md#网页权限审批方案) · [平台构建规划](../../scripts/github-build-plan.mjs#L8)
 
 ## 用户流程
 
@@ -10,9 +10,9 @@
 
 站点权限与系统权限分别生效。「记住此站点」只记录同一浏览配置、来源和具体权限的站点决定。系统权限关闭时，站点记录仍可查看和撤销，网页无法仅凭站点记录越过系统限制。
 
-分别记录「站点已批准」「系统授权状态」「网页已取得位置」。系统提示一旦出现，用户在系统里作出的选择可能改变 Homer 的应用权限，即使原网页已经关闭。系统返回后仍须核对原页面、文档及任务有效性，失效时丢弃该请求的结果。新的网页请求重新检查两层权限。 · [Apple 的系统授权 API](https://developer.apple.com/documentation/corelocation/cllocationmanager/requestwheninuseauthorization())
+分别记录「站点已批准」「系统授权状态」「网页已取得位置」。系统提示一旦出现，用户在系统里作出的选择可能改变 Homer 的应用权限，即使原网页已经关闭。系统返回后仍须核对原页面、文档及任务有效性，失效时丢弃该请求的结果。新的网页请求重新检查两层权限。 [原页面有效性检查](../../packaging/electron/preview-pages.mjs#L211) · [Apple 的系统授权 API](https://developer.apple.com/documentation/corelocation/cllocationmanager/requestwheninuseauthorization())
 
-撤销会删除记住的授权，后续权限检查不再使用该记录。已交付的坐标无法收回。同一文档的新定位调用是否重新触发权限检查、已有 `watchPosition` 是否停止、打开新文档后是否重新审批，须分开实测。若用户要立即结束当前页面的持续定位，引导关闭对应 Preview 页面。精确与近似权限分别匹配，允许近似定位不能授权精确定位。最终精度取决于系统与定位提供方。
+撤销会删除记住的授权，后续权限检查不再使用该记录。已交付的坐标无法收回。同一文档的新定位调用是否重新触发权限检查、已有 `watchPosition` 是否停止、打开新文档后是否重新审批，须分开实测。若用户要立即结束当前页面的持续定位，引导关闭对应 Preview 页面。精确与近似权限分别匹配，允许近似定位不能授权精确定位。最终精度取决于系统与定位提供方。 [现有站点授权撤销](../../packaging/electron/preview-pages.mjs#L177)
 
 ## 实施顺序
 

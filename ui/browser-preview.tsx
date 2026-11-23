@@ -24,8 +24,8 @@ export function useBrowserPages(threadId:string){
   void read();const off=bridge.onChanged(()=>void read());return()=>{current=false;off();};
  },[threadId]);return{pages,error};
 }
-type Props={page:BrowserPage;annotationDraft:AnnotationDraft;onReference:(reference:PreviewRequest,file?:File,isCurrent?:()=>boolean)=>Promise<void>;enabled:boolean;focusId?:string;focusKey?:string;focusRequest?:string;historyNote?:PreviewAnnotation;suspended?:boolean;isCurrent?:()=>boolean};
-export function BrowserPreview({page,annotationDraft,onReference,enabled:referenceEnabled,focusId:requestedFocus,focusKey,focusRequest,historyNote,suspended=false,isCurrent=()=>true}:Props){
+type Props={page:BrowserPage;annotationDraft:AnnotationDraft;onReference:(reference:PreviewRequest,file?:File,isCurrent?:()=>boolean)=>Promise<void>;enabled:boolean;focusId?:string;focusKey?:string;focusRequest?:string;historyNote?:PreviewAnnotation;suspended?:boolean;isCurrent?:()=>boolean;onLocationApproval?:(id:string)=>void};
+export function BrowserPreview({page,annotationDraft,onReference,enabled:referenceEnabled,focusId:requestedFocus,focusKey,focusRequest,historyNote,suspended=false,isCurrent=()=>true,onLocationApproval}:Props){
  const enabled=referenceEnabled&&!page.resource;
  const draft=useAnnotationDraft(annotationDraft),viewport=useRef<HTMLDivElement>(null),latest=useRef({page,onReference,enabled,isCurrent});latest.current={page,onReference,enabled,isCurrent};
  const [active,setActive]=useState(false),[syncing,setSyncing]=useState(false),[notice,setNotice]=useState('');
@@ -70,7 +70,15 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  async function control(action:'takeover'|'resume'|'back'|'forward'|'reload'){
   try{await window.homerBrowserPreview?.control({pageId:page.id,threadId:page.threadId,action});setNotice('');if(action==='resume')setActive(false);return true;}catch(e){setNotice(e instanceof Error?e.message:'网页操作未确认。');return false;}
  }
+ const [locationGrants,setLocationGrants]=useState<string[]>([]);
+ const locationBridge=window.homerBrowserPreview;
  const locationSettingsAvailable=page.url.startsWith('https:')&&!!window.homerDesktopPermissions;
+ async function updateLocationGrants(key?:string){
+  try{
+   const grants=key?await locationBridge?.revokeLocation?.(key):await locationBridge?.locationGrants?.();
+   if(grants)setLocationGrants(grants);
+  }catch{setNotice('无法更新网站定位授权。');}
+ }
  async function openLocationSettings(){
   const manual='请在电脑的系统设置中打开「隐私与安全性」下的定位服务或位置设置。';
   try{
@@ -83,10 +91,12 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
   <AnnotationButton disabled={!enabled||page.loading||syncing} aria-busy={syncing} active={active} aria-label="批注" tooltip={active?'退出网页批注':'选择网页元素批注'} onClick={()=>void control('takeover').then(ok=>{if(ok)setActive(value=>!value);})}/>
   {page.agentAssigned&&<TooltipIconButton side="top" aria-label={page.control==='agent'?'用户接手':'交还 AI'} tooltip={page.control==='agent'?'暂停 AI 写入，由你操作':'结束用户接手，允许原任务继续操作此页'} onClick={()=>void control(page.control==='agent'?'takeover':'resume')}>{page.control==='agent'?<Hand size={16} aria-hidden/>:<Play size={16} aria-hidden/>}</TooltipIconButton>}
  </PreviewToolbar>
- {locationSettingsAvailable&&<details className="canvas-note">
+ {page.locationApproval&&<p className="canvas-note" role="status">等待位置权限决定。 <button type="button" onClick={()=>onLocationApproval?.(page.locationApproval!)}>查看审批</button></p>}
+ {(locationBridge?.locationGrants||locationSettingsAvailable)&&<details className="canvas-note" onToggle={event=>{if(event.currentTarget.open&&locationBridge?.locationGrants)void updateLocationGrants();}}>
   <summary>网站定位授权</summary>
-  <p>网站已获准但仍无法定位时，可检查运行荷马的电脑的位置设置。</p>
-  <button type="button" onClick={()=>void openLocationSettings()}>打开系统位置设置</button>
+  {locationSettingsAvailable&&<><p>网站已获准但仍无法定位时，可检查运行荷马的电脑的位置设置。</p>
+  <button type="button" onClick={()=>void openLocationSettings()}>打开系统位置设置</button></>}
+  {locationBridge?.locationGrants&&(locationGrants.length?locationGrants.map(key=>{const [site,type]=key.split(' ');return <div key={key}>{site} · {type==='geolocation-approximate'?'近似位置':'位置'} <button type="button" onClick={()=>void updateLocationGrants(key)}>撤销</button></div>;}):<p>没有已记住的网站定位授权。</p>)}
  </details>}
  {(notice||page.error)&&<p role="status" className="canvas-note">{notice||page.error}</p>}
  <div className="browser-preview-viewport" ref={viewport} aria-label="内置网页内容">{suspended&&<p>关闭对话框后继续查看网页。</p>}</div></div>;

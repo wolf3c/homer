@@ -6,6 +6,7 @@ export type InteractionDecision = {
   answer?: string;
   answers?: Record<string, string[]>;
   permissions?: unknown;
+  rememberLocation?: true;
 };
 export type NativeInteraction = {
   method: string;
