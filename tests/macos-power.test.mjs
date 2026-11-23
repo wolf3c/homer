@@ -175,13 +175,13 @@ test('native build requires an explicit destination before running platform comm
  assert.throws(()=>buildMacPower({root:'/synthetic/source',arch:'arm64',minimumMacOS:'13.0',run(){throw Error('must not run');}}),/macos_power_build_inputs_invalid/);
 });
 
-function updateFixture({receipt={ok:true},code=0,signal=null,autoClose=true,emitReceipt=true,reply}={}){
+function updateFixture({receipt={ok:true},code=0,signal=null,autoClose=true,emitReceipt=true,reply,launchError}={}){
  const calls=[],kills=[],requests=[];let child;
  const adapter=createMacWakeAdapter(options,{platform:'darwin',checkBundle:()=>true,timeoutMs:80,spawn(file,args,settings){
   calls.push({file,args,settings});child=new EventEmitter();child.stdout=new PassThrough();
   const current=child;
   current.kill=signal=>{kills.push(signal);queueMicrotask(()=>current.emit('close',null,signal));return true;};
-  if(args[0]!=='--uninstall'){
+  if(!['--uninstall','--confirm-uninstall'].includes(args[0])){
    current.stdin=new Writable({write(bytes,_encoding,done){
     const request=JSON.parse(String(bytes));requests.push(request);
     const result=request.op==='close'?null:reply(request,current);
@@ -191,7 +191,9 @@ function updateFixture({receipt={ok:true},code=0,signal=null,autoClose=true,emit
    return current;
   }
   queueMicrotask(()=>{
-   if(emitReceipt)current.stdout.write(typeof receipt==='string'?receipt:JSON.stringify(receipt)+'\n');
+   if(launchError?.()){current.emit('error',Error('synthetic spawn error'));return;}
+   const outcome=typeof receipt==='function'?receipt(args[0]):receipt;
+   if(emitReceipt)current.stdout.write(typeof outcome==='string'?outcome:JSON.stringify(outcome)+'\n');
    if(autoClose){current.emit('exit',code,signal);current.emit('close',code,signal);}
   });
   return current;
@@ -224,6 +226,21 @@ test('prepareUpdate rejects a missing or malformed receipt and a nonzero or sign
   await assert.rejects(f.adapter.prepareUpdate(),/macos_power_(?:response_invalid|update_unconfirmed)/);
  }
 });
+test('retry reconciles an unknown uninstall receipt without unregistering again',async()=>{
+ const f=updateFixture({receipt:command=>command==='--uninstall'?'':{ok:true}});
+ await f.adapter.close();
+ await assert.rejects(f.adapter.prepareUpdate(),/macos_power_response_invalid/);
+ await f.adapter.prepareUpdate();
+ assert.deepEqual(f.calls.map(call=>call.args[0]),['--uninstall','--confirm-uninstall']);
+});
+test('a failed native spawn permits a fresh uninstall attempt',async()=>{
+ let attempts=0;
+ const f=updateFixture({launchError:()=>++attempts===1});
+ await f.adapter.close();
+ await assert.rejects(f.adapter.prepareUpdate(),/macos_power_client_failed/);
+ await f.adapter.prepareUpdate();
+ assert.deepEqual(f.calls.map(call=>call.args[0]),['--uninstall','--uninstall']);
+});
 test('prepareUpdate waits for native close even after a success receipt and exit event',async()=>{
  const f=updateFixture({autoClose:false});await f.adapter.close();
  let settled=false;const work=f.adapter.prepareUpdate().finally(()=>settled=true);
@@ -243,6 +260,19 @@ test('prepareUpdate preserves a failed ordinary close and does not spawn another
  await f.adapter.status();await assert.rejects(f.adapter.close(),/macos_power_cancel_unconfirmed/);
  await assert.rejects(f.adapter.prepareUpdate(),/macos_power_cancel_unconfirmed/);
  assert.equal(f.children.length,1);
+});
+test('an explicit second close rechecks a failed macOS update cleanup',async()=>{
+ let attempts=0;
+ const f=fixture({isUpdating:()=>true,reply:(request,child)=>{
+  if(request.op==='status')return {supported:true,authorization:'authorized'};
+  if(++attempts>1)return null;
+  queueMicrotask(()=>child.stdout.write(JSON.stringify({requestId:request.requestId,ok:false,error:'macos_power_connection_failed'})+'\n'));
+  return false;
+ }});
+ await f.adapter.status();
+ await assert.rejects(f.adapter.close(),/macos_power_connection_failed/);
+ await f.adapter.close();
+ assert.deepEqual(f.requests.map(request=>request.op),['status','close-for-update','close-for-update']);
 });
 test('prepareUpdate skips an unregistered helper using the latest native capability',async()=>{
  for(const capability of [

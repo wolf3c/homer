@@ -95,8 +95,13 @@ private final class PowerClient {
         default: throw PowerError("macos_power_request_invalid")
         }
     }
-    func uninstall() throws {
+    func uninstall(confirmOnly: Bool) throws {
         // An update/uninstaller must finish this before replacing or removing the signed app bundle.
+        if confirmOnly {
+            guard service.status == .notRegistered else { throw PowerError("macos_power_unregister_unconfirmed") }
+            guard try IOKitWakeStore().ownedEvents().isEmpty else { throw PowerError("macos_power_cleanup_not_authorized") }
+            return
+        }
         if service.status == .enabled { _ = try request(["op": "prepare-uninstall"]) }
         else if try !IOKitWakeStore().ownedEvents().isEmpty { throw PowerError("macos_power_cleanup_not_authorized") }
         if service.status == .notRegistered || service.status == .notFound { return }
@@ -114,12 +119,13 @@ private final class PowerClient {
         FileHandle.standardOutput.write(json(value) + Data([10]))
     }
     static func main() {
-        let args = Array(CommandLine.arguments.dropFirst()), uninstall = args.first == "--uninstall"
+        let args = Array(CommandLine.arguments.dropFirst()), confirmOnly = args.first == "--confirm-uninstall"
+        let uninstall = confirmOnly || args.first == "--uninstall"
         let expected = uninstall ? Array(args.dropFirst()) : args
         guard expected.count == 2, expected[0] == "--instance", hex(expected[1], count: 64) else { exit(2) }
         let client: Result<PowerClient, Error> = Result { try PowerClient(instance: expected[1]) }
         if uninstall {
-            do { try client.get().uninstall(); emit(["ok": true]) }
+            do { try client.get().uninstall(confirmOnly: confirmOnly); emit(["ok": true]) }
             catch { emit(["ok": false, "error": powerError(error)]); exit(1) }
             return
         }

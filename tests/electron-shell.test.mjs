@@ -88,6 +88,8 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  electron.powerSaveBlocker={start:type=>{nativeCalls.push(['power-start',type]);const id=++powerLockId;powerLocks.set(id,type);return id;},stop:id=>{nativeCalls.push(['power-stop',id]);powerLocks.delete(id);}};
  const wakeAdapter={status:async()=>({supported:true,authorization:native.powerAuthorization??'authorized'}),authorize:async()=>{nativeCalls.push(['power-authorize']);return {supported:true,authorization:native.powerAuthorization??'authorized'};},list:async()=>wakeEvents.map(event=>({...event})),schedule:async event=>{nativeCalls.push(['power-schedule',event.at]);wakeEvents.push(event);return event;},cancel:async event=>{nativeCalls.push(['power-cancel',event.at]);const index=wakeEvents.findIndex(item=>item.id===event.id);if(index>=0)wakeEvents.splice(index,1);},close:async()=>{nativeCalls.push(['power-close']);}};
  wakeAdapter.prepareUpdate=async()=>{nativeCalls.push(['power-update-cleanup']);await native.powerUpdatePending;if(native.powerUpdateError)throw Error('private_power_failure');};
+ if(native.powerStatus)wakeAdapter.status=async()=>native.powerStatus();
+ if(native.powerClose)wakeAdapter.close=async()=>{nativeCalls.push(['power-close']);return native.powerClose();};
  const createWakeAdapter=options=>{if(native.powerConstructorError)throw Error('private_wake_context');native.onPowerWake=options.onWake;return wakeAdapter;};
  modules['../homer/scripts/macos-power.mjs']={createMacWakeAdapter:createWakeAdapter};
  modules['../homer/scripts/windows-power.mjs']={createWindowsWakeAdapter:createWakeAdapter};
@@ -466,13 +468,29 @@ test('manual errors and hidden restart failures give safe native feedback',async
  assert.ok(f.messages.some(m=>m.detail?.includes('当前工作尚未结束')));assert.equal((await updateCall(f,'state')).noticeHidden,true);
 });
 test('update becoming ready during an ordinary quit confirmation switches to the safe update gate',async()=>{
- const f=await updateFixture();f.app.quit();f.updater.emit('update-downloaded',{},'', '0.2.0');await f.tick();
+ const f=await updateFixture();f.updater.emit('update-not-available');f.app.quit();f.updater.emit('update-downloaded',{},'', '0.2.0');await f.tick();
  assert.deepEqual(f.sent.map(JSON.parse),[{kind:'update-stop'}]);
 });
 test('a staged update arriving after ordinary stop was sent cannot bypass update-stop proof',async()=>{
- const f=await updateFixture();let quits=0;f.app.on('quit',()=>quits++);f.app.quit();await f.tick();assert.equal(JSON.parse(f.sent[0]).kind,'quit');
+ const f=await updateFixture();f.updater.emit('update-not-available');let quits=0;f.app.on('quit',()=>quits++);f.app.quit();await f.tick();assert.equal(JSON.parse(f.sent[0]).kind,'quit');
  f.updater.emit('update-downloaded',{},'', '0.2.0');f.event({kind:'stopped'});f.child.emit('close',0,null);await f.tick();
  assert.equal(quits,0);assert.equal((await updateCall(f,'state')).error,'update_service_stopped');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+});
+test('ordinary macOS quit cannot stop the runtime while native staging is unresolved',async()=>{
+ const f=await updateFixture();
+ for(const event of ['checking-for-update','update-available','error']){
+  f.updater.emit(event,Error('synthetic'));f.app.quit();await f.tick();
+  assert.equal(f.sent.length,0);
+ }
+ f.updater.emit('update-downloaded',{},'','0.2.0');f.app.quit();await f.tick();
+ assert.deepEqual(f.sent.map(JSON.parse),[{kind:'update-stop'}]);
+});
+for(const error of [{domain:'NSURLErrorDomain'},{domain:'SQRLUpdaterErrorDomain',code:5},{domain:'SQRLUpdaterErrorDomain',code:9}])test('a known macOS transfer failure still permits ordinary quit: '+(error.code??error.domain),async()=>{
+ const f=await updateFixture();
+ f.updater.emit('update-available');
+ f.updater.emit('error',Object.assign(Error('synthetic transfer error'),error));
+ f.app.quit();await f.tick();
+ assert.deepEqual(f.sent.map(JSON.parse),[{kind:'quit'}]);
 });
 test('native install failure keeps a recoverable ready state without relaunch or forced exit',async()=>{
  const f=await updateFixture({installError:true});f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();
@@ -896,6 +914,34 @@ test('quitting a staged Mac update retries native cleanup and cannot bypass a pr
  assert.equal(f.nativeCalls.filter(call=>call[0]==='power-update-cleanup').length,3);
  assert.equal(f.nativeCalls.some(call=>call[0]==='install-update'),false);
 });
+test('an unreachable macOS wake helper blocks update before stopping the runtime',async()=>{
+ const f=await updateFixture({powerStatus:()=>({supported:false,authorization:'unavailable',reason:'macos_power_connection_failed'})});
+ f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
+ assert.equal(f.sent.length,0);
+ assert.equal((await updateCall(f,'state')).error,'update_power_cleanup_unconfirmed');
+});
+test('retry after macOS wake close failure keeps the runtime stop proof',async()=>{
+ let failed=true;
+ const f=await updateFixture({powerClose:()=>{if(failed)throw Error('macos_power_connection_failed');return true;}});
+ f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(f.nativeCalls.some(call=>call[0]==='install-update'),false);
+ failed=false;
+ await updateCall(f,'restart');await f.tick();
+ assert.deepEqual(f.sent.map(JSON.parse),[{kind:'update-stop'}]);
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='power-close').length,2);
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='install-update').length,1);
+});
+test('the runtime stop timeout ends before macOS wake cleanup begins',async()=>{
+ let finishClose;
+ const f=await updateFixture({powerClose:()=>new Promise(resolve=>{finishClose=()=>resolve(true);})});
+ f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ f.runTimers(20_001);await f.tick();
+ assert.equal((await updateCall(f,'state')).error,undefined);
+ finishClose();await f.tick();
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='install-update').length,1);
+});
 test('staged Mac update quit rechecks its caller after asynchronous native cleanup',async()=>{
  const f=await updateFixture({powerUpdateError:true,response:options=>options.message==='更新尚未确认，如何继续？'?2:1});let exits=0;f.app.on('quit',()=>{exits++;});
  f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
@@ -909,7 +955,7 @@ test('unavailable native wake cleanup prevents replacing the Mac helper while or
  const f=await updateFixture({powerConstructorError:true});
  assert.equal(f.spawnCount(),1);
  f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
- f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(f.sent.length,0);
  assert.equal(f.nativeCalls.some(call=>call[0]==='install-update'),false);
  assert.equal((await updateCall(f,'state')).error,'update_power_cleanup_unconfirmed');
 });

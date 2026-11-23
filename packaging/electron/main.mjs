@@ -28,7 +28,7 @@ let window,child,origin,acknowledged=false,startupRefused=false,closed=false,exi
 app.on('will-quit',()=>browserPreview?.close());
 let deepseek=false;
 let desktopAccessToken;
-let power,powerWakeAdapter,powerProfile,powerConfiguration,powerPreferenceError,powerAuthorizationOffering=false,powerClosing,powerExitReady=false,powerExitChecking=false,powerUpdateReady=false,powerUpdatePending;
+let power,powerWakeAdapter,powerProfile,powerConfiguration,powerPreferenceError,powerAuthorizationOffering=false,powerExitReady=false,powerExitChecking=false,powerUpdateReady=false,powerUpdatePending;
 const powerRequests=new Map();
 function powerChanged(){
  if(!window||window.isDestroyed()||!origin)return;
@@ -97,7 +97,7 @@ function registerDesktopPower(profile){
   return powerState();
  });
 }
-function closeDesktopPower(){return powerClosing??=power?.close()??Promise.resolve(true);}
+function closeDesktopPower(){return power?.close()??Promise.resolve(true);}
 async function preparePowerUpdate(){
  if(process.platform!=='darwin'||powerUpdateReady)return;
  const wasAuthorized=power?.state().wake.authorization==='authorized';await powerWakeAdapter?.prepareUpdate();
@@ -553,6 +553,7 @@ function requestQuit(){if(windowsRecovery())void recoverWindowsExit();else app.q
 const nativeUpdater=()=>windowsUpdater??autoUpdater;
 const windowsRecovery=()=>!!windowsUpdater&&(closed||updateStopping)&&updateState?.status==='error';
 let updateState=null,updateStopping=false,updateAcknowledged=false,updateManual=false;
+let macUpdateMayBeStaged=false;
 let updateCheckTimer,updateCheckDue,updateSuspended=false;
 const UPDATE_CHECK_JITTER=5*60_000;
 const updateJitter=()=>Math.floor(Math.random()*UPDATE_CHECK_JITTER);
@@ -596,8 +597,13 @@ function checkUpdate(manual=false){
   }).catch(()=>{});
  }catch{updateCheckFailed();}
 }
-function updateCheckFailed(){
+function updateCheckFailed(error){
  if(!updateState)return;
+ if(process.platform==='darwin'&&updateState.status==='downloading'){
+  // Squirrel's invalid server response (5) and package (9) precede staging.
+  const beforeStaging=error?.domain==='NSURLErrorDomain'||error?.domain==='SQRLUpdaterErrorDomain'&&[5,9].includes(error.code);
+  if(!beforeStaging)macUpdateMayBeStaged=true;
+ }
  if(windowsUpdater&&closed&&(!updateStopping||updateConfirmed())){windowsUpdateFailed();return;}
  if(updateStopping&&allowQuit){allowQuit=false;updateFailed('update_install_unconfirmed');return;}
  if(windowsUpdater)windowsCandidate=undefined;
@@ -629,7 +635,10 @@ async function setupDesktopUpdate(manifest,test){
   autoUpdater.setFeedURL({url:`https://github.com/wolf3c/homer/releases/latest/download/RELEASES-darwin-${process.arch}.json`,serverType:'json'});
   }
   nativeUpdater().on('checking-for-update',()=>{if(windowsRecovery())return;updateState={status:'checking',noticeHidden:false};updateChanged();});
-  nativeUpdater().on('update-available',()=>{if(windowsRecovery())return;updateState={status:'downloading',noticeHidden:false};updateChanged();});
+  nativeUpdater().on('update-available',()=>{
+   if(windowsRecovery())return;
+   updateState={status:'downloading',noticeHidden:false};updateChanged();
+  });
   nativeUpdater().on('update-not-available',()=>{
    if(windowsRecovery())return;
    updateState={status:'idle',noticeHidden:false};updateChanged();
@@ -714,7 +723,8 @@ function registerDesktopUpdate(){
 function updateFailed(error){
  clearTimeout(stopTimer);quitPending=false;quitAction=undefined;switchSource=undefined;updateStopping=false;
  updateState={...updateState,error};updateChanged();
- if(error&&updateState.noticeHidden)void showError(error==='update_busy'?'当前工作尚未结束，请稍后重试。':closed?'服务已停止，更新尚未确认。请重新打开荷马后核对。':'重启更新未能确认，请保存未提交编辑并稍后重试。');
+ if(error==='update_power_cleanup_unconfirmed')void showError(closed?'后台服务已安全停止，但系统唤醒清理未确认。请检查系统唤醒服务后重试更新。':'系统唤醒服务暂不可用，荷马仍在运行。请检查系统唤醒服务后重试更新。');
+ else if(error&&updateState.noticeHidden)void showError(error==='update_busy'?'当前工作尚未结束，请稍后重试。':closed?'服务已停止，更新尚未确认。请重新打开荷马后核对。':'重启更新未能确认，请保存未提交编辑并稍后重试。');
 }
 function registerDesktopPermissions(){
  const actions={
@@ -829,20 +839,21 @@ const startupFailed=error=>{void app.whenReady().then(async()=>{await showError(
 function finishQuit(){
  if(allowQuit)return;
  if(updateStopping?!updateConfirmed():!confirmed())return;
+ clearTimeout(stopTimer);
  if(windowsUpdater&&updateStopping&&updateState?.status==='error'){windowsUpdateFailed();return;}
  if(updateState?.status==='ready'&&!updateStopping){updateFailed('update_service_stopped');return;}
  if(!powerExitReady){
   if(powerExitChecking)return;powerExitChecking=true;
   void closeDesktopPower().then(async clean=>{
+   if(!clean&&updateStopping&&process.platform==='darwin'){powerExitChecking=false;updateFailed('update_power_cleanup_unconfirmed');return;}
    if(!clean){const {response}=await dialog.showMessageBox(window,{type:'warning',title:'荷马',message:'系统唤醒清理未确认',detail:'荷马已停止待命，但可能仍有本实例的系统唤醒事件或保护未清除。可保留窗口核对，或退出后在下次启动时重新检查。',buttons:['保留窗口核对','仍然退出'],defaultId:0,cancelId:0});if(response!==1){quitPending=false;powerExitChecking=false;return;}}
-   powerExitReady=true;finishQuit();
+   powerExitChecking=false;powerExitReady=true;finishQuit();
   });return;
  }
  if(updateStopping&&process.platform==='darwin'&&!powerUpdateReady){
   if(!powerUpdatePending)powerUpdatePending=preparePowerUpdate().then(()=>{finishQuit();}).catch(()=>{updateFailed('update_power_cleanup_unconfirmed');}).finally(()=>{powerUpdatePending=undefined;});
   return;
  }
- clearTimeout(stopTimer);
  if(quitPending){
   cancelConnection();
   try{
@@ -863,8 +874,16 @@ app.on('before-quit',event=>{
  if(allowQuit||!child){cancelConnection();return;}
  event.preventDefault();
  if(windowsRecovery())return;
- if(confirmed()&&updateState?.status!=='ready'){quitPending=true;finishQuit();return;}
  if(quitPending)return;
+ // ShipIt can have a staged request before Electron reports ready.
+ if(process.platform==='darwin'&&updateState&&updateState.status!=='ready'&&(['checking','downloading'].includes(updateState.status)||macUpdateMayBeStaged)){
+  quitPending=true;refreshMenu();
+  void showError('正在确认 macOS 更新是否已暂存。请在检查结束后再次退出。如检查失败，请先从菜单重查更新。').finally(()=>{
+   quitPending=false;refreshMenu();armUpdateCheck();
+  });
+  return;
+ }
+ if(confirmed()&&updateState?.status!=='ready'){quitPending=true;finishQuit();return;}
  quitPending=true;
  clearTimeout(updateCheckTimer);
  if(updateState)refreshMenu();
@@ -878,6 +897,11 @@ app.on('before-quit',event=>{
   if(!contents&&!stopped){updateFailed('update_stop_unconfirmed');return;}
   void (async()=>{
    try{
+    if(!stopped&&process.platform==='darwin'){
+     const wake=await powerWakeAdapter?.status();
+     if(window!==currentWindow||contents?.isDestroyed()||navigation!==permissionNavigation){updateFailed(undefined);return;}
+     if(!wake?.supported||!['authorized','required'].includes(wake.authorization)){updateFailed('update_power_cleanup_unconfirmed');return;}
+    }
     if(contents){
      const mayLeave=await contents.executeJavaScript("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))");
      if(!mayLeave||window!==currentWindow||contents.isDestroyed()||navigation!==permissionNavigation){updateFailed('update_unsaved');return;}

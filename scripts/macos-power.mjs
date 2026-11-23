@@ -18,7 +18,8 @@ function packaged(bundle,resources){
 export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdating=()=>false}, {platform=process.platform,spawn=spawnProcess,checkBundle=packaged,timeoutMs=10000}={}){
  if(typeof instanceId!=='string'||!/^[a-f0-9]{64}$/.test(instanceId))throw Error('macos_power_instance_invalid');
  const unavailable=platform!=='darwin'?'macos_power_platform_unsupported':!checkBundle(bundle,resources)?'macos_power_bundle_unavailable':undefined;
- let client,sequence=0,closed=false,closing,started=false,capability,helperMayExist=false;
+ let client,sequence=0,closed=false,closing,closeFailed=false,started=false,capability,helperMayExist=false;
+ let uninstallUnconfirmed=false;
  // Keep uncertain writes across native client loss. Only a helper close can settle them.
  let unconfirmedWrites=0;
  const pending=new Map();
@@ -97,8 +98,9 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
    unconfirmedWrites--;
   },
   close(){
-   if(closing)return closing;
+   if(closing&&!closeFailed)return closing;
    closed=true;
+   closeFailed=false;
    closing=(async()=>{
     try{
      if(!unavailable&&started){
@@ -106,10 +108,11 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
       if(result==='owner-empty'){
        if(unconfirmedWrites)throw Error('macos_power_cleanup_unconfirmed');
       }else if(result!==null)throw Error('macos_power_response_invalid');
+      return true;
      }
     }
     finally{const child=client;client=undefined;child?.stdin.end();child?.kill();}
-   })();
+   })().catch(error=>{closeFailed=true;throw error;});
    return closing;
   },
   async prepareUpdate(){
@@ -120,11 +123,16 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
    if(unavailable||!helperMayExist&&helperAbsent)return;
    await new Promise((resolve,reject)=>{
     let child,buffer='',settled=false;
+    const confirmOnly=uninstallUnconfirmed;
     const finish=error=>{if(settled)return;settled=true;clearTimeout(timer);if(error)reject(error);else resolve();};
     const timer=setTimeout(()=>{finish(Error('macos_power_request_timeout'));child?.kill('SIGKILL');},timeoutMs);
-    try{child=spawn(join(bundle,'Contents/MacOS/homer-power-client'),['--uninstall','--instance',instanceId],{shell:false,stdio:['ignore','pipe','ignore'],env:{PATH:'/usr/bin:/bin',HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:'en_US.UTF-8'}});}
+    try{child=spawn(join(bundle,'Contents/MacOS/homer-power-client'),[confirmOnly?'--confirm-uninstall':'--uninstall','--instance',instanceId],{shell:false,stdio:['ignore','pipe','ignore'],env:{PATH:'/usr/bin:/bin',HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:'en_US.UTF-8'}});}
     catch{finish(Error('macos_power_client_failed'));return;}
-    child.once('error',()=>finish(Error('macos_power_client_failed')));
+    uninstallUnconfirmed=true;
+    child.once('error',()=>{
+     if(child.pid===undefined&&!confirmOnly)uninstallUnconfirmed=false;
+     finish(Error('macos_power_client_failed'));
+    });
     child.stdout.on('error',()=>{finish(Error('macos_power_client_failed'));child.kill('SIGKILL');});
     child.stdout.on('data',bytes=>{
      if(settled)return;
@@ -135,9 +143,13 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
      if(settled)return;
      let receipt;
      try{receipt=JSON.parse(buffer);}catch{finish(Error('macos_power_response_invalid'));return;}
-     if(receipt?.ok===false&&Object.keys(receipt).sort().join(',')==='error,ok'&&failure(receipt.error).message===receipt.error){finish(failure(receipt.error));return;}
+     if(receipt?.ok===false&&Object.keys(receipt).sort().join(',')==='error,ok'&&failure(receipt.error).message===receipt.error){
+      if(!confirmOnly&&code===1&&!signal&&!['macos_power_unregister_failed','macos_power_unregister_unconfirmed'].includes(receipt.error))uninstallUnconfirmed=false;
+      finish(failure(receipt.error));return;
+     }
      if(receipt?.ok!==true||Object.keys(receipt).join(',')!=='ok'){finish(Error('macos_power_response_invalid'));return;}
-     finish(code===0&&!signal?undefined:Error('macos_power_update_unconfirmed'));
+     if(code!==0||signal){finish(Error('macos_power_update_unconfirmed'));return;}
+     uninstallUnconfirmed=false;finish();
     });
    });
   }

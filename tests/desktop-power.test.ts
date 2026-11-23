@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DesktopPowerCoordinator,POWER_DEFAULTS,validatePowerPreferences,type PowerFacts,type WakeEvent} from '../src/desktop-power.js';
+import {DesktopPowerCoordinator,POWER_DEFAULTS,validatePowerPreferences,type PowerFacts,type WakeAdapter,type WakeEvent} from '../src/desktop-power.js';
 
-function fixture(options:{leadMs?:number}={}){
+function fixture(options:{leadMs?:number;wake?:WakeAdapter}={}){
  let now=Date.UTC(2026,10,13,0),sequence=0;
  const timers=new Map<number,{at:number;fn:()=>void}>(),events:WakeEvent[]=[],calls:string[]=[],locks=new Map<number,string>();
  const control={authorization:'authorized' as 'authorized'|'required'|'denied',statusUnavailable:false,statusCalls:0,listCalls:0,createCalls:0,authorizeCalls:0,failCreate:false,failCreateAt:undefined as number|undefined,loseReceipt:false,failStop:false,failCancel:false,maxEvents:128,hangCheck:false,blockCheck:undefined as Promise<void>|undefined,blockCreate:undefined as Promise<void>|undefined,checks:0,recoveryKinds:[] as boolean[]};
@@ -131,6 +131,17 @@ test('unconfirmed cancellation and blocker release are reported rather than clai
  const f=fixture();await f.update({executing:true,nextScheduledAt:f.now()+300_000});
  f.control.failCancel=true;f.control.failStop=true;
  assert.equal(await f.power.close(),false);assert.ok(f.power.state().wake.error);assert.ok(f.power.state().protectionError);
+});
+
+test('a confirmed native close clears an earlier reconciliation failure',async()=>{
+ const native=fixture({wake:{
+  status:async()=>({supported:true,authorization:'authorized'}),authorize:async()=>({supported:true,authorization:'authorized'}),
+  list:async()=>{throw Error('macos_power_connection_failed');},schedule:async event=>event,cancel:async()=>{},
+  close:async()=>true,
+ }});
+ await native.update({nextScheduledAt:native.now()+300_000});
+ assert.equal(await native.power.close(),true);
+ assert.equal(native.power.state().wake.error,undefined);
 });
 
 test('a failed old-event cleanup cannot exhaust the two-event native limit on the next replacement',async()=>{

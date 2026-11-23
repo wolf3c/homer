@@ -6,6 +6,6 @@ export function createMacWakeAdapter(options:{bundle:string;resources:string;pro
  list():Promise<MacWakeEvent[]>;
  schedule(event:MacWakeEvent):Promise<MacWakeEvent>;
  cancel(event:MacWakeEvent):Promise<void>;
- close():Promise<void>;
+ close():Promise<void|true>;
  prepareUpdate():Promise<void>;
 };

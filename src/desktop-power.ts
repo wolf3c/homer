@@ -11,7 +11,7 @@ export function validatePowerPreferences(value:unknown):PowerPreferences{
 }
 export type WakeEvent={id:string;at:number};
 export type WakeCapability={supported:boolean;authorization:'required'|'authorized'|'denied'|'unavailable';reason?:string};
-export type WakeAdapter={status:()=>Promise<WakeCapability>;authorize:()=>Promise<WakeCapability>;list:()=>Promise<WakeEvent[]>;schedule:(event:WakeEvent)=>Promise<WakeEvent>;cancel:(event:WakeEvent)=>Promise<void>;close:()=>Promise<void>};
+export type WakeAdapter={status:()=>Promise<WakeCapability>;authorize:()=>Promise<WakeCapability>;list:()=>Promise<WakeEvent[]>;schedule:(event:WakeEvent)=>Promise<WakeEvent>;cancel:(event:WakeEvent)=>Promise<void>;close:()=>Promise<void|true>};
 export type PowerFacts={runtimeAvailable:boolean;executing:boolean;displayRequired:boolean;nextScheduledAt:number|null;channels:string[]};
 export type DesktopPowerState={supported:boolean;preferences:PowerPreferences;runtimeAvailable:boolean;protection:'none'|'system'|'display';protectionError?:string;channels:string[];wake:{supported:boolean;authorization:WakeCapability['authorization'];status:'idle'|'unavailable'|'authorization-required'|'scheduled'|'error';nextAt:number|null;error?:string}};
 type Clock={now:()=>number;setTimeout:(fn:()=>void,delay:number)=>unknown;clearTimeout:(id:unknown)=>void};
@@ -103,13 +103,18 @@ export class DesktopPowerCoordinator{
  }
  close():Promise<boolean>{
   return this.closedResult??=(async()=>{
+   const firstClose=!this.closed;
    this.closed=true;this.prepareUntil=null;this.pollAt=null;this.pruneEventSources();this.protect();
-   if(this.timer!==undefined){this.clock.clearTimeout(this.timer);this.timer=undefined;}
-   this.cancelCheck?.();await this.checking;
-   this.readCapability=true;await this.sync();
-   try{await this.options.wake.close();}catch{this.wakeError='wake_cleanup_unconfirmed';}
+   if(firstClose){
+    if(this.timer!==undefined){this.clock.clearTimeout(this.timer);this.timer=undefined;}
+    this.cancelCheck?.();await this.checking;
+    this.readCapability=true;await this.sync();
+   }
+   try{
+    if(await this.options.wake.close()===true){this.wakeError=undefined;this.nextAt=null;}
+   }catch{this.wakeError='wake_cleanup_unconfirmed';}
    this.changed();return !this.wakeError&&!this.protectionError;
-  })();
+  })().then(clean=>{if(!clean)this.closedResult=undefined;return clean;});
  }
  private updatePolling(){
   if(this.closed||!this.facts.runtimeAvailable||!this.preferences.pollMessages||!this.facts.channels.length)this.pollAt=null;
