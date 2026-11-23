@@ -15,14 +15,14 @@ export interface MessageActionsProps extends ComponentProps<'div'>{
 }
 export function MessageActions({copied,copying,onCopy,onQuote,quoteDisabled,className,children,...props}:MessageActionsProps){
  return <div data-slot="message-actions" className={['aui-message-actions',className].filter(Boolean).join(' ')} {...props}>
+  {onQuote&&<button type="button" aria-label="引用" title="引用" disabled={quoteDisabled} onClick={onQuote} className="aui-message-action">
+   <MessageCirclePlus aria-hidden="true"/>
+  </button>}
   <button type="button" aria-label="复制" title={copied?'已复制':'复制'} aria-busy={copying} disabled={copying} onClick={onCopy}
    className={'aui-message-action aui-message-copy'+(copied?' is-copied':'')}>
    <CopyIcon aria-hidden="true" className={'aui-message-action-icon '+(copied?'is-out':'is-in')}/>
    <CheckIcon aria-hidden="true" className={'aui-message-action-icon '+(copied?'is-in':'is-out')}/>
   </button>
-  {onQuote&&<button type="button" aria-label="引用" title="引用" disabled={quoteDisabled} onClick={onQuote} className="aui-message-action">
-   <MessageCirclePlus aria-hidden="true"/>
-  </button>}
   {children}
  </div>;
 }

@@ -49,19 +49,28 @@ try{
   try{
    await page.command('Page.addScriptToEvaluateOnNewDocument',{source:`window.__console=[];for(const level of ["warn","error"]){const original=console[level].bind(console);console[level]=(...args)=>{window.__console.push(level);original(...args);};}window.__copies=[];window.__copyMode='hold';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText(text){window.__copies.push({text,active:navigator.userActivation.isActive});if(window.__copyMode==='hold')return new Promise((resolve,reject)=>window.__clipboard={resolve,reject});if(window.__copyMode==='fail')return Promise.reject(Error('synthetic_clipboard_denied'));return Promise.resolve();}}});`});
    await page.navigate();await wait(()=>!!document.querySelector('#message-quote-assistant [data-slot="message-actions"]')&&!!document.querySelector('[contenteditable=true]'));
-   await check('each text message has Copy and Quote in official MessageActions',()=>['quote-user','quote-assistant'].every(id=>JSON.stringify([...document.querySelectorAll('#message-'+id+' [data-slot="message-actions"] button')].map(b=>b.getAttribute('aria-label')))==='["复制","引用"]'));
+   await check('each text message places Quote before Copy',()=>['quote-user','quote-assistant'].every(id=>JSON.stringify([...document.querySelectorAll('#message-'+id+' [data-slot="message-actions"] button')].map(b=>b.getAttribute('aria-label')))==='["引用","复制"]'));
    await check('no empty message action bar',()=>!document.querySelector('#message-attachment-only [data-slot="message-actions"]'));
    await check('actions keep their mirrored desktop rails and usable touch targets',()=>{
     const touch=matchMedia('(pointer:coarse)').matches;
     return ['quote-user','quote-assistant','same-task'].every(id=>{
      const row=document.querySelector('#message-'+id),bubble=row.querySelector('.user-message-bubble,.assistant-message-bubble').getBoundingClientRect();
-     const [copy,quote]=[...row.querySelectorAll('[data-slot="message-actions"] button')].map(b=>b.getBoundingClientRect());
-     return touch?copy.width===44&&copy.height===44&&copy.top>=bubble.bottom&&quote.top===copy.top:
-      copy.width===36&&copy.height===36&&(id==='quote-assistant'?quote.top>=copy.bottom:quote.top===copy.top)&&
-      (id==='quote-user'?quote.right<=bubble.left:copy.left>=bubble.right)&&
+     const [quote,copy]=[...row.querySelectorAll('[data-slot="message-actions"] button')].map(b=>b.getBoundingClientRect());
+     const size=touch?44:36;
+     if(![quote,copy].every(button=>button.width===size&&button.height===size))return false;
+     const horizontal=quote.top===copy.top&&quote.right<=copy.left;
+     return touch?horizontal&&quote.top>=bubble.bottom:
+      (id==='quote-assistant'?quote.bottom<=copy.top&&quote.left===copy.left:horizontal)&&
+      (id==='quote-user'?copy.right<=bubble.left:quote.left>=bubble.right)&&
       (id==='quote-assistant'||Math.abs(row.querySelector('.message-bubble-row').getBoundingClientRect().height-bubble.height)<1);
     });
    });
+   await page.evaluate(()=>document.querySelector('#message-quote-user time').focus());
+   await key(page,'Tab');
+   await check('Tab reaches Quote first',()=>document.activeElement===document.querySelector('#message-quote-user [aria-label="引用"]'));
+   await key(page,'Tab');
+   await check('the next Tab reaches Copy',()=>document.activeElement===document.querySelector('#message-quote-user [aria-label="复制"]'));
+   await page.evaluate(()=>document.activeElement.blur());
    await check('adjacent same-task titles are visually hidden, and matching names on different tasks stay separate',()=>{
     const first=document.querySelector('#message-quote-assistant'),second=document.querySelector('#message-same-task'),other=document.querySelector('#message-other-task');
     const gap=(before,after)=>Math.round(after.querySelector('.assistant-message-bubble').getBoundingClientRect().top-before.querySelector('.assistant-message-bubble').getBoundingClientRect().bottom);
