@@ -5,7 +5,7 @@ import {taskName} from './task-presentation.js';
 // Read-only Web facts. Task decisions and Worker execution have separate owners.
 export type OverviewRun={id:string;taskId:string;workerId:string;status:string;phase:string;version:number;epoch:number;sourceRequestId:string|null;createdAt?:number;startedAt?:number|null;endedAt?:number|null;stopRequestedAt?:number|null;replacesRunId?:string|null;errorCode?:string|null;threadId?:string|null;turnId?:string|null};
 export type OverviewWorker={id:string;taskId:string;title?:string|null;run:OverviewRun;pendingMain:number;pendingMainApprovals?:number;pendingMainQuestions?:number};
-export type OverviewTask={id:string;title?:string|null;goal:string|null;notes:string;headVersion:number;revision:number;state:'open'|'paused';historyState:'visible'|'archived';hasExecutingWorker?:boolean;sourceRequestId:string|null;sourceRequestIds?:string[];creationOrder?:number;createdAt?:number;workers:OverviewWorker[]};
+export type OverviewTask={id:string;title?:string|null;goal:string|null;notes:string;headVersion:number;revision:number;state:'open'|'paused';historyState:'visible'|'archived';hasExecutingWorker?:boolean;archiveBlocker?:string|null;archiveReviewIssue?:'failed'|'unknown';sourceRequestId:string|null;sourceRequestIds?:string[];creationOrder?:number;createdAt?:number;workers:OverviewWorker[]};
 export type OverviewPage={view?:'visible'|'archived';before?:number};
 export type TaskOverview={tasks:OverviewTask[];nextCursor?:number;progressRevision?:number};
 export type TaskRequirement={taskId:string;version:number;goal:string|null;sourceRequestId:string|null;sourceMessageId?:string;threadId?:string};
@@ -40,6 +40,17 @@ export function readTaskOverview(db:DatabaseSync,page:OverviewPage={}):TaskOverv
   else worker.pendingMainQuestions=item.total;
  }
  for(const item of replies){const worker=byWorker.get(item.workerId);if(worker)worker.pendingMain+=item.pendingMain;}
+ if(view==='archived'){
+  const issues=db.prepare(`SELECT t.id,coalesce(json_extract(o.detailsJson,'$.reviewIssue'),
+      CASE r.state WHEN 'rejected' THEN 'failed' WHEN 'uncertain' THEN 'unknown' END) issue
+    FROM tasks t JOIN agent_messages m ON m.taskId=t.id AND m.kind='task_archived' AND m.senderAgentId='host'
+      AND json_extract(m.payloadJson,'$.revision')=t.revision
+    JOIN operations o ON o.id=m.operationKey AND o.kind='archive_work' AND o.state='confirmed'
+    JOIN agent_receipts r ON r.messageId=m.id AND r.recipientAgentId=m.recipientAgentId
+    WHERE ${inPage} AND json_extract(o.detailsJson,'$.origin')='work_status'
+      AND (json_extract(o.detailsJson,'$.reviewIssue') IN ('failed','unknown') OR r.state IN ('rejected','uncertain'))`).all(ids) as {id:string;issue:'failed'|'unknown'}[];
+  for(const {id,issue} of issues)byTask.get(id)!.archiveReviewIssue=issue;
+ }
  return {tasks:[...byTask.values()],...(pageRows.length>20?{nextCursor:tasks.at(-1)!.creationOrder}:{})};
 }
 function requireTask(db:DatabaseSync,id:string){

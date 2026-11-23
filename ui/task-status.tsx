@@ -1,7 +1,7 @@
 import {useEffect,useId,useLayoutEffect,useMemo,useRef,useState} from 'react';
-import {ListTodoIcon,ChevronRightIcon,BotIcon,MessageCirclePlus} from 'lucide-react';
+import {ArchiveIcon,ListTodoIcon,ChevronRightIcon,BotIcon,MessageCirclePlus} from 'lucide-react';
 import {Collapsible} from '@base-ui/react/collapsible';
-import type {WebState} from '../src/web-contract';
+import type {TaskArchiveResult,WebState} from '../src/web-contract';
 import type {OverviewTask,TaskDetail,TaskOverview} from '../src/task-overview';
 import type {TaskReference} from '../src/web-history';
 import {connectionFetch} from './web-connection-client';
@@ -13,13 +13,27 @@ import {ghostButton} from './vendor/task-status/surfaces';
 import {createPortal} from 'react-dom';
 import './vendor/task-status/components.css';
 import './task-status.css';
-function TaskStatusRow({label,workerCount,running,selected,onSelect,onReference}:{
+function archiveReason(reason:string){
+ switch(reason){
+  case 'interaction_unresolved':return '仍有待答问题或待审批操作。';
+  case 'run_not_closed':return 'Worker 执行尚未结束。';
+  case 'operation_unresolved':
+  case 'worker_effect_unconfirmed':
+  case 'main_effect_unconfirmed':return '仍有操作结果待确认。';
+  case 'archive_source_unavailable':return '暂时无法核实归档复核所需的原委托。';
+  case 'archive_review_skill_unavailable':return '归档复核 Skill 暂不可用。';
+  case 'main_engine_unavailable':return 'Homer 暂不可用。';
+  default:return '仍有事项记录待处理。';
+ }
+}
+function TaskStatusRow({label,workerCount,running,selected,onSelect,onReference,archive}:{
  label:string;workerCount:number;running:boolean;selected:boolean;onSelect?:()=>void;onReference?:()=>void;
+ archive?:{reason:string|null;pending:boolean;activate:()=>void};
 }){
  const id=useId();
  const Row=onSelect?'button':'div';
- const description=[running&&id+'-running',workerCount>0&&id+'-workers'].filter(Boolean).join(' ');
- return <div className="status-task-entry" data-reference={onReference?'available':undefined} data-workers={workerCount>0?'present':undefined}>
+ const description=[running&&id+'-running',workerCount>0&&id+'-workers',archive?.reason&&id+'-archive-reason'].filter(Boolean).join(' ');
+ return <div className="status-task-entry" data-reference={onReference?'available':undefined} data-workers={workerCount>0?'present':undefined} data-archive={archive?'available':undefined}>
  <Row data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}
   {...(onSelect?{type:'button' as const,onClick:onSelect,'aria-labelledby':id,'aria-describedby':description||undefined,'aria-pressed':selected}:{})}>
   <span id={id} className="status-task-title">{label}</span>
@@ -31,15 +45,20 @@ function TaskStatusRow({label,workerCount,running,selected,onSelect,onReference}
   </span>}
   {workerCount>0&&<span id={id+'-workers'} className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
  </Row>
+ {archive&&!running&&<button type="button" className="status-task-archive" aria-label={(archive.pending?'正在归档：':'归档事项：')+label}
+  title={archive.reason??(archive.pending?'正在归档…':'归档事项')} disabled={!!archive.reason&&!archive.pending}
+  aria-disabled={archive.pending||undefined} onClick={archive.activate}><ArchiveIcon size={16} aria-hidden/></button>}
+ {archive?.reason&&<span id={id+'-archive-reason'} className="sr-only">{archive.reason}</span>}
  {onReference&&<button type="button" className="status-task-reference" aria-label={'引用事项：'+label} title="引用到对话" onClick={onReference}><MessageCirclePlus size={16} aria-hidden/></button>}
  </div>;
 }
 type TaskLocation={taskId:string;threadId:string;readEpoch?:string};
 type ListProps={connected:boolean;refreshKey:unknown;running?:ReadonlySet<string>;onReference?:(value:TaskReference)=>void;location?:TaskLocation;onLocated?:()=>void};
 type TaskRead=ReturnType<typeof useTaskStatusData>;
-function TaskSection({archived,connected,read,tasks,tail,running,onReference}:{
+function TaskSection({archived,connected,read,tasks,tail,running,onReference,onArchive,archiving}:{
  archived:boolean;connected:boolean;read:TaskRead;tasks:OverviewTask[];tail:React.RefObject<HTMLDivElement|null>;
  running?:ReadonlySet<string>;onReference?:ListProps['onReference'];
+ onArchive?:(task:OverviewTask)=>void;archiving?:ReadonlySet<string>;
 }){
  const [selectedId,setSelectedId]=useState<string>();
  const {data,reading,failure,stale,retry}=read;
@@ -53,11 +72,16 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference}:{
   {data&&!data.tasks.length&&<p>{archived?'暂无已归档事项。':'暂无当前事项。'}</p>}
   <div className="flex flex-col gap-1">{tasks.map(task=>{
    const title=taskName(task).text;
+   const executing=!archived&&connected&&(running?running.has(task.id):!stale&&task.hasExecutingWorker===true);
+   const archive=onArchive&&!archived&&!stale&&(executing||task.archiveBlocker!==undefined)?{
+    reason:task.archiveBlocker?archiveReason(task.archiveBlocker):null,pending:archiving?.has(task.id)===true,activate:()=>onArchive(task),
+   }:undefined;
    return <section key={task.id} id={'task-'+encodeURIComponent(task.id)} data-todo-id={task.id} aria-label={title}>
-    <TaskStatusRow label={title} workerCount={task.workers.length} running={!archived&&connected&&(running?running.has(task.id):!stale&&task.hasExecutingWorker===true)}
+    <TaskStatusRow label={title} workerCount={task.workers.length} running={executing} archive={archive}
      onReference={onReference&&!stale?()=>onReference({taskId:task.id,version:task.headVersion,title}):undefined}
      selected={task.id===selectedId} onSelect={archived?undefined:()=>setSelectedId(id=>id===task.id?undefined:task.id)}/>
-    {!archived&&<div role="status" aria-atomic="true">{task.id===selectedId&&<p className="status-full-title"><span>完整标题</span>{title}</p>}</div>}
+    {archived&&task.archiveReviewIssue&&<p className="status-archive-notice" role="status">{task.archiveReviewIssue==='failed'?'归档复核失败，事项已归档。':'归档复核结果待确认。'}</p>}
+    {!archived&&<div role="status" aria-atomic="true">{task.id===selectedId&&<p className="status-full-title"><span>完整标题</span>{title}{archive?.reason&&<small>{archive.reason}</small>}</p>}</div>}
    </section>;
   })}</div>
   {reading==='append'&&<p role="status">正在读取更多事项…</p>}
@@ -66,7 +90,7 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference}:{
  </section>;
 }
 
-function TaskList({connected,refreshKey,running,onReference,location,onLocated}:ListProps){
+function TaskList({connected,refreshKey,running,onReference,location,onLocated,archiveScope}:ListProps&{archiveScope?:{threadId:string;readEpoch:string}}){
  const [archived,setArchived]=useState(false);
  const list=useRef<HTMLDivElement>(null);
  const beforeArchive=useRef<ReturnType<typeof readAnchor>>(null);
@@ -77,6 +101,12 @@ function TaskList({connected,refreshKey,running,onReference,location,onLocated}:
  const [locationError,setLocationError]=useState(false);
  const locationAnchor=useRef<ReturnType<typeof readAnchor>>(null);
  const locateFocus=useRef<string|undefined>(undefined);
+ const archiveRequests=useRef(new Set<string>());
+ const [archiving,setArchiving]=useState<ReadonlySet<string>>(()=>new Set());
+ const [archiveNotice,setArchiveNotice]=useState('');
+ const [archiveRefresh,setArchiveRefresh]=useState(0);
+ const [archiveRevisions,setArchiveRevisions]=useState<ReadonlyMap<string,number>>(()=>new Map());
+ const listRefreshKey=useMemo(()=>({refreshKey,archiveRefresh}),[refreshKey,archiveRefresh]);
 
  function isVisible(tail:HTMLElement|null){
   const root=list.current;
@@ -109,12 +139,12 @@ function TaskList({connected,refreshKey,running,onReference,location,onLocated}:
   if(!target&&!anchor.current&&list.current?.scrollTop)anchor.current=readAnchor(archived);
  }
 
- const current=useTaskStatusData(false,true,connected,refreshKey,()=>{
+ const current=useTaskStatusData(false,true,connected,listRefreshKey,()=>{
   const focus=document.activeElement;
   const archiveFocused=focus instanceof HTMLElement&&archiveGroup.current?.contains(focus)&&isVisible(focus);
   return !target&&!archiveFocused&&!(archived&&isVisible(archiveToggle.current))&&isVisible(currentTail.current);
  },captureAnchor);
- const history=useTaskStatusData(true,archived,connected,refreshKey,()=>!target&&isVisible(archiveTail.current),captureAnchor);
+ const history=useTaskStatusData(true,archived,connected,listRefreshKey,()=>!target&&isVisible(archiveTail.current),captureAnchor);
  const wakeCurrent=current.wake,wakeHistory=history.wake;
  const currentReady=!!(current.data||current.failure);
 
@@ -194,18 +224,65 @@ function TaskList({connected,refreshKey,running,onReference,location,onLocated}:
   }
  },[archived]);
 
+ async function archiveTask(task:OverviewTask){
+  if(!archiveScope||!connected||task.archiveBlocker!==null||running?.has(task.id)||archiveRequests.current.has(task.id))return;
+  const title=taskName(task).text;
+  const requests=archiveRequests.current;
+  requests.add(task.id);
+  setArchiving(new Set(requests));
+  setArchiveNotice('正在归档「'+title+'」…');
+  try{
+   const response=await connectionFetch('/api/tasks/archive',{
+    method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),
+    body:JSON.stringify({...archiveScope,taskId:task.id,expectedRevision:task.revision,operationId:crypto.randomUUID()}),
+   });
+   if(!response.ok){
+    const error=(await response.json().catch(()=>null))?.error;
+    if(['task_revision_conflict','history_epoch_changed','queue_thread_conflict'].includes(error)){
+     setArchiveNotice('事项列表已变更，暂未归档。');
+     return;
+    }
+    if(['archive_review_skill_unavailable','main_engine_unavailable'].includes(error)){
+     setArchiveNotice('「'+title+'」暂不能归档。'+archiveReason(error));
+     return;
+    }
+    throw Error('task_archive_unconfirmed');
+   }
+   const result:TaskArchiveResult=await response.json();
+   if(result.state==='skipped'){
+    setArchiveNotice('「'+title+'」暂不能归档。'+archiveReason(result.reason));
+    return;
+   }
+   if(result.state!=='archived'||result.revision!==task.revision+1)throw Error('task_archive_unconfirmed');
+   const focused=document.activeElement?.closest('[data-todo-id]')?.getAttribute('data-todo-id')===task.id;
+   if(focused)(archiveToggle.current??list.current)?.focus({preventScroll:true});
+   setTarget(value=>value?.view==='visible'&&value.data.tasks.some(item=>item.id===task.id)?null:value);
+   setArchiveRevisions(value=>new Map(value).set(task.id,result.revision));
+   setArchiveNotice('已归档「'+title+'」，已通知 Homer 复核。');
+  }catch{
+   setArchiveNotice('未确认「'+title+'」的归档结果，正在刷新事项列表。');
+  }finally{
+   requests.delete(task.id);
+   setArchiving(new Set(requests));
+   setArchiveRefresh(value=>value+1);
+  }
+ }
+ const onArchive=archiveScope?archiveTask:undefined;
+ const stillCurrent=(task:OverviewTask)=>task.revision>=(archiveRevisions.get(task.id)??-1);
  const currentTasks=current.data?.tasks??[],archivedTasks=archived?history.data?.tasks??[]:[];
  const currentRevisions=new Map(currentTasks.map(task=>[task.id,task.revision]));
  const archivedRevisions=new Map(archivedTasks.map(task=>[task.id,task.revision]));
  return <div className="status-list" ref={list} role="region" aria-label="事项列表" tabIndex={0}
   onFocusCapture={wakeCurrent} onBlurCapture={wakeCurrent} onScroll={wakeCurrent}>
   {locationError&&<p role="status">暂时无法定位所引用的事项。</p>}
+  <div className="status-archive-notice" role="status">{archiveNotice}</div>
   {target?<><button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>{setTarget(null);list.current?.focus({preventScroll:true});}}>返回事项列表</button>
    <TaskSection archived={target.view==='archived'} connected={connected} read={{...current,data:target.data,reading:null,failure:null,stale:!connected}}
-    tasks={target.data.tasks} tail={currentTail} running={running} onReference={onReference}/>
+    tasks={target.view==='visible'?target.data.tasks.filter(stillCurrent):target.data.tasks} tail={currentTail}
+    running={running} onReference={onReference} onArchive={onArchive} archiving={archiving}/>
   </>:<>
   <TaskSection archived={false} connected={connected} read={current} tail={currentTail} running={running} onReference={onReference}
-   tasks={currentTasks.filter(task=>task.revision>=(archivedRevisions.get(task.id)??-1))}/>
+   onArchive={onArchive} archiving={archiving} tasks={currentTasks.filter(task=>stillCurrent(task)&&task.revision>=(archivedRevisions.get(task.id)??-1))}/>
   <div ref={archiveGroup}>
    <Collapsible.Root open={archived} onOpenChange={value=>{if(value)beforeArchive.current=readAnchor();setArchived(value);}}>
     <Collapsible.Trigger ref={archiveToggle} className={ghostButton+' status-archive-toggle min-h-11 w-full gap-1 px-1.5 text-xs'}>
@@ -244,6 +321,7 @@ export function TaskStatusPopover({state,connected,refreshKey,asideContainer,onB
  const count=connected?running?.size:undefined;
  const title=count===undefined?(running?'工作状态，运行数量待核实':'工作状态'):count?'工作状态，'+count+' 项事项运行中':'工作状态，无运行中事项';
  const content=<TaskList key={state.threadId+':'+(state.history?.readEpoch??'legacy')} connected={connected} refreshKey={refreshKey}
+  archiveScope={state.features?.taskArchive&&state.history&&state.threadId?{threadId:state.threadId,readEpoch:state.history.readEpoch}:undefined}
   running={running} location={scopedLocation} onLocated={onLocated} onReference={onReference&&((ref)=>{
    if(onReference(ref)&&!wide){focusComposer.current=true;setPopupOpen(false);}
   })}/>;

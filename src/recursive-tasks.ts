@@ -18,6 +18,7 @@ export type Task={id:string;title:string;headVersion:number;notes:string;state:'
 export type TaskVersion={taskId:string;version:number;goal:string;authorityJson:string|null;sourceRequestId:string|null;triggerOpId:string;workingDirectory:string};
 export type TaskRun=Run;
 export type TaskMutation={operationId:string;taskId:string;expectedRevision:number};
+type ArchiveProcesses={working:string;unsettled:string;effects:string};
 export type Worker={workerId:string;taskId:string;threadId:string|null;run:TaskRun};
 export type Operation={id:string;actorAgentId:string;scopeId:string;operationId:string;kind:string;payloadHash:string;state:string;detailsJson:string;responseJson:string|null;revision:number};
 export type AgentMessage={seq:number;id:string;senderAgentId:string;senderRunId:string|null;senderEpoch:number|null;recipientAgentId:string;taskId:string|null;taskVersion:number|null;targetRunId:string|null;kind:string;replyTo:string|null;causationId:string|null;operationKey:string;payloadJson:string};
@@ -704,25 +705,31 @@ export class RecursiveTasks{
   return this.table('worker_interactions')?this.one<{id:string}>(`SELECT i.id FROM worker_interactions i JOIN runs r ON r.id=i.runId
     WHERE (?=0 OR i.source<>'ask_main') AND r.taskId=?${workerId?' AND r.workerId=?':''} AND (i.state IN ('pending_main','pending_user') OR i.state IN ('approved','denied','answered') AND i.deliveredAt IS NULL) LIMIT 1`,Number(allowQuestions),taskId,...(workerId?[workerId]:[])):undefined;
  }
- private historyBlockers(task:Task,except:string){
+ private historyBlockers(task:Task,except:string,allowQuestions=true,processes?:ArchiveProcesses){
   const blockers:{reason:string;id:string}[]=[];
   const add=(reason:string,rows:{id:string}[])=>{for(const {id} of rows)blockers.push({reason,id});};
   add('run_not_closed',this.runs(task.id).filter(run=>active(run)||this.stopExitUnconfirmed(run)));
   add('worker_effect_unconfirmed',this.workers(task.id).map(worker=>worker.run).filter(run=>this.workerEffectUnconfirmed(run)));
   add('message_unprocessed',this.all(`SELECT m.id FROM agent_messages m LEFT JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND
     (r.state IS NULL OR r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected') OR
-      r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND ${mainInputProcessingSql()}))`,task.id));
-  const interaction=this.unresolvedInteractions(task.id,undefined,true);
+      r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND
+        ${processes?`((m.kind='user_input' AND json_extract(m.payloadJson,'$.terminal') IS NULL) OR (m.kind<>'user_input' AND m.id IN (SELECT value FROM json_each(?))))`:mainInputProcessingSql()}))`,task.id,...(processes?[processes.working]:[])));
+  const interaction=this.unresolvedInteractions(task.id,undefined,allowQuestions);
   if(interaction)add('interaction_unresolved',[interaction]);
   const relatedInputs=`SELECT m.id FROM agent_messages m WHERE m.taskId=? OR m.taskId IS NULL AND m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${taskSourceRequestsSql})`;
   add('operation_unresolved',this.all(`SELECT id FROM operations WHERE id<>? AND state IN ('accepted','dispatching','uncertain')
     AND (scopeId=? OR NOT EXISTS(SELECT 1 FROM tasks WHERE id=operations.scopeId) AND json_extract(detailsJson,'$.inputMessageId') IN (${relatedInputs}))`,except,task.id,task.id,task.id,task.id,task.id));
   add('source_input_unprocessed',this.all(`SELECT m.id FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${taskSourceRequestsSql}) AND (r.state NOT IN ('received','rejected') OR r.state='received' AND (json_extract(m.payloadJson,'$.terminal') IS NULL OR json_extract(m.payloadJson,'$.terminal')='uncertain'))`,task.id,task.id,task.id));
   if(this.table('media_assets'))add('attachment_in_progress',this.all(`SELECT id FROM media_assets WHERE requestId IN (${taskSourceRequestsSql}) AND (lease IS NOT NULL OR state IN ('received','downloading','retryable_failed'))`,task.id,task.id,task.id));
-  add('coordination_consumer_unresolved',this.all(`SELECT DISTINCT m.id FROM agent_messages m JOIN meta p ON p.key GLOB 'publicMainNode:v1:*' JOIN json_each(p.value,'$.sourceMessageIds') source ON source.value=m.id WHERE m.taskId=? AND json_extract(p.value,'$.threadId')=? AND (json_extract(p.value,'$.state')<>'worked' OR json_extract(p.value,'$.status')='unknown')`,task.id,this.store.meta('mainThread')!));
-  add('main_effect_unconfirmed',this.all(`SELECT json_extract(p.value,'$.id') AS id FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*'
-    AND json_extract(p.value,'$.threadId')=? AND EXISTS(SELECT 1 FROM json_each(p.value,'$.sourceMessageIds') source WHERE source.value IN (${relatedInputs}))
-    AND ${unconfirmedNativeEffectsSql()}`,this.store.meta('mainThread')!,task.id,task.id,task.id,task.id));
+  if(processes){
+   add('coordination_consumer_unresolved',this.all(`SELECT m.id FROM agent_messages m WHERE m.taskId=? AND m.id IN (SELECT value FROM json_each(?))`,task.id,processes.unsettled));
+   add('main_effect_unconfirmed',this.all(`SELECT value AS id FROM json_each(?) WHERE value IN (${relatedInputs})`,processes.effects,task.id,task.id,task.id,task.id));
+  }else{
+   add('coordination_consumer_unresolved',this.all(`SELECT DISTINCT m.id FROM agent_messages m JOIN meta p ON p.key GLOB 'publicMainNode:v1:*' JOIN json_each(p.value,'$.sourceMessageIds') source ON source.value=m.id WHERE m.taskId=? AND json_extract(p.value,'$.threadId')=? AND (json_extract(p.value,'$.state')<>'worked' OR json_extract(p.value,'$.status')='unknown')`,task.id,this.store.meta('mainThread')!));
+   add('main_effect_unconfirmed',this.all(`SELECT json_extract(p.value,'$.id') AS id FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*'
+      AND json_extract(p.value,'$.threadId')=? AND EXISTS(SELECT 1 FROM json_each(p.value,'$.sourceMessageIds') source WHERE source.value IN (${relatedInputs}))
+      AND ${unconfirmedNativeEffectsSql()}`,this.store.meta('mainThread')!,task.id,task.id,task.id,task.id));
+  }
   return blockers;
  }
  private archiveSource(actor:Actor,task:Task,archive:boolean){
@@ -745,7 +752,54 @@ export class RecursiveTasks{
   this.cancelQuestions(task.id);
   this.sql("UPDATE tasks SET historyState='archived',state='paused',revision=revision+1,updatedAt=? WHERE id=?",Date.now(),task.id);
   this.message({agentId:'host'},key,this.store.meta('mainAgentId')!,task.id,task.headVersion,'task_archived',{historyState:'archived',revision:task.revision+1});
-  return {taskId:task.id,version:task.headVersion,state:'archived',revision:task.revision+1,diskBytesReclaimed:null};
+  return {taskId:task.id,version:task.headVersion,state:'archived' as const,revision:task.revision+1,diskBytesReclaimed:null};
+ }
+ webArchiveBlockers(actor:Actor,taskIds:readonly string[]){
+  if(!taskIds.length)return new Map<string,string|null>();
+  const rows=this.all<{value:string;working:number;unsettled:number;effects:number}>(`WITH facts AS MATERIALIZED (
+    SELECT json_extract(p.value,'$.sourceMessageIds') sources,json_extract(p.value,'$.state')='working' working,
+      json_extract(p.value,'$.state')<>'worked' OR json_extract(p.value,'$.status')='unknown' unsettled,
+      ${unconfirmedNativeEffectsSql()} effects
+    FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=?
+   ) SELECT source.value,working,unsettled,effects FROM facts,json_each(sources) source WHERE working OR unsettled OR effects`,actor.threadId??null);
+  const processes={
+   working:json(rows.filter(row=>row.working).map(row=>row.value)),
+   unsettled:json(rows.filter(row=>row.unsettled).map(row=>row.value)),
+   effects:json(rows.filter(row=>row.effects).map(row=>row.value)),
+  };
+  return new Map(taskIds.map(taskId=>[taskId,this.webArchiveBlocker(actor,taskId,'',processes)]));
+ }
+ webArchiveBlocker(actor:Actor,taskId:string,except='',processes?:ArchiveProcesses){
+  this.requireMain(actor);
+  const task=this.task(taskId);
+  if(task.historyState!=='visible')return 'task_history_not_visible';
+  const blockers=this.historyBlockers(task,except,false,processes);
+  if(blockers.length)return blockers.some(blocker=>blocker.reason==='interaction_unresolved')?'interaction_unresolved':blockers[0]!.reason;
+  try{
+   const {authorityJson,sourceRequestId}=this.version(task.id,task.headVersion);
+   if(!sourceRequestId)return 'archive_source_unavailable';
+   const sources=authorityJson?this.authoritySources(actor,JSON.parse(authorityJson)):[];
+   if(!sources.includes(sourceRequestId)){this.trustedSource(actor,sourceRequestId);sources.push(sourceRequestId);}
+   for(const source of sources)this.lifecycle?.validateScheduledSource?.(source);
+  }catch{return 'archive_source_unavailable';}
+  return null;
+ }
+ archiveFromWeb(actor:Actor,input:TaskMutation){
+  if(actor.inputMessageId||actor.sourceRequestId||actor.threadId!==this.store.meta('mainThread'))throw Error('history_source_required');
+  return this.mutation(actor,input.taskId,input.operationId,'archive_work',input,key=>{
+   const task=this.check(actor,input),reason=this.webArchiveBlocker(actor,task.id,key);
+   if(reason)return {state:'skipped' as const,reason};
+   this.details(key,{origin:'work_status',sourceRequestId:this.version(task.id,task.headVersion).sourceRequestId});
+   return this.commitArchive(task,key);
+  });
+ }
+ workStatusArchiveOperation(messageId:string){
+  return this.one<{id:string}>(`SELECT o.id FROM agent_messages m JOIN operations o ON o.id=m.operationKey
+   WHERE m.id=? AND m.kind='task_archived' AND m.senderAgentId='host' AND o.kind='archive_work'
+     AND json_extract(o.detailsJson,'$.origin')='work_status'`,messageId)?.id;
+ }
+ recordArchiveReviewIssue(key:string,issue:'failed'|'unknown'){
+  this.details(key,{reviewIssue:issue});
  }
  archiveHistory(actor:Actor,input:TaskMutation,archive:boolean){
   this.requireMain(actor);

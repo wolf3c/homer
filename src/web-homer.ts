@@ -43,7 +43,11 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
      AND json_extract(o.responseJson,'$.version')=m.taskVersion
      AND json_type(m.payloadJson,'$.revision')='integer' AND json_extract(m.payloadJson,'$.revision')>0
      AND json_extract(o.responseJson,'$.revision')=json_extract(m.payloadJson,'$.revision')
-     AND EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=m.recipientAgentId AND ((${userInput}) OR (${workerArchiveInput})))
+     AND (EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=m.recipientAgentId AND ((${userInput}) OR (${workerArchiveInput})))
+       OR json_extract(o.detailsJson,'$.origin')='work_status' AND o.operationId GLOB 'work-status:*'
+         AND EXISTS(SELECT 1 FROM task_versions v JOIN conversation_inputs c ON c.requestId=v.sourceRequestId
+           WHERE v.taskId=m.taskId AND v.version=m.taskVersion AND c.threadId=json_extract(o.detailsJson,'$.threadId')
+             AND v.sourceRequestId=json_extract(o.detailsJson,'$.sourceRequestId')))
    END AS archiveMatches
    FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId
    JOIN operations o ON o.id=m.operationKey WHERE m.id IN ($keys) AND m.targetRunId IS NULL AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')`,sourceIds).map(row=>[row.id,row]));
@@ -324,7 +328,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
           if(receipt)activity.finalText=app.liveReceiptText(receipt);
         }
         return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:CONVERSATION_VIEW,acceptedRequestIds:[],processNodes:[],
-        queueDispatch:app.inputs.dispatchSummary(),runningTaskIds:app.runningTaskIds?.(),features:{draftUpload,taskOverview:true,taskReference:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
+        queueDispatch:app.inputs.dispatchSummary(),runningTaskIds:app.runningTaskIds?.(),features:{draftUpload,taskOverview:true,taskArchive:1,taskReference:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
         history:{protocol:3,readEpoch:app.webReadEpoch,page:pageInfo,moreQueue:queue.after,moreInteractions:pending.after}};
         };
         return app.receptionTimings?app.receptionTimings.measure('state_history',build):build();
@@ -336,10 +340,16 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
     schedules:async input=>app.readSchedules(input),
     onStateChange: listener=>app.onStateChange(listener),
     taskOverview:{
+      ...(app.archiveTaskFromWeb?{archive:async input=>app.archiveTaskFromWeb(input)}:{}),
       list:async page=>{
         const overview=readTaskOverview(app.store.db,page);
         for(const task of overview.tasks){
           if(task.historyState==='visible'&&task.workers.some(worker=>app.isWorkerExecuting?.(worker.run)===true))task.hasExecutingWorker=true;
+        }
+        const candidates=overview.tasks.filter(task=>task.historyState==='visible'&&!task.hasExecutingWorker);
+        if(candidates.length&&app.taskArchiveBlockers){
+          const blockers=app.taskArchiveBlockers(candidates.map(task=>task.id));
+          for(const task of candidates)task.archiveBlocker=blockers.get(task.id);
         }
         return overview;
       },

@@ -5,6 +5,7 @@ export const CONVERSATION_VIEW = 4;
 export const WEB_CHAT_POST:Readonly<Record<string,{op:string;status:number}>>={
   '/api/preview/open':{op:'preview.open',status:200},
   '/api/schedules/read':{op:'schedules.read',status:200},
+  '/api/tasks/archive':{op:'tasks.archive',status:200},
   '/api/history/page':{op:'history.page',status:200},'/api/history/process':{op:'history.process',status:200},
   '/api/history/resolve':{op:'history.resolve',status:200},'/api/history/receipts':{op:'history.receipts',status:200},
   '/api/history/queue':{op:'history.queue',status:200},'/api/history/interactions':{op:'history.interactions',status:200},
@@ -14,6 +15,8 @@ export const WEB_CHAT_POST:Readonly<Record<string,{op:string;status:number}>>={
   '/api/messages/edit':{op:'messages.edit',status:200},'/api/messages/cancel':{op:'messages.cancel',status:200},
   '/api/messages/move':{op:'messages.move',status:200},'/api/stop':{op:'messages.stop',status:202},
 };
+export type TaskArchiveRequest=import('./recursive-tasks.js').TaskMutation&{threadId:string;readEpoch:string};
+export type TaskArchiveResult={state:'archived';revision:number}|{state:'skipped';reason:string};
 export function webChatPost(path:string):{op:string;status:number;id?:string}|undefined{
   const fixed=WEB_CHAT_POST[path];if(fixed)return fixed;
   const match=path.match(/^\/api\/interactions\/([\w-]{1,100})$/);
@@ -57,7 +60,7 @@ export type WebState = {
   // Current host observation only; never reconstruct it from legacy message text.
   modelFailure?:{messageId:string;code:'engine_quota_insufficient'|'engine_rate_limited'|'engine_authentication_failed'|'engine_account_status_unconfirmed'|'main_turn_failed';source?:'codex'|'website'};
   processNodes?: import('./main-process.js').ProcessNode[];
-  features?:{draftUpload?:boolean;taskOverview?:boolean;taskReference?:1;workerExecution?:1;workerEventCards?:1;queueDispatch?:1;queueSources?:1;nativeQuestionAnswers?:1;previewReferences?:1;previewReferenceCollections?:1|2};
+  features?:{draftUpload?:boolean;taskOverview?:boolean;taskArchive?:1;taskReference?:1;workerExecution?:1;workerEventCards?:1;queueDispatch?:1;queueSources?:1;nativeQuestionAnswers?:1;previewReferences?:1;previewReferenceCollections?:1|2};
   runningTaskIds?:string[];
   threadId: string; messages: import('./conversation-projection.js').DisplayMessage[]; isRunning: boolean; activeMessageId: string | null;
   queue?: (QueuedInput & Partial<import('./conversation-projection.js').DisplayQueueInput>)[];generation?:MainGeneration|null;
@@ -82,7 +85,7 @@ export type WebBridge = {
     interactions(after:number,readEpoch?:string,id?:string):Promise<ActiveReadResult<WebInteraction>&{cursor?:number}>;
   };
   onStateChange?(listener:()=>void):()=>void;
-  taskOverview?: {execution?(selector:import('./worker-execution.js').ExecutionSelector,before?:string):Promise<import('./worker-execution.js').WorkerExecutionPage>;call?(selector:import('./worker-execution.js').ExecutionSelector,callKey:string):Promise<import('./worker-execution.js').WorkerCallDetail>;progress?(id:string):Promise<import('./task-status.js').TaskProgress>;list(page?:import('./task-overview.js').OverviewPage):Promise<import('./task-overview.js').TaskOverview>;detail(id:string,query?:import('./task-overview.js').WorkerConversationQuery):Promise<import('./task-overview.js').TaskDetail>;summary?(id:string):Promise<import('./task-overview.js').TaskDetail>;origin?(id:string,messageId:string):Promise<ArtifactOrigin>};
+  taskOverview?: {archive?(input:TaskArchiveRequest):Promise<TaskArchiveResult>;execution?(selector:import('./worker-execution.js').ExecutionSelector,before?:string):Promise<import('./worker-execution.js').WorkerExecutionPage>;call?(selector:import('./worker-execution.js').ExecutionSelector,callKey:string):Promise<import('./worker-execution.js').WorkerCallDetail>;progress?(id:string):Promise<import('./task-status.js').TaskProgress>;list(page?:import('./task-overview.js').OverviewPage):Promise<import('./task-overview.js').TaskOverview>;detail(id:string,query?:import('./task-overview.js').WorkerConversationQuery):Promise<import('./task-overview.js').TaskDetail>;summary?(id:string):Promise<import('./task-overview.js').TaskDetail>;origin?(id:string,messageId:string):Promise<ArtifactOrigin>};
   media?:{read(input:MessageAttachment&{preview?:'voice';resource?:string}):Promise<{filename:string;mime:string;data:string;sha256?:string}>;origin?(input:MessageAttachment):Promise<ArtifactOrigin>;reveal?(input:MessageAttachment):Promise<{target:'source'|'snapshot';device:'homer-host'}>;upload?(input:import('./web-upload.js').WebUpload):Promise<import('./media-store.js').MediaView>;discard?(input:unknown):Promise<unknown>;previewDraft?(input:unknown):Promise<{mime:string;data:string}>};
   submit(input: ConversationInput): Promise<unknown>;
   queue?:{

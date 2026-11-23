@@ -19,8 +19,10 @@ export function fixture(adapters?:readonly ChannelAdapter[], beforeEngineStart?:
     async start(){await beforeEngineStart?.();return this.threadId;}
     async request(method:string){return method==='skills/list'?{data:[{skills:[{name:'homer-archive-review',path:join(root,'empty-home/skills/homer-archive-review/SKILL.md'),enabled:true}]}]}:{};}
     async call(tool:string,args:unknown,callId='call-'+ ++sequence):Promise<any>{const result=await this.handle({threadId:this.threadId,turnId:this.turnId!,callId,tool,arguments:args});this.emit('toolResponse',callId);return result;}
-    async turn(text:string,options?:{onStarted?:(turnId:string)=>void}){
+    skills?:{name:string;path:string}[];
+    async turn(text:string,options?:Parameters<EngineLike['turn']>[1]){
       this.turnId='turn-'+ ++sequence;options?.onStarted?.(this.turnId);
+      this.skills=options?.skills;
       if(this.options.role==='worker'){
         this.input=text;
         return new Promise<TurnResult>(resolve=>{this.finish=resolve;});
