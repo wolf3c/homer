@@ -10,8 +10,8 @@ import {isDraftImageReference,referenceKey} from '../src/preview-reference';
 export type WebPreviewSource=Extract<PreviewSource,{kind:'web'}>;
 export type {PreviewRequest} from '../src/preview-reference';
 export type PreviewImportGuard=()=>boolean;
-export type PreviewComposer={selectSchedule:(value:import('./conversation-client').ScheduleContext)=>boolean;add:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[])=>Promise<void>;canQuote:()=>boolean;openQuote:(snapshot:import('./message-source-selection').SourceQuoteSelection,trigger?:HTMLElement)=>void;appendQuote:(quote:import('../src/web-history').MessageQuote)=>void};
-export const PreviewActionsContext=createContext<Pick<PreviewComposer,'canQuote'|'openQuote'|'appendQuote'>>({canQuote:()=>false,openQuote:()=>{},appendQuote:()=>{}});
+export type PreviewComposer={selectSchedule:(value:import('./conversation-client').ScheduleContext)=>boolean;add:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[])=>Promise<void>;canQuote:()=>boolean;openQuote:(snapshot:import('./message-source-selection').SourceQuoteSelection,trigger?:HTMLElement)=>boolean;quoteNotice:(message:string)=>void;appendQuote:(quote:import('../src/web-history').MessageQuote)=>void};
+export const PreviewActionsContext=createContext<Pick<PreviewComposer,'canQuote'|'openQuote'|'appendQuote'|'quoteNotice'>>({canQuote:()=>false,openQuote:()=>false,quoteNotice:()=>{},appendQuote:()=>{}});
 export function AnnotationChips({references,onOpen,onRemove,preparingKeys=[],noteId}:{references:(PreviewRequest|DraftImageReference)[];preparingKeys?:string[];noteId?:string;onOpen:(reference:PreviewRequest|DraftImageReference,id:string)=>void;onRemove:(key:string,id:string)=>void}){
  return <div className="annotation-chips" aria-label="已保存批注">{references.flatMap(reference=>{
   const notes=reference.annotations??[{id:'legacy',comment:reference.kind==='text'?reference.text:reference.kind==='image'?reference.comment:''}];

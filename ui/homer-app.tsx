@@ -3,7 +3,7 @@ import {MOBILE_DOWNLOAD_LIMIT_NOTICE,mobileDownloadNotice,saveBlob} from './file
 import {isViewportAtBottom,observeContentResize} from '@assistant-ui/store/client';
 import {messageSourceParts} from '../src/message-quote';
 import {remarkPreviewMath} from './preview-selection';
-import {captureSourceQuoteSelection,completeSourceQuote,locateSourceQuote,type SourceQuoteSelection} from './message-source-selection';
+import {captureSourceQuoteSelection,completeSourceQuote,locateSourceQuote,resolveSourceQuote,visibleQuoteLine,type SourceQuoteSelection} from './message-source-selection';
 import {Popover} from '@base-ui/react/popover';
 import {AnnotationCommentForm} from './annotation-comment-form';
 import {createAnnotationDraft,useAnnotationDraft,annotationValidationReferences,type AnnotationDraft} from './annotation-draft';
@@ -66,7 +66,7 @@ import {isVisibleConversationMessage} from './chat-date';
 import {MessageTimestamps,MessageDaySeparator,MessageTimestamp} from './message-timestamps';
 import { Highlight } from "./markdown-code";
 import {CodeHeader} from './vendor/assistant-ui/code-header';
-import {QuoteBlock,SelectionToolbar} from './vendor/assistant-ui/quote';
+import {QuoteBlock} from './vendor/assistant-ui/quote';
 import { CONVERSATION_VIEW,type QueueReceipts,type WebState,type WebInteraction,type WebArtifact } from "../src/web-contract";
 import { QuestionFlow } from './vendor/assistant-ui/question-flow';
 import { ElicitationForm } from './vendor/assistant-ui/elicitation-form';
@@ -312,16 +312,103 @@ function AssistantMessage() {
     {!hasBubble&&!original?.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
   </MessagePrimitive.Root></>;
 }
-function HomerSelectionToolbar() {
-  const {canQuote,openQuote}=useContext(PreviewActionsContext);
-  return <SelectionToolbar.Root onMouseDownCapture={event=>{if((event.target as Element).closest('[data-slot="selection-toolbar-quote"]'))event.preventDefault();}} onClickCapture={event=>{
-    if(!(event.target as Element).closest('[data-slot="selection-toolbar-quote"]'))return;
-    event.preventDefault();event.stopPropagation();
-    if(!canQuote())return;
-    const snapshot=captureSourceQuoteSelection(window.getSelection());if(!snapshot)return;
-    const source=document.getElementById('message-'+snapshot.quote.messageId)??undefined;
-    openQuote(snapshot,source);window.getSelection()?.removeAllRanges();
-  }}><SelectionToolbar.Quote><MessageCirclePlus className="size-3.5" aria-hidden/>引用</SelectionToolbar.Quote></SelectionToolbar.Root>;
+function HomerSelectionToolbar({viewport}:{viewport:React.RefObject<HTMLDivElement|null>}) {
+  const {openQuote,quoteNotice}=useContext(PreviewActionsContext);
+  type Candidate=NonNullable<ReturnType<typeof resolveSourceQuote>>;
+  const endpoints=(selection:Selection)=>[selection.anchorNode,selection.anchorOffset,selection.focusNode,selection.focusOffset] as const;
+  type SelectionCandidate={value:Candidate;points:ReturnType<typeof endpoints>};
+  const candidate=useRef<SelectionCandidate>(null);
+  const [position,setPosition]=useState<{selection:SelectionCandidate;line:DOMRect}>();
+  const notice=useRef(quoteNotice);notice.current=quoteNotice;
+  function matches(selection:Selection,displayed=candidate.current){
+    return displayed&&endpoints(selection).every((point,index)=>point===displayed.points[index]);
+  }
+  useEffect(()=>{
+    const region=viewport.current;if(!region)return;
+    let frame=0,dragging=false,readSelection=false;
+    function update(){
+      frame=0;
+      const selection=window.getSelection();
+      const read=readSelection;
+      readSelection=false;
+      if(read&&(!selection||!matches(selection))){
+        let error='';
+        const value=selection&&region!.contains(selection.anchorNode)&&resolveSourceQuote(selection,message=>{error=message;});
+        candidate.current=value&&selection?{value,points:endpoints(selection)}:null;
+        notice.current(error);
+      }
+      const displayed=candidate.current;
+      const value=displayed?.value;
+      const line=value&&selection&&matches(selection,displayed)&&region!.contains(value.body)
+        ?visibleQuoteLine(value.range,region!,value.backward):undefined;
+      setPosition(previous=>{
+        if(!line||!displayed)return undefined;
+        const old=previous?.line;
+        return previous?.selection===displayed&&old?.x===line.x&&old.y===line.y&&old.width===line.width&&old.height===line.height
+          ?previous:{selection:displayed,line};
+      });
+    }
+    function schedule(read=false){
+      if(dragging)return;
+      readSelection||=read;
+      if(!frame)frame=requestAnimationFrame(update);
+    }
+    const reposition=()=>schedule();
+    const changed=()=>{
+      const selection=window.getSelection();
+      schedule(!selection||!matches(selection));
+    };
+    const down=(event:MouseEvent)=>{
+      if(event.button!==0)return;
+      dragging=true;candidate.current=null;cancelAnimationFrame(frame);frame=0;setPosition(undefined);
+    };
+    const up=()=>{if(dragging){dragging=false;schedule(true);}};
+    region.addEventListener('mousedown',down);
+    document.addEventListener('mouseup',up);
+    document.addEventListener('dragend',up);
+    document.addEventListener('contextmenu',up);
+    window.addEventListener('blur',up);
+    document.addEventListener('selectionchange',changed);
+    region.addEventListener('scroll',reposition,{passive:true});
+    window.addEventListener('resize',reposition);
+    changed();
+    return ()=>{
+      cancelAnimationFrame(frame);
+      region.removeEventListener('mousedown',down);
+      document.removeEventListener('mouseup',up);
+      document.removeEventListener('dragend',up);
+      document.removeEventListener('contextmenu',up);
+      window.removeEventListener('blur',up);
+      document.removeEventListener('selectionchange',changed);
+      region.removeEventListener('scroll',reposition);
+      window.removeEventListener('resize',reposition);
+      candidate.current=null;
+    };
+  },[viewport]);
+  if(!position)return null;
+  const {selection:displayed,line}=position;
+  const shown=displayed.value;
+  return <Popover.Root open>
+    <Popover.Portal><Popover.Positioner anchor={{contextElement:shown.body,getBoundingClientRect:()=>line}} positionMethod="fixed"
+      collisionBoundary={viewport.current??undefined} collisionPadding={8} side="top" sideOffset={8}
+      collisionAvoidance={{side:'flip',align:'shift'}} style={{zIndex:50}}>
+      <Popover.Popup initialFocus={false} finalFocus={false} data-slot="selection-toolbar"
+        className="bg-popover flex items-center gap-1 rounded-lg border px-1 py-1" onMouseDown={event=>event.preventDefault()}>
+        <button type="button" data-slot="selection-toolbar-quote" className="text-popover-foreground hover:bg-accent flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors" onClick={()=>{
+          const selection=window.getSelection();
+          const current=selection&&candidate.current===displayed&&matches(selection,displayed)&&resolveSourceQuote(selection);
+          if(!current||!viewport.current?.contains(current.body)||current.body!==shown.body||current.root!==shown.root||
+             current.quote.messageId!==shown.quote.messageId||current.quote.text!==shown.quote.text||
+             JSON.stringify(current.quote.itemIds)!==JSON.stringify(shown.quote.itemIds)){
+            candidate.current=null;setPosition(undefined);quoteNotice('选区已变化，请重新选择。');return;
+          }
+          if(!visibleQuoteLine(current.range,viewport.current,current.backward))return;
+          const snapshot=captureSourceQuoteSelection(selection,current);
+          if(snapshot&&openQuote(snapshot,current.root))selection?.removeAllRanges();
+        }}><MessageCirclePlus className="size-3.5" aria-hidden/>引用</button>
+      </Popover.Popup>
+    </Popover.Positioner></Popover.Portal>
+  </Popover.Root>;
 }
 function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,captureShortcutRecording,splitPreview }: {
   annotationDraft:AnnotationDraft;bindPreview:(value:PreviewComposer|null)=>void;state: WebState; connected: boolean; stopping: string | null;
@@ -367,23 +454,25 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   const quotesRef=useRef(savedQuotes);quotesRef.current=savedQuotes;
   function replaceQuotes(value:readonly AnnotatedQuote[]){const next=quoteDrafts(value,()=>crypto.randomUUID());contextOrder.current.reconcile('quote',next.map(q=>contextKey('quote',q.draftId)));quotesRef.current=next;setSavedQuotes(next);}
   const quotes=answerEditing?[]:savedQuotes;
-  type QuoteEditor={draftId:string;quote:MessageQuote;annotation:string;existing:boolean;range?:Range;trigger?:HTMLElement;requestId:string;ready:boolean;error:string};
+  type QuoteEditor={draftId:string;quote:MessageQuote;annotation:string;existing:boolean;range?:Range;backward?:boolean;trigger?:HTMLElement;requestId:string;ready:boolean;error:string};
   const [quoteEditor,setQuoteEditor]=useState<QuoteEditor|null>(null);
   const quoteEditorRef=useRef(quoteEditor);quoteEditorRef.current=quoteEditor;
   const quoteTextarea=useRef<HTMLTextAreaElement>(null),composerBody=useRef<HTMLDivElement>(null);
   const focusQuoteTextarea=useCallback((node:HTMLTextAreaElement|null)=>{quoteTextarea.current=node;node?.focus({preventScroll:true});},[]);
-  const [rangeVisible,setRangeVisible]=useState(false);
+  const [quoteLine,setQuoteLine]=useState<DOMRect>();
   useLayoutEffect(()=>{
     const range=quoteEditor?.range;
+    if(!range)return;
+    const viewport=range.startContainer.parentElement?.closest<HTMLElement>('.thread-viewport');
+    let frame=0;
     function update(){
-      const element=range?.startContainer.parentElement;
-      if(!range||!element?.isConnected){setRangeVisible(false);return;}
-      const rect=range.getBoundingClientRect(),viewport=element.closest('.thread-viewport')?.getBoundingClientRect();
-      setRangeVisible(rect.bottom>Math.max(0,viewport?.top??0)&&rect.top<Math.min(window.innerHeight,viewport?.bottom??window.innerHeight)&&rect.right>0&&rect.left<window.innerWidth);
+      frame=0;
+      setQuoteLine(viewport?.isConnected?visibleQuoteLine(range!,viewport,quoteEditor?.backward):undefined);
     }
-    update();window.addEventListener('scroll',update,true);window.addEventListener('resize',update);
-    return()=>{window.removeEventListener('scroll',update,true);window.removeEventListener('resize',update);};
-  },[quoteEditor?.range]);
+    const reposition=()=>{if(!frame)frame=requestAnimationFrame(update);};
+    update();viewport?.addEventListener('scroll',reposition,{passive:true});window.addEventListener('resize',reposition);
+    return()=>{cancelAnimationFrame(frame);viewport?.removeEventListener('scroll',reposition);window.removeEventListener('resize',reposition);};
+  },[quoteEditor?.range,quoteEditor?.backward]);
   function dismissQuote(returnToInput=false){
     const trigger=quoteEditorRef.current?.trigger;quoteEditorRef.current=null;setQuoteEditor(null);
     if(!returnToInput&&trigger?.isConnected)trigger.focus({preventScroll:true});
@@ -391,13 +480,14 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   }
   function appendQuote(quote:MessageQuote){if(!canQuoteMessage())return;const next=[...quotesRef.current,{...quote,annotation:''}];try{checkQuotes(next);replaceQuotes(next);}catch(error){setDraftNotice((error as Error).message);}}
   function openQuote(snapshot:SourceQuoteSelection,trigger?:HTMLElement){
-    if(!canQuoteMessage())return;
-    const editor:QuoteEditor={draftId:crypto.randomUUID(),quote:snapshot.quote,annotation:'',existing:false,range:snapshot.range,trigger,requestId:draftRequest.current,ready:false,error:''};
+    if(!canQuoteMessage())return false;
+    const editor:QuoteEditor={draftId:crypto.randomUUID(),quote:snapshot.quote,annotation:'',existing:false,range:snapshot.range,backward:snapshot.backward,trigger,requestId:draftRequest.current,ready:false,error:''};
     quoteEditorRef.current=editor;setQuoteEditor(editor);
     void completeSourceQuote(snapshot).then(quote=>{
       if(!composerMounted.current||quoteEditorRef.current?.draftId!==editor.draftId||draftRequest.current!==editor.requestId||answerRef.current)return;
       const next={...quoteEditorRef.current,quote,ready:true};quoteEditorRef.current=next;setQuoteEditor(next);
     }).catch(()=>{if(composerMounted.current&&quoteEditorRef.current?.draftId===editor.draftId){const next={...quoteEditorRef.current,ready:true,error:'精确位置暂不可用；将保留来源与摘录快照。'};quoteEditorRef.current=next;setQuoteEditor(next);}});
+    return true;
   }
   function editQuote(quote:QuoteDraft,trigger:HTMLElement){
     if(!canQuoteMessage())return;
@@ -838,14 +928,15 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     const metadata={...annotationDraft.read().htmlMetadata};if(htmlNotes)metadata[key]=Object.fromEntries(htmlNotes.map(({id,isFixed,selectedText,isMultiSelect,elementBoundingBoxes})=>[id,{isFixed,selectedText,isMultiSelect,elementBoundingBoxes}]));
     annotationDraft.replace(refs,metadata);setDraftNotice('');
   }
-  useLayoutEffect(()=>{bindPreview({selectSchedule:value=>{if(restoring||blocked||editDraft||answerRef.current||quoteEditorRef.current||screenshotRef.current){setDraftNotice('请先返回普通输入，再引用定时任务。');return false;}setScheduleContext(value);setDraftNotice('');focusInput();return true;},add:addReference,canQuote:canQuoteMessage,appendQuote,openQuote});return()=>bindPreview(null);});
+  useLayoutEffect(()=>{bindPreview({selectSchedule:value=>{if(restoring||blocked||editDraft||answerRef.current||quoteEditorRef.current||screenshotRef.current){setDraftNotice('请先返回普通输入，再引用定时任务。');return false;}setScheduleContext(value);setDraftNotice('');focusInput();return true;},add:addReference,canQuote:canQuoteMessage,appendQuote,openQuote,quoteNotice:setQuoteNotice});return()=>bindPreview(null);});
+  const [quoteNotice,setQuoteNotice]=useState('');
   const intentReference=answerEditing?undefined:resourceReference;
   const accountRequired=!mobileView&&!!window.homerDesktopAccount&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
-  const notice=blocked?(accountRequired?'请先连接账号，重启并应用后即可开始。':connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):previewIntentTooLong({text,quotes,resourceReference:intentReference,resourceReferences:answerEditing?undefined:resourceReferences})?'整体要求与批注合计过长，请缩短后再发送。':draftNotice;
+  const notice=blocked?(accountRequired?'请先连接账号，重启并应用后即可开始。':connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):previewIntentTooLong({text,quotes,resourceReference:intentReference,resourceReferences:answerEditing?undefined:resourceReferences})?'整体要求与批注合计过长，请缩短后再发送。':draftNotice||quoteNotice;
   const range=quoteEditor?.range;
   const rangeBody=range?.startContainer.parentElement;
   const quoteBoundary=splitPreview?composerBody.current?.closest<HTMLElement>('.conversation-panel')??undefined:undefined;
-  const quoteAnchor=range&&rangeVisible&&rangeBody?.isConnected?{contextElement:rangeBody,getBoundingClientRect:()=>range.getBoundingClientRect(),getClientRects:()=>range.getClientRects()}:quoteEditor?.existing&&quoteEditor.trigger?.isConnected?quoteEditor.trigger:composerBody;
+  const quoteAnchor=quoteEditor&&quoteLine&&rangeBody?.isConnected?{contextElement:rangeBody,getBoundingClientRect:()=>quoteLine}:quoteEditor?.existing&&quoteEditor.trigger?.isConnected?quoteEditor.trigger:composerBody;
   return <div className="composer-area" ref={composerBody}>
     {screenshot&&!screenshot.joining&&<ScreenshotDialog file={screenshot.file} attachment={screenshot.attachment} annotations={screenshot.reference?.annotations??screenshot.annotations} ax={screenshot.ax} focusAnnotation={screenshot.focusAnnotation} initialError={screenshot.error}
       onDone={(notes,ax)=>finishScreenshot(screenshot,notes,ax)} onCancel={()=>cancelScreenshot(screenshot)} focusInput={focusInput}/>}
@@ -1749,7 +1840,7 @@ function HomerApp() {
   const indicator=useMainProcessingIndicator(processing,processingInline,viewport,messageList);
   const featureTour = mobileView ? undefined : window.homerDesktopFeatureTour;
   const feedback = error || (!accountRequired&&!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
-  return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
+  return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger)??false,quoteNotice:message=>previewComposer.current?.quoteNotice(message),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
     <div className={canvasOpen?"app-shell canvas-open":"app-shell"} data-native-titlebar={nativeTitlebar||undefined}>
       {featureTour && <DesktopFeatureTour bridge={featureTour}
         ready={accountRequired || (connected && !!state.threadId && state.upgrade.phase === 'running')}
@@ -1814,7 +1905,7 @@ function HomerApp() {
             <img ref={indicator.sprite} className="processing-sprite" data-docked={indicator.docked} src={homerProcessing} width={40} height={40} alt=""/>
           </>}
           <MainComposer splitPreview={!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
-          <HomerSelectionToolbar />
+          <HomerSelectionToolbar key={'quote-'+state.threadId} viewport={viewport} />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
       </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>:<p role="status" className="schedule-note">{connectionError||"正在连接荷马…"}</p>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
     </div>

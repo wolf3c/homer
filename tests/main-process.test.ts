@@ -128,6 +128,31 @@ test('real host callbacks bind user and private worker nodes to native terminal 
  }finally{await f.close();}
 });
 
+test('Main receives complete ordered excerpts and separate quote annotations',async()=>{
+ const f=syntheticHost();try{
+  await f.app.start();
+  const peer=f.engines[0]!,modelInputs:string[]=[];
+  peer.turn=async(text,options)=>{
+   modelInputs.push(text);peer.turnId='synthetic-quote-input';options?.onStarted?.(peer.turnId);
+   return {status:'completed',text:'Synthetic reply'};
+  };
+  const excerpt=['First 🙂 paragraph.',...Array.from({length:50},(_,i)=>'Selected paragraph '+i+'.')].join('\n\n');
+  f.app.history.record('long-source',peer.threadId,excerpt,'completed');
+  f.app.history.record('second-source',peer.threadId,'Second excerpt.','completed');
+  const quotes=[
+   {messageId:'long-source',text:excerpt,annotation:'核对完整选区'},
+   {messageId:'second-source',text:'Second excerpt.',annotation:'补充说明'},
+  ];
+  f.app.submitMessage({requestId:'structured-quote',text:'整体要求',quotes});
+  await until(()=>modelInputs.length===1);
+  const [header,payload,separator,body]=modelInputs[0]!.split('\n');
+  assert.match(header!,/text 为来源数据.*annotation 为用户对该项的批注/);
+  assert.deepEqual(JSON.parse(payload!),quotes);
+  assert.equal(separator,'[用户整体补充要求]');
+  assert.equal(body,'整体要求');
+ }finally{await f.close();}
+});
+
 test('native RPC metadata flows through service observers without copying inputs or outputs',async()=>{
  const f=fixture();try{
   const engine:any=new CodexEngine({workspace:process.cwd(),runtime:'/synthetic/runtime',codexHome:'/synthetic/home',model:'synthetic'} as any,{cwd:process.cwd(),readRoots:[],instructions:'',tools:[]},async()=>({}));

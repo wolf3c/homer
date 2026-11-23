@@ -1528,3 +1528,16 @@ node --import tsx --test tests/chat-timestamps.test.ts
 ```
 
 覆盖 1440px 桌面、320px 窄屏和 390px 触屏模拟。核对单行气泡行高、按钮尺寸、可用宽度变化时的横竖切换、用户和荷马气泡的滚动停靠、悬停到按钮、键盘操作及时间展示。复制写入由夹具接收。专项须同时通过断言及 Chrome 正常退出检查。
+
+## 悬浮引用选区与滚动
+
+对隔离构建的实际聊天前端运行浏览器专项。只使用合成消息、回环服务及独立 Chrome 资料。
+
+```sh
+quote_run=$(mktemp -d /private/tmp/homer-quote-selection-XXXXXX)
+node scripts/build-preview-annotation.mjs
+(cd ui && ../node_modules/.bin/vite build --configLoader runner --outDir "$quote_run/web")
+HOMER_COMPONENT_BUILD="$quote_run/web" HOMER_BROWSER_EVIDENCE="$quote_run/evidence" node tests/quote-selection-scroll.browser.mjs
+```
+
+专项核对滚动前后选区保持、长选区离屏恢复、可见引用表单及离屏回退、合法时间戳边界和选区内容变化后拒绝旧点击。覆盖桌面键盘、触屏点击模拟以及浏览器提交完整摘录与独立批注。Chrome 正常退出是通过条件。
