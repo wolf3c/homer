@@ -60,6 +60,26 @@ test('missing/invalid time never fabricates time; suppressed assistant and worke
   assert.equal(isVisibleConversationMessage(undefined), false);
 });
 
+test('published Worker replies have their own time without affecting date separators', () => {
+  const worker = { role: 'assistant', audience: 'user', process: { sourceKind: 'worker' } };
+  const publishedAt = '2025-01-02T10:01:00.000Z';
+  const times = conversationTimestamps([
+    m('previous', '2025-01-01T10:00:00Z'),
+    m('published', publishedAt, worker),
+    m('internal', publishedAt, { ...worker, audience: 'internal' }),
+    m('empty', publishedAt, { ...worker, text: ' ' }),
+    m('invalid', undefined, worker),
+    m('scheduled', publishedAt, { ...worker, process: { sourceKind: 'scheduled' } }),
+    m('next', '2025-01-02T10:02:00Z', { role: 'assistant' }),
+  ], { now: at(publishedAt), timeZone: 'UTC' });
+
+  assert.deepEqual([...times.keys()], ['previous', 'published', 'next']);
+  assert.equal(times.get('published')?.dateTime, publishedAt);
+  assert.equal(times.get('published')?.time, defaultClock(publishedAt, 'UTC'));
+  assert.equal(times.get('published')?.dayLabel, undefined);
+  assert.equal(times.get('next')?.dayLabel, '今天');
+});
+
 test('default timezone follows local environment and relative labels refresh after midnight', () => {
   const before = process.env.TZ;
   try {

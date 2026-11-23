@@ -1,6 +1,7 @@
 // Presentation only: the caller supplies the already projected conversation.
 type DatedConversationMessage = {
   id: string; role: string; status?: string; text: string; createdAt?: unknown;
+  audience?: 'user' | 'internal';
   process?: { sourceKind: string };
 };
 
@@ -36,14 +37,19 @@ export function conversationTimestamps(messages: readonly DatedConversationMessa
   const result = new Map<string, MessageTimestamp>();
   let precedingDay: string | undefined;
   for (const message of messages) {
-    if (!isVisibleConversationMessage(message) || !['user', 'assistant'].includes(message.role) || message.process && message.process.sourceKind !== 'user') continue;
+    if (!isVisibleConversationMessage(message) || !['user', 'assistant'].includes(message.role)) continue;
+    const sourceKind = message.process?.sourceKind;
+    const participatesInDates = !message.process || sourceKind === 'user';
+    const publishedWorkerReply = message.role === 'assistant' && sourceKind === 'worker' &&
+      message.audience === 'user' && message.text.trim();
+    if (!participatesInDates && !publishedWorkerReply) continue;
     const date = realDate(message.createdAt);
     if (!date) continue; // Unknown time never creates a date segment or a fallback time.
     const dayKey = day(date);
     const [year, month, dateOfMonth] = dayKey.split('-');
     const label = dayKey === today ? '今天' : dayKey === yesterday ? '昨天' : `${year}年${Number(month)}月${Number(dateOfMonth)}日`;
-    result.set(message.id, { dayKey, ...(dayKey !== precedingDay ? { dayLabel: label } : {}), dateTime: date.toISOString(), time: clock.format(date), title: full.format(date) });
-    precedingDay = dayKey;
+    result.set(message.id, { dayKey, ...(participatesInDates && dayKey !== precedingDay ? { dayLabel: label } : {}), dateTime: date.toISOString(), time: clock.format(date), title: full.format(date) });
+    if (participatesInDates) precedingDay = dayKey;
   }
   return result;
 }

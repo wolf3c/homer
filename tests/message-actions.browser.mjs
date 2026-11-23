@@ -143,11 +143,11 @@ try{
    await press(page,'#message-stream-copy [aria-label="引用"]');
    await check('long quote preserves the complete visible text',()=>JSON.parse(sessionStorage.getItem('homer-draft:composer-review')).quotes[0].text.length===16001);
    await check('no application console warnings or errors',()=>window.__console.length===0);
-   if(width===1440){
+   {
     const earlierReply=taskReply('stream-lead','已开始核对。','receipt-task');
     const activity={processId:'receipt-process',source:'internal',stage:'native',turnId:'receipt-turn'};
     const process={id:activity.processId,messageId:'receipt',threadId:'composer-review',sourceKind:'worker',sourceMessageIds:[],turnIds:[activity.turnId],state:'working',status:'running',revision:1,seq:1,items:[]};
-    const receipt={...taskReply('receipt','','receipt-task'),status:'running',process};
+    const receipt={...taskReply('receipt','','receipt-task'),createdAt:earlierReply.createdAt+60000,status:'running',audience:'internal',process};
     fixture.reset({messages:[earlierReply,receipt],mainActivity:activity});
     await page.command('Page.reload');
     await wait(()=>!!document.querySelector('#message-receipt .message-task-title'));
@@ -155,6 +155,40 @@ try{
     fixture.update({mainActivity:{...activity,finalText:'流式接续正文'}});
     await wait(()=>document.querySelector('#message-receipt .assistant-message-bubble')?.textContent.includes('流式接续正文'));
     await check('the projected Worker stream groups with its preceding task before persistence',()=>document.querySelector('#message-receipt').parentElement.hasAttribute('data-continues-task')&&getComputedStyle(document.querySelector('#message-receipt .message-task-title')).clipPath!=='none');
+    await check('the internal stream has no timestamp',()=>!document.querySelector('#message-receipt .message-timestamp'));
+    const published={...receipt,text:'已正式发布正文',status:'completed',audience:'user',process:{...process,state:'worked',status:'completed',final:{id:receipt.id,text:'已正式发布正文'}}};
+    fixture.update({messages:[earlierReply,published],mainActivity:undefined});
+    const selector='#message-receipt .assistant-message-bubble > time.message-timestamp';
+    const expected=new Date(receipt.createdAt).toISOString();
+    await page.until('document.querySelector('+JSON.stringify(selector)+')?.dateTime==='+JSON.stringify(expected),10000);
+    await check('the published reply renders exactly one timestamp without an extra date separator',()=>{
+     const row=document.querySelector('#message-receipt');
+     return row.querySelectorAll('time.message-timestamp').length===1&&!row.parentElement.querySelector('.message-day-separator');
+    });
+    await page.command('Page.reload');
+    await page.until('document.querySelector('+JSON.stringify(selector)+')?.dateTime==='+JSON.stringify(expected),10000);
+    if(width===390){
+     await check('the published reply timestamp stays visible after refresh on touch',()=>getComputedStyle(document.querySelector('#message-receipt time')).opacity==='1');
+    }else{
+     await page.evaluate(()=>document.querySelector('#message-receipt').scrollIntoView({block:'center',behavior:'instant'}));
+     await page.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});
+     await wait(()=>getComputedStyle(document.querySelector('#message-receipt time')).opacity==='0');
+     const corner=await page.evaluate(()=>{
+      const rect=document.querySelector('#message-receipt .assistant-message-bubble').getBoundingClientRect();
+      return {x:rect.right-8,y:rect.bottom-8};
+     });
+     await page.command('Input.dispatchMouseEvent',{type:'mouseMoved',...corner});
+     await wait(()=>getComputedStyle(document.querySelector('#message-receipt time')).opacity==='1');
+     checks.push({width,label:'hovering the published reply bottom-right reveals its time after refresh'});
+     await page.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});
+     await wait(()=>getComputedStyle(document.querySelector('#message-receipt time')).opacity==='0');
+     await page.evaluate(()=>document.querySelector('#message-receipt').focus({preventScroll:true}));
+     await key(page,'Tab');
+     await wait(()=>document.activeElement===document.querySelector('#message-receipt time')&&getComputedStyle(document.activeElement).opacity==='1');
+     checks.push({width,label:'Tab reaches and reveals the published reply timestamp'});
+    }
+   }
+   if(width===1440){
     const replies=Array.from({length:100},(_,i)=>taskReply('group-'+i,'连续同事项回复 '+i,'virtual-task'));
     earlier=replies.slice(0,25);
     fixture.reset({messages:replies.slice(25),features:{draftUpload:true,taskOverview:false}});
