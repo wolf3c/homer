@@ -32,7 +32,7 @@ import {readScheduleDisplay,type ScheduleReadRequest} from './schedule-display.j
 import {Schedules,SCHEDULE_TOOLS} from './schedules.js';
 import {ScheduleTools,type ScheduleSource} from './schedule-tools.js';
 import {HostToolCalls} from './host-tool-calls.js';
-import { join,isAbsolute,dirname,basename,normalize } from "node:path";
+import { join,isAbsolute,dirname,basename,normalize,relative,sep } from "node:path";
 import { fileURLToPath,pathToFileURL } from "node:url";
 import { accessSync,constants,realpathSync,existsSync,statSync,lstatSync,openSync,fstatSync,closeSync,readSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -170,7 +170,61 @@ export class Homer {
   async openBrowserPreview(value:unknown){
     const a=object(value),threadId=string(a.threadId,100);
     if(this.closing||threadId!==this.store.meta('mainThread')||!this.browserTransport)throw Error('preview_unavailable');
-    const source=parsePreviewSource(a.source),file=this.validateBrowserSource(threadId,source);
+    const source=parsePreviewSource(a.source);
+    if(a.href!==undefined){
+      if(source.kind!=='message-file'&&source.kind!=='attachment')throw Error('preview_source_mismatch');
+      const href=string(a.href,16000),actor={threadId,owner:'main:'+threadId};
+      const parent=source.kind==='message-file'?this.resolveMessageFile({threadId,...source}):{attachment:source,path:undefined};
+      const attachment=parent.attachment;
+      if(attachment)this.attachmentMessage(attachment);
+      const root=attachment&&this.media.asset(attachment);
+      if(source.kind==='attachment'&&root?.hash!==source.sha256)throw Error('preview_source_mismatch');
+      if(parent.path)this.withMessageFilePath(parent.path,path=>this.localAttachmentStat(path,true));
+      if(/^https?:/i.test(href)){
+        const url=this.browserUrl(href);
+        return {page:await this.browserTransport(actor,'open',{source:{kind:'browser',messageId:attachment?.messageId??source.messageId,url,title:new URL(url).hostname},user:true,show:false})};
+      }
+      const base=root?attachmentSourcePath(this.store.db,root):parent.path;
+      const absolute=this.messageFilePath(href);
+      let target=absolute;
+      if(!target){
+        if(!base||/^(?:[a-z][a-z\d+.-]*:|[\\/]|[?#])/i.test(href))throw Error('artifact_path_denied');
+        const url=new URL(href,pathToFileURL(base));
+        target=fileURLToPath(url);
+        if(!inside(dirname(base),target))throw Error('artifact_path_denied');
+      }
+      const named=this.resolveMessageFile({threadId,messageId:attachment?.messageId??source.messageId,destination:pathToFileURL(target).href},false,target);
+      const {messageId,destination}=named;
+      if(destination){
+        const file=this.readMessageFile({threadId,messageId,destination});
+        if(file.mime.split(';')[0]==='text/html'){
+          const source={kind:'message-file',messageId,destination,title:file.filename};
+          return {page:await this.browserTransport(actor,'open',{source,user:true,show:false})};
+        }
+        return {destination,messageId,title:file.filename};
+      }
+      const linked=this.history.message(messageId)?.attachments?.find(ref=>{
+        try{return attachmentSourcePath(this.store.db,this.media.asset(ref))===target;}
+        catch{return false;}
+      });
+      if(linked){
+        const ref={...linked,messageId},file=this.readAttachment(ref);
+        const targetSource={kind:'attachment',...ref,title:file.filename,sha256:file.sha256};
+        if(file.mime.split(';')[0]==='text/html')
+          return {page:await this.browserTransport(actor,'open',{source:targetSource,user:true,show:false})};
+        return {attachment:targetSource};
+      }
+      if(!absolute&&attachment&&base&&root){
+        const resource=relative(dirname(base),target).split(sep).map(encodeURIComponent).join('/');
+        const file=this.readAttachment({...attachment,resource});
+        if(file.mime.split(';')[0]==='text/html'){
+          return {page:await this.browserTransport(actor,'open',{source:{kind:'attachment',...attachment,title:root.filename,sha256:root.hash},resource,user:true,show:false})};
+        }
+        return {attachment:{...attachment,resource,title:file.filename}};
+      }
+      throw Error('message_file_scope_denied');
+    }
+    const file=this.validateBrowserSource(threadId,source);
     if(source.kind==='message-file'){
       if(a.url!==undefined||file?.mime.split(';')[0]?.trim()!=='text/html')throw Error('preview_html_required');
       return this.browserTransport({threadId,owner:'main:'+threadId},'open',{source,user:true});
@@ -2205,7 +2259,7 @@ export class Homer {
     if(preview)return {filename:asset.filename+'.wav',mime:preview.mime,data:preview.bytes.toString('base64')};
     return {filename:asset.filename,mime:asset.mime!,data:bytes.toString('base64'),sha256:asset.hash!};
   }
-  private resolveMessageFile(value:unknown,inlineImage=false){
+  private resolveMessageFile(value:unknown,inlineImage=false,matchPath?:string){
     const input=object(value),threadId=string(input.threadId,100),destination=string(input.destination,16000);
     let messageId=string(input.messageId,100);
     if(this.closing||threadId!==this.store.meta('mainThread')||!isMessageFileLink(destination))throw Error('message_file_scope_denied');
@@ -2226,7 +2280,9 @@ export class Homer {
         AND json_extract(responseJson,'$.messageId')=?`).get(reply.operationKey,node.id,reply.id);
       if(reply&&publication){
         const originalFinal=this.processes.exact(node.id)?.items.some(item=>
-          item.kind==='commentary'&&item.phase==='final_answer'&&messageFileDestination(item.text,destination,inlineImage));
+          item.kind==='commentary'&&item.phase==='final_answer'&&(matchPath
+            ?messageFileDestinations(item.text).some(link=>this.messageFilePath(link)===matchPath)
+            :messageFileDestination(item.text,destination,inlineImage)));
         if(!originalFinal||reply.threadId!==threadId||reply.revokedAt!=null||reply.audience!=='user'||reply.status!=='completed')throw Error('message_file_scope_denied');
         messageId=reply.id;
         original=reply;
@@ -2240,15 +2296,18 @@ export class Homer {
     const bodies=parts?.map(part=>part.text)??(message.audience==='user'?[message.text]:[]);
     let raw:string|undefined;
     for(const body of bodies){
-      raw=messageFileDestination(body,destination,inlineImage);
+      raw=matchPath?messageFileDestinations(body).find(link=>this.messageFilePath(link)===matchPath):messageFileDestination(body,destination,inlineImage);
       if(raw)break;
     }
-    if(!raw)throw Error('message_file_scope_denied');
+    if(!raw){
+      if(matchPath)return {threadId,messageId};
+      throw Error('message_file_scope_denied');
+    }
     const snapshot=this.finalAttachmentDestinations(messageId).findIndex(link=>decodeMessageLink(link)===decodeMessageLink(raw));
     if(snapshot>=0){
       const ref=original.attachments?.[snapshot];
       if(!ref)throw Error('media_scope_denied');
-      return {attachment:{messageId,...ref},threadId};
+      return {attachment:{messageId,...ref},threadId,destination:raw,messageId};
     }
     const path=this.messageFilePath(raw);
     if(!path)throw Error('message_file_path_unsupported');
@@ -2258,7 +2317,7 @@ export class Homer {
         :this.config.workspace;
       if(!inside(root,path))throw Error('artifact_path_denied');
     }
-    return {path,threadId};
+    return {path,threadId,destination:raw,messageId};
   }
   readMessageFile(value:unknown){
     const inlineImage=object(value).inlineImage===true;

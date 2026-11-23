@@ -32,7 +32,7 @@ import {connectionFetch as fetch,ConnectionEvents,mobileView} from "./web-connec
 import {markMobileRecovery} from "./mobile-connection";
 import {FileList} from './file-list';
 import {CanvasPanel, type CanvasArtifact,type PreviewTab} from "./canvas-panel";
-import{BrowserPreviewContext,openBrowserPreview,useBrowserPages}from'./browser-preview';
+import{BrowserPreviewContext,openBrowserPreview,openPreviewLink,useBrowserPages}from'./browser-preview';
 import type{BrowserPage}from'../src/browser-preview';
 import { createRoot } from "react-dom/client";
 import { Fragment,createContext,useContext,useCallback,useLayoutEffect, useEffect, useRef, useState,useMemo, type FormEvent, type ReactNode } from "react";
@@ -1183,14 +1183,13 @@ function HomerApp() {
     setPreviewTabs(old=>{
       if(old.threadId!==state.threadId)return old;
       const files=old.tabs.filter(tab=>!('kind'in tab)||tab.kind!=='browser');
-      const pages=browser.pages.filter(p=>!files.some(tab=>!('kind'in tab)&&p.source.kind==='attachment'&&tab.assetId===p.source.assetId&&tab.revision===p.source.revision));
+      const pages=browser.pages.filter(p=>p.resource||!files.some(tab=>!('kind'in tab)&&!tab.resource&&p.source.kind==='attachment'&&tab.assetId===p.source.assetId&&tab.revision===p.source.revision));
       const tabs:typeof old.tabs=[...files,...pages.map(page=>({kind:'browser' as const,id:page.id,title:page.title,page}))];
       const activeId=tabs.some(tab=>tab.id===old.activeId)?old.activeId:tabs[0]?.id??null;
       const signature=(items:typeof tabs,selected:string|null)=>JSON.stringify([items.map(tab=>({...tab,trigger:undefined})),selected]);
       return signature(tabs,activeId)===signature(old.tabs,old.activeId)?old:{...old,tabs,activeId};
     });
   },[browser.pages,state.threadId]);
-  useEffect(()=>window.homerBrowserPreview?.onShow(page=>{if(page.threadId===state.threadId)showBrowser(page);}),[state.threadId,previewTabs,canvasOpen]);
   const activeBrowser=activePreviewTab&&'kind'in activePreviewTab&&activePreviewTab.kind==='browser'?activePreviewTab.page:undefined;
   const canvasArtifact=activePreviewTab&&!('kind' in activePreviewTab)?activePreviewTab:activeBrowser?.source.kind==='attachment'?{...activeBrowser.source,id:JSON.stringify([activeBrowser.source.messageId,activeBrowser.source.assetId,activeBrowser.source.revision])}:null;
   const annotationDraft=useMemo(()=>createAnnotationDraft(),[state.threadId]);
@@ -1204,6 +1203,22 @@ function HomerApp() {
   updatePreviewScope(canvasOpen,activePreviewTab?.id??null);
   const previewGeneration=previewScope.current.generation;
   const isCurrentPreview=()=>previewGeneration===previewScope.current.generation;
+  useEffect(()=>{
+    const bridge=window.homerBrowserPreview;
+    return bridge?.onShow((page,origin)=>{
+      if(page.threadId!==state.threadId)return;
+      if(!origin){showBrowser(page);return;}
+      if(canvasOpen&&isCurrentPreview()&&activeBrowser?.id===origin.pageId)
+        void bridge.list(page.threadId).then(pages=>{
+          if(isCurrentPreview()&&pages.some(source=>source.id===origin.pageId&&source.document===origin.document&&source.control==='user')
+            &&pages.some(child=>child.id===page.id))showBrowser(page);
+        }).catch(()=>{});
+    });
+  },[state.threadId,previewTabs,canvasOpen]);
+  useEffect(()=>window.homerBrowserPreview?.onLink?.(({page,href})=>{
+    if(canvasOpen&&page.threadId===state.threadId&&activeBrowser?.id===page.id)
+      openDocumentLink(page.source,href,async()=> (await window.homerBrowserPreview?.list(page.threadId))?.some(item=>item.id===page.id&&item.document===page.document&&item.control==='user')===true);
+  }),[state.threadId,previewTabs,canvasOpen]);
   const addPreviewReference=useCallback(async(reference:PreviewRequest,file?:File,isCurrent:()=>boolean=()=>true,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[])=>{
     if(!previewComposer.current)throw Error('输入框尚未就绪，请重试。');
     const generation=previewScope.current.generation;
@@ -1752,7 +1767,9 @@ function HomerApp() {
   };
   const closeArtifact=async(id:string)=>{
     const tab=previewTabs.tabs.find(tab=>tab.id===id);
-    const page=tab&&'kind'in tab&&tab.kind==='browser'?tab.page:tab&&!('kind'in tab)?browser.pages.find(p=>p.source.kind==='attachment'&&p.source.assetId===tab.assetId&&p.source.revision===tab.revision):undefined;
+    const page=tab&&'kind'in tab&&tab.kind==='browser'?tab.page:tab&&!('kind'in tab)&&!tab.resource?browser.pages.find(p=>!p.resource&&p.source.kind==='attachment'&&p.source.assetId===tab.assetId&&p.source.revision===tab.revision):undefined;
+    if(page&&id===previewTabs.activeId)previewScope.current.generation++;
+    const scope=previewScope.current.generation;
     if(page){try{await window.homerBrowserPreview?.control({pageId:page.id,threadId:state.threadId,action:'close'});}catch{setPageNotice('网页关闭未确认，已保留预览。');return;}}
     const remove=(old:typeof previewTabs)=>{
       const at=old.tabs.findIndex(tab=>tab.id===id);if(at<0)return old;
@@ -1760,7 +1777,7 @@ function HomerApp() {
       return {...old,tabs,activeId:id===old.activeId?tabs[Math.min(at,tabs.length-1)]?.id??null:old.activeId};
     };
     const {tabs,activeId}=remove(previewTabs);if(tabs===previewTabs.tabs)return;
-    if(id===previewTabs.activeId){
+    if(id===previewTabs.activeId&&scope===previewScope.current.generation){
       updatePreviewScope(tabs.length>0,activeId);setAnnotationFocus(undefined);
       if(activeId)canvasTrigger.current=tabs.find(tab=>tab.id===activeId)?.trigger??null;
       else{captureAnchor();setCanvasOpen(false);}
@@ -1775,7 +1792,7 @@ function HomerApp() {
     const active=trigger??document.activeElement;
     const origin=active instanceof HTMLElement&&!active.closest('#canvas-panel')?active:undefined;
     if(origin)canvasTrigger.current=origin;
-    const native=browser.pages.find(p=>p.source.kind==='attachment'&&p.source.messageId===file.messageId&&p.source.assetId===file.assetId&&p.source.revision===file.revision);
+    const native=browser.pages.find(p=>!p.resource&&p.source.kind==='attachment'&&p.source.messageId===file.messageId&&p.source.assetId===file.assetId&&p.source.revision===file.revision);
     if(window.homerBrowserPreview&&(native||/\.html?$/i.test(file.title))){
       if(native)showBrowser(native,annotation);
       else void openBrowserPreview(state.threadId,{kind:'attachment',messageId:file.messageId,assetId:file.assetId,revision:file.revision,sha256:file.sha256,title:file.title}).then(page=>showBrowser(page,annotation)).catch(error=>setPageNotice(error.message));return;
@@ -1797,7 +1814,7 @@ function HomerApp() {
     setPreviewTabs(old=>{
       const source=page.source;
       const tabs=old.tabs.filter(tab=>{
-        if(source.kind==='attachment'&&!('kind'in tab))return tab.assetId!==source.assetId||tab.revision!==source.revision;
+        if(source.kind==='attachment'&&!page.resource&&!('kind'in tab)&&!tab.resource)return tab.assetId!==source.assetId||tab.revision!==source.revision;
         if(source.kind==='message-file'&&'kind'in tab&&tab.kind==='message-file')return tab.messageId!==source.messageId||tab.destination!==source.destination;
         return true;
       });
@@ -1813,6 +1830,28 @@ function HomerApp() {
       const tab={kind:'message-file' as const,id,title,trigger,messageId,destination,reload:existing&&'kind'in existing&&existing.kind==='message-file'?existing.reload+1:0};
       return {...old,tabs:existing?old.tabs.map(item=>item.id===id?tab:item):[...old.tabs,tab],activeId:id};
     });setCanvasOpen(true);
+  }
+  function openDocumentLink(source:Parameters<typeof openPreviewLink>[1],href:string,sourceCurrent?:()=>Promise<boolean>){
+    if(!isCurrentPreview())return;
+    setPageNotice('');
+    void openPreviewLink(state.threadId,source,href).then(async result=>{
+      if(sourceCurrent&&!await sourceCurrent()||!isCurrentPreview())return;
+      if('page'in result){showBrowser(result.page);return;}
+      if('attachment'in result){
+        const file=result.attachment;
+        if(!file.resource&&file.sha256){
+          openArtifact({...file,id:JSON.stringify([file.messageId,file.assetId,file.revision]),sha256:file.sha256});
+          return;
+        }
+        const tab={...file,id:JSON.stringify([file.messageId,file.assetId,file.revision,file.resource]),sha256:''};
+        setAnnotationFocus(undefined);updatePreviewScope(true,tab.id);
+        setPreviewTabs(old=>({...old,tabs:old.tabs.some(item=>item.id===tab.id)?old.tabs:[...old.tabs,tab],activeId:tab.id}));
+        return;
+      }
+      openLocalFile(result.messageId,result.destination,result.title);
+    }).catch(error=>{
+      if(isCurrentPreview())setPageNotice(error.message==='message_file_scope_denied'?'这个文件未单独交付或链接，无法在预览中打开。':'链接无法打开（'+error.message+'）。');
+    });
   }
   function openBrowserLink(destination:string,trigger:HTMLAnchorElement){
     const messageId=trigger.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage;
@@ -1938,7 +1977,7 @@ function HomerApp() {
           <MainComposer splitPreview={!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar key={'quote-'+state.threadId} viewport={viewport} />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
-      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>:<p role="status" className="schedule-note">{connectionError||"正在连接荷马…"}</p>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
+      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>:<p role="status" className="schedule-note">{connectionError||"正在连接荷马…"}</p>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} onOpenLink={openDocumentLink} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
     </div>
   </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></TaskReferenceNavigationContext.Provider></QuoteNavigationContext.Provider></BrowserPreviewContext.Provider>;
 }

@@ -12,7 +12,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  const browserSession=session.fromPartition('persist:homer-preview');
  const localSession=session.fromPartition('homer-local-preview');
  const preferences={session:browserSession,preload,sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:false,backgroundThrottling:false};
- const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,agentAssigned:!!p.agentAssigned,source:p.source,loading:!!p.loading,...(p.error?{error:p.error}:{})});
+ const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,agentAssigned:!!p.agentAssigned,source:p.source,loading:!!p.loading,...(p.resource?{resource:p.resource}:{}),...(p.error?{error:p.error}:{})});
  const changed=()=>{const w=window();if(w&&!w.isDestroyed())w.webContents.send('homer:preview:changed');};
  const page=id=>{const p=pages.get(id);if(!p||p.closed||p.view.webContents.isDestroyed())throw Error('preview_page_unavailable');return p;};
  const sendState=p=>p.view.webContents.send('homer:preview:annotation-state',{document:p.document,active:false,revision:0,epoch:0,notes:[],...p.annotations});
@@ -52,12 +52,19 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   view.webContents.setWindowOpenHandler(({url})=>{
    if(p.source.kind==='message-file')return{action:'deny'};
    if(!/^https?:/.test(url)&&url!=='about:blank')return{action:'deny'};
-   return{action:'allow',overrideBrowserWindowOptions:{webPreferences:preferences},createWindow:options=>{const child=make({threadId:p.threadId,owner:p.owner,source:p.source,url},options);child.agentAssigned=p.agentAssigned;return child.view.webContents;}};
+   const link=p.popupLink;p.popupLink=undefined;
+   return{action:'allow',overrideBrowserWindowOptions:{webPreferences:preferences},createWindow:options=>{
+    const child=make({threadId:p.threadId,owner:p.owner,source:p.source,url},options);child.agentAssigned=p.agentAssigned;
+    if(link?.url===url&&link.document===p.document&&link.expires>=Date.now()&&selected===p.id&&p.control==='user'&&!p.busy)
+     window().webContents.send('homer:preview:show',publicPage(child),{pageId:p.id,document:p.document});
+    return child.view.webContents;
+   }};
   });
   view.webContents.on('will-navigate',(event,url)=>{
    if(p.source.kind==='message-file'){
     if(url.split('#')[0]!=='homer-preview://'+id+'/local/index.html')event.preventDefault();
-   }else if(!/^https?:/.test(url)&&!url.startsWith('homer-preview://'+id+'/')&&url!=='about:blank')event.preventDefault();
+   }else if(p.resource&&url.startsWith('homer-preview:')&&url.split('#')[0]!==view.webContents.getURL().split('#')[0]
+    ||!/^https?:/.test(url)&&!url.startsWith('homer-preview://'+id+'/')&&url!=='about:blank')event.preventDefault();
   });
   changed();return p;
  }
@@ -72,8 +79,9 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
     return new Response(await response.arrayBuffer(),{headers:{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src http: https: data: blob:; script-src 'unsafe-inline' 'unsafe-eval' http: https: data: blob:; style-src 'unsafe-inline' http: https:; connect-src http: https: ws: wss:; frame-src about: blob: http: https:; sandbox allow-scripts allow-forms"}});
    }
    if(s.kind!=='attachment')throw Error('preview_source_mismatch');
-   const response=await fetchAttachment(s,url.pathname==='/attachment/index.html'?undefined:posix.relative('/attachment',decodeURIComponent(url.pathname)));if(!response.ok)return new Response('资源读取失败',{status:response.status});
-   if(url.pathname==='/attachment/index.html'&&response.headers.get('X-Homer-Artifact-Hash')!==s.sha256)throw Error('preview_source_mismatch');
+   const root=!p.resource&&url.pathname==='/attachment/index.html';
+   const response=await fetchAttachment(s,root?undefined:posix.relative('/attachment',url.pathname));if(!response.ok)return new Response('资源读取失败',{status:response.status});
+   if(root&&response.headers.get('X-Homer-Artifact-Hash')!==s.sha256)throw Error('preview_source_mismatch');
    return new Response(await response.arrayBuffer(),{headers:{'Content-Type':response.headers.get('Content-Type')??'application/octet-stream'}});
   }catch{return new Response('来源已不可用',{status:403});}
  });
@@ -85,6 +93,32 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   void dialog.showMessageBox(window(),{type:'question',buttons:['不允许','允许'],defaultId:0,cancelId:0,message:'允许网页使用 '+permission+'？',detail:String(details.requestingUrl??contents.getURL())}).then(result=>callback(result.response===1),()=>callback(false));
  });
  function contentCaller(event){const p=[...pages.values()].find(p=>p.view.webContents===event.sender);if(!p||event.senderFrame!==p.view.webContents.mainFrame)throw Error('preview_sender_denied');return p;}
+ function visibleUserPage(event){
+  const p=contentCaller(event);
+  return selected===p.id&&p.control==='user'&&!p.busy?p:undefined;
+ }
+ ipcMain.on('homer:preview:popup-link',(event,url)=>{
+  event.returnValue=false;
+  try{
+   const p=visibleUserPage(event);
+   if(p&&/^https?:/.test(p.view.webContents.getURL())&&typeof url==='string'&&/^https?:/.test(url)&&url.length<=16000)
+    p.popupLink={url,document:p.document,expires:Date.now()+250};
+  }catch{/* Page closed before delivery. */}
+ });
+ ipcMain.on('homer:preview:link',(event,href)=>{
+  const forward=()=>{
+   try{
+    const p=visibleUserPage(event);
+    if(!p||typeof href!=='string'||href.length>16000)return false;
+    const path=p.source.kind==='message-file'?'/local/index.html':'/attachment/'+(p.resource??'index.html');
+    if(p.view.webContents.getURL().split('#')[0]!=='homer-preview://'+p.id+path)return false;
+    if(p.resource&&!/^(?:https?:|file:|\/(?![\\/])|[a-z]:(?:[\\/]|%5c))/i.test(href))return false;
+    window().webContents.send('homer:preview:link',{page:publicPage(p),href});
+    return true;
+   }catch{return false;}
+  };
+  event.returnValue=forward();
+ });
  ipcMain.handle('homer:preview:annotation-read',event=>{const p=contentCaller(event);return {document:p.document,active:false,revision:0,epoch:0,notes:[],...p.annotations};});
  ipcMain.handle('homer:preview:annotation-begin',async event=>{const p=contentCaller(event);p.control='user';await p.inFlight?.catch(()=>{});changed();});
  ipcMain.handle('homer:preview:annotation-save',(event,input)=>{
@@ -129,16 +163,17 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
    if(input.pageId){const p=page(input.pageId);if(p.threadId!==actor.threadId)throw Error('preview_scope_denied');
     if(input.claim?.url===p.view.webContents.getURL()&&actor.requestId&&p.claimRequest!==actor.requestId){if(p.busy)throw Error('preview_page_busy');p.agentAssigned=true;p.claimRequest=actor.requestId;p.owner=actor.owner;p.control='agent';p.annotations={...p.annotations,active:false};sendState(p);changed();}
     if(p.owner!==actor.owner)throw Error('preview_scope_denied');return publicPage(p);}
-   const existing=[...pages.values()].find(p=>p.threadId===actor.threadId&&p.owner===actor.owner&&Object.keys(p.source).length===Object.keys(input.source).length&&Object.keys(p.source).every(key=>p.source[key]===input.source[key])&&(!input.url||input.url===p.openingUrl||input.url===p.view.webContents.getURL()));
+   const existing=[...pages.values()].find(p=>p.threadId===actor.threadId&&p.owner===actor.owner&&p.resource===input.resource&&Object.keys(p.source).length===Object.keys(input.source).length&&Object.keys(p.source).every(key=>p.source[key]===input.source[key])&&(!input.url||input.url===p.openingUrl||input.url===p.view.webContents.getURL()));
    if(existing){if(input.source.kind==='message-file'&&!existing.loading)existing.view.webContents.reload();return publicPage(existing);}
    const p=make({...actor,source:input.source,url:input.url});p.control=input.user?'user':'agent';p.agentAssigned=!input.user;p.loading=true;
-   const target=input.url??(input.source.kind==='message-file'?'homer-preview://'+p.id+'/local/index.html':input.source.kind==='attachment'?'homer-preview://'+p.id+'/attachment/index.html':input.source.url);
+   p.resource=input.resource;
+   const target=input.url??(input.source.kind==='message-file'?'homer-preview://'+p.id+'/local/index.html':input.source.kind==='attachment'?'homer-preview://'+p.id+'/attachment/'+(p.resource??'index.html'):input.source.url);
    p.openingUrl=target;
    const loaded=p.view.webContents.loadURL(target).catch(error=>{
     if(!p.closed){p.loading=false;p.error=error.message;changed();}
    }).finally(()=>{p.openingUrl=undefined;});
-   if(input.user)window().webContents.send('homer:preview:show',publicPage(p));
-   else await loaded;
+   if(input.user&&input.show!==false)window().webContents.send('homer:preview:show',publicPage(p));
+   else if(!input.user)await loaded;
    return publicPage(p);
   }
   if(action==='pause'){for(const p of pages.values())if(p.owner===actor.owner&&p.threadId===actor.threadId){p.control='user';changed();}return;}

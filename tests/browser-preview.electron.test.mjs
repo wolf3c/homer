@@ -15,8 +15,10 @@ import{createWebServer}from'../src/web-server.ts';
 const require=createRequire(import.meta.url);
 const ui=process.env.HOMER_PREVIEW_UI,runtime=process.env.HOMER_PREVIEW_RUNTIME,evidence=process.env.HOMER_PREVIEW_EVIDENCE;
 if(!ui||!runtime||!evidence)throw Error('preview_electron_requires_explicit_ui_runtime_evidence');
-test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},async()=>{
- const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence);await mkdir(out,{recursive:true});
+test('desktop Preview links enforce source authority and preserve foreground ownership', {timeout:60000},()=>runPreview(true));
+test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},()=>runPreview(false));
+async function runPreview(linksOnly){
+ const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':'.');await mkdir(out,{recursive:true});
  const f=fixture();let electron,web,site,electronClosed=false;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError;
  const slowPage=new Promise(resolve=>{releaseSlowPage=resolve;});
  const record=(name,detail)=>{checks.push({name,detail});console.log('PASS',name);};
@@ -25,6 +27,14 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   site=createServer(async(req,res)=>{
    if(req.url==='/start'||req.url==='/explicit-start')await slowPage;
    res.setHeader('Content-Type','text/html; charset=utf-8');res.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'");
+   if(req.url==='/link-source'){
+    res.end('<!doctype html><meta charset="utf-8"><title>链接来源页</title><a href="/link-target" target="_blank">打开新页</a> <a href="/link-target">当前页跳转</a>');
+    return;
+   }
+   if(req.url==='/link-target'||req.url==='/script-popup'){
+    res.end('<!doctype html><meta charset="utf-8"><title>'+(req.url==='/link-target'?'新页目标':'脚本新页')+'</title>');
+    return;
+   }
    res.end('<!doctype html><meta charset="utf-8"><title>合成业务页面</title><style>body{font:18px/1.7 system-ui;padding:40px;background:#faf9f6;color:#233044}article{margin:24px 0;padding:24px;border:1px solid #ddd;background:white}input,button{font:inherit}h1{font-size:32px}</style><h1 id="heading">网页内容操作</h1><p>隔离产品源码验收 · 无真实账号</p><label>任务输入 <input aria-label="任务输入"></label><article><h2 id="target">需要完善的结论</h2><p>请在这里标记、备注并回到原对话草稿。</p></article><select aria-label="任务选项"><option value="a">甲</option><option value="b">乙</option></select><button id="business" onclick="this.textContent=\'已完成点击\'">业务操作</button><p><a href="/next">下一页</a></p><div style="height:500px"></div><h2 id="lower">页面下方的建议</h2>');
   });await new Promise(r=>site.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+site.address().port;
   const preload=(await readFile('packaging/electron/preload.cjs','utf8')).match(/ contextBridge\.exposeInMainWorld\('homerBrowserPreview',\{[\s\S]*?\n \}\);/)[0];
@@ -42,13 +52,20 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
    if(text==='Delegate both pages'){for(const goal of ['Operate page A','Operate page B']){const {taskId}=await main.call('task_create',{title:goal,goal});await main.call('worker_open',{taskId});}return{status:'completed',text:'两个合成任务已创建'};}
-   const final={itemId:'preview-final',phase:'final_answer',text:text.includes('核对本地 HTML 的标题')||text.includes('核对第二处本地文本')||text.includes('测试本地图片批注')?'收到本地批注':text==='Emit Quote'?`${quoteText}\n\n[打开引用验收网页](${url}/quote)`:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
+   const final={itemId:'preview-final',phase:'final_answer',text:text.includes('核对本地 HTML 的标题')||text.includes('核对第二处本地文本')||text.includes('测试本地图片批注')?'收到本地批注':text==='Emit Quote'?`${quoteText}\n\n[打开引用验收网页](${url}/quote)`:text==='Emit Linked HTML'?`[打开附件方案](${pathToFileURL(join(f.app.config.workspace,'preview-linked.html')).href})`:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
    return{status:'completed',text:final.text,messages:[final]};
   });await f.app.start();await f.app.message('打开合成网页并批注','preview-fixture-source');
   const localPath=join(scratch,'current.md');
+  const demoPath=join(scratch,'demo.html');
   await writeFile(localPath,'# 合成本地原文');
   f.app.history.record('desktop-local-fixture',f.app.store.meta('mainThread'),`[打开本地文档](${pathToFileURL(localPath).href})`);
+  if(linksOnly){
+   await writeFile(demoPath,`<!doctype html><title>本地 Demo</title><h1>交互页面</h1><a href="${url}/link-source">打开外部网页</a>`);
+   await writeFile(localPath,'# 合成本地原文\n\n[交互 Demo](demo.html)');
+   f.app.history.record('desktop-local-linked',f.app.store.meta('mainThread'),`[打开附有 Demo 的方案](${pathToFileURL(localPath).href}) · [已交付 Demo](${pathToFileURL(demoPath).href})`);
+   f.app.history.record('desktop-link-source',f.app.store.meta('mainThread'),`[打开链接来源页](${url}/link-source)`);
+  }
   const localHtml=join(scratch,'local.html');
   await writeFile(localHtml,'<!doctype html><meta charset="utf-8"><title>本地批注</title><h1 id="local-heading">合成本地 HTML</h1>');
   f.app.history.record('desktop-html-fixture',f.app.store.meta('mainThread'),`[打开本地 HTML](${pathToFileURL(localHtml).href})`);
@@ -64,6 +81,83 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   const electronExit=new Promise(resolve=>electron.process().once('exit',(code,signal)=>resolve({code,signal})));
   await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
   await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
+  if(linksOnly){
+   await host.getByRole('link',{name:'交互 Demo',exact:true}).click();
+   await host.getByText('这个文件未单独交付或链接，无法在预览中打开。',{exact:true}).waitFor();
+   await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
+   await host.getByRole('link',{name:'打开附有 Demo 的方案',exact:true}).click();
+   await host.getByRole('link',{name:'交互 Demo',exact:true}).click();
+   await host.getByRole('tab',{name:'本地 Demo',exact:true,selected:true}).waitFor();
+   let demoPage;await until(()=>!!(demoPage=electron.context().pages().find(page=>page.url().endsWith('/local/index.html'))));
+   await demoPage.getByRole('heading',{name:'交互页面'}).waitFor();
+   const websiteLink=await demoPage.getByRole('link',{name:'打开外部网页',exact:true}).boundingBox();
+   await demoPage.mouse.click(websiteLink.x+websiteLink.width/2,websiteLink.y+websiteLink.height/2);
+   await host.getByRole('tab',{name:'链接来源页',exact:true,selected:true}).waitFor();
+   await host.getByRole('button',{name:'关闭链接来源页',exact:true}).click();
+   await host.getByRole('tab',{name:'本地 Demo',exact:true,selected:true}).waitFor();
+   await host.getByRole('button',{name:'关闭本地 Demo',exact:true}).click();
+   await host.getByRole('tab',{name:'current.md',exact:true,selected:true}).waitFor();
+   await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
+   record('an exact relative Markdown link opens the authorized demo and rejects unlisted siblings');
+   await host.getByRole('link',{name:'打开链接来源页',exact:true}).click();
+   const selected=(name)=>host.getByRole('tab',{name,exact:true,selected:true}).waitFor();
+   const close=(name)=>host.getByRole('button',{name:'关闭'+name,exact:true}).click();
+   await selected('链接来源页');
+   let linkSource;await until(()=>!!(linkSource=electron.context().pages().find(page=>page.url()===url+'/link-source')));
+   await linkSource.getByRole('link',{name:'打开新页',exact:true}).press('Enter');
+   await selected('新页目标');
+   await close('新页目标');await selected('链接来源页');
+   await linkSource.getByRole('link',{name:'当前页跳转',exact:true}).click();
+   await selected('新页目标');
+   await host.getByRole('button',{name:'后退',exact:true}).click();
+   await selected('链接来源页');
+   await linkSource.evaluate(()=>{window.open('/script-popup');});
+   await host.getByRole('tab',{name:'脚本新页',exact:true,selected:false}).waitFor();
+   await selected('链接来源页');
+   await close('脚本新页');
+   const current=await host.evaluate(async threadId=>(await window.homerBrowserPreview.list(threadId)).find(page=>page.title==='链接来源页'),f.app.store.meta('mainThread'));
+   const controlLink=action=>host.evaluate(({page,action})=>window.homerBrowserPreview.control({threadId:page.threadId,pageId:page.id,action}),{page:current,action});
+   await controlLink('resume');
+   await electron.evaluate((_,page)=>globalThis.preview.execute({threadId:page.threadId,owner:page.owner},'act',{pageId:page.id,document:page.document,action:'click',selector:'a[target="_blank"]'}),current);
+   await host.getByRole('tab',{name:'新页目标',exact:true,selected:false}).waitFor();
+   await selected('链接来源页');
+   await controlLink('takeover');
+   await close('新页目标');await close('链接来源页');
+   await host.getByRole('link',{name:'打开附有 Demo 的方案',exact:true}).click();
+   let requestSeen,continueRequest;
+   const waiting=new Promise(resolve=>{requestSeen=resolve;}),continueLink=new Promise(resolve=>{continueRequest=resolve;});
+   const holdLink=async route=>{requestSeen();await continueLink;await route.continue();};
+   await host.route('**/api/preview/open',holdLink);
+   try{
+    await host.getByRole('link',{name:'交互 Demo',exact:true}).click();
+    await waiting;
+    await close('current.md');
+    await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
+    continueRequest();
+    await host.getByRole('tab',{name:'本地 Demo',exact:true,selected:false}).waitFor();
+    await selected('current.md');
+    await close('本地 Demo');await close('current.md');
+   }finally{continueRequest();await host.unroute('**/api/preview/open',holdLink);}
+   await writeFile(join(f.app.config.workspace,'preview-linked.html'),'<meta charset="utf-8"><title>附件方案</title><a href="子页%20%23.html">打开相邻 HTML</a>');
+   await writeFile(join(f.app.config.workspace,'子页 #.html'),'<meta charset="utf-8"><title>附件相邻页</title><h1>读取匹配的相邻文件</h1>');
+   await f.app.message('Emit Linked HTML','linked-html-fixture');
+   await host.getByRole('link',{name:'打开附件方案',exact:true}).click();
+   await selected('附件方案');
+   let linkedAttachment;await until(()=>!!(linkedAttachment=electron.context().pages().find(page=>page.url().endsWith('/attachment/index.html'))));
+   const siblingLink=await linkedAttachment.getByRole('link',{name:'打开相邻 HTML',exact:true}).boundingBox();
+   await linkedAttachment.mouse.click(siblingLink.x+siblingLink.width/2,siblingLink.y+siblingLink.height/2);
+   await selected('附件相邻页');
+   let sibling;await until(()=>!!(sibling=electron.context().pages().find(page=>page.url().includes('%20%23.html'))));
+   await sibling.getByRole('heading',{name:'读取匹配的相邻文件',exact:true}).waitFor();
+   await close('附件相邻页');await selected('附件方案');
+   await close('附件方案');
+   record('native user link selects a Preview tab while script and Agent popups stay in background; Chromium keeps same-page history and late results stay in background');
+   assert.deepEqual(errors,[]);
+   await electron.close();
+   assert.deepEqual(await electronExit,{code:0,signal:null});
+   clearTimeout(watchdog);electronClosed=true;
+   return;
+  }
   await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
   record('desktop local file link renders current bytes');
   const localImage=join(scratch,'local.png');
@@ -390,4 +484,4 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await writeFile(join(out,'product-report.json'),JSON.stringify({status:'passed',checks,versions,errors,exit,boundary:'Actual source UI/service/MCP/native page modules with synthetic engines; test harness forwards browser transport through Electron inspector. Production stdio transport, installed app, real Codex/LLM, Windows, IME and real login remain separately verified or unverified.'},null,2));
  }catch(error){const pages=[];if(electron)for(const [i,page]of electron.context().pages().entries()){pages.push({url:page.url(),text:await page.locator('body').innerText().catch(()=>'' )});await page.screenshot({path:join(out,'failure-'+i+'.png')}).catch(()=>{});}await writeFile(join(out,'product-failure.json'),JSON.stringify({message:error.stack,checks,errors,pages},null,2));throw error;}
  finally{clearTimeout(watchdog);claimRelease?.();if(electron&&!electronClosed)await electron.close();if(web)await web.close();await f.close();if(site)await new Promise(r=>site.close(r));await rm(scratch,{recursive:true,force:true});}
-});
+}

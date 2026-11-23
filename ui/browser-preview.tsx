@@ -1,5 +1,5 @@
 import{createContext,useEffect,useLayoutEffect,useRef,useState}from'react';
-import type{BrowserPage,BrowserPreviewBridge,BrowserAnnotationState,BrowserAnnotationChange}from'../src/browser-preview';
+import type{BrowserPage,BrowserPreviewBridge,BrowserAnnotationState,BrowserAnnotationChange,PreviewLinkResult}from'../src/browser-preview';
 import{referenceKey,referencesOf,type PreviewSource,type PreviewRequest,type PreviewAnnotation}from'../src/preview-reference';
 import{useAnnotationDraft,type AnnotationDraft}from'./annotation-draft';
 import{connectionFetch}from'./web-connection-client';
@@ -10,10 +10,12 @@ import{PreviewToolbar}from'./preview-toolbar';
 import{AnnotationButton}from'./annotation-button';
 declare global{interface Window{homerBrowserPreview?:BrowserPreviewBridge;}}
 export const BrowserPreviewContext=createContext<{openLink:(url:string,trigger:HTMLAnchorElement)=>boolean;openReference:(reference:PreviewRequest,id:string,history?:boolean)=>void}>({openLink:()=>false,openReference:()=>{}});
-export async function openBrowserPreview(threadId:string,source:PreviewSource,url?:string):Promise<BrowserPage>{
- const response=await connectionFetch('/api/preview/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({threadId,source,...(url?{url}:{})})});
+async function requestPreview<T>(threadId:string,source:PreviewSource,target:{url?:string;href?:string}):Promise<T>{
+ const response=await connectionFetch('/api/preview/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({threadId,source,...target})});
  const result=await response.json();if(!response.ok)throw Error(result.error??'网页打开未确认，请重试。');return result;
 }
+export const openBrowserPreview=(threadId:string,source:PreviewSource,url?:string)=>requestPreview<BrowserPage>(threadId,source,{url});
+export const openPreviewLink=(threadId:string,source:PreviewSource,href:string)=>requestPreview<PreviewLinkResult>(threadId,source,{href});
 export function useBrowserPages(threadId:string){
  const [pages,setPages]=useState<BrowserPage[]>([]),[error,setError]=useState('');
  useEffect(()=>{
@@ -23,14 +25,15 @@ export function useBrowserPages(threadId:string){
  },[threadId]);return{pages,error};
 }
 type Props={page:BrowserPage;annotationDraft:AnnotationDraft;onReference:(reference:PreviewRequest,file?:File,isCurrent?:()=>boolean)=>Promise<void>;enabled:boolean;focusId?:string;focusKey?:string;focusRequest?:string;historyNote?:PreviewAnnotation;suspended?:boolean;isCurrent?:()=>boolean};
-export function BrowserPreview({page,annotationDraft,onReference,enabled,focusId:requestedFocus,focusKey,focusRequest,historyNote,suspended=false,isCurrent=()=>true}:Props){
+export function BrowserPreview({page,annotationDraft,onReference,enabled:referenceEnabled,focusId:requestedFocus,focusKey,focusRequest,historyNote,suspended=false,isCurrent=()=>true}:Props){
+ const enabled=referenceEnabled&&!page.resource;
  const draft=useAnnotationDraft(annotationDraft),viewport=useRef<HTMLDivElement>(null),latest=useRef({page,onReference,enabled,isCurrent});latest.current={page,onReference,enabled,isCurrent};
  const [active,setActive]=useState(false),[syncing,setSyncing]=useState(false),[notice,setNotice]=useState('');
  const key=referenceKey({kind:'web',source:page.source,page:{id:page.id,url:page.url,title:page.title}});
  const focusId=focusKey===key?requestedFocus:undefined;
  const reference=referencesOf(draft).find(r=>r.kind==='web'&&referenceKey(r)===key);
  const notes=reference?.kind==='web'?reference.annotations:[];
- const state:BrowserAnnotationState={document:page.document,active:active&&enabled&&!page.loading&&page.control==='user',revision:draft.revision,epoch:draft.epoch,notes,...(focusId?{focusId,focusRequest,historyNote}:{})};
+ const state:BrowserAnnotationState={document:page.document,active:active&&enabled&&!page.loading&&page.control==='user',revision:draft.revision,epoch:draft.epoch,notes:page.resource?[]:notes,...(focusId?{focusId,focusRequest,historyNote}:{})};
  const currentState=useRef(state);currentState.current=state;
  useEffect(()=>{if(page.control==='agent')setActive(false);},[page.control]);
  useEffect(()=>{if(focusId&&enabled&&!historyNote)setActive(true);},[focusId,focusRequest,enabled,historyNote]);

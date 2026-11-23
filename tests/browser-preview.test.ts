@@ -3,6 +3,7 @@ import assert from'node:assert/strict';
 import test from'node:test';
 import{writeFileSync,mkdirSync,symlinkSync}from'node:fs';
 import{join,dirname}from'node:path';
+import{pathToFileURL}from'node:url';
 import{htmlAttachmentFixture}from'./canvas-html-publication-fixture.js';
 import{fixture,until}from'./fixtures/worker-chat-host.js';
 import{mcpCall}from'./fixtures/host-mcp-call.js';
@@ -107,4 +108,77 @@ test('executable HTML reads only its own asset directory and preserves canonical
   assert.throws(()=>f.app.readAttachment({...ref,resource:'../outside.js'}),/artifact_path_denied/);assert.throws(()=>f.app.readAttachment({...ref,resource:'data.txt'}),/media_preview_unavailable/);
   symlinkSync(join(f.dir,'outside.js'),join(folder,'linked.js'));assert.throws(()=>f.app.readAttachment({...ref,resource:'linked.js'}),/artifact_path_denied/);
  }finally{f.close();}
+});
+
+test('document links reuse exact message file authority and open HTML without a foreground notification',async()=>{
+ const f=fixture(),calls:Record<string,unknown>[]=[];
+ f.app.bindBrowserPreview(async(_actor,_action,input)=>{calls.push(input);return {id:'opened'};});
+ try{
+  await f.app.start();
+  const threadId=f.app.store.meta('mainThread')!,root=f.app.config.workspace;
+  const plan=join(root,'plan.md'),demo=join(root,'demo.html'),link=join(root,'linked.html');
+  const url=(path:string)=>pathToFileURL(path).href;
+  writeFileSync(plan,'[交互 Demo](demo.html)');
+  writeFileSync(demo,'<!doctype html><p>demo</p>');
+  symlinkSync(demo,link);
+  const source=(messageId:string)=>({kind:'message-file',messageId,destination:url(plan),title:'plan.md'});
+  f.app.history.record('plan-only',threadId,`[方案](${url(plan)})`);
+  await assert.rejects(f.app.openBrowserPreview({threadId,source:source('plan-only'),href:'demo.html'}),/message_file_scope_denied/);
+  f.app.history.record('plan-and-demo',threadId,`[方案](${url(plan)}) · [Demo](${url(demo)}) · [Link](${url(link)})`);
+  const open=(href:string)=>f.app.openBrowserPreview({threadId,source:source('plan-and-demo'),href});
+  assert.deepEqual(await open('demo.html'),{page:{id:'opened'}});
+  assert.deepEqual(calls,[{source:{kind:'message-file',messageId:'plan-and-demo',destination:url(demo),title:'demo.html'},user:true,show:false}]);
+  await assert.rejects(open('../demo.html'),/artifact_path_denied/);
+  await assert.rejects(open('linked.html'),/artifact_path_denied/);
+  f.app.history.revokeMessage(threadId,'plan-and-demo');
+  await assert.rejects(open('demo.html'),/message_file_scope_denied/);
+
+  f.setScript(async main=>{
+    const final={itemId:'linked-files',phase:'final_answer' as const,text:`[方案](${url(plan)}) · [Demo](${url(demo)})`};
+    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
+    return {status:'completed',text:final.text,messages:[final]};
+  });
+  await f.app.message('交付方案和演示','deliver-linked-files');
+  const reply=f.app.store.db.prepare('SELECT replyId FROM conversation_inputs WHERE requestId=?').get('deliver-linked-files')?.replyId as string;
+  assert.deepEqual(f.app.finalAttachmentDestinations(reply),[url(plan),url(demo)]);
+  writeFileSync(demo,'原件已变化');
+  assert.deepEqual(await f.app.openBrowserPreview({threadId,source:source(reply),href:'demo.html'}),{page:{id:'opened'}});
+  assert.match(f.app.readMessageFile({threadId,messageId:reply,destination:url(demo)}).bytes.toString(),/<p>demo<\/p>/);
+  const attachments=f.app.history.message(reply)!.attachments!;
+  f.app.history.record('published-attachments',threadId,'方案和演示见附件');
+  f.app.store.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run('published-attachments',JSON.stringify(attachments));
+  const ref={...attachments[0]!,messageId:'published-attachments'},document=f.app.readAttachment(ref);
+  assert.deepEqual(await f.app.openBrowserPreview({threadId,source:{...ref,kind:'attachment',title:document.filename,sha256:document.sha256},href:'demo.html'}),{page:{id:'opened'}});
+ }finally{await f.close();}
+});
+
+test('document links keep the attachment resource rules for each original format',async()=>{
+ const f=fixture();
+ f.app.bindBrowserPreview(async(_actor,_action,input)=>input);
+ try{
+  await f.app.start();
+  const threadId=f.app.store.meta('mainThread')!,root=f.app.config.workspace;
+  writeFileSync(join(root,'demo.html'),'<!doctype html><p>neighbor</p>');
+  for(const filename of ['source.html','source.md']){
+    const path=join(root,filename);
+    writeFileSync(path,filename.endsWith('.html')?'<a href="demo.html">Demo</a>':'[Demo](demo.html)');
+    f.setScript(async main=>{
+      const final={itemId:'source-file',phase:'final_answer' as const,text:`[来源](${pathToFileURL(path).href})`};
+      main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
+      return {status:'completed',text:final.text,messages:[final]};
+    });
+    const requestId='deliver-'+filename.replace('.','-');
+    await f.app.message('交付来源',requestId);
+    const messageId=f.app.store.db.prepare('SELECT replyId FROM conversation_inputs WHERE requestId=?').get(requestId)?.replyId as string;
+    const ref=f.app.history.message(messageId)!.attachments![0]!;
+    const file=f.app.readAttachment({...ref,messageId});
+    const source={kind:'attachment',...ref,messageId,title:file.filename,sha256:file.sha256};
+    const request={threadId,source,href:'demo.html'};
+    if(filename.endsWith('.html')){
+      const result=await f.app.openBrowserPreview(request) as {page:{resource:string;show:boolean}};
+      assert.equal(result.page.resource,'demo.html');
+      assert.equal(result.page.show,false);
+    }else await assert.rejects(f.app.openBrowserPreview(request),/media_preview_unavailable/);
+  }
+ }finally{await f.close();}
 });

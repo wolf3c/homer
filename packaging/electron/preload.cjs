@@ -5,7 +5,8 @@ if(process.isMainFrame===true){
   ...Object.fromEntries(['list','present','control','annotations','reply'].map(name=>[name,input=>ipcRenderer.invoke('homer:preview:'+name,input)])),
   onChanged:callback=>{const listener=()=>callback();ipcRenderer.on('homer:preview:changed',listener);return()=>ipcRenderer.removeListener('homer:preview:changed',listener);},
   onAnnotation:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('homer:preview:annotation',listener);return()=>ipcRenderer.removeListener('homer:preview:annotation',listener);},
-  onShow:callback=>{const listener=(_,page)=>callback(page);ipcRenderer.on('homer:preview:show',listener);return()=>ipcRenderer.removeListener('homer:preview:show',listener);},
+  onShow:callback=>{const listener=(_,page,origin)=>callback(page,origin);ipcRenderer.on('homer:preview:show',listener);return()=>ipcRenderer.removeListener('homer:preview:show',listener);},
+  onLink:callback=>{const listener=(_,link)=>callback(link);ipcRenderer.on('homer:preview:link',listener);return()=>ipcRenderer.removeListener('homer:preview:link',listener);},
  });
  if(process.platform==='darwin'||process.platform==='win32')contextBridge.exposeInMainWorld('homerDesktopCapture',{
   ...(process.platform==='win32'?{platform:'win32'}:{}),
