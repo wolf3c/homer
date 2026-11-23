@@ -207,6 +207,7 @@ function CompletedInteractionCard({item}:{item:NonNullable<WebState['messages'][
    description={[item.description,item.unavailable?'原请求详情不可用。':undefined].filter(Boolean).join('\n')}
    statusLabel={decision}/>;
  }
+ if(!item.answers.length&&!item.unavailable)return <p>{item.title}</p>;
  if(item.unavailable)return <div className="assistant-message-bubble">
   {item.title&&<p>{item.title}</p>}<p>原请求详情不可用。</p>{item.answers.map((answer,index)=><p key={index}>{answer.text}</p>)}
  </div>;
@@ -1036,7 +1037,7 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
   const responseOwner=useRef({live:false,submitting:false,verified,acceptedRequestIds});
   useLayoutEffect(()=>{const owner={live:true,submitting:false,verified,acceptedRequestIds};responseOwner.current=owner;return()=>{owner.live=false;};},[key]);
   useLayoutEffect(()=>{responseOwner.current.verified=verified;responseOwner.current.acceptedRequestIds=acceptedRequestIds;},[verified,acceptedRequestIds]);
-  const pending=storage.read<ConversationInput>(key+':pending');
+  const pending=storage.read<ConversationInput&{optionId?:string}>(key+':pending');
   const accepted=received||!!pending&&acceptedRequestIds.includes(pending.requestId),busy=sending||accepted;
   useEffect(()=>{
     if(accepted){if(item.kind==='authorization'||item.questions&&!(item.questions.length===1&&item.questions[0]!.allowOther))storage.write(key+':draft',undefined);try{const old=interactionDraft(key).legacy;if(Object.keys(old).every(id=>item.questions?.some(q=>q.id===id)))localStorage.removeItem(key+':questions');}catch{};return;}
@@ -1049,19 +1050,22 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
       if(!response.ok)return;const receipt=await response.json();if(!controller.signal.aborted&&receipt.acceptedRequestIds?.includes(pending.requestId))setReceived(true);
     }).catch(()=>{});return()=>controller.abort();
   },[pending?.requestId,accepted,verified,threadId,acceptedRequestIds]);
-  async function respond(event?:FormEvent,decision="",questionAnswers?:ConversationInput['questionAnswers'],retry=false):Promise<void>{
+  async function respond(event?:FormEvent,decision="",questionAnswers?:ConversationInput['questionAnswers'],retry=false,optionId?:string):Promise<void>{
     event?.preventDefault();const owner=responseOwner.current;
     if(!decision.trim()||accepted||!owner.verified||!owner.live||owner.submitting)throw Error('当前问题暂不可提交，请核对连接和原请求。');
-    const previous=storage.read<ConversationInput>(key+':pending');
-    const input=retry&&previous?previous:prepareInteractionResponse(decision,item.id,previous,()=>crypto.randomUUID(),questionAnswers);
+    const previous=storage.read<ConversationInput&{optionId?:string}>(key+':pending');
+    const input=retry&&previous?previous:{
+      ...prepareInteractionResponse(decision,item.id,previous?.optionId===optionId?previous:undefined,()=>crypto.randomUUID(),questionAnswers),
+      ...(optionId?{optionId}:{}),
+    };
     if(item.kind==='question'&&previous&&previous.requestId!==input.requestId)throw Error('上次答复尚未确认，请先核对或重试原答复。');
     owner.submitting=true;storage.write(key+':pending',input);setSending(true);onError('');
-    try{await post('/api/interactions/'+item.id,{requestId:input.requestId,text:input.text,...(input.questionAnswers?{questionAnswers:input.questionAnswers}:{})});if(owner.live){setReceived(true);setSending(false);}}
+    try{await post('/api/interactions/'+item.id,input.optionId?{requestId:input.requestId,optionId:input.optionId}:{requestId:input.requestId,text:input.text,...(input.questionAnswers?{questionAnswers:input.questionAnswers}:{})});if(owner.live){setReceived(true);setSending(false);}}
     catch(error){
       if(owner.acceptedRequestIds.includes(input.requestId)){if(owner.live){setReceived(true);setSending(false);}return;}
       if(owner.live){owner.submitting=false;setSending(false);
         const code=error instanceof Error?error.message:'web_request_failed';
-        if(code==='interaction_not_live'&&owner.verified)onNotLive(item);
+        if(['interaction_not_live','interaction_not_waiting_user','interaction_already_resolved'].includes(code)&&owner.verified)onNotLive(item);
         if(['interaction_answer_scope','invalid_message','interaction_response_kind'].includes(code))storage.write(key+':pending',undefined);
         if(owner.verified&&code!=='interaction_not_live')onError('答复尚未确认，输入已保留；可核对并重试原答复：'+code);
       }
@@ -1113,11 +1117,19 @@ function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError
   const legacy=interactionDraft(key).legacy,unmapped=Object.entries(legacy).filter(([id])=>!questions?.some(q=>q.id===id));
   return <section className="interaction-question" id={'task-interaction-'+item.id} tabIndex={-1} aria-busy={sending}>
     <p className="secondary">{sourceLabel}</p>
-    {free&&<p>{questions?.[0]?.question??item.question}</p>}
+    {free&&!item.options&&<p>{questions?.[0]?.question??item.question}</p>}
     {free&&!!questions?.[0]?.options.length&&<ul>{questions[0].options.map(option=><li key={option.label}>{option.label}{option.description?'：'+option.description:''}</li>)}</ul>}
     {item.reason&&<p className="secondary">{item.reason}</p>}
     {unmapped.length>0&&<details><summary>旧版未提交内容已保留</summary>{unmapped.map(([id,value])=><p key={id}>{value}</p>)}</details>}
-    {free?<>{accepted?<p role="status">答复已接收，待荷马处理。</p>:<button type="button" disabled={!verified||sending} onClick={()=>onAnswer?.(item)}>回答此问题</button>}</>:<fieldset className="interaction-controls" disabled={closed&&!verified||sending||!!pending&&!accepted}>
+    {item.options&&<fieldset className="interaction-controls interaction-business-options" disabled={!verified||busy||!!pending}>
+      <QuestionFlow steps={[{id:item.id,question:item.question,options:item.options}]} onComplete={values=>{
+        const id=values[item.id]?.[0];
+        const option=item.options?.find(option=>option.id===id);
+        if(!option)throw Error('当前选项不可用。');
+        return respond(undefined,option.label+'\n'+option.description,undefined,false,option.id);
+      }}/>
+    </fieldset>}
+    {free?<>{accepted?<p role="status">答复已接收，待荷马处理。</p>:<button type="button" disabled={!verified||sending||!!pending} onClick={()=>onAnswer?.(item)}>回答此问题</button>}</>:<fieldset className="interaction-controls" disabled={closed&&!verified||sending||!!pending&&!accepted}>
       {closed?<QuestionFlow steps={questions!.map(q=>({id:q.id,question:q.question,options:q.options.map(o=>({...o,id:o.label}))}))}
         defaultValue={Object.fromEntries(Object.entries(answers).map(([id,value])=>[id,[value]]))}
         choice={receiptAnswers}

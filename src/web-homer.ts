@@ -1,4 +1,6 @@
 import {taskSourceRequestsSql} from './recursive-tasks.js';
+import {decodeConversationReferences} from './web-history.js';
+import {conversationUserText} from './user-intent.js';
 import type {DatabaseSync} from 'node:sqlite';
 import {activityOutcomes,publicActivityName} from './activity-facts.js';
 import type {DisplayMessage,TaskMessageSource} from './conversation-projection.js';
@@ -153,7 +155,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
  return messages.map(m=>({...m,...(out.has(m.id)?{taskSources:out.get(m.id)}:{}),...(unresolved.has(m.id)?{taskSourceUnresolved:true as const}:{})}));
 }
 import { readTaskOverview, readTaskDetail, readTaskSummary } from './task-overview.js';
-import { projectQuestions } from './question-schema.js';
+import { businessOptions,projectQuestions } from './question-schema.js';
 import {revealAttachmentFile} from './artifact-reveal.js';
 import type { Homer } from "./service.js";
 import { CONVERSATION_VIEW,type WebBridge,type DispatchQueuePage,type WebArtifact,type MessageAttachment,type WebApproval } from "./web-contract.js";
@@ -163,25 +165,31 @@ import { CONVERSATION_VIEW,type WebBridge,type DispatchQueuePage,type WebArtifac
 export function withInteractionResponses(db:DatabaseSync,messages:readonly DisplayMessage[],threadId:string):DisplayMessage[]{
  const requests=[...new Set(messages.flatMap(m=>m.threadId===threadId&&m.requestId?[m.requestId]:[]))];
  if(!requests.length)return [...messages];
- const rows=db.prepare(`SELECT w.id,w.kind,w.runId,w.userQuestion,w.responseUserText,
+ const rows=db.prepare(`SELECT w.id,w.kind,w.source,w.runId,w.userQuestion,w.responseUserText,u.text userText,u.quote userQuote,
   json_extract(w.details,'$.approval') approval,json_extract(w.details,'$.method') method,
   json_extract(w.details,'$.params.questions') questions,w.decision,w.state,w.deliveredAt,c.requestId,c.replyId,u.id userId
   FROM worker_interactions w
   JOIN conversation_inputs c ON c.requestId=w.responseUserMessageId AND c.threadId=?
-  JOIN conversation_messages u ON u.threadId=c.threadId AND u.requestId=c.requestId AND u.role='user' AND u.text=w.responseUserText
+  JOIN conversation_messages u ON u.threadId=c.threadId AND u.requestId=c.requestId AND u.role='user'
   LEFT JOIN conversation_inputs source ON source.requestId=json_extract(w.authority,'$.sourceRequestId') AND source.threadId=c.threadId
   WHERE w.responseUserMessageId IN (${requests.map(()=>'?').join(',')})
   AND (source.requestId IS NOT NULL OR (json_extract(w.details,'$.method')='homer_preview_location' AND json_extract(w.details,'$.historyThreadId')=c.threadId))
   AND (json_type(w.details,'$.historyThreadId') IS NULL OR json_extract(w.details,'$.historyThreadId')=c.threadId)`)
-  .all(threadId,...requests) as {id:string;kind:'authorization'|'question';runId:string;userQuestion:string|null;responseUserText:string;approval:string|null;method:string|null;questions:string|null;decision:string|null;state:string;deliveredAt:number|null;requestId:string;replyId:string;userId:string}[];
+  .all(threadId,...requests) as {id:string;kind:'authorization'|'question';source:string;runId:string;userQuestion:string|null;responseUserText:string;userText:string;userQuote:string|null;approval:string|null;method:string|null;questions:string|null;decision:string|null;state:string;deliveredAt:number|null;requestId:string;replyId:string;userId:string}[];
  const byRequest=new Map<string,typeof rows[number]|null>();
  for(const row of rows)byRequest.set(row.requestId,byRequest.has(row.requestId)?null:row);
  const cards=new Map<string,NonNullable<DisplayMessage['interaction']>>(),hidden=new Set<string>();
  const text=(value:unknown):value is string=>typeof value==='string'&&!!value.trim();
  for(const row of byRequest.values()){
   if(!row)continue;
+  if(row.userText!==row.responseUserText){
+   if(row.kind!=='question'||row.source!=='ask_main'||!row.userQuote)continue;
+   try{
+    if(conversationUserText({text:row.userText,...decodeConversationReferences(row.userQuote)})!==row.responseUserText)continue;
+   }catch{continue;}
+  }
   const approval:WebApproval|undefined=row.approval?JSON.parse(row.approval):undefined;
-  const card:NonNullable<DisplayMessage['interaction']>={id:row.id,kind:row.kind,title:row.userQuestion??'',answers:[{text:row.responseUserText}]};
+  const card:NonNullable<DisplayMessage['interaction']>={id:row.id,kind:row.kind,title:row.userQuestion??'',answers:row.userText.trim()?[{text:row.userText}]:[]};
   if(row.kind==='authorization'){
    card.title=text(approval?.title)?approval.title:'';
    const description=[approval?.context,approval?.explanation];
@@ -260,7 +268,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
     const rows=app.store.db.prepare("SELECT id,rowid position FROM worker_interactions WHERE state='pending_user' AND responseUserMessageId IS NULL AND rowid>? ORDER BY rowid LIMIT 81").all(after),selected=rows.slice(0,80);
     const facts=new Map(selected.length?app.store.db.prepare(`SELECT i.id,t.title,(SELECT id FROM conversation_messages c WHERE c.threadId=? AND c.requestId=json_extract(i.authority,'$.sourceRequestId') AND c.role='user' ORDER BY c.rowid DESC LIMIT 1) sourceMessageId
       FROM worker_interactions i LEFT JOIN runs r ON r.id=CASE WHEN i.runId LIKE 'main-native:worker-native:%' THEN substr(i.runId,27) ELSE i.runId END LEFT JOIN tasks t ON t.id=r.taskId WHERE i.id IN (${selected.map(()=>'?').join(',')})`).all(app.store.meta('mainThread')!,...selected.map(row=>String(row.id))).map(row=>[String(row.id),row]):[]);
-    return {items:selected.map(({id})=>app.interactions.inspect(String(id))).map(item=>({id:item.id,runId:item.runId,kind:item.kind,workTitle:String(facts.get(item.id)?.title??(item.runId.startsWith('main-native:worker-native:')?'后台原生请求':item.runId.startsWith('main-native:')?'主对话':'后台工作')),sourceRequestId:item.authority.sourceRequestId,...(facts.get(item.id)?.sourceMessageId?{sourceMessageId:String(facts.get(item.id)!.sourceMessageId)}:{}),question:item.userQuestion??'请补充完成这项工作所需的信息。',reason:item.escalationReason,...(item.kind==='authorization'&&item.details.approval?{approval:item.details.approval as WebApproval}:{}),...(item.details.method==='mcpServer/elicitation/request'&&(item.details.params as any)?._meta?.codex_approval_kind==='mcp_tool_call'?{canCancel:true as const}:{}),questions:item.runId.startsWith('main-native:')?projectQuestions(item.kind,item.details):undefined})),after:rows.length>80?Number(selected.at(-1)!.position):null};
+    return {items:selected.map(({id})=>app.interactions.inspect(String(id))).map(item=>({id:item.id,runId:item.runId,kind:item.kind,workTitle:String(facts.get(item.id)?.title??(item.runId.startsWith('main-native:worker-native:')?'后台原生请求':item.runId.startsWith('main-native:')?'主对话':'后台工作')),sourceRequestId:item.authority.sourceRequestId,...(facts.get(item.id)?.sourceMessageId?{sourceMessageId:String(facts.get(item.id)!.sourceMessageId)}:{}),...(item.source==='ask_main'&&item.kind==='question'&&item.details.userOptions?{options:businessOptions(item.details.userOptions)}:{}),question:item.userQuestion??'请补充完成这项工作所需的信息。',reason:item.escalationReason,...(item.kind==='authorization'&&item.details.approval?{approval:item.details.approval as WebApproval}:{}),...(item.details.method==='mcpServer/elicitation/request'&&(item.details.params as any)?._meta?.codex_approval_kind==='mcp_tool_call'?{canCancel:true as const}:{}),questions:item.runId.startsWith('main-native:')?projectQuestions(item.kind,item.details):undefined})),after:rows.length>80?Number(selected.at(-1)!.position):null};
   };
   return {
     history:{
@@ -391,6 +399,6 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
     queue:{edit:async input=>app.editQueued(input),cancel:async input=>app.cancelQueued(input),move:async input=>app.moveQueued(input),interrupt:async(input,target)=>app.submitMessage(input,undefined,target)},
     stop: id => app.stopMain(id),
     feedback: async (id, value) => app.history.feedback(app.store.meta('mainThread')!, id, value),
-    respond: async (id, input) => app.submitMessage({ ...input, interactionId: id }),
+    respond: async (id, input) => 'optionId' in input?app.submitBusinessOption(id,input):app.submitMessage({ ...input, interactionId: id }),
   };
 }

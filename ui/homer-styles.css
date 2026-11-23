@@ -183,6 +183,10 @@
 @media(max-width:600px){.desktop-settings-popup{inset:0;transform:none;width:100%;height:100dvh;border:0;border-radius:0}.desktop-settings-layout{flex-direction:column}.desktop-settings-nav{width:100%;padding:9px 16px;border-right:0;border-bottom:1px solid var(--line)}.desktop-settings-content{padding:22px 18px;scrollbar-gutter:auto}.desktop-settings-heading{padding:12px 10px 4px 18px}.desktop-settings-description{padding:0 18px 13px;font-size:12px}.desktop-settings-footer{padding:8px 13px}}
 
 /* Questions keep the official surface; only source, receipt and editor context live here. */
+.interaction-business-options [data-slot="option-list"] button {
+  margin-block: 3px;
+  border: 1px solid var(--line);
+}
 .interaction-question{margin:20px 0;min-width:0;overflow-wrap:anywhere}.interaction-question>p{white-space:pre-wrap;font-size:15px;line-height:1.7;margin:10px 0}.interaction-question>.secondary{font-size:12px;color:var(--muted)}.interaction-question>button,.interaction-question>p button{min-height:44px;padding:8px 12px}.interaction-controls{min-width:0;border:0;padding:0;margin:0}.composer-answer-target{display:flex;align-items:center;gap:12px;max-width:760px;margin:0 auto 8px;font-size:14px}.composer-answer-target span{min-width:0;overflow-wrap:anywhere;flex:1}.composer-answer-target button{min-height:44px;flex-shrink:0;padding:8px}.interaction-question details p{white-space:pre-wrap}.interaction-question button:focus-visible,.composer-answer-target button:focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 
 /* The quoted excerpt owns source navigation; identifiers remain in its payload. */

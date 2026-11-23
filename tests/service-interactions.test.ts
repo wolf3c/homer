@@ -1,3 +1,4 @@
+import {createWebChat} from '../src/web-chat.js';
 import {callEngineMcp} from './fixtures/host-mcp-call.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -15,7 +16,14 @@ async function until(check: () => boolean) {
   const end = Date.now() + 4000;
   while (!check()) { if (Date.now() > end) throw new Error("interaction_test_timeout"); await new Promise(done => setTimeout(done, 5)); }
 }
+const releaseOptions=[
+  {id:'publish',label:'豁免 Intel Mac 和 Windows 实机验收',description:'公开 v0.1.23 固定版本，保留 v0.1.22 为 Latest。'},
+  {id:'wait',label:'等待设备验收',description:'等 Intel Mac 和 Windows 两平台验收后再公开。'},
+];
 type InteractionScenario = {
+  business?:true;
+  clarify?:true;
+  longAnswer?:true;
   reply?: TurnResult;
   skipDecision?: boolean;
   skipDelivery?: boolean;
@@ -32,6 +40,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
   const config: Config = { runtime, workspace, codexHome:join(dir,"home"),nativeCodexHome:join(dir,"home"), codexBin: "/usr/bin/false", model: "mock", effort: "medium", requiresOpenaiAuth: false, stopGraceMs: 50 };
   const messages: Message[] = [], resumes: string[] = [], engines: Fake[] = [], mainInputs:string[]=[];
   const handoffs: string[] = [], interactionTurns: string[] = [], pausedWorkers: (() => void)[] = [];
+  const workerAnswers:string[]=[];
   const misdirected: {currentId:string;historicalId:string;currentBefore:unknown;messageBefore:unknown;errors:string[]}[] = [];
   const releaseWorkers = () => { for (const release of pausedWorkers.splice(0)) release(); };
   let sequence = 0;
@@ -45,6 +54,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
     resumeQuestion?: (value:any)=>void;
     async steer(turnId:string,message:string){
       assert.equal(turnId,this.turnId);
+      workerAnswers.push(message);
       if(scenario.skipDelivery)throw new EngineRpcUnconfirmed('engine_rpc_timeout');
       assert.ok(this.resumeQuestion);
       setImmediate(()=>this.resumeQuestion?.({status:'answered',answer:message.slice(message.indexOf('\n')+1)}));
@@ -76,7 +86,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
           if(scenario.skipDelivery)pausedWorkers.push(()=>this.resumeQuestion?.({status:'cancelled'}));
           reply=await continuation;
         }
-        if (scenario.skipDelivery && mode!=="answer") await new Promise<void>(done => pausedWorkers.push(done));
+        if (scenario.skipDelivery && mode!=="answer" && !scenario.business) await new Promise<void>(done => pausedWorkers.push(done));
         if (this.closed || reply.status === "cancelled" || reply.status === "expired") return { status: "interrupted", text: "stopped" };
         resumes.push(this.threadId);
         writeFileSync(join(this.options.cwd, "answer-" + this.threadId + ".md"), `# 合成成果\n${reply.answer ?? reply.decision?.action ?? reply.status}`);
@@ -110,7 +120,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
           this.emit("nativeProcess", { threadId: this.threadId, turnId: this.turnId, itemId: "handoff-" + id, category: "fileChange", status: "completed", completed: true, fileCount: 1 });
         }
         if (mode === "user" || mode === "hang") {
-          await callEngineMcp(this, "escalate_interaction", { interactionId: id, question: `请指定 ${item.runId} 的格式`, reason: "合成歧义" });
+          await callEngineMcp(this, "escalate_interaction", { interactionId: id, question: `请指定 ${item.runId} 的格式`, reason: "合成歧义",...(scenario.business?{options:releaseOptions}:{}) });
           return scenario.reply ?? { status: "completed", text: `请指定 ${item.runId} 的格式。` };
         }
         if (scenario.skipDecision) return scenario.reply ?? { status: "completed", text: "已处理" };
@@ -121,6 +131,16 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
         }
         await callEngineMcp(this, "respond_interaction", { interactionId: id, action: mode === "direct" ? "approve" : mode === "deny" ? "deny" : "answer", reason: "当前任务范围与材料足够判断", answer: mode === "answer" ? item.details.question : null, answers: null, permissions: mode === "direct" ? item.details.params.permissions : null });
         return scenario.reply ?? { status: "completed", text: "已处理" };
+      } else if(scenario.business&&text.includes('[已接收的业务答复，用户内容]')){
+        const id=/interactionId=([^。]+)/.exec(text)![1]!;
+        await callEngineMcp(this,'inspect_interaction',{interactionId:id});
+        if(scenario.clarify&&!text.includes('更正为等待设备验收')){
+          const final={itemId:'clarification-'+this.turnId,phase:'final_answer',text:'请确认发布范围。'};
+          this.emit('agentMessage',{...final,threadId:this.threadId,turnId:this.turnId,completed:true});
+          return {status:'completed',text:final.text,messages:[final]};
+        }
+        await assert.rejects(callEngineMcp(this,'respond_interaction',{interactionId:id,action:'approve',reason:'业务答复不授权'}),/interaction_user_reply_required|interaction_response_kind/);
+        await callEngineMcp(this,'respond_interaction',{interactionId:id,action:'answer',reason:'已核对用户决定',answer:scenario.longAnswer?'补'.repeat(12_000):'请按用户确认的范围处理。'});
       } else if (mode === "approve" && text.includes("[用户答复原待答]")) {
         const id = /interactionId=([^。]+)/.exec(text)![1]!;
         const item = await callEngineMcp(this, "inspect_interaction", { interactionId: id });
@@ -146,7 +166,7 @@ async function fixture(mode: "answer" | "user" | "deny" | "approve" | "direct" |
   }
   app = new Homer(config, async message => { messages.push(message); }, (options, handler) => new Fake(options, handler));
   await app.start();
-  return { app, config, messages, engines, resumes, handoffs, interactionTurns, releaseWorkers, mainInputs, misdirected,
+  return { app, config, messages, engines, resumes, workerAnswers, handoffs, interactionTurns, releaseWorkers, mainInputs, misdirected,
     events: () => app.store.db.prepare("SELECT type,code FROM events ORDER BY seq").all() as { type: string; code: string | null }[],
     async restart() {
       await app.close();
@@ -505,5 +525,90 @@ test('desktop receives distinct user-pending IDs and locates a live target beyon
   assert.equal(page.cursor,999);
   f.app.interactions.cancelRun(f.app.interactions.inspect(target).runId,'synthetic_cancelled');
   await assert.rejects(history.interactions(0,epoch,target),/interaction_not_live/);
+ }finally{await f.cleanup();}
+});
+
+test('business options and targeted free answers bind once and reach both agents with their complete text',async()=>{
+ for(const choice of [...releaseOptions,undefined]){
+  const f=await fixture('user',1,{business:true});
+  try{
+   await f.app.message('dispatch','business-source');
+   await until(()=>f.app.interactions.list()[0]?.state==='pending_user');
+   const item=f.app.interactions.list()[0]!;
+   const bridge=homerWebBridge(f.app),send=createWebChat(bridge);
+   const submit=(input:object)=>send('interactions.respond',{id:item.id,input});
+   assert.deepEqual((await bridge.history!.interactions(0,f.app.webReadEpoch)).items[0]?.options,releaseOptions);
+   await assert.rejects(submit({requestId:'invalid-choice',optionId:'missing'}),/interaction_answer_scope/);
+   const answer=choice?{requestId:'selected',optionId:choice.id}:{requestId:'selected',text:'可以先验收所有平台，保留当前发布。'};
+   const competing={requestId:'other-answer',text:'另一端同时提交的自由答复'};
+   const [first,second]=await Promise.allSettled([submit(answer),submit(competing)]);
+   assert.equal(first.status,'fulfilled');assert.equal(second.status,'rejected');
+   assert.equal(f.app.interactions.inspect(item.id).responseUserMessageId,'selected');
+   assert.equal((await bridge.history!.interactions(0,f.app.webReadEpoch)).items.length,0);
+   await until(()=>f.workerAnswers.length===1);
+   const expected=choice?[choice.label,choice.description]:['可以先验收所有平台，保留当前发布。'];
+   for(const part of expected){
+    assert.ok(f.mainInputs.some(text=>text.includes(part)));
+    assert.ok(f.workerAnswers[0]?.includes(part));
+   }
+   assert.equal((await submit(answer) as {fresh:boolean}).fresh,false);
+   await assert.rejects(submit({...answer,...(choice?{optionId:choice.id==='wait'?'publish':'wait'}:{text:'不同答复'})}),/request_id_conflict/);
+   assert.equal(f.workerAnswers.length,1);
+  }finally{await f.cleanup();}
+ }
+});
+
+test('quoted clarification keeps the original receipt and sends the corrected decision before first dispatch',async()=>{
+ const f=await fixture('user',1,{business:true,clarify:true});
+ try{
+  await f.app.message('dispatch','clarify-source');
+  await until(()=>f.app.interactions.list()[0]?.state==='pending_user');
+  const item=f.app.interactions.list()[0]!;
+  const accepted=f.app.submitBusinessOption(item.id,{requestId:'initial-option',optionId:'publish'});
+  await until(()=>f.app.history.message(accepted.replyId)?.text==='请确认发布范围。');
+  assert.equal(f.workerAnswers.length,0);
+  const thread=f.app.store.meta('mainThread')!;
+  const clarification=f.app.webHistoryPages().read(thread).messages.find(message=>
+   message.process?.replyMessageId===accepted.replyId&&message.text.includes('请确认发布范围。'));
+  assert.ok(clarification,'the quoted source is the user-visible Main clarification');
+  await f.app.message('更正为等待设备验收，验收后再公开。','correction',{messageId:clarification.id,text:'请确认发布范围。'});
+  await until(()=>f.workerAnswers.length===1);
+  assert.match(f.workerAnswers[0]!,/更正为等待设备验收，验收后再公开。/);
+  assert.match(f.workerAnswers[0]!,/后续决定为准/);
+  const record=f.app.interactions.inspect(item.id);
+  assert.equal(record.responseUserMessageId,'initial-option');
+  assert.equal(record.decision?.clarification?.requestId,'correction');
+  assert.match(record.responseUserText!,/保留 v0.1.22/);
+ }finally{await f.cleanup();}
+});
+
+test('an unknown delivery is preserved and a replay of the accepted answer does not resubmit it',async()=>{
+ const f=await fixture('user',1,{business:true,skipDelivery:true});
+ try{
+  await f.app.message('dispatch','unknown-source');
+  await until(()=>f.app.interactions.list()[0]?.state==='pending_user');
+  const item=f.app.interactions.list()[0]!,input={requestId:'unknown-choice',optionId:'wait'};
+  f.app.submitBusinessOption(item.id,input);
+  await until(()=>f.app.tasks.questionDelivery(item.id,f.app.tasks.run(item.runId).taskId)?.state==='uncertain');
+  assert.equal(f.app.interactions.inspect(item.id).deliveredAt,null);
+  assert.equal(f.app.submitBusinessOption(item.id,input).fresh,false);
+  assert.equal(f.workerAnswers.length,1);
+  const reopened=await f.restart();
+  assert.equal(reopened.submitBusinessOption(item.id,input).fresh,false);
+  assert.equal(reopened.interactions.inspect(item.id).deliveredAt,null);
+  assert.equal(f.workerAnswers.length,1);
+ }finally{await f.cleanup();}
+});
+
+test('an accepted maximum-length free answer reaches the Worker with the separate Main note',async()=>{
+ const f=await fixture('user',1,{business:true,longAnswer:true});
+ try{
+  await f.app.message('dispatch','long-source');
+  await until(()=>f.app.interactions.list()[0]?.state==='pending_user');
+  const item=f.app.interactions.list()[0]!,text='答'.repeat(16_000);
+  f.app.submitMessage({requestId:'long-reply',interactionId:item.id,text});
+  await until(()=>f.workerAnswers.length===1);
+  assert.ok(f.workerAnswers[0]!.includes(text));
+  assert.ok(f.workerAnswers[0]!.includes('补'.repeat(12_000)));
  }finally{await f.cleanup();}
 });

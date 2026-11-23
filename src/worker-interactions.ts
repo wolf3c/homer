@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import {businessOptions} from "./question-schema.js";
 import type { InteractionDecision } from "./worker-interaction-protocol.js";
 
 export type InteractionInput = {
@@ -69,7 +70,8 @@ export class WorkerInteractions {
       responseUserMessageId TEXT, responseUserText TEXT, runEpoch INTEGER, taskVersion INTEGER,
       deliveredAt INTEGER, code TEXT,
       createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
-    ); CREATE INDEX IF NOT EXISTS worker_interactions_run ON worker_interactions(runId,state);`);
+    ); CREATE INDEX IF NOT EXISTS worker_interactions_run ON worker_interactions(runId,state);
+    CREATE INDEX IF NOT EXISTS web_interaction_response ON worker_interactions(responseUserMessageId);`);
   }
   private row(id: string): Row {
     const row = this.db.prepare("SELECT * FROM worker_interactions WHERE id=?").get(id) as Row | undefined;
@@ -174,17 +176,20 @@ export class WorkerInteractions {
     }
     return live;
   }
-  escalate(id: string, question: string, reason: string) {
+  escalate(id: string, question: string, reason: string, choices?:unknown) {
     this.current(id);
     if (!text(question, 4000) || !text(reason, 2000)) throw new Error("interaction_escalation_required");
     const row = this.row(id);
+    if(choices!==undefined&&(row.source!=='ask_main'||row.kind!=='question'))throw Error('interaction_response_kind');
+    const options=choices===undefined?undefined:businessOptions(choices);
+    const details=JSON.parse(row.details);
     if (row.state === "pending_user") {
-      if (row.userQuestion === question && row.escalationReason === reason) return { duplicate: true };
+      if (row.userQuestion === question && row.escalationReason === reason && JSON.stringify(details.userOptions)===JSON.stringify(options)) return { duplicate: true };
       throw new Error("interaction_already_escalated");
     }
     if (row.state !== "pending_main") throw new Error("interaction_already_resolved");
-    this.db.prepare("UPDATE worker_interactions SET state='pending_user',userQuestion=?,escalationReason=?,updatedAt=? WHERE id=?")
-      .run(question, reason, Date.now(), id);
+    this.db.prepare("UPDATE worker_interactions SET state='pending_user',userQuestion=?,escalationReason=?,details=?,updatedAt=? WHERE id=?")
+      .run(question, reason, options?JSON.stringify({...details,userOptions:options}):row.details, Date.now(), id);
     this.hooks.userPending?.(id);
     return { duplicate: false };
   }

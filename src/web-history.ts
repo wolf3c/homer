@@ -35,8 +35,8 @@ export type ConversationMessage = {
   feedback?: 'up' | 'down' | null;
 };
 export type ConversationReceipt = { fresh: boolean; replyId: string };
-export type ConversationAcceptance = { source: string; persist: (receipt: ConversationReceipt) => void };
-type AcceptOptions = { source?: string; validateFresh?: () => void; persist?: ConversationAcceptance["persist"] };
+export type ConversationAcceptance = { source?: string; optionId?:string; persist: (receipt: ConversationReceipt) => void };
+type AcceptOptions = { source?: string; optionId?:string; validateFresh?: () => void; persist?: ConversationAcceptance["persist"] };
 type AssistantMessage = {
   threadId: string; requestId?: string | null; text: string; attachments?: readonly AttachmentRef[];
   taskId?: string | null; taskVersion?: number | null; operationKey: string;
@@ -50,7 +50,7 @@ export function encodeConversationReferences(input: ConversationReferences): str
   if(input.taskReference)return JSON.stringify({...resources,...messages,taskReference:input.taskReference});
   return resources ? JSON.stringify({ ...resources, ...messages }) : input.quotes ? JSON.stringify(input.quotes) : input.quote ? JSON.stringify(input.quote) : null;
 }
-function decodeConversationReferences(json: string | null): ConversationReferences {
+export function decodeConversationReferences(json: string | null): ConversationReferences {
   const value: unknown = json ? JSON.parse(json) : undefined;
   if (Array.isArray(value)) return { quotes: value as AnnotatedQuote[] };
   if (!value || typeof value !== 'object') return {};
@@ -267,7 +267,7 @@ export class ConversationHistory {
   accept(threadId: string, value: ConversationInput, options: AcceptOptions = {}) {
     const input = conversationInput(value);
     if (options.source !== undefined && !/^[a-z][a-z0-9_:-]{1,100}$/.test(options.source)) throw new Error("invalid_input_source");
-    const hash = createHash("sha256").update(JSON.stringify([input.text, input.quotes ? { quotes: input.quotes } : input.quote ?? null, input.interactionId ?? null, ...(options.source ? [options.source] : []),...(input.attachments? [{attachments:input.attachments}]:[]),...(input.questionAnswers?[{questionAnswers:input.questionAnswers}]:[]),...(input.resourceReference?[{resourceReference:input.resourceReference}]:[]),...(input.resourceReferences?[{resourceReferences:input.resourceReferences}]:[]),...(input.taskReference?[{taskReference:input.taskReference}]:[])])).digest("hex");
+    const hash = createHash("sha256").update(JSON.stringify([input.text, input.quotes ? { quotes: input.quotes } : input.quote ?? null, input.interactionId ?? null, ...(options.source ? [options.source] : []),...(options.optionId?[{optionId:options.optionId}]:[]),...(input.attachments? [{attachments:input.attachments}]:[]),...(input.questionAnswers?[{questionAnswers:input.questionAnswers}]:[]),...(input.resourceReference?[{resourceReference:input.resourceReference}]:[]),...(input.resourceReferences?[{resourceReferences:input.resourceReferences}]:[]),...(input.taskReference?[{taskReference:input.taskReference}]:[])])).digest("hex");
     const persist = (receipt: ConversationReceipt) => {
       const result: unknown = options.persist?.(receipt);
       if (result && typeof (result as PromiseLike<unknown>).then === "function") throw new Error("accept_hook_must_be_synchronous");

@@ -427,7 +427,10 @@ export class RecursiveTasks{
   this.requireMain(actor);const worker=this.worker(input.workerId);
   return this.mutation<WorkerMessageReceipt>(actor,worker.taskId,input.operationId,'worker_message',input,key=>{
    const task=this.task(worker.taskId),run=this.worker(worker.workerId).run;
-   this.writable(task);text(input.text);this.dispatchAuthority(actor,task);
+   this.writable(task);
+   // Host-bound question replies carry the complete user answer and Main's note.
+   text(input.text,questionId?1024*1024:24000);
+   this.dispatchAuthority(actor,task);
    if(questionId)this.details(key,{questionId});
    const facts={taskId:task.id,workerId:run.workerId,runId:run.id,version:run.version,status:run.status,phase:run.phase,threadId:run.threadId};
    const blocked=(reason:string):WorkerMessageReceipt=>{

@@ -1,3 +1,15 @@
+export type BusinessOption = {id:string;label:string;description:string};
+
+export function businessOptions(value:unknown):BusinessOption[]{
+  if(!Array.isArray(value)||value.length<2||value.length>8)throw Error('interaction_options_invalid');
+  const ids=new Set<string>();
+  return value.map(option=>{
+    if(!object(option)||typeof option.id!=='string'||!/^[\w-]{1,64}$/.test(option.id)||ids.has(option.id)||
+      !text(option.label,120)||!text(option.description,500))throw Error('interaction_options_invalid');
+    ids.add(option.id);
+    return {id:option.id,label:option.label.trim(),description:option.description.trim()};
+  });
+}
 export type WebQuestion = { id: string; question: string; options: { label: string; description?: string }[]; allowOther: boolean };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const text = (v: unknown, max: number): v is string => typeof v === 'string' && !!v.trim() && v.length <= max;

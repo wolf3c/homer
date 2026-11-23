@@ -2,9 +2,9 @@ import type { Tool } from "./engine.js";
 
 const str = { type: "string" };
 const nullableString = { type: ["string", "null"] };
-function tool(name: string, description: string, properties: Record<string, unknown>): Tool {
+function tool(name: string, description: string, properties: Record<string, unknown>, required=Object.keys(properties)): Tool {
   return { type: "function", name, description, inputSchema: {
-    type: "object", properties, required: Object.keys(properties), additionalProperties: false,
+    type: "object", properties, required, additionalProperties: false,
   } };
 }
 
@@ -36,7 +36,10 @@ export const MAIN_INTERACTION_TOOLS: Tool[] = [
       }, required: ["network", "fileSystem"], additionalProperties: false,
     },
   }),
-  tool("escalate_interaction", "Wait for the user only when the request exceeds the captured delegation, its authority or impact is unclear, needed information is missing, or personal confirmation is required. A read-only sandbox, temporary permission request or changed command alone is not a reason to escalate. End this main turn with a brief, nonempty final reply asking for the user's decision and explaining the necessity, scope and impact; the question stays open until answered.", { interactionId: str, question: str, reason: str }),
+  tool("escalate_interaction", "Wait for the user only when the request exceeds the captured delegation, its authority or impact is unclear, needed information is missing, or personal confirmation is required. A read-only sandbox, temporary permission request or changed command alone is not a reason to escalate. End this main turn with a brief, nonempty final reply asking for the user's decision and explaining the necessity, scope and impact; the question stays open until answered. For a Worker business question, optionally supply two to eight choices with distinct IDs, a label and the complete consequence of selecting each. Free text remains available.", {
+    interactionId:str,question:str,reason:str,
+    options:{type:'array',minItems:2,maxItems:8,items:{type:'object',properties:{id:str,label:str,description:str},required:['id','label','description'],additionalProperties:false}},
+  },['interactionId','question','reason']),
 ];
 
 export const WORKER_INTERACTION_TOOLS: Tool[] = [

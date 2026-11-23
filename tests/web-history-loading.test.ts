@@ -174,6 +174,7 @@ test('synthetic streaming updates the public final without replacing commentary'
 });
 
 import {withInteractionResponses} from '../src/web-homer.js';
+import {conversationUserText} from '../src/user-intent.js';
 function answeredInteraction(f:ReturnType<typeof historyFixture>,key:string,kind:'authorization'|'question'='authorization',details:Record<string,unknown>={},text='允许本次操作',runId='main-native:'+key){
  const thread='synthetic-history',source='source-'+key;
  f.history.accept(thread,{requestId:source,text:'原请求 '+key});
@@ -218,6 +219,31 @@ test('completed questions pair original questions by ID and keep free user text 
   const card=messages.find(m=>m.requestId===free.requestId&&m.role==='user')!.interaction!;
   assert.equal(card.title,'当时的问题 free');assert.equal(card.answers[0]?.text,'用户逐字回答\n<script>原样</script>');
   assert.ok(!JSON.stringify(card).includes('主 AI 转述'));assert.equal(messages.some(m=>m.id===native.replyId),false);
+ }finally{f.close();}
+});
+test('quoted Worker answers keep their own historical receipt and display original text',()=>{
+ const f=historyFixture(0);try{
+  const thread='synthetic-history',source='quoted-source';
+  const original=f.history.accept(thread,{requestId:source,text:'整理合成验收资料'});
+  f.history.finish(original.replyId,'请确定是否继续。','completed');
+  const item=f.interactions.open({runId:'quoted-worker',threadId:'worker-thread',turnId:'worker-turn',requestId:'ask',source:'ask_main',kind:'question',details:{question:'是否继续？'},authority:{sourceRequestId:source,description:'合成',nativeApprovals:false}},()=>true);
+  f.interactions.escalate(item.id,'是否继续？','需要用户决定');
+  const input={requestId:'quoted-reply',text:'继续整理。',quotes:[{messageId:original.replyId,text:'请确定是否继续。',annotation:''}]};
+  f.history.accept(thread,input);
+  f.interactions.respond(item.id,{action:'answer',reason:'收到真实答复',answer:input.text},{userMessageId:input.requestId,userText:conversationUserText(input)});
+  const read=()=>withInteractionResponses(f.store.db,f.history.list(thread),thread).find(m=>m.role==='user'&&m.requestId===input.requestId)!;
+  assert.deepEqual(read().interaction?.answers,[{text:input.text}]);
+  assert.deepEqual(read().quotes,input.quotes);
+  f.store.db.prepare("UPDATE worker_interactions SET responseUserText=? WHERE id=?").run('不匹配的上下文',item.id);
+  assert.equal(read().interaction,undefined);
+  const annotationOnly={...input,requestId:'annotation-only',text:'',quotes:[{...input.quotes[0]!,annotation:'仅在批注中回复。'}]};
+  f.history.accept(thread,annotationOnly);
+  f.store.db.prepare("UPDATE worker_interactions SET responseUserMessageId=?,responseUserText=? WHERE id=?")
+   .run(annotationOnly.requestId,conversationUserText(annotationOnly),item.id);
+  const annotation=withInteractionResponses(f.store.db,f.history.list(thread),thread).find(m=>m.role==='user'&&m.requestId===annotationOnly.requestId)!;
+  assert.deepEqual(annotation.interaction?.answers,[]);
+  assert.equal(annotation.interaction?.title,'是否继续？');
+  assert.deepEqual(annotation.quotes,annotationOnly.quotes);
  }finally{f.close();}
 });
 test('interaction history never infers permission from prose, foreign ownership, ambiguous or unconfirmed records',()=>{

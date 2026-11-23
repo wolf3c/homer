@@ -137,6 +137,11 @@ export function createWebChat(bridge:WebBridge){
   }
   const interaction = path.match(/^\/api\/interactions\/([\w-]{1,100})$/);
   if (interaction) {
+    if(input&&typeof input==='object'&&Object.hasOwn(input,'optionId')){
+      if(!id(input.requestId)||typeof input.optionId!=='string'||!/^[\w-]{1,64}$/.test(input.optionId)||
+        Object.keys(input).some(key=>key!=='requestId'&&key!=='optionId'))throw Error('interaction_answer_scope');
+      return bridge.respond(interaction[1]!,{requestId:input.requestId,optionId:input.optionId});
+    }
     const valid = conversationInput({...input,interactionId:interaction[1]!});
     return (await bridge.respond(interaction[1]!, { requestId: valid.requestId, text: valid.text,...(valid.questionAnswers?{questionAnswers:valid.questionAnswers}:{}) }));
   }

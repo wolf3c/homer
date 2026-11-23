@@ -4,6 +4,7 @@ export type InteractionDecision = {
   action: "approve" | "deny" | "answer" | "cancel";
   reason: string;
   answer?: string;
+  clarification?:{requestId:string};
   answers?: Record<string, string[]>;
   permissions?: unknown;
   rememberLocation?: true;

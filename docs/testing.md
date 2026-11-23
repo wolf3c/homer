@@ -849,6 +849,16 @@ HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test tests/nati
 
 交互式合成调试可显式准备独立的 UI 构建和 `HISTORY_FOLLOWUP_BUILD`，再运行 `node --import tsx scripts/recursive-acceptance.ts`。真实账号、打包桌面及 Chrome 的结果分别记录。Chrome 使用独立 profile，以 DevTools 就绪和原进程退出为准。
 
+## Worker 业务问答与引用回执
+
+定向离线回归沿已有服务和历史用例。覆盖选项后果及自由答复进入 Main 与原 Worker、两份输入抢答、同 ID 重试和冲突、引用更正、未知派送保留与重启、历史批注和严格权限匹配。
+
+```sh
+node --import tsx --test tests/service-interactions.test.ts tests/web-history-loading.test.ts tests/worker-interactions.test.ts tests/main-native-approvals.test.ts tests/service-main-native-approvals.test.ts tests/question-flow-contract.test.ts
+```
+
+`interaction-completion.browser.mjs` 在 1440、390、320px 增加业务选项及带选项时的自由答复，核对键盘、触屏模拟、精确重试载荷和重开后只读回执。通过既有合成 HTTP 与隔离 Chrome 运行，验收无需账号、真实模型或日常数据库。
+
 ## 授权与咨询完成卡片
 
 离线回归（Node 22，合成数据与临时数据库）：

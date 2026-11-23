@@ -13,30 +13,38 @@ import {isolatedChrome} from './web-history-browser-cdp.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/interaction-completion-20261111/browser');
 mkdirSync(destination,{recursive:true});
 const webDir=process.env.HOMER_COMPONENT_BUILD??await buildApprovalUI(join(destination,'web'));
-const results=[],browser=process.argv.includes('--serve')?null:await isolatedChrome(destination);
+const results=[],browser=process.argv.includes('--serve')?null:await isolatedChrome(destination,{mockKeychain:true});
 async function scene(name,width){
- const database=join(mkdtempSync(join(destination,'data-'+name+'-'+width+'-')),'history.sqlite');let store=historyFixture(0,160,false,database),approvals=new MainNativeApprovals(store.interactions,store.history),unknown=name==='allow',submissions=0;
+ const database=join(mkdtempSync(join(destination,'data-'+name+'-'+width+'-')),'history.sqlite');let store=historyFixture(0,160,false,database),approvals=new MainNativeApprovals(store.interactions,store.history),unknown=['allow','business'].includes(name),submissions=0;
+ const payloads=[];
+ const business=name.startsWith('business'),openAnswer=name==='free'||business;
  const thread='synthetic-history',scope={threadId:thread,turnId:'turn',generationId:name+'-'+width,sourceRequestId:'original',userText:'合成请求',isCurrent:()=>true};
- store.history.accept(thread,{requestId:'original',text:name==='free'?'请整理一份问题说明。':name==='question'?'关于页面中加上版本信息。':'请检查隔离浏览器截图是否可用。'});
+ store.history.accept(thread,{requestId:'original',text:business?'请整理并核对桌面固定版本的验收计划。':name==='free'?'请整理一份问题说明。':name==='question'?'关于页面中加上版本信息。':'请检查隔离浏览器截图是否可用。'});
  const questions=[{id:'format',question:'版本信息如何显示？',options:[{label:'版本号和构建号'},{label:'仅版本号'}]},{id:'audience',question:'面向谁展示？',options:[{label:'所有用户'},{label:'开发人员'}]}];
  const native={requestId:name,threadId:thread,turnId:'turn',itemId:name,kind:name==='question'?'question':'authorization',method:name==='question'?'item/tool/requestUserInput':'item/commandExecution/requestApproval',details:name==='question'?{questions}:{command:'node /synthetic/中文目录/'+('long-path-'.repeat(9))+'/browser-check.mjs',cwd:'/synthetic/临时目录',reason:'使用一次性配置验证截图，不使用日常浏览器资料。',availableDecisions:['accept','decline']}};
- const opened=name==='free'?store.interactions.open({runId:'worker-'+name,threadId:'worker-thread',turnId:'turn',requestId:name,source:'ask_main',kind:'question',details:{question:'Worker 的原始问题'},authority:{sourceRequestId:'original',description:'合成来源',nativeApprovals:true}},()=>true):approvals.open(native,scope);
- if(name==='free')store.interactions.escalate(opened.id,'你希望问题说明重点包含哪些内容？','需要确认说明范围');
+ const options=[{id:'publish',label:'豁免本轮实机验收',description:'公开固定版本并保留原 Latest。'},{id:'wait',label:'等实机验收后再公开',description:'等待 Intel Mac 和 Windows 验收。'}];
+ const opened=openAnswer?store.interactions.open({runId:'worker-'+name,threadId:'worker-thread',turnId:'turn',requestId:name,source:'ask_main',kind:'question',details:{question:'Worker 的原始问题'},authority:{sourceRequestId:'original',description:'合成来源',nativeApprovals:true}},()=>true):approvals.open(native,scope);
+ if(openAnswer)store.interactions.escalate(opened.id,business?'Intel Mac 和 Windows 尚缺实机验收。你希望如何继续？':'你希望问题说明重点包含哪些内容？',business?'需要你决定是否豁免本轮设备验收。':'需要确认说明范围',business?options:undefined);
  new WebHistoryPages(store.history,store.processes,store.inputs);
- const state=()=>{const item=store.interactions.inspect(opened.id);return {threadId:thread,messages:withInteractionResponses(store.store.db,store.history.list(thread).filter(m=>m.role==='user'||m.text.trim()),thread),interactions:item.responseUserMessageId?[]:[{id:item.id,kind:item.kind,runId:item.runId,question:item.userQuestion,reason:item.escalationReason,approval:item.details.approval,questions:projectQuestions(item.kind,item.details)}],acceptedRequestIds:item.responseUserMessageId?[item.responseUserMessageId]:[],features:{taskOverview:true,nativeQuestionAnswers:true}};};
+ const state=()=>{const item=store.interactions.inspect(opened.id);return {threadId:thread,messages:withInteractionResponses(store.store.db,store.history.list(thread).filter(m=>m.role==='user'||m.text.trim()),thread),interactions:item.responseUserMessageId?[]:[{id:item.id,kind:item.kind,runId:item.runId,question:item.userQuestion,reason:item.escalationReason,sourceRequestId:'original',workTitle:business?'桌面发布验收':undefined,approval:item.details.approval,options:item.details.userOptions,questions:projectQuestions(item.kind,item.details)}],acceptedRequestIds:item.responseUserMessageId?[item.responseUserMessageId]:[],features:{taskOverview:true,nativeQuestionAnswers:true}};};
  const f=await composerFixture({webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-64.png'),interaction({body,json}){
-  submissions++;if(unknown){unknown=false;return json({error:'synthetic_unconfirmed'},503);}
-  if(name==='free'){store.history.accept(thread,{...body,interactionId:opened.id});store.interactions.respond(opened.id,{action:'answer',reason:'合成用户答复',answer:'Worker 转述，不展示'},{userMessageId:body.requestId,userText:body.text});}
+  submissions++;payloads.push(body);if(unknown){unknown=false;return json({error:'synthetic_unconfirmed'},503);}
+  if(openAnswer){
+   const option=options.find(option=>option.id===body.optionId);
+   const text=option?option.label+'\n'+option.description:body.text;
+   store.history.accept(thread,{requestId:body.requestId,text,interactionId:opened.id});
+   store.interactions.respond(opened.id,{action:'answer',reason:'合成用户答复',answer:'Worker 转述，不展示'},{userMessageId:body.requestId,userText:text});
+  }
   else approvals.respond(opened.id,body);
   f.update(state());return json({fresh:true});
  }});f.reset(state());
- return {...f,state,get submissions(){return submissions;},restart(){store.close();store=historyFixture(0,160,false,database);approvals=new MainNativeApprovals(store.interactions,store.history);new WebHistoryPages(store.history,store.processes,store.inputs);f.update(state());},close:async()=>{await f.close();store.close();}};
+ return {...f,state,payloads,get submissions(){return submissions;},restart(){store.close();store=historyFixture(0,160,false,database);approvals=new MainNativeApprovals(store.interactions,store.history);new WebHistoryPages(store.history,store.processes,store.inputs);f.update(state());},close:async()=>{await f.close();store.close();}};
 }
 if(process.argv.includes('--serve')){
  const f=await scene('question',0);console.log('Product interaction completion preview: '+f.url);
  process.once('SIGINT',async()=>{await f.close();process.exit(0);});
 }else try{
- for(const width of [1440,390,320])for(const name of ['allow','deny','question','free']){
+ for(const width of [1440,390,320])for(const name of ['allow','deny','question','free','business','business-free']){
   const f=await scene(name,width),p=await browser.page(f.url,width);
   try{
    await p.navigate();await p.until(()=>!!document.querySelector('[contenteditable=true]')&&!!document.querySelector('.interaction-list button'));
@@ -50,6 +58,27 @@ if(process.argv.includes('--serve')){
     }
    }else if(name==='question'){
     await click('版本号和构建号');await p.until(()=>document.body.textContent.includes('面向谁展示？'));await click('所有用户');
+   }else if(name==='business'){
+    const selector='#task-interaction-'+f.state().interactions[0].id+' [data-slot="option-list"] button';
+    await p.until(`!!document.querySelector(${JSON.stringify(selector+':not(:disabled)')})`);
+    if(width!==1440)await p.command('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
+    await p.evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});el.scrollIntoView({block:'center'});if(${width}===1440)el.focus({preventScroll:true});})()`);
+    await p.until(`(()=>{const el=document.querySelector(${JSON.stringify(selector)}),box=el.getBoundingClientRect();return el.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));})()`,5000);
+    await p.screenshot('business-pending-'+width+'.png');
+    const point=await p.evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)}),box=el.getBoundingClientRect();return {x:Math.round(box.x+box.width/2),y:Math.round(box.y+box.height/2),focused:el===document.activeElement};})()`);
+    if(width===1440){
+     assert.equal(point.focused,true);
+     await p.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+     await p.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    }else{
+     await p.command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:point.x,y:point.y,id:1}]});
+     await p.command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    }
+    try{await p.until(()=>document.body.textContent.includes('上次答复尚未确认'),5000);}
+    catch(error){throw Error(JSON.stringify({width,payloads:f.payloads,body:await p.evaluate(()=>document.body.innerText.slice(-1600))}),{cause:error});}
+    await click('核对并重试原答复');
+    assert.deepEqual(f.payloads[0],f.payloads[1]);
+    assert.deepEqual(Object.keys(f.payloads[1]).sort(),['optionId','requestId']);
    }else{
     await click('回答此问题');await p.evaluate(()=>document.querySelector('[contenteditable=true]').focus());await p.command('Input.insertText',{text:'重点说明已确认的原因。\n验证结果和剩余限制。'});
     await p.evaluate(()=>document.querySelector('button[aria-label="提交答复"]').click());
@@ -59,20 +88,23 @@ if(process.argv.includes('--serve')){
     const group=document.querySelector('.interaction-message > [role="group"]'),receipt=group.querySelector('[data-slot="question-flow"]'),approval=group.querySelector('[data-slot="approval-card"]'),paper=receipt??approval??group;
     return {text:group.innerText,count:document.querySelectorAll('.interaction-message > [role="group"]').length,background:getComputedStyle(paper).backgroundColor,left:paper.getBoundingClientRect().left,parent:document.querySelector('.messages').getBoundingClientRect().left,overflow:document.documentElement.scrollWidth>innerWidth,buttons:group.querySelectorAll('button,details').length,receipt:receipt?.dataset.state??null,approval:!!approval,decision:approval?.querySelector('[role="status"]')?.textContent??null};
    });
-   assert.equal(before.count,1);assert.equal(before.background,'rgb(255, 255, 255)');assert.equal(before.left,before.parent);assert.equal(before.overflow,false);assert.equal(before.buttons,0);assert.equal(before.receipt,['question','free'].includes(name)?'receipt':null);
+   assert.equal(before.count,1);assert.equal(before.background,'rgb(255, 255, 255)');assert.equal(before.left,before.parent);assert.equal(before.overflow,false);assert.equal(before.buttons,0);assert.equal(before.receipt,['question','free','business','business-free'].includes(name)?'receipt':null);
    assert.doesNotMatch(before.text,/你的回答|决定已接收|查看完整|查看原问题|Worker 转述/);
    assert.equal(await p.evaluate(()=>!!document.querySelector('.completed-interaction-navigation')),false);
    if(['allow','deny'].includes(name)){assert.equal(before.approval,true);assert.equal(before.decision,name==='allow'?'你已允许本次操作':'你已拒绝本次操作');}
    if(name==='free')assert.match(before.text,/原因。\n验证结果/);
-   assert.match(before.text,name==='allow'?/你已允许本次操作/:name==='deny'?/你已拒绝本次操作/:name==='question'?/版本信息如何显示？[\s\S]*版本号和构建号[\s\S]*面向谁展示？[\s\S]*所有用户/:/重点说明已确认/);
+   if(name==='business')assert.match(before.text,/公开固定版本并保留原 Latest/);
+   else assert.match(before.text,name==='allow'?/你已允许本次操作/:name==='deny'?/你已拒绝本次操作/:name==='question'?/版本信息如何显示？[\s\S]*版本号和构建号[\s\S]*面向谁展示？[\s\S]*所有用户/:/重点说明已确认/);
    await p.command('Page.reload');await p.until(()=>!!document.querySelector('.interaction-message > [role="group"]'));
    assert.equal(await p.evaluate(()=>document.querySelector('.interaction-message > [role="group"]').innerText),before.text);
    f.restart();await p.command('Page.reload');await p.until(()=>!!document.querySelector('.interaction-message > [role="group"]'));
    assert.equal(await p.evaluate(()=>document.querySelector('.interaction-message > [role="group"]').innerText),before.text);
    await p.evaluate(()=>document.querySelector('.interaction-message > [role="group"]').scrollIntoView({block:'center'}));await p.screenshot(name+'-'+width+'.png');
-   assert.deepEqual(p.errors,[]);assert.deepEqual(p.blocked,[]);assert.equal(f.submissions,name==='allow'?2:1);
-   results.push({width,name,passed:true,unknownReceipt:name==='allow',refresh:true,reopenedDatabase:true});
+   assert.deepEqual(p.errors,[]);assert.deepEqual(p.blocked,[]);assert.equal(f.submissions,['allow','business'].includes(name)?2:1);
+   results.push({width,name,passed:true,unknownReceipt:['allow','business'].includes(name),refresh:true,reopenedDatabase:true});
   }finally{await p.close();await f.close();}
  }
  writeFileSync(join(destination,'results.json'),JSON.stringify(results,null,2));console.log(JSON.stringify({passed:results.length,results}));
-}finally{await browser?.close();}
+}finally{
+ if(browser){const exit=await browser.close();assert.equal(exit.code,0);assert.equal(exit.watchdog,false);assert.equal(exit.forced,false);}
+}

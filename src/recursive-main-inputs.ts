@@ -326,12 +326,12 @@ export class MainInputs {
       throw Error('queue_thread_missing');
     let queueMessageId: string | undefined;
     const receipt = this.history.accept(thread, input, {
-      source: acceptance?.source,validateFresh:()=>{validatePreviewIntent(input);this.validateQuotes?.(input);}, persist: receipt => {
+      source: acceptance?.source,optionId:acceptance?.optionId,validateFresh:()=>{validatePreviewIntent(input);this.validateQuotes?.(input);}, persist: receipt => {
         if (receipt.fresh) {
           this.admit(Buffer.byteLength(input.text));
           const key = 'op-' + randomUUID(), messageId = 'message-' + randomUUID();
           const payload: InputPayload = { requestId: input.requestId, source: acceptance?.source ?? 'local', inputHash: recursiveHash(input), inputRevision: 1, ...(interrupt ? { interrupt, interruptState: 'requested' } : {}) };
-          this.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson,revision) VALUES(?,?,?,?,?,?,'confirmed',?,?,0)").run(key, 'user:' + this.agent, input.requestId, 'accept', 'user_accept', recursiveHash(input), JSON.stringify(input.interactionId ? { interactionId: input.interactionId } : {}), JSON.stringify({ messageId, replyId: receipt.replyId }));
+          this.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson,revision) VALUES(?,?,?,?,?,?,'confirmed',?,?,0)").run(key, 'user:' + this.agent, input.requestId, 'accept', 'user_accept', recursiveHash(input), JSON.stringify(input.interactionId ? { interactionId: input.interactionId,...(acceptance?.optionId?{optionId:acceptance.optionId}:{}) } : {}), JSON.stringify({ messageId, replyId: receipt.replyId }));
           this.db.prepare("INSERT INTO agent_messages(id,senderAgentId,recipientAgentId,kind,operationKey,payloadJson) VALUES(?,?,?,'user_input',?,?)").run(messageId, 'user:' + this.agent, this.agent, key, JSON.stringify(payload));
           this.db.prepare("INSERT INTO agent_receipts(messageId,recipientAgentId,state) VALUES(?,?,'pending')").run(messageId, this.agent);
           this.db.prepare("UPDATE conversation_messages SET status='queued' WHERE requestId=? AND threadId=?").run(input.requestId, thread);

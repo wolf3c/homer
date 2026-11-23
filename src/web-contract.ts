@@ -46,7 +46,7 @@ export type WebArtifact=MessageAttachment&{id:string;title:string;sha256:string;
 export type ArtifactOrigin={message:import('./web-history.js').ConversationMessage;files:WebArtifact[]};
 export type WebWork={id:string;title:string;status:string;summary:string|null};
 export type WebApproval = { title: string; scope: string; canApprove?: false; context?: string; explanation?: string; detailLabel?: string; details?: string; rememberLocation?: true; previewPageId?: string };
-export type WebInteraction = { approval?: WebApproval; canCancel?:true; id: string; runId: string; workTitle?: string; sourceRequestId?: string; sourceMessageId?:string; kind: "question" | "authorization"; question: string; reason: string | null; questions?: import('./question-schema.js').WebQuestion[] };
+export type WebInteraction = { options?:import('./question-schema.js').BusinessOption[]; approval?: WebApproval; canCancel?:true; id: string; runId: string; workTitle?: string; sourceRequestId?: string; sourceMessageId?:string; kind: "question" | "authorization"; question: string; reason: string | null; questions?: import('./question-schema.js').WebQuestion[] };
 export type InactiveInteraction = {code?:string;id:string;kind:"question"|"authorization";state:"expired"|"cancelled";sourceRequestId:string;messageId?:string;processId?:string};
 export type WebState = {
   observedAtMs?:number;
@@ -96,5 +96,5 @@ export type WebBridge = {
   };
   stop(messageId: string): Promise<unknown>;
   feedback?(messageId: string, value: 'up' | 'down' | null): Promise<unknown>;
-  respond(id: string, input: Pick<ConversationInput,'requestId'|'text'|'questionAnswers'>): Promise<unknown>;
+  respond(id: string, input: Pick<ConversationInput,'requestId'|'text'|'questionAnswers'>|{requestId:string;optionId:string}): Promise<unknown>;
 };
