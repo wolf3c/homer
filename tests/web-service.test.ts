@@ -75,6 +75,50 @@ test('desktop message-file reads require a visible Markdown link and read its cu
  }finally{await Promise.all([web.close(),desktop.close()]);await f.app.close();}
 });
 
+test('inline Markdown images read current desktop bytes only within the authorized workspace',async()=>{
+ const f=fixture(),threadId='synthetic-main',messageId='inline-image',token='a'.repeat(64);
+ const path=join(f.base,'workspace','inline.png'),destination=pathToFileURL(path).href;
+ const outside=join(f.base,'outside.png'),outsideUrl=pathToFileURL(outside).href;
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9SsAAAAASUVORK5CYII=','base64');
+ writeFileSync(path,png);writeFileSync(outside,png);
+ const web=await createWebServer({bridge:homerWebBridge(f.app),port:0,desktopAccessToken:token});
+ const read=(url:string,inlineImage=true,access=true)=>fetch(web.url+'/api/preview/message-file',{
+  method:'POST',headers:{Origin:web.url,'Content-Type':'application/json',...(access?{'X-Homer-Desktop-Access':token}:{})},
+  body:JSON.stringify({threadId,messageId,destination:url,...(inlineImage?{inlineImage:true}:{})}),
+ });
+ try{
+  await f.app.start();
+  f.app.history.record(messageId,threadId,`![图][src]\n\n[src]: ${destination}\n\n![外部](${outsideUrl})`);
+  const first=await read(destination);
+  assert.equal(first.status,200);assert.equal(first.headers.get('content-type'),'image/png');
+  assert.deepEqual(Buffer.from(await first.arrayBuffer()),png);
+  assert.equal((await read(destination,false)).status,409);
+  assert.equal((await read(destination,true,false)).status,401);
+  assert.equal((await read(outsideUrl)).status,409);
+  const updated=Buffer.concat([png,Buffer.from([0])]);writeFileSync(path,updated);
+  assert.deepEqual(Buffer.from(await (await read(destination)).arrayBuffer()),updated);
+  writeFileSync(path,'not an image');assert.equal((await read(destination)).status,409);
+  rmSync(path);assert.equal((await read(destination)).status,409);
+  writeFileSync(path,png);f.app.history.revokeMessage(threadId,messageId);
+  assert.equal((await read(destination)).status,409);
+  const engine=f.engines.find(candidate=>!candidate.worker)!;
+  const final={itemId:'inline-fixed',phase:'final_answer',text:`![固定](${destination})\n\n[下载](${destination})`};
+  engine.turn=async(_text,options)=>{
+   engine.turnId='inline-fixed-turn';options?.onStarted?.(engine.turnId);
+   engine.emit('agentMessage',{threadId,turnId:engine.turnId,...final,completed:true});
+   return {status:'completed',text:final.text,messages:[final]};
+  };
+  await f.app.message('固定图像','inline-fixed');
+  const fixed=f.app.history.list(threadId).find(row=>row.requestId==='inline-fixed'&&row.attachments?.length)!;
+  const input={threadId,messageId:fixed.id,destination,inlineImage:true};
+  writeFileSync(path,updated);
+  assert.deepEqual(f.app.readMessageFile(input).bytes,png);
+  const ref=fixed.attachments![0]!;
+  rmSync(f.app.media.readAttachment(ref).path);
+  assert.throws(()=>f.app.readMessageFile(input),/media_file_missing/);
+ }finally{await web.close();await f.app.close();}
+});
+
 test('a finalized file link keeps the delivered bytes through its process identity and fails if the mapping loses its revision',async()=>{
  const f=fixture(),threadId='synthetic-main';
  try{

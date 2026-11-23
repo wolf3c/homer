@@ -1,6 +1,6 @@
 // Real browser bundled UI + Homer owners + actual Yezi2 signaling. Synthetic data only.
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {pathToFileURL} from 'node:url';import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';import {join,resolve} from 'node:path';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {build} from 'vite';
 import {createServer} from 'node:http';
@@ -12,7 +12,7 @@ import {mobileBrowserFixture} from './fixtures/mobile-browser.ts';
 const root=process.env.HOMER_YEZI2_ROOT;if(!root)throw Error('HOMER_YEZI2_ROOT_required');
 const {startHomerRtcLab}=await import(pathToFileURL(resolve(root,'scripts/homer-rtc-lab.mjs')));
 test('bundled chat pairs, approves, sends, reconnects with one credential and revokes over RTC',{timeout:60000},async()=>{
- const base='.codex/scratch/mobile-webrtc/app-chat';mkdirSync(base,{recursive:true});
+ const base=process.env.HOMER_MOBILE_CHAT_FIXTURE??'.codex/scratch/mobile-webrtc/app-chat';mkdirSync(base,{recursive:true});
  const {html}=await buildMobileUi(base+'/ui');
  const lab=await startHomerRtcLab(),signalOrigin=new URL(lab.url).origin.replace(/^ws/,'http');
  let host,browser,page,pageServer;const errors=[];
@@ -22,7 +22,7 @@ test('bundled chat pairs, approves, sends, reconnects with one credential and re
   const invitation=await local('invite',{}),url=new URL(invitation.url);
   assert.match(url.pathname,/^\/homer\/mobile\/[a-f0-9]{64}$/);
   const binding={signalOrigin,routeId:url.pathname.split('/').at(-1),invitation:url.hash.slice(1)};
-  browser=await chromium.launch({channel:'chrome',headless:true});page=await browser.newPage({viewport:{width:393,height:852}});
+  browser=await chromium.launch({channel:'chrome',headless:true,args:['--use-mock-keychain']});page=await browser.newPage({viewport:{width:393,height:852}});
   page.setDefaultTimeout(12000);
   page.on('pageerror',error=>errors.push(error.message));
   pageServer=createServer((request,response)=>{response.writeHead(request.url==='/'?200:404,{'Content-Type':'text/html'});response.end(request.url==='/'?html:'');});pageServer.listen(0,'127.0.0.1');await once(pageServer,'listening');
@@ -61,7 +61,8 @@ test('bundled chat pairs, approves, sends, reconnects with one credential and re
   await page.waitForFunction(()=>window.__qaMessages.some(value=>value.type==='connection-status'&&value.code==='active'));
   assert.equal((await local('state')).devices.length,1);
   // Main now restores image thumbnails through the same scoped draft owner.
-  await page.getByLabel('选择附件',{exact:true}).setInputFiles({name:'synthetic-image.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGOI6tkCRwzEcQCU8hmhmgeEcAAAAABJRU5ErkJggg==','base64')});
+  const imageUpload={name:'synthetic-image.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGOI6tkCRwzEcQCU8hmhmgeEcAAAAABJRU5ErkJggg==','base64')};
+  await page.getByLabel('选择附件',{exact:true}).setInputFiles(imageUpload);
   await page.waitForFunction(()=>document.querySelector('.aui-attachment-tile-image')?.naturalWidth>0&&document.querySelector('.context-attachment-copy')?.textContent.includes('已准备'));
   await page.reload();await page.getByRole('textbox').first().waitFor();
   await page.evaluate(binding=>window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:binding})),{signalOrigin,routeId:binding.routeId,credential});
@@ -69,6 +70,21 @@ test('bundled chat pairs, approves, sends, reconnects with one credential and re
   await page.waitForFunction(()=>document.querySelector('.aui-attachment-tile-image')?.naturalWidth>0);
   assert.equal(await page.locator('.aui-attachment-root').count(),1);
   await page.locator('.aui-attachment-tile-remove').click();await page.locator('.aui-attachment-root').waitFor({state:'detached'});
+  await page.getByLabel('选择附件',{exact:true}).setInputFiles(imageUpload);
+  await page.waitForFunction(()=>document.querySelector('.context-attachment-copy')?.textContent.includes('已准备'));
+  await page.getByRole('button',{name:'发送消息',exact:true}).click();
+  const imageUntil=Date.now()+5000;
+  while(host.turns.length<3&&Date.now()<imageUntil)await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(host.turns.length,3);
+  const imageOwner=host.history.list('synthetic-mobile-main').filter(value=>value.role==='user').at(-1),imageRef=imageOwner.attachments[0];
+  const imageUrl='/api/media/'+imageOwner.id+'/'+imageRef.assetId+'/'+imageRef.revision;
+  const desktopPath=pathToFileURL(join(host.app.config.workspace,'desktop-only.png')).href;
+  host.history.record('inline-images-mobile','synthetic-mobile-main',`![历史固定图](${imageUrl})\n\n![桌面原图](${desktopPath})`);
+  await page.reload();await page.getByRole('textbox').first().waitFor();
+  await page.evaluate(binding=>window.dispatchEvent(new CustomEvent('homer-mobile-connect',{detail:binding})),{signalOrigin,routeId:binding.routeId,credential});
+  await page.locator('img[alt="历史固定图"]').scrollIntoViewIfNeeded();
+  await page.waitForFunction(()=>document.querySelector('img[alt="历史固定图"]')?.naturalWidth===4);
+  await page.getByText('桌面原图 · 图片无法在手机上显示，请在电脑端查看',{exact:true}).waitFor();
 
   await local('update',{id:state.pending.id,enabled:false});
   await page.waitForFunction(()=>window.__qaMessages.some(value=>value.type==='connection-status'&&value.code==='unavailable'));

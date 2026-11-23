@@ -79,6 +79,8 @@ import {MediaWorkQueue} from './media-work.js';
 import {analyzeVideo} from './media-video.js';
 import {nativeTokenUsage} from './native-usage.js';
 import {pcmWav} from './media-audio.js';
+const inlineImageMimes = new Set(['image/png','image/jpeg','image/webp','image/gif']);
+
 export type MainGeneration = {
   generationId: string;
   threadId: string;
@@ -356,7 +358,7 @@ export class Homer {
     if(!expected.isFile()||expected.nlink!==1)throw Error('file_type_or_size_denied');
     return {path,expected};
   }
-  private readLocalAttachment(target:string,messageLink=false){
+  private readLocalAttachment(target:string,messageLink=false,inlineImage=false){
     const {path,expected}=this.localAttachmentStat(target,messageLink);
     if(expected.size>MEDIA_POLICY.fileBytes)throw Error('file_type_or_size_denied');
     if(messageLink&&/\.zip$/i.test(path))throw Error('file_preview_unsupported');
@@ -372,6 +374,7 @@ export class Homer {
       const sample=prefix.subarray(0,prefixSize);
       if(messageLink&&prefixSize===prefix.length){
         const mime=detectMedia(sample);
+        if(inlineImage&&!inlineImageMimes.has(mime))throw Error('file_preview_unsupported');
         if(mime==='application/zip'||mime==='application/octet-stream'&&sample.includes(0))throw Error('file_preview_unsupported');
       }
       const bytes=Buffer.allocUnsafe(before.size);
@@ -2165,7 +2168,7 @@ export class Homer {
     if(preview)return {filename:asset.filename+'.wav',mime:preview.mime,data:preview.bytes.toString('base64')};
     return {filename:asset.filename,mime:asset.mime!,data:bytes.toString('base64'),sha256:asset.hash!};
   }
-  private resolveMessageFile(value:unknown){
+  private resolveMessageFile(value:unknown,inlineImage=false){
     const input=object(value),threadId=string(input.threadId,100),destination=string(input.destination,16000);
     let messageId=string(input.messageId,100);
     if(this.closing||threadId!==this.store.meta('mainThread')||!isMessageFileLink(destination))throw Error('message_file_scope_denied');
@@ -2186,7 +2189,7 @@ export class Homer {
         AND json_extract(responseJson,'$.messageId')=?`).get(reply.operationKey,node.id,reply.id);
       if(reply&&publication){
         const originalFinal=this.processes.exact(node.id)?.items.some(item=>
-          item.kind==='commentary'&&item.phase==='final_answer'&&messageFileDestination(item.text,destination));
+          item.kind==='commentary'&&item.phase==='final_answer'&&messageFileDestination(item.text,destination,inlineImage));
         if(!originalFinal||reply.threadId!==threadId||reply.revokedAt!=null||reply.audience!=='user'||reply.status!=='completed')throw Error('message_file_scope_denied');
         messageId=reply.id;
         original=reply;
@@ -2195,11 +2198,12 @@ export class Homer {
     }
     // Native final answers live in the public projection of an internal
     // process row. Match each visible Markdown part on its own.
+    if(inlineImage&&(message.role!=='assistant'||message.status!=='completed'))throw Error('message_file_scope_denied');
     const parts=messageSourceParts(message);
     const bodies=parts?.map(part=>part.text)??(message.audience==='user'?[message.text]:[]);
     let raw:string|undefined;
     for(const body of bodies){
-      raw=messageFileDestination(body,destination);
+      raw=messageFileDestination(body,destination,inlineImage);
       if(raw)break;
     }
     if(!raw)throw Error('message_file_scope_denied');
@@ -2211,15 +2215,22 @@ export class Homer {
     }
     const path=this.messageFilePath(raw);
     if(!path)throw Error('message_file_path_unsupported');
+    if(inlineImage){
+      const root=original.taskId&&original.taskVersion
+        ?this.tasks.version(original.taskId,original.taskVersion).workingDirectory??this.config.workspace
+        :this.config.workspace;
+      if(!inside(root,path))throw Error('artifact_path_denied');
+    }
     return {path,threadId};
   }
   readMessageFile(value:unknown){
-    const source=this.resolveMessageFile(value);
-    if(source.attachment){
-      const file=this.readAttachment(source.attachment);
-      return {filename:file.filename,mime:file.mime,bytes:Buffer.from(file.data,'base64')};
-    }
-    return this.withMessageFilePath(source.path!,path=>this.readLocalAttachment(path,true));
+    const inlineImage=object(value).inlineImage===true;
+    const source=this.resolveMessageFile(value,inlineImage);
+    const file=source.attachment?this.readAttachment(source.attachment):undefined;
+    const result=file?{filename:file.filename,mime:file.mime,bytes:Buffer.from(file.data,'base64')}
+      :this.withMessageFilePath(source.path!,path=>this.readLocalAttachment(path,true,inlineImage));
+    if(inlineImage&&!inlineImageMimes.has(result.mime))throw Error('file_preview_unsupported');
+    return result;
   }
   async messageFileInfo(value:unknown,reveal=false){
     const source=this.resolveMessageFile(value);

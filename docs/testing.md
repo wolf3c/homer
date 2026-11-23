@@ -1230,6 +1230,8 @@ UI类型检查、官方Canvas两项离线检查、脚本语法和独立Vite构�
 
 生产CSP回归：node --import tsx tests/display-production-images.browser.mjs，沿用上述HOMER_COMPONENT_BUILD／HOMER_BROWSER_EVIDENCE。该显式browser项直接使用真实createWebServer承载静态页面、SSE和媒体，覆盖普通网页及desktop-token模式的HTTP／HTTPS正文、过程、Canvas和Mermaid图片，断言无img-src违规且远程请求不带桌面token。旧策略阻挡已有反例；主页面仅放开img-src的http:／https:，其他指令、HTML预览及截图面板不变。移动App从内联HTML加载，不继承该HTTP CSP；原生网络策略及真机仍未验。
 
+消息 Markdown 内嵌图片使用 Node 22 与隔离 Chrome。设置 `HISTORY_FOLLOWUP_BUILD` 指向独立 Vite 构建，`HOMER_SYNTHETIC_ROOT` 和 `HOMER_BROWSER_EVIDENCE` 指向任务专用临时目录，运行 `node --import tsx tests/message-markdown-image.browser.mjs`。该用例已登记显式 browser 清单。配对浏览器复验另设 `HOMER_YEZI2_ROOT` 指向 Yezi2 信令实验环境，`HOMER_MOBILE_CHAT_FIXTURE` 指向任务临时目录，运行 `node --import tsx --test --test-name-pattern='bundled chat pairs' tests/mobile-app-chat.integration.mjs`。两项使用合成会话和独立 profile。
+
 ## Markdown 附件相对图片专项（2026-11-17）
 
 默认离线回归 `tests/markdown-resources.test.ts` 使用已有独立SQLite／附件夹具，覆盖保存的原路径、子目录与../、编码路径、正文快照、原.md删除／修改、图片变化／缺失、无原路径、原有消息授权及文件检查。`mobile-request.test.mjs`验证手机资源URL到`media.read`的参数与二进制回传；桌面鉴权断言沿用`electron-shell.test.mjs`。不读取日常账号／runtime／CODEX_HOME，不调用模型。

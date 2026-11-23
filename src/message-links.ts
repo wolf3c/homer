@@ -31,13 +31,13 @@ export function decodeMessageLink(destination:string){
   catch{return undefined;}
 }
 
-function fileLinks(root:Node){
+function fileLinks(root:Node,image=false){
   const definitions=new Map<string,Node>();
   walk(root,node=>{if(node.type==='definition'&&node.identifier&&!definitions.has(node.identifier))definitions.set(node.identifier,node);});
   const links:{node:Node;destination:string;definition?:Node}[]=[];
   walk(root,node=>{
-    const definition=node.type==='linkReference'?definitions.get(node.identifier??''):undefined;
-    const destination=node.type==='link'?node.url:definition?.url;
+    const definition=node.type===(image?'imageReference':'linkReference')?definitions.get(node.identifier??''):undefined;
+    const destination=node.type===(image?'image':'link')?node.url:definition?.url;
     if(destination&&(isMessageFileLink(destination)||messageAttachmentDestination(destination)))links.push({node,destination,definition});
   });
   return links;
@@ -47,9 +47,9 @@ export function messageFileDestinations(markdown:string){
   return [...new Set(fileLinks(parse(markdown)).map(link=>link.destination))];
 }
 
-export function messageFileDestination(markdown:string,destination:string){
+export function messageFileDestination(markdown:string,destination:string,image=false){
   const decoded=decodeMessageLink(destination);
-  if(decoded!==undefined)return messageFileDestinations(markdown).find(raw=>decodeMessageLink(raw)===decoded);
+  if(decoded!==undefined)return fileLinks(parse(markdown),image).find(link=>decodeMessageLink(link.destination)===decoded)?.destination;
 }
 
 export function externalFileMessage(markdown:string,stripLocalLinks:boolean){

@@ -110,6 +110,10 @@ async function post(path: string, value: unknown) {
   return data;
 }
 const messageUrlTransform:UrlTransform=(url,key,node)=>{
+  if(key==='src'&&node.tagName==='img'&&isMessageFileLink(url)&&!messageAttachmentDestination(url)){
+    node.properties.homerImageDestination=url;
+    return '';
+  }
   if(key==='href'&&node.tagName==='a'&&(mobileView||window.homerBrowserPreview)&&(isMessageFileLink(url)||messageAttachmentDestination(url))){
     node.properties.homerFileDestination=url;
     return '#';
@@ -125,8 +129,27 @@ const MessageMarkdownLink:NonNullable<Components['a']>=({children,href,node})=>{
   }}>{children}</a>;
   return <a href={href} target="_blank" rel="noreferrer noopener" onClick={event=>{if(href&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&browser.openLink(href,event.currentTarget))event.preventDefault();}}>{children}</a>;
 };
+const MessageMarkdownImage:NonNullable<Components['img']>=({src,alt,node})=>{
+  const id=useAuiState(s=>s.message.metadata.custom.messageId);
+  const message=useContext(ProcessMessagesContext).get(String(id));
+  const {files}=useContext(ArtifactsContext);
+  const destination=node?.properties.homerImageDestination;
+  if(typeof destination!=='string'){
+    if(!src||!/^(?:https?:\/\/|\/)/i.test(src))return <span>{alt}</span>;
+    return <LazyMarkdownImage src={src} alt={alt}/>;
+  }
+  if(message?.status==='running')return <span>{alt}</span>;
+  if(message?.status==='completed'){
+    const decoded=decodeMessageLink(destination);
+    const file=decoded===undefined?undefined:files.find(file=>file.messageId===message.id&&file.destination&&decodeMessageLink(file.destination)===decoded);
+    if(file)return <LazyMarkdownImage src={`/api/media/${file.messageId}/${file.assetId}/${file.revision}`} alt={alt}/>;
+    if(!mobileView&&window.homerBrowserPreview)return <LazyMarkdownImage src="/api/preview/message-file" alt={alt}
+      body={JSON.stringify({threadId:message.threadId,messageId:message.id,destination,inlineImage:true})}/>;
+  }
+  return <span role="status">{alt?alt+' · ':''}{mobileView?'图片无法在手机上显示，请在电脑端查看':'图片不可用'}</span>;
+};
 function Markdown() {
-  return <MarkdownTextPrimitive className="markdown" remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} urlTransform={messageUrlTransform} components={{img:LazyMarkdownImage,CodeHeader,SyntaxHighlighter:Highlight,a:MessageMarkdownLink}} />;
+  return <MarkdownTextPrimitive className="markdown" remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} urlTransform={messageUrlTransform} components={{img:MessageMarkdownImage,CodeHeader,SyntaxHighlighter:Highlight,a:MessageMarkdownLink}} />;
 }
 function ResourceDownload({path,filename,mimeType,size}:{path:string;filename:string;mimeType:string;size?:number}){
  const [error,setError]=useState('');
