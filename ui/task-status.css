@@ -16,5 +16,6 @@
 .homer-task-status .status-task-running{display:inline-flex;flex:none;margin-top:3px}
 .homer-task-status .status-task-workers{display:flex;align-items:center;gap:5px;margin-top:3px;color:hsl(var(--muted-foreground));font-size:12px;font-variant-numeric:tabular-nums}
 .homer-task-status .status-list:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:2px}
+.homer-task-status .status-list .status-archive-toggle{justify-content:flex-start}
 /* Host accessibility boundary; pinned TaskCard markup and utilities stay intact. */
 :is(.homer-task-status[data-slot="task-card"],.homer-task-status [data-slot="task-card"])>button:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:-2px}

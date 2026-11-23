@@ -62,6 +62,21 @@ try{
   await normal.click();
   ok(await normal.locator('button, [aria-expanded], svg').count()===0&&await current.getByText(/不应显示的|执行记录/).count()===0,'ordinary row has no disclosure or detail '+width);
   ok(await toggle.getAttribute('aria-expanded')==='false'&&await archive.count()===0,'archive starts collapsed '+width);
+  const layout=await toggle.evaluate(button=>{
+   const row=button.closest('.status-list').querySelector('[data-slot="task-status-row"]');
+   const title=document.createRange(),label=document.createRange();
+   title.selectNodeContents(row);
+   label.selectNode([...button.childNodes].find(node=>node.textContent==='已归档'));
+   const icon=button.querySelector('svg'),box=button.getBoundingClientRect();
+   return {
+    alignment:label.getBoundingClientRect().left-title.getBoundingClientRect().left,
+    gap:icon.getBoundingClientRect().left-label.getBoundingClientRect().right,
+    rowWidth:row.getBoundingClientRect().width,width:box.width,height:box.height,
+    rotation:getComputedStyle(icon).rotate,
+   };
+  });
+  ok(Math.abs(layout.alignment)<1&&Math.abs(layout.gap-4)<1,'archive label aligns with task titles and the arrow follows 4px after it '+width);
+  ok(Math.abs(layout.width-layout.rowWidth)<1&&layout.height>=44&&layout.rotation==='none','collapsed archive spans the row with a right arrow '+width);
   if(width===1440)ok(paths.every(path=>path==='/api/tasks'),'default loads only current matters');
   for(const task of [mixed,stopping]){
    const row=current.locator('[data-todo-id="'+task.id+'"] [data-slot="task-status-row"]');
@@ -80,12 +95,13 @@ try{
   await toggle.scrollIntoViewIfNeeded();await toggle.focus();
   const list=panel.getByRole('region',{name:'事项列表'}),scroll=()=>list.evaluate(el=>el.scrollTop),position=await scroll();
   await toggle.press('Enter');const history=archive.locator('[data-todo-id="archived"]');await history.waitFor();
-  ok(await toggle.getAttribute('aria-expanded')==='true','keyboard exposes expanded state '+width);
+  ok(await toggle.getAttribute('aria-expanded')==='true'&&await toggle.locator('svg').evaluate(icon=>icon.getAttribute('aria-hidden')==='true'&&getComputedStyle(icon).rotate==='90deg'),'keyboard exposes expanded state with a downward decorative arrow '+width);
   await archive.getByRole('button',{name:'下一页'}).click();await archive.locator('[data-todo-id="older"]').waitFor();
   await archive.getByRole('button',{name:'上一页'}).click();await history.waitFor();
   await toggle.press('Space');await archive.waitFor({state:'hidden'});
   ok(await paged.isVisible()&&Math.abs(await scroll()-position)<=1,'current page and scroll retained '+width);
-  await toggle.click();await history.waitFor();ok(await archive.getByRole('button',{name:'上一页'}).count()===0,'archive reopens on first page '+width);
+  await toggle.click({position:{x:layout.width-8,y:layout.height/2}});await history.waitFor();
+  ok(await archive.getByRole('button',{name:'上一页'}).count()===0,'clicking empty space at row end reopens archive on first page '+width);
   const historicalRow=history.locator('[data-slot="task-status-row"]');await historicalRow.click();
   ok(await historicalRow.getByText('去年报价',{exact:true}).isVisible()&&await historicalRow.getByRole('img',{name:'1 个 Worker'}).isVisible()&&await historicalRow.locator('button, [aria-expanded], .status-task-running').count()===0,'archived row shows count without execution or disclosure '+width);
   await page.screenshot({path:join(destination,'archived-'+width+'.png')});

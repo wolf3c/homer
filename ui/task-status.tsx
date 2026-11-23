@@ -64,7 +64,9 @@ function TaskList(props:ListProps){
  return <div className="status-list" ref={list} role="region" aria-label="事项列表" tabIndex={0}>
   <TaskPage {...props} view="visible"/>
   <Collapsible.Root open={archived} onOpenChange={value=>{if(value)currentPosition.current=list.current?.scrollTop??0;setArchived(value);}}>
-   <Collapsible.Trigger className={ghostButton+' min-h-11 gap-1 px-2 text-xs'}><ChevronRightIcon aria-hidden="true" className={cn('size-3',archived&&'rotate-90')}/>已归档</Collapsible.Trigger>
+   <Collapsible.Trigger className={ghostButton+' status-archive-toggle min-h-11 w-full gap-1 px-1.5 text-xs'}>
+    已归档<ChevronRightIcon aria-hidden="true" className={cn('size-3',archived&&'rotate-90')}/>
+   </Collapsible.Trigger>
    <Collapsible.Panel>{archived&&<TaskPage {...props} view="archived"/>}</Collapsible.Panel>
   </Collapsible.Root>
  </div>;
