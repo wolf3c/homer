@@ -336,7 +336,13 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
     schedules:async input=>app.readSchedules(input),
     onStateChange: listener=>app.onStateChange(listener),
     taskOverview:{
-      list:async page=>readTaskOverview(app.store.db,page),
+      list:async page=>{
+        const overview=readTaskOverview(app.store.db,page);
+        for(const task of overview.tasks){
+          if(task.historyState==='visible'&&task.workers.some(worker=>app.isWorkerExecuting?.(worker.run)===true))task.hasExecutingWorker=true;
+        }
+        return overview;
+      },
       summary:async id=>{
         const detail=readTaskSummary(app.store.db,id);
         const sources=app.store.db.prepare(`SELECT v.taskId,c.id,c.threadId FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion JOIN conversation_inputs input ON input.requestId=v.sourceRequestId JOIN conversation_messages c ON c.threadId=input.threadId AND c.requestId=input.requestId AND c.role='user' WHERE t.id=?`).all(id);

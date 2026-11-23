@@ -1,5 +1,5 @@
 import {useLayoutEffect,useRef,useState} from 'react';
-import {ListTodoIcon,ChevronRightIcon} from 'lucide-react';
+import {ListTodoIcon,ChevronRightIcon,BotIcon,LoaderCircleIcon} from 'lucide-react';
 import {Collapsible} from '@base-ui/react/collapsible';
 import type {WebState} from '../src/web-contract';
 import type {OverviewPage} from '../src/task-overview';
@@ -11,8 +11,14 @@ import {ghostButton} from './vendor/task-status/surfaces';
 import {createPortal} from 'react-dom';
 import './vendor/task-status/components.css';
 import './task-status.css';
-function TaskStatusRow({label}:{label:string}){
- return <div data-slot="task-status-row" data-item-row="true" className="truncate px-1.5 py-2 text-[13px]" title={label}>{label}</div>;
+function TaskStatusRow({label,workerCount,running}:{label:string;workerCount:number;running:boolean}){
+ return <div data-slot="task-status-row" data-item-row="true" className="px-1.5 py-2 text-[13px]" title={label}>
+  <div className="status-task-heading">
+   <span className="min-w-0">{label}</span>
+   {running&&<span className="status-task-running" role="img" aria-label="运行中" title="运行中"><LoaderCircleIcon size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none"/></span>}
+  </div>
+  {workerCount>0&&<span className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
+ </div>;
 }
 type ListProps={state:WebState;connected:boolean};
 function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewPage['view']>}){
@@ -45,7 +51,7 @@ function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewP
   {data&&!tasks.length&&<p>{archived?'暂无已归档事项。':'暂无当前事项。'}</p>}
   <div className="flex flex-col gap-1">{tasks.map(task=>{
    const title=taskName(task).text;
-   return <section key={task.id+':'+task.headVersion} data-todo-id={task.id} aria-label={title}><TaskStatusRow label={title}/></section>;
+   return <section key={task.id+':'+task.headVersion} data-todo-id={task.id} aria-label={title}><TaskStatusRow label={title} workerCount={task.workers.length} running={!archived&&!stale&&task.hasExecutingWorker===true}/></section>;
   })}</div>
   {!!pages.length&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changePage(pages.slice(0,-1))}>上一页</button>}
   {data?.nextCursor&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changePage([...pages,data.nextCursor!])}>下一页</button>}

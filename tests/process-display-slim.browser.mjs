@@ -64,7 +64,7 @@ try{
   assert.ok(await page.locator('.thread-viewport').evaluate(node=>document.activeElement===node));
   await page.getByRole('button',{name:'工作状态',exact:true}).click();
   const row=page.locator('#task-status-panel [data-slot="task-status-row"]');await row.click();
-  assert.equal(await row.innerText(),'合成精简事项');assert.equal(await row.locator('button, [aria-expanded]').count(),0);
+  assert.equal(await row.locator('.status-task-heading').innerText(),'合成精简事项');assert.ok(await row.getByRole('img',{name:'1 个 Worker'}).isVisible());assert.equal(await row.locator('button, [aria-expanded]').count(),0);
   assert.ok(!requests.some(path=>/^\/api\/tasks\/task(?:\/|$)|\/execution\/|\/history\/process/.test(path)),requests.join('\n'));await page.screenshot({path:join(destination,'work-status-'+width+'.png')});
   // Resetting the viewport reloads the same persisted synthetic scene with the panel closed.
   await page.reload();await page.getByRole('button',{name:'拒绝本次操作',exact:true}).click();await page.getByText('你已拒绝本次操作',{exact:true}).waitFor();assert.equal(decisions.at(-1)?.text,'拒绝本次操作');

@@ -4,7 +4,7 @@ import {mainProcessSourceSql} from './main-process.js';
 // Read-only Web facts. Task decisions and Worker execution have separate owners.
 export type OverviewRun={id:string;taskId:string;workerId:string;status:string;phase:string;version:number;epoch:number;sourceRequestId:string|null;createdAt?:number;startedAt?:number|null;endedAt?:number|null;stopRequestedAt?:number|null;replacesRunId?:string|null;errorCode?:string|null;threadId?:string|null;turnId?:string|null};
 export type OverviewWorker={id:string;taskId:string;title?:string|null;run:OverviewRun;pendingMain:number;pendingMainApprovals?:number;pendingMainQuestions?:number};
-export type OverviewTask={id:string;title?:string|null;goal:string|null;notes:string;headVersion:number;revision:number;state:'open'|'paused';historyState:'visible'|'archived';sourceRequestId:string|null;sourceRequestIds?:string[];creationOrder?:number;createdAt?:number;workers:OverviewWorker[]};
+export type OverviewTask={id:string;title?:string|null;goal:string|null;notes:string;headVersion:number;revision:number;state:'open'|'paused';historyState:'visible'|'archived';hasExecutingWorker?:boolean;sourceRequestId:string|null;sourceRequestIds?:string[];creationOrder?:number;createdAt?:number;workers:OverviewWorker[]};
 export type OverviewPage={view?:'visible'|'archived';before?:number};
 export type TaskOverview={tasks:OverviewTask[];nextCursor?:number;progressRevision?:number};
 export type TaskRequirement={taskId:string;version:number;goal:string|null;sourceRequestId:string|null;sourceMessageId?:string;threadId?:string};
@@ -22,7 +22,7 @@ export function readTaskOverview(db:DatabaseSync,page:OverviewPage={}):TaskOverv
        AND EXISTS(SELECT 1 FROM agent_messages m WHERE m.senderRunId=r.id AND m.kind='worker_reply' AND m.senderEpoch=i.runEpoch))
    AND (i.source='ask_main' OR NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid))`;
  const pageRows=db.prepare(`SELECT t.rowid AS creationOrder,t.id,t.title,t.notes,t.headVersion,t.revision,t.state,t.historyState,t.createdAt,
-   v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState=? AND t.rowid<? ORDER BY t.rowid DESC LIMIT 21`).all(view,before??Number.MAX_SAFE_INTEGER) as (Omit<OverviewTask,'workers'|'sourceRequestIds'>&{sources:string|null})[];
+   v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState=? AND t.rowid<? ORDER BY t.rowid DESC LIMIT 21`).all(view,before??Number.MAX_SAFE_INTEGER) as (Omit<OverviewTask,'workers'|'sourceRequestIds'|'hasExecutingWorker'>&{sources:string|null})[];
  if(!pageRows.length)return {tasks:[]};
  const tasks=pageRows.slice(0,20),ids=JSON.stringify(tasks.map(t=>t.id));
  const inPage='t.id IN (SELECT value FROM json_each(?))';

@@ -7,6 +7,7 @@ import {decodeMessageLink,externalFileMessage,isMessageFileLink,messageAttachmen
 import {withInteractionResponses} from './web-homer.js';
 import {publicActivityName,type PublicActivity} from './activity-facts.js';
 import {WebHistoryPages} from './web-history-pages.js';
+import type {OverviewRun} from './task-overview.js';
 import {ReceptionTimings} from './reception-timings.js';
 import {createHooks} from './hooks.js';
 import {attachmentReference} from './attachment-reference.js';
@@ -633,6 +634,13 @@ export class Homer {
   webHistoryPages(){return this.pageReader??=new WebHistoryPages(this.history,this.processes,this.inputs,this.channels);}
   onStateChange(observer:(reason?:'model-turn'|'user-input')=>void){this.stateObservers.add(observer);return ()=>{this.stateObservers.delete(observer);};}
   private invalidateState(reason?:'model-turn'|'user-input'){for(const observer of this.stateObservers??[])try{observer(reason);}catch{/* Notification is never business execution. */}}
+  isWorkerExecuting(run:OverviewRun):boolean {
+    if(this.closing||run.status!=='running'||run.phase!=='executing'||run.stopRequestedAt!=null||!run.threadId||!run.turnId)return false;
+    const slot=this.workers.get(run.id);
+    return !!slot&&slot.epoch===run.epoch&&slot.activeSince!==undefined&&!slot.stopping&&!slot.closing&&
+      slot.engine.available===true&&slot.engine.turnActive===true&&
+      slot.engine.threadId===run.threadId&&slot.engine.turnId===run.turnId;
+  }
   private desktopPowerProtection?:(facts:{executing:boolean;displayRequired:boolean})=>Promise<void>;
   private desktopPowerInvocations?:Set<{displayRequired:boolean}>;
   private desktopPowerResuming?:Set<EngineLike>;

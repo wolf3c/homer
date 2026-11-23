@@ -15,10 +15,11 @@ export default async function flatStatus(page,{destination}={}){
    const current=panel.getByRole('region',{name:'当前事项',exact:true});
    const purchase=current.getByRole('region',{name:'采购选型方案',exact:true});
    await purchase.getByText('采购选型方案',{exact:true}).click();
-   assert.equal(await purchase.innerText(),'采购选型方案');
+   assert.equal(await purchase.locator('.status-task-heading').innerText(),'采购选型方案');
+   assert.ok(await purchase.getByRole('img',{name:'4 个 Worker'}).isVisible());
    const uncertain=current.getByRole('region',{name:'活动资料整理',exact:true});
-   assert.equal(await uncertain.innerText(),'活动资料整理');
-   assert.equal(await uncertain.locator('svg').count(),0);
+   assert.equal(await uncertain.locator('.status-task-heading').innerText(),'活动资料整理');
+   assert.equal(await uncertain.getByRole('img',{name:'运行中'}).count(),0);
    assert.equal(await page.locator('#task-interaction-status-approval').getByRole('button',{name:'允许本次操作'}).count(),1);
    assert.equal(await panel.getByText('九月供应商比较报告',{exact:true}).count(),0);
    const archiveToggle=panel.getByRole('button',{name:'已归档',exact:true});
@@ -27,7 +28,8 @@ export default async function flatStatus(page,{destination}={}){
    const report=archive.getByRole('region',{name:'九月供应商比较报告',exact:true});
    await report.getByText('九月供应商比较报告',{exact:true}).click();
    assert.ok(await purchase.isVisible());
-   assert.equal(await report.innerText(),'九月供应商比较报告');
+   assert.equal(await report.locator('.status-task-heading').innerText(),'九月供应商比较报告');
+   assert.ok(await report.getByRole('img',{name:'1 个 Worker'}).isVisible());
    assert.equal(await panel.locator('[data-todo-id] :is(button, [aria-expanded], details)').count(),0);
    assert.equal(await panel.getByText(/执行记录|会话原文|资料整理 Worker|九月供应商比较报告\.md/).count(),0);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),width);
