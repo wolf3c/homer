@@ -40,7 +40,7 @@ export default function forgeConfig({payload,metadata,icon,distribution}){
  return {
   packagerConfig:{
    name:'Homer',executableName:'Homer',appBundleId:distribution?metadata.appId:'app.homer.desktop.candidate',appVersion:metadata.version,buildVersion:String(metadata.build),appCategoryType:'public.app-category.productivity',darwinDarkModeSupport:true,
-   extendInfo:{CFBundleDisplayName:'荷马',LSMinimumSystemVersion:metadata.minimumMacOS??'27.0',NSScreenCaptureUsageDescription:'截取你选择的窗口或区域，用于图片批注。'},icon,asar:true,prune:false,
+   extendInfo:{CFBundleDisplayName:'荷马',LSMinimumSystemVersion:metadata.minimumMacOS??'27.0',NSScreenCaptureUsageDescription:'截取你选择的窗口或区域，用于图片批注。',NSLocationUsageDescription:'当你允许预览中的网站使用位置时，荷马需要访问此 Mac 的位置。'},icon,asar:true,prune:false,
    extraResource:['homer','runtime','licenses'].map(name=>join(payload,name)),
    tmpdir:join(payload,'../packager-tmp'),
    // Keep upstream executable signatures. The Cua SDK addons load inside Electron and need its team signature.

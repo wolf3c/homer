@@ -744,10 +744,11 @@ function registerDesktopPermissions(){
   },
   'open-system-settings':async target=>{
    try{
-    const pane=target==='screen'?'Privacy_ScreenCapture':'Privacy_Accessibility';
-    await shell.openExternal('x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?'+pane);
+    const pane=target==='location'?'Privacy_LocationServices':target==='screen'?'Privacy_ScreenCapture':'Privacy_Accessibility';
+    await shell.openExternal(process.platform==='win32'?'ms-settings:privacy-location':'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?'+pane);
     return {ok:true};
    }catch{} // Dispatch failed: keep the fixed app entry as a manual fallback.
+   if(process.platform==='win32')return {ok:false,code:'open_failed'};
    try{return await shell.openPath('/System/Applications/System Settings.app')===''?{ok:true,code:'manual_navigation'}:{ok:false,code:'open_failed'};}
    catch{return {ok:false,code:'open_failed'};}
   },
@@ -755,8 +756,9 @@ function registerDesktopPermissions(){
  for(const [name,action]of Object.entries(actions))ipcMain.handle('homer:desktop-permissions:'+name,async(event,...args)=>{
   const frame=event.senderFrame,navigation=permissionNavigation;
   const screenTarget=name==='open-system-settings'&&args.length===1&&args[0]==='screen';
-  if((args.length&&!screenTarget)||!permissionCaller(event,frame))throw Error('desktop_permissions_forbidden');
-  if(process.platform!=='darwin')return {supported:false};
+  const locationTarget=name==='open-system-settings'&&args.length===1&&args[0]==='location';
+  if((args.length&&!screenTarget&&!locationTarget)||!permissionCaller(event,frame))throw Error('desktop_permissions_forbidden');
+  if(process.platform!=='darwin'&&!(process.platform==='win32'&&locationTarget))return {supported:false};
   const result=await action(...args);
   // Rechecking protects the response; an already issued OS action cannot be undone.
   if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_permissions_forbidden');

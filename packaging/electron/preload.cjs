@@ -37,8 +37,8 @@ if(process.isMainFrame===true){
  contextBridge.exposeInMainWorld('homerDesktopPermissions',{
   check:(...args)=>invoke('homer:desktop-permissions:check',args),
   promptAccessibility:(...args)=>invoke('homer:desktop-permissions:prompt-accessibility',args),
-  openSystemSettings:(...args)=>args.length===1&&args[0]==='screen'
-   ?ipcRenderer.invoke('homer:desktop-permissions:open-system-settings','screen')
+  openSystemSettings:(...args)=>args.length===1&&['screen','location'].includes(args[0])
+   ?ipcRenderer.invoke('homer:desktop-permissions:open-system-settings',args[0])
    :invoke('homer:desktop-permissions:open-system-settings',args),
  });
  contextBridge.exposeInMainWorld('homerDesktopAccount',{

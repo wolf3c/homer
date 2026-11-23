@@ -70,11 +70,25 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  async function control(action:'takeover'|'resume'|'back'|'forward'|'reload'){
   try{await window.homerBrowserPreview?.control({pageId:page.id,threadId:page.threadId,action});setNotice('');if(action==='resume')setActive(false);return true;}catch(e){setNotice(e instanceof Error?e.message:'网页操作未确认。');return false;}
  }
+ const locationSettingsAvailable=page.url.startsWith('https:')&&!!window.homerDesktopPermissions;
+ async function openLocationSettings(){
+  const manual='请在电脑的系统设置中打开「隐私与安全性」下的定位服务或位置设置。';
+  try{
+   const result=await window.homerDesktopPermissions?.openSystemSettings('location');
+   setNotice(result&&'ok'in result&&result.ok&&result.code!=='manual_navigation'?'请核对电脑的定位设置，再从原网页重新请求位置。':manual);
+  }catch{setNotice(manual);}
+ }
  const domain=page.url.startsWith('homer-preview:')?(page.source.kind==='message-file'?'本地 HTML':'HTML 附件'):new URL(page.url||'about:blank').host;
  return <div className="browser-preview"><PreviewToolbar title={page.title} detail={page.loading?domain+' · 加载中':domain} leading={<>{([{action:'back',label:'后退',Icon:ArrowLeft},{action:'forward',label:'前进',Icon:ArrowRight},{action:'reload',label:'重新加载',Icon:RotateCw}]as const).map(({action,label,Icon})=><TooltipIconButton side="top" key={action} aria-label={label} tooltip={label} onClick={()=>void control(action)}><Icon size={16} aria-hidden/></TooltipIconButton>)}</>}>
   <AnnotationButton disabled={!enabled||page.loading||syncing} aria-busy={syncing} active={active} aria-label="批注" tooltip={active?'退出网页批注':'选择网页元素批注'} onClick={()=>void control('takeover').then(ok=>{if(ok)setActive(value=>!value);})}/>
   {page.agentAssigned&&<TooltipIconButton side="top" aria-label={page.control==='agent'?'用户接手':'交还 AI'} tooltip={page.control==='agent'?'暂停 AI 写入，由你操作':'结束用户接手，允许原任务继续操作此页'} onClick={()=>void control(page.control==='agent'?'takeover':'resume')}>{page.control==='agent'?<Hand size={16} aria-hidden/>:<Play size={16} aria-hidden/>}</TooltipIconButton>}
- </PreviewToolbar>{(notice||page.error)&&<p role="status" className="canvas-note">{notice||page.error}</p>}
+ </PreviewToolbar>
+ {locationSettingsAvailable&&<details className="canvas-note">
+  <summary>网站定位授权</summary>
+  <p>网站已获准但仍无法定位时，可检查运行荷马的电脑的位置设置。</p>
+  <button type="button" onClick={()=>void openLocationSettings()}>打开系统位置设置</button>
+ </details>}
+ {(notice||page.error)&&<p role="status" className="canvas-note">{notice||page.error}</p>}
  <div className="browser-preview-viewport" ref={viewport} aria-label="内置网页内容">{suspended&&<p>关闭对话框后继续查看网页。</p>}</div></div>;
 }
 export function AttachmentBrowserPreview(props:Omit<Props,'page'>&{threadId:string;source:PreviewSource}){

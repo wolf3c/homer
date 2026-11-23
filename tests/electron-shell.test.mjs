@@ -900,6 +900,16 @@ test('retired manual Token launch flags never prompt or spawn a backend',async()
  ]){const f=await fixture(args);assert.equal(f.spawnCount(),0);assert.deepEqual(f.credentials,[]);}
 });
 const permissionEvent=f=>({sender:f.windows[0].webContents,senderFrame:f.windows[0].webContents.mainFrame});
+test('desktop location settings use fixed native destinations',async()=>{
+ for(const [platform,url] of [['darwin','x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_LocationServices'],['win32','ms-settings:privacy-location']]){
+  const f=await permissionFixture();f.setPlatform(platform);
+  const open=f.handlers.get(permissionChannels[2]);
+  await assert.rejects(()=>open(permissionEvent(f),'location','https://example.invalid'),/desktop_permissions_forbidden/);
+  assert.deepEqual(f.nonLifecycleCalls,[]);
+  assert.deepEqual(plain(await open(permissionEvent(f),'location')),{ok:true});
+  assert.deepEqual(f.nonLifecycleCalls,[['external',url]]);
+ }
+});
 const powerFacts=patch=>({runtimeAvailable:true,executing:false,displayRequired:false,nextScheduledAt:null,channels:[],...patch});
 test('Windows task wake keeps the passive channel check while the computer is already awake',async()=>{
  const f=await fixture(undefined,undefined,'win32');
@@ -1681,7 +1691,7 @@ for(const state of ['detached','destroyed','window replaced','frame replaced','n
  if(state==='navigation away and back'){f.windows[0].webContents.emit('did-start-navigation',{url:'http://127.0.0.1:56789/',isSameDocument:false,isMainFrame:true});}
  finish('');await assert.rejects(pending,/desktop_permissions_forbidden/);
 });
-test('preload exposes fixed Promise methods and only the screen settings token in the main frame',async()=>{
+test('preload exposes fixed Promise methods and allowlisted settings tokens in the main frame',async()=>{
  const source=readFileSync('packaging/electron/preload.cjs','utf8');
  for(const isMainFrame of [true,false,undefined]){
   const exposed=[],calls=[];vm.runInNewContext(source,{process:{isMainFrame},require:name=>{assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(...args)=>exposed.push(args)},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {synthetic:true};}}};}});
@@ -1692,7 +1702,7 @@ test('preload exposes fixed Promise methods and only the screen settings token i
   await notifications.set('attention',false);
   assert.deepEqual(calls.at(-1),['homer:notification','set','attention',false]);
   const browser=exposed.find(([name])=>name==='homerBrowserPreview')[1];
-  assert.deepEqual(Object.keys(browser),['list','present','control','annotations','reply','onChanged','onAnnotation','onShow']);
+  assert.deepEqual(Object.keys(browser),['list','present','control','annotations','reply','onChanged','onAnnotation','onShow','onLink']);
   for(const method of ['list','present','control','annotations','reply']){await browser[method]({pageId:'fixture'});assert.equal(calls.at(-1)[0],'homer:preview:'+method);}
   const tour=exposed.find(([name])=>name==='homerDesktopFeatureTour')[1];
   assert.deepEqual(Object.keys(tour),['pending','dismiss']);
@@ -1706,6 +1716,7 @@ test('preload exposes fixed Promise methods and only the screen settings token i
   await chatApps.health();assert.deepEqual(calls.at(-1),['homer:chat-apps','health',undefined]);
   const [name,api]=exposed.find(([name])=>name==='homerDesktopPermissions');assert.equal(name,'homerDesktopPermissions');assert.deepEqual(Object.keys(api),['check','promptAccessibility','openSystemSettings']);
   await api.openSystemSettings('screen');assert.deepEqual(calls.at(-1),[permissionChannels[2],'screen']);
+  await api.openSystemSettings('location');assert.deepEqual(calls.at(-1),[permissionChannels[2],'location']);
   for(const args of [[undefined],[null],['Screen'],['screen',true],['https://example.invalid/'],[{target:'screen'}]]){const n=calls.length;await assert.rejects(async()=>api.openSystemSettings(...args),/desktop_permissions_arguments/);assert.equal(calls.length,n);}
   for(const [i,method] of Object.keys(api).entries()){assert.equal(typeof api[method],'function');assert.equal((await api[method]()).synthetic,true);assert.deepEqual(calls.at(-1),[permissionChannels[i]]);const n=calls.length;await assert.rejects(async()=>api[method]('/tmp'),/desktop_permissions_arguments/);assert.equal(calls.length,n);}
  }

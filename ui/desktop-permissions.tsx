@@ -20,7 +20,7 @@ type Accessibility='granted'|'not-granted'|'unknown';
 type Screen='not-determined'|'denied'|'granted'|'restricted'|'unknown';
 type PermissionState={supported:false}|{supported:true;subject:'Homer';accessibility:Accessibility;screen:Screen};
 type ActionResult={supported:false}|{ok:boolean;code?:string};
-type PermissionsBridge={check:()=>Promise<PermissionState>;openSystemSettings:(target?:'screen')=>Promise<ActionResult>};
+type PermissionsBridge={check:()=>Promise<PermissionState>;openSystemSettings:(target?:'screen'|'location')=>Promise<ActionResult>};
 type CaptureShortcutState={shortcut:string;defaultShortcut:string;active:boolean;error?:'invalid'|'reserved'|'unavailable'|'save_failed'};
 export type CaptureShortcutBridge={platform?:'win32';getShortcut:()=>Promise<CaptureShortcutState>;setShortcut:(shortcut:string|null)=>Promise<CaptureShortcutState>};
 type AboutLink='website'|'github';
