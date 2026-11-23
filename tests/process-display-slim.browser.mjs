@@ -8,9 +8,10 @@ const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE),webDir=resolve(pro
 const decisions=[];let state;
 const pageReads=[];
 const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png'),historyPage:({body,json,revision})=>{
- pageReads.push(body.request.around);
- if(body.request.around!==older.id)return json({error:'history_message_not_found'},404);
  const messages=[older,...state.messages];
+ const {around,limit}=body.request;
+ if(limit===undefined)pageReads.push(around);
+ if(!messages.some(message=>message.id===around))return json({error:'history_message_not_found'},404);
  json({protocol:3,threadId:older.threadId,revision,messages,units:messages.map(m=>m.id),before:null,after:null,artifacts:state.artifacts});
 },interaction:({body,json})=>{
  decisions.push(body);state={...state,interactions:[],acceptedRequestIds:[body.requestId],messages:[...state.messages,{id:'decision',threadId:'composer-review',role:'user',text:'拒绝本次操作',status:'completed',createdAt:1700000005000,interaction:{id:'approval',kind:'authorization',title:'合成操作审批',scope:'仅隔离测试',answers:[{text:'你已拒绝本次操作'}]}}]};fixture.reset(state);json({ok:true});
@@ -18,6 +19,8 @@ const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('a
 const chrome=await openBrowser(destination,{mockKeychain:true}),checks=[];let failure,exit;
 const worker={id:'worker',taskId:'task',title:'合成 Worker',pendingUser:0,pendingMain:0,pendingUsers:[],run:{id:'run',taskId:'task',workerId:'worker',version:1,epoch:1,threadId:'worker-thread',turnId:'worker-turn',status:'running',phase:'executing',createdAt:1700000000000,startedAt:1700000001000,endedAt:null}};
 const task={id:'task',title:'合成精简事项',goal:'保留原文与审批',notes:'',headVersion:1,revision:1,state:'open',controlState:'normal',historyState:'visible',workers:[worker]};
+const noWorkers={...task,id:'no-workers',title:'没有 Worker 的长事项标题，验证省略时引用按钮仍保持独立位置和完整名称',workers:[]};
+const deepTask={...task,id:'deep',title:'未加载的已归档事项',historyState:'archived',creationOrder:24,workers:[]};
 const processNode={id:'process',messageId:'reply',threadId:'composer-review',seq:1,revision:1,sourceKind:'user',sourceMessageIds:[],turnIds:['turn'],state:'working',status:'running',items:[...['running','completed','failed','declined','interrupted','unknown','blocked'].map((status,i)=>({id:'tool-'+i,kind:'tool',seq:i+1,revision:1,status,label:'PRIVATE_TOOL',content:{input:{state:'recorded',value:'PRIVATE_INPUT'},output:{state:'recorded',value:'PRIVATE_OUTPUT'}}})),{id:'progress',kind:'commentary',seq:8,revision:1,phase:'commentary',text:'PRIVATE_PROGRESS'},{id:'final',kind:'commentary',seq:9,revision:1,phase:'final_answer',turnId:'turn',itemId:'final',text:'正式正文与事项标题保持。',completed:true},{id:'event',kind:'workerEvent',seq:10,revision:1,eventKey:'receipt',event:{eventKind:'reply_received',title:'合成精简事项',bodySource:'reply',body:'Worker 原始反馈预览'}}]};
 const message={id:'reply',threadId:'composer-review',role:'assistant',text:'正式正文与事项标题保持。',status:'running',createdAt:1700000000000,process:processNode,taskSources:[{key:'task',target:{taskId:'task',version:1},title:'合成精简事项'}]};
 const silent={...message,id:'silent',text:'',createdAt:1699900000000,taskSources:[],process:{...processNode,id:'silent',messageId:'silent',items:[
@@ -28,14 +31,22 @@ const older={...silent,id:'older',status:'completed',createdAt:1699800000000,pro
 const failed={...message,id:'failed',text:'',status:'completed',taskSources:[],taskSourceUnresolved:true,process:{...processNode,id:'failed',messageId:'failed',state:'worked',status:'completed',items:[
  {id:'failure',kind:'workerEvent',seq:1,revision:1,eventKey:'failure',event:{eventKind:'start_failed',title:'核对合成附件',bodySource:'error',body:'认证失败，请检查模型连接。'}},
 ]}};
-const quoted={id:'quoted',threadId:message.threadId,role:'user',text:'核对旧记录的位置',status:'completed',createdAt:1700000003000,quotes:[{messageId:older.id,text:'旧版摘录'}]};
+const quoted={id:'quoted',threadId:message.threadId,role:'user',text:'核对旧记录的位置',status:'completed',createdAt:1700000003000,taskReference:{taskId:deepTask.id,version:1,title:deepTask.title},quotes:[{messageId:older.id,text:'旧版摘录'}]};
 const artifact={id:'file',title:'合成成果.txt',messageId:message.id};
 try{
  for(const width of [1080,390]){
-  const context=await chrome.browser.newContext({viewport:{width,height:1000}}),page=await context.newPage(),errors=[],requests=[];
-  page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(String(e)));page.on('console',e=>{if(e.type()==='error')errors.push(e.text());});page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/'))requests.push(new URL(r.url()).pathname);});
-  await page.route('**/api/tasks',route=>route.fulfill({json:{tasks:[task]}}));
-  state={features:{draftUpload:true,taskOverview:true},messages:[silent,message,failed,quoted],artifacts:[artifact],inactiveInteractions:[{id:'expired',kind:'authorization',state:'expired',processId:'failed',sourceRequestId:'old-request'}],interactions:[{id:'approval',kind:'authorization',runId:'run',question:'合成操作审批',reason:'确认原请求',approval:{title:'合成操作审批',scope:'仅隔离测试',details:'node synthetic-check.mjs'}}]};fixture.reset(state);
+  const context=await chrome.browser.newContext({viewport:{width,height:1000},hasTouch:width===390}),page=await context.newPage(),errors=[],requests=[];
+  page.setDefaultTimeout(10000);page.on('pageerror',e=>{errors.push(String(e));console.error(e);});page.on('console',e=>{if(e.type()==='error')errors.push(e.text());});page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/'))requests.push(new URL(r.url()).pathname);});
+  const failedResponses=[];
+  page.on('response',r=>{if(r.status()>=400)failedResponses.push(r.status()+' '+new URL(r.url()).pathname);});
+  await page.route('**/api/tasks',route=>route.fulfill({json:{tasks:[task,noWorkers]}}));
+  let summaryHold;
+  await page.route('**/api/tasks/deep/summary',async route=>{
+   if(summaryHold)await summaryHold;
+   await route.fulfill({json:{taskId:deepTask.id,creationOrder:24,historyState:'archived',runs:[]}});
+  });
+  await page.route('**/api/tasks/list/archived/before/25',route=>route.fulfill({json:{tasks:[deepTask]}}));
+  state={features:{draftUpload:true,taskOverview:true,taskReference:1},runningTaskIds:['task','off-page'],messages:[silent,message,failed,quoted],artifacts:[artifact],inactiveInteractions:[{id:'expired',kind:'authorization',state:'expired',processId:'failed',sourceRequestId:'old-request'}],interactions:[{id:'approval',kind:'authorization',runId:'run',question:'合成操作审批',reason:'确认原请求',approval:{title:'合成操作审批',scope:'仅隔离测试',details:'node synthetic-check.mjs'}}]};fixture.reset(state);
   await page.goto(fixture.url);await page.getByText('正式正文与事项标题保持。',{exact:true}).waitFor();assert.equal(new URL(page.url()).origin,new URL(fixture.url).origin);assert.ok(await page.title());assert.equal(await page.locator('vite-error-overlay').count(),0);
   assert.ok((await page.locator('.message-task-title').allTextContents()).includes('合成精简事项'));assert.doesNotMatch(await page.locator('body').innerText(),/PRIVATE_|当前对话 ·|过程耗时/);assert.equal(await page.locator('[data-tool-id]').count(),0);
   const hidden=page.locator('#message-silent');
@@ -62,13 +73,75 @@ try{
   assert.equal(pageReads.at(-1),older.id);
   assert.deepEqual(await rowHeight(page.locator('#message-older')),{anchor:0,row:0});
   assert.ok(await page.locator('.thread-viewport').evaluate(node=>document.activeElement===node));
-  await page.getByRole('button',{name:'工作状态',exact:true}).click();
-  const row=page.locator('#task-status-panel [data-slot="task-status-row"]');await row.click();
+  const workStatus=page.getByRole('button',{name:'工作状态，2 项事项运行中',exact:true});
+  assert.equal(await workStatus.locator('.status-entry-count').textContent(),'2');
+  await workStatus.click();
+  const row=page.locator('[data-todo-id="task"] [data-slot="task-status-row"]');await row.click();
   assert.equal(await row.locator('.status-task-title').innerText(),'合成精简事项');assert.ok(await row.getByRole('img',{name:'1 个 Worker'}).isVisible());assert.equal(await row.getAttribute('aria-pressed'),'true');
-  assert.ok(!requests.some(path=>/^\/api\/tasks\/task(?:\/|$)|\/execution\/|\/history\/process/.test(path)),requests.join('\n'));await page.screenshot({path:join(destination,'work-status-'+width+'.png')});
+  assert.equal(await row.getByRole('img',{name:'运行中'}).count(),1);
+  const input=page.getByRole('textbox',{name:'给荷马发消息'});
+  await workStatus.click();await input.fill('补上缺少的验证结果。');await workStatus.click();
+  const ref=page.getByRole('button',{name:'引用事项：合成精简事项'});
+  const noWorkerRow=page.locator('[data-todo-id="no-workers"]');
+  const longRef=noWorkerRow.getByRole('button',{name:'引用事项：'+noWorkers.title});
+  await longRef.focus();
+  assert.equal(await noWorkerRow.locator('.status-task-workers').count(),0);
+  assert.ok(await longRef.evaluate(button=>{
+   const title=button.parentElement.querySelector('.status-task-title'),text=title.getBoundingClientRect(),control=button.getBoundingClientRect();
+   return text.right<=control.left&&Math.abs(text.top+text.height/2-control.top-control.height/2)<=1&&getComputedStyle(title).textOverflow==='ellipsis';
+  }));
+  await row.focus();
+  if(width!==390)await row.hover();
+  await page.locator('#task-status-panel').screenshot({path:join(destination,'task-reference-list-'+width+'.png'),animations:'disabled'});
+  if(width===390)await ref.tap();else{await row.hover();await ref.click();}
+  await page.getByRole('button',{name:'移除事项引用'}).waitFor();
+  assert.ok(await input.evaluate(el=>el===document.activeElement));
+  assert.equal(await input.innerText(),'补上缺少的验证结果。');
+  await page.locator('.composer-context').screenshot({path:join(destination,'task-reference-draft-'+width+'.png'),animations:'disabled'});
+  await page.getByRole('button',{name:'发送消息',exact:true}).click();
+  const sent=page.getByRole('link',{name:'查看引用事项：合成精简事项'});
+  await sent.waitFor();
+  assert.deepEqual(fixture.received.messages.at(-1)?.taskReference,{taskId:'task',version:1,title:task.title});
+  assert.equal(fixture.received.messages.at(-1)?.text,'补上缺少的验证结果。');
+  await sent.click();
+  await row.waitFor();await page.waitForFunction(()=>document.activeElement?.getAttribute('data-slot')==='task-status-row');
+  await page.screenshot({path:join(destination,'work-status-'+width+'.png'),animations:'disabled'});
+  await page.keyboard.press('Escape');
+  await page.locator('#task-status-panel').waitFor({state:'hidden'});
+  await page.getByRole('link',{name:'查看引用事项：未加载的已归档事项'}).press('Enter');
+  const target=page.locator('#task-status-panel [data-todo-id="deep"]');
+  await target.waitFor();
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('data-todo-id')==='deep');
+  assert.deepEqual(requests.filter(path=>path.includes('/api/tasks/deep/')||path.includes('/api/tasks/list/archived/before/')),['/api/tasks/deep/summary','/api/tasks/list/archived/before/25']);
+  await page.getByRole('button',{name:'返回事项列表'}).click();
+  await row.waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('#task-status-panel').waitFor({state:'hidden'});
+  let releaseSummary;
+  summaryHold=new Promise(resolve=>{releaseSummary=resolve;});
+  const firstLookup=page.waitForRequest('**/api/tasks/deep/summary');
+  await page.getByRole('link',{name:'查看引用事项：未加载的已归档事项'}).press('Enter');
+  const pendingLookup=await firstLookup;
+  const cancelled=page.waitForEvent('requestfailed',request=>request===pendingLookup);
+  await page.keyboard.press('Escape');
+  await cancelled;
+  releaseSummary();summaryHold=undefined;
+  await page.locator('#task-status-panel').waitFor({state:'hidden'});
+  await workStatus.click();await row.waitFor();
+  assert.equal(requests.filter(path=>path==='/api/tasks/deep/summary').length,2);
+  assert.equal(await target.count(),0);
+  assert.ok(!requests.some(path=>/^\/api\/tasks\/task(?:\/|$)|\/execution\/|\/history\/process/.test(path)),requests.join('\n'));
+  fixture.update({runningTaskIds:[]});
+  await page.getByRole('button',{name:'工作状态，无运行中事项'}).waitFor();
+  assert.equal(await row.getByRole('img',{name:'运行中'}).count(),0);
+  fixture.update({runningTaskIds:['task']});
+  await page.getByRole('button',{name:'工作状态，1 项事项运行中'}).waitFor();
+  fixture.unavailable();
+  await page.getByRole('button',{name:'工作状态，运行数量待核实'}).waitFor();
+  assert.equal(await row.getByRole('img',{name:'运行中'}).count(),0);
   // Resetting the viewport reloads the same persisted synthetic scene with the panel closed.
   await page.reload();await page.getByRole('button',{name:'拒绝本次操作',exact:true}).click();await page.getByText('你已拒绝本次操作',{exact:true}).waitFor();assert.equal(decisions.at(-1)?.text,'拒绝本次操作');
-  await page.screenshot({path:join(destination,'message-approval-'+width+'.png')});assert.deepEqual(errors,[]);checks.push({width,title:true,formalAnswer:true,noToolParts:true,noProgressReads:true,noCoordinationRows:true,silentAnchor:true,approvalFocusPreserved:true,failureNotice:true,inactiveNotice:true,artifact:true,staticTaskRow:true,approvalDecision:true,consoleErrors:errors});await context.close();
+  await page.screenshot({path:join(destination,'message-approval-'+width+'.png')});assert.deepEqual(errors,[],JSON.stringify({errors,failedResponses}));checks.push({width,title:true,formalAnswer:true,noToolParts:true,noProgressReads:true,noCoordinationRows:true,silentAnchor:true,approvalFocusPreserved:true,failureNotice:true,inactiveNotice:true,artifact:true,staticTaskRow:true,approvalDecision:true,taskReference:true,taskLocation:true,runningTaskCount:true,consoleErrors:errors});await context.close();
  }
 }catch(error){failure=error;const page=chrome.browser.contexts().flatMap(c=>c.pages()).at(-1);if(page){await page.screenshot({path:join(destination,'failure.png')}).catch(()=>{});writeFileSync(join(destination,'failure.txt'),await page.locator('body').innerText().catch(()=>''));}}finally{exit=await chrome.finish();await fixture.close();writeFileSync(join(destination,'result.json'),JSON.stringify({checks,exit,failure:failure?String(failure):null},null,2));}
 if(failure)throw failure;assert.equal(exit.code,0);assert.equal(exit.watchdog,false);assert.equal(exit.forced,false);console.log(JSON.stringify({checks,exit}));

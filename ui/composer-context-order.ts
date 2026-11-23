@@ -1,6 +1,6 @@
-type ContextKind='ref'|'quote'|'attachment';
+type ContextKind='ref'|'quote'|'attachment'|'task';
 export const contextKey=(kind:ContextKind,...parts:string[])=>JSON.stringify([kind,...parts]);
-function kindOf(key:string):ContextKind|undefined{try{const value:unknown=JSON.parse(key);if(Array.isArray(value)&&['ref','quote','attachment'].includes(value[0])&&value.slice(1).every(v=>typeof v==='string'))return value[0] as ContextKind;}catch{}return undefined;}
+function kindOf(key:string):ContextKind|undefined{try{const value:unknown=JSON.parse(key);if(Array.isArray(value)&&['ref','quote','attachment','task'].includes(value[0])&&value.slice(1).every(v=>typeof v==='string'))return value[0] as ContextKind;}catch{}return undefined;}
 /** Display order only. The server payload continues to use the original owners. */
 export class ContextOrder{
  private keys:string[];

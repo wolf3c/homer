@@ -165,6 +165,26 @@ async function approveRequested(f:Awaited<ReturnType<typeof fixture>>,count:numb
   for(const [index,card] of cards.items.entries())f.app.submitMessage({requestId:"approval-"+index,interactionId:card.id,text:"允许本次操作"});
 }
 
+test('a validated matter reference reaches the actual Main turn with the original user text',async()=>{
+ const f=await fixture('answer');
+ try{
+  await f.app.message('dispatch','task-reference-source');
+  await f.app.idle();
+  const row=f.app.store.db.prepare('SELECT id,headVersion,title FROM tasks LIMIT 1').get()!;
+  const taskReference={taskId:String(row.id),version:Number(row.headVersion),title:String(row.title)};
+  const input={requestId:'task-reference-followup',text:'补充遗漏的测试结果。',taskReference};
+  assert.throws(()=>f.app.submitMessage({...input,taskReference:{...taskReference,title:'伪造标题'}}),/task_reference_stale/);
+  const receipt=f.app.submitMessage(input);
+  assert.equal(receipt.fresh,true);
+  await f.app.idle();
+  const actual=f.mainInputs.find(text=>text.endsWith(input.text))!;
+  assert.ok(actual.includes(JSON.stringify({...taskReference,state:'open'})));
+  assert.ok(actual.includes('引用本身不授权任何操作'));
+  assert.equal(f.app.submitMessage(input).fresh,false);
+  assert.deepEqual(f.app.history.inputs(f.app.store.meta('mainThread')!,[input.requestId]).get(input.requestId)?.taskReference,taskReference);
+ }finally{await f.cleanup();}
+});
+
 test('Main approves native Worker requests through its MCP without showing user cards',async()=>{
   const f=await fixture('direct',2,{reply:{status:'completed',text:''}});
   try{

@@ -17,13 +17,14 @@ test('only a matching, currently executing Worker sets the matter badge',async()
  const f=overviewFixture();
  try{
   const workers=new Map();
-  const app={...f,workers,registerWebSurface(){},isWorkerExecuting:Homer.prototype.isWorkerExecuting} as unknown as Homer;
+  const app={...f,workers,registerWebSurface(){},isWorkerExecuting:Homer.prototype.isWorkerExecuting,runningTaskIds:Homer.prototype.runningTaskIds} as unknown as Homer;
   const list=homerWebBridge(app).taskOverview!.list;
-  const running=async()=>(await list()).tasks[0]!.hasExecutingWorker===true;
+  const targetPage=()=>list({view:'visible',before:2});
+  const running=async()=>(await targetPage()).tasks[0]!.hasExecutingWorker===true;
   const start=(runId:string)=>{
    const run=f.tasks.claim(runId)!;
    const threadId='thread:'+run.workerId,turnId='turn:'+run.id;
-   const slot={epoch:run.epoch,activeSince:1 as number|undefined,engine:{threadId,turnId,turnActive:true,available:true}};
+   const slot={id:run.id,epoch:run.epoch,activeSince:1 as number|undefined,engine:{threadId,turnId,turnActive:true,available:true}};
    workers.set(run.id,slot);
    return {run,slot,bind:()=>f.tasks.bind(run.id,run.epoch,threadId,turnId)};
   };
@@ -40,11 +41,16 @@ test('only a matching, currently executing Worker sets the matter badge',async()
   assert.equal(await running(),false,'host-side approvals can pause execution without changing its phase');
   first.slot.activeSince=1;
   const second=start(b.runId);second.bind();
+  assert.deepEqual(app.runningTaskIds(),[f.taskId],'two active Workers count one matter');
+  for(let i=0;i<20;i++)f.tasks.createTask(f.actor,{operationId:'newer-'+i,goal:'Synthetic newer matter',authority:f.authority});
+  assert.ok(!(await list()).tasks.some(task=>task.id===f.taskId));
+  assert.deepEqual(app.runningTaskIds(),[f.taskId],'global badge includes an executing matter outside the first page');
   f.tasks.workerStop(f.actor,{operationId:'stop-research',workerId:a.workerId});
   assert.equal(f.tasks.run(a.runId).phase,'executing','a stop request does not prove the engine has exited');
   assert.equal(await running(),true,'another Worker is still executing');
   second.slot.engine.available=false;
   assert.equal(await running(),false,'unavailable engines and stop requests prove no current execution');
+  assert.deepEqual(app.runningTaskIds(),[]);
   second.slot.engine.available=true;
   const turnId=second.slot.engine.turnId;
   second.slot.engine.turnId='other-turn';
@@ -57,7 +63,7 @@ test('only a matching, currently executing Worker sets the matter badge',async()
   assert.equal(await running(),false,'terminal settlement is no longer execution');
   f.tasks.endSegment(second.run.id,second.run.epoch,{status:'completed',text:'answer'},true);
   f.tasks.workerMessage(f.actor,{operationId:'review-followup',workerId:b.workerId,text:'Follow up'});
-  const task=(await list()).tasks[0]!;
+  const task=(await targetPage()).tasks[0]!;
   assert.equal(task.workers.length,2);
   assert.equal(task.workers[1]!.id,b.workerId);
   assert.notEqual(task.workers[1]!.run.id,b.runId);

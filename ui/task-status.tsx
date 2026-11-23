@@ -1,8 +1,10 @@
-import {useId,useLayoutEffect,useRef,useState} from 'react';
-import {ListTodoIcon,ChevronRightIcon,BotIcon} from 'lucide-react';
+import {useEffect,useId,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import {ListTodoIcon,ChevronRightIcon,BotIcon,MessageCirclePlus} from 'lucide-react';
 import {Collapsible} from '@base-ui/react/collapsible';
 import type {WebState} from '../src/web-contract';
-import type {OverviewTask} from '../src/task-overview';
+import type {OverviewTask,TaskDetail,TaskOverview} from '../src/task-overview';
+import type {TaskReference} from '../src/web-history';
+import {connectionFetch} from './web-connection-client';
 import {taskName} from '../src/task-presentation';
 import {cn} from './vendor/task-status/utils';
 import {useTaskStatusData} from './task-status-data';
@@ -11,13 +13,14 @@ import {ghostButton} from './vendor/task-status/surfaces';
 import {createPortal} from 'react-dom';
 import './vendor/task-status/components.css';
 import './task-status.css';
-function TaskStatusRow({label,workerCount,running,selected,onSelect}:{
- label:string;workerCount:number;running:boolean;selected:boolean;onSelect?:()=>void;
+function TaskStatusRow({label,workerCount,running,selected,onSelect,onReference}:{
+ label:string;workerCount:number;running:boolean;selected:boolean;onSelect?:()=>void;onReference?:()=>void;
 }){
  const id=useId();
  const Row=onSelect?'button':'div';
  const description=[running&&id+'-running',workerCount>0&&id+'-workers'].filter(Boolean).join(' ');
- return <Row data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}
+ return <div className="status-task-entry" data-reference={onReference?'available':undefined} data-workers={workerCount>0?'present':undefined}>
+ <Row data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}
   {...(onSelect?{type:'button' as const,onClick:onSelect,'aria-labelledby':id,'aria-describedby':description||undefined,'aria-pressed':selected}:{})}>
   <span id={id} className="status-task-title">{label}</span>
   {running&&<span id={id+'-running'} className="status-task-running" role="img" aria-label="运行中" title="运行中">
@@ -27,12 +30,16 @@ function TaskStatusRow({label,workerCount,running,selected,onSelect}:{
    </svg>
   </span>}
   {workerCount>0&&<span id={id+'-workers'} className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
- </Row>;
+ </Row>
+ {onReference&&<button type="button" className="status-task-reference" aria-label={'引用事项：'+label} title="引用到对话" onClick={onReference}><MessageCirclePlus size={16} aria-hidden/></button>}
+ </div>;
 }
-type ListProps={connected:boolean;refreshKey:unknown};
+type TaskLocation={taskId:string;threadId:string;readEpoch?:string};
+type ListProps={connected:boolean;refreshKey:unknown;running?:ReadonlySet<string>;onReference?:(value:TaskReference)=>void;location?:TaskLocation;onLocated?:()=>void};
 type TaskRead=ReturnType<typeof useTaskStatusData>;
-function TaskSection({archived,connected,read,tasks,tail}:{
+function TaskSection({archived,connected,read,tasks,tail,running,onReference}:{
  archived:boolean;connected:boolean;read:TaskRead;tasks:OverviewTask[];tail:React.RefObject<HTMLDivElement|null>;
+ running?:ReadonlySet<string>;onReference?:ListProps['onReference'];
 }){
  const [selectedId,setSelectedId]=useState<string>();
  const {data,reading,failure,stale,retry}=read;
@@ -46,8 +53,9 @@ function TaskSection({archived,connected,read,tasks,tail}:{
   {data&&!data.tasks.length&&<p>{archived?'暂无已归档事项。':'暂无当前事项。'}</p>}
   <div className="flex flex-col gap-1">{tasks.map(task=>{
    const title=taskName(task).text;
-   return <section key={task.id} data-todo-id={task.id} aria-label={title}>
-    <TaskStatusRow label={title} workerCount={task.workers.length} running={!archived&&!stale&&task.hasExecutingWorker===true}
+   return <section key={task.id} id={'task-'+encodeURIComponent(task.id)} data-todo-id={task.id} aria-label={title}>
+    <TaskStatusRow label={title} workerCount={task.workers.length} running={!archived&&connected&&(running?running.has(task.id):!stale&&task.hasExecutingWorker===true)}
+     onReference={onReference&&!stale?()=>onReference({taskId:task.id,version:task.headVersion,title}):undefined}
      selected={task.id===selectedId} onSelect={archived?undefined:()=>setSelectedId(id=>id===task.id?undefined:task.id)}/>
     {!archived&&<div role="status" aria-atomic="true">{task.id===selectedId&&<p className="status-full-title"><span>完整标题</span>{title}</p>}</div>}
    </section>;
@@ -58,13 +66,17 @@ function TaskSection({archived,connected,read,tasks,tail}:{
  </section>;
 }
 
-function TaskList({connected,refreshKey}:ListProps){
+function TaskList({connected,refreshKey,running,onReference,location,onLocated}:ListProps){
  const [archived,setArchived]=useState(false);
  const list=useRef<HTMLDivElement>(null);
  const beforeArchive=useRef<ReturnType<typeof readAnchor>>(null);
  const archiveGroup=useRef<HTMLDivElement>(null),archiveToggle=useRef<HTMLButtonElement>(null);
  const currentTail=useRef<HTMLDivElement>(null),archiveTail=useRef<HTMLDivElement>(null);
  const anchor=useRef<ReturnType<typeof readAnchor>>(null);
+ const [target,setTarget]=useState<{view:'visible'|'archived';data:TaskOverview}|null>(null);
+ const [locationError,setLocationError]=useState(false);
+ const locationAnchor=useRef<ReturnType<typeof readAnchor>>(null);
+ const locateFocus=useRef<string|undefined>(undefined);
 
  function isVisible(tail:HTMLElement|null){
   const root=list.current;
@@ -94,16 +106,65 @@ function TaskList({connected,refreshKey}:ListProps){
  }
 
  function captureAnchor(){
-  if(!anchor.current&&list.current?.scrollTop)anchor.current=readAnchor(archived);
+  if(!target&&!anchor.current&&list.current?.scrollTop)anchor.current=readAnchor(archived);
  }
 
  const current=useTaskStatusData(false,true,connected,refreshKey,()=>{
   const focus=document.activeElement;
   const archiveFocused=focus instanceof HTMLElement&&archiveGroup.current?.contains(focus)&&isVisible(focus);
-  return !archiveFocused&&!(archived&&isVisible(archiveToggle.current))&&isVisible(currentTail.current);
+  return !target&&!archiveFocused&&!(archived&&isVisible(archiveToggle.current))&&isVisible(currentTail.current);
  },captureAnchor);
- const history=useTaskStatusData(true,archived,connected,refreshKey,()=>isVisible(archiveTail.current),captureAnchor);
+ const history=useTaskStatusData(true,archived,connected,refreshKey,()=>!target&&isVisible(archiveTail.current),captureAnchor);
  const wakeCurrent=current.wake,wakeHistory=history.wake;
+ const currentReady=!!(current.data||current.failure);
+
+ function focusTask(taskId:string){
+  const row=document.getElementById('task-'+encodeURIComponent(taskId));
+  if(!row||!list.current?.contains(row))return false;
+  row.scrollIntoView({block:'nearest'});
+  const control=row.querySelector<HTMLButtonElement>('button[data-slot="task-status-row"]');
+  if(control)control.focus({preventScroll:true});
+  else{row.tabIndex=-1;row.focus({preventScroll:true});}
+  return true;
+ }
+
+ useEffect(()=>{
+  if(!location)return;
+  setLocationError(false);
+  if(connected&&focusTask(location.taskId)){onLocated?.();return;}
+  if(!connected){setLocationError(true);onLocated?.();return;}
+  if(!currentReady)return;
+  const controller=new AbortController();
+  const signal=controller.signal;
+  async function read<T>(path:string){
+   const response=await connectionFetch(path,{signal});
+   if(!response.ok)throw Error('task_location_unavailable');
+   return await response.json() as T;
+  }
+  const timeout=setTimeout(()=>controller.abort('task_location_timeout'),15000);
+  void(async()=>{
+   try{
+    const taskId=location.taskId;
+    const {historyState,creationOrder}=await read<TaskDetail>('/api/tasks/'+encodeURIComponent(taskId)+'/summary');
+    if(!historyState||!creationOrder||!Number.isSafeInteger(creationOrder+1))throw Error('task_location_unavailable');
+    const data=await read<TaskOverview>('/api/tasks/list/'+historyState+'/before/'+(creationOrder+1));
+    if(signal.aborted||!data.tasks.some(task=>task.id===taskId))throw Error('task_location_unavailable');
+    if(!target)locationAnchor.current=readAnchor(archived);
+    locateFocus.current=taskId;
+    setTarget({view:historyState,data});
+   }catch{if(!signal.aborted||signal.reason==='task_location_timeout')setLocationError(true);}
+   finally{clearTimeout(timeout);if(!signal.aborted||signal.reason==='task_location_timeout')onLocated?.();}
+  })();
+  return()=>{clearTimeout(timeout);controller.abort();};
+ },[connected,currentReady,location]);
+
+ useLayoutEffect(()=>{
+  if(locateFocus.current&&focusTask(locateFocus.current))locateFocus.current=undefined;
+  if(!target&&locationAnchor.current){
+   restoreAnchor(locationAnchor.current,true);
+   locationAnchor.current=null;
+  }
+ },[target]);
 
  useLayoutEffect(()=>{
   const root=list.current;
@@ -138,23 +199,28 @@ function TaskList({connected,refreshKey}:ListProps){
  const archivedRevisions=new Map(archivedTasks.map(task=>[task.id,task.revision]));
  return <div className="status-list" ref={list} role="region" aria-label="事项列表" tabIndex={0}
   onFocusCapture={wakeCurrent} onBlurCapture={wakeCurrent} onScroll={wakeCurrent}>
-  <TaskSection archived={false} connected={connected} read={current} tail={currentTail}
+  {locationError&&<p role="status">暂时无法定位所引用的事项。</p>}
+  {target?<><button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>{setTarget(null);list.current?.focus({preventScroll:true});}}>返回事项列表</button>
+   <TaskSection archived={target.view==='archived'} connected={connected} read={{...current,data:target.data,reading:null,failure:null,stale:!connected}}
+    tasks={target.data.tasks} tail={currentTail} running={running} onReference={onReference}/>
+  </>:<>
+  <TaskSection archived={false} connected={connected} read={current} tail={currentTail} running={running} onReference={onReference}
    tasks={currentTasks.filter(task=>task.revision>=(archivedRevisions.get(task.id)??-1))}/>
   <div ref={archiveGroup}>
    <Collapsible.Root open={archived} onOpenChange={value=>{if(value)beforeArchive.current=readAnchor();setArchived(value);}}>
     <Collapsible.Trigger ref={archiveToggle} className={ghostButton+' status-archive-toggle min-h-11 w-full gap-1 px-1.5 text-xs'}>
      已归档<ChevronRightIcon aria-hidden="true" className={cn('size-3',archived&&'rotate-90')}/>
     </Collapsible.Trigger>
-    <Collapsible.Panel>{archived&&<TaskSection archived connected={connected} read={history} tail={archiveTail}
+    <Collapsible.Panel>{archived&&<TaskSection archived connected={connected} read={history} tail={archiveTail} onReference={onReference}
      tasks={archivedTasks.filter(task=>task.revision>(currentRevisions.get(task.id)??-1))}/>}</Collapsible.Panel>
    </Collapsible.Root>
-  </div>
+  </div></>}
  </div>;
 }
-export function TaskStatusPopover({state,connected,refreshKey,asideContainer,onBeforeLayoutChange}:ListProps & {state:WebState;asideContainer:HTMLElement|null;onBeforeLayoutChange:()=>void}){
+export function TaskStatusPopover({state,connected,refreshKey,asideContainer,onBeforeLayoutChange,onReference,location,onLocated}:Omit<ListProps,'running'|'onReference'> & {state:WebState;asideContainer:HTMLElement|null;onBeforeLayoutChange:()=>void;onReference?:(value:TaskReference)=>boolean}){
  const [wide,setWide]=useState(false),[pinned,setPinned]=useState(true),[popupOpen,setPopupOpen]=useState(false);
  const open=wide?pinned:popupOpen;
- const togglePinned=()=>{onBeforeLayoutChange();setPinned(!pinned);};
+ const focusComposer=useRef(false);
  const beforeLayout=useRef(onBeforeLayoutChange);beforeLayout.current=onBeforeLayoutChange;
  useLayoutEffect(()=>{
   const workspace=asideContainer?.parentElement;if(!workspace)return;
@@ -170,16 +236,26 @@ export function TaskStatusPopover({state,connected,refreshKey,asideContainer,onB
   measure();const observer=new ResizeObserver(measure);observer.observe(workspace);return()=>observer.disconnect();
  },[asideContainer]);
  useLayoutEffect(()=>{setPopupOpen(false);},[state.threadId,state.history?.readEpoch]);
- const title='工作状态';
- const content=<TaskList key={state.threadId+':'+(state.history?.readEpoch??'legacy')} connected={connected} refreshKey={refreshKey}/>;
- return <><div className="homer-task-status"><Popover open={!wide&&popupOpen} onOpenChange={value=>{if(!wide)setPopupOpen(value);}}><PopoverTrigger asChild>
+ const scopedLocation=location?.threadId===state.threadId&&location.readEpoch===state.history?.readEpoch?location:undefined;
+ const clearLocation=()=>{if(scopedLocation)onLocated?.();};
+ const togglePinned=()=>{onBeforeLayoutChange();if(pinned)clearLocation();setPinned(!pinned);};
+ useLayoutEffect(()=>{if(scopedLocation){if(wide)setPinned(true);else setPopupOpen(true);}},[scopedLocation,wide]);
+ const running=useMemo(()=>state.runningTaskIds&&new Set(state.runningTaskIds),[state.runningTaskIds]);
+ const count=connected?running?.size:undefined;
+ const title=count===undefined?(running?'工作状态，运行数量待核实':'工作状态'):count?'工作状态，'+count+' 项事项运行中':'工作状态，无运行中事项';
+ const content=<TaskList key={state.threadId+':'+(state.history?.readEpoch??'legacy')} connected={connected} refreshKey={refreshKey}
+  running={running} location={scopedLocation} onLocated={onLocated} onReference={onReference&&((ref)=>{
+   if(onReference(ref)&&!wide){focusComposer.current=true;setPopupOpen(false);}
+  })}/>;
+ return <><div className="homer-task-status"><Popover open={!wide&&popupOpen} onOpenChange={value=>{if(!wide){if(!value)clearLocation();setPopupOpen(value);}}}><PopoverTrigger asChild>
   <button id="task-status-trigger" type="button" className={ghostButton+' status-entry'} aria-label={title} title={title} aria-expanded={open} aria-controls="task-status-panel" aria-haspopup={wide?undefined:'dialog'} onClick={wide?togglePinned:undefined}>
    <span className="status-entry-icon" aria-hidden="true">
     <ListTodoIcon size={18}/>
+    {!!count&&<span className="status-entry-count">{count>99?'99+':count}</span>}
    </span>
   </button>
   </PopoverTrigger>
-  {!wide&&<PopoverContent id="task-status-panel" className="homer-task-status status-popover w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-3 shadow-none motion-reduce:animate-none" align="end" side="bottom" sideOffset={12} collisionPadding={12} aria-label="工作状态卡片" aria-describedby={undefined} onEscapeKeyDown={event=>event.stopPropagation()}>{content}</PopoverContent>}
+  {!wide&&<PopoverContent id="task-status-panel" className="homer-task-status status-popover w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-3 shadow-none motion-reduce:animate-none" align="end" side="bottom" sideOffset={12} collisionPadding={12} aria-label="工作状态卡片" aria-describedby={undefined} onEscapeKeyDown={event=>event.stopPropagation()} onCloseAutoFocus={event=>{if(focusComposer.current){focusComposer.current=false;event.preventDefault();}}}>{content}</PopoverContent>}
  </Popover></div>
  {wide&&pinned&&asideContainer&&createPortal(<aside id="task-status-panel" className="homer-task-status status-aside" aria-label="工作状态卡片">{content}</aside>,asideContainer)}</>;
 }

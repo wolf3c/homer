@@ -15,12 +15,14 @@ function quotePosition(value:unknown,text:string):MessageQuote['position']{
  return {format:p.format,representation:p.representation,start:p.start,end:p.end,exact:p.exact,prefix:p.prefix,suffix:p.suffix,sourceHash:p.sourceHash};
 }
 export type AnnotatedQuote = MessageQuote & { annotation: string };
-export type ConversationInput = { requestId: string; text: string; quote?: MessageQuote; quotes?: AnnotatedQuote[]; resourceReference?:ResourceReference; resourceReferences?:ResourceReference[]; interactionId?: string; questionAnswers?: Record<string,string[]>; attachments?: AttachmentRef[] };
+export type TaskReference = {taskId:string;version:number;title:string};
+export type ConversationInput = { requestId: string; text: string; taskReference?:TaskReference; quote?: MessageQuote; quotes?: AnnotatedQuote[]; resourceReference?:ResourceReference; resourceReferences?:ResourceReference[]; interactionId?: string; questionAnswers?: Record<string,string[]>; attachments?: AttachmentRef[] };
 export type ConversationMessage = {
   id: string; threadId: string; requestId: string | null;
   role: "user" | "assistant"; text: string;
   status: "queued" | "processing" | "cancelled" | "running" | "completed" | "interrupted" | "failed";
   quote?: MessageQuote; quotes?: AnnotatedQuote[]; resourceReference?:ResourceReference; resourceReferences?:ResourceReference[]; createdAt: number;
+  taskReference?:TaskReference;
   taskId?: string | null;
   taskVersion?: number | null;
   operationKey?: string | null;
@@ -39,27 +41,39 @@ type AssistantMessage = {
   threadId: string; requestId?: string | null; text: string; attachments?: readonly AttachmentRef[];
   taskId?: string | null; taskVersion?: number | null; operationKey: string;
 };
-type Row = Omit<ConversationMessage, "quote" | "quotes" | "resourceReference" | "resourceReferences"> & { quote: string | null };
+type ConversationReferences = Pick<ConversationInput,'quote'|'quotes'|'resourceReference'|'resourceReferences'|'taskReference'>;
+type Row = Omit<ConversationMessage, keyof ConversationReferences> & { quote: string | null };
 // Preserve the legacy single-owner JSON bytes; only mixed inputs use both keys.
-export function encodeConversationReferences(input: Pick<ConversationInput, 'quote' | 'quotes' | 'resourceReference' | 'resourceReferences'>): string | null {
+export function encodeConversationReferences(input: ConversationReferences): string | null {
   const resources = input.resourceReferences ? { resourceReferences: input.resourceReferences } : input.resourceReference ? { resourceReference: input.resourceReference } : undefined;
   const messages = input.quotes ? { quotes: input.quotes } : input.quote ? { quote: input.quote } : {};
+  if(input.taskReference)return JSON.stringify({...resources,...messages,taskReference:input.taskReference});
   return resources ? JSON.stringify({ ...resources, ...messages }) : input.quotes ? JSON.stringify(input.quotes) : input.quote ? JSON.stringify(input.quote) : null;
 }
-function decodeConversationReferences(json: string | null): Pick<ConversationInput, 'quote' | 'quotes' | 'resourceReference' | 'resourceReferences'> {
+function decodeConversationReferences(json: string | null): ConversationReferences {
   const value: unknown = json ? JSON.parse(json) : undefined;
   if (Array.isArray(value)) return { quotes: value as AnnotatedQuote[] };
   if (!value || typeof value !== 'object') return {};
-  if ('resourceReferences' in value || 'resourceReference' in value) return {
+  if ('resourceReferences' in value || 'resourceReference' in value || 'taskReference' in value) return {
+    ...('taskReference' in value ? {taskReference:parseTaskReference(value.taskReference)} : {}),
     ...('resourceReferences' in value ? { resourceReferences: parseResourceReferences(value.resourceReferences) } : 'resourceReference' in value ? { resourceReference: parseResourceReference(value.resourceReference) } : {}),
     ...('quotes' in value ? { quotes: value.quotes as AnnotatedQuote[] } : 'quote' in value ? { quote: value.quote as MessageQuote } : {}),
   };
   return { quote: value as MessageQuote };
 }
 const parse = ({ quote, ...row }: Row): ConversationMessage => ({ ...row, ...decodeConversationReferences(quote) });
+function parseTaskReference(value:unknown):TaskReference{
+  const ref=value as TaskReference|null;
+  if(!ref||typeof ref.taskId!=='string'||!/^[\w:-]{1,100}$/.test(ref.taskId)||
+    !Number.isSafeInteger(ref.version)||ref.version<1||typeof ref.title!=='string'||!ref.title.trim()||ref.title.length>16000)
+    throw Error('invalid_task_reference');
+  return {taskId:ref.taskId,version:ref.version,title:ref.title};
+}
 export function conversationInput(value: unknown): ConversationInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_message");
   const input = value as ConversationInput;
+  const taskReference=input.taskReference===undefined?undefined:parseTaskReference(input.taskReference);
+  if(taskReference&&(input.interactionId!==undefined||input.questionAnswers!==undefined))throw Error('invalid_task_reference');
   const validQuote = (quote: unknown): quote is MessageQuote => !!quote && typeof quote === "object" &&
     typeof (quote as MessageQuote).messageId === "string" && /^[\w:-]{1,100}$/.test((quote as MessageQuote).messageId) &&
     typeof (quote as MessageQuote).text === "string" && !!(quote as MessageQuote).text.trim() &&
@@ -89,7 +103,7 @@ export function conversationInput(value: unknown): ConversationInput {
       Object.entries(answers).some(([id,list])=>!id.trim()||id.length>200||!Array.isArray(list)||!list.length||list.length>16||list.some(value=>typeof value!=='string'||!value.trim()||value.length>16000))||JSON.stringify(answers).length>64000)throw Error('interaction_answer_scope');
     questionAnswers=Object.fromEntries(Object.entries(answers).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([id,list])=>[id,[...list]]));
   }
-  return { requestId: input.requestId, text: input.text,...(resourceReference?{resourceReference}:{}),...(resourceReferences?{resourceReferences}:{}),
+  return { requestId: input.requestId, text: input.text,...(taskReference?{taskReference}:{}),...(resourceReference?{resourceReference}:{}),...(resourceReferences?{resourceReferences}:{}),
     ...(input.quote ? { quote: { messageId: input.quote.messageId, text: input.quote.text,...(input.quote.itemIds?{itemIds:[...input.quote.itemIds]}:{}),...(input.quote.position!==undefined?{position:quotePosition(input.quote.position,input.quote.text)}:{}) } } : {}),
     ...(quotes?.length ? { quotes } : {}), ...(attachments?.length?{attachments}:{}), ...(input.interactionId ? { interactionId: input.interactionId } : {}),...(questionAnswers?{questionAnswers}:{}) };
 }
@@ -253,7 +267,7 @@ export class ConversationHistory {
   accept(threadId: string, value: ConversationInput, options: AcceptOptions = {}) {
     const input = conversationInput(value);
     if (options.source !== undefined && !/^[a-z][a-z0-9_:-]{1,100}$/.test(options.source)) throw new Error("invalid_input_source");
-    const hash = createHash("sha256").update(JSON.stringify([input.text, input.quotes ? { quotes: input.quotes } : input.quote ?? null, input.interactionId ?? null, ...(options.source ? [options.source] : []),...(input.attachments? [{attachments:input.attachments}]:[]),...(input.questionAnswers?[{questionAnswers:input.questionAnswers}]:[]),...(input.resourceReference?[{resourceReference:input.resourceReference}]:[]),...(input.resourceReferences?[{resourceReferences:input.resourceReferences}]:[])])).digest("hex");
+    const hash = createHash("sha256").update(JSON.stringify([input.text, input.quotes ? { quotes: input.quotes } : input.quote ?? null, input.interactionId ?? null, ...(options.source ? [options.source] : []),...(input.attachments? [{attachments:input.attachments}]:[]),...(input.questionAnswers?[{questionAnswers:input.questionAnswers}]:[]),...(input.resourceReference?[{resourceReference:input.resourceReference}]:[]),...(input.resourceReferences?[{resourceReferences:input.resourceReferences}]:[]),...(input.taskReference?[{taskReference:input.taskReference}]:[])])).digest("hex");
     const persist = (receipt: ConversationReceipt) => {
       const result: unknown = options.persist?.(receipt);
       if (result && typeof (result as PromiseLike<unknown>).then === "function") throw new Error("accept_hook_must_be_synchronous");

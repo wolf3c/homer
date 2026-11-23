@@ -324,7 +324,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
           if(receipt)activity.finalText=app.liveReceiptText(receipt);
         }
         return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:CONVERSATION_VIEW,acceptedRequestIds:[],processNodes:[],
-        queueDispatch:app.inputs.dispatchSummary(),features:{draftUpload,taskOverview:true,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
+        queueDispatch:app.inputs.dispatchSummary(),runningTaskIds:app.runningTaskIds?.(),features:{draftUpload,taskOverview:true,taskReference:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
         history:{protocol:3,readEpoch:app.webReadEpoch,page:pageInfo,moreQueue:queue.after,moreInteractions:pending.after}};
         };
         return app.receptionTimings?app.receptionTimings.measure('state_history',build):build();

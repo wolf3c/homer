@@ -148,7 +148,7 @@ export class MainInputs {
     message ??= this.history.inputs(row.threadId, [p.requestId]).get(p.requestId);
     if (!message) throw Error('queue_input_missing');
     const details = JSON.parse(row.detailsJson ?? '{}');
-    const input = conversationInput({ requestId: p.requestId, text: message.text,...(message.attachments?{attachments:message.attachments}:{}),...(message.resourceReference?{resourceReference:message.resourceReference}:{}),...(message.resourceReferences?{resourceReferences:message.resourceReferences}:{}), ...(message.quotes ? { quotes: message.quotes } : message.quote ? { quote: message.quote } : {}), ...(details.interactionId ? { interactionId: details.interactionId } : {}) });
+    const input = conversationInput({ requestId: p.requestId, text: message.text,taskReference:message.taskReference,...(message.attachments?{attachments:message.attachments}:{}),...(message.resourceReference?{resourceReference:message.resourceReference}:{}),...(message.resourceReferences?{resourceReferences:message.resourceReferences}:{}), ...(message.quotes ? { quotes: message.quotes } : message.quote ? { quote: message.quote } : {}), ...(details.interactionId ? { interactionId: details.interactionId } : {}) });
     return { origin:'user',messageId: row.id, seq: row.seq, revision: row.revision, inputRevision: p.inputRevision, input, replyId: row.replyId, source: p.source,editable:this.rowEditable(row),...(row.receiptState==='pending'?{preparation:this.preparation(input,p.source)}:{}), state: p.terminal ?? (row.receiptState === 'pending' ? 'queued' : ['offered', 'received'].includes(row.receiptState) ? 'processing' : row.receiptState === 'uncertain' ? 'uncertain' : 'failed'), ...(row.offeredTurnId ? { generationId: row.offeredTurnId } : {}), ...(p.interruptState ? { interruptState: p.interruptState, interruptTarget: p.interrupt } : {}) };
   }
   list(): QueuedInput[] {
@@ -319,6 +319,7 @@ export class MainInputs {
     revision?: number;
   } {
     const input = conversationInput(value), thread = this.store.meta('mainThread');
+    if(input.taskReference&&(acceptance?.source!==undefined||!this.validateQuotes))throw Error('task_reference_scope_denied');
     // Typed native answers belong to the live native callback, never this inbox.
     if(input.questionAnswers)throw Error('interaction_response_kind');
     if (!thread)
@@ -380,20 +381,23 @@ export class MainInputs {
     expectedRevision: number;
     input: ConversationInput;
   }) {
-    const updated = conversationInput(input.input);
+    let updated = conversationInput(input.input);
     if(updated.questionAnswers)throw Error('interaction_response_kind');
     if (updated.requestId !== input.requestId)
       throw Error('queue_request_id_conflict');
     return this.mutate(input.requestId, input.operationId, input, (row, p) => {
       this.scope(row,input);
       this.editable(row, input.expectedRevision);
+      const previous=this.current(row).input;
+      const taskReference=previous.taskReference;
+      if(updated.taskReference&&recursiveHash(updated.taskReference)!==recursiveHash(taskReference??null))throw Error('task_reference_changed');
+      if(taskReference)updated=conversationInput({...updated,taskReference});
       validatePreviewIntent(updated);
-      if(updated.interactionId!==this.current(row).input.interactionId)throw Error('queue_interaction_conflict');
-      if((updated.resourceReference||updated.resourceReferences)&&JSON.stringify([updated.resourceReference,updated.resourceReferences])!==JSON.stringify([this.current(row).input.resourceReference,this.current(row).input.resourceReferences]))throw Error('queue_quote_validation_required');
+      if(updated.interactionId!==previous.interactionId)throw Error('queue_interaction_conflict');
+      if((updated.resourceReference||updated.resourceReferences)&&JSON.stringify([updated.resourceReference,updated.resourceReferences])!==JSON.stringify([previous.resourceReference,previous.resourceReferences]))throw Error('queue_quote_validation_required');
       if (this.validateQuotes)
-        this.validateQuotes({...updated,resourceReference:undefined,resourceReferences:undefined});
+        this.validateQuotes({...updated,taskReference:undefined,resourceReference:undefined,resourceReferences:undefined});
       else if (updated.quotes?.length || updated.quote) {
-        const previous = this.current(row).input;
         if (JSON.stringify(updated.quotes ?? updated.quote) !== JSON.stringify(previous.quotes ?? previous.quote))
           throw Error('queue_quote_validation_required');
       }

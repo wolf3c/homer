@@ -10,6 +10,22 @@ import { RecursiveTasks } from '../src/recursive-tasks.js';
 import { MainInputs } from '../src/recursive-main-inputs.js';
 mkdirSync('.codex/scratch/linear-conversation-timeline-review/regression-runtime',{recursive:true});
 function fixture() { const dir = mkdtempSync(resolve('.codex/scratch/linear-conversation-timeline-review/regression-runtime/main-input-')); const store = new Store(join(dir, 'db.sqlite')); new WorkerInteractions(store.db); const history = new ConversationHistory(store.db); const tasks = new RecursiveTasks(store, new Files(join(dir, 'workspace'))); tasks.migrate(); store.setMeta('mainThread', 'synthetic-main-thread'); const inputs = new MainInputs(tasks, history); return { store, history, inputs, tasks, close() { store.close(); rmSync(dir, { recursive: true, force: true }); } }; }
+test('a queued matter reference survives a legacy edit and recovery',()=>{
+ const f=fixture();
+ try{
+  const inputs=new MainInputs(f.tasks,f.history,()=>{});
+  const taskReference={taskId:'task-example',version:1,title:'合成事项'};
+  const input={requestId:'q-task',text:'原要求',taskReference};
+  assert.throws(()=>inputs.accept(input,{source:'channel_plugin',persist:()=>{}}),/task_reference_scope_denied/);
+  inputs.accept(input);
+  const item=inputs.list()[0]!;
+  assert.throws(()=>inputs.edit({requestId:input.requestId,operationId:'replace-task',expectedRevision:item.revision,input:{...input,taskReference:{...taskReference,version:2}}}),/task_reference_changed/);
+  inputs.edit({requestId:input.requestId,operationId:'edit-text',expectedRevision:item.revision,input:{requestId:input.requestId,text:'更新要求'}});
+  const restored=new MainInputs(f.tasks,f.history,()=>{}).claim()!;
+  assert.equal(restored.input.text,'更新要求');
+  assert.deepEqual(restored.input.taskReference,taskReference);
+ }finally{f.close();}
+});
 test('a resumed session leaves old pending inputs untouched while processing a newly submitted input',()=>{
  const f=fixture();try{
   f.inputs.accept({requestId:'old',text:'synthetic old'});

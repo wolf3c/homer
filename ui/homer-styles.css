@@ -186,6 +186,11 @@
 .message-quote-source:focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 @media(forced-colors:none){.message[data-conversation-message]:focus-visible{outline:none}}
 .message-quote-source [data-slot="quote-block"]{margin-bottom:0}
+.task-reference-source [data-slot="quote-block"]>div{min-width:0}
+.task-reference-source svg{flex:none;margin-top:2px;color:var(--muted)}
+.task-reference-source small{display:block;color:var(--muted);font-size:12px}
+.task-reference-source [data-slot="quote-block-text"]{font-style:normal;font-weight:550;color:var(--ink)}
+.composer-context .task-reference-chip{cursor:default}
 .message-quote-source [data-slot="quote-block-text"]{white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* One settings owner: permissions and IM panels share navigation and focus. */

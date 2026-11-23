@@ -3,6 +3,22 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { ConversationHistory } from "../src/web-history.js";
 
+test("matter references survive history and bind the acceptance identity", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    const history = new ConversationHistory(db);
+    const taskReference = {taskId:'task-a',version:2,title:'同名事项'};
+    const input = {requestId:'request-task',text:'补齐验证',taskReference};
+    assert.equal(history.accept('thread-a',input).fresh,true);
+    assert.deepEqual(new ConversationHistory(db).list('thread-a')[0]?.taskReference,taskReference);
+    assert.equal(history.accept('thread-a',input).fresh,false);
+    assert.throws(()=>history.accept('thread-a',{...input,taskReference:{...taskReference,taskId:'task-b'}}),/request_id_conflict/);
+    assert.throws(()=>history.accept('thread-a',{...input,requestId:'request-answer',interactionId:'interaction-1'}),/invalid_task_reference/);
+  } finally {
+    db.close();
+  }
+});
+
 // Source: requirement-derived contract, synthetic content only.
 test("web history accepts input atomically and survives a new history owner", () => {
   const db = new DatabaseSync(":memory:");

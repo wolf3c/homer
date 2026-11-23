@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {mainProcessSourceSql} from './main-process.js';
+import {taskName} from './task-presentation.js';
 
 // Read-only Web facts. Task decisions and Worker execution have separate owners.
 export type OverviewRun={id:string;taskId:string;workerId:string;status:string;phase:string;version:number;epoch:number;sourceRequestId:string|null;createdAt?:number;startedAt?:number|null;endedAt?:number|null;stopRequestedAt?:number|null;replacesRunId?:string|null;errorCode?:string|null;threadId?:string|null;turnId?:string|null};
@@ -11,7 +12,7 @@ export type TaskRequirement={taskId:string;version:number;goal:string|null;sourc
 export type RecoveryFacts={operations:{id:string;taskId:string;kind:string;state:string;revision:number}[];receipts:{messageId:string;taskId:string;taskVersion:number;state:string;revision:number}[];interactions:{id:string;runId:string;taskVersion:number|null;kind:string;state:string}[]};
 export type WorkerConversationQuery={workerId:string;after?:number;messageId?:string;offset?:number};
 export type WorkerConversation={taskId:string;workerId:string;threadId:string|null;messages:{id:string;seq:number;kind:'worker_input'|'worker_reply';runId:string|null;version:number;text:string;offset:number;nextOffset:number|null;receipt?:string}[];nextCursor:number|null};
-export type TaskDetail={taskId:string;historyState?:OverviewTask['historyState'];publicMessages?:{id:string;role:'user'|'assistant';excerpt:string}[];moreMessages?:boolean;conversation?:WorkerConversation;requirements?:TaskRequirement[];moreHistory?:boolean;artifacts?:import('./web-contract.js').WebArtifact[];moreArtifacts?:boolean;recovery?:RecoveryFacts;runs:(OverviewRun&{stateRevision:number;activeMs:number;createdAt:number;startedAt:number|null;endedAt:number|null})[]};
+export type TaskDetail={taskId:string;historyState?:OverviewTask['historyState'];creationOrder?:number;publicMessages?:{id:string;role:'user'|'assistant';excerpt:string}[];moreMessages?:boolean;conversation?:WorkerConversation;requirements?:TaskRequirement[];moreHistory?:boolean;artifacts?:import('./web-contract.js').WebArtifact[];moreArtifacts?:boolean;recovery?:RecoveryFacts;runs:(OverviewRun&{stateRevision:number;activeMs:number;createdAt:number;startedAt:number|null;endedAt:number|null})[]};
 export function readTaskOverview(db:DatabaseSync,page:OverviewPage={}):TaskOverview{
  const {view='visible',before}=page;
  if(!['visible','archived'].includes(view)||before!==undefined&&(!Number.isSafeInteger(before)||before<1))throw Error('task_overview_invalid');
@@ -47,9 +48,17 @@ function requireTask(db:DatabaseSync,id:string){
  return row.historyState as OverviewTask['historyState'];
 }
 export function readTaskSummary(db:DatabaseSync,taskId:string):TaskDetail{
- requireTask(db,taskId);
+ if(!/^[\w:-]{1,100}$/.test(taskId))throw Error('task_not_found');
+ const location=db.prepare('SELECT historyState,rowid AS creationOrder FROM tasks WHERE id=?').get(taskId) as Pick<TaskDetail,'historyState'|'creationOrder'>|undefined;
+ if(!location)throw Error('task_not_found');
  const requirements=db.prepare(`SELECT v.taskId,v.version,v.goal,v.sourceRequestId FROM task_versions v JOIN tasks t ON t.id=v.taskId AND t.headVersion=v.version WHERE t.id=?`).all(taskId) as TaskRequirement[];
- return {taskId,runs:[],requirements};
+ return {taskId,...location,runs:[],requirements};
+}
+export function readTaskReference(db:DatabaseSync,taskId:string){
+ const task=db.prepare(`SELECT t.title,t.headVersion,t.state,t.historyState,v.goal
+  FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.id=?`).get(taskId) as
+   Pick<OverviewTask,'title'|'headVersion'|'state'|'historyState'|'goal'>|undefined;
+ if(task)return {taskId,version:task.headVersion,title:taskName(task).text,state:task.historyState==='archived'?'archived':task.state};
 }
 export function readTaskDetail(db:DatabaseSync,taskId:string,query?:WorkerConversationQuery):TaskDetail{
  const historyState=requireTask(db,taskId);
