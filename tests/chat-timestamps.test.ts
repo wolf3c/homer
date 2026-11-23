@@ -349,7 +349,7 @@ test('bubbles own the only time, while tool-only and invalid messages retain the
     assert.equal((row.match(/class="message-timestamp"/g) ?? []).length, i === 4 ? 0 : 1);
     if (i < 2) {
       assert.match(row, /class="(?:user|assistant)-message-bubble"[\s\S]*<time class="message-timestamp"[\s\S]*<div data-slot="message-actions"/);
-      assert.match(row.match(/<div data-slot="message-actions"[\s\S]*?<\/div>/)?.[0] ?? '', /aria-label="复制"[\s\S]*aria-label="引用"/);
+      assert.match(row.match(/<div data-slot="message-actions"[\s\S]*?<\/div>/)?.[0] ?? '', /aria-label="引用"[\s\S]*aria-label="复制"/);
     }
     else if (i < 4) { assert.ok(!row.includes('data-slot="message-actions"')); assert.match(row, /<time class="message-timestamp"/); }
   }
