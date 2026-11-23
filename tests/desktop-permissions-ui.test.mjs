@@ -72,6 +72,17 @@ test('one settings dialog exposes permissions and mobile devices without startin
   assert.equal(calls.length,0);
  }finally{globalThis.fetch=original;}
 }));
+test('notification settings explain previews and open the system controls',async()=>withDom(async d=>{
+ let opened=0;
+ window.homerDesktopNotifications={preferences:async()=>({message:true,attention:true}),openSystemSettings:async()=>{opened++;}};
+ await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
+ await d.click(d.find(n=>n.getAttribute('role')==='tab'&&n.textContent==='通知'));
+ assert.match(d.find(n=>n.getAttribute('role')==='tabpanel').textContent,/通知可能显示回复正文。可在系统通知设置中隐藏预览/);
+ assert.equal(button(d,'Homer 有新消息').getAttribute('aria-checked'),'true');
+ assert.equal(button(d,'需要我关注').getAttribute('aria-checked'),'true');
+ await d.click(button(d,'打开系统通知设置'));
+ assert.equal(opened,1);
+}));
 test('about displays the version supplied by the desktop app',async()=>withDom(async d=>{
  let reads=0;
  window.homerDesktopFeatureTour={pending:async()=>false,dismiss:async()=>{}};

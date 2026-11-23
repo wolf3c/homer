@@ -11,6 +11,34 @@ const walk = (node:Node,visit:(node:Node)=>void) => {visit(node);node.children?.
 const parse=(markdown:string)=>fromMarkdown(markdown,{extensions:[gfm(),math()],mdastExtensions:[gfmFromMarkdown(),mathFromMarkdown()]}) as Node;
 const label=(node:Node):string=>node.value??node.children?.map(label).join('')??'';
 
+const previewSegmenter=new Intl.Segmenter(undefined,{granularity:'grapheme'});
+function notificationParagraphText(node:Node):string{
+  if(node.type==='text')return node.value??'';
+  if(node.type==='break')return ' ';
+  if(!['paragraph','strong','emphasis','delete'].includes(node.type))return '';
+  return node.children?.map(notificationParagraphText).join('')??'';
+}
+export function notificationPreviewText(markdown:string):string|undefined{
+  if(Buffer.byteLength(markdown)>16*1024)return;
+  let paragraphs:Node[];
+  try{paragraphs=parse(markdown).children??[];}catch{return;}
+  for(const paragraph of paragraphs){
+    const text=notificationParagraphText(paragraph).replace(/\s+/gu,' ').replace(/\p{Cc}/gu,'').trim();
+    if(!text)continue;
+    const segments:string[]=[];
+    let bytes=0;
+    for(const {segment} of previewSegmenter.segment(text)){
+      bytes+=Buffer.byteLength(segment);
+      if(segments.length===120||bytes>1021){
+        const prefix=segments.slice(0,119).join('').trimEnd();
+        return prefix?prefix+'…':undefined;
+      }
+      segments.push(segment);
+    }
+    return text;
+  }
+}
+
 // Reserve the loopback server's routes. An explicit file URL disambiguates
 // a disk file with the same spelling.
 export function isMessageFileLink(destination:string){

@@ -3,7 +3,7 @@ import {conversationUserText,userAuthorityDescription} from './user-intent.js';
 import {isUtf8} from 'node:buffer';
 import {isDraftImageReference,resourceReferenceText,referencesOf,type ResourceReference} from './preview-reference.js';
 import {messageSourceParts,previewQuoteText} from './message-quote.js';
-import {decodeMessageLink,externalFileMessage,isMessageFileLink,messageAttachmentDestination,messageFileDestination,messageFileDestinations,messageLinks} from './message-links.js';
+import {decodeMessageLink,externalFileMessage,isMessageFileLink,messageAttachmentDestination,messageFileDestination,messageFileDestinations,messageLinks,notificationPreviewText} from './message-links.js';
 import {withInteractionResponses} from './web-homer.js';
 import {publicActivityName,type PublicActivity} from './activity-facts.js';
 import {WebHistoryPages} from './web-history-pages.js';
@@ -1378,7 +1378,7 @@ export class Homer {
       }catch(error){
         if(error instanceof MainInputClaimError){
           const replyId=this.inputs.failClaim(error);
-          if(replyId){this.notifyCommittedMessage(replyId);this.emitDesktopNotification('message',replyId);}
+          if(replyId){this.notifyCommittedMessage(replyId);this.emitDesktopNotification('message',replyId,this.history.message(replyId)?.text);}
           this.inputWaiters.get(error.requestId)?.reject(error);this.inputWaiters.delete(error.requestId);this.store.event(null,'input_claim_failed',engineError(error));this.scheduleInputs();
         }
         else {
@@ -1466,7 +1466,7 @@ export class Homer {
       return changed&&!uncertain&&!context.explicitSent;
     });}finally{if(staged&&!committed)this.abandonMessageOperation(staged.key);}
     if(committed)this.notifyCommittedMessage(replyId);
-    if(desktopReplyId)this.emitDesktopNotification('message',desktopReplyId);
+    if(desktopReplyId)this.emitDesktopNotification('message',desktopReplyId,replyStatus==='completed'?context.nativeFinal:failureNotice);
     if(context.generation){
       for(const activity of context.toolActivities?.values()??[])this.emitMain(context,{type:'tool_progress',...context.generation,text:'',progress:{...activity,label:activity.label==='创建任务'?'创建结果待核对':activity.label,phase:'end',status:'blocked'}});
       context.toolActivities?.clear();
@@ -1590,7 +1590,7 @@ export class Homer {
     }catch(error){this.store.db.exec('ROLLBACK');keptStage=false;throw error;}
     finally{if(staged&&!keptStage)this.abandonMessageOperation(staged.key);}
     if(committedFinal)this.notifyCommittedMessage(committedFinal);
-    if(desktopFinal)this.emitDesktopNotification('message',desktopFinal);
+    if(desktopFinal)this.emitDesktopNotification('message',desktopFinal,original);
   }
   // Chain a user's start/deltas/terminal even if a local sink is asynchronous.
   private emitMain(context: MainContext, message: Message, activity?:PublicActivity,call?:{toolName:string}) {
@@ -2052,20 +2052,28 @@ export class Homer {
     const body=typeof payload.text==='string'?payload.text.trim().slice(0,640):'';
     this.processes.workerEvent(processId,{eventKey:'worker-reply:'+source.id,eventKind:'reply_received',title:this.tasks.task(run.taskId).title.slice(0,80),body:body||'Worker 已结束本轮，未提供正文。',bodySource:body?'reply':'missing',taskId:run.taskId,version:run.version,runId:run.id,sourceMessageId:String(source.id),operationKey:null,observedAtMs:Date.now()});
   }
-  private desktopNotification?: (event:{kind:'message'|'interaction';id:string;threadId:string})=>void;
+  private desktopNotification?: (event:{kind:'message'|'interaction';id:string;threadId:string;body?:string})=>void;
   onDesktopNotification(listener:NonNullable<Homer['desktopNotification']>){this.desktopNotification=listener;}
-  private emitDesktopNotification(kind:'message'|'interaction',id:string){
+  private emitDesktopNotification(kind:'message'|'interaction',id:string,previewText?:string){
     const threadId=this.store.meta('mainThread');
     if(!threadId||!this.desktopNotification)return;
     setImmediate(()=>{
       if(this.closing||this.closed||this.store.meta('mainThread')!==threadId)return;
       try{
-        if(kind==='interaction'&&!this.interactions.actionable(id))return;
-        if(kind==='message'){
+        let body:string|undefined;
+        if(kind==='interaction'){
+          if(!this.interactions.actionable(id))return;
+          body=this.interactions.inspect(id).kind==='authorization'?'有操作待你确认':'有问题等待回复';
+        }else{
           const message=this.history.message(id);
-          if(!message||message.threadId!==threadId||message.audience!=='user'||message.status==='running'||message.revokedAt!=null)return;
+          if(!message||message.threadId!==threadId||message.role!=='assistant'||message.audience!=='user'||message.revokedAt!=null)return;
+          const preview=previewText?notificationPreviewText(previewText):undefined;
+          if(message.status==='completed')body=preview??(message.attachments?.length?'收到附件':undefined);
+          else if(message.status==='failed')body=preview??'本次回复未完成';
+          else if(message.status==='interrupted')body='本次回复已中断';
+          else return;
         }
-        this.desktopNotification?.({kind,id,threadId});
+        this.desktopNotification?.({kind,id,threadId,...(body?{body}:{})});
       }catch{/* A desktop hint is independent of the committed result. */}
     });
   }

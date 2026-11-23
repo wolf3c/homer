@@ -835,12 +835,14 @@ function registerDesktopNotifications(profile,appId){
 async function showDesktopNotification(notice){
  if(!notificationPreferences||!Notification.isSupported()||!notice||
    !['message','interaction','pairing'].includes(notice.kind)||typeof notice.id!=='string'||typeof notice.threadId!=='string')return;
- const key=notice.kind+':'+notice.threadId+':'+notice.id;
+ const {kind,id,threadId}=notice;
+ const target={kind,id,threadId};
+ const key=kind+':'+threadId+':'+id;
  if(checkedNotifications.has(key))return;
  checkedNotifications.add(key);
  // Only live events reach this path. Bound the duplicate guard for long-running sessions.
  if(checkedNotifications.size>1024)checkedNotifications.delete(checkedNotifications.values().next().value);
- const actionable=notice.kind!=='message';
+ const actionable=kind!=='message';
  let visible=false;
  if(actionable&&notificationPreferences.attention&&!notificationBackground()&&currentNotificationPage()){
   const id=randomUUID(),frame=notificationPage.senderFrame;
@@ -848,14 +850,16 @@ async function showDesktopNotification(notice){
    const finish=value=>{clearTimeout(timer);notificationChecks.delete(id);resolve(value);};
    const timer=setTimeout(()=>finish(false),350);
    notificationChecks.set(id,{frame,finish});
-   try{frame.send('homer:notification:check',id,notice);}catch{finish(false);}
+   try{frame.send('homer:notification:check',id,target);}catch{finish(false);}
   });
  }
  if(closed||quitPending)return;
  const background=notificationBackground();
  const attention=actionable&&notificationPreferences.attention&&(background||!visible);
  if(!attention&&!(notificationPreferences.message&&background))return;
- const toast=new Notification({title:'Homer',body:attention?'Homer 需要你处理一项请求':'Homer 有新消息'});
+ const preview=typeof notice.body==='string'&&Buffer.byteLength(notice.body)<=1024?notice.body.trim():'';
+ const fallback=attention?'Homer 需要你处理一项请求':'Homer 有新消息';
+ const toast=new Notification({title:'Homer',body:kind==='pairing'?'请确认新设备配对':preview||fallback});
  desktopNotifications.add(toast);
  const release=()=>desktopNotifications.delete(toast);
  toast.on('close',event=>{if(process.platform!=='win32'||event?.reason==='userCanceled')release();});
@@ -865,7 +869,7 @@ async function showDesktopNotification(notice){
   if(quitPending||closed)return;
   if(window?.isMinimized())window.restore();
   showWindow();
-  notificationTarget=notice;
+  notificationTarget=target;
   flushNotificationTarget();
  });
  try{toast.show();}catch{release();}

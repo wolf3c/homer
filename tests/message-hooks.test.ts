@@ -5,6 +5,7 @@ import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {fixture,until} from './fixtures/worker-chat-host.js';
+import {notificationPreviewText} from '../src/message-links.js';
 
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 
@@ -13,6 +14,8 @@ test('message hook observes committed natural, file, and background messages onl
  try{
   const seen:{messageId:string;inTransaction:boolean;status?:string}[]=[];
   const seenElsewhere:string[]=[];
+  const desktopBodies:(string|undefined)[]=[];
+  f.app.onDesktopNotification(event=>desktopBodies.push(event.body));
   other.app.hooks.on('message.committed',({messageId})=>{seenElsewhere.push(messageId);});
   f.app.hooks.on('message.committed',({messageId})=>{
    seen.push({messageId,inTransaction:f.app.store.db.isTransaction,status:f.app.history.message(messageId)?.status});
@@ -26,7 +29,7 @@ test('message hook observes committed natural, file, and background messages onl
     return {status:'completed',text:'Natural reply'};
    }
    if(text==='send'){
-    const final=`First message [Report](${pathToFileURL(path).href})`;
+    const final=`[Report](${pathToFileURL(path).href})`;
     await tick();assert.equal(seen.length,1);
     return {status:'completed',text:final,messages:[{itemId:'file-final',phase:'final_answer',text:final}]};
    }
@@ -46,6 +49,8 @@ test('message hook observes committed natural, file, and background messages onl
   const worker=f.engines.find(e=>e.options.role==='worker')!;
   worker.finish!({status:'completed',text:'Internal Worker result'});
   await f.app.idle();await until(()=>seen.length===4);await tick();
+  await until(()=>desktopBodies.length===4);
+  assert.deepEqual(desktopBodies,[undefined,'收到附件',undefined,'Background message']);
   assert.equal(new Set(seen.map(e=>e.messageId)).size,4);
   assert.ok(seen.every(e=>!e.inTransaction&&e.status==='completed'));
   const fileId=seen[1]!.messageId;
@@ -183,7 +188,9 @@ test('committed reads do not expose later uncommitted edits or revocation change
 for(const file of [false,true])test('a real COMMIT failure never emits for '+(file?'a file final':'a natural reply'),async()=>{
  const f=fixture();try{
   const seen:string[]=[];
+  const desktop:string[]=[];
   f.app.hooks.on('message.committed',({messageId})=>{seen.push(messageId);});
+  f.app.onDesktopNotification(event=>desktop.push(event.id));
   const path=join(f.app.config.workspace,'commit.md');writeFileSync(path,'# File');
   f.setScript(async()=>{
    f.app.store.db.exec(`
@@ -202,20 +209,30 @@ for(const file of [false,true])test('a real COMMIT failure never emits for '+(fi
   await f.app.start();
   await assert.rejects(f.app.message('commit test','commit-test'),/FOREIGN KEY constraint failed/);
   await tick();assert.deepEqual(seen,[]);
+  assert.deepEqual(desktop,[]);
   const row=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='commit-test'").get()!;
   assert.equal(f.app.readCommittedMessage(String(row.replyId),{requestId:'commit-test'}),undefined);
  }finally{await f.close();}
 });
 
-test('desktop receives the committed reply without streaming text or history replay', async () => {
+test('desktop previews the committed final and failure status without streaming text or history replay', async () => {
  const f=fixture();
  try {
-  const events:{kind:string;id:string;threadId:string}[]=[];
+  const events:{kind:string;id:string;threadId:string;body?:string}[]=[];
   f.app.onDesktopNotification(event=>{
    assert.equal(f.app.store.db.isTransaction,false);
    events.push(event);
   });
-  f.setScript(async()=>({status:'completed',text:'Private reply'}));
+  f.setScript(async(main,text)=>{
+   const commentary={itemId:'progress',phase:'commentary',text:'Process update'} as const;
+   const final={itemId:'final',phase:'final_answer',text:'**Final reply** [source](https://example.test/hidden)'} as const;
+   main.emit('textDelta',{threadId:main.threadId,turnId:main.turnId,delta:'Incomplete fragment'});
+   await tick();
+   if(text==='fail')return {status:'failed',text:'Incomplete fragment',errorCode:'synthetic_failure'};
+   if(text==='quota')return {status:'failed',text:'Incomplete fragment',errorCode:'engine_quota_insufficient'};
+   if(text==='interrupt')return {status:'interrupted',text:'Incomplete fragment',errorCode:'main_user_interrupted'};
+   return {status:'completed',text:commentary.text+'\n'+final.text,messages:[commentary,final]};
+  });
   await f.app.start();
   assert.equal(events.length,0);
   await f.app.submitMessage({requestId:'desktop-notice',text:'Private input'});
@@ -224,10 +241,32 @@ test('desktop receives the committed reply without streaming text or history rep
   const threadId=f.app.store.meta('mainThread')!;
   const event=events[0]!;
   assert.equal(event.kind,'message');assert.equal(event.threadId,threadId);
+  assert.equal(event.body,'Final reply');
   const page=f.app.webHistoryPages().read(threadId,{around:event.id});
   assert.ok(page.messages.some(message=>message.id===event.id||message.process?.replyMessageId===replyId),'the notification reaches a displayed message');
+  await f.app.message('fail','desktop-failed');
+  await until(()=>events.length===2);
+  assert.equal(events[1]?.body,'本次回复未完成');
+  await f.app.message('quota','desktop-quota');
+  await until(()=>events.length===3);
+  assert.match(events[2]?.body??'',/当前额度不足/);
+  await f.app.message('interrupt','desktop-interrupt');
+  await until(()=>events.length===4);
+  assert.equal(events[3]?.body,'本次回复已中断');
   await f.restart(app=>app.onDesktopNotification(value=>events.push(value)));
   await tick();
-  assert.equal(events.length,1);
+  assert.equal(events.length,4);
  } finally {await f.close();}
+});
+
+test('notification preview keeps plain paragraph text and bounds complete graphemes',()=>{
+ assert.equal(notificationPreviewText(' \n\n```sh\nprivate command\n```\n\n[attachment](file:///example/report)\n\n**已完成**  收尾\n\n其余信息'),'已完成 收尾');
+ assert.equal(notificationPreviewText(' ![Graphic](file:///example/image) `private code` https://example.test/private'),undefined);
+ assert.equal(notificationPreviewText('  \n  '),undefined);
+ const emoji='👨‍👩‍👧‍👦';
+ assert.equal(notificationPreviewText('字'.repeat(118)+emoji+'尾字'),'字'.repeat(118)+emoji+'…');
+ const long=notificationPreviewText(emoji.repeat(120))!;
+ assert.equal(long,emoji.repeat(40)+'…');
+ assert.ok(Buffer.byteLength(long)<=1024);
+ assert.equal(notificationPreviewText('**Final.**\n\n'+'字'.repeat(6000)),undefined);
 });

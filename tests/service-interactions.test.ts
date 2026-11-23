@@ -460,7 +460,12 @@ test('desktop receives distinct user-pending IDs and locates a live target beyon
  const f=await fixture('user',2);
  try{
   const received:string[]=[];
-  f.app.onDesktopNotification(event=>{if(event.kind==='interaction')received.push(event.id);});
+  f.app.onDesktopNotification(event=>{
+   if(event.kind==='interaction'){
+    assert.equal(event.body,'有问题等待回复');
+    received.push(event.id);
+   }
+  });
   await f.app.message('dispatch','notification-source');
   await until(()=>received.length===2);
   assert.notEqual(received[0],received[1]);

@@ -44,7 +44,7 @@ function DesktopNotificationSettings(){
   try{setValue(await bridge.set(key,checked));}catch{setError('未能保存提醒设置，请重试。');}finally{setBusy(false);}
  }
  return <div className="desktop-permissions">
-  <p className="permission-intro">系统通知受通知权限和勿扰设置控制。</p>
+  <p className="permission-intro">通知可能显示回复正文。可在系统通知设置中隐藏预览。通知权限和勿扰由系统控制。</p>
   <div className="desktop-permission-actions"><Button type="button" onClick={()=>void bridge.openSystemSettings().catch(()=>setError('未能打开系统通知设置。'))}>打开系统通知设置</Button></div>
   {([['message','Homer 有新消息'],['attention','需要我关注']] as const).map(([key,label])=><section key={key}>
    <div className="desktop-permission-heading"><h3>{label}</h3><Button type="button" role="switch" aria-label={label} aria-checked={value?.[key]??false}
