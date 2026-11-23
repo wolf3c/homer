@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {conversationInput,ConversationHistory,type ConversationInput} from '../src/web-history.js';
 import {conversationUserText,previewIntentTooLong} from '../src/user-intent.js';
-import {parseResourceReference,referencesOf,resourceReferenceText,type ResourceReference} from '../src/preview-reference.js';
+import {parseResourceReference,referenceKey,referencesOf,resourceReferenceText,type ResourceReference} from '../src/preview-reference.js';
 import {prepareMessage,restoreComposerDraft,canSubmitMessage} from '../ui/conversation-client.js';
 import {historyFixture} from './web-history-loading-fixture.js';
 
@@ -240,4 +240,14 @@ test('dispatch excludes an unauthorized reference and its image but keeps user i
  assert.doesNotMatch(projected.context,/同名\.txt（revoked/);
  assert.deepEqual(projected.attachments,[independent]);
  assert.deepEqual(input.attachments,[image,independent]);
+});
+
+test('local image annotations require a content digest and distinguish versions at the same path',()=>{
+ const source={kind:'message-file',messageId:'message',destination:'/tmp/image.png',title:'image.png',sha256:'a'.repeat(64)};
+ const image={assetId:'asset-00000000-0000-4000-8000-000000000002',revision:1};
+ const reference={kind:'image',source,image,width:32,height:32,annotations:[{id:'area',region:{x:0,y:0,width:1,height:1},comment:'Review'}]};
+ const accepted=parseResourceReference(reference);
+ assert.deepEqual(accepted,reference);
+ assert.throws(()=>parseResourceReference({...reference,source:{...source,sha256:undefined}}),/invalid_resource_reference/);
+ assert.notEqual(referenceKey(accepted),referenceKey(parseResourceReference({...reference,source:{...source,sha256:'b'.repeat(64)}})));
 });

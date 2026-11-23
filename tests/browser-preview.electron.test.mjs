@@ -42,7 +42,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
    if(text==='Delegate both pages'){for(const goal of ['Operate page A','Operate page B']){const {taskId}=await main.call('task_create',{title:goal,goal});await main.call('worker_open',{taskId});}return{status:'completed',text:'两个合成任务已创建'};}
-   const final={itemId:'preview-final',phase:'final_answer',text:text.includes('核对本地 HTML 的标题')||text.includes('核对第二处本地文本')?'收到本地批注':text==='Emit Quote'?quoteText:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
+   const final={itemId:'preview-final',phase:'final_answer',text:text.includes('核对本地 HTML 的标题')||text.includes('核对第二处本地文本')||text.includes('测试本地图片批注')?'收到本地批注':text==='Emit Quote'?`${quoteText}\n\n[打开引用验收网页](${url}/quote)`:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
    return{status:'completed',text:final.text,messages:[final]};
   });await f.app.start();await f.app.message('打开合成网页并批注','preview-fixture-source');
@@ -66,6 +66,68 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
   await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
   record('desktop local file link renders current bytes');
+  const localImage=join(scratch,'local.png');
+  const png=async(color)=>Buffer.from(await host.evaluate(color=>{
+   const canvas=document.createElement('canvas');canvas.width=240;canvas.height=180;
+   const ctx=canvas.getContext('2d');ctx.fillStyle=color;ctx.fillRect(0,0,240,180);
+   return canvas.toDataURL('image/png').split(',')[1];
+  },color),'base64');
+  await writeFile(localImage,await png('blue'));
+  f.app.history.record('desktop-image-fixture',f.app.store.meta('mainThread'),`[打开本地图片](${pathToFileURL(localImage).href})`);
+  await host.getByRole('link',{name:'打开本地图片',exact:true}).click();
+  async function noteLocalImage(note){
+   await host.locator('.image-annotation-toggle').click();
+   const box=await host.locator('.image-annotation img').boundingBox();
+   await host.mouse.move(box.x+20,box.y+20);await host.mouse.down();
+   await host.mouse.move(box.x+100,box.y+90,{steps:6});await host.mouse.up();
+   await host.locator('.image-annotation textarea').fill(note);
+   await host.locator('.image-annotation button[type="submit"]').click();
+   await host.locator('.annotation-chip').filter({hasText:note}).waitFor();
+  }
+  await noteLocalImage('测试本地图片批注');
+  await host.locator('.composer-area button[type="submit"]').click();
+  await until(()=>f.inputs.some(text=>text.includes('测试本地图片批注')&&text.includes('批注时所见')));
+  await host.getByRole('button',{name:'关闭local.png',exact:true}).click();
+  const reopenImage=host.locator('.image-reference').filter({hasText:'测试本地图片批注'}).getByRole('button',{name:'打开批注 1',exact:true});
+  await reopenImage.click();await host.locator('.image-region-number').waitFor();
+  assert.equal(await host.locator('.image-annotation.is-annotating').count(),0);
+  await host.getByRole('button',{name:'关闭local.png',exact:true}).click();
+  await writeFile(localImage,await png('red'));
+  await reopenImage.click();
+  await host.getByText('当前预览无法准确定位这条批注，原摘录与备注已保留。').waitFor();
+  assert.equal(await host.locator('.image-region-number').count(),0);
+  await host.getByRole('button',{name:'关闭local.png',exact:true}).click();
+  record('local PNG draws, sends and reopens without restoring the old box on a same-size replacement');
+  await host.getByRole('link',{name:'打开本地图片',exact:true}).click();
+  await noteLocalImage('测试本地图片批注只保留备注');
+  await writeFile(localImage,await png('green'));
+  await host.locator('.composer-area button[type="submit"]').click();
+  await host.getByRole('button',{name:'只保留本地图片批注备注',exact:true}).click();
+  await host.locator('.composer-area button[type="submit"]').click();
+  await until(()=>f.inputs.includes('测试本地图片批注只保留备注'));
+  await host.getByRole('button',{name:'关闭local.png',exact:true}).click();
+  await truncate(localImage,8*1024*1024+1);
+  await host.getByRole('link',{name:'打开本地图片',exact:true}).click();
+  await host.getByText('图片超过草稿附件的 8 MiB 上限，可预览。',{exact:true}).waitFor();
+  assert.equal(await host.locator('.image-annotation-toggle').count(),0);
+  await host.getByRole('button',{name:'关闭local.png',exact:true}).click();
+  record('local PNG replacement keeps the draft and can send only its note; oversized files still preview');
+  await writeFile(localImage,await png('green'));
+  await host.getByRole('link',{name:'打开本地图片',exact:true}).click();
+  await noteLocalImage('从输入区删除本地图批注');
+  const draftImage=host.locator('.context-attachment-item').filter({hasText:'local.png'});
+  await draftImage.waitFor();
+  await host.getByRole('button',{name:/删除 local\.png 的批注/}).click();
+  await draftImage.waitFor({state:'detached'});
+  await host.getByRole('button',{name:'关闭local.png',exact:true}).click();
+  await host.getByRole('link',{name:'打开本地图片',exact:true}).click();
+  await noteLocalImage('从 Preview 删除本地图批注');
+  await host.getByRole('button',{name:/打开 local\.png 的批注 .*从 Preview 删除本地图批注/}).click();
+  await host.getByRole('button',{name:'删除此批注',exact:true}).click();
+  await draftImage.waitFor({state:'detached'});
+  await host.getByRole('button',{name:'关闭local.png',exact:true}).click();
+  record('deleting the final local image annotation removes its draft attachment from both entry points');
+
   await host.getByRole('link',{name:'打开本地 HTML',exact:true}).click();
   let localPage;
   await until(()=>!!(localPage=electron.context().pages().find(page=>page.url().endsWith('/local/index.html'))));
@@ -86,7 +148,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await host.locator('.composer-area button[type="submit"]').click();
   await until(()=>f.inputs.some(input=>input.includes('核对本地 HTML 的标题')&&input.includes('desktop-html-fixture')));
   await host.getByRole('button',{name:'关闭本地批注',exact:true}).click();
-  await host.getByRole('button',{name:'打开批注 1',exact:true}).click();
+  await host.locator('.preview-reference').filter({hasText:'核对本地 HTML 的标题'}).getByRole('button',{name:'打开批注 1',exact:true}).click();
   await until(()=>!!(localPage=electron.context().pages().find(page=>page.url().endsWith('/local/index.html'))));
   await localPage.locator('.annotation-outline').waitFor();
   await host.getByRole('button',{name:'关闭本地批注',exact:true}).click();
@@ -252,9 +314,8 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
    assert.equal(before.visible,true);
    const latest=host.locator('.scroll-latest:enabled');
    if(await latest.isVisible())await latest.click();
-   await source.click();
+   await source.scrollIntoViewIfNeeded();
    await source.evaluate(element=>{
-    element.scrollIntoView({block:'center'});
     const range=document.createRange(),text=element.firstChild;
     let start=0,right=0;
     for(let index=0;index<text.length-8;index+=4){
@@ -289,14 +350,15 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
    await quote.waitFor({state:'hidden'});
    assert.deepEqual(await nativeState(target.url()),before);
   }
-  await host.getByRole('link',{name:'打开业务网页',exact:true}).first().click();
-  await until(async()=>!!(await nativeState(page.url()))?.visible);
-  await page.getByLabel('任务输入').fill('保留网页输入');
-  await verifyQuote(page,false);
-  assert.equal(await page.getByLabel('任务输入').inputValue(),'保留网页输入');
+  await host.getByRole('link',{name:'打开引用验收网页',exact:true}).click();
+  const quotePage=await waitPage(url+'/quote');
+  await until(async()=>!!(await nativeState(quotePage.url()))?.visible);
+  await quotePage.getByLabel('任务输入').fill('保留网页输入');
+  await verifyQuote(quotePage,false);
+  assert.equal(await quotePage.getByLabel('任务输入').inputValue(),'保留网页输入');
   await host.locator(`[data-conversation-message="${htmlReplyId}"]`).getByRole('link',{name:'preview.html',exact:true}).click();
   await until(async()=>!!(await nativeState(html.url()))?.visible);
-  assert.equal((await nativeState(page.url())).visible,false);
+  assert.equal((await nativeState(quotePage.url())).visible,false);
   const gutter=await host.locator('.preview-separator').boundingBox();
   const separatorX=gutter.x+gutter.width/2,separatorY=gutter.y+gutter.height/2;
   await host.mouse.move(separatorX,separatorY);

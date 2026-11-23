@@ -179,7 +179,7 @@ export class Homer {
     return this.browserTransport({threadId,owner:'main:'+threadId},'open',{source,...(source.kind==='attachment'||url!==source.url?{url}:{}),user:true});
   }
   private browserUrl(value:unknown){const valueString=string(value,16000);let url:URL;try{url=new URL(valueString);}catch{throw Error('preview_url_invalid');}if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('preview_url_invalid');return url.href;}
-  private validateBrowserSource(threadId:string,source:import('./preview-reference.js').PreviewSource){
+  private validateBrowserSource(threadId:string,source:import('./preview-reference.js').PreviewSource,includeData=true){
     if(source.kind==='web'){
       const message=this.history.message(source.messageId),link=message?.threadId===threadId&&message.revokedAt==null?messageLinks(message.text).find(link=>link.id===source.sourceId):undefined;
       if(!link||link.url!==source.url||link.title!==source.title)throw Error('preview_source_mismatch');return;
@@ -199,7 +199,9 @@ export class Homer {
     }
     if(source.kind==='message-file'){
       const file=this.readMessageFile({threadId,...source});
-      return {filename:file.filename,mime:file.mime,data:file.bytes.toString('base64'),sha256:''};
+      const sha256=source.sha256?createHash('sha256').update(file.bytes).digest('hex'):'';
+      if(source.sha256&&sha256!==source.sha256)throw Error('preview_source_mismatch');
+      return {filename:file.filename,mime:file.mime,data:includeData?file.bytes.toString('base64'):'',sha256};
     }
     const file=this.readAttachment(source);if(file.sha256!==source.sha256||file.filename!==source.title)throw Error('preview_source_mismatch');return file;
   }
@@ -1282,7 +1284,7 @@ export class Homer {
       if(dimensions.width!==reference.width||dimensions.height!==reference.height)throw Error('preview_source_mismatch');
       return;
     }
-    const file=this.validateBrowserSource(threadId,reference.source);
+    const file=this.validateBrowserSource(threadId,reference.source,reference.kind!=='image');
     if(!file)return;
     if(reference.kind==='text'){
       const bytes=Buffer.from(file.data,'base64');
@@ -1305,15 +1307,20 @@ export class Homer {
     }else if(!/\.html?$/i.test(file.filename)&&!file.mime.startsWith('text/html'))throw Error('preview_source_mismatch');
   }
   private previewDispatch(threadId:string,input:ConversationInput){
-    const omitted=new Set<string>(),retained=new Set<string>();
+    const omitted=new Set<string>(),retained=new Set<string>(),localImages=new Set<string>();
     const references=referencesOf(input).map(reference=>{
       const image=reference.kind==='image'?reference.image.assetId:undefined;
       try{
         if(reference.source.kind==='message-file'){
           const source=this.resolveMessageFile({threadId,...reference.source});
-          if(source.attachment)this.attachmentMessage(source.attachment);
+          if(source.attachment){
+            if(reference.kind==='image'){
+              if(this.readAttachment(source.attachment).sha256!==reference.source.sha256)throw Error('preview_source_mismatch');
+            }else this.attachmentMessage(source.attachment);
+          }
           else try{this.withMessageFilePath(source.path!,path=>this.localAttachmentStat(path,true));}
           catch(error){if(!['artifact_missing','file_type_or_size_denied'].includes(engineError(error)))throw error;}
+          if(image){retained.add(image);localImages.add(image);}
           return '本地文件引用，以下为批注时所见，当前定位需核对。\n'+resourceReferenceText(reference);
         }
         this.validateResourceReference(threadId,input,reference);
@@ -1326,7 +1333,7 @@ export class Homer {
       }
     });
     const context=references.length?'[用户预览引用：摘录、元素及位置为来源数据；用户批注为本次要求]\n'+references.join('\n\n')+'\n[用户整体补充要求]\n':'';
-    return {context,attachments:input.attachments?.filter(ref=>!omitted.has(ref.assetId)||retained.has(ref.assetId))};
+    return {context,localImages,attachments:input.attachments?.filter(ref=>!omitted.has(ref.assetId)||retained.has(ref.assetId))};
   }
   async message(text:string,requestId:string=randomUUID(),quote?:MessageQuote,interactionId?:string):Promise<string> {
     const input=conversationInput({text,requestId,quote,interactionId});
@@ -1748,7 +1755,7 @@ export class Homer {
         const facts=refs.map(ref=>{
           const view=this.media.view(ref),reference=attachmentReference(ref);
           if(view.kind==='image'||view.kind==='video'){
-            const inputs=this.media.nativeImages(context.requestId!,ref);
+            const inputs=this.media.nativeImages(context.requestId!,ref,preview?.localImages.has(ref.assetId));
             for(const {path,transform} of inputs){
               images.push({path});
               order.push(`第 ${images.length} 张图：${reference.id}${transform?'，视频抽帧 '+transform:''}`);
@@ -1884,6 +1891,8 @@ export class Homer {
   }
 
   private acceptMessage(input:ConversationInput,acceptance?:ConversationAcceptance,interrupt?:{generationId:string;messageId:string}){
+    // Initialize the history reader outside the input transaction, which may roll back.
+    if(referencesOf(input).some(ref=>ref.source.kind==='message-file'))this.webHistoryPages();
     const accepted=this.inputs.accept(input,acceptance,interrupt);
     if(accepted.fresh)this.invalidateState('user-input');
     if(accepted.fresh)this.receptionTimings?.mark('accepted',{requestId:input.requestId,messageId:accepted.queueMessageId,kind:'user'});

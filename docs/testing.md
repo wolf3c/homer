@@ -1362,6 +1362,8 @@ HOMER_PREVIEW_UI="$preview_run/web" HOMER_PREVIEW_RUNTIME="$PWD/dist/browser-pre
 
 `HOMER_PREVIEW_UI/RUNTIME/EVIDENCE` 均必须显式提供，每次复验使用独立证据目录，保留已跟踪的历史报告。macOS 专项以原生窗口 ID 调用 screencapture 保存真正的完整窗口；内容 renderer 截图不能替代这一证据。
 
+普通本地图片的媒体解码和模型请求专项由 `npm run test:local-media` 纳入。使用 Node 22、项目依赖和 FFmpeg 可单独运行 `node --import tsx --test tests/preview-image.local-media.test.ts`。它检查合成 App Server 实收的 `turn/start`、JPEG 方向、排队撤权和设备附件读取。
+
 本次专项退出 0、8 组闭环检查通过，页面错误为空：消息链接、React Grab 多标记编辑删除/chip 定位、Composer 来源发送、双 Worker MCP 后台页、ARIA refs/select、接手/继续、导航关闭、新请求同页移交、HTML CSS/JS 与批注。见[报告及截图](../outputs/browser-product-2026-11-17/product-report.json)。生产 stdio 各段另用既有 shell/runtime/host 测试合约验证：418/418；本次引入上下文后补齐 MainComposer、reader、management、Main/native observer 夹具，合并139/139；runtime命名管道等48/48，草稿/调度等105/105，媒体/引用34/34。计数有重叠，不相加为独立总数。两端类型与独立 Vite 构建通过。
 
 默认全量实跑 **2727 项，2651 通过、76 失败**，保留 本地原始 default-regression.log（不随产品提交）。其中64项是本次新增绑定的旧提取夹具缺项，已补接口/真实导入、原样重跑通过；未删断言。余下12项在固定 Node22 的隔离 HEAD `dfee72287374f3d70bf67f186143bfe3c8b50bc9` 同样失败：时间戳异步断言、链接来源、旧过程/不确定状态呈现与次序。逐项标题对照见 [baseline.json](../outputs/browser-product-2026-11-17/baseline.json)、本地 HEAD 原始日志与本地共享源码原始日志。HEAD 50项38过12失败，共享51项39过同12失败；不将默认全量追认通过。修正后未重复全量。

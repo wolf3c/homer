@@ -8,7 +8,7 @@ export function webSourceUrl(value:string):URL|undefined {
 
 export type PreviewSource =
  | ({kind:'attachment';messageId:string;sha256:string;title:string}&AttachmentRef)
- | {kind:'message-file';messageId:string;destination:string;title:string}
+ | {kind:'message-file';messageId:string;destination:string;title:string;sha256?:string}
  | {kind:'web';messageId:string;sourceId:string;url:string;title:string}
  | ({kind:'browser';url:string;title:string}&({requestId:string;messageId?:never}|{messageId:string;requestId?:never}));
 export type PreviewPageCapture={id:string;url:string;title:string};
@@ -94,7 +94,9 @@ export function parsePreviewSource(value:unknown):PreviewSource{
   if(!/^[\w:-]+$/.test(messageId)||!/^asset-[a-f0-9-]{36}$/.test(assetId)||!Number.isSafeInteger(revision)||revision<1||!/^[a-f0-9]{64}$/.test(sha256))invalid();
   source={kind:'attachment',messageId,assetId,revision,sha256,title};
  }else if(s.kind==='message-file'){
-  source={kind:'message-file',messageId:text(s.messageId,100),destination:text(s.destination),title};
+  const sha256=s.sha256===undefined?undefined:text(s.sha256,64);
+  if(sha256&&!/^[a-f0-9]{64}$/.test(sha256))invalid();
+  source={kind:'message-file',messageId:text(s.messageId,100),destination:text(s.destination),title,...(sha256?{sha256}:{})};
  }else if(s.kind==='web'||s.kind==='browser'){
   const url=text(s.url);
   const parsed=webSourceUrl(url);
@@ -125,7 +127,7 @@ export function parseResourceReference(value:unknown):ResourceReference{
   return {kind:'web',source,annotations:previewAnnotations(v.annotations),...(page?{page}:{})};
  }
  if(v.kind==='image'){
-  if(source.kind!=='attachment')invalid();
+  if(source.kind!=='attachment'&&!(source.kind==='message-file'&&source.sha256))invalid();
   const image=imageReference(v);
   if(v.annotations!==undefined){
    if(v.region!==undefined||v.comment!==undefined)invalid();
@@ -146,7 +148,10 @@ export function resourceReferenceText(reference:ResourceReference):string{
  const source=reference.source;
  const origin=source.kind==='message-file'?`${source.title}（${source.destination}，来源消息 ${source.messageId}）`:source.kind==='attachment'?`${source.title}（${source.messageId}／${source.assetId}@${source.revision}，SHA-256 ${source.sha256}）`:source.kind==='web'?`${source.title}（${source.url}，来源消息 ${source.messageId}／${source.sourceId}）`:`${source.title}（${source.url}，打开自${source.requestId?'请求 '+source.requestId:'消息 '+source.messageId}）`;
  if(reference.kind==='text')return reference.annotations?`来源：${origin}\n文件逐段批注（text 为来源数据，comment 为用户备注）：\n${JSON.stringify(reference.annotations.map((note,i)=>({number:i+1,...note})))}`:`来源：${origin}\n引用原文：\n${reference.text}`;
- if(reference.kind==='image')return reference.annotations?`来源：${origin}\n图片尺寸：${reference.width} × ${reference.height}\n图片逐区域批注（region 为原图像素位置，comment 为用户备注；原图随附件提供）：\n${JSON.stringify(reference.annotations.map((note,i)=>({number:i+1,...note})))}`:`来源：${origin}\n图片尺寸：${reference.width} × ${reference.height}；矩形区域（原图像素）：${JSON.stringify(reference.region)}\n用户批注：${reference.comment}`;
+ if(reference.kind==='image'){
+  const picture=`来源：${origin}\n批注图片附件：${reference.image.assetId}@${reference.image.revision}\n图片尺寸：${reference.width} × ${reference.height}`;
+  return reference.annotations?`${picture}\n图片逐区域批注（region 为原图像素位置，comment 为用户备注）：\n${JSON.stringify(reference.annotations.map((note,i)=>({number:i+1,...note})))}`:`${picture}；矩形区域（原图像素）：${JSON.stringify(reference.region)}\n用户批注：${reference.comment}`;
+ }
  return `来源：${origin}\n${reference.page?`批注时页面：${reference.page.title}（${reference.page.url}）；页面句柄 ${reference.page.id}（运行期有效，操作前重新读取）\n`:''}网页元素位置为批注时的页面信息，非服务器复现。\n${reference.annotations.map((n,i)=>`${i+1}. ${n.element} ${n.elementPath}\n位置：${JSON.stringify(n.boundingBox??{x:n.x,y:n.y})}\n用户批注：${n.comment}`).join('\n')}`;
 }
 export function resourceHasComment(reference:ResourceReference|undefined):boolean{
@@ -157,7 +162,7 @@ export type ResourceReferences={resourceReference?:ResourceReference;resourceRef
 export function referenceKey(reference:Pick<ResourceReference,'kind'|'source'>&{image?:AttachmentRef;page?:PreviewPageCapture}):string{
  const s=reference.source;
  if(s.kind==='draft-image')return JSON.stringify(['image',s.kind,reference.image?.assetId,reference.image?.revision]);
- if(s.kind==='message-file')return JSON.stringify([reference.kind,s.kind,s.messageId,s.destination]);
+ if(s.kind==='message-file')return JSON.stringify([reference.kind,s.kind,s.messageId,s.destination,...(reference.kind==='image'?[s.sha256]:[])]);
  const page='page' in reference?reference.page as PreviewPageCapture|undefined:undefined;
  const pageUrl=page&&!page.url.startsWith('homer-preview:')&&(s.kind==='attachment'||page.url!==s.url)?page.url:undefined;
  return JSON.stringify(s.kind==='attachment'?[reference.kind,s.kind,s.messageId,s.assetId,s.revision,s.sha256,...(pageUrl?[pageUrl]:[])]:s.kind==='web'?[reference.kind,s.kind,s.messageId,s.sourceId,s.url,...(pageUrl?[pageUrl]:[])]:[reference.kind,s.kind,s.requestId??s.messageId,s.url,...(pageUrl?[pageUrl]:[])]);

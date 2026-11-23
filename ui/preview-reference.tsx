@@ -55,7 +55,8 @@ export function ResourceReferenceBlock({reference,children,hideScreenshotDetails
     {children&&<div className="image-reference-image" style={{maxWidth:Math.min(reference.height>reference.width?220:320,360*reference.width/reference.height)}}>{children}<ImageReferenceRegions reference={reference}/></div>}
     <ol className="image-reference-notes" aria-label="图片区域批注">{notes.map(note=><li key={note.id}>{note.comment.length>240||note.comment.split('\n').length>4?<details className="image-reference-long-comment"><summary>{note.comment.slice(0,60).trimEnd()}… <span>全文</span></summary><p className="image-reference-comment">{note.comment}</p></details>:<p className="image-reference-comment">{note.comment}</p>}</li>)}</ol>
    </div>
-   {!(hideScreenshotDetails&&screenshot)&&<><details className="image-reference-details"><summary>截图来源与区域</summary>
+   {!isDraftImageReference(reference)&&source.kind==='message-file'&&window.homerBrowserPreview&&notes.map((note,i)=><Button key={note.id} type="button" className="annotation-chip-open" onClick={()=>browser.openReference(reference,note.id,true)}>打开批注 {i+1}</Button>)}
+   {!(hideScreenshotDetails&&screenshot)&&<><details className="image-reference-details"><summary>{screenshot?'截图来源与区域':'图片来源与区域'}</summary>
     <QuoteBlock.Root><QuoteBlock.Icon/><QuoteBlock.Text className="image-reference-source">{'来源：'+title+'\n图片尺寸：'+reference.width+' × '+reference.height}</QuoteBlock.Text></QuoteBlock.Root>
     <ol>{notes.map((note,i)=><li key={note.id}>区域 {i+1}：{coordinates(note.region)}</li>)}</ol>
    </details>

@@ -28,7 +28,7 @@ function withCurrentBounds(a:NativeAnnotation):NativeAnnotation{
 function fromNotes(notes:readonly PreviewImageAnnotation[]):NativeAnnotation[]{
  return notes.map((n,i)=>({id:n.id,bodies:[{id:'homer-comment:'+n.id,annotation:n.id,purpose:'commenting',value:n.comment}],properties:{homerOrder:i+1},target:{annotation:n.id,selector:{type:ShapeType.RECTANGLE,geometry:{x:n.region.x,y:n.region.y,w:n.region.width,h:n.region.height,bounds:{minX:n.region.x,minY:n.region.y,maxX:n.region.x+n.region.width,maxY:n.region.y+n.region.height}}}}}));
 }
-function RegionComment({popup,anno,pending,onDone,title,image,onSave,onRemove,canonical}:{popup:PopupProps;anno:Annotator;pending:MutableRefObject<Pending|null>;onDone:()=>void;title:string;image:HTMLImageElement|null;onSave:(items:import('../src/preview-reference').PreviewImageAnnotation[])=>Promise<void>;onRemove:(id:string)=>void;canonical:(id:string)=>NativeAnnotation|undefined}){
+function RegionComment({popup,anno,pending,onDone,title,image,onSave,onRemove,canonical}:{popup:PopupProps;anno:Annotator;pending:MutableRefObject<Pending|null>;onDone:()=>void;title:string;image:HTMLImageElement|null;onSave:(items:import('../src/preview-reference').PreviewImageAnnotation[])=>Promise<void>;onRemove:(id:string)=>void|Promise<void>;canonical:(id:string)=>NativeAnnotation|undefined}){
  const id=popup.annotation.id,ended=useRef(false),textarea=useRef<HTMLTextAreaElement>(null);
  const existing=!!canonical(id);
  const [comment,setComment]=useState(()=>note(popup.annotation)),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -57,14 +57,23 @@ function RegionComment({popup,anno,pending,onDone,title,image,onSave,onRemove,ca
  };
  return <AnnotationCommentForm ref={textarea} title={'图片区域 · '+title} value={comment} busy={busy} error={error}
   onChange={value=>{setComment(value);setError('');}} onSave={()=>void save()} onCancel={()=>{cancel();finish();}}
-  onDelete={existing?()=>{if(ended.current)return;ended.current=true;onRemove(popup.annotation.id);anno.removeAnnotation(popup.annotation.id);finish();}:undefined}/>;
+  onDelete={existing?async()=>{
+   if(ended.current||busy)return;
+   setBusy(true);
+   try{
+    await onRemove(id);
+    if(ended.current)return;
+    ended.current=true;anno.removeAnnotation(id);finish();
+   }catch(error){if(!ended.current)setError(error instanceof Error?error.message:'批注移除失败，请重试。');}
+   finally{setBusy(false);}
+  }:undefined}/>;
 }
-type Props={initialEnabled?:boolean;url:string;title:string;actions?:HTMLElement;control:MutableRefObject<ImageAnnotationControl|null>;notes:readonly PreviewImageAnnotation[];onSave:(notes:PreviewImageAnnotation[],size:{width:number;height:number},isCurrent:()=>boolean)=>Promise<void>;onRemove:(id:string)=>void;focusAnnotation?:string;focusRequest?:string};
-function Regions({initialEnabled=true,url,title,actions,control,notes,onSave,onRemove,focusAnnotation,focusRequest}:Props){
+type Props={initialEnabled?:boolean;readOnly?:boolean;url:string;title:string;actions?:HTMLElement;control:MutableRefObject<ImageAnnotationControl|null>;notes:readonly PreviewImageAnnotation[];onSave:(notes:PreviewImageAnnotation[],size:{width:number;height:number},isCurrent:()=>boolean)=>Promise<void>;onRemove:(id:string)=>void|Promise<void>;focusAnnotation?:string;focusRequest?:string};
+function Regions({initialEnabled=true,readOnly=false,url,title,actions,control,notes,onSave,onRemove,focusAnnotation,focusRequest}:Props){
  const anno=useAnnotator<Annotator>(),annotations=useAnnotations<NativeAnnotation>(),regions=saved(annotations);
  const image=useRef<HTMLImageElement>(null),stage=useRef<HTMLDivElement>(null),toggle=useRef<HTMLButtonElement>(null),pending=useRef<Pending|null>(null),mounted=useRef(true);
  const [drawingEnabled,setEnabled]=useState(initialEnabled),[dimensions,setDimensions]=useState({width:0,height:0});
- const enabled=!actions||drawingEnabled;
+ const enabled=!readOnly&&(!actions||drawingEnabled);
  const [hint,setHint]=useState(initialEnabled),[loadError,setLoadError]=useState(false);
  useLayoutEffect(()=>{
   setHint(enabled);

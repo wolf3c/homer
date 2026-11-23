@@ -197,8 +197,8 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
   const previewMarkdownComponents=useMemo<Components>(()=>!attachmentPath?markdownComponents:({...markdownComponents,
     img:({src,alt})=><LazyMarkdownImage src={src&&!/^(?:[a-z][a-z\d+.-]*:|[\\/]|[?#])/i.test(src)?attachmentPath+'/resource/'+encodeURIComponent(src):src} alt={alt}/>,
   }),[attachmentPath]);
-  const source=useMemo<PreviewSource|undefined>(()=>webSource??(local&&file?{kind:'message-file',messageId:local.messageId,destination:local.destination,title:file.name}:artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file,local]);
-  const imageFile=useMemo(()=>file&&source?.kind==='attachment'?annotationDraft.imageFile(referenceKey({kind:'image',source}),new File([file.blob],file.name,{type:file.mime})):undefined,[file,source,annotationDraft]);
+  const source=useMemo<PreviewSource|undefined>(()=>webSource??(local&&file?{kind:'message-file',messageId:local.messageId,destination:local.destination,title:file.name,...(file.sha256?{sha256:file.sha256}:{})}:artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file,local]);
+  const imageFile=useMemo(()=>file&&source&&(source.kind==='attachment'||source.kind==='message-file'&&source.sha256)?new File([file.blob],file.name,{type:file.mime}):undefined,[file,source]);
   useLayoutEffect(()=>{
     generation.current++;setFile(null);setLocalInfo(undefined);setReadError('');setMediaError('');setNotice('');setRuntime('');setReady(false);setSelection('idle');
     if(!artifact&&!local||webSource){setLoading(false);return;}
@@ -224,9 +224,13 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
         if(mobileView&&error==='mobile_packet_size_limit')throw Error(mobileTransferLimit);
         throw Error('成果读取失败（'+response.status+'），'+(error==='file_type_or_size_denied'?'文件类型或大小不符合当前读取限制（文件上限 50 MiB），请使用原文件。':'请重新连接后重试。'));
       }
-      const sha256=response.headers.get('X-Homer-Artifact-Hash');
+      let sha256=response.headers.get('X-Homer-Artifact-Hash');
       if(artifact&&sha256!==artifact.sha256)throw Error('成果读取失败：附件版本已变化，请重新打开。');
       const blob=await response.blob(),mime=(response.headers.get('Content-Type')??blob.type).split(';')[0]!.trim().toLowerCase();
+      if(local&&['image/png','image/jpeg','image/webp','image/gif'].includes(mime)&&blob.size<=8*1024*1024){
+        const digest=await crypto.subtle.digest('SHA-256',await blob.arrayBuffer());
+        sha256=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+      }
       let name=local?.title??artifact!.title;try{const encoded=response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];if(encoded)name=decodeURIComponent(encoded);}catch{}
       const text=isPatchFile(name,mime)?await blob.slice(0,blob.size>MAX_PATCH_BYTES?PATCH_PREFIX_BYTES:blob.size).text():!/^(audio|video)\//.test(mime)&&(mime.startsWith('text/')||/^(application\/(json|javascript))/.test(mime)||!local&&/\.(txt|md|json|[cm]?[jt]sx?|css|py|sh)$/i.test(name))?await blob.text():'';
       if(controller.signal.aborted||!readerCurrent())return;
@@ -242,10 +246,11 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
       if(objectUrl)URL.revokeObjectURL(objectUrl);
     };
   },[artifact?.id,local?.id,local?.reload,webSource?.url,retry,threadId]);
-  const noteKey=source?.kind==='attachment'?referenceKey({kind:'image',source}):'';
+  const noteKey=source?referenceKey({kind:'image',source}):'';
   const htmlKey=source?referenceKey({kind:'web',source}):'';
   const textReference=referencesOf(draft).find(r=>r.kind==='text'&&source&&referenceKey(r)===referenceKey({kind:'text',source}));
   const imageReference=Object.values(draft.preparingImages??{}).find(r=>source&&referenceKey(r)===referenceKey({kind:'image',source}))??referencesOf(draft).find(r=>r.kind==='image'&&source&&referenceKey(r)===referenceKey({kind:'image',source}));
+  const historicImage=annotationFocus?.history?.kind==='image'&&annotationFocus.key===noteKey?annotationFocus.history:undefined;
   const savedCount=referencesOf(draft).find(r=>r.kind==='web'&&referenceKey(r)===htmlKey)?.annotations?.length??0;
   const focusId=annotationFocus&&source&&annotationFocus.key===referenceKey({kind:isImageSource()?'image':file?.mime==='text/html'?'web':'text',source})?annotationFocus.id:undefined;
   useEffect(()=>{if(annotationFocus&&source&&!focusId&&!(file?.mime==='text/html'&&window.homerBrowserPreview))setNotice('当前预览无法准确定位这条批注，原摘录与备注已保留。');},[annotationFocus?.nonce,source]);
@@ -353,6 +358,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
     <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml?'html-preview-body':isPatch?'patch-preview-body':undefined}>
     {(notice||downloadNotice)&&<p role="status" className="canvas-note">{notice||downloadNotice}</p>}
     {webSource&&<p className="canvas-note canvas-web-narrow-note">网页元素批注暂限桌面使用。</p>}
+    {local&&isImage&&file&&file.blob.size>8*1024*1024&&<p role="status" className="canvas-note">图片超过草稿附件的 8 MiB 上限，可预览。</p>}
     {referencesEnabled&&source&&!webSource&&isText&&!isHtml&&!isPatch&&<PreviewSelectionToolbar key={JSON.stringify([artifact?.id,file?.sha256])} body={body} source={source} annotations={textReference?.kind==='text'?textReference.annotations??[]:[]} representation={file?.mime==='text/markdown'||/\.md$/i.test(file?.name??'')?'markdown':'plain'} onReference={onReference} onRemove={id=>annotationDraft.remove(referenceKey({kind:'text',source}),id)} onNotice={setNotice} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce} historyNote={annotationFocus?.history?.kind==='text'?annotationFocus.history.annotations?.find(note=>note.id===focusId):undefined}/>}
     {webSource?<><p className="canvas-note">{ready?'网页已接入批注器，可使用页面内工具栏选择元素。':'网站可能禁止嵌入；未接入批注器的网页只能预览。'}</p><WebPreview origin={webSource.url} loading={false} onReload={()=>{setReady(false);if(webFrame.current)webFrame.current.src=webSource.url;}} onOpenExternal={()=>window.open(webSource.url,'_blank','noopener,noreferrer')}><iframe ref={webFrame} key={webSource.url} title="网页预览" onLoad={()=>setFrameRevision(value=>value+1)} src={webSource.url} sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer"/></WebPreview></>:
     loading?<p role="status">{local?'正在读取本地文件…':'正在读取成果…'}</p>:readError?<div className="canvas-read-error"><p role="alert">{readError}</p><button type="button" onClick={event=>{if(local&&!event.isTrusted)return;stopHtmlAnnotation();setFile(null);setRetry(value=>value+1);}}>重试读取</button></div>:localInfo&&!file?<div className="canvas-read-error">
@@ -378,10 +384,15 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
       </div>:
       (file.mime==='text/markdown'||(!local||isText)&&/\.md$/i.test(file.name))?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} components={previewMarkdownComponents}>{file.text}</ReactMarkdown></div>:
       isText?<pre data-preview-text>{file.text}</pre>:
-      file.mime.startsWith('image/')?isImage&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation initialEnabled={false} key={noteKey} url={file.url} title={source.title} actions={imageActions} control={imageControl}
-        notes={imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[]}
-        onSave={(annotations,size,isCurrent)=>onReference({kind:'image',source,...size,annotations},imageFile,isCurrent)}
-        onRemove={id=>annotationDraft.remove(referenceKey({kind:'image',source}),id)} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<ImageRoot className="canvas-image-root"><ImagePreview src={file.url} alt={local?file.name:artifact?.title??'成果图片'}/></ImageRoot>:
+      file.mime.startsWith('image/')?isImage&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation initialEnabled={false} readOnly={!!historicImage} key={noteKey} url={file.url} title={source.title} actions={historicImage?undefined:imageActions} control={imageControl}
+        notes={historicImage?.annotations??(imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[])}
+        onSave={(annotations,size,isCurrent)=>onReference({kind:'image',source,...size,annotations},annotationDraft.imageFile(noteKey,imageFile),isCurrent)}
+        onRemove={id=>{
+          if(source.kind==='message-file'&&imageReference?.kind==='image'&&(imageReference.annotations?.length??1)===1){
+            return onReference({kind:'image',source,width:imageReference.width,height:imageReference.height,annotations:[]});
+          }
+          annotationDraft.remove(noteKey,id);
+        }} focusAnnotation={historicImage?undefined:focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<ImageRoot className="canvas-image-root"><ImagePreview src={file.url} alt={local?file.name:artifact?.title??'成果图片'}/></ImageRoot>:
       file.mime==='application/pdf'?<iframe title="PDF 成果" src={file.url}/>:unknownMedia?<div className="canvas-media"><p className="canvas-note">{file.name}</p><p>{downloadNotice?'未识别为可播放的媒体类型。':'未识别为可播放的媒体类型，可下载后打开。'}</p>{!downloadNotice&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a>}</div>:<p>此格式暂不支持在线预览。</p>}
     </>:<p className="canvas-note">从对话中选择网页或成果进行预览。</p>}
     {hasFrame&&<div className="canvas-frame-exit"><p className="canvas-note">预览内部的快捷键由网页处理，可用 Tab 移到“收起预览”按钮。</p><button type="button" onClick={onClose}>收起预览</button></div>}

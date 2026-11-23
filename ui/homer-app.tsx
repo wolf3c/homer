@@ -444,9 +444,12 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   useEffect(() => {if(!selected)return;if(answerRef.current)setDraftNotice('当前编辑不能添加新引用；原普通草稿已保留。');else appendQuote(selected as MessageQuote);aui.composer().setQuote(undefined);},[selected,aui]);
   async function recoverRejectedSource(item:UnconfirmedInput,error:string){
     const {input,draft}=item;
-    const screenshotInput=referencesOf(input).some(isDraftImageReference);
+    const refs=referencesOf(input);
+    const localImage=refs.some(ref=>ref.kind==='image'&&ref.source.kind==='message-file');
+    const localFileError=localImage&&['preview_source_mismatch','artifact_missing','message_file_scope_denied','artifact_path_denied','file_type_or_size_denied','file_preview_unsupported','media_preview_unavailable'].includes(error);
+    const imageError=(localImage||refs.some(isDraftImageReference))&&['preview_source_mismatch','preview_image_missing','invalid_resource_reference','invalid_attachments','media_scope_denied','media_asset_not_found','media_not_ready','media_derivative_missing'].includes(error);
     if(restoring||!draft||reconciled.current.has(item)||!pendingRef.current.includes(item)
-      ||error!=='request_too_large'&&error!=='quote_source_mismatch'&&(!screenshotInput||!['preview_source_mismatch','preview_image_missing','invalid_resource_reference','invalid_attachments','media_scope_denied','media_asset_not_found','media_not_ready','media_derivative_missing'].includes(error)))return;
+      ||error!=='request_too_large'&&error!=='quote_source_mismatch'&&!localFileError&&!imageError)return;
     reconciled.current.add(item);
     if(clearing.current?.requestId===input.requestId)await clearing.current.wait;
     if(!composerMounted.current||!pendingRef.current.includes(item))return;
@@ -463,8 +466,29 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
         if(!composerMounted.current||uploadingRef.current||draftRequest.current!==input.requestId||current.text!==input.text||annotationDraft.read()!==restoredResources||current.attachments.length!==index||JSON.stringify(protocolQuotes(quotesRef.current))!==JSON.stringify(protocolQuotes(restore.quotes)))break;
         await aui.composer().addAttachment(attachmentOwner.restore(asset));
       }
-      setDraftNotice(error==='request_too_large'?'整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。':'引用来源未通过校验，原草稿和请求标识已保留，请重新核对引用。');
+      setDraftNotice(error==='request_too_large'?'整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。':localFileError?'本地图片来源无法核验。草稿已保留，可移除旧图片附件后重新圈选，或只保留备注。':'引用来源未通过校验，原草稿和请求标识已保留，请重新核对引用。');
     }finally{if(composerMounted.current)setRestoring(false);}
+  }
+  async function keepLocalImageComments(){
+    if(uploadingRef.current||restoring)return;
+    const refs=referencesOf(annotationDraft.read());
+    const local=refs.filter(ref=>ref.kind==='image'&&ref.source.kind==='message-file');
+    if(!local.length)return;
+    const retained=refs.filter(ref=>!local.includes(ref));
+    const retainedImages=new Set(retained.flatMap(ref=>ref.kind==='image'?[ref.image.assetId]:[]));
+    const removed=new Set(local.flatMap(ref=>ref.kind==='image'&&!retainedImages.has(ref.image.assetId)?[ref.image.assetId]:[]));
+    const comments=local.flatMap(ref=>ref.kind==='image'?(ref.annotations?.map(note=>note.comment)??[ref.comment]):[]);
+    const composer=aui.composer(),current=composer.getState();
+    uploadingRef.current=true;setUploading(true);
+    try{
+      for(const attachment of current.attachments){
+        const asset=attachmentAsset(attachment);
+        if(asset&&removed.has(asset.assetId))await composer.attachment({id:attachment.id}).remove();
+      }
+      composer.setText([composer.getState().text,...comments].filter(Boolean).join('\n\n'));
+      annotationDraft.replace(referencesOf(annotationDraft.read()).filter(ref=>!local.some(removed=>referenceKey(removed)===referenceKey(ref))));
+      setDraftNotice('已将本地图片批注备注放入正文。');focusInput();
+    }finally{uploadingRef.current=false;setUploading(false);}
   }
   function checkReceipts(){
     const needsReceipt=(item:UnconfirmedInput)=>!sending.current.has(item)&&!reconciled.current.has(item);
@@ -754,6 +778,12 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     if(state.features?.previewReferenceCollections!==2&&annotationValidationReferences(annotationDraft.read()).length){setDraftNotice('请先移除输入草稿中的成果批注，再引用消息。');return false;}
     return true;
   }
+  async function removeComposerNote(reference:PreviewRequest|ResourceReference,id:string){
+    if(reference.kind==='image'&&reference.source.kind==='message-file'&&(reference.annotations?.length??1)===1){
+      await addReference({kind:'image',source:reference.source,width:reference.width,height:reference.height,annotations:[]});
+    }else annotationDraft.remove(referenceKey(reference),id);
+    focusInput();
+  }
   async function addReference(reference:PreviewRequest,file?:File,isCurrent:()=>boolean=()=>true,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[]){
     if(restoring||answerRef.current||!state.features?.previewReferenceCollections)throw Error('请先返回普通输入，或刷新支持批注集合的界面。');
     if(state.features?.previewReferenceCollections!==2&&quotesRef.current.length)throw Error('请先移除当前消息引用，再保存成果批注。');
@@ -766,6 +796,20 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     });}
     let next:ResourceReference|undefined;
     if(reference.annotations?.length===0){
+      if(reference.kind==='image'&&reference.source.kind==='message-file'){
+        if(uploadingRef.current)throw Error('图片附件正在处理，请稍后重试。');
+        const refs=referencesOf(annotationDraft.read());
+        const saved=refs.find(r=>referenceKey(r)===key);
+        if(saved?.kind==='image'&&!refs.some(r=>r!==saved&&r.kind==='image'&&r.image.assetId===saved.image.assetId)){
+          const composer=aui.composer();
+          const attached=composer.getState().attachments.find(item=>attachmentAsset(item)?.assetId===saved.image.assetId);
+          if(attached){
+            uploadingRef.current=true;setUploading(true);
+            try{await composer.attachment({id:attached.id}).remove();}
+            finally{uploadingRef.current=false;setUploading(false);}
+          }
+        }
+      }
       if(!current())throw Error('草稿已经变化，请重新编辑。');
       const metadata={...annotationDraft.read().htmlMetadata};delete metadata[key];annotationDraft.replace(merged(undefined),metadata);return;
     }
@@ -833,7 +877,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
       const items=new Map<string,ReactNode>();
       for(const reference of chipReferences)for(const note of reference.annotations??[{id:'legacy'}]){
         const key=contextKey('ref',referenceKey(reference),note.id);
-        items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{if(isDraftImageReference(ref)){openScreenshot(ref,id);return;}const source=ref.source;if(ref.kind==='web'&&window.homerBrowserPreview){browserPreview.openReference(ref,id);return;}if(source.kind==='attachment')openReferenceArtifact({...source,id:JSON.stringify([source.messageId,source.assetId,source.revision])},undefined,{key:referenceKey(ref),id});else browserPreview.openReference(ref,id);}} onRemove={(refKey,id)=>{annotationDraft.remove(refKey,id);focusInput();}}/>);
+        items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{if(isDraftImageReference(ref)){openScreenshot(ref,id);return;}const source=ref.source;if(ref.kind==='web'&&window.homerBrowserPreview){browserPreview.openReference(ref,id);return;}if(source.kind==='attachment')openReferenceArtifact({...source,id:JSON.stringify([source.messageId,source.assetId,source.revision])},undefined,{key:referenceKey(ref),id});else browserPreview.openReference(ref,id);}} onRemove={(_,id)=>void removeComposerNote(reference,id).catch(error=>setDraftNotice(error.message))}/>);
       }
       quotes.forEach((quote,i)=>{const key=contextKey('quote',quote.draftId);items.set(key,<div className="annotation-chip" key={key}>
         <button type="button" className="annotation-chip-open" aria-label={'编辑引用 '+(i+1)} onClick={event=>editQuote(quote,event.currentTarget)} title={quote.text+'\n'+quote.annotation}><MessageCirclePlus size={15} aria-hidden="true"/><span className="compact-context-copy"><span className="compact-context-label">{quote.annotation?.trim()||quote.text}</span><span className="compact-context-source">{quote.annotation?.trim()?'消息批注':'消息引用'}</span></span></button>
@@ -849,6 +893,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
       return [...ordered,...items.values()];
     })()}
     </div>
+    {draftNotice.startsWith('本地图片来源无法核验。')&&<button type="button" onClick={()=>void keepLocalImageComments().catch(()=>setDraftNotice('图片附件移除未确认，请检查当前草稿。'))}>只保留本地图片批注备注</button>}
     {uploading&&<div className="composer-upload-status" role="status">正在处理附件…</div>}
     </div>}
     {!answerEditing&&retryAttachments.length>0&&<div className="composer-upload-actions"><button type="button" disabled={uploading||blocked||state.upgrade.phase!=='running'} onClick={()=>void uploadFiles(retryAttachments.map(attachment=>attachmentOwner.retryFile(attachment)))}>重试上传</button><button type="button" disabled={uploading||blocked} onClick={()=>void discardUnconfirmed()}>不添加这些附件</button></div>}
@@ -1668,7 +1713,7 @@ function HomerApp() {
   function openBrowserReference(reference:PreviewRequest,id:string,history=false){
     if(!window.homerBrowserPreview)return;
     const focus={key:referenceKey(reference),id,...(history?{history:reference}:{})};
-    if(reference.kind==='text'&&reference.source.kind==='message-file'){
+    if(reference.kind!=='web'&&reference.source.kind==='message-file'){
       const {messageId,destination,title}=reference.source;
       openLocalFile(messageId,destination,title,undefined,focus);
       return;

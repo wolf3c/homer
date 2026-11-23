@@ -156,14 +156,21 @@ export class MediaStore{
    return bytes;
   }finally{closeSync(fd);}
  }
- nativeImages(requestId:string,ref:AttachmentRef){
+ nativeImages(requestId:string,ref:AttachmentRef,orientLocalImage=false){
   this.validate(requestId,[ref]);
   const asset=this.asset(ref);
   if(asset.kind!=='image'&&asset.kind!=='video')return [];
   if(!this.originalAvailable(asset))throw Error('media_not_ready');
   const path=this.path(asset.id);
   this.verifyFile(path,asset.size,asset.hash);
-  if(asset.kind==='image')return [{path,transform:''}];
+  if(asset.kind==='image'){
+   if(!orientLocalImage||asset.mime!=='image/jpeg')return [{path,transform:''}];
+   const image=this.db.prepare("SELECT transform,size,hash FROM media_derivatives WHERE assetId=? AND revision=? AND sourceHash=? AND mime='image/png' ORDER BY rowid LIMIT 1").get(asset.id,asset.revision,asset.hash!);
+   if(!image||!/^[-\w]{1,80}$/.test(String(image.transform)))throw Error('media_derivative_missing');
+   const oriented=path+'.'+image.transform;
+   this.verifyFile(oriented,Number(image.size),String(image.hash));
+   return [{path:oriented,transform:''}];
+  }
   const frames=this.db.prepare("SELECT transform,size,hash FROM media_derivatives WHERE assetId=? AND revision=? AND sourceHash=? AND mime LIKE 'image/%' ORDER BY rowid").all(asset.id,asset.revision,asset.hash!);
   return frames.map(row=>{
    const transform=String(row.transform);
