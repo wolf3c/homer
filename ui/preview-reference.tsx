@@ -1,8 +1,9 @@
-import {createContext,type ReactNode} from 'react';
+import {createContext,useContext,type ReactNode} from 'react';
 import {MessageCirclePlus,XIcon,FileTextIcon,ImageIcon,GlobeIcon} from 'lucide-react';
 import {Button} from '@base-ui/react/button';
 import {QuoteBlock} from './vendor/assistant-ui/quote';
 import './image-reference.css';
+import {BrowserPreviewContext} from './browser-preview';
 import type {DraftImageReference,PreviewSource,ResourceReference,PreviewRequest,WindowAXNode,PreviewImageAnnotation} from '../src/preview-reference';
 import {isDraftImageReference,referenceKey} from '../src/preview-reference';
 
@@ -43,6 +44,7 @@ export function ImageReferenceRegions({reference}:{reference:Extract<ResourceRef
  return <div className="image-reference-regions" aria-hidden="true">{imageNotes(reference).map((note,i)=><div key={note.id} className="image-reference-region" style={{left:note.region.x/reference.width*100+'%',top:note.region.y/reference.height*100+'%',width:note.region.width/reference.width*100+'%',height:note.region.height/reference.height*100+'%'}}><span>{i+1}</span></div>)}</div>;
 }
 export function ResourceReferenceBlock({reference,children,hideScreenshotDetails}:{reference:ResourceReference;children?:ReactNode;hideScreenshotDetails?:boolean}){
+ const browser=useContext(BrowserPreviewContext);
  const coordinates=(r:{x:number;y:number;width:number;height:number})=>`${Math.round(r.x)}, ${Math.round(r.y)} · ${Math.round(r.width)} × ${Math.round(r.height)}`;
  const source=reference.source,title=source.kind==='draft-image'?'截图':source.title;
  if(reference.kind==='image'&&imageNotes(reference).length){
@@ -64,6 +66,9 @@ export function ResourceReferenceBlock({reference,children,hideScreenshotDetails
  return <div className="preview-reference" aria-label="预览引用">
   <span className="preview-reference-source" title={source.kind==='web'?source.url:title}>来源：{title}</span>
   {excerpt&&<QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text className={reference.kind!=='web'&&reference.annotations?'resource-annotations-text':undefined}>{excerpt}</QuoteBlock.Text></QuoteBlock.Root>}
+  {source.kind==='message-file'&&reference.kind!=='image'&&(window.homerBrowserPreview
+   ?reference.annotations?.map((note,index)=><Button key={note.id} type="button" className="annotation-chip-open" onClick={()=>browser.openReference(reference,note.id,true)}>打开批注 {index+1}</Button>)
+   :<span className="preview-reference-source">原文件可在桌面打开。</span>)}
   {isDraftImageReference(reference)&&reference.ax&&<WindowAXExcerpt ax={reference.ax}/>}
  </div>;
 }

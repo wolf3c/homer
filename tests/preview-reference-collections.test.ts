@@ -214,3 +214,30 @@ test('mixed intake rejects any forged source atomically while keeping independen
   assert.deepEqual(inputs.list()[0]!.input,row.input);
  }finally{f.close();}
 });
+
+test('local preview references preserve the exact message link for text and HTML',()=>{
+ const local={kind:'message-file',messageId:'reply-1',destination:'/tmp/local%20draft.html',title:'local draft.html'};
+ const reference=parseResourceReference({kind:'web',source:local,annotations:[{id:'selection',element:'Heading',elementPath:'h1',comment:'Revise',x:1,y:1}]});
+ assert.deepEqual(reference.source,local);
+ assert.match(resourceReferenceText(reference),/local%20draft\.html/);
+ assert.equal(parseResourceReference({kind:'text',source:local,text:'Selected text'}).source.kind,'message-file');
+});
+
+test('dispatch excludes an unauthorized reference and its image but keeps user intent and independent attachments',()=>{
+ const image={assetId:'asset-00000000-0000-4000-8000-000000000002',revision:1};
+ const independent={assetId:'asset-00000000-0000-4000-8000-000000000003',revision:1};
+ const input=conversationInput({requestId:'revoked-after-enqueue',text:'Review',attachments:[image,independent],resourceReferences:[
+  {kind:'image',source:source('revoked'),image,width:32,height:32,region:{x:0,y:0,width:1,height:1},comment:'Keep my note'},
+  ref('allowed'),
+ ]});
+ const owner={validateResourceReference(_thread:string,_input:ConversationInput,reference:ResourceReference){
+  if(reference.source.kind==='attachment'&&reference.source.messageId==='revoked')throw Error('media_scope_denied');
+ }};
+ const project=(Homer.prototype as unknown as {previewDispatch:(thread:string,input:ConversationInput)=>{context:string;attachments:ConversationInput['attachments']}}).previewDispatch;
+ const projected=project.call(owner,'thread',input);
+ assert.match(projected.context,/Keep my note/);
+ assert.match(projected.context,/备注 allowed/);
+ assert.doesNotMatch(projected.context,/同名\.txt（revoked/);
+ assert.deepEqual(projected.attachments,[independent]);
+ assert.deepEqual(input.attachments,[image,independent]);
+});

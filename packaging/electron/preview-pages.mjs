@@ -5,11 +5,12 @@ import{randomUUID}from'node:crypto';
 import{previewAutomation}from'./preview-automation.mjs';
 
 export function registerPreviewScheme(){protocol.registerSchemesAsPrivileged([{scheme:'homer-preview',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);}
-export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,uiCaller,fetchAttachment}){
+export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,uiCaller,fetchAttachment,fetchMessageFile}){
  const pages=new Map(),pending=new Map();let selected;
  const automation=previewAutomation(join(runtimeDirectory,'automation.js'));
  const runtime=readFileSync(join(runtimeDirectory,'runtime.js'),'utf8'),css=readFileSync(join(runtimeDirectory,'runtime.css'),'utf8');
  const browserSession=session.fromPartition('persist:homer-preview');
+ const localSession=session.fromPartition('homer-local-preview');
  const preferences={session:browserSession,preload,sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:false,backgroundThrottling:false};
  const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,agentAssigned:!!p.agentAssigned,source:p.source,loading:!!p.loading,...(p.error?{error:p.error}:{})});
  const changed=()=>{const w=window();if(w&&!w.isDestroyed())w.webContents.send('homer:preview:changed');};
@@ -17,7 +18,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  const sendState=p=>p.view.webContents.send('homer:preview:annotation-state',{document:p.document,active:false,revision:0,epoch:0,notes:[],...p.annotations});
  async function annotations(p){
   if(p.loading||!p.annotations)return;
-  if(!p.annotations.active&&!p.annotations.notes.length){if(p.runtime)sendState(p);return;}
+  if(!p.annotations.active&&!p.annotations.notes.length&&!p.annotations.historyNote){if(p.runtime)sendState(p);return;}
   const document=p.document;
   if(!p.runtime)p.runtime=p.view.webContents.executeJavaScriptInIsolatedWorld(999,[{code:`globalThis.homerAnnotationCss=${JSON.stringify(css)};${runtime}`}]);
   const injection=p.runtime;
@@ -36,7 +37,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  }
  function make({threadId,owner,source,url},options={}){
   const id='page-'+randomUUID();
-  const view=new WebContentsView({...options,webPreferences:{...options.webPreferences,...preferences}});
+  const view=new WebContentsView({...options,webPreferences:{...options.webPreferences,...preferences,...(source.kind==='message-file'?{session:localSession}:{})}});
   const p={id,threadId,owner,source,view,document:0,operation:0,control:'user',closed:false,busy:false};pages.set(id,p);window().contentView.addChildView(view);
   const area=window().getContentBounds();view.setBounds({x:0,y:0,width:Math.max(320,area.width),height:Math.max(240,area.height)});view.setVisible(false);
   view.webContents.on('did-start-navigation',details=>{if(details.isMainFrame&&!details.isSameDocument){p.document++;p.loading=true;p.runtime=undefined;p.annotations=undefined;settle(p,'preview_document_changed');changed();}});
@@ -49,21 +50,35 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   view.webContents.on('render-process-gone',()=>{p.error='网页进程已退出，请核对未完成操作后重新加载。';p.control='user';settle(p,'preview_page_unavailable');changed();});
   view.webContents.once('destroyed',()=>close(id));
   view.webContents.setWindowOpenHandler(({url})=>{
+   if(p.source.kind==='message-file')return{action:'deny'};
    if(!/^https?:/.test(url)&&url!=='about:blank')return{action:'deny'};
    return{action:'allow',overrideBrowserWindowOptions:{webPreferences:preferences},createWindow:options=>{const child=make({threadId:p.threadId,owner:p.owner,source:p.source,url},options);child.agentAssigned=p.agentAssigned;return child.view.webContents;}};
   });
-  view.webContents.on('will-navigate',(event,url)=>{if(!/^https?:/.test(url)&&!url.startsWith('homer-preview://'+id+'/')&&url!=='about:blank')event.preventDefault();});
+  view.webContents.on('will-navigate',(event,url)=>{
+   if(p.source.kind==='message-file'){
+    if(url.split('#')[0]!=='homer-preview://'+id+'/local/index.html')event.preventDefault();
+   }else if(!/^https?:/.test(url)&&!url.startsWith('homer-preview://'+id+'/')&&url!=='about:blank')event.preventDefault();
+  });
   changed();return p;
  }
- browserSession.protocol.handle('homer-preview',async request=>{
+ for(const previewSession of [browserSession,localSession])previewSession.protocol.handle('homer-preview',async request=>{
   try{
    const url=new URL(request.url),p=page(url.hostname),s=p.source;
+   if(p.view.webContents.session!==previewSession)throw Error('preview_source_mismatch');
+   if(s.kind==='message-file'){
+    if(url.pathname!=='/local/index.html'||request.method!=='GET'||url.search)return new Response(null,{status:403});
+    const response=await fetchMessageFile(p.threadId,s);
+    if(!response.ok||response.headers.get('Content-Type')?.split(';')[0]!=='text/html')return new Response('来源已不可用',{status:403});
+    return new Response(await response.arrayBuffer(),{headers:{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src http: https: data: blob:; script-src 'unsafe-inline' 'unsafe-eval' http: https: data: blob:; style-src 'unsafe-inline' http: https:; connect-src http: https: ws: wss:; frame-src about: blob: http: https:; sandbox allow-scripts allow-forms"}});
+   }
    if(s.kind!=='attachment')throw Error('preview_source_mismatch');
    const response=await fetchAttachment(s,url.pathname==='/attachment/index.html'?undefined:posix.relative('/attachment',decodeURIComponent(url.pathname)));if(!response.ok)return new Response('资源读取失败',{status:response.status});
    if(url.pathname==='/attachment/index.html'&&response.headers.get('X-Homer-Artifact-Hash')!==s.sha256)throw Error('preview_source_mismatch');
    return new Response(await response.arrayBuffer(),{headers:{'Content-Type':response.headers.get('Content-Type')??'application/octet-stream'}});
   }catch{return new Response('来源已不可用',{status:403});}
  });
+ localSession.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
+ localSession.setPermissionCheckHandler(()=>false);
  browserSession.setPermissionRequestHandler((contents,permission,callback,details)=>{
   const p=[...pages.values()].find(p=>p.view.webContents===contents);
   if(!p){callback(false);return;}p.control='user';changed();
@@ -115,9 +130,9 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
     if(input.claim?.url===p.view.webContents.getURL()&&actor.requestId&&p.claimRequest!==actor.requestId){if(p.busy)throw Error('preview_page_busy');p.agentAssigned=true;p.claimRequest=actor.requestId;p.owner=actor.owner;p.control='agent';p.annotations={...p.annotations,active:false};sendState(p);changed();}
     if(p.owner!==actor.owner)throw Error('preview_scope_denied');return publicPage(p);}
    const existing=[...pages.values()].find(p=>p.threadId===actor.threadId&&p.owner===actor.owner&&Object.keys(p.source).length===Object.keys(input.source).length&&Object.keys(p.source).every(key=>p.source[key]===input.source[key])&&(!input.url||input.url===p.openingUrl||input.url===p.view.webContents.getURL()));
-   if(existing)return publicPage(existing);
+   if(existing){if(input.source.kind==='message-file'&&!existing.loading)existing.view.webContents.reload();return publicPage(existing);}
    const p=make({...actor,source:input.source,url:input.url});p.control=input.user?'user':'agent';p.agentAssigned=!input.user;p.loading=true;
-   const target=input.url??(input.source.kind==='attachment'?'homer-preview://'+p.id+'/attachment/index.html':input.source.url);
+   const target=input.url??(input.source.kind==='message-file'?'homer-preview://'+p.id+'/local/index.html':input.source.kind==='attachment'?'homer-preview://'+p.id+'/attachment/index.html':input.source.url);
    p.openingUrl=target;
    const loaded=p.view.webContents.loadURL(target).catch(error=>{
     if(!p.closed){p.loading=false;p.error=error.message;changed();}

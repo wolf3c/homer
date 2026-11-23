@@ -12,11 +12,12 @@ type Props={
  onDelete?:()=>void;
  error?:string;
  busy?:boolean;
+ trustedInput?:boolean;
 };
 
 // Content only. The text and image owners retain positioning, drafts,
 // validation and the transaction that commits or rolls back an annotation.
-export const AnnotationCommentForm=forwardRef<HTMLTextAreaElement,Props>(function AnnotationCommentForm({title,excerpt,value,onChange,onSave,onCancel,onDelete,error,busy=false},ref){
+export const AnnotationCommentForm=forwardRef<HTMLTextAreaElement,Props>(function AnnotationCommentForm({title,excerpt,value,onChange,onSave,onCancel,onDelete,error,busy=false,trustedInput=false},ref){
  const id=useId(),composing=useRef(false);
  const tooLong=value.length>16000;
  const message=tooLong?'批注超过16000字符，请缩短后保存。':error;
@@ -28,7 +29,7 @@ export const AnnotationCommentForm=forwardRef<HTMLTextAreaElement,Props>(functio
    // the enclosing Popover/Dialog treat its Escape as a dismissal.
    if((composing.current||event.nativeEvent.isComposing||event.keyCode===229)&&(event.key==='Escape'||event.key==='Enter'))event.stopPropagation();
   }}
-  onSubmit={event=>{event.preventDefault();if(canSave&&!composing.current)onSave();}}>
+  onSubmit={event=>{event.preventDefault();if(!trustedInput&&canSave&&!composing.current)onSave();}}>
   <label id={id+'-label'} htmlFor={id} title={title}>{title}</label>
   {excerpt&&<blockquote id={id+'-excerpt'} tabIndex={0} aria-label="选中文字">{excerpt}</blockquote>}
   <textarea ref={ref} id={id} rows={2} placeholder="希望这里怎么改？" disabled={busy} value={value}
@@ -38,15 +39,18 @@ export const AnnotationCommentForm=forwardRef<HTMLTextAreaElement,Props>(functio
     if(composing.current||event.nativeEvent.isComposing||event.keyCode===229)return;
     if(event.key==='Enter'&&!event.shiftKey){
      event.preventDefault();event.stopPropagation();
-     if(canSave)event.currentTarget.form?.requestSubmit();
+     if(canSave){
+      if(!trustedInput)event.currentTarget.form?.requestSubmit();
+      else if(event.nativeEvent.isTrusted)onSave();
+     }
     }
    }}
-   onChange={event=>onChange(event.target.value)}/>
+   onChange={event=>{if(!trustedInput||event.nativeEvent.isTrusted)onChange(event.target.value);}}/>
   {message&&<p id={id+'-error'} role="alert">{message}</p>}
   <div className="annotation-comment-actions">
-   {onDelete&&<Button type="button" className="delete-note quiet" aria-label="删除此批注" disabled={busy} onClick={()=>{if(!composing.current)onDelete();}}>删除</Button>}
+   {onDelete&&<Button type="button" className="delete-note quiet" aria-label="删除此批注" disabled={busy} onClick={event=>{if(!composing.current&&(!trustedInput||event.nativeEvent.isTrusted))onDelete();}}>删除</Button>}
    <Button type="button" className="quiet" disabled={busy} onClick={()=>{if(!composing.current)onCancel();}}>取消</Button>
-   <Button type="submit" className="primary" disabled={!canSave}>保存</Button>
+   <Button type="submit" className="primary" disabled={!canSave} onClick={event=>{if(trustedInput&&event.nativeEvent.isTrusted&&canSave&&!composing.current)onSave();}}>保存</Button>
   </div>
  </form>;
 });

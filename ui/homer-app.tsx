@@ -1004,7 +1004,7 @@ function HomerApp() {
   const activeBrowser=activePreviewTab&&'kind'in activePreviewTab&&activePreviewTab.kind==='browser'?activePreviewTab.page:undefined;
   const canvasArtifact=activePreviewTab&&!('kind' in activePreviewTab)?activePreviewTab:activeBrowser?.source.kind==='attachment'?{...activeBrowser.source,id:JSON.stringify([activeBrowser.source.messageId,activeBrowser.source.assetId,activeBrowser.source.revision])}:null;
   const annotationDraft=useMemo(()=>createAnnotationDraft(),[state.threadId]);
-  const [annotationFocus,setAnnotationFocus]=useState<{key:string;id:string;nonce:string}>();
+  const [annotationFocus,setAnnotationFocus]=useState<{key:string;id:string;nonce:string;history?:PreviewRequest}>();
   const focusEditor=useMemo<{current:(()=>void)|null}>(()=>({current:null}),[state.threadId]);
   const previewScope=useRef({key:'',generation:0});
   function updatePreviewScope(open:boolean,id:string|null){
@@ -1504,11 +1504,29 @@ function HomerApp() {
       return {...old,tabs:existing?old.tabs.map(tab=>tab.id===file.id&&origin?{...tab,trigger:origin}:tab):[...old.tabs,{...file,trigger:origin}],activeId:file.id};
     });setCanvasOpen(true);
   };
-  function showBrowser(page:BrowserPage,focus?:{key:string;id:string}){
+  function showBrowser(page:BrowserPage,focus?:{key:string;id:string;history?:PreviewRequest}){
     if(page.threadId!==state.threadId)return;
     const id=page.id;updatePreviewScope(true,id);if(!canvasOpen)captureAnchor();
     setAnnotationFocus(focus?{...focus,nonce:crypto.randomUUID()}:undefined);
-    setPreviewTabs(old=>{const tabs=old.tabs.filter(tab=>!(!('kind'in tab)&&page.source.kind==='attachment'&&tab.assetId===page.source.assetId&&tab.revision===page.source.revision));return{...old,tabs:tabs.some(tab=>tab.id===id)?tabs:[...tabs,{kind:'browser',id,title:page.title,page}],activeId:id};});setCanvasOpen(true);
+    setPreviewTabs(old=>{
+      const source=page.source;
+      const tabs=old.tabs.filter(tab=>{
+        if(source.kind==='attachment'&&!('kind'in tab))return tab.assetId!==source.assetId||tab.revision!==source.revision;
+        if(source.kind==='message-file'&&'kind'in tab&&tab.kind==='message-file')return tab.messageId!==source.messageId||tab.destination!==source.destination;
+        return true;
+      });
+      return {...old,tabs:tabs.some(tab=>tab.id===id)?tabs:[...tabs,{kind:'browser',id,title:page.title,page}],activeId:id};
+    });setCanvasOpen(true);
+  }
+  function openLocalFile(messageId:string,destination:string,title:string,trigger?:HTMLElement,annotation?:{key:string;id:string;history?:PreviewRequest}){
+    const id=JSON.stringify(['message-file',messageId,destination]);
+    if(trigger)canvasTrigger.current=trigger;
+    updatePreviewScope(true,id);setAnnotationFocus(annotation?{...annotation,nonce:crypto.randomUUID()}:undefined);if(!canvasOpen)captureAnchor();
+    setPreviewTabs(old=>{
+      const existing=old.tabs.find(tab=>tab.id===id);
+      const tab={kind:'message-file' as const,id,title,trigger,messageId,destination,reload:existing&&'kind'in existing&&existing.kind==='message-file'?existing.reload+1:0};
+      return {...old,tabs:existing?old.tabs.map(item=>item.id===id?tab:item):[...old.tabs,tab],activeId:id};
+    });setCanvasOpen(true);
   }
   function openBrowserLink(destination:string,trigger:HTMLAnchorElement){
     const messageId=trigger.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage;
@@ -1522,23 +1540,27 @@ function HomerApp() {
     if(!window.homerBrowserPreview||!messageId||!local&&!/^https?:/.test(trigger.href))return false;
     canvasTrigger.current=trigger;
     if(local){
-      const id=JSON.stringify(['message-file',messageId,destination]);
       const title=(decodeMessageLink(destination)??destination).split(/[\\/]/).pop()||destination;
-      updatePreviewScope(true,id);setAnnotationFocus(undefined);if(!canvasOpen)captureAnchor();
-      setPreviewTabs(old=>{
-        const existing=old.tabs.find(tab=>tab.id===id);
-        const tab={kind:'message-file' as const,id,title,trigger,messageId,destination,reload:existing&&'kind'in existing&&existing.kind==='message-file'?existing.reload+1:0};
-        return {...old,tabs:existing?old.tabs.map(item=>item.id===id?tab:item):[...old.tabs,tab],activeId:id};
-      });setCanvasOpen(true);return true;
+      const existing=browser.pages.find(page=>page.source.kind==='message-file'&&page.source.messageId===messageId&&page.source.destination===destination);
+      if(existing)void openBrowserPreview(state.threadId,existing.source).then(page=>showBrowser(page)).catch(error=>setPageNotice(error.message));
+      else openLocalFile(messageId,destination,title,trigger);
+      return true;
     }
     void openBrowserPreview(state.threadId,{kind:'browser',messageId,url:trigger.href,title:trigger.textContent?.trim().slice(0,500)||new URL(trigger.href).hostname}).then(page=>showBrowser(page)).catch(error=>setPageNotice(error.message));return true;
   }
-  function openBrowserReference(reference:PreviewRequest,id:string){
-    if(!window.homerBrowserPreview||reference.kind!=='web')return;
-    const show=(page:BrowserPage)=>showBrowser(page,{key:referenceKey(reference),id});
+  function openBrowserReference(reference:PreviewRequest,id:string,history=false){
+    if(!window.homerBrowserPreview)return;
+    const focus={key:referenceKey(reference),id,...(history?{history:reference}:{})};
+    if(reference.kind==='text'&&reference.source.kind==='message-file'){
+      const {messageId,destination,title}=reference.source;
+      openLocalFile(messageId,destination,title,undefined,focus);
+      return;
+    }
+    if(reference.kind!=='web')return;
+    const show=(page:BrowserPage)=>showBrowser(page,focus);
     const existing=browser.pages.find(page=>page.id===reference.page?.id&&page.url===reference.page.url);
-    if(existing){show(existing);return;}
-    void openBrowserPreview(state.threadId,reference.source,reference.page?.url.startsWith('http')?reference.page.url:undefined).then(show).catch(error=>setPageNotice(error.message));
+    if(existing&&reference.source.kind!=='message-file'){show(existing);return;}
+    void openBrowserPreview(state.threadId,reference.source,reference.source.kind!=='message-file'&&reference.page?.url.startsWith('http')?reference.page.url:undefined).then(show).catch(error=>setPageNotice(error.message));
   }
   const queueDrafts=(()=>{try{return Object.keys(sessionStorage).filter(key=>key.startsWith('homer-queue-edit:')).flatMap(key=>{const draft=storage.read<Pick<ConversationInput,'text'|'quote'|'quotes'|'resourceReference'|'resourceReferences'|'attachments'>>(key);return draft?[{key,...draft}]:[];});}catch{return [];}})();
   const questionDrafts=(state.inactiveInteractions??[]).filter(item=>item.kind==='question').flatMap(item=>{

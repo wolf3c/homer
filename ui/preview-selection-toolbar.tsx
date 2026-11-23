@@ -5,16 +5,16 @@ import {useTextSelection} from '@mantine/hooks';
 import {Popover} from '@base-ui/react/popover';
 import {previewTextAnnotations,type PreviewSource,type PreviewTextAnnotation} from '../src/preview-reference';
 import type {PreviewRequest} from './preview-reference';
-import {captureTextAnchor,restoreTextRange} from './preview-text-anchor';
+import {captureTextAnchor,previewTextFlow,restoreTextRange} from './preview-text-anchor';
 import {AnnotationCommentForm} from './annotation-comment-form';
 import './vendor/assistant-ui/quote.css';
 
-type Props={body:RefObject<HTMLDivElement|null>;source:PreviewSource;annotations:PreviewTextAnnotation[];representation:'plain'|'markdown';onReference:(reference:PreviewRequest)=>Promise<void>;onRemove:(id:string)=>void;onNotice:(notice:string)=>void;focusAnnotation?:string;focusRequest?:string};
+type Props={body:RefObject<HTMLDivElement|null>;source:PreviewSource;annotations:PreviewTextAnnotation[];representation:'plain'|'markdown';onReference:(reference:PreviewRequest)=>Promise<void>;onRemove:(id:string)=>void;onNotice:(notice:string)=>void;focusAnnotation?:string;focusRequest?:string;historyNote?:PreviewTextAnnotation};
 const sameRange=(a:Range,b:Range)=>a.startContainer===b.startContainer&&a.startOffset===b.startOffset&&a.endContainer===b.endContainer&&a.endOffset===b.endOffset;
 
 // Only this leaf subscribes to selection. Saved notes belong to the composer;
 // this component owns only the current uncommitted editor and DOM locations.
-export function PreviewSelectionToolbar({body,source,annotations,representation,onReference,onRemove,onNotice,focusAnnotation,focusRequest}:Props){
+export function PreviewSelectionToolbar({body,source,annotations,representation,onReference,onRemove,onNotice,focusAnnotation,focusRequest,historyNote}:Props){
  const [editor,setEditor]=useState<PreviewTextAnnotation>(),[error,setError]=useState(''),[pending,setPending]=useState(false),[savedNotice,setSavedNotice]=useState('');
  const [positions,setPositions]=useState<{id:string;left:number;top:number}[]>([]);
  const selection=useTextSelection(),popup=useRef<HTMLDivElement>(null),textarea=useRef<HTMLTextAreaElement>(null);
@@ -53,11 +53,19 @@ export function PreviewSelectionToolbar({body,source,annotations,representation,
  function edit(note:PreviewTextAnnotation,button?:HTMLButtonElement){
   setSavedNotice('');
   if(busy.current)return;
-  const range=textBody?restoreTextRange(textBody,note.anchor,representation):undefined;
+  const range=textBody?restoreTextRange(textBody,note.anchor,representation,source.kind==='message-file'):undefined;
   editorRange.current=range??null;existing.current=true;trigger.current=button??body.current?.querySelector<HTMLButtonElement>('[data-annotation-id="'+CSS.escape(note.id)+'"]')??null;setEditor({...note});setError(range?'':'原文暂无法准确定位；摘录与批注已保留。');clearSelection();
   if(range){const target=range.startContainer instanceof Element?range.startContainer:range.startContainer.parentElement;target?.scrollIntoView({block:'nearest'});}
  }
- useEffect(()=>{if(focusAnnotation){const note=annotations.find(n=>n.id===focusAnnotation);if(note)edit(note);}},[focusAnnotation,focusRequest,textBody]);
+ useEffect(()=>{
+  if(historyNote&&textBody){
+   const range=restoreTextRange(textBody,historyNote.anchor,representation,true);
+   if(range)range.startContainer.parentElement?.scrollIntoView({block:'nearest'});
+   else onNotice('原文暂无法准确定位；摘录与批注已保留。');
+   return;
+  }
+  if(focusAnnotation){const note=annotations.find(n=>n.id===focusAnnotation);if(note)edit(note);}
+ },[focusAnnotation,focusRequest,textBody,historyNote]);
  async function save(){
   if(!mounted.current||!editor||busy.current)return;
   if(existing.current&&!annotations.some(n=>n.id===editor.id)){dismiss();return;}
@@ -70,21 +78,34 @@ export function PreviewSelectionToolbar({body,source,annotations,representation,
  }
  useLayoutEffect(()=>{
   const root=body.current?.querySelector('[data-preview-text]'),container=body.current;if(!root||!container)return;
-  const registry=CSS.highlights;let frame=0;
+  const registry=CSS.highlights;let frame=0,dirty=true;
+  let located:{id:string;range:Range}[]=[];
   const draw=()=>{
-   const ranges:Range[]=[],next:typeof positions=[];const box=container.getBoundingClientRect();
-   for(const n of annotations){const r=restoreTextRange(root,n.anchor,representation);if(!r)continue;ranges.push(r);const rect=r.getClientRects()[0];if(rect)next.push({id:n.id,left:4,top:rect.top-box.top+container.scrollTop});}
+   if(dirty){
+    dirty=false;
+    const flow=annotations.length||historyNote?previewTextFlow(root):undefined;
+    located=annotations.flatMap(note=>{
+     const range=restoreTextRange(root,note.anchor,representation,source.kind==='message-file',flow);
+     return range?[{id:note.id,range}]:[];
+    });
+    if(registry&&typeof Highlight!=='undefined'){
+     const historyRange=historyNote&&restoreTextRange(root,historyNote.anchor,representation,true,flow);
+     registry.set(highlightName,new Highlight(...located.map(note=>note.range),...(historyRange?[historyRange]:[])));
+    }
+   }
+   const box=container.getBoundingClientRect(),next=located.flatMap(({id,range})=>{
+    const rect=range.getClientRects()[0];return rect?[{id,left:4,top:rect.top-box.top+container.scrollTop}]:[];
+   });
    // Overlapping excerpts retain separate keyboard targets.
    next.sort((a,b)=>a.top-b.top);next.forEach((p,i)=>{if(i>0)p.top=Math.max(p.top,next[i-1]!.top+24);});
-   if(registry&&typeof Highlight!=='undefined')registry.set(highlightName,new Highlight(...ranges));
    setPositions(next);
   };
   const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(draw);};draw();
   const observer=new ResizeObserver(schedule);observer.observe(root);observer.observe(container);
-  const mutation=new MutationObserver(records=>{if(records.some(record=>!(record.target instanceof Element?record.target:record.target.parentElement)?.closest('.text-annotation-markers,.preview-selection-positioner')))schedule();});mutation.observe(container,{subtree:true,childList:true,characterData:true});
+  const mutation=new MutationObserver(()=>{dirty=true;schedule();});mutation.observe(root,{subtree:true,childList:true,characterData:true});
   container.addEventListener('scroll',schedule);window.addEventListener('resize',schedule);document.fonts.addEventListener('loadingdone',schedule);
   return()=>{cancelAnimationFrame(frame);observer.disconnect();mutation.disconnect();container.removeEventListener('scroll',schedule);window.removeEventListener('resize',schedule);document.fonts.removeEventListener('loadingdone',schedule);registry?.delete(highlightName);};
- },[annotations,representation,body,textBody,highlightName]);
+ },[annotations,representation,body,textBody,highlightName,historyNote,source.kind]);
  return <>
   <span className="sr-only" role="status">{savedNotice}</span>
   <style>{`::highlight(${highlightName}){background-color:color-mix(in srgb,var(--focus) 25%,transparent);color:inherit}`}</style>

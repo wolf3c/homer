@@ -2,7 +2,9 @@ import {openTaskWorker} from './fixtures/open-task-worker.js';
 import assert from'node:assert/strict';
 import test from'node:test';
 import{writeFileSync,mkdirSync,symlinkSync}from'node:fs';
-import{join,dirname}from'node:path';
+import{join,dirname,resolve}from'node:path';
+import{CodexEngine}from'../src/engine.js';
+import{fixture as webFixture}from'./web-service-fixture.js';
 import{htmlAttachmentFixture}from'./canvas-html-publication-fixture.js';
 import{fixture,until}from'./fixtures/worker-chat-host.js';
 import{mcpCall}from'./fixtures/host-mcp-call.js';
@@ -107,4 +109,42 @@ test('executable HTML reads only its own asset directory and preserves canonical
   assert.throws(()=>f.app.readAttachment({...ref,resource:'../outside.js'}),/artifact_path_denied/);assert.throws(()=>f.app.readAttachment({...ref,resource:'data.txt'}),/media_preview_unavailable/);
   symlinkSync(join(f.dir,'outside.js'),join(folder,'linked.js'));assert.throws(()=>f.app.readAttachment({...ref,resource:'linked.js'}),/artifact_path_denied/);
  }finally{f.close();}
+});
+
+test('queued revocation preserves the note and independent image in the actual turn/start payload',async()=>{
+ const f=webFixture(),threadId='synthetic-main',requestId='queued-annotation';
+ const wire=new CodexEngine({...f.app.config,codexBin:resolve('tests/fixtures/mock-app-server.mjs'),model:'image-input-check'},
+  {cwd:f.app.config.workspace,readRoots:[],instructions:'Synthetic Preview dispatch',tools:[]},async()=>({}));
+ const data='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY9sAAAAASUVORK5CYII=';
+ try{
+  await Promise.all([wire.start(),f.app.start()]);
+  const [source]=await f.attach('preview-source',[{filename:'source.png',content:Buffer.from(data,'base64')}]);
+  const upload=async(filename:string)=>{
+   const {assetId,revision}=await f.app.uploadAttachment({threadId,requestId,uploadId:filename.replace('.', '-'),filename,data});
+   return {assetId,revision};
+  };
+  const image=await upload('reference.png'),independent=await upload('independent.png');
+  const engine=f.engines.find(candidate=>!candidate.worker)!;
+  const hold=f.app.message('stream','hold-queue');
+  await until(()=>!!engine.pending);
+  f.app.submitMessage({requestId,text:'Apply the note',attachments:[image,independent],resourceReference:{
+   kind:'image',source:source!,image,width:1,height:1,region:{x:0,y:0,width:1,height:1},comment:'Keep this user instruction',
+  }});
+  assert.equal(f.app.history.revokeMessage(threadId,source!.messageId),true);
+  engine.pending!({status:'completed',text:'Held request complete'});
+  await hold;await f.app.idle();
+  const sent=f.inputs.at(-1)!;
+  const images=f.nativeImages.at(-1)!;
+  assert.equal(images.length,1);
+  const actual=JSON.parse((await wire.turn(sent,{images})).text);
+  assert.equal(actual[0].type,'text');
+  assert.match(actual[0].text,/Keep this user instruction/);
+  assert.match(actual[0].text,/来源不可用/);
+  assert.doesNotMatch(actual[0].text,new RegExp(image.assetId+'|source\\.png'));
+  assert.match(actual[0].text,new RegExp(independent.assetId));
+  assert.ok('path' in images[0]!);
+  assert.deepEqual(actual.slice(1),[{type:'localImage',path:images[0]!.path}]);
+  const accepted=f.app.history.list(threadId).find(message=>message.role==='user'&&message.requestId===requestId);
+  assert.deepEqual(accepted?.attachments,[image,independent]);
+ }finally{await Promise.all([f.app.close(),wire.close()]);}
 });

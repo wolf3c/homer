@@ -962,7 +962,7 @@ function createWindow(){
  });
  window.on('close',event=>{if(!allowQuit){event.preventDefault();if(process.platform==='win32'){if(windowsRecovery())void recoverWindowsExit();else app.quit();}else window.hide();}});
  const contents=window.webContents;
- if(!browserPreview)browserPreview=createBrowserPreview({window:()=>window,runtimeDirectory:join(resources,'homer/dist/browser-preview'),preload:join(fileURLToPath(new URL('.',import.meta.url)),'preview-content-preload.cjs'),ipcMain,uiCaller:event=>permissionCaller(event,event.senderFrame),fetchAttachment:(source,resource)=>{
+ if(!browserPreview)browserPreview=createBrowserPreview({window:()=>window,runtimeDirectory:join(resources,'homer/dist/browser-preview'),preload:join(fileURLToPath(new URL('.',import.meta.url)),'preview-content-preload.cjs'),ipcMain,uiCaller:event=>permissionCaller(event,event.senderFrame),fetchMessageFile:(threadId,{messageId,destination})=>fetch(origin+'/api/preview/message-file',{method:'POST',headers:{'X-Homer-Desktop-Access':desktopAccessToken,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({threadId,messageId,destination})}),fetchAttachment:(source,resource)=>{
   const path='/api/media/'+[source.messageId,source.assetId,source.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):'');
   return fetch(origin+path,{headers:{'X-Homer-Desktop-Access':desktopAccessToken,Origin:origin}});
  }});

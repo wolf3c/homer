@@ -35,20 +35,23 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   const window=new BrowserWindow({width:1280,height:900,useContentSize:true,webPreferences:{preload:${JSON.stringify(join(scratch,'preload.cjs'))},contextIsolation:true,nodeIntegration:false,sandbox:true}});
   const access={'X-Homer-Desktop-Access':process.env.TEST_ACCESS};
   window.webContents.session.webRequest.onBeforeSendHeaders({urls:[process.env.TEST_ORIGIN+'/api/*']},(details,callback)=>callback({requestHeaders:{...details.requestHeaders,...access}}));
-  globalThis.testWindow=window;globalThis.preview=createBrowserPreview({window:()=>window,runtimeDirectory:${JSON.stringify(resolve(runtime))},preload:${JSON.stringify(resolve('packaging/electron/preview-content-preload.cjs'))},ipcMain,uiCaller:event=>event.sender===window.webContents&&event.senderFrame===window.webContents.mainFrame,fetchAttachment:(s,resource)=>fetch(process.env.TEST_ORIGIN+'/api/media/'+[s.messageId,s.assetId,s.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):''),{headers:access})});
+  globalThis.testWindow=window;globalThis.preview=createBrowserPreview({window:()=>window,runtimeDirectory:${JSON.stringify(resolve(runtime))},preload:${JSON.stringify(resolve('packaging/electron/preview-content-preload.cjs'))},ipcMain,uiCaller:event=>event.sender===window.webContents&&event.senderFrame===window.webContents.mainFrame,fetchMessageFile:(threadId,{messageId,destination})=>fetch(process.env.TEST_ORIGIN+'/api/preview/message-file',{method:'POST',headers:{...access,Origin:process.env.TEST_ORIGIN,'Content-Type':'application/json'},body:JSON.stringify({threadId,messageId,destination})}),fetchAttachment:(s,resource)=>fetch(process.env.TEST_ORIGIN+'/api/media/'+[s.messageId,s.assetId,s.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):''),{headers:access})});
   await window.loadURL(process.env.TEST_ORIGIN);window.on('closed',()=>{globalThis.preview.close();app.quit();});})().catch(e=>{console.error(e.stack);app.exit(1)});`);
   f.app.bindBrowserPreview((actor,action,input)=>electron.evaluate((_,a)=>globalThis.preview.execute(a.actor,a.action,a.input),{actor,action,input}).catch(error=>{throw Error(error.message.match(/preview_[a-z_]+/)?.[0]??'preview_result_unconfirmed');}));
   const quoteText='合成原文用于核对跨栏批注。'.repeat(10);
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
    if(text==='Delegate both pages'){for(const goal of ['Operate page A','Operate page B']){const {taskId}=await main.call('task_create',{title:goal,goal});await main.call('worker_open',{taskId});}return{status:'completed',text:'两个合成任务已创建'};}
-   const final={itemId:'preview-final',phase:'final_answer',text:text==='Emit Quote'?quoteText:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
+   const final={itemId:'preview-final',phase:'final_answer',text:text.includes('核对本地 HTML 的标题')||text.includes('核对第二处本地文本')?'收到本地批注':text==='Emit Quote'?quoteText:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
    return{status:'completed',text:final.text,messages:[final]};
   });await f.app.start();await f.app.message('打开合成网页并批注','preview-fixture-source');
   const localPath=join(scratch,'current.md');
   await writeFile(localPath,'# 合成本地原文');
   f.app.history.record('desktop-local-fixture',f.app.store.meta('mainThread'),`[打开本地文档](${pathToFileURL(localPath).href})`);
+  const localHtml=join(scratch,'local.html');
+  await writeFile(localHtml,'<!doctype html><meta charset="utf-8"><title>本地批注</title><h1 id="local-heading">合成本地 HTML</h1>');
+  f.app.history.record('desktop-html-fixture',f.app.store.meta('mainThread'),`[打开本地 HTML](${pathToFileURL(localHtml).href})`);
   const archivePath=join(await realpath(scratch),'test-build.zip');
   await writeFile(archivePath,Buffer.from([80,75,3,4]));await truncate(archivePath,412*1024*1024);
   f.app.history.record('desktop-archive-fixture',f.app.store.meta('mainThread'),`[打开测试安装包](${pathToFileURL(archivePath).href})`);
@@ -63,6 +66,59 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
   await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
   record('desktop local file link renders current bytes');
+  await host.getByRole('link',{name:'打开本地 HTML',exact:true}).click();
+  let localPage;
+  await until(()=>!!(localPage=electron.context().pages().find(page=>page.url().endsWith('/local/index.html'))));
+  await localPage.getByRole('heading',{name:'合成本地 HTML'}).waitFor();
+  const localSessionIsSeparate=await electron.evaluate(({webContents,session})=>{
+   const local=webContents.getAllWebContents().find(view=>view.getURL().endsWith('/local/index.html'));
+   return local?.session===session.fromPartition('homer-local-preview')&&local.session!==session.fromPartition('persist:homer-preview');
+  });
+  assert.equal(localSessionIsSeparate,true);
+  await host.getByRole('button',{name:'批注',exact:true}).click();
+  await host.waitForFunction(()=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-busy')==='false');
+  await localPage.locator('#local-heading').evaluate(element=>element.click());
+  assert.equal(await localPage.getByRole('textbox',{name:'网页元素批注'}).count(),0);
+  await localPage.locator('#local-heading').click();
+  await localPage.getByRole('textbox',{name:'网页元素批注'}).fill('核对本地 HTML 的标题');
+  await localPage.getByRole('button',{name:'保存',exact:true}).click();
+  await host.locator('.annotation-chip').filter({hasText:'核对本地 HTML 的标题'}).waitFor();
+  await host.locator('.composer-area button[type="submit"]').click();
+  await until(()=>f.inputs.some(input=>input.includes('核对本地 HTML 的标题')&&input.includes('desktop-html-fixture')));
+  await host.getByRole('button',{name:'关闭本地批注',exact:true}).click();
+  await host.getByRole('button',{name:'打开批注 1',exact:true}).click();
+  await until(()=>!!(localPage=electron.context().pages().find(page=>page.url().endsWith('/local/index.html'))));
+  await localPage.locator('.annotation-outline').waitFor();
+  await host.getByRole('button',{name:'关闭本地批注',exact:true}).click();
+  record('local HTML opens, rejects synthetic selection and sends a native annotation');
+  const noteBlock='第二处前文。'.repeat(8)+'重复文字。'+'第二处后文。'.repeat(8);
+  await writeFile(localPath,'# 合成本地原文\n\n第一处重复文字。\n\n'+noteBlock);
+  await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
+  await host.getByText(noteBlock,{exact:true}).evaluate(element=>{
+   const value='重复文字。',at=element.textContent.indexOf(value),range=document.createRange();
+   range.setStart(element.firstChild,at);range.setEnd(element.firstChild,at+value.length);
+   getSelection().removeAllRanges();getSelection().addRange(range);
+   document.dispatchEvent(new Event('selectionchange'));
+  });
+  await host.locator('[data-slot=selection-toolbar-quote]').click();
+  await host.getByRole('textbox',{name:'文件批注 · current.md'}).fill('核对第二处本地文本');
+  await host.getByRole('button',{name:'保存',exact:true}).click();
+  await host.locator('.composer-area .annotation-chip').filter({hasText:'核对第二处本地文本'}).waitFor();
+  await host.locator('.composer-area button[type="submit"]').click();
+  await until(()=>f.inputs.some(input=>input.includes('核对第二处本地文本')&&input.includes('批注时所见')));
+  await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
+  const historicalText=host.locator('.preview-reference').filter({hasText:'核对第二处本地文本'}).getByRole('button',{name:'打开批注 1',exact:true});
+  await writeFile(localPath,'# 新增标题\n\n'+noteBlock);
+  await historicalText.click();
+  await host.waitForFunction(()=>[...CSS.highlights.values()].some(highlight=>[...highlight].some(range=>range.toString()==='重复文字。')));
+  await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
+  await writeFile(localPath,noteBlock+'\n\n'+noteBlock);
+  await historicalText.click();
+  await host.getByText('原文暂无法准确定位；摘录与批注已保留。',{exact:true}).waitFor();
+  await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
+  record('local Markdown restores a unique moved anchor and leaves duplicate anchors unresolved');
+
+
   const archiveRead=host.waitForResponse(response=>new URL(response.url()).pathname==='/api/preview/message-file');
   await host.getByRole('link',{name:'打开测试安装包',exact:true}).click();
   assert.deepEqual(await (await archiveRead).json(),{error:'file_type_or_size_denied'});
@@ -123,7 +179,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   // Use the actual composer's submit button, then validate persisted source and prompt.
   await host.locator('.composer-area button[type="submit"]').click();
   await until(()=>f.inputs.some(text=>text.includes('用户批注：补充可核对的数据和下一步行动。')));
-  const accepted=f.app.history.list(f.app.store.meta('mainThread')).find(m=>m.role==='user'&&m.resourceReferences?.length);
+  const accepted=f.app.history.list(f.app.store.meta('mainThread')).find(m=>m.role==='user'&&m.text==='请按网页批注处理');
   assert(accepted);assert.equal(accepted.resourceReferences[0].source.kind,'browser');assert.equal(accepted.resourceReferences[0].page.url,url+'/start');record('actual composer submission passes real service provenance and reaches synthetic Main prompt');
   await f.app.message('Delegate both pages','delegate-browser-fixture');await until(()=>f.engines.filter(p=>p.options.role==='worker'&&p.finish).length===2);
   const workers=f.engines.filter(p=>p.options.role==='worker');
@@ -164,10 +220,12 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await writeFile(join(f.app.config.workspace,'preview.css'),'body{background:rgb(13,21,34);color:white;padding:36px;font:20px system-ui}');
   await writeFile(join(f.app.config.workspace,'preview.js'),'document.getElementById("ready").textContent="资源脚本已加载";');
   await f.app.message('Emit HTML','html-fixture');
+  const latestMessages=host.getByRole('button',{name:/最新消息/});
+  if(await latestMessages.isVisible())await latestMessages.click();
   const htmlReplyId=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='html-fixture'").get().replyId;
   await host.locator(`[data-conversation-message="${htmlReplyId}"]`).getByRole('link',{name:'preview.html',exact:true}).click();
   await host.waitForFunction(()=>Array.from(document.querySelectorAll('a')).filter(link=>link.textContent==='preview.html').length===1);
-  let html;await until(()=>!!(html=electron.context().pages().find(p=>p.url().startsWith('homer-preview:'))));
+  let html;await until(()=>!!(html=electron.context().pages().find(p=>p.url().endsWith('/attachment/index.html'))));
   await html.getByText('资源脚本已加载',{exact:true}).waitFor();assert.equal(await html.locator('body').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(13, 21, 34)');
   await annotationMode(true);assert.equal(await host.locator('.preview-toolbar:visible').count(),1);await hoverMatch(html,'#ready');await hoverMatch(html,'#html-title');await html.screenshot({path:join(out,'html-hover.png')});await annotationMode(false);await html.locator('.annotation-hover-outline').waitFor({state:'detached'});await annotationMode(true);await html.locator('#html-title').click();
   await html.getByRole('textbox',{name:'网页元素批注'}).fill('HTML 备注同时引用原始附件');await html.getByRole('button',{name:'保存',exact:true}).click();

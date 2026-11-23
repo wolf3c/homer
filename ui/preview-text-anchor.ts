@@ -34,9 +34,15 @@ export function captureTextAnchor(root:Element,selection:Range,representation:Pr
  if(end<=start)return;
  return {format:'preview-text-v1',representation,start,end,exact:flow.text.slice(start,end),prefix:flow.text.slice(Math.max(0,start-32),start),suffix:flow.text.slice(end,end+32)};
 }
-export function restoreTextRange(root:Element,anchor:PreviewTextAnchor|undefined,representation:PreviewTextAnchor['representation']):Range|undefined{
+export function restoreTextRange(root:Element,anchor:PreviewTextAnchor|undefined,representation:PreviewTextAnchor['representation'],findUnique=false,preparedFlow?:ReturnType<typeof previewTextFlow>):Range|undefined{
  if(!anchor||anchor.representation!==representation)return;
- const flow=previewTextFlow(root),{start,end}=anchor;
+ const flow=preparedFlow??previewTextFlow(root);
+ let {start,end}=anchor;
+ if(findUnique){
+  const context=anchor.prefix+anchor.exact+anchor.suffix,offset=flow.text.indexOf(context);
+  if(offset<0||flow.text.indexOf(context,offset+1)>=0)return;
+  start=offset+anchor.prefix.length;end=start+anchor.exact.length;
+ }
  if(flow.text.slice(start,end)!==anchor.exact||flow.text.slice(Math.max(0,start-anchor.prefix.length),start)!==anchor.prefix||flow.text.slice(end,end+anchor.suffix.length)!==anchor.suffix)return;
  const first=flow.segments.find(s=>s.start<=start&&s.end>start),last=flow.segments.find(s=>s.start<end&&s.end>=end);
  if(!first||!last)return;
