@@ -10,7 +10,8 @@
 .homer-task-status .status-entry-icon{position:relative;display:grid;place-items:center;width:34px;height:34px;border-radius:8px}
 .homer-task-status .status-entry:is(:hover,[aria-expanded="true"]) .status-entry-icon{background:var(--soft);color:var(--ink)}
 .homer-task-status .status-entry:focus-visible{outline:1px solid var(--focus);outline-offset:1px}
-.homer-task-status .status-list{position:relative;max-height:min(59dvh,34rem);overflow:auto;overscroll-behavior:contain;padding:0 8px 4px 0;min-width:0;overflow-wrap:anywhere}
+.homer-task-status .status-list{position:relative;max-height:min(59dvh,34rem);overflow:auto;overflow-anchor:none;overscroll-behavior:contain;padding:0 8px 4px 0;min-width:0;overflow-wrap:anywhere}
+.status-list-tail{height:1px}
 .homer-task-status.status-aside .status-list{flex:1;max-height:none}
 .homer-task-status .status-task-row{
  display:grid;grid-template-columns:minmax(0,1fr) 20px;column-gap:8px;

@@ -2,7 +2,7 @@ import {useId,useLayoutEffect,useRef,useState} from 'react';
 import {ListTodoIcon,ChevronRightIcon,BotIcon} from 'lucide-react';
 import {Collapsible} from '@base-ui/react/collapsible';
 import type {WebState} from '../src/web-contract';
-import type {OverviewPage} from '../src/task-overview';
+import type {OverviewTask} from '../src/task-overview';
 import {taskName} from '../src/task-presentation';
 import {cn} from './vendor/task-status/utils';
 import {useTaskStatusData} from './task-status-data';
@@ -29,37 +29,21 @@ function TaskStatusRow({label,workerCount,running,selected,onSelect}:{
   {workerCount>0&&<span id={id+'-workers'} className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
  </Row>;
 }
-type ListProps={state:WebState;connected:boolean};
-function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewPage['view']>}){
- const [pages,setPages]=useState<number[]>([]);
+type ListProps={connected:boolean;refreshKey:unknown};
+type TaskRead=ReturnType<typeof useTaskStatusData>;
+function TaskSection({archived,connected,read,tasks,tail}:{
+ archived:boolean;connected:boolean;read:TaskRead;tasks:OverviewTask[];tail:React.RefObject<HTMLDivElement|null>;
+}){
  const [selectedId,setSelectedId]=useState<string>();
- const section=useRef<HTMLElement>(null);
- const anchor=useRef<{id:string;top:number;scrollTop:number}|null>(null);
- const before=pages.at(-1),archived=view==='archived';
- const path=!archived&&!before?'/api/tasks':`/api/tasks/list/${view}${before?'/before/'+before:''}`;
- const {data,error,busy,stale,refresh}=useTaskStatusData(state,connected,path,()=>{
-  const list=section.current?.closest('.status-list');if(!list)return;
-  const top=list.getBoundingClientRect().top;
-  const row=Array.from(list.querySelectorAll<HTMLElement>('[data-todo-id]')).find(row=>row.getBoundingClientRect().bottom>top);
-  anchor.current=row&&section.current?.contains(row)?{id:row.dataset.todoId!,top:row.getBoundingClientRect().top,scrollTop:list.scrollTop}:null;
- });
- const tasks=data?.tasks??[];
- useLayoutEffect(()=>{
-  const saved=anchor.current;anchor.current=null;
-  const list=section.current?.closest('.status-list');if(!saved||!list||list.scrollTop!==saved.scrollTop)return;
-  const row=Array.from(section.current!.querySelectorAll<HTMLElement>('[data-todo-id]')).find(r=>r.dataset.todoId===saved.id);
-  if(row)list.scrollTop+=row.getBoundingClientRect().top-saved.top;
- },[data]);
- function changePage(next:number[]){
-  setPages(next);
-  setSelectedId(undefined);
-  section.current?.focus({preventScroll:true});
-  section.current?.scrollIntoView({block:'nearest'});
- }
- return <section ref={section} tabIndex={-1} aria-label={archived?'已归档事项':'当前事项'}>
-  {(error||stale&&data)&&<div role="status">{error||'连接尚未确认。'}{data?' 显示上次记录。':''}{error&&<button type="button" className={ghostButton} disabled={busy||!connected} onClick={()=>refresh(true)}>重试</button>}</div>}
-  {!data&&!error&&<p role="status">{connected?'正在读取事项记录…':'等待连接后读取事项记录。'}</p>}
-  {data&&!tasks.length&&<p>{archived?'暂无已归档事项。':'暂无当前事项。'}</p>}
+ const {data,reading,failure,stale,retry}=read;
+ const retryButton=failure&&<button type="button" className={ghostButton} disabled={!!reading||!connected} onClick={event=>{
+  if(document.activeElement===event.currentTarget)event.currentTarget.closest('section')?.focus({preventScroll:true});
+  retry();
+ }}>重试</button>;
+ return <section tabIndex={-1} aria-label={archived?'已归档事项':'当前事项'}>
+  {(failure==='refresh'||stale&&data)&&<div role="status">{failure==='refresh'?'任务记录暂时无法读取。':'连接尚未确认。'}{data?' 显示上次记录。':''}{failure==='refresh'&&retryButton}</div>}
+  {!data&&!failure&&<p role="status">{connected?'正在读取事项记录…':'等待连接后读取事项记录。'}</p>}
+  {data&&!data.tasks.length&&<p>{archived?'暂无已归档事项。':'暂无当前事项。'}</p>}
   <div className="flex flex-col gap-1">{tasks.map(task=>{
    const title=taskName(task).text;
    return <section key={task.id} data-todo-id={task.id} aria-label={title}>
@@ -68,25 +52,106 @@ function TaskPage({state,connected,view}:ListProps & {view:NonNullable<OverviewP
     {!archived&&<div role="status" aria-atomic="true">{task.id===selectedId&&<p className="status-full-title"><span>完整标题</span>{title}</p>}</div>}
    </section>;
   })}</div>
-  {!!pages.length&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changePage(pages.slice(0,-1))}>上一页</button>}
-  {data?.nextCursor&&<button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>changePage([...pages,data.nextCursor!])}>下一页</button>}
+  {reading==='append'&&<p role="status">正在读取更多事项…</p>}
+  {failure==='append'&&<div role="status">暂时无法读取更多事项。{retryButton}</div>}
+  <div ref={tail} className="status-list-tail" aria-hidden="true"/>
  </section>;
 }
-function TaskList(props:ListProps){
+
+function TaskList({connected,refreshKey}:ListProps){
  const [archived,setArchived]=useState(false);
- const list=useRef<HTMLDivElement>(null),currentPosition=useRef(0);
- useLayoutEffect(()=>{if(!archived&&list.current)list.current.scrollTop=currentPosition.current;},[archived]);
- return <div className="status-list" ref={list} role="region" aria-label="事项列表" tabIndex={0}>
-  <TaskPage {...props} view="visible"/>
-  <Collapsible.Root open={archived} onOpenChange={value=>{if(value)currentPosition.current=list.current?.scrollTop??0;setArchived(value);}}>
-   <Collapsible.Trigger className={ghostButton+' status-archive-toggle min-h-11 w-full gap-1 px-1.5 text-xs'}>
-    已归档<ChevronRightIcon aria-hidden="true" className={cn('size-3',archived&&'rotate-90')}/>
-   </Collapsible.Trigger>
-   <Collapsible.Panel>{archived&&<TaskPage {...props} view="archived"/>}</Collapsible.Panel>
-  </Collapsible.Root>
+ const list=useRef<HTMLDivElement>(null);
+ const beforeArchive=useRef<ReturnType<typeof readAnchor>>(null);
+ const archiveGroup=useRef<HTMLDivElement>(null),archiveToggle=useRef<HTMLButtonElement>(null);
+ const currentTail=useRef<HTMLDivElement>(null),archiveTail=useRef<HTMLDivElement>(null);
+ const anchor=useRef<ReturnType<typeof readAnchor>>(null);
+
+ function isVisible(tail:HTMLElement|null){
+  const root=list.current;
+  if(!root||!tail)return false;
+  const clip=root.getBoundingClientRect(),row=tail.getBoundingClientRect();
+  return row.height>0&&row.bottom>clip.top&&row.top<clip.bottom;
+ }
+
+ function readAnchor(preferArchive=false){
+  const root=list.current;
+  if(!root)return null;
+  const rows=Array.from(root.querySelectorAll<HTMLElement>('[data-todo-id]'));
+  const row=(preferArchive&&rows.find(row=>archiveGroup.current?.contains(row)&&isVisible(row)))
+   ||(preferArchive&&isVisible(archiveToggle.current)&&archiveToggle.current)
+   ||rows.find(isVisible);
+  return {id:row?.dataset.todoId,archiveToggle:row===archiveToggle.current,inArchive:!!row&&!!archiveGroup.current?.contains(row),
+   top:row?.getBoundingClientRect().top??0,scrollTop:root.scrollTop};
+ }
+
+ function restoreAnchor(saved:NonNullable<ReturnType<typeof readAnchor>>,restoreTop=false){
+  const root=list.current;
+  if(!root)return;
+  const row=saved.archiveToggle?archiveToggle.current
+   :Array.from(root.querySelectorAll<HTMLElement>('[data-todo-id]')).find(row=>row.dataset.todoId===saved.id&&!!archiveGroup.current?.contains(row)===saved.inArchive);
+  if(row&&saved.scrollTop!==0)root.scrollTop+=row.getBoundingClientRect().top-saved.top;
+  else if(restoreTop)root.scrollTop=saved.scrollTop;
+ }
+
+ function captureAnchor(){
+  if(!anchor.current&&list.current?.scrollTop)anchor.current=readAnchor(archived);
+ }
+
+ const current=useTaskStatusData(false,true,connected,refreshKey,()=>{
+  const focus=document.activeElement;
+  const archiveFocused=focus instanceof HTMLElement&&archiveGroup.current?.contains(focus)&&isVisible(focus);
+  return !archiveFocused&&!(archived&&isVisible(archiveToggle.current))&&isVisible(currentTail.current);
+ },captureAnchor);
+ const history=useTaskStatusData(true,archived,connected,refreshKey,()=>isVisible(archiveTail.current),captureAnchor);
+ const wakeCurrent=current.wake,wakeHistory=history.wake;
+
+ useLayoutEffect(()=>{
+  const root=list.current;
+  if(!root)return;
+  const observer=new IntersectionObserver(entries=>{
+   for(const entry of entries)if(entry.isIntersecting){
+    if(entry.target===currentTail.current)wakeCurrent();
+    else wakeHistory();
+   }
+  },{root});
+  if(currentTail.current)observer.observe(currentTail.current);
+  if(archiveTail.current)observer.observe(archiveTail.current);
+  return()=>observer.disconnect();
+ },[archived,wakeCurrent,wakeHistory]);
+
+ useLayoutEffect(()=>{
+  const saved=anchor.current;anchor.current=null;
+  if(saved&&list.current?.scrollTop===saved.scrollTop)restoreAnchor(saved);
+  wakeCurrent();
+  wakeHistory();
+ },[current.data,history.data,current.reading,history.reading,archived,wakeCurrent,wakeHistory]);
+
+ useLayoutEffect(()=>{
+  if(!archived&&beforeArchive.current){
+   restoreAnchor(beforeArchive.current,true);
+   beforeArchive.current=null;
+  }
+ },[archived]);
+
+ const currentTasks=current.data?.tasks??[],archivedTasks=archived?history.data?.tasks??[]:[];
+ const currentRevisions=new Map(currentTasks.map(task=>[task.id,task.revision]));
+ const archivedRevisions=new Map(archivedTasks.map(task=>[task.id,task.revision]));
+ return <div className="status-list" ref={list} role="region" aria-label="事项列表" tabIndex={0}
+  onFocusCapture={wakeCurrent} onBlurCapture={wakeCurrent} onScroll={wakeCurrent}>
+  <TaskSection archived={false} connected={connected} read={current} tail={currentTail}
+   tasks={currentTasks.filter(task=>task.revision>=(archivedRevisions.get(task.id)??-1))}/>
+  <div ref={archiveGroup}>
+   <Collapsible.Root open={archived} onOpenChange={value=>{if(value)beforeArchive.current=readAnchor();setArchived(value);}}>
+    <Collapsible.Trigger ref={archiveToggle} className={ghostButton+' status-archive-toggle min-h-11 w-full gap-1 px-1.5 text-xs'}>
+     已归档<ChevronRightIcon aria-hidden="true" className={cn('size-3',archived&&'rotate-90')}/>
+    </Collapsible.Trigger>
+    <Collapsible.Panel>{archived&&<TaskSection archived connected={connected} read={history} tail={archiveTail}
+     tasks={archivedTasks.filter(task=>task.revision>(currentRevisions.get(task.id)??-1))}/>}</Collapsible.Panel>
+   </Collapsible.Root>
+  </div>
  </div>;
 }
-export function TaskStatusPopover({state,connected,asideContainer,onBeforeLayoutChange}:ListProps & {asideContainer:HTMLElement|null;onBeforeLayoutChange:()=>void}){
+export function TaskStatusPopover({state,connected,refreshKey,asideContainer,onBeforeLayoutChange}:ListProps & {state:WebState;asideContainer:HTMLElement|null;onBeforeLayoutChange:()=>void}){
  const [wide,setWide]=useState(false),[pinned,setPinned]=useState(true),[popupOpen,setPopupOpen]=useState(false);
  const open=wide?pinned:popupOpen;
  const togglePinned=()=>{onBeforeLayoutChange();setPinned(!pinned);};
@@ -106,7 +171,7 @@ export function TaskStatusPopover({state,connected,asideContainer,onBeforeLayout
  },[asideContainer]);
  useLayoutEffect(()=>{setPopupOpen(false);},[state.threadId,state.history?.readEpoch]);
  const title='工作状态';
- const content=<TaskList key={state.threadId+':'+(state.history?.readEpoch??'legacy')} state={state} connected={connected}/>;
+ const content=<TaskList key={state.threadId+':'+(state.history?.readEpoch??'legacy')} connected={connected} refreshKey={refreshKey}/>;
  return <><div className="homer-task-status"><Popover open={!wide&&popupOpen} onOpenChange={value=>{if(!wide)setPopupOpen(value);}}><PopoverTrigger asChild>
   <button id="task-status-trigger" type="button" className={ghostButton+' status-entry'} aria-label={title} title={title} aria-expanded={open} aria-controls="task-status-panel" aria-haspopup={wide?undefined:'dialog'} onClick={wide?togglePinned:undefined}>
    <span className="status-entry-icon" aria-hidden="true">

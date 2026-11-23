@@ -1057,6 +1057,7 @@ function HomerApp() {
   }
   const activePreviewTab=previewTabs.threadId===state.threadId?previewTabs.tabs.find(tab=>tab.id===previewTabs.activeId)??null:null;
   useEffect(()=>{
+  const taskStatusFrame=useRef(0);
     if(!window.homerBrowserPreview)return;
     setPreviewTabs(old=>{
       if(old.threadId!==state.threadId)return old;
@@ -1485,6 +1486,8 @@ function HomerApp() {
       if (disposed || activeEvents !== events) return;
       if(code==='history_protocol_required'||code==='route_not_found'){setUiUpdate(true);setConnectionError('网页读取版本不匹配，请保存草稿后刷新界面。');reader.current.connected=false;setConnected(false);events.close();return;}
       if(code==='mobile_device_denied'){reader.current.connected=false;setConnected(false);setConnectionError('此设备未获授权或已停用。请在主端核对，或在 App 中重新扫码。草稿已保留。');if(!mobileView){events.close();activeEvents=undefined;retryTimer=setTimeout(connect,10000);}return;}
+      taskStatusFrame.current++;
+      scheduleRefreshFrame.current++;
       reader.current.connected=false;setConnected(false); setConnectionError(code==="service_not_ready"?"服务尚未就绪，正在等待主对话。":"暂未连接到荷马，正在自动重连。已有消息和草稿会保留。");
       if(mobileView)return;
       events.close(); activeEvents = undefined;
@@ -1758,7 +1761,7 @@ function HomerApp() {
       <Group className="preview-layout" orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={nativeTitlebar?'240px':'25%'}><div className="conversation-panel">
         <header className="conversation-header">
           <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
-          <div className="header-actions">{mobileView?<MobileSettings/>:<DesktopSettings key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <div className="header-actions">{mobileView?<MobileSettings/>:<DesktopSettings key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} refreshKey={taskStatusFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
       {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
       {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}

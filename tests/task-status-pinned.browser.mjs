@@ -4,16 +4,17 @@ import {cloneTask,overviewTask} from './task-status-browser-data.mjs';
 export async function pinnedPerformance(page){
  const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel');
  const current=Array.from({length:20},(_,i)=>overviewTask('current-'+i));
- const archived=Array.from({length:1000},(_,i)=>overviewTask('archive-'+i,{historyState:'archived'}));
- const reads=[],archivePath=/\/api\/tasks\/list\/archived(?:\/before\/20)?$/;
+ const archived=Array.from({length:1000},(_,i)=>overviewTask('archive-'+i,{historyState:'archived',creationOrder:1000-i}));
+ const reads=[],archivePath=/\/api\/tasks\/list\/archived(?:\/before\/\d+)?$/;
  const capture=request=>{
   const path=new URL(request.url()).pathname;
   if(/^\/api\/tasks(?:\/|$)/.test(path))reads.push(path);
  };
  await page.route('**/api/tasks',route=>route.fulfill({json:{tasks:current}}));
  await page.route(archivePath,route=>{
-  const next=new URL(route.request().url()).pathname.endsWith('/before/20');
-  return route.fulfill({json:{tasks:archived.slice(next?20:0,next?40:20),nextCursor:next?40:20}});
+  const before=Number(new URL(route.request().url()).pathname.match(/before\/(\d+)$/)?.[1]??1001);
+  const start=1001-before,tasks=archived.slice(start,start+20);
+  return route.fulfill({json:{tasks,nextCursor:start+20<archived.length?tasks.at(-1).creationOrder:undefined}});
  });
  await page.setViewportSize({width:390,height:844});
  await page.reload();
@@ -34,11 +35,11 @@ export async function pinnedPerformance(page){
   await panel.getByRole('button',{name:'已归档',exact:true}).click();
   await archive.getByText('合成任务 archive-0',{exact:true}).waitFor();
   assert.equal(await rows.count(),40);
-  await archive.getByRole('button',{name:'下一页',exact:true}).click();
+  await panel.locator('.status-list').evaluate(el=>el.scrollTop=el.scrollHeight);
   await archive.getByText('合成任务 archive-20',{exact:true}).waitFor();
-  assert.equal(await rows.count(),40,'new archive page replaces the previous page');
-  assert.deepEqual([...new Set(reads)],['/api/tasks','/api/tasks/list/archived','/api/tasks/list/archived/before/20']);
-  return {checksPassed:5,firstFrameMs,archivedTasks:archived.length,maxRenderedRows:40};
+  assert.equal(await rows.count(),60,'new archive batch retains the previous rows');
+  assert.deepEqual([...new Set(reads)],['/api/tasks','/api/tasks/list/archived','/api/tasks/list/archived/before/981']);
+  return {checksPassed:5,firstFrameMs,archivedTasks:archived.length,renderedRows:60};
  }finally{
   page.off('request',capture);
   await page.unroute('**/api/tasks');
@@ -196,26 +197,26 @@ export async function pinnedData(page,{destination}={}){
  await page.unroute('**/api/tasks');await retry.click();await retry.waitFor({state:'hidden'});
  ok(true,'就地重试恢复总览');
  const tasks=Array.from({length:35},(_,i)=>cloneTask(original.tasks[0],'-'+i,{title:'完整中文事项标题用于窄屏截断检查'.repeat(4)+' '+i,creationOrder:100-i}));
- await page.route('**/api/tasks',route=>route.fulfill({json:{tasks:tasks.slice(0,20),nextCursor:20}}));
- await page.route('**/api/tasks/list/visible/before/20',route=>route.fulfill({json:{tasks:tasks.slice(20)}}));
+ await page.route('**/api/tasks',route=>route.fulfill({json:{tasks:tasks.slice(0,20),nextCursor:81}}));
+ await page.route('**/api/tasks/list/visible/before/81',route=>route.fulfill({json:{tasks:tasks.slice(20)}}));
  await page.setViewportSize({width:320,height:844});await page.reload();await trigger.waitFor();
  ok(await trigger.getAttribute('aria-expanded')==='false','320px 大量任务仍默认关闭');
  await trigger.click();
- const first=panel.locator('[data-item-row]').first(),next=panel.getByRole('button',{name:'下一页',exact:true});
- await next.waitFor();
+ const first=panel.locator('[data-item-row]').first();
+ await first.waitFor();
  ok(await panel.locator('[data-todo-id]').count()===20,'第一页最多显示 20 项合成事项');
  ok((await first.getAttribute('title')).length>50,'长标题保留完整 title');
- await next.click();
+ await panel.locator('.status-list').evaluate(el=>el.scrollTop=el.scrollHeight);
  await panel.getByText(tasks[20].title,{exact:true}).waitFor();
- ok(await panel.locator('[data-todo-id]').count()===15,'下一页可访问剩余事项');
+ ok(await panel.locator('[data-todo-id]').count()===35,'滚动加载剩余事项并保留已有行');
  await page.keyboard.press('Escape');
  await page.setViewportSize({width:1440,height:520});
- await next.waitFor();
+ await first.waitFor();
  const view=page.locator('.thread-viewport'),top=await view.evaluate(el=>el.scrollTop);
  await panel.locator('.status-list').evaluate(el=>el.scrollTop=200);
  ok(await panel.locator('.status-list').evaluate(el=>el.scrollHeight>el.clientHeight&&el.scrollTop===200)&&await view.evaluate(el=>el.scrollTop)===top,'常驻列表独立滚动');
  if(destination)await page.screenshot({path:destination+'/desktop-1440-long-titles.png',animations:'disabled'});
- await page.unroute('**/api/tasks');await page.unroute('**/api/tasks/list/visible/before/20');
+ await page.unroute('**/api/tasks');await page.unroute('**/api/tasks/list/visible/before/81');
  return {checksPassed:checks.length,checks};
 }
 
