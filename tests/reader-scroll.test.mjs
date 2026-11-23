@@ -16,7 +16,10 @@ const require=createRequire(resolve('package.json'));
 function load(path,bindings,name){
  const ast=ts.createSourceFile(path,readFileSync(path,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
  let source=name?ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name).getText(ast):ast.statements.filter(n=>!ts.isImportDeclaration(n)).map(n=>n.getText(ast)).join('\n');
- if(name==='HomerApp')source=source.replace('  const accountRequired=', '  captureCommands({loadPage});\n  const accountRequired=');
+ if(name==='HomerApp'){
+  const grouping=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&['messageTaskTitles','singleReplyTask','continuesReplyTask'].includes(n.name?.text)).map(n=>n.getText(ast)).join('\n');
+  source=grouping+'\n'+source.replace('  const accountRequired=', '  captureCommands({loadPage});\n  const accountRequired=');
+ }
  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  return Function('require','exports',...Object.keys(bindings),js+(name?`;return ${name};`:';return exports;'))(require,{},...Object.values(bindings));
 }

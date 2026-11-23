@@ -198,7 +198,7 @@ function UserMessage() {
   const channelName=channelSource?.source==='wechat'?'微信':channelSource?.source==='telegram'?'Telegram':channelSource?.source==='dingtalk'?'钉钉':channelSource?.source;
   const hasText = useAuiState(s => s.message.content.some(part => part.type === 'text' && part.text.trim().length > 0));
   const quotes = draftQuotes(metadata as { quote?: MessageQuote; quotes?: AnnotatedQuote[] });
-  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className={"message "+(original?.interaction?"interaction-message":"user-message")} aria-label="你的消息">
+  const bubble =
     <div className={original?.interaction?undefined:"user-message-bubble"} data-kind={original?.interaction?.kind} role={original?.interaction?"group":undefined} aria-label={original?.interaction?(original.interaction.kind==='authorization'?'授权请求与用户决定':'咨询问题与用户回答'):undefined}>
     {channelSource&&<p className="message-source-label">{channelName+'@'+channelSource.entryLabel}</p>}
     {quotes.map((quote, index) => <Fragment key={index}>
@@ -208,13 +208,47 @@ function UserMessage() {
     <MediaAttachments media={(metadata.media as MediaView[])??[]} messageId={String(metadata.messageId)} references={referencesOf(metadata as {resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]})} hideScreenshotDetails/>
     {original?.interaction?<CompletedInteractionCard item={original.interaction}/>:hasText&&<div data-aui-quote-selectable><MessagePrimitive.Parts components={{ Text: Markdown }} /></div>}
     {metadata.inputState==='uncertain'&&<p className="message-state">接收或结束结果待核实，未自动重跑</p>}
-    </div>
+    {!original?.interaction&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
+    </div>;
+  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className={"message "+(original?.interaction?"interaction-message":"user-message")} aria-label="你的消息">
+    {original?.interaction
+      ? <>{bubble}<MessageDetails runtime message={original}/>{!original.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}</>
+      : original ? <MessageDetails runtime message={original}>{bubble}</MessageDetails> : bubble}
     <InactiveInteractionNotes items={metadata.inactiveInteractions as WebState['inactiveInteractions']}/>
-    {original&&<MessageDetails runtime message={original} />}
-    {!original?.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
   </MessagePrimitive.Root></>;
 }
 const ProcessMessagesContext=createContext<ReadonlyMap<string,WebState['messages'][number]>>(new Map());
+function messageTaskTitles(message:WebState['messages'][number]|undefined){
+  const process=message?.process;
+  const titles=new Map<string,string>();
+  for(const {title,target} of message?.taskSources??[]){
+    if(title&&!titles.has('task:'+target.taskId))titles.set('task:'+target.taskId,title);
+  }
+  for(const item of process?.items??[]){
+    if(item.kind!=='workerEvent'||!item.event?.title)continue;
+    const delegated=item.event.eventKind==='delegated'&&item.event.bodySource==='description';
+    const received=process?.sourceKind==='worker'&&item.event.eventKind==='reply_received'&&item.event.sourceMessageId&&process.sourceMessageIds.includes(item.event.sourceMessageId);
+    if(!delegated&&!received)continue;
+    const key=item.event.taskId?'task:'+item.event.taskId:'event:'+item.eventKey;
+    if(!titles.has(key))titles.set(key,item.event.title);
+  }
+  return titles;
+}
+function singleReplyTask(message:WebState['messages'][number]|undefined,hasBody=!!message?.text.trim()){
+  if(!message||message.role!=='assistant'||!hasBody||message.taskSourceUnresolved||message.source||
+     message.process?.sourceKind==='scheduled'||!['running','completed'].includes(message.status))return;
+  const titles=messageTaskTitles(message);
+  const [entry]=titles;
+  if(titles.size===1&&entry?.[0].startsWith('task:')&&
+     !message.taskSources?.some(({target})=>'task:'+target.taskId!==entry[0]))return entry;
+}
+function continuesReplyTask(previous:WebState['messages'][number]|undefined,current:WebState['messages'][number]|undefined,hasBody?:boolean){
+  if(previous?.role!=='assistant'||!current||previous.status!=='completed'||previous.threadId!==current.threadId)return false;
+  const task=singleReplyTask(current,hasBody),prior=task&&singleReplyTask(previous);
+  if(!prior||prior[0]!==task[0]||prior[1]!==task[1])return false;
+  const day=new Date(previous.createdAt);
+  return Number.isFinite(day.getTime())&&day.toDateString()===new Date(current.createdAt).toDateString();
+}
 function AssistantMessage() {
   const status = useAuiState(s => s.message.status);
   const content = useAuiState(s => s.message.content);
@@ -231,39 +265,28 @@ function AssistantMessage() {
   const messageFiles=files.filter(file=>file.messageId===metadata.messageId&&!file.destination);
   const hasBubble=hasBody||!!original?.source||messageFiles.length>0;
   const completed=!!process&&confirmedTerminal(process)&&process.status==='completed';
-  let taskTitle='';
-  if(hasBubble||internal&&process.turnIds.length>0&&!completed){
-    const titles=new Map<string,string>();
-    for(const {title,target} of original?.taskSources??[]){
-      if(title&&!titles.has('task:'+target.taskId))titles.set('task:'+target.taskId,title);
-    }
-    for(const item of process?.items??[]){
-      if(item.kind!=='workerEvent'||!item.event?.title)continue;
-      const delegated=item.event.eventKind==='delegated'&&item.event.bodySource==='description';
-      const received=internal&&item.event.eventKind==='reply_received'&&item.event.sourceMessageId&&process.sourceMessageIds.includes(item.event.sourceMessageId);
-      if(!delegated&&!received)continue;
-      const key=item.event.taskId?'task:'+item.event.taskId:'event:'+item.eventKey;
-      if(!titles.has(key))titles.set(key,item.event.title);
-    }
-    taskTitle=[...titles.values()].join('、')||(internal?'事项标题待确认':'');
-  }
+  const taskTitle=hasBubble||internal&&process.turnIds.length>0&&!completed
+    ? [...messageTaskTitles(original).values()].join('、')||(internal?'事项标题待确认':'') : '';
+  const bubble=hasBubble&&<div className="assistant-message-bubble">
+    {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
+    {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]} references={referencesOf(original.source)}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
+    <ArtifactFiles files={messageFiles}/>
+    <MessageTimestamp messageId={String(metadata.messageId)}/>
+  </div>;
   return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-message-source={process?.sourceKind==='user'&&(!original||messageSourceParts(original)!==undefined)?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className="message assistant-message" aria-label="荷马的回复">
     {!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
     {internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
     <ProcessMessageContent taskSourceUnresolved={original?.taskSourceUnresolved} node={process}>
     {hasBubble&&<>
     {!internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
-    <div className="assistant-message-bubble">
-    {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
-    {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]} references={referencesOf(original.source)}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
-    <ArtifactFiles files={messageFiles}/>
-    </div></>}
+    {original ? <MessageDetails runtime message={original}>{bubble}</MessageDetails> : bubble}
+    </>}
     {!!original&&!process&&status?.type === "running" && !content.some(part => part.type === "text" && part.text) && <p className="thinking" role="status">处理阶段待确认</p>}
     {status?.type === "incomplete" && <span className="message-state">{process?.status==='unknown'?"这条回复结束状态待核实，未自动重跑":status.reason === "cancelled" ? "这条回复已停止" : "这条回复未完成"}</span>}
     </ProcessMessageContent>
     <InactiveInteractionNotes items={metadata.inactiveInteractions as WebState['inactiveInteractions']}/>
-    {!!original && <MessageDetails runtime message={original} />}
-    {!original?.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
+    {!hasBubble&&original&&<MessageDetails runtime message={original}/>}
+    {!hasBubble&&!original?.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
   </MessagePrimitive.Root></>;
 }
 function HomerSelectionToolbar() {
@@ -1584,7 +1607,7 @@ function HomerApp() {
             <div className="messages" ref={messageList}><MessageTimestamps messages={state.messages}>
               {virtualRows.map((row,i)=><Fragment key={row.key}>
                 <div aria-hidden="true" style={{height:Math.max(0,row.start-(virtualRows[i-1]?.end??listTop))}}/>
-                <div data-index={row.index} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
+                <div data-index={row.index} data-continues-task={continuesReplyTask(processMessages.get(rows[row.index-1]?.id),processMessages.get(rows[row.index].id),runtimeMessages[rows[row.index].index].content.some(part=>part.type==='text'))||undefined} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
               </Fragment>)}
               <div aria-hidden="true" style={{height:Math.max(0,virtualizer.getTotalSize()-((virtualRows.at(-1)?.end??listTop)-listTop))}}/>
             </MessageTimestamps>

@@ -21,7 +21,7 @@ function realDate(value: unknown): Date | undefined {
 
 export function conversationTimestamps(messages: readonly DatedConversationMessage[], { now = new Date(), timeZone }: { now?: Date; timeZone?: string } = {}) {
   const calendar = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-  const clock = new Intl.DateTimeFormat(undefined, { timeZone, hour: '2-digit', minute: '2-digit' });
+  const clock = new Intl.DateTimeFormat(undefined, { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   const full = new Intl.DateTimeFormat('zh-CN', { timeZone, year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short' });
   function day(date: Date) {
     const parts = calendar.formatToParts(date);

@@ -62,7 +62,7 @@
 .user-message .markdown>:last-child{margin-bottom:0}
 .user-message .markdown blockquote{margin:0;padding:0 0 0 11px;border-left:2px solid var(--strong-line);border-radius:0;background:transparent;color:var(--muted);font-size:14px;line-height:1.7}
 .user-message .message-attachments{min-width:0;gap:10px}
-.user-message .message-actions{justify-content:flex-end;margin-top:2px}
+.user-message .message-actions{justify-content:flex-end}
 .user-message .message-action-notice{margin:0 0 4px;text-align:right;line-height:1.7;overflow-wrap:anywhere}
 @media(max-width:600px){.user-message{max-width:92%}}
 @media(max-width:480px){.user-message-bubble{padding:11px 14px}}

@@ -5,8 +5,16 @@
 .user-message>.message-timestamp{margin-left:auto}
 .message-actions{flex-wrap:wrap}
 .message-actions>.message-timestamp{margin:0 0 0 -4px;max-width:0;overflow:hidden;white-space:nowrap}
-.message:hover .message-timestamp,.message:focus-within .message-timestamp{opacity:1}
+.message:not(:has(>.message-bubble-row)):hover .message-timestamp,.message-bubble-row:hover .message-timestamp,.message:focus-within .message-timestamp{opacity:1}
 .message:hover>.message-actions>.message-timestamp,.message:focus-within>.message-actions>.message-timestamp{margin-left:0;max-width:100%;overflow:visible}
 .message-timestamp:focus-visible{outline:2px solid var(--strong-line);outline-offset:2px;border-radius:2px}
-@media(hover:none),(pointer:coarse){.message-timestamp{opacity:1}.message-actions>.message-timestamp{margin-left:0;max-width:100%;overflow:visible}}
+@media(hover:none),(pointer:coarse),(any-pointer:coarse){.message-timestamp{opacity:1}.message-actions>.message-timestamp{margin-left:0;max-width:100%;overflow:visible}}
 @media(prefers-reduced-motion:reduce){.message-timestamp{transition:none}}
+
+/* Use the bubble's existing lower padding. Short bubbles bring the time closer to the curve. */
+.message-bubble-row :is(.assistant-message-bubble,.user-message-bubble)>.message-timestamp{
+  position:absolute;inset-inline-end:clamp(3px,calc(100% - 32px),6px);inset-block-end:4px;
+  margin:0;font-size:10px;line-height:7px;white-space:nowrap
+}
+.message-bubble-row .message-timestamp:focus-visible{outline-width:1px;outline-offset:0}
+.message:focus-visible .message-timestamp{opacity:1}

@@ -19,7 +19,7 @@ import { withDom } from './helpers/process-dom.mjs';
 
 const m = <T extends object = Record<never, never>>(id: string, createdAt: unknown, extra: T = {} as T) => ({ id, createdAt, role: 'user', text: '内容', ...extra });
 const at = (value: string) => new Date(value);
-const defaultClock = (value: string, timeZone?: string) => new Intl.DateTimeFormat(undefined, { timeZone, hour: '2-digit', minute: '2-digit' }).format(at(value));
+const defaultClock = (value: string, timeZone?: string) => new Intl.DateTimeFormat(undefined, { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at(value));
 test('adjacent calendar days include year, yesterday crosses year, original order and IDs remain', () => {
   const messages = [m('a', '2024-12-31T15:59:00Z'), m('b', '2024-12-31T15:59:59Z'), m('c', '2024-12-31T16:00:00Z'), m('d', '2023-12-31T16:00:00Z'), m('e', '2024-12-31T16:01:00Z')];
   const map = conversationTimestamps(messages, { now: at('2024-12-31T16:05:00Z'), timeZone: 'Asia/Shanghai' });
@@ -67,7 +67,7 @@ test('default timezone follows local environment and relative labels refresh aft
     const messages = [m('a', '2025-01-01T07:59:00Z')];
     assert.equal(conversationTimestamps(messages, { now: at('2025-01-01T07:59:30Z') }).get('a')?.dayLabel, '今天');
     assert.equal(conversationTimestamps(messages, { now: at('2025-01-01T08:00:00Z') }).get('a')?.dayLabel, '昨天');
-    const expected = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+    const expected = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
     const options = expected.resolvedOptions();
     assert.equal(options.timeZone, 'America/Los_Angeles');
     const resolved = new Intl.DateTimeFormat(options.locale, { timeZone: options.timeZone, hour: '2-digit', minute: '2-digit', hourCycle: options.hourCycle });
@@ -180,7 +180,7 @@ Function('require', 'exports', 'useContext', 'useLayoutEffect', 'useRef', 'useSt
 const processExports: any = {};
 Function('require', 'exports', 'useMemo', 'useAuiState', 'MessagePrimitive', 'HomerToolFallback', declarations('../ui/process-message.tsx', ['useProcessParts']))(
   require, processExports, React.useMemo, useAuiState, MessagePrimitive, () => null);
-const wrapperJs = 'const Fragment = require("react").Fragment;\n'+declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage','QuoteSource']);
+const wrapperJs = 'const Fragment = require("react").Fragment;\n'+declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage','QuoteSource','messageTaskTitles','singleReplyTask','continuesReplyTask']);
 // Keep the current production quote renderer in this rich-content boundary.
 // Only its stylesheet is omitted; installed primitives and icons stay real.
 const quotePath = new URL('../ui/vendor/assistant-ui/quote.tsx', import.meta.url);
@@ -196,7 +196,7 @@ const files = [{ id: 'file', messageId: 'a' }];
 const artifacts = React.createContext({ files });
 const processes = React.createContext(new Map());
 const calls: any[] = [];
-Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','useEffect','locateSourceQuote', 'draftQuotes', 'MessagePrimitive', 'Markdown', 'MediaAttachments', 'MessageDetails', 'InactiveInteractionNotes', 'ArtifactsContext', 'confirmedTerminal', 'ProcessMessageContent', 'ReactMarkdown', 'remarkGfm', 'ArtifactFiles', 'MessageDaySeparator', 'MessageTimestamp', 'isVisibleConversationMessage', 'QuoteBlock', 'MessageCirclePlus', 'referencesOf', 'ProcessMessagesContext', 'useProcessParts', 'messageSourceParts', 'QuoteNavigationContext', wrapperJs + '\nexports.UserMessage=UserMessage;exports.AssistantMessage=AssistantMessage;')(
+Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','useEffect','locateSourceQuote', 'draftQuotes', 'MessagePrimitive', 'Markdown', 'MediaAttachments', 'MessageDetails', 'InactiveInteractionNotes', 'ArtifactsContext', 'confirmedTerminal', 'ProcessMessageContent', 'ReactMarkdown', 'remarkGfm', 'ArtifactFiles', 'MessageDaySeparator', 'MessageTimestamp', 'isVisibleConversationMessage', 'QuoteBlock', 'MessageCirclePlus', 'referencesOf', 'ProcessMessagesContext', 'useProcessParts', 'messageSourceParts', 'QuoteNavigationContext', wrapperJs + '\nexports.UserMessage=UserMessage;exports.AssistantMessage=AssistantMessage;exports.continuesReplyTask=continuesReplyTask;')(
   require, wrappers, useAuiState, React.useContext,React.useState,React.useRef,React.useEffect,locateSourceQuote, (v: any) => v.quotes ?? [], MessagePrimitive,
   () => h(MessagePrimitive.Parts, { children: ({ part }: any) => part.type === 'text' ? h('p', null, part.text) : null }),
   (props: any) => { calls.push(['media', props]); return props.media?.length ? h('figure', null, '附件') : null; },
@@ -244,7 +244,7 @@ test('each reply displays its verified task names directly above its own bubble'
     m('empty', 4000, { role: 'assistant', text: '', taskSources: [task('extra', '没有对应气泡')] }),
     m('single', 5000, { role: 'assistant', text: '单项回复', taskSources: [task('four', '后台工作')] }),
   ]);
-  assert.deepEqual([...html.matchAll(/<p class="message-task-title">([^<]+)<\/p><div class="assistant-message-bubble">/g)].map(match => match[1]), ['隔离 Chrome 排查、检查附件来源、检查附件来源', '后台工作']);
+  assert.deepEqual([...html.matchAll(/<p class="message-task-title">([^<]+)<\/p><div class="message-bubble-row"><div class="assistant-message-bubble">/g)].map(match => match[1]), ['隔离 Chrome 排查、检查附件来源、检查附件来源', '后台工作']);
   assert.doesNotMatch(html, /重复来源|没有对应气泡|任务来源|事项 ·/);
   assert.match(html, /保留原正文[\s\S]*aria-label="复制"[\s\S]*aria-label="引用"/);
 });
@@ -257,7 +257,7 @@ test('a reply also names its immutable delegation events when taskSources are ab
     m('delegation', 1000, { role: 'assistant', text: '合成回复正文', process }),
     m('without-answer', 2000, { role: 'assistant', text: '', process }),
   ]);
-  assert.match(html, /<p class="message-task-title">核对合成版本、核对合成界面<\/p><div class="assistant-message-bubble">/);
+  assert.match(html, /<p class="message-task-title">核对合成版本、核对合成界面<\/p><div class="message-bubble-row"><div class="assistant-message-bubble">/);
   assert.doesNotMatch(html, /重复交办/);
   assert.match(html, /data-conversation-message="without-answer"/);
   assert.doesNotMatch(html, /合成交办详情/);
@@ -316,7 +316,7 @@ test('production wrappers integrate installed runtime and retain rich slots with
   assert.equal((streamed.match(/class="message-day-separator"/g) ?? []).length, 2);
 });
 
-test('text actions own the only time, while empty, tool-only and invalid messages retain their fallback rules', () => {
+test('bubbles own the only time, while tool-only and invalid messages retain their fallback rules', () => {
   const html = renderConversation([
     m('text-user', 1000), m('text-assistant', 2000, { role: 'assistant' }),
     m('empty-user', 3000, { text: '', media: [{ filename: '附件' }] }),
@@ -327,12 +327,34 @@ test('text actions own the only time, while empty, tool-only and invalid message
   assert.equal(rows.length, 5);
   for (const [i, row] of rows.entries()) {
     assert.equal((row.match(/class="message-timestamp"/g) ?? []).length, i === 4 ? 0 : 1);
-    if (i < 2) assert.match(row.match(/<div data-slot="message-actions"[\s\S]*?<\/div>/)?.[0] ?? '', /aria-label="复制"[\s\S]*aria-label="引用"[\s\S]*<time class="message-timestamp"/);
+    if (i < 2) {
+      assert.match(row, /class="(?:user|assistant)-message-bubble"[\s\S]*<time class="message-timestamp"[\s\S]*<div data-slot="message-actions"/);
+      assert.match(row.match(/<div data-slot="message-actions"[\s\S]*?<\/div>/)?.[0] ?? '', /aria-label="复制"[\s\S]*aria-label="引用"/);
+    }
     else if (i < 4) { assert.ok(!row.includes('data-slot="message-actions"')); assert.match(row, /<time class="message-timestamp"/); }
   }
   const plain = renderToStaticMarkup(h(timestampExports.MessageTimestamps, { messages: [m('plain', 5000)] }, h(detailsExports.MessageDetails, { message: m('plain', 5000) })));
   assert.match(plain, /aria-label="复制"[\s\S]*<time class="message-timestamp"/);
   assert.equal((plain.match(/class="message-timestamp"/g) ?? []).length, 1);
+});
+
+test('grouping uses the adjacent history row and one verified task and title', () => {
+  const task = (taskId: string, title = '同名事项') => ({ target: { taskId }, title });
+  const first = { ...m('a', 1700000000000), role: 'assistant', status: 'completed', threadId: 'thread', taskSources: [task('one')] };
+  const second = { ...first, id: 'b', status: 'running', text: '流式回复' };
+  const continues = wrappers.continuesReplyTask;
+  assert.equal(continues(first, second), true);
+  assert.equal(continues(first, { ...second, text: '' }), false);
+  assert.equal(continues(first, { ...second, text: '' }, true), true);
+  assert.equal(continues(undefined, second), false);
+  assert.equal(continues({ ...first, createdAt: NaN }, { ...second, createdAt: NaN }), false);
+  assert.equal(continues({ ...first, text: '' }, second), false);
+  assert.equal(continues({ ...first, role: 'user' }, second), false);
+  assert.equal(continues(first, { ...second, createdAt: 1700000000000 + 86_400_000 }), false);
+  for (const taskSources of [[], [task('two')], [task('one', '新标题')], [task('one'), task('two')], [task('one'), task('two', '')]]) {
+    assert.equal(continues(first, { ...second, taskSources }), false);
+  }
+  assert.equal(continues(first, { ...second, taskSourceUnresolved: true }), false);
 });
 
 test('React reconciliation retains message, date and time DOM nodes across text deltas and appends', async () => withDom(async (d: any) => {
@@ -378,9 +400,10 @@ test('React reconciliation retains message, date and time DOM nodes across text 
 
 test('production CSS exposes time on row hover, keyboard focus and touch while retaining a focusable time', () => {
   const css = readFileSync(new URL('../ui/message-timestamps.css', import.meta.url), 'utf8');
-  assert.match(css, /\.message:hover \.message-timestamp,\.message:focus-within \.message-timestamp\{opacity:1\}/);
-  assert.match(css, /@media\(hover:none\),\(pointer:coarse\)\{\.message-timestamp\{opacity:1\}/);
-  assert.doesNotMatch(css, /display:none|position:absolute/);
+  assert.match(css, /\.message-bubble-row:hover \.message-timestamp,\.message:focus-within \.message-timestamp\{opacity:1\}/);
+  assert.match(css, /@media\(hover:none\),\(pointer:coarse\),\(any-pointer:coarse\)\{\.message-timestamp\{opacity:1\}/);
+  assert.doesNotMatch(css, /display:none/);
+  assert.match(css, /\.message-bubble-row[^{}]+>\.message-timestamp\{\s*position:absolute/);
   const source = readFileSync(new URL('../ui/homer-app.tsx', import.meta.url), 'utf8');
   assert.match(source, /<MessageTimestamps messages=\{state.messages\}>(?:(?!<\/MessageTimestamps>)[\s\S])*?<VirtualMessage id=\{rows\[row.index\].id\}/);
 });

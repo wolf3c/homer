@@ -30,7 +30,7 @@ function render(metadata){
   require,exports,selector=>selector({message:{metadata:{custom:metadata},content:[{type:'text',text:metadata.original?.text??''}]}}),value=>value.quotes??(value.quote?[value.quote]:[]),
   {Root:props=>React.createElement('article',props),Parts:()=>React.createElement('p',null,metadata.original?.text)},()=>null,
   props=>{calls.media=props;return React.createElement(React.Fragment,null,...(props.references??[]).map((r,i)=>React.createElement(reference,{key:i,reference:r})),props.media.length?React.createElement('figure',null,props.media.map(m=>m.filename).join(', ')):null);},
-  props=>{calls.details=props;return props.message.text?React.createElement('button',{'aria-label':'复制'},'复制'):null;},
+  props=>{calls.details=props;return React.createElement(React.Fragment,null,props.children,props.message.text?React.createElement('button',{'aria-label':'复制'},'复制'):null);},
   props=>{calls.day=props;return null;},props=>{calls.timestamp=props;return null;},
   props=>{calls.inactive=props;return null;},props=>{(calls.quotes??=[]).push(props);return React.createElement('blockquote',null,props.quote.text);},
   referencesOf,referenceKey,reference,QuestionFlow,ApprovalCard

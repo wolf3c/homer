@@ -48,7 +48,7 @@ test('the default QuoteBlock clamp preserves the full source payload',()=>{
 });
 test('user quotes keep each annotation directly after its source as ordinary body text',()=>{
  const QuoteSource='quote-source',Parts='message-parts';
- const render=metadata=>component('ui/homer-app.tsx','UserMessage',{Fragment:React.Fragment,useAuiState:fn=>fn({message:{metadata:{custom:metadata},content:[{type:'text',text:'普通正文'}]}}),draftQuotes,MessageDaySeparator:'day',MessagePrimitive:{Root:'article',Parts},QuoteSource,referencesOf:()=>[],ResourceReferenceBlock:'resource',MediaAttachments:'media',Markdown:'markdown',CompletedInteractionCard:'interaction',InactiveInteractionNotes:'inactive',MessageDetails:'details',MessageTimestamp:'time'})();
+ const render=metadata=>component('ui/homer-app.tsx','UserMessage',{Fragment:React.Fragment,useAuiState:fn=>fn({message:{metadata:{custom:metadata},content:[{type:'text',text:'普通正文'}]}}),draftQuotes,MessageDaySeparator:'day',MessagePrimitive:{Root:'article',Parts},QuoteSource,referencesOf:()=>[],ResourceReferenceBlock:'resource',MediaAttachments:'media',Markdown:'markdown',CompletedInteractionCard:'interaction',InactiveInteractionNotes:'inactive',MessageDetails:({children})=>children,MessageTimestamp:'time'})();
  const quotes=[{messageId:'a',text:'原文甲',annotation:'  第一段备注\n**用户原样输入**  '},{messageId:'b',text:'原文乙',annotation:'第二段备注'},{messageId:'c',text:'原文丙',annotation:''}];
  const metadata={messageId:'quoted',quotes},before=structuredClone(metadata),tree=render(metadata);
  const sequence=nodes(tree).filter(n=>n.type===QuoteSource||n.type==='p'||n.type===Parts);
