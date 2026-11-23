@@ -59,7 +59,7 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled,focusId
  useLayoutEffect(()=>{
   const bridge=window.homerBrowserPreview,node=viewport.current;if(!bridge||!node)return;
   let frame=0,disposed=false;
-  const draw=()=>{if(disposed)return;const r=node.getBoundingClientRect(),covered=[...document.querySelectorAll<HTMLElement>('[role="dialog"]:not(#canvas-panel),[role="alertdialog"],[role="menu"]')].some(el=>el.getClientRects().length>0);void bridge.present({pageId:page.id,threadId:page.threadId,bounds:suspended||covered||!r.width||!r.height?null:{x:r.x,y:r.y,width:r.width,height:r.height}}).catch(()=>setNotice('网页显示未确认，请重新打开。'));};
+  const draw=()=>{if(disposed)return;const r=node.getBoundingClientRect(),covered=[...document.querySelectorAll<HTMLElement>('[role="dialog"]:not(#canvas-panel,[data-preview-local-quote]),[role="alertdialog"],[role="menu"]')].some(el=>el.getClientRects().length>0);void bridge.present({pageId:page.id,threadId:page.threadId,bounds:suspended||covered||!r.width||!r.height?null:{x:r.x,y:r.y,width:r.width,height:r.height}}).catch(()=>setNotice('网页显示未确认，请重新打开。'));};
   const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(draw);};draw();
   const observer=new ResizeObserver(schedule);observer.observe(node);const portals=new MutationObserver(schedule);portals.observe(document.body,{childList:true});window.addEventListener('resize',schedule);window.addEventListener('scroll',schedule,true);
   return()=>{disposed=true;cancelAnimationFrame(frame);observer.disconnect();portals.disconnect();window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);void bridge.present({pageId:page.id,threadId:page.threadId,bounds:null}).catch(()=>{});};

@@ -275,13 +275,13 @@ function HomerSelectionToolbar() {
     openQuote(snapshot,source);window.getSelection()?.removeAllRanges();
   }}><SelectionToolbar.Quote><MessageCirclePlus className="size-3.5" aria-hidden/>引用</SelectionToolbar.Quote></SelectionToolbar.Root>;
 }
-function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,captureShortcutRecording }: {
+function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,captureShortcutRecording,splitPreview }: {
   annotationDraft:AnnotationDraft;bindPreview:(value:PreviewComposer|null)=>void;state: WebState; connected: boolean; stopping: string | null;
   editDraft?: {text:string;id:string;source?:'welcome'};
   answerTarget?:WebInteraction;onAnswerTarget:(item:WebInteraction|undefined)=>void;interactionsVerified:boolean;
   attachmentOwner:HomerAttachmentAdapter;composerRuntime:ThreadComposerRuntime;bindAttachments:(read:()=>DraftContext)=>void;
   onSend: (input: ConversationInput,target?:UnconfirmedInput['target']) => Promise<void>;onStop:()=>void;
-  queueContent?:ReactNode;onQueueBusy?:(busy:boolean)=>void;onAccount?:()=>void;captureShortcutRecording?:boolean;
+  queueContent?:ReactNode;onQueueBusy?:(busy:boolean)=>void;onAccount?:()=>void;captureShortcutRecording?:boolean;splitPreview:boolean;
 }) {
   const aui = useAui();
   const text = useAuiState(s => s.composer.text), selected = useAuiState(s => s.composer.quote);
@@ -752,6 +752,7 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
   const notice=blocked?(accountRequired?'请先连接账号，重启并应用后即可开始。':connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):previewIntentTooLong({text,quotes,resourceReference:intentReference,resourceReferences:answerEditing?undefined:resourceReferences})?'整体要求与批注合计过长，请缩短后再发送。':draftNotice;
   const range=quoteEditor?.range;
   const rangeBody=range?.startContainer.parentElement;
+  const quoteBoundary=splitPreview?composerBody.current?.closest<HTMLElement>('.conversation-panel')??undefined:undefined;
   const quoteAnchor=range&&rangeVisible&&rangeBody?.isConnected?{contextElement:rangeBody,getBoundingClientRect:()=>range.getBoundingClientRect(),getClientRects:()=>range.getClientRects()}:quoteEditor?.existing&&quoteEditor.trigger?.isConnected?quoteEditor.trigger:composerBody;
   return <div className="composer-area" ref={composerBody}>
     {screenshot&&!screenshot.joining&&<ScreenshotDialog file={screenshot.file} attachment={screenshot.attachment} annotations={screenshot.reference?.annotations??screenshot.annotations} ax={screenshot.ax} focusAnnotation={screenshot.focusAnnotation} initialError={screenshot.error}
@@ -766,8 +767,8 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
       }
       dismissQuote();
     }}>
-     <Popover.Portal><Popover.Positioner anchor={quoteAnchor} positionMethod="fixed" side="bottom" sideOffset={8} collisionPadding={8} sticky collisionAvoidance={{side:'flip',align:'shift'}} className="preview-selection-positioner">
-      <Popover.Popup initialFocus={false} finalFocus={false} aria-label="引用评论" className="text-annotation-editor message-quote-editor">
+     <Popover.Portal><Popover.Positioner anchor={quoteAnchor} collisionBoundary={quoteBoundary} positionMethod="fixed" side="bottom" sideOffset={8} collisionPadding={8} sticky collisionAvoidance={{side:'flip',align:'shift'}} className="preview-selection-positioner">
+      <Popover.Popup initialFocus={false} finalFocus={false} aria-label="引用评论" data-preview-local-quote={quoteBoundary?'':undefined} className="text-annotation-editor message-quote-editor">
        {quoteEditor&&<AnnotationCommentForm key={quoteEditor.draftId} ref={focusQuoteTextarea} title={'引用 · '+quoteEditor.quote.messageId} excerpt={quoteEditor.quote.text} value={quoteEditor.annotation} onChange={annotation=>{const next={...quoteEditor,annotation,error:''};quoteEditorRef.current=next;setQuoteEditor(next);}} onSave={saveQuote} onCancel={dismissQuote} onDelete={quoteEditor.existing?()=>{replaceQuotes(quotesRef.current.filter(q=>q.draftId!==quoteEditor.draftId));dismissQuote(true);}:undefined} busy={false} error={quoteEditor.error}/>}
       </Popover.Popup>
      </Popover.Positioner></Popover.Portal>
@@ -1600,7 +1601,7 @@ function HomerApp() {
             <span className="sr-only" role="status">AI 正在处理</span>
             <img ref={indicator.sprite} className="processing-sprite" data-docked={indicator.docked} src={homerProcessing} width={40} height={40} alt=""/>
           </>}
-          <MainComposer captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
+          <MainComposer splitPreview={!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
       </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={state.history&&<ScheduledMessages threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={state} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} annotationFocus={annotationFocus} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>

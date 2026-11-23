@@ -17,7 +17,7 @@ const ui=process.env.HOMER_PREVIEW_UI,runtime=process.env.HOMER_PREVIEW_RUNTIME,
 if(!ui||!runtime||!evidence)throw Error('preview_electron_requires_explicit_ui_runtime_evidence');
 test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},async()=>{
  const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence);await mkdir(out,{recursive:true});
- const f=fixture();let electron,web,site;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError;
+ const f=fixture();let electron,web,site,electronClosed=false;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError;
  const slowPage=new Promise(resolve=>{releaseSlowPage=resolve;});
  const record=(name,detail)=>{checks.push({name,detail});console.log('PASS',name);};
  async function call(peer,name,args,id){const role=peer.options.role==='worker'?'worker':'main',argv=peer.options.interactionMcp.args;peer.emit('hostMcpToolStarted',{threadId:peer.threadId,turnId:peer.turnId,itemId:id,tool:name,arguments:args});const response=await mcpCall(argv[argv.indexOf(role)-1],name,args,{callId:id,'x-codex-turn-metadata':{turn_id:peer.turnId}});if(response.error)throw Error(response.error);return response.result;}
@@ -37,10 +37,11 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   globalThis.testWindow=window;globalThis.preview=createBrowserPreview({window:()=>window,runtimeDirectory:${JSON.stringify(resolve(runtime))},preload:${JSON.stringify(resolve('packaging/electron/preview-content-preload.cjs'))},ipcMain,uiCaller:event=>event.sender===window.webContents&&event.senderFrame===window.webContents.mainFrame,fetchAttachment:(s,resource)=>fetch(process.env.TEST_ORIGIN+'/api/media/'+[s.messageId,s.assetId,s.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):''),{headers:access})});
   await window.loadURL(process.env.TEST_ORIGIN);window.on('closed',()=>{globalThis.preview.close();app.quit();});})().catch(e=>{console.error(e.stack);app.exit(1)});`);
   f.app.bindBrowserPreview((actor,action,input)=>electron.evaluate((_,a)=>globalThis.preview.execute(a.actor,a.action,a.input),{actor,action,input}).catch(error=>{throw Error(error.message.match(/preview_[a-z_]+/)?.[0]??'preview_result_unconfirmed');}));
+  const quoteText='合成原文用于核对跨栏批注。'.repeat(10);
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
    if(text==='Delegate both pages'){for(const goal of ['Operate page A','Operate page B']){const {taskId}=await main.call('task_create',{title:goal,goal});await main.call('worker_open',{taskId});}return{status:'completed',text:'两个合成任务已创建'};}
-   const final={itemId:'preview-final',phase:'final_answer',text:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
+   const final={itemId:'preview-final',phase:'final_answer',text:text==='Emit Quote'?quoteText:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
    return{status:'completed',text:final.text,messages:[final]};
   });await f.app.start();await f.app.message('打开合成网页并批注','preview-fixture-source');
@@ -53,6 +54,7 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   electron=await _electron.launch({executablePath:require('electron'),args:[join(scratch,'main.cjs')],env,timeout:30000});
   watchdog=setTimeout(()=>electron.process()?.kill('SIGKILL'),110000);
   const host=await electron.firstWindow();host.on('pageerror',e=>errors.push(e.message));
+  const electronExit=new Promise(resolve=>electron.process().once('exit',(code,signal)=>resolve({code,signal})));
   await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
   await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
   await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
@@ -157,10 +159,98 @@ test('real Preview UI, service provenance, Worker MCP and native page content cl
   await until(()=>f.inputs.some(text=>text.includes('用户批注：HTML 备注同时引用原始附件')));
   record('real HTML attachment, relative CSS/JS and annotation submission pass existing attachment/source authorization');
   record('web and HTML hover, exit and single native toolbar');
+  host.setDefaultTimeout(5000);
+  await f.app.message('Emit Quote','quote-fixture');
+  const source=host.getByText(quoteText,{exact:true});
+  const quote=host.getByRole('dialog',{name:'引用评论'});
+  const nativeState=target=>electron.evaluate((_,target)=>{
+   const view=testWindow.contentView.children.find(child=>child.webContents?.getURL()===target);
+   return view&&{id:view.webContents.id,visible:view.getVisible()};
+  },target);
+  const quoteFits=()=>host.waitForFunction(()=>{
+   const popup=document.querySelector('.message-quote-editor')?.getBoundingClientRect();
+   const left=document.querySelector('.conversation-panel').getBoundingClientRect();
+   return popup&&popup.left>=left.left&&popup.right<=left.right;
+  });
+  async function verifyQuote(target,save){
+   const before=await nativeState(target.url());
+   assert.equal(before.visible,true);
+   const latest=host.locator('.scroll-latest:enabled');
+   if(await latest.isVisible())await latest.click();
+   await source.click();
+   await source.evaluate(element=>{
+    element.scrollIntoView({block:'center'});
+    const range=document.createRange(),text=element.firstChild;
+    let start=0,right=0;
+    for(let index=0;index<text.length-8;index+=4){
+     range.setStart(text,index);range.setEnd(text,index+8);
+     const box=range.getBoundingClientRect();
+     if(box.right>right){start=index;right=box.right;}
+    }
+    range.setStart(text,start);range.setEnd(text,start+8);
+    const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+   });
+   await host.locator('[data-slot=selection-toolbar-quote]').click();
+   await quote.locator('textarea').fill('跨栏编辑期间保留原生页面');
+   await host.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   assert.deepEqual(await nativeState(target.url()),before);
+   await quoteFits();
+   if(save){
+    await electron.evaluate(()=>{
+     testWindow.setContentSize(840,900);
+     testWindow.webContents.setZoomFactor(0.95);
+    });
+    await quoteFits();
+    await host.locator('.thread-viewport').evaluate(node=>node.scrollTo(0,0));
+    await quoteFits();
+    assert.deepEqual(await nativeState(target.url()),before);
+    if(process.platform==='darwin'){
+     const id=await electron.evaluate(()=>testWindow.getMediaSourceId().split(':')[1]);
+     execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,'product-conversation-quote.png')],{timeout:10000});
+    }
+   }
+   await quote.getByRole('button',{name:save?'保存':'取消',exact:true}).click();
+   await quote.waitFor({state:'hidden'});
+   assert.deepEqual(await nativeState(target.url()),before);
+  }
+  await host.getByRole('link',{name:'打开业务网页',exact:true}).first().click();
+  await until(async()=>!!(await nativeState(page.url()))?.visible);
+  await page.getByLabel('任务输入').fill('保留网页输入');
+  await verifyQuote(page,false);
+  assert.equal(await page.getByLabel('任务输入').inputValue(),'保留网页输入');
+  await host.locator(`[data-conversation-message="${htmlReplyId}"]`).getByRole('link',{name:'preview.html',exact:true}).click();
+  await until(async()=>!!(await nativeState(html.url()))?.visible);
+  assert.equal((await nativeState(page.url())).visible,false);
+  const gutter=await host.locator('.preview-separator').boundingBox();
+  const separatorX=gutter.x+gutter.width/2,separatorY=gutter.y+gutter.height/2;
+  await host.mouse.move(separatorX,separatorY);
+  await host.mouse.down();
+  await host.mouse.move(separatorX-400,separatorY,{steps:8});
+  await host.mouse.up();
+  await host.waitForFunction(()=>document.querySelector('.conversation-panel').getBoundingClientRect().width<400);
+  await html.evaluate(()=>{window.quoteProbe=42;});
+  await verifyQuote(html,true);
+  assert.equal(await html.evaluate(()=>window.quoteProbe),42);
+  await host.getByRole('button',{name:'编辑引用 1'}).click();
+  await quoteFits();
+  await quote.getByRole('button',{name:'取消',exact:true}).click();
+  await host.getByRole('button',{name:'设置',exact:true}).click();
+  await until(async()=>!(await nativeState(html.url())).visible);
+  await host.getByRole('button',{name:'关闭设置',exact:true}).click();
+  await until(async()=>(await nativeState(html.url())).visible);
+  await electron.evaluate(()=>testWindow.setContentSize(760,900));
+  await host.locator('#canvas-panel[aria-modal="true"]').waitFor();
+  assert.equal((await nativeState(html.url())).visible,true);
+  record('conversation quote stays in its panel while the same web and HTML views remain visible');
+
   assert.deepEqual(errors,[]);
   if(captureError)throw captureError;
   const versions=await electron.evaluate(()=>({electron:process.versions.electron,chromium:process.versions.chrome}));
-  await writeFile(join(out,'product-report.json'),JSON.stringify({status:'passed',checks,versions,errors,boundary:'Actual source UI/service/MCP/native page modules with synthetic engines; test harness forwards browser transport through Electron inspector. Production stdio transport, installed app, real Codex/LLM, Windows, IME and real login remain separately verified or unverified.'},null,2));
+  await electron.close();
+  const exit=await electronExit;assert.deepEqual(exit,{code:0,signal:null});
+  clearTimeout(watchdog);electronClosed=true;
+  await writeFile(join(out,'product-report.json'),JSON.stringify({status:'passed',checks,versions,errors,exit,boundary:'Actual source UI/service/MCP/native page modules with synthetic engines; test harness forwards browser transport through Electron inspector. Production stdio transport, installed app, real Codex/LLM, Windows, IME and real login remain separately verified or unverified.'},null,2));
  }catch(error){const pages=[];if(electron)for(const [i,page]of electron.context().pages().entries()){pages.push({url:page.url(),text:await page.locator('body').innerText().catch(()=>'' )});await page.screenshot({path:join(out,'failure-'+i+'.png')}).catch(()=>{});}await writeFile(join(out,'product-failure.json'),JSON.stringify({message:error.stack,checks,errors,pages},null,2));throw error;}
- finally{clearTimeout(watchdog);claimRelease?.();if(electron)await electron.close();if(web)await web.close();await f.close();if(site)await new Promise(r=>site.close(r));await rm(scratch,{recursive:true,force:true});}
+ finally{clearTimeout(watchdog);claimRelease?.();if(electron&&!electronClosed)await electron.close();if(web)await web.close();await f.close();if(site)await new Promise(r=>site.close(r));await rm(scratch,{recursive:true,force:true});}
 });
