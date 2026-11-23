@@ -804,10 +804,6 @@ for(const modelSource of ['website','codex'])test('startup migrates the cached i
    assert.deepEqual(f.credentials.map(JSON.parse),[{...identity,selection:expected}]);assert.equal(reads,before+1);
    f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();
    const state=await accountCall(f,'state');assert.equal(state.websiteReady,true);assert.equal(state.needsRestart,false);assert.equal(state.active,modelSource==='website'?'website':'disconnected');
-   const info=f.handlers.get('menu')[0].submenu.find(item=>item.label==='模型连接信息…');
-   info.click();const detail=f.messages.at(-1).detail;
-   for(const role of ['main','worker'])assert.ok(detail.includes((role==='main'?'Homer':'Worker')+'：'+expected[role].model+' · '+expected[role].effort));
-   assert.ok(detail.includes(boundary.gatewayOrigin+'/v1'));assert.ok(!detail.includes(identity.token));
    assert.deepEqual(JSON.parse(readFileSync(file)),identity);assert.equal(statSync(file).mode&0o777,0o600);
    f.advance(3600001);f.event({kind:'account_config_check'});await f.tick();assert.equal(reads,before+1);
    assert.deepEqual(f.credentials.map(JSON.parse),[{...identity,selection:expected}]);
@@ -1068,8 +1064,10 @@ test('invalid daily token file opens management mode without a model credential'
  const f=await fixture(['Homer'],undefined,undefined,{adopted:true,published:true,invalidTokenFile:true});
  assert.equal(f.spawnCount(),1);assert.deepEqual(f.credentials,['null']);
 });
-test('settings menu restores the primary window and waits for its renderer subscription',async()=>{
- const f=await fixture(),w=f.windows[0],item=settingsItem(f);assert.ok(item);assert.equal(item.accelerator,'CmdOrCtrl+,');
+for(const platform of ['darwin','win32'])test('application menu opens settings without a model connection dialog on '+platform,async()=>{
+ const f=await fixture(['Homer'],undefined,platform,{adopted:true,published:true});
+ assert.ok(!f.handlers.get('menu')[0].submenu.some(item=>item.label==='模型连接信息…'));
+ const w=f.windows[0],item=settingsItem(f);assert.ok(item);assert.equal(item.accelerator,'CmdOrCtrl+,');
  w.hide();w.minimized=true;item.click();item.click();assert.equal(w.hidden,false);assert.equal(w.minimized,false);assert.equal(w.focused,true);assert.equal(f.windows.length,1);assert.equal(w.settingsMessages.length,0);
  f.event({kind:'url',url:'http://127.0.0.1:56789/',desktopAccessToken:'a'.repeat(64)});await f.tick();await settingsReady(f,w,true);assert.deepEqual(w.settingsMessages,[['homer:settings:open']]);
  item.click();assert.equal(w.settingsMessages.length,2);await settingsReady(f,w,false);item.click();assert.equal(w.settingsMessages.length,2);await settingsReady(f,w,true);assert.equal(w.settingsMessages.length,3);

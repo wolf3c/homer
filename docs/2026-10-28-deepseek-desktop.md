@@ -13,7 +13,7 @@
 `/Users/wolf3c/.codex/worktrees/homer-account-stage1/homer/.codex/scratch/desktop-deepseek/try/Start-DeepSeek.command`
 
 1. 双击入口，在 macOS 原生隐藏输入框输入 Token；不要把 Token 发进聊天、命令参数或配置文件。
-2. 桌面窗口标题为“荷马 · DeepSeek”；“荷马 → DeepSeek 连接信息…”可核对固定模型配置。输入有效凭据只证明本地配置已备好，真实可用性要看模型实际回复。
+2. 桌面窗口标题为“荷马 · DeepSeek”。输入有效凭据只证明本地配置已备好，真实可用性要看模型实际回复。
 3. 自己发送消息后才开始模型轮次。可交办一个 Worker 在隔离 workspace 中生成文件，再由主 Agent 核对。调用需要使用者自己的 Token 和额度。
 4. 用 Cmd+Q 或菜单退出，确认停止当前回复和后台工作。下次启动重新输入同一本人的 Token，沿用该入口的独立对话和文件。
 
