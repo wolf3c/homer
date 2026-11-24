@@ -2,6 +2,10 @@ const {contextBridge,ipcRenderer}=require('electron');
 
 if(process.isMainFrame===true){
  contextBridge.exposeInMainWorld('homerBrowserPreview',{
+  platform:process.platform,
+  more:input=>navigator.userActivation.isActive
+   ?ipcRenderer.invoke('homer:preview:more',input):Promise.reject(new Error('preview_user_action_required')),
+  onNativePointer:callback=>{const listener=(_event,id)=>callback(id);ipcRenderer.on('homer:preview:native-pointer',listener);return()=>ipcRenderer.removeListener('homer:preview:native-pointer',listener);},
   ...Object.fromEntries(['list','present','control','annotations','reply'].map(name=>[name,input=>ipcRenderer.invoke('homer:preview:'+name,input)])),
   locationGrants:()=>ipcRenderer.invoke('homer:preview:location-grants'),
   revokeLocation:key=>ipcRenderer.invoke('homer:preview:revoke-location',key),

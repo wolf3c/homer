@@ -1,6 +1,6 @@
 import test from'node:test';
 import assert from'node:assert/strict';
-import{mkdtemp,mkdir,writeFile,readFile,rm,truncate,realpath}from'node:fs/promises';
+import{mkdtemp,mkdir,writeFile,readFile,readdir,rm,truncate,realpath,utimes}from'node:fs/promises';
 import{resolve,join}from'node:path';
 import{pathToFileURL}from'node:url';
 import{createRequire}from'node:module';
@@ -12,6 +12,7 @@ const until=async(check)=>{const end=performance.now()+4000;while(!await check()
 import{mcpCall}from'./fixtures/host-mcp-call.ts';
 import{homerWebBridge}from'../src/web-homer.ts';
 import{createWebServer}from'../src/web-server.ts';
+import{previewFileCanOpen}from'../src/browser-preview.ts';
 const require=createRequire(import.meta.url);
 const ui=process.env.HOMER_PREVIEW_UI,runtime=process.env.HOMER_PREVIEW_RUNTIME,evidence=process.env.HOMER_PREVIEW_EVIDENCE;
 if(!ui||!runtime||!evidence)throw Error('preview_electron_requires_explicit_ui_runtime_evidence');
@@ -19,8 +20,11 @@ test('desktop Preview links enforce source authority and preserve foreground own
 test('native HTML modal annotation preserves its draft and uses the real Composer', {timeout:60000},()=>runPreview(false,true));
 test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},()=>runPreview(false));
 test('desktop Preview locates linked source lines in Markdown and plain text', {timeout:60000},()=>runPreview(false,false,true));
-async function runPreview(linksOnly,modalOnly=false,linesOnly=false){
- const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':modalOnly?'modal':linesOnly?'lines':'.');await mkdir(out,{recursive:true});
+test('desktop Preview more actions follow the current document and real native viewport', {timeout:60000},()=>runPreview(false,false,false,true));
+async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=false){
+ const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':modalOnly?'modal':linesOnly?'lines':moreOnly?'more':'.');await mkdir(out,{recursive:true});
+ const openFilesDirectory=join(scratch,'exports'),oldExport=join(openFilesDirectory,'snapshot-staled');
+ if(moreOnly){await mkdir(oldExport,{recursive:true});await utimes(oldExport,1,1);}
  const f=fixture();let electron,web,site,electronClosed=false;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError;
  const slowPage=new Promise(resolve=>{releaseSlowPage=resolve;});
  const record=(name,detail)=>{checks.push({name,detail});console.log('PASS',name);};
@@ -43,11 +47,19 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false){
   await writeFile(join(scratch,'preload.cjs'),"const{contextBridge,ipcRenderer}=require('electron');\n"+preload);
   await writeFile(join(scratch,'main.cjs'),`const{app,BrowserWindow,ipcMain,shell}=require('electron');app.setPath('userData',${JSON.stringify(join(scratch,'profile'))});
   globalThis.revealRequests=[];shell.showItemInFolder=path=>globalThis.revealRequests.push(path);
+  globalThis.openRequests=[];globalThis.browserRequests=[];globalThis.failOpen=false;
+  shell.openPath=async path=>{globalThis.openRequests.push(path);return globalThis.failOpen?'simulated system failure':'';};
+  shell.openExternal=async url=>{globalThis.browserRequests.push(url);if(globalThis.failOpen)throw Error('simulated system failure');};
   (async()=>{const{registerPreviewScheme,createBrowserPreview}=await import(${JSON.stringify(pathToFileURL(resolve('packaging/electron/preview-pages.mjs')).href)});registerPreviewScheme();await app.whenReady();
   const window=new BrowserWindow({width:1280,height:900,useContentSize:true,webPreferences:{preload:${JSON.stringify(join(scratch,'preload.cjs'))},contextIsolation:true,nodeIntegration:false,sandbox:true}});
   const access={'X-Homer-Desktop-Access':process.env.TEST_ACCESS};
   window.webContents.session.webRequest.onBeforeSendHeaders({urls:[process.env.TEST_ORIGIN+'/api/*']},(details,callback)=>callback({requestHeaders:{...details.requestHeaders,...access}}));
-  globalThis.testWindow=window;globalThis.preview=createBrowserPreview({window:()=>window,runtimeDirectory:${JSON.stringify(resolve(runtime))},preload:${JSON.stringify(resolve('packaging/electron/preview-content-preload.cjs'))},ipcMain,uiCaller:event=>event.sender===window.webContents&&event.senderFrame===window.webContents.mainFrame,fetchMessageFile:(threadId,{messageId,destination})=>fetch(process.env.TEST_ORIGIN+'/api/preview/message-file',{method:'POST',headers:{...access,Origin:process.env.TEST_ORIGIN,'Content-Type':'application/json'},body:JSON.stringify({threadId,messageId,destination})}),fetchAttachment:(s,resource)=>fetch(process.env.TEST_ORIGIN+'/api/media/'+[s.messageId,s.assetId,s.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):''),{headers:access})});
+  const messageFile=(suffix,input)=>fetch(process.env.TEST_ORIGIN+'/api/preview/message-file'+suffix,{method:'POST',headers:{...access,Origin:process.env.TEST_ORIGIN,'Content-Type':'application/json'},body:JSON.stringify(input)});
+  globalThis.testWindow=window;globalThis.preview=createBrowserPreview({window:()=>window,runtimeDirectory:${JSON.stringify(resolve(runtime))},preload:${JSON.stringify(resolve('packaging/electron/preview-content-preload.cjs'))},ipcMain,uiCaller:event=>event.sender===window.webContents&&event.senderFrame===window.webContents.mainFrame,
+    openFilesDirectory:${JSON.stringify(openFilesDirectory)},fileCanOpen:${previewFileCanOpen.toString()},
+    actOnMessageFile:async(action,input)=>{const res=await messageFile('/'+action,input),result=await res.json();if(!res.ok)throw Error(result.error);return result;},
+    fetchMessageFile:(threadId,{messageId,destination})=>messageFile('',{threadId,messageId,destination}),
+    fetchAttachment:(s,resource)=>fetch(process.env.TEST_ORIGIN+'/api/media/'+[s.messageId,s.assetId,s.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):''),{headers:access})});
   await window.loadURL(process.env.TEST_ORIGIN);window.on('closed',()=>{globalThis.preview.close();app.quit();});})().catch(e=>{console.error(e.stack);app.exit(1)});`);
   f.app.bindBrowserPreview((actor,action,input)=>electron.evaluate((_,a)=>globalThis.preview.execute(a.actor,a.action,a.input),{actor,action,input}).catch(error=>{throw Error(error.message.match(/preview_[a-z_]+/)?.[0]??'preview_result_unconfirmed');}));
   const quoteText='合成原文用于核对跨栏批注。'.repeat(10);
@@ -181,6 +193,135 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false){
   }
   await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
   await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
+  if(moreOnly){
+   const more=host.getByRole('button',{name:'更多',exact:true});
+   const item=name=>host.getByRole('menuitem',{name,exact:true});
+   const menu=host.locator('[role="menu"].preview-more-menu');
+   const closeTab=name=>host.getByRole('button',{name:'关闭'+name,exact:true}).click();
+   const snapshot=await realpath(localPath);
+   const dispatches=()=>electron.evaluate(()=>({files:globalThis.openRequests,urls:globalThis.browserRequests,reveal:globalThis.revealRequests}));
+   await more.press('ArrowDown');
+   await until(()=>item('在 Finder 中显示').evaluate(el=>el===document.activeElement));
+   await item('在 Finder 中显示').press('End');
+   await item('用默认应用打开').press('Enter');
+   await host.getByText('已向系统发送打开请求。',{exact:true}).waitFor();
+   assert.deepEqual((await dispatches()).files,[snapshot]);
+   await more.click();
+   await item('在 Finder 中显示').click();
+   await host.getByText('已请求在系统中显示文件。',{exact:true}).waitFor();
+   assert.deepEqual((await dispatches()).reveal,[snapshot]);
+   await more.click();await menu.waitFor();
+   await item('用默认应用打开').evaluate(el=>el.click());
+   assert.equal((await dispatches()).files.length,1);
+   await rm(localPath);
+   await more.click();await item('用默认应用打开').click();
+   await host.getByText('找不到本地原件。',{exact:true}).waitFor();
+   assert.equal((await dispatches()).files.length,1);
+   await closeTab('current.md');
+   await host.getByRole('link',{name:'打开本地 HTML',exact:true}).click();
+   await (await waitNative('/local/index.html')).getByRole('heading',{name:'合成本地 HTML'}).waitFor();
+   await more.click();await item('用默认应用打开').click();
+   await until(async()=>(await dispatches()).files.length===2);
+   assert.equal((await dispatches()).files[1],await realpath(localHtml));
+   await closeTab('本地批注');
+   const disguised=join(scratch,'disguised.md');
+   await writeFile(disguised,'#!synthetic\n');
+   f.app.history.record('desktop-disguised-fixture',f.app.store.meta('mainThread'),`[打开伪装文件](${pathToFileURL(disguised).href})`);
+   await host.getByRole('link',{name:'打开伪装文件',exact:true}).click();
+   await more.click();await item('用默认应用打开').click();
+   await host.getByText('此文件类型暂不支持用默认应用打开。',{exact:true}).waitFor();
+   assert.equal((await dispatches()).files.length,2);
+   await closeTab('disguised.md');
+   record('trusted keyboard and pointer actions revalidate and dispatch the current original, including native local HTML');
+
+   const original=join(f.app.config.workspace,'preview-linked.html');
+   const delivered='<meta charset="utf-8"><title>附件方案</title><a href="child.html">打开相邻 HTML</a>';
+   await writeFile(original,delivered);
+   await writeFile(join(f.app.config.workspace,'child.html'),'<meta charset="utf-8"><title>附件相邻页</title>');
+   await f.app.message('Emit Linked HTML','more-html-fixture');
+   await host.getByRole('link',{name:'打开附件方案',exact:true}).click();
+   const attachment=await waitNative('/attachment/index.html');
+   const siblingLink=await attachment.getByRole('link',{name:'打开相邻 HTML'}).boundingBox();
+   await attachment.mouse.click(siblingLink.x+siblingLink.width/2,siblingLink.y+siblingLink.height/2);
+   await host.getByRole('tab',{name:'附件相邻页',selected:true}).waitFor();
+   assert.equal(await more.count(),0);
+   await closeTab('附件相邻页');
+   await attachment.evaluate(()=>history.pushState({},'','?state=retained'));
+   await writeFile(original,'changed original');
+   await more.click();await item('用默认应用打开').click();
+   await until(async()=>(await dispatches()).files.length===3);
+   const copy=(await dispatches()).files[2];
+   assert.ok(copy.startsWith(openFilesDirectory+'/snapshot-')&&copy.endsWith('.html'));
+   assert.equal(await readFile(copy,'utf8'),delivered);
+   const retained=await readdir(openFilesDirectory);assert.equal(retained.length,1);
+   await electron.evaluate((_,path)=>globalThis.testWindow.webContents.session.once('will-download',(_event,download)=>download.setSavePath(path)),join(scratch,'downloaded.html'));
+   await more.click();await item('下载').press('Space');
+   await until(async()=>await readFile(join(scratch,'downloaded.html'),'utf8').catch(()=>undefined)===delivered);
+   await electron.evaluate(()=>{globalThis.failOpen=true;});
+   await more.click();await item('用默认应用打开').click();
+   await host.getByText('系统未能打开目标，请核对默认应用或浏览器设置。',{exact:true}).waitFor();
+   assert.deepEqual(await readdir(openFilesDirectory),retained);
+   await electron.evaluate(()=>{globalThis.failOpen=false;});
+   const replyId=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='more-html-fixture'").get().replyId;
+   f.app.history.revokeMessage(f.app.store.meta('mainThread'),replyId);
+   await more.click();await item('用默认应用打开').click();
+   await host.getByText('此文件的交付版本不可用，请重新打开。',{exact:true}).waitFor();
+   assert.equal((await dispatches()).files.length,4);
+   await closeTab('附件方案');
+   record('fixed HTML bytes survive original changes; real download, expiry, rejected handoff and sibling identity are verified');
+
+   await host.getByRole('link',{name:'打开业务网页',exact:true}).click();releaseSlowPage();
+   const native=await waitPage(url+'/start');
+   const nativeState=()=>electron.evaluate((_,address)=>{
+    const view=globalThis.testWindow.contentView.children.find(view=>view.webContents?.getURL()===address);
+    return view&&{bounds:view.getBounds(),visible:view.getVisible()};
+   },native.url());
+   for(const width of [1280,390]){
+    await electron.evaluate((_,width)=>globalThis.testWindow.setContentSize(width,840),width);
+    await until(()=>host.evaluate(width=>innerWidth===width,width));
+    const viewport=host.locator('.browser-preview-viewport');
+    await until(async()=>Math.abs((await nativeState()).bounds.y-(await viewport.boundingBox()).y)<=1);
+    const base=(await nativeState()).bounds;
+    await more.press('ArrowDown');await menu.waitFor();
+    await until(async()=>{
+     const {visible,bounds}=await nativeState(),box=await menu.boundingBox();
+     return visible&&bounds.y>=box.y+box.height-1&&bounds.y>base.y;
+    });
+    const box=await menu.boundingBox();
+    assert.ok(box.x>=0&&box.x+box.width<=width);
+    await host.screenshot({path:join(out,'web-menu-'+width+'.png')});
+    await item('在默认浏览器中打开').press('Escape');
+    await menu.waitFor({state:'hidden'});
+    await until(async()=>await more.evaluate(el=>el===document.activeElement)&&(await nativeState()).bounds.y===base.y);
+   }
+   await more.click();await menu.waitFor();
+   await item('在默认浏览器中打开').press('Tab');
+   await menu.waitFor({state:'hidden'});
+   await more.click();await menu.waitFor();
+   await native.mouse.click(12,32);
+   await menu.waitFor({state:'hidden',timeout:3000});
+   const target=url+'/next?x=%2F&y=2#part';
+   await more.click();await menu.waitFor();
+   await native.evaluate(address=>history.pushState({},'',address),target);
+   await menu.waitFor({state:'hidden'});
+   await more.click();await item('在默认浏览器中打开').click();
+   await until(async()=>(await dispatches()).urls.length===1);
+   assert.deepEqual((await dispatches()).urls,[target]);
+   await electron.evaluate(()=>globalThis.testWindow.setContentSize(1280,840));
+   await more.click();await menu.waitFor();
+   await host.getByRole('button',{name:'定时任务',exact:true}).click();
+   await host.getByRole('tab',{name:'定时任务',selected:true}).waitFor();
+   assert.equal(await more.count(),0);
+   record('wide and narrow native views yield actual space, Escape restores focus, original URL survives navigation');
+   assert.deepEqual(errors,[]);
+   await electron.close();const exit=await electronExit;assert.deepEqual(exit,{code:0,signal:null});
+   clearTimeout(watchdog);electronClosed=true;
+   await writeFile(join(out,'more-report.json'),JSON.stringify({checks,errors,exit,watchdog:false},null,2));
+   return;
+  }
+  async function waitNative(suffix){
+   let view;await until(()=>!!(view=electron.context().pages().find(page=>page.url().endsWith(suffix))));return view;
+  }
   if(linesOnly){
    const panel=host.locator('#canvas-panel'),body=panel.locator('[data-slot=canvas-split-body]');
    const target=body.locator('[data-preview-source-target]');

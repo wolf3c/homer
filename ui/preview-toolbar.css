@@ -16,3 +16,10 @@ button.preview-annotation-button.aui-button-icon>.preview-annotation-label{displ
 @media(forced-colors:active){.preview-toolbar button.preview-annotation-button.aui-button-icon[aria-pressed=true],button.preview-annotation-button.aui-button-icon[aria-pressed=true]{outline:1px solid Highlight;color:Highlight}}
 
 .preview-toolbar-actions,.preview-toolbar .canvas-tab-actions{flex-wrap:wrap;max-width:100%}
+
+.preview-more-positioner{z-index:var(--homer-layer-tooltip,1000);max-width:calc(100vw - 16px)}
+.preview-more-menu{display:grid;gap:2px;max-width:100%;max-height:var(--available-height);overflow:auto;padding:4px;border:1px solid var(--line,#dedcd6);border-radius:8px;background:var(--surface,#faf9f6);color:var(--ink,#292825);box-shadow:0 4px 14px #0002}
+.preview-more-item{display:block;min-height:34px;padding:6px 10px;border:0;border-radius:4px;background:transparent;color:inherit;text-align:start;font:13px/1.5 system-ui;cursor:pointer}
+.preview-more-item[data-highlighted]{background:var(--soft,#efede7)}
+.preview-more-item:focus-visible{outline:1px solid var(--focus,#65625c);outline-offset:-1px}
+@media(max-width:600px){.preview-more-item{min-height:44px}.browser-preview .preview-toolbar-navigation{flex-basis:100%}}

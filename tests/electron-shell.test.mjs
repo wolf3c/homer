@@ -82,7 +82,8 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
   return {isFile:()=>!native.fileDirectory&&!native.fileSymlink,isSymbolicLink:()=>!!native.fileSymlink,size:(native.fileData??installerBytes).length,dev:1,ino:native.fileRevision??0,mtimeMs:1,ctimeMs:1};
  }};
  modules['../homer/dist/preview-reference.js']=await import('../src/preview-reference.ts');
- modules['./preview-pages.mjs']={registerPreviewScheme(){},createBrowserPreview(){return{close(){},async execute(...args){if(native.previewExecute)return native.previewExecute(...args);throw Error('preview_unavailable');}};}};
+ modules['../homer/dist/browser-preview.js']=await import('../src/browser-preview.ts');
+ modules['./preview-pages.mjs']={registerPreviewScheme(){},createBrowserPreview(){return{close(){},expirePermissions(){},async execute(...args){if(native.previewExecute)return native.previewExecute(...args);throw Error('preview_unavailable');}};}};
  Object.assign(modules['../homer/scripts/desktop-profile.mjs'],{
   readDesktopCaptureShortcut:()=>native.captureShortcut,
   saveDesktopCaptureShortcut:(_root,shortcut)=>{if(native.shortcutWriteError)throw Error('private_write_failure');native.captureShortcut=shortcut;},
@@ -701,6 +702,7 @@ test('desktop access injects only into current main UI requests and strips crede
  for(const overrides of [
   {url:'https://foreign.invalid/api/history/state'},{url:'http://127.0.0.1:56790/api/history/state'},
   {url:origin+'/preview/interactive'},{url:origin+'/api/history/state?q=1'},{url:'http://user:pass@127.0.0.1:56789/api/history/state'},
+  {url:origin+'/api/preview/message-file/open'},{url:origin+'/api/preview/message-file/reveal'},
   {webContents:{}},{frame:null},{frame:{...w.webContents.mainFrame}},
   {initiatorOrigin:'null'},{initiatorOrigin:'https://foreign.invalid'},{initiatorOrigin:undefined},
   {resourceType:'mainFrame'},{resourceType:'subFrame'},
@@ -1728,7 +1730,7 @@ for(const state of ['detached','destroyed','window replaced','frame replaced','n
 test('preload exposes fixed Promise methods and allowlisted settings tokens in the main frame',async()=>{
  const source=readFileSync('packaging/electron/preload.cjs','utf8');
  for(const isMainFrame of [true,false,undefined]){
-  const exposed=[],calls=[];vm.runInNewContext(source,{process:{isMainFrame},require:name=>{assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(...args)=>exposed.push(args)},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {synthetic:true};}}};}});
+  const exposed=[],calls=[],userActivation={isActive:false};vm.runInNewContext(source,{process:{isMainFrame,platform:'linux'},navigator:{userActivation},require:name=>{assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(...args)=>exposed.push(args)},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return {synthetic:true};}}};}});
   if(isMainFrame!==true){assert.equal(exposed.length,0);continue;}
   assert.equal(exposed.length,9);
   const notifications=exposed.find(([name])=>name==='homerDesktopNotifications')[1];
@@ -1736,7 +1738,10 @@ test('preload exposes fixed Promise methods and allowlisted settings tokens in t
   await notifications.set('attention',false);
   assert.deepEqual(calls.at(-1),['homer:notification','set','attention',false]);
   const browser=exposed.find(([name])=>name==='homerBrowserPreview')[1];
-  assert.deepEqual(Object.keys(browser),['list','present','control','annotations','reply','locationGrants','revokeLocation','onChanged','onAnnotation','onShow','onLink']);
+  assert.deepEqual(Object.keys(browser),['platform','more','onNativePointer','list','present','control','annotations','reply','locationGrants','revokeLocation','onChanged','onAnnotation','onShow','onLink']);
+  await assert.rejects(browser.more({action:'browser'}),/preview_user_action_required/);
+  userActivation.isActive=true;await browser.more({action:'browser'});
+  assert.deepEqual(calls.at(-1),['homer:preview:more',{action:'browser'}]);
   for(const method of ['list','present','control','annotations','reply']){await browser[method]({pageId:'fixture'});assert.equal(calls.at(-1)[0],'homer:preview:'+method);}
   const tour=exposed.find(([name])=>name==='homerDesktopFeatureTour')[1];
   assert.deepEqual(Object.keys(tour),['pending','dismiss']);

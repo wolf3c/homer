@@ -8,9 +8,9 @@ test('a location decision uses the paired interaction route',async()=>{
  assert.equal(result.status,202);
  assert.deepEqual(f.calls,[{op:'interactions.respond',input:{id:'location-card',input}}]);
 });
-test('desktop file metadata and system reveal have no mobile route',async()=>{
+test('desktop file metadata and system actions have no mobile route',async()=>{
  const f=fixture();
- for(const suffix of ['/info','/reveal']){
+ for(const suffix of ['/info','/reveal','/open']){
   const result=await f.fetch(new Request('https://localhost/api/preview/message-file'+suffix,{method:'POST',body:'{}'}));
   assert.deepEqual(await result.json(),{error:'route_not_found'});
  }

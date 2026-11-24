@@ -8,6 +8,7 @@ import{ArrowLeft,ArrowRight,RotateCw,Hand,Play,MapPin,Clock,X,ChevronRight}from'
 import{TooltipIconButton}from'./vendor/assistant-ui/attachment-icon-button';
 import{PreviewToolbar}from'./preview-toolbar';
 import{AnnotationButton}from'./annotation-button';
+import{attachmentMoreItems,localMoreItems,PreviewMoreMenu,runPreviewMore,type PreviewMoreItem}from'./preview-more';
 declare global{interface Window{homerBrowserPreview?:BrowserPreviewBridge;}}
 export const BrowserPreviewContext=createContext<{openLink:(url:string,trigger:HTMLAnchorElement)=>boolean;openReference:(reference:PreviewRequest,id:string,history?:boolean)=>void}>({openLink:()=>false,openReference:()=>{}});
 async function requestPreview<T>(threadId:string,source:PreviewSource,target:{url?:string;href?:string;show?:false}):Promise<T>{
@@ -33,6 +34,7 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  const locationPanel=useRef<HTMLElement>(null),locationButton=useRef<HTMLButtonElement>(null);
  const locationHistoryButton=useRef<HTMLButtonElement>(null),locationId=useId();
  const [location,setLocation]=useState<LocationPanel>();
+ const [morePopup,setMorePopup]=useState<HTMLDivElement|null>(null);
  const [active,setActive]=useState(false),[syncing,setSyncing]=useState(false),[notice,setNotice]=useState('');
  const key=referenceKey({kind:'web',source:page.source,page:{id:page.id,url:page.url,title:page.title}});
  const focusId=focusKey===key?requestedFocus:undefined;
@@ -74,8 +76,9 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
     const parent=panel.parentElement!.getBoundingClientRect();
     panel.style.marginInlineStart=Math.max(8,Math.min(button.getBoundingClientRect().left-parent.left,parent.width-panel.offsetWidth-8))+'px';
    }
-   const covered=[...document.querySelectorAll<HTMLElement>('[role="dialog"]:not(#canvas-panel,[data-preview-local-quote]),[role="alertdialog"],[role="menu"]')].some(el=>el.getClientRects().length>0);
-   const bounds=suspended||covered||!r.width||!r.height?null:{x:r.x,y:r.y,width:r.width,height:r.height};
+   const covered=[...document.querySelectorAll<HTMLElement>('[role="dialog"]:not(#canvas-panel,[data-preview-local-quote]),[role="alertdialog"],[role="menu"]')].some(el=>el!==morePopup&&el.getClientRects().length>0);
+   const top=Math.max(r.top,Math.ceil(morePopup?.getBoundingClientRect().bottom??r.top));
+   const bounds=suspended||covered||!r.width||r.bottom<=top?null:{x:r.x,y:top,width:r.width,height:r.bottom-top};
    void bridge.present({pageId:page.id,threadId:page.threadId,bounds}).then(()=>{
     if(!disposed&&bounds&&panel&&locationPanel.current===panel&&!panel.dataset.ready&&node.getBoundingClientRect().top===r.top){
      panel.dataset.ready='true';
@@ -89,12 +92,15 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
   };
   const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(draw);};draw();
   const observer=new ResizeObserver(schedule);observer.observe(node);
+  if(morePopup)observer.observe(morePopup);
   const portals=new MutationObserver(schedule);
   portals.observe(document.body,{childList:true});
   portals.observe(document.documentElement,{subtree:true,attributes:true,attributeFilter:['data-preview-local-quote']});
+  if(morePopup?.parentElement)portals.observe(morePopup.parentElement,{attributes:true,attributeFilter:['style']});
   window.addEventListener('resize',schedule);window.addEventListener('scroll',schedule,true);
-  return()=>{disposed=true;cancelAnimationFrame(frame);observer.disconnect();portals.disconnect();window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);void bridge.present({pageId:page.id,threadId:page.threadId,bounds:null}).catch(()=>{});};
- },[page.id,page.threadId,suspended]);
+  return()=>{disposed=true;cancelAnimationFrame(frame);observer.disconnect();portals.disconnect();window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);};
+ },[page.id,page.threadId,suspended,morePopup]);
+ useLayoutEffect(()=>()=>{void window.homerBrowserPreview?.present({pageId:page.id,threadId:page.threadId,bounds:null}).catch(()=>{});},[page.id,page.threadId]);
  async function control(action:'takeover'|'resume'|'back'|'forward'|'reload'){
   try{await window.homerBrowserPreview?.control({pageId:page.id,threadId:page.threadId,action});setNotice('');if(action==='resume')setActive(false);return true;}catch(e){setNotice(e instanceof Error?e.message:'网页操作未确认。');return false;}
  }
@@ -107,6 +113,20 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  const canManage=!!locationBridge?.locationGrants, settings=!!origin&&!!window.homerDesktopPermissions;
  const approval=page.locationApproval;
  const domain=url.protocol==='homer-preview:'?(page.source.kind==='message-file'?'本地 HTML':'HTML 附件'):url.host;
+ const stamp={pageId:page.id,document:page.document};
+ const target={threadId:page.threadId,page:stamp};
+ let items:PreviewMoreItem[]=[];
+ if(locationBridge?.more&&!suspended&&!page.loading&&!page.error){
+  if(['http:','https:'].includes(url.protocol)&&!url.username&&!url.password)
+   items=[{label:'在默认浏览器中打开',input:{...target,action:'browser'}}];
+  else if(url.hostname===page.id&&url.protocol==='homer-preview:'&&!page.resource){
+   const source=page.source;
+   if(source.kind==='message-file'&&url.pathname==='/local/index.html'&&!url.search)
+    items=localMoreItems({...target,file:source},source.title,locationBridge.platform);
+   else if(source.kind==='attachment'&&url.pathname==='/attachment/index.html')
+    items=attachmentMoreItems({...target,attachment:source});
+  }
+ }
  function dismissLocation(restore=false){
   setLocation(undefined);
   if(restore)locationButton.current?.focus();
@@ -163,6 +183,9 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  return <div className="browser-preview" data-location-open={shown?'true':undefined}><PreviewToolbar title={page.title} detail={page.loading?domain+' · 加载中':domain} identityStart={siteButton} identityEnd={approval&&<button type="button" className="aui-button-icon browser-location-pending" title="查看定位审批" aria-label="查看定位审批" onClick={()=>{dismissLocation();onLocationApproval?.(approval);}}><Clock size={16} aria-hidden/><span>待审批</span></button>} leading={<>{([{action:'back',label:'后退',Icon:ArrowLeft},{action:'forward',label:'前进',Icon:ArrowRight},{action:'reload',label:'重新加载',Icon:RotateCw}]as const).map(({action,label,Icon})=><TooltipIconButton side="top" key={action} aria-label={label} tooltip={label} onClick={()=>void control(action)}><Icon size={16} aria-hidden/></TooltipIconButton>)}</>}>
   <AnnotationButton disabled={!enabled||page.loading||syncing} aria-busy={syncing} active={active} aria-label="批注" tooltip={active?'退出网页批注':'选择网页元素批注'} onClick={()=>void control('takeover').then(ok=>{if(ok)setActive(value=>!value);})}/>
   {page.agentAssigned&&<TooltipIconButton side="top" aria-label={page.control==='agent'?'用户接手':'交还 AI'} tooltip={page.control==='agent'?'暂停 AI 写入，由你操作':'结束用户接手，允许原任务继续操作此页'} onClick={()=>void control(page.control==='agent'?'takeover':'resume')}>{page.control==='agent'?<Hand size={16} aria-hidden/>:<Play size={16} aria-hidden/>}</TooltipIconButton>}
+  {items.length>0&&<PreviewMoreMenu key={JSON.stringify([page.id,page.document])} nativePageId={page.id} onPopup={setMorePopup} items={items} onAction={input=>{
+   void runPreviewMore(input,()=>latest.current.isCurrent()&&latest.current.page.id===stamp.pageId&&latest.current.page.document===stamp.document,setNotice);
+  }}/>}
  </PreviewToolbar>
  {shown&&<section className="browser-location-panel" id={locationId} ref={locationPanel} tabIndex={-1} aria-labelledby={locationId+'-title'}>
   <header><div><h2 id={locationId+'-title'}>{shown.history?'已记住的网站':'网站定位'}</h2>{!shown.history&&origin&&<p>{origin}</p>}</div><button type="button" aria-label="关闭网站定位" onClick={()=>dismissLocation(true)}><X size={16} aria-hidden/></button></header>

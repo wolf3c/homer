@@ -1,12 +1,42 @@
 import{WebContentsView,session,protocol,shell}from'electron';
-import{readFileSync,writeFileSync,renameSync}from'node:fs';
+import{constants,openSync,readSync,closeSync,fstatSync,readFileSync,writeFileSync,renameSync,mkdirSync,readdirSync,lstatSync,realpathSync,rmSync}from'node:fs';
+import{mkdtemp,writeFile,rm}from'node:fs/promises';
 import{isAbsolute,join,posix}from'node:path';
-import{randomUUID}from'node:crypto';
+import{createHash,randomUUID}from'node:crypto';
 import{previewAutomation}from'./preview-automation.mjs';
 
 export function registerPreviewScheme(){protocol.registerSchemesAsPrivileged([{scheme:'homer-preview',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);}
-export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,uiCaller,fetchAttachment,fetchMessageFile,permissionFile,permissionEvent}){
+export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,uiCaller,fetchAttachment,fetchMessageFile,actOnMessageFile,fileCanOpen=()=>false,openFilesDirectory,permissionFile,permissionEvent}){
  const pages=new Map(),pending=new Map();let selected;
+ function clearExpiredOpenFiles(){
+  if(!openFilesDirectory)return;
+  try{
+   const cutoff=Date.now()-24*60*60*1000;
+   for(const entry of readdirSync(openFilesDirectory,{withFileTypes:true})){
+    if(!entry.isDirectory()||!/^snapshot-[a-z0-9]{6}$/i.test(entry.name))continue;
+    const path=join(openFilesDirectory,entry.name);
+    try{if(lstatSync(path).mtimeMs<cutoff)rmSync(path,{recursive:true,force:true});}catch{/* Retry after the next launch or open. */}
+   }
+  }catch{/* The directory may not exist yet. */}
+ }
+ clearExpiredOpenFiles();
+ async function openFile(path,expected){
+  if(!fileCanOpen(path))throw Error('preview_file_open_unsupported');
+  const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  try{
+   const actual=fstatSync(fd);
+   if(!actual.isFile()||actual.nlink!==1||expected&&(actual.dev!==expected.dev||actual.ino!==expected.ino||realpathSync.native(path)!==path))
+    throw Error('artifact_path_denied');
+   const header=Buffer.alloc(64),size=readSync(fd,header,0,header.length,0);
+   const magic=header.subarray(0,4).toString('hex');
+   if(/^(?:7f454c46|feedfac[ef]|c[ef]faedfe|cafeba(?:be|bf)|b[ef]bafeca)$/.test(magic)
+    ||header.subarray(0,2).toString()==='#!'
+    ||header.subarray(0,2).toString()==='MZ'&&header.subarray(2,size).includes(0))
+    throw Error('preview_file_open_unsupported');
+  }finally{closeSync(fd);}
+  try{if(await shell.openPath(path))throw Error('open_failed');}catch{throw Error('preview_system_open_failed');}
+  return {requested:true};
+ }
  const permissions=new Map(),grants=new Set();
  const locationType=type=>type==='geolocation'||type==='geolocation-approximate';
  function locationOrigin(value){try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password?url.origin:undefined;}catch{return undefined;}}
@@ -67,6 +97,9 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   const id='page-'+randomUUID();
   const view=new WebContentsView({...options,webPreferences:{...options.webPreferences,...preferences,...(source.kind==='message-file'?{session:localSession}:{})}});
   const p={id,threadId,owner,source,view,document:0,operation:0,control:'user',closed:false,busy:false};pages.set(id,p);window().contentView.addChildView(view);
+  view.webContents.on('before-mouse-event',(_event,input)=>{
+   if(selected===id&&input.type==='mouseDown')window().webContents.send('homer:preview:native-pointer',id);
+  });
   const area=window().getContentBounds();view.setBounds({x:0,y:0,width:Math.max(320,area.width),height:Math.max(240,area.height)});view.setVisible(false);
   view.webContents.on('did-start-navigation',details=>{if(details.isMainFrame&&!details.isSameDocument){p.document++;p.loading=true;p.runtime=undefined;p.annotations=undefined;settle(p,'preview_document_changed');changed();}});
   view.webContents.on('did-finish-load',()=>{
@@ -174,6 +207,68 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   if(pending.has(input.changeId))throw Error('preview_save_pending');
   return new Promise(resolve=>{const timer=setTimeout(()=>{pending.delete(input.changeId);resolve({changeId:input.changeId,error:'草稿保存尚未确认，输入已保留。'});},15000);pending.set(input.changeId,{page:p,resolve,timer});window().webContents.send('homer:preview:annotation',{...input,pageId:p.id});});
  });
+ function currentMorePage(threadId,stamp){
+  const p=page(stamp?.pageId);
+  if(p.id!==selected||p.threadId!==threadId||p.document!==stamp.document||p.loading||p.error)
+   throw Error('preview_document_changed');
+  return p;
+ }
+ function atFileDocument(p){
+  const address=p.view.webContents.getURL().split('#')[0];
+  const root='homer-preview://'+p.id;
+  return !p.resource&&(p.source.kind==='message-file'?address===root+'/local/index.html':
+   p.source.kind==='attachment'&&address.split('?')[0]===root+'/attachment/index.html');
+ }
+ ipcMain.handle('homer:preview:more',async(event,input)=>{
+  const frame=event.senderFrame;
+  const guard=()=>{
+   if(!uiCaller(event)||event.senderFrame!==frame)throw Error('preview_sender_denied');
+   if(input?.page)return currentMorePage(input.threadId,input.page);
+   if(selected)throw Error('preview_document_changed');
+  };
+  const p=guard(),action=input?.action;
+  if(action==='browser'){
+   const address=p?.view.webContents.getURL();
+   let url;
+   try{url=new URL(address);}catch{throw Error('preview_url_invalid');}
+   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('preview_url_invalid');
+   try{await shell.openExternal(address);}catch{throw Error('preview_system_open_failed');}
+   return {requested:true};
+  }
+  if(!['open','reveal','download'].includes(action)||p&&!atFileDocument(p))throw Error('preview_document_changed');
+  const source=p?.source;
+  if(source?.kind==='message-file'||!p&&input.file){
+   if(action==='download'||!actOnMessageFile)throw Error('preview_system_action_unavailable');
+   const {messageId,destination}=source??input.file;
+   return actOnMessageFile(action,{threadId:input.threadId,messageId,destination,page:input.page});
+  }
+  const attachment=source??input.attachment;
+  if(action==='reveal'||attachment?.kind!=='attachment'||typeof attachment.title!=='string'
+   ||typeof attachment.sha256!=='string'||!/^[a-f0-9]{64}$/.test(attachment.sha256))
+   throw Error('preview_source_mismatch');
+  const response=await fetchAttachment(attachment);
+  const filename=response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if(!response.ok||!filename||decodeURIComponent(filename)!==attachment.title
+   ||response.headers.get('X-Homer-Artifact-Hash')!==attachment.sha256)throw Error('preview_source_mismatch');
+  const bytes=await response.arrayBuffer();
+  if(createHash('sha256').update(new Uint8Array(bytes)).digest('hex')!==attachment.sha256)
+   throw Error('preview_source_mismatch');
+  guard();
+  if(action==='download')return {download:{filename:attachment.title,mime:response.headers.get('Content-Type')??'',bytes}};
+  if(!openFilesDirectory||!fileCanOpen(attachment.title))throw Error('preview_file_open_unsupported');
+  clearExpiredOpenFiles();
+  mkdirSync(openFilesDirectory,{recursive:true,mode:0o700});
+  const folder=await mkdtemp(join(openFilesDirectory,'snapshot-'));
+  const path=join(folder,'Preview'+attachment.title.slice(attachment.title.lastIndexOf('.')));
+  try{
+   await writeFile(path,new Uint8Array(bytes),{flag:'wx',mode:0o600});
+   guard();
+   return await openFile(path);
+  }catch(error){
+   await rm(folder,{recursive:true,force:true}).catch(()=>{});
+   throw error;
+  }
+ });
  for(const method of ['list','present','control','annotations','reply','location-grants','revoke-location'])ipcMain.handle('homer:preview:'+method,async(event,input)=>{
   if(!uiCaller(event))throw Error('preview_sender_denied');
   if(method==='list')return [...pages.values()].filter(p=>p.threadId===input).map(publicPage);
@@ -203,9 +298,21 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   call.resolve(input.state.document===p.document?{...input.state,changeId:input.changeId}:{changeId:input.changeId,error:'preview_document_changed'});
  });
  return {async execute(actor,action,input){
-  if(action==='reveal-file'){
-   if(typeof input.path!=='string'||!isAbsolute(input.path))throw Error('preview_reveal_unavailable');
-   shell.showItemInFolder(input.path);
+  if(action==='reveal-file'||action==='open-file'){
+   if(typeof input.path!=='string'||!isAbsolute(input.path))throw Error('preview_system_action_unavailable');
+   if(input.page!==undefined){
+    const p=currentMorePage(actor.threadId,input.page),source=p.source;
+    if(!atFileDocument(p)||source.kind!=='message-file'||source.messageId!==input.file?.messageId||source.destination!==input.file?.destination)
+     throw Error('preview_document_changed');
+   }else if(selected)throw Error('preview_document_changed');
+   let actual,canonical;
+   try{actual=lstatSync(input.path);canonical=realpathSync.native(input.path);}catch(error){
+    throw Error(error.code==='ENOENT'||error.code==='ENOTDIR'?'artifact_missing':'artifact_path_denied');
+   }
+   if(!actual.isFile()||actual.nlink!==1||actual.dev!==input.dev||actual.ino!==input.ino||canonical!==input.path)
+    throw Error('artifact_path_denied');
+   if(action==='open-file')return openFile(input.path,input);
+   try{shell.showItemInFolder(input.path);}catch{throw Error('preview_system_open_failed');}
    return {requested:true};
   }
   if(action==='location-card'||action==='location-decision'){

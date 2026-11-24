@@ -289,7 +289,8 @@ async function receive(raw: unknown) {
       else if(m.method==='taskOverview.origin')value=await bridge.taskOverview!.origin!(m.input.id,m.input.messageId);
       else if(m.method==='taskOverview.detail'){const {id,...query}=m.input;value=await bridge.taskOverview!.detail(id,Object.keys(query).length?query:undefined);}
       else if(m.method==='preview.open'&&desktop)value=await bridge.openPreview!(m.input);
-      else if(desktop&&(m.method==='preview.messageFileInfo'||m.method==='preview.revealMessageFile'))value=await bridge.messageFileInfo!(m.input,m.method==='preview.revealMessageFile');
+      else if(desktop&&['preview.messageFileInfo','preview.revealMessageFile','preview.openMessageFile'].includes(m.method))
+        value=await bridge.messageFileInfo!(m.input,m.method==='preview.openMessageFile'?'open':m.method==='preview.revealMessageFile');
       else if(m.method==='preview.messageFile'&&desktop){
         const {filename,mime,bytes,sourceLine,sha256,attachment}=await bridge.readMessageFile!(m.input);
         value={filename,mime,data:bytes.toString('base64'),sourceLine,sha256,attachment};

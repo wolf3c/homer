@@ -6,7 +6,22 @@ export type PreviewLinkResult={page:BrowserPage}|{messageId:string;destination:s
 export type BrowserAnnotationState={document:number;active:boolean;revision:number;epoch:number;notes:PreviewAnnotation[];focusId?:string;focusRequest?:string;historyNote?:PreviewAnnotation};
 export type BrowserAnnotationChange={pageId:string;document:number;baseRevision:number;epoch:number;changeId:string;notes:PreviewAnnotation[]};
 export type BrowserAnnotationReply=BrowserAnnotationState&{changeId?:string;error?:string};
+type PreviewDocument={pageId:string;document:number};
+export type PreviewMoreAction={threadId:string}&(
+ {action:'browser';page:PreviewDocument}|
+ {action:'reveal'|'open';file:{messageId:string;destination:string};page?:PreviewDocument}|
+ {action:'download'|'open';attachment:Extract<PreviewSource,{kind:'attachment'}>;page?:PreviewDocument}
+);
+export type PreviewMoreResult={requested:true}|{download:{filename:string;mime:string;bytes:ArrayBuffer}};
+export type MessageFileOperation=boolean|'open';
+
+export function previewFileCanOpen(filename:string){
+ return /\.(?:txt|md|markdown|csv|tsv|json|pdf|html?|png|jpe?g|gif|webp|bmp|tiff?|mp3|wav|m4a|ogg|mp4|m4v|mov|webm)$/i.test(filename);
+}
 export type BrowserPreviewBridge={
+ platform?:string;
+ more?(input:PreviewMoreAction):Promise<PreviewMoreResult>;
+ onNativePointer?(listener:(pageId:string)=>void):()=>void;
  list(threadId:string):Promise<BrowserPage[]>;
  locationGrants?():Promise<string[]>;
  revokeLocation?(key:string):Promise<string[]>;

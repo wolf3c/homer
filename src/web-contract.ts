@@ -72,7 +72,7 @@ export type MessageFileBytes={filename:string;mime:string;bytes:Buffer;sourceLin
 export type WebBridge = {
   openPreview?(input:unknown):Promise<unknown>;
   readMessageFile?(input:unknown):MessageFileBytes|Promise<MessageFileBytes>;
-  messageFileInfo?(input:unknown,reveal:boolean):Promise<unknown>;
+  messageFileInfo?(input:unknown,operation:import('./browser-preview.js').MessageFileOperation):Promise<unknown>;
   schedules?(input:import('./schedule-display.js').ScheduleReadRequest):Promise<import('./schedule-display.js').ScheduleReadResult>;
   history?:{
     state():Promise<WebState>;

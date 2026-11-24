@@ -251,7 +251,9 @@ export class Homer {
       if(destination){
         const file=this.readMessageFile({threadId,messageId,destination});
         if(file.mime.split(';')[0]==='text/html'){
-          const source={kind:'message-file',messageId,destination,title:file.filename};
+          const source=file.attachment
+            ?{kind:'attachment',...file.attachment,title:file.filename,sha256:file.sha256}
+            :{kind:'message-file',messageId,destination,title:file.filename};
           return {page:await this.browserTransport(actor,'open',{source,user:true,show:false})};
         }
         return {destination,messageId,title:file.filename};
@@ -281,7 +283,10 @@ export class Homer {
     const background=a.show===false&&source.kind!=='browser'?{show:false}:{};
     if(source.kind==='message-file'){
       if(a.url!==undefined||file?.mime.split(';')[0]?.trim()!=='text/html')throw Error('preview_html_required');
-      return this.browserTransport({threadId,owner:'main:'+threadId},'open',{source,user:true,...background});
+      const actual='attachment' in file&&file.attachment
+        ?{kind:'attachment',...file.attachment,title:file.filename,sha256:file.artifactHash}
+        :source;
+      return this.browserTransport({threadId,owner:'main:'+threadId},'open',{source:actual,user:true,...background});
     }
     if(file&&file.mime.split(';')[0]?.trim()!=='text/html')throw Error('preview_html_required');
     const url=a.url!==undefined?this.browserUrl(a.url):source.kind==='attachment'?undefined:this.browserUrl(source.url);
@@ -311,7 +316,7 @@ export class Homer {
       const file=this.readMessageFile({threadId,...source});
       const sha256=source.sha256?createHash('sha256').update(file.bytes).digest('hex'):'';
       if(source.sha256&&sha256!==source.sha256)throw Error('preview_source_mismatch');
-      return {filename:file.filename,mime:file.mime,data:includeData?file.bytes.toString('base64'):'',sha256};
+      return {filename:file.filename,mime:file.mime,data:includeData?file.bytes.toString('base64'):'',sha256,attachment:file.attachment,artifactHash:file.sha256};
     }
     const file=this.readAttachment(source);if(file.sha256!==source.sha256||file.filename!==source.title)throw Error('preview_source_mismatch');return file;
   }
@@ -2513,11 +2518,11 @@ export class Homer {
     if(inlineImage&&!inlineImageMimes.has(result.mime))throw Error('file_preview_unsupported');
     return result;
   }
-  async messageFileInfo(value:unknown,reveal=false){
+  async messageFileInfo(value:unknown,operation:import('./browser-preview.js').MessageFileOperation=false){
     const source=this.resolveMessageFile(value);
     // The existing attachment download is the owner of fixed snapshot bytes.
     if(source.attachment){
-      if(reveal)throw Error('media_scope_denied');
+      if(operation)throw Error('media_scope_denied');
       this.attachmentMessage(source.attachment);
       return {kind:'attachment' as const};
     }
@@ -2531,9 +2536,15 @@ export class Homer {
       }finally{closeSync(fd);}
     });
     const platform=process.platform;
-    if(reveal){
-      if((platform!=='darwin'&&platform!=='win32')||!this.browserTransport)throw Error('preview_reveal_unavailable');
-      await this.browserTransport({threadId:source.threadId,owner:'main:'+source.threadId},'reveal-file',{path:info.path});
+    if(operation){
+      if(!this.browserTransport||operation===true&&platform!=='darwin'&&platform!=='win32')
+        throw Error(operation===true?'preview_reveal_unavailable':'preview_system_action_unavailable');
+      const input=object(value);
+      const native=input.page===undefined?{}:{page:input.page,file:{messageId:input.messageId,destination:input.destination}};
+      const receipt=await this.browserTransport({threadId:source.threadId,owner:'main:'+source.threadId},operation==='open'?'open-file':'reveal-file',{
+        path:info.path,dev:info.dev,ino:info.ino,...native
+      });
+      if(!receipt||object(receipt).requested!==true)throw Error('preview_system_open_failed');
       return {requested:true as const};
     }
     return {kind:'local' as const,filename:basename(info.path),size:info.size,overLimit:info.size>MEDIA_POLICY.fileBytes,

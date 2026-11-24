@@ -17,6 +17,7 @@ import {createWindowsWakeAdapter} from '../homer/scripts/windows-power.mjs';
 import {CHATGPT_MODEL_DEFAULTS,chatgptModelConfig,chatgptModelError,modelRowEdit,validateChatGPTSelection} from '../homer/dist/model-config.js';
 import {processIdentity,leaseOwnerGone} from '../homer/dist/processes.js';
 import {webMediaRoute} from '../homer/dist/web-contract.js';
+import {previewFileCanOpen} from '../homer/dist/browser-preview.js';
 import {WEB_UPLOAD_BYTES} from '../homer/dist/web-upload.js';
 import {MEDIA_POLICY,detectMedia,imageDimensions} from '../homer/dist/media-policy.js';
 import {parseWindowAX,previewImageAnnotations} from '../homer/dist/preview-reference.js';
@@ -1090,6 +1091,14 @@ function createWindow(){
  const contents=window.webContents;
  if(!browserPreview)browserPreview=createBrowserPreview({window:()=>window,runtimeDirectory:join(resources,'homer/dist/browser-preview'),preload:join(fileURLToPath(new URL('.',import.meta.url)),'preview-content-preload.cjs'),ipcMain,uiCaller:event=>permissionCaller(event,event.senderFrame),
  permissionFile:join(app.getPath('userData'),'preview-location.json'),
+ openFilesDirectory:join(app.getPath('userData'),'preview-open-files'),fileCanOpen:previewFileCanOpen,
+ actOnMessageFile:async(action,input)=>{
+  const response=await fetch(origin+'/api/preview/message-file/'+action,{method:'POST',
+   headers:{'X-Homer-Desktop-Access':desktopAccessToken,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(input)});
+  const result=await response.json();
+  if(!response.ok||result.requested!==true)throw Error(result.error??'preview_system_open_failed');
+  return result;
+ },
  permissionEvent:input=>{if(!child?.stdin?.writable||closed||quitPending)return false;child.stdin.write(JSON.stringify({kind:'browser_permission',input})+'\n');return true;},
  fetchMessageFile:(threadId,{messageId,destination})=>fetch(origin+'/api/preview/message-file',{method:'POST',headers:{'X-Homer-Desktop-Access':desktopAccessToken,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({threadId,messageId,destination})}),fetchAttachment:(source,resource)=>{
   const path='/api/media/'+[source.messageId,source.assetId,source.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):'');
@@ -1102,6 +1111,7 @@ function createWindow(){
   try{
    const target=new URL(details.url);
    if(desktopAccessToken&&owned(details.url)&&target.pathname.startsWith('/api/')
+    &&!['/api/preview/message-file/open','/api/preview/message-file/reveal'].includes(target.pathname)
     &&(!target.search||webMediaRoute(details.method,target)?.preview)
     &&['xhr','image','media','other'].includes(details.resourceType)&&details.initiatorOrigin===origin
     &&permissionCaller({sender:details.webContents,senderFrame:details.frame},details.frame))
@@ -1197,7 +1207,7 @@ try{
    let at;while((at=buffer.indexOf('\n'))>=0){
     const line=buffer.slice(0,at);buffer=buffer.slice(at+1);let value;try{value=JSON.parse(line);}catch{continue;}
     if(value.kind==='browser_request'){
-     void (async()=>{try{if(!browserPreview||closed||quitPending)throw Error('preview_unavailable');const result=await browserPreview.execute(value.owner,value.action,value.input);runtime.stdin.write(JSON.stringify({kind:'browser_result',id:value.id,value:result})+'\n');}catch(error){runtime.stdin.write(JSON.stringify({kind:'browser_result',id:value.id,error:/^preview_[a-z_]+$/.test(error?.message??'')?error.message:'preview_result_unconfirmed'})+'\n');}})();
+     void (async()=>{try{if(!browserPreview||closed||quitPending)throw Error('preview_unavailable');const result=await browserPreview.execute(value.owner,value.action,value.input);runtime.stdin.write(JSON.stringify({kind:'browser_result',id:value.id,value:result})+'\n');}catch(error){runtime.stdin.write(JSON.stringify({kind:'browser_result',id:value.id,error:/^(?:preview_[a-z_]+|artifact_missing|artifact_path_denied)$/.test(error?.message??'')?error.message:'preview_result_unconfirmed'})+'\n');}})();
     }
     else if(value.kind==='desktop_notification'){
      void showDesktopNotification(value.notice).catch(()=>{});

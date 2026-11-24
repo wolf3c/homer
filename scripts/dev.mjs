@@ -146,7 +146,7 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
       getAssets: version => ({ uiDirectory: version ? uiBuilds.has(version) ? join(uiBuilds.get(version).directory, "dist/web") : undefined : join(uiCurrent.directory, "dist/web"), logoPath: join(current.directory, "assets/branding/odysseus-20261030/homer-odysseus-256.png") }),
       bridge: {schedules:input=>invokeWeb('schedules.read',input),...(desktop?{
         openPreview:input=>invokeWeb('preview.open',input),
-        messageFileInfo:(source,reveal)=>invokeWeb(reveal?'preview.revealMessageFile':'preview.messageFileInfo',source),
+        messageFileInfo:(source,operation)=>invokeWeb(operation==='open'?'preview.openMessageFile':operation?'preview.revealMessageFile':'preview.messageFileInfo',source),
         readMessageFile:async input=>{
           const {filename,mime,data,sourceLine,sha256,attachment}=await invokeWeb('preview.messageFile',input);
           return {filename,mime,bytes:Buffer.from(data,'base64'),sourceLine,sha256,attachment};

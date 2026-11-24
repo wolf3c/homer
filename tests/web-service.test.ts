@@ -2,7 +2,7 @@ import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {realpathSync,rmSync,symlinkSync,truncateSync,writeFileSync} from 'node:fs';
+import {realpathSync,rmSync,statSync,symlinkSync,truncateSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import type {Message} from "../src/service.js";
@@ -237,7 +237,8 @@ test('desktop gets bounded metadata and revalidates local file scope before syst
   assert.deepEqual(await request('/info'),[200,{kind:'local',filename,size:4,overLimit:false,reveal,platform}]);
   assert.deepEqual(await request(''),[409,{error:'file_preview_unsupported'}]);
   assert.deepEqual(await request('/reveal'),reveal?[200,{requested:true}]:[409,{error:'preview_reveal_unavailable'}]);
-  assert.deepEqual(calls,reveal?[{action:'reveal-file',input:{path}}]:[]);
+  const {dev,ino}=statSync(path);
+  assert.deepEqual(calls,reveal?[{action:'reveal-file',input:{path,dev,ino}}]:[]);
   rmSync(path);
   assert.deepEqual(await request('/reveal'),[409,{error:'artifact_missing'}]);
   f.app.history.revokeMessage(threadId,input.messageId);
