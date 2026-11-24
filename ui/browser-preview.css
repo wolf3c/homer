@@ -1,3 +1,33 @@
 .browser-preview{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1;height:100%;background:var(--background)}
 .browser-preview-viewport{min-height:160px;min-width:0;flex:1;position:relative;background:var(--background)}
 .browser-preview-viewport>p{padding:16px;font-size:13px}
+
+.browser-preview{container-type:inline-size}
+.preview-toolbar-site{display:flex;align-items:center;flex:1;gap:4px;min-width:0}
+.preview-toolbar-site .preview-toolbar-identity{min-width:0;flex:0 1 auto}
+.browser-preview .preview-toolbar-site button{display:inline-flex;align-items:center;justify-content:center;flex:none;gap:4px;min-width:32px;height:32px;padding:0 7px;border:0;border-radius:6px;background:transparent;color:inherit;font:12px system-ui;white-space:nowrap;cursor:pointer}
+.browser-preview .preview-toolbar-site button:hover,.browser-preview .preview-toolbar-site button[aria-expanded=true]{background:var(--soft,#efede7)}
+.browser-preview .preview-toolbar-site .browser-location-pending{background:#f7edda;color:#714906}
+.browser-preview .preview-toolbar-site .browser-location-pending:hover{background:#f1e1bf}
+.browser-preview[data-location-open] .browser-preview-viewport{min-height:0}
+.browser-location-panel{visibility:hidden;box-sizing:border-box;flex:0 1 auto;min-height:0;max-height:45%;width:min(336px,calc(100% - 16px));margin:4px 8px 6px;padding:10px 12px;overflow:auto;border:1px solid var(--line,#dedcd6);border-radius:10px;background:var(--surface,#faf9f6);color:var(--ink,#292825);font:13px/1.4 system-ui;outline:none}
+.browser-location-panel[data-ready]{visibility:visible}
+.browser-location-panel :is(h2,p,ul){margin:0;overflow-wrap:anywhere}
+.browser-location-panel h2{font-size:14px}
+.browser-location-panel p{color:var(--muted,#615e58);margin-top:4px}
+.browser-location-panel header,.browser-location-panel li{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.browser-location-panel header{padding-bottom:6px;border-bottom:1px solid var(--line,#dedcd6)}
+.browser-location-panel ul{padding:5px 0;list-style:none}
+.browser-location-panel button{display:inline-flex;align-items:center;justify-content:space-between;gap:6px;flex:none;min-height:32px;padding:2px 6px;border:0;border-radius:5px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.browser-location-panel button:hover:not(:disabled,[aria-disabled=true]){background:var(--soft,#efede7)}
+.browser-location-panel button:is(:disabled,[aria-disabled=true]){opacity:.55;cursor:default}
+.browser-location-panel footer{display:grid;margin-top:5px}
+@container (max-width:540px){
+ .browser-preview .preview-toolbar-site button,.browser-location-panel button{min-width:44px;min-height:44px}
+ .browser-preview .preview-toolbar-site .browser-location-pending span{display:none}
+}
+@container (max-width:365px){
+ .browser-preview .preview-toolbar:has(.preview-toolbar-site){display:grid;grid-template-columns:minmax(0,1fr) auto}
+ .browser-preview .preview-toolbar:has(.preview-toolbar-site) .preview-toolbar-navigation{grid-column:1/-1}
+ .browser-preview .preview-toolbar-site .preview-toolbar-identity{flex:1}
+}

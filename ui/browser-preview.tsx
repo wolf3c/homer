@@ -1,10 +1,10 @@
-import{createContext,useEffect,useLayoutEffect,useRef,useState}from'react';
+import{createContext,useEffect,useId,useLayoutEffect,useRef,useState}from'react';
 import type{BrowserPage,BrowserPreviewBridge,BrowserAnnotationState,BrowserAnnotationChange,PreviewLinkResult}from'../src/browser-preview';
 import{referenceKey,referencesOf,type PreviewSource,type PreviewRequest,type PreviewAnnotation}from'../src/preview-reference';
 import{useAnnotationDraft,type AnnotationDraft}from'./annotation-draft';
 import{connectionFetch}from'./web-connection-client';
 import './browser-preview.css';
-import{ArrowLeft,ArrowRight,RotateCw,Hand,Play}from'lucide-react';
+import{ArrowLeft,ArrowRight,RotateCw,Hand,Play,MapPin,Clock,X,ChevronRight}from'lucide-react';
 import{TooltipIconButton}from'./vendor/assistant-ui/attachment-icon-button';
 import{PreviewToolbar}from'./preview-toolbar';
 import{AnnotationButton}from'./annotation-button';
@@ -24,10 +24,15 @@ export function useBrowserPages(threadId:string){
   void read();const off=bridge.onChanged(()=>void read());return()=>{current=false;off();};
  },[threadId]);return{pages,error};
 }
+type LocationPanel={scope:string;session:symbol;grants?:string[];history?:boolean;busy?:boolean;notice?:string};
+const locationLabel=(type:string)=>type==='geolocation-approximate'?'近似位置':'位置';
 type Props={page:BrowserPage;annotationDraft:AnnotationDraft;onReference:(reference:PreviewRequest,file?:File,isCurrent?:()=>boolean)=>Promise<void>;enabled:boolean;focusId?:string;focusKey?:string;focusRequest?:string;historyNote?:PreviewAnnotation;suspended?:boolean;isCurrent?:()=>boolean;onLocationApproval?:(id:string)=>void};
 export function BrowserPreview({page,annotationDraft,onReference,enabled:referenceEnabled,focusId:requestedFocus,focusKey,focusRequest,historyNote,suspended=false,isCurrent=()=>true,onLocationApproval}:Props){
  const enabled=referenceEnabled&&!page.resource;
  const draft=useAnnotationDraft(annotationDraft),viewport=useRef<HTMLDivElement>(null),latest=useRef({page,onReference,enabled,isCurrent});latest.current={page,onReference,enabled,isCurrent};
+ const locationPanel=useRef<HTMLElement>(null),locationButton=useRef<HTMLButtonElement>(null);
+ const locationHistoryButton=useRef<HTMLButtonElement>(null),locationId=useId();
+ const [location,setLocation]=useState<LocationPanel>();
  const [active,setActive]=useState(false),[syncing,setSyncing]=useState(false),[notice,setNotice]=useState('');
  const key=referenceKey({kind:'web',source:page.source,page:{id:page.id,url:page.url,title:page.title}});
  const focusId=focusKey===key?requestedFocus:undefined;
@@ -62,7 +67,26 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  useLayoutEffect(()=>{
   const bridge=window.homerBrowserPreview,node=viewport.current;if(!bridge||!node)return;
   let frame=0,disposed=false;
-  const draw=()=>{if(disposed)return;const r=node.getBoundingClientRect(),covered=[...document.querySelectorAll<HTMLElement>('[role="dialog"]:not(#canvas-panel,[data-preview-local-quote]),[role="alertdialog"],[role="menu"]')].some(el=>el.getClientRects().length>0);void bridge.present({pageId:page.id,threadId:page.threadId,bounds:suspended||covered||!r.width||!r.height?null:{x:r.x,y:r.y,width:r.width,height:r.height}}).catch(()=>setNotice('网页显示未确认，请重新打开。'));};
+  const draw=()=>{
+   if(disposed)return;
+   const r=node.getBoundingClientRect(),panel=locationPanel.current,button=locationButton.current;
+   if(panel&&button){
+    const parent=panel.parentElement!.getBoundingClientRect();
+    panel.style.marginInlineStart=Math.max(8,Math.min(button.getBoundingClientRect().left-parent.left,parent.width-panel.offsetWidth-8))+'px';
+   }
+   const covered=[...document.querySelectorAll<HTMLElement>('[role="dialog"]:not(#canvas-panel,[data-preview-local-quote]),[role="alertdialog"],[role="menu"]')].some(el=>el.getClientRects().length>0);
+   const bounds=suspended||covered||!r.width||!r.height?null:{x:r.x,y:r.y,width:r.width,height:r.height};
+   void bridge.present({pageId:page.id,threadId:page.threadId,bounds}).then(()=>{
+    if(!disposed&&bounds&&panel&&locationPanel.current===panel&&!panel.dataset.ready&&node.getBoundingClientRect().top===r.top){
+     panel.dataset.ready='true';
+     if(document.activeElement===button||document.activeElement===document.body)panel.focus();
+    }
+   }).catch(()=>{
+    if(disposed)return;
+    setNotice('网页显示未确认，请重新打开。');
+    if(panel&&locationPanel.current===panel&&!panel.dataset.ready)setLocation(undefined);
+   });
+  };
   const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(draw);};draw();
   const observer=new ResizeObserver(schedule);observer.observe(node);const portals=new MutationObserver(schedule);portals.observe(document.body,{childList:true});window.addEventListener('resize',schedule);window.addEventListener('scroll',schedule,true);
   return()=>{disposed=true;cancelAnimationFrame(frame);observer.disconnect();portals.disconnect();window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);void bridge.present({pageId:page.id,threadId:page.threadId,bounds:null}).catch(()=>{});};
@@ -70,34 +94,88 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  async function control(action:'takeover'|'resume'|'back'|'forward'|'reload'){
   try{await window.homerBrowserPreview?.control({pageId:page.id,threadId:page.threadId,action});setNotice('');if(action==='resume')setActive(false);return true;}catch(e){setNotice(e instanceof Error?e.message:'网页操作未确认。');return false;}
  }
- const [locationGrants,setLocationGrants]=useState<string[]>([]);
  const locationBridge=window.homerBrowserPreview;
- const locationSettingsAvailable=page.url.startsWith('https:')&&!!window.homerDesktopPermissions;
- async function updateLocationGrants(key?:string){
-  try{
-   const grants=key?await locationBridge?.revokeLocation?.(key):await locationBridge?.locationGrants?.();
-   if(grants)setLocationGrants(grants);
-  }catch{setNotice('无法更新网站定位授权。');}
+ const url=new URL(page.url||'about:blank');
+ const origin=url.protocol==='https:'&&!url.username&&!url.password&&['browser','web'].includes(page.source.kind)?url.origin:undefined;
+ const scope=JSON.stringify([page.id,page.document,origin]);
+ const shown=location?.scope===scope?location:undefined;
+ useEffect(()=>{setLocation(current=>current?.scope===scope?current:undefined);},[scope]);
+ const canManage=!!locationBridge?.locationGrants, settings=!!origin&&!!window.homerDesktopPermissions;
+ const approval=page.locationApproval;
+ const domain=url.protocol==='homer-preview:'?(page.source.kind==='message-file'?'本地 HTML':'HTML 附件'):url.host;
+ function dismissLocation(restore=false){
+  setLocation(undefined);
+  if(restore)locationButton.current?.focus();
  }
- async function openLocationSettings(){
+ useEffect(()=>{
+  if(!shown)return;
+  const outside=(event:PointerEvent)=>{
+   const target=event.target as Node;
+   if(!locationPanel.current?.contains(target)&&!locationButton.current?.contains(target))dismissLocation();
+  };
+  const escape=(event:KeyboardEvent)=>{
+   const target=event.target as Node;
+   if(event.key!=='Escape'||(target!==document.body&&!locationPanel.current?.contains(target)&&!locationButton.current?.contains(target)))return;
+   event.preventDefault();
+   event.stopPropagation();
+   dismissLocation(true);
+  };
+  window.addEventListener('pointerdown',outside);
+  document.addEventListener('keydown',escape,true);
+  return()=>{
+   window.removeEventListener('pointerdown',outside);
+   document.removeEventListener('keydown',escape,true);
+  };
+ },[!!shown]);
+ function updatePanel(session:symbol,patch:Partial<LocationPanel>){
+  setLocation(current=>current?.session===session?{...current,...patch}:current);
+ }
+ async function readGrants(session:symbol,key?:string){
+  updatePanel(session,{busy:true,notice:undefined});
+  try{
+   const grants=key?await locationBridge!.revokeLocation!(key):await locationBridge!.locationGrants!();
+   updatePanel(session,{grants,busy:false});
+  }catch{
+   updatePanel(session,{busy:false,notice:'无法更新网站定位授权，请重试。'});
+  }
+ }
+ function toggleLocation(){
+  if(shown){dismissLocation(true);return;}
+  const session=Symbol();
+  setLocation({scope,session,history:!origin});
+  if(canManage)void readGrants(session);
+ }
+ async function openLocationSettings(session:symbol){
   const manual='请在电脑的系统设置中打开「隐私与安全性」下的定位服务或位置设置。';
+  updatePanel(session,{busy:true,notice:undefined});
   try{
    const result=await window.homerDesktopPermissions?.openSystemSettings('location');
-   setNotice(result&&'ok'in result&&result.ok&&result.code!=='manual_navigation'?'请核对电脑的定位设置，再从原网页重新请求位置。':manual);
-  }catch{setNotice(manual);}
+   updatePanel(session,{busy:false,notice:result&&'ok'in result&&result.ok&&result.code!=='manual_navigation'?'请核对电脑的定位设置，再从原网页重新请求位置。':manual});
+  }catch{updatePanel(session,{busy:false,notice:manual});}
  }
- const domain=page.url.startsWith('homer-preview:')?(page.source.kind==='message-file'?'本地 HTML':'HTML 附件'):new URL(page.url||'about:blank').host;
- return <div className="browser-preview"><PreviewToolbar title={page.title} detail={page.loading?domain+' · 加载中':domain} leading={<>{([{action:'back',label:'后退',Icon:ArrowLeft},{action:'forward',label:'前进',Icon:ArrowRight},{action:'reload',label:'重新加载',Icon:RotateCw}]as const).map(({action,label,Icon})=><TooltipIconButton side="top" key={action} aria-label={label} tooltip={label} onClick={()=>void control(action)}><Icon size={16} aria-hidden/></TooltipIconButton>)}</>}>
+ const siteGrants=shown?.grants?.filter(key=>key.split(' ')[0]===origin);
+ const grants=shown?.history?shown.grants:siteGrants;
+ const siteButton=(canManage||settings)&&<button type="button" className="aui-button-icon" ref={locationButton} title="网站定位权限" aria-label="网站定位权限" aria-expanded={!!shown} aria-controls={shown?locationId:undefined} onClick={toggleLocation}><MapPin size={16} aria-hidden/></button>;
+ return <div className="browser-preview" data-location-open={shown?'true':undefined}><PreviewToolbar title={page.title} detail={page.loading?domain+' · 加载中':domain} identityStart={siteButton} identityEnd={approval&&<button type="button" className="aui-button-icon browser-location-pending" title="查看定位审批" aria-label="查看定位审批" onClick={()=>{dismissLocation();onLocationApproval?.(approval);}}><Clock size={16} aria-hidden/><span>待审批</span></button>} leading={<>{([{action:'back',label:'后退',Icon:ArrowLeft},{action:'forward',label:'前进',Icon:ArrowRight},{action:'reload',label:'重新加载',Icon:RotateCw}]as const).map(({action,label,Icon})=><TooltipIconButton side="top" key={action} aria-label={label} tooltip={label} onClick={()=>void control(action)}><Icon size={16} aria-hidden/></TooltipIconButton>)}</>}>
   <AnnotationButton disabled={!enabled||page.loading||syncing} aria-busy={syncing} active={active} aria-label="批注" tooltip={active?'退出网页批注':'选择网页元素批注'} onClick={()=>void control('takeover').then(ok=>{if(ok)setActive(value=>!value);})}/>
   {page.agentAssigned&&<TooltipIconButton side="top" aria-label={page.control==='agent'?'用户接手':'交还 AI'} tooltip={page.control==='agent'?'暂停 AI 写入，由你操作':'结束用户接手，允许原任务继续操作此页'} onClick={()=>void control(page.control==='agent'?'takeover':'resume')}>{page.control==='agent'?<Hand size={16} aria-hidden/>:<Play size={16} aria-hidden/>}</TooltipIconButton>}
  </PreviewToolbar>
- {page.locationApproval&&<p className="canvas-note" role="status">等待位置权限决定。 <button type="button" onClick={()=>onLocationApproval?.(page.locationApproval!)}>查看审批</button></p>}
- {(locationBridge?.locationGrants||locationSettingsAvailable)&&<details className="canvas-note" onToggle={event=>{if(event.currentTarget.open&&locationBridge?.locationGrants)void updateLocationGrants();}}>
-  <summary>网站定位授权</summary>
-  {locationSettingsAvailable&&<><p>网站已获准但仍无法定位时，可检查运行荷马的电脑的位置设置。</p>
-  <button type="button" onClick={()=>void openLocationSettings()}>打开系统位置设置</button></>}
-  {locationBridge?.locationGrants&&(locationGrants.length?locationGrants.map(key=>{const [site,type]=key.split(' ');return <div key={key}>{site} · {type==='geolocation-approximate'?'近似位置':'位置'} <button type="button" onClick={()=>void updateLocationGrants(key)}>撤销</button></div>;}):<p>没有已记住的网站定位授权。</p>)}
- </details>}
+ {shown&&<section className="browser-location-panel" id={locationId} ref={locationPanel} tabIndex={-1} aria-labelledby={locationId+'-title'}>
+  <header><div><h2 id={locationId+'-title'}>{shown.history?'已记住的网站':'网站定位'}</h2>{!shown.history&&origin&&<p>{origin}</p>}</div><button type="button" aria-label="关闭网站定位" onClick={()=>dismissLocation(true)}><X size={16} aria-hidden/></button></header>
+  {!shown.history&&origin&&approval&&<p role="status">等待定位审批</p>}
+  {!shown.history&&origin&&!approval&&page.locationDenied&&<p role="status">上次请求未获准</p>}
+  {!!grants?.length&&<ul>{grants.map(key=>{
+   const [site,type]=key.split(' '),label=locationLabel(type);
+   return <li key={key}><span>{shown.history&&<>{site}<br/></>}{label}{!shown.history&&' · 已记住'}</span><button type="button" disabled={shown.busy} aria-label={'撤销 '+site+' 的'+label+'授权'} onClick={()=>{locationPanel.current?.focus();void readGrants(shown.session,key);}}>撤销</button></li>;
+  })}</ul>}
+  {grants?.length===0&&<p>{shown.history?'没有已记住的网站定位授权。':'未保存授权'}</p>}
+  {canManage&&!shown.grants&&(shown.busy?<p role="status">正在读取网站定位授权…</p>:<button type="button" onClick={()=>void readGrants(shown.session)}>重新读取授权</button>)}
+  {shown.notice&&<p role="status">{shown.notice}</p>}
+  {shown.history?(origin&&<button type="button" onClick={()=>{const panel=locationPanel.current;updatePanel(shown.session,{history:false});requestAnimationFrame(()=>{if(locationPanel.current===panel)locationHistoryButton.current?.focus();});}}>返回当前站点</button>):<footer>
+   {settings&&<button type="button" aria-disabled={!!shown.busy} onClick={()=>{if(!shown.busy)void openLocationSettings(shown.session);}}>打开系统位置设置</button>}
+   {canManage&&<button type="button" ref={locationHistoryButton} onClick={()=>{locationPanel.current?.focus();updatePanel(shown.session,{history:true});}}>已记住的网站<ChevronRight size={14} aria-hidden/></button>}
+  </footer>}
+ </section>}
  {(notice||page.error)&&<p role="status" className="canvas-note">{notice||page.error}</p>}
  <div className="browser-preview-viewport" ref={viewport} aria-label="内置网页内容">{suspended&&<p>关闭对话框后继续查看网页。</p>}</div></div>;
 }
