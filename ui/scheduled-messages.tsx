@@ -1,4 +1,6 @@
-import {useEffect,useRef,useState} from 'react';
+import {createElement,useEffect,useRef,useState} from 'react';
+import '@github/relative-time-element';
+import type {RelativeTimeElement} from '@github/relative-time-element';
 import {Clock3,MessageCircle,X} from 'lucide-react';
 import {connectionFetch} from './web-connection-client';
 import type {ScheduleSummary,ScheduleReadRequest,ScheduleReadResult} from '../src/schedule-display';
@@ -17,52 +19,119 @@ async function read(input:ScheduleReadRequest,threadId:string,signal:AbortSignal
  if(!response.ok)throw Error('schedule_read_failed');const result=await response.json() as ScheduleReadResult;
  if(result.threadId!==threadId||result.readEpoch!==input.readEpoch)throw Error('history_epoch_changed');return result;
 }
-function coalesceReads(run:(signal:AbortSignal,offset:number)=>Promise<void>){
+function coalesceReads(run:(signal:AbortSignal,more:boolean)=>Promise<void>){
  const controller=new AbortController();
- let busy=false,again=false;
- const load=async(offset=0)=>{
+ let busy=false,again=false,loadingMore=false,moreQueued=false;
+ let recoveryInFlight:number|undefined;
+ const load=async(more=false,recovery?:number)=>{
   if(controller.signal.aborted)return;
-  if(busy){again=true;return;}
-  busy=true;
-  try{await run(controller.signal,offset);}
-  finally{busy=false;if(again){again=false;void load();}}
+  if(busy){
+   if(more&&loadingMore)return;
+   moreQueued||=more;
+   // A recovery read in flight or already queued covers further recovery events.
+   if(recovery===undefined||recovery!==recoveryInFlight)again=true;
+   recoveryInFlight=recovery??recoveryInFlight;
+   return;
+  }
+  busy=true;recoveryInFlight=recovery;loadingMore=more;
+  try{await run(controller.signal,more);}
+  finally{
+   busy=false;
+   if(again){
+    const more=moreQueued;
+    again=false;moreQueued=false;
+    void load(more,recoveryInFlight);
+   }
+  }
  };
  return {load,close:()=>controller.abort()};
 }
 const scheduleExample='每周五下午 5 点，提醒我写周报。';
+const pageSize=20;
+const maxTimerDelay=2_147_483_647;
+const upcomingAt=(row:ScheduleSummary)=>row.enabled&&row.status==='已启用'?row.nextFireAt:null;
 
 export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference,onExample,onDetails}:{threadId:string;readEpoch:string;refreshKey:unknown;onReference:(value:ScheduleContext)=>void;onExample:(text:string)=>string|undefined;onDetails:(id:string,trigger:HTMLElement)=>void}){
- const [items,setItems]=useState<ScheduleSummary[]>([]),[next,setNext]=useState<number|null>(null),[busy,setBusy]=useState(true),[error,setError]=useState('');
+ const [{items,next,displayTimeZone},setList]=useState<{items:ScheduleSummary[];next:number|null;displayTimeZone?:string}>({items:[],next:null});
+ const [busy,setBusy]=useState(true),[error,setError]=useState('');
  const [exampleError,setExampleError]=useState<string>();
- const listRead=useRef<(offset?:number)=>void>(()=>{});
+ const listBody=useRef<HTMLDivElement>(null);
+ const listRead=useRef<(more?:boolean)=>void>(()=>{});
  const refresh=()=>listRead.current();
  useEffect(()=>{
-  const loader=coalesceReads(async(signal,offset)=>{
+  let loaded:ScheduleSummary[]=[];
+  let loadedLimit=pageSize;
+  let recoveryGeneration=0;
+  let timer:number|undefined;
+  const armDeadline=(startedAt:number)=>{
+   let deadline=Infinity;
+   for(const row of loaded){
+    const at=upcomingAt(row);
+    // The current read already covered deadlines reached before it started.
+    if(at!==null&&at>startedAt)deadline=Math.min(deadline,at);
+   }
+   if(!Number.isFinite(deadline))return;
+   const check=()=>{
+    const remaining=deadline-Date.now();
+    if(remaining>0)timer=window.setTimeout(check,Math.min(remaining,maxTimerDelay));
+    else if(document.visibilityState==='visible')void loader.load(false,recoveryGeneration);
+   };
+   timer=window.setTimeout(check,Math.min(Math.max(0,deadline-Date.now()),maxTimerDelay));
+  };
+  const loader=coalesceReads(async(signal,more)=>{
+   const startedAt=Date.now();
+   window.clearTimeout(timer);
    setBusy(true);setError('');
    try{
-    const result=await read({readEpoch,view:'list',offset},threadId,signal);
-    if(signal.aborted)return;
-    if(!('items' in result))throw Error('schedule_read_failed');
-    setItems(old=>offset?[...new Map([...old,...result.items].map(item=>[item.scheduleId,item])).values()]:result.items);
-    setNext(result.nextOffset);
+    // Status changes can reorder rows. Rebuild the loaded range from the first page.
+    const limit=loadedLimit+(more?pageSize:0);
+    const rows=new Map<string,ScheduleSummary>();
+    let displayTimeZone:string|undefined;
+    let cursor:number|null=0;
+    while(cursor!==null&&cursor<limit){
+     const result=await read({readEpoch,view:'list',offset:cursor,limit:Math.min(100,limit-cursor)},threadId,signal);
+     if(signal.aborted)return;
+     if(!('items' in result)||result.nextOffset!==null&&
+      (!Number.isSafeInteger(result.nextOffset)||result.nextOffset<=cursor||result.nextOffset!==cursor+result.items.length))throw Error('schedule_read_failed');
+     displayTimeZone??=result.displayTimeZone;
+     for(const item of result.items)rows.set(item.scheduleId,item);
+     cursor=result.nextOffset;
+    }
+    loaded=[...rows.values()];
+    loadedLimit=limit;
+    setList({items:loaded,next:cursor,displayTimeZone});
    }catch{if(!signal.aborted)setError('定时任务未能读取，当前内容尚未确认。');}
-   finally{if(!signal.aborted)setBusy(false);}
+   finally{if(!signal.aborted){setBusy(false);armDeadline(startedAt);}}
   });
   listRead.current=loader.load;
-  const foreground=()=>{if(document.visibilityState==='visible')refresh();};
+  const foreground=(event:Event)=>{
+   if(document.visibilityState!=='visible'){
+    if(event.type==='visibilitychange')recoveryGeneration++;
+    return;
+   }
+   for(const time of listBody.current?.querySelectorAll<RelativeTimeElement>('relative-time')??[])time.update();
+   void loader.load(false,recoveryGeneration);
+  };
   document.addEventListener('visibilitychange',foreground);window.addEventListener('pageshow',foreground);
-  return()=>{loader.close();document.removeEventListener('visibilitychange',foreground);window.removeEventListener('pageshow',foreground);};
+  return()=>{loader.close();window.clearTimeout(timer);document.removeEventListener('visibilitychange',foreground);window.removeEventListener('pageshow',foreground);};
  },[threadId,readEpoch]);
  useEffect(()=>{refresh();},[refreshKey,threadId,readEpoch]);
- const card=(row:ScheduleSummary)=><ScheduleCard key={row.scheduleId} name={row.title} cadence={row.cadence} statusLabel={row.status} nextRun={row.timeText} timeLabel={row.timeLabel} className={row.enabled?'homer-schedule-card':'homer-schedule-card schedule-inactive'} note={row.note} detailLabel={'查看定时任务详情：'+row.title} onDetails={event=>onDetails(row.scheduleId,event.currentTarget)} endAction={<button type="button" className="schedule-talk" aria-label={'在对话中说：'+row.title} title={'在对话中说：'+row.title} onClick={event=>{event.stopPropagation();onReference({scheduleId:row.scheduleId,label:row.title});}}><MessageCircle size={16} aria-hidden/></button>}/>;
+ const card=(row:ScheduleSummary)=>{
+  const at=upcomingAt(row);
+  const nextRun=at===null?row.timeText:createElement('relative-time',{
+   datetime:new Date(at).toISOString(),format:'relative',tense:'future',title:row.timeText,
+   'time-zone':'cron' in row.trigger?row.trigger.timeZone:displayTimeZone,
+  },row.timeText);
+  return <ScheduleCard key={row.scheduleId} name={row.title} cadence={row.cadence} statusLabel={row.status} nextRun={nextRun} timeLabel={row.timeLabel} className={row.enabled?'homer-schedule-card':'homer-schedule-card schedule-inactive'} note={row.note} detailLabel={'查看定时任务详情：'+row.title} onDetails={event=>onDetails(row.scheduleId,event.currentTarget)} endAction={<button type="button" className="schedule-talk" aria-label={'在对话中说：'+row.title} title={'在对话中说：'+row.title} onClick={event=>{event.stopPropagation();onReference({scheduleId:row.scheduleId,label:row.title});}}><MessageCircle size={16} aria-hidden/></button>}/>;
+ };
  const enabled=items.filter(row=>row.enabled),disabled=items.filter(row=>!row.enabled);
  const empty=!items.length&&!error&&!busy&&next===null;
  return <div className="homer-schedules">
-  <div className="schedule-list-body">
+  <div className="schedule-list-body" ref={listBody}>
    {error&&<p role="status" className="schedule-note">{error} <button type="button" disabled={busy} onClick={refresh}>重试</button></p>}
    {!items.length&&busy&&<p role="status" className="schedule-note">正在读取…</p>}
    {enabled.map(card)}{disabled.map(card)}
-   {next!==null&&<button type="button" className="schedule-more" disabled={busy} onClick={()=>listRead.current(next)}>加载更多</button>}
+   {next!==null&&<button type="button" className="schedule-more" disabled={busy} onClick={()=>listRead.current(true)}>加载更多</button>}
    {empty&&<section className="schedule-empty" aria-labelledby="schedule-empty-title">
     <span className="schedule-empty-icon"><Clock3 size={24} aria-hidden/></span>
     <h2 id="schedule-empty-title">还没有定时任务</h2>

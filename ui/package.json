@@ -15,6 +15,7 @@
     "@base-ui/react": "1.8.0",
     "@dnd-kit/abstract": "0.5.1",
     "@dnd-kit/react": "0.5.1",
+    "@github/relative-time-element": "5.5.0",
     "@lexical/history": "0.51.0",
     "@lexical/plain-text": "0.51.0",
     "@lexical/react": "0.51.0",

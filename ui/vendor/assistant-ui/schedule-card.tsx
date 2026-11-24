@@ -30,7 +30,7 @@ export function ScheduleCard({
 > & {
   name: string;
   cadence: string;
-  nextRun: string;
+  nextRun: ReactNode;
   statusLabel?: string;
   timeLabel: string;
   endAction?: ReactNode;

@@ -7,18 +7,22 @@ import {openBrowser} from './helpers/image-zoom-browser.mjs';
 const dest=resolve(process.env.HOMER_BROWSER_EVIDENCE),webDir=resolve(process.env.HOMER_COMPONENT_BUILD);mkdirSync(dest,{recursive:true});
 const artifact={id:'synthetic-file',title:'原文件.md',messageId:'synthetic-reply',assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64)};
 const fixture=await composerFixture({webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png'),resource:(_req,res)=>{res.writeHead(200,{'Content-Type':'text/markdown','X-Homer-Artifact-Hash':artifact.sha256});res.end('# 原文件\n\n原文件内容保持可预览。');}});
-const base={revision:1,trigger:{cron:'0 9 * * *',timeZone:'Asia/Shanghai'},enabled:true,nextFireAt:1794963600000,status:'已启用',timeLabel:'下次投递',timeText:'2026年11月18日 09:00',cadence:'每天 09:00 · Asia/Shanghai',note:''};
-const rows=[{...base,scheduleId:'schedule-00000000-0000-4000-8000-000000000001',title:'整理 AI 行业简报'},{...base,scheduleId:'schedule-00000000-0000-4000-8000-000000000002',title:'核对项目进展',trigger:{at:'2026-11-19T07:00:00Z'},cadence:'仅一次 · Asia/Shanghai',timeText:'2026年11月19日 15:00'},{...base,scheduleId:'schedule-00000000-0000-4000-8000-000000000003',title:'已取消的合成安排',enabled:false,status:'已取消后续投递',timeLabel:'后续投递',timeText:'不再投递',note:'已入箱消息不会被撤回。'}];
+const start=new Date('2026-11-18T00:00:00Z');
+const base={revision:1,trigger:{cron:'0 10 * * *',timeZone:'Asia/Shanghai'},enabled:true,nextFireAt:Date.parse('2026-11-18T02:00:00Z'),status:'已启用',timeLabel:'下次投递',timeText:'2026年11月18日 10:00',cadence:'每天 10:00 · Asia/Shanghai',note:''};
+const rows=[{...base,scheduleId:'schedule-00000000-0000-4000-8000-000000000001',title:'整理 AI 行业简报'},{...base,scheduleId:'schedule-00000000-0000-4000-8000-000000000002',title:'核对项目进展',trigger:{at:'2026-11-19T07:00:00Z'},nextFireAt:Date.parse('2026-11-19T07:00:00Z'),cadence:'仅一次 · Asia/Shanghai',timeText:'2026年11月19日 15:00'},{...base,scheduleId:'schedule-00000000-0000-4000-8000-000000000003',title:'已取消的合成安排',enabled:false,nextFireAt:null,status:'已取消后续投递',timeLabel:'后续投递',timeText:'不再投递',note:'已入箱消息不会被撤回。'}];
+const extraRows=Array.from({length:99},(_,i)=>({...base,scheduleId:'schedule-00000000-0000-4000-8000-'+String(i+10).padStart(12,'0'),title:'合成分页任务 '+i,nextFireAt:null,status:'规则异常',timeText:'无法计算'}));
 const text='每天汇总三条 AI 行业进展，说明来源和对项目的影响。\n\n'+('这段较长的合成任务内容用于核对详情滚动，不会创建真实日程。\n').repeat(160)+'完整任务内容尾部';
 const checks=[],errors=[];let chrome,failure,exit;
 try{
  chrome=await openBrowser(dest,{mockKeychain:true});
  for(const width of [1440,390,320]){
   const context=await chrome.browser.newContext({viewport:{width,height:960}}),page=await context.newPage();page.on('pageerror',error=>errors.push(String(error)));
-  let reads=0,detailReads=0,deny=false,paged=false,empty=false,currentRows=structuredClone(rows),detailText=text,holdDetail,onHeldDetail;
+  await page.clock.install({time:start});
+  let reads=0,listReads=0,detailReads=0,deny=false,paged=false,longList=false,staleCursor=false,empty=false,currentRows=structuredClone(rows),detailText=text,holdDetail,onHeldDetail,holdList,onHeldList;
   await page.route('**/api/schedules/read',async route=>{
    const input=route.request().postDataJSON();reads++;
    if(input.view==='detail')detailReads++;
+   else listReads++;
    if(deny)return route.fulfill({status:409,json:{error:'schedule_unavailable'}});
    const common={threadId:'composer-review',readEpoch:input.readEpoch,displayTimeZone:'Asia/Shanghai'};
    if(input.view==='detail'){
@@ -26,8 +30,12 @@ try{
     if(holdDetail){onHeldDetail();await holdDetail;}
     return route.fulfill({json:{...common,item}});
    }
-   const items=empty?[]:paged?(input.offset?[currentRows[1]]:[currentRows[0],currentRows[2]]):currentRows;
-   await route.fulfill({json:{...common,items,nextOffset:paged&&!input.offset?2:null}});
+   const extras=extraRows.slice(0,longList?99:19);
+   const ordered=empty?[]:paged?(currentRows[0].enabled?[currentRows[0],...extras,currentRows[1],currentRows[2]]:[...extras,currentRows[1],currentRows[0],currentRows[2]]):currentRows;
+   const offset=input.offset??0,end=offset+(input.limit??20);
+   const json=structuredClone({...common,items:ordered.slice(offset,end),nextOffset:staleCursor&&offset===100?offset:end<ordered.length?end:null});
+   if(holdList){const pending=holdList;holdList=undefined;onHeldList();await pending;}
+   await route.fulfill({json});
   });
   fixture.reset({features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2},artifacts:[artifact],messages:[{id:artifact.messageId,threadId:'composer-review',requestId:'synthetic-request',role:'assistant',text:'已按要求登记安排。后续如需调整，直接告诉我。',status:'completed',createdAt:1700000000000,media:[{...artifact,filename:artifact.title,kind:'file',state:'ready',mime:'text/markdown',size:45}]}]});
   await page.goto(fixture.url);const editor=page.locator('[contenteditable=true]');await editor.waitFor();await editor.fill('把这个改到每天上午十点。');
@@ -38,6 +46,16 @@ try{
   await page.getByRole('tab',{name:artifact.title,exact:true}).click();await page.locator('.canvas-markdown').waitFor();assert.ok((await page.locator('.canvas-markdown').innerText()).includes('原文件内容保持可预览'));await page.getByRole('tab',{name:'定时任务',exact:true}).click();await detailButton.waitFor();assert.equal(await page.locator('.messages [data-slot=schedule-card]').count(),0);assert.equal(await page.locator('[data-slot=schedule-card]:visible').count(),3);
   assert.deepEqual(await page.locator('.schedule-status').allTextContents(),['已启用','已启用','已取消后续投递']);
   assert.equal(await page.locator('.schedule-inactive').count(),1);
+  const firstRelative=page.locator('relative-time').first();
+  await firstRelative.waitFor();
+  assert.equal(await page.locator('relative-time').count(),2);
+  assert.equal(await firstRelative.getAttribute('format'),'relative');
+  assert.equal(await firstRelative.getAttribute('tense'),'future');
+  assert.equal(await firstRelative.getAttribute('time-zone'),'Asia/Shanghai');
+  assert.equal(await firstRelative.getAttribute('datetime'),new Date(rows[0].nextFireAt).toISOString());
+  assert.equal(await firstRelative.getAttribute('title'),rows[0].timeText);
+  assert.match(await firstRelative.evaluate(el=>el.shadowRoot.textContent),/2\s*小时后/);
+  await page.getByText('不再投递',{exact:true}).waitFor();
   assert.doesNotMatch(await page.locator('.homer-schedules').innerText(),/当前定时安排|已加载/);
   assert.equal(await page.locator('.homer-schedule-card').evaluateAll(cards=>cards.every(card=>{
    const box=card.getBoundingClientRect(),list=card.parentElement.getBoundingClientRect();
@@ -49,6 +67,8 @@ try{
   await dialog.getByRole('button',{name:'关闭',exact:true}).click({trial:true});
   assert.equal(await dialog.getByRole('button',{name:'关闭',exact:true}).evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),true,'close button must be above the narrow Preview');
   assert.equal(await dialog.locator('[data-slot=dialog-title]').innerText(),rows[0].title);assert.equal(await dialog.locator('[data-slot=spec-sheet]>div:last-child>div').last().locator('span').last().textContent(),text);
+  await dialog.getByText(rows[0].timeText,{exact:true}).waitFor();
+  await dialog.getByText('Asia/Shanghai',{exact:true}).waitFor();
   await page.keyboard.press('Tab');await page.waitForFunction(()=>document.querySelector('.homer-schedule-detail')?.contains(document.activeElement));await page.keyboard.press('Shift+Tab');await page.waitForFunction(()=>document.querySelector('.homer-schedule-detail')?.contains(document.activeElement));
   await page.screenshot({animations:'disabled',path:join(dest,'detail-'+width+'.png')});
   await dialog.locator('[data-slot=spec-sheet]').evaluate(node=>{node.scrollTop=node.scrollHeight;});assert.ok(await dialog.getByRole('button',{name:'关闭',exact:true}).isVisible());await page.screenshot({animations:'disabled',path:join(dest,'detail-bottom-'+width+'.png')});
@@ -64,7 +84,13 @@ try{
   await page.getByRole('button',{name:'发送消息',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.schedule-chip'));assert.equal(fixture.received.messages.length,1);assert.equal(fixture.received.messages[0].text,'用户选择的定时任务：'+JSON.stringify({scheduleId:rows[0].scheduleId,label:rows[0].title})+'\n\n把这个改到每天上午十点。');
   await page.getByRole('button',{name:'定时任务',exact:true}).click();await detailButton.waitFor();
   const readBefore=reads;currentRows[0].title='已刷新：整理 AI 行业简报';fixture.update({isRunning:false});await page.getByRole('button',{name:'查看定时任务详情：已刷新：整理 AI 行业简报',exact:true}).waitFor();assert.ok(reads>readBefore);
-  paged=true;fixture.update({});await page.getByRole('button',{name:'加载更多',exact:true}).click();
+  paged=true;fixture.update({});
+  const moreButton=page.getByRole('button',{name:'加载更多',exact:true});
+  await moreButton.evaluate(button=>{
+   if(button.disabled)throw Error('load more should start from the enabled control');
+   window.dispatchEvent(new Event('pageshow'));
+   button.click();
+  });
   await page.getByRole('button',{name:'查看定时任务详情：核对项目进展',exact:true}).click();
   await dialog.locator('[data-slot=spec-sheet]').waitFor();
   let releaseRefresh;holdDetail=new Promise(resolve=>{releaseRefresh=resolve;});
@@ -78,14 +104,81 @@ try{
   holdDetail=undefined;releaseRefresh();await dialog.getByText(detailText,{exact:true}).waitFor();
   assert.equal(detailReads,beforeRefresh+2,'pending refresh runs once after the old detail settles');
   await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
-  assert.equal(await page.getByRole('button',{name:'查看定时任务详情：已更新的第二页任务',exact:true}).count(),0);
+  const secondPageButton=page.getByRole('button',{name:'查看定时任务详情：已更新的第二页任务',exact:true});
+  await secondPageButton.waitFor();
+  assert.equal(await page.locator('.homer-schedule-card').count(),22);
+  assert.equal(await page.getByRole('button',{name:'加载更多',exact:true}).count(),0);
+  const deadline=await page.evaluate(()=>Date.now()+60_000);
+  currentRows[0].nextFireAt=deadline;
+  currentRows[1].nextFireAt=deadline+3*3_600_000;
+  fixture.update({});
+  await page.locator(`relative-time[datetime="${new Date(deadline).toISOString()}"]`).waitFor();
+  const beforeDue=listReads;
+  Object.assign(currentRows[0],{status:'到期待投递',timeLabel:'原定投递'});
+  await page.clock.fastForward(61_000);
+  await page.getByText('到期待投递',{exact:true}).waitFor();
+  assert.equal(listReads,beforeDue+1);
+  assert.equal(await page.locator('relative-time').count(),1);
+  assert.match(await firstRelative.evaluate(el=>el.shadowRoot.textContent),/3\s*小时后/);
+  assert.equal(await page.locator('.homer-schedule-card').count(),22);
+  const beforeWake=listReads;
+  const later=await page.evaluate(()=>Date.now()+3_600_000);
+  Object.assign(currentRows[0],{revision:2,enabled:false,nextFireAt:null,status:'已停用',timeLabel:'后续投递',timeText:'不再投递'});
+  await page.evaluate(()=>{
+   Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+   document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.clock.setSystemTime(later);
+  await page.evaluate(()=>{
+   delete document.visibilityState;
+   document.dispatchEvent(new Event('visibilitychange'));
+   window.dispatchEvent(new Event('pageshow'));
+  });
+  await page.getByText('已停用',{exact:true}).waitFor();
+  assert.equal(listReads,beforeWake+1);
+  await secondPageButton.waitFor();
+  assert.equal(await page.locator('.homer-schedule-card').count(),22);
+  assert.match(await firstRelative.evaluate(el=>el.shadowRoot.textContent),/2\s*小时后/);
+  if(width===1440){
+   const more=page.getByRole('button',{name:'加载更多',exact:true});
+   longList=true;fixture.update({});
+   for(let i=0;i<4;i++)await more.click();
+   await more.waitFor({state:'hidden'});
+   assert.equal(await page.locator('.homer-schedule-card').count(),102);
+   const beforeCursor=listReads;
+   staleCursor=true;fixture.update({});
+   const retry=page.getByRole('button',{name:'重试',exact:true});
+   await retry.waitFor();
+   assert.equal(listReads,beforeCursor+2);
+   assert.equal(await page.locator('.homer-schedule-card').count(),102);
+   staleCursor=false;longList=false;await retry.click();
+   await retry.waitFor({state:'hidden'});
+   await page.waitForFunction(()=>document.querySelectorAll('.homer-schedule-card').length===22);
+  }
+  const beforeNextRecovery=listReads;
+  let releaseList;
+  holdList=new Promise(resolve=>{releaseList=resolve;});
+  const listHeld=new Promise(resolve=>{onHeldList=resolve;});
+  await page.evaluate(()=>window.dispatchEvent(new Event('pageshow')));
+  await listHeld;
+  currentRows[1].title='再次回到前台后的任务';
+  await page.evaluate(()=>{
+   Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+   document.dispatchEvent(new Event('visibilitychange'));
+   delete document.visibilityState;
+   document.dispatchEvent(new Event('visibilitychange'));
+   window.dispatchEvent(new Event('pageshow'));
+  });
+  releaseList();
+  await page.getByRole('button',{name:'查看定时任务详情：再次回到前台后的任务',exact:true}).waitFor();
+  assert.equal(listReads,beforeNextRecovery+2);
   const refreshedButton=page.getByRole('button',{name:'查看定时任务详情：已刷新：整理 AI 行业简报',exact:true});
   await refreshedButton.click();await dialog.locator('[data-slot=spec-sheet]').waitFor();
   let releaseDetail;holdDetail=new Promise(resolve=>{releaseDetail=resolve;});
   const detailRequested=Promise.all([nextRead('detail'),new Promise(resolve=>{onHeldDetail=resolve;})]);
   fixture.update({});await detailRequested;
   fixture.unavailable();await dialog.waitFor({state:'hidden'});await refreshedButton.waitFor({state:'hidden'});
-  releaseDetail();holdDetail=undefined;fixture.update({});await refreshedButton.waitFor();
+  paged=false;releaseDetail();holdDetail=undefined;fixture.update({});await refreshedButton.waitFor();
   assert.equal(await dialog.count(),0,'a late detail cannot restore the dialog after reconnect');
   await page.getByRole('button',{name:'查看定时任务详情：已取消的合成安排',exact:true}).waitFor();
   deny=true;fixture.update({isRunning:false});await page.getByText('定时任务未能读取，当前内容尚未确认。',{exact:false}).waitFor();assert.equal(await page.getByText('还没有定时任务',{exact:true}).count(),0);
@@ -112,7 +205,7 @@ try{
   assert.equal(await editor.innerText(),composed);
   assert.equal(fixture.received.messages.length,1,'the example must only change the draft');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  checks.push({width,reads,detailReads,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,pagedDetailRefresh:true,disconnectClears:true,failureNotEmpty:true,exampleInComposer:true,existingDraftPreserved:true});await context.close();
+  checks.push({width,reads,detailReads,relativeTime:true,loadedPagesPreserved:true,dueRefresh:true,foregroundRecovery:true,staleCursorRejected:width===1440,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,pagedDetailRefresh:true,disconnectClears:true,failureNotEmpty:true,exampleInComposer:true,existingDraftPreserved:true});await context.close();
  }
  assert.deepEqual(errors,[]);
 }catch(error){failure=error;}finally{if(chrome)exit=await chrome.finish();await fixture.close();writeFileSync(join(dest,'browser-result.json'),JSON.stringify({checks,errors,exit,failure:failure?String(failure):null},null,2));}
