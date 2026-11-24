@@ -18,10 +18,10 @@ function packaged(bundle,resources){
 export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdating=()=>false}, {platform=process.platform,spawn=spawnProcess,checkBundle=packaged,timeoutMs=10000}={}){
  if(typeof instanceId!=='string'||!/^[a-f0-9]{64}$/.test(instanceId))throw Error('macos_power_instance_invalid');
  const unavailable=platform!=='darwin'?'macos_power_platform_unsupported':!checkBundle(bundle,resources)?'macos_power_bundle_unavailable':undefined;
- let client,sequence=0,closed=false,closing,closeFailed=false,started=false,capability,helperMayExist=false;
+ let client,sequence=0,closed=false,closing,closeFailed=false,started=false;
  let uninstallUnconfirmed=false;
  // Keep uncertain writes across native client loss. Only a helper close can settle them.
- let unconfirmedWrites=0;
+ let unconfirmedWrites=0,authorizationRequest;
  const pending=new Map();
  function launch(){
   if(client)return client;
@@ -45,6 +45,13 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
     try{result=JSON.parse(line);}catch{lost('macos_power_response_invalid');child.kill();return;}
     if(result?.kind==='wake'&&Object.keys(result).length===1){try{onWake?.();}catch{}continue;}
     if(!Number.isSafeInteger(result?.requestId)||typeof result.ok!=='boolean'){lost('macos_power_response_invalid');child.kill();return;}
+    if(authorizationRequest?.child===child&&authorizationRequest.id===result.requestId){
+     try{
+      if(result.ok)statusResult(result.result);
+      else if(failure(result.error).message!==result.error)throw Error('macos_power_response_invalid');
+      authorizationRequest=undefined;
+     }catch{/* A malformed receipt cannot settle authorization. */}
+    }
     const call=pending.get(result.requestId);if(!call||call.child!==child)continue;
     clearTimeout(call.timer);pending.delete(result.requestId);
     if(result.ok)call.resolve(result.result);else call.reject(failure(result.error));
@@ -55,14 +62,13 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
  function request(op,fields={},allowClosing=false){
   if(closed&&!allowClosing)return Promise.reject(Error('macos_power_closed'));
   if(unavailable)return Promise.reject(Error(unavailable));
-  // An unavailable capability cannot erase a possibly completed registration or event request.
-  if(!allowClosing&&op!=='status')helperMayExist=true;
   return new Promise((resolve,reject)=>{
    let child;
    try{child=launch();}catch{return reject(Error('macos_power_client_failed'));}
    const requestId=++sequence,timer=setTimeout(()=>{pending.delete(requestId);reject(Error('macos_power_request_timeout'));},timeoutMs);
    pending.set(requestId,{child,timer,resolve,reject});
    if(op==='schedule'||op==='cancel')unconfirmedWrites++;
+   if(op==='authorize')authorizationRequest={child,id:requestId};
    child.stdin.write(JSON.stringify({requestId,op,...fields})+'\n',error=>{
     if(error&&pending.has(requestId)){clearTimeout(timer);pending.delete(requestId);reject(Error('macos_power_client_failed'));}
    });
@@ -70,16 +76,17 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
  }
  function statusResult(value){
   if(!value||typeof value.supported!=='boolean'||!['required','authorized','denied','unavailable'].includes(value.authorization)||value.reason!==undefined&&failure(value.reason).message!==value.reason)throw Error('macos_power_response_invalid');
-  capability={supported:value.supported,authorization:value.authorization,...(value.reason?{reason:value.reason}:{})};
-  if(value.authorization==='authorized'||value.reason==='macos_power_approval_required')helperMayExist=true;
-  return {...capability};
+  return {supported:value.supported,authorization:value.authorization,...(value.reason?{reason:value.reason}:{})};
  }
  return {
   async status(){
    if(unavailable)return {supported:false,authorization:'unavailable',reason:unavailable};
    try{return statusResult(await request('status'));}catch(error){return statusResult({supported:false,authorization:'unavailable',reason:failure(error.message).message});}
   },
-  async authorize(){return statusResult(await request('authorize'));},
+  async authorize(){
+   if(authorizationRequest)throw Error('macos_power_authorization_unconfirmed');
+   return statusResult(await request('authorize'));
+  },
   async list(){
    const events=await request('list');
    if(!Array.isArray(events)||events.length>2||!events.every(validEvent)||new Set(events.map(event=>event.id)).size!==events.length)throw Error('macos_power_response_invalid');
@@ -103,8 +110,10 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
    closeFailed=false;
    closing=(async()=>{
     try{
-     if(!unavailable&&started){
-      const result=await request(isUpdating()?'close-for-update':'close',{},true);
+     const forUpdate=isUpdating();
+     if(!unavailable&&(forUpdate||started)){
+      const result=await request(forUpdate?'close-for-update':'close',{},true);
+      if(forUpdate&&authorizationRequest)throw Error('macos_power_cleanup_unconfirmed');
       if(result==='owner-empty'){
        if(unconfirmedWrites)throw Error('macos_power_cleanup_unconfirmed');
       }else if(result!==null)throw Error('macos_power_response_invalid');
@@ -118,9 +127,8 @@ export function createMacWakeAdapter({bundle,resources,instanceId,onWake,isUpdat
   async prepareUpdate(){
    if(!closing)throw Error('macos_power_close_required');
    await closing;
-   const helperAbsent=capability?.supported===true&&capability.authorization==='required'&&capability.reason==='macos_power_registration_required'||
-    capability?.supported===false&&capability.authorization==='unavailable'&&['macos_power_helper_missing','macos_power_developer_signature_required'].includes(capability.reason);
-   if(unavailable||!helperMayExist&&helperAbsent)return;
+   if(authorizationRequest)throw Error('macos_power_cleanup_unconfirmed');
+   if(unavailable)return;
    await new Promise((resolve,reject)=>{
     let child,buffer='',settled=false;
     const confirmOnly=uninstallUnconfirmed;

@@ -142,6 +142,25 @@ test('a write refused after close begins does not invalidate an owner-empty rece
  await closing;
 });
 
+test('neither a helper close nor an empty queue settles a lost authorization receipt',async()=>{
+ for(const result of [null,'owner-empty']){
+  const f=fixture({isUpdating:()=>true,reply:request=>request.op==='authorize'?false:result});
+  await assert.rejects(f.adapter.authorize(),/macos_power_request_timeout/);
+  await assert.rejects(f.adapter.close(),/macos_power_cleanup_unconfirmed/);
+  await assert.rejects(f.adapter.prepareUpdate(),/macos_power_cleanup_unconfirmed/);
+ }
+});
+
+test('the original late authorization receipt allows update cleanup without sending authorization again',async()=>{
+ const capability={supported:true,authorization:'authorized'};
+ const f=fixture({isUpdating:()=>true,reply:request=>request.op==='authorize'?false:null});
+ await assert.rejects(f.adapter.authorize(),/macos_power_request_timeout/);
+ await assert.rejects(f.adapter.authorize(),/macos_power_authorization_unconfirmed/);
+ f.children[0].stdout.write(JSON.stringify({requestId:f.requests[0].requestId,ok:true,result:capability})+'\n');
+ await f.adapter.close();
+ assert.deepEqual(f.requests.map(request=>request.op),['authorize','close-for-update']);
+});
+
 test('confirmed writes permit an owner-empty exit, while update shutdown uses its strict command',async()=>{
  const event={id,at:Math.ceil((Date.now()+10000)/1000)*1000};
  const f=fixture({reply:request=>request.op==='schedule'?event:request.op==='cancel'?null:'owner-empty'});
@@ -274,7 +293,7 @@ test('an explicit second close rechecks a failed macOS update cleanup',async()=>
  await f.adapter.close();
  assert.deepEqual(f.requests.map(request=>request.op),['status','close-for-update','close-for-update']);
 });
-test('prepareUpdate skips an unregistered helper using the latest native capability',async()=>{
+test('prepareUpdate checks current shared registration instead of trusting earlier capability',async()=>{
  for(const capability of [
   {supported:true,authorization:'required',reason:'macos_power_registration_required'},
   {supported:false,authorization:'unavailable',reason:'macos_power_helper_missing'},
@@ -284,7 +303,7 @@ test('prepareUpdate skips an unregistered helper using the latest native capabil
   assert.deepEqual(await f.adapter.status(),capability);
   await f.adapter.close();await f.adapter.prepareUpdate();
   assert.deepEqual(f.requests.map(request=>request.op),['status','close']);
-  assert.equal(f.calls.length,1);
+  assert.deepEqual(f.calls.at(-1).args,['--uninstall','--instance',instanceId]);
  }
 });
 test('prepareUpdate does not hide lost authorization after a helper was authorized',async()=>{
@@ -295,16 +314,13 @@ test('prepareUpdate does not hide lost authorization after a helper was authoriz
  await assert.rejects(f.adapter.prepareUpdate(),/macos_power_cleanup_not_authorized/);
  assert.deepEqual(f.calls.at(-1).args,['--uninstall','--instance',instanceId]);
 });
-test('prepareUpdate does not skip uncertain registration or scheduling after capability becomes unavailable',async()=>{
- for(const op of ['authorize','schedule']){
-  const f=updateFixture({receipt:{ok:false,error:'macos_power_cleanup_not_authorized'},code:1,reply:request=>request.op===op?false:
-   {supported:false,authorization:'unavailable',reason:'macos_power_developer_signature_required'}});
-  const mutation=op==='authorize'?f.adapter.authorize():f.adapter.schedule({id,at:Math.ceil((Date.now()+10000)/1000)*1000});
-  await assert.rejects(mutation,/macos_power_request_timeout/);
-  await f.adapter.status();await f.adapter.close();
-  await assert.rejects(f.adapter.prepareUpdate(),/macos_power_cleanup_not_authorized/);
-  assert.deepEqual(f.calls.at(-1).args,['--uninstall','--instance',instanceId]);
- }
+test('prepareUpdate does not skip reconciliation of uncertain scheduling after capability becomes unavailable',async()=>{
+ const f=updateFixture({receipt:{ok:false,error:'macos_power_cleanup_not_authorized'},code:1,reply:request=>request.op==='schedule'?false:
+  {supported:false,authorization:'unavailable',reason:'macos_power_developer_signature_required'}});
+ await assert.rejects(f.adapter.schedule({id,at:Math.ceil((Date.now()+10000)/1000)*1000}),/macos_power_request_timeout/);
+ await f.adapter.status();await f.adapter.close();
+ await assert.rejects(f.adapter.prepareUpdate(),/macos_power_cleanup_not_authorized/);
+ assert.deepEqual(f.calls.at(-1).args,['--uninstall','--instance',instanceId]);
 });
 test('prepareUpdate still checks native uninstall when unavailable status does not prove absence',async()=>{
  for(const capability of [

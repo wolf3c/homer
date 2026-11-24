@@ -16,7 +16,7 @@ export type PowerFacts={runtimeAvailable:boolean;executing:boolean;displayRequir
 export type DesktopPowerState={supported:boolean;preferences:PowerPreferences;runtimeAvailable:boolean;protection:'none'|'system'|'display';protectionError?:string;channels:string[];wake:{supported:boolean;authorization:WakeCapability['authorization'];status:'idle'|'unavailable'|'authorization-required'|'scheduled'|'error';nextAt:number|null;error?:string}};
 type Clock={now:()=>number;setTimeout:(fn:()=>void,delay:number)=>unknown;clearTimeout:(id:unknown)=>void};
 type Blocker={start:(type:'prevent-app-suspension'|'prevent-display-sleep')=>number;stop:(id:number)=>void};
-type Options={blocker:Blocker;wake:WakeAdapter;eventId:()=>string;check:(afterSleep:boolean)=>Promise<void>;preferences?:PowerPreferences;onChanged?:()=>void;clock?:Clock;leadMs?:number};
+type Options={blocker:Blocker;wake:WakeAdapter;eventId:()=>string;check:(afterSleep:boolean)=>Promise<void>;preferences?:PowerPreferences;onChanged?:()=>void;clock?:Clock;leadMs?:number;reconcileOnClose?:boolean};
 const sameEvent=(a:WakeEvent,b:WakeEvent)=>a.id===b.id&&a.at===b.at;
 const validEvent=(event:WakeEvent)=>!!event&&/^[a-f0-9]{32}$/.test(event.id)&&Number.isSafeInteger(event.at)&&event.at>0;
 
@@ -60,7 +60,7 @@ export class DesktopPowerCoordinator{
   return {supported:true,preferences:{...this.preferences},runtimeAvailable:this.facts.runtimeAvailable&&!this.closed,protection,...(this.protectionError?{protectionError:this.protectionError}:{}),channels:[...this.facts.channels],wake:{supported:this.capability.supported,authorization:this.capability.authorization,status:this.wakeError?'error':needsWake&&!this.capability.supported?'unavailable':needsWake&&this.capability.authorization!=='authorized'?'authorization-required':this.nextAt!==null?'scheduled':'idle',nextAt:this.nextAt,...(this.wakeError?{error:this.wakeError}:{})}};
  }
  updateFacts(facts:PowerFacts){
-  if(this.closed)return this.sync();
+  if(this.closed)return;
   if(!facts||typeof facts.runtimeAvailable!=='boolean'||typeof facts.executing!=='boolean'||typeof facts.displayRequired!=='boolean'||
    facts.nextScheduledAt!==null&&(!Number.isSafeInteger(facts.nextScheduledAt)||facts.nextScheduledAt<=0)||
    !Array.isArray(facts.channels)||facts.channels.length>16||facts.channels.some(channel=>typeof channel!=='string'||!/^[a-z][a-z0-9_-]{0,39}$/.test(channel)))throw Error('power_facts_invalid');
@@ -71,6 +71,7 @@ export class DesktopPowerCoordinator{
   this.protect();return this.sync();
  }
  setPreferences(preferences:PowerPreferences){
+  if(this.closed)return;
   const next=validatePowerPreferences(preferences),intervalChanged=next.pollIntervalMinutes!==this.preferences.pollIntervalMinutes;
   if(next.pollMessages!==this.preferences.pollMessages||next.wakeScheduled!==this.preferences.wakeScheduled)this.readCapability=true;
   this.preferences=next;if(intervalChanged)this.pollAt=null;
@@ -79,25 +80,28 @@ export class DesktopPowerCoordinator{
   if(!next.wakeScheduled)this.prepareUntil=null;
   this.protect();return this.sync();
  }
- async refresh(){this.protect();this.readCapability=true;await this.sync();}
+ async refresh(){if(this.closed)return;this.protect();this.readCapability=true;await this.sync();}
  authorize(){
   return this.authorization??=(async()=>{
    await this.sync();if(this.closed)return;
    try{this.capability=await this.options.wake.authorize();this.wakeError=undefined;}
    catch{this.wakeError='wake_authorization_unconfirmed';}
-   this.checkedTarget=undefined;await this.sync();
+   if(!this.closed){this.checkedTarget=undefined;await this.sync();}
   })().finally(()=>{this.authorization=undefined;});
  }
  async resume(afterSleep=true){
   if(this.closed||!this.facts.runtimeAvailable)return;
   const due=this.facts.nextScheduledAt,now=this.clock.now();
   if(this.preferences.wakeScheduled&&due!==null&&due>now&&due-now<=this.leadMs)this.prepareUntil=due;
-  await this.check(afterSleep);this.readCapability=true;await this.sync();
+  await this.check(afterSleep);
+  if(this.closed)return;
+  this.readCapability=true;await this.sync();
  }
+ private get nativeClosing(){return this.closed&&this.options.reconcileOnClose===false;}
  sync():Promise<void>{
   this.dirty=true;
   if(!this.work){
-   this.work=(async()=>{while(this.dirty){this.dirty=false;await this.reconcile();}})().finally(()=>{this.work=undefined;this.arm();this.changed();});
+   this.work=(async()=>{while(this.dirty&&!this.nativeClosing){this.dirty=false;await this.reconcile();}})().finally(()=>{this.work=undefined;this.arm();this.changed();});
   }
   return this.work;
  }
@@ -108,7 +112,9 @@ export class DesktopPowerCoordinator{
    if(firstClose){
     if(this.timer!==undefined){this.clock.clearTimeout(this.timer);this.timer=undefined;}
     this.cancelCheck?.();await this.checking;
-    this.readCapability=true;await this.sync();
+    await this.authorization;
+    if(this.options.reconcileOnClose===false)await this.work;
+    else{this.readCapability=true;await this.sync();}
    }
    try{
     if(await this.options.wake.close()===true){this.wakeError=undefined;this.nextAt=null;}
@@ -161,9 +167,11 @@ export class DesktopPowerCoordinator{
   return events;
  }
  private async reconcileEvents(){
+  if(this.nativeClosing)return [];
   const events=await this.readEvents(),active:WakeEvent[]=[];
   for(const id of this.eventSources.keys())if(!events.some(event=>event.id===id))this.eventSources.delete(id);
   for(const event of events){
+   if(this.nativeClosing)return active;
    if(event.at===this.target())this.rememberEvent(event);
    const source=this.eventSources.get(event.id);
    if(event.at>this.clock.now()&&source&&(source.poll||source.scheduled)){active.push(event);continue;}
@@ -179,6 +187,7 @@ export class DesktopPowerCoordinator{
    if(!this.readCapability&&this.checkedTarget===target&&(!this.retryAt||this.retryAt>this.clock.now()))return;
    if(this.checkedTarget===target&&this.retryAt)this.readCapability=true;
    if(this.readCapability||needsNative&&this.capability.authorization==='unavailable'){this.readCapability=false;this.capability=await this.options.wake.status();}
+   if(this.nativeClosing)return;
    if(!this.capability.supported||this.capability.authorization!=='authorized'){
     if(this.nextAt!==null||target===null&&this.wakeError)this.wakeError=target===null?'wake_cleanup_unconfirmed':'wake_state_unconfirmed';
     this.checkedTarget=target;this.retryAt=target!==null||this.wakeError==='wake_cleanup_unconfirmed'?this.clock.now()+(this.capability.authorization==='unavailable'?30_000:60_000):0;
@@ -189,12 +198,17 @@ export class DesktopPowerCoordinator{
     // Keep one confirmed backup while retiring residue from an earlier replacement.
     if(events.length>1){
      const backup=events.find(event=>event.at===this.nextAt&&event.at>this.clock.now())??events.find(event=>event.at>this.clock.now())??events[0]!;
-     for(const event of events)if(!sameEvent(event,backup))await this.options.wake.cancel(event);
+     for(const event of events)if(!sameEvent(event,backup)){
+      if(this.nativeClosing)return;
+      await this.options.wake.cancel(event);
+     }
      events=await this.reconcileEvents();
     }
+    if(this.closed)return;
     const candidate={id:this.options.eventId(),at:target};if(!validEvent(candidate))throw Error('wake_event_invalid');
     this.rememberEvent(candidate);
     try{await this.options.wake.schedule(candidate);}catch{/* Read back after an unknown result before attempting another create. */}
+    if(this.nativeClosing)return;
     events=await this.reconcileEvents();chosen=events.find(event=>sameEvent(event,candidate));
     if(!chosen){
      this.nextAt=events.filter(event=>event.at>this.clock.now()).sort((a,b)=>a.at-b.at)[0]?.at??null;
@@ -205,7 +219,10 @@ export class DesktopPowerCoordinator{
    if(this.target()!==target){this.dirty=true;return;}
    if(chosen)this.rememberEvent(chosen);
    let clean=true;
-   for(const event of events)if(!chosen||!sameEvent(event,chosen))try{await this.options.wake.cancel(event);}catch{clean=false;}
+   for(const event of events)if(!chosen||!sameEvent(event,chosen)){
+    if(this.nativeClosing)return;
+    try{await this.options.wake.cancel(event);}catch{clean=false;}
+   }
    this.nextAt=chosen?.at??null;this.checkedTarget=target;
    this.retryAt=clean&&target===null?0:this.clock.now()+(clean?60_000:30_000);
    this.wakeError=clean?undefined:'wake_cleanup_unconfirmed';

@@ -95,7 +95,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  const wakeEvents=[],powerMonitor=new EventEmitter(),powerLocks=new Map();let powerLockId=0;
  electron.powerMonitor=powerMonitor;
  electron.powerSaveBlocker={start:type=>{nativeCalls.push(['power-start',type]);const id=++powerLockId;powerLocks.set(id,type);return id;},stop:id=>{nativeCalls.push(['power-stop',id]);powerLocks.delete(id);}};
- const wakeAdapter={status:async()=>({supported:true,authorization:native.powerAuthorization??'authorized'}),authorize:async()=>{nativeCalls.push(['power-authorize']);return {supported:true,authorization:native.powerAuthorization??'authorized'};},list:async()=>wakeEvents.map(event=>({...event})),schedule:async event=>{nativeCalls.push(['power-schedule',event.at]);wakeEvents.push(event);return event;},cancel:async event=>{nativeCalls.push(['power-cancel',event.at]);const index=wakeEvents.findIndex(item=>item.id===event.id);if(index>=0)wakeEvents.splice(index,1);},close:async()=>{nativeCalls.push(['power-close']);}};
+ const wakeAdapter={status:async()=>({supported:true,authorization:native.powerAuthorization??'authorized'}),authorize:async()=>{nativeCalls.push(['power-authorize']);return {supported:true,authorization:native.powerAuthorization??'authorized'};},list:async()=>wakeEvents.map(event=>({...event})),schedule:async event=>{nativeCalls.push(['power-schedule',event.at]);wakeEvents.push(event);return event;},cancel:async event=>{nativeCalls.push(['power-cancel',event.at]);const index=wakeEvents.findIndex(item=>item.id===event.id);if(index>=0)wakeEvents.splice(index,1);},close:async()=>{nativeCalls.push(['power-close']);if(platform==='darwin'){wakeEvents.length=0;return true;}}};
  wakeAdapter.prepareUpdate=async()=>{nativeCalls.push(['power-update-cleanup']);await native.powerUpdatePending;if(native.powerUpdateError)throw Error('private_power_failure');};
  if(native.powerStatus)wakeAdapter.status=async()=>native.powerStatus();
  if(native.powerClose)wakeAdapter.close=async()=>{nativeCalls.push(['power-close']);return native.powerClose();};
@@ -672,6 +672,16 @@ test('unsaved edits and timeout never stop or install automatically',async()=>{
  const f=await updateFixture();f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();f.timeout();await f.tick();
  f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
 });
+test('Mac stop timeout keeps the original request and requires new confirmation after a late proof',async()=>{
+ const f=await updateFixture();f.updater.emit('update-downloaded',{},'', '0.2.0');await updateCall(f,'restart');await f.tick();f.timeout();await f.tick();
+ await updateCall(f,'restart');f.app.quit();await f.tick();
+ assert.deepEqual(f.sent.map(JSON.parse),[{kind:'update-stop'}]);
+ f.event({kind:'update-stopped'});f.child.emit('close',0,null);await f.tick();
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='install-update').length,0);
+ await updateCall(f,'restart');await f.tick();
+ assert.deepEqual(f.sent.map(JSON.parse),[{kind:'update-stop'}]);
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='install-update').length,1);
+});
 test('updater failures never expose native errors or report preparation success',async()=>{
  const f=await updateFixture({checkError:true});assert.equal((await updateCall(f,'state')).status,'error');assert.equal(JSON.stringify(await updateCall(f,'state')).includes('private'),false);
  const malformed=await updateFixture();malformed.updater.emit('update-downloaded',{},'', '<unsafe>');await updateCall(malformed,'restart');await malformed.tick();assert.equal(malformed.sent.length,0);
@@ -979,6 +989,19 @@ test('malformed saved power identity cannot block the normal desktop host',async
  assert.equal(f.spawnCount(),1);
  const state=await f.handlers.get('homer:power:state')(permissionEvent(f));assert.equal(state.wake.error,'power_preferences_unconfirmed');
  f.child.emit('close',1,null);await f.tick();
+});
+
+test('power preferences cannot turn a Mac recovery hash into a trusted update identity',async()=>{
+ const preferences={keepAwake:false,pollMessages:true,wakeScheduled:true,pollIntervalMinutes:15};
+ const recoveryId=createHash('sha256').update('homer-power-recovery:/synthetic/user/Library/Application Support/Homer Desktop').digest('hex');
+ for(const instanceId of ['invalid',recoveryId]){
+  const powerConfig={instanceId,preferences};
+  const f=await updateFixture({powerConfig});
+  await assert.rejects(()=>f.handlers.get('homer:power:update')(accountEvent(f),{keepAwake:true}),/power_preferences_unconfirmed/);
+  assert.equal(f.options.powerConfig,powerConfig);
+  f.updater.emit('update-downloaded',{},'','0.2.0');await updateCall(f,'restart');await f.tick();
+  assert.deepEqual(f.sent,[]);
+ }
 });
 test('the first actual wake demand offers authorization once and remembers postponement',async()=>{
  const response=options=>options.message==='允许 Homer 请求系统唤醒？'?0:1;

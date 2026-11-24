@@ -129,6 +129,15 @@ private final class MemoryStore: WakeStore {
         ]
         let empty = try IOKitWakeStore(copyEvents: { nil }).confirmEmpty(owner)
         precondition(empty == "owner-empty")
+        rejects("macos_power_query_failed") { _ = try IOKitWakeStore(copyEvents: { nil }).confirmEmpty(owner, forUpdate: true) }
+        let verifiedEmpty = try IOKitWakeStore(copyEvents: { [] as CFArray }).confirmEmpty(owner, forUpdate: true)
+        precondition(verifiedEmpty == "owner-empty")
+        rejects("macos_power_cleanup_unconfirmed") {
+            _ = try IOKitWakeStore(copyEvents: { [entries[4]] as CFArray }).confirmEmpty(nil, forUpdate: true)
+        }
+        rejects("macos_power_cleanup_unconfirmed") {
+            _ = try IOKitWakeStore(copyEvents: { [["eventtype": "wake", "scheduledby": name + ".malformed"]] as CFArray }).confirmEmpty(owner, forUpdate: true)
+        }
         let foreignOnly = try IOKitWakeStore(copyEvents: { entries as CFArray }).confirmEmpty(another)
         precondition(foreignOnly == "owner-empty")
         for entry in [entries[0], entries[4]] {

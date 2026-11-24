@@ -33,8 +33,9 @@ private final class PowerSession: NSObject, PowerServiceProtocol {
                     _ = try self.server.registry.list(owner, lease: self.lease)
                     try self.server.registry.release(owner, lease: self.lease); self.owner = nil
                 case "prepare-uninstall":
-                    guard try !self.server.registry.hasOtherOwner(owner, lease: self.lease), try !self.server.store.ownedEvents().contains(where: { $0.0 != owner }) else { throw PowerError("macos_power_other_instances_active") }
+                    guard try !self.server.registry.hasOtherOwner(owner, lease: self.lease) else { throw PowerError("macos_power_other_instances_active") }
                     try self.server.registry.release(owner, lease: self.lease); self.owner = nil
+                    _ = try self.server.store.confirmEmpty(nil, forUpdate: true)
                     self.server.uninstallLease = self.lease; self.server.uninstallUntil = Date().addingTimeInterval(30)
                 default: throw PowerError("macos_power_request_invalid")
                 }

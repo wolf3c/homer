@@ -85,13 +85,17 @@ private final class PowerClient {
         case "schedule", "cancel": return try request(command.event!.value.merging(["op": command.op]) { _, new in new })
         case "close", "close-for-update":
             // Reconnect to reconcile after a lost connection; never unregister a shared helper here.
+            let forUpdate = command.op == "close-for-update"
+            let owner = WakeOwner(uid: geteuid(), instance: instance)
             defer { connection?.invalidate(); connection = nil }
             let current: NSXPCConnection
             do { current = try connect() }
-            catch where powerError(error) == "macos_power_not_authorized" || (command.op == "close" && powerError(error) == "macos_power_connection_failed") {
-                return try IOKitWakeStore().confirmEmpty(WakeOwner(uid: geteuid(), instance: instance))
+            catch where powerError(error) == "macos_power_not_authorized" || (!forUpdate && powerError(error) == "macos_power_connection_failed") {
+                return try IOKitWakeStore().confirmEmpty(owner, forUpdate: forUpdate)
             }
-            return try call(["op": "close"], on: current)
+            let receipt = try call(["op": "close"], on: current)
+            if forUpdate { _ = try IOKitWakeStore().confirmEmpty(owner, forUpdate: true) }
+            return receipt
         default: throw PowerError("macos_power_request_invalid")
         }
     }
@@ -99,12 +103,16 @@ private final class PowerClient {
         // An update/uninstaller must finish this before replacing or removing the signed app bundle.
         if confirmOnly {
             guard service.status == .notRegistered else { throw PowerError("macos_power_unregister_unconfirmed") }
-            guard try IOKitWakeStore().ownedEvents().isEmpty else { throw PowerError("macos_power_cleanup_not_authorized") }
+            _ = try IOKitWakeStore().confirmEmpty(nil, forUpdate: true)
             return
         }
-        if service.status == .enabled { _ = try request(["op": "prepare-uninstall"]) }
-        else if try !IOKitWakeStore().ownedEvents().isEmpty { throw PowerError("macos_power_cleanup_not_authorized") }
-        if service.status == .notRegistered || service.status == .notFound { return }
+        let status = service.status
+        if status == .enabled { _ = try request(["op": "prepare-uninstall"]) }
+        else {
+            _ = try IOKitWakeStore().confirmEmpty(nil, forUpdate: true)
+            guard service.status == status else { throw PowerError("macos_power_cleanup_unconfirmed") }
+        }
+        if status == .notRegistered || status == .notFound { return }
         do { try service.unregister() }
         catch { if let connection { _ = try? call(["op": "abort-uninstall"], on: connection) }; throw PowerError("macos_power_unregister_failed") }
         connection?.invalidate(); connection = nil
@@ -153,7 +161,7 @@ private final class PowerClient {
                         case .failure(let error):
                             if command.op == "status" { result = ["supported": false, "authorization": "unavailable", "reason": powerError(error)] }
                             else if command.op == "close" || command.op == "close-for-update" {
-                                result = try IOKitWakeStore().confirmEmpty(WakeOwner(uid: geteuid(), instance: expected[1]))
+                                result = try IOKitWakeStore().confirmEmpty(WakeOwner(uid: geteuid(), instance: expected[1]), forUpdate: command.op == "close-for-update")
                             }
                             else { throw error }
                         }

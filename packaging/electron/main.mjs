@@ -64,27 +64,30 @@ function recheckRuntimePower(afterSleep){
 }
 function registerDesktopPower(profile){
  powerProfile=profile;
+ const recoveryId=createHash('sha256').update('homer-power-recovery:'+profile).digest('hex');
  try{
   powerConfiguration=readDesktopPowerConfig(profile);
   if(powerConfiguration===undefined){powerConfiguration={instanceId:randomUUID().replaceAll('-','')+randomUUID().replaceAll('-',''),preferences:{...POWER_DEFAULTS}};saveDesktopPowerConfig(profile,powerConfiguration);}
   if(!powerConfiguration||typeof powerConfiguration.instanceId!=='string'||!/^[a-f0-9]{64}$/.test(powerConfiguration.instanceId)||Object.keys(powerConfiguration).some(key=>!['instanceId','preferences','authorizationAsked'].includes(key))||powerConfiguration.authorizationAsked!==undefined&&typeof powerConfiguration.authorizationAsked!=='boolean')throw Error('power_preferences_invalid');
+  if(process.platform==='darwin'&&powerConfiguration.instanceId===recoveryId)throw Error('power_preferences_unconfirmed');
   powerConfiguration={...powerConfiguration,preferences:validatePowerPreferences(powerConfiguration.preferences)};
  }catch{
   powerPreferenceError=true;
-  powerConfiguration={instanceId:createHash('sha256').update('homer-power-recovery:'+profile).digest('hex'),preferences:{...POWER_DEFAULTS,pollMessages:false,wakeScheduled:false}};
+  powerConfiguration={instanceId:recoveryId,preferences:{...POWER_DEFAULTS,pollMessages:false,wakeScheduled:false}};
  }
  const options={bundle,resources,profile,instanceId:powerConfiguration.instanceId,onWake:()=>{void power?.resume(process.platform==='darwin');}};
- try{powerWakeAdapter=process.platform==='darwin'?createMacWakeAdapter({...options,isUpdating:()=>updateStopping}):createWindowsWakeAdapter(options);}
+ try{powerWakeAdapter=process.platform==='darwin'?createMacWakeAdapter({...options,isUpdating:()=>updateStopping||updateStopUnconfirmed}):createWindowsWakeAdapter(options);}
  catch{
   const unavailable=async()=>({supported:false,authorization:'unavailable'}),reject=async()=>{throw Error('wake_adapter_unavailable');};
   powerWakeAdapter={status:unavailable,authorize:unavailable,list:reject,schedule:reject,cancel:reject,close:async()=>{},prepareUpdate:reject};
  }
- power=new DesktopPowerCoordinator({blocker:powerSaveBlocker,wake:powerWakeAdapter,preferences:powerConfiguration.preferences,eventId:()=>randomUUID().replaceAll('-',''),check:recheckRuntimePower,onChanged:powerChanged});
+ power=new DesktopPowerCoordinator({blocker:powerSaveBlocker,wake:powerWakeAdapter,preferences:powerConfiguration.preferences,eventId:()=>randomUUID().replaceAll('-',''),check:recheckRuntimePower,onChanged:powerChanged,reconcileOnClose:process.platform!=='darwin'});
  powerMonitor.on('resume',()=>{void power.resume();});
  for(const event of ['on-ac','on-battery','unlock-screen'])powerMonitor.on(event,()=>{void power.refresh();});
  for(const action of ['state','update','authorize'])ipcMain.handle('homer:power:'+action,async(event,...args)=>{
   const frame=event.senderFrame,navigation=permissionNavigation;
-  if(!permissionCaller(event,frame)||args.length!==(action==='update'?1:0)||quitSent)throw Error('desktop_power_forbidden');
+  if(!permissionCaller(event,frame)||args.length!==(action==='update'?1:0)||quitSent||closed&&action!=='state')throw Error('desktop_power_forbidden');
+  if(action!=='state'&&process.platform==='darwin'&&powerConfiguration.instanceId===recoveryId)throw Error('power_preferences_unconfirmed');
   if(action==='update'){
    const patch=args[0];
    if(!patch||typeof patch!=='object'||Array.isArray(patch)||!Object.keys(patch).length)throw Error('power_preferences_invalid');
@@ -101,6 +104,7 @@ function registerDesktopPower(profile){
 function closeDesktopPower(){return power?.close()??Promise.resolve(true);}
 async function preparePowerUpdate(){
  if(process.platform!=='darwin'||powerUpdateReady)return;
+ if(powerPreferenceError)throw Error('power_preferences_unconfirmed');
  const wasAuthorized=power?.state().wake.authorization==='authorized';await powerWakeAdapter?.prepareUpdate();
  if(wasAuthorized){const updated={...powerConfiguration,authorizationAsked:false};saveDesktopPowerConfig(powerProfile,updated);powerConfiguration=updated;}
  powerUpdateReady=true;
@@ -581,7 +585,7 @@ let windowsUpdater,windowsCandidate,windowsPublishers,windowsInstall;
 function requestQuit(){if(windowsRecovery())void recoverWindowsExit();else app.quit();}
 const nativeUpdater=()=>windowsUpdater??autoUpdater;
 const windowsRecovery=()=>!!windowsUpdater&&(closed||updateStopping)&&updateState?.status==='error';
-let updateState=null,updateStopping=false,updateAcknowledged=false,updateManual=false;
+let updateState=null,updateStopping=false,updateAcknowledged=false,updateManual=false,updateStopUnconfirmed=false;
 let macUpdateMayBeStaged=false;
 let updateCheckTimer,updateCheckDue,updateSuspended=false;
 const UPDATE_CHECK_JITTER=5*60_000;
@@ -753,6 +757,7 @@ function updateFailed(error){
  clearTimeout(stopTimer);quitPending=false;quitAction=undefined;switchSource=undefined;updateStopping=false;
  updateState={...updateState,error};updateChanged();
  if(error==='update_power_cleanup_unconfirmed')void showError(closed?'后台服务已安全停止，但系统唤醒清理未确认。请检查系统唤醒服务后重试更新。':'系统唤醒服务暂不可用，荷马仍在运行。请检查系统唤醒服务后重试更新。');
+ else if(error==='update_stop_unconfirmed'&&updateStopUnconfirmed)void showError('后台停止尚未确认。请保留荷马窗口，等待原请求结果。');
  else if(error&&updateState.noticeHidden)void showError(error==='update_busy'?'当前工作尚未结束，请稍后重试。':closed?'服务已停止，更新尚未确认。请重新打开荷马后核对。':'重启更新未能确认，请保存未提交编辑并稍后重试。');
 }
 function registerDesktopPermissions(){
@@ -1002,6 +1007,7 @@ app.on('before-quit',event=>{
  event.preventDefault();
  if(windowsRecovery())return;
  if(quitPending)return;
+ if(updateStopUnconfirmed&&!updateConfirmed()){updateFailed('update_stop_unconfirmed');return;}
  // ShipIt can have a staged request before Electron reports ready.
  if(process.platform==='darwin'&&updateState&&updateState.status!=='ready'&&(['checking','downloading'].includes(updateState.status)||macUpdateMayBeStaged)){
   quitPending=true;refreshMenu();
@@ -1027,7 +1033,7 @@ app.on('before-quit',event=>{
     if(!stopped&&process.platform==='darwin'){
      const wake=await powerWakeAdapter?.status();
      if(window!==currentWindow||contents?.isDestroyed()||navigation!==permissionNavigation){updateFailed(undefined);return;}
-     if(!wake?.supported||!['authorized','required'].includes(wake.authorization)){updateFailed('update_power_cleanup_unconfirmed');return;}
+     if(powerPreferenceError||!wake?.supported||!['authorized','required'].includes(wake.authorization)){updateFailed('update_power_cleanup_unconfirmed');return;}
     }
     if(contents){
      const mayLeave=await contents.executeJavaScript("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))");
@@ -1046,8 +1052,13 @@ app.on('before-quit',event=>{
     updateStopping=true;
     if(stopped){finishQuit();return;}
     updateAcknowledged=false;
-    child.stdin.write('{"kind":"update-stop"}\n',error=>{if(error&&updateStopping)updateFailed('update_stop_unconfirmed');});
-    stopTimer=setTimeout(()=>{if(updateStopping)updateFailed(closed?'update_service_stopped':'update_stop_unconfirmed');},20000);
+    const stopUnconfirmed=()=>{
+     if(!updateStopping)return;
+     if(process.platform==='darwin')updateStopUnconfirmed=true;
+     updateFailed(closed?'update_service_stopped':'update_stop_unconfirmed');
+    };
+    stopTimer=setTimeout(stopUnconfirmed,20000);
+    child.stdin.write('{"kind":"update-stop"}\n',error=>{if(error)stopUnconfirmed();});
    }catch{updateFailed('update_stop_unconfirmed');}
   })();
   return;
@@ -1228,8 +1239,8 @@ try{
     }
     else if(value.kind==='native-account-changed'||value.kind==='native-account-disconnected'||value.kind==='member-models-changed')accountChanged(value.kind);
     else if(value.kind==='account_usage_dirty'){walletRevision++;walletDirty=true;accountChanged();}
-    else if(value.kind==='update-busy'&&updateStopping)updateFailed('update_busy');
-    else if(value.kind==='update-stopped'&&updateStopping){updateAcknowledged=true;finishQuit();}
+    else if(value.kind==='update-busy'&&(updateStopping||updateStopUnconfirmed)){updateStopUnconfirmed=false;updateFailed('update_busy');}
+    else if(value.kind==='update-stopped'&&(updateStopping||updateStopUnconfirmed)){updateAcknowledged=true;if(updateStopping)finishQuit();}
     else if(value.kind==='stopped'){acknowledged=true;finishQuit();}
     else if(value.kind==='startup_refused'&&!origin)startupRefused=true;
     else if(value.kind==='url'&&!origin){
@@ -1259,6 +1270,7 @@ try{
    void closeDesktopPower();
    cancelDesktopCapture();
    if(windowsUpdater&&updateStopping&&status===0&&!signal&&!updateAcknowledged)return;
+   if(updateStopUnconfirmed&&updateConfirmed())return;
    if(updateStopping?updateConfirmed():confirmed())finishQuit();
    else if(updateState?.status==='ready'){updateFailed('update_service_stopped');}
    else{clearTimeout(stopTimer);quitPending=false;quitAction=undefined;switchSource=undefined;void showError('停止尚未确认。请保留数据并核对后台 owner；不会自动重发请求。');}

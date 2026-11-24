@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DesktopPowerCoordinator,POWER_DEFAULTS,validatePowerPreferences,type PowerFacts,type WakeAdapter,type WakeEvent} from '../src/desktop-power.js';
 
-function fixture(options:{leadMs?:number;wake?:WakeAdapter}={}){
+function fixture(options:{leadMs?:number;wake?:WakeAdapter;reconcileOnClose?:boolean}={}){
  let now=Date.UTC(2026,10,13,0),sequence=0;
  const timers=new Map<number,{at:number;fn:()=>void}>(),events:WakeEvent[]=[],calls:string[]=[],locks=new Map<number,string>();
  const control={authorization:'authorized' as 'authorized'|'required'|'denied',statusUnavailable:false,statusCalls:0,listCalls:0,createCalls:0,authorizeCalls:0,failCreate:false,failCreateAt:undefined as number|undefined,loseReceipt:false,failStop:false,failCancel:false,maxEvents:128,hangCheck:false,blockCheck:undefined as Promise<void>|undefined,blockCreate:undefined as Promise<void>|undefined,checks:0,recoveryKinds:[] as boolean[]};
@@ -23,6 +23,50 @@ test('unchanged status refreshes do not emit another settings notification',asyn
  const power=new DesktopPowerCoordinator({blocker:{start:()=>1,stop:()=>{}},wake:{status:async()=>({supported:false,authorization:'unavailable'}),authorize:async()=>({supported:false,authorization:'unavailable'}),list:async()=>[],schedule:async event=>event,cancel:async()=>{},close:async()=>{}},eventId:()=> 'a'.repeat(32),check:async()=>{},onChanged:()=>{changed++;}});
  await power.refresh();const initial=changed;
  await power.refresh();await power.refresh();assert.equal(changed,initial);await power.close();
+});
+
+test('close drains accepted authorization before native cleanup and ignores later refreshes',async()=>{
+ let begin!:()=>void,finish!:()=>void;
+ const started=new Promise<void>(resolve=>{begin=resolve;}),release=new Promise<void>(resolve=>{finish=resolve;});
+ let statusCalls=0,closeCalls=0;
+ const capability={supported:false,authorization:'unavailable'} as const;
+ const f=fixture({reconcileOnClose:false,wake:{status:async()=>{statusCalls++;return capability;},authorize:async()=>{begin();await release;return capability;},list:async()=>[],schedule:async event=>event,cancel:async()=>{},close:async()=>{closeCalls++;return true;}}});
+ const authorizing=f.power.authorize();await started;
+ const closing=f.power.close();await new Promise(resolve=>setImmediate(resolve));
+ const earlyClose=closeCalls;finish();await authorizing;assert.equal(await closing,true);
+ assert.equal(earlyClose,0);assert.equal(closeCalls,1);assert.equal(statusCalls,1);
+ const before=statusCalls;await f.power.refresh();assert.equal(statusCalls,before);
+});
+
+test('close prevents an in-flight queue read from scheduling a new wake',async()=>{
+ let begin!:()=>void,finish!:()=>void,scheduled=0;
+ const reading=new Promise<void>(resolve=>{begin=resolve;}),release=new Promise<void>(resolve=>{finish=resolve;});
+ const capability={supported:true,authorization:'authorized'} as const;
+ const f=fixture({wake:{status:async()=>capability,authorize:async()=>capability,list:async()=>{begin();await release;return [];},schedule:async event=>{scheduled++;return event;},cancel:async()=>{},close:async()=>true}});
+ const updating=f.update({nextScheduledAt:f.now()+600_000});await reading;
+ const closing=f.power.close();finish();await updating;assert.equal(await closing,true);
+ assert.equal(scheduled,0);
+});
+
+test('Mac close drains a sent wake without starting another queue query',async()=>{
+ let begin!:()=>void,finish!:()=>void,reads=0,closed=false;
+ const writing=new Promise<void>(resolve=>{begin=resolve;}),release=new Promise<void>(resolve=>{finish=resolve;});
+ const capability={supported:true,authorization:'authorized'} as const;
+ const f=fixture({reconcileOnClose:false,wake:{status:async()=>capability,authorize:async()=>capability,list:async()=>{reads++;return [];},schedule:async event=>{begin();await release;return event;},cancel:async()=>{},close:async()=>{closed=true;return true;}}});
+ const updating=f.update({nextScheduledAt:f.now()+600_000});await writing;
+ const closing=f.power.close();assert.equal(closed,false);finish();await updating;
+ assert.equal(await closing,true);assert.equal(closed,true);assert.equal(reads,1);
+});
+
+test('Mac close leaves subsequent cancellations to native cleanup',async()=>{
+ let begin!:()=>void,finish!:()=>void;
+ const canceling=new Promise<void>(resolve=>{begin=resolve;}),release=new Promise<void>(resolve=>{finish=resolve;});
+ const capability={supported:true,authorization:'authorized'} as const;
+ const events=[{id:'a'.repeat(32),at:Date.UTC(2026,10,13,1)},{id:'b'.repeat(32),at:Date.UTC(2026,10,13,2)}],canceled:WakeEvent[]=[];
+ const f=fixture({reconcileOnClose:false,wake:{status:async()=>capability,authorize:async()=>capability,list:async()=>events,schedule:async event=>event,cancel:async event=>{canceled.push(event);begin();await release;},close:async()=>true}});
+ const updating=f.update();await canceling;
+ const closing=f.power.close();finish();await updating;
+ assert.equal(await closing,true);assert.deepEqual(canceled,events.slice(0,1));
 });
 
 test('rechecking retries an execution protection that previously failed without failing business work',async()=>{
