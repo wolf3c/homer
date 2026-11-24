@@ -7,7 +7,7 @@ import {PassThrough,Writable} from 'node:stream';
 import {createInterface} from 'node:readline';
 import {userInfo} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
-import {prepareDesktopProfile,acquireDesktopOwner,assertDesktopAdoptionLeasesRecoverable,desktopBoundary,readDesktopModelSource,readDesktopChatGPTConfig} from './desktop-profile.mjs';
+import {prepareDesktopProfile,acquireDesktopOwner,assertDesktopAdoptionLeasesRecoverable,desktopBoundary,readDesktopModelSource,readDesktopChatGPTConfig,readDesktopMemberConfig} from './desktop-profile.mjs';
 const DEEPSEEK_KEY_ENV='HOMER_DEEPSEEK_TOKEN';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const send=value=>new Promise((accept,reject)=>process.stdout.write(JSON.stringify(value)+'\n',error=>error?reject(error):accept()));
@@ -85,10 +85,19 @@ try{
  if(daily&&modelSource==='website'&&connection?.token)process.env[DEEPSEEK_KEY_ENV]=connection.token;
  const mobileTurnAccount=daily&&connection?.token?{gatewayOrigin:manifest.account.gatewayOrigin,token:connection.token,allowSyntheticLoopback:test}:undefined;
  if(daily){
-   config={...config,dailyDeepSeek:true,pauseOldDesktopWork:true,desktopConnection:modelSource==='website'&&connection?.token?connection.config:undefined};connection=undefined;
+   config={...config,dailyDeepSeek:true,pauseOldDesktopWork:true};
+  if(modelSource==='website'&&connection?.token){
+   config.desktopConnection=connection.config;
+   config.member={subject:connection.subject,overrides:readDesktopMemberConfig(profile,connection.subject)};
+  }
+  connection=undefined;
  }
  if(modelSource)config={...config,desktopModelSource:modelSource,desktopProfile:profile,pauseOldDesktopWork:true};
- if(modelSource==='codex')config={...config,chatgpt:chatgptModelConfig(readDesktopChatGPTConfig(profile))};
+ if(modelSource==='codex'){
+   const chatgpt=readDesktopChatGPTConfig(profile);
+   chatgptModelConfig(chatgpt);
+   config={...config,chatgpt};
+ }
  const database=join(paths.runtime,'homer.sqlite');let thread,legacyBaseline=false;
  if(existsSync(database)){
    const db=new DatabaseSync(database,{readOnly:true});
@@ -149,13 +158,13 @@ try{
     void (async()=>{try{if(quitting||!power)throw Error('power_recheck_unconfirmed');if(value.afterSleep===undefined)await power('resume');else await power('resume',{afterSleep:value.afterSleep});await send({kind:'power_result',id:value.id});}catch{await send({kind:'power_result',id:value.id,error:'power_recheck_unconfirmed'});}})();
    }
    else if(value.kind==='update-stop'){if(!quitting&&updateStop)updateStop();else void send({kind:'update-busy'});}
-   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','usage','apply-models','channel-state','channel-manage'].includes(value.action)){
-    void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action,value.input)});}catch(error){await send({kind:'native_account_result',id:value.id,error:value.action==='apply-models'?chatgptModelError(error?.message):'native_account_unconfirmed'});}})();
+   else if(value.kind==='native_account'&&Number.isSafeInteger(value.id)&&value.id>0&&['state','connect','cancel','models','usage','apply-models','member-models','apply-member-model','channel-state','channel-manage'].includes(value.action)){
+    void (async()=>{try{if(quitting||!nativeAccount)throw Error('desktop_account_unavailable');await send({kind:'native_account_result',id:value.id,value:await nativeAccount(value.action,value.input)});}catch(error){await send({kind:'native_account_result',id:value.id,error:['apply-models','apply-member-model'].includes(value.action)?chatgptModelError(error?.message):'native_account_unconfirmed'});}})();
    }
   }catch{}
  });
  reader.on('close',quit);
- const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindBrowserReply:callback=>{browserReply=callback;},bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{const sent=send(value);if(['desktop_notification','native-account-changed','native-account-disconnected'].includes(value.kind))void sent.catch(()=>{});}}});
+ const result=await runDev({root:homer,input,output,...mobileConfig,mobileTurnAccount,json:false,webPort:0,fixedBuild:build,desktop:{bindBrowserReply:callback=>{browserReply=callback;},bindAccount:callback=>{nativeAccount=callback;},bindPower:callback=>{power=callback;},bindUpdateStop:callback=>{updateStop=callback;},onHostSpawn:()=>{hostStarted=true;},onEvent:value=>{const sent=send(value);if(['desktop_notification','native-account-changed','native-account-disconnected','member-models-changed'].includes(value.kind))void sent.catch(()=>{});}}});
  reader.close();input.destroy();process.stdin.pause();
  if(!result?.stoppedConfirmed&&!result?.noHostStarted)throw Error('desktop_stop_unconfirmed');
  // A successful host close includes all main/control/Worker/MCP owner evidence.

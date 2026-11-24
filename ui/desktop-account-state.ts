@@ -1,11 +1,11 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {CHATGPT_MODEL_ERRORS,chatgptModelError,type ChatGPTModelConfig,type ModelRole,type NativeModelSettings} from '../src/model-config';
+import {CHATGPT_MODEL_ERRORS,chatgptModelError,type ChatGPTModelConfig,type ModelRole,type ModelRowEdit,type NativeModelSettings} from '../src/model-config';
 import type {NativeUsageSnapshot} from '../src/native-account';
 
-type NativeAccountChange='native-account-changed'|'native-account-disconnected';
-export type AccountState={supported:boolean;configured:boolean;source?:'codex'|'website';native?:{account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:string;pending:boolean;canReopen:boolean};nativeError?:string;websiteReady?:boolean;connection:'website'|'disconnected';active:'website'|'disconnected';pending:boolean;canReopen:boolean;needsRestart:boolean;error?:string;wallet?:{available:number;used:number;unit:string;expiresAt?:number};updatedAt?:string;walletError?:string;stale:boolean};
+type NativeAccountChange='native-account-changed'|'native-account-disconnected'|'member-models-changed';
+export type AccountState={supported:boolean;configured:boolean;memberRevision?:number;source?:'codex'|'website';native?:{account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:string;pending:boolean;canReopen:boolean};nativeError?:string;websiteReady?:boolean;connection:'website'|'disconnected';active:'website'|'disconnected';pending:boolean;canReopen:boolean;needsRestart:boolean;error?:string;wallet?:{available:number;used:number;unit:string;expiresAt?:number};updatedAt?:string;walletError?:string;stale:boolean};
 type AccountAction='state'|'connect'|'cancel'|'reopen'|'refresh'|'openWebsite'|'disconnect'|'restart'|'nativeConnect'|'nativeCancel'|'nativeReopen'|'applyCodex'|'applyWebsite';
-type AccountBridge=Omit<Record<AccountAction,()=>Promise<AccountState>>,'applyCodex'>&{applyCodex:(roles?:Record<ModelRole,ChatGPTModelConfig>)=>Promise<AccountState>;nativeModels:()=>Promise<NativeModelSettings>;nativeUsage:()=>Promise<NativeUsageSnapshot>;onChange:(callback:(reason?:NativeAccountChange)=>void)=>()=>void};
+type AccountBridge=Omit<Record<AccountAction,()=>Promise<AccountState>>,'applyCodex'>&{applyCodex:(roles?:Record<ModelRole,ChatGPTModelConfig>|ModelRowEdit)=>Promise<AccountState>;nativeModels:()=>Promise<NativeModelSettings>;memberModels:()=>Promise<NativeModelSettings>;applyMemberModel:(input:{revision:number;edit:ModelRowEdit})=>Promise<NativeModelSettings>;nativeUsage:()=>Promise<NativeUsageSnapshot>;onChange:(callback:(reason?:NativeAccountChange)=>void)=>()=>void};
 declare global{interface Window{homerDesktopAccount?:AccountBridge;}}
 
 export const accountErrors:Record<string,string>={
@@ -25,7 +25,7 @@ export function useDesktopAccount({currentSourceOnly=false,withWallet=true}:{cur
  const bridge=window.homerDesktopAccount;
  const [state,setState]=useState<AccountState>(),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const live=useRef(false),request=useRef(0),running=useRef(false);
- const apply=useCallback(async(action:AccountAction='state',roles?:Record<ModelRole,ChatGPTModelConfig>,background=false)=>{
+ const apply=useCallback(async(action:AccountAction='state',roles?:Record<ModelRole,ChatGPTModelConfig>|ModelRowEdit,background=false)=>{
   if(!bridge)return;
   const id=++request.current;
   try{
@@ -44,7 +44,7 @@ export function useDesktopAccount({currentSourceOnly=false,withWallet=true}:{cur
    }else setNotice(previous=>background&&CHATGPT_MODEL_ERRORS[previous]?previous:action==='openWebsite'?'购买积分页面未能打开，请稍后重试。':'状态未能确认，请重试。');
   }}
  },[bridge,currentSourceOnly,withWallet]);
- useEffect(()=>{live.current=true;void apply();const dispose=bridge?.onChange(reason=>{if(reason!=='native-account-disconnected')void apply('state',undefined,true);});return()=>{live.current=false;request.current++;dispose?.();};},[bridge,apply]);
+ useEffect(()=>{live.current=true;void apply();const dispose=bridge?.onChange(reason=>{if(reason!=='native-account-disconnected'&&reason!=='member-models-changed')void apply('state',undefined,true);});return()=>{live.current=false;request.current++;dispose?.();};},[bridge,apply]);
  useEffect(()=>{
   const expiresAt=state?.wallet?.expiresAt;
   if(!withWallet||currentSourceOnly&&state?.source!=='website'||!expiresAt||expiresAt<=Date.now()/1000||state.stale||state.walletError)return;
@@ -63,7 +63,7 @@ export function useDesktopAccount({currentSourceOnly=false,withWallet=true}:{cur
   },1000);
   return()=>{active=false;window.clearInterval(timer);};
  },[state?.pending,state?.native?.pending,apply,currentSourceOnly]);
- async function run(action:AccountAction,roles?:Record<ModelRole,ChatGPTModelConfig>){
+ async function run(action:AccountAction,roles?:Record<ModelRole,ChatGPTModelConfig>|ModelRowEdit){
   if(running.current)return;running.current=true;setBusy(true);setNotice('');
   try{return await apply(action,roles);}finally{running.current=false;if(live.current)setBusy(false);}
  }

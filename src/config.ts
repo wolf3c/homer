@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { canonicalDir, inside } from "./files.js";
 import { PRODUCT_MODEL_DEFAULTS, chatgptModelConfig, type ChatGPTModelOverrides, type ReasoningEffort } from "./model-config.js";
 import {deepseekProfile,validateDeepSeekTuning,type DeepSeekTuning} from './deepseek-model.js';
+import {isMemberRoleSelection,memberRoleConfig,type MemberOverrides} from './member-models.js';
 import {validateExecutionLimits,type ExecutionLimits} from './execution-limits.js';
 export type Config = {
   executionLimits?:ExecutionLimits;
@@ -16,6 +17,8 @@ export type Config = {
   desktopProfile?:string;
   desktopConnection?: import('./homer-account.js').HomerRuntimeConfig;
   chatgpt?:ChatGPTModelOverrides;
+  member?:{subject:string;overrides:MemberOverrides};
+  memberModelUnavailable?:boolean;
   desktopAdopted?: boolean;
   pauseOldDesktopWork?: boolean;
   appData?: string;
@@ -119,8 +122,16 @@ export function effectiveModelConfig(config:Config,role:"main"|"worker"="main"):
   }
   if(config.dailyDeepSeek){
     if(!config.desktopResources||!config.pauseOldDesktopWork)throw Error('daily_deepseek_desktop_required');
-    const selected=config.desktopConnection?.[role];
-    config={...config,...selected,baseUrl:selected?.baseUrl,context:selected?.context,webSearch:selected?.webSearch,supportsWebSocket:selected?.supportsWebSocket===true,keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
+    let selected=config.desktopConnection?.[role];
+    const override=config.member?.overrides[role];
+    let memberModelUnavailable=false;
+    if(selected&&override){
+      try{
+        if(isMemberRoleSelection(override))selected={...selected,...memberRoleConfig(override,selected.baseUrl)};
+        else memberModelUnavailable=true;
+      }catch{memberModelUnavailable=true;}
+    }
+    config={...config,...selected,...(config.member?{memberModelUnavailable,serviceTier:null}:{}),baseUrl:selected?.baseUrl,context:selected?.context,webSearch:selected?.webSearch,supportsWebSocket:selected?.supportsWebSocket===true,keyEnv:'HOMER_DEEPSEEK_TOKEN',requiresOpenaiAuth:false};
   }
   const profile=deepseekProfile(config);
   return profile?{...config,effort:profile.effort,fast:profile.fast}:config;

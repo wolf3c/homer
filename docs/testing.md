@@ -469,6 +469,8 @@ HOMER_TEST_CODEX_BIN=/absolute/path/to/codex node --import tsx --test tests/desk
 
 交互式 UI 复验运行 `node --import tsx tests/fixtures/desktop-model-settings-browser.mjs --serve`，用内置浏览器打开打印出的回环地址。该 fixture 打包实际 DesktopSettings 与局部官方 CSS，桌面桥完全合成；默认自动保存、`?scenario=failure`（首读失败后可重试）、`missing`、`plus` 分别检查保存重读、缺失模型与权限收回。`website`／`cancel` 验证跨来源的应用及取消，`save-failure` 首次保存失败后可重试；`stale-apply` 验证保存被拒后单次重读目录和失效提示；`account-error` 验证账号暂时未知时选择保留、操作禁用及重查恢复。需要验证桌面、390px、320px、无搜索、无可调深度、三档闪电、键盘、Escape、焦点与 Portal 102；截图保存到 `.codex/scratch/`。此入口仅供显式浏览器检查，不进入默认测试，Ctrl+C 清理该次临时目录。
 
+会员逐行恢复复用上述入口的 `?scenario=member`，使用随包目录和合成桌面桥验证零积分、显式覆盖与默认相同、失效选择、宽窄窗及恢复焦点。固定 Codex 回环可用 `HOMER_TEST_CODEX_BIN` 指定 0.171.0-alpha.7，运行 `node --import ./tests/fixtures/core-system-proxy.mjs --import tsx --test --test-name-pattern="switches catalog models" tests/native-membership-auto-review.engine.test.mjs`。在允许写入独立测试资料的源码副本中运行。
+
 2026-11-11 在 Node 22.22.0 上，定向七文件584项通过；补充完整角色与草稿、目录未知及失效深度提示，以及复审发现的应用拒绝后单次重读、临时账号未知时保留草稿回归后，设置 UI 94项通过。固定上游源码4项、两端类型检查、构建及最终默认核心2177项通过，均无失败或跳过。固定引擎专项1项通过，包含全部三档与同线程断言；实际设置 Dialog 在桌面、390px及320px完成交互检查，复审新增两条异常路径也通过实际组件的合成浏览器复验。源码通过不表示已安装；真实 Pro $500／企业权限及收费调用、打包后的 Windows／macOS 验收未执行。
 
 2026-11-12 修复 preload 参数拒绝和 runtime 行长度导致的完整角色参数丢失，同来源改为自动保存、下一轮生效。真实 preload／主进程组合、活跃轮次隔离、profile 交错写入和后台读取吞掉保存错误均补充回归；相关新增失败先复现后修正。最终 Node 22.22.0 默认核心2187项、账号／移动设备界面116项全部通过，零失败、零跳过；两端类型检查、构建及固定 Codex 0.163.0 的隔离专项1项通过。构建保留现有大分包提示。实际组件在内置浏览器复验桌面、390px、320px、自动保存、重开保留、保存失败及重试、恢复默认、控件回焦、Escape、三档闪电及 Portal 102；跨来源仍需明确应用，未误触自动切换。测试页、临时服务和重复中间产物已清理；未安装、发布或调用真实账号与收费模型。

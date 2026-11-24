@@ -2104,4 +2104,26 @@ test('native usage is a zero-argument read through the trusted desktop account b
  dispose();assert.equal(listeners.size,0);
 });
 
+test('member settings reject a stale connection revision and never expose the bound subject',async()=>{
+ const updates=[];
+ const {CHATGPT_MODEL_DEFAULTS}=await import('../src/model-config.ts');
+ const f=await accountFixture({modelSource:'website',nativeAction:(action,input)=>{
+  if(action==='member-models'||action==='apply-member-model'){
+   assert.equal(input.subject,'fixture_user');
+   if(action==='apply-member-model')updates.push(input.edit);
+   return {current:CHATGPT_MODEL_DEFAULTS,defaults:CHATGPT_MODEL_DEFAULTS,inherited:{main:true,worker:true}};
+  }
+  return nativeModelAction(action);
+ }});
+ const settings=await accountCall(f,'memberModels'),edit={role:'worker',selection:null};
+ assert.equal(JSON.stringify(settings).includes('fixture_user'),false);
+ const result=await accountCall(f,'applyMemberModel',{revision:settings.revision,edit});
+ assert.equal(result.revision,settings.revision);assert.equal(updates.length,1);
+ await accountCall(f,'cancel');
+ await assert.rejects(accountCall(f,'applyMemberModel',{revision:settings.revision,edit}),/chatgpt_model_source_changed/);
+ await assert.rejects(accountCall(f,'applyMemberModel',{revision:settings.revision,edit},{}),/desktop_account_forbidden/);
+ assert.equal(updates.length,1);
+ assert.equal(f.nativeCalls.some(call=>call[0]==='source'||call[0]==='relaunch'),false);
+});
+
 }

@@ -80,7 +80,7 @@ const startupErrors:Record<string,string>={
   engine_quota_insufficient:'模型服务额度不足，Worker 未能启动。请检查可用额度。',
   engine_rate_limited:'模型服务请求受到限流，Worker 未能启动。请稍后手动重试。',
   engine_permission_failed:'权限不足，Worker 未能启动。',
-  engine_model_unavailable:'所需模型不可用，Worker 未能启动。',
+  engine_model_unavailable:'Worker 选择的模型或思考深度不可用。',
   output_setup_failed:'任务工作目录准备失败，Worker 未能启动。',
   task_authority_source_denied:'任务授权来源不可用，Worker 未能启动。',
 };

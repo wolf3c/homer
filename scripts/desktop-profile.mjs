@@ -16,6 +16,18 @@ export function saveDesktopModelSource(root,source,chatgpt){
  writeDesktopProfile(root,{modelSource:source,...(chatgpt!==undefined?{chatgpt:Object.keys(chatgpt).length?chatgpt:undefined}:{})});
 }
 export function readDesktopChatGPTConfig(root){return JSON.parse(privateFile(join(root,markerName))).chatgpt;}
+export function readDesktopMemberConfig(root,subject){
+ return JSON.parse(privateFile(join(root,markerName))).memberModels?.[hash(subject)]??{};
+}
+export function saveDesktopMemberConfig(root,subject,overrides){
+ writeDesktopProfile(root,profile=>{
+  if((profile.modelSource??'website')!=='website')throw Error('chatgpt_model_source_changed');
+  const memberModels={...profile.memberModels},key=hash(subject);
+  if(Object.keys(overrides).length)memberModels[key]=overrides;
+  else delete memberModels[key];
+  return {memberModels:Object.keys(memberModels).length?memberModels:undefined};
+ });
+}
 export function readDesktopCaptureShortcut(root){
  return JSON.parse(privateFile(join(root,markerName))).captureShortcut;
 }
@@ -31,7 +43,7 @@ function writeDesktopProfile(root,fields){
  let fd,created=false;
  try{
   fd=openSync(temporary,'wx',0o600);created=true;
-  const value=JSON.parse(privateFile(file));writeFileSync(fd,JSON.stringify({...value,...fields})+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
+  const value=JSON.parse(privateFile(file));writeFileSync(fd,JSON.stringify({...value,...(typeof fields==='function'?fields(value):fields)})+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
   renameSync(temporary,file);created=false;
  }finally{if(fd!==undefined)closeSync(fd);if(created)unlinkSync(temporary);}
 }

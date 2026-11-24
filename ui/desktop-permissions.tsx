@@ -1,4 +1,4 @@
-import {useCallback,useEffect,useImperativeHandle,useLayoutEffect,useRef,useState,type KeyboardEvent,type Ref} from 'react';
+import {useCallback,useEffect,useId,useImperativeHandle,useLayoutEffect,useRef,useState,type KeyboardEvent,type Ref} from 'react';
 import homerLogo from '../assets/branding/odysseus-20261030/homer-odysseus-64.png';
 import type {NativeUsageSnapshot} from '../src/native-account';
 import type {WebState} from '../src/web-contract';
@@ -15,7 +15,7 @@ import {useMediaQuery} from '@mantine/hooks';
 import {Settings,Bell,X,ArrowLeft,ShieldCheck,UserRound,Smartphone,Link2,Scan,RotateCcw,Pause,Play,Info,ChevronRight,Zap,Check,Power} from 'lucide-react';
 import {Menu} from '@base-ui/react/menu';
 import {ModelSelectorRoot,ModelSelectorTrigger,ModelSelectorValue,ModelSelectorContent,ModelSelectorList,ModelSelectorEffort} from './vendor/assistant-ui/model-selector';
-import {validateChatGPTSelection,type ChatGPTModelConfig,type ModelRole,type NativeModelSettings} from '../src/model-config';
+import {CHATGPT_MODEL_ERRORS,chatgptModelError,validateChatGPTModel,validateChatGPTSelection,type ChatGPTModelConfig,type ModelRole,type ModelRowEdit,type NativeModelSettings} from '../src/model-config';
 
 type Accessibility='granted'|'not-granted'|'unknown';
 type Screen='not-determined'|'denied'|'granted'|'restricted'|'unknown';
@@ -350,58 +350,119 @@ function NativeSpeedControl({name,value,tiers,disabled,onChange}:{name:string;va
   </Menu.Popup></Menu.Positioner></Menu.Portal>
  </Menu.Root>;
 }
-function DesktopChatGPTModels({connected,unconfirmed,busy,different,apply}:{connected:boolean;unconfirmed:boolean;busy:boolean;different:boolean;apply:(roles:Record<ModelRole,ChatGPTModelConfig>)=>Promise<AccountState|undefined>}){
+function DesktopModelSettings({member=false,connected,unconfirmed,busy,different,apply}:{member?:boolean;connected:boolean;unconfirmed:boolean;busy:boolean;different:boolean;apply?:(value:Record<ModelRole,ChatGPTModelConfig>|ModelRowEdit)=>Promise<AccountState|undefined>}){
  const bridge=window.homerDesktopAccount!;
- const [settings,setSettings]=useState<NativeModelSettings>(),[draft,setDraft]=useState<Record<ModelRole,ChatGPTModelConfig>>(),[reading,setReading]=useState(true),[retry,setRetry]=useState(0),[notice,setNotice]=useState('');
- const focus=useRef<{elements:HTMLElement[];pending:boolean}>({elements:[],pending:false});
+ const [settings,setSettings]=useState<NativeModelSettings>(),[draft,setDraft]=useState<Record<ModelRole,ChatGPTModelConfig>>();
+ const [reading,setReading]=useState(true),[saving,setSaving]=useState(false),[retry,setRetry]=useState(0),[notice,setNotice]=useState('');
+ const [pending,setPending]=useState<ModelRowEdit>();
+ const rowId=useId(),focus=useRef<{role:ModelRole;restore:boolean}|null>(null),submitting=useRef(false);
  useEffect(()=>{
-  if(busy||reading||!focus.current.pending)return;
-  focus.current.pending=false;
-  if(document.activeElement===document.body||document.activeElement?.matches('.desktop-settings-popup'))focus.current.elements.find(element=>element.isConnected&&!element.matches(':disabled'))?.focus();
- },[busy,reading]);
+  if(busy||reading||saving||!focus.current)return;
+  const {role,restore}=focus.current;focus.current=null;
+  if(restore||document.activeElement===document.body||document.activeElement?.matches('.desktop-settings-popup'))
+   document.getElementById?.(rowId+'-'+role)?.focus();
+ },[busy,reading,saving,rowId]);
  useEffect(()=>{
   if(!connected)return;
   let live=true,request=0;
-  async function read(){const id=++request;setReading(true);try{const next=await bridge.nativeModels();if(live&&id===request){setSettings(previous=>({...next,models:next.models??previous?.models}));setDraft(previous=>previous??next.current);}}catch{if(live&&id===request)setSettings(previous=>previous?{...previous,error:'native_models_unconfirmed'}:undefined);}
-   finally{if(live&&id===request)setReading(false);}}
-  void read();const dispose=bridge.onChange(()=>void read());return()=>{live=false;request++;dispose();};
- },[bridge,retry,connected]);
- if(!connected&&(!unconfirmed||!draft))return null;
- const disabled=!connected||busy||reading||!!settings?.error;
- let valid=false;if(draft&&settings?.models&&!disabled){try{validateChatGPTSelection(draft,settings.models);valid=true;}catch{}}
- function applyDraft(next:Record<ModelRole,ChatGPTModelConfig>){
-  focus.current.pending=!different;
-  setNotice('');void apply(next).then(result=>{
-   if(!result){setReading(true);setRetry(value=>value+1);return;}
-   if(!different){setSettings(current=>current?{...current,current:next}:current);setNotice(previous=>(previous?previous+' ':'')+'已保存，下一轮生效。');}
+  async function read(){
+   const id=++request;setReading(true);
+   try{
+    const next=await (member?bridge.memberModels():bridge.nativeModels());
+    if(live&&id===request){
+     setSettings(previous=>({...next,models:next.models??previous?.models}));
+     setDraft(previous=>previous??next.current);
+    }
+   }catch{if(live&&id===request)setSettings(previous=>previous?{...previous,error:'native_models_unconfirmed'}:undefined);}
+   finally{if(live&&id===request)setReading(false);}
+  }
+  void read();const dispose=bridge.onChange(reason=>{
+   if(member?reason==='member-models-changed':reason!=='member-models-changed')void read();
   });
+  return()=>{live=false;request++;dispose();};
+ },[bridge,retry,connected,member]);
+ if(!connected&&(!unconfirmed||!draft))return null;
+ const disabled=!connected||busy||saving||reading||!!settings?.error;
+ function inherited(role:ModelRole){
+  return settings?.inherited?.[role]??sameNativeModels(settings?.current[role],settings?.defaults[role]);
  }
- function save(next:Record<ModelRole,ChatGPTModelConfig>){if(disabled)return;setDraft(next);setNotice('');if(!different)applyDraft(next);}
- function change(role:ModelRole,patch:Partial<ChatGPTModelConfig>){if(draft)save({...draft,[role]:{...draft[role],...patch}});}
- function chooseModel(role:ModelRole,id:string){
-  const model=settings?.models?.find(model=>model.model===id);if(disabled||!model||!draft)return;
-  const previous=draft[role],effort=model.supportedReasoningEfforts.some(option=>option.reasoningEffort===previous.effort)?previous.effort:model.defaultReasoningEffort;
-  const serviceTier=model.serviceTiers.some(tier=>tier.id===previous.serviceTier)?previous.serviceTier:null;
-  change(role,{model:id,effort,serviceTier});if(effort!==previous.effort||serviceTier!==previous.serviceTier)setNotice(nativeRoleNames[role]+'：已按所选模型调整思考深度或速度。'+(different?'请核对后应用。':''));
+ function alreadySaved(edit:ModelRowEdit, snapshot:NativeModelSettings){
+  return edit.selection===null
+   ? snapshot.inherited?.[edit.role]??sameNativeModels(snapshot.current[edit.role],snapshot.defaults[edit.role])
+   : sameNativeModels(edit.selection,snapshot.current[edit.role]);
+ }
+ function valid(edit:ModelRowEdit){
+  if(disabled||!settings?.models)return false;
+  if(edit.selection===null)return true;
+  try{validateChatGPTModel(edit.role,edit.selection,settings.models);return true;}catch{return false;}
+ }
+ async function save(edit:ModelRowEdit,adjusted=false){
+  if(!settings||!valid(edit)||submitting.current)return;
+  submitting.current=true;setSaving(true);setPending(edit);
+  focus.current={role:edit.role,restore:edit.selection===null};
+  const selected=edit.selection??settings.defaults[edit.role];
+  const adjustment=adjusted?(member?'已按所选模型调整思考深度。':'已按所选模型调整思考深度或速度。'):'';
+  setNotice(adjustment);
+  try{
+   if(member){
+    if(settings.revision===undefined)throw Error('chatgpt_model_source_changed');
+    setSettings(await bridge.applyMemberModel({revision:settings.revision,edit}));
+   }else{
+    if(!await apply?.(edit)){setRetry(value=>value+1);return;}
+    setSettings(current=>current?{...current,current:{...current.current,[edit.role]:selected}}:current);
+   }
+   setPending(undefined);
+   setNotice(adjustment+(edit.selection===null?nativeRoleNames[edit.role]+' 已恢复默认。':'')+'已保存，下一轮生效。');
+  }catch(error){
+   const code=chatgptModelError(error instanceof Error?error.message:'');
+   setNotice(CHATGPT_MODEL_ERRORS[code]);
+   setRetry(value=>value+1);
+  }finally{submitting.current=false;setSaving(false);}
+ }
+ function change(role:ModelRole,selection:ChatGPTModelConfig|null,adjusted=false){
+  if(!draft||!settings||disabled)return;
+  if(different){
+   setDraft({...draft,[role]:selection??settings.defaults[role]});
+   setNotice(adjusted?'已按所选模型调整思考深度或速度，请核对后应用。':'');
+   if(!selection)document.getElementById?.(rowId+'-'+role)?.focus();
+  }else void save({role,selection},adjusted);
  }
  if(!draft||!settings)return <div className="desktop-chatgpt-models"><p role="status">{reading?'正在读取模型列表…':'模型列表读取失败。'}</p>{!reading&&<Button onClick={()=>setRetry(value=>value+1)}>重试模型列表</Button>}</div>;
  const models=(settings.models??[]).map(model=>({id:model.model,name:model.displayName,efforts:model.supportedReasoningEfforts.map(option=>({id:option.reasoningEffort,name:nativeEffortNames[option.reasoningEffort]??option.reasoningEffort}))}));
- return <div className="desktop-chatgpt-models" onFocusCapture={event=>{if(event.currentTarget.contains(event.target))focus.current.elements=[event.target,...event.currentTarget.querySelectorAll<HTMLElement>('[role="combobox"]')];}}>
+ const unsaved=pending&&!alreadySaved(pending,settings)?pending:undefined;
+ const shownNotice=pending&&!unsaved&&!reading&&!saving&&!settings.error&&notice===CHATGPT_MODEL_ERRORS.chatgpt_model_apply_unconfirmed
+  ?'已保存，下一轮生效。':notice;
+ let validDraft=false;
+ if(different&&settings.models&&!disabled){try{validateChatGPTSelection(draft,settings.models);validDraft=true;}catch{}}
+ return <div className="desktop-chatgpt-models" aria-busy={reading||saving}>
   {(['main','worker'] as const).map(role=>{
-   const selected=draft[role],model=settings.models?.find(model=>model.model===selected.model);
-   return <section key={role} aria-labelledby={'chatgpt-'+role}>
-    <h3 id={'chatgpt-'+role}>{nativeRoleNames[role]}{sameNativeModels(selected,settings.defaults[role])&&<span>默认</span>}</h3>
-    <div className="desktop-model-controls"><ModelSelectorRoot models={models} value={selected.model} effort={selected.effort} onValueChange={id=>chooseModel(role,id)} onEffortChange={effort=>change(role,{effort})}>
-     <ModelSelectorTrigger aria-label={nativeRoleNames[role]+' 模型'} disabled={disabled}><ModelSelectorValue placeholder={selected.model}/></ModelSelectorTrigger>
+   const selected=different?draft[role]:unsaved?.role===role?unsaved.selection??settings.defaults[role]:settings.current[role];
+   const model=settings.models?.find(model=>model.model===selected.model);
+   const defaultRow=!member&&(different||unsaved?.role===role)?sameNativeModels(selected,settings.defaults[role]):inherited(role);
+   const name=nativeRoleNames[role],restore='恢复 '+name+' 默认配置';
+   const unavailable=settings.unavailable?.includes(role)&&sameNativeModels(selected,settings.current[role]);
+   function chooseModel(id:string){
+    const next=settings?.models?.find(entry=>entry.model===id);if(!next)return;
+    const effort=next.supportedReasoningEfforts.some(option=>option.reasoningEffort===selected.effort)?selected.effort:next.defaultReasoningEffort;
+    const serviceTier=next.serviceTiers.some(tier=>tier.id===selected.serviceTier)?selected.serviceTier:null;
+    change(role,{model:id,effort,serviceTier},effort!==selected.effort||serviceTier!==selected.serviceTier);
+   }
+   return <section key={role} aria-labelledby={rowId+'-label-'+role}>
+    <h3 id={rowId+'-label-'+role}>{name}{defaultRow?<span>默认</span>:<Button className="desktop-model-restore" type="button" disabled={disabled} aria-label={restore} title={restore} onClick={()=>change(role,null)}><RotateCcw size={17} aria-hidden="true"/></Button>}</h3>
+    <div className="desktop-model-controls"><ModelSelectorRoot models={models} value={selected.model} effort={selected.effort} onValueChange={chooseModel} onEffortChange={effort=>change(role,{...selected,effort})}>
+     <ModelSelectorTrigger id={rowId+'-'+role} aria-label={name+' 模型'} disabled={disabled}><ModelSelectorValue placeholder={selected.model}/></ModelSelectorTrigger>
      <ModelSelectorContent searchable={false} className="desktop-model-menu"><ModelSelectorList/><ModelSelectorEffort label="思考深度"/></ModelSelectorContent>
-    </ModelSelectorRoot><NativeSpeedControl name={nativeRoleNames[role]} value={selected.serviceTier} tiers={model?.serviceTiers??[]} disabled={disabled||!model} onChange={serviceTier=>change(role,{serviceTier})}/></div>
-    {settings.models&&!settings.error&&!reading&&(!model||!(model.supportedReasoningEfforts.length?model.supportedReasoningEfforts.some(option=>option.reasoningEffort===selected.effort):selected.effort===model.defaultReasoningEffort)||selected.serviceTier!==null&&!model.serviceTiers.some(tier=>tier.id===selected.serviceTier))&&<p role="status">{nativeRoleNames[role]} 的当前配置不可用，请重新选择。</p>}
+    </ModelSelectorRoot>{!member&&<NativeSpeedControl name={name} value={selected.serviceTier} tiers={model?.serviceTiers??[]} disabled={disabled||!model} onChange={serviceTier=>change(role,{...selected,serviceTier})}/>}</div>
+    {settings.models&&!settings.error&&!reading&&(unavailable||!model||!(model.supportedReasoningEfforts.length?model.supportedReasoningEfforts.some(option=>option.reasoningEffort===selected.effort):selected.effort===model.defaultReasoningEffort)||selected.serviceTier!==null&&!model.serviceTiers.some(tier=>tier.id===selected.serviceTier))&&<p role="status">{name} 的当前配置不可用，请重新选择。</p>}
    </section>;
   })}
-  {settings.error&&<p role="status">模型列表读取失败，已保留当前选择。<Button disabled={!connected||busy||reading} onClick={()=>setRetry(value=>value+1)}>重试模型列表</Button></p>}
-  <p className="desktop-model-hint">分别配置，{different?'切换来源后生效':'下一轮生效，不打断当前任务'}。闪电调整速度，加速会消耗更多用量。</p>
-  <div className="desktop-permission-actions">{(different||!busy&&!sameNativeModels(draft,settings.current))&&<Button type="button" className="primary-button" onClick={()=>{if(valid)applyDraft(draft);}} disabled={!valid}>{different?'应用并重启':'重试保存'}</Button>}<Button className="desktop-model-restore" type="button" disabled={!connected||busy||reading||sameNativeModels(draft,settings.defaults)} onClick={()=>save(settings.defaults)}>恢复默认</Button></div>
-  {notice&&<p role="status">{notice}</p>}
+  {settings.error&&<p role="status">模型列表读取失败，已保留当前选择。<Button disabled={!connected||busy||saving||reading} onClick={()=>setRetry(value=>value+1)}>重试模型列表</Button></p>}
+  <p className="desktop-model-hint">分别配置，{different?'切换来源后生效':'下一轮生效，不打断当前任务'}。{member?'后续模型请求消耗会员积分。':'闪电调整速度，加速会消耗更多用量。'}</p>
+  {(different||unsaved)&&<div className="desktop-permission-actions">
+   {different?<Button type="button" className="primary-button" onClick={()=>{if(validDraft)void apply?.(draft);}} disabled={!validDraft}>应用并重启</Button>:
+   unsaved&&<Button type="button" className="primary-button" onClick={()=>void save(unsaved)} disabled={!valid(unsaved)}>重试保存</Button>}
+  </div>}
+  {shownNotice&&<p role="status">{shownNotice}</p>}
  </div>;
 }
 
@@ -470,7 +531,7 @@ export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
       {state&&(nativeLabel==='状态未确认'||native?.phase==='unconfirmed'||native?.phase==='cancel_unconfirmed')&&<Button disabled={busy} onClick={()=>void run('state')}>重新检查 Codex 登录</Button>}
       {onboarding&&!different&&native?.connected&&!state?.nativeError&&<Button className="primary-button" disabled={busy} onClick={()=>void run('restart')}>重启并应用</Button>}
      </div>
-     {!onboarding&&<DesktopChatGPTModels connected={!!native?.connected&&!state?.nativeError} unconfirmed={!native||!!state?.nativeError||native.account==='unknown'} busy={busy} different={different} apply={roles=>run('applyCodex',roles)}/>}
+     {!onboarding&&<DesktopModelSettings connected={!!native?.connected&&!state?.nativeError} unconfirmed={!native||!!state?.nativeError||native.account==='unknown'} busy={busy} different={different} apply={roles=>run('applyCodex',roles)}/>}
     </>:<>
      {websiteStatus&&<p role="status">{websiteStatus}</p>}
      {state&&!state.configured&&<p role="status">{error('CONFIGURATION_REQUIRED')}</p>}
@@ -479,6 +540,7 @@ export function DesktopAccount({onboarding=false}:{onboarding?:boolean}={}){
       {state&&!state.needsRestart&&(!connected&&!saved||expired)&&<div className="desktop-permission-actions"><Button className="primary-button" disabled={busy||!state.configured} onClick={()=>void run('connect')}>{expired||state.error&&state.error!=='CONNECTION_CANCELLED'?'重新登录':onboarding?'登录荷马':'登录'}</Button></div>}
       {state?.needsRestart&&!different&&<div className="desktop-permission-actions"><Button className="primary-button" disabled={busy} onClick={()=>void run('restart')}>重启并应用</Button></div>}
      </>}
+     {!onboarding&&connected&&!different&&typeof bridge.memberModels==='function'&&<DesktopModelSettings key={state?.memberRevision} member connected={!expired&&!state?.pending&&!state?.needsRestart} unconfirmed busy={busy} different={false}/>}
      {!onboarding&&(connected||state?.source==='codex'&&saved)&&<section aria-label="可用积分">
       <div className="desktop-account-metrics"><p><span>可用积分</span><strong>{state?.wallet?`${state.wallet.available.toLocaleString(undefined,{maximumFractionDigits:6})} ${state.wallet.unit}`:'未知'}</strong></p></div>
       {state?.updatedAt&&<p>{state.stale||state.walletError?'上次记录':'更新时间'}：{new Date(state.updatedAt).toLocaleString()}</p>}
@@ -524,12 +586,12 @@ export function ModelFailureNotice({failure,onAccount,onDismiss}:{failure?:NonNu
  },[active,known,low]);
  const current=failure?.messageId===dismissed?undefined:failure;
  const quota=current?.code==='engine_quota_insufficient'||!current&&active&&(low||lowSeen);
- const rate=current?.code==='engine_rate_limited',auth=current?.code==='engine_authentication_failed',unconfirmed=current?.code==='engine_account_status_unconfirmed';
+ const rate=current?.code==='engine_rate_limited',auth=current?.code==='engine_authentication_failed',unconfirmed=current?.code==='engine_account_status_unconfirmed',unavailable=current?.code==='engine_model_unavailable';
  const website=quota&&(current?current.source==='website':active);
  const wallet=website?currentWallet:undefined;
  const zero=wallet?.available===0;
- let title=quota?'额度不足':rate?'请求受到限流，本次未能继续':auth?'账号连接未通过验证':unconfirmed?'账号状态未能确认':'本次请求未能完成';
- let description=quota?'当前额度不足以继续本次请求。':rate?'请稍后再发起请求。恢复时间暂未提供，荷马不会自动重试。':auth?'当前模型服务未通过认证，请检查账号连接后重新发送消息。':unconfirmed?'未能核实账号状态，请检查连接与额度后重新发送消息。':'原因暂无法确认。请先核对已有结果，再决定下一步。';
+ let title=quota?'额度不足':rate?'请求受到限流，本次未能继续':auth?'账号连接未通过验证':unconfirmed?'账号状态未能确认':unavailable?'该轮的模型配置不可用':'本次请求未能完成';
+ let description=quota?'当前额度不足以继续本次请求。':rate?'请稍后再发起请求。恢复时间暂未提供，荷马不会自动重试。':auth?'当前模型服务未通过认证，请检查账号连接后重新发送消息。':unconfirmed?'未能核实账号状态，请检查连接与额度后重新发送消息。':unavailable?'请在账号设置中重新选择模型或思考深度，再发送消息。':'原因暂无法确认。请先核对已有结果，再决定下一步。';
  if(website){
   title=zero?'积分已用完':current?'额度不足':wallet?'积分余额较低':'积分状态待确认';
   if(expired)description='登录凭据已失效，请查看账号与额度并重新登录。';
@@ -547,8 +609,8 @@ export function ModelFailureNotice({failure,onAccount,onDismiss}:{failure?:NonNu
    <div className="model-failure-heading"><h2>{title}</h2>{website&&<p className="model-failure-balance">{wallet&&wallet.unit!=='积分'?'剩余额度':'剩余积分'}：<strong>{wallet?`${wallet.available.toLocaleString(undefined,{maximumFractionDigits:6})} ${wallet.unit}`:'暂时无法确认'}</strong></p>}</div>
    <p>{description}</p>
   </div>
-   {(quota||auth||unconfirmed)&&(bridge||onAccount)&&<div className="model-failure-actions">
-    {onAccount&&<Button className="model-failure-account" onClick={onAccount}>查看账号与额度</Button>}
+   {(quota||auth||unconfirmed||unavailable)&&(bridge||onAccount)&&<div className="model-failure-actions">
+    {onAccount&&<Button className="model-failure-account" onClick={onAccount}>{unavailable?'打开账号设置':'查看账号与额度'}</Button>}
     {website&&bridge&&!expired&&<Button className="primary-button" disabled={busy||state?.configured===false} aria-busy={busy} onClick={()=>void run('openWebsite')}>购买积分</Button>}
     {website&&bridge&&<Button disabled={busy} aria-busy={busy} onClick={()=>void refresh()}>刷新余额</Button>}
    </div>}

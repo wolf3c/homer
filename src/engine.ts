@@ -140,6 +140,9 @@ export function engineError(error: unknown): string {
 // Only pending RPCs rejected by transport shutdown carry this evidence.
 // The request may have executed; pre-send and explicit native errors do not.
 export class EngineRpcUnconfirmed extends Error {}
+export class MemberSelectionUnavailable extends Error {
+  constructor(){super('engine_model_unavailable');}
+}
 // Only error classifications escape the adapter. Raw errors can include response bodies or URLs.
 function rpcError(value: any): Error {
   if(value?.data?.config_write_error_code==='configVersionConflict')return new Error('capability_config_conflict');
@@ -157,7 +160,8 @@ function rpcError(value: any): Error {
     return new Error("engine_thread_history_unavailable");
   if (/^\s*(?:invalid image\b|unsupported image format\b|image dimensions exceed\b)/i.test(msg))
     return new Error("engine_image_rejected");
-  if (/model.*not|unsupported.*model/i.test(msg))
+  if (/\b(?:model_not_found|model_not_supported|unsupported_model|invalid_reasoning_effort|unsupported_reasoning_effort)\b/i.test(msg)||
+     /\b(?:model|reasoning (?:effort|level))\b[^\r\n]{0,180}\b(?:not (?:found|supported|enabled)|does not exist)\b|\bunsupported (?:model|reasoning (?:effort|level))\b/i.test(msg))
     return new Error("engine_model_unavailable");
   return new Error("engine_rpc_failed");
 }
@@ -230,7 +234,11 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     }while(cursor);
   }
   async imageCapability(){
-    const model=this.config.desktopModelSource==='codex'&&!this.active&&!this.preparation&&!this.compaction?effectiveModelConfig(this.sourceConfig,this.options.role).model:this.config.model;
+    const config=this.liveModelSettings&&!this.active&&!this.preparation&&!this.compaction?effectiveModelConfig(this.sourceConfig,this.options.role):this.config;
+    if(config.memberModelUnavailable)throw Error('engine_model_unavailable');
+    return this.modelImageCapability(config.model);
+  }
+  private async modelImageCapability(model:string){
     if(this.imageSupported?.model===model)return this.imageSupported.supported;
     const info=await this.modelInfo(model),supported=!!info?.inputModalities?.includes('image');
     this.imageSupported={model,supported};return supported;
@@ -361,8 +369,10 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if(this.config.desktopModelSource==='website'&&this.config.keyEnv)this.websiteToken=process.env[this.config.keyEnv];
     this.nativeRequests = this.requestBridge();
   }
-  private async modelError(value:unknown):Promise<Error>{
+  private async modelError(value:unknown,modelRequest=true):Promise<Error>{
     const error=rpcError(value);
+    if(modelRequest&&error.message==='engine_model_unavailable'&&this.config.desktopModelSource==='website'&&this.config.effort)
+      this.emit('memberModelUnavailable',{model:this.config.model,effort:this.config.effort});
     if(error.message!=='engine_authentication_failed'||this.config.desktopModelSource!=='website'||!this.websiteToken||!this.config.baseUrl)return error;
     return Error(await queryHomerTokenFailure(this.websiteToken,{gatewayOrigin:new URL(this.config.baseUrl).origin},this.failureChecks.signal));
   }
@@ -794,7 +804,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       if (p) {
         if(p.checking)return;
         let error:Error|undefined;
-        if(m.error){p.checking=true;error=await this.modelError(m.error);if(this.pending.get(m.id)!==p)return;}
+        if(m.error){p.checking=true;error=await this.modelError(m.error,p.method==='turn/start'||p.method==='thread/compact/start');if(this.pending.get(m.id)!==p)return;}
         this.pending.delete(m.id);
         if(!error&&p.method==='config/read'){
           const config=m.result?.config,provider=config?.model_provider??(this.config.baseUrl?'homer':'openai'),info=config?.model_providers?.[provider];
@@ -1059,6 +1069,30 @@ export class CodexEngine extends EventEmitter implements EngineLike {
       if(this.options.role!=='worker')a.resolve(result);
     }
   }
+  private get liveModelSettings(){
+    return this.config.desktopModelSource==='codex'||this.config.desktopModelSource==='website'&&!!this.config.member;
+  }
+  private async applyTurnModel(operation:object){
+    if(!this.liveModelSettings)return;
+    const next=effectiveModelConfig(this.sourceConfig,this.options.role);
+    if(next.memberModelUnavailable)throw new MemberSelectionUnavailable();
+    if(next.model!==this.config.model||next.effort!==this.config.effort||next.serviceTier!==this.config.serviceTier){
+      if(next.serviceTier){
+        const model=await this.prepared(operation,this.modelInfo(next.model));
+        if(Array.isArray(model?.serviceTiers)&&!model.serviceTiers.some((tier:any)=>tier.id===next.serviceTier))throw Error('engine_fast_unavailable');
+      }
+      try{
+        await this.prepared(operation,this.request('thread/settings/update',{
+          threadId:this.threadId,model:next.model,effort:effectiveEffort(next.effort,this.options.role),serviceTier:next.serviceTier??null,
+        }));
+      }catch(error){
+        if(next.member&&next.effort&&engineError(error)==='engine_model_unavailable')
+          this.emit('memberModelUnavailable',{model:next.model,effort:next.effort});
+        throw error;
+      }
+    }
+    Object.assign(this.config,next);
+  }
   async turn(
     text: string,
     options?: {
@@ -1073,17 +1107,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     if (!this.threadId) throw new Error("engine_not_started");
     const operation={};this.preparation=operation;
     try{
-    if(this.config.desktopModelSource==='codex'){
-      const next=effectiveModelConfig(this.sourceConfig,this.options.role);
-      if(next.model!==this.config.model||next.effort!==this.config.effort||next.serviceTier!==this.config.serviceTier){
-        if(next.serviceTier){
-          const model=await this.prepared(operation,this.modelInfo(next.model));
-          if(Array.isArray(model?.serviceTiers)&&!model.serviceTiers.some((tier:any)=>tier.id===next.serviceTier))throw Error('engine_fast_unavailable');
-        }
-        await this.prepared(operation,this.request('thread/settings/update',{threadId:this.threadId,model:next.model,effort:effectiveEffort(next.effort,this.options.role),serviceTier:next.serviceTier}));
-        Object.assign(this.config,next);
-      }
-    }
+    await this.applyTurnModel(operation);
     if(options?.cwd&&resolve(options.cwd)!==resolve(this.options.cwd)){
 
         this.assertInteractionMcpBoundary(await this.prepared(operation,this.request('config/read',{includeLayers:true,cwd:options.cwd})));
@@ -1100,6 +1124,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     }
     if(options?.cwd)this.options.cwd=options.cwd;
     if(options?.images?.some(image=>'path' in image ? !isAbsolute(image.path)||image.path.includes('\0') : !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(image.url)))throw Error('engine_image_input_denied');
+    if(options?.images?.length&&this.liveModelSettings&&!await this.prepared(operation,this.modelImageCapability(this.config.model)))throw Error('engine_image_input_denied');
     let resultResolve!: (r: TurnResult) => void,
       resultReject!: (e: Error) => void;
     const completion = new Promise<TurnResult>((res, rej) => {
@@ -1121,7 +1146,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
         cwd:this.options.cwd, runtimeWorkspaceRoots:[this.options.cwd],
         ...(this.options.nativeTools?{environments:[{environmentId:"local",cwd:this.options.cwd,runtimeWorkspaceRoots:[this.options.cwd]}]}:{}),
         threadId: this.threadId,
-        ...(this.config.desktopModelSource==='codex'?{model:this.config.model}:{}),
+        ...(this.liveModelSettings?{model:this.config.model}:{}),
         input: [{ type: "text", text, text_elements: [] },...(options?.skills??[]).map(skill=>({type:"skill",...skill})),...(options?.images??[]).map(image=>'path' in image?{type:'localImage',path:image.path}:{type:'image',url:image.url})],
         effort: effectiveEffort(this.config.effort, this.options.role),
         serviceTier: this.serviceTier,
@@ -1180,12 +1205,15 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     let resolve!: () => void, reject!: (error: Error) => void;
     const completed = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
     completed.catch(() => {});
-    const compact = { resolve, reject };
-    this.compaction = compact;
+    const compact = { resolve, reject },operation={};
+    this.preparation=operation;
     try {
+      if(this.config.desktopModelSource==='website')await this.applyTurnModel(operation);
+      this.compaction=compact;
       await this.request('thread/compact/start',{threadId:this.threadId});
       await completed;
     } finally {
+      if(this.preparation===operation)this.preparation=undefined;
       if (this.compaction === compact) this.compaction = undefined;
       this.emitIdle();
     }

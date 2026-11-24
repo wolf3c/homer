@@ -204,3 +204,24 @@ test('ChatGPT roles and source save atomically and source-only changes preserve 
   assert.equal(readFileSync(auth,'utf8'),'synthetic-kept-auth');
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('member overrides survive account round trips and keep existing ChatGPT settings',()=>{
+ const root=make();
+ try{
+  prepareDesktopProfile(root,version,{initialize:true});
+  const chatgpt={main:{model:'synthetic-chatgpt',effort:'low',serviceTier:'ultrafast'}};
+  saveDesktopModelSource(root,'codex',chatgpt);
+  assert.deepEqual(desktopProfile.readDesktopMemberConfig(root,'member-a'),{});
+  const selected={main:{model:'deepseek-flash',effort:'none'},worker:{model:'retired-model',effort:'high'}};
+  assert.throws(()=>desktopProfile.saveDesktopMemberConfig(root,'member-a',selected),/chatgpt_model_source_changed/);
+  saveDesktopModelSource(root,'website');
+  desktopProfile.saveDesktopMemberConfig(root,'member-a',selected);
+  assert.deepEqual(desktopProfile.readDesktopMemberConfig(root,'member-b'),{});
+  desktopProfile.saveDesktopMemberConfig(root,'member-b',{main:{model:'gpt-6.1-terra',effort:'high'}});
+  assert.deepEqual(desktopProfile.readDesktopMemberConfig(root,'member-a'),selected);
+  desktopProfile.saveDesktopMemberConfig(root,'member-a',{worker:selected.worker});
+  assert.deepEqual(desktopProfile.readDesktopMemberConfig(root,'member-a'),{worker:selected.worker});
+  assert.equal(desktopProfile.readDesktopMemberConfig(root,'member-b').main.model,'gpt-6.1-terra');
+  assert.deepEqual(desktopProfile.readDesktopChatGPTConfig(root),chatgpt);
+ }finally{rmSync(root,{recursive:true,force:true});}
+});

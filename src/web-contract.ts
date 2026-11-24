@@ -58,7 +58,7 @@ export type WebState = {
   artifacts?:WebArtifact[];
   mainActivity?:MainActivity|null;
   // Current host observation only; never reconstruct it from legacy message text.
-  modelFailure?:{messageId:string;code:'engine_quota_insufficient'|'engine_rate_limited'|'engine_authentication_failed'|'engine_account_status_unconfirmed'|'main_turn_failed';source?:'codex'|'website'};
+  modelFailure?:{messageId:string;code:'engine_quota_insufficient'|'engine_rate_limited'|'engine_authentication_failed'|'engine_account_status_unconfirmed'|'engine_model_unavailable'|'main_turn_failed';source?:'codex'|'website'};
   processNodes?: import('./main-process.js').ProcessNode[];
   features?:{draftUpload?:boolean;taskOverview?:boolean;taskArchive?:1;taskReference?:1;workerExecution?:1;workerEventCards?:1;queueDispatch?:1;queueSources?:1;nativeQuestionAnswers?:1;previewReferences?:1;previewReferenceCollections?:1|2};
   runningTaskIds?:string[];

@@ -14,7 +14,7 @@ import {prepareDesktopProfile,recoverDesktopOwner,assertDesktopControlPaths,read
 import {DesktopPowerCoordinator,POWER_DEFAULTS,validatePowerPreferences} from '../homer/dist/desktop-power.js';
 import {createMacWakeAdapter} from '../homer/scripts/macos-power.mjs';
 import {createWindowsWakeAdapter} from '../homer/scripts/windows-power.mjs';
-import {CHATGPT_MODEL_DEFAULTS,chatgptModelConfig,chatgptModelError,validateChatGPTSelection} from '../homer/dist/model-config.js';
+import {CHATGPT_MODEL_DEFAULTS,chatgptModelConfig,chatgptModelError,modelRowEdit,validateChatGPTSelection} from '../homer/dist/model-config.js';
 import {processIdentity,leaseOwnerGone} from '../homer/dist/processes.js';
 import {webMediaRoute} from '../homer/dist/web-contract.js';
 import {WEB_UPLOAD_BYTES} from '../homer/dist/web-upload.js';
@@ -124,8 +124,11 @@ let accountRevision=0,walletRevision=0,walletDirty=true,walletRead,quitAction,pe
 const accountBoundary=()=>({gatewayOrigin:accountOrigins?.gatewayOrigin??'',allowSyntheticLoopback:accountSynthetic});
 const connectionKind=value=>value?.subject&&value.token?'website':'disconnected';
 const connectionReady=value=>!!value?.subject&&!!value.token&&!!value.selection;
+const memberSettingsActive=()=>modelSource==='website'&&connectionReady(activeConnection)&&connectionReady(connection)&&
+ connection.subject===activeConnection.subject&&connection.token===activeConnection.token&&JSON.stringify(connection.selection)===JSON.stringify(activeConnection.selection)&&
+ !pendingConnection&&!quitPending&&connectionError!=='TOKEN_UNAVAILABLE'&&walletError!=='TOKEN_UNAVAILABLE'&&(!wallet?.expiresAt||wallet.expiresAt>Date.now()/1000);
 const accountCode=error=>['INVALID_REQUEST','UNAUTHORIZED','FORBIDDEN','ACCOUNT_UNAVAILABLE','CONFLICT','RATE_LIMITED','UNAVAILABLE','ACCOUNT_MISMATCH','CONNECTION_FILE_INVALID','CONNECTION_WRITE_FAILED','CONNECTION_CANCELLED','MODEL_CONFIG_UNAVAILABLE','TOKEN_UNAVAILABLE','USAGE_UNAVAILABLE','NOT_CONNECTED'].includes(error?.message)?error.message:'UNAVAILABLE';
-const accountState=()=>({supported:!!dailyTokenFile,configured:!!accountOrigins,source:modelSource,websiteReady:connectionReady(connection),native:nativeStatus?{account:nativeStatus.account,connected:nativeStatus.connected,phase:nativeStatus.phase,pending:!!nativeStatus.loginId,canReopen:!!nativeStatus.authUrl}:undefined,nativeError,connection:connectionKind(connection),active:connectionKind(modelSource==='website'?activeConnection:null),pending:!!pendingConnection,canReopen:!!pendingConnection&&!!pendingLoginUrl,needsRestart:connectionReady(connection)&&JSON.stringify(connection)!==JSON.stringify(activeConnection),error:connectionError,...(wallet?{wallet,updatedAt:walletUpdatedAt}:{}),walletError,stale:walletDirty||!!wallet?.expiresAt&&wallet.expiresAt<=Date.now()/1000});
+const accountState=()=>({supported:!!dailyTokenFile,configured:!!accountOrigins,source:modelSource,memberRevision:accountRevision,websiteReady:connectionReady(connection),native:nativeStatus?{account:nativeStatus.account,connected:nativeStatus.connected,phase:nativeStatus.phase,pending:!!nativeStatus.loginId,canReopen:!!nativeStatus.authUrl}:undefined,nativeError,connection:connectionKind(connection),active:connectionKind(modelSource==='website'?activeConnection:null),pending:!!pendingConnection,canReopen:!!pendingConnection&&!!pendingLoginUrl,needsRestart:connectionReady(connection)&&JSON.stringify(connection)!==JSON.stringify(activeConnection),error:connectionError,...(wallet?{wallet,updatedAt:walletUpdatedAt}:{}),walletError,stale:walletDirty||!!wallet?.expiresAt&&wallet.expiresAt<=Date.now()/1000});
 function accountChanged(reason){
  if(!window||window.isDestroyed()||!origin)return;
  const frame=window.webContents.mainFrame,event={sender:window.webContents,senderFrame:frame};
@@ -160,6 +163,12 @@ function registerDesktopAccount(){
    catch{return {current,defaults:CHATGPT_MODEL_DEFAULTS,error:'native_models_unconfirmed'};}
   },
   applyCodex:async(roles,validCaller=()=>true)=>{
+   const edit=modelRowEdit(roles);
+   if(edit){
+    if(modelSource!=='codex'||!validCaller()||quitPending)throw Error('chatgpt_model_source_changed');
+    if(!nativeStatus?.connected)throw Error('native_account_not_connected');
+    await nativeAccount('apply-models',edit);accountChanged();return accountState();
+   }
    const selected=roles===undefined?undefined:chatgptModelConfig(roles);
    if(selected&&(Object.keys(roles).length!==2||Object.values(roles).includes(undefined)))throw Error('chatgpt_model_config_invalid');
    if(selected&&modelSource==='codex'){
@@ -170,6 +179,21 @@ function registerDesktopAccount(){
    const chatgpt=selected?validateChatGPTSelection(selected,await nativeAccount('models')):undefined;
    if(!validCaller())throw Error('desktop_account_forbidden');
    if(nativeStatus?.connected&&!quitPending){switchSource={source:'codex',chatgpt,validCaller};quitAction='restart';requestQuit();}return accountState();
+  },
+  memberModels:async()=>{
+   if(!memberSettingsActive())throw Error('chatgpt_model_source_changed');
+   const revision=accountRevision;
+   const settings=await nativeAccount('member-models',{subject:activeConnection.subject});
+   if(revision!==accountRevision||!memberSettingsActive())throw Error('chatgpt_model_source_changed');
+   return {...settings,revision};
+  },
+  applyMemberModel:async(input,validCaller=()=>true)=>{
+   if(!memberSettingsActive()||input?.revision!==accountRevision||!validCaller())throw Error('chatgpt_model_source_changed');
+   const revision=accountRevision,edit=modelRowEdit(input.edit);
+   if(!edit||Object.keys(input).length!==2)throw Error('chatgpt_model_config_invalid');
+   const settings=await nativeAccount('apply-member-model',{subject:activeConnection.subject,edit});
+   if(revision!==accountRevision||!memberSettingsActive())throw Error('chatgpt_model_source_changed');
+   return {...settings,revision};
   },
   applyWebsite:(_roles,validCaller=()=>true)=>{if(connectionReady(connection)&&!quitPending){switchSource={source:'website',validCaller};quitAction='restart';requestQuit();}return accountState();},
   connect:()=>{
@@ -211,7 +235,7 @@ function registerDesktopAccount(){
  };
  for(const [name,action]of Object.entries(actions))ipcMain.handle('homer:account:'+name,async(event,...args)=>{
   const frame=event.senderFrame,navigation=permissionNavigation;
-  if(args.length>(name==='applyCodex'?1:0)||!permissionCaller(event,frame))throw Error('desktop_account_forbidden');
+  if(args.length>(['applyCodex','applyMemberModel'].includes(name)?1:0)||!permissionCaller(event,frame))throw Error('desktop_account_forbidden');
   const result=dailyTokenFile?await action(args[0],()=>navigation===permissionNavigation&&permissionCaller(event,frame)):{supported:false};
   if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_account_forbidden');
   return result;
@@ -1179,7 +1203,7 @@ try{
      void showDesktopNotification(value.notice).catch(()=>{});
     }
     else if(value.kind==='native_account_result'){
-     const pending=nativeRequests.get(value.id);if(pending){clearTimeout(pending.timer);nativeRequests.delete(value.id);value.error?pending.reject(Error(pending.action==='apply-models'?chatgptModelError(value.error):'native_account_unconfirmed')):pending.resolve(value.value);}
+     const pending=nativeRequests.get(value.id);if(pending){clearTimeout(pending.timer);nativeRequests.delete(value.id);value.error?pending.reject(Error(['apply-models','apply-member-model'].includes(pending.action)?chatgptModelError(value.error):'native_account_unconfirmed')):pending.resolve(value.value);}
     }
     else if(value.kind==='power_result'){
      const pending=powerRequests.get(value.id);if(pending){clearTimeout(pending.timer);powerRequests.delete(value.id);value.error?pending.reject(Error('power_recheck_unconfirmed')):pending.resolve();}
@@ -1192,7 +1216,7 @@ try{
       if(value.kind==='power_acquire'&&Number.isSafeInteger(value.id)&&value.id>0)runtime.stdin.write(JSON.stringify({kind:'power_ack',id:value.id})+'\n');
      }catch{void showError('电源状态未能确认，当前任务会沿原流程继续。');}
     }
-    else if(value.kind==='native-account-changed'||value.kind==='native-account-disconnected')accountChanged(value.kind);
+    else if(value.kind==='native-account-changed'||value.kind==='native-account-disconnected'||value.kind==='member-models-changed')accountChanged(value.kind);
     else if(value.kind==='account_usage_dirty'){walletRevision++;walletDirty=true;accountChanged();}
     else if(value.kind==='update-busy'&&updateStopping)updateFailed('update_busy');
     else if(value.kind==='update-stopped'&&updateStopping){updateAcknowledged=true;finishQuit();}

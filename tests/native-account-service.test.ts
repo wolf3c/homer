@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {EventEmitter}from'node:events';import{mkdtempSync,mkdirSync,rmSync}from'node:fs';import{join,resolve}from'node:path';import{tmpdir}from'node:os';import{Homer}from'../src/service.js';import{CodexEngine,type EngineOptions}from'../src/engine.js';import{NativeAccount}from'../src/native-account.js';
+import {memberRuntimeConfig,resolveMemberSelection,type MemberOverrides} from '../src/member-models.js';
 const scratch=resolve('.codex/scratch/native-account-browser-login');mkdirSync(scratch,{recursive:true});
 function config(parent=scratch){const dir=mkdtempSync(join(parent,'service-'));mkdirSync(join(dir,'runtime'));mkdirSync(join(dir,'workspace'));return{appData:dir,codexHome:join(dir,'legacy-native'),nativeCodexHome:join(dir,'legacy-native'),codexBin:resolve('tests/fixtures/native-account-app-server.mjs'),runtime:join(dir,'runtime'),workspace:join(dir,'workspace'),model:'synthetic',requiresOpenaiAuth:false,stopGraceMs:100};}
 test('control child without memory relays account notification before thread filtering, restart reads native storage, logout confirms empty state',async()=>{const c=config();c.codexHome=c.nativeCodexHome=join(c.appData,'codex');mkdirSync(c.codexHome,{recursive:true});const start=async()=>{const e=new CodexEngine(c,{cwd:c.appData,readRoots:[],instructions:'Synthetic only',tools:[],controlOnly:true},async()=>({}));const m=new NativeAccount((method,params)=>e.request(method,params));e.on('accountLoginCompleted',v=>m.completed(v));assert.equal(await e.start(),"");assert.equal(e.threadId,undefined);await assert.rejects(e.turn("Synthetic forbidden turn"),/engine_not_started/);return{e,m};};let p=await start();try{assert.equal((await p.m.start()).phase,'waiting');await p.e.request('synthetic/complete',{success:true});assert.equal((await p.m.state()).connected,true);await p.m.close();assert.equal(await p.e.close(),true);p=await start();const restored=await p.m.state();assert.equal(restored.connected,true);assert.equal(JSON.stringify(restored).includes('PRIVATE'),false);assert.equal((await p.m.logout()).connected,false);}finally{await p.m.close();await p.e.close();}});
@@ -49,6 +50,9 @@ test('live ChatGPT save validates both roles and commits memory only after the p
   await assert.rejects(()=>app.applyChatGPTModels(roles,()=>{throw Error('PRIVATE_DISK_FAILURE');}),/chatgpt_model_save_failed/);assert.equal(c.chatgpt,before);
   await assert.rejects(()=>app.applyChatGPTModels({...roles,extra:{}},()=>{throw Error('unexpected_write');}),/chatgpt_model_config_invalid/);
   await app.applyChatGPTModels(roles,value=>{assert.equal(c.chatgpt,before);saved=value;});assert.deepEqual(saved,roles);assert.deepEqual(c.chatgpt,roles);assert.equal(app.store.meta('mainThread'),undefined);
+  await app.applyChatGPTModels({role:'worker',selection:null},value=>{saved=value;});
+  assert.deepEqual(saved,{main:roles.main});
+  assert.deepEqual(c.chatgpt,{main:roles.main});
  }finally{await app.close();rmSync(c.appData,{recursive:true,force:true});}
 });
 
@@ -69,5 +73,37 @@ test('quota shares the native control child and reports native account invalidat
   assert.equal(await control.close(),true);
   assert.deepEqual(changes,['native-account-changed','native-account-disconnected']);
   assert.equal(control.threadId,undefined);
+ }finally{await app?.close();rmSync(c.appData,{recursive:true,force:true});}
+});
+
+test('member row repair preserves unrelated overrides and publishes only after saving',async()=>{
+ const defaults=resolveMemberSelection(null);
+ const c=Object.assign(config(tmpdir()),{
+  desktopModelSource:'website' as const,dailyDeepSeek:true,
+  desktopResources:{bundleRoot:'synthetic',manifestSha256:'a'.repeat(64)},pauseOldDesktopWork:true,
+  desktopConnection:memberRuntimeConfig(defaults,'https://fixture.invalid'),
+  member:{subject:'synthetic',overrides:{main:{...defaults.main},worker:{model:'retired-model',effort:'high'}} as MemberOverrides},
+ });
+ let app:Homer|undefined;
+ try{
+  app=new Homer(c,async()=>{});
+  const snapshot=app.memberModels();
+  assert.deepEqual(snapshot.inherited,{main:false,worker:false});
+  assert.deepEqual(snapshot.unavailable,['worker']);
+  assert.equal(snapshot.current.worker.model,'retired-model');
+  assert.deepEqual(snapshot.models?.find(row=>row.model==='deepseek-flash')?.supportedReasoningEfforts.map(level=>level.reasoningEffort),['none','low','high','max']);
+  assert.ok(snapshot.models?.every(row=>row.serviceTiers.length===0));
+  const original=c.member.overrides,edit={role:'main',selection:null};
+  assert.throws(()=>app!.applyMemberModel(edit,()=>{throw Error('fixture_disk_failure');}),/chatgpt_model_save_failed/);
+  assert.equal(c.member.overrides,original);
+  assert.deepEqual(app.applyMemberModel(edit,value=>{
+   assert.equal(c.member.overrides,original);
+   assert.deepEqual(value,{worker:original.worker});
+  }).inherited,{main:true,worker:false});
+  const repaired={model:'deepseek-flash',effort:'none',serviceTier:null};
+  const result=app.applyMemberModel({role:'worker',selection:repaired},()=>{});
+  assert.deepEqual(result.current.worker,repaired);
+  assert.deepEqual(result.unavailable,[]);
+  assert.deepEqual(result.current.main,snapshot.defaults.main);
  }finally{await app?.close();rmSync(c.appData,{recursive:true,force:true});}
 });

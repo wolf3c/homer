@@ -307,3 +307,18 @@ test('membership WS follows independent role snapshots and cannot leak into Chat
  assert.equal(effectiveModelConfig({...base,desktopConnection:undefined},'main').supportsWebSocket,false);
  assert.equal(effectiveModelConfig({...base,desktopModelSource:'codex'},'main').supportsWebSocket,undefined);
 });
+
+test('member role overrides preserve connection flags and leave the other role untouched',()=>{
+ const context={contextWindow:272000,autoCompactTokenLimit:244800,autoCompactTokenLimitScope:'total' as const};
+ const main={model:'gpt-6.1-terra',effort:'medium',fast:false as const,baseUrl:'https://fixture.invalid/v1',webSearch:true,supportsWebSocket:true,context};
+ const config:Config={
+  workspace:'/fixture/workspace',runtime:'/fixture/runtime',codexHome:'/fixture/codex',codexBin:'/fixture/bin/codex',
+  model:main.model,requiresOpenaiAuth:false,stopGraceMs:100,
+  desktopModelSource:'website',desktopResources:{bundleRoot:'fixture',manifestSha256:'a'.repeat(64)},dailyDeepSeek:true,pauseOldDesktopWork:true,
+  desktopConnection:{main,worker:{...main,effort:'high',webSearch:false,supportsWebSocket:false}},
+  member:{subject:'fixture',overrides:{main:{model:'deepseek-flash',effort:'none'}}},
+ };
+ const selected=effectiveModelConfig(config,'main'),worker=effectiveModelConfig(config,'worker');
+ assert.deepEqual([selected.model,selected.effort,selected.fast,selected.webSearch,selected.supportsWebSocket,selected.baseUrl],['deepseek-flash','none',false,true,true,main.baseUrl]);
+ assert.deepEqual([worker.model,worker.effort,worker.webSearch,worker.supportsWebSocket],['gpt-6.1-terra','high',false,false]);
+});

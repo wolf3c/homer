@@ -6,13 +6,14 @@ export type ReasoningEffort = string;
 export const validReasoningEffort=(value:unknown):value is string=>typeof value==='string'&&/^[\x21-\x7e]{1,64}$/.test(value);
 export type ModelRole = "main" | "worker";
 export type ChatGPTModelConfig={model:string;effort:ReasoningEffort;serviceTier:string|null};
+export type ModelRowEdit={role:ModelRole;selection:ChatGPTModelConfig|null};
 export type ChatGPTModelOverrides=Partial<Record<ModelRole,ChatGPTModelConfig>>;
 export const CHATGPT_MODEL_DEFAULTS:Readonly<Record<ModelRole,Readonly<ChatGPTModelConfig>>>=Object.freeze({
   main:Object.freeze({model:'gpt-6.1-terra',effort:'medium',serviceTier:null}),
   worker:Object.freeze({model:'gpt-6.1-sol',effort:'high',serviceTier:null}),
 });
 export type NativeModel={model:string;displayName:string;defaultReasoningEffort:string;supportedReasoningEfforts:{reasoningEffort:string}[];serviceTiers:{id:string;name:string}[]};
-export type NativeModelSettings={current:Record<ModelRole,ChatGPTModelConfig>;defaults:Record<ModelRole,Readonly<ChatGPTModelConfig>>;models?:NativeModel[];error?:string};
+export type NativeModelSettings={current:Record<ModelRole,ChatGPTModelConfig>;defaults:Record<ModelRole,Readonly<ChatGPTModelConfig>>;models?:NativeModel[];inherited?:Record<ModelRole,boolean>;unavailable?:ModelRole[];revision?:number;error?:string};
 export const CHATGPT_MODEL_ERRORS:Record<string,string>={
   chatgpt_model_config_invalid:'模型参数无效，请重新选择。',
   chatgpt_model_selection_unavailable:'所选模型、思考深度或速度已不可用，请重新选择。',
@@ -37,14 +38,25 @@ export function chatgptModelConfig(value:unknown=undefined):Record<ModelRole,Cha
   return result;
 }
 
+export function modelRowEdit(value:unknown):ModelRowEdit|undefined {
+  if(!value||typeof value!=='object'||!('role' in value))return;
+  if(Object.keys(value).length!==2||(value.role!=='main'&&value.role!=='worker')||!('selection' in value)||value.selection===undefined)throw Error('chatgpt_model_config_invalid');
+  return {role:value.role,selection:value.selection===null?null:chatgptModelConfig({[value.role]:value.selection})[value.role]};
+}
+
+export function validateChatGPTModel(role:ModelRole,selected:ChatGPTModelConfig,models:NativeModel[]) {
+  const model=models.find(model=>model.model===selected.model);
+  if(!model||!(model.supportedReasoningEfforts.length?model.supportedReasoningEfforts.some(option=>option.reasoningEffort===selected.effort):selected.effort===model.defaultReasoningEffort)||
+     selected.serviceTier!==null&&!model.serviceTiers.some(tier=>tier.id===selected.serviceTier))throw Error('chatgpt_model_selection_unavailable');
+  if(JSON.stringify(selected)!==JSON.stringify(CHATGPT_MODEL_DEFAULTS[role]))return selected;
+}
+
 export function validateChatGPTSelection(value:unknown,models:NativeModel[]):ChatGPTModelOverrides{
   const roles=chatgptModelConfig(value),overrides:ChatGPTModelOverrides={};
   if(!value||Object.keys(value).length!==2||Object.values(value).includes(undefined))throw Error('chatgpt_model_config_invalid');
   for(const role of ['main','worker'] as const){
-    const selected=roles[role],model=models.find(model=>model.model===selected.model);
-    if(!model||!(model.supportedReasoningEfforts.length?model.supportedReasoningEfforts.some(option=>option.reasoningEffort===selected.effort):selected.effort===model.defaultReasoningEffort)||
-       selected.serviceTier!==null&&!model.serviceTiers.some(tier=>tier.id===selected.serviceTier))throw Error('chatgpt_model_selection_unavailable');
-    if(JSON.stringify(selected)!==JSON.stringify(CHATGPT_MODEL_DEFAULTS[role]))overrides[role]=selected;
+    const selected=validateChatGPTModel(role,roles[role],models);
+    if(selected)overrides[role]=selected;
   }
   return overrides;
 }

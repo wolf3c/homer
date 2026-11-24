@@ -725,7 +725,7 @@ test('same-source ChatGPT selection saves immediately without a restart action',
  const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}},calls=[];
  window.homerDesktopAccount={state:async()=>current,onChange:()=>()=>{},nativeModels:async()=>nativeSettings(),applyCodex:async roles=>{calls.push(roles);return current;}};
  await d.render(React.createElement(get().DesktopAccount));await d.click(button(d,'Homer 速度：Fast'));
- assert.deepEqual(calls,[{main:{model:'gpt-6.1-terra',effort:'high',serviceTier:null},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}}]);
+ assert.deepEqual(calls,[{role:'main',selection:{model:'gpt-6.1-terra',effort:'high',serviceTier:null}}]);
  assert.ok(!button(d,'应用并重启'));assert.match(d.container.textContent,/下一轮生效/);assert.ok(!button(d,'重试保存'));
 }));
 test('model save failures show a specific safe error and retry instead of a login recheck',async()=>withDom(async d=>{
@@ -753,7 +753,7 @@ test('inactive ChatGPT settings keep independent drafts until the explicit sourc
  await d.click(button(d,'Homer 速度：Fast'));assert.equal(button(d,'应用并重启').getAttribute('disabled'),null);assert.ok(button(d,'Worker 速度：标准'));
  await d.click(button(d,'应用并重启'));
  assert.deepEqual(calls,[{main:{model:'gpt-6.1-terra',effort:'high',serviceTier:null},worker:{model:'gpt-6.1-terra',effort:'xhigh',serviceTier:null}}]);
- await d.click(button(d,'恢复默认'));assert.ok(button(d,'Homer 速度：Fast'));assert.equal(calls.length,1);
+ await d.click(button(d,'恢复 Homer 默认配置'));assert.ok(button(d,'Homer 速度：Fast'));assert.equal(calls.length,1);
 }));
 test('ChatGPT catalog errors preserve unavailable saved model values through retry',async()=>withDom(async d=>{
  const current={supported:true,configured:false,source:'codex',connection:'disconnected',active:'disconnected',pending:false,needsRestart:false,stale:false,native:{account:'chatgpt',connected:true,phase:'idle',pending:false}};
@@ -793,7 +793,7 @@ test('ChatGPT transient account uncertainty disables controls and retains drafts
  window.homerDesktopAccount={state:async()=>current,onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeModels:async()=>nativeSettings(),applyCodex:async()=>{throw Error('chatgpt_model_save_failed');}};
  await d.render(React.createElement(get().DesktopAccount));await d.click(button(d,'Homer 速度：Fast'));
  current={...connected,native:undefined,nativeError:'Codex 登录状态未能确认，请重试。'};await act(async()=>{for(const fn of listeners)fn();});
- assert.equal(button(d,'Homer 速度：标准')?.getAttribute('disabled'),'');assert.equal(button(d,'恢复默认')?.getAttribute('disabled'),'');
+ assert.equal(button(d,'Homer 速度：标准')?.getAttribute('disabled'),'');assert.equal(button(d,'恢复 Homer 默认配置')?.getAttribute('disabled'),'');
  current=connected;await d.click(button(d,'重新检查 Codex 登录'));
  assert.ok(button(d,'Homer 速度：标准'));assert.equal(button(d,'重试保存').getAttribute('disabled'),null);
 }));
@@ -928,4 +928,33 @@ test('Codex credits distinguish unlimited, no credits, unknown and a failed snap
  assert.equal(usage(),'暂无额度数据积分 · 余额未知');
  fail=true;await refresh();
  assert.equal(usage(),'暂时无法读取额度');
+}));
+
+test('member settings retain an explicit default-equivalent override and repair only the selected unavailable role at zero credits',async()=>withDom(async d=>{
+ const state={supported:true,configured:true,source:'website',active:'website',connection:'website',pending:false,needsRestart:false,stale:false,memberRevision:4,wallet:{available:0,used:12,unit:'积分'}};
+ const defaults={main:{model:'gpt-6.1-terra',effort:'medium',serviceTier:null},worker:{model:'gpt-6.1-terra',effort:'high',serviceTier:null}},calls=[];
+ let fail=true;
+ let settings={current:{...defaults,worker:{model:'retired-member-model',effort:'high',serviceTier:null}},defaults,revision:4,inherited:{main:false,worker:false},unavailable:['worker'],models:nativeSettings().models.map(model=>({...model,serviceTiers:[]}))};
+ window.homerDesktopAccount={state:async()=>state,onChange:()=>()=>{},memberModels:async()=>settings,applyMemberModel:async input=>{
+  calls.push(input);
+  if(fail)throw Error('chatgpt_model_save_failed');
+  settings={...settings,current:{...settings.current,worker:defaults.worker},inherited:{...settings.inherited,worker:true},unavailable:[]};
+  return settings;
+ }};
+ await d.render(React.createElement(get().DesktopAccount));
+ assert.ok(button(d,'恢复 Homer 默认配置'));
+ assert.ok(button(d,'恢复 Worker 默认配置'));
+ assert.match(d.container.textContent,/retired-member-model/);
+ assert.match(d.container.textContent,/当前配置不可用/);
+ assert.match(d.container.textContent,/0 积分/);
+ assert.ok(!button(d,'Homer 速度：标准'));
+ await d.click(button(d,'恢复 Worker 默认配置'));
+ assert.match(d.container.textContent,/原设置已保留/);
+ fail=false;await d.click(button(d,'重试保存'));
+ assert.deepEqual(calls,[{revision:4,edit:{role:'worker',selection:null}},{revision:4,edit:{role:'worker',selection:null}}]);
+ assert.ok(button(d,'恢复 Homer 默认配置'));
+ assert.ok(!button(d,'恢复 Worker 默认配置'));
+ assert.ok(!button(d,'重试保存'));
+ assert.ok(!button(d,'应用并重启'));
+ assert.match(d.container.textContent,/已保存，下一轮生效/);
 }));

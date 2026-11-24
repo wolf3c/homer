@@ -19,7 +19,8 @@ import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {attachmentRevealTarget,attachmentSourcePath} from './artifact-reveal.js';
 import {seedFirstLaunchSkills,shouldSeedFirstLaunchSkills} from './first-launch.js';
 import {NativeAccount,type NativeAccountState,type NativeUsageSnapshot} from './native-account.js';
-import {validateChatGPTSelection,type ChatGPTModelOverrides,type NativeModel} from './model-config.js';
+import {isMemberRoleSelection,memberModelSettings,sameMemberSelection,type MemberOverrides,type RoleSelection} from './member-models.js';
+import {modelRowEdit,validateChatGPTModel,validateChatGPTSelection,type ChatGPTModelOverrides,type NativeModel} from './model-config.js';
 import {createMembershipTools,isMembershipTool} from './membership-web-tools.js';
 import {readMembershipAudio,runMembershipAudio,verifyMembershipAudioAttachment} from './membership-audio.js';
 import {runMembershipVideo} from './membership-video.js';
@@ -41,7 +42,7 @@ import { Store, type Run } from "./store.js";
 import { Files, canonicalDir } from "./files.js";
 import {
   CodexEngine,
-  EngineRpcUnconfirmed,
+  EngineRpcUnconfirmed,MemberSelectionUnavailable,
   nativeExecutableRoots,
   engineError,
   type EngineLike,
@@ -163,7 +164,7 @@ type WorkerSlot = {
 // Emitted only after constructor preflight has closed the database and lock.
 export class DesktopReviewRequired extends Error {}
 
-type StateChangeReason='model-turn'|'user-input'|'native-account-changed'|'native-account-disconnected';
+type StateChangeReason='model-turn'|'user-input'|'native-account-changed'|'native-account-disconnected'|'member-models-changed';
 
 class ScheduledSourcePending extends Error {
   constructor(readonly retryWithoutEvent:boolean){super('channel_input_preparing');}
@@ -681,11 +682,44 @@ export class Homer {
   private nativeAccount(){return this.accountManager??=new NativeAccount((method,params,signal)=>this.nativeRpc(method,params,signal),{onIdle:()=>this.scheduleMainTransportRecovery()});}
   async applyChatGPTModels(value:unknown,persist:(overrides:ChatGPTModelOverrides)=>void){
     if(this.config.desktopModelSource!=='codex'||!this.config.appData)throw Error('chatgpt_model_source_changed');
-    const overrides=validateChatGPTSelection(value,await this.manageNativeAccount({action:'model_list'}));
+    const edit=modelRowEdit(value);
+    const models=edit?.selection===null?undefined:await this.manageNativeAccount({action:'model_list'});
     if(this.closing||this.closed)throw Error('service_upgrading');
+    let overrides:ChatGPTModelOverrides;
+    if(edit){
+      overrides={...this.config.chatgpt};
+      const selected=edit.selection&&validateChatGPTModel(edit.role,edit.selection,models!);
+      if(selected)overrides[edit.role]=selected;
+      else delete overrides[edit.role];
+    }else overrides=validateChatGPTSelection(value,models!);
     try{persist(overrides);}catch{throw Error('chatgpt_model_save_failed');}
     this.config.chatgpt=overrides;
     this.invalidateState();
+  }
+  private memberUnavailable:MemberOverrides={};
+  memberModels(){
+    const {member,desktopConnection}=this.config;
+    if(this.config.desktopModelSource!=='website'||!member||!desktopConnection)throw Error('chatgpt_model_source_changed');
+    return memberModelSettings(desktopConnection,member.overrides,this.memberUnavailable);
+  }
+  applyMemberModel(value:unknown,persist:(overrides:MemberOverrides)=>void){
+    const {member,desktopConnection}=this.config;
+    if(this.closing||this.closed||this.config.desktopModelSource!=='website'||!member||!desktopConnection)throw Error('chatgpt_model_source_changed');
+    const edit=modelRowEdit(value);
+    if(!edit)throw Error('chatgpt_model_config_invalid');
+    const {role,selection}=edit,overrides={...member.overrides};
+    if(selection){
+      const {model,effort,serviceTier}=selection,selected={model,effort};
+      if(serviceTier!==null||!isMemberRoleSelection(selected))throw Error('chatgpt_model_selection_unavailable');
+      if(sameMemberSelection(selected,desktopConnection[role]))delete overrides[role];
+      else overrides[role]=selected;
+    }else delete overrides[role];
+    try{persist(overrides);}catch{throw Error('chatgpt_model_save_failed');}
+    member.overrides=overrides;
+    const selected=overrides[role]??desktopConnection[role];
+    if(!sameMemberSelection(this.memberUnavailable[role],selected))delete this.memberUnavailable[role];
+    this.invalidateState();
+    return this.memberModels();
   }
   private async nativeRpc(method:string,params:any,signal?:AbortSignal){
       if(this.closing||this.closed)throw Error('service_upgrading');
@@ -1030,6 +1064,13 @@ export class Homer {
       engine.on('hostMcpToolStarted',call=>this.scheduleCalls.observe(engine,catalog,call));
       engine.on('hostMcpToolCompleted',(thread,turn,id)=>this.scheduleCalls.complete(engine,thread,turn,id));
     }
+    engine.on('memberModelUnavailable',(selection:RoleSelection)=>{
+      const role=options.role??'main',current=this.config.member?.overrides[role]??this.config.desktopConnection?.[role];
+      if(current&&sameMemberSelection(selection,current)){
+        this.memberUnavailable[role]=selection;
+        this.invalidateState('member-models-changed');
+      }
+    });
     engine.on('powerActivity',()=>this.invalidateState());
     engine.on('interactionWaiting',()=>{if(!engine.nativeInteractionPending)this.desktopPowerResuming?.delete(engine);this.invalidateState();});
     engine.on('exit',()=>{
@@ -1591,7 +1632,7 @@ export class Homer {
       if(code==='channel_input_preparing'&&context.nativeStartAttempted===undefined){
         this.inputs.deferClaim(queued);return;
       }
-      if(!interrupted&&code!=='main_recovery_unconfirmed'&&code!=='channel_binding_denied')this.modelFailure={messageId:replyId,code:code==='engine_quota_insufficient'||code==='engine_rate_limited'||code==='engine_authentication_failed'||code==='engine_account_status_unconfirmed'?code:'main_turn_failed',source:this.config.desktopModelSource};
+      if(!interrupted&&code!=='main_recovery_unconfirmed'&&code!=='channel_binding_denied')this.modelFailure={messageId:replyId,code:code==='engine_quota_insufficient'||code==='engine_rate_limited'||code==='engine_authentication_failed'||code==='engine_account_status_unconfirmed'||code==='engine_model_unavailable'?code:'main_turn_failed',source:this.config.desktopModelSource};
       const partial=this.history.message(replyId)?.text??'';
       const reasons:Record<string,string>={
         main_recovery_unconfirmed:'旧回执核对未确认，原记录已保留；发送消息可继续核对',
@@ -1599,6 +1640,7 @@ export class Homer {
         engine_rate_limited:'当前模型来源请求受到限流，请稍后手动重试',
         engine_authentication_failed:'当前模型服务未通过认证，请检查账号连接后重新发送消息',
         engine_account_status_unconfirmed:'未能核实账号状态，请检查连接与额度后重新发送消息',
+        engine_model_unavailable:'当前模型或思考深度不可用，请在账号设置中重新选择后发送消息',
         engine_image_rejected:'Codex 拒绝了图片输入，请检查图片格式和尺寸',
         engine_rpc_failed:'Codex 未能完成本次请求',
         channel_binding_denied:'聊天应用绑定已失效或尚未核实，本次请求未执行',
@@ -2027,6 +2069,7 @@ export class Homer {
       if(!shutdown)this.store.event(null, "main_turn_failed", engineError(e));
       // A terminal failure is still a confirmed turn boundary. Preserve its
       // failed receipt without poisoning a healthy process or retrying work.
+      if(e instanceof MemberSelectionUnavailable)context.terminalConfirmed=true;
       if(!context.terminalConfirmed||this.main.available===false){
         await this.retireMain();
         context.terminalConfirmed ||= !this.mainBroken;

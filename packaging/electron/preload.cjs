@@ -44,8 +44,8 @@ if(process.isMainFrame===true){
    :invoke('homer:desktop-permissions:open-system-settings',args),
  });
  contextBridge.exposeInMainWorld('homerDesktopAccount',{
-  ...Object.fromEntries(['state','connect','cancel','reopen','refresh','openWebsite','disconnect','restart','nativeConnect','nativeCancel','nativeReopen','nativeModels','nativeUsage','applyWebsite'].map(name=>[name,(...args)=>invoke('homer:account:'+name,args)])),
-  applyCodex:(...args)=>args.length<=1?ipcRenderer.invoke('homer:account:applyCodex',...args):Promise.reject(new Error('desktop_permissions_arguments')),
+  ...Object.fromEntries(['state','connect','cancel','reopen','refresh','openWebsite','disconnect','restart','nativeConnect','nativeCancel','nativeReopen','nativeModels','memberModels','nativeUsage','applyWebsite'].map(name=>[name,(...args)=>invoke('homer:account:'+name,args)])),
+  ...Object.fromEntries(['applyCodex','applyMemberModel'].map(name=>[name,(...args)=>args.length<=1?ipcRenderer.invoke('homer:account:'+name,...args):Promise.reject(new Error('desktop_permissions_arguments'))])),
   onChange:callback=>{
    if(typeof callback!=='function')throw new TypeError('desktop_account_callback');
    const listener=(_event,reason)=>callback(reason);ipcRenderer.on('homer:account:changed',listener);
